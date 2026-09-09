@@ -1,6 +1,7 @@
 import { Effect, Layer, Schema } from 'effect';
-import { defineOutboxWorker } from '../../src/outbox/definition.ts';
+
 import { defineTenantModuleEntrypoint } from '../../src/modules/module-entrypoint.ts';
+import { defineOutboxWorker } from '../../src/outbox/definition.ts';
 import { startOutboxWorkerProcess } from '../../src/outbox/process.ts';
 import { OutboxRuntime } from '../../src/outbox/runtime.ts';
 

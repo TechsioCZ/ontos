@@ -1,13 +1,14 @@
-import { PgClient } from '@effect/sql-pg';
-import { drizzleAdapter } from '@better-auth/drizzle-adapter/relations-v2';
-import { makeWithDefaults } from 'drizzle-orm/effect-postgres';
-import { Reactivity } from 'effect/unstable/reactivity';
 import { configureDatabasePool } from '@app/core-runtime';
+import { drizzleAdapter } from '@better-auth/drizzle-adapter/relations-v2';
+import { PgClient } from '@effect/sql-pg';
+import { makeWithDefaults } from 'drizzle-orm/effect-postgres';
 import { drizzle } from 'drizzle-orm/node-postgres';
 import { Context, Effect, Layer, Redacted } from 'effect';
 import type { Scope } from 'effect';
+import { Reactivity } from 'effect/unstable/reactivity';
 import { Pool } from 'pg';
 import type { PoolConfig } from 'pg';
+
 import { AuthConfig } from '../config.ts';
 import type { AuthConfigValue } from '../config.ts';
 import { AuthDatabaseConnectionError } from './connection-error.ts';
@@ -61,15 +62,14 @@ export const makeAuthDatabase = Effect.fn('AuthDatabase.make')(function* makeDat
   configuration: Pick<AuthConfigValue, 'connectionString'>,
   poolFactory: PoolFactory = defaultPoolFactory,
 ): Effect.fn.Return<(typeof AuthDatabase)['Service'], AuthDatabaseConnectionError, Scope.Scope> {
-  const poolConfiguration = yield* configureDatabasePool(
-    Redacted.make(configuration.connectionString),
-  ).pipe(Effect.mapError(mapPoolConfigurationError));
+  const poolConfiguration = yield* configureDatabasePool(Redacted.make(configuration.connectionString)).pipe(
+    Effect.mapError(mapPoolConfigurationError),
+  );
   const pool = yield* acquirePoolResource(() => poolFactory(poolConfiguration));
   const reactivity = yield* Reactivity.make;
-  const client = yield* PgClient.fromPool({ acquire: Effect.succeed(pool) }).pipe(
-    Effect.provideService(Reactivity.Reactivity, reactivity),
-    Effect.mapError(connectionFailure),
-  );
+  const client = yield* PgClient.fromPool({
+    acquire: Effect.succeed(pool),
+  }).pipe(Effect.provideService(Reactivity.Reactivity, reactivity), Effect.mapError(connectionFailure));
   const executor = yield* makeWithDefaults({ relations: authRelations }).pipe(
     Effect.provideService(PgClient.PgClient, client),
   );

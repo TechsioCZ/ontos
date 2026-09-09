@@ -2,6 +2,7 @@
 import { DatabaseConfig, loadDatabaseConfig, loadDatabaseConnectionPair } from '@app/core-runtime';
 import { sql } from 'drizzle-orm';
 import { Effect, Layer, Schema } from 'effect';
+
 import { PartyDatabase, PartyDatabaseLive } from '../src/db/client.ts';
 import { compareContactsCatalog } from '../src/db/engagement-catalog.ts';
 import { CONTACTS_SCHEMA_NAME, CONTACTS_TABLES } from '../src/db/engagement-schema.ts';
@@ -112,9 +113,7 @@ const verification = Effect.gen(function* verifyContactsDatabase() {
           }),
       ),
     );
-  const difference = compareContactsCatalog(
-    catalog.map((row) => `${CONTACTS_SCHEMA_NAME}.${row.table_name}`),
-  );
+  const difference = compareContactsCatalog(catalog.map((row) => `${CONTACTS_SCHEMA_NAME}.${row.table_name}`));
   if (difference.missing.length > 0 || difference.unexpected.length > 0) {
     return yield* new ContactsDatabaseVerificationError({
       reason: `Contacts catalog mismatch; missing=[${difference.missing.join(', ')}], unexpected=[${difference.unexpected.join(', ')}]`,
@@ -135,7 +134,9 @@ const verification = Effect.gen(function* verifyContactsDatabase() {
     .pipe(
       Effect.mapError(
         () =>
-          new ContactsDatabaseVerificationError({ reason: 'Unable to compare Contacts columns' }),
+          new ContactsDatabaseVerificationError({
+            reason: 'Unable to compare Contacts columns',
+          }),
       ),
     );
   const actualColumns = columns.map((row) => `${row.table_name}.${row.column_name}`);
@@ -197,10 +198,6 @@ const verification = Effect.gen(function* verifyContactsDatabase() {
   return { typedTableCount: CONTACTS_TABLES.length };
 });
 
-const runtime = PartyDatabaseLive.pipe(
-  Layer.provide(Layer.effect(DatabaseConfig, loadDatabaseConfig())),
-);
+const runtime = PartyDatabaseLive.pipe(Layer.provide(Layer.effect(DatabaseConfig, loadDatabaseConfig())));
 const result = await Effect.runPromise(Effect.provide(verification, runtime));
-console.log(
-  `Verified ${result.typedTableCount} typed tables in PostgreSQL schema ${CONTACTS_SCHEMA_NAME}`,
-);
+console.log(`Verified ${result.typedTableCount} typed tables in PostgreSQL schema ${CONTACTS_SCHEMA_NAME}`);

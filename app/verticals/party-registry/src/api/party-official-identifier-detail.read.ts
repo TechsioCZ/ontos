@@ -2,6 +2,7 @@
 import { defineRead, defineTenantModuleEntrypoint } from '@app/core-runtime';
 import type { ReadHandlerContext } from '@app/core-runtime';
 import { Effect } from 'effect';
+
 import {
   PartyOfficialIdentifierDetailRequestSchema,
   PartyOfficialIdentifierDetailResponseSchema,
@@ -47,8 +48,7 @@ export const partyOfficialIdentifierDetailRead = defineRead(
       ),
   (transaction, scope) =>
     Effect.succeed({
-      find: (identifierId: string) =>
-        findOfficialIdentifierRecord(transaction, scope.tenantId, identifierId),
+      find: (identifierId: string) => findOfficialIdentifierRecord(transaction, scope.tenantId, identifierId),
     }),
   () => ({ kind: 'tenant', permission: 'read_party_identity' }),
 );

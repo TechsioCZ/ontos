@@ -15,9 +15,7 @@ export function listRuleNames(): readonly string[] {
 }
 
 /** Import selected rules; isolated fixture runs need not load unrelated modules under repair. */
-export async function discoverRules(
-  names: readonly string[] = listRuleNames(),
-): Promise<Record<string, Rule>> {
+export async function discoverRules(names: readonly string[] = listRuleNames()): Promise<Record<string, Rule>> {
   const available = new Set(listRuleNames());
   const rules: Record<string, Rule> = {};
   for (const name of names) {

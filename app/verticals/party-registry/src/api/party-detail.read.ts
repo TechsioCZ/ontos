@@ -7,10 +7,8 @@ import {
 } from '@app/core-runtime';
 import type { ReadHandlerContext } from '@app/core-runtime';
 import { Effect, Match, Option } from 'effect';
-import {
-  PartyDetailRequestSchema,
-  PartyDetailResponseSchema,
-} from '../../shared/apis/party-detail.ts';
+
+import { PartyDetailRequestSchema, PartyDetailResponseSchema } from '../../shared/apis/party-detail.ts';
 import type { PartyDetailRequest, PartyDetailResponse } from '../../shared/apis/party-detail.ts';
 // eslint-disable-next-line anti-slop-effect/no-service-constructor-imports -- This pure helper constructs a ResourceRef, not an Effect service.
 import { makePartyRef } from '../../shared/domain/identity-contracts.ts';
@@ -19,10 +17,10 @@ import type { PartyAliasResolutionError } from '../../shared/domain/merge-alias-
 import type { PartyRef } from '../../shared/resources/party.ts';
 import { resolvePartyAlias } from '../merge/party-alias-resolution.service.ts';
 import type { ResolvedPartyAlias } from '../merge/party-alias-resolution.service.ts';
-import { findPartyRecord } from '../services/party-identity-persistence.service.ts';
-import type { PartyLookup } from '../services/party-identity-persistence.service.ts';
 import { findPartyDetailAssertions } from '../services/party-detail-persistence.service.ts';
 import type { PartyDetailAssertions } from '../services/party-detail-persistence.service.ts';
+import { findPartyRecord } from '../services/party-identity-persistence.service.ts';
+import type { PartyLookup } from '../services/party-identity-persistence.service.ts';
 
 interface Services {
   readonly facts: (
@@ -30,9 +28,7 @@ interface Services {
     includeFactHistory: boolean,
   ) => Effect.Effect<PartyDetailAssertions, PartyPersistenceUnavailableError>;
   readonly find: (partyId: string) => Effect.Effect<PartyLookup, PartyPersistenceUnavailableError>;
-  readonly resolve: (
-    partyId: string,
-  ) => Effect.Effect<ResolvedPartyAlias, PartyAliasResolutionError>;
+  readonly resolve: (partyId: string) => Effect.Effect<ResolvedPartyAlias, PartyAliasResolutionError>;
 }
 
 const notFound = () =>
@@ -46,7 +42,10 @@ const unavailable = (cause?: unknown) => {
     reason: 'Party identity or Alias resolution is temporarily unavailable',
   });
   if (cause !== undefined) {
-    Object.defineProperty(failure, 'cause', { configurable: true, value: cause });
+    Object.defineProperty(failure, 'cause', {
+      configurable: true,
+      value: cause,
+    });
   }
   return failure;
 };
@@ -67,9 +66,7 @@ export const readPartyDetailFromServices = Effect.fn('PartyDetailRead.readPartyD
         Match.value(error).pipe(
           Match.tags({
             PartyAliasResolutionBrokenChain: (failure) =>
-              failure.missingPartyId === requestedPartyRef.resourceId
-                ? notFound()
-                : unavailable(failure),
+              failure.missingPartyId === requestedPartyRef.resourceId ? notFound() : unavailable(failure),
             PartyAliasResolutionCrossTenant: unavailable,
             PartyAliasResolutionCycle: unavailable,
             PartyAliasResolutionUnavailable: unavailable,
@@ -78,9 +75,7 @@ export const readPartyDetailFromServices = Effect.fn('PartyDetailRead.readPartyD
         ),
       ),
     );
-    const found = yield* services
-      .find(resolved.canonicalPartyId)
-      .pipe(Effect.mapError(unavailable));
+    const found = yield* services.find(resolved.canonicalPartyId).pipe(Effect.mapError(unavailable));
     const party = Match.value(found).pipe(
       Match.tag('found', ({ value }) => Option.some(value)),
       Match.tag('not_found', () => Option.none()),
@@ -116,10 +111,7 @@ const partyDetailEntrypoint = defineTenantModuleEntrypoint({
 
 export const partyDetailPermissionTarget = (input: PartyDetailRequest) => ({
   kind: 'tenant' as const,
-  permission:
-    input.includeFactHistory === true
-      ? ('review_party_identity' as const)
-      : ('read_party_identity' as const),
+  permission: input.includeFactHistory === true ? ('review_party_identity' as const) : ('read_party_identity' as const),
 });
 
 export const partyDetailRead = defineRead(

@@ -1,10 +1,10 @@
-import { expect, it } from 'effect-rstest';
-
 import { NodeServices } from '@effect/platform-node';
 import { eq, sql } from 'drizzle-orm';
 import { Cause, Crypto, Deferred, Effect, Fiber, Option } from 'effect';
+import { expect, it } from 'effect-rstest';
 import type { PoolClient } from 'pg';
 import { Pool } from 'pg';
+
 import { loadDatabaseConnectionPair } from '../../src/db/config.ts';
 import { coreRelations, domainEvents } from '../../src/db/schema.ts';
 import type { OutboxWorkerHandlerContext } from '../../src/outbox/definition.ts';
@@ -32,14 +32,13 @@ const readLegalEntitySettings = (executor: CoreSearchSnapshotReadExecutor, event
 
 const readTenantMaxVersion = (executor: CoreSearchSnapshotReadExecutor, tenantId: string) =>
   executor
-    .select({ version: sql<string>`max(${domainEvents.tenantSequenceNo})::text` })
+    .select({
+      version: sql<string>`max(${domainEvents.tenantSequenceNo})::text`,
+    })
     .from(domainEvents)
     .where(eq(domainEvents.tenantId, tenantId));
 
-const readSnapshotPosition = (
-  source: CoreSearchWorkerSnapshotService,
-  context: OutboxWorkerHandlerContext,
-) =>
+const readSnapshotPosition = (source: CoreSearchWorkerSnapshotService, context: OutboxWorkerHandlerContext) =>
   source.read(context, (snapshot) =>
     Effect.succeed({
       eventWatermark: snapshot.eventWatermark,
@@ -61,12 +60,7 @@ const commitTransaction = (client: PoolClient) =>
     try: () => client.query('commit'),
   });
 
-const insertPendingEvent = (
-  client: PoolClient,
-  pendingEventId: string,
-  tenantId: string,
-  pendingSubjectId: string,
-) =>
+const insertPendingEvent = (client: PoolClient, pendingEventId: string, tenantId: string, pendingSubjectId: string) =>
   Effect.tryPromise({
     catch: (cause) => new Cause.UnknownError(cause),
 
@@ -84,7 +78,9 @@ const workerSnapshotProgram = Effect.gen(function* workerSnapshotIntegration() {
     [crypto.randomUUIDv4, crypto.randomUUIDv4, crypto.randomUUIDv4],
     { concurrency: 'unbounded' },
   );
-  const admin = new Pool({ connectionString: connections.admin.connectionString });
+  const admin = new Pool({
+    connectionString: connections.admin.connectionString,
+  });
   const applicationName = `core-search-snapshot-${tenantId}`;
   const runtimePool = new Pool({
     application_name: applicationName,
@@ -115,10 +111,7 @@ const workerSnapshotProgram = Effect.gen(function* workerSnapshotIntegration() {
     yield* Effect.tryPromise({
       catch: (cause) => new Cause.UnknownError(cause),
 
-      try: () =>
-        admin.query('delete from core.search_projection_generations where tenant_id = $1', [
-          tenantId,
-        ]),
+      try: () => admin.query('delete from core.search_projection_generations where tenant_id = $1', [tenantId]),
     });
     yield* Effect.tryPromise({
       catch: (cause) => new Cause.UnknownError(cause),
@@ -189,10 +182,8 @@ const workerSnapshotProgram = Effect.gen(function* workerSnapshotIntegration() {
       topic: 'party.registry.party-updated.v1',
       workerKey: 'party.registry.project-party-updated-to-search',
     });
-    const readEventSettings = (executor: CoreSearchSnapshotReadExecutor) =>
-      readLegalEntitySettings(executor, eventId);
-    const readMaxTenantVersion = (executor: CoreSearchSnapshotReadExecutor) =>
-      readTenantMaxVersion(executor, tenantId);
+    const readEventSettings = (executor: CoreSearchSnapshotReadExecutor) => readLegalEntitySettings(executor, eventId);
+    const readMaxTenantVersion = (executor: CoreSearchSnapshotReadExecutor) => readTenantMaxVersion(executor, tenantId);
     let newerVersion = '';
     const result = yield* source.read(context, (snapshot) =>
       Effect.gen(function* inspectSnapshot() {
@@ -214,11 +205,12 @@ const workerSnapshotProgram = Effect.gen(function* workerSnapshotIntegration() {
       },
     ]);
     expect(result.version).toBe(originalVersion);
-    expect(
-      yield* source.read(context, (snapshot) => Effect.succeed(snapshot.projectionVersion)),
-    ).toBe('2');
+    expect(yield* source.read(context, (snapshot) => Effect.succeed(snapshot.projectionVersion))).toBe('2');
     const nextSnapshot = yield* readSnapshotPosition(source, context);
-    expect(nextSnapshot).toEqual({ eventWatermark: newerVersion, generation: '3' });
+    expect(nextSnapshot).toEqual({
+      eventWatermark: newerVersion,
+      generation: '3',
+    });
 
     // A second snapshot starts while the first owns the generation row. It must
     // retry its old RR snapshot after the first commits, never publish stale data
@@ -273,8 +265,14 @@ const workerSnapshotProgram = Effect.gen(function* workerSnapshotIntegration() {
     const [firstResult, secondResult] = yield* Effect.all([Fiber.join(first), Fiber.join(second)], {
       concurrency: 'unbounded',
     });
-    expect(firstResult).toEqual({ eventWatermark: newerVersion, generation: '4' });
-    expect(secondResult).toEqual({ eventWatermark: latestEvent, generation: '5' });
+    expect(firstResult).toEqual({
+      eventWatermark: newerVersion,
+      generation: '4',
+    });
+    expect(secondResult).toEqual({
+      eventWatermark: latestEvent,
+      generation: '5',
+    });
 
     // Business transactions may commit event allocation sequences out of order.
     // Both snapshots below have the same event max but must get new generations.

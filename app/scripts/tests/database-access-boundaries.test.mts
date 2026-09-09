@@ -1,9 +1,11 @@
-import { Effect } from 'effect';
-import { NodeServices } from '@effect/platform-node';
-import { expect, it } from 'effect-rstest';
 import { mkdtemp, mkdir, rm, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
+
+import { NodeServices } from '@effect/platform-node';
+import { Effect } from 'effect';
+import { expect, it } from 'effect-rstest';
+
 import { checkDatabaseAccessBoundaries } from '../check-database-access-boundaries.mts';
 
 it.live(
@@ -15,13 +17,10 @@ it.live(
         (directory) => Effect.promise(() => rm(directory, { force: true, recursive: true })),
       );
       const files = {
-        'apps/shell/api/routes/private.ts':
-          "const database = import(\n  '@app/core-runtime/db/schema'\n);\n",
-        'packages/core-runtime/src/testing/actions.ts':
-          'export const makeActionTestHarness = () => undefined;\n',
+        'apps/shell/api/routes/private.ts': "const database = import(\n  '@app/core-runtime/db/schema'\n);\n",
+        'packages/core-runtime/src/testing/actions.ts': 'export const makeActionTestHarness = () => undefined;\n',
         'verticals/stock/api/index.ts': "import { Pool } from 'pg';\n",
-        'verticals/stock/api/routes/export.ts':
-          "import { coreDatabaseSchema } from '@app/core-runtime';\n",
+        'verticals/stock/api/routes/export.ts': "import { coreDatabaseSchema } from '@app/core-runtime';\n",
         'verticals/stock/src/actions/generated-safe.action.ts':
           "import { defineAction } from '@app/core-runtime/actions/definition';\n",
         'verticals/stock/src/actions/package-root.action.ts':
@@ -30,16 +29,11 @@ it.live(
           "import { CoreDatabase } from '@app/core-runtime';\nimport { InventoryPersistence } from '../infrastructure/inventory-persistence.ts';\nconst reserve = Effect.gen(function* testEffect2() { yield* InventoryPersistence; });\n",
         'verticals/stock/src/actions/scoped.action.ts':
           "import { makeScopedServices } from '../services/scoped-services.ts';\n",
-        'verticals/stock/src/actions/side-effect.action.ts':
-          "import '../infrastructure/inventory-persistence.ts';\n",
-        'verticals/stock/src/db/billing-leak.ts':
-          "import { invoices } from '../../../billing/src/db/schema.ts';\n",
-        'verticals/stock/src/db/cross-owner.ts':
-          "import { coreDatabaseSchema } from '@app/core-runtime/db/schema';\n",
-        'verticals/stock/src/db/dynamic-core.ts':
-          "const core = import(\n  '@app/core-runtime/db/schema'\n);\n",
-        'verticals/stock/src/db/service-factory.ts':
-          "import { drizzle } from 'drizzle-orm/node-postgres';\n",
+        'verticals/stock/src/actions/side-effect.action.ts': "import '../infrastructure/inventory-persistence.ts';\n",
+        'verticals/stock/src/db/billing-leak.ts': "import { invoices } from '../../../billing/src/db/schema.ts';\n",
+        'verticals/stock/src/db/cross-owner.ts': "import { coreDatabaseSchema } from '@app/core-runtime/db/schema';\n",
+        'verticals/stock/src/db/dynamic-core.ts': "const core = import(\n  '@app/core-runtime/db/schema'\n);\n",
+        'verticals/stock/src/db/service-factory.ts': "import { drizzle } from 'drizzle-orm/node-postgres';\n",
         'verticals/stock/src/index.ts':
           "export { InventoryPersistence } from './infrastructure/inventory-persistence.ts';\n",
         'verticals/stock/src/infrastructure/inventory-persistence.ts':
@@ -70,9 +64,7 @@ it.live(
           }),
         ),
       );
-      const violations = yield* checkDatabaseAccessBoundaries(root).pipe(
-        Effect.provide(NodeServices.layer),
-      );
+      const violations = yield* checkDatabaseAccessBoundaries(root).pipe(Effect.provide(NodeServices.layer));
       expect(violations.map(({ file, line }) => `${file}:${line}`)).toEqual([
         'apps/shell/api/routes/private.ts:1',
         'verticals/stock/api/index.ts:1',

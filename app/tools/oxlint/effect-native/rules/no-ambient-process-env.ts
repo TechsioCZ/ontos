@@ -1,4 +1,3 @@
-import { snippet } from '../shared/reporting.ts';
 /**
  * effect-native/no-ambient-process-env
  *
@@ -56,19 +55,13 @@ import { snippet } from '../shared/reporting.ts';
  * Report-only: no fixers, no suggestions.
  */
 import { defineRule } from '@oxlint/plugins';
-
 import type { Context, ESTree } from '@oxlint/plugins';
 
-import { includesRuleFile } from '../shared/paths.ts';
-import {
-  keyName as sharedKeyName,
-  memberName,
-  parentOf,
-  skipWrappers,
-  unwrapNode as unwrap,
-} from '../shared/ast.ts';
+import { keyName as sharedKeyName, memberName, parentOf, skipWrappers, unwrapNode as unwrap } from '../shared/ast.ts';
 import { isUnshadowedGlobal, resolveVariable } from '../shared/bindings.ts';
 import { booleanOption, stringList } from '../shared/options.ts';
+import { includesRuleFile } from '../shared/paths.ts';
+import { snippet } from '../shared/reporting.ts';
 
 type AnyNode = ESTree.Node;
 
@@ -87,12 +80,7 @@ const MUTATING_CALLS: ReadonlyMap<string, ReadonlySet<string>> = new Map([
   ['Reflect', new Set(['set', 'defineProperty', 'deleteProperty'])],
 ]);
 
-const DEFAULT_INCLUDE_PATHS: readonly string[] = [
-  'apps/**',
-  'verticals/**',
-  'packages/**',
-  'scripts/**',
-];
+const DEFAULT_INCLUDE_PATHS: readonly string[] = ['apps/**', 'verticals/**', 'packages/**', 'scripts/**'];
 
 interface RuleOptions {
   readonly allowPaths: readonly string[];
@@ -158,11 +146,7 @@ function isContainerHost(context: Context, member: ESTree.MemberExpression): boo
   );
 }
 
-function isMutatingCall(
-  context: Context,
-  call: ESTree.CallExpression,
-  reference: AnyNode,
-): boolean {
+function isMutatingCall(context: Context, call: ESTree.CallExpression, reference: AnyNode): boolean {
   if (call.arguments[0] !== reference || call.callee.type !== 'MemberExpression') return false;
   const member = call.callee;
   if (member.object.type !== 'Identifier') return false;
@@ -207,7 +191,12 @@ function patternSource(node: AnyNode): AnyNode | null {
 
 function isEnvProperty(property: ESTree.ObjectPattern['properties'][number]): boolean {
   if (property.type !== 'Property') return false;
-  return sharedKeyName(property.key, property.computed, { templates: true, unwrap: {} }) === 'env';
+  return (
+    sharedKeyName(property.key, property.computed, {
+      templates: true,
+      unwrap: {},
+    }) === 'env'
+  );
 }
 
 /** Effect-native rule: configuration is declared with `Config` and provided by one `ConfigProvider`. */
@@ -244,22 +233,24 @@ export const rule = defineRule({
           includePaths: {
             type: 'array',
             items: { type: 'string' },
-            description:
-              'Globs the rule applies to (default: apps/**, verticals/**, packages/**, scripts/**).',
+            description: 'Globs the rule applies to (default: apps/**, verticals/**, packages/**, scripts/**).',
           },
         },
       },
     ],
     defaultOptions: [
-      { allowPaths: [], ignoreTestFiles: false, includePaths: [...DEFAULT_INCLUDE_PATHS] },
+      {
+        allowPaths: [],
+        ignoreTestFiles: false,
+        includePaths: [...DEFAULT_INCLUDE_PATHS],
+      },
     ],
   },
   create(context) {
     const options = readOptions(context.options[0]);
     if (!includesRuleFile(context.filename, options)) return {};
 
-    const printed = (node: AnyNode): string =>
-      snippet(context.sourceCode.getText(node), 72, 69, '...');
+    const printed = (node: AnyNode): string => snippet(context.sourceCode.getText(node), 72, 69, '...');
 
     const report = (node: AnyNode, messageId: string): void => {
       context.report({ node, messageId, data: { expression: printed(node) } });
@@ -288,10 +279,7 @@ export const rule = defineRule({
         case 'ImportExpression':
           return isProcessSource(inner.source);
         case 'CallExpression':
-          return (
-            isUnshadowedGlobal(context, unwrap(inner.callee), 'require') &&
-            isProcessSource(inner.arguments[0])
-          );
+          return isUnshadowedGlobal(context, unwrap(inner.callee), 'require') && isProcessSource(inner.arguments[0]);
         case 'MetaProperty':
           return isImportMeta(inner);
         case 'Identifier':
@@ -306,15 +294,10 @@ export const rule = defineRule({
     /** Climb the continued member chain before classifying its consumer. */
     const classify = (envNode: AnyNode): string => {
       let current = skipWrappers(envNode);
-      while (
-        current.parent?.type === 'MemberExpression' &&
-        current.parent.object === current.node
-      ) {
+      while (current.parent?.type === 'MemberExpression' && current.parent.object === current.node) {
         current = skipWrappers(current.parent);
       }
-      return isMutation(context, current.parent, current.node)
-        ? 'ambientEnvMutation'
-        : 'ambientEnvRead';
+      return isMutation(context, current.parent, current.node) ? 'ambientEnvMutation' : 'ambientEnvRead';
     };
 
     return {
@@ -322,25 +305,19 @@ export const rule = defineRule({
       ImportDeclaration(node) {
         if (node.importKind === 'type' || !PROCESS_MODULES.has(node.source.value)) return;
         for (const specifier of node.specifiers) {
-          if (
-            specifier.type === 'ImportDefaultSpecifier' ||
-            specifier.type === 'ImportNamespaceSpecifier'
-          ) {
+          if (specifier.type === 'ImportDefaultSpecifier' || specifier.type === 'ImportNamespaceSpecifier') {
             continue;
           }
           if (specifier.type !== 'ImportSpecifier' || specifier.importKind === 'type') continue;
           const imported =
-            specifier.imported.type === 'Identifier'
-              ? specifier.imported.name
-              : specifier.imported.value;
+            specifier.imported.type === 'Identifier' ? specifier.imported.name : specifier.imported.value;
           // `import { env } from "node:process"` *is* the ambient environment bag.
           if (imported === 'env') report(specifier as unknown as AnyNode, 'ambientEnvRead');
         }
       },
 
       ExportNamedDeclaration(node) {
-        if (!node.source || node.exportKind === 'type' || !PROCESS_MODULES.has(node.source.value))
-          return;
+        if (!node.source || node.exportKind === 'type' || !PROCESS_MODULES.has(node.source.value)) return;
         for (const specifier of node.specifiers) {
           if (
             specifier.type === 'ExportSpecifier' &&

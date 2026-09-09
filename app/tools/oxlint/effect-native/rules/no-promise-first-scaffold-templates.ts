@@ -99,17 +99,12 @@
  * `scripts/` is edited to satisfy it.
  */
 import { defineRule } from '@oxlint/plugins';
-
 import type { ESTree } from '@oxlint/plugins';
 
-import { isTestFile, matchesGlobs, scopePath } from '../shared/paths.ts';
 import { booleanOption, compilePatterns, stringArray } from '../shared/options.ts';
+import { isTestFile, matchesGlobs, scopePath } from '../shared/paths.ts';
 import { snippet } from '../shared/reporting.ts';
-import {
-  driverText as sharedDriverText,
-  emittedText,
-  reportNode,
-} from '../shared/scaffold-text.ts';
+import { driverText as sharedDriverText, emittedText, reportNode } from '../shared/scaffold-text.ts';
 import type { StringNode } from '../shared/scaffold-text.ts';
 
 /** Files whose template literals are emitted as source code into someone else's module. */
@@ -127,12 +122,7 @@ const DEFAULT_TEMPLATE_PATHS: readonly string[] = [
 ];
 
 /** Generated or vendored output that is never hand-edited. */
-const DEFAULT_EXCLUDE: readonly string[] = [
-  '**/dist/**',
-  '**/.output/**',
-  '**/node_modules/**',
-  '**/*.d.ts',
-];
+const DEFAULT_EXCLUDE: readonly string[] = ['**/dist/**', '**/.output/**', '**/node_modules/**', '**/*.d.ts'];
 
 /**
  * A8 "Promise-first browser code" / A9 "~40 scattered browser `runPromise` calls". Sources, not
@@ -185,9 +175,7 @@ interface Match {
 
 function readOptions(raw: unknown): RuleOptions {
   const record: Record<string, unknown> =
-    typeof raw === 'object' && raw !== null && !Array.isArray(raw)
-      ? (raw as Record<string, unknown>)
-      : {};
+    typeof raw === 'object' && raw !== null && !Array.isArray(raw) ? (raw as Record<string, unknown>) : {};
   return {
     templatePaths: stringArray(record.templatePaths, DEFAULT_TEMPLATE_PATHS),
     promiseFirstPatterns: stringArray(record.promiseFirstPatterns, DEFAULT_PROMISE_FIRST),
@@ -211,21 +199,13 @@ function driverText(node: ESTree.Node): boolean {
   let parent = node.parent;
   if (
     parent &&
-    [
-      'ImportDeclaration',
-      'ImportExpression',
-      'ExportNamedDeclaration',
-      'ExportAllDeclaration',
-    ].includes(parent.type)
+    ['ImportDeclaration', 'ImportExpression', 'ExportNamedDeclaration', 'ExportAllDeclaration'].includes(parent.type)
   )
     return sharedDriverText(node);
   while (parent) {
     if (/Function/u.test(parent.type) || parent.type === 'ClassBody') return false;
     if (parent.type === 'CallExpression' || parent.type === 'NewExpression') break;
-    if (
-      ['VariableDeclarator', 'ReturnStatement', 'TemplateLiteral', 'Program'].includes(parent.type)
-    )
-      break;
+    if (['VariableDeclarator', 'ReturnStatement', 'TemplateLiteral', 'Program'].includes(parent.type)) break;
     parent = parent.parent;
   }
   return sharedDriverText(node);
@@ -291,28 +271,21 @@ function operationSpans(text: string): { functions: Span[]; layers: Span[] } {
   return { functions, layers };
 }
 /** Collect named emitted imports without treating arbitrary receivers as Effect. */
-function collectRunnerImports(
-  entries: string,
-  source: string,
-  names: string[],
-  namespace: string[],
-): void {
+function collectRunnerImports(entries: string, source: string, names: string[], namespace: string[]): void {
   for (const entry of entries.split(',')) {
     const binding = /^\s*([\w$]+)(?:\s+as\s+([\w$]+))?\s*$/u.exec(entry);
     if (binding === null) continue;
     const imported = binding[1]!;
     const local = binding[2] ?? imported;
     if (source === 'effect' && imported === 'Effect') namespace.push(local);
-    if (source === 'effect/Effect' && /^run(?:Promise|Sync|Fork)(?:Exit)?$/u.test(imported))
-      names.push(local);
+    if (source === 'effect/Effect' && /^run(?:Promise|Sync|Fork)(?:Exit)?$/u.test(imported)) names.push(local);
   }
 }
 /** Resolve only explicit emitted Effect import aliases, never arbitrary *.runPromise receivers. */
 function runnerPatterns(text: string): readonly RegExp[] {
   const names: string[] = [];
   const namespace: string[] = [];
-  const imports =
-    /\bimport\s+(?:\*\s+as\s+([\w$]+)|\{([^}]+)\})\s+from\s+['"](effect(?:\/Effect)?)['"]/gu;
+  const imports = /\bimport\s+(?:\*\s+as\s+([\w$]+)|\{([^}]+)\})\s+from\s+['"](effect(?:\/Effect)?)['"]/gu;
   for (const match of text.matchAll(imports)) {
     if (match[1] !== undefined && match[3] === 'effect/Effect') namespace.push(match[1]);
     collectRunnerImports(match[2] ?? '', match[3]!, names, namespace);
@@ -321,11 +294,7 @@ function runnerPatterns(text: string): readonly RegExp[] {
   return [
     ...names.map((name) => new RegExp(String.raw`(?<![.\w$])${escape(name)}\s*\(`, 'gu')),
     ...namespace.map(
-      (name) =>
-        new RegExp(
-          String.raw`\b${escape(name)}\s*\.\s*run(?:Promise|Sync|Fork)(?:Exit)?\s*\(`,
-          'gu',
-        ),
+      (name) => new RegExp(String.raw`\b${escape(name)}\s*\.\s*run(?:Promise|Sync|Fork)(?:Exit)?\s*\(`, 'gu'),
     ),
   ];
 }
@@ -338,7 +307,12 @@ function scan(text: string, patterns: readonly RegExp[], group: Group, found: Ma
     while (match !== null) {
       const value = match[0];
       if (value.length > 0)
-        found.push({ start: match.index, end: match.index + value.length, text: value, group });
+        found.push({
+          start: match.index,
+          end: match.index + value.length,
+          text: value,
+          group,
+        });
       // A user-supplied pattern may match the empty string; step past it rather than spin.
       if (value.length === 0) pattern.lastIndex += 1;
       match = pattern.exec(text);
@@ -460,22 +434,15 @@ export const rule = defineRule({
       const syntax = maskText(text, true);
       const found: Match[] = [];
       scan(syntax, promiseFirst, 'promiseFirst', found);
-      if (
-        options.promiseFirstPatterns.includes(
-          String.raw`\bEffect\.run(?:Promise|Sync|Fork)(?:Exit)?\b`,
-        )
-      )
+      if (options.promiseFirstPatterns.includes(String.raw`\bEffect\.run(?:Promise|Sync|Fork)(?:Exit)?\b`))
         scan(syntax, runnerPatterns(maskText(text, false)), 'promiseFirst', found);
       const spans = operationSpans(syntax);
       const clients: Match[] = [];
       scan(syntax, perCallClient, 'perCallClient', clients);
       for (const candidate of clients) {
-        const enclosing = spans.functions.filter(
-          (span) => span.start < candidate.start && span.end > candidate.start,
-        );
+        const enclosing = spans.functions.filter((span) => span.start < candidate.start && span.end > candidate.start);
         const perOperation = enclosing.some(
-          (fn) =>
-            !spans.layers.some((layer) => layer.start < fn.start && layer.end > candidate.start),
+          (fn) => !spans.layers.some((layer) => layer.start < fn.start && layer.end > candidate.start),
         );
         if (options.strictPerCallClient || perOperation) found.push(candidate);
       }
@@ -488,7 +455,9 @@ export const rule = defineRule({
         context.report({
           node: reportNode(node, match.start, match.end),
           messageId: match.group,
-          data: { snippet: snippet(text.slice(match.start, match.end), SNIPPET_LIMIT) },
+          data: {
+            snippet: snippet(text.slice(match.start, match.end), SNIPPET_LIMIT),
+          },
         });
       }
     }

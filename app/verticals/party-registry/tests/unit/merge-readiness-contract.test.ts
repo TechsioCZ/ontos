@@ -1,27 +1,23 @@
-// @effect-diagnostics nodeBuiltinImport:off -- Source-only contract checks require reading TypeScript files; remove-when: manifests are importable without TSX loaders.
+import { fileURLToPath } from 'node:url';
+
+import { NodeFileSystem } from '@effect/platform-node';
+import { FileSystem, Effect, Match, Schema, Struct, Predicate } from 'effect';
 import { expect, it } from 'effect-rstest';
-import { readFile } from 'node:fs/promises';
-import { Effect, Match, Schema, Struct, Predicate } from 'effect';
+
+import { partyRegistryApi } from '../../shared/api.ts';
 import {
   PartyMergeReadinessRequestSchema,
   PartyMergeReadinessResponseSchema,
 } from '../../shared/apis/party-merge-readiness.ts';
-import {
-  PartyAliasSchema,
-  partyAliasResourceDescriptor,
-} from '../../shared/resources/party-alias.ts';
-import {
-  PartyMergeSchema,
-  partyMergeResourceDescriptor,
-} from '../../shared/resources/party-merge.ts';
+import { PartyAliasSchema, partyAliasResourceDescriptor } from '../../shared/resources/party-alias.ts';
+import { PartyMergeSchema, partyMergeResourceDescriptor } from '../../shared/resources/party-merge.ts';
 import { partyMergeReadinessRead } from '../../src/api/party-merge-readiness.read.ts';
+import { selectCanonicalSurvivor } from '../../src/merge/canonical-survivor-selection.ts';
 import {
   analyzePreparedMergeReadiness,
   evaluateDisabledMergeReadiness,
   rejectProductionMergeExecution,
 } from '../../src/merge/merge-readiness.ts';
-import { selectCanonicalSurvivor } from '../../src/merge/canonical-survivor-selection.ts';
-import { partyRegistryApi } from '../../shared/api.ts';
 
 const tenantId = '11111111-1111-4111-8111-111111111111';
 const party = (resourceId: string) => ({
@@ -31,11 +27,84 @@ const party = (resourceId: string) => ({
   tenantId,
 });
 
-it.effect(
-  'publishes a tenant-governed read-only readiness contract that always reports execution disabled',
-  () =>
+it('readiness invokes survivor, collision, and reference analyzers while remaining disabled', () => {
+  const result = analyzePreparedMergeReadiness({
+    aliases: [],
+    collisionInput: {
+      absorbedPartyRefs: [party('unrelated-b')],
+      connectorCorrelations: [],
+      consumerProfiles: [],
+      counterparties: [
+        {
+          counterpartyId: 'cp-a',
+          legalEntityId: 'le-1',
+          partyRef: party('party-a'),
+        },
+        {
+          counterpartyId: 'cp-b',
+          legalEntityId: 'le-1',
+          partyRef: party('party-b'),
+        },
+      ],
+      counterpartyRoles: [],
+      officialIdentifiers: [],
+      relationships: [],
+      survivorPartyRef: party('unrelated-a'),
+    },
+    consumerReconciliation: [],
+    references: [
+      {
+        class: 'COMMERCE_PROFILE',
+        ownerKey: 'commerce',
+        partyRef: party('party-b'),
+      },
+    ],
+    selectionInput: {
+      candidates: [
+        {
+          authoritativeEvidenceRank: 2,
+          blockingAuthoritativeConflict: false,
+          completenessRank: 1,
+          createdAt: '2024-01-01T00:00:00.000Z',
+          lifecycle: 'ACTIVE',
+          partyRef: party('party-a'),
+          referenceStabilityRank: 2,
+        },
+        {
+          authoritativeEvidenceRank: 1,
+          blockingAuthoritativeConflict: false,
+          completenessRank: 1,
+          createdAt: '2025-01-01T00:00:00.000Z',
+          lifecycle: 'ACTIVE',
+          partyRef: party('party-b'),
+          referenceStabilityRank: 1,
+        },
+      ],
+      confirmation: {
+        confirmedDuplicateDecisionId: 'decision-1',
+        confirmedPartyRefs: [party('party-a'), party('party-b')],
+        decisionActorPrincipalId: 'principal-1',
+        evidenceRefs: ['evidence-1'],
+      },
+    },
+  });
+
+  expect(result.status).toBe('DISABLED');
+  expect(result.mergeExecutionEnabled).toBe(false);
+  expect(result.analysis).toEqual({
+    collisionCodes: ['COUNTERPARTY_COLLISION'],
+    referencePlanStatus: 'BLOCKED',
+    selectedSurvivorPartyRef: party('party-a'),
+    selectionStatus: 'SELECTED',
+  });
+  expect(result.blockers.some(({ code }) => code === 'COUNTERPARTY_COLLISION')).toBe(true);
+  expect(result.blockers.some(({ code }) => code === 'CONSUMER_RECONCILIATION_UNPROVEN')).toBe(true);
+});
+
+it.layer(NodeFileSystem.layer)('merge-readiness-contract', (suite) => {
+  suite.effect('publishes a tenant-governed read-only readiness contract that always reports execution disabled', () =>
     Effect.gen(function* schemaContract1() {
-      const request = yield* Schema.decodeUnknownEffect(PartyMergeReadinessRequestSchema, {
+      const request = yield* Schema.decodeEffect(PartyMergeReadinessRequestSchema, {
         onExcessProperty: 'error',
       })({
         partyRefs: [party('party-a'), party('party-b')],
@@ -43,16 +112,19 @@ it.effect(
       });
       expect(request.partyRefs).toEqual([party('party-a'), party('party-b')]);
       expect(() =>
-        Schema.decodeUnknownSync(PartyMergeReadinessRequestSchema)({
+        Schema.decodeSync(PartyMergeReadinessRequestSchema)({
           partyRefs: [party('party-a'), party('party-a')],
           policyVersion: 'party-merge-readiness.v1',
         }),
       ).toThrow();
       expect(() =>
-        Schema.decodeUnknownSync(PartyMergeReadinessRequestSchema)({
+        Schema.decodeSync(PartyMergeReadinessRequestSchema)({
           partyRefs: [
             party('party-a'),
-            { ...party('party-b'), tenantId: '22222222-2222-4222-8222-222222222222' },
+            {
+              ...party('party-b'),
+              tenantId: '22222222-2222-4222-8222-222222222222',
+            },
           ],
           policyVersion: 'party-merge-readiness.v1',
         }),
@@ -97,11 +169,9 @@ it.effect(
         'PREPARED_STATE_UNAVAILABLE',
       ]);
     }),
-);
+  );
 
-it.effect(
-  'keeps prepared merge and permanent alias schemas explainable without enabling execution',
-  () =>
+  suite.effect('keeps prepared merge and permanent alias schemas explainable without enabling execution', () =>
     Effect.gen(function* schemaContract2() {
       const selection = selectCanonicalSurvivor({
         candidates: ['party-a', 'party-b'].map((id, index) => ({
@@ -129,7 +199,7 @@ it.effect(
         ),
         Match.exhaustive,
       );
-      const merge = yield* Schema.decodeUnknownEffect(PartyMergeSchema)({
+      const merge = yield* Schema.decodeEffect(PartyMergeSchema)({
         absorbedPartyRefs: [party('party-b')],
         confirmedDuplicateDecisionId: 'decision-1',
         createdAt: '2026-09-03T10:00:00.000Z',
@@ -146,7 +216,7 @@ it.effect(
         state: 'PREPARED',
         survivorPartyRef: party('party-a'),
       });
-      const alias = yield* Schema.decodeUnknownEffect(PartyAliasSchema)({
+      const alias = yield* Schema.decodeEffect(PartyAliasSchema)({
         aliasPartyRef: party('party-b'),
         createdAt: '2026-09-03T10:00:00.000Z',
         mergeRef: merge.mergeRef,
@@ -191,59 +261,73 @@ it.effect(
       expect(partyMergeResourceDescriptor.capabilities.searchable).toBe(false);
       expect(partyAliasResourceDescriptor.capabilities.searchable).toBe(false);
     }),
-);
+  );
 
-it.effect('has no registered Party Merge Action, event, outbox consumer, or write endpoint', () =>
-  Effect.map(
-    Effect.all([
-      Effect.promise(() =>
-        readFile(new URL('../../vertical.manifest.ts', import.meta.url), 'utf-8'),
+  suite.effect('has no registered Party Merge Action, event, outbox consumer, or write endpoint', () =>
+    Effect.map(
+      Effect.all([
+        FileSystem.FileSystem.use((fs) =>
+          fs.readFileString(fileURLToPath(new URL('../../vertical.manifest.ts', import.meta.url))),
+        ),
+        FileSystem.FileSystem.use((fs) =>
+          fs.readFileString(fileURLToPath(new URL('../../vertical.registration.ts', import.meta.url))),
+        ),
+      ]),
+      ([manifestSource, registrationSource]) => {
+        expect(manifestSource).not.toMatch(/merge[^\n]*Action|Action[^\n]*merge/iu);
+        expect(registrationSource).not.toMatch(/merge[^\n]*Action|Action[^\n]*merge/iu);
+        expect(registrationSource).toMatch(/'party-merge-readiness'/u);
+        const endpoints = Object.values(partyRegistryApi.groups).flatMap((group) => Object.values(group.endpoints));
+        expect(Object.keys(partyRegistryApi.groups.partyCommands.endpoints).length > 0).toBe(true);
+        expect(endpoints.filter(({ path }) => /merge/iu.test(path)).map(({ path }) => path)).toEqual([
+          '/reads/party-merge-readiness',
+        ]);
+      },
+    ),
+  );
+
+  suite.effect('serves the generated OntOS module contract before i18n redirects in development', () =>
+    Effect.map(
+      FileSystem.FileSystem.use((fs) =>
+        fs.readFileString(fileURLToPath(new URL('../../modern.config.ts', import.meta.url))),
       ),
-      Effect.promise(() =>
-        readFile(new URL('../../vertical.registration.ts', import.meta.url), 'utf-8'),
-      ),
-    ]),
-    ([manifestSource, registrationSource]) => {
-      expect(manifestSource).not.toMatch(/merge[^\n]*Action|Action[^\n]*merge/iu);
-      expect(registrationSource).not.toMatch(/merge[^\n]*Action|Action[^\n]*merge/iu);
-      expect(registrationSource).toMatch(/'party-merge-readiness'/u);
-      const endpoints = Object.values(partyRegistryApi.groups).flatMap((group) =>
-        Object.values(group.endpoints),
-      );
-      expect(Object.keys(partyRegistryApi.groups.partyCommands.endpoints).length > 0).toBe(true);
-      expect(endpoints.filter(({ path }) => /merge/iu.test(path)).map(({ path }) => path)).toEqual([
-        '/reads/party-merge-readiness',
-      ]);
-    },
-  ),
-);
+      (modernConfigSource) => {
+        expect(modernConfigSource).toMatch(
+          /new URL\(\s*'\.dev-public\/\.well-known\/ontos-module-manifest\.json',\s*import\.meta\.url\s*\)/u,
+        );
+        expect(modernConfigSource).toMatch(/setupMiddlewares:/u);
+        expect(modernConfigSource).toMatch(
+          /request\.url\?\.split\('\?', 1\)\[0\]\s*!==\s*'\/\.well-known\/ontos-module-manifest\.json'/u,
+        );
+        expect(modernConfigSource).toMatch(/response\.setHeader\('Content-Type', 'application\/json'\)/u);
+        expect(modernConfigSource).toMatch(/ignoreRedirectRoutes: \[\s*'\/\.well-known'/u);
+        expect(modernConfigSource).toMatch(/publicDir: \['\.\/locales', '\.\/assets', '\.\/\.dev-public'\]/u);
+      },
+    ),
+  );
 
-it.effect('serves the generated OntOS module contract before i18n redirects in development', () =>
-  Effect.map(
-    Effect.promise(() => readFile(new URL('../../modern.config.ts', import.meta.url), 'utf-8')),
-    (modernConfigSource) => {
-      expect(modernConfigSource).toMatch(
-        /new URL\('\.dev-public\/\.well-known\/ontos-module-manifest\.json', import\.meta\.url\)/u,
-      );
-      expect(modernConfigSource).toMatch(/setupMiddlewares:/u);
-      expect(modernConfigSource).toMatch(
-        /request\.url\?\.split\('\?', 1\)\[0\] !== '\/\.well-known\/ontos-module-manifest\.json'/u,
-      );
-      expect(modernConfigSource).toMatch(
-        /response\.setHeader\('Content-Type', 'application\/json'\)/u,
-      );
-      expect(modernConfigSource).toMatch(/ignoreRedirectRoutes: \[\s*'\/\.well-known'/u);
-      expect(modernConfigSource).toMatch(
-        /publicDir: \['\.\/locales', '\.\/assets', '\.\/\.dev-public'\]/u,
-      );
-    },
-  ),
-);
-
-it.effect('readiness response schema cannot claim production merge is enabled', () =>
-  Effect.gen(function* schemaContract3() {
-    expect(
-      yield* Schema.decodeUnknownEffect(PartyMergeReadinessResponseSchema)({
+  suite.effect('readiness response schema cannot claim production merge is enabled', () =>
+    Effect.gen(function* schemaContract3() {
+      expect(
+        yield* Schema.decodeEffect(PartyMergeReadinessResponseSchema)({
+          analysis: {
+            collisionCodes: [],
+            referencePlanStatus: 'BLOCKED',
+            selectedSurvivorPartyRef: null,
+            selectionStatus: 'BLOCKED',
+          },
+          blockers: [
+            {
+              code: 'PRODUCTION_MERGE_DISABLED',
+              detail: 'Production merge is disabled.',
+              ownerKey: 'party.registry',
+            },
+          ],
+          mergeExecutionEnabled: false,
+          partyRefs: [party('party-a'), party('party-b')],
+          status: 'DISABLED',
+        }),
+      ).toEqual({
         analysis: {
           collisionCodes: [],
           referencePlanStatus: 'BLOCKED',
@@ -260,100 +344,21 @@ it.effect('readiness response schema cannot claim production merge is enabled', 
         mergeExecutionEnabled: false,
         partyRefs: [party('party-a'), party('party-b')],
         status: 'DISABLED',
-      }),
-    ).toEqual({
-      analysis: {
-        collisionCodes: [],
-        referencePlanStatus: 'BLOCKED',
-        selectedSurvivorPartyRef: null,
-        selectionStatus: 'BLOCKED',
-      },
-      blockers: [
-        {
-          code: 'PRODUCTION_MERGE_DISABLED',
-          detail: 'Production merge is disabled.',
-          ownerKey: 'party.registry',
-        },
-      ],
-      mergeExecutionEnabled: false,
-      partyRefs: [party('party-a'), party('party-b')],
-      status: 'DISABLED',
-    });
-    expect(() =>
-      Schema.decodeUnknownSync(PartyMergeReadinessResponseSchema)({
-        analysis: {
-          collisionCodes: [],
-          referencePlanStatus: 'PLANNED',
-          selectedSurvivorPartyRef: party('party-a'),
-          selectionStatus: 'SELECTED',
-        },
-        blockers: [],
-        mergeExecutionEnabled: true,
-        partyRefs: [party('party-a'), party('party-b')],
-        status: 'READY',
-      }),
-    ).toThrow();
-  }),
-);
-
-it('readiness invokes survivor, collision, and reference analyzers while remaining disabled', () => {
-  const result = analyzePreparedMergeReadiness({
-    aliases: [],
-    collisionInput: {
-      absorbedPartyRefs: [party('unrelated-b')],
-      connectorCorrelations: [],
-      consumerProfiles: [],
-      counterparties: [
-        { counterpartyId: 'cp-a', legalEntityId: 'le-1', partyRef: party('party-a') },
-        { counterpartyId: 'cp-b', legalEntityId: 'le-1', partyRef: party('party-b') },
-      ],
-      counterpartyRoles: [],
-      officialIdentifiers: [],
-      relationships: [],
-      survivorPartyRef: party('unrelated-a'),
-    },
-    consumerReconciliation: [],
-    references: [{ class: 'COMMERCE_PROFILE', ownerKey: 'commerce', partyRef: party('party-b') }],
-    selectionInput: {
-      candidates: [
-        {
-          authoritativeEvidenceRank: 2,
-          blockingAuthoritativeConflict: false,
-          completenessRank: 1,
-          createdAt: '2024-01-01T00:00:00.000Z',
-          lifecycle: 'ACTIVE',
-          partyRef: party('party-a'),
-          referenceStabilityRank: 2,
-        },
-        {
-          authoritativeEvidenceRank: 1,
-          blockingAuthoritativeConflict: false,
-          completenessRank: 1,
-          createdAt: '2025-01-01T00:00:00.000Z',
-          lifecycle: 'ACTIVE',
-          partyRef: party('party-b'),
-          referenceStabilityRank: 1,
-        },
-      ],
-      confirmation: {
-        confirmedDuplicateDecisionId: 'decision-1',
-        confirmedPartyRefs: [party('party-a'), party('party-b')],
-        decisionActorPrincipalId: 'principal-1',
-        evidenceRefs: ['evidence-1'],
-      },
-    },
-  });
-
-  expect(result.status).toBe('DISABLED');
-  expect(result.mergeExecutionEnabled).toBe(false);
-  expect(result.analysis).toEqual({
-    collisionCodes: ['COUNTERPARTY_COLLISION'],
-    referencePlanStatus: 'BLOCKED',
-    selectedSurvivorPartyRef: party('party-a'),
-    selectionStatus: 'SELECTED',
-  });
-  expect(result.blockers.some(({ code }) => code === 'COUNTERPARTY_COLLISION')).toBe(true);
-  expect(result.blockers.some(({ code }) => code === 'CONSUMER_RECONCILIATION_UNPROVEN')).toBe(
-    true,
+      });
+      expect(() =>
+        Schema.decodeUnknownSync(PartyMergeReadinessResponseSchema)({
+          analysis: {
+            collisionCodes: [],
+            referencePlanStatus: 'PLANNED',
+            selectedSurvivorPartyRef: party('party-a'),
+            selectionStatus: 'SELECTED',
+          },
+          blockers: [],
+          mergeExecutionEnabled: true,
+          partyRefs: [party('party-a'), party('party-b')],
+          status: 'READY',
+        }),
+      ).toThrow();
+    }),
   );
 });

@@ -42,12 +42,8 @@ it('impact reduction is deterministic and aggregates sanitized evidence', () => 
 });
 
 it('impact reduction rejects mixed build evidence and sensitive extra fields', () => {
-  expect(() => reduceAuthorizationImpact([event(), event({ sourceRevision: 'other' })])).toThrow(
-    /mixes/u,
-  );
-  expect(() => reduceAuthorizationImpact([event({ principalId: 'secret' })])).toThrow(
-    /prohibited/u,
-  );
+  expect(() => reduceAuthorizationImpact([event(), event({ sourceRevision: 'other' })])).toThrow(/mixes/u);
+  expect(() => reduceAuthorizationImpact([event({ principalId: 'secret' })])).toThrow(/prohibited/u);
   expect(() => reduceAuthorizationImpact([event({ tenantId: 'secret' })])).toThrow(/prohibited/u);
 });
 

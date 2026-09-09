@@ -1,28 +1,30 @@
 #!/usr/bin/env node
-import { NodeServices } from '@effect/platform-node';
 import path from 'node:path';
 import { pathToFileURL } from 'node:url';
+
+import { NodeServices } from '@effect/platform-node';
 import { CodeSmith, FsMaterial, GeneratorCore } from '@modern-js/codesmith';
 import type { GeneratorContext } from '@modern-js/codesmith';
 import { Console, Effect, Option, Predicate, Schema } from 'effect';
 import { Argument, CliConfig, Command, Flag, GlobalFlag } from 'effect/unstable/cli';
 import { ChildProcess, ChildProcessSpawner } from 'effect/unstable/process';
-import actionGenerator from './action/scaffold.mts';
+
 import actionServiceGenerator from './action-service/scaffold.mts';
+import actionGenerator from './action/scaffold.mts';
 import externalHttpAdapterGenerator from './external-http-adapter/scaffold.mts';
 import actionBoundaryGenerator from './microvertical-action-boundary/scaffold.mts';
 import microverticalPageGenerator from './microvertical-page/scaffold.mts';
+import moduleApiGenerator from './module-api/scaffold.mts';
 import moduleContractGenerator from './module-contract/scaffold.mts';
 import outboxMessageGenerator from './outbox-message/scaffold.mts';
 import outboxWorkerGenerator from './outbox-worker/scaffold.mts';
 import policyGenerator from './policy/scaffold.mts';
 import publicComponentGenerator from './public-component/scaffold.mts';
-import moduleApiGenerator from './module-api/scaffold.mts';
 import reportGenerator from './report/scaffold.mts';
 import resourceGenerator from './resource/scaffold.mts';
 import retireContributionGenerator from './retire-contribution/scaffold.mts';
-import searchProviderGenerator from './search-provider/scaffold.mts';
 import searchProviderAccessGenerator from './search-provider-access/generator.mts';
+import searchProviderGenerator from './search-provider/scaffold.mts';
 import type {
   ActionScaffoldConfig,
   ActionScaffoldResult,
@@ -128,9 +130,7 @@ export interface RouteRefreshInput {
   readonly workspaceRoot: string;
 }
 
-export type RouteRefreshExecutor = (
-  input: RouteRefreshInput,
-) => Effect.Effect<void, ScaffoldingError>;
+export type RouteRefreshExecutor = (input: RouteRefreshInput) => Effect.Effect<void, ScaffoldingError>;
 
 export interface RunScaffoldOptions {
   readonly routeRefresh?: RouteRefreshExecutor;
@@ -197,62 +197,60 @@ export type RunScaffoldResult =
   | { readonly help: string; readonly kind: 'help' }
   | { readonly kind: 'generated'; readonly result: GeneratorResult };
 
-const failScaffolding = (
-  message: string,
-  cause?: unknown,
-): Effect.Effect<never, ScaffoldingError> =>
+const failScaffolding = (message: string, cause?: unknown): Effect.Effect<never, ScaffoldingError> =>
   Effect.fail(new ScaffoldingError(cause === undefined ? { message } : { cause, message }));
 
-const runCodesmithGenerator = Effect.fn('runCodesmithGenerator')(
-  function* runCodesmithGeneratorEffect<
-    Config extends GeneratorConfig,
-    Result extends GeneratorResult,
-  >(
-    generator: LocalGenerator<Config, Result>,
-    workspaceRoot: string,
-    config: Config,
-  ): Effect.fn.Return<Result, ScaffoldingError, NodeServices.NodeServices> {
-    const prepared = yield* Effect.try({
-      catch: (cause) =>
-        new ScaffoldingError({ cause, message: 'failed to prepare the Codesmith generator' }),
-      try: () => {
-        const smith = new CodeSmith({ namespace: 'ontos-scaffolding' });
-        const core = new GeneratorCore({
-          logger: smith.logger,
-          materialsManager: smith.materialsManager,
-          outputPath: workspaceRoot,
-        });
-        const workspaceMaterial = new FsMaterial(workspaceRoot);
-        const generatorMaterial = new FsMaterial(path.resolve(import.meta.dirname));
-        core.addMaterial('default', workspaceMaterial);
-        core.addMaterial('ontos-local-generator', generatorMaterial);
-        core._context.config = config;
-        core._context.current = { material: generatorMaterial };
-        const generatorContext = { ...core._context, config };
-        return { core, generatorContext };
-      },
-    });
-    const result = yield* generator(prepared.generatorContext, prepared.core).pipe(
-      Effect.catchDefect((cause) =>
-        Effect.fail(
-          new ScaffoldingError({
-            cause,
-            message: Predicate.isError(cause) ? cause.message : 'Codesmith generation failed',
-          }),
-        ),
+const runCodesmithGenerator = Effect.fn('runCodesmithGenerator')(function* runCodesmithGeneratorEffect<
+  Config extends GeneratorConfig,
+  Result extends GeneratorResult,
+>(
+  generator: LocalGenerator<Config, Result>,
+  workspaceRoot: string,
+  config: Config,
+): Effect.fn.Return<Result, ScaffoldingError, NodeServices.NodeServices> {
+  const prepared = yield* Effect.try({
+    catch: (cause) =>
+      new ScaffoldingError({
+        cause,
+        message: 'failed to prepare the Codesmith generator',
+      }),
+    try: () => {
+      const smith = new CodeSmith({ namespace: 'ontos-scaffolding' });
+      const core = new GeneratorCore({
+        logger: smith.logger,
+        materialsManager: smith.materialsManager,
+        outputPath: workspaceRoot,
+      });
+      const workspaceMaterial = new FsMaterial(workspaceRoot);
+      const generatorMaterial = new FsMaterial(path.resolve(import.meta.dirname));
+      core.addMaterial('default', workspaceMaterial);
+      core.addMaterial('ontos-local-generator', generatorMaterial);
+      core._context.config = config;
+      core._context.current = { material: generatorMaterial };
+      const generatorContext = { ...core._context, config };
+      return { core, generatorContext };
+    },
+  });
+  const result = yield* generator(prepared.generatorContext, prepared.core).pipe(
+    Effect.catchDefect((cause) =>
+      Effect.fail(
+        new ScaffoldingError({
+          cause,
+          message: Predicate.isError(cause) ? cause.message : 'Codesmith generation failed',
+        }),
       ),
-      Effect.mapError(
-        (cause) =>
-          new ScaffoldingError({
-            cause,
-            message: Predicate.isError(cause) ? cause.message : 'Codesmith generation failed',
-          }),
-      ),
-      Effect.ensuring(Effect.sync(() => (prepared.core._context.current = null))),
-    );
-    return result;
-  },
-);
+    ),
+    Effect.mapError(
+      (cause) =>
+        new ScaffoldingError({
+          cause,
+          message: Predicate.isError(cause) ? cause.message : 'Codesmith generation failed',
+        }),
+    ),
+    Effect.ensuring(Effect.sync(() => (prepared.core._context.current = null))),
+  );
+  return result;
+});
 
 const defineCommand = <Config extends GeneratorConfig, Result extends GeneratorResult>(
   definition: CommandDefinitionInput<Config, Result>,
@@ -282,7 +280,11 @@ const defaultRouteRefresh = ({ appId, workspaceRoot }: RouteRefreshInput) =>
       )
       .pipe(
         Effect.mapError(
-          (cause) => new ScaffoldingError({ cause, message: `route refresh failed for ${appId}` }),
+          (cause) =>
+            new ScaffoldingError({
+              cause,
+              message: `route refresh failed for ${appId}`,
+            }),
         ),
       );
     if (exitCode !== ChildProcessSpawner.ExitCode(0)) {
@@ -294,39 +296,29 @@ const defaultRouteRefresh = ({ appId, workspaceRoot }: RouteRefreshInput) =>
 const LegalEntityScope = Schema.Literals(['required', 'optional', 'forbidden']);
 const isLegalEntityScope = Schema.is(LegalEntityScope);
 
-const ReadAuthorization = Schema.Literals([
-  'authenticated_principal',
-  'context_permission',
-  'public',
-]);
+const ReadAuthorization = Schema.Literals(['authenticated_principal', 'context_permission', 'public']);
 const isReadAuthorization = Schema.is(ReadAuthorization);
 const RequestFilter = Schema.Literals(['includeArchived', 'role']);
 const isRequestFilter = Schema.is(RequestFilter);
 
 const requireReadAuthorization = (
   flags: ParsedScaffoldFlags,
-): Effect.Effect<
-  Pick<GovernedContributionScaffoldConfig, 'authorization' | 'permission'>,
-  ScaffoldingError
-> =>
+): Effect.Effect<Pick<GovernedContributionScaffoldConfig, 'authorization' | 'permission'>, ScaffoldingError> =>
   Effect.gen(function* requireReadAuthorizationEffect() {
     if (!isReadAuthorization(flags.authorizationMode)) {
-      return yield* failScaffolding(
-        '--authorization must be public, authenticated_principal, or context_permission',
-      );
+      return yield* failScaffolding('--authorization must be public, authenticated_principal, or context_permission');
     }
     if (flags.authorizationMode === 'context_permission') {
       if (flags.permission === undefined) {
-        return yield* failScaffolding(
-          '--permission is required for context_permission authorization',
-        );
+        return yield* failScaffolding('--permission is required for context_permission authorization');
       }
-      return { authorization: flags.authorizationMode, permission: flags.permission };
+      return {
+        authorization: flags.authorizationMode,
+        permission: flags.permission,
+      };
     }
     if (flags.permission !== undefined) {
-      return yield* failScaffolding(
-        '--permission is valid only for context_permission authorization',
-      );
+      return yield* failScaffolding('--permission is valid only for context_permission authorization');
     }
     return { authorization: flags.authorizationMode };
   });
@@ -337,15 +329,7 @@ const isSearchLegalEntityScope = Schema.is(Schema.Literals(['required', 'optiona
 
 const commandDefinitions = {
   action: defineCommand({
-    flags: [
-      'action',
-      'authorization',
-      LEGAL_ENTITY_SCOPE_FLAG,
-      'module',
-      'provisioning',
-      'scope',
-      'vertical',
-    ],
+    flags: ['action', 'authorization', LEGAL_ENTITY_SCOPE_FLAG, 'module', 'provisioning', 'scope', 'vertical'],
     generator: actionGenerator,
     help: `Usage:
   pnpm scaffold:action -- --vertical <vertical> --action <action> --legal-entity-scope <required|optional|forbidden> --authorization action_execution --provisioning <tenant_membership_default|explicit>
@@ -372,24 +356,18 @@ Options:
         const action = flags.action ?? '';
         const { legalEntityScope } = flags;
         if (!isLegalEntityScope(legalEntityScope)) {
-          return yield* failScaffolding(
-            '--legal-entity-scope must be required, optional, or forbidden',
-          );
+          return yield* failScaffolding('--legal-entity-scope must be required, optional, or forbidden');
         }
         if (flags.authorizationMode !== 'action_execution') {
           return yield* failScaffolding('--authorization must be action_execution for Actions');
         }
         if (!isActionProvisioning(flags.provisioning)) {
-          return yield* failScaffolding(
-            '--provisioning must be tenant_membership_default or explicit',
-          );
+          return yield* failScaffolding('--provisioning must be tenant_membership_default or explicit');
         }
         const { module, scope, vertical } = flags;
         if (vertical !== undefined) {
           if (scope !== undefined || module !== undefined) {
-            return yield* failScaffolding(
-              '--vertical is mutually exclusive with --scope and --module',
-            );
+            return yield* failScaffolding('--vertical is mutually exclusive with --scope and --module');
           }
           return {
             action,
@@ -520,9 +498,7 @@ Example:
         const vertical = flags.vertical ?? '';
         const { url } = flags;
         const authorization = yield* requireReadAuthorization(flags);
-        return url === undefined
-          ? { ...authorization, page, vertical }
-          : { ...authorization, page, url, vertical };
+        return url === undefined ? { ...authorization, page, vertical } : { ...authorization, page, url, vertical };
       }),
   }),
   'module-api': defineCommand({
@@ -617,9 +593,7 @@ Options:
     toConfig: (flags) =>
       Effect.gen(function* outboxWorkerConfigEffect() {
         if (flags.authorizationMode !== 'owner_local_background') {
-          return yield* failScaffolding(
-            '--authorization must be owner_local_background for Outbox Workers',
-          );
+          return yield* failScaffolding('--authorization must be owner_local_background for Outbox Workers');
         }
         return {
           authorization: 'owner_local_background',
@@ -814,29 +788,19 @@ Options:
   --tenant-permission read_party_identity  Required exactly for tenant_scope
   --help                                  Show this help without writing
 `,
-    requiredFlags: [
-      ACCESS_FILTERING_FLAG,
-      LEGAL_ENTITY_SCOPE_FLAG,
-      'name',
-      REQUEST_FILTERS_FLAG,
-      'vertical',
-    ],
+    requiredFlags: [ACCESS_FILTERING_FLAG, LEGAL_ENTITY_SCOPE_FLAG, 'name', REQUEST_FILTERS_FLAG, 'vertical'],
     toConfig: (flags) =>
       Effect.gen(function* searchProviderAccessConfigEffect() {
         const { accessFiltering, legalEntityScope, tenantPermission } = flags;
         const filters = (flags.requestFilters ?? '').split(',').filter((value) => value !== '');
         if (!isAccessFiltering(accessFiltering)) {
-          return yield* failScaffolding(
-            '--access-filtering must be resource_permission or tenant_scope',
-          );
+          return yield* failScaffolding('--access-filtering must be resource_permission or tenant_scope');
         }
         if (!isSearchLegalEntityScope(legalEntityScope)) {
           return yield* failScaffolding('--legal-entity-scope must be required or optional');
         }
         if (!filters.every(isRequestFilter)) {
-          return yield* failScaffolding(
-            '--request-filters may contain only includeArchived and role',
-          );
+          return yield* failScaffolding('--request-filters may contain only includeArchived and role');
         }
         if (tenantPermission !== undefined && tenantPermission !== 'read_party_identity') {
           return yield* failScaffolding('--tenant-permission must be read_party_identity');
@@ -861,8 +825,7 @@ export const isScaffoldCommand = Schema.is(ScaffoldCommandSchema);
 
 export const getHelpText = (command: ScaffoldCommand): string => commandDefinitions[command].help;
 
-const isFlagArgument = (flag: string): boolean =>
-  flag.startsWith('--') && flag !== '--' && !flag.includes('=');
+const isFlagArgument = (flag: string): boolean => flag.startsWith('--') && flag !== '--' && !flag.includes('=');
 
 const parseFlagPair = (
   command: ScaffoldCommand,
@@ -873,9 +836,7 @@ const parseFlagPair = (
 ) =>
   Effect.gen(function* parseFlagPairEffect() {
     if (flag === undefined || !isFlagArgument(flag)) {
-      return yield* failScaffolding(
-        `invalid argument ${flag ?? '<missing>'}; use separate --flag value pairs`,
-      );
+      return yield* failScaffolding(`invalid argument ${flag ?? '<missing>'}; use separate --flag value pairs`);
     }
     const name = flag.slice(2);
     if (!allowed.has(name)) {
@@ -990,8 +951,7 @@ const cliFlags = {
   worker: optionalTextFlag('worker'),
 } as const;
 
-const cliFlagName = (key: string): string =>
-  key.replaceAll(/[A-Z]/gu, (letter) => `-${letter.toLowerCase()}`);
+const cliFlagName = (key: string): string => key.replaceAll(/[A-Z]/gu, (letter) => `-${letter.toLowerCase()}`);
 
 const toCliArguments = (
   values: Readonly<Partial<Record<keyof typeof cliFlags, Option.Option<string>>>>,
@@ -1020,9 +980,7 @@ const cliSubcommands = scaffoldCommandValues.map((command) =>
     command,
     {
       ...Object.fromEntries(
-        Object.entries(cliFlags).filter(([key]) =>
-          commandDefinitions[command].flags.includes(cliFlagName(key)),
-        ),
+        Object.entries(cliFlags).filter(([key]) => commandDefinitions[command].flags.includes(cliFlagName(key))),
       ),
       forwarded: forwardedArguments,
     },

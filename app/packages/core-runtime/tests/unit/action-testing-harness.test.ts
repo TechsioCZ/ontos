@@ -1,5 +1,6 @@
-import { expect, it } from 'effect-rstest';
 import { Effect, Schema, Predicate } from 'effect';
+import { expect, it } from 'effect-rstest';
+
 import { defineAction } from '../../src/actions/definition.ts';
 import { defineGlobalPolicy, denyPolicy } from '../../src/actions/policy.ts';
 import { ACTION_RUNTIME_STAGES } from '../../src/actions/runtime.ts';
@@ -16,14 +17,22 @@ const principal = {
 
 const lifecycleAction = defineAction(
   {
-    accessEvidencePolicy: { captureMode: 'metadata_only', policyKey: 'test.counter.read.v1' },
+    accessEvidencePolicy: {
+      captureMode: 'metadata_only',
+      policyKey: 'test.counter.read.v1',
+    },
     actionKey: 'test.counter.increment',
     auditProfile: 'standard',
     domainErrorSchema: Schema.Never,
-    domainEvents: { 'test.counter.incremented.v1': Schema.Struct({ amount: Schema.Finite }) },
+    domainEvents: {
+      'test.counter.incremented.v1': Schema.Struct({ amount: Schema.Finite }),
+    },
     entrypoint: defineTenantModuleEntrypoint({
       access: 'write',
-      authorization: { kind: 'action_execution', provisioning: 'tenant_membership_default' },
+      authorization: {
+        kind: 'action_execution',
+        provisioning: 'tenant_membership_default',
+      },
       entrypointKey: 'test.counter.increment',
       moduleKey: 'test.counter',
       role: 'action',
@@ -59,7 +68,10 @@ const request = {
   payload: { amount: 2 },
   principal,
   registration: lifecycleAction,
-  transport: { correlationId: 'action-harness-test', idempotencyKey: 'increment-once' },
+  transport: {
+    correlationId: 'action-harness-test',
+    idempotencyKey: 'increment-once',
+  },
 } as const;
 
 it.effect(
@@ -140,8 +152,7 @@ it.effect(
         schemaVersion: '1',
       },
       (payload, context) => context.services.increment(payload.amount),
-      (): Effect.Effect<CounterServices> =>
-        Effect.die('production owner services must not run in this test'),
+      (): Effect.Effect<CounterServices> => Effect.die('production owner services must not run in this test'),
     );
     let calls = 0;
     const harness = yield* makeActionTestHarness({
@@ -161,7 +172,10 @@ it.effect(
       payload: { amount: 4 },
       principal,
       registration: serviceAction,
-      transport: { correlationId: 'service-test', idempotencyKey: 'service-once' },
+      transport: {
+        correlationId: 'service-test',
+        idempotencyKey: 'service-once',
+      },
     });
 
     expect(result).toBe(5);
@@ -192,37 +206,33 @@ it.effect(
   }),
 );
 
-it.effect(
-  'persists policy denials separately from permission denials before handler execution',
-  () =>
-    Effect.gen(function* policyDenialSnapshot() {
-      const registration = defineAction(
-        {
-          ...lifecycleAction.descriptor,
-          policies: [
-            defineGlobalPolicy({
-              evaluate: () => Effect.fail(denyPolicy('counter_locked', 'Counter is locked')),
-              policyKey: 'global.counter-locked.v1',
-            }),
-          ],
-        },
-        () => Effect.die('A denied policy must not execute the handler'),
-      );
-      const harness = yield* makeActionTestHarness({
-        actionPermission: 'allowed',
-        tenantPermission: 'allowed',
-      });
-      yield* harness.runtime.runAction({ ...request, registration }).pipe(Effect.flip);
-      const snapshot = harness.snapshot();
-      expect(snapshot.policyDenials.length).toBe(1);
-      expect(snapshot.permissionDenials.length).toBe(0);
-      expect(snapshot.invocations[0]?.status).toBe('rejected');
-      expect(snapshot.invocations[0]?.completedAt?.getTime()).toBe(0);
-      expect(snapshot.policyDenials[0]?.actionInvocationId).toBe(
-        snapshot.invocations[0]?.actionInvocationId,
-      );
-      expect(snapshot.transactionCount).toBe(0);
-      expect(snapshot.committed.length).toBe(0);
-      expect(snapshot.stages.includes('handler_executed')).toBe(false);
-    }),
+it.effect('persists policy denials separately from permission denials before handler execution', () =>
+  Effect.gen(function* policyDenialSnapshot() {
+    const registration = defineAction(
+      {
+        ...lifecycleAction.descriptor,
+        policies: [
+          defineGlobalPolicy({
+            evaluate: () => Effect.fail(denyPolicy('counter_locked', 'Counter is locked')),
+            policyKey: 'global.counter-locked.v1',
+          }),
+        ],
+      },
+      () => Effect.die('A denied policy must not execute the handler'),
+    );
+    const harness = yield* makeActionTestHarness({
+      actionPermission: 'allowed',
+      tenantPermission: 'allowed',
+    });
+    yield* harness.runtime.runAction({ ...request, registration }).pipe(Effect.flip);
+    const snapshot = harness.snapshot();
+    expect(snapshot.policyDenials.length).toBe(1);
+    expect(snapshot.permissionDenials.length).toBe(0);
+    expect(snapshot.invocations[0]?.status).toBe('rejected');
+    expect(snapshot.invocations[0]?.completedAt?.getTime()).toBe(0);
+    expect(snapshot.policyDenials[0]?.actionInvocationId).toBe(snapshot.invocations[0]?.actionInvocationId);
+    expect(snapshot.transactionCount).toBe(0);
+    expect(snapshot.committed.length).toBe(0);
+    expect(snapshot.stages.includes('handler_executed')).toBe(false);
+  }),
 );

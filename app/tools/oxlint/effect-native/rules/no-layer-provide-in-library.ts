@@ -1,4 +1,3 @@
-import { isNonReferencePosition } from '../shared/reference-positions.ts';
 /**
  * effect-native/no-layer-provide-in-library
  *
@@ -48,12 +47,12 @@ import { isNonReferencePosition } from '../shared/reference-positions.ts';
  * Report-only: no fixer, no suggestion. Existing violations are the intended output.
  */
 import { defineRule } from '@oxlint/plugins';
-
 import type { Context, ESTree, Scope, Variable } from '@oxlint/plugins';
 
 import { collectEffectBindings, effectMember } from '../shared/effect-imports.ts';
 import type { EffectBindings } from '../shared/effect-imports.ts';
 import { isScriptFile, isTestFile, matchesAny } from '../shared/paths.ts';
+import { isNonReferencePosition } from '../shared/reference-positions.ts';
 
 const LAYER_NAMESPACE = 'Layer';
 const EFFECT_ROOT_MODULE = 'effect';
@@ -132,9 +131,7 @@ function isGovernedLibraryFile(filename: string, options: RuleOptions): boolean 
 }
 
 function importedName(specifier: ESTree.ImportSpecifier): string {
-  return specifier.imported.type === 'Identifier'
-    ? specifier.imported.name
-    : specifier.imported.value;
+  return specifier.imported.type === 'Identifier' ? specifier.imported.name : specifier.imported.value;
 }
 
 /** Local names bound by `import * as X from "effect"` — `X.Layer.provide` must still be caught. */
@@ -155,10 +152,7 @@ function collectEffectRootNamespaces(program: ESTree.Program): ReadonlySet<strin
  * escape hatch as `const { provide } = Layer`, one step earlier: there is no `Layer.` member
  * expression left to match, so bare references to these locals are what must be reported.
  */
-function collectDirectMemberImports(
-  program: ESTree.Program,
-  members: readonly string[],
-): ReadonlyMap<string, string> {
+function collectDirectMemberImports(program: ESTree.Program, members: readonly string[]): ReadonlyMap<string, string> {
   const locals = new Map<string, string>();
   for (const statement of program.body) {
     if (statement.type !== 'ImportDeclaration') continue;
@@ -175,11 +169,7 @@ function collectDirectMemberImports(
 /** A single-quasi template literal (`` `provide` ``) or a plain string literal. */
 function constantStringName(node: ESTree.Node): string | null {
   if (node.type === 'Literal') return typeof node.value === 'string' ? node.value : null;
-  if (
-    node.type === 'TemplateLiteral' &&
-    node.expressions.length === 0 &&
-    node.quasis.length === 1
-  ) {
+  if (node.type === 'TemplateLiteral' && node.expressions.length === 0 && node.quasis.length === 1) {
     const cooked = node.quasis[0]?.value.cooked;
     return typeof cooked === 'string' ? cooked : null;
   }
@@ -241,10 +231,7 @@ function isTypePosition(node: ESTree.Node): boolean {
   return false;
 }
 
-function lookupVariable(
-  context: Context,
-  identifier: Extract<ESTree.Node, { type: 'Identifier' }>,
-): Variable | null {
+function lookupVariable(context: Context, identifier: Extract<ESTree.Node, { type: 'Identifier' }>): Variable | null {
   let scope: Scope | null = context.sourceCode.getScope(identifier);
   while (scope !== null) {
     const variable = scope.set.get(identifier.name);
@@ -273,7 +260,11 @@ export const rule = defineRule({
           ignore: globArray,
           rootFiles: globArray,
           compositionFiles: globArray,
-          members: { type: 'array', items: { type: 'string' }, uniqueItems: true },
+          members: {
+            type: 'array',
+            items: { type: 'string' },
+            uniqueItems: true,
+          },
           alsoGovern: globArray,
         },
         additionalProperties: false,
@@ -306,8 +297,7 @@ export const rule = defineRule({
     for (const [local, namespace] of bindings.namespaces) {
       if (namespace === LAYER_NAMESPACE) importedLayerLocals.add(local);
     }
-    if (importedLayerLocals.size === 0 && effectRoots.size === 0 && directMembers.size === 0)
-      return {};
+    if (importedLayerLocals.size === 0 && effectRoots.size === 0 && directMembers.size === 0) return {};
 
     // ---- Resolution -------------------------------------------------------------------------
     // `start` offsets of binding identifiers that alias the Effect `Layer` namespace locally
@@ -328,18 +318,14 @@ export const rule = defineRule({
     }
 
     /** `true` when the identifier resolves to a local rebinding of the `Layer` namespace. */
-    function resolvesToLayerAlias(
-      identifier: Extract<ESTree.Node, { type: 'Identifier' }>,
-    ): boolean {
+    function resolvesToLayerAlias(identifier: Extract<ESTree.Node, { type: 'Identifier' }>): boolean {
       const variable = lookupVariable(context, identifier);
       if (variable === null) return false;
       return variable.defs.some((definition) => layerAliasBindings.has(definition.name.start));
     }
 
     /** `true` when this identifier denotes the Effect `Layer` module in its own scope. */
-    function isLayerNamespaceIdentifier(
-      identifier: Extract<ESTree.Node, { type: 'Identifier' }>,
-    ): boolean {
+    function isLayerNamespaceIdentifier(identifier: Extract<ESTree.Node, { type: 'Identifier' }>): boolean {
       if (resolvesToImport(identifier, importedLayerLocals)) return true;
       return resolvesToLayerAlias(identifier);
     }
@@ -366,11 +352,18 @@ export const rule = defineRule({
     const memberCandidates: MemberCandidate[] = [];
     const identifierCandidates: Extract<ESTree.Node, { type: 'Identifier' }>[] = [];
     const declarators: ESTree.VariableDeclarator[] = [];
-    const reports: Array<{ node: ESTree.Node; messageId: string; data: Record<string, string> }> =
-      [];
+    const reports: Array<{
+      node: ESTree.Node;
+      messageId: string;
+      data: Record<string, string>;
+    }> = [];
 
     function queue(node: ESTree.Node, member: string): void {
-      reports.push({ node, messageId: 'layerProvideInLibrary', data: { member } });
+      reports.push({
+        node,
+        messageId: 'layerProvideInLibrary',
+        data: { member },
+      });
     }
 
     function collectDirectReferences(): void {
@@ -455,7 +448,11 @@ export const rule = defineRule({
 
         reports.sort((left, right) => left.node.start - right.node.start);
         for (const report of reports) {
-          context.report({ node: report.node, messageId: report.messageId, data: report.data });
+          context.report({
+            node: report.node,
+            messageId: report.messageId,
+            data: report.data,
+          });
         }
       },
     };

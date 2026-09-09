@@ -1,8 +1,9 @@
-import { TestClock } from 'effect/testing';
-import { expect, it } from 'effect-rstest';
 // @effect-diagnostics globalDate:off -- Existing compatibility boundary; expires: 2026-12-31.
 /* eslint-disable anti-slop/no-chained-type-assertions, anti-slop/no-unsafe-dictionary-type -- This focused harness models only the Drizzle system boundary used by the Relationship service. expires: 2026-12-31. */
 import { DateTime, Effect, Layer, Option, Schema, Predicate } from 'effect';
+import { expect, it } from 'effect-rstest';
+import { TestClock } from 'effect/testing';
+
 import { PartyAliasWriteRejected } from '../../shared/domain/merge-alias-resolution.ts';
 import {
   CreatePartyRelationshipPayloadSchema,
@@ -89,16 +90,13 @@ const transactionHarness = (
   const updateSets: Readonly<Record<string, unknown>>[] = [];
   const select = () => {
     const rows = selectQueue.shift() ?? [];
-    const chain = Object.assign(
-      Effect.sync(() => rows),
-      {
-        for: () => Effect.succeed(rows),
-        from: () => chain,
-        limit: () => chain,
-        orderBy: () => chain,
-        where: () => chain,
-      },
-    );
+    const chain = Object.assign(Effect.succeed(rows), {
+      for: () => Effect.succeed(rows),
+      from: () => chain,
+      limit: () => chain,
+      orderBy: () => chain,
+      where: () => chain,
+    });
     return chain;
   };
   const insert = () => {
@@ -125,225 +123,219 @@ const transactionHarness = (
     return chain;
   };
   // SAFETY: the harness implements precisely the select/insert/update fluent surface used here.
-  const transaction = { insert, select, update } as unknown as Parameters<
-    typeof createPartyRelationshipRecord
-  >[0];
+  const transaction = { insert, select, update } as unknown as Parameters<typeof createPartyRelationshipRecord>[0];
   return { insertValues, transaction, updateSets };
 };
 
 it.layer(
-  Layer.effectDiscard(
-    TestClock.setTime(DateTime.toEpochMillis(DateTime.makeUnsafe('2026-09-03T10:00:00.000Z'))),
-  ),
+  Layer.effectDiscard(TestClock.setTime(DateTime.toEpochMillis(DateTime.makeUnsafe('2026-09-03T10:00:00.000Z')))),
 )('relationship persistence', (relationshipIt) => {
-  relationshipIt.effect(
-    'create persists an active assertion with unknown start and derives current state',
-    () =>
-      Effect.gen(function* testProgram1() {
-        const created = relationshipRow();
-        const harness = transactionHarness(
+  relationshipIt.effect('create persists an active assertion with unknown start and derives current state', () =>
+    Effect.gen(function* testProgram1() {
+      const created = relationshipRow();
+      const harness = transactionHarness(
+        [
           [
-            [
-              { archivedAt: null, currentType: 'PERSON', partyId: fromPartyId },
-              { archivedAt: null, currentType: 'ORGANIZATION', partyId: toPartyId },
-            ],
-            ...canonicalEndpointReads,
-            [],
+            { archivedAt: null, currentType: 'PERSON', partyId: fromPartyId },
+            {
+              archivedAt: null,
+              currentType: 'ORGANIZATION',
+              partyId: toPartyId,
+            },
           ],
-          [[created]],
-        );
-
-        const result = yield* createPartyRelationshipRecord(
-          harness.transaction,
-          tenantId,
-          principalId,
-          actionInvocationId,
-          decodeCreatePayload({
-            fromPartyRef: ref(fromPartyId),
-            provenance: { method: 'MANUAL_CONFIRMATION', source: 'ENGAGEMENT_REVIEW' },
-            relationshipType: 'CONTACT_PERSON_OF',
-            toPartyRef: ref(toPartyId),
-            validFrom: null,
-            validTo: null,
-          }),
-        );
-
-        expect(result.outcome).toBe('CREATED');
-        expect(result.relationship.state).toBe('CURRENT');
-        expect(harness.insertValues[0]?.['assertionState']).toBe('ACTIVE');
-        expect(harness.insertValues[0]?.['validFrom']).toBe(null);
-        expect('state' in (harness.insertValues[0] ?? {})).toBe(false);
-        expect('isCurrent' in (harness.insertValues[0] ?? {})).toBe(false);
-      }),
-  );
-
-  relationshipIt.effect(
-    'update refines an unknown historical validFrom through the persistence service',
-    () =>
-      Effect.gen(function* testProgram2() {
-        const refinedAt = '2025-01-01T00:00:00.000Z';
-        const validTo = DateTime.toDateUtc(DateTime.makeUnsafe('2026-01-01T00:00:00.000Z'));
-        const current = relationshipRow({ validTo });
-        const updated = relationshipRow({
-          revision: 2,
-          validFrom: DateTime.toDateUtc(DateTime.makeUnsafe(refinedAt)),
-          validTo,
-        });
-        const harness = transactionHarness(
-          [[current], ...canonicalEndpointReads, []],
+          ...canonicalEndpointReads,
           [],
-          [[updated]],
-        );
+        ],
+        [[created]],
+      );
 
-        const result = yield* updatePartyRelationshipRecord(
-          harness.transaction,
-          tenantId,
-          principalId,
-          actionInvocationId,
-          decodeUpdatePayload({
-            changeReason: 'Reliable engagement evidence established the relationship start',
-            expectedRevision: 1,
-            provenance: { method: 'DOCUMENT_REVIEW', source: 'ENGAGEMENT_RECORD' },
-            relationshipRef,
-            validFrom: refinedAt,
-          }),
-        );
+      const result = yield* createPartyRelationshipRecord(
+        harness.transaction,
+        tenantId,
+        principalId,
+        actionInvocationId,
+        decodeCreatePayload({
+          fromPartyRef: ref(fromPartyId),
+          provenance: {
+            method: 'MANUAL_CONFIRMATION',
+            source: 'ENGAGEMENT_REVIEW',
+          },
+          relationshipType: 'CONTACT_PERSON_OF',
+          toPartyRef: ref(toPartyId),
+          validFrom: null,
+          validTo: null,
+        }),
+      );
 
-        expect(result.outcome).toBe('CHANGED');
-        expect(DateTime.formatIso(Option.getOrThrow(result.relationship.validFrom))).toBe(
-          refinedAt,
-        );
-        expect(result.relationship.state).toBe('HISTORICAL');
-        expect(harness.updateSets[0]?.['validFrom']).toEqual(
-          DateTime.toDateUtc(DateTime.makeUnsafe(refinedAt)),
-        );
-        expect(harness.updateSets[0]?.['revision']).toBe(2);
-      }),
+      expect(result.outcome).toBe('CREATED');
+      expect(result.relationship.state).toBe('CURRENT');
+      expect(harness.insertValues[0]?.['assertionState']).toBe('ACTIVE');
+      expect(harness.insertValues[0]?.['validFrom']).toBe(null);
+      expect('state' in (harness.insertValues[0] ?? {})).toBe(false);
+      expect('isCurrent' in (harness.insertValues[0] ?? {})).toBe(false);
+    }),
   );
 
-  relationshipIt.effect(
-    'end keeps a future-ended relationship current and exposes bounded end history',
-    () =>
-      Effect.gen(function* testProgram3() {
-        const effectiveAt = '2099-01-01T00:00:00.000Z';
-        const survivorId = '70000000-0000-4000-8000-000000000001';
-        const current = relationshipRow({
-          validFrom: DateTime.toDateUtc(DateTime.makeUnsafe('2025-01-01T00:00:00.000Z')),
-        });
-        const ended = relationshipRow({
-          endProvenanceMethod: 'MANUAL_CONFIRMATION',
-          endProvenanceSource: 'ENGAGEMENT_REVIEW',
-          endReason: 'A successor contact takes responsibility',
-          endedByActionInvocationId: actionInvocationId,
-          endedByPrincipalId: principalId,
-          endedRecordedAt: DateTime.toDateUtc(DateTime.makeUnsafe('2026-09-03T00:00:00.000Z')),
-          revision: 2,
-          validFrom: DateTime.toDateUtc(DateTime.makeUnsafe('2025-01-01T00:00:00.000Z')),
-          validTo: DateTime.toDateUtc(DateTime.makeUnsafe(effectiveAt)),
-        });
-        const harness = transactionHarness(
+  relationshipIt.effect('update refines an unknown historical validFrom through the persistence service', () =>
+    Effect.gen(function* testProgram2() {
+      const refinedAt = '2025-01-01T00:00:00.000Z';
+      const validTo = DateTime.toDateUtc(DateTime.makeUnsafe('2026-01-01T00:00:00.000Z'));
+      const current = relationshipRow({ validTo });
+      const updated = relationshipRow({
+        revision: 2,
+        validFrom: DateTime.toDateUtc(DateTime.makeUnsafe(refinedAt)),
+        validTo,
+      });
+      const harness = transactionHarness([[current], ...canonicalEndpointReads, []], [], [[updated]]);
+
+      const result = yield* updatePartyRelationshipRecord(
+        harness.transaction,
+        tenantId,
+        principalId,
+        actionInvocationId,
+        decodeUpdatePayload({
+          changeReason: 'Reliable engagement evidence established the relationship start',
+          expectedRevision: 1,
+          provenance: {
+            method: 'DOCUMENT_REVIEW',
+            source: 'ENGAGEMENT_RECORD',
+          },
+          relationshipRef,
+          validFrom: refinedAt,
+        }),
+      );
+
+      expect(result.outcome).toBe('CHANGED');
+      expect(DateTime.formatIso(Option.getOrThrow(result.relationship.validFrom))).toBe(refinedAt);
+      expect(result.relationship.state).toBe('HISTORICAL');
+      expect(harness.updateSets[0]?.['validFrom']).toEqual(DateTime.toDateUtc(DateTime.makeUnsafe(refinedAt)));
+      expect(harness.updateSets[0]?.['revision']).toBe(2);
+    }),
+  );
+
+  relationshipIt.effect('end keeps a future-ended relationship current and exposes bounded end history', () =>
+    Effect.gen(function* testProgram3() {
+      const effectiveAt = '2099-01-01T00:00:00.000Z';
+      const survivorId = '70000000-0000-4000-8000-000000000001';
+      const current = relationshipRow({
+        validFrom: DateTime.toDateUtc(DateTime.makeUnsafe('2025-01-01T00:00:00.000Z')),
+      });
+      const ended = relationshipRow({
+        endProvenanceMethod: 'MANUAL_CONFIRMATION',
+        endProvenanceSource: 'ENGAGEMENT_REVIEW',
+        endReason: 'A successor contact takes responsibility',
+        endedByActionInvocationId: actionInvocationId,
+        endedByPrincipalId: principalId,
+        endedRecordedAt: DateTime.toDateUtc(DateTime.makeUnsafe('2026-09-03T00:00:00.000Z')),
+        revision: 2,
+        validFrom: DateTime.toDateUtc(DateTime.makeUnsafe('2025-01-01T00:00:00.000Z')),
+        validTo: DateTime.toDateUtc(DateTime.makeUnsafe(effectiveAt)),
+      });
+      const harness = transactionHarness(
+        [
+          [current],
           [
-            [current],
-            [{ aliasPartyId: fromPartyId, canonicalPartyId: survivorId, tenantId }],
-            [],
-            [{ partyId: survivorId }],
-            [],
-            [{ partyId: toPartyId }],
+            {
+              aliasPartyId: fromPartyId,
+              canonicalPartyId: survivorId,
+              tenantId,
+            },
           ],
           [],
-          [[ended]],
-        );
-
-        const result = yield* endPartyRelationshipRecord(
-          harness.transaction,
-          tenantId,
-          principalId,
-          actionInvocationId,
-          decodeEndPayload({
-            effectiveAt,
-            expectedRevision: 1,
-            provenance: { method: 'MANUAL_CONFIRMATION', source: 'ENGAGEMENT_REVIEW' },
-            reason: 'A successor contact takes responsibility',
-            relationshipRef,
-          }),
-        );
-
-        expect(result.relationship.state).toBe('CURRENT');
-        expect(result.relationship.from.canonicalPartyRef.resourceId).toBe(survivorId);
-        expect(result.relationship.from.storedPartyRef.resourceId).toBe(fromPartyId);
-        expect(result.relationship.endHistory.length).toBe(1);
-        const [endEvidence] = result.relationship.endHistory;
-        expect(endEvidence).toBeDefined();
-        if (endEvidence === undefined) {
-          throw new Error('Expected endEvidence');
-        }
-        expect(DateTime.formatIso(endEvidence.effectiveAt)).toBe(effectiveAt);
-        expect(Option.getOrThrow(endEvidence.reason)).toBe(
-          'A successor contact takes responsibility',
-        );
-        expect('state' in (harness.updateSets[0] ?? {})).toBe(false);
-        expect('isCurrent' in (harness.updateSets[0] ?? {})).toBe(false);
-      }),
-  );
-
-  relationshipIt.effect(
-    'detail derives scheduled state and resolves stored endpoint aliases independently',
-    () =>
-      Effect.gen(function* testProgram4() {
-        const canonicalFrom = '70000000-0000-4000-8000-000000000001';
-        const middleAlias = '80000000-0000-4000-8000-000000000001';
-        const scheduled = relationshipRow({
-          validFrom: DateTime.toDateUtc(DateTime.makeUnsafe('2099-01-01T00:00:00.000Z')),
-        });
-        const harness = transactionHarness([
-          [scheduled],
-          [{ aliasPartyId: fromPartyId, canonicalPartyId: middleAlias, tenantId }],
-          [{ aliasPartyId: middleAlias, canonicalPartyId: canonicalFrom, tenantId }],
-          [],
-          [{ partyId: canonicalFrom }],
+          [{ partyId: survivorId }],
           [],
           [{ partyId: toPartyId }],
-        ]);
+        ],
+        [],
+        [[ended]],
+      );
 
-        const detail = yield* findPartyRelationshipRecord(
-          harness.transaction,
-          tenantId,
-          relationshipId,
-        );
+      const result = yield* endPartyRelationshipRecord(
+        harness.transaction,
+        tenantId,
+        principalId,
+        actionInvocationId,
+        decodeEndPayload({
+          effectiveAt,
+          expectedRevision: 1,
+          provenance: {
+            method: 'MANUAL_CONFIRMATION',
+            source: 'ENGAGEMENT_REVIEW',
+          },
+          reason: 'A successor contact takes responsibility',
+          relationshipRef,
+        }),
+      );
 
-        expect(detail?.state).toBe('SCHEDULED');
-        expect(detail?.from.storedPartyRef.resourceId).toBe(fromPartyId);
-        expect(detail?.from.canonicalPartyRef.resourceId).toBe(canonicalFrom);
-        expect(detail).toBeDefined();
-        if (detail === undefined || detail === null) {
-          throw new Error('Expected detail');
-        }
-        expect(Option.getOrThrow(detail.from.requestedAlias).resourceId).toBe(fromPartyId);
-        expect(Option.isNone(detail.to.requestedAlias)).toBe(true);
-      }),
+      expect(result.relationship.state).toBe('CURRENT');
+      expect(result.relationship.from.canonicalPartyRef.resourceId).toBe(survivorId);
+      expect(result.relationship.from.storedPartyRef.resourceId).toBe(fromPartyId);
+      expect(result.relationship.endHistory.length).toBe(1);
+      const [endEvidence] = result.relationship.endHistory;
+      expect(endEvidence).toBeDefined();
+      if (endEvidence === undefined) {
+        throw new Error('Expected endEvidence');
+      }
+      expect(DateTime.formatIso(endEvidence.effectiveAt)).toBe(effectiveAt);
+      expect(Option.getOrThrow(endEvidence.reason)).toBe('A successor contact takes responsibility');
+      expect('state' in (harness.updateSets[0] ?? {})).toBe(false);
+      expect('isCurrent' in (harness.updateSets[0] ?? {})).toBe(false);
+    }),
   );
 
-  relationshipIt.effect(
-    'non-active assertions never read as current even with an open effective interval',
-    () =>
-      Effect.all(
-        ['RETRACTED', 'SUPERSEDED', 'DISPUTED'].map((assertionState) =>
-          Effect.gen(function* testProgram6() {
-            const harness = transactionHarness([
-              [relationshipRow({ assertionState })],
-              ...canonicalEndpointReads,
-            ]);
-            const detail = yield* findPartyRelationshipRecord(
-              harness.transaction,
-              tenantId,
-              relationshipId,
-            );
+  relationshipIt.effect('detail derives scheduled state and resolves stored endpoint aliases independently', () =>
+    Effect.gen(function* testProgram4() {
+      const canonicalFrom = '70000000-0000-4000-8000-000000000001';
+      const middleAlias = '80000000-0000-4000-8000-000000000001';
+      const scheduled = relationshipRow({
+        validFrom: DateTime.toDateUtc(DateTime.makeUnsafe('2099-01-01T00:00:00.000Z')),
+      });
+      const harness = transactionHarness([
+        [scheduled],
+        [
+          {
+            aliasPartyId: fromPartyId,
+            canonicalPartyId: middleAlias,
+            tenantId,
+          },
+        ],
+        [
+          {
+            aliasPartyId: middleAlias,
+            canonicalPartyId: canonicalFrom,
+            tenantId,
+          },
+        ],
+        [],
+        [{ partyId: canonicalFrom }],
+        [],
+        [{ partyId: toPartyId }],
+      ]);
 
-            expect(detail?.assertionState).toBe(assertionState);
-            expect(detail?.state).toBe('HISTORICAL');
-          }),
-        ),
-      ),
+      const detail = yield* findPartyRelationshipRecord(harness.transaction, tenantId, relationshipId);
+
+      expect(detail?.state).toBe('SCHEDULED');
+      expect(detail?.from.storedPartyRef.resourceId).toBe(fromPartyId);
+      expect(detail?.from.canonicalPartyRef.resourceId).toBe(canonicalFrom);
+      expect(detail).toBeDefined();
+      if (detail === undefined || detail === null) {
+        throw new Error('Expected detail');
+      }
+      expect(Option.getOrThrow(detail.from.requestedAlias).resourceId).toBe(fromPartyId);
+      expect(Option.isNone(detail.to.requestedAlias)).toBe(true);
+    }),
+  );
+
+  relationshipIt.effect('non-active assertions never read as current even with an open effective interval', () =>
+    Effect.forEach(['RETRACTED', 'SUPERSEDED', 'DISPUTED'], (assertionState) =>
+      Effect.gen(function* testProgram6() {
+        const harness = transactionHarness([[relationshipRow({ assertionState })], ...canonicalEndpointReads]);
+        const detail = yield* findPartyRelationshipRecord(harness.transaction, tenantId, relationshipId);
+
+        expect(detail?.assertionState).toBe(assertionState);
+        expect(detail?.state).toBe('HISTORICAL');
+      }),
+    ),
   );
 
   relationshipIt.effect(
@@ -358,7 +350,13 @@ it.layer(
         const harness = transactionHarness(
           [
             [relationshipRow()],
-            [{ aliasPartyId: fromPartyId, canonicalPartyId: survivorId, tenantId }],
+            [
+              {
+                aliasPartyId: fromPartyId,
+                canonicalPartyId: survivorId,
+                tenantId,
+              },
+            ],
             [],
             [{ partyId: survivorId }],
             [],
@@ -376,7 +374,10 @@ it.layer(
           decodeUpdatePayload({
             changeReason: 'A revised planned start',
             expectedRevision: 1,
-            provenance: { method: 'MANUAL_CONFIRMATION', source: 'ENGAGEMENT_REVIEW' },
+            provenance: {
+              method: 'MANUAL_CONFIRMATION',
+              source: 'ENGAGEMENT_REVIEW',
+            },
             relationshipRef,
             validFrom: '2099-01-01T00:00:00.000Z',
           }),
@@ -389,45 +390,56 @@ it.layer(
       }),
   );
 
-  relationshipIt.effect(
-    'create rejects an explicit alias endpoint with canonical survivor guidance',
-    () =>
-      Effect.gen(function* testProgram8() {
-        const survivorId = '70000000-0000-4000-8000-000000000001';
-        const harness = transactionHarness([
-          [
-            {
-              archivedAt: DateTime.toDateUtc(DateTime.makeUnsafe('2026-01-01T00:00:00.000Z')),
-              currentType: 'PERSON',
-              partyId: fromPartyId,
-            },
-            { archivedAt: null, currentType: 'ORGANIZATION', partyId: toPartyId },
-          ],
-          [{ aliasPartyId: fromPartyId, canonicalPartyId: survivorId, tenantId }],
-          [],
-          [{ partyId: survivorId }],
-        ]);
-        const rejection = yield* createPartyRelationshipRecord(
-          harness.transaction,
-          tenantId,
-          principalId,
-          actionInvocationId,
-          decodeCreatePayload({
-            fromPartyRef: ref(fromPartyId),
-            provenance: { method: 'MANUAL_CONFIRMATION', source: 'ENGAGEMENT_REVIEW' },
-            relationshipType: 'CONTACT_PERSON_OF',
-            toPartyRef: ref(toPartyId),
-            validFrom: null,
-            validTo: null,
-          }),
-        ).pipe(Effect.flip);
+  relationshipIt.effect('create rejects an explicit alias endpoint with canonical survivor guidance', () =>
+    Effect.gen(function* testProgram8() {
+      const survivorId = '70000000-0000-4000-8000-000000000001';
+      const harness = transactionHarness([
+        [
+          {
+            archivedAt: DateTime.toDateUtc(DateTime.makeUnsafe('2026-01-01T00:00:00.000Z')),
+            currentType: 'PERSON',
+            partyId: fromPartyId,
+          },
+          {
+            archivedAt: null,
+            currentType: 'ORGANIZATION',
+            partyId: toPartyId,
+          },
+        ],
+        [
+          {
+            aliasPartyId: fromPartyId,
+            canonicalPartyId: survivorId,
+            tenantId,
+          },
+        ],
+        [],
+        [{ partyId: survivorId }],
+      ]);
+      const rejection = yield* createPartyRelationshipRecord(
+        harness.transaction,
+        tenantId,
+        principalId,
+        actionInvocationId,
+        decodeCreatePayload({
+          fromPartyRef: ref(fromPartyId),
+          provenance: {
+            method: 'MANUAL_CONFIRMATION',
+            source: 'ENGAGEMENT_REVIEW',
+          },
+          relationshipType: 'CONTACT_PERSON_OF',
+          toPartyRef: ref(toPartyId),
+          validFrom: null,
+          validTo: null,
+        }),
+      ).pipe(Effect.flip);
 
-        expect(Predicate.isTagged(rejection, 'PartyAliasWriteRejected')).toBe(true);
-        if (Schema.is(PartyAliasWriteRejected)(rejection)) {
-          expect(rejection.canonicalPartyRef.resourceId).toBe(survivorId);
-        }
-        expect(harness.insertValues.length).toBe(0);
-      }),
+      expect(Predicate.isTagged(rejection, 'PartyAliasWriteRejected')).toBe(true);
+      if (Schema.is(PartyAliasWriteRejected)(rejection)) {
+        expect(rejection.canonicalPartyRef.resourceId).toBe(survivorId);
+      }
+      expect(harness.insertValues.length).toBe(0);
+    }),
   );
 
   relationshipIt.effect('a known historical start cannot be rewritten by ordinary update', () =>
@@ -448,7 +460,10 @@ it.layer(
         decodeUpdatePayload({
           changeReason: 'The previous start was wrong',
           expectedRevision: 1,
-          provenance: { method: 'DOCUMENT_REVIEW', source: 'ENGAGEMENT_RECORD' },
+          provenance: {
+            method: 'DOCUMENT_REVIEW',
+            source: 'ENGAGEMENT_RECORD',
+          },
           relationshipRef,
           validFrom: '2025-02-01T00:00:00.000Z',
         }),
@@ -476,11 +491,7 @@ it.layer(
           validTo: DateTime.toDateUtc(DateTime.makeUnsafe('2099-01-01T00:00:00.000Z')),
         });
         const updated = relationshipRow({ revision: 2 });
-        const harness = transactionHarness(
-          [[current], ...canonicalEndpointReads, []],
-          [],
-          [[updated]],
-        );
+        const harness = transactionHarness([[current], ...canonicalEndpointReads, []], [], [[updated]]);
         const result = yield* updatePartyRelationshipRecord(
           harness.transaction,
           tenantId,
@@ -489,7 +500,10 @@ it.layer(
           decodeUpdatePayload({
             changeReason: 'The planned handover was canceled',
             expectedRevision: 1,
-            provenance: { method: 'MANUAL_CONFIRMATION', source: 'ENGAGEMENT_REVIEW' },
+            provenance: {
+              method: 'MANUAL_CONFIRMATION',
+              source: 'ENGAGEMENT_REVIEW',
+            },
             relationshipRef,
             validTo: null,
           }),
@@ -511,113 +525,107 @@ it.layer(
       }),
   );
 
-  relationshipIt.effect(
-    'update can shorten a future planned end to a valid retrospective end with new evidence',
-    () =>
-      Effect.gen(function* testProgram11() {
-        const validFrom = DateTime.toDateUtc(DateTime.makeUnsafe('2025-01-01T00:00:00.000Z'));
-        const effectiveAt = '2026-02-01T00:00:00.000Z';
-        const current = relationshipRow({
-          validFrom,
-          validTo: DateTime.toDateUtc(DateTime.makeUnsafe('2099-01-01T00:00:00.000Z')),
-        });
-        const updated = relationshipRow({
-          endProvenanceMethod: 'DOCUMENT_REVIEW',
-          endProvenanceSource: 'ENGAGEMENT_RECORD',
-          endReason: 'The handover actually completed earlier',
-          endedByActionInvocationId: actionInvocationId,
-          endedByPrincipalId: principalId,
-          endedRecordedAt: DateTime.toDateUtc(DateTime.makeUnsafe('2026-09-03T00:00:00.000Z')),
-          revision: 2,
-          validFrom,
-          validTo: DateTime.toDateUtc(DateTime.makeUnsafe(effectiveAt)),
-        });
-        const harness = transactionHarness(
-          [[current], ...canonicalEndpointReads, []],
-          [],
-          [[updated]],
-        );
-        const result = yield* updatePartyRelationshipRecord(
-          harness.transaction,
-          tenantId,
-          principalId,
-          actionInvocationId,
-          decodeUpdatePayload({
-            changeReason: 'The handover actually completed earlier',
-            expectedRevision: 1,
-            provenance: { method: 'DOCUMENT_REVIEW', source: 'ENGAGEMENT_RECORD' },
-            relationshipRef,
-            validTo: effectiveAt,
-          }),
-        );
+  relationshipIt.effect('update can shorten a future planned end to a valid retrospective end with new evidence', () =>
+    Effect.gen(function* testProgram11() {
+      const validFrom = DateTime.toDateUtc(DateTime.makeUnsafe('2025-01-01T00:00:00.000Z'));
+      const effectiveAt = '2026-02-01T00:00:00.000Z';
+      const current = relationshipRow({
+        validFrom,
+        validTo: DateTime.toDateUtc(DateTime.makeUnsafe('2099-01-01T00:00:00.000Z')),
+      });
+      const updated = relationshipRow({
+        endProvenanceMethod: 'DOCUMENT_REVIEW',
+        endProvenanceSource: 'ENGAGEMENT_RECORD',
+        endReason: 'The handover actually completed earlier',
+        endedByActionInvocationId: actionInvocationId,
+        endedByPrincipalId: principalId,
+        endedRecordedAt: DateTime.toDateUtc(DateTime.makeUnsafe('2026-09-03T00:00:00.000Z')),
+        revision: 2,
+        validFrom,
+        validTo: DateTime.toDateUtc(DateTime.makeUnsafe(effectiveAt)),
+      });
+      const harness = transactionHarness([[current], ...canonicalEndpointReads, []], [], [[updated]]);
+      const result = yield* updatePartyRelationshipRecord(
+        harness.transaction,
+        tenantId,
+        principalId,
+        actionInvocationId,
+        decodeUpdatePayload({
+          changeReason: 'The handover actually completed earlier',
+          expectedRevision: 1,
+          provenance: {
+            method: 'DOCUMENT_REVIEW',
+            source: 'ENGAGEMENT_RECORD',
+          },
+          relationshipRef,
+          validTo: effectiveAt,
+        }),
+      );
 
-        expect(result.outcome).toBe('CHANGED');
-        expect(result.relationship.state).toBe('HISTORICAL');
-        const [endEvidence] = result.relationship.endHistory;
-        expect(endEvidence).toBeDefined();
-        if (endEvidence === undefined) {
-          throw new Error('Expected endEvidence');
-        }
-        expect(DateTime.formatIso(endEvidence.effectiveAt)).toBe(effectiveAt);
-        expect(harness.updateSets[0]?.['endProvenanceSource']).toBe('ENGAGEMENT_RECORD');
-        expect(harness.updateSets[0]?.['endedByActionInvocationId']).toBe(actionInvocationId);
-      }),
+      expect(result.outcome).toBe('CHANGED');
+      expect(result.relationship.state).toBe('HISTORICAL');
+      const [endEvidence] = result.relationship.endHistory;
+      expect(endEvidence).toBeDefined();
+      if (endEvidence === undefined) {
+        throw new Error('Expected endEvidence');
+      }
+      expect(DateTime.formatIso(endEvidence.effectiveAt)).toBe(effectiveAt);
+      expect(harness.updateSets[0]?.['endProvenanceSource']).toBe('ENGAGEMENT_RECORD');
+      expect(harness.updateSets[0]?.['endedByActionInvocationId']).toBe(actionInvocationId);
+    }),
   );
 
-  relationshipIt.effect(
-    'an evidence-backed end without a generic reason stays visible and retries exactly',
-    () =>
-      Effect.gen(function* testProgram12() {
-        const effectiveAt = '2026-02-01T00:00:00.000Z';
-        const ended = relationshipRow({
-          endProvenanceMethod: 'DOCUMENT_REVIEW',
-          endProvenanceSource: 'ENGAGEMENT_RECORD',
-          endedByActionInvocationId: actionInvocationId,
-          endedByPrincipalId: principalId,
-          endedRecordedAt: DateTime.toDateUtc(DateTime.makeUnsafe('2026-09-03T00:00:00.000Z')),
-          revision: 2,
-          validTo: DateTime.toDateUtc(DateTime.makeUnsafe(effectiveAt)),
-        });
-        const harness = transactionHarness(
-          [[relationshipRow()], ...canonicalEndpointReads],
-          [],
-          [[ended]],
-        );
-        const payload = {
-          effectiveAt,
-          expectedRevision: 1,
-          provenance: { method: 'DOCUMENT_REVIEW', source: 'ENGAGEMENT_RECORD' },
-          relationshipRef,
-        };
-        const result = yield* endPartyRelationshipRecord(
-          harness.transaction,
-          tenantId,
-          principalId,
-          actionInvocationId,
-          decodeEndPayload(payload),
-        );
-        expect(result.relationship.endHistory.length).toBe(1);
-        const [endEvidence] = result.relationship.endHistory;
-        expect(endEvidence).toBeDefined();
-        if (endEvidence === undefined) {
-          throw new Error('Expected endEvidence');
-        }
-        expect(Option.isNone(endEvidence.reason)).toBe(true);
-        expect(harness.updateSets[0]?.['endReason']).toBe(null);
+  relationshipIt.effect('an evidence-backed end without a generic reason stays visible and retries exactly', () =>
+    Effect.gen(function* testProgram12() {
+      const effectiveAt = '2026-02-01T00:00:00.000Z';
+      const ended = relationshipRow({
+        endProvenanceMethod: 'DOCUMENT_REVIEW',
+        endProvenanceSource: 'ENGAGEMENT_RECORD',
+        endedByActionInvocationId: actionInvocationId,
+        endedByPrincipalId: principalId,
+        endedRecordedAt: DateTime.toDateUtc(DateTime.makeUnsafe('2026-09-03T00:00:00.000Z')),
+        revision: 2,
+        validTo: DateTime.toDateUtc(DateTime.makeUnsafe(effectiveAt)),
+      });
+      const harness = transactionHarness([[relationshipRow()], ...canonicalEndpointReads], [], [[ended]]);
+      const payload = {
+        effectiveAt,
+        expectedRevision: 1,
+        provenance: {
+          method: 'DOCUMENT_REVIEW',
+          source: 'ENGAGEMENT_RECORD',
+        },
+        relationshipRef,
+      };
+      const result = yield* endPartyRelationshipRecord(
+        harness.transaction,
+        tenantId,
+        principalId,
+        actionInvocationId,
+        decodeEndPayload(payload),
+      );
+      expect(result.relationship.endHistory.length).toBe(1);
+      const [endEvidence] = result.relationship.endHistory;
+      expect(endEvidence).toBeDefined();
+      if (endEvidence === undefined) {
+        throw new Error('Expected endEvidence');
+      }
+      expect(Option.isNone(endEvidence.reason)).toBe(true);
+      expect(harness.updateSets[0]?.['endReason']).toBe(null);
 
-        const retryHarness = transactionHarness([[ended], ...canonicalEndpointReads]);
-        const retry = yield* endPartyRelationshipRecord(
-          retryHarness.transaction,
-          tenantId,
-          principalId,
-          actionInvocationId,
-          decodeEndPayload({
-            ...payload,
-            expectedRevision: 2,
-          }),
-        );
-        expect(retry.outcome).toBe('UNCHANGED');
-        expect(retryHarness.updateSets.length).toBe(0);
-      }),
+      const retryHarness = transactionHarness([[ended], ...canonicalEndpointReads]);
+      const retry = yield* endPartyRelationshipRecord(
+        retryHarness.transaction,
+        tenantId,
+        principalId,
+        actionInvocationId,
+        decodeEndPayload({
+          ...payload,
+          expectedRevision: 2,
+        }),
+      );
+      expect(retry.outcome).toBe('UNCHANGED');
+      expect(retryHarness.updateSets.length).toBe(0);
+    }),
   );
 });

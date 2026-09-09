@@ -1,4 +1,5 @@
 import { Effect } from 'effect';
+
 import { createCodesmithGenerator } from '../generator-adapter.mts';
 import {
   MODULE_MANIFEST_IMPORT_SLOT_END,
@@ -61,8 +62,7 @@ export const ${descriptor} = {
 `;
 };
 
-const isResourceDescriptor = (candidate: string): boolean =>
-  /^[a-z][A-Za-z0-9]*ResourceDescriptor,$/u.test(candidate);
+const isResourceDescriptor = (candidate: string): boolean => /^[a-z][A-Za-z0-9]*ResourceDescriptor,$/u.test(candidate);
 
 const planResourceScaffold = Effect.fn('ResourceScaffold.plan')(function* planResourceScaffold(
   workspaceRoot: string,
@@ -75,10 +75,7 @@ const planResourceScaffold = Effect.fn('ResourceScaffold.plan')(function* planRe
   const resourcePath = yield* tryScaffold('failed to resolve resource path', () =>
     resolveContainedPath(vertical.directory, 'shared', 'resources', `${resource}.ts`),
   );
-  const resourceMutation = yield* createMutationEffect(
-    resourcePath,
-    renderResource(vertical, resource),
-  );
+  const resourceMutation = yield* createMutationEffect(resourcePath, renderResource(vertical, resource));
 
   const descriptor = `${toCamelCase(resource)}ResourceDescriptor`;
   const ownerImport = `import { ${descriptor} } from './shared/resources/${resource}.ts';`;
@@ -97,11 +94,7 @@ const planResourceScaffold = Effect.fn('ResourceScaffold.plan')(function* planRe
       isResourceDescriptor,
     ),
   );
-  const manifestMutation = updateMutation(
-    vertical.manifestPath,
-    vertical.manifestContent,
-    nextManifest,
-  );
+  const manifestMutation = updateMutation(vertical.manifestPath, vertical.manifestContent, nextManifest);
   if (manifestMutation === undefined) {
     return yield* scaffoldFailure('Resource manifest patch unexpectedly made no change');
   }
@@ -131,9 +124,7 @@ const planResourceScaffold = Effect.fn('ResourceScaffold.plan')(function* planRe
   }
 
   const mutations = [resourceMutation, manifestMutation, packageMutation];
-  yield* tryScaffold('resource mutation paths are invalid', () =>
-    ensureUniqueMutationPaths(mutations),
-  );
+  yield* tryScaffold('resource mutation paths are invalid', () => ensureUniqueMutationPaths(mutations));
   return { mutations, result: { resourcePath } };
 });
 

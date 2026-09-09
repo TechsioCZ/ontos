@@ -1,5 +1,6 @@
 import { Context } from 'effect';
 import type { Effect } from 'effect';
+
 import type { GatewayAssertionRedemptionUnavailableError } from './gateway-assertion-redemption-unavailable-error.ts';
 import type { GatewayAssertionReplayError } from './gateway-assertion-replay-error.ts';
 
@@ -13,14 +14,10 @@ export interface GatewayAssertionRedemptionInput {
   readonly jti: string;
 }
 
-export type GatewayAssertionRedemptionError =
-  | GatewayAssertionReplayError
-  | GatewayAssertionRedemptionUnavailableError;
+export type GatewayAssertionRedemptionError = GatewayAssertionReplayError | GatewayAssertionRedemptionUnavailableError;
 
 export interface GatewayAssertionRedemption {
-  readonly consume: (
-    input: GatewayAssertionRedemptionInput,
-  ) => Effect.Effect<void, GatewayAssertionRedemptionError>;
+  readonly consume: (input: GatewayAssertionRedemptionInput) => Effect.Effect<void, GatewayAssertionRedemptionError>;
 }
 
 export class GatewayAssertionRedemptionService extends Context.Service<

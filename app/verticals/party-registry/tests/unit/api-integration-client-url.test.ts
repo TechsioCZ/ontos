@@ -1,14 +1,13 @@
-import { expect, it } from 'effect-rstest';
-
 import { Effect, Schema } from 'effect';
+import { expect, it } from 'effect-rstest';
 import { FetchHttpClient } from 'effect/unstable/http';
 
+import { AresSubjectLookupIcoSchema } from '../../shared/domain/ares-evidence.ts';
 import { executeAresLookupWithAuthorization } from '../../src/api/ares-lookup-client.ts';
 import { loadPartiesClientWithAuthorization } from '../../src/api/parties-search-client.ts';
 import { executePartyDetailWithAuthorization } from '../../src/api/party-detail-client.ts';
-import { AresSubjectLookupIcoSchema } from '../../shared/domain/ares-evidence.ts';
 
-const ico = Schema.decodeUnknownSync(AresSubjectLookupIcoSchema)('12345678');
+const ico = Schema.decodeSync(AresSubjectLookupIcoSchema)('12345678');
 
 it.effect('targets the mounted owner BFF prefix and supports a separate owner deployment', () =>
   Effect.gen(function* testProgram1() {

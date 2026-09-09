@@ -1,5 +1,7 @@
-import { expect, test } from 'effect-rstest';
 import { getColumns } from 'drizzle-orm';
+import { expect, test } from 'effect-rstest';
+
+import { compareAuthCatalog, expectedAuthTableCatalog } from '../../api/auth/db/catalog.ts';
 import {
   AUTH_SCHEMA_NAME,
   AUTH_TABLE_INVENTORY,
@@ -8,7 +10,6 @@ import {
   supportImpersonationRecovery,
   user,
 } from '../../api/auth/db/schema.ts';
-import { compareAuthCatalog, expectedAuthTableCatalog } from '../../api/auth/db/catalog.ts';
 
 test('owns the exact Better Auth model inside the auth schema', () => {
   expect(AUTH_SCHEMA_NAME).toBe('auth');
@@ -67,9 +68,7 @@ test('matches the generated API Key and Admin plugin persistence fields', () => 
     'permissions',
     'metadata',
   ]);
-  expect(Object.keys(getColumns(user))).toEqual(
-    expect.arrayContaining(['role', 'banned', 'banReason', 'banExpires']),
-  );
+  expect(Object.keys(getColumns(user))).toEqual(expect.arrayContaining(['role', 'banned', 'banReason', 'banExpires']));
   expect(Object.keys(getColumns(session))).toEqual(
     expect.arrayContaining([
       'impersonatedBy',
@@ -101,13 +100,7 @@ test('matches the generated API Key and Admin plugin persistence fields', () => 
 
 test('reports missing and unexpected authentication tables', () => {
   expect(
-    compareAuthCatalog([
-      'auth.user',
-      'auth.session',
-      'auth.account',
-      'auth.unexpected',
-      'auth.unexpected',
-    ]),
+    compareAuthCatalog(['auth.user', 'auth.session', 'auth.account', 'auth.unexpected', 'auth.unexpected']),
   ).toEqual({
     missing: ['auth.apikey', 'auth.support_impersonation_recovery', 'auth.verification'],
     unexpected: ['auth.unexpected'],

@@ -44,19 +44,14 @@ export const counterpartyContextEvidenceIsSufficient = (method: string): boolean
 export const roleEvidenceIsSufficient = (roleType: CounterpartyRoleType, method: string): boolean =>
   (roleType === 'CUSTOMER' ? customerEvidenceMethods : supplierEvidenceMethods).has(method);
 
-export const roleEndEvidenceIsSufficient = (
-  roleType: CounterpartyRoleType,
-  method: string,
-): boolean =>
+export const roleEndEvidenceIsSufficient = (roleType: CounterpartyRoleType, method: string): boolean =>
   (roleType === 'CUSTOMER' ? customerEndEvidenceMethods : supplierEndEvidenceMethods).has(method);
 
 export const rolePeriodIsCurrentAt = (
   period: Pick<CounterpartyRolePeriod, 'state' | 'validFrom' | 'validTo'>,
   instant: string,
 ): boolean =>
-  period.state === 'ACTIVE' &&
-  period.validFrom <= instant &&
-  (period.validTo === null || instant < period.validTo);
+  period.state === 'ACTIVE' && period.validFrom <= instant && (period.validTo === null || instant < period.validTo);
 
 export interface RolePeriodStorageState {
   readonly isCurrent: boolean;
@@ -69,10 +64,7 @@ export const rolePeriodStorageStateAt = (
 ): RolePeriodStorageState => {
   const ended = period.validTo !== null && period.validTo <= recordedAt;
   return {
-    isCurrent:
-      !ended &&
-      period.validFrom <= recordedAt &&
-      (period.validTo === null || recordedAt < period.validTo),
+    isCurrent: !ended && period.validFrom <= recordedAt && (period.validTo === null || recordedAt < period.validTo),
     state: ended ? 'ENDED' : 'ACTIVE',
   };
 };

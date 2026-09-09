@@ -1,5 +1,3 @@
-import { expect, it } from 'effect-rstest';
-
 import { makeEffectBffClient } from '@app/shared-contracts/client-runtime';
 import {
   Effect,
@@ -10,6 +8,7 @@ import {
   Schema,
 } from '@modern-js/plugin-bff/effect-client';
 import { Predicate, Struct } from 'effect';
+import { expect, it } from 'effect-rstest';
 import { FetchHttpClient } from 'effect/unstable/http';
 
 const RepresentativeConflictSchema = Schema.TaggedStruct('RepresentativeConflict', {
@@ -17,10 +16,7 @@ const RepresentativeConflictSchema = Schema.TaggedStruct('RepresentativeConflict
   status: Schema.Literal(409),
   title: Schema.String,
   type: Schema.String,
-}).pipe(
-  HttpApiSchema.asJson({ contentType: 'application/problem+json' }),
-  HttpApiSchema.status(409),
-);
+}).pipe(HttpApiSchema.asJson({ contentType: 'application/problem+json' }), HttpApiSchema.status(409));
 
 const RepresentativeApi = HttpApi.make('RepresentativeApi').add(
   HttpApiGroup.make('representative').add(
@@ -46,9 +42,7 @@ type RepresentativeReadError = Effect.Error<RepresentativeReadEffect>;
 
 const preserveRepresentativeReadType = (client: RepresentativeClient): RepresentativeReadEffect =>
   client.representative.read({});
-const preserveRepresentativeSuccessType = (
-  success: RepresentativeReadSuccess,
-): Readonly<{ value: string }> => success;
+const preserveRepresentativeSuccessType = (success: RepresentativeReadSuccess): Readonly<{ value: string }> => success;
 const preserveRepresentativeErrorType = (error: RepresentativeReadError) => {
   if (Schema.is(RepresentativeConflictSchema)(error)) {
     return error.status satisfies 409;
@@ -107,9 +101,7 @@ it.effect('uses the owner-supplied API prefix by default', () =>
     );
 
     expect(result).toEqual({ value: 'default-prefix' });
-    expect(requests.map(({ url }) => url)).toEqual([
-      'https://shell.example/representative-api/read',
-    ]);
+    expect(requests.map(({ url }) => url)).toEqual(['https://shell.example/representative-api/read']);
   }),
 );
 
@@ -177,7 +169,7 @@ it.effect('propagates supported request context and resolved transport headers',
     expect(request.headers.get('traceparent')).toBe(traceparent);
     expect(request.headers.get('x-operation-id')).toBe(operationContext.operationId);
     expect(
-      yield* Schema.decodeUnknownEffect(Schema.fromJsonString(Schema.Unknown))(
+      yield* Schema.decodeEffect(Schema.fromJsonString(Schema.Unknown))(
         request.headers.get('x-modernjs-bff-operation-context') ?? '',
       ),
     ).toEqual(operationContext);
@@ -210,12 +202,7 @@ it.effect('omits absent optional request context and transport header values', (
     if (request === undefined) {
       throw new Error('Expected captured request');
     }
-    for (const header of [
-      'accept-language',
-      'traceparent',
-      'x-modernjs-bff-operation-context',
-      'x-operation-id',
-    ]) {
+    for (const header of ['accept-language', 'traceparent', 'x-modernjs-bff-operation-context', 'x-operation-id']) {
       expect(request.headers.has(header), header).toBe(false);
     }
   }),

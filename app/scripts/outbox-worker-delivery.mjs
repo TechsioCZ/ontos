@@ -23,7 +23,7 @@ class OutboxWorkerDeliveryInvalid extends Schema.TaggedError()('OutboxWorkerDeli
 /**
  * A generated worker host is the deployment capability; topology owns its identity.
  *
- * @type {(root: string, vertical: OutboxWorkerVertical) => Effect.Effect<OutboxWorkerDelivery | undefined, OutboxWorkerDeliveryInvalidValue | import('effect/SchemaError').SchemaError | import('effect/PlatformError').PlatformError, FileSystem.FileSystem | Path.Path>}
+ * @type {(root: string, vertical: OutboxWorkerVertical) => Effect.Effect<OutboxWorkerDelivery | undefined, OutboxWorkerDeliveryInvalidValue | Schema.SchemaError | import('effect/PlatformError').PlatformError, FileSystem.FileSystem | Path.Path>}
  */
 export const outboxWorkerDelivery = Effect.fn('outboxWorkerDelivery')(
   /**
@@ -39,9 +39,9 @@ export const outboxWorkerDelivery = Effect.fn('outboxWorkerDelivery')(
       return yield* Effect.undefined;
     }
 
-    const ownerPackage = yield* Schema.decodeUnknownEffect(
-      Schema.fromJsonString(OwnerPackageSchema),
-    )(yield* fileSystem.readFileString(packagePath));
+    const ownerPackage = yield* Schema.decodeUnknownEffect(Schema.fromJsonString(OwnerPackageSchema))(
+      yield* fileSystem.readFileString(packagePath),
+    );
     const workerStart = ownerPackage.scripts?.['worker:start'];
     if (workerStart === undefined || workerStart.length === 0) {
       return yield* Effect.undefined;

@@ -1,12 +1,15 @@
-import { expect, it } from 'effect-rstest';
 import { Effect, Tracer, Predicate } from 'effect';
+import { expect, it } from 'effect-rstest';
+
+import type { TrustedPrincipalContext } from '../../src/actions/context.ts';
+import { makeModuleEntrypointGateway } from '../../src/modules/module-entrypoint-gateway.ts';
 import {
   MODULE_ENTRYPOINT_ACCESSES,
   decodeTenantModuleEntrypoint,
   defineSystemModuleEntrypoint,
   defineTenantModuleEntrypoint,
 } from '../../src/modules/module-entrypoint.ts';
-import { makeModuleEntrypointGateway } from '../../src/modules/module-entrypoint-gateway.ts';
+import type { ModuleEntrypointAccess } from '../../src/modules/module-entrypoint.ts';
 import {
   checkModuleEntrypoint,
   decideModuleStateAccess,
@@ -16,8 +19,6 @@ import {
   tenantStatesAllowingAccess,
 } from '../../src/modules/module-state-gate.ts';
 import { TENANT_MODULE_STATES } from '../../src/modules/tenant-module-state-service.ts';
-import type { TrustedPrincipalContext } from '../../src/actions/context.ts';
-import type { ModuleEntrypointAccess } from '../../src/modules/module-entrypoint.ts';
 import type {
   TenantModuleState,
   TenantModuleStateServiceContract,
@@ -37,7 +38,10 @@ const makeRecordingTracer = (spans: Tracer.Span[]): Tracer.Tracer =>
     span(options) {
       const attributes = new Map<string, unknown>();
       const links = [...options.links];
-      let status: Tracer.SpanStatus = { _tag: 'Started', startTime: options.startTime };
+      let status: Tracer.SpanStatus = {
+        _tag: 'Started',
+        startTime: options.startTime,
+      };
       const span: Tracer.Span = {
         _tag: 'Span',
         addLinks: (newLinks) => {
@@ -49,7 +53,12 @@ const makeRecordingTracer = (spans: Tracer.Span[]): Tracer.Tracer =>
         },
         attributes,
         end: (endTime, exit) => {
-          status = { _tag: 'Ended', endTime, exit, startTime: options.startTime };
+          status = {
+            _tag: 'Ended',
+            endTime,
+            exit,
+            startTime: options.startTime,
+          };
         },
         event: () => {
           // This recording tracer's assertions inspect spans, attributes, links, and status only.
@@ -70,9 +79,8 @@ const makeRecordingTracer = (spans: Tracer.Span[]): Tracer.Tracer =>
     },
   });
 
-const accessSet = (
-  ...accesses: readonly ModuleEntrypointAccess[]
-): ReadonlySet<ModuleEntrypointAccess> => new Set(accesses);
+const accessSet = (...accesses: readonly ModuleEntrypointAccess[]): ReadonlySet<ModuleEntrypointAccess> =>
+  new Set(accesses);
 const expectedAllowed = {
   active: accessSet('background', 'historical_read', 'read', 'write'),
   archived: accessSet('historical_read'),
@@ -102,14 +110,20 @@ it('encodes the exhaustive state/access matrix once, including missing state', (
 it('constructs frozen tenant and explicit system entrypoints and rejects forged combinations', () => {
   const tenant = defineTenantModuleEntrypoint({
     access: 'write',
-    authorization: { kind: 'action_execution', provisioning: 'tenant_membership_default' },
+    authorization: {
+      kind: 'action_execution',
+      provisioning: 'tenant_membership_default',
+    },
     entrypointKey: 'inventory.stock.reserve',
     moduleKey: 'inventory.stock',
     role: 'action',
   });
   const system = defineSystemModuleEntrypoint({
     access: 'write',
-    authorization: { kind: 'action_execution', provisioning: 'tenant_membership_default' },
+    authorization: {
+      kind: 'action_execution',
+      provisioning: 'tenant_membership_default',
+    },
     entrypointKey: 'core.modules.change-state',
     moduleKey: 'core.modules',
     role: 'action',
@@ -128,7 +142,10 @@ it('constructs frozen tenant and explicit system entrypoints and rejects forged 
   expect(() =>
     defineSystemModuleEntrypoint({
       access: 'write',
-      authorization: { kind: 'action_execution', provisioning: 'tenant_membership_default' },
+      authorization: {
+        kind: 'action_execution',
+        provisioning: 'tenant_membership_default',
+      },
       entrypointKey: 'Invalid',
       moduleKey: 'inventory.stock',
       role: 'action',
@@ -157,81 +174,92 @@ it('constructs frozen tenant and explicit system entrypoints and rejects forged 
   }
 });
 
-it.effect(
-  'deduplicates one batch, reuses an immutable snapshot, and fails undeclared keys closed',
-  () =>
-    Effect.gen(function* reuseSnapshot() {
-      let reads = 0;
-      let observedKeys: readonly string[] = [];
-      const service: TenantModuleStateServiceContract = {
-        getTenantModuleStates: (_tenantId, moduleKeys) => {
-          reads += 1;
-          observedKeys = moduleKeys;
-          return Effect.succeed(
-            moduleKeys.map((moduleKey) => ({
-              moduleKey,
-              state: moduleKey === 'billing.invoice' ? ('read_only' as const) : ('active' as const),
-            })),
-          );
-        },
-        listActiveTenantModules: () => Effect.succeed([]),
-        listTenantModuleStates: () => Effect.succeed([]),
-      };
-      const descriptors = [
-        defineTenantModuleEntrypoint({
-          access: 'read',
-          authorization: { kind: 'context_permission', permission: 'module.access' },
-          entrypointKey: 'inventory.stock.page',
-          moduleKey: 'inventory.stock',
-          role: 'page',
-        }),
-        defineTenantModuleEntrypoint({
-          access: 'historical_read',
-          authorization: { kind: 'context_permission', permission: 'module.access' },
-          entrypointKey: 'inventory.stock.report',
-          moduleKey: 'inventory.stock',
-          role: 'report',
-        }),
-        defineTenantModuleEntrypoint({
-          access: 'read',
-          authorization: { kind: 'context_permission', permission: 'module.access' },
-          entrypointKey: 'billing.invoice.search',
-          moduleKey: 'billing.invoice',
-          role: 'search',
-        }),
-      ] as const;
-      const snapshot = yield* prepareModuleStateSnapshot(service, 'tenant-1', descriptors);
-      expect(observedKeys).toEqual(['billing.invoice', 'inventory.stock']);
-      expect(reads).toBe(1);
-      expect(Object.isFrozen(snapshot)).toBe(true);
-      expect(Object.isFrozen(snapshot.entrypointKeys)).toBe(true);
-      expect(Object.isFrozen(snapshot.moduleKeys)).toBe(true);
-      yield* checkModuleEntrypoint(snapshot, descriptors[0]);
-      yield* checkModuleEntrypoint(snapshot, descriptors[0]);
-      expect(reads).toBe(1);
-
-      const undeclared = defineTenantModuleEntrypoint({
+it.effect('deduplicates one batch, reuses an immutable snapshot, and fails undeclared keys closed', () =>
+  Effect.gen(function* reuseSnapshot() {
+    let reads = 0;
+    let observedKeys: readonly string[] = [];
+    const service: TenantModuleStateServiceContract = {
+      getTenantModuleStates: (_tenantId, moduleKeys) => {
+        reads += 1;
+        observedKeys = moduleKeys;
+        return Effect.succeed(
+          moduleKeys.map((moduleKey) => ({
+            moduleKey,
+            state: moduleKey === 'billing.invoice' ? ('read_only' as const) : ('active' as const),
+          })),
+        );
+      },
+      listActiveTenantModules: () => Effect.succeed([]),
+      listTenantModuleStates: () => Effect.succeed([]),
+    };
+    const descriptors = [
+      defineTenantModuleEntrypoint({
         access: 'read',
-        authorization: { kind: 'context_permission', permission: 'module.access' },
-        entrypointKey: 'people.directory.page',
-        moduleKey: 'people.directory',
-        role: 'page',
-      });
-      const failure = yield* Effect.flip(checkModuleEntrypoint(snapshot, undeclared));
-      expect(Predicate.isTagged(failure, 'ModuleStateCheckUnavailableError')).toBe(true);
-      const undeclaredSameModule = defineTenantModuleEntrypoint({
-        access: 'write',
-        authorization: { kind: 'action_execution', provisioning: 'tenant_membership_default' },
-        entrypointKey: 'inventory.stock.undeclared-action',
+        authorization: {
+          kind: 'context_permission',
+          permission: 'module.access',
+        },
+        entrypointKey: 'inventory.stock.page',
         moduleKey: 'inventory.stock',
-        role: 'action',
-      });
-      const sameModuleFailure = yield* Effect.flip(
-        checkModuleEntrypoint(snapshot, undeclaredSameModule),
-      );
-      expect(Predicate.isTagged(sameModuleFailure, 'ModuleStateCheckUnavailableError')).toBe(true);
-      expect(reads).toBe(1);
-    }),
+        role: 'page',
+      }),
+      defineTenantModuleEntrypoint({
+        access: 'historical_read',
+        authorization: {
+          kind: 'context_permission',
+          permission: 'module.access',
+        },
+        entrypointKey: 'inventory.stock.report',
+        moduleKey: 'inventory.stock',
+        role: 'report',
+      }),
+      defineTenantModuleEntrypoint({
+        access: 'read',
+        authorization: {
+          kind: 'context_permission',
+          permission: 'module.access',
+        },
+        entrypointKey: 'billing.invoice.search',
+        moduleKey: 'billing.invoice',
+        role: 'search',
+      }),
+    ] as const;
+    const snapshot = yield* prepareModuleStateSnapshot(service, 'tenant-1', descriptors);
+    expect(observedKeys).toEqual(['billing.invoice', 'inventory.stock']);
+    expect(reads).toBe(1);
+    expect(Object.isFrozen(snapshot)).toBe(true);
+    expect(Object.isFrozen(snapshot.entrypointKeys)).toBe(true);
+    expect(Object.isFrozen(snapshot.moduleKeys)).toBe(true);
+    yield* checkModuleEntrypoint(snapshot, descriptors[0]);
+    yield* checkModuleEntrypoint(snapshot, descriptors[0]);
+    expect(reads).toBe(1);
+
+    const undeclared = defineTenantModuleEntrypoint({
+      access: 'read',
+      authorization: {
+        kind: 'context_permission',
+        permission: 'module.access',
+      },
+      entrypointKey: 'people.directory.page',
+      moduleKey: 'people.directory',
+      role: 'page',
+    });
+    const failure = yield* Effect.flip(checkModuleEntrypoint(snapshot, undeclared));
+    expect(Predicate.isTagged(failure, 'ModuleStateCheckUnavailableError')).toBe(true);
+    const undeclaredSameModule = defineTenantModuleEntrypoint({
+      access: 'write',
+      authorization: {
+        kind: 'action_execution',
+        provisioning: 'tenant_membership_default',
+      },
+      entrypointKey: 'inventory.stock.undeclared-action',
+      moduleKey: 'inventory.stock',
+      role: 'action',
+    });
+    const sameModuleFailure = yield* Effect.flip(checkModuleEntrypoint(snapshot, undeclaredSameModule));
+    expect(Predicate.isTagged(sameModuleFailure, 'ModuleStateCheckUnavailableError')).toBe(true);
+    expect(reads).toBe(1);
+  }),
 );
 
 it.effect('records safe acquisition and evaluation telemetry including snapshot reuse', () =>
@@ -240,14 +268,16 @@ it.effect('records safe acquisition and evaluation telemetry including snapshot 
     const tracer = makeRecordingTracer(spans);
     const descriptor = defineTenantModuleEntrypoint({
       access: 'read',
-      authorization: { kind: 'context_permission', permission: 'module.access' },
+      authorization: {
+        kind: 'context_permission',
+        permission: 'module.access',
+      },
       entrypointKey: 'inventory.stock.page',
       moduleKey: 'inventory.stock',
       role: 'page',
     });
     const service: TenantModuleStateServiceContract = {
-      getTenantModuleStates: () =>
-        Effect.succeed([{ moduleKey: 'inventory.stock', state: 'active' }]),
+      getTenantModuleStates: () => Effect.succeed([{ moduleKey: 'inventory.stock', state: 'active' }]),
       listActiveTenantModules: () => Effect.succeed([]),
       listTenantModuleStates: () => Effect.succeed([]),
     };
@@ -294,7 +324,10 @@ it.effect('empty and system-only compositions perform zero reads', () =>
     };
     const system = defineSystemModuleEntrypoint({
       access: 'read',
-      authorization: { kind: 'context_permission', permission: 'module.access' },
+      authorization: {
+        kind: 'context_permission',
+        permission: 'module.access',
+      },
       entrypointKey: 'core.audit.page',
       moduleKey: 'core.audit',
       role: 'page',
@@ -312,7 +345,10 @@ it.effect('the gateway rejects missing trusted principal context before state ac
     let reads = 0;
     const descriptor = defineTenantModuleEntrypoint({
       access: 'read',
-      authorization: { kind: 'context_permission', permission: 'module.access' },
+      authorization: {
+        kind: 'context_permission',
+        permission: 'module.access',
+      },
       entrypointKey: 'inventory.stock.page',
       moduleKey: 'inventory.stock',
       role: 'page',
@@ -325,9 +361,7 @@ it.effect('the gateway rejects missing trusted principal context before state ac
       listActiveTenantModules: () => Effect.succeed([]),
       listTenantModuleStates: () => Effect.succeed([]),
     });
-    const failure = yield* Effect.flip(
-      makeModuleEntrypointGateway(gate).prepareSnapshotInput({}, [descriptor]),
-    );
+    const failure = yield* Effect.flip(makeModuleEntrypointGateway(gate).prepareSnapshotInput({}, [descriptor]));
     expect(Predicate.isTagged(failure, 'ModuleStateCheckUnavailableError')).toBe(true);
     expect(reads).toBe(0);
   }),
@@ -359,63 +393,90 @@ it.effect('gates every future entrypoint category before its fake implementation
     const allowed = [
       defineTenantModuleEntrypoint({
         access: 'read',
-        authorization: { kind: 'context_permission', permission: 'module.access' },
+        authorization: {
+          kind: 'context_permission',
+          permission: 'module.access',
+        },
         entrypointKey: 'module.active.page',
         moduleKey: 'module.active',
         role: 'page',
       }),
       defineTenantModuleEntrypoint({
         access: 'read',
-        authorization: { kind: 'context_permission', permission: 'module.access' },
+        authorization: {
+          kind: 'context_permission',
+          permission: 'module.access',
+        },
         entrypointKey: 'module.active.component',
         moduleKey: 'module.active',
         role: 'public_component',
       }),
       defineTenantModuleEntrypoint({
         access: 'read',
-        authorization: { kind: 'context_permission', permission: 'module.access' },
+        authorization: {
+          kind: 'context_permission',
+          permission: 'module.access',
+        },
         entrypointKey: 'module.read-only.api',
         moduleKey: 'module.read-only',
         role: 'api',
       }),
       defineTenantModuleEntrypoint({
         access: 'historical_read',
-        authorization: { kind: 'context_permission', permission: 'module.access' },
+        authorization: {
+          kind: 'context_permission',
+          permission: 'module.access',
+        },
         entrypointKey: 'module.suspended.api-history',
         moduleKey: 'module.suspended',
         role: 'api',
       }),
       defineTenantModuleEntrypoint({
         access: 'read',
-        authorization: { kind: 'context_permission', permission: 'module.access' },
+        authorization: {
+          kind: 'context_permission',
+          permission: 'module.access',
+        },
         entrypointKey: 'module.deprecated.search',
         moduleKey: 'module.deprecated',
         role: 'search',
       }),
       defineTenantModuleEntrypoint({
         access: 'historical_read',
-        authorization: { kind: 'context_permission', permission: 'module.access' },
+        authorization: {
+          kind: 'context_permission',
+          permission: 'module.access',
+        },
         entrypointKey: 'module.inactive.search-history',
         moduleKey: 'module.inactive',
         role: 'search',
       }),
       defineTenantModuleEntrypoint({
         access: 'read',
-        authorization: { kind: 'context_permission', permission: 'module.access' },
+        authorization: {
+          kind: 'context_permission',
+          permission: 'module.access',
+        },
         entrypointKey: 'module.deprecated.report',
         moduleKey: 'module.deprecated',
         role: 'report',
       }),
       defineTenantModuleEntrypoint({
         access: 'historical_read',
-        authorization: { kind: 'context_permission', permission: 'module.access' },
+        authorization: {
+          kind: 'context_permission',
+          permission: 'module.access',
+        },
         entrypointKey: 'module.archived.report-history',
         moduleKey: 'module.archived',
         role: 'report',
       }),
       defineSystemModuleEntrypoint({
         access: 'read',
-        authorization: { kind: 'context_permission', permission: 'module.access' },
+        authorization: {
+          kind: 'context_permission',
+          permission: 'module.access',
+        },
         entrypointKey: 'core.audit.page',
         moduleKey: 'core.audit',
         role: 'page',
@@ -424,28 +485,40 @@ it.effect('gates every future entrypoint category before its fake implementation
     const denied = [
       defineTenantModuleEntrypoint({
         access: 'write',
-        authorization: { kind: 'context_permission', permission: 'module.access' },
+        authorization: {
+          kind: 'context_permission',
+          permission: 'module.access',
+        },
         entrypointKey: 'module.read-only.api-write',
         moduleKey: 'module.read-only',
         role: 'api',
       }),
       defineTenantModuleEntrypoint({
         access: 'read',
-        authorization: { kind: 'context_permission', permission: 'module.access' },
+        authorization: {
+          kind: 'context_permission',
+          permission: 'module.access',
+        },
         entrypointKey: 'module.inactive.search',
         moduleKey: 'module.inactive',
         role: 'search',
       }),
       defineTenantModuleEntrypoint({
         access: 'read',
-        authorization: { kind: 'context_permission', permission: 'module.access' },
+        authorization: {
+          kind: 'context_permission',
+          permission: 'module.access',
+        },
         entrypointKey: 'module.archived.report',
         moduleKey: 'module.archived',
         role: 'report',
       }),
       defineTenantModuleEntrypoint({
         access: 'historical_read',
-        authorization: { kind: 'context_permission', permission: 'module.access' },
+        authorization: {
+          kind: 'context_permission',
+          permission: 'module.access',
+        },
         entrypointKey: 'module.missing.report-history',
         moduleKey: 'module.missing',
         role: 'report',
@@ -466,11 +539,9 @@ it.effect('gates every future entrypoint category before its fake implementation
         snapshot,
       });
     yield* Effect.forEach(allowed, run, { concurrency: 'unbounded' });
-    const deniedFailures = yield* Effect.forEach(
-      denied,
-      (entrypoint) => Effect.flip(run(entrypoint)),
-      { concurrency: 'unbounded' },
-    );
+    const deniedFailures = yield* Effect.forEach(denied, (entrypoint) => Effect.flip(run(entrypoint)), {
+      concurrency: 'unbounded',
+    });
     for (const failure of deniedFailures) {
       expect(Predicate.isTagged(failure, 'ModuleStateDeniedError')).toBe(true);
     }
@@ -483,15 +554,17 @@ it.effect('gates every future entrypoint category before its fake implementation
 it.effect('the gateway never evaluates authorization or lazy implementation on denial', () =>
   Effect.gen(function* denyBeforeLoading() {
     const gate = makeModuleStateGate({
-      getTenantModuleStates: () =>
-        Effect.succeed([{ moduleKey: 'inventory.stock', state: 'read_only' }]),
+      getTenantModuleStates: () => Effect.succeed([{ moduleKey: 'inventory.stock', state: 'read_only' }]),
       listActiveTenantModules: () => Effect.succeed([]),
       listTenantModuleStates: () => Effect.succeed([]),
     });
     const gateway = makeModuleEntrypointGateway(gate);
     const descriptor = defineTenantModuleEntrypoint({
       access: 'write',
-      authorization: { kind: 'action_execution', provisioning: 'tenant_membership_default' },
+      authorization: {
+        kind: 'action_execution',
+        provisioning: 'tenant_membership_default',
+      },
       entrypointKey: 'inventory.stock.reserve',
       moduleKey: 'inventory.stock',
       role: 'action',
@@ -527,7 +600,10 @@ it.effect('a missing row is a definite denial rather than an unavailable read', 
   Effect.gen(function* denyMissingRow() {
     const descriptor = defineTenantModuleEntrypoint({
       access: 'read',
-      authorization: { kind: 'context_permission', permission: 'module.access' },
+      authorization: {
+        kind: 'context_permission',
+        permission: 'module.access',
+      },
       entrypointKey: 'inventory.stock.page',
       moduleKey: 'inventory.stock',
       role: 'page',

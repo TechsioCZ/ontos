@@ -1,7 +1,8 @@
-import type { EffectDrizzleQueryError } from 'drizzle-orm/effect-core';
 // @effect-diagnostics processEnv:off globalConsole:off strictEffectProvide:off -- Existing compatibility boundary; expires: 2026-12-31.
 import { getTableName, sql } from 'drizzle-orm';
+import type { EffectDrizzleQueryError } from 'drizzle-orm/effect-core';
 import { Effect, Layer, Schema } from 'effect';
+
 import type { CatalogEntry } from '../src/db/catalog.ts';
 import { compareApplicationCatalog } from '../src/db/catalog.ts';
 import { CoreDatabase, CoreDatabaseLive } from '../src/db/client.ts';
@@ -30,12 +31,9 @@ import {
   workerCheckpoints,
 } from '../src/db/schema.ts';
 
-class DatabaseVerificationError extends Schema.TaggedError<DatabaseVerificationError>()(
-  'DatabaseVerificationError',
-  {
-    reason: Schema.String,
-  },
-) {}
+class DatabaseVerificationError extends Schema.TaggedError<DatabaseVerificationError>()('DatabaseVerificationError', {
+  reason: Schema.String,
+}) {}
 
 const CatalogRowSchema = Schema.Struct({
   kind: Schema.Literals(['migration', 'table']),
@@ -81,7 +79,9 @@ const verifyRuntimeRole = Effect.gen(function* verifyRuntimeRoleEffect() {
     .pipe(
       Effect.mapError(
         () =>
-          new DatabaseVerificationError({ reason: 'Unable to verify the PostgreSQL runtime role' }),
+          new DatabaseVerificationError({
+            reason: 'Unable to verify the PostgreSQL runtime role',
+          }),
       ),
     );
   const [role] = runtimeRole;
@@ -131,17 +131,13 @@ const verifySearchIsolation = Effect.gen(function* verifySearchIsolationEffect()
         ),
       );
     const [searchIsolationRow] = searchIsolation;
-    const expectedSearchPolicies = operations.map(
-      (operation) => `core_${tableName}_tenant_${operation}`,
-    );
+    const expectedSearchPolicies = operations.map((operation) => `core_${tableName}_tenant_${operation}`);
     if (
       searchIsolationRow === undefined ||
       !searchIsolationRow.relrowsecurity ||
       !searchIsolationRow.relforcerowsecurity ||
       searchIsolationRow.policy_names.length !== expectedSearchPolicies.length ||
-      searchIsolationRow.policy_names.some(
-        (policy, index) => policy !== expectedSearchPolicies[index],
-      )
+      searchIsolationRow.policy_names.some((policy, index) => policy !== expectedSearchPolicies[index])
     ) {
       return yield* new DatabaseVerificationError({
         reason: 'Core Search must enforce forced tenant RLS with complete owner-operation policies',
@@ -227,9 +223,7 @@ const verifyCatalog = Effect.gen(function* verifyCatalogEffect() {
 
   if (
     migrationBookkeepingTables.length !== expectedMigrationBookkeepingTables.length ||
-    migrationBookkeepingTables.some(
-      (tableName, index) => tableName !== expectedMigrationBookkeepingTables[index],
-    )
+    migrationBookkeepingTables.some((tableName, index) => tableName !== expectedMigrationBookkeepingTables[index])
   ) {
     return yield* new DatabaseVerificationError({
       reason: `Expected Drizzle migration bookkeeping tables [${expectedMigrationBookkeepingTables.join(', ')}], found [${migrationBookkeepingTables.join(', ')}]`,
@@ -298,7 +292,10 @@ const verifyDatabase = Effect.gen(function* verifyDatabaseEffect() {
     )
     .pipe(
       Effect.mapError(
-        () => new DatabaseVerificationError({ reason: 'Unable to verify same-tenant constraints' }),
+        () =>
+          new DatabaseVerificationError({
+            reason: 'Unable to verify same-tenant constraints',
+          }),
       ),
     );
   const presentCompositeConstraints = constraintRows
@@ -334,9 +331,7 @@ const verifyDatabase = Effect.gen(function* verifyDatabaseEffect() {
     searchProjectionGenerations,
     searchProjectionRebuilds,
     workerCheckpoints,
-  ].map((table) =>
-    verifyTypedQuery(getTableName(table), () => database.executor.select().from(table).limit(0)),
-  );
+  ].map((table) => verifyTypedQuery(getTableName(table), () => database.executor.select().from(table).limit(0)));
 
   for (const query of typedQueries) {
     yield* query;

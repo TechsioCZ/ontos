@@ -1,9 +1,8 @@
-import { TestClock } from 'effect/testing';
-import { expect, it } from 'effect-rstest';
-
 /* eslint-disable anti-slop/no-chained-type-assertions, anti-slop/no-unsafe-dictionary-type -- This harness implements the narrow Drizzle Effect boundary exercised by the owner-local matching service. expires: 2026-12-31. */
 import type { SQL } from 'drizzle-orm';
 import { DateTime, Effect, Layer, Schema, Predicate } from 'effect';
+import { expect, it } from 'effect-rstest';
+import { TestClock } from 'effect/testing';
 
 import { createActionCollector } from '../../../../packages/core-runtime/src/actions/collector.ts';
 import { getActionHandler } from '../../../../packages/core-runtime/src/actions/definition.ts';
@@ -180,9 +179,7 @@ const harness = (queues: ReadonlyMap<unknown, readonly Rows[]> = new Map()) => {
     return chain;
   };
   // SAFETY: this test double implements exactly the fluent methods called by the persistence seam.
-  const transaction = { insert, select, update } as unknown as Parameters<
-    typeof resolveDuplicateCandidateMatch
-  >[0];
+  const transaction = { insert, select, update } as unknown as Parameters<typeof resolveDuplicateCandidateMatch>[0];
   return { inserts, reads, transaction, updates };
 };
 
@@ -198,9 +195,7 @@ const ambiguousHarness = (existingCase: boolean) =>
   );
 
 it.layer(
-  Layer.effectDiscard(
-    TestClock.setTime(DateTime.toEpochMillis(DateTime.makeUnsafe('2026-09-01T00:00:00.000Z'))),
-  ),
+  Layer.effectDiscard(TestClock.setTime(DateTime.toEpochMillis(DateTime.makeUnsafe('2026-09-01T00:00:00.000Z')))),
 )('matching-persistence', (testIt) => {
   testIt.effect(
     'durable Party Match commits an ambiguity decision, complete case references, and original evidence without mutating a Party',
@@ -233,10 +228,9 @@ it.layer(
         ]);
         expect(recordedRow(subject.inserts[2]?.values)['candidateCaseId']).toBe(candidateCaseId);
         expect(subject.updates.length).toBe(0);
-        expect(
-          subject.reads[0]?.table,
-          'tenant serialization lock precedes row/claim reads',
-        ).not.toBe(partyIdentifierClaims);
+        expect(subject.reads[0]?.table, 'tenant serialization lock precedes row/claim reads').not.toBe(
+          partyIdentifierClaims,
+        );
       }),
   );
 
@@ -264,7 +258,11 @@ it.layer(
           actionInvocationId,
           candidate: candidate({
             officialIdentifiers: [
-              { identifierType: 'ICO', value: '27074358', verification: 'VERIFIED' },
+              {
+                identifierType: 'ICO',
+                value: '27074358',
+                verification: 'VERIFIED',
+              },
             ],
             partyType: 'PERSON',
             subjectEvidence: [
@@ -281,9 +279,7 @@ it.layer(
           tenantId,
         });
         expect(result.outcome).toBe('NO_MATCH');
-        const durable = recordedRow(
-          subject.inserts.find(({ table }) => table === partyMatchDecisions)?.values,
-        );
+        const durable = recordedRow(subject.inserts.find(({ table }) => table === partyMatchDecisions)?.values);
         expect(durable['operation']).toBe('MATCH');
         expect(durable['committedCreateOutcome']).toBe(null);
         expect(result.candidateParties).toEqual([]);
@@ -317,7 +313,10 @@ it.layer(
                   [
                     {
                       ...original,
-                      candidateSnapshot: { ...original.candidateSnapshot, intent: 'UNARCHIVE' },
+                      candidateSnapshot: {
+                        ...original.candidateSnapshot,
+                        intent: 'UNARCHIVE',
+                      },
                     },
                   ],
                 ],
@@ -326,12 +325,8 @@ it.layer(
           );
           const error =
             resolution === 'CREATE'
-              ? yield* Effect.flip(
-                  resolveDuplicateCandidateCreate(subject.transaction, resolutionInput),
-                )
-              : yield* Effect.flip(
-                  resolveDuplicateCandidateMatch(subject.transaction, resolutionInput),
-                );
+              ? yield* Effect.flip(resolveDuplicateCandidateCreate(subject.transaction, resolutionInput))
+              : yield* Effect.flip(resolveDuplicateCandidateMatch(subject.transaction, resolutionInput));
           expect(Predicate.isTagged(error, 'DuplicateCandidateConflict')).toBe(true);
           expect(error.reason).toMatch(/unarchive/iu);
           expect(subject.inserts).toEqual([]);
@@ -391,15 +386,10 @@ it.layer(
           },
         );
         expect(result.outcome).toBe('MATCHED_EXISTING');
-        const durable = recordedRow(
-          subject.inserts.find(({ table }) => table === partyMatchDecisions)?.values,
-        );
+        const durable = recordedRow(subject.inserts.find(({ table }) => table === partyMatchDecisions)?.values);
         expect(durable['operation']).toBe('CREATE');
         expect(durable['committedCreateOutcome']).toBe('MATCHED_EXISTING');
-        expect(
-          'addedOfficialIdentifierRefs' in result,
-          'mutation metadata stays private to the Action',
-        ).toBe(false);
+        expect('addedOfficialIdentifierRefs' in result, 'mutation metadata stays private to the Action').toBe(false);
         const evidence = collector.snapshot();
         expect(evidence.domainEvents.map((event) => event.eventType)).toEqual([
           'party.registry.official-identifier-added.v1',
@@ -466,159 +456,156 @@ it.layer(
         ]);
         expect(evidence.outboxMessages.length).toBe(1);
         expect(evidence.outboxMessages[0]?.domainEventIndex).toBe(0);
-        expect(evidence.outboxMessages[0]?.message.topic).toBe(
-          'party.registry.official-identifier-added.v1',
-        );
-        expect(evidence.outboxMessages[0]?.message.payloadJson).toEqual(
-          evidence.domainEvents[0]?.payloadJson,
-        );
+        expect(evidence.outboxMessages[0]?.message.topic).toBe('party.registry.official-identifier-added.v1');
+        expect(evidence.outboxMessages[0]?.message.payloadJson).toEqual(evidence.domainEvents[0]?.payloadJson);
       }),
   );
 
-  testIt.effect(
-    'matched Create reusing an existing identifier does not republish an acceptance event',
-    () =>
-      Effect.gen(function* matchedCreateReusingAnExistingIdentifierDoes() {
-        const subject = harness(
-          new Map<unknown, readonly Rows[]>([
-            [partyIdentifierClaims, [[{ partyId: partyA }]]],
-            [parties, [[activePartyRow(partyA)]]],
+  testIt.effect('matched Create reusing an existing identifier does not republish an acceptance event', () =>
+    Effect.gen(function* matchedCreateReusingAnExistingIdentifierDoes() {
+      const subject = harness(
+        new Map<unknown, readonly Rows[]>([
+          [partyIdentifierClaims, [[{ partyId: partyA }]]],
+          [parties, [[activePartyRow(partyA)]]],
+          [
+            partyOfficialIdentifiers,
             [
-              partyOfficialIdentifiers,
               [
-                [
-                  {
-                    acceptedByActionInvocationId: 'prior-acceptance',
-                    officialIdentifierId,
-                    partyId: partyA,
-                  },
-                ],
+                {
+                  acceptedByActionInvocationId: 'prior-acceptance',
+                  officialIdentifierId,
+                  partyId: partyA,
+                },
               ],
             ],
-          ]),
-        );
-        const collector = createActionCollector(
-          createPartyAction.descriptor.domainEvents,
-          'party.registry',
-          createPartyAction.descriptor.accessEvidencePolicy,
-        );
-        const result = yield* getActionHandler(createPartyAction)(
-          {
-            candidate: candidate({
-              officialIdentifiers: [
-                { identifierType: 'ICO', value: '27074358', verification: 'VERIFIED' },
-                { identifierType: 'CZ_DIC', value: 'CZ27074358', verification: 'UNVERIFIED' },
-              ],
-            }),
+          ],
+        ]),
+      );
+      const collector = createActionCollector(
+        createPartyAction.descriptor.domainEvents,
+        'party.registry',
+        createPartyAction.descriptor.accessEvidencePolicy,
+      );
+      const result = yield* getActionHandler(createPartyAction)(
+        {
+          candidate: candidate({
+            officialIdentifiers: [
+              {
+                identifierType: 'ICO',
+                value: '27074358',
+                verification: 'VERIFIED',
+              },
+              {
+                identifierType: 'CZ_DIC',
+                value: 'CZ27074358',
+                verification: 'UNVERIFIED',
+              },
+            ],
+          }),
+        },
+        {
+          ...collector,
+          actionInvocationId,
+          scope: actionScope,
+          services: {
+            createOrMatch: (value, invocationId) =>
+              createOrMatchParty(subject.transaction, {
+                actionInvocationId: invocationId,
+                candidate: value,
+                principalId,
+                tenantId,
+              }),
           },
-          {
-            ...collector,
-            actionInvocationId,
-            scope: actionScope,
-            services: {
-              createOrMatch: (value, invocationId) =>
-                createOrMatchParty(subject.transaction, {
-                  actionInvocationId: invocationId,
-                  candidate: value,
-                  principalId,
-                  tenantId,
-                }),
-            },
-          },
-        );
-        expect(result.outcome).toBe('MATCHED_EXISTING');
-        expect(collector.snapshot().domainEvents).toEqual([]);
-        expect(collector.snapshot().outboxMessages).toEqual([]);
-        expect(subject.inserts.some(({ table }) => table === partyOfficialIdentifiers)).toBe(false);
-      }),
+        },
+      );
+      expect(result.outcome).toBe('MATCHED_EXISTING');
+      expect(collector.snapshot().domainEvents).toEqual([]);
+      expect(collector.snapshot().outboxMessages).toEqual([]);
+      expect(subject.inserts.some(({ table }) => table === partyOfficialIdentifiers)).toBe(false);
+    }),
   );
 
-  testIt.effect(
-    'repeated Candidate facts accepted in one matching transaction publish one identifier event',
-    () =>
-      Effect.gen(function* repeatedCandidateFactsAcceptedInOneMatching() {
-        const subject = harness(
-          new Map<unknown, readonly Rows[]>([
-            [partyIdentifierClaims, [[{ partyId: partyA }]]],
-            [parties, [[activePartyRow(partyA)]]],
+  testIt.effect('repeated Candidate facts accepted in one matching transaction publish one identifier event', () =>
+    Effect.gen(function* repeatedCandidateFactsAcceptedInOneMatching() {
+      const subject = harness(
+        new Map<unknown, readonly Rows[]>([
+          [partyIdentifierClaims, [[{ partyId: partyA }]]],
+          [parties, [[activePartyRow(partyA)]]],
+          [
+            partyOfficialIdentifiers,
             [
-              partyOfficialIdentifiers,
+              [],
               [
-                [],
-                [
-                  {
-                    acceptedByActionInvocationId: actionInvocationId,
-                    officialIdentifierId,
-                    partyId: partyA,
-                  },
-                ],
+                {
+                  acceptedByActionInvocationId: actionInvocationId,
+                  officialIdentifierId,
+                  partyId: partyA,
+                },
               ],
             ],
-          ]),
-        );
-        const identifier = {
-          identifierType: 'CZ_DIC' as const,
-          value: 'CZ27074358',
-          verification: 'UNVERIFIED' as const,
-        };
-        const collector = createActionCollector(
-          createPartyAction.descriptor.domainEvents,
-          'party.registry',
-          createPartyAction.descriptor.accessEvidencePolicy,
-        );
-        yield* getActionHandler(createPartyAction)(
-          {
-            candidate: candidate({
-              officialIdentifiers: [
-                { identifierType: 'ICO', value: '27074358', verification: 'VERIFIED' },
-                identifier,
-                identifier,
-              ],
-            }),
+          ],
+        ]),
+      );
+      const identifier = {
+        identifierType: 'CZ_DIC' as const,
+        value: 'CZ27074358',
+        verification: 'UNVERIFIED' as const,
+      };
+      const collector = createActionCollector(
+        createPartyAction.descriptor.domainEvents,
+        'party.registry',
+        createPartyAction.descriptor.accessEvidencePolicy,
+      );
+      yield* getActionHandler(createPartyAction)(
+        {
+          candidate: candidate({
+            officialIdentifiers: [
+              {
+                identifierType: 'ICO',
+                value: '27074358',
+                verification: 'VERIFIED',
+              },
+              identifier,
+              identifier,
+            ],
+          }),
+        },
+        {
+          ...collector,
+          actionInvocationId,
+          scope: actionScope,
+          services: {
+            createOrMatch: (value, invocationId) =>
+              createOrMatchParty(subject.transaction, {
+                actionInvocationId: invocationId,
+                candidate: value,
+                principalId,
+                tenantId,
+              }),
           },
-          {
-            ...collector,
-            actionInvocationId,
-            scope: actionScope,
-            services: {
-              createOrMatch: (value, invocationId) =>
-                createOrMatchParty(subject.transaction, {
-                  actionInvocationId: invocationId,
-                  candidate: value,
-                  principalId,
-                  tenantId,
-                }),
-            },
-          },
-        );
-        expect(
-          subject.inserts.filter(({ table }) => table === partyOfficialIdentifiers).length,
-        ).toBe(1);
-        expect(collector.snapshot().domainEvents.length).toBe(1);
-        expect(collector.snapshot().outboxMessages.length).toBe(1);
-      }),
+        },
+      );
+      expect(subject.inserts.filter(({ table }) => table === partyOfficialIdentifiers).length).toBe(1);
+      expect(collector.snapshot().domainEvents.length).toBe(1);
+      expect(collector.snapshot().outboxMessages.length).toBe(1);
+    }),
   );
 
-  testIt.effect(
-    'reviewed matching with already-owned claims creates no duplicate identifier notifications',
-    () =>
-      Effect.gen(function* reviewedMatchingWithAlreadyOwnedClaimsCreates() {
-        const subject = harness(
-          new Map<unknown, readonly Rows[]>([
-            [duplicateCandidateCases, [[caseRow()]]],
-            [partyAliases, [[], []]],
-            [
-              parties,
-              [[activePartyRow(partyC)], [activePartyRow(partyC)], [activePartyRow(partyC)]],
-            ],
-            [partyIdentifierClaims, [[{ officialIdentifierId, partyId: partyC }]]],
-          ]),
-        );
-        const { collector, result } = yield* invokeReviewedMatch(subject);
-        expect(result.outcome).toBe('MATCH_EXISTING');
-        expect(collector.snapshot().domainEvents).toEqual([]);
-        expect(collector.snapshot().outboxMessages).toEqual([]);
-      }),
+  testIt.effect('reviewed matching with already-owned claims creates no duplicate identifier notifications', () =>
+    Effect.gen(function* reviewedMatchingWithAlreadyOwnedClaimsCreates() {
+      const subject = harness(
+        new Map<unknown, readonly Rows[]>([
+          [duplicateCandidateCases, [[caseRow()]]],
+          [partyAliases, [[], []]],
+          [parties, [[activePartyRow(partyC)], [activePartyRow(partyC)], [activePartyRow(partyC)]]],
+          [partyIdentifierClaims, [[{ officialIdentifierId, partyId: partyC }]]],
+        ]),
+      );
+      const { collector, result } = yield* invokeReviewedMatch(subject);
+      expect(result.outcome).toBe('MATCH_EXISTING');
+      expect(collector.snapshot().domainEvents).toEqual([]);
+      expect(collector.snapshot().outboxMessages).toEqual([]);
+    }),
   );
 
   testIt.effect(
@@ -644,9 +631,7 @@ it.layer(
             ],
           ]),
         );
-        const failure = yield* Effect.flip(
-          resolveDuplicateCandidateMatch(subject.transaction, resolutionInput),
-        );
+        const failure = yield* Effect.flip(resolveDuplicateCandidateMatch(subject.transaction, resolutionInput));
         expect(Predicate.isTagged(failure, 'DuplicateCandidateConflict')).toBe(true);
         expect(subject.reads.some(({ table, locked }) => table === parties && locked)).toBe(true);
         expect(subject.inserts).toEqual([]);
@@ -654,119 +639,113 @@ it.layer(
       }),
   );
 
-  testIt.effect(
-    'reviewed matching rejects a cross-tenant selected reference without resolving its identity',
-    () =>
-      Effect.gen(function* reviewedMatchingRejectsACrossTenantSelected() {
-        const subject = harness();
-        const failure = yield* Effect.flip(
-          resolveDuplicateCandidateMatch(subject.transaction, {
-            ...resolutionInput,
-            selectedPartyTenantId: '90000000-0000-4000-8000-000000000001',
-          }),
-        );
-        expect(Predicate.isTagged(failure, 'DuplicateCandidateConflict')).toBe(true);
-        expect(subject.reads.length, 'only the trusted tenant serialization lock is acquired').toBe(
-          1,
-        );
-        expect(subject.inserts).toEqual([]);
-      }),
+  testIt.effect('reviewed matching rejects a cross-tenant selected reference without resolving its identity', () =>
+    Effect.gen(function* reviewedMatchingRejectsACrossTenantSelected() {
+      const subject = harness();
+      const failure = yield* Effect.flip(
+        resolveDuplicateCandidateMatch(subject.transaction, {
+          ...resolutionInput,
+          selectedPartyTenantId: '90000000-0000-4000-8000-000000000001',
+        }),
+      );
+      expect(Predicate.isTagged(failure, 'DuplicateCandidateConflict')).toBe(true);
+      expect(subject.reads.length, 'only the trusted tenant serialization lock is acquired').toBe(1);
+      expect(subject.inserts).toEqual([]);
+    }),
   );
 
-  testIt.effect(
-    'reviewed matching rejects an absorbed target with the full-chain canonical survivor reference',
-    () =>
-      Effect.gen(function* reviewedMatchingRejectsAnAbsorbedTargetWith() {
-        const subject = harness(
-          new Map<unknown, readonly Rows[]>([
-            [duplicateCandidateCases, [[caseRow()]]],
+  testIt.effect('reviewed matching rejects an absorbed target with the full-chain canonical survivor reference', () =>
+    Effect.gen(function* reviewedMatchingRejectsAnAbsorbedTargetWith() {
+      const subject = harness(
+        new Map<unknown, readonly Rows[]>([
+          [duplicateCandidateCases, [[caseRow()]]],
+          [
+            partyAliases,
             [
-              partyAliases,
-              [
-                [{ aliasPartyId: partyB, canonicalPartyId: partyA, tenantId }],
-                [{ aliasPartyId: partyA, canonicalPartyId: partyC, tenantId }],
-                [],
-              ],
+              [{ aliasPartyId: partyB, canonicalPartyId: partyA, tenantId }],
+              [{ aliasPartyId: partyA, canonicalPartyId: partyC, tenantId }],
+              [],
             ],
-            [parties, [[{ partyId: partyC }]]],
-          ]),
-        );
-        const failure = yield* Effect.flip(
-          resolveDuplicateCandidateMatch(subject.transaction, {
-            ...resolutionInput,
-            selectedPartyId: partyB,
-          }),
-        );
-        expect(Schema.is(PartyAliasWriteRejected)(failure)).toBe(true);
-        const rejection = yield* Schema.decodeUnknownEffect(PartyAliasWriteRejected)(failure);
-        expect(rejection.canonicalPartyRef.resourceId).toBe(partyC);
-        expect(subject.inserts).toEqual([]);
-        expect(subject.updates).toEqual([]);
-      }),
+          ],
+          [parties, [[{ partyId: partyC }]]],
+        ]),
+      );
+      const failure = yield* Effect.flip(
+        resolveDuplicateCandidateMatch(subject.transaction, {
+          ...resolutionInput,
+          selectedPartyId: partyB,
+        }),
+      );
+      expect(Schema.is(PartyAliasWriteRejected)(failure)).toBe(true);
+      const rejection = yield* Schema.decodeUnknownEffect(PartyAliasWriteRejected)(failure);
+      expect(rejection.canonicalPartyRef.resourceId).toBe(partyC);
+      expect(subject.inserts).toEqual([]);
+      expect(subject.updates).toEqual([]);
+    }),
   );
 
-  testIt.effect(
-    'future-effective evidence is rejected before a current decision or Party can be persisted',
-    () =>
-      Effect.gen(function* futureEffectiveEvidenceIsRejectedBeforeA() {
-        const subject = harness();
-        const failure = yield* Effect.flip(
-          matchParty(subject.transaction, {
-            actionInvocationId,
-            candidate: candidate({ validFrom: DateTime.makeUnsafe('2099-01-01T00:00:00.000Z') }),
-            tenantId,
+  testIt.effect('future-effective evidence is rejected before a current decision or Party can be persisted', () =>
+    Effect.gen(function* futureEffectiveEvidenceIsRejectedBeforeA() {
+      const subject = harness();
+      const failure = yield* Effect.flip(
+        matchParty(subject.transaction, {
+          actionInvocationId,
+          candidate: candidate({
+            validFrom: DateTime.makeUnsafe('2099-01-01T00:00:00.000Z'),
           }),
-        );
-        expect(Predicate.isTagged(failure, 'PartyEvidenceInsufficient')).toBe(true);
-        expect(subject.inserts).toEqual([]);
-      }),
+          tenantId,
+        }),
+      );
+      expect(Predicate.isTagged(failure, 'PartyEvidenceInsufficient')).toBe(true);
+      expect(subject.inserts).toEqual([]);
+    }),
   );
 
   it('durable matching is an idempotent identity Action and the separate UX preview remains a governed read', () => {
     expect(matchPartyAction.descriptor.idempotency).toBe('required');
-    expect(matchPartyAction.descriptor.tenantPermission?.({ candidate: candidate() })).toBe(
-      'manage_party_identity',
-    );
+    expect(matchPartyAction.descriptor.tenantPermission?.({ candidate: candidate() })).toBe('manage_party_identity');
     expect(matchPartyAction.descriptor.legalEntityScope).toBe('optional');
     expect(partyMatchRead.descriptor.accessKind).toBe('detail');
   });
 
-  testIt.effect(
-    'weak exact canonical evidence produces review rather than automatic identity or NO_MATCH',
-    () =>
-      Effect.gen(function* weakExactCanonicalEvidenceProducesReviewRather() {
-        const subject = harness(
-          new Map<unknown, readonly Rows[]>([
-            [partyOfficialIdentifiers, [[{ partyId: partyA }]]],
-            [partyAliases, [[]]],
-            [parties, [[{ partyId: partyA }]]],
-          ]),
-        );
-        const result = yield* matchParty(subject.transaction, {
-          actionInvocationId,
-          candidate: candidate({
-            officialIdentifiers: [
-              { identifierType: 'ICO', value: '27074358', verification: 'UNVERIFIED' },
-            ],
-            partyType: 'PERSON',
-            subjectEvidence: [
-              {
-                basis: 'DIRECT_INTERACTION',
-                evidenceRef: 'meeting/42',
-                kind: 'ACTOR_ATTESTATION',
-                observedSubject: 'PERSON',
-                statement: 'Met this human',
-                subjectKey: partySubjectKeyFromString('one-subject'),
-              },
-            ],
-          }),
-          tenantId,
-        });
-        expect(result.outcome).toBe('AMBIGUOUS');
-        expect(result.caseRef?.resourceId).toBe(candidateCaseId);
-        expect(result.candidateParties.map((ref) => ref.resourceId)).toEqual([partyA]);
-        expect(subject.inserts.some(({ table }) => table === parties)).toBe(false);
-      }),
+  testIt.effect('weak exact canonical evidence produces review rather than automatic identity or NO_MATCH', () =>
+    Effect.gen(function* weakExactCanonicalEvidenceProducesReviewRather() {
+      const subject = harness(
+        new Map<unknown, readonly Rows[]>([
+          [partyOfficialIdentifiers, [[{ partyId: partyA }]]],
+          [partyAliases, [[]]],
+          [parties, [[{ partyId: partyA }]]],
+        ]),
+      );
+      const result = yield* matchParty(subject.transaction, {
+        actionInvocationId,
+        candidate: candidate({
+          officialIdentifiers: [
+            {
+              identifierType: 'ICO',
+              value: '27074358',
+              verification: 'UNVERIFIED',
+            },
+          ],
+          partyType: 'PERSON',
+          subjectEvidence: [
+            {
+              basis: 'DIRECT_INTERACTION',
+              evidenceRef: 'meeting/42',
+              kind: 'ACTOR_ATTESTATION',
+              observedSubject: 'PERSON',
+              statement: 'Met this human',
+              subjectKey: partySubjectKeyFromString('one-subject'),
+            },
+          ],
+        }),
+        tenantId,
+      });
+      expect(result.outcome).toBe('AMBIGUOUS');
+      expect(result.caseRef?.resourceId).toBe(candidateCaseId);
+      expect(result.candidateParties.map((ref) => ref.resourceId)).toEqual([partyA]);
+      expect(subject.inserts.some(({ table }) => table === parties)).toBe(false);
+    }),
   );
 
   testIt.effect(
@@ -799,69 +778,77 @@ it.layer(
       }),
   );
 
-  testIt.effect(
-    'a new material evaluation creates a linked successor without rewriting the prior case',
-    () =>
-      Effect.gen(function* aNewMaterialEvaluationCreatesALinked() {
-        const priorId = '30000000-0000-4000-8000-000000000099';
-        const subject = harness(
-          new Map<unknown, readonly Rows[]>([
+  testIt.effect('a new material evaluation creates a linked successor without rewriting the prior case', () =>
+    Effect.gen(function* aNewMaterialEvaluationCreatesALinked() {
+      const priorId = '30000000-0000-4000-8000-000000000099';
+      const subject = harness(
+        new Map<unknown, readonly Rows[]>([
+          [
+            partyIdentifierClaims,
             [
-              partyIdentifierClaims,
               [
-                [{ officialIdentifierId: '70000000-0000-4000-8000-000000000001', partyId: partyA }],
-                [{ partyId: partyB }],
+                {
+                  officialIdentifierId: '70000000-0000-4000-8000-000000000001',
+                  partyId: partyA,
+                },
+              ],
+              [{ partyId: partyB }],
+            ],
+          ],
+          [partyAliases, [[], []]],
+          [parties, [[{ partyId: partyA }], [{ partyId: partyB }]]],
+          [
+            duplicateCandidateCases,
+            [
+              [],
+              [
+                {
+                  ...caseRow(),
+                  candidateCaseId: priorId,
+                  lifecycleState: 'RESOLVED',
+                },
               ],
             ],
-            [partyAliases, [[], []]],
-            [parties, [[{ partyId: partyA }], [{ partyId: partyB }]]],
-            [
-              duplicateCandidateCases,
-              [[], [{ ...caseRow(), candidateCaseId: priorId, lifecycleState: 'RESOLVED' }]],
-            ],
-          ]),
-        );
-        const result = yield* matchParty(subject.transaction, {
-          actionInvocationId,
-          candidate: candidate(),
-          tenantId,
-        });
-        const insertedCase = recordedRow(
-          subject.inserts.find(({ table }) => table === duplicateCandidateCases)?.values,
-        );
-        expect(insertedCase['priorCandidateCaseId']).toBe(priorId);
-        expect(String(insertedCase['evaluationFingerprint'])).toMatch(/^[0-9a-f]{64}$/u);
-        expect(result.evidenceExplanation[0]?.officialIdentifierRef?.resourceId).toBe(
-          '70000000-0000-4000-8000-000000000001',
-        );
-        expect(result.evidenceExplanation[0]?.identifierType).toBe('ICO');
-        expect(result.evidenceExplanation[0]?.normalizedValue).toBe('27074358');
-        expect(subject.updates).toEqual([]);
-      }),
+          ],
+        ]),
+      );
+      const result = yield* matchParty(subject.transaction, {
+        actionInvocationId,
+        candidate: candidate(),
+        tenantId,
+      });
+      const insertedCase = recordedRow(subject.inserts.find(({ table }) => table === duplicateCandidateCases)?.values);
+      expect(insertedCase['priorCandidateCaseId']).toBe(priorId);
+      expect(String(insertedCase['evaluationFingerprint'])).toMatch(/^[0-9a-f]{64}$/u);
+      expect(result.evidenceExplanation[0]?.officialIdentifierRef?.resourceId).toBe(
+        '70000000-0000-4000-8000-000000000001',
+      );
+      expect(result.evidenceExplanation[0]?.identifierType).toBe('ICO');
+      expect(result.evidenceExplanation[0]?.normalizedValue).toBe('27074358');
+      expect(subject.updates).toEqual([]);
+    }),
   );
 
-  testIt.effect(
-    'explicit prior-case continuation rejects foreign or missing review references',
-    () =>
-      Effect.forEach(
-        [tenantId, '90000000-0000-4000-8000-000000000001'],
-        (priorCaseTenantId) =>
-          Effect.gen(function* rejectInvalidPriorCaseReference() {
-            const subject = harness();
-            const failure = yield* Effect.flip(
-              matchParty(subject.transaction, {
-                actionInvocationId,
-                candidate: candidate(),
-                priorCandidateCaseId: candidateCaseId,
-                priorCaseTenantId,
-                tenantId,
-              }),
-            );
-            expect(Predicate.isTagged(failure, 'PartyEvidenceInsufficient')).toBe(true);
-            expect(subject.inserts).toEqual([]);
-          }),
-        { concurrency: 'unbounded', discard: true },
-      ),
+  testIt.effect('explicit prior-case continuation rejects foreign or missing review references', () =>
+    Effect.forEach(
+      [tenantId, '90000000-0000-4000-8000-000000000001'],
+      (priorCaseTenantId) =>
+        Effect.gen(function* rejectInvalidPriorCaseReference() {
+          const subject = harness();
+          const failure = yield* Effect.flip(
+            matchParty(subject.transaction, {
+              actionInvocationId,
+              candidate: candidate(),
+              priorCandidateCaseId: candidateCaseId,
+              priorCaseTenantId,
+              tenantId,
+            }),
+          );
+          expect(Predicate.isTagged(failure, 'PartyEvidenceInsufficient')).toBe(true);
+          expect(subject.inserts).toEqual([]);
+        }),
+      { concurrency: 'unbounded', discard: true },
+    ),
   );
 
   it('equivalent Candidate property and evidence ordering has one deterministic fingerprint', () => {
@@ -874,62 +861,71 @@ it.layer(
       evidenceRefs: original.evidenceRefs.toReversed(),
       officialIdentifiers: original.officialIdentifiers.toReversed(),
       partyType: original.partyType,
-      provenance: { method: original.provenance.method, source: original.provenance.source },
+      provenance: {
+        method: original.provenance.method,
+        source: original.provenance.source,
+      },
       subjectEvidence: original.subjectEvidence ?? [],
       validFrom: original.validFrom,
     };
     expect(candidateFingerprint(original)).toBe(candidateFingerprint(reordered));
   });
 
-  testIt.effect(
-    'insufficient typed evidence cannot persist a case or decision even with a verified identifier',
-    () =>
-      Effect.gen(function* denyUnevidencedSubject() {
-        for (const operation of ['CREATE', 'MATCH'] as const) {
-          const subject = harness();
-          const input = {
-            actionInvocationId,
-            candidate: candidate({ subjectEvidence: [] }),
-            principalId,
-            tenantId,
-          };
-          const failure = yield* operation === 'CREATE'
-            ? Effect.flip(createOrMatchParty(subject.transaction, input))
-            : Effect.flip(matchParty(subject.transaction, input));
-          expect(Predicate.isTagged(failure, 'PartyEvidenceInsufficient')).toBe(true);
-          expect(subject.inserts.length).toBe(0);
-        }
-      }),
+  testIt.effect('insufficient typed evidence cannot persist a case or decision even with a verified identifier', () =>
+    Effect.gen(function* denyUnevidencedSubject() {
+      for (const operation of ['CREATE', 'MATCH'] as const) {
+        const subject = harness();
+        const input = {
+          actionInvocationId,
+          candidate: candidate({ subjectEvidence: [] }),
+          principalId,
+          tenantId,
+        };
+        const failure = yield* operation === 'CREATE'
+          ? Effect.flip(createOrMatchParty(subject.transaction, input))
+          : Effect.flip(matchParty(subject.transaction, input));
+        expect(Predicate.isTagged(failure, 'PartyEvidenceInsufficient')).toBe(true);
+        expect(subject.inserts.length).toBe(0);
+      }
+    }),
   );
 
-  testIt.effect(
-    'reviewer selection cannot waive missing subject/type evidence from a retained case',
-    () =>
-      Effect.gen(function* denyUnevidencedReview() {
-        const row = caseRow();
-        const subject = harness(
-          new Map([
+  testIt.effect('reviewer selection cannot waive missing subject/type evidence from a retained case', () =>
+    Effect.gen(function* denyUnevidencedReview() {
+      const row = caseRow();
+      const subject = harness(
+        new Map([
+          [
+            duplicateCandidateCases,
             [
-              duplicateCandidateCases,
-              [[{ ...row, candidateSnapshot: { ...row.candidateSnapshot, subjectEvidence: [] } }]],
+              [
+                {
+                  ...row,
+                  candidateSnapshot: {
+                    ...row.candidateSnapshot,
+                    subjectEvidence: [],
+                  },
+                },
+              ],
             ],
-          ]),
-        );
-        const failure = yield* Effect.flip(
-          resolveDuplicateCandidateMatch(subject.transaction, {
-            actionInvocationId,
-            candidateCaseId,
-            expectedRevision: 1,
-            principalId,
-            reason: 'reviewed',
-            selectedPartyId: partyA,
-            selectedPartyTenantId: tenantId,
-            tenantId,
-          }),
-        );
-        expect(Predicate.isTagged(failure, 'DuplicateCandidateConflict')).toBe(true);
-        expect(subject.inserts.length).toBe(0);
-        expect(subject.updates.length).toBe(0);
-      }),
+          ],
+        ]),
+      );
+      const failure = yield* Effect.flip(
+        resolveDuplicateCandidateMatch(subject.transaction, {
+          actionInvocationId,
+          candidateCaseId,
+          expectedRevision: 1,
+          principalId,
+          reason: 'reviewed',
+          selectedPartyId: partyA,
+          selectedPartyTenantId: tenantId,
+          tenantId,
+        }),
+      );
+      expect(Predicate.isTagged(failure, 'DuplicateCandidateConflict')).toBe(true);
+      expect(subject.inserts.length).toBe(0);
+      expect(subject.updates.length).toBe(0);
+    }),
   );
 });

@@ -1,4 +1,5 @@
 import { Schema } from 'effect';
+
 import { PartyRefSchema } from '../resources/party.ts';
 
 const MergeReadinessOwnerKeySchema = Schema.String.check(Schema.isMinLength(1)).pipe(

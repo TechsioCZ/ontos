@@ -1,7 +1,9 @@
 import { Cause, Option, Predicate, Schema } from 'effect';
 
 const PostgresFailureCodeSchema = Schema.Struct({ code: Schema.String });
-const PostgresFailureConstraintSchema = Schema.Struct({ constraint: Schema.String });
+const PostgresFailureConstraintSchema = Schema.Struct({
+  constraint: Schema.String,
+});
 const CauseWrapperSchema = Schema.Struct({ cause: Schema.Unknown });
 export type PostgresFailureMetadata = Readonly<{
   readonly code: string;
@@ -24,9 +26,7 @@ const enqueueFailureReasons = (cause: Cause.Cause<unknown>, pending: unknown[]):
   }
 };
 
-const decodeFailureMetadata = (
-  current: PostgresFailureInput,
-): Option.Option<Readonly<PostgresFailureMetadata>> =>
+const decodeFailureMetadata = (current: PostgresFailureInput): Option.Option<Readonly<PostgresFailureMetadata>> =>
   Option.map(decodePostgresFailureCode(current), ({ code }) => {
     const constraint = decodePostgresFailureConstraint(current);
     const metadata: PostgresFailureMetadata = Option.isSome(constraint)

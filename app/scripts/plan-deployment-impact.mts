@@ -16,7 +16,7 @@ import {
 } from 'effect';
 import { Command, Flag } from 'effect/unstable/cli';
 import { ChildProcess, ChildProcessSpawner } from 'effect/unstable/process';
-import { outboxWorkerDelivery } from './outbox-worker-delivery.mjs';
+
 import type { ProtectedEntrypointInventory } from './authorization/protected-entrypoint-inventory.mts';
 import type { AuthorizationRolloutContract } from './authorization/rollout-contract.mts';
 import { validateAuthorizationRolloutContract } from './authorization/rollout-contract.mts';
@@ -25,13 +25,8 @@ import type {
   AuthorizationReadinessEvidence,
 } from './check-authorization-readiness.mts';
 import { hashAuthorizationEvidence } from './check-authorization-readiness.mts';
+import { outboxWorkerDelivery } from './outbox-worker-delivery.mjs';
 import type { AuthorizationImpactReport } from './report-fail-closed-authorization-impact.mts';
-
-declare global {
-  interface ImportMeta {
-    readonly main?: boolean;
-  }
-}
 
 export const DeploymentPhaseKindSchema = Schema.Literals(['infrastructure', 'provider', 'shell']);
 export type DeploymentPhaseKind = typeof DeploymentPhaseKindSchema.Type;
@@ -74,9 +69,7 @@ const ReferenceTopologySchema = Schema.Struct({
         id: Schema.optional(Schema.String),
         moduleFederation: Schema.optional(
           Schema.Struct({
-            remotes: Schema.optional(
-              Schema.Array(Schema.Struct({ id: Schema.optional(Schema.String) })),
-            ),
+            remotes: Schema.optional(Schema.Array(Schema.Struct({ id: Schema.optional(Schema.String) }))),
             verticalRefs: Schema.optional(Schema.Array(Schema.String)),
           }),
         ),
@@ -98,12 +91,7 @@ type Ownership = typeof OwnershipSchema.Type;
 const AuthorizationEnvironmentSchema = Schema.Literals(['development', 'production', 'stage']);
 const AuthorizationModeSchema = Schema.Literals(['enforced', 'report_only']);
 const AuthorizationCredentialSchema = Schema.Literals(['api_key', 'session']);
-const AuthorizationSurfaceSchema = Schema.Literals([
-  'action',
-  'capability_issuance',
-  'route',
-  'worker',
-]);
+const AuthorizationSurfaceSchema = Schema.Literals(['action', 'capability_issuance', 'route', 'worker']);
 const EntrypointKeySchema = Schema.String.pipe(Schema.brand('EntrypointKey'));
 const CanonicalTimestampStringSchema = Schema.String.check(
   Schema.makeFilter((value) => {
@@ -113,9 +101,7 @@ const CanonicalTimestampStringSchema = Schema.String.check(
       : 'timestamp must use canonical UTC ISO 8601 encoding';
   }),
 );
-const CanonicalTimestampCodec = CanonicalTimestampStringSchema.pipe(
-  Schema.decodeTo(Schema.DateTimeUtcFromString),
-);
+const CanonicalTimestampCodec = CanonicalTimestampStringSchema.pipe(Schema.decodeTo(Schema.DateTimeUtcFromString));
 const CanonicalTimestampWireSchema = Schema.toEncoded(CanonicalTimestampCodec);
 
 export interface DeploymentImpactPlan {
@@ -164,7 +150,10 @@ const InventoryAuthorizationSchema = Schema.Union([
   Schema.Struct({ kind: Schema.Literal('public') }),
   Schema.Struct({ kind: Schema.Literal('authenticated_principal') }),
   Schema.Struct({ kind: Schema.Literal('owner_local_background') }),
-  Schema.Struct({ kind: Schema.Literal('context_permission'), permission: Schema.String }),
+  Schema.Struct({
+    kind: Schema.Literal('context_permission'),
+    permission: Schema.String,
+  }),
   Schema.Struct({
     kind: Schema.Literal('action_execution'),
     provisioning: Schema.Literals(['explicit', 'tenant_membership_default']),
@@ -326,16 +315,12 @@ const requireAuthorizationEvidence = (
 ): Required<Pick<AuthorizationPromotionGateInput, 'impact' | 'negativeSmoke' | 'readiness'>> => {
   const { impact, negativeSmoke, readiness } = input;
   if (impact === undefined || negativeSmoke === undefined || readiness === undefined) {
-    return fail(
-      'enforced authorization promotion requires impact, readiness, and negative-smoke evidence',
-    );
+    return fail('enforced authorization promotion requires impact, readiness, and negative-smoke evidence');
   }
   return { impact, negativeSmoke, readiness };
 };
 
-type PromotionEvidence = Required<
-  Pick<AuthorizationPromotionGateInput, 'impact' | 'negativeSmoke' | 'readiness'>
->;
+type PromotionEvidence = Required<Pick<AuthorizationPromotionGateInput, 'impact' | 'negativeSmoke' | 'readiness'>>;
 
 const evidenceHasInventoryIdentity = (
   inventory: ProtectedEntrypointInventory,
@@ -349,10 +334,7 @@ const evidenceHasInventoryIdentity = (
   evidence.sourceRevision === inventory.sourceRevision &&
   evidence.inventoryHash === inventory.inventoryHash;
 
-const readinessMatchesPromotion = (
-  input: AuthorizationPromotionGateInput,
-  evidence: PromotionEvidence,
-): boolean => {
+const readinessMatchesPromotion = (input: AuthorizationPromotionGateInput, evidence: PromotionEvidence): boolean => {
   const { impact, negativeSmoke, readiness } = evidence;
   return (
     readiness.status === 'ready' &&
@@ -363,10 +345,7 @@ const readinessMatchesPromotion = (
   );
 };
 
-const authorizationEvidenceMatches = (
-  input: AuthorizationPromotionGateInput,
-  evidence: PromotionEvidence,
-): boolean =>
+const authorizationEvidenceMatches = (input: AuthorizationPromotionGateInput, evidence: PromotionEvidence): boolean =>
   [evidence.impact, evidence.negativeSmoke, evidence.readiness].every((item) =>
     evidenceHasInventoryIdentity(input.inventory, item),
   ) &&
@@ -387,12 +366,20 @@ export const validateAuthorizationPromotionGate = (
     if (input.environment === 'production') {
       fail('production authorization promotion rejects report-only configuration');
     }
-    return { environment: input.environment, mode: rollout.mode, status: 'observing' };
+    return {
+      environment: input.environment,
+      mode: rollout.mode,
+      status: 'observing',
+    };
   }
   if (!authorizationEvidenceMatches(input, requireAuthorizationEvidence(input))) {
     fail('authorization promotion evidence is missing, stale, mismatched, or unresolved');
   }
-  return { environment: input.environment, mode: rollout.mode, status: 'ready' };
+  return {
+    environment: input.environment,
+    mode: rollout.mode,
+    status: 'ready',
+  };
 };
 
 const INFRASTRUCTURE_PHASES = {
@@ -412,10 +399,7 @@ const INFRASTRUCTURE_PHASES = {
 
 const GIT_EXECUTABLE = '/usr/bin/git';
 
-const readJson = <DocumentSchema extends Schema.ConstraintDecoder<unknown>>(
-  schema: DocumentSchema,
-  filePath: string,
-) =>
+const readJson = <DocumentSchema extends Schema.ConstraintDecoder<unknown>>(schema: DocumentSchema, filePath: string) =>
   Effect.gen(function* readJsonEffect() {
     const fileSystem = yield* FileSystem.FileSystem;
     const source = yield* fileSystem.readFileString(filePath);
@@ -445,9 +429,7 @@ const isWithin = (changedPath: string, ownerPath: string): boolean =>
 
 const parseStageSetups = (zeropsSource: string): ReadonlySet<string> => {
   const setups = new Set<string>();
-  for (const match of zeropsSource.matchAll(
-    /^\s*-\s+setup:\s*['"]?(?<setup>[^'"\s]+)['"]?\s*$/gmu,
-  )) {
+  for (const match of zeropsSource.matchAll(/^\s*-\s+setup:\s*['"]?(?<setup>[^'"\s]+)['"]?\s*$/gmu)) {
     const setup = match.groups?.setup;
     if (setup !== undefined && setup.length > 0) {
       setups.add(setup);
@@ -459,9 +441,7 @@ const parseStageSetups = (zeropsSource: string): ReadonlySet<string> => {
 type TopologyOwner = typeof TopologyOwnerSchema.Type;
 type ReferenceVertical = NonNullable<ReferenceTopology['verticals']>[number];
 
-const indexOwners = (
-  ownerEntries: readonly TopologyOwner[],
-): ReadonlyMap<string, TopologyOwner> => {
+const indexOwners = (ownerEntries: readonly TopologyOwner[]): ReadonlyMap<string, TopologyOwner> => {
   const ownersById = new Map<string, TopologyOwner>();
   for (const owner of ownerEntries) {
     const ownerId = requireString(owner.id, 'ownership owner.id');
@@ -518,14 +498,8 @@ const validateSharedPackages = (
   const sharedPackageIds = new Set<string>();
   for (const sharedPackage of sharedPackages) {
     const id = requireString(sharedPackage.id, 'reference topology shared package.id');
-    const packageName = requireString(
-      sharedPackage.package,
-      `reference topology shared package ${id}.package`,
-    );
-    const ownerPath = requireString(
-      sharedPackage.path,
-      `reference topology shared package ${id}.path`,
-    );
+    const packageName = requireString(sharedPackage.package, `reference topology shared package ${id}.package`);
+    const ownerPath = requireString(sharedPackage.path, `reference topology shared package ${id}.path`);
     if (sharedPackageIds.has(id)) {
       fail(`reference topology contains duplicate shared package identity "${id}"`);
     }
@@ -562,9 +536,7 @@ const verticalDependencies = (
 ): readonly string[] => {
   const dependencies = [
     ...(vertical.moduleFederation?.verticalRefs ?? []),
-    ...(vertical.moduleFederation?.remotes ?? []).flatMap((remote) =>
-      remote.id === undefined ? [] : [remote.id],
-    ),
+    ...(vertical.moduleFederation?.remotes ?? []).flatMap((remote) => (remote.id === undefined ? [] : [remote.id])),
   ];
   for (const dependency of dependencies) {
     if (!verticalIds.has(dependency)) {
@@ -582,10 +554,7 @@ const buildVerticalUnits = (
   const units: TopologyUnit[] = [];
   for (const vertical of verticals) {
     const id = requireString(vertical.id, 'reference topology vertical.id');
-    const packageName = requireString(
-      vertical.package,
-      `reference topology vertical ${id}.package`,
-    );
+    const packageName = requireString(vertical.package, `reference topology vertical ${id}.package`);
     const ownerPath = requireString(vertical.path, `reference topology vertical ${id}.path`);
     const owner = ownersById.get(id);
     if (owner === undefined) {
@@ -643,15 +612,10 @@ const validateOwnershipCoverage = (
   }
 };
 
-const validateStageSetupCoverage = (
-  units: readonly TopologyUnit[],
-  stageSetups: ReadonlySet<string>,
-): void => {
+const validateStageSetupCoverage = (units: readonly TopologyUnit[], stageSetups: ReadonlySet<string>): void => {
   for (const phase of [...Object.values(INFRASTRUCTURE_PHASES), ...units]) {
     if (!stageSetups.has(phase.stageSetup)) {
-      fail(
-        `topology delivery unit "${phase.id}" has unsupported stage setup "${phase.stageSetup}" in zerops.yaml`,
-      );
+      fail(`topology delivery unit "${phase.id}" has unsupported stage setup "${phase.stageSetup}" in zerops.yaml`);
     }
   }
 };
@@ -709,11 +673,7 @@ const orderUnits = (units: readonly TopologyUnit[]): readonly TopologyUnit[] => 
   return ordered;
 };
 
-const invalidBaseReason = (
-  rootDirectory: string,
-  baseRevision: string | undefined,
-  headRevision: string,
-) =>
+const invalidBaseReason = (rootDirectory: string, baseRevision: string | undefined, headRevision: string) =>
   Effect.gen(function* invalidBaseReasonEffect() {
     if (baseRevision === undefined || baseRevision.length === 0 || /^0+$/u.test(baseRevision)) {
       return 'comparison base is unavailable or all-zero';
@@ -736,11 +696,11 @@ const invalidBaseReason = (
     }
     const isAncestor = yield* spawner
       .exitCode(
-        ChildProcess.make(
-          GIT_EXECUTABLE,
-          ['merge-base', '--is-ancestor', baseRevision, headRevision],
-          { cwd: rootDirectory, stderr: 'ignore', stdout: 'ignore' },
-        ),
+        ChildProcess.make(GIT_EXECUTABLE, ['merge-base', '--is-ancestor', baseRevision, headRevision], {
+          cwd: rootDirectory,
+          stderr: 'ignore',
+          stdout: 'ignore',
+        }),
       )
       .pipe(
         Effect.map((exitCode) => exitCode === 0),
@@ -756,11 +716,9 @@ const changedPathsFromGit = (rootDirectory: string, baseRevision: string, headRe
   Effect.gen(function* changedPathsFromGitEffect() {
     const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
     const output = yield* spawner.string(
-      ChildProcess.make(
-        GIT_EXECUTABLE,
-        ['diff', '--name-only', '--no-renames', '-z', baseRevision, headRevision],
-        { cwd: rootDirectory },
-      ),
+      ChildProcess.make(GIT_EXECUTABLE, ['diff', '--name-only', '--no-renames', '-z', baseRevision, headRevision], {
+        cwd: rootDirectory,
+      }),
     );
     return output.split('\0').filter(Boolean);
   });
@@ -831,13 +789,16 @@ const makeComparison = (
 ): DeploymentImpactPlan['comparison'] => {
   const mode = fallbackReason === undefined ? 'diff' : 'full';
   if (options.baseRevision === undefined) {
-    return fallbackReason === undefined
-      ? { headRevision, mode }
-      : { headRevision, mode, reason: fallbackReason };
+    return fallbackReason === undefined ? { headRevision, mode } : { headRevision, mode, reason: fallbackReason };
   }
   return fallbackReason === undefined
     ? { baseRevision: options.baseRevision, headRevision, mode }
-    : { baseRevision: options.baseRevision, headRevision, mode, reason: fallbackReason };
+    : {
+        baseRevision: options.baseRevision,
+        headRevision,
+        mode,
+        reason: fallbackReason,
+      };
 };
 
 interface DeploymentImpactState {
@@ -852,20 +813,13 @@ const addAllUnits = (impacted: Set<string>, orderedUnits: readonly TopologyUnit[
   }
 };
 
-const addWithConsumers = (
-  unitId: string,
-  impacted: Set<string>,
-  orderedUnits: readonly TopologyUnit[],
-): void => {
+const addWithConsumers = (unitId: string, impacted: Set<string>, orderedUnits: readonly TopologyUnit[]): void => {
   impacted.add(unitId);
   let changed = true;
   while (changed) {
     changed = false;
     for (const unit of orderedUnits) {
-      if (
-        !impacted.has(unit.id) &&
-        unit.dependencies.some((dependency) => impacted.has(dependency))
-      ) {
+      if (!impacted.has(unit.id) && unit.dependencies.some((dependency) => impacted.has(dependency))) {
         impacted.add(unit.id);
         changed = true;
       }
@@ -972,10 +926,7 @@ const deploymentComparison = (options: PlanDeploymentImpactOptions, rootDirector
             requireString(options.baseRevision, 'base revision'),
             headRevision,
           ));
-    const changedPaths = EffectArray.sort(
-      [...new Set(comparedPaths.map(normalizeChangedPath))],
-      Order.String,
-    );
+    const changedPaths = EffectArray.sort([...new Set(comparedPaths.map(normalizeChangedPath))], Order.String);
     return { changedPaths, fallbackReason, fullDeploy, headRevision };
   });
 
@@ -998,16 +949,12 @@ export const planDeploymentImpact = (options: PlanDeploymentImpactOptions = {}) 
         : validateAuthorizationPromotionGate(options.authorizationPromotion);
     const pathService = yield* Path.Path;
     const fileSystem = yield* FileSystem.FileSystem;
-    const rootDirectory =
-      options.rootDirectory ?? (yield* Config.string('PWD').pipe(Effect.orElseSucceed(() => '.')));
+    const rootDirectory = options.rootDirectory ?? (yield* Config.string('PWD').pipe(Effect.orElseSucceed(() => '.')));
     const topology = yield* readJson(
       ReferenceTopologySchema,
       pathService.join(rootDirectory, 'topology/reference-topology.json'),
     );
-    const ownership = yield* readJson(
-      OwnershipSchema,
-      pathService.join(rootDirectory, 'topology/ownership.json'),
-    );
+    const ownership = yield* readJson(OwnershipSchema, pathService.join(rootDirectory, 'topology/ownership.json'));
     const stageSetups = parseStageSetups(
       yield* fileSystem.readFileString(pathService.join(rootDirectory, 'zerops.yaml')),
     );
@@ -1137,18 +1084,14 @@ const writeGitHubOutputs = (plan: DeploymentImpactPlan, outputPath: string) =>
   });
 
 const parseAuthorizationNow = (value: string) =>
-  Schema.decodeUnknownEffect(Schema.DateTimeUtcFromString)(value).pipe(
-    Effect.map(DateTime.toEpochMillis),
-  );
+  Schema.decodeUnknownEffect(Schema.DateTimeUtcFromString)(value).pipe(Effect.map(DateTime.toEpochMillis));
 
 const deploymentImpactCommand = Command.make(
   'plan-deployment-impact',
   {
-    authorizationEnvironment: Flag.choice('authorization-environment', [
-      'development',
-      'production',
-      'stage',
-    ]).pipe(Flag.optional),
+    authorizationEnvironment: Flag.choice('authorization-environment', ['development', 'production', 'stage']).pipe(
+      Flag.optional,
+    ),
     authorizationNow: Flag.string('authorization-now').pipe(Flag.optional),
     baseRevision: Flag.string('base').pipe(Flag.optional),
     changedPaths: Flag.string('changed-path').pipe(Flag.atLeast(0)),
@@ -1162,14 +1105,8 @@ const deploymentImpactCommand = Command.make(
       if (environment !== undefined) {
         const configuredNow = Option.getOrUndefined(authorizationNow);
         const nowEpochMs =
-          configuredNow === undefined
-            ? yield* Clock.currentTimeMillis
-            : yield* parseAuthorizationNow(configuredNow);
-        authorizationPromotion = yield* loadAuthorizationPromotionGate(
-          rootDirectory,
-          environment,
-          nowEpochMs,
-        );
+          configuredNow === undefined ? yield* Clock.currentTimeMillis : yield* parseAuthorizationNow(configuredNow);
+        authorizationPromotion = yield* loadAuthorizationPromotionGate(rootDirectory, environment, nowEpochMs);
       }
       const options: PlanDeploymentImpactOptions = {
         baseRevision: Option.getOrUndefined(baseRevision),
@@ -1192,10 +1129,8 @@ const deploymentImpactCommand = Command.make(
 
 export const main = Command.run({ version: '1.0.0' })(deploymentImpactCommand);
 
-if (import.meta.main === true) {
+if (import.meta.main) {
   NodeRuntime.runMain(
-    Layer.build(Layer.effectDiscard(main).pipe(Layer.provide(NodeServices.layer))).pipe(
-      Effect.scoped,
-    ),
+    Layer.build(Layer.effectDiscard(main).pipe(Layer.provide(NodeServices.layer))).pipe(Effect.scoped),
   );
 }

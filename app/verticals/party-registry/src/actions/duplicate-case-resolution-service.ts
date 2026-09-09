@@ -1,7 +1,8 @@
 import { Effect, Schema } from 'effect';
+
+import type { ConfirmDuplicatePartiesPayload } from '../../shared/actions/confirm-duplicate-parties.ts';
 import { PartyPersistenceUnavailable } from '../../shared/domain/identity-contracts.ts';
 import { DuplicateCandidateConflict } from '../../shared/domain/matching-contracts.ts';
-import type { ConfirmDuplicatePartiesPayload } from '../../shared/actions/confirm-duplicate-parties.ts';
 import { transitionDuplicateCandidateCase } from '../services/party-matching-persistence.service.ts';
 
 export const DuplicateCaseResolutionErrorSchema = Schema.Union([

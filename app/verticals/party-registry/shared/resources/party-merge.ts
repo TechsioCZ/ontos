@@ -3,6 +3,7 @@
 // @ontos-resource-slug party-merge
 import type { OntosResourceType } from '@app/core-runtime';
 import { Schema } from 'effect';
+
 import { IsoTimestampSchema } from '../domain/identity-contracts.ts';
 import {
   ConfirmedDuplicateDecisionIdSchema,
@@ -12,10 +13,7 @@ import {
 } from '../domain/merge-selection.ts';
 import { PartyRefSchema } from './party.ts';
 import type { PartyRef } from './party.ts';
-import {
-  PartyRegistryResourceIdJsonSchema,
-  PartyRegistryTenantIdJsonSchema,
-} from './resource-ref-identifiers.ts';
+import { PartyRegistryResourceIdJsonSchema, PartyRegistryTenantIdJsonSchema } from './resource-ref-identifiers.ts';
 
 export const PartyMergeRefSchema = Schema.Struct({
   moduleId: Schema.Literal('party.registry'),
@@ -46,77 +44,54 @@ const selectionEvidenceIsInvalid = (
  */
 export const PartyMergeSchema = Schema.Struct({
   absorbedPartyRefs: Schema.Array(PartyRefSchema).check(Schema.isMinLength(1)),
-  confirmedDuplicateDecisionId: Schema.toEncoded(ConfirmedDuplicateDecisionIdSchema).check(
-    Schema.isMaxLength(300),
-  ),
+  confirmedDuplicateDecisionId: Schema.toEncoded(ConfirmedDuplicateDecisionIdSchema).check(Schema.isMaxLength(300)),
   createdAt: IsoTimestampSchema,
-  decisionActorPrincipalId: Schema.toEncoded(DecisionActorPrincipalIdSchema).check(
-    Schema.isMaxLength(300),
-  ),
+  decisionActorPrincipalId: Schema.toEncoded(DecisionActorPrincipalIdSchema).check(Schema.isMaxLength(300)),
   mergeRef: PartyMergeRefSchema,
   policyVersion: Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(300)),
-  selectionEvidenceChain: Schema.Array(MergeSelectionEvidenceStepSchema).check(
-    Schema.isMinLength(3),
-  ),
+  selectionEvidenceChain: Schema.Array(MergeSelectionEvidenceStepSchema).check(Schema.isMinLength(3)),
   selectionReason: MergeSurvivorSelectionReasonSchema,
   state: Schema.Literal('PREPARED'),
   survivorPartyRef: PartyRefSchema,
 }).check(
-  Schema.makeFilter(
-    ({
-      absorbedPartyRefs,
-      mergeRef,
-      selectionEvidenceChain,
-      selectionReason,
-      survivorPartyRef,
-    }) => {
-      const identities = new Set(absorbedPartyRefs.map(({ resourceId }) => resourceId));
-      const allRefs = [survivorPartyRef, ...absorbedPartyRefs];
-      const issues: Schema.FilterIssue[] = [];
-      if (allRefs.some(({ tenantId }) => tenantId !== mergeRef.tenantId)) {
-        issues.push({
-          issue: 'prepared merge Parties and merge Resource must share one tenant',
-          path: ['mergeRef'],
-        });
-      }
-      if (
-        identities.size !== absorbedPartyRefs.length ||
-        identities.has(survivorPartyRef.resourceId)
-      ) {
-        issues.push({
-          issue: 'survivor and absorbed Parties must be distinct',
-          path: ['absorbedPartyRefs'],
-        });
-      }
-      if (selectionEvidenceIsInvalid(selectionEvidenceChain, selectionReason, survivorPartyRef)) {
-        issues.push({
-          issue:
-            'selection evidence must prove confirmation, safety, and the recorded survivor reason',
-          path: ['selectionEvidenceChain'],
-        });
-      }
-      const mergeKeys = allRefs
-        .map(({ resourceId, tenantId }) => `${tenantId}:${resourceId}`)
-        .toSorted();
-      if (
-        selectionEvidenceChain.some(({ candidatePartyRefs }) => {
-          const evidenceKeys = candidatePartyRefs
-            .map(({ resourceId, tenantId }) => `${tenantId}:${resourceId}`)
-            .toSorted();
-          return (
-            evidenceKeys.length !== mergeKeys.length ||
-            evidenceKeys.some((key, index) => key !== mergeKeys[index])
-          );
-        })
-      ) {
-        issues.push({
-          issue: 'selection evidence must describe exactly the prepared merge Party set',
-          path: ['selectionEvidenceChain'],
-        });
-      }
-      return issues;
-    },
-  ),
+  Schema.makeFilter(({ absorbedPartyRefs, mergeRef, selectionEvidenceChain, selectionReason, survivorPartyRef }) => {
+    const identities = new Set(absorbedPartyRefs.map(({ resourceId }) => resourceId));
+    const allRefs = [survivorPartyRef, ...absorbedPartyRefs];
+    const issues: Schema.FilterIssue[] = [];
+    if (allRefs.some(({ tenantId }) => tenantId !== mergeRef.tenantId)) {
+      issues.push({
+        issue: 'prepared merge Parties and merge Resource must share one tenant',
+        path: ['mergeRef'],
+      });
+    }
+    if (identities.size !== absorbedPartyRefs.length || identities.has(survivorPartyRef.resourceId)) {
+      issues.push({
+        issue: 'survivor and absorbed Parties must be distinct',
+        path: ['absorbedPartyRefs'],
+      });
+    }
+    if (selectionEvidenceIsInvalid(selectionEvidenceChain, selectionReason, survivorPartyRef)) {
+      issues.push({
+        issue: 'selection evidence must prove confirmation, safety, and the recorded survivor reason',
+        path: ['selectionEvidenceChain'],
+      });
+    }
+    const mergeKeys = allRefs.map(({ resourceId, tenantId }) => `${tenantId}:${resourceId}`).toSorted();
+    if (
+      selectionEvidenceChain.some(({ candidatePartyRefs }) => {
+        const evidenceKeys = candidatePartyRefs
+          .map(({ resourceId, tenantId }) => `${tenantId}:${resourceId}`)
+          .toSorted();
+        return evidenceKeys.length !== mergeKeys.length || evidenceKeys.some((key, index) => key !== mergeKeys[index]);
+      })
+    ) {
+      issues.push({
+        issue: 'selection evidence must describe exactly the prepared merge Party set',
+        path: ['selectionEvidenceChain'],
+      });
+    }
+    return issues;
+  }),
 );
 export type PartyMerge = typeof PartyMergeSchema.Type;
 

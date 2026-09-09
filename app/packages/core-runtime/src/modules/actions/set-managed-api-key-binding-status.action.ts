@@ -2,11 +2,12 @@
 // @ontos-action-owner core.identity
 // @ontos-action-slug set-managed-api-key-binding-status
 import { Effect, Schema } from 'effect';
+
 import type { ActionHandlerContext } from '../../actions/context.ts';
 import { defineAction } from '../../actions/definition.ts';
+import { PrincipalManagementErrorSchema } from '../../auth/principal-management-errors.ts';
 import { principalManagementRepositoryFromTransaction } from '../../auth/principal-management.ts';
 import type { PrincipalManagementRepositoryService } from '../../auth/principal-management.ts';
-import { PrincipalManagementErrorSchema } from '../../auth/principal-management-errors.ts';
 import { defineSystemModuleEntrypoint } from '../module-entrypoint.ts';
 
 const uuid = Schema.String.check(Schema.isUUID());
@@ -42,7 +43,9 @@ const handle = Effect.fn('SetManagedApiKeyBindingStatusAction.handle')(
     payload: SetManagedApiKeyBindingStatusPayload,
     context: ActionHandlerContext<
       Readonly<Record<never, never>>,
-      { readonly setStatus: PrincipalManagementRepositoryService['setApiKeyBindingStatus'] }
+      {
+        readonly setStatus: PrincipalManagementRepositoryService['setApiKeyBindingStatus'];
+      }
     >,
   ) {
     const result = yield* context.services.setStatus({
@@ -74,7 +77,10 @@ export const setManagedApiKeyBindingStatusAction = defineAction(
     domainEvents: {},
     entrypoint: defineSystemModuleEntrypoint({
       access: 'write',
-      authorization: { kind: 'action_execution', provisioning: 'tenant_membership_default' },
+      authorization: {
+        kind: 'action_execution',
+        provisioning: 'tenant_membership_default',
+      },
       entrypointKey: 'core.identity.set-managed-api-key-binding-status',
       moduleKey: 'core.identity',
       role: 'action',

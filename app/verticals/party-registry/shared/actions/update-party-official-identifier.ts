@@ -1,5 +1,6 @@
 // Canonical schema-only contract extracted from the generated update-party-official-identifier Action.
 import { Schema } from 'effect';
+
 import {
   IdentifierVerificationSchema,
   OfficialIdentifierAssertionStateSchema,
@@ -15,11 +16,15 @@ export const UpdatePartyOfficialIdentifierPayloadSchema = Schema.Struct({
       type: Schema.Literal('SET_VERIFICATION'),
       verification: IdentifierVerificationSchema,
     }),
-    Schema.Struct({ type: Schema.Literal('END_VALIDITY'), validTo: IsoTimestampSchema }),
+    Schema.Struct({
+      type: Schema.Literal('END_VALIDITY'),
+      validTo: IsoTimestampSchema,
+    }),
   ]),
-  evidenceRefs: Schema.Array(
-    Schema.Trim.check(Schema.isMinLength(1), Schema.isMaxLength(500)),
-  ).check(Schema.isMinLength(1), Schema.isMaxLength(20)),
+  evidenceRefs: Schema.Array(Schema.Trim.check(Schema.isMinLength(1), Schema.isMaxLength(500))).check(
+    Schema.isMinLength(1),
+    Schema.isMaxLength(20),
+  ),
   identifierType: Schema.optionalKey(Schema.Never),
   namespace: Schema.optionalKey(Schema.Never),
   normalizedValue: Schema.optionalKey(Schema.Never),
@@ -28,8 +33,7 @@ export const UpdatePartyOfficialIdentifierPayloadSchema = Schema.Struct({
   reason: Schema.Trim.check(Schema.isMinLength(1), Schema.isMaxLength(1000)),
   value: Schema.optionalKey(Schema.Never),
 });
-export type UpdatePartyOfficialIdentifierPayload =
-  typeof UpdatePartyOfficialIdentifierPayloadSchema.Type;
+export type UpdatePartyOfficialIdentifierPayload = typeof UpdatePartyOfficialIdentifierPayloadSchema.Type;
 
 export const UpdatePartyOfficialIdentifierResultSchema = Schema.Struct({
   officialIdentifierRef: PartyOfficialIdentifierRefSchema,
@@ -38,5 +42,4 @@ export const UpdatePartyOfficialIdentifierResultSchema = Schema.Struct({
   validTo: Schema.OptionFromNullOr(IsoTimestampSchema),
   verification: IdentifierVerificationSchema,
 });
-export type UpdatePartyOfficialIdentifierResult =
-  typeof UpdatePartyOfficialIdentifierResultSchema.Type;
+export type UpdatePartyOfficialIdentifierResult = typeof UpdatePartyOfficialIdentifierResultSchema.Type;

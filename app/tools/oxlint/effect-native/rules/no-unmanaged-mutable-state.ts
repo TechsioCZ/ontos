@@ -1,3 +1,5 @@
+import { fileURLToPath } from 'node:url';
+
 /**
  * Audit A4/C3/B4 (`docs/architecture/EFFECT_V4_ANTIPATTERN_AUDIT.md`) targets WeakMap
  * defect-cause storage, non-reactive Contacts UI side channels and module memoization whose lifecycle
@@ -23,23 +25,19 @@
  * Report-only, with no fixer or suggestions.
  */
 import { defineRule } from '@oxlint/plugins';
-import { fileURLToPath } from 'node:url';
-
 import type { Context, ESTree, Reference, Variable } from '@oxlint/plugins';
-
-import { matchesGlobs as matchesAny, isTestFile, normalisePath } from '../shared/paths.ts';
 
 import { staticString, skipWrappers, unwrapNode } from '../shared/ast.ts';
 import { isUnshadowedGlobal, resolveVariable } from '../shared/bindings.ts';
 import { booleanOption as boolean, stringList } from '../shared/options.ts';
+import { matchesGlobs as matchesAny, isTestFile, normalisePath } from '../shared/paths.ts';
 
 type AnyNode = ESTree.Node;
 
 /** Exact app-root/fixture-prefix normalization; nested workspace markers never change scope. */
 function workspacePath(filename: string): string {
   const unified = filename.replaceAll('\\', '/');
-  const fixture =
-    /(?:^|\/)tools\/oxlint\/[^/]+\/tests\/fixtures\/[^/]+\/(?:valid|invalid)\/(.*)$/u.exec(unified);
+  const fixture = /(?:^|\/)tools\/oxlint\/[^/]+\/tests\/fixtures\/[^/]+\/(?:valid|invalid)\/(.*)$/u.exec(unified);
   if (fixture?.[1]) return fixture[1];
   const root = fileURLToPath(new URL('../../../../', import.meta.url)).replaceAll('\\', '/');
   return unified.startsWith(root) ? unified.slice(root.length) : normalisePath(unified);
@@ -151,9 +149,7 @@ function constructorAlias(variable: Variable): AnyNode | null {
   const definition = variable.defs[0];
   if (definition?.type !== 'ClassName') return null;
   const node = definition.node;
-  return node.type === 'ClassDeclaration' || node.type === 'ClassExpression'
-    ? node.superClass
-    : null;
+  return node.type === 'ClassDeclaration' || node.type === 'ClassExpression' ? node.superClass : null;
 }
 
 /**
@@ -162,11 +158,7 @@ function constructorAlias(variable: Variable): AnyNode | null {
  * Accepts the bare global (`new WeakMap()`) and the container-global forms
  * (`new globalThis.WeakMap()`, `new window["WeakSet"]()`, `new globalThis?.WeakMap()`).
  */
-function globalConstructorName(
-  context: Context,
-  callee: AnyNode,
-  seen = new Set<Variable>(),
-): string | null {
+function globalConstructorName(context: Context, callee: AnyNode, seen = new Set<Variable>()): string | null {
   const node = unwrap(callee);
   if (node.type === 'Identifier') {
     const name = (node as ESTree.IdentifierReference).name;
@@ -209,12 +201,7 @@ function moduleDeclarations(program: ESTree.Program): readonly ESTree.VariableDe
 function inScope(path: string, options: RuleOptions): boolean {
   const include = options.includeScripts ? [...options.include, 'scripts/**'] : options.include;
   if (!matchesAny(path, include)) return false;
-  if (
-    [ALWAYS_IGNORED, options.ignore, options.allowPaths].some((patterns) =>
-      matchesAny(path, patterns),
-    )
-  )
-    return false;
+  if ([ALWAYS_IGNORED, options.ignore, options.allowPaths].some((patterns) => matchesAny(path, patterns))) return false;
   if (!options.includeTests && isTestFile(path)) return false;
   return options.includeScripts || !/(?:^|\/)scripts\//u.test(path);
 }
@@ -223,8 +210,7 @@ function moduleClassOwner(node: ESTree.PropertyDefinition) {
   const body = node.parent;
   const owner = body?.type === 'ClassBody' ? body.parent : null;
   if (owner?.type !== 'ClassDeclaration' || !owner.id) return null;
-  const ancestor =
-    owner.parent?.type === 'ExportNamedDeclaration' ? owner.parent.parent : owner.parent;
+  const ancestor = owner.parent?.type === 'ExportNamedDeclaration' ? owner.parent.parent : owner.parent;
   return ancestor?.type === 'Program' ? owner : null;
 }
 
@@ -340,10 +326,7 @@ export const rule = defineRule({
       }
       return value.type === 'CallExpression' ? factoryContainerKind(value, depth) : null;
     };
-    const factoryContainerKind = (
-      value: ESTree.CallExpression,
-      depth: number,
-    ): 'object' | 'collection' | null => {
+    const factoryContainerKind = (value: ESTree.CallExpression, depth: number): 'object' | 'collection' | null => {
       const callee = unwrap(value.callee);
       if (callee.type !== 'MemberExpression') return null;
       const method = staticPropertyName(callee) ?? '';
@@ -352,8 +335,7 @@ export const rule = defineRule({
         if (['create', 'fromEntries'].includes(method)) return 'object';
         if (['entries', 'keys', 'values'].includes(method)) return 'collection';
       }
-      if (isUnshadowedGlobal(context, object, 'Array') && ['from', 'of'].includes(method))
-        return 'collection';
+      if (isUnshadowedGlobal(context, object, 'Array') && ['from', 'of'].includes(method)) return 'collection';
       if (!['slice', 'concat', 'map', 'filter', 'flat', 'flatMap'].includes(method)) return null;
       return containerKind(object, depth + 1) === 'collection' ? 'collection' : null;
     };
@@ -380,11 +362,7 @@ export const rule = defineRule({
         const method = staticPropertyName(member);
         const outer = skipWrappers(member);
         if (outer.parent?.type === 'CallExpression' && outer.parent.callee === outer.node) {
-          return (
-            method !== null &&
-            mutatingMembers.has(method) &&
-            containerKind(receiver) === 'collection'
-          );
+          return method !== null && mutatingMembers.has(method) && containerKind(receiver) === 'collection';
         }
         receiver = propertyValue(receiver, method);
         current = outer.node;
@@ -415,10 +393,7 @@ export const rule = defineRule({
     const globalContainer = (input: AnyNode, seen = new Set<Variable>()): boolean => {
       const node = unwrap(input);
       if (node.type !== 'Identifier') return false;
-      if (
-        ['globalThis', 'global', 'self'].includes(node.name) &&
-        isUnshadowedGlobal(context, node, node.name)
-      )
+      if (['globalThis', 'global', 'self'].includes(node.name) && isUnshadowedGlobal(context, node, node.name))
         return true;
       const initial = variableInitializer(immutableVariable(context, node, seen));
       return initial !== null && globalContainer(initial, seen);
@@ -430,14 +405,19 @@ export const rule = defineRule({
         context.report({
           node: declarator.id as unknown as AnyNode,
           messageId: 'moduleMutable',
-          data: { name: context.sourceCode.getText(declarator.id as unknown as AnyNode) },
+          data: {
+            name: context.sourceCode.getText(declarator.id as unknown as AnyNode),
+          },
         });
         return;
       }
       for (const variable of variables) {
-        const anchor =
-          (variable.identifiers[0] as AnyNode | undefined) ?? (declarator.id as unknown as AnyNode);
-        context.report({ node: anchor, messageId: 'moduleMutable', data: { name: variable.name } });
+        const anchor = (variable.identifiers[0] as AnyNode | undefined) ?? (declarator.id as unknown as AnyNode);
+        context.report({
+          node: anchor,
+          messageId: 'moduleMutable',
+          data: { name: variable.name },
+        });
       }
     };
 
@@ -453,9 +433,7 @@ export const rule = defineRule({
       if (!containerKind(declarator.init ?? null)) return;
       const variables = context.sourceCode.getDeclaredVariables(declarator);
       const mutated = variables.some((variable) =>
-        variable.references.some((reference) =>
-          isMutatingReference(reference, declarator.init ?? null),
-        ),
+        variable.references.some((reference) => isMutatingReference(reference, declarator.init ?? null)),
       );
       if (mutated) reportDeclarator(declarator);
     };
@@ -481,9 +459,7 @@ export const rule = defineRule({
           variable.references.some((reference) => {
             const access = skipWrappers(reference.identifier).parent;
             return (
-              access?.type === 'MemberExpression' &&
-              staticPropertyName(access) === key &&
-              mutatedAt(access, node.value)
+              access?.type === 'MemberExpression' && staticPropertyName(access) === key && mutatedAt(access, node.value)
             );
           }),
         );
@@ -501,11 +477,7 @@ export const rule = defineRule({
         const outer = skipWrappers(node);
         // A4 targets cause/provenance/UI storage, not ephemeral recursive cycle guards
         // (D tier and Existing patterns to preserve). No escape analysis is claimed.
-        if (
-          outer.parent?.type === 'CallExpression' &&
-          outer.parent.arguments.includes(outer.node as never)
-        )
-          return;
+        if (outer.parent?.type === 'CallExpression' && outer.parent.arguments.includes(outer.node as never)) return;
         if (outer.parent?.type === 'MemberExpression' && outer.parent.object === outer.node) return;
         context.report({
           node: node as unknown as AnyNode,
@@ -517,8 +489,7 @@ export const rule = defineRule({
       // (2) module-scope `let`/`var`, and mutated module-scope container `const`s.
       Program(node) {
         for (const declaration of moduleDeclarations(node)) {
-          for (const declarator of declaration.declarations)
-            inspectDeclarator(declarator, declaration.kind);
+          for (const declarator of declaration.declarations) inspectDeclarator(declarator, declaration.kind);
         }
       },
     };

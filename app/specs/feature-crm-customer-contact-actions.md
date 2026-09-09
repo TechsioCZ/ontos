@@ -8,69 +8,27 @@ created: 2026-08-14
 
 ## Feature Description
 
-Expose the existing CRM-owned Customer and Contact records through authenticated, typed Effect
-operations. Add generated state-changing Actions for creating, editing, archiving, and unarchiving
-both entities. Add governed reads for Customer detail/list and Contact detail/list, with the Contact
-list always scoped by one Customer. Publish every operation through the CRM MicroVertical's Effect
-BFF so frontend code can call a generated client method without importing backend code or using an
-ad hoc HTTP request. Every successfully completed requested `Get*` operation must commit one
-runtime-owned Data Access Event to `core.data_access_events` before its result is released.
+Expose the existing CRM-owned Customer and Contact records through authenticated, typed Effect operations. Add generated state-changing Actions for creating, editing, archiving, and unarchiving both entities. Add governed reads for Customer detail/list and Contact detail/list, with the Contact list always scoped by one Customer. Publish every operation through the CRM MicroVertical's Effect BFF so frontend code can call a generated client method without importing backend code or using an ad hoc HTTP request. Every successfully completed requested `Get*` operation must commit one runtime-owned Data Access Event to `core.data_access_events` before its result is released.
 
-The feature retains the persistence model already established in `crm.customers` and
-`crm.contacts`: Customer has a required name; Contact has a required name, email, phone, and one
-immutable parent Customer; both use a nullable `archived_at` lifecycle marker and tenant RLS. It
-adds no UI, cross-MicroVertical dependency, Policy, additional tenant-role permission, public
-Domain Event, or Outbox Message.
+The feature retains the persistence model already established in `crm.customers` and `crm.contacts`: Customer has a required name; Contact has a required name, email, phone, and one immutable parent Customer; both use a nullable `archived_at` lifecycle marker and tenant RLS. It adds no UI, cross-MicroVertical dependency, Policy, additional tenant-role permission, public Domain Event, or Outbox Message.
 
 ## User Story
 
-As a signed-in CRM user
-I want to create, edit, inspect, list, archive, and restore Customers and their Contacts
-So that frontend CRM features can manage the canonical records through one typed and auditable BFF
-boundary
+As a signed-in CRM user I want to create, edit, inspect, list, archive, and restore Customers and their Contacts So that frontend CRM features can manage the canonical records through one typed and auditable BFF boundary
 
 ## Problem Statement
 
-CRM currently persists Customers and Contacts but exposes only its generated readiness endpoint.
-Frontend code therefore has no supported Effect client methods for the records, and direct database,
-backend-handler, or fetch access would bypass the MicroVertical, governed operation, authentication,
-module-state, audit/evidence, and typed error boundaries.
+CRM currently persists Customers and Contacts but exposes only its generated readiness endpoint. Frontend code therefore has no supported Effect client methods for the records, and direct database, backend-handler, or fetch access would bypass the MicroVertical, governed operation, authentication, module-state, audit/evidence, and typed error boundaries.
 
-The requested operation names also describe four reads as Actions. OntOS Actions are write-only and
-would incorrectly make reads require idempotency/invocation records and become unavailable when the
-module is `read_only` or `deprecated`. Those operations need the governed Read runtime while keeping
-the requested `getCustomerDetail`, `getCustomerList`, `getContact`, and `getContactList` frontend
-method names.
+The requested operation names also describe four reads as Actions. OntOS Actions are write-only and would incorrectly make reads require idempotency/invocation records and become unavailable when the module is `read_only` or `deprecated`. Those operations need the governed Read runtime while keeping the requested `getCustomerDetail`, `getCustomerList`, `getContact`, and `getContactList` frontend method names.
 
 ## Solution Statement
 
-Run the mandatory Action generator for eight writes: create, edit, archive, and unarchive Customer,
-and the same four Contact operations. Adapt the generated registrations with concrete public input
-and result schemas, owner-local service factories over the Core-supplied scoped transaction, typed
-domain failures, metadata-only access evidence, required idempotency, `legalEntityScope: 'optional'`,
-and `policies: []`. Do not declare an additional tenant permission or provision an Action-specific
-SpiceDB executor relation; the normal authenticated context, tenant/module gates, runtime
-availability checks, and unconfigured-Action compatibility behavior still apply.
+Run the mandatory Action generator for eight writes: create, edit, archive, and unarchive Customer, and the same four Contact operations. Adapt the generated registrations with concrete public input and result schemas, owner-local service factories over the Core-supplied scoped transaction, typed domain failures, metadata-only access evidence, required idempotency, `legalEntityScope: 'optional'`, and `policies: []`. Do not declare an additional tenant permission or provision an Action-specific SpiceDB executor relation; the normal authenticated context, tenant/module gates, runtime availability checks, and unconfigured-Action compatibility behavior still apply.
 
-Generate four module APIs as the supported starting point for Customer detail/list and Contact
-detail/list reads. Adapt their `defineRead` registrations to tenant-level access, optional legal-
-entity context, metadata-only evidence, empty Policy lists, CRM table queries, and typed not-found or
-unavailable failures. Customer and Contact lists are bounded and deterministically ordered; both
-default to active records and accept an explicit active/archived/all filter. Contact list input must
-contain `customerId`, verifies that the same-tenant Customer exists, returns `404` when it does not,
-and returns an empty list when it exists without matching Contacts. Each read handler returns
-bounded evidence metadata with the released result count, and `ReadRuntime` atomically persists the
-corresponding allowed row in `core.data_access_events` in the governed read transaction. Evidence
-persistence failure is a typed retryable failure and no read result may escape without its durable
-record.
+Generate four module APIs as the supported starting point for Customer detail/list and Contact detail/list reads. Adapt their `defineRead` registrations to tenant-level access, optional legal- entity context, metadata-only evidence, empty Policy lists, CRM table queries, and typed not-found or unavailable failures. Customer and Contact lists are bounded and deterministically ordered; both default to active records and accept an explicit active/archived/all filter. Contact list input must contain `customerId`, verifies that the same-tenant Customer exists, returns `404` when it does not, and returns an empty list when it exists without matching Contacts. Each read handler returns bounded evidence metadata with the released result count, and `ReadRuntime` atomically persists the corresponding allowed row in `core.data_access_events` in the governed read transaction. Evidence persistence failure is a typed retryable failure and no read result may escape without its durable record.
 
-Compose the generated Action identity boundary, Action/Read runtimes, strict Effect HttpApi
-contracts, handlers, and contract-derived clients into the existing CRM BFF. Export exactly these
-frontend methods: `createCustomer`, `editCustomer`, `getCustomerDetail`, `getCustomerList`,
-`archiveCustomer`, `unarchiveCustomer`, `createContact`, `editContact`, `getContact`,
-`getContactList`, `archiveContact`, and `unarchiveContact`. Each mutation accepts explicit
-idempotency/correlation input and obtains a fresh CRM-audience Shell assertion for each invocation.
-All declared backend, transport, and decode errors stay typed in the client Effect error channel.
+Compose the generated Action identity boundary, Action/Read runtimes, strict Effect HttpApi contracts, handlers, and contract-derived clients into the existing CRM BFF. Export exactly these frontend methods: `createCustomer`, `editCustomer`, `getCustomerDetail`, `getCustomerList`, `archiveCustomer`, `unarchiveCustomer`, `createContact`, `editContact`, `getContact`, `getContactList`, `archiveContact`, and `unarchiveContact`. Each mutation accepts explicit idempotency/correlation input and obtains a fresh CRM-audience Shell assertion for each invocation. All declared backend, transport, and decode errors stay typed in the client Effect error channel.
 
 ## Relevant Files
 
@@ -127,31 +85,15 @@ Use these files to implement the feature:
 
 ### Phase 1: Foundation
 
-Generate all eight state-changing Actions first, using the existing `crm.core` module contract and
-optional legal-entity scope. Generate the four read module APIs next; the first module-API generator
-also creates CRM's Action identity boundary because it is not currently present. Confirm every
-generated artifact is patched into only the owner manifest/registration slots and no raw Shell or
-cross-vertical import is introduced.
+Generate all eight state-changing Actions first, using the existing `crm.core` module contract and optional legal-entity scope. Generate the four read module APIs next; the first module-API generator also creates CRM's Action identity boundary because it is not currently present. Confirm every generated artifact is patched into only the owner manifest/registration slots and no raw Shell or cross-vertical import is introduced.
 
 ### Phase 2: Core Implementation
 
-Define browser-safe Customer/Contact DTOs and operation inputs, then implement the eight generated
-Actions and four generated Reads. Handlers receive only owner-local service methods built over the
-Core-supplied scoped transaction. They use typed Drizzle table references, trusted scope tenant ID,
-metadata-only evidence, deterministic pagination, and typed failures. Customer archive does not
-cascade to Contacts, Contact's parent is immutable after creation, edits preserve archive state,
-and archive/unarchive reject an already-achieved lifecycle state as a typed conflict. Every
-successful governed read supplies an exact result count so `ReadRuntime` can durably commit its Data
-Access Event before returning the Customer or Contact result.
+Define browser-safe Customer/Contact DTOs and operation inputs, then implement the eight generated Actions and four generated Reads. Handlers receive only owner-local service methods built over the Core-supplied scoped transaction. They use typed Drizzle table references, trusted scope tenant ID, metadata-only evidence, deterministic pagination, and typed failures. Customer archive does not cascade to Contacts, Contact's parent is immutable after creation, edits preserve archive state, and archive/unarchive reject an already-achieved lifecycle state as a typed conflict. Every successful governed read supplies an exact result count so `ReadRuntime` can durably commit its Data Access Event before returning the Customer or Contact result.
 
 ### Phase 3: Integration
 
-Add the mutation endpoints and all twelve named client methods to the existing CRM BFF, compose the
-generated read server layers plus Action/Read runtime dependencies, and exhaustively map verification,
-module-state, Action, Read, domain, persistence, and unexpected failures to declared RFC 9457
-schemas. Add focused unit and live integration coverage for authenticated invocation, no custom
-permissions/Policies, tenant isolation, Customer-scoped Contact listing, archive visibility,
-idempotency, durable evidence, and contract-derived client decoding.
+Add the mutation endpoints and all twelve named client methods to the existing CRM BFF, compose the generated read server layers plus Action/Read runtime dependencies, and exhaustively map verification, module-state, Action, Read, domain, persistence, and unexpected failures to declared RFC 9457 schemas. Add focused unit and live integration coverage for authenticated invocation, no custom permissions/Policies, tenant isolation, Customer-scoped Contact listing, archive visibility, idempotency, durable evidence, and contract-derived client decoding.
 
 ## Step by Step Tasks
 
@@ -225,22 +167,11 @@ IMPORTANT: Execute every step in order, top to bottom.
 
 ### Unit Tests
 
-Test all Action and Read descriptors, payload/result/DTO schemas, validation and normalization,
-archive filter/pagination helpers, typed domain failures, no custom Policy/permission declaration,
-manifest and private registration identity, assertion verification, Problem Details statuses, exact
-BFF method names, exact read evidence metadata, and contract-derived Effect error types. Keep
-presentation/browser tests out of scope because the feature adds no UI.
+Test all Action and Read descriptors, payload/result/DTO schemas, validation and normalization, archive filter/pagination helpers, typed domain failures, no custom Policy/permission declaration, manifest and private registration identity, assertion verification, Problem Details statuses, exact BFF method names, exact read evidence metadata, and contract-derived Effect error types. Keep presentation/browser tests out of scope because the feature adds no UI.
 
 ### Integration Tests
 
-Use the migrated Core and CRM PostgreSQL schemas with deterministic tenant/principal/module fixtures.
-Run writes through the real Action runtime and reads through the real Read runtime so transaction
-scope, forced RLS, module-state semantics, idempotency, audit/read evidence, parent integrity, and
-tenant isolation are exercised rather than bypassed with direct repository calls. Run the strict
-Effect BFF in process with signed and invalid assertions and call it through the generated clients
-to prove request metadata and declared errors survive the complete horizontal seam. Inspect
-`core.data_access_events` after every successful requested `Get*` call and simulate evidence-storage
-failure to prove that durable read evidence is a prerequisite for releasing a result.
+Use the migrated Core and CRM PostgreSQL schemas with deterministic tenant/principal/module fixtures. Run writes through the real Action runtime and reads through the real Read runtime so transaction scope, forced RLS, module-state semantics, idempotency, audit/read evidence, parent integrity, and tenant isolation are exercised rather than bypassed with direct repository calls. Run the strict Effect BFF in process with signed and invalid assertions and call it through the generated clients to prove request metadata and declared errors survive the complete horizontal seam. Inspect `core.data_access_events` after every successful requested `Get*` call and simulate evidence-storage failure to prove that durable read evidence is a prerequisite for releasing a result.
 
 ### Edge Cases
 
@@ -313,50 +244,20 @@ Execute every command to validate the feature with zero regressions.
 
 ## Notes
 
-- The request is one cohesive feature because all twelve operations share the same CRM persistence,
-  authenticated BFF, runtime layers, public DTOs, error vocabulary, and integration tests.
-- `GetCustomerDetailAction`, `GetCustomerListAction`, `GetContactAction`, and
-  `GetContactListAction` are interpreted as requested operation/client names. Authoritative OntOS
-  guidance requires them to be governed Reads, not Actions. This is not an unresolved developer
-  decision.
+- The request is one cohesive feature because all twelve operations share the same CRM persistence, authenticated BFF, runtime layers, public DTOs, error vocabulary, and integration tests.
+- `GetCustomerDetailAction`, `GetCustomerListAction`, `GetContactAction`, and `GetContactListAction` are interpreted as requested operation/client names. Authoritative OntOS guidance requires them to be governed Reads, not Actions. This is not an unresolved developer decision.
 - `EditCContactAction` is treated as a typographical error for `EditContactAction`.
-- Customer and Contact are tenant-wide records in the completed persistence feature, so all new
-  operations use `legalEntityScope: 'optional'`: a selected legal entity is revalidated when present
-  but is not persisted as record ownership.
-- "No permission nor policy restrictions" means no Action-specific executor provisioning, no
-  additional tenant-role permission, and `policies: []`. Mandatory authentication, trusted-context
-  validation, tenant/module state gates, tenant baseline access for Reads, RLS, fail-closed
-  infrastructure checks, and Action runtime compatibility behavior are not bypassed.
-- The requested `Get*` Data Access record is the governed `ReadRuntime` evidence row in
-  `core.data_access_events`, not a CRM-owned log table and not an Action Invocation Log. Successful
-  detail/list results persist allowed evidence atomically before release; definite authorization or
-  Policy denials retain the runtime's separate sanitized denied-evidence behavior.
-- List defaults and archive semantics are conservative: active-only by default, explicit historical
-  filtering, non-cascading Customer archive, immutable Contact parent, and edits that preserve but
-  are not blocked by archive state.
+- Customer and Contact are tenant-wide records in the completed persistence feature, so all new operations use `legalEntityScope: 'optional'`: a selected legal entity is revalidated when present but is not persisted as record ownership.
+- "No permission nor policy restrictions" means no Action-specific executor provisioning, no additional tenant-role permission, and `policies: []`. Mandatory authentication, trusted-context validation, tenant/module state gates, tenant baseline access for Reads, RLS, fail-closed infrastructure checks, and Action runtime compatibility behavior are not bypassed.
+- The requested `Get*` Data Access record is the governed `ReadRuntime` evidence row in `core.data_access_events`, not a CRM-owned log table and not an Action Invocation Log. Successful detail/list results persist allowed evidence atomically before release; definite authorization or Policy denials retain the runtime's separate sanitized denied-evidence behavior.
+- List defaults and archive semantics are conservative: active-only by default, explicit historical filtering, non-cascading Customer archive, immutable Contact parent, and edits that preserve but are not blocked by archive state.
 - No unresolved decision blocks implementation.
 
 ## Implementation Evidence
 
-- Implemented in worktree
-  `/Users/jiprochazka/Projects/Programming/TechsioCZ/ontos-feature-crm-customer-contact-actions`
-  on branch `codex/feature-crm-customer-contact-actions`, based on
-  `d1818d84db23c1ddcb4e3ca8214b3daf1d74be61`.
-- Ran the mandatory Codesmith generators from `app/` for the eight Customer/Contact Actions and the
-  four Customer/Contact module APIs before adapting their generated output. Generated source headers
-  and manifest/registration slots were retained.
-- Added the twelve typed CRM operations, strict authenticated BFF handlers, governed Action/Read
-  runtime composition, contract-derived frontend clients, canonical DTOs, typed Problem Details,
-  tenant-scoped persistence services, stable pagination, lifecycle conflicts, idempotency, and
-  durable read evidence.
-- Added 19 focused unit tests and 3 PostgreSQL-backed integration tests. The live governed-runtime
-  test exercises all eight mutations, all four read registrations, idempotent replay, missing
-  idempotency, lifecycle filtering, and committed standalone read evidence.
-- Passed `test:unit`, `test:integration`, CRM `typecheck`, `api:check`,
-  `database-access:check`, `module-entrypoints:check`, `check:module-contracts`, CRM `build`, the
-  scaffold boundary tests, `contract:check`, and the repository-wide `pnpm check` quality gate.
-  The CRM build used the explicit base revision because the release-envelope check intentionally
-  rejects a dirty worktree revision during implementation.
-- Used an isolated migrated PostgreSQL database for integration validation and removed it afterward.
-  No UI, route, Policy, permission provisioning, Contact reassignment, cascade archive, Domain Event,
-  Outbox Message, or cross-vertical dependency was added.
+- Implemented in worktree `/Users/jiprochazka/Projects/Programming/TechsioCZ/ontos-feature-crm-customer-contact-actions` on branch `codex/feature-crm-customer-contact-actions`, based on `d1818d84db23c1ddcb4e3ca8214b3daf1d74be61`.
+- Ran the mandatory Codesmith generators from `app/` for the eight Customer/Contact Actions and the four Customer/Contact module APIs before adapting their generated output. Generated source headers and manifest/registration slots were retained.
+- Added the twelve typed CRM operations, strict authenticated BFF handlers, governed Action/Read runtime composition, contract-derived frontend clients, canonical DTOs, typed Problem Details, tenant-scoped persistence services, stable pagination, lifecycle conflicts, idempotency, and durable read evidence.
+- Added 19 focused unit tests and 3 PostgreSQL-backed integration tests. The live governed-runtime test exercises all eight mutations, all four read registrations, idempotent replay, missing idempotency, lifecycle filtering, and committed standalone read evidence.
+- Passed `test:unit`, `test:integration`, CRM `typecheck`, `api:check`, `database-access:check`, `module-entrypoints:check`, `check:module-contracts`, CRM `build`, the scaffold boundary tests, `contract:check`, and the repository-wide `pnpm check` quality gate. The CRM build used the explicit base revision because the release-envelope check intentionally rejects a dirty worktree revision during implementation.
+- Used an isolated migrated PostgreSQL database for integration validation and removed it afterward. No UI, route, Policy, permission provisioning, Contact reassignment, cascade archive, Domain Event, Outbox Message, or cross-vertical dependency was added.

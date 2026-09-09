@@ -8,27 +8,19 @@ created: 2026-08-17
 
 ## Feature Description
 
-Update the existing Customer edit page to load, display, validate, and save all canonical Customer
-business fields through the controlled Customer form and existing EditCustomerAction. The ARES
-loader remains create-only.
+Update the existing Customer edit page to load, display, validate, and save all canonical Customer business fields through the controlled Customer form and existing EditCustomerAction. The ARES loader remains create-only.
 
 ## User Story
 
-As a CRM user
-I want to correct any Customer business field
-So that the canonical Customer record remains accurate after creation
+As a CRM user I want to correct any Customer business field So that the canonical Customer record remains accurate after creation
 
 ## Problem Statement
 
-The edit page currently initializes and submits only `name`. Once the canonical Customer expands,
-the page must preserve optional values, allow explicit clearing, classify field/conflict errors, and
-include the complete payload in logical idempotency behavior.
+The edit page currently initializes and submits only `name`. Once the canonical Customer expands, the page must preserve optional values, allow explicit clearing, classify field/conflict errors, and include the complete payload in logical idempotency behavior.
 
 ## Solution Statement
 
-Map the expanded detail response into controlled form strings, submit normalized nullable values
-through the generated `editCustomer` Effect client, and update all query-cache, error, idempotency,
-and component tests. Do not add ARES lookup controls or a separate ARES section.
+Map the expanded detail response into controlled form strings, submit normalized nullable values through the generated `editCustomer` Effect client, and update all query-cache, error, idempotency, and component tests. Do not add ARES lookup controls or a separate ARES section.
 
 ## Relevant Files
 
@@ -47,18 +39,15 @@ Use these files to implement the feature:
 
 ### Phase 1: Foundation
 
-Consume the expanded read/Action contracts and controlled form without changing the generated page,
-route, federation, or Shell identity.
+Consume the expanded read/Action contracts and controlled form without changing the generated page, route, federation, or Shell identity.
 
 ### Phase 2: Core Implementation
 
-Map nullable DTO values to form values, normalize changed values back to the edit payload, and
-preserve typed error and idempotency semantics across every field.
+Map nullable DTO values to form values, normalize changed values back to the edit payload, and preserve typed error and idempotency semantics across every field.
 
 ### Phase 3: Integration
 
-Complete localized field/conflict states, cache updates, responsive/accessibility behavior, and
-focused page plus real BFF tests.
+Complete localized field/conflict states, cache updates, responsive/accessibility behavior, and focused page plus real BFF tests.
 
 ## Step by Step Tasks
 
@@ -98,13 +87,11 @@ IMPORTANT: Execute every step in order, top to bottom.
 
 ### Unit Tests
 
-Use Testing Library with mocked generated Effect clients to cover read mapping, controlled edits,
-nullable normalization, every explicit state, idempotency, cache, and navigation.
+Use Testing Library with mocked generated Effect clients to cover read mapping, controlled edits, nullable normalization, every explicit state, idempotency, cache, and navigation.
 
 ### Integration Tests
 
-Use the strict CRM BFF and real EditCustomerAction to prove complete persistence, null clearing,
-tenant isolation, and duplicate-IČO conflict.
+Use the strict CRM BFF and real EditCustomerAction to prove complete persistence, null clearing, tenant isolation, and duplicate-IČO conflict.
 
 ### Edge Cases
 

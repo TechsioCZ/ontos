@@ -1,4 +1,5 @@
 import type { Context, ESTree, Variable } from '@oxlint/plugins';
+
 import type { StringOptions } from './ast.ts';
 import { keyName, memberName, unwrapNode } from './ast.ts';
 import { lookupVariable } from './bindings.ts';
@@ -12,21 +13,15 @@ function schemaMember(host: string | null, member: string | null): string | null
   if (host === '@schema') return member;
   return host === '@effect' && member === 'Schema' ? '@schema' : null;
 }
-function submoduleIdentity(
-  specifier: ESTree.ImportDeclaration['specifiers'][number],
-): string | null {
+function submoduleIdentity(specifier: ESTree.ImportDeclaration['specifiers'][number]): string | null {
   if (specifier.type === 'ImportNamespaceSpecifier') return '@schema';
   return specifier.type === 'ImportSpecifier' ? importedName(specifier) : null;
 }
 function rootIdentity(specifier: ESTree.ImportDeclaration['specifiers'][number]): string | null {
   if (specifier.type === 'ImportNamespaceSpecifier') return '@effect';
-  return specifier.type === 'ImportSpecifier' && importedName(specifier) === 'Schema'
-    ? '@schema'
-    : null;
+  return specifier.type === 'ImportSpecifier' && importedName(specifier) === 'Schema' ? '@schema' : null;
 }
-function isImportSpecifier(
-  node: ESTree.Node,
-): node is ESTree.ImportDeclaration['specifiers'][number] {
+function isImportSpecifier(node: ESTree.Node): node is ESTree.ImportDeclaration['specifiers'][number] {
   return (
     node.type === 'ImportSpecifier' ||
     node.type === 'ImportNamespaceSpecifier' ||
@@ -44,16 +39,10 @@ function importIdentity(definition: Definition, reexports: readonly string[]): s
   return source === 'effect' || matchesGlobs(source, reexports) ? rootIdentity(specifier) : null;
 }
 export function constSchemaAlias(definition: Definition): ESTree.VariableDeclarator | null {
-  if (
-    definition.type !== 'Variable' ||
-    definition.node.type !== 'VariableDeclarator' ||
-    definition.node.init === null
-  )
+  if (definition.type !== 'Variable' || definition.node.type !== 'VariableDeclarator' || definition.node.init === null)
     return null;
   const declarator = definition.node;
-  return declarator.parent?.type === 'VariableDeclaration' && declarator.parent.kind === 'const'
-    ? declarator
-    : null;
+  return declarator.parent?.type === 'VariableDeclaration' && declarator.parent.kind === 'const' ? declarator : null;
 }
 function destructuredSchemaIdentity(
   pattern: ESTree.ObjectPattern,
@@ -61,12 +50,7 @@ function destructuredSchemaIdentity(
   host: string | null,
 ): string | null | undefined {
   for (const property of pattern.properties) {
-    if (
-      property.type !== 'Property' ||
-      property.value.type !== 'Identifier' ||
-      property.value.name !== name
-    )
-      continue;
+    if (property.type !== 'Property' || property.value.type !== 'Identifier' || property.value.name !== name) continue;
     const identity = schemaMember(host, keyName(property.key, property.computed));
     // A matching schema property returns even an unknown key, preserving the original first match.
     if (host === '@schema' || identity !== null) return identity;
@@ -89,8 +73,7 @@ function identifierIdentity(
     }
     const alias = constSchemaAlias(definition);
     if (!alias?.init) continue;
-    if (alias.id.type === 'Identifier')
-      return schemaIdentity(context, alias.init, reexports, depth + 1, syntax);
+    if (alias.id.type === 'Identifier') return schemaIdentity(context, alias.init, reexports, depth + 1, syntax);
     if (alias.id.type !== 'ObjectPattern') continue;
     const host = schemaIdentity(context, alias.init, reexports, depth + 1, syntax);
     const identity = destructuredSchemaIdentity(alias.id, node.name, host);
@@ -113,11 +96,6 @@ export function schemaIdentity(
   if (depth > 16) return null;
   const node = unwrapNode(input, syntax.unwrap);
   if (node.type === 'MemberExpression')
-    return schemaMember(
-      schemaIdentity(context, node.object, reexports, depth + 1, syntax),
-      memberName(node, syntax),
-    );
-  return node.type === 'Identifier'
-    ? identifierIdentity(context, node, reexports, depth, syntax)
-    : null;
+    return schemaMember(schemaIdentity(context, node.object, reexports, depth + 1, syntax), memberName(node, syntax));
+  return node.type === 'Identifier' ? identifierIdentity(context, node, reexports, depth, syntax) : null;
 }

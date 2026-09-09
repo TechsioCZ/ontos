@@ -25,9 +25,7 @@ const FixtureStartupError = Data.TaggedError('FixtureStartupError')<{
 }>;
 
 type IsExact<Left, Right> =
-  (<Value>() => Value extends Left ? 1 : 2) extends <Value>() => Value extends Right ? 1 : 2
-    ? true
-    : false;
+  (<Value>() => Value extends Left ? 1 : 2) extends <Value>() => Value extends Right ? 1 : 2 ? true : false;
 
 type ExpectedRuntimeRequirements =
   | Exclude<
@@ -55,8 +53,7 @@ const fixtureRuntime = assembleEffectBffRuntime({
   handlers: fixtureHandlers,
 });
 
-const concreteRuntime: EffectBffDefinition<typeof fixtureApi> &
-  EffectBffRuntime<typeof fixtureApi> = fixtureRuntime;
+const concreteRuntime: EffectBffDefinition<typeof fixtureApi> & EffectBffRuntime<typeof fixtureApi> = fixtureRuntime;
 const inferredApiIsExact: IsExact<typeof fixtureRuntime.api, typeof fixtureApi> = true;
 const inferredRequirementsAreExact: IsExact<
   Layer.Services<typeof fixtureRuntime.layer>,
@@ -73,7 +70,11 @@ const failingFixtureHandlers = HttpApiBuilder.group(fixtureApi, 'fixture', (hand
   Layer.provide(
     Layer.effect(
       FixtureDependency,
-      Effect.fail(new FixtureStartupError({ reason: 'must be resolved at the runtime root' })),
+      Effect.fail(
+        new FixtureStartupError({
+          reason: 'must be resolved at the runtime root',
+        }),
+      ),
     ),
   ),
 );

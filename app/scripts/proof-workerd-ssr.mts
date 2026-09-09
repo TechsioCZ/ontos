@@ -1,30 +1,14 @@
 #!/usr/bin/env node
 import crypto from 'node:crypto';
 import http from 'node:http';
+import type { IncomingMessage, Server, ServerResponse } from 'node:http';
 import path from 'node:path';
 
 import { NodeFileSystem } from '@effect/platform-node';
-import {
-  Array as EffectArray,
-  Config,
-  Effect,
-  Exit,
-  FileSystem,
-  ManagedRuntime,
-  Option,
-  Order,
-  Schema,
-} from 'effect';
-import {
-  Headers as MiniflareHeaders,
-  Log,
-  LogLevel,
-  Miniflare,
-  Response as MiniflareResponse,
-} from 'miniflare';
-import type { IncomingMessage, Server, ServerResponse } from 'node:http';
+import { Array as EffectArray, Config, Effect, Exit, FileSystem, ManagedRuntime, Option, Order, Schema } from 'effect';
 import type { PlatformError } from 'effect/PlatformError';
 import type { Scope } from 'effect/Scope';
+import { Headers as MiniflareHeaders, Log, LogLevel, Miniflare, Response as MiniflareResponse } from 'miniflare';
 import type { Request as MiniflareRequest, RequestInit as MiniflareRequestInit } from 'miniflare';
 
 const DISTRIBUTED_SSR_FRAGMENT_REQUEST_HEADER = 'x-modern-js-fragment-request';
@@ -62,9 +46,7 @@ const WranglerSchema = Schema.Struct({
   compatibility_flags: Schema.optionalKey(Schema.Array(Schema.String)),
   main: Schema.optionalKey(Schema.String),
   name: Schema.String,
-  services: Schema.optionalKey(
-    Schema.Array(Schema.Struct({ binding: Schema.String, service: Schema.String })),
-  ),
+  services: Schema.optionalKey(Schema.Array(Schema.Struct({ binding: Schema.String, service: Schema.String }))),
   vars: Schema.optionalKey(Schema.Record(Schema.String, Schema.String)),
 });
 const ArtifactSchema = Schema.Struct({
@@ -122,11 +104,19 @@ const RawAppSchema = Schema.Struct({
   port: Schema.Number,
 });
 const CompactConfigSchema = Schema.Struct({
-  topology: Schema.optionalKey(
-    Schema.Struct({ apps: Schema.optionalKey(Schema.Array(RawAppSchema)) }),
-  ),
+  topology: Schema.optionalKey(Schema.Struct({ apps: Schema.optionalKey(Schema.Array(RawAppSchema)) })),
 });
-const ApiResponseSchema = Schema.Struct({ marker: ApiReleaseMarkerSchema });
+const containsApiReleaseMarker = Schema.is(Schema.Struct({ marker: ApiReleaseMarkerSchema }));
+const isJsonScalar = Schema.is(Schema.Union([Schema.Null, Schema.Boolean, Schema.Number, Schema.String]));
+const findReleaseMarkers = (value: Schema.Json): readonly ApiReleaseMarker[] => {
+  if (isJsonScalar(value)) {
+    return [];
+  }
+  return [
+    ...(containsApiReleaseMarker(value) ? [value.marker] : []),
+    ...Object.values(value).flatMap(findReleaseMarkers),
+  ];
+};
 const ServiceBindingFaultCommandSchema = Schema.Struct({
   appId: AppIdSchema,
   failed: Schema.Boolean,
@@ -140,10 +130,10 @@ const ServiceBindingFaultResponseSchema = Schema.fromJsonString(
 );
 const TargetUrlsSchema = Schema.fromJsonString(Schema.Record(Schema.String, Schema.String));
 
-export class WorkerdProofError extends Schema.TaggedError<WorkerdProofError>()(
-  'WorkerdProofError',
-  { cause: Schema.optionalKey(Schema.Defect()), message: Schema.String },
-) {}
+export class WorkerdProofError extends Schema.TaggedError<WorkerdProofError>()('WorkerdProofError', {
+  cause: Schema.optionalKey(Schema.Defect()),
+  message: Schema.String,
+}) {}
 
 type SmokeCheck = typeof SmokeCheckSchema.Type;
 type Wrangler = typeof WranglerSchema.Type;
@@ -371,10 +361,7 @@ const collectJavaScriptFiles = (absoluteDirectory: string): ProofEffect<readonly
     return EffectArray.sort(nested.flat(), Order.String);
   });
 
-const createWorkerModules = (
-  outputRoot: string,
-  main: string,
-): ProofEffect<readonly WorkerModule[]> =>
+const createWorkerModules = (outputRoot: string, main: string): ProofEffect<readonly WorkerModule[]> =>
   Effect.gen(function* createWorkerModulesEffect() {
     const entryPath = path.resolve(outputRoot, main);
     const collected = yield* Effect.all(
@@ -397,58 +384,39 @@ const readExecutionEnvelope = (
   appId: string,
   outputRoot: string,
   expectedUnitId: string | undefined,
-): ProofEffect<{ readonly envelope: ExecutionEnvelope; readonly envelopePath: string }> =>
+): ProofEffect<{
+  readonly envelope: ExecutionEnvelope;
+  readonly envelopePath: string;
+}> =>
   Effect.gen(function* readExecutionEnvelopeEffect() {
     const fileSystem = yield* FileSystem.FileSystem;
     const envelopePath = path.join(outputRoot, 'release/microvertical-release-envelope.json');
-    yield* ensure(
-      yield* fileSystem.exists(envelopePath),
-      `${appId} executed .output release envelope is missing`,
-    );
+    yield* ensure(yield* fileSystem.exists(envelopePath), `${appId} executed .output release envelope is missing`);
     const envelope = yield* readJsonDocument(envelopePath, ExecutionEnvelopeSchema);
     yield* ensure(envelope.schemaVersion === 3, `${appId} executed envelope schema must be 3`);
+    yield* ensure(envelope.target === 'cloudflare', `${appId} executed envelope must target cloudflare`);
     yield* ensure(
-      envelope.target === 'cloudflare',
-      `${appId} executed envelope must target cloudflare`,
-    );
-    yield* ensure(
-      expectedUnitId !== undefined &&
-        expectedUnitId.length > 0 &&
-        envelope.identity.unitId === expectedUnitId,
+      expectedUnitId !== undefined && expectedUnitId.length > 0 && envelope.identity.unitId === expectedUnitId,
       `${appId} executed envelope unit identity is invalid`,
     );
-    yield* ensure(
-      /^[a-f\d]{64}$/u.test(envelope.envelopeDigest),
-      `${appId} executed envelope digest is invalid`,
-    );
+    yield* ensure(/^[a-f\d]{64}$/u.test(envelope.envelopeDigest), `${appId} executed envelope digest is invalid`);
     yield* ensure(envelope.artifacts.length > 0, `${appId} executed envelope has no artifacts`);
     return { envelope, envelopePath };
   });
 
-const bindExecutedModule = (
-  app: App,
-  envelope: ExecutionEnvelope,
-  module: WorkerModule,
-): ProofEffect<BoundModule> =>
+const bindExecutedModule = (app: App, envelope: ExecutionEnvelope, module: WorkerModule): ProofEffect<BoundModule> =>
   Effect.gen(function* bindExecutedModuleEffect() {
     const fileSystem = yield* FileSystem.FileSystem;
     const logicalPath = normalizePath(path.relative(app.outputRoot, module.path));
     yield* ensure(
-      logicalPath.length > 0 &&
-        !logicalPath.startsWith('../') &&
-        !path.posix.isAbsolute(logicalPath),
+      logicalPath.length > 0 && !logicalPath.startsWith('../') && !path.posix.isAbsolute(logicalPath),
       `${app.id} selected module escapes .output: ${logicalPath}`,
     );
     const artifact = envelope.artifacts.find((candidate) => candidate.logicalPath === logicalPath);
     if (artifact === undefined) {
-      return yield* Effect.fail(
-        proofError(`${app.id} selected module ${logicalPath} is not envelope-bound`),
-      );
+      return yield* Effect.fail(proofError(`${app.id} selected module ${logicalPath} is not envelope-bound`));
     }
-    yield* ensure(
-      artifact.kind === 'file',
-      `${app.id} selected module ${logicalPath} is bound to a non-file artifact`,
-    );
+    yield* ensure(artifact.kind === 'file', `${app.id} selected module ${logicalPath} is bound to a non-file artifact`);
     const bytes = yield* fileSystem.readFile(module.path);
     const digest = sha256(bytes);
     yield* ensure(
@@ -470,10 +438,7 @@ const resolveAppPath = (id: string, kind: App['kind'], configuredPath: string | 
   }
   return kind === 'shell' ? 'apps/shell-super-app' : `verticals/${id}`;
 };
-const resolveProofRoutes = (
-  configuredRoutes: readonly string[],
-  configuredSsrRoute: string | undefined,
-) => {
+const resolveProofRoutes = (configuredRoutes: readonly string[], configuredSsrRoute: string | undefined) => {
   const proofRoutes = [...new Set(configuredRoutes.filter((route) => route.startsWith('/')))];
   if (proofRoutes.length > 0) {
     return proofRoutes;
@@ -488,10 +453,7 @@ const deriveAppConfiguration = (rawApp: typeof RawAppSchema.Type) => {
     id: rawApp.id,
     jsonSmokeChecks: cloudflare?.jsonSmokeChecks ?? [],
     port: rawApp.port,
-    proofRoutes: resolveProofRoutes(
-      cloudflare?.distributedSsrProofRoutes ?? [],
-      cloudflare?.routes?.ssr,
-    ),
+    proofRoutes: resolveProofRoutes(cloudflare?.distributedSsrProofRoutes ?? [], cloudflare?.routes?.ssr),
     verticalRefs: rawApp.moduleFederation?.verticalRefs ?? [],
   };
 };
@@ -566,9 +528,7 @@ const createWorkerConfiguration = (
           : bindExecutedModule(app, app.envelope, module),
       { concurrency: 1 },
     );
-    const mainLogicalPath = normalizePath(
-      path.relative(app.outputRoot, path.resolve(app.outputRoot, main)),
-    );
+    const mainLogicalPath = normalizePath(path.relative(app.outputRoot, path.resolve(app.outputRoot, main)));
     yield* ensure(
       boundModules.some((module) => module.logicalPath === mainLogicalPath),
       `${app.id} Miniflare main ${mainLogicalPath} is not in the selected module set`,
@@ -579,8 +539,7 @@ const createWorkerConfiguration = (
       const selectedPaths = new Set(boundModules.map((module) => module.logicalPath));
       yield* ensure(
         app.kind !== 'vertical' ||
-          (apiBackend.length > 0 &&
-            apiBackend.every((logicalPath) => selectedPaths.has(logicalPath))),
+          (apiBackend.length > 0 && apiBackend.every((logicalPath) => selectedPaths.has(logicalPath))),
         `${app.id} BFF worker surface is not selected by Miniflare`,
       );
       yield* ensure(
@@ -625,9 +584,7 @@ const createWorkerConfiguration = (
         appId: app.id,
         envelopeDigest: app.envelope?.envelopeDigest ?? null,
         envelopePath:
-          app.envelopePath === undefined
-            ? null
-            : normalizePath(path.relative(workspaceRoot, app.envelopePath)),
+          app.envelopePath === undefined ? null : normalizePath(path.relative(workspaceRoot, app.envelopePath)),
         identity: app.envelope?.identity ?? null,
         main: mainLogicalPath,
         modules: boundModules,
@@ -638,10 +595,7 @@ const createWorkerConfiguration = (
     };
   });
 
-const responseEvidence = (
-  app: App,
-  response: MiniflareResponse,
-): Effect.Effect<ResponseEvidence, WorkerdProofError> =>
+const responseEvidence = (app: App, response: MiniflareResponse): Effect.Effect<ResponseEvidence, WorkerdProofError> =>
   Effect.gen(function* responseEvidenceEffect() {
     const arrayBuffer = yield* Effect.tryPromise({
       catch: (cause) => proofError(`${app.id} API response body could not be read`, cause),
@@ -649,18 +603,18 @@ const responseEvidence = (
     });
     const bytes = Buffer.from(arrayBuffer);
     const source = bytes.toString('utf-8');
-    const body = yield* Schema.decodeUnknownEffect(Schema.fromJsonString(ApiResponseSchema))(
-      source,
-    ).pipe(
+    const body = yield* Schema.decodeUnknownEffect(Schema.fromJsonString(Schema.Json))(source).pipe(
       Effect.mapError((cause) => proofError(`${app.id} API response is not valid JSON`, cause)),
     );
-    const { marker } = body;
-    yield* ensure(
-      marker.appId === app.id &&
-        marker.build === app.envelope?.identity.buildMarker &&
-        marker.version === app.envelope.identity.releaseVersion,
-      `${app.id} API response is not tied to its executed release identity: ${source.slice(0, 1000)}`,
+    const marker = findReleaseMarkers(body).find(
+      (candidate) =>
+        candidate.appId === app.id &&
+        candidate.build === app.envelope?.identity.buildMarker &&
+        candidate.version === app.envelope.identity.releaseVersion,
     );
+    if (marker === undefined) {
+      return yield* proofError(`${app.id} API response is not tied to its executed release identity`);
+    }
     yield* ensure(response.ok, `${app.id} API response returned HTTP ${response.status}`);
     return {
       bodyBase64: bytes.toString('base64'),
@@ -671,22 +625,41 @@ const responseEvidence = (
     };
   });
 
-const resolveApiSmokeChecks = (app: App, shell: App): readonly SmokeCheck[] => {
-  const shellChecks =
-    app.apiPrefix?.startsWith('/') === true
-      ? shell.jsonSmokeChecks.filter(
-          (check) => check.route === app.apiPrefix || check.route.startsWith(`${app.apiPrefix}/`),
-        )
-      : [];
-  const uniqueChecks = new Map<string, SmokeCheck>();
-  for (const check of [...app.jsonSmokeChecks, ...shellChecks]) {
-    const key = [(check.method ?? 'GET').toUpperCase(), check.route, check.id ?? ''].join('\u0000');
-    if (!uniqueChecks.has(key)) {
-      uniqueChecks.set(key, check);
+const encodeSmokeCheckIdentity = Schema.encodeEffect(
+  Schema.fromJsonString(
+    Schema.Struct({
+      body: Schema.Json,
+      expect: Schema.Json,
+      id: Schema.optional(Schema.String),
+      method: Schema.String,
+      route: Schema.String,
+    }),
+  ),
+);
+
+const resolveApiSmokeChecks = (app: App, shell: App): Effect.Effect<readonly SmokeCheck[], WorkerdProofError> =>
+  Effect.gen(function* resolveApiSmokeChecksEffect() {
+    const shellChecks =
+      app.apiPrefix?.startsWith('/') === true
+        ? shell.jsonSmokeChecks.filter(
+            (check) => check.route === app.apiPrefix || check.route.startsWith(`${app.apiPrefix}/`),
+          )
+        : [];
+    const uniqueChecks = new Map<string, SmokeCheck>();
+    for (const check of [...app.jsonSmokeChecks, ...shellChecks]) {
+      const key = yield* encodeSmokeCheckIdentity({
+        body: check.body ?? null,
+        expect: check.expect ?? null,
+        id: check.id,
+        method: (check.method ?? 'GET').toUpperCase(),
+        route: check.route,
+      }).pipe(Effect.mapError((cause) => proofError(`${app.id} smoke identity could not be encoded`, cause)));
+      if (!uniqueChecks.has(key)) {
+        uniqueChecks.set(key, check);
+      }
     }
-  }
-  return [...uniqueChecks.values()];
-};
+    return [...uniqueChecks.values()];
+  });
 
 const runApiCheck = (
   app: App,
@@ -724,14 +697,10 @@ const runApiCheck = (
     const direct = yield* responseEvidence(app, directResponse);
     const shellResponse = yield* Effect.tryPromise({
       catch: (cause) => proofError(`${app.id} Shell API request failed`, cause),
-      try: async () =>
-        await miniflare.dispatchFetch(`https://${shellWorkerName}.invalid${check.route}`, init),
+      try: async () => await miniflare.dispatchFetch(`https://${shellWorkerName}.invalid${check.route}`, init),
     });
     const throughShell = yield* responseEvidence(app, shellResponse);
-    yield* ensure(
-      direct.sha256 === throughShell.sha256,
-      `${app.id} direct and service-binding API responses differ`,
-    );
+    yield* ensure(direct.sha256 === throughShell.sha256, `${app.id} direct and service-binding API responses differ`);
     return {
       appId: app.id,
       binding,
@@ -755,29 +724,18 @@ const runAppApiProofs = (
   executionByAppId: ReadonlyMap<string, ExecutionEvidence>,
 ): Effect.Effect<readonly ApiProof[], WorkerdProofError> =>
   Effect.gen(function* runAppApiProofsEffect() {
-    const checks = resolveApiSmokeChecks(app, shell);
+    const checks = yield* resolveApiSmokeChecks(app, shell);
     yield* ensure(checks.length > 0, `${app.id} has no real Cloudflare API smoke check`);
     const appWorkerName = yield* workerName(app);
     const shellWorkerName = yield* workerName(shell);
-    const binding = (shell.wrangler.services ?? []).find(
-      (candidate) => candidate.service === appWorkerName,
-    );
+    const binding = (shell.wrangler.services ?? []).find((candidate) => candidate.service === appWorkerName);
     const targetEvidence = executionByAppId.get(app.id);
     if (binding === undefined || targetEvidence === undefined) {
       return yield* Effect.fail(proofError(`${app.id} service-binding evidence is missing`));
     }
     return yield* Effect.forEach(
       checks,
-      (check) =>
-        runApiCheck(
-          app,
-          appWorkerName,
-          binding.binding,
-          check,
-          miniflare,
-          shellWorkerName,
-          targetEvidence,
-        ),
+      (check) => runApiCheck(app, appWorkerName, binding.binding, check, miniflare, shellWorkerName, targetEvidence),
       { concurrency: 1 },
     );
   });
@@ -794,18 +752,14 @@ const runApiProofs = (
     { concurrency: 1 },
   ).pipe(Effect.map((nested) => nested.flat()));
 
-const readRequestBody = (
-  request: IncomingMessage,
-): Effect.Effect<Option.Option<Buffer>, WorkerdProofError> =>
+const readRequestBody = (request: IncomingMessage): Effect.Effect<Option.Option<Buffer>, WorkerdProofError> =>
   Effect.callback((resume) => {
     const chunks: Buffer[] = [];
     const onData = (chunk: Buffer | string) => {
       chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk));
     };
     const onEnd = () => {
-      resume(
-        Effect.succeed(chunks.length > 0 ? Option.some(Buffer.concat(chunks)) : Option.none()),
-      );
+      resume(Effect.succeed(chunks.length > 0 ? Option.some(Buffer.concat(chunks)) : Option.none()));
     };
     const onError = (cause: Error) => {
       resume(Effect.fail(proofError('Could not read incoming proof request', cause)));
@@ -862,15 +816,10 @@ const handleTargetRequest = (
 ): Effect.Effect<void> =>
   Effect.gen(function* handleTargetRequestEffect() {
     const body = Option.getOrUndefined(yield* readRequestBody(incoming));
-    if (
-      incoming.method === 'POST' &&
-      incoming.url === '/_ultramodern-proof/service-binding-fault'
-    ) {
-      const command = yield* Schema.decodeUnknownEffect(
-        Schema.fromJsonString(ServiceBindingFaultCommandSchema),
-      )(body?.toString('utf-8') ?? '{}').pipe(
-        Effect.mapError((cause) => proofError('Invalid service-binding fault command', cause)),
-      );
+    if (incoming.method === 'POST' && incoming.url === '/_ultramodern-proof/service-binding-fault') {
+      const command = yield* Schema.decodeUnknownEffect(Schema.fromJsonString(ServiceBindingFaultCommandSchema))(
+        body?.toString('utf-8') ?? '{}',
+      ).pipe(Effect.mapError((cause) => proofError('Invalid service-binding fault command', cause)));
       const targetApp = yield* Effect.fromOption(
         Option.fromNullishOr(apps.find((candidate) => candidate.id === command.appId)),
         () => proofError(`Unknown service-binding fault target ${command.appId}`),
@@ -886,7 +835,9 @@ const handleTargetRequest = (
         service,
       }).pipe(Effect.mapError((cause) => proofError('Could not encode fault response', cause)));
       yield* Effect.sync(() => {
-        outgoing.writeHead(200, { [CONTENT_TYPE_HEADER]: APPLICATION_JSON_CONTENT_TYPE });
+        outgoing.writeHead(200, {
+          [CONTENT_TYPE_HEADER]: APPLICATION_JSON_CONTENT_TYPE,
+        });
         outgoing.end(encoded);
       });
     } else {
@@ -900,8 +851,7 @@ const handleTargetRequest = (
       }
       const response = yield* Effect.tryPromise({
         catch: (cause) => proofError(`${app.id} target dispatch failed`, cause),
-        try: async () =>
-          await runtime.dispatchFetch(`https://${name}.invalid${incoming.url ?? '/'}`, init),
+        try: async () => await runtime.dispatchFetch(`https://${name}.invalid${incoming.url ?? '/'}`, init),
       });
       const bytes = yield* Effect.tryPromise({
         catch: (cause) => proofError('Could not read Worker response', cause),
@@ -917,7 +867,9 @@ const handleTargetRequest = (
       Effect.logError(cause).pipe(
         Effect.andThen(
           Effect.sync(() => {
-            outgoing.writeHead(500, { [CONTENT_TYPE_HEADER]: 'text/plain; charset=utf-8' });
+            outgoing.writeHead(500, {
+              [CONTENT_TYPE_HEADER]: 'text/plain; charset=utf-8',
+            });
             outgoing.end('Workerd proof request failed');
           }),
         ),
@@ -928,9 +880,7 @@ const handleTargetRequest = (
 const createTargetRequestListener =
   (apps: readonly App[], app: App, runtime: Miniflare, failedServices: Set<string>) =>
   (incoming: IncomingMessage, outgoing: ServerResponse): void => {
-    adapterRuntime.runCallback(
-      handleTargetRequest(apps, app, runtime, failedServices, incoming, outgoing),
-    );
+    adapterRuntime.runCallback(handleTargetRequest(apps, app, runtime, failedServices, incoming, outgoing));
   };
 
 const startTargetServer = (
@@ -950,11 +900,12 @@ const startTargetServer = (
     }
     const runtime =
       app.kind === 'vertical'
-        ? new Miniflare({ log: new Log(LogLevel.ERROR), workers: [configuration] })
+        ? new Miniflare({
+            log: new Log(LogLevel.ERROR),
+            workers: [configuration],
+          })
         : miniflare;
-    const server = http.createServer(
-      createTargetRequestListener(apps, app, runtime, failedServices),
-    );
+    const server = http.createServer(createTargetRequestListener(apps, app, runtime, failedServices));
     yield* listen(server, app.port);
     return {
       app,
@@ -982,18 +933,14 @@ const startWorkerdTargetServers = (
   Effect.gen(function* startWorkerdTargetServersEffect() {
     const started = yield* Effect.forEach(
       apps,
-      (app, index) =>
-        startTargetServer(apps, app, workerConfigurations[index], failedServices, miniflare),
+      (app, index) => startTargetServer(apps, app, workerConfigurations[index], failedServices, miniflare),
       { concurrency: 1 },
     );
-    const targetUrls = Object.fromEntries(
-      started.map(({ app }) => [app.id, `http://127.0.0.1:${app.port}`]),
-    );
+    const targetUrls = Object.fromEntries(started.map(({ app }) => [app.id, `http://127.0.0.1:${app.port}`]));
     const runtimeDisposals = started.map(({ runtime }) => disposeTargetRuntime(runtime));
-    const stop = Effect.all(
-      [...started.map(({ server }) => closeServer(server)), ...runtimeDisposals],
-      { concurrency: 'unbounded' },
-    ).pipe(Effect.asVoid);
+    const stop = Effect.all([...started.map(({ server }) => closeServer(server)), ...runtimeDisposals], {
+      concurrency: 'unbounded',
+    }).pipe(Effect.asVoid);
     return { stop, targetUrls };
   });
 
@@ -1002,9 +949,7 @@ const readAttribute = (tag: string, name: string) => {
   const match = new RegExp(`\\s${escapedName}=(?:"([^"]*)"|'([^']*)')`, 'u').exec(tag);
   return match?.[1] ?? match?.[2];
 };
-const collectDistributedBoundaries = (
-  html: string,
-): Effect.Effect<readonly DistributedBoundary[], WorkerdProofError> =>
+const collectDistributedBoundaries = (html: string): Effect.Effect<readonly DistributedBoundary[], WorkerdProofError> =>
   Effect.forEach(
     html.matchAll(/<[a-z][^>]*data-modern-distributed-ssr-boundary=(?:"[^"]+"|'[^']+')[^>]*>/giu),
     (match) =>
@@ -1028,9 +973,7 @@ const collectDistributedBoundaries = (
   );
 const collectStylesheetHrefs = (html: string): readonly string[] =>
   [...html.matchAll(/<link\b[^>]*>/giu)]
-    .filter(
-      (match) => readAttribute(match[0], 'rel')?.split(/\s+/u).includes('stylesheet') === true,
-    )
+    .filter((match) => readAttribute(match[0], 'rel')?.split(/\s+/u).includes('stylesheet') === true)
     .map((match) => readAttribute(match[0], 'href'))
     .filter((href): href is string => href !== undefined);
 const isDistributedSsrFragmentRequest = (request: MiniflareRequest) =>
@@ -1070,9 +1013,7 @@ const decodeDistributedSsrFragmentRequest = (
       (header) => readRequiredFragmentHeader(request, header),
       { concurrency: 5 },
     );
-    const headers = new Map(
-      DISTRIBUTED_SSR_REQUIRED_HEADERS.map((header, index) => [header, values[index]]),
-    );
+    const headers = new Map(DISTRIBUTED_SSR_REQUIRED_HEADERS.map((header, index) => [header, values[index]]));
     const propsSource = headers.get('x-modern-distributed-ssr-props');
     const sourceUrl = headers.get('x-modern-distributed-ssr-source-url');
     const boundaryId = headers.get('x-modern-distributed-ssr-boundary-id');
@@ -1187,13 +1128,7 @@ const createServiceBindings = (
   Object.fromEntries(
     (caller.wrangler.services ?? []).map((service) => [
       service.binding,
-      createServiceBindingHandler(
-        caller,
-        apiBindingRequests,
-        failedServices,
-        fragmentBindingRequests,
-        service,
-      ),
+      createServiceBindingHandler(caller, apiBindingRequests, failedServices, fragmentBindingRequests, service),
     ]),
   );
 
@@ -1235,7 +1170,9 @@ const writeReport = (
       schemaVersion: 3,
     };
     const encoded = yield* encodeJson(report);
-    yield* fileSystem.makeDirectory(path.dirname(reportPath), { recursive: true });
+    yield* fileSystem.makeDirectory(path.dirname(reportPath), {
+      recursive: true,
+    });
     yield* fileSystem.writeFileString(reportPath, `${encoded}\n`);
   });
 
@@ -1243,7 +1180,9 @@ const createOutboundService =
   (app: App, outboundRequests: OutboundRequest[]): ServiceBindingHandler =>
   (request) => {
     outboundRequests.push({ callerId: app.id, url: new URL(request.url).href });
-    return new MiniflareResponse('External network disabled by SSR proof', { status: 502 });
+    return new MiniflareResponse('External network disabled by SSR proof', {
+      status: 502,
+    });
   };
 
 const proveBoundary = (
@@ -1257,10 +1196,7 @@ const proveBoundary = (
 ): Effect.Effect<void, WorkerdProofError> =>
   Effect.gen(function* proveBoundaryEffect() {
     renderedRemoteIds.add(boundary.remote);
-    yield* ensure(
-      boundary.status === 'ready',
-      `${shell.id} did not mark ${boundary.key} as ready for ${route}`,
-    );
+    yield* ensure(boundary.status === 'ready', `${shell.id} did not mark ${boundary.key} as ready for ${route}`);
     yield* ensure(
       boundary.buildMarker !== undefined && boundary.buildMarker.length > 0,
       `${shell.id} ${boundary.key} is missing immutable build provenance`,
@@ -1269,9 +1205,8 @@ const proveBoundary = (
       /^[a-f\d]{64}$/u.test(boundary.digest ?? ''),
       `${shell.id} ${boundary.key} is missing a verified SHA-256 digest`,
     );
-    const remote = yield* Effect.fromOption(
-      Option.fromNullishOr(apps.find((app) => app.id === boundary.remote)),
-      () => proofError(`${shell.id} rendered unknown remote ${boundary.remote}`),
+    const remote = yield* Effect.fromOption(Option.fromNullishOr(apps.find((app) => app.id === boundary.remote)), () =>
+      proofError(`${shell.id} rendered unknown remote ${boundary.remote}`),
     );
     const remoteWorkerName = yield* workerName(remote);
     const requests = routeFragmentBindingRequests.filter(
@@ -1282,8 +1217,7 @@ const proveBoundary = (
     );
     const renderedCount = boundaries.filter((candidate) => candidate.key === boundary.key).length;
     yield* ensure(
-      requests.length === renderedCount &&
-        requests.every((request) => request.pathname.includes('/_mf/fragment/')),
+      requests.length === renderedCount && requests.every((request) => request.pathname.includes('/_mf/fragment/')),
       `${shell.id} must compose each ${boundary.key} occurrence through its remote service binding`,
     );
   });
@@ -1345,15 +1279,7 @@ const proveShellRoute = (
     yield* Effect.forEach(
       boundaries,
       (boundary) =>
-        proveBoundary(
-          apps,
-          boundaries,
-          boundary,
-          state.renderedRemoteIds,
-          route,
-          routeFragmentBindingRequests,
-          shell,
-        ),
+        proveBoundary(apps, boundaries, boundary, state.renderedRemoteIds, route, routeFragmentBindingRequests, shell),
       { concurrency: 1 },
     );
     const stylesheetHrefs = collectStylesheetHrefs(html);
@@ -1445,10 +1371,7 @@ const runShellProof = (
     const remotes = shell.verticalRefs
       .map((ref) => apps.find((app) => app.id === ref))
       .filter((remote): remote is App => remote !== undefined);
-    yield* ensure(
-      remotes.length === shell.verticalRefs.length,
-      `${shell.id} references a missing MicroVertical`,
-    );
+    yield* ensure(remotes.length === shell.verticalRefs.length, `${shell.id} references a missing MicroVertical`);
     yield* ensure(remotes.length > 0, `${shell.id} has no MicroVerticals to prove`);
     const failedServices = new Set<string>();
     const state: ShellProofState = {
@@ -1466,12 +1389,7 @@ const runShellProof = (
           app,
           process.cwd(),
           createOutboundService(app, state.outboundRequests),
-          createServiceBindings(
-            app,
-            state.apiBindingRequests,
-            failedServices,
-            state.fragmentBindingRequests,
-          ),
+          createServiceBindings(app, state.apiBindingRequests, failedServices, state.fragmentBindingRequests),
         ),
       { concurrency: 1 },
     );
@@ -1497,15 +1415,10 @@ const runShellProof = (
     const apiProofs = yield* runApiProofs(apps, miniflare, shell, executionByAppId);
     if (keepWorkerd) {
       yield* writeReport(reportPath, apiProofs, executions, state.proofs, state.remoteProofs);
-      const targetServers = yield* startWorkerdTargetServers(
-        apps,
-        miniflare,
-        failedServices,
-        workers,
+      const targetServers = yield* startWorkerdTargetServers(apps, miniflare, failedServices, workers);
+      const encodedTargetUrls = yield* Schema.encodeEffect(TargetUrlsSchema)(targetServers.targetUrls).pipe(
+        Effect.mapError((cause) => proofError('Could not encode Workerd target URLs', cause)),
       );
-      const encodedTargetUrls = yield* Schema.encodeEffect(TargetUrlsSchema)(
-        targetServers.targetUrls,
-      ).pipe(Effect.mapError((cause) => proofError('Could not encode Workerd target URLs', cause)));
       yield* Effect.log(`WORKERD_TARGET_URLS=${encodedTargetUrls}`);
       yield* Effect.log(`WORKERD_URL=${targetServers.targetUrls[shell.id] ?? ''}`);
       yield* waitForTerminationSignal.pipe(Effect.ensuring(targetServers.stop));
@@ -1520,32 +1433,23 @@ const runShellProof = (
 
 const main = Effect.gen(function* mainEffect() {
   const workspaceRoot = process.cwd();
-  const reportPath = path.join(
-    workspaceRoot,
-    '.codex/reports/cloudflare-workerd-ssr/composition-proof.json',
-  );
-  const keepWorkerd = yield* Config.boolean('ULTRAMODERN_KEEP_WORKERD').pipe(
-    Config.withDefault(false),
-  );
+  const reportPath = path.join(workspaceRoot, '.codex/reports/cloudflare-workerd-ssr/composition-proof.json');
+  const keepWorkerd = yield* Config.boolean('ULTRAMODERN_KEEP_WORKERD').pipe(Config.withDefault(false));
   const apps = yield* loadApps(workspaceRoot);
   const shells = apps.filter((app) => app.kind === 'shell');
   yield* ensure(shells.length > 0, 'Workerd SSR proof requires at least one shell');
   if (keepWorkerd) {
     yield* ensure(shells.length === 1, 'Browser workerd proof requires exactly one shell');
   }
-  const results = yield* Effect.forEach(
-    shells,
-    (shell) => runShellProof(apps, shell, keepWorkerd, reportPath),
-    { concurrency: 1 },
-  );
+  const results = yield* Effect.forEach(shells, (shell) => runShellProof(apps, shell, keepWorkerd, reportPath), {
+    concurrency: 1,
+  });
   const apiProofs = results.flatMap((result) => result.apiProofs);
   const executions = results.flatMap((result) => result.executions);
   const proofs = results.flatMap((result) => result.proofs);
   const remoteProofs = results.flatMap((result) => result.remoteProofs);
   yield* writeReport(reportPath, apiProofs, executions, proofs, remoteProofs);
-  yield* Effect.log(
-    `Workerd SSR composition proof passed for ${shells.length} shell(s): ${reportPath}`,
-  );
+  yield* Effect.log(`Workerd SSR composition proof passed for ${shells.length} shell(s): ${reportPath}`);
 }).pipe(Effect.scoped);
 
 const loggedMain = main.pipe(Effect.tapCause((cause) => Effect.logError(cause)));

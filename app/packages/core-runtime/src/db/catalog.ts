@@ -17,17 +17,12 @@ export interface CatalogDifference {
   readonly unexpected: readonly string[];
 }
 
-export const expectedCoreTableCatalog = CORE_TABLE_INVENTORY.map(
-  (tableName) => `${CORE_SCHEMA_NAME}.${tableName}`,
-);
+export const expectedCoreTableCatalog = CORE_TABLE_INVENTORY.map((tableName) => `${CORE_SCHEMA_NAME}.${tableName}`);
 
 export const compareApplicationCatalog = (entries: readonly CatalogEntry[]): CatalogDifference => {
   const actualTables = new Set(
     entries
-      .filter(
-        (entry): entry is Extract<CatalogEntry, { readonly kind: 'table' }> =>
-          entry.kind === 'table',
-      )
+      .filter((entry): entry is Extract<CatalogEntry, { readonly kind: 'table' }> => entry.kind === 'table')
       .map((entry) => `${entry.schemaName}.${entry.tableName}`),
   );
   const expectedTables = new Set(expectedCoreTableCatalog);

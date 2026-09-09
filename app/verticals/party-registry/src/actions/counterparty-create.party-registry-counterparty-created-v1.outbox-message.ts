@@ -5,8 +5,7 @@ import {
 } from '@app/party-registry/outbox/party-registry-counterparty-created-v1';
 import type { OutboxPayload } from '@app/party-registry/outbox/party-registry-counterparty-created-v1';
 
-const CounterpartyCreatePartyRegistryCounterpartyCreatedV1OutboxProducerModuleKey =
-  outboxProducerModuleKey;
+const CounterpartyCreatePartyRegistryCounterpartyCreatedV1OutboxProducerModuleKey = outboxProducerModuleKey;
 const CounterpartyCreatePartyRegistryCounterpartyCreatedV1OutboxTopic = outboxTopic;
 
 export const createCounterpartyCreatePartyRegistryCounterpartyCreatedV1OutboxMessage = (

@@ -51,7 +51,6 @@ export const deriveInstalledVerticalIds = (
     ),
   );
 
-export const installedVerticalIds: Effect.Effect<
-  ReadonlySet<string>,
-  InstalledVerticalTopologyError
-> = Effect.suspend(() => deriveInstalledVerticalIds(ULTRAMODERN_GATEWAY_AUDIENCE_TOPOLOGY));
+export const installedVerticalIds: Effect.Effect<ReadonlySet<string>, InstalledVerticalTopologyError> = Effect.suspend(
+  () => deriveInstalledVerticalIds(ULTRAMODERN_GATEWAY_AUDIENCE_TOPOLOGY),
+);

@@ -14,9 +14,7 @@ Every declared Policy is evaluated against the decoded payload and trusted execu
 
 ## User Story
 
-As an OntOS module developer
-I want every Action to reference and enforce its applicable global and module-owned business Policies
-So that disallowed state changes are stopped consistently, reported safely, and retained as durable evidence without crossing MicroVertical boundaries
+As an OntOS module developer I want every Action to reference and enforce its applicable global and module-owned business Policies So that disallowed state changes are stopped consistently, reported safely, and retained as durable evidence without crossing MicroVertical boundaries
 
 ## Problem Statement
 

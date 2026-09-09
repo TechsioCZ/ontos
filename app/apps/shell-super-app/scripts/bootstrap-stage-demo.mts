@@ -1,5 +1,6 @@
 // @effect-diagnostics nodeBuiltinImport:off processEnv:off -- Existing compatibility boundary; expires: 2026-12-31.
 import { Console, Effect, Exit, Layer } from 'effect';
+
 import { AuthConfig } from '../api/auth/config.ts';
 import { AuthDatabaseLive } from '../api/auth/db/client.ts';
 import { StageDemoBootstrapError } from '../api/auth/stage-demo-bootstrap-contract.ts';

@@ -1,5 +1,6 @@
 import { and, eq } from 'drizzle-orm';
 import { Clock, Context, Effect, Layer, Schema } from 'effect';
+
 import { tenantModuleStates, tenants } from '../db/schema.ts';
 import type { CoreTransaction } from '../db/types.ts';
 import type {
@@ -8,16 +9,10 @@ import type {
   TenantModuleEntrypoint,
 } from './module-entrypoint.ts';
 import type { ModuleStateGateError } from './module-state-gate-errors.ts';
-import {
-  ModuleStateCheckUnavailableError,
-  ModuleStateDeniedError,
-} from './module-state-gate-errors.ts';
+import { ModuleStateCheckUnavailableError, ModuleStateDeniedError } from './module-state-gate-errors.ts';
 import type { ModuleStateSnapshot } from './module-state-snapshot.ts';
 import { ModuleStateSnapshotValue } from './module-state-snapshot.ts';
-import type {
-  TenantModuleState,
-  TenantModuleStateServiceContract,
-} from './tenant-module-state-service.ts';
+import type { TenantModuleState, TenantModuleStateServiceContract } from './tenant-module-state-service.ts';
 import {
   TENANT_MODULE_STATES,
   TenantModuleStateSchema,
@@ -29,9 +24,7 @@ export type { ModuleStateSnapshot } from './module-state-snapshot.ts';
 const ModuleStateDecisionSchema = Schema.Literals(['allow', 'deny']);
 export type ModuleStateDecision = typeof ModuleStateDecisionSchema.Type;
 
-const allowedAccessByState: Readonly<
-  Record<TenantModuleState, ReadonlySet<ModuleEntrypointAccess>>
-> = Object.freeze({
+const allowedAccessByState: Readonly<Record<TenantModuleState, ReadonlySet<ModuleEntrypointAccess>>> = Object.freeze({
   active: new Set<ModuleEntrypointAccess>(['background', 'historical_read', 'read', 'write']),
   archived: new Set<ModuleEntrypointAccess>(['historical_read']),
   deprecated: new Set<ModuleEntrypointAccess>(['historical_read', 'read']),
@@ -44,31 +37,19 @@ const allowedAccessByState: Readonly<
 export const decideModuleStateAccess = (
   state: TenantModuleState | null,
   access: ModuleEntrypointAccess,
-): ModuleStateDecision =>
-  state !== null && allowedAccessByState[state].has(access) ? 'allow' : 'deny';
+): ModuleStateDecision => (state !== null && allowedAccessByState[state].has(access) ? 'allow' : 'deny');
 
-export const tenantStatesAllowingAccess = (
-  access: ModuleEntrypointAccess,
-): readonly TenantModuleState[] =>
+export const tenantStatesAllowingAccess = (access: ModuleEntrypointAccess): readonly TenantModuleState[] =>
   Object.freeze(
-    TENANT_MODULE_STATES.flatMap((state) =>
-      allowedAccessByState[state].has(access) ? [state] : [],
-    ).toSorted(),
+    TENANT_MODULE_STATES.flatMap((state) => (allowedAccessByState[state].has(access) ? [state] : [])).toSorted(),
   );
 
-const ModuleStateSnapshotInvariantError = Schema.TaggedError<Error>()(
-  'ModuleStateSnapshotInvariantError',
-  { reason: Schema.String },
-);
+const ModuleStateSnapshotInvariantError = Schema.TaggedError<Error>()('ModuleStateSnapshotInvariantError', {
+  reason: Schema.String,
+});
 
 const entrypointFingerprint = (entrypoint: ModuleEntrypointDescriptor): string =>
-  [
-    entrypoint.scope,
-    entrypoint.moduleKey,
-    entrypoint.entrypointKey,
-    entrypoint.role,
-    entrypoint.access,
-  ].join('\u0000');
+  [entrypoint.scope, entrypoint.moduleKey, entrypoint.entrypointKey, entrypoint.role, entrypoint.access].join('\u0000');
 
 const unavailable = (cause?: unknown) => {
   const error = new ModuleStateCheckUnavailableError({
@@ -91,16 +72,17 @@ export const makeModuleStateSnapshot = (
   ...[tenantId, entrypoints, records]: [
     tenantId: string,
     entrypoints: readonly ModuleEntrypointDescriptor[],
-    records: readonly { readonly moduleKey: string; readonly state: TenantModuleState }[],
+    records: readonly {
+      readonly moduleKey: string;
+      readonly state: TenantModuleState;
+    }[],
   ]
 ): ModuleStateSnapshot => {
   const entrypointKeys = Object.freeze(
     [...new Set(entrypoints.map((entrypoint) => entrypoint.entrypointKey))].toSorted(),
   );
   const declaredEntrypoints = new Set(entrypoints.map(entrypointFingerprint));
-  const moduleKeys = entrypoints.flatMap((entrypoint) =>
-    entrypoint.scope === 'tenant' ? [entrypoint.moduleKey] : [],
-  );
+  const moduleKeys = entrypoints.flatMap((entrypoint) => (entrypoint.scope === 'tenant' ? [entrypoint.moduleKey] : []));
   const declaredKeys = Object.freeze([...new Set(moduleKeys)].toSorted());
   const declaredSet = new Set(declaredKeys);
   const states = new Map<string, TenantModuleState>();
@@ -239,10 +221,7 @@ export const checkModuleEntrypoint = (
       }),
     );
   }
-  const outcome = decideModuleStateAccess(
-    data.states.get(entrypoint.moduleKey) ?? null,
-    entrypoint.access,
-  );
+  const outcome = decideModuleStateAccess(data.states.get(entrypoint.moduleKey) ?? null, entrypoint.access);
   return (outcome === 'allow' ? Effect.void : Effect.fail(denied())).pipe(
     Effect.withSpan('ModuleStateGate.evaluate', {
       attributes: {
@@ -273,12 +252,9 @@ export interface ModuleStateGateService {
 
 const isModuleStateDenied = Schema.is(ModuleStateDeniedError);
 
-export const makeModuleStateGate = (
-  stateService: TenantModuleStateServiceContract,
-): ModuleStateGateService => ({
+export const makeModuleStateGate = (stateService: TenantModuleStateServiceContract): ModuleStateGateService => ({
   check: checkModuleEntrypoint,
-  prepareSnapshot: (tenantId, entrypoints) =>
-    prepareModuleStateSnapshot(stateService, tenantId, entrypoints),
+  prepareSnapshot: (tenantId, entrypoints) => prepareModuleStateSnapshot(stateService, tenantId, entrypoints),
   recheckWrite: (transaction, tenantId, entrypoint) => {
     const recheck = Effect.gen(function* recheckWriteEffect() {
       const tenantRows = yield* transaction
@@ -293,12 +269,7 @@ export const makeModuleStateGate = (
       const rows = yield* transaction
         .select({ state: tenantModuleStates.state })
         .from(tenantModuleStates)
-        .where(
-          and(
-            eq(tenantModuleStates.tenantId, tenantId),
-            eq(tenantModuleStates.moduleKey, entrypoint.moduleKey),
-          ),
-        )
+        .where(and(eq(tenantModuleStates.tenantId, tenantId), eq(tenantModuleStates.moduleKey, entrypoint.moduleKey)))
         .pipe(Effect.mapError(unavailable));
       const state =
         rows[0] === undefined

@@ -8,18 +8,9 @@ created: 2026-08-14
 
 ## Chore Description
 
-Extend the mandatory `scaffold:microvertical-page` Codesmith generator and the authenticated Shell
-page gateway so an owner can generate a private exact page whose canonical URL contains safe named
-parameters, such as `/crm/customers/:id/edit`. Today the generator accepts only static lowercase
-kebab-case segments and explicitly rejects parameters, even though the UltraModern route metadata
-and existing Shell-owned resource routes already use `:parameter` patterns backed by `[parameter]`
-filesystem segments.
+Extend the mandatory `scaffold:microvertical-page` Codesmith generator and the authenticated Shell page gateway so an owner can generate a private exact page whose canonical URL contains safe named parameters, such as `/crm/customers/:id/edit`. Today the generator accepts only static lowercase kebab-case segments and explicitly rejects parameters, even though the UltraModern route metadata and existing Shell-owned resource routes already use `:parameter` patterns backed by `[parameter]` filesystem segments.
 
-The extension must keep dynamic page URLs declarative and non-executable in the serialized module
-contract, omit them from ordinary module navigation because a route template is not a usable href,
-preserve exact Shell/Core page gating before a remote loads, and pass only a bounded route-parameter
-map to the approved remote component. Route parameters remain untrusted business input; they never
-become tenant, principal, legal-entity, authorization, or module-state context.
+The extension must keep dynamic page URLs declarative and non-executable in the serialized module contract, omit them from ordinary module navigation because a route template is not a usable href, preserve exact Shell/Core page gating before a remote loads, and pass only a bounded route-parameter map to the approved remote component. Route parameters remain untrusted business input; they never become tenant, principal, legal-entity, authorization, or module-state context.
 
 ## Relevant Files
 
@@ -88,11 +79,7 @@ IMPORTANT: Execute every step in order, top to bottom.
 
 ## Testing Strategy
 
-Use Core schema unit tests for the serialized template grammar, disposable generator fixtures for
-every output and failure path, and Shell unit tests for the runtime prop boundary and load ordering.
-Compile generated dynamic-page fixtures against the real workspace contracts. Preserve all static
-page tests as compatibility coverage and verify that every validation failure leaves the fixture
-byte-for-byte unchanged.
+Use Core schema unit tests for the serialized template grammar, disposable generator fixtures for every output and failure path, and Shell unit tests for the runtime prop boundary and load ordering. Compile generated dynamic-page fixtures against the real workspace contracts. Preserve all static page tests as compatibility coverage and verify that every validation failure leaves the fixture byte-for-byte unchanged.
 
 ## Acceptance Criteria
 
@@ -127,80 +114,51 @@ Execute every command to validate the chore with zero regressions.
 
 ## Notes
 
-- This chore is required before the requested `CustomerEdit` page can use its exact URL. The current
-  generator help and implementation explicitly reject `:id` parameters.
-- Dynamic page route parameters are business input only. Receiving BFF schemas still validate
-  `customerId`, and authenticated tenant/principal/legal-entity context still comes exclusively from
-  the verified Shell boundary.
-- Dynamic pages intentionally have no generated module navigation item. Contextual links from a
-  Customer list/detail flow must supply a concrete Customer ID.
+- This chore is required before the requested `CustomerEdit` page can use its exact URL. The current generator help and implementation explicitly reject `:id` parameters.
+- Dynamic page route parameters are business input only. Receiving BFF schemas still validate `customerId`, and authenticated tenant/principal/legal-entity context still comes exclusively from the verified Shell boundary.
+- Dynamic pages intentionally have no generated module navigation item. Contextual links from a Customer list/detail flow must supply a concrete Customer ID.
 - This chore adds no CRM page, Customer behavior, BFF operation, database change, or UI.
 
 ## Implementation Evidence
 
 ### Summary
 
-- Added safe dynamic page-template validation, canonical-to-filesystem mapping, collision preflight,
-  non-navigation generation, and bounded untrusted route-parameter propagation through the existing
-  exact Shell gateway.
-- Updated command help, public documentation, and authoritative module guidance without generating
-  the CRM `customer-edit` business page.
+- Added safe dynamic page-template validation, canonical-to-filesystem mapping, collision preflight, non-navigation generation, and bounded untrusted route-parameter propagation through the existing exact Shell gateway.
+- Updated command help, public documentation, and authoritative module guidance without generating the CRM `customer-edit` business page.
 
 ### Changed Files
 
-17 files changed, 730 insertions(+), 96 deletions(-), including the dynamic-page implementation,
-its tests and documentation, plus the narrow scaffolding validation fixes required to make every
-listed command pass.
+17 files changed, 730 insertions(+), 96 deletions(-), including the dynamic-page implementation, its tests and documentation, plus the narrow scaffolding validation fixes required to make every listed command pass.
 
 ### Tests Written or Updated
 
-- `packages/core-runtime/tests/unit/shell-contribution.test.ts` — accepted mixed templates, plain
-  serialization, and unsafe/ambiguous/repeated parameter rejection.
-- `scripts/scaffolding/tests/scaffold-generators.test.mts` — exact dynamic output, compilation,
-  formatting, reruns, static compatibility, collisions, developer edits, and atomic no-write paths.
-- `apps/shell-super-app/tests/unit/routes/modules/loader.test.ts` — declared/bounded parameter
-  selection, empty static parameters, and target-identity separation.
-- `apps/shell-super-app/tests/unit/routes/modules/page.test.tsx` — post-resolution lazy-load ordering
-  and approved remote props for dynamic and static pages.
-- `scripts/scaffolding/tests/module-contract-generator.test.mts` — supplies the Action generator's
-  mandatory legal-entity scope so the fixture reaches the intended missing-contract assertion.
+- `packages/core-runtime/tests/unit/shell-contribution.test.ts` — accepted mixed templates, plain serialization, and unsafe/ambiguous/repeated parameter rejection.
+- `scripts/scaffolding/tests/scaffold-generators.test.mts` — exact dynamic output, compilation, formatting, reruns, static compatibility, collisions, developer edits, and atomic no-write paths.
+- `apps/shell-super-app/tests/unit/routes/modules/loader.test.ts` — declared/bounded parameter selection, empty static parameters, and target-identity separation.
+- `apps/shell-super-app/tests/unit/routes/modules/page.test.tsx` — post-resolution lazy-load ordering and approved remote props for dynamic and static pages.
+- `scripts/scaffolding/tests/module-contract-generator.test.mts` — supplies the Action generator's mandatory legal-entity scope so the fixture reaches the intended missing-contract assertion.
 
 ### Validation
 
 - `mise exec -- pnpm exec tsc -p scripts/scaffolding/tsconfig.json` — passed.
-- `mise exec -- pnpm exec oxlint scripts/scaffolding` — passed after resolving all reported
-  scaffolding findings.
-- `mise exec -- node --test scripts/scaffolding/tests/*.test.mts` — 42/42 passed, including
-  formatter stability and generated-file typechecking.
+- `mise exec -- pnpm exec oxlint scripts/scaffolding` — passed after resolving all reported scaffolding findings.
+- `mise exec -- node --test scripts/scaffolding/tests/*.test.mts` — 42/42 passed, including formatter stability and generated-file typechecking.
 - `mise exec -- pnpm scaffold:microvertical-page -- --help` — passed.
-- `mise exec -- node --test packages/core-runtime/tests/unit/shell-contribution.test.ts` — 20/20
-  passed, including non-configured locale-prefix regressions.
+- `mise exec -- node --test packages/core-runtime/tests/unit/shell-contribution.test.ts` — 20/20 passed, including non-configured locale-prefix regressions.
 - `mise exec -- pnpm --filter @app/shell-super-app test:unit` — 149/149 passed.
 - `mise exec -- pnpm module-entrypoints:check` — passed.
 - `mise exec -- pnpm check:module-contracts` — passed.
 - `mise exec -- pnpm check` — passed twice, including after the review fix.
-- `mise exec -- pnpm build` — CRM server/client compilation and Module Federation DTS generation
-  passed, then the existing release-envelope precondition rejected source revision `workspace`.
-- Browser validation — not run: this infrastructure chore intentionally does not generate the CRM
-  business page, so there is no changed user-visible runtime path to exercise.
+- `mise exec -- pnpm build` — CRM server/client compilation and Module Federation DTS generation passed, then the existing release-envelope precondition rejected source revision `workspace`.
+- Browser validation — not run: this infrastructure chore intentionally does not generate the CRM business page, so there is no changed user-visible runtime path to exercise.
 
 ### Review
 
-- Re-read `../AGENTS.md`, `AGENTS.md`, `MICROVERTICALS.md`, `ACTIONS.md`, `ERRORS.md`,
-  `ULTRAMODERN.md`, `FRONTEND.md`, `MODULE_ENTRYPOINTS.md`, and `MODULE_MANIFESTS.md`; the final diff
-  preserves independent deployment seams, exact target gating, typed errors, private lazy loading,
-  and the `appId`/`moduleId` split.
-- The review found and fixed one evidence mismatch: the disposable dynamic fixture now uses the
-  specification's exact `/crm/customers/:id/edit` canonical template. A second specification review
-  and standards/AGENTS review found no release blockers after generic locale-prefix coverage was
-  added and an initially broad lint cleanup was narrowed to behavior-preserving changes. No
-  screenshots apply.
+- Re-read `../AGENTS.md`, `AGENTS.md`, `MICROVERTICALS.md`, `ACTIONS.md`, `ERRORS.md`, `ULTRAMODERN.md`, `FRONTEND.md`, `MODULE_ENTRYPOINTS.md`, and `MODULE_MANIFESTS.md`; the final diff preserves independent deployment seams, exact target gating, typed errors, private lazy loading, and the `appId`/`moduleId` split.
+- The review found and fixed one evidence mismatch: the disposable dynamic fixture now uses the specification's exact `/crm/customers/:id/edit` canonical template. A second specification review and standards/AGENTS review found no release blockers after generic locale-prefix coverage was added and an initially broad lint cleanup was narrowed to behavior-preserving changes. No screenshots apply.
 
 ### Deviations and Follow-ups
 
 - No validation-command deviations remain.
-- The build requires a promotable source revision instead of the worktree value `workspace`; no
-  product or generator failure occurred before that environment precondition.
-- Core and Codesmith retain separate implementations of the same route grammar. The review judged
-  this non-blocking because sharing the validator would widen a dependency boundary and both suites
-  now cover matching locale and parameter cases.
+- The build requires a promotable source revision instead of the worktree value `workspace`; no product or generator failure occurred before that environment precondition.
+- Core and Codesmith retain separate implementations of the same route grammar. The review judged this non-blocking because sharing the validator would widen a dependency boundary and both suites now cover matching locale and parameter cases.

@@ -1,5 +1,6 @@
 import { Predicate, Result, Schema } from 'effect';
 import type { Effect } from 'effect';
+
 import type { AnyOutboxWorkerRegistration } from '../outbox/definition.ts';
 import { validateOutboxWorkerRegistrations } from '../outbox/definition.ts';
 import type {
@@ -12,9 +13,7 @@ import type {
 import { OntosActionContractSchema } from './manifest.ts';
 import type { OntosShellContributions } from './shell-contribution.ts';
 
-const runtimeRegistrationBrand: unique symbol = Symbol(
-  '@app/core-runtime/modules/runtime-registration',
-);
+const runtimeRegistrationBrand: unique symbol = Symbol('@app/core-runtime/modules/runtime-registration');
 
 interface PrivateVerticalRuntime {
   readonly actions: readonly OntosManifestActionValue[];
@@ -28,9 +27,7 @@ export interface VerticalRuntimeRegistration<ModuleId extends string = string> {
   readonly [runtimeRegistrationBrand]: true;
 }
 
-class VerticalRuntimeRegistrationValue<
-  ModuleId extends string,
-> implements VerticalRuntimeRegistration<ModuleId> {
+class VerticalRuntimeRegistrationValue<ModuleId extends string> implements VerticalRuntimeRegistration<ModuleId> {
   readonly #runtime: PrivateVerticalRuntime;
   readonly [runtimeRegistrationBrand] = true as const;
   readonly moduleId: ModuleId;
@@ -55,9 +52,7 @@ const failRuntimeRegistration = (message: string): never => {
   throw new VerticalRuntimeRegistrationInvariantError({ message });
 };
 
-export interface VerticalRuntimeRegistrationInput<
-  Manifest extends OntosModuleManifest = OntosModuleManifest,
-> {
+export interface VerticalRuntimeRegistrationInput<Manifest extends OntosModuleManifest = OntosModuleManifest> {
   readonly actions: readonly OntosManifestActionValue[];
   readonly entrypoints?: VerticalRuntimeEntrypointBindings;
   readonly manifest: Manifest;
@@ -155,9 +150,7 @@ export const defineVerticalRuntimeRegistration = <const Manifest extends OntosMo
   });
 };
 
-const requirePrivateRuntime = (
-  registration: VerticalRuntimeRegistration,
-): PrivateVerticalRuntime => {
+const requirePrivateRuntime = (registration: VerticalRuntimeRegistration): PrivateVerticalRuntime => {
   const value = VerticalRuntimeRegistrationValue.runtimeOf(registration);
   if (value === undefined || !registration[runtimeRegistrationBrand]) {
     return failRuntimeRegistration('invalid Vertical Runtime Registration');
@@ -198,7 +191,7 @@ export const extractVerticalRuntimeSafeDescriptors = (
         .map(({ descriptor }) =>
           Object.freeze(
             Result.getOrThrow(
-              Schema.decodeUnknownResult(OntosActionContractSchema)({
+              Schema.decodeResult(OntosActionContractSchema)({
                 actionKey: descriptor.actionKey,
                 auditProfile: descriptor.auditProfile,
                 entrypoint: descriptor.entrypoint,
@@ -220,7 +213,9 @@ export const extractVerticalRuntimeSafeDescriptors = (
             consumerModuleKey: descriptor.consumerModuleKey,
             entrypoint: Object.freeze({
               ...descriptor.entrypoint,
-              authorization: Object.freeze({ kind: 'owner_local_background' as const }),
+              authorization: Object.freeze({
+                kind: 'owner_local_background' as const,
+              }),
             }),
             producerModuleKey: descriptor.producerModuleKey,
             topic: descriptor.topic,

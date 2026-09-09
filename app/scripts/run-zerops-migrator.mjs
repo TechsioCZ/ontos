@@ -3,6 +3,7 @@
 import { createServer } from 'node:http';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+
 import { Cause, Config, Effect, Exit } from 'effect';
 
 const appDirectory = fileURLToPath(new URL('../', import.meta.url));
@@ -72,8 +73,7 @@ const run = Effect.fn('run')(
 );
 
 /** @param {string} relativePath - Application-relative script path. */
-const runAppScript = (relativePath) =>
-  run(process.execPath, [path.join(appDirectory, relativePath)]);
+const runAppScript = (relativePath) => run(process.execPath, [path.join(appDirectory, relativePath)]);
 /**
  * @param {string} relativeDirectory - Application-relative package directory.
  * @param {string} config - Drizzle configuration filename.
@@ -107,7 +107,9 @@ const serveReadiness = Effect.fn('serveReadiness')(
       Effect.sync(() =>
         createServer((request, response) => {
           if (request.url === '/ready') {
-            response.writeHead(200, { 'content-type': 'text/plain; charset=utf-8' });
+            response.writeHead(200, {
+              'content-type': 'text/plain; charset=utf-8',
+            });
             response.end('ready\n');
             return;
           }
@@ -118,8 +120,7 @@ const serveReadiness = Effect.fn('serveReadiness')(
     );
 
     yield* Effect.callback((resume) => {
-      const onError = (cause) =>
-        resume(Effect.fail(new MigratorError('The migration readiness server failed', cause)));
+      const onError = (cause) => resume(Effect.fail(new MigratorError('The migration readiness server failed', cause)));
       const onListening = () => {
         console.log(`Migration verification complete; readiness listening on port ${String(port)}`);
       };

@@ -1,6 +1,6 @@
-import { expect, it } from 'effect-rstest';
 import { NodeServices } from '@effect/platform-node';
 import { Effect, Schema, Stream } from 'effect';
+import { expect, it } from 'effect-rstest';
 import { ChildProcess, ChildProcessSpawner } from 'effect/unstable/process';
 
 const encodeJson = Schema.encodeSync(Schema.fromJsonString(Schema.Unknown));
@@ -8,9 +8,7 @@ const encodeJson = Schema.encodeSync(Schema.fromJsonString(Schema.Unknown));
 const lifecycleUrl = new URL('../quality-cli-lifecycle.mts', import.meta.url).href;
 const runChild = Effect.fn('runLifecycleChild')(function* runLifecycleChild(source: string) {
   const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
-  const child = yield* spawner.spawn(
-    ChildProcess.make(process.execPath, ['--input-type=module', '-e', source]),
-  );
+  const child = yield* spawner.spawn(ChildProcess.make(process.execPath, ['--input-type=module', '-e', source]));
   const [stdout, stderr, code] = yield* Effect.all(
     [
       child.stdout.pipe(Stream.decodeText(), Stream.mkString),
@@ -32,12 +30,8 @@ const verifyImports = Effect.gen(function* verifyInertImports() {
   expect(yield* runChild(imports)).toEqual({ code: 0, stderr: '', stdout: '' });
 });
 
-it.live('CLI modules are inert when imported', () =>
-  verifyImports.pipe(Effect.provide(NodeServices.layer)),
-);
-const verifyFinalization = Effect.fn('verifyFinalization')(function* verifyCliFinalization(
-  fails: boolean,
-) {
+it.live('CLI modules are inert when imported', () => verifyImports.pipe(Effect.provide(NodeServices.layer)));
+const verifyFinalization = Effect.fn('verifyFinalization')(function* verifyCliFinalization(fails: boolean) {
   const result = yield* runChild(`
       import { Console, Data, Effect } from 'effect';
       import { runQualityCli } from ${encodeJson(lifecycleUrl)};

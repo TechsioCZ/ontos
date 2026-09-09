@@ -1,17 +1,6 @@
 import { Result, Schema } from 'effect';
 
-const digitWords = [
-  'zero',
-  'one',
-  'two',
-  'three',
-  'four',
-  'five',
-  'six',
-  'seven',
-  'eight',
-  'nine',
-] as const;
+const digitWords = ['zero', 'one', 'two', 'three', 'four', 'five', 'six', 'seven', 'eight', 'nine'] as const;
 
 class TailwindPrefixError extends Schema.TaggedError<TailwindPrefixError>()('TailwindPrefixError', {
   message: Schema.String,

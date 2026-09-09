@@ -4,6 +4,22 @@
 import { defineAction, defineTenantModuleEntrypoint } from '@app/core-runtime';
 import type { ActionHandlerContext } from '@app/core-runtime';
 import { DateTime, Effect, Match, Schema } from 'effect';
+
+import {
+  UpdateContactPointPayloadSchema,
+  UpdateContactPointResultSchema,
+} from '../../shared/actions/update-contact-point.ts';
+import type { UpdateContactPointPayload } from '../../shared/actions/update-contact-point.ts';
+import {
+  PartyContactPointAlreadyExists,
+  PartyContactPointCorrectionRequired,
+  PartyContactPointInvalid,
+  PartyContactPointLifecycleConflict,
+  PartyContactPointNotFound,
+  PartyContactPointPersistenceUnavailable,
+  PartyContactPointPartyNotFound,
+  PartyContactPointRevisionConflict,
+} from '../../shared/domain/contact-point-errors.ts';
 import {
   PartyContactPointSchema,
   assertAddressPurposeRules,
@@ -19,25 +35,9 @@ import type {
   ContactPointVerification,
   PartyContactPoint,
 } from '../../shared/domain/contact-point.ts';
-import {
-  PartyContactPointAlreadyExists,
-  PartyContactPointCorrectionRequired,
-  PartyContactPointInvalid,
-  PartyContactPointLifecycleConflict,
-  PartyContactPointNotFound,
-  PartyContactPointPersistenceUnavailable,
-  PartyContactPointPartyNotFound,
-  PartyContactPointRevisionConflict,
-} from '../../shared/domain/contact-point-errors.ts';
 import { PartyAliasWriteRejected } from '../../shared/domain/merge-alias-resolution.ts';
 import { updateContactPointRecord } from '../services/party-contact-point-persistence.service.ts';
 import { createUpdateContactPointPartyRegistryContactPointUpdatedV1OutboxMessage } from './update-contact-point.party-registry-contact-point-updated-v1.outbox-message.ts';
-
-import {
-  UpdateContactPointPayloadSchema,
-  UpdateContactPointResultSchema,
-} from '../../shared/actions/update-contact-point.ts';
-import type { UpdateContactPointPayload } from '../../shared/actions/update-contact-point.ts';
 
 export { UpdateContactPointPayloadSchema } from '../../shared/actions/update-contact-point.ts';
 export type { UpdateContactPointPayload } from '../../shared/actions/update-contact-point.ts';
@@ -64,7 +64,10 @@ export interface UpdateContactPointCommand {
   readonly acceptedByActionInvocationId: string;
   readonly acceptedByPrincipalId: string;
   readonly change:
-    | Readonly<{ readonly preferred: boolean; readonly type: 'SET_CHANNEL_PREFERRED' }>
+    | Readonly<{
+        readonly preferred: boolean;
+        readonly type: 'SET_CHANNEL_PREFERRED';
+      }>
     | Readonly<{
         readonly assignment: AddressPurposeAssignment;
         readonly type: 'SET_ADDRESS_PURPOSE';
@@ -79,7 +82,10 @@ export interface UpdateContactPointCommand {
         readonly type: 'ENRICH_VERIFICATION';
         readonly verification: ContactPointVerification;
       }>
-    | Readonly<{ readonly provenance: ContactPointProvenance; readonly type: 'ADD_PROVENANCE' }>
+    | Readonly<{
+        readonly provenance: ContactPointProvenance;
+        readonly type: 'ADD_PROVENANCE';
+      }>
     | Readonly<{
         readonly evidenceReferences: readonly string[];
         readonly reason: string;
@@ -109,14 +115,15 @@ type UpdateError =
   | PartyContactPointRevisionConflict;
 
 interface Services {
-  readonly update: (
-    command: UpdateContactPointCommand,
-  ) => Effect.Effect<PartyContactPoint, UpdateError>;
+  readonly update: (command: UpdateContactPointCommand) => Effect.Effect<PartyContactPoint, UpdateError>;
 }
 
 const invalidContactPoint = (reason: string, cause: unknown) =>
   Object.defineProperty(
-    new PartyContactPointInvalid({ code: 'party_contact_point_invalid', reason }),
+    new PartyContactPointInvalid({
+      code: 'party_contact_point_invalid',
+      reason,
+    }),
     'cause',
     { configurable: true, value: cause },
   );
@@ -131,9 +138,7 @@ const persistenceUnavailable = (cause: unknown) =>
     { configurable: true, value: cause },
   );
 
-const persistenceChange = (
-  change: UpdateContactPointPayload['change'],
-): UpdateContactPointCommand['change'] =>
+const persistenceChange = (change: UpdateContactPointPayload['change']): UpdateContactPointCommand['change'] =>
   Match.value(change).pipe(
     Match.discriminatorsExhaustive('type')({
       ADD_PROVENANCE: (value) => value,
@@ -172,22 +177,14 @@ const handleUpdateContactPoint = Effect.fn('UpdateContactPointAction.handleUpdat
     if (payload.change.type === 'ENRICH_VERIFICATION') {
       const { verification } = payload.change;
       yield* Effect.try({
-        catch: (cause) =>
-          invalidContactPoint('Verification enrichment is missing its required evidence', cause),
+        catch: (cause) => invalidContactPoint('Verification enrichment is missing its required evidence', cause),
         try: () => assertVerificationRules(verification),
       });
     }
-    if (
-      payload.change.type === 'CORRECT_CONTACT_POINT' &&
-      payload.change.replacement !== undefined
-    ) {
+    if (payload.change.type === 'CORRECT_CONTACT_POINT' && payload.change.replacement !== undefined) {
       const { replacement } = payload.change;
       yield* Effect.try({
-        catch: (cause) =>
-          invalidContactPoint(
-            'The correction replacement does not satisfy Contact Point rules',
-            cause,
-          ),
+        catch: (cause) => invalidContactPoint('The correction replacement does not satisfy Contact Point rules', cause),
         try: () => {
           assertVerificationRules(replacement.verification);
           if (replacement.contactPoint.type === 'ADDRESS') {
@@ -204,13 +201,9 @@ const handleUpdateContactPoint = Effect.fn('UpdateContactPointAction.handleUpdat
       change: persistenceChange(payload.change),
     });
     const eventContactPointRef =
-      payload.change.type === 'CORRECT_CONTACT_POINT'
-        ? payload.contactPointRef
-        : contactPoint.contactPointRef;
+      payload.change.type === 'CORRECT_CONTACT_POINT' ? payload.contactPointRef : contactPoint.contactPointRef;
     const eventRevision =
-      payload.change.type === 'CORRECT_CONTACT_POINT'
-        ? payload.expectedRevision + 1
-        : contactPoint.revision;
+      payload.change.type === 'CORRECT_CONTACT_POINT' ? payload.expectedRevision + 1 : contactPoint.revision;
     const event = yield* context.addDomainEvent({
       eventType: 'party.registry.contact-point-updated.v1',
       payloadJson: {
@@ -243,10 +236,15 @@ export const updateContactPointAction = defineAction(
     actionKey: 'party.registry.update-contact-point',
     auditProfile: 'sensitive',
     domainErrorSchema: UpdateContactPointErrorSchema,
-    domainEvents: { 'party.registry.contact-point-updated.v1': ContactPointUpdatedEventSchema },
+    domainEvents: {
+      'party.registry.contact-point-updated.v1': ContactPointUpdatedEventSchema,
+    },
     entrypoint: defineTenantModuleEntrypoint({
       access: 'write',
-      authorization: { kind: 'action_execution', provisioning: 'tenant_membership_default' },
+      authorization: {
+        kind: 'action_execution',
+        provisioning: 'tenant_membership_default',
+      },
       entrypointKey: 'party.registry.update-contact-point',
       moduleKey: 'party.registry',
       role: 'action',
@@ -265,12 +263,10 @@ export const updateContactPointAction = defineAction(
     Effect.succeed({
       update: (command: UpdateContactPointCommand) =>
         updateContactPointRecord(transaction, scope, command).pipe(
-          Effect.flatMap((contactPoint) =>
-            Schema.is(PartyContactPointSchema)(contactPoint)
-              ? Effect.succeed(contactPoint)
-              : Schema.decodeUnknownEffect(PartyContactPointSchema)(contactPoint).pipe(
-                  Effect.mapError(persistenceUnavailable),
-                ),
+          Effect.filterOrElse(Schema.is(PartyContactPointSchema), (contactPoint) =>
+            Schema.decodeUnknownEffect(PartyContactPointSchema)(contactPoint).pipe(
+              Effect.mapError(persistenceUnavailable),
+            ),
           ),
         ),
     }),

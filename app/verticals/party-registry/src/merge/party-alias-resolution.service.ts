@@ -1,5 +1,6 @@
 import { and, eq } from 'drizzle-orm';
 import { Context, Effect, Option } from 'effect';
+
 import type { PartyAliasResolutionError } from '../../shared/domain/merge-alias-resolution.ts';
 import {
   PartyAliasResolutionBrokenChain,
@@ -23,10 +24,7 @@ export interface PartyAliasLookup {
     tenantId: string,
     aliasPartyId: string,
   ) => Effect.Effect<Option.Option<PartyAliasLookupRow>, PartyAliasResolutionUnavailable>;
-  readonly partyExists: (
-    tenantId: string,
-    partyId: string,
-  ) => Effect.Effect<boolean, PartyAliasResolutionUnavailable>;
+  readonly partyExists: (tenantId: string, partyId: string) => Effect.Effect<boolean, PartyAliasResolutionUnavailable>;
 }
 
 export interface ResolvedPartyAlias {
@@ -47,10 +45,9 @@ export interface PartyAliasResolutionService {
   ) => Effect.Effect<ResolvedPartyAlias, PartyAliasResolutionError>;
 }
 
-class PartyAliasResolution extends Context.Service<
-  PartyAliasResolution,
-  PartyAliasResolutionService
->()('@app/party-registry/merge/party-alias-resolution.service/PartyAliasResolution') {}
+class PartyAliasResolution extends Context.Service<PartyAliasResolution, PartyAliasResolutionService>()(
+  '@app/party-registry/merge/party-alias-resolution.service/PartyAliasResolution',
+) {}
 
 const partyRef = (tenantId: string, resourceId: string): PartyRef => ({
   moduleId: 'party.registry',
@@ -59,9 +56,7 @@ const partyRef = (tenantId: string, resourceId: string): PartyRef => ({
   tenantId,
 });
 
-export const makePartyAliasResolutionService = (
-  lookup: PartyAliasLookup,
-): PartyAliasResolutionService => {
+export const makePartyAliasResolutionService = (lookup: PartyAliasLookup): PartyAliasResolutionService => {
   type ResolveFrom = (
     tenantId: string,
     requestedPartyId: string,
@@ -69,9 +64,13 @@ export const makePartyAliasResolutionService = (
     seen: ReadonlySet<string>,
     traversedAliasIds: readonly string[],
   ) => Effect.Effect<ResolvedPartyAlias, PartyAliasResolutionError>;
-  const resolveFrom: ResolveFrom = Effect.fn(
-    'makePartyAliasResolutionService.resolvePartyAlias.step',
-  )((tenantId, requestedPartyId, currentPartyId, seen, traversedAliasIds) => {
+  const resolveFrom: ResolveFrom = Effect.fn('makePartyAliasResolutionService.resolvePartyAlias.step')((
+    tenantId,
+    requestedPartyId,
+    currentPartyId,
+    seen,
+    traversedAliasIds,
+  ) => {
     if (seen.has(currentPartyId)) {
       return new PartyAliasResolutionCycle({
         code: 'party_alias_resolution_cycle',
@@ -110,13 +109,10 @@ export const makePartyAliasResolutionService = (
                   tenantId,
                 })
               : Effect.suspend(() =>
-                  resolveFrom(
-                    tenantId,
-                    requestedPartyId,
-                    alias.canonicalPartyId,
-                    new Set([...seen, currentPartyId]),
-                    [...traversedAliasIds, currentPartyId],
-                  ),
+                  resolveFrom(tenantId, requestedPartyId, alias.canonicalPartyId, new Set([...seen, currentPartyId]), [
+                    ...traversedAliasIds,
+                    currentPartyId,
+                  ]),
                 ),
         }),
       ),
@@ -129,15 +125,15 @@ export const makePartyAliasResolutionService = (
   return PartyAliasResolution.of({
     requireCanonicalWriteTarget: (tenantId, requestedPartyId) =>
       resolvePartyAlias(tenantId, requestedPartyId).pipe(
-        Effect.flatMap((resolution) =>
-          resolution.wasAlias
-            ? new PartyAliasWriteRejected({
-                aliasPartyRef: partyRef(tenantId, requestedPartyId),
-                canonicalPartyRef: partyRef(tenantId, resolution.canonicalPartyId),
-                code: 'party_alias_write_rejected',
-                reason: 'New writes must explicitly target the canonical survivor Party',
-              })
-            : Effect.succeed(resolution),
+        Effect.filterOrFail(
+          (resolution) => !resolution.wasAlias,
+          (resolution) =>
+            new PartyAliasWriteRejected({
+              aliasPartyRef: partyRef(tenantId, requestedPartyId),
+              canonicalPartyRef: partyRef(tenantId, resolution.canonicalPartyId),
+              code: 'party_alias_write_rejected',
+              reason: 'New writes must explicitly target the canonical survivor Party',
+            }),
         ),
       ),
     resolvePartyAlias,
@@ -157,9 +153,7 @@ const unavailable = (cause?: unknown) =>
     cause,
   );
 
-const makeTransactionPartyAliasResolutionService = (
-  transaction: AliasTransaction,
-): PartyAliasResolutionService =>
+const makeTransactionPartyAliasResolutionService = (transaction: AliasTransaction): PartyAliasResolutionService =>
   makePartyAliasResolutionService({
     findAlias: (tenantId, aliasPartyId) =>
       transaction
@@ -169,9 +163,7 @@ const makeTransactionPartyAliasResolutionService = (
           tenantId: partyAliases.tenantId,
         })
         .from(partyAliases)
-        .where(
-          and(eq(partyAliases.tenantId, tenantId), eq(partyAliases.aliasPartyId, aliasPartyId)),
-        )
+        .where(and(eq(partyAliases.tenantId, tenantId), eq(partyAliases.aliasPartyId, aliasPartyId)))
         .limit(1)
         .pipe(
           Effect.mapError(unavailable),
@@ -189,18 +181,8 @@ const makeTransactionPartyAliasResolutionService = (
         ),
   });
 
-export const resolvePartyAlias = (
-  transaction: AliasTransaction,
-  tenantId: string,
-  partyId: string,
-) => makeTransactionPartyAliasResolutionService(transaction).resolvePartyAlias(tenantId, partyId);
+export const resolvePartyAlias = (transaction: AliasTransaction, tenantId: string, partyId: string) =>
+  makeTransactionPartyAliasResolutionService(transaction).resolvePartyAlias(tenantId, partyId);
 
-export const requireCanonicalPartyWriteTarget = (
-  transaction: AliasTransaction,
-  tenantId: string,
-  partyId: string,
-) =>
-  makeTransactionPartyAliasResolutionService(transaction).requireCanonicalWriteTarget(
-    tenantId,
-    partyId,
-  );
+export const requireCanonicalPartyWriteTarget = (transaction: AliasTransaction, tenantId: string, partyId: string) =>
+  makeTransactionPartyAliasResolutionService(transaction).requireCanonicalWriteTarget(tenantId, partyId);

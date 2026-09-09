@@ -1,9 +1,10 @@
 import { reconcileStageContextBootstraps } from '@app/core-runtime/install/stage-context-bootstrap';
 import { betterAuth } from 'better-auth';
 import { hashPassword, verifyPassword } from 'better-auth/crypto';
-import { admin } from 'better-auth/plugins';
+import { admin } from 'better-auth/plugins/admin';
 import { and, eq } from 'drizzle-orm';
 import { Config, DateTime, Effect, Option, Redacted } from 'effect';
+
 import { AuthDatabase } from './db/client.ts';
 import { account, session, user } from './db/schema.ts';
 import type { AuthDatabaseExecutor } from './db/types.ts';
@@ -37,29 +38,27 @@ const bootstrapSdkTimeout = Effect.timeoutOrElse({
 
 type AuthTransaction = Parameters<Parameters<AuthDatabaseExecutor['transaction']>[0]>[0];
 
-const replaceStagePassword = Effect.fn('StageDemoBootstrap.replacePassword')(
-  function* replacePassword(
-    transaction: AuthTransaction,
-    accountId: string,
-    userId: string,
-    replacementHash: string,
-    updatedAt: Date,
-  ) {
-    const updated = yield* transaction
-      .update(account)
-      .set({ password: replacementHash, updatedAt })
-      .where(eq(account.id, accountId))
-      .returning({ id: account.id });
-    if (updated.length !== 1) {
-      return yield* new StageDemoBootstrapError({
-        code: 'stage_demo_conflict',
-        reason: 'The existing stage demo credential changed during password replacement',
-      });
-    }
-    yield* transaction.delete(session).where(eq(session.userId, userId));
-    return yield* Effect.void;
-  },
-);
+const replaceStagePassword = Effect.fn('StageDemoBootstrap.replacePassword')(function* replacePassword(
+  transaction: AuthTransaction,
+  accountId: string,
+  userId: string,
+  replacementHash: string,
+  updatedAt: Date,
+) {
+  const updated = yield* transaction
+    .update(account)
+    .set({ password: replacementHash, updatedAt })
+    .where(eq(account.id, accountId))
+    .returning({ id: account.id });
+  if (updated.length !== 1) {
+    return yield* new StageDemoBootstrapError({
+      code: 'stage_demo_conflict',
+      reason: 'The existing stage demo credential changed during password replacement',
+    });
+  }
+  yield* transaction.delete(session).where(eq(session.userId, userId));
+  return yield* Effect.void;
+});
 
 const ensureAuthUser = Effect.fn('StageDemoBootstrap.ensureAuthUser')(function* ensureUser(
   configuration: StageDemoBootstrapConfig,
@@ -121,13 +120,7 @@ const ensureAuthUser = Effect.fn('StageDemoBootstrap.ensureAuthUser')(function* 
       const updatedAt = yield* DateTime.nowAsDate;
       yield* database
         .transaction((transaction) =>
-          replaceStagePassword(
-            transaction,
-            credential.id,
-            existingUser.id,
-            replacementHash,
-            updatedAt,
-          ),
+          replaceStagePassword(transaction, credential.id, existingUser.id, replacementHash, updatedAt),
         )
         .pipe(Effect.mapError(persistenceFailure));
       return { status: 'password-reset' as const, userId: existingUser.id };
@@ -138,7 +131,11 @@ const ensureAuthUser = Effect.fn('StageDemoBootstrap.ensureAuthUser')(function* 
   const authentication = betterAuth({
     baseURL: configuration.authBaseUrl,
     database: adapter,
-    emailAndPassword: { autoSignIn: false, disableSignUp: true, enabled: true },
+    emailAndPassword: {
+      autoSignIn: false,
+      disableSignUp: true,
+      enabled: true,
+    },
     logger: { disabled: true },
     plugins: [admin()],
     secret: configuration.authSecret,
@@ -162,48 +159,44 @@ const ensureAuthUser = Effect.fn('StageDemoBootstrap.ensureAuthUser')(function* 
 
 export { ensureAuthUser as ensureStageDemoAuthUser };
 
-const optionalString = (name: string) =>
-  Config.option(Config.string(name)).pipe(Config.map(Option.getOrUndefined));
+const optionalString = (name: string) => Config.option(Config.string(name)).pipe(Config.map(Option.getOrUndefined));
 
 const optionalSecret = (name: string) =>
-  Config.option(Config.redacted(name)).pipe(
-    Config.map(Option.map(Redacted.value)),
-    Config.map(Option.getOrUndefined),
-  );
+  Config.option(Config.redacted(name)).pipe(Config.map(Option.map(Redacted.value)), Config.map(Option.getOrUndefined));
 
-const loadStageDemoEnvironment = Effect.fn(
-  'StageDemoBootstrapRuntimeInfrastructure.loadStageDemoEnvironment',
-)(function* loadStageDemoEnvironmentEffect() {
-  const values = yield* Effect.all(
-    {
-      BETTER_AUTH_SECRET: optionalSecret('BETTER_AUTH_SECRET'),
-      BETTER_AUTH_URL: optionalString('BETTER_AUTH_URL'),
-      DATABASE_ADMIN_URL: optionalSecret('DATABASE_ADMIN_URL'),
-      STAGE_DEMO_PASSWORD: optionalSecret('STAGE_DEMO_PASSWORD'),
-      STAGE_SIAMPARK_PASSWORD: optionalSecret('STAGE_SIAMPARK_PASSWORD'),
-      ULTRAMODERN_DEPLOYMENT_ENVIRONMENT: optionalString('ULTRAMODERN_DEPLOYMENT_ENVIRONMENT'),
-    },
-    { concurrency: 6 },
-  );
-  return values satisfies StageDemoEnvironment;
-});
-
-export const loadStageDemoConfiguration = Effect.fn('StageDemoBootstrap.loadConfiguration')(
-  function* loadConfiguration(environment?: StageDemoEnvironment) {
-    const runtimeEnvironment =
-      environment ??
-      (yield* loadStageDemoEnvironment().pipe(
-        Effect.mapError(
-          (error) =>
-            new StageDemoBootstrapError({
-              code: 'stage_demo_configuration_invalid',
-              reason: `The stage demo configuration could not be loaded: ${error.message}`,
-            }),
-        ),
-      ));
-    return yield* parseStageDemoBootstrapConfig(runtimeEnvironment);
+const loadStageDemoEnvironment = Effect.fn('StageDemoBootstrapRuntimeInfrastructure.loadStageDemoEnvironment')(
+  function* loadStageDemoEnvironmentEffect() {
+    const values = yield* Effect.all(
+      {
+        BETTER_AUTH_SECRET: optionalSecret('BETTER_AUTH_SECRET'),
+        BETTER_AUTH_URL: optionalString('BETTER_AUTH_URL'),
+        DATABASE_ADMIN_URL: optionalSecret('DATABASE_ADMIN_URL'),
+        STAGE_DEMO_PASSWORD: optionalSecret('STAGE_DEMO_PASSWORD'),
+        STAGE_SIAMPARK_PASSWORD: optionalSecret('STAGE_SIAMPARK_PASSWORD'),
+        ULTRAMODERN_DEPLOYMENT_ENVIRONMENT: optionalString('ULTRAMODERN_DEPLOYMENT_ENVIRONMENT'),
+      },
+      { concurrency: 6 },
+    );
+    return values satisfies StageDemoEnvironment;
   },
 );
+
+export const loadStageDemoConfiguration = Effect.fn('StageDemoBootstrap.loadConfiguration')(function* loadConfiguration(
+  environment?: StageDemoEnvironment,
+) {
+  const runtimeEnvironment =
+    environment ??
+    (yield* loadStageDemoEnvironment().pipe(
+      Effect.mapError(
+        (error) =>
+          new StageDemoBootstrapError({
+            code: 'stage_demo_configuration_invalid',
+            reason: `The stage demo configuration could not be loaded: ${error.message}`,
+          }),
+      ),
+    ));
+  return yield* parseStageDemoBootstrapConfig(runtimeEnvironment);
+});
 
 export const bootstrapStageDemo = Effect.fn('StageDemoBootstrap.bootstrap')(function* bootstrap(
   configuration: StageDemoBootstrapConfig,

@@ -1,5 +1,6 @@
 import type { ActionHandlerContext } from '@app/core-runtime';
 import { Effect } from 'effect';
+
 import type {
   AddPartyOfficialIdentifierResult,
   AddPartyOfficialIdentifierResultSchema,
@@ -30,9 +31,7 @@ export const publishAttachedOfficialIdentifiers = (
       });
       yield* context.addOutboxMessage(
         event,
-        createAddPartyOfficialIdentifierPartyRegistryOfficialIdentifierAddedV1OutboxMessage(
-          payload,
-        ),
+        createAddPartyOfficialIdentifierPartyRegistryOfficialIdentifierAddedV1OutboxMessage(payload),
       );
     }),
     { concurrency: 1, discard: true },

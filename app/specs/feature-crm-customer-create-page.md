@@ -8,58 +8,25 @@ created: 2026-08-16
 
 ## Feature Description
 
-Add the generated CRM `CustomerCreate` page at localized URL
-`/cs/crm/customers/:id/new` (canonical generator URL `/crm/customers/:id/new`, also exposed under
-`/en`). The authenticated Shell continues to own dashboard/sidebar composition, legal-entity
-selection, exact page resolution, module-state gating, and the lazy remote load. The CRM-owned page
-renders the existing owner-private `CustomerForm` with empty initial values and submits the valid
-name through the generated `createCustomer` Effect client method. That BFF endpoint must execute the
-existing `CreateCustomerAction`; the page must not call the Action handler, persistence service, or
-HTTP endpoint directly.
+Add the generated CRM `CustomerCreate` page at localized URL `/cs/crm/customers/:id/new` (canonical generator URL `/crm/customers/:id/new`, also exposed under `/en`). The authenticated Shell continues to own dashboard/sidebar composition, legal-entity selection, exact page resolution, module-state gating, and the lazy remote load. The CRM-owned page renders the existing owner-private `CustomerForm` with empty initial values and submits the valid name through the generated `createCustomer` Effect client method. That BFF endpoint must execute the existing `CreateCustomerAction`; the page must not call the Action handler, persistence service, or HTTP endpoint directly.
 
-Use Figma file `ERP`, page `Pre-Alpha Repo` (not `Pre-Alpha`), frame
-`Resource Detail — Běžný` (`6:780`) only as an arrangement wireframe. Preserve the authenticated
-Shell, compact Back link, page heading, and one main content surface, but replace the read-only
-detail rows with the form controls. Do not copy Figma styling or add its inert Overview/Documents/
-Timeline/Audit tabs. Use the existing `@techsio/ui-kit` components and tokens, with CRM-prefixed
-Tailwind utilities only for responsive layout composition.
+Use Figma file `ERP`, page `Pre-Alpha Repo` (not `Pre-Alpha`), frame `Resource Detail — Běžný` (`6:780`) only as an arrangement wireframe. Preserve the authenticated Shell, compact Back link, page heading, and one main content surface, but replace the read-only detail rows with the form controls. Do not copy Figma styling or add its inert Overview/Documents/ Timeline/Audit tabs. Use the existing `@techsio/ui-kit` components and tokens, with CRM-prefixed Tailwind utilities only for responsive layout composition.
 
-The generated route carries the declared `id` parameter through the Shell boundary because the
-requested URL contains it. The current `CreateCustomerPayloadSchema` accepts only `name`, so this
-feature treats `id` as untrusted navigation context and never sends it to `createCustomer`, derives
-trusted context from it, or changes the Action contract to accommodate it.
+The generated route carries the declared `id` parameter through the Shell boundary because the requested URL contains it. The current `CreateCustomerPayloadSchema` accepts only `name`, so this feature treats `id` as untrusted navigation context and never sends it to `createCustomer`, derives trusted context from it, or changes the Action contract to accommodate it.
 
 ## User Story
 
-As an authenticated CRM user with write access
-I want to enter a new Customer name on a dedicated localized page
-So that I can create the canonical Customer through the governed CRM Action boundary
+As an authenticated CRM user with write access I want to enter a new Customer name on a dedicated localized page So that I can create the canonical Customer through the governed CRM Action boundary
 
 ## Problem Statement
 
-CRM already owns Customer persistence, `CreateCustomerAction`, the strict Effect BFF mutation, and
-the generated `createCustomer` client, but there is no governed page where a user can create a
-Customer. Calling the endpoint directly would bypass the intended frontend integration and would
-provide no accessible validation, pending, denial, retry, or localized success/failure experience.
-The requested dynamic route also requires Codesmith-owned manifest, registration, federation,
-Shell connector, route-parameter, and locale wiring before business UI can be adapted safely.
+CRM already owns Customer persistence, `CreateCustomerAction`, the strict Effect BFF mutation, and the generated `createCustomer` client, but there is no governed page where a user can create a Customer. Calling the endpoint directly would bypass the intended frontend integration and would provide no accessible validation, pending, denial, retry, or localized success/failure experience. The requested dynamic route also requires Codesmith-owned manifest, registration, federation, Shell connector, route-parameter, and locale wiring before business UI can be adapted safely.
 
 ## Solution Statement
 
-Run the mandatory MicroVertical page generator with stable identity `customer-create` and canonical
-URL `/crm/customers/:id/new`. Preserve its private/non-indexable exact-page descriptor, dynamic
-non-navigation behavior, owner-private registration, Module Federation exposure, approved Shell
-lazy client, and bounded `id` propagation. Adapt the generated CRM page and federation wrapper to
-receive the resolved target so write availability remains explicit.
+Run the mandatory MicroVertical page generator with stable identity `customer-create` and canonical URL `/crm/customers/:id/new`. Preserve its private/non-indexable exact-page descriptor, dynamic non-navigation behavior, owner-private registration, Module Federation exposure, approved Shell lazy client, and bounded `id` propagation. Adapt the generated CRM page and federation wrapper to receive the resolved target so write availability remains explicit.
 
-Reuse `verticals/crm/src/features/customers/customer-form.tsx` unchanged with
-`initialValues={{ name: '' }}` and create-specific localized copy. Keep route, BFF, query, Effect,
-permission, and navigation behavior in the generated page integration. Use the existing page-local
-TanStack Query mutation pattern to bridge the generated `createCustomer` Effect at the framework
-edge, retain its operation-specific typed error union, and map every expected failure into the
-form's existing field/form status contract. Generate one idempotency key per logical submission,
-reuse it only after an uncertain same-name failure, and replace it after the user changes the
-intent. On success, navigate to the localized generated Customers list.
+Reuse `verticals/crm/src/features/customers/customer-form.tsx` unchanged with `initialValues={{ name: '' }}` and create-specific localized copy. Keep route, BFF, query, Effect, permission, and navigation behavior in the generated page integration. Use the existing page-local TanStack Query mutation pattern to bridge the generated `createCustomer` Effect at the framework edge, retain its operation-specific typed error union, and map every expected failure into the form's existing field/form status contract. Generate one idempotency key per logical submission, reuse it only after an uncertain same-name failure, and replace it after the user changes the intent. On success, navigate to the localized generated Customers list.
 
 ## Relevant Files
 
@@ -116,27 +83,15 @@ Use these files to implement the feature:
 
 ### Phase 1: Foundation
 
-Generate the exact dynamic page and all owner/Shell wiring before adapting business code. Verify the
-generator retains the canonical route without a locale prefix, carries only `id`, omits dynamic
-navigation, and creates stable `customer-create` identities. Reuse the already implemented Customer
-Action/BFF and CRM UI/query/test infrastructure; add no backend contract, persistence, dependency,
-or UI-kit component.
+Generate the exact dynamic page and all owner/Shell wiring before adapting business code. Verify the generator retains the canonical route without a locale prefix, carries only `id`, omits dynamic navigation, and creates stable `customer-create` identities. Reuse the already implemented Customer Action/BFF and CRM UI/query/test infrastructure; add no backend contract, persistence, dependency, or UI-kit component.
 
 ### Phase 2: Core Implementation
 
-Adapt the generated remote page and federation wrapper to receive `target.writable`. Render the
-existing `CustomerForm` with empty values and create-specific localized copy. Compose
-`createCustomer` through a typed TanStack mutation, preserve all generated client failure families,
-and implement logical-submission idempotency without leaking route context into the Action payload.
-Add focused tests beside the writable, form, mutation, error, and navigation behavior.
+Adapt the generated remote page and federation wrapper to receive `target.writable`. Render the existing `CustomerForm` with empty values and create-specific localized copy. Compose `createCustomer` through a typed TanStack mutation, preserve all generated client failure families, and implement logical-submission idempotency without leaking route context into the Action payload. Add focused tests beside the writable, form, mutation, error, and navigation behavior.
 
 ### Phase 3: Integration
 
-Complete Czech/English copy, generated manifest/registration/federation/Shell verification,
-responsive and keyboard behavior, and exact route-param tests. Use the existing real CRM integration
-suites as the proof that the client call reaches `CreateCustomerAction` through the strict BFF and
-commits under the governed Action lifecycle. Finish with the independent CRM build, Shell unit
-suite, repository boundary checks, and final quality gate.
+Complete Czech/English copy, generated manifest/registration/federation/Shell verification, responsive and keyboard behavior, and exact route-param tests. Use the existing real CRM integration suites as the proof that the client call reaches `CreateCustomerAction` through the strict BFF and commits under the governed Action lifecycle. Finish with the independent CRM build, Shell unit suite, repository boundary checks, and final quality gate.
 
 ## Step by Step Tasks
 
@@ -185,22 +140,11 @@ IMPORTANT: Execute every step in order, top to bottom.
 
 ### Unit Tests
 
-Use the existing CRM Node unit tests for the Action/API descriptors and add Rstest/Testing Library
-coverage for the generated CustomerCreate page. Mock only the generated frontend Effect client seam
-in page tests. Prove empty-form composition, validation/focus/keyboard behavior, writable gating,
-exact `createCustomer` payload/options, typed failure mapping, logical idempotency, accessible status,
-localized navigation, route-param non-propagation to business input, and absence of forbidden
-frontend dependencies. Retain the existing `CustomerForm` tests as the reusable presentation proof.
+Use the existing CRM Node unit tests for the Action/API descriptors and add Rstest/Testing Library coverage for the generated CustomerCreate page. Mock only the generated frontend Effect client seam in page tests. Prove empty-form composition, validation/focus/keyboard behavior, writable gating, exact `createCustomer` payload/options, typed failure mapping, logical idempotency, accessible status, localized navigation, route-param non-propagation to business input, and absence of forbidden frontend dependencies. Retain the existing `CustomerForm` tests as the reusable presentation proof.
 
 ### Integration Tests
 
-Run the existing CRM integration suites that execute Customer creation through both the generated
-contract-derived client/BFF and the real Action runtime. They prove assertion verification,
-`CreateCustomerAction` dispatch, idempotency, tenant/module/write scope, persistence, audit evidence,
-typed Problem Details decoding, and rollback/isolation without weakening the MicroVertical seam.
-Run Shell unit tests for exact page resolution, bounded `id` propagation, and lazy remote props. A
-new Playwright test is not required because the current repository browser server does not
-orchestrate both independently deployable Shell and CRM services.
+Run the existing CRM integration suites that execute Customer creation through both the generated contract-derived client/BFF and the real Action runtime. They prove assertion verification, `CreateCustomerAction` dispatch, idempotency, tenant/module/write scope, persistence, audit evidence, typed Problem Details decoding, and rollback/isolation without weakening the MicroVertical seam. Run Shell unit tests for exact page resolution, bounded `id` propagation, and lazy remote props. A new Playwright test is not required because the current repository browser server does not orchestrate both independently deployable Shell and CRM services.
 
 ### Edge Cases
 

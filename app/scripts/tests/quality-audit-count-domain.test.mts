@@ -1,8 +1,9 @@
-import { expect, it } from 'effect-rstest';
 import { Effect, Result, Schema } from 'effect';
+import { expect, it } from 'effect-rstest';
+
 import { KnipModelEvidenceSchema } from '../../quality-audit/knip-model.mts';
-import { validateReport } from '../quality-audit.mts';
 import { validateQualityAuditSummary } from '../quality-audit-gate.mts';
+import { validateReport } from '../quality-audit.mts';
 
 it('audit evidence requires finite nonnegative integer source positions', () => {
   const evidence = {

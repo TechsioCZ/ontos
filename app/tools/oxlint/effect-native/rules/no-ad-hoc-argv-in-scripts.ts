@@ -11,7 +11,6 @@
  * Report-only: no fixers or suggestions.
  */
 import { defineRule } from '@oxlint/plugins';
-
 import type { ESTree } from '@oxlint/plugins';
 
 import { literalText, propertyText, staticString, unwrap } from '../shared/ast.ts';
@@ -71,16 +70,10 @@ function numberList(value: unknown, fallback: readonly number[]): readonly numbe
 }
 
 function readOptions(raw: unknown): RuleOptions {
-  const given =
-    typeof raw === 'object' && raw !== null && !Array.isArray(raw)
-      ? (raw as Record<string, unknown>)
-      : {};
+  const given = typeof raw === 'object' && raw !== null && !Array.isArray(raw) ? (raw as Record<string, unknown>) : {};
   return {
     allowPaths: stringList(given.allowPaths, DEFAULTS.allowPaths),
-    allowEntryGuardIndices: numberList(
-      given.allowEntryGuardIndices,
-      DEFAULTS.allowEntryGuardIndices,
-    ),
+    allowEntryGuardIndices: numberList(given.allowEntryGuardIndices, DEFAULTS.allowEntryGuardIndices),
     forbiddenCliModules: stringList(given.forbiddenCliModules, DEFAULTS.forbiddenCliModules),
   };
 }
@@ -90,8 +83,7 @@ function staticIndex(node: ESTree.MemberExpression): number | null {
   if (!node.computed) return null;
   const property = unwrap(node.property, { maxDepth: 8 });
   if (property === null) return null;
-  const value =
-    property.type === 'Literal' ? (property as { value?: unknown }).value : literalText(property);
+  const value = property.type === 'Literal' ? (property as { value?: unknown }).value : literalText(property);
   if (typeof value === 'number') return Number.isInteger(value) ? value : null;
   if (typeof value !== 'string') return null;
   const parsed = Number(value);
@@ -315,11 +307,7 @@ export const rule = defineRule({
 
       AssignmentPattern(node) {
         const pattern = node as ESTree.AssignmentPattern;
-        reportPattern(
-          pattern.left as AnyNode,
-          pattern.right as AnyNode,
-          pattern as unknown as AnyNode,
-        );
+        reportPattern(pattern.left as AnyNode, pattern.right as AnyNode, pattern as unknown as AnyNode);
       },
 
       AssignmentExpression(node) {
@@ -327,22 +315,18 @@ export const rule = defineRule({
         if (assignment.operator !== '=') return;
         const target = assignment.left as AnyNode;
         // Only destructuring targets: `foo.bar = process.argv` merely forwards the array on.
-        if (
-          target.type !== 'Identifier' &&
-          target.type !== 'ArrayPattern' &&
-          target.type !== 'ObjectPattern'
-        )
-          return;
+        if (target.type !== 'Identifier' && target.type !== 'ArrayPattern' && target.type !== 'ObjectPattern') return;
         reportPattern(target, assignment.right as AnyNode, assignment as unknown as AnyNode);
       },
 
       SpreadElement(node) {
-        if (isArgvSource(node.argument))
-          report(node, 'argvDestructuring', { expression: printed(node) });
+        if (isArgvSource(node.argument)) report(node, 'argvDestructuring', { expression: printed(node) });
       },
       ForOfStatement(node) {
         if (isArgvSource(node.right))
-          report(node.right, 'argvMemberAccess', { expression: printed(node.right) });
+          report(node.right, 'argvMemberAccess', {
+            expression: printed(node.right),
+          });
       },
       NewExpression(node) {
         if (
@@ -371,8 +355,7 @@ export const rule = defineRule({
           report(node, 'argvMemberAccess', { expression: printed(node) });
         if (identity !== 'require') return;
         const module = staticStringValue(node.arguments[0]);
-        if (module !== null && forbiddenModules.has(packageName(module)))
-          report(node, 'cliPackageImport', { module });
+        if (module !== null && forbiddenModules.has(packageName(module))) report(node, 'cliPackageImport', { module });
       },
     };
   },

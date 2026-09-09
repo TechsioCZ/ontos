@@ -1,22 +1,18 @@
-import { makeModuleContractFixture } from '../../src/testing/module-contract.ts';
-import { expect, it } from 'effect-rstest';
-import { ConnectionError, SqlError, UnknownError } from 'effect/unstable/sql/SqlError';
+import { randomUUID } from 'node:crypto';
+
 import { and, eq } from 'drizzle-orm';
 import { Cause, Deferred, Effect, Layer, Exit, Fiber, Option, Schema, Predicate } from 'effect';
-import { randomUUID } from 'node:crypto';
+import { expect, it } from 'effect-rstest';
+import { ConnectionError, SqlError, UnknownError } from 'effect/unstable/sql/SqlError';
+
 import type { ActionHandlerContext } from '../../src/actions/context.ts';
 import { defineAction } from '../../src/actions/definition.ts';
 import { ActionInvocationPersistenceError } from '../../src/actions/errors.ts';
 import { createDomainEventReference } from '../../src/actions/events.ts';
 import type { ActionPolicy } from '../../src/actions/policy.ts';
-import {
-  defineGlobalPolicy,
-  defineMicroverticalPolicy,
-  denyPolicy,
-} from '../../src/actions/policy.ts';
+import { defineGlobalPolicy, defineMicroverticalPolicy, denyPolicy } from '../../src/actions/policy.ts';
 import { makeActionRepository } from '../../src/actions/repository.ts';
 import { makeActionRuntime } from '../../src/actions/runtime.ts';
-import { makeFaultInjectableCoreDatabase, TestQueryHook } from '../support/database-faults.ts';
 import { loadDatabaseConfig } from '../../src/db/config.ts';
 import {
   actionInvocations,
@@ -37,28 +33,24 @@ import type { InstalledModuleCatalog } from '../../src/modules/catalog.ts';
 import { InstalledModuleCatalogService } from '../../src/modules/catalog.ts';
 import type { OntosModuleDeploymentContract } from '../../src/modules/manifest.ts';
 import { makeModuleEntrypointGateway } from '../../src/modules/module-entrypoint-gateway.ts';
-import {
-  defineSystemModuleEntrypoint,
-  defineTenantModuleEntrypoint,
-} from '../../src/modules/module-entrypoint.ts';
+import { defineSystemModuleEntrypoint, defineTenantModuleEntrypoint } from '../../src/modules/module-entrypoint.ts';
 import { makeModuleStateGate } from '../../src/modules/module-state-gate.ts';
 import {
   TenantModuleStateService,
   makeTenantModuleStateService,
 } from '../../src/modules/tenant-module-state-service.ts';
+import { makeModuleContractFixture } from '../../src/testing/module-contract.ts';
 import { testOperationalScopeResolver } from '../fixtures/operational-scope.ts';
 import { openActionRuntimeOptions } from '../support/action-runtime-options.ts';
+import { makeFaultInjectableCoreDatabase, TestQueryHook } from '../support/database-faults.ts';
 
 const TestPersistenceErrorContract = Schema.TaggedStruct('TestPersistenceError', {
   reason: Schema.String,
 });
 type TestPersistenceErrorSelf = typeof TestPersistenceErrorContract.Type;
-const TestPersistenceError = Schema.TaggedError<TestPersistenceErrorSelf>()(
-  'TestPersistenceError',
-  {
-    reason: Schema.String,
-  },
-);
+const TestPersistenceError = Schema.TaggedError<TestPersistenceErrorSelf>()('TestPersistenceError', {
+  reason: Schema.String,
+});
 
 const TestDomainRejectedContract = Schema.TaggedStruct('TestDomainRejected', {
   reason: Schema.String,
@@ -103,27 +95,21 @@ const inventoryStockContract: OntosModuleDeploymentContract = makeModuleContract
   description: 'Inventory integration fixture',
   displayName: 'Inventory',
   moduleId: 'inventory.stock',
-  supportedStates: [
-    'inactive',
-    'active',
-    'read_only',
-    'suspended',
-    'quarantined',
-    'deprecated',
-    'archived',
-  ],
+  supportedStates: ['inactive', 'active', 'read_only', 'suspended', 'quarantined', 'deprecated', 'archived'],
 });
 
 const inventoryInstalledCatalog: InstalledModuleCatalog = Object.freeze({
   contracts: Object.freeze([inventoryStockContract]),
   deploymentAppIds: Object.freeze(['inventory-stock']),
   deploymentStatuses: Object.freeze([
-    { appId: 'inventory-stock', moduleId: 'inventory.stock', status: 'available' as const },
+    {
+      appId: 'inventory-stock',
+      moduleId: 'inventory.stock',
+      status: 'available' as const,
+    },
   ]),
-  getByDeploymentAppId: (appId: string) =>
-    appId === 'inventory-stock' ? inventoryStockContract : undefined,
-  getByModuleId: (moduleId: string) =>
-    moduleId === 'inventory.stock' ? inventoryStockContract : undefined,
+  getByDeploymentAppId: (appId: string) => (appId === 'inventory-stock' ? inventoryStockContract : undefined),
+  getByModuleId: (moduleId: string) => (moduleId === 'inventory.stock' ? inventoryStockContract : undefined),
   moduleIds: Object.freeze(['inventory.stock']),
   outboxSubscriptions: Object.freeze([]),
 });
@@ -326,7 +312,10 @@ const makeRegistration = ({
       domainEvents: TestDomainEvents,
       entrypoint: defineSystemModuleEntrypoint({
         access: 'write',
-        authorization: { kind: 'action_execution', provisioning: 'tenant_membership_default' },
+        authorization: {
+          kind: 'action_execution',
+          provisioning: 'tenant_membership_default',
+        },
         entrypointKey: actionKey,
         moduleKey: 'core.shell',
         role: 'action',
@@ -336,7 +325,10 @@ const makeRegistration = ({
       owningModuleKey: 'core.shell',
       payloadSchema: Schema.Struct({ value: Schema.String }),
       policies,
-      resultSchema: Schema.Struct({ stateId: TestStateIdSchema, value: Schema.String }),
+      resultSchema: Schema.Struct({
+        stateId: TestStateIdSchema,
+        value: Schema.String,
+      }),
       schemaVersion: '1',
     },
     Effect.fn(function* integrationHandler(payload, context: TestActionContext) {
@@ -354,9 +346,7 @@ const makeRegistration = ({
         .returning({
           tenantModuleStateId: tenantModuleStates.tenantModuleStateId,
         })
-        .pipe(
-          Effect.mapError(() => new TestPersistenceError({ reason: 'test business write failed' })),
-        );
+        .pipe(Effect.mapError(() => new TestPersistenceError({ reason: 'test business write failed' })));
 
       yield* context.recordDataAccess({
         accessKind: 'read',
@@ -394,12 +384,16 @@ const makeRegistration = ({
         yield* Deferred.await(completionGate);
       }
       if (mode === 'reject') {
-        return yield* new TestDomainRejected({ reason: 'test domain rejection' });
+        return yield* new TestDomainRejected({
+          reason: 'test domain rejection',
+        });
       }
 
       const [row] = inserted;
       if (row === undefined) {
-        return yield* new TestPersistenceError({ reason: 'test write returned no row' });
+        return yield* new TestPersistenceError({
+          reason: 'test write returned no row',
+        });
       }
       return {
         stateId: TestStateIdSchema.make(row.tenantModuleStateId),
@@ -574,45 +568,22 @@ const testProgram2 = Effect.fn(function* integrationProgram4() {
       });
 
       const [states, invocations, audits, accesses, events, messages] = yield* Effect.all([
-        database.executor
-          .select()
-          .from(tenantModuleStates)
-          .where(eq(tenantModuleStates.moduleKey, moduleStateKey)),
-        database.executor
-          .select()
-          .from(actionInvocations)
-          .where(eq(actionInvocations.idempotencyKey, key)),
+        database.executor.select().from(tenantModuleStates).where(eq(tenantModuleStates.moduleKey, moduleStateKey)),
+        database.executor.select().from(actionInvocations).where(eq(actionInvocations.idempotencyKey, key)),
         database.executor.select().from(auditEvents).where(eq(auditEvents.tenantId, tenantId)),
-        database.executor
-          .select()
-          .from(dataAccessEvents)
-          .where(eq(dataAccessEvents.tenantId, tenantId)),
-        database.executor
-          .select()
-          .from(domainEvents)
-          .where(eq(domainEvents.subjectResourceId, moduleStateKey)),
-        database.executor
-          .select()
-          .from(outboxMessages)
-          .where(eq(outboxMessages.tenantId, tenantId)),
+        database.executor.select().from(dataAccessEvents).where(eq(dataAccessEvents.tenantId, tenantId)),
+        database.executor.select().from(domainEvents).where(eq(domainEvents.subjectResourceId, moduleStateKey)),
+        database.executor.select().from(outboxMessages).where(eq(outboxMessages.tenantId, tenantId)),
       ]);
 
       expect(result.value).toBe('committed');
       expect(states.length).toBe(1);
       expect(invocations[0]?.status).toBe('succeeded');
       expect(invocations[0]?.completedAt).toBeTruthy();
-      expect(
-        audits.filter((row) => row.actionInvocationId === invocations[0]?.actionInvocationId)
-          .length,
-      ).toBe(1);
-      expect(
-        accesses.filter((row) => row.actionInvocationId === invocations[0]?.actionInvocationId)
-          .length,
-      ).toBe(1);
+      expect(audits.filter((row) => row.actionInvocationId === invocations[0]?.actionInvocationId).length).toBe(1);
+      expect(accesses.filter((row) => row.actionInvocationId === invocations[0]?.actionInvocationId).length).toBe(1);
       expect(events.length).toBe(1);
-      expect(messages.filter((row) => row.domainEventId === events[0]?.domainEventId).length).toBe(
-        1,
-      );
+      expect(messages.filter((row) => row.domainEventId === events[0]?.domainEventId).length).toBe(1);
       expect((events[0]?.tenantSequenceNo ?? 0) > 0).toBe(true);
     }),
   );
@@ -675,10 +646,7 @@ const testProgram4 = Effect.fn(function* integrationProgram8() {
       key: 'policy-denied-global',
       makeRegistration(handler: () => void) {
         const policy = defineGlobalPolicy<{ readonly value: string }>({
-          evaluate: () =>
-            Effect.fail(
-              denyPolicy('tenant_suspended', 'This tenant is suspended — contact support'),
-            ),
+          evaluate: () => Effect.fail(denyPolicy('tenant_suspended', 'This tenant is suspended — contact support')),
           policyKey: 'global.tenant-active.v1',
         });
         return makeRegistration({
@@ -696,8 +664,7 @@ const testProgram4 = Effect.fn(function* integrationProgram8() {
       key: 'policy-denied-local',
       makeRegistration(handler: () => void) {
         const policy = defineMicroverticalPolicy<{ readonly value: string }, 'inventory.stock'>({
-          evaluate: () =>
-            Effect.fail(denyPolicy('stock_locked', 'Stock is locked for reconciliation')),
+          evaluate: () => Effect.fail(denyPolicy('stock_locked', 'Stock is locked for reconciliation')),
           owningModuleKey: 'inventory.stock',
           policyKey: 'inventory.stock.unlocked.v1',
         });
@@ -918,9 +885,7 @@ const testProgram6 = Effect.fn(function* integrationProgram14() {
       Effect.fn(function* integrationProgram15(scenario) {
         const moduleStateKey = `test.${scenario.key}.${tenantId}`;
         const runtime = makeActionRuntime(
-          scenario.key === 'evidence-failure'
-            ? withEvidencePersistenceFailure(database, 'audit')
-            : database,
+          scenario.key === 'evidence-failure' ? withEvidencePersistenceFailure(database, 'audit') : database,
           makeActionRepository(),
           allowedPermission,
           testOperationalScopeResolver,
@@ -1037,22 +1002,13 @@ const testProgram7 = Effect.fn(function* integrationProgram16() {
         expect(invocation).not.toBe(undefined);
         const invocationId = invocation?.actionInvocationId ?? '';
         const [audits, accesses, events, afterOutbox] = yield* Effect.all([
-          database.executor
-            .select()
-            .from(auditEvents)
-            .where(eq(auditEvents.actionInvocationId, invocationId)),
+          database.executor.select().from(auditEvents).where(eq(auditEvents.actionInvocationId, invocationId)),
           database.executor
             .select()
             .from(dataAccessEvents)
             .where(eq(dataAccessEvents.actionInvocationId, invocationId)),
-          database.executor
-            .select()
-            .from(domainEvents)
-            .where(eq(domainEvents.actionInvocationId, invocationId)),
-          database.executor
-            .select()
-            .from(outboxMessages)
-            .where(eq(outboxMessages.tenantId, tenantId)),
+          database.executor.select().from(domainEvents).where(eq(domainEvents.actionInvocationId, invocationId)),
+          database.executor.select().from(outboxMessages).where(eq(outboxMessages.tenantId, tenantId)),
         ]);
 
         expect(hasFailure(exit, 'ActionTransactionError'), stage).toBe(true);
@@ -1142,10 +1098,7 @@ const testProgram8 = () =>
         transport: transport(concurrentKey),
       };
       const concurrent = yield* Effect.all(
-        [
-          Effect.exit(runtime.runAction(concurrentInput)),
-          Effect.exit(runtime.runAction(concurrentInput)),
-        ],
+        [Effect.exit(runtime.runAction(concurrentInput)), Effect.exit(runtime.runAction(concurrentInput))],
         { concurrency: 'unbounded' },
       );
       const [concurrentInvocation] = yield* database.executor
@@ -1219,17 +1172,14 @@ const testProgram9 = () =>
         transport: transport(key, moduleStateKey),
       };
 
-      const success = yield* Effect.forkScoped(
-        allowedRuntime.runAction({ ...sharedInput, registration: allowed }),
-      );
+      const success = yield* Effect.forkScoped(allowedRuntime.runAction({ ...sharedInput, registration: allowed }));
       yield* Deferred.await(handlerStarted);
       const rejected = yield* Effect.forkScoped(
         Effect.exit(deniedRuntime.runAction({ ...sharedInput, registration: denied })),
       );
-      const [successResult, rejectedExit] = yield* Effect.all(
-        [Fiber.join(success), Fiber.join(rejected)],
-        { concurrency: 'unbounded' },
-      );
+      const [successResult, rejectedExit] = yield* Effect.all([Fiber.join(success), Fiber.join(rejected)], {
+        concurrency: 'unbounded',
+      });
       const { audits, invocation } = yield* invocationEvidence(database, key);
 
       expect(successResult.value).toBe('same');
@@ -1279,19 +1229,12 @@ const testProgram10 = () =>
         }),
         transport: transport(concurrentKey, concurrentModule),
       };
-      const firstAttempt = yield* Effect.exit(runtime.runAction(concurrentInput)).pipe(
-        Effect.forkChild,
-      );
+      const firstAttempt = yield* Effect.exit(runtime.runAction(concurrentInput)).pipe(Effect.forkChild);
       yield* Deferred.await(handlerStarted);
-      const secondAttempt = yield* Effect.exit(runtime.runAction(concurrentInput)).pipe(
-        Effect.forkChild,
-      );
+      const secondAttempt = yield* Effect.exit(runtime.runAction(concurrentInput)).pipe(Effect.forkChild);
       yield* Deferred.await(secondPermissionChecked);
       yield* Deferred.succeed(handlerRelease, null);
-      const concurrentResults = yield* Effect.all([
-        Fiber.join(firstAttempt),
-        Fiber.join(secondAttempt),
-      ]);
+      const concurrentResults = yield* Effect.all([Fiber.join(firstAttempt), Fiber.join(secondAttempt)]);
 
       expect(executions).toBe(1);
       expect(concurrentResults.filter(Exit.isSuccess).length).toBe(1);
@@ -1416,9 +1359,7 @@ const testProgram11 = () =>
             transport: transport('sequence-second', secondModule),
           })
           .pipe(
-            Effect.provideService(TestQueryHook, () =>
-              Deferred.succeed(secondInsertStarted, null).pipe(Effect.asVoid),
-            ),
+            Effect.provideService(TestQueryHook, () => Deferred.succeed(secondInsertStarted, null).pipe(Effect.asVoid)),
             Effect.ensuring(
               Effect.sync(() => {
                 secondCompleted = true;
@@ -1431,12 +1372,11 @@ const testProgram11 = () =>
       expect(secondCompleted).toBe(false);
 
       yield* Deferred.succeed(firstCommitRelease, null);
-      yield* Effect.all([first, second].map(Fiber.join), { concurrency: 'unbounded' });
+      yield* Effect.forEach([first, second], Fiber.join, {
+        concurrency: 'unbounded',
+      });
 
-      const events = yield* database.executor
-        .select()
-        .from(domainEvents)
-        .where(eq(domainEvents.tenantId, tenantId));
+      const events = yield* database.executor.select().from(domainEvents).where(eq(domainEvents.tenantId, tenantId));
       const firstEvent = events.find((event) => event.subjectResourceId === firstModule);
       const secondEvent = events.find((event) => event.subjectResourceId === secondModule);
 
@@ -1468,9 +1408,7 @@ const testProgram12 = () =>
       });
       const uncertainTransaction = {
         transaction: (transactionBody) =>
-          database.executor
-            .transaction(transactionBody)
-            .pipe(Effect.andThen(Effect.die(acknowledgementLost))),
+          database.executor.transaction(transactionBody).pipe(Effect.andThen(Effect.die(acknowledgementLost))),
       } satisfies Pick<ContextServiceContract['executor'], 'transaction'>;
 
       const uncertainRuntime = makeActionRuntime(
@@ -1678,26 +1616,14 @@ const testProgram13 = () =>
       });
       expect(handlerExecutions).toBe(1);
 
-      const deniedStates = [
-        'inactive',
-        'read_only',
-        'suspended',
-        'quarantined',
-        'deprecated',
-        'archived',
-      ] as const;
+      const deniedStates = ['inactive', 'read_only', 'suspended', 'quarantined', 'deprecated', 'archived'] as const;
       yield* Effect.forEach(
         deniedStates,
         Effect.fn(function* integrationProgram23(state, index) {
           yield* database.executor
             .update(tenantModuleStates)
             .set({ state })
-            .where(
-              and(
-                eq(tenantModuleStates.tenantId, tenantId),
-                eq(tenantModuleStates.moduleKey, moduleKey),
-              ),
-            );
+            .where(and(eq(tenantModuleStates.tenantId, tenantId), eq(tenantModuleStates.moduleKey, moduleKey)));
           const idempotencyKey = `module-state-denied-${index}`;
           const exit = yield* Effect.exit(
             runtime.runAction({
@@ -1719,12 +1645,7 @@ const testProgram13 = () =>
 
       yield* database.executor
         .delete(tenantModuleStates)
-        .where(
-          and(
-            eq(tenantModuleStates.tenantId, tenantId),
-            eq(tenantModuleStates.moduleKey, moduleKey),
-          ),
-        );
+        .where(and(eq(tenantModuleStates.tenantId, tenantId), eq(tenantModuleStates.moduleKey, moduleKey)));
       const missingExit = yield* Effect.exit(
         runtime.runAction({
           payload: undefined,
@@ -1741,20 +1662,11 @@ const testProgram13 = () =>
 it.layer(Layer.effectDiscard(Effect.acquireRelease(prepare, () => cleanup.pipe(Effect.orDie))), {
   excludeTestServices: true,
 })('Action runtime', (suite) => {
-  suite.effect(
-    'rechecks business module state under the tenant lock and retries after Core recovery',
-    testProgram1,
-  );
+  suite.effect('rechecks business module state under the tenant lock and retries after Core recovery', testProgram1);
 
-  suite.effect(
-    'atomically commits business state, all success evidence, and the succeeded marker',
-    testProgram2,
-  );
+  suite.effect('atomically commits business state, all success evidence, and the succeeded marker', testProgram2);
 
-  suite.effect(
-    'commits allowed Policy checkpoints atomically before handler success evidence',
-    testProgram3,
-  );
+  suite.effect('commits allowed Policy checkpoints atomically before handler success evidence', testProgram3);
 
   suite.effect(
     'atomically rejects denied global and same-owner MicroVertical Policies without handler evidence',
@@ -1763,22 +1675,13 @@ it.layer(Layer.effectDiscard(Effect.acquireRelease(prepare, () => cleanup.pipe(E
 
   suite.effect('rolls back every denied-Policy finalization persistence failure', testProgram5);
 
-  suite.effect(
-    'rolls back domain rejection, evidence persistence failure, and orphan outbox attempts',
-    testProgram6,
-  );
+  suite.effect('rolls back domain rejection, evidence persistence failure, and orphan outbox attempts', testProgram6);
 
   suite.effect('rolls back every individual success-evidence persistence failure', testProgram7);
 
-  suite.effect(
-    'keeps Policy rejection terminal and deduplicates repeated and concurrent evidence',
-    testProgram8,
-  );
+  suite.effect('keeps Policy rejection terminal and deduplicates repeated and concurrent evidence', testProgram8);
 
-  suite.effect(
-    'never lets a losing Policy denial replace a running or successful invocation',
-    testProgram9,
-  );
+  suite.effect('never lets a losing Policy denial replace a running or successful invocation', testProgram9);
 
   suite.effect(
     'serializes concurrent requests and enforces committed, open-retry, and hash-conflict behavior',
@@ -1787,13 +1690,7 @@ it.layer(Layer.effectDiscard(Effect.acquireRelease(prepare, () => cleanup.pipe(E
 
   suite.effect('serializes Domain Event allocation by tenant commit order', testProgram11);
 
-  suite.effect(
-    'resolves a lost commit acknowledgement from the durable succeeded marker',
-    testProgram12,
-  );
+  suite.effect('resolves a lost commit acknowledgement from the durable succeeded marker', testProgram12);
 
-  suite.effect(
-    'persists no invocation or evidence for every non-writable business module state',
-    testProgram13,
-  );
+  suite.effect('persists no invocation or evidence for every non-writable business module state', testProgram13);
 });

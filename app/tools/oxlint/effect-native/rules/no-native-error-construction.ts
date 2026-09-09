@@ -106,13 +106,12 @@
  * Report-only: no fixers, no suggestions.
  */
 import { defineRule } from '@oxlint/plugins';
-
 import type { Context, ESTree, Scope, Variable } from '@oxlint/plugins';
 
-import { bindingsFor } from '../shared/effect-imports.ts';
-import { isTestFile, matchesGlobs, scopePath } from '../shared/paths.ts';
-import { booleanOption as boolean, stringList } from '../shared/options.ts';
 import { keyName, memberName, unwrapNode } from '../shared/ast.ts';
+import { bindingsFor } from '../shared/effect-imports.ts';
+import { booleanOption as boolean, stringList } from '../shared/options.ts';
+import { isTestFile, matchesGlobs, scopePath } from '../shared/paths.ts';
 
 type AnyNode = ESTree.Node;
 
@@ -198,10 +197,7 @@ function resolveVariable(context: Context, name: string, from: AnyNode): Variabl
     if (
       variable !== undefined &&
       variable.defs.some(
-        (def) =>
-          !['TSInterfaceDeclaration', 'TSTypeAliasDeclaration', 'TSTypeParameter'].includes(
-            def.node.type,
-          ),
+        (def) => !['TSInterfaceDeclaration', 'TSTypeAliasDeclaration', 'TSTypeParameter'].includes(def.node.type),
       )
     )
       return variable;
@@ -311,9 +307,7 @@ export const rule = defineRule({
      * (`globalThis.Error`, `window["TypeError"]`), through parens, `as` casts and optional chains.
      */
     const isContainer = (node: AnyNode): boolean =>
-      node.type === 'Identifier' &&
-      CONTAINER_GLOBALS.has(node.name) &&
-      isUnshadowedGlobal(context, node, node.name);
+      node.type === 'Identifier' && CONTAINER_GLOBALS.has(node.name) && isUnshadowedGlobal(context, node, node.name);
 
     const immutableDeclaration = (identifier: Extract<ESTree.Node, { type: 'Identifier' }>) => {
       const variable = resolveVariable(context, identifier.name, identifier);
@@ -336,13 +330,11 @@ export const rule = defineRule({
 
     const destructuredErrorName = (pattern: ESTree.ObjectPattern, name: string): string | null => {
       for (const property of pattern.properties) {
-        if (
-          property.type !== 'Property' ||
-          property.value.type !== 'Identifier' ||
-          property.value.name !== name
-        )
+        if (property.type !== 'Property' || property.value.type !== 'Identifier' || property.value.name !== name)
           continue;
-        const key = keyName(property.key, property.computed, { templates: true });
+        const key = keyName(property.key, property.computed, {
+          templates: true,
+        });
         if (key !== null && constructors.has(key)) return key;
       }
       return null;
@@ -357,8 +349,7 @@ export const rule = defineRule({
       const declaration = immutableDeclaration(identifier);
       if (!declaration?.init) return null;
       if (declaration.id.type === 'Identifier') return nativeErrorName(declaration.init, depth + 1);
-      if (declaration.id.type !== 'ObjectPattern' || !isContainer(unwrap(declaration.init)))
-        return null;
+      if (declaration.id.type !== 'ObjectPattern' || !isContainer(unwrap(declaration.init))) return null;
       return destructuredErrorName(declaration.id, name);
     };
 

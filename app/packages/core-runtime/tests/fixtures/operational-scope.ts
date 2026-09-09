@@ -1,13 +1,9 @@
 import { Effect } from 'effect';
-import type { OperationalScopeResolverService } from '../../src/operations/context.ts';
-import { preserveSystemPrincipalContextTrust } from '../../src/auth/system-principal-context-provenance.ts';
 
-const withOptionalProperty = <
-  Base extends object,
-  Key extends PropertyKey,
-  Value,
-  Trailing extends object,
->(
+import { preserveSystemPrincipalContextTrust } from '../../src/auth/system-principal-context-provenance.ts';
+import type { OperationalScopeResolverService } from '../../src/operations/context.ts';
+
+const withOptionalProperty = <Base extends object, Key extends PropertyKey, Value, Trailing extends object>(
   base: Base,
   condition: boolean,
   key: Key,

@@ -1,23 +1,14 @@
-import { expect, it } from 'effect-rstest';
-import { runPinnedKnip } from './quality-audit-test-support.mts';
-
-import {
-  mkdirSync,
-  mkdtempSync,
-  readFileSync,
-  realpathSync,
-  rmSync,
-  symlinkSync,
-  writeFileSync,
-} from 'node:fs';
+import { mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 
 import { NodeServices } from '@effect/platform-node';
 import { Effect, Schema } from 'effect';
-import { runQualityAudit } from '../quality-audit.mts';
+import { expect, it } from 'effect-rstest';
 
 import { buildKnipModel, KnipConfigSchema } from '../../quality-audit/knip-model.mts';
+import { runQualityAudit } from '../quality-audit.mts';
+import { runPinnedKnip } from './quality-audit-test-support.mts';
 
 const rspackPackageName = '@rspack/core';
 const fixtureModuleSource = 'module.exports = {};';
@@ -69,7 +60,11 @@ const fixture = () =>
       root,
       packageFile,
       yield* stringify({
-        dependencies: { 'drizzle-orm': '1.0.0-rc.4', effect: '4.0.0-beta.107', jose: '6.2.5' },
+        dependencies: {
+          'drizzle-orm': '1.0.0-rc.4',
+          effect: '4.0.0-beta.107',
+          jose: '6.2.5',
+        },
         name: 'knip-consumer-controls',
         private: true,
         type: 'module',
@@ -100,28 +95,20 @@ const fixture = () =>
       }),
     );
     write(root, `${resolverOwner}/index.js`, fixtureModuleSource);
-    write(
-      root,
-      `${resolverTarget}/package.json`,
-      yield* stringify({ main: 'index.js', name: rspackPackageName }),
-    );
+    write(root, `${resolverTarget}/package.json`, yield* stringify({ main: 'index.js', name: rspackPackageName }));
     write(root, `${resolverTarget}/index.js`, fixtureModuleSource);
     const resolverAnchor = path.join(root, resolverOwner, 'index.js');
     write(
       root,
       resolverFile,
-      [
-        ...requirePrelude,
-        `require.resolve('@rspack/core', { paths: [${JSON.stringify(resolverAnchor)}] });`,
-      ].join('\n'),
+      [...requirePrelude, `require.resolve('@rspack/core', { paths: [${JSON.stringify(resolverAnchor)}] });`].join(
+        '\n',
+      ),
     );
     write(
       root,
       'src/own-resolver.ts',
-      [
-        ...requirePrelude,
-        `require.resolve('oxc-parser', { paths: [${JSON.stringify(root)}] });`,
-      ].join('\n'),
+      [...requirePrelude, `require.resolve('oxc-parser', { paths: [${JSON.stringify(root)}] });`].join('\n'),
     );
     write(
       root,
@@ -162,11 +149,7 @@ const fixture = () =>
       'verticals/remote/shared/ultramodern-build.ts',
       'export const declaredBuildIdentity = 1; export const unusedBuildNeighbor = 2;',
     );
-    write(
-      root,
-      'tools/oxlint/effect-native/report.mts',
-      "runOxlint(join(pluginDirectory, 'report.config.ts'), []);",
-    );
+    write(root, 'tools/oxlint/effect-native/report.mts', "runOxlint(join(pluginDirectory, 'report.config.ts'), []);");
     write(
       root,
       'tools/oxlint/effect-native/report.config.ts',
@@ -219,51 +202,32 @@ it.live(
           node: false,
           project: [sourcePattern, configurationFiles, toolsPattern],
         },
-        'verticals/*': { entry: [indexFile, configurationFiles], project: ['**/*.{ts,mts}'] },
+        'verticals/*': {
+          entry: [indexFile, configurationFiles],
+          project: ['**/*.{ts,mts}'],
+        },
       },
     });
     const consumerPath = path.join(root, '.codex/knip-model/consumers.mts');
-    const model = yield* buildKnipModel(root, base, consumerPath).pipe(
-      Effect.provide(NodeServices.layer),
-    );
-    const run = yield* runPinnedKnip(root, consumerPath, model).pipe(
-      Effect.provide(NodeServices.layer),
-    );
+    const model = yield* buildKnipModel(root, base, consumerPath).pipe(Effect.provide(NodeServices.layer));
+    const run = yield* runPinnedKnip(root, consumerPath, model).pipe(Effect.provide(NodeServices.layer));
     expect(run.status, `${run.stdout}\n${run.stderr}`).toBe(1);
     expect(run.stderr).toBe('');
-    const report = yield* Schema.decodeUnknownEffect(Schema.fromJsonString(ReportSchema))(
-      run.stdout,
-    );
+    const report = yield* Schema.decodeUnknownEffect(Schema.fromJsonString(ReportSchema))(run.stdout);
     const findings = (kind: 'files' | 'exports' | 'dependencies' | 'unlisted') =>
-      report.issues.flatMap((issue) =>
-        issue[kind].map((finding) => `${issue.file}#${finding.name}`),
-      );
+      report.issues.flatMap((issue) => issue[kind].map((finding) => `${issue.file}#${finding.name}`));
     expect(findings('files').includes('src/dead.ts#src/dead.ts')).toBe(true);
     expect(!findings('files').some((finding) => finding.startsWith('src/worker.mts#'))).toBe(true);
     expect(!findings('files').some((finding) => finding.startsWith('src/public.ts#'))).toBe(true);
     expect(findings('exports').includes('src/helper.ts#unusedNeighbor')).toBe(true);
     expect(findings('exports').includes('src/validated.ts#unusedValidatedExport')).toBe(true);
-    expect(
-      !findings('exports').includes(
-        'verticals/remote/shared/ultramodern-build.ts#declaredBuildIdentity',
-      ),
-    ).toBe(true);
-    expect(
-      findings('exports').includes(
-        'verticals/remote/shared/ultramodern-build.ts#unusedBuildNeighbor',
-      ),
-    ).toBe(true);
-    expect(
-      !findings('exports').includes('tools/oxlint/effect-native/report.config.ts#default'),
-    ).toBe(true);
-    expect(
-      findings('exports').includes(
-        'tools/oxlint/effect-native/report.config.ts#unusedConfigNeighbor',
-      ),
-    ).toBe(true);
-    expect(!findings('files').some((finding) => finding.startsWith('src/validated.ts#'))).toBe(
+    expect(!findings('exports').includes('verticals/remote/shared/ultramodern-build.ts#declaredBuildIdentity')).toBe(
       true,
     );
+    expect(findings('exports').includes('verticals/remote/shared/ultramodern-build.ts#unusedBuildNeighbor')).toBe(true);
+    expect(!findings('exports').includes('tools/oxlint/effect-native/report.config.ts#default')).toBe(true);
+    expect(findings('exports').includes('tools/oxlint/effect-native/report.config.ts#unusedConfigNeighbor')).toBe(true);
+    expect(!findings('files').some((finding) => finding.startsWith('src/validated.ts#'))).toBe(true);
     expect(findings('exports').includes('src/schema.ts#unregisteredHelper')).toBe(true);
     expect(!findings('exports').includes('src/schema.ts#registeredSchema')).toBe(true);
     expect(!findings('exports').includes('src/public.ts#externallyConsumed')).toBe(true);
@@ -272,12 +236,8 @@ it.live(
     expect(findings('unlisted').includes('src/index.ts#misspelledRemote')).toBe(true);
     expect(findings('unlisted').includes('src/index.ts#declaredRemote')).toBe(true);
     expect(!findings('unlisted').includes('verticals/remote/src/index.ts#childRemote')).toBe(true);
-    expect(findings('unlisted').includes('verticals/remote/src/index.ts#misspelledChild')).toBe(
-      true,
-    );
-    expect(findings('unlisted').includes('verticals/remote/src/index.ts#declaredRemote')).toBe(
-      true,
-    );
+    expect(findings('unlisted').includes('verticals/remote/src/index.ts#misspelledChild')).toBe(true);
+    expect(findings('unlisted').includes('verticals/remote/src/index.ts#declaredRemote')).toBe(true);
     expect(findings('dependencies').includes('verticals/remote/package.json#effect')).toBe(true);
     expect(
       findings('dependencies').includes('verticals/remote/package.json#drizzle-orm'),
@@ -287,11 +247,9 @@ it.live(
     expect(findings('unlisted').includes('src/index.ts#shadowedRemote')).toBe(true);
     expect(findings('unlisted').includes('src/direct.ts#@rspack/core')).toBe(true);
     expect(findings('unlisted').includes('src/own-resolver.ts#oxc-parser')).toBe(true);
-    expect(
-      !model.evidence.some(
-        (item) => item.kind === 'resolver' && item.source === 'src/own-resolver.ts',
-      ),
-    ).toBe(true);
+    expect(!model.evidence.some((item) => item.kind === 'resolver' && item.source === 'src/own-resolver.ts')).toBe(
+      true,
+    );
     expect(
       model.evidence.some(
         (item) =>
@@ -303,13 +261,9 @@ it.live(
           item.resolved !== undefined,
       ),
     ).toBe(true);
+    expect(!model.evidence.some((item) => item.kind === 'resolver' && item.source === directFile)).toBe(true);
     expect(
-      !model.evidence.some((item) => item.kind === 'resolver' && item.source === directFile),
-    ).toBe(true);
-    expect(
-      model.evidence.some(
-        (item) => item.target === 'src/schema.ts#registeredSchema' && item.kind === 'export',
-      ),
+      model.evidence.some((item) => item.target === 'src/schema.ts#registeredSchema' && item.kind === 'export'),
     ).toBe(true);
   }),
 );
@@ -324,9 +278,9 @@ it.live(
       .pipe(
         Effect.flip,
         Effect.map((error) =>
-          expect(
-            Schema.decodeUnknownSync(Schema.Struct({ reason: Schema.String }))(error).reason,
-          ).toMatch(/Invalid quality model source/u),
+          expect(Schema.decodeUnknownSync(Schema.Struct({ reason: Schema.String }))(error).reason).toMatch(
+            /Invalid quality model source/u,
+          ),
         ),
       );
   }),
@@ -372,7 +326,10 @@ it.live(
             node: false,
             project: [sourcePattern, configurationFiles, toolsPattern],
           },
-          'verticals/*': { entry: [indexFile, configurationFiles], project: ['**/*.{ts,mts}'] },
+          'verticals/*': {
+            entry: [indexFile, configurationFiles],
+            project: ['**/*.{ts,mts}'],
+          },
         },
       }),
     );
@@ -408,23 +365,17 @@ it.live(
       throw new Error('Expected result to be present');
     }
     expect(result.coverage.modeledUsages).toBe(1);
-    expect(result.coverage.nativeFindingCounts.unlisted).toBe(
-      (result.coverage.findingCounts.unlisted ?? 0) + 1,
-    );
+    expect(result.coverage.nativeFindingCounts.unlisted).toBe((result.coverage.findingCounts.unlisted ?? 0) + 1);
     const modeled = Schema.decodeUnknownSync(
       Schema.fromJsonString(Schema.Array(Schema.Struct({ file: Schema.String }))),
     )(readFileSync(path.join(summary.runDirectory, 'knip/modeled-usages.json'), 'utf-8'));
     expect(modeled).toEqual([{ file: resolverFile }]);
     const raw = Schema.decodeUnknownSync(Schema.fromJsonString(ReportSchema))(
-      readFileSync(path.join(summary.runDirectory, 'knip/report.ndjson'), 'utf-8')
-        .trim()
-        .split('\n')[0],
+      readFileSync(path.join(summary.runDirectory, 'knip/report.ndjson'), 'utf-8').trim().split('\n')[0],
     );
     expect(
       raw.issues.some(
-        (issue) =>
-          issue.file === directFile &&
-          issue.unlisted.some((entry) => entry.name === rspackPackageName),
+        (issue) => issue.file === directFile && issue.unlisted.some((entry) => entry.name === rspackPackageName),
       ),
     ).toBe(true);
   }),
@@ -452,11 +403,7 @@ it.live(
         ] as const
       ).map(([directory, name, dependencies]) =>
         Effect.gen(function* testEffect8() {
-          write(
-            root,
-            `${directory}/package.json`,
-            yield* stringify({ dependencies, main: 'index.js', name }),
-          );
+          write(root, `${directory}/package.json`, yield* stringify({ dependencies, main: 'index.js', name }));
           write(root, `${directory}/index.js`, fixtureModuleSource);
         }),
       ),
@@ -480,11 +427,7 @@ it.live(
         ).pipe(Effect.provide(NodeServices.layer));
       });
     const differentCopies = yield* build();
-    expect(
-      !differentCopies.evidence.some(
-        (item) => item.kind === 'resolver' && item.target === 'target',
-      ),
-    ).toBe(true);
+    expect(!differentCopies.evidence.some((item) => item.kind === 'resolver' && item.target === 'target')).toBe(true);
     const mismatch = differentCopies.evidence.find(
       (item) => item.kind === 'resolver-unproven' && item.target === 'target',
     );
@@ -493,21 +436,14 @@ it.live(
       throw new Error('Expected mismatch to be present');
     }
     expect(mismatch.producerManifest).toBe(path.join(root, producer, packageFile));
-    expect(mismatch.producerResolved).toBe(
-      realpathSync(path.join(root, producerTarget, 'index.js')),
-    );
+    expect(mismatch.producerResolved).toBe(realpathSync(path.join(root, producerTarget, 'index.js')));
     expect(mismatch.resolved).toBe(realpathSync(path.join(root, ownerTarget, 'index.js')));
     expect(mismatch.reason).toMatch(/different canonical target/u);
-    const run = yield* runPinnedKnip(root, consumerPath, differentCopies).pipe(
-      Effect.provide(NodeServices.layer),
-    );
+    const run = yield* runPinnedKnip(root, consumerPath, differentCopies).pipe(Effect.provide(NodeServices.layer));
     expect(run.status, run.stderr).toBe(1);
     const report = Schema.decodeUnknownSync(Schema.fromJsonString(ReportSchema))(run.stdout);
     expect(
-      report.issues.some(
-        (issue) =>
-          issue.file === indexFile && issue.unlisted.some((item) => item.name === 'target'),
-      ),
+      report.issues.some((issue) => issue.file === indexFile && issue.unlisted.some((item) => item.name === 'target')),
     ).toBe(true);
     rmSync(path.join(root, producerTarget), { force: true, recursive: true });
     symlinkSync(path.join(root, ownerTarget), path.join(root, producerTarget), 'dir');
@@ -529,9 +465,7 @@ it.live(
       ].join('\n'),
     );
     const missingAnchor = yield* build();
-    expect(
-      !missingAnchor.evidence.some((item) => item.kind === 'resolver' && item.target === 'target'),
-    ).toBe(true);
+    expect(!missingAnchor.evidence.some((item) => item.kind === 'resolver' && item.target === 'target')).toBe(true);
   }),
 );
 
@@ -547,19 +481,11 @@ it.live(
       `${lintDirectory}/repository-policy.config.ts`,
       `${lintDirectory}/tests/shared-helpers-probe.ts`,
     ];
-    write(
-      root,
-      packageFile,
-      '{"name":"consumer-controls","type":"module","scripts":{"test":"rstest --project unit"}}',
-    );
+    write(root, packageFile, '{"name":"consumer-controls","type":"module","scripts":{"test":"rstest --project unit"}}');
     for (const file of loadedFiles) {
       write(root, file, 'export default {}; export const unusedNeighbor = 1;');
     }
-    write(
-      root,
-      policyTest,
-      "runOxlint(nodePath.join(pluginDirectory, 'repository-policy.config.ts'), []);",
-    );
+    write(root, policyTest, "runOxlint(nodePath.join(pluginDirectory, 'repository-policy.config.ts'), []);");
     write(
       root,
       helperTest,
@@ -579,20 +505,12 @@ it.live(
         },
       },
     };
-    const model = yield* buildKnipModel(root, base, consumerPath).pipe(
-      Effect.provide(NodeServices.layer),
-    );
-    const run = yield* runPinnedKnip(root, consumerPath, model).pipe(
-      Effect.provide(NodeServices.layer),
-    );
+    const model = yield* buildKnipModel(root, base, consumerPath).pipe(Effect.provide(NodeServices.layer));
+    const run = yield* runPinnedKnip(root, consumerPath, model).pipe(Effect.provide(NodeServices.layer));
     expect(run.status, `${run.stdout}\n${run.stderr}`).toBe(1);
-    const report = yield* Schema.decodeUnknownEffect(Schema.fromJsonString(ReportSchema))(
-      run.stdout,
-    );
+    const report = yield* Schema.decodeUnknownEffect(Schema.fromJsonString(ReportSchema))(run.stdout);
     const files = report.issues.flatMap((issue) => issue.files.map((finding) => finding.name));
-    const exports = report.issues.flatMap((issue) =>
-      issue.exports.map((finding) => `${issue.file}#${finding.name}`),
-    );
+    const exports = report.issues.flatMap((issue) => issue.exports.map((finding) => `${issue.file}#${finding.name}`));
     for (const file of loadedFiles) {
       expect(files).not.toContain(file);
       expect(exports).toContain(`${file}#unusedNeighbor`);
@@ -630,9 +548,7 @@ it.live(
       "path.join(testsDirectory, 'other-probe.ts')",
     ]) {
       write(root, helperTest, `void { name: 'shared-helpers-probe', specifier: ${specifier} };`);
-      const unrecognized = yield* buildKnipModel(root, base, consumerPath).pipe(
-        Effect.provide(NodeServices.layer),
-      );
+      const unrecognized = yield* buildKnipModel(root, base, consumerPath).pipe(Effect.provide(NodeServices.layer));
       expect(unrecognized.evidence.some((fact) => fact.source === helperTest)).toBe(false);
     }
     write(
@@ -647,14 +563,10 @@ it.live(
       helperTest,
       "void { name: 'other-plugin', specifier: path.join(testsDirectory, 'shared-helpers-probe.ts') };",
     );
-    const unrelated = yield* buildKnipModel(root, base, consumerPath).pipe(
-      Effect.provide(NodeServices.layer),
+    const unrelated = yield* buildKnipModel(root, base, consumerPath).pipe(Effect.provide(NodeServices.layer));
+    expect(unrelated.evidence.some((fact) => loadedFiles.includes(fact.target) || fact.target === typeTest)).toBe(
+      false,
     );
-    expect(
-      unrelated.evidence.some(
-        (fact) => loadedFiles.includes(fact.target) || fact.target === typeTest,
-      ),
-    ).toBe(false);
   }),
 );
 
@@ -679,9 +591,7 @@ it.live(
         "export default { testEnvironment: 'node', projects, metadata: unrelated };",
       ].join('\n'),
     );
-    const model = yield* buildKnipModel(root, { entry: [configFile] }).pipe(
-      Effect.provide(NodeServices.layer),
-    );
+    const model = yield* buildKnipModel(root, { entry: [configFile] }).pipe(Effect.provide(NodeServices.layer));
     const environments = model.evidence.filter((fact) => fact.reason === rstestEnvironmentReason);
     expect(environments.map((fact) => fact.target)).toEqual(['happy-dom', 'jsdom', 'happy-dom']);
     expect(environments[0]).toEqual(
@@ -699,13 +609,9 @@ it.live(
         configFile,
         `const cycle = cycle; export default { testEnvironment: 'happy-dom', projects: ${projects} };`,
       );
-      const dynamic = yield* buildKnipModel(root, { entry: [configFile] }).pipe(
-        Effect.provide(NodeServices.layer),
-      );
+      const dynamic = yield* buildKnipModel(root, { entry: [configFile] }).pipe(Effect.provide(NodeServices.layer));
       expect(
-        dynamic.evidence
-          .filter((fact) => fact.reason === rstestEnvironmentReason)
-          .map((fact) => fact.target),
+        dynamic.evidence.filter((fact) => fact.reason === rstestEnvironmentReason).map((fact) => fact.target),
       ).toEqual(['happy-dom']);
     }
   }),
@@ -725,11 +631,7 @@ it.live(
         type: 'module',
       }),
     );
-    write(
-      root,
-      rstestConfigFile,
-      "export default { projects: [{ testEnvironment: 'happy-dom' }] };",
-    );
+    write(root, rstestConfigFile, "export default { projects: [{ testEnvironment: 'happy-dom' }] };");
     const consumerPath = path.join(root, auditConsumersFile);
     const model = yield* buildKnipModel(
       root,
@@ -741,26 +643,21 @@ it.live(
       },
       consumerPath,
     ).pipe(Effect.provide(NodeServices.layer));
-    expect(
-      model.evidence.some(
-        (fact) => fact.reason === rstestEnvironmentReason && fact.target === 'happy-dom',
-      ),
-    ).toBe(true);
+    expect(model.evidence.some((fact) => fact.reason === rstestEnvironmentReason && fact.target === 'happy-dom')).toBe(
+      true,
+    );
     for (const [consumerSource, expectedUnused] of [
       [model.consumerSource, false],
       ['', true],
     ] as const) {
-      const run = yield* runPinnedKnip(root, consumerPath, { ...model, consumerSource }).pipe(
-        Effect.provide(NodeServices.layer),
-      );
+      const run = yield* runPinnedKnip(root, consumerPath, {
+        ...model,
+        consumerSource,
+      }).pipe(Effect.provide(NodeServices.layer));
       expect(run.status, `${run.stdout}\n${run.stderr}`).toBe(1);
       expect(run.stderr).toBe('');
-      const report = yield* Schema.decodeUnknownEffect(Schema.fromJsonString(ReportSchema))(
-        run.stdout,
-      );
-      const dependencies = report.issues.flatMap((issue) =>
-        issue.dependencies.map((item) => item.name),
-      );
+      const report = yield* Schema.decodeUnknownEffect(Schema.fromJsonString(ReportSchema))(run.stdout);
+      const dependencies = report.issues.flatMap((issue) => issue.dependencies.map((item) => item.name));
       expect(dependencies.includes('happy-dom')).toBe(expectedUnused);
       expect(dependencies).toContain('jose');
     }

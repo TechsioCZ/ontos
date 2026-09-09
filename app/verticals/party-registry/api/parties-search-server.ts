@@ -3,6 +3,7 @@
 import { makeGovernedReadHttpHandler } from '@app/core-runtime/http/governed-read';
 import { makeGovernedReadProblems } from '@app/shared-contracts/server/effect-bff-runtime';
 import { HttpApiBuilder } from '@modern-js/plugin-bff/effect-edge';
+
 import { partyRegistryApi } from '../shared/api.ts';
 import {
   PartiesProviderAuthenticationProblemSchema,
@@ -28,16 +29,13 @@ const problems = makeGovernedReadProblems({
   unavailable: PartiesProviderUnavailableProblemSchema,
 });
 
-export const partiesReadApiLive = HttpApiBuilder.group(
-  partyRegistryApi,
-  'partiesSearch',
-  (handlers) =>
-    handlers.handle(
-      'execute',
-      makeGovernedReadHttpHandler({
-        authenticatePrincipal: authenticateOperationPrincipal,
-        problems,
-        registration: partiesRead,
-      }),
-    ),
+export const partiesReadApiLive = HttpApiBuilder.group(partyRegistryApi, 'partiesSearch', (handlers) =>
+  handlers.handle(
+    'execute',
+    makeGovernedReadHttpHandler({
+      authenticatePrincipal: authenticateOperationPrincipal,
+      problems,
+      registration: partiesRead,
+    }),
+  ),
 );

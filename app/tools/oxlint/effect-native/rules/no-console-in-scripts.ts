@@ -11,7 +11,6 @@
  * Report-only: no fixers or suggestions.
  */
 import { defineRule } from '@oxlint/plugins';
-
 import type { Context, ESTree } from '@oxlint/plugins';
 
 import { skipWrappers, syntax } from '../shared/ast.ts';
@@ -25,12 +24,7 @@ type AnyNode = ESTree.Node;
 
 const CONSOLE_MODULES = new Set(['console', 'node:console']);
 const DEFAULT_METHODS: readonly string[] = ['error', 'warn', 'debug', 'trace'];
-const FUNCTION_LIKE = new Set([
-  'ArrowFunctionExpression',
-  'FunctionDeclaration',
-  'FunctionExpression',
-  'StaticBlock',
-]);
+const FUNCTION_LIKE = new Set(['ArrowFunctionExpression', 'FunctionDeclaration', 'FunctionExpression', 'StaticBlock']);
 
 interface RuleOptions {
   readonly allowPaths: readonly string[];
@@ -66,16 +60,9 @@ function observesSink(parent: AnyNode, outer: AnyNode): boolean {
   return parent.type === 'UnaryExpression' && ['void', 'typeof'].includes(parent.operator);
 }
 
-function restoresSink(
-  context: Context,
-  parent: AnyNode,
-  outer: AnyNode,
-  identity: string,
-): boolean {
+function restoresSink(context: Context, parent: AnyNode, outer: AnyNode, identity: string): boolean {
   return (
-    parent.type === 'AssignmentExpression' &&
-    parent.right === outer &&
-    provenance(context, parent.left) === identity
+    parent.type === 'AssignmentExpression' && parent.right === outer && provenance(context, parent.left) === identity
   );
 }
 
@@ -148,8 +135,7 @@ export const rule = defineRule({
   create(context) {
     const options = readOptions(context.options[0]);
     const path = scriptScope(context.filename);
-    if (!inScriptScope(path) || options.allowPaths.some((glob) => globToRegExp(glob).test(path)))
-      return {};
+    if (!inScriptScope(path) || options.allowPaths.some((glob) => globToRegExp(glob).test(path))) return {};
     const methods = new Set(options.methods);
     const report = (node: AnyNode, id: string, data: Record<string, string>) => {
       if (options.allowAtEntry && isEntryPosition(context, node)) return;
@@ -161,8 +147,7 @@ export const rule = defineRule({
       if (isRestoredCapture(context, node)) return;
       if (restoresSink(context, parent, outer, identity)) return;
       const called = parent.type === 'CallExpression' && parent.callee === outer;
-      if (called || options.reportReferences)
-        report(node, called ? 'consoleCall' : 'consoleReference', { method });
+      if (called || options.reportReferences) report(node, called ? 'consoleCall' : 'consoleReference', { method });
     };
     const inspect = (node: AnyNode) => {
       const identity = provenance(context, node);
@@ -183,8 +168,7 @@ export const rule = defineRule({
         if (valueReference(context, node)) inspect(node as AnyNode);
       },
       ExportNamedDeclaration(node) {
-        if (!node.source || !CONSOLE_MODULES.has(node.source.value) || node.exportKind === 'type')
-          return;
+        if (!node.source || !CONSOLE_MODULES.has(node.source.value) || node.exportKind === 'type') return;
         for (const s of node.specifiers) {
           if (s.exportKind === 'type') continue;
           const name = s.local.type === 'Identifier' ? s.local.name : s.local.value;
@@ -200,8 +184,7 @@ export const rule = defineRule({
 function isRestoredCapture(context: Context, node: AnyNode): boolean {
   const n = syntax(node),
     p = n?.parent;
-  if (!n || p?.type !== 'VariableDeclarator' || p.init !== n || p.id.type !== 'Identifier')
-    return false;
+  if (!n || p?.type !== 'VariableDeclarator' || p.init !== n || p.id.type !== 'Identifier') return false;
   const variable = lexicalVariable(context, p.id);
   if (!variable) return false;
   const reads = variable.references.filter((r) => r.isRead());

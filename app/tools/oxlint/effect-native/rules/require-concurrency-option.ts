@@ -1,4 +1,3 @@
-import { optionRecord } from '../shared/options.ts';
 /**
  * effect-native/require-concurrency-option
  *
@@ -63,25 +62,20 @@ import { optionRecord } from '../shared/options.ts';
  * Report-only: no fixer, no suggestion.
  */
 import { defineRule } from '@oxlint/plugins';
-
 import type { Context, ESTree } from '@oxlint/plugins';
 
-import { collectEffectBindings, type EffectBindings } from '../shared/effect-imports.ts';
-import { isScriptFile, isTestFile, matchesGlobs, scopePath } from '../shared/paths.ts';
-import {
-  skipWrappers,
-  staticString,
-  unwrapNode,
-  memberName as staticMemberName,
-} from '../shared/ast.ts';
+import { skipWrappers, staticString, unwrapNode, memberName as staticMemberName } from '../shared/ast.ts';
 import { bindingPath } from '../shared/effect-identity.ts';
-import { stringArray, positiveInteger } from '../shared/options.ts';
+import { collectEffectBindings, type EffectBindings } from '../shared/effect-imports.ts';
 import {
   collectRootNamespaces,
   collectDirectMemberImports,
   collectNamedImports,
   importDeclarations,
 } from '../shared/imports.ts';
+import { optionRecord } from '../shared/options.ts';
+import { stringArray, positiveInteger } from '../shared/options.ts';
+import { isScriptFile, isTestFile, matchesGlobs, scopePath } from '../shared/paths.ts';
 
 const EFFECT_ROOT_MODULE = 'effect';
 /** `effect/Effect`, `effect/Stream`, and any nested re-export path ending in those names. */
@@ -214,10 +208,7 @@ function memberName(node: ESTree.MemberExpression): string | null {
  * The shared `effect`/`effect/*` bindings, widened with the named imports of the Effect re-export
  * barrels. `import { Effect } from "@modern-js/plugin-bff/effect-edge"` binds Effect's own `Effect`.
  */
-function collectBindings(
-  program: ESTree.Program,
-  reexportModules: readonly string[],
-): EffectBindings {
+function collectBindings(program: ESTree.Program, reexportModules: readonly string[]): EffectBindings {
   const shared = collectEffectBindings(program);
   const accepts = (source: string) => matchesGlobs(source, reexportModules);
   const namespaces = new Map([...shared.namespaces, ...collectNamedImports(program, accepts)]);
@@ -256,9 +247,7 @@ function literalLength(node: ESTree.Node | undefined): number | null {
       : value.elements.length;
   }
   if (value.type === 'ObjectExpression') {
-    return value.properties.some((property) => property.type === 'SpreadElement')
-      ? null
-      : value.properties.length;
+    return value.properties.some((property) => property.type === 'SpreadElement') ? null : value.properties.length;
   }
   return null;
 }
@@ -304,11 +293,7 @@ function inspectConcurrency(value: ESTree.Node, allowUnbounded: boolean): Verdic
   return OK;
 }
 
-function memberShape(
-  namespace: string,
-  member: string,
-  options: RuleOptions,
-): MemberShape | undefined {
+function memberShape(namespace: string, member: string, options: RuleOptions): MemberShape | undefined {
   if (namespace === 'Effect') return EFFECT_MEMBERS.get(member);
   if (namespace === 'Stream' && options.streamMembers.has(member)) return STREAM;
   return undefined;
@@ -350,7 +335,11 @@ function reportVerdict(
   context.report({
     node,
     messageId: 'unboundedConcurrency',
-    data: { namespace: callee.namespace, member: callee.member, value: verdict.value },
+    data: {
+      namespace: callee.namespace,
+      member: callee.member,
+      value: verdict.value,
+    },
   });
 }
 
@@ -429,8 +418,7 @@ export const rule = defineRule({
         bindings = collectBindings(program, resolved.reexportModules);
         rootNamespaces = collectRootNamespaces(
           program,
-          (source) =>
-            source === EFFECT_ROOT_MODULE || matchesGlobs(source, resolved.reexportModules),
+          (source) => source === EFFECT_ROOT_MODULE || matchesGlobs(source, resolved.reexportModules),
         );
         directMembers = collectDirectMemberImports(
           program,

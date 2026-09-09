@@ -14,9 +14,7 @@ const SpiceDbDatabaseBootstrapEnvironmentSchema = Schema.Struct({
 
 const PostgreSqlUrlSchema = Schema.URLFromString.check(
   Schema.makeFilter((url) =>
-    url.protocol === 'postgres:' || url.protocol === 'postgresql:'
-      ? undefined
-      : 'URL must use PostgreSQL',
+    url.protocol === 'postgres:' || url.protocol === 'postgresql:' ? undefined : 'URL must use PostgreSQL',
   ),
 );
 
@@ -71,28 +69,20 @@ export type SpiceDbDatabaseBootstrapConfig = ReturnType<typeof makeSpiceDbDataba
 export const parseSpiceDbDatabaseBootstrapConfig = (
   environment: SpiceDbDatabaseBootstrapEnvironment,
 ): SpiceDbDatabaseBootstrapConfig => {
-  const source = Result.getOrThrow(
-    Schema.decodeUnknownResult(SpiceDbDatabaseBootstrapEnvironmentSchema)(environment),
-  );
-  const admin = Result.getOrThrow(
-    Schema.decodeUnknownResult(PostgreSqlUrlSchema)(source.DATABASE_ADMIN_URL),
-  );
-  const spicedb = Result.getOrThrow(
-    Schema.decodeUnknownResult(PostgreSqlUrlSchema)(source.SPICEDB_DATABASE_URL),
-  );
+  const source = Result.getOrThrow(Schema.decodeUnknownResult(SpiceDbDatabaseBootstrapEnvironmentSchema)(environment));
+  const admin = Result.getOrThrow(Schema.decodeResult(PostgreSqlUrlSchema)(source.DATABASE_ADMIN_URL));
+  const spicedb = Result.getOrThrow(Schema.decodeResult(PostgreSqlUrlSchema)(source.SPICEDB_DATABASE_URL));
   const pair = Result.getOrThrow(
-    Schema.decodeUnknownResult(SpiceDbDatabasePairSchema)({
+    Schema.decodeResult(SpiceDbDatabasePairSchema)({
       admin,
       spicedb,
       spicedbUser: decodeURIComponent(
-        Result.getOrThrow(
-          Schema.decodeUnknownResult(PercentEncodedUriComponentSchema)(spicedb.username),
-        ),
+        Result.getOrThrow(Schema.decodeResult(PercentEncodedUriComponentSchema)(spicedb.username)),
       ),
     }),
   );
   const encodedPassword = Result.getOrThrow(
-    Schema.decodeUnknownResult(PercentEncodedUriComponentSchema)(pair.spicedb.password),
+    Schema.decodeResult(PercentEncodedUriComponentSchema)(pair.spicedb.password),
   );
 
   return makeSpiceDbDatabaseBootstrapConfig({

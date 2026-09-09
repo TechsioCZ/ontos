@@ -1,6 +1,6 @@
 import { Effect, Equal, Hash, Schema } from 'effect';
-import { FastCheck } from 'effect/testing';
 import { addEqualityTesters, expect, it } from 'effect-rstest';
+import { FastCheck } from 'effect/testing';
 
 class SemanticValue implements Equal.Equal {
   readonly #key: string;
@@ -35,13 +35,9 @@ it.prop(
   },
 );
 
-it.prop(
-  'the installed package generates record schemas',
-  { value: Schema.Literal('schema') },
-  ({ value }) => {
-    expect(value).toBe('schema');
-  },
-);
+it.prop('the installed package generates record schemas', { value: Schema.Literal('schema') }, ({ value }) => {
+  expect(value).toBe('schema');
+});
 
 // Promise assimilation would inspect this success value for a `then` property.
 const value = new Proxy(

@@ -3,9 +3,21 @@
 // @ontos-action-slug update-party-official-identifier
 /* eslint-disable anti-slop-effect/no-service-constructor-imports -- make*Ref helpers construct plain ResourceRef values, not Effect services. expires: 2026-12-31. */
 import { createHash } from 'node:crypto';
+
 import type { ActionHandlerContext } from '@app/core-runtime';
 import { defineAction, defineTenantModuleEntrypoint } from '@app/core-runtime';
 import { DateTime, Effect, Match, Option, Schema } from 'effect';
+
+// Value/type/namespace/Party reassignment requires correct-party-fact. A legitimate new
+// identifier is represented by END_VALIDITY followed by add-party-official-identifier.
+import {
+  UpdatePartyOfficialIdentifierPayloadSchema,
+  UpdatePartyOfficialIdentifierResultSchema,
+} from '../../shared/actions/update-party-official-identifier.ts';
+import type {
+  UpdatePartyOfficialIdentifierPayload,
+  UpdatePartyOfficialIdentifierResult,
+} from '../../shared/actions/update-party-official-identifier.ts';
 import {
   IdentifierVerificationSchema,
   OfficialIdentifierAssertionStateSchema,
@@ -35,47 +47,29 @@ import {
   endOfficialIdentifierRecord,
   updateOfficialIdentifierVerificationRecord,
 } from '../services/party-official-identifier-persistence.service.ts';
-
-// Value/type/namespace/Party reassignment requires correct-party-fact. A legitimate new
-// identifier is represented by END_VALIDITY followed by add-party-official-identifier.
-import {
-  UpdatePartyOfficialIdentifierPayloadSchema,
-  UpdatePartyOfficialIdentifierResultSchema,
-} from '../../shared/actions/update-party-official-identifier.ts';
-import type {
-  UpdatePartyOfficialIdentifierPayload,
-  UpdatePartyOfficialIdentifierResult,
-} from '../../shared/actions/update-party-official-identifier.ts';
 import { createUpdatePartyOfficialIdentifierPartyRegistryOfficialIdentifierUpdatedV1OutboxMessage } from './update-party-official-identifier.party-registry-official-identifier-updated-v1.outbox-message.ts';
 
 export { UpdatePartyOfficialIdentifierPayloadSchema } from '../../shared/actions/update-party-official-identifier.ts';
 export type { UpdatePartyOfficialIdentifierPayload } from '../../shared/actions/update-party-official-identifier.ts';
 
-const PartyOfficialIdentifierNotFoundContract = Schema.TaggedStruct(
+const PartyOfficialIdentifierNotFoundContract = Schema.TaggedStruct('PartyOfficialIdentifierNotFound', {
+  code: Schema.Literal('party_official_identifier_not_found'),
+  reason: Schema.String,
+});
+const PartyOfficialIdentifierNotFound = Schema.TaggedError<typeof PartyOfficialIdentifierNotFoundContract.Type>()(
   'PartyOfficialIdentifierNotFound',
-  {
-    code: Schema.Literal('party_official_identifier_not_found'),
-    reason: Schema.String,
-  },
+  PartyOfficialIdentifierNotFoundContract.fields,
 );
-const PartyOfficialIdentifierNotFound = Schema.TaggedError<
-  typeof PartyOfficialIdentifierNotFoundContract.Type
->()('PartyOfficialIdentifierNotFound', PartyOfficialIdentifierNotFoundContract.fields);
 type PartyOfficialIdentifierNotFoundError = InstanceType<typeof PartyOfficialIdentifierNotFound>;
 
-const PartyOfficialIdentifierUpdateConflictContract = Schema.TaggedStruct(
-  'PartyOfficialIdentifierUpdateConflict',
-  {
-    code: Schema.Literal('party_official_identifier_update_conflict'),
-    reason: Schema.String,
-  },
-);
+const PartyOfficialIdentifierUpdateConflictContract = Schema.TaggedStruct('PartyOfficialIdentifierUpdateConflict', {
+  code: Schema.Literal('party_official_identifier_update_conflict'),
+  reason: Schema.String,
+});
 const PartyOfficialIdentifierUpdateConflict = Schema.TaggedError<
   typeof PartyOfficialIdentifierUpdateConflictContract.Type
 >()('PartyOfficialIdentifierUpdateConflict', PartyOfficialIdentifierUpdateConflictContract.fields);
-type PartyOfficialIdentifierUpdateConflictError = InstanceType<
-  typeof PartyOfficialIdentifierUpdateConflict
->;
+type PartyOfficialIdentifierUpdateConflictError = InstanceType<typeof PartyOfficialIdentifierUpdateConflict>;
 
 const ErrorSchema = Schema.Union([
   OfficialIdentifierClaimConflict,
@@ -183,7 +177,10 @@ export const updatePartyOfficialIdentifierAction = defineAction(
     domainEvents,
     entrypoint: defineTenantModuleEntrypoint({
       access: 'write',
-      authorization: { kind: 'action_execution', provisioning: 'tenant_membership_default' },
+      authorization: {
+        kind: 'action_execution',
+        provisioning: 'tenant_membership_default',
+      },
       entrypointKey: 'party.registry.update-party-official-identifier',
       moduleKey: 'party.registry',
       role: 'action',
@@ -261,17 +258,13 @@ export const updatePartyOfficialIdentifierAction = defineAction(
               after: metadata(value),
               before: metadata(previous),
               result: {
-                officialIdentifierRef: makePartyOfficialIdentifierRef(
-                  scope.tenantId,
-                  value.officialIdentifierId,
-                ),
+                officialIdentifierRef: makePartyOfficialIdentifierRef(scope.tenantId, value.officialIdentifierId),
                 partyRef: makePartyRef(scope.tenantId, value.partyId),
                 // SAFETY: the owner database CHECK constrains assertion state to this contract.
                 state: value.state as UpdatePartyOfficialIdentifierResult['state'],
                 validTo: Option.fromNullOr(value.validTo).pipe(Option.map(DateTime.makeUnsafe)),
                 // SAFETY: the owner database CHECK constrains verification to this contract.
-                verification:
-                  value.verificationState as UpdatePartyOfficialIdentifierResult['verification'],
+                verification: value.verificationState as UpdatePartyOfficialIdentifierResult['verification'],
               },
             });
           }),

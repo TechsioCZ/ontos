@@ -15,7 +15,6 @@ import {
   uniqueIndex,
   uuid,
 } from 'drizzle-orm/pg-core';
-
 import type { AnyPgColumn } from 'drizzle-orm/pg-core';
 
 export const CORE_SCHEMA_NAME = 'core';
@@ -55,12 +54,7 @@ export const ACTION_INVOCATION_STATUSES = [
 
 export type ActionInvocationStatus = (typeof ACTION_INVOCATION_STATUSES)[number];
 
-export const ACTION_AUTH_METHODS = [
-  'session',
-  'api_key',
-  'system',
-  'support_impersonation',
-] as const;
+export const ACTION_AUTH_METHODS = ['session', 'api_key', 'system', 'support_impersonation'] as const;
 
 export type ActionAuthMethod = (typeof ACTION_AUTH_METHODS)[number];
 
@@ -82,8 +76,7 @@ export const domainEventTenantSequence = coreSchema.sequence('domain_event_tenan
 const createdAt = () => timestamp('created_at', { withTimezone: true }).defaultNow().notNull();
 const updatedAt = () => timestamp('updated_at', { withTimezone: true }).defaultNow().notNull();
 const occurredAt = () => timestamp('occurred_at', { withTimezone: true }).defaultNow().notNull();
-const enableCoreGovernedRls = <Table>(table: { readonly enableRLS: () => Table }): Table =>
-  table.enableRLS();
+const enableCoreGovernedRls = <Table>(table: { readonly enableRLS: () => Table }): Table => table.enableRLS();
 
 export const tenants = coreSchema.table(
   'tenants',
@@ -128,10 +121,7 @@ export const legalEntities = coreSchema.table(
       table.registrationNumber,
     ),
     index('core_legal_entities_tenant_idx').on(table.tenantId),
-    check(
-      'core_legal_entities_status_ck',
-      sql`${table.status} in ('active', 'suspended', 'archived')`,
-    ),
+    check('core_legal_entities_status_ck', sql`${table.status} in ('active', 'suspended', 'archived')`),
   ],
 );
 
@@ -149,10 +139,7 @@ export const principals = coreSchema.table(
   (table) => [
     uniqueIndex('core_principals_tenant_id_uk').on(table.tenantId, table.principalId),
     index('core_principals_tenant_kind_idx').on(table.tenantId, table.kind),
-    check(
-      'core_principals_kind_ck',
-      sql`${table.kind} in ('human', 'service', 'integration', 'agent', 'system')`,
-    ),
+    check('core_principals_kind_ck', sql`${table.kind} in ('human', 'service', 'integration', 'agent', 'system')`),
     check('core_principals_status_ck', sql`${table.status} in ('active', 'disabled', 'archived')`),
   ],
 );
@@ -194,10 +181,7 @@ export const principalAuthBindings = coreSchema.table(
     }).onDelete('restrict'),
     check('core_auth_bindings_provider_ck', sql`${table.provider} in ('better_auth')`),
     check('core_auth_bindings_subject_type_ck', sql`${table.subjectType} in ('user', 'api_key')`),
-    check(
-      'core_auth_bindings_status_ck',
-      sql`${table.status} in ('active', 'revoked', 'disabled')`,
-    ),
+    check('core_auth_bindings_status_ck', sql`${table.status} in ('active', 'revoked', 'disabled')`),
     check(
       'core_auth_bindings_lifecycle_ck',
       sql`(${table.status} = 'revoked' and ${table.revokedAt} is not null) or (${table.status} in ('active', 'disabled') and ${table.revokedAt} is null)`,
@@ -284,10 +268,7 @@ export const actionInvocations = coreSchema.table(
     completedAt: timestamp('completed_at', { withTimezone: true }),
   },
   (table) => [
-    uniqueIndex('core_action_invocations_tenant_id_uk').on(
-      table.tenantId,
-      table.actionInvocationId,
-    ),
+    uniqueIndex('core_action_invocations_tenant_id_uk').on(table.tenantId, table.actionInvocationId),
     uniqueIndex('core_action_invocations_idempotency_uk')
       .on(table.tenantId, table.actionKey, table.principalId, table.idempotencyKey)
       .where(sql`${table.idempotencyKey} is not null`),
@@ -332,11 +313,7 @@ export const tenantModuleStateChanges = coreSchema.table(
     occurredAt: occurredAt(),
   },
   (table) => [
-    index('core_module_state_changes_tenant_module_idx').on(
-      table.tenantId,
-      table.moduleKey,
-      table.occurredAt,
-    ),
+    index('core_module_state_changes_tenant_module_idx').on(table.tenantId, table.moduleKey, table.occurredAt),
     foreignKey({
       columns: [table.tenantId, table.changedByPrincipalId],
       foreignColumns: [principals.tenantId, principals.principalId],
@@ -347,10 +324,7 @@ export const tenantModuleStateChanges = coreSchema.table(
       foreignColumns: [actionInvocations.tenantId, actionInvocations.actionInvocationId],
       name: 'core_module_state_changes_tenant_invocation_fk',
     }).onDelete('restrict'),
-    check(
-      'core_module_state_changes_source_ck',
-      sql`${table.changeSource} in ('user', 'support', 'system')`,
-    ),
+    check('core_module_state_changes_source_ck', sql`${table.changeSource} in ('user', 'support', 'system')`),
     check(
       'core_module_state_changes_new_state_ck',
       sql`${table.newState} in ('inactive', 'active', 'read_only', 'suspended', 'quarantined', 'deprecated', 'archived')`,
@@ -396,18 +370,12 @@ export const auditEvents = coreSchema.table(
       name: 'core_audit_events_tenant_invocation_fk',
     }).onDelete('restrict'),
     ...authContextForeignKeys('core_audit_events', table),
-    check(
-      'core_audit_events_outcome_ck',
-      sql`${table.outcome} in ('allowed', 'denied', 'succeeded', 'failed')`,
-    ),
+    check('core_audit_events_outcome_ck', sql`${table.outcome} in ('allowed', 'denied', 'succeeded', 'failed')`),
     check(
       'core_audit_events_stage_ck',
       sql`${table.outcomeStage} in ('system', 'authn', 'authz', 'policy', 'validation', 'execution')`,
     ),
-    check(
-      'core_audit_events_profile_ck',
-      sql`${table.auditProfile} in ('standard', 'sensitive', 'minimal')`,
-    ),
+    check('core_audit_events_profile_ck', sql`${table.auditProfile} in ('standard', 'sensitive', 'minimal')`),
   ],
 );
 
@@ -455,10 +423,7 @@ export const dataAccessEvents = coreSchema.table(
       name: 'core_data_access_events_tenant_invocation_fk',
     }).onDelete('restrict'),
     ...authContextForeignKeys('core_data_access_events', table),
-    check(
-      'core_data_access_events_outcome_ck',
-      sql`${table.outcome} in ('allowed', 'denied', 'failed')`,
-    ),
+    check('core_data_access_events_outcome_ck', sql`${table.outcome} in ('allowed', 'denied', 'failed')`),
     check(
       'core_data_access_events_stage_ck',
       sql`${table.outcomeStage} in ('authn', 'context', 'module_state', 'authz', 'policy', 'execution', 'evidence')`,
@@ -559,7 +524,9 @@ export const outboxDeliveries = coreSchema.table(
     outboxDeliveryId: uuid('outbox_delivery_id').defaultRandom().primaryKey(),
     outboxMessageId: uuid('outbox_message_id')
       .notNull()
-      .references(() => outboxMessages.outboxMessageId, { onDelete: 'cascade' }),
+      .references(() => outboxMessages.outboxMessageId, {
+        onDelete: 'cascade',
+      }),
     workerKey: text('worker_key').notNull(),
     consumerModuleKey: text('consumer_module_key').notNull(),
     status: text('status').default('pending').notNull(),
@@ -572,19 +539,13 @@ export const outboxDeliveries = coreSchema.table(
     updatedAt: updatedAt(),
   },
   (table) => [
-    uniqueIndex('core_outbox_deliveries_message_worker_uk').on(
-      table.outboxMessageId,
-      table.workerKey,
-    ),
+    uniqueIndex('core_outbox_deliveries_message_worker_uk').on(table.outboxMessageId, table.workerKey),
     index('core_outbox_deliveries_pending_idx')
       .on(table.availableAt)
       .where(sql`${table.status} = 'pending'`),
     index('core_outbox_deliveries_message_idx').on(table.outboxMessageId),
     index('core_outbox_deliveries_worker_status_idx').on(table.workerKey, table.status),
-    check(
-      'core_outbox_deliveries_status_ck',
-      sql`${table.status} in ('pending', 'processing', 'done', 'dead')`,
-    ),
+    check('core_outbox_deliveries_status_ck', sql`${table.status} in ('pending', 'processing', 'done', 'dead')`),
     check('core_outbox_deliveries_attempts_count_ck', sql`${table.attemptsCount} >= 0`),
   ],
 );
@@ -595,14 +556,14 @@ export const outboxAttempts = coreSchema.table(
     outboxAttemptId: uuid('outbox_attempt_id').defaultRandom().primaryKey(),
     outboxDeliveryId: uuid('outbox_delivery_id')
       .notNull()
-      .references(() => outboxDeliveries.outboxDeliveryId, { onDelete: 'cascade' }),
+      .references(() => outboxDeliveries.outboxDeliveryId, {
+        onDelete: 'cascade',
+      }),
     startedAt: timestamp('started_at', { withTimezone: true }).defaultNow().notNull(),
     finishedAt: timestamp('finished_at', { withTimezone: true }),
     errorMessage: text('error_message'),
   },
-  (table) => [
-    index('core_outbox_attempts_delivery_started_idx').on(table.outboxDeliveryId, table.startedAt),
-  ],
+  (table) => [index('core_outbox_attempts_delivery_started_idx').on(table.outboxDeliveryId, table.startedAt)],
 );
 
 export const mediaAssets = coreSchema.table(
@@ -696,10 +657,7 @@ export const mediaLinks = coreSchema.table(
       foreignColumns: [actionInvocations.tenantId, actionInvocations.actionInvocationId],
       name: 'core_media_links_tenant_invocation_fk',
     }).onDelete('restrict'),
-    check(
-      'core_media_links_source_ck',
-      sql`${table.linkSource} in ('user', 'integration', 'import', 'system')`,
-    ),
+    check('core_media_links_source_ck', sql`${table.linkSource} in ('user', 'integration', 'import', 'system')`),
   ],
 );
 
@@ -725,9 +683,13 @@ export const evidenceReferences = coreSchema.table(
     storageLockScope: text('storage_lock_scope').notNull(),
     storageLockMode: text('storage_lock_mode').notNull(),
     storageLegalHold: boolean('storage_legal_hold').default(false).notNull(),
-    storageRetainUntil: timestamp('storage_retain_until', { withTimezone: true }),
+    storageRetainUntil: timestamp('storage_retain_until', {
+      withTimezone: true,
+    }),
     storageLockStatus: text('storage_lock_status').notNull(),
-    storageLockVerifiedAt: timestamp('storage_lock_verified_at', { withTimezone: true }),
+    storageLockVerifiedAt: timestamp('storage_lock_verified_at', {
+      withTimezone: true,
+    }),
     storageLockEvidenceJson: jsonb('storage_lock_evidence_json')
       .notNull()
       .default(sql`'{}'::jsonb`),
@@ -926,10 +888,7 @@ export const searchProjectionRebuilds = enableCoreGovernedRls(
         columns: [table.tenantId, table.sourceModuleKey, table.sourceResourceType],
       }),
       check('core_search_projection_rebuilds_version_ck', sql`${table.rebuildVersion} > 0`),
-      check(
-        'core_search_projection_rebuilds_fingerprint_ck',
-        sql`${table.fingerprint} ~ '^[a-f0-9]{64}$'`,
-      ),
+      check('core_search_projection_rebuilds_fingerprint_ck', sql`${table.fingerprint} ~ '^[a-f0-9]{64}$'`),
       pgPolicy('core_search_projection_rebuilds_tenant_select', {
         for: 'select',
         to: 'ontos_runtime',

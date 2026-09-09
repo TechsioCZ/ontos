@@ -2,6 +2,7 @@
 import { makeGovernedReadHttpHandler } from '@app/core-runtime/http/governed-read';
 import { makeGovernedReadProblems } from '@app/shared-contracts/server/effect-bff-runtime';
 import { HttpApiBuilder } from '@modern-js/plugin-bff/effect-edge';
+
 import { partyRegistryApi } from '../shared/api.ts';
 import {
   PartyMatchDecisionAuthenticationProblemSchema,
@@ -27,16 +28,13 @@ const problems = makeGovernedReadProblems({
   unavailable: PartyMatchDecisionUnavailableProblemSchema,
 });
 
-export const partyMatchDecisionReadApiLive = HttpApiBuilder.group(
-  partyRegistryApi,
-  'partyMatchDecision',
-  (handlers) =>
-    handlers.handle(
-      'execute',
-      makeGovernedReadHttpHandler({
-        authenticatePrincipal: authenticateOperationPrincipal,
-        problems,
-        registration: partyMatchDecisionRead,
-      }),
-    ),
+export const partyMatchDecisionReadApiLive = HttpApiBuilder.group(partyRegistryApi, 'partyMatchDecision', (handlers) =>
+  handlers.handle(
+    'execute',
+    makeGovernedReadHttpHandler({
+      authenticatePrincipal: authenticateOperationPrincipal,
+      problems,
+      registration: partyMatchDecisionRead,
+    }),
+  ),
 );

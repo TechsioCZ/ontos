@@ -1,5 +1,6 @@
-import { expect, it } from 'effect-rstest';
 import { Effect, Schema } from 'effect';
+import { expect, it } from 'effect-rstest';
+
 import {
   bindManagedApiKeyAction,
   bindSelfApiKeyAction,
@@ -38,13 +39,13 @@ it.effect('identity administration and support starts declare independent tenant
     const originalPrincipalId = '00000000-0000-4000-8000-000000000003';
     const managedPermissions = [
       bindManagedApiKeyAction.descriptor.tenantPermission?.(
-        yield* Schema.decodeUnknownEffect(bindManagedApiKeyAction.descriptor.payloadSchema)({
+        yield* Schema.decodeEffect(bindManagedApiKeyAction.descriptor.payloadSchema)({
           principalId,
           providerSubjectId: 'provider-key-id',
         }),
       ),
       changePrincipalStatusAction.descriptor.tenantPermission?.(
-        yield* Schema.decodeUnknownEffect(changePrincipalStatusAction.descriptor.payloadSchema)({
+        yield* Schema.decodeEffect(changePrincipalStatusAction.descriptor.payloadSchema)({
           expectedStatus: 'active',
           newStatus: 'disabled',
           principalId,
@@ -52,15 +53,13 @@ it.effect('identity administration and support starts declare independent tenant
         }),
       ),
       createNonHumanPrincipalAction.descriptor.tenantPermission?.(
-        yield* Schema.decodeUnknownEffect(createNonHumanPrincipalAction.descriptor.payloadSchema)({
+        yield* Schema.decodeEffect(createNonHumanPrincipalAction.descriptor.payloadSchema)({
           displayName: 'Inventory service',
           kind: 'service',
         }),
       ),
       setManagedApiKeyBindingStatusAction.descriptor.tenantPermission?.(
-        yield* Schema.decodeUnknownEffect(
-          setManagedApiKeyBindingStatusAction.descriptor.payloadSchema,
-        )({
+        yield* Schema.decodeEffect(setManagedApiKeyBindingStatusAction.descriptor.payloadSchema)({
           authBindingId,
           expectedStatus: 'active',
           newStatus: 'disabled',
@@ -80,9 +79,7 @@ it.effect('identity administration and support starts declare independent tenant
     };
     expect(
       recordSupportImpersonationAction.descriptor.tenantPermission?.(
-        yield* Schema.decodeUnknownEffect(
-          recordSupportImpersonationAction.descriptor.payloadSchema,
-        )({
+        yield* Schema.decodeEffect(recordSupportImpersonationAction.descriptor.payloadSchema)({
           ...supportPayload,
           checkpoint: 'requested',
         }),
@@ -90,9 +87,7 @@ it.effect('identity administration and support starts declare independent tenant
     ).toBe('impersonate');
     expect(
       recordSupportImpersonationAction.descriptor.tenantPermission?.(
-        yield* Schema.decodeUnknownEffect(
-          recordSupportImpersonationAction.descriptor.payloadSchema,
-        )({
+        yield* Schema.decodeEffect(recordSupportImpersonationAction.descriptor.payloadSchema)({
           ...supportPayload,
           checkpoint: 'stopped',
           sessionRef: 'better-auth-session:safe-session-reference',
@@ -134,9 +129,7 @@ it.effect('support checkpoints forbid unsafe or misplaced session references', (
   Effect.gen(function* identityScenario4() {
     const originalPrincipalId = '00000000-0000-4000-8000-000000000001';
     const targetPrincipalId = '00000000-0000-4000-8000-000000000002';
-    const decode = Schema.decodeUnknownEffect(
-      recordSupportImpersonationAction.descriptor.payloadSchema,
-    );
+    const decode = Schema.decodeUnknownEffect(recordSupportImpersonationAction.descriptor.payloadSchema);
 
     expect(
       yield* decode({

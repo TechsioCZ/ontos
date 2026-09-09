@@ -1,8 +1,10 @@
-import { expect, it } from 'effect-rstest';
 import { createRequire } from 'node:module';
 import { fileURLToPath, pathToFileURL } from 'node:url';
+import { stripVTControlCharacters } from 'node:util';
+
 import { NodeServices } from '@effect/platform-node';
 import { Effect, FileSystem, Path, Schema, Stream } from 'effect';
+import { expect, it } from 'effect-rstest';
 import { ChildProcess, ChildProcessSpawner } from 'effect/unstable/process';
 
 const encodeJson = Schema.encodeSync(Schema.fromJsonString(Schema.Unknown));
@@ -45,7 +47,9 @@ for (const format of ['cjs', 'esm', 'esm-node']) {
       const fs = yield* FileSystem.FileSystem;
       const path = yield* Path.Path;
       const oxlintRoot = path.dirname(packageRequire.resolve('oxlint/package.json'));
-      const root = yield* fs.makeTempDirectoryScoped({ prefix: 'ontos-code-tools-i18n-' });
+      const root = yield* fs.makeTempDirectoryScoped({
+        prefix: 'ontos-code-tools-i18n-',
+      });
       const extension = format === 'cjs' ? 'cjs' : 'js';
       const dist = path.join(root, 'dist', format);
       yield* fs.makeDirectory(path.join(root, 'dist'), { recursive: true });
@@ -56,16 +60,20 @@ for (const format of ['cjs', 'esm', 'esm-node']) {
       );
       yield* fs.makeDirectory(path.join(root, 'node_modules'));
       yield* fs.symlink(oxlintRoot, path.join(root, 'node_modules', 'oxlint'));
+      yield* fs.makeDirectory(path.join(root, 'node_modules', '@babel'));
+      for (const dependency of ['parser', 'traverse', 'types']) {
+        yield* fs.symlink(
+          path.dirname(packageRequire.resolve(`@babel/${dependency}/package.json`)),
+          path.join(root, 'node_modules', '@babel', dependency),
+        );
+      }
       yield* fs.makeDirectory(path.join(root, 'src'));
       yield* fs.writeFileString(path.join(root, 'src', 'fixture.tsx'), fixture.source);
       if (fixture.name === malformedPluginCase) {
         // A deliberately broken, isolated plugin exercises Oxlint's actual crash reporter.
         const plugin =
           '{ meta: { name: "ultramodern" }, rules: { "no-manual-locale-copy-branching": { meta: { schema: [] }, create() { return { Program() { throw new Error("deliberate-i18n-plugin-failure"); } }; } } } }';
-        yield* fs.writeFileString(
-          path.join(root, 'src', 'oxlint-plugin.ts'),
-          `export default ${plugin};`,
-        );
+        yield* fs.writeFileString(path.join(root, 'src', 'oxlint-plugin.ts'), `export default ${plugin};`);
       } else if (format === 'cjs') {
         // Oxlint expects the plugin value, not the CJS module's named-export namespace.
         yield* fs.writeFileString(
@@ -103,7 +111,7 @@ printOxlintOutput(result); process.exitCode = result.exitCode;`;
         },
         { concurrency: 'unbounded' },
       );
-      const output = result.stdout + result.stderr;
+      const output = stripVTControlCharacters(result.stdout + result.stderr);
       if (fixture.diagnostic === null) {
         expect(result.status, output).toBe(0);
         expect(output).toMatch(cleanOutput);
@@ -120,15 +128,12 @@ printOxlintOutput(result); process.exitCode = result.exitCode;`;
         }
       }
     });
-    it.live(`code-tools ${format}: ${fixture.name}`, () =>
-      testEffect.pipe(Effect.provide(NodeServices.layer)),
-    );
+    it.live(`code-tools ${format}: ${fixture.name}`, () => testEffect.pipe(Effect.provide(NodeServices.layer)));
   }
 }
 
 it('clean i18n output accepts only silence or a zero-diagnostic summary', () => {
-  const summary =
-    'Found 0 warnings and 0 errors.\nFinished in 423ms on 2 files with 98 rules using 4 threads.\n';
+  const summary = 'Found 0 warnings and 0 errors.\nFinished in 423ms on 2 files with 98 rules using 4 threads.\n';
   expect('').toMatch(cleanOutput);
   expect(summary).toMatch(cleanOutput);
   for (const output of [

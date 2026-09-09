@@ -1,4 +1,3 @@
-import { expect, it } from 'effect-rstest';
 import { buildInstalledModuleCatalog } from '@app/core-runtime';
 import type {
   ContextAccessDecision,
@@ -7,6 +6,8 @@ import type {
   TenantModuleState,
 } from '@app/core-runtime';
 import { DateTime, Effect, Schema } from 'effect';
+import { expect, it } from 'effect-rstest';
+
 import {
   attachShellMedia,
   makeShellResourceDetail,
@@ -61,15 +62,7 @@ const catalog = (): InstalledModuleCatalog =>
             defaultState: 'inactive',
             preservesHistoryWhenInactive: true,
             scope: 'tenant',
-            supportedStates: [
-              'inactive',
-              'active',
-              'read_only',
-              'suspended',
-              'quarantined',
-              'deprecated',
-              'archived',
-            ],
+            supportedStates: ['inactive', 'active', 'read_only', 'suspended', 'quarantined', 'deprecated', 'archived'],
           },
           module: {
             description: 'Property capability.',
@@ -100,7 +93,12 @@ const catalog = (): InstalledModuleCatalog =>
                 schemaVersion: '1',
               },
             ],
-            api: [{ key: 'property.registry.resource-api', operationKeys: ['detail'] }],
+            api: [
+              {
+                key: 'property.registry.resource-api',
+                operationKeys: ['detail'],
+              },
+            ],
             components: [],
             events: [],
             reports: [],
@@ -180,8 +178,7 @@ const access = (
   resourceWriteDecision: ContextAccessDecision = resourceDecision,
 ): ContextAccessService => ({
   legalEntities: () => Effect.succeed([]),
-  modules: ({ moduleIds }) =>
-    Effect.succeed(moduleIds.map((key) => ({ decision: moduleDecision, key }))),
+  modules: ({ moduleIds }) => Effect.succeed(moduleIds.map((key) => ({ decision: moduleDecision, key }))),
   resources: ({ permission = 'read', resources }) =>
     Effect.succeed(
       resources.map(({ moduleId: owner, resourceId, resourceType: type }) => ({
@@ -189,8 +186,7 @@ const access = (
         key: `${owner}:${type}:${resourceId}`,
       })),
     ),
-  tenants: ({ tenantIds }) =>
-    Effect.succeed(tenantIds.map((key) => ({ decision: moduleDecision, key }))),
+  tenants: ({ tenantIds }) => Effect.succeed(tenantIds.map((key) => ({ decision: moduleDecision, key }))),
 });
 
 const dependencies = (
@@ -232,23 +228,21 @@ it.effect('search treats empty input as empty without touching providers', () =>
   }),
 );
 
-it.effect(
-  'search keeps an eligible provider with zero candidates as a successful empty result',
-  () =>
-    Effect.gen(function* searchKeepsAnEligibleProviderWith() {
-      const baseline = dependencies();
-      const result = yield* makeShellSearch(
-        {
-          ...baseline,
-          contextAccess: {
-            ...baseline.contextAccess,
-            resources: () => Effect.die('empty results must not authorize an empty resource batch'),
-          },
+it.effect('search keeps an eligible provider with zero candidates as a successful empty result', () =>
+  Effect.gen(function* searchKeepsAnEligibleProviderWith() {
+    const baseline = dependencies();
+    const result = yield* makeShellSearch(
+      {
+        ...baseline,
+        contextAccess: {
+          ...baseline.contextAccess,
+          resources: () => Effect.die('empty results must not authorize an empty resource batch'),
         },
-        { search: () => Effect.succeed([]) },
-      ).search(context, 'unit');
-      expect(result).toEqual({ partial: false, results: [] });
-    }),
+      },
+      { search: () => Effect.succeed([]) },
+    ).search(context, 'unit');
+    expect(result).toEqual({ partial: false, results: [] });
+  }),
 );
 
 it.effect('search filters resource denials and reports partial provider failure', () =>
@@ -392,9 +386,7 @@ it.effect(
           },
         },
       };
-      const partyCatalog = buildInstalledModuleCatalog([
-        { contract: partyContract, expectedAppId: 'party-registry' },
-      ]);
+      const partyCatalog = buildInstalledModuleCatalog([{ contract: partyContract, expectedAppId: 'party-registry' }]);
       const calls: unknown[] = [];
       const baseline = dependencies();
       const result = yield* makeShellSearch(
@@ -429,9 +421,16 @@ it.effect(
             ]);
           },
         },
-      ).search(tenantContext, { includeArchived: true, query: ' party ', role: 'CUSTOMER' });
+      ).search(tenantContext, {
+        includeArchived: true,
+        query: ' party ',
+        role: 'CUSTOMER',
+      });
 
-      expect(calls[0]).toEqual({ permission: 'read_party_identity', tenantIds: [tenantId] });
+      expect(calls[0]).toEqual({
+        permission: 'read_party_identity',
+        tenantIds: [tenantId],
+      });
       expect(calls[1]).toMatchObject({ includeArchived: true, query: 'party' });
       expect(calls[1]).not.toHaveProperty('role');
       expect(result).toEqual({
@@ -463,136 +462,134 @@ it.effect('search fails only when every eligible provider fails', () =>
   }),
 );
 
-it.effect(
-  'Counterparty search preserves both identities, selected scope, roles and collision metadata',
-  () =>
-    Effect.gen(function* CounterpartySearchPreservesBothIdentitiesSelected() {
-      const [contract] = catalog().contracts;
-      if (contract === undefined) {
-        throw new Error('The test catalog must include one installed contract');
-      }
-      const filteredCatalog = buildInstalledModuleCatalog([
-        {
-          contract: {
-            ...contract,
-            manifest: {
-              ...contract.manifest,
-              publicSurface: {
-                ...contract.manifest.publicSurface,
-                search: contract.manifest.publicSurface.search.map((descriptor) => ({
-                  ...descriptor,
-                  requestFilters: ['includeArchived', 'role'] as const,
-                })),
-              },
+it.effect('Counterparty search preserves both identities, selected scope, roles and collision metadata', () =>
+  Effect.gen(function* CounterpartySearchPreservesBothIdentitiesSelected() {
+    const [contract] = catalog().contracts;
+    if (contract === undefined) {
+      throw new Error('The test catalog must include one installed contract');
+    }
+    const filteredCatalog = buildInstalledModuleCatalog([
+      {
+        contract: {
+          ...contract,
+          manifest: {
+            ...contract.manifest,
+            publicSurface: {
+              ...contract.manifest.publicSurface,
+              search: contract.manifest.publicSurface.search.map((descriptor) => ({
+                ...descriptor,
+                requestFilters: ['includeArchived', 'role'] as const,
+              })),
             },
           },
-          expectedAppId: 'property-registry',
         },
-      ]);
-      const counterpartyRef = { ...ref, tenantId };
-      const canonicalPartyRef = {
-        ...ref,
-        resourceId: 'party-1',
-        resourceType: 'property.registry.party',
-        tenantId,
-      };
-      const collision = {
-        counterpartyRefs: [counterpartyRef, { ...counterpartyRef, resourceId: 'unit-2' }],
-        kind: 'CANONICAL_PARTY_COUNTERPARTY_COLLISION',
-      };
-      const value = {
-        collision,
-        currentRoles: ['CUSTOMER', 'SUPPLIER'],
-        legalEntity: { legalEntityId, tenantId },
-        party: {
-          archived: true,
-          matchedViaAlias: true,
-          ref: canonicalPartyRef,
-          title: 'Canonical Party',
+        expectedAppId: 'property-registry',
+      },
+    ]);
+    const counterpartyRef = { ...ref, tenantId };
+    const canonicalPartyRef = {
+      ...ref,
+      resourceId: 'party-1',
+      resourceType: 'property.registry.party',
+      tenantId,
+    };
+    const collision = {
+      counterpartyRefs: [counterpartyRef, { ...counterpartyRef, resourceId: 'unit-2' }],
+      kind: 'CANONICAL_PARTY_COUNTERPARTY_COLLISION',
+    };
+    const value = {
+      collision,
+      currentRoles: ['CUSTOMER', 'SUPPLIER'],
+      legalEntity: { legalEntityId, tenantId },
+      party: {
+        archived: true,
+        matchedViaAlias: true,
+        ref: canonicalPartyRef,
+        title: 'Canonical Party',
+      },
+      ref: counterpartyRef,
+    };
+    const calls: unknown[] = [];
+    const search = makeShellSearch(
+      { ...dependencies(), catalog: Effect.succeed(filteredCatalog) },
+      {
+        search: (input) => {
+          calls.push(input);
+          return Effect.succeed([value]);
         },
-        ref: counterpartyRef,
-      };
-      const calls: unknown[] = [];
-      const search = makeShellSearch(
-        { ...dependencies(), catalog: Effect.succeed(filteredCatalog) },
-        {
-          search: (input) => {
-            calls.push(input);
-            return Effect.succeed([value]);
-          },
+      },
+    );
+    const result = yield* search.search(context, {
+      includeArchived: true,
+      query: 'canonical',
+      role: 'CUSTOMER',
+    });
+    expect(calls[0]).toMatchObject({
+      includeArchived: true,
+      role: 'CUSTOMER',
+    });
+    expect(result).toEqual({
+      partial: false,
+      results: [{ ...value, kind: 'counterparty', title: 'Canonical Party' }],
+    });
+    expect(yield* search.search(tenantContext, 'canonical')).toEqual({
+      partial: false,
+      results: [],
+    });
+    expect(calls).toHaveLength(1);
+    const baseline = dependencies();
+    const redacted = yield* makeShellSearch(
+      {
+        ...baseline,
+        catalog: Effect.succeed(filteredCatalog),
+        contextAccess: {
+          ...baseline.contextAccess,
+          resources: ({ resources }) =>
+            Effect.succeed(
+              resources.map((resource) => ({
+                decision: resource.resourceId === 'unit-2' ? ('denied' as const) : ('allowed' as const),
+                key: `${resource.moduleId}:${resource.resourceType}:${resource.resourceId}`,
+              })),
+            ),
         },
-      );
-      const result = yield* search.search(context, {
-        includeArchived: true,
-        query: 'canonical',
-        role: 'CUSTOMER',
-      });
-      expect(calls[0]).toMatchObject({ includeArchived: true, role: 'CUSTOMER' });
-      expect(result).toEqual({
-        partial: false,
-        results: [{ ...value, kind: 'counterparty', title: 'Canonical Party' }],
-      });
-      expect(yield* search.search(tenantContext, 'canonical')).toEqual({
-        partial: false,
-        results: [],
-      });
-      expect(calls).toHaveLength(1);
-      const baseline = dependencies();
-      const redacted = yield* makeShellSearch(
-        {
-          ...baseline,
-          catalog: Effect.succeed(filteredCatalog),
-          contextAccess: {
-            ...baseline.contextAccess,
-            resources: ({ resources }) =>
-              Effect.succeed(
-                resources.map((resource) => ({
-                  decision:
-                    resource.resourceId === 'unit-2' ? ('denied' as const) : ('allowed' as const),
-                  key: `${resource.moduleId}:${resource.resourceType}:${resource.resourceId}`,
-                })),
-              ),
-          },
-        },
-        { search: () => Effect.succeed([value]) },
-      ).search(context, 'canonical');
-      expect(JSON.stringify(redacted)).not.toContain('unit-2');
-      expect(redacted.results[0]).not.toHaveProperty('collision');
-    }),
+      },
+      { search: () => Effect.succeed([value]) },
+    ).search(context, 'canonical');
+    expect(JSON.stringify(redacted)).not.toContain('unit-2');
+    expect(redacted.results[0]).not.toHaveProperty('collision');
+  }),
 );
 
-it.effect(
-  'treats a missing tenant module-state record as hidden rather than authorization uncertainty',
-  () =>
-    Effect.gen(function* treatsAMissingTenantModuleState() {
-      let calls = 0;
-      const hiddenDependencies = {
-        ...dependencies(),
-        moduleStates: { getTenantModuleStates: () => Effect.succeed([]) },
-      };
-      expect(
-        yield* makeShellSearch(hiddenDependencies, {
-          search: () => {
-            calls += 1;
-            return Effect.succeed([{ ref, title: 'Unit 1' }]);
-          },
-        }).search(context, 'unit'),
-      ).toEqual({ partial: false, results: [] });
-      const gateway = {
-        detail: () => {
+it.effect('treats a missing tenant module-state record as hidden rather than authorization uncertainty', () =>
+  Effect.gen(function* treatsAMissingTenantModuleState() {
+    let calls = 0;
+    const hiddenDependencies = {
+      ...dependencies(),
+      moduleStates: { getTenantModuleStates: () => Effect.succeed([]) },
+    };
+    expect(
+      yield* makeShellSearch(hiddenDependencies, {
+        search: () => {
           calls += 1;
-          return Effect.succeed({ fields: [], title: 'Unit 1' });
+          return Effect.succeed([{ ref, title: 'Unit 1' }]);
         },
-        timeline: () => Effect.succeed({ entries: [], projectionLagging: false }),
-      };
-      expect(
-        yield* makeShellResourceDetail(hiddenDependencies, gateway).resolve(context, ref),
-      ).toEqual({ outcome: 'not_found' });
-      expect(yield* attachShellMedia(context, ref)).toEqual({
-        outcome: 'unavailable',
-      });
-      expect(calls).toBe(0);
-    }),
+      }).search(context, 'unit'),
+    ).toEqual({ partial: false, results: [] });
+    const gateway = {
+      detail: () => {
+        calls += 1;
+        return Effect.succeed({ fields: [], title: 'Unit 1' });
+      },
+      timeline: () => Effect.succeed({ entries: [], projectionLagging: false }),
+    };
+    expect(yield* makeShellResourceDetail(hiddenDependencies, gateway).resolve(context, ref)).toEqual({
+      outcome: 'not_found',
+    });
+    expect(yield* attachShellMedia(context, ref)).toEqual({
+      outcome: 'unavailable',
+    });
+    expect(calls).toBe(0);
+  }),
 );
 
 it.effect('search fails closed for module or resource authorization uncertainty', () =>
@@ -618,35 +615,27 @@ it.effect('search fails closed for module or resource authorization uncertainty'
   }),
 );
 
-it.effect(
-  'resource detail applies catalog, state, module and resource gates before providers',
-  () =>
-    Effect.gen(function* resourceDetailAppliesCatalogStateModule() {
-      let calls = 0;
-      const provider = {
-        detail: () => {
-          calls += 1;
-          return Effect.succeed({ fields: [], title: 'Unit 1' });
-        },
-        timeline: () => Effect.succeed({ entries: [], projectionLagging: false }),
-      };
-      expect(
-        yield* makeShellResourceDetail(dependencies('inactive'), provider).resolve(context, ref),
-      ).toEqual({ outcome: 'not_found' });
-      expect(
-        yield* makeShellResourceDetail(dependencies('active', 'denied'), provider).resolve(
-          context,
-          ref,
-        ),
-      ).toEqual({ outcome: 'forbidden' });
-      expect(
-        yield* makeShellResourceDetail(
-          dependencies('active', 'allowed', 'unavailable'),
-          provider,
-        ).resolve(context, ref),
-      ).toEqual({ outcome: 'unavailable' });
-      expect(calls).toBe(0);
-    }),
+it.effect('resource detail applies catalog, state, module and resource gates before providers', () =>
+  Effect.gen(function* resourceDetailAppliesCatalogStateModule() {
+    let calls = 0;
+    const provider = {
+      detail: () => {
+        calls += 1;
+        return Effect.succeed({ fields: [], title: 'Unit 1' });
+      },
+      timeline: () => Effect.succeed({ entries: [], projectionLagging: false }),
+    };
+    expect(yield* makeShellResourceDetail(dependencies('inactive'), provider).resolve(context, ref)).toEqual({
+      outcome: 'not_found',
+    });
+    expect(yield* makeShellResourceDetail(dependencies('active', 'denied'), provider).resolve(context, ref)).toEqual({
+      outcome: 'forbidden',
+    });
+    expect(
+      yield* makeShellResourceDetail(dependencies('active', 'allowed', 'unavailable'), provider).resolve(context, ref),
+    ).toEqual({ outcome: 'unavailable' });
+    expect(calls).toBe(0);
+  }),
 );
 
 it.effect('resource detail sorts an authorized timeline and exposes projection lag', () =>
@@ -656,8 +645,16 @@ it.effect('resource detail sorts an authorized timeline and exposes projection l
       timeline: () =>
         Effect.succeed({
           entries: [
-            { occurredAt: '2026-01-01T00:00:00Z', summary: 'Created', timelineEntryId: '1' },
-            { occurredAt: '2026-02-01T00:00:00Z', summary: 'Updated', timelineEntryId: '2' },
+            {
+              occurredAt: '2026-01-01T00:00:00Z',
+              summary: 'Created',
+              timelineEntryId: '1',
+            },
+            {
+              occurredAt: '2026-02-01T00:00:00Z',
+              summary: 'Updated',
+              timelineEntryId: '2',
+            },
           ],
           projectionLagging: true,
         }),
@@ -683,11 +680,17 @@ it.effect('resource detail sorts an authorized timeline and exposes projection l
     if (result.outcome !== 'resolved') {
       throw new TypeError('The authorized resource fixture must resolve');
     }
-    expect(
-      yield* Schema.encodeEffect(Schema.Array(ShellTimelineEntrySchema))(result.timeline),
-    ).toEqual([
-      { occurredAt: '2026-02-01T00:00:00.000Z', summary: 'Updated', timelineEntryId: '2' },
-      { occurredAt: '2026-01-01T00:00:00.000Z', summary: 'Created', timelineEntryId: '1' },
+    expect(yield* Schema.encodeEffect(Schema.Array(ShellTimelineEntrySchema))(result.timeline)).toEqual([
+      {
+        occurredAt: '2026-02-01T00:00:00.000Z',
+        summary: 'Updated',
+        timelineEntryId: '2',
+      },
+      {
+        occurredAt: '2026-01-01T00:00:00.000Z',
+        summary: 'Created',
+        timelineEntryId: '1',
+      },
     ]);
   }),
 );
@@ -698,18 +701,18 @@ it.effect('media affordance remains unavailable until a generated Action exists'
       detail: () => Effect.succeed({ fields: [], title: 'Unit 1' }),
       timeline: () => Effect.succeed({ entries: [], projectionLagging: false }),
     };
+    expect(yield* makeShellResourceDetail(dependencies('read_only'), provider).resolve(context, ref)).toMatchObject({
+      media: { enabled: false, reason: 'read_only' },
+    });
     expect(
-      yield* makeShellResourceDetail(dependencies('read_only'), provider).resolve(context, ref),
-    ).toMatchObject({ media: { enabled: false, reason: 'read_only' } });
-    expect(
-      yield* makeShellResourceDetail(
-        dependencies('active', 'allowed', 'allowed', 'denied'),
-        provider,
-      ).resolve(context, ref),
+      yield* makeShellResourceDetail(dependencies('active', 'allowed', 'allowed', 'denied'), provider).resolve(
+        context,
+        ref,
+      ),
     ).toMatchObject({ media: { enabled: false, reason: 'unavailable' } });
-    expect(
-      yield* makeShellResourceDetail(dependencies(), provider).resolve(context, ref),
-    ).toMatchObject({ media: { enabled: false, reason: 'unavailable' } });
+    expect(yield* makeShellResourceDetail(dependencies(), provider).resolve(context, ref)).toMatchObject({
+      media: { enabled: false, reason: 'unavailable' },
+    });
   }),
 );
 

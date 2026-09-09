@@ -1,9 +1,10 @@
-import { expect, it, rstest } from 'effect-rstest';
-import { Schema } from 'effect';
 import { spawnSync } from 'node:child_process';
 import { readFileSync, writeFileSync } from 'node:fs';
-import nodePath from 'node:path';
 import { createRequire } from 'node:module';
+import nodePath from 'node:path';
+
+import { Schema } from 'effect';
+import { expect, it, rstest } from 'effect-rstest';
 
 import { appRoot, runOxlint } from './oxlint.mts';
 import { withTemporaryWorkspace } from './temporary-workspace.mts';
@@ -38,10 +39,7 @@ it('Oxlint launches its JavaScript entry point through Node without a platform s
         throw new TypeError('Expected spawn arguments array');
       }
       expect(args[1][0]).toBe(
-        nodePath.join(
-          nodePath.dirname(createRequire(import.meta.url).resolve('oxlint/package.json')),
-          'bin/oxlint',
-        ),
+        nodePath.join(nodePath.dirname(createRequire(import.meta.url).resolve('oxlint/package.json')), 'bin/oxlint'),
       );
       expect(args[1].includes(input)).toBe(true);
       expect(args[1].includes(config)).toBe(true);
@@ -52,9 +50,7 @@ it('Oxlint launches its JavaScript entry point through Node without a platform s
 });
 
 it('lint and lint:fix cover the same directories without changing reporting-only commands', () => {
-  const { scripts } = decodePackageScripts(
-    readFileSync(nodePath.join(appRoot, 'package.json'), 'utf-8'),
-  );
+  const { scripts } = decodePackageScripts(readFileSync(nodePath.join(appRoot, 'package.json'), 'utf-8'));
   expect(scripts.lint).toBeDefined();
   expect(scripts['lint:fix']).toBeDefined();
   const lint = (scripts.lint ?? '').split(/\s+/u);
@@ -63,8 +59,6 @@ it('lint and lint:fix cover the same directories without changing reporting-only
   expect(fix.filter((argument) => argument === '--fix').length).toBe(1);
   expect(lint.includes('scripts')).toBe(true);
   for (const name of ['lint', 'lint:effect', 'test:lint-rules', 'check']) {
-    expect(!(scripts[name] ?? '').includes('--fix'), `${name} must remain reporting-only`).toBe(
-      true,
-    );
+    expect(!(scripts[name] ?? '').includes('--fix'), `${name} must remain reporting-only`).toBe(true);
   }
 });

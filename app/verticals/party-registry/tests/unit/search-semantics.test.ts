@@ -1,17 +1,12 @@
-import { expect, it } from 'effect-rstest';
 import { Match, Predicate, Struct } from 'effect';
-import {
-  normalizeCounterpartySearchHits,
-  normalizePartySearchHits,
-} from '../../shared/domain/search-semantics.ts';
-import type {
-  SearchNormalizationResult,
-  SearchResults,
-} from '../../shared/domain/search-semantics.ts';
+import { expect, it } from 'effect-rstest';
+
 import type {
   CounterpartySearchProjectionHit,
   PartySearchProjectionHit,
 } from '../../shared/domain/search-projection-gateway.ts';
+import { normalizeCounterpartySearchHits, normalizePartySearchHits } from '../../shared/domain/search-semantics.ts';
+import type { SearchNormalizationResult, SearchResults } from '../../shared/domain/search-semantics.ts';
 
 const tenantId = '10000000-0000-4000-8000-000000000001';
 const legalEntityId = '20000000-0000-4000-8000-000000000002';
@@ -28,15 +23,11 @@ const counterpartyRef = (resourceId: string) => ({
   tenantId,
 });
 
-const expectSearchResults = <Result>(
-  result: SearchNormalizationResult<Result>,
-): SearchResults<Result> =>
+const expectSearchResults = <Result>(result: SearchNormalizationResult<Result>): SearchResults<Result> =>
   Match.value(result).pipe(
     Match.tag('SearchResults', (results) => results),
     Match.tag('SearchProjectionViolation', ({ reason }) => {
-      throw new Error(
-        `Expected normalized search results, but the projection was invalid: ${reason}`,
-      );
+      throw new Error(`Expected normalized search results, but the projection was invalid: ${reason}`);
     }),
     Match.exhaustive,
   );
@@ -44,20 +35,28 @@ const expectSearchResults = <Result>(
 it('Party Search hides archived hits by default and explicitly labels included archived hits', () => {
   const hits: readonly PartySearchProjectionHit[] = [
     { archived: false, canonicalPartyRef: partyRef('active'), title: 'Active' },
-    { archived: true, canonicalPartyRef: partyRef('archived'), title: 'Archived' },
+    {
+      archived: true,
+      canonicalPartyRef: partyRef('archived'),
+      title: 'Archived',
+    },
   ];
 
   const activeResults = normalizePartySearchHits({ includeArchived: false, tenantId }, hits);
   expect(Predicate.isTagged(activeResults, 'SearchResults')).toBe(true);
   expect(Struct.omit(activeResults, ['_tag'])).toEqual({
-    items: [{ archived: false, matchedViaAlias: false, ref: partyRef('active'), title: 'Active' }],
+    items: [
+      {
+        archived: false,
+        matchedViaAlias: false,
+        ref: partyRef('active'),
+        title: 'Active',
+      },
+    ],
   });
   const included = normalizePartySearchHits({ includeArchived: true, tenantId }, hits);
   expect(Predicate.isTagged(included, 'SearchResults')).toBe(true);
-  expect(expectSearchResults(included).items.map(({ archived }) => archived)).toEqual([
-    false,
-    true,
-  ]);
+  expect(expectSearchResults(included).items.map(({ archived }) => archived)).toEqual([false, true]);
 });
 
 it('Party aliases collapse to one survivor while shared contact queries may retain multiple Parties', () => {
@@ -70,7 +69,11 @@ it('Party aliases collapse to one survivor while shared contact queries may reta
       matchedPartyRef: partyRef('absorbed'),
       title: 'ACME',
     },
-    { archived: false, canonicalPartyRef: partyRef('shared-2'), title: 'Other person' },
+    {
+      archived: false,
+      canonicalPartyRef: partyRef('shared-2'),
+      title: 'Other person',
+    },
   ]);
 
   expect(Predicate.isTagged(result, 'SearchResults')).toBe(true);
@@ -120,11 +123,13 @@ it('Counterparty Search evaluates only current role periods at the exclusive tim
   const effectiveAt = '2026-09-03T12:00:00.000Z';
   const hits: readonly CounterpartySearchProjectionHit[] = [
     baseCounterpartyHit('ended', 'p1', [
-      { role: 'CUSTOMER', validFrom: '2026-01-01T00:00:00.000Z', validTo: effectiveAt },
+      {
+        role: 'CUSTOMER',
+        validFrom: '2026-01-01T00:00:00.000Z',
+        validTo: effectiveAt,
+      },
     ]),
-    baseCounterpartyHit('future', 'p2', [
-      { role: 'CUSTOMER', validFrom: '2026-10-01T00:00:00.000Z' },
-    ]),
+    baseCounterpartyHit('future', 'p2', [{ role: 'CUSTOMER', validFrom: '2026-10-01T00:00:00.000Z' }]),
     baseCounterpartyHit('future-ended', 'p3', [
       {
         role: 'CUSTOMER',
@@ -138,7 +143,13 @@ it('Counterparty Search evaluates only current role periods at the exclusive tim
     ]),
   ];
   const result = normalizeCounterpartySearchHits(
-    { effectiveAt, includeArchived: false, legalEntityId, role: 'CUSTOMER', tenantId },
+    {
+      effectiveAt,
+      includeArchived: false,
+      legalEntityId,
+      role: 'CUSTOMER',
+      tenantId,
+    },
     hits,
   );
 
@@ -182,9 +193,7 @@ it('Counterparty identity dedupes independently and survivor collisions are surf
   expect(Predicate.isTagged(result, 'SearchResults')).toBe(true);
   const { items } = expectSearchResults(result);
   expect(items.map(({ ref }) => ref.resourceId)).toEqual(['cp-1', 'cp-2']);
-  expect(
-    items.map(({ collision }) => collision?.counterpartyRefs.map(({ resourceId }) => resourceId)),
-  ).toEqual([
+  expect(items.map(({ collision }) => collision?.counterpartyRefs.map(({ resourceId }) => resourceId))).toEqual([
     ['cp-1', 'cp-2'],
     ['cp-1', 'cp-2'],
   ]);

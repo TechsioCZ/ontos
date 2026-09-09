@@ -1,18 +1,9 @@
+import { Effect, Schema } from 'effect';
 import { expect, it } from 'effect-rstest';
 
-import { Effect, Schema } from 'effect';
-import {
-  AresCanonicalRouteSchema,
-  AresEvidenceApplicationSchema,
-} from '../../shared/domain/ares-application.ts';
-import {
-  AresSubjectEvidenceSchema,
-  AresSubjectLookupIcoSchema,
-} from '../../shared/domain/ares-evidence.ts';
-import {
-  AresLookupRequestSchema,
-  AresLookupResponseSchema,
-} from '../../shared/apis/ares-lookup.ts';
+import { AresLookupRequestSchema, AresLookupResponseSchema } from '../../shared/apis/ares-lookup.ts';
+import { AresCanonicalRouteSchema, AresEvidenceApplicationSchema } from '../../shared/domain/ares-application.ts';
+import { AresSubjectEvidenceSchema, AresSubjectLookupIcoSchema } from '../../shared/domain/ares-evidence.ts';
 
 const evidence = {
   cacheAgeSeconds: 0,
@@ -43,23 +34,21 @@ const evidence = {
   },
 } as const;
 
-it.effect(
-  'normalizes only surrounding whitespace and preserves leading zeroes in an exact IČO',
-  () =>
-    Effect.gen(function* validateContract1() {
-      expect(yield* Schema.decodeUnknownEffect(AresSubjectLookupIcoSchema)(' 01234567 ')).toBe(
-        '01234567',
-      );
-      expect(
-        yield* Schema.decodeUnknownEffect(AresLookupRequestSchema)({ ico: ' 01234567 ' }),
-      ).toEqual({
-        ico: '01234567',
-      });
+it.effect('normalizes only surrounding whitespace and preserves leading zeroes in an exact IČO', () =>
+  Effect.gen(function* validateContract1() {
+    expect(yield* Schema.decodeEffect(AresSubjectLookupIcoSchema)(' 01234567 ')).toBe('01234567');
+    expect(
+      yield* Schema.decodeEffect(AresLookupRequestSchema)({
+        ico: ' 01234567 ',
+      }),
+    ).toEqual({
+      ico: '01234567',
+    });
 
-      for (const ico of ['1234567', '123456789', '1234 5678', 'abcdefgh', '']) {
-        expect(() => Schema.decodeUnknownSync(AresSubjectLookupIcoSchema)(ico)).toThrow();
-      }
-    }),
+    for (const ico of ['1234567', '123456789', '1234 5678', 'abcdefgh', '']) {
+      expect(() => Schema.decodeSync(AresSubjectLookupIcoSchema)(ico)).toThrow();
+    }
+  }),
 );
 
 it.effect('returns one bounded evidence envelope and strips unowned provider payload fields', () =>
@@ -78,19 +67,19 @@ it.effect('returns one bounded evidence envelope and strips unowned provider pay
     expect(encoded).toEqual(evidence);
     expect(Object.hasOwn(decoded, 'rawResponse')).toBe(false);
     expect(Object.hasOwn(decoded.subject, 'czNace')).toBe(false);
-    expect(yield* Schema.decodeUnknownEffect(AresSubjectEvidenceSchema)(encoded)).toEqual(decoded);
+    expect(yield* Schema.decodeEffect(AresSubjectEvidenceSchema)(encoded)).toEqual(decoded);
   }),
 );
 
 it.effect('keeps observed time separate from provider change time and cache-serving time', () =>
   Effect.gen(function* validateContract3() {
     expect(() =>
-      Schema.decodeUnknownSync(AresSubjectEvidenceSchema)({
+      Schema.decodeSync(AresSubjectEvidenceSchema)({
         ...evidence,
         observedAt: '2026-02-30T08:00:00.000Z',
       }),
     ).toThrow();
-    const cached = yield* Schema.decodeUnknownEffect(AresSubjectEvidenceSchema)({
+    const cached = yield* Schema.decodeEffect(AresSubjectEvidenceSchema)({
       ...evidence,
       cacheAgeSeconds: 120,
       servedAt: '2026-09-03T08:02:00.000Z',
@@ -106,25 +95,15 @@ it.effect('keeps observed time separate from provider change time and cache-serv
 
 it.effect('allows ARES evidence to route only through standard Party-owned lifecycle Actions', () =>
   Effect.gen(function* validateContract4() {
-    const routes = [
-      'PARTY_UPDATE',
-      'IDENTIFIER_ADD',
-      'CONTACT_POINT_ADD',
-      'PARTY_CORRECTION',
-    ] as const;
+    const routes = ['PARTY_UPDATE', 'IDENTIFIER_ADD', 'CONTACT_POINT_ADD', 'PARTY_CORRECTION'] as const;
     for (const route of routes) {
-      expect(yield* Schema.decodeUnknownEffect(AresCanonicalRouteSchema)(route)).toBe(route);
+      expect(yield* Schema.decodeEffect(AresCanonicalRouteSchema)(route)).toBe(route);
     }
-    for (const forbiddenRoute of [
-      'PARTY_CREATE',
-      'ARES_APPLY',
-      'PARTY_MERGE',
-      'RAW_PROVIDER_OVERWRITE',
-    ]) {
+    for (const forbiddenRoute of ['PARTY_CREATE', 'ARES_APPLY', 'PARTY_MERGE', 'RAW_PROVIDER_OVERWRITE']) {
       expect(() => Schema.decodeUnknownSync(AresCanonicalRouteSchema)(forbiddenRoute)).toThrow();
     }
 
-    const application = yield* Schema.decodeUnknownEffect(AresEvidenceApplicationSchema)({
+    const application = yield* Schema.decodeEffect(AresEvidenceApplicationSchema)({
       decidedAt: '2026-09-03T08:01:00.000Z',
       evidence,
       factDecisions: [
@@ -164,7 +143,7 @@ it.effect('allows ARES evidence to route only through standard Party-owned lifec
 it.effect('rejects unattended enrichment and mutation routes on non-applying outcomes', () =>
   Effect.gen(function* validateContract5() {
     expect(() =>
-      Schema.decodeUnknownSync(AresEvidenceApplicationSchema)({
+      Schema.decodeSync(AresEvidenceApplicationSchema)({
         decidedAt: '2026-09-03T08:01:00.000Z',
         evidence,
         factDecisions: [
@@ -182,7 +161,7 @@ it.effect('rejects unattended enrichment and mutation routes on non-applying out
       }),
     ).toThrow();
     expect(() =>
-      Schema.decodeUnknownSync(AresEvidenceApplicationSchema)({
+      Schema.decodeSync(AresEvidenceApplicationSchema)({
         decidedAt: '2026-09-03T08:01:00.000Z',
         evidence,
         factDecisions: [
@@ -200,7 +179,7 @@ it.effect('rejects unattended enrichment and mutation routes on non-applying out
       }),
     ).toThrow();
 
-    const conflict = yield* Schema.decodeUnknownEffect(AresEvidenceApplicationSchema)({
+    const conflict = yield* Schema.decodeEffect(AresEvidenceApplicationSchema)({
       decidedAt: '2026-09-03T08:01:00.000Z',
       evidence,
       factDecisions: [

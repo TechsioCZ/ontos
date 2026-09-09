@@ -2,15 +2,9 @@
 
 import path from 'node:path';
 
-import type { CallExpression, Expression, MemberExpression, VariableDeclarator } from 'oxc-parser';
-import {
-  ExportExportNameKind,
-  ExportImportNameKind,
-  ImportNameKind,
-  parseSync,
-  Visitor,
-} from 'oxc-parser';
 import { Result, Schema } from 'effect';
+import type { CallExpression, Expression, MemberExpression, VariableDeclarator } from 'oxc-parser';
+import { ExportExportNameKind, ExportImportNameKind, ImportNameKind, parseSync, Visitor } from 'oxc-parser';
 
 /* oxlint-disable no-nested-ternary, no-use-before-define, prefer-destructuring, prefer-template, anti-slop/require-safety-comment-for-type-assertion, perfectionist/sort-interfaces, perfectionist/sort-objects, sonarjs/function-name, sonarjs/no-collapsible-if, sonarjs/no-duplicate-string, sonarjs/too-many-break-or-continue-in-loop, typescript/no-unsafe-type-assertion, unicorn/no-array-reverse, unicorn/no-array-sort, unicorn/no-lonely-if, unicorn/no-nested-ternary -- Oxc requires syntax-node callback keys, narrowed generated-node bridges, mutually recursive graph resolvers, and a single indexed resolver model; remove-when: Oxc exposes a typed scope/module graph or these resolvers move behind dedicated typed modules; expires: 2026-12-31. */
 
@@ -33,7 +27,11 @@ interface ImportBinding {
 type ExportBinding =
   | { readonly kind: 'expression'; readonly span: Span }
   | { readonly kind: 'local'; readonly local: string }
-  | { readonly imported: string; readonly kind: 'reexport'; readonly specifier: string }
+  | {
+      readonly imported: string;
+      readonly kind: 'reexport';
+      readonly specifier: string;
+    }
   | { readonly kind: 'namespace'; readonly specifier: string }
   | { readonly kind: 'star'; readonly specifier: string };
 
@@ -74,16 +72,9 @@ interface SourceModel {
 }
 
 const forbiddenSchemaMembers = new Set(['Any', 'Json', 'Unknown', 'UnknownFromJsonString']);
-const problemDetailsFactoryNames = new Set([
-  'makeProblemDetailsSchema',
-  'makeRetryableProblemDetailsSchema',
-]);
+const problemDetailsFactoryNames = new Set(['makeProblemDetailsSchema', 'makeRetryableProblemDetailsSchema']);
 const endpointMethods = new Set(['delete', 'get', 'head', 'options', 'patch', 'post', 'put']);
-const schemaProviderSpecifiers = new Set([
-  '@modern-js/plugin-bff/effect-client',
-  'effect',
-  'effect/Schema',
-]);
+const schemaProviderSpecifiers = new Set(['@modern-js/plugin-bff/effect-client', 'effect', 'effect/Schema']);
 const endpointProviderSpecifiers = new Set([
   '@modern-js/plugin-bff/effect-client',
   '@modern-js/plugin-bff/effect-edge',
@@ -110,9 +101,7 @@ const PackageExportValueSchema: Schema.Codec<PackageExportValue> = Schema.suspen
     Schema.Record(Schema.String, PackageExportValueSchema),
   ]),
 );
-const PackageJsonExportsSchema = Schema.fromJsonString(
-  Schema.Struct({ exports: PackageExportValueSchema }),
-);
+const PackageJsonExportsSchema = Schema.fromJsonString(Schema.Struct({ exports: PackageExportValueSchema }));
 const isPackageExportString = Schema.is(Schema.String);
 const isPackageExportArray = Schema.is(Schema.Array(PackageExportValueSchema));
 const isPackageExportRecord = Schema.is(Schema.Record(Schema.String, PackageExportValueSchema));
@@ -135,17 +124,17 @@ interface PackageExportResolution {
 const isRootPackageExport = (value: PackageExportValue): boolean =>
   value === null || isPackageExportString(value) || isPackageExportArray(value);
 
-const packageExportResolution = (
-  packageJson: string,
-  exportKey: string,
-): PackageExportResolution => {
+const packageExportResolution = (packageJson: string, exportKey: string): PackageExportResolution => {
   const parsed = Schema.decodeUnknownResult(PackageJsonExportsSchema)(packageJson);
   if (Result.isFailure(parsed)) {
     return { governed: false, targets: [] };
   }
   const exportsField = parsed.success.exports;
   if (isRootPackageExport(exportsField)) {
-    return { governed: true, targets: exportKey === '.' ? exportTargets(exportsField) : [] };
+    return {
+      governed: true,
+      targets: exportKey === '.' ? exportTargets(exportsField) : [],
+    };
   }
   if (!isPackageExportRecord(exportsField)) {
     return { governed: true, targets: [] };
@@ -154,7 +143,10 @@ const packageExportResolution = (
     return { governed: true, targets: exportTargets(exportsField) };
   }
   if (Object.hasOwn(exportsField, exportKey)) {
-    return { governed: true, targets: exportTargets(exportsField[exportKey] ?? null) };
+    return {
+      governed: true,
+      targets: exportTargets(exportsField[exportKey] ?? null),
+    };
   }
   return wildcardExportResolution(exportsField, exportKey);
 };
@@ -175,7 +167,10 @@ const wildcardExportResolution = (
     }
     const substitution = exportKey.slice(prefix.length, exportKey.length - suffix.length);
     return [
-      { key, targets: exportTargets(value).map((target) => target.replaceAll('*', substitution)) },
+      {
+        key,
+        targets: exportTargets(value).map((target) => target.replaceAll('*', substitution)),
+      },
     ];
   });
   if (wildcardMatches.length === 0) {
@@ -206,23 +201,19 @@ const resolveSources = (
   );
   const bases = specifier.startsWith('.')
     ? [path.posix.normalize(path.posix.join(path.posix.dirname(importingFile), specifier))]
-    : (packageRootsWithManifest.length === 0 ? packageRoots : packageRootsWithManifest).flatMap(
-        (packageRoot) => {
-          const packageJson = context.sources.get(`${packageRoot}/package.json`);
-          if (packageJson !== undefined) {
-            const exportKey = subpath === undefined ? '.' : `./${subpath}`;
-            const resolution = packageExportResolution(packageJson, exportKey);
-            if (resolution.governed) {
-              return resolution.targets.map((target) =>
-                path.posix.normalize(path.posix.join(packageRoot, target)),
-              );
-            }
+    : (packageRootsWithManifest.length === 0 ? packageRoots : packageRootsWithManifest).flatMap((packageRoot) => {
+        const packageJson = context.sources.get(`${packageRoot}/package.json`);
+        if (packageJson !== undefined) {
+          const exportKey = subpath === undefined ? '.' : `./${subpath}`;
+          const resolution = packageExportResolution(packageJson, exportKey);
+          if (resolution.governed) {
+            return resolution.targets.map((target) => path.posix.normalize(path.posix.join(packageRoot, target)));
           }
-          return subpath === undefined
-            ? [`${packageRoot}/src/index`, `${packageRoot}/index`]
-            : [`${packageRoot}/src/${subpath}`, `${packageRoot}/${subpath}`];
-        },
-      );
+        }
+        return subpath === undefined
+          ? [`${packageRoot}/src/index`, `${packageRoot}/index`]
+          : [`${packageRoot}/src/${subpath}`, `${packageRoot}/${subpath}`];
+      });
   return [
     ...new Set(
       bases.flatMap((base) => {
@@ -266,11 +257,7 @@ const moduleSpecifierTargets = (
 const externalSpecifier = (file: string): string | undefined =>
   file.startsWith(externalModulePrefix) ? file.slice(externalModulePrefix.length) : undefined;
 
-const addExport = (
-  exports: Map<string, ExportBinding[]>,
-  exportedName: string,
-  binding: ExportBinding,
-): void => {
+const addExport = (exports: Map<string, ExportBinding[]>, exportedName: string, binding: ExportBinding): void => {
   const existing = exports.get(exportedName) ?? [];
   existing.push(binding);
   exports.set(exportedName, existing);
@@ -355,13 +342,11 @@ const parseSourceModel = (file: string, content: string): SourceModel => {
   const enclosingScope = (span: Span): Span =>
     scopes
       .filter((scope) => within(span, scope))
-      .sort((left, right) => left.end - left.start - (right.end - right.start))[0] ??
-    parsed.program;
+      .sort((left, right) => left.end - left.start - (right.end - right.start))[0] ?? parsed.program;
   const enclosingFunctionScope = (span: Span): Span =>
     functionScopes
       .filter((scope) => within(span, scope))
-      .sort((left, right) => left.end - left.start - (right.end - right.start))[0] ??
-    parsed.program;
+      .sort((left, right) => left.end - left.start - (right.end - right.start))[0] ?? parsed.program;
   const addBinding = (name: string, binding: ScopedBinding): void => {
     const existing = bindings.get(name) ?? [];
     existing.push(binding);
@@ -470,7 +455,10 @@ const parseSourceModel = (file: string, content: string): SourceModel => {
     },
     ClassDeclaration: (node) => {
       if (node.id !== null) {
-        addBinding(node.id.name, { kind: 'shadow', scope: enclosingScope(node) });
+        addBinding(node.id.name, {
+          kind: 'shadow',
+          scope: enclosingScope(node),
+        });
       }
     },
     FunctionDeclaration: (node) => {
@@ -503,7 +491,10 @@ const parseSourceModel = (file: string, content: string): SourceModel => {
     },
     ReturnStatement: (node) => {
       if (node.argument !== null) {
-        returns.push({ expression: node.argument, scope: enclosingFunctionScope(node) });
+        returns.push({
+          expression: node.argument,
+          scope: enclosingFunctionScope(node),
+        });
       }
     },
     TSEnumDeclaration: (node) => {
@@ -511,18 +502,23 @@ const parseSourceModel = (file: string, content: string): SourceModel => {
     },
     TSModuleDeclaration: (node) => {
       if (node.id.type === 'Identifier') {
-        addBinding(node.id.name, { kind: 'shadow', scope: enclosingScope(node) });
+        addBinding(node.id.name, {
+          kind: 'shadow',
+          scope: enclosingScope(node),
+        });
       }
     },
     VariableDeclarator: (node: VariableDeclarator) => {
-      const scope = varDeclarators.has(node.start)
-        ? enclosingFunctionScope(node)
-        : enclosingScope(node);
+      const scope = varDeclarators.has(node.start) ? enclosingFunctionScope(node) : enclosingScope(node);
       if (node.id.type === 'Identifier') {
         if (node.init === null) {
           addBinding(node.id.name, { kind: 'shadow', scope });
         } else {
-          addBinding(node.id.name, { expression: node.init, kind: 'expression', scope });
+          addBinding(node.id.name, {
+            expression: node.init,
+            kind: 'expression',
+            scope,
+          });
           if (scope === parsed.program) {
             declarations.set(node.id.name, node.init);
           }
@@ -531,16 +527,16 @@ const parseSourceModel = (file: string, content: string): SourceModel => {
         const source = node.init;
         const addDestructuredProperty = (property: (typeof node.id.properties)[number]): void => {
           const propertyName = destructuredPropertyName(property);
-          if (
-            property.type === 'Property' &&
-            propertyName !== undefined &&
-            property.value.type === 'Identifier'
-          ) {
+          if (property.type === 'Property' && propertyName !== undefined && property.value.type === 'Identifier') {
             const binding = {
               member: propertyName,
               source,
             };
-            addBinding(property.value.name, { ...binding, kind: 'destructured', scope });
+            addBinding(property.value.name, {
+              ...binding,
+              kind: 'destructured',
+              scope,
+            });
             if (scope === parsed.program) {
               destructured.set(property.value.name, binding);
             }
@@ -593,15 +589,10 @@ const parseSourceModel = (file: string, content: string): SourceModel => {
     for (const declaration of parsed.module.staticExports) {
       const collectExportEntry = (entry: (typeof declaration.entries)[number]): void => {
         const exportName = (): string | undefined =>
-          entry.exportName.kind === ExportExportNameKind.Default
-            ? 'default'
-            : (entry.exportName.name ?? undefined);
+          entry.exportName.kind === ExportExportNameKind.Default ? 'default' : (entry.exportName.name ?? undefined);
         const exportedName = exportName();
         const specifier = entry.moduleRequest?.value;
-        if (
-          entry.importName.kind === ExportImportNameKind.AllButDefault &&
-          specifier !== undefined
-        ) {
+        if (entry.importName.kind === ExportImportNameKind.AllButDefault && specifier !== undefined) {
           starExports.push({ kind: 'star', specifier });
           return;
         }
@@ -622,7 +613,10 @@ const parseSourceModel = (file: string, content: string): SourceModel => {
             span: { end: entry.end, start: entry.start },
           });
         } else {
-          addExport(exports, exportedName, { kind: 'local', local: entry.localName.name });
+          addExport(exports, exportedName, {
+            kind: 'local',
+            local: entry.localName.name,
+          });
         }
       };
       for (const entry of declaration.entries) {
@@ -676,8 +670,7 @@ const scopedBindingsAt = (
     model.bindings
       .get(name)
       ?.filter(
-        ({ at, scope }) =>
-          position >= scope.start && position <= scope.end && (at === undefined || at <= position),
+        ({ at, scope }) => position >= scope.start && position <= scope.end && (at === undefined || at <= position),
       )
       .sort(
         (left, right) =>
@@ -749,10 +742,7 @@ const memberPath = (expression: Expression): readonly string[] | undefined => {
   return undefined;
 };
 
-const objectPathExpression = (
-  expression: Expression,
-  pathParts: readonly string[],
-): Expression | undefined => {
+const objectPathExpression = (expression: Expression, pathParts: readonly string[]): Expression | undefined => {
   const unwrapped = unwrapExpression(expression);
   const [member, ...rest] = pathParts;
   if (member === undefined || unwrapped.type !== 'ObjectExpression') {
@@ -763,9 +753,7 @@ const objectPathExpression = (
       continue;
     }
     const propertyName =
-      !property.computed && property.key.type === 'Identifier'
-        ? property.key.name
-        : staticString(property.key);
+      !property.computed && property.key.type === 'Identifier' ? property.key.name : staticString(property.key);
     if (propertyName !== member) {
       continue;
     }
@@ -798,15 +786,7 @@ const staticStringAt = (
         ? []
         : scopedBindingsAt(model, unwrapped.name, position).flatMap((binding) =>
             binding.kind === 'expression'
-              ? [
-                  staticStringAt(
-                    context,
-                    file,
-                    binding.expression,
-                    binding.expression.start,
-                    visited,
-                  ),
-                ]
+              ? [staticStringAt(context, file, binding.expression, binding.expression.start, visited)]
               : [],
           );
     return values.find((value) => value !== undefined);
@@ -838,19 +818,14 @@ const memberPathAt = (
   return object === undefined || property === undefined ? undefined : [...object, property];
 };
 
-const memberNameAt = (
-  context: ApiContractSourceContext,
-  file: string,
-  member: MemberExpression,
-): string | undefined =>
+const memberNameAt = (context: ApiContractSourceContext, file: string, member: MemberExpression): string | undefined =>
   !member.computed && member.property.type === 'Identifier'
     ? member.property.name
     : member.computed
       ? staticStringAt(context, file, member.property, member.start, new Set())
       : undefined;
 
-const within = (inner: Span, outer: Span): boolean =>
-  inner.start >= outer.start && inner.end <= outer.end;
+const within = (inner: Span, outer: Span): boolean => inner.start >= outer.start && inner.end <= outer.end;
 
 const isForbiddenMember = (member: string, forbidRecord: boolean): boolean =>
   forbiddenSchemaMembers.has(member) || (forbidRecord && member === 'Record');
@@ -884,13 +859,7 @@ const schemaNamespacePath = (
       const resolveExpressionSchema = () => {
         const declarationPath = memberPath(scoped.expression);
         if (declarationPath !== undefined) {
-          return schemaNamespacePath(
-            context,
-            file,
-            [...declarationPath, ...rest],
-            scoped.expression.start,
-            visited,
-          );
+          return schemaNamespacePath(context, file, [...declarationPath, ...rest], scoped.expression.start, visited);
         }
         const unwrapped = unwrapExpression(scoped.expression);
         return (
@@ -900,13 +869,7 @@ const schemaNamespacePath = (
             (property) =>
               property.type === 'SpreadElement' &&
               memberPath(property.argument) !== undefined &&
-              schemaNamespacePath(
-                context,
-                file,
-                memberPath(property.argument) ?? [],
-                property.argument.start,
-                visited,
-              ),
+              schemaNamespacePath(context, file, memberPath(property.argument) ?? [], property.argument.start, visited),
           )
         );
       };
@@ -916,13 +879,7 @@ const schemaNamespacePath = (
       const sourcePath = memberPath(scoped.source);
       return (
         sourcePath !== undefined &&
-        schemaNamespacePath(
-          context,
-          file,
-          [...sourcePath, scoped.member, ...rest],
-          scoped.source.start,
-          visited,
-        )
+        schemaNamespacePath(context, file, [...sourcePath, scoped.member, ...rest], scoped.source.start, visited)
       );
     }
     if (scoped.kind === 'namespace-rest') {
@@ -1012,9 +969,7 @@ const exportOrigins = (
         const targets = moduleSpecifierTargets(context, file, binding.specifier);
         return targets.length === 0
           ? [`external:${binding.specifier}:${binding.imported}`]
-          : targets.flatMap((target) => [
-              ...exportOrigins(context, target, binding.imported, new Set(visited)),
-            ]);
+          : targets.flatMap((target) => [...exportOrigins(context, target, binding.imported, new Set(visited))]);
       }
       if (binding.kind === 'namespace') {
         return [`namespace:${file}:${exportedName}:${binding.specifier}`];
@@ -1025,9 +980,7 @@ const exportOrigins = (
           const targets = moduleSpecifierTargets(context, file, imported.specifier);
           return targets.length === 0
             ? [`external:${imported.specifier}:${imported.imported}`]
-            : targets.flatMap((target) => [
-                ...exportOrigins(context, target, imported.imported, new Set(visited)),
-              ]);
+            : targets.flatMap((target) => [...exportOrigins(context, target, imported.imported, new Set(visited))]);
         }
       }
       return [`local:${file}:${binding.kind === 'local' ? binding.local : exportedName}`];
@@ -1096,15 +1049,7 @@ function exportedNamespaceTargets(
         targets.push(...exportedNamespaceTargets(context, target, binding.imported, visited));
       }
     } else if (binding.kind === 'local') {
-      targets.push(
-        ...localNamespaceTargets(
-          context,
-          file,
-          binding.local,
-          model?.moduleScope.start ?? 0,
-          visited,
-        ),
-      );
+      targets.push(...localNamespaceTargets(context, file, binding.local, model?.moduleScope.start ?? 0, visited));
     }
   }
   for (const target of unambiguousStarTargets(context, file, exportedName)) {
@@ -1145,13 +1090,7 @@ function localNamespaceTargets(
       const pathParts = memberPath(scoped.source);
       return pathParts === undefined
         ? []
-        : namespacePathTargets(
-            context,
-            file,
-            [...pathParts, scoped.member],
-            scoped.source.start,
-            visited,
-          );
+        : namespacePathTargets(context, file, [...pathParts, scoped.member], scoped.source.start, visited);
     }
     if (scoped.kind === 'namespace-rest') {
       const pathParts = memberPath(scoped.source);
@@ -1176,9 +1115,7 @@ function localNamespaceTargets(
   if (binding.kind === 'namespace') {
     return directTargets;
   }
-  return directTargets.flatMap((target) =>
-    exportedNamespaceTargets(context, target, binding.imported, visited),
-  );
+  return directTargets.flatMap((target) => exportedNamespaceTargets(context, target, binding.imported, visited));
 }
 
 // eslint-disable-next-line func-style -- Member paths recurse through arbitrarily nested exported namespaces.
@@ -1195,9 +1132,7 @@ function namespacePathTargets(
   }
   let targets = localNamespaceTargets(context, file, root, position, visited);
   for (const member of rest) {
-    targets = targets.flatMap((target) =>
-      exportedNamespaceTargets(context, target, member, visited),
-    );
+    targets = targets.flatMap((target) => exportedNamespaceTargets(context, target, member, visited));
   }
   return [...new Set(targets)];
 }
@@ -1225,22 +1160,12 @@ function exportedExpressionIsForbidden(
   visited.add(key);
   const model = sourceModel(context, file);
   const bindingMatches = (binding: ExportBinding): boolean => {
-    if (
-      binding.kind === 'expression' &&
-      expressionIsForbidden(context, file, binding.span, forbidRecord, visited)
-    ) {
+    if (binding.kind === 'expression' && expressionIsForbidden(context, file, binding.span, forbidRecord, visited)) {
       return true;
     }
     if (
       binding.kind === 'local' &&
-      localIdentifierIsForbidden(
-        context,
-        file,
-        binding.local,
-        model?.moduleScope.start ?? 0,
-        forbidRecord,
-        visited,
-      )
+      localIdentifierIsForbidden(context, file, binding.local, model?.moduleScope.start ?? 0, forbidRecord, visited)
     ) {
       return true;
     }
@@ -1353,8 +1278,8 @@ const memberIsForbidden = (
   if (schemaMember === undefined) {
     return false;
   }
-  return namespacePathTargets(context, file, pathParts.slice(0, -1), member.start, new Set()).some(
-    (target) => exportedExpressionIsForbidden(context, target, schemaMember, forbidRecord, visited),
+  return namespacePathTargets(context, file, pathParts.slice(0, -1), member.start, new Set()).some((target) =>
+    exportedExpressionIsForbidden(context, target, schemaMember, forbidRecord, visited),
   );
 };
 
@@ -1374,9 +1299,7 @@ function expressionIsForbidden(
   const model = sourceModel(context, file);
   if (
     model?.members.some(
-      (member) =>
-        within(member, expression) &&
-        memberIsForbidden(context, file, member, forbidRecord, visited),
+      (member) => within(member, expression) && memberIsForbidden(context, file, member, forbidRecord, visited),
     ) === true
   ) {
     return true;
@@ -1385,14 +1308,7 @@ function expressionIsForbidden(
     model?.identifiers.some(
       (identifier) =>
         within(identifier, expression) &&
-        localIdentifierIsForbidden(
-          context,
-          file,
-          identifier.name,
-          identifier.start,
-          forbidRecord,
-          visited,
-        ),
+        localIdentifierIsForbidden(context, file, identifier.name, identifier.start, forbidRecord, visited),
     ) === true
   );
 }
@@ -1418,14 +1334,7 @@ function exportedBindingResolvesSymbol(
   const bindingMatches = (binding: ExportBinding): boolean => {
     if (
       binding.kind === 'local' &&
-      localBindingResolvesSymbol(
-        context,
-        file,
-        binding.local,
-        model?.moduleScope.start ?? 0,
-        symbols,
-        visited,
-      )
+      localBindingResolvesSymbol(context, file, binding.local, model?.moduleScope.start ?? 0, symbols, visited)
     ) {
       return true;
     }
@@ -1441,10 +1350,7 @@ function exportedBindingResolvesSymbol(
         return true;
       }
     }
-    if (
-      binding.kind === 'expression' &&
-      expressionResolvesSymbol(context, file, binding.span, symbols, visited)
-    ) {
+    if (binding.kind === 'expression' && expressionResolvesSymbol(context, file, binding.span, symbols, visited)) {
       return true;
     }
     return false;
@@ -1460,11 +1366,7 @@ function exportedBindingResolvesSymbol(
   return false;
 }
 
-const specifierProvidesSymbol = (
-  specifier: string,
-  importedName: string,
-  symbols: ReadonlySet<string>,
-): boolean => {
+const specifierProvidesSymbol = (specifier: string, importedName: string, symbols: ReadonlySet<string>): boolean => {
   if (!symbols.has(importedName)) {
     return false;
   }
@@ -1505,14 +1407,7 @@ function localBindingResolvesSymbol(
         const pathParts = memberPath(candidate.source);
         return (
           pathParts !== undefined &&
-          pathResolvesSymbol(
-            context,
-            file,
-            [...pathParts, candidate.member],
-            candidate.source.start,
-            symbols,
-            visited,
-          )
+          pathResolvesSymbol(context, file, [...pathParts, candidate.member], candidate.source.start, symbols, visited)
         );
       }
       if (candidate.kind === 'namespace-rest') {
@@ -1529,10 +1424,7 @@ function localBindingResolvesSymbol(
   if (binding === undefined) {
     return symbols.has(name);
   }
-  if (
-    binding.kind !== 'namespace' &&
-    specifierProvidesSymbol(binding.specifier, binding.imported, symbols)
-  ) {
+  if (binding.kind !== 'namespace' && specifierProvidesSymbol(binding.specifier, binding.imported, symbols)) {
     return true;
   }
   return (
@@ -1553,10 +1445,7 @@ const pathResolvesSymbol = (
 ): boolean => {
   if (pathParts.length === 1) {
     const name = pathParts[0];
-    return (
-      name !== undefined &&
-      localBindingResolvesSymbol(context, file, name, position, symbols, visited)
-    );
+    return name !== undefined && localBindingResolvesSymbol(context, file, name, position, symbols, visited);
   }
   const symbol = pathParts.at(-1);
   const root = pathParts[0];
@@ -1582,10 +1471,7 @@ const pathResolvesSymbol = (
     const assignedObjectResolvesSymbol = (): boolean => {
       if (scoped?.kind === 'expression') {
         const propertyValue = objectPathExpression(scoped.expression, pathParts.slice(1));
-        if (
-          propertyValue !== undefined &&
-          expressionResolvesSymbol(context, file, propertyValue, symbols, visited)
-        ) {
+        if (propertyValue !== undefined && expressionResolvesSymbol(context, file, propertyValue, symbols, visited)) {
           return true;
         }
       }
@@ -1607,8 +1493,8 @@ const pathResolvesSymbol = (
   if (localPathResolvesSymbol()) {
     return true;
   }
-  return namespacePathTargets(context, file, pathParts.slice(0, -1), position, new Set()).some(
-    (target) => exportedBindingResolvesSymbol(context, target, symbol, symbols, visited),
+  return namespacePathTargets(context, file, pathParts.slice(0, -1), position, new Set()).some((target) =>
+    exportedBindingResolvesSymbol(context, target, symbol, symbols, visited),
   );
 };
 
@@ -1625,10 +1511,7 @@ function expressionResolvesSymbol(
     .filter((member) => member.start === expression.start && member.end === expression.end)
     .map((member) => memberPathAt(context, file, member, expression.start))
     .find((candidate) => candidate !== undefined);
-  if (
-    pathParts !== undefined &&
-    pathResolvesSymbol(context, file, pathParts, expression.start, symbols, visited)
-  ) {
+  if (pathParts !== undefined && pathResolvesSymbol(context, file, pathParts, expression.start, symbols, visited)) {
     return true;
   }
   const identifier = model?.identifiers.find(
@@ -1720,13 +1603,7 @@ function exportedExpressionResolvesEndpointFactory(
     if (
       binding.kind === 'reexport' &&
       moduleSpecifierTargets(context, file, binding.specifier).some((target) =>
-        exportedExpressionResolvesEndpointFactory(
-          context,
-          target,
-          binding.imported,
-          isBuilder,
-          visited,
-        ),
+        exportedExpressionResolvesEndpointFactory(context, target, binding.imported, isBuilder, visited),
       )
     ) {
       return true;
@@ -1766,16 +1643,9 @@ function localIdentifierResolvesEndpointFactory(
         return isBuilder && functionReturnsEndpointFactory(context, file, candidate.body, visited);
       }
       if (candidate.kind === 'expression') {
-        return isBuilder &&
-          functionExpressionReturnsEndpointFactory(context, file, candidate.expression, visited)
+        return isBuilder && functionExpressionReturnsEndpointFactory(context, file, candidate.expression, visited)
           ? true
-          : expressionResolvesEndpointFactory(
-              context,
-              file,
-              candidate.expression,
-              isBuilder,
-              visited,
-            );
+          : expressionResolvesEndpointFactory(context, file, candidate.expression, isBuilder, visited);
       }
       if (candidate.kind === 'destructured') {
         const targets = namespacePathTargets(
@@ -1786,13 +1656,7 @@ function localIdentifierResolvesEndpointFactory(
           new Set(),
         );
         return targets.some((target) =>
-          exportedExpressionResolvesEndpointFactory(
-            context,
-            target,
-            candidate.member,
-            isBuilder,
-            visited,
-          ),
+          exportedExpressionResolvesEndpointFactory(context, target, candidate.member, isBuilder, visited),
         );
       }
       return false;
@@ -1803,13 +1667,7 @@ function localIdentifierResolvesEndpointFactory(
     binding !== undefined &&
     binding.kind !== 'namespace' &&
     moduleSpecifierTargets(context, file, binding.specifier).some((target) =>
-      exportedExpressionResolvesEndpointFactory(
-        context,
-        target,
-        binding.imported,
-        isBuilder,
-        visited,
-      ),
+      exportedExpressionResolvesEndpointFactory(context, target, binding.imported, isBuilder, visited),
     )
   );
 }
@@ -1837,33 +1695,15 @@ function expressionResolvesEndpointFactory(
       if (
         method !== undefined &&
         (isBuilder ? method === 'make' : endpointMethods.has(method)) &&
-        expressionResolvesSymbol(
-          context,
-          file,
-          member.object,
-          new Set(['HttpApiEndpoint']),
-          new Set(),
-        )
+        expressionResolvesSymbol(context, file, member.object, new Set(['HttpApiEndpoint']), new Set())
       ) {
         return true;
       }
       const pathParts = memberPathAt(context, file, member, member.start);
       const exportedName = pathParts?.at(-1);
       if (pathParts !== undefined && exportedName !== undefined) {
-        return namespacePathTargets(
-          context,
-          file,
-          pathParts.slice(0, -1),
-          member.start,
-          new Set(),
-        ).some((target) =>
-          exportedExpressionResolvesEndpointFactory(
-            context,
-            target,
-            exportedName,
-            isBuilder,
-            visited,
-          ),
+        return namespacePathTargets(context, file, pathParts.slice(0, -1), member.start, new Set()).some((target) =>
+          exportedExpressionResolvesEndpointFactory(context, target, exportedName, isBuilder, visited),
         );
       }
     }
@@ -1878,14 +1718,7 @@ function expressionResolvesEndpointFactory(
   );
   if (
     identifier !== undefined &&
-    localIdentifierResolvesEndpointFactory(
-      context,
-      file,
-      identifier.name,
-      identifier.start,
-      isBuilder,
-      visited,
-    )
+    localIdentifierResolvesEndpointFactory(context, file, identifier.name, identifier.start, isBuilder, visited)
   ) {
     return true;
   }
@@ -1893,17 +1726,11 @@ function expressionResolvesEndpointFactory(
     (candidate) => candidate.start === expression.start && candidate.end === expression.end,
   );
   return (
-    !isBuilder &&
-    call !== undefined &&
-    expressionResolvesEndpointFactory(context, file, call.callee, true, visited)
+    !isBuilder && call !== undefined && expressionResolvesEndpointFactory(context, file, call.callee, true, visited)
   );
 }
 
-const isEndpointCall = (
-  context: ApiContractSourceContext,
-  file: string,
-  call: CallExpression,
-): boolean => {
+const isEndpointCall = (context: ApiContractSourceContext, file: string, call: CallExpression): boolean => {
   const callee = unwrapExpression(call.callee);
   if (expressionResolvesEndpointFactory(context, file, callee, false, new Set())) {
     return true;
@@ -1911,16 +1738,9 @@ const isEndpointCall = (
   const resolveIdentifierCall = () => {
     if (callee.type === 'Identifier') {
       const model = sourceModel(context, file);
-      const scoped =
-        model === undefined ? undefined : scopedBindingAt(model, callee.name, callee.start);
+      const scoped = model === undefined ? undefined : scopedBindingAt(model, callee.name, callee.start);
       if (scoped?.kind === 'destructured' && endpointMethods.has(scoped.member)) {
-        return expressionResolvesSymbol(
-          context,
-          file,
-          scoped.source,
-          new Set(['HttpApiEndpoint']),
-          new Set(),
-        );
+        return expressionResolvesSymbol(context, file, scoped.source, new Set(['HttpApiEndpoint']), new Set());
       }
       const resolveAliasedCall = (): boolean => {
         if (scoped?.kind === 'expression') {
@@ -1930,13 +1750,7 @@ const isEndpointCall = (
             return (
               method !== undefined &&
               endpointMethods.has(method) &&
-              expressionResolvesSymbol(
-                context,
-                file,
-                aliased.object,
-                new Set(['HttpApiEndpoint']),
-                new Set(),
-              )
+              expressionResolvesSymbol(context, file, aliased.object, new Set(['HttpApiEndpoint']), new Set())
             );
           }
         }
@@ -1961,11 +1775,7 @@ const isEndpointCall = (
   );
 };
 
-const isProblemDetailsCall = (
-  context: ApiContractSourceContext,
-  file: string,
-  call: CallExpression,
-): boolean =>
+const isProblemDetailsCall = (context: ApiContractSourceContext, file: string, call: CallExpression): boolean =>
   expressionResolvesSymbol(context, file, call.callee, problemDetailsFactoryNames, new Set());
 
 const violationMessage =

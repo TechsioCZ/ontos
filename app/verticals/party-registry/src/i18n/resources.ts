@@ -1,6 +1,7 @@
+import { isString } from 'effect/Predicate';
+
 import csResource from '../../locales/cs/party-registry.json' with { type: 'json' };
 import enResource from '../../locales/en/party-registry.json' with { type: 'json' };
-import { isString } from 'effect/Predicate';
 import { ultramodernRouteNamespace } from '../routes/ultramodern-route-metadata.ts';
 
 type LocaleResource = string | { readonly [key: string]: LocaleResource };
@@ -15,9 +16,7 @@ const flattenLocaleResource = (resource: LocaleResource, prefix = ''): Record<st
   return Object.fromEntries(
     Object.entries(resource).flatMap(([key, value]) => {
       const nextKey = prefix.length > 0 ? `${prefix}.${key}` : key;
-      return isLocaleText(value)
-        ? [[nextKey, value]]
-        : Object.entries(flattenLocaleResource(value, nextKey));
+      return isLocaleText(value) ? [[nextKey, value]] : Object.entries(flattenLocaleResource(value, nextKey));
     }),
   );
 };

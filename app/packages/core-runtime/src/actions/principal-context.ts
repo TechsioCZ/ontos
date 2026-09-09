@@ -1,4 +1,5 @@
 import { Schema } from 'effect';
+
 import { decodedStringBrand, nonEmptyString } from './string-schemas.ts';
 
 const uuid = Schema.String.check(Schema.isUUID());
@@ -19,13 +20,9 @@ const TrustedPrincipalContextFieldsSchema = Schema.Struct({
 });
 
 type TrustedPrincipalContextFields = typeof TrustedPrincipalContextFieldsSchema.Type;
-type PrincipalContextValidator = (
-  context: TrustedPrincipalContextFields,
-) => readonly Schema.FilterIssue[];
+type PrincipalContextValidator = (context: TrustedPrincipalContextFields) => readonly Schema.FilterIssue[];
 
-const issue = (message: string): readonly Schema.FilterIssue[] => [
-  { issue: message, path: ['authMethod'] },
-];
+const issue = (message: string): readonly Schema.FilterIssue[] => [{ issue: message, path: ['authMethod'] }];
 
 const validateApiKeyContext: PrincipalContextValidator = (context) =>
   context.authBindingId === undefined ||

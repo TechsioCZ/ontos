@@ -8,10 +8,8 @@ import {
 } from '@app/core-runtime';
 import type { ReadHandlerContext } from '@app/core-runtime';
 import { Effect, Match } from 'effect';
-import {
-  AresLookupRequestSchema,
-  AresLookupResponseSchema,
-} from '../../shared/apis/ares-lookup.ts';
+
+import { AresLookupRequestSchema, AresLookupResponseSchema } from '../../shared/apis/ares-lookup.ts';
 import { AresSubjectService } from '../integrations/ares/ares-subject.service.ts';
 import type {
   AresSubjectError,
@@ -31,15 +29,10 @@ interface Services {
   readonly lookup: AresSubjectServiceContract['subject'];
 }
 
-type AresLookupHandlerError =
-  | ReadHandlerExecutionError
-  | ReadHandlerNotFound
-  | ReadHandlerUnavailable;
+type AresLookupHandlerError = ReadHandlerExecutionError | ReadHandlerNotFound | ReadHandlerUnavailable;
 
-const withCause = <MappedError extends AresLookupHandlerError>(
-  mappedError: MappedError,
-  cause: AresSubjectError,
-) => Object.defineProperty(mappedError, 'cause', { value: cause });
+const withCause = <MappedError extends AresLookupHandlerError>(mappedError: MappedError, cause: AresSubjectError) =>
+  Object.defineProperty(mappedError, 'cause', { value: cause });
 
 const mapAresFailure = (error: AresSubjectError): Effect.Effect<never, AresLookupHandlerError> =>
   Match.value(error).pipe(

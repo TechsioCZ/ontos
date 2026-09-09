@@ -7,6 +7,7 @@ import {
 } from '@app/core-runtime';
 import type { ReadHandlerContext } from '@app/core-runtime';
 import { Effect, Match, Schema } from 'effect';
+
 import {
   PartyMatchDecisionRequestSchema,
   PartyMatchDecisionResponseSchema,
@@ -71,8 +72,11 @@ export const partyMatchDecisionRead = defineRead(
         Effect.flatMap((found) =>
           Match.value(found).pipe(
             Match.tag('found', ({ value }) =>
-              Schema.decodeUnknownEffect(PartyMatchDecisionResponseSchema)(value).pipe(
-                Effect.map((result) => ({ evidence: { resultCount: 1 }, result })),
+              Schema.decodeEffect(PartyMatchDecisionResponseSchema)(value).pipe(
+                Effect.map((result) => ({
+                  evidence: { resultCount: 1 },
+                  result,
+                })),
                 Effect.mapError(matchDecisionUnavailable),
               ),
             ),

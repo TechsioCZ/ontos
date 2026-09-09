@@ -3,10 +3,8 @@ import type { GatewayContextClientOptions } from '@app/shared-contracts';
 import { Effect } from '@modern-js/plugin-bff/effect-client';
 import type { HttpClientError, Schema } from '@modern-js/plugin-bff/effect-client';
 import { Redacted } from 'effect';
-import {
-  engagementProfileOperationContexts,
-  partyRegistryOperationContexts,
-} from '../../shared/api.ts';
+
+import { engagementProfileOperationContexts, partyRegistryOperationContexts } from '../../shared/api.ts';
 import type { OperationContext, PartyRegistryReadiness } from '../../shared/api.ts';
 import { operationGateway } from './action-gateway.ts';
 import {
@@ -46,9 +44,8 @@ export interface ContactsMutationOptions extends ContactsOperationOptions {
   readonly idempotencyKey: string;
 }
 
-export const createContactsClient = (
-  options: ContactsClientOptions = {},
-): ContactsClientEffect<ContactsClient> => createPartyRegistryHttpClient(options);
+export const createContactsClient = (options: ContactsClientOptions = {}): ContactsClientEffect<ContactsClient> =>
+  createPartyRegistryHttpClient(options);
 
 const invoke = <Success, Failure>(
   options: ContactsOperationOptions,
@@ -72,14 +69,14 @@ const engagementMutation =
     context: OperationContext,
     endpoint: (
       client: ContactsClient,
-    ) => (request: {
-      headers: { 'idempotency-key': string };
-      payload: Payload;
-    }) => Effect.Effect<Success, Failure>,
+    ) => (request: { headers: { 'idempotency-key': string }; payload: Payload }) => Effect.Effect<Success, Failure>,
   ) =>
   (payload: Payload, options: ContactsMutationOptions) =>
     invoke(options, context, (client) =>
-      endpoint(client)({ headers: { 'idempotency-key': options.idempotencyKey }, payload }),
+      endpoint(client)({
+        headers: { 'idempotency-key': options.idempotencyKey },
+        payload,
+      }),
     );
 
 export const getContactsReadiness = (

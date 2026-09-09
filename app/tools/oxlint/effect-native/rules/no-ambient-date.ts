@@ -77,20 +77,13 @@
  * Report-only: no fixers, no suggestions.
  */
 import { defineRule } from '@oxlint/plugins';
-
 import type { Context, ESTree } from '@oxlint/plugins';
 
-import {
-  parentOf,
-  skipWrappers,
-  unwrapNode,
-  memberName,
-  keyName as staticKeyName,
-} from '../shared/ast.ts';
+import { parentOf, skipWrappers, unwrapNode, memberName, keyName as staticKeyName } from '../shared/ast.ts';
 import { resolveVariable } from '../shared/bindings.ts';
-import { stringList } from '../shared/options.ts';
 import { collectEffectBindings } from '../shared/effect-imports.ts';
 import type { EffectBindings } from '../shared/effect-imports.ts';
+import { stringList } from '../shared/options.ts';
 import { isScriptFile, isTestFile, matchesAny, normalisePath } from '../shared/paths.ts';
 
 type AnyNode = ESTree.Node;
@@ -169,20 +162,11 @@ const DEFAULT_BROWSER_EVALUATED_METHODS: readonly string[] = [
 
 const FIXTURE_PREFIX = /^tools\/oxlint\/[^/]+\/tests\/fixtures\/[^/]+\/(?:valid|invalid)\//u;
 
-const DEFAULT_INCLUDE_PATHS: readonly string[] = [
-  'apps/**',
-  'verticals/**',
-  'packages/**',
-  'scripts/**',
-];
+const DEFAULT_INCLUDE_PATHS: readonly string[] = ['apps/**', 'verticals/**', 'packages/**', 'scripts/**'];
 
 const TEST_MODES = new Set(['clock-only', 'all', 'off']);
 
-const FUNCTION_TYPES = new Set([
-  'ArrowFunctionExpression',
-  'FunctionExpression',
-  'FunctionDeclaration',
-]);
+const FUNCTION_TYPES = new Set(['ArrowFunctionExpression', 'FunctionExpression', 'FunctionDeclaration']);
 
 interface RuleOptions {
   readonly testMode: string;
@@ -214,41 +198,34 @@ function readOptions(raw: unknown): RuleOptions {
   const given = (raw ?? {}) as Partial<Record<keyof RuleOptions, unknown>>;
   const includePaths = stringList(given.includePaths, DEFAULTS.includePaths);
   return {
-    testMode:
-      typeof given.testMode === 'string' && TEST_MODES.has(given.testMode)
-        ? given.testMode
-        : DEFAULTS.testMode,
+    testMode: typeof given.testMode === 'string' && TEST_MODES.has(given.testMode) ? given.testMode : DEFAULTS.testMode,
     dateMethods: stringList(given.dateMethods, DEFAULTS.dateMethods),
     allowDurationArithmetic:
       typeof given.allowDurationArithmetic === 'boolean'
         ? given.allowDurationArithmetic
         : DEFAULTS.allowDurationArithmetic,
     ignore: stringList(given.ignore, DEFAULTS.ignore),
-    ignoreScripts:
-      typeof given.ignoreScripts === 'boolean' ? given.ignoreScripts : DEFAULTS.ignoreScripts,
+    ignoreScripts: typeof given.ignoreScripts === 'boolean' ? given.ignoreScripts : DEFAULTS.ignoreScripts,
     includePaths: includePaths.length > 0 ? includePaths : DEFAULTS.includePaths,
     testPaths: stringList(given.testPaths, DEFAULTS.testPaths),
     productionPaths: stringList(given.productionPaths, DEFAULTS.productionPaths),
     ignoreReceivers: stringList(given.ignoreReceivers, DEFAULTS.ignoreReceivers),
-    browserEvaluatedMethods: stringList(
-      given.browserEvaluatedMethods,
-      DEFAULTS.browserEvaluatedMethods,
-    ),
+    browserEvaluatedMethods: stringList(given.browserEvaluatedMethods, DEFAULTS.browserEvaluatedMethods),
   };
 }
 
 function unwrap(node: AnyNode, depth: number): AnyNode {
-  return unwrapNode(node, { wrappers: TRANSPARENT_PARENTS, maxDepth: Math.max(0, 9 - depth) });
+  return unwrapNode(node, {
+    wrappers: TRANSPARENT_PARENTS,
+    maxDepth: Math.max(0, 9 - depth),
+  });
 }
 
 function staticPropertyName(node: ESTree.MemberExpression): string | null {
   return memberName(node, { templates: true, singleQuasi: true });
 }
 
-function aliasInitializer(
-  context: Context,
-  node: Extract<AnyNode, { type: 'Identifier' }>,
-): AnyNode | null {
+function aliasInitializer(context: Context, node: Extract<AnyNode, { type: 'Identifier' }>): AnyNode | null {
   const variable = resolveVariable(context, node.name, node);
   if (variable?.defs.length !== 1) return null;
   if (variable.references.some((reference) => reference.isWrite() && !reference.init)) return null;
@@ -277,8 +254,7 @@ function identifierGlobalName(
   if (variable === null || variable.defs.length === 0) return name;
   const definition = variable.defs.length === 1 ? variable.defs[0] : undefined;
   if (definition?.type !== 'Variable') return null;
-  if (definition.node.type !== 'VariableDeclarator' || definition.node.id.type !== 'Identifier')
-    return null;
+  if (definition.node.type !== 'VariableDeclarator' || definition.node.id.type !== 'Identifier') return null;
   const init = aliasInitializer(context, node as ESTree.IdentifierReference);
   if (init === null) return null;
   return resolveGlobalName(context, init, depth + 1);
@@ -302,18 +278,10 @@ function resolveGlobalName(context: Context, raw: AnyNode, depth = 0): string | 
 /** The call this expression is the callee of, or the expression itself when used point-free. */
 function callSiteOf(node: AnyNode): AnyNode {
   const { node: reference, parent } = skipWrappers(node);
-  if (
-    parent !== null &&
-    parent.type === 'CallExpression' &&
-    (parent as ESTree.CallExpression).callee === reference
-  ) {
+  if (parent !== null && parent.type === 'CallExpression' && (parent as ESTree.CallExpression).callee === reference) {
     return parent;
   }
-  if (
-    parent !== null &&
-    parent.type === 'NewExpression' &&
-    (parent as ESTree.NewExpression).callee === reference
-  ) {
+  if (parent !== null && parent.type === 'NewExpression' && (parent as ESTree.NewExpression).callee === reference) {
     return parent;
   }
   return reference;
@@ -360,11 +328,7 @@ function durationName(name: string | null): string | null {
   return name !== null && DURATION_NAME.test(name) ? name : null;
 }
 
-const DURATION_WRAPPERS = new Set([
-  'ParenthesizedExpression',
-  'TSAsExpression',
-  'TSNonNullExpression',
-]);
+const DURATION_WRAPPERS = new Set(['ParenthesizedExpression', 'TSAsExpression', 'TSNonNullExpression']);
 
 /** Duration-suffixed identifier / property name appearing as a factor of the chain. */
 function operandDurationName(node: AnyNode, depth: number): string | null {
@@ -385,8 +349,7 @@ function operandDurationName(node: AnyNode, depth: number): string | null {
   const binary = node as ESTree.BinaryExpression;
   if (binary.operator !== '*' && binary.operator !== '/') return null;
   return (
-    operandDurationName(binary.left as AnyNode, depth + 1) ??
-    operandDurationName(binary.right as AnyNode, depth + 1)
+    operandDurationName(binary.left as AnyNode, depth + 1) ?? operandDurationName(binary.right as AnyNode, depth + 1)
   );
 }
 
@@ -404,10 +367,7 @@ function isEffectCallArgument(node: AnyNode, bindings: EffectBindings): boolean 
       if (callee === current) return false;
       if (callee.type !== 'MemberExpression') return false;
       const object = (callee as ESTree.MemberExpression).object as AnyNode;
-      return (
-        object.type === 'Identifier' &&
-        bindings.namespaces.has((object as ESTree.IdentifierReference).name)
-      );
+      return object.type === 'Identifier' && bindings.namespaces.has((object as ESTree.IdentifierReference).name);
     }
     current = parent;
   }
@@ -434,19 +394,15 @@ function identifierName(node: AnyNode | null | undefined): string | null {
 }
 
 function assignmentName(node: ESTree.AssignmentExpression): string | null {
-  return node.left.type === 'MemberExpression'
-    ? staticPropertyName(node.left)
-    : identifierName(node.left);
+  return node.left.type === 'MemberExpression' ? staticPropertyName(node.left) : identifierName(node.left);
 }
 
 const OWNER_NAMES: ReadonlyMap<string, (node: AnyNode) => string | null> = new Map([
   ['VariableDeclarator', (node) => identifierName((node as ESTree.VariableDeclarator).id)],
-  ...['Property', 'PropertyDefinition', 'MethodDefinition'].map(
-    (kind): [string, (node: AnyNode) => string | null] => [
-      kind,
-      (node) => keyName((node as { key: AnyNode }).key),
-    ],
-  ),
+  ...['Property', 'PropertyDefinition', 'MethodDefinition'].map((kind): [string, (node: AnyNode) => string | null] => [
+    kind,
+    (node) => keyName((node as { key: AnyNode }).key),
+  ]),
   ['AssignmentExpression', (node) => assignmentName(node as ESTree.AssignmentExpression)],
   ['AssignmentPattern', (node) => identifierName((node as ESTree.AssignmentPattern).left)],
 ]);
@@ -474,8 +430,7 @@ function fileIsTest(filename: string, options: RuleOptions): boolean {
 function browserFunction(node: AnyNode, methods: ReadonlySet<string>): boolean {
   if (!FUNCTION_TYPES.has(node.type)) return false;
   const parent = parentOf(node);
-  if (parent?.type !== 'CallExpression' || !(parent.arguments as readonly AnyNode[]).includes(node))
-    return false;
+  if (parent?.type !== 'CallExpression' || !(parent.arguments as readonly AnyNode[]).includes(node)) return false;
   const callee = unwrap(parent.callee, 0);
   if (callee.type !== 'MemberExpression') return false;
   const name = staticPropertyName(callee);
@@ -496,23 +451,14 @@ function clockSite(node: ESTree.MemberExpression, global: string): AnyNode {
   return staticPropertyName(parent) === 'bigint' ? parent : node;
 }
 
-function ignoredReceiver(
-  node: AnyNode,
-  ignored: ReadonlySet<string>,
-  bindings: EffectBindings,
-): boolean {
+function ignoredReceiver(node: AnyNode, ignored: ReadonlySet<string>, bindings: EffectBindings): boolean {
   if (node.type === 'ThisExpression') return ignored.has('this');
   if (node.type === 'Super') return ignored.has('super');
-  return (
-    node.type === 'Identifier' && (ignored.has(node.name) || bindings.namespaces.has(node.name))
-  );
+  return node.type === 'Identifier' && (ignored.has(node.name) || bindings.namespaces.has(node.name));
 }
 
 function durationIsNamed(node: ESTree.BinaryExpression): boolean {
-  return (
-    durationName(ownerName(node)) !== null ||
-    (node.operator === '*' && operandDurationName(node, 0) !== null)
-  );
+  return durationName(ownerName(node)) !== null || (node.operator === '*' && operandDurationName(node, 0) !== null);
 }
 
 /** Effect-native rule: instants come from `DateTime`/`Clock`, intervals from `Duration`. */
@@ -553,8 +499,7 @@ export const rule = defineRule({
           },
           allowDurationArithmetic: {
             type: 'boolean',
-            description:
-              'Allow hand millisecond arithmetic in duration-named bindings (default: false).',
+            description: 'Allow hand millisecond arithmetic in duration-named bindings (default: false).',
           },
           ignore: {
             type: 'array',
@@ -568,26 +513,22 @@ export const rule = defineRule({
           includePaths: {
             type: 'array',
             items: { type: 'string' },
-            description:
-              'Globs the rule applies to (default: apps/**, verticals/**, packages/**, scripts/**).',
+            description: 'Globs the rule applies to (default: apps/**, verticals/**, packages/**, scripts/**).',
           },
           testPaths: {
             type: 'array',
             items: { type: 'string' },
-            description:
-              'Globs force-treated as test files, overriding the built-in test-file detection.',
+            description: 'Globs force-treated as test files, overriding the built-in test-file detection.',
           },
           productionPaths: {
             type: 'array',
             items: { type: 'string' },
-            description:
-              'Globs force-treated as production files even when the built-in test-file detection matches.',
+            description: 'Globs force-treated as production files even when the built-in test-file detection matches.',
           },
           ignoreReceivers: {
             type: 'array',
             items: { type: 'string' },
-            description:
-              'Receiver expressions whose date-named method calls are ignored (default: ["this", "super"]).',
+            description: 'Receiver expressions whose date-named method calls are ignored (default: ["this", "super"]).',
           },
           browserEvaluatedMethods: {
             type: 'array',
@@ -629,7 +570,10 @@ export const rule = defineRule({
     const ignoreReceivers = new Set(options.ignoreReceivers);
     const browserEvaluated = new Set(options.browserEvaluatedMethods);
     const clockTable = clockOnly ? TEST_CLOCK_MEMBERS : CLOCK_MEMBERS;
-    let bindings: EffectBindings = { namespaces: new Map(), importsEffect: false };
+    let bindings: EffectBindings = {
+      namespaces: new Map(),
+      importsEffect: false,
+    };
     /** Spans already reported, so one expression never emits two overlapping diagnostics. */
     const reported = new Set<AnyNode>();
 
@@ -675,17 +619,12 @@ export const rule = defineRule({
       return null;
     };
 
-    const identifierType = (
-      node: Extract<AnyNode, { type: 'Identifier' }>,
-      depth: number,
-    ): ESTree.TSType | null => {
+    const identifierType = (node: Extract<AnyNode, { type: 'Identifier' }>, depth: number): ESTree.TSType | null => {
       const variable = resolveVariable(context, node.name, node);
-      if (variable?.references.some((reference) => reference.isWrite() && !reference.init))
-        return null;
+      if (variable?.references.some((reference) => reference.isWrite() && !reference.init)) return null;
       const definition = variable?.defs.length === 1 ? variable.defs[0] : undefined;
       if (definition === undefined) return null;
-      const declared = (definition.name as { typeAnnotation?: ESTree.TSTypeAnnotation })
-        .typeAnnotation;
+      const declared = (definition.name as { typeAnnotation?: ESTree.TSTypeAnnotation }).typeAnnotation;
       if (declared != null) return declared.typeAnnotation;
       if (definition.node.type === 'VariableDeclarator' && definition.node.init !== null)
         return declaredType(definition.node.init, depth + 1);
@@ -706,18 +645,13 @@ export const rule = defineRule({
     const dateAnnotation = (raw: AnyNode): ESTree.IdentifierReference | null => {
       const type = declaredType(raw);
       const resolved = type === null ? null : resolveType(type);
-      if (resolved?.type !== 'TSTypeReference' || resolved.typeName.type !== 'Identifier')
-        return null;
+      if (resolved?.type !== 'TSTypeReference' || resolved.typeName.type !== 'Identifier') return null;
       return resolved.typeName.name === 'Date' ? resolved.typeName : null;
     };
 
     const declaredType = (raw: AnyNode, depth = 0): ESTree.TSType | null => {
       if (depth > 12) return null;
-      if (
-        raw.type === 'TSAsExpression' ||
-        raw.type === 'TSSatisfiesExpression' ||
-        raw.type === 'TSTypeAssertion'
-      )
+      if (raw.type === 'TSAsExpression' || raw.type === 'TSSatisfiesExpression' || raw.type === 'TSTypeAssertion')
         return raw.typeAnnotation;
       const node = unwrap(raw, 0);
       const annotation = (node as { typeAnnotation?: ESTree.TSTypeAnnotation }).typeAnnotation;
@@ -811,8 +745,7 @@ export const rule = defineRule({
         if (global === null) return;
         const members = clockTable.get(global);
         if (members === undefined) return;
-        for (const property of (id as ESTree.ObjectPattern).properties)
-          reportClockProperty(property, members);
+        for (const property of (id as ESTree.ObjectPattern).properties) reportClockProperty(property, members);
       },
 
       // (4) a Duration spelled out as magic millisecond arithmetic.

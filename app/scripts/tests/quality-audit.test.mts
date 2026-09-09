@@ -1,5 +1,3 @@
-import { expect, it } from 'effect-rstest';
-
 import {
   copyFileSync,
   mkdirSync,
@@ -14,12 +12,14 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 
 import { NodeServices } from '@effect/platform-node';
-import { Effect, Schema } from 'effect';
+import { Config, Effect, Match, Schema } from 'effect';
+import { expect, it } from 'effect-rstest';
 import { ChildProcess, ChildProcessSpawner } from 'effect/unstable/process';
 
 import { auditSteps, runQualityAudit, validateReport } from '../quality-audit.mts';
 import { collectToolingProcess } from './tooling-process-fixture.mts';
 
+const NATIVE_GIT = '/usr/bin/git';
 const FALLOW_CLONES = 'fallow-clones';
 const FALLOW_SIMILARITY = 'fallow-similarity';
 const FALLOW_HEALTH = 'fallow-health';
@@ -37,10 +37,7 @@ const ProvenanceSchema = Schema.fromJsonString(
   }),
 );
 const appRoot = path.resolve(import.meta.dirname, '../..');
-const includesPolicyFiles = (
-  instances: readonly { readonly file: string }[],
-  policyFiles: readonly string[],
-) => {
+const includesPolicyFiles = (instances: readonly { readonly file: string }[], policyFiles: readonly string[]) => {
   const names = new Set(instances.map((instance) => path.basename(instance.file)));
   return policyFiles.every((file) => names.has(file));
 };
@@ -74,14 +71,20 @@ it.effect(
     const emptySourceError = yield* Effect.flip(
       validateReport(
         'jscpd',
-        yield* encodeReport({ duplicates: [], statistics: { total: { clones: 0, sources: 0 } } }),
+        yield* encodeReport({
+          duplicates: [],
+          statistics: { total: { clones: 0, sources: 0 } },
+        }),
       ),
     );
     expect(emptySourceError.message).toMatch(/no files/u);
     const cloneCountError = yield* Effect.flip(
       validateReport(
         'jscpd',
-        yield* encodeReport({ ...report, statistics: { total: { clones: 0, sources: 2 } } }),
+        yield* encodeReport({
+          ...report,
+          statistics: { total: { clones: 0, sources: 2 } },
+        }),
       ),
     );
     expect(cloneCountError.message).toMatch(/count disagrees/u);
@@ -144,7 +147,11 @@ it.effect(
         yield* encodeReport({
           ...report,
           workspace_diagnostics: [
-            { kind: 'invalid-package-json', message: 'invalid package', path: 'packages/broken' },
+            {
+              kind: 'invalid-package-json',
+              message: 'invalid package',
+              path: 'packages/broken',
+            },
           ],
         }),
       ),
@@ -181,13 +188,14 @@ const createFixture = () =>
     symlinkSync(path.join(appRoot, 'node_modules'), path.join(root, 'node_modules'), 'dir');
     writeFileSync(
       path.join(root, PACKAGE_JSON),
-      yield* encodeReport({ name: 'quality-test', private: true, type: 'module' }),
+      yield* encodeReport({
+        name: 'quality-test',
+        private: true,
+        type: 'module',
+      }),
     );
     for (const name of ['scope.json', 'fallow.json', 'jscpd.json', 'knip-reporter.mts']) {
-      copyFileSync(
-        path.join(appRoot, CONFIG_DIRECTORY, name),
-        path.join(root, CONFIG_DIRECTORY, name),
-      );
+      copyFileSync(path.join(appRoot, CONFIG_DIRECTORY, name), path.join(root, CONFIG_DIRECTORY, name));
     }
     writeFileSync(
       path.join(root, KNIP_CONFIG),
@@ -198,21 +206,42 @@ const createFixture = () =>
         project: ['scripts/**/*.ts'],
       }),
     );
-    const branches = Array.from(
-      { length: 15 },
-      (_, index) => `if (input > ${index}) result += input * ${index};`,
-    ).join('\n');
+    const branches = Array.from({ length: 15 }, (_, index) => `if (input > ${index}) result += input * ${index};`).join(
+      '\n',
+    );
     const body = `export function calculate(input: number) {\nlet result = input;\n${branches}\nreturn result;\n}\n`;
     writeFileSync(path.join(root, 'scripts/index.ts'), body);
-    writeFileSync(
-      path.join(root, 'scripts/dead.ts'),
-      body.replace('calculate', 'unusedCalculation'),
-    );
+    writeFileSync(path.join(root, 'scripts/dead.ts'), body.replace('calculate', 'unusedCalculation'));
     return root;
   });
 
 const runFixture = (root: string, output: string, tool: 'all' | 'knip' | 'jscpd' | 'fallow') =>
-  runQualityAudit(root, output, tool).pipe(Effect.provide(NodeServices.layer));
+  Effect.gen(function* runNativeFixture() {
+    const nativeSpawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+    const runtimePath = yield* Config.string('PATH');
+    // Both fixtures and analyzer subprocesses use Git inside this test runtime.
+    const fixtureSpawner = ChildProcessSpawner.make((command) =>
+      Match.value(command).pipe(
+        Match.tag('StandardCommand', (standard) =>
+          nativeSpawner.spawn(
+            ChildProcess.make(standard.command === 'git' ? NATIVE_GIT : standard.command, standard.args, {
+              ...standard.options,
+              env: {
+                ...standard.options.env,
+                PATH: `/usr/bin:${runtimePath}`,
+              },
+              extendEnv: true,
+            }),
+          ),
+        ),
+        Match.tag('PipedCommand', (piped) => nativeSpawner.spawn(piped)),
+        Match.exhaustive,
+      ),
+    );
+    return yield* runQualityAudit(root, output, tool).pipe(
+      Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, fixtureSpawner),
+    );
+  }).pipe(Effect.provide(NodeServices.layer));
 
 const SummarySchema = Schema.Struct({
   mode: Schema.Literal('report-only'),
@@ -241,10 +270,9 @@ it.live(
     const root = yield* createFixture();
     const output = path.join(root, REPORT_DIRECTORY);
     const props = Array.from({ length: 22 }, (_, index) => `p${index + 1}`).join(', ');
-    const branches = Array.from(
-      { length: 11 },
-      (_, index) => `if (value === ${index + 1}) return ${index + 1};`,
-    ).join('\n');
+    const branches = Array.from({ length: 11 }, (_, index) => `if (value === ${index + 1}) return ${index + 1};`).join(
+      '\n',
+    );
     writeFileSync(
       path.join(root, 'scripts/metric-example.tsx'),
       `import { useState } from 'react';
@@ -293,10 +321,7 @@ export function branchHeavy(value: number) {
     expect(corrupted).not.toBe(raw);
     const contributionsError = yield* Effect.flip(validateReport(FALLOW_HEALTH, corrupted));
     expect(contributionsError.message).toMatch(/contributions disagree/u);
-    const wrongCount = raw.replace(
-      /"functions_above_threshold"\s*:\s*\d+/u,
-      '"functions_above_threshold": 0',
-    );
+    const wrongCount = raw.replace(/"functions_above_threshold"\s*:\s*\d+/u, '"functions_above_threshold": 0');
     const thresholdCountError = yield* Effect.flip(validateReport(FALLOW_HEALTH, wrongCount));
     expect(thresholdCountError.message).toMatch(/count disagrees/u);
   }),
@@ -324,7 +349,9 @@ it.live(
     const schema = Schema.fromJsonString(
       Schema.Struct({
         clone_groups: Schema.Array(
-          Schema.Struct({ instances: Schema.Array(Schema.Struct({ file: Schema.String })) }),
+          Schema.Struct({
+            instances: Schema.Array(Schema.Struct({ file: Schema.String })),
+          }),
         ),
       }),
     );
@@ -391,12 +418,8 @@ it.live(
     expect(second.results[0]?.status).toBe('error');
     expect(readdirSync(path.join(root, '.codex'))).toEqual([CALLER_OWNED_FILE]);
     expect(readFileSync(path.join(root, '.codex/caller-owned.txt'), 'utf-8')).toBe('keep');
-    expect(readFileSync(path.join(output, 'summary.md'), 'utf-8')).toMatch(
-      /Malformed .*configs\/knip\.json/u,
-    );
-    expect(
-      readFileSync(path.join(first.runDirectory, 'knip/report.ndjson'), 'utf-8').length > 0,
-    ).toBe(true);
+    expect(readFileSync(path.join(output, 'summary.md'), 'utf-8')).toMatch(/Malformed .*configs\/knip\.json/u);
+    expect(readFileSync(path.join(first.runDirectory, 'knip/report.ndjson'), 'utf-8').length > 0).toBe(true);
   }),
 );
 
@@ -414,10 +437,7 @@ it.live(
     expect(missing.results).toEqual([
       {
         coverage: {},
-        diagnostic: readFileSync(
-          path.join(failedDirectory, 'validation-error.txt'),
-          'utf-8',
-        ).trimEnd(),
+        diagnostic: readFileSync(path.join(failedDirectory, 'validation-error.txt'), 'utf-8').trimEnd(),
         directory: failedDirectory,
         files: 0,
         findings: 0,
@@ -459,7 +479,7 @@ it.live(
     const output = path.join(root, REPORT_DIRECTORY);
     yield* Effect.gen(function* initializeFixtureRepository() {
       const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
-      yield* spawner.string(ChildProcess.make('git', ['init', '-q', root]));
+      yield* spawner.string(ChildProcess.make(NATIVE_GIT, ['init', '-q', root]));
     }).pipe(Effect.provide(NodeServices.layer));
     mkdirSync(path.join(root, 'scripts/shared'), { recursive: true });
     copyFileSync(
@@ -472,16 +492,19 @@ it.live(
       path.join(appRoot, 'scripts/quality-cli-lifecycle.mts'),
       path.join(root, 'scripts/quality-cli-lifecycle.mts'),
     );
-    for (const file of ['knip-model.mts', 'knip-runtime-model.mts']) {
-      copyFileSync(
-        path.join(appRoot, CONFIG_DIRECTORY, file),
-        path.join(root, CONFIG_DIRECTORY, file),
-      );
+    for (const file of ['knip-model.mts', 'knip-runtime-model.mts', 'import-clone-evidence.mts']) {
+      copyFileSync(path.join(appRoot, CONFIG_DIRECTORY, file), path.join(root, CONFIG_DIRECTORY, file));
     }
     const result = yield* collectToolingProcess(
       ChildProcess.make(process.execPath, [executable, '--tool', 'knip', '--output', output], {
         cwd: tmpdir(),
-        env: { CI: 'true', FORCE_COLOR: '1', GITHUB_ACTIONS: 'true', NO_COLOR: '1' },
+        env: {
+          CI: 'true',
+          FORCE_COLOR: '1',
+          GITHUB_ACTIONS: 'true',
+          NO_COLOR: '1',
+          PATH: `/usr/bin:${yield* Config.string('PATH')}`,
+        },
         extendEnv: true,
         stderr: 'pipe',
         stdin: 'ignore',
@@ -497,9 +520,7 @@ it.live(
     );
     expect(provenance.sourceState).toBe('modified');
     expect(provenance.workingTreeChanges.some((file) => file === '?? scripts/index.ts')).toBe(true);
-    expect(!provenance.workingTreeChanges.some((file) => file.startsWith('?? reports/'))).toBe(
-      true,
-    );
+    expect(!provenance.workingTreeChanges.some((file) => file.startsWith('?? reports/'))).toBe(true);
   }),
 );
 
@@ -533,9 +554,7 @@ it.live(
     expect(symlinkOutputError.message).toMatch(/analysis failed/u);
     const rejected = yield* summary(output);
     expect(rejected.results[0]?.name).toBe('setup');
-    expect(rejected.results[0]?.diagnostic ?? '').toMatch(
-      /output directory outside configured source roots/u,
-    );
+    expect(rejected.results[0]?.diagnostic ?? '').toMatch(/output directory outside configured source roots/u);
     expect(readdirSync(rejected.runDirectory)).toEqual([]);
     expect(readdirSync(path.join(root, '.codex'))).toEqual([CALLER_OWNED_FILE]);
 
@@ -577,7 +596,7 @@ it.live(
         commands,
         (args) =>
           spawner
-            .exitCode(ChildProcess.make('git', args, { cwd: root }))
+            .exitCode(ChildProcess.make(NATIVE_GIT, args, { cwd: root }))
             .pipe(Effect.map((code) => expect(Number(code)).toBe(0))),
         { concurrency: 1 },
       );
@@ -608,22 +627,18 @@ it.live(
     expect(narrowed.results[0]?.status).toBe('reported');
     expect(narrowed.results.at(-1)?.name).toBe('coverage');
     expect(narrowed.results.at(-1)?.diagnostic ?? '').toMatch(/Knip workspace coverage mismatch/u);
-    expect(
-      narrowed.results.some((result) => result.name === 'coverage' && result.status === 'error'),
-    ).toBe(true);
+    expect(narrowed.results.some((result) => result.name === 'coverage' && result.status === 'error')).toBe(true);
     writeFileSync(
       path.join(root, 'quality-audit/fallow.json'),
-      yield* encodeReport({ ignorePatterns: ['scripts/**', 'node_modules/**', 'packages/**'] }),
+      yield* encodeReport({
+        ignorePatterns: ['scripts/**', 'node_modules/**', 'packages/**'],
+      }),
     );
     const omittedSourceError = yield* Effect.flip(runFixture(root, output, 'fallow'));
     expect(omittedSourceError.message).toMatch(/analysis failed/u);
     const omitted = yield* summary(output);
-    expect(
-      omitted.results.some((result) => result.name === 'coverage' && result.status === 'error'),
-    ).toBe(true);
-    expect(readFileSync(path.join(omitted.runDirectory, 'coverage.json'), 'utf-8')).toMatch(
-      /scripts\/index.ts/u,
-    );
+    expect(omitted.results.some((result) => result.name === 'coverage' && result.status === 'error')).toBe(true);
+    expect(readFileSync(path.join(omitted.runDirectory, 'coverage.json'), 'utf-8')).toMatch(/scripts\/index.ts/u);
   }),
 );
 
@@ -636,10 +651,7 @@ it.live(
     rmSync(path.join(root, 'node_modules'));
     mkdirSync(path.join(root, 'node_modules/knip/bin'), { recursive: true });
     writeFileSync(path.join(root, 'node_modules/knip/bin/knip.js'), 'must never execute');
-    writeFileSync(
-      path.join(root, 'node_modules/knip/package.json'),
-      yield* encodeReport({ version: '0.0.0' }),
-    );
+    writeFileSync(path.join(root, 'node_modules/knip/package.json'), yield* encodeReport({ version: '0.0.0' }));
     const versionError = yield* Effect.flip(runFixture(root, output, 'knip'));
     expect(versionError.message).toMatch(/analysis failed/u);
     const mismatch = yield* summary(output);
@@ -659,10 +671,7 @@ it.live(
     rmSync(path.join(root, 'node_modules'));
     const toolDirectory = path.join(root, 'node_modules/jscpd');
     mkdirSync(toolDirectory, { recursive: true });
-    writeFileSync(
-      path.join(toolDirectory, PACKAGE_JSON),
-      yield* encodeReport({ type: 'module', version: '5.1.2' }),
-    );
+    writeFileSync(path.join(toolDirectory, PACKAGE_JSON), yield* encodeReport({ type: 'module', version: '5.1.2' }));
     const report = yield* encodeReport({
       duplicates: [],
       statistics: { total: { clones: 0, sources: 2 } },
@@ -713,15 +722,10 @@ it.live('external report directories preserve valid Fallow exclusions and source
     mkdirSync(generatedTypes, { recursive: true });
     writeFileSync(path.join(root, GITIGNORE_FILE), '**/@mf-types/\n');
     const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
-    const initialized = yield* spawner.exitCode(
-      ChildProcess.make('git', ['init', '-q'], { cwd: root }),
-    );
+    const initialized = yield* spawner.exitCode(ChildProcess.make(NATIVE_GIT, ['init', '-q'], { cwd: root }));
     expect(Number(initialized)).toBe(0);
-    writeFileSync(
-      path.join(generatedTypes, 'index.d.ts'),
-      'export declare const remoteComponent: unknown;\n',
-    );
-    yield* runQualityAudit(root, output, 'fallow');
+    writeFileSync(path.join(generatedTypes, 'index.d.ts'), 'export declare const remoteComponent: unknown;\n');
+    yield* runFixture(root, output, 'fallow');
     const result = yield* Schema.decodeUnknownEffect(Schema.fromJsonString(SummarySchema))(
       readFileSync(path.join(output, SUMMARY_FILE), 'utf-8'),
     );
@@ -739,9 +743,7 @@ it.live('external report directories preserve valid Fallow exclusions and source
     )(readFileSync(path.join(result.runDirectory, 'coverage.json'), 'utf-8'));
     // Two authored fixture sources plus the copied Knip reporter, not remote declarations.
     expect(coverage).toEqual({ extra: [], intendedSources: 3, missing: [] });
-    expect(
-      result.results.some((row) => row.name === FALLOW_HEALTH && row.findings > 0),
-    ).toBeTruthy();
+    expect(result.results.some((row) => row.name === FALLOW_HEALTH && row.findings > 0)).toBeTruthy();
     expect(readFileSync(path.join(result.runDirectory, 'configs/fallow.json'), 'utf-8')).toBe(
       readFileSync(path.join(root, 'quality-audit/fallow.json'), 'utf-8'),
     );

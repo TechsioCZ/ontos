@@ -1,4 +1,3 @@
-import { optionRecord, positiveInteger, stringArray } from '../shared/options.ts';
 /**
  * Audit finding: **A1** — "Establish one process-level Layer and ManagedRuntime composition model"
  * (`docs/architecture/EFFECT_V4_ANTIPATTERN_AUDIT.md`). A1 records "four runtime roots, 15+ manually
@@ -67,17 +66,17 @@ import { optionRecord, positiveInteger, stringArray } from '../shared/options.ts
  * satisfy it.
  */
 import { defineRule } from '@oxlint/plugins';
-
 import type { Context, ESTree } from '@oxlint/plugins';
 
-import { collectEffectBindings, type EffectBindings } from '../shared/effect-imports.ts';
-import { isTestFile, scopePath, matchesGlobs } from '../shared/paths.ts';
-import { lookupVariable, resolvesToImport } from '../shared/bindings.ts';
 import { unwrapNode, keyName, memberName as sharedMemberName } from '../shared/ast.ts';
+import { lookupVariable, resolvesToImport } from '../shared/bindings.ts';
+import { collectEffectBindings, type EffectBindings } from '../shared/effect-imports.ts';
 import {
   collectNamespaceLocals as sharedNamespaceLocals,
   collectDirectMemberImports as sharedDirectMembers,
 } from '../shared/imports.ts';
+import { optionRecord, positiveInteger, stringArray } from '../shared/options.ts';
+import { isTestFile, scopePath, matchesGlobs } from '../shared/paths.ts';
 import { isNonReferencePosition as nonReferencePosition } from '../shared/reference-positions.ts';
 import { nodeKey } from '../shared/reporting.ts';
 
@@ -121,12 +120,7 @@ const TRANSPARENT_EXPRESSIONS = new Set([
 ]);
 
 /** Parents that put an identifier in a type position, where nothing is constructed at runtime. */
-const TYPE_POSITION_PARENTS = new Set([
-  'TSTypeQuery',
-  'TSQualifiedName',
-  'TSTypeReference',
-  'TSImportType',
-]);
+const TYPE_POSITION_PARENTS = new Set(['TSTypeQuery', 'TSQualifiedName', 'TSTypeReference', 'TSImportType']);
 
 interface RuleOptions {
   readonly include: readonly string[];
@@ -187,8 +181,7 @@ function collectTypeOnlyLocals(program: ESTree.Program): ReadonlySet<string> {
     if (statement.type !== 'ImportDeclaration') continue;
     const declarationIsType = statement.importKind === 'type';
     for (const specifier of statement.specifiers) {
-      const specifierIsType =
-        specifier.type === 'ImportSpecifier' && specifier.importKind === 'type';
+      const specifierIsType = specifier.type === 'ImportSpecifier' && specifier.importKind === 'type';
       if (declarationIsType || specifierIsType) locals.add(specifier.local.name);
     }
   }
@@ -215,16 +208,10 @@ function collectNamespaceLocals(
   reexportModules: readonly string[],
   typeOnly: ReadonlySet<string>,
 ): NamespaceLocals {
-  const { namespaced, barrel } = sharedNamespaceLocals(
-    program,
-    bindings,
-    tracked,
-    reexportModules,
-    {
-      valueOnly: true,
-      excludedLocals: typeOnly,
-    },
-  );
+  const { namespaced, barrel } = sharedNamespaceLocals(program, bindings, tracked, reexportModules, {
+    valueOnly: true,
+    excludedLocals: typeOnly,
+  });
   for (const local of typeOnly) namespaced.delete(local);
   return { namespaces: namespaced, barrels: barrel };
 }
@@ -267,8 +254,7 @@ function exportedMember(
   members: ReadonlySet<string> | undefined,
   directMembers: ReadonlyMap<string, string>,
 ): string | undefined {
-  if (namespace !== null && members !== undefined)
-    return members.has(local) ? `${namespace}.${local}` : undefined;
+  if (namespace !== null && members !== undefined) return members.has(local) ? `${namespace}.${local}` : undefined;
   return directMembers.get(local);
 }
 
@@ -310,7 +296,10 @@ function memberName(node: ESTree.MemberExpression): string | null {
 
 /** `{ make: boot }`, `{ "make": boot }`, `{ ["make"]: boot }`, `` { [`make`]: boot } ``. */
 function propertyKeyName(property: Extract<ESTree.Node, { type: 'Property' }>): string | null {
-  return keyName(property.key, property.computed, { templates: true, rawTemplates: true });
+  return keyName(property.key, property.computed, {
+    templates: true,
+    rawTemplates: true,
+  });
 }
 
 /** Peel `as` / `satisfies` / `!` / `<T>` / parentheses / optional-chain wrappers off an expression. */
@@ -320,13 +309,12 @@ function unwrapExpression(node: ESTree.Node): ESTree.Node {
 
 /** Identifier positions that are declarations, property keys or type references — never runtime uses. */
 function isNonReferencePosition(node: Extract<ESTree.Node, { type: 'Identifier' }>): boolean {
-  return nonReferencePosition(node, { nonReferenceParents: TYPE_POSITION_PARENTS });
+  return nonReferencePosition(node, {
+    nonReferenceParents: TYPE_POSITION_PARENTS,
+  });
 }
 
-type ResolvedBinding =
-  | { readonly kind: 'namespace'; readonly namespace: string }
-  | { readonly kind: 'barrel' }
-  | null;
+type ResolvedBinding = { readonly kind: 'namespace'; readonly namespace: string } | { readonly kind: 'barrel' } | null;
 
 interface MemberCandidate {
   readonly node: ESTree.Node;
@@ -424,12 +412,7 @@ export const rule = defineRule({
     );
     const directMembers = collectDirectMemberImports(program, byNamespace, typeOnly);
     const reexports = collectReexportedMembers(program, byNamespace, directMembers);
-    if (
-      namespaces.size === 0 &&
-      barrels.size === 0 &&
-      directMembers.size === 0 &&
-      reexports.length === 0
-    ) {
+    if (namespaces.size === 0 && barrels.size === 0 && directMembers.size === 0 && reexports.length === 0) {
       return {};
     }
 
@@ -461,8 +444,7 @@ export const rule = defineRule({
       if (depth > 6) return null;
       const variable = lookupVariable(context, identifier);
       if (variable === null || variable.defs.length === 0) return fromImports(identifier.name);
-      if (variable.references.some((reference) => reference.isWrite() && !reference.init))
-        return null;
+      if (variable.references.some((reference) => reference.isWrite() && !reference.init)) return null;
       for (const definition of variable.defs) {
         if (definition.type === 'ImportBinding') return fromImports(identifier.name);
         if (definition.type !== 'Variable') continue;
@@ -481,8 +463,7 @@ export const rule = defineRule({
       const property = destructured.keys.get(name);
       if (property === undefined || !tracked.has(property)) return null;
       const source = resolveBinding(destructured.source, depth + 1);
-      if (source !== null && source.kind === 'barrel')
-        return { kind: 'namespace', namespace: property };
+      if (source !== null && source.kind === 'barrel') return { kind: 'namespace', namespace: property };
       return null;
     }
 
@@ -498,8 +479,7 @@ export const rule = defineRule({
             : resolved.kind === 'barrel'
               ? candidate.viaBarrel
               : null;
-        if (namespace === null || byNamespace.get(namespace)?.has(candidate.member) !== true)
-          continue;
+        if (namespace === null || byNamespace.get(namespace)?.has(candidate.member) !== true) continue;
         found.push({
           node: candidate.node,
           member: `${namespace}.${candidate.member}`,
@@ -550,7 +530,12 @@ export const rule = defineRule({
         if (namespace === null || !tracked.has(namespace)) return;
         const barrel = unwrapExpression(object.object as ESTree.Node);
         if (barrel.type !== 'Identifier') return;
-        memberCandidates.push({ node, object: barrel, viaBarrel: namespace, member });
+        memberCandidates.push({
+          node,
+          object: barrel,
+          viaBarrel: namespace,
+          member,
+        });
       },
 
       // `const { make } = ManagedRuntime`, `const MR = ManagedRuntime`, `const { Layer } = EffectNs`.
@@ -571,7 +556,11 @@ export const rule = defineRule({
           if (name === null) continue;
           const value = property.value as ESTree.Node;
           if (value.type === 'Identifier') keys.set(value.name, name);
-          destructureCandidates.push({ node: property, source: init, key: name });
+          destructureCandidates.push({
+            node: property,
+            source: init,
+            key: name,
+          });
         }
         destructureDeclarators.set(nodeKey(node), { source: init, keys });
       },

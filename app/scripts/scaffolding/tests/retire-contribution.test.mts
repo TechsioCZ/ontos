@@ -1,23 +1,18 @@
-import { withCreatedFixture } from './fixture-ownership.mts';
-import { ChildProcess, ChildProcessSpawner } from 'effect/unstable/process';
-import { fileURLToPath } from 'node:url';
-import {
-  insertSortedSlot,
-  readGeneratedSlotEntries,
-  removeGeneratedSlotEntry,
-} from '../shared.mts';
-import { snapshotTree, write } from './fixture-files.mts';
-import { Cause, Effect } from 'effect';
-import { expect, it } from 'effect-rstest';
-
-import { NodeServices } from '@effect/platform-node';
-
 import { access, mkdtemp, readFile, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
+import { fileURLToPath } from 'node:url';
+
+import { NodeServices } from '@effect/platform-node';
+import { Cause, Effect } from 'effect';
+import { expect, it } from 'effect-rstest';
+import { ChildProcess, ChildProcessSpawner } from 'effect/unstable/process';
 
 import { getHelpText, runScaffoldEffect } from '../cli.mts';
+import { insertSortedSlot, readGeneratedSlotEntries, removeGeneratedSlotEntry } from '../shared.mts';
 import type { JsonValue } from '../shared.mts';
+import { snapshotTree, write } from './fixture-files.mts';
+import { withCreatedFixture } from './fixture-ownership.mts';
 
 const expectFailure = <A, E, R>(self: Effect.Effect<A, E, R>, check: (cause: unknown) => void) =>
   Effect.matchCauseEffect(self, {
@@ -106,9 +101,7 @@ export const inventoryRegistration = {
 
 const createFixture = (): Effect.Effect<string, unknown> =>
   Effect.gen(function* scenario5() {
-    const root = yield* Effect.promise(() =>
-      mkdtemp(path.join(tmpdir(), 'ontos-retire-contribution-')),
-    );
+    const root = yield* Effect.promise(() => mkdtemp(path.join(tmpdir(), 'ontos-retire-contribution-')));
     yield* write(
       root,
       'verticals/inventory/package.json',
@@ -190,11 +183,7 @@ export const archiveItemAction = {};
 
 const withFixture = withCreatedFixture(createFixture());
 
-const retire = Effect.fn(function* scenario7(
-  root: string,
-  kind: 'action' | 'api' | 'page',
-  name: string,
-) {
+const retire = Effect.fn(function* scenario7(root: string, kind: 'action' | 'api' | 'page', name: string) {
   return yield* runScaffoldEffect(
     RETIRE_CONTRIBUTION_COMMAND,
     [VERTICAL_FLAG, 'inventory', '--kind', kind, '--name', name],
@@ -208,7 +197,10 @@ it.live(
     const result = yield* runScaffoldEffect(RETIRE_CONTRIBUTION_COMMAND, ['--help'], {
       workspaceRoot: path.join(tmpdir(), 'retire-help-missing'),
     }).pipe(Effect.provide(NodeServices.layer));
-    expect(result).toEqual({ help: getHelpText(RETIRE_CONTRIBUTION_COMMAND), kind: 'help' });
+    expect(result).toEqual({
+      help: getHelpText(RETIRE_CONTRIBUTION_COMMAND),
+      kind: 'help',
+    });
     if (result.kind !== 'help') {
       throw new Error('Expected help result');
     }
@@ -247,24 +239,16 @@ it.live(
 
         yield* retire(root, 'page', ITEM_DETAIL);
         yield* Effect.promise(() =>
-          access(
-            path.join(root, 'verticals/inventory/src/routes/[lang]/inventory/items/[id]/page.tsx'),
-          ),
+          access(path.join(root, 'verticals/inventory/src/routes/[lang]/inventory/items/[id]/page.tsx')),
         );
         const [nextManifest, nextRegistration] = yield* Effect.all(
           [
-            Effect.promise(() =>
-              readFile(path.join(root, 'verticals/inventory/vertical.manifest.ts'), 'utf-8'),
-            ),
-            Effect.promise(() =>
-              readFile(path.join(root, 'verticals/inventory/vertical.registration.ts'), 'utf-8'),
-            ),
+            Effect.promise(() => readFile(path.join(root, 'verticals/inventory/vertical.manifest.ts'), 'utf-8')),
+            Effect.promise(() => readFile(path.join(root, 'verticals/inventory/vertical.registration.ts'), 'utf-8')),
           ],
           { concurrency: 'unbounded' },
         );
-        expect(nextManifest).not.toMatch(
-          /archiveItemAction|ItemDetailApi|ItemDetailPage|item-detail/u,
-        );
+        expect(nextManifest).not.toMatch(/archiveItemAction|ItemDetailApi|ItemDetailPage|item-detail/u);
         expect(nextRegistration).not.toMatch(/archiveItemAction|item-detail/u);
       }),
     );
@@ -283,9 +267,7 @@ it.live(
         expect(yield* snapshotTree(root)).toEqual(beforeTraversal);
 
         const actionPath = path.join(root, ARCHIVE_ITEM_ACTION_PATH);
-        yield* Effect.promise(() =>
-          writeFile(actionPath, 'export const archiveItemAction = {};\n', 'utf-8'),
-        );
+        yield* Effect.promise(() => writeFile(actionPath, 'export const archiveItemAction = {};\n', 'utf-8'));
         const beforeCustomized = yield* snapshotTree(root);
         yield* expectFailure(retire(root, 'action', ARCHIVE_ITEM), (error) =>
           expect(String(error)).toMatch(/matching generated Action/u),
@@ -348,21 +330,13 @@ after`;
 ${end}
 after`);
   expect(readGeneratedSlotEntries(inserted, start, end)).toEqual([entry]);
-  const removed = removeGeneratedSlotEntry(
-    inserted,
-    start,
-    end,
-    (candidate) => candidate === entry,
-    'item',
-  );
+  const removed = removeGeneratedSlotEntry(inserted, start, end, (candidate) => candidate === entry, 'item');
   expect(removed).toBe(`before
   ${start}
 
 ${end}
 after`);
-  expect(() => removeGeneratedSlotEntry(removed, start, end, () => true, 'item')).toThrow(
-    /found 0/u,
-  );
+  expect(() => removeGeneratedSlotEntry(removed, start, end, () => true, 'item')).toThrow(/found 0/u);
 });
 
 it.live(
@@ -402,16 +376,7 @@ it.live(
         message: 'search provider access flags are internally inconsistent',
       },
       {
-        args: [
-          'retire-contribution',
-          '--',
-          VERTICAL_FLAG,
-          'inventory',
-          '--name',
-          'item',
-          '--kind',
-          'invalid',
-        ],
+        args: ['retire-contribution', '--', VERTICAL_FLAG, 'inventory', '--name', 'item', '--kind', 'invalid'],
         message: '--kind must be action, api, or page',
       },
     ];
@@ -419,10 +384,7 @@ it.live(
       const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
       for (const { args, message } of cases) {
         const output = yield* spawner.string(
-          ChildProcess.make(process.execPath, [
-            fileURLToPath(new URL('../cli.mts', import.meta.url)),
-            ...args,
-          ]),
+          ChildProcess.make(process.execPath, [fileURLToPath(new URL('../cli.mts', import.meta.url)), ...args]),
         );
         expect(output.includes(message), output).toBeTruthy();
       }

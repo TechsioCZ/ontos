@@ -1,9 +1,9 @@
-import { Effect, Cause } from 'effect';
-import { expect, it } from 'effect-rstest';
-
 import { readFile } from 'node:fs/promises';
 
+import { Effect, Cause } from 'effect';
+import { expect, it } from 'effect-rstest';
 import { Client } from 'pg';
+
 import {
   assertDatabaseSessionIdentities,
   assertSameDatabaseTarget,
@@ -178,9 +178,7 @@ it('builds deterministic current-state evidence and identifies the material trus
     'contacts.customers',
     'core.tenants',
   ]);
-  expect(
-    report.defaultPrivileges.map(({ grantee, schema, source }) => `${source}:${grantee}:${schema}`),
-  ).toEqual([
+  expect(report.defaultPrivileges.map(({ grantee, schema, source }) => `${source}:${grantee}:${schema}`)).toEqual([
     'inherited:analytics_reader:null',
     'public:PUBLIC:auth',
     'direct:ontos_runtime:contacts',
@@ -216,10 +214,7 @@ it('orders audit evidence by code units rather than locale collation', () => {
     ],
   });
 
-  expect(report.types.map(({ schema, type }) => `${schema}.${type}`)).toEqual([
-    'zeta.status',
-    'ärea.status',
-  ]);
+  expect(report.types.map(({ schema, type }) => `${schema}.${type}`)).toEqual(['zeta.status', 'ärea.status']);
 });
 
 it('totally orders default privileges from distinct creator roles', () => {
@@ -245,11 +240,9 @@ it('totally orders default privileges from distinct creator roles', () => {
 it('extracts typed audit failures from an Effect cause', () => {
   const reason = 'DATABASE_ADMIN_URL and DATABASE_URL must use distinct roles';
 
-  expect(
-    getDatabaseTrustBoundaryFailureMessage(
-      Cause.fail(new DatabaseTrustBoundaryAuditError({ reason })),
-    ),
-  ).toBe(reason);
+  expect(getDatabaseTrustBoundaryFailureMessage(Cause.fail(new DatabaseTrustBoundaryAuditError({ reason })))).toBe(
+    reason,
+  );
   expect(getDatabaseTrustBoundaryFailureMessage(Cause.die(new Error('driver defect')))).toBe(
     'Database trust-boundary audit failed',
   );
@@ -282,10 +275,7 @@ it('reports privilege escalation paths without embedding credentials or context 
       },
     ],
     role: { ...snapshot.role, bypassRls: true },
-    schemas: [
-      ...snapshot.schemas,
-      { create: true, owner: 'empty_owner', schema: 'empty', usage: true },
-    ],
+    schemas: [...snapshot.schemas, { create: true, owner: 'empty_owner', schema: 'empty', usage: true }],
   });
 
   expect(findingCodes(report)).toEqual([
@@ -401,9 +391,7 @@ it('flags selectable privileged owner-context views but accepts security invoker
   };
 
   const ownerContextReport = buildDatabaseTrustBoundaryReport(base);
-  expect(ownerContextReport.findings.map(({ code }) => code)).toEqual([
-    'runtime_role_can_use_privileged_owner_view',
-  ]);
+  expect(ownerContextReport.findings.map(({ code }) => code)).toEqual(['runtime_role_can_use_privileged_owner_view']);
   expect(ownerContextReport.summary.privilegedOwnerViewCount).toBe(1);
 
   const writableReport = buildDatabaseTrustBoundaryReport({
@@ -411,7 +399,11 @@ it('flags selectable privileged owner-context views but accepts security invoker
     tables: [
       {
         ...ownerContextView,
-        privileges: { ...ownerContextView.privileges, select: false, update: true },
+        privileges: {
+          ...ownerContextView.privileges,
+          select: false,
+          update: true,
+        },
       },
     ],
   });
@@ -422,7 +414,11 @@ it('flags selectable privileged owner-context views but accepts security invoker
     tables: [
       {
         ...ownerContextView,
-        privileges: { ...ownerContextView.privileges, select: false, update: true },
+        privileges: {
+          ...ownerContextView.privileges,
+          select: false,
+          update: true,
+        },
         updatable: false,
       },
     ],
@@ -671,12 +667,8 @@ it.live(
       readFile(new URL('../database-trust-audit/collect-snapshot.mts', import.meta.url), 'utf-8'),
     );
 
-    expect(source.match(/where membership\.admin_option or membership\.set_option/gu)?.length).toBe(
-      3,
-    );
-    expect(source).toMatch(
-      /candidate\.oid in \(select role_oid from reachable_roles\) as can_set_role/u,
-    );
+    expect(source.match(/where membership\.admin_option or membership\.set_option/gu)?.length).toBe(3);
+    expect(source).toMatch(/candidate\.oid in \(select role_oid from reachable_roles\) as can_set_role/u);
     expect(source).not.toMatch(
       /or pg_has_role\(\$1, grantee\.oid, 'SET'\)\s+or grantee\.oid in \(select role_oid from administrable_roles\)/u,
     );
@@ -711,10 +703,7 @@ it('treats inherited owner-role authority as effective runtime DDL authority', (
     ],
   });
 
-  expect(findingCodes(report)).toEqual([
-    'runtime_role_can_assume_privileged_role',
-    'runtime_role_has_ddl_authority',
-  ]);
+  expect(findingCodes(report)).toEqual(['runtime_role_can_assume_privileged_role', 'runtime_role_has_ddl_authority']);
 });
 
 it('does not inherit cluster attributes without SET ROLE or ADMIN OPTION', () => {
@@ -790,7 +779,10 @@ it('rejects evidence collected from different servers or databases', () => {
     /same PostgreSQL server and database/u,
   );
   expect(() =>
-    assertSameDatabaseTarget(target, { ...target, serverAddress: alternateServerAddress }),
+    assertSameDatabaseTarget(target, {
+      ...target,
+      serverAddress: alternateServerAddress,
+    }),
   ).toThrow(/same PostgreSQL server and database/u);
   expect(() =>
     assertSameDatabaseTarget(

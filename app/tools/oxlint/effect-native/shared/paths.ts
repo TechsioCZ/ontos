@@ -76,12 +76,9 @@ export function matchesGlobs(path: string, globs: readonly string[]): boolean {
 /** Strip fixture scaffolding first; never renormalize a relative script path around inner markers. */
 export function scriptScope(filename: string): string {
   const unified = filename.replaceAll('\\', '/');
-  const fixture = unified.match(
-    /(?:^|\/)tools\/oxlint\/[^/]+\/tests\/fixtures\/[^/]+\/(?:valid|invalid)\/(.*)$/u,
-  );
+  const fixture = unified.match(/(?:^|\/)tools\/oxlint\/[^/]+\/tests\/fixtures\/[^/]+\/(?:valid|invalid)\/(.*)$/u);
   if (fixture) return fixture[1];
-  if (!unified.startsWith('/') && !/^[A-Za-z]:\//u.test(unified))
-    return unified.replace(/^\.\//u, '');
+  if (!unified.startsWith('/') && !/^[A-Za-z]:\//u.test(unified)) return unified.replace(/^\.\//u, '');
   const match = unified.match(/(?:^|\/)((?:apps|packages|verticals|scripts|tools)\/.*)$/u);
   return match?.[1] ?? unified;
 }
@@ -104,13 +101,10 @@ export function workspacePath(
 /** Fixture-first normalization with an explicit repository root, retaining nested markers. */
 export function rootedScopePath(filename: string, root: string): string {
   const unified = filename.replaceAll('\\', '/');
-  const fixture =
-    /(?:^|\/)tools\/oxlint\/[^/]+\/tests\/fixtures\/[^/]+\/(?:valid|invalid)\/(.*)$/u.exec(unified);
+  const fixture = /(?:^|\/)tools\/oxlint\/[^/]+\/tests\/fixtures\/[^/]+\/(?:valid|invalid)\/(.*)$/u.exec(unified);
   if (fixture?.[1]) return fixture[1];
   const normalizedRoot = root.replaceAll('\\', '/');
-  return unified.startsWith(normalizedRoot)
-    ? unified.slice(normalizedRoot.length)
-    : scopePath(unified);
+  return unified.startsWith(normalizedRoot) ? unified.slice(normalizedRoot.length) : scopePath(unified);
 }
 
 /** Common source-rule policy; retain fixture-aware and legacy glob normalization. */

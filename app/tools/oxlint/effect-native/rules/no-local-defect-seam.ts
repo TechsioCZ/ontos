@@ -1,4 +1,3 @@
-import { optionRecord } from '../shared/options.ts';
 /**
  * Audit findings: **A4** — "Rebuild the error system around typed channels and contract-owned Problem
  * Details" and **A6** — "Activate real observability at the runtime roots"
@@ -52,17 +51,13 @@ import { optionRecord } from '../shared/options.ts';
  * rule never fixes or suggests.
  */
 import { defineRule } from '@oxlint/plugins';
-
 import type { Context, ESTree } from '@oxlint/plugins';
 
 import { lookupVariable } from '../shared/bindings.ts';
-import { collectEffectBindings } from '../shared/effect-imports.ts';
 import { effectOrigin } from '../shared/effect-identity.ts';
-import {
-  collectDirectMemberImports,
-  collectNamespaceLocals,
-  splitMembers,
-} from '../shared/imports.ts';
+import { collectEffectBindings } from '../shared/effect-imports.ts';
+import { collectDirectMemberImports, collectNamespaceLocals, splitMembers } from '../shared/imports.ts';
+import { optionRecord } from '../shared/options.ts';
 import { stringArray } from '../shared/options.ts';
 import { isScriptFile, isTestFile, matchesGlobs, scopePath } from '../shared/paths.ts';
 import { isInTypePosition, isNonReferencePosition } from '../shared/reference-positions.ts';
@@ -191,12 +186,7 @@ export const rule = defineRule({
 
     const program = context.sourceCode.ast;
     const bindings = collectEffectBindings(program);
-    const { namespaced, barrel } = collectNamespaceLocals(
-      program,
-      bindings,
-      watched,
-      options.reexportModules,
-    );
+    const { namespaced, barrel } = collectNamespaceLocals(program, bindings, watched, options.reexportModules);
     const directMembers = collectDirectMemberImports(program, byNamespace);
     if (namespaced.size === 0 && barrel.size === 0 && directMembers.size === 0) return {};
 
@@ -218,12 +208,7 @@ export const rule = defineRule({
       Identifier(node) {
         if (isNonReferencePosition(node)) return;
         const variable = lookupVariable(context, node);
-        if (
-          !variable?.references.some(
-            (reference) => reference.identifier === node && reference.isRead(),
-          )
-        )
-          return;
+        if (!variable?.references.some((reference) => reference.identifier === node && reference.isRead())) return;
         // Type queries and type-member names are not runtime seam references.
         if (isInTypePosition(node, RUNTIME_TS_EXPRESSIONS)) return;
         inspect(node);

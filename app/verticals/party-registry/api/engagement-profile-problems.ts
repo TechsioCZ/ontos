@@ -1,7 +1,12 @@
-import { failAuthenticatedProblem } from './fail-authenticated-problem.ts';
 import type { ActionCoreError } from '@app/core-runtime';
 import { Match, Result, Schema } from 'effect';
 
+import type {
+  EngagementProfileConflict,
+  EngagementProfileNotFound,
+  EngagementProfilePersistenceUnavailable,
+  PartyRegistryReferenceUnavailable,
+} from '../shared/domain/engagement-profile.ts';
 import {
   ContactsAuthenticationProblemSchema,
   ContactsConflictProblemSchema,
@@ -13,12 +18,7 @@ import {
   ContactsUnavailableProblemSchema,
 } from '../shared/engagement-profile-api.ts';
 import type { ContactsProblem } from '../shared/engagement-profile-api.ts';
-import type {
-  EngagementProfileConflict,
-  EngagementProfileNotFound,
-  EngagementProfilePersistenceUnavailable,
-  PartyRegistryReferenceUnavailable,
-} from '../shared/domain/engagement-profile.ts';
+import { failAuthenticatedProblem } from './fail-authenticated-problem.ts';
 
 export type EngagementActionError =
   | ActionCoreError
@@ -26,15 +26,12 @@ export type EngagementActionError =
   | EngagementProfileNotFound
   | EngagementProfilePersistenceUnavailable
   | PartyRegistryReferenceUnavailable;
-export type EngagementAttachProblem = Exclude<
-  ContactsProblem,
-  { readonly _tag: 'ContactsNotFoundProblem' }
->;
+export type EngagementAttachProblem = Exclude<ContactsProblem, { readonly _tag: 'ContactsNotFoundProblem' }>;
 
 export const engagementProblem = {
   authentication: () =>
     Result.getOrThrow(
-      Schema.decodeUnknownResult(ContactsAuthenticationProblemSchema)({
+      Schema.decodeResult(ContactsAuthenticationProblemSchema)({
         _tag: 'ContactsAuthenticationProblem',
         detail: 'A valid audience-scoped Bearer assertion is required.',
         status: 401,
@@ -42,11 +39,9 @@ export const engagementProblem = {
         type: 'https://ontos.dev/problems/operation-authentication-required',
       }),
     ),
-  conflict: (
-    code: Extract<ContactsProblem, { readonly _tag: 'ContactsConflictProblem' }>['code'],
-  ) =>
+  conflict: (code: Extract<ContactsProblem, { readonly _tag: 'ContactsConflictProblem' }>['code']) =>
     Result.getOrThrow(
-      Schema.decodeUnknownResult(ContactsConflictProblemSchema)({
+      Schema.decodeResult(ContactsConflictProblemSchema)({
         _tag: 'ContactsConflictProblem',
         code,
         detail: 'The engagement profile operation conflicts with the current state.',
@@ -57,7 +52,7 @@ export const engagementProblem = {
     ),
   forbidden: () =>
     Result.getOrThrow(
-      Schema.decodeUnknownResult(ContactsForbiddenProblemSchema)({
+      Schema.decodeResult(ContactsForbiddenProblemSchema)({
         _tag: 'ContactsForbiddenProblem',
         detail: 'The principal is not permitted to perform this Party Registry operation.',
         status: 403,
@@ -67,7 +62,7 @@ export const engagementProblem = {
     ),
   internal: () =>
     Result.getOrThrow(
-      Schema.decodeUnknownResult(ContactsInternalProblemSchema)({
+      Schema.decodeResult(ContactsInternalProblemSchema)({
         _tag: 'ContactsInternalProblem',
         detail: 'The engagement profile operation could not be completed.',
         status: 500,
@@ -77,7 +72,7 @@ export const engagementProblem = {
     ),
   invalid: () =>
     Result.getOrThrow(
-      Schema.decodeUnknownResult(ContactsInvalidRequestProblemSchema)({
+      Schema.decodeResult(ContactsInvalidRequestProblemSchema)({
         _tag: 'ContactsInvalidRequestProblem',
         detail: 'The engagement profile operation request is invalid.',
         status: 400,
@@ -87,7 +82,7 @@ export const engagementProblem = {
     ),
   notFound: () =>
     Result.getOrThrow(
-      Schema.decodeUnknownResult(ContactsNotFoundProblemSchema)({
+      Schema.decodeResult(ContactsNotFoundProblemSchema)({
         _tag: 'ContactsNotFoundProblem',
         detail: 'The requested engagement profile was not found.',
         status: 404,
@@ -97,7 +92,7 @@ export const engagementProblem = {
     ),
   precondition: () =>
     Result.getOrThrow(
-      Schema.decodeUnknownResult(ContactsPreconditionRequiredProblemSchema)({
+      Schema.decodeResult(ContactsPreconditionRequiredProblemSchema)({
         _tag: 'ContactsPreconditionRequiredProblem',
         detail: 'An Idempotency-Key header is required.',
         status: 428,
@@ -107,7 +102,7 @@ export const engagementProblem = {
     ),
   unavailable: () =>
     Result.getOrThrow(
-      Schema.decodeUnknownResult(ContactsUnavailableProblemSchema)({
+      Schema.decodeResult(ContactsUnavailableProblemSchema)({
         _tag: 'ContactsUnavailableProblem',
         detail: 'The engagement profile operation is temporarily unavailable.',
         retryable: true,
@@ -125,23 +120,20 @@ export const failEngagementProblem = <Problem extends ContactsProblem>(mapped: P
 export const mapEngagementActionProblem = (error: EngagementActionError): ContactsProblem =>
   Match.value(error).pipe(
     Match.tags({
-      ActionAlreadyCommitted: () =>
-        engagementProblem.conflict('contacts_engagement_profile_lifecycle_conflict'),
+      ActionAlreadyCommitted: () => engagementProblem.conflict('contacts_engagement_profile_lifecycle_conflict'),
       ActionCollectorError: engagementProblem.internal,
       ActionCommitIndeterminate: engagementProblem.unavailable,
       ActionHandlerExecutionError: engagementProblem.internal,
       ActionIdempotencyKeyRequired: engagementProblem.precondition,
       ActionInvocationNotFound: engagementProblem.notFound,
       ActionInvocationPersistenceError: engagementProblem.unavailable,
-      ActionInvocationStateError: () =>
-        engagementProblem.conflict('contacts_engagement_profile_lifecycle_conflict'),
+      ActionInvocationStateError: () => engagementProblem.conflict('contacts_engagement_profile_lifecycle_conflict'),
       ActionPayloadValidationError: engagementProblem.invalid,
       ActionPermissionCheckError: engagementProblem.unavailable,
       ActionPermissionDenied: engagementProblem.forbidden,
       ActionPolicyDenied: engagementProblem.internal,
       ActionPolicyEvaluationError: engagementProblem.unavailable,
-      ActionRequestHashConflict: () =>
-        engagementProblem.conflict('contacts_engagement_profile_lifecycle_conflict'),
+      ActionRequestHashConflict: () => engagementProblem.conflict('contacts_engagement_profile_lifecycle_conflict'),
       ActionResultValidationError: engagementProblem.internal,
       ActionTransactionError: engagementProblem.unavailable,
       ActionTrustedContextValidationError: engagementProblem.authentication,

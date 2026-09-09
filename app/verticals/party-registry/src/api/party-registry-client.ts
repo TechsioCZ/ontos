@@ -14,14 +14,14 @@ import { executePartyContactPointDetail } from './party-contact-point-detail-cli
 import { executePartyContactPoints } from './party-contact-points-client.ts';
 import { executePartyCorrection } from './party-correction-client.ts';
 import { executePartyDetail } from './party-detail-client.ts';
-import { executePartyMatchDecision } from './party-match-decision-client.ts';
 import { executePartyMatch } from './party-match-client.ts';
+import { executePartyMatchDecision } from './party-match-decision-client.ts';
 import { executePartyMergeReadiness } from './party-merge-readiness-client.ts';
 import { executePartyOfficialIdentifierDetail } from './party-official-identifier-detail-client.ts';
 import { executePartyOfficialIdentifierHistory } from './party-official-identifier-history-client.ts';
-import { executePartyRelationshipDetail } from './party-relationship-detail-client.ts';
 import { createPartyRegistryHttpClient } from './party-registry-http-client.ts';
 import type { PartyRegistryHttpClientOptions } from './party-registry-http-client.ts';
+import { executePartyRelationshipDetail } from './party-relationship-detail-client.ts';
 
 export * from './ares-lookup-client.ts';
 export * from './counterparties-search-client.ts';
@@ -83,11 +83,7 @@ export interface PartyRegistryClient {
 
 export type PartyRegistryClientError = HttpClientError.HttpClientError | Schema.SchemaError;
 
-export type PartyRegistryClientEffect<Success> = Effect.Effect<
-  Success,
-  PartyRegistryClientError,
-  never
->;
+export type PartyRegistryClientEffect<Success> = Effect.Effect<Success, PartyRegistryClientError, never>;
 
 export type PartyRegistryClientOptions = PartyRegistryHttpClientOptions;
 

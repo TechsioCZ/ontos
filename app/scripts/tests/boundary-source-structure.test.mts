@@ -1,5 +1,6 @@
-import { expect, it } from 'effect-rstest';
 import { SyntaxKind } from '@typescript/native/unstable/ast';
+import { expect, it } from 'effect-rstest';
+
 import {
   DelimiterDepth,
   matchingDelimiter,
@@ -35,9 +36,7 @@ it('balanced traversal ignores nested separators but preserves source offsets', 
 
 it('generic parameter commas and arrow returns remain separate lexical concerns', () => {
   const source = 'value: Map<string, () => number>, next: number';
-  expect(topLevelSeparators(source, ',', 0, source.length, true)).toEqual([
-    source.indexOf(', next'),
-  ]);
+  expect(topLevelSeparators(source, ',', 0, source.length, true)).toEqual([source.indexOf(', next')]);
   expect(topLevelSeparators('value < maximum; next > minimum;', ';')).toEqual([15, 31]);
   const depth = new DelimiterDepth();
   depth.update(']');
@@ -55,9 +54,7 @@ it('token rescan retains nested template expressions and excludes regex punctuat
 });
 
 it('endpoint grammar shares only topology, preserving owner path and endpoint identity', () => {
-  expect(
-    hasGeneratedModuleApiContract(endpointApi(stockReadPath), 'StockApi', 'stock', 'stock'),
-  ).toBe(true);
+  expect(hasGeneratedModuleApiContract(endpointApi(stockReadPath), 'StockApi', 'stock', 'stock')).toBe(true);
   expect(
     hasGeneratedProviderApiContract(
       endpointApi('/inventory.stock/reports/stock'),
@@ -68,21 +65,10 @@ it('endpoint grammar shares only topology, preserving owner path and endpoint id
     ),
   ).toBe(true);
   expect(
-    hasGeneratedProviderApiContract(
-      endpointApi(stockReadPath),
-      'StockApi',
-      'inventory.stock',
-      'stock',
-      'report',
-    ),
+    hasGeneratedProviderApiContract(endpointApi(stockReadPath), 'StockApi', 'inventory.stock', 'stock', 'report'),
   ).toBe(false);
   expect(
-    hasGeneratedModuleApiContract(
-      endpointApi(stockReadPath, 'UnrelatedEndpoint'),
-      'StockApi',
-      'stock',
-      'stock',
-    ),
+    hasGeneratedModuleApiContract(endpointApi(stockReadPath, 'UnrelatedEndpoint'), 'StockApi', 'stock', 'stock'),
   ).toBe(false);
   expect(
     hasGeneratedModuleApiContract(

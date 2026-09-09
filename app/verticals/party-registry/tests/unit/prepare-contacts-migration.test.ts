@@ -1,21 +1,15 @@
-import { expect, it } from 'effect-rstest';
 import { Effect } from 'effect';
+import { expect, it } from 'effect-rstest';
 import { Client } from 'pg';
-import {
-  classifyContactsJournalState,
-  prepareContactsMigration,
-} from '../../scripts/prepare-contacts-migration.mts';
+
+import { classifyContactsJournalState, prepareContactsMigration } from '../../scripts/prepare-contacts-migration.mts';
 
 interface JournalClientFixture {
   readonly client: Client;
   readonly queries: string[];
 }
 
-const journalClient = (
-  legacy: boolean,
-  contacts: boolean,
-  renameFailure?: Error,
-): JournalClientFixture => {
+const journalClient = (legacy: boolean, contacts: boolean, renameFailure?: Error): JournalClientFixture => {
   const queries: string[] = [];
   const client = new Client();
   // Accepted foreign API fixture: pg Client.query returns Promises, consumed by the

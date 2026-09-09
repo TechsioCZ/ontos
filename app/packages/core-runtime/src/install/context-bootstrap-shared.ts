@@ -1,5 +1,6 @@
 import { v1 } from '@authzed/authzed-node';
 import { and, eq, or } from 'drizzle-orm';
+
 import { legalEntities, principalAuthBindings, principals } from '../db/schema.ts';
 import type { CoreTransaction } from '../db/types.ts';
 
@@ -14,10 +15,7 @@ interface BootstrapIdentity {
   readonly tenantId: string;
 }
 
-export const selectBootstrapLegalEntities = (
-  transaction: CoreTransaction,
-  context: BootstrapIdentity,
-) =>
+export const selectBootstrapLegalEntities = (transaction: CoreTransaction, context: BootstrapIdentity) =>
   transaction
     .select({
       legalEntityId: legalEntities.legalEntityId,
@@ -40,10 +38,7 @@ export const selectBootstrapLegalEntities = (
     )
     .limit(2);
 
-export const selectBootstrapPrincipals = (
-  transaction: CoreTransaction,
-  context: BootstrapIdentity,
-) =>
+export const selectBootstrapPrincipals = (transaction: CoreTransaction, context: BootstrapIdentity) =>
   transaction
     .select({
       displayName: principals.displayName,

@@ -1,5 +1,6 @@
-import { expect, it } from 'effect-rstest';
 import { Result } from 'effect';
+import { expect, it } from 'effect-rstest';
+
 import { readGeneratedSlotEntries } from '../scaffolding/shared.mts';
 
 const start = '// slot:start';
@@ -13,10 +14,7 @@ it('fluent slots split only outer calls, retaining nested multiline fluent chain
     .add(Group.make('nested'))
     .pipe(identity),
 )`;
-  expect(readEntries(`${nested}\n.addHttpApi(SecondApi)`)).toEqual([
-    nested,
-    '.addHttpApi(SecondApi)',
-  ]);
+  expect(readEntries(`${nested}\n.addHttpApi(SecondApi)`)).toEqual([nested, '.addHttpApi(SecondApi)']);
 });
 
 it('slot delimiters inside strings and comments do not terminate entries', () => {
@@ -27,10 +25,7 @@ it('slot delimiters inside strings and comments do not terminate entries', () =>
 
 it('line comments protect fluent-looking text until the newline', () => {
   const first = '.addHttpApi(\n  FirstApi // .addHttpApi(FakeApi);\n)';
-  expect(readEntries(`${first}\n.addHttpApi(SecondApi)`)).toEqual([
-    first,
-    '.addHttpApi(SecondApi)',
-  ]);
+  expect(readEntries(`${first}\n.addHttpApi(SecondApi)`)).toEqual([first, '.addHttpApi(SecondApi)']);
 });
 
 it('empty generated slots remain empty', () => {

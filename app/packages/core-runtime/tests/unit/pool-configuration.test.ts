@@ -1,9 +1,7 @@
-import { expect, it } from 'effect-rstest';
 import { Effect, Redacted, Predicate } from 'effect';
-import {
-  DEFAULT_DATABASE_POOL_DEADLINES,
-  configureDatabasePool,
-} from '../../src/db/pool-configuration.ts';
+import { expect, it } from 'effect-rstest';
+
+import { DEFAULT_DATABASE_POOL_DEADLINES, configureDatabasePool } from '../../src/db/pool-configuration.ts';
 
 const runtimeUrl = 'postgresql://runtime:secret@localhost:5432/ontos';
 
@@ -12,9 +10,7 @@ it.effect('uses acquisition and statement deadlines without opting into a lock d
     const connectionString = Redacted.make(`${runtimeUrl}?sslmode=require`);
     const configuration = yield* configureDatabasePool(connectionString);
 
-    expect(configuration.connectionTimeoutMillis).toBe(
-      DEFAULT_DATABASE_POOL_DEADLINES.connectionTimeoutMillis,
-    );
+    expect(configuration.connectionTimeoutMillis).toBe(DEFAULT_DATABASE_POOL_DEADLINES.connectionTimeoutMillis);
     expect(configuration.statement_timeout).toBe(DEFAULT_DATABASE_POOL_DEADLINES.statement_timeout);
     expect(Object.hasOwn(configuration, 'lock_timeout')).toBe(false);
     expect(configuration.connectionString).toBe(`${runtimeUrl}?sslmode=require`);
@@ -58,13 +54,9 @@ it.effect('rejects URL deadline overrides with a typed configuration failure', (
 it.effect('rejects invalid deadline values with a typed configuration failure', () =>
   Effect.gen(function* verifyInvalidDeadline() {
     const connectionString = Redacted.make(runtimeUrl);
-    const error = yield* Effect.flip(
-      configureDatabasePool(connectionString, { statement_timeout: 0 }),
-    );
+    const error = yield* Effect.flip(configureDatabasePool(connectionString, { statement_timeout: 0 }));
 
     expect(Predicate.isTagged(error, 'DatabaseConnectionError')).toBe(true);
-    expect(error.reason).toBe(
-      'Database pool deadlines must be positive 32-bit millisecond integers',
-    );
+    expect(error.reason).toBe('Database pool deadlines must be positive 32-bit millisecond integers');
   }),
 );

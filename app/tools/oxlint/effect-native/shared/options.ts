@@ -7,23 +7,17 @@ export function stringArray(value: unknown, fallback: readonly string[]): readon
 
 /** every-mode preserves the old stringList helper's treatment of sparse arrays. */
 export function stringList(value: unknown, fallback: readonly string[]): readonly string[] {
-  return Array.isArray(value) && value.every((entry) => typeof entry === 'string')
-    ? value
-    : fallback;
+  return Array.isArray(value) && value.every((entry) => typeof entry === 'string') ? value : fallback;
 }
 
 export function optionRecord(value: unknown): Record<string, unknown> {
-  return typeof value === 'object' && value !== null && !Array.isArray(value)
-    ? (value as Record<string, unknown>)
-    : {};
+  return typeof value === 'object' && value !== null && !Array.isArray(value) ? (value as Record<string, unknown>) : {};
 }
 export function booleanOption(value: unknown, fallback: boolean): boolean {
   return typeof value === 'boolean' ? value : fallback;
 }
 export function positiveInteger(value: unknown, fallback: number, minimum = 1): number {
-  return typeof value === 'number' && Number.isInteger(value) && value >= minimum
-    ? value
-    : fallback;
+  return typeof value === 'number' && Number.isInteger(value) && value >= minimum ? value : fallback;
 }
 export function stringOption(value: unknown, fallback: string, allowEmpty = true): string {
   return typeof value === 'string' && (allowEmpty || value.length > 0) ? value : fallback;

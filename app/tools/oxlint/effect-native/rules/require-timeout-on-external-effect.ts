@@ -1,4 +1,3 @@
-import { optionRecord } from '../shared/options.ts';
 /**
  * effect-native/require-timeout-on-external-effect
  *
@@ -81,15 +80,15 @@ import { optionRecord } from '../shared/options.ts';
  * or `scripts/` is edited to satisfy this rule.
  */
 import { defineRule } from '@oxlint/plugins';
-
 import type { Context, ESTree } from '@oxlint/plugins';
 
-import { isScriptFile, isTestFile, scopePath, matchesGlobs } from '../shared/paths.ts';
 import { identityUnwrap, staticString, FUNCTION_TYPES } from '../shared/ast.ts';
 import { lookupVariable as lexicalVariable } from '../shared/bindings.ts';
 import { bindingPath } from '../shared/effect-identity.ts';
 import { importedName } from '../shared/imports.ts';
+import { optionRecord } from '../shared/options.ts';
 import { stringArray, booleanOption as boolean, stringOption, compile } from '../shared/options.ts';
+import { isScriptFile, isTestFile, scopePath, matchesGlobs } from '../shared/paths.ts';
 
 const DEFAULT_INCLUDE = ['apps/**', 'verticals/**', 'packages/**'];
 const DEFAULT_IGNORE = [
@@ -142,11 +141,7 @@ function readOptions(context: Context): RuleOptions {
     requireRetry: boolean(record.requireRetry, false),
     portFiles: stringArray(record.portFiles, DEFAULT_PORT_FILES),
     trustPorts: boolean(record.trustPorts, false),
-    policyHelperPattern: stringOption(
-      record.policyHelperPattern,
-      DEFAULT_POLICY_HELPER_PATTERN,
-      false,
-    ),
+    policyHelperPattern: stringOption(record.policyHelperPattern, DEFAULT_POLICY_HELPER_PATTERN, false),
     includeTests: boolean(record.includeTests, false),
     includeScripts: boolean(record.includeScripts, false),
     include: stringArray(record.include, DEFAULT_INCLUDE),
@@ -159,19 +154,13 @@ function readOptions(context: Context): RuleOptions {
 
 function inScope(path: string, options: RuleOptions): boolean {
   if (!options.requireTimeout && !options.requireRetry) return false;
-  if (matchesGlobs(path, options.ignore) || (!options.includeTests && isTestFile(path)))
-    return false;
-  if (isScriptFile(path) ? !options.includeScripts : !matchesGlobs(path, options.include))
-    return false;
+  if (matchesGlobs(path, options.ignore) || (!options.includeTests && isTestFile(path))) return false;
+  if (isScriptFile(path) ? !options.includeScripts : !matchesGlobs(path, options.include)) return false;
   return !(options.trustPorts && matchesGlobs(path, options.portFiles));
 }
 
 type Definition = import('@oxlint/plugins').Variable['defs'][number];
-function unseenDefinition(
-  context: Context,
-  node: ESTree.Node,
-  seen: Set<unknown>,
-): Definition | undefined {
+function unseenDefinition(context: Context, node: ESTree.Node, seen: Set<unknown>): Definition | undefined {
   const variable = lexicalVariable(context, node);
   if (variable === null || seen.has(variable) || variable.defs.length !== 1) return undefined;
   seen.add(variable);
@@ -183,8 +172,7 @@ function memberPolicy(member: string | null): Policy | null {
   return RETRY_MEMBERS.has(member) ? { timeout: false, retry: true } : null;
 }
 function constantInitializer(def: Definition | undefined): ESTree.Expression | null {
-  if (def?.type !== 'Variable' || (def.parent as ESTree.VariableDeclaration)?.kind !== 'const')
-    return null;
+  if (def?.type !== 'Variable' || (def.parent as ESTree.VariableDeclaration)?.kind !== 'const') return null;
   return (def.node as ESTree.VariableDeclarator).init;
 }
 function importedPolicy(def: Definition, localName: string, pattern: RegExp): Policy | null {
@@ -194,10 +182,7 @@ function importedPolicy(def: Definition, localName: string, pattern: RegExp): Po
   const name = specifier.type === 'ImportSpecifier' ? importedName(specifier) : localName;
   return pattern.test(name) ? { timeout: true, retry: true } : null;
 }
-function isHttpNamespace(
-  context: Context,
-  name: Extract<ESTree.Node, { type: 'Identifier' }>,
-): boolean {
+function isHttpNamespace(context: Context, name: Extract<ESTree.Node, { type: 'Identifier' }>): boolean {
   const imported = lexicalVariable(context, name)?.defs[0];
   if (imported?.type !== 'ImportBinding') return false;
   const source = (imported.parent as ESTree.ImportDeclaration).source.value;
@@ -213,14 +198,9 @@ function isHttpNamespace(
 function hasHttpAnnotation(context: Context, binding: ESTree.Node | undefined): boolean {
   if (binding?.type !== 'Identifier') return false;
   const annotation = binding.typeAnnotation?.typeAnnotation;
-  if (annotation?.type !== 'TSTypeReference' || annotation.typeName.type !== 'TSQualifiedName')
-    return false;
+  if (annotation?.type !== 'TSTypeReference' || annotation.typeName.type !== 'TSQualifiedName') return false;
   const name = annotation.typeName;
-  return (
-    name.left.type === 'Identifier' &&
-    name.right.name === 'HttpClient' &&
-    isHttpNamespace(context, name.left)
-  );
+  return name.left.type === 'Identifier' && name.right.name === 'HttpClient' && isHttpNamespace(context, name.left);
 }
 function tryProperty(property: ESTree.ObjectExpression['properties'][number]): boolean {
   if (property.type !== 'Property') return false;
@@ -238,8 +218,7 @@ function bridgeThunk(call: ESTree.CallExpression): ESTree.Node | null {
   return property?.type === 'Property' ? property.value : null;
 }
 function returnedBody(thunk: ESTree.Node | null): ESTree.Node | null {
-  if (thunk?.type !== 'ArrowFunctionExpression' && thunk?.type !== 'FunctionExpression')
-    return null;
+  if (thunk?.type !== 'ArrowFunctionExpression' && thunk?.type !== 'FunctionExpression') return null;
   const body = thunk.body;
   if (body?.type !== 'BlockStatement') return body;
   if (body.body.length !== 1 || body.body[0]?.type !== 'ReturnStatement') return null;
@@ -318,9 +297,7 @@ export const rule = defineRule({
       return identity?.length === 2 && identity[0] === 'Effect' ? (identity[1] ?? null) : null;
     };
     const memberKey = (node: ESTree.MemberExpression): string | null =>
-      !node.computed && node.property.type === 'Identifier'
-        ? node.property.name
-        : staticString(node.property);
+      !node.computed && node.property.type === 'Identifier' ? node.property.name : staticString(node.property);
     const effectCallee = (call: ESTree.CallExpression): string | null => {
       const callee = identityUnwrap(call.callee);
       if (callee.type === 'CallExpression' && effectMemberOf(callee.callee) === 'fn') return 'fn';
@@ -348,11 +325,7 @@ export const rule = defineRule({
     };
     const outerExpression = (node: ESTree.Node): ESTree.Node => {
       let current = node;
-      while (
-        current.parent !== null &&
-        current.parent !== undefined &&
-        identityUnwrap(current.parent) === current
-      )
+      while (current.parent !== null && current.parent !== undefined && identityUnwrap(current.parent) === current)
         current = current.parent;
       return current;
     };
@@ -379,8 +352,7 @@ export const rule = defineRule({
         (member === 'acquireRelease' && index === 1) ||
         (member === 'acquireUseRelease' && index === 2) ||
         (member === 'addFinalizer' && index === 0) ||
-        (['ensuring', 'onExit', 'onInterrupt'].includes(member ?? '') &&
-          index === call.arguments.length - 1)
+        (['ensuring', 'onExit', 'onInterrupt'].includes(member ?? '') && index === call.arguments.length - 1)
       );
     };
     type AncestorStep = 'continue' | 'stop' | 'finalizer';
@@ -391,36 +363,18 @@ export const rule = defineRule({
       if (finalizerArgument(owner, outer)) return 'finalizer';
       const member = effectCallee(owner);
       if (member === null) return 'stop';
-      return effectCallbacks.has(member) ||
-        (options.crossEffectGen && EFFECT_PROGRAM_WRAPPERS.has(member))
+      return effectCallbacks.has(member) || (options.crossEffectGen && EFFECT_PROGRAM_WRAPPERS.has(member))
         ? 'continue'
         : 'stop';
     };
-    const canCrossCall = (
-      call: ESTree.CallExpression,
-      member: string | null,
-      index: number,
-    ): boolean => {
-      const separateLifetime = [
-        'map',
-        'sync',
-        'succeed',
-        'as',
-        'forkChild',
-        'forkScoped',
-        'forkDaemon',
-        'cached',
-      ];
+    const canCrossCall = (call: ESTree.CallExpression, member: string | null, index: number): boolean => {
+      const separateLifetime = ['map', 'sync', 'succeed', 'as', 'forkChild', 'forkScoped', 'forkDaemon', 'cached'];
       if (member !== null && !separateLifetime.includes(member)) return true;
       // Native Array.map builds the Effect collection; do not infer arbitrary helpers.
       const callee = identityUnwrap(call.callee);
       return callee.type === 'MemberExpression' && memberKey(callee) === 'map' && index >= 0;
     };
-    const mergeFollowing = (
-      call: ESTree.CallExpression,
-      start: number,
-      merge: (value: ESTree.Node) => void,
-    ): void => {
+    const mergeFollowing = (call: ESTree.CallExpression, start: number, merge: (value: ESTree.Node) => void): void => {
       for (const argument of call.arguments.slice(start)) merge(argument);
     };
     const isPolicyMember = (member: string | null): boolean =>
@@ -510,14 +464,9 @@ export const rule = defineRule({
       if (body === null) return false;
       body = identityUnwrap(body);
       if (body.type === 'AwaitExpression') body = identityUnwrap(body.argument);
-      return (
-        body.type === 'ImportExpression' && /^\.{1,2}\//u.test(staticString(body.source) ?? '')
-      );
+      return body.type === 'ImportExpression' && /^\.{1,2}\//u.test(staticString(body.source) ?? '');
     };
-    const report = (
-      node: ESTree.Node,
-      messageId: 'unboundedPromiseBridge' | 'unboundedHttpCall',
-    ): void => {
+    const report = (node: ESTree.Node, messageId: 'unboundedPromiseBridge' | 'unboundedHttpCall'): void => {
       const found = inspectAncestors(node);
       if (found.finalizer || satisfied(found.policy)) return;
       context.report({
@@ -547,20 +496,14 @@ export const rule = defineRule({
         if (!options.promiseBridges.includes(effectMemberOf(node) ?? '')) return;
         const outer = outerExpression(node),
           parent = outer.parent;
-        if (
-          parent?.type === 'CallExpression' &&
-          parent.arguments.includes(outer as ESTree.Argument)
-        )
+        if (parent?.type === 'CallExpression' && parent.arguments.includes(outer as ESTree.Argument))
           report(node, 'unboundedPromiseBridge');
       },
       Identifier(node) {
         if (!options.promiseBridges.includes(effectMemberOf(node) ?? '')) return;
         const outer = outerExpression(node),
           parent = outer.parent;
-        if (
-          parent?.type === 'CallExpression' &&
-          parent.arguments.includes(outer as ESTree.Argument)
-        )
+        if (parent?.type === 'CallExpression' && parent.arguments.includes(outer as ESTree.Argument))
           report(node, 'unboundedPromiseBridge');
       },
     };

@@ -1,11 +1,12 @@
 import { Cause, Effect, Exit, Schema } from 'effect';
 import type { Redacted } from 'effect';
-import { ActionRuntime } from '../actions/runtime.ts';
-import type { ActionRegistration } from '../actions/definition.ts';
+
 import type { ActionTransportMetadata } from '../actions/context.ts';
+import type { ActionRegistration } from '../actions/definition.ts';
 import type { ActionCoreError } from '../actions/errors.ts';
 import type { DomainEventContractMap } from '../actions/events.ts';
 import type { TrustedPrincipalContext } from '../actions/principal-context.ts';
+import { ActionRuntime } from '../actions/runtime.ts';
 
 export interface ActionHttpEndpointHeaders {
   readonly idempotencyKey: string | undefined;
@@ -153,9 +154,9 @@ export const runGovernedActionHttp = <
     }
 
     const principal = yield* input.principal.authenticate(input.requestHeaders.authorization);
-    const encodedPayload = yield* Schema.encodeEffect(input.registration.descriptor.payloadSchema)(
-      input.payload,
-    ).pipe(Effect.orDie);
+    const encodedPayload = yield* Schema.encodeEffect(input.registration.descriptor.payloadSchema)(input.payload).pipe(
+      Effect.orDie,
+    );
     const runtime = yield* ActionRuntime;
     let transport: ActionTransportMetadata;
     if (input.endpointHeaders.idempotencyKey === undefined) {
@@ -166,7 +167,10 @@ export const runGovernedActionHttp = <
     } else {
       transport =
         input.endpointHeaders.traceId === undefined
-          ? { correlationId, idempotencyKey: input.endpointHeaders.idempotencyKey }
+          ? {
+              correlationId,
+              idempotencyKey: input.endpointHeaders.idempotencyKey,
+            }
           : {
               correlationId,
               idempotencyKey: input.endpointHeaders.idempotencyKey,
@@ -199,7 +203,9 @@ export const bindGovernedActionHttp =
   <
     PayloadSchema extends Schema.ConstraintDecoder<unknown> & Schema.ConstraintEncoder<unknown>,
     ResultSchema extends Schema.ConstraintDecoder<unknown>,
-    DomainErrorSchema extends Schema.ConstraintDecoder<{ readonly _tag: string }>,
+    DomainErrorSchema extends Schema.ConstraintDecoder<{
+      readonly _tag: string;
+    }>,
     DomainEvents extends DomainEventContractMap,
     Owner extends string,
     Services,

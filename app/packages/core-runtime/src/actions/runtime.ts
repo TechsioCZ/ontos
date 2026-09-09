@@ -1,13 +1,26 @@
 import { Cause, Context, Effect, Exit, Layer, Option, Ref, Result, Schema } from 'effect';
 import type { SqlError } from 'effect/unstable/sql/SqlError';
 import { ConnectionError, UnknownError, isSqlError } from 'effect/unstable/sql/SqlError';
+
 import {
   decodeTrustedPrincipalContext,
   isTrustedSupportRecoveryPrincipalContext,
 } from '../auth/system-principal-context-provenance.ts';
+import { isDatabaseCommitAcknowledgementAmbiguous } from '../database/driver-failure.ts';
 import { findPostgresFailure } from '../database/postgres-failure.ts';
 import { CoreDatabase as CoreDatabaseService } from '../db/client.ts';
+import { installOperationalScope } from '../db/scoped-transaction.ts';
 import type { CoreTransaction } from '../db/types.ts';
+import type { ModuleEntrypointGatewayService } from '../modules/module-entrypoint-gateway.ts';
+import { ModuleEntrypointGateway } from '../modules/module-entrypoint-gateway.ts';
+import type { TenantModuleEntrypoint } from '../modules/module-entrypoint.ts';
+import type { ModuleStateGateService } from '../modules/module-state-gate.ts';
+import { ModuleStateGate } from '../modules/module-state-gate.ts';
+import type { OperationalScope, OperationalScopeResolverService } from '../operations/context.ts';
+import { OperationalScopeResolver } from '../operations/context.ts';
+import { ContextAccess } from '../permissions/context-access.ts';
+import type { ActionPermissionService } from '../permissions/service.ts';
+import { ActionPermission } from '../permissions/service.ts';
 import { createActionCollector } from './collector.ts';
 import type { ActionTransportMetadata, TrustedPrincipalContext } from './context.ts';
 import { ActionTransportMetadataSchema } from './context.ts';
@@ -42,28 +55,11 @@ import {
   ActionTransactionError,
   ActionTrustedContextValidationError,
 } from './errors.ts';
-
-import { isDatabaseCommitAcknowledgementAmbiguous } from '../database/driver-failure.ts';
-import { installOperationalScope } from '../db/scoped-transaction.ts';
-import type { ModuleEntrypointGatewayService } from '../modules/module-entrypoint-gateway.ts';
-import { ModuleEntrypointGateway } from '../modules/module-entrypoint-gateway.ts';
-import type { TenantModuleEntrypoint } from '../modules/module-entrypoint.ts';
-import type { ModuleStateGateService } from '../modules/module-state-gate.ts';
-import { ModuleStateGate } from '../modules/module-state-gate.ts';
-import type { OperationalScope, OperationalScopeResolverService } from '../operations/context.ts';
-import { OperationalScopeResolver } from '../operations/context.ts';
-import { ContextAccess } from '../permissions/context-access.ts';
-import type { ActionPermissionService } from '../permissions/service.ts';
-import { ActionPermission } from '../permissions/service.ts';
 import type { ActionCoreError, ActionInvocationNotFound } from './errors.ts';
 import type { DomainEventContractMap } from './events.ts';
 import type { ActionPolicy, ActionPolicyEvaluatorInput } from './policy.ts';
 import { PolicyDenied } from './policy.ts';
-import type {
-  ActionInvocationRecord,
-  ActionPolicyEvidence,
-  ActionRepositoryService,
-} from './repository.ts';
+import type { ActionInvocationRecord, ActionPolicyEvidence, ActionRepositoryService } from './repository.ts';
 import {
   ActionRepository,
   computeActionRequestHash,
@@ -82,12 +78,7 @@ const requireIdempotencyKey = (idempotency: string, transport: ActionTransportMe
       )
     : Effect.void;
 
-const withOptionalProperty = <
-  Base extends object,
-  Key extends PropertyKey,
-  Value,
-  Trailing extends object,
->(
+const withOptionalProperty = <Base extends object, Key extends PropertyKey, Value, Trailing extends object>(
   base: Base,
   condition: boolean,
   key: Key,
@@ -95,11 +86,12 @@ const withOptionalProperty = <
   trailing: Trailing,
 ) => (condition ? { ...base, [key]: value, ...trailing } : { ...base, ...trailing });
 
-const attachFailureCause = <Failure extends object, FailureCause>(
-  failure: Failure,
-  cause: FailureCause,
-): Failure => {
-  Object.defineProperty(failure, 'cause', { configurable: false, enumerable: false, value: cause });
+const attachFailureCause = <Failure extends object, FailureCause>(failure: Failure, cause: FailureCause): Failure => {
+  Object.defineProperty(failure, 'cause', {
+    configurable: false,
+    enumerable: false,
+    value: cause,
+  });
   return failure;
 };
 
@@ -149,9 +141,7 @@ export interface ResolveActionCommitInput {
   readonly principal: unknown;
 }
 
-const ActionInvocationIdSchema = Schema.String.check(Schema.isUUID()).pipe(
-  Schema.brand('ActionInvocationId'),
-);
+const ActionInvocationIdSchema = Schema.String.check(Schema.isUUID()).pipe(Schema.brand('ActionInvocationId'));
 
 const ActionCommitOpenSchema = Schema.TaggedStruct('ActionCommitOpen', {
   invocationId: ActionInvocationIdSchema,
@@ -174,7 +164,9 @@ export interface ActionRuntimeService {
   readonly runAction: <
     PayloadSchema extends Schema.ConstraintDecoder<unknown>,
     ResultSchema extends Schema.ConstraintDecoder<unknown>,
-    DomainErrorSchema extends Schema.ConstraintDecoder<{ readonly _tag: string }>,
+    DomainErrorSchema extends Schema.ConstraintDecoder<{
+      readonly _tag: string;
+    }>,
     DomainEvents extends DomainEventContractMap,
     Owner extends string,
     Services,
@@ -189,11 +181,7 @@ export interface ActionRuntimeService {
       Services,
       HandlerRequirements
     >,
-  ) => Effect.Effect<
-    ResultSchema['Type'],
-    ActionCoreError | DomainErrorSchema['Type'],
-    HandlerRequirements
-  >;
+  ) => Effect.Effect<ResultSchema['Type'], ActionCoreError | DomainErrorSchema['Type'], HandlerRequirements>;
 }
 
 export interface ActionRuntimeOptions {
@@ -275,9 +263,7 @@ const ActionResourcePermissionTargetSchema = Schema.Struct({
 const resolveActionResourcePermissionTarget = <Payload>(
   payload: Payload,
   scope: OperationalScope,
-  resolver:
-    | ((payload: Payload, scope: OperationalScope) => ActionResourcePermissionTarget)
-    | undefined,
+  resolver: ((payload: Payload, scope: OperationalScope) => ActionResourcePermissionTarget) | undefined,
 ): Effect.Effect<Option.Option<ActionResourcePermissionTarget>, ActionPermissionCheckError> =>
   Effect.suspend(() => {
     if (resolver === undefined) {
@@ -320,10 +306,7 @@ const verifyInvocation = (
   requestHash: string,
 ): Effect.Effect<
   void,
-  | ActionAlreadyCommitted
-  | ActionCommitIndeterminate
-  | ActionInvocationStateError
-  | ActionRequestHashConflict
+  ActionAlreadyCommitted | ActionCommitIndeterminate | ActionInvocationStateError | ActionRequestHashConflict
 > => {
   if (invocation.requestHash !== requestHash) {
     return Effect.fail(requestHashConflict());
@@ -340,10 +323,7 @@ const verifyInvocation = (
       }),
     );
   }
-  if (
-    (invocation.status === 'received' || invocation.status === 'running') &&
-    invocation.completedAt === null
-  ) {
+  if ((invocation.status === 'received' || invocation.status === 'running') && invocation.completedAt === null) {
     return Effect.void;
   }
   return Effect.fail(
@@ -387,9 +367,7 @@ const validatePrincipal = <Input, Registration extends object = object, Payload 
     ),
   );
 
-const validateTransport = <Input>(
-  input: Input,
-): Effect.Effect<ActionTransportMetadata, ActionPayloadValidationError> =>
+const validateTransport = <Input>(input: Input): Effect.Effect<ActionTransportMetadata, ActionPayloadValidationError> =>
   Schema.decodeUnknownEffect(ActionTransportMetadataSchema)(input).pipe(
     Effect.mapError((cause) =>
       attachFailureCause(
@@ -408,9 +386,7 @@ const makeHandlerExecutionError = () =>
     reason: 'The Action handler failed unexpectedly',
   });
 
-const policyEvidence = <Payload, Owner extends string>(
-  policy: ActionPolicy<Payload, Owner>,
-): ActionPolicyEvidence =>
+const policyEvidence = <Payload, Owner extends string>(policy: ActionPolicy<Payload, Owner>): ActionPolicyEvidence =>
   policy.scope === 'global'
     ? { policyKey: policy.policyKey, scope: policy.scope }
     : {
@@ -442,9 +418,7 @@ type ActionRuntimeConstruction = readonly [
   options: ActionRuntimeOptions,
 ];
 
-export const makeActionRuntime = (
-  ...construction: ActionRuntimeConstruction
-): ActionRuntimeService => {
+export const makeActionRuntime = (...construction: ActionRuntimeConstruction): ActionRuntimeService => {
   const [database, repository, permission, operationalScopeResolver, options] = construction;
   const { contextAccess, moduleEntrypointGateway, moduleStateGate } = options;
   const resolveHandler = options.resolveHandler ?? getActionHandler;
@@ -472,8 +446,7 @@ export const makeActionRuntime = (
       })
       .pipe(
         Effect.flatMap(([decision]) =>
-          decision?.key === principal.tenantId &&
-          (decision.decision === 'allowed' || decision.decision === 'denied')
+          decision?.key === principal.tenantId && (decision.decision === 'allowed' || decision.decision === 'denied')
             ? Effect.succeed(decision.decision)
             : Effect.fail(permissionUnavailable()),
         ),
@@ -538,572 +511,508 @@ export const makeActionRuntime = (
       );
   };
 
-  const runAction: ActionRuntimeService['runAction'] = Effect.fn('ActionRuntime.runAction')(
-    function* runActionEffect<
-      PayloadSchema extends Schema.ConstraintDecoder<unknown>,
-      ResultSchema extends Schema.ConstraintDecoder<unknown>,
-      DomainErrorSchema extends Schema.ConstraintDecoder<{ readonly _tag: string }>,
-      DomainEvents extends DomainEventContractMap,
-      Owner extends string,
+  const runAction: ActionRuntimeService['runAction'] = Effect.fn('ActionRuntime.runAction')(function* runActionEffect<
+    PayloadSchema extends Schema.ConstraintDecoder<unknown>,
+    ResultSchema extends Schema.ConstraintDecoder<unknown>,
+    DomainErrorSchema extends Schema.ConstraintDecoder<{
+      readonly _tag: string;
+    }>,
+    DomainEvents extends DomainEventContractMap,
+    Owner extends string,
+    Services,
+    HandlerRequirements,
+  >(
+    input: RunActionInput<
+      PayloadSchema,
+      ResultSchema,
+      DomainErrorSchema,
+      DomainEvents,
+      Owner,
       Services,
-      HandlerRequirements,
-    >(
-      input: RunActionInput<
-        PayloadSchema,
-        ResultSchema,
-        DomainErrorSchema,
-        DomainEvents,
-        Owner,
-        Services,
-        HandlerRequirements
-      >,
-    ) {
-      const payload = yield* decodeActionPayload(
-        input.registration.descriptor.payloadSchema,
-        input.payload,
-      );
-      notifyStage('payload_decoded');
+      HandlerRequirements
+    >,
+  ) {
+    const payload = yield* decodeActionPayload(input.registration.descriptor.payloadSchema, input.payload);
+    notifyStage('payload_decoded');
 
-      const principal = yield* validatePrincipal(input.principal, input.registration, payload);
-      const transport = yield* validateTransport(input.transport);
-      const scope = yield* operationalScopeResolver.resolve(
+    const principal = yield* validatePrincipal(input.principal, input.registration, payload);
+    const transport = yield* validateTransport(input.transport);
+    const scope = yield* operationalScopeResolver.resolve(
+      withOptionalProperty(
+        {
+          correlationId: transport.correlationId,
+          legalEntityScope: input.registration.descriptor.legalEntityScope,
+          principal,
+        },
+        transport.traceId !== undefined,
+        'traceId',
+        transport.traceId,
+        {},
+      ),
+    );
+    notifyStage('trusted_context_validated');
+
+    const moduleStateSnapshot = yield* moduleEntrypointGateway.prepareSnapshot(scope, [
+      input.registration.descriptor.entrypoint,
+    ]);
+    yield* moduleEntrypointGateway.check(moduleStateSnapshot, input.registration.descriptor.entrypoint);
+    notifyStage('module_state_gate');
+
+    yield* requireIdempotencyKey(input.registration.descriptor.idempotency, transport);
+
+    const tenantPermission = isTrustedSupportRecoveryPrincipalContext(principal, input.registration)
+      ? Option.none<ActionTenantPermission>()
+      : yield* resolveActionTenantPermission(payload, input.registration.descriptor.tenantPermission);
+    const { legalEntityPermission } = input.registration.descriptor;
+    const hasCanonicalScopeTarget = Option.isSome(tenantPermission) || legalEntityPermission !== undefined;
+
+    const resourcePermissionTarget = yield* resolveActionResourcePermissionTarget(
+      payload,
+      scope,
+      getActionResourcePermissionTargetResolver(input.registration),
+    );
+    let actionTarget: Pick<ActionTransportMetadata, 'targetModuleKey' | 'targetResourceId' | 'targetResourceType'>;
+    let governedTransport: ActionTransportMetadata;
+    if (Option.isSome(resourcePermissionTarget)) {
+      const target = resourcePermissionTarget.value;
+      actionTarget = {
+        targetModuleKey: target.resource.moduleId,
+        targetResourceId: target.resource.resourceId,
+        targetResourceType: target.resource.resourceType,
+      };
+      governedTransport = withOptionalProperty(
         withOptionalProperty(
           {
             correlationId: transport.correlationId,
-            legalEntityScope: input.registration.descriptor.legalEntityScope,
-            principal,
+            targetModuleKey: target.resource.moduleId,
+            targetResourceId: target.resource.resourceId,
+            targetResourceType: target.resource.resourceType,
           },
-          transport.traceId !== undefined,
-          'traceId',
-          transport.traceId,
+          transport.idempotencyKey !== undefined,
+          'idempotencyKey',
+          transport.idempotencyKey,
           {},
         ),
+        transport.traceId !== undefined,
+        'traceId',
+        transport.traceId,
+        {},
       );
-      notifyStage('trusted_context_validated');
-
-      const moduleStateSnapshot = yield* moduleEntrypointGateway.prepareSnapshot(scope, [
-        input.registration.descriptor.entrypoint,
-      ]);
-      yield* moduleEntrypointGateway.check(
-        moduleStateSnapshot,
-        input.registration.descriptor.entrypoint,
+    } else if (hasCanonicalScopeTarget) {
+      actionTarget = {};
+      governedTransport = withOptionalProperty(
+        withOptionalProperty(
+          { correlationId: transport.correlationId },
+          transport.idempotencyKey !== undefined,
+          'idempotencyKey',
+          transport.idempotencyKey,
+          {},
+        ),
+        transport.traceId !== undefined,
+        'traceId',
+        transport.traceId,
+        {},
       );
-      notifyStage('module_state_gate');
-
-      yield* requireIdempotencyKey(input.registration.descriptor.idempotency, transport);
-
-      const tenantPermission = isTrustedSupportRecoveryPrincipalContext(
-        principal,
-        input.registration,
-      )
-        ? Option.none<ActionTenantPermission>()
-        : yield* resolveActionTenantPermission(
-            payload,
-            input.registration.descriptor.tenantPermission,
-          );
-      const { legalEntityPermission } = input.registration.descriptor;
-      const hasCanonicalScopeTarget =
-        Option.isSome(tenantPermission) || legalEntityPermission !== undefined;
-
-      const resourcePermissionTarget = yield* resolveActionResourcePermissionTarget(
-        payload,
-        scope,
-        getActionResourcePermissionTargetResolver(input.registration),
-      );
-      let actionTarget: Pick<
-        ActionTransportMetadata,
-        'targetModuleKey' | 'targetResourceId' | 'targetResourceType'
-      >;
-      let governedTransport: ActionTransportMetadata;
-      if (Option.isSome(resourcePermissionTarget)) {
-        const target = resourcePermissionTarget.value;
-        actionTarget = {
-          targetModuleKey: target.resource.moduleId,
-          targetResourceId: target.resource.resourceId,
-          targetResourceType: target.resource.resourceType,
-        };
-        governedTransport = withOptionalProperty(
+    } else {
+      actionTarget = withOptionalProperty(
+        withOptionalProperty(
           withOptionalProperty(
-            {
-              correlationId: transport.correlationId,
-              targetModuleKey: target.resource.moduleId,
-              targetResourceId: target.resource.resourceId,
-              targetResourceType: target.resource.resourceType,
-            },
-            transport.idempotencyKey !== undefined,
-            'idempotencyKey',
-            transport.idempotencyKey,
+            {},
+            transport.targetModuleKey !== undefined,
+            'targetModuleKey',
+            transport.targetModuleKey,
             {},
           ),
-          transport.traceId !== undefined,
-          'traceId',
-          transport.traceId,
+          transport.targetResourceId !== undefined,
+          'targetResourceId',
+          transport.targetResourceId,
           {},
-        );
-      } else if (hasCanonicalScopeTarget) {
-        actionTarget = {};
-        governedTransport = withOptionalProperty(
-          withOptionalProperty(
-            { correlationId: transport.correlationId },
-            transport.idempotencyKey !== undefined,
-            'idempotencyKey',
-            transport.idempotencyKey,
-            {},
-          ),
-          transport.traceId !== undefined,
-          'traceId',
-          transport.traceId,
-          {},
-        );
-      } else {
-        actionTarget = withOptionalProperty(
-          withOptionalProperty(
-            withOptionalProperty(
-              {},
-              transport.targetModuleKey !== undefined,
-              'targetModuleKey',
-              transport.targetModuleKey,
-              {},
-            ),
-            transport.targetResourceId !== undefined,
-            'targetResourceId',
-            transport.targetResourceId,
-            {},
-          ),
-          transport.targetResourceType !== undefined,
-          'targetResourceType',
-          transport.targetResourceType,
-          {},
-        );
-        governedTransport = transport;
-      }
+        ),
+        transport.targetResourceType !== undefined,
+        'targetResourceType',
+        transport.targetResourceType,
+        {},
+      );
+      governedTransport = transport;
+    }
 
-      const normalizedPayload = yield* Effect.try({
-        catch: (cause) =>
-          attachFailureCause(
-            new ActionPayloadValidationError({
-              code: 'action_payload_invalid',
-              reason: 'The decoded Action payload cannot be encoded safely',
-            }),
-            cause,
-          ),
-        try: () =>
-          Result.getOrThrow(
-            Schema.encodeUnknownResult(
-              Schema.make<Schema.ConstraintEncoder<unknown>>(
-                input.registration.descriptor.payloadSchema.ast,
-              ),
-            )(payload),
-          ),
-      });
-
-      const requestHash = yield* Effect.try({
-        catch: (cause) =>
-          attachFailureCause(
-            new ActionPayloadValidationError({
-              code: 'action_payload_invalid',
-              reason: 'The decoded Action payload cannot be normalized safely',
-            }),
-            cause,
-          ),
-        try: () =>
-          computeActionRequestHash({
-            actionKey: input.registration.descriptor.actionKey,
-            normalizedPayload,
-            owningModuleKey: input.registration.descriptor.owningModuleKey,
-            principal,
-            schemaVersion: input.registration.descriptor.schemaVersion,
-            target: actionTarget,
+    const normalizedPayload = yield* Effect.try({
+      catch: (cause) =>
+        attachFailureCause(
+          new ActionPayloadValidationError({
+            code: 'action_payload_invalid',
+            reason: 'The decoded Action payload cannot be encoded safely',
           }),
-      });
+          cause,
+        ),
+      try: () =>
+        Result.getOrThrow(
+          Schema.encodeUnknownResult(
+            Schema.make<Schema.ConstraintEncoder<unknown>>(input.registration.descriptor.payloadSchema.ast),
+          )(payload),
+        ),
+    });
 
-      const invocation = yield* repository
-        .createOrResolveInvocation(database.executor, {
+    const requestHash = yield* Effect.try({
+      catch: (cause) =>
+        attachFailureCause(
+          new ActionPayloadValidationError({
+            code: 'action_payload_invalid',
+            reason: 'The decoded Action payload cannot be normalized safely',
+          }),
+          cause,
+        ),
+      try: () =>
+        computeActionRequestHash({
           actionKey: input.registration.descriptor.actionKey,
-          idempotencyKey: transport.idempotencyKey,
+          normalizedPayload,
+          owningModuleKey: input.registration.descriptor.owningModuleKey,
           principal,
-          requestHash,
-          transport: governedTransport,
-        })
-        .pipe(
-          Effect.tapError((error) =>
-            logInvocationPersistenceFailure(error, {
-              actionKey: input.registration.descriptor.actionKey,
-              correlationId: transport.correlationId,
-            }),
-          ),
-        );
-      notifyStage('invocation_prepared');
-      yield* verifyInvocation(invocation, requestHash);
+          schemaVersion: input.registration.descriptor.schemaVersion,
+          target: actionTarget,
+        }),
+    });
 
-      // The trusted context already represents authentication. Authorization
-      // uses only the immutable Action key and trusted principal identity.
-      notifyStage('authentication_boundary');
-      const logPermissionInvocationFailure = Effect.fn(
-        'ActionRuntime.logPermissionInvocationFailure',
-      )(function* logPermissionInvocationFailureEffect(failure: ActionInvocationPersistenceError) {
+    const invocation = yield* repository
+      .createOrResolveInvocation(database.executor, {
+        actionKey: input.registration.descriptor.actionKey,
+        idempotencyKey: transport.idempotencyKey,
+        principal,
+        requestHash,
+        transport: governedTransport,
+      })
+      .pipe(
+        Effect.tapError((error) =>
+          logInvocationPersistenceFailure(error, {
+            actionKey: input.registration.descriptor.actionKey,
+            correlationId: transport.correlationId,
+          }),
+        ),
+      );
+    notifyStage('invocation_prepared');
+    yield* verifyInvocation(invocation, requestHash);
+
+    // The trusted context already represents authentication. Authorization
+    // uses only the immutable Action key and trusted principal identity.
+    notifyStage('authentication_boundary');
+    const logPermissionInvocationFailure = Effect.fn('ActionRuntime.logPermissionInvocationFailure')(
+      function* logPermissionInvocationFailureEffect(failure: ActionInvocationPersistenceError) {
         yield* logInvocationPersistenceFailure(failure, {
           actionKey: input.registration.descriptor.actionKey,
           correlationId: transport.correlationId,
           invocationId: invocation.actionInvocationId,
         });
-      });
-      const logPermissionTransactionFailure = Effect.fn(
-        'ActionRuntime.logPermissionTransactionFailure',
-      )(function* logPermissionTransactionFailureEffect(failure: ActionTransactionError) {
-        yield* logActionTransactionFailureCause(
-          failure,
-          'Unexpected permission denial persistence failure',
-          {
-            actionKey: input.registration.descriptor.actionKey,
-            correlationId: transport.correlationId,
-            invocationId: invocation.actionInvocationId,
-          },
+      },
+    );
+    const logPermissionTransactionFailure = Effect.fn('ActionRuntime.logPermissionTransactionFailure')(
+      function* logPermissionTransactionFailureEffect(failure: ActionTransactionError) {
+        yield* logActionTransactionFailureCause(failure, 'Unexpected permission denial persistence failure', {
+          actionKey: input.registration.descriptor.actionKey,
+          correlationId: transport.correlationId,
+          invocationId: invocation.actionInvocationId,
+        });
+      },
+    );
+    const rejectPermission = () =>
+      repository
+        .rejectPermissionDenied(database.executor, {
+          actionInvocationId: invocation.actionInvocationId,
+          actionKey: input.registration.descriptor.actionKey,
+          auditProfile: input.registration.descriptor.auditProfile,
+          principal,
+          transport: governedTransport,
+        })
+        .pipe(
+          Effect.tapErrorTag('ActionInvocationPersistenceError', logPermissionInvocationFailure),
+          Effect.tapErrorTag('ActionTransactionError', logPermissionTransactionFailure),
+          Effect.flatMap(() =>
+            Effect.fail(
+              new ActionPermissionDenied({
+                code: 'action_permission_denied',
+                reason: 'The principal is not permitted to execute this Action',
+              }),
+            ),
+          ),
         );
-      });
-      const rejectPermission = () =>
-        repository
-          .rejectPermissionDenied(database.executor, {
+    const permissionDecision = yield* permission
+      .checkActionPermission({
+        actionKey: input.registration.descriptor.actionKey,
+        correlationId: transport.correlationId,
+        principalId: principal.principalId,
+      })
+      .pipe(Effect.tapError((error) => Effect.logError(error.reason)));
+    const tenantPermissionDecision = yield* checkTenantActionPermission(principal, tenantPermission);
+
+    const legalEntityPermissionDecision = yield* checkActionLegalEntityPermission(scope, legalEntityPermission);
+
+    const resourcePermissionDecision = yield* checkActionResourcePermission(scope, resourcePermissionTarget);
+    notifyStage('permission_checked');
+    if (
+      permissionDecision === 'denied' ||
+      tenantPermissionDecision === 'denied' ||
+      legalEntityPermissionDecision === 'denied' ||
+      resourcePermissionDecision === 'denied'
+    ) {
+      return yield* rejectPermission();
+    }
+
+    notifyStage('policy_boundary');
+
+    const policyInput: ActionPolicyEvaluatorInput<typeof payload> = Object.freeze({
+      action: Object.freeze({
+        actionKey: input.registration.descriptor.actionKey,
+        owningModuleKey: input.registration.descriptor.owningModuleKey,
+        schemaVersion: input.registration.descriptor.schemaVersion,
+      }),
+      payload,
+      principal: Object.freeze({ ...principal }),
+      target: Object.freeze({ ...actionTarget }),
+      transport: Object.freeze(
+        withOptionalProperty(
+          {
+            correlationId: transport.correlationId,
+          },
+          transport.traceId !== undefined,
+          'traceId',
+          transport.traceId,
+          {},
+        ),
+      ),
+    });
+    const evaluateActionPolicy = Effect.fn('ActionRuntime.evaluatePolicy')(function* evaluatePolicy(
+      policy: ActionPolicy<typeof payload, Owner>,
+    ) {
+      const policyExit = yield* Effect.exit(Effect.suspend(() => policy.evaluate(policyInput)));
+      if (Exit.isSuccess(policyExit)) {
+        return policyEvidence(policy);
+      }
+
+      const failureReasons = policyExit.cause.reasons.filter(Cause.isFailReason);
+      const [failureReason] = failureReasons;
+      if (
+        failureReasons.length === policyExit.cause.reasons.length &&
+        failureReason !== undefined &&
+        Schema.is(PolicyDenied)(failureReason.error)
+      ) {
+        const denial = failureReason.error;
+        yield* repository
+          .finalizePolicyDenial(database.executor, {
             actionInvocationId: invocation.actionInvocationId,
             actionKey: input.registration.descriptor.actionKey,
             auditProfile: input.registration.descriptor.auditProfile,
+            policy: policyEvidence(policy),
             principal,
+            reasonCode: denial.reasonCode,
             transport: governedTransport,
           })
           .pipe(
-            Effect.tapErrorTag('ActionInvocationPersistenceError', logPermissionInvocationFailure),
-            Effect.tapErrorTag('ActionTransactionError', logPermissionTransactionFailure),
-            Effect.flatMap(() =>
-              Effect.fail(
-                new ActionPermissionDenied({
-                  code: 'action_permission_denied',
-                  reason: 'The principal is not permitted to execute this Action',
-                }),
-              ),
+            Effect.tapError((error) =>
+              logInvocationPersistenceFailure(error, {
+                actionKey: input.registration.descriptor.actionKey,
+                correlationId: transport.correlationId,
+                invocationId: invocation.actionInvocationId,
+                policyKey: policy.policyKey,
+              }),
             ),
           );
-      const permissionDecision = yield* permission
-        .checkActionPermission({
-          actionKey: input.registration.descriptor.actionKey,
-          correlationId: transport.correlationId,
-          principalId: principal.principalId,
-        })
-        .pipe(Effect.tapError((error) => Effect.logError(error.reason)));
-      const tenantPermissionDecision = yield* checkTenantActionPermission(
-        principal,
-        tenantPermission,
-      );
-
-      const legalEntityPermissionDecision = yield* checkActionLegalEntityPermission(
-        scope,
-        legalEntityPermission,
-      );
-
-      const resourcePermissionDecision = yield* checkActionResourcePermission(
-        scope,
-        resourcePermissionTarget,
-      );
-      notifyStage('permission_checked');
-      if (
-        permissionDecision === 'denied' ||
-        tenantPermissionDecision === 'denied' ||
-        legalEntityPermissionDecision === 'denied' ||
-        resourcePermissionDecision === 'denied'
-      ) {
-        return yield* rejectPermission();
+        return yield* new ActionPolicyDenied({
+          code: 'action_policy_denied',
+          policyReasonCode: denial.reasonCode,
+          reason: denial.reason,
+        });
       }
 
-      notifyStage('policy_boundary');
-
-      const policyInput: ActionPolicyEvaluatorInput<typeof payload> = Object.freeze({
-        action: Object.freeze({
-          actionKey: input.registration.descriptor.actionKey,
-          owningModuleKey: input.registration.descriptor.owningModuleKey,
-          schemaVersion: input.registration.descriptor.schemaVersion,
-        }),
-        payload,
-        principal: Object.freeze({ ...principal }),
-        target: Object.freeze({ ...actionTarget }),
-        transport: Object.freeze(
-          withOptionalProperty(
-            {
-              correlationId: transport.correlationId,
-            },
-            transport.traceId !== undefined,
-            'traceId',
-            transport.traceId,
-            {},
-          ),
-        ),
+      yield* Effect.logError('Unexpected Action Policy evaluation failure', policyExit.cause);
+      return yield* new ActionPolicyEvaluationError({
+        code: 'action_policy_evaluation_failed',
+        reason: 'A required Action Policy could not be evaluated',
       });
-      const evaluateActionPolicy = Effect.fn('ActionRuntime.evaluatePolicy')(
-        function* evaluatePolicy(policy: ActionPolicy<typeof payload, Owner>) {
-          const policyExit = yield* Effect.exit(Effect.suspend(() => policy.evaluate(policyInput)));
-          if (Exit.isSuccess(policyExit)) {
-            return policyEvidence(policy);
-          }
+    });
+    const allowedPolicies = yield* Effect.forEach(input.registration.descriptor.policies, evaluateActionPolicy, {
+      concurrency: 1,
+    });
 
-          const failureReasons = policyExit.cause.reasons.filter(Cause.isFailReason);
-          const [failureReason] = failureReasons;
-          if (
-            failureReasons.length === policyExit.cause.reasons.length &&
-            failureReason !== undefined &&
-            Schema.is(PolicyDenied)(failureReason.error)
-          ) {
-            const denial = failureReason.error;
-            yield* repository
-              .finalizePolicyDenial(database.executor, {
-                actionInvocationId: invocation.actionInvocationId,
-                actionKey: input.registration.descriptor.actionKey,
-                auditProfile: input.registration.descriptor.auditProfile,
-                policy: policyEvidence(policy),
-                principal,
-                reasonCode: denial.reasonCode,
-                transport: governedTransport,
-              })
-              .pipe(
-                Effect.tapError((error) =>
-                  logInvocationPersistenceFailure(error, {
-                    actionKey: input.registration.descriptor.actionKey,
-                    correlationId: transport.correlationId,
-                    invocationId: invocation.actionInvocationId,
-                    policyKey: policy.policyKey,
-                  }),
-                ),
-              );
-            return yield* new ActionPolicyDenied({
-              code: 'action_policy_denied',
-              policyReasonCode: denial.reasonCode,
-              reason: denial.reason,
-            });
-          }
-
-          yield* Effect.logError('Unexpected Action Policy evaluation failure', policyExit.cause);
-          return yield* new ActionPolicyEvaluationError({
-            code: 'action_policy_evaluation_failed',
-            reason: 'A required Action Policy could not be evaluated',
-          });
-        },
+    const runningInvocation = yield* repository
+      .transitionInvocationToRunning(database.executor, invocation.actionInvocationId)
+      .pipe(
+        Effect.tapError((error) =>
+          logInvocationPersistenceFailure(error, {
+            actionKey: input.registration.descriptor.actionKey,
+            correlationId: transport.correlationId,
+            invocationId: invocation.actionInvocationId,
+          }),
+        ),
       );
-      const allowedPolicies = yield* Effect.forEach(
-        input.registration.descriptor.policies,
-        evaluateActionPolicy,
-        { concurrency: 1 },
-      );
+    yield* verifyInvocation(runningInvocation, requestHash);
+    notifyStage('invocation_running');
 
-      const runningInvocation = yield* repository
-        .transitionInvocationToRunning(database.executor, invocation.actionInvocationId)
+    const transactionBodyCompleted = yield* Ref.make(false);
+    const transactionBodyExit = yield* Ref.make<Exit.Exit<unknown, unknown> | null>(null);
+    const transactionProgram = Effect.fn('ActionRuntime.transaction')(function* executeTransaction(
+      drizzleTransaction: CoreTransaction,
+    ) {
+      const lockedInvocation = yield* repository.lockInvocation(drizzleTransaction, invocation.actionInvocationId).pipe(
+        Effect.tapError((error) =>
+          logInvocationPersistenceFailure(error, {
+            actionKey: input.registration.descriptor.actionKey,
+            correlationId: transport.correlationId,
+            invocationId: invocation.actionInvocationId,
+          }),
+        ),
+      );
+      notifyStage('invocation_locked');
+      yield* verifyInvocation(lockedInvocation, requestHash);
+
+      const scopedTransaction = yield* installScope(drizzleTransaction, scope);
+      notifyStage('database_scope_installed');
+
+      const actionEntrypoint = input.registration.descriptor.entrypoint;
+      if (actionEntrypoint.scope === 'tenant') {
+        const tenantEntrypoint = Object.freeze({
+          ...actionEntrypoint,
+          scope: 'tenant' as const,
+        }) satisfies TenantModuleEntrypoint<'action', 'write', Owner>;
+        yield* moduleStateGate.recheckWrite(drizzleTransaction, scope.tenantId, tenantEntrypoint);
+      }
+      notifyStage('module_state_rechecked');
+      const serviceFactory = resolveServiceFactory(input.registration);
+      const services = yield* serviceFactory(scopedTransaction, scope);
+      const handler = resolveHandler(input.registration);
+
+      const collector = createActionCollector(
+        input.registration.descriptor.domainEvents,
+        input.registration.descriptor.owningModuleKey,
+        input.registration.descriptor.accessEvidencePolicy,
+        input.registration.descriptor.auditEvidenceSchema,
+      );
+      const handlerContext = Object.freeze({
+        actionInvocationId: lockedInvocation.actionInvocationId,
+        addDomainEvent: collector.addDomainEvent,
+        addOutboxMessage: collector.addOutboxMessage,
+        recordAuditEvidence: collector.recordAuditEvidence,
+        recordDataAccess: collector.recordDataAccess,
+        scope,
+        services,
+      });
+
+      const handlerExit = yield* Effect.exit(Effect.suspend(() => handler(payload, handlerContext)));
+
+      if (Exit.isFailure(handlerExit)) {
+        const failureReasons = handlerExit.cause.reasons.filter(Cause.isFailReason);
+        const [failureReason] = failureReasons;
+        if (failureReasons.length === handlerExit.cause.reasons.length && failureReason !== undefined) {
+          if (Schema.is(ActionCollectorError)(failureReason.error)) {
+            return yield* failureReason.error;
+          }
+          const decodedDomainError = yield* Effect.option(
+            Schema.decodeUnknownEffect(input.registration.descriptor.domainErrorSchema)(failureReason.error),
+          );
+          if (Option.isSome(decodedDomainError)) {
+            return yield* Effect.fail(decodedDomainError.value);
+          }
+        }
+        yield* Effect.logError('Unexpected Action execution defect', handlerExit.cause);
+        return yield* makeHandlerExecutionError();
+      }
+      notifyStage('handler_executed');
+
+      const result = yield* decodeActionResult(input.registration.descriptor.resultSchema, handlerExit.value);
+
+      const resultHash = yield* Effect.try({
+        catch: (cause) =>
+          attachFailureCause(
+            new ActionResultValidationError({
+              code: 'action_result_invalid',
+              reason: 'The decoded Action result cannot be normalized safely',
+            }),
+            cause,
+          ),
+        try: () =>
+          computeCanonicalValueHash(
+            Result.getOrThrow(
+              Schema.encodeUnknownResult(
+                Schema.make<Schema.ConstraintEncoder<unknown>>(input.registration.descriptor.resultSchema.ast),
+              )(result),
+            ),
+          ),
+      });
+      yield* repository
+        .flushSuccess(drizzleTransaction, {
+          actionInvocationId: invocation.actionInvocationId,
+          actionKey: input.registration.descriptor.actionKey,
+          allowedPolicies,
+          auditProfile: input.registration.descriptor.auditProfile,
+          evidence: collector.snapshot(),
+          principal,
+          resultHash,
+          transport: governedTransport,
+        })
         .pipe(
           Effect.tapError((error) =>
-            logInvocationPersistenceFailure(error, {
+            logActionTransactionFailureCause(error, 'Unexpected Action success evidence persistence failure', {
               actionKey: input.registration.descriptor.actionKey,
               correlationId: transport.correlationId,
               invocationId: invocation.actionInvocationId,
             }),
           ),
         );
-      yield* verifyInvocation(runningInvocation, requestHash);
-      notifyStage('invocation_running');
+      notifyStage('success_evidence_flushed');
+      yield* Ref.set(transactionBodyCompleted, true);
+      return result;
+    });
+    // The driver/body stay interruptible; classify the settled Cause before interruption resumes.
+    return yield* Effect.uninterruptibleMask(
+      Effect.fn('ActionRuntime.classifyTransactionOutcome')(function* classifyTransactionOutcome(
+        restore: <Value, Failure, Requirements>(
+          effect: Effect.Effect<Value, Failure, Requirements>,
+        ) => Effect.Effect<Value, Failure, Requirements>,
+      ) {
+        const transactionExit = yield* Effect.exit(
+          restore(
+            database.executor.transaction((transaction) =>
+              transactionProgram(transaction).pipe(Effect.onExit((exit) => Ref.set(transactionBodyExit, exit))),
+            ),
+          ),
+        );
+        if (Exit.isSuccess(transactionExit)) {
+          return transactionExit.value;
+        }
 
-      const transactionBodyCompleted = yield* Ref.make(false);
-      const transactionBodyExit = yield* Ref.make<Exit.Exit<unknown, unknown> | null>(null);
-      const transactionProgram = Effect.fn('ActionRuntime.transaction')(
-        function* executeTransaction(drizzleTransaction: CoreTransaction) {
-          const lockedInvocation = yield* repository
-            .lockInvocation(drizzleTransaction, invocation.actionInvocationId)
-            .pipe(
-              Effect.tapError((error) =>
-                logInvocationPersistenceFailure(error, {
-                  actionKey: input.registration.descriptor.actionKey,
-                  correlationId: transport.correlationId,
-                  invocationId: invocation.actionInvocationId,
-                }),
-              ),
-            );
-          notifyStage('invocation_locked');
-          yield* verifyInvocation(lockedInvocation, requestHash);
-
-          const scopedTransaction = yield* installScope(drizzleTransaction, scope);
-          notifyStage('database_scope_installed');
-
-          const actionEntrypoint = input.registration.descriptor.entrypoint;
-          if (actionEntrypoint.scope === 'tenant') {
-            const tenantEntrypoint = Object.freeze({
-              ...actionEntrypoint,
-              scope: 'tenant' as const,
-            }) satisfies TenantModuleEntrypoint<'action', 'write', Owner>;
-            yield* moduleStateGate.recheckWrite(
-              drizzleTransaction,
-              scope.tenantId,
-              tenantEntrypoint,
-            );
-          }
-          notifyStage('module_state_rechecked');
-          const serviceFactory = resolveServiceFactory(input.registration);
-          const services = yield* serviceFactory(scopedTransaction, scope);
-          const handler = resolveHandler(input.registration);
-
-          const collector = createActionCollector(
-            input.registration.descriptor.domainEvents,
-            input.registration.descriptor.owningModuleKey,
-            input.registration.descriptor.accessEvidencePolicy,
-            input.registration.descriptor.auditEvidenceSchema,
-          );
-          const handlerContext = Object.freeze({
-            actionInvocationId: lockedInvocation.actionInvocationId,
-            addDomainEvent: collector.addDomainEvent,
-            addOutboxMessage: collector.addOutboxMessage,
-            recordAuditEvidence: collector.recordAuditEvidence,
-            recordDataAccess: collector.recordDataAccess,
-            scope,
-            services,
-          });
-
-          const handlerExit = yield* Effect.exit(
-            Effect.suspend(() => handler(payload, handlerContext)),
-          );
-
-          if (Exit.isFailure(handlerExit)) {
-            const failureReasons = handlerExit.cause.reasons.filter(Cause.isFailReason);
-            const [failureReason] = failureReasons;
-            if (
-              failureReasons.length === handlerExit.cause.reasons.length &&
-              failureReason !== undefined
-            ) {
-              if (Schema.is(ActionCollectorError)(failureReason.error)) {
-                return yield* failureReason.error;
-              }
-              const decodedDomainError = yield* Effect.option(
-                Schema.decodeUnknownEffect(input.registration.descriptor.domainErrorSchema)(
-                  failureReason.error,
-                ),
-              );
-              if (Option.isSome(decodedDomainError)) {
-                return yield* Effect.fail(decodedDomainError.value);
-              }
-            }
-            yield* Effect.logError('Unexpected Action execution defect', handlerExit.cause);
-            return yield* makeHandlerExecutionError();
-          }
-          notifyStage('handler_executed');
-
-          const result = yield* decodeActionResult(
-            input.registration.descriptor.resultSchema,
-            handlerExit.value,
-          );
-
-          const resultHash = yield* Effect.try({
-            catch: (cause) =>
-              attachFailureCause(
-                new ActionResultValidationError({
-                  code: 'action_result_invalid',
-                  reason: 'The decoded Action result cannot be normalized safely',
-                }),
-                cause,
-              ),
-            try: () =>
-              computeCanonicalValueHash(
-                Result.getOrThrow(
-                  Schema.encodeUnknownResult(
-                    Schema.make<Schema.ConstraintEncoder<unknown>>(
-                      input.registration.descriptor.resultSchema.ast,
-                    ),
-                  )(result),
-                ),
-              ),
-          });
-          yield* repository
-            .flushSuccess(drizzleTransaction, {
-              actionInvocationId: invocation.actionInvocationId,
-              actionKey: input.registration.descriptor.actionKey,
-              allowedPolicies,
-              auditProfile: input.registration.descriptor.auditProfile,
-              evidence: collector.snapshot(),
-              principal,
-              resultHash,
-              transport: governedTransport,
-            })
-            .pipe(
-              Effect.tapError((error) =>
-                logActionTransactionFailureCause(
-                  error,
-                  'Unexpected Action success evidence persistence failure',
-                  {
-                    actionKey: input.registration.descriptor.actionKey,
-                    correlationId: transport.correlationId,
-                    invocationId: invocation.actionInvocationId,
-                  },
-                ),
-              ),
-            );
-          notifyStage('success_evidence_flushed');
-          yield* Ref.set(transactionBodyCompleted, true);
-          return result;
-        },
-      );
-      // The driver/body stay interruptible; classify the settled Cause before interruption resumes.
-      return yield* Effect.uninterruptibleMask(
-        Effect.fn('ActionRuntime.classifyTransactionOutcome')(function* classifyTransactionOutcome(
-          restore: <Value, Failure, Requirements>(
-            effect: Effect.Effect<Value, Failure, Requirements>,
-          ) => Effect.Effect<Value, Failure, Requirements>,
+        const bodyExit = yield* Ref.get(transactionBodyExit);
+        const bodyCompleted =
+          (yield* Ref.get(transactionBodyCompleted)) && bodyExit !== null && Exit.isSuccess(bodyExit);
+        if (
+          bodyExit !== null &&
+          Exit.isFailure(bodyExit) &&
+          transactionExit.cause.reasons.some((reason) => Cause.isDieReason(reason) && isSqlError(reason.defect))
         ) {
-          const transactionExit = yield* Effect.exit(
-            restore(
-              database.executor.transaction((transaction) =>
-                transactionProgram(transaction).pipe(
-                  Effect.onExit((exit) => Ref.set(transactionBodyExit, exit)),
-                ),
-              ),
-            ),
-          );
-          if (Exit.isSuccess(transactionExit)) {
-            return transactionExit.value;
-          }
-
-          const bodyExit = yield* Ref.get(transactionBodyExit);
-          const bodyCompleted =
-            (yield* Ref.get(transactionBodyCompleted)) &&
-            bodyExit !== null &&
-            Exit.isSuccess(bodyExit);
-          if (
-            bodyExit !== null &&
-            Exit.isFailure(bodyExit) &&
-            transactionExit.cause.reasons.some(
-              (reason) => Cause.isDieReason(reason) && isSqlError(reason.defect),
-            )
-          ) {
-            yield* Effect.logError(
-              'Action body failed before transaction rollback failed',
-              bodyExit.cause,
-            );
-          }
-          return yield* Effect.failCause(
-            Cause.fromReasons(
-              transactionExit.cause.reasons.map((reason) => {
-                if (Cause.isInterruptReason(reason)) {
-                  return reason;
-                }
-                const failure = Cause.isFailReason(reason) ? reason.error : reason.defect;
-                if (!isSqlError(failure)) {
-                  return reason;
-                }
-                return Cause.makeFailReason(
-                  bodyCompleted && isCommitAcknowledgementFailure(failure)
-                    ? new ActionCommitIndeterminate({
-                        code: 'action_commit_indeterminate',
-                        invocationId: invocation.actionInvocationId,
-                        reason: 'The database did not confirm whether the Action commit completed',
-                      })
-                    : transactionFailure(),
-                );
-              }),
-            ),
-          );
-        }),
-      );
-    },
-  );
+          yield* Effect.logError('Action body failed before transaction rollback failed', bodyExit.cause);
+        }
+        return yield* Effect.failCause(
+          Cause.fromReasons(
+            transactionExit.cause.reasons.map((reason) => {
+              if (Cause.isInterruptReason(reason)) {
+                return reason;
+              }
+              const failure = Cause.isFailReason(reason) ? reason.error : reason.defect;
+              if (!isSqlError(failure)) {
+                return reason;
+              }
+              return Cause.makeFailReason(
+                bodyCompleted && isCommitAcknowledgementFailure(failure)
+                  ? new ActionCommitIndeterminate({
+                      code: 'action_commit_indeterminate',
+                      invocationId: invocation.actionInvocationId,
+                      reason: 'The database did not confirm whether the Action commit completed',
+                    })
+                  : transactionFailure(),
+              );
+            }),
+          ),
+        );
+      }),
+    );
+  });
 
   const resolveActionCommit: ActionRuntimeService['resolveActionCommit'] = Effect.fn(
     'ActionRuntime.resolveActionCommit',
@@ -1140,9 +1049,7 @@ export const makeActionRuntime = (
       return yield* alreadyCommitted(invocation.actionInvocationId);
     }
     if (
-      (invocation.status === 'received' ||
-        invocation.status === 'running' ||
-        invocation.status === 'indeterminate') &&
+      (invocation.status === 'received' || invocation.status === 'running' || invocation.status === 'indeterminate') &&
       invocation.completedAt === null
     ) {
       return Object.freeze({
@@ -1166,26 +1073,19 @@ export class ActionRuntime extends Context.Service<ActionRuntime, ActionRuntimeS
 export const ActionRuntimeLive = Layer.effect(
   ActionRuntime,
   Effect.gen(function* makeActionRuntimeService() {
-    const [
-      database,
-      repository,
-      permission,
-      moduleEntrypointGateway,
-      moduleStateGate,
-      scopeResolver,
-      contextAccess,
-    ] = yield* Effect.all(
-      [
-        CoreDatabaseService,
-        ActionRepository,
-        ActionPermission,
-        ModuleEntrypointGateway,
-        ModuleStateGate,
-        OperationalScopeResolver,
-        ContextAccess,
-      ] as const,
-      { concurrency: 7 },
-    );
+    const [database, repository, permission, moduleEntrypointGateway, moduleStateGate, scopeResolver, contextAccess] =
+      yield* Effect.all(
+        [
+          CoreDatabaseService,
+          ActionRepository,
+          ActionPermission,
+          ModuleEntrypointGateway,
+          ModuleStateGate,
+          OperationalScopeResolver,
+          ContextAccess,
+        ] as const,
+        { concurrency: 7 },
+      );
     return makeActionRuntime(database, repository, permission, scopeResolver, {
       contextAccess,
       moduleEntrypointGateway,

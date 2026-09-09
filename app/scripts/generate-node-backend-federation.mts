@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 import { NodeServices } from '@effect/platform-node';
 import { Effect, Schema } from 'effect';
+
 import { runUltramodernScript, ultramodernExitCode } from './shared/ultramodern-command.mts';
 
 class BackendFederationGenerationError extends Schema.TaggedError<BackendFederationGenerationError>()(
@@ -8,8 +9,7 @@ class BackendFederationGenerationError extends Schema.TaggedError<BackendFederat
   { reason: Schema.String },
 ) {}
 
-const failure = (reason: string): BackendFederationGenerationError =>
-  new BackendFederationGenerationError({ reason });
+const failure = (reason: string): BackendFederationGenerationError => new BackendFederationGenerationError({ reason });
 
 const exit = await Effect.runPromiseExit(
   runUltramodernScript({

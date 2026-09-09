@@ -1,10 +1,6 @@
 import { Schema } from 'effect';
-import {
-  decodedStringBrand,
-  nonEmptyString,
-  TargetModuleKeySchema,
-  TargetResourceIdSchema,
-} from './string-schemas.ts';
+
+import { decodedStringBrand, nonEmptyString, TargetModuleKeySchema, TargetResourceIdSchema } from './string-schemas.ts';
 
 const nonNegativeInteger = Schema.Finite.check(Schema.isInt(), Schema.isGreaterThanOrEqualTo(0));
 const EvidencePolicyKeySchema = decodedStringBrand(nonEmptyString, 'EvidencePolicyKey');
@@ -33,12 +29,7 @@ export type ActionAccessEvidencePolicy =
 
 export const DataAccessEventSchema = Schema.Struct({
   accessKind: Schema.Literals(['read', 'list', 'search', 'export', 'download']),
-  evidenceCaptureMode: Schema.Literals([
-    'metadata_only',
-    'hash_only',
-    'redacted_payload',
-    'stored_artifact',
-  ]),
+  evidenceCaptureMode: Schema.Literals(['metadata_only', 'hash_only', 'redacted_payload', 'stored_artifact']),
   evidencePayloadJson: Schema.optionalKey(Schema.Json),
   evidencePolicyKey: EvidencePolicyKeySchema,
   occurredAt: Schema.optionalKey(Schema.Date),
@@ -74,10 +65,7 @@ export const DomainEventSchema = Schema.Struct({
 export type DomainEvent = Schema.Schema.Type<typeof DomainEventSchema>;
 
 export type DeclaredDomainEvent<Contracts extends DomainEventContractMap> = {
-  readonly [EventType in keyof Contracts & string]: Omit<
-    DomainEvent,
-    'eventType' | 'payloadJson'
-  > & {
+  readonly [EventType in keyof Contracts & string]: Omit<DomainEvent, 'eventType' | 'payloadJson'> & {
     readonly eventType: EventType;
     readonly payloadJson: Contracts[EventType]['Type'];
   };
@@ -91,9 +79,7 @@ export const OutboxMessageSchema = Schema.Struct({
 
 export type OutboxMessage = Schema.Schema.Type<typeof OutboxMessageSchema>;
 
-const domainEventReferenceBrand: unique symbol = Symbol(
-  '@app/core-runtime/actions/events/DomainEventReference',
-);
+const domainEventReferenceBrand: unique symbol = Symbol('@app/core-runtime/actions/events/DomainEventReference');
 
 /** Opaque reference produced only by one execution's Domain Event collector. */
 export interface DomainEventReference {

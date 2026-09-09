@@ -1,6 +1,5 @@
-import { expect, it } from 'effect-rstest';
-
 import { Effect, Predicate } from 'effect';
+import { expect, it } from 'effect-rstest';
 import { ConnectionError, SqlError } from 'effect/unstable/sql/SqlError';
 
 import type { LegalEntityContextRecord } from '../../src/auth/legal-entity-context.ts';
@@ -71,17 +70,14 @@ it.effect('lists zero, one, and many active legal entities in deterministic safe
 
 it.effect('validates exactly one active selection and rejects missing or inactive selections', () =>
   Effect.gen(function* validatesLegalEntitySelection() {
-    expect(
-      yield* classifySelectedLegalEntity([activeRecord], tenantId, activeRecord.legalEntityId),
-    ).toEqual({ legalEntityId: activeRecord.legalEntityId, legalName: activeRecord.legalName });
+    expect(yield* classifySelectedLegalEntity([activeRecord], tenantId, activeRecord.legalEntityId)).toEqual({
+      legalEntityId: activeRecord.legalEntityId,
+      legalName: activeRecord.legalName,
+    });
     expect(
       Predicate.isTagged(
         yield* Effect.flip(
-          classifySelectedLegalEntity(
-            [activeRecord],
-            tenantId,
-            '20000000-0000-4000-8000-000000000099',
-          ),
+          classifySelectedLegalEntity([activeRecord], tenantId, '20000000-0000-4000-8000-000000000099'),
         ),
         'LegalEntityContextMissingError',
       ),
@@ -89,11 +85,7 @@ it.effect('validates exactly one active selection and rejects missing or inactiv
     expect(
       Predicate.isTagged(
         yield* Effect.flip(
-          classifySelectedLegalEntity(
-            [{ ...activeRecord, status: 'suspended' }],
-            tenantId,
-            activeRecord.legalEntityId,
-          ),
+          classifySelectedLegalEntity([{ ...activeRecord, status: 'suspended' }], tenantId, activeRecord.legalEntityId),
         ),
         'LegalEntityContextInactiveError',
       ),
@@ -107,7 +99,12 @@ it.effect('rejects cross-tenant, malformed, and duplicate records', () =>
       Predicate.isTagged(
         yield* Effect.flip(
           classifyActiveLegalEntities(
-            [{ ...activeRecord, tenantId: '10000000-0000-4000-8000-000000000002' }],
+            [
+              {
+                ...activeRecord,
+                tenantId: '10000000-0000-4000-8000-000000000002',
+              },
+            ],
             tenantId,
           ),
         ),
@@ -116,17 +113,13 @@ it.effect('rejects cross-tenant, malformed, and duplicate records', () =>
     ).toBe(true);
     expect(
       Predicate.isTagged(
-        yield* Effect.flip(
-          classifyActiveLegalEntities([{ ...activeRecord, legalName: '' }], tenantId),
-        ),
+        yield* Effect.flip(classifyActiveLegalEntities([{ ...activeRecord, legalName: '' }], tenantId)),
         'LegalEntityContextInvalidError',
       ),
     ).toBe(true);
     expect(
       Predicate.isTagged(
-        yield* Effect.flip(
-          classifyActiveLegalEntities([activeRecord, { ...activeRecord }], tenantId),
-        ),
+        yield* Effect.flip(classifyActiveLegalEntities([activeRecord, { ...activeRecord }], tenantId)),
         'LegalEntityContextAmbiguousError',
       ),
     ).toBe(true);
@@ -139,15 +132,17 @@ it.effect('types database failures as sanitized legal-entity context unavailabil
       executor: yield* makeTestDatabase(() =>
         Effect.fail(
           new SqlError({
-            reason: new ConnectionError({ cause: new Error('secret database diagnostic') }),
+            reason: new ConnectionError({
+              cause: new Error('secret database diagnostic'),
+            }),
           }),
         ),
       ),
     });
     const error = yield* Effect.flip(context.listActiveForTenant(tenantId));
     expect(Predicate.isTagged(error, 'LegalEntityContextUnavailableError')).toBe(true);
-    expect(
-      Predicate.isTagged(error, 'LegalEntityContextUnavailableError') ? error.reason : undefined,
-    ).not.toMatch(/secret database diagnostic/u);
+    expect(Predicate.isTagged(error, 'LegalEntityContextUnavailableError') ? error.reason : undefined).not.toMatch(
+      /secret database diagnostic/u,
+    );
   }),
 );

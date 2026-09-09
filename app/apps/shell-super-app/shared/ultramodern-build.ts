@@ -1,63 +1,57 @@
-import { withUltramodernBuildIdentity } from '@app/shared-contracts/ultramodern-build';
-import { Predicate } from 'effect';
+import { resolveUltramodernBuildArtifact } from '@modern-js/runtime-extensions/build-identity';
 
 declare const ULTRAMODERN_BUILD_MARKER: string;
 declare const ULTRAMODERN_SOURCE_REVISION: string;
 
-const ultramodernGeneratedBuildArtifact = {
-  deliveryUnit: {
-    appId: 'shell-super-app',
-    build: '090dd0a19fdd0853',
-    buildMarker: '090dd0a19fdd0853',
-    deployProfile: 'cloudflare-ssr-mf-effect-v1',
-    kind: 'microvertical-delivery-unit',
-    packageName: '@app/shell-super-app',
+const ultramodernBuildArtifact = resolveUltramodernBuildArtifact(
+  {
+    deliveryUnit: {
+      appId: 'shell-super-app',
+      build: '090dd0a19fdd0853',
+      buildMarker: '090dd0a19fdd0853',
+      deployProfile: 'cloudflare-ssr-mf-effect-v1',
+      kind: 'microvertical-delivery-unit',
+      packageName: '@app/shell-super-app',
+      schemaVersion: 1,
+      sourceRevision: 'workspace',
+      unitId: 'app/shell-super-app',
+      version: '0.1.0',
+    },
+    kind: 'ultramodern-build-artifact',
     schemaVersion: 1,
-    sourceRevision: 'workspace',
-    unitId: 'app/shell-super-app',
-    version: '0.1.0',
-  },
-  kind: 'ultramodern-build-artifact',
-  schemaVersion: 1,
-  surfaces: {
-    api: {
-      appId: 'shell-super-app',
-      build: '090dd0a19fdd0853',
-      buildMarker: '090dd0a19fdd0853',
-      deployProfile: 'cloudflare-ssr-mf-effect-v1',
-      kind: 'microvertical-delivery-unit',
-      packageName: '@app/shell-super-app',
-      schemaVersion: 1,
-      sourceRevision: 'workspace',
-      surface: 'api',
-      unitId: 'app/shell-super-app',
-      version: '0.1.0',
+    surfaces: {
+      api: {
+        appId: 'shell-super-app',
+        build: '090dd0a19fdd0853',
+        buildMarker: '090dd0a19fdd0853',
+        deployProfile: 'cloudflare-ssr-mf-effect-v1',
+        kind: 'microvertical-delivery-unit',
+        packageName: '@app/shell-super-app',
+        schemaVersion: 1,
+        sourceRevision: 'workspace',
+        surface: 'api',
+        unitId: 'app/shell-super-app',
+        version: '0.1.0',
+      },
+      ui: {
+        appId: 'shell-super-app',
+        build: '090dd0a19fdd0853',
+        buildMarker: '090dd0a19fdd0853',
+        deployProfile: 'cloudflare-ssr-mf-effect-v1',
+        kind: 'microvertical-delivery-unit',
+        packageName: '@app/shell-super-app',
+        schemaVersion: 1,
+        sourceRevision: 'workspace',
+        surface: 'ui',
+        unitId: 'app/shell-super-app',
+        version: '0.1.0',
+      },
     },
-    ui: {
-      appId: 'shell-super-app',
-      build: '090dd0a19fdd0853',
-      buildMarker: '090dd0a19fdd0853',
-      deployProfile: 'cloudflare-ssr-mf-effect-v1',
-      kind: 'microvertical-delivery-unit',
-      packageName: '@app/shell-super-app',
-      schemaVersion: 1,
-      sourceRevision: 'workspace',
-      surface: 'ui',
-      unitId: 'app/shell-super-app',
-      version: '0.1.0',
-    },
+  } as const,
+  {
+    buildMarker: () => ULTRAMODERN_BUILD_MARKER,
+    sourceRevision: () => ULTRAMODERN_SOURCE_REVISION,
   },
-} as const;
-const ultramodernBuildMarker = Predicate.isString(ULTRAMODERN_BUILD_MARKER)
-  ? ULTRAMODERN_BUILD_MARKER
-  : ultramodernGeneratedBuildArtifact.deliveryUnit.buildMarker;
-const ultramodernSourceRevision = Predicate.isString(ULTRAMODERN_SOURCE_REVISION)
-  ? ULTRAMODERN_SOURCE_REVISION
-  : ultramodernGeneratedBuildArtifact.deliveryUnit.sourceRevision;
-const ultramodernBuildArtifact = withUltramodernBuildIdentity(
-  ultramodernGeneratedBuildArtifact,
-  ultramodernBuildMarker,
-  ultramodernSourceRevision,
 );
 
 export const ultramodernDeliveryUnit = ultramodernBuildArtifact.deliveryUnit;

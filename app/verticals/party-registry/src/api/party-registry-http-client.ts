@@ -1,25 +1,16 @@
 import { makeEffectBffClient } from '@app/shared-contracts/client-runtime';
-import type {
-  EffectBffClientOptions,
-  EffectBffRequestContext,
-} from '@app/shared-contracts/client-runtime';
+import type { EffectBffClientOptions, EffectBffRequestContext } from '@app/shared-contracts/client-runtime';
 import { Effect } from '@modern-js/plugin-bff/effect-client';
-import type {
-  HttpApi,
-  HttpApiClient,
-  HttpApiGroup,
-  Schema,
-} from '@modern-js/plugin-bff/effect-client';
+import type { HttpApi, HttpApiClient, HttpApiGroup, Schema } from '@modern-js/plugin-bff/effect-client';
 import { Redacted } from 'effect';
+
 import { partyRegistryApi, partyRegistryApiContract } from '../../shared/api.ts';
 import type { OperationContext } from '../../shared/api.ts';
 
 type PartyRegistryApiGroups =
   typeof partyRegistryApi extends HttpApi.HttpApi<infer _ApiId, infer Groups> ? Groups : never;
 
-export type PartyRegistryHttpClient = HttpApiClient.Client<
-  Extract<PartyRegistryApiGroups, HttpApiGroup.Constraint>
->;
+export type PartyRegistryHttpClient = HttpApiClient.Client<Extract<PartyRegistryApiGroups, HttpApiGroup.Constraint>>;
 
 const traceparentOption = 'traceparent' as const;
 const requestCorrelationHeaderName = 'x-correlation-id' as const;
@@ -74,9 +65,7 @@ export const authenticatePartyRegistryHttpRequest = (
         requestTrace,
       };
 
-const effectBffClientOptions = (
-  context: PartyRegistryHttpRequestContextValue,
-): EffectBffClientOptions => {
+const effectBffClientOptions = (context: PartyRegistryHttpRequestContextValue): EffectBffClientOptions => {
   const requestCorrelationHeader = context.requestCorrelationHeader ?? requestCorrelationHeaderName;
   const transportHeaders =
     context.credential === undefined || context.requestCorrelation === undefined
@@ -91,7 +80,9 @@ const effectBffClientOptions = (
     Object.assign(requestContext, { locale: context.requestLocale });
   }
   if (context.operationContext !== undefined) {
-    Object.assign(requestContext, { operationContext: context.operationContext });
+    Object.assign(requestContext, {
+      operationContext: context.operationContext,
+    });
   }
   if (context.requestTraceparent !== undefined) {
     Object.assign(requestContext, { traceparent: context.requestTraceparent });

@@ -1,10 +1,11 @@
 import { Brand, Schema } from 'effect';
-import { PartyRefSchema } from '../resources/party.ts';
-import type { PartyRef } from '../resources/party.ts';
+
 import { DuplicateCandidateCaseRefSchema } from '../resources/duplicate-candidate-case.ts';
 import { PartyMatchDecisionRefSchema } from '../resources/party-match-decision.ts';
-import { OfficialIdentifierInputSchema } from './identifier-contracts.ts';
+import { PartyRefSchema } from '../resources/party.ts';
+import type { PartyRef } from '../resources/party.ts';
 import { AresAppliedEvidenceSchema } from './ares-application.ts';
+import { OfficialIdentifierInputSchema } from './identifier-contracts.ts';
 
 export const PartyTypeSchema = Schema.Literals(['PERSON', 'ORGANIZATION', 'UNRESOLVED']);
 export type PartyType = typeof PartyTypeSchema.Type;
@@ -13,17 +14,13 @@ export const isPartyTypeEnrichment = (current: PartyType, requested: PartyType):
 export const IsoTimestampSchema = Schema.DateTimeUtcFromString;
 export const PartyIdSchema = Schema.String.check(Schema.isUUID()).pipe(Schema.brand('PartyId'));
 export type PartyId = typeof PartyIdSchema.Type;
-const PartySubjectKeySchema = Schema.Trim.check(
-  Schema.isMinLength(1),
-  Schema.isMaxLength(200),
-).pipe(Schema.brand('PartySubjectKey'));
+const PartySubjectKeySchema = Schema.Trim.check(Schema.isMinLength(1), Schema.isMaxLength(200)).pipe(
+  Schema.brand('PartySubjectKey'),
+);
 export type PartySubjectKey = typeof PartySubjectKeySchema.Type;
 export const partyIdFromString = Brand.nominal<PartyId>();
 export const partySubjectKeyFromString = Brand.nominal<PartySubjectKey>();
-export const PartyDisplayNameSchema = Schema.Trim.check(
-  Schema.isMinLength(1),
-  Schema.isMaxLength(300),
-);
+export const PartyDisplayNameSchema = Schema.Trim.check(Schema.isMinLength(1), Schema.isMaxLength(300));
 const ProvenanceSchema = Schema.Struct({
   externalEvidence: Schema.optionalKey(AresAppliedEvidenceSchema),
   method: Schema.Trim.check(Schema.isMinLength(1), Schema.isMaxLength(100)),
@@ -48,9 +45,7 @@ export const PartySubjectEvidenceSchema = Schema.Struct({
   subjectKey: PartySubjectKeySchema,
 });
 export type PartySubjectEvidence = typeof PartySubjectEvidenceSchema.Type;
-export const PartySubjectEvidenceListSchema = Schema.Array(PartySubjectEvidenceSchema).check(
-  Schema.isMaxLength(32),
-);
+export const PartySubjectEvidenceListSchema = Schema.Array(PartySubjectEvidenceSchema).check(Schema.isMaxLength(32));
 export const PartySubjectEligibilityVersion = 'party-concrete-subject.v1' as const;
 export const PartyTypeRuleVersion = 'party-subject-type.v1' as const;
 export const PartyEvidenceEvaluationSchema = Schema.Struct({
@@ -65,9 +60,9 @@ export type PartyEvidenceEvaluation = typeof PartyEvidenceEvaluationSchema.Type;
 
 export const PartyCandidateSchema = Schema.Struct({
   displayName: Schema.optionalKey(PartyDisplayNameSchema),
-  evidenceRefs: Schema.Array(
-    Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(500)),
-  ).check(Schema.isMaxLength(100)),
+  evidenceRefs: Schema.Array(Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(500))).check(
+    Schema.isMaxLength(100),
+  ),
   officialIdentifiers: Schema.Array(OfficialIdentifierInputSchema).check(Schema.isMaxLength(20)),
   partyType: PartyTypeSchema,
   provenance: ProvenanceSchema,
@@ -130,13 +125,11 @@ const partyLifecycleConflictFields = {
   reason: Schema.String,
   requestedState: Schema.Literals(['ACTIVE', 'ARCHIVED']),
 } as const;
-const PartyLifecycleConflictSchema = Schema.TaggedStruct(
+const PartyLifecycleConflictSchema = Schema.TaggedStruct('PartyLifecycleConflict', partyLifecycleConflictFields);
+export const PartyLifecycleConflict = Schema.TaggedError<typeof PartyLifecycleConflictSchema.Type>()(
   'PartyLifecycleConflict',
   partyLifecycleConflictFields,
 );
-export const PartyLifecycleConflict = Schema.TaggedError<
-  typeof PartyLifecycleConflictSchema.Type
->()('PartyLifecycleConflict', partyLifecycleConflictFields);
 
 const partyEvidenceInsufficientFields = {
   code: Schema.Literal('party_evidence_insufficient'),
@@ -146,9 +139,10 @@ const PartyEvidenceInsufficientSchema = Schema.TaggedStruct(
   'PartyEvidenceInsufficient',
   partyEvidenceInsufficientFields,
 );
-export const PartyEvidenceInsufficient = Schema.TaggedError<
-  typeof PartyEvidenceInsufficientSchema.Type
->()('PartyEvidenceInsufficient', partyEvidenceInsufficientFields);
+export const PartyEvidenceInsufficient = Schema.TaggedError<typeof PartyEvidenceInsufficientSchema.Type>()(
+  'PartyEvidenceInsufficient',
+  partyEvidenceInsufficientFields,
+);
 export type PartyEvidenceInsufficientError = InstanceType<typeof PartyEvidenceInsufficient>;
 
 const partyPersistenceUnavailableFields = {
@@ -159,7 +153,8 @@ const PartyPersistenceUnavailableSchema = Schema.TaggedStruct(
   'PartyPersistenceUnavailable',
   partyPersistenceUnavailableFields,
 );
-export const PartyPersistenceUnavailable = Schema.TaggedError<
-  typeof PartyPersistenceUnavailableSchema.Type
->()('PartyPersistenceUnavailable', partyPersistenceUnavailableFields);
+export const PartyPersistenceUnavailable = Schema.TaggedError<typeof PartyPersistenceUnavailableSchema.Type>()(
+  'PartyPersistenceUnavailable',
+  partyPersistenceUnavailableFields,
+);
 export type PartyPersistenceUnavailableError = InstanceType<typeof PartyPersistenceUnavailable>;

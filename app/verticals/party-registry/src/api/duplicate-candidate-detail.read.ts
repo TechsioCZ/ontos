@@ -2,6 +2,7 @@
 import { defineRead, defineTenantModuleEntrypoint } from '@app/core-runtime';
 import type { ReadHandlerContext } from '@app/core-runtime';
 import { Effect, Schema } from 'effect';
+
 import {
   DuplicateCandidateDetailRequestSchema,
   DuplicateCandidateDetailResponseSchema,
@@ -19,9 +20,7 @@ const duplicateCandidateDetailEntrypoint = defineTenantModuleEntrypoint({
 interface Services {
   readonly find: (caseId: string) => ReturnType<typeof findDuplicateCandidateCase>;
 }
-const duplicateCandidateUnavailable = readUnavailable(
-  'Duplicate Candidate persistence is unavailable',
-);
+const duplicateCandidateUnavailable = readUnavailable('Duplicate Candidate persistence is unavailable');
 export const duplicateCandidateDetailRead = defineRead(
   {
     accessKind: 'detail',

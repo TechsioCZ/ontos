@@ -10,9 +10,9 @@ export const ultramodernLaunch = (
   const launch = Option.match(createBin, {
     onNone: () => ({
       args: ultramodernArgs,
-      executable: 'modern-js-create',
+      executable: 'ultramodern-create',
       shell: pathSeparator === '\\',
-      target: 'modern-js-create from PATH',
+      target: 'ultramodern-create from PATH',
     }),
     onSome: (bin) => ({
       args: [bin, ...ultramodernArgs],

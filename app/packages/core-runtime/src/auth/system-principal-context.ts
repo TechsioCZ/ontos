@@ -1,5 +1,6 @@
 import { and, eq } from 'drizzle-orm';
 import { Duration, Effect, Option, Schema } from 'effect';
+
 import type { TrustedPrincipalContext } from '../actions/principal-context.ts';
 import { principals, tenants } from '../db/schema.ts';
 import type { CoreDatabaseExecutor } from '../db/types.ts';
@@ -62,9 +63,7 @@ type SystemPrincipalContextRepositoryLoadResult = Effect.Effect<
   SystemPrincipalContextUnavailableError
 >;
 
-interface SystemPrincipalContextRecordReader<
-  Result extends SystemPrincipalContextRepositoryLoadResult,
-> {
+interface SystemPrincipalContextRecordReader<Result extends SystemPrincipalContextRepositoryLoadResult> {
   readonly load: (input: { readonly principalId: string; readonly tenantId: string }) => Result;
 }
 
@@ -82,15 +81,11 @@ const unavailable = (cause?: unknown): SystemPrincipalContextUnavailableError =>
 
 const DATABASE_OPERATION_TIMEOUT = Duration.seconds(30);
 
-const loadSystemPrincipalContextRecord = <
-  Result extends SystemPrincipalContextRepositoryLoadResult,
->(
+const loadSystemPrincipalContextRecord = <Result extends SystemPrincipalContextRepositoryLoadResult>(
   repository: SystemPrincipalContextRecordReader<Result>,
   input: { readonly principalId: string; readonly tenantId: string },
-): Effect.Effect<
-  Option.Option<SystemPrincipalContextRecord>,
-  SystemPrincipalContextUnavailableError
-> => repository.load(input);
+): Effect.Effect<Option.Option<SystemPrincipalContextRecord>, SystemPrincipalContextUnavailableError> =>
+  repository.load(input);
 
 const systemPrincipalContextRepositoryFromDatabase = (database: {
   readonly executor: Pick<CoreDatabaseExecutor, 'select'>;
@@ -104,9 +99,7 @@ const systemPrincipalContextRepositoryFromDatabase = (database: {
       })
       .from(principals)
       .innerJoin(tenants, eq(tenants.tenantId, principals.tenantId))
-      .where(
-        and(eq(principals.tenantId, input.tenantId), eq(principals.principalId, input.principalId)),
-      )
+      .where(and(eq(principals.tenantId, input.tenantId), eq(principals.principalId, input.principalId)))
       .limit(1)
       .pipe(
         Effect.mapError(unavailable),
@@ -122,14 +115,11 @@ const isEligibleSystemPrincipal = (
   record: SystemPrincipalContextRecord,
   registration: SystemWorkloadRegistration,
 ): boolean => {
-  const kindAllowed =
-    record.kind === 'system' || (registration.allowServicePrincipal && record.kind === 'service');
+  const kindAllowed = record.kind === 'system' || (registration.allowServicePrincipal && record.kind === 'service');
   return record.principalStatus === 'active' && record.tenantStatus === 'active' && kindAllowed;
 };
 
-export const systemPrincipalContextResolverFromRepository = <
-  Result extends SystemPrincipalContextRepositoryLoadResult,
->(
+export const systemPrincipalContextResolverFromRepository = <Result extends SystemPrincipalContextRepositoryLoadResult>(
   repository: SystemPrincipalContextRecordReader<Result>,
 ) => ({
   resolve: Effect.fn('systemPrincipalContextResolverFromRepository.resolve')(
@@ -181,7 +171,4 @@ export const systemPrincipalContextResolverFromRepository = <
 
 export const makeSystemPrincipalContextResolver = (database: {
   readonly executor: Pick<CoreDatabaseExecutor, 'select'>;
-}) =>
-  systemPrincipalContextResolverFromRepository(
-    systemPrincipalContextRepositoryFromDatabase(database),
-  );
+}) => systemPrincipalContextResolverFromRepository(systemPrincipalContextRepositoryFromDatabase(database));

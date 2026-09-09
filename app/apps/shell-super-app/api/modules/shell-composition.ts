@@ -7,15 +7,11 @@ import type {
 } from '@app/core-runtime';
 import { decideModuleStateAccess } from '@app/core-runtime';
 import { Context, Effect, Layer, Schema } from 'effect';
+
 import { ShellCompositionSchema, ShellNavigationItemSchema } from '../../shared/api.ts';
 import type { InstalledModuleCatalogError } from './installed-module-catalog.ts';
 
-const withOptionalProperty = <
-  Base extends object,
-  Key extends PropertyKey,
-  Value,
-  Trailing extends object,
->(
+const withOptionalProperty = <Base extends object, Key extends PropertyKey, Value, Trailing extends object>(
   base: Base,
   condition: boolean,
   key: Key,
@@ -33,11 +29,10 @@ const ShellCompositionUnavailableErrorSchema = Schema.TaggedStruct(
   shellCompositionUnavailableErrorFields,
 );
 export type ShellCompositionUnavailableError = typeof ShellCompositionUnavailableErrorSchema.Type;
-const ShellCompositionUnavailableErrorConstructor =
-  Schema.TaggedError<ShellCompositionUnavailableError>()(
-    'ShellCompositionUnavailableError',
-    shellCompositionUnavailableErrorFields,
-  );
+const ShellCompositionUnavailableErrorConstructor = Schema.TaggedError<ShellCompositionUnavailableError>()(
+  'ShellCompositionUnavailableError',
+  shellCompositionUnavailableErrorFields,
+);
 export { ShellCompositionUnavailableErrorConstructor as ShellCompositionUnavailableError };
 
 export interface ShellCompositionContext {
@@ -57,27 +52,17 @@ const isVisibleState = Schema.is(ShellNavigationItemSchema.fields.state);
 const loadCatalog = (
   sources: ShellCompositionSources,
 ): Effect.Effect<InstalledModuleCatalog, ShellCompositionUnavailableError> =>
-  sources.catalog.pipe(
-    Effect.mapError((cause) => new ShellCompositionUnavailableErrorConstructor({ cause })),
-  );
+  sources.catalog.pipe(Effect.mapError((cause) => new ShellCompositionUnavailableErrorConstructor({ cause })));
 
-const loadStates = (
-  sources: ShellCompositionSources,
-  context: ShellCompositionContext,
-  moduleIds: readonly string[],
-) =>
+const loadStates = (sources: ShellCompositionSources, context: ShellCompositionContext, moduleIds: readonly string[]) =>
   sources.moduleStates
     .getTenantModuleStates(context.tenantId, moduleIds)
     .pipe(Effect.mapError((cause) => new ShellCompositionUnavailableErrorConstructor({ cause })));
 
-const pageByContributionKey = (
-  catalog: InstalledModuleCatalog,
-): ReadonlyMap<string, ShellPageContribution> =>
+const pageByContributionKey = (catalog: InstalledModuleCatalog): ReadonlyMap<string, ShellPageContribution> =>
   new Map(
     catalog.contracts.flatMap(({ manifest }) =>
-      manifest.publicSurface.shellContributions.pages.map(
-        (page) => [page.contributionKey, page] as const,
-      ),
+      manifest.publicSurface.shellContributions.pages.map((page) => [page.contributionKey, page] as const),
     ),
   );
 
@@ -88,8 +73,7 @@ const resolveContributionPage = (
   const { navigation, pages } = contributions;
   if (input.entrypointKey !== undefined) {
     return pages.find(
-      ({ entrypoint }) =>
-        entrypoint.entrypointKey === input.entrypointKey && entrypoint.moduleKey === input.moduleId,
+      ({ entrypoint }) => entrypoint.entrypointKey === input.entrypointKey && entrypoint.moduleKey === input.moduleId,
     );
   }
   const [landing] = navigation;
@@ -98,32 +82,30 @@ const resolveContributionPage = (
     : pages.find(({ contributionKey }) => String(contributionKey) === String(landing.pageKey));
 };
 
-const resolveTargetPermission = Effect.fn('ShellComposition.resolveTargetPermission')(
-  function* resolveTargetPermission(
-    sources: ShellCompositionSources,
-    context: ShellCompositionContext & {
-      readonly legalEntityId: string;
-      readonly moduleId: string;
-    },
-  ) {
-    const [permission, ...unexpected] = yield* sources.contextAccess.modules({
-      legalEntityId: context.legalEntityId,
-      moduleIds: [context.moduleId],
-      principalId: context.principalId,
-      tenantId: context.tenantId,
-    });
-    if (unexpected.length > 0 || permission === undefined || permission.key !== context.moduleId) {
-      return { outcome: 'unavailable' } as const;
-    }
-    if (permission.decision === 'unavailable') {
-      return { outcome: 'unavailable' } as const;
-    }
-    if (permission.decision === 'denied') {
-      return { outcome: 'forbidden' } as const;
-    }
-    return null;
+const resolveTargetPermission = Effect.fn('ShellComposition.resolveTargetPermission')(function* resolveTargetPermission(
+  sources: ShellCompositionSources,
+  context: ShellCompositionContext & {
+    readonly legalEntityId: string;
+    readonly moduleId: string;
   },
-);
+) {
+  const [permission, ...unexpected] = yield* sources.contextAccess.modules({
+    legalEntityId: context.legalEntityId,
+    moduleIds: [context.moduleId],
+    principalId: context.principalId,
+    tenantId: context.tenantId,
+  });
+  if (unexpected.length > 0 || permission === undefined || permission.key !== context.moduleId) {
+    return { outcome: 'unavailable' } as const;
+  }
+  if (permission.decision === 'unavailable') {
+    return { outcome: 'unavailable' } as const;
+  }
+  if (permission.decision === 'denied') {
+    return { outcome: 'forbidden' } as const;
+  }
+  return null;
+});
 
 export const makeShellComposition = (sources: ShellCompositionSources) => {
   const compose = Effect.fn('makeShellComposition.compose')(function* composeShellEffect(
@@ -142,10 +124,7 @@ export const makeShellComposition = (sources: ShellCompositionSources) => {
       principalId: context.principalId,
       tenantId: context.tenantId,
     });
-    if (
-      decisions.length !== moduleIds.length ||
-      decisions.some(({ key }, index) => key !== moduleIds[index])
-    ) {
+    if (decisions.length !== moduleIds.length || decisions.some(({ key }, index) => key !== moduleIds[index])) {
       return yield* new ShellCompositionUnavailableErrorConstructor();
     }
     const permissionByModule = new Map(decisions.map(({ decision, key }) => [key, decision]));
@@ -154,12 +133,7 @@ export const makeShellComposition = (sources: ShellCompositionSources) => {
       const moduleId = contract.manifest.module.id;
       const state = states.get(moduleId);
       const permission = permissionByModule.get(moduleId);
-      if (
-        state === undefined ||
-        !isVisibleState(state) ||
-        permission === undefined ||
-        permission === 'denied'
-      ) {
+      if (state === undefined || !isVisibleState(state) || permission === undefined || permission === 'denied') {
         return [];
       }
       return contract.manifest.publicSurface.shellContributions.navigation.map((contribution) => {
@@ -185,7 +159,7 @@ export const makeShellComposition = (sources: ShellCompositionSources) => {
         );
       });
     });
-    const composition = yield* Schema.decodeUnknownEffect(ShellCompositionSchema)({
+    const composition = yield* Schema.decodeEffect(ShellCompositionSchema)({
       navigation: navigation.toSorted(
         (left, right) =>
           left.order - right.order ||
@@ -215,58 +189,53 @@ export const makeShellComposition = (sources: ShellCompositionSources) => {
     return composition;
   });
 
-  const resolveModuleTarget = Effect.fn('makeShellComposition.resolveModuleTarget')(
-    function* resolveModuleTargetEffect(
-      context: ShellCompositionContext,
-      input: {
-        readonly access?: ModuleEntrypointAccess;
-        readonly entrypointKey?: string;
-        readonly moduleId: string;
-      },
-    ) {
-      if (context.legalEntityId === undefined) {
-        return { outcome: 'selection_required' } as const;
-      }
-      const catalog = yield* loadCatalog(sources);
-      const contract = catalog.getByModuleId(input.moduleId);
-      if (contract === undefined) {
-        return { outcome: 'not_found' } as const;
-      }
-      const page = resolveContributionPage(
-        contract.manifest.publicSurface.shellContributions,
-        input,
-      );
-      if (page === undefined) {
-        return { outcome: 'not_found' } as const;
-      }
-      const records = yield* loadStates(sources, context, [input.moduleId]);
-      const [record] = records;
-      const state = record?.moduleKey === input.moduleId ? record.state : undefined;
-      if (state === undefined) {
-        return { outcome: 'not_found' } as const;
-      }
-      const access = input.access ?? page.entrypoint.access;
-      if (decideModuleStateAccess(state, access) === 'deny') {
-        return { outcome: 'not_found' } as const;
-      }
-      const permission = yield* resolveTargetPermission(sources, {
-        legalEntityId: context.legalEntityId,
-        moduleId: input.moduleId,
-        principalId: context.principalId,
-        tenantId: context.tenantId,
-      });
-      if (permission !== null) {
-        return permission;
-      }
-      return {
-        appId: contract.deployment.appId,
-        moduleId: input.moduleId,
-        outcome: 'resolved',
-        page,
-        writable: state === 'active',
-      } as const;
+  const resolveModuleTarget = Effect.fn('makeShellComposition.resolveModuleTarget')(function* resolveModuleTargetEffect(
+    context: ShellCompositionContext,
+    input: {
+      readonly access?: ModuleEntrypointAccess;
+      readonly entrypointKey?: string;
+      readonly moduleId: string;
     },
-  );
+  ) {
+    if (context.legalEntityId === undefined) {
+      return { outcome: 'selection_required' } as const;
+    }
+    const catalog = yield* loadCatalog(sources);
+    const contract = catalog.getByModuleId(input.moduleId);
+    if (contract === undefined) {
+      return { outcome: 'not_found' } as const;
+    }
+    const page = resolveContributionPage(contract.manifest.publicSurface.shellContributions, input);
+    if (page === undefined) {
+      return { outcome: 'not_found' } as const;
+    }
+    const records = yield* loadStates(sources, context, [input.moduleId]);
+    const [record] = records;
+    const state = record?.moduleKey === input.moduleId ? record.state : undefined;
+    if (state === undefined) {
+      return { outcome: 'not_found' } as const;
+    }
+    const access = input.access ?? page.entrypoint.access;
+    if (decideModuleStateAccess(state, access) === 'deny') {
+      return { outcome: 'not_found' } as const;
+    }
+    const permission = yield* resolveTargetPermission(sources, {
+      legalEntityId: context.legalEntityId,
+      moduleId: input.moduleId,
+      principalId: context.principalId,
+      tenantId: context.tenantId,
+    });
+    if (permission !== null) {
+      return permission;
+    }
+    return {
+      appId: contract.deployment.appId,
+      moduleId: input.moduleId,
+      outcome: 'resolved',
+      page,
+      writable: state === 'active',
+    } as const;
+  });
 
   return Object.freeze({ compose, resolveModuleTarget });
 };
@@ -275,10 +244,9 @@ export interface ShellCompositionFactoryService {
   readonly create: typeof makeShellComposition;
 }
 
-export class ShellCompositionFactory extends Context.Service<
-  ShellCompositionFactory,
-  ShellCompositionFactoryService
->()('@app/shell-super-app/api/modules/shell-composition/ShellCompositionFactory') {}
+export class ShellCompositionFactory extends Context.Service<ShellCompositionFactory, ShellCompositionFactoryService>()(
+  '@app/shell-super-app/api/modules/shell-composition/ShellCompositionFactory',
+) {}
 
 export const ShellCompositionFactoryLive = Layer.succeed(
   ShellCompositionFactory,

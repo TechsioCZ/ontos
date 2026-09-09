@@ -4,6 +4,15 @@
 import { defineAction, defineTenantModuleEntrypoint } from '@app/core-runtime';
 import type { ActionHandlerContext } from '@app/core-runtime';
 import { DateTime, Effect, Schema } from 'effect';
+
+import { AddContactPointPayloadSchema, AddContactPointResultSchema } from '../../shared/actions/add-contact-point.ts';
+import type { AddContactPointPayload } from '../../shared/actions/add-contact-point.ts';
+import {
+  PartyContactPointAlreadyExists,
+  PartyContactPointInvalid,
+  PartyContactPointPartyNotFound,
+  PartyContactPointPersistenceUnavailable,
+} from '../../shared/domain/contact-point-errors.ts';
 import {
   PartyContactPointSchema,
   assertAddressPurposeRules,
@@ -17,21 +26,9 @@ import type {
   ContactPointVerification,
   PartyContactPoint,
 } from '../../shared/domain/contact-point.ts';
-import {
-  PartyContactPointAlreadyExists,
-  PartyContactPointInvalid,
-  PartyContactPointPartyNotFound,
-  PartyContactPointPersistenceUnavailable,
-} from '../../shared/domain/contact-point-errors.ts';
 import { PartyAliasWriteRejected } from '../../shared/domain/merge-alias-resolution.ts';
 import { addContactPointRecord } from '../services/party-contact-point-persistence.service.ts';
 import { createAddContactPointPartyRegistryContactPointAddedV1OutboxMessage } from './add-contact-point.party-registry-contact-point-added-v1.outbox-message.ts';
-
-import {
-  AddContactPointPayloadSchema,
-  AddContactPointResultSchema,
-} from '../../shared/actions/add-contact-point.ts';
-import type { AddContactPointPayload } from '../../shared/actions/add-contact-point.ts';
 
 export { AddContactPointPayloadSchema } from '../../shared/actions/add-contact-point.ts';
 export type { AddContactPointPayload } from '../../shared/actions/add-contact-point.ts';
@@ -94,52 +91,52 @@ const validateAndNormalize = (payload: AddContactPointPayload) =>
     },
   });
 
-const handleAddContactPoint = Effect.fn('AddContactPointAction.handleAddContactPoint')(
-  function* addContactPoint(
-    payload: AddContactPointPayload,
-    context: ActionHandlerContext<
-      Readonly<{ 'party.registry.contact-point-added.v1': typeof ContactPointAddedEventSchema }>,
-      Services
-    >,
-  ) {
-    const command = yield* validateAndNormalize(payload);
-    const contactPoint = yield* context.services.add({
-      ...command,
-      acceptedByActionInvocationId: context.actionInvocationId,
-      acceptedByPrincipalId: context.scope.principalId,
-      validFrom: DateTime.formatIso(command.validFrom),
-    });
-    yield* context.recordDataAccess({
-      accessKind: 'read',
-      queryHash: `party-contact-point-add:${contactPoint.partyRef.resourceId}`,
-      resultCount: 1,
-      servingModuleKey: 'party.registry',
-      targetModuleKey: 'party.registry',
-      targetResourceId: contactPoint.partyRef.resourceId,
-      targetResourceType: contactPoint.partyRef.resourceType,
-    });
-    const event = yield* context.addDomainEvent({
-      eventType: 'party.registry.contact-point-added.v1',
-      payloadJson: {
-        contactPointRef: contactPoint.contactPointRef,
-        partyRef: contactPoint.partyRef,
-        revision: contactPoint.revision,
-      },
-      producerModuleKey: 'party.registry',
-      subjectModuleKey: 'party.registry',
-      subjectResourceId: contactPoint.contactPointRef.resourceId,
-      subjectResourceType: contactPoint.contactPointRef.resourceType,
-    });
-    yield* context.addOutboxMessage(
-      event,
-      createAddContactPointPartyRegistryContactPointAddedV1OutboxMessage({
-        contactPointRef: contactPoint.contactPointRef,
-        partyRef: contactPoint.partyRef,
-      }),
-    );
-    return contactPoint;
-  },
-);
+const handleAddContactPoint = Effect.fn('AddContactPointAction.handleAddContactPoint')(function* addContactPoint(
+  payload: AddContactPointPayload,
+  context: ActionHandlerContext<
+    Readonly<{
+      'party.registry.contact-point-added.v1': typeof ContactPointAddedEventSchema;
+    }>,
+    Services
+  >,
+) {
+  const command = yield* validateAndNormalize(payload);
+  const contactPoint = yield* context.services.add({
+    ...command,
+    acceptedByActionInvocationId: context.actionInvocationId,
+    acceptedByPrincipalId: context.scope.principalId,
+    validFrom: DateTime.formatIso(command.validFrom),
+  });
+  yield* context.recordDataAccess({
+    accessKind: 'read',
+    queryHash: `party-contact-point-add:${contactPoint.partyRef.resourceId}`,
+    resultCount: 1,
+    servingModuleKey: 'party.registry',
+    targetModuleKey: 'party.registry',
+    targetResourceId: contactPoint.partyRef.resourceId,
+    targetResourceType: contactPoint.partyRef.resourceType,
+  });
+  const event = yield* context.addDomainEvent({
+    eventType: 'party.registry.contact-point-added.v1',
+    payloadJson: {
+      contactPointRef: contactPoint.contactPointRef,
+      partyRef: contactPoint.partyRef,
+      revision: contactPoint.revision,
+    },
+    producerModuleKey: 'party.registry',
+    subjectModuleKey: 'party.registry',
+    subjectResourceId: contactPoint.contactPointRef.resourceId,
+    subjectResourceType: contactPoint.contactPointRef.resourceType,
+  });
+  yield* context.addOutboxMessage(
+    event,
+    createAddContactPointPartyRegistryContactPointAddedV1OutboxMessage({
+      contactPointRef: contactPoint.contactPointRef,
+      partyRef: contactPoint.partyRef,
+    }),
+  );
+  return contactPoint;
+});
 
 export const addContactPointAction = defineAction(
   {
@@ -150,10 +147,15 @@ export const addContactPointAction = defineAction(
     actionKey: 'party.registry.add-contact-point',
     auditProfile: 'sensitive',
     domainErrorSchema: AddContactPointErrorSchema,
-    domainEvents: { 'party.registry.contact-point-added.v1': ContactPointAddedEventSchema },
+    domainEvents: {
+      'party.registry.contact-point-added.v1': ContactPointAddedEventSchema,
+    },
     entrypoint: defineTenantModuleEntrypoint({
       access: 'write',
-      authorization: { kind: 'action_execution', provisioning: 'tenant_membership_default' },
+      authorization: {
+        kind: 'action_execution',
+        provisioning: 'tenant_membership_default',
+      },
       entrypointKey: 'party.registry.add-contact-point',
       moduleKey: 'party.registry',
       role: 'action',

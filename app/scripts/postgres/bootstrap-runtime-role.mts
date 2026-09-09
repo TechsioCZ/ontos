@@ -1,14 +1,12 @@
 import { Effect, Exit, Redacted, Schema } from 'effect';
 import { Client } from 'pg';
 import type { QueryResult, QueryResultRow } from 'pg';
+
 import { loadDatabaseConnectionPair } from '../../packages/core-runtime/src/db/config.ts';
 
-class RuntimeRoleBootstrapError extends Schema.TaggedError<RuntimeRoleBootstrapError>()(
-  'RuntimeRoleBootstrapError',
-  {
-    reason: Schema.String,
-  },
-) {}
+class RuntimeRoleBootstrapError extends Schema.TaggedError<RuntimeRoleBootstrapError>()('RuntimeRoleBootstrapError', {
+  reason: Schema.String,
+}) {}
 
 const quoteLiteral = (value: string): string => `'${value.replaceAll("'", "''")}'`;
 const quoteIdentifier = (value: string): string => `"${value.replaceAll('"', '""')}"`;
@@ -26,16 +24,16 @@ const query = <Row extends QueryResultRow = QueryResultRow>(
     try: async () => await client.query<Row>(text, values),
   });
 
-const connectAdmin = (
-  connectionString: Redacted.Redacted,
-): Effect.Effect<Client, RuntimeRoleBootstrapError> =>
+const connectAdmin = (connectionString: Redacted.Redacted): Effect.Effect<Client, RuntimeRoleBootstrapError> =>
   Effect.tryPromise({
     catch: (cause) =>
       new RuntimeRoleBootstrapError({
         reason: `Unable to connect to the administrative PostgreSQL database: ${String(cause)}`,
       }),
     try: async () => {
-      const client = new Client({ connectionString: Redacted.value(connectionString) });
+      const client = new Client({
+        connectionString: Redacted.value(connectionString),
+      });
       await client.connect();
       return client;
     },
@@ -85,10 +83,7 @@ const bootstrapRuntimeRole = (
               client,
               `grant select, insert, update, delete on all tables in schema ${schema} to ontos_runtime`,
             );
-            yield* query(
-              client,
-              `grant usage, select on all sequences in schema ${schema} to ontos_runtime`,
-            );
+            yield* query(client, `grant usage, select on all sequences in schema ${schema} to ontos_runtime`);
             yield* query(
               client,
               `alter default privileges in schema ${schema} grant select, insert, update, delete on tables to ontos_runtime`,

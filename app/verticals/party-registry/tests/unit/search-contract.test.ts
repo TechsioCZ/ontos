@@ -1,18 +1,12 @@
+import { Effect, Schema } from 'effect';
 import { expect, it } from 'effect-rstest';
 
-import { Effect, Schema } from 'effect';
 import {
   CounterpartiesProviderRequestSchema,
   CounterpartiesProviderResponseSchema,
 } from '../../shared/apis/counterparties-search.ts';
-import {
-  PartiesProviderRequestSchema,
-  PartiesProviderResponseSchema,
-} from '../../shared/apis/parties-search.ts';
-import {
-  COUNTERPARTY_SEARCH_SEMANTICS,
-  PARTY_SEARCH_SEMANTICS,
-} from '../../shared/domain/search-descriptor.ts';
+import { PartiesProviderRequestSchema, PartiesProviderResponseSchema } from '../../shared/apis/parties-search.ts';
+import { COUNTERPARTY_SEARCH_SEMANTICS, PARTY_SEARCH_SEMANTICS } from '../../shared/domain/search-descriptor.ts';
 
 it('Party-owned search semantics expose only current approved V1 facts', () => {
   const searchableFacts: readonly string[] = PARTY_SEARCH_SEMANTICS.searchableFacts;
@@ -38,16 +32,16 @@ it('Counterparty semantics retain Legal Entity and current-period role boundarie
 it.effect('Party Search accepts a bounded query and an explicit archived switch', () =>
   Effect.gen(function* testScenario() {
     expect(
-      yield* Schema.decodeUnknownEffect(PartiesProviderRequestSchema)({
+      yield* Schema.decodeEffect(PartiesProviderRequestSchema)({
         includeArchived: true,
         query: '  ACME  ',
       }),
     ).toEqual({ includeArchived: true, query: 'ACME' });
+    expect(() => Schema.decodeSync(PartiesProviderRequestSchema)({ query: '   ' })).toThrow();
     expect(() =>
-      Schema.decodeUnknownSync(PartiesProviderRequestSchema)({ query: '   ' }),
-    ).toThrow();
-    expect(() =>
-      Schema.decodeUnknownSync(PartiesProviderRequestSchema)({ query: 'a'.repeat(201) }),
+      Schema.decodeSync(PartiesProviderRequestSchema)({
+        query: 'a'.repeat(201),
+      }),
     ).toThrow();
   }),
 );
@@ -55,7 +49,7 @@ it.effect('Party Search accepts a bounded query and an explicit archived switch'
 it.effect('Counterparty Search exposes only the closed current-role filter', () =>
   Effect.gen(function* testScenario() {
     expect(
-      yield* Schema.decodeUnknownEffect(CounterpartiesProviderRequestSchema)({
+      yield* Schema.decodeEffect(CounterpartiesProviderRequestSchema)({
         includeArchived: false,
         query: 'ACME',
         role: 'CUSTOMER',
@@ -72,7 +66,7 @@ it.effect('Counterparty Search exposes only the closed current-role filter', () 
 
 it.effect('Party Search result is a minimal canonical projection without PII match evidence', () =>
   Effect.gen(function* testScenario() {
-    const result = yield* Schema.decodeUnknownEffect(PartiesProviderResponseSchema)([
+    const result = yield* Schema.decodeEffect(PartiesProviderResponseSchema)([
       {
         archived: false,
         matchedViaAlias: true,
@@ -86,12 +80,7 @@ it.effect('Party Search result is a minimal canonical projection without PII mat
       },
     ]);
 
-    expect(Object.keys(result[0] ?? {}).toSorted()).toEqual([
-      'archived',
-      'matchedViaAlias',
-      'ref',
-      'title',
-    ]);
+    expect(Object.keys(result[0] ?? {}).toSorted()).toEqual(['archived', 'matchedViaAlias', 'ref', 'title']);
     expect('email' in (result[0] ?? {})).toBe(false);
     expect('identifier' in (result[0] ?? {})).toBe(false);
     expect('matchedValue' in (result[0] ?? {})).toBe(false);
@@ -101,7 +90,7 @@ it.effect('Party Search result is a minimal canonical projection without PII mat
 it.effect('Counterparty Search result distinguishes Counterparty and canonical Party', () =>
   Effect.gen(function* testScenario() {
     const tenantId = '10000000-0000-4000-8000-000000000001';
-    const result = yield* Schema.decodeUnknownEffect(CounterpartiesProviderResponseSchema)([
+    const result = yield* Schema.decodeEffect(CounterpartiesProviderResponseSchema)([
       {
         currentRoles: ['CUSTOMER', 'SUPPLIER'],
         legalEntity: {

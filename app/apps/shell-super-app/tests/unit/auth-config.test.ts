@@ -1,10 +1,8 @@
-import { expect, it } from 'effect-rstest';
 import { Effect, Predicate, Schema } from 'effect';
+import { expect, it } from 'effect-rstest';
+
 import { parseAuthConfig } from '../../api/auth/config.ts';
-import {
-  GatewayIssuerConfigError,
-  parseGatewayIssuerConfig,
-} from '../../api/auth/gateway-issuer-config.ts';
+import { GatewayIssuerConfigError, parseGatewayIssuerConfig } from '../../api/auth/gateway-issuer-config.ts';
 
 const validEnvironment = {
   BETTER_AUTH_SECRET: 'a-secure-test-secret-with-more-than-32-characters',
@@ -17,17 +15,19 @@ it.effect('parses trusted origins and derives local cookie security', () =>
   Effect.gen(function* parsesOrigins() {
     const configuration = yield* parseAuthConfig(validEnvironment);
     expect(configuration.secureCookies).toBe(false);
-    expect(configuration.trustedOrigins).toEqual([
-      'http://localhost:3020',
-      'https://preview.example.test',
-    ]);
+    expect(configuration.trustedOrigins).toEqual(['http://localhost:3020', 'https://preview.example.test']);
   }),
 );
 it.effect('requires a strong secret and PostgreSQL URL in the typed error channel', () =>
   Effect.gen(function* validatesCredentials() {
     const [secretError, databaseError] = yield* Effect.all(
       [
-        Effect.flip(parseAuthConfig({ ...validEnvironment, BETTER_AUTH_SECRET: 'short' })),
+        Effect.flip(
+          parseAuthConfig({
+            ...validEnvironment,
+            BETTER_AUTH_SECRET: 'short',
+          }),
+        ),
         Effect.flip(
           parseAuthConfig({
             ...validEnvironment,

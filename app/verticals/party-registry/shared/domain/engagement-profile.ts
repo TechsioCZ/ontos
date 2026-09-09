@@ -1,13 +1,11 @@
 import { Schema } from 'effect';
-import { CanonicalUtcTimestampJsonSchema } from './canonical-utc-timestamp.ts';
+
 import { CounterpartyRefSchema, PartyRefSchema } from '../party-registry-references.ts';
 import { OrganizationEngagementProfileRefSchema } from '../resources/organization-engagement-profile.ts';
 import { PersonEngagementProfileRefSchema } from '../resources/person-engagement-profile.ts';
+import { CanonicalUtcTimestampJsonSchema } from './canonical-utc-timestamp.ts';
 
-export {
-  EngagementProfileIdSchema,
-  EngagementProfileNotFound,
-} from './engagement-profile-errors/not-found.ts';
+export { EngagementProfileIdSchema, EngagementProfileNotFound } from './engagement-profile-errors/not-found.ts';
 export { EngagementProfileConflict } from './engagement-profile-errors/conflict.ts';
 export { EngagementProfilePersistenceUnavailable } from './engagement-profile-errors/persistence-unavailable.ts';
 export { PartyRegistryReferenceUnavailable } from './engagement-profile-errors/party-registry-reference-unavailable.ts';
@@ -37,8 +35,7 @@ export const AttachOrganizationEngagementPayloadSchema = Schema.Struct({
   counterpartyRef: Schema.optionalKey(CounterpartyRefSchema),
   partyRef: PartyRefSchema,
 });
-export type AttachOrganizationEngagementPayload =
-  typeof AttachOrganizationEngagementPayloadSchema.Type;
+export type AttachOrganizationEngagementPayload = typeof AttachOrganizationEngagementPayloadSchema.Type;
 
 export const AttachPersonEngagementPayloadSchema = Schema.Struct({
   counterpartyRef: Schema.optionalKey(CounterpartyRefSchema),
@@ -49,8 +46,7 @@ export type AttachPersonEngagementPayload = typeof AttachPersonEngagementPayload
 export const OrganizationEngagementLifecyclePayloadSchema = Schema.Struct({
   profileRef: OrganizationEngagementProfileRefSchema,
 });
-export type OrganizationEngagementLifecyclePayload =
-  typeof OrganizationEngagementLifecyclePayloadSchema.Type;
+export type OrganizationEngagementLifecyclePayload = typeof OrganizationEngagementLifecyclePayloadSchema.Type;
 
 export const PersonEngagementLifecyclePayloadSchema = Schema.Struct({
   profileRef: PersonEngagementProfileRefSchema,

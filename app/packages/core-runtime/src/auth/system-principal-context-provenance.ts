@@ -1,19 +1,21 @@
 import { Effect, Schema, Predicate } from 'effect';
+
 import { TrustedPrincipalContextSchema } from '../actions/principal-context.ts';
 import type { TrustedPrincipalContext } from '../actions/principal-context.ts';
 
-const SystemPrincipalContextSchema = Schema.Struct({ authMethod: Schema.Literal('system') });
-const SessionPrincipalContextSchema = Schema.Struct({ authMethod: Schema.Literal('session') });
+const SystemPrincipalContextSchema = Schema.Struct({
+  authMethod: Schema.Literal('system'),
+});
+const SessionPrincipalContextSchema = Schema.Struct({
+  authMethod: Schema.Literal('session'),
+});
 const systemProvenance = Object.freeze({ kind: 'system' });
 const supportRecoveryProvenance = Object.freeze({ kind: 'support_recovery' });
 const provenanceAccessProperty = '__ontosCorePrincipalContextProvenanceAccess';
 
-const PrincipalContextProvenanceInvariant = Schema.TaggedError<Error>()(
-  'PrincipalContextProvenanceInvariant',
-  {
-    reason: Schema.String,
-  },
-);
+const PrincipalContextProvenanceInvariant = Schema.TaggedError<Error>()('PrincipalContextProvenanceInvariant', {
+  reason: Schema.String,
+});
 
 export class TrustedPrincipalContextDecodeError extends Schema.TaggedError<TrustedPrincipalContextDecodeError>()(
   'TrustedPrincipalContextDecodeError',
@@ -48,7 +50,9 @@ const attachPrincipalContextProvenance = <
     }
     return provenance === systemProvenance ? true : (actionRegistration ?? false);
   };
-  Object.defineProperty(carrier, provenanceAccessProperty, { value: accessProvenance });
+  Object.defineProperty(carrier, provenanceAccessProperty, {
+    value: accessProvenance,
+  });
   return Object.isFrozen(context) ? Object.freeze(carrier) : carrier;
 };
 
@@ -102,17 +106,12 @@ export const trustSupportRecoveryPrincipalContext = <
   actionRegistration: Registration,
 ): Context => {
   if (!Schema.is(SessionPrincipalContextSchema)(context)) {
-    return failProvenanceInvariant(
-      'Only resolved session contexts can carry support recovery provenance',
-    );
+    return failProvenanceInvariant('Only resolved session contexts can carry support recovery provenance');
   }
   return attachPrincipalContextProvenance(context, supportRecoveryProvenance, actionRegistration);
 };
 
-export const isTrustedSupportRecoveryPrincipalContext = <
-  Context,
-  Registration extends object = object,
->(
+export const isTrustedSupportRecoveryPrincipalContext = <Context, Registration extends object = object>(
   context: Context,
   actionRegistration?: Registration,
 ): boolean => {
@@ -124,10 +123,7 @@ export const isTrustedSupportRecoveryPrincipalContext = <
   );
 };
 
-export const preserveSystemPrincipalContextTrust = <
-  Source,
-  Context extends TrustedPrincipalContext,
->(
+export const preserveSystemPrincipalContextTrust = <Source, Context extends TrustedPrincipalContext>(
   source: Source,
   context: Context,
 ): Context => {
@@ -149,7 +145,9 @@ export const decodeTrustedPrincipalContext = <Input>(
   }
   return Schema.decodeUnknownEffect(TrustedPrincipalContextSchema)(input).pipe(
     Effect.mapError((cause) =>
-      Object.defineProperty(new TrustedPrincipalContextDecodeError(), 'cause', { value: cause }),
+      Object.defineProperty(new TrustedPrincipalContextDecodeError(), 'cause', {
+        value: cause,
+      }),
     ),
     Effect.map((context) => preserveSystemPrincipalContextTrust(input, context)),
   );

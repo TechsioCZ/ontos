@@ -1,5 +1,6 @@
 import { Predicate, Result, Schema } from 'effect';
 import { HttpApi } from 'effect/unstable/httpapi';
+
 import type { AnyActionRegistration } from '../actions/definition.ts';
 import { isActionRegistration } from '../actions/definition.ts';
 import { TENANT_PERMISSION_KEYS } from '../permissions/context-access.ts';
@@ -12,24 +13,21 @@ export const ONTOS_MODULE_CONTRACT_PATH = '/.well-known/ontos-module-manifest.js
 export const ONTOS_MODULE_CONTRACT_MAX_BYTES = 1024 * 1024;
 export const ONTOS_MODULE_CONTRACT_TIMEOUT_MS = 5000;
 
-const dottedIdentifierPattern =
-  /^[a-z][a-z0-9]*(?:-[a-z0-9]+)*(?:\.[a-z][a-z0-9]*(?:-[a-z0-9]+)*)+$/u;
+const dottedIdentifierPattern = /^[a-z][a-z0-9]*(?:-[a-z0-9]+)*(?:\.[a-z][a-z0-9]*(?:-[a-z0-9]+)*)+$/u;
 const deploymentIdPattern = /^[a-z][a-z0-9]*(?:-[a-z0-9]+)*$/u;
 const moduleFederationBoundaryPattern = /^[A-Za-z][A-Za-z0-9]*$/u;
 const schemaVersionPattern = /^[0-9]+$/u;
 const nonEmptyString = Schema.String.check(Schema.isMinLength(1));
 
-export const OntosModuleIdSchema = Schema.String.check(
-  Schema.isPattern(dottedIdentifierPattern),
-).pipe(Schema.brand('OntosModuleId'), Schema.decodeTo(Schema.String));
-export const OntosDeploymentAppIdSchema = Schema.String.check(
-  Schema.isPattern(deploymentIdPattern),
-).pipe(Schema.brand('OntosDeploymentAppId'), Schema.decodeTo(Schema.String));
-export const OntosModuleKindSchema = Schema.Literals([
-  'business_module',
-  'foundational_module',
-  'system_module',
-]);
+export const OntosModuleIdSchema = Schema.String.check(Schema.isPattern(dottedIdentifierPattern)).pipe(
+  Schema.brand('OntosModuleId'),
+  Schema.decodeTo(Schema.String),
+);
+export const OntosDeploymentAppIdSchema = Schema.String.check(Schema.isPattern(deploymentIdPattern)).pipe(
+  Schema.brand('OntosDeploymentAppId'),
+  Schema.decodeTo(Schema.String),
+);
+export const OntosModuleKindSchema = Schema.Literals(['business_module', 'foundational_module', 'system_module']);
 export const OntosModuleActivationStateSchema = Schema.Literals([
   'inactive',
   'active',
@@ -44,15 +42,8 @@ export type OntosDeploymentAppId = typeof OntosDeploymentAppIdSchema.Type;
 export type OntosModuleKind = typeof OntosModuleKindSchema.Type;
 export type OntosModuleActivationState = typeof OntosModuleActivationStateSchema.Type;
 
-const OntosAccessFilteringSchema = Schema.Literals([
-  'legal_entity_scope',
-  'resource_permission',
-  'tenant_scope',
-]);
-const OntosOperationKeySchema = nonEmptyString.pipe(
-  Schema.brand('OntosOperationKey'),
-  Schema.decodeTo(Schema.String),
-);
+const OntosAccessFilteringSchema = Schema.Literals(['legal_entity_scope', 'resource_permission', 'tenant_scope']);
+const OntosOperationKeySchema = nonEmptyString.pipe(Schema.brand('OntosOperationKey'), Schema.decodeTo(Schema.String));
 const OntosModuleFederationBoundaryIdSchema = Schema.String.check(
   Schema.isPattern(moduleFederationBoundaryPattern),
 ).pipe(Schema.brand('OntosModuleFederationBoundaryId'), Schema.decodeTo(Schema.String));
@@ -138,7 +129,9 @@ export const OntosOutboxSubscriptionContractSchema = Schema.Struct({
   consumerModuleKey: OntosModuleIdSchema,
   entrypoint: Schema.Struct({
     access: Schema.Literal('background'),
-    authorization: Schema.Struct({ kind: Schema.Literal('owner_local_background') }),
+    authorization: Schema.Struct({
+      kind: Schema.Literal('owner_local_background'),
+    }),
     entrypointKey: OntosModuleIdSchema,
     moduleKey: OntosModuleIdSchema,
     role: Schema.Literal('worker'),
@@ -221,8 +214,7 @@ export interface OntosModuleManifestInput {
   readonly publicSurface: OntosAuthoredPublicSurface;
 }
 
-export type OntosModuleManifest<Input extends OntosModuleManifestInput = OntosModuleManifestInput> =
-  Readonly<Input>;
+export type OntosModuleManifest<Input extends OntosModuleManifestInput = OntosModuleManifestInput> = Readonly<Input>;
 
 class OntosModuleManifestValidationError extends Schema.TaggedError<OntosModuleManifestValidationError>()(
   'OntosModuleManifestValidationError',
@@ -232,17 +224,10 @@ class OntosModuleManifestValidationError extends Schema.TaggedError<OntosModuleM
 const invalidManifest = (message: string): OntosModuleManifestValidationError =>
   new OntosModuleManifestValidationError({ message });
 
-const exactDecode = <S extends Schema.ConstraintDecoder<unknown>, Value>(
-  schema: S,
-  value: Value,
-): S['Type'] =>
+const exactDecode = <S extends Schema.ConstraintDecoder<unknown>, Value>(schema: S, value: Value): S['Type'] =>
   Result.getOrThrow(Schema.decodeUnknownResult(schema, { onExcessProperty: 'error' })(value));
 
-const assertExactKeys = <Value extends object>(
-  value: Value,
-  keys: readonly string[],
-  label: string,
-): void => {
+const assertExactKeys = <Value extends object>(value: Value, keys: readonly string[], label: string): void => {
   const allowed = new Set(keys);
   for (const key of Reflect.ownKeys(value)) {
     if (!Predicate.isString(key) || !allowed.has(key)) {
@@ -283,36 +268,19 @@ const assertOwner = (owner: string, expected: string, label: string): void => {
   }
 };
 
-export const validateOntosModuleManifestFields = <
-  Input extends object,
-  PublicSurface extends object,
->(
+export const validateOntosModuleManifestFields = <Input extends object, PublicSurface extends object>(
   input: Input,
   publicSurface: PublicSurface,
 ): void => {
   assertExactKeys(input, ['activation', 'module', 'publicSurface'], 'manifest');
   assertExactKeys(
     publicSurface,
-    [
-      'actions',
-      'api',
-      'components',
-      'events',
-      'reports',
-      'resourceTypes',
-      'search',
-      'shellContributions',
-    ],
+    ['actions', 'api', 'components', 'events', 'reports', 'resourceTypes', 'search', 'shellContributions'],
     'manifest public surface',
   );
 };
 
-export const validateOntosModuleExecutableReferences = <
-  ActionValue,
-  ApiValue,
-  ComponentValue,
-  EventPayloadSchema,
->(
+export const validateOntosModuleExecutableReferences = <ActionValue, ApiValue, ComponentValue, EventPayloadSchema>(
   actions: readonly ActionValue[],
   apiValues: readonly ApiValue[],
   componentValues: readonly ComponentValue[],
@@ -346,17 +314,10 @@ const validateSearchDescriptorReferences = (
 ): void => {
   assertOwner(descriptor.owningModuleId, moduleId, 'search descriptor');
   if (!resourceSet.has(descriptor.resourceType)) {
-    throw invalidManifest(
-      `search descriptor references undeclared resource type ${descriptor.resourceType}`,
-    );
+    throw invalidManifest(`search descriptor references undeclared resource type ${descriptor.resourceType}`);
   }
-  if (
-    (descriptor.accessFiltering === 'tenant_scope') !==
-    (descriptor.tenantPermission !== undefined)
-  ) {
-    throw invalidManifest(
-      'tenant-scoped search requires exactly one explicit Tenant permission declaration',
-    );
+  if ((descriptor.accessFiltering === 'tenant_scope') !== (descriptor.tenantPermission !== undefined)) {
+    throw invalidManifest('tenant-scoped search requires exactly one explicit Tenant permission declaration');
   }
   if (
     descriptor.requestFilters !== undefined &&
@@ -394,9 +355,7 @@ export const defineOntosModuleManifest = <const Input extends OntosModuleManifes
   const actionKeys = input.publicSurface.actions.map(({ descriptor }) => descriptor.actionKey);
   assertUnique(actionKeys, 'Action key');
 
-  const resources = input.publicSurface.resourceTypes.map((resource) =>
-    exactDecode(OntosResourceTypeSchema, resource),
-  );
+  const resources = input.publicSurface.resourceTypes.map((resource) => exactDecode(OntosResourceTypeSchema, resource));
   const resourceKeys = resources.map(({ key }) => key);
   assertUnique(resourceKeys, 'resource type key');
   for (const resource of resources) {
@@ -434,9 +393,7 @@ export const defineOntosModuleManifest = <const Input extends OntosModuleManifes
     'public event key',
   );
 
-  const search = input.publicSurface.search.map((descriptor) =>
-    exactDecode(OntosSearchDescriptorSchema, descriptor),
-  );
+  const search = input.publicSurface.search.map((descriptor) => exactDecode(OntosSearchDescriptorSchema, descriptor));
   assertUnique(
     search.map(({ key }) => key),
     'search descriptor key',
@@ -445,9 +402,7 @@ export const defineOntosModuleManifest = <const Input extends OntosModuleManifes
     validateSearchDescriptorReferences(descriptor, input.module.id, resourceSet);
   }
 
-  const reports = input.publicSurface.reports.map((descriptor) =>
-    exactDecode(OntosReportDescriptorSchema, descriptor),
-  );
+  const reports = input.publicSurface.reports.map((descriptor) => exactDecode(OntosReportDescriptorSchema, descriptor));
   assertUnique(
     reports.map(({ key }) => key),
     'report descriptor key',
@@ -456,21 +411,15 @@ export const defineOntosModuleManifest = <const Input extends OntosModuleManifes
     assertOwner(descriptor.owningModuleId, input.module.id, 'report descriptor');
     for (const resourceType of descriptor.resourceTypes) {
       if (!resourceSet.has(resourceType)) {
-        throw invalidManifest(
-          `report descriptor references undeclared resource type ${resourceType}`,
-        );
+        throw invalidManifest(`report descriptor references undeclared resource type ${resourceType}`);
       }
     }
   }
 
   assertUnique(Object.keys(input.publicSurface.api), 'API key');
   assertUnique(Object.keys(input.publicSurface.components), 'component key');
-  const componentKeys = new Set(
-    Object.keys(input.publicSurface.components).map((key) => `${input.module.id}.${key}`),
-  );
-  const apiKeys = new Set(
-    Object.keys(input.publicSurface.api).map((key) => `${input.module.id}.${key}`),
-  );
+  const componentKeys = new Set(Object.keys(input.publicSurface.components).map((key) => `${input.module.id}.${key}`));
+  const apiKeys = new Set(Object.keys(input.publicSurface.api).map((key) => `${input.module.id}.${key}`));
   const shellContributions = validateShellContributions(input.publicSurface.shellContributions, {
     actionKeys: new Set(actionKeys),
     apiKeys,
@@ -504,9 +453,7 @@ export const defineOntosModuleManifest = <const Input extends OntosModuleManifes
         ),
       ),
       resourceTypes: Object.freeze(
-        resources.map((value) =>
-          freezePlain({ ...value, capabilities: { ...value.capabilities } }),
-        ),
+        resources.map((value) => freezePlain({ ...value, capabilities: { ...value.capabilities } })),
       ),
       search: Object.freeze(search.map((value) => freezePlain({ ...value }))),
       shellContributions: freezePlain({
@@ -524,6 +471,5 @@ export const defineOntosModuleManifest = <const Input extends OntosModuleManifes
   return Object.freeze(manifest);
 };
 
-export const decodeOntosModuleDeploymentContract = <Value>(
-  value: Value,
-): OntosModuleDeploymentContract => exactDecode(OntosModuleDeploymentContractSchema, value);
+export const decodeOntosModuleDeploymentContract = <Value>(value: Value): OntosModuleDeploymentContract =>
+  exactDecode(OntosModuleDeploymentContractSchema, value);

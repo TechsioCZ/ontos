@@ -1,15 +1,6 @@
 import { tenantRlsPolicies } from '@app/core-runtime';
 import { defineRelations, sql } from 'drizzle-orm';
-import {
-  check,
-  index,
-  pgSchema,
-  text,
-  timestamp,
-  unique,
-  uniqueIndex,
-  uuid,
-} from 'drizzle-orm/pg-core';
+import { check, index, pgSchema, text, timestamp, unique, uniqueIndex, uuid } from 'drizzle-orm/pg-core';
 
 export const CONTACTS_SCHEMA_NAME = 'contacts';
 
@@ -37,18 +28,12 @@ export const organizationEngagementProfiles = contactsSchema.table.withRLS(
     archivedAt: archivedAt(),
   },
   (table) => [
-    unique('contacts_organization_engagement_profiles_tenant_id_uk').on(
-      table.tenantId,
-      table.engagementProfileId,
-    ),
+    unique('contacts_organization_engagement_profiles_tenant_id_uk').on(table.tenantId, table.engagementProfileId),
     uniqueIndex('contacts_organization_engagement_profiles_counterparty_uk').on(
       table.tenantId,
       table.counterpartyResourceId,
     ),
-    uniqueIndex('contacts_organization_engagement_profiles_party_uk').on(
-      table.tenantId,
-      table.partyResourceId,
-    ),
+    uniqueIndex('contacts_organization_engagement_profiles_party_uk').on(table.tenantId, table.partyResourceId),
     index('contacts_organization_engagement_profiles_active_idx')
       .on(table.tenantId, table.counterpartyResourceId)
       .where(sql`${table.archivedAt} is null`),
@@ -76,10 +61,7 @@ export const personEngagementProfiles = contactsSchema.table.withRLS(
     archivedAt: archivedAt(),
   },
   (table) => [
-    unique('contacts_person_engagement_profiles_tenant_id_uk').on(
-      table.tenantId,
-      table.engagementProfileId,
-    ),
+    unique('contacts_person_engagement_profiles_tenant_id_uk').on(table.tenantId, table.engagementProfileId),
     uniqueIndex('contacts_person_engagement_profiles_party_counterparty_uk').on(
       table.tenantId,
       table.partyResourceId,
@@ -113,11 +95,7 @@ export const gatewayAssertionRedemptions = contactsSchema.table(
     redeemedAt: timestamp('redeemed_at', { withTimezone: true }).defaultNow().notNull(),
   },
   (table) => [
-    unique('contacts_gateway_assertion_redemptions_identity_uk').on(
-      table.issuer,
-      table.audience,
-      table.jti,
-    ),
+    unique('contacts_gateway_assertion_redemptions_identity_uk').on(table.issuer, table.audience, table.jti),
     index('contacts_gateway_assertion_redemptions_expiry_idx').on(table.expiresAt),
   ],
 );
@@ -134,8 +112,7 @@ export const CONTACTS_TABLES = [
   personEngagementProfiles,
 ] as const;
 
-export type OrganizationEngagementProfileRecord =
-  typeof organizationEngagementProfiles.$inferSelect;
+export type OrganizationEngagementProfileRecord = typeof organizationEngagementProfiles.$inferSelect;
 export type PersonEngagementProfileRecord = typeof personEngagementProfiles.$inferSelect;
 
 /** Relational Queries v2 entry point for the Contacts owner. */

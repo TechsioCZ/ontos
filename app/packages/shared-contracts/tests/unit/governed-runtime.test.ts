@@ -1,13 +1,11 @@
-import { expect, it } from 'effect-rstest';
-import { Effect, Redacted, Schema } from 'effect';
 import { HttpApi, HttpApiEndpoint, HttpApiGroup } from '@modern-js/plugin-bff/effect-client';
+import { Effect, Redacted, Schema } from 'effect';
+import { expect, it } from 'effect-rstest';
 import { FetchHttpClient } from 'effect/unstable/http';
-import { makeGovernedReadProblems } from '../../src/effect-bff-runtime.ts';
+
 import { makeGovernedEffectBffClient } from '../../src/client-runtime.ts';
-import {
-  makeProblemDetailsSchema,
-  makeRetryableProblemDetailsSchema,
-} from '../../src/problem-details.ts';
+import { makeGovernedReadProblems } from '../../src/effect-bff-runtime.ts';
+import { makeProblemDetailsSchema, makeRetryableProblemDetailsSchema } from '../../src/problem-details.ts';
 
 const schemas = {
   authentication: makeProblemDetailsSchema('AuthenticationProblem', 401),
@@ -92,43 +90,37 @@ const makeClient = (credential: string, requestCorrelation: string, baseUrl: str
     { baseUrl },
   );
 
-it.effect(
-  'shared transport is lazy and keeps each invocation credential, correlation and trusted URL',
-  () =>
-    Effect.gen(function* checkTransport() {
-      const requests: Request[] = [];
-      const fetch: typeof globalThis.fetch = (input, init) => {
-        requests.push(new Request(input, init));
-        return Promise.resolve(Response.json('ok'));
-      };
-      const url = new URL('https://owner.example/custom');
-      const first = makeClient('Bearer first', 'first-correlation', url);
-      url.protocol = 'ftp:';
-      url.hostname = 'attacker.example';
-      const second = makeClient(
-        'Bearer second',
-        'second-correlation',
-        'https://owner.example/custom',
+it.effect('shared transport is lazy and keeps each invocation credential, correlation and trusted URL', () =>
+  Effect.gen(function* checkTransport() {
+    const requests: Request[] = [];
+    const fetch: typeof globalThis.fetch = (input, init) => {
+      requests.push(new Request(input, init));
+      return Promise.resolve(Response.json('ok'));
+    };
+    const url = new URL('https://owner.example/custom');
+    const first = makeClient('Bearer first', 'first-correlation', url);
+    url.protocol = 'ftp:';
+    url.hostname = 'attacker.example';
+    const second = makeClient('Bearer second', 'second-correlation', 'https://owner.example/custom');
+    expect(requests.length).toBe(0);
+    for (const client of [first, second]) {
+      const result = yield* client.pipe(
+        Effect.flatMap((value) => value.read.execute({})),
+        Effect.provideService(FetchHttpClient.Fetch, fetch),
       );
-      expect(requests.length).toBe(0);
-      for (const client of [first, second]) {
-        const result = yield* client.pipe(
-          Effect.flatMap((value) => value.read.execute({})),
-          Effect.provideService(FetchHttpClient.Fetch, fetch),
-        );
-        expect(result).toBe('ok');
-      }
-      expect(
-        requests.map((request) => [
-          request.url,
-          request.headers.get('authorization'),
-          request.headers.get('x-correlation-id'),
-        ]),
-      ).toEqual([
-        ['https://owner.example/custom/read', 'Bearer first', 'first-correlation'],
-        ['https://owner.example/custom/read', 'Bearer second', 'second-correlation'],
-      ]);
-    }),
+      expect(result).toBe('ok');
+    }
+    expect(
+      requests.map((request) => [
+        request.url,
+        request.headers.get('authorization'),
+        request.headers.get('x-correlation-id'),
+      ]),
+    ).toEqual([
+      ['https://owner.example/custom/read', 'Bearer first', 'first-correlation'],
+      ['https://owner.example/custom/read', 'Bearer second', 'second-correlation'],
+    ]);
+  }),
 );
 
 it.effect('shared transport retains the concrete retryable backend error union', () =>
@@ -140,11 +132,7 @@ it.effect('shared transport retains the concrete retryable backend error union',
           status: 503,
         }),
       );
-    const result = yield* makeClient(
-      'Bearer proof',
-      'correlation',
-      'https://owner.example/api',
-    ).pipe(
+    const result = yield* makeClient('Bearer proof', 'correlation', 'https://owner.example/api').pipe(
       Effect.flatMap((client) => client.read.execute({})),
       Effect.provideService(FetchHttpClient.Fetch, fetch),
       Effect.flip,
@@ -157,11 +145,7 @@ it.effect('shared transport retains the concrete retryable backend error union',
   }),
 );
 
-for (const baseUrl of [
-  'data:text/plain,unsafe',
-  'https://user:password@owner.example/api',
-  '//attacker.example/api',
-]) {
+for (const baseUrl of ['data:text/plain,unsafe', 'https://user:password@owner.example/api', '//attacker.example/api']) {
   it.effect(`shared transport rejects unsafe URL ${baseUrl} before fetch`, () =>
     Effect.gen(function* checkUnsafeUrl() {
       let calls = 0;

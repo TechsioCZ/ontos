@@ -2,6 +2,7 @@
 /* eslint-disable anti-slop-effect/no-service-constructor-imports -- make*Ref helpers construct plain ResourceRef values, not Effect services. expires: 2026-12-31. */
 import { and, eq } from 'drizzle-orm';
 import { DateTime, Effect, Match, Schema } from 'effect';
+
 import type { AresAppliedEvidence } from '../../shared/domain/ares-application.ts';
 import { AresAppliedEvidenceSchema } from '../../shared/domain/ares-application.ts';
 import type {
@@ -11,18 +12,12 @@ import type {
 } from '../../shared/domain/identifier-contracts.ts';
 import { qualifiesForExclusiveClaim } from '../../shared/domain/identifier-contracts.ts';
 import type { PartyType } from '../../shared/domain/identity-contracts.ts';
-import {
-  PartyPersistenceUnavailable,
-  makePartyRef,
-} from '../../shared/domain/identity-contracts.ts';
+import { PartyPersistenceUnavailable, makePartyRef } from '../../shared/domain/identity-contracts.ts';
 import { makePartyOfficialIdentifierRef } from '../../shared/resources/party-official-identifier.ts';
 import { parties, partyIdentifierClaims, partyOfficialIdentifiers } from '../db/schema.ts';
 import type { PartyTransaction } from '../db/types.ts';
 import { requireCanonicalPartyWriteTarget } from '../merge/party-alias-resolution.service.ts';
-import {
-  lockAndResolveClaims,
-  lockTenantIdentityWrites,
-} from './party-identifier-claim.service.ts';
+import { lockAndResolveClaims, lockTenantIdentityWrites } from './party-identifier-claim.service.ts';
 
 const unavailable = (cause?: unknown) => {
   const error = new PartyPersistenceUnavailable({
@@ -33,8 +28,7 @@ const unavailable = (cause?: unknown) => {
   return error;
 };
 
-const instantAsDate = (instant: string | DateTime.Utc): Date =>
-  DateTime.toDateUtc(DateTime.makeUnsafe(instant));
+const instantAsDate = (instant: string | DateTime.Utc): Date => DateTime.toDateUtc(DateTime.makeUnsafe(instant));
 
 export const PARTY_EXACT_CLAIM_RULE_VERSION = 'party-exact-claims.v1';
 
@@ -45,11 +39,7 @@ const endedOfficialIdentifierTransition = {
 
 export const lockOfficialIdentifierPartyRecord = Effect.fn(
   'PartyOfficialIdentifierPersistenceService.lockOfficialIdentifierPartyRecord',
-)(function* lockIdentifierParty(
-  transaction: Pick<PartyTransaction, 'select'>,
-  tenantId: string,
-  partyId: string,
-) {
+)(function* lockIdentifierParty(transaction: Pick<PartyTransaction, 'select'>, tenantId: string, partyId: string) {
   yield* lockTenantIdentityWrites(transaction, tenantId);
   const [party] = yield* transaction
     .select()
@@ -62,59 +52,53 @@ export const lockOfficialIdentifierPartyRecord = Effect.fn(
     return { _tag: 'not_found' } as const;
   }
   yield* requireCanonicalPartyWriteTarget(transaction, tenantId, partyId);
-  return party.archivedAt === null
-    ? ({ _tag: 'found', value: party } as const)
-    : ({ _tag: 'conflict' } as const);
+  return party.archivedAt === null ? ({ _tag: 'found', value: party } as const) : ({ _tag: 'conflict' } as const);
 });
 
-const lockIdentifierWriteTarget = Effect.fn(
-  'PartyOfficialIdentifierPersistenceService.lockIdentifierWriteTarget',
-)(function* lockTarget(
-  transaction: Pick<PartyTransaction, 'select'>,
-  tenantId: string,
-  officialIdentifierId: string,
-) {
-  yield* lockTenantIdentityWrites(transaction, tenantId);
-  // Resolve the owner without a row lock, then always lock Party before its assertion.
-  const [target] = yield* transaction
-    .select({ partyId: partyOfficialIdentifiers.partyId })
-    .from(partyOfficialIdentifiers)
-    .where(
-      and(
-        eq(partyOfficialIdentifiers.tenantId, tenantId),
-        eq(partyOfficialIdentifiers.officialIdentifierId, officialIdentifierId),
-      ),
-    )
-    .limit(1)
-    .pipe(Effect.mapError(unavailable));
-  if (target === undefined) {
-    return { _tag: 'not_found' } as const;
-  }
-  const party = yield* lockOfficialIdentifierPartyRecord(transaction, tenantId, target.partyId);
-  const matchedParty = Match.value(party).pipe(
-    Match.tag('found', (result) => ({ matched: true, result }) as const),
-    Match.tag('conflict', 'not_found', (result) => ({ matched: false, result }) as const),
-    Match.exhaustive,
-  );
-  if (!matchedParty.matched) {
-    return matchedParty.result;
-  }
-  const [current] = yield* transaction
-    .select()
-    .from(partyOfficialIdentifiers)
-    .where(
-      and(
-        eq(partyOfficialIdentifiers.tenantId, tenantId),
-        eq(partyOfficialIdentifiers.officialIdentifierId, officialIdentifierId),
-      ),
-    )
-    .limit(1)
-    .for('update')
-    .pipe(Effect.mapError(unavailable));
-  return current === undefined
-    ? ({ _tag: 'not_found' } as const)
-    : ({ _tag: 'found', current, party: matchedParty.result.value } as const);
-});
+const lockIdentifierWriteTarget = Effect.fn('PartyOfficialIdentifierPersistenceService.lockIdentifierWriteTarget')(
+  function* lockTarget(transaction: Pick<PartyTransaction, 'select'>, tenantId: string, officialIdentifierId: string) {
+    yield* lockTenantIdentityWrites(transaction, tenantId);
+    // Resolve the owner without a row lock, then always lock Party before its assertion.
+    const [target] = yield* transaction
+      .select({ partyId: partyOfficialIdentifiers.partyId })
+      .from(partyOfficialIdentifiers)
+      .where(
+        and(
+          eq(partyOfficialIdentifiers.tenantId, tenantId),
+          eq(partyOfficialIdentifiers.officialIdentifierId, officialIdentifierId),
+        ),
+      )
+      .limit(1)
+      .pipe(Effect.mapError(unavailable));
+    if (target === undefined) {
+      return { _tag: 'not_found' } as const;
+    }
+    const party = yield* lockOfficialIdentifierPartyRecord(transaction, tenantId, target.partyId);
+    const matchedParty = Match.value(party).pipe(
+      Match.tag('found', (result) => ({ matched: true, result }) as const),
+      Match.tag('conflict', 'not_found', (result) => ({ matched: false, result }) as const),
+      Match.exhaustive,
+    );
+    if (!matchedParty.matched) {
+      return matchedParty.result;
+    }
+    const [current] = yield* transaction
+      .select()
+      .from(partyOfficialIdentifiers)
+      .where(
+        and(
+          eq(partyOfficialIdentifiers.tenantId, tenantId),
+          eq(partyOfficialIdentifiers.officialIdentifierId, officialIdentifierId),
+        ),
+      )
+      .limit(1)
+      .for('update')
+      .pipe(Effect.mapError(unavailable));
+    return current === undefined
+      ? ({ _tag: 'not_found' } as const)
+      : ({ _tag: 'found', current, party: matchedParty.result.value } as const);
+  },
+);
 
 const matchIdentifierWriteTarget = (
   transaction: Pick<PartyTransaction, 'select'>,
@@ -140,34 +124,37 @@ const verificationTargetChanged = (
   current.validTo !== null ||
   current.verificationState !== expectedVerification;
 
-const resolveVerificationClaim = Effect.fn(
-  'PartyOfficialIdentifierPersistenceService.resolveVerificationClaim',
-)(function* resolveVerificationClaim(
-  transaction: Pick<PartyTransaction, 'select'>,
-  tenantId: string,
-  candidate: NormalizedOfficialIdentifier,
-  current: typeof partyOfficialIdentifiers.$inferSelect,
-  partyType: PartyType,
-  matchRuleVersion: string,
-) {
-  const claimEligible = qualifiesForExclusiveClaim(candidate, partyType, matchRuleVersion);
-  const previouslyClaimEligible = qualifiesForExclusiveClaim(
-    // SAFETY: the database CHECK constrains verification to this contract.
-    { ...candidate, verification: current.verificationState as IdentifierVerification },
-    partyType,
-    matchRuleVersion,
-  );
-  if (!claimEligible && !previouslyClaimEligible) {
-    return { claimEligible, claimOwner: undefined, conflict: false };
-  }
-  const [claim] = yield* lockAndResolveClaims(transaction, tenantId, [candidate]);
-  const claimOwner = claim?.partyId;
-  return {
-    claimEligible,
-    claimOwner,
-    conflict: claimEligible && claimOwner !== undefined && claimOwner !== current.partyId,
-  };
-});
+const resolveVerificationClaim = Effect.fn('PartyOfficialIdentifierPersistenceService.resolveVerificationClaim')(
+  function* resolveVerificationClaim(
+    transaction: Pick<PartyTransaction, 'select'>,
+    tenantId: string,
+    candidate: NormalizedOfficialIdentifier,
+    current: typeof partyOfficialIdentifiers.$inferSelect,
+    partyType: PartyType,
+    matchRuleVersion: string,
+  ) {
+    const claimEligible = qualifiesForExclusiveClaim(candidate, partyType, matchRuleVersion);
+    const previouslyClaimEligible = qualifiesForExclusiveClaim(
+      // SAFETY: the database CHECK constrains verification to this contract.
+      {
+        ...candidate,
+        verification: current.verificationState as IdentifierVerification,
+      },
+      partyType,
+      matchRuleVersion,
+    );
+    if (!claimEligible && !previouslyClaimEligible) {
+      return { claimEligible, claimOwner: undefined, conflict: false };
+    }
+    const [claim] = yield* lockAndResolveClaims(transaction, tenantId, [candidate]);
+    const claimOwner = claim?.partyId;
+    return {
+      claimEligible,
+      claimOwner,
+      conflict: claimEligible && claimOwner !== undefined && claimOwner !== current.partyId,
+    };
+  },
+);
 
 export const addOfficialIdentifierRecord = Effect.fn(
   'PartyOfficialIdentifierPersistenceService.addOfficialIdentifierRecord',
@@ -261,11 +248,7 @@ export const endOfficialIdentifierRecord = Effect.fn(
   officialIdentifierId: string,
   validTo: string,
 ) {
-  const matchedTarget = yield* matchIdentifierWriteTarget(
-    transaction,
-    tenantId,
-    officialIdentifierId,
-  );
+  const matchedTarget = yield* matchIdentifierWriteTarget(transaction, tenantId, officialIdentifierId);
   if (!matchedTarget.matched) {
     return matchedTarget.result;
   }
@@ -320,9 +303,7 @@ export const endOfficialIdentifierRecord = Effect.fn(
       ),
     )
     .pipe(Effect.mapError(unavailable));
-  return updated === undefined
-    ? yield* unavailable()
-    : ({ _tag: 'found', previous: current, value: updated } as const);
+  return updated === undefined ? yield* unavailable() : ({ _tag: 'found', previous: current, value: updated } as const);
 });
 
 export const updateOfficialIdentifierVerificationRecord = Effect.fn(
@@ -338,11 +319,7 @@ export const updateOfficialIdentifierVerificationRecord = Effect.fn(
     readonly verification: IdentifierVerification;
   },
 ) {
-  const matchedTarget = yield* matchIdentifierWriteTarget(
-    transaction,
-    tenantId,
-    officialIdentifierId,
-  );
+  const matchedTarget = yield* matchIdentifierWriteTarget(transaction, tenantId, officialIdentifierId);
   if (!matchedTarget.matched) {
     return matchedTarget.result;
   }
@@ -419,9 +396,7 @@ export const updateOfficialIdentifierVerificationRecord = Effect.fn(
   return { _tag: 'found', previous: current, value: updated } as const;
 });
 
-const identifierDto = (
-  row: typeof partyOfficialIdentifiers.$inferSelect,
-): OfficialIdentifierAssertion => ({
+const identifierDto = (row: typeof partyOfficialIdentifiers.$inferSelect): OfficialIdentifierAssertion => ({
   externalEvidence: row.externalEvidence,
   // SAFETY: the database CHECK permits only supported identifier types.
   identifierType: row.identifierTypeKey as 'ICO' | 'CZ_DIC',
@@ -455,9 +430,7 @@ export const findOfficialIdentifierRecord = (
     .pipe(
       Effect.mapError(unavailable),
       Effect.map(([row]) =>
-        row === undefined
-          ? ({ _tag: 'not_found' } as const)
-          : ({ _tag: 'found', value: identifierDto(row) } as const),
+        row === undefined ? ({ _tag: 'not_found' } as const) : ({ _tag: 'found', value: identifierDto(row) } as const),
       ),
     );
 export const listOfficialIdentifierHistory = (
@@ -468,12 +441,7 @@ export const listOfficialIdentifierHistory = (
   transaction
     .select()
     .from(partyOfficialIdentifiers)
-    .where(
-      and(
-        eq(partyOfficialIdentifiers.tenantId, tenantId),
-        eq(partyOfficialIdentifiers.partyId, partyId),
-      ),
-    )
+    .where(and(eq(partyOfficialIdentifiers.tenantId, tenantId), eq(partyOfficialIdentifiers.partyId, partyId)))
     .pipe(
       Effect.mapError(unavailable),
       Effect.map((rows) => rows.map(identifierDto)),

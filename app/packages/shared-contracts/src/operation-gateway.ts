@@ -1,4 +1,5 @@
 import { Effect, Redacted } from 'effect';
+
 import { issueGatewayContext } from './gateway-context.ts';
 import type {
   GatewayContextClientError,

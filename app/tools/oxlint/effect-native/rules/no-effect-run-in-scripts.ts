@@ -62,27 +62,16 @@
  * Report-only: no fixers, no suggestions.
  */
 import { defineRule } from '@oxlint/plugins';
-
 import type { Context, ESTree } from '@oxlint/plugins';
 
-import {
-  parentOf,
-  keyName,
-  unwrapNode,
-  skipWrappers as sharedSkipWrappers,
-  walk as walkAst,
-} from '../shared/ast.ts';
+import { parentOf, keyName, unwrapNode, skipWrappers as sharedSkipWrappers, walk as walkAst } from '../shared/ast.ts';
 import { resolveVariable, isTrackedReference as trackedReference } from '../shared/bindings.ts';
-import { importedName } from '../shared/imports.ts';
-import {
-  isNonReferencePosition,
-  isInTypePosition as inTypePosition,
-} from '../shared/reference-positions.ts';
-import { nearestFunction, isTopLevel, programLevelFunctionName } from '../shared/script-entry.ts';
-
 import { collectEffectBindings, effectMember } from '../shared/effect-imports.ts';
 import type { EffectBindings } from '../shared/effect-imports.ts';
+import { importedName } from '../shared/imports.ts';
 import { isScriptFile, isTestFile, matchesAny } from '../shared/paths.ts';
+import { isNonReferencePosition, isInTypePosition as inTypePosition } from '../shared/reference-positions.ts';
+import { nearestFunction, isTopLevel, programLevelFunctionName } from '../shared/script-entry.ts';
 
 /** `runPromise`, `runPromiseExit`, `runSync`, `runSyncExit`, `runFork`, `runCallback`, `run*With`. */
 const RUN_MEMBER = /^run[A-Z]/u;
@@ -93,13 +82,7 @@ const PROMISE_CHAIN_METHODS = new Set(['then', 'catch']);
 const CLEANUP_CHAIN_METHOD = 'finally';
 
 /** Loops turn one syntactic run site into one root fiber per iteration (S1). */
-const LOOP_NODES = new Set([
-  'DoWhileStatement',
-  'ForInStatement',
-  'ForOfStatement',
-  'ForStatement',
-  'WhileStatement',
-]);
+const LOOP_NODES = new Set(['DoWhileStatement', 'ForInStatement', 'ForOfStatement', 'ForStatement', 'WhileStatement']);
 
 /** Wrappers that do not change "is this expression the callee / object / init of its parent". */
 const TRANSPARENT_PARENTS = new Set([
@@ -123,12 +106,7 @@ const TS_EXPRESSION_NODES = new Set([
   'TSTypeAssertion',
 ]);
 
-const FUNCTION_LIKE = new Set([
-  'ArrowFunctionExpression',
-  'FunctionDeclaration',
-  'FunctionExpression',
-  'StaticBlock',
-]);
+const FUNCTION_LIKE = new Set(['ArrowFunctionExpression', 'FunctionDeclaration', 'FunctionExpression', 'StaticBlock']);
 
 /** Export syntax: a re-export mentions the entrypoint without ever invoking it. */
 const EXPORT_REFERENCE_PARENTS = new Set([
@@ -181,15 +159,11 @@ function readOptions(raw: unknown): RuleOptions {
   return {
     allowPaths: strings(given.allowPaths, DEFAULTS.allowPaths),
     maxRunSites:
-      typeof given.maxRunSites === 'number' &&
-      Number.isInteger(given.maxRunSites) &&
-      given.maxRunSites >= 0
+      typeof given.maxRunSites === 'number' && Number.isInteger(given.maxRunSites) && given.maxRunSites >= 0
         ? given.maxRunSites
         : DEFAULTS.maxRunSites,
     reportPromiseChain:
-      typeof given.reportPromiseChain === 'boolean'
-        ? given.reportPromiseChain
-        : DEFAULTS.reportPromiseChain,
+      typeof given.reportPromiseChain === 'boolean' ? given.reportPromiseChain : DEFAULTS.reportPromiseChain,
     effectModules: strings(given.effectModules, DEFAULTS.effectModules),
     scriptGlobs: strings(given.scriptGlobs, DEFAULTS.scriptGlobs),
     scriptPaths: strings(given.scriptPaths, DEFAULTS.scriptPaths),
@@ -207,12 +181,7 @@ function isInTypePosition(node: AnyNode): boolean {
   return inTypePosition(node, TS_EXPRESSION_NODES);
 }
 const DECLARATION_PARENTS = new Set(['LabeledStatement', 'BreakStatement', 'ContinueStatement']);
-const DECLARATION_KEYS = new Set([
-  'Property',
-  'PropertyDefinition',
-  'MethodDefinition',
-  'AccessorProperty',
-]);
+const DECLARATION_KEYS = new Set(['Property', 'PropertyDefinition', 'MethodDefinition', 'AccessorProperty']);
 function isDeclarationPosition(node: AnyNode): boolean {
   return isNonReferencePosition(node, {
     detached: false,
@@ -222,7 +191,11 @@ function isDeclarationPosition(node: AnyNode): boolean {
   });
 }
 function staticName(key: AnyNode, computed: boolean): string | null {
-  return keyName(key, computed, { templates: computed, rawTemplates: true, singleQuasi: true });
+  return keyName(key, computed, {
+    templates: computed,
+    rawTemplates: true,
+    singleQuasi: true,
+  });
 }
 
 function sameSpan(left: AnyNode, right: AnyNode): boolean {
@@ -269,21 +242,17 @@ interface BindingState {
   readonly runLocals: Map<string, RunLocalBinding>;
   readonly effectModules: readonly string[];
 }
-function collectNamedRunner(
-  state: BindingState,
-  specifier: ESTree.ImportSpecifier,
-  source: string,
-): void {
+function collectNamedRunner(state: BindingState, specifier: ESTree.ImportSpecifier, source: string): void {
   if (specifier.importKind === 'type') return;
   const imported = importedName(specifier);
   const local = specifier.local;
   const submodule = source.split('/').at(-1) ?? '';
   if (state.effectModules.includes(imported)) {
-    state.namespaces.set(local.name, { declaration: local, namespace: imported });
-  } else if (
-    RUN_MEMBER.test(imported) &&
-    (source === 'effect' || state.effectModules.includes(submodule))
-  ) {
+    state.namespaces.set(local.name, {
+      declaration: local,
+      namespace: imported,
+    });
+  } else if (RUN_MEMBER.test(imported) && (source === 'effect' || state.effectModules.includes(submodule))) {
     state.runLocals.set(local.name, {
       declaration: local,
       member: imported,
@@ -307,11 +276,7 @@ function collectRunnerImport(state: BindingState, statement: ESTree.ImportDeclar
     }
   }
 }
-function collectRunBindings(
-  context: Context,
-  program: ESTree.Program,
-  effectModules: readonly string[],
-): RunBindings {
+function collectRunBindings(context: Context, program: ESTree.Program, effectModules: readonly string[]): RunBindings {
   const state: BindingState = {
     context,
     effectModules,
@@ -331,10 +296,7 @@ function collectRunBindings(
   };
 }
 type AliasKind = NamespaceBinding | 'package';
-function packageNamespace(
-  state: BindingState,
-  member: ESTree.MemberExpression,
-): NamespaceBinding | null {
+function packageNamespace(state: BindingState, member: ESTree.MemberExpression): NamespaceBinding | null {
   const name = staticName(member.property, member.computed);
   if (name === null || !state.effectModules.includes(name)) return null;
   const object = unwrapExpression(member.object);
@@ -348,26 +310,22 @@ function aliasKind(state: BindingState, init: AnyNode): AliasKind | null {
   if (init.type === 'MemberExpression') return packageNamespace(state, init);
   if (init.type !== 'Identifier') return null;
   const known = state.namespaces.get(init.name);
-  if (known !== undefined && isTrackedReference(state.context, init, known.declaration))
-    return known;
+  if (known !== undefined && isTrackedReference(state.context, init, known.declaration)) return known;
   const declaration = state.packages.get(init.name);
-  return declaration !== undefined && isTrackedReference(state.context, init, declaration)
-    ? 'package'
-    : null;
+  return declaration !== undefined && isTrackedReference(state.context, init, declaration) ? 'package' : null;
 }
 function addBinding<T>(map: Map<string, T>, name: string, value: T): boolean {
   if (map.has(name)) return false;
   map.set(name, value);
   return true;
 }
-function bindAlias(
-  state: BindingState,
-  target: ESTree.BindingIdentifier,
-  kind: AliasKind,
-): boolean {
+function bindAlias(state: BindingState, target: ESTree.BindingIdentifier, kind: AliasKind): boolean {
   return kind === 'package'
     ? addBinding(state.packages, target.name, target)
-    : addBinding(state.namespaces, target.name, { declaration: target, namespace: kind.namespace });
+    : addBinding(state.namespaces, target.name, {
+        declaration: target,
+        namespace: kind.namespace,
+      });
 }
 function bindProperty(
   state: BindingState,
@@ -381,7 +339,10 @@ function bindProperty(
   if (kind === 'package') {
     return (
       state.effectModules.includes(key) &&
-      addBinding(state.namespaces, value.name, { declaration: value, namespace: key })
+      addBinding(state.namespaces, value.name, {
+        declaration: value,
+        namespace: key,
+      })
     );
   }
   return (
@@ -393,22 +354,11 @@ function bindProperty(
     })
   );
 }
-function runnerAlias(
-  state: BindingState,
-  init: AnyNode,
-): { member: string; namespace: string } | null {
+function runnerAlias(state: BindingState, init: AnyNode): { member: string; namespace: string } | null {
   if (init.type !== 'MemberExpression') return null;
-  const namespace = namespaceOfObject(
-    state.context,
-    init,
-    state.namespaces,
-    state.packages,
-    state.effectModules,
-  );
+  const namespace = namespaceOfObject(state.context, init, state.namespaces, state.packages, state.effectModules);
   const member = staticName(init.property, init.computed);
-  return namespace !== null && member !== null && RUN_MEMBER.test(member)
-    ? { member, namespace }
-    : null;
+  return namespace !== null && member !== null && RUN_MEMBER.test(member) ? { member, namespace } : null;
 }
 function propagateDeclarator(state: BindingState, declarator: ESTree.VariableDeclarator): boolean {
   if (declarator.init == null) return false;
@@ -418,7 +368,10 @@ function propagateDeclarator(state: BindingState, declarator: ESTree.VariableDec
   if (runner !== null) {
     return (
       target.type === 'Identifier' &&
-      addBinding(state.runLocals, target.name, { declaration: target, ...runner })
+      addBinding(state.runLocals, target.name, {
+        declaration: target,
+        ...runner,
+      })
     );
   }
   const kind = aliasKind(state, init);
@@ -462,9 +415,7 @@ function namespaceOfObject(
   const object = unwrapExpression(node.object as unknown as AnyNode);
   if (object.type === 'Identifier') {
     const binding = namespaces.get((object as ESTree.IdentifierReference).name);
-    return binding !== undefined && isTrackedReference(context, object, binding.declaration)
-      ? binding.namespace
-      : null;
+    return binding !== undefined && isTrackedReference(context, object, binding.declaration) ? binding.namespace : null;
   }
   if (object.type !== 'MemberExpression') return null;
   const inner = object as ESTree.MemberExpression;
@@ -494,8 +445,7 @@ function runMember(
     const tracked = bindings.namespaces.get((object as ESTree.IdentifierReference).name);
     if (tracked === undefined) return null;
     // Cross-check with the shared import tracker for the plain `Effect.runPromise` shape.
-    const namespace =
-      effectMember(node as unknown as ESTree.Node, shared)?.namespace ?? tracked.namespace;
+    const namespace = effectMember(node as unknown as ESTree.Node, shared)?.namespace ?? tracked.namespace;
     if (!effectModules.includes(namespace)) return null;
     if (!isTrackedReference(context, object, tracked.declaration)) return null;
     return { member, namespace };
@@ -525,9 +475,7 @@ function packageRunMember(
 /** Return a call only when the wrapped expression is its callee. */
 function invocation(node: AnyNode): ESTree.CallExpression | null {
   const wrapped = skipWrappers(node);
-  return wrapped.parent?.type === 'CallExpression' && wrapped.parent.callee === wrapped.node
-    ? wrapped.parent
-    : null;
+  return wrapped.parent?.type === 'CallExpression' && wrapped.parent.callee === wrapped.node ? wrapped.parent : null;
 }
 function isTopLevelImmediatelyInvoked(fn: AnyNode): boolean {
   const call = invocation(fn);
@@ -599,11 +547,7 @@ function switchHasNoFallthrough(node: ESTree.SwitchStatement): boolean {
       return true;
     if (statement.type === 'BlockStatement') return terminates(statement.body.at(-1));
     if (statement.type === 'IfStatement')
-      return (
-        terminates(statement.consequent) &&
-        statement.alternate !== null &&
-        terminates(statement.alternate)
-      );
+      return terminates(statement.consequent) && statement.alternate !== null && terminates(statement.alternate);
     return false;
   };
   return node.cases
@@ -627,11 +571,12 @@ function decisionPath(site: AnyNode): readonly Decision[] {
   let current = parentOf(child);
   while (current !== null) {
     if (current.type === 'IfStatement' || current.type === 'ConditionalExpression') {
-      const branching = current as unknown as { consequent?: unknown; alternate?: unknown };
-      if (branching.consequent === child)
-        path.push({ branch: 'then', id: (current as ESTree.Span).start });
-      else if (branching.alternate === child)
-        path.push({ branch: 'else', id: (current as ESTree.Span).start });
+      const branching = current as unknown as {
+        consequent?: unknown;
+        alternate?: unknown;
+      };
+      if (branching.consequent === child) path.push({ branch: 'then', id: (current as ESTree.Span).start });
+      else if (branching.alternate === child) path.push({ branch: 'else', id: (current as ESTree.Span).start });
     } else if (current.type === 'SwitchCase') {
       const parent = parentOf(current);
       if (
@@ -675,24 +620,17 @@ function promiseChainMethod(site: AnyNode): string | null {
     (member as ESTree.MemberExpression).property as unknown as AnyNode,
     (member as ESTree.MemberExpression).computed,
   );
-  if (method === null || (!PROMISE_CHAIN_METHODS.has(method) && method !== CLEANUP_CHAIN_METHOD))
-    return null;
+  if (method === null || (!PROMISE_CHAIN_METHODS.has(method) && method !== CLEANUP_CHAIN_METHOD)) return null;
   return invocation(member) !== null ? method : null;
 }
 
 function isAliasInitializer(node: AnyNode): boolean {
   const wrapped = skipWrappers(node);
   const parent = wrapped.parent;
-  return (
-    parent?.type === 'VariableDeclarator' &&
-    parent.init === wrapped.node &&
-    parent.id.type === 'Identifier'
-  );
+  return parent?.type === 'VariableDeclarator' && parent.init === wrapped.node && parent.id.type === 'Identifier';
 }
 function chargeSlot(charged: Array<Array<readonly Decision[]>>, path: readonly Decision[]): number {
-  const slot = charged.findIndex((alternatives) =>
-    alternatives.every((other) => mutuallyExclusive(other, path)),
-  );
+  const slot = charged.findIndex((alternatives) => alternatives.every((other) => mutuallyExclusive(other, path)));
   if (slot !== -1) {
     charged[slot]?.push(path);
     return slot;
@@ -753,8 +691,7 @@ export const rule = defineRule({
           effectModules: {
             type: 'array',
             items: { type: 'string' },
-            description:
-              'Effect namespaces whose run* members start a root fiber (default: ["Effect"]).',
+            description: 'Effect namespaces whose run* members start a root fiber (default: ["Effect"]).',
           },
           scriptGlobs: {
             type: 'array',
@@ -839,9 +776,7 @@ export const rule = defineRule({
       },
       'Program:exit'() {
         if (sites.length === 0) return;
-        const ordered = [...sites].sort(
-          (left, right) => left.start - right.start || right.end - left.end,
-        );
+        const ordered = [...sites].sort((left, right) => left.start - right.start || right.end - left.end);
         // Skip run sites nested inside another run site's expression; the outer one is the report.
         const outer = ordered.filter(
           (site) =>
@@ -874,7 +809,11 @@ export const rule = defineRule({
           }
           const method = options.reportPromiseChain ? promiseChainMethod(site.node) : null;
           if (method === CLEANUP_CHAIN_METHOD) {
-            context.report({ node: site.node, messageId: 'promiseFinallyOnRun', data });
+            context.report({
+              node: site.node,
+              messageId: 'promiseFinallyOnRun',
+              data,
+            });
           } else if (method !== null) {
             context.report({
               node: site.node,

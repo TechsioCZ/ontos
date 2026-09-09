@@ -3,8 +3,8 @@ import { copyFileSync, mkdirSync, realpathSync, symlinkSync, writeFileSync } fro
 import path from 'node:path';
 import { pathToFileURL } from 'node:url';
 
-import { expect, it } from 'effect-rstest';
 import { Effect, Predicate } from 'effect';
+import { expect, it } from 'effect-rstest';
 
 import { discoverRules } from '../shared/discover-rules.ts';
 import { pluginDirectory } from './oxlint.mts';
@@ -31,10 +31,7 @@ it('rule discovery uses file URLs in workspaces containing spaces, URL delimiter
     mkdirSync(shared, { recursive: true });
     mkdirSync(rules, { recursive: true });
     writeFileSync(path.join(workspace, 'package.json'), JSON.stringify({ type: 'module' }));
-    copyFileSync(
-      path.join(pluginDirectory, 'shared', discoveryFile),
-      path.join(shared, discoveryFile),
-    );
+    copyFileSync(path.join(pluginDirectory, 'shared', discoveryFile), path.join(shared, discoveryFile));
     writeFileSync(path.join(rules, selectedFile), 'export const rule = { marker: "selected" };');
     writeFileSync(
       path.join(rules, 'unselected.ts'),

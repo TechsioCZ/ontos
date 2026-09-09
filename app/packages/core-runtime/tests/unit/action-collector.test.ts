@@ -1,5 +1,6 @@
-import { expect, it } from 'effect-rstest';
 import { Effect, Schema, Predicate } from 'effect';
+import { expect, it } from 'effect-rstest';
+
 import { createActionCollector } from '../../src/actions/collector.ts';
 
 const event = (id: string) =>
@@ -33,7 +34,10 @@ const makeCollector = () =>
       captureMode: 'metadata_only',
       policyKey: 'counter.read.v1',
     },
-    Schema.Struct({ checkpoint: Schema.String, nested: Schema.optionalKey(Schema.Json) }),
+    Schema.Struct({
+      checkpoint: Schema.String,
+      nested: Schema.optionalKey(Schema.Json),
+    }),
   );
 
 it.effect('preserves event order, multiple messages, and events without messages', () =>
@@ -55,13 +59,8 @@ it.effect('preserves event order, multiple messages, and events without messages
 
     const snapshot = collector.snapshot();
 
-    expect(snapshot.domainEvents.map((item) => item.subjectResourceId)).toEqual([
-      'first',
-      'second',
-    ]);
-    expect(
-      snapshot.outboxMessages.map((item) => [item.domainEventIndex, item.message.topic]),
-    ).toEqual([
+    expect(snapshot.domainEvents.map((item) => item.subjectResourceId)).toEqual(['first', 'second']);
+    expect(snapshot.outboxMessages.map((item) => [item.domainEventIndex, item.message.topic])).toEqual([
       [0, 'counter.project'],
       [0, 'counter.notify'],
     ]);
@@ -75,12 +74,8 @@ it.effect('rejects orphan and foreign Domain Event references', () =>
     const second = makeCollector();
     const foreign = yield* first.addDomainEvent(event('foreign'));
 
-    const foreignError = yield* Effect.flip(
-      second.addOutboxMessage(foreign, message('counter.project')),
-    );
-    const orphanError = yield* Effect.flip(
-      second.addOutboxMessageInput({}, message('counter.project')),
-    );
+    const foreignError = yield* Effect.flip(second.addOutboxMessage(foreign, message('counter.project')));
+    const orphanError = yield* Effect.flip(second.addOutboxMessageInput({}, message('counter.project')));
 
     expect(Predicate.isTagged(foreignError, 'ActionCollectorError')).toBe(true);
     expect(Predicate.isTagged(orphanError, 'ActionCollectorError')).toBe(true);
@@ -129,11 +124,12 @@ it.effect('captures one immutable JSON audit-evidence object and rejects invalid
     expect(Object.isFrozen(snapshot.auditEvidence['nested'])).toBe(true);
 
     const repeated = yield* Effect.flip(collector.recordAuditEvidence({ checkpoint: 'stopped' }));
-    const invalid = yield* Effect.flip(
-      makeCollector().recordAuditEvidenceInput({ value: undefined }),
-    );
+    const invalid = yield* Effect.flip(makeCollector().recordAuditEvidenceInput({ value: undefined }));
     const undeclared = yield* Effect.flip(
-      makeCollector().recordAuditEvidence({ checkpoint: 'started', secret: 'must-not-persist' }),
+      makeCollector().recordAuditEvidence({
+        checkpoint: 'started',
+        secret: 'must-not-persist',
+      }),
     );
     const missingSchema = yield* Effect.flip(
       createActionCollector(domainEventContracts, 'shell.core', {
@@ -175,12 +171,8 @@ it.effect('applies descriptor evidence policy and rejects incompatible evidence'
       resultCount: 1,
       servingModuleKey: 'shell.core',
     });
-    expect(metadataCollector.snapshot().dataAccessEvents[0]?.evidenceCaptureMode).toBe(
-      'metadata_only',
-    );
-    expect(metadataCollector.snapshot().dataAccessEvents[0]?.evidencePolicyKey).toBe(
-      'counter.read.v1',
-    );
+    expect(metadataCollector.snapshot().dataAccessEvents[0]?.evidenceCaptureMode).toBe('metadata_only');
+    expect(metadataCollector.snapshot().dataAccessEvents[0]?.evidencePolicyKey).toBe('counter.read.v1');
   }),
 );
 

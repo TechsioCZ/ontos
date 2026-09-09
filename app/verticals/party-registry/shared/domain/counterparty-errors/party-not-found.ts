@@ -1,4 +1,5 @@
 import { Schema } from 'effect';
+
 import { CounterpartyUuidSchema } from '../counterparty-contract.ts';
 
 export class CounterpartyPartyNotFound extends Schema.TaggedError<CounterpartyPartyNotFound>()(

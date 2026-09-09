@@ -8,26 +8,29 @@
     "incremental": true,
     "noEmit": false,
     "outDir": "../../node_modules/.cache/tsgo/declarations/apps__shell-super-app",
-    "skipLibCheck": true,
     "tsBuildInfoFile": "../../node_modules/.cache/tsgo/apps__shell-super-app.tsbuildinfo",
-    "types": ["node", "bun-types/sqlite"]
+    "types": [
+      "node",
+      "bun-types/sqlite"
+    ]
   },
   "include": [
-    "api",
     "src",
     "locales/**/*.json",
     "package.json",
-    "shared"
+    "shared",
+    "server",
+    "api"
   ],
   "references": [
-    {
-      "path": "../../packages/core-runtime"
-    },
     {
       "path": "../../packages/shared-contracts"
     },
     {
       "path": "../../packages/shared-design-tokens"
+    },
+    {
+      "path": "../../packages/core-runtime"
     },
     {
       "path": "../../verticals/party-registry"

@@ -1,12 +1,11 @@
 import { Effect } from 'effect';
+
 // eslint-disable-next-line anti-slop-effect/no-service-constructor-imports -- Pure browser gateway value constructor, not a Context service.
 import { makeOperationGateway } from './operation-gateway.ts';
 import type { OperationGatewayIssuer } from './operation-gateway.ts';
 
 type Equal<Left, Right> =
-  (<Value>() => Value extends Left ? 1 : 2) extends <Value>() => Value extends Right ? 1 : 2
-    ? true
-    : false;
+  (<Value>() => Value extends Left ? 1 : 2) extends <Value>() => Value extends Right ? 1 : 2 ? true : false;
 type EffectChannels<Value> =
   Value extends Effect.Effect<infer Success, infer Failure, infer Requirements>
     ? readonly [Success, Failure, Requirements]

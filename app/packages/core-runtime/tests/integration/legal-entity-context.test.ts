@@ -1,11 +1,11 @@
-import { expect, it } from 'effect-rstest';
-
 import { eq } from 'drizzle-orm';
 import { Effect, Predicate } from 'effect';
+import { expect, it } from 'effect-rstest';
+
 import { makeLegalEntityContext } from '../../src/auth/legal-entity-context.ts';
+import { makeCoreDatabase } from '../../src/db/client.ts';
 import { loadDatabaseConfig } from '../../src/db/config.ts';
 import { legalEntities, tenants } from '../../src/db/schema.ts';
-import { makeCoreDatabase } from '../../src/db/client.ts';
 
 const tenantOne = '11000000-0000-4000-8000-000000000001';
 const tenantTwo = '11000000-0000-4000-8000-000000000002';

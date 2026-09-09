@@ -1,4 +1,5 @@
 import { Result, Schema } from 'effect';
+
 import { ModuleEntrypointSchema } from './module-entrypoint.ts';
 
 const stableKey = Schema.String.check(
@@ -14,10 +15,7 @@ const groupKey = stableKey.pipe(Schema.brand('GroupKey'));
 const pageKey = stableKey.pipe(Schema.brand('PageKey'));
 const reportKey = stableKey.pipe(Schema.brand('ReportKey'));
 const searchKey = stableKey.pipe(Schema.brand('SearchKey'));
-const order = Schema.Finite.check(
-  Schema.isInt(),
-  Schema.isBetween({ maximum: 10_000, minimum: 0 }),
-);
+const order = Schema.Finite.check(Schema.isInt(), Schema.isBetween({ maximum: 10_000, minimum: 0 }));
 const routeParameterPattern = /^:(?<name>[a-z][A-Za-z0-9]*)$/u;
 const routeLocalePrefixPattern = /^[a-z]{2}(?:-[a-z]{2})?$/u;
 const routePath = Schema.String.check(
@@ -58,9 +56,7 @@ const pageEntrypoint = ModuleEntrypointSchema.pipe(
 const componentEntrypoint = ModuleEntrypointSchema.pipe(
   Schema.check(
     Schema.makeFilter((entrypoint) =>
-      entrypoint.scope === 'tenant' &&
-      entrypoint.role === 'public_component' &&
-      allowsRead(entrypoint.access)
+      entrypoint.scope === 'tenant' && entrypoint.role === 'public_component' && allowsRead(entrypoint.access)
         ? undefined
         : 'component contribution entrypoint must be a readable tenant public component',
     ),
@@ -78,9 +74,7 @@ const searchEntrypoint = ModuleEntrypointSchema.pipe(
 const reportEntrypoint = ModuleEntrypointSchema.pipe(
   Schema.check(
     Schema.makeFilter((entrypoint) =>
-      entrypoint.scope === 'tenant' &&
-      entrypoint.role === 'report' &&
-      entrypoint.access !== 'background'
+      entrypoint.scope === 'tenant' && entrypoint.role === 'report' && entrypoint.access !== 'background'
         ? undefined
         : 'report contribution entrypoint must be a tenant report with compatible access',
     ),
@@ -183,11 +177,7 @@ export interface ShellContributionReferenceSets {
   readonly searchKeys: ReadonlySet<string>;
 }
 
-const referenceIssue = (
-  set: ReadonlySet<string>,
-  key: string,
-  label: string,
-): string | undefined =>
+const referenceIssue = (set: ReadonlySet<string>, key: string, label: string): string | undefined =>
   set.has(key) ? undefined : `${label} references undeclared manifest key ${key}`;
 
 const validatePageReferences = (
@@ -202,11 +192,7 @@ const validatePageReferences = (
     }
   }
   for (const contribution of [...contributions.pages, ...contributions.publicComponents]) {
-    const issue = referenceIssue(
-      references.componentKeys,
-      contribution.componentKey,
-      'component contribution',
-    );
+    const issue = referenceIssue(references.componentKeys, contribution.componentKey, 'component contribution');
     if (issue !== undefined) {
       return issue;
     }
@@ -220,21 +206,13 @@ const validateDiscoveryReferences = (
   references: ShellContributionReferenceSets,
 ): string | undefined => {
   for (const contribution of contributions.search) {
-    const issue = referenceIssue(
-      references.searchKeys,
-      contribution.searchKey,
-      'search contribution',
-    );
+    const issue = referenceIssue(references.searchKeys, contribution.searchKey, 'search contribution');
     if (issue !== undefined) {
       return issue;
     }
   }
   for (const contribution of contributions.reports) {
-    const issue = referenceIssue(
-      references.reportKeys,
-      contribution.reportKey,
-      'report contribution',
-    );
+    const issue = referenceIssue(references.reportKeys, contribution.reportKey, 'report contribution');
     if (issue !== undefined) {
       return issue;
     }
@@ -248,11 +226,7 @@ const validateResourceReferences = (
   references: ShellContributionReferenceSets,
 ): string | undefined => {
   for (const contribution of [...contributions.resourceDetails, ...contributions.timelines]) {
-    const apiIssue = referenceIssue(
-      references.apiKeys,
-      contribution.apiKey,
-      'resource contribution',
-    );
+    const apiIssue = referenceIssue(references.apiKeys, contribution.apiKey, 'resource contribution');
     if (apiIssue !== undefined) {
       return apiIssue;
     }
@@ -274,11 +248,7 @@ const validateMediaReferences = (
   references: ShellContributionReferenceSets,
 ): string | undefined => {
   for (const contribution of contributions.mediaAttachments) {
-    const actionIssue = referenceIssue(
-      references.actionKeys,
-      contribution.actionKey,
-      'media contribution',
-    );
+    const actionIssue = referenceIssue(references.actionKeys, contribution.actionKey, 'media contribution');
     if (actionIssue !== undefined) {
       return actionIssue;
     }
@@ -286,11 +256,7 @@ const validateMediaReferences = (
     if (apiIssue !== undefined) {
       return apiIssue;
     }
-    const resourceIssue = referenceIssue(
-      references.resourceTypeKeys,
-      contribution.resourceType,
-      'media contribution',
-    );
+    const resourceIssue = referenceIssue(references.resourceTypeKeys, contribution.resourceType, 'media contribution');
     if (resourceIssue !== undefined) {
       return resourceIssue;
     }
@@ -337,11 +303,7 @@ export const validateShellContributions = <Input>(
   references: ShellContributionReferenceSets,
 ): OntosShellContributions => {
   const schema = OntosShellContributionsSchema.pipe(
-    Schema.check(
-      Schema.makeFilter((contributions) => validateReferences(contributions, references)),
-    ),
+    Schema.check(Schema.makeFilter((contributions) => validateReferences(contributions, references))),
   );
-  return Result.getOrThrow(
-    Schema.decodeUnknownResult(schema, { onExcessProperty: 'error' })(input),
-  );
+  return Result.getOrThrow(Schema.decodeUnknownResult(schema, { onExcessProperty: 'error' })(input));
 };

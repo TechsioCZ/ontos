@@ -8,58 +8,27 @@ created: 2026-08-14
 
 ## Feature Description
 
-Add the generated CRM MicroVertical page `CustomerDetail` at canonical route
-`/crm/customers/:id`, exposed by the locale-aware Shell as `/cs/crm/customers/:id` and
-`/en/crm/customers/:id`. The authenticated page presents one Customer using the component
-arrangement from Figma page `Pre-Alpha Repo`, frame `Resource Detail — Běžný` (`6:780`): a compact
-return link, Customer heading, and responsive overview details inside the existing Shell dashboard
-layout.
+Add the generated CRM MicroVertical page `CustomerDetail` at canonical route `/crm/customers/:id`, exposed by the locale-aware Shell as `/cs/crm/customers/:id` and `/en/crm/customers/:id`. The authenticated page presents one Customer using the component arrangement from Figma page `Pre-Alpha Repo`, frame `Resource Detail — Běžný` (`6:780`): a compact return link, Customer heading, and responsive overview details inside the existing Shell dashboard layout.
 
-The page must obtain its Customer data by executing the CRM contract-derived
-`getCustomerDetail` Effect client operation through the CRM BFF. It must not import a backend
-handler, read CRM persistence directly, or issue an ad hoc `fetch`. The BFF operation is owned by
-the prerequisite plan `specs/feature-crm-customer-contact-actions.md`; this page consumes that
-operation and does not create a second Customer-detail contract or endpoint.
+The page must obtain its Customer data by executing the CRM contract-derived `getCustomerDetail` Effect client operation through the CRM BFF. It must not import a backend handler, read CRM persistence directly, or issue an ad hoc `fetch`. The BFF operation is owned by the prerequisite plan `specs/feature-crm-customer-contact-actions.md`; this page consumes that operation and does not create a second Customer-detail contract or endpoint.
 
-Figma is a wireframe for arrangement only. The implementation uses the installed
-`@techsio/ui-kit` components and tokens without copying Figma colors, spacing, typography, borders,
-or component styling.
+Figma is a wireframe for arrangement only. The implementation uses the installed `@techsio/ui-kit` components and tokens without copying Figma colors, spacing, typography, borders, or component styling.
 
 ## User Story
 
-As a signed-in CRM user
-I want to open a Customer by its URL and see its current details
-So that I can inspect the canonical CRM record without leaving the authenticated dashboard
+As a signed-in CRM user I want to open a Customer by its URL and see its current details So that I can inspect the canonical CRM record without leaving the authenticated dashboard
 
 ## Problem Statement
 
-CRM persists Customers and has a planned governed Customer-detail read, but it has no Customer
-detail page. Users therefore cannot navigate directly to a Customer record through a stable,
-localized CRM URL or see typed loading, not-found, forbidden, and unavailable states.
+CRM persists Customers and has a planned governed Customer-detail read, but it has no Customer detail page. Users therefore cannot navigate directly to a Customer record through a stable, localized CRM URL or see typed loading, not-found, forbidden, and unavailable states.
 
-The current repository cannot safely generate the requested page yet. The mandatory
-`scaffold:microvertical-page` command rejects route parameters, `ShellPageContributionSchema`
-accepts only static kebab-case paths, and the generated Shell page connector has no approved typed
-route-parameter prop contract for a remote MicroVertical page. Hand-authoring
-the dynamic route, manifest registration, Shell connector, or private loader would violate the
-Codesmith and module-entrypoint rules. The planned prerequisite
-`specs/chore-support-dynamic-microvertical-pages.md` owns that infrastructure change.
+The current repository cannot safely generate the requested page yet. The mandatory `scaffold:microvertical-page` command rejects route parameters, `ShellPageContributionSchema` accepts only static kebab-case paths, and the generated Shell page connector has no approved typed route-parameter prop contract for a remote MicroVertical page. Hand-authoring the dynamic route, manifest registration, Shell connector, or private loader would violate the Codesmith and module-entrypoint rules. The planned prerequisite `specs/chore-support-dynamic-microvertical-pages.md` owns that infrastructure change.
 
 ## Solution Statement
 
-First implement and validate `specs/chore-support-dynamic-microvertical-pages.md`. After that
-prerequisite lands, run the page generator with stable page identity `customer-detail` and canonical URL
-`/crm/customers/:id`; do not include the locale in the generator URL.
+First implement and validate `specs/chore-support-dynamic-microvertical-pages.md`. After that prerequisite lands, run the page generator with stable page identity `customer-detail` and canonical URL `/crm/customers/:id`; do not include the locale in the generator URL.
 
-Adapt the generated CRM page to receive the bounded `id` route prop only after the Shell gate,
-validate it as the Customer UUID, and call `getCustomerDetail` through the CRM Effect BFF client.
-Follow the Customers-list feature's page-local TanStack Query pattern to bridge the typed Effect at
-the framework edge without ordinary fetching in a React effect. Retain the declared
-client error union until it is mapped to a closed presentation model. Use UI-kit `Link`, `Skeleton`,
-`StatusText`, and `Button` components for navigation, loading, feedback, and retry. Render the
-Customer fields as a semantic description list because the UI kit has no more specific detail-list
-component. Do not add inert tabs for Documents, Timeline, or Audit: those peer panels are visible in
-the generic Figma wireframe but have no CRM contract in this feature.
+Adapt the generated CRM page to receive the bounded `id` route prop only after the Shell gate, validate it as the Customer UUID, and call `getCustomerDetail` through the CRM Effect BFF client. Follow the Customers-list feature's page-local TanStack Query pattern to bridge the typed Effect at the framework edge without ordinary fetching in a React effect. Retain the declared client error union until it is mapped to a closed presentation model. Use UI-kit `Link`, `Skeleton`, `StatusText`, and `Button` components for navigation, loading, feedback, and retry. Render the Customer fields as a semantic description list because the UI kit has no more specific detail-list component. Do not add inert tabs for Documents, Timeline, or Audit: those peer panels are visible in the generic Figma wireframe but have no CRM contract in this feature.
 
 ## Relevant Files
 
@@ -118,26 +87,15 @@ Use these files to implement the feature:
 
 ### Phase 1: Foundation
 
-Implement and validate the planned dynamic-page chore, then run the mandatory page generator.
-Complete the Customer operations plan so `getCustomerDetail` and its public DTO/error union are real
-contracts rather than page-owned inventions. Complete the Customers-list page so `/crm/customers`
-and the CRM-local UI-kit/query dependencies and test infrastructure exist before detail reuses them.
+Implement and validate the planned dynamic-page chore, then run the mandatory page generator. Complete the Customer operations plan so `getCustomerDetail` and its public DTO/error union are real contracts rather than page-owned inventions. Complete the Customers-list page so `/crm/customers` and the CRM-local UI-kit/query dependencies and test infrastructure exist before detail reuses them.
 
 ### Phase 2: Core Implementation
 
-Adapt the generated remote route-param prop to validate `id`, execute `getCustomerDetail` through the
-CRM Effect client inside the CRM query boundary, and map success and the complete client error union
-to closed presentation states.
-Adapt the generated page presentation to show the Customer name and canonical DTO fields with
-localized labels, layout-only Tailwind classes, UI-kit loading/error/retry controls, semantic HTML,
-and no mutation affordances.
+Adapt the generated remote route-param prop to validate `id`, execute `getCustomerDetail` through the CRM Effect client inside the CRM query boundary, and map success and the complete client error union to closed presentation states. Adapt the generated page presentation to show the Customer name and canonical DTO fields with localized labels, layout-only Tailwind classes, UI-kit loading/error/retry controls, semantic HTML, and no mutation affordances.
 
 ### Phase 3: Integration
 
-Verify that Shell authentication, legal-entity selection, module state, and page permission gates
-run before any CRM remote or Customer read. Add focused generator, contract, Shell, and browser
-coverage for both locales, exact Customer ID propagation, normal/loading/not-found/forbidden/
-unavailable behavior, retry, and mobile layout. Finish with the complete repository quality gate.
+Verify that Shell authentication, legal-entity selection, module state, and page permission gates run before any CRM remote or Customer read. Add focused generator, contract, Shell, and browser coverage for both locales, exact Customer ID propagation, normal/loading/not-found/forbidden/ unavailable behavior, retry, and mobile layout. Finish with the complete repository quality gate.
 
 ## Step by Step Tasks
 
@@ -202,19 +160,11 @@ IMPORTANT: Execute every step in order, top to bottom.
 
 ### Unit Tests
 
-Rely on the dynamic-page prerequisite's disposable workspaces for filesystem mapping, route schema,
-Shell/manifest wiring, collisions, reruns, and atomic failure. Use CRM component tests for route-ID
-decoding, exact BFF request construction, query behavior, DTO-to-view mapping, typed failure mapping,
-semantic presentation, localization, and source-boundary assertions. Use Shell Rstest coverage for
-authorization-before-load ordering and the typed remote parameter contract.
+Rely on the dynamic-page prerequisite's disposable workspaces for filesystem mapping, route schema, Shell/manifest wiring, collisions, reruns, and atomic failure. Use CRM component tests for route-ID decoding, exact BFF request construction, query behavior, DTO-to-view mapping, typed failure mapping, semantic presentation, localization, and source-boundary assertions. Use Shell Rstest coverage for authorization-before-load ordering and the typed remote parameter contract.
 
 ### Integration Tests
 
-Reuse the prerequisite CRM BFF integration coverage for governed Customer reads, authentication,
-tenant isolation, typed Problem Details, and durable Data Access evidence. Add an authenticated
-Shell browser flow with a seeded Customer to prove the complete localized URL → Shell gate →
-generated remote route-param seam → `getCustomerDetail` BFF → rendered detail path. Browser tests also
-cover anonymous non-loading, declared failures, retry, keyboard behavior, and mobile layout.
+Reuse the prerequisite CRM BFF integration coverage for governed Customer reads, authentication, tenant isolation, typed Problem Details, and durable Data Access evidence. Add an authenticated Shell browser flow with a seeded Customer to prove the complete localized URL → Shell gate → generated remote route-param seam → `getCustomerDetail` BFF → rendered detail path. Browser tests also cover anonymous non-loading, declared failures, retry, keyboard behavior, and mobile layout.
 
 ### Edge Cases
 

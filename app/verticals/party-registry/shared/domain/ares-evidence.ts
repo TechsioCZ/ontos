@@ -19,10 +19,9 @@ export const AresSubjectLookupIcoSchema = Schema.Trim.check(Schema.isPattern(/^\
   Schema.brand('AresSubjectLookupIco'),
 );
 
-export const AresDicSchema = Schema.Trim.check(
-  Schema.isPattern(/^CZ\d{8,10}$/u),
-  Schema.isMaxLength(12),
-).pipe(Schema.brand('AresDic'));
+export const AresDicSchema = Schema.Trim.check(Schema.isPattern(/^CZ\d{8,10}$/u), Schema.isMaxLength(12)).pipe(
+  Schema.brand('AresDic'),
+);
 export const AresDateOnlySchema = Schema.String.pipe(
   Schema.check(Schema.isPattern(/^\d{4}-\d{2}-\d{2}$/u), validDateOnly),
   Schema.decodeTo(Schema.toType(Schema.DateTimeUtc), {

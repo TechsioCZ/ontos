@@ -1,5 +1,6 @@
 import { Effect, Match, Option, Schema } from 'effect';
 import { Url, UrlParams } from 'effect/unstable/http';
+
 import type { ShellSearchResponse } from '../../../../shared/api.ts';
 import { searchResources } from '../../../api/auth-client.ts';
 import { browserRuntime } from '../../../runtime/browser-effect-runtime.ts';
@@ -24,13 +25,15 @@ export type SearchPageModel =
       readonly state: 'ready';
     };
 
-export const SearchRouteSearch = Schema.Struct({ q: Schema.optionalKey(Schema.String) });
+export const SearchRouteSearch = Schema.Struct({
+  q: Schema.optionalKey(Schema.String),
+});
 export const SearchRouteSearchStandard = Schema.toStandardSchemaV1(SearchRouteSearch);
 
 const searchFromRequest = (request: Request): typeof SearchRouteSearch.Type => {
   const query = UrlParams.getFirst(Url.urlParams(new URL(request.url)), 'q');
   return Option.getOrElse(
-    Schema.decodeUnknownOption(SearchRouteSearch)(Option.isSome(query) ? { q: query.value } : {}),
+    Schema.decodeOption(SearchRouteSearch)(Option.isSome(query) ? { q: query.value } : {}),
     () => ({}),
   );
 };
@@ -49,7 +52,11 @@ export const loader = ({ request }: SearchLoaderArguments): Promise<SearchPageMo
           });
         }
         if (shell.contextState !== 'authenticated') {
-          return Effect.succeed<SearchPageModel>({ query, shell, state: 'selection_required' });
+          return Effect.succeed<SearchPageModel>({
+            query,
+            shell,
+            state: 'selection_required',
+          });
         }
         if (query.length === 0) {
           return Effect.succeed<SearchPageModel>({
@@ -61,7 +68,12 @@ export const loader = ({ request }: SearchLoaderArguments): Promise<SearchPageMo
         }
         return shellAuthenticationClientOptionsFromRequest(request).pipe(
           Effect.flatMap((options) => searchResources({ query }, options)),
-          Effect.map((response): SearchPageModel => ({ query, response, shell, state: 'ready' })),
+          Effect.map((response): SearchPageModel => ({
+            query,
+            response,
+            shell,
+            state: 'ready',
+          })),
           Effect.matchEffect({
             onFailure: (error) =>
               Effect.succeed<SearchPageModel>({

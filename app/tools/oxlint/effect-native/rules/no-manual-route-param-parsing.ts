@@ -1,4 +1,3 @@
-import { optionRecord } from '../shared/options.ts';
 /**
  * Audit findings: **A9** — "Preserve typed Effects through the frontend" (target: "Schema-driven
  * route/search parameters through `Schema.standardSchemaV1`" and "Form codecs derived from payload
@@ -45,14 +44,14 @@ import { optionRecord } from '../shared/options.ts';
  * Report-only; no fixer or suggestion.
  */
 import { defineRule } from '@oxlint/plugins';
-
 import type { Context, ESTree, Variable } from '@oxlint/plugins';
 
-import { isTestFile, scopePath, matchesGlobs } from '../shared/paths.ts';
-import { stringArray } from '../shared/options.ts';
 import { unwrap as unwrapAst, memberName as astMemberName, keyName } from '../shared/ast.ts';
 import { lookupVariable, resolvesToImport } from '../shared/bindings.ts';
 import { importedName } from '../shared/imports.ts';
+import { optionRecord } from '../shared/options.ts';
+import { stringArray } from '../shared/options.ts';
+import { isTestFile, scopePath, matchesGlobs } from '../shared/paths.ts';
 
 /** Route modules: the frontend seam A9 names. Nested `routes/` directories are covered too. */
 const DEFAULT_ROUTE_GLOBS = [
@@ -113,7 +112,10 @@ function unwrap(node: ESTree.Node | null | undefined): ESTree.Node | null {
 }
 
 function memberName(node: ESTree.MemberExpression): string | null {
-  return astMemberName(node, { templates: false, unwrap: { wrappers: ROUTE_WRAPPERS } });
+  return astMemberName(node, {
+    templates: false,
+    unwrap: { wrappers: ROUTE_WRAPPERS },
+  });
 }
 
 function propertyKeyName(property: Extract<ESTree.Node, { type: 'Property' }>): string | null {
@@ -129,11 +131,7 @@ function collectWrites(variable: Variable): readonly ESTree.Node[] {
   for (const definition of variable.defs) {
     if (definition.type !== 'Variable') continue;
     const declarator = definition.node;
-    if (
-      declarator.type === 'VariableDeclarator' &&
-      declarator.init !== null &&
-      declarator.init !== undefined
-    ) {
+    if (declarator.type === 'VariableDeclarator' && declarator.init !== null && declarator.init !== undefined) {
       writes.push(declarator.init);
     }
   }
@@ -144,10 +142,7 @@ function collectWrites(variable: Variable): readonly ESTree.Node[] {
   return writes;
 }
 
-function writesOf(
-  context: Context,
-  identifier: Extract<ESTree.Node, { type: 'Identifier' }>,
-): readonly ESTree.Node[] {
+function writesOf(context: Context, identifier: Extract<ESTree.Node, { type: 'Identifier' }>): readonly ESTree.Node[] {
   const variable = lookupVariable(context, identifier);
   if (variable === null) return [];
   // Options/constructor aliases must have a stable value; an earlier false/global assignment
@@ -161,10 +156,7 @@ function writesOf(
  * no declaration (the implicit global scope). Any real declaration — `const`, class, function,
  * parameter, catch clause or `import` — means this is not the browser API and must not be reported.
  */
-function isUnshadowedGlobal(
-  context: Context,
-  identifier: Extract<ESTree.Node, { type: 'Identifier' }>,
-): boolean {
+function isUnshadowedGlobal(context: Context, identifier: Extract<ESTree.Node, { type: 'Identifier' }>): boolean {
   const variable = lookupVariable(context, identifier);
   if (variable === null) return true;
   return variable.defs.length === 0;
@@ -214,20 +206,15 @@ function globalConstructorName(context: Context, node: ESTree.NewExpression): st
 function isUrlExpression(context: Context, node: ESTree.Node | null, depth = 0): boolean {
   const target = unwrap(node);
   if (target === null || depth >= MAX_ALIAS_DEPTH) return false;
-  if (target.type === 'NewExpression')
-    return globalConstructorName(context, target) === URL_CONSTRUCTOR;
+  if (target.type === 'NewExpression') return globalConstructorName(context, target) === URL_CONSTRUCTOR;
   if (target.type === 'CallExpression') return isUrlFactoryCall(context, target);
   if (target.type === 'ConditionalExpression') {
     return (
-      isUrlExpression(context, target.consequent, depth + 1) ||
-      isUrlExpression(context, target.alternate, depth + 1)
+      isUrlExpression(context, target.consequent, depth + 1) || isUrlExpression(context, target.alternate, depth + 1)
     );
   }
   if (target.type === 'LogicalExpression') {
-    return (
-      isUrlExpression(context, target.left, depth + 1) ||
-      isUrlExpression(context, target.right, depth + 1)
-    );
+    return isUrlExpression(context, target.left, depth + 1) || isUrlExpression(context, target.right, depth + 1);
   }
   return false;
 }
@@ -253,8 +240,7 @@ function isUrlBinding(
   for (const write of collectWrites(variable)) {
     if (isUrlExpression(context, write)) return true;
     const target = unwrap(write);
-    if (target !== null && target.type === 'Identifier' && isUrlBinding(context, target, seen))
-      return true;
+    if (target !== null && target.type === 'Identifier' && isUrlBinding(context, target, seen)) return true;
   }
   return false;
 }
@@ -268,11 +254,7 @@ function isUrlSource(context: Context, node: ESTree.Node | null): boolean {
 }
 
 /** Resolve an expression to the object literal it denotes, following local `const` bindings. */
-function resolveObject(
-  context: Context,
-  node: ESTree.Node | null,
-  depth = 0,
-): ESTree.ObjectExpression | null {
+function resolveObject(context: Context, node: ESTree.Node | null, depth = 0): ESTree.ObjectExpression | null {
   const target = unwrap(node);
   if (target === null || depth >= MAX_ALIAS_DEPTH) return null;
   if (target.type === 'ObjectExpression') return target;
@@ -298,10 +280,7 @@ function isFalseValue(context: Context, node: ESTree.Node | null, depth = 0): bo
  * (`const untyped = { strict: false } as const`) or spread in from one.
  */
 function spreadMaySetStrict(entry: ESTree.ObjectExpression['properties'][number]): boolean {
-  return (
-    entry.type === 'SpreadElement' ||
-    (entry.type === 'Property' && propertyKeyName(entry) === 'strict')
-  );
+  return entry.type === 'SpreadElement' || (entry.type === 'Property' && propertyKeyName(entry) === 'strict');
 }
 
 function nextStrictValue(
@@ -314,9 +293,7 @@ function nextStrictValue(
     // Unknown later spreads may overwrite strict; never infer false through them.
     const spread = resolveObject(context, property.argument, depth + 1);
     if (spread === null) return undefined;
-    return spread.properties.some(spreadMaySetStrict)
-      ? strictValue(context, spread, depth + 1)
-      : value;
+    return spread.properties.some(spreadMaySetStrict) ? strictValue(context, spread, depth + 1) : value;
   }
   if (property.type !== 'Property') return value;
   if (property.computed) return undefined;
@@ -328,8 +305,7 @@ function strictValue(context: Context, node: ESTree.Node | null, depth = 0): boo
   const object = resolveObject(context, node, depth);
   if (object === null || depth >= MAX_ALIAS_DEPTH) return undefined;
   let value: boolean | undefined;
-  for (const property of object.properties)
-    value = nextStrictValue(context, property, value, depth);
+  for (const property of object.properties) value = nextStrictValue(context, property, value, depth);
   return value;
 }
 
@@ -518,21 +494,14 @@ export const rule = defineRule({
     if (!matchesGlobs(path, options.routeGlobs)) return {};
     if (!options.allowTestFiles && isTestFile(path)) return {};
 
-    const bindings = collectHookBindings(
-      context.sourceCode.ast,
-      options.untypedHooks,
-      options.routerModules,
-    );
+    const bindings = collectHookBindings(context.sourceCode.ast, options.untypedHooks, options.routerModules);
 
     /** `const { searchParams } = <url>` / `const { searchParams: alias } = <url>`. */
-    const reportDestructuredSearchParams = (
-      pattern: Extract<ESTree.Node, { type: 'ObjectPattern' }>,
-    ): void => {
+    const reportDestructuredSearchParams = (pattern: Extract<ESTree.Node, { type: 'ObjectPattern' }>): void => {
       for (const property of pattern.properties) {
         if (property.type !== 'Property') continue;
         if (propertyKeyName(property) !== SEARCH_PARAMS) continue;
-        if (property.value.type === 'Identifier' && isOutputBinding(context, property.value))
-          continue;
+        if (property.value.type === 'Identifier' && isOutputBinding(context, property.value)) continue;
         context.report({ node: property, messageId: 'rawUrlSearchParams' });
       }
     };
@@ -544,10 +513,7 @@ export const rule = defineRule({
         // Empty multipart/search containers carry outgoing data; they parse no route input.
         if (node.arguments.length === 0) return;
         const input = unwrap(node.arguments[0]);
-        if (
-          name === 'URLSearchParams' &&
-          (input?.type === 'ObjectExpression' || input?.type === 'ArrayExpression')
-        )
+        if (name === 'URLSearchParams' && (input?.type === 'ObjectExpression' || input?.type === 'ArrayExpression'))
           return;
         context.report({
           node,
@@ -569,8 +535,7 @@ export const rule = defineRule({
       MemberExpression(node) {
         if (!options.flagUrlSearchParams) return;
         if (memberName(node) !== SEARCH_PARAMS || isOutputUse(context, node)) return;
-        if (isUrlSource(context, node.object))
-          context.report({ node, messageId: 'rawUrlSearchParams' });
+        if (isUrlSource(context, node.object)) context.report({ node, messageId: 'rawUrlSearchParams' });
       },
       VariableDeclarator(node) {
         if (!options.flagUrlSearchParams) return;

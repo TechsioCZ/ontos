@@ -7,11 +7,7 @@ interface ExternalRequest {
   dependencyType?: string;
   request?: string;
 }
-type ExternalResult = [
-  error?: Error | undefined,
-  result?: string | string[],
-  type?: 'module-import',
-];
+type ExternalResult = [error?: Error | undefined, result?: string | string[], type?: 'module-import'];
 
 export const resolveCloudflareExternal = (
   { dependencyType, request }: ExternalRequest,
@@ -25,8 +21,7 @@ export const resolveCloudflareExternal = (
     return [];
   }
   const specifier = isNodeBuiltin && !request.startsWith('node:') ? `node:${request}` : request;
-  const nativeImport =
-    dependencyType?.startsWith('commonjs') === true ? [specifier, 'default'] : specifier;
+  const nativeImport = dependencyType?.startsWith('commonjs') === true ? [specifier, 'default'] : specifier;
   return [undefined, nativeImport, 'module-import'];
 };
 
@@ -85,10 +80,7 @@ interface ReplacementResource {
 }
 
 const retainWorkerLoader = (resource: ReplacementResource) => {
-  resource.request = resource.request.replace(
-    /(?<separator>[?&])retain=[^&]*/u,
-    '$<separator>retain=true',
-  );
+  resource.request = resource.request.replace(/(?<separator>[?&])retain=[^&]*/u, '$<separator>retain=true');
 };
 
 const markWorkerApiSource = (resource: ReplacementResource, sourceDirectory: string) => {

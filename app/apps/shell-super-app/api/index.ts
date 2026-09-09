@@ -1,12 +1,3 @@
-import {
-  Cookies,
-  Effect,
-  HttpApiBuilder,
-  HttpEffect,
-  HttpServerResponse,
-  Layer,
-} from '@modern-js/plugin-bff/effect-edge';
-import type { EffectBffDefinition, EffectBffRuntime } from '@modern-js/plugin-bff/effect-edge';
 import type {
   ActionCoreError,
   ContextAccess,
@@ -43,8 +34,11 @@ import {
 } from '@app/core-runtime/actions/runtime-wiring';
 import type { GatewayContextProblem } from '@app/shared-contracts';
 import { assembleEffectBffRuntime } from '@app/shared-contracts/server/effect-bff-runtime';
+import { Cookies, HttpApiBuilder, HttpEffect, HttpServerResponse, Layer } from '@modern-js/plugin-bff/effect-edge';
+import type { EffectBffDefinition, EffectBffRuntime } from '@modern-js/plugin-bff/effect-edge';
 import {
   Cause,
+  Effect,
   Exit,
   Logger,
   Match,
@@ -56,6 +50,7 @@ import {
   Schema,
   Tracer,
 } from 'effect';
+
 import {
   ApiKeyIssueResponseSchema,
   ApiKeyLifecycleResponseSchema,
@@ -99,41 +94,31 @@ import type {
   TenantCapabilityUnavailableProblem,
   TenantInternalProblem,
 } from '../shared/api.ts';
-import { AuthPersistenceLive } from './auth/runtime-infrastructure.ts';
-import { AuthConfigLive } from './auth/config.ts';
 import { ApiKeyService, ApiKeyServiceLive } from './auth/api-key-service.ts';
+import type { ApiKeyProviderError } from './auth/api-key-service.ts';
+import { AuthConfigLive } from './auth/config.ts';
+import type { AuthenticationRuntimeError, SwitchTenantRuntimeError } from './auth/errors.ts';
+import { GatewayIssuer, GatewayIssuerLive, issueGatewayContextAssertion } from './auth/gateway-issuer.ts';
+import type { GatewayIssuerError } from './auth/gateway-issuer.ts';
 import { IdentityLifecycle, IdentityLifecycleLive } from './auth/identity-lifecycle.ts';
+import type { IdentityLifecycleError } from './auth/identity-lifecycle.ts';
 import {
   SupportImpersonationCorrelationId,
   SupportImpersonationService,
   SupportImpersonationServiceLive,
 } from './auth/impersonation-service.ts';
-import {
-  GatewayIssuer,
-  GatewayIssuerLive,
-  issueGatewayContextAssertion,
-} from './auth/gateway-issuer.ts';
-import type { GatewayIssuerError } from './auth/gateway-issuer.ts';
-import type { AuthenticationRuntimeError, SwitchTenantRuntimeError } from './auth/errors.ts';
-import type { ApiKeyProviderError } from './auth/api-key-service.ts';
-import type { IdentityLifecycleError } from './auth/identity-lifecycle.ts';
 import type { SupportImpersonationError } from './auth/impersonation-service.ts';
 import type { LegalEntitySelectionForbiddenError } from './auth/legal-entity-selection.ts';
 import { validateAuthorizedLegalEntity } from './auth/legal-entity-selection.ts';
+import { AuthPersistenceLive } from './auth/runtime-infrastructure.ts';
 import { AuthenticationService, AuthenticationServiceLive } from './auth/service.ts';
 import type { ShellContextResult } from './auth/service.ts';
-import {
-  ShellInstalledModuleCatalog,
-  ShellInstalledModuleCatalogLive,
-} from './modules/installed-module-catalog.ts';
+import { ShellInstalledModuleCatalog, ShellInstalledModuleCatalogLive } from './modules/installed-module-catalog.ts';
 import type { InstalledModuleCatalogError } from './modules/installed-module-catalog.ts';
 import { InstalledOutboxMatcherLive } from './modules/installed-outbox-matcher.ts';
-import {
-  ShellGovernedReads,
-  createShellGovernedReadsLayer,
-} from './modules/shell-governed-reads.ts';
-import type { ShellScopedModuleStateFactory } from './modules/shell-governed-reads.ts';
 import { ShellCompositionFactoryLive } from './modules/shell-composition.ts';
+import { ShellGovernedReads, createShellGovernedReadsLayer } from './modules/shell-governed-reads.ts';
+import type { ShellScopedModuleStateFactory } from './modules/shell-governed-reads.ts';
 import {
   attachShellMedia,
   ShellProviderUnavailableError,
@@ -145,10 +130,7 @@ import type {
   ShellResourceGateways,
 } from './modules/shell-resources.ts';
 
-const RequestHeadersSchema = Schema.Record(
-  Schema.String,
-  Schema.Union([Schema.String, Schema.Undefined]),
-);
+const RequestHeadersSchema = Schema.Record(Schema.String, Schema.Union([Schema.String, Schema.Undefined]));
 type RequestHeaders = Schema.Schema.Type<typeof RequestHeadersSchema>;
 interface RequestWithHeaders {
   readonly headers: RequestHeaders;
@@ -180,10 +162,9 @@ const recoverUnexpectedDefect =
           return Effect.succeed(exit.value);
         }
         return exit.cause.reasons.some(Cause.isDieReason)
-          ? Effect.annotateLogs(
-              Effect.logError(message, exit.cause),
-              requestLogAnnotations(request),
-            ).pipe(Effect.andThen(fail()))
+          ? Effect.annotateLogs(Effect.logError(message, exit.cause), requestLogAnnotations(request)).pipe(
+              Effect.andThen(fail()),
+            )
           : Effect.failCause(exit.cause);
       }),
     );
@@ -209,12 +190,7 @@ const extendedProblemDetails = <
   extension: Extension,
 ) => ({ _tag: tag, detail, ...extension, status, title, type });
 
-const withOptionalProperty = <
-  Base extends object,
-  Key extends PropertyKey,
-  Value,
-  Trailing extends object,
->(
+const withOptionalProperty = <Base extends object, Key extends PropertyKey, Value, Trailing extends object>(
   base: Base,
   condition: boolean,
   key: Key,
@@ -222,11 +198,7 @@ const withOptionalProperty = <
   trailing: Trailing,
 ) => (condition ? { ...base, [key]: value, ...trailing } : { ...base, ...trailing });
 
-const decodeResponse = <
-  ResponseSchema extends Schema.Constraint,
-  EncodedResponse extends object,
-  Failure,
->(
+const decodeResponse = <ResponseSchema extends Schema.Constraint, EncodedResponse extends object, Failure>(
   schema: ResponseSchema,
   encoded: EncodedResponse,
   failure: (schemaError: Schema.SchemaError) => Failure,
@@ -248,51 +220,35 @@ const forwardSetCookieHeaders = (headers: readonly string[]) =>
   headers.length === 0
     ? Effect.void
     : HttpEffect.appendPreResponseHandler((_request, response) =>
-        Effect.succeed(
-          response.pipe(HttpServerResponse.mergeCookies(Cookies.fromSetCookie(headers))),
-        ),
+        Effect.succeed(response.pipe(HttpServerResponse.mergeCookies(Cookies.fromSetCookie(headers)))),
       );
 
 const bearerChallenge = HttpEffect.appendPreResponseHandler((_request, response) =>
   Effect.succeed(
-    HttpServerResponse.setHeader(
-      response,
-      'www-authenticate',
-      'Bearer realm="ontos-gateway", error="invalid_token"',
-    ),
+    HttpServerResponse.setHeader(response, 'www-authenticate', 'Bearer realm="ontos-gateway", error="invalid_token"'),
   ),
 );
 const apiKeyChallenge = HttpEffect.appendPreResponseHandler((_request, response) =>
-  Effect.succeed(
-    HttpServerResponse.setHeader(response, 'www-authenticate', 'ApiKey realm="ontos-gateway"'),
-  ),
+  Effect.succeed(HttpServerResponse.setHeader(response, 'www-authenticate', 'ApiKey realm="ontos-gateway"')),
 );
 export const noStoreResponse = (response: Parameters<typeof HttpServerResponse.setHeader>[0]) =>
   HttpServerResponse.setHeader(response, 'cache-control', 'no-store');
-const noStore = HttpEffect.appendPreResponseHandler((_request, response) =>
-  Effect.succeed(noStoreResponse(response)),
-);
+const noStore = HttpEffect.appendPreResponseHandler((_request, response) => Effect.succeed(noStoreResponse(response)));
 
 const failGatewayProblem = <Failure extends GatewayContextProblem>(gatewayProblem: Failure) =>
-  (Predicate.isTagged(gatewayProblem, 'GatewayAuthenticationRequiredProblem')
-    ? bearerChallenge
-    : Effect.void
-  ).pipe(Effect.andThen(Effect.fail(gatewayProblem)));
+  (Predicate.isTagged(gatewayProblem, 'GatewayAuthenticationRequiredProblem') ? bearerChallenge : Effect.void).pipe(
+    Effect.andThen(Effect.fail(gatewayProblem)),
+  );
 const failApiKeyGatewayProblem = <Failure extends GatewayContextProblem>(gatewayProblem: Failure) =>
-  (Predicate.isTagged(gatewayProblem, 'GatewayAuthenticationRequiredProblem')
-    ? apiKeyChallenge
-    : Effect.void
-  ).pipe(Effect.andThen(Effect.fail(gatewayProblem)));
+  (Predicate.isTagged(gatewayProblem, 'GatewayAuthenticationRequiredProblem') ? apiKeyChallenge : Effect.void).pipe(
+    Effect.andThen(Effect.fail(gatewayProblem)),
+  );
 
 const failIdentityProblem = (problem: IdentityProblem) =>
-  (Predicate.isTagged(problem, 'ShellAuthenticationRequiredProblem')
-    ? bearerChallenge
-    : Effect.void
-  ).pipe(Effect.andThen(Effect.fail(problem)));
-type GatewayProblem<Tag extends GatewayContextProblem['_tag']> = Extract<
-  GatewayContextProblem,
-  { readonly _tag: Tag }
->;
+  (Predicate.isTagged(problem, 'ShellAuthenticationRequiredProblem') ? bearerChallenge : Effect.void).pipe(
+    Effect.andThen(Effect.fail(problem)),
+  );
+type GatewayProblem<Tag extends GatewayContextProblem['_tag']> = Extract<GatewayContextProblem, { readonly _tag: Tag }>;
 type IdentityRuntimeError =
   | ActionCoreError
   | ApiKeyProviderError
@@ -303,28 +259,18 @@ type IdentityRuntimeError =
   | ReadCoreError
   | SupportImpersonationError;
 type IdentityActionPolicyStatuses = Readonly<Record<string, 403 | 409 | 422>>;
-type IdentityActionPolicyDenied = Extract<
-  IdentityRuntimeError,
-  { readonly _tag: 'ActionPolicyDenied' }
->;
-type IdentityApiKeyRateLimited = Extract<
-  IdentityRuntimeError,
-  { readonly _tag: 'ApiKeyRateLimitedError' }
->;
-type IdentityReadPolicyDenied = Extract<
-  IdentityRuntimeError,
-  { readonly _tag: 'ReadPolicyDenied' }
->;
+type IdentityActionPolicyDenied = Extract<IdentityRuntimeError, { readonly _tag: 'ActionPolicyDenied' }>;
+type IdentityApiKeyRateLimited = Extract<IdentityRuntimeError, { readonly _tag: 'ApiKeyRateLimitedError' }>;
+type IdentityReadPolicyDenied = Extract<IdentityRuntimeError, { readonly _tag: 'ReadPolicyDenied' }>;
 
-const gatewayAuthenticationRequiredProblem =
-  (): GatewayProblem<'GatewayAuthenticationRequiredProblem'> =>
-    problemDetails(
-      'GatewayAuthenticationRequiredProblem',
-      'A valid Shell session is required.',
-      401,
-      'Gateway authentication required',
-      'https://ontos.dev/problems/gateway-authentication-required',
-    );
+const gatewayAuthenticationRequiredProblem = (): GatewayProblem<'GatewayAuthenticationRequiredProblem'> =>
+  problemDetails(
+    'GatewayAuthenticationRequiredProblem',
+    'A valid Shell session is required.',
+    401,
+    'Gateway authentication required',
+    'https://ontos.dev/problems/gateway-authentication-required',
+  );
 
 const gatewayInternalProblem = (): GatewayProblem<'GatewayInternalProblem'> =>
   problemDetails(
@@ -342,9 +288,7 @@ const gatewayForbiddenProblem = (): GatewayProblem<'GatewayForbiddenProblem'> =>
     'Gateway context forbidden',
     'https://ontos.dev/problems/gateway-forbidden',
   );
-const gatewayRateLimitedProblem = (
-  retryAfterSeconds: number,
-): GatewayProblem<'GatewayRateLimitedProblem'> =>
+const gatewayRateLimitedProblem = (retryAfterSeconds: number): GatewayProblem<'GatewayRateLimitedProblem'> =>
   extendedProblemDetails(
     'GatewayRateLimitedProblem',
     'The API key rate limit was exceeded.',
@@ -380,9 +324,7 @@ const gatewayRateLimitedFromProviderError = (
 
 const apiKeyProviderGatewayProblem = (
   error: ApiKeyProviderError,
-): GatewayProblem<
-  'GatewayAuthenticationRequiredProblem' | 'GatewayRateLimitedProblem' | 'GatewayUnavailableProblem'
-> =>
+): GatewayProblem<'GatewayAuthenticationRequiredProblem' | 'GatewayRateLimitedProblem' | 'GatewayUnavailableProblem'> =>
   Match.value(error).pipe(
     Match.tags({
       ApiKeyCredentialInvalidError: gatewayAuthenticationRequiredProblem,
@@ -395,9 +337,7 @@ const apiKeyProviderGatewayProblem = (
 
 const principalResolutionGatewayProblem = (
   error: PrincipalResolutionError,
-): GatewayProblem<
-  'GatewayAuthenticationRequiredProblem' | 'GatewayForbiddenProblem' | 'GatewayUnavailableProblem'
-> =>
+): GatewayProblem<'GatewayAuthenticationRequiredProblem' | 'GatewayForbiddenProblem' | 'GatewayUnavailableProblem'> =>
   Match.value(error).pipe(
     Match.tags({
       PrincipalBindingAmbiguousError: gatewayAuthenticationRequiredProblem,
@@ -507,15 +447,17 @@ const problem = (error: AuthenticationRuntimeError): AuthenticationProblem =>
     Match.exhaustive,
   );
 
-const currentAccessBlockedResponse = (
-  session: Extract<ShellContextResult, { readonly state: 'access_blocked' }>,
-) => ({ identity: session.identity, state: 'access_blocked' as const });
+const currentAccessBlockedResponse = (session: Extract<ShellContextResult, { readonly state: 'access_blocked' }>) => ({
+  identity: session.identity,
+  state: 'access_blocked' as const,
+});
 
 const currentAnonymousResponse = () => ({ state: 'anonymous' as const });
 
-const currentAuthenticatedResponse = (
-  session: Extract<ShellContextResult, { readonly state: 'authenticated' }>,
-) => ({ identity: session.identity, state: 'authenticated' as const });
+const currentAuthenticatedResponse = (session: Extract<ShellContextResult, { readonly state: 'authenticated' }>) => ({
+  identity: session.identity,
+  state: 'authenticated' as const,
+});
 
 const currentSelectionRequiredResponse = (
   session: Extract<ShellContextResult, { readonly state: 'selection_required' }>,
@@ -594,13 +536,10 @@ const legalEntityAccessForbiddenProblem = (): LegalEntityAccessForbiddenProblem 
     'https://ontos.dev/problems/legal-entity-access-forbidden',
   );
 
-const failContextProblem = <Failure extends LegalEntityProblem | SwitchTenantProblem>(
-  failure: Failure,
-) =>
-  (Predicate.isTagged(failure, 'TenantAuthenticationRequiredProblem')
-    ? bearerChallenge
-    : Effect.void
-  ).pipe(Effect.andThen(Effect.fail(failure)));
+const failContextProblem = <Failure extends LegalEntityProblem | SwitchTenantProblem>(failure: Failure) =>
+  (Predicate.isTagged(failure, 'TenantAuthenticationRequiredProblem') ? bearerChallenge : Effect.void).pipe(
+    Effect.andThen(Effect.fail(failure)),
+  );
 
 const shellAuthenticationRequiredProblem = (): ShellAuthenticationRequiredProblem =>
   problemDetails(
@@ -806,9 +745,8 @@ const identityProblem = (
   );
 };
 
-const shellReadPolicyProblem = (
-  denial: Extract<ReadCoreError, { readonly _tag: 'ReadPolicyDenied' }>,
-) => (denial.httpStatus === 409 ? shellPolicyConflictProblem() : shellPolicyUnprocessableProblem());
+const shellReadPolicyProblem = (denial: Extract<ReadCoreError, { readonly _tag: 'ReadPolicyDenied' }>) =>
+  denial.httpStatus === 409 ? shellPolicyConflictProblem() : shellPolicyUnprocessableProblem();
 
 const shellReadProblem = (
   error: ReadCoreError,
@@ -845,9 +783,7 @@ const shellReadProblem = (
 
 const shellListReadProblem = (error: ReadCoreError) => {
   const mappedProblem = shellReadProblem(error);
-  return Predicate.isTagged(mappedProblem, 'ShellTargetNotFoundProblem')
-    ? shellInternalProblem()
-    : mappedProblem;
+  return Predicate.isTagged(mappedProblem, 'ShellTargetNotFoundProblem') ? shellInternalProblem() : mappedProblem;
 };
 
 const logShellReadFailure = (
@@ -875,10 +811,9 @@ type ShellProblem =
   | ShellTargetNotFoundProblem;
 
 const failShellProblem = <Failure extends ShellProblem>(failure: Failure) =>
-  (Predicate.isTagged(failure, 'ShellAuthenticationRequiredProblem')
-    ? bearerChallenge
-    : Effect.void
-  ).pipe(Effect.andThen(Effect.fail(failure)));
+  (Predicate.isTagged(failure, 'ShellAuthenticationRequiredProblem') ? bearerChallenge : Effect.void).pipe(
+    Effect.andThen(Effect.fail(failure)),
+  );
 
 const mediaAttachmentForbidden = () => failShellProblem(shellTargetForbiddenProblem());
 const mediaAttachmentNotFound = () => failShellProblem(shellTargetNotFoundProblem());
@@ -887,142 +822,120 @@ const mediaAttachmentResolved = (
 ) => decodeResponse(MediaAttachmentResponseSchema, resolution.result, shellInternalProblem);
 const mediaAttachmentUnavailable = () => failShellProblem(shellCapabilityUnavailableProblem());
 
-const authenticationGroupLive = HttpApiBuilder.group(
-  ShellAuthenticationApi,
-  'authentication',
-  (handlers) =>
-    handlers
-      .handle(
-        'signIn',
-        Effect.fn('shell.authentication.signIn')(({ payload, request }) =>
-          Effect.gen(function* signInHandler() {
-            const authentication = yield* AuthenticationService;
-            const result = yield* authentication
-              .signIn(
-                payload.email,
-                Redacted.value(payload.password),
-                requestHeaders(request.headers),
-              )
-              .pipe(Effect.mapError(problem));
-            yield* forwardSetCookieHeaders(result.setCookieHeaders);
-            return yield* decodeResponse(
-              SignInResponseSchema,
-              { identity: result.identity },
-              authenticationInternalProblem,
-            );
-          }),
-        ),
-      )
-      .handle('currentSession', ({ request }) =>
-        Effect.gen(function* currentSessionHandler() {
+const authenticationGroupLive = HttpApiBuilder.group(ShellAuthenticationApi, 'authentication', (handlers) =>
+  handlers
+    .handle(
+      'signIn',
+      Effect.fn('shell.authentication.signIn')(({ payload, request }) =>
+        Effect.gen(function* signInHandler() {
           const authentication = yield* AuthenticationService;
           const result = yield* authentication
-            .resolveShellContext(requestHeaders(request.headers))
+            .signIn(payload.email, Redacted.value(payload.password), requestHeaders(request.headers))
             .pipe(Effect.mapError(problem));
           yield* forwardSetCookieHeaders(result.setCookieHeaders);
-          const response = Match.value(result).pipe(
-            Match.discriminators('state')({
-              access_blocked: currentAccessBlockedResponse,
-              anonymous: currentAnonymousResponse,
-              authenticated: currentAuthenticatedResponse,
-              selection_required: currentSelectionRequiredResponse,
-            }),
-            Match.exhaustive,
-          );
           return yield* decodeResponse(
-            CurrentSessionSchema,
-            response,
+            SignInResponseSchema,
+            { identity: result.identity },
             authenticationInternalProblem,
           );
-        }).pipe(
-          recoverUnexpectedDefect(request, 'Unexpected Shell current-session defect', () =>
-            Effect.fail(authenticationInternalProblem()),
-          ),
-        ),
-      )
-      .handle(
-        'signOut',
-        Effect.fn('shell.authentication.signOut')(({ request }) =>
-          Effect.gen(function* signOutHandler() {
-            const authentication = yield* AuthenticationService;
-            const result = yield* authentication.signOut(requestHeaders(request.headers));
-            yield* forwardSetCookieHeaders(result.setCookieHeaders);
-            return {
-              signedOut: true as const,
-            };
-          }).pipe(Effect.mapError(problem)),
+        }),
+      ),
+    )
+    .handle('currentSession', ({ request }) =>
+      Effect.gen(function* currentSessionHandler() {
+        const authentication = yield* AuthenticationService;
+        const result = yield* authentication
+          .resolveShellContext(requestHeaders(request.headers))
+          .pipe(Effect.mapError(problem));
+        yield* forwardSetCookieHeaders(result.setCookieHeaders);
+        const response = Match.value(result).pipe(
+          Match.discriminators('state')({
+            access_blocked: currentAccessBlockedResponse,
+            anonymous: currentAnonymousResponse,
+            authenticated: currentAuthenticatedResponse,
+            selection_required: currentSelectionRequiredResponse,
+          }),
+          Match.exhaustive,
+        );
+        return yield* decodeResponse(CurrentSessionSchema, response, authenticationInternalProblem);
+      }).pipe(
+        recoverUnexpectedDefect(request, 'Unexpected Shell current-session defect', () =>
+          Effect.fail(authenticationInternalProblem()),
         ),
       ),
+    )
+    .handle(
+      'signOut',
+      Effect.fn('shell.authentication.signOut')(({ request }) =>
+        Effect.gen(function* signOutHandler() {
+          const authentication = yield* AuthenticationService;
+          const result = yield* authentication.signOut(requestHeaders(request.headers));
+          yield* forwardSetCookieHeaders(result.setCookieHeaders);
+          return {
+            signedOut: true as const,
+          };
+        }).pipe(Effect.mapError(problem)),
+      ),
+    ),
 );
 
-const legalEntityGroupLive = HttpApiBuilder.group(
-  ShellAuthenticationApi,
-  'legalEntities',
-  (handlers) =>
-    handlers
-      .handle('availableLegalEntities', ({ request }) =>
-        Effect.gen(function* availableLegalEntitiesHandler() {
-          const authentication = yield* AuthenticationService;
-          const result = yield* authentication
-            .resolveShellContext(requestHeaders(request.headers))
-            .pipe(
-              Effect.catch((error) => pipe(error, tenantAuthenticationProblem, failContextProblem)),
-            );
-          yield* forwardSetCookieHeaders(result.setCookieHeaders);
-          if (result.state === 'anonymous') {
-            return yield* failContextProblem(tenantAuthenticationRequiredProblem());
-          }
-          const selectedLegalEntityId =
-            result.state === 'authenticated' ? result.identity.legalEntityId : undefined;
-          const response = withOptionalProperty(
-            {
-              legalEntities: result.availableLegalEntities,
-            },
-            selectedLegalEntityId !== undefined,
-            'selectedLegalEntityId',
-            selectedLegalEntityId,
-            {
-              state: result.state,
-            },
-          );
-          return yield* decodeResponse(
-            AvailableLegalEntitiesResponseSchema,
-            response,
-            tenantInternalProblem,
-          );
-        }).pipe(
-          recoverUnexpectedDefect(request, 'Unexpected legal-entity list defect', () =>
-            failContextProblem(tenantInternalProblem()),
-          ),
-        ),
-      )
-      .handle('switchLegalEntity', ({ payload, request }) =>
-        Effect.gen(function* switchLegalEntityHandler() {
-          const authentication = yield* AuthenticationService;
-          const result = yield* authentication
-            .switchLegalEntity(payload.legalEntityId, requestHeaders(request.headers))
-            .pipe(
-              Effect.catch(
-                (error: AuthenticationRuntimeError | LegalEntitySelectionForbiddenError) =>
-                  failContextProblem(
-                    Predicate.isTagged(error, 'LegalEntitySelectionForbiddenError')
-                      ? legalEntityAccessForbiddenProblem()
-                      : tenantAuthenticationProblem(error),
-                  ),
-              ),
-            );
-          yield* forwardSetCookieHeaders(result.setCookieHeaders);
-          return yield* decodeResponse(
-            SwitchLegalEntityResponseSchema,
-            { selectedLegalEntityId: result.selectedLegalEntityId },
-            tenantInternalProblem,
-          );
-        }).pipe(
-          recoverUnexpectedDefect(request, 'Unexpected legal-entity switch defect', () =>
-            failContextProblem(tenantInternalProblem()),
-          ),
+const legalEntityGroupLive = HttpApiBuilder.group(ShellAuthenticationApi, 'legalEntities', (handlers) =>
+  handlers
+    .handle('availableLegalEntities', ({ request }) =>
+      Effect.gen(function* availableLegalEntitiesHandler() {
+        const authentication = yield* AuthenticationService;
+        const result = yield* authentication
+          .resolveShellContext(requestHeaders(request.headers))
+          .pipe(Effect.catch((error) => pipe(error, tenantAuthenticationProblem, failContextProblem)));
+        yield* forwardSetCookieHeaders(result.setCookieHeaders);
+        if (result.state === 'anonymous') {
+          return yield* failContextProblem(tenantAuthenticationRequiredProblem());
+        }
+        const selectedLegalEntityId = result.state === 'authenticated' ? result.identity.legalEntityId : undefined;
+        const response = withOptionalProperty(
+          {
+            legalEntities: result.availableLegalEntities,
+          },
+          selectedLegalEntityId !== undefined,
+          'selectedLegalEntityId',
+          selectedLegalEntityId,
+          {
+            state: result.state,
+          },
+        );
+        return yield* decodeResponse(AvailableLegalEntitiesResponseSchema, response, tenantInternalProblem);
+      }).pipe(
+        recoverUnexpectedDefect(request, 'Unexpected legal-entity list defect', () =>
+          failContextProblem(tenantInternalProblem()),
         ),
       ),
+    )
+    .handle('switchLegalEntity', ({ payload, request }) =>
+      Effect.gen(function* switchLegalEntityHandler() {
+        const authentication = yield* AuthenticationService;
+        const result = yield* authentication
+          .switchLegalEntity(payload.legalEntityId, requestHeaders(request.headers))
+          .pipe(
+            Effect.catch((error: AuthenticationRuntimeError | LegalEntitySelectionForbiddenError) =>
+              failContextProblem(
+                Predicate.isTagged(error, 'LegalEntitySelectionForbiddenError')
+                  ? legalEntityAccessForbiddenProblem()
+                  : tenantAuthenticationProblem(error),
+              ),
+            ),
+          );
+        yield* forwardSetCookieHeaders(result.setCookieHeaders);
+        return yield* decodeResponse(
+          SwitchLegalEntityResponseSchema,
+          { selectedLegalEntityId: result.selectedLegalEntityId },
+          tenantInternalProblem,
+        );
+      }).pipe(
+        recoverUnexpectedDefect(request, 'Unexpected legal-entity switch defect', () =>
+          failContextProblem(tenantInternalProblem()),
+        ),
+      ),
+    ),
 );
 
 const tenantGroupLive = HttpApiBuilder.group(ShellAuthenticationApi, 'tenants', (handlers) =>
@@ -1032,9 +945,7 @@ const tenantGroupLive = HttpApiBuilder.group(ShellAuthenticationApi, 'tenants', 
         const authentication = yield* AuthenticationService;
         const result = yield* authentication
           .availableTenants(requestHeaders(request.headers))
-          .pipe(
-            Effect.catch((error) => pipe(error, tenantAuthenticationProblem, failContextProblem)),
-          );
+          .pipe(Effect.catch((error) => pipe(error, tenantAuthenticationProblem, failContextProblem)));
         yield* forwardSetCookieHeaders(result.setCookieHeaders);
         return yield* decodeResponse(
           AvailableTenantsResponseSchema,
@@ -1073,9 +984,7 @@ const requireShellSession = Effect.fn('ShellApi.requireShellSession')(function* 
   const authentication = yield* AuthenticationService;
   const session = yield* authentication
     .resolveShellContext(requestHeaders(headers))
-    .pipe(
-      Effect.catch((error) => pipe(error, shellProblemFromAuthenticationError, failShellProblem)),
-    );
+    .pipe(Effect.catch((error) => pipe(error, shellProblemFromAuthenticationError, failShellProblem)));
   yield* forwardSetCookieHeaders(session.setCookieHeaders);
   if (session.state === 'anonymous') {
     return yield* failShellProblem(shellAuthenticationRequiredProblem());
@@ -1093,77 +1002,74 @@ const requireAuthenticatedShellContext = Effect.fn('ShellApi.requireAuthenticate
   },
 );
 
-const compositionGroupLive = HttpApiBuilder.group(
-  ShellAuthenticationApi,
-  'composition',
-  (handlers) =>
-    handlers
-      .handle('shellComposition', ({ request }) =>
-        Effect.gen(function* shellCompositionHandler() {
-          const session = yield* requireShellSession(request.headers);
-          if (session.state === 'access_blocked') {
-            return yield* decodeResponse(
-              ShellCompositionSchema,
-              { navigation: [], state: 'access_blocked' },
-              shellInternalProblem,
-            );
-          }
-          if (session.state !== 'authenticated') {
-            return yield* decodeResponse(
-              ShellCompositionSchema,
-              { navigation: [], state: 'selection_required' },
-              shellInternalProblem,
-            );
-          }
-          const governedReads = yield* ShellGovernedReads;
-          const correlationId = correlationFromRequest(request);
-          const response = yield* governedReads
-            .composition({
-              correlationId,
-              principal: session.principal,
-            })
-            .pipe(
-              Effect.tapError((error) => logShellReadFailure('composition', request, error)),
-              Effect.catch((error) => pipe(error, shellListReadProblem, failShellProblem)),
-            );
-          return yield* decodeResponse(ShellCompositionSchema, response, shellInternalProblem);
-        }).pipe(
-          recoverUnexpectedDefect(request, 'Unexpected Shell composition defect', () =>
-            failShellProblem(shellInternalProblem()),
-          ),
-        ),
-      )
-      .handle('resolveModuleTarget', ({ payload, request }) =>
-        Effect.gen(function* resolveModuleTargetHandler() {
-          const session = yield* requireAuthenticatedShellContext(request.headers);
-          const governedReads = yield* ShellGovernedReads;
-          const correlationId = correlationFromRequest(request);
-          const response = yield* governedReads
-            .moduleTarget(
-              withOptionalProperty(
-                {
-                  correlationId,
-                },
-                payload.entrypointKey !== undefined,
-                'entrypointKey',
-                payload.entrypointKey,
-                {
-                  moduleId: payload.moduleId,
-                  principal: session.principal,
-                },
-              ),
-            )
-            .pipe(
-              Effect.tapError((error) => logShellReadFailure('module_target', request, error)),
-              Effect.catch((error) => pipe(error, shellReadProblem, failShellProblem)),
-            );
-          return yield* decodeResponse(ResolvedModuleTargetSchema, response, shellInternalProblem);
-        }).pipe(
-          recoverUnexpectedDefect(request, 'Unexpected module target defect', () =>
-            failShellProblem(shellInternalProblem()),
-          ),
+const compositionGroupLive = HttpApiBuilder.group(ShellAuthenticationApi, 'composition', (handlers) =>
+  handlers
+    .handle('shellComposition', ({ request }) =>
+      Effect.gen(function* shellCompositionHandler() {
+        const session = yield* requireShellSession(request.headers);
+        if (session.state === 'access_blocked') {
+          return yield* decodeResponse(
+            ShellCompositionSchema,
+            { navigation: [], state: 'access_blocked' },
+            shellInternalProblem,
+          );
+        }
+        if (session.state !== 'authenticated') {
+          return yield* decodeResponse(
+            ShellCompositionSchema,
+            { navigation: [], state: 'selection_required' },
+            shellInternalProblem,
+          );
+        }
+        const governedReads = yield* ShellGovernedReads;
+        const correlationId = correlationFromRequest(request);
+        const response = yield* governedReads
+          .composition({
+            correlationId,
+            principal: session.principal,
+          })
+          .pipe(
+            Effect.tapError((error) => logShellReadFailure('composition', request, error)),
+            Effect.catch((error) => pipe(error, shellListReadProblem, failShellProblem)),
+          );
+        return yield* decodeResponse(ShellCompositionSchema, response, shellInternalProblem);
+      }).pipe(
+        recoverUnexpectedDefect(request, 'Unexpected Shell composition defect', () =>
+          failShellProblem(shellInternalProblem()),
         ),
       ),
+    )
+    .handle('resolveModuleTarget', ({ payload, request }) =>
+      Effect.gen(function* resolveModuleTargetHandler() {
+        const session = yield* requireAuthenticatedShellContext(request.headers);
+        const governedReads = yield* ShellGovernedReads;
+        const correlationId = correlationFromRequest(request);
+        const response = yield* governedReads
+          .moduleTarget(
+            withOptionalProperty(
+              {
+                correlationId,
+              },
+              payload.entrypointKey !== undefined,
+              'entrypointKey',
+              payload.entrypointKey,
+              {
+                moduleId: payload.moduleId,
+                principal: session.principal,
+              },
+            ),
+          )
+          .pipe(
+            Effect.tapError((error) => logShellReadFailure('module_target', request, error)),
+            Effect.catch((error) => pipe(error, shellReadProblem, failShellProblem)),
+          );
+        return yield* decodeResponse(ResolvedModuleTargetSchema, response, shellInternalProblem);
+      }).pipe(
+        recoverUnexpectedDefect(request, 'Unexpected module target defect', () =>
+          failShellProblem(shellInternalProblem()),
+        ),
+      ),
+    ),
 );
 
 export type { ShellResourceGateways } from './modules/shell-resources.ts';
@@ -1260,9 +1166,7 @@ const identityGroupLive = HttpApiBuilder.group(ShellAuthenticationApi, 'identity
   );
   const requiredIdempotencyKey = (headers: RequestHeaders) => {
     const value = headerValue(headers, 'idempotency-key');
-    return value === undefined
-      ? failIdentityProblem(shellPreconditionRequiredProblem())
-      : Effect.succeed(value);
+    return value === undefined ? failIdentityProblem(shellPreconditionRequiredProblem()) : Effect.succeed(value);
   };
   const safeIdentity = <Value, Error, Requirements>(
     request: RequestWithHeaders,
@@ -1280,8 +1184,7 @@ const identityGroupLive = HttpApiBuilder.group(ShellAuthenticationApi, 'identity
       Effect.tap(effect, () => noStore),
       {
         onFailure: (error) => pipe(error, identityProblem, failIdentityProblem),
-        onSuccess: (response) =>
-          decodeResponse(ApiKeyIssueResponseSchema, response, shellInternalProblem),
+        onSuccess: (response) => decodeResponse(ApiKeyIssueResponseSchema, response, shellInternalProblem),
       },
     );
   const mutationContext = Effect.fn('shell.identity.mutationContext')(function* mutationContext(
@@ -1312,11 +1215,7 @@ const identityGroupLive = HttpApiBuilder.group(ShellAuthenticationApi, 'identity
               payload,
             })
             .pipe(Effect.catch((error) => pipe(error, identityProblem, failIdentityProblem)));
-          return yield* decodeResponse(
-            PrincipalMutationResponseSchema,
-            response,
-            shellInternalProblem,
-          );
+          return yield* decodeResponse(PrincipalMutationResponseSchema, response, shellInternalProblem);
         }),
       ),
     )
@@ -1370,8 +1269,9 @@ const identityGroupLive = HttpApiBuilder.group(ShellAuthenticationApi, 'identity
               transport: { correlationId: correlationFromRequest(request) },
             })
             .pipe(Effect.catch((error) => pipe(error, identityProblem, failIdentityProblem)));
-          const items = yield* Effect.all(
-            result.items.map((binding) =>
+          const items = yield* Effect.forEach(
+            result.items,
+            (binding) =>
               resolver
                 .loadApiKeyBindingForAdministration({
                   authBindingId: binding.authBindingId,
@@ -1394,7 +1294,6 @@ const identityGroupLive = HttpApiBuilder.group(ShellAuthenticationApi, 'identity
                   }),
                   Effect.catch((error) => pipe(error, identityProblem, failIdentityProblem)),
                 ),
-            ),
             { concurrency: 1 },
           );
           return yield* decodeResponse(
@@ -1445,8 +1344,9 @@ const identityGroupLive = HttpApiBuilder.group(ShellAuthenticationApi, 'identity
               transport: { correlationId: correlationFromRequest(request) },
             })
             .pipe(Effect.catch((error) => pipe(error, identityProblem, failIdentityProblem)));
-          const items = yield* Effect.all(
-            result.items.map((item) => {
+          const items = yield* Effect.forEach(
+            result.items,
+            Effect.fn(function* loadManagedApiKey(item) {
               const authBindingId = Option.getOrNull(item.authBindingId);
               if (authBindingId === null) {
                 const withoutKey = {
@@ -1456,9 +1356,9 @@ const identityGroupLive = HttpApiBuilder.group(ShellAuthenticationApi, 'identity
                   principalId: item.principalId,
                   principalStatus: item.principalStatus,
                 };
-                return Effect.succeed(withoutKey);
+                return withoutKey;
               }
-              return resolver
+              return yield* resolver
                 .loadApiKeyBindingForAdministration({
                   authBindingId,
                   principalId: item.principalId,
@@ -1509,11 +1409,7 @@ const identityGroupLive = HttpApiBuilder.group(ShellAuthenticationApi, 'identity
               ...context,
             })
             .pipe(Effect.catch((error) => pipe(error, identityProblem, failIdentityProblem)));
-          return yield* decodeResponse(
-            ApiKeyLifecycleResponseSchema,
-            response,
-            shellInternalProblem,
-          );
+          return yield* decodeResponse(ApiKeyLifecycleResponseSchema, response, shellInternalProblem);
         }),
       ),
     )
@@ -1530,11 +1426,7 @@ const identityGroupLive = HttpApiBuilder.group(ShellAuthenticationApi, 'identity
               managedPrincipalId: principalId,
             })
             .pipe(Effect.catch((error) => pipe(error, identityProblem, failIdentityProblem)));
-          return yield* decodeResponse(
-            ApiKeyLifecycleResponseSchema,
-            response,
-            shellInternalProblem,
-          );
+          return yield* decodeResponse(ApiKeyLifecycleResponseSchema, response, shellInternalProblem);
         }),
       ),
     )
@@ -1596,16 +1488,16 @@ const identityGroupLive = HttpApiBuilder.group(ShellAuthenticationApi, 'identity
               targetPrincipalId: payload.targetPrincipalId,
             })
             .pipe(
-              Effect.provideService(
-                SupportImpersonationCorrelationId,
-                correlationFromRequest(request),
-              ),
+              Effect.provideService(SupportImpersonationCorrelationId, correlationFromRequest(request)),
               Effect.catch((error) => pipe(error, identityProblem, failIdentityProblem)),
             );
           yield* forwardSetCookieHeaders(result.setCookieHeaders);
           return yield* decodeResponse(
             SupportImpersonationResponseSchema,
-            { active: result.active, targetPrincipalId: result.targetPrincipalId },
+            {
+              active: result.active,
+              targetPrincipalId: result.targetPrincipalId,
+            },
             shellInternalProblem,
           );
         }),
@@ -1623,10 +1515,7 @@ const identityGroupLive = HttpApiBuilder.group(ShellAuthenticationApi, 'identity
               requestHeaders: requestHeaders(request.headers),
             })
             .pipe(
-              Effect.provideService(
-                SupportImpersonationCorrelationId,
-                correlationFromRequest(request),
-              ),
+              Effect.provideService(SupportImpersonationCorrelationId, correlationFromRequest(request)),
               Effect.catch((error) => pipe(error, identityProblem, failIdentityProblem)),
             );
           yield* forwardSetCookieHeaders(result.setCookieHeaders);
@@ -1643,128 +1532,106 @@ const identityGroupLive = HttpApiBuilder.group(ShellAuthenticationApi, 'identity
     );
 });
 
-const gatewayContextGroupLive = HttpApiBuilder.group(
-  ShellAuthenticationApi,
-  'gatewayContext',
-  (handlers) =>
-    handlers
-      .handle('issueGatewayContext', ({ payload, request }) =>
-        Effect.gen(function* issueGatewayContextHandler() {
-          const authentication = yield* AuthenticationService;
-          const sessionResult = yield* authentication
-            .resolveShellContext(requestHeaders(request.headers))
-            .pipe(
-              Effect.catch((error) =>
-                pipe(error, gatewayAuthenticationProblem, failGatewayProblem),
-              ),
-            );
-          yield* forwardSetCookieHeaders(sessionResult.setCookieHeaders);
-          if (sessionResult.state !== 'authenticated') {
-            return yield* failGatewayProblem(gatewayAuthenticationRequiredProblem());
-          }
-          if (
-            payload.legalEntityId !== undefined &&
-            payload.legalEntityId !== sessionResult.principal.legalEntityId
-          ) {
-            return yield* failGatewayProblem(gatewayForbiddenProblem());
-          }
+const gatewayContextGroupLive = HttpApiBuilder.group(ShellAuthenticationApi, 'gatewayContext', (handlers) =>
+  handlers
+    .handle('issueGatewayContext', ({ payload, request }) =>
+      Effect.gen(function* issueGatewayContextHandler() {
+        const authentication = yield* AuthenticationService;
+        const sessionResult = yield* authentication
+          .resolveShellContext(requestHeaders(request.headers))
+          .pipe(Effect.catch((error) => pipe(error, gatewayAuthenticationProblem, failGatewayProblem)));
+        yield* forwardSetCookieHeaders(sessionResult.setCookieHeaders);
+        if (sessionResult.state !== 'authenticated') {
+          return yield* failGatewayProblem(gatewayAuthenticationRequiredProblem());
+        }
+        if (payload.legalEntityId !== undefined && payload.legalEntityId !== sessionResult.principal.legalEntityId) {
+          return yield* failGatewayProblem(gatewayForbiddenProblem());
+        }
 
-          return yield* issueGatewayContextAssertion({
-            audience: payload.audience,
-            principal: sessionResult.principal,
-          }).pipe(
-            Effect.tapError((error) => logGatewayIssuerFailure('session', request, error)),
-            Effect.catch((error) => pipe(error, gatewayIssuerProblem, failGatewayProblem)),
-          );
+        return yield* issueGatewayContextAssertion({
+          audience: payload.audience,
+          principal: sessionResult.principal,
         }).pipe(
-          recoverUnexpectedDefect(request, 'Unexpected Shell gateway assertion defect', () =>
-            failGatewayProblem(gatewayInternalProblem()),
-          ),
-        ),
-      )
-      .handle('issueApiKeyGatewayContext', ({ headers, payload, request }) =>
-        Effect.gen(function* issueApiKeyGatewayContextHandler() {
-          const keys = yield* ApiKeyService;
-          const resolver = yield* PrincipalResolver;
-          const { 'x-api-key': rawKey } = headers;
-          if (rawKey === undefined || rawKey.trim().length === 0) {
-            return yield* failApiKeyGatewayProblem(gatewayAuthenticationRequiredProblem());
-          }
-          const verified = yield* keys
-            .verify(rawKey)
-            .pipe(
-              Effect.catch((error) =>
-                failApiKeyGatewayProblem(apiKeyProviderGatewayProblem(error)),
-              ),
-            );
-          const identity = yield* resolver
-            .resolveBetterAuthApiKey(verified.providerKeyId)
-            .pipe(
-              Effect.catch((error) =>
-                pipe(error, principalResolutionGatewayProblem, failApiKeyGatewayProblem),
-              ),
-            );
-          let legalEntityId: string | undefined;
-          if (payload.legalEntityId !== undefined) {
-            const selected = yield* validateAuthorizedLegalEntity({
-              legalEntityId: payload.legalEntityId,
-              principalId: identity.principalId,
-              tenantId: identity.tenantId,
-            }).pipe(
-              Effect.catch((error) =>
-                failApiKeyGatewayProblem(
-                  Predicate.isTagged(error, 'LegalEntitySelectionUnavailableError')
-                    ? gatewayAuthorizationUnavailableProblem()
-                    : gatewayForbiddenProblem(),
-                ),
-              ),
-            );
-            ({ legalEntityId } = selected);
-          }
-          return yield* issueGatewayContextAssertion({
-            audience: payload.audience,
-            principal: withOptionalProperty(
-              {
-                authBindingId: identity.authBindingId,
-                authContextRef: `better-auth-api-key:${verified.providerKeyId}`,
-                authMethod: 'api_key',
-              },
-              legalEntityId !== undefined,
-              'legalEntityId',
-              legalEntityId,
-              {
-                principalId: identity.principalId,
-                tenantId: identity.tenantId,
-              },
-            ),
-          }).pipe(
-            Effect.tapError((error) => logGatewayIssuerFailure('api_key', request, error)),
-            Effect.catch((error) => pipe(error, gatewayIssuerProblem, failGatewayProblem)),
-          );
-        }).pipe(
-          recoverUnexpectedDefect(request, 'Unexpected API-key gateway assertion defect', () =>
-            failGatewayProblem(gatewayInternalProblem()),
-          ),
+          Effect.tapError((error) => logGatewayIssuerFailure('session', request, error)),
+          Effect.catch((error) => pipe(error, gatewayIssuerProblem, failGatewayProblem)),
+        );
+      }).pipe(
+        recoverUnexpectedDefect(request, 'Unexpected Shell gateway assertion defect', () =>
+          failGatewayProblem(gatewayInternalProblem()),
         ),
       ),
+    )
+    .handle('issueApiKeyGatewayContext', ({ headers, payload, request }) =>
+      Effect.gen(function* issueApiKeyGatewayContextHandler() {
+        const keys = yield* ApiKeyService;
+        const resolver = yield* PrincipalResolver;
+        const { 'x-api-key': rawKey } = headers;
+        if (rawKey === undefined || rawKey.trim().length === 0) {
+          return yield* failApiKeyGatewayProblem(gatewayAuthenticationRequiredProblem());
+        }
+        const verified = yield* keys
+          .verify(rawKey)
+          .pipe(Effect.catch((error) => failApiKeyGatewayProblem(apiKeyProviderGatewayProblem(error))));
+        const identity = yield* resolver
+          .resolveBetterAuthApiKey(verified.providerKeyId)
+          .pipe(Effect.catch((error) => pipe(error, principalResolutionGatewayProblem, failApiKeyGatewayProblem)));
+        let legalEntityId: string | undefined;
+        if (payload.legalEntityId !== undefined) {
+          const selected = yield* validateAuthorizedLegalEntity({
+            legalEntityId: payload.legalEntityId,
+            principalId: identity.principalId,
+            tenantId: identity.tenantId,
+          }).pipe(
+            Effect.catch((error) =>
+              failApiKeyGatewayProblem(
+                Predicate.isTagged(error, 'LegalEntitySelectionUnavailableError')
+                  ? gatewayAuthorizationUnavailableProblem()
+                  : gatewayForbiddenProblem(),
+              ),
+            ),
+          );
+          ({ legalEntityId } = selected);
+        }
+        return yield* issueGatewayContextAssertion({
+          audience: payload.audience,
+          principal: withOptionalProperty(
+            {
+              authBindingId: identity.authBindingId,
+              authContextRef: `better-auth-api-key:${verified.providerKeyId}`,
+              authMethod: 'api_key',
+            },
+            legalEntityId !== undefined,
+            'legalEntityId',
+            legalEntityId,
+            {
+              principalId: identity.principalId,
+              tenantId: identity.tenantId,
+            },
+          ),
+        }).pipe(
+          Effect.tapError((error) => logGatewayIssuerFailure('api_key', request, error)),
+          Effect.catch((error) => pipe(error, gatewayIssuerProblem, failGatewayProblem)),
+        );
+      }).pipe(
+        recoverUnexpectedDefect(request, 'Unexpected API-key gateway assertion defect', () =>
+          failGatewayProblem(gatewayInternalProblem()),
+        ),
+      ),
+    ),
 );
 
 const corePersistenceLive = CorePersistenceLive.pipe(Layer.provide(DatabaseConfigLive));
 const authPersistenceLive = AuthPersistenceLive.pipe(Layer.provide(AuthConfigLive));
 const principalResolverLive = PrincipalResolverLive.pipe(Layer.provide(corePersistenceLive));
 const legalEntityContextLive = LegalEntityContextLive.pipe(Layer.provide(corePersistenceLive));
-const tenantModuleStateServiceLive = TenantModuleStateServiceLive.pipe(
-  Layer.provide(corePersistenceLive),
-);
+const tenantModuleStateServiceLive = TenantModuleStateServiceLive.pipe(Layer.provide(corePersistenceLive));
 const authenticationDependenciesLive = Layer.mergeAll(
   authPersistenceLive,
   ContextAccessLive,
   legalEntityContextLive,
   principalResolverLive,
 );
-const authenticationServiceLive = AuthenticationServiceLive.pipe(
-  Layer.provide(authenticationDependenciesLive),
-);
+const authenticationServiceLive = AuthenticationServiceLive.pipe(Layer.provide(authenticationDependenciesLive));
 const apiKeyServiceLive = ApiKeyServiceLive.pipe(Layer.provide(authPersistenceLive));
 const supportRecoveryPrincipalLive = SupportRecoveryPrincipalContextResolverLive.pipe(
   Layer.provide(corePersistenceLive),
@@ -1776,14 +1643,8 @@ const runtimeObservabilityLive = Layer.mergeAll(
   Layer.succeed(References.MinimumLogLevel, 'Info'),
 );
 
-type ShellAuthenticationLayer = Layer.Layer<
-  AuthenticationService,
-  Layer.Error<typeof authenticationServiceLive>
->;
-type ShellModuleStateLayer = Layer.Layer<
-  TenantModuleStateService,
-  Layer.Error<typeof tenantModuleStateServiceLive>
->;
+type ShellAuthenticationLayer = Layer.Layer<AuthenticationService, Layer.Error<typeof authenticationServiceLive>>;
+type ShellModuleStateLayer = Layer.Layer<TenantModuleStateService, Layer.Error<typeof tenantModuleStateServiceLive>>;
 
 const defaultScopedModuleStateFactory: ShellScopedModuleStateFactory = (transaction) =>
   makeTenantModuleStateService({ executor: transaction });
@@ -1801,8 +1662,7 @@ type ShellAuthenticationApiRuntimeArguments = readonly [
 
 export const makeShellAuthenticationApiRuntime = (
   ...args: ShellAuthenticationApiRuntimeArguments
-): EffectBffDefinition<typeof ShellAuthenticationApi> &
-  EffectBffRuntime<typeof ShellAuthenticationApi> => {
+): EffectBffDefinition<typeof ShellAuthenticationApi> & EffectBffRuntime<typeof ShellAuthenticationApi> => {
   const [
     authenticationLayer,
     issuerLayer,
@@ -1816,11 +1676,11 @@ export const makeShellAuthenticationApiRuntime = (
   const moduleCatalogLayer =
     loadInstalledModuleCatalog === undefined
       ? ShellInstalledModuleCatalogLive
-      : Layer.succeed(ShellInstalledModuleCatalog, { load: loadInstalledModuleCatalog });
+      : Layer.succeed(ShellInstalledModuleCatalog, {
+          load: loadInstalledModuleCatalog,
+        });
   const moduleStateGateLayer = ModuleStateGateLive.pipe(Layer.provide(moduleStateLayer));
-  const moduleEntrypointGatewayLayer = ModuleEntrypointGatewayLive.pipe(
-    Layer.provide(moduleStateGateLayer),
-  );
+  const moduleEntrypointGatewayLayer = ModuleEntrypointGatewayLive.pipe(Layer.provide(moduleStateGateLayer));
   const operationalScopeResolverLayer = OperationalScopeResolverLive.pipe(
     Layer.provide(Layer.mergeAll(corePersistenceLive, contextAccessLayer)),
   );
@@ -1833,9 +1693,7 @@ export const makeShellAuthenticationApiRuntime = (
   );
   const readRuntimeLayer = ReadRuntimeLive.pipe(Layer.provide(sharedOperationLayers));
   const actionRuntimeLayer = ActionRuntimeLive.pipe(
-    Layer.provide(
-      Layer.mergeAll(sharedOperationLayers, ActionRepositoryLive, ActionPermissionLive),
-    ),
+    Layer.provide(Layer.mergeAll(sharedOperationLayers, ActionRepositoryLive, ActionPermissionLive)),
   );
   const identityLifecycleLayer = IdentityLifecycleLive.pipe(
     Layer.provide(Layer.mergeAll(actionRuntimeLayer, apiKeyServiceLive, principalResolverLive)),
@@ -1844,13 +1702,7 @@ export const makeShellAuthenticationApiRuntime = (
     GatewayIssuer.pipe(
       Effect.map((gatewayIssuer) => {
         const providerAssertionIssuer = {
-          issueAssertion: ({
-            appId,
-            context,
-          }: {
-            readonly appId: string;
-            readonly context: ShellResourceContext;
-          }) =>
+          issueAssertion: ({ appId, context }: { readonly appId: string; readonly context: ShellResourceContext }) =>
             gatewayIssuer
               .issue({
                 audience: appId,
@@ -1886,16 +1738,10 @@ export const makeShellAuthenticationApiRuntime = (
               })
               .pipe(
                 Effect.map(({ token }) => `Bearer ${token}`),
-                Effect.catchTag('GatewayIssuerError', () =>
-                  Effect.fail(new ShellProviderUnavailableError()),
-                ),
+                Effect.catchTag('GatewayIssuerError', () => Effect.fail(new ShellProviderUnavailableError())),
               ),
         };
-        return createShellGovernedReadsLayer(
-          resourceGateways,
-          providerAssertionIssuer,
-          scopedModuleStateFactory,
-        );
+        return createShellGovernedReadsLayer(resourceGateways, providerAssertionIssuer, scopedModuleStateFactory);
       }),
     ),
   ).pipe(
@@ -1925,12 +1771,7 @@ export const makeShellAuthenticationApiRuntime = (
   );
   const outboxMatcherLayer = enableInstalledOutboxMatcher
     ? InstalledOutboxMatcherLive.pipe(
-        Layer.provide(
-          OutboxRuntimeLive.pipe(
-            Layer.provide(OutboxRepositoryLive),
-            Layer.provide(corePersistenceLive),
-          ),
-        ),
+        Layer.provide(OutboxRuntimeLive.pipe(Layer.provide(OutboxRepositoryLive), Layer.provide(corePersistenceLive))),
       )
     : Layer.empty;
   const handlerDependenciesLive = Layer.mergeAll(

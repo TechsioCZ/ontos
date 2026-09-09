@@ -2,12 +2,12 @@
 // @ontos-deployment-app-id party-registry
 // @ontos-module-id party.registry
 import { defineVerticalRuntimeRegistration } from '@app/core-runtime';
-import { partyRegistryManifest } from './vertical.manifest.ts';
+
 // <generated-module-registration-imports>
 import { addContactPointAction } from './src/actions/add-contact-point.action.ts';
 import { addPartyOfficialIdentifierAction } from './src/actions/add-party-official-identifier.action.ts';
-import { archivePartyAction } from './src/actions/archive-party.action.ts';
 import { archiveOrganizationEngagementAction } from './src/actions/archive-organization-engagement.action.ts';
+import { archivePartyAction } from './src/actions/archive-party.action.ts';
 import { archivePersonEngagementAction } from './src/actions/archive-person-engagement.action.ts';
 import { attachOrganizationEngagementAction } from './src/actions/attach-organization-engagement.action.ts';
 import { attachPersonEngagementAction } from './src/actions/attach-person-engagement.action.ts';
@@ -16,14 +16,24 @@ import { correctPartyFactAction } from './src/actions/correct-party-fact.action.
 import { counterpartyCreateAction } from './src/actions/counterparty-create.action.ts';
 import { counterpartyRoleAddAction } from './src/actions/counterparty-role-add.action.ts';
 import { counterpartyRoleEndAction } from './src/actions/counterparty-role-end.action.ts';
-import { createPartyAction } from './src/actions/create-party.action.ts';
 import { createPartyRelationshipAction } from './src/actions/create-party-relationship.action.ts';
+import { createPartyAction } from './src/actions/create-party.action.ts';
 import { dismissDuplicateCandidateAction } from './src/actions/dismiss-duplicate-candidate.action.ts';
 import { endContactPointAction } from './src/actions/end-contact-point.action.ts';
 import { endPartyOfficialIdentifierAction } from './src/actions/end-party-official-identifier.action.ts';
 import { endPartyRelationshipAction } from './src/actions/end-party-relationship.action.ts';
 import { markDuplicateCandidateNeedsEvidenceAction } from './src/actions/mark-duplicate-candidate-needs-evidence.action.ts';
 import { matchPartyAction } from './src/actions/match-party.action.ts';
+import { requestSearchRebuildAction } from './src/actions/request-search-rebuild.action.ts';
+import { resolveDuplicateCandidateCreateAction } from './src/actions/resolve-duplicate-candidate-create.action.ts';
+import { resolveDuplicateCandidateMatchAction } from './src/actions/resolve-duplicate-candidate-match.action.ts';
+import { unarchiveOrganizationEngagementAction } from './src/actions/unarchive-organization-engagement.action.ts';
+import { unarchivePartyAction } from './src/actions/unarchive-party.action.ts';
+import { unarchivePersonEngagementAction } from './src/actions/unarchive-person-engagement.action.ts';
+import { updateContactPointAction } from './src/actions/update-contact-point.action.ts';
+import { updatePartyOfficialIdentifierAction } from './src/actions/update-party-official-identifier.action.ts';
+import { updatePartyRelationshipAction } from './src/actions/update-party-relationship.action.ts';
+import { updatePartyAction } from './src/actions/update-party.action.ts';
 import { projectContactPointAddedToSearchWorker } from './src/workers/project-contact-point-added-to-search.worker.ts';
 import { projectContactPointEndedToSearchWorker } from './src/workers/project-contact-point-ended-to-search.worker.ts';
 import { projectContactPointUpdatedToSearchWorker } from './src/workers/project-contact-point-updated-to-search.worker.ts';
@@ -39,16 +49,7 @@ import { projectPartyFactCorrectedToSearchWorker } from './src/workers/project-p
 import { projectPartyUnarchivedToSearchWorker } from './src/workers/project-party-unarchived-to-search.worker.ts';
 import { projectPartyUpdatedToSearchWorker } from './src/workers/project-party-updated-to-search.worker.ts';
 import { rebuildSearchWorker } from './src/workers/rebuild-search.worker.ts';
-import { requestSearchRebuildAction } from './src/actions/request-search-rebuild.action.ts';
-import { resolveDuplicateCandidateCreateAction } from './src/actions/resolve-duplicate-candidate-create.action.ts';
-import { resolveDuplicateCandidateMatchAction } from './src/actions/resolve-duplicate-candidate-match.action.ts';
-import { unarchivePartyAction } from './src/actions/unarchive-party.action.ts';
-import { unarchiveOrganizationEngagementAction } from './src/actions/unarchive-organization-engagement.action.ts';
-import { unarchivePersonEngagementAction } from './src/actions/unarchive-person-engagement.action.ts';
-import { updateContactPointAction } from './src/actions/update-contact-point.action.ts';
-import { updatePartyAction } from './src/actions/update-party.action.ts';
-import { updatePartyOfficialIdentifierAction } from './src/actions/update-party-official-identifier.action.ts';
-import { updatePartyRelationshipAction } from './src/actions/update-party-relationship.action.ts';
+import { partyRegistryManifest } from './vertical.manifest.ts';
 // </generated-module-registration-imports>
 
 export const partyRegistryRegistration = defineVerticalRuntimeRegistration({
@@ -93,8 +94,7 @@ export const partyRegistryRegistration = defineVerticalRuntimeRegistration({
       'counterparty-read': () => import('./src/api/counterparty-read-client.ts'),
       'counterparty-role-history': () => import('./src/api/counterparty-role-history-client.ts'),
       'duplicate-candidate-detail': () => import('./src/api/duplicate-candidate-detail-client.ts'),
-      'organization-engagement-profile': () =>
-        import('./src/api/organization-engagement-profile-client.ts'),
+      'organization-engagement-profile': () => import('./src/api/organization-engagement-profile-client.ts'),
       'party-contact-point-detail': () => import('./src/api/party-contact-point-detail-client.ts'),
       'party-contact-points': () => import('./src/api/party-contact-points-client.ts'),
       'party-correction': () => import('./src/api/party-correction-client.ts'),
@@ -102,10 +102,8 @@ export const partyRegistryRegistration = defineVerticalRuntimeRegistration({
       'party-match': () => import('./src/api/party-match-client.ts'),
       'party-match-decision': () => import('./src/api/party-match-decision-client.ts'),
       'party-merge-readiness': () => import('./src/api/party-merge-readiness-client.ts'),
-      'party-official-identifier-detail': () =>
-        import('./src/api/party-official-identifier-detail-client.ts'),
-      'party-official-identifier-history': () =>
-        import('./src/api/party-official-identifier-history-client.ts'),
+      'party-official-identifier-detail': () => import('./src/api/party-official-identifier-detail-client.ts'),
+      'party-official-identifier-history': () => import('./src/api/party-official-identifier-history-client.ts'),
       'party-relationship-detail': () => import('./src/api/party-relationship-detail-client.ts'),
       'person-engagement-profile': () => import('./src/api/person-engagement-profile-client.ts'),
       // </generated-module-registration-apis>

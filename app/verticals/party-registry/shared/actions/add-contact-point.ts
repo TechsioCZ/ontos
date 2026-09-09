@@ -1,5 +1,6 @@
 // Canonical schema-only contract extracted from the generated add-contact-point Action.
 import { Schema } from 'effect';
+
 import {
   ContactPointInputSchema,
   ContactPointPrivacyClassificationSchema,

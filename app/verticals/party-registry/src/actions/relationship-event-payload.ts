@@ -1,4 +1,5 @@
 import { Effect, Schema } from 'effect';
+
 import { PartyRelationshipLifecycleEventPayloadSchema } from '../../shared/domain/relationship-contract.ts';
 import type { PartyRelationshipDetail } from '../../shared/domain/relationship-contract.ts';
 

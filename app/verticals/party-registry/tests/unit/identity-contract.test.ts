@@ -1,5 +1,6 @@
-import { expect, it } from 'effect-rstest';
 import { Effect, DateTime, Option, Schema, Struct } from 'effect';
+import { expect, it } from 'effect-rstest';
+
 import {
   PartyCandidateSchema,
   IsoTimestampSchema,
@@ -10,11 +11,11 @@ import {
   makePartyRef,
   partyIdFromString,
 } from '../../shared/domain/identity-contracts.ts';
+import { makeDuplicateCandidateCaseRef } from '../../shared/resources/duplicate-candidate-case.ts';
+import { makePartyMatchDecisionRef } from '../../shared/resources/party-match-decision.ts';
 import { createPartyAction } from '../../src/actions/create-party.action.ts';
 import { unarchivePartyAction } from '../../src/actions/unarchive-party.action.ts';
 import { updatePartyAction } from '../../src/actions/update-party.action.ts';
-import { makeDuplicateCandidateCaseRef } from '../../shared/resources/duplicate-candidate-case.ts';
-import { makePartyMatchDecisionRef } from '../../shared/resources/party-match-decision.ts';
 
 const decode = Schema.decodeUnknownSync;
 
@@ -24,7 +25,7 @@ it('Party V1 admits only PERSON, ORGANIZATION, and evidenced UNRESOLVED identity
   }
   expect(() => decode(PartyTypeSchema)('OTHER')).toThrow();
   expect(() =>
-    decode(PartyCandidateSchema)({
+    Schema.decodeSync(PartyCandidateSchema)({
       displayName: '   ',
       evidenceRefs: [],
       officialIdentifiers: [],
@@ -43,8 +44,8 @@ it('Party Type update is enrichment-only; cross-kind changes require Correction'
 });
 
 it('identity timestamps decode to canonical UTC values', () => {
-  expect(() => decode(IsoTimestampSchema)('not-a-timestamp')).toThrow();
-  const leapDay = decode(IsoTimestampSchema)('2024-02-29T00:00:00Z');
+  expect(() => Schema.decodeSync(IsoTimestampSchema)('not-a-timestamp')).toThrow();
+  const leapDay = Schema.decodeSync(IsoTimestampSchema)('2024-02-29T00:00:00Z');
   expect(DateTime.formatIso(leapDay)).toBe('2024-02-29T00:00:00.000Z');
 });
 
@@ -54,15 +55,12 @@ it.effect('Party JSON round-trips timestamps as strings and absent values as nul
       archivedAt: null,
       createdAt: '2025-01-01T00:00:00.000Z',
       displayName: null,
-      partyRef: makePartyRef(
-        '11111111-1111-4111-8111-111111111111',
-        '22222222-2222-4222-8222-222222222222',
-      ),
+      partyRef: makePartyRef('11111111-1111-4111-8111-111111111111', '22222222-2222-4222-8222-222222222222'),
       partyType: 'UNRESOLVED' as const,
       revision: 1,
       updatedAt: '2026-01-01T00:00:00.000Z',
     };
-    const decoded = decode(PartySchema)(encoded);
+    const decoded = yield* Schema.decodeEffect(PartySchema)(encoded);
 
     expect(Option.isNone(decoded.archivedAt)).toBe(true);
     expect(Option.isNone(decoded.displayName)).toBe(true);
@@ -76,7 +74,7 @@ it.effect('Party JSON round-trips timestamps as strings and absent values as nul
       archivedAt: '2026-02-01T00:00:00.000Z',
       displayName: 'Example organization',
     };
-    expect(yield* Schema.encodeEffect(PartySchema)(decode(PartySchema)(presentEncoded))).toEqual(
+    expect(yield* Schema.encodeEffect(PartySchema)(yield* Schema.decodeEffect(PartySchema)(presentEncoded))).toEqual(
       presentEncoded,
     );
   }),
@@ -86,12 +84,18 @@ it.effect('Party Candidate accepts an evidenced identifier without inventing a d
   Effect.gen(function* verifySchema2() {
     const encoded = {
       evidenceRefs: ['source:official-record'],
-      officialIdentifiers: [{ identifierType: 'ICO', value: '27074358', verification: 'VERIFIED' }],
+      officialIdentifiers: [
+        {
+          identifierType: 'ICO',
+          value: '27074358',
+          verification: 'VERIFIED',
+        },
+      ],
       partyType: 'ORGANIZATION' as const,
       provenance: { method: 'IMPORT', source: 'official-register' },
       validFrom: '2026-01-01T00:00:00.000Z',
     };
-    const candidate = decode(PartyCandidateSchema)(encoded);
+    const candidate = yield* Schema.decodeUnknownEffect(PartyCandidateSchema)(encoded);
     expect(candidate.displayName).toBe(undefined);
     expect(candidate.officialIdentifiers.length).toBe(1);
     expect(yield* Schema.encodeEffect(PartyCandidateSchema)(candidate)).toEqual(encoded);
@@ -99,9 +103,7 @@ it.effect('Party Candidate accepts an evidenced identifier without inventing a d
 );
 
 it('Party references retain tenant, module, resource type, and resource identity', () => {
-  expect(
-    makePartyRef('11111111-1111-4111-8111-111111111111', '22222222-2222-4222-8222-222222222222'),
-  ).toEqual({
+  expect(makePartyRef('11111111-1111-4111-8111-111111111111', '22222222-2222-4222-8222-222222222222')).toEqual({
     moduleId: 'party.registry',
     resourceId: '22222222-2222-4222-8222-222222222222',
     resourceType: 'party.registry.party',

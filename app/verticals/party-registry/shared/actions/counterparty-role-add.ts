@@ -1,12 +1,13 @@
 // Canonical schema-only contract extracted from the generated counterparty-role-add Action.
 import { Schema } from 'effect';
+
 import {
   CounterpartyIsoTimestampSchema,
   CounterpartyProvenanceSchema,
   CounterpartyRoleTypeSchema,
 } from '../domain/counterparty-contract.ts';
-import { CounterpartyRefSchema } from '../resources/counterparty.ts';
 import { CounterpartyRolePeriodRefSchema } from '../resources/counterparty-role-period.ts';
+import { CounterpartyRefSchema } from '../resources/counterparty.ts';
 
 export const CounterpartyRoleAddPayloadSchema = Schema.Struct({
   counterpartyRef: CounterpartyRefSchema,

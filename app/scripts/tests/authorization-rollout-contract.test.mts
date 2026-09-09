@@ -52,11 +52,12 @@ it('rollout contract rejects expiry, stale inventory binding, extra fields, and 
     }),
   ).toThrow(/inactive or expired/u);
   expect(() =>
-    validateAuthorizationRolloutContract(contract, { ...context, inventoryHash: 'other' }),
+    validateAuthorizationRolloutContract(contract, {
+      ...context,
+      inventoryHash: 'other',
+    }),
   ).toThrow(/does not match/u);
-  expect(() =>
-    validateAuthorizationRolloutContract({ ...contract, arbitrary: true }, context),
-  ).toThrow(/malformed/u);
+  expect(() => validateAuthorizationRolloutContract({ ...contract, arbitrary: true }, context)).toThrow(/malformed/u);
   expect(() =>
     validateAuthorizationRolloutContract(
       {
@@ -68,7 +69,10 @@ it('rollout contract rejects expiry, stale inventory binding, extra fields, and 
   ).toThrow(/duplicates/u);
   expect(() =>
     validateAuthorizationRolloutContract(
-      { ...contract, compatibilityEligibleEntrypoints: ['contacts.new-action'] },
+      {
+        ...contract,
+        compatibilityEligibleEntrypoints: ['contacts.new-action'],
+      },
       context,
     ),
   ).toThrow(/unknown entrypoint/u);

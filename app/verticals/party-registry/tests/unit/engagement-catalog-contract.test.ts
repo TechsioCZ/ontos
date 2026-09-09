@@ -1,8 +1,6 @@
 import { assert, expect, it } from 'effect-rstest';
-import {
-  compareContactsCatalog,
-  expectedContactsTableCatalog,
-} from '../../src/db/engagement-catalog.ts';
+
+import { compareContactsCatalog, expectedContactsTableCatalog } from '../../src/db/engagement-catalog.ts';
 
 it('reports exact Contacts table catalog differences', () => {
   expect(expectedContactsTableCatalog).toEqual([
@@ -18,11 +16,7 @@ it('reports exact Contacts table catalog differences', () => {
 
 it('keeps Contacts inventory separate while rejecting duplicate unknown tables once', () => {
   assert.deepEqual(
-    compareContactsCatalog([
-      ...expectedContactsTableCatalog,
-      'party.counterparties',
-      'party.counterparties',
-    ]),
+    compareContactsCatalog([...expectedContactsTableCatalog, 'party.counterparties', 'party.counterparties']),
     { missing: [], unexpected: ['party.counterparties'] },
   );
   assert.deepEqual(compareContactsCatalog([]), {

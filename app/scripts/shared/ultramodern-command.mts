@@ -29,12 +29,12 @@ export const resolveUltramodernInvocation = <E,>(options: CommandOptions<E>) =>
     );
     const forwardedArgs = yield* stdio.args;
     const args = ['ultramodern', options.command, ...forwardedArgs];
-    const nodeExecutable = options.nodeExecutable ?? 'node';
+    const nodeExecutable = options.nodeExecutable ?? process.execPath;
     const launch = Option.match(createBin, {
       onNone: () => ({
         args,
-        executable: 'modern-js-create',
-        target: 'modern-js-create from PATH',
+        executable: 'ultramodern-create',
+        target: 'ultramodern-create from PATH',
       }),
       onSome: (bin) => ({
         args: [bin, ...args],
@@ -62,21 +62,13 @@ export const resolveUltramodernInvocation = <E,>(options: CommandOptions<E>) =>
     };
   });
 
-export const launchUltramodern = <E,>(
-  invocation: Effect.Success<ReturnType<typeof resolveUltramodernInvocation<E>>>,
-) =>
+export const launchUltramodern = <E,>(invocation: Effect.Success<ReturnType<typeof resolveUltramodernInvocation<E>>>) =>
   Effect.gen(function* launchUltramodernEffect() {
     const processSpawner = yield* ChildProcessSpawner.ChildProcessSpawner;
-    return Number(
-      yield* processSpawner
-        .exitCode(invocation.command)
-        .pipe(Effect.mapError(invocation.launchFailure)),
-    );
+    return Number(yield* processSpawner.exitCode(invocation.command).pipe(Effect.mapError(invocation.launchFailure)));
   });
 
-export const runUltramodernScript = <E extends { readonly reason: string }>(
-  options: CommandOptions<E>,
-) =>
+export const runUltramodernScript = <E extends { readonly reason: string }>(options: CommandOptions<E>) =>
   resolveUltramodernInvocation(options).pipe(
     Effect.flatMap(launchUltramodern),
     Effect.tapError(({ reason }) => Console.error(reason)),

@@ -2,10 +2,8 @@
 import { defineRead, defineTenantModuleEntrypoint } from '@app/core-runtime';
 import type { ReadHandlerContext } from '@app/core-runtime';
 import { Effect } from 'effect';
-import {
-  PartyCorrectionRequestSchema,
-  PartyCorrectionResponseSchema,
-} from '../../shared/apis/party-correction.ts';
+
+import { PartyCorrectionRequestSchema, PartyCorrectionResponseSchema } from '../../shared/apis/party-correction.ts';
 import { findPartyCorrection } from '../services/party-correction.service.ts';
 import { readUnavailable, requireReadValue, readDetailResult } from './read-outcome.ts';
 
@@ -19,8 +17,7 @@ const partyCorrectionEntrypoint = defineTenantModuleEntrypoint({
 interface Services {
   readonly find: (correctionId: string) => ReturnType<typeof findPartyCorrection>;
 }
-export const partyCorrectionPermissionTarget = () =>
-  ({ kind: 'tenant', permission: 'review_party_identity' }) as const;
+export const partyCorrectionPermissionTarget = () => ({ kind: 'tenant', permission: 'review_party_identity' }) as const;
 const unavailable = readUnavailable('Party Correction persistence is unavailable');
 export const partyCorrectionRead = defineRead(
   {
@@ -49,8 +46,7 @@ export const partyCorrectionRead = defineRead(
       ),
   (transaction, scope) =>
     Effect.succeed({
-      find: (correctionId: string) =>
-        findPartyCorrection(transaction, scope.tenantId, correctionId),
+      find: (correctionId: string) => findPartyCorrection(transaction, scope.tenantId, correctionId),
     }),
   partyCorrectionPermissionTarget,
 );

@@ -11,7 +11,6 @@
  * Configurable naming and width controls intentionally cover only part of B4. Report only.
  */
 import { defineRule } from '@oxlint/plugins';
-
 import type { ESTree } from '@oxlint/plugins';
 
 import { keyName as staticKeyName, parentOf, unwrapBinding } from '../shared/ast.ts';
@@ -47,13 +46,7 @@ const NAMED_MEMBERS = new Set([
 ]);
 
 /** Type wrappers that never change which named type a parameter is annotated with. */
-const TYPE_WRAPPERS = new Set([
-  'TSParenthesizedType',
-  'TSTypeOperator',
-  'TSArrayType',
-  'TSOptionalType',
-  'TSRestType',
-]);
+const TYPE_WRAPPERS = new Set(['TSParenthesizedType', 'TSTypeOperator', 'TSArrayType', 'TSOptionalType', 'TSRestType']);
 
 interface RuleOptions {
   readonly factoryNamePattern: RegExp;
@@ -80,17 +73,17 @@ function readOptions(raw: unknown): RuleOptions {
     includeScripts: booleanOption(given.includeScripts, false),
     includeTests: booleanOption(given.includeTests, false),
     includeTypeSignatures: booleanOption(given.includeTypeSignatures, true),
-    maxPositionalParams: positiveInteger(
-      given.maxPositionalParams,
-      DEFAULT_MAX_POSITIONAL_PARAMS,
-      0,
-    ),
+    maxPositionalParams: positiveInteger(given.maxPositionalParams, DEFAULT_MAX_POSITIONAL_PARAMS, 0),
     optionBagTypePattern: compile(given.optionBagTypePattern, DEFAULT_OPTION_BAG_TYPE_PATTERN),
   };
 }
 
 function keyName(key: AnyNode, computed: boolean): string | null {
-  return staticKeyName(key, computed, { templates: true, rawTemplates: false, singleQuasi: false });
+  return staticKeyName(key, computed, {
+    templates: true,
+    rawTemplates: false,
+    singleQuasi: false,
+  });
 }
 
 /**
@@ -112,17 +105,14 @@ function countPositionalParameters(params: readonly AnyNode[]): number {
 function typeReferenceNames(annotation: AnyNode | null | undefined, depth = 0): readonly string[] {
   if (annotation === null || annotation === undefined || depth > 5) return [];
   const node =
-    annotation.type === 'TSTypeAnnotation'
-      ? (annotation as { typeAnnotation: AnyNode }).typeAnnotation
-      : annotation;
+    annotation.type === 'TSTypeAnnotation' ? (annotation as { typeAnnotation: AnyNode }).typeAnnotation : annotation;
   return namesInType(node, depth);
 }
 
 function namesInType(node: AnyNode, depth: number): readonly string[] {
   if (TYPE_WRAPPERS.has(node.type)) {
     const inner =
-      (node as { typeAnnotation?: AnyNode }).typeAnnotation ??
-      (node as { elementType?: AnyNode }).elementType;
+      (node as { typeAnnotation?: AnyNode }).typeAnnotation ?? (node as { elementType?: AnyNode }).elementType;
     return inner === undefined ? [] : typeReferenceNames(inner, depth + 1);
   }
   if (node.type === 'TSUnionType' || node.type === 'TSIntersectionType') {
@@ -138,8 +128,7 @@ function namesInType(node: AnyNode, depth: number): readonly string[] {
 
 function referenceLeafNames(typeName: AnyNode): readonly string[] {
   if (typeName.type === 'Identifier') return [typeName.name];
-  if (typeName.type === 'TSQualifiedName' && typeName.right.type === 'Identifier')
-    return [typeName.right.name];
+  if (typeName.type === 'TSQualifiedName' && typeName.right.type === 'Identifier') return [typeName.right.name];
   return [];
 }
 
@@ -184,7 +173,11 @@ function holderName(parent: AnyNode, child: AnyNode): FactoryName | null {
     return parent.right === child ? assignmentName(parent.left) : null;
   }
   if (!NAMED_MEMBERS.has(parent.type)) return null;
-  const holder = parent as unknown as { key: AnyNode; computed: boolean; value: AnyNode | null };
+  const holder = parent as unknown as {
+    key: AnyNode;
+    computed: boolean;
+    value: AnyNode | null;
+  };
   if (holder.value !== child) return null;
   const name = keyName(holder.key, holder.computed);
   return name === null ? null : { name, node: holder.key };
@@ -192,14 +185,17 @@ function holderName(parent: AnyNode, child: AnyNode): FactoryName | null {
 
 /** The type-level declaration that owns a signature node (`TSMethodSignature` / `TSPropertySignature`). */
 function signatureName(node: AnyNode): FactoryName | null {
-  const holder = node as unknown as { key?: AnyNode; computed?: boolean; id?: AnyNode | null };
+  const holder = node as unknown as {
+    key?: AnyNode;
+    computed?: boolean;
+    id?: AnyNode | null;
+  };
   if (holder.key !== undefined) {
     const name = keyName(holder.key, holder.computed === true);
     return name === null ? null : { name, node: holder.key };
   }
   const id = holder.id ?? null;
-  if (id !== null && id.type === 'Identifier')
-    return { name: (id as { name: string }).name, node: id };
+  if (id !== null && id.type === 'Identifier') return { name: (id as { name: string }).name, node: id };
   return null;
 }
 
@@ -250,8 +246,7 @@ export const rule = defineRule({
           },
           includeScripts: {
             type: 'boolean',
-            description:
-              'Also report inside scripts/** (default: false — one-shot programs, no Layer graph).',
+            description: 'Also report inside scripts/** (default: false — one-shot programs, no Layer graph).',
           },
           includeTests: {
             type: 'boolean',
@@ -303,8 +298,7 @@ export const rule = defineRule({
     const resolve = (node: any, seen = new Set<any>()): string | null => {
       if (!node || seen.has(node)) return null;
       seen.add(node);
-      if (VALUE_WRAPPERS.has(node.type) || node.type === 'ChainExpression')
-        return resolve(node.expression, seen);
+      if (VALUE_WRAPPERS.has(node.type) || node.type === 'ChainExpression') return resolve(node.expression, seen);
       if (node.type === 'MemberExpression') {
         const object = resolve(node.object, seen);
         const key = keyName(node.property, node.computed);
@@ -322,15 +316,11 @@ export const rule = defineRule({
       if (source === 'effect/Effect') return imported ? `Effect.${imported}` : 'Effect';
       return imported ?? 'root';
     };
-    const resolveDefinitions = (
-      variable: import('@oxlint/plugins').Variable,
-      seen: Set<any>,
-    ): string | null => {
+    const resolveDefinitions = (variable: import('@oxlint/plugins').Variable, seen: Set<any>): string | null => {
       for (const def of variable.defs as any[]) {
         if (def.type === 'ImportBinding') return importIdentity(def);
         if (def.type !== 'Variable' || def.parent?.kind !== 'const') continue;
-        if (!variable.references.some((r) => r.isWrite() && !r.init))
-          return resolve(def.node.init, seen);
+        if (!variable.references.some((r) => r.isWrite() && !r.init)) return resolve(def.node.init, seen);
       }
       return null;
     };
@@ -339,16 +329,12 @@ export const rule = defineRule({
       if (Array.isArray(node)) return node.some((child) => someNode(child, predicate));
       if (typeof node.type !== 'string') return false;
       if (predicate(node)) return true;
-      return Object.entries(node).some(
-        ([key, value]) => key !== 'parent' && someNode(value, predicate),
-      );
+      return Object.entries(node).some(([key, value]) => key !== 'parent' && someNode(value, predicate));
     };
     const bodyIsEffectProgram = (fn: AnyNode): boolean =>
       someNode(
         (fn as any).body,
-        (node) =>
-          node.type === 'CallExpression' &&
-          /^(?:root\.)?Effect\./u.test(resolve(node.callee) ?? ''),
+        (node) => node.type === 'CallExpression' && /^(?:root\.)?Effect\./u.test(resolve(node.callee) ?? ''),
       );
 
     // Only proven local scalar/data shapes are exempt. Unknown/imported annotations stay
@@ -359,8 +345,7 @@ export const rule = defineRule({
       return classifyDataType(node, seen);
     };
     const classifyDataType = (node: any, seen: Set<any>): boolean => {
-      if (['TSTypeAnnotation', 'TSTypeOperator'].includes(node.type))
-        return dataType(node.typeAnnotation, seen);
+      if (['TSTypeAnnotation', 'TSTypeOperator'].includes(node.type)) return dataType(node.typeAnnotation, seen);
       if (
         [
           'TSStringKeyword',
@@ -384,9 +369,7 @@ export const rule = defineRule({
     const dataMembers = (node: any, seen: Set<any>): boolean => {
       const members = node.members ?? node.body.body;
       return (
-        members.every(
-          (m: any) => m.type === 'TSPropertySignature' && dataType(m.typeAnnotation, new Set(seen)),
-        ) &&
+        members.every((m: any) => m.type === 'TSPropertySignature' && dataType(m.typeAnnotation, new Set(seen))) &&
         (node.extends ?? []).every((e: any) =>
           dataType({ type: 'TSTypeReference', typeName: e.expression }, new Set(seen)),
         )

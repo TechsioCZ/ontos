@@ -19,11 +19,7 @@ export const FUNCTION_TYPES: ReadonlySet<string> = new Set([
 ]);
 
 export function isNode(value: unknown): value is Syntax {
-  return (
-    typeof value === 'object' &&
-    value !== null &&
-    typeof (value as { type?: unknown }).type === 'string'
-  );
+  return typeof value === 'object' && value !== null && typeof (value as { type?: unknown }).type === 'string';
 }
 
 /** requireStart preserves the stricter generator-walker node guard. */
@@ -53,8 +49,7 @@ export interface UnwrapOptions {
 function innerExpression(node: Syntax, options: UnwrapOptions): Syntax | null {
   if (options.sequence && node.type === 'SequenceExpression')
     return asNode(node.expressions.at(-1), options.requireStart);
-  if (options.await && node.type === 'AwaitExpression')
-    return asNode(node.argument, options.requireStart);
+  if (options.await && node.type === 'AwaitExpression') return asNode(node.argument, options.requireStart);
   if (!(options.wrappers ?? EXPRESSION_WRAPPERS).has(node.type)) return null;
   return asNode(options.argumentFallback ? (node.expression ?? node.argument) : node.expression);
 }
@@ -118,10 +113,7 @@ function stringNode(value: unknown, options: StringOptions): Syntax | null {
   return node && options.unwrap ? unwrapNode(node, options.unwrap) : node;
 }
 function isStringLiteral(node: Syntax, options: StringOptions): boolean {
-  return (
-    node.type === 'Literal' ||
-    (options.babelStrings === true && (node.type as string) === 'StringLiteral')
-  );
+  return node.type === 'Literal' || (options.babelStrings === true && (node.type as string) === 'StringLiteral');
 }
 
 /** String literals and, by default, interpolation-free cooked templates; never dynamic keys. */
@@ -131,11 +123,7 @@ export function staticString(value: unknown, options: StringOptions = {}): strin
   if (isStringLiteral(node, options)) {
     return typeof node.value === 'string' ? node.value : null;
   }
-  if (
-    options.templates !== false &&
-    node.type === 'TemplateLiteral' &&
-    node.expressions.length === 0
-  ) {
+  if (options.templates !== false && node.type === 'TemplateLiteral' && node.expressions.length === 0) {
     return templateText(node, options.rawTemplates === true, options.singleQuasi === true);
   }
   return null;
@@ -145,11 +133,7 @@ export function literalText(value: unknown): string | null {
   return staticString(syntax(value));
 }
 
-export function keyName(
-  value: unknown,
-  computed = false,
-  options: StringOptions = {},
-): string | null {
+export function keyName(value: unknown, computed = false, options: StringOptions = {}): string | null {
   const input = asNode(value);
   const key = input && options.unwrap ? unwrapNode(input, options.unwrap) : input;
   if (!computed && key?.type === 'Identifier') return key.name;
@@ -157,10 +141,7 @@ export function keyName(
 }
 
 /** Defaults to literal-only computed keys; opt into templates/unwrap to preserve wider copies. */
-export function memberName(
-  node: unknown,
-  options: StringOptions = { templates: false },
-): string | null {
+export function memberName(node: unknown, options: StringOptions = { templates: false }): string | null {
   const member = asNode(node);
   return member ? keyName(member.property, member.computed === true, options) : null;
 }
@@ -200,8 +181,7 @@ export function childrenOf(
   requireStart = true,
 ): Syntax[] {
   const record = node as Syntax;
-  const names =
-    visitorKeys[node.type] ?? Object.keys(node).filter((key) => key !== 'parent' && key !== 'type');
+  const names = visitorKeys[node.type] ?? Object.keys(node).filter((key) => key !== 'parent' && key !== 'type');
   return names.flatMap((name) => {
     const value = record[name];
     const values: unknown[] = Array.isArray(value) ? value : [value];
@@ -245,12 +225,9 @@ export interface TypeUnwrapOptions {
   readonly elementTypeFallback?: boolean;
 }
 function innerType(node: Syntax, options: TypeUnwrapOptions): Syntax | null {
-  const readonly =
-    options.readonlyOperator && node.type === 'TSTypeOperator' && node.operator === 'readonly';
+  const readonly = options.readonlyOperator && node.type === 'TSTypeOperator' && node.operator === 'readonly';
   if (!readonly && !(options.wrappers ?? TYPE_WRAPPERS).has(node.type)) return null;
-  return asNode(
-    options.elementTypeFallback ? (node.typeAnnotation ?? node.elementType) : node.typeAnnotation,
-  );
+  return asNode(options.elementTypeFallback ? (node.typeAnnotation ?? node.elementType) : node.typeAnnotation);
 }
 const TYPE_WRAPPERS: ReadonlySet<string> = new Set(['TSParenthesizedType']);
 export function unwrapType(node: ESTree.Node, options: TypeUnwrapOptions = {}): Syntax {
@@ -284,8 +261,7 @@ export function asNamedMember(
 ): ESTree.MemberExpression | null {
   const node = unwrapNode(input, options);
   if (node.type !== 'MemberExpression') return null;
-  if (!node.computed)
-    return node.property.type === 'Identifier' && node.property.name === name ? node : null;
+  if (!node.computed) return node.property.type === 'Identifier' && node.property.name === name ? node : null;
   if ((node.property.type as string) === 'PrivateIdentifier') return null;
   return resolveComputed(node.property) === name ? node : null;
 }

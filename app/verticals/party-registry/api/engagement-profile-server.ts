@@ -1,11 +1,9 @@
 import type { ActionRegistration, DomainEventContractMap } from '@app/core-runtime';
 import { Effect, HttpApiBuilder, Layer } from '@modern-js/plugin-bff/effect-edge';
 import { Redacted, Schema } from 'effect';
+
 import { partyRegistryApi } from '../shared/api.ts';
-import type {
-  ContactsMutationHeadersSchema,
-  ContactsProblem,
-} from '../shared/engagement-profile-api.ts';
+import type { ContactsMutationHeadersSchema, ContactsProblem } from '../shared/engagement-profile-api.ts';
 import { archiveOrganizationEngagementAction } from '../src/actions/archive-organization-engagement.action.ts';
 import { archivePersonEngagementAction } from '../src/actions/archive-person-engagement.action.ts';
 import { attachOrganizationEngagementAction } from '../src/actions/attach-organization-engagement.action.ts';
@@ -20,20 +18,14 @@ import {
   isEngagementAuthenticationProblem,
   mapEngagementActionProblem,
 } from './engagement-profile-problems.ts';
-import type {
-  EngagementActionError,
-  EngagementAttachProblem,
-} from './engagement-profile-problems.ts';
+import type { EngagementActionError, EngagementAttachProblem } from './engagement-profile-problems.ts';
 
 const runActionHttp = bindActionHttpRunner({
   authentication: engagementProblem.authentication,
   unavailable: engagementProblem.unavailable,
 });
 
-const RequestHeadersSchema = Schema.Record(
-  Schema.String,
-  Schema.Union([Schema.String, Schema.Undefined]),
-);
+const RequestHeadersSchema = Schema.Record(Schema.String, Schema.Union([Schema.String, Schema.Undefined]));
 type RequestHeaders = Schema.Schema.Type<typeof RequestHeadersSchema>;
 type ContactsMutationHeaders = Schema.Schema.Type<typeof ContactsMutationHeadersSchema>;
 
@@ -96,34 +88,16 @@ export const organizationEngagementMutationsLive = HttpApiBuilder.group(
   'organizationEngagementMutations',
   (handlers) =>
     handlers
-      .handle(
-        'attach',
-        engagementActionHandler(attachOrganizationEngagementAction, attachActionProblem),
-      )
-      .handle(
-        'archive',
-        engagementActionHandler(archiveOrganizationEngagementAction, mapEngagementActionProblem),
-      )
-      .handle(
-        'unarchive',
-        engagementActionHandler(unarchiveOrganizationEngagementAction, mapEngagementActionProblem),
-      ),
+      .handle('attach', engagementActionHandler(attachOrganizationEngagementAction, attachActionProblem))
+      .handle('archive', engagementActionHandler(archiveOrganizationEngagementAction, mapEngagementActionProblem))
+      .handle('unarchive', engagementActionHandler(unarchiveOrganizationEngagementAction, mapEngagementActionProblem)),
 );
 
-const personEngagementMutationsLive = HttpApiBuilder.group(
-  partyRegistryApi,
-  'personEngagementMutations',
-  (handlers) =>
-    handlers
-      .handle('attach', engagementActionHandler(attachPersonEngagementAction, attachActionProblem))
-      .handle(
-        'archive',
-        engagementActionHandler(archivePersonEngagementAction, mapEngagementActionProblem),
-      )
-      .handle(
-        'unarchive',
-        engagementActionHandler(unarchivePersonEngagementAction, mapEngagementActionProblem),
-      ),
+const personEngagementMutationsLive = HttpApiBuilder.group(partyRegistryApi, 'personEngagementMutations', (handlers) =>
+  handlers
+    .handle('attach', engagementActionHandler(attachPersonEngagementAction, attachActionProblem))
+    .handle('archive', engagementActionHandler(archivePersonEngagementAction, mapEngagementActionProblem))
+    .handle('unarchive', engagementActionHandler(unarchivePersonEngagementAction, mapEngagementActionProblem)),
 );
 
 export const engagementProfileApiHandlersLive = Layer.mergeAll(

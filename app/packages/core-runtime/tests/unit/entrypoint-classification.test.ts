@@ -1,14 +1,11 @@
+import { Schema } from 'effect';
 import { expect, it } from 'effect-rstest';
 
-import { Schema } from 'effect';
 import {
   EntrypointAuthorizationSchema,
   decodeEntrypointAuthorization,
 } from '../../src/authorization/entrypoint-classification.ts';
-import {
-  defineSystemModuleEntrypoint,
-  defineTenantModuleEntrypoint,
-} from '../../src/modules/module-entrypoint.ts';
+import { defineSystemModuleEntrypoint, defineTenantModuleEntrypoint } from '../../src/modules/module-entrypoint.ts';
 
 it('decodes every closed authorization classification', () => {
   const classifications = [

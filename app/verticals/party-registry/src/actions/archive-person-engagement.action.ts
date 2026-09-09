@@ -3,6 +3,7 @@
 // @ontos-action-slug archive-person-engagement
 import { defineAction, OperationContextUnavailable } from '@app/core-runtime';
 import { Effect } from 'effect';
+
 import {
   PersonEngagementLifecyclePayloadSchema,
   PersonEngagementProfileSchema,
@@ -17,9 +18,7 @@ import { engagementLifecycleRegistration } from './engagement-lifecycle-registra
 
 export const archivePersonEngagementAction = defineAction(
   {
-    ...engagementLifecycleRegistration<PersonEngagementLifecyclePayload>(
-      'party.registry.archive-person-engagement',
-    ),
+    ...engagementLifecycleRegistration<PersonEngagementLifecyclePayload>('party.registry.archive-person-engagement'),
     payloadSchema: PersonEngagementLifecyclePayloadSchema,
     resultSchema: PersonEngagementProfileSchema,
   },
@@ -34,8 +33,7 @@ export const archivePersonEngagementAction = defineAction(
       );
     }
     return Effect.succeed({
-      transition: (profileId) =>
-        transitionPersonEngagementProfile(transaction, scope.tenantId, profileId, 'archived'),
+      transition: (profileId) => transitionPersonEngagementProfile(transaction, scope.tenantId, profileId, 'archived'),
     });
   },
 );

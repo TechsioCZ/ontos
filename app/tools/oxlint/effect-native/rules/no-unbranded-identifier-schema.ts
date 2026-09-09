@@ -1,4 +1,3 @@
-import { optionRecord } from '../shared/options.ts';
 /**
  * Audit finding: **A2** — "Make Schema the sole authority for contracts and domain models"
  * (`docs/architecture/EFFECT_V4_ANTIPATTERN_AUDIT.md`). A2 measures **zero branded identifiers** and
@@ -67,19 +66,19 @@ import { optionRecord } from '../shared/options.ts';
  * Report-only; this rule never fixes or suggests.
  */
 import { defineRule } from '@oxlint/plugins';
-
 import type { Context, ESTree } from '@oxlint/plugins';
 
+import { memberName, keyName, skipWrappers, unwrapNode } from '../shared/ast.ts';
+import { resolveVariable } from '../shared/bindings.ts';
 import { collectEffectBindings, type EffectBindings } from '../shared/effect-imports.ts';
+import { collectNamedImports, collectRootNamespaces } from '../shared/imports.ts';
+import { optionRecord } from '../shared/options.ts';
+import { stringArray, stringOption, safeRegExp } from '../shared/options.ts';
 import { matchesGlobs } from '../shared/paths.ts';
 import {
   isSchemaRuleInScope,
   isSchemaConstructorArgument as isConstructorArgument,
 } from '../shared/schema-rule-support.ts';
-import { stringArray, stringOption, safeRegExp } from '../shared/options.ts';
-import { memberName, keyName, skipWrappers, unwrapNode } from '../shared/ast.ts';
-import { resolveVariable } from '../shared/bindings.ts';
-import { collectNamedImports, collectRootNamespaces } from '../shared/imports.ts';
 
 const SCHEMA_NAMESPACE = 'Schema';
 const EFFECT_ROOT_MODULE = 'effect';
@@ -188,11 +187,7 @@ function readOptions(context: Context): RuleOptions {
   return {
     brandHelpers: stringArray(record.brandHelpers, DEFAULT_BRAND_HELPERS),
     identifierKeyPattern: stringOption(record.identifierKeyPattern, DEFAULT_KEY_PATTERN, false),
-    identifierSchemaNamePattern: stringOption(
-      record.identifierSchemaNamePattern,
-      DEFAULT_SCHEMA_NAME_PATTERN,
-      false,
-    ),
+    identifierSchemaNamePattern: stringOption(record.identifierSchemaNamePattern, DEFAULT_SCHEMA_NAME_PATTERN, false),
     ignore: stringArray(record.ignore, DEFAULT_IGNORE),
     ignoreTests: record.ignoreTests === true,
     include: stringArray(record.include, DEFAULT_INCLUDE),
@@ -241,10 +236,7 @@ function collectSchemaLocals(
     if (namespace === SCHEMA_NAMESPACE) schema.add(local);
     if (namespace === 'pipe') pipe.add(local);
   }
-  const barrel = collectRootNamespaces(
-    program,
-    (source) => source === EFFECT_ROOT_MODULE || isReexport(source),
-  );
+  const barrel = collectRootNamespaces(program, (source) => source === EFFECT_ROOT_MODULE || isReexport(source));
   const reexports = collectNamedImports(program, isReexport);
   for (const [local, member] of reexports) {
     if (member === SCHEMA_NAMESPACE) schema.add(local);
@@ -256,9 +248,7 @@ function collectSchemaLocals(
     if (KNOWN_SCHEMA_MEMBERS.has(member)) members.set(local, { declarator: null, member });
   }
   for (const [local, member] of direct) members.set(local, { declarator: null, member });
-  const brandDirect = new Set(
-    [...direct].filter(([, member]) => BRAND_MEMBERS.has(member)).map(([local]) => local),
-  );
+  const brandDirect = new Set([...direct].filter(([, member]) => BRAND_MEMBERS.has(member)).map(([local]) => local));
   return { barrel, brandDirect, members, pipe, schema };
 }
 
@@ -320,12 +310,12 @@ export const rule = defineRule({
     if (!isSchemaRuleInScope(context.filename, options)) return {};
 
     const keyPattern = safeRegExp(options.identifierKeyPattern, DEFAULT_KEY_PATTERN);
-    const schemaNamePattern = safeRegExp(
-      options.identifierSchemaNamePattern,
-      DEFAULT_SCHEMA_NAME_PATTERN,
-    );
+    const schemaNamePattern = safeRegExp(options.identifierSchemaNamePattern, DEFAULT_SCHEMA_NAME_PATTERN);
 
-    let bindings: EffectBindings = { importsEffect: false, namespaces: new Map() };
+    let bindings: EffectBindings = {
+      importsEffect: false,
+      namespaces: new Map(),
+    };
     let locals: SchemaLocals = {
       barrel: new Set(),
       brandDirect: new Set(),
@@ -366,8 +356,7 @@ export const rule = defineRule({
     const destructuredMembers = new Map<number, Map<string, string>>();
     const memberOfIdentifier = (node: ESTree.Node, name: string): string | null => {
       const local = localDeclarator(node, name);
-      const destructured =
-        local === null ? undefined : destructuredMembers.get(local.start)?.get(name);
+      const destructured = local === null ? undefined : destructuredMembers.get(local.start)?.get(name);
       if (destructured !== undefined) return destructured;
       const binding = locals.members.get(name);
       if (binding === undefined) return null;
@@ -382,8 +371,7 @@ export const rule = defineRule({
     const isSchemaSource = (node: ESTree.Node): boolean => {
       const source = unwrap(node);
       if (source.type === 'Identifier') return isImportedLocal(source, locals.schema);
-      if (source.type !== 'MemberExpression' || memberName(source) !== SCHEMA_NAMESPACE)
-        return false;
+      if (source.type !== 'MemberExpression' || memberName(source) !== SCHEMA_NAMESPACE) return false;
       return isImportedLocal(unwrap(source.object), locals.barrel);
     };
 
@@ -407,18 +395,14 @@ export const rule = defineRule({
       if (expression.type !== 'MemberExpression') return false;
       const member = memberName(expression);
       if (member === null) return false;
-      return (
-        (BRAND_MEMBERS.has(member) && schemaMember(expression) !== null) ||
-        options.brandHelpers.includes(member)
-      );
+      return (BRAND_MEMBERS.has(member) && schemaMember(expression) !== null) || options.brandHelpers.includes(member);
     };
 
     const recordDestructuredProperty = (
       declarator: ESTree.VariableDeclarator,
       property: ESTree.ObjectPattern['properties'][number],
     ): void => {
-      if (property.type !== 'Property' || property.computed || property.value.type !== 'Identifier')
-        return;
+      if (property.type !== 'Property' || property.computed || property.value.type !== 'Identifier') return;
       const member = keyName(property.key);
       if (member === null) return;
       const members = destructuredMembers.get(declarator.start) ?? new Map<string, string>();
@@ -430,8 +414,7 @@ export const rule = defineRule({
       for (const declarator of declarators) {
         if (declarator.id.type !== 'ObjectPattern' || declarator.init == null) continue;
         if (!isSchemaSource(declarator.init)) continue;
-        for (const property of declarator.id.properties)
-          recordDestructuredProperty(declarator, property);
+        for (const property of declarator.id.properties) recordDestructuredProperty(declarator, property);
       }
     };
 
@@ -442,10 +425,8 @@ export const rule = defineRule({
     };
 
     const isIdentityFunction = (step: ESTree.Node): boolean => {
-      if (step.type !== 'ArrowFunctionExpression' && step.type !== 'FunctionExpression')
-        return false;
-      if (step.body === null || step.params.length !== 1 || step.params[0]?.type !== 'Identifier')
-        return false;
+      if (step.type !== 'ArrowFunctionExpression' && step.type !== 'FunctionExpression') return false;
+      if (step.body === null || step.params.length !== 1 || step.params[0]?.type !== 'Identifier') return false;
       const returned = identityResult(step.body);
       return returned?.type === 'Identifier' && returned.name === step.params[0].name;
     };
@@ -464,11 +445,7 @@ export const rule = defineRule({
       }
       if (step.type === 'Identifier') {
         const declaration = localDeclarator(step, step.name);
-        if (
-          declaration?.parent?.type !== 'VariableDeclaration' ||
-          declaration.parent.kind !== 'const'
-        )
-          return false;
+        if (declaration?.parent?.type !== 'VariableDeclaration' || declaration.parent.kind !== 'const') return false;
         return declaration.init !== null && isTransparentStep(declaration.init, depth + 1);
       }
       return isIdentityFunction(step);
@@ -478,11 +455,7 @@ export const rule = defineRule({
      * A schema expression whose runtime identity is still "any string": no brand anywhere in the
      * chain. `seen` guards mutually-referential `const`s.
      */
-    const isStringRooted = (
-      node: ESTree.Node | null,
-      seen: Set<number>,
-      depth: number,
-    ): boolean => {
+    const isStringRooted = (node: ESTree.Node | null, seen: Set<number>, depth: number): boolean => {
       if (node === null || depth > 24) return false;
       const expression = unwrap(node);
 
@@ -505,17 +478,9 @@ export const rule = defineRule({
       return isStringRootedCall(expression, seen, depth);
     };
 
-    const firstArgumentRooted = (
-      expression: ESTree.CallExpression,
-      seen: Set<number>,
-      depth: number,
-    ): boolean => {
+    const firstArgumentRooted = (expression: ESTree.CallExpression, seen: Set<number>, depth: number): boolean => {
       const first = expression.arguments[0];
-      return (
-        first !== undefined &&
-        first.type !== 'SpreadElement' &&
-        isStringRooted(first, seen, depth + 1)
-      );
+      return first !== undefined && first.type !== 'SpreadElement' && isStringRooted(first, seen, depth + 1);
     };
 
     const isStringRootedMethod = (
@@ -525,27 +490,17 @@ export const rule = defineRule({
       depth: number,
     ): boolean => {
       const method = memberName(callee);
-      if (method === null || BRAND_MEMBERS.has(method) || !TRANSPARENT_METHODS.has(method))
-        return false;
+      if (method === null || BRAND_MEMBERS.has(method) || !TRANSPARENT_METHODS.has(method)) return false;
       if (expression.arguments.some((argument) => isBrandExpression(argument))) return false;
-      if (
-        method === 'pipe' &&
-        !expression.arguments.every((argument) => isTransparentStep(argument))
-      )
-        return false;
+      if (method === 'pipe' && !expression.arguments.every((argument) => isTransparentStep(argument))) return false;
       return isStringRooted(callee.object, seen, depth + 1);
     };
 
-    const isStringRootedCall = (
-      expression: ESTree.CallExpression,
-      seen: Set<number>,
-      depth: number,
-    ): boolean => {
+    const isStringRootedCall = (expression: ESTree.CallExpression, seen: Set<number>, depth: number): boolean => {
       const callee = unwrap(expression.callee);
       if (isImportedLocal(callee, locals.pipe)) {
         if (expression.arguments.some((argument) => isBrandExpression(argument))) return false;
-        if (!expression.arguments.slice(1).every((argument) => isTransparentStep(argument)))
-          return false;
+        if (!expression.arguments.slice(1).every((argument) => isTransparentStep(argument))) return false;
         return firstArgumentRooted(expression, seen, depth);
       }
       const wrapper = schemaMember(callee);
@@ -556,9 +511,7 @@ export const rule = defineRule({
           firstArgumentRooted(expression, seen, depth)
         );
       }
-      return (
-        callee.type === 'MemberExpression' && isStringRootedMethod(expression, callee, seen, depth)
-      );
+      return callee.type === 'MemberExpression' && isStringRootedMethod(expression, callee, seen, depth);
     };
 
     /** Is `node` an argument of a `Schema.Struct` / `Schema.TaggedError<E>()('T', ...)` style call? */
@@ -649,8 +602,7 @@ export const rule = defineRule({
       for (const call of calls) {
         for (const argument of call.arguments) {
           const value = unwrap(argument);
-          if (value.type === 'Identifier' && isSchemaConstructorArgument(argument))
-            bagIdentifierNames.add(value.name);
+          if (value.type === 'Identifier' && isSchemaConstructorArgument(argument)) bagIdentifierNames.add(value.name);
         }
       }
     };
@@ -674,8 +626,7 @@ export const rule = defineRule({
         declarators.push(node);
       },
       'Program:exit'() {
-        if (locals.schema.size === 0 && locals.barrel.size === 0 && locals.members.size === 0)
-          return;
+        if (locals.schema.size === 0 && locals.barrel.size === 0 && locals.members.size === 0) return;
         collectDestructuredMembers();
         collectBagIdentifiers();
         for (const declarator of declarators) reportDeclarator(declarator);
@@ -686,7 +637,11 @@ export const rule = defineRule({
 
         reports.sort((left, right) => left.start - right.start);
         for (const report of reports) {
-          context.report({ data: report.data, messageId: report.messageId, node: report.node });
+          context.report({
+            data: report.data,
+            messageId: report.messageId,
+            node: report.node,
+          });
         }
       },
     };

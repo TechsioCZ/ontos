@@ -1,6 +1,6 @@
 import { Effect } from 'effect';
-
 import { expect, it } from 'effect-rstest';
+
 import { deriveDeploymentAllowlist } from '../../api/modules/deployment-allowlist.ts';
 import { createModuleDeploymentAllowlistBuildInput } from '../../module-deployment-allowlist.config.ts';
 
@@ -11,10 +11,7 @@ const topology = {
   ],
 };
 
-const overlay = (
-  ontosModuleManifests: Readonly<Record<string, string>>,
-  environment = 'development',
-) => ({
+const overlay = (ontosModuleManifests: Readonly<Record<string, string>>, environment = 'development') => ({
   environment,
   ontosModuleManifests,
   schemaVersion: 1,
@@ -32,10 +29,7 @@ it.effect('derives an immutable, topology-authorized and deterministically order
       overlay: overlay(validUrls),
       topology,
     });
-    expect(allowlist.entries.map(({ appId }) => appId)).toEqual([
-      'documents-center',
-      'property-registry',
-    ]);
+    expect(allowlist.entries.map(({ appId }) => appId)).toEqual(['documents-center', 'property-registry']);
     expect(Object.isFrozen(allowlist)).toBe(true);
     expect(Object.isFrozen(allowlist.entries)).toBe(true);
   }),
@@ -44,19 +38,21 @@ it.effect('derives an immutable, topology-authorized and deterministically order
 it.effect.each([
   ['missing topology entry', { 'property-registry': validUrls['property-registry'] }],
   ['unknown shell entry', { ...validUrls, 'shell-super-app': validUrls['property-registry'] }],
-  [
-    'duplicate normalized URL',
-    { ...validUrls, 'documents-center': validUrls['property-registry'] },
-  ],
+  ['duplicate normalized URL', { ...validUrls, 'documents-center': validUrls['property-registry'] }],
   [
     'credentials',
     {
       ...validUrls,
-      'property-registry':
-        'http://user:secret@localhost:4101/.well-known/ontos-module-manifest.json',
+      'property-registry': 'http://user:secret@localhost:4101/.well-known/ontos-module-manifest.json',
     },
   ],
-  ['fragment', { ...validUrls, 'property-registry': `${validUrls['property-registry']}#private` }],
+  [
+    'fragment',
+    {
+      ...validUrls,
+      'property-registry': `${validUrls['property-registry']}#private`,
+    },
+  ],
   ['arbitrary path', { ...validUrls, 'property-registry': 'http://localhost:4101/private.json' }],
 ] as const)('rejects %s configuration without authorizing a fetch', ([_label, manifests]) =>
   Effect.gen(function* testProgram2() {
@@ -107,7 +103,9 @@ it('builds production discovery from deployment URL configuration, never the dev
   const productionTopology = {
     verticals: [
       {
-        cloudflare: { publicUrlEnv: 'ULTRAMODERN_PUBLIC_URL_PROPERTY_REGISTRY' },
+        cloudflare: {
+          publicUrlEnv: 'ULTRAMODERN_PUBLIC_URL_PROPERTY_REGISTRY',
+        },
         id: 'property-registry',
         kind: 'vertical',
       },
@@ -119,9 +117,7 @@ it('builds production discovery from deployment URL configuration, never the dev
       'property-registry': 'http://localhost:4101/.well-known/ontos-module-manifest.json',
     }),
     readEnvironment: (name) =>
-      name === 'ULTRAMODERN_PUBLIC_URL_PROPERTY_REGISTRY'
-        ? 'https://property.example.test'
-        : undefined,
+      name === 'ULTRAMODERN_PUBLIC_URL_PROPERTY_REGISTRY' ? 'https://property.example.test' : undefined,
     topology: productionTopology,
   });
 

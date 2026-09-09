@@ -1,8 +1,9 @@
-import { expect, it } from 'effect-rstest';
-import { Schema } from 'effect';
 import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import nodePath from 'node:path';
 import { pathToFileURL } from 'node:url';
+
+import { Schema } from 'effect';
+import { expect, it } from 'effect-rstest';
 
 import plugin from '../index.ts';
 import { listRuleNames } from '../shared/discover-rules.ts';
@@ -38,7 +39,10 @@ const FixtureConfig = Schema.fromJsonString(
     rules: Schema.Record(Schema.String, RuleSetting),
   }),
 );
-const NamedPluginEntry = Schema.Struct({ name: Schema.String, specifier: Schema.String });
+const NamedPluginEntry = Schema.Struct({
+  name: Schema.String,
+  specifier: Schema.String,
+});
 const isNamedPluginEntry = Schema.is(NamedPluginEntry);
 const decodeFixtureConfig = Schema.decodeUnknownSync(FixtureConfig);
 const { default: config } = Schema.decodeUnknownSync(ProductionConfigModule)(
@@ -51,9 +55,7 @@ it('every rule is actually exported, enabled at error severity, and covered by f
   expect(rules.length > 0, 'the plugin cannot be empty').toBe(true);
   expect(Object.keys(plugin.rules).toSorted()).toEqual(rules);
   expect([...listFixtureRules()].toSorted()).toEqual(rules);
-  const configured = Object.keys(configuredRules).filter((name) =>
-    name.startsWith('effect-native/'),
-  );
+  const configured = Object.keys(configuredRules).filter((name) => name.startsWith('effect-native/'));
   expect(configured.toSorted()).toEqual(rules.map((name) => `effect-native/${name}`));
   for (const rule of rules) {
     const setting = configuredRules[`effect-native/${rule}`];
@@ -83,35 +85,25 @@ it('every rule is reporting-only and declares diagnostic metadata', () => {
     }
     expect(Object.keys(rule.meta.messages ?? {}).length > 0, `${name} needs messages`).toBe(true);
     expect(rule.meta.fixable, `${name} must not advertise fixes`).toBe(undefined);
-    expect(!(rule.meta.hasSuggestions ?? false), `${name} must not advertise suggestions`).toBe(
-      true,
-    );
+    expect(!(rule.meta.hasSuggestions ?? false), `${name} must not advertise suggestions`).toBe(true);
   }
 });
 
 it('fixture configs enable only their owned rule without file-ignore shortcuts', () => {
   for (const rule of rules) {
     const fixture = decodeFixtureConfig(
-      readFileSync(
-        nodePath.join(pluginDirectory, 'tests', 'fixtures', rule, '.oxlintrc.json'),
-        'utf-8',
-      ),
+      readFileSync(nodePath.join(pluginDirectory, 'tests', 'fixtures', rule, '.oxlintrc.json'), 'utf-8'),
     );
     expect(Object.keys(fixture.rules)).toEqual([`effect-native/${rule}`]);
     const setting = fixture.rules[`effect-native/${rule}`];
     expect(Array.isArray(setting) ? setting[0] : setting).toBe('error');
-    expect(
-      (fixture.ignorePatterns ?? []).length === 0,
-      `${rule} must exercise fixtures, not ignore them`,
-    ).toBe(true);
+    expect((fixture.ignorePatterns ?? []).length === 0, `${rule} must exercise fixtures, not ignore them`).toBe(true);
   }
 });
 
 it('production import policy rejects node:test in application tests but not e2e adapters', () => {
   withTemporaryWorkspace((directory) => {
-    const overrides = config.overrides.filter(
-      (override) => 'eslint/no-restricted-imports' in override.rules,
-    );
+    const overrides = config.overrides.filter((override) => 'eslint/no-restricted-imports' in override.rules);
     expect(overrides.length).toBe(1);
     const configPath = nodePath.join(directory, '.oxlintrc.json');
     writeFileSync(configPath, JSON.stringify({ categories: { correctness: 'off' }, overrides }));

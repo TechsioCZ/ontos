@@ -1,7 +1,8 @@
-import { expect, it } from 'effect-rstest';
 import { Effect, Redacted } from 'effect';
+import { expect, it } from 'effect-rstest';
 import { Pool } from 'pg';
 import type { PoolClient } from 'pg';
+
 import { loadDatabaseConfig } from '../../src/db/config.ts';
 import { configureDatabasePool } from '../../src/db/pool-configuration.ts';
 
@@ -14,10 +15,10 @@ const rollbackAndRelease = (client: PoolClient) =>
 it.live('applies PostgreSQL pool connection and statement deadlines', () =>
   Effect.gen(function* poolDeadlines1() {
     const databaseConfiguration = yield* loadDatabaseConfig();
-    const poolConfiguration = yield* configureDatabasePool(
-      Redacted.make(databaseConfiguration.connectionString),
-      { connectionTimeoutMillis: 200, statement_timeout: 120 },
-    );
+    const poolConfiguration = yield* configureDatabasePool(Redacted.make(databaseConfiguration.connectionString), {
+      connectionTimeoutMillis: 200,
+      statement_timeout: 120,
+    });
     const acquirePool = Effect.acquireRelease(
       Effect.sync(() => new Pool({ ...poolConfiguration, max: 1 })),
       (resource) => Effect.promise(() => resource.end()).pipe(Effect.orDie),
@@ -36,20 +37,14 @@ it.live('applies PostgreSQL pool connection and statement deadlines', () =>
         );
         expect(settings.rows[0]?.statement_timeout).toBe('120ms');
 
-        const identity = yield* Effect.promise(() =>
-          client.query<{ current_user: string }>('select current_user'),
-        );
+        const identity = yield* Effect.promise(() => client.query<{ current_user: string }>('select current_user'));
         expect(identity.rows[0]?.current_user).toBe(databaseConfiguration.user);
 
-        const pidResult = yield* Effect.promise(() =>
-          client.query<{ pid: number }>('select pg_backend_pid() as pid'),
-        );
+        const pidResult = yield* Effect.promise(() => client.query<{ pid: number }>('select pg_backend_pid() as pid'));
         const pid = pidResult.rows[0]?.pid;
         expect(pid !== undefined).toBe(true);
 
-        const cancellation = yield* Effect.flip(
-          Effect.tryPromise(() => client.query('select pg_sleep(1)')),
-        );
+        const cancellation = yield* Effect.flip(Effect.tryPromise(() => client.query('select pg_sleep(1)')));
         expect(cancellation.cause).toMatchObject({ code: '57014' });
 
         const afterCancellation = yield* Effect.promise(() =>
@@ -59,7 +54,9 @@ it.live('applies PostgreSQL pool connection and statement deadlines', () =>
         expect(afterCancellation.rows[0]?.ok).toBe(1);
 
         const timeout = yield* Effect.flip(Effect.tryPromise(() => pool.connect()));
-        expect(timeout.cause).toMatchObject({ message: expect.stringMatching(/timeout/iu) });
+        expect(timeout.cause).toMatchObject({
+          message: expect.stringMatching(/timeout/iu),
+        });
       }),
     );
 

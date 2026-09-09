@@ -1,7 +1,8 @@
 import { DateTime, Option, Schema, SchemaGetter } from 'effect';
-import { PartyRefSchema } from '../resources/party.ts';
-import { CounterpartyRefSchema } from '../resources/counterparty.ts';
+
 import { CounterpartyRolePeriodRefSchema } from '../resources/counterparty-role-period.ts';
+import { CounterpartyRefSchema } from '../resources/counterparty.ts';
+import { PartyRefSchema } from '../resources/party.ts';
 
 export const CounterpartyUuidSchema = Schema.String.check(Schema.isUUID());
 const CounterpartyTextSchema = Schema.Trim.check(Schema.isMinLength(1), Schema.isMaxLength(500));
@@ -58,13 +59,7 @@ export const CounterpartyAuditEvidenceSchema = Schema.Struct({
 export const CounterpartyRoleTypeSchema = Schema.Literals(['CUSTOMER', 'SUPPLIER']);
 export type CounterpartyRoleType = typeof CounterpartyRoleTypeSchema.Type;
 
-const CounterpartyRoleStateSchema = Schema.Literals([
-  'ACTIVE',
-  'ENDED',
-  'SUPERSEDED',
-  'RETRACTED',
-  'DISPUTED',
-]);
+const CounterpartyRoleStateSchema = Schema.Literals(['ACTIVE', 'ENDED', 'SUPERSEDED', 'RETRACTED', 'DISPUTED']);
 
 export const CounterpartyRolePeriodSchema = Schema.Struct({
   endProvenance: Schema.toEncoded(Schema.OptionFromOptionalNullOr(CounterpartyProvenanceSchema)),

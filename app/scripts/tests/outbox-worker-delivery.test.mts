@@ -1,13 +1,15 @@
-import { expect, it } from 'effect-rstest';
 import { spawn } from 'node:child_process';
 import type { ChildProcess } from 'node:child_process';
-import { existsSync } from 'node:fs';
 import { once } from 'node:events';
-import type { Readable } from 'node:stream';
+import { existsSync } from 'node:fs';
 import { mkdtemp, mkdir, readFile, rm, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
+import type { Readable } from 'node:stream';
+
 import { Cause, Deferred, Effect, Exit, Fiber, Schema } from 'effect';
+import { expect, it } from 'effect-rstest';
+
 import { generateOutboxWorkerDeployment } from '../generate-outbox-worker-deployment.mjs';
 import { materializeOutboxWorker } from '../materialize-outbox-worker.mjs';
 
@@ -52,9 +54,9 @@ const scopedChild = <Child extends ChildProcess>(start: () => Child) =>
 
 const readWorkerOutput = (child: { readonly stdout: Readable }) =>
   Effect.gen(function* awaitWorkerOutput() {
-    const dataEvent: unknown = yield* Effect.tryPromise((signal) =>
-      once(child.stdout, 'data', { signal }),
-    ).pipe(Effect.timeout('3 seconds'));
+    const dataEvent: unknown = yield* Effect.tryPromise((signal) => once(child.stdout, 'data', { signal })).pipe(
+      Effect.timeout('3 seconds'),
+    );
     const [output] = decodeDataEvent(dataEvent);
     return String(output);
   });
@@ -66,7 +68,9 @@ const makeFixture = () =>
       (directory) => Effect.promise(() => rm(directory, { force: true, recursive: true })),
     );
     yield* Effect.tryPromise(() =>
-      mkdir(path.join(root, LEDGER_PATH, 'src/worker-host'), { recursive: true }),
+      mkdir(path.join(root, LEDGER_PATH, 'src/worker-host'), {
+        recursive: true,
+      }),
     );
     yield* Effect.tryPromise(() => mkdir(path.join(root, 'topology'), { recursive: true }));
     yield* Effect.tryPromise(() =>
@@ -74,7 +78,9 @@ const makeFixture = () =>
         path.join(root, LEDGER_PATH, 'package.json'),
         JSON.stringify({
           name: LEDGER_PACKAGE,
-          scripts: { 'worker:start': `node --experimental-strip-types ./${WORKER_HOST_ENTRY}` },
+          scripts: {
+            'worker:start': `node --experimental-strip-types ./${WORKER_HOST_ENTRY}`,
+          },
           type: 'module',
         }),
       ),
@@ -92,7 +98,9 @@ const makeFixture = () =>
           verticals: [
             {
               id: 'ledger',
-              moduleFederation: { manifestUrl: 'http://localhost:4110/mf-manifest.json' },
+              moduleFederation: {
+                manifestUrl: 'http://localhost:4110/mf-manifest.json',
+              },
               package: LEDGER_PACKAGE,
               path: LEDGER_PATH,
             },
@@ -115,9 +123,7 @@ it.live('generates a separate supervised worker setup without changing owner con
     expect(generated.split("setup: 'ledger-worker'")[1]).not.toMatch(/ run build/u);
     expect(generated.split("setup: 'ledger-worker'")[1]).not.toMatch(/(?:^|\s)&(?:\s|$)/u);
     expect(generated.match(/ONTOS_KEEP_ME: 'true'/gu)?.length).toBe(2);
-    expect(yield* Effect.tryPromise(() => generateOutboxWorkerDeployment(root, generated))).toBe(
-      generated,
-    );
+    expect(yield* Effect.tryPromise(() => generateOutboxWorkerDeployment(root, generated))).toBe(generated);
   }),
 );
 
@@ -165,9 +171,7 @@ it.live('materializes and starts a relocatable production worker artifact', () =
       ),
     );
     expect(artifact.serviceId).toBe('ledger-worker');
-    expect(artifact.sourceInputs.some((input: string) => input.endsWith(WORKER_HOST_ENTRY))).toBe(
-      true,
-    );
+    expect(artifact.sourceInputs.some((input: string) => input.endsWith(WORKER_HOST_ENTRY))).toBe(true);
     const runtime = yield* scopedChild(() =>
       spawn(process.execPath, ['worker.mjs'], {
         cwd: path.join(root, '.zerops/runtime/ledger-worker'),
@@ -179,24 +183,18 @@ it.live('materializes and starts a relocatable production worker artifact', () =
   }),
 );
 
-it.live(
-  'keeps the live Party Registry worker deployment generated and independently supervised',
-  () =>
-    Effect.gen(function* testEffect4() {
-      const root = process.cwd();
-      const source = yield* Effect.tryPromise(() =>
-        readFile(path.join(root, 'zerops.yaml'), 'utf-8'),
-      );
-      expect(source).not.toContain('run zerops:materialize -- --app');
-      expect(yield* Effect.tryPromise(() => generateOutboxWorkerDeployment(root, source))).toBe(
-        source,
-      );
-      const [, worker] = source.split("setup: 'party-registry-worker'");
-      expect(worker).toMatch(/DATABASE_URL: \$\{partyregistry_DATABASE_URL\}/u);
-      expect(worker).toMatch(/OUTBOX_WORKER_HEALTH_PORT: '4102'/u);
-      expect(worker).toMatch(/cd app\/\.zerops\/runtime\/party-registry-worker/u);
-      expect(worker).not.toMatch(/(?:^|\s)&(?:\s|$)/u);
-    }),
+it.live('keeps the live Party Registry worker deployment generated and independently supervised', () =>
+  Effect.gen(function* testEffect4() {
+    const root = process.cwd();
+    const source = yield* Effect.tryPromise(() => readFile(path.join(root, 'zerops.yaml'), 'utf-8'));
+    expect(source).not.toContain('run zerops:materialize -- --app');
+    expect(yield* Effect.tryPromise(() => generateOutboxWorkerDeployment(root, source))).toBe(source);
+    const [, worker] = source.split("setup: 'party-registry-worker'");
+    expect(worker).toMatch(/DATABASE_URL: \$\{partyregistry_DATABASE_URL\}/u);
+    expect(worker).toMatch(/OUTBOX_WORKER_HEALTH_PORT: '4102'/u);
+    expect(worker).toMatch(/cd app\/\.zerops\/runtime\/party-registry-worker/u);
+    expect(worker).not.toMatch(/(?:^|\s)&(?:\s|$)/u);
+  }),
 );
 
 it.live('bundles the real Party host including the production Effect HTTP health adapter', () =>
@@ -214,18 +212,14 @@ it.live('bundles the real Party host including the production Effect HTTP health
         workspaceRoot: process.cwd(),
       }),
     );
-    const bundle = yield* Effect.tryPromise(() =>
-      readFile(path.join(runtimeDir, 'worker.mjs'), 'utf-8'),
-    );
+    const bundle = yield* Effect.tryPromise(() => readFile(path.join(runtimeDir, 'worker.mjs'), 'utf-8'));
     const artifact = decodeWorkerArtifact(
-      yield* Effect.tryPromise(() =>
-        readFile(path.join(runtimeDir, 'worker-artifact.json'), 'utf-8'),
-      ),
+      yield* Effect.tryPromise(() => readFile(path.join(runtimeDir, 'worker-artifact.json'), 'utf-8')),
     );
     expect(artifact.sourceInputs.includes('packages/core-runtime/src/outbox/health.ts')).toBe(true);
     expect(bundle).toMatch(/@effect\/platform-node\/NodeHttpServer/u);
     expect(bundle).not.toMatch(/from ["']@effect\/platform-node["']/u);
-    expect(runtimePackage.dependencies['@effect/platform-node']).toBe('4.0.0-beta.107');
+    expect(runtimePackage.dependencies['@effect/platform-node']).toBe('4.0.0-rc.112');
   }),
 );
 
@@ -250,10 +244,7 @@ const runCleanupControl = (
     const child = yield* scopedChild(() =>
       spawn(
         process.execPath,
-        [
-          '-e',
-          'process.on("SIGTERM", () => {}); console.log("unexpected-startup"); setInterval(() => {}, 1000);',
-        ],
+        ['-e', 'process.on("SIGTERM", () => {}); console.log("unexpected-startup"); setInterval(() => {}, 1000);'],
         {
           cwd: root,
           stdio: ['ignore', 'pipe', 'pipe'],
@@ -272,12 +263,13 @@ const runCleanupControl = (
 
 const cleanupControl = (interrupt: boolean) =>
   Effect.gen(function* verifyChildCleanup() {
-    const started = yield* Deferred.make<{ child: ChildProcess; root: string }>();
+    const started = yield* Deferred.make<{
+      child: ChildProcess;
+      root: string;
+    }>();
     const ready = yield* Deferred.make<null>();
     const cleanupOrder = yield* Deferred.make<boolean>();
-    const worker = yield* Effect.forkChild(
-      Effect.scoped(runCleanupControl(interrupt, started, ready, cleanupOrder)),
-    );
+    const worker = yield* Effect.forkChild(Effect.scoped(runCleanupControl(interrupt, started, ready, cleanupOrder)));
     const { child, root } = yield* Deferred.await(started).pipe(Effect.timeout('5 seconds'));
     if (interrupt) {
       yield* Deferred.await(ready).pipe(Effect.timeout('5 seconds'));
@@ -298,8 +290,6 @@ const cleanupControl = (interrupt: boolean) =>
     expect(existsSync(root)).toBe(false);
   });
 
-it.live('reaps a worker before removing its fixture after failed startup output', () =>
-  cleanupControl(false),
-);
+it.live('reaps a worker before removing its fixture after failed startup output', () => cleanupControl(false));
 
 it.live('reaps a worker before removing its fixture on interruption', () => cleanupControl(true));

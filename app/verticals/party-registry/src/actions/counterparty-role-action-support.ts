@@ -1,10 +1,9 @@
 import { Effect } from 'effect';
+
 import type { CounterpartyRoleAddPayload } from '../../shared/actions/counterparty-role-add.ts';
 import { CounterpartyNotFound } from '../../shared/domain/counterparty-errors.ts';
 
-export const counterpartyRoleWritePermission = (
-  payload: Pick<CounterpartyRoleAddPayload, 'counterpartyRef'>,
-) => ({
+export const counterpartyRoleWritePermission = (payload: Pick<CounterpartyRoleAddPayload, 'counterpartyRef'>) => ({
   permission: 'write' as const,
   resource: {
     moduleId: payload.counterpartyRef.moduleId,
@@ -13,9 +12,7 @@ export const counterpartyRoleWritePermission = (
   },
 });
 
-export const failCounterpartyNotFound = ({
-  counterpartyId,
-}: Pick<CounterpartyNotFound, 'counterpartyId'>) =>
+export const failCounterpartyNotFound = ({ counterpartyId }: Pick<CounterpartyNotFound, 'counterpartyId'>) =>
   Effect.fail(
     new CounterpartyNotFound({
       code: 'counterparty_not_found',

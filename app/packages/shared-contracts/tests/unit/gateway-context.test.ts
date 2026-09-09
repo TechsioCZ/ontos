@@ -1,6 +1,7 @@
-import { expect, it } from 'effect-rstest';
 import { TrustedPrincipalContextSchema } from '@app/core-runtime/actions/principal-context';
 import { Effect, Schema, SchemaAST, Struct } from 'effect';
+import { expect, it } from 'effect-rstest';
+
 import {
   ApiKeyGatewayHeadersSchema,
   GatewayContextApiGroup,
@@ -53,7 +54,7 @@ it.effect('decodes the exact versioned public assertion contract', () =>
   Effect.gen(function* testScenario1() {
     expect(yield* decodeGatewayContextClaims(claims)).toEqual(claims);
     expect(
-      yield* Schema.decodeUnknownEffect(GatewayContextProtectedHeaderSchema)({
+      yield* Schema.decodeEffect(GatewayContextProtectedHeaderSchema)({
         alg: 'EdDSA',
         kid: 'current-2026-08',
         typ: 'JWT',
@@ -64,12 +65,12 @@ it.effect('decodes the exact versioned public assertion contract', () =>
       typ: 'JWT',
     });
     expect(
-      yield* Schema.decodeUnknownEffect(GatewayContextRequestSchema)({
+      yield* Schema.decodeEffect(GatewayContextRequestSchema)({
         audience: 'inventory-stock',
       }),
     ).toEqual({ audience: 'inventory-stock' });
     expect(
-      yield* Schema.decodeUnknownEffect(GatewayContextResponseSchema)({
+      yield* Schema.decodeEffect(GatewayContextResponseSchema)({
         expiresAt: claims.exp,
         token: 'header.payload.signature',
       }),
@@ -80,14 +81,14 @@ it.effect('decodes the exact versioned public assertion contract', () =>
 it.effect('rejects malformed audiences, invalid ordering, and subject mismatch', () =>
   Effect.gen(function* testScenario2() {
     expect(
-      yield* Effect.flip(Schema.decodeUnknownEffect(GatewayContextRequestSchema)({ audience: '' })),
+      yield* Effect.flip(
+        Schema.decodeEffect(GatewayContextRequestSchema)({
+          audience: '',
+        }),
+      ),
     ).toBeDefined();
-    expect(
-      yield* Effect.flip(decodeGatewayContextClaims({ ...claims, exp: claims.iat })),
-    ).toBeDefined();
-    expect(
-      yield* Effect.flip(decodeGatewayContextClaims({ ...claims, exp: claims.iat + 301 })),
-    ).toBeDefined();
+    expect(yield* Effect.flip(decodeGatewayContextClaims({ ...claims, exp: claims.iat }))).toBeDefined();
+    expect(yield* Effect.flip(decodeGatewayContextClaims({ ...claims, exp: claims.iat + 301 }))).toBeDefined();
     expect(
       yield* Effect.flip(
         decodeGatewayContextClaims({
@@ -145,11 +146,7 @@ it('schemas publish only the required public field names', () => {
     'sub',
     'ver',
   ]);
-  expect(Object.keys(GatewayContextProtectedHeaderSchema.fields).toSorted()).toEqual([
-    'alg',
-    'kid',
-    'typ',
-  ]);
+  expect(Object.keys(GatewayContextProtectedHeaderSchema.fields).toSorted()).toEqual(['alg', 'kid', 'typ']);
 });
 
 it('publishes the exact API-key credential boundary and failure statuses', () => {
@@ -176,14 +173,16 @@ it('preserves migrated gateway Problem Details shapes and ordered endpoint membe
     title: 'Gateway unavailable',
     type: 'https://ontos.dev/problems/gateway-unavailable',
   } as const;
-  const decodedRateLimited = Schema.decodeUnknownSync(GatewayRateLimitedProblemSchema)(rateLimited);
+  const decodedRateLimited = Schema.decodeSync(GatewayRateLimitedProblemSchema)(rateLimited);
   expect(Schema.is(GatewayRateLimitedProblemSchema)(decodedRateLimited)).toBe(true);
   expect(Struct.omit(decodedRateLimited, ['_tag'])).toEqual(Struct.omit(rateLimited, ['_tag']));
-  const decodedUnavailable = Schema.decodeUnknownSync(GatewayUnavailableProblemSchema)(unavailable);
+  const decodedUnavailable = Schema.decodeSync(GatewayUnavailableProblemSchema)(unavailable);
   expect(Schema.is(GatewayUnavailableProblemSchema)(decodedUnavailable)).toBe(true);
   expect(Struct.omit(decodedUnavailable, ['_tag'])).toEqual(Struct.omit(unavailable, ['_tag']));
   expect(() =>
-    Schema.decodeUnknownSync(GatewayRateLimitedProblemSchema, { onExcessProperty: 'error' })({
+    Schema.decodeUnknownSync(GatewayRateLimitedProblemSchema, {
+      onExcessProperty: 'error',
+    })({
       ...rateLimited,
       internalDiagnostic: 'must-not-pass',
     }),

@@ -2,6 +2,7 @@
 // @ontos-outbox-producer party.registry
 // @ontos-outbox-topic party.registry.official-identifier-updated.v1
 import { Schema } from 'effect';
+
 import { PartyOfficialIdentifierRefSchema } from '../resources/party-official-identifier.ts';
 import { PartyRefSchema } from '../resources/party.ts';
 

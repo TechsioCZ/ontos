@@ -1,5 +1,5 @@
-import { expect, it } from 'effect-rstest';
 import { Effect, Schema } from 'effect';
+import { expect, it } from 'effect-rstest';
 
 import {
   MicroVerticalBuildMarkerSchema,
@@ -48,13 +48,9 @@ it.effect('marker and readiness schemas preserve the generated wire representati
       versionSkew: 'none' as const,
     };
 
-    expect(
-      yield* Schema.decodeUnknownEffect(MicroVerticalBuildMarkerSchema)(generatedBuildMetadata),
-    ).toEqual(marker);
+    expect(yield* Schema.decodeEffect(MicroVerticalBuildMarkerSchema)(generatedBuildMetadata)).toEqual(marker);
     expect(yield* Schema.encodeEffect(MicroVerticalBuildMarkerSchema)(marker)).toEqual(marker);
-    expect(yield* Schema.decodeUnknownEffect(MicroVerticalReadinessSchema)(readiness)).toEqual(
-      readiness,
-    );
+    expect(yield* Schema.decodeEffect(MicroVerticalReadinessSchema)(readiness)).toEqual(readiness);
     expect(yield* Schema.encodeEffect(MicroVerticalReadinessSchema)(readiness)).toEqual(readiness);
   }),
 );

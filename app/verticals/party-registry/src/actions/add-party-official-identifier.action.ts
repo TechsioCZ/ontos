@@ -2,42 +2,10 @@
 // @ontos-action-owner party.registry
 // @ontos-action-slug add-party-official-identifier
 import { createHash } from 'node:crypto';
+
 import { defineAction, defineTenantModuleEntrypoint } from '@app/core-runtime';
 import type { ActionHandlerContext } from '@app/core-runtime';
 import { DateTime, Effect, Match, Schema } from 'effect';
-import {
-  partyIdFromString,
-  PartyNotFound,
-  PartyPersistenceUnavailable,
-  PartyTypeSchema,
-} from '../../shared/domain/identity-contracts.ts';
-import type {
-  PartyNotFoundError,
-  PartyPersistenceUnavailableError,
-} from '../../shared/domain/identity-contracts.ts';
-import {
-  OfficialIdentifierClaimConflict,
-  OfficialIdentifierInvalid,
-  normalizeOfficialIdentifier,
-  qualifiesForExclusiveClaim,
-} from '../../shared/domain/identifier-contracts.ts';
-import { PartyOfficialIdentifierRefSchema } from '../../shared/resources/party-official-identifier.ts';
-import { PartyRefSchema } from '../../shared/resources/party.ts';
-import {
-  PartyAliasResolutionBrokenChain,
-  PartyAliasResolutionCrossTenant,
-  PartyAliasResolutionCycle,
-  PartyAliasResolutionUnavailable,
-  PartyAliasWriteRejected,
-} from '../../shared/domain/merge-alias-resolution.ts';
-import type { PartyAliasResolutionError } from '../../shared/domain/merge-alias-resolution.ts';
-import { lockAndResolveClaims } from '../services/party-identifier-claim.service.ts';
-import {
-  PARTY_EXACT_CLAIM_RULE_VERSION,
-  addOfficialIdentifierRecord,
-  lockOfficialIdentifierPartyRecord,
-} from '../services/party-official-identifier-persistence.service.ts';
-import { createAddPartyOfficialIdentifierPartyRegistryOfficialIdentifierAddedV1OutboxMessage } from './add-party-official-identifier.party-registry-official-identifier-added-v1.outbox-message.ts';
 
 import {
   AddPartyOfficialIdentifierPayloadSchema,
@@ -47,6 +15,36 @@ import type {
   AddPartyOfficialIdentifierPayload,
   AddPartyOfficialIdentifierResult,
 } from '../../shared/actions/add-party-official-identifier.ts';
+import {
+  OfficialIdentifierClaimConflict,
+  OfficialIdentifierInvalid,
+  normalizeOfficialIdentifier,
+  qualifiesForExclusiveClaim,
+} from '../../shared/domain/identifier-contracts.ts';
+import {
+  partyIdFromString,
+  PartyNotFound,
+  PartyPersistenceUnavailable,
+  PartyTypeSchema,
+} from '../../shared/domain/identity-contracts.ts';
+import type { PartyNotFoundError, PartyPersistenceUnavailableError } from '../../shared/domain/identity-contracts.ts';
+import {
+  PartyAliasResolutionBrokenChain,
+  PartyAliasResolutionCrossTenant,
+  PartyAliasResolutionCycle,
+  PartyAliasResolutionUnavailable,
+  PartyAliasWriteRejected,
+} from '../../shared/domain/merge-alias-resolution.ts';
+import type { PartyAliasResolutionError } from '../../shared/domain/merge-alias-resolution.ts';
+import { PartyOfficialIdentifierRefSchema } from '../../shared/resources/party-official-identifier.ts';
+import { PartyRefSchema } from '../../shared/resources/party.ts';
+import { lockAndResolveClaims } from '../services/party-identifier-claim.service.ts';
+import {
+  PARTY_EXACT_CLAIM_RULE_VERSION,
+  addOfficialIdentifierRecord,
+  lockOfficialIdentifierPartyRecord,
+} from '../services/party-official-identifier-persistence.service.ts';
+import { createAddPartyOfficialIdentifierPartyRegistryOfficialIdentifierAddedV1OutboxMessage } from './add-party-official-identifier.party-registry-official-identifier-added-v1.outbox-message.ts';
 
 export type { AddPartyOfficialIdentifierPayload } from '../../shared/actions/add-party-official-identifier.ts';
 const ErrorSchema = Schema.Union([
@@ -129,7 +127,10 @@ export const addPartyOfficialIdentifierAction = defineAction(
     domainEvents,
     entrypoint: defineTenantModuleEntrypoint({
       access: 'write',
-      authorization: { kind: 'action_execution', provisioning: 'tenant_membership_default' },
+      authorization: {
+        kind: 'action_execution',
+        provisioning: 'tenant_membership_default',
+      },
       entrypointKey: 'party.registry.add-party-official-identifier',
       moduleKey: 'party.registry',
       role: 'action',
@@ -184,9 +185,9 @@ export const addPartyOfficialIdentifierAction = defineAction(
           Match.exhaustive,
         );
         const identifier = normalizeOfficialIdentifier(payload.identifier);
-        const partyType = yield* Schema.decodeUnknownEffect(PartyTypeSchema)(
-          party.currentType,
-        ).pipe(Effect.mapError(persistenceUnavailable));
+        const partyType = yield* Schema.decodeUnknownEffect(PartyTypeSchema)(party.currentType).pipe(
+          Effect.mapError(persistenceUnavailable),
+        );
         if (qualifiesForExclusiveClaim(identifier, partyType, PARTY_EXACT_CLAIM_RULE_VERSION)) {
           const [claim] = yield* lockAndResolveClaims(transaction, scope.tenantId, [identifier]);
           if (claim?.partyId !== undefined && claim.partyId !== payload.partyRef.resourceId) {

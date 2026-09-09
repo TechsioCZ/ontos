@@ -1,4 +1,3 @@
-import { optionRecord } from '../shared/options.ts';
 /**
  * Audit findings: **A2** — "Make Schema the sole authority for contracts and domain models"
  * ("Model absence and outcomes with `Option`, `Result`, `Schema.OptionFromNullOr`, or typed
@@ -83,15 +82,15 @@ import { optionRecord } from '../shared/options.ts';
  * Reports are informational only; this rule never fixes or suggests.
  */
 import { defineRule } from '@oxlint/plugins';
-
 import type { Context, ESTree, Variable } from '@oxlint/plugins';
 
-import { collectEffectBindings, type EffectBindings } from '../shared/effect-imports.ts';
-import { isTestFile, matchesGlobs, scopePath } from '../shared/paths.ts';
 import { typeNameSegments } from '../shared/ast.ts';
 import { resolveVariable } from '../shared/bindings.ts';
+import { collectEffectBindings, type EffectBindings } from '../shared/effect-imports.ts';
 import { collectRootNamespaces } from '../shared/imports.ts';
+import { optionRecord } from '../shared/options.ts';
 import { booleanOption as boolean, positiveInteger, stringArray } from '../shared/options.ts';
+import { isTestFile, matchesGlobs, scopePath } from '../shared/paths.ts';
 
 const DEFAULT_INCLUDE = ['apps/**', 'verticals/**', 'packages/**', 'scripts/**'];
 const DEFAULT_IGNORE: readonly string[] = [];
@@ -105,12 +104,7 @@ const EFFECT_TYPE = 'Effect';
 
 const ABSENCE_TYPES = new Set(['TSNullKeyword', 'TSUndefinedKeyword']);
 /** Members that carry no value worth wrapping in an `Option`. */
-const VOID_LIKE_TYPES = new Set([
-  'TSVoidKeyword',
-  'TSNeverKeyword',
-  'TSAnyKeyword',
-  'TSUnknownKeyword',
-]);
+const VOID_LIKE_TYPES = new Set(['TSVoidKeyword', 'TSNeverKeyword', 'TSAnyKeyword', 'TSUnknownKeyword']);
 
 function readOptions(context: Context) {
   const record = optionRecord(context.options?.[0]);
@@ -218,11 +212,7 @@ export const rule = defineRule({
       if (reference.typeName.type !== 'Identifier' || reference.typeArguments != null) return null;
       const variable = rootVariable(reference);
       const definition = variable?.defs.length === 1 ? variable.defs[0] : undefined;
-      if (
-        definition?.node.type !== 'TSTypeAliasDeclaration' ||
-        definition.node.typeParameters != null
-      )
-        return null;
+      if (definition?.node.type !== 'TSTypeAliasDeclaration' || definition.node.typeParameters != null) return null;
       return definition.node.typeAnnotation;
     };
 
@@ -278,18 +268,14 @@ export const rule = defineRule({
       if (values.length === 0) return null;
       if (values.every((member) => VOID_LIKE_TYPES.has(member.type))) return null;
       // any/unknown absorb the union; a value member does not make their absence meaningful.
-      if (
-        values.some(
-          (member) => member.type === 'TSAnyKeyword' || member.type === 'TSUnknownKeyword',
-        )
-      )
-        return null;
+      if (values.some((member) => member.type === 'TSAnyKeyword' || member.type === 'TSUnknownKeyword')) return null;
       const absenceNames = [
-        ...new Set(
-          absent.map((member) => (member.type === 'TSNullKeyword' ? 'null' : 'undefined')),
-        ),
+        ...new Set(absent.map((member) => (member.type === 'TSNullKeyword' ? 'null' : 'undefined'))),
       ];
-      return { absence: absenceNames.join(' | '), value: values.map(printed).join(' | ') };
+      return {
+        absence: absenceNames.join(' | '),
+        value: values.map(printed).join(' | '),
+      };
     };
 
     const nextAlias = (current: ESTree.TSTypeReference, seen: Set<string>) => {
@@ -427,21 +413,18 @@ export const rule = defineRule({
     const visitors: Record<string, (node: never) => void> = {
       TSMethodSignature: (node: ESTree.TSMethodSignature) => checkReturnType(node.returnType),
       TSFunctionType: (node: ESTree.TSFunctionType) => checkReturnType(node.returnType),
-      TSCallSignatureDeclaration: (node: ESTree.TSCallSignatureDeclaration) =>
-        checkReturnType(node.returnType),
+      TSCallSignatureDeclaration: (node: ESTree.TSCallSignatureDeclaration) => checkReturnType(node.returnType),
       TSConstructSignatureDeclaration: (node: ESTree.TSConstructSignatureDeclaration) =>
         checkReturnType(node.returnType),
       // A bodyless class member: `abstract load(): ...`, a `declare class` method, or an overload
       // signature. Type-level port declarations, so never gated behind `includeAsyncFunctions`.
-      TSEmptyBodyFunctionExpression: (node: {
-        readonly returnType?: ESTree.TSTypeAnnotation | null;
-      }) => checkReturnType(node.returnType),
+      TSEmptyBodyFunctionExpression: (node: { readonly returnType?: ESTree.TSTypeAnnotation | null }) =>
+        checkReturnType(node.returnType),
     } as Record<string, (node: never) => void>;
 
     if (options.includeAsyncFunctions) {
-      const checkFunction = (node: {
-        readonly returnType?: ESTree.TSTypeAnnotation | null;
-      }): void => checkReturnType(node.returnType);
+      const checkFunction = (node: { readonly returnType?: ESTree.TSTypeAnnotation | null }): void =>
+        checkReturnType(node.returnType);
       visitors.FunctionDeclaration = checkFunction as (node: never) => void;
       visitors.FunctionExpression = checkFunction as (node: never) => void;
       visitors.ArrowFunctionExpression = checkFunction as (node: never) => void;

@@ -1,5 +1,6 @@
 import { and, eq } from 'drizzle-orm';
 import { Context, Duration, Effect, Layer, Option, Schema } from 'effect';
+
 import type { TrustedPrincipalContext } from '../actions/principal-context.ts';
 import { CoreDatabase } from '../db/client.ts';
 import { principalAuthBindings, principals, tenants } from '../db/schema.ts';
@@ -117,9 +118,7 @@ const supportRecoveryPrincipalContextRepositoryFromDatabase = (database: {
 });
 
 const isInvalidRecoveryInput = (
-  input: Parameters<
-    SupportRecoveryPrincipalContextResolverService['resolveStoppedImpersonation']
-  >[0],
+  input: Parameters<SupportRecoveryPrincipalContextResolverService['resolveStoppedImpersonation']>[0],
 ): boolean =>
   !Schema.is(uuid)(input.originalAuthBindingId) ||
   !Schema.is(uuid)(input.originalPrincipalId) ||
@@ -131,53 +130,52 @@ const isInvalidRecoveryInput = (
 const supportRecoveryPrincipalContextResolverFromEffectRecordReader = (
   repository: SupportRecoveryPrincipalContextEffectRecordReader,
 ): SupportRecoveryPrincipalContextResolverService => ({
-  resolveStoppedImpersonation: Effect.fn(
-    'SupportRecoveryPrincipalContext.resolveStoppedImpersonation',
-  )(function* resolveStoppedImpersonation(input): Effect.fn.Return<
-    TrustedPrincipalContext,
-    SupportRecoveryPrincipalContextError
-  > {
-    if (isInvalidRecoveryInput(input)) {
-      return yield* new SupportRecoveryPrincipalContextDeniedError({
-        code: 'support_recovery_context_denied',
-        reason: 'The support recovery identity is invalid',
-      });
-    }
-    const maybeRecord = yield* repository.load({
-      originalAuthBindingId: input.originalAuthBindingId,
-      originalPrincipalId: input.originalPrincipalId,
-      tenantId: input.tenantId,
-    });
-    if (Option.isNone(maybeRecord)) {
-      return yield* new SupportRecoveryPrincipalContextDeniedError({
-        code: 'support_recovery_context_denied',
-        reason: 'The support recovery identity is not a historical tenant-local user binding',
-      });
-    }
-    const record = maybeRecord.value;
-    if (
-      record.bindingPrincipalId !== input.originalPrincipalId ||
-      record.bindingTenantId !== input.tenantId ||
-      record.principalKind !== 'human' ||
-      record.principalTenantId !== input.tenantId ||
-      record.tenantId !== input.tenantId
-    ) {
-      return yield* new SupportRecoveryPrincipalContextDeniedError({
-        code: 'support_recovery_context_denied',
-        reason: 'The support recovery identity is not a historical tenant-local user binding',
-      });
-    }
-    return trustSupportRecoveryPrincipalContext(
-      Object.freeze({
-        authBindingId: input.originalAuthBindingId,
-        authContextRef: `better-auth-session:${input.originalSessionId}`,
-        authMethod: 'session' as const,
-        principalId: input.originalPrincipalId,
+  resolveStoppedImpersonation: Effect.fn('SupportRecoveryPrincipalContext.resolveStoppedImpersonation')(
+    function* resolveStoppedImpersonation(
+      input,
+    ): Effect.fn.Return<TrustedPrincipalContext, SupportRecoveryPrincipalContextError> {
+      if (isInvalidRecoveryInput(input)) {
+        return yield* new SupportRecoveryPrincipalContextDeniedError({
+          code: 'support_recovery_context_denied',
+          reason: 'The support recovery identity is invalid',
+        });
+      }
+      const maybeRecord = yield* repository.load({
+        originalAuthBindingId: input.originalAuthBindingId,
+        originalPrincipalId: input.originalPrincipalId,
         tenantId: input.tenantId,
-      }),
-      recordSupportImpersonationAction,
-    );
-  }),
+      });
+      if (Option.isNone(maybeRecord)) {
+        return yield* new SupportRecoveryPrincipalContextDeniedError({
+          code: 'support_recovery_context_denied',
+          reason: 'The support recovery identity is not a historical tenant-local user binding',
+        });
+      }
+      const record = maybeRecord.value;
+      if (
+        record.bindingPrincipalId !== input.originalPrincipalId ||
+        record.bindingTenantId !== input.tenantId ||
+        record.principalKind !== 'human' ||
+        record.principalTenantId !== input.tenantId ||
+        record.tenantId !== input.tenantId
+      ) {
+        return yield* new SupportRecoveryPrincipalContextDeniedError({
+          code: 'support_recovery_context_denied',
+          reason: 'The support recovery identity is not a historical tenant-local user binding',
+        });
+      }
+      return trustSupportRecoveryPrincipalContext(
+        Object.freeze({
+          authBindingId: input.originalAuthBindingId,
+          authContextRef: `better-auth-session:${input.originalSessionId}`,
+          authMethod: 'session' as const,
+          principalId: input.originalPrincipalId,
+          tenantId: input.tenantId,
+        }),
+        recordSupportImpersonationAction,
+      );
+    },
+  ),
 });
 
 export const supportRecoveryPrincipalContextResolverFromRepository = (
@@ -195,9 +193,7 @@ export const makeSupportRecoveryPrincipalContextResolver = (database: {
 export class SupportRecoveryPrincipalContextResolver extends Context.Service<
   SupportRecoveryPrincipalContextResolver,
   SupportRecoveryPrincipalContextResolverService
->()(
-  '@app/core-runtime/auth/support-recovery-principal-context/SupportRecoveryPrincipalContextResolver',
-) {}
+>()('@app/core-runtime/auth/support-recovery-principal-context/SupportRecoveryPrincipalContextResolver') {}
 
 export const SupportRecoveryPrincipalContextResolverLive = Layer.effect(
   SupportRecoveryPrincipalContextResolver,

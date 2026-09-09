@@ -13,12 +13,11 @@
  * Report only; no fixer or suggestions.
  */
 import { defineRule } from '@oxlint/plugins';
-
 import type { Context, ESTree, Scope } from '@oxlint/plugins';
 
-import { isTestFile, matchesAny, workspacePath } from '../shared/paths.ts';
-import { booleanOption as boolean, stringList } from '../shared/options.ts';
 import { unwrapNode, unwrapType } from '../shared/ast.ts';
+import { booleanOption as boolean, stringList } from '../shared/options.ts';
+import { isTestFile, matchesAny, workspacePath } from '../shared/paths.ts';
 import { spanOf } from '../shared/reporting.ts';
 
 type AnyNode = ESTree.Node;
@@ -67,9 +66,7 @@ interface Span {
 function definesSpan(definitionNode: AnyNode | null, declarators: readonly Span[]): boolean {
   const span = spanOf(definitionNode);
   if (span === null) return false;
-  return declarators.some(
-    (declarator) => span.start <= declarator.start && span.end >= declarator.end,
-  );
+  return declarators.some((declarator) => span.start <= declarator.start && span.end >= declarator.end);
 }
 
 const VALUE_WRAPPERS = new Set([
@@ -104,10 +101,7 @@ function isSymbolTypeAnnotation(annotation: AnyNode | null | undefined): boolean
   if (inner.type === 'TSSymbolKeyword') return true;
   if (inner.type !== 'TSTypeOperator') return false;
   const operator = inner as ESTree.TSTypeOperator;
-  return (
-    operator.operator === 'unique' &&
-    unwrapType(operator.typeAnnotation as AnyNode).type === 'TSSymbolKeyword'
-  );
+  return operator.operator === 'unique' && unwrapType(operator.typeAnnotation as AnyNode).type === 'TSSymbolKeyword';
 }
 
 /** `Symbol('…')` / `Symbol.for('…')` — the callee must be the *global* `Symbol`. */
@@ -122,17 +116,13 @@ function isSymbolFactoryCall(node: AnyNode | null | undefined, symbolIsGlobal: b
 }
 
 function isSymbolForMember(callee: ESTree.MemberExpression): boolean {
-  const member = callee as unknown as { computed: boolean; object: AnyNode; property: AnyNode };
-  if (
-    member.computed ||
-    member.object.type !== 'Identifier' ||
-    member.property.type !== 'Identifier'
-  )
-    return false;
-  return (
-    (member.object as { name: string }).name === 'Symbol' &&
-    (member.property as { name: string }).name === 'for'
-  );
+  const member = callee as unknown as {
+    computed: boolean;
+    object: AnyNode;
+    property: AnyNode;
+  };
+  if (member.computed || member.object.type !== 'Identifier' || member.property.type !== 'Identifier') return false;
+  return (member.object as { name: string }).name === 'Symbol' && (member.property as { name: string }).name === 'for';
 }
 
 /** A type that carries no capability: `true`, `'tag'`, `typeof X`, `symbol`, or `X` named like the key. */
@@ -150,8 +140,7 @@ function isMarkerType(annotation: AnyNode | null | undefined, keyName: string): 
     ].includes(type.type)
   )
     return true;
-  if (type.type === 'TSUnionType')
-    return type.types.every((member) => isMarkerType(member, keyName));
+  if (type.type === 'TSUnionType') return type.types.every((member) => isMarkerType(member, keyName));
   if (type.type === 'TSTypeQuery') return true;
   if (type.type === 'TSSymbolKeyword') return true;
   if (type.type === 'TSTypeOperator') return isSymbolTypeAnnotation(type);
@@ -178,17 +167,14 @@ function typeOfAnnotation(holder: { typeAnnotation?: unknown } | null | undefine
 type SymbolKind = 'local' | 'import';
 
 /** Statements that can hold the program-scope `const x: unique symbol = Symbol(…)` declarations. */
-function programVariableDeclarations(
-  program: ESTree.Program,
-): readonly ESTree.VariableDeclaration[] {
+function programVariableDeclarations(program: ESTree.Program): readonly ESTree.VariableDeclaration[] {
   const declarations: ESTree.VariableDeclaration[] = [];
   const statements = [...program.body] as AnyNode[];
   for (let index = 0; index < statements.length; index++) {
     const statement = statements[index]!;
     if (statement.type === 'TSModuleDeclaration' && statement.body?.type === 'TSModuleBlock')
       statements.push(...statement.body.body);
-    if (statement.type === 'ExportNamedDeclaration' && statement.declaration)
-      statements.push(statement.declaration);
+    if (statement.type === 'ExportNamedDeclaration' && statement.declaration) statements.push(statement.declaration);
     const declaration = statementVariableDeclaration(statement);
     if (declaration) declarations.push(declaration);
   }
@@ -210,10 +196,7 @@ function hasSymbolImport(program: ESTree.Program): boolean {
   );
 }
 
-function symbolIsGlobal(
-  program: ESTree.Program,
-  declarations: readonly ESTree.VariableDeclaration[],
-): boolean {
+function symbolIsGlobal(program: ESTree.Program, declarations: readonly ESTree.VariableDeclaration[]): boolean {
   return (
     !hasSymbolImport(program) &&
     !declarations.some((declaration) =>
@@ -258,8 +241,7 @@ function hasNamedOrDefaultImport(program: ESTree.Program): boolean {
     (statement) =>
       statement.type === 'ImportDeclaration' &&
       statement.specifiers.some(
-        (specifier) =>
-          specifier.type === 'ImportSpecifier' || specifier.type === 'ImportDefaultSpecifier',
+        (specifier) => specifier.type === 'ImportSpecifier' || specifier.type === 'ImportDefaultSpecifier',
       ),
   );
 }
@@ -301,8 +283,7 @@ export const rule = defineRule({
           ignore: {
             type: 'array',
             items: { type: 'string' },
-            description:
-              'Globs exempted from the rule (default: none — no carve-out has been ratified).',
+            description: 'Globs exempted from the rule (default: none — no carve-out has been ratified).',
           },
           includePaths: {
             type: 'array',
@@ -363,9 +344,7 @@ export const rule = defineRule({
           }
           const spans = localSymbols.get(name);
           if (spans === undefined) return null;
-          return variable.defs.some((definition) => definesSpan(definition.node as AnyNode, spans))
-            ? 'local'
-            : null;
+          return variable.defs.some((definition) => definesSpan(definition.node as AnyNode, spans)) ? 'local' : null;
         }
         scope = scope.upper;
       }
@@ -390,14 +369,12 @@ export const rule = defineRule({
     /** Imported names proven to be symbol slots because this file uses them as *type* member keys. */
     const importedSlotKeys = new Set<string>();
     /** `record[importedKey]` reads, resolved once the whole program has been walked. */
-    const importedAccesses: { readonly node: AnyNode; readonly slot: string }[] = [];
+    const importedAccesses: {
+      readonly node: AnyNode;
+      readonly slot: string;
+    }[] = [];
 
-    const recordSlot = (
-      node: AnyNode,
-      name: string,
-      kind: SymbolKind,
-      isTypeMember: boolean,
-    ): void => {
+    const recordSlot = (node: AnyNode, name: string, kind: SymbolKind, isTypeMember: boolean): void => {
       if (kind === 'import' && isTypeMember) importedSlotKeys.add(name);
       pending.push({
         kind,
@@ -418,11 +395,7 @@ export const rule = defineRule({
 
     return {
       TSMappedType(node: any) {
-        inspectKeyType(
-          node,
-          node.typeParameter?.constraint ?? node.constraint,
-          node.typeAnnotation,
-        );
+        inspectKeyType(node, node.typeParameter?.constraint ?? node.constraint, node.typeAnnotation);
       },
       TSTypeReference(node: any) {
         if (node.typeName.type !== 'Identifier' || node.typeName.name !== 'Record') return;
@@ -453,7 +426,10 @@ export const rule = defineRule({
 
       // `[actionHandler](payload: P): Effect<…>` — a method slot is never a brand marker.
       TSMethodSignature(node) {
-        const signature = node as unknown as { computed: boolean; key: AnyNode };
+        const signature = node as unknown as {
+          computed: boolean;
+          key: AnyNode;
+        };
         const name = keyName(signature.key, signature.computed);
         if (name === null) return;
         const kind = classify(node as unknown as AnyNode, name);
@@ -463,14 +439,22 @@ export const rule = defineRule({
 
       // `{ [actionHandler]: handler, [actionRegistration]: true as const }`.
       Property(node) {
-        const property = node as unknown as { computed: boolean; key: AnyNode; value: AnyNode };
+        const property = node as unknown as {
+          computed: boolean;
+          key: AnyNode;
+          value: AnyNode;
+        };
         const name = keyName(property.key, property.computed);
         if (name === null) return;
         const kind = classify(node as unknown as AnyNode, name);
         if (kind === null) return;
         if ((node as any).parent?.type === 'ObjectPattern') {
           if (!options.allowSameFileAccessors)
-            context.report({ node, messageId: 'symbolSlotAccess', data: { slot: name } });
+            context.report({
+              node,
+              messageId: 'symbolSlotAccess',
+              data: { slot: name },
+            });
           return;
         }
         if (options.allowBrandMarkers && isMarkerValue(property.value, name)) return;
@@ -491,12 +475,7 @@ export const rule = defineRule({
         if (kind === null) return;
         if (options.allowBrandMarkers) {
           const annotation = typeOfAnnotation(property);
-          if (
-            annotation !== null
-              ? isMarkerType(annotation, name)
-              : isMarkerValue(property.value, name)
-          )
-            return;
+          if (annotation !== null ? isMarkerType(annotation, name) : isMarkerValue(property.value, name)) return;
         }
         recordSlot(node as unknown as AnyNode, name, kind, false);
       },
@@ -529,7 +508,10 @@ export const rule = defineRule({
 
       // `registration[actionHandler]` — the accessor a symbol slot forces on consumers.
       MemberExpression(node) {
-        const member = node as unknown as { computed: boolean; property: AnyNode };
+        const member = node as unknown as {
+          computed: boolean;
+          property: AnyNode;
+        };
         if (!member.computed) return;
         const inner = unwrapValue(member.property);
         if (inner.type !== 'Identifier') return;
@@ -537,7 +519,10 @@ export const rule = defineRule({
         const kind = classify(node as unknown as AnyNode, name);
         if (kind === null) return;
         if (kind === 'import') {
-          importedAccesses.push({ node: node as unknown as AnyNode, slot: name });
+          importedAccesses.push({
+            node: node as unknown as AnyNode,
+            slot: name,
+          });
           return;
         }
         if (options.allowSameFileAccessors) return;

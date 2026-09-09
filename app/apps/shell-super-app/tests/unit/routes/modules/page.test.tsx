@@ -1,26 +1,24 @@
-import { afterEach, beforeEach, expect, rstest, it } from 'effect-rstest';
 import { cleanup, render, screen, waitFor } from '@testing-library/react';
 import { Effect, Schema } from 'effect';
+import { afterEach, beforeEach, expect, rstest, it } from 'effect-rstest';
 import type { ReactNode } from 'react';
+
 import { ResolvedModuleTargetSchema } from '../../../../shared/api.ts';
-import { authenticatedShellFixture } from '../authenticated-shell-fixture.ts';
 import ContactsPage from '../../../../src/routes/[lang]/contacts/page.tsx';
-import ModuleTargetPage from '../../../../src/routes/[lang]/modules/[moduleId]/page.tsx';
 import type { ModuleTargetPageModel } from '../../../../src/routes/[lang]/modules/[moduleId]/page.data.ts';
+import ModuleTargetPage from '../../../../src/routes/[lang]/modules/[moduleId]/page.tsx';
+import { authenticatedShellFixture } from '../authenticated-shell-fixture.ts';
 
 type ResolvedPageModel = Extract<ModuleTargetPageModel, { readonly state: 'resolved' }>;
 
-const {
-  findApprovedVerticalPageClientMock,
-  loadRemotePageMock,
-  remotePropsMock,
-  useLoaderDataMock,
-} = rstest.hoisted(() => ({
-  findApprovedVerticalPageClientMock: rstest.fn(),
-  loadRemotePageMock: rstest.fn(),
-  remotePropsMock: rstest.fn(),
-  useLoaderDataMock: rstest.fn(),
-}));
+const { findApprovedVerticalPageClientMock, loadRemotePageMock, remotePropsMock, useLoaderDataMock } = rstest.hoisted(
+  () => ({
+    findApprovedVerticalPageClientMock: rstest.fn(),
+    loadRemotePageMock: rstest.fn(),
+    remotePropsMock: rstest.fn(),
+    useLoaderDataMock: rstest.fn(),
+  }),
+);
 
 rstest.mock('@modern-js/plugin-i18n/runtime', () => ({
   useModernI18n: () => ({ t: (key: string) => key }),
@@ -39,9 +37,7 @@ rstest.mock('../../../../src/api/vertical-clients.ts', () => ({
 }));
 
 rstest.mock('../../../../src/routes/shell-frame.tsx', () => ({
-  AuthenticatedDashboardLayout: ({ children }: { readonly children: ReactNode }) => (
-    <main>{children}</main>
-  ),
+  AuthenticatedDashboardLayout: ({ children }: { readonly children: ReactNode }) => <main>{children}</main>,
 }));
 
 rstest.mock('../../../../src/routes/use-shell-controls.ts', () => ({
@@ -150,13 +146,18 @@ beforeEach(() => {
       target,
     }: {
       readonly routeParams: Readonly<Record<string, string>>;
-      readonly target: { readonly componentKey: string; readonly writable: boolean };
+      readonly target: {
+        readonly componentKey: string;
+        readonly writable: boolean;
+      };
     }) => {
       remotePropsMock({ routeParams, target });
       return <div>{`${target.componentKey}:${routeParams['id'] ?? 'static'}`}</div>;
     },
   });
-  findApprovedVerticalPageClientMock.mockReturnValue({ load: loadRemotePageMock });
+  findApprovedVerticalPageClientMock.mockReturnValue({
+    load: loadRemotePageMock,
+  });
 });
 
 afterEach(() => {
@@ -167,7 +168,10 @@ afterEach(() => {
 it.each(['selection_required', 'forbidden', 'not_found', 'unavailable'] as const)(
   'does not consult or invoke the private registry for a %s exact-page response',
   (state) => {
-    useLoaderDataMock.mockReturnValue({ shell, state } satisfies ModuleTargetPageModel);
+    useLoaderDataMock.mockReturnValue({
+      shell,
+      state,
+    } satisfies ModuleTargetPageModel);
     render(<ModuleTargetPage />);
     expect(findApprovedVerticalPageClientMock).not.toHaveBeenCalled();
     expect(loadRemotePageMock).not.toHaveBeenCalled();
@@ -180,9 +184,7 @@ it.live('invokes the exact private page loader only after a resolved authenticat
     render(<ModuleTargetPage />);
     expect(findApprovedVerticalPageClientMock).toHaveBeenCalledWith(resolvedModel.target);
     yield* Effect.promise(() => waitFor(() => expect(loadRemotePageMock).toHaveBeenCalledTimes(1)));
-    expect(
-      yield* Effect.promise(() => screen.findByText('contacts.core.page-customers:customer-1')),
-    ).toBeTruthy();
+    expect(yield* Effect.promise(() => screen.findByText('contacts.core.page-customers:customer-1'))).toBeTruthy();
   }),
 );
 
@@ -208,9 +210,7 @@ it.live('maps an unreachable approved remote to its safe local diagnostic', () =
 
     render(<ModuleTargetPage />);
 
-    expect(
-      yield* Effect.promise(() => screen.findByText('shell.moduleTarget.unavailable')),
-    ).toBeTruthy();
+    expect(yield* Effect.promise(() => screen.findByText('shell.moduleTarget.unavailable'))).toBeTruthy();
   }),
 );
 
@@ -221,9 +221,7 @@ it.live('rejects a malformed remote module before React receives it', () =>
 
     render(<ModuleTargetPage />);
 
-    expect(
-      yield* Effect.promise(() => screen.findByText('shell.moduleTarget.incompatible')),
-    ).toBeTruthy();
+    expect(yield* Effect.promise(() => screen.findByText('shell.moduleTarget.incompatible'))).toBeTruthy();
     expect(remotePropsMock).not.toHaveBeenCalled();
   }),
 );
@@ -233,9 +231,7 @@ it.live('passes an empty route-parameter record to a resolved static page', () =
     useLoaderDataMock.mockReturnValue({ ...resolvedModel, routeParams: {} });
     render(<ModuleTargetPage />);
     yield* Effect.promise(() => waitFor(() => expect(loadRemotePageMock).toHaveBeenCalledTimes(1)));
-    expect(
-      yield* Effect.promise(() => screen.findByText('contacts.core.page-customers:static')),
-    ).toBeTruthy();
+    expect(yield* Effect.promise(() => screen.findByText('contacts.core.page-customers:static'))).toBeTruthy();
   }),
 );
 
@@ -253,10 +249,11 @@ it.live.each(exactPageCases)(
       render(<ModuleTargetPage />);
 
       expect(findApprovedVerticalPageClientMock).toHaveBeenCalledWith(exactModel.target);
-      yield* Effect.promise(() =>
-        waitFor(() => expect(loadRemotePageMock).toHaveBeenCalledTimes(1)),
-      );
-      expect(remotePropsMock).toHaveBeenCalledWith({ routeParams, target: exactModel.target });
+      yield* Effect.promise(() => waitFor(() => expect(loadRemotePageMock).toHaveBeenCalledTimes(1)));
+      expect(remotePropsMock).toHaveBeenCalledWith({
+        routeParams,
+        target: exactModel.target,
+      });
       expect(yield* Effect.promise(() => screen.findByText(renderedText))).toBeTruthy();
     }),
 );

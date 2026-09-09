@@ -4,12 +4,13 @@
 // @ontos-outbox-worker-producer party.registry
 // @ontos-outbox-worker-topic party.registry.party-fact-corrected.v1
 import { defineTenantModuleEntrypoint } from '@app/core-runtime';
-import { definePartySearchWorker } from './party-search-worker.ts';
 import {
   OutboxPayloadSchema,
   outboxProducerModuleKey,
   outboxTopic,
 } from '@app/party-registry/outbox/party-registry-party-fact-corrected-v1';
+
+import { definePartySearchWorker } from './party-search-worker.ts';
 
 export const { worker: projectPartyFactCorrectedToSearchWorker } = definePartySearchWorker(
   {

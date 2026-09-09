@@ -1,7 +1,8 @@
-import { expect, it } from 'effect-rstest';
 import { ContextAccess, LegalEntityContext } from '@app/core-runtime';
 import type { ContextAccessService, LegalEntityContextService } from '@app/core-runtime';
 import { Effect, Layer, Predicate } from 'effect';
+import { expect, it } from 'effect-rstest';
+
 import {
   resolveAuthorizedLegalEntities,
   validateAuthorizedLegalEntity,
@@ -26,16 +27,17 @@ const context = (entities = [alpha, beta] as const): LegalEntityContextService =
   },
 });
 
-const access = (
-  decisions: Readonly<Record<string, 'allowed' | 'denied' | 'unavailable'>>,
-): ContextAccessService => ({
+const access = (decisions: Readonly<Record<string, 'allowed' | 'denied' | 'unavailable'>>): ContextAccessService => ({
   legalEntities: ({ legalEntityIds }) =>
-    Effect.succeed(legalEntityIds.map((key) => ({ decision: decisions[key] ?? 'denied', key }))),
-  modules: ({ moduleIds }) =>
-    Effect.succeed(moduleIds.map((key) => ({ decision: 'denied' as const, key }))),
+    Effect.succeed(
+      legalEntityIds.map((key) => ({
+        decision: decisions[key] ?? 'denied',
+        key,
+      })),
+    ),
+  modules: ({ moduleIds }) => Effect.succeed(moduleIds.map((key) => ({ decision: 'denied' as const, key }))),
   resources: () => Effect.succeed([]),
-  tenants: ({ tenantIds }) =>
-    Effect.succeed(tenantIds.map((key) => ({ decision: 'denied' as const, key }))),
+  tenants: ({ tenantIds }) => Effect.succeed(tenantIds.map((key) => ({ decision: 'denied' as const, key }))),
 });
 
 const provideSelectionServices = <Success, Failure>(
@@ -59,7 +61,11 @@ it.effect('auto-selects the only authorized entity and preserves an exact saved 
       context(),
       access({ [alpha.legalEntityId]: 'allowed' }),
     );
-    expect(only).toEqual({ available: [alpha], selected: alpha, state: 'selected' });
+    expect(only).toEqual({
+      available: [alpha],
+      selected: alpha,
+      state: 'selected',
+    });
     const saved = yield* provideSelectionServices(
       resolveAuthorizedLegalEntities({
         principalId,
@@ -67,9 +73,16 @@ it.effect('auto-selects the only authorized entity and preserves an exact saved 
         tenantId,
       }),
       context(),
-      access({ [alpha.legalEntityId]: 'allowed', [beta.legalEntityId]: 'allowed' }),
+      access({
+        [alpha.legalEntityId]: 'allowed',
+        [beta.legalEntityId]: 'allowed',
+      }),
     );
-    expect(saved).toEqual({ available: [alpha, beta], selected: beta, state: 'selected' });
+    expect(saved).toEqual({
+      available: [alpha, beta],
+      selected: beta,
+      state: 'selected',
+    });
   }),
 );
 
@@ -79,15 +92,14 @@ it.effect('requires a choice for several entities and blocks zero definite grant
       yield* provideSelectionServices(
         resolveAuthorizedLegalEntities({ principalId, tenantId }),
         context(),
-        access({ [alpha.legalEntityId]: 'allowed', [beta.legalEntityId]: 'allowed' }),
+        access({
+          [alpha.legalEntityId]: 'allowed',
+          [beta.legalEntityId]: 'allowed',
+        }),
       ),
     ).toEqual({ available: [alpha, beta], state: 'selection_required' });
     expect(
-      yield* provideSelectionServices(
-        resolveAuthorizedLegalEntities({ principalId, tenantId }),
-        context(),
-        access({}),
-      ),
+      yield* provideSelectionServices(resolveAuthorizedLegalEntities({ principalId, tenantId }), context(), access({})),
     ).toEqual({ available: [], state: 'access_blocked' });
   }),
 );

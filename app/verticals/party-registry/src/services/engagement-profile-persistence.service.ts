@@ -3,23 +3,15 @@ import { findPostgresFailure } from '@app/core-runtime';
 import { and, eq } from 'drizzle-orm';
 import type { EffectDrizzleQueryError } from 'drizzle-orm/effect-core';
 import { DateTime, Effect, Option, Schema } from 'effect';
-import type {
-  OrganizationEngagementProfile,
-  PersonEngagementProfile,
-} from '../../shared/domain/engagement-profile.ts';
+
+import type { OrganizationEngagementProfile, PersonEngagementProfile } from '../../shared/domain/engagement-profile.ts';
 import {
   EngagementProfileConflict,
   EngagementProfilePersistenceUnavailable,
 } from '../../shared/domain/engagement-profile.ts';
 import type { CounterpartyRef, PartyRef } from '../../shared/party-registry-references.ts';
-import type {
-  OrganizationEngagementProfileRecord,
-  PersonEngagementProfileRecord,
-} from '../db/engagement-schema.ts';
-import {
-  organizationEngagementProfiles,
-  personEngagementProfiles,
-} from '../db/engagement-schema.ts';
+import type { OrganizationEngagementProfileRecord, PersonEngagementProfileRecord } from '../db/engagement-schema.ts';
+import { organizationEngagementProfiles, personEngagementProfiles } from '../db/engagement-schema.ts';
 import type { ContactsTransaction } from '../db/engagement-types.ts';
 
 type ScopedTransaction = Pick<ContactsTransaction, 'insert' | 'select' | 'update'>;
@@ -32,9 +24,7 @@ export type LookupResult<Value> = Schema.Schema.Type<ReturnType<typeof lookupRes
 const lifecycleResultSchema = <Value>(value: Schema.Schema<Value>) =>
   Schema.Union([lookupResultSchema(value), Schema.TaggedStruct('conflict', { value })]);
 
-export type LifecycleResult<Value> = Schema.Schema.Type<
-  ReturnType<typeof lifecycleResultSchema<Value>>
->;
+export type LifecycleResult<Value> = Schema.Schema.Type<ReturnType<typeof lifecycleResultSchema<Value>>>;
 
 const unavailable = (cause?: unknown) => {
   const error = new EngagementProfilePersistenceUnavailable({
@@ -88,9 +78,7 @@ export const organizationEngagementProfileFromRecord = (
 ): OrganizationEngagementProfile => ({
   archivedAt: row.archivedAt?.toISOString() ?? null,
   counterpartyRef:
-    row.counterpartyResourceId === null
-      ? null
-      : counterpartyRef(row.tenantId, row.counterpartyResourceId),
+    row.counterpartyResourceId === null ? null : counterpartyRef(row.tenantId, row.counterpartyResourceId),
   createdAt: row.createdAt.toISOString(),
   partyRef: partyRef(row.tenantId, row.partyResourceId),
   profileRef: {
@@ -105,9 +93,7 @@ export const organizationEngagementProfileFromRecord = (
 const personDto = (row: PersonEngagementProfileRecord): PersonEngagementProfile => ({
   archivedAt: row.archivedAt?.toISOString() ?? null,
   counterpartyRef:
-    row.counterpartyResourceId === null
-      ? null
-      : counterpartyRef(row.tenantId, row.counterpartyResourceId),
+    row.counterpartyResourceId === null ? null : counterpartyRef(row.tenantId, row.counterpartyResourceId),
   createdAt: row.createdAt.toISOString(),
   partyRef: partyRef(row.tenantId, row.partyResourceId),
   profileRef: {
@@ -121,7 +107,10 @@ const personDto = (row: PersonEngagementProfileRecord): PersonEngagementProfile 
 
 export const ensureReferencesBelongToTenant = (
   tenantId: string,
-  refs: { readonly counterpartyRef?: CounterpartyRef; readonly partyRef: PartyRef },
+  refs: {
+    readonly counterpartyRef?: CounterpartyRef;
+    readonly partyRef: PartyRef;
+  },
 ) =>
   refs.partyRef.tenantId === tenantId &&
   (refs.counterpartyRef === undefined || refs.counterpartyRef.tenantId === tenantId)
@@ -161,44 +150,43 @@ const engagementProfilePersistence = <Value>(
             .returning()
             .pipe(Effect.mapError(mutationFailure)),
         ),
-        Effect.flatMap(([row]) =>
-          row === undefined ? Effect.fail(unavailable()) : Effect.succeed(toDto(row)),
-        ),
+        Effect.flatMap(([row]) => (row === undefined ? Effect.fail(unavailable()) : Effect.succeed(toDto(row)))),
       ),
-    transition: Effect.fn('EngagementProfilePersistenceService.transition')(
-      function* transitionProfile(
-        transaction: ScopedTransaction,
-        tenantId: string,
-        profileId: string,
-        state: 'active' | 'archived',
-      ): Effect.fn.Return<LifecycleResult<Value>, EngagementProfilePersistenceUnavailable> {
-        const predicate = profilePredicate(tenantId, profileId);
-        const [current] = yield* transaction
-          .select()
-          .from(table)
-          .where(predicate)
-          .limit(1)
-          .for('update')
-          .pipe(Effect.mapError(unavailable));
-        if (current === undefined) {
-          return { _tag: 'not_found' } as const;
-        }
-        if ((state === 'archived') === (current.archivedAt !== null)) {
-          return { _tag: 'conflict', value: toDto(current) } as const;
-        }
-        const now = yield* DateTime.nowAsDate;
-        const [updated] = yield* transaction
-          .update(table)
-          .set({ archivedAt: state === 'archived' ? now : null, updatedAt: now })
-          .where(predicate)
-          .returning()
-          .pipe(Effect.mapError(unavailable));
-        if (updated === undefined) {
-          return yield* unavailable();
-        }
-        return { _tag: 'found', value: toDto(updated) } as const;
-      },
-    ),
+    transition: Effect.fn('EngagementProfilePersistenceService.transition')(function* transitionProfile(
+      transaction: ScopedTransaction,
+      tenantId: string,
+      profileId: string,
+      state: 'active' | 'archived',
+    ): Effect.fn.Return<LifecycleResult<Value>, EngagementProfilePersistenceUnavailable> {
+      const predicate = profilePredicate(tenantId, profileId);
+      const [current] = yield* transaction
+        .select()
+        .from(table)
+        .where(predicate)
+        .limit(1)
+        .for('update')
+        .pipe(Effect.mapError(unavailable));
+      if (current === undefined) {
+        return { _tag: 'not_found' } as const;
+      }
+      if ((state === 'archived') === (current.archivedAt !== null)) {
+        return { _tag: 'conflict', value: toDto(current) } as const;
+      }
+      const now = yield* DateTime.nowAsDate;
+      const [updated] = yield* transaction
+        .update(table)
+        .set({
+          archivedAt: state === 'archived' ? now : null,
+          updatedAt: now,
+        })
+        .where(predicate)
+        .returning()
+        .pipe(Effect.mapError(unavailable));
+      if (updated === undefined) {
+        return yield* unavailable();
+      }
+      return { _tag: 'found', value: toDto(updated) } as const;
+    }),
     find: (transaction: ScopedTransaction, tenantId: string, profileId: string) =>
       transaction
         .select()
@@ -208,9 +196,7 @@ const engagementProfilePersistence = <Value>(
         .pipe(
           Effect.mapError(unavailable),
           Effect.map(([row]) =>
-            row === undefined
-              ? ({ _tag: 'not_found' } as const)
-              : ({ _tag: 'found', value: toDto(row) } as const),
+            row === undefined ? ({ _tag: 'not_found' } as const) : ({ _tag: 'found', value: toDto(row) } as const),
           ),
         ),
   };
@@ -220,10 +206,7 @@ export const {
   create: createOrganizationEngagementProfile,
   transition: transitionOrganizationEngagementProfile,
   find: findOrganizationEngagementProfile,
-} = engagementProfilePersistence(
-  organizationEngagementProfiles,
-  organizationEngagementProfileFromRecord,
-);
+} = engagementProfilePersistence(organizationEngagementProfiles, organizationEngagementProfileFromRecord);
 
 export const {
   create: createPersonEngagementProfile,

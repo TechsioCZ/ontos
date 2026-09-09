@@ -3,13 +3,11 @@
 // @ontos-resource-slug party-alias
 import type { OntosResourceType } from '@app/core-runtime';
 import { Schema } from 'effect';
+
 import { IsoTimestampSchema } from '../domain/identity-contracts.ts';
 import { PartyMergeRefSchema } from './party-merge.ts';
 import { PartyRefSchema } from './party.ts';
-import {
-  PartyRegistryResourceIdJsonSchema,
-  PartyRegistryTenantIdJsonSchema,
-} from './resource-ref-identifiers.ts';
+import { PartyRegistryResourceIdJsonSchema, PartyRegistryTenantIdJsonSchema } from './resource-ref-identifiers.ts';
 
 export const PartyAliasRefSchema = Schema.Struct({
   moduleId: Schema.Literal('party.registry'),
@@ -28,17 +26,17 @@ export const PartyAliasSchema = Schema.Struct({
 }).check(
   Schema.makeFilter(({ aliasPartyRef, mergeRef, survivorPartyRef }) => {
     const issues: Schema.FilterIssue[] = [];
-    if (
-      aliasPartyRef.tenantId !== survivorPartyRef.tenantId ||
-      aliasPartyRef.tenantId !== mergeRef.tenantId
-    ) {
+    if (aliasPartyRef.tenantId !== survivorPartyRef.tenantId || aliasPartyRef.tenantId !== mergeRef.tenantId) {
       issues.push({
         issue: 'Party Alias, survivor, and merge Resource must share one tenant',
         path: ['survivorPartyRef'],
       });
     }
     if (aliasPartyRef.resourceId === survivorPartyRef.resourceId) {
-      issues.push({ issue: 'Party Alias cannot target itself', path: ['survivorPartyRef'] });
+      issues.push({
+        issue: 'Party Alias cannot target itself',
+        path: ['survivorPartyRef'],
+      });
     }
     return issues;
   }),

@@ -2,9 +2,10 @@ import { ConfigProvider, Effect, Match, Predicate } from 'effect';
 
 const nodeFileSystem = process.getBuiltinModule('node:fs');
 
-export const loadDotEnvProvider = Effect.fn('Config.loadDotEnvProvider')(function* loadProvider<
-  Failure,
->(envPath: string, configFailure: (reason: string, cause: unknown) => Failure) {
+export const loadDotEnvProvider = Effect.fn('Config.loadDotEnvProvider')(function* loadProvider<Failure>(
+  envPath: string,
+  configFailure: (reason: string, cause: unknown) => Failure,
+) {
   const result = yield* Effect.sync(() => {
     try {
       return {
@@ -29,7 +30,11 @@ export const loadDotEnvProvider = Effect.fn('Config.loadDotEnvProvider')(functio
     Match.discriminatorsExhaustive('status')({
       failed: ({ error }) => Effect.fail(error),
       loaded: ({ contents }) =>
-        Effect.succeed(ConfigProvider.fromDotEnvContents(contents, { preserveEmptyStrings: true })),
+        Effect.succeed(
+          ConfigProvider.fromDotEnvContents(contents, {
+            preserveEmptyStrings: true,
+          }),
+        ),
       missing: () => Effect.succeed(ConfigProvider.fromUnknown({})),
     }),
   );

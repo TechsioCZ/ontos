@@ -1,4 +1,5 @@
 import { DateTime, Option, Schema } from 'effect';
+
 import { PartyRefSchema } from '../resources/party.ts';
 import { IsoTimestampSchema } from './identity-contracts.ts';
 
@@ -45,13 +46,9 @@ const MergeEvaluatedCandidateSnapshotSchema = Schema.Struct({
 });
 export const MergeSelectionEvidenceStepSchema = Schema.Struct({
   candidatePartyRefs: Schema.Array(PartyRefSchema).check(Schema.isMinLength(2)),
-  candidateSnapshots: Schema.Array(MergeEvaluatedCandidateSnapshotSchema).check(
-    Schema.isMinLength(2),
-  ),
+  candidateSnapshots: Schema.Array(MergeEvaluatedCandidateSnapshotSchema).check(Schema.isMinLength(2)),
   criterion: MergeSelectionEvidenceCriterionSchema,
-  evidenceRefs: Schema.Array(Schema.String.check(Schema.isMinLength(1))).check(
-    Schema.isMinLength(1),
-  ),
+  evidenceRefs: Schema.Array(Schema.String.check(Schema.isMinLength(1))).check(Schema.isMinLength(1)),
   explanation: Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(500)),
   winnerPartyRef: Schema.toEncoded(Schema.OptionFromNullOr(PartyRefSchema)),
 });
@@ -68,9 +65,7 @@ const ConfirmedDuplicateSetSchema = Schema.Struct({
   confirmedDuplicateDecisionId: Schema.toEncoded(ConfirmedDuplicateDecisionIdSchema),
   confirmedPartyRefs: Schema.Array(PartyRefSchema).check(Schema.isMinLength(2)),
   decisionActorPrincipalId: Schema.toEncoded(DecisionActorPrincipalIdSchema),
-  evidenceRefs: Schema.Array(Schema.String.check(Schema.isMinLength(1))).check(
-    Schema.isMinLength(1),
-  ),
+  evidenceRefs: Schema.Array(Schema.String.check(Schema.isMinLength(1))).check(Schema.isMinLength(1)),
 });
 export type ConfirmedDuplicateSet = typeof ConfirmedDuplicateSetSchema.Type;
 

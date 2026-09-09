@@ -1,5 +1,7 @@
-import { expect, it } from 'effect-rstest';
 import { Effect, Schema, Predicate } from 'effect';
+import { expect, it } from 'effect-rstest';
+
+import { defineTenantModuleEntrypoint } from '../../src/modules/module-entrypoint.ts';
 import {
   defineOutboxWorker,
   getOutboxWorkerHandler,
@@ -7,7 +9,6 @@ import {
   validateOutboxWorkerRegistrations,
   validateOutboxWorkerSubscriptions,
 } from '../../src/outbox/definition.ts';
-import { defineTenantModuleEntrypoint } from '../../src/modules/module-entrypoint.ts';
 import { OutboxWorkerDescriptorError } from '../../src/outbox/errors.ts';
 
 const MessageKey = Schema.String.pipe(Schema.brand('MessageKey'));
@@ -67,7 +68,9 @@ it.effect('defines an exact immutable registration while keeping the handler opa
     expect(Object.isFrozen(worker.descriptor.retryPolicy)).toBe(true);
     expect('handler' in worker).toBe(false);
     expect(Object.keys(worker)).toEqual(['descriptor']);
-    const payload = yield* Schema.decodeUnknownEffect(payloadSchema)({ messageKey: 'message-1' });
+    const payload = yield* Schema.decodeEffect(payloadSchema)({
+      messageKey: 'message-1',
+    });
     yield* getOutboxWorkerHandler(worker)(payload, {
       attemptNumber: 1,
       claimId: 'claim-1',
@@ -135,9 +138,7 @@ it('rejects invalid identities, retry policies, and lease policies', () => {
     { ...valid, retryPolicy: { ...valid.retryPolicy, multiplier: 0 } },
   ];
   for (const descriptor of invalidDescriptors) {
-    expect(() => defineOutboxWorker(descriptor, () => Effect.void)).toThrow(
-      OutboxWorkerDescriptorError,
-    );
+    expect(() => defineOutboxWorker(descriptor, () => Effect.void)).toThrow(OutboxWorkerDescriptorError);
   }
 });
 it('rejects duplicate worker keys and calculates bounded exponential backoff', () => {

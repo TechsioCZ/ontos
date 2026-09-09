@@ -59,26 +59,18 @@
  * Report-only: no fixer, no suggestion.
  */
 import { defineRule } from '@oxlint/plugins';
-
 import type { Context, ESTree, Variable } from '@oxlint/plugins';
 
-import { bindingsFor, effectMember } from '../shared/effect-imports.ts';
-import type { EffectBindings } from '../shared/effect-imports.ts';
 import { asNode as sharedAsNode, keyName as sharedKeyName } from '../shared/ast.ts';
 import { resolveVariable as sharedResolveVariable } from '../shared/bindings.ts';
+import { bindingsFor, effectMember } from '../shared/effect-imports.ts';
+import type { EffectBindings } from '../shared/effect-imports.ts';
 import { importedName } from '../shared/imports.ts';
-import { sameNode as sharedSameNode, nodeKey as sharedNodeKey } from '../shared/reporting.ts';
 import { matchesAny } from '../shared/paths.ts';
+import { sameNode as sharedSameNode, nodeKey as sharedNodeKey } from '../shared/reporting.ts';
 
 /** Root-fiber entry points. Every one of these starts a fresh runtime with no inherited context. */
-const RUN_MEMBERS = new Set([
-  'runCallback',
-  'runFork',
-  'runPromise',
-  'runPromiseExit',
-  'runSync',
-  'runSyncExit',
-]);
+const RUN_MEMBERS = new Set(['runCallback', 'runFork', 'runPromise', 'runPromiseExit', 'runSync', 'runSyncExit']);
 
 /** Context-capturing variants — the S1 target shape at the single unavoidable Promise boundary. */
 const WITH_MEMBERS = new Set([
@@ -93,10 +85,7 @@ const WITH_MEMBERS = new Set([
 /** Namespaces whose call arguments are Effect-owned code: callbacks there run inside a fiber. */
 const OWNING_NAMESPACES = new Set(['Effect', 'Fiber', 'Layer', 'Schedule', 'Scope', 'Stream']);
 
-const DEFAULT_EFFECT_MODULES = [
-  '@modern-js/plugin-bff/effect-client',
-  '@modern-js/plugin-bff/effect-edge',
-];
+const DEFAULT_EFFECT_MODULES = ['@modern-js/plugin-bff/effect-client', '@modern-js/plugin-bff/effect-edge'];
 
 const EFFECT_MODULE = /^effect(?:\/.*)?$/u;
 
@@ -169,7 +158,10 @@ function isRunMemberName(name: string): boolean {
 }
 
 function keyName(key: AnyNode | null, computed: boolean): string | null {
-  return sharedKeyName(key, computed, { templates: computed, singleQuasi: true });
+  return sharedKeyName(key, computed, {
+    templates: computed,
+    singleQuasi: true,
+  });
 }
 
 /** Property name of a `MemberExpression`, honouring computed static access. */
@@ -238,11 +230,15 @@ function collectImports(context: Context, modules: readonly string[]): FileImpor
     if (!isEffectPackage && !isExtraModule) continue;
     importsEffect = true;
     const submodule = isEffectPackage ? (source.split('/').at(-1) ?? '') : '';
-    for (const specifier of statement.specifiers)
-      collectSpecifier(specifier, submodule, isExtraModule);
+    for (const specifier of statement.specifiers) collectSpecifier(specifier, submodule, isExtraModule);
   }
 
-  return { barrelLocals, bindings: { importsEffect, namespaces }, flatOwners, flatRuns };
+  return {
+    barrelLocals,
+    bindings: { importsEffect, namespaces },
+    flatOwners,
+    flatRuns,
+  };
 }
 
 function resolveVariable(context: Context, identifier: AnyNode): Variable | null {
@@ -277,8 +273,7 @@ export const rule = defineRule({
             type: 'boolean',
           },
           effectModules: {
-            description:
-              'Extra modules whose named imports bind Effect namespaces (re-export barrels).',
+            description: 'Extra modules whose named imports bind Effect namespaces (re-export barrels).',
             items: { type: 'string' },
             type: 'array',
           },
@@ -323,10 +318,7 @@ export const rule = defineRule({
       return variable.defs.some((definition) => definition.type === 'ImportBinding');
     };
 
-    const importedNamespace = (
-      identifier: AnyNode,
-      namespaces: ReadonlyMap<string, string>,
-    ): string | null => {
+    const importedNamespace = (identifier: AnyNode, namespaces: ReadonlyMap<string, string>): string | null => {
       if (typeof identifier.name !== 'string') return null;
       const namespace = namespaces.get(identifier.name);
       if (namespace === undefined) return null;
@@ -339,8 +331,7 @@ export const rule = defineRule({
      */
     const namespaceOfObject = (object: AnyNode | null): string | null => {
       if (object === null) return null;
-      if (object.type === 'Identifier')
-        return importedNamespace(object, imports.bindings.namespaces);
+      if (object.type === 'Identifier') return importedNamespace(object, imports.bindings.namespaces);
       if (object.type !== 'MemberExpression') return null;
       const base = unwrap(object.object);
       if (base === null || base.type !== 'Identifier' || typeof base.name !== 'string') return null;
@@ -379,11 +370,7 @@ export const rule = defineRule({
     /** `Effect.fn("name")(body)` — peel curried calls to reach the Effect-family member. */
     const calleeOwner = (callee: AnyNode | null): string | null => {
       let current = callee;
-      for (
-        let guard = 0;
-        current !== null && current.type === 'CallExpression' && guard < 8;
-        guard += 1
-      ) {
+      for (let guard = 0; current !== null && current.type === 'CallExpression' && guard < 8; guard += 1) {
         current = unwrap(current.callee);
       }
       return owningNamespaceOf(current);
@@ -435,22 +422,13 @@ export const rule = defineRule({
     };
 
     const callbackBinding = (parent: AnyNode, child: AnyNode): AnyNode | null => {
-      if (
-        parent.type === 'VariableDeclarator' &&
-        isFunctionNode(child) &&
-        sameNode(unwrap(parent.init), child)
-      )
+      if (parent.type === 'VariableDeclarator' && isFunctionNode(child) && sameNode(unwrap(parent.init), child))
         return asNode(parent.id);
-      if (parent.type === 'FunctionDeclaration' && sameNode(asNode(parent.body), child))
-        return asNode(parent.id);
+      if (parent.type === 'FunctionDeclaration' && sameNode(asNode(parent.body), child)) return asNode(parent.id);
       return null;
     };
 
-    const enqueueCallbackReferences = (
-      identifier: AnyNode | null,
-      queue: AnyNode[],
-      seen: Set<string>,
-    ): void => {
+    const enqueueCallbackReferences = (identifier: AnyNode | null, queue: AnyNode[], seen: Set<string>): void => {
       for (const next of referenceStartsFor(identifier)) {
         const key = nodeKey(next);
         if (seen.has(key)) continue;
@@ -462,11 +440,7 @@ export const rule = defineRule({
     const walkOwners = (from: AnyNode, queue: AnyNode[], seen: Set<string>): boolean => {
       let child = from;
       let parent = asNode(child.parent);
-      for (
-        let guard = 0;
-        parent !== null && parent.type !== 'Program' && guard < MAX_WALK_STEPS;
-        guard += 1
-      ) {
+      for (let guard = 0; parent !== null && parent.type !== 'Program' && guard < MAX_WALK_STEPS; guard += 1) {
         if (isOwnedArgument(parent, child)) return true;
         enqueueCallbackReferences(callbackBinding(parent, child), queue, seen);
         child = parent;
@@ -498,15 +472,7 @@ export const rule = defineRule({
     const report = (node: AnyNode, member: string): void => {
       // Type queries nested in an Effect callback are erased, not re-entry sites.
       for (let at = asNode(node.parent); at !== null; at = asNode(at.parent)) {
-        if (
-          [
-            'TSTypeQuery',
-            'TSTypeAnnotation',
-            'TSTypeReference',
-            'TSImportType',
-            'TSQualifiedName',
-          ].includes(at.type)
-        )
+        if (['TSTypeQuery', 'TSTypeAnnotation', 'TSTypeReference', 'TSImportType', 'TSQualifiedName'].includes(at.type))
           return;
       }
       if (options.allowRuntimeCapturedRuns && WITH_MEMBERS.has(member)) return;
@@ -552,10 +518,7 @@ export const rule = defineRule({
       return null;
     };
 
-    const definitionRunMember = (
-      definition: Variable['defs'][number],
-      name: string,
-    ): string | null => {
+    const definitionRunMember = (definition: Variable['defs'][number], name: string): string | null => {
       if (definition.type === 'ImportBinding') return imports.flatRuns.get(name) ?? null;
       if (definition.type !== 'Variable') return null;
       return declaratorRunMember(definition.node, name);
@@ -587,8 +550,7 @@ export const rule = defineRule({
         if (!reference.isRead()) continue;
         const identifier = asNode(reference.identifier);
         if (identifier === null) continue;
-        if (variable.identifiers.some((declared) => sameNode(asNode(declared), identifier)))
-          continue;
+        if (variable.identifiers.some((declared) => sameNode(asNode(declared), identifier))) continue;
         report(identifier, member);
       }
     };

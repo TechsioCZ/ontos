@@ -7,10 +7,7 @@ const withoutComments = (source: string): string => {
   }
   let text = source;
   for (const comment of parsed.comments) {
-    text =
-      text.slice(0, comment.start) +
-      ' '.repeat(comment.end - comment.start) +
-      text.slice(comment.end);
+    text = text.slice(0, comment.start) + ' '.repeat(comment.end - comment.start) + text.slice(comment.end);
   }
   return text;
 };
@@ -18,7 +15,7 @@ const withoutComments = (source: string): string => {
 const hasSharedUltramodernDispatch = (source: string): boolean =>
   source.includes("Config.string('ULTRAMODERN_CREATE_BIN')") &&
   source.includes("['ultramodern', options.command, ...forwardedArgs]") &&
-  source.includes("executable: 'modern-js-create'") &&
+  source.includes("executable: 'ultramodern-create'") &&
   source.includes('ChildProcess.make(launch.executable, launch.args,') &&
   source.includes('resolveUltramodernInvocation(options).pipe(') &&
   source.includes('Effect.flatMap(launchUltramodern)');
@@ -31,9 +28,11 @@ export const hasUltramodernSkillsDispatch = (source: string, implementation: str
     wrapper.includes("['skills', 'check',") &&
     wrapper.includes("['skills', 'install',") &&
     wrapper.includes("['ultramodern', ...skillArgs]") &&
-    wrapper.includes('ultramodernLaunch(createBin, ultramodernArgs, workspaceRoot, path.sep)') &&
+    /ultramodernLaunch\(\s*createBin\s*,\s*ultramodernArgs\s*,\s*workspaceRoot\s*,\s*path\.sep\s*,?\s*\)/u.test(
+      wrapper,
+    ) &&
     wrapper.includes("Config.string('ULTRAMODERN_CREATE_BIN')") &&
-    runner.includes("executable: 'modern-js-create'") &&
+    runner.includes("executable: 'ultramodern-create'") &&
     runner.includes('ChildProcess.make(launch.executable, launch.args,')
   );
 };
@@ -48,7 +47,12 @@ export const hasUltramodernDispatch = (
     return false;
   }
   const wrapper = withoutComments(source);
-  if (wrapper.includes(`['ultramodern', '${command}', ...forwardedArgs]`)) {
+  if (
+    new RegExp(
+      `\\[\\s*['"]ultramodern['"]\\s*,\\s*['"]${command}['"]\\s*,\\s*\\.\\.\\.forwardedArgs\\s*,?\\s*\\]`,
+      'u',
+    ).test(wrapper)
+  ) {
     return true;
   }
   if (implementation === undefined) {

@@ -1,10 +1,8 @@
-import { expect, it } from 'effect-rstest';
 import { DateTime } from 'effect';
+import { expect, it } from 'effect-rstest';
+
 import { partySubjectKeyFromString } from '../../shared/domain/identity-contracts.ts';
-import type {
-  PartyCandidate,
-  PartySubjectEvidence,
-} from '../../shared/domain/identity-contracts.ts';
+import type { PartyCandidate, PartySubjectEvidence } from '../../shared/domain/identity-contracts.ts';
 import { createPartyAction } from '../../src/actions/create-party.action.ts';
 import {
   decideCreateWithoutStrongIdentifier,
@@ -15,9 +13,7 @@ import {
   candidateFingerprint,
 } from '../../src/services/party-matching-persistence.service.ts';
 
-const evidence = (
-  observedSubject: PartySubjectEvidence['observedSubject'],
-): PartySubjectEvidence => ({
+const evidence = (observedSubject: PartySubjectEvidence['observedSubject']): PartySubjectEvidence => ({
   basis: 'DIRECT_INTERACTION',
   evidenceRef: 'meeting/42',
   kind: 'ACTOR_ATTESTATION',
@@ -34,8 +30,7 @@ const candidate = (overrides: Partial<PartyCandidate> = {}): PartyCandidate => (
   validFrom: DateTime.makeUnsafe('2020-01-01T00:00:00.000Z'),
   ...overrides,
 });
-const decide = (value: PartyCandidate) =>
-  decideCreateWithoutStrongIdentifier(value, { requireIdentityReview: false });
+const decide = (value: PartyCandidate) => decideCreateWithoutStrongIdentifier(value, { requireIdentityReview: false });
 it('concrete subject evidence needs neither a name nor an official ID', () => {
   expect(decide(candidate()).decision).toBe('ALLOW');
   expect(decide(candidate({ displayName: 'A' })).decision).toBe('ALLOW');
@@ -61,13 +56,14 @@ it('names, reference prefixes and identifiers never substitute for subject evide
 it('type support is separate from evidence of a concrete subject', () => {
   for (const partyType of ['PERSON', 'ORGANIZATION'] as const) {
     expect(decide(candidate({ partyType })).reasonCode).toBe('party_type_evidence_required');
-    expect(decide(candidate({ partyType, subjectEvidence: [evidence(partyType)] })).decision).toBe(
-      'ALLOW',
-    );
+    expect(decide(candidate({ partyType, subjectEvidence: [evidence(partyType)] })).decision).toBe('ALLOW');
   }
   expect(
-    decide(candidate({ subjectEvidence: [evidence('PERSON'), evidence('ORGANIZATION')] }))
-      .reasonCode,
+    decide(
+      candidate({
+        subjectEvidence: [evidence('PERSON'), evidence('ORGANIZATION')],
+      }),
+    ).reasonCode,
   ).toBe('conflicting_type_evidence');
 });
 
@@ -80,7 +76,10 @@ it('technical records, managed Legal Entities and multiple subjects fail closed'
       candidate({
         subjectEvidence: [
           evidence('PERSON'),
-          { ...evidence('PERSON'), subjectKey: partySubjectKeyFromString('another') },
+          {
+            ...evidence('PERSON'),
+            subjectKey: partySubjectKeyFromString('another'),
+          },
         ],
       }),
     ).reasonCode,
@@ -89,13 +88,9 @@ it('technical records, managed Legal Entities and multiple subjects fail closed'
 
 it('review configuration cannot waive evidence and eligible review remains atomic', () => {
   expect(createPartyAction.descriptor.policies).toEqual([]);
-  expect(decideAtomicCreateWithoutStrongIdentifier(candidate(), false).decision).toBe(
-    'REVIEW_REQUIRED',
-  );
+  expect(decideAtomicCreateWithoutStrongIdentifier(candidate(), false).decision).toBe('REVIEW_REQUIRED');
   expect(decideAtomicCreateWithoutStrongIdentifier(candidate(), true).decision).toBe('ALLOW');
-  expect(
-    decideAtomicCreateWithoutStrongIdentifier(candidate({ subjectEvidence: [] }), true).decision,
-  ).toBe('DENY');
+  expect(decideAtomicCreateWithoutStrongIdentifier(candidate({ subjectEvidence: [] }), true).decision).toBe('DENY');
 });
 
 it('reference spelling is neutral; meaningful evidence and independent versions are retained', () => {

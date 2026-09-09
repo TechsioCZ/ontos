@@ -1,5 +1,6 @@
-import { Predicate } from 'effect';
 import { defineRuntimeConfig } from '@modern-js/runtime';
+import { Predicate } from 'effect';
+
 import csResource from '../locales/cs/shell.json';
 import enResource from '../locales/en/shell.json';
 import { ultramodernRouteNamespace } from './routes/ultramodern-route-metadata';
@@ -14,9 +15,7 @@ const flattenLocaleResource = (resource: LocaleResource, prefix = ''): Record<st
   return Object.fromEntries(
     Object.entries(resource).flatMap(([key, value]) => {
       const nextKey = prefix.length > 0 ? `${prefix}.${key}` : key;
-      return Predicate.isString(value)
-        ? [[nextKey, value]]
-        : Object.entries(flattenLocaleResource(value, nextKey));
+      return Predicate.isString(value) ? [[nextKey, value]] : Object.entries(flattenLocaleResource(value, nextKey));
     }),
   );
 };

@@ -1,5 +1,6 @@
-import { expect, it } from 'effect-rstest';
 import { getTableConfig } from 'drizzle-orm/pg-core';
+import { expect, it } from 'effect-rstest';
+
 import {
   CONTACTS_SCHEMA_NAME,
   CONTACTS_TABLE_INVENTORY,
@@ -20,10 +21,7 @@ it('owns two engagement profile tables plus gateway replay protection', () => {
     'organization_engagement_profiles',
     'person_engagement_profiles',
   ]);
-  expect(qualifiedNames).toEqual([
-    'contacts.organization_engagement_profiles',
-    'contacts.person_engagement_profiles',
-  ]);
+  expect(qualifiedNames).toEqual(['contacts.organization_engagement_profiles', 'contacts.person_engagement_profiles']);
 });
 
 it('stores references and profile lifecycle, never Party identity facts', () => {
@@ -41,18 +39,10 @@ it('stores references and profile lifecycle, never Party identity facts', () => 
     for (const forbidden of ['customer_id', 'contact_id', 'name', 'ico', 'dic', 'email', 'phone']) {
       expect(config.columns.some((column) => column.name === forbidden)).toBe(false);
     }
-    for (const required of [
-      'engagement_profile_id',
-      'tenant_id',
-      'party_resource_id',
-      'created_at',
-      'updated_at',
-    ]) {
+    for (const required of ['engagement_profile_id', 'tenant_id', 'party_resource_id', 'created_at', 'updated_at']) {
       expect(config.columns.find((column) => column.name === required)?.notNull).toBe(true);
     }
-    expect(
-      config.columns.find((column) => column.name === 'counterparty_resource_id')?.notNull,
-    ).toBe(false);
+    expect(config.columns.find((column) => column.name === 'counterparty_resource_id')?.notNull).toBe(false);
   }
 });
 
@@ -68,12 +58,7 @@ it('forces tenant RLS with complete CRUD policies on both profile tables', () =>
       `${prefix}_update`,
       `${prefix}_delete`,
     ]);
-    expect(config.policies.map((policy) => policy.for)).toEqual([
-      'select',
-      'insert',
-      'update',
-      'delete',
-    ]);
+    expect(config.policies.map((policy) => policy.for)).toEqual(['select', 'insert', 'update', 'delete']);
     for (const policy of config.policies) {
       expect(policy.to).toBe('ontos_runtime');
     }

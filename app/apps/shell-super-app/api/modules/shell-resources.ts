@@ -8,6 +8,7 @@ import type {
 } from '@app/core-runtime';
 import { decideModuleStateAccess } from '@app/core-runtime';
 import { Context, DateTime, Effect, Exit, Layer, Option, Schema } from 'effect';
+
 import {
   ResourceRefSchema as SharedResourceRefSchema,
   ShellTimelineEntrySchema as SharedShellTimelineEntrySchema,
@@ -18,9 +19,7 @@ import type { InstalledModuleCatalogError } from './installed-module-catalog.ts'
 const stableKey = Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(300));
 const PartyRoleSchema = Schema.Literals(['CUSTOMER', 'SUPPLIER']);
 const TenantIdSchema = Schema.String.check(Schema.isUUID()).pipe(Schema.brand('TenantId'));
-const LegalEntityIdSchema = Schema.String.check(Schema.isUUID()).pipe(
-  Schema.brand('LegalEntityId'),
-);
+const LegalEntityIdSchema = Schema.String.check(Schema.isUUID()).pipe(Schema.brand('LegalEntityId'));
 type PartyRole = typeof PartyRoleSchema.Type;
 
 export const ResourceRefSchema = SharedResourceRefSchema;
@@ -63,9 +62,7 @@ const CounterpartyShellSearchResultSchema = Schema.Struct({
   ref: ResourceRefSchema.pipe(
     Schema.check(
       Schema.makeFilter((ref) =>
-        ref.tenantId === undefined
-          ? 'Counterparty search result requires Tenant identity'
-          : undefined,
+        ref.tenantId === undefined ? 'Counterparty search result requires Tenant identity' : undefined,
       ),
     ),
   ),
@@ -131,10 +128,7 @@ interface ShellSearchProviderHandler {
   ) => Effect.Effect<readonly unknown[], ShellProviderUnavailableError>;
 }
 
-interface ShellResourceProviderRequest<
-  ApiKey extends string = string,
-  Authorization extends string = string,
-> {
+interface ShellResourceProviderRequest<ApiKey extends string = string, Authorization extends string = string> {
   readonly apiKey: ApiKey;
   readonly appId: string;
   readonly authorization: Authorization;
@@ -143,13 +137,12 @@ interface ShellResourceProviderRequest<
 }
 
 interface ShellResourceProviderHandler {
-  readonly detail: (
-    input: ShellResourceProviderRequest,
-  ) => Effect.Effect<unknown, ShellProviderUnavailableError>;
-  readonly timeline: (
-    input: ShellResourceProviderRequest,
-  ) => Effect.Effect<
-    { readonly entries: readonly unknown[]; readonly projectionLagging: boolean },
+  readonly detail: (input: ShellResourceProviderRequest) => Effect.Effect<unknown, ShellProviderUnavailableError>;
+  readonly timeline: (input: ShellResourceProviderRequest) => Effect.Effect<
+    {
+      readonly entries: readonly unknown[];
+      readonly projectionLagging: boolean;
+    },
     ShellProviderUnavailableError
   >;
 }
@@ -187,11 +180,7 @@ const unavailable = (cause?: ProviderFailureCause) =>
   new ShellProviderUnavailableError(cause === undefined ? {} : { cause });
 const capture = <Success, Failure, Requirements>(
   effect: Effect.Effect<Success, Failure, Requirements>,
-): Effect.Effect<
-  { readonly ok: false } | { readonly ok: true; readonly value: Success },
-  never,
-  Requirements
-> =>
+): Effect.Effect<{ readonly ok: false } | { readonly ok: true; readonly value: Success }, never, Requirements> =>
   Effect.exit(effect).pipe(
     Effect.map((exit) =>
       Exit.isSuccess(exit) ? ({ ok: true, value: exit.value } as const) : ({ ok: false } as const),
@@ -211,7 +200,7 @@ const loadState = (
         return Effect.succeed(Option.none<TenantModuleState>());
       }
       return unexpected.length === 0 && record.moduleKey === moduleId
-        ? Effect.succeed(Option.some(record.state))
+        ? Effect.succeedSome(record.state)
         : Effect.fail(unavailable());
     }),
   );
@@ -281,15 +270,10 @@ const resultBelongsToProvider = (
   if (result.kind !== 'counterparty') {
     return true;
   }
-  return (
-    counterpartyBelongsToContext(context, result) &&
-    collisionBelongsToProvider(context, provider, result)
-  );
+  return counterpartyBelongsToContext(context, result) && collisionBelongsToProvider(context, provider, result);
 };
 
-const normalizeProviderResult = (
-  value: Schema.Schema.Type<typeof RawShellSearchResultSchema>,
-): ShellSearchResult => {
+const normalizeProviderResult = (value: Schema.Schema.Type<typeof RawShellSearchResultSchema>): ShellSearchResult => {
   if (Schema.is(CounterpartyShellSearchResultSchema)(value)) {
     return {
       ...value,
@@ -319,9 +303,7 @@ const decodeProviderResults = (
 const searchProviders = (catalog: InstalledModuleCatalog) =>
   catalog.contracts.flatMap((contract) =>
     contract.manifest.publicSurface.shellContributions.search.flatMap((contribution) => {
-      const descriptor = contract.manifest.publicSurface.search.find(
-        ({ key }) => key === contribution.searchKey,
-      );
+      const descriptor = contract.manifest.publicSurface.search.find(({ key }) => key === contribution.searchKey);
       return descriptor === undefined
         ? []
         : [
@@ -340,59 +322,50 @@ interface SearchCandidate {
   readonly value: ShellSearchResult;
 }
 
-const authorizeSearchCandidates = Effect.fn('ShellSearch.authorizeCandidates')(
-  function* authorizeSearchCandidates(
-    ...[dependencies, context, uniqueCandidates]: readonly [
-      ShellResourceDependencies,
-      ShellResourceContext,
-      readonly SearchCandidate[],
-    ]
-  ) {
-    const resourceCandidates = uniqueCandidates.filter(
-      ({ provider }) => provider.descriptor.accessFiltering === 'resource_permission',
-    );
-    const candidateResourceRefs = resourceCandidates.flatMap(({ value }) => [
-      value.ref,
-      ...(value.kind === 'counterparty' ? (value.collision?.counterpartyRefs ?? []) : []),
-    ]);
-    const resourcesToAuthorize = [
-      ...new Map(candidateResourceRefs.map((ref) => [resourceKey(ref), ref])).values(),
-    ];
-    let resourcePermissions: readonly ContextAccessResult[] = [];
-    if (resourceCandidates.length > 0) {
-      const { legalEntityId } = context;
-      if (legalEntityId === undefined) {
-        return yield* unavailable();
-      }
-      resourcePermissions = yield* dependencies.contextAccess.resources({
-        legalEntityId,
-        principalId: context.principalId,
-        resources: resourcesToAuthorize,
-        tenantId: context.tenantId,
-      });
-    }
-    if (
-      resourcePermissions.length !== resourcesToAuthorize.length ||
-      resourcePermissions.some(({ decision, key }, index) => {
-        const candidate = resourcesToAuthorize[index];
-        return (
-          candidate === undefined || key !== resourceKey(candidate) || decision === 'unavailable'
-        );
-      })
-    ) {
+const authorizeSearchCandidates = Effect.fn('ShellSearch.authorizeCandidates')(function* authorizeSearchCandidates(
+  ...[dependencies, context, uniqueCandidates]: readonly [
+    ShellResourceDependencies,
+    ShellResourceContext,
+    readonly SearchCandidate[],
+  ]
+) {
+  const resourceCandidates = uniqueCandidates.filter(
+    ({ provider }) => provider.descriptor.accessFiltering === 'resource_permission',
+  );
+  const candidateResourceRefs = resourceCandidates.flatMap(({ value }) => [
+    value.ref,
+    ...(value.kind === 'counterparty' ? (value.collision?.counterpartyRefs ?? []) : []),
+  ]);
+  const resourcesToAuthorize = [...new Map(candidateResourceRefs.map((ref) => [resourceKey(ref), ref])).values()];
+  let resourcePermissions: readonly ContextAccessResult[] = [];
+  if (resourceCandidates.length > 0) {
+    const { legalEntityId } = context;
+    if (legalEntityId === undefined) {
       return yield* unavailable();
     }
-    const allowedKeys = new Set(
-      resourcePermissions.flatMap(({ decision, key }) => (decision === 'allowed' ? [key] : [])),
-    );
-    return allowedKeys;
-  },
-);
+    resourcePermissions = yield* dependencies.contextAccess.resources({
+      legalEntityId,
+      principalId: context.principalId,
+      resources: resourcesToAuthorize,
+      tenantId: context.tenantId,
+    });
+  }
+  if (
+    resourcePermissions.length !== resourcesToAuthorize.length ||
+    resourcePermissions.some(({ decision, key }, index) => {
+      const candidate = resourcesToAuthorize[index];
+      return candidate === undefined || key !== resourceKey(candidate) || decision === 'unavailable';
+    })
+  ) {
+    return yield* unavailable();
+  }
+  const allowedKeys = new Set(
+    resourcePermissions.flatMap(({ decision, key }) => (decision === 'allowed' ? [key] : [])),
+  );
+  return allowedKeys;
+});
 
-type ShellSearchArguments = readonly [
-  dependencies: ShellResourceDependencies,
-  gateway: ShellSearchProviderHandler,
-];
+type ShellSearchArguments = readonly [dependencies: ShellResourceDependencies, gateway: ShellSearchProviderHandler];
 
 export const makeShellSearch = (...[dependencies, gateway]: ShellSearchArguments) => ({
   search: Effect.fn('ShellSearch.search')(function* shellSearch(
@@ -415,19 +388,13 @@ export const makeShellSearch = (...[dependencies, gateway]: ShellSearchArguments
       .pipe(Effect.mapError(unavailable));
     const stateKeys = states.map(({ moduleKey }) => moduleKey);
     const moduleIdSet = new Set(moduleIds);
-    if (
-      new Set(stateKeys).size !== stateKeys.length ||
-      stateKeys.some((moduleId) => !moduleIdSet.has(moduleId))
-    ) {
+    if (new Set(stateKeys).size !== stateKeys.length || stateKeys.some((moduleId) => !moduleIdSet.has(moduleId))) {
       return yield* unavailable();
     }
     const stateByModule = new Map(states.map(({ moduleKey, state }) => [moduleKey, state]));
     const stateEligible = providers.filter(({ contribution, moduleId }) => {
       const state = stateByModule.get(moduleId);
-      return (
-        state !== undefined &&
-        decideModuleStateAccess(state, contribution.entrypoint.access) === 'allow'
-      );
+      return state !== undefined && decideModuleStateAccess(state, contribution.entrypoint.access) === 'allow';
     });
     const permissionOutcomes = yield* Effect.forEach(
       stateEligible,
@@ -435,7 +402,10 @@ export const makeShellSearch = (...[dependencies, gateway]: ShellSearchArguments
         if (provider.descriptor.accessFiltering === 'tenant_scope') {
           const permission = provider.descriptor.tenantPermission;
           if (permission === undefined) {
-            return Effect.succeed({ decision: 'unavailable' as const, provider });
+            return Effect.succeed({
+              decision: 'unavailable' as const,
+              provider,
+            });
           }
           return dependencies.contextAccess
             .tenants({
@@ -478,9 +448,7 @@ export const makeShellSearch = (...[dependencies, gateway]: ShellSearchArguments
     if (permissionOutcomes.some(({ decision }) => decision === 'unavailable')) {
       return yield* unavailable();
     }
-    const eligible = permissionOutcomes.flatMap(({ decision, provider }) =>
-      decision === 'allowed' ? [provider] : [],
-    );
+    const eligible = permissionOutcomes.flatMap(({ decision, provider }) => (decision === 'allowed' ? [provider] : []));
     if (eligible.length === 0) {
       return { partial: false, results: [] } as const;
     }
@@ -499,7 +467,10 @@ export const makeShellSearch = (...[dependencies, gateway]: ShellSearchArguments
             };
             const archiveFiltered =
               requestFilters.has('includeArchived') && searchRequest.includeArchived !== undefined
-                ? { ...providerRequest, includeArchived: searchRequest.includeArchived }
+                ? {
+                    ...providerRequest,
+                    includeArchived: searchRequest.includeArchived,
+                  }
                 : providerRequest;
             const roleFiltered =
               requestFilters.has('role') && searchRequest.role !== undefined
@@ -533,24 +504,22 @@ export const makeShellSearch = (...[dependencies, gateway]: ShellSearchArguments
       ).values(),
     ];
     if (uniqueCandidates.length === 0) {
-      return { partial: succeeded.length !== attempts.length, results: [] } as const;
+      return {
+        partial: succeeded.length !== attempts.length,
+        results: [],
+      } as const;
     }
     const allowedKeys = yield* authorizeSearchCandidates(dependencies, context, uniqueCandidates);
     const results = uniqueCandidates
       .flatMap<ShellSearchResult>(({ provider, value }) => {
-        if (
-          provider.descriptor.accessFiltering === 'resource_permission' &&
-          !allowedKeys.has(resourceKey(value.ref))
-        ) {
+        if (provider.descriptor.accessFiltering === 'resource_permission' && !allowedKeys.has(resourceKey(value.ref))) {
           return [];
         }
         if (value.kind !== 'counterparty' || value.collision === undefined) {
           return [value];
         }
         const { collision, ...visible } = value;
-        const counterpartyRefs = collision.counterpartyRefs.filter((ref) =>
-          allowedKeys.has(resourceKey(ref)),
-        );
+        const counterpartyRefs = collision.counterpartyRefs.filter((ref) => allowedKeys.has(resourceKey(ref)));
         return [
           counterpartyRefs.length < 2
             ? visible
@@ -562,9 +531,7 @@ export const makeShellSearch = (...[dependencies, gateway]: ShellSearchArguments
       })
       .toSorted((left, right) => {
         const titleOrder = left.title.localeCompare(right.title);
-        return titleOrder === 0
-          ? left.ref.resourceId.localeCompare(right.ref.resourceId)
-          : titleOrder;
+        return titleOrder === 0 ? left.ref.resourceId.localeCompare(right.ref.resourceId) : titleOrder;
       });
     return {
       partial: succeeded.length !== attempts.length,
@@ -582,9 +549,7 @@ export type MediaAffordance =
 
 const mediaAffordance = (state: TenantModuleState, attachable: boolean): MediaAffordance => {
   if (attachable) {
-    return state === 'active'
-      ? { enabled: false, reason: 'unavailable' }
-      : { enabled: false, reason: 'read_only' };
+    return state === 'active' ? { enabled: false, reason: 'unavailable' } : { enabled: false, reason: 'read_only' };
   }
   return { enabled: false, reason: 'absent' };
 };
@@ -594,39 +559,28 @@ const hasMediaBinding = <Binding>(attachable: boolean, binding: Binding | undefi
 
 const accessOutcome = (decisions: readonly ContextAccessResult[], expectedKey: string) => {
   const [decision, ...unexpected] = decisions;
-  if (
-    unexpected.length > 0 ||
-    decision?.key !== expectedKey ||
-    decision.decision === 'unavailable'
-  ) {
+  if (unexpected.length > 0 || decision?.key !== expectedKey || decision.decision === 'unavailable') {
     return { outcome: 'unavailable' } as const;
   }
-  return decision.decision === 'denied'
-    ? ({ outcome: 'forbidden' } as const)
-    : ({ outcome: 'allowed' } as const);
+  return decision.decision === 'denied' ? ({ outcome: 'forbidden' } as const) : ({ outcome: 'allowed' } as const);
 };
 
-const resourceAccessOutcome = Effect.fn('ShellResourceDetail.accessOutcome')(
-  function* resourceAccessOutcome(...[dependencies, context, ref]: ResourceDecisionArguments) {
-    const moduleAccess = accessOutcome(
-      yield* moduleDecision(dependencies, context, ref.moduleId),
-      ref.moduleId,
-    );
-    if (moduleAccess.outcome !== 'allowed') {
-      return moduleAccess;
-    }
-    return accessOutcome(yield* resourceDecision(dependencies, context, ref), resourceKey(ref));
-  },
-);
+const resourceAccessOutcome = Effect.fn('ShellResourceDetail.accessOutcome')(function* resourceAccessOutcome(
+  ...[dependencies, context, ref]: ResourceDecisionArguments
+) {
+  const moduleAccess = accessOutcome(yield* moduleDecision(dependencies, context, ref.moduleId), ref.moduleId);
+  if (moduleAccess.outcome !== 'allowed') {
+    return moduleAccess;
+  }
+  return accessOutcome(yield* resourceDecision(dependencies, context, ref), resourceKey(ref));
+});
 
 type ShellResourceDetailArguments = readonly [
   dependencies: ShellResourceDependencies,
   gateway: ShellResourceProviderHandler,
 ];
 
-export const makeShellResourceDetail = (
-  ...[dependencies, gateway]: ShellResourceDetailArguments
-) => {
+export const makeShellResourceDetail = (...[dependencies, gateway]: ShellResourceDetailArguments) => {
   const resolveGate = Effect.fn('ShellResourceDetail.resolveGate')(function* shellResourceGate(
     context: ShellResourceContext,
     ref: ResourceRef,
@@ -636,16 +590,12 @@ export const makeShellResourceDetail = (
       return { outcome: 'unavailable' } as const;
     }
     const contract = catalogResult.value.getByModuleId(ref.moduleId);
-    const resourceType = contract?.manifest.publicSurface.resourceTypes.find(
-      ({ key }) => key === ref.resourceType,
-    );
+    const resourceType = contract?.manifest.publicSurface.resourceTypes.find(({ key }) => key === ref.resourceType);
     if (contract === undefined || resourceType === undefined) {
       return { outcome: 'not_found' } as const;
     }
     const contributions = contract.manifest.publicSurface.shellContributions;
-    const detailBinding = contributions.resourceDetails.find(
-      ({ resourceType: key }) => key === ref.resourceType,
-    );
+    const detailBinding = contributions.resourceDetails.find(({ resourceType: key }) => key === ref.resourceType);
     if (detailBinding === undefined) {
       return { outcome: 'not_found' } as const;
     }
@@ -663,12 +613,8 @@ export const makeShellResourceDetail = (
     if (access.outcome !== 'allowed') {
       return access;
     }
-    const mediaBinding = contributions.mediaAttachments.find(
-      ({ resourceType: key }) => key === ref.resourceType,
-    );
-    const timelineBinding = contributions.timelines.find(
-      ({ resourceType: key }) => key === ref.resourceType,
-    );
+    const mediaBinding = contributions.mediaAttachments.find(({ resourceType: key }) => key === ref.resourceType);
+    const timelineBinding = contributions.timelines.find(({ resourceType: key }) => key === ref.resourceType);
     const media = mediaAffordance(
       stateResult.value.value,
       hasMediaBinding(resourceType.capabilities.mediaAttachable, mediaBinding),
@@ -748,8 +694,7 @@ export const makeShellResourceDetail = (
                 projectionLagging,
                 timeline: timeline.toSorted((left, right) => {
                   const occurredAtOrder =
-                    DateTime.toEpochMillis(right.occurredAt) -
-                    DateTime.toEpochMillis(left.occurredAt);
+                    DateTime.toEpochMillis(right.occurredAt) - DateTime.toEpochMillis(left.occurredAt);
                   return occurredAtOrder === 0
                     ? left.timelineEntryId.localeCompare(right.timelineEntryId)
                     : occurredAtOrder;
@@ -775,13 +720,15 @@ export const makeShellResourceDetail = (
 
 export type ShellMediaAttachmentResolution =
   | { readonly outcome: 'forbidden' | 'not_found' | 'unavailable' }
-  | { readonly outcome: 'resolved'; readonly result: { readonly attached: true } };
+  | {
+      readonly outcome: 'resolved';
+      readonly result: { readonly attached: true };
+    };
 
 export const attachShellMedia = (
   _context: ShellResourceContext,
   _ref: ResourceRef,
-): Effect.Effect<ShellMediaAttachmentResolution> =>
-  Effect.succeed({ outcome: 'unavailable' as const });
+): Effect.Effect<ShellMediaAttachmentResolution> => Effect.succeed({ outcome: 'unavailable' as const });
 
 export interface ShellResourceServicesFactoryService {
   readonly createResourceDetail: typeof makeShellResourceDetail;

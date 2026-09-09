@@ -1,4 +1,5 @@
 import { Effect, FileSystem, Match, Option, Predicate, Schema } from 'effect';
+
 import { createCodesmithGenerator } from '../generator-adapter.mts';
 import {
   MODULE_REGISTRATION_IMPORT_SLOT_END,
@@ -35,13 +36,10 @@ import type {
   ScaffoldPlan,
 } from '../shared.mts';
 
-class OutboxWorkerScaffoldError extends Schema.TaggedError<OutboxWorkerScaffoldError>()(
-  'OutboxWorkerScaffoldError',
-  {
-    cause: Schema.Unknown,
-    message: Schema.String,
-  },
-) {}
+class OutboxWorkerScaffoldError extends Schema.TaggedError<OutboxWorkerScaffoldError>()('OutboxWorkerScaffoldError', {
+  cause: Schema.Unknown,
+  message: Schema.String,
+}) {}
 
 const scaffoldError = (cause: unknown, message?: string): OutboxWorkerScaffoldError =>
   new OutboxWorkerScaffoldError({
@@ -153,8 +151,7 @@ export const ${workerVariable} = defineOutboxWorker(
 `;
 };
 
-const renderRegistry =
-  (): string => `import type { AnyOutboxWorkerRegistration } from '@app/core-runtime';
+const renderRegistry = (): string => `import type { AnyOutboxWorkerRegistration } from '@app/core-runtime';
 
 ${OUTBOX_WORKER_IMPORT_SLOT_START}
 ${OUTBOX_WORKER_IMPORT_SLOT_END}
@@ -165,9 +162,7 @@ export const outboxWorkers = Object.freeze([
 ]) satisfies readonly AnyOutboxWorkerRegistration[];
 `;
 
-const renderWorkerHostLayer = (
-  consumer: OntosVerticalMetadata,
-): string => `${OUTBOX_WORKER_HOST_HEADER}
+const renderWorkerHostLayer = (consumer: OntosVerticalMetadata): string => `${OUTBOX_WORKER_HOST_HEADER}
 // @ontos-outbox-worker-host-owner ${consumer.moduleId}
 import { Layer } from 'effect';
 import { OutboxWorkerInfrastructureLive } from '@app/core-runtime/outbox/worker';
@@ -185,18 +180,14 @@ export const outboxWorkerLayer = Layer.merge(
 );
 `;
 
-const renderWorkerHostMain = (
-  consumer: OntosVerticalMetadata,
-): string => `${OUTBOX_WORKER_HOST_HEADER}
+const renderWorkerHostMain = (consumer: OntosVerticalMetadata): string => `${OUTBOX_WORKER_HOST_HEADER}
 // @ontos-outbox-worker-host-owner ${consumer.moduleId}
 import { start${toPascalCase(consumer.slug)}OutboxWorker } from '../../scripts/outbox-worker.ts';
 
 start${toPascalCase(consumer.slug)}OutboxWorker();
 `;
 
-const renderWorkerHostScript = (
-  consumer: OntosVerticalMetadata,
-): string => `${OUTBOX_WORKER_HOST_HEADER}
+const renderWorkerHostScript = (consumer: OntosVerticalMetadata): string => `${OUTBOX_WORKER_HOST_HEADER}
 // @ontos-outbox-worker-host-owner ${consumer.moduleId}
 import { Layer } from 'effect';
 import {
@@ -253,9 +244,7 @@ const patchConsumerPackage = (consumer: OntosVerticalMetadata, producer: OntosVe
       dependenciesValue === undefined
         ? {}
         : {
-            ...(yield* trySync(() =>
-              asJsonObject(dependenciesValue, `vertical ${consumer.slug} dependencies`),
-            )),
+            ...(yield* trySync(() => asJsonObject(dependenciesValue, `vertical ${consumer.slug} dependencies`))),
           };
     for (const [name, version] of [
       ['@app/core-runtime', 'workspace:*'],
@@ -304,29 +293,17 @@ const patchConsumerPackage = (consumer: OntosVerticalMetadata, producer: OntosVe
     const withDependencies = yield* trySync(() =>
       patchJsonObjectProperty(consumer.packageContent, [], 'dependencies', sortedDependencies),
     );
-    return yield* trySync(() =>
-      patchJsonObjectProperty(withDependencies, [], 'scripts', sortedScripts),
-    );
+    return yield* trySync(() => patchJsonObjectProperty(withDependencies, [], 'scripts', sortedScripts));
   });
 
-const patchConsumerTsconfig = (
-  content: string,
-  consumer: OntosVerticalMetadata,
-  producer: OntosVerticalMetadata,
-) =>
+const patchConsumerTsconfig = (content: string, consumer: OntosVerticalMetadata, producer: OntosVerticalMetadata) =>
   Effect.gen(function* patchConsumerTsconfigEffect() {
-    const parsed = yield* Schema.decodeUnknownEffect(Schema.fromJsonString(Schema.Json))(
-      content,
-    ).pipe(
-      Effect.mapError((cause) =>
-        scaffoldError(cause, `vertical ${consumer.slug} tsconfig is not valid JSON`),
-      ),
+    const parsed = yield* Schema.decodeUnknownEffect(Schema.fromJsonString(Schema.Json))(content).pipe(
+      Effect.mapError((cause) => scaffoldError(cause, `vertical ${consumer.slug} tsconfig is not valid JSON`)),
     );
     const root = yield* trySync(() => asJsonObject(parsed, `vertical ${consumer.slug} tsconfig`));
     const referencesValue = root['references'];
-    const references = yield* Schema.decodeUnknownEffect(TsconfigReferencesSchema)(
-      referencesValue,
-    ).pipe(
+    const references = yield* Schema.decodeUnknownEffect(TsconfigReferencesSchema)(referencesValue).pipe(
       Effect.mapError((cause) =>
         scaffoldError(cause, `vertical ${consumer.slug} tsconfig references must be an array`),
       ),
@@ -357,11 +334,7 @@ const patchConsumerTsconfig = (
     return yield* trySync(() => patchJsonObjectProperty(content, [], 'references', patched));
   });
 
-const isMatchingOutboxContract = (
-  contract: string,
-  producer: OntosVerticalMetadata,
-  topic: string,
-): boolean =>
+const isMatchingOutboxContract = (contract: string, producer: OntosVerticalMetadata, topic: string): boolean =>
   contract.startsWith(`${OUTBOX_CONTRACT_GENERATOR_HEADER}\n`) &&
   [
     `// @ontos-outbox-producer ${producer.moduleId}\n`,
@@ -372,11 +345,7 @@ const isMatchingOutboxContract = (
   ].every((fragment) => contract.includes(fragment)) &&
   !/(?:src\/actions|create[A-Za-z0-9]+Message|handler|repository|transport)/u.test(contract);
 
-const planRegistryMutation = (
-  registryPath: string,
-  registryContent: Option.Option<string>,
-  worker: string,
-) =>
+const planRegistryMutation = (registryPath: string, registryContent: Option.Option<string>, worker: string) =>
   Effect.gen(function* planRegistryMutationEffect() {
     const workerVariable = `${toCamelCase(worker)}Worker`;
     let registryMutation: Mutation;
@@ -402,8 +371,7 @@ const planRegistryMutation = (
           OUTBOX_WORKER_IMPORT_SLOT_START,
           OUTBOX_WORKER_IMPORT_SLOT_END,
           [`import { ${workerVariable} } from './${worker}.worker.ts';`],
-          (candidate) =>
-            /^import \{ [A-Za-z0-9]+Worker \} from '\.\/[a-z0-9-]+\.worker\.ts';$/u.test(candidate),
+          (candidate) => /^import \{ [A-Za-z0-9]+Worker \} from '\.\/[a-z0-9-]+\.worker\.ts';$/u.test(candidate),
         );
         return insertSortedSlot(
           withImport,
@@ -464,14 +432,7 @@ const planOutboxWorkerScaffoldEffect = (
     ]);
     const topicSlug = yield* trySync(() => topicToSlug(topic));
     const contractPath = yield* trySync(() =>
-      resolveContainedPath(
-        workspaceRoot,
-        'verticals',
-        producer.slug,
-        'shared',
-        'outbox',
-        `${topicSlug}.ts`,
-      ),
+      resolveContainedPath(workspaceRoot, 'verticals', producer.slug, 'shared', 'outbox', `${topicSlug}.ts`),
     );
     const contract = yield* readRequiredFile(contractPath, 'published producer Outbox contract');
     const contractExport = `./outbox/${topicSlug}`;
@@ -499,19 +460,9 @@ const planOutboxWorkerScaffoldEffect = (
     }
 
     const workerPath = yield* trySync(() =>
-      resolveContainedPath(
-        workspaceRoot,
-        'verticals',
-        consumer.slug,
-        'src',
-        'workers',
-        `${worker}.worker.ts`,
-      ),
+      resolveContainedPath(workspaceRoot, 'verticals', consumer.slug, 'src', 'workers', `${worker}.worker.ts`),
     );
-    const workerMutation = yield* createMutationEffect(
-      workerPath,
-      renderWorker(consumer, producer, worker, topic),
-    );
+    const workerMutation = yield* createMutationEffect(workerPath, renderWorker(consumer, producer, worker, topic));
     const registryPath = yield* trySync(() =>
       resolveContainedPath(workspaceRoot, 'verticals', consumer.slug, 'src', 'workers', 'index.ts'),
     );
@@ -520,40 +471,19 @@ const planOutboxWorkerScaffoldEffect = (
     const registryMutation = yield* planRegistryMutation(registryPath, registryContent, worker);
 
     const workerHostLayerPath = yield* trySync(() =>
-      resolveContainedPath(
-        workspaceRoot,
-        'verticals',
-        consumer.slug,
-        'src',
-        'worker-host',
-        'layer.ts',
-      ),
+      resolveContainedPath(workspaceRoot, 'verticals', consumer.slug, 'src', 'worker-host', 'layer.ts'),
     );
     const workerHostMainPath = yield* trySync(() =>
-      resolveContainedPath(
-        workspaceRoot,
-        'verticals',
-        consumer.slug,
-        'src',
-        'worker-host',
-        'main.ts',
-      ),
+      resolveContainedPath(workspaceRoot, 'verticals', consumer.slug, 'src', 'worker-host', 'main.ts'),
     );
     const workerHostScriptPath = yield* trySync(() =>
-      resolveContainedPath(
-        workspaceRoot,
-        'verticals',
-        consumer.slug,
-        'scripts',
-        'outbox-worker.ts',
-      ),
+      resolveContainedPath(workspaceRoot, 'verticals', consumer.slug, 'scripts', 'outbox-worker.ts'),
     );
-    const [workerHostLayerMutation, workerHostMainMutation, workerHostScriptMutation] =
-      yield* Effect.all([
-        planWorkerHostFile(workerHostLayerPath, consumer, renderWorkerHostLayer(consumer)),
-        planWorkerHostFile(workerHostMainPath, consumer, renderWorkerHostMain(consumer)),
-        planWorkerHostFile(workerHostScriptPath, consumer, renderWorkerHostScript(consumer)),
-      ]);
+    const [workerHostLayerMutation, workerHostMainMutation, workerHostScriptMutation] = yield* Effect.all([
+      planWorkerHostFile(workerHostLayerPath, consumer, renderWorkerHostLayer(consumer)),
+      planWorkerHostFile(workerHostMainPath, consumer, renderWorkerHostMain(consumer)),
+      planWorkerHostFile(workerHostScriptPath, consumer, renderWorkerHostScript(consumer)),
+    ]);
 
     const registrationImport = `import { ${workerVariable} } from './src/workers/${worker}.worker.ts';`;
     const nextRegistration = yield* trySync(() =>
@@ -588,14 +518,9 @@ const planOutboxWorkerScaffoldEffect = (
     const tsconfigPath = yield* trySync(() =>
       resolveContainedPath(workspaceRoot, 'verticals', consumer.slug, 'tsconfig.json'),
     );
-    const tsconfigContent = yield* readRequiredFile(
-      tsconfigPath,
-      `vertical ${consumer.slug} tsconfig`,
-    );
+    const tsconfigContent = yield* readRequiredFile(tsconfigPath, `vertical ${consumer.slug} tsconfig`);
     const patchedTsconfig = yield* patchConsumerTsconfig(tsconfigContent, consumer, producer);
-    const tsconfigMutation = yield* trySync(() =>
-      updateMutation(tsconfigPath, tsconfigContent, patchedTsconfig),
-    );
+    const tsconfigMutation = yield* trySync(() => updateMutation(tsconfigPath, tsconfigContent, patchedTsconfig));
     const mutations = [
       workerMutation,
       registryMutation,

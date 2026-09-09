@@ -2,19 +2,26 @@
 // @ontos-action-owner party.registry
 // @ontos-action-slug end-party-official-identifier
 import { createHash } from 'node:crypto';
+
 import { defineAction, defineTenantModuleEntrypoint } from '@app/core-runtime';
 import type { ActionHandlerContext } from '@app/core-runtime';
 import { DateTime, Effect, Match, Schema } from 'effect';
+
+import {
+  EndPartyOfficialIdentifierPayloadSchema,
+  EndPartyOfficialIdentifierResultSchema,
+} from '../../shared/actions/end-party-official-identifier.ts';
+import type {
+  EndPartyOfficialIdentifierPayload,
+  EndPartyOfficialIdentifierResult,
+} from '../../shared/actions/end-party-official-identifier.ts';
+import { OfficialIdentifierClaimConflict } from '../../shared/domain/identifier-contracts.ts';
 import {
   partyIdFromString,
   PartyNotFound,
   PartyPersistenceUnavailable,
 } from '../../shared/domain/identity-contracts.ts';
-import type {
-  PartyNotFoundError,
-  PartyPersistenceUnavailableError,
-} from '../../shared/domain/identity-contracts.ts';
-import { OfficialIdentifierClaimConflict } from '../../shared/domain/identifier-contracts.ts';
+import type { PartyNotFoundError, PartyPersistenceUnavailableError } from '../../shared/domain/identity-contracts.ts';
 import {
   PartyAliasResolutionBrokenChain,
   PartyAliasResolutionCrossTenant,
@@ -27,15 +34,6 @@ import { PartyOfficialIdentifierRefSchema } from '../../shared/resources/party-o
 import { PartyRefSchema } from '../../shared/resources/party.ts';
 import { endOfficialIdentifierRecord } from '../services/party-official-identifier-persistence.service.ts';
 import { createEndPartyOfficialIdentifierPartyRegistryOfficialIdentifierEndedV1OutboxMessage } from './end-party-official-identifier.party-registry-official-identifier-ended-v1.outbox-message.ts';
-
-import {
-  EndPartyOfficialIdentifierPayloadSchema,
-  EndPartyOfficialIdentifierResultSchema,
-} from '../../shared/actions/end-party-official-identifier.ts';
-import type {
-  EndPartyOfficialIdentifierPayload,
-  EndPartyOfficialIdentifierResult,
-} from '../../shared/actions/end-party-official-identifier.ts';
 
 export type { EndPartyOfficialIdentifierPayload } from '../../shared/actions/end-party-official-identifier.ts';
 const ErrorSchema = Schema.Union([
@@ -96,10 +94,7 @@ const handle = Effect.fn('EndPartyOfficialIdentifierAction.handle')(function* en
   );
   return result;
 });
-const makeEndService = (
-  transaction: Parameters<typeof endOfficialIdentifierRecord>[0],
-  tenantId: string,
-) =>
+const makeEndService = (transaction: Parameters<typeof endOfficialIdentifierRecord>[0], tenantId: string) =>
   Effect.fn('endPartyOfficialIdentifierAction.end')(function* endIdentifier(
     payload: EndPartyOfficialIdentifierPayload,
   ) {
@@ -158,7 +153,10 @@ export const endPartyOfficialIdentifierAction = defineAction(
     domainEvents,
     entrypoint: defineTenantModuleEntrypoint({
       access: 'write',
-      authorization: { kind: 'action_execution', provisioning: 'tenant_membership_default' },
+      authorization: {
+        kind: 'action_execution',
+        provisioning: 'tenant_membership_default',
+      },
       entrypointKey: 'party.registry.end-party-official-identifier',
       moduleKey: 'party.registry',
       role: 'action',
@@ -174,5 +172,7 @@ export const endPartyOfficialIdentifierAction = defineAction(
   },
   handle,
   (transaction, scope) =>
-    Effect.succeed({ end: makeEndService(transaction, scope.tenantId) } satisfies Services),
+    Effect.succeed({
+      end: makeEndService(transaction, scope.tenantId),
+    } satisfies Services),
 );

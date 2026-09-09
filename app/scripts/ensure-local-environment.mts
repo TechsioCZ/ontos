@@ -1,17 +1,6 @@
 #!/usr/bin/env node
 import { NodeFileSystem, NodePath } from '@effect/platform-node';
-import {
-  Cause,
-  Config,
-  Effect,
-  Exit,
-  FileSystem,
-  Layer,
-  Option,
-  Path,
-  Redacted,
-  Schema,
-} from 'effect';
+import { Cause, Config, Effect, Exit, FileSystem, Layer, Option, Path, Redacted, Schema } from 'effect';
 
 import { APP_ENV_PATH } from '../packages/core-runtime/src/environment/workspace-environment.ts';
 import { localPublicClientValues, localSpiceDbValues } from './local-environment-values.mts';
@@ -44,7 +33,9 @@ const LocalEnvironmentOverrides = Config.all({
   httpPort: optionalTrimmedString('LOCAL_SPICEDB_HTTP_PORT'),
   preSharedKey: Config.option(
     Config.schema(
-      Schema.RedactedFromValue(Schema.Trim, { label: 'LOCAL_SPICEDB_PRESHARED_KEY' }),
+      Schema.RedactedFromValue(Schema.Trim, {
+        label: 'LOCAL_SPICEDB_PRESHARED_KEY',
+      }),
       'LOCAL_SPICEDB_PRESHARED_KEY',
     ),
   ),
@@ -56,9 +47,7 @@ const nonEmptyValue = (value: Option.Option<string>): string | undefined =>
     Option.getOrUndefined,
   );
 
-const nonEmptyRedactedValue = (
-  value: Option.Option<Redacted.Redacted>,
-): Redacted.Redacted | undefined =>
+const nonEmptyRedactedValue = (value: Option.Option<Redacted.Redacted>): Redacted.Redacted | undefined =>
   value.pipe(
     Option.filter((candidate) => Redacted.value(candidate).length > 0),
     Option.getOrUndefined,
@@ -67,12 +56,8 @@ const nonEmptyRedactedValue = (
 const main = Effect.gen(function* ensureLocalEnvironment() {
   const fileSystem = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
-  const topologyPath = yield* path.fromFileUrl(
-    new URL('../topology/reference-topology.json', import.meta.url),
-  );
-  const overlayPath = yield* path.fromFileUrl(
-    new URL('../topology/local-overlays/development.json', import.meta.url),
-  );
+  const topologyPath = yield* path.fromFileUrl(new URL('../topology/reference-topology.json', import.meta.url));
+  const overlayPath = yield* path.fromFileUrl(new URL('../topology/local-overlays/development.json', import.meta.url));
   const [original, topologySource, overlaySource, overrides] = yield* Effect.all([
     fileSystem.readFileString(APP_ENV_PATH, 'utf-8'),
     fileSystem.readFileString(topologyPath, 'utf-8'),
@@ -120,7 +105,9 @@ const main = Effect.gen(function* ensureLocalEnvironment() {
   }
 
   const temporaryPath = `${APP_ENV_PATH}.tmp-${process.pid}`;
-  yield* fileSystem.writeFileString(temporaryPath, `${updated.join('\n')}\n`, { mode: 0o600 });
+  yield* fileSystem.writeFileString(temporaryPath, `${updated.join('\n')}\n`, {
+    mode: 0o600,
+  });
   yield* fileSystem.rename(temporaryPath, APP_ENV_PATH);
   console.log(`Updated the canonical local environment at ${APP_ENV_PATH}`);
 });

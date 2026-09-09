@@ -1,6 +1,4 @@
 #!/usr/bin/env node
-import { maskNonCode } from './scaffolding/shared.mts';
-import { topLevelSeparators } from './boundary-source-structure.mts';
 import { NodeRuntime, NodeServices } from '@effect/platform-node';
 import { LanguageVariant, SyntaxKind, createScanner } from '@typescript/native/unstable/ast';
 import {
@@ -17,6 +15,7 @@ import {
 } from 'effect';
 import type { PlatformError } from 'effect/PlatformError';
 import { ChildProcess, ChildProcessSpawner } from 'effect/unstable/process';
+
 import {
   gatewayContextAuthorizationEntrypoints,
   shellGatewayContextContract,
@@ -31,6 +30,11 @@ import type {
   InventoryAuthorization,
   ProtectedEntrypointInventoryEntry,
 } from './authorization/protected-entrypoint-inventory.mts';
+import { topLevelSeparators } from './boundary-source-structure.mts';
+import {
+  hasCompleteGeneratedModuleApiSeam,
+  hasGeneratedGovernedServerContract,
+} from './generated-governed-http-boundary.mts';
 import {
   toPascalCase,
   generatedApiGroup,
@@ -44,11 +48,9 @@ import {
   hasGeneratedProviderManifest,
   hasGeneratedProviderReadContract,
   hasGeneratedProviderRegistration,
+  hasGeneratedSourceHeader,
 } from './generated-module-api-boundary.mts';
-import {
-  hasCompleteGeneratedModuleApiSeam,
-  hasGeneratedGovernedServerContract,
-} from './generated-governed-http-boundary.mts';
+import { maskNonCode } from './scaffolding/shared.mts';
 
 const SOURCE_EXTENSIONS = new Set(['.js', '.jsx', '.mjs', '.mts', '.ts', '.tsx']);
 const ACTION_EXTENSION = '.action.ts';
@@ -61,10 +63,7 @@ const sortStrings = (values: readonly string[]): readonly string[] => {
   const sorted: string[] = [];
   for (const value of values) {
     let insertionIndex = 0;
-    while (
-      insertionIndex < sorted.length &&
-      (sorted[insertionIndex]?.localeCompare(value) ?? 0) <= 0
-    ) {
+    while (insertionIndex < sorted.length && (sorted[insertionIndex]?.localeCompare(value) ?? 0) <= 0) {
       insertionIndex += 1;
     }
     sorted.splice(insertionIndex, 0, value);
@@ -78,9 +77,7 @@ const isGeneratedInfrastructureReadinessApi = (file: string, source: string): bo
     return false;
   }
   const endpoints = [
-    ...source.matchAll(
-      /HttpApiEndpoint\.(?<method>get|post)\(\s*'(?<name>[^']+)'\s*,\s*'(?<path>[^']+)'/gu,
-    ),
+    ...source.matchAll(/HttpApiEndpoint\.(?<method>get|post)\(\s*'(?<name>[^']+)'\s*,\s*'(?<path>[^']+)'/gu),
   ].map((match) => {
     const { groups } = match;
     return `${groups?.method}:${groups?.name}:${groups?.path}`;
@@ -94,9 +91,7 @@ const isGeneratedInfrastructureReadinessApi = (file: string, source: string): bo
 
 const SKIPPED_DIRECTORIES = new Set(['.output', 'node_modules']);
 
-const walk = (
-  directory: string,
-): Effect.Effect<readonly string[], PlatformError, FileSystem.FileSystem | Path.Path> =>
+const walk = (directory: string): Effect.Effect<readonly string[], PlatformError, FileSystem.FileSystem | Path.Path> =>
   Effect.gen(function* walkEffect() {
     const fileSystem = yield* FileSystem.FileSystem;
     const path = yield* Path.Path;
@@ -154,22 +149,14 @@ interface ObjectProperties {
   readonly values: ReadonlyMap<string, string>;
 }
 
-const tokenKindAt = (tokens: readonly SourceToken[], index: number): SyntaxKind | undefined =>
-  tokens[index]?.kind;
+const tokenKindAt = (tokens: readonly SourceToken[], index: number): SyntaxKind | undefined => tokens[index]?.kind;
 
-const isPropertyValue = (
-  tokens: readonly SourceToken[],
-  index: number,
-  valueKind: SyntaxKind,
-): boolean =>
+const isPropertyValue = (tokens: readonly SourceToken[], index: number, valueKind: SyntaxKind): boolean =>
   tokenKindAt(tokens, index) === SyntaxKind.Identifier &&
   tokenKindAt(tokens, index + 1) === SyntaxKind.ColonToken &&
   tokenKindAt(tokens, index + 2) === valueKind;
 
-const readObjectStringProperties = (
-  tokens: readonly SourceToken[],
-  openBraceIndex: number,
-): ObjectProperties => {
+const readObjectStringProperties = (tokens: readonly SourceToken[], openBraceIndex: number): ObjectProperties => {
   const values = new Map<string, string>();
   let depth = 0;
   for (let cursor = openBraceIndex; cursor < tokens.length; cursor += 1) {
@@ -191,28 +178,19 @@ const readObjectStringProperties = (
   return { closeBraceIndex: tokens.length, values };
 };
 
-const readContextPermission = (
-  properties: ReadonlyMap<string, string>,
-): InventoryAuthorization | undefined => {
+const readContextPermission = (properties: ReadonlyMap<string, string>): InventoryAuthorization | undefined => {
   const permission = properties.get('permission');
-  return properties.size === 2 && permission !== undefined
-    ? { kind: 'context_permission', permission }
-    : undefined;
+  return properties.size === 2 && permission !== undefined ? { kind: 'context_permission', permission } : undefined;
 };
 
-const readActionExecution = (
-  properties: ReadonlyMap<string, string>,
-): InventoryAuthorization | undefined => {
+const readActionExecution = (properties: ReadonlyMap<string, string>): InventoryAuthorization | undefined => {
   const provisioning = properties.get('provisioning');
-  return properties.size === 2 &&
-    (provisioning === 'explicit' || provisioning === 'tenant_membership_default')
+  return properties.size === 2 && (provisioning === 'explicit' || provisioning === 'tenant_membership_default')
     ? { kind: 'action_execution', provisioning }
     : undefined;
 };
 
-const readCapabilityIssuance = (
-  properties: ReadonlyMap<string, string>,
-): InventoryAuthorization | undefined => {
+const readCapabilityIssuance = (properties: ReadonlyMap<string, string>): InventoryAuthorization | undefined => {
   const credential = properties.get('credential');
   return properties.size === 2 && (credential === 'api_key' || credential === 'session')
     ? { credential, kind: 'capability_issuance' }
@@ -235,10 +213,7 @@ const readAuthorization = (
   );
 };
 
-const rescanTemplateClose = (
-  scanner: ReturnType<typeof createScanner>,
-  depths: number[],
-): SyntaxKind => {
+const rescanTemplateClose = (scanner: ReturnType<typeof createScanner>, depths: number[]): SyntaxKind => {
   const index = depths.length - 1;
   const depth = depths[index] ?? 0;
   if (depth !== 0) {
@@ -301,10 +276,7 @@ const readEntrypointAuthorization = (
 ): InventoryAuthorization | undefined => {
   let authorization: InventoryAuthorization | undefined;
   for (let cursor = start; cursor < end; cursor += 1) {
-    if (
-      tokens[cursor]?.value === 'authorization' &&
-      isPropertyValue(tokens, cursor, SyntaxKind.OpenBraceToken)
-    ) {
+    if (tokens[cursor]?.value === 'authorization' && isPropertyValue(tokens, cursor, SyntaxKind.OpenBraceToken)) {
       authorization = readAuthorization(tokens, cursor + 2);
     }
   }
@@ -365,17 +337,14 @@ const callsIdentifier = (source: string, identifier: string): boolean => {
 };
 
 const containsIdentifier = (source: string, identifiers: ReadonlySet<string>): boolean =>
-  tokenize(source).some(
-    (token) => token.kind === SyntaxKind.Identifier && identifiers.has(token.value),
-  );
+  tokenize(source).some((token) => token.kind === SyntaxKind.Identifier && identifiers.has(token.value));
 
 const isModuleSpecifierPosition = (tokens: readonly SourceToken[], index: number): boolean => {
   const previous = tokenKindAt(tokens, index - 1);
   return (
     previous === SyntaxKind.FromKeyword ||
     previous === SyntaxKind.ImportKeyword ||
-    (previous === SyntaxKind.OpenParenToken &&
-      tokenKindAt(tokens, index - 2) === SyntaxKind.ImportKeyword)
+    (previous === SyntaxKind.OpenParenToken && tokenKindAt(tokens, index - 2) === SyntaxKind.ImportKeyword)
   );
 };
 
@@ -393,10 +362,7 @@ const readImportedModuleSpecifiers = (source: string): readonly string[] => {
   return specifiers;
 };
 
-const authorizationEquals = (
-  left: InventoryAuthorization | undefined,
-  right: InventoryAuthorization,
-): boolean => {
+const authorizationEquals = (left: InventoryAuthorization | undefined, right: InventoryAuthorization): boolean => {
   if (left?.kind !== right.kind) {
     return false;
   }
@@ -412,8 +378,7 @@ const authorizationEquals = (
   return true;
 };
 
-const sourceOrEmpty = (sourceMap: ReadonlyMap<string, string>, file: string): string =>
-  sourceMap.get(file) ?? '';
+const sourceOrEmpty = (sourceMap: ReadonlyMap<string, string>, file: string): string => sourceMap.get(file) ?? '';
 
 const readActionEntrypoints = (
   sourceMap: ReadonlyMap<string, string>,
@@ -425,10 +390,7 @@ const readActionEntrypoints = (
     /^verticals\/party-registry\/src\/actions\/(?<action>(?:archive|unarchive)-(?:organization|person)-engagement)\.action\.ts$/u.exec(
       file,
     )?.groups?.action;
-  if (
-    action === undefined &&
-    !containsIdentifier(source, new Set(['engagementLifecycleRegistration']))
-  ) {
+  if (action === undefined && !containsIdentifier(source, new Set(['engagementLifecycleRegistration']))) {
     return inline;
   }
   if (
@@ -436,10 +398,7 @@ const readActionEntrypoints = (
     inline.length !== 0 ||
     !hasEngagementLifecycleRegistrationContract(
       source,
-      sourceOrEmpty(
-        sourceMap,
-        'verticals/party-registry/src/actions/engagement-lifecycle-registration.ts',
-      ),
+      sourceOrEmpty(sourceMap, 'verticals/party-registry/src/actions/engagement-lifecycle-registration.ts'),
       action,
     )
   ) {
@@ -448,7 +407,10 @@ const readActionEntrypoints = (
   return [
     {
       access: 'write',
-      authorization: { kind: 'action_execution', provisioning: 'tenant_membership_default' },
+      authorization: {
+        kind: 'action_execution',
+        provisioning: 'tenant_membership_default',
+      },
       entrypointKey: `party.registry.${action}`,
       moduleKey: 'party.registry',
       role: 'action',
@@ -480,13 +442,9 @@ const requireExactEntrypoint = (
     return entrypoint;
   });
 
-const requireGeneratedActionEntrypoint = (
-  sourceMap: ReadonlyMap<string, string>,
-  file: string,
-  source: string,
-) =>
+const requireGeneratedActionEntrypoint = (sourceMap: ReadonlyMap<string, string>, file: string, source: string) =>
   Effect.gen(function* requireGeneratedActionEntrypointEffect() {
-    if (!source.startsWith(`${ACTION_HEADER}\n`)) {
+    if (!hasGeneratedSourceHeader(source, `${ACTION_HEADER}\n`)) {
       yield* fail(file, 'Actions must be created and maintained with scaffold:action');
     }
     const owner = /^\/\/ @ontos-action-owner (?<owner>.+)$/mu.exec(source)?.groups?.owner;
@@ -521,15 +479,11 @@ const requireGeneratedActionEntrypoint = (
 
 const requireGeneratedWorkerEntrypoint = (file: string, source: string) =>
   Effect.gen(function* requireGeneratedWorkerEntrypointEffect() {
-    if (!source.startsWith(`${WORKER_HEADER}\n`)) {
-      yield* fail(
-        file,
-        'Outbox Workers must be created and maintained with scaffold:outbox-worker',
-      );
+    if (!hasGeneratedSourceHeader(source, `${WORKER_HEADER}\n`)) {
+      yield* fail(file, 'Outbox Workers must be created and maintained with scaffold:outbox-worker');
     }
     const owner = /^\/\/ @ontos-outbox-worker-owner (?<owner>.+)$/mu.exec(source)?.groups?.owner;
-    const workerKey = /^\/\/ @ontos-outbox-worker-key (?<workerKey>.+)$/mu.exec(source)?.groups
-      ?.workerKey;
+    const workerKey = /^\/\/ @ontos-outbox-worker-key (?<workerKey>.+)$/mu.exec(source)?.groups?.workerKey;
     const descriptorMessage =
       'regenerate this Worker with scaffold:outbox-worker so it has its governed worker/background entrypoint';
     const definedOwner = yield* requireDefined(owner, file, descriptorMessage);
@@ -578,22 +532,16 @@ const requireRouteEntrypoint = (
 const TopologyMetadataSchema = Schema.Struct({
   topology: Schema.optionalKey(
     Schema.Struct({
-      apps: Schema.optionalKey(
-        Schema.Array(Schema.Struct({ id: Schema.String, path: Schema.String })),
-      ),
+      apps: Schema.optionalKey(Schema.Array(Schema.Struct({ id: Schema.String, path: Schema.String }))),
     }),
   ),
 });
-const decodeTopologyMetadata = Schema.decodeUnknownEffect(
-  Schema.fromJsonString(TopologyMetadataSchema),
-);
+const decodeTopologyMetadata = Schema.decodeUnknownEffect(Schema.fromJsonString(TopologyMetadataSchema));
 
 const VerticalPackageJsonSchema = Schema.Struct({
   exports: Schema.optionalKey(Schema.Record(Schema.String, Schema.String)),
 });
-const decodeVerticalPackageJson = Schema.decodeUnknownEffect(
-  Schema.fromJsonString(VerticalPackageJsonSchema),
-);
+const decodeVerticalPackageJson = Schema.decodeUnknownEffect(Schema.fromJsonString(VerticalPackageJsonSchema));
 
 const readTopologyOwners = (root: string) =>
   Effect.gen(function* readTopologyOwnersEffect() {
@@ -602,9 +550,7 @@ const readTopologyOwners = (root: string) =>
     const metadata = yield* fileSystem
       .readFileString(path.join(root, '.modernjs/ultramodern.json'), 'utf-8')
       .pipe(Effect.flatMap(decodeTopologyMetadata));
-    return new Map(
-      (metadata.topology?.apps ?? []).map((app) => [app.path.replaceAll('\\', '/'), app.id]),
-    );
+    return new Map((metadata.topology?.apps ?? []).map((app) => [app.path.replaceAll('\\', '/'), app.id]));
   });
 
 const readSourceRevision = (root: string) =>
@@ -614,15 +560,13 @@ const readSourceRevision = (root: string) =>
       return configured.value;
     }
     const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
-    return yield* spawner
-      .string(ChildProcess.make('git', ['rev-parse', 'HEAD'], { cwd: root }))
-      .pipe(
-        Effect.map((revision) => {
-          const trimmed = revision.trim();
-          return trimmed.length === 0 ? 'working-tree' : trimmed;
-        }),
-        Effect.catch(() => Effect.succeed('working-tree')),
-      );
+    return yield* spawner.string(ChildProcess.make('git', ['rev-parse', 'HEAD'], { cwd: root })).pipe(
+      Effect.map((revision) => {
+        const trimmed = revision.trim();
+        return trimmed.length === 0 ? 'working-tree' : trimmed;
+      }),
+      Effect.catch(() => Effect.succeed('working-tree')),
+    );
   });
 
 interface RouteEntrypointRecord {
@@ -663,14 +607,8 @@ const validateRouteSource = (state: BoundaryCheckState, file: string, source: st
     if (!file.endsWith('/route.meta.ts')) {
       return;
     }
-    const ownerEntry = [...state.owners.entries()].find(([appPath]) =>
-      file.startsWith(`${appPath}/`),
-    );
-    const [, owner] = yield* requireDefined(
-      ownerEntry,
-      file,
-      'route owner is absent from the generated topology',
-    );
+    const ownerEntry = [...state.owners.entries()].find(([appPath]) => file.startsWith(`${appPath}/`));
+    const [, owner] = yield* requireDefined(ownerEntry, file, 'route owner is absent from the generated topology');
     const ownerAppIds = readStringProperties(source, 'ownerAppId');
     if (ownerAppIds.size !== 1 || !ownerAppIds.has(owner)) {
       yield* fail(file, 'route ownerAppId must match the generated topology deployment identity');
@@ -690,12 +628,11 @@ const validateRouteSource = (state: BoundaryCheckState, file: string, source: st
 
 const validateGovernedSource = (file: string, source: string) =>
   Effect.gen(function* validateGovernedSourceEffect() {
-    const category = /\/src\/(?<category>components|search|reports)\//u.exec(`/${file}`)?.groups
-      ?.category;
+    const category = /\/src\/(?<category>components|search|reports)\//u.exec(`/${file}`)?.groups?.category;
     const expectedHeader = governedSourceHeader(category);
     const invalidGovernedSource =
       /\/src\/public-components\//u.test(`/${file}`) ||
-      (expectedHeader !== undefined && !source.startsWith(expectedHeader));
+      (expectedHeader !== undefined && !hasGeneratedSourceHeader(source, expectedHeader));
     if (invalidGovernedSource) {
       yield* fail(
         file,
@@ -704,19 +641,21 @@ const validateGovernedSource = (file: string, source: string) =>
     }
   });
 
+const SEARCH_PROVIDER_KIND = 'search-provider';
+
 interface GeneratedProviderLocation {
   readonly kind: 'report' | 'search';
   readonly name: string;
   readonly vertical: string;
 }
 
-const generatedProviderLocation = (
-  file: string,
-  source: string,
-): GeneratedProviderLocation | undefined => {
+const generatedProviderLocation = (file: string, source: string): GeneratedProviderLocation | undefined => {
   if (
-    !/^\/\/ @generated by OntOS Codesmith Governed Contribution v1\n\/\/ @ontos-contribution-kind (?:report|search-provider)\n/u.test(
-      source,
+    !['report', SEARCH_PROVIDER_KIND].some((kind) =>
+      hasGeneratedSourceHeader(
+        source,
+        `// @generated by OntOS Codesmith Governed Contribution v1\n// @ontos-contribution-kind ${kind}\n`,
+      ),
     )
   ) {
     return undefined;
@@ -750,8 +689,7 @@ const validateGeneratedProviderClient = (
   discoveredProvider?: GeneratedProviderLocation,
 ) =>
   Effect.gen(function* validateGeneratedProviderClientEffect() {
-    const provider =
-      discoveredProvider ?? generatedProviderLocation(file, sourceOrEmpty(sourceMap, file));
+    const provider = discoveredProvider ?? generatedProviderLocation(file, sourceOrEmpty(sourceMap, file));
     if (provider === undefined) {
       return;
     }
@@ -788,24 +726,10 @@ const validateGeneratedProviderClient = (
     const ownerApiValue = `${type}${kindDetails.apiSuffix}Api`;
     const endpointGroup = generatedApiGroup(contractSource, ownerApiValue) ?? '';
     const expectedGroups = new Set([kindDetails.endpointGroup, `${camel}${kindDetails.apiSuffix}`]);
-    const hasCompleteProviderSeam = [
-      contractSource.startsWith(generatedHeader),
-      clientSource.startsWith(generatedHeader),
-      providerSource.startsWith(generatedHeader),
-      serverSource.startsWith(generatedHeader),
-      expectedGroups.has(endpointGroup),
-      hasGeneratedProviderApiContract(contractSource, ownerApiValue, moduleId, name, kind),
-      hasGeneratedProviderReadContract(providerSource, moduleId, name, kind),
-      hasMatchingGeneratedProviderAuthorization(providerSource, manifest, moduleId, name, kind),
-      hasGeneratedGovernedServerContract(
-        serverSource,
-        `${camel}ReadApiLive`,
-        sourceOrEmpty(sourceMap, `${vertical}/shared/api.ts`),
-      ),
-      hasGeneratedOperationGatewayContract(gateway, deploymentAppId),
-      hasGeneratedProviderManifest(manifest, moduleId, name, kind),
-      hasGeneratedProviderRegistration(registration, name, kind),
-      hasGeneratedGovernedClientContract(clientSource, {
+    const providerChecks = {
+      apiContract: hasGeneratedProviderApiContract(contractSource, ownerApiValue, moduleId, name, kind),
+      authorization: hasMatchingGeneratedProviderAuthorization(providerSource, manifest, moduleId, name, kind),
+      clientContract: hasGeneratedGovernedClientContract(clientSource, {
         authorizedOperation: `load${type}ClientWithAuthorization`,
         defaultApiPrefix: `/${deploymentAppId}-api`,
         endpointGroup,
@@ -815,11 +739,28 @@ const validateGeneratedProviderClient = (
         ownerContractImport: `../../shared/apis/${name}-${kind}.ts`,
         publicOperation: `load${type}Client`,
       }),
-    ].every(Boolean);
-    if (!hasCompleteProviderSeam) {
+      clientHeader: hasGeneratedSourceHeader(clientSource, generatedHeader),
+      contractHeader: hasGeneratedSourceHeader(contractSource, generatedHeader),
+      endpointGroup: expectedGroups.has(endpointGroup),
+      manifest: hasGeneratedProviderManifest(manifest, moduleId, name, kind),
+      operationGateway: hasGeneratedOperationGatewayContract(gateway, deploymentAppId),
+      providerHeader: hasGeneratedSourceHeader(providerSource, generatedHeader),
+      readContract: hasGeneratedProviderReadContract(providerSource, moduleId, name, kind),
+      registration: hasGeneratedProviderRegistration(registration, name, kind),
+      serverContract: hasGeneratedGovernedServerContract(
+        serverSource,
+        `${camel}ReadApiLive`,
+        sourceOrEmpty(sourceMap, `${vertical}/shared/api.ts`),
+      ),
+      serverHeader: hasGeneratedSourceHeader(serverSource, generatedHeader),
+    };
+    const failedChecks = Object.entries(providerChecks)
+      .filter(([, valid]) => !valid)
+      .map(([checkName]) => checkName);
+    if (failedChecks.length > 0) {
       yield* fail(
         file,
-        'generated search and report clients require the shared client runtime, owner-local contract, operation gateway, authorization, and correlation metadata',
+        `generated search and report clients require the shared client runtime, owner-local contract, operation gateway, authorization, and correlation metadata (failed: ${failedChecks.join(', ')})`,
       );
     }
   });
@@ -832,8 +773,7 @@ const validatePublishedProviderIdentities = (
   Effect.gen(function* validatePublishedProviderIdentitiesEffect() {
     if (
       verticalPath === undefined ||
-      (file !== `${verticalPath}/vertical.manifest.ts` &&
-        file !== `${verticalPath}/vertical.registration.ts`)
+      (file !== `${verticalPath}/vertical.manifest.ts` && file !== `${verticalPath}/vertical.registration.ts`)
     ) {
       return;
     }
@@ -858,6 +798,7 @@ const validatePublishedProviderIdentities = (
 const validateVerticalApiSource = (state: BoundaryCheckState, file: string, source: string) =>
   Effect.gen(function* validateVerticalApiSourceEffect() {
     const { sourceMap } = state;
+    const diagnostics: string[] = [];
     if (
       file.endsWith('/shared/api.ts') &&
       source.includes('HttpApiEndpoint') &&
@@ -866,18 +807,22 @@ const validateVerticalApiSource = (state: BoundaryCheckState, file: string, sour
         sourceMap,
         file,
         state.owners.get(file.slice(0, -'/shared/api.ts'.length)),
+        diagnostics,
       )
     ) {
       yield* fail(
         file,
-        'module APIs require an approved Codesmith generator, structured api registration, trusted context, and server ModuleEntrypointGateway integration first',
+        `module APIs require an approved Codesmith generator, structured api registration, trusted context, and server ModuleEntrypointGateway integration first (failed: ${diagnostics.join('; ')})`,
       );
     }
     if (
       /\/shared\/apis\/[^/]+\.ts$/u.test(`/${file}`) &&
-      !source.startsWith('// @generated by OntOS Codesmith module-api v1\n') &&
-      !/^\/\/ @generated by OntOS Codesmith Governed Contribution v1\n\/\/ @ontos-contribution-kind (?:report|search-provider)\n/u.test(
-        source,
+      !hasGeneratedSourceHeader(source, '// @generated by OntOS Codesmith module-api v1\n') &&
+      !['report', SEARCH_PROVIDER_KIND].some((kind) =>
+        hasGeneratedSourceHeader(
+          source,
+          `// @generated by OntOS Codesmith Governed Contribution v1\n// @ontos-contribution-kind ${kind}\n`,
+        ),
       )
     ) {
       yield* fail(file, 'module APIs must be created with scaffold:module-api');
@@ -900,16 +845,12 @@ const validateVerticalSource = (
     yield* validateGeneratedProviderClient(
       sourceMap,
       file,
-      (verticalPath === undefined ? undefined : state.owners.get(verticalPath)) ??
-        file.split('/')[1] ??
-        '',
+      (verticalPath === undefined ? undefined : state.owners.get(verticalPath)) ?? file.split('/')[1] ?? '',
     );
     yield* validateVerticalApiSource(state, file, source);
     yield* validateGovernedSource(file, source);
     const privateImport = importedModuleSpecifiers.some((specifier) =>
-      /(?:verticals\/|@app\/).*\/(?:src|vertical\.registration|workers|search|reports|db)(?:\/|$)/u.test(
-        specifier,
-      ),
+      /(?:verticals\/|@app\/).*\/(?:src|vertical\.registration|workers|search|reports|db)(?:\/|$)/u.test(specifier),
     );
     if (privateImport) {
       yield* fail(
@@ -942,15 +883,10 @@ const validatePackageExports = (file: string, source: string) =>
     if (file.startsWith('verticals/') && file.endsWith('package.json')) {
       const packageJson = yield* decodeVerticalPackageJson(source);
       const privateExport = Object.values(packageJson.exports ?? {}).some((target) =>
-        /(?:vertical\.registration|\/src\/(?:handlers|workers|routes|search|reports|db))/u.test(
-          target,
-        ),
+        /(?:vertical\.registration|\/src\/(?:handlers|workers|routes|search|reports|db))/u.test(target),
       );
       if (privateExport) {
-        yield* fail(
-          file,
-          'package exports must not publish private entrypoint implementations or registrations',
-        );
+        yield* fail(file, 'package exports must not publish private entrypoint implementations or registrations');
       }
     }
   });
@@ -992,23 +928,13 @@ const validateCoreExports = (file: string, source: string) =>
     }
   });
 
-const validateGeneralSource = (
-  file: string,
-  source: string,
-  importedModuleSpecifiers: readonly string[],
-) =>
+const validateGeneralSource = (file: string, source: string, importedModuleSpecifiers: readonly string[]) =>
   Effect.gen(function* validateGeneralSourceEffect() {
     if (callsIdentifier(source, 'loadRemote') && file !== APPROVED_REMOTE_LOADER) {
-      yield* fail(
-        file,
-        'raw loadRemote(...) is forbidden outside the approved Shell module-entrypoint loader',
-      );
+      yield* fail(file, 'raw loadRemote(...) is forbidden outside the approved Shell module-entrypoint loader');
     }
     if (importedModuleSpecifiers.some((specifier) => /\/(?:remote|exposes)\//u.test(specifier))) {
-      yield* fail(
-        file,
-        'eager remote implementation imports are forbidden; pass a lazy thunk to the gateway',
-      );
+      yield* fail(file, 'eager remote implementation imports are forbidden; pass a lazy thunk to the gateway');
     }
     yield* validatePrivateHandlerAccess(file, source);
     yield* validatePackageExports(file, source);
@@ -1030,24 +956,14 @@ const appendInventoryEntries = (state: BoundaryCheckState, file: string, source:
       return;
     }
     const deployment =
-      [...state.owners.entries()].find(([appPath]) => file.startsWith(`${appPath}/`))?.[1] ??
-      'shell-super-app';
+      [...state.owners.entries()].find(([appPath]) => file.startsWith(`${appPath}/`))?.[1] ?? 'shell-super-app';
     const entrypoints = file.endsWith(ACTION_EXTENSION)
       ? readActionEntrypoints(state.sourceMap, file, source)
       : readEntrypoints(source);
     for (const entrypoint of entrypoints) {
-      const descriptorMessage =
-        'every runtime entrypoint must declare exactly one valid authorization';
-      const authorization = yield* requireDefined(
-        entrypoint.authorization,
-        file,
-        descriptorMessage,
-      );
-      const entrypointKey = yield* requireDefined(
-        entrypoint.entrypointKey,
-        file,
-        descriptorMessage,
-      );
+      const descriptorMessage = 'every runtime entrypoint must declare exactly one valid authorization';
+      const authorization = yield* requireDefined(entrypoint.authorization, file, descriptorMessage);
+      const entrypointKey = yield* requireDefined(entrypoint.entrypointKey, file, descriptorMessage);
       const owner = yield* requireDefined(entrypoint.moduleKey, file, descriptorMessage);
       const role = yield* requireDefined(entrypoint.role, file, descriptorMessage);
       state.inventoryEntries.push({
@@ -1089,11 +1005,7 @@ const collectRouteSourceKeys = (state: BoundaryCheckState) =>
     return routeSourceKeysByDeployment;
   });
 
-const validateManifestKeys = (
-  state: BoundaryCheckState,
-  normalizedFile: string,
-  sourceKeys: ReadonlySet<string>,
-) =>
+const validateManifestKeys = (state: BoundaryCheckState, normalizedFile: string, sourceKeys: ReadonlySet<string>) =>
   Effect.gen(function* validateManifestKeysEffect() {
     const manifestSource = sourceOrEmpty(state.sourceMap, normalizedFile);
     const manifestKeys = readStringProperties(manifestSource, 'entrypointKey');
@@ -1109,31 +1021,21 @@ const validateManifestKeys = (
     }
   });
 
-const validateRouteManifests = (
-  path: Path.Path,
-  files: readonly string[],
-  root: string,
-  state: BoundaryCheckState,
-) =>
+const validateRouteManifests = (path: Path.Path, files: readonly string[], root: string, state: BoundaryCheckState) =>
   Effect.gen(function* validateRouteManifestsEffect() {
     const routeSourceKeysByDeployment = yield* collectRouteSourceKeys(state);
     const routeManifests = files.filter((file) => file.endsWith('/ultramodern-route-metadata.ts'));
     const seenManifestDeployments = new Set<string>();
     for (const manifestFile of routeManifests) {
       const normalizedFile = relative(path, root, manifestFile);
-      const ownerEntry = [...state.owners.entries()].find(([appPath]) =>
-        normalizedFile.startsWith(`${appPath}/`),
-      );
+      const ownerEntry = [...state.owners.entries()].find(([appPath]) => normalizedFile.startsWith(`${appPath}/`));
       const [, deployment] = yield* requireDefined(
         ownerEntry,
         normalizedFile,
         'generated route manifest owner is absent from topology',
       );
       if (seenManifestDeployments.has(deployment)) {
-        yield* fail(
-          normalizedFile,
-          `deployment ${deployment} has multiple generated route manifests`,
-        );
+        yield* fail(normalizedFile, `deployment ${deployment} has multiple generated route manifests`);
       }
       seenManifestDeployments.add(deployment);
       yield* validateManifestKeys(
@@ -1144,10 +1046,7 @@ const validateRouteManifests = (
     }
     for (const deployment of routeSourceKeysByDeployment.keys()) {
       if (!seenManifestDeployments.has(deployment)) {
-        yield* fail(
-          'generated route manifests',
-          `deployment ${deployment} is missing its route manifest`,
-        );
+        yield* fail('generated route manifests', `deployment ${deployment} is missing its route manifest`);
       }
     }
   });
@@ -1178,10 +1077,8 @@ const validateGatewayRuntime = (shellApiContract: string, shellApiRuntime: strin
     const missingSessionHandler = !hasIssuerHandler(shellApiRuntime, 'issueGatewayContext');
     if (
       !shellApiContract.includes('.add(GatewayContextApiGroup)') ||
-      shellGatewayContextContract.issueGatewayContextPath !==
-        gatewayContextAuthorizationEntrypoints[0]?.path ||
-      shellGatewayContextContract.issueApiKeyGatewayContextPath !==
-        gatewayContextAuthorizationEntrypoints[1]?.path ||
+      shellGatewayContextContract.issueGatewayContextPath !== gatewayContextAuthorizationEntrypoints[0]?.path ||
+      shellGatewayContextContract.issueApiKeyGatewayContextPath !== gatewayContextAuthorizationEntrypoints[1]?.path ||
       missingApiKeyHandler ||
       missingSessionHandler
     ) {
@@ -1208,33 +1105,22 @@ const hasMountedIssuerPath = (
   gatewaySource: string,
   issuer: (typeof gatewayContextAuthorizationEntrypoints)[number],
 ): boolean => {
-  const name =
-    issuer.authorization.credential === 'session'
-      ? 'issueGatewayContext'
-      : 'issueApiKeyGatewayContext';
+  const name = issuer.authorization.credential === 'session' ? 'issueGatewayContext' : 'issueApiKeyGatewayContext';
   const endpointPath = issuer.path.slice(shellGatewayContextContract.apiPrefix.length);
   const group = gatewayDeclaration(gatewaySource, 'GatewayContextApiGroup');
   const shellApi = gatewayDeclaration(source, 'ShellAuthenticationApi');
   return (
-    maskNonCode(source, true).includes(
-      "import { GatewayContextApiGroup } from '@app/shared-contracts'",
-    ) &&
+    maskNonCode(source, true).includes("import { GatewayContextApiGroup } from '@app/shared-contracts'") &&
     shellApi.startsWith('HttpApi.make(') &&
     /\.add\(\s*GatewayContextApiGroup\s*\)/u.test(shellApi) &&
     group.startsWith("HttpApiGroup.make('gatewayContext')") &&
-    new RegExp(
-      `\\.add\\(\\s*HttpApiEndpoint\\.post\\(\\s*'${name}'\\s*,\\s*'${endpointPath}'\\s*,`,
-      'u',
-    ).test(group)
+    new RegExp(`\\.add\\(\\s*HttpApiEndpoint\\.post\\(\\s*'${name}'\\s*,\\s*'${endpointPath}'\\s*,`, 'u').test(group)
   );
 };
 
 const validateGatewayContract = (state: BoundaryCheckState) =>
   Effect.gen(function* validateGatewayContractEffect() {
-    const gatewayContract = sourceOrEmpty(
-      state.sourceMap,
-      'packages/shared-contracts/src/gateway-context.ts',
-    );
+    const gatewayContract = sourceOrEmpty(state.sourceMap, 'packages/shared-contracts/src/gateway-context.ts');
     const shellApiContract = sourceOrEmpty(state.sourceMap, 'apps/shell-super-app/shared/api.ts');
     const shellApiRuntime = sourceOrEmpty(state.sourceMap, 'apps/shell-super-app/api/index.ts');
     yield* validateIssuerCredentials();
@@ -1276,8 +1162,7 @@ const checkModuleEntrypointBoundariesEffect = (root: string) =>
       sourceMap,
     };
     for (const [file, source] of sourcePairs) {
-      const supportedFile =
-        SOURCE_EXTENSIONS.has(path.extname(file)) || file.endsWith('package.json');
+      const supportedFile = SOURCE_EXTENSIONS.has(path.extname(file)) || file.endsWith('package.json');
       const productionFile = !file.includes('/tests/') && !file.includes('/fixtures/');
       if (supportedFile && productionFile) {
         yield* validateProductionSource(state, file, source);
@@ -1290,8 +1175,7 @@ const checkModuleEntrypointBoundariesEffect = (root: string) =>
       Effect.mapError(
         () =>
           new ModuleEntrypointBoundaryError({
-            message:
-              'protected entrypoint inventory: sourceRevision must be a stable revision identifier',
+            message: 'protected entrypoint inventory: sourceRevision must be a stable revision identifier',
           }),
       ),
     );
@@ -1322,8 +1206,8 @@ if (invokedPath !== undefined && invokedPath === import.meta.filename) {
     yield* checkModuleEntrypointBoundariesEffect(root);
     yield* Console.log('Module entrypoint boundaries are valid.');
   });
-  const runnable = Effect.scoped(
-    Layer.build(Layer.effectDiscard(main).pipe(Layer.provide(NodeServices.layer))),
-  ).pipe(Effect.asVoid);
+  const runnable = Effect.scoped(Layer.build(Layer.effectDiscard(main).pipe(Layer.provide(NodeServices.layer)))).pipe(
+    Effect.asVoid,
+  );
   NodeRuntime.runMain(runnable);
 }

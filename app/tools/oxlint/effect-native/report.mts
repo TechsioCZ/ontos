@@ -4,10 +4,8 @@ import plugin from './index.ts';
 import { appRoot, pluginDirectory, runOxlint } from './tests/oxlint.mts';
 
 const args = process.argv.slice(2);
-if (args.some((arg) => arg !== '--json'))
-  throw new Error('Usage: node tools/oxlint/effect-native/report.mts [--json]');
-if (Object.keys(plugin.rules).length === 0)
-  throw new Error('No Effect-native rules are registered.');
+if (args.some((arg) => arg !== '--json')) throw new Error('Usage: node tools/oxlint/effect-native/report.mts [--json]');
+if (Object.keys(plugin.rules).length === 0) throw new Error('No Effect-native rules are registered.');
 
 const scope = ['apps', 'verticals', 'packages', 'scripts'];
 const run = runOxlint(join(pluginDirectory, 'report.config.ts'), scope, appRoot);
@@ -25,8 +23,7 @@ for (const diagnostic of run.diagnostics) {
   const filename = diagnostic.filename.replaceAll('\\', '/');
   row.total++;
   // Test files are tests even when they live under scripts/; categories never overlap.
-  if (/(?:^|\/)(?:tests?|__tests__)\/|\.(?:test|spec|test-d|spec-d)\.[cm]?[jt]sx?$/u.test(filename))
-    row.tests++;
+  if (/(?:^|\/)(?:tests?|__tests__)\/|\.(?:test|spec|test-d|spec-d)\.[cm]?[jt]sx?$/u.test(filename)) row.tests++;
   else if (/(?:^|\/)scripts\//u.test(filename)) row.scripts++;
   else row.source++;
   byFile.set(filename, (byFile.get(filename) ?? 0) + 1);
@@ -39,9 +36,7 @@ const report = {
   totalDiagnostics: run.diagnostics.length,
   filesWithDiagnostics: byFile.size,
   rules: [...byRule].map(([rule, counts]) => ({ rule, ...counts })),
-  files: [...byFile]
-    .sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]))
-    .map(([file, count]) => ({ file, count })),
+  files: [...byFile].sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0])).map(([file, count]) => ({ file, count })),
   diagnostics: run.diagnostics,
 };
 

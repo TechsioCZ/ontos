@@ -1,5 +1,6 @@
-import { createCodesmithGenerator } from '../generator-adapter.mts';
 import { Effect, Predicate } from 'effect';
+
+import { createCodesmithGenerator } from '../generator-adapter.mts';
 import {
   createMutationEffect,
   discoverOntosModuleEffect,
@@ -21,16 +22,10 @@ import type {
 const preserveFileSystemCause = (failure: ScaffoldFailure): ScaffoldFailure => {
   const { cause } = failure;
   const underlying = Predicate.isError(cause) ? cause.cause : undefined;
-  return Predicate.isError(underlying)
-    ? scaffoldFailure(`${failure.message}: ${underlying.message}`, cause)
-    : failure;
+  return Predicate.isError(underlying) ? scaffoldFailure(`${failure.message}: ${underlying.message}`, cause) : failure;
 };
 
-const renderExternalHttpAdapter = (
-  packageName: string,
-  provider: string,
-  operation: string,
-): string => {
+const renderExternalHttpAdapter = (packageName: string, provider: string, operation: string): string => {
   const providerType = toPascalCase(provider);
   const operationType = toPascalCase(operation);
   const adapterType = `${providerType}${operationType}`;
@@ -80,10 +75,7 @@ export const ${adapterType}ServiceLive = Layer.effect(
 };
 
 const planExternalHttpAdapterScaffold = Effect.fn('ExternalHttpAdapterScaffold.plan')(
-  function* planExternalHttpAdapterScaffold(
-    workspaceRoot: string,
-    config: ExternalHttpAdapterScaffoldConfig,
-  ) {
+  function* planExternalHttpAdapterScaffold(workspaceRoot: string, config: ExternalHttpAdapterScaffoldConfig) {
     const provider = yield* tryScaffold('provider name is invalid', () =>
       requireCanonicalSlug(config.provider, 'provider'),
     );

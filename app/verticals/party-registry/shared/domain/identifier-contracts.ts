@@ -1,8 +1,9 @@
-import { AresAppliedEvidenceSchema } from './ares-application.ts';
 import { Schema } from 'effect';
-import { CanonicalUtcTimestampJsonSchema } from './canonical-utc-timestamp.ts';
+
 import { PartyOfficialIdentifierRefSchema } from '../resources/party-official-identifier.ts';
 import { PartyRefSchema } from '../resources/party.ts';
+import { AresAppliedEvidenceSchema } from './ares-application.ts';
+import { CanonicalUtcTimestampJsonSchema } from './canonical-utc-timestamp.ts';
 
 export { OfficialIdentifierClaimConflict } from './identifier-errors/claim-conflict.ts';
 export { OfficialIdentifierInvalid } from './identifier-errors/invalid.ts';
@@ -38,21 +39,14 @@ export const OfficialIdentifierInputSchema = Schema.Struct({
 );
 export type OfficialIdentifierInput = typeof OfficialIdentifierInputSchema.Type;
 
-export interface NormalizedOfficialIdentifier extends Omit<
-  OfficialIdentifierInput,
-  'value' | 'namespace'
-> {
+export interface NormalizedOfficialIdentifier extends Omit<OfficialIdentifierInput, 'value' | 'namespace'> {
   readonly namespace: 'CZ:DIC' | 'CZ:ICO';
   readonly normalizedValue: string;
 }
 
-export const normalizeOfficialIdentifier = (
-  input: OfficialIdentifierInput,
-): NormalizedOfficialIdentifier => {
+export const normalizeOfficialIdentifier = (input: OfficialIdentifierInput): NormalizedOfficialIdentifier => {
   const normalizedValue =
-    input.identifierType === 'ICO'
-      ? input.value.trim().padStart(8, '0')
-      : input.value.trim().toUpperCase();
+    input.identifierType === 'ICO' ? input.value.trim().padStart(8, '0') : input.value.trim().toUpperCase();
   return {
     identifierType: input.identifierType,
     namespace: input.identifierType === 'ICO' ? 'CZ:ICO' : 'CZ:DIC',
@@ -90,9 +84,7 @@ export const OfficialIdentifierAssertionStateSchema = Schema.Literals([
 ]);
 
 export const OfficialIdentifierAssertionSchema = Schema.Struct({
-  externalEvidence: Schema.optionalKey(
-    Schema.toEncoded(Schema.OptionFromNullOr(AresAppliedEvidenceSchema)),
-  ),
+  externalEvidence: Schema.optionalKey(Schema.toEncoded(Schema.OptionFromNullOr(AresAppliedEvidenceSchema))),
   identifierType: OfficialIdentifierTypeSchema,
   namespace: Schema.String,
   normalizedValue: Schema.String,

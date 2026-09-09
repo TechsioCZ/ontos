@@ -1,12 +1,11 @@
-import { expect, it } from 'effect-rstest';
-
 import { mkdtempSync, mkdirSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-
 import { fileURLToPath, pathToFileURL } from 'node:url';
+
 import { NodeServices } from '@effect/platform-node';
 import { Config, Effect, Predicate, Schema } from 'effect';
+import { expect, it } from 'effect-rstest';
 import { ChildProcess } from 'effect/unstable/process';
 
 import { collectToolingProcess } from './tooling-process-fixture.mts';
@@ -56,7 +55,7 @@ const runTypecheck = (fixture: string, commandArguments: readonly string[]) =>
   }).pipe(Effect.scoped, Effect.provide(NodeServices.layer));
 
 it.live(
-  'installed workspace generator keeps build mode as the root typecheck default',
+  'installed generator and consumer both check the full project reference graph',
   Effect.fn(function* testEffect2() {
     const generator = Schema.decodeUnknownSync(WorkspaceScriptPlanModuleSchema)(
       yield* Effect.tryPromise(
@@ -65,18 +64,15 @@ it.live(
             pathToFileURL(
               path.join(
                 workspaceRoot,
-                'node_modules/@modern-js/create/dist/esm-node/ultramodern-workspace/workspace-script-plan.js',
+                'node_modules/@modern-js/ultramodern-create/dist/esm-node/ultramodern-workspace/workspace-script-plan.js',
               ),
             ).href
           ),
       ),
     );
-    const scriptPlan = Schema.decodeUnknownSync(WorkspaceScriptPlanSchema)(
-      generator.createWorkspaceRootScriptPlan([]),
-    );
-    expect(scriptPlan.typecheck).toBe(
-      'node ./scripts/ultramodern-typecheck.mts --build tsconfig.json',
-    );
+    const scriptPlan = Schema.decodeUnknownSync(WorkspaceScriptPlanSchema)(generator.createWorkspaceRootScriptPlan([]));
+    expect(scriptPlan.typecheck).toBe('node ./scripts/ultramodern-typecheck.mts --build tsconfig.json');
+    expect(packageJson.scripts.typecheck).toBe('node ./scripts/ultramodern-typecheck.mts --build tsconfig.json');
   }),
 );
 
@@ -87,11 +83,7 @@ it.live(
       Effect.sync(() => mkdtempSync(path.join(os.tmpdir(), 'ontos-drizzle-declarations-'))),
       (directory) => Effect.sync(() => rmSync(directory, { force: true, recursive: true })),
     );
-    symlinkSync(
-      path.join(workspaceRoot, 'node_modules'),
-      path.join(fixture, 'node_modules'),
-      'dir',
-    );
+    symlinkSync(path.join(workspaceRoot, 'node_modules'), path.join(fixture, 'node_modules'), 'dir');
     writeFileSync(path.join(fixture, packageJsonFile), '{"private":true,"type":"module"}\n');
     writeFileSync(
       path.join(fixture, tsconfigFile),
@@ -129,11 +121,7 @@ it.live(
       (directory) => Effect.sync(() => rmSync(directory, { force: true, recursive: true })),
     );
     mkdirSync(path.join(fixture, 'referenced'));
-    symlinkSync(
-      path.join(workspaceRoot, 'node_modules'),
-      path.join(fixture, 'node_modules'),
-      'dir',
-    );
+    symlinkSync(path.join(workspaceRoot, 'node_modules'), path.join(fixture, 'node_modules'), 'dir');
     writeFileSync(path.join(fixture, packageJsonFile), '{"private":true,"type":"module"}\n');
     writeFileSync(
       path.join(fixture, tsconfigFile),
@@ -162,9 +150,7 @@ it.live(
     const initial = yield* runTypecheck(fixture, args);
     expect(initial.status, initial.stdout + initial.stderr).toBe(0);
     expect(
-      readFileSync(path.join(fixture, 'referenced/output/index.d.ts'), 'utf-8').includes(
-        'referenceGateFixture',
-      ),
+      readFileSync(path.join(fixture, 'referenced/output/index.d.ts'), 'utf-8').includes('referenceGateFixture'),
       'the referenced project must actually be built; a root files:[] project check is a no-op',
     ).toBe(true);
     writeFileSync(sourceFile, 'export const referenceGateFixture: number = "invalid";\n');

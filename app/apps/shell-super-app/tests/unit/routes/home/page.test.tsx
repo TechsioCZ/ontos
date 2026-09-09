@@ -1,11 +1,8 @@
-import { browserRuntime } from '../../../../src/runtime/browser-effect-runtime.ts' with {
-  rstest: 'importActual',
-};
-import { afterEach, beforeEach, expect, rstest, it } from 'effect-rstest';
 import { cleanup, render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { Effect, Schema } from 'effect';
-import type { ReactNode } from 'react';
+import { afterEach, beforeEach, expect, rstest, it } from 'effect-rstest';
+
 import {
   AppIdSchema,
   GroupKeySchema,
@@ -17,22 +14,34 @@ import {
   TenantAuthenticationRequiredProblemSchema,
   TenantIdSchema,
 } from '../../../../shared/api.ts';
-import { HomeView } from '../../../../src/routes/[lang]/page.tsx';
 import type { HomePageModel } from '../../../../src/routes/[lang]/page.data.ts';
+import { HomeView } from '../../../../src/routes/[lang]/page.tsx';
+import { browserRuntime } from '../../../../src/runtime/browser-effect-runtime.ts' with {
+  rstest: 'importActual',
+};
+import type { LocalizedLinkCall, LocalizedLinkDoubleProps } from '../../../support/localized-link-double.tsx';
+import { renderLocalizedLinkDouble } from '../../../support/localized-link-double.tsx';
 
 const {
   browserRunPromiseMock,
+  languageState,
+  localizedLinkCalls,
   navigateMock,
   signOutMock,
   switchLegalEntityMock,
   switchTenantMock,
-} = rstest.hoisted(() => ({
-  browserRunPromiseMock: rstest.fn(),
-  navigateMock: rstest.fn(),
-  signOutMock: rstest.fn(),
-  switchLegalEntityMock: rstest.fn(),
-  switchTenantMock: rstest.fn(),
-}));
+} = rstest.hoisted(() => {
+  const recordedLinkCalls: LocalizedLinkCall[] = [];
+  return {
+    browserRunPromiseMock: rstest.fn(),
+    languageState: { current: 'en' },
+    localizedLinkCalls: recordedLinkCalls,
+    navigateMock: rstest.fn(),
+    signOutMock: rstest.fn(),
+    switchLegalEntityMock: rstest.fn(),
+    switchTenantMock: rstest.fn(),
+  };
+});
 
 const translations = new Map(
   Object.entries({
@@ -70,14 +79,17 @@ const translations = new Map(
 );
 
 rstest.mock('@modern-js/plugin-i18n/runtime', () => ({
-  Link: ({ children, to, ...props }: { children: ReactNode; to: string }) => (
-    <a href={`/en${to === '/' ? '/' : to}`} {...props}>
-      {children}
-    </a>
-  ),
-  useLocalizedLocation: () => ({ alternates: { cs: '/cs/', en: '/en/' }, canonical: '/en/' }),
+  Link: (props: LocalizedLinkDoubleProps) =>
+    renderLocalizedLinkDouble(props, {
+      calls: localizedLinkCalls,
+      language: languageState,
+    }),
+  useLocalizedLocation: () => ({
+    alternates: { cs: '/cs/', en: '/en/' },
+    canonical: '/en/',
+  }),
   useModernI18n: () => ({
-    language: 'en',
+    language: languageState.current,
     t: (key: string) => translations.get(key) ?? key,
   }),
 }));
@@ -97,22 +109,16 @@ rstest.mock('../../../../src/runtime/browser-effect-runtime.ts', () => ({
   browserRuntime: { runPromise: browserRunPromiseMock },
 }));
 
-const principalId = Schema.decodeUnknownSync(PrincipalIdSchema)(
-  '00000000-0000-4000-8000-000000000001',
-);
+const principalId = Schema.decodeUnknownSync(PrincipalIdSchema)('00000000-0000-4000-8000-000000000001');
 const tenantId1 = Schema.decodeUnknownSync(TenantIdSchema)('00000000-0000-4000-8000-000000000101');
 const tenantId2 = Schema.decodeUnknownSync(TenantIdSchema)('00000000-0000-4000-8000-000000000102');
-const legalEntityId1 = Schema.decodeUnknownSync(LegalEntityIdSchema)(
-  '00000000-0000-4000-8000-000000000201',
-);
-const legalEntityId2 = Schema.decodeUnknownSync(LegalEntityIdSchema)(
-  '00000000-0000-4000-8000-000000000202',
-);
+const legalEntityId1 = Schema.decodeUnknownSync(LegalEntityIdSchema)('00000000-0000-4000-8000-000000000201');
+const legalEntityId2 = Schema.decodeUnknownSync(LegalEntityIdSchema)('00000000-0000-4000-8000-000000000202');
 const inventoryAppId = Schema.decodeUnknownSync(AppIdSchema)('inventory-app');
 const navigationGroupKey = Schema.decodeUnknownSync(GroupKeySchema)('shell.navigation.modules');
 const inventoryModuleId = Schema.decodeUnknownSync(ModuleIdSchema)('inventory.stock');
 
-const authenticatedModel = (): HomePageModel => ({
+const authenticatedModel = (options?: { readonly moduleEnabled?: boolean }): HomePageModel => ({
   contextState: 'authenticated',
   identity: {
     displayName: 'Ada Lovelace',
@@ -131,7 +137,7 @@ const authenticatedModel = (): HomePageModel => ({
     items: [
       {
         appId: inventoryAppId,
-        enabled: true,
+        enabled: options?.moduleEnabled ?? true,
         groupKey: navigationGroupKey,
         href: '/modules/inventory.stock',
         label: 'Inventory',
@@ -166,6 +172,8 @@ beforeEach(() => {
 
 afterEach(() => {
   cleanup();
+  languageState.current = 'en';
+  localizedLinkCalls.length = 0;
   rstest.clearAllMocks();
 });
 
@@ -175,11 +183,37 @@ it('anonymous home exposes only the localized login action', () => {
   expect(screen.queryByRole('banner')).toBeNull();
 });
 
+it('the anonymous login action hands a canonical target to the framework link', () => {
+  render(<HomeView initialModel={{ state: 'anonymous' }} />);
+  const loginCall = localizedLinkCalls.find((call) => call.to === '/login');
+  expect(loginCall).toBeDefined();
+  expect(loginCall?.params).toBeUndefined();
+  expect(loginCall?.href).toBeUndefined();
+});
+
+it('the anonymous login action resolves Czech from the same canonical target', () => {
+  languageState.current = 'cs';
+  render(<HomeView initialModel={{ state: 'anonymous' }} />);
+  expect(localizedLinkCalls.map((call) => call.to)).toContain('/login');
+  expect(screen.getByRole('link', { name: 'Login' }).getAttribute('href')).toBe('/cs/login');
+});
+
+it('the unavailable dashboard exposes no navigable affordance', () => {
+  render(<HomeView initialModel={{ state: 'unavailable' }} />);
+  expect(screen.queryAllByRole('link')).toHaveLength(0);
+  expect(localizedLinkCalls).toHaveLength(0);
+});
+
+it('a disabled module affordance stays non-interactive text', () => {
+  render(<HomeView initialModel={authenticatedModel({ moduleEnabled: false })} />);
+  expect(screen.queryByRole('link', { name: 'Inventory' })).toBeNull();
+  expect(screen.getByText('Inventory')).toBeTruthy();
+  expect(localizedLinkCalls.map((call) => call.to)).not.toContain('/modules/inventory.stock');
+});
+
 it('authenticated home renders server-composed navigation and selected legal context', () => {
   render(<HomeView initialModel={authenticatedModel()} />);
-  expect(screen.getByRole('link', { name: 'Inventory' }).getAttribute('href')).toBe(
-    '/en/modules/inventory.stock',
-  );
+  expect(screen.getByRole('link', { name: 'Inventory' }).getAttribute('href')).toBe('/en/modules/inventory.stock');
   expect(screen.getByText('Read only')).toBeTruthy();
   expect(screen.getByText(legalEntityId1)).toBeTruthy();
   expect(screen.queryByText('inventory.stock')).toBeNull();
@@ -189,20 +223,19 @@ it.live('successful tenant switch performs a full document reload', () =>
   Effect.gen(function* successfulTenantSwitchPerformsAFull() {
     const user = userEvent.setup();
     render(<HomeView initialModel={authenticatedModel()} />);
-    yield* Effect.promise(() =>
-      user.click(screen.getByRole('combobox', { name: 'Current tenant' })),
-    );
-    const tenantOption = yield* Effect.promise(() =>
-      screen.findByRole('option', { name: 'Zeta tenant' }),
-    );
+    yield* Effect.promise(() => user.click(screen.getByRole('combobox', { name: 'Current tenant' })));
+    const tenantOption = yield* Effect.promise(() => screen.findByRole('option', { name: 'Zeta tenant' }));
     yield* Effect.promise(() => user.click(tenantOption));
     yield* Effect.promise(() =>
-      waitFor(() =>
-        expect(switchTenantMock).toHaveBeenCalledWith({ tenantId: tenantId2 }, { locale: 'en' }),
-      ),
+      waitFor(() => expect(switchTenantMock).toHaveBeenCalledWith({ tenantId: tenantId2 }, { locale: 'en' })),
     );
     yield* Effect.promise(() =>
-      waitFor(() => expect(navigateMock).toHaveBeenCalledWith({ reloadDocument: true, to: '.' })),
+      waitFor(() =>
+        expect(navigateMock).toHaveBeenCalledWith({
+          reloadDocument: true,
+          to: '.',
+        }),
+      ),
     );
   }),
 );
@@ -211,23 +244,21 @@ it.live('successful legal-entity switch performs a full document reload', () =>
   Effect.gen(function* successfulLegalEntitySwitchPerformsA() {
     const user = userEvent.setup();
     render(<HomeView initialModel={authenticatedModel()} />);
-    yield* Effect.promise(() =>
-      user.click(screen.getByRole('combobox', { name: 'Current legal entity' })),
-    );
-    const legalEntityOption = yield* Effect.promise(() =>
-      screen.findByRole('option', { name: 'Beta company' }),
-    );
+    yield* Effect.promise(() => user.click(screen.getByRole('combobox', { name: 'Current legal entity' })));
+    const legalEntityOption = yield* Effect.promise(() => screen.findByRole('option', { name: 'Beta company' }));
     yield* Effect.promise(() => user.click(legalEntityOption));
     yield* Effect.promise(() =>
       waitFor(() =>
-        expect(switchLegalEntityMock).toHaveBeenCalledWith(
-          { legalEntityId: legalEntityId2 },
-          { locale: 'en' },
-        ),
+        expect(switchLegalEntityMock).toHaveBeenCalledWith({ legalEntityId: legalEntityId2 }, { locale: 'en' }),
       ),
     );
     yield* Effect.promise(() =>
-      waitFor(() => expect(navigateMock).toHaveBeenCalledWith({ reloadDocument: true, to: '.' })),
+      waitFor(() =>
+        expect(navigateMock).toHaveBeenCalledWith({
+          reloadDocument: true,
+          to: '.',
+        }),
+      ),
     );
   }),
 );
@@ -236,9 +267,7 @@ it.live('search submission navigates to the localized Shell search route', () =>
   Effect.gen(function* searchSubmissionNavigatesToTheLocalized() {
     const user = userEvent.setup();
     render(<HomeView initialModel={authenticatedModel()} />);
-    yield* Effect.promise(() =>
-      user.type(screen.getByLabelText('Search this legal entity'), 'Unit 1'),
-    );
+    yield* Effect.promise(() => user.type(screen.getByLabelText('Search this legal entity'), 'Unit 1'));
     yield* Effect.promise(() => user.click(screen.getByRole('button', { name: 'Search' })));
     expect(navigateMock).toHaveBeenCalledWith({ to: '/en/search?q=Unit%201' });
   }),
@@ -249,21 +278,24 @@ it.live('logout clears the authenticated composition together', () =>
     const user = userEvent.setup();
     render(<HomeView initialModel={authenticatedModel()} />);
     yield* Effect.promise(() => user.click(screen.getByRole('button', { name: 'Ada Lovelace' })));
-    const logoutItem = yield* Effect.promise(() =>
-      screen.findByRole('menuitem', { name: 'Logout' }),
-    );
+    const logoutItem = yield* Effect.promise(() => screen.findByRole('menuitem', { name: 'Logout' }));
+    // Happy DOM has no layout. Give pointer movement distinct coordinates so
+    // the menu can distinguish it from virtual focus after a prior selection.
+    yield* Effect.promise(() => user.pointer({ coords: { x: 10, y: 10 }, target: logoutItem }));
     yield* Effect.promise(() => user.click(logoutItem));
+    yield* Effect.promise(() => waitFor(() => expect(signOutMock).toHaveBeenCalledWith({ locale: 'en' })));
     yield* Effect.promise(() =>
       waitFor(() =>
-        expect(navigateMock).toHaveBeenCalledWith({ reloadDocument: true, to: '/en/login' }),
+        expect(navigateMock).toHaveBeenCalledWith({
+          reloadDocument: true,
+          to: '/en/login',
+        }),
       ),
     );
   }),
 );
 
-const tenantAuthenticationRequired = Schema.decodeUnknownSync(
-  TenantAuthenticationRequiredProblemSchema,
-)({
+const tenantAuthenticationRequired = Schema.decodeUnknownSync(TenantAuthenticationRequiredProblemSchema)({
   _tag: 'TenantAuthenticationRequiredProblem',
   detail: 'The tenant session expired.',
   status: 401,
@@ -277,9 +309,7 @@ const tenantAccessForbidden = Schema.decodeUnknownSync(TenantAccessForbiddenProb
   title: 'Tenant access forbidden',
   type: 'https://ontos.dev/problems/tenant-access-forbidden',
 });
-const legalEntityAccessForbidden = Schema.decodeUnknownSync(
-  LegalEntityAccessForbiddenProblemSchema,
-)({
+const legalEntityAccessForbidden = Schema.decodeUnknownSync(LegalEntityAccessForbiddenProblemSchema)({
   _tag: 'LegalEntityAccessForbiddenProblem',
   detail: 'The principal cannot use this legal entity.',
   status: 403,
@@ -360,23 +390,20 @@ it.live.each(switchFailureCases)(
       if (reloads) {
         yield* Effect.promise(() =>
           waitFor(() =>
-            expect(navigateMock).toHaveBeenCalledWith({ reloadDocument: true, to: '.' }),
+            expect(navigateMock).toHaveBeenCalledWith({
+              reloadDocument: true,
+              to: '.',
+            }),
           ),
         );
-        yield* Effect.promise(() =>
-          waitFor(() => expect(screen.queryByText(pendingText)).toBeNull()),
-        );
+        yield* Effect.promise(() => waitFor(() => expect(screen.queryByText(pendingText)).toBeNull()));
         expect(screen.queryByText(failedText)).toBeNull();
       } else {
-        yield* Effect.promise(() =>
-          waitFor(() => expect(screen.getByText(failedText)).toBeTruthy()),
-        );
+        yield* Effect.promise(() => waitFor(() => expect(screen.getByText(failedText)).toBeTruthy()));
         expect(navigateMock).not.toHaveBeenCalled();
         expect(screen.queryByText(pendingText)).toBeNull();
       }
 
-      expect(screen.getByRole('combobox', { name: comboboxName }).hasAttribute('disabled')).toBe(
-        false,
-      );
+      expect(screen.getByRole('combobox', { name: comboboxName }).hasAttribute('disabled')).toBe(false);
     }),
 );

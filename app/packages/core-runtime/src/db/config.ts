@@ -1,4 +1,5 @@
 import { Config, ConfigProvider, Context, Effect, Layer, Redacted, Schema } from 'effect';
+
 import { loadDotEnvProvider } from '../environment/dotenv-provider.ts';
 import { APP_ENV_PATH } from '../environment/workspace-environment.ts';
 import { DatabaseConfigError } from './config-error.ts';
@@ -77,15 +78,12 @@ const hasValidDatabaseFields = ({
 const readDatabaseUrl = Effect.fn('Config.readDatabaseUrl')(function* readDatabaseUrlEffect(
   options: ReadDatabaseUrlOptions,
 ) {
-  const connectionString = yield* Config.schema(
-    Schema.Redacted(requiredDatabaseUrlSchema),
-    options.configKey,
-  )
+  const connectionString = yield* Config.schema(Schema.Redacted(requiredDatabaseUrlSchema), options.configKey)
     .parse(options.provider)
     .pipe(Effect.mapError((error) => configFailure(options.requiredReason, error)));
-  const parsed = yield* Schema.decodeEffect(Schema.URLFromString)(
-    Redacted.value(connectionString),
-  ).pipe(Effect.mapError((error) => configFailure(INVALID_DATABASE_URL_REASON, error)));
+  const parsed = yield* Schema.decodeEffect(Schema.URLFromString)(Redacted.value(connectionString)).pipe(
+    Effect.mapError((error) => configFailure(INVALID_DATABASE_URL_REASON, error)),
+  );
 
   if (parsed.protocol !== 'postgres:' && parsed.protocol !== 'postgresql:') {
     return yield* configFailure(INVALID_DATABASE_URL_REASON);
@@ -101,8 +99,7 @@ const readDatabaseUrl = Effect.fn('Config.readDatabaseUrl')(function* readDataba
   const host = parsed.hostname;
   const port = parsed.port.length > 0 ? Math.trunc(Number(parsed.port)) : 5432;
   const queryUser = parsed.searchParams.getAll('user').at(-1);
-  const user =
-    queryUser === undefined || queryUser.length === 0 ? decoded.authorityUser : queryUser;
+  const user = queryUser === undefined || queryUser.length === 0 ? decoded.authorityUser : queryUser;
 
   if (!hasValidDatabaseFields({ database: decoded.database, host, port, user })) {
     return yield* configFailure(INVALID_DATABASE_URL_REASON);
@@ -143,9 +140,7 @@ const parseDatabaseConnectionPairWith = Effect.fn('Config.readDatabaseConnection
       admin.user === runtime.user ||
       runtime.user === 'postgres'
     ) {
-      return yield* configFailure(
-        'Administrative and runtime PostgreSQL identities must be distinct',
-      );
+      return yield* configFailure('Administrative and runtime PostgreSQL identities must be distinct');
     }
 
     return Object.freeze({ admin, runtime });
@@ -160,9 +155,7 @@ export const parseDatabaseConfig = (
 export const parseDatabaseConnectionPair = (
   environment: DatabaseEnvironment,
 ): Effect.Effect<DatabaseConnectionPair, DatabaseConfigError> =>
-  parseDatabaseConnectionPairWith(
-    ConfigProvider.fromUnknown(environment, { preserveEmptyStrings: true }),
-  );
+  parseDatabaseConnectionPairWith(ConfigProvider.fromUnknown(environment, { preserveEmptyStrings: true }));
 
 const loadWithProvider = <Value>(
   parse: (provider: ConfigProvider.ConfigProvider) => Effect.Effect<Value, DatabaseConfigError>,
@@ -178,16 +171,13 @@ const loadWithProvider = <Value>(
 
   return loadDotEnvProvider(envPath, configFailure).pipe(
     Effect.withSpan('Config.loadDotEnvProvider'),
-    Effect.flatMap((fileProvider) =>
-      parse(ConfigProvider.orElse(environmentProvider, fileProvider)),
-    ),
+    Effect.flatMap((fileProvider) => parse(ConfigProvider.orElse(environmentProvider, fileProvider))),
   );
 };
 
 export const loadDatabaseConfig = (
   options: LoadDatabaseConfigOptions = {},
-): Effect.Effect<DatabaseConfigValue, DatabaseConfigError> =>
-  loadWithProvider(parseDatabaseConfigWith, options);
+): Effect.Effect<DatabaseConfigValue, DatabaseConfigError> => loadWithProvider(parseDatabaseConfigWith, options);
 
 export const loadDatabaseConnectionPair = (
   options: LoadDatabaseConfigOptions = {},

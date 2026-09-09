@@ -14,8 +14,7 @@ export const makeInstalledCatalogFixture = (
         status: 'available' as const,
       })),
     ),
-    getByDeploymentAppId: (appId: string) =>
-      contracts.find(({ deployment }) => deployment.appId === appId),
+    getByDeploymentAppId: (appId: string) => contracts.find(({ deployment }) => deployment.appId === appId),
     getByModuleId: (moduleId: string) => byModuleId.get(moduleId),
     moduleIds: Object.freeze(contracts.map(({ manifest }) => manifest.module.id)),
     outboxSubscriptions: Object.freeze([]),

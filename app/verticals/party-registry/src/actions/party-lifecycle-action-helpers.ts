@@ -1,6 +1,8 @@
 import { createHash } from 'node:crypto';
+
 import type { ActionHandlerContext } from '@app/core-runtime';
 import { Effect, Match, Schema } from 'effect';
+
 import {
   partyIdFromString,
   PartyLifecycleConflict,
@@ -14,7 +16,7 @@ type PersistedParty = typeof PartySchema.Type | typeof PartySchema.Encoded;
 export const decodeParty = (party: PersistedParty) =>
   Schema.is(PartySchema)(party)
     ? Effect.succeed(party)
-    : Schema.decodeUnknownEffect(PartySchema)(party).pipe(
+    : Schema.decodeEffect(PartySchema)(party).pipe(
         Effect.mapError((cause) =>
           Object.defineProperty(
             new PartyPersistenceUnavailable({
@@ -54,9 +56,7 @@ export const recordPartyInvariantAccess = (
 ) =>
   context.recordDataAccess({
     accessKind: 'read',
-    queryHash: createHash('sha256')
-      .update(`${queryPrefix}:${party.partyRef.resourceId}`)
-      .digest('hex'),
+    queryHash: createHash('sha256').update(`${queryPrefix}:${party.partyRef.resourceId}`).digest('hex'),
     resultCount: 1,
     servingModuleKey: 'party.registry',
     targetModuleKey: 'party.registry',

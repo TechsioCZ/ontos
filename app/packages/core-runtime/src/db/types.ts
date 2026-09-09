@@ -1,4 +1,5 @@
 import type { EffectPgDatabase } from 'drizzle-orm/effect-postgres';
+
 import type { coreRelations } from './schema.ts';
 
 export type CoreDatabaseExecutor = EffectPgDatabase<typeof coreRelations>;

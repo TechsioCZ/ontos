@@ -86,25 +86,19 @@
  * suggests.
  */
 import { defineRule } from '@oxlint/plugins';
-
 import type { ESTree } from '@oxlint/plugins';
 
-import { collectEffectBindings } from '../shared/effect-imports.ts';
-import { isTestFile, scopePath, matchesGlobs } from '../shared/paths.ts';
-import { compile, stringList } from '../shared/options.ts';
 import { parentOf, unwrapNode } from '../shared/ast.ts';
 import { resolveVariable, resolvesToImport as importedReference } from '../shared/bindings.ts';
+import { collectEffectBindings } from '../shared/effect-imports.ts';
 import { collectRootNamespaces, collectNamedImports, importedName } from '../shared/imports.ts';
+import { compile, stringList } from '../shared/options.ts';
+import { isTestFile, scopePath, matchesGlobs } from '../shared/paths.ts';
 
 type AnyNode = ESTree.Node;
 type IdentifierNode = Extract<AnyNode, { type: 'Identifier' }>;
 
-const DEFAULT_INCLUDE_PATHS: readonly string[] = [
-  'apps/**',
-  'verticals/**',
-  'packages/**',
-  'scripts/**',
-];
+const DEFAULT_INCLUDE_PATHS: readonly string[] = ['apps/**', 'verticals/**', 'packages/**', 'scripts/**'];
 const DEFAULT_ALLOW_PATHS: readonly string[] = [];
 
 /**
@@ -236,8 +230,7 @@ function unwrap(node: AnyNode): AnyNode {
 function staticString(node: AnyNode): string | null {
   const value = unwrap(node);
   if (value.type === 'Literal' && typeof value.value === 'string') return value.value;
-  if (value.type === 'TemplateLiteral' && value.expressions.length === 0)
-    return value.quasis[0]?.value.cooked ?? null;
+  if (value.type === 'TemplateLiteral' && value.expressions.length === 0) return value.quasis[0]?.value.cooked ?? null;
   return null;
 }
 function memberName(node: ESTree.MemberExpression): string | null {
@@ -254,9 +247,7 @@ function typeNameOf(node: AnyNode): string | null {
   if (node.type === 'Identifier') return (node as { name: string }).name;
   if (node.type === 'TSQualifiedName') {
     const right = (node as { right?: AnyNode }).right;
-    return right !== undefined && right.type === 'Identifier'
-      ? (right as { name: string }).name
-      : null;
+    return right !== undefined && right.type === 'Identifier' ? (right as { name: string }).name : null;
   }
   return null;
 }
@@ -268,10 +259,7 @@ function unwrapType(node: AnyNode): AnyNode {
       current = (current as { typeAnnotation: AnyNode }).typeAnnotation;
       continue;
     }
-    if (
-      current.type === 'TSTypeOperator' &&
-      (current as { operator?: string }).operator === 'readonly'
-    ) {
+    if (current.type === 'TSTypeOperator' && (current as { operator?: string }).operator === 'readonly') {
       current = (current as { typeAnnotation: AnyNode }).typeAnnotation;
       continue;
     }
@@ -283,11 +271,7 @@ function unwrapType(node: AnyNode): AnyNode {
 /** Nullable and literal alternatives do not themselves establish a raw string payload. */
 function isNeutralStringAlternative(type: AnyNode): boolean {
   if (type.type === 'TSNullKeyword' || type.type === 'TSUndefinedKeyword') return true;
-  return (
-    type.type === 'TSLiteralType' &&
-    type.literal.type === 'Literal' &&
-    typeof type.literal.value === 'string'
-  );
+  return type.type === 'TSLiteralType' && type.literal.type === 'Literal' && typeof type.literal.value === 'string';
 }
 
 function isStringUnion(types: readonly AnyNode[], depth: number): boolean {
@@ -368,14 +352,12 @@ export const rule = defineRule({
           includePaths: {
             type: 'array',
             items: { type: 'string' },
-            description:
-              'Globs the rule applies to (default: apps/**, verticals/**, packages/**, scripts/**).',
+            description: 'Globs the rule applies to (default: apps/**, verticals/**, packages/**, scripts/**).',
           },
           reexportModules: {
             type: 'array',
             items: { type: 'string' },
-            description:
-              'Modules that re-export Effect namespaces verbatim (Modern.js BFF barrels).',
+            description: 'Modules that re-export Effect namespaces verbatim (Modern.js BFF barrels).',
           },
           secretConfigKeys: {
             type: 'string',
@@ -383,8 +365,7 @@ export const rule = defineRule({
           },
           secretNames: {
             type: 'string',
-            description:
-              'Regex (case-insensitive) matched against field/parameter/Schema-field names.',
+            description: 'Regex (case-insensitive) matched against field/parameter/Schema-field names.',
           },
         },
       },
@@ -414,8 +395,7 @@ export const rule = defineRule({
 
     const isSecretName = (name: string): boolean => options.secretNames.test(name);
 
-    const lookupVariable = (identifier: AnyNode, name: string) =>
-      resolveVariable(context, name, identifier);
+    const lookupVariable = (identifier: AnyNode, name: string) => resolveVariable(context, name, identifier);
 
     const resolvesToImport = (node: AnyNode): boolean => importedReference(context, node);
 
@@ -448,10 +428,7 @@ export const rule = defineRule({
       return { specifier, declaration };
     };
 
-    const directMember = (
-      node: IdentifierNode,
-      depth: number,
-    ): { namespace: string; member: string } | null => {
+    const directMember = (node: IdentifierNode, depth: number): { namespace: string; member: string } | null => {
       const initializer = constantInitializer(node);
       if (initializer) return resolveMember(initializer, depth + 1);
       const binding = valueImport(node);
@@ -469,21 +446,12 @@ export const rule = defineRule({
     const barrelMember = (object: ESTree.MemberExpression, member: string) => {
       const namespace = memberName(object);
       const root = unwrap(object.object as AnyNode);
-      if (
-        !namespace ||
-        root.type !== 'Identifier' ||
-        !barrels.has(root.name) ||
-        !resolvesToImport(root)
-      )
-        return null;
+      if (!namespace || root.type !== 'Identifier' || !barrels.has(root.name) || !resolvesToImport(root)) return null;
       return { namespace, member };
     };
 
     /** Exact imports and bounded const aliases, without broadening namespace alias support. */
-    const resolveMember = (
-      input: AnyNode,
-      depth = 0,
-    ): { namespace: string; member: string } | null => {
+    const resolveMember = (input: AnyNode, depth = 0): { namespace: string; member: string } | null => {
       if (depth > 12) return null;
       const node = unwrap(input);
       if (node.type === 'Identifier') return directMember(node, depth);
@@ -506,13 +474,8 @@ export const rule = defineRule({
     };
     const isRedaction = (node: AnyNode): boolean => {
       const expression = unwrap(node);
-      const member = resolveMember(
-        expression.type === 'CallExpression' ? (expression.callee as AnyNode) : expression,
-      );
-      return (
-        member?.namespace === 'Schema' &&
-        (member.member === 'Redacted' || member.member === 'RedactedFromSelf')
-      );
+      const member = resolveMember(expression.type === 'CallExpression' ? (expression.callee as AnyNode) : expression);
+      return member?.namespace === 'Schema' && (member.member === 'Redacted' || member.member === 'RedactedFromSelf');
     };
 
     const isPipeIdentifier = (node: AnyNode): boolean => {
@@ -523,18 +486,12 @@ export const rule = defineRule({
 
     const isSchemaMember = (node: AnyNode, members: ReadonlySet<string>): boolean => {
       const resolved = resolveMember(node);
-      return (
-        resolved !== null && resolved.namespace === SCHEMA_NAMESPACE && members.has(resolved.member)
-      );
+      return resolved !== null && resolved.namespace === SCHEMA_NAMESPACE && members.has(resolved.member);
     };
 
     const stringSchemaArgument = (call: ESTree.CallExpression, depth: number): boolean => {
       const argument = call.arguments[0];
-      return (
-        argument !== undefined &&
-        argument.type !== 'SpreadElement' &&
-        isStringSchema(argument, depth + 1)
-      );
+      return argument !== undefined && argument.type !== 'SpreadElement' && isStringSchema(argument, depth + 1);
     };
 
     const isStringSchemaChain = (
@@ -544,8 +501,7 @@ export const rule = defineRule({
     ): boolean | null => {
       const method = memberName(callee);
       if (method === null || !SCHEMA_CHAIN_METHODS.has(method)) return null;
-      if (method === 'pipe' && call.arguments.some((argument) => isRedaction(argument as AnyNode)))
-        return false;
+      if (method === 'pipe' && call.arguments.some((argument) => isRedaction(argument as AnyNode))) return false;
       return isStringSchema(callee.object as AnyNode, depth + 1);
     };
 
@@ -620,11 +576,9 @@ export const rule = defineRule({
       Program(node) {
         namespaces = new Map(collectEffectBindings(node).namespaces);
         const isReexport = (source: string) => matchesGlobs(source, options.reexportModules);
-        barrels = collectRootNamespaces(
-          node,
-          (source) => source === EFFECT_ROOT_MODULE || isReexport(source),
-          { valueOnly: true },
-        );
+        barrels = collectRootNamespaces(node, (source) => source === EFFECT_ROOT_MODULE || isReexport(source), {
+          valueOnly: true,
+        });
         for (const [local, imported] of collectNamedImports(node, isReexport, undefined, {
           valueOnly: true,
         })) {
@@ -680,7 +634,10 @@ export const rule = defineRule({
         if (argument === undefined) return;
         const key = configKey(argument);
         if (typeof key !== 'string' || !options.secretConfigKeys.test(key)) return;
-        report(node as unknown as AnyNode, 'secretConfigKey', { member: called.member, name: key });
+        report(node as unknown as AnyNode, 'secretConfigKey', {
+          member: called.member,
+          name: key,
+        });
       },
     };
   },

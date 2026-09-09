@@ -1,10 +1,19 @@
-import { testRestrictedImports } from './tools/oxlint/effect-native/shared/test-restricted-imports.ts';
 import { defineConfig } from 'oxlint';
 import core from 'ultracite/oxlint/core';
 import { jsPluginSettings, selectJsPlugins } from 'ultracite/oxlint/js-plugins';
 import react from 'ultracite/oxlint/react';
 
-const jsPlugins = selectJsPlugins(['github', 'sonarjs', 'react-doctor']);
+import { testRestrictedImports } from './tools/oxlint/effect-native/shared/test-restricted-imports.ts';
+
+const selectedJsPlugins = selectJsPlugins(['github', 'sonarjs', 'react-doctor']);
+const jsPlugins = {
+  ...selectedJsPlugins,
+  // Load GitHub's published rule-only entrypoint, not its ESLint configuration aggregator.
+  // The aggregator eagerly imports eslint-plugin-import and the ESLint runner; the rules do not.
+  jsPlugins: selectedJsPlugins.jsPlugins.map((plugin) =>
+    plugin.name === 'github' ? { ...plugin, specifier: 'eslint-plugin-github/lib/plugin.js' } : plugin,
+  ),
+};
 
 const antiSlopRules = {
   'anti-slop/no-chained-type-assertions': 'error',
@@ -42,7 +51,9 @@ const effectNativeRules: NonNullable<Parameters<typeof defineConfig>[0]['rules']
   'effect-native/no-dotenv-loading': 'error',
   'effect-native/no-driver-failure-inspection': [
     'error',
-    { decoderPaths: ['packages/core-runtime/src/database/postgres-failure.ts'] },
+    {
+      decoderPaths: ['packages/core-runtime/src/database/postgres-failure.ts'],
+    },
   ],
   'effect-native/no-duplicate-literal-vocabulary': 'error',
   // These factories compose a scoped pool, its native SQL client, and Drizzle once.
@@ -185,7 +196,10 @@ export default defineConfig({
       name: 'anti-slop-effect',
       specifier: './tools/oxlint/anti-slop/effect/index.ts',
     },
-    { name: 'effect-native', specifier: './tools/oxlint/effect-native/index.ts' },
+    {
+      name: 'effect-native',
+      specifier: './tools/oxlint/effect-native/index.ts',
+    },
   ],
   options: {
     denyWarnings: true,
@@ -224,10 +238,7 @@ export default defineConfig({
     {
       // This guarded test-only entrypoint composes real services with boundary fakes.
       // database-access:check rejects imports of it from production source.
-      files: [
-        'packages/core-runtime/src/testing/**/*.ts',
-        'apps/shell-super-app/tests/e2e/auth-fixture.ts',
-      ],
+      files: ['packages/core-runtime/src/testing/**/*.ts', 'apps/shell-super-app/tests/e2e/auth-fixture.ts'],
       rules: {
         'anti-slop-effect/no-service-constructor-imports': 'off',
       },
@@ -293,10 +304,7 @@ export default defineConfig({
     },
     {
       // Test registration deliberately returns an ignored promise, and test synchronization may use `.then`.
-      files: [
-        '**/*.{test,spec,test-d,spec-d}.{ts,tsx,js,jsx}',
-        '**/__tests__/**/*.{ts,tsx,js,jsx}',
-      ],
+      files: ['**/*.{test,spec,test-d,spec-d}.{ts,tsx,js,jsx}', '**/__tests__/**/*.{ts,tsx,js,jsx}'],
       rules: {
         'github/no-then': 'off',
         // Ultracite's JS-plugin preset applies the same test-data exception; repeat it because
@@ -306,8 +314,16 @@ export default defineConfig({
           'error',
           {
             allowForKnownSafeCalls: [
-              { from: 'package', name: ['it', 'test'], package: '@playwright/test' },
-              { from: 'package', name: ['it', 'test'], package: '@rstest/core' },
+              {
+                from: 'package',
+                name: ['it', 'test'],
+                package: '@playwright/test',
+              },
+              {
+                from: 'package',
+                name: ['it', 'test'],
+                package: '@rstest/core',
+              },
               { from: 'package', name: ['it', 'test'], package: 'node:test' },
             ],
           },
@@ -477,10 +493,7 @@ export default defineConfig({
     {
       // These aliases name stable domain boundaries even when their current representation is
       // identical to another type; removing the names would couple public/runtime APIs to storage.
-      files: [
-        'apps/shell-super-app/src/api/auth-client.ts',
-        'packages/core-runtime/src/actions/runtime.ts',
-      ],
+      files: ['apps/shell-super-app/src/api/auth-client.ts', 'packages/core-runtime/src/actions/runtime.ts'],
       rules: {
         'sonarjs/redundant-type-aliases': 'off',
       },
@@ -652,9 +665,7 @@ export default defineConfig({
     {
       // The edit page keeps one cohesive mutation/detail workflow; splitting it would move
       // authorization and retry state across component boundaries during this lint-only migration.
-      files: [
-        'verticals/party-registry/src/routes/**/contacts/customers/**/contacts/**/edit/page.tsx',
-      ],
+      files: ['verticals/party-registry/src/routes/**/contacts/customers/**/contacts/**/edit/page.tsx'],
       rules: {
         'react-doctor/no-giant-component': 'off',
       },

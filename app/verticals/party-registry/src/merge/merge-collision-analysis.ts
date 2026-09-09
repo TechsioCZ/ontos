@@ -67,9 +67,7 @@ const groupsWithCollisions = <Value>(
     const key = groupKey(value);
     groups.set(key, [...(groups.get(key) ?? []), value]);
   }
-  return [...groups]
-    .filter(([, group]) => group.length > 1)
-    .toSorted(([left], [right]) => left.localeCompare(right));
+  return [...groups].filter(([, group]) => group.length > 1).toSorted(([left], [right]) => left.localeCompare(right));
 };
 
 const periodsOverlap = (
@@ -81,10 +79,7 @@ const periodsOverlap = (
 const partyKey = ({ resourceId, tenantId }: PartyRef) => `${tenantId}:${resourceId}`;
 
 export const analyzeMergeCollisions = (input: MergeCollisionInput): readonly MergeCollision[] => {
-  const mergePartyKeys = new Set([
-    partyKey(input.survivorPartyRef),
-    ...input.absorbedPartyRefs.map(partyKey),
-  ]);
+  const mergePartyKeys = new Set([partyKey(input.survivorPartyRef), ...input.absorbedPartyRefs.map(partyKey)]);
   const inMergeSet = <Value extends PartyOwnedReference>(values: readonly Value[]) =>
     values.filter(({ partyRef }) => mergePartyKeys.has(partyKey(partyRef)));
   const canonicalPartyId = (partyRef: PartyRef) =>
@@ -116,10 +111,7 @@ export const analyzeMergeCollisions = (input: MergeCollisionInput): readonly Mer
       canonicalToPartyId: canonicalPartyId(relationship.toPartyRef),
     }));
   for (const relationship of relationships) {
-    if (
-      relationship.forbidsOverlap &&
-      relationship.canonicalFromPartyId === relationship.canonicalToPartyId
-    ) {
+    if (relationship.forbidsOverlap && relationship.canonicalFromPartyId === relationship.canonicalToPartyId) {
       relationshipCollisions.push({
         code: 'RELATIONSHIP_SELF_REFERENCE',
         ownerKey: 'party.registry',
@@ -133,9 +125,7 @@ export const analyzeMergeCollisions = (input: MergeCollisionInput): readonly Mer
     ({ canonicalFromPartyId, canonicalToPartyId, relationshipTypeKey }) =>
       `${relationshipTypeKey}:${canonicalFromPartyId}:${canonicalToPartyId}`,
   )) {
-    if (
-      rows.some((left, index) => rows.slice(index + 1).some((right) => periodsOverlap(left, right)))
-    ) {
+    if (rows.some((left, index) => rows.slice(index + 1).some((right) => periodsOverlap(left, right)))) {
       relationshipCollisions.push({
         code: 'RELATIONSHIP_PERIOD_COLLISION',
         ownerKey: 'party.registry',
@@ -150,9 +140,7 @@ export const analyzeMergeCollisions = (input: MergeCollisionInput): readonly Mer
     ({ legalEntityId, roleType }) => `${legalEntityId}:${roleType}`,
   )
     .filter(([, rows]) =>
-      rows.some((left, index) =>
-        rows.slice(index + 1).some((right) => periodsOverlap(left, right)),
-      ),
+      rows.some((left, index) => rows.slice(index + 1).some((right) => periodsOverlap(left, right))),
     )
     .map(([, rows]) => ({
       code: 'COUNTERPARTY_ROLE_PERIOD_COLLISION' as const,

@@ -79,11 +79,10 @@
  * Report-only: no fixers, no suggestions.
  */
 import { defineRule } from '@oxlint/plugins';
-import { optionRecord, stringArray } from '../shared/options.ts';
-import { importedName } from '../shared/imports.ts';
-
 import type { Context, ESTree, Scope, Variable } from '@oxlint/plugins';
 
+import { importedName } from '../shared/imports.ts';
+import { optionRecord, stringArray } from '../shared/options.ts';
 import { globToRegExp, isTestFile, normalisePath } from '../shared/paths.ts';
 
 type AnyNode = ESTree.Node;
@@ -95,21 +94,12 @@ type AnyNode = ESTree.Node;
  */
 const FIXTURE_PREFIX = /^tools\/oxlint\/[^/]+\/tests\/fixtures\/[^/]+\/(?:valid|invalid)\//u;
 
-const DEFAULT_INCLUDE_PATHS: readonly string[] = [
-  'apps/**',
-  'verticals/**',
-  'packages/**',
-  'scripts/**',
-];
+const DEFAULT_INCLUDE_PATHS: readonly string[] = ['apps/**', 'verticals/**', 'packages/**', 'scripts/**'];
 
 const DEFAULT_ENVIRONMENT_IDENTIFIERS =
   '^(env|environment|processEnv|fileEnvironment|environmentVariables|buildEnvironment)$';
 
-const DEFAULT_ENVIRONMENT_READERS: readonly string[] = [
-  'readEnvironment',
-  'getBuildConfigEnvironment',
-  'envValue',
-];
+const DEFAULT_ENVIRONMENT_READERS: readonly string[] = ['readEnvironment', 'getBuildConfigEnvironment', 'envValue'];
 
 /** Wrappers that never change the value: `(x)`, `x as T`, `x satisfies T`, `x!`, `x?.y` chains. */
 const TRANSPARENT = new Set([
@@ -228,9 +218,7 @@ function readOptions(raw: unknown): RuleOptions {
     ignoreTestFiles: given.ignoreTestFiles === true,
     includePaths: includePaths.length > 0 ? includePaths : DEFAULT_INCLUDE_PATHS,
     environmentIdentifiers:
-      typeof identifiers === 'string' && identifiers.length > 0
-        ? identifiers
-        : DEFAULT_ENVIRONMENT_IDENTIFIERS,
+      typeof identifiers === 'string' && identifiers.length > 0 ? identifiers : DEFAULT_ENVIRONMENT_IDENTIFIERS,
     environmentReaders: stringArray(given.environmentReaders, DEFAULT_ENVIRONMENT_READERS),
   };
 }
@@ -258,17 +246,14 @@ function staticKey(node: ESTree.MemberExpression): string | null {
   const property = unwrap(node.property as AnyNode) as AnyNode;
   if (property.type === 'TemplateLiteral' && property.expressions.length === 0)
     return property.quasis[0]?.value.cooked ?? null;
-  if (!node.computed)
-    return property.type === 'Identifier' ? (property as ESTree.IdentifierName).name : null;
+  if (!node.computed) return property.type === 'Identifier' ? (property as ESTree.IdentifierName).name : null;
   if (property.type !== 'Literal') return null;
   const value = (property as { value?: unknown }).value;
   return typeof value === 'string' ? value : null;
 }
 
 function identifierName(node: AnyNode | null): string | null {
-  return node !== null && node.type === 'Identifier'
-    ? (node as ESTree.IdentifierReference).name
-    : null;
+  return node !== null && node.type === 'Identifier' ? (node as ESTree.IdentifierReference).name : null;
 }
 
 function resolveVariable(context: Context, name: string, from: AnyNode): Variable | null {
@@ -388,8 +373,7 @@ export const rule = defineRule({
           includePaths: {
             type: 'array',
             items: { type: 'string' },
-            description:
-              'Globs the rule applies to (default: apps/**, verticals/**, packages/**, scripts/**).',
+            description: 'Globs the rule applies to (default: apps/**, verticals/**, packages/**, scripts/**).',
           },
           environmentIdentifiers: {
             type: 'string',
@@ -462,17 +446,14 @@ export const rule = defineRule({
       if (imported) return processModule(imported.source) && imported.member === 'default';
       if (ENV_HOSTS.has(name) && isUnshadowedGlobal(context, host, name)) return true;
       const declaration = declaratorOf(context, host);
-      return (
-        declaration?.id.type === 'Identifier' && isEnvHost(declaration.init as AnyNode, depth + 1)
-      );
+      return declaration?.id.type === 'Identifier' && isEnvHost(declaration.init as AnyNode, depth + 1);
     };
     const isEnvHost = (node: AnyNode | null, depth = 0): boolean => {
       const host = unwrap(node);
       if (!host || depth > MAX_DEPTH) return false;
       if (host.type === 'AwaitExpression') return isEnvHost(host.argument, depth + 1);
       if (host.type === 'ImportExpression') return processModule(staticString(host.source) ?? '');
-      if (host.type === 'MetaProperty')
-        return host.meta.name === 'import' && host.property.name === 'meta';
+      if (host.type === 'MetaProperty') return host.meta.name === 'import' && host.property.name === 'meta';
       const name = identifierName(host);
       if (name) return isNamedEnvHost(host, name, depth);
       return isGlobalEnvHostMember(host);
@@ -487,12 +468,8 @@ export const rule = defineRule({
         isUnshadowedGlobal(context, owner as AnyNode, ownerName)
       );
     };
-    const isDestructuredEnvBag = (
-      declaration: ESTree.VariableDeclarator,
-      name: string,
-    ): boolean => {
-      if (declaration.id.type !== 'ObjectPattern' || !isEnvHost(declaration.init as AnyNode))
-        return false;
+    const isDestructuredEnvBag = (declaration: ESTree.VariableDeclarator, name: string): boolean => {
+      if (declaration.id.type !== 'ObjectPattern' || !isEnvHost(declaration.init as AnyNode)) return false;
       return declaration.id.properties.some(
         (property) =>
           property.type === 'Property' &&
@@ -506,15 +483,13 @@ export const rule = defineRule({
     const isAmbientEnvBag = (node: AnyNode | null, depth = 0): boolean => {
       const bag = unwrap(node);
       if (!bag || depth > MAX_DEPTH) return false;
-      if (bag.type === 'MemberExpression')
-        return staticKey(bag) === 'env' && isEnvHost(bag.object as AnyNode);
+      if (bag.type === 'MemberExpression') return staticKey(bag) === 'env' && isEnvHost(bag.object as AnyNode);
       if (bag.type !== 'Identifier') return false;
       const imported = importOf(bag);
       if (imported) return processModule(imported.source) && imported.member === 'env';
       const declaration = declaratorOf(context, bag);
       if (!declaration) return false;
-      if (declaration.id.type === 'Identifier')
-        return isAmbientEnvBag(declaration.init as AnyNode, depth + 1);
+      if (declaration.id.type === 'Identifier') return isAmbientEnvBag(declaration.init as AnyNode, depth + 1);
       return isDestructuredEnvBag(declaration, bag.name);
     };
     const isLiteralObject = (node: AnyNode | null, depth = 0): boolean => {
@@ -543,10 +518,7 @@ export const rule = defineRule({
       const declaration = declaratorOf(context, record);
       if (declaration?.init && isLiteralObject(declaration.init as AnyNode)) return false;
       if (environmentIdentifier.test(name) && !importOf(record)) return true;
-      return (
-        declaration?.id.type === 'Identifier' &&
-        isEnvironmentRecord(declaration.init as AnyNode, depth + 1)
-      );
+      return declaration?.id.type === 'Identifier' && isEnvironmentRecord(declaration.init as AnyNode, depth + 1);
     };
     const isReader = (node: AnyNode, depth = 0): boolean => {
       if (depth > MAX_DEPTH) return false;
@@ -645,16 +617,11 @@ export const rule = defineRule({
       if (value.type === 'LogicalExpression') return isDerivedLogical(value, depth);
 
       if (value.type === 'ConditionalExpression')
-        return (
-          isEnvironmentDerived(value.consequent, depth + 1) ||
-          isEnvironmentDerived(value.alternate, depth + 1)
-        );
+        return isEnvironmentDerived(value.consequent, depth + 1) || isEnvironmentDerived(value.alternate, depth + 1);
 
       if (value.type === 'TemplateLiteral') {
         const template = value as ESTree.TemplateLiteral;
-        return template.expressions.some((expression) =>
-          isEnvironmentDerived(expression as AnyNode, depth + 1),
-        );
+        return template.expressions.some((expression) => isEnvironmentDerived(expression as AnyNode, depth + 1));
       }
 
       if (value.type === 'CallExpression') return isDerivedStringCall(value, depth);
@@ -672,13 +639,19 @@ export const rule = defineRule({
 
     const reportable = new Map<
       string,
-      { readonly messageId: string; readonly data: Record<string, string> } | null
+      {
+        readonly messageId: string;
+        readonly data: Record<string, string>;
+      } | null
     >();
 
     /** The diagnostic `node` would raise on its own, or `null` when it is not a hand parse. */
     const classify = (
       node: AnyNode,
-    ): { readonly messageId: string; readonly data: Record<string, string> } | null => {
+    ): {
+      readonly messageId: string;
+      readonly data: Record<string, string>;
+    } | null => {
       const cached = reportable.get(spanOf(node));
       if (cached !== undefined) return cached;
       const verdict = computeClassification(node);
@@ -718,10 +691,7 @@ export const rule = defineRule({
       }
       return null;
     }
-    function classifyMemberCall(
-      member: ESTree.MemberExpression,
-      firstArgument: AnyNode | null,
-    ): Classification {
+    function classifyMemberCall(member: ESTree.MemberExpression, firstArgument: AnyNode | null): Classification {
       const key = staticKey(member);
       if (key === null) return null;
       const namespaced = classifyNamespacedCall(member, key, firstArgument);
@@ -762,10 +732,7 @@ export const rule = defineRule({
     function classifyUnary(node: ESTree.UnaryExpression): Classification {
       if (node.operator === '!' && isEnvironmentLength(node.argument))
         return { messageId: 'envLengthCheck', data: { operation: 'length' } };
-      if (
-        (node.operator === '+' || node.operator === '-') &&
-        isEnvironmentDerived(node.argument, 0)
-      )
+      if ((node.operator === '+' || node.operator === '-') && isEnvironmentDerived(node.argument, 0))
         return { messageId: 'envCoercion', data: { operation: node.operator } };
       return null;
     }
@@ -778,9 +745,7 @@ export const rule = defineRule({
         data: { literal: context.sourceCode.getText(branch.test) },
       };
     }
-    function classifyComparison(
-      node: ESTree.BinaryExpression | ESTree.PrivateInExpression,
-    ): Classification {
+    function classifyComparison(node: ESTree.BinaryExpression | ESTree.PrivateInExpression): Classification {
       const comparison = node as ESTree.BinaryExpression;
       if (!COMPARISON_OPERATORS.has(comparison.operator)) return null;
       const left = comparison.left as AnyNode;
@@ -797,7 +762,9 @@ export const rule = defineRule({
       const raw = (literal as { raw?: string | null }).raw;
       return {
         messageId: 'envLiteralComparison',
-        data: { literal: raw ?? String((literal as { value?: unknown }).value) },
+        data: {
+          literal: raw ?? String((literal as { value?: unknown }).value),
+        },
       };
     }
     /** The diagnostic a node would raise on its own. */
@@ -823,16 +790,9 @@ export const rule = defineRule({
       let current = parentOf(node);
       for (let depth = 0; depth < MAX_ANCESTORS; depth += 1) {
         if (current === null || current.type === 'Program') return false;
-        if (
-          classify(current) !== null &&
-          (current.type !== 'SwitchStatement' || node.end <= current.discriminant.end)
-        )
+        if (classify(current) !== null && (current.type !== 'SwitchStatement' || node.end <= current.discriminant.end))
           return true;
-        if (
-          ['ArrowFunctionExpression', 'FunctionExpression', 'FunctionDeclaration'].includes(
-            current.type,
-          )
-        )
+        if (['ArrowFunctionExpression', 'FunctionExpression', 'FunctionDeclaration'].includes(current.type))
           return false;
         current = parentOf(current);
       }
@@ -843,7 +803,11 @@ export const rule = defineRule({
       const verdict = classify(node);
       if (verdict === null) return;
       if (hasReportableAncestor(node)) return;
-      context.report({ node: node as never, messageId: verdict.messageId, data: verdict.data });
+      context.report({
+        node: node as never,
+        messageId: verdict.messageId,
+        data: verdict.data,
+      });
     };
 
     return {

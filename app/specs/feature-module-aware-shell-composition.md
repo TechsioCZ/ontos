@@ -16,9 +16,7 @@ The Shell remains responsible for URLs, layout, tenant context, navigation, load
 
 ## User Story
 
-As an authenticated OntOS user
-I want the Shell to show and open only the module capabilities that are valid for my tenant, module state, and permissions
-So that navigation and every cross-module entrypoint behave consistently and safely as independently deployed modules are installed or change state
+As an authenticated OntOS user I want the Shell to show and open only the module capabilities that are valid for my tenant, module state, and permissions So that navigation and every cross-module entrypoint behave consistently and safely as independently deployed modules are installed or change state
 
 ## Problem Statement
 

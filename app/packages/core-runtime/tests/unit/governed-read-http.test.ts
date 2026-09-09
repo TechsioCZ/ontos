@@ -1,6 +1,10 @@
+import { Cause, Effect, Exit, Logger, Redacted, Schema } from 'effect';
 // @effect-diagnostics strictEffectProvide:off -- Test-owned logger capture entrypoint; expires: 2026-12-31.
 import { expect, it } from 'effect-rstest';
+import { Headers, HttpServerRequest } from 'effect/unstable/http';
+
 import { TrustedPrincipalContextSchema } from '../../src/actions/principal-context.ts';
+import { classifyReadCoreError, makeGovernedReadHttpHandler } from '../../src/http/governed-read.ts';
 import { defineSystemModuleEntrypoint } from '../../src/modules/module-entrypoint.ts';
 import { ModuleStateCheckUnavailableError } from '../../src/modules/module-state-check-unavailable-error.ts';
 import { ModuleStateDeniedError } from '../../src/modules/module-state-denied-error.ts';
@@ -8,6 +12,8 @@ import { OperationAuthenticationRequired } from '../../src/operations/operation-
 import { OperationContextDenied } from '../../src/operations/operation-context-denied.ts';
 import { OperationContextInvalid } from '../../src/operations/operation-context-invalid.ts';
 import { OperationContextUnavailable } from '../../src/operations/operation-context-unavailable.ts';
+import { defineRead } from '../../src/reads/definition.ts';
+import type { ReadCoreError } from '../../src/reads/errors.ts';
 import { ReadEvidencePersistenceError } from '../../src/reads/read-evidence-persistence-error.ts';
 import { ReadEvidenceValidationError } from '../../src/reads/read-evidence-validation-error.ts';
 import { ReadHandlerExecutionError } from '../../src/reads/read-handler-execution-error.ts';
@@ -19,21 +25,13 @@ import { ReadPermissionUnavailable } from '../../src/reads/read-permission-unava
 import { ReadPolicyDenied } from '../../src/reads/read-policy-denied.ts';
 import { ReadPolicyEvaluationError } from '../../src/reads/read-policy-evaluation-error.ts';
 import { ReadResultValidationError } from '../../src/reads/read-result-validation-error.ts';
-import {
-  classifyReadCoreError,
-  makeGovernedReadHttpHandler,
-} from '../../src/http/governed-read.ts';
-import { defineRead } from '../../src/reads/definition.ts';
 import { ReadRuntime } from '../../src/reads/runtime.ts';
-import type { ReadCoreError } from '../../src/reads/errors.ts';
 import type { ReadRuntimeService } from '../../src/reads/runtime.ts';
-import { Cause, Effect, Exit, Logger, Redacted, Schema } from 'effect';
-import { Headers, HttpServerRequest } from 'effect/unstable/http';
 
-const problem = <const Kind extends string, const Status extends number>(
-  kind: Kind,
-  status: Status,
-) => ({ kind, status });
+const problem = <const Kind extends string, const Status extends number>(kind: Kind, status: Status) => ({
+  kind,
+  status,
+});
 
 const problems = {
   authentication: () => problem('authentication', 401),
@@ -54,50 +52,62 @@ const capturedLoggerLayer = (entries: string[]) =>
   ]);
 
 const reason = 'safe reason';
-const coreFailures: readonly [
-  ReadCoreError,
-  ReturnType<(typeof problems)[keyof typeof problems]>,
-][] = [
+const coreFailures: readonly [ReadCoreError, ReturnType<(typeof problems)[keyof typeof problems]>][] = [
   [
-    new ModuleStateCheckUnavailableError({ code: 'module_state_check_unavailable', reason }),
+    new ModuleStateCheckUnavailableError({
+      code: 'module_state_check_unavailable',
+      reason,
+    }),
     problems.unavailable(),
   ],
   [new ModuleStateDeniedError({ code: 'module_state_denied', reason }), problems.forbidden()],
   [
-    new OperationAuthenticationRequired({ code: 'operation_authentication_required', reason }),
+    new OperationAuthenticationRequired({
+      code: 'operation_authentication_required',
+      reason,
+    }),
     problems.authentication(),
   ],
   [new OperationContextDenied({ code: 'operation_context_denied', reason }), problems.forbidden()],
+  [new OperationContextInvalid({ code: 'operation_context_invalid', reason }), problems.forbidden()],
   [
-    new OperationContextInvalid({ code: 'operation_context_invalid', reason }),
-    problems.forbidden(),
-  ],
-  [
-    new OperationContextUnavailable({ code: 'operation_context_unavailable', reason }),
+    new OperationContextUnavailable({
+      code: 'operation_context_unavailable',
+      reason,
+    }),
     problems.unavailable(),
   ],
   [
-    new ReadEvidencePersistenceError({ code: 'read_evidence_persistence_failed', reason }),
+    new ReadEvidencePersistenceError({
+      code: 'read_evidence_persistence_failed',
+      reason,
+    }),
     problems.unavailable(),
   ],
   [new ReadEvidenceValidationError({ code: 'read_evidence_invalid', reason }), problems.internal()],
   [
-    new ReadHandlerExecutionError({ code: 'read_handler_execution_failed', reason }),
+    new ReadHandlerExecutionError({
+      code: 'read_handler_execution_failed',
+      reason,
+    }),
     problems.internal(),
   ],
   [new ReadHandlerNotFound({ code: 'read_handler_not_found', reason }), problems.notFound()],
-  [
-    new ReadHandlerUnavailable({ code: 'read_handler_unavailable', reason }),
-    problems.unavailable(),
-  ],
+  [new ReadHandlerUnavailable({ code: 'read_handler_unavailable', reason }), problems.unavailable()],
   [new ReadInputValidationError({ code: 'read_input_invalid', reason }), problems.invalid()],
   [new ReadPermissionDenied({ code: 'read_permission_denied', reason }), problems.forbidden()],
   [
-    new ReadPermissionUnavailable({ code: 'read_permission_unavailable', reason }),
+    new ReadPermissionUnavailable({
+      code: 'read_permission_unavailable',
+      reason,
+    }),
     problems.unavailable(),
   ],
   [
-    new ReadPolicyEvaluationError({ code: 'read_policy_evaluation_failed', reason }),
+    new ReadPolicyEvaluationError({
+      code: 'read_policy_evaluation_failed',
+      reason,
+    }),
     problems.unavailable(),
   ],
   [new ReadResultValidationError({ code: 'read_result_invalid', reason }), problems.internal()],
@@ -133,7 +143,10 @@ const registration = defineRead(
     accessKind: 'detail',
     entrypoint: defineSystemModuleEntrypoint({
       access: 'read',
-      authorization: { kind: 'context_permission', permission: 'module.access' },
+      authorization: {
+        kind: 'context_permission',
+        permission: 'module.access',
+      },
       entrypointKey: 'core.shell.governed-http-test',
       moduleKey: 'core.shell',
       role: 'api',
@@ -151,12 +164,16 @@ const registration = defineRead(
     resultSchema: Schema.Struct({ ok: Schema.Literal(true) }),
     schemaVersion: '1',
   },
-  () => Effect.succeed({ evidence: { resultCount: 1 }, result: { ok: true as const } }),
+  () =>
+    Effect.succeed({
+      evidence: { resultCount: 1 },
+      result: { ok: true as const },
+    }),
   () => Effect.succeed({}),
   () => ({ kind: 'module', moduleId: 'core.shell' }),
 );
 
-const principal = Schema.decodeUnknownSync(TrustedPrincipalContextSchema)({
+const principal = Schema.decodeSync(TrustedPrincipalContextSchema)({
   authBindingId: '00000000-0000-4000-8000-000000000002',
   authContextRef: 'better-auth-session:governed-http-test',
   authMethod: 'session',
@@ -233,7 +250,9 @@ it.effect('sanitizes synchronous defects across correlation validation and authe
           problems,
           registration,
         }),
-        headers: Headers.fromInput({ 'x-correlation-id': 'synchronous-defect' }),
+        headers: Headers.fromInput({
+          'x-correlation-id': 'synchronous-defect',
+        }),
       },
     ];
     const exits = yield* Effect.forEach(
@@ -250,54 +269,57 @@ it.effect('sanitizes synchronous defects across correlation validation and authe
       if (Exit.isFailure(exit)) {
         const publicFailure = Cause.squash(exit.cause);
         expect(publicFailure).toEqual(problems.internal());
-        expect(
-          yield* Schema.encodeEffect(Schema.fromJsonString(Schema.Unknown))(publicFailure),
-        ).not.toMatch(/private/u);
+        expect(yield* Schema.encodeEffect(Schema.fromJsonString(Schema.Unknown))(publicFailure)).not.toMatch(
+          /private/u,
+        );
       }
     }
   }),
 );
 
-it.effect(
-  'passes only payload, trusted principal, registration, and correlation to ReadRuntime',
-  () =>
-    Effect.gen(function* forwardTrustedReadInputs() {
-      const payload = { query: 'fixture' };
-      observed.length = 0;
-      const handler = makeGovernedReadHttpHandler({
-        authenticatePrincipal: (authorization) => {
-          expect(Redacted.value(authorization)).toBe('Bearer private');
-          return Effect.succeed(principal);
+it.effect('passes only payload, trusted principal, registration, and correlation to ReadRuntime', () =>
+  Effect.gen(function* forwardTrustedReadInputs() {
+    const payload = { query: 'fixture' };
+    observed.length = 0;
+    const handler = makeGovernedReadHttpHandler({
+      authenticatePrincipal: (authorization) => {
+        expect(Redacted.value(authorization)).toBe('Bearer private');
+        return Effect.succeed(principal);
+      },
+      problems,
+      registration,
+    });
+    const assertDecodedPayloadInput = () =>
+      handler({
+        payload: {
+          // @ts-expect-error The HTTP framework must pass the schema-decoded payload shape.
+          query: 123,
         },
-        problems,
-        registration,
+        request: { headers: Headers.empty },
       });
-      const assertDecodedPayloadInput = () =>
-        // @ts-expect-error The HTTP framework must pass the schema-decoded payload shape.
-        handler({ payload: { query: 123 }, request: { headers: Headers.empty } });
-      void assertDecodedPayloadInput;
-      const result = yield* handler({
-        payload,
-        request: {
-          headers: Headers.fromInput({
-            authorization: 'Bearer private',
-            'x-correlation-id': 'correlation-test',
-          }),
-        },
-      }).pipe(
-        Effect.provideService(ReadRuntime, readRuntime),
-        Effect.provideService(HttpServerRequest.HttpServerRequest, requestService),
-      );
-      expect(result).toEqual({ ok: true });
-      expect(observed).toEqual([
-        {
-          input: payload,
-          principal,
-          registration,
-          transport: { correlationId: 'correlation-test' },
-        },
-      ]);
-    }),
+    void assertDecodedPayloadInput;
+    const result = yield* handler({
+      payload,
+      request: {
+        headers: Headers.fromInput({
+          authorization: 'Bearer private',
+          'x-correlation-id': 'correlation-test',
+        }),
+      },
+    }).pipe(
+      Effect.provideService(ReadRuntime, readRuntime),
+      Effect.provideService(HttpServerRequest.HttpServerRequest, requestService),
+    );
+    expect(result).toEqual({ ok: true });
+    expect(observed).toEqual([
+      {
+        input: payload,
+        principal,
+        registration,
+        transport: { correlationId: 'correlation-test' },
+      },
+    ]);
+  }),
 );
 
 it.effect('sanitizes unexpected defects at the complete governed handler boundary', () =>
@@ -317,7 +339,9 @@ it.effect('sanitizes unexpected defects at the complete governed handler boundar
       handler({
         payload: { query: 'fixture' },
         request: {
-          headers: Headers.fromInput({ 'x-correlation-id': 'correlation-defect' }),
+          headers: Headers.fromInput({
+            'x-correlation-id': 'correlation-defect',
+          }),
         },
       }),
     ).pipe(
@@ -329,9 +353,9 @@ it.effect('sanitizes unexpected defects at the complete governed handler boundar
     if (Exit.isFailure(exit)) {
       const publicFailure = Cause.squash(exit.cause);
       expect(publicFailure).toEqual(problems.internal());
-      expect(
-        yield* Schema.encodeEffect(Schema.fromJsonString(Schema.Unknown))(publicFailure),
-      ).not.toMatch(/private database connection detail/u);
+      expect(yield* Schema.encodeEffect(Schema.fromJsonString(Schema.Unknown))(publicFailure)).not.toMatch(
+        /private database connection detail/u,
+      );
     }
     expect(logEntries.length).toBe(1);
     expect(logEntries.join('\n')).not.toMatch(/private database connection detail/u);

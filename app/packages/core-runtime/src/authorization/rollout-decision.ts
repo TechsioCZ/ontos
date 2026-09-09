@@ -62,10 +62,7 @@ const nonBypassableReasons = new Set<AuthorizationDenialReason>([
   'wrong_audience',
 ]);
 
-const isReportOnlyActive = (
-  contract: AuthorizationRolloutRuntimeContract,
-  nowEpochMs: number,
-): boolean =>
+const isReportOnlyActive = (contract: AuthorizationRolloutRuntimeContract, nowEpochMs: number): boolean =>
   contract.mode === 'report_only' &&
   nowEpochMs >= contract.activatedAtEpochMs &&
   nowEpochMs < contract.expiresAtEpochMs;

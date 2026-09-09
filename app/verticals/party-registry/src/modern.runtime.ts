@@ -1,6 +1,7 @@
 import { assertI18nInstance } from '@modern-js/plugin-i18n/i18n';
 import { defineRuntimeConfig } from '@modern-js/runtime';
 import { createInstance } from 'i18next';
+
 import csResource from '../locales/cs/translation.json' with { type: 'json' };
 import enResource from '../locales/en/translation.json' with { type: 'json' };
 import { partyRegistryI18nResources } from './i18n/resources.ts';

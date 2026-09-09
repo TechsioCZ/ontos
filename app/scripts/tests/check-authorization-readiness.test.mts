@@ -1,10 +1,7 @@
 import { expect, it } from 'effect-rstest';
 
 import type { ProtectedEntrypointInventory } from '../authorization/protected-entrypoint-inventory.mts';
-import {
-  checkAuthorizationReadiness,
-  hashAuthorizationEvidence,
-} from '../check-authorization-readiness.mts';
+import { checkAuthorizationReadiness, hashAuthorizationEvidence } from '../check-authorization-readiness.mts';
 import type {
   AuthorizationNegativeSmokeEvidence,
   AuthorizationReadinessInput,
@@ -19,7 +16,10 @@ const contactsOwner = 'contacts.core';
 const inventory: ProtectedEntrypointInventory = {
   entries: [
     {
-      authorization: { kind: 'action_execution', provisioning: 'tenant_membership_default' },
+      authorization: {
+        kind: 'action_execution',
+        provisioning: 'tenant_membership_default',
+      },
       deployment: 'contacts',
       entrypointKey: contactsCreateCustomerEntrypoint,
       owner: contactsOwner,
@@ -189,7 +189,10 @@ it('readiness rejects missing relationships, module state, worker ownership, and
   expect(() =>
     checkAuthorizationReadiness({
       ...ready,
-      observation: { ...ready.observation, replayMigrationHash: 'f'.repeat(64) },
+      observation: {
+        ...ready.observation,
+        replayMigrationHash: 'f'.repeat(64),
+      },
     }),
   ).toThrow(/stale/u);
 });
@@ -204,7 +207,10 @@ it('readiness rejects incorrect issuer/audience topology, short observations, an
   expect(() =>
     checkAuthorizationReadiness({
       ...ready,
-      observation: { ...ready.observation, gatewayIssuer: 'http://insecure.test' },
+      observation: {
+        ...ready.observation,
+        gatewayIssuer: 'http://insecure.test',
+      },
     }),
   ).toThrow(/issuer or audience/u);
   expect(() =>
@@ -222,7 +228,10 @@ it('readiness rejects incorrect issuer/audience topology, short observations, an
   expect(() =>
     checkAuthorizationReadiness({
       ...ready,
-      negativeSmoke: { ...negativeSmoke, scenarios: negativeSmoke.scenarios.slice(1) },
+      negativeSmoke: {
+        ...negativeSmoke,
+        scenarios: negativeSmoke.scenarios.slice(1),
+      },
     }),
   ).toThrow(/smoke evidence is incomplete/u);
 });

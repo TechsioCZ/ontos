@@ -1,4 +1,5 @@
 import { Schema } from 'effect';
+
 import { PartyIdJsonSchema, TenantIdJsonSchema } from './shared.ts';
 
 export class PartyAliasResolutionCycle extends Schema.TaggedError<PartyAliasResolutionCycle>()(

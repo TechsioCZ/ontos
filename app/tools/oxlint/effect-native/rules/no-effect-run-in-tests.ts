@@ -1,4 +1,3 @@
-import { collectNamedImports } from '../shared/imports.ts';
 /**
  * effect-native/no-effect-run-in-tests
  *
@@ -51,11 +50,11 @@ import { collectNamedImports } from '../shared/imports.ts';
  * Report-only: no fixer, no suggestion. Existing violations are the intended output.
  */
 import { defineRule } from '@oxlint/plugins';
-
 import type { Context, ESTree, Scope, Variable } from '@oxlint/plugins';
 
 import { collectEffectBindings, effectMember } from '../shared/effect-imports.ts';
 import type { EffectBindings } from '../shared/effect-imports.ts';
+import { collectNamedImports } from '../shared/imports.ts';
 import { globToRegExp, isTestFile, matchesAny } from '../shared/paths.ts';
 
 /** `run`, `runPromise`, `runSyncExit`, `runPromiseWith`, … but not `runtime`. */
@@ -78,11 +77,7 @@ const ERASED_WRAPPERS = new Set([
 const MAX_ALIAS_HOPS = 8;
 
 /** D-tier: Promise adapters forced by Playwright and other browser drivers. */
-const DEFAULT_IGNORE_PATHS: readonly string[] = [
-  '**/tests/e2e/**',
-  '**/*.e2e.*',
-  '**/playwright/**',
-];
+const DEFAULT_IGNORE_PATHS: readonly string[] = ['**/tests/e2e/**', '**/*.e2e.*', '**/playwright/**'];
 
 const DEFAULT_EFFECT_MODULES: readonly string[] = ['Effect'];
 
@@ -160,17 +155,11 @@ function moduleExportName(node: ESTree.Node): string | null {
  * Supplement `collectEffectBindings` with namespaces re-exported by non-`effect` barrels, so
  * `import { Effect } from "@modern-js/plugin-bff/effect-edge"` is tracked exactly like `from "effect"`.
  */
-function collectBarrelBindings(
-  program: ESTree.Program,
-  sources: readonly string[],
-): Map<string, string> {
+function collectBarrelBindings(program: ESTree.Program, sources: readonly string[]): Map<string, string> {
   const patterns = sources.map(globToRegExp);
-  return collectNamedImports(
-    program,
-    (source) => patterns.some((pattern) => pattern.test(source)),
-    undefined,
-    { valueOnly: true },
-  );
+  return collectNamedImports(program, (source) => patterns.some((pattern) => pattern.test(source)), undefined, {
+    valueOnly: true,
+  });
 }
 
 /**
@@ -251,7 +240,10 @@ export const rule = defineRule({
     if (matchesAny(filename, options.ignorePaths)) return {};
     if (!isTestFile(filename) && !matchesAny(filename, options.testPaths)) return {};
 
-    let bindings: EffectBindings = { namespaces: new Map<string, string>(), importsEffect: false };
+    let bindings: EffectBindings = {
+      namespaces: new Map<string, string>(),
+      importsEffect: false,
+    };
     /** `import * as X from "effect"` — `X.Effect` is the Effect namespace. */
     let rootNamespaces = new Set<string>();
     /** `const Effect = await import("effect/Effect")` — local name → submodule name. */
@@ -288,8 +280,7 @@ export const rule = defineRule({
       const variable = lookupVariable(node, node.name);
       return (
         variable?.defs.some(
-          (definition) =>
-            definition.name.start === declaration.start && definition.name.end === declaration.end,
+          (definition) => definition.name.start === declaration.start && definition.name.end === declaration.end,
         ) ?? false
       );
     }
@@ -345,9 +336,7 @@ export const rule = defineRule({
       return alias === null ? false : isEffectNamespace(alias, hops + 1);
     }
 
-    function isImportedEffectNamespace(
-      target: Extract<ESTree.Node, { type: 'Identifier' }>,
-    ): boolean {
+    function isImportedEffectNamespace(target: Extract<ESTree.Node, { type: 'Identifier' }>): boolean {
       const dynamic = dynamicNamespaces.get(target.name);
       if (
         dynamic !== undefined &&
@@ -402,7 +391,10 @@ export const rule = defineRule({
         const key = staticKey(property.key, property.computed);
         if (key === null || !options.effectModules.includes(key)) continue;
         if (property.value.type !== 'Identifier') continue;
-        dynamicNamespaces.set(property.value.name, { namespace: key, declaration: property.value });
+        dynamicNamespaces.set(property.value.name, {
+          namespace: key,
+          declaration: property.value,
+        });
       }
     }
 
@@ -410,7 +402,10 @@ export const rule = defineRule({
       const submodule = SUBMODULE_SOURCE.exec(source)?.[1];
       if (submodule !== undefined && options.effectModules.includes(submodule)) {
         if (id.type === 'Identifier')
-          dynamicNamespaces.set(id.name, { namespace: submodule, declaration: id });
+          dynamicNamespaces.set(id.name, {
+            namespace: submodule,
+            declaration: id,
+          });
         else if (id.type === 'ObjectPattern') collectRunProperties(id, dynamicSites);
         return;
       }
@@ -477,10 +472,7 @@ export const rule = defineRule({
         if (member === null) return;
         const parent = node.parent;
         const called =
-          parent !== null &&
-          parent !== undefined &&
-          parent.type === 'CallExpression' &&
-          parent.callee === node;
+          parent !== null && parent !== undefined && parent.type === 'CallExpression' && parent.callee === node;
         (called ? callSites : referenceSites).push({ node, member });
       },
 

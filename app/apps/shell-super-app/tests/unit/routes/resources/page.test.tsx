@@ -1,19 +1,17 @@
-import { browserRuntime } from '../../../../src/runtime/browser-effect-runtime.ts' with {
-  rstest: 'importActual',
-};
-import { afterEach, beforeEach, expect, rstest, it } from 'effect-rstest';
 import { act, cleanup, render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { Deferred, Effect, Schema } from 'effect';
+import { afterEach, beforeEach, expect, rstest, it } from 'effect-rstest';
 import type { ReactNode } from 'react';
-import {
-  ShellResourceResponseSchema,
-  ShellTargetForbiddenProblemSchema,
-} from '../../../../shared/api.ts';
+
+import { ShellResourceResponseSchema, ShellTargetForbiddenProblemSchema } from '../../../../shared/api.ts';
 import type { MediaAttachmentResponse, ShellResourceResponse } from '../../../../shared/api.ts';
-import { authenticatedShellFixture } from '../authenticated-shell-fixture.ts';
-import ResourcePage from '../../../../src/routes/[lang]/resources/[moduleId]/[resourceType]/[resourceId]/page.tsx';
 import type { ResourcePageModel } from '../../../../src/routes/[lang]/resources/[moduleId]/[resourceType]/[resourceId]/page.data.ts';
+import ResourcePage from '../../../../src/routes/[lang]/resources/[moduleId]/[resourceType]/[resourceId]/page.tsx';
+import { browserRuntime } from '../../../../src/runtime/browser-effect-runtime.ts' with {
+  rstest: 'importActual',
+};
+import { authenticatedShellFixture } from '../authenticated-shell-fixture.ts';
 
 type ReadyModel = Extract<ResourcePageModel, { readonly state: 'ready' }>;
 type ClosedState = Exclude<ResourcePageModel['state'], 'ready'>;
@@ -23,22 +21,17 @@ interface DashboardPageProps {
   readonly title: string;
 }
 
-const {
-  attachResourceMediaMock,
-  browserRunPromiseMock,
-  dashboardRenders,
-  shellControlsMock,
-  useLoaderDataMock,
-} = rstest.hoisted(() => {
-  const renders: DashboardPageProps[] = [];
-  return {
-    attachResourceMediaMock: rstest.fn(),
-    browserRunPromiseMock: rstest.fn(),
-    dashboardRenders: renders,
-    shellControlsMock: rstest.fn(),
-    useLoaderDataMock: rstest.fn(),
-  };
-});
+const { attachResourceMediaMock, browserRunPromiseMock, dashboardRenders, shellControlsMock, useLoaderDataMock } =
+  rstest.hoisted(() => {
+    const renders: DashboardPageProps[] = [];
+    return {
+      attachResourceMediaMock: rstest.fn(),
+      browserRunPromiseMock: rstest.fn(),
+      dashboardRenders: renders,
+      shellControlsMock: rstest.fn(),
+      useLoaderDataMock: rstest.fn(),
+    };
+  });
 
 const translations = new Map(
   Object.entries({
@@ -88,10 +81,7 @@ rstest.mock('../../../../src/routes/use-shell-controls.ts', () => ({
 }));
 
 rstest.mock('../../../../src/routes/shell-frame.tsx', () => ({
-  AuthenticatedDashboardLayout: ({
-    children,
-    ...props
-  }: DashboardPageProps & { readonly children: ReactNode }) => {
+  AuthenticatedDashboardLayout: ({ children, ...props }: DashboardPageProps & { readonly children: ReactNode }) => {
     dashboardRenders.push(props);
     return (
       <main>
@@ -187,8 +177,14 @@ afterEach(() => {
 });
 
 it.each([
-  { blockedText: 'The dashboard is unavailable', shellState: 'unavailable' as const },
-  { blockedText: 'Select a legal entity first', shellState: 'anonymous' as const },
+  {
+    blockedText: 'The dashboard is unavailable',
+    shellState: 'unavailable' as const,
+  },
+  {
+    blockedText: 'Select a legal entity first',
+    shellState: 'anonymous' as const,
+  },
 ])(
   'refuses the whole page for a $shellState shell without a dashboard or an attach seam',
   ({ blockedText, shellState }) => {
@@ -204,7 +200,10 @@ it.each([
   },
 );
 
-const closedStates: readonly { readonly closedText: string; readonly state: ClosedState }[] = [
+const closedStates: readonly {
+  readonly closedText: string;
+  readonly state: ClosedState;
+}[] = [
   { closedText: 'You cannot open this resource', state: 'forbidden' },
   { closedText: 'This resource does not exist', state: 'not_found' },
   { closedText: 'Select a legal entity first', state: 'selection_required' },
@@ -258,7 +257,10 @@ const disabledMediaCases = [
   { blockedText: 'This module is read only', reason: 'read_only' as const },
   { blockedText: 'This resource has no media', reason: 'absent' as const },
   { blockedText: 'You cannot attach media here', reason: 'forbidden' as const },
-  { blockedText: 'Media attachment is unavailable', reason: 'unavailable' as const },
+  {
+    blockedText: 'Media attachment is unavailable',
+    reason: 'unavailable' as const,
+  },
 ];
 
 it.live.each(disabledMediaCases)(
@@ -317,9 +319,7 @@ it.live('holds the attach seam disabled for the whole in-flight attachment', () 
     renderResourcePage(readyModel());
 
     yield* Effect.promise(() => user.click(attachButton()));
-    yield* Effect.promise(() =>
-      waitFor(() => expect(screen.getByText('Attaching media…')).toBeTruthy()),
-    );
+    yield* Effect.promise(() => waitFor(() => expect(screen.getByText('Attaching media…')).toBeTruthy()));
     expect(attachButton().hasAttribute('disabled')).toBe(true);
 
     yield* Effect.promise(() => user.click(attachButton()));
@@ -327,9 +327,7 @@ it.live('holds the attach seam disabled for the whole in-flight attachment', () 
     expect(browserRunPromiseMock).toHaveBeenCalledTimes(1);
 
     yield* Deferred.succeed(gate, attachedResponse);
-    yield* Effect.promise(() =>
-      waitFor(() => expect(screen.getByText('Media attached')).toBeTruthy()),
-    );
+    yield* Effect.promise(() => waitFor(() => expect(screen.getByText('Media attached')).toBeTruthy()));
     expect(attachButton().hasAttribute('disabled')).toBe(false);
   }),
 );
@@ -341,9 +339,7 @@ it.live('attaches media for the loaded resource reference and reports success on
     renderResourcePage(model);
 
     yield* Effect.promise(() => user.click(attachButton()));
-    yield* Effect.promise(() =>
-      waitFor(() => expect(screen.getByText('Media attached')).toBeTruthy()),
-    );
+    yield* Effect.promise(() => waitFor(() => expect(screen.getByText('Media attached')).toBeTruthy()));
 
     expect(attachResourceMediaMock).toHaveBeenCalledTimes(1);
     expect(attachResourceMediaMock).toHaveBeenCalledWith(model.resource.ref);
@@ -360,9 +356,7 @@ it.live('settles a typed attachment failure into its own status without a defect
     renderResourcePage(readyModel());
 
     yield* Effect.promise(() => user.click(attachButton()));
-    yield* Effect.promise(() =>
-      waitFor(() => expect(screen.getByText('Attaching the media failed')).toBeTruthy()),
-    );
+    yield* Effect.promise(() => waitFor(() => expect(screen.getByText('Attaching the media failed')).toBeTruthy()));
 
     expect(screen.queryByText('Media attached')).toBeNull();
     expect(screen.queryByText('Attaching media…')).toBeNull();
@@ -377,14 +371,10 @@ it.live('retries after a failure and replaces the failure status with success', 
     renderResourcePage(readyModel());
 
     yield* Effect.promise(() => user.click(attachButton()));
-    yield* Effect.promise(() =>
-      waitFor(() => expect(screen.getByText('Attaching the media failed')).toBeTruthy()),
-    );
+    yield* Effect.promise(() => waitFor(() => expect(screen.getByText('Attaching the media failed')).toBeTruthy()));
 
     yield* Effect.promise(() => user.click(attachButton()));
-    yield* Effect.promise(() =>
-      waitFor(() => expect(screen.getByText('Media attached')).toBeTruthy()),
-    );
+    yield* Effect.promise(() => waitFor(() => expect(screen.getByText('Media attached')).toBeTruthy()));
 
     expect(attachResourceMediaMock).toHaveBeenCalledTimes(2);
     expect(browserRunPromiseMock).toHaveBeenCalledTimes(2);

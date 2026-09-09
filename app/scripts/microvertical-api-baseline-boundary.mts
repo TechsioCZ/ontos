@@ -40,10 +40,7 @@ const identifierName = (node: Node | undefined): string | undefined =>
   node !== undefined && isIdentifier(node) ? node.text : undefined;
 
 const propertyName = (node: Node | undefined): string | undefined => {
-  if (
-    node !== undefined &&
-    (isIdentifier(node) || isStringLiteralLikeNode(node) || isNumericLiteral(node))
-  ) {
+  if (node !== undefined && (isIdentifier(node) || isStringLiteralLikeNode(node) || isNumericLiteral(node))) {
     return node.text;
   }
   return undefined;
@@ -65,11 +62,7 @@ const isAccessPath = (node: Expression, expected: readonly string[]): boolean =>
 
 const unwrapExpression = (expression: Expression): Expression => {
   let current = expression;
-  while (
-    isAsExpression(current) ||
-    isParenthesizedExpression(current) ||
-    isSatisfiesExpression(current)
-  ) {
+  while (isAsExpression(current) || isParenthesizedExpression(current) || isSatisfiesExpression(current)) {
     current = current.expression;
   }
   return current;
@@ -91,26 +84,19 @@ const numericLiteral = (expression: Expression | undefined): number | undefined 
   return isNumericLiteral(unwrapped) ? Number(unwrapped.text) : undefined;
 };
 
-const callExpression = (
-  expression: Expression | undefined,
-  callee: readonly string[],
-): CallExpression | undefined => {
+const callExpression = (expression: Expression | undefined, callee: readonly string[]): CallExpression | undefined => {
   if (expression === undefined) {
     return undefined;
   }
   const unwrapped = unwrapExpression(expression);
-  return isCallExpression(unwrapped) && isAccessPath(unwrapped.expression, callee)
-    ? unwrapped
-    : undefined;
+  return isCallExpression(unwrapped) && isAccessPath(unwrapped.expression, callee) ? unwrapped : undefined;
 };
 
 const exportedConst = (sourceFile: SourceFile, name: string): VariableDeclaration | undefined => {
   for (const statement of sourceFile.statements) {
     if (
       !isVariableStatement(statement) ||
-      !(
-        statement.modifiers?.some((modifier) => modifier.kind === SyntaxKind.ExportKeyword) ?? false
-      ) ||
+      !(statement.modifiers?.some((modifier) => modifier.kind === SyntaxKind.ExportKeyword) ?? false) ||
       statement.declarationList.flags !== NodeFlags.Const
     ) {
       continue;
@@ -197,9 +183,7 @@ const sharedSchemaObject = (
     return undefined;
   }
   const spreads = schemaObject.properties.filter(isSpreadAssignment);
-  const assignments = propertyAssignments(
-    schemaObject.properties.filter((property) => !isSpreadAssignment(property)),
-  );
+  const assignments = propertyAssignments(schemaObject.properties.filter((property) => !isSpreadAssignment(property)));
   if (
     spreads.length !== 1 ||
     !spreads.every((spread) => isAccessPath(spread.expression, [sharedSchemaName, 'fields'])) ||
@@ -224,13 +208,19 @@ const directCallChain = (expression: Expression | undefined): DirectCallChain | 
     return undefined;
   }
   let current = unwrapExpression(expression);
-  const methods: { readonly arguments: readonly Expression[]; readonly name: string }[] = [];
+  const methods: {
+    readonly arguments: readonly Expression[];
+    readonly name: string;
+  }[] = [];
   while (
     isCallExpression(current) &&
     isPropertyAccessExpression(current.expression) &&
     !isIdentifier(current.expression.expression)
   ) {
-    methods.unshift({ arguments: current.arguments, name: current.expression.name.text });
+    methods.unshift({
+      arguments: current.arguments,
+      name: current.expression.name.text,
+    });
     current = unwrapExpression(current.expression.expression);
   }
   if (!isCallExpression(current)) {
@@ -239,10 +229,7 @@ const directCallChain = (expression: Expression | undefined): DirectCallChain | 
   return { base: current, methods };
 };
 
-const brandedStringSchemaIsExact = (
-  declaration: VariableDeclaration | undefined,
-  brand: string,
-): boolean => {
+const brandedStringSchemaIsExact = (declaration: VariableDeclaration | undefined, brand: string): boolean => {
   const initializer = declaration?.initializer;
   if (initializer === undefined) {
     return false;
@@ -262,19 +249,12 @@ const brandedStringSchemaIsExact = (
 };
 
 const importedRuntimeNames = (statement: Node, expectedPackage: string): readonly string[] => {
-  if (
-    !isImportDeclaration(statement) ||
-    stringLiteral(statement.moduleSpecifier) !== expectedPackage
-  ) {
+  if (!isImportDeclaration(statement) || stringLiteral(statement.moduleSpecifier) !== expectedPackage) {
     return [];
   }
   const clause = statement.importClause;
   const bindings = clause?.namedBindings;
-  if (
-    clause?.phaseModifier === SyntaxKind.TypeKeyword ||
-    bindings === undefined ||
-    !isNamedImports(bindings)
-  ) {
+  if (clause?.phaseModifier === SyntaxKind.TypeKeyword || bindings === undefined || !isNamedImports(bindings)) {
     return [];
   }
   return bindings.elements
@@ -287,21 +267,18 @@ const importsExactBindings = (
   expectedPackage: string,
   expectedBindings: readonly string[],
 ): boolean => {
-  const names = new Set(
-    sourceFile.statements.flatMap((statement) => importedRuntimeNames(statement, expectedPackage)),
-  );
+  const names = new Set(sourceFile.statements.flatMap((statement) => importedRuntimeNames(statement, expectedPackage)));
   return expectedBindings.every((name) => names.has(name));
 };
 
-const importsSharedBaselinePrimitives = (
-  sourceFile: SourceFile,
-  expectedPackage: string,
-): boolean =>
-  importsExactBindings(sourceFile, expectedPackage, [
-    'MicroVerticalBuildMarkerSchema',
-    'MicroVerticalReadinessSchema',
-    'createMicroVerticalOperationContext',
-  ]);
+const importsSharedBaselinePrimitives = (sourceFile: SourceFile, expectedPackage: string): boolean =>
+  [expectedPackage, `${expectedPackage}/microvertical-api-baseline`].some((specifier) =>
+    importsExactBindings(sourceFile, specifier, [
+      'MicroVerticalBuildMarkerSchema',
+      'MicroVerticalReadinessSchema',
+      'createMicroVerticalOperationContext',
+    ]),
+  );
 
 const singleAddedArgument = (
   expression: Expression | undefined,
@@ -379,11 +356,7 @@ const rootComposesFoundation = (
 };
 
 const operationContextFields = (property: PropertyAssignment) => {
-  const constructorCall = exactCall(
-    property.initializer,
-    ['createMicroVerticalOperationContext'],
-    1,
-  );
+  const constructorCall = exactCall(property.initializer, ['createMicroVerticalOperationContext'], 1);
   const input = objectLiteral(constructorCall?.arguments[0]);
   return input === undefined ? undefined : propertyAssignments(input.properties);
 };
@@ -391,28 +364,23 @@ const operationContextFields = (property: PropertyAssignment) => {
 const operationContextIdentity = (
   property: PropertyAssignment,
 ):
-  | { readonly method: string; readonly operationId: string; readonly routePath: string }
+  | {
+      readonly method: string;
+      readonly operationId: string;
+      readonly routePath: string;
+    }
   | undefined => {
   const fields = operationContextFields(property);
   const method = stringLiteral(fields?.get('method')?.initializer);
   const operationId = stringLiteral(fields?.get('operationId')?.initializer);
   const routePath = stringLiteral(fields?.get('routePath')?.initializer);
-  if (
-    fields?.size !== 3 ||
-    method === undefined ||
-    operationId === undefined ||
-    routePath === undefined
-  ) {
+  if (fields?.size !== 3 || method === undefined || operationId === undefined || routePath === undefined) {
     return undefined;
   }
   return { method, operationId, routePath };
 };
 
-const operationContextIsConstructed = (
-  property: PropertyAssignment,
-  stem: string,
-  propertyKey: string,
-): boolean => {
+const operationContextIsConstructed = (property: PropertyAssignment, stem: string, propertyKey: string): boolean => {
   const identity = operationContextIdentity(property);
   if (identity === undefined) {
     return false;
@@ -433,8 +401,7 @@ const operationContextIsConstructed = (
     ['removeCartItem', ['POST', `/${stem}/cart/remove`]],
   ]).get(propertyKey);
   const requestedOperation = [method, routePath];
-  const matchesGenerated =
-    generatedOperation?.every((value, index) => value === requestedOperation[index]) === true;
+  const matchesGenerated = generatedOperation?.every((value, index) => value === requestedOperation[index]) === true;
   if (propertyKey === 'readiness' && !matchesGenerated) {
     return false;
   }
@@ -444,10 +411,7 @@ const operationContextIsConstructed = (
   );
 };
 
-const operationMapIsConnected = (
-  declaration: VariableDeclaration | undefined,
-  stem: string,
-): boolean => {
+const operationMapIsConnected = (declaration: VariableDeclaration | undefined, stem: string): boolean => {
   const map = objectLiteral(declaration?.initializer);
   const properties = map === undefined ? undefined : propertyAssignments(map.properties);
   return (
@@ -457,15 +421,9 @@ const operationMapIsConnected = (
   );
 };
 
-const constAssertionObject = (
-  declaration: VariableDeclaration | undefined,
-): ObjectLiteralExpression | undefined => {
+const constAssertionObject = (declaration: VariableDeclaration | undefined): ObjectLiteralExpression | undefined => {
   const initializer = declaration?.initializer;
-  if (
-    initializer === undefined ||
-    !isAsExpression(initializer) ||
-    initializer.type.getText() !== 'const'
-  ) {
+  if (initializer === undefined || !isAsExpression(initializer) || initializer.type.getText() !== 'const') {
     return undefined;
   }
   return objectLiteral(initializer.expression);
@@ -487,16 +445,11 @@ const metadataIsExact = (
   return (
     fields !== undefined &&
     fields.size === new Map(expectedFields).size &&
-    [...expectedFields].every(
-      ([field, value]) => stringLiteral(fields.get(field)?.initializer) === value,
-    )
+    [...expectedFields].every(([field, value]) => stringLiteral(fields.get(field)?.initializer) === value)
   );
 };
 
-const markerSchemaIsShared = (
-  sourceFile: SourceFile,
-  declaration: VariableDeclaration | undefined,
-): boolean => {
+const markerSchemaIsShared = (sourceFile: SourceFile, declaration: VariableDeclaration | undefined): boolean => {
   const schema = sharedSchemaObject(declaration, 'MicroVerticalBuildMarkerSchema', [
     'build',
     'buildMarker',
@@ -523,14 +476,10 @@ const markerSchemaIsShared = (
     ],
     [
       'schemaVersion',
-      (property) =>
-        numericLiteral(exactCall(property.initializer, ['Schema', 'Literal'], 1)?.arguments[0]) ===
-        1,
+      (property) => numericLiteral(exactCall(property.initializer, ['Schema', 'Literal'], 1)?.arguments[0]) === 1,
     ],
   ]);
-  return [...schema.assignments].every(
-    ([field, property]) => validators.get(field)?.(property) === true,
-  );
+  return [...schema.assignments].every(([field, property]) => validators.get(field)?.(property) === true);
 };
 
 const readinessSchemaIsShared = (
@@ -538,11 +487,7 @@ const readinessSchemaIsShared = (
   markerSchemaName: string,
   ownerMarkerIsIdentity: boolean,
 ): boolean => {
-  const schema = sharedSchemaObject(declaration, 'MicroVerticalReadinessSchema', [
-    'checks',
-    'status',
-    'versionSkew',
-  ]);
+  const schema = sharedSchemaObject(declaration, 'MicroVerticalReadinessSchema', ['checks', 'status', 'versionSkew']);
   return (
     schema !== undefined &&
     ((schema.identity && ownerMarkerIsIdentity) ||
@@ -551,12 +496,8 @@ const readinessSchemaIsShared = (
   );
 };
 
-const declarationIsIdentifier = (
-  declaration: VariableDeclaration | undefined,
-  identifier: string,
-): boolean =>
-  declaration?.initializer !== undefined &&
-  identifierName(unwrapExpression(declaration.initializer)) === identifier;
+const declarationIsIdentifier = (declaration: VariableDeclaration | undefined, identifier: string): boolean =>
+  declaration?.initializer !== undefined && identifierName(unwrapExpression(declaration.initializer)) === identifier;
 
 const validateParsedContract = (
   sourceFile: SourceFile,
@@ -596,14 +537,7 @@ const validateParsedContract = (
   if (!foundationIsExact(exportedConst(sourceFile, foundationName), stem, readinessSchemaName)) {
     return 'MicroVertical readiness foundation API must directly compose its exact readiness endpoint and foundation identity';
   }
-  if (
-    !rootComposesFoundation(
-      sourceFile,
-      exportedConst(sourceFile, `${exportStem}Api`),
-      stem,
-      foundationName,
-    )
-  ) {
+  if (!rootComposesFoundation(sourceFile, exportedConst(sourceFile, `${exportStem}Api`), stem, foundationName)) {
     return 'MicroVertical root API must explicitly compose its readiness foundation API';
   }
   if (!operationMapIsConnected(exportedConst(sourceFile, `${exportStem}OperationContexts`), stem)) {
@@ -658,9 +592,7 @@ export const configuredMicroVerticalApiStem = (
   verticalPath: string,
   verticals: readonly MicroVerticalTopologyEntry[],
 ): string | undefined => {
-  const topologyVertical = verticals.find(
-    (vertical) => (vertical.path ?? `verticals/${vertical.id}`) === verticalPath,
-  );
+  const topologyVertical = verticals.find((vertical) => (vertical.path ?? `verticals/${vertical.id}`) === verticalPath);
   const endpoint = topologyVertical?.api?.readiness?.endpoint;
   return endpoint?.match(/^\/(?<stem>[a-z0-9]+(?:-[a-z0-9]+)*)\/readiness$/u)?.groups?.stem;
 };

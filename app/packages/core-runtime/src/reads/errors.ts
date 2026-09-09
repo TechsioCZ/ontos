@@ -1,5 +1,5 @@
-import type { OperationContextError } from '../operations/errors.ts';
 import type { ModuleStateGateError } from '../modules/module-state-gate-errors.ts';
+import type { OperationContextError } from '../operations/errors.ts';
 import type { ReadEvidencePersistenceError } from './read-evidence-persistence-error.ts';
 import type { ReadEvidenceValidationError } from './read-evidence-validation-error.ts';
 import type { ReadHandlerExecutionError } from './read-handler-execution-error.ts';

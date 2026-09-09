@@ -1,5 +1,6 @@
-import type { Client, ClientBase, QueryResult, QueryResultRow } from 'pg';
 import { Effect, Schema } from 'effect';
+import type { Client, ClientBase, QueryResult, QueryResultRow } from 'pg';
+
 import {
   assertDatabaseSessionIdentities,
   assertSameDatabaseTarget,
@@ -176,8 +177,7 @@ const query = <Row extends QueryResultRow>(
     try: async () => await client.query<Row>(statement, values),
   });
 
-export const hasTrustedContextValue = (value: string | null): boolean =>
-  value !== null && value.length > 0;
+export const hasTrustedContextValue = (value: string | null): boolean => value !== null && value.length > 0;
 
 const probeSettingEffect = Effect.fn('probeSetting')(function* probeSetting(
   client: ClientBase,
@@ -187,16 +187,12 @@ const probeSettingEffect = Effect.fn('probeSetting')(function* probeSetting(
   yield* query(client, 'begin');
   const settable = yield* Effect.gen(function* probeTrustedContextSetting() {
     yield* query(client, 'select set_config($1, $2, true)', [setting, value]);
-    const current = yield* query<SettingRow>(client, 'select current_setting($1, true) as value', [
-      setting,
-    ]);
+    const current = yield* query<SettingRow>(client, 'select current_setting($1, true) as value', [setting]);
     const [currentRow] = current.rows;
     return currentRow?.value === value;
   }).pipe(Effect.catch(() => Effect.succeed(false)));
   yield* query(client, 'rollback');
-  const after = yield* query<SettingRow>(client, 'select current_setting($1, true) as value', [
-    setting,
-  ]);
+  const after = yield* query<SettingRow>(client, 'select current_setting($1, true) as value', [setting]);
   const [afterRow] = after.rows;
   return {
     retainedAfterRollback: hasTrustedContextValue(afterRow?.value ?? null),
@@ -209,9 +205,7 @@ export const collectSnapshot = Effect.fn('collectSnapshot')(function* collectSna
   runtime: Client,
 ): Effect.fn.Return<
   DatabaseTrustBoundarySnapshot,
-  | DatabaseSessionIdentityFailure
-  | DatabaseTargetMismatchFailure
-  | DatabaseTrustBoundarySnapshotError
+  DatabaseSessionIdentityFailure | DatabaseTargetMismatchFailure | DatabaseTrustBoundarySnapshotError
 > {
   const targetQuery = `select
     current_user::text as current_role,
@@ -1070,11 +1064,7 @@ export const collectSnapshot = Effect.fn('collectSnapshot')(function* collectSna
        grantable`,
     [runtimeRole, schemaNames, administrativeRole],
   );
-  const tenant = yield* probeSettingEffect(
-    runtime,
-    'ontos.tenant_id',
-    '00000000-0000-4000-8000-000000000001',
-  );
+  const tenant = yield* probeSettingEffect(runtime, 'ontos.tenant_id', '00000000-0000-4000-8000-000000000001');
   const legalEntity = yield* probeSettingEffect(
     runtime,
     'ontos.legal_entity_id',

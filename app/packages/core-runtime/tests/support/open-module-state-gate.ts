@@ -1,4 +1,5 @@
 import { Effect } from 'effect';
+
 import type { ModuleStateGateService } from '../../src/modules/module-state-gate.ts';
 
 const prepareSnapshot: ModuleStateGateService['prepareSnapshot'] = (tenantId, entrypoints) =>
@@ -6,11 +7,7 @@ const prepareSnapshot: ModuleStateGateService['prepareSnapshot'] = (tenantId, en
     Object.freeze({
       entrypointKeys: Object.freeze(entrypoints.map(({ entrypointKey }) => entrypointKey)),
       moduleKeys: Object.freeze([
-        ...new Set(
-          entrypoints
-            .filter((entrypoint) => entrypoint.scope === 'tenant')
-            .map(({ moduleKey }) => moduleKey),
-        ),
+        ...new Set(entrypoints.filter((entrypoint) => entrypoint.scope === 'tenant').map(({ moduleKey }) => moduleKey)),
       ]),
       tenantId,
     }),

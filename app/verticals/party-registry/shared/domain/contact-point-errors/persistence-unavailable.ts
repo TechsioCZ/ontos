@@ -1,4 +1,5 @@
 import { Schema } from 'effect';
+
 import { ContactPointErrorReasonSchema } from './shared.ts';
 
 export class PartyContactPointPersistenceUnavailable extends Schema.TaggedError<PartyContactPointPersistenceUnavailable>()(

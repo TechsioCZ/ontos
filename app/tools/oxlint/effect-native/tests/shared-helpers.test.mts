@@ -12,13 +12,7 @@ import {
   stringArray,
   stringList,
 } from '../shared/options.ts';
-import {
-  globToRegExp,
-  inScriptScope,
-  scopePath,
-  scriptScope,
-  workspacePath,
-} from '../shared/paths.ts';
+import { globToRegExp, inScriptScope, scopePath, scriptScope, workspacePath } from '../shared/paths.ts';
 import { runOxlint, testsDirectory } from './oxlint.mts';
 import { withTemporaryWorkspace } from './temporary-workspace.mts';
 
@@ -41,8 +35,7 @@ it('shared option parsers preserve rejection, sparse arrays and regex flags', ()
 
 it('shared path policies distinguish earliest and latest markers and script scope', () => {
   const nestedScript = 'packages/p/scripts/apps/demo.ts';
-  const fixture =
-    '/repo/tools/oxlint/effect-native/tests/fixtures/x/invalid/packages/p/scripts/apps/demo.ts';
+  const fixture = '/repo/tools/oxlint/effect-native/tests/fixtures/x/invalid/packages/p/scripts/apps/demo.ts';
   expect(scopePath(fixture)).toBe(nestedScript);
   expect(scriptScope(fixture)).toBe(nestedScript);
   expect(workspacePath(fixture)).toBe('apps/demo.ts');
@@ -132,8 +125,7 @@ const cases = [
     expected: [null, null],
     name: 'script provenance rejects later writes',
     probe: 'provenance',
-    source:
-      'import * as p from "node:process"; let { stderr: sink } = p; sink = p.stdout; sink.write;',
+    source: 'import * as p from "node:process"; let { stderr: sink } = p; sink = p.stdout; sink.write;',
   },
   {
     expected: ['process', null],
@@ -163,8 +155,7 @@ const cases = [
     expected: ['decodeUnknownSync'],
     name: 'Schema identity follows aliases',
     probe: 'schema',
-    source:
-      'import * as E from "effect"; const S = E.Schema; const { decodeUnknownSync: decode } = S; decode;',
+    source: 'import * as E from "effect"; const S = E.Schema; const { decodeUnknownSync: decode } = S; decode;',
   },
   {
     expected: [null],

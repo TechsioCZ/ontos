@@ -1,9 +1,7 @@
 // Canonical schema-only contract extracted from the generated counterparty-create Action.
 import { Schema } from 'effect';
-import {
-  CounterpartyCreationProvenanceSchema,
-  LegalEntityRefSchema,
-} from '../domain/counterparty-contract.ts';
+
+import { CounterpartyCreationProvenanceSchema, LegalEntityRefSchema } from '../domain/counterparty-contract.ts';
 import { CounterpartyRefSchema } from '../resources/counterparty.ts';
 import { PartyRefSchema } from '../resources/party.ts';
 

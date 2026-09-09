@@ -64,11 +64,8 @@
  * Report-only: no fixers, no suggestions.
  */
 import { defineRule } from '@oxlint/plugins';
-
 import type { Context, ESTree } from '@oxlint/plugins';
 
-import { jsonExpressionSnippet } from '../shared/json-globals.ts';
-import { inJsonRuleScope } from '../shared/json-rule-scope.ts';
 import {
   EXPRESSION_WRAPPERS,
   identityUnwrap as unwrap,
@@ -78,6 +75,8 @@ import {
   staticString,
 } from '../shared/ast.ts';
 import { isUnshadowedGlobal } from '../shared/bindings.ts';
+import { jsonExpressionSnippet } from '../shared/json-globals.ts';
+import { inJsonRuleScope } from '../shared/json-rule-scope.ts';
 
 type AnyNode = ESTree.Node;
 
@@ -109,7 +108,9 @@ function staticPropertyName(node: ESTree.MemberExpression): string | null {
 }
 
 function keyName(key: AnyNode): string | null {
-  return sharedKeyName(key, false, { unwrap: { wrappers: EXPRESSION_WRAPPERS, sequence: true } });
+  return sharedKeyName(key, false, {
+    unwrap: { wrappers: EXPRESSION_WRAPPERS, sequence: true },
+  });
 }
 
 const OWNER_WRAPPERS = new Set([
@@ -162,9 +163,7 @@ function isJsonHost(context: Context, node: AnyNode): boolean {
   const host = unwrap(node);
   if (host.type === 'Identifier') return isUnshadowedGlobal(context, host, 'JSON', true);
   return (
-    host.type === 'MemberExpression' &&
-    staticPropertyName(host) === 'JSON' &&
-    isGlobalContainer(context, host.object)
+    host.type === 'MemberExpression' && staticPropertyName(host) === 'JSON' && isGlobalContainer(context, host.object)
   );
 }
 
@@ -185,13 +184,14 @@ function callMessage(call: AnyNode): string {
     return 'jsonStringifyEquality';
   if (isKeyConsumer(consumer, result)) return 'jsonStringifyIdentityKey';
   const owner = ownerName(call);
-  return owner !== null && IDENTITY_NAME.test(owner)
-    ? 'jsonStringifyIdentityKey'
-    : 'nativeJsonStringify';
+  return owner !== null && IDENTITY_NAME.test(owner) ? 'jsonStringifyIdentityKey' : 'nativeJsonStringify';
 }
 
 /** Called references anchor at their call; point-free references anchor at capture. */
-function classify(reference: AnyNode): { readonly node: AnyNode; readonly messageId: string } {
+function classify(reference: AnyNode): {
+  readonly node: AnyNode;
+  readonly messageId: string;
+} {
   const { node: callee, parent } = skipWrappers(reference);
   if (parent?.type !== 'CallExpression' || parent.callee !== callee)
     return { node: reference, messageId: 'jsonStringifyReference' };
@@ -243,7 +243,11 @@ export const rule = defineRule({
       },
     ],
     defaultOptions: [
-      { allowPaths: [], ignoreTestFiles: true, includePaths: [...DEFAULT_INCLUDE_PATHS] },
+      {
+        allowPaths: [],
+        ignoreTestFiles: true,
+        includePaths: [...DEFAULT_INCLUDE_PATHS],
+      },
     ],
   },
   create(context) {
@@ -253,7 +257,9 @@ export const rule = defineRule({
       context.report({
         node,
         messageId,
-        data: { expression: jsonExpressionSnippet(context.sourceCode.getText(node)) },
+        data: {
+          expression: jsonExpressionSnippet(context.sourceCode.getText(node)),
+        },
       });
     };
 

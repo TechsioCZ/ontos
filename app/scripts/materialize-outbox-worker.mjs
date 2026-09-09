@@ -1,7 +1,9 @@
 import { isBuiltin } from 'node:module';
+
 import { NodeServices } from '@effect/platform-node';
-import { build } from 'esbuild';
 import { Config, Effect, FileSystem, ManagedRuntime, Path, Schema } from 'effect';
+import { build } from 'esbuild';
+
 import { outboxWorkerDelivery } from './outbox-worker-delivery.mjs';
 
 const TopologySchema = Schema.fromJsonString(
@@ -102,9 +104,7 @@ const makeProductionDependenciesPlugin = ({ packages, path, workspaceRoot }) => 
       if (isBuiltin(args.path)) {
         return { external: true, path: args.path };
       }
-      const name = args.path.startsWith('@')
-        ? args.path.split('/').slice(0, 2).join('/')
-        : args.path.split('/').at(0);
+      const name = args.path.startsWith('@') ? args.path.split('/').slice(0, 2).join('/') : args.path.split('/').at(0);
       if (args.path === '@app/core-runtime') {
         return {
           path: path.join(workspaceRoot, 'packages/core-runtime/src/outbox/worker-entrypoint.ts'),
@@ -140,9 +140,7 @@ const collectProductionDependency = (importedPath, packages, dependencies) =>
     });
     const uniqueVersions = [...new Set(versions)];
     if (uniqueVersions.length !== 1) {
-      return yield* Effect.fail(
-        failure(`Worker dependency ${name} must have one declared production version`),
-      );
+      return yield* Effect.fail(failure(`Worker dependency ${name} must have one declared production version`));
     }
     const [version] = uniqueVersions;
     if (version === undefined) {
@@ -166,26 +164,14 @@ const collectProductionDependency = (importedPath, packages, dependencies) =>
  * Bundle owner + Core code; retain exact production dependencies, never workspace links.
  * @param {MaterializeOptions} options Materialization identity and paths.
  */
-const materializeOutboxWorkerEffect = ({
-  appId,
-  packageDir,
-  packageName,
-  runtimeDir,
-  workspaceRoot,
-}) =>
+const materializeOutboxWorkerEffect = ({ appId, packageDir, packageName, runtimeDir, workspaceRoot }) =>
   Effect.gen(function* materializeWorker() {
     const fs = yield* FileSystem.FileSystem;
     const path = yield* Path.Path;
-    const topologySource = yield* fs.readFileString(
-      path.join(workspaceRoot, 'topology/reference-topology.json'),
-    );
+    const topologySource = yield* fs.readFileString(path.join(workspaceRoot, 'topology/reference-topology.json'));
     const topology = yield* Schema.decodeUnknownEffect(TopologySchema)(topologySource);
     const vertical = topology.verticals.find((candidate) => candidate.id === appId);
-    if (
-      vertical === undefined ||
-      vertical.package !== packageName ||
-      vertical.path !== packageDir
-    ) {
+    if (vertical === undefined || vertical.package !== packageName || vertical.path !== packageDir) {
       return yield* Effect.fail(failure('Worker identity must match its topology owner'));
     }
     const delivery = yield* outboxWorkerDelivery(workspaceRoot, vertical).pipe(
@@ -232,7 +218,13 @@ const materializeOutboxWorkerEffect = ({
             metafile: true,
             outfile: path.join(runtimeDir, WORKER_ENTRY),
             platform: 'node',
-            plugins: [makeProductionDependenciesPlugin({ packages, path, workspaceRoot })],
+            plugins: [
+              makeProductionDependenciesPlugin({
+                packages,
+                path,
+                workspaceRoot,
+              }),
+            ],
             target: 'node26',
           })
         ),
@@ -251,8 +243,7 @@ const materializeOutboxWorkerEffect = ({
     const sourceRevision = yield* Config.option(Config.string('ULTRAMODERN_SOURCE_REVISION'));
     const artifactAppId = yield* Schema.decodeUnknownEffect(AppIdSchema)(appId);
     const artifactServiceId = yield* Schema.decodeUnknownEffect(ServiceIdSchema)(delivery.id);
-    const { inputs: sourceInputMetadata } =
-      yield* Schema.decodeUnknownEffect(MetafileInputsSchema)(metafile);
+    const { inputs: sourceInputMetadata } = yield* Schema.decodeUnknownEffect(MetafileInputsSchema)(metafile);
     /** @type {string[]} */
     const sourceInputs = [];
     for (const sourceInput in sourceInputMetadata) {
@@ -289,5 +280,4 @@ const materializeOutboxWorkerEffect = ({
  *   type: string,
  * }>} Materialized runtime package manifest.
  */
-export const materializeOutboxWorker = (options) =>
-  nodeRuntime.runPromise(materializeOutboxWorkerEffect(options));
+export const materializeOutboxWorker = (options) => nodeRuntime.runPromise(materializeOutboxWorkerEffect(options));

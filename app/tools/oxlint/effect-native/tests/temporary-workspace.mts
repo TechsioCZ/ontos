@@ -36,11 +36,9 @@ export function withTemporaryWorkspace<T>(
     try {
       release(directory);
     } catch (cleanupError) {
-      throw new AggregateError(
-        [error, cleanupError],
-        `Fixture run failed and workspace remains: ${directory}`,
-        { cause: error },
-      );
+      throw new AggregateError([error, cleanupError], `Fixture run failed and workspace remains: ${directory}`, {
+        cause: error,
+      });
     }
     throw error;
   }

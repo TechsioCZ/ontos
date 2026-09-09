@@ -1,5 +1,6 @@
 import { Cause, Effect, FileSystem, Predicate, Result, Schema } from 'effect';
 import type { PlatformError } from 'effect';
+
 import { createCodesmithGenerator } from '../generator-adapter.mts';
 import {
   ACTION_GENERATOR_HEADER,
@@ -19,12 +20,7 @@ import {
   topicToSlug,
   updateMutation,
 } from '../shared.mts';
-import type {
-  OntosVerticalMetadata,
-  OutboxScaffoldConfig,
-  OutboxScaffoldResult,
-  ScaffoldPlan,
-} from '../shared.mts';
+import type { OntosVerticalMetadata, OutboxScaffoldConfig, OutboxScaffoldResult, ScaffoldPlan } from '../shared.mts';
 
 class OutboxMessageScaffoldError extends Schema.TaggedError<OutboxMessageScaffoldError>()(
   'OutboxMessageScaffoldError',
@@ -36,16 +32,12 @@ class OutboxMessageScaffoldError extends Schema.TaggedError<OutboxMessageScaffol
 }
 
 const planningFailure = (reason: string, cause?: unknown): OutboxMessageScaffoldError =>
-  cause === undefined
-    ? new OutboxMessageScaffoldError({ reason })
-    : new OutboxMessageScaffoldError({ cause, reason });
+  cause === undefined ? new OutboxMessageScaffoldError({ reason }) : new OutboxMessageScaffoldError({ cause, reason });
 
 const failureFromCause = (cause: unknown): OutboxMessageScaffoldError =>
   planningFailure(Predicate.isError(cause) ? cause.message : String(cause), cause);
 
-const fromLegacySync = <Value,>(
-  operation: () => Value,
-): Effect.Effect<Value, OutboxMessageScaffoldError> =>
+const fromLegacySync = <Value,>(operation: () => Value): Effect.Effect<Value, OutboxMessageScaffoldError> =>
   Effect.try({ catch: failureFromCause, try: operation });
 
 const PackageExportsSchema = Schema.Struct({
@@ -84,11 +76,7 @@ const recoverDiscoveryCause = (cause: Cause.Cause<ScaffoldFailure>) => {
 const FORMATTED_ACTION_GENERATOR_PREFIX =
   "import { defineAction, defineTenantModuleEntrypoint } from '@app/core-runtime';\n";
 
-const renderOutboxMessage = (
-  vertical: OntosVerticalMetadata,
-  action: string,
-  topic: string,
-): string => {
+const renderOutboxMessage = (vertical: OntosVerticalMetadata, action: string, topic: string): string => {
   const actionType = toPascalCase(action);
   const topicType = toPascalCase(topicToSlug(topic));
   const base = `${actionType}${topicType}Outbox`;
@@ -127,11 +115,7 @@ export const outboxTopic = '${topic}' as const;
 export const outboxProducerModuleKey = '${vertical.moduleId}' as const;
 `;
 
-const isMatchingGeneratedAction = (
-  actionContent: string,
-  vertical: OntosVerticalMetadata,
-  action: string,
-): boolean => {
+const isMatchingGeneratedAction = (actionContent: string, vertical: OntosVerticalMetadata, action: string): boolean => {
   const hasGeneratedActionPrefix =
     actionContent.startsWith(`${ACTION_GENERATOR_HEADER}\n`) ||
     actionContent.startsWith(`${FORMATTED_ACTION_GENERATOR_PREFIX}${ACTION_GENERATOR_HEADER}\n`);
@@ -165,22 +149,13 @@ const planOutboxScaffold = (
       Effect.catchCause(recoverDiscoveryCause),
     );
     const actionPath = yield* fromLegacySync(() =>
-      resolveContainedPath(
-        workspaceRoot,
-        'verticals',
-        vertical.slug,
-        'src',
-        'actions',
-        `${action}.action.ts`,
-      ),
+      resolveContainedPath(workspaceRoot, 'verticals', vertical.slug, 'src', 'actions', `${action}.action.ts`),
     );
     const actionContent = yield* fileSystem
       .readFileString(actionPath)
       .pipe(
         Effect.catchIf(isNotFoundPlatformError, (cause) =>
-          Effect.fail(
-            planningFailure(`Outbox Message requires the generated Action at ${actionPath}`, cause),
-          ),
+          Effect.fail(planningFailure(`Outbox Message requires the generated Action at ${actionPath}`, cause)),
         ),
       );
     if (!isMatchingGeneratedAction(actionContent, vertical, action)) {
@@ -193,10 +168,9 @@ const planOutboxScaffold = (
     const topicSlug = topicToSlug(topic);
     const base = `${toPascalCase(action)}${toPascalCase(topicSlug)}Outbox`;
     if (
-      new RegExp(
-        `\\b(?:${base}(?:Payload|PayloadSchema|ProducerModuleKey|Topic)|create${base}Message)\\b`,
-        'u',
-      ).test(actionContent)
+      new RegExp(`\\b(?:${base}(?:Payload|PayloadSchema|ProducerModuleKey|Topic)|create${base}Message)\\b`, 'u').test(
+        actionContent,
+      )
     ) {
       return yield* Effect.fail(planningFailure(`Outbox identifier ${base} already exists`));
     }
@@ -211,23 +185,10 @@ const planOutboxScaffold = (
       ),
     );
     const contractPath = yield* fromLegacySync(() =>
-      resolveContainedPath(
-        workspaceRoot,
-        'verticals',
-        vertical.slug,
-        'shared',
-        'outbox',
-        `${topicSlug}.ts`,
-      ),
+      resolveContainedPath(workspaceRoot, 'verticals', vertical.slug, 'shared', 'outbox', `${topicSlug}.ts`),
     );
-    const contractMutation = yield* createMutationEffect(
-      contractPath,
-      renderOutboxContract(vertical, topic),
-    );
-    const messageMutation = yield* createMutationEffect(
-      messagePath,
-      renderOutboxMessage(vertical, action, topic),
-    );
+    const contractMutation = yield* createMutationEffect(contractPath, renderOutboxContract(vertical, topic));
+    const messageMutation = yield* createMutationEffect(messagePath, renderOutboxMessage(vertical, action, topic));
     const exportSource = `./${action}.${topicSlug}.outbox-message.ts`;
     const exportEntries = [
       `export { ${base}PayloadSchema } from '${exportSource}';`,
@@ -237,27 +198,17 @@ const planOutboxScaffold = (
       `export type { ${base}Payload } from '${exportSource}';`,
     ];
     const patchedAction = yield* fromLegacySync(() =>
-      insertSortedSlot(
-        actionContent,
-        OUTBOX_SLOT_START,
-        OUTBOX_SLOT_END,
-        exportEntries,
-        (candidate) =>
-          /^export (?:type )?\{ [A-Za-z0-9]+ \} from '\.\/[a-z0-9.-]+\.outbox-message\.ts';$/u.test(
-            candidate,
-          ),
+      insertSortedSlot(actionContent, OUTBOX_SLOT_START, OUTBOX_SLOT_END, exportEntries, (candidate) =>
+        /^export (?:type )?\{ [A-Za-z0-9]+ \} from '\.\/[a-z0-9.-]+\.outbox-message\.ts';$/u.test(candidate),
       ),
     );
     const actionMutation = updateMutation(actionPath, actionContent, patchedAction);
     if (actionMutation === undefined) {
-      return yield* Effect.fail(
-        planningFailure('Outbox Message Action export patch unexpectedly made no change'),
-      );
+      return yield* Effect.fail(planningFailure('Outbox Message Action export patch unexpectedly made no change'));
     }
-    const packageDocument = yield* Schema.decodeUnknownEffect(
-      Schema.fromJsonString(PackageExportsSchema),
-      { onExcessProperty: 'preserve' },
-    )(vertical.packageContent).pipe(
+    const packageDocument = yield* Schema.decodeUnknownEffect(Schema.fromJsonString(PackageExportsSchema), {
+      onExcessProperty: 'preserve',
+    })(vertical.packageContent).pipe(
       Effect.mapError((cause) =>
         planningFailure(`vertical ${vertical.slug} package exports must be a JSON object`, cause),
       ),
@@ -265,9 +216,7 @@ const planOutboxScaffold = (
     const exportsValue = packageDocument.exports;
     const contractExport = `./outbox/${topicSlug}`;
     if (exportsValue[contractExport] !== undefined) {
-      return yield* Effect.fail(
-        planningFailure(`Outbox contract export ${contractExport} already exists`),
-      );
+      return yield* Effect.fail(planningFailure(`Outbox contract export ${contractExport} already exists`));
     }
     const patchedExports = Object.fromEntries(
       Object.entries({
@@ -283,9 +232,7 @@ const planOutboxScaffold = (
       ),
     );
     if (packageMutation === undefined) {
-      return yield* Effect.fail(
-        planningFailure('Outbox Message package export patch unexpectedly made no change'),
-      );
+      return yield* Effect.fail(planningFailure('Outbox Message package export patch unexpectedly made no change'));
     }
     const mutations = [contractMutation, messageMutation, actionMutation, packageMutation];
     yield* fromLegacySync(() => ensureUniqueMutationPaths(mutations));

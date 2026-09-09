@@ -1,8 +1,9 @@
 import { DateTime, Option, Schema, SchemaGetter } from 'effect';
+
 import { DuplicateCandidateCaseRefSchema } from '../resources/duplicate-candidate-case.ts';
 import { PartyMatchDecisionRefSchema } from '../resources/party-match-decision.ts';
-import { PartyRefSchema } from '../resources/party.ts';
 import { PartyOfficialIdentifierRefSchema } from '../resources/party-official-identifier.ts';
+import { PartyRefSchema } from '../resources/party.ts';
 import type { PartyCreateOutcomeSchema } from './identity-contracts.ts';
 import { PartyCandidateSchema, PartyEvidenceEvaluationSchema } from './identity-contracts.ts';
 
@@ -13,18 +14,16 @@ export { PartyCreateRecoveryUnavailable } from './party-create-recovery-unavaila
 const MatchOutcomeSchema = Schema.Literals(['MATCHED', 'NO_MATCH', 'AMBIGUOUS']);
 type MatchOutcome = typeof MatchOutcomeSchema.Type;
 
-export const RuleKeySchema = Schema.String.check(
-  Schema.isMinLength(1),
-  Schema.isMaxLength(100),
-).pipe(Schema.brand('RuleKey'));
+export const RuleKeySchema = Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(100)).pipe(
+  Schema.brand('RuleKey'),
+);
 
 // Matching contracts predate Option/DateTime models and are consumed directly as JSON-shaped DTOs.
 // Validate through Effect's temporal and absence codecs while retaining those decoded DTO shapes.
 const UtcTimestampStringSchema = Schema.String.check(
   Schema.makeFilter((value) => {
     const parsed = DateTime.make(value);
-    const canonicalInput =
-      value.length === 20 && value.endsWith('Z') ? `${value.slice(0, -1)}.000Z` : value;
+    const canonicalInput = value.length === 20 && value.endsWith('Z') ? `${value.slice(0, -1)}.000Z` : value;
     return Option.isSome(parsed) && DateTime.formatIso(parsed.value) === canonicalInput
       ? undefined
       : 'timestamp must be a canonical UTC ISO instant';
@@ -53,20 +52,16 @@ export const evaluateExactClaims = (partyIds: readonly string[]) => {
   } as const;
 };
 
-export const PartyMatchRequestSchema = Schema.Struct({ candidate: PartyCandidateSchema });
+export const PartyMatchRequestSchema = Schema.Struct({
+  candidate: PartyCandidateSchema,
+});
 const MatchEvidenceExplanationSchema = Schema.Struct({
   evidenceRefs: Schema.optionalKey(
-    Schema.Array(Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(500))).check(
-      Schema.isMaxLength(100),
-    ),
+    Schema.Array(Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(500))).check(Schema.isMaxLength(100)),
   ),
   identifierType: Schema.optionalKey(Schema.Literals(['ICO', 'CZ_DIC'])),
-  namespace: Schema.optionalKey(
-    Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(100)),
-  ),
-  normalizedValue: Schema.optionalKey(
-    Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(100)),
-  ),
+  namespace: Schema.optionalKey(Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(100))),
+  normalizedValue: Schema.optionalKey(Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(100))),
   officialIdentifierRef: Schema.optionalKey(PartyOfficialIdentifierRefSchema),
   outcome: Schema.optionalKey(MatchOutcomeSchema),
   reason: Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(1000)),
@@ -126,12 +121,16 @@ const CommittedCreateOutcomeSchema = Schema.Literals(['CREATED', 'MATCHED_EXISTI
 const PartyMatchDecisionRecordFieldsSchema = Schema.Struct({
   caseRef: Schema.toEncoded(Schema.OptionFromNullOr(DuplicateCandidateCaseRefSchema)),
   committedCreateOutcome: Schema.toEncoded(
-    Schema.OptionFromOptionalNullOr(CommittedCreateOutcomeSchema, { onNoneEncoding: null }),
+    Schema.OptionFromOptionalNullOr(CommittedCreateOutcomeSchema, {
+      onNoneEncoding: null,
+    }),
   ),
   decidedAt: UtcTimestampStringSchema,
   decisionRef: PartyMatchDecisionRefSchema,
   evidenceEvaluation: Schema.toEncoded(
-    Schema.OptionFromOptionalNullOr(PartyEvidenceEvaluationSchema, { onNoneEncoding: null }),
+    Schema.OptionFromOptionalNullOr(PartyEvidenceEvaluationSchema, {
+      onNoneEncoding: null,
+    }),
   ),
   evidenceExplanation: Schema.Array(MatchEvidenceExplanationSchema),
   matchRuleVersion: Schema.String,
@@ -149,11 +148,7 @@ const validateCreateOutcome = (record: DecisionRecord): string | undefined => {
   if (isCreate && (record.committedCreateOutcome !== expected || record.outcome === 'NO_MATCH')) {
     return 'Create decisions must preserve the exact committed Create result';
   }
-  if (
-    !isCreate &&
-    record.committedCreateOutcome !== null &&
-    record.committedCreateOutcome !== undefined
-  ) {
+  if (!isCreate && record.committedCreateOutcome !== null && record.committedCreateOutcome !== undefined) {
     return 'Only Create operations carry committed Create outcomes';
   }
   return undefined;
@@ -166,9 +161,7 @@ const validateDecisionReferences = (record: DecisionRecord): string | undefined 
       : 'Ambiguity requires exactly one case reference';
   }
   if (record.outcome === 'NO_MATCH') {
-    return record.partyRef === null && record.caseRef === null
-      ? undefined
-      : 'NO_MATCH has no result reference';
+    return record.partyRef === null && record.caseRef === null ? undefined : 'NO_MATCH has no result reference';
   }
   return record.partyRef !== null && record.caseRef === null
     ? undefined
@@ -176,9 +169,7 @@ const validateDecisionReferences = (record: DecisionRecord): string | undefined 
 };
 
 export const PartyMatchDecisionRecordSchema = PartyMatchDecisionRecordFieldsSchema.check(
-  Schema.makeFilter(
-    (record) => validateCreateOutcome(record) ?? validateDecisionReferences(record),
-  ),
+  Schema.makeFilter((record) => validateCreateOutcome(record) ?? validateDecisionReferences(record)),
 );
 export const DuplicateCandidateDetailSchema = Schema.Struct({
   candidate: PartyCandidateSchema,
@@ -194,9 +185,7 @@ export const DuplicateCandidateDetailSchema = Schema.Struct({
   revision: Schema.Finite.check(Schema.isInt(), Schema.isGreaterThan(0)),
 });
 
-const resolvedCreateResult = (
-  record: DecisionRecord,
-): typeof PartyCreateOutcomeSchema.Type | null => {
+const resolvedCreateResult = (record: DecisionRecord): typeof PartyCreateOutcomeSchema.Type | null => {
   if (
     record.partyRef !== null &&
     record.caseRef === null &&
@@ -225,7 +214,11 @@ export const committedCreateResult = (
     record.partyRef === null &&
     record.outcome === 'AMBIGUOUS'
   ) {
-    return { caseRef: record.caseRef, decisionRef: record.decisionRef, outcome: 'AMBIGUOUS' };
+    return {
+      caseRef: record.caseRef,
+      decisionRef: record.decisionRef,
+      outcome: 'AMBIGUOUS',
+    };
   }
   return resolvedCreateResult(record);
 };

@@ -2,6 +2,7 @@
 import { defineRead, defineTenantModuleEntrypoint } from '@app/core-runtime';
 import type { ReadHandlerContext } from '@app/core-runtime';
 import { Effect } from 'effect';
+
 import {
   PartyOfficialIdentifierHistoryRequestSchema,
   PartyOfficialIdentifierHistoryResponseSchema,
@@ -40,12 +41,14 @@ export const partyOfficialIdentifierHistoryRead = defineRead(
   (input, context: ReadHandlerContext<Services>) =>
     context.services.list(input.partyRef.resourceId).pipe(
       Effect.mapError(unavailable),
-      Effect.map((items) => ({ evidence: { resultCount: items.length }, result: { items } })),
+      Effect.map((items) => ({
+        evidence: { resultCount: items.length },
+        result: { items },
+      })),
     ),
   (transaction, scope) =>
     Effect.succeed({
-      list: (partyId: string) =>
-        listOfficialIdentifierHistory(transaction, scope.tenantId, partyId),
+      list: (partyId: string) => listOfficialIdentifierHistory(transaction, scope.tenantId, partyId),
     }),
   () => ({ kind: 'tenant', permission: 'read_party_identity' }),
 );

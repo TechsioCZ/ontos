@@ -1,4 +1,5 @@
-import { optionRecord } from '../shared/options.ts';
+import { fileURLToPath } from 'node:url';
+
 /**
  * Audit A6 (`docs/architecture/EFFECT_V4_ANTIPATTERN_AUDIT.md`) calls for one outer
  * instrumentation seam and ambient identity annotations, replacing copied per-handler records.
@@ -17,24 +18,15 @@ import { optionRecord } from '../shared/options.ts';
  * Report-only, with no fixer or suggestions.
  */
 import { defineRule } from '@oxlint/plugins';
-import { fileURLToPath } from 'node:url';
-
 import type { Context, ESTree, Variable } from '@oxlint/plugins';
 
-import { collectEffectBindings } from '../shared/effect-imports.ts';
-import { isTestFile, matchesGlobs, rootedScopePath } from '../shared/paths.ts';
-import { stringArray } from '../shared/options.ts';
-import {
-  unwrapNode as unwrap,
-  staticString,
-  memberName as staticMemberName,
-} from '../shared/ast.ts';
+import { unwrapNode as unwrap, staticString, memberName as staticMemberName } from '../shared/ast.ts';
 import { lookupVariable, resolvesToImport } from '../shared/bindings.ts';
-import {
-  splitMembers,
-  collectNamespaceLocals,
-  collectDirectMemberImports,
-} from '../shared/imports.ts';
+import { collectEffectBindings } from '../shared/effect-imports.ts';
+import { splitMembers, collectNamespaceLocals, collectDirectMemberImports } from '../shared/imports.ts';
+import { optionRecord } from '../shared/options.ts';
+import { stringArray } from '../shared/options.ts';
+import { isTestFile, matchesGlobs, rootedScopePath } from '../shared/paths.ts';
 
 const DEFAULT_INCLUDE = ['apps/**', 'verticals/**', 'packages/**'];
 
@@ -158,32 +150,19 @@ function qualifiedMember(base: string | null, key: string | null): string | null
   return base === '$root' ? key : `${base}.${key}`;
 }
 
-function destructuredMember(
-  pattern: ESTree.Node,
-  name: string,
-  base: string | null,
-): string | null {
+function destructuredMember(pattern: ESTree.Node, name: string, base: string | null): string | null {
   if (pattern.type === 'Identifier') return base;
   if (pattern.type !== 'ObjectPattern' || base === null) return null;
   for (const property of pattern.properties) {
-    if (
-      property.type !== 'Property' ||
-      property.value.type !== 'Identifier' ||
-      property.value.name !== name
-    )
-      continue;
+    if (property.type !== 'Property' || property.value.type !== 'Identifier' || property.value.name !== name) continue;
     const key =
-      !property.computed && property.key.type === 'Identifier'
-        ? property.key.name
-        : literalString(property.key);
+      !property.computed && property.key.type === 'Identifier' ? property.key.name : literalString(property.key);
     return qualifiedMember(base, key);
   }
   return null;
 }
 
-function objectArgument(
-  args: ESTree.CallExpression['arguments'],
-): ESTree.ObjectExpression | undefined {
+function objectArgument(args: ESTree.CallExpression['arguments']): ESTree.ObjectExpression | undefined {
   for (const raw of args) {
     const argument = unwrap(raw);
     if (argument.type === 'ObjectExpression') return argument;
@@ -266,10 +245,7 @@ export const rule = defineRule({
 
     const annotationByNamespace = splitMembers(options.annotationMembers).byNamespace;
     const spanByNamespace = splitMembers(options.spanMembers).byNamespace;
-    const allByNamespace = splitMembers([
-      ...options.annotationMembers,
-      ...options.spanMembers,
-    ]).byNamespace;
+    const allByNamespace = splitMembers([...options.annotationMembers, ...options.spanMembers]).byNamespace;
     if (allByNamespace.size === 0) return {};
 
     const identities = new Map<string, string>();
@@ -279,32 +255,21 @@ export const rule = defineRule({
     const program = context.sourceCode.ast;
     const bindings = collectEffectBindings(program);
     const watched = new Set(allByNamespace.keys());
-    const { namespaced, barrel } = collectNamespaceLocals(
-      program,
-      bindings,
-      watched,
-      options.reexportModules,
-    );
+    const { namespaced, barrel } = collectNamespaceLocals(program, bindings, watched, options.reexportModules);
     const directMembers = new Map(
-      [...collectDirectMemberImports(program, allByNamespace)].map(
-        ([local, { namespace, member }]) => [local, `${namespace}.${member}`],
-      ),
+      [...collectDirectMemberImports(program, allByNamespace)].map(([local, { namespace, member }]) => [
+        local,
+        `${namespace}.${member}`,
+      ]),
     );
     if (namespaced.size === 0 && barrel.size === 0 && directMembers.size === 0) return {};
 
     const resolveAlias = (variable: Variable, name: string, seen: Set<Variable>): string | null => {
-      if (
-        seen.has(variable) ||
-        variable.references.some((reference) => reference.isWrite() && !reference.init)
-      )
+      if (seen.has(variable) || variable.references.some((reference) => reference.isWrite() && !reference.init))
         return null;
       seen.add(variable);
       const definition = variable.defs[0];
-      if (
-        definition?.type !== 'Variable' ||
-        definition.node.type !== 'VariableDeclarator' ||
-        !definition.node.init
-      )
+      if (definition?.type !== 'Variable' || definition.node.type !== 'VariableDeclarator' || !definition.node.init)
         return null;
       const declaration = definition.node;
       return destructuredMember(declaration.id, name, resolveCallee(declaration.init!, seen));
@@ -315,12 +280,9 @@ export const rule = defineRule({
       seen: Set<Variable>,
     ): string | null => {
       const variable = lookupVariable(context, callee);
-      if (variable && !resolvesToImport(context, callee, true))
-        return resolveAlias(variable, callee.name, seen);
+      if (variable && !resolvesToImport(context, callee, true)) return resolveAlias(variable, callee.name, seen);
       return (
-        directMembers.get(callee.name) ??
-        namespaced.get(callee.name) ??
-        (barrel.has(callee.name) ? '$root' : null)
+        directMembers.get(callee.name) ?? namespaced.get(callee.name) ?? (barrel.has(callee.name) ? '$root' : null)
       );
     };
 
@@ -335,12 +297,20 @@ export const rule = defineRule({
     };
 
     const reportIdentity = (node: ESTree.Node, key: string, member: string): void => {
-      context.report({ node, messageId: 'manualIdentity', data: { key, member } });
+      context.report({
+        node,
+        messageId: 'manualIdentity',
+        data: { key, member },
+      });
     };
 
     const reportOpaque = (node: ESTree.Node, member: string): void => {
       if (!options.flagSpreadHelpers) return;
-      context.report({ node, messageId: 'opaqueAnnotations', data: { member } });
+      context.report({
+        node,
+        messageId: 'opaqueAnnotations',
+        data: { member },
+      });
     };
 
     /** Report every identity-named property of a flat annotation/attributes record. */
@@ -351,9 +321,7 @@ export const rule = defineRule({
           continue;
         }
         const key =
-          property.computed || property.key.type !== 'Identifier'
-            ? literalString(property.key)
-            : property.key.name;
+          property.computed || property.key.type !== 'Identifier' ? literalString(property.key) : property.key.name;
         if (key === null) continue;
         const identity = identityKeyFor(key, identities);
         if (identity !== null) reportIdentity(property, identity, member);
@@ -391,9 +359,7 @@ export const rule = defineRule({
       for (const property of argument.properties) {
         if (property.type === 'SpreadElement') continue;
         const key =
-          property.computed || property.key.type !== 'Identifier'
-            ? literalString(property.key)
-            : property.key.name;
+          property.computed || property.key.type !== 'Identifier' ? literalString(property.key) : property.key.name;
         if (key !== 'attributes') continue;
         const value = unwrap(property.value);
         if (value.type === 'ObjectExpression') inspectRecord(value, member);
@@ -408,8 +374,7 @@ export const rule = defineRule({
         const dot = qualified.indexOf('.');
         const namespace = qualified.slice(0, dot);
         const member = qualified.slice(dot + 1);
-        if (annotationByNamespace.get(namespace)?.has(member))
-          inspectAnnotationCall(node, qualified);
+        if (annotationByNamespace.get(namespace)?.has(member)) inspectAnnotationCall(node, qualified);
         else if (spanByNamespace.get(namespace)?.has(member)) inspectSpanCall(node, qualified);
       },
     };

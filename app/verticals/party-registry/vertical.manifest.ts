@@ -8,67 +8,68 @@ import {
   ShellSearchContributionSchema,
 } from '@app/core-runtime';
 import { Result, Schema } from 'effect';
+
+import { AresLookupApi } from './shared/apis/ares-lookup.ts';
+import { CounterpartyReadApi } from './shared/apis/counterparty-read.ts';
+import { CounterpartyRoleHistoryApi } from './shared/apis/counterparty-role-history.ts';
+import { DuplicateCandidateDetailApi } from './shared/apis/duplicate-candidate-detail.ts';
+import { OrganizationEngagementProfileApi } from './shared/apis/organization-engagement-profile.ts';
+import { PartyContactPointDetailApi } from './shared/apis/party-contact-point-detail.ts';
+import { PartyContactPointsApi } from './shared/apis/party-contact-points.ts';
+import { PartyCorrectionApi } from './shared/apis/party-correction.ts';
+import { PartyDetailApi } from './shared/apis/party-detail.ts';
+import { PartyMatchDecisionApi } from './shared/apis/party-match-decision.ts';
+import { PartyMatchApi } from './shared/apis/party-match.ts';
+import { PartyMergeReadinessApi } from './shared/apis/party-merge-readiness.ts';
+import { PartyOfficialIdentifierDetailApi } from './shared/apis/party-official-identifier-detail.ts';
+import { PartyOfficialIdentifierHistoryApi } from './shared/apis/party-official-identifier-history.ts';
+import { PartyRelationshipDetailApi } from './shared/apis/party-relationship-detail.ts';
+import { PersonEngagementProfileApi } from './shared/apis/person-engagement-profile.ts';
+import { counterpartyRolePeriodResourceDescriptor } from './shared/resources/counterparty-role-period.ts';
+import { counterpartyResourceDescriptor } from './shared/resources/counterparty.ts';
+import { duplicateCandidateCaseResourceDescriptor } from './shared/resources/duplicate-candidate-case.ts';
+import { organizationEngagementProfileResourceDescriptor } from './shared/resources/organization-engagement-profile.ts';
+import { partyAliasResourceDescriptor } from './shared/resources/party-alias.ts';
+import { partyContactPointResourceDescriptor } from './shared/resources/party-contact-point.ts';
+import { partyCorrectionResourceDescriptor } from './shared/resources/party-correction.ts';
+import { partyMatchDecisionResourceDescriptor } from './shared/resources/party-match-decision.ts';
+import { partyMergeResourceDescriptor } from './shared/resources/party-merge.ts';
+import { partyOfficialIdentifierResourceDescriptor } from './shared/resources/party-official-identifier.ts';
+import { partyRelationshipResourceDescriptor } from './shared/resources/party-relationship.ts';
+import { partyResourceDescriptor } from './shared/resources/party.ts';
+import { personEngagementProfileResourceDescriptor } from './shared/resources/person-engagement-profile.ts';
 // <generated-module-manifest-imports>
 import { addContactPointAction } from './src/actions/add-contact-point.action.ts';
 import { addPartyOfficialIdentifierAction } from './src/actions/add-party-official-identifier.action.ts';
-import { archivePartyAction } from './src/actions/archive-party.action.ts';
 import { archiveOrganizationEngagementAction } from './src/actions/archive-organization-engagement.action.ts';
+import { archivePartyAction } from './src/actions/archive-party.action.ts';
 import { archivePersonEngagementAction } from './src/actions/archive-person-engagement.action.ts';
-import { AresLookupApi } from './shared/apis/ares-lookup.ts';
 import { attachOrganizationEngagementAction } from './src/actions/attach-organization-engagement.action.ts';
 import { attachPersonEngagementAction } from './src/actions/attach-person-engagement.action.ts';
 import { confirmDuplicatePartiesAction } from './src/actions/confirm-duplicate-parties.action.ts';
-import ContactsPage from './src/routes/[lang]/contacts/page.tsx';
 import { correctPartyFactAction } from './src/actions/correct-party-fact.action.ts';
 import { counterpartyCreateAction } from './src/actions/counterparty-create.action.ts';
-import { CounterpartyReadApi } from './shared/apis/counterparty-read.ts';
-import { counterpartyResourceDescriptor } from './shared/resources/counterparty.ts';
 import { counterpartyRoleAddAction } from './src/actions/counterparty-role-add.action.ts';
 import { counterpartyRoleEndAction } from './src/actions/counterparty-role-end.action.ts';
-import { CounterpartyRoleHistoryApi } from './shared/apis/counterparty-role-history.ts';
-import { counterpartyRolePeriodResourceDescriptor } from './shared/resources/counterparty-role-period.ts';
-import { createPartyAction } from './src/actions/create-party.action.ts';
 import { createPartyRelationshipAction } from './src/actions/create-party-relationship.action.ts';
+import { createPartyAction } from './src/actions/create-party.action.ts';
 import { dismissDuplicateCandidateAction } from './src/actions/dismiss-duplicate-candidate.action.ts';
-import { duplicateCandidateCaseResourceDescriptor } from './shared/resources/duplicate-candidate-case.ts';
-import { DuplicateCandidateDetailApi } from './shared/apis/duplicate-candidate-detail.ts';
 import { endContactPointAction } from './src/actions/end-contact-point.action.ts';
 import { endPartyOfficialIdentifierAction } from './src/actions/end-party-official-identifier.action.ts';
 import { endPartyRelationshipAction } from './src/actions/end-party-relationship.action.ts';
 import { markDuplicateCandidateNeedsEvidenceAction } from './src/actions/mark-duplicate-candidate-needs-evidence.action.ts';
 import { matchPartyAction } from './src/actions/match-party.action.ts';
-import { OrganizationEngagementProfileApi } from './shared/apis/organization-engagement-profile.ts';
-import { organizationEngagementProfileResourceDescriptor } from './shared/resources/organization-engagement-profile.ts';
-import { partyAliasResourceDescriptor } from './shared/resources/party-alias.ts';
-import { PartyContactPointDetailApi } from './shared/apis/party-contact-point-detail.ts';
-import { partyContactPointResourceDescriptor } from './shared/resources/party-contact-point.ts';
-import { PartyContactPointsApi } from './shared/apis/party-contact-points.ts';
-import { PartyCorrectionApi } from './shared/apis/party-correction.ts';
-import { partyCorrectionResourceDescriptor } from './shared/resources/party-correction.ts';
-import { PartyDetailApi } from './shared/apis/party-detail.ts';
-import { PartyMatchApi } from './shared/apis/party-match.ts';
-import { PartyMatchDecisionApi } from './shared/apis/party-match-decision.ts';
-import { partyMatchDecisionResourceDescriptor } from './shared/resources/party-match-decision.ts';
-import { PartyMergeReadinessApi } from './shared/apis/party-merge-readiness.ts';
-import { partyMergeResourceDescriptor } from './shared/resources/party-merge.ts';
-import { PartyOfficialIdentifierDetailApi } from './shared/apis/party-official-identifier-detail.ts';
-import { PartyOfficialIdentifierHistoryApi } from './shared/apis/party-official-identifier-history.ts';
-import { partyOfficialIdentifierResourceDescriptor } from './shared/resources/party-official-identifier.ts';
-import { PartyRelationshipDetailApi } from './shared/apis/party-relationship-detail.ts';
-import { partyRelationshipResourceDescriptor } from './shared/resources/party-relationship.ts';
-import { partyResourceDescriptor } from './shared/resources/party.ts';
-import { PersonEngagementProfileApi } from './shared/apis/person-engagement-profile.ts';
-import { personEngagementProfileResourceDescriptor } from './shared/resources/person-engagement-profile.ts';
 import { requestSearchRebuildAction } from './src/actions/request-search-rebuild.action.ts';
 import { resolveDuplicateCandidateCreateAction } from './src/actions/resolve-duplicate-candidate-create.action.ts';
 import { resolveDuplicateCandidateMatchAction } from './src/actions/resolve-duplicate-candidate-match.action.ts';
-import { unarchivePartyAction } from './src/actions/unarchive-party.action.ts';
 import { unarchiveOrganizationEngagementAction } from './src/actions/unarchive-organization-engagement.action.ts';
+import { unarchivePartyAction } from './src/actions/unarchive-party.action.ts';
 import { unarchivePersonEngagementAction } from './src/actions/unarchive-person-engagement.action.ts';
 import { updateContactPointAction } from './src/actions/update-contact-point.action.ts';
-import { updatePartyAction } from './src/actions/update-party.action.ts';
 import { updatePartyOfficialIdentifierAction } from './src/actions/update-party-official-identifier.action.ts';
 import { updatePartyRelationshipAction } from './src/actions/update-party-relationship.action.ts';
+import { updatePartyAction } from './src/actions/update-party.action.ts';
+import ContactsPage from './src/routes/[lang]/contacts/page.tsx';
 // </generated-module-manifest-imports>
 
 type NavigationContributionInput = typeof ShellNavigationContributionSchema.Encoded;
@@ -76,26 +77,18 @@ type PageContributionInput = typeof ShellPageContributionSchema.Encoded;
 type SearchContributionInput = typeof ShellSearchContributionSchema.Encoded;
 
 const navigationContribution = (value: NavigationContributionInput) =>
-  Result.getOrThrow(Schema.decodeUnknownResult(ShellNavigationContributionSchema)(value));
+  Result.getOrThrow(Schema.decodeResult(ShellNavigationContributionSchema)(value));
 const pageContribution = (value: PageContributionInput) =>
-  Result.getOrThrow(Schema.decodeUnknownResult(ShellPageContributionSchema)(value));
+  Result.getOrThrow(Schema.decodeResult(ShellPageContributionSchema)(value));
 const searchContribution = (value: SearchContributionInput) =>
-  Result.getOrThrow(Schema.decodeUnknownResult(ShellSearchContributionSchema)(value));
+  Result.getOrThrow(Schema.decodeResult(ShellSearchContributionSchema)(value));
 
 export const partyRegistryManifest = defineOntosModuleManifest({
   activation: {
     defaultState: 'inactive',
     preservesHistoryWhenInactive: true,
     scope: 'tenant',
-    supportedStates: [
-      'inactive',
-      'active',
-      'read_only',
-      'suspended',
-      'quarantined',
-      'deprecated',
-      'archived',
-    ],
+    supportedStates: ['inactive', 'active', 'read_only', 'suspended', 'quarantined', 'deprecated', 'archived'],
   },
   module: {
     description: 'Party Registry business capability.',
@@ -213,7 +206,10 @@ export const partyRegistryManifest = defineOntosModuleManifest({
           contributionKey: 'party.registry.navigation.contacts',
           entrypoint: {
             access: 'read',
-            authorization: { kind: 'context_permission', permission: 'module.access' },
+            authorization: {
+              kind: 'context_permission',
+              permission: 'module.access',
+            },
             entrypointKey: 'party.registry.page.contacts',
             moduleKey: 'party.registry',
             role: 'page',
@@ -232,7 +228,10 @@ export const partyRegistryManifest = defineOntosModuleManifest({
           contributionKey: 'party.registry.page.contacts',
           entrypoint: {
             access: 'read',
-            authorization: { kind: 'context_permission', permission: 'module.access' },
+            authorization: {
+              kind: 'context_permission',
+              permission: 'module.access',
+            },
             entrypointKey: 'party.registry.page.contacts',
             moduleKey: 'party.registry',
             role: 'page',
@@ -257,7 +256,10 @@ export const partyRegistryManifest = defineOntosModuleManifest({
           contributionKey: 'party.registry.search.counterparties',
           entrypoint: {
             access: 'read',
-            authorization: { kind: 'context_permission', permission: 'module.access' },
+            authorization: {
+              kind: 'context_permission',
+              permission: 'module.access',
+            },
             entrypointKey: 'party.registry.search.counterparties',
             moduleKey: 'party.registry',
             role: 'search',
@@ -269,7 +271,10 @@ export const partyRegistryManifest = defineOntosModuleManifest({
           contributionKey: 'party.registry.search.parties',
           entrypoint: {
             access: 'read',
-            authorization: { kind: 'context_permission', permission: 'module.access' },
+            authorization: {
+              kind: 'context_permission',
+              permission: 'module.access',
+            },
             entrypointKey: 'party.registry.search.parties',
             moduleKey: 'party.registry',
             role: 'search',

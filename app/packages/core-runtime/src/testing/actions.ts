@@ -1,15 +1,13 @@
+import { randomUUID } from 'node:crypto';
+
 import { PgClient } from '@effect/sql-pg';
 import { makeWithDefaults } from 'drizzle-orm/effect-postgres';
 import { DateTime, Deferred, Effect, Layer, Schema, Stream } from 'effect';
 import { Reactivity } from 'effect/unstable/reactivity';
 import type { Connection } from 'effect/unstable/sql/SqlConnection';
 import { ConnectionError, SqlError } from 'effect/unstable/sql/SqlError';
-import { randomUUID } from 'node:crypto';
-import type {
-  ActionRegistration,
-  ActionServiceFactory,
-  AnyActionRegistration,
-} from '../actions/definition.ts';
+
+import type { ActionRegistration, ActionServiceFactory, AnyActionRegistration } from '../actions/definition.ts';
 import { getActionServiceFactory } from '../actions/definition.ts';
 import {
   ActionInvocationNotFound,
@@ -40,12 +38,7 @@ import type { ContextAccessDecision, ContextAccessService } from '../permissions
 const actionTestServiceBinding: unique symbol = Symbol('test-action-service-binding');
 const querySchema = Schema.Union([Schema.String, Schema.Struct({ text: Schema.String })]);
 const scopeValuesSchema = Schema.Tuple([Schema.String, Schema.String]);
-const idempotencyScopeSchema = Schema.Tuple([
-  Schema.String,
-  Schema.String,
-  Schema.String,
-  Schema.String,
-]);
+const idempotencyScopeSchema = Schema.Tuple([Schema.String, Schema.String, Schema.String, Schema.String]);
 const encodeIdempotencyScope = Schema.encodeEffect(Schema.fromJsonString(idempotencyScopeSchema));
 const testCommitAcknowledgementSqlState = ['0', '8007'].join('');
 const completionTime = () => DateTime.toDateUtc(DateTime.makeUnsafe(0));
@@ -89,18 +82,9 @@ export const bindActionTestServices = <
   Services,
   Requirements,
 >(
-  registration: ActionRegistration<
-    Payload,
-    Result,
-    DomainError,
-    Events,
-    Owner,
-    Services,
-    Requirements
-  >,
+  registration: ActionRegistration<Payload, Result, DomainError, Events, Owner, Services, Requirements>,
   services: NoInfer<Services>,
-): ActionTestServiceBinding =>
-  Object.freeze(new ActionTestServiceBindingValue({ registration, services }));
+): ActionTestServiceBinding => Object.freeze(new ActionTestServiceBindingValue({ registration, services }));
 
 export interface ActionTestHarnessOptions {
   readonly actionPermission?: ContextAccessDecision;
@@ -159,13 +143,9 @@ const actionTestHarness = Effect.fn('ActionTestHarness.make')(function* actionTe
   let pendingCommit: Effect.Effect<void, ActionInvocationPersistenceError>[] = [];
   let connectionQueue = Effect.void;
 
-  const find = (
-    id: string,
-  ): Effect.Effect<ActionTestInvocation, ActionInvocationPersistenceError> => {
+  const find = (id: string): Effect.Effect<ActionTestInvocation, ActionInvocationPersistenceError> => {
     const invocation = invocations.get(id);
-    return invocation === undefined
-      ? Effect.fail(persistenceFailure())
-      : Effect.succeed(invocation);
+    return invocation === undefined ? Effect.fail(persistenceFailure()) : Effect.succeed(invocation);
   };
   const prepare = Effect.fn('ActionTestHarness.prepare')(function* prepareTestInvocation(
     input: PrepareActionInvocationInput,
@@ -210,10 +190,7 @@ const actionTestHarness = Effect.fn('ActionTestHarness.make')(function* actionTe
       status: 'succeeded',
     });
   });
-  const recordRejection = <Input extends { readonly actionInvocationId: string }>(
-    input: Input,
-    denials: Input[],
-  ) =>
+  const recordRejection = <Input extends { readonly actionInvocationId: string }>(input: Input, denials: Input[]) =>
     find(input.actionInvocationId).pipe(
       Effect.flatMap((invocation) =>
         Effect.sync(() => {
@@ -261,43 +238,43 @@ const actionTestHarness = Effect.fn('ActionTestHarness.make')(function* actionTe
       ),
   };
 
-  const executeTestQuery = Effect.fn('ActionTestHarness.executeQuery')(
-    function* executeTestQueryEffect<Query, Values>(
-      scope: ActionTestConnectionScope,
-      query: Query,
-      values?: Values,
-    ) {
-      const decoded = yield* Schema.decodeUnknownEffect(querySchema)(query);
-      const sql = Schema.is(Schema.String)(decoded) ? decoded : decoded.text;
-      if (sql === 'begin') {
-        transactionCount += 1;
-      } else if (sql === 'commit') {
-        yield* Effect.all(pendingCommit, { concurrency: 1, discard: true });
-        pendingCommit = [];
-        if (loseCommitAcknowledgement) {
-          loseCommitAcknowledgement = false;
-          return yield* new DatabaseCommitAcknowledgementAmbiguous({
-            code: testCommitAcknowledgementSqlState,
-            kind: 'sqlstate',
-          });
-        }
-      } else if (sql === 'rollback') {
-        pendingCommit = [];
-      } else if (sql.includes('set_config')) {
-        [scope.tenantId, scope.legalEntityId] =
-          yield* Schema.decodeUnknownEffect(scopeValuesSchema)(values);
-      } else if (sql.includes('current_setting')) {
-        return {
-          rows: [{ legal_entity_id: scope.legalEntityId, tenant_id: scope.tenantId }],
-        };
-      } else {
-        return yield* Effect.die(
-          'Owner SQL is unavailable in the Action test harness; bind typed services',
-        );
+  const executeTestQuery = Effect.fn('ActionTestHarness.executeQuery')(function* executeTestQueryEffect<Query, Values>(
+    scope: ActionTestConnectionScope,
+    query: Query,
+    values?: Values,
+  ) {
+    const decoded = yield* Schema.decodeUnknownEffect(querySchema)(query);
+    const sql = Schema.is(Schema.String)(decoded) ? decoded : decoded.text;
+    if (sql === 'begin') {
+      transactionCount += 1;
+    } else if (sql === 'commit') {
+      yield* Effect.all(pendingCommit, { concurrency: 1, discard: true });
+      pendingCommit = [];
+      if (loseCommitAcknowledgement) {
+        loseCommitAcknowledgement = false;
+        return yield* new DatabaseCommitAcknowledgementAmbiguous({
+          code: testCommitAcknowledgementSqlState,
+          kind: 'sqlstate',
+        });
       }
-      return { rows: [] };
-    },
-  );
+    } else if (sql === 'rollback') {
+      pendingCommit = [];
+    } else if (sql.includes('set_config')) {
+      [scope.tenantId, scope.legalEntityId] = yield* Schema.decodeUnknownEffect(scopeValuesSchema)(values);
+    } else if (sql.includes('current_setting')) {
+      return {
+        rows: [
+          {
+            legal_entity_id: scope.legalEntityId,
+            tenant_id: scope.tenantId,
+          },
+        ],
+      };
+    } else {
+      return yield* Effect.die('Owner SQL is unavailable in the Action test harness; bind typed services');
+    }
+    return { rows: [] };
+  });
 
   const acquireConnection = Effect.suspend(() => {
     const previous = connectionQueue;
@@ -306,13 +283,13 @@ const actionTestHarness = Effect.fn('ActionTestHarness.make')(function* actionTe
     return Effect.gen(function* acquireTestConnection() {
       yield* previous;
       yield* Effect.addFinalizer(() => Deferred.succeed(released, null));
-      const scope: ActionTestConnectionScope = { legalEntityId: '', tenantId: '' };
+      const scope: ActionTestConnectionScope = {
+        legalEntityId: '',
+        tenantId: '',
+      };
       pendingCommit = [];
       const execute = (query: string, values: readonly unknown[]) =>
-        executeTestQuery(scope, query.toLowerCase(), values).pipe(
-          Effect.map(queryRows),
-          Effect.mapError(sqlFailure),
-        );
+        executeTestQuery(scope, query.toLowerCase(), values).pipe(Effect.map(queryRows), Effect.mapError(sqlFailure));
       const unsupported = Effect.die('Owner SQL is unavailable in the Action test harness');
       return {
         execute,
@@ -351,8 +328,7 @@ const actionTestHarness = Effect.fn('ActionTestHarness.make')(function* actionTe
           key,
         })),
       ),
-    modules: ({ moduleIds }) =>
-      Effect.succeed(moduleIds.map((key) => ({ decision: 'allowed' as const, key }))),
+    modules: ({ moduleIds }) => Effect.succeed(moduleIds.map((key) => ({ decision: 'allowed' as const, key }))),
     resources: ({ resources }) =>
       Effect.succeed(
         resources.map((resource) => ({
@@ -405,7 +381,10 @@ const actionTestHarness = Effect.fn('ActionTestHarness.make')(function* actionTe
                 .filter((entrypoint) => entrypoint.scope === 'tenant')
                 .map((entrypoint) => entrypoint.moduleKey),
             ),
-          ].map((moduleKey) => ({ moduleKey, state: options.moduleState ?? 'active' })),
+          ].map((moduleKey) => ({
+            moduleKey,
+            state: options.moduleState ?? 'active',
+          })),
         ),
       ),
     recheckWrite: () => Effect.void,
@@ -420,7 +399,9 @@ const actionTestHarness = Effect.fn('ActionTestHarness.make')(function* actionTe
   const resolveServiceFactory: typeof getActionServiceFactory = <
     PayloadSchema extends Schema.ConstraintDecoder<unknown>,
     ResultSchema extends Schema.ConstraintDecoder<unknown>,
-    DomainErrorSchema extends Schema.ConstraintDecoder<{ readonly _tag: string }>,
+    DomainErrorSchema extends Schema.ConstraintDecoder<{
+      readonly _tag: string;
+    }>,
     DomainEvents extends DomainEventContractMap,
     Owner extends string,
     Services,
@@ -439,8 +420,7 @@ const actionTestHarness = Effect.fn('ActionTestHarness.make')(function* actionTe
     if (!bindings.has(registration)) {
       return getActionServiceFactory(registration);
     }
-    return () =>
-      Schema.decodeUnknownEffect(Schema.Any)(bindings.get(registration)).pipe(Effect.orDie);
+    return () => Schema.decodeUnknownEffect(Schema.Any)(bindings.get(registration)).pipe(Effect.orDie);
   };
   const runtime = makeActionRuntime(
     database,
@@ -473,9 +453,7 @@ const actionTestHarness = Effect.fn('ActionTestHarness.make')(function* actionTe
     snapshot: (): ActionTestSnapshot =>
       Object.freeze({
         committed: Object.freeze([...committed]),
-        invocations: Object.freeze(
-          [...invocations.values()].map((value) => Object.freeze({ ...value })),
-        ),
+        invocations: Object.freeze([...invocations.values()].map((value) => Object.freeze({ ...value }))),
         permissionDenials: Object.freeze([...permissionDenials]),
         policyDenials: Object.freeze([...policyDenials]),
         stages: Object.freeze([...stages]),

@@ -1,9 +1,9 @@
 #!/usr/bin/env node
-import { loadCoreNodeServices } from './shared/core-node-services.mts';
 import { Console, Effect, Exit, FileSystem, Path, Schema } from 'effect';
 import { Argument, Command } from 'effect/unstable/cli';
 
 import { generateOntosModuleContract } from './generate-ontos-module-contract.mts';
+import { loadCoreNodeServices } from './shared/core-node-services.mts';
 
 class ModuleContractPreparationError extends Schema.TaggedError<ModuleContractPreparationError>()(
   'ModuleContractPreparationError',
@@ -17,9 +17,7 @@ class ModuleContractPreparationError extends Schema.TaggedError<ModuleContractPr
   }
 }
 
-const VerticalNameSchema = Schema.String.check(
-  Schema.isPattern(/^[a-z][a-z0-9]*(?:-[a-z0-9]+)*$/u),
-);
+const VerticalNameSchema = Schema.String.check(Schema.isPattern(/^[a-z][a-z0-9]*(?:-[a-z0-9]+)*$/u));
 
 const prepareDevModuleContractCommand = Command.make(
   'prepare-dev-module-contract',
@@ -47,17 +45,12 @@ const prepareDevModuleContractCommand = Command.make(
       const publicDirectory = pathService.join(workspaceRoot, 'verticals', vertical, '.dev-public');
       const contractDirectory = pathService.join(publicDirectory, '.well-known');
       yield* fileSystem.makeDirectory(contractDirectory, { recursive: true });
-      yield* fileSystem.copyFile(
-        generated.path,
-        pathService.join(contractDirectory, 'ontos-module-manifest.json'),
-      );
+      yield* fileSystem.copyFile(generated.path, pathService.join(contractDirectory, 'ontos-module-manifest.json'));
       const headers = yield* fileSystem.readFileString(
         pathService.join(pathService.dirname(pathService.dirname(generated.path)), '_headers'),
       );
       yield* fileSystem.writeFileString(pathService.join(publicDirectory, '_headers'), headers);
-      yield* Console.log(
-        `Prepared the ${vertical} development module contract in ${publicDirectory}`,
-      );
+      yield* Console.log(`Prepared the ${vertical} development module contract in ${publicDirectory}`);
     }).pipe(
       Effect.mapError((cause) =>
         Schema.is(ModuleContractPreparationError)(cause)
@@ -75,9 +68,7 @@ const NodeServices = loadCoreNodeServices();
 const exit = await Effect.runPromiseExit(
   Command.run(prepareDevModuleContractCommand, { version: '1.0.0' }).pipe(
     Effect.tapError((failure) =>
-      Schema.is(ModuleContractPreparationError)(failure)
-        ? Console.error(failure.message)
-        : Effect.void,
+      Schema.is(ModuleContractPreparationError)(failure) ? Console.error(failure.message) : Effect.void,
     ),
     Effect.provide(NodeServices.layer),
   ),

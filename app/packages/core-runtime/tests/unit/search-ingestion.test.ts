@@ -1,11 +1,13 @@
-import { expect, it } from 'effect-rstest';
 import { Effect, Predicate } from 'effect';
+import { expect, it } from 'effect-rstest';
+
 import {
   CORE_SEARCH_INGESTION_REGISTRATIONS,
   CORE_SEARCH_PARTY_LIFECYCLE_TOPICS,
   makeCoreSearchIngestion,
 } from '../../src/search/ingestion.ts';
 import {
+  CoreSearchProjectionStore,
   createCoreSearchQueryRuntime,
   makeInMemoryCoreSearchProjectionStore,
 } from '../../src/search/projection.ts';
@@ -39,9 +41,7 @@ const observation = (projectionVersion: string, title: string) => ({
 });
 
 it('declares one immutable Core registration for every closed Party lifecycle topic', () => {
-  expect(CORE_SEARCH_INGESTION_REGISTRATIONS.map(({ topic }) => topic)).toEqual(
-    CORE_SEARCH_PARTY_LIFECYCLE_TOPICS,
-  );
+  expect(CORE_SEARCH_INGESTION_REGISTRATIONS.map(({ topic }) => topic)).toEqual(CORE_SEARCH_PARTY_LIFECYCLE_TOPICS);
   expect(Object.isFrozen(CORE_SEARCH_INGESTION_REGISTRATIONS)).toBe(true);
   expect(
     CORE_SEARCH_INGESTION_REGISTRATIONS.every(
@@ -56,9 +56,9 @@ it('declares one immutable Core registration for every closed Party lifecycle to
 it.effect('ingests duplicate and out-of-order post-commit observations idempotently', () => {
   const store = makeInMemoryCoreSearchProjectionStore();
   const ingestion = makeCoreSearchIngestion(store);
-  const runtime = createCoreSearchQueryRuntime(store);
 
   return Effect.gen(function* ingestObservationsIdempotently() {
+    const runtime = yield* createCoreSearchQueryRuntime.pipe(Effect.provideService(CoreSearchProjectionStore, store));
     yield* ingestion.ingest(observation('2', 'Current title'));
     yield* ingestion.ingest(observation('2', 'Current title'));
     yield* ingestion.ingest(observation('1', 'Stale title'));
@@ -117,10 +117,9 @@ it.effect('rejects undeclared topics and sequence/document identity mismatches',
     },
   ];
   return Effect.gen(function* testInvalidObservations() {
-    const failures = yield* Effect.all(
-      invalidObservations.map((invalidObservation) =>
-        Effect.flip(ingestion.ingest(invalidObservation)),
-      ),
+    const failures = yield* Effect.forEach(
+      invalidObservations,
+      (invalidObservation) => Effect.flip(ingestion.ingest(invalidObservation)),
       { concurrency: 'unbounded' },
     );
     for (const failure of failures) {

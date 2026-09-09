@@ -1,28 +1,15 @@
 #!/usr/bin/env node
 import { NodeServices } from '@effect/platform-node';
-import {
-  Config,
-  ConfigProvider,
-  Console,
-  Effect,
-  Exit,
-  Option,
-  Path,
-  Predicate,
-  Schema,
-  Stdio,
-} from 'effect';
+import { Config, ConfigProvider, Console, Effect, Exit, Option, Path, Predicate, Schema, Stdio } from 'effect';
 import { ChildProcessSpawner } from 'effect/unstable/process';
 
 import { ultramodernLaunch } from './shared/ultramodern-launch.mts';
 
-class AgentSkillsBootstrapError extends Schema.TaggedError<AgentSkillsBootstrapError>()(
-  'AgentSkillsBootstrapError',
-  { reason: Schema.String },
-) {}
+class AgentSkillsBootstrapError extends Schema.TaggedError<AgentSkillsBootstrapError>()('AgentSkillsBootstrapError', {
+  reason: Schema.String,
+}) {}
 
-const failure = (reason: string): AgentSkillsBootstrapError =>
-  new AgentSkillsBootstrapError({ reason });
+const failure = (reason: string): AgentSkillsBootstrapError => new AgentSkillsBootstrapError({ reason });
 
 const program = Effect.gen(function* bootstrapAgentSkills() {
   const path = yield* Path.Path;
@@ -70,10 +57,7 @@ const program = Effect.gen(function* bootstrapAgentSkills() {
 const exit = await Effect.runPromiseExit(
   program.pipe(
     Effect.tapError((error) => Console.error(error.reason)),
-    Effect.provideService(
-      ConfigProvider.ConfigProvider,
-      ConfigProvider.fromEnv({ preserveEmptyStrings: true }),
-    ),
+    Effect.provideService(ConfigProvider.ConfigProvider, ConfigProvider.fromEnv({ preserveEmptyStrings: true })),
     Effect.provide(NodeServices.layer),
     Effect.scoped,
   ),

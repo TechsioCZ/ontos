@@ -1,9 +1,11 @@
-import { describe, expect, it, rstest } from 'effect-rstest';
 import { randomUUID } from 'node:crypto';
+
 import { memoryAdapter } from 'better-auth/adapters/memory';
 import { verifyPassword } from 'better-auth/crypto';
 import { eq } from 'drizzle-orm';
 import { Cause, DateTime, Deferred, Effect, Exit, Fiber } from 'effect';
+import { describe, expect, it, rstest } from 'effect-rstest';
+
 import { loadAuthConfig } from '../../api/auth/config.ts';
 import { AuthDatabase, makeAuthDatabase } from '../../api/auth/db/client.ts';
 import { account, session, user } from '../../api/auth/db/schema.ts';
@@ -24,7 +26,11 @@ describe('stage-demo-bootstrap', () => {
         const replacementPassword = `replacement-${randomUUID()}`;
         const configuration = {
           accounts: [
-            { email, password: initialPassword, principalDisplayName: 'Password reset fixture' },
+            {
+              email,
+              password: initialPassword,
+              principalDisplayName: 'Password reset fixture',
+            },
             {
               email: `unused-${randomUUID()}@example.test`,
               password: randomUUID(),
@@ -36,10 +42,7 @@ describe('stage-demo-bootstrap', () => {
           databaseAdminUrl: baseConfiguration.connectionString,
         } as const;
         const cleanup = Effect.gen(function* cleanupPasswordFixture() {
-          const users = yield* database
-            .select({ id: user.id })
-            .from(user)
-            .where(eq(user.email, email));
+          const users = yield* database.select({ id: user.id }).from(user).where(eq(user.email, email));
           for (const existingUser of users) {
             yield* database.delete(session).where(eq(session.userId, existingUser.id));
             yield* database.delete(account).where(eq(account.userId, existingUser.id));
@@ -48,14 +51,10 @@ describe('stage-demo-bootstrap', () => {
         }).pipe(Effect.orDie);
         yield* cleanup;
         yield* Effect.addFinalizer(() => cleanup);
-        const created = yield* ensureStageDemoAuthUser(
-          configuration,
-          configuration.accounts[0],
-        ).pipe(Effect.provideService(AuthDatabase, persistence));
-        yield* database
-          .update(account)
-          .set({ password: randomUUID() })
-          .where(eq(account.userId, created.userId));
+        const created = yield* ensureStageDemoAuthUser(configuration, configuration.accounts[0]).pipe(
+          Effect.provideService(AuthDatabase, persistence),
+        );
+        yield* database.update(account).set({ password: randomUUID() }).where(eq(account.userId, created.userId));
         const sessionCreatedAt = yield* DateTime.nowAsDate;
         const sessionExpiresAt = DateTime.makeUnsafe(sessionCreatedAt).pipe(
           DateTime.add({ minutes: 1 }),
@@ -73,17 +72,26 @@ describe('stage-demo-bootstrap', () => {
           ...configuration.accounts[0],
           password: replacementPassword,
         }).pipe(Effect.provideService(AuthDatabase, persistence));
-        expect(replaced).toEqual({ status: 'password-reset', userId: created.userId });
+        expect(replaced).toEqual({
+          status: 'password-reset',
+          userId: created.userId,
+        });
         const [credential] = yield* database
           .select({ password: account.password })
           .from(account)
           .where(eq(account.userId, created.userId));
         expect(credential?.password).toBeDefined();
         const replacementMatches = yield* Effect.promise(() =>
-          verifyPassword({ hash: credential?.password ?? '', password: replacementPassword }),
+          verifyPassword({
+            hash: credential?.password ?? '',
+            password: replacementPassword,
+          }),
         );
         const initialMatches = yield* Effect.promise(() =>
-          verifyPassword({ hash: credential?.password ?? '', password: initialPassword }),
+          verifyPassword({
+            hash: credential?.password ?? '',
+            password: initialPassword,
+          }),
         );
         expect(replacementMatches).toBe(true);
         expect(initialMatches).toBe(false);
@@ -135,16 +143,14 @@ describe('stage-demo-bootstrap', () => {
                 adapter: (options) => {
                   const adapter = sdkAdapter(options);
                   const create = adapter.create.bind(adapter);
-                  rstest
-                    .spyOn(adapter, 'create')
-                    .mockImplementation((input: Parameters<typeof create>[0]) => {
-                      if (input.model === 'user') {
-                        Deferred.doneUnsafe(sdkStarted, Effect.succeed(null));
-                        // oxlint-disable-next-line sonarjs/no-nested-functions -- SDK settlement continuation stays inside its adapter mock.
-                        return sdkSettlement.promise.then(() => create(input));
-                      }
-                      return create(input);
-                    });
+                  rstest.spyOn(adapter, 'create').mockImplementation((input: Parameters<typeof create>[0]) => {
+                    if (input.model === 'user') {
+                      Deferred.doneUnsafe(sdkStarted, Effect.succeed(null));
+                      // oxlint-disable-next-line sonarjs/no-nested-functions -- SDK settlement continuation stays inside its adapter mock.
+                      return sdkSettlement.promise.then(() => create(input));
+                    }
+                    return create(input);
+                  });
                   return adapter;
                 },
                 executor: database.executor,
@@ -161,7 +167,11 @@ describe('stage-demo-bootstrap', () => {
           const closedBeforeSettlement = databaseClosed;
           sdkSettlement.resolve(null);
           yield* Fiber.join(interruption);
-          return { closedBeforeSettlement, exit: yield* Fiber.await(bootstrap), pending };
+          return {
+            closedBeforeSettlement,
+            exit: yield* Fiber.await(bootstrap),
+            pending,
+          };
         }).pipe(Effect.ensuring(Effect.sync(() => sdkSettlement.resolve(null))));
         expect(outcome.pending).toBe(true);
         expect(outcome.closedBeforeSettlement).toBe(false);

@@ -66,31 +66,24 @@
  * Report-only: no fixer, no suggestion.
  */
 import { defineRule } from '@oxlint/plugins';
-
 import type { Context, ESTree } from '@oxlint/plugins';
 
 import { parentOf, isFunctionNode, unwrapNode, keyName } from '../shared/ast.ts';
 import { lookupVariable } from '../shared/bindings.ts';
-import { importedName } from '../shared/imports.ts';
-import { sameNode } from '../shared/reporting.ts';
-import { stringArray as readStringArray } from '../shared/options.ts';
 import { collectEffectBindings, effectMember } from '../shared/effect-imports.ts';
 import type { EffectBindings } from '../shared/effect-imports.ts';
+import { importedName } from '../shared/imports.ts';
+import { stringArray as readStringArray } from '../shared/options.ts';
 import { isScriptFile, isTestFile, matchesAny, normalisePath } from '../shared/paths.ts';
+import { sameNode } from '../shared/reporting.ts';
 
 const DEFAULT_INCLUDE: readonly string[] = ['apps/**', 'verticals/**', 'packages/**'];
 /** No browser runtime module exists yet (audit A9 lists it as a target); configure when it lands. */
 const DEFAULT_CLIENT_MODULE_FILES: readonly string[] = [];
 const DEFAULT_CONSTRUCTOR_NAMES: readonly string[] = ['makeEffectHttpApiClient'];
-const DEFAULT_CONSTRUCTOR_MEMBERS: readonly string[] = [
-  'HttpApiClient.make',
-  'HttpApiClient.makeWith',
-];
+const DEFAULT_CONSTRUCTOR_MEMBERS: readonly string[] = ['HttpApiClient.make', 'HttpApiClient.makeWith'];
 /** Derive a typed accessor from an already-injected `httpClient`: no transport is rebuilt. */
-const DEFAULT_ACCESSOR_MEMBERS: readonly string[] = [
-  'HttpApiClient.group',
-  'HttpApiClient.endpoint',
-];
+const DEFAULT_ACCESSOR_MEMBERS: readonly string[] = ['HttpApiClient.group', 'HttpApiClient.endpoint'];
 const DEFAULT_LAYER_CONSTRUCTOR_MEMBERS: readonly string[] = [
   'Layer.effect',
   'Layer.sync',
@@ -105,11 +98,7 @@ const DEFAULT_TRANSPARENT_MEMBERS: readonly string[] = ['Effect.gen'];
 /** Modules that re-export the `effect` namespaces verbatim (Modern.js BFF client). */
 const DEFAULT_EFFECT_REEXPORT_MODULES: readonly string[] = ['@modern-js/plugin-bff/effect-client'];
 /** Call wrappers that do not change which binding an effect/function is stored under. */
-const NAME_WRAPPER_MEMBERS: ReadonlySet<string> = new Set([
-  'Effect.gen',
-  'Effect.fn',
-  'Effect.fnUntraced',
-]);
+const NAME_WRAPPER_MEMBERS: ReadonlySet<string> = new Set(['Effect.gen', 'Effect.fn', 'Effect.fnUntraced']);
 
 const EFFECT_MODULE = /^effect(?:\/.*)?$/u;
 const EXPRESSION_WRAPPERS = new Set([
@@ -143,28 +132,19 @@ interface ResolvedOptions {
 function resolveOptions(context: Context): ResolvedOptions {
   const raw = context.options?.[0];
   const option: Record<string, unknown> =
-    typeof raw === 'object' && raw !== null && !Array.isArray(raw)
-      ? (raw as Record<string, unknown>)
-      : {};
+    typeof raw === 'object' && raw !== null && !Array.isArray(raw) ? (raw as Record<string, unknown>) : {};
   return {
     accessorMembers: new Set(readStringArray(option.accessorMembers, DEFAULT_ACCESSOR_MEMBERS)),
     clientModuleFiles: readStringArray(option.clientModuleFiles, DEFAULT_CLIENT_MODULE_FILES),
-    constructorMembers: new Set(
-      readStringArray(option.constructorMembers, DEFAULT_CONSTRUCTOR_MEMBERS),
-    ),
+    constructorMembers: new Set(readStringArray(option.constructorMembers, DEFAULT_CONSTRUCTOR_MEMBERS)),
     constructorNames: new Set(readStringArray(option.constructorNames, DEFAULT_CONSTRUCTOR_NAMES)),
-    effectReexportModules: readStringArray(
-      option.effectReexportModules,
-      DEFAULT_EFFECT_REEXPORT_MODULES,
-    ),
+    effectReexportModules: readStringArray(option.effectReexportModules, DEFAULT_EFFECT_REEXPORT_MODULES),
     include: readStringArray(option.include, DEFAULT_INCLUDE),
     includeTests: option.includeTests === true,
     layerConstructorMembers: new Set(
       readStringArray(option.layerConstructorMembers, DEFAULT_LAYER_CONSTRUCTOR_MEMBERS),
     ),
-    transparentMembers: new Set(
-      readStringArray(option.transparentMembers, DEFAULT_TRANSPARENT_MEMBERS),
-    ),
+    transparentMembers: new Set(readStringArray(option.transparentMembers, DEFAULT_TRANSPARENT_MEMBERS)),
   };
 }
 
@@ -198,7 +178,10 @@ function collectModuleImports(program: ESTree.Program): ModuleImports {
     for (const specifier of statement.specifiers) {
       if (specifier.type === 'ImportSpecifier') {
         if (specifier.importKind === 'type') continue;
-        named.set(specifier.local.name, { imported: importedName(specifier), source });
+        named.set(specifier.local.name, {
+          imported: importedName(specifier),
+          source,
+        });
       } else if (specifier.type === 'ImportNamespaceSpecifier') {
         namespaces.set(specifier.local.name, source);
       }
@@ -239,7 +222,10 @@ function memberParts(node: ESTree.Node): { object: string; property: string } | 
   if (member.object.type !== 'Identifier') return null;
   const object = (member.object as unknown as { name: string }).name;
   if (!member.computed && member.property.type === 'Identifier') {
-    return { object, property: (member.property as unknown as { name: string }).name };
+    return {
+      object,
+      property: (member.property as unknown as { name: string }).name,
+    };
   }
   if (member.computed && member.property.type === 'Literal') {
     const value = (member.property as unknown as { value: unknown }).value;
@@ -330,8 +316,16 @@ export const rule = defineRule({
     let bindings: EffectBindings | null = null;
     let imports: ModuleImports | null = null;
     let aliases: Map<string, { text: string; kind: SiteKind }> = new Map();
-    let constructorSites: Array<{ node: ESTree.Node; text: string; kind: SiteKind }> = [];
-    let identifierCalls: Array<{ node: ESTree.Node; identifier: ESTree.Node; name: string }> = [];
+    let constructorSites: Array<{
+      node: ESTree.Node;
+      text: string;
+      kind: SiteKind;
+    }> = [];
+    let identifierCalls: Array<{
+      node: ESTree.Node;
+      identifier: ESTree.Node;
+      name: string;
+    }> = [];
     let layerCalls: Array<{ node: ESTree.Node; args: readonly ESTree.Node[] }> = [];
 
     /** `"Layer.effect"` for a callee, resolved through real import bindings. */
@@ -339,12 +333,7 @@ export const rule = defineRule({
       const effects = bindings;
       if (effects === null) return null;
       const parts = memberParts(node);
-      if (
-        parts !== null &&
-        node.type === 'MemberExpression' &&
-        bindingKind(node.object) !== 'import'
-      )
-        return null;
+      if (parts !== null && node.type === 'MemberExpression' && bindingKind(node.object) !== 'import') return null;
       return namespaceMemberString(node, effects);
     }
 
@@ -354,9 +343,7 @@ export const rule = defineRule({
       const direct = memberOf(callee);
       if (direct !== null) return members.has(direct);
       if (callee.type !== 'CallExpression') return false;
-      const curried = memberOf(
-        unwrap((callee as unknown as ESTree.CallExpression).callee as unknown as ESTree.Node),
-      );
+      const curried = memberOf(unwrap((callee as unknown as ESTree.CallExpression).callee as unknown as ESTree.Node));
       return curried !== null && members.has(curried);
     }
 
@@ -431,11 +418,7 @@ export const rule = defineRule({
           const call = parent as unknown as ESTree.CallExpression;
           if (!sameNode(unwrap(call.callee as unknown as ESTree.Node), current)) {
             const member = memberOf(unwrap(call.callee as unknown as ESTree.Node));
-            if (
-              member !== null &&
-              resolved.layerConstructorMembers.has(member) &&
-              resultEscapesToModuleLevel(parent)
-            ) {
+            if (member !== null && resolved.layerConstructorMembers.has(member) && resultEscapesToModuleLevel(parent)) {
               return true;
             }
           }
@@ -449,9 +432,7 @@ export const rule = defineRule({
     function isNameWrapper(parent: ESTree.Node, current: ESTree.Node): boolean {
       if (EXPRESSION_WRAPPERS.has(parent.type)) return true;
       if (parent.type !== 'CallExpression') return false;
-      return (
-        !sameNode(unwrap(parent.callee), current) && isWrapperCall(parent, NAME_WRAPPER_MEMBERS)
-      );
+      return !sameNode(unwrap(parent.callee), current) && isWrapperCall(parent, NAME_WRAPPER_MEMBERS);
     }
 
     /** The binding this function is stored under, when that is a module-level name. */
@@ -526,10 +507,7 @@ export const rule = defineRule({
     function classifyNamedImport(entry: NamedImport): SiteKind | null {
       const resolved = options;
       if (resolved === null) return null;
-      if (
-        resolved.constructorNames.has(entry.imported) &&
-        resolved.effectReexportModules.includes(entry.source)
-      )
+      if (resolved.constructorNames.has(entry.imported) && resolved.effectReexportModules.includes(entry.source))
         return 'constructor';
       if (!EFFECT_MODULE.test(entry.source)) return null;
       return classifyMember(`${lastSegment(entry.source)}.${entry.imported}`);
@@ -541,8 +519,7 @@ export const rule = defineRule({
       if (parts === null) return null;
       const source = imports.namespaces.get(parts.object);
       if (source === undefined || !options.effectReexportModules.includes(source)) return null;
-      if (callee.type !== 'MemberExpression' || bindingKind(callee.object) !== 'import')
-        return null;
+      if (callee.type !== 'MemberExpression' || bindingKind(callee.object) !== 'import') return null;
       if (!options.constructorNames.has(parts.property)) return null;
       return { kind: 'constructor', text: `${parts.object}.${parts.property}` };
     }
@@ -567,8 +544,7 @@ export const rule = defineRule({
       namespace: string | undefined,
       found: Map<string, { text: string; kind: SiteKind }>,
     ): void {
-      if (property.type !== 'Property' || property.computed || property.value.type !== 'Identifier')
-        return;
+      if (property.type !== 'Property' || property.computed || property.value.type !== 'Identifier') return;
       const key = keyName(property.key);
       if (key === null) return;
       const kind =
@@ -602,21 +578,17 @@ export const rule = defineRule({
       if (pattern.type !== 'ObjectPattern' || init.type !== 'Identifier') return;
       const namespace = bindings?.namespaces.get(init.name);
       const source = imports?.namespaces.get(init.name);
-      const isImportedNamespace =
-        source !== undefined && options?.effectReexportModules.includes(source);
+      const isImportedNamespace = source !== undefined && options?.effectReexportModules.includes(source);
       if (namespace === undefined && !isImportedNamespace) return;
       for (const property of pattern.properties) collectPatternProperty(property, namespace, found);
     }
 
     /** Collect module-level constructor rebindings without propagating operation-local aliases. */
-    function collectAliases(
-      program: ESTree.Program,
-    ): Map<string, { text: string; kind: SiteKind }> {
+    function collectAliases(program: ESTree.Program): Map<string, { text: string; kind: SiteKind }> {
       const found = new Map<string, { text: string; kind: SiteKind }>();
       if (options === null || bindings === null || imports === null) return found;
       for (const statement of program.body) {
-        const declaration =
-          statement.type === 'ExportNamedDeclaration' ? statement.declaration : statement;
+        const declaration = statement.type === 'ExportNamedDeclaration' ? statement.declaration : statement;
         if (declaration?.type !== 'VariableDeclaration') continue;
         for (const entry of declaration.declarations) collectDeclaratorAlias(entry, found);
       }
@@ -631,21 +603,15 @@ export const rule = defineRule({
       if (named !== undefined) {
         const kind = classifyNamedImport(named);
         if (kind === null) return null;
-        return kindOfBinding === 'import' || kindOfBinding === 'unresolved'
-          ? { kind, text: callee.name }
-          : null;
+        return kindOfBinding === 'import' || kindOfBinding === 'unresolved' ? { kind, text: callee.name } : null;
       }
-      return kindOfBinding === 'module' || kindOfBinding === 'unresolved'
-        ? (aliases.get(callee.name) ?? null)
-        : null;
+      return kindOfBinding === 'module' || kindOfBinding === 'unresolved' ? (aliases.get(callee.name) ?? null) : null;
     }
 
     /** Recognize direct constructors and module-level aliases at their use site. */
     function constructorSite(callee: ESTree.Node): { text: string; kind: SiteKind } | null {
       if (options === null || bindings === null || imports === null) return null;
-      return callee.type === 'Identifier'
-        ? identifierConstructorSite(callee)
-        : classifyMemberCallee(callee);
+      return callee.type === 'Identifier' ? identifierConstructorSite(callee) : classifyMemberCallee(callee);
     }
 
     function collectLayerConsumed(): Set<string> {
@@ -654,7 +620,10 @@ export const rule = defineRule({
       for (const layerCall of layerCalls) {
         if (!resultEscapesToModuleLevel(layerCall.node)) continue;
         for (const argument of layerCall.args) {
-          blessedArgumentRanges.push({ end: argument.end, start: argument.start });
+          blessedArgumentRanges.push({
+            end: argument.end,
+            start: argument.start,
+          });
           const value = unwrap(argument);
           if (value.type === 'Identifier' && resolvesToModuleFunction(value)) {
             layerConsumed.add((value as unknown as { name: string }).name);
@@ -680,9 +649,7 @@ export const rule = defineRule({
         constructorSpans.add(`${site.node.start}:${site.node.end}`);
         if (!hasFunctionAncestor(site.node)) continue;
         const owner = outermostModuleFunctionName(site.node);
-        const blessed =
-          isInsideBlessedLayerConstruction(site.node) ||
-          (owner !== null && layerConsumed.has(owner));
+        const blessed = isInsideBlessedLayerConstruction(site.node) || (owner !== null && layerConsumed.has(owner));
         // A blessed construction still marks its function as a client factory: calling it from an
         // operation elsewhere in the file is a fresh client per call.
         if (owner !== null) factories.add(owner);

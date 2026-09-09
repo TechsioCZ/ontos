@@ -1,13 +1,10 @@
-import { rs } from 'effect-rstest';
 import { Effect } from 'effect';
-import type {
-  SupportAuthProvider,
-  SupportImpersonationStore,
-} from '../../api/auth/impersonation-service.ts';
+import { rs } from 'effect-rstest';
+
+import type { SupportAuthProvider, SupportImpersonationStore } from '../../api/auth/impersonation-service.ts';
 import type { AuthenticationServiceContract } from '../../api/auth/service.ts';
 
-const unconfiguredEffect = (operation: string) =>
-  Effect.die(`${operation} is not configured in this test`);
+const unconfiguredEffect = (operation: string) => Effect.die(`${operation} is not configured in this test`);
 const authenticationDefaults: AuthenticationServiceContract = {
   availableTenants: () => unconfiguredEffect('availableTenants'),
   createFixtureUser: () => unconfiguredEffect('createFixtureUser'),
@@ -44,7 +41,10 @@ const storeDefaults: SupportImpersonationStore = {
 
 export const makeAuthenticationServiceDouble = (
   overrides: Partial<AuthenticationServiceContract> = {},
-): AuthenticationServiceContract => ({ ...authenticationDefaults, ...overrides });
+): AuthenticationServiceContract => ({
+  ...authenticationDefaults,
+  ...overrides,
+});
 
 export const makeSupportAuthProviderDouble = (
   overrides: Partial<SupportAuthProvider['api']> = {},

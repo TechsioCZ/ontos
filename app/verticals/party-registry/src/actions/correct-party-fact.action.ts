@@ -4,6 +4,11 @@
 import { defineAction, defineTenantModuleEntrypoint } from '@app/core-runtime';
 import type { ActionHandlerContext } from '@app/core-runtime';
 import { Effect, Option, Schema } from 'effect';
+
+import {
+  CorrectPartyFactPayloadSchema,
+  CorrectPartyFactResultSchema,
+} from '../../shared/actions/correct-party-fact.ts';
 import {
   PartyCorrectionConflict,
   PartyCorrectionResultJsonSchema,
@@ -15,16 +20,7 @@ import { PartyAliasWriteRejected } from '../../shared/domain/merge-alias-resolut
 import { correctPartyFactRecord } from '../services/party-correction.service.ts';
 import { createCorrectPartyFactPartyRegistryPartyFactCorrectedV1OutboxMessage } from './correct-party-fact.party-registry-party-fact-corrected-v1.outbox-message.ts';
 
-import {
-  CorrectPartyFactPayloadSchema,
-  CorrectPartyFactResultSchema,
-} from '../../shared/actions/correct-party-fact.ts';
-
-const ErrorSchema = Schema.Union([
-  PartyCorrectionConflict,
-  PartyPersistenceUnavailable,
-  PartyAliasWriteRejected,
-]);
+const ErrorSchema = Schema.Union([PartyCorrectionConflict, PartyPersistenceUnavailable, PartyAliasWriteRejected]);
 const domainEvents = {
   'party.registry.party-fact-corrected.v1': PartyCorrectionResultJsonSchema,
 } as const;
@@ -49,9 +45,7 @@ const handle = Effect.fn('CorrectPartyFactAction.handle')(function* handleCorrec
     targetResourceId: relationshipRef?.resourceId ?? result.partyRef.resourceId,
     targetResourceType: relationshipRef?.resourceType ?? result.partyRef.resourceType,
   });
-  const payloadJson = yield* Schema.encodeEffect(PartyCorrectionResultSchema)(result).pipe(
-    Effect.orDie,
-  );
+  const payloadJson = yield* Schema.encodeEffect(PartyCorrectionResultSchema)(result).pipe(Effect.orDie);
   const event = yield* context.addDomainEvent({
     eventType: 'party.registry.party-fact-corrected.v1',
     payloadJson,
@@ -81,7 +75,10 @@ export const correctPartyFactAction = defineAction(
     domainEvents,
     entrypoint: defineTenantModuleEntrypoint({
       access: 'write',
-      authorization: { kind: 'action_execution', provisioning: 'tenant_membership_default' },
+      authorization: {
+        kind: 'action_execution',
+        provisioning: 'tenant_membership_default',
+      },
       entrypointKey: 'party.registry.correct-party-fact',
       moduleKey: 'party.registry',
       role: 'action',

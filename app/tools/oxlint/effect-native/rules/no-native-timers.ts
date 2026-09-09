@@ -58,7 +58,6 @@
  * Report-only: no fixer, no suggestion. Existing violations are the intended output.
  */
 import { defineRule } from '@oxlint/plugins';
-
 import type { Context, ESTree, Scope } from '@oxlint/plugins';
 
 import { collectEffectBindings, effectMember } from '../shared/effect-imports.ts';
@@ -82,12 +81,7 @@ const DEFAULT_TIMER_GLOBALS: readonly string[] = [
 const DEFAULT_GLOBAL_OBJECTS: readonly string[] = ['globalThis', 'window', 'global', 'self'];
 
 /** Node timer modules; importing any of them is already the anti-pattern. */
-const DEFAULT_TIMER_MODULES: readonly string[] = [
-  'node:timers',
-  'timers',
-  'node:timers/promises',
-  'timers/promises',
-];
+const DEFAULT_TIMER_MODULES: readonly string[] = ['node:timers', 'timers', 'node:timers/promises', 'timers/promises'];
 
 /** `Effect.*` operators whose behaviour is defined by the ambient `Clock`. */
 const DEFAULT_EFFECT_TIME_MEMBERS: readonly string[] = [
@@ -113,19 +107,10 @@ const DEFAULT_DATE_TIME_MEMBERS: readonly string[] = ['now', 'unsafeNow', 'nowUn
 /** Identifier names that prove the file drives virtual time. */
 const DEFAULT_TEST_CLOCK_INDICATORS: readonly string[] = ['TestClock'];
 
-const DEFAULT_INCLUDE_PATHS: readonly string[] = [
-  'apps/**',
-  'verticals/**',
-  'packages/**',
-  'scripts/**',
-];
+const DEFAULT_INCLUDE_PATHS: readonly string[] = ['apps/**', 'verticals/**', 'packages/**', 'scripts/**'];
 
 /** D tier: Promise/timer adapters forced by Playwright and other browser drivers. */
-const DEFAULT_IGNORE_PATHS: readonly string[] = [
-  '**/tests/e2e/**',
-  '**/*.e2e.*',
-  '**/playwright/**',
-];
+const DEFAULT_IGNORE_PATHS: readonly string[] = ['**/tests/e2e/**', '**/*.e2e.*', '**/playwright/**'];
 
 /** `effect/Effect`-style submodules whose named exports are the time operators themselves. */
 const SUBMODULE_SOURCE = /^effect\/(Effect|Schedule|Clock|DateTime)$/u;
@@ -187,8 +172,7 @@ interface Site {
 function staticKey(node: AnyNode, computed: boolean): string | null {
   if (!computed && node.type === 'Identifier') return node.name;
   if (node.type === 'Literal' && typeof node.value === 'string') return node.value;
-  if (node.type === 'TemplateLiteral' && node.expressions.length === 0)
-    return node.quasis[0]?.value.cooked ?? null;
+  if (node.type === 'TemplateLiteral' && node.expressions.length === 0) return node.quasis[0]?.value.cooked ?? null;
   return null;
 }
 
@@ -224,8 +208,7 @@ function resolve(context: Context, node: AnyNode, name: string): Resolution {
     if (variable !== undefined) {
       if (variable.defs.length === 0) return 'global';
       if (variable.defs.some((definition) => definition.type === 'ImportBinding')) return 'import';
-      if (variable.defs.every((definition) => definition.type === 'ImplicitGlobalVariable'))
-        return 'global';
+      if (variable.defs.every((definition) => definition.type === 'ImplicitGlobalVariable')) return 'global';
       return 'shadowed';
     }
     scope = scope.upper;
@@ -309,8 +292,7 @@ export const rule = defineRule({
           allowNodeTestMockTimers: {
             type: 'boolean',
             description:
-              'Allow native timers in a file that calls `mock.timers.enable(...)` from node:test ' +
-              '(default: true).',
+              'Allow native timers in a file that calls `mock.timers.enable(...)` from node:test ' + '(default: true).',
           },
           adapterFiles: {
             type: 'array',
@@ -322,26 +304,22 @@ export const rule = defineRule({
           ignore: {
             type: 'array',
             items: { type: 'string' },
-            description:
-              'Globs exempted from this rule (default: **/tests/e2e/**, **/*.e2e.*, **/playwright/**).',
+            description: 'Globs exempted from this rule (default: **/tests/e2e/**, **/*.e2e.*, **/playwright/**).',
           },
           includePaths: {
             type: 'array',
             items: { type: 'string' },
-            description:
-              'Globs the rule applies to (default: apps/**, verticals/**, packages/**, scripts/**).',
+            description: 'Globs the rule applies to (default: apps/**, verticals/**, packages/**, scripts/**).',
           },
           testPaths: {
             type: 'array',
             items: { type: 'string' },
-            description:
-              'Globs force-treated as test files, overriding the built-in test-file detection.',
+            description: 'Globs force-treated as test files, overriding the built-in test-file detection.',
           },
           productionPaths: {
             type: 'array',
             items: { type: 'string' },
-            description:
-              'Globs force-treated as production files even when the built-in test-file detection matches.',
+            description: 'Globs force-treated as production files even when the built-in test-file detection matches.',
           },
           timerGlobals: {
             type: 'array',
@@ -353,8 +331,7 @@ export const rule = defineRule({
           globalObjects: {
             type: 'array',
             items: { type: 'string' },
-            description:
-              'Objects that expose the timer globals (default: globalThis, window, global, self).',
+            description: 'Objects that expose the timer globals (default: globalThis, window, global, self).',
           },
           timerModules: {
             type: 'array',
@@ -378,8 +355,7 @@ export const rule = defineRule({
           dateTimeMembers: {
             type: 'array',
             items: { type: 'string' },
-            description:
-              'DateTime members treated as real-time reads (default: now, unsafeNow, nowUnsafe).',
+            description: 'DateTime members treated as real-time reads (default: now, unsafeNow, nowUnsafe).',
           },
           testClockIndicators: {
             type: 'array',
@@ -431,7 +407,10 @@ export const rule = defineRule({
 
     /** local name → imported timer member, or `*` for a namespace import. */
     const timerBindings = new Map<string, string>();
-    let bindings: EffectBindings = { namespaces: new Map(), importsEffect: false };
+    let bindings: EffectBindings = {
+      namespaces: new Map(),
+      importsEffect: false,
+    };
     let hasTestClock = false;
     let hasMockTimers = false;
     const testingNamespaces = new Set<string>();
@@ -449,12 +428,9 @@ export const rule = defineRule({
     };
 
     /** `Effect.sleep` / `E["sleep"]` / `Schedule?.spaced` → the effect namespace + member. */
-    function timeMemberOf(
-      node: ESTree.MemberExpression,
-    ): { namespace: string; member: string } | null {
+    function timeMemberOf(node: ESTree.MemberExpression): { namespace: string; member: string } | null {
       const object = unwrap(node.object);
-      if (object.type !== 'Identifier' || resolve(context, object, object.name) !== 'import')
-        return null;
+      if (object.type !== 'Identifier' || resolve(context, object, object.name) !== 'import') return null;
       const namespace = bindings.namespaces.get(object.name);
       if (namespace === undefined) return null;
       const member = staticKey(node.property, node.computed);
@@ -479,10 +455,7 @@ export const rule = defineRule({
         if (specifier.type === 'ImportNamespaceSpecifier' && source === 'effect/testing')
           testingNamespaces.add(specifier.local.name);
         if (specifier.type !== 'ImportSpecifier') continue;
-        const imported =
-          specifier.imported.type === 'Identifier'
-            ? specifier.imported.name
-            : specifier.imported.value;
+        const imported = specifier.imported.type === 'Identifier' ? specifier.imported.name : specifier.imported.value;
         if (isClockImport(source, imported)) hasTestClock = true;
         if (source === 'node:test' && imported === 'mock') nodeTestMocks.add(specifier.local.name);
       }
@@ -490,19 +463,13 @@ export const rule = defineRule({
 
     function collectTimerBindings(node: ESTree.ImportDeclaration) {
       for (const specifier of node.specifiers) {
-        if (
-          specifier.type === 'ImportNamespaceSpecifier' ||
-          specifier.type === 'ImportDefaultSpecifier'
-        ) {
+        if (specifier.type === 'ImportNamespaceSpecifier' || specifier.type === 'ImportDefaultSpecifier') {
           timerBindings.set(specifier.local.name, NAMESPACE_BINDING);
           continue;
         }
         if (specifier.type !== 'ImportSpecifier') continue;
         if (specifier.importKind === 'type') continue;
-        const imported =
-          specifier.imported.type === 'Identifier'
-            ? specifier.imported.name
-            : specifier.imported.value;
+        const imported = specifier.imported.type === 'Identifier' ? specifier.imported.name : specifier.imported.value;
         timerBindings.set(specifier.local.name, imported);
       }
     }
@@ -514,19 +481,13 @@ export const rule = defineRule({
       for (const specifier of node.specifiers) {
         if (specifier.type !== 'ImportSpecifier') continue;
         if (specifier.importKind === 'type') continue;
-        const imported =
-          specifier.imported.type === 'Identifier'
-            ? specifier.imported.name
-            : specifier.imported.value;
+        const imported = specifier.imported.type === 'Identifier' ? specifier.imported.name : specifier.imported.value;
         if (!isRealTimeMember(submodule, imported)) continue;
         timeSites.push({ node: specifier, callee: `${submodule}.${imported}` });
       }
     }
 
-    function collectIdentifierCall(
-      node: ESTree.CallExpression,
-      callee: Extract<AnyNode, { type: 'Identifier' }>,
-    ) {
+    function collectIdentifierCall(node: ESTree.CallExpression, callee: Extract<AnyNode, { type: 'Identifier' }>) {
       const name = callee.name;
       const resolution = resolve(context, callee, name);
       if (resolution === 'import') {
@@ -543,9 +504,7 @@ export const rule = defineRule({
       if (staticKey(object.property, object.computed) !== 'timers') return false;
       const root = unwrap(object.object);
       return (
-        root.type === 'Identifier' &&
-        nodeTestMocks.has(root.name) &&
-        resolve(context, root, root.name) === 'import'
+        root.type === 'Identifier' && nodeTestMocks.has(root.name) && resolve(context, root, root.name) === 'import'
       );
     }
 
@@ -578,12 +537,7 @@ export const rule = defineRule({
         if (!timerGlobals.has(node.name) || resolve(context, node, node.name) !== 'global') return;
         let parent: ESTree.Node | null = node.parent;
         while (parent !== null && parent !== undefined) {
-          if (
-            ['TSTypeQuery', 'TSTypeReference', 'TSQualifiedName', 'TSTypeAnnotation'].includes(
-              parent.type,
-            )
-          )
-            return;
+          if (['TSTypeQuery', 'TSTypeReference', 'TSQualifiedName', 'TSTypeAnnotation'].includes(parent.type)) return;
           parent = parent.parent;
         }
         // Scope references exclude declarations, labels and noncomputed keys; type queries above
@@ -599,11 +553,7 @@ export const rule = defineRule({
       },
       ExportNamedDeclaration(node) {
         if (node.exportKind === 'type' || node.source === null) return;
-        if (
-          node.specifiers.length > 0 &&
-          node.specifiers.every((specifier) => specifier.exportKind === 'type')
-        )
-          return;
+        if (node.specifiers.length > 0 && node.specifiers.every((specifier) => specifier.exportKind === 'type')) return;
         const source = node.source.value;
         if (timerModules.has(source)) importSites.push({ node, callee: source });
       },
@@ -651,10 +601,7 @@ export const rule = defineRule({
         const resolved = timeMemberOf(node);
         if (resolved === null) return;
         if (!isRealTimeMember(resolved.namespace, resolved.member)) return;
-        if (
-          node.object.type === 'Identifier' &&
-          resolve(context, node.object, node.object.name) === 'shadowed'
-        ) {
+        if (node.object.type === 'Identifier' && resolve(context, node.object, node.object.name) === 'shadowed') {
           return;
         }
         timeSites.push({ node, callee: printed(node) });

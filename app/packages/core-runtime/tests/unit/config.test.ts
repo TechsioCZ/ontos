@@ -1,6 +1,6 @@
+import { Effect, Predicate } from 'effect';
 import { expect, it } from 'effect-rstest';
 
-import { Effect, Predicate } from 'effect';
 import { acquirePoolResource } from '../../src/db/client.ts';
 import {
   ROOT_ENV_PATH,
@@ -26,9 +26,7 @@ it.effect('loads the root environment independently of the invocation directory'
     });
 
     expect(ROOT_ENV_PATH.endsWith('/app/.env')).toBe(true);
-    expect(configuration.connectionString).toBe(
-      'postgresql://ontos_runtime:ontos_runtime@localhost:5433/ontos',
-    );
+    expect(configuration.connectionString).toBe('postgresql://ontos_runtime:ontos_runtime@localhost:5433/ontos');
   }),
 );
 

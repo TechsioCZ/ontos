@@ -76,14 +76,13 @@
  * Report-only: no fixers, no suggestions.
  */
 import { defineRule } from '@oxlint/plugins';
-
 import type { Context, ESTree } from '@oxlint/plugins';
 
+import { parentOf, unwrapNode as unwrap, memberName as staticMemberName } from '../shared/ast.ts';
+import { resolveVariable } from '../shared/bindings.ts';
 import { collectEffectBindings } from '../shared/effect-imports.ts';
 import type { EffectBindings } from '../shared/effect-imports.ts';
 import { globToRegExp, scriptScope, inScriptScope } from '../shared/paths.ts';
-import { parentOf, unwrapNode as unwrap, memberName as staticMemberName } from '../shared/ast.ts';
-import { resolveVariable } from '../shared/bindings.ts';
 import { provenance } from '../shared/provenance.ts';
 
 /** Native error globals. A `throw new X(...)` against one of these is the B3 "manual throw". */
@@ -121,12 +120,9 @@ function readOptions(raw: unknown): RuleOptions {
       : DEFAULTS.allowPaths;
   return {
     allowPaths: globs,
-    allowRethrow:
-      typeof given.allowRethrow === 'boolean' ? given.allowRethrow : DEFAULTS.allowRethrow,
+    allowRethrow: typeof given.allowRethrow === 'boolean' ? given.allowRethrow : DEFAULTS.allowRethrow,
     allowInsideEffectTry:
-      typeof given.allowInsideEffectTry === 'boolean'
-        ? given.allowInsideEffectTry
-        : DEFAULTS.allowInsideEffectTry,
+      typeof given.allowInsideEffectTry === 'boolean' ? given.allowInsideEffectTry : DEFAULTS.allowInsideEffectTry,
   };
 }
 
@@ -149,8 +145,7 @@ function nativeErrorName(context: Context, node: AnyNode): string | null {
   const variable = resolveVariable(context, name, callee);
   // Unresolved, or resolved only to an implicit global, means the real native constructor.
   if (variable === null) return name;
-  return variable.defs.length === 0 ||
-    variable.defs.every((definition) => definition.type === 'ImplicitGlobalVariable')
+  return variable.defs.length === 0 || variable.defs.every((definition) => definition.type === 'ImplicitGlobalVariable')
     ? name
     : null;
 }

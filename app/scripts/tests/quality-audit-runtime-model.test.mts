@@ -1,19 +1,18 @@
-import { expect, it } from 'effect-rstest';
-import { runPinnedKnip } from './quality-audit-test-support.mts';
-
 import { mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 
 import { NodeServices } from '@effect/platform-node';
 import { Effect, Schema } from 'effect';
+import { expect, it } from 'effect-rstest';
 
 import { buildKnipModel } from '../../quality-audit/knip-model.mts';
 import { buildKnipRuntimeEvidence } from '../../quality-audit/knip-runtime-model.mts';
+import { runPinnedKnip } from './quality-audit-test-support.mts';
 
 const shellRoot = 'apps/shell';
 const layoutFile = `${shellRoot}/src/routes/layout.tsx`;
-const vendorRoot = 'node_modules/@modern-js/create/templates/workspace-scripts';
+const vendorRoot = 'node_modules/@modern-js/ultramodern-create/templates/workspace-scripts';
 const resetFile = 'scripts/reset.mjs';
 const readinessConfig = 'scripts/readiness.config.mjs';
 const launchedFile = 'scripts/launched.mts';
@@ -65,11 +64,7 @@ const fixture = () =>
         type: 'module',
       }),
     );
-    write(
-      root,
-      layoutFile,
-      "import './index.css'; export default function Layout() { return null; }",
-    );
+    write(root, layoutFile, "import './index.css'; export default function Layout() { return null; }");
     write(
       root,
       `${shellRoot}/src/routes/index.css`,
@@ -100,11 +95,7 @@ const fixture = () =>
       "resolveEffectTsgoCompiler({ from: pathToFileURL(join(workspaceRoot, 'package.json')) });",
     );
     write(root, tsgoReadme, compilerDocumentation);
-    write(
-      root,
-      compilerConfig,
-      yield* stringify({ compilerOptions: { plugins: [{ name: pluginName }] } }),
-    );
+    write(root, compilerConfig, yield* stringify({ compilerOptions: { plugins: [{ name: pluginName }] } }));
     write(
       root,
       'scripts/ultramodern-performance-readiness.mts',
@@ -124,14 +115,7 @@ it.live(
   Effect.fn(function* testEffect4() {
     const root = yield* fixture();
     const initial = yield* facts(root);
-    for (const target of [
-      cssUsed,
-      launchedFile,
-      resetFile,
-      tsgoName,
-      pluginName,
-      readinessConfig,
-    ]) {
+    for (const target of [cssUsed, launchedFile, resetFile, tsgoName, pluginName, readinessConfig]) {
       expect(
         initial.some((fact) => fact.target === target),
         target,
@@ -141,11 +125,7 @@ it.live(
       expect(!initial.some((fact) => fact.target === target), target).toBe(true);
     }
     expect(initial.find((fact) => fact.target === pluginName)?.kind).toBe(compilerOptionKind);
-    expect(
-      initial.some(
-        (fact) => fact.target === `${readinessConfig}#default` && fact.kind === 'export',
-      ),
-    ).toBe(true);
+    expect(initial.some((fact) => fact.target === `${readinessConfig}#default` && fact.kind === 'export')).toBe(true);
     write(root, layoutFile, emptyLayout);
     write(root, `${shellRoot}/package.json`, '{"name":"@fixture/shell"}');
     write(root, 'zerops.yaml', '# - cd app && node scripts/reset.mjs');
@@ -153,7 +133,10 @@ it.live(
       root,
       compilerConfig,
       yield* stringify({
-        compilerOptions: { plugins: [{ name: pluginName }], types: [pluginName] },
+        compilerOptions: {
+          plugins: [{ name: pluginName }],
+          types: [pluginName],
+        },
       }),
     );
     write(
@@ -228,14 +211,12 @@ it.live(
     const root = yield* fixture();
     const configFile = `${shellRoot}/module-federation.config.ts`;
     const source =
-      "import { resolveEffectTsgoCompiler } from '@modern-js/app-tools/config';\nconst compiler = resolveEffectTsgoCompiler({ from: import.meta.url });\nvoid compiler;";
+      "import { resolveEffectTsgoCompiler } from '@modern-js/app-tools/config';\nconst compiler = resolveEffectTsgoCompiler({\n from: import.meta.url,\n });\nvoid compiler;";
     write(root, configFile, source);
     write(root, `${shellRoot}/${tsgoReadme}`, 'tries `typescript`, then `@typescript/native`');
     const initial = yield* facts(root);
     for (const target of ['@effect/tsgo', '@typescript/native']) {
-      expect(initial.some((fact) => fact.target === target && fact.workspace === shellRoot)).toBe(
-        true,
-      );
+      expect(initial.some((fact) => fact.target === target && fact.workspace === shellRoot)).toBe(true);
     }
     write(root, configFile, `/* ${source} */\nexport default {};`);
     const commented = yield* facts(root);
@@ -285,9 +266,7 @@ it.live(
       },
       consumerPath,
     ).pipe(Effect.provide(NodeServices.layer));
-    const run = yield* runPinnedKnip(root, consumerPath, model).pipe(
-      Effect.provide(NodeServices.layer),
-    );
+    const run = yield* runPinnedKnip(root, consumerPath, model).pipe(Effect.provide(NodeServices.layer));
     expect(run.error).toBe(undefined);
     expect(run.status === 0 || run.status === 1, run.stderr).toBe(true);
     const report = yield* Schema.decodeUnknownEffect(
@@ -308,23 +287,17 @@ it.live(
     expect(unusedFiles.some((file) => file.endsWith('/scripts/dead.mts'))).toBe(true);
     expect(
       !unusedFiles.some(
-        (file) =>
-          file.endsWith('/scripts/launched.mts') || file === resetFile || file === readinessConfig,
+        (file) => file.endsWith('/scripts/launched.mts') || file === resetFile || file === readinessConfig,
       ),
     ).toBe(true);
-    const dependencies = new Set(
-      report.issues.flatMap((issue) => issue.dependencies.map((item) => item.name)),
-    );
+    const dependencies = new Set(report.issues.flatMap((issue) => issue.dependencies.map((item) => item.name)));
     expect(dependencies.has('@fixture/css-dead')).toBe(true);
     expect(dependencies.has('@fixture/css-comment')).toBe(true);
     expect(!dependencies.has(cssUsed)).toBe(true);
-    const exports = new Set(
-      report.issues.flatMap((issue) => issue.exports.map((item) => item.name)),
-    );
+    const exports = new Set(report.issues.flatMap((issue) => issue.exports.map((item) => item.name)));
     expect(
       !report.issues.some(
-        (issue) =>
-          issue.file === readinessConfig && issue.exports.some((item) => item.name === 'default'),
+        (issue) => issue.file === readinessConfig && issue.exports.some((item) => item.name === 'default'),
       ),
     ).toBe(true);
     for (const name of ['unusedLauncherExport', 'unusedResetExport', 'unusedConfigExport']) {
@@ -339,10 +312,7 @@ it.live(
     const root = yield* fixture();
     const runnerFile = 'scripts/shared/ultramodern-command.mts';
     try {
-      const runner = readFileSync(
-        new URL('../shared/ultramodern-command.mts', import.meta.url),
-        'utf-8',
-      );
+      const runner = readFileSync(new URL('../shared/ultramodern-command.mts', import.meta.url), 'utf-8');
       write(root, runnerFile, runner);
       for (const command of ['typecheck', 'performance-readiness']) {
         write(
@@ -361,10 +331,7 @@ it.live(
       write(
         root,
         runnerFile,
-        runner.replace(
-          'ChildProcess.make(launch.executable, launch.args,',
-          'ChildProcess.make("unrelated", [],',
-        ),
+        runner.replace('ChildProcess.make(launch.executable, launch.args,', 'ChildProcess.make("unrelated", [],'),
       );
       const disconnected = yield* facts(root);
       expect(!disconnected.some((fact) => fact.target === tsgoName)).toBeTruthy();

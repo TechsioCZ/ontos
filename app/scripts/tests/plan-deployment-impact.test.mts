@@ -1,19 +1,18 @@
-import { expect, it } from 'effect-rstest';
 import { execFileSync } from 'node:child_process';
 import { access, mkdtemp, mkdir, rm, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
+
 import { NodeServices } from '@effect/platform-node';
 import { Cause, Effect, Exit } from 'effect';
+import { expect, it } from 'effect-rstest';
+
 import { hashAuthorizationEvidence } from '../check-authorization-readiness.mts';
 import {
   planDeploymentImpact as planDeploymentImpactEffect,
   validateAuthorizationPromotionGate,
 } from '../plan-deployment-impact.mts';
-import type {
-  AuthorizationPromotionGateInput,
-  PlanDeploymentImpactOptions,
-} from '../plan-deployment-impact.mts';
+import type { AuthorizationPromotionGateInput, PlanDeploymentImpactOptions } from '../plan-deployment-impact.mts';
 
 const planningFailure = <A, E>(effect: Effect.Effect<A, E>) =>
   effect.pipe(
@@ -94,17 +93,14 @@ const writeJson = (root: string, relativePath: string, value: FixtureDocument) =
   Effect.gen(function* testEffect1() {
     const target = path.join(root, relativePath);
     yield* Effect.tryPromise(() => mkdir(path.dirname(target), { recursive: true }));
-    yield* Effect.tryPromise(() =>
-      writeFile(target, `${JSON.stringify(value, undefined, 2)}\n`, 'utf-8'),
-    );
+    yield* Effect.tryPromise(() => writeFile(target, `${JSON.stringify(value, undefined, 2)}\n`, 'utf-8'));
   });
 
 const makeFixture = (options: FixtureOptions = {}) =>
   Effect.gen(function* testEffect2() {
     const root = yield* Effect.acquireRelease(
       Effect.tryPromise(() => mkdtemp(path.join(os.tmpdir(), 'ontos-deployment-impact-'))),
-      (directory) =>
-        Effect.tryPromise(() => rm(directory, { force: true, recursive: true })).pipe(Effect.orDie),
+      (directory) => Effect.tryPromise(() => rm(directory, { force: true, recursive: true })).pipe(Effect.orDie),
     );
     const verticalId = options.verticalId ?? 'contacts';
     const verticalPackage = `@app/${verticalId}`;
@@ -139,9 +135,7 @@ const makeFixture = (options: FixtureOptions = {}) =>
     });
     if (options.includeWorker === true) {
       const workerRoot = path.join(root, verticalPath);
-      yield* Effect.tryPromise(() =>
-        mkdir(path.join(workerRoot, 'src/worker-host'), { recursive: true }),
-      );
+      yield* Effect.tryPromise(() => mkdir(path.join(workerRoot, 'src/worker-host'), { recursive: true }));
       yield* Effect.tryPromise(() =>
         writeFile(
           path.join(workerRoot, 'package.json'),
@@ -163,16 +157,11 @@ const makeFixture = (options: FixtureOptions = {}) =>
       'shellsuperapp',
     ];
     const setupLines = setups.map((setup) => `  - setup: '${setup}'`).join('\n');
-    yield* Effect.tryPromise(() =>
-      writeFile(path.join(root, 'zerops.yaml'), `zerops:\n${setupLines}\n`, 'utf-8'),
-    );
+    yield* Effect.tryPromise(() => writeFile(path.join(root, 'zerops.yaml'), `zerops:\n${setupLines}\n`, 'utf-8'));
     return root;
   });
 
-const withFixture = (
-  run: (root: string) => Effect.Effect<void, unknown>,
-  options?: FixtureOptions,
-) =>
+const withFixture = (run: (root: string) => Effect.Effect<void, unknown>, options?: FixtureOptions) =>
   Effect.gen(function* testEffect3() {
     const root = yield* makeFixture(options);
     yield* run(root);
@@ -250,12 +239,7 @@ it.live('orders authorization schema and replay migration before every affected 
           changedPaths: ['app/scripts/authorization/rollout-contract.mts'],
           rootDirectory: root,
         });
-        expect(plan.phases.map(({ id }) => id)).toEqual([
-          'migrator',
-          'spicedb',
-          'contacts',
-          SHELL_ID,
-        ]);
+        expect(plan.phases.map(({ id }) => id)).toEqual(['migrator', 'spicedb', 'contacts', SHELL_ID]);
       }),
     );
   }),
@@ -374,12 +358,7 @@ for (const changedPath of [
             changedPaths: [changedPath],
             rootDirectory: root,
           });
-          expect(plan.phases.map((phase) => phase.id)).toEqual([
-            'migrator',
-            'spicedb',
-            'contacts',
-            SHELL_ID,
-          ]);
+          expect(plan.phases.map((phase) => phase.id)).toEqual(['migrator', 'spicedb', 'contacts', SHELL_ID]);
         }),
       );
     }),
@@ -408,16 +387,11 @@ it.live('fails closed for the unknown destination of a renamed application direc
         expect(
           yield* planningFailure(
             planDeploymentImpact({
-              changedPaths: [
-                'verticals/contacts/src/index.ts',
-                'verticals/relationships/src/index.ts',
-              ],
+              changedPaths: ['verticals/contacts/src/index.ts', 'verticals/relationships/src/index.ts'],
               rootDirectory: root,
             }),
           ),
-        ).toMatch(
-          /unknown changed path "verticals\/relationships\/src\/index\.ts" in application area "verticals"/u,
-        );
+        ).toMatch(/unknown changed path "verticals\/relationships\/src\/index\.ts" in application area "verticals"/u);
       }),
     );
   }),
@@ -430,7 +404,10 @@ it.live('fails closed when a topology delivery unit has no ownership entry', () 
         Effect.gen(function* testEffect31() {
           expect(
             yield* planningFailure(
-              planDeploymentImpact({ changedPaths: [DOCUMENTATION_PATH], rootDirectory: root }),
+              planDeploymentImpact({
+                changedPaths: [DOCUMENTATION_PATH],
+                rootDirectory: root,
+              }),
             ),
           ).toMatch(/topology delivery unit "contacts" is missing from topology\/ownership\.json/u);
         }),
@@ -448,12 +425,19 @@ it.live('fails closed when topology and ownership identities disagree', () =>
             CORE_RUNTIME_OWNER,
             SHARED_CONTRACTS_OWNER,
             SHELL_OWNER,
-            { id: 'contacts', package: '@app/contacts-old', path: 'verticals/contacts-old' },
+            {
+              id: 'contacts',
+              package: '@app/contacts-old',
+              path: 'verticals/contacts-old',
+            },
           ],
         });
         expect(
           yield* planningFailure(
-            planDeploymentImpact({ changedPaths: [DOCUMENTATION_PATH], rootDirectory: root }),
+            planDeploymentImpact({
+              changedPaths: [DOCUMENTATION_PATH],
+              rootDirectory: root,
+            }),
           ),
         ).toMatch(/topology and ownership disagree for "contacts"/u);
       }),
@@ -470,12 +454,19 @@ it.live('fails closed when shared-package topology and ownership identities disa
             { ...CORE_RUNTIME_OWNER, path: 'packages/core-runtime-old' },
             SHARED_CONTRACTS_OWNER,
             SHELL_OWNER,
-            { id: 'contacts', package: '@app/contacts', path: 'verticals/contacts' },
+            {
+              id: 'contacts',
+              package: '@app/contacts',
+              path: 'verticals/contacts',
+            },
           ],
         });
         expect(
           yield* planningFailure(
-            planDeploymentImpact({ changedPaths: [DOCUMENTATION_PATH], rootDirectory: root }),
+            planDeploymentImpact({
+              changedPaths: [DOCUMENTATION_PATH],
+              rootDirectory: root,
+            }),
           ),
         ).toMatch(/topology and ownership disagree for shared package "core-runtime"/u);
       }),
@@ -490,7 +481,10 @@ it.live('fails closed when a topology unit has no supported stage setup', () =>
         Effect.gen(function* testEffect37() {
           expect(
             yield* planningFailure(
-              planDeploymentImpact({ changedPaths: [DOCUMENTATION_PATH], rootDirectory: root }),
+              planDeploymentImpact({
+                changedPaths: [DOCUMENTATION_PATH],
+                rootDirectory: root,
+              }),
             ),
           ).toMatch(/topology delivery unit "contacts" has unsupported stage setup "contacts"/u);
         }),
@@ -510,12 +504,7 @@ it.live('uses a safe full deployment for an all-zero comparison base', () =>
         });
         expect(plan.comparison.mode).toBe('full');
         expect(plan.comparison.reason ?? '').toMatch(/all-zero/u);
-        expect(plan.phases.map((phase) => phase.id)).toEqual([
-          'migrator',
-          'spicedb',
-          'contacts',
-          SHELL_ID,
-        ]);
+        expect(plan.phases.map((phase) => phase.id)).toEqual(['migrator', 'spicedb', 'contacts', SHELL_ID]);
       }),
     );
   }),
@@ -531,9 +520,7 @@ it.live('uses a safe full deployment for an unavailable comparison base', () =>
           rootDirectory: root,
         });
         expect(plan.comparison.mode).toBe('full');
-        expect(plan.comparison.reason ?? '').toMatch(
-          /comparison base "missing-base-revision" is unavailable/u,
-        );
+        expect(plan.comparison.reason ?? '').toMatch(/comparison base "missing-base-revision" is unavailable/u);
       }),
     );
   }),
@@ -547,16 +534,12 @@ it.live('uses a safe full deployment when the comparison base is not an ancestor
         runGit(root, ['add', '.']);
         runGit(root, ['commit', '-m', 'fixture root']);
         const rootRevision = runGit(root, ['rev-parse', 'HEAD']);
-        yield* Effect.tryPromise(() =>
-          writeFile(path.join(root, 'main-marker.txt'), 'main\n', 'utf-8'),
-        );
+        yield* Effect.tryPromise(() => writeFile(path.join(root, 'main-marker.txt'), 'main\n', 'utf-8'));
         runGit(root, ['add', 'main-marker.txt']);
         runGit(root, ['commit', '-m', 'main change']);
         const rewrittenBase = runGit(root, ['rev-parse', 'HEAD']);
         runGit(root, ['checkout', '-b', 'rewritten', rootRevision]);
-        yield* Effect.tryPromise(() =>
-          writeFile(path.join(root, 'rewritten-marker.txt'), 'rewritten\n', 'utf-8'),
-        );
+        yield* Effect.tryPromise(() => writeFile(path.join(root, 'rewritten-marker.txt'), 'rewritten\n', 'utf-8'));
         runGit(root, ['add', 'rewritten-marker.txt']);
         runGit(root, ['commit', '-m', 'rewritten change']);
 
@@ -659,25 +642,19 @@ const promotionFixture = (): AuthorizationPromotionGateInput => {
   };
 };
 
-const withoutImpactEvidence = (
-  input: AuthorizationPromotionGateInput,
-): AuthorizationPromotionGateInput => {
+const withoutImpactEvidence = (input: AuthorizationPromotionGateInput): AuthorizationPromotionGateInput => {
   const { impact, ...remaining } = input;
   expect(impact !== undefined).toBe(true);
   return remaining;
 };
 
-const withoutNegativeSmokeEvidence = (
-  input: AuthorizationPromotionGateInput,
-): AuthorizationPromotionGateInput => {
+const withoutNegativeSmokeEvidence = (input: AuthorizationPromotionGateInput): AuthorizationPromotionGateInput => {
   const { negativeSmoke, ...remaining } = input;
   expect(negativeSmoke !== undefined).toBe(true);
   return remaining;
 };
 
-const withoutReadinessEvidence = (
-  input: AuthorizationPromotionGateInput,
-): AuthorizationPromotionGateInput => {
+const withoutReadinessEvidence = (input: AuthorizationPromotionGateInput): AuthorizationPromotionGateInput => {
   const { readiness, ...remaining } = input;
   expect(readiness !== undefined).toBe(true);
   return remaining;
@@ -722,7 +699,10 @@ it('report-only promotion is bounded, explicit-baseline-only, and never allowed 
   };
   expect(validateAuthorizationPromotionGate(reportOnly).status).toBe('observing');
   expect(() =>
-    validateAuthorizationPromotionGate({ ...reportOnly, environment: 'production' }),
+    validateAuthorizationPromotionGate({
+      ...reportOnly,
+      environment: 'production',
+    }),
   ).toThrow(/production.*report-only/u);
   expect(() =>
     validateAuthorizationPromotionGate({

@@ -70,14 +70,13 @@
  * Report-only: no fixer, no suggestion.
  */
 import { defineRule } from '@oxlint/plugins';
-
 import type { Context, ESTree } from '@oxlint/plugins';
 
-import { isTestFile, matchesGlobs, scopePath } from '../shared/paths.ts';
 import { staticString, unwrapNode as unwrap } from '../shared/ast.ts';
 import { resolveVariable } from '../shared/bindings.ts';
 import { importedName } from '../shared/imports.ts';
 import { stringList as stringArray } from '../shared/options.ts';
+import { isTestFile, matchesGlobs, scopePath } from '../shared/paths.ts';
 
 /**
  * Any dotenv-family loader package, with or without a subpath (`dotenv/config` is the side-effect
@@ -93,12 +92,7 @@ const DOTENV_MODULE =
 const NODE_MODULE_SPECIFIER = /^(?:node:module|module)$/u;
 
 /** Audit scope: application, vertical, package and script sources. Tests included by default. */
-const DEFAULT_SCOPE_PATHS: readonly string[] = [
-  'apps/**',
-  'verticals/**',
-  'packages/**',
-  'scripts/**',
-];
+const DEFAULT_SCOPE_PATHS: readonly string[] = ['apps/**', 'verticals/**', 'packages/**', 'scripts/**'];
 
 /**
  * The local bootstrap composition root loads dotenv into a local record (processEnv), not the
@@ -121,14 +115,10 @@ const DEFAULTS: RuleOptions = {
 type AnyNode = ESTree.Node;
 
 function readOptions(raw: unknown): RuleOptions {
-  const given =
-    typeof raw === 'object' && raw !== null && !Array.isArray(raw)
-      ? (raw as Record<string, unknown>)
-      : {};
+  const given = typeof raw === 'object' && raw !== null && !Array.isArray(raw) ? (raw as Record<string, unknown>) : {};
   return {
     allowPaths: stringArray(given.allowPaths, DEFAULTS.allowPaths),
-    ignoreTestFiles:
-      typeof given.ignoreTestFiles === 'boolean' ? given.ignoreTestFiles : DEFAULTS.ignoreTestFiles,
+    ignoreTestFiles: typeof given.ignoreTestFiles === 'boolean' ? given.ignoreTestFiles : DEFAULTS.ignoreTestFiles,
     scopePaths: stringArray(given.scopePaths, DEFAULTS.scopePaths),
   };
 }
@@ -169,27 +159,15 @@ function staticMemberName(node: ESTree.MemberExpression): string | null {
  */
 interface Tracker {
   /** Record a binding introduced by an `import` declaration (def type `ImportBinding`). */
-  readonly addImport: (
-    name: string,
-    value: string,
-    ...anchors: readonly (AnyNode | null | undefined)[]
-  ) => void;
+  readonly addImport: (name: string, value: string, ...anchors: readonly (AnyNode | null | undefined)[]) => void;
   /** Record a binding introduced by a declarator / declaration, anchored on the given nodes. */
-  readonly addDeclared: (
-    name: string,
-    value: string,
-    ...anchors: readonly (AnyNode | null | undefined)[]
-  ) => void;
+  readonly addDeclared: (name: string, value: string, ...anchors: readonly (AnyNode | null | undefined)[]) => void;
   readonly resolve: (node: AnyNode, name: string) => string | null;
 }
 
 function createTracker(context: Context): Tracker {
   const anchored = new Map<number, string>();
-  const add = (
-    _name: string,
-    value: string,
-    ...anchors: readonly (AnyNode | null | undefined)[]
-  ): void => {
+  const add = (_name: string, value: string, ...anchors: readonly (AnyNode | null | undefined)[]): void => {
     for (const node of anchors) {
       const start = startOf(node);
       if (start !== null) anchored.set(start, value);
@@ -202,8 +180,7 @@ function createTracker(context: Context): Tracker {
       const variable = resolveVariable(context, name, node);
       if (!variable || variable.defs.length !== 1) return null;
       // Do not infer the current value after a reassignment.
-      if (variable.references.some((reference) => reference.isWrite() && !reference.init))
-        return null;
+      if (variable.references.some((reference) => reference.isWrite() && !reference.init)) return null;
       const definition = variable.defs[0];
       return (
         anchored.get(startOf(definition.name as AnyNode) ?? -1) ??
@@ -313,9 +290,7 @@ export const rule = defineRule({
       if (staticMemberName(callee as ESTree.MemberExpression) !== 'createRequire') return false;
       const object = unwrap((callee as ESTree.MemberExpression).object as AnyNode);
       if (object.type === 'Identifier') {
-        return (
-          moduleNamespace.resolve(object, (object as ESTree.IdentifierReference).name) !== null
-        );
+        return moduleNamespace.resolve(object, (object as ESTree.IdentifierReference).name) !== null;
       }
       return isAmbientModuleRequire(object);
     };
@@ -415,9 +390,7 @@ export const rule = defineRule({
     };
 
     /** The dotenv module a member chain's root object resolves to, plus a readable label. */
-    const resolveDotenvObject = (
-      expression: AnyNode,
-    ): { readonly module: string; readonly label: string } | null => {
+    const resolveDotenvObject = (expression: AnyNode): { readonly module: string; readonly label: string } | null => {
       const target = unwrap(expression);
       if (target.type === 'Identifier') {
         const name = (target as ESTree.IdentifierReference).name;
@@ -455,25 +428,35 @@ export const rule = defineRule({
         const source = node.source;
         if (source === null || !isDotenvSpecifier(source.value)) return;
         if (node.exportKind === 'type') return;
-        context.report({ node, messageId: 'dotenvImport', data: { module: source.value } });
+        context.report({
+          node,
+          messageId: 'dotenvImport',
+          data: { module: source.value },
+        });
       },
       ExportAllDeclaration(node) {
         if (!isDotenvSpecifier(node.source.value)) return;
         if (node.exportKind === 'type') return;
-        context.report({ node, messageId: 'dotenvImport', data: { module: node.source.value } });
+        context.report({
+          node,
+          messageId: 'dotenvImport',
+          data: { module: node.source.value },
+        });
       },
       ImportExpression(node) {
         const module = staticStringValue(node.source as AnyNode);
         if (module === null || !isDotenvSpecifier(module)) return;
-        context.report({ node, messageId: 'dotenvDynamicImport', data: { module } });
+        context.report({
+          node,
+          messageId: 'dotenvDynamicImport',
+          data: { module },
+        });
       },
       TSImportEqualsDeclaration(node) {
         if (node.importKind === 'type') return;
         const reference = node.moduleReference as AnyNode;
         if (reference.type !== 'TSExternalModuleReference') return;
-        const module = staticStringValue(
-          (reference as ESTree.TSExternalModuleReference).expression as AnyNode,
-        );
+        const module = staticStringValue((reference as ESTree.TSExternalModuleReference).expression as AnyNode);
         if (module === null) return;
         if (NODE_MODULE_SPECIFIER.test(module)) {
           moduleNamespace.addImport(node.id.name, 'node:module', node.id, node);
@@ -517,7 +500,11 @@ export const rule = defineRule({
         if (isModuleLoaderCallee(callee)) {
           const module = staticStringValue((node.arguments[0] as AnyNode | undefined) ?? null);
           if (module === null || !isDotenvSpecifier(module)) return;
-          context.report({ node, messageId: 'dotenvRequire', data: { module } });
+          context.report({
+            node,
+            messageId: 'dotenvRequire',
+            data: { module },
+          });
           return;
         }
 
@@ -526,7 +513,11 @@ export const rule = defineRule({
           const name = (callee as ESTree.IdentifierReference).name;
           const module = dotenv.resolve(callee, name);
           if (module === null) return;
-          context.report({ node, messageId: 'dotenvCall', data: { call: `${name}()`, module } });
+          context.report({
+            node,
+            messageId: 'dotenvCall',
+            data: { call: `${name}()`, module },
+          });
           return;
         }
 
@@ -536,7 +527,11 @@ export const rule = defineRule({
         if (object === null) return;
         const member = staticMemberName(callee as ESTree.MemberExpression);
         const call = member === null ? `${object.label}[…]()` : `${object.label}.${member}()`;
-        context.report({ node, messageId: 'dotenvCall', data: { call, module: object.module } });
+        context.report({
+          node,
+          messageId: 'dotenvCall',
+          data: { call, module: object.module },
+        });
       },
     };
   },

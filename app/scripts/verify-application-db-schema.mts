@@ -1,6 +1,7 @@
 import { Console, Effect, Exit, Schema } from 'effect';
 import { Client } from 'pg';
 import type { QueryResult, QueryResultRow } from 'pg';
+
 import { loadDatabaseConnectionPair } from '../packages/core-runtime/src/db/config.ts';
 
 const EXPECTED_APPLICATION_SCHEMAS = ['auth', 'contacts', 'core', 'party'] as const;
@@ -19,10 +20,7 @@ class ApplicationDatabaseVerificationError extends Schema.TaggedError<Applicatio
   },
 ) {}
 
-const verificationFailure = (
-  reason: string,
-  cause?: unknown,
-): ApplicationDatabaseVerificationError =>
+const verificationFailure = (reason: string, cause?: unknown): ApplicationDatabaseVerificationError =>
   new ApplicationDatabaseVerificationError(cause === undefined ? { reason } : { cause, reason });
 
 const query = <Row extends QueryResultRow>(
@@ -94,13 +92,14 @@ const main = Effect.gen(function* verifyApplicationDatabase() {
   yield* Effect.acquireUseRelease(
     Effect.gen(function* acquireAdministrativeClient() {
       const client = yield* Effect.try({
-        catch: (cause) =>
-          verificationFailure('Unable to create the administrative PostgreSQL client', cause),
-        try: () => new Client({ connectionString: configuration.admin.connectionString }),
+        catch: (cause) => verificationFailure('Unable to create the administrative PostgreSQL client', cause),
+        try: () =>
+          new Client({
+            connectionString: configuration.admin.connectionString,
+          }),
       });
       yield* Effect.tryPromise({
-        catch: (cause) =>
-          verificationFailure('Unable to connect to the administrative PostgreSQL database', cause),
+        catch: (cause) => verificationFailure('Unable to connect to the administrative PostgreSQL database', cause),
         try: async () => await client.connect(),
       });
       return client;
@@ -108,8 +107,7 @@ const main = Effect.gen(function* verifyApplicationDatabase() {
     verifyApplicationCatalog,
     (client) =>
       Effect.tryPromise({
-        catch: (cause) =>
-          verificationFailure('Unable to close the administrative PostgreSQL connection', cause),
+        catch: (cause) => verificationFailure('Unable to close the administrative PostgreSQL connection', cause),
         try: async () => await client.end(),
       }),
   );

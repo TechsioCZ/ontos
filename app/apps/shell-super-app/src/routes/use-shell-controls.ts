@@ -2,9 +2,10 @@ import { useModernI18n } from '@modern-js/plugin-i18n/runtime';
 import { useNavigate } from '@modern-js/plugin-tanstack/runtime';
 import { Effect, Match, Schema } from 'effect';
 import { useState } from 'react';
+
+import { SwitchLegalEntityPayloadSchema, SwitchTenantPayloadSchema } from '../../shared/api.ts';
 import { signOut, switchLegalEntity, switchTenant } from '../api/auth-client.ts';
 import type { SwitchLegalEntityClientError, SwitchTenantClientError } from '../api/auth-client.ts';
-import { SwitchLegalEntityPayloadSchema, SwitchTenantPayloadSchema } from '../../shared/api.ts';
 import { browserRuntime } from '../runtime/browser-effect-runtime.ts';
 import type { AuthenticatedHomePageModel } from './[lang]/page.data.ts';
 
@@ -50,9 +51,7 @@ export const useShellControls = (model: AuthenticatedHomePageModel | undefined) 
   const [legalEntitySwitchFailed, setLegalEntitySwitchFailed] = useState(false);
 
   const reload = () =>
-    Effect.tryPromise(() => navigate({ reloadDocument: true, to: '.' })).pipe(
-      Effect.timeout('10 seconds'),
-    );
+    Effect.tryPromise(() => navigate({ reloadDocument: true, to: '.' })).pipe(Effect.timeout('10 seconds'));
 
   const handleLogout = () => {
     if (logoutPending) {
@@ -63,9 +62,9 @@ export const useShellControls = (model: AuthenticatedHomePageModel | undefined) 
     void browserRuntime.runPromise(
       signOut({ locale: language }).pipe(
         Effect.andThen(
-          Effect.tryPromise(() =>
-            navigate({ reloadDocument: true, to: `/${language}/login` }),
-          ).pipe(Effect.timeout('10 seconds')),
+          Effect.tryPromise(() => navigate({ reloadDocument: true, to: `/${language}/login` })).pipe(
+            Effect.timeout('10 seconds'),
+          ),
         ),
         Effect.matchEffect({
           onFailure: (error) =>
@@ -113,17 +112,13 @@ export const useShellControls = (model: AuthenticatedHomePageModel | undefined) 
   };
 
   const handleLegalEntityChange = (legalEntityId: string) => {
-    if (
-      model === undefined ||
-      legalEntitySwitchPending ||
-      legalEntityId === model.selectedLegalEntityId
-    ) {
+    if (model === undefined || legalEntitySwitchPending || legalEntityId === model.selectedLegalEntityId) {
       return;
     }
     runSwitch(
-      Schema.decodeUnknownEffect(SwitchLegalEntityPayloadSchema)({ legalEntityId }).pipe(
-        Effect.flatMap((payload) => switchLegalEntity(payload, { locale: language })),
-      ),
+      Schema.decodeEffect(SwitchLegalEntityPayloadSchema)({
+        legalEntityId,
+      }).pipe(Effect.flatMap((payload) => switchLegalEntity(payload, { locale: language }))),
       legalEntitySwitchFailureState,
       setLegalEntitySwitchPending,
       setLegalEntitySwitchFailed,
@@ -131,16 +126,11 @@ export const useShellControls = (model: AuthenticatedHomePageModel | undefined) 
   };
 
   const handleTenantChange = (tenantId: string) => {
-    if (
-      model === undefined ||
-      tenantSwitchPending ||
-      tenantId.length === 0 ||
-      tenantId === model.identity.tenantId
-    ) {
+    if (model === undefined || tenantSwitchPending || tenantId.length === 0 || tenantId === model.identity.tenantId) {
       return;
     }
     runSwitch(
-      Schema.decodeUnknownEffect(SwitchTenantPayloadSchema)({ tenantId }).pipe(
+      Schema.decodeEffect(SwitchTenantPayloadSchema)({ tenantId }).pipe(
         Effect.flatMap((payload) => switchTenant(payload, { locale: language })),
       ),
       tenantSwitchFailureState,
@@ -153,7 +143,9 @@ export const useShellControls = (model: AuthenticatedHomePageModel | undefined) 
     handleLegalEntityChange,
     handleLogout,
     handleSearch: (query: string) => {
-      void navigate({ to: `/${language}/search?q=${encodeURIComponent(query)}` });
+      void navigate({
+        to: `/${language}/search?q=${encodeURIComponent(query)}`,
+      });
     },
     handleTenantChange,
     legalEntitySwitchFailed,

@@ -2,21 +2,19 @@
 // @ontos-action-owner core.identity
 // @ontos-action-slug bind-managed-api-key
 import { Effect, Schema } from 'effect';
+
 import type { ActionHandlerContext } from '../../actions/context.ts';
 import { defineAction } from '../../actions/definition.ts';
+import { PrincipalManagementErrorSchema } from '../../auth/principal-management-errors.ts';
 import { principalManagementRepositoryFromTransaction } from '../../auth/principal-management.ts';
 import type { PrincipalManagementRepositoryService } from '../../auth/principal-management.ts';
-import { PrincipalManagementErrorSchema } from '../../auth/principal-management-errors.ts';
 import { defineSystemModuleEntrypoint } from '../module-entrypoint.ts';
 
 const PrincipalIdSchema = Schema.String.check(Schema.isUUID()).pipe(Schema.brand('PrincipalId'));
-const ProviderSubjectIdSchema = Schema.String.check(
-  Schema.isMinLength(1),
-  Schema.isMaxLength(500),
-).pipe(Schema.brand('ProviderSubjectId'));
-const AuthBindingIdSchema = Schema.String.check(Schema.isUUID()).pipe(
-  Schema.brand('AuthBindingId'),
+const ProviderSubjectIdSchema = Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(500)).pipe(
+  Schema.brand('ProviderSubjectId'),
 );
+const AuthBindingIdSchema = Schema.String.check(Schema.isUUID()).pipe(Schema.brand('AuthBindingId'));
 const BindManagedApiKeyPayloadSchema = Schema.Struct({
   principalId: PrincipalIdSchema,
   providerSubjectId: ProviderSubjectIdSchema,
@@ -65,7 +63,10 @@ export const bindManagedApiKeyAction = defineAction(
     domainEvents: {},
     entrypoint: defineSystemModuleEntrypoint({
       access: 'write',
-      authorization: { kind: 'action_execution', provisioning: 'tenant_membership_default' },
+      authorization: {
+        kind: 'action_execution',
+        provisioning: 'tenant_membership_default',
+      },
       entrypointKey: 'core.identity.bind-managed-api-key',
       moduleKey: 'core.identity',
       role: 'action',

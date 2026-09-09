@@ -3,6 +3,7 @@
 // @ontos-action-slug archive-organization-engagement
 import { defineAction, OperationContextUnavailable } from '@app/core-runtime';
 import { Effect } from 'effect';
+
 import {
   OrganizationEngagementLifecyclePayloadSchema,
   OrganizationEngagementProfileSchema,
@@ -23,9 +24,7 @@ export const archiveOrganizationEngagementAction = defineAction(
     payloadSchema: OrganizationEngagementLifecyclePayloadSchema,
     resultSchema: OrganizationEngagementProfileSchema,
   },
-  handleEngagementLifecycle<OrganizationEngagementLifecyclePayload, OrganizationEngagementProfile>(
-    'archived',
-  ),
+  handleEngagementLifecycle<OrganizationEngagementLifecyclePayload, OrganizationEngagementProfile>('archived'),
   (transaction, scope) => {
     if (scope.legalEntityId === undefined) {
       return Effect.fail(

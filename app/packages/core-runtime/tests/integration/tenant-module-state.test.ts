@@ -1,13 +1,10 @@
-import { expect, it } from 'effect-rstest';
-import { makeInstalledCatalogFixture as catalogFrom } from '../support/installed-catalog.ts';
-import { makeModuleContractFixture } from '../../src/testing/module-contract.ts';
-import { SqlError, UnknownError } from 'effect/unstable/sql/SqlError';
-
 import { and, asc, eq, inArray } from 'drizzle-orm';
 import { Cause, Effect, Exit, Match, Option, Schema, Layer } from 'effect';
+import { expect, it } from 'effect-rstest';
+import { SqlError, UnknownError } from 'effect/unstable/sql/SqlError';
+
 import { makeActionRepository } from '../../src/actions/repository.ts';
 import { makeActionRuntime } from '../../src/actions/runtime.ts';
-import { makeFaultInjectableCoreDatabase, TestQueryHook } from '../support/database-faults.ts';
 import { loadDatabaseConfig } from '../../src/db/config.ts';
 import {
   actionInvocations,
@@ -26,8 +23,11 @@ import {
   TenantModuleStateService,
   makeTenantModuleStateService,
 } from '../../src/modules/tenant-module-state-service.ts';
+import { makeModuleContractFixture } from '../../src/testing/module-contract.ts';
 import { testOperationalScopeResolver } from '../fixtures/operational-scope.ts';
 import { openActionRuntimeOptions } from '../support/action-runtime-options.ts';
+import { makeFaultInjectableCoreDatabase, TestQueryHook } from '../support/database-faults.ts';
+import { makeInstalledCatalogFixture as catalogFrom } from '../support/installed-catalog.ts';
 
 const tenantOne = '70000000-0000-4000-8000-000000000001';
 const tenantTwo = '70000000-0000-4000-8000-000000000002';
@@ -48,15 +48,7 @@ const installedContract = (moduleId: string): OntosModuleDeploymentContract =>
     description: 'Integration test module',
     displayName: 'Integration test module',
     moduleId,
-    supportedStates: [
-      'inactive',
-      'active',
-      'read_only',
-      'suspended',
-      'quarantined',
-      'deprecated',
-      'archived',
-    ],
+    supportedStates: ['inactive', 'active', 'read_only', 'suspended', 'quarantined', 'deprecated', 'archived'],
   });
 
 // State-transition tests deliberately accept arbitrary module IDs without discovery.
@@ -161,9 +153,7 @@ const setup = Effect.gen(function* initializeTenantModuleStateFixtures() {
   );
 });
 
-const Fixtures = Layer.effectDiscard(
-  Effect.acquireRelease(setup, () => cleanup.pipe(Effect.orDie)),
-);
+const Fixtures = Layer.effectDiscard(Effect.acquireRelease(setup, () => cleanup.pipe(Effect.orDie)));
 
 const allowedPermission = {
   checkActionPermission: () => Effect.succeed('allowed' as const),
@@ -214,10 +204,7 @@ const failureTag = <Error>(exit: Exit.Exit<unknown, Error>): string | undefined 
   return Option.getOrUndefined(tag);
 };
 
-const verifyHistoryEvidence = (
-  database: DatabaseService,
-  row: typeof tenantModuleStateChanges.$inferSelect,
-) =>
+const verifyHistoryEvidence = (database: DatabaseService, row: typeof tenantModuleStateChanges.$inferSelect) =>
   Effect.gen(function* verifyHistoryEvidenceEffect() {
     const [invocation] = yield* database.executor
       .select()
@@ -253,17 +240,13 @@ const tenantModuleStateTest1 = withDatabase((database) =>
       { moduleKey: 'list.alpha', state: 'active' },
       { moduleKey: 'list.zeta', state: 'active' },
     ]);
-    expect(yield* service.listActiveTenantModules(tenantTwo)).toEqual([
-      { moduleKey: 'list.alpha', state: 'active' },
-    ]);
+    expect(yield* service.listActiveTenantModules(tenantTwo)).toEqual([{ moduleKey: 'list.alpha', state: 'active' }]);
     expect(yield* service.listTenantModuleStates(tenantOne)).toEqual([
       { moduleKey: 'list.alpha', state: 'active' },
       { moduleKey: 'list.inactive', state: 'inactive' },
       { moduleKey: 'list.zeta', state: 'active' },
     ]);
-    expect(yield* service.listTenantModuleStates(tenantTwo)).toEqual([
-      { moduleKey: 'list.alpha', state: 'active' },
-    ]);
+    expect(yield* service.listTenantModuleStates(tenantTwo)).toEqual([{ moduleKey: 'list.alpha', state: 'active' }]);
   }),
 );
 const tenantModuleStateTest2 = Effect.gen(function* createAndTransitionTenantModuleState() {
@@ -279,7 +262,11 @@ const tenantModuleStateTest2 = Effect.gen(function* createAndTransitionTenantMod
     );
     return Effect.gen(function* transitionSequence() {
       const created = yield* runtime.runAction(actionInput(moduleKey, 'active', 'create'));
-      expect(created).toEqual({ moduleKey, newState: 'active', previousState: null });
+      expect(created).toEqual({
+        moduleKey,
+        newState: 'active',
+        previousState: null,
+      });
       const suspended = yield* runtime.runAction(actionInput(moduleKey, 'suspended', 'suspend'));
       expect(suspended).toEqual({
         moduleKey,
@@ -300,21 +287,11 @@ const tenantModuleStateTest2 = Effect.gen(function* createAndTransitionTenantMod
       const [current] = yield* database.executor
         .select()
         .from(tenantModuleStates)
-        .where(
-          and(
-            eq(tenantModuleStates.tenantId, tenantOne),
-            eq(tenantModuleStates.moduleKey, moduleKey),
-          ),
-        );
+        .where(and(eq(tenantModuleStates.tenantId, tenantOne), eq(tenantModuleStates.moduleKey, moduleKey)));
       const history = yield* database.executor
         .select()
         .from(tenantModuleStateChanges)
-        .where(
-          and(
-            eq(tenantModuleStateChanges.tenantId, tenantOne),
-            eq(tenantModuleStateChanges.moduleKey, moduleKey),
-          ),
-        )
+        .where(and(eq(tenantModuleStateChanges.tenantId, tenantOne), eq(tenantModuleStateChanges.moduleKey, moduleKey)))
         .orderBy(asc(tenantModuleStateChanges.occurredAt));
       expect(current?.state).toBe('active');
       expect(history.length).toBe(3);
@@ -326,15 +303,21 @@ const tenantModuleStateTest2 = Effect.gen(function* createAndTransitionTenantMod
         })),
       ).toEqual([
         { changeSource: 'user', newState: 'active', previousState: null },
-        { changeSource: 'user', newState: 'suspended', previousState: 'active' },
-        { changeSource: 'user', newState: 'active', previousState: 'suspended' },
+        {
+          changeSource: 'user',
+          newState: 'suspended',
+          previousState: 'active',
+        },
+        {
+          changeSource: 'user',
+          newState: 'active',
+          previousState: 'suspended',
+        },
       ]);
       expect(current?.lastChangeId).toBe(history.at(-1)?.moduleStateChangeId);
       expect(history.every((row) => row.changedByPrincipalId === principalOne)).toBe(true);
       expect(history.every((row) => row.actionInvocationId !== null)).toBe(true);
-      expect(
-        history.every((row) => row.reason?.startsWith('Integration transition to ') === true),
-      ).toBe(true);
+      expect(history.every((row) => row.reason?.startsWith('Integration transition to ') === true)).toBe(true);
 
       yield* Effect.forEach(history, (row) => verifyHistoryEvidence(database, row), {
         concurrency: 1,
@@ -345,10 +328,7 @@ const tenantModuleStateTest2 = Effect.gen(function* createAndTransitionTenantMod
 const tenantModuleStateTest3 = Effect.gen(function* allDeclaredTenantModuleStates() {
   const otherModuleKey = testModuleKey('other', tenantOne);
   const targetModuleKey = testModuleKey('independent', tenantOne);
-  const transitionCatalog = catalogFrom(
-    installedContract(otherModuleKey),
-    installedContract(targetModuleKey),
-  );
+  const transitionCatalog = catalogFrom(installedContract(otherModuleKey), installedContract(targetModuleKey));
   yield* withDatabase((database) =>
     database.executor.insert(tenantModuleStates).values({
       moduleKey: otherModuleKey,
@@ -373,19 +353,10 @@ const tenantModuleStateTest3 = Effect.gen(function* allDeclaredTenantModuleState
           load: Effect.succeed(transitionCatalog),
         }),
       );
-    const states = [
-      'active',
-      'read_only',
-      'suspended',
-      'quarantined',
-      'deprecated',
-      'archived',
-      'inactive',
-    ] as const;
+    const states = ['active', 'read_only', 'suspended', 'quarantined', 'deprecated', 'archived', 'inactive'] as const;
     return Effect.forEach(
       states,
-      (state) =>
-        withCatalog(runtime.runAction(actionInput(targetModuleKey, state, `independent-${state}`))),
+      (state) => withCatalog(runtime.runAction(actionInput(targetModuleKey, state, `independent-${state}`))),
       { concurrency: 1, discard: true },
     );
   });
@@ -393,7 +364,10 @@ const tenantModuleStateTest3 = Effect.gen(function* allDeclaredTenantModuleState
   yield* withDatabase((database) =>
     Effect.gen(function* verifyAllDeclaredStates() {
       const stateRows = yield* database.executor
-        .select({ moduleKey: tenantModuleStates.moduleKey, state: tenantModuleStates.state })
+        .select({
+          moduleKey: tenantModuleStates.moduleKey,
+          state: tenantModuleStates.state,
+        })
         .from(tenantModuleStates)
         .where(inArray(tenantModuleStates.moduleKey, [otherModuleKey, targetModuleKey]));
       const historyRows = yield* database.executor
@@ -498,14 +472,8 @@ const withTenantStateWriteFailure = (database: DatabaseService): DatabaseService
         ),
       ),
     );
-  const transactionOverride = { transaction } satisfies Pick<
-    DatabaseService['executor'],
-    'transaction'
-  >;
-  const executor: DatabaseService['executor'] = Object.assign(
-    Object.create(database.executor),
-    transactionOverride,
-  );
+  const transactionOverride = { transaction } satisfies Pick<DatabaseService['executor'], 'transaction'>;
+  const executor: DatabaseService['executor'] = Object.assign(Object.create(database.executor), transactionOverride);
   return { executor };
 };
 const tenantModuleStateTest5 = Effect.gen(function* rollbackFailedTenantModuleStateWrite() {
@@ -520,10 +488,9 @@ const tenantModuleStateTest5 = Effect.gen(function* rollbackFailedTenantModuleSt
     );
     return Effect.exit(runtime.runAction(actionInput(moduleKey, 'active', 'forced-failure')));
   });
-  expect(
-    failureTag(failure),
-    Exit.isFailure(failure) ? Cause.pretty(failure.cause) : 'success',
-  ).toBe('TenantModuleStatePersistenceUnavailableError');
+  expect(failureTag(failure), Exit.isFailure(failure) ? Cause.pretty(failure.cause) : 'success').toBe(
+    'TenantModuleStatePersistenceUnavailableError',
+  );
 
   yield* withDatabase((database) =>
     Effect.gen(function* verifyFailedWriteRollback() {
@@ -550,65 +517,61 @@ const tenantModuleStateTest5 = Effect.gen(function* rollbackFailedTenantModuleSt
     }),
   );
 });
-const tenantModuleStateTest6 = Effect.gen(
-  function* serializeConcurrentTenantModuleStateTransitions() {
-    const moduleKey = testModuleKey('concurrency', tenantOne);
-    yield* withDatabase((database) => {
-      const runtime = makeActionRuntime(
-        database,
-        makeActionRepository(),
-        allowedPermission,
-        testOperationalScopeResolver,
-        openActionRuntimeOptions,
-      );
-      return runtime.runAction(actionInput(moduleKey, 'inactive', 'concurrent-initial'));
-    });
-
-    const exits = yield* Effect.forEach(
-      [
-        ['active', 'concurrent-active'],
-        ['suspended', 'concurrent-suspended'],
-      ] as const,
-      ([state, key]) =>
-        withDatabase((database) => {
-          const runtime = makeActionRuntime(
-            database,
-            makeActionRepository(),
-            allowedPermission,
-            testOperationalScopeResolver,
-            openActionRuntimeOptions,
-          );
-          return Effect.exit(runtime.runAction(actionInput(moduleKey, state, key)));
-        }),
-      { concurrency: 'unbounded' },
+const tenantModuleStateTest6 = Effect.gen(function* serializeConcurrentTenantModuleStateTransitions() {
+  const moduleKey = testModuleKey('concurrency', tenantOne);
+  yield* withDatabase((database) => {
+    const runtime = makeActionRuntime(
+      database,
+      makeActionRepository(),
+      allowedPermission,
+      testOperationalScopeResolver,
+      openActionRuntimeOptions,
     );
-    expect(exits.every(Exit.isSuccess)).toBe(true);
+    return runtime.runAction(actionInput(moduleKey, 'inactive', 'concurrent-initial'));
+  });
 
-    yield* withDatabase((database) =>
-      Effect.gen(function* verifySerializedTransitions() {
-        const [current] = yield* database.executor
-          .select()
-          .from(tenantModuleStates)
-          .where(eq(tenantModuleStates.moduleKey, moduleKey));
-        const history = yield* database.executor
-          .select()
-          .from(tenantModuleStateChanges)
-          .where(eq(tenantModuleStateChanges.moduleKey, moduleKey));
-        expect(history.length).toBe(3);
-        const last = history.find((row) => row.moduleStateChangeId === current?.lastChangeId);
-        const concurrentFirst = history.find(
-          (row) =>
-            row.previousState === 'inactive' &&
-            row.moduleStateChangeId !== last?.moduleStateChangeId,
+  const exits = yield* Effect.forEach(
+    [
+      ['active', 'concurrent-active'],
+      ['suspended', 'concurrent-suspended'],
+    ] as const,
+    ([state, key]) =>
+      withDatabase((database) => {
+        const runtime = makeActionRuntime(
+          database,
+          makeActionRepository(),
+          allowedPermission,
+          testOperationalScopeResolver,
+          openActionRuntimeOptions,
         );
-        expect(last).toBeDefined();
-        expect(concurrentFirst).toBeDefined();
-        expect(last?.previousState).toBe(concurrentFirst?.newState);
-        expect(current?.state).toBe(last?.newState);
+        return Effect.exit(runtime.runAction(actionInput(moduleKey, state, key)));
       }),
-    );
-  },
-);
+    { concurrency: 'unbounded' },
+  );
+  expect(exits.every(Exit.isSuccess)).toBe(true);
+
+  yield* withDatabase((database) =>
+    Effect.gen(function* verifySerializedTransitions() {
+      const [current] = yield* database.executor
+        .select()
+        .from(tenantModuleStates)
+        .where(eq(tenantModuleStates.moduleKey, moduleKey));
+      const history = yield* database.executor
+        .select()
+        .from(tenantModuleStateChanges)
+        .where(eq(tenantModuleStateChanges.moduleKey, moduleKey));
+      expect(history.length).toBe(3);
+      const last = history.find((row) => row.moduleStateChangeId === current?.lastChangeId);
+      const concurrentFirst = history.find(
+        (row) => row.previousState === 'inactive' && row.moduleStateChangeId !== last?.moduleStateChangeId,
+      );
+      expect(last).toBeDefined();
+      expect(concurrentFirst).toBeDefined();
+      expect(last?.previousState).toBe(concurrentFirst?.newState);
+      expect(current?.state).toBe(last?.newState);
+    }),
+  );
+});
 const tenantModuleStateTest7 = Effect.gen(function* deriveTrustedTenantScope() {
   const moduleKey = testModuleKey('isolation', tenantOne);
   yield* withDatabase((database) =>
@@ -633,7 +596,10 @@ const tenantModuleStateTest7 = Effect.gen(function* deriveTrustedTenantScope() {
   yield* withDatabase((database) =>
     Effect.gen(function* verifyTrustedTenantScope() {
       const rows = yield* database.executor
-        .select({ state: tenantModuleStates.state, tenantId: tenantModuleStates.tenantId })
+        .select({
+          state: tenantModuleStates.state,
+          tenantId: tenantModuleStates.tenantId,
+        })
         .from(tenantModuleStates)
         .where(eq(tenantModuleStates.moduleKey, moduleKey))
         .orderBy(asc(tenantModuleStates.tenantId));
@@ -670,13 +636,7 @@ it.layer(Fixtures, { excludeTestServices: true })('tenant module state', (suite)
     () => tenantModuleStateTest5,
   );
 
-  suite.effect(
-    'serializes concurrent transitions into one truthful history chain',
-    () => tenantModuleStateTest6,
-  );
+  suite.effect('serializes concurrent transitions into one truthful history chain', () => tenantModuleStateTest6);
 
-  suite.effect(
-    'derives tenant scope only from the trusted principal',
-    () => tenantModuleStateTest7,
-  );
+  suite.effect('derives tenant scope only from the trusted principal', () => tenantModuleStateTest7);
 });

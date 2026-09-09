@@ -1,6 +1,7 @@
-import { Effect } from 'effect';
 import { mkdir, rm, symlink } from 'node:fs/promises';
 import path from 'node:path';
+
+import { Effect } from 'effect';
 
 /** Link only the dependencies a generated subprocess fixture actually needs. */
 export const linkFixtureDependencies = Effect.fn(function* linkFixtureDependencies(

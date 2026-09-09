@@ -1,4 +1,3 @@
-import { optionRecord, positiveInteger, stringArray } from '../shared/options.ts';
 /**
  * Audit finding: **A1** — "Establish one process-level Layer and ManagedRuntime composition model"
  * (`docs/architecture/EFFECT_V4_ANTIPATTERN_AUDIT.md`). A1 counts 12 `Layer.orDie` sites while the
@@ -39,14 +38,14 @@ import { optionRecord, positiveInteger, stringArray } from '../shared/options.ts
  * AST-only plugin. Reports are informational only; this rule never fixes or suggests.
  */
 import { defineRule } from '@oxlint/plugins';
-
 import type { Context, ESTree } from '@oxlint/plugins';
 
-import { collectEffectBindings } from '../shared/effect-imports.ts';
-import { isTestFile, matchesGlobs, scopePath } from '../shared/paths.ts';
-import { importedName } from '../shared/imports.ts';
-import { lookupVariable } from '../shared/bindings.ts';
 import { asNode, keyName as staticKeyName, memberName } from '../shared/ast.ts';
+import { lookupVariable } from '../shared/bindings.ts';
+import { collectEffectBindings } from '../shared/effect-imports.ts';
+import { importedName } from '../shared/imports.ts';
+import { optionRecord, positiveInteger, stringArray } from '../shared/options.ts';
+import { isTestFile, matchesGlobs, scopePath } from '../shared/paths.ts';
 
 const LAYER_NAMESPACE = 'Layer';
 const EFFECT_ROOT_MODULE = 'effect';
@@ -112,7 +111,10 @@ function unwrapValue(node: unknown): ESTree.Node | null {
   for (let guard = 0; guard < 16; guard += 1) {
     if (current === null || current === undefined || typeof current.type !== 'string') return null;
     if (current.type === 'ParenthesizedExpression' || TS_VALUE_WRAPPERS.has(current.type)) {
-      current = current.expression as { type?: string; expression?: unknown } | null;
+      current = current.expression as {
+        type?: string;
+        expression?: unknown;
+      } | null;
       continue;
     }
     return current as unknown as ESTree.Node;
@@ -154,11 +156,7 @@ function collectDeclarators(program: ESTree.Program): ESTree.VariableDeclarator[
   return found;
 }
 
-function collectDeclaratorChildren(
-  current: object,
-  stack: unknown[],
-  found: ESTree.VariableDeclarator[],
-): void {
+function collectDeclaratorChildren(current: object, stack: unknown[], found: ESTree.VariableDeclarator[]): void {
   if (Array.isArray(current)) {
     for (const item of current) stack.push(item);
     return;
@@ -206,11 +204,7 @@ function collectImportBindings(
   }
 }
 
-function isLayerNamespace(
-  namespaces: ReadonlyMap<string, string>,
-  name: string,
-  isLayer: boolean,
-): boolean {
+function isLayerNamespace(namespaces: ReadonlyMap<string, string>, name: string, isLayer: boolean): boolean {
   return namespaces.get(name) === LAYER_NAMESPACE || isLayer;
 }
 
@@ -231,8 +225,7 @@ function collectImportSpecifier(
   const local = specifier.local;
   if (specifier.type === 'ImportNamespaceSpecifier') {
     if (isRoot) addBinding(maps.barrel, local.name, local.start);
-    else if (isLayerNamespace(namespaces, local.name, isLayer))
-      addBinding(maps.layer, local.name, local.start);
+    else if (isLayerNamespace(namespaces, local.name, isLayer)) addBinding(maps.layer, local.name, local.start);
     return;
   }
   if (specifier.type !== 'ImportSpecifier' || specifier.importKind === 'type') return;
@@ -245,21 +238,11 @@ function isIdentifierNamePosition(node: Extract<ESTree.Node, { type: 'Identifier
   const parent = node.parent;
   if (parent == null) return true;
   if (
-    [
-      'ImportSpecifier',
-      'ImportDefaultSpecifier',
-      'ImportNamespaceSpecifier',
-      'ExportSpecifier',
-    ].includes(parent.type)
+    ['ImportSpecifier', 'ImportDefaultSpecifier', 'ImportNamespaceSpecifier', 'ExportSpecifier'].includes(parent.type)
   )
     return true;
-  if (parent.type === 'MemberExpression')
-    return !parent.computed && parent.property.start === node.start;
-  if (
-    parent.type === 'Property' ||
-    parent.type === 'PropertyDefinition' ||
-    parent.type === 'MethodDefinition'
-  )
+  if (parent.type === 'MemberExpression') return !parent.computed && parent.property.start === node.start;
+  if (parent.type === 'Property' || parent.type === 'PropertyDefinition' || parent.type === 'MethodDefinition')
     return !parent.computed && parent.key.start === node.start;
   return false;
 }
@@ -359,8 +342,7 @@ export const rule = defineRule({
     for (const declarator of declarators) {
       const init = unwrapValue(declarator.init);
       if (init === null) continue;
-      if (init.type === 'Identifier' || init.type === 'MemberExpression')
-        noteBindingNames(declarator.id);
+      if (init.type === 'Identifier' || init.type === 'MemberExpression') noteBindingNames(declarator.id);
     }
 
     if (layerBindings.size === 0 && barrelBindings.size === 0 && memberBindings.size === 0) {
@@ -372,22 +354,16 @@ export const rule = defineRule({
      * names fall back to `true` because the module-level import already proved the binding exists;
      * a local shadow (parameter, `const`, catch clause, class) resolves elsewhere and is rejected.
      */
-    const resolvesTo = (
-      map: BindingMap,
-      identifier: Extract<ESTree.Node, { type: 'Identifier' }>,
-    ): boolean => {
+    const resolvesTo = (map: BindingMap, identifier: Extract<ESTree.Node, { type: 'Identifier' }>): boolean => {
       const starts = map.get(identifier.name);
       if (starts === undefined) return false;
       const variable = lookupVariable(context, identifier);
       if (variable === null || variable.defs.length === 0) return true;
-      if (variable.references.some((reference) => reference.isWrite() && !reference.init))
-        return false;
+      if (variable.references.some((reference) => reference.isWrite() && !reference.init)) return false;
       return variable.defs.some((definition) => starts.has(definition.name.start));
     };
 
-    const isDeclarationSite = (
-      identifier: Extract<ESTree.Node, { type: 'Identifier' }>,
-    ): boolean => {
+    const isDeclarationSite = (identifier: Extract<ESTree.Node, { type: 'Identifier' }>): boolean => {
       const variable = lookupVariable(context, identifier);
       if (variable === null) return false;
       return variable.defs.some((definition) => definition.name.start === identifier.start);
@@ -408,10 +384,7 @@ export const rule = defineRule({
     const bindProperty = (property: unknown, kind: BindingKind): boolean => {
       const entry = asNode(property);
       if (entry?.type !== 'Property' || entry.key === undefined) return false;
-      const nextKind = propertyKind(
-        keyName({ computed: entry.computed === true, key: entry.key }),
-        kind,
-      );
+      const nextKind = propertyKind(keyName({ computed: entry.computed === true, key: entry.key }), kind);
       return nextKind === null ? false : bindPattern(entry.value, nextKind);
     };
 
@@ -424,17 +397,14 @@ export const rule = defineRule({
         if (typeof target.name !== 'string' || typeof target.start !== 'number') return false;
         return addBinding(maps[kind], target.name, target.start);
       }
-      if (target.type !== 'ObjectPattern' || !Array.isArray(target.properties) || kind === 'member')
-        return false;
+      if (target.type !== 'ObjectPattern' || !Array.isArray(target.properties) || kind === 'member') return false;
       return target.properties.reduce(
         (changed: boolean, property: unknown) => bindProperty(property, kind) || changed,
         false,
       );
     };
 
-    const identifierKind = (
-      node: Extract<ESTree.Node, { type: 'Identifier' }>,
-    ): BindingKind | null => {
+    const identifierKind = (node: Extract<ESTree.Node, { type: 'Identifier' }>): BindingKind | null => {
       if (resolvesTo(layerBindings, node)) return 'layer';
       if (resolvesTo(barrelBindings, node)) return 'barrel';
       return resolvesTo(memberBindings, node) ? 'member' : null;
@@ -544,18 +514,10 @@ export const rule = defineRule({
         const found = candidates.filter((candidate) => {
           // Naming the startup adapter does not apply it twice. Count its uses, not the alias definition.
           const value = outerValue(candidate.node);
-          if (
-            isRoot &&
-            value.parent?.type === 'VariableDeclarator' &&
-            value.parent.init?.start === value.start
-          )
+          if (isRoot && value.parent?.type === 'VariableDeclarator' && value.parent.init?.start === value.start)
             return false;
           const map =
-            candidate.kind === 'layer'
-              ? layerBindings
-              : candidate.kind === 'barrel'
-                ? barrelBindings
-                : memberBindings;
+            candidate.kind === 'layer' ? layerBindings : candidate.kind === 'barrel' ? barrelBindings : memberBindings;
           return resolvesTo(map, candidate.identifier);
         });
         if (found.length === 0) return;
@@ -568,25 +530,16 @@ export const rule = defineRule({
         const exportedComposition = (entry: Candidate): number => {
           let current: ESTree.Node | null | undefined = entry.node;
           while (current != null) {
-            if (
-              ['FunctionExpression', 'ArrowFunctionExpression', 'FunctionDeclaration'].includes(
-                current.type,
-              )
-            )
+            if (['FunctionExpression', 'ArrowFunctionExpression', 'FunctionDeclaration'].includes(current.type))
               return 0;
-            if (
-              current.type === 'ExportNamedDeclaration' ||
-              current.type === 'ExportDefaultDeclaration'
-            )
-              return 1;
+            if (current.type === 'ExportNamedDeclaration' || current.type === 'ExportDefaultDeclaration') return 1;
             current = current.parent;
           }
           return 0;
         };
         found.sort(
           (left, right) =>
-            exportedComposition(left) - exportedComposition(right) ||
-            applicationEnd(left) - applicationEnd(right),
+            exportedComposition(left) - exportedComposition(right) || applicationEnd(left) - applicationEnd(right),
         );
 
         const allowed = isRoot ? Math.min(options.maxPerRoot, found.length) : 0;
@@ -597,7 +550,10 @@ export const rule = defineRule({
           context.report({
             node: entry.node,
             messageId: isRoot ? 'beforeRoot' : 'outsideRoot',
-            data: { member: entry.member, remaining: String(found.length - index - 1) },
+            data: {
+              member: entry.member,
+              remaining: String(found.length - index - 1),
+            },
           });
         }
       },

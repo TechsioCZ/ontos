@@ -1,5 +1,6 @@
 // Canonical schema-only contract extracted from the generated end-party-official-identifier Action.
 import { Schema } from 'effect';
+
 import { IsoTimestampSchema } from '../domain/identity-contracts.ts';
 import { PartyOfficialIdentifierRefSchema } from '../resources/party-official-identifier.ts';
 import { PartyRefSchema } from '../resources/party.ts';

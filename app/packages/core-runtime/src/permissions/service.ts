@@ -1,6 +1,7 @@
 import { v1 } from '@authzed/authzed-node';
 import { Context, Effect, Layer, Predicate, Schema } from 'effect';
 import type { Scope } from 'effect';
+
 import type { ActionTransportMetadata } from '../actions/context.ts';
 import { ActionPermissionCheckError } from '../actions/errors.ts';
 import { decideAuthorizationRollout } from '../authorization/rollout-decision.ts';
@@ -8,9 +9,6 @@ import type {
   AuthorizationRolloutDecisionOptions,
   AuthorizationWouldDenyEvent,
 } from '../authorization/rollout-decision.ts';
-import { loadSpiceDbConfig } from './config.ts';
-import type { SpiceDbConfigValue } from './config.ts';
-import type { SpiceDbConfigError } from './config-error.ts';
 import {
   SPICEDB_CHECK_TIMEOUT_MS,
   acquireSpiceDbClientResource,
@@ -18,6 +16,9 @@ import {
   fullyConsistent,
 } from './client.ts';
 import type { SpiceDbPermissionClient } from './client.ts';
+import type { SpiceDbConfigError } from './config-error.ts';
+import { loadSpiceDbConfig } from './config.ts';
+import type { SpiceDbConfigValue } from './config.ts';
 
 export { SPICEDB_CHECK_TIMEOUT_MS } from './client.ts';
 
@@ -67,14 +68,8 @@ const checkFailure = (cause?: unknown): ActionPermissionCheckError =>
     cause,
   );
 
-export const createPermissionCheckClient: PermissionClientFactory = (
-  configuration,
-  timeoutMilliseconds,
-) =>
-  createSpiceDbPermissionClient(
-    configuration,
-    timeoutMilliseconds,
-  ) satisfies SpiceDbPermissionClient;
+export const createPermissionCheckClient: PermissionClientFactory = (configuration, timeoutMilliseconds) =>
+  createSpiceDbPermissionClient(configuration, timeoutMilliseconds) satisfies SpiceDbPermissionClient;
 
 export const acquirePermissionClientResource = (
   acquire: () => PermissionCheckClient,
@@ -114,11 +109,7 @@ const restrictionRequest = (actionKey: string, principalId: string) =>
 const classifyPermissionship = <Response>(
   response: Response,
 ): Effect.Effect<'has' | 'none', ActionPermissionCheckError> => {
-  if (
-    !Predicate.isObjectKeyword(response) ||
-    response === null ||
-    !('permissionship' in response)
-  ) {
+  if (!Predicate.isObjectKeyword(response) || response === null || !('permissionship' in response)) {
     return Effect.fail(checkFailure());
   }
 
@@ -136,9 +127,7 @@ const runCheck = (
   client: PermissionCheckClient,
   request: v1.CheckPermissionRequest,
 ): Effect.Effect<'has' | 'none', ActionPermissionCheckError> =>
-  client
-    .checkPermission(request)
-    .pipe(Effect.mapError(checkFailure), Effect.flatMap(classifyPermissionship));
+  client.checkPermission(request).pipe(Effect.mapError(checkFailure), Effect.flatMap(classifyPermissionship));
 
 interface ActionPermissionRolloutOptions {
   readonly emit: (event: AuthorizationWouldDenyEvent) => void;
@@ -153,43 +142,37 @@ const actionPermissionService = (
   rolloutOptions?: PermissionRollout,
 ): ActionPermissionService =>
   Object.freeze({
-    checkActionPermission: Effect.fn('ActionPermission.checkActionPermission')(
-      function* checkActionPermissionEffect(input: CheckActionPermissionInput) {
-        const execution = yield* runCheck(
-          client,
-          executionRequest(input.actionKey, input.principalId),
-        );
-        if (execution === 'has') {
-          return 'allowed' as const;
-        }
-        if (rolloutOptions === undefined) {
-          return 'denied' as const;
-        }
-        const restricted = yield* runCheck(
-          client,
-          restrictionRequest(input.actionKey, input.principalId),
-        );
-        if (restricted === 'has') {
-          return 'denied' as const;
-        }
-        return yield* Effect.try({
-          catch: (cause) => checkFailure(cause),
-          try: () =>
-            decideAuthorizationRollout(
-              {
-                candidate: 'denied',
-                current: 'allowed',
-                denialReason: 'missing_policy',
-                entrypointKey: input.actionKey,
-                nowEpochMs: rolloutOptions.nowEpochMs(),
-                policyClass: 'action_execution',
-                surface: 'action',
-              },
-              { contract: rolloutOptions.rollout, emit: rolloutOptions.emit },
-            ),
-        });
-      },
-    ),
+    checkActionPermission: Effect.fn('ActionPermission.checkActionPermission')(function* checkActionPermissionEffect(
+      input: CheckActionPermissionInput,
+    ) {
+      const execution = yield* runCheck(client, executionRequest(input.actionKey, input.principalId));
+      if (execution === 'has') {
+        return 'allowed' as const;
+      }
+      if (rolloutOptions === undefined) {
+        return 'denied' as const;
+      }
+      const restricted = yield* runCheck(client, restrictionRequest(input.actionKey, input.principalId));
+      if (restricted === 'has') {
+        return 'denied' as const;
+      }
+      return yield* Effect.try({
+        catch: (cause) => checkFailure(cause),
+        try: () =>
+          decideAuthorizationRollout(
+            {
+              candidate: 'denied',
+              current: 'allowed',
+              denialReason: 'missing_policy',
+              entrypointKey: input.actionKey,
+              nowEpochMs: rolloutOptions.nowEpochMs(),
+              policyClass: 'action_execution',
+              surface: 'action',
+            },
+            { contract: rolloutOptions.rollout, emit: rolloutOptions.emit },
+          ),
+      });
+    }),
   });
 
 export const makeActionPermissionService = actionPermissionService;
@@ -209,21 +192,14 @@ export class ActionPermission extends Context.Service<ActionPermission, ActionPe
 
 export const makeActionPermissionLive = (
   clientFactory: PermissionClientFactory = createPermissionCheckClient,
-  loadConfiguration: () => Effect.Effect<
-    SpiceDbConfigValue,
-    SpiceDbConfigError
-  > = loadSpiceDbConfig,
+  loadConfiguration: () => Effect.Effect<SpiceDbConfigValue, SpiceDbConfigError> = loadSpiceDbConfig,
 ): Effect.Effect<ActionPermissionService, never, Scope.Scope> =>
   Effect.matchEffect(loadConfiguration(), {
     onFailure: (cause) => Effect.succeed(unavailablePermissionService(cause)),
     onSuccess: (configuration) =>
-      acquirePermissionClientResource(() =>
-        clientFactory(configuration, SPICEDB_CHECK_TIMEOUT_MS),
-      ).pipe(
+      acquirePermissionClientResource(() => clientFactory(configuration, SPICEDB_CHECK_TIMEOUT_MS)).pipe(
         Effect.map(makeActionPermissionService),
-        Effect.catchTag('ActionPermissionCheckError', (cause) =>
-          Effect.succeed(unavailablePermissionService(cause)),
-        ),
+        Effect.catchTag('ActionPermissionCheckError', (cause) => Effect.succeed(unavailablePermissionService(cause))),
       ),
   });
 

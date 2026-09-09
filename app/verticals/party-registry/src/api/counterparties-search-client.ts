@@ -2,6 +2,7 @@
 // @ontos-contribution-kind search-provider
 import { makeGovernedEffectBffClient } from '@app/shared-contracts/client-runtime';
 import { Effect, Redacted } from 'effect';
+
 import { CounterpartiesSearchApi } from '../../shared/apis/counterparties-search.ts';
 import type { CounterpartiesProviderRequest } from '../../shared/apis/counterparties-search.ts';
 import { operationGateway } from './action-gateway.ts';

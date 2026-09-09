@@ -1,11 +1,9 @@
 import { Cause, Schema } from 'effect';
+
+import type { ModuleStateCheckUnavailableError, ModuleStateDeniedError } from '../modules/module-state-gate-errors.ts';
+import type { OperationContextError } from '../operations/errors.ts';
 import { actionErrorSchema } from './error-schema.ts';
 import type { ActionTransactionError } from './transaction-error.ts';
-import type {
-  ModuleStateCheckUnavailableError,
-  ModuleStateDeniedError,
-} from '../modules/module-state-gate-errors.ts';
-import type { OperationContextError } from '../operations/errors.ts';
 
 export { ActionTransactionError } from './transaction-error.ts';
 
@@ -13,10 +11,7 @@ const safeReason = {
   reason: Schema.String,
 } as const;
 
-const ActionInvocationIdSchema = Schema.String.pipe(
-  Schema.brand('ActionInvocationId'),
-  Schema.decodeTo(Schema.String),
-);
+const ActionInvocationIdSchema = Schema.String.pipe(Schema.brand('ActionInvocationId'), Schema.decodeTo(Schema.String));
 
 const ActionPayloadValidationErrorValue = actionErrorSchema('ActionPayloadValidationError', {
   code: Schema.Literal('action_payload_invalid'),
@@ -32,16 +27,11 @@ const ActionResultValidationErrorValue = actionErrorSchema('ActionResultValidati
 export type ActionResultValidationError = InstanceType<typeof ActionResultValidationErrorValue>;
 export { ActionResultValidationErrorValue as ActionResultValidationError };
 
-const ActionTrustedContextValidationErrorValue = actionErrorSchema(
-  'ActionTrustedContextValidationError',
-  {
-    code: Schema.Literal('action_trusted_context_invalid'),
-    ...safeReason,
-  },
-);
-export type ActionTrustedContextValidationError = InstanceType<
-  typeof ActionTrustedContextValidationErrorValue
->;
+const ActionTrustedContextValidationErrorValue = actionErrorSchema('ActionTrustedContextValidationError', {
+  code: Schema.Literal('action_trusted_context_invalid'),
+  ...safeReason,
+});
+export type ActionTrustedContextValidationError = InstanceType<typeof ActionTrustedContextValidationErrorValue>;
 export { ActionTrustedContextValidationErrorValue as ActionTrustedContextValidationError };
 
 const ActionIdempotencyKeyRequiredValue = actionErrorSchema('ActionIdempotencyKeyRequired', {
@@ -80,16 +70,11 @@ const ActionRequestHashConflictValue = actionErrorSchema('ActionRequestHashConfl
 export type ActionRequestHashConflict = InstanceType<typeof ActionRequestHashConflictValue>;
 export { ActionRequestHashConflictValue as ActionRequestHashConflict };
 
-const ActionInvocationPersistenceErrorValue = actionErrorSchema(
-  'ActionInvocationPersistenceError',
-  {
-    code: Schema.Literal('action_invocation_persistence_failed'),
-    ...safeReason,
-  },
-);
-export type ActionInvocationPersistenceError = InstanceType<
-  typeof ActionInvocationPersistenceErrorValue
->;
+const ActionInvocationPersistenceErrorValue = actionErrorSchema('ActionInvocationPersistenceError', {
+  code: Schema.Literal('action_invocation_persistence_failed'),
+  ...safeReason,
+});
+export type ActionInvocationPersistenceError = InstanceType<typeof ActionInvocationPersistenceErrorValue>;
 const ActionInvocationPersistenceErrorInternals = (() => {
   let createWithCause: (
     props: ConstructorParameters<typeof ActionInvocationPersistenceErrorValue>[0],
@@ -119,8 +104,7 @@ export { ActionInvocationPersistenceErrorClass as ActionInvocationPersistenceErr
 // Core-only accessors: deliberately excluded from the package root exports.
 export const createActionInvocationPersistenceErrorWithCause =
   ActionInvocationPersistenceErrorInternals.createWithCause;
-export const getActionInvocationPersistenceErrorCause =
-  ActionInvocationPersistenceErrorInternals.readCause;
+export const getActionInvocationPersistenceErrorCause = ActionInvocationPersistenceErrorInternals.readCause;
 
 const ActionInvocationNotFoundValue = actionErrorSchema('ActionInvocationNotFound', {
   code: Schema.Literal('action_invocation_not_found'),

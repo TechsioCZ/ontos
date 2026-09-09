@@ -2,12 +2,14 @@
 // @ontos-action-owner party.registry
 // @ontos-action-slug counterparty-create
 import type { ActionHandlerContext } from '@app/core-runtime';
-import {
-  defineAction,
-  defineTenantModuleEntrypoint,
-  OperationContextUnavailable,
-} from '@app/core-runtime';
+import { defineAction, defineTenantModuleEntrypoint, OperationContextUnavailable } from '@app/core-runtime';
 import { Effect, Match, Schema } from 'effect';
+
+import {
+  CounterpartyCreatePayloadSchema,
+  CounterpartyCreateResultSchema,
+} from '../../shared/actions/counterparty-create.ts';
+import type { CounterpartyCreatePayload } from '../../shared/actions/counterparty-create.ts';
 import { CounterpartyAuditEvidenceSchema } from '../../shared/domain/counterparty-contract.ts';
 import {
   CounterpartyEvidenceInsufficient,
@@ -22,12 +24,6 @@ import { OutboxPayloadSchema as CounterpartyCreatedEventSchema } from '../../sha
 import { createCounterpartyRecord } from '../services/counterparty-persistence.service.ts';
 import type { CreateCounterpartyResult as PersistenceResult } from '../services/counterparty-persistence.service.ts';
 import { createCounterpartyCreatePartyRegistryCounterpartyCreatedV1OutboxMessage } from './counterparty-create.party-registry-counterparty-created-v1.outbox-message.ts';
-
-import {
-  CounterpartyCreatePayloadSchema,
-  CounterpartyCreateResultSchema,
-} from '../../shared/actions/counterparty-create.ts';
-import type { CounterpartyCreatePayload } from '../../shared/actions/counterparty-create.ts';
 
 export {
   CounterpartyCreatePayloadSchema,
@@ -164,7 +160,10 @@ export const counterpartyCreateAction = defineAction(
     },
     entrypoint: defineTenantModuleEntrypoint({
       access: 'write',
-      authorization: { kind: 'action_execution', provisioning: 'tenant_membership_default' },
+      authorization: {
+        kind: 'action_execution',
+        provisioning: 'tenant_membership_default',
+      },
       entrypointKey: 'party.registry.counterparty-create',
       moduleKey: 'party.registry',
       role: 'action',

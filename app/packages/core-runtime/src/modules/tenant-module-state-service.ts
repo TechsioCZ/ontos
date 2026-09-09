@@ -1,5 +1,6 @@
 import { and, asc, eq, inArray } from 'drizzle-orm';
 import { Clock, Context, DateTime, Effect, Layer, Match, Schema } from 'effect';
+
 import { CoreDatabase } from '../db/client.ts';
 import type { ActionAuthMethod } from '../db/schema.ts';
 import { tenantModuleStateChanges, tenantModuleStates, tenants } from '../db/schema.ts';
@@ -20,12 +21,7 @@ import {
   TenantModuleStateUnsupportedStateError,
 } from './tenant-module-state-errors.ts';
 
-const withOptionalProperty = <
-  Base extends object,
-  Key extends PropertyKey,
-  Value,
-  Trailing extends object,
->(
+const withOptionalProperty = <Base extends object, Key extends PropertyKey, Value, Trailing extends object>(
   base: Base,
   condition: boolean,
   key: Key,
@@ -65,10 +61,7 @@ export const validateTenantModuleStateTransition = (
   catalog: InstalledModuleCatalog,
   moduleKey: OntosModuleId,
   newState: TenantModuleState,
-): Effect.Effect<
-  void,
-  TenantModuleStateUnknownModuleError | TenantModuleStateUnsupportedStateError
-> => {
+): Effect.Effect<void, TenantModuleStateUnknownModuleError | TenantModuleStateUnsupportedStateError> => {
   if (newState === 'inactive') {
     return Effect.void;
   }
@@ -168,7 +161,10 @@ export const makeTenantModuleStateService = (database: {
 
   const listTenantModuleStates = (tenantId: string) =>
     database.executor
-      .select({ moduleKey: tenantModuleStates.moduleKey, state: tenantModuleStates.state })
+      .select({
+        moduleKey: tenantModuleStates.moduleKey,
+        state: tenantModuleStates.state,
+      })
       .from(tenantModuleStates)
       .where(eq(tenantModuleStates.tenantId, tenantId))
       .orderBy(asc(tenantModuleStates.moduleKey))
@@ -181,14 +177,12 @@ export const makeTenantModuleStateService = (database: {
         return Effect.succeed(Object.freeze([]));
       }
       return database.executor
-        .select({ moduleKey: tenantModuleStates.moduleKey, state: tenantModuleStates.state })
+        .select({
+          moduleKey: tenantModuleStates.moduleKey,
+          state: tenantModuleStates.state,
+        })
         .from(tenantModuleStates)
-        .where(
-          and(
-            eq(tenantModuleStates.tenantId, tenantId),
-            inArray(tenantModuleStates.moduleKey, distinctKeys),
-          ),
-        )
+        .where(and(eq(tenantModuleStates.tenantId, tenantId), inArray(tenantModuleStates.moduleKey, distinctKeys)))
         .orderBy(asc(tenantModuleStates.moduleKey))
         .pipe(Effect.mapError(tenantModuleStateReadUnavailable), Effect.flatMap(decodeRows));
     },
@@ -237,132 +231,131 @@ const persistenceUnavailable = (cause?: unknown) => {
   return error;
 };
 
-export const persistTenantModuleStateChange = Effect.fn(
-  'TenantModuleStateService.persistTenantModuleStateChange',
-)(function* persistTenantModuleStateChangeEffect(
-  transaction: ScopedTransactionExecutor,
-  input: PersistTenantModuleStateChangeInput,
-): Effect.fn.Return<PersistTenantModuleStateChangeResult, TenantModuleStateTransitionError> {
-  const { changeSource, tenantRows } = yield* resolveTenantModuleStateChangeSource(
-    input.authMethod,
-  ).pipe(
-    Effect.flatMap((resolvedChangeSource) =>
-      transaction
-        .select({ tenantId: tenants.tenantId })
-        .from(tenants)
-        .where(eq(tenants.tenantId, input.tenantId))
-        .for('update')
-        .pipe(
-          Effect.mapError(persistenceUnavailable),
-          Effect.map((lockedTenantRows) => ({
-            changeSource: resolvedChangeSource,
-            tenantRows: lockedTenantRows,
-          })),
+export const persistTenantModuleStateChange = Effect.fn('TenantModuleStateService.persistTenantModuleStateChange')(
+  function* persistTenantModuleStateChangeEffect(
+    transaction: ScopedTransactionExecutor,
+    input: PersistTenantModuleStateChangeInput,
+  ): Effect.fn.Return<PersistTenantModuleStateChangeResult, TenantModuleStateTransitionError> {
+    const { changeSource, tenantRows } = yield* resolveTenantModuleStateChangeSource(input.authMethod).pipe(
+      Effect.flatMap((resolvedChangeSource) =>
+        transaction
+          .select({ tenantId: tenants.tenantId })
+          .from(tenants)
+          .where(eq(tenants.tenantId, input.tenantId))
+          .for('update')
+          .pipe(
+            Effect.mapError(persistenceUnavailable),
+            Effect.map((lockedTenantRows) => ({
+              changeSource: resolvedChangeSource,
+              tenantRows: lockedTenantRows,
+            })),
+          ),
+      ),
+    );
+    const [tenant] = tenantRows;
+    if (tenant === undefined) {
+      return yield* new TenantModuleStateTenantMissingError({
+        code: 'tenant_module_state_tenant_missing',
+        reason: 'The tenant required for this state change does not exist',
+      });
+    }
+
+    const currentRows = yield* transaction
+      .select({
+        state: tenantModuleStates.state,
+        tenantModuleStateId: tenantModuleStates.tenantModuleStateId,
+      })
+      .from(tenantModuleStates)
+      .where(and(eq(tenantModuleStates.tenantId, input.tenantId), eq(tenantModuleStates.moduleKey, input.moduleKey)))
+      .pipe(Effect.mapError(persistenceUnavailable));
+    const [current] = currentRows;
+    const previousState =
+      current === undefined
+        ? null
+        : yield* Schema.decodeUnknownEffect(TenantModuleStateSchema)(current.state).pipe(
+            Effect.mapError(persistenceUnavailable),
+          );
+    const effectivePreviousState = previousState ?? 'inactive';
+    if (input.expectedState !== undefined && input.expectedState !== effectivePreviousState) {
+      return yield* new TenantModuleStateConcurrentChangeError({
+        code: 'tenant_module_state_changed_concurrently',
+        reason: 'The tenant module state changed after it was read',
+      });
+    }
+    yield* rejectUnchangedTenantModuleState(previousState, input.newState);
+    const currentTimeMillis = yield* Clock.currentTimeMillis;
+    const changedAt = DateTime.toDateUtc(DateTime.makeUnsafe(currentTimeMillis));
+
+    const historyRows = yield* transaction
+      .insert(tenantModuleStateChanges)
+      .values(
+        withOptionalProperty(
+          {
+            actionInvocationId: input.actionInvocationId,
+            changedByPrincipalId: input.principalId,
+            changeSource,
+            moduleKey: input.moduleKey,
+            newState: input.newState,
+            occurredAt: changedAt,
+            previousState,
+          },
+          input.reason !== undefined,
+          'reason',
+          input.reason,
+          {
+            tenantId: input.tenantId,
+          },
         ),
-    ),
-  );
-  const [tenant] = tenantRows;
-  if (tenant === undefined) {
-    return yield* new TenantModuleStateTenantMissingError({
-      code: 'tenant_module_state_tenant_missing',
-      reason: 'The tenant required for this state change does not exist',
-    });
-  }
+      )
+      .returning({
+        moduleStateChangeId: tenantModuleStateChanges.moduleStateChangeId,
+      })
+      .pipe(Effect.mapError(persistenceUnavailable));
+    const [history] = historyRows;
+    if (history === undefined) {
+      return yield* persistenceUnavailable();
+    }
 
-  const currentRows = yield* transaction
-    .select({
-      state: tenantModuleStates.state,
-      tenantModuleStateId: tenantModuleStates.tenantModuleStateId,
-    })
-    .from(tenantModuleStates)
-    .where(
-      and(
-        eq(tenantModuleStates.tenantId, input.tenantId),
-        eq(tenantModuleStates.moduleKey, input.moduleKey),
-      ),
-    )
-    .pipe(Effect.mapError(persistenceUnavailable));
-  const [current] = currentRows;
-  const previousState =
-    current === undefined
-      ? null
-      : yield* Schema.decodeUnknownEffect(TenantModuleStateSchema)(current.state).pipe(
-          Effect.mapError(persistenceUnavailable),
-        );
-  const effectivePreviousState = previousState ?? 'inactive';
-  if (input.expectedState !== undefined && input.expectedState !== effectivePreviousState) {
-    return yield* new TenantModuleStateConcurrentChangeError({
-      code: 'tenant_module_state_changed_concurrently',
-      reason: 'The tenant module state changed after it was read',
-    });
-  }
-  yield* rejectUnchangedTenantModuleState(previousState, input.newState);
-  const currentTimeMillis = yield* Clock.currentTimeMillis;
-  const changedAt = DateTime.toDateUtc(DateTime.makeUnsafe(currentTimeMillis));
-
-  const historyRows = yield* transaction
-    .insert(tenantModuleStateChanges)
-    .values(
-      withOptionalProperty(
-        {
-          actionInvocationId: input.actionInvocationId,
-          changedByPrincipalId: input.principalId,
-          changeSource,
+    if (current === undefined) {
+      const inserted = yield* transaction
+        .insert(tenantModuleStates)
+        .values({
+          lastChangeId: history.moduleStateChangeId,
           moduleKey: input.moduleKey,
-          newState: input.newState,
-          occurredAt: changedAt,
-          previousState,
-        },
-        input.reason !== undefined,
-        'reason',
-        input.reason,
-        {
+          state: input.newState,
           tenantId: input.tenantId,
-        },
-      ),
-    )
-    .returning({ moduleStateChangeId: tenantModuleStateChanges.moduleStateChangeId })
-    .pipe(Effect.mapError(persistenceUnavailable));
-  const [history] = historyRows;
-  if (history === undefined) {
-    return yield* persistenceUnavailable();
-  }
-
-  if (current === undefined) {
-    const inserted = yield* transaction
-      .insert(tenantModuleStates)
-      .values({
-        lastChangeId: history.moduleStateChangeId,
-        moduleKey: input.moduleKey,
-        state: input.newState,
-        tenantId: input.tenantId,
-        updatedAt: changedAt,
-      })
-      .returning({ tenantModuleStateId: tenantModuleStates.tenantModuleStateId })
-      .pipe(Effect.mapError(persistenceUnavailable));
-    const [insertedState] = inserted;
-    if (insertedState === undefined) {
-      return yield* persistenceUnavailable();
+          updatedAt: changedAt,
+        })
+        .returning({
+          tenantModuleStateId: tenantModuleStates.tenantModuleStateId,
+        })
+        .pipe(Effect.mapError(persistenceUnavailable));
+      const [insertedState] = inserted;
+      if (insertedState === undefined) {
+        return yield* persistenceUnavailable();
+      }
+    } else {
+      const updated = yield* transaction
+        .update(tenantModuleStates)
+        .set({
+          lastChangeId: history.moduleStateChangeId,
+          state: input.newState,
+          updatedAt: changedAt,
+        })
+        .where(eq(tenantModuleStates.tenantModuleStateId, current.tenantModuleStateId))
+        .returning({
+          tenantModuleStateId: tenantModuleStates.tenantModuleStateId,
+        })
+        .pipe(Effect.mapError(persistenceUnavailable));
+      if (updated[0] === undefined) {
+        return yield* persistenceUnavailable();
+      }
     }
-  } else {
-    const updated = yield* transaction
-      .update(tenantModuleStates)
-      .set({
-        lastChangeId: history.moduleStateChangeId,
-        state: input.newState,
-        updatedAt: changedAt,
-      })
-      .where(eq(tenantModuleStates.tenantModuleStateId, current.tenantModuleStateId))
-      .returning({ tenantModuleStateId: tenantModuleStates.tenantModuleStateId })
-      .pipe(Effect.mapError(persistenceUnavailable));
-    if (updated[0] === undefined) {
-      return yield* persistenceUnavailable();
-    }
-  }
 
-  return {
-    moduleKey: input.moduleKey,
-    newState: input.newState,
-    previousState,
-  };
-});
+    return {
+      moduleKey: input.moduleKey,
+      newState: input.newState,
+      previousState,
+    };
+  },
+);

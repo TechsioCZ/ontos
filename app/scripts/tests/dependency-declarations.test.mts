@@ -1,10 +1,11 @@
-import { expect, it } from 'effect-rstest';
 import { spawnSync } from 'node:child_process';
 import { appendFileSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+
 import { Option } from 'effect';
+import { expect, it } from 'effect-rstest';
 import { Param } from 'effect/unstable/cli';
 
 const configFilename = 'tsconfig.json';
@@ -12,8 +13,7 @@ const metadataFilename = 'metadata.mts';
 const compilerRelativePath = 'node_modules/.bin/tsc';
 const workspaceRoot = fileURLToPath(new URL('../..', import.meta.url));
 
-const countDiagnostics = (diagnostics: string, pattern: RegExp): number =>
-  [...diagnostics.matchAll(pattern)].length;
+const countDiagnostics = (diagnostics: string, pattern: RegExp): number => [...diagnostics.matchAll(pattern)].length;
 
 const verifyDrizzleRuntimeFormats = (fixture: string): void => {
   for (const extension of ['mjs', 'cjs']) {
@@ -38,7 +38,9 @@ assert.equal(role.createDb, undefined); assert.equal(role.createRole, undefined)
 assert.equal(pgRole('undefined', { inherit: undefined }).inherit, undefined);
 `,
     );
-    const result = spawnSync(process.execPath, [filename], { encoding: 'utf-8' });
+    const result = spawnSync(process.execPath, [filename], {
+      encoding: 'utf-8',
+    });
     expect(result.error).toBeUndefined();
     expect(result.status, result.stdout + result.stderr).toBe(0);
   }
@@ -47,11 +49,7 @@ assert.equal(pgRole('undefined', { inherit: undefined }).inherit, undefined);
 it('published dependency declarations retain strict positive and negative contracts', () => {
   const fixture = mkdtempSync(path.join(tmpdir(), 'ontos-declaration-contract-'));
   try {
-    symlinkSync(
-      path.join(workspaceRoot, 'node_modules'),
-      path.join(fixture, 'node_modules'),
-      'dir',
-    );
+    symlinkSync(path.join(workspaceRoot, 'node_modules'), path.join(fixture, 'node_modules'), 'dir');
     const imports = `import { pgPolicy, pgRole, type PgPolicyConfig, type PgRoleConfig } from 'drizzle-orm/pg-core';
 import { cockroachPolicy, cockroachRole, type CockroachPolicyConfig, type CockroachRoleConfig } from 'drizzle-orm/cockroach-core';
 import { sql } from 'drizzle-orm';\n`;

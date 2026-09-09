@@ -1,9 +1,6 @@
 import { Schema } from 'effect';
 
-const MicroVerticalAppIdSchema = Schema.String.pipe(
-  Schema.brand('MicroVerticalAppId'),
-  Schema.decodeTo(Schema.String),
-);
+const MicroVerticalAppIdSchema = Schema.String.pipe(Schema.brand('MicroVerticalAppId'), Schema.decodeTo(Schema.String));
 const MicroVerticalUnitIdSchema = Schema.String.pipe(
   Schema.brand('MicroVerticalUnitId'),
   Schema.decodeTo(Schema.String),
@@ -86,9 +83,7 @@ export const createMicroVerticalOperationContext = <
   return input.traceId === undefined ? context : { ...context, traceId: input.traceId };
 };
 
-export const microVerticalOperationAttributes = (
-  operationContext: MicroVerticalOperationContext,
-) => {
+export const microVerticalOperationAttributes = (operationContext: MicroVerticalOperationContext) => {
   const attributes = {
     'modernjs.operation.id': operationContext.operationId,
     'modernjs.operation.method': operationContext.method,

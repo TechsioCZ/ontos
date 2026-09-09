@@ -27,10 +27,7 @@ it('manual configuration rule detects access after supplementary Unicode but ign
     const positive = 'scripts/scaffolding/unicode-positive.mts';
     const negative = 'scripts/scaffolding/unicode-negative.mts';
     const prefix = `const label="${supplementaryCharacter.repeat(20)}"; `;
-    writeFileSync(
-      path.join(directory, positive),
-      `export const source = \`${prefix}process.env.X${' '.repeat(30)}\`;`,
-    );
+    writeFileSync(path.join(directory, positive), `export const source = \`${prefix}process.env.X${' '.repeat(30)}\`;`);
     writeFileSync(
       path.join(directory, negative),
       `export const source = \`${prefix}const example = "process.env.X";\`;`,
@@ -51,18 +48,11 @@ it('manual configuration rule detects access after supplementary Unicode but ign
         },
       }),
     );
-    const result = runOxlint(
-      config,
-      [positive, negative],
-      directory,
-      'no-manual-config-in-scaffold-templates',
-    );
+    const result = runOxlint(config, [positive, negative], directory, 'no-manual-config-in-scaffold-templates');
     expect(result.numberOfFiles).toBe(2);
     expect(result.exitCode).toBe(1);
     expect(result.diagnostics.length).toBe(1);
-    expect(result.diagnostics[0]?.code).toBe(
-      'effect-native(no-manual-config-in-scaffold-templates)',
-    );
+    expect(result.diagnostics[0]?.code).toBe('effect-native(no-manual-config-in-scaffold-templates)');
     expect(result.diagnostics[0]?.filename.replaceAll('\\', '/')).toBe(positive);
   });
 });

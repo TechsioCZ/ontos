@@ -12,22 +12,16 @@
  * Report only; no fixer or suggestions.
  */
 import { defineRule } from '@oxlint/plugins';
-
 import type { ESTree } from '@oxlint/plugins';
 
-import {
-  keyName as staticKeyName,
-  unwrapBinding,
-  unwrapType as unwrapSharedType,
-} from '../shared/ast.ts';
+import { keyName as staticKeyName, unwrapBinding, unwrapType as unwrapSharedType } from '../shared/ast.ts';
 import { resolveVariable } from '../shared/bindings.ts';
 import { booleanOption as boolean, compile, stringList } from '../shared/options.ts';
 import { isSourceRuleInScope } from '../shared/source-rule-scope.ts';
 
 type AnyNode = ESTree.Node;
 
-const DEFAULT_DEPENDENCY_TYPE_PATTERN =
-  '(Service|Repository|Gateway|Resolver|Dependencies|ServiceFactory)$';
+const DEFAULT_DEPENDENCY_TYPE_PATTERN = '(Service|Repository|Gateway|Resolver|Dependencies|ServiceFactory)$';
 const DEFAULT_ALLOW_TYPE_NAMES: readonly string[] = [];
 const DEFAULT_SERVICE_INDEX_KEYS: readonly string[] = ['Service'];
 const DEFAULT_INCLUDE_PATHS: readonly string[] = ['apps/**', 'verticals/**', 'packages/**'];
@@ -43,11 +37,7 @@ const TYPE_WRAPPERS = new Set([
   'TSRestType',
 ]);
 
-type MessageId =
-  | 'dependencyParameter'
-  | 'layerParameter'
-  | 'inlineServiceRecord'
-  | 'dependencyOptionBag';
+type MessageId = 'dependencyParameter' | 'layerParameter' | 'inlineServiceRecord' | 'dependencyOptionBag';
 
 interface Verdict {
   readonly messageId: MessageId;
@@ -131,10 +121,8 @@ function typeQueryName(node: AnyNode): string | null {
 
 /** Members of an object type body, whichever container holds them. */
 function membersOf(node: AnyNode): readonly AnyNode[] {
-  if (node.type === 'TSTypeLiteral')
-    return (node as unknown as { members: readonly AnyNode[] }).members;
-  if (node.type === 'TSInterfaceBody')
-    return (node as unknown as { body: readonly AnyNode[] }).body;
+  if (node.type === 'TSTypeLiteral') return (node as unknown as { members: readonly AnyNode[] }).members;
+  if (node.type === 'TSInterfaceBody') return (node as unknown as { body: readonly AnyNode[] }).body;
   if (node.type === 'TSInterfaceDeclaration') {
     const body = (node as unknown as { body: AnyNode }).body;
     return (body as unknown as { body: readonly AnyNode[] }).body;
@@ -205,13 +193,11 @@ export const rule = defineRule({
           },
           includeScripts: {
             type: 'boolean',
-            description:
-              'Also report inside scripts/** (default: false — B3 migrates only consequential scripts).',
+            description: 'Also report inside scripts/** (default: false — B3 migrates only consequential scripts).',
           },
           includeTests: {
             type: 'boolean',
-            description:
-              "Also report inside test files (default: false — the audit's D tier blesses test fixtures).",
+            description: "Also report inside test files (default: false — the audit's D tier blesses test fixtures).",
           },
           serviceIndexKeys: {
             type: 'array',
@@ -299,15 +285,14 @@ export const rule = defineRule({
     };
 
     function classifyIndexed(node: AnyNode): Verdict | null {
-      const indexed = node as unknown as { objectType: AnyNode; indexType: AnyNode };
+      const indexed = node as unknown as {
+        objectType: AnyNode;
+        indexType: AnyNode;
+      };
       const owner = typeQueryName(unwrapType(indexed.objectType));
       const index = unwrapType(indexed.indexType);
-      const literal =
-        index.type === 'TSLiteralType' ? (index as unknown as { literal: AnyNode }).literal : null;
-      const key =
-        literal !== null && literal.type === 'Literal'
-          ? (literal as { value?: unknown }).value
-          : undefined;
+      const literal = index.type === 'TSLiteralType' ? (index as unknown as { literal: AnyNode }).literal : null;
+      const key = literal !== null && literal.type === 'Literal' ? (literal as { value?: unknown }).value : undefined;
       if (owner !== null && typeof key === 'string' && options.serviceIndexKeys.has(key)) {
         return {
           member: null,
@@ -321,8 +306,7 @@ export const rule = defineRule({
 
     function classifyLayer(node: AnyNode, qualifier: string | null): Verdict {
       const args = (node as unknown as { typeArguments: AnyNode | null }).typeArguments;
-      const first =
-        args === null ? undefined : (args as unknown as { params: readonly AnyNode[] }).params[0];
+      const first = args === null ? undefined : (args as unknown as { params: readonly AnyNode[] }).params[0];
       const provided =
         first === undefined
           ? null
@@ -344,8 +328,7 @@ export const rule = defineRule({
       const result = local.returnType?.typeAnnotation;
       if (!result || returnsEffect(local.returnType)) return false;
       return !(
-        result.type === 'TSTypeReference' &&
-        ['Promise', 'PromiseLike'].includes(lastTypeName(result.typeName) ?? '')
+        result.type === 'TSTypeReference' && ['Promise', 'PromiseLike'].includes(lastTypeName(result.typeName) ?? '')
       );
     }
 
@@ -395,8 +378,7 @@ export const rule = defineRule({
       if (name === null) return null;
       const qualifier = qualifierName(typeName);
       const origin = importedPath(typeName);
-      if (/^(?:root\.)?Layer(?:\.Layer)?$/u.test(origin ?? ''))
-        return classifyLayer(node, qualifier);
+      if (/^(?:root\.)?Layer(?:\.Layer)?$/u.test(origin ?? '')) return classifyLayer(node, qualifier);
       if (origin !== null) return null;
       return classifyApplicationReference(node, typeName, name, qualifier, depth);
     }
@@ -447,17 +429,23 @@ export const rule = defineRule({
         if (memberName === null) continue;
         const verdict = classify(signature.typeAnnotation, depth);
         if (verdict === null) continue;
-        return { ...verdict, member: memberName, messageId: 'dependencyOptionBag' };
+        return {
+          ...verdict,
+          member: memberName,
+          messageId: 'dependencyOptionBag',
+        };
       }
       return null;
     }
 
     function objectParameterName(binding: AnyNode): string {
       const keys: string[] = [];
-      for (const property of (binding as unknown as { properties: readonly AnyNode[] })
-        .properties) {
+      for (const property of (binding as unknown as { properties: readonly AnyNode[] }).properties) {
         if (property.type !== 'Property') continue;
-        const entry = property as unknown as { key: AnyNode; computed: boolean };
+        const entry = property as unknown as {
+          key: AnyNode;
+          computed: boolean;
+        };
         const name = keyName(entry.key, entry.computed);
         if (name !== null) keys.push(name);
         if (keys.length === 3) break;

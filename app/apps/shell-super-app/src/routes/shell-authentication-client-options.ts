@@ -1,4 +1,5 @@
 import { Config, Effect } from 'effect';
+
 import { shellAuthenticationApiContract } from '../../shared/api.ts';
 
 export const shellAuthenticationClientOptionsFromRequest = (request: Request) =>

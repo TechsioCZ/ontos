@@ -4,12 +4,13 @@
 // @ontos-outbox-worker-producer party.registry
 // @ontos-outbox-worker-topic party.registry.counterparty-created.v1
 import { defineTenantModuleEntrypoint } from '@app/core-runtime';
-import { definePartySearchWorker } from './party-search-worker.ts';
 import {
   OutboxPayloadSchema,
   outboxProducerModuleKey,
   outboxTopic,
 } from '@app/party-registry/outbox/party-registry-counterparty-created-v1';
+
+import { definePartySearchWorker } from './party-search-worker.ts';
 
 export const { worker: projectCounterpartyCreatedToSearchWorker } = definePartySearchWorker(
   {
@@ -26,6 +27,8 @@ export const { worker: projectCounterpartyCreatedToSearchWorker } = definePartyS
   },
   {
     spanName: 'handleProjectCounterpartyCreatedToSearch',
-    target: (payload) => ({ counterpartyId: payload.counterpartyRef.resourceId }),
+    target: (payload) => ({
+      counterpartyId: payload.counterpartyRef.resourceId,
+    }),
   },
 );

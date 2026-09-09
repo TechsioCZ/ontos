@@ -1,5 +1,6 @@
 import { Effect } from 'effect';
 import { assert, it } from 'effect-rstest';
+
 import { readDetailResult, readUnavailable, requireReadValue } from '../../src/api/read-outcome.ts';
 
 it.effect('detail lookup preserves the value and one-result evidence', () => {
@@ -16,21 +17,18 @@ it.effect('detail lookup preserves the value and one-result evidence', () => {
   );
 });
 
-it.effect(
-  'missing detail produces the caller-specific typed failure without result evidence',
-  () => {
-    const reason = 'The Official Identifier does not exist';
-    return requireReadValue(reason)({ _tag: 'not_found' }).pipe(
-      Effect.map(() => assert.fail('Missing lookup must not succeed')),
-      Effect.catchTag('ReadHandlerNotFound', (failure) =>
-        Effect.sync(() => {
-          assert.equal(failure.code, 'read_handler_not_found');
-          assert.equal(failure.reason, reason);
-        }),
-      ),
-    );
-  },
-);
+it.effect('missing detail produces the caller-specific typed failure without result evidence', () => {
+  const reason = 'The Official Identifier does not exist';
+  return requireReadValue(reason)({ _tag: 'not_found' }).pipe(
+    Effect.map(() => assert.fail('Missing lookup must not succeed')),
+    Effect.catchTag('ReadHandlerNotFound', (failure) =>
+      Effect.sync(() => {
+        assert.equal(failure.code, 'read_handler_not_found');
+        assert.equal(failure.reason, reason);
+      }),
+    ),
+  );
+});
 
 it('unavailable mapping retains hidden diagnostic cause and descriptor policy', () => {
   const cause = { diagnostic: 'private' };

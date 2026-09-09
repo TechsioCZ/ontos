@@ -7,6 +7,7 @@ import { Context, Effect, Layer, Redacted } from 'effect';
 import { Reactivity } from 'effect/unstable/reactivity';
 import type { PoolConfig } from 'pg';
 import { Pool } from 'pg';
+
 import { PartyDatabaseConnectionError } from './connection-error.ts';
 import { partyRelations } from './schema.ts';
 import type { PartyDatabaseExecutor } from './types.ts';
@@ -55,21 +56,16 @@ export const makePartyDatabase = Effect.fn('Client.makePartyDatabase')(function*
     readonly poolDeadlines?: Partial<DatabasePoolDeadlines>;
   },
   poolFactory: PoolFactory = defaultPoolFactory,
-): Effect.fn.Return<
-  ContextServiceContract<typeof PartyDatabase>,
-  PartyDatabaseConnectionError,
-  Scope.Scope
-> {
+): Effect.fn.Return<ContextServiceContract<typeof PartyDatabase>, PartyDatabaseConnectionError, Scope.Scope> {
   const poolConfiguration = yield* configureDatabasePool(
     Redacted.make(configuration.connectionString),
     configuration.poolDeadlines,
   ).pipe(Effect.mapError((error) => new PartyDatabaseConnectionError({ reason: error.reason })));
   const pool = yield* acquirePoolResource(() => poolFactory(poolConfiguration));
   const reactivity = yield* Reactivity.make;
-  const client = yield* PgClient.fromPool({ acquire: Effect.succeed(pool) }).pipe(
-    Effect.provideService(Reactivity.Reactivity, reactivity),
-    Effect.mapError(connectionFailure),
-  );
+  const client = yield* PgClient.fromPool({
+    acquire: Effect.succeed(pool),
+  }).pipe(Effect.provideService(Reactivity.Reactivity, reactivity), Effect.mapError(connectionFailure));
   return {
     executor: yield* makeWithDefaults({ relations: partyRelations }).pipe(
       Effect.provideService(PgClient.PgClient, client),

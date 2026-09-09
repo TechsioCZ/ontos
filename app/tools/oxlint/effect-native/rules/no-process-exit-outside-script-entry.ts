@@ -73,31 +73,16 @@
  * Report-only: no fixers, no suggestions.
  */
 import { defineRule } from '@oxlint/plugins';
-
 import type { Context, ESTree } from '@oxlint/plugins';
-import {
-  parentOf,
-  skipWrappers,
-  syntax,
-  propertyText,
-  unwrapNode as skipTransparent,
-} from '../shared/ast.ts';
-import { provenance, valueReference } from '../shared/provenance.ts';
-import {
-  isEntryPosition as isBasicEntryPosition,
-  nearestFunction,
-} from '../shared/script-entry.ts';
-import { scriptScope, inScriptScope, matchesGlobs } from '../shared/paths.ts';
+
+import { parentOf, skipWrappers, syntax, propertyText, unwrapNode as skipTransparent } from '../shared/ast.ts';
 import { stringList, positiveInteger, booleanOption } from '../shared/options.ts';
+import { scriptScope, inScriptScope, matchesGlobs } from '../shared/paths.ts';
+import { provenance, valueReference } from '../shared/provenance.ts';
+import { isEntryPosition as isBasicEntryPosition, nearestFunction } from '../shared/script-entry.ts';
 
 /** Emitter registration methods whose callback argument is a signal/exit handler. */
-const LISTENER_METHODS = new Set([
-  'on',
-  'once',
-  'addListener',
-  'prependListener',
-  'prependOnceListener',
-]);
+const LISTENER_METHODS = new Set(['on', 'once', 'addListener', 'prependListener', 'prependOnceListener']);
 
 type AnyNode = ESTree.Node;
 
@@ -137,9 +122,7 @@ function entryContinuation(context: Context, fn: AnyNode): ESTree.CallExpression
 function isEntryPosition(context: Context, site: AnyNode): boolean {
   const fn = nearestFunction(site);
   const continuation = fn === null ? null : entryContinuation(context, fn);
-  return continuation === null
-    ? isBasicEntryPosition(context, site)
-    : isEntryPosition(context, continuation);
+  return continuation === null ? isBasicEntryPosition(context, site) : isEntryPosition(context, continuation);
 }
 
 function processObjectText(context: Context, node: AnyNode): string | null {
@@ -189,8 +172,7 @@ function listenerEvent(context: Context, call: ESTree.CallExpression) {
   if (method === null || !LISTENER_METHODS.has(method)) return null;
   if (processObjectText(context, skipTransparent(callee.object)) === null) return null;
   const first = call.arguments[0];
-  const event =
-    first?.type === 'Literal' && typeof first.value === 'string' ? first.value : 'signal';
+  const event = first?.type === 'Literal' && typeof first.value === 'string' ? first.value : 'signal';
   return { method, event };
 }
 
@@ -290,9 +272,7 @@ export const rule = defineRule({
           name = (node as ESTree.IdentifierReference).name;
         if (identity === 'process.exit') {
           const { node: reference, parent: outer } = skipWrappers(self);
-          const isCallee =
-            outer?.type === 'CallExpression' &&
-            (outer as ESTree.CallExpression).callee === reference;
+          const isCallee = outer?.type === 'CallExpression' && (outer as ESTree.CallExpression).callee === reference;
           push(isCallee ? outer : self, 'exit', isCallee ? `${name}(…)` : name);
         }
         // Destructured exitCode is a copied value, not a write to process.exitCode.
@@ -306,16 +286,10 @@ export const rule = defineRule({
         const self = node as unknown as AnyNode;
         const { node: reference, parent } = skipWrappers(self);
         const isCallee =
-          parent !== null &&
-          parent.type === 'CallExpression' &&
-          (parent as ESTree.CallExpression).callee === reference;
+          parent !== null && parent.type === 'CallExpression' && (parent as ESTree.CallExpression).callee === reference;
 
         if (property === 'exit') {
-          push(
-            isCallee ? parent : self,
-            'exit',
-            isCallee ? `${objectText}.exit(…)` : `${objectText}.exit`,
-          );
+          push(isCallee ? parent : self, 'exit', isCallee ? `${objectText}.exit(…)` : `${objectText}.exit`);
         } else if (property === 'kill') {
           if (isCallee) collectSelfKill(parent as ESTree.CallExpression, objectText);
         } else {
@@ -328,10 +302,7 @@ export const rule = defineRule({
         // Drop sites nested inside another site's expression (`process.exitCode = exit(1)`).
         const outer = ordered.filter(
           (site) =>
-            !ordered.some(
-              (other) =>
-                other.node !== site.node && other.start <= site.start && site.end <= other.end,
-            ),
+            !ordered.some((other) => other.node !== site.node && other.start <= site.start && site.end <= other.end),
         );
         let allowance = options.maxExitSites;
         for (const site of outer) {
@@ -340,7 +311,11 @@ export const rule = defineRule({
             context.report({
               node: site.node,
               messageId: 'exitInSignalHandler',
-              data: { site: site.site, event: handler.event, method: handler.method },
+              data: {
+                site: site.site,
+                event: handler.event,
+                method: handler.method,
+              },
             });
             continue;
           }

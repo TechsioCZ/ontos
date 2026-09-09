@@ -1,5 +1,3 @@
-import { expect, it } from 'effect-rstest';
-
 import {
   Effect,
   HttpApi,
@@ -11,6 +9,7 @@ import {
 } from '@modern-js/plugin-bff/effect-edge';
 import type { EffectBffDefinition, EffectBffRuntime } from '@modern-js/plugin-bff/effect-edge';
 import { Context, Schema } from 'effect';
+import { expect, it } from 'effect-rstest';
 
 import { assembleEffectBffRuntime } from '../../src/effect-bff-runtime.ts';
 
@@ -50,9 +49,7 @@ const makeCorsRuntime = (greeting: string) =>
 
 const failingStartupRuntime = assembleEffectBffRuntime({
   api,
-  handlers: handlers.pipe(
-    Layer.provide(Layer.effect(Greeting, Effect.die('fixture layer startup defect'))),
-  ),
+  handlers: handlers.pipe(Layer.provide(Layer.effect(Greeting, Effect.die('fixture layer startup defect')))),
 });
 
 const inferredRuntime: EffectBffDefinition<typeof api> & EffectBffRuntime<typeof api> =
@@ -65,9 +62,7 @@ it.live('assembles a concrete API with caller-provided handler dependencies', ()
       Effect.sync(() => makeRuntime('substitute runtime').createHandler()),
       (runtimeServer) => Effect.promise(() => runtimeServer.dispose()),
     );
-    const response = yield* Effect.promise(() =>
-      server.handler(new Request('http://localhost/greet')),
-    );
+    const response = yield* Effect.promise(() => server.handler(new Request('http://localhost/greet')));
     expect(response.status).toBe(200);
     expect(yield* Effect.promise(() => response.json())).toEqual({
       greeting: 'substitute runtime',
@@ -104,9 +99,7 @@ it.live('keeps strict runtime defect handling at the generated HTTP boundary', (
       Effect.sync(() => makeRuntime('unused').createHandler()),
       (runtimeServer) => Effect.promise(() => runtimeServer.dispose()),
     );
-    const response = yield* Effect.promise(() =>
-      server.handler(new Request('http://localhost/fail')),
-    );
+    const response = yield* Effect.promise(() => server.handler(new Request('http://localhost/fail')));
     expect(response.status).toBe(500);
   }),
 );
@@ -117,9 +110,9 @@ it.live('preserves caller-owned Layer startup defects', () =>
       Effect.sync(() => failingStartupRuntime.createHandler()),
       (runtimeServer) => Effect.promise(() => runtimeServer.dispose()),
     );
-    const error = yield* Effect.tryPromise(() =>
-      server.handler(new Request('http://localhost/greet')),
-    ).pipe(Effect.flip);
+    const error = yield* Effect.tryPromise(() => server.handler(new Request('http://localhost/greet'))).pipe(
+      Effect.flip,
+    );
     expect(String(error.cause)).toMatch(/fixture layer startup defect/u);
   }),
 );

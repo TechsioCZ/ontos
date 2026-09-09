@@ -260,9 +260,9 @@
             "ssr": {
               "workerEntry": ".output/server/index.mjs",
               "workerManifest": ".output/server/modern-worker-manifest.json",
+              "effectBffBundle": ".output/worker/__modern_bff_effect.js",
               "routeManifest": ".output/server/route.json",
               "ssrBundle": ".output/worker/index.js",
-              "effectBffBundle": ".output/worker/__modern_bff_effect.js",
               "assetsBinding": "ASSETS"
             },
             "zephyr": {
@@ -300,8 +300,8 @@
         "compatibility": {
           "contractVersion": "microvertical-server-effect-v1",
           "packageName": "@app/party-registry",
-          "effectVersion": "4.0.0-beta.107",
-          "moduleFederationVersion": "2.8.0"
+          "effectVersion": "4.0.0-rc.112",
+          "moduleFederationVersion": "2.9.0"
         },
         "cache": {
           "cloudflareSnapshot": "immutable",

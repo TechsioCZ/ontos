@@ -1,4 +1,3 @@
-import { optionRecord } from '../shared/options.ts';
 /**
  * Audit findings: **A2** — "Make Schema the sole authority for contracts and domain models" and
  * **B5** — "Adopt Effect's ADTs and temporal model consistently"
@@ -76,16 +75,16 @@ import { optionRecord } from '../shared/options.ts';
  * never fixes or suggests.
  */
 import { defineRule } from '@oxlint/plugins';
-
 import type { Context, ESTree, Variable } from '@oxlint/plugins';
 
-import { collectEffectBindings, type EffectBindings } from '../shared/effect-imports.ts';
-import { matchesGlobs } from '../shared/paths.ts';
-import { acceptsRuleFile, ruleFilePolicyProperties } from '../shared/rule-file-policy.ts';
 import { keyName, memberName as staticMemberName, unwrapNode } from '../shared/ast.ts';
 import { resolveVariable } from '../shared/bindings.ts';
+import { collectEffectBindings, type EffectBindings } from '../shared/effect-imports.ts';
 import { importDeclarations, importedName } from '../shared/imports.ts';
+import { optionRecord } from '../shared/options.ts';
 import { stringArray } from '../shared/options.ts';
+import { matchesGlobs } from '../shared/paths.ts';
+import { acceptsRuleFile, ruleFilePolicyProperties } from '../shared/rule-file-policy.ts';
 
 const SCHEMA_NAMESPACE = 'Schema';
 const EFFECT_ROOT_MODULE = 'effect';
@@ -241,9 +240,10 @@ function collectSchemaLocals(
   reexportModules: readonly string[],
 ): SchemaLocals {
   const locals = emptyLocals();
-  const accepts = (source: string): boolean =>
-    EFFECT_SOURCE.test(source) || matchesGlobs(source, reexportModules);
-  for (const statement of importDeclarations(program, accepts, { valueOnly: true })) {
+  const accepts = (source: string): boolean => EFFECT_SOURCE.test(source) || matchesGlobs(source, reexportModules);
+  for (const statement of importDeclarations(program, accepts, {
+    valueOnly: true,
+  })) {
     const source = statement.source.value;
     const isBarrel = matchesGlobs(source, reexportModules) || source === EFFECT_ROOT_MODULE;
     for (const specifier of statement.specifiers) {
@@ -295,7 +295,10 @@ const METHOD_PRESERVERS = new Set(['check', 'annotate', 'annotateKey']);
 
 /** `const S = Schema` / `const { NullOr } = Schema`: resolved after the whole file is known. */
 interface AliasCandidate {
-  readonly local: ESTree.Node & { readonly name: string; readonly start: number };
+  readonly local: ESTree.Node & {
+    readonly name: string;
+    readonly start: number;
+  };
   readonly source: ESTree.Node;
   /** Property name for a destructuring candidate; `null` for a whole-namespace alias. */
   readonly key: string | null;
@@ -356,15 +359,10 @@ export const rule = defineRule({
     const pending: PendingReport[] = [];
 
     /** `true` when this use of `name` resolves to one of the recorded declarations (no shadow). */
-    const resolvesTo = (
-      node: ESTree.Node,
-      name: string,
-      declarations: ReadonlySet<number>,
-    ): boolean => {
+    const resolvesTo = (node: ESTree.Node, name: string, declarations: ReadonlySet<number>): boolean => {
       const variable = resolveVariable(context, name, node);
       if (variable === null || variable.defs.length === 0) return true;
-      if (variable.references.some((reference) => reference.isWrite() && !reference.init))
-        return false;
+      if (variable.references.some((reference) => reference.isWrite() && !reference.init)) return false;
       return variable.defs.some((definition) => declarations.has(definition.name.start));
     };
 
@@ -405,8 +403,7 @@ export const rule = defineRule({
     };
 
     /** The Schema export a node refers to, however it is spelled. */
-    const combinatorMember = (node: ESTree.Node): string | null =>
-      schemaMember(node) ?? directMember(node);
+    const combinatorMember = (node: ESTree.Node): string | null => schemaMember(node) ?? directMember(node);
 
     /** The Schema export a call expression invokes, or `null`. */
     const calledMember = (node: ESTree.Node | undefined): string | null => {
@@ -429,8 +426,7 @@ export const rule = defineRule({
         if (parent.type !== 'CallExpression') return null;
         const inner = current;
         const isArgument = parent.arguments.some(
-          (argument) =>
-            argument === inner || (argument.start === inner.start && argument.end === inner.end),
+          (argument) => argument === inner || (argument.start === inner.start && argument.end === inner.end),
         );
         return isArgument ? parent : null;
       }
@@ -464,8 +460,7 @@ export const rule = defineRule({
       let current: ESTree.Node = node;
       for (let guard = 0; guard < 16; guard += 1) {
         const parent = current.parent;
-        if (parent === null || parent === undefined || !UNWRAPPABLE.has(parent.type))
-          return current;
+        if (parent === null || parent === undefined || !UNWRAPPABLE.has(parent.type)) return current;
         current = parent;
       }
       return current;
@@ -491,12 +486,7 @@ export const rule = defineRule({
       }
     };
 
-    const reportCombinator = (
-      node: ESTree.Node,
-      member: string,
-      replacement: string,
-      messageId: string,
-    ): void => {
+    const reportCombinator = (node: ESTree.Node, member: string, replacement: string, messageId: string): void => {
       context.report({ data: { member, replacement }, messageId, node });
     };
 
@@ -509,8 +499,7 @@ export const rule = defineRule({
       if (expression.type !== 'Identifier') return false;
       const variable = resolveVariable(context, expression.name, expression);
       const definition = soleDefinition(variable);
-      if (definition?.type !== 'Variable' || definition.node.type !== 'VariableDeclarator')
-        return false;
+      if (definition?.type !== 'Variable' || definition.node.type !== 'VariableDeclarator') return false;
       const declaration = definition.node;
       if (!isConstDeclaration(declaration) || declaration.init === null) return false;
       return optionTarget(declaration.init, depth + 1);
@@ -525,8 +514,7 @@ export const rule = defineRule({
       if (callee.type !== 'Identifier') return false;
       const definition = soleDefinition(resolveVariable(context, callee.name, callee));
       if (definition?.type !== 'ImportBinding') return false;
-      if (definition.node.type !== 'ImportSpecifier' || importedName(definition.node) !== 'pipe')
-        return false;
+      if (definition.node.type !== 'ImportSpecifier' || importedName(definition.node) !== 'pipe') return false;
       return (
         definition.parent?.type === 'ImportDeclaration' &&
         ['effect', 'effect/Function'].includes(definition.parent.source.value)
@@ -534,10 +522,7 @@ export const rule = defineRule({
     };
 
     /** Undefined means all steps preserve the source, with no destination encountered. */
-    const encodedPipeline = (
-      steps: readonly ESTree.Node[],
-      unwrapSteps: boolean,
-    ): boolean | undefined => {
+    const encodedPipeline = (steps: readonly ESTree.Node[], unwrapSteps: boolean): boolean | undefined => {
       for (const argument of steps) {
         const step = unwrapSteps ? unwrap(argument) : argument;
         if (step.type !== 'CallExpression') return false;
@@ -559,17 +544,14 @@ export const rule = defineRule({
       const wrapper = combinatorMember(parent.callee);
       // encodeTo's argument is the encoded side, not the decoded destination.
       if (wrapper === 'encodeTo') return true;
-      return (
-        wrapper !== null && OPTIONAL_REPLACEMENTS.has(wrapper) && isEncodedSide(parent, depth + 1)
-      );
+      return wrapper !== null && OPTIONAL_REPLACEMENTS.has(wrapper) && isEncodedSide(parent, depth + 1);
     };
 
     const encodedMethodReceiver = (parent: ESTree.MemberExpression, depth: number): boolean => {
       const call = parent.parent;
       if (call?.type !== 'CallExpression' || call.callee !== parent) return false;
       const method = memberName(parent);
-      if (method === 'pipe')
-        return encodedPipeline(call.arguments, true) ?? isEncodedSide(call, depth + 1);
+      if (method === 'pipe') return encodedPipeline(call.arguments, true) ?? isEncodedSide(call, depth + 1);
       return method !== null && METHOD_PRESERVERS.has(method) && isEncodedSide(call, depth + 1);
     };
 
@@ -578,10 +560,7 @@ export const rule = defineRule({
       if (declaration.parent?.parent?.type === 'ExportNamedDeclaration') return false;
       const variable = resolveVariable(context, declaration.id.name, declaration.id);
       const reads = variable?.references.filter((reference) => reference.isRead()) ?? [];
-      return (
-        reads.length > 0 &&
-        reads.every((reference) => isEncodedSide(reference.identifier, depth + 1))
-      );
+      return reads.length > 0 && reads.every((reference) => isEncodedSide(reference.identifier, depth + 1));
     };
 
     /** Follow only source schemas, never Array/Struct payload boundaries. */
@@ -592,10 +571,8 @@ export const rule = defineRule({
       if (!parent) return false;
       if (parent.type === 'CallExpression' && parent.arguments[0] === current)
         return encodedCallArgument(parent, depth);
-      if (parent.type === 'MemberExpression' && parent.object === current)
-        return encodedMethodReceiver(parent, depth);
-      if (parent.type === 'VariableDeclarator' && parent.init === current)
-        return encodedAlias(parent, depth);
+      if (parent.type === 'MemberExpression' && parent.object === current) return encodedMethodReceiver(parent, depth);
+      if (parent.type === 'VariableDeclarator' && parent.init === current) return encodedAlias(parent, depth);
       return false;
     };
 
@@ -603,10 +580,7 @@ export const rule = defineRule({
       if (!options.includeOptionalKeys) return true;
       const innerMember = calledMember(firstArgument(node));
       // Presence flags and optional(nullable) report no separate optional diagnostic.
-      return (
-        innerMember === 'Literal' ||
-        (innerMember !== null && NULLABLE_REPLACEMENTS.has(innerMember))
-      );
+      return innerMember === 'Literal' || (innerMember !== null && NULLABLE_REPLACEMENTS.has(innerMember));
     };
 
     const callReplacement = (node: ESTree.CallExpression, member: string): string => {
@@ -683,10 +657,7 @@ export const rule = defineRule({
       }
     };
 
-    const collectPropertyAlias = (
-      property: ESTree.ObjectPattern['properties'][number],
-      source: ESTree.Node,
-    ): void => {
+    const collectPropertyAlias = (property: ESTree.ObjectPattern['properties'][number], source: ESTree.Node): void => {
       if (property.type !== 'Property' || property.computed) return;
       if (property.value.type !== 'Identifier') return;
       const key = keyName(property.key, false, { templates: false });

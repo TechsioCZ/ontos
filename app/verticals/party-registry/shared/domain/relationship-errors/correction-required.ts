@@ -1,4 +1,5 @@
 import { Schema } from 'effect';
+
 import { RelationshipErrorBase } from './shared.ts';
 
 export class PartyRelationshipCorrectionRequired extends Schema.TaggedError<PartyRelationshipCorrectionRequired>()(

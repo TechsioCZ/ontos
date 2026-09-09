@@ -10,14 +10,12 @@ import {
   isMinLength,
   makeFilter,
 } from 'effect/Schema';
+
 import {
   DeploymentAllowlistOverlaySchema,
   DeploymentAllowlistTopologySchema,
 } from './api/modules/deployment-allowlist.ts';
-import type {
-  DeploymentAllowlistOverlay,
-  DeploymentAllowlistTopology,
-} from './api/modules/deployment-allowlist.ts';
+import type { DeploymentAllowlistOverlay, DeploymentAllowlistTopology } from './api/modules/deployment-allowlist.ts';
 
 const contractPath = '/.well-known/ontos-module-manifest.json';
 
@@ -100,9 +98,7 @@ export const createModuleDeploymentAllowlistBuildInput = ({
 
   const ontosModuleManifests = Object.fromEntries(
     parsedTopology.verticals.map((vertical) => {
-      const deploymentVertical = getResultOrThrow(
-        decodeUnknownResult(DeploymentPublicUrlVerticalSchema)(vertical),
-      );
+      const deploymentVertical = getResultOrThrow(decodeUnknownResult(DeploymentPublicUrlVerticalSchema)(vertical));
       const environmentName = deploymentVertical.cloudflare.publicUrlEnv;
       const configuredOrigin = getResultOrThrow(
         decodeUnknownResult(productionOriginSchema(environmentName, environment))(

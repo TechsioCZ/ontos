@@ -1,12 +1,15 @@
-import { afterEach, expect, it, rstest, test } from 'effect-rstest';
-import { cleanup, render, screen } from '@testing-library/react';
-import userEvent from '@testing-library/user-event';
-import { Menu as ActualMenu } from '@techsio/ui-kit/molecules/menu' with { rstest: 'importActual' };
+import { Menu as ActualMenu } from '@techsio/ui-kit/molecules/menu' with {
+  rstest: 'importActual',
+};
 import { Select as ActualSelect } from '@techsio/ui-kit/molecules/select' with {
   rstest: 'importActual',
 };
+import { cleanup, render, screen } from '@testing-library/react';
+import userEvent from '@testing-library/user-event';
 import { Effect } from 'effect';
+import { afterEach, expect, it, rstest, test } from 'effect-rstest';
 import type { ComponentProps, ReactNode } from 'react';
+
 import { AppIdSchema } from '../../shared/api';
 import Layout from '../../src/routes/layout';
 import { AuthenticatedDashboardLayout } from '../../src/routes/shell-frame';
@@ -49,8 +52,7 @@ rstest.mock('@modern-js/plugin-i18n/runtime', () => ({
         'shell.dashboard.legalEntity.failed': 'Legal entity switching failed. Try again.',
         'shell.dashboard.legalEntity.pending': 'Switching legal entity…',
         'shell.dashboard.legalEntity.placeholder': 'Select a legal entity',
-        'shell.dashboard.legalEntity.unavailable':
-          'Legal entity choices are temporarily unavailable.',
+        'shell.dashboard.legalEntity.unavailable': 'Legal entity choices are temporarily unavailable.',
         'shell.dashboard.navigation.home': 'Home',
         'shell.dashboard.navigation.label': 'Dashboard navigation',
         'shell.dashboard.sidebar.label': 'Dashboard sidebar',
@@ -174,13 +176,11 @@ test('renders the default Home dashboard contract and preserves page children', 
   expect(tenantSelect.hasAttribute('disabled')).toBe(false);
   expect(screen.getAllByText('Alpha tenant').length).toBeGreaterThan(0);
 
-  const navigationElement = screen.getByRole('navigation', { name: 'Dashboard navigation' });
+  const navigationElement = screen.getByRole('navigation', {
+    name: 'Dashboard navigation',
+  });
   const links = [...navigationElement.querySelectorAll('a')];
-  expect(links.map((link) => link.textContent)).toEqual([
-    'Home',
-    'Future generated',
-    'Testing one',
-  ]);
+  expect(links.map((link) => link.textContent)).toEqual(['Home', 'Future generated', 'Testing one']);
   expect(links.map((link) => link.getAttribute('href'))).toEqual([
     '/en/',
     '/en/modules/future-generated',
@@ -209,9 +209,7 @@ test('supports an alternate title and current MicroVertical without changing chi
   expect(screen.getByRole('heading', { level: 1, name: 'Testing workspace' })).toBeTruthy();
   expect(screen.getByText('Stable child content')).toBeTruthy();
   expect(screen.getByRole('link', { name: 'Home' }).hasAttribute('aria-current')).toBe(false);
-  expect(screen.getByRole('link', { name: 'Testing one' }).getAttribute('aria-current')).toBe(
-    'page',
-  );
+  expect(screen.getByRole('link', { name: 'Testing one' }).getAttribute('aria-current')).toBe('page');
 });
 
 test('supports module pages without a shell heading and keeps reduced horizontal content padding', () => {
@@ -248,9 +246,7 @@ test('keeps Home as the only navigation link when no active modules are supplied
     </AuthenticatedDashboardLayout>,
   );
 
-  expect(
-    screen.getByRole('navigation', { name: 'Dashboard navigation' }).querySelectorAll('a'),
-  ).toHaveLength(1);
+  expect(screen.getByRole('navigation', { name: 'Dashboard navigation' }).querySelectorAll('a')).toHaveLength(1);
 });
 
 test('shows failed installed deployments as disabled identities with typed reasons', () => {
@@ -346,9 +342,7 @@ it.effect('retains the account trigger and disables the sole command while logou
 
     const trigger = screen.getByRole('button', { name: 'Ada Lovelace' });
     yield* Effect.promise(() => user.click(trigger));
-    const command = yield* Effect.promise(() =>
-      screen.findByRole('menuitem', { name: 'Logging out…' }),
-    );
+    const command = yield* Effect.promise(() => screen.findByRole('menuitem', { name: 'Logging out…' }));
     expect(command.getAttribute('aria-disabled')).toBe('true');
     yield* Effect.promise(() => user.click(command));
     expect(onLogout).not.toHaveBeenCalled();
@@ -406,9 +400,7 @@ test('disables unavailable, one-choice, and pending tenant states with associate
       Content
     </AuthenticatedDashboardLayout>,
   );
-  expect(screen.getByRole('combobox', { name: 'Current tenant' }).hasAttribute('disabled')).toBe(
-    true,
-  );
+  expect(screen.getByRole('combobox', { name: 'Current tenant' }).hasAttribute('disabled')).toBe(true);
 
   rerender(
     <AuthenticatedDashboardLayout
@@ -423,9 +415,7 @@ test('disables unavailable, one-choice, and pending tenant states with associate
       Content
     </AuthenticatedDashboardLayout>,
   );
-  expect(screen.getByRole('combobox', { name: 'Current tenant' }).hasAttribute('disabled')).toBe(
-    true,
-  );
+  expect(screen.getByRole('combobox', { name: 'Current tenant' }).hasAttribute('disabled')).toBe(true);
 
   rerender(
     <AuthenticatedDashboardLayout
@@ -458,9 +448,7 @@ test('disables unavailable, one-choice, and pending tenant states with associate
       Content
     </AuthenticatedDashboardLayout>,
   );
-  expect(screen.getByRole('combobox', { name: 'Current tenant' }).hasAttribute('disabled')).toBe(
-    true,
-  );
+  expect(screen.getByRole('combobox', { name: 'Current tenant' }).hasAttribute('disabled')).toBe(true);
   expect(screen.getByText('Switching tenant…')).toBeTruthy();
 });
 
@@ -499,17 +487,16 @@ test('names the legal-entity selector by its own label and keeps a sole choice o
     </AuthenticatedDashboardLayout>,
   );
 
-  const legalEntity = screen.getByRole('combobox', { name: 'Current legal entity' });
+  const legalEntity = screen.getByRole('combobox', {
+    name: 'Current legal entity',
+  });
   expect(legalEntity.hasAttribute('aria-label')).toBe(false);
   expect(legalEntity.hasAttribute('aria-describedby')).toBe(false);
   expect(legalEntity.hasAttribute('disabled')).toBe(false);
-  expect(screen.getByRole('combobox', { name: 'Current tenant' }).getAttribute('aria-label')).toBe(
-    'Current tenant',
-  );
+  expect(screen.getByRole('combobox', { name: 'Current tenant' }).getAttribute('aria-label')).toBe('Current tenant');
   expect(screen.queryByText('Select a legal entity')).toBeNull();
 
-  const { currentLegalEntityId: _selectedLegalEntityId, ...unselectedLegalEntityProps } =
-    tenantProps;
+  const { currentLegalEntityId: _selectedLegalEntityId, ...unselectedLegalEntityProps } = tenantProps;
   rerender(
     <AuthenticatedDashboardLayout
       {...unselectedLegalEntityProps}
@@ -576,12 +563,12 @@ test.each(legalEntitySelectorStateCases)(
       </AuthenticatedDashboardLayout>,
     );
 
-    const legalEntity = screen.getByRole('combobox', { name: 'Current legal entity' });
+    const legalEntity = screen.getByRole('combobox', {
+      name: 'Current legal entity',
+    });
     expect(legalEntity.hasAttribute('disabled')).toBe(disabled);
     expect(legalEntity.getAttribute('aria-describedby')).toBe('legal-entity-switch-status');
     expect(screen.getByText(statusText)).toBeTruthy();
-    expect(
-      screen.getByRole('combobox', { name: 'Current tenant' }).getAttribute('aria-describedby'),
-    ).toBeNull();
+    expect(screen.getByRole('combobox', { name: 'Current tenant' }).getAttribute('aria-describedby')).toBeNull();
   },
 );

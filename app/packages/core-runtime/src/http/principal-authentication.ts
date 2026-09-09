@@ -1,8 +1,9 @@
-import type { TrustedPrincipalContext } from '../actions/principal-context.ts';
 import { Effect, Schema } from 'effect';
 import type { Redacted } from 'effect';
 import { HttpEffect, HttpServerResponse } from 'effect/unstable/http';
 import type { HttpServerRequest } from 'effect/unstable/http';
+
+import type { TrustedPrincipalContext } from '../actions/principal-context.ts';
 
 const verificationErrorFields = { reason: Schema.String };
 export const OperationPrincipalVerificationErrorSchema = Schema.Union([
@@ -13,8 +14,7 @@ export const OperationPrincipalVerificationErrorSchema = Schema.Union([
   Schema.TaggedStruct('ActionPrincipalScopeError', verificationErrorFields),
   Schema.TaggedStruct('ActionPrincipalUnavailableError', verificationErrorFields),
 ]);
-export type OperationPrincipalVerificationError =
-  typeof OperationPrincipalVerificationErrorSchema.Type;
+export type OperationPrincipalVerificationError = typeof OperationPrincipalVerificationErrorSchema.Type;
 
 export interface PrincipalAuthenticationProblems<AuthenticationProblem, UnavailableProblem> {
   readonly authentication: () => AuthenticationProblem;
@@ -43,8 +43,7 @@ export const makeMicroverticalHttpPrincipalAuthentication =
     AuthenticationProblem | UnavailableProblem,
     HttpServerRequest.HttpServerRequest | Requirements
   > => {
-    const authentication = () =>
-      bearerChallenge.pipe(Effect.andThen(Effect.fail(problems.authentication())));
+    const authentication = () => bearerChallenge.pipe(Effect.andThen(Effect.fail(problems.authentication())));
     const unavailable = () => Effect.fail(problems.unavailable());
     return verify(authorization).pipe(
       Effect.catchTags({

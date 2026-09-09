@@ -1,4 +1,3 @@
-import { optionRecord } from '../shared/options.ts';
 /**
  * effect-native/no-throw-in-effect-callback
  *
@@ -86,25 +85,16 @@ import { optionRecord } from '../shared/options.ts';
  * Report-only: no fixer, no suggestion.
  */
 import { defineRule } from '@oxlint/plugins';
-
 import type { Context, ESTree, Variable } from '@oxlint/plugins';
 
-import { collectEffectBindings } from '../shared/effect-imports.ts';
-import { isScriptFile, isTestFile, scopePath, matchesGlobs } from '../shared/paths.ts';
-import { stringArray } from '../shared/options.ts';
-import {
-  unwrapNode as unwrap,
-  parentOf,
-  nearestFunction as enclosingFunction,
-  FUNCTION_TYPES,
-} from '../shared/ast.ts';
+import { unwrapNode as unwrap, parentOf, nearestFunction as enclosingFunction, FUNCTION_TYPES } from '../shared/ast.ts';
 import { lookupVariable } from '../shared/bindings.ts';
 import { effectOrigin } from '../shared/effect-identity.ts';
-import {
-  collectRootNamespaces,
-  collectDirectMemberImports,
-  importDeclarations,
-} from '../shared/imports.ts';
+import { collectEffectBindings } from '../shared/effect-imports.ts';
+import { collectRootNamespaces, collectDirectMemberImports, importDeclarations } from '../shared/imports.ts';
+import { optionRecord } from '../shared/options.ts';
+import { stringArray } from '../shared/options.ts';
+import { isScriptFile, isTestFile, scopePath, matchesGlobs } from '../shared/paths.ts';
 
 /** S1/A4 are application-architecture findings: `scripts/**` is excluded on purpose (see B3). */
 const DEFAULT_INCLUDE = ['apps/**', 'verticals/**', 'packages/**'];
@@ -124,17 +114,7 @@ const DEFAULT_IGNORE = [
  * Effect namespaces whose combinators take user callbacks that run *inside* a fiber. A `throw` in
  * any of them bypasses the typed failure channel of the surrounding program.
  */
-const DEFAULT_NAMESPACES = [
-  'Effect',
-  'Layer',
-  'Stream',
-  'Schedule',
-  'Cause',
-  'Exit',
-  'Option',
-  'Result',
-  'Match',
-];
+const DEFAULT_NAMESPACES = ['Effect', 'Layer', 'Stream', 'Schedule', 'Cause', 'Exit', 'Option', 'Result', 'Match'];
 
 /** Import sources that make a thrown constructor "module-local" — i.e. a private sentinel. */
 const DEFAULT_LOCAL_IMPORT_PREFIXES = ['./', '../', '@app/'];
@@ -196,9 +176,7 @@ function collectModuleView(program: ESTree.Program, options: RuleOptions): boole
     program,
     (source) => source !== EFFECT_ROOT_MODULE && options.effectModules.includes(source),
   );
-  return (
-    shared.importsEffect || rootNamespaces.size > 0 || directMembers.size > 0 || barrels.length > 0
-  );
+  return shared.importsEffect || rootNamespaces.size > 0 || directMembers.size > 0 || barrels.length > 0;
 }
 
 /** `Effect.gen` / `E.gen` / `Effect["gen"]` / `Eff.Effect.gen` / bare `gen` from `effect/Effect`. */
@@ -234,36 +212,23 @@ function argumentCall(node: ESTree.Node): ESTree.CallExpression | null {
 }
 
 function isAdapterCall(context: Context, call: ESTree.CallExpression): boolean {
-  const origin = effectOrigin(context, call.callee, [
-    'react',
-    '@tanstack/react-query',
-    '@tanstack/react-router',
-  ]);
+  const origin = effectOrigin(context, call.callee, ['react', '@tanstack/react-query', '@tanstack/react-router']);
   return (
     origin?.length === 1 &&
-    ['useCallback', 'useMutation', 'useQuery', 'queryOptions', 'mutationOptions'].includes(
-      origin[0]!,
-    )
+    ['useCallback', 'useMutation', 'useQuery', 'queryOptions', 'mutationOptions'].includes(origin[0]!)
   );
 }
 
 function isDataCall(context: Context, call: ESTree.CallExpression, options: RuleOptions): boolean {
   const origin = effectOrigin(context, call.callee, options.effectModules);
-  return (
-    origin?.length === 2 &&
-    ['succeed', 'fail', 'die', 'fromNullable', 'fromIterable'].includes(origin[1]!)
-  );
+  return origin?.length === 2 && ['succeed', 'fail', 'die', 'fromNullable', 'fromIterable'].includes(origin[1]!);
 }
 
 /**
  * Transitively: is this node lexically inside a callback passed to an Effect combinator? Nested
  * non-Effect callbacks (`db.transaction(async (tx) => …)`) keep climbing to their outer function.
  */
-function isInsideEffectCallback(
-  context: Context,
-  node: ESTree.Node,
-  options: RuleOptions,
-): boolean {
+function isInsideEffectCallback(context: Context, node: ESTree.Node, options: RuleOptions): boolean {
   let cursor: ESTree.Node = node;
   for (;;) {
     const fn = enclosingFunction(cursor);
@@ -279,10 +244,7 @@ function isInsideEffectCallback(
 }
 
 /** The module specifier a definition came from, when the definition is an import binding. */
-function importSourceOf(definition: {
-  node: ESTree.Node;
-  parent: ESTree.Node | null;
-}): string | null {
+function importSourceOf(definition: { node: ESTree.Node; parent: ESTree.Node | null }): string | null {
   let current: ESTree.Node | null = definition.parent ?? definition.node;
   for (let depth = 0; current !== null && depth < 6; depth += 1) {
     if (current.type === 'ImportDeclaration') return current.source.value;
@@ -296,11 +258,7 @@ function importSourceOf(definition: {
  * constructor resolves to a module-local class/function/const or a project-local import.
  * `new Error(…)` (an unresolved global) → `null`.
  */
-function sentinelName(
-  context: Context,
-  argument: ESTree.Node,
-  options: RuleOptions,
-): string | null {
+function sentinelName(context: Context, argument: ESTree.Node, options: RuleOptions): string | null {
   const thrown = unwrap(argument);
   if (thrown.type !== 'NewExpression' && thrown.type !== 'CallExpression') return null;
   const callee = unwrap(thrown.callee as ESTree.Node);
@@ -309,9 +267,7 @@ function sentinelName(
   const variable = lookupVariable(context, callee);
   if (variable === null || variable.defs.length === 0) return null;
 
-  return variable.defs.some((definition) => isLocalDefinition(definition, options))
-    ? callee.name
-    : null;
+  return variable.defs.some((definition) => isLocalDefinition(definition, options)) ? callee.name : null;
 }
 
 function isLocalDefinition(definition: Variable['defs'][number], options: RuleOptions): boolean {

@@ -1,6 +1,6 @@
 import { Effect, Equal, FileSystem, Schema, Predicate } from 'effect';
+
 import { createCodesmithGenerator } from '../generator-adapter.mts';
-import { tailwindPrefixForNamespace } from '../tailwind-prefix.mts';
 import {
   MODULE_MANIFEST_COMPONENT_SLOT_END,
   MODULE_MANIFEST_COMPONENT_SLOT_START,
@@ -16,6 +16,7 @@ import {
   createMutationEffect as createSharedMutation,
   discoverOntosModuleEffect as discoverSharedModule,
   ensureUniqueMutationPaths,
+  formatGeneratedMutationContent,
   generatedSlotContainsExactEntry,
   insertModuleFederationExposure,
   insertSortedSlot,
@@ -40,6 +41,7 @@ import type {
   ScaffoldPlan,
   OntosVerticalMetadata,
 } from '../shared.mts';
+import { tailwindPrefixForNamespace } from '../tailwind-prefix.mts';
 
 interface PageVerticalMetadata extends OntosVerticalMetadata {
   readonly locales: readonly string[];
@@ -87,10 +89,7 @@ const pageScaffoldFailureFromUnknown = (cause: unknown, fallback: string): PageS
 const discoverOntosModuleEffect = (workspaceRoot: string, requestedVertical: string) =>
   discoverSharedModule(workspaceRoot, requestedVertical).pipe(
     Effect.mapError((cause) =>
-      pageScaffoldFailureFromUnknown(
-        cause,
-        `vertical ${requestedVertical} could not be discovered`,
-      ),
+      pageScaffoldFailureFromUnknown(cause, `vertical ${requestedVertical} could not be discovered`),
     ),
   );
 
@@ -108,9 +107,7 @@ const mapFileSystemError = <Value, Failure, Requirements>(
   operation: Effect.Effect<Value, Failure, Requirements>,
 ): Effect.Effect<Value, PageScaffoldError, Requirements> =>
   operation.pipe(
-    Effect.mapError((cause) =>
-      pageScaffoldFailureFromUnknown(cause, 'page scaffold file-system operation failed'),
-    ),
+    Effect.mapError((cause) => pageScaffoldFailureFromUnknown(cause, 'page scaffold file-system operation failed')),
   );
 
 interface DirectoryEntry {
@@ -159,8 +156,7 @@ const pageRouteIsInvalid = (
   canonicalPath.length > 200 ||
   canonicalSegments.length === 0 ||
   canonicalSegments.some(
-    (segment) =>
-      !staticRouteSegmentPattern.test(segment) && !parameterRouteSegmentPattern.test(segment),
+    (segment) => !staticRouteSegmentPattern.test(segment) && !parameterRouteSegmentPattern.test(segment),
   ) ||
   new Set(parameterNames).size !== parameterNames.length ||
   (requestedUrl === undefined && parameterNames.length > 0);
@@ -172,9 +168,7 @@ const resolvePageRoute = (
 ): Effect.Effect<PageRoute, PageScaffoldError> =>
   Effect.gen(function* resolvePageRouteEffect() {
     const canonicalPath = requestedUrl ?? `/${vertical.slug}/${page}`;
-    const canonicalSegments = canonicalPath.startsWith('/')
-      ? canonicalPath.slice(1).split('/')
-      : [];
+    const canonicalSegments = canonicalPath.startsWith('/') ? canonicalPath.slice(1).split('/') : [];
     const parameterNames = canonicalSegments.flatMap((segment) => {
       const name = parameterRouteSegmentPattern.exec(segment)?.groups?.['name'];
       return name === undefined ? [] : [name];
@@ -185,9 +179,7 @@ const resolvePageRoute = (
       );
     }
     if (requestedUrl !== undefined && routeLocalePrefixPattern.test(canonicalSegments[0] ?? '')) {
-      return yield* pageScaffoldFailure(
-        '--url must not include a locale prefix; the localized router adds it',
-      );
+      return yield* pageScaffoldFailure('--url must not include a locale prefix; the localized router adds it');
     }
     const filesystemSegments = canonicalSegments.map((segment) => {
       const parameterName = parameterRouteSegmentPattern.exec(segment)?.groups?.['name'];
@@ -209,8 +201,7 @@ const relativeFromRoute = (route: PageRoute, target: string, extraLevels = 0): s
 const renderRouteParameterSchemaFields = (componentName: string, route: PageRoute): string =>
   route.parameterNames
     .map(
-      (name) =>
-        `  ${name}: Schema.String.pipe(Schema.brand('${componentName}${toPascalCase(name)}RouteParameter')),`,
+      (name) => `  ${name}: Schema.String.pipe(Schema.brand('${componentName}${toPascalCase(name)}RouteParameter')),`,
     )
     .join('\n');
 
@@ -224,9 +215,7 @@ const validateLocale = (
   Effect.gen(function* validateLocaleEffect() {
     const expectedExport = `./locales/${locale}/${namespace}.json`;
     if (packageExports[`./locales/${locale}`] !== expectedExport) {
-      yield* pageScaffoldFailure(
-        `vertical ${vertical.slug} is missing its generated ${locale} locale export`,
-      );
+      yield* pageScaffoldFailure(`vertical ${vertical.slug} is missing its generated ${locale} locale export`);
     }
     const localePath = resolveContainedPath(
       workspaceRoot,
@@ -250,14 +239,9 @@ const discoverPageVertical = (
   Effect.gen(function* discoverPageVerticalEffect() {
     const vertical = yield* discoverOntosModuleEffect(workspaceRoot, requestedVertical);
     const { topologyEntry } = vertical;
-    const namespace = requiredString(
-      topologyEntry['domain'],
-      `vertical ${vertical.slug} namespace`,
-    );
+    const namespace = requiredString(topologyEntry['domain'], `vertical ${vertical.slug} namespace`);
     if (!namespacePattern.test(namespace)) {
-      return yield* pageScaffoldFailure(
-        `vertical ${vertical.slug} namespace is not a safe generated identifier`,
-      );
+      return yield* pageScaffoldFailure(`vertical ${vertical.slug} namespace is not a safe generated identifier`);
     }
     const moduleFederation = asJsonObject(
       topologyEntry['moduleFederation'],
@@ -268,9 +252,7 @@ const discoverPageVertical = (
       `vertical ${vertical.slug} Module Federation boundary`,
     );
     if (!moduleFederationNamePattern.test(mfBoundaryId)) {
-      return yield* pageScaffoldFailure(
-        `vertical ${vertical.slug} Module Federation boundary is invalid`,
-      );
+      return yield* pageScaffoldFailure(`vertical ${vertical.slug} Module Federation boundary is invalid`);
     }
     const localeRoot = resolveContainedPath(workspaceRoot, 'verticals', vertical.slug, 'locales');
     if (!(yield* fileExists(localeRoot))) {
@@ -288,18 +270,11 @@ const discoverPageVertical = (
     }
     const unsupportedLocale = locales.find((locale) => !pageStarterLocales.has(locale));
     if (unsupportedLocale !== undefined) {
-      return yield* pageScaffoldFailure(
-        `page scaffold has no starter translation for locale ${unsupportedLocale}`,
-      );
+      return yield* pageScaffoldFailure(`page scaffold has no starter translation for locale ${unsupportedLocale}`);
     }
-    const packageExports = asJsonObject(
-      vertical.packageJson['exports'],
-      `vertical ${vertical.slug} package exports`,
-    );
+    const packageExports = asJsonObject(vertical.packageJson['exports'], `vertical ${vertical.slug} package exports`);
     yield* Effect.all(
-      locales.map((locale) =>
-        validateLocale(workspaceRoot, vertical, namespace, packageExports, locale),
-      ),
+      locales.map((locale) => validateLocale(workspaceRoot, vertical, namespace, packageExports, locale)),
       { concurrency: 'unbounded' },
     );
     const routeHeadPath = resolveContainedPath(
@@ -311,9 +286,7 @@ const discoverPageVertical = (
       'ultramodern-route-head.tsx',
     );
     if (!(yield* fileExists(routeHeadPath))) {
-      return yield* pageScaffoldFailure(
-        `vertical ${vertical.slug} generated UltramodernRouteHead is missing`,
-      );
+      return yield* pageScaffoldFailure(`vertical ${vertical.slug} generated UltramodernRouteHead is missing`);
     }
     const resourcesName = `${toCamelCase(vertical.slug)}I18nResources`;
     const resourcesPath = resolveContainedPath(
@@ -325,9 +298,7 @@ const discoverPageVertical = (
       'resources.ts',
     );
     if (!(yield* fileExists(resourcesPath))) {
-      return yield* pageScaffoldFailure(
-        `vertical ${vertical.slug} generated i18n resources are missing`,
-      );
+      return yield* pageScaffoldFailure(`vertical ${vertical.slug} generated i18n resources are missing`);
     }
     const resourcesContent = yield* readTextFile(resourcesPath);
     if (!resourcesContent.includes(`export const ${resourcesName} =`)) {
@@ -397,9 +368,7 @@ export default ${componentName};
 `;
 };
 
-const renderReadAuthorization = (
-  config: Pick<PageScaffoldConfig, 'authorization' | 'permission'>,
-): string => {
+const renderReadAuthorization = (config: Pick<PageScaffoldConfig, 'authorization' | 'permission'>): string => {
   if (config.authorization === 'context_permission') {
     return `{ kind: 'context_permission', permission: '${config.permission ?? ''}' }`;
   }
@@ -412,12 +381,9 @@ const validateReadAuthorization = (
   Effect.gen(function* validateReadAuthorizationEffect() {
     if (
       config.authorization === 'context_permission' &&
-      (config.permission === undefined ||
-        !/^[a-z][a-z0-9]*(?:[._-][a-z0-9]+)*$/u.test(config.permission))
+      (config.permission === undefined || !/^[a-z][a-z0-9]*(?:[._-][a-z0-9]+)*$/u.test(config.permission))
     ) {
-      yield* pageScaffoldFailure(
-        'context_permission authorization requires a stable --permission value',
-      );
+      yield* pageScaffoldFailure('context_permission authorization requires a stable --permission value');
     }
     if (config.authorization !== 'context_permission' && config.permission !== undefined) {
       yield* pageScaffoldFailure('--permission is valid only for context_permission authorization');
@@ -449,11 +415,7 @@ const pageWiring = (
   } as const;
 };
 
-const renderFederatedPage = (
-  vertical: PageVerticalMetadata,
-  page: string,
-  route: PageRoute,
-): string => {
+const renderFederatedPage = (vertical: PageVerticalMetadata, page: string, route: PageRoute): string => {
   const componentName = `${toPascalCase(page)}Page`;
   const federatedComponentName = `${toPascalCase(page)}FederatedPage`;
   const resourcesName = `${toCamelCase(vertical.slug)}I18nResources`;
@@ -467,9 +429,7 @@ const renderFederatedPage = (
   const declaration = route.isDynamic
     ? `const ${federatedComponentName} = ({ routeParams }: ${federatedComponentName}Props) => (`
     : `const ${federatedComponentName} = () => (`;
-  const ownerPage = route.isDynamic
-    ? `<${componentName} routeParams={routeParams} />`
-    : `<${componentName} />`;
+  const ownerPage = route.isDynamic ? `<${componentName} routeParams={routeParams} />` : `<${componentName} />`;
   const ownerPageImport = route.isDynamic
     ? `import {
   ${componentName},
@@ -554,9 +514,7 @@ const renderRouteMetadata = (
   config: Pick<PageScaffoldConfig, 'authorization' | 'permission'>,
 ): string => {
   const keyRoot = `${vertical.namespace}.pages.${toCamelCase(page)}`;
-  const localisedPaths = vertical.locales
-    .map((locale) => `    ${locale}: '${route.canonicalPath}',`)
-    .join('\n');
+  const localisedPaths = vertical.locales.map((locale) => `    ${locale}: '${route.canonicalPath}',`).join('\n');
   return `import { defineTenantModuleEntrypoint } from '@app/core-runtime';
 
 const routeMeta = {
@@ -592,11 +550,7 @@ const renderShellConnectorPage = (route: PageRoute): string =>
   `export { default } from '${relativeFromRoute(route, 'modules/[moduleId]/page.tsx')}';
 `;
 
-const renderShellConnectorLoader = (
-  vertical: PageVerticalMetadata,
-  page: string,
-  route: PageRoute,
-): string => {
+const renderShellConnectorLoader = (vertical: PageVerticalMetadata, page: string, route: PageRoute): string => {
   const loaderImport = route.isDynamic
     ? `{
   loader as loadModuleTarget,
@@ -645,9 +599,7 @@ const renderShellConnectorMetadata = (
   route: PageRoute,
   config: Pick<PageScaffoldConfig, 'authorization' | 'permission'>,
 ): string => {
-  const localisedPaths = vertical.locales
-    .map((locale) => `    ${locale}: '${route.canonicalPath}',`)
-    .join('\n');
+  const localisedPaths = vertical.locales.map((locale) => `    ${locale}: '${route.canonicalPath}',`).join('\n');
   return `import { defineSystemModuleEntrypoint } from '@app/core-runtime';
 
 const routeMeta = {
@@ -744,10 +696,7 @@ interface OwnedPageRoute {
   readonly routePath: string;
 }
 
-const ownedPageRoute = (
-  owner: string,
-  candidate: string,
-): Effect.Effect<OwnedPageRoute, PageScaffoldError> =>
+const ownedPageRoute = (owner: string, candidate: string): Effect.Effect<OwnedPageRoute, PageScaffoldError> =>
   Effect.gen(function* ownedPageRouteEffect() {
     const matches = [...candidate.matchAll(/\broutePath:\s*'(?<routePath>\/[^']+)'/gu)];
     const routePath = matches[0]?.groups?.['routePath'];
@@ -786,9 +735,7 @@ const ownedPageRoutes = (
     const verticalRoot = resolveContainedPath(workspaceRoot, 'verticals');
     const verticals = yield* readDirectoryEntries(verticalRoot);
     const ownedRoutes = yield* Effect.all(
-      verticals
-        .filter((entry) => entry.isDirectory)
-        .map((entry) => readOwnerRoutes(verticalRoot, entry.name)),
+      verticals.filter((entry) => entry.isDirectory).map((entry) => readOwnerRoutes(verticalRoot, entry.name)),
       { concurrency: 'unbounded' },
     );
     return ownedRoutes.flat();
@@ -803,21 +750,14 @@ const routeCollisionIdentity = (routePath: string): string =>
     .map((segment) => (parameterRouteSegmentPattern.test(segment) ? ':parameter' : segment))
     .join('/');
 
-const assertShellRouteSiblingsAreAvailable = (
-  entries: readonly DirectoryEntry[],
-  segment: string,
-  route: PageRoute,
-) =>
+const assertShellRouteSiblingsAreAvailable = (entries: readonly DirectoryEntry[], segment: string, route: PageRoute) =>
   Effect.gen(function* assertShellRouteSiblingsAreAvailableEffect() {
     const desiredSegmentIsDynamic = isDynamicShellRouteSegment(segment);
     const siblingCollision = entries.find(
-      (entry) =>
-        entry.isDirectory && (desiredSegmentIsDynamic || isDynamicShellRouteSegment(entry.name)),
+      (entry) => entry.isDirectory && (desiredSegmentIsDynamic || isDynamicShellRouteSegment(entry.name)),
     );
     if (siblingCollision !== undefined) {
-      const collisionKind = isDynamicShellRouteSegment(siblingCollision.name)
-        ? 'dynamic'
-        : 'static';
+      const collisionKind = isDynamicShellRouteSegment(siblingCollision.name) ? 'dynamic' : 'static';
       yield* pageScaffoldFailure(
         `Shell route ${route.canonicalPath} collides with ${collisionKind} route segment ${siblingCollision.name}`,
       );
@@ -843,14 +783,10 @@ const assertShellRouteSegmentIsAvailable = (
     }
     const child = resolveContainedPath(parent, segment);
     if (index === route.filesystemSegments.length - 1) {
-      yield* pageScaffoldFailure(
-        `Shell route already exists or collides with generated page: ${child}`,
-      );
+      yield* pageScaffoldFailure(`Shell route already exists or collides with generated page: ${child}`);
     }
     if (!childEntry.isDirectory) {
-      yield* pageScaffoldFailure(
-        `Shell route ${route.canonicalPath} collides with reserved route content`,
-      );
+      yield* pageScaffoldFailure(`Shell route ${route.canonicalPath} collides with reserved route content`);
     }
     const prefix = `/${route.canonicalSegments.slice(0, index + 1).join('/')}`;
     const ownsPrefix = registeredRoutes.has(prefix);
@@ -862,9 +798,7 @@ const assertShellRouteSegmentIsAvailable = (
       { concurrency: 'unbounded' },
     );
     if ((pageRouteExists || routeMetadataExists) && !ownsPrefix) {
-      yield* pageScaffoldFailure(
-        `Shell route ${route.canonicalPath} uses reserved route prefix ${prefix}`,
-      );
+      yield* pageScaffoldFailure(`Shell route ${route.canonicalPath} uses reserved route prefix ${prefix}`);
     }
     yield* assertShellRouteSegmentIsAvailable(child, index + 1, route, registeredRoutes);
   });
@@ -880,18 +814,6 @@ const assertShellRouteIsAvailable = (
     route,
     registeredRoutes,
   );
-
-const resolveGeneratedPageContentState = (
-  pageContent: string,
-  vertical: PageVerticalMetadata,
-  page: string,
-  route: PageRoute,
-): GeneratedPageState => {
-  if (pageContent === renderPage(vertical, page, route)) {
-    return 'current';
-  }
-  return 'invalid';
-};
 
 const generatedWiringEntryMatches = (
   content: string,
@@ -910,13 +832,17 @@ const generatedFileMatches = (
   filePath: string,
   expected: string,
 ): Effect.Effect<boolean, PageScaffoldError, FileSystem.FileSystem> =>
-  fileExists(filePath).pipe(
-    Effect.flatMap((exists) =>
-      exists
-        ? readTextFile(filePath).pipe(Effect.map((content) => content === expected))
-        : Effect.succeed(false),
-    ),
-  );
+  Effect.gen(function* generatedFileMatchesProgram() {
+    if (!(yield* fileExists(filePath))) {
+      return false;
+    }
+    const content = yield* readTextFile(filePath);
+    const [actual, generated] = yield* Effect.all([
+      formatGeneratedMutationContent(filePath, content),
+      formatGeneratedMutationContent(filePath, expected),
+    ]).pipe(Effect.mapError((cause) => pageScaffoldFailureFromUnknown(cause, 'generated page formatting failed')));
+    return actual === generated;
+  });
 
 const generatedWiringContentMatches = (
   vertical: PageVerticalMetadata,
@@ -975,16 +901,7 @@ const generatedWiringMatches = (
     const [federation, shellClients] = yield* Effect.all(
       [
         readTextFile(federationPath),
-        readTextFile(
-          resolveContainedPath(
-            workspaceRoot,
-            'apps',
-            SHELL_APP_ID,
-            'src',
-            'api',
-            'vertical-clients.ts',
-          ),
-        ),
+        readTextFile(resolveContainedPath(workspaceRoot, 'apps', SHELL_APP_ID, 'src', 'api', 'vertical-clients.ts')),
       ],
       { concurrency: 'unbounded' },
     );
@@ -1012,18 +929,15 @@ const generatedWiringMatches = (
     const shellRouteInventoryMatches =
       shellRouteEntries.length === expectedShellFiles.length &&
       shellRouteEntries.every(
-        (entry) =>
-          entry.isFile && expectedShellFiles.some(([expectedName]) => expectedName === entry.name),
+        (entry) => entry.isFile && expectedShellFiles.some(([expectedName]) => expectedName === entry.name),
       );
     const exposureKey = `./Page${toPascalCase(page)}`;
     const expectedExposureSource = `./src/federation/page-${page}.tsx`;
     const exposureSource = moduleFederationExposureSource(federation, exposureKey);
     const federatedPagePath = resolveContainedPath(vertical.directory, expectedExposureSource);
-    const federatedPageExists = yield* fileExists(federatedPagePath);
     const federationMatches =
       exposureSource === expectedExposureSource &&
-      federatedPageExists &&
-      (yield* readTextFile(federatedPagePath)) === renderFederatedPage(vertical, page, route);
+      (yield* generatedFileMatches(federatedPagePath, renderFederatedPage(vertical, page, route)));
     const escapedModuleId = vertical.moduleId.replaceAll('.', String.raw`\.`);
     const navigationMatches =
       wiring.manifestNavigation === undefined
@@ -1033,20 +947,16 @@ const generatedWiringMatches = (
             MODULE_MANIFEST_SHELL_NAVIGATION_SLOT_END,
           ).every(
             (entry) =>
-              !new RegExp(
-                `\\bcontributionKey\\s*:\\s*["']${escapedModuleId}\\.navigation\\.${page}["']`,
-                'u',
-              ).test(entry),
+              !new RegExp(`\\bcontributionKey\\s*:\\s*["']${escapedModuleId}\\.navigation\\.${page}["']`, 'u').test(
+                entry,
+              ),
           )
         : generatedWiringEntryMatches(
             vertical.manifestContent,
             MODULE_MANIFEST_SHELL_NAVIGATION_SLOT_START,
             MODULE_MANIFEST_SHELL_NAVIGATION_SLOT_END,
             wiring.manifestNavigation,
-            new RegExp(
-              `\\bcontributionKey\\s*:\\s*["']${vertical.moduleId}\\.navigation\\.${page}["']`,
-              'u',
-            ),
+            new RegExp(`\\bcontributionKey\\s*:\\s*["']${vertical.moduleId}\\.navigation\\.${page}["']`, 'u'),
           );
     return (
       generatedWiringContentMatches(vertical, page, wiring, shellClients, navigationMatches) &&
@@ -1105,31 +1015,22 @@ const generatedPageState = (
     ) {
       return 'invalid';
     }
-    const [pageContent, routeMetadataContent] = yield* Effect.all(
-      [readTextFile(pagePath), readTextFile(routeMetadataPath)],
-      { concurrency: 'unbounded' },
-    );
-    const expectedMetadata = renderRouteMetadata(vertical, page, route, config);
-    if (routeMetadataContent !== expectedMetadata) {
-      return 'invalid';
-    }
-    const pageState = resolveGeneratedPageContentState(pageContent, vertical, page, route);
-    if (pageState === 'invalid') {
+    const fileMatches = yield* Effect.all([
+      generatedFileMatches(pagePath, renderPage(vertical, page, route)),
+      generatedFileMatches(routeMetadataPath, renderRouteMetadata(vertical, page, route, config)),
+    ]);
+    if (!fileMatches.every(Boolean)) {
       return 'invalid';
     }
     const pageKey = toCamelCase(page);
     const localeStates = yield* Effect.all(
-      vertical.locales.map((locale) =>
-        generatedLocaleState(workspaceRoot, vertical, locale, pageKey),
-      ),
+      vertical.locales.map((locale) => generatedLocaleState(workspaceRoot, vertical, locale, pageKey)),
       { concurrency: 'unbounded' },
     );
-    if (!localeStates.every((state) => state === pageState)) {
+    if (!localeStates.every((state) => state === 'current')) {
       return 'invalid';
     }
-    return (yield* generatedWiringMatches(workspaceRoot, vertical, page, route, config))
-      ? pageState
-      : 'invalid';
+    return (yield* generatedWiringMatches(workspaceRoot, vertical, page, route, config)) ? 'current' : 'invalid';
   });
 
 const planPageScaffold = (
@@ -1181,9 +1082,7 @@ const planPageScaffold = (
           result: { appId: vertical.appId, pagePath, routeMetadataPath },
         };
       }
-      return yield* pageScaffoldFailure(
-        `page route already exists or collides with nested content: ${routeDirectory}`,
-      );
+      return yield* pageScaffoldFailure(`page route already exists or collides with nested content: ${routeDirectory}`);
     }
     const identity = `${vertical.moduleId}.page.${page}`;
     const pageComponentIdentity = new RegExp(`["']page-${page}["']\\s*:`, 'u');
@@ -1197,9 +1096,7 @@ const planPageScaffold = (
     }
     const registeredRoutes = yield* ownedPageRoutes(workspaceRoot);
     const existingRouteOwner = registeredRoutes.find(
-      (registered) =>
-        routeCollisionIdentity(registered.routePath) ===
-        routeCollisionIdentity(route.canonicalPath),
+      (registered) => routeCollisionIdentity(registered.routePath) === routeCollisionIdentity(route.canonicalPath),
     );
     if (existingRouteOwner !== undefined) {
       const reason =
@@ -1214,12 +1111,7 @@ const planPageScaffold = (
       new Set(registeredRoutes.map((registered) => registered.routePath)),
     );
     const federationPath = resolveContainedPath(vertical.directory, 'module-federation.config.ts');
-    const federatedPagePath = resolveContainedPath(
-      vertical.directory,
-      'src',
-      'federation',
-      `page-${page}.tsx`,
-    );
+    const federatedPagePath = resolveContainedPath(vertical.directory, 'src', 'federation', `page-${page}.tsx`);
     const shellClientsPath = resolveContainedPath(
       workspaceRoot,
       'apps',
@@ -1228,34 +1120,25 @@ const planPageScaffold = (
       'api',
       'vertical-clients.ts',
     );
-    const [pageMutation, routeMutation, localeMutations, federationContent, shellClientsContent] =
-      yield* Effect.all(
-        [
-          createMutationEffect(
-            pagePath,
-            renderPage(vertical, page, route),
-            'page route could not be created',
-          ),
-          createMutationEffect(
-            routeMetadataPath,
-            renderRouteMetadata(vertical, page, route, config),
-            'page route metadata could not be created',
-          ),
-          Effect.all(
-            vertical.locales.map((locale) => patchLocale(workspaceRoot, vertical, locale, page)),
-            { concurrency: 'unbounded' },
-          ),
-          readTextFile(federationPath),
-          readTextFile(shellClientsPath),
-        ],
-        { concurrency: 'unbounded' },
-      );
-    const wiring = patchPageWiring(vertical, page, route, config);
-    const manifestMutation = updateMutation(
-      vertical.manifestPath,
-      vertical.manifestContent,
-      wiring.manifest,
+    const [pageMutation, routeMutation, localeMutations, federationContent, shellClientsContent] = yield* Effect.all(
+      [
+        createMutationEffect(pagePath, renderPage(vertical, page, route), 'page route could not be created'),
+        createMutationEffect(
+          routeMetadataPath,
+          renderRouteMetadata(vertical, page, route, config),
+          'page route metadata could not be created',
+        ),
+        Effect.all(
+          vertical.locales.map((locale) => patchLocale(workspaceRoot, vertical, locale, page)),
+          { concurrency: 'unbounded' },
+        ),
+        readTextFile(federationPath),
+        readTextFile(shellClientsPath),
+      ],
+      { concurrency: 'unbounded' },
     );
+    const wiring = patchPageWiring(vertical, page, route, config);
+    const manifestMutation = updateMutation(vertical.manifestPath, vertical.manifestContent, wiring.manifest);
     const registrationMutation = updateMutation(
       vertical.registrationPath,
       vertical.registrationContent,

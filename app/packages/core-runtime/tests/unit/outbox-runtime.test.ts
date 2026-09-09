@@ -1,14 +1,11 @@
-import { expect, it } from 'effect-rstest';
 import { Context, Effect, Option, Schema } from 'effect';
-import { defineOutboxWorker } from '../../src/outbox/definition.ts';
+import { expect, it } from 'effect-rstest';
+
 import { defineTenantModuleEntrypoint } from '../../src/modules/module-entrypoint.ts';
+import { defineOutboxWorker } from '../../src/outbox/definition.ts';
 import type { OutboxWorkerHandler, OutboxWorkerRegistration } from '../../src/outbox/definition.ts';
 import { OutboxClaimLostError, OutboxWorkerDescriptorError } from '../../src/outbox/errors.ts';
-import type {
-  OutboxClaim,
-  OutboxFailureStatus,
-  OutboxRepositoryService,
-} from '../../src/outbox/repository.ts';
+import type { OutboxClaim, OutboxFailureStatus, OutboxRepositoryService } from '../../src/outbox/repository.ts';
 import { makeOutboxRuntime } from '../../src/outbox/runtime.ts';
 
 const TestHandlerFailureContract = Schema.TaggedStruct('TestHandlerFailure', {
@@ -52,11 +49,7 @@ const claim = (attemptNumber = 1, payloadJson?: OutboxClaim['payloadJson']): Out
 });
 
 const worker = <HandlerError, HandlerRequirements = never>(
-  handler: OutboxWorkerHandler<
-    { readonly messageKey: typeof MessageKey.Type },
-    HandlerError,
-    HandlerRequirements
-  >,
+  handler: OutboxWorkerHandler<{ readonly messageKey: typeof MessageKey.Type }, HandlerError, HandlerRequirements>,
 ) =>
   defineOutboxWorker(
     {
@@ -93,7 +86,10 @@ const repository = (
     readonly claims?: readonly OutboxClaim[];
     readonly completeError?: OutboxClaimLostError;
     readonly failureStatuses?: readonly OutboxFailureStatus[];
-    readonly match?: { readonly deliveriesCreated: number; readonly messagesMatched: number };
+    readonly match?: {
+      readonly deliveriesCreated: number;
+      readonly messagesMatched: number;
+    };
   } = {},
 ): ControlledRepository => {
   const claims = [...(options.claims ?? [])];
@@ -114,28 +110,19 @@ const repository = (
           probe.failed.push({ claim: claimed, message });
           return failureStatuses.shift() ?? 'pending';
         }),
-      matchUnmatched: () =>
-        Effect.succeed(options.match ?? { deliveriesCreated: 0, messagesMatched: 0 }),
+      matchUnmatched: () => Effect.succeed(options.match ?? { deliveriesCreated: 0, messagesMatched: 0 }),
     },
   };
 };
 
-type NoRequirementsWorker = OutboxWorkerRegistration<
-  Schema.ConstraintDecoder<unknown>,
-  string,
-  string,
-  unknown
->;
+type NoRequirementsWorker = OutboxWorkerRegistration<Schema.ConstraintDecoder<unknown>, string, string, unknown>;
 
 interface WorkerInvocation {
   readonly context: Parameters<OutboxWorkerHandler<{ readonly messageKey: string }, never>>[1];
   readonly payload: { readonly messageKey: string };
 }
 
-const run = (
-  service: OutboxRepositoryService,
-  registration: NoRequirementsWorker = worker(() => Effect.void),
-) =>
+const run = (service: OutboxRepositoryService, registration: NoRequirementsWorker = worker(() => Effect.void)) =>
   makeOutboxRuntime(service).runCycle({
     claimOwner: 'unit-runtime',
     registrations: [registration],
@@ -144,7 +131,9 @@ const run = (
 
 it.effect('owner-local cycles do not perform global matching', () =>
   Effect.gen(function* ownerLocalCycle() {
-    const controlled = repository({ match: { deliveriesCreated: 0, messagesMatched: 2 } });
+    const controlled = repository({
+      match: { deliveriesCreated: 0, messagesMatched: 2 },
+    });
 
     expect(yield* run(controlled.service)).toEqual({
       claimed: 0,
@@ -162,7 +151,9 @@ it.effect('owner-local cycles do not perform global matching', () =>
 
 it.effect('matches messages only through the explicit Core matcher snapshot', () =>
   Effect.gen(function* explicitMatcherSnapshot() {
-    const controlled = repository({ match: { deliveriesCreated: 3, messagesMatched: 2 } });
+    const controlled = repository({
+      match: { deliveriesCreated: 3, messagesMatched: 2 },
+    });
     const registration = worker(() => Effect.void);
     const result = yield* makeOutboxRuntime(controlled.service).matchMessages({
       subscriptions: [registration.descriptor],
@@ -277,9 +268,7 @@ it.effect('runs a worker with Effect services provided by its owning MicroVertic
         workerKey: 'consumer.layered-logger',
       },
       (_payload, context) =>
-        TestWorkerDependency.pipe(
-          Effect.flatMap(({ record }) => Effect.sync(() => record(context.messageId))),
-        ),
+        TestWorkerDependency.pipe(Effect.flatMap(({ record }) => Effect.sync(() => record(context.messageId)))),
     );
 
     const result = yield* makeOutboxRuntime(controlled.service)
@@ -316,25 +305,27 @@ it.effect('records decode failures as retries without calling the handler or com
     expect(result.failed).toBe(1);
     expect(result.retried).toBe(1);
     expect(controlled.probe.completed).toEqual([]);
-    expect(controlled.probe.failed[0]?.message).toBe(
-      'The Outbox Message payload does not match its published schema',
-    );
+    expect(controlled.probe.failed[0]?.message).toBe('The Outbox Message payload does not match its published schema');
   }),
 );
 
 it.effect('classifies declared failures, defects, retry exhaustion, and never completes them', () =>
   Effect.gen(function* failureClassification() {
-    const declared = repository({ claims: [claim()], failureStatuses: ['pending'] });
+    const declared = repository({
+      claims: [claim()],
+      failureStatuses: ['pending'],
+    });
     const declaredResult = yield* run(
       declared.service,
       worker(() => Effect.fail(new TestHandlerFailure({ reason: 'secret typed detail' }))),
     );
     expect(declaredResult.retried).toBe(1);
-    expect(declared.probe.failed[0]?.message).toBe(
-      'The Outbox Worker handler returned a declared failure',
-    );
+    expect(declared.probe.failed[0]?.message).toBe('The Outbox Worker handler returned a declared failure');
 
-    const defect = repository({ claims: [claim(2)], failureStatuses: ['dead'] });
+    const defect = repository({
+      claims: [claim(2)],
+      failureStatuses: ['dead'],
+    });
     const defectResult = yield* run(
       defect.service,
       worker(() => Effect.die(new Error('database password must not be stored'))),
@@ -347,20 +338,18 @@ it.effect('classifies declared failures, defects, retry exhaustion, and never co
   }),
 );
 
-it.effect(
-  'surfaces stale-claim finalization and leaves checkpoint responsibility with the repository',
-  () =>
-    Effect.gen(function* staleClaimFinalization() {
-      const controlled = repository({
-        claims: [claim()],
-        completeError: new OutboxClaimLostError({
-          code: 'outbox_claim_lost',
-          reason: 'stale test claim',
-        }),
-      });
+it.effect('surfaces stale-claim finalization and leaves checkpoint responsibility with the repository', () =>
+  Effect.gen(function* staleClaimFinalization() {
+    const controlled = repository({
+      claims: [claim()],
+      completeError: new OutboxClaimLostError({
+        code: 'outbox_claim_lost',
+        reason: 'stale test claim',
+      }),
+    });
 
-      const error = yield* Effect.flip(run(controlled.service));
-      expect(Schema.is(OutboxClaimLostError)(error)).toBe(true);
-      expect(controlled.probe.failed).toEqual([]);
-    }),
+    const error = yield* Effect.flip(run(controlled.service));
+    expect(Schema.is(OutboxClaimLostError)(error)).toBe(true);
+    expect(controlled.probe.failed).toEqual([]);
+  }),
 );

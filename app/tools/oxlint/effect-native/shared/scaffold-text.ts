@@ -7,41 +7,27 @@ const MODULE_PARENTS = new Set([
   'ExportNamedDeclaration',
   'ExportAllDeclaration',
 ]);
-const DRIVER_BOUNDARIES = new Set([
-  'VariableDeclarator',
-  'ReturnStatement',
-  'TemplateLiteral',
-  'Program',
-]);
+const DRIVER_BOUNDARIES = new Set(['VariableDeclarator', 'ReturnStatement', 'TemplateLiteral', 'Program']);
 
 /** Lexical masking keeps offsets/newlines; regex literals and dynamic fragments remain opaque. */
 export function maskText(text: string, strings = false): string {
   return text.replace(
     /\/\*[\s\S]*?\*\/|\/\/[^\r\n]*|'(?:\\[\s\S]|[^'\\])*'|"(?:\\[\s\S]|[^"\\])*"|`(?:\\[\s\S]|[^`\\])*`/gu,
     (value) =>
-      value.startsWith('/') || strings
-        ? value.replace(/[^\r\n]+/gu, (segment) => ' '.repeat(segment.length))
-        : value,
+      value.startsWith('/') || strings ? value.replace(/[^\r\n]+/gu, (segment) => ' '.repeat(segment.length)) : value,
   );
 }
 function driverCallee(callee: ESTree.Node): boolean {
   if (callee.type === 'Identifier')
-    return /^(?:Error|TypeError|exec|execSync|execFile|execFileSync|spawn|spawnSync)$/u.test(
-      callee.name,
-    );
-  return (
-    callee.type === 'MemberExpression' &&
-    callee.object.type === 'Identifier' &&
-    callee.object.name === 'console'
-  );
+    return /^(?:Error|TypeError|exec|execSync|execFile|execFileSync|spawn|spawnSync)$/u.test(callee.name);
+  return callee.type === 'MemberExpression' && callee.object.type === 'Identifier' && callee.object.name === 'console';
 }
 /** Excludes generator-driver prose/logging/shell arguments, not text emitted into source files. */
 export function driverText(node: ESTree.Node): boolean {
   if (node.parent && MODULE_PARENTS.has(node.parent.type)) return true;
   let current = node.parent;
   while (current) {
-    if (current.type === 'CallExpression' || current.type === 'NewExpression')
-      return driverCallee(current.callee);
+    if (current.type === 'CallExpression' || current.type === 'NewExpression') return driverCallee(current.callee);
     if (DRIVER_BOUNDARIES.has(current.type)) return false;
     current = current.parent;
   }

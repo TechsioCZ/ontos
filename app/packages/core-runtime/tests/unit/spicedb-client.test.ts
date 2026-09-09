@@ -1,5 +1,6 @@
-import { expect, it } from 'effect-rstest';
 import { v1 } from '@authzed/authzed-node';
+import { expect, it } from 'effect-rstest';
+
 import { spiceDbClientSecurity } from '../../src/permissions/client.ts';
 import { SpiceDbConfigError } from '../../src/permissions/config-error.ts';
 

@@ -54,9 +54,7 @@ for (const { rule, source } of cases) {
               },
             ],
             rules: {
-              [`effect-native/${rule}`]: includeScripts
-                ? ['error', { includeScripts: true }]
-                : 'error',
+              [`effect-native/${rule}`]: includeScripts ? ['error', { includeScripts: true }] : 'error',
             },
           }),
         );
@@ -65,9 +63,7 @@ for (const { rule, source } of cases) {
             config,
             pathMode === 'relative'
               ? paths
-              : paths.map((path) =>
-                  nodePath.join(pathMode === 'symlink' ? alias : directory, path),
-                ),
+              : paths.map((path) => nodePath.join(pathMode === 'symlink' ? alias : directory, path)),
             directory,
             rule,
           );
@@ -79,18 +75,11 @@ for (const { rule, source } of cases) {
           const reported = [
             ...new Set(
               // Oxlint may retain absolute spellings when input paths cross a symlink.
-              run.diagnostics.map((diagnostic) =>
-                realpathSync(nodePath.resolve(directory, diagnostic.filename)),
-              ),
+              run.diagnostics.map((diagnostic) => realpathSync(nodePath.resolve(directory, diagnostic.filename))),
             ),
           ];
-          expect(
-            reported.toSorted(),
-            `${rule}: includeScripts=${includeScripts}, pathMode=${pathMode}`,
-          ).toEqual(
-            (includeScripts ? paths : sources)
-              .map((path) => realpathSync(nodePath.join(directory, path)))
-              .toSorted(),
+          expect(reported.toSorted(), `${rule}: includeScripts=${includeScripts}, pathMode=${pathMode}`).toEqual(
+            (includeScripts ? paths : sources).map((path) => realpathSync(nodePath.join(directory, path))).toSorted(),
           );
         }
       }

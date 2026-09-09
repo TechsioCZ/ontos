@@ -2,11 +2,12 @@
 // @ontos-action-owner core.identity
 // @ontos-action-slug create-non-human-principal
 import { Effect, Schema } from 'effect';
+
 import type { ActionHandlerContext } from '../../actions/context.ts';
 import { defineAction } from '../../actions/definition.ts';
+import { PrincipalManagementErrorSchema } from '../../auth/principal-management-errors.ts';
 import { principalManagementRepositoryFromTransaction } from '../../auth/principal-management.ts';
 import type { PrincipalManagementRepositoryService } from '../../auth/principal-management.ts';
-import { PrincipalManagementErrorSchema } from '../../auth/principal-management-errors.ts';
 import { defineSystemModuleEntrypoint } from '../module-entrypoint.ts';
 
 const uuid = Schema.String.check(Schema.isUUID());
@@ -16,9 +17,7 @@ const CreateNonHumanPrincipalPayloadSchema = Schema.Struct({
   displayName,
   kind: Schema.Literals(['service', 'integration', 'system']),
 });
-export type CreateNonHumanPrincipalPayload = Schema.Schema.Type<
-  typeof CreateNonHumanPrincipalPayloadSchema
->;
+export type CreateNonHumanPrincipalPayload = Schema.Schema.Type<typeof CreateNonHumanPrincipalPayloadSchema>;
 const CreateNonHumanPrincipalResultSchema = Schema.Struct({
   principalId: PrincipalIdSchema,
   status: Schema.Literal('active'),
@@ -28,7 +27,9 @@ const handle = (
   payload: CreateNonHumanPrincipalPayload,
   context: ActionHandlerContext<
     Readonly<Record<never, never>>,
-    { readonly create: PrincipalManagementRepositoryService['createNonHumanPrincipal'] }
+    {
+      readonly create: PrincipalManagementRepositoryService['createNonHumanPrincipal'];
+    }
   >,
 ) =>
   context.services.create({ ...payload, tenantId: context.scope.tenantId }).pipe(
@@ -50,7 +51,10 @@ export const createNonHumanPrincipalAction = defineAction(
     domainEvents: {},
     entrypoint: defineSystemModuleEntrypoint({
       access: 'write',
-      authorization: { kind: 'action_execution', provisioning: 'tenant_membership_default' },
+      authorization: {
+        kind: 'action_execution',
+        provisioning: 'tenant_membership_default',
+      },
       entrypointKey: 'core.identity.create-non-human-principal',
       moduleKey: 'core.identity',
       role: 'action',

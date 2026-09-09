@@ -34,16 +34,9 @@ function addEffectSpecifiers(
 ): void {
   for (const specifier of specifiers) {
     if (specifier.type === 'ImportSpecifier') {
-      const imported =
-        specifier.imported.type === 'Identifier'
-          ? specifier.imported.name
-          : specifier.imported.value;
+      const imported = specifier.imported.type === 'Identifier' ? specifier.imported.name : specifier.imported.value;
       namespaces.set(specifier.local.name, imported);
-    } else if (
-      specifier.type === 'ImportNamespaceSpecifier' &&
-      submodule !== undefined &&
-      submodule !== 'effect'
-    ) {
+    } else if (specifier.type === 'ImportNamespaceSpecifier' && submodule !== undefined && submodule !== 'effect') {
       namespaces.set(specifier.local.name, submodule);
     }
   }

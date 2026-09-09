@@ -2,10 +2,8 @@
 import { defineRead, defineTenantModuleEntrypoint } from '@app/core-runtime';
 import type { ReadHandlerContext } from '@app/core-runtime';
 import { Effect } from 'effect';
-import {
-  PartyMatchRequestSchema,
-  PartyMatchResponseSchema,
-} from '../../shared/apis/party-match.ts';
+
+import { PartyMatchRequestSchema, PartyMatchResponseSchema } from '../../shared/apis/party-match.ts';
 import type { PartyCandidate } from '../../shared/domain/identity-contracts.ts';
 import { previewPartyMatch } from '../services/party-matching-persistence.service.ts';
 import { readUnavailable } from './read-outcome.ts';
@@ -49,8 +47,7 @@ export const partyMatchRead = defineRead(
     ),
   (transaction, scope) =>
     Effect.succeed({
-      preview: (candidate: PartyCandidate) =>
-        previewPartyMatch(transaction, scope.tenantId, candidate),
+      preview: (candidate: PartyCandidate) => previewPartyMatch(transaction, scope.tenantId, candidate),
     }),
   () => ({ kind: 'tenant', permission: 'manage_party_identity' }),
 );

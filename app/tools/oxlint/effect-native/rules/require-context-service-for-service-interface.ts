@@ -1,4 +1,3 @@
-import { optionRecord } from '../shared/options.ts';
 /**
  * effect-native/require-context-service-for-service-interface
  *
@@ -14,18 +13,13 @@ import { optionRecord } from '../shared/options.ts';
  * not proof that values never enter a runtime. Report only; no fixer or suggestions.
  */
 import { defineRule } from '@oxlint/plugins';
-
 import type { Context, ESTree } from '@oxlint/plugins';
 
-import { isTestFile, scopePath, matchesGlobs } from '../shared/paths.ts';
-import {
-  booleanOption as boolean,
-  stringArray,
-  stringOption,
-  safeRegExp,
-} from '../shared/options.ts';
 import { typeNameSegments } from '../shared/ast.ts';
 import { resolveVariable } from '../shared/bindings.ts';
+import { optionRecord } from '../shared/options.ts';
+import { booleanOption as boolean, stringArray, stringOption, safeRegExp } from '../shared/options.ts';
+import { isTestFile, scopePath, matchesGlobs } from '../shared/paths.ts';
 
 const DEFAULT_INCLUDE = ['apps/**', 'verticals/**', 'packages/**'];
 const DEFAULT_IGNORE = [
@@ -40,22 +34,13 @@ const DEFAULT_IGNORE = [
   '**/scripts/**',
 ];
 
-const DEFAULT_SERVICE_NAME_PATTERN =
-  '(Service|Repository|Gateway|Resolver|Access|Store|Port|Contract)$';
-const DEFAULT_DATA_TYPE_PATTERN =
-  '(Input|Output|Options|Config|Record|Row|Payload|Result|Error|Problem)$';
+const DEFAULT_SERVICE_NAME_PATTERN = '(Service|Repository|Gateway|Resolver|Access|Store|Port|Contract)$';
+const DEFAULT_DATA_TYPE_PATTERN = '(Input|Output|Options|Config|Record|Row|Payload|Result|Error|Problem)$';
 const DEFAULT_EFFECT_TYPES = ['Effect'];
 const DEFAULT_PROMISE_TYPES = ['Promise', 'PromiseLike'];
 const DEFAULT_TAG_MEMBERS = ['Service', 'Reference', 'Tag', 'GenericTag'];
 const DEFAULT_TAG_NAMESPACES = ['Context', 'Effect'];
-const DEFAULT_LAYER_MEMBERS = [
-  'effect',
-  'succeed',
-  'sync',
-  'scoped',
-  'scopedDiscard',
-  'effectDiscard',
-];
+const DEFAULT_LAYER_MEMBERS = ['effect', 'succeed', 'sync', 'scoped', 'scopedDiscard', 'effectDiscard'];
 
 const TSX_FILE = /\.[cm]?[jt]sx$/u;
 /** Depth cap for the generic type-subtree walk; deep enough for nested generics, cheap enough to run per member. */
@@ -75,11 +60,7 @@ function readOptions(context: Context) {
     includePromiseMembers: boolean(record.includePromiseMembers, true),
     allowLayerConstruction: boolean(record.allowLayerConstruction, true),
     requireTagPerContract: boolean(record.requireTagPerContract, true),
-    serviceNamePattern: stringOption(
-      record.serviceNamePattern,
-      DEFAULT_SERVICE_NAME_PATTERN,
-      false,
-    ),
+    serviceNamePattern: stringOption(record.serviceNamePattern, DEFAULT_SERVICE_NAME_PATTERN, false),
     dataTypePattern: stringOption(record.dataTypePattern, DEFAULT_DATA_TYPE_PATTERN, false),
     effectTypes: stringArray(record.effectTypes, DEFAULT_EFFECT_TYPES),
     promiseTypes: stringArray(record.promiseTypes, DEFAULT_PROMISE_TYPES),
@@ -148,8 +129,7 @@ function importedMemberKey(node: any): unknown {
   const property = node.property ?? node.right;
   if (!node.computed) return property.name;
   if (property.type === 'Literal') return property.value;
-  if (property.type === 'TemplateLiteral' && !property.expressions.length)
-    return property.quasis[0]?.value.cooked;
+  if (property.type === 'TemplateLiteral' && !property.expressions.length) return property.quasis[0]?.value.cooked;
   return null;
 }
 
@@ -225,9 +205,8 @@ export const rule = defineRule({
     const variableFor = (node: any, name: string): any => resolveVariable(context, name, node);
     const localAlias = (node: any): any =>
       node?.type === 'Identifier'
-        ? variableFor(node, node.name)?.defs.find(
-            (d: any) => d.node.type === 'TSTypeAliasDeclaration',
-          )?.node.typeAnnotation
+        ? variableFor(node, node.name)?.defs.find((d: any) => d.node.type === 'TSTypeAliasDeclaration')?.node
+            .typeAnnotation
         : null;
     const imported = (node: any, seen = new Set<any>()): string | null => {
       if (!node || seen.has(node)) return null;
@@ -266,8 +245,7 @@ export const rule = defineRule({
       for (const statement of program.body)
         if (statement.type === 'ExportNamedDeclaration' && !statement.source) {
           for (const spec of statement.specifiers)
-            if (spec.local.type === 'Identifier')
-              separateExports.add(variableFor(spec.local, spec.local.name));
+            if (spec.local.type === 'Identifier') separateExports.add(variableFor(spec.local, spec.local.name));
         }
     };
     collectSeparateExports();
@@ -285,9 +263,7 @@ export const rule = defineRule({
     const taggedDeclarations = new Set<any>();
     const taggedFactories = new Set<any>();
     const declarationsFor = (id: any): any[] =>
-      id?.type === 'Identifier'
-        ? (variableFor(id, id.name)?.defs ?? []).map((def: any) => def.node)
-        : [];
+      id?.type === 'Identifier' ? (variableFor(id, id.name)?.defs ?? []).map((def: any) => def.node) : [];
     const collectContracts = (value: any, depth = 0): void => {
       if (!value || typeof value !== 'object' || depth > MAX_TYPE_DEPTH) return;
       if (Array.isArray(value)) {
@@ -295,13 +271,11 @@ export const rule = defineRule({
         return;
       }
       collectContractReferences(value);
-      for (const [key, child] of Object.entries(value))
-        if (key !== 'parent') collectContracts(child, depth + 1);
+      for (const [key, child] of Object.entries(value)) if (key !== 'parent') collectContracts(child, depth + 1);
     };
     const collectContractReferences = (value: any): void => {
       if (value.type === 'TSTypeReference')
-        for (const declaration of declarationsFor(value.typeName))
-          taggedDeclarations.add(declaration);
+        for (const declaration of declarationsFor(value.typeName)) taggedDeclarations.add(declaration);
       if (value.type === 'TSTypeQuery')
         for (const declaration of declarationsFor(value.exprName)) taggedFactories.add(declaration);
     };
@@ -330,8 +304,7 @@ export const rule = defineRule({
     /** Any effectful type reference anywhere inside a *return type* subtree (unions, arrays, generics). */
     const returnTypeIsEffectful = (node: unknown, depth: number): string | null => {
       if (depth > MAX_TYPE_DEPTH || node === null || typeof node !== 'object') return null;
-      if (Array.isArray(node))
-        return firstResult(node, (entry) => returnTypeIsEffectful(entry, depth + 1));
+      if (Array.isArray(node)) return firstResult(node, (entry) => returnTypeIsEffectful(entry, depth + 1));
       const record = node as Record<string, unknown>;
       if (typeof record.type !== 'string') return null;
       if (['TSFunctionType', 'TSConstructorType'].includes(record.type))
@@ -344,13 +317,9 @@ export const rule = defineRule({
       }
       return returnChildrenAreEffectful(record, depth);
     };
-    const returnChildrenAreEffectful = (
-      record: Record<string, unknown>,
-      depth: number,
-    ): string | null =>
+    const returnChildrenAreEffectful = (record: Record<string, unknown>, depth: number): string | null =>
       firstResult(Object.entries(record), ([key, value]) => {
-        if (key === 'parent' || key === 'type' || value === null || typeof value !== 'object')
-          return null;
+        if (key === 'parent' || key === 'type' || value === null || typeof value !== 'object') return null;
         return returnTypeIsEffectful(value, depth + 1);
       });
 
@@ -358,8 +327,7 @@ export const rule = defineRule({
     const annotationIsEffectful = (type: ESTree.TSType, depth: number): string | null => {
       if (depth > MAX_TYPE_DEPTH) return null;
       const current = unwrapType(type);
-      if (['TSFunctionType', 'TSConstructorType'].includes(current.type))
-        return signatureEffect(current);
+      if (['TSFunctionType', 'TSConstructorType'].includes(current.type)) return signatureEffect(current);
       if (current.type === 'TSUnionType' || current.type === 'TSIntersectionType') {
         return firstResult(current.types, (member) => annotationIsEffectful(member, depth + 1));
       }
@@ -424,9 +392,7 @@ export const rule = defineRule({
     };
 
     const tagNameFor = (name: string): string =>
-      name.endsWith('Service') && name.length > 'Service'.length
-        ? name.slice(0, -'Service'.length)
-        : `${name}Tag`;
+      name.endsWith('Service') && name.length > 'Service'.length ? name.slice(0, -'Service'.length) : `${name}Tag`;
 
     const isUtilityReference = (name: ESTree.TSTypeName): boolean =>
       name.type === 'Identifier' &&
@@ -444,9 +410,7 @@ export const rule = defineRule({
     };
 
     /** `ReturnType<typeof makeX>` — a factory-derived service contract. */
-    const returnTypeAlias = (
-      type: ESTree.TSType,
-    ): { label: string; factory: ESTree.Node | null } | null => {
+    const returnTypeAlias = (type: ESTree.TSType): { label: string; factory: ESTree.Node | null } | null => {
       const current = unwrapType(type);
       if (current.type !== 'TSTypeReference') return null;
       if (isUtilityReference(current.typeName)) {
@@ -459,8 +423,7 @@ export const rule = defineRule({
       const inner = unwrapType(argument);
       if (inner.type !== 'TSTypeQuery') return null;
       const name = inner.exprName;
-      if (name.type === 'Identifier')
-        return { label: `ReturnType<typeof ${name.name}>`, factory: name };
+      if (name.type === 'Identifier') return { label: `ReturnType<typeof ${name.name}>`, factory: name };
       return { label: 'ReturnType<typeof …>', factory: null };
     };
 
@@ -469,8 +432,7 @@ export const rule = defineRule({
       for (const args of tagConstructionArguments(callee)) collectContracts(args);
     };
     const collectDeclarationContract = (declaration: any): void => {
-      if (declaration.type === 'TSTypeAliasDeclaration')
-        collectContracts(declaration.typeAnnotation);
+      if (declaration.type === 'TSTypeAliasDeclaration') collectContracts(declaration.typeAnnotation);
     };
     const collectFactoryContract = (declaration: any): void => {
       if (declaration.type === 'FunctionDeclaration') collectContracts(declaration.returnType);
@@ -498,9 +460,7 @@ export const rule = defineRule({
       if (['TSSatisfiesExpression', 'TSAsExpression', 'TSTypeAssertion'].includes(value.type)) {
         collectContracts(value.typeAnnotation);
         providedContract(value.expression, seen);
-      } else if (
-        ['TSNonNullExpression', 'TSInstantiationExpression', 'ChainExpression'].includes(value.type)
-      ) {
+      } else if (['TSNonNullExpression', 'TSInstantiationExpression', 'ChainExpression'].includes(value.type)) {
         providedContract(value.expression, seen);
       } else if (value.type === 'Identifier') {
         providedIdentifierContract(value, seen);
@@ -534,14 +494,12 @@ export const rule = defineRule({
       if (config?.type !== 'ObjectExpression') return;
       for (const property of config.properties) {
         const key = property.computed ? property.key?.value : property.key?.name;
-        if (property.type === 'Property' && ['effect', 'defaultValue'].includes(key))
-          providedContract(property.value);
+        if (property.type === 'Property' && ['effect', 'defaultValue'].includes(key)) providedContract(property.value);
       }
     };
     const outerCall = (node: any): any => {
       let outer = node;
-      while (outer.parent?.type === 'CallExpression' && outer.parent.callee === outer)
-        outer = outer.parent;
+      while (outer.parent?.type === 'CallExpression' && outer.parent.callee === outer) outer = outer.parent;
       return outer;
     };
 
@@ -550,12 +508,8 @@ export const rule = defineRule({
         const path = imported(node.callee);
         if (!path) return;
         const segments = path.replace(/^root\./u, '').split('.');
-        const isTag =
-          segments.length === 2 && tagNamespaces.has(segments[0]!) && tagMembers.has(segments[1]!);
-        const isLayer =
-          options.allowLayerConstruction &&
-          segments[0] === 'Layer' &&
-          layerMembers.has(segments[1]!);
+        const isTag = segments.length === 2 && tagNamespaces.has(segments[0]!) && tagMembers.has(segments[1]!);
+        const isLayer = options.allowLayerConstruction && segments[0] === 'Layer' && layerMembers.has(segments[1]!);
         if (!isTag && !isLayer) return;
         moduleHasTag = true;
         if (isTag) recordTagConstruction(node.callee as AnyNode);
@@ -584,9 +538,7 @@ export const rule = defineRule({
         if (options.exportedOnly && !isExported(node as unknown as AnyNode)) return;
         const annotation = unwrapType(node.typeAnnotation);
         if (annotation.type === 'TSTypeLiteral') {
-          const member = firstEffectfulMember(
-            annotation.members as unknown as readonly ESTree.Node[],
-          );
+          const member = firstEffectfulMember(annotation.members as unknown as readonly ESTree.Node[]);
           if (member === null) return;
           candidates.push({
             node: node.id as unknown as ESTree.Node,

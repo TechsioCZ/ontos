@@ -1,4 +1,3 @@
-import { expect, it } from 'effect-rstest';
 import type {
   CoreSearchSnapshotReadExecutor,
   CoreSearchWorkerSnapshotService,
@@ -8,6 +7,8 @@ import type { AnyColumn, Query, SQL, Table } from 'drizzle-orm';
 import { getTableName } from 'drizzle-orm';
 import { PgDialect } from 'drizzle-orm/pg-core';
 import { DateTime, Effect, Result, Predicate } from 'effect';
+import { expect, it } from 'effect-rstest';
+
 import { makePartySearchProjectionSource } from '../../src/services/party-search-projection-source.service.ts';
 
 const tenantId = '10000000-0000-4000-8000-000000000001';
@@ -75,7 +76,12 @@ const harness = (
         tenantId,
       }),
   };
-  return { columns, filters, scopes, source: makePartySearchProjectionSource(snapshot) };
+  return {
+    columns,
+    filters,
+    scopes,
+    source: makePartySearchProjectionSource(snapshot),
+  };
 };
 
 it.effect('canonical snapshot preserves alias identity and legal-entity Counterparty context', () =>
@@ -95,7 +101,12 @@ it.effect('canonical snapshot preserves alias identity and legal-entity Counterp
       ],
       parties: [
         { archivedAt: null, displayName: 'Canonical', partyId, tenantId },
-        { archivedAt: from, displayName: 'Former name', partyId: aliasId, tenantId },
+        {
+          archivedAt: from,
+          displayName: 'Former name',
+          partyId: aliasId,
+          tenantId,
+        },
       ],
       party_aliases: [{ aliasPartyId: aliasId, canonicalPartyId: partyId, tenantId }],
       party_contact_points: [],
@@ -117,20 +128,40 @@ it.effect('canonical snapshot preserves alias identity and legal-entity Counterp
         {
           legalEntityId,
           partyRef: ref(partyId),
-          ref: { ...ref(counterpartyId), resourceType: 'party.registry.counterparty' },
-          rolePeriods: [{ role: 'CUSTOMER', state: 'ACTIVE', validFrom: from.toISOString() }],
+          ref: {
+            ...ref(counterpartyId),
+            resourceType: 'party.registry.counterparty',
+          },
+          rolePeriods: [
+            {
+              role: 'CUSTOMER',
+              state: 'ACTIVE',
+              validFrom: from.toISOString(),
+            },
+          ],
           storedPartyRef: ref(aliasId),
         },
       ],
       parties: [
         {
           aliases: [
-            { contacts: [], displayName: 'Former name', identifiers: [], ref: ref(aliasId) },
+            {
+              contacts: [],
+              displayName: 'Former name',
+              identifiers: [],
+              ref: ref(aliasId),
+            },
           ],
           archived: false,
           contacts: [],
           displayName: 'Canonical',
-          identifiers: [{ state: 'ACTIVE', validFrom: from.toISOString(), value: '27074358' }],
+          identifiers: [
+            {
+              state: 'ACTIVE',
+              validFrom: from.toISOString(),
+              value: '27074358',
+            },
+          ],
           ref: ref(partyId),
         },
       ],
@@ -167,7 +198,11 @@ it.effect(
             value: '+420123456789',
           },
           { ...contact, privacy: 'PERSONAL', value: 'personal@example.test' },
-          { ...contact, privacy: 'BUSINESS_SENSITIVE', value: 'sensitive@example.test' },
+          {
+            ...contact,
+            privacy: 'BUSINESS_SENSITIVE',
+            value: 'sensitive@example.test',
+          },
           { ...contact, state: 'ENDED', value: 'ended@example.test' },
           { ...contact, isCurrent: false, value: 'superseded@example.test' },
           { ...contact, type: 'ADDRESS', value: 'Private road' },
@@ -202,17 +237,7 @@ it.effect(
       ]);
       expect(filters['party_contact_points']?.sql ?? '').toMatch(/privacy_classification/u);
       expect(columns['party_contact_points']?.toSorted()).toEqual(
-        [
-          'partyId',
-          'tenantId',
-          'value',
-          'type',
-          'privacy',
-          'state',
-          'isCurrent',
-          'validFrom',
-          'validTo',
-        ].toSorted(),
+        ['partyId', 'tenantId', 'value', 'type', 'privacy', 'state', 'isCurrent', 'validFrom', 'validTo'].toSorted(),
       );
     }),
 );
@@ -229,9 +254,7 @@ it.effect('missing Party and Counterparty targets produce explicit versioned tom
       removedRefs: [ref(partyId)],
       tenantId,
     });
-    expect(counterparty.removedRefs).toEqual([
-      { ...ref(counterpartyId), resourceType: 'party.registry.counterparty' },
-    ]);
+    expect(counterparty.removedRefs).toEqual([{ ...ref(counterpartyId), resourceType: 'party.registry.counterparty' }]);
   }),
 );
 
@@ -252,71 +275,79 @@ it.effect(
               tenantId,
             },
           ],
-          parties: [{ archivedAt: from, displayName: 'Shared Party', partyId, tenantId }],
+          parties: [
+            {
+              archivedAt: from,
+              displayName: 'Shared Party',
+              partyId,
+              tenantId,
+            },
+          ],
         },
         [legalEntityId, secondLegalEntityId],
       );
       const result = yield* source.load(context, { rebuild: true });
       expect(scopes).toEqual([undefined, legalEntityId, secondLegalEntityId, undefined]);
-      expect(result.counterparties.map((row) => row.ref.resourceId)).toEqual([
-        counterpartyId,
-        secondCounterpartyId,
-      ]);
+      expect(result.counterparties.map((row) => row.ref.resourceId)).toEqual([counterpartyId, secondCounterpartyId]);
       expect(result.parties[0]?.archived).toBe(true);
       expect(result.projectionVersion).toBe('9');
     }),
 );
 
-it.effect(
-  'Counterparty-only refresh emits only its canonical family and selected Counterparty',
-  () =>
-    Effect.gen(function* targetedCounterpartySnapshot() {
-      const otherId = '20000000-0000-4000-8000-000000000009';
-      const { source } = harness({
-        counterparties: [
-          { counterpartyId, legalEntityId, partyId, tenantId },
-          {
-            counterpartyId: '40000000-0000-4000-8000-000000000009',
-            legalEntityId,
-            partyId: otherId,
-            tenantId,
-          },
-        ],
-        parties: [
-          { archivedAt: null, displayName: 'Selected', partyId, tenantId },
-          { archivedAt: null, displayName: 'Unrelated', partyId: otherId, tenantId },
-        ],
-      });
-      const result = yield* source.load(context, { counterpartyId });
-      expect(result.parties.map((party) => party.ref.resourceId)).toEqual([partyId]);
-      expect(result.counterparties.map((row) => row.ref.resourceId)).toEqual([counterpartyId]);
-    }),
+it.effect('Counterparty-only refresh emits only its canonical family and selected Counterparty', () =>
+  Effect.gen(function* targetedCounterpartySnapshot() {
+    const otherId = '20000000-0000-4000-8000-000000000009';
+    const { source } = harness({
+      counterparties: [
+        { counterpartyId, legalEntityId, partyId, tenantId },
+        {
+          counterpartyId: '40000000-0000-4000-8000-000000000009',
+          legalEntityId,
+          partyId: otherId,
+          tenantId,
+        },
+      ],
+      parties: [
+        { archivedAt: null, displayName: 'Selected', partyId, tenantId },
+        {
+          archivedAt: null,
+          displayName: 'Unrelated',
+          partyId: otherId,
+          tenantId,
+        },
+      ],
+    });
+    const result = yield* source.load(context, { counterpartyId });
+    expect(result.parties.map((party) => party.ref.resourceId)).toEqual([partyId]);
+    expect(result.counterparties.map((row) => row.ref.resourceId)).toEqual([counterpartyId]);
+  }),
 );
 
-it.effect(
-  'alias cycles and cross-tenant source rows fail closed with sanitized typed failures',
-  () =>
-    Effect.gen(function* rejectedSourceSnapshot() {
-      for (const rows of [
-        {
-          parties: [{ archivedAt: null, displayName: 'A', partyId, tenantId }],
-          party_aliases: [{ aliasPartyId: partyId, canonicalPartyId: partyId, tenantId }],
-        },
-        {
-          parties: [
-            { archivedAt: null, displayName: 'Secret name', partyId, tenantId: 'foreign-tenant' },
-          ],
-        },
-      ]) {
-        const { source } = harness(rows);
-        const outcome = yield* source.load(context, { rebuild: true }).pipe(Effect.result);
-        expect(Result.isFailure(outcome)).toBe(true);
-        if (Result.isFailure(outcome)) {
-          expect(Predicate.isTagged(outcome.failure, 'PartySearchProjectionUnavailable')).toBe(
-            true,
-          );
-          expect(outcome.failure.reason).not.toMatch(/Secret name|foreign-tenant/u);
-        }
+it.effect('alias cycles and cross-tenant source rows fail closed with sanitized typed failures', () =>
+  Effect.gen(function* rejectedSourceSnapshot() {
+    for (const rows of [
+      {
+        parties: [{ archivedAt: null, displayName: 'A', partyId, tenantId }],
+        party_aliases: [{ aliasPartyId: partyId, canonicalPartyId: partyId, tenantId }],
+      },
+      {
+        parties: [
+          {
+            archivedAt: null,
+            displayName: 'Secret name',
+            partyId,
+            tenantId: 'foreign-tenant',
+          },
+        ],
+      },
+    ]) {
+      const { source } = harness(rows);
+      const outcome = yield* source.load(context, { rebuild: true }).pipe(Effect.result);
+      expect(Result.isFailure(outcome)).toBe(true);
+      if (Result.isFailure(outcome)) {
+        expect(Predicate.isTagged(outcome.failure, 'PartySearchProjectionUnavailable')).toBe(true);
+        expect(outcome.failure.reason).not.toMatch(/Secret name|foreign-tenant/u);
       }
-    }),
+    }
+  }),
 );

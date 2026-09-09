@@ -1,12 +1,8 @@
-import { loadConfigurationProvider } from './configuration-provider.ts';
 import { Config, ConfigProvider, Effect, Redacted, Schema } from 'effect';
 
-const withOptionalProperty = <
-  Base extends object,
-  Key extends PropertyKey,
-  Value,
-  Trailing extends object,
->(
+import { loadConfigurationProvider } from './configuration-provider.ts';
+
+const withOptionalProperty = <Base extends object, Key extends PropertyKey, Value, Trailing extends object>(
   base: Base,
   condition: boolean,
   key: Key,
@@ -39,18 +35,13 @@ export interface GatewayIssuerConfigValue {
   readonly privateJwk: Ed25519PrivateJwk;
 }
 
-const Base64UrlSchema = Schema.String.check(
-  Schema.isNonEmpty(),
-  Schema.isPattern(/^[A-Za-z0-9_-]+$/u),
-);
+const Base64UrlSchema = Schema.String.check(Schema.isNonEmpty(), Schema.isPattern(/^[A-Za-z0-9_-]+$/u));
 
 const PrivateJwkInputSchema = Schema.Struct({
   alg: Schema.Literal('EdDSA'),
   crv: Schema.Literal('Ed25519'),
   d: Base64UrlSchema,
-  key_ops: Schema.optional(
-    Schema.Array(Schema.Literal('sign')).check(Schema.isLengthBetween(1, 1)),
-  ),
+  key_ops: Schema.optional(Schema.Array(Schema.Literal('sign')).check(Schema.isLengthBetween(1, 1))),
   kid: Base64UrlSchema,
   kty: Schema.Literal('OKP'),
   use: Schema.Literal('sig'),
@@ -78,33 +69,33 @@ const gatewayIssuerConfigSource = Config.all({
   privateJwk: Config.redacted('ONTOS_GATEWAY_PRIVATE_JWK'),
 });
 
-const parseGatewayIssuerConfigFromProvider = Effect.fn(
-  'GatewayIssuerConfig.parseGatewayIssuerConfigFromProvider',
-)(function* parseConfiguration(provider: ConfigProvider.ConfigProvider) {
-  const source = yield* gatewayIssuerConfigSource
-    .parse(provider)
-    .pipe(Effect.catchTag('ConfigError', () => Effect.fail(malformedConfiguration())));
-  const parsed = yield* Schema.decodeUnknownEffect(Schema.fromJsonString(PrivateJwkInputSchema))(
-    Redacted.value(source.privateJwk).trim(),
-  ).pipe(Effect.catchTag('SchemaError', () => Effect.fail(malformedConfiguration())));
-  const privateJwk: Ed25519PrivateJwk = withOptionalProperty(
-    {
-      alg: 'EdDSA' as const,
-      crv: 'Ed25519' as const,
-      d: parsed.d,
-    },
-    parsed.key_ops !== undefined,
-    'key_ops',
-    ['sign'],
-    {
-      kid: parsed.kid,
-      kty: 'OKP' as const,
-      use: 'sig' as const,
-      x: parsed.x,
-    },
-  );
-  return { issuer: source.issuer, privateJwk };
-});
+const parseGatewayIssuerConfigFromProvider = Effect.fn('GatewayIssuerConfig.parseGatewayIssuerConfigFromProvider')(
+  function* parseConfiguration(provider: ConfigProvider.ConfigProvider) {
+    const source = yield* gatewayIssuerConfigSource
+      .parse(provider)
+      .pipe(Effect.catchTag('ConfigError', () => Effect.fail(malformedConfiguration())));
+    const parsed = yield* Schema.decodeEffect(Schema.fromJsonString(PrivateJwkInputSchema))(
+      Redacted.value(source.privateJwk).trim(),
+    ).pipe(Effect.catchTag('SchemaError', () => Effect.fail(malformedConfiguration())));
+    const privateJwk: Ed25519PrivateJwk = withOptionalProperty(
+      {
+        alg: 'EdDSA' as const,
+        crv: 'Ed25519' as const,
+        d: parsed.d,
+      },
+      parsed.key_ops !== undefined,
+      'key_ops',
+      ['sign'],
+      {
+        kid: parsed.kid,
+        kty: 'OKP' as const,
+        use: 'sig' as const,
+        x: parsed.x,
+      },
+    );
+    return { issuer: source.issuer, privateJwk };
+  },
+);
 
 export const parseGatewayIssuerConfig = (
   environment: Environment,

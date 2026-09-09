@@ -1,5 +1,6 @@
 import { Schema } from 'effect';
 import { expect, it } from 'effect-rstest';
+
 import { validateShellContributions } from '../../src/modules/shell-contribution.ts';
 
 const encodeJson = Schema.encodeSync(Schema.fromJsonString(Schema.Any));
@@ -14,7 +15,10 @@ const first = <Value>(values: readonly Value[]): Value => {
 };
 const entrypoint = (role: 'api' | 'page' | 'public_component' | 'report' | 'search') => ({
   access: 'read' as const,
-  authorization: { kind: 'context_permission' as const, permission: 'module.access' },
+  authorization: {
+    kind: 'context_permission' as const,
+    permission: 'module.access',
+  },
   entrypointKey: `${moduleId}.${role.replace('_', '-')}.primary`,
   moduleKey: moduleId,
   role,
@@ -136,11 +140,17 @@ it('rejects extra keys, duplicates, cross-owner entrypoints, and missing referen
   const crossOwner = full();
   crossOwner.pages[0] = {
     ...first(crossOwner.pages),
-    entrypoint: { ...first(crossOwner.pages).entrypoint, moduleKey: 'billing.core' },
+    entrypoint: {
+      ...first(crossOwner.pages).entrypoint,
+      moduleKey: 'billing.core',
+    },
   };
   expect(() => validateShellContributions(crossOwner, references)).toThrow(/owner/u);
   expect(() =>
-    validateShellContributions(full(), { ...references, componentKeys: new Set() }),
+    validateShellContributions(full(), {
+      ...references,
+      componentKeys: new Set(),
+    }),
   ).toThrow();
 });
 
@@ -162,7 +172,10 @@ it('rejects incompatible entrypoint roles and arbitrary transport metadata', () 
         pages: [
           {
             ...first(baseline.pages),
-            entrypoint: { ...first(baseline.pages).entrypoint, access: 'write' },
+            entrypoint: {
+              ...first(baseline.pages).entrypoint,
+              access: 'write',
+            },
           },
         ],
       },

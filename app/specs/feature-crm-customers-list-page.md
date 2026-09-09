@@ -8,61 +8,27 @@ created: 2026-08-14
 
 ## Feature Description
 
-Add a generated CRM MicroVertical page named `CustomersListPage` at the canonical path
-`/crm/customers`, exposed by the localized Shell as `/cs/crm/customers` and
-`/en/crm/customers`. The page gives an authenticated, permitted CRM user a compact overview of
-Customers using the installed `@techsio/ui-kit@0.25.1` semantic Table and supporting UI-kit
-components.
+Add a generated CRM MicroVertical page named `CustomersListPage` at the canonical path `/crm/customers`, exposed by the localized Shell as `/cs/crm/customers` and `/en/crm/customers`. The page gives an authenticated, permitted CRM user a compact overview of Customers using the installed `@techsio/ui-kit@0.25.1` semantic Table and supporting UI-kit components.
 
-Use Figma file `ERP`, page `Pre-Alpha Repo`, frame `Audit Log — Naplněný` (`6:1042`) only as a
-wireframe for the content arrangement: page heading, compact filter controls, tabular results, and
-pagination controls. The authenticated Shell already owns the sidebar, tenant/legal-entity
-selectors, global search, header, and account menu, so the CRM remote must render only the page
-content and must not duplicate that chrome or copy Figma colors and fixed measurements.
+Use Figma file `ERP`, page `Pre-Alpha Repo`, frame `Audit Log — Naplněný` (`6:1042`) only as a wireframe for the content arrangement: page heading, compact filter controls, tabular results, and pagination controls. The authenticated Shell already owns the sidebar, tenant/legal-entity selectors, global search, header, and account menu, so the CRM remote must render only the page content and must not duplicate that chrome or copy Figma colors and fixed measurements.
 
-The populated list is loaded through the CRM MicroVertical's generated Effect BFF client. The
-requested `GetCustomersAction` terminology maps to the architecture-compliant governed Customer
-list read exposed as `getCustomerList`; it is not implemented as a state-changing OntOS Action.
+The populated list is loaded through the CRM MicroVertical's generated Effect BFF client. The requested `GetCustomersAction` terminology maps to the architecture-compliant governed Customer list read exposed as `getCustomerList`; it is not implemented as a state-changing OntOS Action.
 
 ## User Story
 
-As an authenticated CRM user
-I want to view and page through Customers in a clear table
-So that I can quickly understand which Customer records exist and whether they are active or
-archived
+As an authenticated CRM user I want to view and page through Customers in a clear table So that I can quickly understand which Customer records exist and whether they are active or archived
 
 ## Problem Statement
 
-CRM has persistence for Customers but no dedicated Customers page. The generated `/crm` starter
-shows only a placeholder heading, and the current CRM package does not declare or load the UI kit.
-The Customer list read and typed BFF client are now implemented, but frontend code still needs an
-approved generated page, typed client integration, explicit user-facing states, localized copy,
-and semantic table presentation. Direct database access, a backend implementation import, an ad
-hoc `fetch`, or a getter modeled as an Action would violate the MicroVertical and governed-read
-boundaries.
+CRM has persistence for Customers but no dedicated Customers page. The generated `/crm` starter shows only a placeholder heading, and the current CRM package does not declare or load the UI kit. The Customer list read and typed BFF client are now implemented, but frontend code still needs an approved generated page, typed client integration, explicit user-facing states, localized copy, and semantic table presentation. Direct database access, a backend implementation import, an ad hoc `fetch`, or a getter modeled as an Action would violate the MicroVertical and governed-read boundaries.
 
 ## Solution Statement
 
-Run the mandatory MicroVertical page generator with stable identity `customers-list` and canonical
-URL `/crm/customers`, producing `CustomersListPage` and all CRM/Shell manifest, registration,
-Module Federation, route, and locale wiring before adapting the generated page. Add the pinned UI
-kit to CRM and load its package token/theme output while preserving CRM-prefixed Tailwind layout
-utilities. Reuse `Table`, `Select`, `Badge`, `Skeleton`, `StatusText`, `Button`, and `LinkButton`
-from their public package subpaths; do not recreate or restyle their primitives.
+Run the mandatory MicroVertical page generator with stable identity `customers-list` and canonical URL `/crm/customers`, producing `CustomersListPage` and all CRM/Shell manifest, registration, Module Federation, route, and locale wiring before adapting the generated page. Add the pinned UI kit to CRM and load its package token/theme output while preserving CRM-prefixed Tailwind layout utilities. Reuse `Table`, `Select`, `Badge`, `Skeleton`, `StatusText`, `Button`, and `LinkButton` from their public package subpaths; do not recreate or restyle their primitives.
 
-Keep query integration and pure presentation separate inside the generated page module so no
-unsupported business file type is hand-authored. Because a Shell-composed federated page loads
-after the Shell route loader and the repository forbids ordinary data fetching in a React effect,
-use a page-local TanStack Query provider/hook as the framework edge. Its query function bridges the
-typed `getCustomerList` Effect to the Promise required by the query library while retaining the
-operation-specific error union for exhaustive UI mapping.
+Keep query integration and pure presentation separate inside the generated page module so no unsupported business file type is hand-authored. Because a Shell-composed federated page loads after the Shell route loader and the repository forbids ordinary data fetching in a React effect, use a page-local TanStack Query provider/hook as the framework edge. Its query function bridges the typed `getCustomerList` Effect to the Promise required by the query library while retaining the operation-specific error union for exhaustive UI mapping.
 
-Treat `status=active|archived|all` and a non-negative `offset` as shareable URL state, with active
-and zero as safe defaults, and request a fixed page size of 25. Render name, Customer ID, lifecycle
-status, creation time, and update time in a semantic UI-kit Table. Use previous/next URL navigation
-derived from `offset` and the BFF's nullable `nextOffset`; do not fabricate a total count for the
-UI-kit Pagination component. Present loading, populated, empty, forbidden, and unavailable/retry
-states explicitly and localize all visible and accessibility copy in English and Czech.
+Treat `status=active|archived|all` and a non-negative `offset` as shareable URL state, with active and zero as safe defaults, and request a fixed page size of 25. Render name, Customer ID, lifecycle status, creation time, and update time in a semantic UI-kit Table. Use previous/next URL navigation derived from `offset` and the BFF's nullable `nextOffset`; do not fabricate a total count for the UI-kit Pagination component. Present loading, populated, empty, forbidden, and unavailable/retry states explicitly and localize all visible and accessibility copy in English and Czech.
 
 ## Relevant Files
 
@@ -115,25 +81,15 @@ Use these files to implement the feature:
 
 ### Phase 1: Foundation
 
-Generate the exact CRM page and Shell connector first. Then make CRM an independent consumer of the
-pinned UI kit, add the client-query runtime needed by a federated list with retry/pagination, and
-add focused component-test infrastructure using the same versions and configuration style already
-used by the Shell. Preserve generated owner slots and CRM's `crm:` Tailwind namespace.
+Generate the exact CRM page and Shell connector first. Then make CRM an independent consumer of the pinned UI kit, add the client-query runtime needed by a federated list with retry/pagination, and add focused component-test infrastructure using the same versions and configuration style already used by the Shell. Preserve generated owner slots and CRM's `crm:` Tailwind namespace.
 
 ### Phase 2: Core Implementation
 
-Adapt only the generated page module for business UI. Parse bounded URL query state, call the
-generated `getCustomerList` Effect through the BFF facade, exhaustively convert its success/error
-channels into a closed presentation model, and render the Figma-inspired arrangement from UI-kit
-components. Add tests beside the behavior for loading, populated, active/archived status, empty,
-forbidden, unavailable/retry, invalid URL values, pagination, table semantics, and keyboard use.
+Adapt only the generated page module for business UI. Parse bounded URL query state, call the generated `getCustomerList` Effect through the BFF facade, exhaustively convert its success/error channels into a closed presentation model, and render the Figma-inspired arrangement from UI-kit components. Add tests beside the behavior for loading, populated, active/archived status, empty, forbidden, unavailable/retry, invalid URL values, pagination, table semantics, and keyboard use.
 
 ### Phase 3: Integration
 
-Complete English/Czech catalogs and metadata, prove the authenticated Shell resolves and lazily
-loads the exact page at both localized URLs, and verify the browser issues the Customer list
-operation through the CRM BFF before rendering rows. Test anonymous guarding, retry, mobile layout,
-and the independently deployable CRM build, then run all repository boundaries and the final gate.
+Complete English/Czech catalogs and metadata, prove the authenticated Shell resolves and lazily loads the exact page at both localized URLs, and verify the browser issues the Customer list operation through the CRM BFF before rendering rows. Test anonymous guarding, retry, mobile layout, and the independently deployable CRM build, then run all repository boundaries and the final gate.
 
 ## Step by Step Tasks
 
@@ -192,21 +148,11 @@ IMPORTANT: Execute every step in order, top to bottom.
 
 ### Unit Tests
 
-Retain the existing Node unit tests for the `getCustomerList` schemas and typed client. Add CRM
-RSTest/happy-dom component coverage around the generated page module with the generated BFF client
-mocked at its public Effect seam. Test URL parsing, query keys and exact payloads, exhaustive error
-mapping, retry behavior, view-model formatting, UI-kit Table semantics, filters, lifecycle badges,
-localized copy, focus, and responsive overflow. Test presentation from plain props/query outcomes;
-do not mock or import backend services.
+Retain the existing Node unit tests for the `getCustomerList` schemas and typed client. Add CRM RSTest/happy-dom component coverage around the generated page module with the generated BFF client mocked at its public Effect seam. Test URL parsing, query keys and exact payloads, exhaustive error mapping, retry behavior, view-model formatting, UI-kit Table semantics, filters, lifecycle badges, localized copy, focus, and responsive overflow. Test presentation from plain props/query outcomes; do not mock or import backend services.
 
 ### Integration Tests
 
-Use the existing CRM in-process BFF integration tests to prove the actual governed Customer
-list read, assertion, typed errors, tenant isolation, evidence, and client decoding. Use Shell unit
-tests for exact entrypoint resolution and lazy loading, then Playwright for the complete localized
-Shell → Module Federation page → generated CRM BFF client flow. Browser tests may control BFF
-outcomes at the network seam for deterministic empty/error/retry presentation, while at least one
-populated path must exercise the real generated endpoint/client contract.
+Use the existing CRM in-process BFF integration tests to prove the actual governed Customer list read, assertion, typed errors, tenant isolation, evidence, and client decoding. Use Shell unit tests for exact entrypoint resolution and lazy loading, then Playwright for the complete localized Shell → Module Federation page → generated CRM BFF client flow. Browser tests may control BFF outcomes at the network seam for deterministic empty/error/retry presentation, while at least one populated path must exercise the real generated endpoint/client contract.
 
 ### Edge Cases
 

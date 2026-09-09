@@ -5,8 +5,7 @@ import {
 } from '@app/party-registry/outbox/party-registry-counterparty-role-added-v1';
 import type { OutboxPayload } from '@app/party-registry/outbox/party-registry-counterparty-role-added-v1';
 
-const CounterpartyRoleAddPartyRegistryCounterpartyRoleAddedV1OutboxProducerModuleKey =
-  outboxProducerModuleKey;
+const CounterpartyRoleAddPartyRegistryCounterpartyRoleAddedV1OutboxProducerModuleKey = outboxProducerModuleKey;
 const CounterpartyRoleAddPartyRegistryCounterpartyRoleAddedV1OutboxTopic = outboxTopic;
 
 export const createCounterpartyRoleAddPartyRegistryCounterpartyRoleAddedV1OutboxMessage = (

@@ -1,11 +1,9 @@
-import { expect, it } from 'effect-rstest';
 import { Effect, Schema } from 'effect';
+import { expect, it } from 'effect-rstest';
+
 import { purgeFixtureRows } from '../support/fixture-cleanup.ts';
 
-class FixtureDeletionError extends Schema.TaggedError<FixtureDeletionError>()(
-  'FixtureDeletionError',
-  {},
-) {}
+class FixtureDeletionError extends Schema.TaggedError<FixtureDeletionError>()('FixtureDeletionError', {}) {}
 
 it.effect('purges fixture rows sequentially in child-before-parent order', () =>
   Effect.gen(function* verifyDeletionOrder() {

@@ -1,4 +1,3 @@
-import { optionRecord } from '../shared/options.ts';
 /**
  * Audit findings: **A9** — "Preserve typed Effects through the frontend" ("ten route-specific error
  * classifiers", "Exhaustive `Match` against a shared frontend failure vocabulary") and **A4** —
@@ -60,14 +59,14 @@ import { optionRecord } from '../shared/options.ts';
  * names and annotations. This rule only reports; it never fixes or suggests.
  */
 import { defineRule } from '@oxlint/plugins';
-
 import type { Context, ESTree, Variable } from '@oxlint/plugins';
 
-import { isTestFile, scopePath, matchesGlobs } from '../shared/paths.ts';
-import { compile, stringArray } from '../shared/options.ts';
 import { isNode, memberName, type Syntax } from '../shared/ast.ts';
 import { lookupVariable } from '../shared/bindings.ts';
 import { importedName } from '../shared/imports.ts';
+import { optionRecord } from '../shared/options.ts';
+import { compile, stringArray } from '../shared/options.ts';
+import { isTestFile, scopePath, matchesGlobs } from '../shared/paths.ts';
 
 const DEFAULT_ROUTE_GLOBS = ['apps/*/src/routes/**', 'verticals/*/src/routes/**'];
 
@@ -80,11 +79,7 @@ const DEFAULT_ERROR_PARAMETER_PATTERN = 'error|failure|problem|defect|cause';
 
 const TAG_PROPERTY = '_tag';
 
-const FUNCTION_TYPES = new Set([
-  'FunctionDeclaration',
-  'FunctionExpression',
-  'ArrowFunctionExpression',
-]);
+const FUNCTION_TYPES = new Set(['FunctionDeclaration', 'FunctionExpression', 'ArrowFunctionExpression']);
 
 /** Expression wrappers that keep the same runtime value (type assertions, parens, chains). */
 const TRANSPARENT_EXPRESSIONS = new Set([
@@ -116,11 +111,7 @@ function readOptions(context: Context): RuleOptions {
     routeGlobs: stringArray(record.routeGlobs, DEFAULT_ROUTE_GLOBS),
     namePattern: compile(record.namePattern, DEFAULT_NAME_PATTERN, 'u'),
     classifierInputTypes: stringArray(record.classifierInputTypes, DEFAULT_CLASSIFIER_INPUT_TYPES),
-    errorParameterPattern: compile(
-      record.errorParameterPattern,
-      DEFAULT_ERROR_PARAMETER_PATTERN,
-      'iu',
-    ),
+    errorParameterPattern: compile(record.errorParameterPattern, DEFAULT_ERROR_PARAMETER_PATTERN, 'iu'),
     detectTagDiscrimination: record.detectTagDiscrimination !== false,
     includeInlineHandlers: record.includeInlineHandlers !== false,
     allowedNames: stringArray(record.allowedNames, []),
@@ -133,11 +124,7 @@ function readOptions(context: Context): RuleOptions {
  * visited set guards against any other shared node reference, and `skip` prunes whole subtrees
  * (used to honour shadowing: a nested function that re-binds the tracked name).
  */
-function forEachNode(
-  root: unknown,
-  visit: (node: AnyNode) => void,
-  skip?: (node: AnyNode) => boolean,
-): void {
+function forEachNode(root: unknown, visit: (node: AnyNode) => void, skip?: (node: AnyNode) => boolean): void {
   const stack: unknown[] = [root];
   const seen = new Set<object>();
   while (stack.length > 0) {
@@ -265,7 +252,12 @@ interface ParameterShape {
 function parameterShape(parameter: unknown): ParameterShape {
   const target = unwrapParameter(parameter);
   if (!isNode(target))
-    return { name: null, bindings: [], typeNames: new Set(), destructuresTag: false };
+    return {
+      name: null,
+      bindings: [],
+      typeNames: new Set(),
+      destructuresTag: false,
+    };
   const typeNames = referencedTypeNames(target.typeAnnotation);
   const bindings = new Set<string>();
   patternBindingNames(target, bindings);
@@ -291,43 +283,25 @@ function variableAt(context: Context, node: AnyNode): Variable | null {
 function computedTagKey(context: Context, node: AnyNode): boolean {
   if (node.computed !== true || !isNode(node.property)) return false;
   const variable = variableAt(context, node.property);
-  if (
-    variable === null ||
-    variable.references.some((reference) => reference.isWrite() && !reference.init)
-  )
+  if (variable === null || variable.references.some((reference) => reference.isWrite() && !reference.init))
     return false;
   return variable.defs.some((definition) => {
-    if (definition.type !== 'Variable' || definition.node.type !== 'VariableDeclarator')
-      return false;
+    if (definition.type !== 'Variable' || definition.node.type !== 'VariableDeclarator') return false;
     const init = unwrapExpression(definition.node.init);
     return init?.type === 'Literal' && init.value === TAG_PROPERTY;
   });
 }
 
-function readsParameterTag(
-  context: Context,
-  node: AnyNode,
-  fromParameter: (value: unknown) => boolean,
-): boolean {
+function readsParameterTag(context: Context, node: AnyNode, fromParameter: (value: unknown) => boolean): boolean {
   if (node.type === 'MemberExpression') {
     const key = memberName(node);
     const isTag = key === TAG_PROPERTY || (key === null && computedTagKey(context, node));
     return isTag && fromParameter(node.object);
   }
-  return (
-    node.type === 'VariableDeclarator' &&
-    isNode(node.id) &&
-    patternHasTagKey(node.id) &&
-    fromParameter(node.init)
-  );
+  return node.type === 'VariableDeclarator' && isNode(node.id) && patternHasTagKey(node.id) && fromParameter(node.init);
 }
 
-function discriminatesTag(
-  context: Context,
-  body: unknown,
-  binding: string,
-  parameter: AnyNode,
-): boolean {
+function discriminatesTag(context: Context, body: unknown, binding: string, parameter: AnyNode): boolean {
   const fromParameter = (value: unknown, depth = 0): boolean => {
     if (depth > 8) return false;
     const node = unwrapExpression(value);
@@ -342,11 +316,9 @@ function discriminatesTag(
         definition.name.end <= Number(parameter.end)
       )
         return true;
-      if (definition.type !== 'Variable' || definition.node.type !== 'VariableDeclarator')
-        return false;
+      if (definition.type !== 'Variable' || definition.node.type !== 'VariableDeclarator') return false;
       // Reassigned aliases do not prove identity at this use site.
-      if (variable.references.some((reference) => reference.isWrite() && !reference.init))
-        return false;
+      if (variable.references.some((reference) => reference.isWrite() && !reference.init)) return false;
       return fromParameter(definition.node.init, depth + 1);
     });
   };
@@ -380,8 +352,7 @@ function exitTypeReference(context: Context, name: AnyNode): boolean {
   const variable = variableAt(context, root);
   if (variable === null) return false;
   return variable.defs.some((definition) => {
-    if (definition.type !== 'ImportBinding' || definition.parent?.type !== 'ImportDeclaration')
-      return false;
+    if (definition.type !== 'ImportBinding' || definition.parent?.type !== 'ImportDeclaration') return false;
     return isExitImport(definition.node, definition.parent.source.value, parts.join('.'));
   });
 }
@@ -392,9 +363,7 @@ function isExitImport(specifier: ESTree.Node, source: unknown, path: string): bo
     return (source === 'effect' && path === 'Exit') || (source === 'effect/Exit' && path === '');
   }
   if (specifier.type !== 'ImportNamespaceSpecifier') return false;
-  return (
-    (source === 'effect/Exit' && path === 'Exit') || (source === 'effect' && path === 'Exit.Exit')
-  );
+  return (source === 'effect/Exit' && path === 'Exit') || (source === 'effect' && path === 'Exit.Exit');
 }
 
 /** Type identity needs an import, not just a matching printed local type name. */
@@ -408,9 +377,7 @@ function importsClassifierType(context: Context, parameter: unknown, expected: s
     if (variable === null) return;
     if (
       variable.defs.some(
-        (definition) =>
-          definition.type === 'ImportBinding' &&
-          matchesClassifierImport(name, definition.node, expected),
+        (definition) => definition.type === 'ImportBinding' && matchesClassifierImport(name, definition.node, expected),
       )
     )
       found = true;
@@ -419,8 +386,7 @@ function importsClassifierType(context: Context, parameter: unknown, expected: s
 }
 
 function matchesClassifierImport(name: AnyNode, imported: ESTree.Node, expected: string): boolean {
-  if (name.type === 'Identifier' && imported.type === 'ImportSpecifier')
-    return importedName(imported) === expected;
+  if (name.type === 'Identifier' && imported.type === 'ImportSpecifier') return importedName(imported) === expected;
   return (
     name.type === 'TSQualifiedName' &&
     imported.type === 'ImportNamespaceSpecifier' &&
@@ -483,10 +449,8 @@ function assignmentDefinition(left: unknown): Definition | null {
 function anchorDefinition(anchor: AnyNode): Definition | null {
   const parent = anchor.parent;
   if (!isNode(parent)) return null;
-  if (parent.type === 'VariableDeclarator' && parent.init === anchor)
-    return identifierDefinition(parent.id);
-  if (parent.type === 'AssignmentExpression' && parent.right === anchor)
-    return assignmentDefinition(parent.left);
+  if (parent.type === 'VariableDeclarator' && parent.init === anchor) return identifierDefinition(parent.id);
+  if (parent.type === 'AssignmentExpression' && parent.right === anchor) return assignmentDefinition(parent.left);
   return propertyDefinition(parent, anchor);
 }
 
@@ -520,11 +484,8 @@ function discriminatedParameter(
   if (isExitEnvelope(context, parameter)) return null;
   const shape = parameterShape(parameter);
   const typeMatches = [...shape.typeNames].some((type) => options.errorParameterPattern.test(type));
-  const errorBindings = shape.bindings.filter((binding) =>
-    options.errorParameterPattern.test(binding),
-  );
-  if (shape.destructuresTag && (typeMatches || errorBindings.length > 0))
-    return shape.name ?? '{ _tag }';
+  const errorBindings = shape.bindings.filter((binding) => options.errorParameterPattern.test(binding));
+  if (shape.destructuresTag && (typeMatches || errorBindings.length > 0)) return shape.name ?? '{ _tag }';
   if (!isNode(parameter)) return null;
   return (
     (typeMatches ? shape.bindings : errorBindings).find((binding) =>
@@ -533,15 +494,9 @@ function discriminatedParameter(
   );
 }
 
-function classifierInput(
-  context: Context,
-  parameters: readonly unknown[],
-  options: RuleOptions,
-): string | undefined {
+function classifierInput(context: Context, parameters: readonly unknown[], options: RuleOptions): string | undefined {
   for (const parameter of parameters) {
-    const matched = options.classifierInputTypes.find((type) =>
-      importsClassifierType(context, parameter, type),
-    );
+    const matched = options.classifierInputTypes.find((type) => importsClassifierType(context, parameter, type));
     if (matched !== undefined) return matched;
   }
   return undefined;

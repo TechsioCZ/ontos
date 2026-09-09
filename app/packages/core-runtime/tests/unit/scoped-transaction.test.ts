@@ -1,13 +1,13 @@
+import { getTableConfig, pgTable, uuid } from 'drizzle-orm/pg-core';
+import { Effect, Option, Predicate } from 'effect';
 import { expect, it } from 'effect-rstest';
 
-import { Effect, Option, Predicate } from 'effect';
 import {
   OperationalScopeTransaction,
   installOperationalScopeFromTransactionService,
   tenantLegalEntityRlsPolicies,
   tenantRlsPolicies,
 } from '../../src/db/scoped-transaction.ts';
-import { getTableConfig, pgTable, uuid } from 'drizzle-orm/pg-core';
 import type { OperationalScopeTransactionService } from '../../src/db/scoped-transaction.ts';
 
 const unusedOperation = (): never => {
@@ -34,7 +34,10 @@ it.effect('installs and verifies transaction-local scope and exposes no transact
         }),
       Effect.sync(() => {
         calls += 1;
-        return Option.some({ legal_entity_id: 'entity', tenant_id: 'tenant' });
+        return Option.some({
+          legal_entity_id: 'entity',
+          tenant_id: 'tenant',
+        });
       }),
     );
     const capability = yield* installOperationalScopeFromTransactionService({
@@ -56,7 +59,7 @@ it.effect('fails closed when transaction settings do not match', () =>
   Effect.gen(function* migratedTest2() {
     const transaction = transactionService(
       () => Effect.void,
-      Effect.succeed(Option.some({ legal_entity_id: '', tenant_id: 'foreign' })),
+      Effect.succeedSome({ legal_entity_id: '', tenant_id: 'foreign' }),
     );
     const error = yield* Effect.flip(
       installOperationalScopeFromTransactionService({

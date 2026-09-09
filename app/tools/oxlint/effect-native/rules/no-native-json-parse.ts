@@ -69,17 +69,9 @@
  * Report-only: no fixers, no suggestions.
  */
 import { defineRule } from '@oxlint/plugins';
-
 import type { ESTree } from '@oxlint/plugins';
 
-import {
-  EXPRESSION_WRAPPERS,
-  keyName,
-  memberName,
-  parentOf,
-  skipWrappers,
-  unwrapNode,
-} from '../shared/ast.ts';
+import { EXPRESSION_WRAPPERS, keyName, memberName, parentOf, skipWrappers, unwrapNode } from '../shared/ast.ts';
 import { isJsonHost, jsonExpressionSnippet } from '../shared/json-globals.ts';
 import { booleanOption, stringList } from '../shared/options.ts';
 import { isTestFile, matchesAny, workspacePath } from '../shared/paths.ts';
@@ -89,12 +81,7 @@ type AnyNode = ESTree.Node;
 /** Globals that expose the ambient `JSON` object as a property (`globalThis.JSON.parse`). */
 const CONTAINER_GLOBALS = new Set(['globalThis', 'global', 'window', 'self', 'frames']);
 
-const DEFAULT_INCLUDE_PATHS: readonly string[] = [
-  'apps/**',
-  'verticals/**',
-  'packages/**',
-  'scripts/**',
-];
+const DEFAULT_INCLUDE_PATHS: readonly string[] = ['apps/**', 'verticals/**', 'packages/**', 'scripts/**'];
 
 interface RuleOptions {
   readonly allowPaths: readonly string[];
@@ -118,7 +105,11 @@ function readOptions(raw: unknown): RuleOptions {
   };
 }
 
-const UNWRAP_OPTIONS = { wrappers: EXPRESSION_WRAPPERS, maxDepth: 8, sequence: true };
+const UNWRAP_OPTIONS = {
+  wrappers: EXPRESSION_WRAPPERS,
+  maxDepth: 8,
+  sequence: true,
+};
 const STRING_OPTIONS = {
   templates: true,
   rawTemplates: false,
@@ -165,8 +156,7 @@ export const rule = defineRule({
           allowPaths: {
             type: 'array',
             items: { type: 'string' },
-            description:
-              'Globs of files allowed to call `JSON.parse` — a ratified carve-out only (default: none).',
+            description: 'Globs of files allowed to call `JSON.parse` — a ratified carve-out only (default: none).',
           },
           ignoreTestFiles: {
             type: 'boolean',
@@ -176,14 +166,17 @@ export const rule = defineRule({
           includePaths: {
             type: 'array',
             items: { type: 'string' },
-            description:
-              'Globs the rule applies to (default: apps/**, verticals/**, packages/**, scripts/**).',
+            description: 'Globs the rule applies to (default: apps/**, verticals/**, packages/**, scripts/**).',
           },
         },
       },
     ],
     defaultOptions: [
-      { allowPaths: [], ignoreTestFiles: true, includePaths: [...DEFAULT_INCLUDE_PATHS] },
+      {
+        allowPaths: [],
+        ignoreTestFiles: true,
+        includePaths: [...DEFAULT_INCLUDE_PATHS],
+      },
     ],
   },
   create(context) {
@@ -197,7 +190,9 @@ export const rule = defineRule({
       context.report({
         node,
         messageId,
-        data: { expression: jsonExpressionSnippet(context.sourceCode.getText(node)) },
+        data: {
+          expression: jsonExpressionSnippet(context.sourceCode.getText(node)),
+        },
       });
     };
 

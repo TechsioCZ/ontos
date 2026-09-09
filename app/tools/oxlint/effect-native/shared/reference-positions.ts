@@ -1,4 +1,5 @@
 import type { ESTree } from '@oxlint/plugins';
+
 import { asNode, parentOf, type Syntax } from './ast.ts';
 
 const IMPORT_NAMES = new Set([
@@ -18,19 +19,12 @@ export interface ReferencePositionPolicy {
   /** Some legacy key tests use !== true rather than falsiness; the default retains falsiness. */
   readonly strictComputed?: boolean;
 }
-function isPropertyKey(
-  node: ESTree.Node,
-  parent: Syntax,
-  policy: ReferencePositionPolicy,
-): boolean {
+function isPropertyKey(node: ESTree.Node, parent: Syntax, policy: ReferencePositionPolicy): boolean {
   if (!(policy.keyParents ?? PROPERTY_KEYS).has(parent.type) || parent.key !== node) return false;
   return policy.strictComputed ? parent.computed !== true : !parent.computed;
 }
 /** Immediate-parent name/binding test only; type ancestry is a separate, explicitly configured test. */
-export function isNonReferencePosition(
-  node: ESTree.Node,
-  policy: ReferencePositionPolicy = {},
-): boolean {
+export function isNonReferencePosition(node: ESTree.Node, policy: ReferencePositionPolicy = {}): boolean {
   const parent = parentOf(node);
   if (!parent) return policy.detached ?? true;
   if (IMPORT_NAMES.has(parent.type) || policy.nonReferenceParents?.has(parent.type)) return true;

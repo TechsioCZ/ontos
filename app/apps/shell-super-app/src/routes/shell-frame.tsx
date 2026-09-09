@@ -1,15 +1,16 @@
 import { Link as LocalizedLink, useModernI18n } from '@modern-js/plugin-i18n/runtime';
-import { Link } from '@techsio/ui-kit/atoms/link';
 import { Badge } from '@techsio/ui-kit/atoms/badge';
+import { Link } from '@techsio/ui-kit/atoms/link';
 import { StatusText } from '@techsio/ui-kit/atoms/status-text';
 import { Menu } from '@techsio/ui-kit/molecules/menu';
 import type { MenuItem } from '@techsio/ui-kit/molecules/menu';
+import { SearchForm } from '@techsio/ui-kit/molecules/search-form';
 import { Select } from '@techsio/ui-kit/molecules/select';
 import type { SelectItem } from '@techsio/ui-kit/molecules/select';
-import { SearchForm } from '@techsio/ui-kit/molecules/search-form';
 import { Header } from '@techsio/ui-kit/organisms/header';
 import { useEffect, useState } from 'react';
 import type { ReactNode } from 'react';
+
 import type { ShellUnavailableDeployment } from '../../shared/api.ts';
 
 interface DashboardAccount {
@@ -175,10 +176,7 @@ const DashboardSelector = ({
   >
     <Select.Label>{label}</Select.Label>
     <Select.Control>
-      <Select.Trigger
-        aria-describedby={statusText === null ? undefined : statusId}
-        aria-label={ariaLabel}
-      >
+      <Select.Trigger aria-describedby={statusText === null ? undefined : statusId} aria-label={ariaLabel}>
         <Select.ValueText placeholder={placeholder} />
       </Select.Trigger>
     </Select.Control>
@@ -222,11 +220,7 @@ const DashboardTenantSelector = ({
     <DashboardSelector
       ariaLabel={accessibleLabel}
       currentValue={currentTenantId}
-      disabled={
-        tenantUnavailable ||
-        tenantSwitchPending ||
-        !tenantItems.some((item) => item.value !== currentTenantId)
-      }
+      disabled={tenantUnavailable || tenantSwitchPending || !tenantItems.some((item) => item.value !== currentTenantId)}
       items={tenantItems}
       label={accessibleLabel}
       name="tenant"
@@ -270,16 +264,11 @@ const DashboardLegalEntitySelector = ({
       placeholder={t('shell.dashboard.legalEntity.placeholder')}
       status={selectorStatus(legalEntitySwitchFailed, legalEntityUnavailable)}
       statusId="legal-entity-switch-status"
-      statusText={selectorStatusText(
-        legalEntitySwitchPending,
-        legalEntitySwitchFailed,
-        legalEntityUnavailable,
-        {
-          failed: t('shell.dashboard.legalEntity.failed'),
-          pending: t('shell.dashboard.legalEntity.pending'),
-          unavailable: t('shell.dashboard.legalEntity.unavailable'),
-        },
-      )}
+      statusText={selectorStatusText(legalEntitySwitchPending, legalEntitySwitchFailed, legalEntityUnavailable, {
+        failed: t('shell.dashboard.legalEntity.failed'),
+        pending: t('shell.dashboard.legalEntity.pending'),
+        unavailable: t('shell.dashboard.legalEntity.unavailable'),
+      })}
     />
   );
 };
@@ -309,10 +298,7 @@ const DashboardSearch = ({ onSearch, onValueChange, value }: DashboardSearchProp
   );
 };
 
-const DashboardModuleNavigationItem = ({
-  currentModuleId,
-  module,
-}: DashboardModuleNavigationItemProps) => {
+const DashboardModuleNavigationItem = ({ currentModuleId, module }: DashboardModuleNavigationItemProps) => {
   const { t } = useModernI18n();
 
   return (
@@ -347,20 +333,14 @@ const DashboardModuleNavigationItem = ({
   );
 };
 
-const DashboardDeploymentNavigationItem = ({
-  deployment,
-}: DashboardDeploymentNavigationItemProps) => {
+const DashboardDeploymentNavigationItem = ({ deployment }: DashboardDeploymentNavigationItemProps) => {
   const { t } = useModernI18n();
 
   return (
     <li className="shell:flex shell:flex-wrap shell:items-center shell:gap-2">
       <span>{deployment.appId}</span>
       <StatusText showIcon size="sm" status="warning">
-        {t(
-          `shell.modules.discovery.${
-            deployment.status === 'unavailable' ? deployment.reason : deployment.status
-          }`,
-        )}
+        {t(`shell.modules.discovery.${deployment.status === 'unavailable' ? deployment.reason : deployment.status}`)}
       </StatusText>
     </li>
   );
@@ -387,11 +367,7 @@ const DashboardNavigation = ({
           </Link>
         </li>
         {navigation.map((module) => (
-          <DashboardModuleNavigationItem
-            currentModuleId={currentModuleId}
-            key={module.moduleId}
-            module={module}
-          />
+          <DashboardModuleNavigationItem currentModuleId={currentModuleId} key={module.moduleId} module={module} />
         ))}
         {unavailableDeployments.map((deployment) => (
           <DashboardDeploymentNavigationItem deployment={deployment} key={deployment.appId} />
@@ -473,11 +449,7 @@ export const AuthenticatedDashboardLayout = (props: AuthenticatedDashboardLayout
           legalEntitySwitchPending={props.legalEntitySwitchPending}
           onLegalEntityChange={props.onLegalEntityChange}
         />
-        <DashboardSearch
-          onSearch={props.onSearch}
-          onValueChange={setSearchValue}
-          value={searchValue}
-        />
+        <DashboardSearch onSearch={props.onSearch} onValueChange={setSearchValue} value={searchValue} />
         <DashboardNavigation
           currentModuleId={props.currentModuleId}
           homeCurrent={props.homeCurrent}

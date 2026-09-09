@@ -1,6 +1,7 @@
 import { eq, sql } from 'drizzle-orm';
 import { DateTime, Effect, Layer, Option, Result, Schema } from 'effect';
 import { isSqlError } from 'effect/unstable/sql/SqlError';
+
 import { CoreDatabase } from '../db/client.ts';
 import { searchIndexEntries, searchProjectionRebuilds } from '../db/schema.ts';
 import type { CoreDatabaseExecutor, CoreTransaction } from '../db/types.ts';
@@ -44,15 +45,15 @@ const PersistedDocumentPayloadSchema = Schema.Struct({
     Schema.Array(CoreSearchTemporalSearchableTextSchema).check(Schema.isMaxLength(100)),
   ),
 });
-const ProjectionUnitKeySchema = Schema.fromJsonString(
-  Schema.Tuple([Schema.String, Schema.String, Schema.String]),
-);
+const ProjectionUnitKeySchema = Schema.fromJsonString(Schema.Tuple([Schema.String, Schema.String, Schema.String]));
 
 type PersistedDocumentPayload = typeof PersistedDocumentPayloadSchema.Type;
 type MutablePersistedDocumentPayload = {
   -readonly [Key in keyof PersistedDocumentPayload]: PersistedDocumentPayload[Key];
 };
-type CoreSearchPersistenceDatabase = Readonly<{ executor: CoreDatabaseExecutor }>;
+type CoreSearchPersistenceDatabase = Readonly<{
+  executor: CoreDatabaseExecutor;
+}>;
 type CoreSearchProjectionInput = Parameters<CoreSearchProjectionStoreService['apply']>[0];
 type CoreSearchPersistenceCause = typeof Schema.Unknown.Type;
 type SearchIndexEntry = typeof searchIndexEntries.$inferSelect;
@@ -78,13 +79,17 @@ interface PersistedDocumentInput {
   title: string;
 }
 
-const invalid = (
-  reason: string,
-  cause?: CoreSearchPersistenceCause,
-): CoreSearchProjectionInvalid =>
+const invalid = (reason: string, cause?: CoreSearchPersistenceCause): CoreSearchProjectionInvalid =>
   cause === undefined
-    ? new CoreSearchProjectionInvalid({ code: 'core_search_projection_invalid', reason })
-    : new CoreSearchProjectionInvalid({ cause, code: 'core_search_projection_invalid', reason });
+    ? new CoreSearchProjectionInvalid({
+        code: 'core_search_projection_invalid',
+        reason,
+      })
+    : new CoreSearchProjectionInvalid({
+        cause,
+        code: 'core_search_projection_invalid',
+        reason,
+      });
 const unavailable = (cause?: CoreSearchPersistenceCause) =>
   cause === undefined
     ? new CoreSearchProjectionUnavailable({
@@ -158,54 +163,49 @@ const rowMatchesDocument = (
   );
 
 const makeTransactionOperations = () => {
-  const installTenantScope = Effect.fn('CoreSearchPersistence.installTenantScope')(
-    function* installTenantScopeEffect(
-      transaction: CoreTransaction,
-      tenantId: string,
-      legalEntityId?: string,
-    ) {
-      const result = yield* transaction
-        .execute(
-          sql`
+  const installTenantScope = Effect.fn('CoreSearchPersistence.installTenantScope')(function* installTenantScopeEffect(
+    transaction: CoreTransaction,
+    tenantId: string,
+    legalEntityId?: string,
+  ) {
+    const result = yield* transaction
+      .execute(
+        sql`
         select
           set_config('ontos.tenant_id', ${tenantId}, true) as tenant_id,
           set_config('ontos.legal_entity_id', ${legalEntityId ?? ''}, true) as legal_entity_id
       `,
-          'objects',
-        )
-        .pipe(Effect.mapError(unavailable));
-      const verified = Schema.decodeUnknownOption(
-        Schema.Struct({ legal_entity_id: Schema.String, tenant_id: Schema.String }),
-      )(result[0]);
-      if (
-        Option.isNone(verified) ||
-        verified.value.tenant_id !== tenantId ||
-        verified.value.legal_entity_id !== (legalEntityId ?? '')
-      ) {
-        return yield* unavailable();
-      }
-      return yield* Effect.void;
-    },
-  );
-
-  const lockProjectionUnit = Effect.fn('CoreSearchPersistence.lockProjectionUnit')(
-    function* lockProjectionUnitEffect(
-      transaction: CoreTransaction,
-      tenantId: string,
-      moduleId: string,
-      resourceType: string,
+        'objects',
+      )
+      .pipe(Effect.mapError(unavailable));
+    const verified = Schema.decodeUnknownOption(
+      Schema.Struct({
+        legal_entity_id: Schema.String,
+        tenant_id: Schema.String,
+      }),
+    )(result[0]);
+    if (
+      Option.isNone(verified) ||
+      verified.value.tenant_id !== tenantId ||
+      verified.value.legal_entity_id !== (legalEntityId ?? '')
     ) {
-      yield* transaction
-        .execute(
-          sql`select pg_advisory_xact_lock(hashtextextended(${projectionUnitKey(
-            tenantId,
-            moduleId,
-            resourceType,
-          )}, 0))`,
-        )
-        .pipe(Effect.mapError(unavailable));
-    },
-  );
+      return yield* unavailable();
+    }
+    return yield* Effect.void;
+  });
+
+  const lockProjectionUnit = Effect.fn('CoreSearchPersistence.lockProjectionUnit')(function* lockProjectionUnitEffect(
+    transaction: CoreTransaction,
+    tenantId: string,
+    moduleId: string,
+    resourceType: string,
+  ) {
+    yield* transaction
+      .execute(
+        sql`select pg_advisory_xact_lock(hashtextextended(${projectionUnitKey(tenantId, moduleId, resourceType)}, 0))`,
+      )
+      .pipe(Effect.mapError(unavailable));
+  });
 
   const currentRow = Effect.fn('CoreSearchPersistence.currentRow')(function* currentRowEffect(
     transaction: CoreTransaction,
@@ -223,122 +223,120 @@ const makeTransactionOperations = () => {
     return Option.fromNullishOr(row);
   });
 
-  const currentRebuild = Effect.fn('CoreSearchPersistence.currentRebuild')(
-    function* currentRebuildEffect(
-      transaction: CoreTransaction,
-      unit: Readonly<{ moduleId: string; resourceType: string; tenantId: string }>,
-    ) {
-      const query = transaction.query.searchProjectionRebuilds.findFirst({
-        where: {
-          sourceModuleKey: unit.moduleId,
-          sourceResourceType: unit.resourceType,
-          tenantId: unit.tenantId,
-        },
-      });
-      const rebuild = yield* query.execute.bind(query)().pipe(Effect.mapError(unavailable));
-      return Option.fromNullishOr(rebuild);
-    },
-  );
+  const currentRebuild = Effect.fn('CoreSearchPersistence.currentRebuild')(function* currentRebuildEffect(
+    transaction: CoreTransaction,
+    unit: Readonly<{
+      moduleId: string;
+      resourceType: string;
+      tenantId: string;
+    }>,
+  ) {
+    const query = transaction.query.searchProjectionRebuilds.findFirst({
+      where: {
+        sourceModuleKey: unit.moduleId,
+        sourceResourceType: unit.resourceType,
+        tenantId: unit.tenantId,
+      },
+    });
+    const rebuild = yield* query.execute.bind(query)().pipe(Effect.mapError(unavailable));
+    return Option.fromNullishOr(rebuild);
+  });
 
-  const persistUpsert = Effect.fn('CoreSearchPersistence.persistUpsert')(
-    function* persistUpsertEffect(
-      transaction: CoreTransaction,
-      document: CoreSearchProjectionDocument,
-      updatedAt: Date,
-    ) {
-      const current = yield* currentRow(transaction, document.ref);
-      const version = BigInt(document.projectionVersion);
-      if (Option.isSome(current)) {
-        const existing = current.value;
-        if (existing.projectionVersion > version) {
-          return yield* Effect.void;
-        }
-        if (existing.projectionVersion === version) {
-          if (!Result.getOrThrow(rowMatchesDocument(existing, document))) {
-            return yield* invalid('Core Search mutation reuses a version for different content');
-          }
-          return yield* Effect.void;
-        }
-        const query = transaction
-          .update(searchIndexEntries)
-          .set({
-            bodyText: bodyText(document),
-            deleted: false,
-            facetsJson: payload(document),
-            legalEntityId: document.selectedLegalEntityId ?? null,
-            projectionVersion: version,
-            title: document.title,
-            updatedAt,
-          })
-          .where(eq(searchIndexEntries.searchIndexEntryId, existing.searchIndexEntryId));
-        yield* query.execute.bind(query)().pipe(Effect.mapError(unavailable));
+  const persistUpsert = Effect.fn('CoreSearchPersistence.persistUpsert')(function* persistUpsertEffect(
+    transaction: CoreTransaction,
+    document: CoreSearchProjectionDocument,
+    updatedAt: Date,
+  ) {
+    const current = yield* currentRow(transaction, document.ref);
+    const version = BigInt(document.projectionVersion);
+    if (Option.isSome(current)) {
+      const existing = current.value;
+      if (existing.projectionVersion > version) {
         return yield* Effect.void;
       }
-      const query = transaction.insert(searchIndexEntries).values({
-        bodyText: bodyText(document),
-        deleted: false,
-        facetsJson: payload(document),
-        legalEntityId: document.selectedLegalEntityId ?? null,
-        projectionVersion: version,
-        sourceModuleKey: document.ref.moduleId,
-        sourceResourceId: document.ref.resourceId,
-        sourceResourceType: document.ref.resourceType,
-        tenantId: document.ref.tenantId,
-        title: document.title,
-      });
-      yield* query.execute.bind(query)().pipe(Effect.mapError(unavailable));
-      return yield* Effect.void;
-    },
-  );
-
-  const persistDelete = Effect.fn('CoreSearchPersistence.persistDelete')(
-    function* persistDeleteEffect(
-      transaction: CoreTransaction,
-      mutation: Extract<CoreSearchProjectionMutation, { readonly kind: 'delete' }>,
-      updatedAt: Date,
-    ) {
-      const current = yield* currentRow(transaction, mutation.ref);
-      const version = BigInt(mutation.projectionVersion);
-      if (Option.isSome(current) && current.value.projectionVersion > version) {
-        return yield* Effect.void;
-      }
-      if (Option.isSome(current) && current.value.projectionVersion === version) {
-        if (!current.value.deleted) {
+      if (existing.projectionVersion === version) {
+        if (!Result.getOrThrow(rowMatchesDocument(existing, document))) {
           return yield* invalid('Core Search mutation reuses a version for different content');
         }
-        return yield* Effect.void;
-      }
-      if (Option.isNone(current)) {
-        const query = transaction.insert(searchIndexEntries).values({
-          bodyText: '',
-          deleted: true,
-          facetsJson: { schemaVersion: '1' },
-          projectionVersion: version,
-          sourceModuleKey: mutation.ref.moduleId,
-          sourceResourceId: mutation.ref.resourceId,
-          sourceResourceType: mutation.ref.resourceType,
-          tenantId: mutation.ref.tenantId,
-          title: '',
-        });
-        yield* query.execute.bind(query)().pipe(Effect.mapError(unavailable));
         return yield* Effect.void;
       }
       const query = transaction
         .update(searchIndexEntries)
         .set({
-          bodyText: '',
-          deleted: true,
-          facetsJson: { schemaVersion: '1' },
-          legalEntityId: null,
+          bodyText: bodyText(document),
+          deleted: false,
+          facetsJson: payload(document),
+          legalEntityId: document.selectedLegalEntityId ?? null,
           projectionVersion: version,
-          title: '',
+          title: document.title,
           updatedAt,
         })
-        .where(eq(searchIndexEntries.searchIndexEntryId, current.value.searchIndexEntryId));
+        .where(eq(searchIndexEntries.searchIndexEntryId, existing.searchIndexEntryId));
       yield* query.execute.bind(query)().pipe(Effect.mapError(unavailable));
       return yield* Effect.void;
-    },
-  );
+    }
+    const query = transaction.insert(searchIndexEntries).values({
+      bodyText: bodyText(document),
+      deleted: false,
+      facetsJson: payload(document),
+      legalEntityId: document.selectedLegalEntityId ?? null,
+      projectionVersion: version,
+      sourceModuleKey: document.ref.moduleId,
+      sourceResourceId: document.ref.resourceId,
+      sourceResourceType: document.ref.resourceType,
+      tenantId: document.ref.tenantId,
+      title: document.title,
+    });
+    yield* query.execute.bind(query)().pipe(Effect.mapError(unavailable));
+    return yield* Effect.void;
+  });
+
+  const persistDelete = Effect.fn('CoreSearchPersistence.persistDelete')(function* persistDeleteEffect(
+    transaction: CoreTransaction,
+    mutation: Extract<CoreSearchProjectionMutation, { readonly kind: 'delete' }>,
+    updatedAt: Date,
+  ) {
+    const current = yield* currentRow(transaction, mutation.ref);
+    const version = BigInt(mutation.projectionVersion);
+    if (Option.isSome(current) && current.value.projectionVersion > version) {
+      return yield* Effect.void;
+    }
+    if (Option.isSome(current) && current.value.projectionVersion === version) {
+      if (!current.value.deleted) {
+        return yield* invalid('Core Search mutation reuses a version for different content');
+      }
+      return yield* Effect.void;
+    }
+    if (Option.isNone(current)) {
+      const query = transaction.insert(searchIndexEntries).values({
+        bodyText: '',
+        deleted: true,
+        facetsJson: { schemaVersion: '1' },
+        projectionVersion: version,
+        sourceModuleKey: mutation.ref.moduleId,
+        sourceResourceId: mutation.ref.resourceId,
+        sourceResourceType: mutation.ref.resourceType,
+        tenantId: mutation.ref.tenantId,
+        title: '',
+      });
+      yield* query.execute.bind(query)().pipe(Effect.mapError(unavailable));
+      return yield* Effect.void;
+    }
+    const query = transaction
+      .update(searchIndexEntries)
+      .set({
+        bodyText: '',
+        deleted: true,
+        facetsJson: { schemaVersion: '1' },
+        legalEntityId: null,
+        projectionVersion: version,
+        title: '',
+        updatedAt,
+      })
+      .where(eq(searchIndexEntries.searchIndexEntryId, current.value.searchIndexEntryId));
+    yield* query.execute.bind(query)().pipe(Effect.mapError(unavailable));
+    return yield* Effect.void;
+  });
 
   const persistedDeleteMutation = (
     row: SearchIndexEntry,
@@ -389,77 +387,60 @@ const makeTransactionOperations = () => {
     },
   );
 
-  const replacementRows = Effect.fn('CoreSearchPersistence.replacementRows')(
-    function* replacementRowsEffect(
-      transaction: CoreTransaction,
-      replacement: CoreSearchProjectionReplacement,
-    ) {
-      const current = yield* currentRebuild(transaction, replacement);
-      const version = BigInt(replacement.rebuildVersion);
-      const fingerprint = coreSearchReplacementFingerprint(replacement);
-      if (Option.isSome(current) && version < current.value.rebuildVersion) {
-        return Option.none();
+  const replacementRows = Effect.fn('CoreSearchPersistence.replacementRows')(function* replacementRowsEffect(
+    transaction: CoreTransaction,
+    replacement: CoreSearchProjectionReplacement,
+  ) {
+    const current = yield* currentRebuild(transaction, replacement);
+    const version = BigInt(replacement.rebuildVersion);
+    const fingerprint = coreSearchReplacementFingerprint(replacement);
+    if (Option.isSome(current) && version < current.value.rebuildVersion) {
+      return Option.none();
+    }
+    if (Option.isSome(current) && version === current.value.rebuildVersion) {
+      const prior = current.value;
+      if (fingerprint !== prior.fingerprint) {
+        return yield* invalid('Core Search rebuild reuses a version for different content');
       }
-      if (Option.isSome(current) && version === current.value.rebuildVersion) {
-        const prior = current.value;
-        if (fingerprint !== prior.fingerprint) {
-          return yield* invalid('Core Search rebuild reuses a version for different content');
-        }
-        return Option.none();
-      }
-      const query = transaction.query.searchIndexEntries.findMany({
-        where: {
-          sourceModuleKey: replacement.moduleId,
-          sourceResourceType: replacement.resourceType,
-          tenantId: replacement.tenantId,
-        },
-      });
-      const existing = yield* query.execute.bind(query)().pipe(Effect.mapError(unavailable));
-      return Option.some({ existing, fingerprint });
-    },
-  );
+      return Option.none();
+    }
+    const query = transaction.query.searchIndexEntries.findMany({
+      where: {
+        sourceModuleKey: replacement.moduleId,
+        sourceResourceType: replacement.resourceType,
+        tenantId: replacement.tenantId,
+      },
+    });
+    const existing = yield* query.execute.bind(query)().pipe(Effect.mapError(unavailable));
+    return Option.some({ existing, fingerprint });
+  });
 
-  const replaceProjection = Effect.fn('CoreSearchPersistence.replaceProjection')(
-    function* replaceProjectionEffect(
-      transaction: CoreTransaction,
-      replacement: CoreSearchProjectionReplacement,
-      updatedAt: Date,
-    ) {
-      yield* lockProjectionUnit(
-        transaction,
-        replacement.tenantId,
-        replacement.moduleId,
-        replacement.resourceType,
-      );
-      const work = yield* replacementRows(transaction, replacement);
-      if (Option.isNone(work)) {
-        return;
-      }
-      const { existing, fingerprint } = work.value;
-      yield* Effect.forEach(
-        replacement.documents,
-        (document) => persistUpsert(transaction, document, updatedAt),
-        { concurrency: 1, discard: true },
-      );
-      const nextIds = new Set<string>(replacement.documents.map(({ ref }) => ref.resourceId));
-      const staleRows = existing.filter(
-        (row) =>
-          !nextIds.has(row.sourceResourceId) &&
-          row.projectionVersion < BigInt(replacement.rebuildVersion),
-      );
-      yield* Effect.forEach(
-        staleRows,
-        (row) =>
-          persistDelete(
-            transaction,
-            persistedDeleteMutation(row, replacement.rebuildVersion),
-            updatedAt,
-          ),
-        { concurrency: 1, discard: true },
-      );
-      yield* persistRebuildFloor(transaction, replacement, fingerprint, updatedAt);
-    },
-  );
+  const replaceProjection = Effect.fn('CoreSearchPersistence.replaceProjection')(function* replaceProjectionEffect(
+    transaction: CoreTransaction,
+    replacement: CoreSearchProjectionReplacement,
+    updatedAt: Date,
+  ) {
+    yield* lockProjectionUnit(transaction, replacement.tenantId, replacement.moduleId, replacement.resourceType);
+    const work = yield* replacementRows(transaction, replacement);
+    if (Option.isNone(work)) {
+      return;
+    }
+    const { existing, fingerprint } = work.value;
+    yield* Effect.forEach(replacement.documents, (document) => persistUpsert(transaction, document, updatedAt), {
+      concurrency: 1,
+      discard: true,
+    });
+    const nextIds = new Set<string>(replacement.documents.map(({ ref }) => ref.resourceId));
+    const staleRows = existing.filter(
+      (row) => !nextIds.has(row.sourceResourceId) && row.projectionVersion < BigInt(replacement.rebuildVersion),
+    );
+    yield* Effect.forEach(
+      staleRows,
+      (row) => persistDelete(transaction, persistedDeleteMutation(row, replacement.rebuildVersion), updatedAt),
+      { concurrency: 1, discard: true },
+    );
+    yield* persistRebuildFloor(transaction, replacement, fingerprint, updatedAt);
+  });
 
   const decodeRow = (row: SearchIndexEntry): CoreSearchProjectionDocument => {
     const decoded = Result.getOrThrow(
@@ -502,7 +483,10 @@ const makeTransactionOperations = () => {
     if (decoded.temporalSearchableText !== undefined) {
       document.temporalSearchableText = decoded.temporalSearchableText;
     }
-    const mutation = decodeCoreSearchProjectionMutation({ document, kind: 'upsert' });
+    const mutation = decodeCoreSearchProjectionMutation({
+      document,
+      kind: 'upsert',
+    });
     if (mutation.kind !== 'upsert') {
       throw invalid('Core Search persisted document is invalid');
     }
@@ -538,9 +522,7 @@ const makeTransactionOperations = () => {
       yield* lockProjectionUnit(transaction, ref.tenantId, ref.moduleId, ref.resourceType);
       const rebuild = yield* currentRebuild(transaction, ref);
       const version = BigInt(
-        mutation.kind === 'upsert'
-          ? mutation.document.projectionVersion
-          : mutation.projectionVersion,
+        mutation.kind === 'upsert' ? mutation.document.projectionVersion : mutation.projectionVersion,
       );
       if (Option.isSome(rebuild) && version <= rebuild.value.rebuildVersion) {
         return;
@@ -554,10 +536,7 @@ const makeTransactionOperations = () => {
   );
 
   const queryCandidatesTransaction = Effect.fn('CoreSearchPersistence.queryCandidatesTransaction')(
-    function* queryCandidatesTransactionEffect(
-      transaction: CoreTransaction,
-      input: CoreSearchQuery,
-    ) {
+    function* queryCandidatesTransactionEffect(transaction: CoreTransaction, input: CoreSearchQuery) {
       yield* installTenantScope(transaction, input.tenantId, input.selectedLegalEntityId);
       const query = transaction.query.searchIndexEntries.findMany({
         // Match the bounded rebuild unit; never silently truncate before evidence filtering.
@@ -579,16 +558,16 @@ const makeTransactionOperations = () => {
     },
   );
 
-  const replaceProjectionTransaction = Effect.fn(
-    'CoreSearchPersistence.replaceProjectionTransaction',
-  )(function* replaceProjectionTransactionEffect(
-    transaction: CoreTransaction,
-    replacement: CoreSearchProjectionReplacement,
-    updatedAt: Date,
-  ) {
-    yield* installTenantScope(transaction, replacement.tenantId);
-    yield* replaceProjection(transaction, replacement, updatedAt);
-  });
+  const replaceProjectionTransaction = Effect.fn('CoreSearchPersistence.replaceProjectionTransaction')(
+    function* replaceProjectionTransactionEffect(
+      transaction: CoreTransaction,
+      replacement: CoreSearchProjectionReplacement,
+      updatedAt: Date,
+    ) {
+      yield* installTenantScope(transaction, replacement.tenantId);
+      yield* replaceProjection(transaction, replacement, updatedAt);
+    },
+  );
 
   return Object.freeze({
     applyMutationTransaction,
@@ -604,43 +583,39 @@ const transactionOperations = makeTransactionOperations();
 export const makePostgresCoreSearchProjectionStore = (
   database: CoreSearchPersistenceDatabase,
 ): CoreSearchProjectionStoreService => {
-  const runTransaction = <Value, Failure>(
-    body: (transaction: CoreTransaction) => Effect.Effect<Value, Failure>,
-  ) =>
+  const runTransaction = <Value, Failure>(body: (transaction: CoreTransaction) => Effect.Effect<Value, Failure>) =>
     database.executor.transaction(body).pipe(
-      Effect.catchDefect((defect) =>
-        isSqlError(defect) ? Effect.fail(defect) : Effect.die(defect),
-      ),
+      Effect.catchDefect((defect) => (isSqlError(defect) ? Effect.fail(defect) : Effect.die(defect))),
       Effect.catchTag('SqlError', (failure) => Effect.fail(unavailable(failure))),
     );
-  const apply: CoreSearchProjectionStoreService['apply'] = Effect.fn(
-    'CoreSearchProjectionStore.applyPostgres',
-  )(function* applyCoreSearchProjection(input: CoreSearchProjectionInput) {
-    const mutation = yield* transactionOperations.decodeMutation(input);
-    const updatedAt = DateTime.toDateUtc(yield* DateTime.now);
-    const transactionBody = (transaction: CoreTransaction) =>
-      transactionOperations.applyMutationTransaction(transaction, mutation, updatedAt);
-    yield* runTransaction(transactionBody);
-  });
+  const apply: CoreSearchProjectionStoreService['apply'] = Effect.fn('CoreSearchProjectionStore.applyPostgres')(
+    function* applyCoreSearchProjection(input: CoreSearchProjectionInput) {
+      const mutation = yield* transactionOperations.decodeMutation(input);
+      const updatedAt = DateTime.toDateUtc(yield* DateTime.now);
+      const transactionBody = (transaction: CoreTransaction) =>
+        transactionOperations.applyMutationTransaction(transaction, mutation, updatedAt);
+      yield* runTransaction(transactionBody);
+    },
+  );
   const queryCandidates: CoreSearchProjectionStoreService['queryCandidates'] = Effect.fn(
     'CoreSearchProjectionStore.queryCandidatesPostgres',
   )(function* queryCoreSearchCandidates(input: CoreSearchQuery) {
     const transactionBody = (transaction: CoreTransaction) =>
       transactionOperations.queryCandidatesTransaction(transaction, input);
     const documents = yield* runTransaction(transactionBody);
-    return yield* Schema.decodeUnknownEffect(Schema.Array(CoreSearchProjectionDocumentSchema))(
-      documents,
-    ).pipe(Effect.mapError(unavailable));
+    return yield* Schema.decodeEffect(Schema.Array(CoreSearchProjectionDocumentSchema))(documents).pipe(
+      Effect.mapError(unavailable),
+    );
   });
-  const replace: CoreSearchProjectionStoreService['replace'] = Effect.fn(
-    'CoreSearchProjectionStore.replacePostgres',
-  )(function* replaceCoreSearchProjection(input: CoreSearchProjectionInput) {
-    const replacement = yield* transactionOperations.decodeReplacement(input);
-    const updatedAt = DateTime.toDateUtc(yield* DateTime.now);
-    const transactionBody = (transaction: CoreTransaction) =>
-      transactionOperations.replaceProjectionTransaction(transaction, replacement, updatedAt);
-    yield* runTransaction(transactionBody);
-  });
+  const replace: CoreSearchProjectionStoreService['replace'] = Effect.fn('CoreSearchProjectionStore.replacePostgres')(
+    function* replaceCoreSearchProjection(input: CoreSearchProjectionInput) {
+      const replacement = yield* transactionOperations.decodeReplacement(input);
+      const updatedAt = DateTime.toDateUtc(yield* DateTime.now);
+      const transactionBody = (transaction: CoreTransaction) =>
+        transactionOperations.replaceProjectionTransaction(transaction, replacement, updatedAt);
+      yield* runTransaction(transactionBody);
+    },
+  );
   return Object.freeze({ apply, queryCandidates, replace });
 };
 
@@ -652,12 +627,5 @@ export const CoreSearchProjectionStoreLive = Layer.effect(
   }),
 );
 
-/** Fully composed production query layer; owner adapters never import Core database capabilities. */
-export const CoreSearchQueryRuntimeLive = Layer.effect(
-  CoreSearchQueryRuntime,
-  Effect.gen(function* createCoreSearchQueryRuntimeLive() {
-    const database = yield* CoreDatabase;
-    const store = makePostgresCoreSearchProjectionStore(database);
-    return createCoreSearchQueryRuntime(store);
-  }),
-);
+/** Query layer exposes its store requirement for composition at the application boundary. */
+export const CoreSearchQueryRuntimeLive = Layer.effect(CoreSearchQueryRuntime, createCoreSearchQueryRuntime);

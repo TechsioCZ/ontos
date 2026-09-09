@@ -1,5 +1,6 @@
-import { assert, it } from 'effect-rstest';
 import { Schema } from 'effect';
+import { assert, it } from 'effect-rstest';
+
 import * as duplicateCase from '../../shared/resources/duplicate-candidate-case.ts';
 import * as correction from '../../shared/resources/party-correction.ts';
 import * as matchDecision from '../../shared/resources/party-match-decision.ts';

@@ -1,6 +1,6 @@
 import { NodeServices } from '@effect/platform-node';
-import { expect, it } from 'effect-rstest';
 import { Deferred, Effect, Fiber, Layer, Stream } from 'effect';
+import { expect, it } from 'effect-rstest';
 import { ChildProcess } from 'effect/unstable/process';
 
 const gracefulShutdown = (signal: 'SIGINT' | 'SIGTERM') =>
@@ -31,11 +31,7 @@ const gracefulShutdown = (signal: 'SIGINT' | 'SIGTERM') =>
       Stream.runCollect,
       Effect.forkChild,
     );
-    const errorsFiber = yield* child.stderr.pipe(
-      Stream.decodeText(),
-      Stream.mkString,
-      Effect.forkChild,
-    );
+    const errorsFiber = yield* child.stderr.pipe(Stream.decodeText(), Stream.mkString, Effect.forkChild);
 
     yield* Deferred.await(readyToStop);
     yield* child.kill({ killSignal: signal });

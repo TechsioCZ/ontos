@@ -8,58 +8,25 @@ created: 2026-08-06
 
 ## Feature Description
 
-Make tenant module state a universal Core invariant for every OntOS Business Module entrypoint.
-Core must decide whether a structured entrypoint is loadable or dispatchable before permission
-checks, Policy evaluation, private handler resolution, Module Federation loading, or module code
-execution. The same closed state/access matrix must govern Actions, pages, public components,
-module APIs, search, reports, and Outbox Workers.
+Make tenant module state a universal Core invariant for every OntOS Business Module entrypoint. Core must decide whether a structured entrypoint is loadable or dispatchable before permission checks, Policy evaluation, private handler resolution, Module Federation loading, or module code execution. The same closed state/access matrix must govern Actions, pages, public components, module APIs, search, reports, and Outbox Workers.
 
-Implement the reusable Core gate and gateway contracts now, integrate them with the Action and
-Outbox Worker runtimes that exist on `develop`, and establish fail-closed descriptors, Codesmith
-output, repository checks, and application guidance for categories that do not yet have business
-implementations. Future entrypoint code must be unable to pass the normal `pnpm check` gate unless
-it declares a structured entrypoint and uses an approved Shell/Core gateway. The gateway must
-batch state reads and reuse one immutable request-scoped snapshot so composing many entrypoints
-does not create one database query per page, component, search provider, or report.
+Implement the reusable Core gate and gateway contracts now, integrate them with the Action and Outbox Worker runtimes that exist on `develop`, and establish fail-closed descriptors, Codesmith output, repository checks, and application guidance for categories that do not yet have business implementations. Future entrypoint code must be unable to pass the normal `pnpm check` gate unless it declares a structured entrypoint and uses an approved Shell/Core gateway. The gateway must batch state reads and reuse one immutable request-scoped snapshot so composing many entrypoints does not create one database query per page, component, search provider, or report.
 
 ## User Story
 
-As a tenant administrator and OntOS operator
-I want every module capability to respect the tenant's current module state
-So that inactive, read-only, suspended, quarantined, deprecated, or archived modules cannot be
-loaded or executed through an overlooked entrypoint
+As a tenant administrator and OntOS operator I want every module capability to respect the tenant's current module state So that inactive, read-only, suspended, quarantined, deprecated, or archived modules cannot be loaded or executed through an overlooked entrypoint
 
 ## Problem Statement
 
-`develop` persists all seven tenant module states, exposes Core reads and a Core-owned state-change
-Action, filters the current Shell list to installed active modules, and restricts Outbox Worker
-claims to consuming modules whose state is `active`. These are isolated behaviors rather than one
-Core invariant.
+`develop` persists all seven tenant module states, exposes Core reads and a Core-owned state-change Action, filters the current Shell list to installed active modules, and restricts Outbox Worker claims to consuming modules whose state is `active`. These are isolated behaviors rather than one Core invariant.
 
-The Action runtime demonstrates the gap. `runAction` decodes the payload, retrieves the private
-handler, validates trusted context, creates or resolves an invocation, checks SpiceDB permission,
-evaluates Policies, and executes the handler without checking the owning module's tenant state.
-The current generated Action and Outbox Worker descriptors carry owner keys but no common
-structured entrypoint or access requirement. Generated MicroVertical pages carry `ownerAppId` in
-route metadata but no governed load requirement. No equivalent registration or enforcement
-contract exists yet for module APIs, public components, search, or reports.
+The Action runtime demonstrates the gap. `runAction` decodes the payload, retrieves the private handler, validates trusted context, creates or resolves an invocation, checks SpiceDB permission, evaluates Policies, and executes the handler without checking the owning module's tenant state. The current generated Action and Outbox Worker descriptors carry owner keys but no common structured entrypoint or access requirement. Generated MicroVertical pages carry `ownerAppId` in route metadata but no governed load requirement. No equivalent registration or enforcement contract exists yet for module APIs, public components, search, or reports.
 
-This permits present and future bypasses: an inactive module Action can execute, a direct route or
-remote load can avoid Shell filtering, and new API/search/report/component implementations could
-invent local state checks or omit them entirely. A reusable `isActive` helper would still be
-optional and would allow the seven-state semantics to drift between runtimes. Likewise, a gateway
-that performs one exact database lookup per entrypoint would turn a composed Shell page into an
-N+1 query path and make universal enforcement unnecessarily expensive.
+This permits present and future bypasses: an inactive module Action can execute, a direct route or remote load can avoid Shell filtering, and new API/search/report/component implementations could invent local state checks or omit them entirely. A reusable `isActive` helper would still be optional and would allow the seven-state semantics to drift between runtimes. Likewise, a gateway that performs one exact database lookup per entrypoint would turn a composed Shell page into an N+1 query path and make universal enforcement unnecessarily expensive.
 
 ## Solution Statement
 
-Introduce a narrow Core-owned structured entrypoint contract, one closed state/access decision
-matrix, a typed `ModuleStateGate` Effect service, and a `ModuleEntrypointGateway` that accepts
-trusted tenant context plus lazy authorization/load/dispatch Effects. The gateway must evaluate
-state before invoking downstream authorization or the lazy module implementation. Core system
-capabilities use an explicit system-entrypoint classification and bypass tenant activation only;
-they still pass through authentication, SpiceDB authorization, Policy, evidence, and other
-applicable controls. Never infer the bypass from an arbitrary string prefix at the call site.
+Introduce a narrow Core-owned structured entrypoint contract, one closed state/access decision matrix, a typed `ModuleStateGate` Effect service, and a `ModuleEntrypointGateway` that accepts trusted tenant context plus lazy authorization/load/dispatch Effects. The gateway must evaluate state before invoking downstream authorization or the lazy module implementation. Core system capabilities use an explicit system-entrypoint classification and bypass tenant activation only; they still pass through authentication, SpiceDB authorization, Policy, evidence, and other applicable controls. Never infer the bypass from an arbitrary string prefix at the call site.
 
 Use these access classes:
 
@@ -74,24 +41,11 @@ Use these access classes:
 | `archived`    |   deny |             allow |    deny |         deny |
 | missing row   |   deny |              deny |    deny |         deny |
 
-`historical_read` is an explicit entrypoint classification, never a fallback from a denied normal
-read. It exists for permission-checked historical/audit/reporting paths and must not put inactive,
-suspended, or archived modules into ordinary navigation. Quarantine denies every module-owned
-entrypoint because its purpose includes defect, migration, and data-safety containment.
+`historical_read` is an explicit entrypoint classification, never a fallback from a denied normal read. It exists for permission-checked historical/audit/reporting paths and must not put inactive, suspended, or archived modules into ordinary navigation. Quarantine denies every module-owned entrypoint because its purpose includes defect, migration, and data-safety containment.
 
-Map entrypoint categories to access deliberately: Actions are `write`; Workers are `background`;
-pages, public components, and search default to `read`; every API and report declares `read`,
-`historical_read`, or `write` explicitly. An API write remains only a transport edge into an
-Action—it does not gain an independent write handler.
+Map entrypoint categories to access deliberately: Actions are `write`; Workers are `background`; pages, public components, and search default to `read`; every API and report declares `read`, `historical_read`, or `write` explicitly. An API write remains only a transport edge into an Action—it does not gain an independent write handler.
 
-Separate state acquisition from state evaluation. At the start of one trusted Shell, SSR, route,
-or BFF request, collect the distinct tenant-scoped module keys from the structured entrypoint set,
-load them in one indexed batch query, decode them once, and build an immutable request-scoped
-snapshot. Every gateway decision in that request is then a pure in-memory matrix evaluation.
-Repeated checks for the same module do not query again. A tenant entrypoint absent from the
-declared snapshot fails closed rather than issuing an implicit per-entrypoint query; the owning
-composition boundary must declare the complete batch. Empty and system-only batches perform no
-state query.
+Separate state acquisition from state evaluation. At the start of one trusted Shell, SSR, route, or BFF request, collect the distinct tenant-scoped module keys from the structured entrypoint set, load them in one indexed batch query, decode them once, and build an immutable request-scoped snapshot. Every gateway decision in that request is then a pure in-memory matrix evaluation. Repeated checks for the same module do not query again. A tenant entrypoint absent from the declared snapshot fails closed rather than issuing an implicit per-entrypoint query; the owning composition boundary must declare the complete batch. Empty and system-only batches perform no state query.
 
 Use this database-query budget:
 
@@ -104,33 +58,13 @@ Use this database-query budget:
 | One business Action attempt                                                   | One early indexed read plus one authoritative transactional recheck        |
 | One Outbox Worker claim cycle                                                 | Zero additional queries beyond the existing transactional claim query/join |
 
-Keep the snapshot request-scoped. Do not introduce a process-global, TTL, browser-authoritative,
-or distributed cache in this increment: activation changes must affect the next independent
-request without restart or invalidation coordination. A page-load decision never replaces the
-independent BFF/Action check at the next trust boundary. Instrument gate acquisition/evaluation
-with safe Effect telemetry for batch size, acquisition latency, snapshot reuse, scope/access, and
-outcome, without arbitrary payloads or credentials.
+Keep the snapshot request-scoped. Do not introduce a process-global, TTL, browser-authoritative, or distributed cache in this increment: activation changes must affect the next independent request without restart or invalidation coordination. A page-load decision never replaces the independent BFF/Action check at the next trust boundary. Instrument gate acquisition/evaluation with safe Effect telemetry for batch size, acquisition latency, snapshot reuse, scope/access, and outcome, without arbitrary payloads or credentials.
 
-Integrate Actions after structural payload and trusted-context validation but before invocation
-creation, permission, Policy, or handler resolution. A module-state denial creates no Action
-Invocation Log because the request never enters the module Action lifecycle. Recheck a business
-module's `write` access with the Core transaction immediately before handler execution so a state
-transition between the early gate and dispatch cannot authorize a stale write. A failed locked
-recheck rolls back the business attempt and follows the existing open-invocation retry semantics.
-The `core.modules.change-tenant-module-state` system Action must remain usable for recovery even
-when the target business module is not active.
+Integrate Actions after structural payload and trusted-context validation but before invocation creation, permission, Policy, or handler resolution. A module-state denial creates no Action Invocation Log because the request never enters the module Action lifecycle. Recheck a business module's `write` access with the Core transaction immediately before handler execution so a state transition between the early gate and dispatch cannot authorize a stale write. A failed locked recheck rolls back the business attempt and follows the existing open-invocation retry semantics. The `core.modules.change-tenant-module-state` system Action must remain usable for recovery even when the target business module is not active.
 
-Refactor Outbox Worker eligibility to use the same `background` semantics while preserving its
-transactional claim query, tenant isolation, leases, and no-attempt behavior for ineligible work.
-The consuming module—not the producer—governs dispatch. Handler resolution remains after a
-successful eligible claim.
+Refactor Outbox Worker eligibility to use the same `background` semantics while preserving its transactional claim query, tenant isolation, leases, and no-attempt behavior for ineligible work. The consuming module—not the producer—governs dispatch. Handler resolution remains after a successful eligible claim.
 
-Add a dedicated repository boundary check to the root quality gate. It must validate generated
-Action/page/Worker entrypoint metadata, approved gateway composition, lazy loads, owner/role/access
-consistency, and forbidden direct private imports or raw `loadRemote(...)` calls. It must also
-reserve fail-closed registration slots for API, public-component, search, and report entrypoints:
-until a category has an approved generator and gateway adapter, introducing that category must
-fail validation with an instruction to extend Codesmith and the gateway first.
+Add a dedicated repository boundary check to the root quality gate. It must validate generated Action/page/Worker entrypoint metadata, approved gateway composition, lazy loads, owner/role/access consistency, and forbidden direct private imports or raw `loadRemote(...)` calls. It must also reserve fail-closed registration slots for API, public-component, search, and report entrypoints: until a category has an approved generator and gateway adapter, introducing that category must fail validation with an instruction to extend Codesmith and the gateway first.
 
 ## Relevant Files
 
@@ -200,31 +134,15 @@ Use these files to implement the feature:
 
 ### Phase 1: Foundation
 
-Update the existing Codesmith templates and fixture expectations first so no new generated Action,
-page, or Worker can be produced with the old bypassable shape. Define the architecture document,
-the closed entrypoint role/access vocabulary, the approved state matrix, explicit system scope,
-typed failures, batched state acquisition, immutable request-scoped snapshots, and the Core
-gate/gateway services. Add exhaustive unit, query-budget, and PostgreSQL integration tests beside
-the foundation.
+Update the existing Codesmith templates and fixture expectations first so no new generated Action, page, or Worker can be produced with the old bypassable shape. Define the architecture document, the closed entrypoint role/access vocabulary, the approved state matrix, explicit system scope, typed failures, batched state acquisition, immutable request-scoped snapshots, and the Core gate/gateway services. Add exhaustive unit, query-budget, and PostgreSQL integration tests beside the foundation.
 
 ### Phase 2: Core Implementation
 
-Wire the gate into the existing Action and Outbox Worker runtimes. Preserve each specialized
-lifecycle: Actions gate before invocation/authz/Policy/handler access and recheck under the
-business transaction; Workers retain atomic claim eligibility and use the shared background
-decision. Update descriptors, layers, public errors, runtime stages, test harnesses, and existing
-integration fixtures without weakening idempotency, evidence, leases, or deployment seams.
+Wire the gate into the existing Action and Outbox Worker runtimes. Preserve each specialized lifecycle: Actions gate before invocation/authz/Policy/handler access and recheck under the business transaction; Workers retain atomic claim eligibility and use the shared background decision. Update descriptors, layers, public errors, runtime stages, test harnesses, and existing integration fixtures without weakening idempotency, evidence, leases, or deployment seams.
 
 ### Phase 3: Integration
 
-Add repository enforcement and future-category rails. Preserve structured page metadata through
-route generation; require future vertical APIs to use the approved gateway adapter; require public
-component, search, and report registrations to declare an entrypoint before they can be exported
-or discovered; and reject raw remote/private implementation loading. Update `AGENTS.md` and every
-affected architecture document so implementation agents are required to use the gateway and to
-extend Codesmith before introducing a category the repository cannot yet scaffold safely. Make
-batch acquisition and request-scoped snapshot reuse part of the same mandatory contract so future
-composition code cannot replace security bypasses with N+1 state queries.
+Add repository enforcement and future-category rails. Preserve structured page metadata through route generation; require future vertical APIs to use the approved gateway adapter; require public component, search, and report registrations to declare an entrypoint before they can be exported or discovered; and reject raw remote/private implementation loading. Update `AGENTS.md` and every affected architecture document so implementation agents are required to use the gateway and to extend Codesmith before introducing a category the repository cannot yet scaffold safely. Make batch acquisition and request-scoped snapshot reuse part of the same mandatory contract so future composition code cannot replace security bypasses with N+1 state queries.
 
 ## Step by Step Tasks
 
@@ -306,26 +224,11 @@ IMPORTANT: Execute every step in order, top to bottom.
 
 ### Unit Tests
 
-Exhaustively table-test the state/access matrix, including missing state, and test structured
-descriptor construction, system classification, immutable values, typed safe failures, dependency
-ordering, lazy authorization/load/handler behavior, Action stage order, and Worker descriptor/claim
-behavior. Use counting fakes to prove batch-key deduplication, one state acquisition for many
-descriptors, request-snapshot reuse, fail-closed undeclared keys, zero queries for system-only
-compositions, one early business-Action read, and zero extra Worker queries. Test safe telemetry
-attributes without asserting environment-specific timing values. Test Codesmith and the boundary
-checker with disposable workspaces so future generated artifacts cannot omit or forge their
-entrypoint metadata.
+Exhaustively table-test the state/access matrix, including missing state, and test structured descriptor construction, system classification, immutable values, typed safe failures, dependency ordering, lazy authorization/load/handler behavior, Action stage order, and Worker descriptor/claim behavior. Use counting fakes to prove batch-key deduplication, one state acquisition for many descriptors, request-snapshot reuse, fail-closed undeclared keys, zero queries for system-only compositions, one early business-Action read, and zero extra Worker queries. Test safe telemetry attributes without asserting environment-specific timing values. Test Codesmith and the boundary checker with disposable workspaces so future generated artifacts cannot omit or forge their entrypoint metadata.
 
 ### Integration Tests
 
-Use the existing PostgreSQL-backed Core fixtures to prove tenant-isolated gate reads, Action early
-denial and locked recheck, concurrent state changes, recovery through the Core state Action,
-Outbox Worker claim eligibility/no-attempt behavior, and reactivation. Add multi-key database
-fixtures and repository instrumentation to prove the query budgets without relying on wall-clock
-thresholds. No browser E2E test is required while `develop` contains no business MicroVertical
-route or remote; fake lazy loaders and disposable generated vertical fixtures provide the current
-load-order and batching proof. The first production page/public-component integration must add an
-E2E direct-URL/remote-load denial test and verify its state-decision request remains batched.
+Use the existing PostgreSQL-backed Core fixtures to prove tenant-isolated gate reads, Action early denial and locked recheck, concurrent state changes, recovery through the Core state Action, Outbox Worker claim eligibility/no-attempt behavior, and reactivation. Add multi-key database fixtures and repository instrumentation to prove the query budgets without relying on wall-clock thresholds. No browser E2E test is required while `develop` contains no business MicroVertical route or remote; fake lazy loaders and disposable generated vertical fixtures provide the current load-order and batching proof. The first production page/public-component integration must add an E2E direct-URL/remote-load denial test and verify its state-decision request remains batched.
 
 ### Edge Cases
 
@@ -405,33 +308,19 @@ Execute every command to validate the feature with zero regressions.
 
 ### Summary
 
-- Implemented the universal descriptor, closed state/access matrix, immutable request snapshot,
-  Core gate/gateway, Action early gate plus transactional recheck, Worker claim alignment, lazy
-  Shell adapter, Codesmith output, documentation, and repository bypass enforcement.
-- Hardened the final design so only Core can mint snapshots, snapshots authorize exactly their
-  prepared descriptors, tenant/system ownership is enforced, trusted principal context is runtime
-  validated, all composed Shell descriptors are preflighted before loading, and typed loader and
-  persistence failures remain intact behind safe public errors.
-- Added safe gate telemetry and comment-aware TypeScript boundary inspection without recording
-  tenant, module, principal, entrypoint, payload, credential, or raw persistence information.
+- Implemented the universal descriptor, closed state/access matrix, immutable request snapshot, Core gate/gateway, Action early gate plus transactional recheck, Worker claim alignment, lazy Shell adapter, Codesmith output, documentation, and repository bypass enforcement.
+- Hardened the final design so only Core can mint snapshots, snapshots authorize exactly their prepared descriptors, tenant/system ownership is enforced, trusted principal context is runtime validated, all composed Shell descriptors are preflighted before loading, and typed loader and persistence failures remain intact behind safe public errors.
+- Added safe gate telemetry and comment-aware TypeScript boundary inspection without recording tenant, module, principal, entrypoint, payload, credential, or raw persistence information.
 
 ### Changed Files
 
-- 56 intended paths under `app/` totaling 4,071 additions and 103 deletions: Core gate/runtime
-  code and tests, Shell gateway metadata and tests, Codesmith and boundary tooling, architecture
-  guidance, CI/package wiring, and this spec.
+- 56 intended paths under `app/` totaling 4,071 additions and 103 deletions: Core gate/runtime code and tests, Shell gateway metadata and tests, Codesmith and boundary tooling, architecture guidance, CI/package wiring, and this spec.
 - No files under read-only `mvp/` or `mvp2/` were changed.
 
 ### Tests Written or Updated
 
-- Added exhaustive unit/integration coverage for descriptor construction, state/access decisions,
-  immutable snapshots, batching/reuse, unavailable state, Action ordering and transactional
-  rechecks, system recovery, Worker claim eligibility, Shell lazy composition, telemetry safety,
-  Codesmith output, and every enforced bypass category.
-- Added PostgreSQL coverage for all states, missing and foreign-tenant rows, concurrent state
-  transition, retry after reactivation, rollback/evidence behavior, and consumer-owned Worker
-  state. Database-enabled review also corrected stable fixture keys, tenant-state-change cleanup,
-  and a faithful unavailable-query fake.
+- Added exhaustive unit/integration coverage for descriptor construction, state/access decisions, immutable snapshots, batching/reuse, unavailable state, Action ordering and transactional rechecks, system recovery, Worker claim eligibility, Shell lazy composition, telemetry safety, Codesmith output, and every enforced bypass category.
+- Added PostgreSQL coverage for all states, missing and foreign-tenant rows, concurrent state transition, retry after reactivation, rollback/evidence behavior, and consumer-owned Worker state. Database-enabled review also corrected stable fixture keys, tenant-state-change cleanup, and a faithful unavailable-query fake.
 
 ### Validation
 
@@ -445,31 +334,21 @@ Execute every command to validate the feature with zero regressions.
 - `mise exec -- pnpm --filter @app/core-runtime action:test:unit` — passed, 51 tests.
 - `mise exec -- pnpm --filter @app/core-runtime outbox:test:unit` — passed, 17 tests.
 - `mise exec -- pnpm --filter @app/core-runtime typecheck` — passed.
-- `mise exec -- pnpm --filter @app/core-runtime db:test` — passed, 133 tests, using isolated
-  process-scoped PostgreSQL and SpiceDB test services after applying the repository migrations.
+- `mise exec -- pnpm --filter @app/core-runtime db:test` — passed, 133 tests, using isolated process-scoped PostgreSQL and SpiceDB test services after applying the repository migrations.
 - `mise exec -- pnpm api:check` — passed.
 - `mise exec -- pnpm contract:check` — passed.
 - `mise exec -- pnpm build` — passed.
 - `mise exec -- pnpm check` — passed.
-- Additional verification: Core migrations and exact 18-table schema verification passed against
-  the isolated PostgreSQL database; all 66 Shell unit tests and 9 focused gate tests passed.
+- Additional verification: Core migrations and exact 18-table schema verification passed against the isolated PostgreSQL database; all 66 Shell unit tests and 9 focused gate tests passed.
 
 ### Review
 
-- Re-read `../AGENTS.md`, `AGENTS.md`, and every architecture, frontend, product-context,
-  manifest, validation-report, and ADR reference named by this spec. The final implementation
-  preserves the documented Core/MicroVertical ownership, Action evidence, Worker claim,
-  generated BFF, trusted-context, typed-error, and historical-read boundaries.
-- Final review found and corrected generator stale-entrypoint validation, reference-topology
-  wiring, integration hook order, public snapshot forgery, ownership/context bypasses, partial
-  Shell loading, erased loader errors, formatting-sensitive boundary checks, API discovery,
-  telemetry coverage, and the three database-fixture defects above. No findings remain.
+- Re-read `../AGENTS.md`, `AGENTS.md`, and every architecture, frontend, product-context, manifest, validation-report, and ADR reference named by this spec. The final implementation preserves the documented Core/MicroVertical ownership, Action evidence, Worker claim, generated BFF, trusted-context, typed-error, and historical-read boundaries.
+- Final review found and corrected generator stale-entrypoint validation, reference-topology wiring, integration hook order, public snapshot forgery, ownership/context bypasses, partial Shell loading, erased loader errors, formatting-sensitive boundary checks, API discovery, telemetry coverage, and the three database-fixture defects above. No findings remain.
 
 ### Deviations and Follow-ups
 
-- None required for this feature. No browser E2E was added because there is still no production
-  business MicroVertical route or remote; the spec explicitly uses fake lazy loaders and
-  disposable generated fixtures until the first production integration exists.
+- None required for this feature. No browser E2E was added because there is still no production business MicroVertical route or remote; the spec explicitly uses fake lazy loaders and disposable generated fixtures until the first production integration exists.
 
 ## Notes
 

@@ -1,4 +1,5 @@
 import { Effect, Schema } from 'effect';
+
 import {
   EngagementProfileConflict,
   EngagementProfilePersistenceUnavailable,
@@ -20,12 +21,10 @@ interface EngagementServices<Payload, Result> {
   ) => Effect.Effect<void, EngagementProfileConflict | PartyRegistryReferenceUnavailable>;
 }
 
-export const handleAttachEngagement = Effect.fn('AttachEngagementAction.handle')(
-  function* handleAttachEngagement<Payload, Result>(
-    payload: Payload,
-    context: { readonly services: EngagementServices<Payload, Result> },
-  ) {
-    yield* context.services.validate(payload);
-    return yield* context.services.create(payload);
-  },
-);
+export const handleAttachEngagement = Effect.fn('AttachEngagementAction.handle')(function* handleAttachEngagement<
+  Payload,
+  Result,
+>(payload: Payload, context: { readonly services: EngagementServices<Payload, Result> }) {
+  yield* context.services.validate(payload);
+  return yield* context.services.create(payload);
+});

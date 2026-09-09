@@ -1,5 +1,6 @@
-import { expect, it } from 'effect-rstest';
 import { Schema } from 'effect';
+import { expect, it } from 'effect-rstest';
+
 import {
   AddressContactPointValueSchema,
   AddressContactPointInputSchema,
@@ -12,21 +13,15 @@ import {
   normalizePhone,
   assertAddressPurposeRules,
 } from '../../shared/domain/contact-point.ts';
-import {
-  AddContactPointPayloadSchema,
-  addContactPointAction,
-} from '../../src/actions/add-contact-point.action.ts';
+import { OutboxPayloadSchema as ContactPointAddedOutboxPayloadSchema } from '../../shared/outbox/party-registry-contact-point-added-v1.ts';
+import { AddContactPointPayloadSchema, addContactPointAction } from '../../src/actions/add-contact-point.action.ts';
+import { EndContactPointPayloadSchema, endContactPointAction } from '../../src/actions/end-contact-point.action.ts';
 import {
   UpdateContactPointPayloadSchema,
   updateContactPointAction,
 } from '../../src/actions/update-contact-point.action.ts';
-import {
-  EndContactPointPayloadSchema,
-  endContactPointAction,
-} from '../../src/actions/end-contact-point.action.ts';
 import { partyContactPointDetailRead } from '../../src/api/party-contact-point-detail.read.ts';
 import { partyContactPointsRead } from '../../src/api/party-contact-points.read.ts';
-import { OutboxPayloadSchema as ContactPointAddedOutboxPayloadSchema } from '../../shared/outbox/party-registry-contact-point-added-v1.ts';
 
 const partyRef = {
   moduleId: 'party.registry',
@@ -48,7 +43,7 @@ it('normalizes EMAIL without provider-specific identity heuristics', () => {
     normalizeEmail('qatest+two@example.com').lookupValue,
   );
   expect(() =>
-    Schema.decodeUnknownSync(EmailContactPointInputSchema)({
+    Schema.decodeSync(EmailContactPointInputSchema)({
       preferred: false,
       type: 'EMAIL',
       value: 'not-an-email',
@@ -70,7 +65,7 @@ it('normalizes PHONE only with explicit international or country context and pre
   });
   expect(() => normalizePhone('777 123 456')).toThrow();
   expect(() =>
-    Schema.decodeUnknownSync(PhoneContactPointInputSchema)({
+    Schema.decodeSync(PhoneContactPointInputSchema)({
       countryCode: 'CZ',
       preferred: false,
       type: 'PHONE',
@@ -78,7 +73,7 @@ it('normalizes PHONE only with explicit international or country context and pre
     }),
   ).toThrow();
   expect(() =>
-    Schema.decodeUnknownSync(PhoneContactPointInputSchema)({
+    Schema.decodeSync(PhoneContactPointInputSchema)({
       extension: '1234567890123',
       preferred: false,
       type: 'PHONE',
@@ -87,7 +82,7 @@ it('normalizes PHONE only with explicit international or country context and pre
   ).toThrow();
   expect(() => normalizePhone('+420777123456', 'CZ', '123456789012')).not.toThrow();
   expect(() =>
-    Schema.decodeUnknownSync(PhoneContactPointInputSchema)({
+    Schema.decodeSync(PhoneContactPointInputSchema)({
       preferred: false,
       type: 'PHONE',
       value: '777 123 456',
@@ -95,7 +90,7 @@ it('normalizes PHONE only with explicit international or country context and pre
   ).toThrow();
 });
 it('keeps ADDRESS structured, multi-purpose, and preferred independently per purpose', () => {
-  const decoded = Schema.decodeUnknownSync(AddressContactPointInputSchema)({
+  const decoded = Schema.decodeSync(AddressContactPointInputSchema)({
     address: {
       addressLine1: '  Na Prikope 1  ',
       city: '  Praha  ',
@@ -155,7 +150,11 @@ it('requires authoritative, registry-scoped evidence only for REGISTERED', () =>
         },
         { preferred: false, purpose: 'CORRESPONDENCE' },
       ],
-      { ...provenance, authoritative: true, evidenceReference: 'evidence:ares:subject:1' },
+      {
+        ...provenance,
+        authoritative: true,
+        evidenceReference: 'evidence:ares:subject:1',
+      },
     ),
   ).not.toThrow();
 });
@@ -180,8 +179,12 @@ it('declares tenant-authorized idempotent Actions and prevents value overwrite t
     expect(action.descriptor.tenantPermission).not.toBe(undefined);
   }
   expect(() =>
-    Schema.decodeUnknownSync(AddContactPointPayloadSchema)({
-      contactPoint: { preferred: true, type: 'EMAIL', value: 'user@example.test' },
+    Schema.decodeSync(AddContactPointPayloadSchema)({
+      contactPoint: {
+        preferred: true,
+        type: 'EMAIL',
+        value: 'user@example.test',
+      },
       partyRef,
       privacyClassification: 'PERSONAL',
       provenance,
@@ -190,7 +193,9 @@ it('declares tenant-authorized idempotent Actions and prevents value overwrite t
     }),
   ).not.toThrow();
   expect(() =>
-    Schema.decodeUnknownSync(UpdateContactPointPayloadSchema, { onExcessProperty: 'error' })({
+    Schema.decodeUnknownSync(UpdateContactPointPayloadSchema, {
+      onExcessProperty: 'error',
+    })({
       change: { preferred: true, type: 'SET_CHANNEL_PREFERRED' },
       contactPointRef: {
         ...partyRef,
@@ -209,12 +214,20 @@ it('governs contact reads with tenant Party authority even when Legal Entity con
   }
 });
 it('publishes stable references instead of mutable contact data', () => {
-  const contactPointRef = { ...partyRef, resourceType: 'party.registry.party-contact-point' };
+  const contactPointRef = {
+    ...partyRef,
+    resourceType: 'party.registry.party-contact-point',
+  };
   expect(
-    Schema.decodeUnknownSync(ContactPointAddedOutboxPayloadSchema)({ contactPointRef, partyRef }),
+    Schema.decodeUnknownSync(ContactPointAddedOutboxPayloadSchema)({
+      contactPointRef,
+      partyRef,
+    }),
   ).toEqual({ contactPointRef, partyRef });
   expect(() =>
-    Schema.decodeUnknownSync(ContactPointAddedOutboxPayloadSchema, { onExcessProperty: 'error' })({
+    Schema.decodeUnknownSync(ContactPointAddedOutboxPayloadSchema, {
+      onExcessProperty: 'error',
+    })({
       contactPointRef,
       displayValue: 'private@example.test',
       partyRef,
@@ -222,7 +235,10 @@ it('publishes stable references instead of mutable contact data', () => {
   ).toThrow();
 });
 it('models removal as a reasoned temporal end of a whole contact or one ADDRESS purpose', () => {
-  const contactPointRef = { ...partyRef, resourceType: 'party.registry.party-contact-point' };
+  const contactPointRef = {
+    ...partyRef,
+    resourceType: 'party.registry.party-contact-point',
+  };
   for (const target of [
     { type: 'WHOLE_CONTACT_POINT' },
     { target: { purpose: 'DELIVERY' }, type: 'ADDRESS_PURPOSE' },
@@ -269,7 +285,10 @@ it('models removal as a reasoned temporal end of a whole contact or one ADDRESS 
   ).toThrow();
 });
 it('models an originally wrong Contact Point as an explicit correction with optional validated replacement', () => {
-  const contactPointRef = { ...partyRef, resourceType: 'party.registry.party-contact-point' };
+  const contactPointRef = {
+    ...partyRef,
+    resourceType: 'party.registry.party-contact-point',
+  };
   expect(() =>
     Schema.decodeUnknownSync(UpdateContactPointPayloadSchema)({
       change: {
@@ -282,7 +301,10 @@ it('models an originally wrong Contact Point as an explicit correction with opti
             value: 'correct@example.test',
           },
           privacyClassification: 'PERSONAL',
-          provenance: { ...provenance, evidenceReference: 'evidence:customer-confirmation:42' },
+          provenance: {
+            ...provenance,
+            evidenceReference: 'evidence:customer-confirmation:42',
+          },
           validFrom: '2026-09-03T10:00:00.000Z',
           verification: { state: 'UNVERIFIED' },
         },
@@ -290,7 +312,10 @@ it('models an originally wrong Contact Point as an explicit correction with opti
       },
       contactPointRef,
       expectedRevision: 3,
-      provenance: { ...provenance, evidenceReference: 'evidence:customer-confirmation:42' },
+      provenance: {
+        ...provenance,
+        evidenceReference: 'evidence:customer-confirmation:42',
+      },
     }),
   ).not.toThrow();
   expect(() =>
@@ -319,8 +344,8 @@ it('projects independently auditable whole-contact and ADDRESS-purpose ends', ()
     reason: 'Correspondence moved to another address',
     recordedAt: '2026-09-03T10:00:00.000Z',
   } as const;
-  const end = Schema.decodeUnknownSync(ContactPointEndSchema)(encodedEnd);
-  const address = Schema.decodeUnknownSync(AddressContactPointValueSchema)({
+  const end = Schema.decodeSync(ContactPointEndSchema)(encodedEnd);
+  const address = Schema.decodeSync(AddressContactPointValueSchema)({
     address: {
       addressLine1: 'Na Prikope 1',
       addressLine2: null,

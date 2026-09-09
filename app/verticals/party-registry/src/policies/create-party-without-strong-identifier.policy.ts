@@ -1,4 +1,5 @@
 import { Effect, Schema } from 'effect';
+
 import {
   PartySubjectEligibilityVersion,
   PartyEvidenceInsufficient,
@@ -71,10 +72,12 @@ const CreateWithoutStrongIdentifierDecisionSchema = Schema.Union([
     decision: Schema.Literal('REVIEW_REQUIRED'),
     reasonCode: Schema.Literal('identity_review_required'),
   }),
-  Schema.Struct({ decision: Schema.Literal('DENY'), reasonCode: Schema.String }),
+  Schema.Struct({
+    decision: Schema.Literal('DENY'),
+    reasonCode: Schema.String,
+  }),
 ]);
-export type CreateWithoutStrongIdentifierDecision =
-  typeof CreateWithoutStrongIdentifierDecisionSchema.Type;
+export type CreateWithoutStrongIdentifierDecision = typeof CreateWithoutStrongIdentifierDecisionSchema.Type;
 export const decideCreateWithoutStrongIdentifier = (
   candidate: PartyCandidate,
   configuration: CreateWithoutStrongIdentifierPolicyConfiguration,

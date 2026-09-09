@@ -2,6 +2,7 @@
 // @ontos-contribution-kind search-provider
 import { makeGovernedEffectBffClient } from '@app/shared-contracts/client-runtime';
 import { Effect, Redacted } from 'effect';
+
 import { PartiesSearchApi } from '../../shared/apis/parties-search.ts';
 import type { PartiesProviderRequest } from '../../shared/apis/parties-search.ts';
 import { operationGateway } from './action-gateway.ts';
@@ -16,10 +17,7 @@ type PartiesSearchAuthorizedInvocation = readonly [
   options?: PartiesSearchClientOptions,
 ];
 
-type PartiesSearchOperationInvocation = readonly [
-  requestCorrelation: string,
-  options?: PartiesSearchClientOptions,
-];
+type PartiesSearchOperationInvocation = readonly [requestCorrelation: string, options?: PartiesSearchClientOptions];
 
 const partiesClient = (
   credential: Redacted.Redacted<string>,

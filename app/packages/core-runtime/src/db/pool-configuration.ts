@@ -1,5 +1,6 @@
 import { Effect, Redacted } from 'effect';
 import type { PoolConfig } from 'pg';
+
 import { DatabaseConnectionError } from './connection-error.ts';
 
 export interface DatabasePoolDeadlines {
@@ -62,8 +63,7 @@ export const configureDatabasePool = Effect.fn('PoolConfiguration.configureDatab
       ].some((key) => url.searchParams.has(key))
     ) {
       return yield* new DatabaseConnectionError({
-        reason:
-          'Database URL deadline parameters and startup options are unsupported; use poolDeadlines',
+        reason: 'Database URL deadline parameters and startup options are unsupported; use poolDeadlines',
       });
     }
 

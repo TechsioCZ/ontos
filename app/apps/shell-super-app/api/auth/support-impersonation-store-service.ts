@@ -1,20 +1,16 @@
 import { Context } from 'effect';
 import type { Effect, Option, Redacted } from 'effect';
+
 import type { supportImpersonationRecovery } from './db/schema.ts';
 import type { SupportImpersonationUnavailableError } from './impersonation-service.ts';
 
-export type SupportRecoveryRecord = Omit<
-  typeof supportImpersonationRecovery.$inferSelect,
-  'createdAt'
->;
+export type SupportRecoveryRecord = Omit<typeof supportImpersonationRecovery.$inferSelect, 'createdAt'>;
 
 export interface SupportImpersonationStore {
   readonly deleteRecovery: (
     impersonationSessionId: string,
   ) => Effect.Effect<void, SupportImpersonationUnavailableError>;
-  readonly deleteSession: (
-    sessionId: string,
-  ) => Effect.Effect<void, SupportImpersonationUnavailableError>;
+  readonly deleteSession: (sessionId: string) => Effect.Effect<void, SupportImpersonationUnavailableError>;
   readonly insertRecovery: (
     recovery: SupportRecoveryRecord,
   ) => Effect.Effect<void, SupportImpersonationUnavailableError>;
@@ -47,6 +43,4 @@ export interface SupportImpersonationStore {
 export class SupportImpersonationStoreService extends Context.Service<
   SupportImpersonationStoreService,
   SupportImpersonationStore
->()(
-  '@app/shell-super-app/api/auth/support-impersonation-store-service/SupportImpersonationStoreService',
-) {}
+>()('@app/shell-super-app/api/auth/support-impersonation-store-service/SupportImpersonationStoreService') {}

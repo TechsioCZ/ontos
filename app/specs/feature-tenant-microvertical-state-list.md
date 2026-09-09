@@ -8,66 +8,32 @@ created: 2026-08-03
 
 ## Feature Description
 
-Show the signed-in user's active MicroVerticals on the existing localized Shell home page. The
-authenticated page must retain its current identity and logout UI and add only one semantic
-`<ul>` whose items identify installed MicroVerticals with persisted state exactly `active` for
-the tenant resolved from the authenticated principal.
+Show the signed-in user's active MicroVerticals on the existing localized Shell home page. The authenticated page must retain its current identity and logout UI and add only one semantic `<ul>` whose items identify installed MicroVerticals with persisted state exactly `active` for the tenant resolved from the authenticated principal.
 
-Add a Core-owned, Effect-based read capability over `core.tenant_module_states` and expose that
-read through the existing Shell strict Effect BFF and client. The browser or route loader must
-never supply a tenant id, query Core tables directly, call a MicroVertical BFF for this list, or
-model the read as an Action. The Shell must derive the tenant from the current Better Auth/Core
-identity and intersect persisted active module keys with the authoritative generated topology so
-stale or non-installed keys are not rendered.
+Add a Core-owned, Effect-based read capability over `core.tenant_module_states` and expose that read through the existing Shell strict Effect BFF and client. The browser or route loader must never supply a tenant id, query Core tables directly, call a MicroVertical BFF for this list, or model the read as an Action. The Shell must derive the tenant from the current Better Auth/Core identity and intersect persisted active module keys with the authoritative generated topology so stale or non-installed keys are not rendered.
 
-Also make tenant MicroVertical state transitions safe and auditable. A Core-owned typed Action
-must perform each transition inside the existing Action transaction and atomically update
-`core.tenant_module_states` and insert the corresponding
-`core.tenant_module_state_changes` history row. No state-changing UI is in scope.
+Also make tenant MicroVertical state transitions safe and auditable. A Core-owned typed Action must perform each transition inside the existing Action transaction and atomically update `core.tenant_module_states` and insert the corresponding `core.tenant_module_state_changes` history row. No state-changing UI is in scope.
 
 ## User Story
 
-As a signed-in OntOS user
-I want to see the MicroVerticals that are active for my tenant
-So that the Shell reflects the modules currently available in my tenant context
+As a signed-in OntOS user I want to see the MicroVerticals that are active for my tenant So that the Shell reflects the modules currently available in my tenant context
 
 ## Problem Statement
 
-The Shell currently resolves and displays a safe authenticated identity but does not load tenant
-MicroVertical state. Although Core already owns the `tenant_module_states` current-state table and
-the `tenant_module_state_changes` history table, it has no Effect service for listing active rows
-or changing a state while enforcing the history invariant. The current Shell also knows that
-`testing1` is installed through generated topology and Module Federation wiring, but its home
-route does not combine that installed inventory with persisted tenant state.
+The Shell currently resolves and displays a safe authenticated identity but does not load tenant MicroVertical state. Although Core already owns the `tenant_module_states` current-state table and the `tenant_module_state_changes` history table, it has no Effect service for listing active rows or changing a state while enforcing the history invariant. The current Shell also knows that `testing1` is installed through generated topology and Module Federation wiring, but its home route does not combine that installed inventory with persisted tenant state.
 
-Directly querying the database from the route, putting the read behind an Action, trusting a
-client-supplied tenant id, or hardcoding `testing1` would break the Shell/Core boundary and would
-not extend safely to later generated MicroVerticals. Updating only the current-state table would
-also lose the required change history and actor/invocation evidence.
+Directly querying the database from the route, putting the read behind an Action, trusting a client-supplied tenant id, or hardcoding `testing1` would break the Shell/Core boundary and would not extend safely to later generated MicroVerticals. Updating only the current-state table would also lose the required change history and actor/invocation evidence.
 
 ## Solution Statement
 
 Introduce a narrow Core module-state capability with two separate paths:
 
-- a read service lists rows whose `tenant_id` is the trusted tenant and whose state is exactly
-  `active`, sorted deterministically by module key, without creating an Action invocation or a
-  state-change history row;
-- a generated Core-owned `core.modules.change-tenant-module-state` Action serializes transitions
-  for one tenant, detects no-op transitions, and atomically writes both the current row and one
-  history row carrying the previous state, new state, effective principal, Action invocation,
-  source, reason, and timestamp.
+- a read service lists rows whose `tenant_id` is the trusted tenant and whose state is exactly `active`, sorted deterministically by module key, without creating an Action invocation or a state-change history row;
+- a generated Core-owned `core.modules.change-tenant-module-state` Action serializes transitions for one tenant, detects no-op transitions, and atomically writes both the current row and one history row carrying the previous state, new state, effective principal, Action invocation, source, reason, and timestamp.
 
-Extend the existing Shell Effect API with an authenticated active-module read. Its handler
-revalidates the current session, obtains the trusted tenant id, calls the Core read service, and
-filters the result against installed vertical ids derived from
-`topology/reference-topology.json`. Extend the existing generated-style Shell client and home
-loader to preserve typed failures until they become an explicit page model.
+Extend the existing Shell Effect API with an authenticated active-module read. Its handler revalidates the current session, obtains the trusted tenant id, calls the Core read service, and filters the result against installed vertical ids derived from `topology/reference-topology.json`. Extend the existing generated-style Shell client and home loader to preserve typed failures until they become an explicit page model.
 
-For an authenticated page, render the resulting module key and active state in the new `<ul>`.
-An empty result still renders an empty `<ul>`. A typed availability failure keeps the identity and
-logout UI, renders an empty `<ul>`, and shows localized unavailable feedback associated with the
-list. Anonymous users continue to see only the existing login link. Do not render remote widgets,
-navigation, links, state controls, promotional content, or any other new UI.
+For an authenticated page, render the resulting module key and active state in the new `<ul>`. An empty result still renders an empty `<ul>`. A typed availability failure keeps the identity and logout UI, renders an empty `<ul>`, and shows localized unavailable feedback associated with the list. Anonymous users continue to see only the existing login link. Do not render remote widgets, navigation, links, state controls, promotional content, or any other new UI.
 
 ## Relevant Files
 
@@ -132,26 +98,15 @@ Use these files to implement the feature:
 
 ### Phase 1: Foundation
 
-Extend the existing Codesmith Action command with the approved Core-owned form before creating
-the production Action. Preserve its current MicroVertical form, add strict Core owner/path
-validation, and use the new form to create the initial
-`core.modules.change-tenant-module-state` Action file. Establish shared module-state schemas,
-typed failures, the invocation-id handler context, and the Core Effect service.
+Extend the existing Codesmith Action command with the approved Core-owned form before creating the production Action. Preserve its current MicroVertical form, add strict Core owner/path validation, and use the new form to create the initial `core.modules.change-tenant-module-state` Action file. Establish shared module-state schemas, typed failures, the invocation-id handler context, and the Core Effect service.
 
 ### Phase 2: Core Implementation
 
-Implement the active-state query and the generated Core Action handler. Serialize state changes
-per tenant, make first-time activation explicit with `previous_state = null`, reject no-op
-transitions, and atomically insert history plus insert/update current state and `last_change_id`
-inside the Action transaction. Add unit and PostgreSQL tests beside each behavior.
+Implement the active-state query and the generated Core Action handler. Serialize state changes per tenant, make first-time activation explicit with `previous_state = null`, reject no-op transitions, and atomically insert history plus insert/update current state and `last_change_id` inside the Action transaction. Add unit and PostgreSQL tests beside each behavior.
 
 ### Phase 3: Integration
 
-Generalize the existing topology-derived installed vertical inventory, add the authenticated
-Shell read contract/handler/client, and compose it in the home loader. Render only the requested
-semantic list on the authenticated page, preserve every existing visible state outside that list,
-and prove authentication, tenant isolation, installed-module filtering, typed failures, i18n,
-accessibility, generator behavior, and full production build compatibility.
+Generalize the existing topology-derived installed vertical inventory, add the authenticated Shell read contract/handler/client, and compose it in the home loader. Render only the requested semantic list on the authenticated page, preserve every existing visible state outside that list, and prove authentication, tenant isolation, installed-module filtering, typed failures, i18n, accessibility, generator behavior, and full production build compatibility.
 
 ## Step by Step Tasks
 
@@ -218,20 +173,11 @@ IMPORTANT: Execute every step in order, top to bottom.
 
 ### Unit Tests
 
-Test the canonical state vocabulary, typed state/source errors, invocation-id handler context,
-active-only Core query classification, generated Core Action descriptor, same-state rejection,
-topology decoding, Shell API schemas and Problem Details, generated-style client error unions,
-home loader mapping, semantic `<ul>` output, localization, exact active item order, empty/unavailable
-states, and unchanged anonymous/logout behavior.
+Test the canonical state vocabulary, typed state/source errors, invocation-id handler context, active-only Core query classification, generated Core Action descriptor, same-state rejection, topology decoding, Shell API schemas and Problem Details, generated-style client error unions, home loader mapping, semantic `<ul>` output, localization, exact active item order, empty/unavailable states, and unchanged anonymous/logout behavior.
 
 ### Integration Tests
 
-Run PostgreSQL-backed Core tests for initial state creation, serialized transitions, atomic current
-state plus history, Action audit/evidence, idempotency, rollback, and tenant isolation. Run the real
-Shell Effect BFF with Better Auth/Core fixtures to prove the session-derived tenant, active-only
-query, installed-topology intersection, cookie propagation, declared failures, and response
-redaction. Build the Shell and `testing1` to prove Core state infrastructure remains server-only
-and does not cross the MicroVertical deployment seam.
+Run PostgreSQL-backed Core tests for initial state creation, serialized transitions, atomic current state plus history, Action audit/evidence, idempotency, rollback, and tenant isolation. Run the real Shell Effect BFF with Better Auth/Core fixtures to prove the session-derived tenant, active-only query, installed-topology intersection, cookie propagation, declared failures, and response redaction. Build the Shell and `testing1` to prove Core state infrastructure remains server-only and does not cross the MicroVertical deployment seam.
 
 ### Edge Cases
 
@@ -293,51 +239,29 @@ Execute every command to validate the feature with zero regressions.
 
 ## Notes
 
-- `tenant_module_state_changesonly` in the request is treated as a typographical joining of
-  `tenant_module_state_changes` and “only.” The existing canonical table is
-  `core.tenant_module_state_changes`; this feature does not add or rename a table.
-- “load the list of active tenants” is interpreted as “load active MicroVerticals for the tenant
-  resolved from the signed-in user.” The request's preceding and following bullets consistently
-  describe MicroVertical state, and the product model gives one tenant to the current authenticated
-  principal.
-- The list is intentionally stricter than the older normal-navigation rule in
-  `../docs/14_ONTOS_MODULE_MANIFEST.md`: this requested home-page list includes only exact `active`
-  rows, not `read_only` or `deprecated`. It is not a navigation implementation.
-- The generated topology app id `testing1` is the persisted module key for this proof. Display
-  names and an OntOS Module Manifest are not yet implemented, so the list renders the stable key
-  rather than inventing metadata.
-- No seed data is added. The page reflects persisted Core state; integration tests create isolated
-  fixtures and clean them up in foreign-key order.
-- The state-changing Action is server-side only in this scope. No generic Action endpoint or
-  administrator UI is added.
-- The current Codesmith Action command discovers only `verticals/*`. The developer approved
-  extending it with `scaffold:action -- --scope core --module core.modules --action ...` on
-  2026-08-03. The implementation must add and test that generator form before it creates the Core
-  Action; creating the Action manually remains forbidden.
+- `tenant_module_state_changesonly` in the request is treated as a typographical joining of `tenant_module_state_changes` and “only.” The existing canonical table is `core.tenant_module_state_changes`; this feature does not add or rename a table.
+- “load the list of active tenants” is interpreted as “load active MicroVerticals for the tenant resolved from the signed-in user.” The request's preceding and following bullets consistently describe MicroVertical state, and the product model gives one tenant to the current authenticated principal.
+- The list is intentionally stricter than the older normal-navigation rule in `../docs/14_ONTOS_MODULE_MANIFEST.md`: this requested home-page list includes only exact `active` rows, not `read_only` or `deprecated`. It is not a navigation implementation.
+- The generated topology app id `testing1` is the persisted module key for this proof. Display names and an OntOS Module Manifest are not yet implemented, so the list renders the stable key rather than inventing metadata.
+- No seed data is added. The page reflects persisted Core state; integration tests create isolated fixtures and clean them up in foreign-key order.
+- The state-changing Action is server-side only in this scope. No generic Action endpoint or administrator UI is added.
+- The current Codesmith Action command discovers only `verticals/*`. The developer approved extending it with `scaffold:action -- --scope core --module core.modules --action ...` on 2026-08-03. The implementation must add and test that generator form before it creates the Core Action; creating the Action manually remains forbidden.
 - No unresolved developer decision blocks implementation.
 
 ## Implementation Evidence
 
 ### Summary
 
-- Extended the mandatory Codesmith Action generator with the mutually exclusive Core ownership
-  form and used it to generate `core.modules.change-tenant-module-state` before adapting the
-  generated Action.
-- Added the Core active-module read service and the transaction-only, idempotent, auditable state
-  transition path without changing the existing schema or migrations.
-- Added the authenticated Shell Effect BFF operation, topology intersection, contract-derived
-  client, serializable loader model, and the single localized semantic list requested by this
-  feature.
+- Extended the mandatory Codesmith Action generator with the mutually exclusive Core ownership form and used it to generate `core.modules.change-tenant-module-state` before adapting the generated Action.
+- Added the Core active-module read service and the transaction-only, idempotent, auditable state transition path without changing the existing schema or migrations.
+- Added the authenticated Shell Effect BFF operation, topology intersection, contract-derived client, serializable loader model, and the single localized semantic list requested by this feature.
 
 ### Changed Areas
 
 - `scripts/scaffolding/` and `AGENTS.md` for the tested Core Action generator contract.
-- `packages/core-runtime/src/modules/` and focused Core unit/integration tests for state reads and
-  transitions.
-- `apps/shell-super-app/` for topology inventory, the strict Effect BFF/client/loader path,
-  localized presentation, and focused unit/integration coverage.
-- No files under `verticals/testing1`, `packages/core-runtime/src/db`, `mvp/`, or `mvp2/` were
-  changed. No database schema or migration was added.
+- `packages/core-runtime/src/modules/` and focused Core unit/integration tests for state reads and transitions.
+- `apps/shell-super-app/` for topology inventory, the strict Effect BFF/client/loader path, localized presentation, and focused unit/integration coverage.
+- No files under `verticals/testing1`, `packages/core-runtime/src/db`, `mvp/`, or `mvp2/` were changed. No database schema or migration was added.
 
 ### Validation Results
 
@@ -345,40 +269,24 @@ Execute every command to validate the feature with zero regressions.
 - `mise exec -- pnpm exec oxlint scripts/scaffolding` — passed.
 - `mise exec -- node --test scripts/scaffolding/tests/*.test.mts` — 20/20 passed.
 - `mise exec -- pnpm scaffold:action -- --help` — passed and documents both ownership forms.
-- `mise exec -- pnpm --filter @app/core-runtime db:test` — 89/89 passed with the repository's
-  PostgreSQL fixture and a disposable SpiceDB instance using the tracked development key.
+- `mise exec -- pnpm --filter @app/core-runtime db:test` — 89/89 passed with the repository's PostgreSQL fixture and a disposable SpiceDB instance using the tracked development key.
 - `mise exec -- pnpm --filter @app/core-runtime typecheck` — passed.
 - `mise exec -- pnpm --filter @app/shell-super-app test:unit` — 44/44 passed.
-- `mise exec -- pnpm --filter @app/shell-super-app test:integration` — 1/1 passed with the real
-  Better Auth session, Core PostgreSQL state, and Shell BFF flow.
+- `mise exec -- pnpm --filter @app/shell-super-app test:integration` — 1/1 passed with the real Better Auth session, Core PostgreSQL state, and Shell BFF flow.
 - `mise exec -- pnpm api:check` — passed.
 - `mise exec -- pnpm contract:check` — passed.
-- `mise exec -- pnpm build` — the complete testing1 and Shell client/server production build,
-  type generation, deployment output, and performance checks passed.
+- `mise exec -- pnpm build` — the complete testing1 and Shell client/server production build, type generation, deployment output, and performance checks passed.
 - `git diff --check` — passed.
-- `mise exec -- pnpm check` — passed, including formatting, lint, 48 Action tests, root typecheck,
-  skills, i18n, API, contract, and performance checks.
+- `mise exec -- pnpm check` — passed, including formatting, lint, 48 Action tests, root typecheck, skills, i18n, API, contract, and performance checks.
 
 ### Review Results
 
-- Final review found no unresolved correctness, boundary, accessibility, localization, security,
-  or generated-code issues.
-- The generated Action header identifies owner `core.modules`, and its registration is wired only
-  through the explicit generated Core Action export slot.
-- Final scope and status inspection confirmed the requested branch remains on its original single
-  commit; implementation changes are intentionally uncommitted.
+- Final review found no unresolved correctness, boundary, accessibility, localization, security, or generated-code issues.
+- The generated Action header identifies owner `core.modules`, and its registration is wired only through the explicit generated Core Action export slot.
+- Final scope and status inspection confirmed the requested branch remains on its original single commit; implementation changes are intentionally uncommitted.
 
 ### Validation Deviations
 
-- An already-running local SpiceDB container used credentials that did not match the repository's
-  tracked test configuration. Final Core database validation used a disposable repository-configured
-  SpiceDB container on an alternate port; it was stopped and removed afterward.
-- The release-envelope build correctly refuses a dirty Git worktree. To validate the exact current
-  uncommitted content without changing the requested branch or history, the final production build
-  used disposable Git metadata in `/tmp`; that metadata was deleted after the successful build.
-- Browser review confirmed the anonymous page still renders only the login link and no list. An
-  authenticated follow-up navigation was blocked by the local-browser URL policy; the attempted
-  review nevertheless exposed and led to a fix for strict Effect runtime topology injection.
-  Authenticated, empty, unavailable, ordering, logout, and redaction behavior is covered by the
-  passing component, loader, BFF unit, and real Shell integration tests. The anonymous proof is
-  retained at `.codex/reports/review/feature-tenant-microvertical-state-list/anonymous-home.png`.
+- An already-running local SpiceDB container used credentials that did not match the repository's tracked test configuration. Final Core database validation used a disposable repository-configured SpiceDB container on an alternate port; it was stopped and removed afterward.
+- The release-envelope build correctly refuses a dirty Git worktree. To validate the exact current uncommitted content without changing the requested branch or history, the final production build used disposable Git metadata in `/tmp`; that metadata was deleted after the successful build.
+- Browser review confirmed the anonymous page still renders only the login link and no list. An authenticated follow-up navigation was blocked by the local-browser URL policy; the attempted review nevertheless exposed and led to a fix for strict Effect runtime topology injection. Authenticated, empty, unavailable, ordering, logout, and redaction behavior is covered by the passing component, loader, BFF unit, and real Shell integration tests. The anonymous proof is retained at `.codex/reports/review/feature-tenant-microvertical-state-list/anonymous-home.png`.

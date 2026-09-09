@@ -1,4 +1,5 @@
 import { Effect, FileSystem, Schema, Predicate } from 'effect';
+
 import { createCodesmithGenerator } from '../generator-adapter.mts';
 import {
   ACTION_GENERATOR_HEADER,
@@ -62,26 +63,20 @@ const trySync = <Value,>(operation: () => Value, fallback: string) =>
     try: operation,
   });
 
-const readGeneratedArtifact = Effect.fn('readGeneratedArtifact')(
-  function* readGeneratedArtifactEffect(
-    filePath: string,
-    label: string,
-    checks: readonly string[],
-  ) {
-    const fileSystem = yield* FileSystem.FileSystem;
-    const content = yield* fileSystem
-      .readFileString(filePath)
-      .pipe(
-        Effect.mapError((cause) =>
-          scaffoldError(`matching generated ${label} is missing at ${filePath}`, cause),
-        ),
-      );
-    if (checks.some((check) => !content.includes(check))) {
-      return yield* scaffoldError(`matching generated ${label} metadata is missing at ${filePath}`);
-    }
-    return content;
-  },
-);
+const readGeneratedArtifact = Effect.fn('readGeneratedArtifact')(function* readGeneratedArtifactEffect(
+  filePath: string,
+  label: string,
+  checks: readonly string[],
+) {
+  const fileSystem = yield* FileSystem.FileSystem;
+  const content = yield* fileSystem
+    .readFileString(filePath)
+    .pipe(Effect.mapError((cause) => scaffoldError(`matching generated ${label} is missing at ${filePath}`, cause)));
+  if (checks.some((check) => !content.includes(check))) {
+    return yield* scaffoldError(`matching generated ${label} metadata is missing at ${filePath}`);
+  }
+  return content;
+});
 
 const removeOptionalGeneratedSlotEntry = Effect.fn('removeOptionalGeneratedSlotEntry')(
   function* removeOptionalGeneratedSlotEntryEffect(
@@ -128,9 +123,7 @@ const planActionRetirement = Effect.fn('planActionRetirement')(function* planAct
     `failed to inspect Action ${name} Outbox dependents`,
   );
   if (dependentCount > 0) {
-    return yield* scaffoldError(
-      `cannot retire Action ${name} while it has published Outbox dependents`,
-    );
+    return yield* scaffoldError(`cannot retire Action ${name} while it has published Outbox dependents`);
   }
   const importLine = `import { ${symbol} } from './src/actions/${name}.action.ts';`;
   const { nextManifest, nextRegistration } = yield* trySync(
@@ -165,8 +158,16 @@ const planActionRetirement = Effect.fn('planActionRetirement')(function* planAct
     `failed to retire generated Action ${name}`,
   );
   return [
-    { content: nextManifest, kind: 'update' as const, path: vertical.manifestPath },
-    { content: nextRegistration, kind: 'update' as const, path: vertical.registrationPath },
+    {
+      content: nextManifest,
+      kind: 'update' as const,
+      path: vertical.manifestPath,
+    },
+    {
+      content: nextRegistration,
+      kind: 'update' as const,
+      path: vertical.registrationPath,
+    },
     yield* deleteMutationEffect(artifactPath),
   ];
 });
@@ -194,9 +195,7 @@ const planApiRetirement = Effect.fn('planApiRetirement')(function* planApiRetire
     [`${API_GENERATOR_HEADER}\n`, `export const ${toCamelCase(name)}ReadApiLive`],
   ] as const;
   yield* Effect.all(
-    paths.map((filePath, index) =>
-      readGeneratedArtifact(filePath, `module API ${name}`, checks[index] ?? []),
-    ),
+    paths.map((filePath, index) => readGeneratedArtifact(filePath, `module API ${name}`, checks[index] ?? [])),
     { concurrency: 'unbounded' },
   );
   const { nextManifest, nextRegistration } = yield* trySync(
@@ -228,8 +227,16 @@ const planApiRetirement = Effect.fn('planApiRetirement')(function* planApiRetire
     concurrency: 'unbounded',
   });
   return [
-    { content: nextManifest, kind: 'update' as const, path: vertical.manifestPath },
-    { content: nextRegistration, kind: 'update' as const, path: vertical.registrationPath },
+    {
+      content: nextManifest,
+      kind: 'update' as const,
+      path: vertical.manifestPath,
+    },
+    {
+      content: nextRegistration,
+      kind: 'update' as const,
+      path: vertical.registrationPath,
+    },
     ...deletes,
   ];
 });
@@ -241,10 +248,7 @@ const planPageRetirement = Effect.fn('planPageRetirement')(function* planPageRet
   const type = `${toPascalCase(name)}Page`;
   const componentKey = `${vertical.moduleId}.page-${name}`;
   const contributionKey = `${vertical.moduleId}.page.${name}`;
-  const importPattern = new RegExp(
-    `^import \\{ ${type} \\} from '\\.\\/src\\/routes\\/.+\\/page\\.tsx';$`,
-    'u',
-  );
+  const importPattern = new RegExp(`^import \\{ ${type} \\} from '\\.\\/src\\/routes\\/.+\\/page\\.tsx';$`, 'u');
   let nextManifest = yield* trySync(
     () =>
       removeGeneratedSlotEntry(
@@ -274,8 +278,7 @@ const planPageRetirement = Effect.fn('planPageRetirement')(function* planPageRet
         MODULE_MANIFEST_SHELL_PAGE_SLOT_START,
         MODULE_MANIFEST_SHELL_PAGE_SLOT_END,
         (entry) =>
-          entry.includes(`componentKey: '${componentKey}'`) &&
-          entry.includes(`contributionKey: '${contributionKey}'`),
+          entry.includes(`componentKey: '${componentKey}'`) && entry.includes(`contributionKey: '${contributionKey}'`),
         `shell page ${name}`,
       ),
     `failed to remove generated shell page ${name}`,
@@ -304,8 +307,16 @@ const planPageRetirement = Effect.fn('planPageRetirement')(function* planPageRet
     `failed to remove generated page registration ${name}`,
   );
   return [
-    { content: nextManifest, kind: 'update' as const, path: vertical.manifestPath },
-    { content: nextRegistration, kind: 'update' as const, path: vertical.registrationPath },
+    {
+      content: nextManifest,
+      kind: 'update' as const,
+      path: vertical.manifestPath,
+    },
+    {
+      content: nextRegistration,
+      kind: 'update' as const,
+      path: vertical.registrationPath,
+    },
   ];
 });
 
@@ -331,13 +342,8 @@ const planRetireContributionScaffold = Effect.fn('RetireContributionScaffold.pla
     } else {
       mutations = yield* planPageRetirement(vertical, name);
     }
-    yield* trySync(
-      () => ensureUniqueMutationPaths(mutations),
-      'failed to validate retirement mutation paths',
-    );
-    const deletedPaths = mutations
-      .filter((mutation) => mutation.kind === 'delete')
-      .map(({ path }) => path);
+    yield* trySync(() => ensureUniqueMutationPaths(mutations), 'failed to validate retirement mutation paths');
+    const deletedPaths = mutations.filter((mutation) => mutation.kind === 'delete').map(({ path }) => path);
     return { mutations, result: { deletedPaths, kind: config.kind, name } };
   },
 );

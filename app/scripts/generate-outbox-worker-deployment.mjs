@@ -1,6 +1,7 @@
 import { NodeServices } from '@effect/platform-node';
 import { Effect, FileSystem, ManagedRuntime, Path, Schema } from 'effect';
 import { Command, Flag } from 'effect/unstable/cli';
+
 import { outboxWorkerDelivery } from './outbox-worker-delivery.mjs';
 
 const TopologySchema = Schema.fromJsonString(
@@ -38,9 +39,7 @@ const generateOutboxWorkerDeploymentEffect = (root, source) =>
   Effect.gen(function* generateDeployment() {
     const fs = yield* FileSystem.FileSystem;
     const path = yield* Path.Path;
-    const topologySource = yield* fs.readFileString(
-      path.join(root, 'topology/reference-topology.json'),
-    );
+    const topologySource = yield* fs.readFileString(path.join(root, 'topology/reference-topology.json'));
     const topology = yield* Schema.decodeUnknownEffect(TopologySchema)(topologySource);
     let result = source.replace(
       /\n {2}# <generated-outbox-worker-deployments>[\s\S]*? {2}# <\/generated-outbox-worker-deployments>\n?/u,
@@ -77,25 +76,17 @@ const generateOutboxWorkerDeploymentEffect = (root, source) =>
         .split('\n')
         .filter(
           (line) =>
-            !line.includes(' run build') &&
-            !line.includes("- cp 'app/topology/") &&
-            !line.includes('VERTICAL_'),
+            !line.includes(' run build') && !line.includes("- cp 'app/topology/") && !line.includes('VERTICAL_'),
         )
         .map((line) =>
           line.includes('run zerops:materialize')
-            ? line.replace(
-                'cd app && ',
-                'cd app && ULTRAMODERN_SOURCE_REVISION="$(git rev-parse HEAD)" ',
-              )
+            ? line.replace('cd app && ', 'cd app && ULTRAMODERN_SOURCE_REVISION="$(git rev-parse HEAD)" ')
             : line,
         )
         .join('\n')
         .replace(/(?<command>run zerops:materialize[^\n]*)/u, '$<command> --worker')
         .replaceAll(`/${vertical.id}-api/${vertical.id}/readiness`, '/ready')
-        .replace(
-          `ULTRAMODERN_ZEROPS_SERVICE: ${vertical.id}`,
-          `ULTRAMODERN_ZEROPS_SERVICE: ${delivery.id}`,
-        )
+        .replace(`ULTRAMODERN_ZEROPS_SERVICE: ${vertical.id}`, `ULTRAMODERN_ZEROPS_SERVICE: ${delivery.id}`)
         .replace(
           `        PORT: '${port}'`,
           `        PORT: '${port}'\n        OUTBOX_WORKER_HEALTH_PORT: '${port}'\n        DATABASE_URL: \${${ownerServiceHostname}_DATABASE_URL}`,
@@ -130,22 +121,17 @@ const runCommand = ({ write }) =>
       yield* fs.writeFileString(file, generated);
     } else if (source !== generated) {
       yield* Effect.fail(
-        failure(
-          'Worker deployment drift: run node scripts/generate-outbox-worker-deployment.mjs --write',
-        ),
+        failure('Worker deployment drift: run node scripts/generate-outbox-worker-deployment.mjs --write'),
       );
     }
   });
 
 const command = Command.make(
   'generate-outbox-worker-deployment',
-  { write: Flag.boolean('write') },
+  { write: Flag.boolean('write').pipe(Flag.withDefault(false)) },
   runCommand,
 );
 
-/** @type {ImportMeta & { main?: boolean }} */
-const moduleMetadata = import.meta;
-
-if (moduleMetadata.main === true) {
+if (import.meta.main) {
   void nodeRuntime.runPromise(Command.run(command, { version: '1.0.0' }));
 }

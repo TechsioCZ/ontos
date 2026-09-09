@@ -3,13 +3,11 @@ import { useLoaderData } from '@modern-js/plugin-tanstack/runtime';
 import { StatusText } from '@techsio/ui-kit/atoms/status-text';
 import { Effect, Predicate } from 'effect';
 import { useEffect, useState } from 'react';
+
 import type { ApprovedVerticalPageComponent } from '../../../../api/vertical-clients.ts';
 import { findApprovedVerticalPageClient } from '../../../../api/vertical-clients.ts';
 import { browserRuntime } from '../../../../runtime/browser-effect-runtime.ts';
-import {
-  resolveThenLoadModuleTarget,
-  settleModuleEntrypointLoad,
-} from '../../../module-entrypoint-loader.ts';
+import { resolveThenLoadModuleTarget, settleModuleEntrypointLoad } from '../../../module-entrypoint-loader.ts';
 import { ShellContentLayout } from '../../../shell-content-layout.tsx';
 import { useShellControls } from '../../../use-shell-controls.ts';
 import type { ModuleTargetPageModel } from './page.data.ts';
@@ -20,13 +18,12 @@ type RemoteState =
       readonly reason: 'incompatible' | 'timeout' | 'unavailable';
       readonly state: 'unavailable';
     }
-  | { readonly Component: ApprovedVerticalPageComponent; readonly state: 'ready' };
+  | {
+      readonly Component: ApprovedVerticalPageComponent;
+      readonly state: 'ready';
+    };
 
-const ResolvedTarget = ({
-  model,
-}: {
-  readonly model: Extract<ModuleTargetPageModel, { state: 'resolved' }>;
-}) => {
+const ResolvedTarget = ({ model }: { readonly model: Extract<ModuleTargetPageModel, { state: 'resolved' }> }) => {
   const { t } = useModernI18n();
   const client = findApprovedVerticalPageClient(model.target);
   const [remote, setRemote] = useState<RemoteState>(() =>
@@ -54,11 +51,7 @@ const ResolvedTarget = ({
             if (!current) {
               return;
             }
-            setRemote(
-              result.state === 'ready'
-                ? { Component: result.value.default, state: 'ready' }
-                : result,
-            );
+            setRemote(result.state === 'ready' ? { Component: result.value.default, state: 'ready' } : result);
           }),
         ),
       ),
@@ -72,11 +65,7 @@ const ResolvedTarget = ({
     return <remote.Component routeParams={model.routeParams} target={model.target} />;
   }
   return (
-    <StatusText
-      aria-live="polite"
-      showIcon
-      status={remote.state === 'loading' ? 'default' : 'error'}
-    >
+    <StatusText aria-live="polite" showIcon status={remote.state === 'loading' ? 'default' : 'error'}>
       {t(`shell.moduleTarget.${remote.state === 'unavailable' ? remote.reason : remote.state}`)}
     </StatusText>
   );
@@ -89,9 +78,7 @@ interface ModuleTargetViewProps {
 export const ModuleTargetView = ({ initialModel }: ModuleTargetViewProps) => {
   const { t } = useModernI18n();
   const model = initialModel;
-  const controls = useShellControls(
-    model.shell.state === 'authenticated' ? model.shell : undefined,
-  );
+  const controls = useShellControls(model.shell.state === 'authenticated' ? model.shell : undefined);
   if (model.shell.state !== 'authenticated') {
     return (
       <main className="shell:mx-auto shell:grid shell:w-full shell:max-w-5xl shell:gap-6 shell:px-4 shell:py-8">

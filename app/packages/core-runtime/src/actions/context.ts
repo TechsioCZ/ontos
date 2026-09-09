@@ -1,11 +1,8 @@
 import { Schema } from 'effect';
-import {
-  decodedStringBrand,
-  nonEmptyString,
-  TargetModuleKeySchema,
-  TargetResourceIdSchema,
-} from './string-schemas.ts';
 import type { Effect } from 'effect';
+
+import type { OperationalScope } from '../operations/context.ts';
+import type { ActionCollectorError } from './errors.ts';
 import type {
   DataAccessEventInput,
   DeclaredDomainEvent,
@@ -13,8 +10,7 @@ import type {
   DomainEventReference,
   OutboxMessage,
 } from './events.ts';
-import type { ActionCollectorError } from './errors.ts';
-import type { OperationalScope } from '../operations/context.ts';
+import { decodedStringBrand, nonEmptyString, TargetModuleKeySchema, TargetResourceIdSchema } from './string-schemas.ts';
 
 export { TrustedPrincipalContextSchema } from './principal-context.ts';
 export type { TrustedPrincipalContext } from './principal-context.ts';
@@ -45,9 +41,7 @@ export interface ActionCollectorMethods<DomainEvents extends DomainEventContract
   readonly recordAuditEvidence: (
     evidence: Readonly<Record<string, Schema.Schema.Type<typeof Schema.Json>>>,
   ) => Effect.Effect<void, ActionCollectorError>;
-  readonly recordDataAccess: (
-    event: DataAccessEventInput,
-  ) => Effect.Effect<void, ActionCollectorError>;
+  readonly recordDataAccess: (event: DataAccessEventInput) => Effect.Effect<void, ActionCollectorError>;
 }
 
 export interface ActionHandlerContext<

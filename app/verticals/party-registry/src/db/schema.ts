@@ -1,7 +1,3 @@
-import type {
-  PartySubjectEvidence,
-  PartyEvidenceEvaluation,
-} from '../../shared/domain/identity-contracts.ts';
 import { tenantLegalEntityRlsPolicies, tenantRlsPolicies } from '@app/core-runtime';
 import { defineRelations, sql } from 'drizzle-orm';
 import {
@@ -19,14 +15,10 @@ import {
   uuid,
 } from 'drizzle-orm/pg-core';
 import type { AnyPgColumn } from 'drizzle-orm/pg-core';
-import type {
-  AresAppliedEvidence,
-  AresAppliedEvidenceSchema,
-} from '../../shared/domain/ares-application.ts';
-import type {
-  MergeSelectionEvidenceStep,
-  MergeSurvivorSelectionReason,
-} from '../../shared/domain/merge-selection.ts';
+
+import type { AresAppliedEvidence, AresAppliedEvidenceSchema } from '../../shared/domain/ares-application.ts';
+import type { PartySubjectEvidence, PartyEvidenceEvaluation } from '../../shared/domain/identity-contracts.ts';
+import type { MergeSelectionEvidenceStep, MergeSurvivorSelectionReason } from '../../shared/domain/merge-selection.ts';
 import type { PartyRef } from '../../shared/resources/party.ts';
 
 export const PARTY_SCHEMA_NAME = 'party';
@@ -101,10 +93,7 @@ const activePeriodConstraints = (
   prefix: string,
   table: Readonly<Record<'validFrom' | 'validTo' | 'state' | 'isCurrent', AnyPgColumn>>,
 ) => [
-  check(
-    `${prefix}_interval_ck`,
-    sql`${table.validTo} is null or ${table.validTo} >= ${table.validFrom}`,
-  ),
+  check(`${prefix}_interval_ck`, sql`${table.validTo} is null or ${table.validTo} >= ${table.validFrom}`),
   check(
     `${prefix}_state_ck`,
     sql`${table.state} in ('ACTIVE', 'ENDED', 'SUPERSEDED', 'RETRACTED', 'DISPUTED') and ((${table.state} = 'ACTIVE' and ${table.isCurrent}) or (${table.state} <> 'ACTIVE' and not ${table.isCurrent}))`,
@@ -114,10 +103,7 @@ const activePeriodConstraints = (
 const contactEvidenceConstraints = (
   prefix: string,
   table: Readonly<
-    Record<
-      keyof ReturnType<typeof endedPeriodColumns> | keyof ReturnType<typeof verificationColumns>,
-      AnyPgColumn
-    >
+    Record<keyof ReturnType<typeof endedPeriodColumns> | keyof ReturnType<typeof verificationColumns>, AnyPgColumn>
   >,
 ) => [
   check(
@@ -130,8 +116,7 @@ const contactEvidenceConstraints = (
   ),
 ];
 
-const enableGovernedRls = <Table>(table: { readonly enableRLS: () => Table }): Table =>
-  table.enableRLS();
+const enableGovernedRls = <Table>(table: { readonly enableRLS: () => Table }): Table => table.enableRLS();
 
 const externalEvidenceConstraint = (name: string, column: AnyPgColumn) =>
   check(
@@ -217,10 +202,7 @@ export const parties = enableGovernedRls(
       index('party_parties_current_name_idx')
         .on(table.tenantId, table.currentDisplayName)
         .where(sql`${table.archivedAt} is null`),
-      check(
-        'party_parties_type_ck',
-        sql`${table.currentType} in ('PERSON', 'ORGANIZATION', 'UNRESOLVED')`,
-      ),
+      check('party_parties_type_ck', sql`${table.currentType} in ('PERSON', 'ORGANIZATION', 'UNRESOLVED')`),
       check(
         'party_parties_display_name_ck',
         sql`${table.currentDisplayName} is null or (${table.currentDisplayName} = btrim(${table.currentDisplayName}) and length(${table.currentDisplayName}) > 0)`,
@@ -267,10 +249,7 @@ export const partyFactAssertions = enableGovernedRls(
       index('party_fact_assertions_current_idx')
         .on(table.tenantId, table.partyId, table.factKind)
         .where(sql`${table.state} = 'ACTIVE' and ${table.isCurrent}`),
-      check(
-        'party_fact_assertions_kind_ck',
-        sql`${table.factKind} in ('PARTY_TYPE', 'DISPLAY_NAME')`,
-      ),
+      check('party_fact_assertions_kind_ck', sql`${table.factKind} in ('PARTY_TYPE', 'DISPLAY_NAME')`),
       check(
         'party_fact_assertions_value_ck',
         sql`${table.normalizedValue} = btrim(${table.normalizedValue}) and length(${table.normalizedValue}) > 0`,
@@ -280,10 +259,7 @@ export const partyFactAssertions = enableGovernedRls(
         'party_fact_assertions_verification_ck',
         sql`${table.verificationState} in ('UNVERIFIED', 'VERIFIED', 'REJECTED') and (${table.verificationState} <> 'VERIFIED' or ${table.verifiedAt} is not null)`,
       ),
-      externalEvidenceConstraint(
-        'party_fact_assertions_external_evidence_ck',
-        table.externalEvidence,
-      ),
+      externalEvidenceConstraint('party_fact_assertions_external_evidence_ck', table.externalEvidence),
       ...tenantRlsPolicies('party_fact_assertions_tenant', table.tenantId),
     ],
   ),
@@ -314,10 +290,7 @@ export const partyOfficialIdentifiers = enableGovernedRls(
       retractsOfficialIdentifierId: uuid('retracts_official_identifier_id'),
     },
     (table) => [
-      unique('party_official_identifiers_tenant_id_uk').on(
-        table.tenantId,
-        table.officialIdentifierId,
-      ),
+      unique('party_official_identifiers_tenant_id_uk').on(table.tenantId, table.officialIdentifierId),
       foreignKey({
         columns: [table.tenantId, table.partyId],
         foreignColumns: [parties.tenantId, parties.partyId],
@@ -333,15 +306,8 @@ export const partyOfficialIdentifiers = enableGovernedRls(
         foreignColumns: [table.tenantId, table.officialIdentifierId],
         name: 'party_official_identifiers_tenant_retracts_fk',
       }).onDelete('restrict'),
-      index('party_official_identifiers_party_idx').on(
-        table.tenantId,
-        table.partyId,
-        table.identifierTypeKey,
-      ),
-      check(
-        'party_official_identifiers_type_ck',
-        sql`${table.identifierTypeKey} in ('ICO', 'CZ_DIC')`,
-      ),
+      index('party_official_identifiers_party_idx').on(table.tenantId, table.partyId, table.identifierTypeKey),
+      check('party_official_identifiers_type_ck', sql`${table.identifierTypeKey} in ('ICO', 'CZ_DIC')`),
       check(
         'party_official_identifiers_normalized_value_ck',
         sql`(${table.identifierTypeKey} = 'ICO' and ${table.normalizedValue} ~ '^[0-9]{8}$') or (${table.identifierTypeKey} = 'CZ_DIC' and ${table.normalizedValue} ~ '^CZ[0-9]{8,10}$')`,
@@ -351,10 +317,7 @@ export const partyOfficialIdentifiers = enableGovernedRls(
         'party_official_identifiers_verification_ck',
         sql`${table.verificationState} in ('UNVERIFIED', 'VERIFIED', 'REJECTED') and (${table.verificationState} <> 'VERIFIED' or ${table.verifiedAt} is not null)`,
       ),
-      externalEvidenceConstraint(
-        'party_official_identifiers_external_evidence_ck',
-        table.externalEvidence,
-      ),
+      externalEvidenceConstraint('party_official_identifiers_external_evidence_ck', table.externalEvidence),
       ...tenantRlsPolicies('party_official_identifiers_tenant', table.tenantId),
     ],
   ),
@@ -388,17 +351,11 @@ export const partyIdentifierClaims = enableGovernedRls(
       }).onDelete('restrict'),
       foreignKey({
         columns: [table.tenantId, table.officialIdentifierId],
-        foreignColumns: [
-          partyOfficialIdentifiers.tenantId,
-          partyOfficialIdentifiers.officialIdentifierId,
-        ],
+        foreignColumns: [partyOfficialIdentifiers.tenantId, partyOfficialIdentifiers.officialIdentifierId],
         name: 'party_identifier_claims_tenant_identifier_fk',
       }).onDelete('restrict'),
       index('party_identifier_claims_party_lookup_idx').on(table.tenantId, table.partyId),
-      check(
-        'party_identifier_claims_type_ck',
-        sql`${table.identifierTypeKey} in ('ICO', 'CZ_DIC')`,
-      ),
+      check('party_identifier_claims_type_ck', sql`${table.identifierTypeKey} in ('ICO', 'CZ_DIC')`),
       ...tenantRlsPolicies('party_identifier_claims_tenant', table.tenantId),
     ],
   ),
@@ -428,21 +385,14 @@ export const partyContactPoints = enableGovernedRls(
       revision: integer('revision').default(1).notNull(),
       ...endedPeriodColumns(),
       ...provenanceColumns(),
-      additionalEvidenceRefs: jsonb('additional_evidence_refs')
-        .$type<readonly string[]>()
-        .default([])
-        .notNull(),
+      additionalEvidenceRefs: jsonb('additional_evidence_refs').$type<readonly string[]>().default([]).notNull(),
       ...verificationColumns(),
       supersedesContactPointId: uuid('supersedes_contact_point_id'),
       retractsContactPointId: uuid('retracts_contact_point_id'),
     },
     (table) => [
       unique('party_contact_points_tenant_id_uk').on(table.tenantId, table.contactPointId),
-      unique('party_contact_points_tenant_party_id_uk').on(
-        table.tenantId,
-        table.partyId,
-        table.contactPointId,
-      ),
+      unique('party_contact_points_tenant_party_id_uk').on(table.tenantId, table.partyId, table.contactPointId),
       foreignKey({
         columns: [table.tenantId, table.partyId],
         foreignColumns: [parties.tenantId, parties.partyId],
@@ -466,10 +416,7 @@ export const partyContactPoints = enableGovernedRls(
         .where(
           sql`${table.preferred} and ${table.contactPointType} in ('EMAIL', 'PHONE') and ${table.state} = 'ACTIVE' and ${table.isCurrent}`,
         ),
-      check(
-        'party_contact_points_type_ck',
-        sql`${table.contactPointType} in ('EMAIL', 'PHONE', 'ADDRESS')`,
-      ),
+      check('party_contact_points_type_ck', sql`${table.contactPointType} in ('EMAIL', 'PHONE', 'ADDRESS')`),
       check(
         'party_contact_points_shape_ck',
         sql`(${table.contactPointType} = 'EMAIL' and length(btrim(${table.displayValue})) > 0 and length(btrim(${table.normalizedValue})) > 0 and length(btrim(${table.normalizationVersion})) > 0 and ${table.phoneCountryCode} is null and ${table.phoneExtension} is null and ${table.addressLine1} is null and ${table.city} is null and ${table.postalCode} is null and ${table.countryCode} is null) or (${table.contactPointType} = 'PHONE' and length(btrim(${table.displayValue})) > 0 and ${table.normalizedValue} ~ '^\\+[1-9][0-9]{6,14}$' and length(btrim(${table.normalizationVersion})) > 0 and (${table.phoneCountryCode} is null or ${table.phoneCountryCode} ~ '^[A-Z]{2}$') and (${table.phoneExtension} is null or ${table.phoneExtension} ~ '^[0-9]{1,12}$') and ${table.addressLine1} is null and ${table.city} is null and ${table.postalCode} is null and ${table.countryCode} is null) or (${table.contactPointType} = 'ADDRESS' and ${table.normalizedValue} is null and ${table.normalizationVersion} is null and ${table.phoneCountryCode} is null and ${table.phoneExtension} is null and ${table.countryCode} ~ '^[A-Z]{2}$' and num_nonnulls(nullif(btrim(${table.addressLine1}), ''), nullif(btrim(${table.addressLine2}), ''), nullif(btrim(${table.city}), ''), nullif(btrim(${table.postalCode}), ''), nullif(btrim(${table.region}), '')) >= 2 and not ${table.preferred})`,
@@ -485,10 +432,7 @@ export const partyContactPoints = enableGovernedRls(
       ...activePeriodConstraints('party_contact_points', table),
       ...contactEvidenceConstraints('party_contact_points', table),
       check('party_contact_points_revision_ck', sql`${table.revision} > 0`),
-      externalEvidenceConstraint(
-        'party_contact_points_external_evidence_ck',
-        table.externalEvidence,
-      ),
+      externalEvidenceConstraint('party_contact_points_external_evidence_ck', table.externalEvidence),
       ...tenantRlsPolicies('party_contact_points_tenant', table.tenantId),
     ],
   ),
@@ -512,36 +456,21 @@ export const partyContactPointPurposes = enableGovernedRls(
       revision: integer('revision').default(1).notNull(),
     },
     (table) => [
-      unique('party_contact_point_purposes_tenant_id_uk').on(
-        table.tenantId,
-        table.contactPointPurposeId,
-      ),
+      unique('party_contact_point_purposes_tenant_id_uk').on(table.tenantId, table.contactPointPurposeId),
       foreignKey({
         columns: [table.tenantId, table.partyId, table.contactPointId],
-        foreignColumns: [
-          partyContactPoints.tenantId,
-          partyContactPoints.partyId,
-          partyContactPoints.contactPointId,
-        ],
+        foreignColumns: [partyContactPoints.tenantId, partyContactPoints.partyId, partyContactPoints.contactPointId],
         name: 'party_contact_point_purposes_contact_fk',
       }).onDelete('restrict'),
       index('party_contact_point_purposes_current_idx')
         .on(table.tenantId, table.partyId, table.purposeKey)
         .where(sql`${table.state} = 'ACTIVE' and ${table.isCurrent}`),
       uniqueIndex('party_contact_point_purposes_current_preferred_uk')
-        .on(
-          table.tenantId,
-          table.partyId,
-          table.purposeKey,
-          table.registryContext,
-          table.jurisdiction,
-        )
+        .on(table.tenantId, table.partyId, table.purposeKey, table.registryContext, table.jurisdiction)
         .where(sql`${table.preferred} and ${table.state} = 'ACTIVE' and ${table.isCurrent}`),
       uniqueIndex('party_contact_point_purposes_current_registered_uk')
         .on(table.tenantId, table.partyId, table.registryContext, table.jurisdiction)
-        .where(
-          sql`${table.purposeKey} = 'REGISTERED' and ${table.state} = 'ACTIVE' and ${table.isCurrent}`,
-        ),
+        .where(sql`${table.purposeKey} = 'REGISTERED' and ${table.state} = 'ACTIVE' and ${table.isCurrent}`),
       check(
         'party_contact_point_purposes_key_ck',
         sql`${table.purposeKey} in ('REGISTERED', 'BILLING', 'DELIVERY', 'CORRESPONDENCE')`,
@@ -553,10 +482,7 @@ export const partyContactPointPurposes = enableGovernedRls(
       ...activePeriodConstraints('party_contact_point_purposes', table),
       ...contactEvidenceConstraints('party_contact_point_purposes', table),
       check('party_contact_point_purposes_revision_ck', sql`${table.revision} > 0`),
-      externalEvidenceConstraint(
-        'party_contact_point_purposes_external_evidence_ck',
-        table.externalEvidence,
-      ),
+      externalEvidenceConstraint('party_contact_point_purposes_external_evidence_ck', table.externalEvidence),
       ...tenantRlsPolicies('party_contact_point_purposes_tenant', table.tenantId),
     ],
   ),
@@ -668,22 +594,14 @@ export const counterparties = enableGovernedRls(
     },
     (table) => [
       unique('party_counterparties_tenant_id_uk').on(table.tenantId, table.counterpartyId),
-      unique('party_counterparties_scope_id_uk').on(
-        table.tenantId,
-        table.legalEntityId,
-        table.counterpartyId,
-      ),
+      unique('party_counterparties_scope_id_uk').on(table.tenantId, table.legalEntityId, table.counterpartyId),
       unique('party_counterparties_projection_source_uk').on(
         table.tenantId,
         table.counterpartyId,
         table.legalEntityId,
         table.partyId,
       ),
-      unique('party_counterparties_context_uk').on(
-        table.tenantId,
-        table.partyId,
-        table.legalEntityId,
-      ),
+      unique('party_counterparties_context_uk').on(table.tenantId, table.partyId, table.legalEntityId),
       foreignKey({
         columns: [table.tenantId, table.partyId],
         foreignColumns: [parties.tenantId, parties.partyId],
@@ -700,11 +618,7 @@ export const counterparties = enableGovernedRls(
         'party_counterparties_evidence_ck',
         sql`jsonb_typeof(${table.evidenceRefs}) = 'array' and jsonb_array_length(${table.evidenceRefs}) between 1 and 32 and jsonb_typeof(${table.sourceRecordRefs}) = 'array' and jsonb_array_length(${table.sourceRecordRefs}) <= 32`,
       ),
-      ...tenantLegalEntityRlsPolicies(
-        'party_counterparties_scope',
-        table.tenantId,
-        table.legalEntityId,
-      ),
+      ...tenantLegalEntityRlsPolicies('party_counterparties_scope', table.tenantId, table.legalEntityId),
     ],
   ),
 );
@@ -747,17 +661,10 @@ export const counterpartyRolePeriods = enableGovernedRls(
       ),
       foreignKey({
         columns: [table.tenantId, table.legalEntityId, table.counterpartyId],
-        foreignColumns: [
-          counterparties.tenantId,
-          counterparties.legalEntityId,
-          counterparties.counterpartyId,
-        ],
+        foreignColumns: [counterparties.tenantId, counterparties.legalEntityId, counterparties.counterpartyId],
         name: 'party_role_periods_scope_counterparty_fk',
       }).onDelete('restrict'),
-      check(
-        'party_counterparty_role_periods_type_ck',
-        sql`${table.roleType} in ('CUSTOMER', 'SUPPLIER')`,
-      ),
+      check('party_counterparty_role_periods_type_ck', sql`${table.roleType} in ('CUSTOMER', 'SUPPLIER')`),
       check(
         'party_counterparty_role_periods_interval_ck',
         sql`${table.validTo} is null or ${table.validTo} >= ${table.validFrom}`,
@@ -774,11 +681,7 @@ export const counterpartyRolePeriods = enableGovernedRls(
         'party_counterparty_role_periods_end_evidence_ck',
         sql`((${table.state} = 'ACTIVE' and ((${table.validTo} is null and ${table.endReason} is null and ${table.endEvidenceRefs} is null and ${table.endedByActionInvocationId} is null and ${table.endedByPrincipalId} is null and ${table.endedRecordedAt} is null) or (${table.validTo} is not null and length(btrim(${table.endReason})) > 0 and jsonb_typeof(${table.endEvidenceRefs}) = 'array' and jsonb_array_length(${table.endEvidenceRefs}) between 1 and 32 and ${table.endedByActionInvocationId} is not null and ${table.endedByPrincipalId} is not null and ${table.endedRecordedAt} is not null))) or (${table.state} = 'ENDED' and ${table.validTo} is not null and length(btrim(${table.endReason})) > 0 and jsonb_typeof(${table.endEvidenceRefs}) = 'array' and jsonb_array_length(${table.endEvidenceRefs}) between 1 and 32 and ${table.endedByActionInvocationId} is not null and ${table.endedByPrincipalId} is not null and ${table.endedRecordedAt} is not null) or (${table.state} in ('SUPERSEDED', 'RETRACTED', 'DISPUTED'))) and ((${table.validTo} is null and ${table.endProvenanceSource} is null and ${table.endProvenanceMethod} is null) or (${table.validTo} is not null and ${table.endProvenanceSource} = btrim(${table.endProvenanceSource}) and length(${table.endProvenanceSource}) > 0 and ${table.endProvenanceMethod} = btrim(${table.endProvenanceMethod}) and length(${table.endProvenanceMethod}) > 0))`,
       ),
-      ...tenantLegalEntityRlsPolicies(
-        'party_role_periods_scope',
-        table.tenantId,
-        table.legalEntityId,
-      ),
+      ...tenantLegalEntityRlsPolicies('party_role_periods_scope', table.tenantId, table.legalEntityId),
     ],
   ),
 );
@@ -795,10 +698,7 @@ export const counterpartyAdminReadModels = enableGovernedRls(
       archivedAt: timestamp('archived_at', { withTimezone: true }),
     },
     (table) => [
-      unique('party_counterparty_admin_models_tenant_id_uk').on(
-        table.tenantId,
-        table.counterpartyId,
-      ),
+      unique('party_counterparty_admin_models_tenant_id_uk').on(table.tenantId, table.counterpartyId),
       foreignKey({
         columns: [table.tenantId, table.counterpartyId, table.legalEntityId, table.storedPartyId],
         foreignColumns: [
@@ -841,10 +741,7 @@ export const counterpartyRoleAdminReadModels = enableGovernedRls(
       provenanceMethod: text('provenance_method').notNull(),
     },
     (table) => [
-      unique('party_counterparty_role_admin_models_tenant_id_uk').on(
-        table.tenantId,
-        table.rolePeriodId,
-      ),
+      unique('party_counterparty_role_admin_models_tenant_id_uk').on(table.tenantId, table.rolePeriodId),
       foreignKey({
         columns: [table.tenantId, table.counterpartyId, table.rolePeriodId],
         foreignColumns: [
@@ -856,10 +753,7 @@ export const counterpartyRoleAdminReadModels = enableGovernedRls(
       }).onDelete('restrict'),
       foreignKey({
         columns: [table.tenantId, table.counterpartyId],
-        foreignColumns: [
-          counterpartyAdminReadModels.tenantId,
-          counterpartyAdminReadModels.counterpartyId,
-        ],
+        foreignColumns: [counterpartyAdminReadModels.tenantId, counterpartyAdminReadModels.counterpartyId],
         name: 'party_counterparty_role_admin_model_counterparty_fk',
       }).onDelete('restrict'),
       index('party_counterparty_role_admin_models_history_idx').on(
@@ -868,10 +762,7 @@ export const counterpartyRoleAdminReadModels = enableGovernedRls(
         table.validFrom,
         table.roleType,
       ),
-      check(
-        'party_counterparty_role_admin_models_type_ck',
-        sql`${table.roleType} in ('CUSTOMER', 'SUPPLIER')`,
-      ),
+      check('party_counterparty_role_admin_models_type_ck', sql`${table.roleType} in ('CUSTOMER', 'SUPPLIER')`),
       check(
         'party_counterparty_role_admin_models_state_ck',
         sql`${table.state} in ('ACTIVE', 'ENDED', 'SUPERSEDED', 'RETRACTED', 'DISPUTED')`,
@@ -903,9 +794,7 @@ export const duplicateCandidateCases = enableGovernedRls(
       evaluationFingerprint: text('evaluation_fingerprint').notNull(),
       priorCandidateCaseId: uuid('prior_candidate_case_id'),
       candidateSnapshot: jsonb('candidate_snapshot').$type<PartyCandidateSnapshot>().notNull(),
-      evaluatedEvidence: jsonb('evaluated_evidence')
-        .$type<readonly PartyEvidenceExplanation[]>()
-        .notNull(),
+      evaluatedEvidence: jsonb('evaluated_evidence').$type<readonly PartyEvidenceExplanation[]>().notNull(),
       matchRuleVersion: text('match_rule_version').notNull(),
       lifecycleState: text('lifecycle_state').default('OPEN').notNull(),
       revision: integer('revision').default(1).notNull(),
@@ -923,11 +812,7 @@ export const duplicateCandidateCases = enableGovernedRls(
       uniqueIndex('party_duplicate_cases_fingerprint_uk')
         .on(table.tenantId, table.evaluationFingerprint, table.matchRuleVersion)
         .where(sql`${table.lifecycleState} in ('OPEN', 'NEEDS_EVIDENCE')`),
-      index('party_duplicate_cases_input_history_idx').on(
-        table.tenantId,
-        table.candidateFingerprint,
-        table.createdAt,
-      ),
+      index('party_duplicate_cases_input_history_idx').on(table.tenantId, table.candidateFingerprint, table.createdAt),
       foreignKey({
         columns: [table.tenantId, table.priorCandidateCaseId],
         foreignColumns: [table.tenantId, table.candidateCaseId],
@@ -937,19 +822,13 @@ export const duplicateCandidateCases = enableGovernedRls(
         'party_duplicate_cases_prior_case_ck',
         sql`${table.priorCandidateCaseId} is null or ${table.priorCandidateCaseId} <> ${table.candidateCaseId}`,
       ),
-      check(
-        'party_duplicate_cases_evaluation_fingerprint_ck',
-        sql`${table.evaluationFingerprint} ~ '^[0-9a-f]{64}$'`,
-      ),
+      check('party_duplicate_cases_evaluation_fingerprint_ck', sql`${table.evaluationFingerprint} ~ '^[0-9a-f]{64}$'`),
       foreignKey({
         columns: [table.tenantId, table.selectedPartyId],
         foreignColumns: [parties.tenantId, parties.partyId],
         name: 'party_duplicate_cases_selected_party_fk',
       }).onDelete('restrict'),
-      check(
-        'party_duplicate_cases_fingerprint_ck',
-        sql`${table.candidateFingerprint} ~ '^[0-9a-f]{64}$'`,
-      ),
+      check('party_duplicate_cases_fingerprint_ck', sql`${table.candidateFingerprint} ~ '^[0-9a-f]{64}$'`),
       check(
         'party_duplicate_cases_snapshot_ck',
         sql`coalesce(jsonb_typeof(${table.candidateSnapshot}), '') = 'object' and coalesce(jsonb_typeof(${table.candidateSnapshot}->'names'), '') = 'array' and jsonb_array_length(${table.candidateSnapshot}->'names') <= 32 and coalesce(jsonb_typeof(${table.candidateSnapshot}->'provenance'), '') = 'object' and coalesce(length(btrim(${table.candidateSnapshot}->'provenance'->>'source')), 0) between 1 and 500 and coalesce(length(btrim(${table.candidateSnapshot}->'provenance'->>'method')), 0) between 1 and 500 and coalesce(${table.candidateSnapshot}->>'validFrom', '') ~ '^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}(\\.[0-9]{3})?Z$'`,
@@ -977,17 +856,11 @@ export const duplicateCandidateCaseParties = enableGovernedRls(
       candidateCaseId: uuid('candidate_case_id').notNull(),
       partyId: uuid('party_id').notNull(),
       rank: integer('rank').notNull(),
-      evidenceExplanation: jsonb('evidence_explanation')
-        .$type<PartyEvidenceExplanation>()
-        .notNull(),
+      evidenceExplanation: jsonb('evidence_explanation').$type<PartyEvidenceExplanation>().notNull(),
     },
     (table) => [
       unique('party_case_parties_tenant_id_uk').on(table.tenantId, table.candidateCasePartyId),
-      unique('party_case_parties_candidate_party_uk').on(
-        table.tenantId,
-        table.candidateCaseId,
-        table.partyId,
-      ),
+      unique('party_case_parties_candidate_party_uk').on(table.tenantId, table.candidateCaseId, table.partyId),
       foreignKey({
         columns: [table.tenantId, table.candidateCaseId],
         foreignColumns: [duplicateCandidateCases.tenantId, duplicateCandidateCases.candidateCaseId],
@@ -1019,17 +892,12 @@ export const partyMatchDecisions = enableGovernedRls(
       outcome: text('outcome').notNull(),
       partyId: uuid('party_id'),
       candidateCaseId: uuid('candidate_case_id'),
-      evidenceExplanation: jsonb('evidence_explanation')
-        .$type<readonly PartyEvidenceExplanation[]>()
-        .notNull(),
+      evidenceExplanation: jsonb('evidence_explanation').$type<readonly PartyEvidenceExplanation[]>().notNull(),
       decidedAt: timestamp('decided_at', { withTimezone: true }).defaultNow().notNull(),
     },
     (table) => [
       unique('party_match_decisions_tenant_id_uk').on(table.tenantId, table.matchDecisionId),
-      unique('party_match_decisions_action_invocation_uk').on(
-        table.tenantId,
-        table.actionInvocationId,
-      ),
+      unique('party_match_decisions_action_invocation_uk').on(table.tenantId, table.actionInvocationId),
       foreignKey({
         columns: [table.tenantId, table.partyId],
         foreignColumns: [parties.tenantId, parties.partyId],
@@ -1040,10 +908,7 @@ export const partyMatchDecisions = enableGovernedRls(
         foreignColumns: [duplicateCandidateCases.tenantId, duplicateCandidateCases.candidateCaseId],
         name: 'party_match_decisions_tenant_case_fk',
       }).onDelete('restrict'),
-      check(
-        'party_match_decisions_fingerprint_ck',
-        sql`${table.candidateFingerprint} ~ '^[0-9a-f]{64}$'`,
-      ),
+      check('party_match_decisions_fingerprint_ck', sql`${table.candidateFingerprint} ~ '^[0-9a-f]{64}$'`),
       check(
         'party_match_decisions_outcome_ck',
         sql`${table.outcome} in ('CREATED', 'MATCHED', 'NO_MATCH', 'AMBIGUOUS')`,
@@ -1187,10 +1052,7 @@ export const partyCorrections = enableGovernedRls(
       }).onDelete('restrict'),
       foreignKey({
         columns: [table.tenantId, table.officialIdentifierId],
-        foreignColumns: [
-          partyOfficialIdentifiers.tenantId,
-          partyOfficialIdentifiers.officialIdentifierId,
-        ],
+        foreignColumns: [partyOfficialIdentifiers.tenantId, partyOfficialIdentifiers.officialIdentifierId],
         name: 'party_corrections_tenant_identifier_fk',
       }).onDelete('restrict'),
       foreignKey({
@@ -1210,10 +1072,7 @@ export const partyCorrections = enableGovernedRls(
       }).onDelete('restrict'),
       foreignKey({
         columns: [table.tenantId, table.replacementOfficialIdentifierId],
-        foreignColumns: [
-          partyOfficialIdentifiers.tenantId,
-          partyOfficialIdentifiers.officialIdentifierId,
-        ],
+        foreignColumns: [partyOfficialIdentifiers.tenantId, partyOfficialIdentifiers.officialIdentifierId],
         name: 'party_corrections_tenant_replacement_id_fk',
       }).onDelete('restrict'),
       foreignKey({

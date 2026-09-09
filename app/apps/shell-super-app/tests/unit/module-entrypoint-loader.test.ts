@@ -1,6 +1,3 @@
-import { expect, it } from 'effect-rstest';
-import { Clock, Effect, Fiber, Function as Fn, Match, Predicate, Schema } from 'effect';
-import { TestClock } from 'effect/testing';
 import {
   ModuleStateCheckUnavailableError,
   ModuleStateDeniedError,
@@ -14,6 +11,10 @@ import type {
   ModuleStateSnapshot,
   TrustedPrincipalContext,
 } from '@app/core-runtime';
+import { Clock, Effect, Fiber, Function as Fn, Match, Predicate, Schema } from 'effect';
+import { expect, it } from 'effect-rstest';
+import { TestClock } from 'effect/testing';
+
 import {
   loadModuleEntrypointComposition,
   MODULE_LOAD_CONCURRENCY,
@@ -55,10 +56,7 @@ const makeFakeGateway = (options: FakeGatewayOptions = {}): ModuleEntrypointGate
         )
       : Effect.void;
   };
-  const prepareSnapshot: ModuleEntrypointGatewayService['prepareSnapshot'] = (
-    context,
-    entrypoints,
-  ) => {
+  const prepareSnapshot: ModuleEntrypointGatewayService['prepareSnapshot'] = (context, entrypoints) => {
     options.onPrepare?.(entrypoints);
     if (options.unavailable === true || context.tenantId.length === 0) {
       return Effect.fail(
@@ -70,9 +68,7 @@ const makeFakeGateway = (options: FakeGatewayOptions = {}): ModuleEntrypointGate
     }
     const snapshot: ModuleStateSnapshot = Object.freeze({
       entrypointKeys: Object.freeze(entrypoints.map(({ entrypointKey }) => entrypointKey)),
-      moduleKeys: Object.freeze(
-        [...new Set(entrypoints.map(({ moduleKey }) => moduleKey))].toSorted(),
-      ),
+      moduleKeys: Object.freeze([...new Set(entrypoints.map(({ moduleKey }) => moduleKey))].toSorted()),
       tenantId: context.tenantId,
     });
     return Effect.succeed(snapshot);
@@ -92,10 +88,7 @@ const makeFakeGateway = (options: FakeGatewayOptions = {}): ModuleEntrypointGate
         Effect.flatMap((trusted) => prepareSnapshot(trusted, entrypoints)),
       ),
     run: (input) =>
-      check(input.snapshot, input.entrypoint).pipe(
-        Effect.andThen(input.authorize),
-        Effect.andThen(input.load),
-      ),
+      check(input.snapshot, input.entrypoint).pipe(Effect.andThen(input.authorize), Effect.andThen(input.load)),
   };
   return gateway;
 };
@@ -115,8 +108,7 @@ const component = defineTenantModuleEntrypoint({
   role: 'public_component',
 });
 
-const compatibleRemoteModule = (value: { readonly default: unknown }) =>
-  Predicate.isFunction(value.default);
+const compatibleRemoteModule = (value: { readonly default: unknown }) => Predicate.isFunction(value.default);
 
 it.effect('prepares one complete trusted composition and invokes allowed lazy loaders', () =>
   Effect.gen(function* verifyCompleteComposition() {
@@ -174,23 +166,14 @@ it.effect('checks the complete composition before authorizing or invoking any lo
   }),
 );
 
-class RemoteLoadUnavailable extends Schema.TaggedError<RemoteLoadUnavailable>()(
-  'RemoteLoadUnavailable',
-  {},
-) {}
+class RemoteLoadUnavailable extends Schema.TaggedError<RemoteLoadUnavailable>()('RemoteLoadUnavailable', {}) {}
 const FakeUnavailableUiStateSchema = Schema.Literals(['forbidden', 'unavailable']);
 type FakeUnavailableUiState = typeof FakeUnavailableUiStateSchema.Type;
 
-const mapFakeUnavailableUiState = (
-  error: ModuleStateGateError | RemoteLoadUnavailable,
-): FakeUnavailableUiState =>
+const mapFakeUnavailableUiState = (error: ModuleStateGateError | RemoteLoadUnavailable): FakeUnavailableUiState =>
   Match.value(error).pipe(
     Match.tag('ModuleStateDeniedError', () => 'forbidden' as const),
-    Match.tag(
-      'ModuleStateCheckUnavailableError',
-      'RemoteLoadUnavailable',
-      () => 'unavailable' as const,
-    ),
+    Match.tag('ModuleStateCheckUnavailableError', 'RemoteLoadUnavailable', () => 'unavailable' as const),
     Match.exhaustive,
   );
 
@@ -198,7 +181,11 @@ it.effect('preserves typed gate and remote-load failures for exhaustive UI mappi
   Effect.gen(function* verifyTypedFailures() {
     const gateFailure = yield* Effect.flip(
       loadModuleEntrypointComposition(makeFakeGateway({ unavailable: true }), trustedContext, [
-        { authorize: Effect.void, entrypoint: page, load: Effect.succeed('unreachable') },
+        {
+          authorize: Effect.void,
+          entrypoint: page,
+          load: Effect.succeed('unreachable'),
+        },
       ]),
     );
     expect(mapFakeUnavailableUiState(gateFailure)).toBe('unavailable');
@@ -217,38 +204,42 @@ it.effect('preserves typed gate and remote-load failures for exhaustive UI mappi
   }),
 );
 
-it.live(
-  'settles browser entrypoint success, rejection, incompatibility, and timeout independently',
-  () =>
-    Effect.gen(function* verifySettledLoads() {
-      const pending = Promise.withResolvers<{ readonly default: () => null }>();
-      const [ready, unavailable, incompatible, timedOut] = yield* Effect.all(
-        [
-          settleModuleEntrypointLoad(
-            Fn.constant(Promise.resolve({ default: remoteDefault })),
-            compatibleRemoteModule,
-            50,
-          ),
-          settleModuleEntrypointLoad(
-            Fn.constant(Promise.reject(new Error('remote unavailable'))),
-            compatibleRemoteModule,
-            50,
-          ),
-          settleModuleEntrypointLoad(
-            Fn.constant(Promise.resolve({ default: 'not a component' })),
-            compatibleRemoteModule,
-            50,
-          ),
-          settleModuleEntrypointLoad(Fn.constant(pending.promise), compatibleRemoteModule, 1),
-        ],
-        { concurrency: 'unbounded' },
-      );
+it.live('settles browser entrypoint success, rejection, incompatibility, and timeout independently', () =>
+  Effect.gen(function* verifySettledLoads() {
+    const pending = Promise.withResolvers<{ readonly default: () => null }>();
+    const [ready, unavailable, incompatible, timedOut] = yield* Effect.all(
+      [
+        settleModuleEntrypointLoad(
+          Fn.constant(Promise.resolve({ default: remoteDefault })),
+          compatibleRemoteModule,
+          50,
+        ),
+        settleModuleEntrypointLoad(
+          Fn.constant(Promise.reject(new Error('remote unavailable'))),
+          compatibleRemoteModule,
+          50,
+        ),
+        settleModuleEntrypointLoad(
+          Fn.constant(Promise.resolve({ default: 'not a component' })),
+          compatibleRemoteModule,
+          50,
+        ),
+        settleModuleEntrypointLoad(Fn.constant(pending.promise), compatibleRemoteModule, 1),
+      ],
+      { concurrency: 'unbounded' },
+    );
 
-      expect(ready.state).toBe('ready');
-      expect(unavailable).toEqual({ reason: 'unavailable', state: 'unavailable' });
-      expect(incompatible).toEqual({ reason: 'incompatible', state: 'unavailable' });
-      expect(timedOut).toEqual({ reason: 'timeout', state: 'unavailable' });
-    }),
+    expect(ready.state).toBe('ready');
+    expect(unavailable).toEqual({
+      reason: 'unavailable',
+      state: 'unavailable',
+    });
+    expect(incompatible).toEqual({
+      reason: 'incompatible',
+      state: 'unavailable',
+    });
+    expect(timedOut).toEqual({ reason: 'timeout', state: 'unavailable' });
+  }),
 );
 
 it.effect('settles several browser entrypoints without one failure hiding healthy loads', () =>
@@ -396,9 +387,7 @@ it.live('never starts an expired queued load when synchronous work delays deadli
 
 it.effect('abandons queued loads when the caller is interrupted', () =>
   Effect.gen(function* verifyInterruptedCaller() {
-    const pendingLoads = Array.from({ length: MODULE_LOAD_CONCURRENCY }, () =>
-      Promise.withResolvers<RemoteModule>(),
-    );
+    const pendingLoads = Array.from({ length: MODULE_LOAD_CONCURRENCY }, () => Promise.withResolvers<RemoteModule>());
     const firstWindowStarted = Promise.withResolvers<null>();
     const started: number[] = [];
     const caller = yield* Effect.forkChild(
@@ -431,64 +420,58 @@ it.effect('abandons queued loads when the caller is interrupted', () =>
   }).pipe(Effect.provide(TestClock.layer())),
 );
 
-it.effect(
-  'holds a running timed-out load permit until settlement then releases it to a live queued load',
-  () =>
-    Effect.gen(function* verifyPermitRelease() {
-      const pendingLoads = Array.from({ length: MODULE_LOAD_CONCURRENCY }, () =>
-        Promise.withResolvers<RemoteModule>(),
-      );
-      const firstWindowStarted = Promise.withResolvers<null>();
-      const queuedLoadStarted = Promise.withResolvers<null>();
-      const events: string[] = [];
-      const resultsFiber = yield* Effect.forkChild(
-        settleModuleEntrypointLoads(
-          Array.from({ length: MODULE_LOAD_CONCURRENCY + 1 }, (_, index) => ({
-            identity: `module-${index}/page`,
-            isCompatible: compatibleRemoteModule,
+it.effect('holds a running timed-out load permit until settlement then releases it to a live queued load', () =>
+  Effect.gen(function* verifyPermitRelease() {
+    const pendingLoads = Array.from({ length: MODULE_LOAD_CONCURRENCY }, () => Promise.withResolvers<RemoteModule>());
+    const firstWindowStarted = Promise.withResolvers<null>();
+    const queuedLoadStarted = Promise.withResolvers<null>();
+    const events: string[] = [];
+    const resultsFiber = yield* Effect.forkChild(
+      settleModuleEntrypointLoads(
+        Array.from({ length: MODULE_LOAD_CONCURRENCY + 1 }, (_, index) => ({
+          identity: `module-${index}/page`,
+          isCompatible: compatibleRemoteModule,
 
-            load: () => {
-              events.push(`started-${index}`);
-              if (index === MODULE_LOAD_CONCURRENCY - 1) {
-                firstWindowStarted.resolve(null);
-              }
-              const pending = pendingLoads[index];
-              if (pending === undefined) {
-                queuedLoadStarted.resolve(null);
-                return Promise.resolve({ default: remoteDefault });
-              }
-              return Promise.resolve(
-                pending.promise.then((value) => {
-                  events.push(`settled-${index}`);
-                  return value;
-                }),
-              );
-            },
-            timeoutMs: index === 0 ? 10 : 1000,
-          })),
-        ),
-      );
+          load: () => {
+            events.push(`started-${index}`);
+            if (index === MODULE_LOAD_CONCURRENCY - 1) {
+              firstWindowStarted.resolve(null);
+            }
+            const pending = pendingLoads[index];
+            if (pending === undefined) {
+              queuedLoadStarted.resolve(null);
+              return Promise.resolve({ default: remoteDefault });
+            }
+            return Promise.resolve(
+              pending.promise.then((value) => {
+                events.push(`settled-${index}`);
+                return value;
+              }),
+            );
+          },
+          timeoutMs: index === 0 ? 10 : 1000,
+        })),
+      ),
+    );
 
-      yield* Effect.promise(() => firstWindowStarted.promise);
-      yield* TestClock.adjust('20 millis');
-      expect(events).toEqual(
-        Array.from({ length: MODULE_LOAD_CONCURRENCY }, (_, index) => `started-${index}`),
-      );
+    yield* Effect.promise(() => firstWindowStarted.promise);
+    yield* TestClock.adjust('20 millis');
+    expect(events).toEqual(Array.from({ length: MODULE_LOAD_CONCURRENCY }, (_, index) => `started-${index}`));
 
-      pendingLoads[0]?.resolve({ default: () => null });
-      yield* Effect.promise(() => queuedLoadStarted.promise);
-      expect(events.slice(-2)).toEqual(['settled-0', `started-${MODULE_LOAD_CONCURRENCY}`]);
-      for (const pending of pendingLoads) {
-        pending.resolve({ default: () => null });
-      }
-      const results = yield* Fiber.join(resultsFiber);
-      expect(results[0]).toEqual({
-        identity: 'module-0/page',
-        reason: 'timeout',
-        state: 'unavailable',
-      });
-      expect(results.slice(1).every(({ state }) => state === 'ready')).toBe(true);
-    }).pipe(Effect.provide(TestClock.layer())),
+    pendingLoads[0]?.resolve({ default: () => null });
+    yield* Effect.promise(() => queuedLoadStarted.promise);
+    expect(events.slice(-2)).toEqual(['settled-0', `started-${MODULE_LOAD_CONCURRENCY}`]);
+    for (const pending of pendingLoads) {
+      pending.resolve({ default: () => null });
+    }
+    const results = yield* Fiber.join(resultsFiber);
+    expect(results[0]).toEqual({
+      identity: 'module-0/page',
+      reason: 'timeout',
+      state: 'unavailable',
+    });
+    expect(results.slice(1).every(({ state }) => state === 'ready')).toBe(true);
+  }).pipe(Effect.provide(TestClock.layer())),
 );
 
 it.effect('does not surface a late remote rejection after a timeout', () =>
@@ -558,7 +541,10 @@ it.effect.each(['selection_required', 'not_found', 'forbidden', 'unavailable'] a
 it.effect('invokes the lazy registry only after receiving an approved target', () =>
   Effect.gen(function* verifyApprovedTargetResolution() {
     let loads = 0;
-    const target = { appId: 'inventory-app', componentKey: 'inventory.stock.page' };
+    const target = {
+      appId: 'inventory-app',
+      componentKey: 'inventory.stock.page',
+    };
     const result = yield* resolveThenLoadModuleTarget(Effect.succeed(target), (approved) =>
       Effect.sync(() => {
         loads += 1;

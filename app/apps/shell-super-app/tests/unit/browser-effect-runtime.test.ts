@@ -1,14 +1,12 @@
-import { expect, it } from 'effect-rstest';
 import { Deferred, Effect, Exit, Fiber, Schema } from 'effect';
+import { expect, it } from 'effect-rstest';
+
 import { browserRuntime } from '../../src/runtime/browser-effect-runtime.ts';
 
 class ExpectedFailure extends Schema.TaggedError<ExpectedFailure>()('ExpectedFailure', {}) {}
 
 /** Forks on the real browser runtime, interrupting on scope close so a failed assertion leaks no fiber. */
-const forkOnBrowserRuntime = <Value, Failure>(
-  program: Effect.Effect<Value, Failure>,
-  options?: Effect.RunOptions,
-) =>
+const forkOnBrowserRuntime = <Value, Failure>(program: Effect.Effect<Value, Failure>, options?: Effect.RunOptions) =>
   Effect.acquireRelease(
     Effect.sync(() => browserRuntime.runFork(program, options)),
     (fiber) => Fiber.interrupt(fiber),

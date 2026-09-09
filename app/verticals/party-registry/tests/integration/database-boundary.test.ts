@@ -1,11 +1,9 @@
-import { hasPostgreSqlCode, openBoundaryDatabases } from '../support/database-boundary.ts';
-import { purgeFixtureRows } from '../../../../packages/core-runtime/tests/support/fixture-cleanup.ts';
+import { and, eq, gt, inArray, isNull, lte, or, sql } from 'drizzle-orm';
+import { DateTime, Effect, Schema } from 'effect';
 import { assert, expect, it } from 'effect-rstest';
 
-import { DateTime, Effect, Schema } from 'effect';
-
-import { and, eq, gt, inArray, isNull, lte, or, sql } from 'drizzle-orm';
 import { makeTestDatabaseFromPool } from '../../../../packages/core-runtime/tests/support/database.ts';
+import { purgeFixtureRows } from '../../../../packages/core-runtime/tests/support/fixture-cleanup.ts';
 import { RuleKeySchema } from '../../shared/domain/matching-contracts.ts';
 import {
   counterparties,
@@ -28,6 +26,7 @@ import {
   partyRelationships,
 } from '../../src/db/schema.ts';
 import type { PartyTransaction } from '../../src/db/types.ts';
+import { hasPostgreSqlCode, openBoundaryDatabases } from '../support/database-boundary.ts';
 
 const tenantA = 'a1000000-0000-4000-8000-000000000001';
 const tenantB = 'a1000000-0000-4000-8000-000000000002';
@@ -91,19 +90,16 @@ it.live('enforces Party owner invariants, tenant isolation, and independent fact
     ) =>
       runtime.transaction((transaction) =>
         Effect.gen(function* transactionTestBody() {
-          yield* transaction.execute(
-            sql`select set_config('ontos.tenant_id', ${tenantId}, true)`,
-            'objects',
-          );
+          yield* transaction.execute(sql`select set_config('ontos.tenant_id', ${tenantId}, true)`, 'objects');
           return yield* operation(transaction);
         }),
       );
 
     yield* Effect.addFinalizer(() => cleanup().pipe(Effect.orDie));
-    const runtimeRole = yield* runtime.execute<{ rolbypassrls: boolean; rolsuper: boolean }>(
-      sql`select rolbypassrls, rolsuper from pg_roles where rolname = current_user`,
-      'objects',
-    );
+    const runtimeRole = yield* runtime.execute<{
+      rolbypassrls: boolean;
+      rolsuper: boolean;
+    }>(sql`select rolbypassrls, rolsuper from pg_roles where rolname = current_user`, 'objects');
     expect(runtimeRole).toEqual([{ rolbypassrls: false, rolsuper: false }]);
     yield* cleanup();
     yield* admin.insert(parties).values([
@@ -141,11 +137,7 @@ it.live('enforces Party owner invariants, tenant isolation, and independent fact
       yield* withTenant(tenantA, (transaction) =>
         transaction.select({ partyId: parties.partyId }).from(parties).orderBy(parties.partyId),
       ),
-    ).toEqual([
-      { partyId: partyOrganizationA },
-      { partyId: partyOrganizationA2 },
-      { partyId: partyPersonA },
-    ]);
+    ).toEqual([{ partyId: partyOrganizationA }, { partyId: partyOrganizationA2 }, { partyId: partyPersonA }]);
     const identifierValues = (tenantId: string, partyId: string, identifierId: string) => ({
       acceptedByActionInvocationId: actionA,
       acceptedByPrincipalId: principalA,
@@ -194,9 +186,7 @@ it.live('enforces Party owner invariants, tenant isolation, and independent fact
       .from(partyOfficialIdentifiers)
       .where(eq(partyOfficialIdentifiers.officialIdentifierId, identifierA));
     expect(persistedExternalEvidence?.externalEvidence).toEqual(externalEvidence);
-    expect(persistedExternalEvidence?.validFrom.toISOString()).not.toBe(
-      externalEvidence.observedAt,
-    );
+    expect(persistedExternalEvidence?.validFrom.toISOString()).not.toBe(externalEvidence.observedAt);
     expect(
       hasPostgreSqlCode('23514')(
         yield* Effect.flip(
@@ -333,7 +323,11 @@ it.live('enforces Party owner invariants, tenant isolation, and independent fact
     } as const;
     yield* admin.insert(partyContactPointPurposes).values([
       { ...purposeEvidence, contactPointId: addressA, purposeKey: 'BILLING' },
-      { ...purposeEvidence, contactPointId: addressA, purposeKey: 'DELIVERY' },
+      {
+        ...purposeEvidence,
+        contactPointId: addressA,
+        purposeKey: 'DELIVERY',
+      },
     ]);
     expect(
       hasPostgreSqlCode('23505')(
@@ -496,16 +490,12 @@ it.live('enforces Party owner invariants, tenant isolation, and independent fact
           );
         return relationships.length;
       });
-    expect(
-      yield* effectiveRelationshipCount(
-        DateTime.toDateUtc(DateTime.makeUnsafe('2026-06-01T00:00:00.000Z')),
-      ),
-    ).toBe(1);
-    expect(
-      yield* effectiveRelationshipCount(
-        DateTime.toDateUtc(DateTime.makeUnsafe('2027-01-01T00:00:00.000Z')),
-      ),
-    ).toBe(1);
+    expect(yield* effectiveRelationshipCount(DateTime.toDateUtc(DateTime.makeUnsafe('2026-06-01T00:00:00.000Z')))).toBe(
+      1,
+    );
+    expect(yield* effectiveRelationshipCount(DateTime.toDateUtc(DateTime.makeUnsafe('2027-01-01T00:00:00.000Z')))).toBe(
+      1,
+    );
     const [unknownStart] = yield* admin
       .insert(partyRelationships)
       .values({
@@ -525,7 +515,9 @@ it.live('enforces Party owner invariants, tenant isolation, and independent fact
 
     yield* admin
       .update(partyRelationships)
-      .set({ validFrom: DateTime.toDateUtc(DateTime.makeUnsafe('2028-01-01T00:00:00.000Z')) })
+      .set({
+        validFrom: DateTime.toDateUtc(DateTime.makeUnsafe('2028-01-01T00:00:00.000Z')),
+      })
       .where(eq(partyRelationships.relationshipId, unknownStart.relationshipId));
     expect(
       hasPostgreSqlCode('23514')(
@@ -721,10 +713,7 @@ it.live('enforces Party owner invariants, tenant isolation, and independent fact
           eq(counterpartyRolePeriods.counterpartyId, counterpartyA),
           eq(counterpartyRolePeriods.state, 'ACTIVE'),
           lte(counterpartyRolePeriods.validFrom, effectiveAt),
-          or(
-            isNull(counterpartyRolePeriods.validTo),
-            gt(counterpartyRolePeriods.validTo, effectiveAt),
-          ),
+          or(isNull(counterpartyRolePeriods.validTo), gt(counterpartyRolePeriods.validTo, effectiveAt)),
         ),
       );
     expect(effectiveRoles.length).toBe(1);
@@ -771,9 +760,7 @@ it.live('enforces Party owner invariants, tenant isolation, and independent fact
         validTo: role.validTo,
       })),
     );
-    expect(
-      yield* withTenant(tenantA, (transaction) => transaction.select().from(counterparties)),
-    ).toEqual([]);
+    expect(yield* withTenant(tenantA, (transaction) => transaction.select().from(counterparties))).toEqual([]);
     expect(yield* runtime.select().from(counterpartyAdminReadModels)).toEqual([]);
     const tenantCounterpartyModels = yield* withTenant(tenantA, (transaction) =>
       transaction.select().from(counterpartyAdminReadModels),
@@ -783,26 +770,14 @@ it.live('enforces Party owner invariants, tenant isolation, and independent fact
       transaction.select().from(counterpartyRoleAdminReadModels),
     );
     expect(tenantRoleModels.length).toBe(roleSources.length);
-    expect(
-      yield* withTenant(tenantB, (transaction) =>
-        transaction.select().from(counterpartyAdminReadModels),
-      ),
-    ).toEqual([]);
-    expect(
-      yield* withTenant(tenantA, (transaction) =>
-        transaction.select().from(counterpartyRolePeriods),
-      ),
-    ).toEqual([]);
+    expect(yield* withTenant(tenantB, (transaction) => transaction.select().from(counterpartyAdminReadModels))).toEqual(
+      [],
+    );
+    expect(yield* withTenant(tenantA, (transaction) => transaction.select().from(counterpartyRolePeriods))).toEqual([]);
     const scopedCounterparties = yield* runtime.transaction((transaction) =>
       Effect.gen(function* transactionTestBody() {
-        yield* transaction.execute(
-          sql`select set_config('ontos.tenant_id', ${tenantA}, true)`,
-          'objects',
-        );
-        yield* transaction.execute(
-          sql`select set_config('ontos.legal_entity_id', ${legalEntityA}, true)`,
-          'objects',
-        );
+        yield* transaction.execute(sql`select set_config('ontos.tenant_id', ${tenantA}, true)`, 'objects');
+        yield* transaction.execute(sql`select set_config('ontos.legal_entity_id', ${legalEntityA}, true)`, 'objects');
         return yield* transaction.select().from(counterparties);
       }),
     );
@@ -960,10 +935,7 @@ it.live('enforces Party owner invariants, tenant isolation, and independent fact
       survivorPartyId: partyOrganizationA,
       tenantId: tenantA,
     });
-    const [merge] = yield* admin
-      .select({ mergeId: partyMerges.mergeId })
-      .from(partyMerges)
-      .limit(1);
+    const [merge] = yield* admin.select({ mergeId: partyMerges.mergeId }).from(partyMerges).limit(1);
     assert.isOk(merge);
 
     expect(

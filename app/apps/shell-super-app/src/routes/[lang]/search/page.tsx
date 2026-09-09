@@ -1,10 +1,11 @@
 /* eslint-disable no-negated-condition, unicorn/no-negated-condition -- Closed route states read most clearly as error-versus-ready branches. expires: 2026-12-31. */
-import { useModernI18n } from '@modern-js/plugin-i18n/runtime';
+import { Link as LocalizedLink, useModernI18n } from '@modern-js/plugin-i18n/runtime';
 import { useLoaderData } from '@modern-js/plugin-tanstack/runtime';
 import { Badge } from '@techsio/ui-kit/atoms/badge';
 import { LinkButton } from '@techsio/ui-kit/atoms/link-button';
 import { StatusText } from '@techsio/ui-kit/atoms/status-text';
 import { Match } from 'effect';
+
 import type { ShellSearchResult } from '../../../../shared/api.ts';
 import { ShellContentLayout } from '../../shell-content-layout.tsx';
 import { useShellControls } from '../../use-shell-controls.ts';
@@ -16,7 +17,7 @@ const SearchResultItem = ({
   readonly currentTenantId: string;
   readonly result: ShellSearchResult;
 }) => {
-  const { language, t } = useModernI18n();
+  const { t } = useModernI18n();
   const party = Match.value(result).pipe(
     Match.when({ kind: 'resource' }, () => null),
     Match.when({ kind: 'party' }, (partyResult) => partyResult),
@@ -35,7 +36,13 @@ const SearchResultItem = ({
       key={`${result.ref.moduleId}:${result.ref.resourceType}:${result.ref.resourceId}`}
     >
       <LinkButton
-        href={`/${language}/resources/${encodeURIComponent(result.ref.moduleId)}/${encodeURIComponent(result.ref.resourceType)}/${encodeURIComponent(result.ref.resourceId)}`}
+        as={LocalizedLink}
+        params={{
+          moduleId: result.ref.moduleId,
+          resourceId: result.ref.resourceId,
+          resourceType: result.ref.resourceType,
+        }}
+        to="/resources/$moduleId/$resourceType/$resourceId"
         variant="secondary"
       >
         {result.title}
@@ -87,18 +94,12 @@ const SearchResultItem = ({
 const SearchPage = () => {
   const { t } = useModernI18n();
   const model = useLoaderData({ from: '/$lang/search' });
-  const controls = useShellControls(
-    model.shell.state === 'authenticated' ? model.shell : undefined,
-  );
+  const controls = useShellControls(model.shell.state === 'authenticated' ? model.shell : undefined);
   if (model.shell.state !== 'authenticated') {
     return (
       <main className="shell:mx-auto shell:grid shell:w-full shell:max-w-5xl shell:gap-6 shell:px-4 shell:py-8">
         <StatusText aria-live="polite" showIcon status="error">
-          {t(
-            model.shell.state === 'unavailable'
-              ? 'shell.dashboard.unavailable'
-              : 'shell.search.selection_required',
-          )}
+          {t(model.shell.state === 'unavailable' ? 'shell.dashboard.unavailable' : 'shell.search.selection_required')}
         </StatusText>
       </main>
     );
@@ -110,10 +111,7 @@ const SearchPage = () => {
         {t(`shell.search.${model.state}`)}
       </StatusText>
     ) : (
-      <section
-        aria-labelledby="search-results-title"
-        className="shell:grid shell:w-full shell:max-w-5xl shell:gap-6"
-      >
+      <section aria-labelledby="search-results-title" className="shell:grid shell:w-full shell:max-w-5xl shell:gap-6">
         <h2 className="shell:text-title-lg" id="search-results-title">
           {t('shell.search.title')}
         </h2>

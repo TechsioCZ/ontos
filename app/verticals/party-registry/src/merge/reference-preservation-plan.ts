@@ -1,6 +1,7 @@
+import { Match, Option, Schema } from 'effect';
+
 import type { PartyAlias } from '../../shared/resources/party-alias.ts';
 import type { PartyRef } from '../../shared/resources/party.ts';
-import { Match, Option, Schema } from 'effect';
 import { resolveCanonicalPartyRef } from './party-alias-resolution.ts';
 
 const SupportedReferenceClassSchema = Schema.Literals([
@@ -13,10 +14,7 @@ const SupportedReferenceClassSchema = Schema.Literals([
   'HISTORICAL_DOCUMENT',
 ]);
 type SupportedReferenceClass = typeof SupportedReferenceClassSchema.Type;
-const ReferenceClassSchema = Schema.Union([
-  SupportedReferenceClassSchema,
-  Schema.Literal('UNSUPPORTED'),
-]);
+const ReferenceClassSchema = Schema.Union([SupportedReferenceClassSchema, Schema.Literal('UNSUPPORTED')]);
 type ReferenceClass = typeof ReferenceClassSchema.Type;
 interface HistoricalPartySnapshot {
   readonly address?: string;
@@ -73,12 +71,13 @@ const collectReferenceBlockers = (
   consumerReconciliation: readonly ConsumerReconciliationContract[] | undefined,
 ): ReferenceBlocker[] => {
   const blockers: ReferenceBlocker[] = [];
-  const contracts = new Map(
-    (consumerReconciliation ?? []).map((contract) => [contract.consumerKey, contract]),
-  );
+  const contracts = new Map((consumerReconciliation ?? []).map((contract) => [contract.consumerKey, contract]));
   for (const reference of references) {
     if (reference.class === 'UNSUPPORTED') {
-      blockers.push({ code: 'UNSUPPORTED_REFERENCE_CLASS', ownerKey: reference.ownerKey });
+      blockers.push({
+        code: 'UNSUPPORTED_REFERENCE_CLASS',
+        ownerKey: reference.ownerKey,
+      });
       continue;
     }
     const blocker = consumerContractBlocker(reference.ownerKey, contracts.get(reference.ownerKey));
@@ -100,11 +99,7 @@ export const planReferencePreservation = (
   if (blockers.length > 0) {
     return {
       _tag: 'ReferencePreservationBlocked',
-      blockers: [
-        ...new Map(
-          blockers.map((blocker) => [`${blocker.code}:${blocker.ownerKey}`, blocker]),
-        ).values(),
-      ],
+      blockers: [...new Map(blockers.map((blocker) => [`${blocker.code}:${blocker.ownerKey}`, blocker])).values()],
     } as const;
   }
 
@@ -143,7 +138,10 @@ export const planReferencePreservation = (
       references.push(
         reference.historicalSnapshot === undefined
           ? planned.value
-          : { ...planned.value, historicalSnapshot: reference.historicalSnapshot },
+          : {
+              ...planned.value,
+              historicalSnapshot: reference.historicalSnapshot,
+            },
       );
     }
   }

@@ -1,14 +1,10 @@
 import { Effect, Predicate, Schema } from 'effect';
+
 import type { OperationalScope } from '../operations/context.ts';
 import type { ReadEvidenceCaptureMode } from './definition.ts';
 import { ReadEvidenceValidationError } from './errors.ts';
 
-const withOptionalProperty = <
-  Base extends object,
-  Key extends PropertyKey,
-  Value,
-  Trailing extends object,
->(
+const withOptionalProperty = <Base extends object, Key extends PropertyKey, Value, Trailing extends object>(
   base: Base,
   condition: boolean,
   key: Key,
@@ -35,12 +31,7 @@ export interface ReadHandlerResult<Result> {
 }
 
 const sha256 = /^[\da-f]{64}$/u;
-const evidenceKeys = new Set([
-  'queryHash',
-  'resultCount',
-  'resultFingerprintHash',
-  'resultFingerprintSchema',
-]);
+const evidenceKeys = new Set(['queryHash', 'resultCount', 'resultFingerprintHash', 'resultFingerprintSchema']);
 const invalidEvidence = (cause?: unknown): ReadEvidenceValidationError => {
   const failure = new ReadEvidenceValidationError({
     code: 'read_evidence_invalid',
@@ -68,13 +59,10 @@ const isValidResultCount = Schema.is(
   Schema.Finite.check(Schema.isInt(), Schema.isBetween({ maximum: 2_147_483_647, minimum: 0 })),
 );
 
-const hasInvalidFingerprintHash = (
-  value: ReadEvidenceCandidate['resultFingerprintHash'],
-): boolean => value !== undefined && (!Predicate.isString(value) || !sha256.test(value));
+const hasInvalidFingerprintHash = (value: ReadEvidenceCandidate['resultFingerprintHash']): boolean =>
+  value !== undefined && (!Predicate.isString(value) || !sha256.test(value));
 
-const hasInvalidFingerprintSchema = (
-  value: ReadEvidenceCandidate['resultFingerprintSchema'],
-): boolean =>
+const hasInvalidFingerprintSchema = (value: ReadEvidenceCandidate['resultFingerprintSchema']): boolean =>
   value !== undefined && (!Predicate.isString(value) || value.length === 0 || value.length > 300);
 
 const hasInvalidHashEvidence = (record: ReadEvidenceCandidate): boolean =>
@@ -87,9 +75,9 @@ export const validateReadEvidenceMetadata = <Value>(
   captureMode: ReadEvidenceCaptureMode,
   value: Value,
 ): Effect.Effect<Readonly<ReadEvidenceMetadata>, ReadEvidenceValidationError> =>
-  Schema.decodeUnknownEffect(ReadEvidenceCandidateSchema, { onExcessProperty: 'error' })(
-    value,
-  ).pipe(
+  Schema.decodeUnknownEffect(ReadEvidenceCandidateSchema, {
+    onExcessProperty: 'error',
+  })(value).pipe(
     Effect.mapError(invalidEvidence),
     Effect.flatMap((record) => {
       const {
@@ -98,17 +86,12 @@ export const validateReadEvidenceMetadata = <Value>(
         resultFingerprintHash: fingerprintHash,
         resultFingerprintSchema: fingerprintSchema,
       } = record;
-      if (
-        Object.keys(record).some((key) => !evidenceKeys.has(key)) ||
-        !isValidResultCount(resultCount)
-      ) {
+      if (Object.keys(record).some((key) => !evidenceKeys.has(key)) || !isValidResultCount(resultCount)) {
         return Effect.fail(invalidEvidence());
       }
       if (
         captureMode === 'metadata_only' &&
-        (queryHash !== undefined ||
-          fingerprintHash !== undefined ||
-          fingerprintSchema !== undefined)
+        (queryHash !== undefined || fingerprintHash !== undefined || fingerprintSchema !== undefined)
       ) {
         return Effect.fail(invalidEvidence());
       }

@@ -1,14 +1,10 @@
-// @effect-diagnostics nodeBuiltinImport:off -- Inspect source files through the Node filesystem boundary; expires: 2026-12-31.
+import { fileURLToPath } from 'node:url';
+
+import { NodeFileSystem } from '@effect/platform-node';
+import { FileSystem, Effect, Schema } from 'effect';
 import { expect, it } from 'effect-rstest';
-import { readFile } from 'node:fs/promises';
 
-import { Effect, Schema } from 'effect';
-
-import {
-  partyRegistryApi,
-  partyRegistryApiContract,
-  partyRegistryReadinessSchema,
-} from '../../shared/api.ts';
+import { partyRegistryApi, partyRegistryApiContract, partyRegistryReadinessSchema } from '../../shared/api.ts';
 import type { OperationContext, partyRegistryOperationContexts } from '../../shared/api.ts';
 import { ultramodernApiMarker } from '../../shared/ultramodern-build.ts';
 
@@ -39,21 +35,13 @@ const apiNames = [
 ] as const;
 
 type Equal<Left, Right> =
-  (<Value>() => Value extends Left ? 1 : 2) extends <Value>() => Value extends Right ? 1 : 2
-    ? true
-    : false;
+  (<Value>() => Value extends Left ? 1 : 2) extends <Value>() => Value extends Right ? 1 : 2 ? true : false;
 type Expect<Value extends true> = Value;
 type ReadinessPathRemainsLiteral = Expect<
-  Equal<
-    typeof partyRegistryApiContract.readinessPath,
-    '/party-registry-api/party-registry/readiness'
-  >
+  Equal<typeof partyRegistryApiContract.readinessPath, '/party-registry-api/party-registry/readiness'>
 >;
 type ReadinessOperationRouteRemainsLiteral = Expect<
-  Equal<
-    (typeof partyRegistryOperationContexts)['readiness']['routePath'],
-    '/party-registry/readiness'
-  >
+  Equal<(typeof partyRegistryOperationContexts)['readiness']['routePath'], '/party-registry/readiness'>
 >;
 
 const operationContextRejectsIdentityMetadata: OperationContext = {
@@ -84,9 +72,7 @@ it('aggregates every governed read and search API beside readiness', () => {
   expect(new Set(endpointPaths).size).toBe(endpointPaths.length);
   expect(endpointPaths.includes('/party-registry/readiness')).toBe(true);
   expect(endpointPaths.some((path) => path === '/party-registry')).toBe(false);
-  expect(
-    endpointPaths.some((path) => path === '/actions' || path === '/party-registry/actions'),
-  ).toBe(false);
+  expect(endpointPaths.some((path) => path === '/actions' || path === '/party-registry/actions')).toBe(false);
 });
 
 it('keeps readiness tied to the immutable build marker', () => {
@@ -105,58 +91,62 @@ it('keeps readiness tied to the immutable build marker', () => {
   ).toBe(true);
 });
 
-it.effect('re-exports every governed generated client without exposing private executors', () =>
-  Effect.gen(function* testProgram2() {
-    const source = yield* Effect.promise(() =>
-      readFile(new URL('../../src/api/party-registry-client.ts', import.meta.url), 'utf-8'),
-    );
+it.layer(NodeFileSystem.layer)('api-integration-contract', (suite) => {
+  suite.effect('re-exports every governed generated client without exposing private executors', () =>
+    Effect.gen(function* testProgram2() {
+      const source = yield* FileSystem.FileSystem.use((fs) =>
+        fs.readFileString(fileURLToPath(new URL('../../src/api/party-registry-client.ts', import.meta.url))),
+      );
 
-    for (const client of apiNames.filter(
-      (name) =>
-        name !== 'foundation' &&
-        name !== 'organizationEngagementMutations' &&
-        name !== 'partyCommands' &&
-        name !== 'partyCommandRecovery' &&
-        name !== 'personEngagementMutations',
-    )) {
-      const file = client.replaceAll(/[A-Z]/gu, (value) => `-${value.toLowerCase()}`);
-      expect(source).toMatch(new RegExp(`\\./${file}-client\\.ts`, 'u'));
-    }
-    expect(source).toMatch(/\.\/engagement-profile-client\.ts/u);
-    expect(source).toMatch(/getPartyRegistryReadiness/u);
-    expect(source).toMatch(/party-command-client/u);
-    expect(source).toMatch(/export const partyRegistryClient =/u);
-    expect(source).toMatch(/createPartyRegistryHttpClient/u);
-    expect(source).not.toMatch(/createPartyRegistryClient/u);
-    expect(source).not.toMatch(/makeEffectHttpApiClient\(partyRegistryApi/u);
-    expect(source).not.toMatch(
-      /export const (?:createPartyRegistry|listPartyRegistry|getPartyRegistry)\s*=/u,
-    );
-    expect(source).not.toMatch(/action\.ts|runAction|ActionRuntime/u);
-  }),
-);
+      for (const client of apiNames.filter(
+        (name) =>
+          name !== 'foundation' &&
+          name !== 'organizationEngagementMutations' &&
+          name !== 'partyCommands' &&
+          name !== 'partyCommandRecovery' &&
+          name !== 'personEngagementMutations',
+      )) {
+        const file = client.replaceAll(/[A-Z]/gu, (value) => `-${value.toLowerCase()}`);
+        expect(source).toMatch(new RegExp(`\\./${file}-client\\.ts`, 'u'));
+      }
+      expect(source).toMatch(/\.\/engagement-profile-client\.ts/u);
+      expect(source).toMatch(/getPartyRegistryReadiness/u);
+      expect(source).toMatch(/party-command-client/u);
+      expect(source).toMatch(/export const partyRegistryClient =/u);
+      expect(source).toMatch(/createPartyRegistryHttpClient/u);
+      expect(source).not.toMatch(/createPartyRegistryClient/u);
+      expect(source).not.toMatch(/makeEffectHttpApiClient\(partyRegistryApi/u);
+      expect(source).not.toMatch(/export const (?:createPartyRegistry|listPartyRegistry|getPartyRegistry)\s*=/u);
+      expect(source).not.toMatch(/action\.ts|runAction|ActionRuntime/u);
+    }),
+  );
 
-it.effect('exposes only the backend Effect API and no placeholder UI module', () =>
-  Effect.gen(function* testProgram3() {
-    const [frontendFederation, backendFederation, packageSource] = yield* Effect.promise(() =>
-      Promise.all([
-        readFile(new URL('../../module-federation.config.ts', import.meta.url), 'utf-8'),
-        readFile(new URL('../../backend-federation.config.ts', import.meta.url), 'utf-8'),
-        readFile(new URL('../../package.json', import.meta.url), 'utf-8'),
-      ]),
-    );
-    const packageJson: { readonly exports: Record<string, string> } =
-      yield* Schema.decodeUnknownEffect(
+  suite.effect('exposes only the backend Effect API and no placeholder UI module', () =>
+    Effect.gen(function* testProgram3() {
+      const [frontendFederation, backendFederation, packageSource] = yield* FileSystem.FileSystem.use((fs) =>
+        Effect.all(
+          [
+            fs.readFileString(fileURLToPath(new URL('../../module-federation.config.ts', import.meta.url))),
+            fs.readFileString(fileURLToPath(new URL('../../backend-federation.config.ts', import.meta.url))),
+            fs.readFileString(fileURLToPath(new URL('../../package.json', import.meta.url))),
+          ],
+          { concurrency: 'unbounded' },
+        ),
+      );
+      const packageJson: { readonly exports: Record<string, string> } = yield* Schema.decodeEffect(
         Schema.fromJsonString(
-          Schema.Struct({ exports: Schema.Record(Schema.String, Schema.String) }),
+          Schema.Struct({
+            exports: Schema.Record(Schema.String, Schema.String),
+          }),
         ),
       )(packageSource);
 
-    expect(frontendFederation).not.toMatch(/['"]\.\/Route['"]|['"]\.\/Widget['"]/u);
-    expect(backendFederation).toMatch(/['"]\.\/effect-api['"]/u);
-    expect(packageJson.exports['./Route']).toBe(undefined);
-    expect(packageJson.exports['./Widget']).toBe(undefined);
-    expect(packageJson.exports['./api']).toBe('./shared/api.ts');
-    expect(packageJson.exports['./api/client']).toBe('./src/api/party-registry-client.ts');
-  }),
-);
+      expect(frontendFederation).not.toMatch(/['"]\.\/Route['"]|['"]\.\/Widget['"]/u);
+      expect(backendFederation).toMatch(/['"]\.\/effect-api['"]/u);
+      expect(packageJson.exports['./Route']).toBe(undefined);
+      expect(packageJson.exports['./Widget']).toBe(undefined);
+      expect(packageJson.exports['./api']).toBe('./shared/api.ts');
+      expect(packageJson.exports['./api/client']).toBe('./src/api/party-registry-client.ts');
+    }),
+  );
+});

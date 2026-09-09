@@ -1,4 +1,5 @@
 import { Schema } from 'effect';
+
 import { PartyRefSchema } from '../../resources/party.ts';
 import { RelationshipEndpointSchema, RelationshipErrorBase } from './shared.ts';
 

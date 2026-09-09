@@ -1,33 +1,17 @@
 #!/usr/bin/env node
 import { NodeRuntime, NodeServices } from '@effect/platform-node';
-import {
-  Array as EffectArray,
-  Console,
-  Effect,
-  FileSystem,
-  Layer,
-  Order,
-  Path,
-  Random,
-  Schema,
-} from 'effect';
+import { Array as EffectArray, Console, Effect, FileSystem, Layer, Order, Path, Random, Schema } from 'effect';
 import { ChildProcess, ChildProcessSpawner } from 'effect/unstable/process';
-import { launchUltramodern, resolveUltramodernInvocation } from './shared/ultramodern-command.mts';
+
 import { ModuleEntrypointSchema } from '../packages/core-runtime/src/modules/module-entrypoint.ts';
+import { launchUltramodern, resolveUltramodernInvocation } from './shared/ultramodern-command.mts';
 
 const RouteMetadataIdentifierSchema = Schema.String.pipe(Schema.brand('RouteMetadataIdentifier'));
-const JsonPrimitiveSchema = Schema.Union([
-  Schema.Null,
-  Schema.Number,
-  Schema.Boolean,
-  Schema.String,
-]);
+const JsonPrimitiveSchema = Schema.Union([Schema.Null, Schema.Number, Schema.Boolean, Schema.String]);
 const RouteMetadataValueSchema = Schema.Tree(JsonPrimitiveSchema);
 const RouteMetadataFieldsSchema = Schema.Record(Schema.String, RouteMetadataValueSchema);
 
-const RouteEntrypointSchema = Schema.StructWithRest(ModuleEntrypointSchema, [
-  RouteMetadataFieldsSchema,
-]);
+const RouteEntrypointSchema = Schema.StructWithRest(ModuleEntrypointSchema, [RouteMetadataFieldsSchema]);
 
 const RouteMetadataSchema = Schema.StructWithRest(
   Schema.Struct({
@@ -79,27 +63,20 @@ const PackageConfigSchema = Schema.Struct({
   ),
 });
 
-class RouteGenerationError extends Schema.TaggedError<RouteGenerationError>()(
-  'RouteGenerationError',
-  { reason: Schema.String },
-) {}
+class RouteGenerationError extends Schema.TaggedError<RouteGenerationError>()('RouteGenerationError', {
+  reason: Schema.String,
+}) {}
 
 const failure = (reason: string): RouteGenerationError => new RouteGenerationError({ reason });
 
-const decodeUltramodernConfig = Schema.decodeUnknownEffect(
-  Schema.fromJsonString(UltramodernConfigSchema),
-);
+const decodeUltramodernConfig = Schema.decodeUnknownEffect(Schema.fromJsonString(UltramodernConfigSchema));
 const decodePackageConfig = Schema.decodeUnknownEffect(Schema.fromJsonString(PackageConfigSchema));
 const encodeJsonString = Schema.encodeEffect(Schema.fromJsonString(Schema.String));
-const encodeJson = Schema.encodeEffect(
-  Schema.fromJsonString(RouteMetadataValueSchema, { space: 2 }),
-);
+const encodeJson = Schema.encodeEffect(Schema.fromJsonString(RouteMetadataValueSchema, { space: 2 }));
 const isJsonArray = Schema.is(Schema.Array(RouteMetadataValueSchema));
 const isJsonObject = Schema.is(RouteMetadataFieldsSchema);
 
-const sortJsonValue = (
-  value: typeof RouteMetadataValueSchema.Type,
-): typeof RouteMetadataValueSchema.Type => {
+const sortJsonValue = (value: typeof RouteMetadataValueSchema.Type): typeof RouteMetadataValueSchema.Type => {
   if (isJsonArray(value)) {
     return value.map(sortJsonValue);
   }
@@ -116,7 +93,9 @@ const findRouteMetadataFiles = (
   Effect.gen(function* findRouteMetadataFilesEffect() {
     const fileSystem = yield* FileSystem.FileSystem;
     const path = yield* Path.Path;
-    const entries = yield* fileSystem.readDirectory(directory, { recursive: true });
+    const entries = yield* fileSystem.readDirectory(directory, {
+      recursive: true,
+    });
     const routeFiles = entries
       .filter((entry) => path.basename(entry) === 'route.meta.ts')
       .map((entry) => path.resolve(directory, entry));
@@ -148,23 +127,24 @@ const loadRouteMetadataFile = (
       .pipe(Effect.mapError(() => failure(`Unable to resolve ${metadataFile}`)));
     const cacheNonce = yield* Random.nextInt;
     const moduleUrl = `${moduleFileUrl.href}?generated=${cacheNonce}`;
-    const routeModule = yield* Effect.tryPromise({
+    const decodedModule = yield* Effect.tryPromise({
       catch: () => failure(`Unable to import route metadata from ${metadataFile}`),
-      try: async () =>
-        await Schema.decodeUnknownPromise(RouteMetadataModuleSchema)(await import(moduleUrl)),
+      try: async () => {
+        const importedModule: unknown = await import(moduleUrl);
+        return Schema.decodeUnknownResult(RouteMetadataModuleSchema)(importedModule);
+      },
     });
+    const routeModule = yield* Effect.fromResult(decodedModule).pipe(
+      Effect.mapError(() => failure(`Invalid route metadata in ${metadataFile}`)),
+    );
     const route = routeModule.routeMeta ?? routeModule.default;
     if (route === undefined) {
-      return yield* Effect.fail(
-        failure(`${metadataFile} must export routeMeta or a default route metadata object`),
-      );
+      return yield* Effect.fail(failure(`${metadataFile} must export routeMeta or a default route metadata object`));
     }
     const expectedScope = appId.startsWith('shell-') ? 'system' : 'tenant';
     if (!isGovernedPageEntrypoint(route, appId, moduleId, expectedScope)) {
       return yield* Effect.fail(
-        failure(
-          `${metadataFile} must declare one governed ${expectedScope} page entrypoint owned by ${appId}`,
-        ),
+        failure(`${metadataFile} must declare one governed ${expectedScope} page entrypoint owned by ${appId}`),
       );
     }
     return route;
@@ -191,30 +171,18 @@ const createLocalisedUrls = (
       if (route.canonicalPath === '/') {
         return [];
       }
-      return EffectArray.sort(
-        [...new Set([route.canonicalPath, ...Object.values(route.localisedPaths)])],
-        Order.String,
-      ).map((pathname) => [pathname, route.localisedPaths]);
+      return [[route.canonicalPath, route.localisedPaths]];
     }),
   );
 
-const runCommand = (
-  executable: string,
-  args: readonly string[],
-  options: ChildProcess.CommandOptions,
-) =>
+const runCommand = (executable: string, args: readonly string[], options: ChildProcess.CommandOptions) =>
   Effect.gen(function* runCommandEffect() {
     const processSpawner = yield* ChildProcessSpawner.ChildProcessSpawner;
     const exitCode = yield* processSpawner.exitCode(ChildProcess.make(executable, args, options));
     return Number(exitCode);
   });
 
-const generateRouteMetadataManifest = (
-  appDirectory: string,
-  appId: string,
-  moduleId: string,
-  workspaceRoot: string,
-) =>
+const generateRouteMetadataManifest = (appDirectory: string, appId: string, moduleId: string, workspaceRoot: string) =>
   Effect.gen(function* generateRouteMetadataManifestEffect() {
     const fileSystem = yield* FileSystem.FileSystem;
     const path = yield* Path.Path;
@@ -233,7 +201,7 @@ const generateRouteMetadataManifest = (
     const encodedLocalisedUrls = yield* encodeJson(sortJsonValue(localisedUrls)).pipe(
       Effect.mapError(() => failure(`Unable to encode localised URLs for ${appId}`)),
     );
-    const content = `// @generated by @modern-js/create.
+    const content = `// @generated by @modern-js/ultramodern-create.
 // Author route metadata in colocated src/routes/**/route.meta.ts files.
 // This compatibility manifest is regenerated from route-owned metadata.
 
@@ -256,11 +224,7 @@ export const ultramodernLocalisedUrls = ${encodedLocalisedUrls} as const;
       stdout: 'inherit',
     }).pipe(Effect.mapError(() => failure(`Unable to launch the formatter for ${manifestPath}`)));
     if (formatStatus !== 0) {
-      yield* Effect.fail(
-        failure(
-          `Failed to format generated route metadata at ${manifestPath}: exit ${formatStatus}`,
-        ),
-      );
+      yield* Effect.fail(failure(`Failed to format generated route metadata at ${manifestPath}: exit ${formatStatus}`));
     }
   });
 
@@ -275,13 +239,6 @@ const program = Effect.gen(function* generateTanstackRoutesEffect() {
     moduleUrl: import.meta.url,
   });
   const { forwardedArgs, workspaceRoot } = invocation;
-  const generationStatus = yield* launchUltramodern(invocation);
-  if (generationStatus !== 0) {
-    yield* Console.warn(
-      '[ultramodern] Framework route-artifact generation failed; continuing with the repository compatibility manifest. The application build remains the authoritative route-artifact gate.',
-    );
-  }
-
   const ultramodernConfigPath = path.join(workspaceRoot, '.modernjs/ultramodern.json');
   const ultramodernConfigText = yield* fileSystem
     .readFileString(ultramodernConfigPath)
@@ -307,16 +264,16 @@ const program = Effect.gen(function* generateTanstackRoutesEffect() {
           Effect.mapError(() => failure(`${packageConfigPath} is invalid`)),
         );
         const moduleId = packageConfig.modernjs?.ontosModule?.moduleId ?? app.id;
-        yield* generateRouteMetadataManifest(
-          path.join(workspaceRoot, app.path),
-          app.id,
-          moduleId,
-          workspaceRoot,
-        );
+        yield* generateRouteMetadataManifest(path.join(workspaceRoot, app.path), app.id, moduleId, workspaceRoot);
         yield* Console.log(`[ultramodern] Route metadata manifest generated: ${app.id}`);
       }),
     { concurrency: 1, discard: true },
   );
+
+  const generationStatus = yield* launchUltramodern(invocation);
+  if (generationStatus !== 0) {
+    yield* Effect.fail(failure(`Framework route-artifact generation failed: exit ${generationStatus}`));
+  }
 });
 
 const reportFailure = (error: RouteGenerationError) => Console.error(error.reason);
@@ -324,4 +281,6 @@ const MainLayer = Layer.effectDiscard(program.pipe(Effect.tapError(reportFailure
   Layer.provide(NodeServices.layer),
 );
 
-NodeRuntime.runMain(Effect.scoped(Layer.build(MainLayer)), { disableErrorReporting: true });
+NodeRuntime.runMain(Effect.scoped(Layer.build(MainLayer)), {
+  disableErrorReporting: true,
+});

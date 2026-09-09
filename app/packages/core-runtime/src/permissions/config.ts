@@ -1,4 +1,5 @@
 import { Config, ConfigProvider, Effect, Option, Redacted, Schema } from 'effect';
+
 import { loadDotEnvProvider } from '../environment/dotenv-provider.ts';
 import { APP_ENV_PATH } from '../environment/workspace-environment.ts';
 import { SpiceDbConfigError } from './config-error.ts';
@@ -20,7 +21,11 @@ const makeSpiceDbConfigValue = (settings: {
   };
   return settings.deploymentEnvironment === undefined
     ? Object.freeze(base)
-    : Object.freeze(Object.assign(base, { deploymentEnvironment: settings.deploymentEnvironment }));
+    : Object.freeze(
+        Object.assign(base, {
+          deploymentEnvironment: settings.deploymentEnvironment,
+        }),
+      );
 };
 
 export type SpiceDbConfigValue = ReturnType<typeof makeSpiceDbConfigValue> &
@@ -29,10 +34,7 @@ export type SpiceDbConfigValue = ReturnType<typeof makeSpiceDbConfigValue> &
 export type SpiceDbEnvironment = Readonly<
   Partial<
     Record<
-      | 'SPICEDB_ENDPOINT'
-      | 'SPICEDB_INSECURE'
-      | 'SPICEDB_PRESHARED_KEY'
-      | 'ULTRAMODERN_DEPLOYMENT_ENVIRONMENT',
+      'SPICEDB_ENDPOINT' | 'SPICEDB_INSECURE' | 'SPICEDB_PRESHARED_KEY' | 'ULTRAMODERN_DEPLOYMENT_ENVIRONMENT',
       string
     >
   >
@@ -108,9 +110,7 @@ const parseSpiceDbConfigWith = Effect.fn('Config.parseSpiceDbConfigWith')(functi
         ),
       endpoint: Config.schema(Schema.Trim, 'SPICEDB_ENDPOINT')
         .parse(provider)
-        .pipe(
-          Effect.mapError((error) => configFailureWithCause('SPICEDB_ENDPOINT is required', error)),
-        ),
+        .pipe(Effect.mapError((error) => configFailureWithCause('SPICEDB_ENDPOINT is required', error))),
       insecureFlag: Config.schema(Schema.Trim, 'SPICEDB_INSECURE')
         .pipe(Config.map((value) => value.toLowerCase()))
         .parse(provider)
@@ -122,11 +122,7 @@ const parseSpiceDbConfigWith = Effect.fn('Config.parseSpiceDbConfigWith')(functi
       preSharedKey: Config.redacted('SPICEDB_PRESHARED_KEY')
         .pipe(Config.map((value) => Redacted.make(Redacted.value(value).trim())))
         .parse(provider)
-        .pipe(
-          Effect.mapError((error) =>
-            configFailureWithCause('SPICEDB_PRESHARED_KEY is required', error),
-          ),
-        ),
+        .pipe(Effect.mapError((error) => configFailureWithCause('SPICEDB_PRESHARED_KEY is required', error))),
     },
     { concurrency: 4 },
   );
@@ -169,13 +165,13 @@ export const loadSpiceDbConfig = (
   const environmentProvider =
     options.environment === undefined
       ? ConfigProvider.fromEnv({ preserveEmptyStrings: true })
-      : ConfigProvider.fromUnknown(options.environment, { preserveEmptyStrings: true });
+      : ConfigProvider.fromUnknown(options.environment, {
+          preserveEmptyStrings: true,
+        });
   const envPath = options.envPath ?? SPICEDB_ROOT_ENV_PATH;
 
   return loadDotEnvProvider(envPath, configFailureWithCause).pipe(
     Effect.withSpan('Config.loadFileConfigProvider'),
-    Effect.flatMap((fileProvider) =>
-      parseSpiceDbConfigWith(ConfigProvider.orElse(environmentProvider, fileProvider)),
-    ),
+    Effect.flatMap((fileProvider) => parseSpiceDbConfigWith(ConfigProvider.orElse(environmentProvider, fileProvider))),
   );
 };

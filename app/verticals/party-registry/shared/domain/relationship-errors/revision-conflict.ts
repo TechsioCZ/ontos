@@ -1,4 +1,5 @@
 import { Schema } from 'effect';
+
 import { PositiveRelationshipRevisionSchema, RelationshipErrorBase } from './shared.ts';
 
 export class PartyRelationshipRevisionConflict extends Schema.TaggedError<PartyRelationshipRevisionConflict>()(

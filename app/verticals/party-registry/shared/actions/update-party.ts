@@ -1,5 +1,6 @@
 // Canonical schema-only contract extracted from the generated update-party Action.
 import { Schema } from 'effect';
+
 import { AresAppliedEvidenceSchema } from '../domain/ares-application.ts';
 import {
   IsoTimestampSchema,

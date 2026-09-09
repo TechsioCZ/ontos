@@ -15,20 +15,14 @@ const AuthorizationRolloutContractSchema = Schema.Struct({
   schemaVersion: Schema.Literal(AUTHORIZATION_ROLLOUT_SCHEMA_VERSION),
 });
 
-const BaselineSourceRevisionSchema = Schema.String.check(
-  Schema.isPattern(/^[a-zA-Z0-9._-]{1,100}$/u),
-);
+const BaselineSourceRevisionSchema = Schema.String.check(Schema.isPattern(/^[a-zA-Z0-9._-]{1,100}$/u));
 const DecisionReferenceSchema = Schema.String.check(
   Schema.isPattern(/^(?:https:\/\/github\.com\/TechsioCZ\/ontos\/issues\/\d+|ADR-\d{4})$/u),
 );
 
-type DecodedAuthorizationRolloutContract = Schema.Schema.Type<
-  typeof AuthorizationRolloutContractSchema
->;
+type DecodedAuthorizationRolloutContract = Schema.Schema.Type<typeof AuthorizationRolloutContractSchema>;
 
-export type AuthorizationRolloutContract = Schema.Codec.Encoded<
-  typeof AuthorizationRolloutContractSchema
->;
+export type AuthorizationRolloutContract = Schema.Codec.Encoded<typeof AuthorizationRolloutContractSchema>;
 type AuthorizationRolloutContractDocument =
   | boolean
   | null
@@ -59,9 +53,7 @@ const malformedContract = (): AuthorizationRolloutContractError =>
 const encodeContract = (
   contract: DecodedAuthorizationRolloutContract,
 ): Result.Result<AuthorizationRolloutContract, AuthorizationRolloutContractError> =>
-  Schema.encodeUnknownResult(AuthorizationRolloutContractSchema)(contract).pipe(
-    Result.mapError(malformedContract),
-  );
+  Schema.encodeUnknownResult(AuthorizationRolloutContractSchema)(contract).pipe(Result.mapError(malformedContract));
 
 const validateContractActivity = (
   contract: DecodedAuthorizationRolloutContract,
@@ -82,9 +74,7 @@ const validateInventoryBinding = (
 ): Result.Result<true, AuthorizationRolloutContractError> =>
   contract.baselineInventoryHash !== context.inventoryHash ||
   !Schema.is(BaselineSourceRevisionSchema)(contract.baselineSourceRevision)
-    ? Result.fail(
-        invalidContract('authorization rollout contract does not match the classified inventory'),
-      )
+    ? Result.fail(invalidContract('authorization rollout contract does not match the classified inventory'))
     : Result.succeed(true);
 
 const validateDecisionReference = (
@@ -92,9 +82,7 @@ const validateDecisionReference = (
 ): Result.Result<true, AuthorizationRolloutContractError> =>
   Schema.is(DecisionReferenceSchema)(contract.decisionReference)
     ? Result.succeed(true)
-    : Result.fail(
-        invalidContract('authorization rollout contract requires an auditable decision reference'),
-      );
+    : Result.fail(invalidContract('authorization rollout contract requires an auditable decision reference'));
 
 const validateCompatibilityEntrypoints = (
   contract: DecodedAuthorizationRolloutContract,
@@ -102,20 +90,11 @@ const validateCompatibilityEntrypoints = (
 ): Result.Result<readonly string[], AuthorizationRolloutContractError> => {
   const entries = sortArray(StringOrder)(dedupeArray(contract.compatibilityEligibleEntrypoints));
   if (entries.length !== contract.compatibilityEligibleEntrypoints.length) {
-    return Result.fail(
-      invalidContract('authorization rollout compatibility baseline contains duplicates'),
-    );
+    return Result.fail(invalidContract('authorization rollout compatibility baseline contains duplicates'));
   }
   const { entrypointKeys } = context;
-  if (
-    entrypointKeys !== undefined &&
-    entries.some((entrypoint) => !entrypointKeys.has(entrypoint))
-  ) {
-    return Result.fail(
-      invalidContract(
-        'authorization rollout compatibility baseline contains an unknown entrypoint',
-      ),
-    );
+  if (entrypointKeys !== undefined && entries.some((entrypoint) => !entrypointKeys.has(entrypoint))) {
+    return Result.fail(invalidContract('authorization rollout compatibility baseline contains an unknown entrypoint'));
   }
   return Result.succeed(entries);
 };
@@ -128,11 +107,11 @@ const validateDecodedContract = (
     yield* validateContractActivity(contract, context);
     yield* validateInventoryBinding(contract, context);
     yield* validateDecisionReference(contract);
-    const compatibilityEligibleEntrypoints = yield* validateCompatibilityEntrypoints(
-      contract,
-      context,
-    );
-    return yield* encodeContract({ ...contract, compatibilityEligibleEntrypoints });
+    const compatibilityEligibleEntrypoints = yield* validateCompatibilityEntrypoints(contract, context);
+    return yield* encodeContract({
+      ...contract,
+      compatibilityEligibleEntrypoints,
+    });
   });
 
 const decodeContract = (
@@ -146,6 +125,4 @@ export const validateAuthorizationRolloutContract = (
   raw: AuthorizationRolloutContractDocument,
   context: RolloutValidationContext,
 ): AuthorizationRolloutContract =>
-  Result.getOrThrow(
-    Result.flatMap(decodeContract(raw), (contract) => validateDecodedContract(contract, context)),
-  );
+  Result.getOrThrow(Result.flatMap(decodeContract(raw), (contract) => validateDecodedContract(contract, context)));

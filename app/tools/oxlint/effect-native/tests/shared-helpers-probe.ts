@@ -7,17 +7,9 @@ import type { Syntax } from '../shared/ast.ts';
 import { isUnshadowedGlobal, resolvesToImport } from '../shared/bindings.ts';
 import { bindingPath, effectOrigin, isGenCallee } from '../shared/effect-identity.ts';
 import { collectEffectBindings } from '../shared/effect-imports.ts';
-import {
-  collectDirectMemberImports,
-  collectRootNamespaces,
-  collectSchemaLocals,
-} from '../shared/imports.ts';
+import { collectDirectMemberImports, collectRootNamespaces, collectSchemaLocals } from '../shared/imports.ts';
 import { provenance } from '../shared/provenance.ts';
-import {
-  isInErasedTypePosition,
-  isInTypePosition,
-  isNonReferencePosition,
-} from '../shared/reference-positions.ts';
+import { isInErasedTypePosition, isInTypePosition, isNonReferencePosition } from '../shared/reference-positions.ts';
 import { snippet } from '../shared/reporting.ts';
 import { emittedText, maskText, reportNode } from '../shared/scaffold-text.ts';
 import { schemaIdentity } from '../shared/schema-identity.ts';
@@ -54,21 +46,14 @@ const probes = new Map<string, Probe>([
     'wrappers',
     (_context, program) => {
       const node = expression(program);
-      return [
-        unwrapNode(node, { wrappers: new Set() }) === node,
-        asNode({ type: 'Identifier' }, true) === null,
-      ];
+      return [unwrapNode(node, { wrappers: new Set() }) === node, asNode({ type: 'Identifier' }, true) === null];
     },
   ],
   [
     'members',
     (_context, program) => {
       const node = expression(program);
-      return [
-        memberName(node),
-        memberName(node, { templates: true }),
-        memberName(node, { unwrap: {} }),
-      ];
+      return [memberName(node), memberName(node, { templates: true }), memberName(node, { unwrap: {} })];
     },
   ],
   [
@@ -96,10 +81,7 @@ const probes = new Map<string, Probe>([
   ],
   [
     'origin',
-    (context, program) => [
-      bindingPath(context, expression(program)),
-      effectOrigin(context, expression(program), []),
-    ],
+    (context, program) => [bindingPath(context, expression(program)), effectOrigin(context, expression(program), [])],
   ],
   [
     'barrel',
@@ -110,10 +92,7 @@ const probes = new Map<string, Probe>([
   ],
   [
     'provenance',
-    (context, program) => [
-      provenance(context, expression(program)),
-      bindingPath(context, expression(program)),
-    ],
+    (context, program) => [provenance(context, expression(program)), bindingPath(context, expression(program))],
   ],
   [
     'globals',

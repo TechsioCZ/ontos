@@ -1,4 +1,5 @@
 import { Cause, Schema } from 'effect';
+
 import { actionErrorSchema } from './error-schema.ts';
 
 const ActionTransactionErrorValue = actionErrorSchema('ActionTransactionError', {
@@ -33,6 +34,5 @@ const ActionTransactionErrorInternals = (() => {
 const ActionTransactionErrorClass = ActionTransactionErrorInternals.ErrorClass;
 export { ActionTransactionErrorClass as ActionTransactionError };
 // Core-only accessors: deliberately excluded from the package root exports.
-export const createActionTransactionErrorWithCause =
-  ActionTransactionErrorInternals.createWithCause;
+export const createActionTransactionErrorWithCause = ActionTransactionErrorInternals.createWithCause;
 export const getActionTransactionErrorCause = ActionTransactionErrorInternals.readCause;

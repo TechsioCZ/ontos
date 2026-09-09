@@ -1,7 +1,8 @@
-import { assert, expect, it } from 'effect-rstest';
+import { randomUUID } from 'node:crypto';
 
 import type { TrustedPrincipalContext } from '@app/core-runtime';
 import {
+  CoreSearchProjectionStoreLive,
   CoreSearchQueryRuntimeLive,
   loadDatabaseConnectionPair,
   ReadRuntime,
@@ -9,11 +10,11 @@ import {
   runAction,
 } from '@app/core-runtime';
 import { makeLiveOperationFixture } from '@app/core-runtime/testing/actions';
-
 import { and, eq } from 'drizzle-orm';
 import { Effect, Exit, Layer, Redacted, Predicate } from 'effect';
-import { randomUUID } from 'node:crypto';
+import { assert, expect, it } from 'effect-rstest';
 import { Pool } from 'pg';
+
 import { makeTestDatabaseFromPool } from '../../../../packages/core-runtime/tests/support/database.ts';
 import type { PartyCandidateSchema } from '../../shared/domain/identity-contracts.ts';
 import { committedCreateResult } from '../../shared/domain/matching-contracts.ts';
@@ -40,16 +41,10 @@ import {
   partyOfficialIdentifiers,
   partyRelations,
 } from '../../src/db/schema.ts';
-import {
-  partiesRead,
-  PartySearchProjectionGatewayLive,
-} from '../../src/search/parties.provider.ts';
+import { partiesRead, PartySearchProjectionGatewayLive } from '../../src/search/parties.provider.ts';
 
 type EncodedPartyCandidate = typeof PartyCandidateSchema.Encoded;
-const candidate = (
-  ico: string,
-  extra: Partial<EncodedPartyCandidate> = {},
-): EncodedPartyCandidate => ({
+const candidate = (ico: string, extra: Partial<EncodedPartyCandidate> = {}): EncodedPartyCandidate => ({
   partyType: 'ORGANIZATION',
   officialIdentifiers: [{ identifierType: 'ICO', value: ico, verification: 'VERIFIED' }],
   subjectEvidence: [
@@ -141,18 +136,9 @@ it.live(
           const [partyRows, assertions, claims, decisions, cases, core] = yield* Effect.all(
             [
               admin.select().from(parties).where(eq(parties.tenantId, fixture.tenantId)),
-              admin
-                .select()
-                .from(partyFactAssertions)
-                .where(eq(partyFactAssertions.tenantId, fixture.tenantId)),
-              admin
-                .select()
-                .from(partyIdentifierClaims)
-                .where(eq(partyIdentifierClaims.tenantId, fixture.tenantId)),
-              admin
-                .select()
-                .from(partyMatchDecisions)
-                .where(eq(partyMatchDecisions.tenantId, fixture.tenantId)),
+              admin.select().from(partyFactAssertions).where(eq(partyFactAssertions.tenantId, fixture.tenantId)),
+              admin.select().from(partyIdentifierClaims).where(eq(partyIdentifierClaims.tenantId, fixture.tenantId)),
+              admin.select().from(partyMatchDecisions).where(eq(partyMatchDecisions.tenantId, fixture.tenantId)),
               admin
                 .select()
                 .from(duplicateCandidateCases)
@@ -168,10 +154,7 @@ it.live(
         const concurrent = yield* Effect.all([run(create(exact)), run(create(exact))], {
           concurrency: 2,
         });
-        expect(concurrent.map((result) => result.outcome).toSorted()).toEqual([
-          'CREATED',
-          'MATCHED_EXISTING',
-        ]);
+        expect(concurrent.map((result) => result.outcome).toSorted()).toEqual(['CREATED', 'MATCHED_EXISTING']);
         const created = concurrent.find((result) => result.outcome === 'CREATED');
         assert.isOk(created && created.outcome === 'CREATED');
 
@@ -184,9 +167,7 @@ it.live(
         expect(state.core.events.length).toBe(1);
         expect(state.core.outbox.length).toBe(1);
         expect(state.core.audits.length).toBe(2);
-        assert.isOk(
-          state.core.invocations.every((invocation) => invocation.status === 'succeeded'),
-        );
+        assert.isOk(state.core.invocations.every((invocation) => invocation.status === 'succeeded'));
 
         assert.isOk(state.assertions[0]?.evidenceEvaluation?.subjectEligible);
 
@@ -195,7 +176,11 @@ it.live(
             candidate('27074358', {
               officialIdentifiers: [
                 ...exact.officialIdentifiers,
-                { identifierType: 'CZ_DIC', value: 'CZ27074358', verification: 'VERIFIED' },
+                {
+                  identifierType: 'CZ_DIC',
+                  value: 'CZ27074358',
+                  verification: 'VERIFIED',
+                },
               ],
             }),
           ),
@@ -211,8 +196,16 @@ it.live(
         expect(second.outcome).toBe('CREATED');
         const split = candidate('26168685', {
           officialIdentifiers: [
-            { identifierType: 'ICO', value: '26168685', verification: 'VERIFIED' },
-            { identifierType: 'CZ_DIC', value: 'CZ27074358', verification: 'VERIFIED' },
+            {
+              identifierType: 'ICO',
+              value: '26168685',
+              verification: 'VERIFIED',
+            },
+            {
+              identifierType: 'CZ_DIC',
+              value: 'CZ27074358',
+              verification: 'VERIFIED',
+            },
           ],
         });
         const ambiguity = yield* run(create(split));
@@ -223,86 +216,73 @@ it.live(
         state = yield* snapshot();
         expect(state.partyRows.length).toBe(2);
         expect(state.cases.length).toBe(1);
-        expect(
-          state.decisions.filter((decision) => decision.committedCreateOutcome === 'AMBIGUOUS')
-            .length,
-        ).toBe(2);
+        expect(state.decisions.filter((decision) => decision.committedCreateOutcome === 'AMBIGUOUS').length).toBe(2);
 
         // Every Create outcome survives actual lost commit acknowledgement, followed by a new governed Read.
         const recoveryCandidates = [candidate('45274649'), exact, split];
         yield* Effect.forEach(
           recoveryCandidates,
-          Effect.fn('GovernedIdentityTest.verifyCommitRecovery')(
-            function* verifyCommitRecoveryEffect(value) {
-              const key = randomUUID();
-              fixture.faultNextTransaction('lost-ack');
-              assert.isOk(
-                Predicate.isTagged(
-                  yield* run(create(value, key).pipe(Effect.flip)),
-                  'ActionCommitIndeterminate',
+          Effect.fn('GovernedIdentityTest.verifyCommitRecovery')(function* verifyCommitRecoveryEffect(value) {
+            const key = randomUUID();
+            fixture.faultNextTransaction('lost-ack');
+            assert.isOk(
+              Predicate.isTagged(yield* run(create(value, key).pipe(Effect.flip)), 'ActionCommitIndeterminate'),
+            );
+
+            const before = yield* snapshot();
+            const invocation = before.core.invocations.find((row) => row.idempotencyKey === key);
+            assert.isOk(invocation);
+
+            assert.isOk(
+              Predicate.isTagged(
+                yield* run(
+                  resolveActionCommit({
+                    invocationId: invocation.actionInvocationId,
+                    principal: fixture.manager,
+                  }).pipe(Effect.flip),
                 ),
-              );
+                'ActionAlreadyCommitted',
+              ),
+            );
 
-              const before = yield* snapshot();
-              const invocation = before.core.invocations.find((row) => row.idempotencyKey === key);
-              assert.isOk(invocation);
-
-              assert.isOk(
-                Predicate.isTagged(
-                  yield* run(
-                    resolveActionCommit({
-                      invocationId: invocation.actionInvocationId,
-                      principal: fixture.manager,
-                    }).pipe(Effect.flip),
-                  ),
-                  'ActionAlreadyCommitted',
+            const recovered = yield* run(
+              ReadRuntime.pipe(
+                Effect.flatMap((runtime) =>
+                  runtime.runRead({
+                    registration: partyMatchDecisionRead,
+                    input: {
+                      actionInvocationId: invocation.actionInvocationId,
+                    },
+                    principal: fixture.manager,
+                    transport: { correlationId: randomUUID() },
+                  }),
                 ),
-              );
+              ),
+            );
+            const original = before.decisions.find((row) => row.actionInvocationId === invocation.actionInvocationId);
+            assert.isOk(original);
 
-              const recovered = yield* run(
-                ReadRuntime.pipe(
-                  Effect.flatMap((runtime) =>
-                    runtime.runRead({
-                      registration: partyMatchDecisionRead,
-                      input: { actionInvocationId: invocation.actionInvocationId },
-                      principal: fixture.manager,
-                      transport: { correlationId: randomUUID() },
-                    }),
-                  ),
-                ),
-              );
-              const original = before.decisions.find(
-                (row) => row.actionInvocationId === invocation.actionInvocationId,
-              );
-              assert.isOk(original);
+            const recoveredResult = committedCreateResult(recovered);
+            assert.isOk(recoveredResult);
 
-              const recoveredResult = committedCreateResult(recovered);
-              assert.isOk(recoveredResult);
+            expect(recoveredResult.outcome).toBe(original.committedCreateOutcome);
+            expect(recoveredResult.decisionRef.resourceId).toBe(original.matchDecisionId);
+            expect(recovered.partyRef?.resourceId ?? null).toBe(original.partyId);
+            expect(recovered.caseRef?.resourceId ?? null).toBe(original.candidateCaseId);
+            assert.isOk(Predicate.isTagged(yield* run(create(value, key).pipe(Effect.flip)), 'ActionAlreadyCommitted'));
 
-              expect(recoveredResult.outcome).toBe(original.committedCreateOutcome);
-              expect(recoveredResult.decisionRef.resourceId).toBe(original.matchDecisionId);
-              expect(recovered.partyRef?.resourceId ?? null).toBe(original.partyId);
-              expect(recovered.caseRef?.resourceId ?? null).toBe(original.candidateCaseId);
-              assert.isOk(
-                Predicate.isTagged(
-                  yield* run(create(value, key).pipe(Effect.flip)),
-                  'ActionAlreadyCommitted',
-                ),
-              );
-
-              const after = yield* snapshot();
-              expect(after.partyRows).toEqual(before.partyRows);
-              expect(after.decisions).toEqual(before.decisions);
-              expect(after.core.events).toEqual(before.core.events);
-              expect(after.core.outbox).toEqual(before.core.outbox);
-              assert.isOk(
-                Predicate.isTagged(
-                  yield* run(readPartyDetail(partyRef, fixture.denied).pipe(Effect.flip)),
-                  'ReadPermissionDenied',
-                ),
-              );
-            },
-          ),
+            const after = yield* snapshot();
+            expect(after.partyRows).toEqual(before.partyRows);
+            expect(after.decisions).toEqual(before.decisions);
+            expect(after.core.events).toEqual(before.core.events);
+            expect(after.core.outbox).toEqual(before.core.outbox);
+            assert.isOk(
+              Predicate.isTagged(
+                yield* run(readPartyDetail(partyRef, fixture.denied).pipe(Effect.flip)),
+                'ReadPermissionDenied',
+              ),
+            );
+          }),
           { concurrency: 1, discard: true },
         );
         const beforeDenied = yield* snapshot();
@@ -329,9 +309,7 @@ it.live(
         expect(rolledBack.core.events).toEqual(beforeDenied.core.events);
         expect(rolledBack.core.outbox).toEqual(beforeDenied.core.outbox);
 
-        const independent = yield* create(exact, randomUUID(), other.manager).pipe(
-          Effect.provideContext(otherContext),
-        );
+        const independent = yield* create(exact, randomUUID(), other.manager).pipe(Effect.provideContext(otherContext));
         assert.isOk(independent.outcome === 'CREATED');
 
         expect(independent.partyRef.resourceId).not.toBe(partyRef.resourceId);
@@ -344,11 +322,7 @@ it.live(
 
         assert.isOk(
           Predicate.isTagged(
-            yield* run(
-              create(candidate('00006947'), randomUUID(), fixture.legalEntityOnly).pipe(
-                Effect.flip,
-              ),
-            ),
+            yield* run(create(candidate('00006947'), randomUUID(), fixture.legalEntityOnly).pipe(Effect.flip)),
             'ActionPermissionDenied',
           ),
         );
@@ -362,10 +336,9 @@ it.live(
 
         const searchLayer = PartySearchProjectionGatewayLive.pipe(
           Layer.provide(CoreSearchQueryRuntimeLive),
+          Layer.provide(CoreSearchProjectionStoreLive),
         );
-        const searchContext = yield* Layer.build(searchLayer).pipe(
-          Effect.provideContext(fixtureContext),
-        );
+        const searchContext = yield* Layer.build(searchLayer).pipe(Effect.provideContext(fixtureContext));
         const deniedSearch = ReadRuntime.pipe(
           Effect.flatMap((runtime) =>
             runtime.runRead({
@@ -377,9 +350,7 @@ it.live(
           ),
           Effect.provideContext(searchContext),
         );
-        assert.isOk(
-          Predicate.isTagged(yield* run(deniedSearch.pipe(Effect.flip)), 'ReadPermissionDenied'),
-        );
+        assert.isOk(Predicate.isTagged(yield* run(deniedSearch.pipe(Effect.flip)), 'ReadPermissionDenied'));
 
         assert.isOk(
           Predicate.isTagged(
@@ -455,11 +426,7 @@ it.live(
             transport: transport(),
           }).pipe(Effect.flip),
         );
-        yield* fixture.grantResourceAccess(
-          counterpartyRef,
-          fixture.legalEntityOnly.principalId,
-          'writer',
-        );
+        yield* fixture.grantResourceAccess(counterpartyRef, fixture.legalEntityOnly.principalId, 'writer');
         const role = (roleType: 'CUSTOMER' | 'SUPPLIER') =>
           run(
             runAction({
@@ -482,7 +449,10 @@ it.live(
             payload: {
               counterpartyRef,
               rolePeriodRef: customer.rolePeriodRef,
-              provenance: { ...provenance, method: 'SIGNED_TERMINATION_AGREEMENT' },
+              provenance: {
+                ...provenance,
+                method: 'SIGNED_TERMINATION_AGREEMENT',
+              },
               validTo: '2021-01-01T00:00:00.000Z',
             },
             principal: fixture.legalEntityOnly,
@@ -490,9 +460,7 @@ it.live(
           }),
         );
         const counterpartyAfterRoleEnd = yield* readCounterparty();
-        expect(counterpartyAfterRoleEnd.currentRoles.map((item) => item.roleType)).toEqual([
-          'SUPPLIER',
-        ]);
+        expect(counterpartyAfterRoleEnd.currentRoles.map((item) => item.roleType)).toEqual(['SUPPLIER']);
 
         const person = yield* run(
           create(
@@ -547,9 +515,7 @@ it.live(
         // Domain relationships never provision access to Party records.
         assert.isOk(
           Predicate.isTagged(
-            yield* run(
-              readPartyDetail(reviewedPerson.partyRef, fixture.legalEntityOnly).pipe(Effect.flip),
-            ),
+            yield* run(readPartyDetail(reviewedPerson.partyRef, fixture.legalEntityOnly).pipe(Effect.flip)),
             'ReadPermissionDenied',
           ),
         );
@@ -638,9 +604,7 @@ it.live(
             transport: transport(),
           }),
         );
-        assert.isOk(
-          collision.outcome === 'BLOCKED' && collision.reasonCode === 'EXACT_CLAIM_CONFLICT',
-        );
+        assert.isOk(collision.outcome === 'BLOCKED' && collision.reasonCode === 'EXACT_CLAIM_CONFLICT');
 
         const current = yield* run(readPartyDetail(partyRef, fixture.manager));
         const archived = yield* run(
@@ -674,9 +638,7 @@ it.live(
           }),
         );
         expect(unarchive.outcome).toBe('BLOCKED');
-        assert.isOk(
-          unarchive.outcome === 'BLOCKED' && unarchive.reasonCode === 'OPEN_DUPLICATE_CASE',
-        );
+        assert.isOk(unarchive.outcome === 'BLOCKED' && unarchive.reasonCode === 'OPEN_DUPLICATE_CASE');
       }),
     ),
 );

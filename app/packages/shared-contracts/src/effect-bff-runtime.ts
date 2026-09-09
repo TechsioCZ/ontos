@@ -2,11 +2,7 @@
 /* oxlint-disable effect-native/no-dependency-parameters -- The approved BFF assembly seam intentionally accepts caller-composed Layers; expires: 2027-09-07. */
 import { governedReadHttpStatus } from '@app/core-runtime/http/governed-read';
 import { defineEffectBff, HttpApiBuilder, Layer } from '@modern-js/plugin-bff/effect-edge';
-import type {
-  EffectRuntimeRequirements,
-  HttpApi,
-  HttpApiGroup,
-} from '@modern-js/plugin-bff/effect-edge';
+import type { EffectRuntimeRequirements, HttpApi, HttpApiGroup } from '@modern-js/plugin-bff/effect-edge';
 
 export interface EffectBffRuntimeAssembly<
   ApiId extends string,
@@ -65,9 +61,7 @@ export const makeGovernedReadProblems = <
   readonly policyConflict: GovernedProblemConstructor<409, PolicyConflict>;
   readonly policyIneligible: GovernedProblemConstructor<422, PolicyIneligible>;
   readonly unavailable: {
-    readonly make: (
-      fields: GovernedProblemFields<503> & { readonly retryable: true },
-    ) => Unavailable;
+    readonly make: (fields: GovernedProblemFields<503> & { readonly retryable: true }) => Unavailable;
   };
 }) => ({
   authentication: () =>

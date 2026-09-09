@@ -1,5 +1,6 @@
-import { expect, it } from 'effect-rstest';
 import { DateTime, Effect, Schema, SchemaAST, Predicate, Struct } from 'effect';
+import { expect, it } from 'effect-rstest';
+
 import {
   AuthenticationUnavailableProblemSchema,
   CurrentSessionSchema,
@@ -43,20 +44,12 @@ const problemTag = (schema: Schema.Top): SchemaAST.LiteralValue => {
 };
 
 it('publishes authentication, identity lifecycle, and gateway operations', () => {
-  const authenticationEndpoints = Object.keys(
-    ShellAuthenticationApi.groups.authentication.endpoints,
-  ).toSorted();
+  const authenticationEndpoints = Object.keys(ShellAuthenticationApi.groups.authentication.endpoints).toSorted();
   const gatewayEndpoints = Object.keys(ShellAuthenticationApi.groups.gatewayContext.endpoints);
-  const identityEndpoints = Object.keys(
-    ShellAuthenticationApi.groups.identity.endpoints,
-  ).toSorted();
-  const legalEntityEndpoints = Object.keys(
-    ShellAuthenticationApi.groups.legalEntities.endpoints,
-  ).toSorted();
+  const identityEndpoints = Object.keys(ShellAuthenticationApi.groups.identity.endpoints).toSorted();
+  const legalEntityEndpoints = Object.keys(ShellAuthenticationApi.groups.legalEntities.endpoints).toSorted();
   const tenantEndpoints = Object.keys(ShellAuthenticationApi.groups.tenants.endpoints).toSorted();
-  const resourceEndpoints = Object.keys(
-    ShellAuthenticationApi.groups.resources.endpoints,
-  ).toSorted();
+  const resourceEndpoints = Object.keys(ShellAuthenticationApi.groups.resources.endpoints).toSorted();
 
   expect(authenticationEndpoints).toEqual(['currentSession', 'signIn', 'signOut']);
   expect(gatewayEndpoints).toEqual(['issueGatewayContext', 'issueApiKeyGatewayContext']);
@@ -116,9 +109,7 @@ it('publishes authentication, identity lifecycle, and gateway operations', () =>
     signInPath: '/shell-super-app-api/auth/sign-in',
     switchTenantPath: '/shell-super-app-api/auth/tenant/switch',
   });
-  expect([...authenticationEndpoints, ...gatewayEndpoints].join(':')).not.toMatch(
-    /testing|actionKey/u,
-  );
+  expect([...authenticationEndpoints, ...gatewayEndpoints].join(':')).not.toMatch(/testing|actionKey/u);
 });
 
 it('preserves migrated Shell Problem Details wire shapes and ordered membership', () => {
@@ -145,14 +136,10 @@ it('preserves migrated Shell Problem Details wire shapes and ordered membership'
     title: 'Rate limited',
     type: 'https://ontos.dev/problems/shell-rate-limited',
   } as const;
-  const decodedUnavailable = Schema.decodeUnknownSync(AuthenticationUnavailableProblemSchema)(
-    unavailable,
-  );
+  const decodedUnavailable = Schema.decodeUnknownSync(AuthenticationUnavailableProblemSchema)(unavailable);
   expect(Schema.is(AuthenticationUnavailableProblemSchema)(decodedUnavailable)).toBe(true);
   expect(Struct.omit(decodedUnavailable, ['_tag'])).toEqual(Struct.omit(unavailable, ['_tag']));
-  const decodedRetryable = Schema.decodeUnknownSync(TenantCapabilityUnavailableProblemSchema)(
-    retryable,
-  );
+  const decodedRetryable = Schema.decodeUnknownSync(TenantCapabilityUnavailableProblemSchema)(retryable);
   expect(Schema.is(TenantCapabilityUnavailableProblemSchema)(decodedRetryable)).toBe(true);
   expect(Struct.omit(decodedRetryable, ['_tag'])).toEqual(Struct.omit(retryable, ['_tag']));
   const decodedRateLimited = Schema.decodeUnknownSync(ShellRateLimitedProblemSchema)(rateLimited);
@@ -163,9 +150,7 @@ it('preserves migrated Shell Problem Details wire shapes and ordered membership'
       onExcessProperty: 'error',
     })({ ...unavailable, retryable: true }),
   ).toThrow();
-  expect(
-    [...ShellAuthenticationApi.groups.authentication.endpoints.signIn.error].map(problemTag),
-  ).toEqual([
+  expect([...ShellAuthenticationApi.groups.authentication.endpoints.signIn.error].map(problemTag)).toEqual([
     'InvalidCredentialsProblem',
     'OntosIdentityForbiddenProblem',
     'AuthenticationUnavailableProblem',
@@ -188,13 +173,18 @@ it.effect('decodes a missing identity idempotency header so handlers can return 
 
 it.effect('publishes exact legal-entity endpoints with an ID-only switch payload', () =>
   Effect.gen(function* testProgram2() {
-    const { availableLegalEntities, switchLegalEntity } =
-      ShellAuthenticationApi.groups.legalEntities.endpoints;
-    expect({ method: availableLegalEntities.method, path: availableLegalEntities.path }).toEqual({
+    const { availableLegalEntities, switchLegalEntity } = ShellAuthenticationApi.groups.legalEntities.endpoints;
+    expect({
+      method: availableLegalEntities.method,
+      path: availableLegalEntities.path,
+    }).toEqual({
       method: 'GET',
       path: '/auth/legal-entities',
     });
-    expect({ method: switchLegalEntity.method, path: switchLegalEntity.path }).toEqual({
+    expect({
+      method: switchLegalEntity.method,
+      path: switchLegalEntity.path,
+    }).toEqual({
       method: 'POST',
       path: '/auth/legal-entity/switch',
     });
@@ -220,37 +210,41 @@ it.effect('publishes exact legal-entity endpoints with an ID-only switch payload
   }),
 );
 
-it.effect(
-  'decodes an optional exact page entrypoint without accepting private routing fields',
-  () =>
-    Effect.gen(function* testProgram3() {
-      expect(
-        yield* Schema.decodeUnknownEffect(ResolveModuleTargetPayloadSchema)({
-          entrypointKey: 'contacts.core.page.customers',
-          importPath: 'must-not-pass',
+it.effect('decodes an optional exact page entrypoint without accepting private routing fields', () =>
+  Effect.gen(function* testProgram3() {
+    expect(
+      yield* Schema.decodeUnknownEffect(ResolveModuleTargetPayloadSchema)({
+        entrypointKey: 'contacts.core.page.customers',
+        importPath: 'must-not-pass',
+        moduleId: 'contacts.core',
+        routePath: '/contacts/customers',
+      }),
+    ).toEqual({
+      entrypointKey: 'contacts.core.page.customers',
+      moduleId: 'contacts.core',
+    });
+    expect(
+      yield* Schema.decodeUnknownEffect(ResolveModuleTargetPayloadSchema)({
+        moduleId: 'contacts.core',
+      }),
+    ).toEqual({ moduleId: 'contacts.core' });
+    expect(
+      yield* Effect.flip(
+        Schema.decodeUnknownEffect(ResolveModuleTargetPayloadSchema)({
+          entrypointKey: '../private-page',
           moduleId: 'contacts.core',
-          routePath: '/contacts/customers',
         }),
-      ).toEqual({ entrypointKey: 'contacts.core.page.customers', moduleId: 'contacts.core' });
-      expect(
-        yield* Schema.decodeUnknownEffect(ResolveModuleTargetPayloadSchema)({
-          moduleId: 'contacts.core',
-        }),
-      ).toEqual({ moduleId: 'contacts.core' });
-      expect(
-        yield* Effect.flip(
-          Schema.decodeUnknownEffect(ResolveModuleTargetPayloadSchema)({
-            entrypointKey: '../private-page',
-            moduleId: 'contacts.core',
-          }),
-        ),
-      ).toBeDefined();
-    }),
+      ),
+    ).toBeDefined();
+  }),
 );
 
 it('publishes exact tenant methods, paths, and declared failure statuses', () => {
   const { availableTenants, switchTenant } = ShellAuthenticationApi.groups.tenants.endpoints;
-  expect({ method: availableTenants.method, path: availableTenants.path }).toEqual({
+  expect({
+    method: availableTenants.method,
+    path: availableTenants.path,
+  }).toEqual({
     method: 'GET',
     path: '/auth/tenants',
   });
@@ -300,7 +294,9 @@ it.effect('validates tenant UUIDs and strips all non-contract fields', () =>
       tenantId,
     });
     const invalidPayload = yield* Effect.flip(
-      Schema.decodeUnknownEffect(SwitchTenantPayloadSchema)({ tenantId: 'not-a-uuid' }),
+      Schema.decodeUnknownEffect(SwitchTenantPayloadSchema)({
+        tenantId: 'not-a-uuid',
+      }),
     );
     expect(Predicate.isTagged(invalidPayload, 'SchemaError')).toBe(true);
   }),

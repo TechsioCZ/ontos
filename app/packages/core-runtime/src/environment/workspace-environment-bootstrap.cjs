@@ -38,13 +38,9 @@ const resolveAppWorkspaceRootSync = (startDirectory) => {
  * @returns {{ APP_ENV_PATH: string, APP_WORKSPACE_ROOT: string }} The resolved workspace paths.
  */
 const resolveWorkspaceEnvironmentSync = (candidates) => {
-  const usableCandidates = candidates.filter(
-    (candidate) => candidate !== undefined && candidate.length > 0,
-  );
+  const usableCandidates = candidates.filter((candidate) => candidate !== undefined && candidate.length > 0);
   const APP_WORKSPACE_ROOT =
-    usableCandidates
-      .map(resolveAppWorkspaceRootSync)
-      .find((candidate) => candidate !== undefined) ?? candidates[1];
+    usableCandidates.map(resolveAppWorkspaceRootSync).find((candidate) => candidate !== undefined) ?? candidates[1];
   return {
     APP_ENV_PATH: path.join(APP_WORKSPACE_ROOT, '.env'),
     APP_WORKSPACE_ROOT,

@@ -1,18 +1,10 @@
 import { Config, ConfigProvider, Duration, Effect, Schedule, Schema } from 'effect';
-import type {
-  AnyOutboxWorkerRegistration,
-  OutboxWorkerRequirements,
-  OutboxWorkerSubscription,
-} from './definition.ts';
+
+import type { AnyOutboxWorkerRegistration, OutboxWorkerRequirements, OutboxWorkerSubscription } from './definition.ts';
 import { OutboxPollerConfigError } from './errors.ts';
 import type { OutboxWorkerHealth } from './health.ts';
 import { runOutboxCycle } from './runtime.ts';
-import type {
-  OutboxCycleError,
-  OutboxCycleResult,
-  OutboxRuntime,
-  RunOutboxCycleInput,
-} from './runtime.ts';
+import type { OutboxCycleError, OutboxCycleResult, OutboxRuntime, RunOutboxCycleInput } from './runtime.ts';
 
 const DEFAULT_MAX_DELIVERIES = 100;
 const DEFAULT_POLL_INTERVAL_MS = 1000;
@@ -48,11 +40,7 @@ export type OutboxCycleRunner<
   RunnerRequirements = OutboxRuntime,
 > = (
   input: RunOutboxCycleInput<Registration>,
-) => Effect.Effect<
-  OutboxCycleResult,
-  OutboxCycleError,
-  RunnerRequirements | OutboxWorkerRequirements<Registration>
->;
+) => Effect.Effect<OutboxCycleResult, OutboxCycleError, RunnerRequirements | OutboxWorkerRequirements<Registration>>;
 
 const configError = (reason: string): OutboxPollerConfigError =>
   new OutboxPollerConfigError({ code: 'outbox_poller_config_invalid', reason });
@@ -61,12 +49,7 @@ const EmptyConfigValue = Schema.Trim.pipe(Schema.decodeTo(Schema.Literal('')));
 const ClaimOwnerOverride = Schema.Trim.check(Schema.isMaxLength(200));
 const ClaimOwner = Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(200));
 
-const boundedIntegerConfig = (
-  key: string,
-  fallback: number,
-  minimum: number,
-  maximum: number,
-): Config.Config<number> =>
+const boundedIntegerConfig = (key: string, fallback: number, minimum: number, maximum: number): Config.Config<number> =>
   Config.schema(
     Schema.Union([
       EmptyConfigValue,
@@ -88,18 +71,8 @@ const pollingConfig = (defaultClaimOwner: string) =>
       Config.withDefault(defaultClaimOwner),
       Config.map((value) => (value === '' ? defaultClaimOwner : value)),
     ),
-    maxDeliveries: boundedIntegerConfig(
-      'OUTBOX_WORKER_MAX_DELIVERIES',
-      DEFAULT_MAX_DELIVERIES,
-      1,
-      1000,
-    ),
-    pollIntervalMs: boundedIntegerConfig(
-      'OUTBOX_WORKER_POLL_INTERVAL_MS',
-      DEFAULT_POLL_INTERVAL_MS,
-      10,
-      3_600_000,
-    ),
+    maxDeliveries: boundedIntegerConfig('OUTBOX_WORKER_MAX_DELIVERIES', DEFAULT_MAX_DELIVERIES, 1, 1000),
+    pollIntervalMs: boundedIntegerConfig('OUTBOX_WORKER_POLL_INTERVAL_MS', DEFAULT_POLL_INTERVAL_MS, 10, 3_600_000),
   });
 
 const pollingConfigFailure = ({ message }: { readonly message: string }) => configError(message);
@@ -109,12 +82,11 @@ export const parseOutboxPollingConfig = ({
   environment,
 }: ParseOutboxPollingConfigInput): Effect.Effect<OutboxPollingConfig, OutboxPollerConfigError> => {
   const config = pollingConfig(defaultClaimOwner);
-  const decoded =
-    environment === undefined ? config : config.parse(ConfigProvider.fromUnknown(environment));
+  const decoded = environment === undefined ? config : config.parse(ConfigProvider.fromUnknown(environment));
 
   return decoded.pipe(
     Effect.flatMap((value) =>
-      Schema.decodeUnknownEffect(ClaimOwner)(value.claimOwner).pipe(
+      Schema.decodeEffect(ClaimOwner)(value.claimOwner).pipe(
         Effect.map((claimOwner) => Object.freeze({ ...value, claimOwner })),
       ),
     ),
@@ -128,24 +100,14 @@ const hasActivity = (result: OutboxCycleResult): boolean =>
 export function runOutboxPollingLoop<Registration extends AnyOutboxWorkerRegistration>(
   input: RunOutboxPollingLoopInput<Registration>,
 ): Effect.Effect<void, never, OutboxRuntime | OutboxWorkerRequirements<Registration>>;
-export function runOutboxPollingLoop<
-  Registration extends AnyOutboxWorkerRegistration,
-  RunnerRequirements,
->(
+export function runOutboxPollingLoop<Registration extends AnyOutboxWorkerRegistration, RunnerRequirements>(
   input: RunOutboxPollingLoopInput<Registration>,
   runCycle: OutboxCycleRunner<Registration, RunnerRequirements>,
 ): Effect.Effect<void, never, RunnerRequirements | OutboxWorkerRequirements<Registration>>;
-export function runOutboxPollingLoop<
-  Registration extends AnyOutboxWorkerRegistration,
-  RunnerRequirements,
->(
+export function runOutboxPollingLoop<Registration extends AnyOutboxWorkerRegistration, RunnerRequirements>(
   input: RunOutboxPollingLoopInput<Registration>,
   runCycle?: OutboxCycleRunner<Registration, RunnerRequirements>,
-): Effect.Effect<
-  void,
-  never,
-  OutboxRuntime | RunnerRequirements | OutboxWorkerRequirements<Registration>
-> {
+): Effect.Effect<void, never, OutboxRuntime | RunnerRequirements | OutboxWorkerRequirements<Registration>> {
   const cycleInput = {
     claimOwner: input.config.claimOwner,
     maxDeliveries: input.config.maxDeliveries,
@@ -187,8 +149,5 @@ export function runOutboxPollingLoop<
     }),
   );
 
-  return tick.pipe(
-    Effect.repeat(Schedule.spaced(Duration.millis(input.config.pollIntervalMs))),
-    Effect.asVoid,
-  );
+  return tick.pipe(Effect.repeat(Schedule.spaced(Duration.millis(input.config.pollIntervalMs))), Effect.asVoid);
 }

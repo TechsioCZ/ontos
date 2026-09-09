@@ -59,26 +59,19 @@
  * Report-only: no fixer, no suggestion.
  */
 import { defineRule } from '@oxlint/plugins';
-
 import type { Context, ESTree } from '@oxlint/plugins';
 
-import { isTestFile, matchesGlobs, scopePath } from '../shared/paths.ts';
-import { booleanOption, optionRecord, stringArray } from '../shared/options.ts';
 import { keyName } from '../shared/ast.ts';
 import { lookupVariable } from '../shared/bindings.ts';
-import { schemaIdentity } from '../shared/schema-identity.ts';
+import { booleanOption, optionRecord, stringArray } from '../shared/options.ts';
+import { isTestFile, matchesGlobs, scopePath } from '../shared/paths.ts';
 import { isNonReferencePosition, isInErasedTypePosition } from '../shared/reference-positions.ts';
+import { schemaIdentity } from '../shared/schema-identity.ts';
 
 const EFFECT_SCHEMA_MODULE = /^effect\/(?:.*\/)?Schema$/u;
 
 /** Synchronous, throwing codec entry points. Everything here has an `Effect`/`Result` sibling. */
-const DEFAULT_MEMBERS = [
-  'decodeSync',
-  'decodeUnknownSync',
-  'encodeSync',
-  'encodeUnknownSync',
-  'validateSync',
-];
+const DEFAULT_MEMBERS = ['decodeSync', 'decodeUnknownSync', 'encodeSync', 'encodeUnknownSync', 'validateSync'];
 
 /**
  * Bundler / test-runner configuration roots. These modules are evaluated by the framework before any
@@ -217,16 +210,10 @@ export const rule = defineRule({
         }
       },
       ExportNamedDeclaration(node) {
-        if (
-          !node.source ||
-          !EFFECT_SCHEMA_MODULE.test(node.source.value) ||
-          node.exportKind === 'type'
-        )
-          return;
+        if (!node.source || !EFFECT_SCHEMA_MODULE.test(node.source.value) || node.exportKind === 'type') return;
         for (const specifier of node.specifiers) {
           if (specifier.type !== 'ExportSpecifier' || specifier.exportKind === 'type') continue;
-          const member =
-            specifier.local.type === 'Identifier' ? specifier.local.name : specifier.local.value;
+          const member = specifier.local.type === 'Identifier' ? specifier.local.name : specifier.local.value;
           if (members.has(member)) report(specifier, member);
         }
       },

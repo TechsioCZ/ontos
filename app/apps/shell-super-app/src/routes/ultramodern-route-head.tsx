@@ -1,8 +1,9 @@
 import { useLocalizedLocation, useModernI18n } from '@modern-js/plugin-i18n/runtime';
 import { Helmet } from '@modern-js/runtime/head';
 import { Result, Schema } from 'effect';
-import { ultramodernRouteMetadata } from './ultramodern-route-metadata';
+
 import type { RouteJsonLd } from './ultramodern-jsonld';
+import { ultramodernRouteMetadata } from './ultramodern-route-metadata';
 
 const appName = 'Shell Super App';
 const fallbackLanguage = 'en';
@@ -115,12 +116,7 @@ export const UltramodernRouteHead = () => {
         <>
           <link href={canonicalUrl} rel="canonical" />
           {supportedLanguages.map((code) => (
-            <link
-              href={absoluteUrl(alternates[code] ?? `/${code}`)}
-              hrefLang={code}
-              key={code}
-              rel="alternate"
-            />
+            <link href={absoluteUrl(alternates[code] ?? `/${code}`)} hrefLang={code} key={code} rel="alternate" />
           ))}
           <link href={canonicalUrl} hrefLang="x-default" rel="alternate" />
           <meta content={title} property="og:title" />
@@ -131,9 +127,7 @@ export const UltramodernRouteHead = () => {
           <meta content="summary_large_image" name="twitter:card" />
           <meta content={title} name="twitter:title" />
           <meta content={description} name="twitter:description" />
-          {jsonLd === undefined ? null : (
-            <script type="application/ld+json">{sanitiseJsonLd(jsonLd)}</script>
-          )}
+          {jsonLd === undefined ? null : <script type="application/ld+json">{sanitiseJsonLd(jsonLd)}</script>}
         </>
       )}
     </Helmet>

@@ -1,12 +1,13 @@
 import { Effect, Match, Option } from 'effect';
-import type { CounterpartyRef, PartyRef } from '../../shared/party-registry-references.ts';
+
+import type { CounterpartyPersistenceUnavailable } from '../../shared/domain/counterparty-errors.ts';
 import {
   EngagementProfileConflict,
   PartyRegistryReferenceUnavailable,
 } from '../../shared/domain/engagement-profile.ts';
-import type { CounterpartyPersistenceUnavailable } from '../../shared/domain/counterparty-errors.ts';
-import type { PartyAliasResolutionError } from '../../shared/domain/merge-alias-resolution.ts';
 import type { PartyPersistenceUnavailableError } from '../../shared/domain/identity-contracts.ts';
+import type { PartyAliasResolutionError } from '../../shared/domain/merge-alias-resolution.ts';
+import type { CounterpartyRef, PartyRef } from '../../shared/party-registry-references.ts';
 import type { PartyTransaction } from '../db/types.ts';
 import { resolvePartyAlias } from '../merge/party-alias-resolution.service.ts';
 import { findCounterpartyRecord } from './counterparty-persistence.service.ts';
@@ -36,9 +37,7 @@ export interface PartyRegistryReferenceOperations {
   readonly readCounterparty: (
     ref: CounterpartyRef,
   ) => Effect.Effect<PartyRegistryCounterpartyProjection, ReferenceValidationError>;
-  readonly readParty: (
-    ref: PartyRef,
-  ) => Effect.Effect<PartyRegistryPartyProjection, ReferenceValidationError>;
+  readonly readParty: (ref: PartyRef) => Effect.Effect<PartyRegistryPartyProjection, ReferenceValidationError>;
 }
 
 type ReferencePersistenceError =
@@ -83,9 +82,7 @@ export const partyRegistryReferenceOperations = ({
           Effect.mapError(unavailable),
           Effect.flatMap((result) =>
             Match.value(result).pipe(
-              Match.tag('not_found', () =>
-                Effect.fail(mismatch('The Counterparty reference does not exist')),
-              ),
+              Match.tag('not_found', () => Effect.fail(mismatch('The Counterparty reference does not exist'))),
               Match.tag('found', ({ value }) =>
                 Effect.succeed({
                   counterpartyRef: value.counterpartyRef,
@@ -107,9 +104,7 @@ export const partyRegistryReferenceOperations = ({
               Effect.mapError(unavailable),
               Effect.flatMap((result) =>
                 Match.value(result).pipe(
-                  Match.tag('not_found', () =>
-                    Effect.fail(mismatch('The Party reference does not exist')),
-                  ),
+                  Match.tag('not_found', () => Effect.fail(mismatch('The Party reference does not exist'))),
                   Match.tag('found', ({ value }) =>
                     Effect.succeed({
                       archived: Option.isSome(value.archivedAt),
@@ -127,35 +122,35 @@ export const partyRegistryReferenceOperations = ({
       : Effect.fail(mismatch('The Party reference does not belong to the trusted tenant')),
 });
 
-const validateCounterpartyReference = Effect.fn(
-  'EngagementReferenceValidationService.validateCounterpartyReference',
-)(function* validateCounterpartyReferenceEffect(
-  operations: PartyRegistryReferenceOperations,
-  counterpartyRef: CounterpartyRef,
-  partyRef: PartyRef,
-  party: PartyRegistryPartyProjection,
-) {
-  const counterparty = yield* operations.readCounterparty(counterpartyRef);
-  if (
-    counterparty.counterpartyRef.resourceId !== counterpartyRef.resourceId ||
-    counterparty.counterpartyRef.tenantId !== counterpartyRef.tenantId ||
-    counterpartyRef.tenantId !== partyRef.tenantId ||
-    counterparty.partyRef.resourceId !== party.partyRef.resourceId ||
-    counterparty.partyRef.tenantId !== partyRef.tenantId
+const validateCounterpartyReference = Effect.fn('EngagementReferenceValidationService.validateCounterpartyReference')(
+  function* validateCounterpartyReferenceEffect(
+    operations: PartyRegistryReferenceOperations,
+    counterpartyRef: CounterpartyRef,
+    partyRef: PartyRef,
+    party: PartyRegistryPartyProjection,
   ) {
-    return yield* new EngagementProfileConflict({
-      code: 'contacts_party_counterparty_mismatch',
-      reason: 'The Counterparty does not resolve to the supplied Party',
-    });
-  }
-  if (!counterparty.roleTypes.includes('CUSTOMER')) {
-    return yield* new EngagementProfileConflict({
-      code: 'contacts_counterparty_customer_role_required',
-      reason: 'An explicit commercial context requires a current CUSTOMER role',
-    });
-  }
-  return yield* Effect.void;
-});
+    const counterparty = yield* operations.readCounterparty(counterpartyRef);
+    if (
+      counterparty.counterpartyRef.resourceId !== counterpartyRef.resourceId ||
+      counterparty.counterpartyRef.tenantId !== counterpartyRef.tenantId ||
+      counterpartyRef.tenantId !== partyRef.tenantId ||
+      counterparty.partyRef.resourceId !== party.partyRef.resourceId ||
+      counterparty.partyRef.tenantId !== partyRef.tenantId
+    ) {
+      return yield* new EngagementProfileConflict({
+        code: 'contacts_party_counterparty_mismatch',
+        reason: 'The Counterparty does not resolve to the supplied Party',
+      });
+    }
+    if (!counterparty.roleTypes.includes('CUSTOMER')) {
+      return yield* new EngagementProfileConflict({
+        code: 'contacts_counterparty_customer_role_required',
+        reason: 'An explicit commercial context requires a current CUSTOMER role',
+      });
+    }
+    return yield* Effect.void;
+  },
+);
 
 export const validatePartyRegistryReferences = Effect.fn(
   'EngagementReferenceValidationService.validatePartyRegistryReferences',
@@ -199,10 +194,5 @@ export const validatePartyRegistryReferences = Effect.fn(
   if (refs.counterpartyRef === undefined) {
     return yield* Effect.void;
   }
-  return yield* validateCounterpartyReference(
-    operations,
-    refs.counterpartyRef,
-    refs.partyRef,
-    party,
-  );
+  return yield* validateCounterpartyReference(operations, refs.counterpartyRef, refs.partyRef, party);
 });

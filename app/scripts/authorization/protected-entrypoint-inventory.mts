@@ -4,9 +4,7 @@ import { Array as EffectArray, Order, Result, Schema } from 'effect';
 
 export const PROTECTED_ENTRYPOINT_INVENTORY_SCHEMA_VERSION = 1 as const;
 
-const PermissionSchema = Schema.String.check(
-  Schema.isPattern(/^[a-z][a-z0-9]*(?:[._-][a-z0-9]+)*$/u),
-);
+const PermissionSchema = Schema.String.check(Schema.isPattern(/^[a-z][a-z0-9]*(?:[._-][a-z0-9]+)*$/u));
 
 const InventoryAuthorizationSchema = Schema.Union([
   Schema.Struct({ kind: Schema.Literal('public') }),
@@ -28,18 +26,11 @@ const InventoryAuthorizationSchema = Schema.Union([
 
 export type InventoryAuthorization = typeof InventoryAuthorizationSchema.Type;
 
-const ProtectedEntrypointSurfaceSchema = Schema.Literals([
-  'action',
-  'capability_issuance',
-  'route',
-  'worker',
-]);
+const ProtectedEntrypointSurfaceSchema = Schema.Literals(['action', 'capability_issuance', 'route', 'worker']);
 
 type ProtectedEntrypointSurface = typeof ProtectedEntrypointSurfaceSchema.Type;
 
-const StableIdentifierSchema = Schema.String.check(
-  Schema.isPattern(/^[a-z][a-z0-9]*(?:[./_-][a-z0-9]+)*$/u),
-);
+const StableIdentifierSchema = Schema.String.check(Schema.isPattern(/^[a-z][a-z0-9]*(?:[./_-][a-z0-9]+)*$/u));
 
 const EntrypointKeySchema = StableIdentifierSchema.pipe(Schema.brand('EntrypointKey'));
 
@@ -60,16 +51,13 @@ const ProtectedEntrypointInventorySchema = Schema.Struct({
   sourceRevision: SourceRevisionSchema,
 });
 
-export type ProtectedEntrypointInventoryEntry =
-  typeof ProtectedEntrypointInventoryEntrySchema.Encoded;
+export type ProtectedEntrypointInventoryEntry = typeof ProtectedEntrypointInventoryEntrySchema.Encoded;
 
 export type ProtectedEntrypointInventory = typeof ProtectedEntrypointInventorySchema.Encoded;
 
 const encodeJsonResult = Schema.encodeResult(Schema.fromJsonString(Schema.Unknown));
 
-const encodePrettyJsonResult = Schema.encodeResult(
-  Schema.fromJsonString(Schema.Unknown, { space: 2 }),
-);
+const encodePrettyJsonResult = Schema.encodeResult(Schema.fromJsonString(Schema.Unknown, { space: 2 }));
 
 class ProtectedEntrypointInventoryError extends Schema.TaggedError<ProtectedEntrypointInventoryError>()(
   'ProtectedEntrypointInventoryError',
@@ -79,8 +67,7 @@ class ProtectedEntrypointInventoryError extends Schema.TaggedError<ProtectedEntr
 const invalidInventory = (message: string): ProtectedEntrypointInventoryError =>
   new ProtectedEntrypointInventoryError({ message });
 
-const toTypeError = (error: ProtectedEntrypointInventoryError): TypeError =>
-  new TypeError(error.message);
+const toTypeError = (error: ProtectedEntrypointInventoryError): TypeError => new TypeError(error.message);
 
 // Compatibility boundary for the established synchronous, TypeError-throwing public API.
 const getOrThrowTypeError = <A,>(result: Result.Result<A, ProtectedEntrypointInventoryError>): A =>
@@ -89,10 +76,7 @@ const getOrThrowTypeError = <A,>(result: Result.Result<A, ProtectedEntrypointInv
 const encodingFailure = (): ProtectedEntrypointInventoryError =>
   invalidInventory('protected entrypoint inventory encoding failed');
 
-const stableValue = (
-  value: string,
-  field: string,
-): Result.Result<string, ProtectedEntrypointInventoryError> =>
+const stableValue = (value: string, field: string): Result.Result<string, ProtectedEntrypointInventoryError> =>
   Schema.is(StableIdentifierSchema)(value)
     ? Result.succeed(value)
     : Result.fail(invalidInventory(`${field} must be a stable, non-sensitive identifier`));
@@ -132,8 +116,7 @@ const compareInventoryEntries = (
   right: ProtectedEntrypointInventoryEntry,
 ): -1 | 0 | 1 => {
   const surfaceOrder = left.surface.localeCompare(right.surface);
-  const order =
-    surfaceOrder === 0 ? left.entrypointKey.localeCompare(right.entrypointKey) : surfaceOrder;
+  const order = surfaceOrder === 0 ? left.entrypointKey.localeCompare(right.entrypointKey) : surfaceOrder;
   if (order < 0) {
     return -1;
   }
@@ -153,9 +136,7 @@ const normalizeProtectedEntrypointInventoryResult = (
     const seen = new Set<string>();
     for (const entry of normalized) {
       if (seen.has(entry.entrypointKey)) {
-        return yield* Result.fail(
-          invalidInventory(`duplicate protected entrypoint: ${entry.entrypointKey}`),
-        );
+        return yield* Result.fail(invalidInventory(`duplicate protected entrypoint: ${entry.entrypointKey}`));
       }
       seen.add(entry.entrypointKey);
     }
@@ -167,12 +148,8 @@ export const normalizeProtectedEntrypointInventory = (
 ): readonly ProtectedEntrypointInventoryEntry[] =>
   getOrThrowTypeError(normalizeProtectedEntrypointInventoryResult(entries));
 
-export const hashProtectedEntrypointInventory = (
-  entries: readonly ProtectedEntrypointInventoryEntry[],
-): string => {
-  const encodedEntries = getOrThrowTypeError(
-    encodeJsonResult(entries).pipe(Result.mapError(encodingFailure)),
-  );
+export const hashProtectedEntrypointInventory = (entries: readonly ProtectedEntrypointInventoryEntry[]): string => {
+  const encodedEntries = getOrThrowTypeError(encodeJsonResult(entries).pipe(Result.mapError(encodingFailure)));
   const source = `${encodedEntries}\n`;
   return bytesToHex(sha256(utf8ToBytes(source)));
 };
@@ -184,9 +161,7 @@ export const makeProtectedEntrypointInventory = (
   getOrThrowTypeError(
     Result.gen(function* makeInventoryResult() {
       if (!Schema.is(SourceRevisionSchema)(sourceRevision)) {
-        return yield* Result.fail(
-          invalidInventory('sourceRevision must be a stable revision identifier'),
-        );
+        return yield* Result.fail(invalidInventory('sourceRevision must be a stable revision identifier'));
       }
       const normalized = yield* normalizeProtectedEntrypointInventoryResult(entries);
       return {
@@ -198,9 +173,5 @@ export const makeProtectedEntrypointInventory = (
     }),
   );
 
-export const serializeProtectedEntrypointInventory = (
-  inventory: ProtectedEntrypointInventory,
-): string =>
-  `${getOrThrowTypeError(
-    encodePrettyJsonResult(inventory).pipe(Result.mapError(encodingFailure)),
-  )}\n`;
+export const serializeProtectedEntrypointInventory = (inventory: ProtectedEntrypointInventory): string =>
+  `${getOrThrowTypeError(encodePrettyJsonResult(inventory).pipe(Result.mapError(encodingFailure)))}\n`;

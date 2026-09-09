@@ -1,5 +1,6 @@
 import { APP_ENV_PATH } from '@app/core-runtime/workspace-environment';
 import { ConfigProvider, Effect } from 'effect';
+
 import { loadEnvironmentFileProvider } from './environment-file-provider.ts';
 
 interface LoadConfigurationOptions<Key extends string> {

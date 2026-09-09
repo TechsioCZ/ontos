@@ -1,5 +1,6 @@
-import { expect, it } from 'effect-rstest';
 import { Effect } from 'effect';
+import { expect, it } from 'effect-rstest';
+
 import type { PartyRef } from '../../shared/party-registry-references.ts';
 import { validatePartyRegistryReferences } from '../../src/services/engagement-reference-validation.service.ts';
 import type { PartyRegistryReferenceOperations } from '../../src/services/engagement-reference-validation.service.ts';

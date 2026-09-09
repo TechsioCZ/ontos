@@ -1,4 +1,5 @@
 import { DateTime, Option } from 'effect';
+
 import type { PartyRelationshipState, RelationshipIsoTimestamp } from './relationship-contract.ts';
 
 interface RelationshipPeriod {
@@ -28,7 +29,10 @@ interface RelationshipEndState extends RelationshipUpdateState {
 interface RelationshipEndRequest {
   readonly effectiveAt: RelationshipIsoTimestamp;
   readonly expectedRevision: number;
-  readonly provenance: Readonly<{ readonly method: string; readonly source: string }>;
+  readonly provenance: Readonly<{
+    readonly method: string;
+    readonly source: string;
+  }>;
   readonly reason?: string | undefined;
 }
 
@@ -40,9 +44,7 @@ export const classifyRelationshipValidity = (
   if (Option.isSome(validFrom) && DateTime.Order(now, validFrom.value) < 0) {
     return 'SCHEDULED';
   }
-  return Option.isNone(validTo) || DateTime.Order(now, validTo.value) < 0
-    ? 'CURRENT'
-    : 'HISTORICAL';
+  return Option.isNone(validTo) || DateTime.Order(now, validTo.value) < 0 ? 'CURRENT' : 'HISTORICAL';
 };
 
 const lowerBeforeUpper = (
@@ -57,13 +59,10 @@ const sameOptionalInstant = (
   left: Option.Option<RelationshipIsoTimestamp>,
   right: Option.Option<RelationshipIsoTimestamp>,
 ): boolean =>
-  Option.isNone(left)
-    ? Option.isNone(right)
-    : Option.isSome(right) && sameInstant(left.value, right.value);
+  Option.isNone(left) ? Option.isNone(right) : Option.isSome(right) && sameInstant(left.value, right.value);
 
 const overlaps = (left: RelationshipPeriod, right: RelationshipPeriod): boolean =>
-  lowerBeforeUpper(left.validFrom, right.validTo) &&
-  lowerBeforeUpper(right.validFrom, left.validTo);
+  lowerBeforeUpper(left.validFrom, right.validTo) && lowerBeforeUpper(right.validFrom, left.validTo);
 
 export const decideRelationshipCreate = (
   existingPeriods: readonly RelationshipPeriod[],
@@ -94,8 +93,7 @@ const requiresStartCorrection = (
   request.validFrom !== undefined &&
   Option.isSome(current.validFrom) &&
   !sameInstant(request.validFrom, current.validFrom.value) &&
-  (DateTime.Order(current.validFrom.value, now) <= 0 ||
-    DateTime.Order(request.validFrom, now) <= 0);
+  (DateTime.Order(current.validFrom.value, now) <= 0 || DateTime.Order(request.validFrom, now) <= 0);
 
 const requiresEndCorrection = (
   current: RelationshipUpdateState,
@@ -122,16 +120,21 @@ export const decideRelationshipUpdate = (
   request: RelationshipUpdateRequest,
   now: RelationshipIsoTimestamp,
 ):
-  | Readonly<{ readonly _tag: 'correction_required'; readonly fact: 'validFrom' | 'validTo' }>
+  | Readonly<{
+      readonly _tag: 'correction_required';
+      readonly fact: 'validFrom' | 'validTo';
+    }>
   | Readonly<{ readonly _tag: 'end_required' }>
   | Readonly<{ readonly _tag: 'invalid_interval' }>
-  | Readonly<{ readonly _tag: 'revision_conflict'; readonly actualRevision: number }>
+  | Readonly<{
+      readonly _tag: 'revision_conflict';
+      readonly actualRevision: number;
+    }>
   | Readonly<{ readonly _tag: 'update' }> => {
   if (current.revision !== request.expectedRevision) {
     return { _tag: 'revision_conflict', actualRevision: current.revision };
   }
-  const nextValidFrom =
-    request.validFrom === undefined ? current.validFrom : Option.some(request.validFrom);
+  const nextValidFrom = request.validFrom === undefined ? current.validFrom : Option.some(request.validFrom);
   const nextValidTo = request.validTo === undefined ? current.validTo : request.validTo;
   if (
     Option.isSome(nextValidFrom) &&
@@ -152,10 +155,7 @@ export const decideRelationshipUpdate = (
   return { _tag: 'update' };
 };
 
-const decideRepeatedRelationshipEnd = (
-  current: RelationshipEndState,
-  request: RelationshipEndRequest,
-) => {
+const decideRepeatedRelationshipEnd = (current: RelationshipEndState, request: RelationshipEndRequest) => {
   if (
     current.endReason === (request.reason ?? null) &&
     current.endProvenanceMethod === request.provenance.method &&
@@ -163,11 +163,7 @@ const decideRepeatedRelationshipEnd = (
   ) {
     return { _tag: 'unchanged' } as const;
   }
-  if (
-    current.endReason === null &&
-    current.endProvenanceMethod === null &&
-    current.endProvenanceSource === null
-  ) {
+  if (current.endReason === null && current.endProvenanceMethod === null && current.endProvenanceSource === null) {
     return { _tag: 'attach_end_evidence' } as const;
   }
   return { _tag: 'correction_required', fact: 'validTo' } as const;
@@ -182,16 +178,16 @@ export const decideRelationshipEnd = (
   | Readonly<{ readonly _tag: 'correction_required'; readonly fact: 'validTo' }>
   | Readonly<{ readonly _tag: 'end' }>
   | Readonly<{ readonly _tag: 'invalid_interval' }>
-  | Readonly<{ readonly _tag: 'revision_conflict'; readonly actualRevision: number }>
+  | Readonly<{
+      readonly _tag: 'revision_conflict';
+      readonly actualRevision: number;
+    }>
   | Readonly<{ readonly _tag: 'unchanged' }>
   | Readonly<{ readonly _tag: 'update_required' }> => {
   if (current.revision !== request.expectedRevision) {
     return { _tag: 'revision_conflict', actualRevision: current.revision };
   }
-  if (
-    Option.isSome(current.validFrom) &&
-    DateTime.Order(request.effectiveAt, current.validFrom.value) <= 0
-  ) {
+  if (Option.isSome(current.validFrom) && DateTime.Order(request.effectiveAt, current.validFrom.value) <= 0) {
     return { _tag: 'invalid_interval' };
   }
   if (Option.isSome(current.validTo) && sameInstant(current.validTo.value, request.effectiveAt)) {

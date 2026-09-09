@@ -1,4 +1,3 @@
-import { optionRecord } from '../shared/options.ts';
 /**
  * effect-native/no-throw-in-configuration-parser
  *
@@ -85,19 +84,13 @@ import { optionRecord } from '../shared/options.ts';
  * The rule never fixes and never suggests.
  */
 import { defineRule } from '@oxlint/plugins';
-
 import type { Context, ESTree, Variable } from '@oxlint/plugins';
 
-import { isTestFile, scopePath, matchesGlobs } from '../shared/paths.ts';
-import {
-  keyName as staticKeyName,
-  memberName,
-  parentOf,
-  isFunctionNode,
-  unwrapNode,
-} from '../shared/ast.ts';
+import { keyName as staticKeyName, memberName, parentOf, isFunctionNode, unwrapNode } from '../shared/ast.ts';
 import { resolveVariable as lookupNamedVariable } from '../shared/bindings.ts';
+import { optionRecord } from '../shared/options.ts';
 import { stringArray, safeRegExp, stringOption, positiveInteger } from '../shared/options.ts';
+import { isTestFile, scopePath, matchesGlobs } from '../shared/paths.ts';
 
 type AnyNode = ESTree.Node;
 
@@ -242,10 +235,7 @@ function readOptions(context: Context): RuleOptions {
     allowPaths: stringArray(record.allowPaths, DEFAULTS.allowPaths),
     ignoreTestFiles: record.ignoreTestFiles !== false,
     includePaths: includePaths.length > 0 ? includePaths : DEFAULTS.includePaths,
-    environmentIdentifiers: stringOption(
-      record.environmentIdentifiers,
-      DEFAULTS.environmentIdentifiers,
-    ),
+    environmentIdentifiers: stringOption(record.environmentIdentifiers, DEFAULTS.environmentIdentifiers),
     environmentReaders: stringArray(record.environmentReaders, DEFAULTS.environmentReaders),
     environmentTypeNames: stringOption(record.environmentTypeNames, DEFAULTS.environmentTypeNames),
     followLocalHelpers: record.followLocalHelpers !== false,
@@ -307,13 +297,11 @@ export const rule = defineRule({
           allowPaths: {
             type: 'array',
             items: { type: 'string' },
-            description:
-              'Globs of files allowed to throw from a configuration parser (default: none).',
+            description: 'Globs of files allowed to throw from a configuration parser (default: none).',
           },
           ignoreTestFiles: {
             type: 'boolean',
-            description:
-              'Skip test files (default: true — the D tier blesses fail-fast throws in tests).',
+            description: 'Skip test files (default: true — the D tier blesses fail-fast throws in tests).',
           },
           includePaths: {
             type: 'array',
@@ -329,8 +317,7 @@ export const rule = defineRule({
           environmentReaders: {
             type: 'array',
             items: { type: 'string' },
-            description:
-              'Hand-rolled single-variable readers whose call counts as an environment read.',
+            description: 'Hand-rolled single-variable readers whose call counts as an environment read.',
           },
           environmentTypeNames: {
             type: 'string',
@@ -372,14 +359,8 @@ export const rule = defineRule({
     if (/(?:^|\/)scripts\//u.test(path)) return {};
     if (options.ignoreTestFiles && isTestFile(`/${path}`)) return {};
 
-    const environmentIdentifier = safeRegExp(
-      options.environmentIdentifiers,
-      DEFAULTS.environmentIdentifiers,
-    );
-    const environmentTypeName = safeRegExp(
-      options.environmentTypeNames,
-      DEFAULTS.environmentTypeNames,
-    );
+    const environmentIdentifier = safeRegExp(options.environmentIdentifiers, DEFAULTS.environmentIdentifiers);
+    const environmentTypeName = safeRegExp(options.environmentTypeNames, DEFAULTS.environmentTypeNames);
     const environmentReaders = new Set(options.environmentReaders);
 
     /** `start` offsets of functions proven to parse configuration. */
@@ -398,8 +379,7 @@ export const rule = defineRule({
 
     const throwRecords: ThrowRecord[] = [];
 
-    const resolveVariable = (name: string, from: AnyNode): Variable | null =>
-      lookupNamedVariable(context, name, from);
+    const resolveVariable = (name: string, from: AnyNode): Variable | null => lookupNamedVariable(context, name, from);
 
     /** `true` when `node` is the global `name` — not a local, parameter, class or imported binding. */
     const isUnshadowedGlobal = (node: AnyNode, name: string): boolean => {
@@ -443,16 +423,10 @@ export const rule = defineRule({
         member: specifier.type === 'ImportSpecifier' ? (keyName(specifier.imported) ?? '') : '*',
       };
     };
-    const isIdentifierEnvHost = (
-      node: Extract<AnyNode, { type: 'Identifier' }>,
-      depth: number,
-    ): boolean => {
+    const isIdentifierEnvHost = (node: Extract<AnyNode, { type: 'Identifier' }>, depth: number): boolean => {
       const imported = importOf(node);
       if (imported)
-        return (
-          PROCESS_MODULES.has(imported.source) &&
-          (imported.member === '*' || imported.member === 'default')
-        );
+        return PROCESS_MODULES.has(imported.source) && (imported.member === '*' || imported.member === 'default');
       if (ENV_HOSTS.has(node.name) && isUnshadowedGlobal(node, node.name)) return true;
       const declaration = declarationOf(node);
       return (
@@ -467,14 +441,12 @@ export const rule = defineRule({
       if (node.type === 'AwaitExpression') return isEnvHost(node.argument, depth + 1);
       if (node.type === 'ImportExpression')
         return node.source.type === 'Literal' && PROCESS_MODULES.has(String(node.source.value));
-      if (node.type === 'MetaProperty')
-        return node.meta.name === 'import' && node.property.name === 'meta';
+      if (node.type === 'MetaProperty') return node.meta.name === 'import' && node.property.name === 'meta';
       if (node.type === 'Identifier') return isIdentifierEnvHost(node, depth);
       return isContainerEnvHost(node);
     };
     const isContainerEnvHost = (node: AnyNode): boolean => {
-      if (node.type !== 'MemberExpression' || !ENV_HOSTS.has(staticPropertyName(node) ?? ''))
-        return false;
+      if (node.type !== 'MemberExpression' || !ENV_HOSTS.has(staticPropertyName(node) ?? '')) return false;
       const container = unwrap(node.object as AnyNode);
       return (
         container.type === 'Identifier' &&
@@ -484,9 +456,7 @@ export const rule = defineRule({
     };
     const isEnvironmentClassMember = (member: ESTree.Node, key: string): boolean => {
       if (member.type === 'PropertyDefinition' && keyName(member.key) === key)
-        return (
-          !!member.typeAnnotation && isEnvironmentRecordType(member.typeAnnotation.typeAnnotation)
-        );
+        return !!member.typeAnnotation && isEnvironmentRecordType(member.typeAnnotation.typeAnnotation);
       if (member.type !== 'MethodDefinition' || member.kind !== 'constructor') return false;
       return member.value.params.some(
         (parameter) =>
@@ -501,20 +471,12 @@ export const rule = defineRule({
       if (node.object.type !== 'ThisExpression') return false;
       const key = staticPropertyName(node);
       let enclosing = parentOf(node);
-      while (
-        enclosing &&
-        enclosing.type !== 'ClassDeclaration' &&
-        enclosing.type !== 'ClassExpression'
-      )
+      while (enclosing && enclosing.type !== 'ClassDeclaration' && enclosing.type !== 'ClassExpression')
         enclosing = parentOf(enclosing);
       if (!enclosing || key === null) return false;
       return enclosing.body.body.some((member) => isEnvironmentClassMember(member, key));
     };
-    const initializedEnvBag = (
-      declaration: ESTree.VariableDeclarator,
-      name: string,
-      depth: number,
-    ): boolean | null => {
+    const initializedEnvBag = (declaration: ESTree.VariableDeclarator, name: string, depth: number): boolean | null => {
       if (declaration.init) {
         if (declaration.id.type === 'Identifier') {
           const init = unwrap(declaration.init as AnyNode);
@@ -547,10 +509,7 @@ export const rule = defineRule({
       if (node.type !== 'Identifier') return false;
       return isIdentifierEnvBag(node, depth);
     };
-    const isIdentifierEnvBag = (
-      node: Extract<AnyNode, { type: 'Identifier' }>,
-      depth: number,
-    ): boolean => {
+    const isIdentifierEnvBag = (node: Extract<AnyNode, { type: 'Identifier' }>, depth: number): boolean => {
       const imported = importOf(node);
       if (imported) return PROCESS_MODULES.has(imported.source) && imported.member === 'env';
       const declaration = declarationOf(node);
@@ -559,19 +518,17 @@ export const rule = defineRule({
       const variable = resolveVariable(node.name, node);
       const definition = variable?.defs[0];
       const annotation = (
-        definition?.name as unknown as { typeAnnotation?: { typeAnnotation: AnyNode } }
+        definition?.name as unknown as {
+          typeAnnotation?: { typeAnnotation: AnyNode };
+        }
       )?.typeAnnotation;
       return (
-        (annotation && isEnvironmentRecordType(annotation.typeAnnotation)) ||
-        environmentIdentifier.test(node.name)
+        (annotation && isEnvironmentRecordType(annotation.typeAnnotation)) || environmentIdentifier.test(node.name)
       );
     };
     const isEnvironmentBagRead = (node: ESTree.MemberExpression, depth = 0): boolean => {
       const key = staticPropertyName(node);
-      return (
-        (key === null ? node.computed : ENV_VARIABLE_KEY.test(key)) &&
-        isEnvBag(node.object as AnyNode, depth + 1)
-      );
+      return (key === null ? node.computed : ENV_VARIABLE_KEY.test(key)) && isEnvBag(node.object as AnyNode, depth + 1);
     };
     const resolveFunction = (input: AnyNode): AnyNode | null => {
       const node = unwrap(input);
@@ -592,10 +549,8 @@ export const rule = defineRule({
     const isCallEnvDerived = (node: ESTree.CallExpression, depth: number): boolean => {
       const callee = unwrap(node.callee as AnyNode);
       const imported = importOf(callee);
-      if (callee.type === 'Identifier' && environmentReaders.has(imported?.member ?? callee.name))
-        return true;
-      if (callee.type === 'MemberExpression' && isEnvDerived(callee.object as AnyNode, depth + 1))
-        return true;
+      if (callee.type === 'Identifier' && environmentReaders.has(imported?.member ?? callee.name)) return true;
+      if (callee.type === 'MemberExpression' && isEnvDerived(callee.object as AnyNode, depth + 1)) return true;
       const target = resolveFunction(callee);
       if (!target) return false;
       const body = (target as ESTree.ArrowFunctionExpression).body;
@@ -650,13 +605,10 @@ export const rule = defineRule({
     /** `{ name, typeText }` for one formal parameter; `name` is `null` for destructured params. */
     const parameterInfo = (parameter: AnyNode): { name: string | null; type: AnyNode | null } => {
       let target = parameter;
-      if (target.type === 'TSParameterProperty')
-        target = (target as { parameter: AnyNode }).parameter;
-      if (target.type === 'AssignmentPattern')
-        target = (target as ESTree.AssignmentPattern).left as AnyNode;
+      if (target.type === 'TSParameterProperty') target = (target as { parameter: AnyNode }).parameter;
+      if (target.type === 'AssignmentPattern') target = (target as ESTree.AssignmentPattern).left as AnyNode;
       if (target.type === 'RestElement') target = (target as { argument: AnyNode }).argument;
-      const annotation = (target as { typeAnnotation?: { typeAnnotation?: AnyNode } | null })
-        .typeAnnotation;
+      const annotation = (target as { typeAnnotation?: { typeAnnotation?: AnyNode } | null }).typeAnnotation;
       const type = annotation?.typeAnnotation ?? null;
       const name = target.type === 'Identifier' ? (target as ESTree.BindingIdentifier).name : null;
       return { name, type };
@@ -669,8 +621,7 @@ export const rule = defineRule({
         const reference = node as ESTree.TSTypeReference;
         const name = qualifiedTypeName(reference.typeName as AnyNode);
         if (name !== null) names.push(name);
-        const parameters = (reference as { typeArguments?: { params?: AnyNode[] } | null })
-          .typeArguments;
+        const parameters = (reference as { typeArguments?: { params?: AnyNode[] } | null }).typeArguments;
         for (const parameter of parameters?.params ?? []) visit(parameter, depth + 1);
       };
       const visit = (node: AnyNode | null | undefined, depth: number): void => {
@@ -684,8 +635,7 @@ export const rule = defineRule({
           return;
         }
         if (['TSUnionType', 'TSIntersectionType'].includes(node.type)) {
-          for (const member of (node as { types?: AnyNode[] }).types ?? [])
-            visit(member, depth + 1);
+          for (const member of (node as { types?: AnyNode[] }).types ?? []) visit(member, depth + 1);
         }
       };
       visit(type, 0);
@@ -730,29 +680,20 @@ export const rule = defineRule({
       if (type.type !== 'TSTypeReference') return false;
       return isEnvironmentTypeReference(type, depth, optional);
     };
-    const isEnvironmentTypeReference = (
-      type: ESTree.TSTypeReference,
-      depth: number,
-      optional: boolean,
-    ): boolean => {
+    const isEnvironmentTypeReference = (type: ESTree.TSTypeReference, depth: number, optional: boolean): boolean => {
       const name = qualifiedTypeName(type.typeName);
       const args = type.typeArguments?.params ?? [];
       const resolved = resolvedEnvironmentType(type, depth, optional);
       if (resolved !== null) return resolved;
       if (name === 'NodeJS.ProcessEnv') return true;
       if (name === 'Readonly' || name === 'Partial') {
-        return (
-          !!args[0] && isEnvironmentRecordType(args[0], depth + 1, optional || name === 'Partial')
-        );
+        return !!args[0] && isEnvironmentRecordType(args[0], depth + 1, optional || name === 'Partial');
       }
       return name === 'Record' && isStringRecordArguments(args, optional);
     };
     const isStringRecordArguments = (args: readonly AnyNode[], optional: boolean): boolean => {
       return (
-        args.length === 2 &&
-        args[0]?.type === 'TSStringKeyword' &&
-        !!args[1] &&
-        isStringValueType(args[1], optional)
+        args.length === 2 && args[0]?.type === 'TSStringKeyword' && !!args[1] && isStringValueType(args[1], optional)
       );
     };
     const isStringValueType = (type: AnyNode, optional: boolean): boolean => {
@@ -761,12 +702,8 @@ export const rule = defineRule({
         type.type === 'TSUnionType' &&
         type.types.some((member) => member.type === 'TSStringKeyword') &&
         (optional ||
-          type.types.some(
-            (member) => member.type === 'TSNullKeyword' || member.type === 'TSUndefinedKeyword',
-          )) &&
-        type.types.every((member) =>
-          ['TSStringKeyword', 'TSNullKeyword', 'TSUndefinedKeyword'].includes(member.type),
-        )
+          type.types.some((member) => member.type === 'TSNullKeyword' || member.type === 'TSUndefinedKeyword')) &&
+        type.types.every((member) => ['TSStringKeyword', 'TSNullKeyword', 'TSUndefinedKeyword'].includes(member.type))
       );
     };
 
@@ -779,8 +716,7 @@ export const rule = defineRule({
       const { name, type } = parameterInfo(parameter);
       if (type !== null)
         return (
-          isEnvironmentRecordType(type) ||
-          typeNamesIn(type).some((typeName) => environmentTypeName.test(typeName))
+          isEnvironmentRecordType(type) || typeNamesIn(type).some((typeName) => environmentTypeName.test(typeName))
         );
       return name !== null && environmentIdentifier.test(name);
     };
@@ -853,8 +789,7 @@ export const rule = defineRule({
       let parent = parentOf(target);
       if (parent?.type === 'VariableDeclarator') parent = parentOf(parent);
       if (parent?.type === 'VariableDeclaration') parent = parentOf(parent);
-      if (parent?.type === 'ExportNamedDeclaration' || parent?.type === 'ExportDefaultDeclaration')
-        return false;
+      if (parent?.type === 'ExportNamedDeclaration' || parent?.type === 'ExportDefaultDeclaration') return false;
       return true;
     };
     const hasNonCallReferences = (start: number, sites: readonly CallSite[]): boolean => {
@@ -876,17 +811,13 @@ export const rule = defineRule({
     };
     const canMarkHelper = (start: number, target: AnyNode): boolean => {
       if (markedFunctions.has(start) || !isPrivateHelper(target)) return false;
-      const sites = calls.filter(
-        (entry) => resolveFunction(entry.node.callee as AnyNode)?.start === start,
-      );
-      if (sites.length === 0 || sites.some((entry) => !markedFunctions.has(entry.owner)))
-        return false;
+      const sites = calls.filter((entry) => resolveFunction(entry.node.callee as AnyNode)?.start === start);
+      if (sites.length === 0 || sites.some((entry) => !markedFunctions.has(entry.owner))) return false;
       if (hasNonCallReferences(start, sites)) return false;
       if (
         !sites.every(
           (entry) =>
-            helperMarked.has(entry.owner) ||
-            entry.node.arguments.some((argument) => isEnvDerived(argument as AnyNode)),
+            helperMarked.has(entry.owner) || entry.node.arguments.some((argument) => isEnvDerived(argument as AnyNode)),
         )
       )
         return false;
@@ -909,14 +840,18 @@ export const rule = defineRule({
       if (record.insideEffectCallback) return;
       if (record.chain.length === 0) {
         if (markedModule)
-          context.report({ node: record.node, messageId: 'throwInConfigurationParser' });
+          context.report({
+            node: record.node,
+            messageId: 'throwInConfigurationParser',
+          });
         return;
       }
-      const parser = record.chain.find(
-        (start) => markedFunctions.has(start) && !helperMarked.has(start),
-      );
+      const parser = record.chain.find((start) => markedFunctions.has(start) && !helperMarked.has(start));
       if (parser !== undefined) {
-        context.report({ node: record.node, messageId: 'throwInConfigurationParser' });
+        context.report({
+          node: record.node,
+          messageId: 'throwInConfigurationParser',
+        });
         return;
       }
       const helper = record.chain.find((start) => helperMarked.has(start));

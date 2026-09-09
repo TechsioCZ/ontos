@@ -1,4 +1,3 @@
-import { optionRecord } from '../shared/options.ts';
 /**
  * Audit findings: **B5** — "Adopt Effect's ADTs and temporal model consistently" ("Closed
  * vocabularies and timestamps are repeatedly re-declared", "Highest-value targets are service
@@ -75,17 +74,13 @@ import { optionRecord } from '../shared/options.ts';
  * Report-only: no fixer, no suggestion.
  */
 import { defineRule } from '@oxlint/plugins';
-
 import type { Context, ESTree } from '@oxlint/plugins';
 
-import {
-  collectEffectBindings,
-  effectMember,
-  type EffectBindings,
-} from '../shared/effect-imports.ts';
-import { isTestFile, matchesGlobs, scopePath } from '../shared/paths.ts';
-import { booleanOption as boolean, positiveInteger, stringArray } from '../shared/options.ts';
 import { asNode as sharedAsNode } from '../shared/ast.ts';
+import { collectEffectBindings, effectMember, type EffectBindings } from '../shared/effect-imports.ts';
+import { optionRecord } from '../shared/options.ts';
+import { booleanOption as boolean, positiveInteger, stringArray } from '../shared/options.ts';
+import { isTestFile, matchesGlobs, scopePath } from '../shared/paths.ts';
 
 /** A2/B5 apply everywhere first-party TypeScript is authored. */
 const DEFAULT_INCLUDE = ['apps/**', 'verticals/**', 'packages/**', 'scripts/**'];
@@ -138,8 +133,7 @@ function rawTemplateText(node: AnyNode, interpolationKey: 'expressions' | 'types
   if (interpolations.length > 0) return null;
   const quasis = Array.isArray(node.quasis) ? node.quasis : [];
   const value = asNode(quasis[0])?.value;
-  const raw =
-    typeof value === 'object' && value !== null ? (value as { raw?: unknown }).raw : undefined;
+  const raw = typeof value === 'object' && value !== null ? (value as { raw?: unknown }).raw : undefined;
   return typeof raw === 'string' ? raw : '';
 }
 
@@ -161,10 +155,7 @@ function isNullish(node: AnyNode): boolean {
   // `null` also appears as `TSLiteralType { literal: NullLiteral }` in some shapes.
   if (node.type !== 'TSLiteralType') return false;
   const literal = asNode(node.literal);
-  return (
-    literal !== null &&
-    (literal.type === 'NullLiteral' || (literal.type === 'Literal' && literal.value === null))
-  );
+  return literal !== null && (literal.type === 'NullLiteral' || (literal.type === 'Literal' && literal.value === null));
 }
 
 interface UnionAnalysis {
@@ -244,10 +235,7 @@ function isAmbient(node: ESTree.Node): boolean {
  * declared. A function-local `const AuditProfile = Schema.Literals([...])` is not, so such a binding
  * must not claim ownership — those aliases fall back to the generic message.
  */
-function collectSchemaLiteralNames(
-  program: ESTree.Program,
-  bindings: EffectBindings,
-): ReadonlySet<string> {
+function collectSchemaLiteralNames(program: ESTree.Program, bindings: EffectBindings): ReadonlySet<string> {
   const names = new Set<string>();
   if (!bindings.importsEffect) return names;
   const addDeclarator = (value: unknown): void => {
@@ -303,11 +291,7 @@ function isSchemaLiteralCall(value: unknown, bindings: EffectBindings): boolean 
   const callee = asNode(init.callee);
   if (callee === null) return false;
   const member = effectMember(callee as unknown as ESTree.Node, bindings);
-  return (
-    member !== null &&
-    member.namespace === SCHEMA_NAMESPACE &&
-    SCHEMA_LITERAL_MEMBERS.has(member.member)
-  );
+  return member !== null && member.namespace === SCHEMA_NAMESPACE && SCHEMA_LITERAL_MEMBERS.has(member.member);
 }
 
 function eligibleName(node: ESTree.Node, options: RuleOptions): string | null {
@@ -444,7 +428,11 @@ export const rule = defineRule({
         context.report({
           node: (asNode(raw.id) ?? raw) as unknown as ESTree.Node,
           messageId: 'literalEnum',
-          data: { name, count: String(values.length), members: preview(values) },
+          data: {
+            name,
+            count: String(values.length),
+            members: preview(values),
+          },
         });
       },
     };

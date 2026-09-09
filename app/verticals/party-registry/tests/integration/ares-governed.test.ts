@@ -1,26 +1,15 @@
-import { assert, expect, it } from 'effect-rstest';
+import { randomUUID } from 'node:crypto';
 
 import { DatabaseConfig, loadDatabaseConnectionPair } from '@app/core-runtime';
 import { makeLiveOperationFixture } from '@app/core-runtime/testing/actions';
-
 import { HttpApi, HttpApiBuilder, HttpRouter, HttpServer } from '@modern-js/plugin-bff/effect-edge';
 import { eq } from 'drizzle-orm';
-import {
-  ConfigProvider,
-  Context,
-  DateTime,
-  Effect,
-  Layer,
-  Match,
-  Option,
-  Redacted,
-  Schema,
-  Predicate,
-} from 'effect';
+import { ConfigProvider, Context, DateTime, Effect, Layer, Match, Option, Redacted, Schema, Predicate } from 'effect';
+import { assert, expect, it } from 'effect-rstest';
 import { FetchHttpClient, HttpClient, HttpClientResponse } from 'effect/unstable/http';
 import { SignJWT, exportJWK, generateKeyPair } from 'jose';
-import { randomUUID } from 'node:crypto';
 import { Pool } from 'pg';
+
 import { makeTestDatabaseFromPool } from '../../../../packages/core-runtime/tests/support/database.ts';
 import { aresLookupReadApiLive } from '../../api/ares-lookup-read-server.ts';
 import { ActionPrincipalVerifierLive } from '../../api/auth/action-principal.ts';
@@ -33,14 +22,8 @@ import { partyContactPointsReadApiLive } from '../../api/party-contact-points-re
 import { partyDetailReadApiLive } from '../../api/party-detail-read-server.ts';
 import { partyOfficialIdentifierHistoryReadApiLive } from '../../api/party-official-identifier-history-read-server.ts';
 import { partyRegistryApi } from '../../shared/api.ts';
-import {
-  deriveAresEvidenceApplication,
-  makeAresAppliedEvidence,
-} from '../../shared/domain/ares-application.ts';
-import {
-  AresSubjectEvidenceSchema,
-  AresSubjectLookupIcoSchema,
-} from '../../shared/domain/ares-evidence.ts';
+import { deriveAresEvidenceApplication, makeAresAppliedEvidence } from '../../shared/domain/ares-application.ts';
+import { AresSubjectEvidenceSchema, AresSubjectLookupIcoSchema } from '../../shared/domain/ares-evidence.ts';
 import { IdentityCorrectionCommandSchema } from '../../shared/domain/correction-contracts.ts';
 import { partySubjectKeyFromString } from '../../shared/domain/identity-contracts.ts';
 import type { PartyRef } from '../../shared/resources/party.ts';
@@ -97,7 +80,7 @@ const rawSubject = {
   },
 };
 const emptyRequestContext = Context.makeUnsafe<unknown>(new Map());
-const lookupIco = Schema.decodeUnknownSync(AresSubjectLookupIcoSchema)('27074358');
+const lookupIco = Schema.decodeSync(AresSubjectLookupIcoSchema)('27074358');
 const endPool = (pool: Pool) => Effect.promise(() => pool.end());
 
 it.live(
@@ -144,24 +127,17 @@ it.live(
             .setJti(randomUUID())
             .sign(privateKey),
         );
-      const authorization = () =>
-        sign(fixture.manager).pipe(Effect.map((token) => `Bearer ${token}`));
+      const authorization = () => sign(fixture.manager).pipe(Effect.map((token) => `Bearer ${token}`));
       const gateway = makeOperationGateway(() =>
-        sign(fixture.manager).pipe(
-          Effect.map((signedToken) => ({ expiresAt: 0, token: signedToken })),
-        ),
+        sign(fixture.manager).pipe(Effect.map((signedToken) => ({ expiresAt: 0, token: signedToken }))),
       );
       let providerRequests = 0;
       const provider = HttpClient.make((request, url) => {
-        expect(url.href).toBe(
-          'https://ares.gov.cz/ekonomicke-subjekty-v-be/rest/ekonomicke-subjekty/27074358',
-        );
+        expect(url.href).toBe('https://ares.gov.cz/ekonomicke-subjekty-v-be/rest/ekonomicke-subjekty/27074358');
         providerRequests += 1;
         return Effect.succeed(HttpClientResponse.fromWeb(request, Response.json(rawSubject)));
       });
-      const upstream = AresSubjectServiceLive.pipe(
-        Layer.provide(Layer.succeed(HttpClient.HttpClient, provider)),
-      );
+      const upstream = AresSubjectServiceLive.pipe(Layer.provide(Layer.succeed(HttpClient.HttpClient, provider)));
       const redemption = GatewayAssertionRedemptionLive.pipe(
         Layer.provide(GatewayAssertionRedemptionDatabaseLive),
         Layer.provide(Layer.succeed(DatabaseConfig, connections.runtime)),
@@ -205,8 +181,7 @@ it.live(
         ),
         (resource) => Effect.promise(resource.dispose.bind(resource)).pipe(Effect.orDie),
       );
-      const inMemoryFetch: typeof fetch = (input, init) =>
-        app.handler(new Request(input, init), emptyRequestContext);
+      const inMemoryFetch: typeof fetch = (input, init) => app.handler(new Request(input, init), emptyRequestContext);
       const runHttpEffect = <Success, Failure>(effect: Effect.Effect<Success, Failure>) =>
         effect.pipe(Effect.provideService(FetchHttpClient.Fetch, inMemoryFetch));
       const baseUrl = 'https://party.ontos.test';
@@ -255,17 +230,10 @@ it.live(
       });
       const lookup = Effect.fn('AresGovernedTest.lookup')(function* lookupEffect() {
         return yield* runHttpEffect(
-          executeAresLookupWithAuthorization(
-            { ico: lookupIco },
-            yield* authorization(),
-            randomUUID(),
-            { baseUrl },
-          ),
+          executeAresLookupWithAuthorization({ ico: lookupIco }, yield* authorization(), randomUUID(), { baseUrl }),
         );
       });
-      const detail = Effect.fn('AresGovernedTest.detail')(function* detailEffect(
-        partyRef: PartyRef,
-      ) {
+      const detail = Effect.fn('AresGovernedTest.detail')(function* detailEffect(partyRef: PartyRef) {
         return yield* runHttpEffect(
           executePartyDetailWithAuthorization(
             { partyRef, includeFactHistory: true },
@@ -286,10 +254,7 @@ it.live(
               .select()
               .from(partyIdentifierClaims)
               .where(eq(partyIdentifierClaims.tenantId, fixture.tenantId)),
-            contacts: admin
-              .select()
-              .from(partyContactPoints)
-              .where(eq(partyContactPoints.tenantId, fixture.tenantId)),
+            contacts: admin.select().from(partyContactPoints).where(eq(partyContactPoints.tenantId, fixture.tenantId)),
             core: fixture.evidence(),
             identifiers: admin
               .select()
@@ -303,12 +268,7 @@ it.live(
       const replayAuthorization = yield* authorization();
       const replayLookup = () =>
         runHttpEffect(
-          executeAresLookupWithAuthorization(
-            { ico: lookupIco },
-            replayAuthorization,
-            randomUUID(),
-            { baseUrl },
-          ),
+          executeAresLookupWithAuthorization({ ico: lookupIco }, replayAuthorization, randomUUID(), { baseUrl }),
         );
       yield* replayLookup();
       const providerRequestsBeforeReplay = providerRequests;
@@ -345,7 +305,11 @@ it.live(
             idempotencyKey: randomUUID(),
             payload: {
               partyRef: target,
-              identifier: { identifierType: 'ICO', value: '27074358', verification: 'VERIFIED' },
+              identifier: {
+                identifierType: 'ICO',
+                value: '27074358',
+                verification: 'VERIFIED',
+              },
               validFrom: observation.observedAt,
               provenanceMethod: 'ARES_USER_CONFIRMED',
               provenanceSource: 'ARES',
@@ -371,7 +335,10 @@ it.live(
                   {
                     preferred: false,
                     purpose: 'REGISTERED',
-                    registryContext: { jurisdiction: 'CZ', registryKey: 'ARES' },
+                    registryContext: {
+                      jurisdiction: 'CZ',
+                      registryKey: 'ARES',
+                    },
                   },
                 ],
               },
@@ -389,23 +356,14 @@ it.live(
       const request = requestFor(partyRef);
       const beforeUnconfirmed = yield* state();
       const unconfirmed = yield* runHttpEffect(
-        applyAresObservation({ ...request, userConfirmed: false }, { gateway, baseUrl }).pipe(
-          Effect.result,
-        ),
+        applyAresObservation({ ...request, userConfirmed: false }, { gateway, baseUrl }).pipe(Effect.result),
       );
-      assert.isOk(
-        'failure' in unconfirmed &&
-          Predicate.isTagged(unconfirmed.failure, 'AresApplySelectionInvalid'),
-      );
+      assert.isOk('failure' in unconfirmed && Predicate.isTagged(unconfirmed.failure, 'AresApplySelectionInvalid'));
 
       const afterUnconfirmed = yield* state();
-      expect(afterUnconfirmed.core.invocations.length).toBe(
-        beforeUnconfirmed.core.invocations.length,
-      );
+      expect(afterUnconfirmed.core.invocations.length).toBe(beforeUnconfirmed.core.invocations.length);
       const applied = yield* runHttpEffect(applyAresObservation(request, { gateway, baseUrl }));
-      const appliedMessage = yield* Schema.encodeEffect(Schema.fromJsonString(Schema.Unknown))(
-        applied,
-      );
+      const appliedMessage = yield* Schema.encodeEffect(Schema.fromJsonString(Schema.Unknown))(applied);
       assert.isOk(Predicate.isTagged(applied, 'AresApplyCompleted'), appliedMessage);
 
       expect(applied.completed.length).toBe(3);
@@ -424,10 +382,9 @@ it.live(
       expect(contactEvidence.observedAt).toBe(encodedObservation.observedAt);
       expect(contactEvidence.providerChangedOn).toBe(encodedObservation.providerChangedOn);
       expect(contactEvidence.providerRecordRef).toBe(encodedObservation.providerRecordRef);
-      expect(
-        persisted.assertions.find((item) => item.factKind === 'DISPLAY_NAME')?.externalEvidence
-          ?.decidedAt,
-      ).toBe(encodedObservation.servedAt);
+      expect(persisted.assertions.find((item) => item.factKind === 'DISPLAY_NAME')?.externalEvidence?.decidedAt).toBe(
+        encodedObservation.servedAt,
+      );
       expect(persisted.core.events.length).toBe(4);
       expect(persisted.core.outbox.length).toBe(4);
       assert.isOk(persisted.core.invocations.every((item) => item.status === 'succeeded'));
@@ -440,24 +397,18 @@ it.live(
       const afterReplay = yield* state();
       expect(afterReplay.core.events.length).toBe(persisted.core.events.length);
       const deniedGateway = makeOperationGateway(() =>
-        sign(fixture.denied).pipe(
-          Effect.map((signedToken) => ({ expiresAt: 0, token: signedToken })),
-        ),
+        sign(fixture.denied).pipe(Effect.map((signedToken) => ({ expiresAt: 0, token: signedToken }))),
       );
       const denied = yield* runHttpEffect(
         applyAresObservation(request, { gateway: deniedGateway, baseUrl }).pipe(Effect.result),
       );
-      assert.isOk(
-        'failure' in denied && Predicate.isTagged(denied.failure, 'AresLookupForbiddenProblem'),
-      );
+      assert.isOk('failure' in denied && Predicate.isTagged(denied.failure, 'AresLookupForbiddenProblem'));
 
       const afterDenied = yield* state();
       expect(afterDenied.core.invocations.length).toBe(persisted.core.invocations.length);
 
       const collisionParty = yield* create();
-      const collision = yield* runHttpEffect(
-        applyAresObservation(requestFor(collisionParty), { gateway, baseUrl }),
-      );
+      const collision = yield* runHttpEffect(applyAresObservation(requestFor(collisionParty), { gateway, baseUrl }));
       const collisionOutcome = Match.value(collision).pipe(
         Match.tag('AresApplyPartiallyCompleted', (outcome) => outcome),
         Match.orElse(() => assert.fail(`Expected partial completion, received ${collision._tag}`)),
@@ -469,9 +420,7 @@ it.live(
       expect(afterCollision.claims.length).toBe(1);
       expect(afterCollision.contacts.length).toBe(1);
       const collisionDetail = yield* detail(collisionParty);
-      expect(Option.getOrUndefined(collisionDetail.party.displayName)).toBe(
-        rawSubject.obchodniJmeno,
-      );
+      expect(Option.getOrUndefined(collisionDetail.party.displayName)).toBe(rawSubject.obchodniJmeno);
 
       const erroneousParty = yield* create();
       const logical = deriveAresEvidenceApplication({
@@ -507,12 +456,10 @@ it.live(
         ),
       );
       const erroneous = yield* detail(erroneousParty);
-      const assertion = erroneous.currentFactAssertions.find(
-        (item) => item.factKind === 'DISPLAY_NAME',
-      );
+      const assertion = erroneous.currentFactAssertions.find((item) => item.factKind === 'DISPLAY_NAME');
       assert.isOk(assertion);
 
-      const correctionPayload = yield* Schema.decodeUnknownEffect(IdentityCorrectionCommandSchema)({
+      const correctionPayload = yield* Schema.decodeEffect(IdentityCorrectionCommandSchema)({
         partyId: erroneousParty.resourceId,
         factKind: 'DISPLAY_NAME' as const,
         targetAssertionId: assertion.assertionId,
@@ -552,16 +499,12 @@ it.live(
       expect(reviewOutcome.correctionCandidates[0]?.targetAssertionId).toBe(assertion.assertionId);
       const afterReview = yield* state();
       expect(afterReview.core.invocations.length).toBe(beforeReview.core.invocations.length);
-      yield* runHttpEffect(
-        correctPartyFactWithAuthorization(correctionPayload, yield* authorization(), options()),
-      );
+      yield* runHttpEffect(correctPartyFactWithAuthorization(correctionPayload, yield* authorization(), options()));
       const corrected = yield* detail(erroneousParty);
       expect(Option.getOrUndefined(corrected.party.displayName)).toBe(rawSubject.obchodniJmeno);
       const correctedState = yield* state();
       assert.isOk(
-        correctedState.assertions.some(
-          (item) => item.assertionId === assertion.assertionId && item.state !== 'ACTIVE',
-        ),
+        correctedState.assertions.some((item) => item.assertionId === assertion.assertionId && item.state !== 'ACTIVE'),
       );
 
       assert.isOk(providerRequests >= 1);

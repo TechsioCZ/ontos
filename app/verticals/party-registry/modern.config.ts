@@ -1,13 +1,8 @@
 import { readFileSync } from 'node:fs';
-import {
-  createCloudflareWorkerSecurity,
-  createWorkerSsrPlugins,
-  createZephyrRspackPlugin,
-  resolveCloudflareExternal,
-} from '../../packages/shared-contracts/tooling/modern-config.ts';
 import { createRequire } from 'node:module';
 import { fileURLToPath } from 'node:url';
-import { appTools, defineConfig, presetUltramodern } from '@modern-js/app-tools';
+
+import { appTools, defineConfig, presetUltramodern, ultramodernReleaseEnvelopePlugin } from '@modern-js/app-tools';
 import type { AppTools, AppToolsUserConfig, CliPlugin } from '@modern-js/app-tools';
 import { getBuildConfigEnvironment, withBuildConfigEnvironment } from '@modern-js/app-tools/config';
 import { bffPlugin } from '@modern-js/plugin-bff';
@@ -18,6 +13,12 @@ import { pluginTailwindcss } from '@rsbuild/plugin-tailwindcss';
 import { Config, Option, Result, Schema } from 'effect';
 import { withZephyr as withZephyrRspack } from 'zephyr-rspack-plugin';
 
+import {
+  createCloudflareWorkerSecurity,
+  createWorkerSsrPlugins,
+  createZephyrRspackPlugin,
+  resolveCloudflareExternal,
+} from '../../packages/shared-contracts/tooling/modern-config.ts';
 import { ultramodernLocalisedUrls } from './src/routes/ultramodern-route-metadata';
 
 const localisedUrls = ultramodernLocalisedUrls;
@@ -29,18 +30,16 @@ const resolveDevelopmentModuleContractPath = () =>
 
 const nonEmptyBuildStringSchema = Schema.Trim.pipe(Schema.check(Schema.isMinLength(1)));
 const getOptionalBuildConfig = (name: string): string | undefined => {
-  const decoded = Schema.decodeUnknownResult(
-    Schema.OptionFromUndefinedOr(nonEmptyBuildStringSchema),
-  )(getBuildConfigEnvironment(name));
+  const decoded = Schema.decodeUnknownResult(Schema.OptionFromUndefinedOr(nonEmptyBuildStringSchema))(
+    getBuildConfigEnvironment(name),
+  );
   return Result.isSuccess(decoded) ? Option.getOrUndefined(decoded.success) : undefined;
 };
 const envValue = getOptionalBuildConfig;
 const getBuildBoolean = (name: string): boolean =>
   Option.getOrElse(
     Result.getOrThrow(
-      Schema.decodeUnknownResult(Schema.OptionFromUndefinedOr(Config.Boolean))(
-        getBuildConfigEnvironment(name),
-      ),
+      Schema.decodeUnknownResult(Schema.OptionFromUndefinedOr(Config.Boolean))(getBuildConfigEnvironment(name)),
     ),
     () => false,
   );
@@ -52,8 +51,7 @@ const cloudflareDeployMode = Result.getOrThrow(
 const cloudflareDeployEnabled = Option.contains(cloudflareDeployMode, 'cloudflare');
 const resolvePostgresProtocolCommonJsEntry = () =>
   fileURLToPath(new URL('../pg-protocol/dist/index.js', import.meta.resolve('pg/package.json')));
-const resolvePostgresPoolCommonJsEntry = () =>
-  createRequire(import.meta.resolve('pg/package.json')).resolve('pg-pool');
+const resolvePostgresPoolCommonJsEntry = () => createRequire(import.meta.resolve('pg/package.json')).resolve('pg-pool');
 const resolveEffectApiSourceDirectory = () => fileURLToPath(new URL('api/', import.meta.url));
 /* oxlint-disable promise/prefer-await-to-callbacks -- Rspack externals use a callback API. expires: 2026-12-31. */
 const cloudflareRuntimeExternal = (
@@ -76,9 +74,7 @@ const port = Option.getOrElse(
   Result.getOrThrow(
     Schema.decodeUnknownResult(
       Schema.OptionFromUndefinedOr(
-        Schema.NumberFromString.pipe(
-          Schema.check(Schema.isInt(), Schema.isBetween({ maximum: 65_535, minimum: 1 })),
-        ),
+        Schema.NumberFromString.pipe(Schema.check(Schema.isInt(), Schema.isBetween({ maximum: 65_535, minimum: 1 }))),
       ),
     )(getBuildConfigEnvironment('VERTICAL_PARTY_REGISTRY_PORT')),
   ),
@@ -88,8 +84,7 @@ const configuredSiteUrl = envValue('MODERN_PUBLIC_SITE_URL');
 const configuredCloudflareUrl = envValue('ULTRAMODERN_PUBLIC_URL_PARTY_REGISTRY');
 const configuredUltramodernAssetPrefix = envValue('ULTRAMODERN_ASSET_PREFIX');
 const configuredModernAssetPrefix = envValue('MODERN_ASSET_PREFIX');
-const moduleFederationDevServerOrigin =
-  envValue('ULTRAMODERN_MF_DEV_ORIGIN') ?? 'http://localhost:3020';
+const moduleFederationDevServerOrigin = envValue('ULTRAMODERN_MF_DEV_ORIGIN') ?? 'http://localhost:3020';
 const cloudflareWorkersDevSubdomain = envValue('ULTRAMODERN_CLOUDFLARE_WORKERS_DEV_SUBDOMAIN');
 const inferredCloudflareUrl =
   cloudflareDeployEnabled && cloudflareWorkersDevSubdomain !== undefined
@@ -97,28 +92,20 @@ const inferredCloudflareUrl =
     : undefined;
 // Site origin (SEO: canonical/hreflang URLs) prefers the site-wide public URL;
 // the per-app deployment URL only fills in when no site origin is configured.
-const siteUrl =
-  configuredSiteUrl ??
-  configuredCloudflareUrl ??
-  inferredCloudflareUrl ??
-  `http://localhost:${port}`;
+const siteUrl = configuredSiteUrl ?? configuredCloudflareUrl ?? inferredCloudflareUrl ?? `http://localhost:${port}`;
 const remoteAssetOrigin =
-  configuredCloudflareUrl ??
-  inferredCloudflareUrl ??
-  (cloudflareDeployEnabled ? '' : `http://localhost:${port}`);
+  configuredCloudflareUrl ?? inferredCloudflareUrl ?? (cloudflareDeployEnabled ? '' : `http://localhost:${port}`);
 // When deploying to Cloudflare without a configured public URL, publish an
 // 'auto' publicPath so the remote resolves its chunks from the origin its
 // remoteEntry.js was loaded from (the vertical's Worker), not the host shell's
 // origin — otherwise cross-origin chunk loading 404s and MF reports an empty
 // moduleId. A configured/inferred URL still wins as an absolute prefix.
-const defaultRemoteAssetPrefix =
-  remoteAssetOrigin.length > 0 ? `${remoteAssetOrigin.replace(/\/+$/u, '')}/` : 'auto';
+const defaultRemoteAssetPrefix = remoteAssetOrigin.length > 0 ? `${remoteAssetOrigin.replace(/\/+$/u, '')}/` : 'auto';
 const defaultAssetPrefix = defaultRemoteAssetPrefix;
 // Asset loading is intentionally independent from the canonical site URL.
 // Module Federation remotes must publish an absolute publicPath so browsers
 // load remoteEntry.js and exposed chunks from the remote origin, not the host.
-const assetPrefix =
-  configuredModernAssetPrefix ?? configuredUltramodernAssetPrefix ?? defaultAssetPrefix;
+const assetPrefix = configuredModernAssetPrefix ?? configuredUltramodernAssetPrefix ?? defaultAssetPrefix;
 const buildTarget = cloudflareDeployEnabled ? 'cloudflare' : 'web';
 const buildOutputRoot = cloudflareDeployEnabled ? 'dist-cloudflare' : 'dist';
 const buildTempDirectory = `node_modules/.modern-js-${appId}-${buildTarget}`;
@@ -139,9 +126,7 @@ if (
 const whenEnabled = <Configuration>(enabled: boolean, configuration: Configuration) =>
   enabled ? configuration : undefined;
 
-const appDevServerHeaders: NonNullable<
-  NonNullable<NonNullable<AppToolsUserConfig['dev']>['server']>['headers']
-> = {
+const appDevServerHeaders: NonNullable<NonNullable<NonNullable<AppToolsUserConfig['dev']>['server']>['headers']> = {
   'Access-Control-Allow-Headers': 'Accept, Authorization, Content-Type, X-Requested-With',
   'Access-Control-Allow-Methods': 'GET, HEAD, OPTIONS',
   'Access-Control-Allow-Origin': moduleFederationDevServerOrigin,
@@ -217,13 +202,10 @@ export default defineConfig(
           cacheDigest: [appId, buildTarget],
           cacheDirectory: buildCacheDirectory,
         },
-        rsdoctor: {
-          disableClientServer: true,
-          enabled: getBuildBoolean('ULTRAMODERN_RSDOCTOR'),
-        },
       },
       plugins: [
         appTools(),
+        ultramodernReleaseEnvelopePlugin(),
         tanstackRouterPlugin(),
         i18nPlugin({
           backend: {
@@ -255,7 +237,9 @@ export default defineConfig(
           reactI18next: false,
         }),
         bffPlugin(),
-        moduleFederationPlugin(),
+        moduleFederationPlugin({
+          configPath: fileURLToPath(new URL('module-federation.config.ts', import.meta.url)),
+        }),
         zephyrRspackPlugin(),
       ],
       server: {
@@ -267,8 +251,7 @@ export default defineConfig(
           '@modern-js/plugin-i18n/runtime': '@modern-js/plugin-i18n/runtime/no-react-i18next',
         },
         globalVars: {
-          ULTRAMODERN_SHELL_ORIGIN:
-            envValue('ULTRAMODERN_MF_DEV_ORIGIN') ?? 'http://localhost:3020',
+          ULTRAMODERN_SHELL_ORIGIN: envValue('ULTRAMODERN_MF_DEV_ORIGIN') ?? 'http://localhost:3020',
           ULTRAMODERN_SITE_URL: siteUrl,
         },
         mainEntryName: 'index',
@@ -303,8 +286,7 @@ export default defineConfig(
           if (environment.name === 'workerSSR') {
             const effectApiSourceDirectory = resolveEffectApiSourceDirectory();
             const configuredNode = config.node;
-            config.node =
-              configuredNode === false || configuredNode === undefined ? {} : configuredNode;
+            config.node = configuredNode === false || configuredNode === undefined ? {} : configuredNode;
             Object.assign(config.node, {
               __dirname: false,
               __filename: false,

@@ -109,6 +109,9 @@
           "unnecessaryPipeChain": "error"
         }
       }
+    ],
+    "types": [
+      "node"
     ]
   }
 }

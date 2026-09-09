@@ -1,20 +1,31 @@
+import { toaster } from '@techsio/ui-kit/molecules/toast';
+import { cleanup, render, screen, waitFor } from '@testing-library/react';
+import userEvent from '@testing-library/user-event';
+import { Effect, Redacted } from 'effect';
+import { afterEach, beforeEach, expect, rstest, it } from 'effect-rstest';
+
+import LoginPage from '../../../../src/routes/[lang]/login/page';
 import { browserRuntime } from '../../../../src/runtime/browser-effect-runtime.ts' with {
   rstest: 'importActual',
 };
-import { afterEach, beforeEach, expect, rstest, it } from 'effect-rstest';
-import { Effect, Redacted } from 'effect';
-import { cleanup, render, screen, waitFor } from '@testing-library/react';
-import userEvent from '@testing-library/user-event';
-import { toaster } from '@techsio/ui-kit/molecules/toast';
-import LoginPage from '../../../../src/routes/[lang]/login/page';
+import type { LocalizedLinkCall, LocalizedLinkDoubleProps } from '../../../support/localized-link-double.tsx';
+import { renderLocalizedLinkDouble } from '../../../support/localized-link-double.tsx';
 
-const { browserRunPromiseMock, navigateMock, signInMock } = rstest.hoisted(() => ({
-  browserRunPromiseMock: rstest.fn(),
-  navigateMock: rstest.fn(),
-  signInMock: rstest.fn(),
-}));
+const { browserRunPromiseMock, invalidateMock, languageState, localizedLinkCalls, navigateMock, signInMock } =
+  rstest.hoisted(() => {
+    const recordedLinkCalls: LocalizedLinkCall[] = [];
+    return {
+      browserRunPromiseMock: rstest.fn(),
+      invalidateMock: rstest.fn(),
+      languageState: { current: 'en' },
+      localizedLinkCalls: recordedLinkCalls,
+      navigateMock: rstest.fn(),
+      signInMock: rstest.fn(),
+    };
+  });
 
 beforeEach(() => {
+  invalidateMock.mockImplementation(() => Promise.resolve());
   navigateMock.mockImplementation(() => Promise.resolve());
   browserRunPromiseMock.mockImplementation(browserRuntime.runPromise);
   signInMock.mockReturnValue(
@@ -44,6 +55,11 @@ const translations = new Map(
 );
 
 rstest.mock('@modern-js/plugin-i18n/runtime', () => ({
+  Link: (props: LocalizedLinkDoubleProps) =>
+    renderLocalizedLinkDouble(props, {
+      calls: localizedLinkCalls,
+      language: languageState,
+    }),
   useLocalizedLocation: () => ({
     alternates: {
       cs: '/cs/login',
@@ -52,13 +68,14 @@ rstest.mock('@modern-js/plugin-i18n/runtime', () => ({
     canonical: '/en/login',
   }),
   useModernI18n: () => ({
-    language: 'en',
+    language: languageState.current,
     t: (key: string) => translations.get(key) ?? key,
   }),
 }));
 
 rstest.mock('@modern-js/plugin-tanstack/runtime', () => ({
   useNavigate: () => navigateMock,
+  useRouter: () => ({ invalidate: invalidateMock }),
 }));
 
 rstest.mock('../../../../src/api/auth-client.ts', () => ({
@@ -77,6 +94,8 @@ const renderLogin = () => render(<LoginPage />);
 
 afterEach(() => {
   cleanup();
+  languageState.current = 'en';
+  localizedLinkCalls.length = 0;
   toaster.remove();
   rstest.unstubAllGlobals();
   rstest.clearAllMocks();
@@ -97,9 +116,24 @@ it('shows the required login controls through the UI kit', () => {
   expect(password.getAttribute('autocomplete')).toBe('current-password');
   expect(password.hasAttribute('required')).toBe(true);
   expect(submit.getAttribute('type')).toBe('submit');
-  expect(screen.getByRole('link', { name: '← Back to the home page' }).getAttribute('href')).toBe(
-    '/en',
-  );
+  expect(screen.getByRole('link', { name: '← Back to the home page' }).getAttribute('href')).toBe('/en');
+});
+
+it('the back link hands the canonical home target to the framework link', () => {
+  renderLogin();
+
+  const homeCall = localizedLinkCalls.find((call) => call.to === '/');
+  expect(homeCall).toBeDefined();
+  expect(homeCall?.params).toBeUndefined();
+  expect(homeCall?.href).toBeUndefined();
+});
+
+it('the back link resolves Czech from the same canonical target', () => {
+  languageState.current = 'cs';
+  renderLogin();
+
+  expect(localizedLinkCalls.map((call) => call.to)).toContain('/');
+  expect(screen.getByRole('link', { name: '← Back to the home page' }).getAttribute('href')).toBe('/cs');
 });
 
 const submitLogin = (login: string, password: string) =>
@@ -243,6 +277,7 @@ it.effect('submits valid values through the Shell authentication client and navi
           { locale: 'en' },
         );
         expect(browserRunPromiseMock).toHaveBeenCalledTimes(1);
+        expect(invalidateMock).toHaveBeenCalledWith({ sync: true });
         expect(navigateMock).toHaveBeenCalledWith({ to: '/en/' });
         expect(getSubmit().hasAttribute('disabled')).toBe(false);
         expect(screen.queryByText('shell.login.error.internal')).toBeNull();
@@ -263,6 +298,21 @@ it.effect('reports navigation failure and restores the login form after authenti
         expect(screen.getByText('shell.login.error.internal')).toBeDefined();
         expect(getSubmit().hasAttribute('disabled')).toBe(false);
         expect(document.activeElement).toBe(getLogin());
+      }),
+    );
+  }),
+);
+
+it.effect('keeps navigation on the login route when auth cache refresh fails', () =>
+  Effect.gen(function* reportsAuthenticationRefreshFailure() {
+    invalidateMock.mockRejectedValueOnce('Route refresh failed');
+    yield* submitLogin('admin', 'secret');
+    yield* Effect.promise(() =>
+      waitFor(() => {
+        expect(invalidateMock).toHaveBeenCalledWith({ sync: true });
+        expect(navigateMock).not.toHaveBeenCalled();
+        expect(screen.getByText('shell.login.error.internal')).toBeDefined();
+        expect(getSubmit().hasAttribute('disabled')).toBe(false);
       }),
     );
   }),

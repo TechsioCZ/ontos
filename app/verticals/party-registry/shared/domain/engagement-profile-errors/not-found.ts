@@ -1,8 +1,6 @@
 import { Schema } from 'effect';
 
-export const EngagementProfileIdSchema = Schema.String.check(Schema.isUUID()).pipe(
-  Schema.brand('EngagementProfileId'),
-);
+export const EngagementProfileIdSchema = Schema.String.check(Schema.isUUID()).pipe(Schema.brand('EngagementProfileId'));
 
 export class EngagementProfileNotFound extends Schema.TaggedError<EngagementProfileNotFound>()(
   'EngagementProfileNotFound',

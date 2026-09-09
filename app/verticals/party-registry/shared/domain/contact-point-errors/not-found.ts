@@ -1,4 +1,5 @@
 import { Schema } from 'effect';
+
 import { PartyContactPointRefSchema } from '../../resources/party-contact-point.ts';
 import { ContactPointErrorReasonSchema } from './shared.ts';
 

@@ -1,7 +1,8 @@
-import { makeModuleContractFixture } from '../../../../packages/core-runtime/src/testing/module-contract.ts';
-import { expect, it } from 'effect-rstest';
 import { buildInstalledModuleCatalog } from '@app/core-runtime';
 import { Effect } from 'effect';
+import { expect, it } from 'effect-rstest';
+
+import { makeModuleContractFixture } from '../../../../packages/core-runtime/src/testing/module-contract.ts';
 import { matchInstalledOutboxMessagesOnce } from '../../api/modules/installed-outbox-matcher.ts';
 
 const contract = (appId: string, moduleId: string, outboxSubscriptions: readonly object[] = []) =>

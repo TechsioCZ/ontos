@@ -1,5 +1,6 @@
 // Canonical schema-only contract extracted from the generated end-contact-point Action.
 import { Schema } from 'effect';
+
 import {
   AddressPurposeTargetSchema,
   ContactPointProvenanceSchema,
@@ -9,7 +10,10 @@ import { PartyContactPointRefSchema } from '../resources/party-contact-point.ts'
 
 const EndTargetSchema = Schema.Union([
   Schema.Struct({ type: Schema.Literal('WHOLE_CONTACT_POINT') }),
-  Schema.Struct({ target: AddressPurposeTargetSchema, type: Schema.Literal('ADDRESS_PURPOSE') }),
+  Schema.Struct({
+    target: AddressPurposeTargetSchema,
+    type: Schema.Literal('ADDRESS_PURPOSE'),
+  }),
 ]);
 
 export const EndContactPointPayloadSchema = Schema.Struct({

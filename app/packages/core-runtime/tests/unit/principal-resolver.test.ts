@@ -1,6 +1,5 @@
-import { expect, it } from 'effect-rstest';
-
 import { DateTime, Effect, Predicate } from 'effect';
+import { expect, it } from 'effect-rstest';
 import { ConnectionError, SqlError } from 'effect/unstable/sql/SqlError';
 
 import type { PrincipalResolutionRecord } from '../../src/auth/principal-resolver.ts';
@@ -77,9 +76,7 @@ it.effect('lists safe eligible tenants by name and tenant ID', () =>
 );
 it.effect('lists and resolves one active tenant binding', () =>
   Effect.gen(function* listsAndResolvesActiveTenant() {
-    expect(yield* classifyAvailableTenants([activeRecord])).toEqual([
-      { name: 'Zeta tenant', tenantId: 'tenant-1' },
-    ]);
+    expect(yield* classifyAvailableTenants([activeRecord])).toEqual([{ name: 'Zeta tenant', tenantId: 'tenant-1' }]);
     expect(yield* classifyDefaultPrincipal([activeRecord])).toEqual({
       authBindingId: 'binding-1',
       displayName: 'Ada Lovelace',
@@ -152,10 +149,7 @@ it.effect('rejects Better Auth user bindings to non-human principals', () =>
       Effect.gen(function* rejectsNonHumanPrincipal() {
         const record = { ...activeRecord, principalKind };
         expect(
-          Predicate.isTagged(
-            yield* Effect.flip(classifyDefaultPrincipal([record])),
-            'PrincipalInactiveError',
-          ),
+          Predicate.isTagged(yield* Effect.flip(classifyDefaultPrincipal([record])), 'PrincipalInactiveError'),
         ).toBe(true);
         expect(
           Predicate.isTagged(
@@ -164,51 +158,39 @@ it.effect('rejects Better Auth user bindings to non-human principals', () =>
           ),
         ).toBe(true);
         expect(
-          Predicate.isTagged(
-            yield* Effect.flip(classifyAvailableTenants([record])),
-            'PrincipalInactiveError',
-          ),
+          Predicate.isTagged(yield* Effect.flip(classifyAvailableTenants([record])), 'PrincipalInactiveError'),
         ).toBe(true);
       }),
     ),
   ),
 );
-it.effect(
-  'resolves exactly one API-key subject for human, service, or integration principals',
-  () =>
-    Effect.gen(function* resolvesApiKeySubject() {
-      yield* Effect.all(
-        (['human', 'service', 'integration'] as const).map((principalKind) =>
-          Effect.gen(function* resolvesPrincipalKind() {
-            const resolved = yield* classifyApiKeyPrincipal([{ ...activeRecord, principalKind }]);
-            expect(resolved.principalKind).toBe(principalKind);
-            expect(resolved.authBindingId).toBe(activeRecord.authBindingId);
-          }),
-        ),
-      );
-      expect(
-        Predicate.isTagged(
-          yield* Effect.flip(
-            classifyApiKeyPrincipal([activeRecord, { ...activeRecord, tenantId: 't-2' }]),
-          ),
-          'PrincipalBindingAmbiguousError',
-        ),
-      ).toBe(true);
-    }),
+it.effect('resolves exactly one API-key subject for human, service, or integration principals', () =>
+  Effect.gen(function* resolvesApiKeySubject() {
+    yield* Effect.all(
+      (['human', 'service', 'integration'] as const).map((principalKind) =>
+        Effect.gen(function* resolvesPrincipalKind() {
+          const resolved = yield* classifyApiKeyPrincipal([{ ...activeRecord, principalKind }]);
+          expect(resolved.principalKind).toBe(principalKind);
+          expect(resolved.authBindingId).toBe(activeRecord.authBindingId);
+        }),
+      ),
+    );
+    expect(
+      Predicate.isTagged(
+        yield* Effect.flip(classifyApiKeyPrincipal([activeRecord, { ...activeRecord, tenantId: 't-2' }])),
+        'PrincipalBindingAmbiguousError',
+      ),
+    ).toBe(true);
+  }),
 );
 it.effect('fails closed for empty, inactive, and duplicate eligible resolver states', () =>
   Effect.gen(function* rejectsInvalidResolverStates() {
+    expect(Predicate.isTagged(yield* Effect.flip(classifyAvailableTenants([])), 'PrincipalBindingMissingError')).toBe(
+      true,
+    );
     expect(
       Predicate.isTagged(
-        yield* Effect.flip(classifyAvailableTenants([])),
-        'PrincipalBindingMissingError',
-      ),
-    ).toBe(true);
-    expect(
-      Predicate.isTagged(
-        yield* Effect.flip(
-          classifyAvailableTenants([{ ...activeRecord, bindingStatus: 'revoked' }]),
-        ),
+        yield* Effect.flip(classifyAvailableTenants([{ ...activeRecord, bindingStatus: 'revoked' }])),
         'PrincipalBindingInactiveError',
       ),
     ).toBe(true);
@@ -227,27 +209,20 @@ it.effect('fails closed for empty, inactive, and duplicate eligible resolver sta
     ).toBe(true);
     expect(
       Predicate.isTagged(
-        yield* Effect.flip(
-          classifyAvailableTenants([{ ...activeRecord, principalStatus: 'disabled' }]),
-        ),
+        yield* Effect.flip(classifyAvailableTenants([{ ...activeRecord, principalStatus: 'disabled' }])),
         'PrincipalInactiveError',
       ),
     ).toBe(true);
     expect(
       Predicate.isTagged(
-        yield* Effect.flip(
-          classifyAvailableTenants([{ ...activeRecord, tenantStatus: 'suspended' }]),
-        ),
+        yield* Effect.flip(classifyAvailableTenants([{ ...activeRecord, tenantStatus: 'suspended' }])),
         'TenantInactiveError',
       ),
     ).toBe(true);
     expect(
       Predicate.isTagged(
         yield* Effect.flip(
-          classifyAvailableTenants([
-            activeRecord,
-            { ...activeRecord, principalId: 'duplicate-principal' },
-          ]),
+          classifyAvailableTenants([activeRecord, { ...activeRecord, principalId: 'duplicate-principal' }]),
         ),
         'PrincipalBindingAmbiguousError',
       ),
@@ -261,7 +236,9 @@ it.effect('types database failures as resolver unavailability', () =>
         executor: yield* makeTestDatabase(() =>
           Effect.fail(
             new SqlError({
-              reason: new ConnectionError({ cause: new Error('secret database error') }),
+              reason: new ConnectionError({
+                cause: new Error('secret database error'),
+              }),
             }),
           ),
         ),

@@ -33,14 +33,12 @@ const CompactConfigSchema = Schema.Struct({
 const decodeRuntimePackage = Schema.decodeUnknownEffect(RuntimePackageSchema, {
   onExcessProperty: 'preserve',
 });
-const decodeRuntimePackageJson = Schema.decodeUnknownEffect(
-  Schema.fromJsonString(RuntimePackageSchema),
-  { onExcessProperty: 'preserve' },
-);
-const decodeCompactConfigJson = Schema.decodeUnknownEffect(
-  Schema.fromJsonString(CompactConfigSchema),
-  { onExcessProperty: 'preserve' },
-);
+const decodeRuntimePackageJson = Schema.decodeUnknownEffect(Schema.fromJsonString(RuntimePackageSchema), {
+  onExcessProperty: 'preserve',
+});
+const decodeCompactConfigJson = Schema.decodeUnknownEffect(Schema.fromJsonString(CompactConfigSchema), {
+  onExcessProperty: 'preserve',
+});
 /** @typedef {typeof Schema.Json.Type} JsonValue */
 /** @type {import('effect/Schema').Codec<JsonValue, JsonValue>} */
 const JsonValueSchema = Schema.suspend(() =>
@@ -173,20 +171,12 @@ const normalizeRuntimePackageDependencies = (runtimeManifest, workspaceRoot, pat
     const modernPackageVersion = compactConfig?.packageSource?.modernPackageVersion;
     const aliasScope = compactConfig?.packageSource?.aliasScope;
     const aliasPackageNamePrefix = compactConfig?.packageSource?.aliasPackageNamePrefix;
-    if (
-      modernPackageVersion === undefined ||
-      aliasScope === undefined ||
-      aliasPackageNamePrefix === undefined
-    ) {
+    if (modernPackageVersion === undefined || aliasScope === undefined || aliasPackageNamePrefix === undefined) {
       return runtimeManifest;
     }
 
     const aliasPrefix = `@${aliasScope}/${aliasPackageNamePrefix}`;
-    const dependencies = normalizeDependencySection(
-      runtimeManifest.dependencies,
-      aliasPrefix,
-      modernPackageVersion,
-    );
+    const dependencies = normalizeDependencySection(runtimeManifest.dependencies, aliasPrefix, modernPackageVersion);
     const optionalDependencies = normalizeDependencySection(
       runtimeManifest.optionalDependencies,
       aliasPrefix,
@@ -233,13 +223,7 @@ const isCurrentPlatformSupported = (dependencyManifest) =>
  * @param {string} workspaceRoot - Workspace root.
  * @param {import('effect/Path').Path} pathService - Path service.
  */
-const readInstalledDependencyPackage = (
-  dependencyName,
-  dependencyVersion,
-  appRoot,
-  workspaceRoot,
-  pathService,
-) =>
+const readInstalledDependencyPackage = (dependencyName, dependencyVersion, appRoot, workspaceRoot, pathService) =>
   Effect.gen(function* readInstalledDependencyPackageEffect() {
     const fileSystem = yield* FileSystem.FileSystem;
     const dependencySegments = dependencyName.split('/');
@@ -249,10 +233,7 @@ const readInstalledDependencyPackage = (
     ];
     for (const candidate of directCandidates) {
       const dependencyManifest = yield* readOptionalRuntimePackage(candidate);
-      if (
-        dependencyManifest?.name === dependencyName &&
-        dependencyManifest.version === dependencyVersion
-      ) {
+      if (dependencyManifest?.name === dependencyName && dependencyManifest.version === dependencyVersion) {
         return dependencyManifest;
       }
     }
@@ -272,10 +253,7 @@ const readInstalledDependencyPackage = (
         packageJsonFile,
       );
       const dependencyManifest = yield* readOptionalRuntimePackage(candidate);
-      if (
-        dependencyManifest?.name === dependencyName &&
-        dependencyManifest.version === dependencyVersion
-      ) {
+      if (dependencyManifest?.name === dependencyName && dependencyManifest.version === dependencyVersion) {
         return dependencyManifest;
       }
     }
@@ -303,8 +281,7 @@ const removeIncompatibleDependencySection = (dependencies, appRoot, workspaceRoo
           workspaceRoot,
           pathService,
         );
-        const compatible =
-          dependencyManifest === null || isCurrentPlatformSupported(dependencyManifest);
+        const compatible = dependencyManifest === null || isCurrentPlatformSupported(dependencyManifest);
         if (!compatible) {
           yield* Effect.log(
             `[ultramodern:zerops] excluded ${dependencyName}@${dependencyVersion} from ${process.platform}/${process.arch} runtime`,
@@ -322,26 +299,11 @@ const removeIncompatibleDependencySection = (dependencies, appRoot, workspaceRoo
  * @param {string} workspaceRoot - Workspace root.
  * @param {import('effect/Path').Path} pathService - Path service.
  */
-const removeIncompatiblePlatformDependencies = (
-  runtimeManifest,
-  appRoot,
-  workspaceRoot,
-  pathService,
-) =>
+const removeIncompatiblePlatformDependencies = (runtimeManifest, appRoot, workspaceRoot, pathService) =>
   Effect.all(
     [
-      removeIncompatibleDependencySection(
-        runtimeManifest.dependencies,
-        appRoot,
-        workspaceRoot,
-        pathService,
-      ),
-      removeIncompatibleDependencySection(
-        runtimeManifest.optionalDependencies,
-        appRoot,
-        workspaceRoot,
-        pathService,
-      ),
+      removeIncompatibleDependencySection(runtimeManifest.dependencies, appRoot, workspaceRoot, pathService),
+      removeIncompatibleDependencySection(runtimeManifest.optionalDependencies, appRoot, workspaceRoot, pathService),
     ],
     { concurrency: 'unbounded' },
   ).pipe(
@@ -376,9 +338,7 @@ const collectPackageDirectoryEntries = (absoluteDirectory, pathService) =>
           const packageManifest = yield* readOptionalRuntimePackage(
             pathService.join(packageDirectory, packageJsonFile),
           );
-          return packageManifest?.name === undefined
-            ? null
-            : [packageManifest.name, packageDirectory];
+          return packageManifest?.name === undefined ? null : [packageManifest.name, packageDirectory];
         }),
       { concurrency: 'unbounded' },
     );
@@ -414,9 +374,7 @@ const removeWorkspaceDependencies = (runtimeManifest, workspacePackages) => {
     }
     const entries = Object.entries(dependencies);
     return {
-      dependencies: Object.fromEntries(
-        entries.filter(([dependencyName]) => !workspacePackages.has(dependencyName)),
-      ),
+      dependencies: Object.fromEntries(entries.filter(([dependencyName]) => !workspacePackages.has(dependencyName))),
       localDependencies: entries
         .filter(([dependencyName]) => workspacePackages.has(dependencyName))
         .map(([dependencyName]) => dependencyName),
@@ -433,10 +391,7 @@ const removeWorkspaceDependencies = (runtimeManifest, workspacePackages) => {
   }
   return {
     installPackage,
-    localDependencies: [
-      ...runtimeDependencies.localDependencies,
-      ...runtimeOptionalDependencies.localDependencies,
-    ],
+    localDependencies: [...runtimeDependencies.localDependencies, ...runtimeOptionalDependencies.localDependencies],
   };
 };
 
@@ -495,7 +450,9 @@ const rewriteTsExports = (exportTarget) => {
 const listTsFiles = (directory) =>
   Effect.gen(function* listTsFilesEffect() {
     const fileSystem = yield* FileSystem.FileSystem;
-    const entries = yield* fileSystem.readDirectory(directory, { recursive: true });
+    const entries = yield* fileSystem.readDirectory(directory, {
+      recursive: true,
+    });
     return entries
       .filter((item) => item.endsWith('.ts') && !item.endsWith('.d.ts'))
       .map((item) => `${directory}/${item}`);
@@ -509,8 +466,7 @@ const stripParameterTypes = (parameters) =>
 const rewriteArrowParameters = (_match, parameters) => `(${stripParameterTypes(parameters)}) =>`;
 
 /** @param {string} _match - Full match. @param {string} name - Function name. @param {string} parameters - Parameter source. */
-const rewriteFunctionParameters = (_match, name, parameters) =>
-  `function${name}(${stripParameterTypes(parameters)})`;
+const rewriteFunctionParameters = (_match, name, parameters) => `function${name}(${stripParameterTypes(parameters)})`;
 
 /** @param {string} source - TypeScript source. */
 const transpileGeneratedPackageTs = (source) =>
@@ -550,10 +506,7 @@ const makeWorkspacePackageRuntimeSafe = (packageDirectory) =>
       (tsFile) =>
         Effect.gen(function* transpileWorkspacePackageFileEffect() {
           const source = yield* fileSystem.readFileString(tsFile);
-          yield* fileSystem.writeFileString(
-            tsFile.replace(/\.ts$/u, '.js'),
-            transpileGeneratedPackageTs(source),
-          );
+          yield* fileSystem.writeFileString(tsFile.replace(/\.ts$/u, '.js'), transpileGeneratedPackageTs(source));
         }),
       { concurrency: 'unbounded', discard: true },
     );
@@ -572,13 +525,11 @@ const copyWorkspacePackage = (workspacePackageName, workspacePackages, runtimeDi
   }
   return Effect.gen(function* copyWorkspacePackageEffect() {
     const fileSystem = yield* FileSystem.FileSystem;
-    const targetDirectory = pathService.join(
-      runtimeDir,
-      'node_modules',
-      ...workspacePackageName.split('/'),
-    );
+    const targetDirectory = pathService.join(runtimeDir, 'node_modules', ...workspacePackageName.split('/'));
     yield* fileSystem.remove(targetDirectory, { force: true, recursive: true });
-    yield* fileSystem.makeDirectory(pathService.dirname(targetDirectory), { recursive: true });
+    yield* fileSystem.makeDirectory(pathService.dirname(targetDirectory), {
+      recursive: true,
+    });
     yield* copyDirectoryWithoutNodeModules(sourceDirectory, targetDirectory, pathService);
     yield* makeWorkspacePackageRuntimeSafe(targetDirectory);
   });
@@ -591,13 +542,7 @@ const copyWorkspacePackage = (workspacePackageName, workspacePackages, runtimeDi
  * @param {string} workspaceRoot - Workspace root.
  * @param {import('effect/Path').Path} pathService - Path service.
  */
-const installRuntimeDependencies = (
-  runtimeManifest,
-  appId,
-  runtimeDir,
-  workspaceRoot,
-  pathService,
-) =>
+const installRuntimeDependencies = (runtimeManifest, appId, runtimeDir, workspaceRoot, pathService) =>
   Effect.gen(function* installRuntimeDependenciesEffect() {
     const fileSystem = yield* FileSystem.FileSystem;
     const childProcessSpawner = yield* ChildProcessSpawner.ChildProcessSpawner;
@@ -605,15 +550,17 @@ const installRuntimeDependencies = (
       prefix: `ultramodern-zerops-${appId}-`,
     });
     const workspacePackages = yield* collectWorkspacePackages(workspaceRoot, pathService);
-    const { installPackage, localDependencies } = removeWorkspaceDependencies(
-      runtimeManifest,
-      workspacePackages,
-    );
+    const { installPackage, localDependencies } = removeWorkspaceDependencies(runtimeManifest, workspacePackages);
     yield* writeJson(pathService.join(installDir, packageJsonFile), installPackage);
     const installCommand = ChildProcess.make(
       process.platform === 'win32' ? 'npm.cmd' : 'npm',
       ['install', '--omit=dev', '--no-audit', '--fund=false', '--legacy-peer-deps'],
-      { cwd: installDir, stderr: 'inherit', stdin: 'inherit', stdout: 'inherit' },
+      {
+        cwd: installDir,
+        stderr: 'inherit',
+        stdin: 'inherit',
+        stdout: 'inherit',
+      },
     );
     const installExitCode = yield* childProcessSpawner.exitCode(installCommand);
     if (installExitCode !== 0) {
@@ -640,7 +587,7 @@ const materializeCommand = Command.make(
     appId: Flag.string('app'),
     packageDir: Flag.string('package-dir'),
     packageName: Flag.string('package'),
-    worker: Flag.boolean('worker'),
+    worker: Flag.boolean('worker').pipe(Flag.withDefault(false)),
   },
   ({ appId, packageDir, packageName, worker }) =>
     Effect.gen(function* materializeCommandEffect() {
@@ -652,11 +599,7 @@ const materializeCommand = Command.make(
       yield* assertRelativePath('--package-dir', packageDir, pathService);
       const appRoot = pathService.resolve(workspaceRoot, packageDir);
       const appOutputDir = pathService.join(appRoot, '.output');
-      const runtimeDir = pathService.join(
-        workspaceRoot,
-        '.zerops/runtime',
-        worker ? `${appId}-worker` : appId,
-      );
+      const runtimeDir = pathService.join(workspaceRoot, '.zerops/runtime', worker ? `${appId}-worker` : appId);
       yield* Effect.all(
         [
           assertInsideWorkspace('package directory', appRoot, workspaceRoot, pathService),
@@ -676,16 +619,19 @@ const materializeCommand = Command.make(
           );
         }
 
-        yield* fileSystem.remove(runtimeDir, { force: true, recursive: true });
-        yield* fileSystem.makeDirectory(pathService.dirname(runtimeDir), { recursive: true });
+        yield* fileSystem.remove(runtimeDir, {
+          force: true,
+          recursive: true,
+        });
+        yield* fileSystem.makeDirectory(pathService.dirname(runtimeDir), {
+          recursive: true,
+        });
         yield* worker
           ? fileSystem.makeDirectory(runtimeDir, { recursive: true })
           : fileSystem.copy(appOutputDir, runtimeDir);
         const entryPath = pathService.join(runtimeDir, 'index.js');
         if (!worker && !(yield* fileSystem.exists(entryPath))) {
-          yield* fail(
-            `Modern.js Node deploy output is missing ${pathService.relative(workspaceRoot, entryPath)}`,
-          );
+          yield* fail(`Modern.js Node deploy output is missing ${pathService.relative(workspaceRoot, entryPath)}`);
         }
       });
       yield* prepareRuntimeDirectory;
@@ -709,11 +655,7 @@ const materializeCommand = Command.make(
             }),
         }).pipe(Effect.flatMap(decodeRuntimePackage));
       }
-      runtimePackage = yield* normalizeRuntimePackageDependencies(
-        runtimePackage,
-        workspaceRoot,
-        pathService,
-      );
+      runtimePackage = yield* normalizeRuntimePackageDependencies(runtimePackage, workspaceRoot, pathService);
       runtimePackage = yield* removeIncompatiblePlatformDependencies(
         runtimePackage,
         appRoot,
@@ -730,18 +672,9 @@ const materializeCommand = Command.make(
         },
       });
       yield* writeJson(packageJsonPath, runtimePackage);
-      yield* installRuntimeDependencies(
-        runtimePackage,
-        appId,
-        runtimeDir,
-        workspaceRoot,
-        pathService,
-      );
+      yield* installRuntimeDependencies(runtimePackage, appId, runtimeDir, workspaceRoot, pathService);
       yield* Effect.log(
-        `[ultramodern:zerops] materialized ${appId} runtime at ${pathService.relative(
-          workspaceRoot,
-          runtimeDir,
-        )}`,
+        `[ultramodern:zerops] materialized ${appId} runtime at ${pathService.relative(workspaceRoot, runtimeDir)}`,
       );
     }),
 );

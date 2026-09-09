@@ -1,15 +1,8 @@
-import { purgeFixtureRows } from '../../../../packages/core-runtime/tests/support/fixture-cleanup.ts';
-import { expect, it } from 'effect-rstest';
-import { makeTestDatabaseFromPool } from '../../../../packages/core-runtime/tests/support/database.ts';
-import { Effect, Layer, Predicate, Schema } from 'effect';
 import { mkdir, mkdtemp, rm, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { pathToFileURL } from 'node:url';
-import { and, eq, inArray, sql } from 'drizzle-orm';
-import { AuthDatabase, makeAuthDatabase } from '../../api/auth/db/client.ts';
-import { exportJWK, generateKeyPair, jwtVerify } from 'jose';
-import { Pool } from 'pg';
+
 import {
   PrincipalResolver,
   PrincipalResolverUnavailableError,
@@ -24,6 +17,12 @@ import {
   makeTenantModuleStateService,
 } from '@app/core-runtime';
 import type { InstalledModuleCatalog } from '@app/core-runtime';
+import { and, eq, inArray, sql } from 'drizzle-orm';
+import { Effect, Layer, Predicate, Schema } from 'effect';
+import { expect, it } from 'effect-rstest';
+import { exportJWK, generateKeyPair, jwtVerify } from 'jose';
+import { Pool } from 'pg';
+
 import {
   actionInvocations,
   auditEvents,
@@ -35,18 +34,19 @@ import {
   tenantModuleStates,
   tenants,
 } from '../../../../packages/core-runtime/src/db/schema.ts';
+import { makeTestDatabaseFromPool } from '../../../../packages/core-runtime/tests/support/database.ts';
+import { purgeFixtureRows } from '../../../../packages/core-runtime/tests/support/fixture-cleanup.ts';
+import { renderActionPrincipalServer } from '../../../../scripts/scaffolding/microvertical-action-boundary/scaffold.mts';
 import { AuthConfig, loadAuthConfig } from '../../api/auth/config.ts';
+import { AuthDatabase, makeAuthDatabase } from '../../api/auth/db/client.ts';
+import { account, authRelations, session, user } from '../../api/auth/db/schema.ts';
 import { parseGatewayIssuerConfig } from '../../api/auth/gateway-issuer-config.ts';
 import { makeGatewayIssuerLayer } from '../../api/auth/gateway-issuer.ts';
 import type { GatewayIssuerLayerOptions } from '../../api/auth/gateway-issuer.ts';
-import { account, authRelations, session, user } from '../../api/auth/db/schema.ts';
 import { AuthenticationService, makeAuthenticationService } from '../../api/auth/service.ts';
 import { makeShellAuthenticationApiRuntime } from '../../api/index.ts';
-import { renderActionPrincipalServer } from '../../../../scripts/scaffolding/microvertical-action-boundary/scaffold.mts';
 
-type AuthenticationRuntimeHandler = ReturnType<
-  ReturnType<typeof makeShellAuthenticationApiRuntime>['createHandler']
->;
+type AuthenticationRuntimeHandler = ReturnType<ReturnType<typeof makeShellAuthenticationApiRuntime>['createHandler']>;
 const email = 'better-auth-runtime@example.test';
 const password = 'correct-horse-battery-staple';
 const tenantId = '30000000-0000-4000-8000-000000000001';
@@ -57,15 +57,22 @@ const fixtureLegalEntityId = '35000000-0000-4000-8000-000000000001';
 const fixtureAuthBindingId = '45000000-0000-4000-8000-000000000001';
 const PrincipalIdSchema = Schema.String.pipe(Schema.brand('PrincipalId'));
 const IdentityResponseSchema = Schema.Struct({
-  identity: Schema.Struct({ email: Schema.String, principalId: PrincipalIdSchema }),
+  identity: Schema.Struct({
+    email: Schema.String,
+    principalId: PrincipalIdSchema,
+  }),
 });
 const ProblemStatusSchema = Schema.Struct({ status: Schema.Number });
 const SessionResponseSchema = Schema.Struct({
   identity: Schema.optional(Schema.Struct({ principalId: Schema.optional(PrincipalIdSchema) })),
 });
-const RetryableProblemSchema = Schema.Struct({ retryable: Schema.optional(Schema.Boolean) });
+const RetryableProblemSchema = Schema.Struct({
+  retryable: Schema.optional(Schema.Boolean),
+});
 const TokenResponseSchema = Schema.Struct({ token: Schema.String });
-const DefectProblemSchema = Schema.Struct({ detail: Schema.optional(Schema.String) });
+const DefectProblemSchema = Schema.Struct({
+  detail: Schema.optional(Schema.String),
+});
 const legalEntitySelectionOptions = {
   contextAccess: {
     legalEntities: ({ legalEntityIds }: { readonly legalEntityIds: readonly string[] }) =>
@@ -78,7 +85,12 @@ const legalEntitySelectionOptions = {
   },
   legalEntityContext: {
     listActiveForTenant: () =>
-      Effect.succeed([{ legalEntityId: fixtureLegalEntityId, legalName: 'Fixture legal entity' }]),
+      Effect.succeed([
+        {
+          legalEntityId: fixtureLegalEntityId,
+          legalName: 'Fixture legal entity',
+        },
+      ]),
     validateSelection: (_tenantId: string, legalEntityId: string) =>
       legalEntityId === fixtureLegalEntityId
         ? Effect.succeed({ legalEntityId, legalName: 'Fixture legal entity' })
@@ -118,9 +130,7 @@ const verifiedGatewayAssertion = Effect.fnUntraced(function* verifiedGatewayAsse
     }),
   );
   return {
-    principal: yield* Schema.decodeUnknownEffect(TrustedPrincipalContextSchema)(
-      verified.payload['principal'],
-    ),
+    principal: yield* Schema.decodeUnknownEffect(TrustedPrincipalContextSchema)(verified.payload['principal']),
     token: assertion.token,
   };
 });
@@ -146,7 +156,10 @@ const installedPageCatalog = (): InstalledModuleCatalog =>
   buildInstalledModuleCatalog([
     {
       contract: {
-        deployment: { appId: 'inventory-stock', buildMarker: 'integration-build' },
+        deployment: {
+          appId: 'inventory-stock',
+          buildMarker: 'integration-build',
+        },
         manifest: {
           activation: {
             defaultState: 'inactive',
@@ -265,19 +278,14 @@ it.live(
       makeTenantModuleStateService({ executor: coreDatabase }),
     );
     const handlers: AuthenticationRuntimeHandler[] = [];
-    const generatedFixtureRoot = yield* Effect.tryPromise(() =>
-      mkdtemp(path.join(tmpdir(), 'ontos-auth-runtime-')),
-    );
+    const generatedFixtureRoot = yield* Effect.tryPromise(() => mkdtemp(path.join(tmpdir(), 'ontos-auth-runtime-')));
     const cleanup = Effect.fnUntraced(function* runIntegration2() {
       yield* purgeFixtureRows([
         coreDatabase.delete(dataAccessEvents).where(eq(dataAccessEvents.tenantId, tenantId)),
         coreDatabase.delete(auditEvents).where(eq(auditEvents.tenantId, tenantId)),
         coreDatabase.delete(actionInvocations).where(eq(actionInvocations.tenantId, tenantId)),
       ]);
-      const existingUsers = yield* authDatabase
-        .select({ id: user.id })
-        .from(user)
-        .where(eq(user.email, email));
+      const existingUsers = yield* authDatabase.select({ id: user.id }).from(user).where(eq(user.email, email));
       yield* Effect.all(
         existingUsers.map(
           Effect.fnUntraced(function* runIntegration3(existingUser) {
@@ -293,17 +301,11 @@ it.live(
         ),
       );
       yield* purgeFixtureRows([
-        coreDatabase
-          .delete(principalAuthBindings)
-          .where(eq(principalAuthBindings.principalId, principalId)),
+        coreDatabase.delete(principalAuthBindings).where(eq(principalAuthBindings.principalId, principalId)),
         coreDatabase.delete(tenantModuleStates).where(eq(tenantModuleStates.tenantId, tenantId)),
-        coreDatabase
-          .delete(tenantModuleStates)
-          .where(eq(tenantModuleStates.tenantId, foreignTenantId)),
+        coreDatabase.delete(tenantModuleStates).where(eq(tenantModuleStates.tenantId, foreignTenantId)),
         coreDatabase.delete(principals).where(eq(principals.principalId, principalId)),
-        coreDatabase
-          .delete(legalEntities)
-          .where(eq(legalEntities.legalEntityId, fixtureLegalEntityId)),
+        coreDatabase.delete(legalEntities).where(eq(legalEntities.legalEntityId, fixtureLegalEntityId)),
         coreDatabase.delete(tenants).where(eq(tenants.tenantId, tenantId)),
         coreDatabase.delete(tenants).where(eq(tenants.tenantId, foreignTenantId)),
       ]);
@@ -323,11 +325,7 @@ it.live(
       }, Effect.orDie),
     );
     yield* cleanup();
-    const betterAuthUserId = yield* authentication.createFixtureUser(
-      email,
-      'Runtime fixture',
-      password,
-    );
+    const betterAuthUserId = yield* authentication.createFixtureUser(email, 'Runtime fixture', password);
     yield* coreDatabase.insert(tenants).values({
       defaultLocale: 'en',
       name: 'Authentication runtime tenant',
@@ -376,9 +374,7 @@ it.live(
     const requestHeaders = new Headers({
       origin: configuration.baseUrl,
     });
-    const invalid = yield* Effect.flip(
-      authentication.signIn(email, 'wrong-password', requestHeaders),
-    );
+    const invalid = yield* Effect.flip(authentication.signIn(email, 'wrong-password', requestHeaders));
     expect(Predicate.isTagged(invalid, 'InvalidCredentialsError')).toBe(true);
     const anonymousRuntime = makeShellAuthenticationApiRuntime(
       authenticationLayer,
@@ -399,7 +395,10 @@ it.live(
       unavailableHandler.handler(
         new Request(`${configuration.baseUrl}/auth/gateway-context`, {
           body: JSON.stringify({ audience: 'inventory-stock' }),
-          headers: { 'content-type': 'application/json', origin: configuration.baseUrl },
+          headers: {
+            'content-type': 'application/json',
+            origin: configuration.baseUrl,
+          },
           method: 'POST',
         }),
       ),
@@ -422,7 +421,10 @@ it.live(
             entrypointKey: 'testing.pages.page.customers',
             moduleId: 'testing.pages',
           }),
-          headers: { 'content-type': 'application/json', origin: configuration.baseUrl },
+          headers: {
+            'content-type': 'application/json',
+            origin: configuration.baseUrl,
+          },
           method: 'POST',
         }),
       ),
@@ -433,15 +435,16 @@ it.live(
       unavailableHandler.handler(
         new Request(`${configuration.baseUrl}/auth/sign-in`, {
           body: JSON.stringify({ email, password: 'wrong-password' }),
-          headers: { 'content-type': 'application/json', origin: configuration.baseUrl },
+          headers: {
+            'content-type': 'application/json',
+            origin: configuration.baseUrl,
+          },
           method: 'POST',
         }),
       ),
     );
     expect(invalidSignInResponse.status).toBe(401);
-    expect(headerValue(invalidSignInResponse.headers, 'content-type')).toMatch(
-      /^application\/problem\+json/u,
-    );
+    expect(headerValue(invalidSignInResponse.headers, 'content-type')).toMatch(/^application\/problem\+json/u);
     const invalidSignInProblem = Schema.decodeUnknownSync(ProblemStatusSchema)(
       yield* Effect.tryPromise(() => invalidSignInResponse.json()),
     );
@@ -450,7 +453,10 @@ it.live(
       unavailableHandler.handler(
         new Request(`${configuration.baseUrl}/auth/sign-in`, {
           body: JSON.stringify({ email, password }),
-          headers: { 'content-type': 'application/json', origin: configuration.baseUrl },
+          headers: {
+            'content-type': 'application/json',
+            origin: configuration.baseUrl,
+          },
           method: 'POST',
         }),
       ),
@@ -496,9 +502,7 @@ it.live(
       contextAccessLayer,
     ).createHandler();
     handlers.push(pageRuntime);
-    const exactPageResponse = yield* Effect.tryPromise(() =>
-      pageRuntime.handler(exactPageRequest()),
-    );
+    const exactPageResponse = yield* Effect.tryPromise(() => pageRuntime.handler(exactPageRequest()));
     expect(exactPageResponse.status).toBe(200);
     expect(yield* Effect.tryPromise(() => exactPageResponse.json())).toEqual({
       appId: 'inventory-stock',
@@ -574,14 +578,10 @@ it.live(
       }),
     ).createHandler();
     handlers.push(deniedPageRuntime);
-    const deniedPageResponse = yield* Effect.tryPromise(() =>
-      deniedPageRuntime.handler(exactPageRequest()),
-    );
+    const deniedPageResponse = yield* Effect.tryPromise(() => deniedPageRuntime.handler(exactPageRequest()));
     expect(deniedPageResponse.status).toBe(403);
     expect(
-      Schema.decodeUnknownSync(ProblemStatusSchema)(
-        yield* Effect.tryPromise(() => deniedPageResponse.json()),
-      ).status,
+      Schema.decodeUnknownSync(ProblemStatusSchema)(yield* Effect.tryPromise(() => deniedPageResponse.json())).status,
     ).toBe(403);
     const currentSessionResponse = yield* Effect.tryPromise(() =>
       unavailableHandler.handler(
@@ -592,9 +592,8 @@ it.live(
     );
     expect(currentSessionResponse.status).toBe(200);
     expect(
-      Schema.decodeUnknownSync(SessionResponseSchema)(
-        yield* Effect.tryPromise(() => currentSessionResponse.json()),
-      ).identity?.principalId,
+      Schema.decodeUnknownSync(SessionResponseSchema)(yield* Effect.tryPromise(() => currentSessionResponse.json()))
+        .identity?.principalId,
     ).toBe(principalId);
     const missingIdempotencyResponse = yield* Effect.tryPromise(() =>
       unavailableHandler.handler(
@@ -640,8 +639,7 @@ it.live(
         }) =>
           Effect.succeed(
             tenantIds.map((key) => ({
-              decision:
-                permission === 'manage_identity' ? ('denied' as const) : ('allowed' as const),
+              decision: permission === 'manage_identity' ? ('denied' as const) : ('allowed' as const),
               key,
             })),
           ),
@@ -651,7 +649,10 @@ it.live(
     const deniedIdentityAdministrationResponse = yield* Effect.tryPromise(() =>
       deniedIdentityAdministrationRuntime.handler(
         new Request(`${configuration.baseUrl}/auth/identity/principals`, {
-          body: JSON.stringify({ displayName: 'Denied managed identity', kind: 'service' }),
+          body: JSON.stringify({
+            displayName: 'Denied managed identity',
+            kind: 'service',
+          }),
           headers: {
             'content-type': 'application/json',
             cookie: headerValue(authenticatedHeaders, 'cookie'),
@@ -779,9 +780,7 @@ it.live(
     );
     expect(refreshedModulesResponse.status).toBe(200);
     expect(
-      refreshedModulesResponse.headers
-        .getSetCookie()
-        .some((header) => header.startsWith('refreshed-session=value')),
+      refreshedModulesResponse.headers.getSetCookie().some((header) => header.startsWith('refreshed-session=value')),
     ).toBe(true);
     const unavailableModuleStates = {
       getTenantModuleStates: () =>
@@ -830,18 +829,15 @@ it.live(
       ),
     );
     expect(unavailableModulesResponse.status).toBe(503);
-    const unavailableModulesProblem = yield* Effect.tryPromise(() =>
-      unavailableModulesResponse.text(),
-    );
+    const unavailableModulesProblem = yield* Effect.tryPromise(() => unavailableModulesResponse.text());
     expect(unavailableModulesProblem).not.toMatch(/SQL|30000000|40000000/u);
     const unavailablePageResponse = yield* Effect.tryPromise(() =>
       unavailableModulesHandler.handler(exactPageRequest()),
     );
     expect(unavailablePageResponse.status).toBe(503);
     expect(
-      Schema.decodeUnknownSync(ProblemStatusSchema)(
-        yield* Effect.tryPromise(() => unavailablePageResponse.json()),
-      ).status,
+      Schema.decodeUnknownSync(ProblemStatusSchema)(yield* Effect.tryPromise(() => unavailablePageResponse.json()))
+        .status,
     ).toBe(503);
     const unavailableGatewayResponse = yield* Effect.tryPromise(() =>
       unavailableHandler.handler(
@@ -857,17 +853,13 @@ it.live(
       ),
     );
     expect(unavailableGatewayResponse.status).toBe(503);
-    expect(headerValue(unavailableGatewayResponse.headers, 'content-type')).toMatch(
-      /application\/problem\+json/u,
-    );
+    expect(headerValue(unavailableGatewayResponse.headers, 'content-type')).toMatch(/application\/problem\+json/u);
     expect(
       Schema.decodeUnknownSync(RetryableProblemSchema)(
         yield* Effect.tryPromise(() => unavailableGatewayResponse.json()),
       ).retryable,
     ).toBe(true);
-    const pair = yield* Effect.tryPromise(() =>
-      generateKeyPair('EdDSA', { crv: 'Ed25519', extractable: true }),
-    );
+    const pair = yield* Effect.tryPromise(() => generateKeyPair('EdDSA', { crv: 'Ed25519', extractable: true }));
     const privateJwk = yield* Effect.tryPromise(() => exportJWK(pair.privateKey));
     const publicJwk = yield* Effect.tryPromise(() => exportJWK(pair.publicKey));
     const issuerDependencies: GatewayIssuerLayerOptions = {
@@ -909,10 +901,7 @@ it.live(
         }),
       ),
     );
-    expect(
-      assertionResponse.status,
-      yield* Effect.tryPromise(() => assertionResponse.clone().text()),
-    ).toBe(200);
+    expect(assertionResponse.status, yield* Effect.tryPromise(() => assertionResponse.clone().text())).toBe(200);
     const { principal: verifiedPrincipal, token: assertionToken } = yield* verifiedGatewayAssertion(
       assertionResponse,
       pair.publicKey,
@@ -924,7 +913,9 @@ it.live(
     expect(verifiedPrincipal.principalId).toBe(principalId);
     expect(verifiedPrincipal.tenantId).toBe(tenantId);
     yield* Effect.tryPromise(() =>
-      mkdir(path.join(generatedFixtureRoot, 'node_modules', '@app'), { recursive: true }),
+      mkdir(path.join(generatedFixtureRoot, 'node_modules', '@app'), {
+        recursive: true,
+      }),
     );
     yield* Effect.tryPromise(() =>
       symlink(
@@ -948,11 +939,7 @@ it.live(
       ),
     );
     yield* Effect.tryPromise(() =>
-      symlink(
-        path.join(appRoot, 'node_modules/effect'),
-        path.join(generatedFixtureRoot, 'node_modules/effect'),
-        'dir',
-      ),
+      symlink(path.join(appRoot, 'node_modules/effect'), path.join(generatedFixtureRoot, 'node_modules/effect'), 'dir'),
     );
     yield* Effect.tryPromise(() =>
       symlink(
@@ -963,15 +950,9 @@ it.live(
     );
     const generatedVerifierPath = path.join(generatedFixtureRoot, 'action-principal.ts');
     yield* Effect.tryPromise(() =>
-      writeFile(
-        generatedVerifierPath,
-        renderActionPrincipalServer({ appId: 'inventory-stock' }),
-        'utf-8',
-      ),
+      writeFile(generatedVerifierPath, renderActionPrincipalServer({ appId: 'inventory-stock' }), 'utf-8'),
     );
-    const generatedVerifier = yield* Effect.tryPromise(
-      () => import(pathToFileURL(generatedVerifierPath).href),
-    );
+    const generatedVerifier = yield* Effect.tryPromise(() => import(pathToFileURL(generatedVerifierPath).href));
     type GeneratedVerifier = (
       authorization: string,
       options: {
@@ -983,9 +964,7 @@ it.live(
       },
     ) => Effect.Effect<typeof TrustedPrincipalContextSchema.Type, unknown>;
     const verifyActionPrincipal = Schema.decodeUnknownSync(
-      Schema.declare<GeneratedVerifier>((value): value is GeneratedVerifier =>
-        Predicate.isFunction(value),
-      ),
+      Schema.declare<GeneratedVerifier>((value): value is GeneratedVerifier => Predicate.isFunction(value)),
     )(generatedVerifier.verifyActionPrincipal);
     expect(Predicate.isFunction(verifyActionPrincipal)).toBe(true);
     const generatedPrincipal = Schema.decodeUnknownSync(TrustedPrincipalContextSchema)(
@@ -1054,9 +1033,7 @@ it.live(
       ),
     );
     expect(defectResponse.status).toBe(500);
-    expect(headerValue(defectResponse.headers, 'content-type')).toMatch(
-      /application\/problem\+json/u,
-    );
+    expect(headerValue(defectResponse.headers, 'content-type')).toMatch(/application\/problem\+json/u);
     const defectProblem = Schema.decodeUnknownSync(DefectProblemSchema)(
       yield* Effect.tryPromise(() => defectResponse.json()),
     );
@@ -1068,12 +1045,13 @@ it.live(
     assertOptionalField(stillAuthenticated.identity, 'principalId', principalId);
     yield* coreDatabase
       .update(principalAuthBindings)
-      .set({ revokedAt: new Date('2026-09-01T00:00:00.000Z'), status: 'revoked' })
+      .set({
+        revokedAt: new Date('2026-09-01T00:00:00.000Z'),
+        status: 'revoked',
+      })
       .where(eq(principalAuthBindings.providerSubjectId, betterAuthUserId));
     yield* assertSessionForbidden(
-      authentication
-        .currentSession(authenticatedHeaders)
-        .pipe(Effect.provide(authenticationContextLayer)),
+      authentication.currentSession(authenticatedHeaders).pipe(Effect.provide(authenticationContextLayer)),
     );
     const forbiddenModulesResponse = yield* Effect.tryPromise(() =>
       unavailableHandler.handler(
@@ -1084,9 +1062,7 @@ it.live(
     );
     expect(forbiddenModulesResponse.status).toBe(401);
     expect(headerValue(forbiddenModulesResponse.headers, 'www-authenticate')).toMatch(/^Bearer/u);
-    expect(yield* Effect.tryPromise(() => forbiddenModulesResponse.text())).not.toMatch(
-      /30000000|40000000/u,
-    );
+    expect(yield* Effect.tryPromise(() => forbiddenModulesResponse.text())).not.toMatch(/30000000|40000000/u);
     yield* coreDatabase
       .update(principalAuthBindings)
       .set({ revokedAt: null, status: 'active' })
@@ -1120,9 +1096,7 @@ it.live(
       ),
     );
     expect(expiredModulesResponse.status).toBe(401);
-    expect(yield* Effect.tryPromise(() => expiredModulesResponse.text())).not.toMatch(
-      /30000000|40000000/u,
-    );
+    expect(yield* Effect.tryPromise(() => expiredModulesResponse.text())).not.toMatch(/30000000|40000000/u);
   }),
 );
 it.live(
@@ -1139,7 +1113,13 @@ it.live(
     const secondAuthBindingId = '46000000-0000-4000-8000-000000000002';
     const legalEntityByTenant = new Map([
       [firstTenantId, { legalEntityId: firstLegalEntityId, legalName: 'First legal entity' }],
-      [secondTenantId, { legalEntityId: secondLegalEntityId, legalName: 'Second legal entity' }],
+      [
+        secondTenantId,
+        {
+          legalEntityId: secondLegalEntityId,
+          legalName: 'Second legal entity',
+        },
+      ],
     ]);
     const multiLegalEntitySelectionOptions = {
       contextAccess: legalEntitySelectionOptions.contextAccess,
@@ -1156,10 +1136,7 @@ it.live(
         },
       },
     } as const;
-    const multiContextAccessLayer = Layer.succeed(
-      ContextAccess,
-      multiLegalEntitySelectionOptions.contextAccess,
-    );
+    const multiContextAccessLayer = Layer.succeed(ContextAccess, multiLegalEntitySelectionOptions.contextAccess);
     const multiAuthenticationContextLayer = Layer.mergeAll(
       multiContextAccessLayer,
       Layer.succeed(LegalEntityContext, multiLegalEntitySelectionOptions.legalEntityContext),
@@ -1199,13 +1176,8 @@ it.live(
     const fixtureTenants = [firstTenantId, secondTenantId];
     // Ordered child-before-parent within the owned fixture rows.
     const cleanup = Effect.fnUntraced(function* runIntegration7() {
-      yield* coreDatabase
-        .delete(dataAccessEvents)
-        .where(inArray(dataAccessEvents.tenantId, fixtureTenants));
-      const existingUsers = yield* authDatabase
-        .select({ id: user.id })
-        .from(user)
-        .where(eq(user.email, multiEmail));
+      yield* coreDatabase.delete(dataAccessEvents).where(inArray(dataAccessEvents.tenantId, fixtureTenants));
+      const existingUsers = yield* authDatabase.select({ id: user.id }).from(user).where(eq(user.email, multiEmail));
       const existingUserIds = existingUsers.map(({ id }) => id);
       if (existingUserIds.length > 0) {
         yield* purgeFixtureRows([
@@ -1218,12 +1190,8 @@ it.live(
         ]);
       }
       yield* purgeFixtureRows([
-        coreDatabase
-          .delete(tenantModuleStates)
-          .where(inArray(tenantModuleStates.tenantId, fixtureTenants)),
-        coreDatabase
-          .delete(principals)
-          .where(inArray(principals.principalId, [firstPrincipalId, secondPrincipalId])),
+        coreDatabase.delete(tenantModuleStates).where(inArray(tenantModuleStates.tenantId, fixtureTenants)),
+        coreDatabase.delete(principals).where(inArray(principals.principalId, [firstPrincipalId, secondPrincipalId])),
         coreDatabase
           .delete(legalEntities)
           .where(inArray(legalEntities.legalEntityId, [firstLegalEntityId, secondLegalEntityId])),
@@ -1244,11 +1212,7 @@ it.live(
       }, Effect.orDie),
     );
     yield* cleanup();
-    const betterAuthUserId = yield* authentication.createFixtureUser(
-      multiEmail,
-      'Multi tenant fixture',
-      password,
-    );
+    const betterAuthUserId = yield* authentication.createFixtureUser(multiEmail, 'Multi tenant fixture', password);
     yield* coreDatabase.insert(tenants).values([
       {
         defaultLocale: 'en',
@@ -1325,11 +1289,7 @@ it.live(
       { moduleKey: 'first-module', state: 'active', tenantId: firstTenantId },
       { moduleKey: 'second-module', state: 'active', tenantId: secondTenantId },
     ]);
-    const signIn = yield* authentication.signIn(
-      multiEmail,
-      password,
-      new Headers({ origin: configuration.baseUrl }),
-    );
+    const signIn = yield* authentication.signIn(multiEmail, password, new Headers({ origin: configuration.baseUrl }));
     expect(signIn.identity.tenantId).toBe(firstTenantId);
     expect(signIn.identity.principalId).toBe(firstPrincipalId);
     const authenticatedCookie = cookieHeader(signIn.setCookieHeaders);
@@ -1357,9 +1317,7 @@ it.live(
 
     const initialSessions = yield* readActiveTenantIds();
     assertOptionalField(initialSessions[0], 'activeTenantId', firstTenantId);
-    const pair = yield* Effect.tryPromise(() =>
-      generateKeyPair('EdDSA', { crv: 'Ed25519', extractable: true }),
-    );
+    const pair = yield* Effect.tryPromise(() => generateKeyPair('EdDSA', { crv: 'Ed25519', extractable: true }));
     const privateJwk = yield* Effect.tryPromise(() => exportJWK(pair.privateKey));
     const runtime = makeShellAuthenticationApiRuntime(
       Layer.succeed(AuthenticationService, authentication),
@@ -1394,12 +1352,12 @@ it.live(
       ),
     );
     expect(anonymousAvailableResponse.status).toBe(401);
-    expect(headerValue(anonymousAvailableResponse.headers, 'www-authenticate')).toMatch(
-      /^Bearer /u,
-    );
+    expect(headerValue(anonymousAvailableResponse.headers, 'www-authenticate')).toMatch(/^Bearer /u);
     const availableResponse = yield* Effect.tryPromise(() =>
       runtime.handler(
-        new Request(`${configuration.baseUrl}/auth/tenants`, { headers: authenticatedHeaders }),
+        new Request(`${configuration.baseUrl}/auth/tenants`, {
+          headers: authenticatedHeaders,
+        }),
       ),
     );
     expect(availableResponse.status).toBe(200);
@@ -1412,9 +1370,7 @@ it.live(
     const availableTenants = yield* authentication
       .availableTenants(authenticatedHeaders)
       .pipe(Effect.provide(multiAuthenticationContextLayer));
-    expect(JSON.stringify(availableTenants)).not.toMatch(
-      /principalId|sessionId|token|bindingId|password/u,
-    );
+    expect(JSON.stringify(availableTenants)).not.toMatch(/principalId|sessionId|token|bindingId|password/u);
     const firstModules = yield* Effect.tryPromise(() =>
       runtime.handler(
         new Request(`${configuration.baseUrl}/shell/composition`, {
@@ -1437,9 +1393,7 @@ it.live(
       .update(principals)
       .set({ status: 'disabled' })
       .where(eq(principals.principalId, secondPrincipalId));
-    const inactiveTargetResponse = yield* Effect.tryPromise(() =>
-      runtime.handler(tenantSwitchRequest(secondTenantId)),
-    );
+    const inactiveTargetResponse = yield* Effect.tryPromise(() => runtime.handler(tenantSwitchRequest(secondTenantId)));
     expect(inactiveTargetResponse.status).toBe(403);
     const sessionsAfterInactiveSwitch = yield* readActiveTenantIds();
     assertOptionalField(sessionsAfterInactiveSwitch[0], 'activeTenantId', firstTenantId);
@@ -1455,7 +1409,9 @@ it.live(
         resolveBetterAuthUserForTenant: (userId, selectedTenantId) =>
           selectedTenantId === secondTenantId
             ? Effect.fail(
-                new PrincipalResolverUnavailableError({ reason: 'Injected resolver outage' }),
+                new PrincipalResolverUnavailableError({
+                  reason: 'Injected resolver outage',
+                }),
               )
             : resolver.resolveBetterAuthUserForTenant(userId, selectedTenantId),
       }),
@@ -1532,9 +1488,7 @@ it.live(
       .from(session)
       .where(eq(session.userId, betterAuthUserId));
     assertOptionalField(sessionsBeforeSwitch[0], 'activeLegalEntityId', firstLegalEntityId);
-    const switchResponse = yield* Effect.tryPromise(() =>
-      runtime.handler(tenantSwitchRequest(secondTenantId)),
-    );
+    const switchResponse = yield* Effect.tryPromise(() => runtime.handler(tenantSwitchRequest(secondTenantId)));
     expect(switchResponse.status).toBe(200);
     expect(yield* Effect.tryPromise(() => switchResponse.json())).toEqual({
       selectedTenantId: secondTenantId,
@@ -1581,10 +1535,7 @@ it.live(
         }),
       ),
     );
-    const { principal: verifiedPrincipal } = yield* verifiedGatewayAssertion(
-      assertionResponse,
-      pair.publicKey,
-    );
+    const { principal: verifiedPrincipal } = yield* verifiedGatewayAssertion(assertionResponse, pair.publicKey);
     expect(verifiedPrincipal.authBindingId).toBe(secondAuthBindingId);
     expect(optionalText(verifiedPrincipal.authContextRef)).toMatch(/^better-auth-session:/u);
     expect(verifiedPrincipal.authMethod).toBe('session');
@@ -1645,15 +1596,8 @@ it.live(
           /secret auth persistence defect|P0001/u,
         );
         const sessionsAfterUnexpectedSwitchFailure = yield* readActiveTenantIds();
-        assertOptionalField(
-          sessionsAfterUnexpectedSwitchFailure[0],
-          'activeTenantId',
-          secondTenantId,
-        );
-        yield* authDatabase
-          .update(session)
-          .set({ activeTenantId: null })
-          .where(eq(session.userId, betterAuthUserId));
+        assertOptionalField(sessionsAfterUnexpectedSwitchFailure[0], 'activeTenantId', secondTenantId);
+        yield* authDatabase.update(session).set({ activeTenantId: null }).where(eq(session.userId, betterAuthUserId));
         const unexpectedLegacyUpgradeResponse = yield* Effect.tryPromise(() =>
           runtime.handler(
             new Request(`${configuration.baseUrl}/auth/session`, {
@@ -1684,12 +1628,13 @@ it.live(
       .pipe(Effect.provide(multiAuthenticationContextLayer));
     yield* coreDatabase
       .update(principalAuthBindings)
-      .set({ revokedAt: new Date('2026-09-01T00:00:00.000Z'), status: 'revoked' })
+      .set({
+        revokedAt: new Date('2026-09-01T00:00:00.000Z'),
+        status: 'revoked',
+      })
       .where(eq(principalAuthBindings.tenantId, secondTenantId));
     yield* assertSessionForbidden(
-      authentication
-        .currentSession(authenticatedHeaders)
-        .pipe(Effect.provide(multiAuthenticationContextLayer)),
+      authentication.currentSession(authenticatedHeaders).pipe(Effect.provide(multiAuthenticationContextLayer)),
     );
     yield* coreDatabase
       .update(principalAuthBindings)
@@ -1703,14 +1648,10 @@ it.live(
     // resolver can still prove that an existing selected session rejects a genuinely missing row.
     yield* purgeFixtureRows([
       coreDatabase.delete(dataAccessEvents).where(eq(dataAccessEvents.tenantId, secondTenantId)),
-      coreDatabase
-        .delete(principalAuthBindings)
-        .where(eq(principalAuthBindings.tenantId, secondTenantId)),
+      coreDatabase.delete(principalAuthBindings).where(eq(principalAuthBindings.tenantId, secondTenantId)),
     ]);
     yield* assertSessionForbidden(
-      authentication
-        .currentSession(authenticatedHeaders)
-        .pipe(Effect.provide(multiAuthenticationContextLayer)),
+      authentication.currentSession(authenticatedHeaders).pipe(Effect.provide(multiAuthenticationContextLayer)),
     );
   }),
 );

@@ -1,5 +1,5 @@
-import { Cause, Effect } from 'effect';
 import { expect, test as base } from '@playwright/test';
+import { Cause, Effect } from 'effect';
 
 // Playwright must not abandon setup before Effect closes its scope. The stalled
 // acquisition must finalize before reporting its typed timeout and must never complete.
@@ -34,8 +34,6 @@ const test = base.extend<Record<never, never>, { stalledAcquisition: readonly st
   ],
 });
 
-test('finishes installed finalizers before reporting a stalled acquisition', ({
-  stalledAcquisition,
-}) => {
+test('finishes installed finalizers before reporting a stalled acquisition', ({ stalledAcquisition }) => {
   expect(stalledAcquisition).toEqual(['finalizer', 'reported timeout']);
 });

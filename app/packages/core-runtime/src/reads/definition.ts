@@ -1,12 +1,10 @@
 import { Predicate, Schema } from 'effect';
 import type { Effect } from 'effect';
+
 import type { ActionPolicy } from '../actions/policy.ts';
 import { isActionPolicy } from '../actions/policy.ts';
 import type { ScopedTransactionExecutor } from '../db/scoped-transaction.ts';
-import type {
-  ModuleEntrypointDescriptor,
-  ModuleEntrypointRole,
-} from '../modules/module-entrypoint.ts';
+import type { ModuleEntrypointDescriptor, ModuleEntrypointRole } from '../modules/module-entrypoint.ts';
 import { LEGAL_ENTITY_SCOPES } from '../operations/context.ts';
 import type { LegalEntityScope, OperationalScope } from '../operations/context.ts';
 import type { OperationContextUnavailable } from '../operations/errors.ts';
@@ -42,14 +40,7 @@ class ReadPrivateStorage<Value> {
   }
 }
 
-export const READ_ACCESS_KINDS = [
-  'detail',
-  'download',
-  'export',
-  'list',
-  'report',
-  'search',
-] as const;
+export const READ_ACCESS_KINDS = ['detail', 'download', 'export', 'list', 'report', 'search'] as const;
 export type ReadAccessKind = (typeof READ_ACCESS_KINDS)[number];
 export const READ_EVIDENCE_CAPTURE_MODES = ['hash_only', 'metadata_only'] as const;
 export type ReadEvidenceCaptureMode = (typeof READ_EVIDENCE_CAPTURE_MODES)[number];
@@ -60,24 +51,33 @@ export interface ReadPolicyDescriptor {
   readonly denialStatus: ReadPermissionDenialStatus;
   readonly policyKey: string;
 }
-export type ReadAlternativeTenantPermission = Exclude<
-  TenantPermissionKey,
-  'access' | 'impersonate'
->;
+export type ReadAlternativeTenantPermission = Exclude<TenantPermissionKey, 'access' | 'impersonate'>;
 export type AtomicResolvedReadPermissionTarget =
   | Readonly<{
       readonly kind: 'legal_entity';
       readonly permission?: LegalEntityPermissionKey;
     }>
   | Readonly<{ readonly kind: 'module'; readonly moduleId: string }>
-  | Readonly<{ readonly kind: 'resource'; readonly resource: ResourceAccessTarget }>
-  | Readonly<{ readonly kind: 'tenant'; readonly permission: TenantPermissionKey }>;
+  | Readonly<{
+      readonly kind: 'resource';
+      readonly resource: ResourceAccessTarget;
+    }>
+  | Readonly<{
+      readonly kind: 'tenant';
+      readonly permission: TenantPermissionKey;
+    }>;
 export type AlternativeResolvedReadPermissionTarget =
   | Exclude<
       AtomicResolvedReadPermissionTarget,
-      Readonly<{ readonly kind: 'tenant'; readonly permission: TenantPermissionKey }>
+      Readonly<{
+        readonly kind: 'tenant';
+        readonly permission: TenantPermissionKey;
+      }>
     >
-  | Readonly<{ readonly kind: 'tenant'; readonly permission: ReadAlternativeTenantPermission }>;
+  | Readonly<{
+      readonly kind: 'tenant';
+      readonly permission: ReadAlternativeTenantPermission;
+    }>;
 export type ResolvedReadPermissionTarget =
   | AtomicResolvedReadPermissionTarget
   | Readonly<{
@@ -159,8 +159,7 @@ const failReadDefinition = (message: string): never => {
 export const validateReadDescriptorInput = (descriptor: ReadDescriptorValidationInput): void => {
   if (
     descriptor.entrypoint.moduleKey !== descriptor.owningModuleKey ||
-    descriptor.entrypoint.scope !==
-      (descriptor.owningModuleKey.startsWith('core.') ? 'system' : 'tenant') ||
+    descriptor.entrypoint.scope !== (descriptor.owningModuleKey.startsWith('core.') ? 'system' : 'tenant') ||
     !['read', 'historical_read'].includes(descriptor.entrypoint.access) ||
     !Object.isFrozen(descriptor.entrypoint)
   ) {
@@ -182,9 +181,7 @@ type ReadRegistrationPrivateValue<
   readonly handler: ReadHandler<InputSchema, ResultSchema, Services, Error, Requirements>;
   readonly permissionTargetResolver: ReadPermissionTargetResolver<InputSchema['Type']>;
   readonly policies: readonly ActionPolicy<InputSchema['Type'], Owner>[];
-  readonly resultPermissionTargetResolver?: ReadResultPermissionTargetResolver<
-    ResultSchema['Type']
-  >;
+  readonly resultPermissionTargetResolver?: ReadResultPermissionTargetResolver<ResultSchema['Type']>;
   readonly serviceFactory: ReadServiceFactory<Services, Requirements>;
 }>;
 
@@ -206,11 +203,7 @@ export type ReadRegistration<
 };
 
 const validateReadVocabulary = <Input, Result>(
-  descriptor: ReadDescriptor<
-    Schema.ConstraintDecoder<unknown>,
-    Schema.ConstraintDecoder<unknown>,
-    string
-  >,
+  descriptor: ReadDescriptor<Schema.ConstraintDecoder<unknown>, Schema.ConstraintDecoder<unknown>, string>,
   permissionTargetResolver: ReadPermissionTargetResolver<Input>,
   resultPermissionTargetResolver: ReadResultPermissionTargetResolver<Result> | undefined,
 ): void => {
@@ -245,13 +238,8 @@ export const defineRead = <
     executablePolicies?: readonly ActionPolicy<InputSchema['Type'], NoInfer<Owner>>[],
   ]
 ): ReadRegistration<InputSchema, ResultSchema, Owner, Services, Error, Requirements> => {
-  const [
-    handler,
-    serviceFactory,
-    permissionTargetResolver,
-    resultPermissionTargetResolver,
-    executablePolicies = [],
-  ] = definition;
+  const [handler, serviceFactory, permissionTargetResolver, resultPermissionTargetResolver, executablePolicies = []] =
+    definition;
   validateReadDescriptorInput(descriptor);
   validateReadVocabulary(descriptor, permissionTargetResolver, resultPermissionTargetResolver);
   if (
@@ -273,9 +261,7 @@ export const defineRead = <
     ...descriptor,
     entrypoint: descriptor.entrypoint,
     evidencePolicy: Object.freeze({ ...descriptor.evidencePolicy }),
-    policies: Object.freeze(
-      descriptor.policies.map((reference) => Object.freeze({ ...reference })),
-    ),
+    policies: Object.freeze(descriptor.policies.map((reference) => Object.freeze({ ...reference }))),
   });
   const privateValue = {
     handler,
@@ -290,10 +276,7 @@ export const defineRead = <
   if (resultPermissionTargetResolver === undefined) {
     return ReadPrivateStorage.create(Object.freeze(privateValue), publicFields);
   }
-  return ReadPrivateStorage.create(
-    Object.freeze({ ...privateValue, resultPermissionTargetResolver }),
-    publicFields,
-  );
+  return ReadPrivateStorage.create(Object.freeze({ ...privateValue, resultPermissionTargetResolver }), publicFields);
 };
 
 export const getReadPolicyImplementations = <
@@ -305,8 +288,7 @@ export const getReadPolicyImplementations = <
   Requirements,
 >(
   registration: ReadRegistration<InputSchema, ResultSchema, Owner, Services, Error, Requirements>,
-): readonly ActionPolicy<InputSchema['Type'], Owner>[] =>
-  ReadPrivateStorage.getValue(registration).policies;
+): readonly ActionPolicy<InputSchema['Type'], Owner>[] => ReadPrivateStorage.getValue(registration).policies;
 
 export const getReadResultPermissionTargetResolver = <
   InputSchema extends Schema.ConstraintDecoder<unknown>,
@@ -353,5 +335,4 @@ export const getReadServiceFactory = <
   Requirements,
 >(
   registration: ReadRegistration<InputSchema, ResultSchema, Owner, Services, Error, Requirements>,
-): ReadServiceFactory<Services, Requirements> =>
-  ReadPrivateStorage.getValue(registration).serviceFactory;
+): ReadServiceFactory<Services, Requirements> => ReadPrivateStorage.getValue(registration).serviceFactory;

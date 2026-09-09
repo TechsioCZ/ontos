@@ -27,25 +27,13 @@ import type { LocalJWKSet } from 'jose';
 export const ACTION_PRINCIPAL_BEARER_CHALLENGE = 'Bearer' as const;
 
 const errorFields = { reason: Schema.String };
-export const ActionPrincipalMissingErrorSchema = Schema.TaggedStruct(
-  'ActionPrincipalMissingError',
-  errorFields,
-);
+export const ActionPrincipalMissingErrorSchema = Schema.TaggedStruct('ActionPrincipalMissingError', errorFields);
 export type ActionPrincipalMissingError = typeof ActionPrincipalMissingErrorSchema.Type;
-export const ActionPrincipalInvalidErrorSchema = Schema.TaggedStruct(
-  'ActionPrincipalInvalidError',
-  errorFields,
-);
+export const ActionPrincipalInvalidErrorSchema = Schema.TaggedStruct('ActionPrincipalInvalidError', errorFields);
 export type ActionPrincipalInvalidError = typeof ActionPrincipalInvalidErrorSchema.Type;
-export const ActionPrincipalExpiredErrorSchema = Schema.TaggedStruct(
-  'ActionPrincipalExpiredError',
-  errorFields,
-);
+export const ActionPrincipalExpiredErrorSchema = Schema.TaggedStruct('ActionPrincipalExpiredError', errorFields);
 export type ActionPrincipalExpiredError = typeof ActionPrincipalExpiredErrorSchema.Type;
-export const ActionPrincipalScopeErrorSchema = Schema.TaggedStruct(
-  'ActionPrincipalScopeError',
-  errorFields,
-);
+export const ActionPrincipalScopeErrorSchema = Schema.TaggedStruct('ActionPrincipalScopeError', errorFields);
 export type ActionPrincipalScopeError = typeof ActionPrincipalScopeErrorSchema.Type;
 export const ActionPrincipalConfigurationErrorSchema = Schema.TaggedStruct(
   'ActionPrincipalConfigurationError',
@@ -93,7 +81,9 @@ const configurationError = (): ActionPrincipalConfigurationError =>
     reason: 'Action identity verification is misconfigured',
   });
 const invalidError = (): ActionPrincipalInvalidError =>
-  ActionPrincipalInvalidErrorSchema.make({ reason: 'The Bearer assertion is invalid' });
+  ActionPrincipalInvalidErrorSchema.make({
+    reason: 'The Bearer assertion is invalid',
+  });
 const unavailableError = (): ActionPrincipalUnavailableError =>
   ActionPrincipalUnavailableErrorSchema.make({
     reason: 'Action identity verification is unavailable',
@@ -124,9 +114,7 @@ const PublicVerificationKeysSchema = Schema.Struct({
 const VerificationEnvironmentSchema = Schema.Struct({
   ONTOS_GATEWAY_ISSUER: Schema.String.check(
     Schema.isPattern(/^https?:\/\//u),
-    Schema.makeFilter((value) =>
-      URL.canParse(value) ? undefined : 'An absolute HTTP issuer is required',
-    ),
+    Schema.makeFilter((value) => (URL.canParse(value) ? undefined : 'An absolute HTTP issuer is required')),
   ),
   ONTOS_GATEWAY_PUBLIC_JWKS: Schema.fromJsonString(PublicVerificationKeysSchema),
 });
@@ -143,10 +131,7 @@ interface VerificationConfiguration {
 }
 
 interface GatewayPrincipalVerifierService {
-  readonly configuration: Effect.Effect<
-    VerificationConfiguration,
-    ActionPrincipalConfigurationError
-  >;
+  readonly configuration: Effect.Effect<VerificationConfiguration, ActionPrincipalConfigurationError>;
 }
 
 export class GatewayPrincipalVerifierConfiguration extends Context.Service<
@@ -158,9 +143,7 @@ const loadGatewayPrincipalVerificationConfiguration = (
   provider?: ConfigProvider.ConfigProvider,
 ): Effect.Effect<VerificationConfiguration, ActionPrincipalConfigurationError> => {
   const configuration =
-    provider === undefined
-      ? gatewayVerificationEnvironment
-      : gatewayVerificationEnvironment.parse(provider);
+    provider === undefined ? gatewayVerificationEnvironment : gatewayVerificationEnvironment.parse(provider);
   return configuration.pipe(
     Effect.flatMap(Schema.decodeUnknownEffect(VerificationEnvironmentSchema)),
     Effect.flatMap(({ ONTOS_GATEWAY_ISSUER: issuer, ONTOS_GATEWAY_PUBLIC_JWKS: jwks }) => {
@@ -199,7 +182,9 @@ export const makeGatewayPrincipalVerifierLayer = (
   Layer.effect(
     GatewayPrincipalVerifierConfiguration,
     Effect.cached(loadGatewayPrincipalVerificationConfiguration(provider)).pipe(
-      Effect.map((configuration): GatewayPrincipalVerifierService => ({ configuration })),
+      Effect.map((configuration): GatewayPrincipalVerifierService => ({
+        configuration,
+      })),
     ),
   );
 
@@ -242,7 +227,9 @@ const readBearer = (
   const authorizationValue = Redacted.value(authorization);
   if (authorizationValue === undefined) {
     return Effect.fail(
-      ActionPrincipalMissingErrorSchema.make({ reason: 'A Bearer assertion is required' }),
+      ActionPrincipalMissingErrorSchema.make({
+        reason: 'A Bearer assertion is required',
+      }),
     );
   }
   const token = /^Bearer (?<token>[^\s]+)$/iu.exec(authorizationValue)?.groups?.['token'];
@@ -261,14 +248,8 @@ const verifyAuthenticatedToken = Effect.fn('GatewayPrincipalVerifier.verifyAuthe
     expectedAudience: string,
     token: string,
     options: GatewayPrincipalVerificationOptions,
-  ): Effect.fn.Return<
-    VerifiedGatewayPrincipal,
-    ActionPrincipalError,
-    GatewayPrincipalVerifierConfiguration
-  > {
-    const audience = yield* Schema.decodeUnknownEffect(GatewayAudienceSchema)(
-      expectedAudience,
-    ).pipe(
+  ): Effect.fn.Return<VerifiedGatewayPrincipal, ActionPrincipalError, GatewayPrincipalVerifierConfiguration> {
+    const audience = yield* Schema.decodeEffect(GatewayAudienceSchema)(expectedAudience).pipe(
       // oxlint-disable-next-line effect-native/no-failure-discarding-error-callback -- Schema diagnostics are deliberately sanitized at the trust boundary; remove-when: the rule supports security-boundary sanitizers.
       Effect.mapError(() => configurationError()),
     );
@@ -315,13 +296,10 @@ const verifyAuthenticatedToken = Effect.fn('GatewayPrincipalVerifier.verifyAuthe
       // oxlint-disable-next-line effect-native/no-failure-discarding-error-callback -- Claim diagnostics are deliberately sanitized at the trust boundary; remove-when: the rule supports security-boundary sanitizers.
       Effect.mapError(() => invalidError()),
     );
-    if (
-      claims.ver !== GATEWAY_ASSERTION_VERSION ||
-      claims.iat > now + GATEWAY_ASSERTION_CLOCK_SKEW_SECONDS
-    ) {
+    if (claims.ver !== GATEWAY_ASSERTION_VERSION || claims.iat > now + GATEWAY_ASSERTION_CLOCK_SKEW_SECONDS) {
       return yield* Effect.fail(invalidError());
     }
-    const principal = yield* Schema.decodeUnknownEffect(TrustedPrincipalContextSchema, {
+    const principal = yield* Schema.decodeEffect(TrustedPrincipalContextSchema, {
       onExcessProperty: 'error',
     })(claims.principal).pipe(
       // oxlint-disable-next-line effect-native/no-failure-discarding-error-callback -- Principal decode diagnostics are deliberately sanitized at the trust boundary; remove-when: the rule supports security-boundary sanitizers.
@@ -336,9 +314,7 @@ const verifyAuthenticatedToken = Effect.fn('GatewayPrincipalVerifier.verifyAuthe
   },
 );
 
-export const bindGatewayPrincipalVerifier = <const Audience extends string>(
-  expectedAudience: Audience,
-) => {
+export const bindGatewayPrincipalVerifier = <const Audience extends string>(expectedAudience: Audience) => {
   function verifyPrincipal(
     authorization: Redacted.Redacted<string | undefined>,
     options: GatewayPrincipalVerificationEnvironmentOptions,
@@ -346,19 +322,11 @@ export const bindGatewayPrincipalVerifier = <const Audience extends string>(
   function verifyPrincipal(
     authorization: Redacted.Redacted<string | undefined>,
     options?: GatewayPrincipalVerificationOptions,
-  ): Effect.Effect<
-    VerifiedGatewayPrincipal,
-    ActionPrincipalError,
-    GatewayPrincipalVerifierConfiguration
-  >;
+  ): Effect.Effect<VerifiedGatewayPrincipal, ActionPrincipalError, GatewayPrincipalVerifierConfiguration>;
   function verifyPrincipal(
     authorization: Redacted.Redacted<string | undefined>,
     options: GatewayPrincipalVerificationOptions = {},
-  ): Effect.Effect<
-    VerifiedGatewayPrincipal,
-    ActionPrincipalError,
-    GatewayPrincipalVerifierConfiguration
-  > {
+  ): Effect.Effect<VerifiedGatewayPrincipal, ActionPrincipalError, GatewayPrincipalVerifierConfiguration> {
     const verification = readBearer(authorization).pipe(
       Effect.flatMap((token) => verifyAuthenticatedToken(expectedAudience, token, options)),
     );
@@ -381,19 +349,11 @@ export const bindGatewayPrincipalVerifier = <const Audience extends string>(
   function verify(
     authorization: Redacted.Redacted<string | undefined>,
     options?: GatewayPrincipalVerificationOptions,
-  ): Effect.Effect<
-    TrustedPrincipalContext,
-    ActionPrincipalError,
-    GatewayPrincipalVerifierConfiguration
-  >;
+  ): Effect.Effect<TrustedPrincipalContext, ActionPrincipalError, GatewayPrincipalVerifierConfiguration>;
   function verify(
     authorization: Redacted.Redacted<string | undefined>,
     options: GatewayPrincipalVerificationOptions = {},
-  ): Effect.Effect<
-    TrustedPrincipalContext,
-    ActionPrincipalError,
-    GatewayPrincipalVerifierConfiguration
-  > {
+  ): Effect.Effect<TrustedPrincipalContext, ActionPrincipalError, GatewayPrincipalVerifierConfiguration> {
     return verifyPrincipal(authorization, options).pipe(Effect.map(({ principal }) => principal));
   }
 
@@ -404,23 +364,20 @@ export const bindGatewayPrincipalVerifier = <const Audience extends string>(
   function verifyAndRedeem(
     authorization: Redacted.Redacted<string | undefined>,
     options: GatewayPrincipalVerificationWithRedemptionOptions,
-  ): Effect.Effect<
-    TrustedPrincipalContext,
-    ActionPrincipalError,
-    GatewayPrincipalVerifierConfiguration
-  >;
+  ): Effect.Effect<TrustedPrincipalContext, ActionPrincipalError, GatewayPrincipalVerifierConfiguration>;
   function verifyAndRedeem(
     authorization: Redacted.Redacted<string | undefined>,
     options: GatewayPrincipalVerificationWithRedemptionOptions,
-  ): Effect.Effect<
-    TrustedPrincipalContext,
-    ActionPrincipalError,
-    GatewayPrincipalVerifierConfiguration
-  > {
+  ): Effect.Effect<TrustedPrincipalContext, ActionPrincipalError, GatewayPrincipalVerifierConfiguration> {
     return verifyPrincipal(authorization, options).pipe(
       Effect.tap(({ expiresAtEpochSeconds, issuer, jti }) =>
         options.redemption
-          .consume({ audience: expectedAudience, expiresAtEpochSeconds, issuer, jti })
+          .consume({
+            audience: expectedAudience,
+            expiresAtEpochSeconds,
+            issuer,
+            jti,
+          })
           .pipe(
             Effect.catchTags({
               GatewayAssertionRedemptionUnavailableError: mapRedemptionUnavailable,

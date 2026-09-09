@@ -1,4 +1,5 @@
 import { Context, Effect, Layer, Schema } from 'effect';
+
 import {
   CoreSearchProjectionInvalid,
   CoreSearchProjectionMutationSchema,
@@ -47,8 +48,7 @@ export const CORE_SEARCH_PARTY_PROJECTOR_WORKER_KEYS = [
   'party.registry.project-counterparty-role-ended-to-search',
   'party.registry.rebuild-search',
 ] as const;
-export type CoreSearchPartyProjectorWorkerKey =
-  (typeof CORE_SEARCH_PARTY_PROJECTOR_WORKER_KEYS)[number];
+export type CoreSearchPartyProjectorWorkerKey = (typeof CORE_SEARCH_PARTY_PROJECTOR_WORKER_KEYS)[number];
 
 const topicSchema = Schema.Literals(CORE_SEARCH_PARTY_LIFECYCLE_TOPICS);
 const workerKeySchema = Schema.Literals(CORE_SEARCH_PARTY_PROJECTOR_WORKER_KEYS);
@@ -72,26 +72,28 @@ export interface CoreSearchIngestionRegistration {
   readonly workerKey: CoreSearchPartyProjectorWorkerKey;
 }
 
-export const CORE_SEARCH_INGESTION_REGISTRATIONS: readonly CoreSearchIngestionRegistration[] =
-  Object.freeze(
-    CORE_SEARCH_PARTY_LIFECYCLE_TOPICS.flatMap((topic, index) => {
-      const workerKey = CORE_SEARCH_PARTY_PROJECTOR_WORKER_KEYS[index];
-      return workerKey === undefined
-        ? []
-        : [
-            Object.freeze({
-              consumerModuleKey: PARTY_REGISTRY_MODULE_KEY,
-              producerModuleKey: PARTY_REGISTRY_MODULE_KEY,
-              topic,
-              workerKey,
-            }),
-          ];
-    }),
-  );
+export const CORE_SEARCH_INGESTION_REGISTRATIONS: readonly CoreSearchIngestionRegistration[] = Object.freeze(
+  CORE_SEARCH_PARTY_LIFECYCLE_TOPICS.flatMap((topic, index) => {
+    const workerKey = CORE_SEARCH_PARTY_PROJECTOR_WORKER_KEYS[index];
+    return workerKey === undefined
+      ? []
+      : [
+          Object.freeze({
+            consumerModuleKey: PARTY_REGISTRY_MODULE_KEY,
+            producerModuleKey: PARTY_REGISTRY_MODULE_KEY,
+            topic,
+            workerKey,
+          }),
+        ];
+  }),
+);
 
 const invalid = (reason: string, cause?: unknown): CoreSearchProjectionInvalid => {
   if (cause === undefined) {
-    return new CoreSearchProjectionInvalid({ code: 'core_search_projection_invalid', reason });
+    return new CoreSearchProjectionInvalid({
+      code: 'core_search_projection_invalid',
+      reason,
+    });
   }
   return new CoreSearchProjectionInvalid({
     cause,
@@ -107,14 +109,11 @@ export interface CoreSearchIngestionService {
 }
 
 /** Core-owned consumer seam for post-commit Party lifecycle observations. */
-export class CoreSearchIngestion extends Context.Service<
-  CoreSearchIngestion,
-  CoreSearchIngestionService
->()('@app/core-runtime/search/ingestion/CoreSearchIngestion') {}
+export class CoreSearchIngestion extends Context.Service<CoreSearchIngestion, CoreSearchIngestionService>()(
+  '@app/core-runtime/search/ingestion/CoreSearchIngestion',
+) {}
 
-export const makeCoreSearchIngestion = (
-  store: CoreSearchProjectionMutationSink,
-): CoreSearchIngestionService => ({
+export const makeCoreSearchIngestion = (store: CoreSearchProjectionMutationSink): CoreSearchIngestionService => ({
   ingest: (input) =>
     Schema.decodeUnknownEffect(CoreSearchIngestionObservationSchema)(input).pipe(
       Effect.mapError((cause) => invalid('Core Search ingestion observation is invalid', cause)),
@@ -144,9 +143,7 @@ export const makeCoreSearchIngestion = (
           mutationModuleId !== observation.producerModuleKey ||
           mutationVersion !== observation.projectionVersion
         ) {
-          return Effect.fail(
-            invalid('Core Search ingestion identity does not match its post-commit observation'),
-          );
+          return Effect.fail(invalid('Core Search ingestion identity does not match its post-commit observation'));
         }
         return store.apply(observation.mutation);
       }),

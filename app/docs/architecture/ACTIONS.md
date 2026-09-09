@@ -2,10 +2,7 @@
 
 This document defines state-changing Action execution. MicroVertical deployment and communication are defined in [MicroVertical Architecture](./MICROVERTICALS.md); public failure contracts are defined in [Effect Error and HTTP Contracts](./ERRORS.md).
 
-Operation scope, owner-local scoped services, database settings, and governed read evidence are
-defined in [Governed Data Access and Operation Scope](./DATA_ACCESS.md). Every Action explicitly
-declares legal-entity scope independently of entrypoint tenant/system scope. Business handlers never
-receive or import a database executor.
+Operation scope, owner-local scoped services, database settings, and governed read evidence are defined in [Governed Data Access and Operation Scope](./DATA_ACCESS.md). Every Action explicitly declares legal-entity scope independently of entrypoint tenant/system scope. Business handlers never receive or import a database executor.
 
 ## Core Rules
 
@@ -14,89 +11,21 @@ receive or import a database executor.
 - Every Action descriptor declares an explicit readonly array of immutable Policy object references. A global Shell/Core Policy may be referenced by any Action; an executable MicroVertical Policy may be referenced only by an Action with the same owning module key. Raw Policy keys, registries, and cross-owner Policy imports are forbidden.
 - A Domain Event is a past-tense business fact produced by a successfully committed Action. Domain Events describe what happened; they do not initiate hidden synchronous business state changes.
 - Generate Actions, Permissions, Policies, and Outbox Messages with their respective Codesmith generators.
-- Every Action requires an explicit SpiceDB `executor` relationship. A fully consistent
-  `action#execute` result of `NO_PERMISSION`, including an Action with no relationships, is a
-  definite denial; there is no unconfigured allow path.
+- Every Action requires an explicit SpiceDB `executor` relationship. A fully consistent `action#execute` result of `NO_PERMISSION`, including an Action with no relationships, is a definite denial; there is no unconfigured allow path.
 - Every Action descriptor owns a structured `action`/`write` entrypoint. Business Actions are tenant-scoped; Core recovery capabilities are explicitly system-scoped as defined by [Module Entrypoints and Tenant State](./MODULE_ENTRYPOINTS.md).
-- A MicroVertical Action's `owningModuleKey`, key prefix, event producer, and access-policy identity
-  use the manifest's dotted OntOS `moduleId`, never the topology deployment `appId`. The real Action
-  value is published in the owner-authored manifest and bound to its private handler only in the
-  owner-local runtime registration. See [OntOS Module Manifests](./MODULE_MANIFESTS.md).
+- A MicroVertical Action's `owningModuleKey`, key prefix, event producer, and access-policy identity use the manifest's dotted OntOS `moduleId`, never the topology deployment `appId`. The real Action value is published in the owner-authored manifest and bound to its private handler only in the owner-local runtime registration. See [OntOS Module Manifests](./MODULE_MANIFESTS.md).
 
-The only installation exceptions are the first operator-invoked creation of a deployment's initial
-Tenant context and a statically defined, operator-invoked stage bootstrap context set. Each context
-may include its legal entity, human Principal/Auth binding, module state, and matching authorization
-relationships. An Action cannot perform these transitions because their trusted tenant and Principal
-do not exist yet. The stage set must be fixed in source control; callers cannot supply arbitrary
-Tenant or context data. Every bootstrap must be stage/environment gated, idempotent and conflict
-detecting, must stay inside a Core-owned Effect boundary, and must never run from normal application
-startup or an automatic deployment. Shell may create the matching Better Auth credentials, then pass
-only their provider user IDs in the fixed documented order to that Core installation boundary. Core
-owns the context definitions and their provider-user mapping. Every later or non-fixed state change
-uses an Action.
+The only installation exceptions are the first operator-invoked creation of a deployment's initial Tenant context and a statically defined, operator-invoked stage bootstrap context set. Each context may include its legal entity, human Principal/Auth binding, module state, and matching authorization relationships. An Action cannot perform these transitions because their trusted tenant and Principal do not exist yet. The stage set must be fixed in source control; callers cannot supply arbitrary Tenant or context data. Every bootstrap must be stage/environment gated, idempotent and conflict detecting, must stay inside a Core-owned Effect boundary, and must never run from normal application startup or an automatic deployment. Shell may create the matching Better Auth credentials, then pass only their provider user IDs in the fixed documented order to that Core installation boundary. Core owns the context definitions and their provider-user mapping. Every later or non-fixed state change uses an Action.
 
-Better Auth credential and session lifecycle operations—sign-in, sign-out or revocation, refresh,
-active tenant selection, API-key provider mechanics, and mechanical impersonation-session
-creation/restoration—are Shell-owned authentication mechanics, not canonical business-state
-mutations. They use the strict typed Auth BFF and must not update Core business tables or emit
-Domain Events. Core Principal Auth Bindings remain the tenant-access authority, and a selected
-tenant ID stored on the Auth session grants no permission. Any later canonical Core or
-MicroVertical state change still requires an Action; authentication mechanics do not provide a
-bypass.
+Better Auth credential and session lifecycle operations—sign-in, sign-out or revocation, refresh, active tenant selection, API-key provider mechanics, and mechanical impersonation-session creation/restoration—are Shell-owned authentication mechanics, not canonical business-state mutations. They use the strict typed Auth BFF and must not update Core business tables or emit Domain Events. Core Principal Auth Bindings remain the tenant-access authority, and a selected tenant ID stored on the Auth session grants no permission. Any later canonical Core or MicroVertical state change still requires an Action; authentication mechanics do not provide a bypass.
 
-All Core identity changes use generated restricted `core.identity.*` Actions: non-human principal
-creation/status, self or managed API-key binding/status, and requested/started/stopped support
-checkpoints. Provider key IDs may appear only in private Shell orchestration and the binding Action
-payload; raw keys, hashes, cookies, provider user IDs, and session tokens may not. Identity handlers
-record invariant reads as Data Access Events. Support checkpoint handlers additionally attach the
-safe reason, original/effective principal IDs, checkpoint, and optional safe session reference to
-the sensitive `action.executed` evidence; the audit row supplies tenant, timestamp, and Action
-identity.
+All Core identity changes use generated restricted `core.identity.*` Actions: non-human principal creation/status, self or managed API-key binding/status, and requested/started/stopped support checkpoints. Provider key IDs may appear only in private Shell orchestration and the binding Action payload; raw keys, hashes, cookies, provider user IDs, and session tokens may not. Identity handlers record invariant reads as Data Access Events. Support checkpoint handlers additionally attach the safe reason, original/effective principal IDs, checkpoint, and optional safe session reference to the sensitive `action.executed` evidence; the audit row supplies tenant, timestamp, and Action identity.
 
-Action execution and tenant role authorization are independent grants. The default environment
-rule is an explicit `action:<encoded-key>#executor@tenant:<fixed-tenant>#member` relationship, so it
-allows every authenticated active Principal in that trusted Tenant and nobody outside it. Direct
-`principal` executor relationships remain supported for narrower grants and rollout compatibility.
-The self-key Actions require their explicit Action executor. Principal creation/status and managed-key mutations
-require both their Action executor and tenant `manage_identity`; support start requires the support
-checkpoint executor and tenant `impersonate`. Provision Action relations with the lossless object ID
-from `toSpiceDbActionObjectId`, never a hand-maintained alternate encoding, and remove them when the
-role, membership, or workload authorization is revoked. The parameterless operator command
-`mise exec -- pnpm authorization:provision-current-actions` discovers the complete current Action
-catalog and provisions only the fixed development or stage Tenant sets. It is idempotent, accepts no
-caller-supplied Tenant or Action identifiers, and must never run during startup, migration, sandbox
-preparation, or automatic deployment. Bootstrap `allowed-principal` tuples are test-only.
-The generated Action descriptor declares the additional tenant permission, and Core evaluates it
-inside the canonical Action authorization boundary after the executor check. A definite tenant-role
-denial produces the same durable permission-denial outcome; an indeterminate check fails retryably.
-Only a decoded support `stopped` checkpoint omits the continuing `impersonate` requirement so secure
-termination remains possible, while its Action executor check is still mandatory.
+Action execution and tenant role authorization are independent grants. The default environment rule is an explicit `action:<encoded-key>#executor@tenant:<fixed-tenant>#member` relationship, so it allows every authenticated active Principal in that trusted Tenant and nobody outside it. Direct `principal` executor relationships remain supported for narrower grants and rollout compatibility. The self-key Actions require their explicit Action executor. Principal creation/status and managed-key mutations require both their Action executor and tenant `manage_identity`; support start requires the support checkpoint executor and tenant `impersonate`. Provision Action relations with the lossless object ID from `toSpiceDbActionObjectId`, never a hand-maintained alternate encoding, and remove them when the role, membership, or workload authorization is revoked. The parameterless operator command `mise exec -- pnpm authorization:provision-current-actions` discovers the complete current Action catalog and provisions only the fixed development or stage Tenant sets. It is idempotent, accepts no caller-supplied Tenant or Action identifiers, and must never run during startup, migration, sandbox preparation, or automatic deployment. Bootstrap `allowed-principal` tuples are test-only. The generated Action descriptor declares the additional tenant permission, and Core evaluates it inside the canonical Action authorization boundary after the executor check. A definite tenant-role denial produces the same durable permission-denial outcome; an indeterminate check fails retryably. Only a decoded support `stopped` checkpoint omits the continuing `impersonate` requirement so secure termination remains possible, while its Action executor check is still mandatory.
 
-Provider cleanup is not an Action retry disguised as a new mutation. Shell compares the governed
-Core binding status with Auth's enabled metadata, reports disagreement as `cleanupPending`, and may
-retry only the provider mechanic when Core already holds the requested terminal state. A rotation
-must never return a retryable failure while leaving a newly active secret undisclosed: it first
-attempts to revoke the replacement, and if that rollback cannot be proven it returns the one-time
-secret with cleanup debt. Newly issued provider keys carry a private mechanical
-`binding_pending_v1` marker from the same provider insert that creates the credential. Shell clears
-the marker after it observes the Core binding; a repeated issuance reconciles any retained marker
-against Core and disables an orphan before creating another key. Each marker is scoped by the
-trusted tenant and issuing Principal and remains leased for five minutes, including retries with the
-same caller idempotency key, so concurrent requests cannot reclaim a credential that is still being
-bound. The marker is neither an OntOS permission nor public metadata.
-Stale-marker lookup is tenant/issuer/staleness-filtered and indexed in Auth, processes at most one
-bounded batch per request, and requires a retry before issuance when more cleanup remains.
+Provider cleanup is not an Action retry disguised as a new mutation. Shell compares the governed Core binding status with Auth's enabled metadata, reports disagreement as `cleanupPending`, and may retry only the provider mechanic when Core already holds the requested terminal state. A rotation must never return a retryable failure while leaving a newly active secret undisclosed: it first attempts to revoke the replacement, and if that rollback cannot be proven it returns the one-time secret with cleanup debt. Newly issued provider keys carry a private mechanical `binding_pending_v1` marker from the same provider insert that creates the credential. Shell clears the marker after it observes the Core binding; a repeated issuance reconciles any retained marker against Core and disables an orphan before creating another key. Each marker is scoped by the trusted tenant and issuing Principal and remains leased for five minutes, including retries with the same caller idempotency key, so concurrent requests cannot reclaim a credential that is still being bound. The marker is neither an OntOS permission nor public metadata. Stale-marker lookup is tenant/issuer/staleness-filtered and indexed in Auth, processes at most one bounded batch per request, and requires a retry before issuance when more cleanup remains.
 
-Support start creates an Auth-owned non-secret recovery record after the provider session is
-initialized and before the started checkpoint commits; support stop therefore always has durable
-recovery state before Better Auth deletes or expires the impersonated session. The record carries
-only safe correlation, OntOS principal/binding IDs, reason,
-tenant, and safe session reference—not a token or cookie. Stopped evidence is idempotent;
-post-restore evidence or recovery cleanup failure still forwards the restored cookie and a repeated
-stop resumes the checkpoint. The recovery context is accepted only for the exact generated Action
-and a decoded `stopped` payload; it still performs the Action's normal SpiceDB permission check.
-Mechanical session termination therefore remains independent of evidence availability, while a
-denied or unavailable checkpoint remains pending instead of fabricating authorization.
+Support start creates an Auth-owned non-secret recovery record after the provider session is initialized and before the started checkpoint commits; support stop therefore always has durable recovery state before Better Auth deletes or expires the impersonated session. The record carries only safe correlation, OntOS principal/binding IDs, reason, tenant, and safe session reference—not a token or cookie. Stopped evidence is idempotent; post-restore evidence or recovery cleanup failure still forwards the restored cookie and a repeated stop resumes the checkpoint. The recovery context is accepted only for the exact generated Action and a decoded `stopped` payload; it still performs the Action's normal SpiceDB permission check. Mechanical session termination therefore remains independent of evidence availability, while a denied or unavailable checkpoint remains pending instead of fabricating authorization.
 
 ## Invocation Lifecycle
 
@@ -113,15 +42,7 @@ Process every Action request in this order:
 9. Only after permission and all Policies allow, persist the accepted invocation transition from `received` to `running` independently so a definite business rollback leaves it open.
 10. Open the Core-owned transaction, lock and recheck the invocation, install and verify the transaction-local operational database scope, then lock the tenant and authoritatively recheck tenant `write` access. Only then may Core construct owner-local services, create the collector, resolve the private handler, and execute it. Competing requests may repeat read-only gates, but their handlers must never run concurrently.
 
-The first Shell/Core runtime receives an already trusted principal context. Permission and Policy
-evaluation are both enforced before the invocation becomes `running`, the business transaction
-opens, or the handler and collector are created. Core performs one fully consistent `execute` check:
-`HAS_PERMISSION` allows and `NO_PERMISSION` durably rejects the invocation before Policy, service,
-or handler resolution. Timeout, unavailability, authentication/schema failure, conditional
-decisions, and every other indeterminate result return a sanitized retryable check error while
-leaving the invocation open in `received`. The legacy `restriction` relation and `is_restricted`
-permission remain in the compatible schema only for N/N-1 rollout; the candidate runtime does not
-read them. Remove them only in a later contract release after previous runtimes and tuples are gone.
+The first Shell/Core runtime receives an already trusted principal context. Permission and Policy evaluation are both enforced before the invocation becomes `running`, the business transaction opens, or the handler and collector are created. Core performs one fully consistent `execute` check: `HAS_PERMISSION` allows and `NO_PERMISSION` durably rejects the invocation before Policy, service, or handler resolution. Timeout, unavailability, authentication/schema failure, conditional decisions, and every other indeterminate result return a sanitized retryable check error while leaving the invocation open in `received`. The legacy `restriction` relation and `is_restricted` permission remain in the compatible schema only for N/N-1 rollout; the candidate runtime does not read them. Remove them only in a later contract release after previous runtimes and tuples are gone.
 
 ## Outcomes
 
@@ -177,22 +98,10 @@ Cross-MicroVertical consumers use only the message producer's published schema-o
 
 Authentication, permission, policy, and domain rejections remain typed Effect errors throughout the Action lifecycle. At the Backend for Frontend (BFF) endpoint, map them exhaustively to the declared public error schemas and status codes in [Effect Error and HTTP Contracts](./ERRORS.md). Do not let an Action error escape as an exception, an untyped rejected Promise, or an ad hoc HTTP response.
 
-Authentication assertion failures occur before the Action lifecycle and must not create an Action
-Invocation Log or reach an Action handler. An endpoint maps missing, malformed, tampered, expired,
-or otherwise unusable assertions to its declared `401` Problem Details response with a
-`WWW-Authenticate: Bearer` challenge. Public-JWKS or verification configuration unavailability maps
-to a declared retryable `503`. These endpoint-specific mappings do not replace the separate Core
-permission and Policy mappings and do not justify a generic Action HTTP endpoint.
+Authentication assertion failures occur before the Action lifecycle and must not create an Action Invocation Log or reach an Action handler. An endpoint maps missing, malformed, tampered, expired, or otherwise unusable assertions to its declared `401` Problem Details response with a `WWW-Authenticate: Bearer` challenge. Public-JWKS or verification configuration unavailability maps to a declared retryable `503`. These endpoint-specific mappings do not replace the separate Core permission and Policy mappings and do not justify a generic Action HTTP endpoint.
 
 ## Authorization provisioning and compatibility
 
-Every Action descriptor declares `authorization.kind = action_execution` and one provisioning
-intent. `tenant_membership_default` permits the fixed development/stage provisioner to create the
-tenant-member executor relation. `explicit` requires its intended relation to exist already and is
-never granted blanket tenant membership.
+Every Action descriptor declares `authorization.kind = action_execution` and one provisioning intent. `tenant_membership_default` permits the fixed development/stage provisioner to create the tenant-member executor relation. `explicit` requires its intended relation to exist already and is never granted blanket tenant membership.
 
-The default runtime remains fail closed. A bounded `report_only` contract may preserve only an
-explicitly baselined, pre-existing missing-policy allow while computing the candidate denial and
-emitting one sanitized `authorization.would_deny` event. Explicit denials, infrastructure errors,
-cross-tenant scope, invalid or expired credentials, disabled modules, and replay are never
-compatible. New Actions cannot enter the baseline implicitly.
+The default runtime remains fail closed. A bounded `report_only` contract may preserve only an explicitly baselined, pre-existing missing-policy allow while computing the candidate denial and emitting one sanitized `authorization.would_deny` event. Explicit denials, infrastructure errors, cross-tenant scope, invalid or expired credentials, disabled modules, and replay are never compatible. New Actions cannot enter the baseline implicitly.

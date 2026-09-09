@@ -1,4 +1,3 @@
-import { optionRecord } from '../shared/options.ts';
 /**
  * effect-native/no-duplicate-literal-vocabulary
  *
@@ -81,13 +80,13 @@ import { optionRecord } from '../shared/options.ts';
  * Report-only: no fixer, no suggestion. Existing violations are the intended output.
  */
 import { defineRule } from '@oxlint/plugins';
-
 import type { Context, ESTree } from '@oxlint/plugins';
 
-import { collectEffectBindings } from '../shared/effect-imports.ts';
-import { collectSchemaLocals } from '../shared/imports.ts';
 import { memberName, staticString, unwrapNode } from '../shared/ast.ts';
 import { lookupVariable, resolvesToImport } from '../shared/bindings.ts';
+import { collectEffectBindings } from '../shared/effect-imports.ts';
+import { collectSchemaLocals } from '../shared/imports.ts';
+import { optionRecord } from '../shared/options.ts';
 import { booleanOption, positiveInteger, stringArray } from '../shared/options.ts';
 import { isTestFile, matchesGlobs, scopePath } from '../shared/paths.ts';
 
@@ -148,7 +147,10 @@ const VOCABULARY_WRAPPERS: ReadonlySet<string> = new Set([
 
 /** Preserve the vocabulary rule's bounded, deliberately narrow wrapper policy. */
 function unwrap(node: ESTree.Node): ESTree.Node {
-  return unwrapNode(node, { wrappers: VOCABULARY_WRAPPERS, maxDepth: MAX_NAME_DEPTH });
+  return unwrapNode(node, {
+    wrappers: VOCABULARY_WRAPPERS,
+    maxDepth: MAX_NAME_DEPTH,
+  });
 }
 
 function constBindingDeclarator(
@@ -174,18 +176,12 @@ function constInitializer(
   identifier: Extract<ESTree.Node, { type: 'Identifier' }>,
 ): ESTree.Node | null {
   const declarator = constBindingDeclarator(context, identifier);
-  if (declarator === null || declarator.init === null || declarator.id.type !== 'Identifier')
-    return null;
+  if (declarator === null || declarator.init === null || declarator.id.type !== 'Identifier') return null;
   return unwrap(declarator.init);
 }
 
 /** `true` when this expression denotes Effect's `Schema` namespace (possibly through a const alias). */
-function isSchemaNamespace(
-  node: ESTree.Node,
-  context: Context,
-  locals: SchemaLocals,
-  hops: number,
-): boolean {
+function isSchemaNamespace(node: ESTree.Node, context: Context, locals: SchemaLocals, hops: number): boolean {
   // `Schema.Literals([...])` / `S.Literals([...])` / `Schema['Literals']([...])`.
   if (node.type === 'Identifier') {
     if (locals.schema.has(node.name)) return resolvesToImport(context, node);
@@ -233,8 +229,7 @@ function factoryOf(
   hops: number,
 ): string | null {
   const callee = unwrap(node);
-  if (callee.type === 'Identifier')
-    return identifierFactory(callee, context, locals, factories, hops);
+  if (callee.type === 'Identifier') return identifierFactory(callee, context, locals, factories, hops);
   if (callee.type !== 'MemberExpression') return null;
   const member = memberName(callee);
   if (member === null || !factories.includes(member)) return null;
@@ -372,11 +367,7 @@ function duplicateMessage(canonical: Occurrence) {
   return canonical.name === null ? 'duplicateAnonymous' : 'duplicateOfNamed';
 }
 
-function reportDuplicateGroup(
-  context: Context,
-  group: Group,
-  reported: Set<ESTree.CallExpression>,
-): void {
+function reportDuplicateGroup(context: Context, group: Group, reported: Set<ESTree.CallExpression>): void {
   // Calls built from a shared constant are authorities, never copies to report.
   const copies = group.occurrences.filter((occurrence) => !occurrence.authority);
   if (copies.length === 0) return;
@@ -507,11 +498,7 @@ export const rule = defineRule({
         const program = context.sourceCode.ast;
         const bindings = collectEffectBindings(program);
         const schemaLocals = collectSchemaLocals(program, bindings, resolved.reexportModules);
-        if (
-          schemaLocals.schema.size === 0 &&
-          schemaLocals.barrel.size === 0 &&
-          schemaLocals.direct.size === 0
-        ) {
+        if (schemaLocals.schema.size === 0 && schemaLocals.barrel.size === 0 && schemaLocals.direct.size === 0) {
           return false;
         }
         locals = schemaLocals;

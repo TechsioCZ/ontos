@@ -6,9 +6,9 @@ import type { Scope } from 'effect';
 export const runQualityCli = <Failure,>(
   command: Effect.Effect<void, Failure, NodeServices.NodeServices | Scope.Scope>,
 ) => {
-  const mainLayer = Layer.effectDiscard(
-    command.pipe(Effect.tapError((issue) => Console.error(String(issue)))),
-  ).pipe(Layer.provide(NodeServices.layer));
+  const mainLayer = Layer.effectDiscard(command.pipe(Effect.tapError((issue) => Console.error(String(issue))))).pipe(
+    Layer.provide(NodeServices.layer),
+  );
   NodeRuntime.runMain(Effect.scoped(Layer.build(mainLayer)).pipe(Effect.asVoid), {
     disableErrorReporting: true,
   });

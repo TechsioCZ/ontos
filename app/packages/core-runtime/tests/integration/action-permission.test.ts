@@ -1,15 +1,15 @@
-// oxlint-disable-next-line max-classes-per-file -- Effect requires class declarations for both the typed error and fixture service; remove when this fixture no longer needs its client service.
-import { expect, it } from 'effect-rstest';
+import { randomUUID } from 'node:crypto';
+
 import { v1 } from '@authzed/authzed-node';
 import { and, eq } from 'drizzle-orm';
 import { Context, Effect, Layer, Exit, Schema, Predicate } from 'effect';
-import { randomUUID } from 'node:crypto';
+import { expect, it } from 'effect-rstest';
+import { SqlError, UnknownError } from 'effect/unstable/sql/SqlError';
+
 import type { ActionHandlerContext } from '../../src/actions/context.ts';
 import { defineAction } from '../../src/actions/definition.ts';
 import { makeActionRepository } from '../../src/actions/repository.ts';
 import { makeActionRuntime } from '../../src/actions/runtime.ts';
-import { makeFaultInjectableCoreDatabase, TestQueryHook } from '../support/database-faults.ts';
-import { SqlError, UnknownError } from 'effect/unstable/sql/SqlError';
 import { loadDatabaseConfig } from '../../src/db/config.ts';
 import {
   actionInvocations,
@@ -36,10 +36,12 @@ import {
 } from '../../src/permissions/service.ts';
 import { testOperationalScopeResolver } from '../fixtures/operational-scope.ts';
 import { openActionRuntimeOptions } from '../support/action-runtime-options.ts';
+import { makeFaultInjectableCoreDatabase, TestQueryHook } from '../support/database-faults.ts';
+import { TestWriteError } from '../support/permission-write-error.ts';
 
-class TestWriteError extends Schema.TaggedError<TestWriteError>()('TestWriteError', {
-  reason: Schema.String,
-}) {}
+class PermissionAdmin extends Context.Service<PermissionAdmin, ReturnType<typeof v1.NewClient>>()(
+  '@app/core-runtime/tests/integration/action-permission.test/PermissionAdmin',
+) {}
 
 const suiteId = randomUUID();
 const tenantId = randomUUID();
@@ -150,9 +152,7 @@ const relationship = (
               objectType: executorSubject.objectType,
             }),
       optionalRelation:
-        relation === 'executor' && executorSubject.objectType === 'tenant'
-          ? executorSubject.optionalRelation
-          : '',
+        relation === 'executor' && executorSubject.objectType === 'tenant' ? executorSubject.optionalRelation : '',
     }),
   });
 };
@@ -176,10 +176,7 @@ const NoDomainEvents = {};
 interface PermissionActionServices {
   readonly transaction: ScopedTransactionExecutor;
 }
-type PermissionActionContext = ActionHandlerContext<
-  typeof NoDomainEvents,
-  PermissionActionServices
->;
+type PermissionActionContext = ActionHandlerContext<typeof NoDomainEvents, PermissionActionServices>;
 
 const registration = (actionKey: string, moduleStateKey: string, onExecute: () => void) =>
   defineAction(
@@ -194,7 +191,10 @@ const registration = (actionKey: string, moduleStateKey: string, onExecute: () =
       domainEvents: NoDomainEvents,
       entrypoint: defineSystemModuleEntrypoint({
         access: 'write',
-        authorization: { kind: 'action_execution', provisioning: 'tenant_membership_default' },
+        authorization: {
+          kind: 'action_execution',
+          provisioning: 'tenant_membership_default',
+        },
         entrypointKey: actionKey,
         moduleKey: 'core.shell',
         role: 'action',
@@ -221,9 +221,6 @@ const registration = (actionKey: string, moduleStateKey: string, onExecute: () =
     (transaction) => Effect.succeed({ transaction }),
   );
 
-class PermissionAdmin extends Context.Service<PermissionAdmin, ReturnType<typeof v1.NewClient>>()(
-  '@app/core-runtime/tests/integration/action-permission.test/PermissionAdmin',
-) {}
 const PermissionFixture = Layer.effect(
   PermissionAdmin,
   Effect.gen(function* integrationProgram1() {
@@ -231,16 +228,12 @@ const PermissionFixture = Layer.effect(
     const adminClient = v1.NewClient(
       spiceDbConfig.preSharedKey,
       spiceDbConfig.endpoint,
-      spiceDbConfig.insecureLocal
-        ? v1.ClientSecurity.INSECURE_LOCALHOST_ALLOWED
-        : v1.ClientSecurity.SECURE,
+      spiceDbConfig.insecureLocal ? v1.ClientSecurity.INSECURE_LOCALHOST_ALLOWED : v1.ClientSecurity.SECURE,
     );
 
     const prepare = Effect.gen(function* preparePermissionFixture() {
       yield* Effect.promise(() =>
-        adminClient.promises.writeSchema(
-          v1.WriteSchemaRequest.create({ schema: ONTOS_SPICEDB_SCHEMA }),
-        ),
+        adminClient.promises.writeSchema(v1.WriteSchemaRequest.create({ schema: ONTOS_SPICEDB_SCHEMA })),
       );
       yield* withDatabase(
         Effect.fn(function* seedPermissionFixture(database) {
@@ -359,8 +352,9 @@ const PermissionFixture = Layer.effect(
 
     const cleanup = Effect.gen(function* cleanPermissionFixture() {
       const relationshipCleanupExit = yield* Effect.exit(
-        Effect.all(
-          [...relationshipActionKeys].map((actionKey) =>
+        Effect.forEach(
+          [...relationshipActionKeys],
+          (actionKey) =>
             Effect.promise(() =>
               adminClient.promises.deleteRelationships(
                 v1.DeleteRelationshipsRequest.create({
@@ -371,12 +365,12 @@ const PermissionFixture = Layer.effect(
                 }),
               ),
             ),
-          ),
           { discard: true },
         ).pipe(
           Effect.andThen(
-            Effect.all(
-              [tenantId, otherTenantId].map((membershipTenantId) =>
+            Effect.forEach(
+              [tenantId, otherTenantId],
+              (membershipTenantId) =>
                 Effect.promise(() =>
                   adminClient.promises.deleteRelationships(
                     v1.DeleteRelationshipsRequest.create({
@@ -387,7 +381,6 @@ const PermissionFixture = Layer.effect(
                     }),
                   ),
                 ),
-              ),
               { discard: true },
             ),
           ),
@@ -398,57 +391,24 @@ const PermissionFixture = Layer.effect(
       yield* withDatabase((database) =>
         Effect.forEach(
           [
-            () =>
-              database.executor
-                .delete(outboxMessages)
-                .where(eq(outboxMessages.tenantId, otherTenantId)),
-            () =>
-              database.executor
-                .delete(domainEvents)
-                .where(eq(domainEvents.tenantId, otherTenantId)),
-            () =>
-              database.executor
-                .delete(dataAccessEvents)
-                .where(eq(dataAccessEvents.tenantId, otherTenantId)),
-            () =>
-              database.executor.delete(auditEvents).where(eq(auditEvents.tenantId, otherTenantId)),
-            () =>
-              database.executor
-                .delete(tenantModuleStates)
-                .where(eq(tenantModuleStates.tenantId, otherTenantId)),
-            () =>
-              database.executor
-                .delete(actionInvocations)
-                .where(eq(actionInvocations.tenantId, otherTenantId)),
-            () =>
-              database.executor.delete(outboxMessages).where(eq(outboxMessages.tenantId, tenantId)),
+            () => database.executor.delete(outboxMessages).where(eq(outboxMessages.tenantId, otherTenantId)),
+            () => database.executor.delete(domainEvents).where(eq(domainEvents.tenantId, otherTenantId)),
+            () => database.executor.delete(dataAccessEvents).where(eq(dataAccessEvents.tenantId, otherTenantId)),
+            () => database.executor.delete(auditEvents).where(eq(auditEvents.tenantId, otherTenantId)),
+            () => database.executor.delete(tenantModuleStates).where(eq(tenantModuleStates.tenantId, otherTenantId)),
+            () => database.executor.delete(actionInvocations).where(eq(actionInvocations.tenantId, otherTenantId)),
+            () => database.executor.delete(outboxMessages).where(eq(outboxMessages.tenantId, tenantId)),
             () => database.executor.delete(domainEvents).where(eq(domainEvents.tenantId, tenantId)),
-            () =>
-              database.executor
-                .delete(dataAccessEvents)
-                .where(eq(dataAccessEvents.tenantId, tenantId)),
+            () => database.executor.delete(dataAccessEvents).where(eq(dataAccessEvents.tenantId, tenantId)),
             () => database.executor.delete(auditEvents).where(eq(auditEvents.tenantId, tenantId)),
+            () => database.executor.delete(tenantModuleStates).where(eq(tenantModuleStates.tenantId, tenantId)),
+            () => database.executor.delete(actionInvocations).where(eq(actionInvocations.tenantId, tenantId)),
             () =>
-              database.executor
-                .delete(tenantModuleStates)
-                .where(eq(tenantModuleStates.tenantId, tenantId)),
-            () =>
-              database.executor
-                .delete(actionInvocations)
-                .where(eq(actionInvocations.tenantId, tenantId)),
-            () =>
-              database.executor
-                .delete(principalAuthBindings)
-                .where(eq(principalAuthBindings.tenantId, otherTenantId)),
-            () =>
-              database.executor
-                .delete(principalAuthBindings)
-                .where(eq(principalAuthBindings.tenantId, tenantId)),
-            () =>
-              database.executor.delete(principals).where(eq(principals.tenantId, otherTenantId)),
+              database.executor.delete(principalAuthBindings).where(eq(principalAuthBindings.tenantId, otherTenantId)),
+            () => database.executor.delete(principalAuthBindings).where(eq(principalAuthBindings.tenantId, tenantId)),
+            () => database.executor.delete(principals).where(eq(principals.tenantId, otherTenantId)),
             () => database.executor.delete(principals).where(eq(principals.tenantId, tenantId)),
-            () =>
-              database.executor.delete(legalEntities).where(eq(legalEntities.tenantId, tenantId)),
+            () => database.executor.delete(legalEntities).where(eq(legalEntities.tenantId, tenantId)),
             () => database.executor.delete(tenants).where(eq(tenants.tenantId, tenantId)),
             () => database.executor.delete(tenants).where(eq(tenants.tenantId, otherTenantId)),
           ],
@@ -507,10 +467,7 @@ const withDenialPersistenceFailure = (
 ): ContextServiceContract => {
   const transaction: ContextServiceContract['executor']['transaction'] = (operation) =>
     database.executor.transaction((current) => {
-      const prefix =
-        stage === 'audit'
-          ? 'insert into "core"."audit_events"'
-          : 'update "core"."action_invocations"';
+      const prefix = stage === 'audit' ? 'insert into "core"."audit_events"' : 'update "core"."action_invocations"';
       return operation(current).pipe(
         Effect.provideService(TestQueryHook, (statement) =>
           statement.startsWith(prefix)
@@ -526,10 +483,7 @@ const withDenialPersistenceFailure = (
         ),
       );
     });
-  const executor: ContextServiceContract['executor'] = Object.assign(
-    Object.create(database.executor),
-    { transaction },
-  );
+  const executor: ContextServiceContract['executor'] = Object.assign(Object.create(database.executor), { transaction });
   return { executor };
 };
 
@@ -546,11 +500,7 @@ const runFailedAction = (
     runtime.runAction({
       payload: undefined,
       principal,
-      registration: registration(
-        actionKey,
-        moduleStateKey,
-        incrementExecution.bind(undefined, executions),
-      ),
+      registration: registration(actionKey, moduleStateKey, incrementExecution.bind(undefined, executions)),
       transport: transport(key, moduleStateKey),
     }),
   );
@@ -569,11 +519,7 @@ const testProgram1 = () =>
           runtime.runAction({
             payload: undefined,
             principal,
-            registration: registration(
-              actionKey,
-              moduleStateKey,
-              incrementExecution.bind(undefined, executions),
-            ),
+            registration: registration(actionKey, moduleStateKey, incrementExecution.bind(undefined, executions)),
             transport: transport(kind, moduleStateKey),
           }),
         );
@@ -611,10 +557,7 @@ const testProgram2 = () =>
           .select()
           .from(auditEvents)
           .where(eq(auditEvents.actionInvocationId, invocation.actionInvocationId)),
-        database.executor
-          .select()
-          .from(tenantModuleStates)
-          .where(eq(tenantModuleStates.moduleKey, moduleStateKey)),
+        database.executor.select().from(tenantModuleStates).where(eq(tenantModuleStates.moduleKey, moduleStateKey)),
         database.executor
           .select()
           .from(dataAccessEvents)
@@ -623,10 +566,7 @@ const testProgram2 = () =>
           .select()
           .from(domainEvents)
           .where(eq(domainEvents.actionInvocationId, invocation.actionInvocationId)),
-        database.executor
-          .select()
-          .from(outboxMessages)
-          .where(eq(outboxMessages.tenantId, tenantId)),
+        database.executor.select().from(outboxMessages).where(eq(outboxMessages.tenantId, tenantId)),
       ]);
 
       expect(Predicate.isTagged(failure, 'ActionPermissionDenied')).toBe(true);
@@ -672,11 +612,7 @@ const testProgram3 = () =>
             runtime.runAction({
               payload: undefined,
               principal: deniedPrincipal,
-              registration: registration(
-                actionKey,
-                moduleStateKey,
-                incrementExecution.bind(undefined, executions),
-              ),
+              registration: registration(actionKey, moduleStateKey, incrementExecution.bind(undefined, executions)),
               transport: transport(kind, moduleStateKey),
             }),
           ),
@@ -705,10 +641,9 @@ const testProgram4 = () =>
         ),
         transport: transport(key, moduleStateKey),
       };
-      const results = yield* Effect.all(
-        [1, 2].map(() =>
-          runWithLivePermission(database, (runtime) => Effect.flip(runtime.runAction(input))),
-        ),
+      const results = yield* Effect.forEach(
+        [1, 2],
+        () => runWithLivePermission(database, (runtime) => Effect.flip(runtime.runAction(input))),
         { concurrency: 'unbounded' },
       );
       const [invocation] = yield* database.executor
@@ -756,21 +691,15 @@ const testProgram5 = () =>
             }),
           ),
         );
-        const failure = yield* runWithLivePermission(
-          withDenialPersistenceFailure(database, stage),
-          (runtime) =>
-            Effect.flip(
-              runtime.runAction({
-                payload: undefined,
-                principal,
-                registration: registration(
-                  actionKey,
-                  moduleStateKey,
-                  incrementExecution.bind(undefined, executions),
-                ),
-                transport: transport(key, moduleStateKey),
-              }),
-            ),
+        const failure = yield* runWithLivePermission(withDenialPersistenceFailure(database, stage), (runtime) =>
+          Effect.flip(
+            runtime.runAction({
+              payload: undefined,
+              principal,
+              registration: registration(actionKey, moduleStateKey, incrementExecution.bind(undefined, executions)),
+              transport: transport(key, moduleStateKey),
+            }),
+          ),
         );
         const [invocation] = yield* database.executor
           .select()
@@ -803,9 +732,11 @@ const testProgram6 = () =>
       const moduleStateKey = `${actionPrefix}.state.invalid-credentials`;
       const failure = yield* runWithLivePermission(
         database,
-        (runtime) =>
-          runFailedAction(runtime, actionKeys.unavailable, key, moduleStateKey, executions),
-        { ...(yield* loadSpiceDbConfig()), preSharedKey: 'invalid-integration-key' },
+        (runtime) => runFailedAction(runtime, actionKeys.unavailable, key, moduleStateKey, executions),
+        {
+          ...(yield* loadSpiceDbConfig()),
+          preSharedKey: 'invalid-integration-key',
+        },
       );
       const [invocation] = yield* database.executor
         .select()
@@ -819,10 +750,7 @@ const testProgram6 = () =>
         .select()
         .from(auditEvents)
         .where(
-          and(
-            eq(auditEvents.actionInvocationId, invocation.actionInvocationId),
-            eq(auditEvents.outcomeStage, 'authz'),
-          ),
+          and(eq(auditEvents.actionInvocationId, invocation.actionInvocationId), eq(auditEvents.outcomeStage, 'authz')),
         );
 
       expect(Predicate.isTagged(failure, 'ActionPermissionCheckError')).toBe(true);
@@ -837,28 +765,13 @@ const testProgram6 = () =>
 it.layer(PermissionFixture, { excludeTestServices: true })('Action permissions', (suite) => {
   suite.effect('allows direct Principal and Tenant-membership executor grants', testProgram1);
 
-  suite.effect(
-    'persists one normalized terminal denial and no business or collected evidence',
-    testProgram2,
-  );
+  suite.effect('persists one normalized terminal denial and no business or collected evidence', testProgram2);
 
-  suite.effect(
-    'denies a legacy marker without an executor and membership-set outsiders',
-    testProgram3,
-  );
+  suite.effect('denies a legacy marker without an executor and membership-set outsiders', testProgram3);
 
-  suite.effect(
-    'serializes concurrent denials into one Audit Event without executing the handler',
-    testProgram4,
-  );
+  suite.effect('serializes concurrent denials into one Audit Event without executing the handler', testProgram4);
 
-  suite.effect(
-    'rolls back both denial evidence writes when either persistence step fails',
-    testProgram5,
-  );
+  suite.effect('rolls back both denial evidence writes when either persistence step fails', testProgram5);
 
-  suite.effect(
-    'fails closed for invalid SpiceDB credentials and leaves retryable received evidence',
-    testProgram6,
-  );
+  suite.effect('fails closed for invalid SpiceDB credentials and leaves retryable received evidence', testProgram6);
 });

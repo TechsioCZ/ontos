@@ -1,20 +1,20 @@
-import { write } from './fixture-files.mts';
-import { linkFixtureDependencies, withCreatedFixture } from './fixture-ownership.mts';
-import { Cause, Effect, Schema } from 'effect';
-import { expect, it } from 'effect-rstest';
-import { NodeServices } from '@effect/platform-node';
-
 import { mkdtemp, readFile, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
+
+import { NodeServices } from '@effect/platform-node';
+import { Cause, Effect, Schema } from 'effect';
+import { expect, it } from 'effect-rstest';
+
 import {
   privateOwnerImportViolation,
   unconstrainedHttpApiContractSchemaViolation,
 } from '../../ultramodern-api-boundary-rules.mts';
-// Match the native module identity used by the generated fixture's owner bundle.
-
 import { getHelpText, runScaffoldEffect } from '../cli.mts';
 import type { JsonValue } from '../shared.mts';
+// Match the native module identity used by the generated fixture's owner bundle.
+import { write } from './fixture-files.mts';
+import { linkFixtureDependencies, withCreatedFixture } from './fixture-ownership.mts';
 
 const { checkOntosModuleContracts } = await import(
   /* webpackIgnore: true */
@@ -62,7 +62,9 @@ const ModulePackageSchema = Schema.Struct({
   }),
   scripts: StringRecordSchema,
 });
-const ModuleTsconfigSchema = Schema.Struct({ include: Schema.Array(Schema.String) });
+const ModuleTsconfigSchema = Schema.Struct({
+  include: Schema.Array(Schema.String),
+});
 const ModuleContractDocumentSchema = Schema.Struct({
   deployment: Schema.Struct({ appId: AppIdSchema }),
   manifest: Schema.Struct({
@@ -74,13 +76,13 @@ const ModuleContractDocumentSchema = Schema.Struct({
   schemaVersion: Schema.String,
 });
 const decodeModulePackage = (source: string) =>
-  Schema.decodeUnknownEffect(ModulePackageSchema, { onExcessProperty: 'preserve' })(
-    JSON.parse(source),
-  );
+  Schema.decodeUnknownEffect(ModulePackageSchema, {
+    onExcessProperty: 'preserve',
+  })(JSON.parse(source));
 const decodeModuleContract = (source: string) =>
-  Schema.decodeUnknownEffect(ModuleContractDocumentSchema, { onExcessProperty: 'preserve' })(
-    JSON.parse(source),
-  );
+  Schema.decodeUnknownEffect(ModuleContractDocumentSchema, {
+    onExcessProperty: 'preserve',
+  })(JSON.parse(source));
 
 const appRoot = path.resolve(import.meta.dirname, '..', '..', '..');
 const json = (value: JsonValue): string => `${JSON.stringify(value, null, 2)}\n`;
@@ -106,9 +108,7 @@ export default defineEffectBff({ api: fixtureApi, layer });
 
 const createFixture = (): Effect.Effect<string, unknown> =>
   Effect.gen(function* mergedScenario2() {
-    const root = yield* Effect.promise(() =>
-      mkdtemp(path.join(tmpdir(), 'ontos-module-contract-')),
-    );
+    const root = yield* Effect.promise(() => mkdtemp(path.join(tmpdir(), 'ontos-module-contract-')));
     yield* write(root, 'package.json', json({ name: 'fixture', private: true, type: 'module' }));
     yield* write(
       root,
@@ -138,13 +138,13 @@ const createFixture = (): Effect.Effect<string, unknown> =>
     yield* write(
       root,
       'verticals/property-registry/tsconfig.json',
-      json({ compilerOptions: { composite: true }, include: ['src', 'shared'], references: [] }),
+      json({
+        compilerOptions: { composite: true },
+        include: ['src', 'shared'],
+        references: [],
+      }),
     );
-    yield* write(
-      root,
-      'verticals/property-registry/module-federation.config.ts',
-      `export default { exposes: {} };\n`,
-    );
+    yield* write(root, 'verticals/property-registry/module-federation.config.ts', `export default { exposes: {} };\n`);
     yield* write(
       root,
       'verticals/documents-center/package.json',
@@ -168,17 +168,16 @@ const createFixture = (): Effect.Effect<string, unknown> =>
     yield* write(
       root,
       'verticals/documents-center/tsconfig.json',
-      json({ compilerOptions: { composite: true }, include: ['src'], references: [] }),
+      json({
+        compilerOptions: { composite: true },
+        include: ['src'],
+        references: [],
+      }),
     );
-    yield* write(
-      root,
-      'verticals/documents-center/module-federation.config.ts',
-      'export default {};\n',
-    );
-    yield* Effect.all(
-      [writePinnedEffectApi(root, APP_ID), writePinnedEffectApi(root, DOCUMENTS_APP_ID)],
-      { concurrency: 'unbounded' },
-    );
+    yield* write(root, 'verticals/documents-center/module-federation.config.ts', 'export default {};\n');
+    yield* Effect.all([writePinnedEffectApi(root, APP_ID), writePinnedEffectApi(root, DOCUMENTS_APP_ID)], {
+      concurrency: 'unbounded',
+    });
     yield* write(
       root,
       'topology/reference-topology.json',
@@ -190,7 +189,10 @@ const createFixture = (): Effect.Effect<string, unknown> =>
             domain: 'property',
             id: APP_ID,
             kind: 'vertical',
-            moduleFederation: { name: 'verticalPropertyRegistry', role: 'remote' },
+            moduleFederation: {
+              name: 'verticalPropertyRegistry',
+              role: 'remote',
+            },
             package: '@app/property-registry',
             path: 'verticals/property-registry',
           },
@@ -199,7 +201,10 @@ const createFixture = (): Effect.Effect<string, unknown> =>
             domain: 'documents',
             id: DOCUMENTS_APP_ID,
             kind: 'vertical',
-            moduleFederation: { name: 'verticalDocumentsCenter', role: 'remote' },
+            moduleFederation: {
+              name: 'verticalDocumentsCenter',
+              role: 'remote',
+            },
             package: '@app/documents-center',
             path: 'verticals/documents-center',
           },
@@ -227,18 +232,10 @@ const createFixture = (): Effect.Effect<string, unknown> =>
 
 const withFixture = withCreatedFixture(createFixture());
 
-const scaffold = Effect.fn(function* scenario4(
-  root: string,
-  vertical = APP_ID,
-  module = MODULE_ID,
-) {
-  return yield* runScaffoldEffect(
-    MODULE_CONTRACT_COMMAND,
-    [VERTICAL_FLAG, vertical, '--module', module],
-    {
-      workspaceRoot: root,
-    },
-  ).pipe(Effect.provide(NodeServices.layer));
+const scaffold = Effect.fn(function* scenario4(root: string, vertical = APP_ID, module = MODULE_ID) {
+  return yield* runScaffoldEffect(MODULE_CONTRACT_COMMAND, [VERTICAL_FLAG, vertical, '--module', module], {
+    workspaceRoot: root,
+  }).pipe(Effect.provide(NodeServices.layer));
 });
 
 it.live(
@@ -248,7 +245,10 @@ it.live(
     const result = yield* runScaffoldEffect(MODULE_CONTRACT_COMMAND, ['--help'], {
       workspaceRoot: missingRoot,
     }).pipe(Effect.provide(NodeServices.layer));
-    expect(result).toEqual({ help: getHelpText(MODULE_CONTRACT_COMMAND), kind: 'help' });
+    expect(result).toEqual({
+      help: getHelpText(MODULE_CONTRACT_COMMAND),
+      kind: 'help',
+    });
     if (result.kind !== 'help') {
       throw new Error('Expected help result');
     }
@@ -291,10 +291,7 @@ it.live(
               'module.access',
             ],
           ],
-          [
-            'outbox-message',
-            [VERTICAL_FLAG, APP_ID, '--action', 'create-property', '--topic', 'property.created'],
-          ],
+          ['outbox-message', [VERTICAL_FLAG, APP_ID, '--action', 'create-property', '--topic', 'property.created']],
           [
             'outbox-worker',
             [
@@ -310,18 +307,13 @@ it.live(
               'owner_local_background',
             ],
           ],
-          [
-            'policy',
-            ['--scope', 'microvertical', VERTICAL_FLAG, APP_ID, '--policy', 'property-visible'],
-          ],
+          ['policy', ['--scope', 'microvertical', VERTICAL_FLAG, APP_ID, '--policy', 'property-visible']],
         ] as const;
         yield* Effect.all(
           commands.map(
             Effect.fn(function* scenario8([command, flags]) {
               return yield* expectFailure(
-                runScaffoldEffect(command, flags, { workspaceRoot: root }).pipe(
-                  Effect.provide(NodeServices.layer),
-                ),
+                runScaffoldEffect(command, flags, { workspaceRoot: root }).pipe(Effect.provide(NodeServices.layer)),
                 (error) => expect(String(error)).toMatch(/requires scaffold:module-contract/u),
               );
             }),
@@ -341,9 +333,7 @@ it.live(
         yield* expectFailure(scaffold(root, '../property', MODULE_ID), (error) =>
           expect(String(error)).toMatch(/lower-kebab-case/u),
         );
-        yield* expectFailure(scaffold(root, APP_ID, APP_ID), (error) =>
-          expect(String(error)).toMatch(/dotted/u),
-        );
+        yield* expectFailure(scaffold(root, APP_ID, APP_ID), (error) => expect(String(error)).toMatch(/dotted/u));
         yield* expectFailure(scaffold(root, APP_ID, 'core.modules'), (error) =>
           expect(String(error)).toMatch(/non-core/u),
         );
@@ -351,12 +341,10 @@ it.live(
         const packageAfterFirst = yield* Effect.promise(() =>
           readFile(path.join(root, PROPERTY_PACKAGE_PATH), 'utf-8'),
         );
-        yield* expectFailure(scaffold(root), (error) =>
-          expect(String(error)).toMatch(/refusing to overwrite/u),
+        yield* expectFailure(scaffold(root), (error) => expect(String(error)).toMatch(/refusing to overwrite/u));
+        expect(yield* Effect.promise(() => readFile(path.join(root, PROPERTY_PACKAGE_PATH), 'utf-8'))).toBe(
+          packageAfterFirst,
         );
-        expect(
-          yield* Effect.promise(() => readFile(path.join(root, PROPERTY_PACKAGE_PATH), 'utf-8')),
-        ).toBe(packageAfterFirst);
         yield* expectFailure(scaffold(root, DOCUMENTS_APP_ID, MODULE_ID), (error) =>
           expect(String(error)).toMatch(/duplicate OntOS module ID/u),
         );
@@ -372,14 +360,9 @@ it.live(
       Effect.fn(function* scenario12(root) {
         const result = yield* scaffold(root);
         expect(result.kind).toBe('generated');
-        const manifest = yield* Effect.promise(() =>
-          readFile(path.join(root, PROPERTY_MANIFEST_PATH), 'utf-8'),
-        );
+        const manifest = yield* Effect.promise(() => readFile(path.join(root, PROPERTY_MANIFEST_PATH), 'utf-8'));
         const registration = yield* Effect.promise(() =>
-          readFile(
-            path.join(root, 'verticals/property-registry/vertical.registration.ts'),
-            'utf-8',
-          ),
+          readFile(path.join(root, 'verticals/property-registry/vertical.registration.ts'), 'utf-8'),
         );
         expect(manifest).toMatch(/@ontos-deployment-app-id property-registry/u);
         expect(manifest).toMatch(/@ontos-module-id property\.registry/u);
@@ -407,9 +390,7 @@ it.live(
         });
         expect(packageJson.exports).toEqual({ '.': './src/index.ts' });
         expect(packageJson.scripts['existing']).toBe('preserve-me');
-        expect(packageJson.scripts['build'] ?? '').toMatch(
-          /--vertical property-registry --target dist/u,
-        );
+        expect(packageJson.scripts['build'] ?? '').toMatch(/--vertical property-registry --target dist/u);
         expect(packageJson.scripts['cloudflare:build'] ?? '').toMatch(
           /--vertical property-registry --target cloudflare-dist/u,
         );
@@ -427,12 +408,7 @@ it.live(
             ),
           ),
         );
-        expect(tsconfig.include).toEqual([
-          'src',
-          'shared',
-          'vertical.manifest.ts',
-          'vertical.registration.ts',
-        ]);
+        expect(tsconfig.include).toEqual(['src', 'shared', 'vertical.manifest.ts', 'vertical.registration.ts']);
       }),
     );
   }),
@@ -446,9 +422,7 @@ it.live(
         yield* scaffold(root);
         yield* scaffold(root, DOCUMENTS_APP_ID, DOCUMENTS_MODULE_ID);
         const authoredManifestPath = path.join(root, PROPERTY_MANIFEST_PATH);
-        const authoredManifest = yield* Effect.promise(() =>
-          readFile(authoredManifestPath, 'utf-8'),
-        );
+        const authoredManifest = yield* Effect.promise(() => readFile(authoredManifestPath, 'utf-8'));
         yield* Effect.promise(() =>
           writeFile(
             authoredManifestPath,
@@ -477,7 +451,10 @@ it.live(
           ...decodedPackage,
           modernjs: {
             ...decodedPackage.modernjs,
-            ontosModule: { ...decodedPackage.modernjs.ontosModule, schemaVersion: 0 },
+            ontosModule: {
+              ...decodedPackage.modernjs.ontosModule,
+              schemaVersion: 0,
+            },
           },
         };
         yield* Effect.promise(() => writeFile(packagePath, json(incompatiblePackage), 'utf-8'));
@@ -503,9 +480,7 @@ it.live(
         expect(document.manifest.module.id).toBe(MODULE_ID);
         expect(document.schemaVersion).toBe('2');
         expect(Object.hasOwn(document.manifest, 'dependencies')).toBe(false);
-        expect(document.manifest.publicSurface.api[0]?.operationKeys).toEqual([
-          'property.listUnits',
-        ]);
+        expect(document.manifest.publicSurface.api[0]?.operationKeys).toEqual(['property.listUnits']);
         expect(firstContent).not.toMatch(/vertical\.registration|function|handler|sourcePath/u);
         const headers = yield* Effect.promise(() =>
           readFile(path.join(root, 'verticals/property-registry/dist/public/_headers'), 'utf-8'),
@@ -527,11 +502,7 @@ it.live(
         const manifestPath = path.join(root, PROPERTY_MANIFEST_PATH);
         const manifest = yield* Effect.promise(() => readFile(manifestPath, 'utf-8'));
         yield* Effect.promise(() =>
-          writeFile(
-            manifestPath,
-            manifest.replace('// </generated-module-manifest-actions>', ''),
-            'utf-8',
-          ),
+          writeFile(manifestPath, manifest.replace('// </generated-module-manifest-actions>', ''), 'utf-8'),
         );
         yield* expectFailure(
           generateOntosModuleContract({
@@ -570,11 +541,7 @@ it.live(
 it('permits owner-local registration imports but rejects cross-deployment owner imports', () => {
   const root = '/workspace/app';
   expect(
-    privateOwnerImportViolation(
-      root,
-      'verticals/billing/src/worker-host/main.ts',
-      '../../vertical.registration.ts',
-    ),
+    privateOwnerImportViolation(root, 'verticals/billing/src/worker-host/main.ts', '../../vertical.registration.ts'),
   ).toBe(undefined);
   expect(
     privateOwnerImportViolation(
@@ -617,9 +584,9 @@ export const untouched = true;
           readFile(path.join(root, 'verticals/property-registry/shared/api.ts'), 'utf-8'),
         );
         expect(generated).toMatch(/HttpApi\.make\('Fixture;Api'\)/u);
-        expect(generated).toMatch(
-          /return api; \}\)\s*\/\/ <generated-governed-http-api-additions>/u,
-        );
+        expect(generated).toMatch(/return api;\s*\}\)\s*\/\/ <generated-governed-http-api-additions>/u);
+        expect(generated).toMatch(/<\/generated-governed-http-api-additions>\s*\.pipe\(governedHttpApiIdentity\);/u);
+        expect(generated).toMatch(/import \{ identity as governedHttpApiIdentity \} from 'effect';/u);
         expect(generated).toMatch(/export const governedHttpApi = fixtureApi;/u);
         expect(generated).toMatch(/export const untouched = true;/u);
       }),
@@ -709,10 +676,7 @@ it('follows imported payload, query, parameter, success, and error schemas', () 
           HttpApiEndpoint.post('execute', '/reads/example', { ${member}: UnsafeSchema });
         `,
       ],
-      [
-        unsafeContractFixturePath,
-        `export const UnsafeSchema = Schema.Struct({ nested: Schema.Unknown });`,
-      ],
+      [unsafeContractFixturePath, `export const UnsafeSchema = Schema.Struct({ nested: Schema.Unknown });`],
     ]);
     expect(
       unconstrainedHttpApiContractSchemaViolation(sources.get(contractApiFixturePath) ?? '', {
@@ -749,10 +713,7 @@ it('covers every supported endpoint constructor through direct and aliased paths
         ReexportedEndpoint.options('execute', '/reads/example', { success: Schema.Any });
       `,
     ],
-    [
-      contractBarrelFixturePath,
-      `export { HttpApiEndpoint as ReexportedEndpoint } from 'effect/unstable/httpapi';`,
-    ],
+    [contractBarrelFixturePath, `export { HttpApiEndpoint as ReexportedEndpoint } from 'effect/unstable/httpapi';`],
   ]);
   expect(
     unconstrainedHttpApiContractSchemaViolation(sources.get(contractApiFixturePath) ?? '', {
@@ -1101,10 +1062,7 @@ it('follows star barrels, default imports, and package export maps', () => {
     },
   ];
   for (const fixture of fixtures) {
-    const sources = new Map<string, string>([
-      [contractApiFixturePath, fixture.entry],
-      ...fixture.extraSources,
-    ]);
+    const sources = new Map<string, string>([[contractApiFixturePath, fixture.entry], ...fixture.extraSources]);
     expect(
       unconstrainedHttpApiContractSchemaViolation(sources.get(contractApiFixturePath) ?? '', {
         file: contractApiFixturePath,
@@ -1129,9 +1087,7 @@ it('covers ordinary endpoint aliases and TypeScript module forms', () => {
       HttpApiEndpoint.get('read', '/reads/example', { success: S.Any });
     `,
   ]) {
-    expect(unconstrainedHttpApiContractSchemaViolation(content) ?? '').toMatch(
-      /must use concrete/u,
-    );
+    expect(unconstrainedHttpApiContractSchemaViolation(content) ?? '').toMatch(/must use concrete/u);
   }
 
   const fixtures: readonly (readonly [string, ReadonlyMap<string, string>])[] = [
@@ -1140,12 +1096,7 @@ it('covers ordinary endpoint aliases and TypeScript module forms', () => {
         import SafeDefault, { UnsafeSchema } from './unsafe';
         HttpApiEndpoint.get('read', '/reads/example', { success: UnsafeSchema });
       `,
-      new Map([
-        [
-          unsafeContractFixturePath,
-          `export default Schema.String; export const UnsafeSchema = Schema.Any;`,
-        ],
-      ]),
+      new Map([[unsafeContractFixturePath, `export default Schema.String; export const UnsafeSchema = Schema.Any;`]]),
     ],
     [
       `
@@ -1163,10 +1114,7 @@ it('covers ordinary endpoint aliases and TypeScript module forms', () => {
         HttpApiEndpoint.get('read', '/reads/example', { success: UnsafeSchema });
       `,
       new Map([
-        [
-          packageFixturePath,
-          `{"exports":{"./api":{"types":"./src/unsafe.ts","default":"./dist/unsafe.js"}}}`,
-        ],
+        [packageFixturePath, `{"exports":{"./api":{"types":"./src/unsafe.ts","default":"./dist/unsafe.js"}}}`],
         [packageUnsafeFixturePath, `export const UnsafeSchema = Schema.Any;`],
       ]),
     ],
@@ -1210,9 +1158,7 @@ it('covers destructured, computed, and provenance-safe aliases', () => {
       factory('InvalidProblem', 400, { values: Schema.Record(Schema.String, Schema.String) });
     `,
   ]) {
-    expect(unconstrainedHttpApiContractSchemaViolation(content) ?? '').toMatch(
-      /must use concrete/u,
-    );
+    expect(unconstrainedHttpApiContractSchemaViolation(content) ?? '').toMatch(/must use concrete/u);
   }
 
   expect(
@@ -1308,10 +1254,7 @@ it('evaluates package export conditions, wildcard specificity, and null exclusio
     [
       '@app/example/api',
       new Map([
-        [
-          packageFixturePath,
-          `{"exports":{"./api":{"types":"./src/safe.d.ts","default":"./src/unsafe.ts"}}}`,
-        ],
+        [packageFixturePath, `{"exports":{"./api":{"types":"./src/safe.d.ts","default":"./src/unsafe.ts"}}}`],
         ['packages/example/src/safe.d.ts', `export const UnsafeSchema: unknown;`],
         [packageUnsafeFixturePath, `export const UnsafeSchema = Schema.Any;`],
       ]),
@@ -1389,10 +1332,7 @@ it('terminates on safe and unsafe cyclic re-exports', () => {
   const safeSources = new Map([
     [contractApiFixturePath, entry],
     ['contracts/cycle-a.ts', `export * from './cycle-b';`],
-    [
-      'contracts/cycle-b.ts',
-      `export * from './cycle-a'; export const ResponseSchema = Schema.String;`,
-    ],
+    ['contracts/cycle-b.ts', `export * from './cycle-a'; export const ResponseSchema = Schema.String;`],
   ]);
   expect(
     unconstrainedHttpApiContractSchemaViolation(entry, {
@@ -1402,10 +1342,7 @@ it('terminates on safe and unsafe cyclic re-exports', () => {
   ).toBe(undefined);
   const unsafeSources = new Map([
     ...safeSources,
-    [
-      'contracts/cycle-b.ts',
-      `export * from './cycle-a'; export const ResponseSchema = Schema.Any;`,
-    ] as const,
+    ['contracts/cycle-b.ts', `export * from './cycle-a'; export const ResponseSchema = Schema.Any;`] as const,
   ]);
   expect(
     unconstrainedHttpApiContractSchemaViolation(entry, {
@@ -1422,10 +1359,7 @@ it('honors explicit export precedence and star-export binding identity', () => {
   `;
   const explicitSources = new Map([
     [contractApiFixturePath, entry],
-    [
-      contractBarrelFixturePath,
-      `export { SafeSchema as ResponseSchema } from './safe'; export * from './unsafe';`,
-    ],
+    [contractBarrelFixturePath, `export { SafeSchema as ResponseSchema } from './safe'; export * from './unsafe';`],
     ['contracts/safe.ts', `export const SafeSchema = Schema.String;`],
     [unsafeContractFixturePath, `export const ResponseSchema = Schema.Any;`],
   ]);
@@ -1545,9 +1479,7 @@ it('tracks object, mutable, rest, var, enum, and namespace provenance', () => {
       HttpApiEndpoint.get('read', '/reads/example', { success: ResponseSchema });
     `,
   ]) {
-    expect(unconstrainedHttpApiContractSchemaViolation(content) ?? '').toMatch(
-      /must use concrete/u,
-    );
+    expect(unconstrainedHttpApiContractSchemaViolation(content) ?? '').toMatch(/must use concrete/u);
   }
 
   for (const content of [
@@ -1581,14 +1513,8 @@ it('tracks object, mutable, rest, var, enum, and namespace provenance', () => {
 it('follows external schema and endpoint provider re-exports', () => {
   const fixtures: readonly (readonly [string, string])[] = [
     [`export * from 'effect/Schema';`, `import { Any as UnsafeSchema } from './barrel';`],
-    [
-      `export { Unknown as UnsafeSchema } from 'effect';`,
-      `import { UnsafeSchema } from './barrel';`,
-    ],
-    [
-      `export * as S from 'effect/Schema';`,
-      `import { S } from './barrel'; const UnsafeSchema = S.Any;`,
-    ],
+    [`export { Unknown as UnsafeSchema } from 'effect';`, `import { UnsafeSchema } from './barrel';`],
+    [`export * as S from 'effect/Schema';`, `import { S } from './barrel'; const UnsafeSchema = S.Any;`],
   ];
   for (const [barrel, imported] of fixtures) {
     const entry = `${imported}
@@ -1661,10 +1587,7 @@ it('follows local and imported aliases of Problem Details factories', () => {
       sources,
     }) ?? '',
   ).toMatch(/must use concrete/u);
-  for (const extensions of [
-    `{ field: Schema.Unknown }`,
-    `{ values: Schema.Record(Schema.String, Schema.String) }`,
-  ]) {
+  for (const extensions of [`{ field: Schema.Unknown }`, `{ values: Schema.Record(Schema.String, Schema.String) }`]) {
     const inlineSources = new Map([
       ...sources,
       [

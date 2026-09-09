@@ -1,8 +1,6 @@
 import { Effect, Match } from 'effect';
-import {
-  EngagementProfileConflict,
-  EngagementProfileNotFound,
-} from '../../shared/domain/engagement-profile.ts';
+
+import { EngagementProfileConflict, EngagementProfileNotFound } from '../../shared/domain/engagement-profile.ts';
 import type { LifecycleResult } from '../services/engagement-profile-persistence.service.ts';
 
 export const resolveEngagementLifecycle = <Value>(

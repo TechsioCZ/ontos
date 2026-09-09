@@ -1,5 +1,6 @@
-import { expect, it } from 'effect-rstest';
 import { Schema, Predicate } from 'effect';
+import { expect, it } from 'effect-rstest';
+
 import {
   ACTION_CORE_ERROR_TAGS,
   ActionAlreadyCommitted,

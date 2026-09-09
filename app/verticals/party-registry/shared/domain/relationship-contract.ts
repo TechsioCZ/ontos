@@ -1,6 +1,7 @@
 import { DateTime, Option, Schema, SchemaGetter } from 'effect';
-import { PartyRefSchema } from '../resources/party.ts';
+
 import { PartyRelationshipRefSchema } from '../resources/party-relationship.ts';
+import { PartyRefSchema } from '../resources/party.ts';
 
 export {
   PartyRelationshipCorrectionRequired,
@@ -17,11 +18,7 @@ export {
 export const ContactPersonOfRelationshipType = 'CONTACT_PERSON_OF' as const;
 export const PartyRelationshipTypeSchema = Schema.Literal(ContactPersonOfRelationshipType);
 
-export const RelationshipPartyTypeSchema = Schema.Literals([
-  'PERSON',
-  'ORGANIZATION',
-  'UNRESOLVED',
-]);
+export const RelationshipPartyTypeSchema = Schema.Literals(['PERSON', 'ORGANIZATION', 'UNRESOLVED']);
 
 export const RelationshipIsoTimestampSchema = Schema.String.pipe(
   Schema.check(
@@ -42,10 +39,7 @@ export type RelationshipIsoTimestamp = typeof RelationshipIsoTimestampSchema.Typ
 
 const BoundedTextSchema = Schema.Trim.check(Schema.isMinLength(1), Schema.isMaxLength(300));
 const ReasonSchema = Schema.Trim.check(Schema.isMinLength(1), Schema.isMaxLength(1000));
-const PositiveRevisionSchema = Schema.Finite.check(
-  Schema.isInt(),
-  Schema.isGreaterThanOrEqualTo(1),
-);
+const PositiveRevisionSchema = Schema.Finite.check(Schema.isInt(), Schema.isGreaterThanOrEqualTo(1));
 
 export const PartyRelationshipProvenanceSchema = Schema.Struct({
   method: BoundedTextSchema,
@@ -107,12 +101,7 @@ const RelationshipStoredEndpointSchema = Schema.Struct({
 const PartyRelationshipStateSchema = Schema.Literals(['SCHEDULED', 'CURRENT', 'HISTORICAL']);
 export type PartyRelationshipState = typeof PartyRelationshipStateSchema.Type;
 
-export const PartyRelationshipAssertionStateSchema = Schema.Literals([
-  'ACTIVE',
-  'SUPERSEDED',
-  'RETRACTED',
-  'DISPUTED',
-]);
+export const PartyRelationshipAssertionStateSchema = Schema.Literals(['ACTIVE', 'SUPERSEDED', 'RETRACTED', 'DISPUTED']);
 
 export const RelationshipEndEvidenceSchema = Schema.Struct({
   effectiveAt: RelationshipIsoTimestampSchema,
@@ -133,9 +122,7 @@ export const UpdateRelationshipAuditEvidenceSchema = Schema.Struct({
   previousValidTo: Schema.OptionFromNullOr(RelationshipIsoTimestampSchema),
   relationshipRef: PartyRelationshipRefSchema,
 });
-export const UpdateRelationshipAuditEvidenceJsonSchema = Schema.toEncoded(
-  UpdateRelationshipAuditEvidenceSchema,
-);
+export const UpdateRelationshipAuditEvidenceJsonSchema = Schema.toEncoded(UpdateRelationshipAuditEvidenceSchema);
 export const EndRelationshipAuditEvidenceSchema = Schema.Struct({
   effectiveAt: RelationshipIsoTimestampSchema,
   newProvenance: PartyRelationshipProvenanceSchema,
@@ -143,9 +130,7 @@ export const EndRelationshipAuditEvidenceSchema = Schema.Struct({
   reason: Schema.OptionFromNullOr(ReasonSchema),
   relationshipRef: PartyRelationshipRefSchema,
 });
-export const EndRelationshipAuditEvidenceJsonSchema = Schema.toEncoded(
-  EndRelationshipAuditEvidenceSchema,
-);
+export const EndRelationshipAuditEvidenceJsonSchema = Schema.toEncoded(EndRelationshipAuditEvidenceSchema);
 
 export const PartyRelationshipDetailSchema = Schema.Struct({
   assertionState: PartyRelationshipAssertionStateSchema,

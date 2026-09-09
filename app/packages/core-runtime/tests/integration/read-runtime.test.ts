@@ -1,18 +1,13 @@
-import { expect, it } from 'effect-rstest';
+import { randomUUID } from 'node:crypto';
 
 import { getTableConfig } from 'drizzle-orm/pg-core';
 import { Effect, Schema } from 'effect';
-import { randomUUID } from 'node:crypto';
-import {
-  makeSystemPrincipalContextResolver,
-  registerSystemWorkload,
-} from '../../src/auth/system-principal-context.ts';
+import { expect, it } from 'effect-rstest';
+
+import { makeSystemPrincipalContextResolver, registerSystemWorkload } from '../../src/auth/system-principal-context.ts';
 import { coreRelations, dataAccessEvents } from '../../src/db/schema.ts';
 import { defineSystemModuleEntrypoint } from '../../src/modules/module-entrypoint.ts';
-import {
-  makeOperationalScopeRepository,
-  makeOperationalScopeResolver,
-} from '../../src/operations/context.ts';
+import { makeOperationalScopeRepository, makeOperationalScopeResolver } from '../../src/operations/context.ts';
 import { defineRead } from '../../src/reads/definition.ts';
 import { makeReadRuntime } from '../../src/reads/runtime.ts';
 import { makeTestDatabaseFromPool, testDatabasePools } from '../support/database.ts';
@@ -40,12 +35,18 @@ it.live('commits live allowed evidence before releasing a governed read result',
         accessKind: 'list',
         entrypoint: defineSystemModuleEntrypoint({
           access: 'read',
-          authorization: { kind: 'context_permission', permission: 'module.access' },
+          authorization: {
+            kind: 'context_permission',
+            permission: 'module.access',
+          },
           entrypointKey: readKey,
           moduleKey: 'core.shell',
           role: 'api',
         }),
-        evidencePolicy: { captureMode: 'metadata_only', policyKey: `${readKey}.v1` },
+        evidencePolicy: {
+          captureMode: 'metadata_only',
+          policyKey: `${readKey}.v1`,
+        },
         inputSchema: Schema.Struct({}),
         legalEntityScope: 'forbidden',
         owningModuleKey: 'core.shell',
@@ -65,12 +66,8 @@ it.live('commits live allowed evidence before releasing a governed read result',
         yield* Effect.promise(() =>
           admin.query('delete from core.data_access_events where tenant_id = $1', [tenantId]),
         );
-        yield* Effect.promise(() =>
-          admin.query('delete from core.principals where tenant_id = $1', [tenantId]),
-        );
-        yield* Effect.promise(() =>
-          admin.query('delete from core.tenants where tenant_id = $1', [tenantId]),
-        );
+        yield* Effect.promise(() => admin.query('delete from core.principals where tenant_id = $1', [tenantId]));
+        yield* Effect.promise(() => admin.query('delete from core.tenants where tenant_id = $1', [tenantId]));
       }).pipe(Effect.orDie),
     );
 
@@ -96,17 +93,16 @@ it.live('commits live allowed evidence before releasing a governed read result',
       executor: runtimeDatabase,
     }).resolve({
       principalId,
-      registration: registerSystemWorkload({ jobKey: 'read-runtime-integration' }),
+      registration: registerSystemWorkload({
+        jobKey: 'read-runtime-integration',
+      }),
       runReference: readKey,
       tenantId,
     });
     const runtime = makeReadRuntime(
       { executor: runtimeDatabase },
       openModuleEntrypointGateway,
-      makeOperationalScopeResolver(
-        makeOperationalScopeRepository({ executor: runtimeDatabase }),
-        contextAccess,
-      ),
+      makeOperationalScopeResolver(makeOperationalScopeRepository({ executor: runtimeDatabase }), contextAccess),
       contextAccess,
     );
     expect(

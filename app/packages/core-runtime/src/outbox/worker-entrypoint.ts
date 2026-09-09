@@ -10,10 +10,7 @@ export {
   CoreSearchProjectionMutationSchema,
   CoreSearchProjectionStore,
 } from '../search/projection.ts';
-export {
-  CoreSearchWorkerSnapshot,
-  CoreSearchWorkerSnapshotLive,
-} from '../search/worker-snapshot.ts';
+export { CoreSearchWorkerSnapshot, CoreSearchWorkerSnapshotLive } from '../search/worker-snapshot.ts';
 export { defineOutboxWorker, extractOutboxWorkerSubscriptions } from './definition.ts';
 export { OutboxWorkerInfrastructureLive, startOutboxWorkerProcess } from './process.ts';
 export { OutboxRepositoryLive } from './repository.ts';

@@ -1,8 +1,10 @@
 import { createRequire } from 'node:module';
+
 import { Effect, FileSystem, Path, Schema } from 'effect';
 import type { PlatformError } from 'effect/PlatformError';
 import { parseSync, Visitor } from 'oxc-parser';
 import type { Node, ObjectExpression, Program } from 'oxc-parser';
+
 import { buildKnipRuntimeEvidence, workspaceDirectories } from './knip-runtime-model.mts';
 
 const Strings = Schema.Array(Schema.String);
@@ -114,8 +116,7 @@ const propertyName = (node: Node): string | undefined => {
 const declarations = (program: Program): Map<string, Node> => {
   const result = new Map<string, Node>();
   for (const statement of program.body) {
-    const declaration =
-      statement.type === 'ExportNamedDeclaration' ? statement.declaration : statement;
+    const declaration = statement.type === 'ExportNamedDeclaration' ? statement.declaration : statement;
     if (declaration?.type !== 'VariableDeclaration') {
       continue;
     }
@@ -128,31 +129,20 @@ const declarations = (program: Program): Map<string, Node> => {
   return result;
 };
 
-const unwrap = (
-  node: Node | undefined,
-  variables: ReadonlyMap<string, Node>,
-  depth = 0,
-): Node | undefined => {
+const unwrap = (node: Node | undefined, variables: ReadonlyMap<string, Node>, depth = 0): Node | undefined => {
   if (node === undefined || depth > 12) {
     return undefined;
   }
   if (node.type === 'Identifier') {
     return unwrap(variables.get(node.name), variables, depth + 1);
   }
-  if (
-    node.type === 'TSAsExpression' ||
-    node.type === 'TSSatisfiesExpression' ||
-    node.type === 'TSNonNullExpression'
-  ) {
+  if (node.type === 'TSAsExpression' || node.type === 'TSSatisfiesExpression' || node.type === 'TSNonNullExpression') {
     return unwrap(node.expression, variables, depth + 1);
   }
   return node;
 };
 
-const staticString = (
-  node: Node | undefined,
-  variables: ReadonlyMap<string, Node>,
-): string | undefined => {
+const staticString = (node: Node | undefined, variables: ReadonlyMap<string, Node>): string | undefined => {
   const value = unwrap(node, variables);
   if (value?.type === 'Literal' && isString(value.value)) {
     return value.value;
@@ -179,9 +169,7 @@ const objectExpression = (
 
 const exportedObject = ({ program, variables }: SourceFacts): ObjectExpression | undefined => {
   const exported = program.body.find((node) => node.type === 'ExportDefaultDeclaration');
-  return exported?.type === 'ExportDefaultDeclaration'
-    ? objectExpression(exported.declaration, variables)
-    : undefined;
+  return exported?.type === 'ExportDefaultDeclaration' ? objectExpression(exported.declaration, variables) : undefined;
 };
 
 const objectValue = (object: ObjectExpression | undefined, name: string): Node | undefined => {
@@ -231,9 +219,7 @@ const exportLeaves = (value: typeof ExportsSchema.Type | undefined): string[] =>
   if (value === undefined) {
     return [];
   }
-  return Object.values(value).flatMap((entry) =>
-    isString(entry) ? [entry] : Object.values(entry),
-  );
+  return Object.values(value).flatMap((entry) => (isString(entry) ? [entry] : Object.values(entry)));
 };
 
 const importedUrlBase = (node: Node | undefined): boolean =>
@@ -247,7 +233,10 @@ const parseSource = Effect.fn('QualityAudit.parseKnipModelSource')(function* par
   source: string,
 ) {
   const result = yield* Effect.try({
-    catch: () => new KnipModelError({ reason: `Unable to parse quality model source ${file}` }),
+    catch: () =>
+      new KnipModelError({
+        reason: `Unable to parse quality model source ${file}`,
+      }),
     try: () => parseSync(file, source),
   });
   if (result.errors.length > 0) {
@@ -255,7 +244,12 @@ const parseSource = Effect.fn('QualityAudit.parseKnipModelSource')(function* par
       reason: `Invalid quality model source ${file}: ${result.errors[0]?.message}`,
     });
   }
-  return { file, program: result.program, source, variables: declarations(result.program) };
+  return {
+    file,
+    program: result.program,
+    source,
+    variables: declarations(result.program),
+  };
 });
 
 const sourceFiles = Effect.fn('QualityAudit.knipModelSourceFiles')(function* readModelFiles(
@@ -268,9 +262,7 @@ const sourceFiles = Effect.fn('QualityAudit.knipModelSourceFiles')(function* rea
   const names = yield* fs.readDirectory(path.join(root, relative));
   const children = names.flatMap((name) => {
     const child = relative.length > 0 ? `${relative}/${name}` : name;
-    return name.startsWith('.') || skippedDirectories.has(name) || child === invalidFixtures
-      ? []
-      : [child];
+    return name.startsWith('.') || skippedDirectories.has(name) || child === invalidFixtures ? [] : [child];
   });
   for (const child of children) {
     const stat = yield* fs.stat(path.join(root, child));
@@ -389,12 +381,7 @@ const federationEvidence = (facts: SourceFacts, workspace: string): KnipModelEvi
   }
   const object = exportedObject(facts);
   return ['remotes', 'shared', 'exposes'].flatMap((field) =>
-    federationFieldEvidence(
-      facts,
-      workspace,
-      field,
-      objectExpression(objectValue(object, field), facts.variables),
-    ),
+    federationFieldEvidence(facts, workspace, field, objectExpression(objectValue(object, field), facts.variables)),
   );
 };
 
@@ -449,10 +436,7 @@ const isAppBuildTemplate = (argument: Node | undefined): boolean =>
   argument.quasis[1]?.value.cooked === '/shared/ultramodern-build.ts';
 
 const configuredBuildDirectories = (facts: SourceFacts, field: string): string[] => {
-  const contract = objectExpression(
-    facts.variables.get('workspaceValidationContractDefinition'),
-    facts.variables,
-  );
+  const contract = objectExpression(facts.variables.get('workspaceValidationContractDefinition'), facts.variables);
   const topology = objectExpression(objectValue(contract, 'topology'), facts.variables);
   const compact = objectExpression(objectValue(topology, 'compactConfig'), facts.variables);
   const collection = field === 'apps' ? objectValue(compact, 'apps') : objectValue(contract, field);
@@ -469,23 +453,13 @@ const configuredBuildDirectories = (facts: SourceFacts, field: string): string[]
   });
 };
 
-const buildSourceScope = (
-  source: Node | undefined,
-  variables: ReadonlyMap<string, Node>,
-): Node | undefined => {
+const buildSourceScope = (source: Node | undefined, variables: ReadonlyMap<string, Node>): Node | undefined => {
   const reader = unwrap(source, variables);
-  if (
-    reader?.type !== 'CallExpression' ||
-    reader.callee.type !== 'Identifier' ||
-    reader.callee.name !== 'readText'
-  ) {
+  if (reader?.type !== 'CallExpression' || reader.callee.type !== 'Identifier' || reader.callee.name !== 'readText') {
     return undefined;
   }
   const [argument] = reader.arguments;
-  if (
-    argument?.type !== 'TemplateLiteral' ||
-    argument.quasis[1]?.value.cooked !== '/shared/ultramodern-build.ts'
-  ) {
+  if (argument?.type !== 'TemplateLiteral' || argument.quasis[1]?.value.cooked !== '/shared/ultramodern-build.ts') {
     return undefined;
   }
   return argument.expressions[0];
@@ -525,15 +499,11 @@ const validatedBuildExport = (
     const [source] = node.arguments;
     return name === undefined || source === undefined ? undefined : { name, source };
   }
-  if (
-    node.callee.type !== 'MemberExpression' ||
-    propertyName(node.callee.property) !== 'includes'
-  ) {
+  if (node.callee.type !== 'MemberExpression' || propertyName(node.callee.property) !== 'includes') {
     return undefined;
   }
   const expected = staticString(node.arguments[0], variables);
-  const { name } =
-    expected?.match(/^export const (?<name>[A-Za-z_$][A-Za-z0-9_$]*)\b/u)?.groups ?? {};
+  const { name } = expected?.match(/^export const (?<name>[A-Za-z_$][A-Za-z0-9_$]*)\b/u)?.groups ?? {};
   return name === undefined ? undefined : { name, source: node.callee.object };
 };
 
@@ -637,11 +607,7 @@ const sourceEvidence = (
     );
   }
   const recordUrl = (node: Extract<Node, { type: 'NewExpression' }>) => {
-    if (
-      node.callee.type !== 'Identifier' ||
-      node.callee.name !== 'URL' ||
-      !importedUrlBase(node.arguments[1])
-    ) {
+    if (node.callee.type !== 'Identifier' || node.callee.name !== 'URL' || !importedUrlBase(node.arguments[1])) {
       return;
     }
     const target = staticString(node.arguments[0], scopedVariables(facts, node.start));
@@ -665,16 +631,7 @@ const sourceEvidence = (
         for (const argument of args.elements) {
           const target = staticString(argument ?? undefined, facts.variables);
           if (target !== undefined && sourceExtension.test(target)) {
-            result.push(
-              evidenceAt(
-                facts,
-                workspace,
-                'file',
-                target,
-                node.start,
-                'Node subprocess source argument',
-              ),
-            );
+            result.push(evidenceAt(facts, workspace, 'file', target, node.start, 'Node subprocess source argument'));
           }
         }
       }
@@ -704,10 +661,7 @@ const sourceEvidence = (
   const recordLintConfig = (node: Extract<Node, { type: 'CallExpression' }>) => {
     const consumers = new Map([
       ['tools/oxlint/effect-native/report.mts', 'report.config.ts'],
-      [
-        'tools/oxlint/effect-native/tests/repository-policy.test.mts',
-        'repository-policy.config.ts',
-      ],
+      ['tools/oxlint/effect-native/tests/repository-policy.test.mts', 'repository-policy.config.ts'],
     ]);
     const config = consumers.get(facts.file);
     const [joined] = node.arguments;
@@ -738,12 +692,7 @@ const sourceEvidence = (
     if (
       facts.file !== 'tools/oxlint/effect-native/tests/shared-helpers.test.mts' ||
       staticString(objectValue(node, 'name'), facts.variables) !== 'shared-helpers-probe' ||
-      !isJoinedSourceSpecifier(
-        specifier,
-        'testsDirectory',
-        'shared-helpers-probe.ts',
-        facts.variables,
-      )
+      !isJoinedSourceSpecifier(specifier, 'testsDirectory', 'shared-helpers-probe.ts', facts.variables)
     ) {
       return;
     }
@@ -774,21 +723,8 @@ const sourceEvidence = (
   if (facts.file === 'scripts/quality-audit.mts') {
     const recordAuditStep = (node: ObjectExpression) => {
       const tool = staticString(objectValue(node, 'tool'), facts.variables);
-      if (
-        tool !== undefined &&
-        objectValue(node, 'args') !== undefined &&
-        objectValue(node, 'name') !== undefined
-      ) {
-        result.push(
-          evidenceAt(
-            facts,
-            workspace,
-            'dependency',
-            tool,
-            node.start,
-            'Quality audit subprocess step',
-          ),
-        );
+      if (tool !== undefined && objectValue(node, 'args') !== undefined && objectValue(node, 'name') !== undefined) {
+        result.push(evidenceAt(facts, workspace, 'dependency', tool, node.start, 'Quality audit subprocess step'));
       }
     };
     new Visitor({ ObjectExpression: recordAuditStep }).visit(facts.program);
@@ -805,14 +741,9 @@ const drizzleFactories = (facts: SourceFacts): ReadonlySet<string> => {
       node.type === 'ImportDeclaration'
         ? node.specifiers.flatMap((specifier) =>
             specifier.type === 'ImportSpecifier' &&
-            [
-              'pgSchema',
-              'pgTable',
-              'pgEnum',
-              'pgSequence',
-              'pgView',
-              'pgMaterializedView',
-            ].includes(propertyName(specifier.imported) ?? '')
+            ['pgSchema', 'pgTable', 'pgEnum', 'pgSequence', 'pgView', 'pgMaterializedView'].includes(
+              propertyName(specifier.imported) ?? '',
+            )
               ? [specifier.local.name]
               : [],
           )
@@ -834,27 +765,17 @@ const isDrizzleDeclaration = (
   if (expression.callee.type === 'Identifier') {
     return factories.has(expression.callee.name);
   }
-  if (
-    expression.callee.type === 'MemberExpression' &&
-    propertyName(expression.callee.property) === 'table'
-  ) {
+  if (expression.callee.type === 'MemberExpression' && propertyName(expression.callee.property) === 'table') {
     return isDrizzleDeclaration(expression.callee.object, variables, factories, depth + 1);
   }
   return false;
 };
 
-const reflectedDrizzleExports = (
-  facts: SourceFacts,
-  workspace: string,
-  configSource: string,
-): KnipModelEvidence[] => {
+const reflectedDrizzleExports = (facts: SourceFacts, workspace: string, configSource: string): KnipModelEvidence[] => {
   const factories = drizzleFactories(facts);
   const result: KnipModelEvidence[] = [];
   for (const node of facts.program.body) {
-    if (
-      node.type !== 'ExportNamedDeclaration' ||
-      node.declaration?.type !== 'VariableDeclaration'
-    ) {
+    if (node.type !== 'ExportNamedDeclaration' || node.declaration?.type !== 'VariableDeclaration') {
       continue;
     }
     for (const declaration of node.declaration.declarations) {
@@ -881,9 +802,7 @@ const reflectedDrizzleExports = (
 
 const resolver = createRequire(import.meta.url);
 const packageName = (specifier: string): string =>
-  specifier.startsWith('@')
-    ? specifier.split('/').slice(0, 2).join('/')
-    : (specifier.split('/')[0] ?? specifier);
+  specifier.startsWith('@') ? specifier.split('/').slice(0, 2).join('/') : (specifier.split('/')[0] ?? specifier);
 
 const isRequireResolve = (node: Node): boolean =>
   node.type === 'CallExpression' &&
@@ -930,14 +849,10 @@ const resolveStaticCall = (
     return undefined;
   }
   const resolvedAnchor = resolvePath(anchor);
-  return resolvedAnchor === undefined
-    ? undefined
-    : resolveInstalledDependency(target, resolvedAnchor);
+  return resolvedAnchor === undefined ? undefined : resolveInstalledDependency(target, resolvedAnchor);
 };
 
-const isImportMetaUrl = (
-  node: Node | undefined,
-): node is Extract<Node, { type: 'NewExpression' }> =>
+const isImportMetaUrl = (node: Node | undefined): node is Extract<Node, { type: 'NewExpression' }> =>
   node?.type === 'NewExpression' &&
   node.callee.type === 'Identifier' &&
   node.callee.name === 'URL' &&
@@ -984,13 +899,9 @@ const staticPath = (
     return staticPath(value.arguments[0], variables, file, path, depth + 1);
   }
   if (isRequireResolve(value)) {
-    return resolveStaticCall(value, variables, (argument) =>
-      staticPath(argument, variables, file, path, depth + 1),
-    );
+    return resolveStaticCall(value, variables, (argument) => staticPath(argument, variables, file, path, depth + 1));
   }
-  return resolveJoinedPath(value, path, (argument) =>
-    staticPath(argument, variables, file, path, depth + 1),
-  );
+  return resolveJoinedPath(value, path, (argument) => staticPath(argument, variables, file, path, depth + 1));
 };
 
 const hasNativeRequire = (facts: SourceFacts, variables: ReadonlyMap<string, Node>): boolean => {
@@ -1034,12 +945,7 @@ const resolverEvidence = (
     if (target === undefined || target.startsWith('.') || target.startsWith('node:')) {
       return;
     }
-    const anchor = staticPath(
-      resolverAnchor(node, variables),
-      variables,
-      path.join(appRoot, facts.file),
-      path,
-    );
+    const anchor = staticPath(resolverAnchor(node, variables), variables, path.join(appRoot, facts.file), path);
     const resolved = staticPath(node, variables, path.join(appRoot, facts.file), path);
     if (anchor === undefined || resolved === undefined) {
       return;
@@ -1072,10 +978,7 @@ const drizzleEvidence = (
       continue;
     }
     const schema = staticString(objectValue(exportedObject(facts), 'schema'), facts.variables);
-    const target =
-      schema === undefined
-        ? undefined
-        : factsByPath.get(`${prefix}${schema.replace(/^\.\//u, '')}`);
+    const target = schema === undefined ? undefined : factsByPath.get(`${prefix}${schema.replace(/^\.\//u, '')}`);
     if (target !== undefined) {
       evidence.push(...reflectedDrizzleExports(target, workspace, facts.file));
     }
@@ -1083,9 +986,7 @@ const drizzleEvidence = (
   return evidence;
 };
 
-const nearestPackage = Effect.fn('QualityAudit.nearestPackage')(function* readNearestPackage(
-  anchor: string,
-) {
+const nearestPackage = Effect.fn('QualityAudit.nearestPackage')(function* readNearestPackage(anchor: string) {
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
   let directory = anchor;
@@ -1098,9 +999,9 @@ const nearestPackage = Effect.fn('QualityAudit.nearestPackage')(function* readNe
   while (true) {
     const manifest = path.join(directory, 'package.json');
     if (yield* fs.exists(manifest)) {
-      const declared = yield* Schema.decodeUnknownEffect(
-        Schema.fromJsonString(DependencyDeclarationSchema),
-      )(yield* fs.readFileString(manifest));
+      const declared = yield* Schema.decodeUnknownEffect(Schema.fromJsonString(DependencyDeclarationSchema))(
+        yield* fs.readFileString(manifest),
+      );
       if (declared.name !== undefined) {
         return { declared, manifest };
       }
@@ -1113,39 +1014,40 @@ const nearestPackage = Effect.fn('QualityAudit.nearestPackage')(function* readNe
   }
 });
 
-const classifyProducerTarget = Effect.fn('QualityAudit.classifyProducerTarget')(
-  function* classifyProducer(fact: KnipModelEvidence, manifest: string) {
-    const fs = yield* FileSystem.FileSystem;
-    const resolved = resolveInstalledDependency(fact.target, manifest);
-    if (resolved === undefined || fact.resolved === undefined) {
-      return {
-        ...fact,
-        ...unprovenResolver,
-        producerManifest: manifest,
-        reason: `${fact.reason}; declaring producer could not resolve the exact target`,
-      };
-    }
-    const [producerResolved, selectedResolved] = yield* Effect.all([
-      fs.realPath(resolved),
-      fs.realPath(fact.resolved),
-    ]);
-    if (producerResolved !== selectedResolved) {
-      return {
-        ...fact,
-        ...unprovenResolver,
-        producerManifest: manifest,
-        producerResolved,
-        reason: `${fact.reason}; declaring producer ${manifest} resolves a different canonical target ${producerResolved}; selected target ${selectedResolved}`,
-        resolved: selectedResolved,
-      };
-    }
-    return { ...fact, owningManifest: manifest };
-  },
-);
+const classifyProducerTarget = Effect.fn('QualityAudit.classifyProducerTarget')(function* classifyProducer(
+  fact: KnipModelEvidence,
+  manifest: string,
+) {
+  const fs = yield* FileSystem.FileSystem;
+  const resolved = resolveInstalledDependency(fact.target, manifest);
+  if (resolved === undefined || fact.resolved === undefined) {
+    return {
+      ...fact,
+      ...unprovenResolver,
+      producerManifest: manifest,
+      reason: `${fact.reason}; declaring producer could not resolve the exact target`,
+    };
+  }
+  const [producerResolved, selectedResolved] = yield* Effect.all([fs.realPath(resolved), fs.realPath(fact.resolved)]);
+  if (producerResolved !== selectedResolved) {
+    return {
+      ...fact,
+      ...unprovenResolver,
+      producerManifest: manifest,
+      producerResolved,
+      reason: `${fact.reason}; declaring producer ${manifest} resolves a different canonical target ${producerResolved}; selected target ${selectedResolved}`,
+      resolved: selectedResolved,
+    };
+  }
+  return { ...fact, owningManifest: manifest };
+});
 
 const proveVendorDependency = Effect.fn('QualityAudit.proveVendorDependency')(function* proveVendor(
   fact: KnipModelEvidence,
-  owner: { readonly declared: typeof DependencyDeclarationSchema.Type; readonly manifest: string },
+  owner: {
+    readonly declared: typeof DependencyDeclarationSchema.Type;
+    readonly manifest: string;
+  },
 ) {
   if (!owner.manifest.includes('/node_modules/')) {
     return null;
@@ -1171,29 +1073,32 @@ const proveVendorDependency = Effect.fn('QualityAudit.proveVendorDependency')(fu
   return unproven;
 });
 
-const proveResolverOwnership = Effect.fn('QualityAudit.proveResolverOwnership')(
-  function* proveResolver(fact: KnipModelEvidence) {
-    if (fact.anchor === undefined) {
-      return null;
+const proveResolverOwnership = Effect.fn('QualityAudit.proveResolverOwnership')(function* proveResolver(
+  fact: KnipModelEvidence,
+) {
+  if (fact.anchor === undefined) {
+    return null;
+  }
+  const owner = yield* nearestPackage(fact.anchor);
+  if (owner === null) {
+    return null;
+  }
+  const dependencies = {
+    ...owner.declared.dependencies,
+    ...owner.declared.devDependencies,
+  };
+  if (Object.hasOwn(dependencies, fact.target)) {
+    return { ...fact, owningManifest: owner.manifest };
+  }
+  const producerProof = yield* proveVendorDependency(fact, owner);
+  return (
+    producerProof ?? {
+      ...fact,
+      ...unprovenResolver,
+      reason: `${fact.reason}; anchor package ${owner.manifest} does not declare ${fact.target}, and no producer selecting the same target was proven`,
     }
-    const owner = yield* nearestPackage(fact.anchor);
-    if (owner === null) {
-      return null;
-    }
-    const dependencies = { ...owner.declared.dependencies, ...owner.declared.devDependencies };
-    if (Object.hasOwn(dependencies, fact.target)) {
-      return { ...fact, owningManifest: owner.manifest };
-    }
-    const producerProof = yield* proveVendorDependency(fact, owner);
-    return (
-      producerProof ?? {
-        ...fact,
-        ...unprovenResolver,
-        reason: `${fact.reason}; anchor package ${owner.manifest} does not declare ${fact.target}, and no producer selecting the same target was proven`,
-      }
-    );
-  },
-);
+  );
+});
 
 const workspaceModel = Effect.fn('QualityAudit.knipWorkspaceModel')(function* buildWorkspace(
   appRoot: string,
@@ -1215,9 +1120,7 @@ const workspaceModel = Effect.fn('QualityAudit.knipWorkspaceModel')(function* bu
   const dependencies = new Set(current.ignoreDependencies);
   const add = (fact: KnipModelEvidence) => {
     if (fact.kind === 'entry' || fact.kind === 'file') {
-      const target = path
-        .relative(appRoot, path.resolve(appRoot, prefix, fact.target))
-        .replaceAll('\\', '/');
+      const target = path.relative(appRoot, path.resolve(appRoot, prefix, fact.target)).replaceAll('\\', '/');
       if (!fileSet.has(target)) {
         return;
       }
@@ -1249,16 +1152,18 @@ const workspaceModel = Effect.fn('QualityAudit.knipWorkspaceModel')(function* bu
         evidence.push(proof);
       }
     }
-    const directory = path.dirname(
-      path.relative(path.resolve(appRoot, prefix), path.resolve(appRoot, file)),
-    );
+    const directory = path.dirname(path.relative(path.resolve(appRoot, prefix), path.resolve(appRoot, file)));
     for (const fact of sourceEvidence(facts, workspace, directory, path)) {
       add(fact);
     }
   }
   evidence.push(...drizzleEvidence(factsByPath, prefix, workspace));
   return {
-    config: { ...current, entry: [...entries], ignoreDependencies: [...dependencies] },
+    config: {
+      ...current,
+      entry: [...entries],
+      ignoreDependencies: [...dependencies],
+    },
     evidence,
   };
 });
@@ -1316,9 +1221,7 @@ export const buildKnipModel = Effect.fn('QualityAudit.buildKnipModel')(function*
     (fact) =>
       fact.kind === 'export' ||
       fact.kind === 'file' ||
-      (fact.kind === 'dependency' &&
-        fact.workspace === '.' &&
-        fact.reason !== 'Module Federation remotes consumer'),
+      (fact.kind === 'dependency' && fact.workspace === '.' && fact.reason !== 'Module Federation remotes consumer'),
   );
   const consumerSource = reflected
     .map((fact, index) => {

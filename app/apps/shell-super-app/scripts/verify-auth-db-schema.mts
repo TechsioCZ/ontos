@@ -1,9 +1,10 @@
 // @effect-diagnostics globalConsole:off processEnv:off strictEffectProvide:off -- Existing compatibility boundary; expires: 2026-12-31.
 import { sql } from 'drizzle-orm';
 import { Effect, Layer, Schema } from 'effect';
+
 import { AuthConfigLive } from '../api/auth/config.ts';
-import { AuthDatabase, AuthDatabaseLive } from '../api/auth/db/client.ts';
 import { compareAuthCatalog } from '../api/auth/db/catalog.ts';
+import { AuthDatabase, AuthDatabaseLive } from '../api/auth/db/client.ts';
 import { AUTH_SCHEMA_NAME, AUTH_TABLES } from '../api/auth/db/schema.ts';
 
 class AuthDatabaseVerificationError extends Schema.TaggedError<AuthDatabaseVerificationError>()(
@@ -95,9 +96,7 @@ const verification = Effect.gen(function* verifyAuthDatabase() {
   const difference = compareAuthCatalog(tableNames);
   if (
     migrationBookkeepingTables.length !== expectedMigrationBookkeepingTables.length ||
-    migrationBookkeepingTables.some(
-      (tableName, index) => tableName !== expectedMigrationBookkeepingTables[index],
-    ) ||
+    migrationBookkeepingTables.some((tableName, index) => tableName !== expectedMigrationBookkeepingTables[index]) ||
     difference.missing.length > 0 ||
     difference.unexpected.length > 0
   ) {

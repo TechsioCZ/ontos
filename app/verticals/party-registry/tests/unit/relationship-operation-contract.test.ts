@@ -1,15 +1,16 @@
-import { encodeRelationshipEventPayload } from '../../src/actions/relationship-event-payload.ts';
-import { expect, it } from 'effect-rstest';
 import { Effect, DateTime, Option, Schema } from 'effect';
-import { createPartyRelationshipAction } from '../../src/actions/create-party-relationship.action.ts';
-import { endPartyRelationshipAction } from '../../src/actions/end-party-relationship.action.ts';
-import { updatePartyRelationshipAction } from '../../src/actions/update-party-relationship.action.ts';
-import { partyRelationshipDetailRead } from '../../src/api/party-relationship-detail.read.ts';
+import { expect, it } from 'effect-rstest';
+
 import {
   PartyRelationshipDetailRequestSchema,
   PartyRelationshipDetailResponseSchema,
 } from '../../shared/apis/party-relationship-detail.ts';
 import { OutboxPayloadSchema as RelationshipCreatedOutboxSchema } from '../../shared/outbox/party-registry-relationship-created-v1.ts';
+import { createPartyRelationshipAction } from '../../src/actions/create-party-relationship.action.ts';
+import { endPartyRelationshipAction } from '../../src/actions/end-party-relationship.action.ts';
+import { encodeRelationshipEventPayload } from '../../src/actions/relationship-event-payload.ts';
+import { updatePartyRelationshipAction } from '../../src/actions/update-party-relationship.action.ts';
+import { partyRelationshipDetailRead } from '../../src/api/party-relationship-detail.read.ts';
 
 const tenantId = '11111111-1111-4111-8111-111111111111';
 const partyRef = (resourceId: string) => ({
@@ -26,11 +27,7 @@ const relationshipRef = {
 } as const;
 
 it('relationship writes are idempotent tenant Actions with dedicated authority', () => {
-  const actions = [
-    createPartyRelationshipAction,
-    updatePartyRelationshipAction,
-    endPartyRelationshipAction,
-  ] as const;
+  const actions = [createPartyRelationshipAction, updatePartyRelationshipAction, endPartyRelationshipAction] as const;
   expect(actions.map(({ descriptor }) => descriptor.actionKey)).toEqual([
     'party.registry.create-party-relationship',
     'party.registry.update-party-relationship',
@@ -60,7 +57,9 @@ it.effect('relationship detail is a tenant-authorized governed read of one Resou
     expect(partyRelationshipDetailRead.descriptor.permissionTarget).toBe('tenant');
     expect(partyRelationshipDetailRead.descriptor.accessKind).toBe('detail');
     expect(
-      yield* Schema.decodeUnknownEffect(PartyRelationshipDetailRequestSchema)({ relationshipRef }),
+      yield* Schema.decodeEffect(PartyRelationshipDetailRequestSchema)({
+        relationshipRef,
+      }),
     ).toEqual({ relationshipRef });
   }),
 );
@@ -70,12 +69,15 @@ it.effect('relationship detail preserves canonical and stored alias endpoint con
     const storedFrom = partyRef('22222222-2222-4222-8222-222222222222');
     const canonicalFrom = partyRef('55555555-5555-4555-8555-555555555555');
     const to = partyRef('33333333-3333-4333-8333-333333333333');
-    const detail = yield* Schema.decodeUnknownEffect(PartyRelationshipDetailResponseSchema)({
+    const detail = yield* Schema.decodeEffect(PartyRelationshipDetailResponseSchema)({
       assertionState: 'ACTIVE',
       endHistory: [
         {
           effectiveAt: '2026-09-01T00:00:00.000Z',
-          provenance: { method: 'MANUAL_CONFIRMATION', source: 'ENGAGEMENT_REVIEW' },
+          provenance: {
+            method: 'MANUAL_CONFIRMATION',
+            source: 'ENGAGEMENT_REVIEW',
+          },
           reason: 'No longer the contact',
           recordedAt: '2026-08-20T10:00:00.000Z',
         },
@@ -85,7 +87,10 @@ it.effect('relationship detail preserves canonical and stored alias endpoint con
         requestedAlias: storedFrom,
         storedPartyRef: storedFrom,
       },
-      provenance: { method: 'MANUAL_CONFIRMATION', source: 'ENGAGEMENT_REVIEW' },
+      provenance: {
+        method: 'MANUAL_CONFIRMATION',
+        source: 'ENGAGEMENT_REVIEW',
+      },
       recordedAt: '2026-09-01T10:00:00.000Z',
       relationshipRef,
       relationshipType: 'CONTACT_PERSON_OF',
@@ -128,16 +133,20 @@ it.effect('outbox payloads carry stable refs and no mutable Party or authorizati
       validFrom: '2026-09-01T10:00:00.000Z',
       validTo: null,
     } as const;
-    const decoded = yield* Schema.decodeUnknownEffect(RelationshipCreatedOutboxSchema)(payload);
+    const decoded = yield* Schema.decodeEffect(RelationshipCreatedOutboxSchema)(payload);
     expect(yield* Schema.encodeEffect(RelationshipCreatedOutboxSchema)(decoded)).toEqual(payload);
     expect(() =>
-      Schema.decodeUnknownSync(RelationshipCreatedOutboxSchema, { onExcessProperty: 'error' })({
+      Schema.decodeUnknownSync(RelationshipCreatedOutboxSchema, {
+        onExcessProperty: 'error',
+      })({
         ...payload,
         authorizationGranted: true,
       }),
     ).toThrow();
     expect(() =>
-      Schema.decodeUnknownSync(RelationshipCreatedOutboxSchema, { onExcessProperty: 'error' })({
+      Schema.decodeUnknownSync(RelationshipCreatedOutboxSchema, {
+        onExcessProperty: 'error',
+      })({
         ...payload,
         party: { displayName: 'mutable copy' },
       }),

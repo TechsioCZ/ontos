@@ -68,19 +68,15 @@
  * Report-only: no fixer, no suggestion.
  */
 import { defineRule } from '@oxlint/plugins';
-
 import type { Context, ESTree } from '@oxlint/plugins';
 
-import { collectEffectBindings } from '../shared/effect-imports.ts';
-import { isTestFile, matchesGlobs, scopePath } from '../shared/paths.ts';
-import { booleanOption as boolean, optionRecord, stringArray } from '../shared/options.ts';
 import { unwrapNode } from '../shared/ast.ts';
 import { lookupVariable, resolvesToImport } from '../shared/bindings.ts';
+import { collectEffectBindings } from '../shared/effect-imports.ts';
 import { collectSchemaLocals, importedName } from '../shared/imports.ts';
-import {
-  constSchemaAlias as constantInitializer,
-  schemaIdentity,
-} from '../shared/schema-identity.ts';
+import { booleanOption as boolean, optionRecord, stringArray } from '../shared/options.ts';
+import { isTestFile, matchesGlobs, scopePath } from '../shared/paths.ts';
+import { constSchemaAlias as constantInitializer, schemaIdentity } from '../shared/schema-identity.ts';
 
 const SCHEMA_NAMESPACE = 'Schema';
 
@@ -184,7 +180,10 @@ function readOptions(context: Context): RuleOptions {
 }
 
 function unwrapExpression(node: ESTree.Node): ESTree.Node {
-  return unwrapNode(node, { wrappers: EXPRESSION_WRAPPERS, maxDepth: MAX_RESOLUTION_DEPTH });
+  return unwrapNode(node, {
+    wrappers: EXPRESSION_WRAPPERS,
+    maxDepth: MAX_RESOLUTION_DEPTH,
+  });
 }
 
 function recordValue(args: ESTree.CallExpression['arguments']): ESTree.Node | null {
@@ -286,7 +285,10 @@ export const rule = defineRule({
     const schemaReference = (node: ESTree.Node): string | null =>
       schemaIdentity(context, node, [], 0, {
         templates: true,
-        unwrap: { wrappers: EXPRESSION_WRAPPERS, maxDepth: MAX_RESOLUTION_DEPTH },
+        unwrap: {
+          wrappers: EXPRESSION_WRAPPERS,
+          maxDepth: MAX_RESOLUTION_DEPTH,
+        },
       });
 
     /** `Schema.Json` / `S.Json` / `Schema["Json"]` / a bare `Json` imported from `effect/Schema`. */
@@ -299,11 +301,7 @@ export const rule = defineRule({
      * Describe `node` when it is a shape-free JSON *document* schema, resolving module-scope
      * aliases and unwrapping transparent combinators. Returns the shape to quote in the message.
      */
-    const jsonDocumentShape = (
-      node: ESTree.Node,
-      depth: number,
-      seen: Set<string>,
-    ): string | null => {
+    const jsonDocumentShape = (node: ESTree.Node, depth: number, seen: Set<string>): string | null => {
       if (depth > MAX_RESOLUTION_DEPTH) return null;
       const current = unwrapExpression(node);
 
@@ -366,8 +364,7 @@ export const rule = defineRule({
       return jsonDocumentShape(declarator.init, depth + 1, seen);
     };
 
-    const describe = (node: ESTree.Node): string | null =>
-      jsonDocumentShape(node, 0, new Set<string>());
+    const describe = (node: ESTree.Node): string | null => jsonDocumentShape(node, 0, new Set<string>());
 
     /**
      * The `Schema` member a call ultimately targets, unwrapping the curried forms
@@ -459,9 +456,7 @@ export const rule = defineRule({
         const left = expression.left;
         if (left.type !== 'Identifier') return null;
         if (!locals.schema.has(left.name) || !resolvesToImport(context, left)) return null;
-        return jsonMembers.has(expression.right.name)
-          ? `${left.name}.${expression.right.name}`
-          : null;
+        return jsonMembers.has(expression.right.name) ? `${left.name}.${expression.right.name}` : null;
       }
       if (expression.type !== 'Identifier') return null;
       const imported = locals.direct.get(expression.name);
@@ -496,21 +491,33 @@ export const rule = defineRule({
         if (insideSchemaCall(node)) return;
         const shape = describe(node.init);
         if (shape === null) return;
-        context.report({ node: node.init, messageId: 'jsonDocumentSchema', data: { shape } });
+        context.report({
+          node: node.init,
+          messageId: 'jsonDocumentSchema',
+          data: { shape },
+        });
       },
 
       PropertyDefinition(node) {
         if (!node.static || !node.readonly || node.value === null || insideSchemaCall(node)) return;
         const shape = describe(node.value);
         if (shape !== null)
-          context.report({ node: node.value, messageId: 'jsonDocumentSchema', data: { shape } });
+          context.report({
+            node: node.value,
+            messageId: 'jsonDocumentSchema',
+            data: { shape },
+          });
       },
 
       TSTypeQuery(node) {
         const reference = typeQueryReference(node.exprName);
         if (reference === null) return;
         if (!inTypeContract(node)) return;
-        context.report({ node, messageId: 'jsonDocumentType', data: { reference } });
+        context.report({
+          node,
+          messageId: 'jsonDocumentType',
+          data: { reference },
+        });
       },
     };
   },

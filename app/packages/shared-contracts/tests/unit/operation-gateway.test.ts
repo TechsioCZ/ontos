@@ -1,5 +1,6 @@
-import { expect, it } from 'effect-rstest';
 import { Effect } from 'effect';
+import { expect, it } from 'effect-rstest';
+
 import { makeOperationGateway } from '../../src/operation-gateway.ts';
 
 const gatewayAcquisitionFailure = {
@@ -26,13 +27,13 @@ it.effect('preserves the literal audience and success and failure inference', ()
       return Effect.fail(gatewayAcquisitionFailure);
     });
 
-    yield* expectType<
-      Effect.Effect<never, typeof gatewayAcquisitionFailure | typeof operationAttemptFailure>
-    >(gateway.invoke(() => Effect.fail(operationAttemptFailure))).pipe(Effect.flip);
+    yield* expectType<Effect.Effect<never, typeof gatewayAcquisitionFailure | typeof operationAttemptFailure>>(
+      gateway.invoke(() => Effect.fail(operationAttemptFailure)),
+    ).pipe(Effect.flip);
     yield* expectType<Effect.Effect<'completed'>>(
-      makeOperationGateway(audience, () =>
-        Effect.succeed({ expiresAt: 1_700_000_300, token: 'test-token' }),
-      ).invoke(() => Effect.succeed('completed' as const)),
+      makeOperationGateway(audience, () => Effect.succeed({ expiresAt: 1_700_000_300, token: 'test-token' })).invoke(
+        () => Effect.succeed('completed' as const),
+      ),
     );
   }),
 );
@@ -48,7 +49,10 @@ it.effect('acquires one audience-scoped assertion and forwards options unchanged
       Effect.sync(() => {
         expect(receivedOptions).toBe(options);
         issuerCalls.push({ audience: payload.audience, options });
-        return { expiresAt: 1_700_000_300, token: 'header.payload.signature' };
+        return {
+          expiresAt: 1_700_000_300,
+          token: 'header.payload.signature',
+        };
       }),
     );
 
@@ -110,9 +114,7 @@ it.effect('preserves the attempted-operation failure without translation', () =>
       Effect.succeed({ expiresAt: 1_700_000_300, token: 'test-token' }),
     );
 
-    const received = yield* gateway
-      .invoke(() => Effect.fail(operationAttemptFailure))
-      .pipe(Effect.flip);
+    const received = yield* gateway.invoke(() => Effect.fail(operationAttemptFailure)).pipe(Effect.flip);
 
     expect(received).toBe(operationAttemptFailure);
   }),

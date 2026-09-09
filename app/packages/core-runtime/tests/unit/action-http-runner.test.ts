@@ -1,5 +1,6 @@
-import { expect, it } from 'effect-rstest';
 import { Effect, Redacted, Schema } from 'effect';
+import { expect, it } from 'effect-rstest';
+
 import { defineAction } from '../../src/actions/definition.ts';
 import { ActionRuntime } from '../../src/actions/runtime.ts';
 import type { ActionRuntimeService } from '../../src/actions/runtime.ts';
@@ -26,7 +27,10 @@ const registration = defineAction(
     domainEvents: {},
     entrypoint: defineSystemModuleEntrypoint({
       access: 'write',
-      authorization: { kind: 'action_execution', provisioning: 'tenant_membership_default' },
+      authorization: {
+        kind: 'action_execution',
+        provisioning: 'tenant_membership_default',
+      },
       entrypointKey: 'core.test.http-runner',
       moduleKey: 'core.shell',
       role: 'action',
@@ -54,43 +58,40 @@ const invalidProblem = { _tag: 'InvalidProblem' as const };
 const internalProblem = { _tag: 'InternalProblem' as const };
 const authorization = (value?: string) => Redacted.make(value);
 
-it.effect(
-  'invalid correlation metadata is rejected before principal acquisition and runtime lookup',
-  () =>
-    Effect.gen(function* rejectInvalidCorrelation() {
-      const requestHeaders = [
-        {},
-        { 'x-correlation-id': '' },
-        { 'x-correlation-id': '   ' },
-      ] as const;
-      let authenticationCalls = 0;
-      let runtimeCalls = 0;
-      const runtime = unusedRuntime(() => {
-        runtimeCalls += 1;
-      });
-      const authenticate = () => {
-        authenticationCalls += 1;
-        return Effect.succeed(principal);
-      };
+it.effect('invalid correlation metadata is rejected before principal acquisition and runtime lookup', () =>
+  Effect.gen(function* rejectInvalidCorrelation() {
+    const requestHeaders = [{}, { 'x-correlation-id': '' }, { 'x-correlation-id': '   ' }] as const;
+    let authenticationCalls = 0;
+    let runtimeCalls = 0;
+    const runtime = unusedRuntime(() => {
+      runtimeCalls += 1;
+    });
+    const authenticate = () => {
+      authenticationCalls += 1;
+      return Effect.succeed(principal);
+    };
 
-      for (const headers of requestHeaders) {
-        const effect = runGovernedActionHttp({
-          endpointHeaders: { idempotencyKey: 'not-reached', traceId: 'not-reached' },
-          internalProblem: () => internalProblem,
-          invalidCorrelationProblem: () => invalidProblem,
-          mapError: () => internalProblem,
-          payload: {},
-          principal: { authenticate },
-          registration,
-          requestHeaders: { authorization: authorization(), ...headers },
-        }).pipe(Effect.provideService(ActionRuntime, runtime));
+    for (const headers of requestHeaders) {
+      const effect = runGovernedActionHttp({
+        endpointHeaders: {
+          idempotencyKey: 'not-reached',
+          traceId: 'not-reached',
+        },
+        internalProblem: () => internalProblem,
+        invalidCorrelationProblem: () => invalidProblem,
+        mapError: () => internalProblem,
+        payload: {},
+        principal: { authenticate },
+        registration,
+        requestHeaders: { authorization: authorization(), ...headers },
+      }).pipe(Effect.provideService(ActionRuntime, runtime));
 
-        expect(yield* Effect.flip(effect)).toBe(invalidProblem);
-      }
+      expect(yield* Effect.flip(effect)).toBe(invalidProblem);
+    }
 
-      expect(authenticationCalls).toBe(0);
-      expect(runtimeCalls).toBe(0);
-    }),
+    expect(authenticationCalls).toBe(0);
+    expect(runtimeCalls).toBe(0);
+  }),
 );
 
 it.effect('principal authentication failure prevents Action runtime execution', () =>
@@ -98,7 +99,10 @@ it.effect('principal authentication failure prevents Action runtime execution', 
     const authenticationProblem = { _tag: 'AuthenticationProblem' as const };
     let runtimeCalls = 0;
     const effect = runGovernedActionHttp({
-      endpointHeaders: { idempotencyKey: 'not-reached', traceId: 'not-reached' },
+      endpointHeaders: {
+        idempotencyKey: 'not-reached',
+        traceId: 'not-reached',
+      },
       internalProblem: () => internalProblem,
       invalidCorrelationProblem: () => invalidProblem,
       mapError: () => internalProblem,
@@ -131,7 +135,9 @@ it.effect('synchronous endpoint callback defects are sanitized before the Action
           throw new Error('private invalid-problem constructor defect');
         },
         principal: { authenticate: () => Effect.succeed(principal) },
-        requestHeaders: { authorization: authorization('Bearer private-token') },
+        requestHeaders: {
+          authorization: authorization('Bearer private-token'),
+        },
       },
       {
         invalidCorrelationProblem: () => invalidProblem,
@@ -153,7 +159,10 @@ it.effect('synchronous endpoint callback defects are sanitized before the Action
 
     for (const fixture of callbackDefects) {
       const effect = runGovernedActionHttp({
-        endpointHeaders: { idempotencyKey: 'not-reached', traceId: 'not-reached' },
+        endpointHeaders: {
+          idempotencyKey: 'not-reached',
+          traceId: 'not-reached',
+        },
         internalProblem: () => internalProblem,
         invalidCorrelationProblem: fixture.invalidCorrelationProblem,
         mapError: () => internalProblem,

@@ -39,24 +39,14 @@
  *   (`export { runPromise }`), none of which start a fiber.
  */
 import { defineRule } from '@oxlint/plugins';
+import type { Context, ESTree } from '@oxlint/plugins';
+
 import { keyName, unwrapNode, walk as walkAst } from '../shared/ast.ts';
 import { isTrackedReference } from '../shared/bindings.ts';
-import { importedName } from '../shared/imports.ts';
-import {
-  isNonReferencePosition,
-  isInTypePosition as inTypePosition,
-} from '../shared/reference-positions.ts';
-
 import { bindingsFor, effectMember, type EffectBindings } from '../shared/effect-imports.ts';
-import {
-  globToRegExp,
-  isScriptFile,
-  isTestFile,
-  normalisePath,
-  matchesGlobs,
-} from '../shared/paths.ts';
-
-import type { Context, ESTree } from '@oxlint/plugins';
+import { importedName } from '../shared/imports.ts';
+import { globToRegExp, isScriptFile, isTestFile, normalisePath, matchesGlobs } from '../shared/paths.ts';
+import { isNonReferencePosition, isInTypePosition as inTypePosition } from '../shared/reference-positions.ts';
 
 /** `runPromise`, `runSync`, `runFork`, `run` — but not `runtime`. */
 const RUN_MEMBER = /^run(?:[A-Z]|$)/u;
@@ -192,7 +182,11 @@ function isInTypePosition(node: ESTree.Node): boolean {
   return inTypePosition(node, TS_EXPRESSION_NODES);
 }
 function staticName(key: ESTree.Node, computed: boolean): string | null {
-  return keyName(key, computed, { templates: computed, rawTemplates: true, singleQuasi: true });
+  return keyName(key, computed, {
+    templates: computed,
+    rawTemplates: true,
+    singleQuasi: true,
+  });
 }
 
 /**
@@ -220,7 +214,10 @@ function collectNamedBinding(
   if (imported === EFFECT_NAMESPACE && source.rootLike) {
     bindings.effectNamespaces.set(local, specifier.local);
   } else if (RUN_MEMBER.test(imported) && (source.rootLike || source.effectSubmodule)) {
-    bindings.runLocals.set(local, { declaration: specifier.local, member: imported });
+    bindings.runLocals.set(local, {
+      declaration: specifier.local,
+      member: imported,
+    });
   }
 }
 function collectImportBindings(
@@ -248,8 +245,7 @@ function collectImportSpecifier(
   if (specifier.type === 'ImportSpecifier') {
     collectNamedBinding(specifier, source, bindings);
   } else if (specifier.type === 'ImportNamespaceSpecifier') {
-    if (source.effectSubmodule)
-      bindings.effectNamespaces.set(specifier.local.name, specifier.local);
+    if (source.effectSubmodule) bindings.effectNamespaces.set(specifier.local.name, specifier.local);
     else if (source.rootLike || source.emptySubmodule)
       bindings.packageNamespaces.set(specifier.local.name, specifier.local);
   }
@@ -266,17 +262,13 @@ function collectRunBindings(context: Context, effectModules: readonly string[]):
     .map((module) => globToRegExp(module));
   const ast = context.sourceCode.ast;
   for (const statement of ast.body) {
-    if (statement.type === 'ImportDeclaration')
-      collectImportBindings(statement, extraMatchers, bindings);
+    if (statement.type === 'ImportDeclaration') collectImportBindings(statement, extraMatchers, bindings);
   }
   if (bindings.effectNamespaces.size > 0 || bindings.packageNamespaces.size > 0)
     propagateLocalAliases(context, ast, bindings);
   return {
     ...bindings,
-    tracked:
-      bindings.effectNamespaces.size > 0 ||
-      bindings.packageNamespaces.size > 0 ||
-      bindings.runLocals.size > 0,
+    tracked: bindings.effectNamespaces.size > 0 || bindings.packageNamespaces.size > 0 || bindings.runLocals.size > 0,
   };
 }
 
@@ -284,11 +276,7 @@ function collectRunBindings(context: Context, effectModules: readonly string[]):
  * Follow `const Fx = Effect;`, `const Fx = Pkg.Effect;`, `const { runSync } = Effect;` and
  * `const { Effect } = Pkg;` to a fixed point, so a one-line re-binding cannot defeat the rule.
  */
-function trackedNamespace(
-  context: Context,
-  node: ESTree.Node,
-  namespaces: ReadonlyMap<string, ESTree.Node>,
-): boolean {
+function trackedNamespace(context: Context, node: ESTree.Node, namespaces: ReadonlyMap<string, ESTree.Node>): boolean {
   if (node.type !== 'Identifier') return false;
   const declaration = namespaces.get(node.name);
   return declaration !== undefined && isTrackedReference(context, node, declaration);
@@ -298,24 +286,15 @@ function packageEffectRoot(node: ESTree.Node): ESTree.Node | null {
   if (staticName(node.property, node.computed) !== EFFECT_NAMESPACE) return null;
   return unwrapExpression(node.object);
 }
-function namespaceKind(
-  context: Context,
-  init: ESTree.Node,
-  bindings: CollectedBindings,
-): 'effect' | 'package' | null {
+function namespaceKind(context: Context, init: ESTree.Node, bindings: CollectedBindings): 'effect' | 'package' | null {
   if (init.type === 'Identifier') {
     if (trackedNamespace(context, init, bindings.effectNamespaces)) return 'effect';
     return trackedNamespace(context, init, bindings.packageNamespaces) ? 'package' : null;
   }
   const root = packageEffectRoot(init);
-  return root !== null && trackedNamespace(context, root, bindings.packageNamespaces)
-    ? 'effect'
-    : null;
+  return root !== null && trackedNamespace(context, root, bindings.packageNamespaces) ? 'effect' : null;
 }
-function addNamespace(
-  map: Map<string, ESTree.Node>,
-  target: Extract<ESTree.Node, { type: 'Identifier' }>,
-): boolean {
+function addNamespace(map: Map<string, ESTree.Node>, target: Extract<ESTree.Node, { type: 'Identifier' }>): boolean {
   if (map.has(target.name)) return false;
   map.set(target.name, target);
   return true;
@@ -330,8 +309,7 @@ function addDestructuredAlias(
   if (name === null) return false;
   const value = property.value.type === 'AssignmentPattern' ? property.value.left : property.value;
   if (value.type !== 'Identifier') return false;
-  if (kind === 'package')
-    return name === EFFECT_NAMESPACE && addNamespace(bindings.effectNamespaces, value);
+  if (kind === 'package') return name === EFFECT_NAMESPACE && addNamespace(bindings.effectNamespaces, value);
   if (!RUN_MEMBER.test(name) || bindings.runLocals.has(value.name)) return false;
   bindings.runLocals.set(value.name, { declaration: value, member: name });
   return true;
@@ -346,10 +324,7 @@ function propagateDeclarator(
   if (kind === null) return false;
   const target = declarator.id;
   if (target.type === 'Identifier')
-    return addNamespace(
-      kind === 'effect' ? bindings.effectNamespaces : bindings.packageNamespaces,
-      target,
-    );
+    return addNamespace(kind === 'effect' ? bindings.effectNamespaces : bindings.packageNamespaces, target);
   if (target.type !== 'ObjectPattern') return false;
   let changed = false;
   for (const property of target.properties) {
@@ -357,11 +332,7 @@ function propagateDeclarator(
   }
   return changed;
 }
-function propagateLocalAliases(
-  context: Context,
-  ast: ESTree.Program,
-  bindings: CollectedBindings,
-): void {
+function propagateLocalAliases(context: Context, ast: ESTree.Program, bindings: CollectedBindings): void {
   const declarators: ESTree.VariableDeclarator[] = [];
   walk(ast, (node) => {
     if (node.type === 'VariableDeclarator' && node.init !== null) declarators.push(node);
@@ -376,27 +347,18 @@ function propagateLocalAliases(
 }
 
 /** `Effect.runPromise` / `E["runSync"]` / ``Fx.Effect[`runFork`]`` → the run member name. */
-function runEntryPoint(
-  context: Context,
-  node: ESTree.MemberExpression,
-  bindings: RunBindings,
-): string | null {
+function runEntryPoint(context: Context, node: ESTree.MemberExpression, bindings: RunBindings): string | null {
   const member = staticName(node.property, node.computed);
   if (member === null || !RUN_MEMBER.test(member)) return null;
   const object = unwrapExpression(node.object);
-  if (object.type === 'Identifier')
-    return trackedNamespace(context, object, bindings.effectNamespaces) ? member : null;
+  if (object.type === 'Identifier') return trackedNamespace(context, object, bindings.effectNamespaces) ? member : null;
   const root = packageEffectRoot(object);
-  return root !== null && trackedNamespace(context, root, bindings.packageNamespaces)
-    ? member
-    : null;
+  return root !== null && trackedNamespace(context, root, bindings.packageNamespaces) ? member : null;
 }
 
 function isFunctionNode(node: ESTree.Node): node is FunctionNode {
   return (
-    node.type === 'ArrowFunctionExpression' ||
-    node.type === 'FunctionDeclaration' ||
-    node.type === 'FunctionExpression'
+    node.type === 'ArrowFunctionExpression' || node.type === 'FunctionDeclaration' || node.type === 'FunctionExpression'
   );
 }
 
@@ -432,11 +394,7 @@ function owningCall(fn: FunctionNode): ESTree.CallExpression | null {
 }
 
 /** A function passed to an Effect/Layer/Stream combinator (`Effect.gen`, `Effect.fn("x")(...)`, `gen(...)`). */
-function isEffectOwnedFunction(
-  fn: FunctionNode,
-  bindings: RunBindings,
-  shared: EffectBindings,
-): boolean {
+function isEffectOwnedFunction(fn: FunctionNode, bindings: RunBindings, shared: EffectBindings): boolean {
   const call = owningCall(fn);
   if (call === null) return false;
   // `Effect.fn("name")(function* () { ... })` and `Effect.fn()(...)`.
@@ -449,24 +407,18 @@ function isEffectOwnedFunction(
   }
   if (callee.type !== 'MemberExpression') return false;
   const member = effectMember(callee, shared);
-  if (member !== null)
-    return !(member.namespace === EFFECT_NAMESPACE && RUN_MEMBER.test(member.member));
+  if (member !== null) return !(member.namespace === EFFECT_NAMESPACE && RUN_MEMBER.test(member.member));
   return isPackageCombinator(callee, bindings);
 }
 function isPackageCombinator(callee: ESTree.MemberExpression, bindings: RunBindings): boolean {
   const root = packageEffectRoot(unwrapExpression(callee.object));
-  if (root === null || root.type !== 'Identifier' || !bindings.packageNamespaces.has(root.name))
-    return false;
+  if (root === null || root.type !== 'Identifier' || !bindings.packageNamespaces.has(root.name)) return false;
   const name = staticName(callee.property, callee.computed);
   return name !== null && !RUN_MEMBER.test(name);
 }
 
 /** True when the run site sits inside an Effect program body — the S1 nested re-entry case. */
-function isInsideEffectOwnedCode(
-  node: ESTree.Node,
-  bindings: RunBindings,
-  shared: EffectBindings,
-): boolean {
+function isInsideEffectOwnedCode(node: ESTree.Node, bindings: RunBindings, shared: EffectBindings): boolean {
   let current: ESTree.Node | null = node.parent;
   while (current !== null && current.type !== 'Program') {
     if (isFunctionNode(current) && isEffectOwnedFunction(current, bindings, shared)) return true;
@@ -488,8 +440,7 @@ const DECLARATION_KEY_PARENTS = new Set([
 ]);
 const NAME_PARENTS = new Set(['LabeledStatement', 'BreakStatement', 'ContinueStatement']);
 function isDeclarationPosition(node: ESTree.Node): boolean {
-  if (node.parent?.type === 'Property')
-    return Object.is(node.parent.key, node) && !node.parent.computed;
+  if (node.parent?.type === 'Property') return Object.is(node.parent.key, node) && !node.parent.computed;
   return isNonReferencePosition(node, {
     detached: false,
     keyParents: DECLARATION_KEY_PARENTS,
@@ -536,13 +487,8 @@ export const rule = defineRule({
     if (
       isTestFile(filename) ||
       isScriptFile(filename) ||
-      matchesGlobs(filename, [
-        'apps/*/scripts/**',
-        'verticals/*/scripts/**',
-        'packages/*/scripts/**',
-      ]) ||
-      (matchesGlobs(filename, options.browserGlobs) &&
-        !matchesGlobs(filename, options.serverGlobs)) ||
+      matchesGlobs(filename, ['apps/*/scripts/**', 'verticals/*/scripts/**', 'packages/*/scripts/**']) ||
+      (matchesGlobs(filename, options.browserGlobs) && !matchesGlobs(filename, options.serverGlobs)) ||
       matchesGlobs(filename, options.adapterFiles)
     ) {
       return {};

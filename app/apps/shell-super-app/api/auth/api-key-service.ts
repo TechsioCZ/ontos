@@ -1,29 +1,14 @@
-import { isAPIError } from 'better-auth/api';
 import { apiKey } from '@better-auth/api-key';
 import { betterAuth } from 'better-auth';
+import { isAPIError } from 'better-auth/api';
 import { and, asc, eq, lte, sql } from 'drizzle-orm';
-import {
-  Brand,
-  Clock,
-  Context,
-  DateTime,
-  Duration,
-  Effect,
-  Layer,
-  Option,
-  Redacted,
-  Schema,
-} from 'effect';
+import { Brand, Clock, Context, DateTime, Duration, Effect, Layer, Option, Redacted, Schema } from 'effect';
+
 import { AuthConfig } from './config.ts';
 import { AuthDatabase } from './db/client.ts';
 import { apikey } from './db/schema.ts';
 
-const withOptionalProperty = <
-  Base extends object,
-  Key extends PropertyKey,
-  Value,
-  Trailing extends object,
->(
+const withOptionalProperty = <Base extends object, Key extends PropertyKey, Value, Trailing extends object>(
   base: Base,
   condition: boolean,
   key: Key,
@@ -47,13 +32,11 @@ const apiKeyRateLimitedFields = {
   reason: Schema.String,
   retryAfterSeconds: Schema.Finite,
 };
-const ApiKeyRateLimitedErrorSchema = Schema.TaggedStruct(
+const ApiKeyRateLimitedErrorSchema = Schema.TaggedStruct('ApiKeyRateLimitedError', apiKeyRateLimitedFields);
+const ApiKeyRateLimitedError = Schema.TaggedError<Schema.Schema.Type<typeof ApiKeyRateLimitedErrorSchema>>()(
   'ApiKeyRateLimitedError',
   apiKeyRateLimitedFields,
 );
-const ApiKeyRateLimitedError = Schema.TaggedError<
-  Schema.Schema.Type<typeof ApiKeyRateLimitedErrorSchema>
->()('ApiKeyRateLimitedError', apiKeyRateLimitedFields);
 const apiKeyProviderUnavailableFields = {
   code: Schema.Literal('api_key_provider_unavailable'),
   failureCause: Schema.optionalKey(Schema.Defect()),
@@ -126,10 +109,7 @@ export interface ApiKeyServiceContract {
     readonly nowEpochMillis?: number;
     readonly tenantId: string;
   }) => Effect.Effect<PendingApiKeyCleanupBatch, ApiKeyProviderError>;
-  readonly setEnabled: (
-    keyId: string,
-    enabled: boolean,
-  ) => Effect.Effect<ProviderApiKeyMetadata, ApiKeyProviderError>;
+  readonly setEnabled: (keyId: string, enabled: boolean) => Effect.Effect<ProviderApiKeyMetadata, ApiKeyProviderError>;
   readonly verify: (rawKey: string) => Effect.Effect<VerifiedApiKey, ApiKeyProviderError>;
 }
 export class ApiKeyService extends Context.Service<ApiKeyService, ApiKeyServiceContract>()(
@@ -184,8 +164,7 @@ const PendingBindingScopeJson = Schema.fromJsonString(PendingBindingScopeSchema)
 const PendingBindingMarkerJson = Schema.fromJsonString(PendingBindingMarkerSchema);
 const makeIssuerPrincipalId = Brand.nominal<Schema.Schema.Type<typeof IssuerPrincipalIdSchema>>();
 const makeTenantId = Brand.nominal<Schema.Schema.Type<typeof TenantIdSchema>>();
-const makeLifecycleOperationId =
-  Brand.nominal<Schema.Schema.Type<typeof LifecycleOperationIdSchema>>();
+const makeLifecycleOperationId = Brand.nominal<Schema.Schema.Type<typeof LifecycleOperationIdSchema>>();
 interface PendingBindingScope {
   readonly issuerPrincipalId: string;
   readonly tenantId: string;
@@ -193,16 +172,12 @@ interface PendingBindingScope {
 interface PendingBindingMarker extends PendingBindingScope {
   readonly lifecycleOperationId: string;
 }
-const pendingBindingScope = (
-  input: PendingBindingScope,
-): Schema.Schema.Type<typeof PendingBindingScopeSchema> => ({
+const pendingBindingScope = (input: PendingBindingScope): Schema.Schema.Type<typeof PendingBindingScopeSchema> => ({
   issuerPrincipalId: makeIssuerPrincipalId(input.issuerPrincipalId),
   ontosLifecycle: 'binding_pending_v1',
   tenantId: makeTenantId(input.tenantId),
 });
-const pendingBindingMarker = (
-  input: PendingBindingMarker,
-): Schema.Schema.Type<typeof PendingBindingMarkerSchema> => ({
+const pendingBindingMarker = (input: PendingBindingMarker): Schema.Schema.Type<typeof PendingBindingMarkerSchema> => ({
   ...pendingBindingScope(input),
   lifecycleOperationId: makeLifecycleOperationId(input.lifecycleOperationId),
 });
@@ -212,7 +187,7 @@ const decodePendingBindingMarker = (
   if (metadata === null) {
     return undefined;
   }
-  return Option.getOrUndefined(Schema.decodeUnknownOption(PendingBindingMarkerJson)(metadata));
+  return Option.getOrUndefined(Schema.decodeOption(PendingBindingMarkerJson)(metadata));
 };
 export const classifyPendingApiKeyCleanup = (
   records: readonly {
@@ -248,8 +223,7 @@ const toSafe = (value: {
 }): ProviderApiKeyMetadata => ({
   createdAt: DateTime.formatIso(DateTime.makeUnsafe(value.createdAt)),
   enabled: value.enabled === true,
-  expiresAt:
-    value.expiresAt === null ? null : DateTime.formatIso(DateTime.makeUnsafe(value.expiresAt)),
+  expiresAt: value.expiresAt === null ? null : DateTime.formatIso(DateTime.makeUnsafe(value.expiresAt)),
   name: value.name,
   providerKeyId: value.id,
   start: value.start,
@@ -267,7 +241,13 @@ export const makeApiKeyService = Effect.fn('ApiKeyService.make')(function* makeS
     baseURL: configuration.baseUrl,
     database: databaseAdapter,
     logger: { disabled: true },
-    plugins: [apiKey({ enableMetadata: true, enableSessionForAPIKeys: false, references: 'user' })],
+    plugins: [
+      apiKey({
+        enableMetadata: true,
+        enableSessionForAPIKeys: false,
+        references: 'user',
+      }),
+    ],
     secret: configuration.secret,
     trustedOrigins: [...configuration.trustedOrigins],
   });
@@ -329,7 +309,10 @@ export const makeApiKeyService = Effect.fn('ApiKeyService.make')(function* makeS
         }),
       }).pipe(
         apiKeyExternalTimeout,
-        Effect.map((created) => ({ ...toSafe(created), secret: Redacted.make(created.key) })),
+        Effect.map((created) => ({
+          ...toSafe(created),
+          secret: Redacted.make(created.key),
+        })),
       ),
     metadata,
     pendingCleanup: Effect.fn('ApiKeyService.pendingCleanup')(function* pendingCleanup(input) {
@@ -338,9 +321,9 @@ export const makeApiKeyService = Effect.fn('ApiKeyService.make')(function* makeS
         DateTime.subtractDuration(PENDING_BINDING_LEASE),
         DateTime.toDateUtc,
       );
-      const encodedScope = yield* Schema.encodeEffect(PendingBindingScopeJson)(
-        pendingBindingScope(input),
-      ).pipe(Effect.mapError(unavailable));
+      const encodedScope = yield* Schema.encodeEffect(PendingBindingScopeJson)(pendingBindingScope(input)).pipe(
+        Effect.mapError(unavailable),
+      );
       const records = yield* database
         .select({
           createdAt: apikey.createdAt,
@@ -359,15 +342,12 @@ export const makeApiKeyService = Effect.fn('ApiKeyService.make')(function* makeS
         .orderBy(asc(apikey.createdAt), asc(apikey.id))
         .limit(PENDING_CLEANUP_BATCH_SIZE + 1)
         .pipe(Effect.mapError(unavailable), apiKeyExternalTimeout);
-      const providerKeyIds = classifyPendingApiKeyCleanup(
-        records.slice(0, PENDING_CLEANUP_BATCH_SIZE),
-        {
-          issuerPrincipalId: input.issuerPrincipalId,
-          lifecycleOperationId: input.lifecycleOperationId,
-          nowEpochMillis,
-          tenantId: input.tenantId,
-        },
-      );
+      const providerKeyIds = classifyPendingApiKeyCleanup(records.slice(0, PENDING_CLEANUP_BATCH_SIZE), {
+        issuerPrincipalId: input.issuerPrincipalId,
+        lifecycleOperationId: input.lifecycleOperationId,
+        nowEpochMillis,
+        tenantId: input.tenantId,
+      });
       return {
         hasMore: records.length > PENDING_CLEANUP_BATCH_SIZE,
         providerKeyIds,

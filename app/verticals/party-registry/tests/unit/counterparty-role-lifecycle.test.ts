@@ -1,4 +1,5 @@
 import { expect, it } from 'effect-rstest';
+
 import {
   counterpartyContextEvidenceIsSufficient,
   roleEvidenceIsSufficient,
@@ -54,17 +55,12 @@ it('derives current role state from lifecycle and effective time', () => {
       '2026-06-01T00:00:00.000Z',
     ),
   ).toBe(false);
-  expect(rolePeriodIsCurrentAt({ ...active, state: 'ENDED' }, '2026-06-01T00:00:00.000Z')).toBe(
-    false,
-  );
+  expect(rolePeriodIsCurrentAt({ ...active, state: 'ENDED' }, '2026-06-01T00:00:00.000Z')).toBe(false);
 });
 
 it('stores future, current, future-ended, and historical periods by their interval', () => {
   expect(
-    rolePeriodStorageStateAt(
-      { validFrom: '2027-01-01T00:00:00.000Z', validTo: null },
-      '2026-06-01T00:00:00.000Z',
-    ),
+    rolePeriodStorageStateAt({ validFrom: '2027-01-01T00:00:00.000Z', validTo: null }, '2026-06-01T00:00:00.000Z'),
   ).toEqual({ isCurrent: false, state: 'ACTIVE' });
   expect(
     rolePeriodStorageStateAt(

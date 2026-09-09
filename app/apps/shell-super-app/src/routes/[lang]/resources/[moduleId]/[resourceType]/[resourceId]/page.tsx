@@ -5,11 +5,12 @@ import { Button } from '@techsio/ui-kit/atoms/button';
 import { StatusText } from '@techsio/ui-kit/atoms/status-text';
 import { DateTime, Effect, Schema } from 'effect';
 import { useState } from 'react';
+
 import { attachResourceMedia } from '../../../../../../api/auth-client.ts';
 import { browserRuntime } from '../../../../../../runtime/browser-effect-runtime.ts';
 import { ShellContentLayout } from '../../../../../shell-content-layout.tsx';
-import type { ResourcePageModel } from './page.data.ts';
 import { useShellControls } from '../../../../../use-shell-controls.ts';
+import type { ResourcePageModel } from './page.data.ts';
 
 const MediaStateSchema = Schema.Literals(['failed', 'idle', 'pending', 'success']);
 type MediaState = typeof MediaStateSchema.Type;
@@ -54,16 +55,10 @@ const ResourceDetails = ({
           {t('shell.resource.media.attach')}
         </Button>
         {model.resource.media.enabled ? null : (
-          <StatusText status="default">
-            {t(`shell.resource.media.${model.resource.media.reason}`)}
-          </StatusText>
+          <StatusText status="default">{t(`shell.resource.media.${model.resource.media.reason}`)}</StatusText>
         )}
         {mediaState === 'success' || mediaState === 'failed' ? (
-          <StatusText
-            aria-live="polite"
-            showIcon
-            status={mediaState === 'success' ? 'success' : 'error'}
-          >
+          <StatusText aria-live="polite" showIcon status={mediaState === 'success' ? 'success' : 'error'}>
             {t(`shell.resource.media.${mediaState}`)}
           </StatusText>
         ) : null}
@@ -102,9 +97,7 @@ const ResourcePage = () => {
     from: '/$lang/resources/$moduleId/$resourceType/$resourceId',
   });
   const [mediaState, setMediaState] = useState<MediaState>('idle');
-  const controls = useShellControls(
-    model.shell.state === 'authenticated' ? model.shell : undefined,
-  );
+  const controls = useShellControls(model.shell.state === 'authenticated' ? model.shell : undefined);
   const handleMediaAttachment = (ref: ReadyResourceModel['resource']['ref']) => {
     setMediaState('pending');
     void browserRuntime.runPromise(
@@ -124,11 +117,7 @@ const ResourcePage = () => {
     return (
       <main className="shell:mx-auto shell:grid shell:w-full shell:max-w-5xl shell:gap-6 shell:px-4 shell:py-8">
         <StatusText aria-live="polite" showIcon status="error">
-          {t(
-            model.shell.state === 'unavailable'
-              ? 'shell.dashboard.unavailable'
-              : 'shell.resource.selection_required',
-          )}
+          {t(model.shell.state === 'unavailable' ? 'shell.dashboard.unavailable' : 'shell.resource.selection_required')}
         </StatusText>
       </main>
     );

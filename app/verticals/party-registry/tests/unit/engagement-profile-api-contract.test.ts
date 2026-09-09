@@ -1,8 +1,10 @@
-import { expect, it } from 'effect-rstest';
 // @effect-diagnostics nodeBuiltinImport:off -- Source-contract test reads actual module files; expires: 2026-12-31.
 import { readFile } from 'node:fs/promises';
+
 import { Effect, Option, Schema } from 'effect';
+import { expect, it } from 'effect-rstest';
 import { FetchHttpClient } from 'effect/unstable/http';
+
 import {
   AttachOrganizationEngagementPayloadSchema,
   AttachPersonEngagementPayloadSchema,
@@ -26,9 +28,7 @@ const counterpartyRef = {
 } as const;
 
 it('publishes engagement operations from the Party Registry API boundary', () => {
-  expect(partyRegistryApiContract.readinessPath).toBe(
-    '/party-registry-api/party-registry/readiness',
-  );
+  expect(partyRegistryApiContract.readinessPath).toBe('/party-registry-api/party-registry/readiness');
   expect(
     Object.values(engagementProfileOperationContexts)
       .map(({ routePath }) => routePath)
@@ -48,22 +48,19 @@ it('publishes engagement operations from the Party Registry API boundary', () =>
 it.effect('attach contracts accept only public Party Registry refs', () =>
   Effect.gen(function* decodeContracts() {
     const payload = { counterpartyRef, partyRef };
-    expect(
-      yield* Schema.decodeUnknownEffect(AttachOrganizationEngagementPayloadSchema)(payload),
-    ).toEqual(payload);
-    expect(yield* Schema.decodeUnknownEffect(AttachPersonEngagementPayloadSchema)(payload)).toEqual(
-      payload,
-    );
+    expect(yield* Schema.decodeEffect(AttachOrganizationEngagementPayloadSchema)(payload)).toEqual(payload);
+    expect(yield* Schema.decodeEffect(AttachPersonEngagementPayloadSchema)(payload)).toEqual(payload);
 
-    for (const schema of [
-      AttachOrganizationEngagementPayloadSchema,
-      AttachPersonEngagementPayloadSchema,
-    ] as const) {
+    for (const schema of [AttachOrganizationEngagementPayloadSchema, AttachPersonEngagementPayloadSchema] as const) {
       expect(
-        yield* Schema.decodeUnknownEffect(schema, { onExcessProperty: 'error' })({ partyRef }),
+        yield* Schema.decodeEffect(schema, {
+          onExcessProperty: 'error',
+        })({ partyRef }),
       ).toEqual({ partyRef });
       expect(
-        yield* Schema.decodeUnknownEffect(schema, { onExcessProperty: 'error' })({
+        yield* Schema.decodeUnknownEffect(schema, {
+          onExcessProperty: 'error',
+        })({
           ...payload,
           customerId: 'd4000000-0000-4000-8000-000000000001',
         }).pipe(Effect.isFailure),
@@ -119,9 +116,7 @@ it.effect('public engagement mutations preserve owner request context at the HTT
     const gatewayRequest = requests.find(({ url }) => url.endsWith('/auth/gateway-context'));
     expect(gatewayRequest).toBeDefined();
     expect(mutationRequest).toBeDefined();
-    const gatewayPayload = yield* Effect.promise(() =>
-      Option.getOrThrow(Option.fromNullishOr(gatewayRequest)).json(),
-    );
+    const gatewayPayload = yield* Effect.promise(() => Option.getOrThrow(Option.fromNullishOr(gatewayRequest)).json());
     expect(gatewayPayload).toEqual({ audience: 'party-registry' });
     expect(mutationRequest?.headers.get('authorization')).toBe('Bearer test-gateway-token');
     expect(mutationRequest?.headers.get('accept-language')).toBe('cs');
@@ -132,7 +127,7 @@ it.effect('public engagement mutations preserve owner request context at the HTT
       engagementProfileOperationContexts.attachOrganizationEngagement.operationId,
     );
     expect(
-      yield* Schema.decodeUnknownEffect(Schema.fromJsonString(Schema.Unknown))(
+      yield* Schema.decodeEffect(Schema.fromJsonString(Schema.Unknown))(
         mutationRequest?.headers.get('x-modernjs-bff-operation-context') ?? '',
       ),
     ).toEqual(engagementProfileOperationContexts.attachOrganizationEngagement);
@@ -142,21 +137,13 @@ it.effect('public engagement mutations preserve owner request context at the HTT
 it.effect('public Party Registry engagement API does not expose legacy identity operations', () =>
   Effect.gen(function* verifyCase4() {
     const [apiSource, clientSource] = yield* Effect.all([
-      Effect.promise(() =>
-        readFile(new URL('../../shared/engagement-profile-api.ts', import.meta.url), 'utf-8'),
-      ),
-      Effect.promise(() =>
-        readFile(new URL('../../src/api/engagement-profile-client.ts', import.meta.url), 'utf-8'),
-      ),
+      Effect.promise(() => readFile(new URL('../../shared/engagement-profile-api.ts', import.meta.url), 'utf-8')),
+      Effect.promise(() => readFile(new URL('../../src/api/engagement-profile-client.ts', import.meta.url), 'utf-8')),
     ]);
 
     for (const source of [apiSource, clientSource]) {
-      expect(source).not.toMatch(
-        /\b(?:createCustomer|editCustomer|archiveCustomer|unarchiveCustomer)\b/u,
-      );
-      expect(source).not.toMatch(
-        /\b(?:createContact|editContact|archiveContact|unarchiveContact)\b/u,
-      );
+      expect(source).not.toMatch(/\b(?:createCustomer|editCustomer|archiveCustomer|unarchiveCustomer)\b/u);
+      expect(source).not.toMatch(/\b(?:createContact|editContact|archiveContact|unarchiveContact)\b/u);
       expect(source).not.toMatch(/CustomerAresLookup|customerId|contactId/u);
     }
   }),

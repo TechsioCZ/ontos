@@ -1,11 +1,12 @@
 import { Context, Effect, Layer } from 'effect';
+
 import type { TrustedPrincipalContext } from '../actions/context.ts';
 import { decodeTrustedPrincipalContext } from '../auth/system-principal-context-provenance.ts';
 import type { ModuleEntrypointDescriptor } from './module-entrypoint.ts';
-import { ModuleStateGate } from './module-state-gate.ts';
-import type { ModuleStateGateService, ModuleStateSnapshot } from './module-state-gate.ts';
 import { ModuleStateCheckUnavailableError } from './module-state-gate-errors.ts';
 import type { ModuleStateGateError } from './module-state-gate-errors.ts';
+import { ModuleStateGate } from './module-state-gate.ts';
+import type { ModuleStateGateService, ModuleStateSnapshot } from './module-state-gate.ts';
 
 const unavailable = (cause?: unknown) => {
   const error = new ModuleStateCheckUnavailableError({
@@ -14,7 +15,10 @@ const unavailable = (cause?: unknown) => {
   });
   return cause === undefined
     ? error
-    : Object.defineProperty(error, 'cause', { configurable: true, value: cause });
+    : Object.defineProperty(error, 'cause', {
+        configurable: true,
+        value: cause,
+      });
 };
 
 export interface RunGatedModuleEntrypointInput<Value, AuthorizationError, LoadError, Requirements> {
@@ -42,31 +46,23 @@ export interface ModuleEntrypointGatewayService {
 export const makeModuleEntrypointGateway = <Gate extends ModuleStateGateService>(
   gate: Gate,
 ): ModuleEntrypointGatewayService => {
-  const prepareSnapshotInput = <Input>(
-    context: Input,
-    entrypoints: readonly ModuleEntrypointDescriptor[],
-  ) =>
+  const prepareSnapshotInput = <Input>(context: Input, entrypoints: readonly ModuleEntrypointDescriptor[]) =>
     decodeTrustedPrincipalContext(context).pipe(
       Effect.mapError(unavailable),
-      Effect.flatMap((trustedContext) =>
-        gate.prepareSnapshot(trustedContext.tenantId, entrypoints),
-      ),
+      Effect.flatMap((trustedContext) => gate.prepareSnapshot(trustedContext.tenantId, entrypoints)),
     );
   return {
     check: gate.check,
     prepareSnapshot: prepareSnapshotInput,
     prepareSnapshotInput,
     run: (input) =>
-      gate
-        .check(input.snapshot, input.entrypoint)
-        .pipe(Effect.andThen(input.authorize), Effect.andThen(input.load)),
+      gate.check(input.snapshot, input.entrypoint).pipe(Effect.andThen(input.authorize), Effect.andThen(input.load)),
   };
 };
 
-export class ModuleEntrypointGateway extends Context.Service<
-  ModuleEntrypointGateway,
-  ModuleEntrypointGatewayService
->()('@app/core-runtime/modules/module-entrypoint-gateway/ModuleEntrypointGateway') {}
+export class ModuleEntrypointGateway extends Context.Service<ModuleEntrypointGateway, ModuleEntrypointGatewayService>()(
+  '@app/core-runtime/modules/module-entrypoint-gateway/ModuleEntrypointGateway',
+) {}
 
 export const ModuleEntrypointGatewayLive = Layer.effect(
   ModuleEntrypointGateway,

@@ -56,19 +56,14 @@ const isConcreteExtensionValue = (ast: SchemaAST.AST): boolean => {
   return true;
 };
 
-const visitExtensionChildren = (
-  ast: SchemaAST.AST,
-  visit: (ast: SchemaAST.AST) => boolean,
-): boolean => {
+const visitExtensionChildren = (ast: SchemaAST.AST, visit: (ast: SchemaAST.AST) => boolean): boolean => {
   if (SchemaAST.isArrays(ast)) {
     return ast.elements.every(visit) && ast.rest.every(visit);
   }
   if (SchemaAST.isObjects(ast)) {
     return (
       ast.indexSignatures.length === 0 &&
-      ast.propertySignatures.every(
-        ({ name, type }) => Predicate.isString(name) && name !== '__proto__' && visit(type),
-      )
+      ast.propertySignatures.every(({ name, type }) => Predicate.isString(name) && name !== '__proto__' && visit(type))
     );
   }
   if (SchemaAST.isUnion(ast)) {
@@ -104,10 +99,7 @@ const cloneDescriptors = <Value>(value: Value, clone: <Current>(value: Current) 
     if ('value' in descriptor) {
       const descriptorValue = descriptor.value;
       descriptor.value =
-        key === 'thunk' &&
-        SchemaAST.isAST(value) &&
-        SchemaAST.isSuspend(value) &&
-        Predicate.isFunction(descriptorValue)
+        key === 'thunk' && SchemaAST.isAST(value) && SchemaAST.isSuspend(value) && Predicate.isFunction(descriptorValue)
           ? () => clone(descriptorValue())
           : clone(descriptorValue);
     }
@@ -158,11 +150,7 @@ const stableExtensionField = (name: string, descriptor: PropertyDescriptor) => {
   }
   const fieldDescriptors = Object.getOwnPropertyDescriptors(field);
   const astDescriptor = fieldDescriptors.ast;
-  if (
-    astDescriptor === undefined ||
-    !('value' in astDescriptor) ||
-    !SchemaAST.isAST(astDescriptor.value)
-  ) {
+  if (astDescriptor === undefined || !('value' in astDescriptor) || !SchemaAST.isAST(astDescriptor.value)) {
     // eslint-disable-next-line effect-native/no-native-error-construction -- Schema AST accessors could change after validation; the captured AST must be the one consumed by TaggedStruct.
     throw new TypeError(`Problem Details extension field "${name}" must use a concrete schema.`);
   }
@@ -175,30 +163,16 @@ const stableExtensionField = (name: string, descriptor: PropertyDescriptor) => {
   return Object.defineProperties(Object.create(Object.getPrototypeOf(field)), fieldDescriptors);
 };
 
-const reservedExtensionFields = new Set([
-  '__proto__',
-  '_tag',
-  'detail',
-  'retryable',
-  'status',
-  'title',
-  'type',
-]);
+const reservedExtensionFields = new Set(['__proto__', '_tag', 'detail', 'retryable', 'status', 'title', 'type']);
 
 const concreteExtensionsSnapshot = <const Extensions extends Schema.Struct.Fields>(
   extensions: Extensions,
 ): Extensions => {
-  if (
-    Object.getPrototypeOf(extensions) !== Object.prototype &&
-    Object.getPrototypeOf(extensions) !== null
-  ) {
+  if (Object.getPrototypeOf(extensions) !== Object.prototype && Object.getPrototypeOf(extensions) !== null) {
     // eslint-disable-next-line effect-native/no-native-error-construction -- This synchronous, browser-safe schema factory rejects a caller programming error before a contract can be published.
     throw new TypeError('Problem Details extensions must use a plain object.');
   }
-  const snapshot = Object.defineProperties(
-    {},
-    Object.getOwnPropertyDescriptors(extensions),
-  ) as Extensions;
+  const snapshot = Object.defineProperties({}, Object.getOwnPropertyDescriptors(extensions)) as Extensions;
   for (const name of Reflect.ownKeys(snapshot)) {
     if (!Predicate.isString(name)) {
       // eslint-disable-next-line effect-native/no-native-error-construction -- This synchronous, browser-safe schema factory rejects a caller programming error before a contract can be published.
@@ -211,12 +185,13 @@ const concreteExtensionsSnapshot = <const Extensions extends Schema.Struct.Field
     const descriptor = Object.getOwnPropertyDescriptor(snapshot, name);
     if (descriptor === undefined || descriptor.enumerable !== true || !('value' in descriptor)) {
       // eslint-disable-next-line effect-native/no-native-error-construction -- Accessors could change after validation; contract fields must be immutable schema data descriptors.
-      throw new TypeError(
-        `Problem Details extension field "${name}" must be an enumerable data property.`,
-      );
+      throw new TypeError(`Problem Details extension field "${name}" must be an enumerable data property.`);
     }
     const stableField = stableExtensionField(name, descriptor);
-    Object.defineProperty(snapshot, name, { ...descriptor, value: stableField });
+    Object.defineProperty(snapshot, name, {
+      ...descriptor,
+      value: stableField,
+    });
   }
   return snapshot;
 };
@@ -233,8 +208,7 @@ const makeAnnotatedProblemDetailsSchema = <
   marker: Marker,
   extensions?: Extensions,
 ) => {
-  const concreteExtensions =
-    extensions === undefined ? extensions : concreteExtensionsSnapshot(extensions);
+  const concreteExtensions = extensions === undefined ? extensions : concreteExtensionsSnapshot(extensions);
   // eslint-disable-next-line prefer-object-spread -- Object.assign preserves the concrete generic marker and extension fields in the inferred schema type.
   const fields = Object.assign(
     {
@@ -246,10 +220,7 @@ const makeAnnotatedProblemDetailsSchema = <
     marker,
     concreteExtensions,
   );
-  return Schema.TaggedStruct(tag, fields).pipe(
-    problemDetailsRepresentation,
-    HttpApiSchema.status(status),
-  );
+  return Schema.TaggedStruct(tag, fields).pipe(problemDetailsRepresentation, HttpApiSchema.status(status));
 };
 
 /**
@@ -277,5 +248,4 @@ export const makeRetryableProblemDetailsSchema = <
   tag: Tag,
   status: Status,
   extensions?: Extensions,
-) =>
-  makeAnnotatedProblemDetailsSchema(tag, status, { retryable: Schema.Literal(true) }, extensions);
+) => makeAnnotatedProblemDetailsSchema(tag, status, { retryable: Schema.Literal(true) }, extensions);

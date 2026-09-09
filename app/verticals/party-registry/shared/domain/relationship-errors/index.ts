@@ -1,4 +1,5 @@
 import { Schema } from 'effect';
+
 import { PartyAliasWriteRejected } from '../merge-alias-resolution.ts';
 import { PartyRelationshipCorrectionRequired } from './correction-required.ts';
 import { PartyRelationshipEndpointNotFound } from './endpoint-not-found.ts';

@@ -1,4 +1,5 @@
-import { optionRecord } from '../shared/options.ts';
+import { fileURLToPath } from 'node:url';
+
 /**
  * Audit A6 (`docs/architecture/EFFECT_V4_ANTIPATTERN_AUDIT.md`) asks for Logger,
  * Tracer/OpenTelemetry and minimum-level Layers at runtime roots.
@@ -21,15 +22,14 @@ import { optionRecord } from '../shared/options.ts';
  * serialization remain untouched. Tests/scripts are excluded by default. No fixer or suggestions.
  */
 import { defineRule } from '@oxlint/plugins';
-import { fileURLToPath } from 'node:url';
-
 import type { Context, ESTree, Variable } from '@oxlint/plugins';
 
-import { isTestFile, rootedScopePath, matchesGlobs } from '../shared/paths.ts';
-import { stringArray, booleanOption as boolOption } from '../shared/options.ts';
 import { unwrapNode as unwrap, memberName as sharedMemberName, keyName } from '../shared/ast.ts';
 import { lookupVariable, resolvesToImport } from '../shared/bindings.ts';
 import { importedName } from '../shared/imports.ts';
+import { optionRecord } from '../shared/options.ts';
+import { stringArray, booleanOption as boolOption } from '../shared/options.ts';
+import { isTestFile, rootedScopePath, matchesGlobs } from '../shared/paths.ts';
 import { isNonReferencePosition as sharedNonReferencePosition } from '../shared/reference-positions.ts';
 
 const EFFECT_MODULE = /^effect(?:\/.*)?$/u;
@@ -94,10 +94,7 @@ function readOptions(context: Context) {
     runtimeTypeNames: stringArray(record.runtimeTypeNames, DEFAULT_RUNTIME_TYPE_NAMES),
     otelModules: stringArray(record.otelModules, DEFAULT_OTEL_MODULES),
     reexportModules: stringArray(record.reexportModules, DEFAULT_REEXPORT_MODULES),
-    minimumLogLevelMembers: stringArray(
-      record.minimumLogLevelMembers,
-      DEFAULT_MINIMUM_LOG_LEVEL_MEMBERS,
-    ),
+    minimumLogLevelMembers: stringArray(record.minimumLogLevelMembers, DEFAULT_MINIMUM_LOG_LEVEL_MEMBERS),
     includeScripts: boolOption(record.includeScripts, false),
     includeTests: boolOption(record.includeTests, false),
     require: {
@@ -124,10 +121,7 @@ function qualifiedSet(entries: readonly string[]): ReadonlySet<string> {
   return set;
 }
 
-function isTypeOnly(
-  declaration: ESTree.ImportDeclaration,
-  specifier: ESTree.ImportDeclarationSpecifier,
-): boolean {
+function isTypeOnly(declaration: ESTree.ImportDeclaration, specifier: ESTree.ImportDeclarationSpecifier): boolean {
   if (declaration.importKind === 'type') return true;
   return specifier.type === 'ImportSpecifier' && specifier.importKind === 'type';
 }
@@ -170,8 +164,7 @@ function collectRuntimeTypes(
   bindings: CollectedBindings,
 ): void {
   for (const specifier of statement.specifiers) {
-    if (specifier.type === 'ImportNamespaceSpecifier')
-      bindings.runtimeTypeNamespaces.add(specifier.local.name);
+    if (specifier.type === 'ImportNamespaceSpecifier') bindings.runtimeTypeNamespaces.add(specifier.local.name);
     if (specifier.type === 'ImportSpecifier' && names.has(importedName(specifier)))
       bindings.runtimeTypeLocals.add(specifier.local.name);
   }
@@ -195,10 +188,7 @@ function collectEffectSpecifier(
   else if (submodule !== undefined) bindings.namespaces.set(local, submodule);
 }
 
-function collectBarrelSpecifier(
-  specifier: ESTree.ImportDeclarationSpecifier,
-  bindings: CollectedBindings,
-): void {
+function collectBarrelSpecifier(specifier: ESTree.ImportDeclarationSpecifier, bindings: CollectedBindings): void {
   if (specifier.type === 'ImportNamespaceSpecifier') bindings.barrels.add(specifier.local.name);
   if (specifier.type !== 'ImportSpecifier') return;
   const imported = importedName(specifier);
@@ -265,8 +255,7 @@ function collectFileBindings(program: ESTree.Program, options: RuleOptions): Fil
   const names = new Set(options.runtimeTypeNames);
   for (const statement of program.body) {
     if (statement.type !== 'ImportDeclaration') continue;
-    if (matchesGlobs(statement.source.value, options.reexportModules))
-      collectRuntimeTypes(statement, names, bindings);
+    if (matchesGlobs(statement.source.value, options.reexportModules)) collectRuntimeTypes(statement, names, bindings);
     collectValueImport(statement, options, bindings);
   }
   return bindings;
@@ -283,11 +272,7 @@ function isNonReferencePosition(node: ESTree.Node): boolean {
   });
 }
 
-const FUNCTION_TYPES = new Set([
-  'FunctionDeclaration',
-  'FunctionExpression',
-  'ArrowFunctionExpression',
-]);
+const FUNCTION_TYPES = new Set(['FunctionDeclaration', 'FunctionExpression', 'ArrowFunctionExpression']);
 
 /** `true` when any ancestor is a function — i.e. the node is *not* at module top level. */
 function insideFunction(node: ESTree.Node): boolean {
@@ -295,8 +280,7 @@ function insideFunction(node: ESTree.Node): boolean {
   while (current !== null && current !== undefined) {
     if (FUNCTION_TYPES.has(current.type)) {
       let expression = current;
-      while (expression.parent && unwrap(expression.parent) === current)
-        expression = expression.parent;
+      while (expression.parent && unwrap(expression.parent) === current) expression = expression.parent;
       const parent = expression.parent;
       if (parent?.type !== 'CallExpression' || parent.callee !== expression) return true;
     }
@@ -307,12 +291,7 @@ function insideFunction(node: ESTree.Node): boolean {
 }
 
 /** Type positions a runtime type may hide inside while still being *the* return type. */
-const RETURN_TYPE_WRAPPERS = new Set([
-  'TSIntersectionType',
-  'TSUnionType',
-  'TSParenthesizedType',
-  'TSTypeReference',
-]);
+const RETURN_TYPE_WRAPPERS = new Set(['TSIntersectionType', 'TSUnionType', 'TSParenthesizedType', 'TSTypeReference']);
 
 /**
  * When `node` is (part of) a function's return type annotation, return that function. Walks up
@@ -325,16 +304,12 @@ function initializedFunctionType(owner: ESTree.Node): ESTree.Node | null {
   if (annotation?.type !== 'TSTypeAnnotation') return null;
   const binding = annotation.parent;
   const declaration = binding?.parent;
-  if (declaration?.type !== 'VariableDeclarator' || declaration.id !== binding || !declaration.init)
-    return null;
+  if (declaration?.type !== 'VariableDeclarator' || declaration.id !== binding || !declaration.init) return null;
   return declaration;
 }
 
 function returnAnnotationOwner(annotation: ESTree.Node): ESTree.Node | null {
-  const owner = annotation.parent as
-    | (ESTree.Node & { returnType?: unknown; body?: unknown })
-    | null
-    | undefined;
+  const owner = annotation.parent as (ESTree.Node & { returnType?: unknown; body?: unknown }) | null | undefined;
   if (!owner || owner.returnType !== annotation) return null;
   if (FUNCTION_TYPES.has(owner.type) && owner.body) return owner;
   return initializedFunctionType(owner);
@@ -351,16 +326,11 @@ function functionOwningReturnType(node: ESTree.Node): ESTree.Node | null {
 }
 
 function excludedPath(path: string, options: RuleOptions): boolean {
-  if (
-    /\.d\.[cm]?ts$/u.test(path) ||
-    /(?:^|\/)(?:dist(?:-[^/]+)?|build|\.output|node_modules)\//u.test(path)
-  )
+  if (/\.d\.[cm]?ts$/u.test(path) || /(?:^|\/)(?:dist(?:-[^/]+)?|build|\.output|node_modules)\//u.test(path))
     return true;
   if (matchesGlobs(path, options.ignore)) return true;
   if (!options.includeTests && isTestFile(path)) return true;
-  return /(?:^|\/)scripts\//u.test(path)
-    ? !options.includeScripts
-    : !matchesGlobs(path, options.include);
+  return /(?:^|\/)scripts\//u.test(path) ? !options.includeScripts : !matchesGlobs(path, options.include);
 }
 
 function qualifyValue(base: string | null, key: string | null): string | null {
@@ -368,46 +338,27 @@ function qualifyValue(base: string | null, key: string | null): string | null {
   return base === '$root' ? key : `${base}.${key}`;
 }
 
-function destructuredValue(
-  declaration: ESTree.VariableDeclarator,
-  name: string,
-  base: string | null,
-): string | null {
+function destructuredValue(declaration: ESTree.VariableDeclarator, name: string, base: string | null): string | null {
   if (declaration.id.type === 'Identifier') return base;
   if (declaration.id.type !== 'ObjectPattern' || base === null) return null;
   for (const property of declaration.id.properties) {
-    if (
-      property.type !== 'Property' ||
-      property.value.type !== 'Identifier' ||
-      property.value.name !== name
-    )
-      continue;
+    if (property.type !== 'Property' || property.value.type !== 'Identifier' || property.value.name !== name) continue;
     return qualifyValue(base, keyName(property.key, property.computed, { templates: false }));
   }
   return null;
 }
 
-function aliasDeclaration(
-  variable: Variable | null,
-  seen: Set<Variable>,
-): ESTree.VariableDeclarator | null {
+function aliasDeclaration(variable: Variable | null, seen: Set<Variable>): ESTree.VariableDeclarator | null {
   if (!variable || seen.has(variable)) return null;
   if (variable.references.some((reference) => reference.isWrite() && !reference.init)) return null;
   seen.add(variable);
   const definition = variable.defs[0];
-  if (
-    definition?.type !== 'Variable' ||
-    definition.node.type !== 'VariableDeclarator' ||
-    !definition.node.init
-  )
+  if (definition?.type !== 'Variable' || definition.node.type !== 'VariableDeclarator' || !definition.node.init)
     return null;
   return definition.node;
 }
 
-function rootAnchor(
-  roots: RootHit[],
-  program: ESTree.Program,
-): { node: ESTree.Node; kind: string } {
+function rootAnchor(roots: RootHit[], program: ESTree.Program): { node: ESTree.Node; kind: string } {
   roots.sort((left, right) => left.start - right.start);
   const first = roots[0];
   return {
@@ -553,16 +504,14 @@ export const rule = defineRule({
       }
       if (typeName.type !== 'TSQualifiedName' || typeName.left.type !== 'Identifier') return null;
       const name = typeName.right.name;
-      if (!runtimeTypeNameSet.has(name) || !bindings.runtimeTypeNamespaces.has(typeName.left.name))
-        return null;
+      if (!runtimeTypeNameSet.has(name) || !bindings.runtimeTypeNamespaces.has(typeName.left.name)) return null;
       return resolvesToImport(context, typeName.left) ? name : null;
     };
     const missingEvidence = (): string[] => {
       const missing: string[] = [];
       if (options.require.logger && !hasLogger) missing.push('missingLogger');
       if (options.require.tracer && !hasTracer) missing.push('missingTracer');
-      if (options.require.minimumLogLevel && !hasMinimumLogLevel)
-        missing.push('missingMinimumLogLevel');
+      if (options.require.minimumLogLevel && !hasMinimumLogLevel) missing.push('missingMinimumLogLevel');
       return missing;
     };
 
@@ -613,7 +562,11 @@ export const rule = defineRule({
         const { node: anchor, kind } = rootAnchor(roots, node);
 
         for (const entry of missing) {
-          context.report({ node: anchor, messageId: entry, data: { root: path, kind } });
+          context.report({
+            node: anchor,
+            messageId: entry,
+            data: { root: path, kind },
+          });
         }
       },
     };

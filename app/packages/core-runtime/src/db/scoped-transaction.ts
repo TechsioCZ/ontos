@@ -1,7 +1,9 @@
 import { sql } from 'drizzle-orm';
+import type { SQL } from 'drizzle-orm';
 import type { AnyPgColumn } from 'drizzle-orm/pg-core';
 import { pgPolicy } from 'drizzle-orm/pg-core';
 import { Context, Effect, Option } from 'effect';
+
 import type { OperationalScope } from '../operations/context.ts';
 import { OperationContextUnavailable } from '../operations/errors.ts';
 import type { CoreTransaction } from './types.ts';
@@ -42,7 +44,10 @@ const operationContextUnavailable = (cause?: unknown) => {
     reason: 'The database operation scope could not be installed',
   });
   if (cause !== undefined) {
-    Object.defineProperty(failure, 'cause', { configurable: true, value: cause });
+    Object.defineProperty(failure, 'cause', {
+      configurable: true,
+      value: cause,
+    });
   }
   return failure;
 };
@@ -76,27 +81,27 @@ const operationalScopeTransactionFromCoreTransaction = (
     ),
 });
 
-export const installOperationalScopeFromTransactionService = Effect.fn(
-  'installOperationalScopeFromTransactionService',
-)(function* installOperationalScopeFromTransactionServiceEffect(scope: OperationalScope) {
-  const transaction = yield* OperationalScopeTransaction;
-  yield* transaction.install(scope);
-  const setting = yield* transaction.verify;
-  if (
-    Option.isNone(setting) ||
-    setting.value.tenant_id !== scope.tenantId ||
-    setting.value.legal_entity_id !== (scope.legalEntityId ?? '')
-  ) {
-    return yield* operationContextUnavailable();
-  }
-  return Object.freeze({
-    delete: transaction.delete.bind(transaction),
-    insert: transaction.insert.bind(transaction),
-    [scopedTransaction]: true as const,
-    select: transaction.select.bind(transaction),
-    update: transaction.update.bind(transaction),
-  });
-});
+export const installOperationalScopeFromTransactionService = Effect.fn('installOperationalScopeFromTransactionService')(
+  function* installOperationalScopeFromTransactionServiceEffect(scope: OperationalScope) {
+    const transaction = yield* OperationalScopeTransaction;
+    yield* transaction.install(scope);
+    const setting = yield* transaction.verify;
+    if (
+      Option.isNone(setting) ||
+      setting.value.tenant_id !== scope.tenantId ||
+      setting.value.legal_entity_id !== (scope.legalEntityId ?? '')
+    ) {
+      return yield* operationContextUnavailable();
+    }
+    return Object.freeze({
+      delete: transaction.delete.bind(transaction),
+      insert: transaction.insert.bind(transaction),
+      [scopedTransaction]: true as const,
+      select: transaction.select.bind(transaction),
+      update: transaction.update.bind(transaction),
+    });
+  },
+);
 
 export const installOperationalScope = (
   transaction: CoreTransaction,
@@ -104,27 +109,38 @@ export const installOperationalScope = (
 ): Effect.Effect<ScopedTransactionExecutor, OperationContextUnavailable> =>
   installOperationalScopeFromTransactionService(scope).pipe(
     Effect.updateContext((context: Context.Context<never>) =>
-      Context.add(
-        context,
-        OperationalScopeTransaction,
-        operationalScopeTransactionFromCoreTransaction(transaction),
-      ),
+      Context.add(context, OperationalScopeTransaction, operationalScopeTransactionFromCoreTransaction(transaction)),
     ),
   );
 
-export const tenantRlsPolicies = (prefix: string, tenantColumn: AnyPgColumn) => {
-  const predicate = sql`${tenantColumn} = nullif(current_setting('ontos.tenant_id', true), '')::uuid`;
-  return [
-    pgPolicy(`${prefix}_select`, { for: 'select', to: 'ontos_runtime', using: predicate }),
-    pgPolicy(`${prefix}_insert`, { for: 'insert', to: 'ontos_runtime', withCheck: predicate }),
+const operationalRlsPolicies = (prefix: string, predicate: SQL) =>
+  [
+    pgPolicy(`${prefix}_select`, {
+      for: 'select',
+      to: 'ontos_runtime',
+      using: predicate,
+    }),
+    pgPolicy(`${prefix}_insert`, {
+      for: 'insert',
+      to: 'ontos_runtime',
+      withCheck: predicate,
+    }),
     pgPolicy(`${prefix}_update`, {
       for: 'update',
       to: 'ontos_runtime',
       using: predicate,
       withCheck: predicate,
     }),
-    pgPolicy(`${prefix}_delete`, { for: 'delete', to: 'ontos_runtime', using: predicate }),
+    pgPolicy(`${prefix}_delete`, {
+      for: 'delete',
+      to: 'ontos_runtime',
+      using: predicate,
+    }),
   ] as const;
+
+export const tenantRlsPolicies = (prefix: string, tenantColumn: AnyPgColumn) => {
+  const predicate = sql`${tenantColumn} = nullif(current_setting('ontos.tenant_id', true), '')::uuid`;
+  return operationalRlsPolicies(prefix, predicate);
 };
 
 export const tenantLegalEntityRlsPolicies = (
@@ -133,15 +149,5 @@ export const tenantLegalEntityRlsPolicies = (
   legalEntityColumn: AnyPgColumn,
 ) => {
   const predicate = sql`${tenantColumn} = nullif(current_setting('ontos.tenant_id', true), '')::uuid and ${legalEntityColumn} = nullif(current_setting('ontos.legal_entity_id', true), '')::uuid`;
-  return [
-    pgPolicy(`${prefix}_select`, { for: 'select', to: 'ontos_runtime', using: predicate }),
-    pgPolicy(`${prefix}_insert`, { for: 'insert', to: 'ontos_runtime', withCheck: predicate }),
-    pgPolicy(`${prefix}_update`, {
-      for: 'update',
-      to: 'ontos_runtime',
-      using: predicate,
-      withCheck: predicate,
-    }),
-    pgPolicy(`${prefix}_delete`, { for: 'delete', to: 'ontos_runtime', using: predicate }),
-  ] as const;
+  return operationalRlsPolicies(prefix, predicate);
 };

@@ -1,4 +1,3 @@
-import { Cause, Clock, Deferred, Duration, Effect } from 'effect';
 import type {
   InstalledDeploymentFailureReason,
   ModuleEntrypointDescriptor,
@@ -6,21 +5,23 @@ import type {
   RunGatedModuleEntrypointInput,
   TrustedPrincipalContext,
 } from '@app/core-runtime';
+import { Cause, Clock, Deferred, Duration, Effect } from 'effect';
 
 export type SettledModuleEntrypointLoad<Value> =
-  | { readonly reason: InstalledDeploymentFailureReason; readonly state: 'unavailable' }
+  | {
+      readonly reason: InstalledDeploymentFailureReason;
+      readonly state: 'unavailable';
+    }
   | { readonly state: 'ready'; readonly value: Value };
 
-export type IdentifiedSettledModuleEntrypointLoad<Identity, Value> =
-  SettledModuleEntrypointLoad<Value> & { readonly identity: Identity };
+export type IdentifiedSettledModuleEntrypointLoad<Identity, Value> = SettledModuleEntrypointLoad<Value> & {
+  readonly identity: Identity;
+};
 
 /** Bound for independent external module loads so one navigation cannot fan out without limit. */
 export const MODULE_LOAD_CONCURRENCY = 8;
 
-const safelyCheckCompatibility = <Value>(
-  value: Value,
-  isCompatible: (value: Value) => boolean,
-): boolean => {
+const safelyCheckCompatibility = <Value>(value: Value, isCompatible: (value: Value) => boolean): boolean => {
   try {
     return isCompatible(value);
   } catch {
@@ -89,32 +90,26 @@ interface PendingModuleEntrypointLoad<Identity, Value> {
   readonly result: Deferred.Deferred<SettledModuleEntrypointLoad<Value>>;
 }
 
-const settlePendingLoad = Effect.fn('ModuleEntrypointLoader.settlePendingLoad')(
-  function* settlePendingLoadEffect<Identity, Value>({
-    deadline,
-    request,
-    result,
-  }: PendingModuleEntrypointLoad<Identity, Value>) {
-    // Check only once this worker owns a slot, even if an overdue timer has not run yet.
-    const done = yield* Deferred.isDone(result);
-    const now = yield* Clock.currentTimeMillis;
-    if (done || now >= deadline) {
-      yield* Deferred.succeed(result, timeoutResult);
-      return;
-    }
-    yield* settleIntoDeferred(request, result);
-  },
-);
+const settlePendingLoad = Effect.fn('ModuleEntrypointLoader.settlePendingLoad')(function* settlePendingLoadEffect<
+  Identity,
+  Value,
+>({ deadline, request, result }: PendingModuleEntrypointLoad<Identity, Value>) {
+  // Check only once this worker owns a slot, even if an overdue timer has not run yet.
+  const done = yield* Deferred.isDone(result);
+  const now = yield* Clock.currentTimeMillis;
+  if (done || now >= deadline) {
+    yield* Deferred.succeed(result, timeoutResult);
+    return;
+  }
+  yield* settleIntoDeferred(request, result);
+});
 
 const identify = <Identity, Value>({
   request,
   result,
 }: PendingModuleEntrypointLoad<Identity, Value>): Effect.Effect<
   IdentifiedSettledModuleEntrypointLoad<Identity, Value>
-> =>
-  Deferred.await(result).pipe(
-    Effect.map((settled) => ({ identity: request.identity, ...settled })),
-  );
+> => Deferred.await(result).pipe(Effect.map((settled) => ({ identity: request.identity, ...settled })));
 
 /**
  * Settles a set of browser entrypoints concurrently without widening one failure to the set.
@@ -177,43 +172,27 @@ export type LazyModuleEntrypointLoad<Value, AuthorizationError, LoadError, Requi
 };
 
 /** Shell-only composition seam. Callers pass typed descriptors and lazy Effects, never remote strings. */
-export const loadModuleEntrypointComposition = Effect.fn(
-  'ModuleEntrypointLoader.loadModuleEntrypointComposition',
-)(function* loadModuleEntrypointCompositionEffect<
-  Value,
-  AuthorizationError,
-  LoadError,
-  Requirements,
->(
-  gateway: ModuleEntrypointAdapter,
-  context: Readonly<TrustedPrincipalContext>,
-  loads: readonly LazyModuleEntrypointLoad<Value, AuthorizationError, LoadError, Requirements>[],
-) {
-  const snapshot = yield* gateway.prepareSnapshot(
-    context,
-    loads.map((load) => load.entrypoint),
-  );
-  yield* Effect.forEach(
-    loads,
-    (load: (typeof loads)[number]) => gateway.check(snapshot, load.entrypoint),
-    { concurrency: 1 },
-  );
-  return yield* Effect.forEach(
-    loads,
-    (load: (typeof loads)[number]) => gateway.run({ ...load, snapshot }),
-    { concurrency: 1 },
-  );
-});
+export const loadModuleEntrypointComposition = Effect.fn('ModuleEntrypointLoader.loadModuleEntrypointComposition')(
+  function* loadModuleEntrypointCompositionEffect<Value, AuthorizationError, LoadError, Requirements>(
+    gateway: ModuleEntrypointAdapter,
+    context: Readonly<TrustedPrincipalContext>,
+    loads: readonly LazyModuleEntrypointLoad<Value, AuthorizationError, LoadError, Requirements>[],
+  ) {
+    const snapshot = yield* gateway.prepareSnapshot(
+      context,
+      loads.map((load) => load.entrypoint),
+    );
+    yield* Effect.forEach(loads, (load: (typeof loads)[number]) => gateway.check(snapshot, load.entrypoint), {
+      concurrency: 1,
+    });
+    return yield* Effect.forEach(loads, (load: (typeof loads)[number]) => gateway.run({ ...load, snapshot }), {
+      concurrency: 1,
+    });
+  },
+);
 
 /** A resolved BFF target is the capability token that permits the browser-side lazy registry lookup. */
-export const resolveThenLoadModuleTarget = <
-  Target,
-  Value,
-  ResolutionError,
-  LoadError,
-  Requirements,
->(
+export const resolveThenLoadModuleTarget = <Target, Value, ResolutionError, LoadError, Requirements>(
   resolution: Effect.Effect<Target, ResolutionError, Requirements>,
   load: (target: Target) => Effect.Effect<Value, LoadError, Requirements>,
-): Effect.Effect<Value, ResolutionError | LoadError, Requirements> =>
-  resolution.pipe(Effect.flatMap(load));
+): Effect.Effect<Value, ResolutionError | LoadError, Requirements> => resolution.pipe(Effect.flatMap(load));

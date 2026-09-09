@@ -1,4 +1,3 @@
-import { expect, it } from 'effect-rstest';
 import { makeEffectHttpApiClient } from '@modern-js/plugin-bff/effect-client';
 import {
   HttpApi,
@@ -9,11 +8,10 @@ import {
   HttpServer,
 } from '@modern-js/plugin-bff/effect-edge';
 import { Context, Effect, Layer, Predicate, Schema, SchemaAST, Struct } from 'effect';
+import { expect, it } from 'effect-rstest';
 import { FetchHttpClient } from 'effect/unstable/http';
-import {
-  makeProblemDetailsSchema,
-  makeRetryableProblemDetailsSchema,
-} from '../../src/problem-details.ts';
+
+import { makeProblemDetailsSchema, makeRetryableProblemDetailsSchema } from '../../src/problem-details.ts';
 import { ImportedUnconstrainedExtensionSchema } from '../fixtures/unconstrained-extension.ts';
 
 const statuses = [400, 401, 403, 404, 409, 422, 428, 429, 500, 503, 504] as const;
@@ -32,7 +30,7 @@ for (const status of statuses) {
       type: `urn:ontos:test:problem:${status}`,
     } as const;
 
-    const decodedProblem = Schema.decodeUnknownSync(schema)(problem);
+    const decodedProblem = Schema.decodeSync(schema)(problem);
     expect(Schema.is(schema)(decodedProblem)).toBe(true);
     expect(Struct.omit(decodedProblem, ['_tag'])).toEqual(Struct.omit(problem, ['_tag']));
     const encodedProblem = Schema.encodeUnknownSync(schema)(problem);
@@ -71,7 +69,7 @@ it('adds only the deliberate retryable literal marker', () => {
     type: 'urn:ontos:test:retryable',
   } as const;
 
-  const decodedProblem = Schema.decodeUnknownSync(schema)(problem);
+  const decodedProblem = Schema.decodeSync(schema)(problem);
   expect(Schema.is(schema)(decodedProblem)).toBe(true);
   expect(Struct.omit(decodedProblem, ['_tag'])).toEqual(Struct.omit(problem, ['_tag']));
   expect(() => Schema.decodeUnknownSync(schema)({ ...problem, retryable: false })).toThrow();
@@ -104,10 +102,7 @@ it.live('drives real HttpApi responses and generated client decoding', () =>
     const server = yield* Effect.acquireRelease(
       Effect.sync(() =>
         HttpRouter.toWebHandler(
-          HttpApiBuilder.layer(api).pipe(
-            Layer.provide(handlers),
-            Layer.provide(HttpServer.layerServices),
-          ),
+          HttpApiBuilder.layer(api).pipe(Layer.provide(handlers), Layer.provide(HttpServer.layerServices)),
           { disableLogger: true },
         ),
       ),
@@ -124,7 +119,9 @@ it.live('drives real HttpApi responses and generated client decoding', () =>
     expect(response.headers.get('content-type') ?? '').toMatch(/^application\/problem\+json\b/u);
     expect(yield* Effect.promise(() => response.json())).toEqual(problem);
 
-    const client = makeEffectHttpApiClient(api, { baseUrl: 'https://fixture.ontos.test' });
+    const client = makeEffectHttpApiClient(api, {
+      baseUrl: 'https://fixture.ontos.test',
+    });
     const clientError = yield* Effect.flip(
       client.pipe(
         Effect.flatMap((generated) => generated.problemFixture.execute({ payload: {} })),
@@ -146,7 +143,9 @@ it('rejects reserved and unconstrained extension schemas at construction', () =>
     }),
   ).toThrow(/reserved/u);
   expect(() =>
-    makeProblemDetailsSchema('PrototypeSyntaxFixtureProblem', 400, { __proto__: Schema.String }),
+    makeProblemDetailsSchema('PrototypeSyntaxFixtureProblem', 400, {
+      __proto__: Schema.String,
+    }),
   ).toThrow(/plain object/u);
   expect(() =>
     makeProblemDetailsSchema('SymbolKeyFixtureProblem', 400, {
@@ -186,16 +185,12 @@ it('rejects reserved and unconstrained extension schemas at construction', () =>
     Schema.Undefined,
     ImportedUnconstrainedExtensionSchema,
   ]) {
-    expect(() => makeProblemDetailsSchema('NestedUnknownFixtureProblem', 400, { unsafe })).toThrow(
-      /concrete/u,
-    );
+    expect(() => makeProblemDetailsSchema('NestedUnknownFixtureProblem', 400, { unsafe })).toThrow(/concrete/u);
   }
   for (const literal of [undefined, Symbol('non-json-literal')]) {
     // @ts-expect-error JavaScript callers can provide unsupported literal values, so the runtime factory must still reject them.
     const unsafe = Schema.Literal(literal);
-    expect(() => makeProblemDetailsSchema('NonJsonLiteralFixtureProblem', 400, { unsafe })).toThrow(
-      /concrete/u,
-    );
+    expect(() => makeProblemDetailsSchema('NonJsonLiteralFixtureProblem', 400, { unsafe })).toThrow(/concrete/u);
   }
 });
 

@@ -1,4 +1,5 @@
 import { Effect, Match } from 'effect';
+
 import { PartySearchProjectionUnavailable } from '../shared/domain/search-projection-error.ts';
 import type { SearchNormalizationResult } from '../shared/domain/search-semantics.ts';
 

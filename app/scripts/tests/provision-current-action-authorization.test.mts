@@ -1,15 +1,13 @@
-import type { deriveOntosModuleDeploymentContract as DeriveModuleContract } from '../generate-ontos-module-contract.mts';
-
-import { expect, it } from 'effect-rstest';
-import { NodeServices } from '@effect/platform-node';
-
 import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
-
 import { pathToFileURL } from 'node:url';
+
 import { v1 } from '@authzed/authzed-node';
+import { NodeServices } from '@effect/platform-node';
 import { Cause, Effect, Option, Schema } from 'effect';
+import { expect, it } from 'effect-rstest';
+
 import {
   ACTION_AUTHORIZATION_DENIED_PRINCIPAL_ID,
   ActionAuthorizationProvisioningError,
@@ -20,9 +18,9 @@ import type {
   ActionAuthorizationContext,
   ActionAuthorizationProvisioningClient,
 } from '../../packages/core-runtime/src/install/action-authorization-provisioning.ts';
-import { toSpiceDbActionObjectId } from '../../packages/core-runtime/src/permissions/service.ts';
 import type { SpiceDbConfigValue } from '../../packages/core-runtime/src/permissions/config.ts';
-
+import { toSpiceDbActionObjectId } from '../../packages/core-runtime/src/permissions/service.ts';
+import type { deriveOntosModuleDeploymentContract as DeriveModuleContract } from '../generate-ontos-module-contract.mts';
 import { LOCAL_DEVELOPMENT_CONTEXT } from '../initialize-local-development.mts';
 import {
   formatActionAuthorizationProvisioningFailure,
@@ -105,9 +103,7 @@ const failureOf = <Value,>(effect: Effect.Effect<Value, ActionAuthorizationProvi
     return yield* Effect.flip(effect);
   });
 
-const rejectionOf = <Value, Failure, Requirements>(
-  effect: Effect.Effect<Value, Failure, Requirements>,
-) =>
+const rejectionOf = <Value, Failure, Requirements>(effect: Effect.Effect<Value, Failure, Requirements>) =>
   effect.pipe(
     Effect.matchCause({
       onFailure: Cause.squash,
@@ -120,8 +116,7 @@ const rejectionOf = <Value, Failure, Requirements>(
 it.effect(
   'selects only exact source-controlled development and stage targets',
   Effect.fn(function* testEffect2() {
-    const development =
-      yield* selectActionAuthorizationProvisioningTarget(developmentConfiguration);
+    const development = yield* selectActionAuthorizationProvisioningTarget(developmentConfiguration);
     expect(development.environment).toBe('development');
     expect(development.contexts).toEqual([
       {
@@ -135,8 +130,7 @@ it.effect(
     expect(stage.contexts.length).toBe(2);
 
     const { deploymentEnvironment: _environment, ...withoutEnvironment } = developmentConfiguration;
-    const implicitDevelopment =
-      yield* selectActionAuthorizationProvisioningTarget(withoutEnvironment);
+    const implicitDevelopment = yield* selectActionAuthorizationProvisioningTarget(withoutEnvironment);
     expect(implicitDevelopment.contexts).toEqual(development.contexts);
     expect(implicitDevelopment.environment).toBe('development');
 
@@ -160,9 +154,7 @@ it.effect(
         { ...stageConfiguration, insecureLocal: false },
       ].map((configuration) =>
         Effect.gen(function* testEffect3() {
-          const error = yield* failureOf(
-            selectActionAuthorizationProvisioningTarget(configuration),
-          );
+          const error = yield* failureOf(selectActionAuthorizationProvisioningTarget(configuration));
           expect(error.code).toBe('action_authorization_configuration_invalid');
           expect(error.reason).not.toMatch(new RegExp(testPreSharedKey, 'u'));
         }),
@@ -196,9 +188,7 @@ it.effect(
         () => Effect.die(new Error(`client.close failed with ${testPreSharedKey}`)),
       ),
     );
-    expect(formatActionAuthorizationProvisioningFailure(unexpectedRejection)).toBe(
-      unexpectedMessage,
-    );
+    expect(formatActionAuthorizationProvisioningFailure(unexpectedRejection)).toBe(unexpectedMessage);
   }),
 );
 
@@ -214,8 +204,7 @@ it.effect(
     expect(start !== -1 && end > start).toBe(true);
     const block = source.slice(start, end);
     const scripts = {
-      'authorization:provision-current-actions':
-        'node ./scripts/provision-current-action-authorization.mts',
+      'authorization:provision-current-actions': 'node ./scripts/provision-current-action-authorization.mts',
       'local:initialize': 'node ./scripts/initialize-local-development.mts',
     };
     const validationRoot = yield* Effect.acquireRelease(
@@ -223,10 +212,7 @@ it.effect(
       (directory) => Effect.promise(() => rm(directory, { force: true, recursive: true })),
     );
     let validationIndex = 0;
-    const validate = (
-      sources: Readonly<Record<string, string>>,
-      overrides: Readonly<Record<string, string>> = {},
-    ) =>
+    const validate = (sources: Readonly<Record<string, string>>, overrides: Readonly<Record<string, string>> = {}) =>
       Effect.gen(function* testEffect6() {
         const modulePath = path.join(validationRoot, `validation-${validationIndex}.mjs`);
         validationIndex += 1;
@@ -311,16 +297,14 @@ it.effect(
   Effect.fn(function* testEffect7() {
     const workspaceRoot = path.resolve(import.meta.dirname, '../..');
     const { discoverCurrentActionKeys } = yield* Effect.promise(
-      (): Promise<{ readonly discoverCurrentActionKeys: typeof DiscoverCurrentActionKeys }> =>
-        import(
-          pathToFileURL(
-            path.resolve(import.meta.dirname, '../provision-current-action-authorization.mts'),
-          ).href
-        ),
+      (): Promise<{
+        readonly discoverCurrentActionKeys: typeof DiscoverCurrentActionKeys;
+      }> =>
+        import(pathToFileURL(path.resolve(import.meta.dirname, '../provision-current-action-authorization.mts')).href),
     );
-    expect(
-      yield* discoverCurrentActionKeys(workspaceRoot).pipe(Effect.provide(NodeServices.layer)),
-    ).toEqual(currentActionKeys);
+    expect(yield* discoverCurrentActionKeys(workspaceRoot).pipe(Effect.provide(NodeServices.layer))).toEqual(
+      currentActionKeys,
+    );
     expect(new Set(currentActionKeys).size).toBe(38);
     expect(currentActionKeys.filter((key) => key.startsWith('core.')).length).toBe(8);
     expect(currentActionKeys.filter((key) => key.startsWith('party.registry.')).length).toBe(30);
@@ -330,17 +314,10 @@ it.effect(
 it.effect(
   'builds lossless, deterministic Tenant-membership grants for development and stage',
   Effect.fn(function* testEffect8() {
-    const development =
-      yield* selectActionAuthorizationProvisioningTarget(developmentConfiguration);
+    const development = yield* selectActionAuthorizationProvisioningTarget(developmentConfiguration);
     const stage = yield* selectActionAuthorizationProvisioningTarget(stageConfiguration);
-    const developmentRelationships = buildActionAuthorizationRelationships(
-      currentActionKeys,
-      development.contexts,
-    );
-    const stageRelationships = buildActionAuthorizationRelationships(
-      currentActionKeys,
-      stage.contexts,
-    );
+    const developmentRelationships = buildActionAuthorizationRelationships(currentActionKeys, development.contexts);
+    const stageRelationships = buildActionAuthorizationRelationships(currentActionKeys, stage.contexts);
 
     expect(developmentRelationships.length).toBe(38);
     expect(stageRelationships.length).toBe(76);
@@ -354,16 +331,10 @@ it.effect(
       ({ resource, subject }) => `${resource?.objectId}:${subject?.object?.objectId}`,
     );
     expect(
-      identifiers.every(
-        (identifier, index) =>
-          index === 0 || identifiers[index - 1]?.localeCompare(identifier) <= 0,
-      ),
+      identifiers.every((identifier, index) => index === 0 || identifiers[index - 1]?.localeCompare(identifier) <= 0),
     ).toBe(true);
     expect(
-      Buffer.from(
-        toSpiceDbActionObjectId(attachPersonEngagementAction).slice(3),
-        'base64url',
-      ).toString('utf-8'),
+      Buffer.from(toSpiceDbActionObjectId(attachPersonEngagementAction).slice(3), 'base64url').toString('utf-8'),
     ).toBe(attachPersonEngagementAction);
     expect(toSpiceDbActionObjectId(attachPersonEngagementAction)).not.toBe(
       toSpiceDbActionObjectId('contacts-core-attach-person-engagement'),
@@ -398,15 +369,10 @@ const hasActionGrant = (
   principalId: string,
   tenantId: string | undefined,
 ): boolean =>
-  grants.has(`${resourceId}:${principalId}`) ||
-  (tenantId !== undefined && grants.has(`${resourceId}:${tenantId}`));
+  grants.has(`${resourceId}:${principalId}`) || (tenantId !== undefined && grants.has(`${resourceId}:${tenantId}`));
 
-const makeProvisioningClient = (
-  contexts: readonly ActionAuthorizationContext[],
-): ProvisioningClientFixture => {
-  const principalTenants = new Map(
-    contexts.map(({ principalId, tenantId }) => [principalId, tenantId]),
-  );
+const makeProvisioningClient = (contexts: readonly ActionAuthorizationContext[]): ProvisioningClientFixture => {
+  const principalTenants = new Map(contexts.map(({ principalId, tenantId }) => [principalId, tenantId]));
   const state: ProvisioningClientState = {
     grants: new Set(),
     relationshipWriteCount: 0,
@@ -464,12 +430,8 @@ it.effect(
     expect(state.relationshipWriteCount).toBe(2);
     expect(state.grants.size).toBe(38);
     expect(state.updates.length).toBe(76);
-    expect(
-      state.updates.every(({ operation }) => operation === v1.RelationshipUpdate_Operation.TOUCH),
-    ).toBe(true);
-    expect(
-      ![...state.grants].some((grant) => grant.includes(ACTION_AUTHORIZATION_DENIED_PRINCIPAL_ID)),
-    ).toBe(true);
+    expect(state.updates.every(({ operation }) => operation === v1.RelationshipUpdate_Operation.TOUCH)).toBe(true);
+    expect(![...state.grants].some((grant) => grant.includes(ACTION_AUTHORIZATION_DENIED_PRINCIPAL_ID))).toBe(true);
   }),
 );
 
@@ -527,7 +489,10 @@ it.effect(
           {
             actionKey: restrictedAction,
             assertions: [
-              { expected: 'allowed' as const, principalId: target.contexts[0]?.principalId ?? '' },
+              {
+                expected: 'allowed' as const,
+                principalId: target.contexts[0]?.principalId ?? '',
+              },
             ],
           },
         ],
@@ -535,7 +500,10 @@ it.effect(
           {
             actionKey: 'core.identity.unknown',
             assertions: [
-              { expected: 'allowed' as const, principalId: target.contexts[0]?.principalId ?? '' },
+              {
+                expected: 'allowed' as const,
+                principalId: target.contexts[0]?.principalId ?? '',
+              },
               {
                 expected: 'denied' as const,
                 principalId: ACTION_AUTHORIZATION_DENIED_PRINCIPAL_ID,
@@ -660,9 +628,7 @@ it.effect(
     const target = yield* selectActionAuthorizationProvisioningTarget(developmentConfiguration);
     const unavailable: ActionAuthorizationProvisioningClient = {
       checkPermission: () =>
-        Effect.succeed(
-          Option.some(response(v1.CheckPermissionResponse_Permissionship.HAS_PERMISSION)),
-        ),
+        Effect.succeed(Option.some(response(v1.CheckPermissionResponse_Permissionship.HAS_PERMISSION))),
       writeRelationships: () => Effect.succeed(v1.WriteRelationshipsResponse.create({})),
       writeSchema: () => Effect.fail(upstreamFailure),
     };
@@ -680,23 +646,21 @@ it.effect(
 
 const writeInventory = (
   root: string,
-  verticals: readonly { readonly id: string; readonly package: string; readonly path: string }[],
+  verticals: readonly {
+    readonly id: string;
+    readonly package: string;
+    readonly path: string;
+  }[],
 ) =>
   Effect.gen(function* testEffect18() {
     yield* Effect.tryPromise(() => mkdir(path.join(root, 'topology'), { recursive: true }));
     yield* Effect.all(
       [
         Effect.promise(() =>
-          writeFile(
-            path.join(root, 'topology/reference-topology.json'),
-            JSON.stringify({ verticals }),
-          ),
+          writeFile(path.join(root, 'topology/reference-topology.json'), JSON.stringify({ verticals })),
         ),
         Effect.promise(() =>
-          writeFile(
-            path.join(root, 'topology/ownership.json'),
-            JSON.stringify({ owners: verticals }),
-          ),
+          writeFile(path.join(root, 'topology/ownership.json'), JSON.stringify({ owners: verticals })),
         ),
       ],
       { concurrency: 'unbounded' },
@@ -709,19 +673,15 @@ it.effect(
     const workspaceRoot = path.resolve(import.meta.dirname, '../..');
     // Native discovery imports registrations dynamically; keep its private registry in one module instance.
     const { discoverCurrentActionKeys } = yield* Effect.promise(
-      (): Promise<{ readonly discoverCurrentActionKeys: typeof DiscoverCurrentActionKeys }> =>
-        import(
-          pathToFileURL(
-            path.resolve(import.meta.dirname, '../provision-current-action-authorization.mts'),
-          ).href
-        ),
+      (): Promise<{
+        readonly discoverCurrentActionKeys: typeof DiscoverCurrentActionKeys;
+      }> =>
+        import(pathToFileURL(path.resolve(import.meta.dirname, '../provision-current-action-authorization.mts')).href),
     );
     const { deriveOntosModuleDeploymentContract } = yield* Effect.promise(
-      (): Promise<{ readonly deriveOntosModuleDeploymentContract: typeof DeriveModuleContract }> =>
-        import(
-          pathToFileURL(path.resolve(import.meta.dirname, '../generate-ontos-module-contract.mts'))
-            .href
-        ),
+      (): Promise<{
+        readonly deriveOntosModuleDeploymentContract: typeof DeriveModuleContract;
+      }> => import(pathToFileURL(path.resolve(import.meta.dirname, '../generate-ontos-module-contract.mts')).href),
     );
     const { ActionAuthorizationProvisioningError: NativeProvisioningError } = yield* Effect.promise(
       (): Promise<{
@@ -746,7 +706,11 @@ it.effect(
       Effect.tryPromise(() => mkdtemp(path.join(os.tmpdir(), 'ontos-action-discovery-'))),
       (directory) => Effect.promise(() => rm(directory, { force: true, recursive: true })),
     );
-    const vertical = { id: 'example', package: '@app/example', path: 'verticals/example' };
+    const vertical = {
+      id: 'example',
+      package: '@app/example',
+      path: 'verticals/example',
+    };
     yield* writeInventory(root, [vertical]);
     const incomplete: typeof deriveOntosModuleDeploymentContract = () =>
       Effect.succeed({
@@ -754,7 +718,10 @@ it.effect(
         deployment: { ...currentContract.deployment, appId: 'example' },
         manifest: {
           ...currentContract.manifest,
-          publicSurface: { ...currentContract.manifest.publicSurface, actions: [] },
+          publicSurface: {
+            ...currentContract.manifest.publicSurface,
+            actions: [],
+          },
         },
       });
     const incompleteError = yield* rejectionOf(
@@ -773,7 +740,12 @@ it.effect(
           ...currentContract.manifest,
           publicSurface: {
             ...currentContract.manifest.publicSurface,
-            actions: [{ ...currentPublicAction, actionKey: 'core.identity.bind-managed-api-key' }],
+            actions: [
+              {
+                ...currentPublicAction,
+                actionKey: 'core.identity.bind-managed-api-key',
+              },
+            ],
           },
         },
       });
@@ -799,10 +771,7 @@ it.effect(
   'the operator entrypoint rejects every command-line argument before loading configuration',
   Effect.fn(function* testEffect20() {
     const error = yield* failureOf(
-      runCurrentActionAuthorizationProvisioning(path.resolve(import.meta.dirname, '../..'), [
-        '--tenant',
-        'arbitrary',
-      ]),
+      runCurrentActionAuthorizationProvisioning(path.resolve(import.meta.dirname, '../..'), ['--tenant', 'arbitrary']),
     );
     expect(error.code).toBe('action_authorization_configuration_invalid');
     expect(error.reason).toMatch(/no command-line arguments/u);

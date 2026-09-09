@@ -1,14 +1,5 @@
-import {
-  availableLegalEntities,
-  availableTenants,
-  currentSession,
-  shellComposition,
-} from '../../api/auth-client.ts';
-import type {
-  AvailableTenantsClientError,
-  ShellCompositionClientError,
-} from '../../api/auth-client.ts';
 import { Effect, Match } from 'effect';
+
 import type {
   AvailableTenant,
   LegalEntityChoice,
@@ -17,6 +8,8 @@ import type {
   ShellNavigationItem,
   ShellUnavailableDeployment,
 } from '../../../shared/api.ts';
+import { availableLegalEntities, availableTenants, currentSession, shellComposition } from '../../api/auth-client.ts';
+import type { AvailableTenantsClientError, ShellCompositionClientError } from '../../api/auth-client.ts';
 import { browserRuntime } from '../../runtime/browser-effect-runtime.ts';
 import { shellAuthenticationClientOptionsFromRequest } from '../shell-authentication-client-options.ts';
 
@@ -36,7 +29,10 @@ export interface AuthenticatedHomePageModel {
   readonly contextState: 'access_blocked' | 'authenticated' | 'selection_required';
   readonly identity: SafeTenantIdentity;
   readonly legalEntities:
-    | { readonly items: readonly LegalEntityChoice[]; readonly state: 'available' }
+    | {
+        readonly items: readonly LegalEntityChoice[];
+        readonly state: 'available';
+      }
     | { readonly items: readonly []; readonly state: 'unavailable' };
   readonly navigation:
     | {
@@ -52,14 +48,17 @@ export interface AuthenticatedHomePageModel {
   readonly selectedLegalEntityId?: SafeAuthenticatedIdentity['legalEntityId'];
   readonly state: 'authenticated';
   readonly tenants:
-    | { readonly items: readonly AvailableTenant[]; readonly state: 'available' }
-    | { readonly items: readonly [AvailableTenant]; readonly state: 'unavailable' };
+    | {
+        readonly items: readonly AvailableTenant[];
+        readonly state: 'available';
+      }
+    | {
+        readonly items: readonly [AvailableTenant];
+        readonly state: 'unavailable';
+      };
 }
 
-export type HomePageModel =
-  | AnonymousHomePageModel
-  | AuthenticatedHomePageModel
-  | UnavailableHomePageModel;
+export type HomePageModel = AnonymousHomePageModel | AuthenticatedHomePageModel | UnavailableHomePageModel;
 
 const anonymousModel: AnonymousHomePageModel = { state: 'anonymous' };
 const unavailableModel: UnavailableHomePageModel = { state: 'unavailable' };
@@ -77,13 +76,11 @@ const unavailableTenants = (tenantId: SafeTenantIdentity['tenantId']) => ({
 
 const tenantRead = (error: AvailableTenantsClientError, tenantId: SafeTenantIdentity['tenantId']) =>
   Match.value(error).pipe(
-    Match.tag('TenantAuthenticationRequiredProblem', () => ({ state: 'stale' as const })),
-    Match.tag(
-      'HttpClientError',
-      'SchemaError',
-      'TenantCapabilityUnavailableProblem',
-      'TenantInternalProblem',
-      () => unavailableTenants(tenantId),
+    Match.tag('TenantAuthenticationRequiredProblem', () => ({
+      state: 'stale' as const,
+    })),
+    Match.tag('HttpClientError', 'SchemaError', 'TenantCapabilityUnavailableProblem', 'TenantInternalProblem', () =>
+      unavailableTenants(tenantId),
     ),
     Match.exhaustive,
   );
@@ -109,23 +106,17 @@ export const loadHomePageModel = (request: Request) =>
                   })),
                 )
               : Effect.succeed({
-                  items:
-                    session.state === 'selection_required'
-                      ? session.availableLegalEntities
-                      : ([] as const),
+                  items: session.state === 'selection_required' ? session.availableLegalEntities : ([] as const),
                   state: 'available' as const,
                 });
           const navigation =
             session.state === 'authenticated'
               ? shellComposition(options).pipe(
                   Effect.map((composition) => ({
-                    items:
-                      composition.state === 'available' ? composition.navigation : ([] as const),
+                    items: composition.state === 'available' ? composition.navigation : ([] as const),
                     state: 'available' as const,
                     unavailableDeployments:
-                      composition.state === 'available'
-                        ? composition.unavailableDeployments
-                        : ([] as const),
+                      composition.state === 'available' ? composition.unavailableDeployments : ([] as const),
                   })),
                   Effect.matchEffect({
                     onFailure: (error) => Effect.succeed(unavailableNavigation(error)),
@@ -142,10 +133,12 @@ export const loadHomePageModel = (request: Request) =>
               legalEntities,
               navigation,
               tenants: availableTenants(options).pipe(
-                Effect.map(({ tenants }) => ({ items: tenants, state: 'available' as const })),
+                Effect.map(({ tenants }) => ({
+                  items: tenants,
+                  state: 'available' as const,
+                })),
                 Effect.matchEffect({
-                  onFailure: (error) =>
-                    Effect.succeed(tenantRead(error, session.identity.tenantId)),
+                  onFailure: (error) => Effect.succeed(tenantRead(error, session.identity.tenantId)),
                   onSuccess: Effect.succeed,
                 }),
               ),
@@ -165,7 +158,10 @@ export const loadHomePageModel = (request: Request) =>
                 tenants,
               };
               return session.state === 'authenticated'
-                ? { ...model, selectedLegalEntityId: session.identity.legalEntityId }
+                ? {
+                    ...model,
+                    selectedLegalEntityId: session.identity.legalEntityId,
+                  }
                 : model;
             }),
           );
@@ -194,4 +190,6 @@ export const loadHomePageModel = (request: Request) =>
   );
 
 export const loader = ({ request }: HomeLoaderArguments): Promise<HomePageModel> =>
-  browserRuntime.runPromise(loadHomePageModel(request), { signal: request.signal });
+  browserRuntime.runPromise(loadHomePageModel(request), {
+    signal: request.signal,
+  });

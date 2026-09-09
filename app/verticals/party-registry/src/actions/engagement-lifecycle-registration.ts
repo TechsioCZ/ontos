@@ -1,15 +1,13 @@
 import { defineActionResourcePermission, defineTenantModuleEntrypoint } from '@app/core-runtime';
+
 import type {
   OrganizationEngagementLifecyclePayload,
   PersonEngagementLifecyclePayload,
 } from '../../shared/domain/engagement-profile.ts';
 import { EngagementLifecycleErrorSchema } from './engagement-lifecycle-handler.ts';
 
-type EngagementLifecyclePayload =
-  | OrganizationEngagementLifecyclePayload
-  | PersonEngagementLifecyclePayload;
-type EngagementLifecycleActionKey =
-  `party.registry.${'archive' | 'unarchive'}-${'person' | 'organization'}-engagement`;
+type EngagementLifecyclePayload = OrganizationEngagementLifecyclePayload | PersonEngagementLifecyclePayload;
+type EngagementLifecycleActionKey = `party.registry.${'archive' | 'unarchive'}-${'person' | 'organization'}-engagement`;
 
 /** The shared governed-write contract; schemas and transaction services stay owner-specific. */
 export const engagementLifecycleRegistration = <Payload extends EngagementLifecyclePayload>(
@@ -26,7 +24,10 @@ export const engagementLifecycleRegistration = <Payload extends EngagementLifecy
     domainEvents: {},
     entrypoint: defineTenantModuleEntrypoint({
       access: 'write',
-      authorization: { kind: 'action_execution', provisioning: 'tenant_membership_default' },
+      authorization: {
+        kind: 'action_execution',
+        provisioning: 'tenant_membership_default',
+      },
       entrypointKey: actionKey,
       moduleKey: 'party.registry',
       role: 'action',

@@ -1,5 +1,6 @@
-import { expect, it } from 'effect-rstest';
 import { Cause, Effect, Schema } from 'effect';
+import { expect, it } from 'effect-rstest';
+
 import { validateQualityAuditSummary } from '../quality-audit-gate.mts';
 import { validateReport } from '../quality-audit.mts';
 
@@ -63,9 +64,7 @@ const clean = () => ({
   status: 'reported',
 });
 const encode = Schema.encodeEffect(Schema.fromJsonString(Schema.Unknown));
-const validate = Effect.fn(function* mergedScenario1(
-  summary: ReturnType<typeof clean> | Schema.Json,
-) {
+const validate = Effect.fn(function* mergedScenario1(summary: ReturnType<typeof clean> | Schema.Json) {
   return yield* encode(summary).pipe(Effect.flatMap(validateQualityAuditSummary));
 });
 
@@ -173,9 +172,7 @@ for (const [name, source] of positiveReports) {
       }
       yield* Effect.matchCause(validate(summary), {
         onFailure: (cause) =>
-          expect(String(Cause.squash(cause))).toMatch(
-            new RegExp(`Quality audit gate failed: ${name}=1`, 'u'),
-          ),
+          expect(String(Cause.squash(cause))).toMatch(new RegExp(`Quality audit gate failed: ${name}=1`, 'u')),
         onSuccess: () => {
           throw new Error(EXPECTED_EFFECT_FAILURE);
         },
@@ -248,15 +245,12 @@ it.effect(
           if (!result) {
             throw new Error(EXPECTED_PROOF_VALUE);
           }
-          yield* Effect.matchCause(
-            validate({ ...summary, results: [...summary.results, result] }),
-            {
-              onFailure: (cause) => expect(String(Cause.squash(cause))).toMatch(/six unique/u),
-              onSuccess: () => {
-                throw new Error(EXPECTED_EFFECT_FAILURE);
-              },
+          yield* Effect.matchCause(validate({ ...summary, results: [...summary.results, result] }), {
+            onFailure: (cause) => expect(String(Cause.squash(cause))).toMatch(/six unique/u),
+            onSuccess: () => {
+              throw new Error(EXPECTED_EFFECT_FAILURE);
             },
-          );
+          });
           result.status = 'error';
           yield* Effect.matchCause(validate(summary), {
             onFailure: (cause) => expect(String(Cause.squash(cause))).toMatch(/Malformed/u),
@@ -348,8 +342,7 @@ it.effect(
           }
           Object.assign(result, patch);
           yield* Effect.matchCause(validate(summary), {
-            onFailure: (cause) =>
-              expect(String(Cause.squash(cause))).toMatch(/Malformed|inconsistent/u),
+            onFailure: (cause) => expect(String(Cause.squash(cause))).toMatch(/Malformed|inconsistent/u),
             onSuccess: () => {
               throw new Error(EXPECTED_EFFECT_FAILURE);
             },
@@ -395,8 +388,7 @@ it.effect(
           }
           Object.assign(result.coverage, coverage);
           yield* Effect.matchCause(validate(summary), {
-            onFailure: (cause) =>
-              expect(String(Cause.squash(cause))).toMatch(/Malformed|inconsistent/u),
+            onFailure: (cause) => expect(String(Cause.squash(cause))).toMatch(/Malformed|inconsistent/u),
             onSuccess: () => {
               throw new Error(EXPECTED_EFFECT_FAILURE);
             },

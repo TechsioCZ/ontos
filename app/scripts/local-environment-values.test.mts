@@ -1,4 +1,5 @@
 import { expect, it } from 'effect-rstest';
+
 import { localPublicClientValues, localSpiceDbValues } from './local-environment-values.mts';
 
 const spiceDbGrpcPort = '50052';
@@ -27,10 +28,10 @@ it('preserves canonical SpiceDB values when no local override is supplied', () =
 });
 
 it('applies explicit local port overrides as one consistent endpoint', () => {
-  const values = localSpiceDbValues(
-    ['SPICEDB_ENDPOINT=localhost:50051', 'SPICEDB_GRPC_PORT=50051'],
-    { grpcPort: spiceDbGrpcPort, httpPort: spiceDbHttpPort },
-  );
+  const values = localSpiceDbValues(['SPICEDB_ENDPOINT=localhost:50051', 'SPICEDB_GRPC_PORT=50051'], {
+    grpcPort: spiceDbGrpcPort,
+    httpPort: spiceDbHttpPort,
+  });
 
   expect(values.SPICEDB_ENDPOINT).toBe(spiceDbEndpoint);
   expect(values.SPICEDB_GRPC_PORT).toBe(spiceDbGrpcPort);

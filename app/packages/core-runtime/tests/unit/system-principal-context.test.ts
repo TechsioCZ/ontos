@@ -1,5 +1,6 @@
+import { Effect, Schema, Predicate } from 'effect';
 import { expect, it } from 'effect-rstest';
-import { Effect, Option, Schema, Predicate } from 'effect';
+
 import { TrustedPrincipalContextSchema } from '../../src/actions/principal-context.ts';
 import { decodeTrustedPrincipalContext } from '../../src/auth/system-principal-context-provenance.ts';
 import {
@@ -16,12 +17,14 @@ const resolverFor = (record: {
   readonly tenantStatus: 'active' | 'suspended';
 }) =>
   systemPrincipalContextResolverFromRepository({
-    load: () => Effect.succeed(Option.some(record)),
+    load: () => Effect.succeedSome(record),
   });
 
 it.effect('constructs one immutable trusted system context from a branded registration', () =>
   Effect.gen(function* testScenario1() {
-    const registration = registerSystemWorkload({ jobKey: 'inventory-reconcile' });
+    const registration = registerSystemWorkload({
+      jobKey: 'inventory-reconcile',
+    });
     const context = yield* resolverFor({
       kind: 'system',
       principalStatus: 'active',
@@ -41,9 +44,7 @@ it.effect('constructs one immutable trusted system context from a branded regist
       principalId,
       tenantId,
     });
-    expect(yield* Schema.decodeUnknownEffect(TrustedPrincipalContextSchema)(context)).toEqual(
-      context,
-    );
+    expect(yield* Schema.decodeEffect(TrustedPrincipalContextSchema)(context)).toEqual(context);
     expect(yield* decodeTrustedPrincipalContext(context)).toEqual(context);
     expect(yield* Effect.flip(decodeTrustedPrincipalContext({ ...context }))).toBeDefined();
   }),
@@ -51,10 +52,16 @@ it.effect('constructs one immutable trusted system context from a branded regist
 
 it.effect('rejects forged registrations, unsafe refs, wrong kinds, and inactive state', () =>
   Effect.gen(function* testScenario2() {
-    const registration = registerSystemWorkload({ jobKey: 'inventory-reconcile' });
+    const registration = registerSystemWorkload({
+      jobKey: 'inventory-reconcile',
+    });
     const forged = { ...registration };
     const invalid = yield* Effect.flip(
-      resolverFor({ kind: 'system', principalStatus: 'active', tenantStatus: 'active' }).resolve({
+      resolverFor({
+        kind: 'system',
+        principalStatus: 'active',
+        tenantStatus: 'active',
+      }).resolve({
         principalId,
         registration: forged,
         runReference: 'run-42',
@@ -62,7 +69,11 @@ it.effect('rejects forged registrations, unsafe refs, wrong kinds, and inactive 
       }),
     );
     const wrongKind = yield* Effect.flip(
-      resolverFor({ kind: 'human', principalStatus: 'active', tenantStatus: 'active' }).resolve({
+      resolverFor({
+        kind: 'human',
+        principalStatus: 'active',
+        tenantStatus: 'active',
+      }).resolve({
         principalId,
         registration,
         runReference: 'run-42',
@@ -70,7 +81,11 @@ it.effect('rejects forged registrations, unsafe refs, wrong kinds, and inactive 
       }),
     );
     const inactive = yield* Effect.flip(
-      resolverFor({ kind: 'system', principalStatus: 'disabled', tenantStatus: 'active' }).resolve({
+      resolverFor({
+        kind: 'system',
+        principalStatus: 'disabled',
+        tenantStatus: 'active',
+      }).resolve({
         principalId,
         registration,
         runReference: 'run-42',
@@ -88,7 +103,11 @@ it.effect('rejects forged registrations, unsafe refs, wrong kinds, and inactive 
 it.effect('permits service principals only when the trusted registration opts in', () =>
   Effect.gen(function* testScenario3() {
     const denied = yield* Effect.flip(
-      resolverFor({ kind: 'service', principalStatus: 'active', tenantStatus: 'active' }).resolve({
+      resolverFor({
+        kind: 'service',
+        principalStatus: 'active',
+        tenantStatus: 'active',
+      }).resolve({
         principalId,
         registration: registerSystemWorkload({ jobKey: 'service-job' }),
         runReference: 'run-1',
@@ -101,7 +120,10 @@ it.effect('permits service principals only when the trusted registration opts in
       tenantStatus: 'active',
     }).resolve({
       principalId,
-      registration: registerSystemWorkload({ allowServicePrincipal: true, jobKey: 'service-job' }),
+      registration: registerSystemWorkload({
+        allowServicePrincipal: true,
+        jobKey: 'service-job',
+      }),
       runReference: 'run-1',
       tenantId,
     });
@@ -142,7 +164,7 @@ it('enforces mode-specific trusted context cross-field invariants', () => {
     expect(() => Schema.decodeUnknownSync(TrustedPrincipalContextSchema)(context)).not.toThrow();
   }
   expect(() =>
-    Schema.decodeUnknownSync(TrustedPrincipalContextSchema)({
+    Schema.decodeSync(TrustedPrincipalContextSchema)({
       authContextRef: 'better-auth-api-key:key-id',
       authMethod: 'api_key',
       principalId,
@@ -150,7 +172,7 @@ it('enforces mode-specific trusted context cross-field invariants', () => {
     }),
   ).toThrow();
   expect(() =>
-    Schema.decodeUnknownSync(TrustedPrincipalContextSchema)({
+    Schema.decodeSync(TrustedPrincipalContextSchema)({
       authBindingId: binding,
       authContextRef: 'better-auth-session:nested',
       authMethod: 'support_impersonation',

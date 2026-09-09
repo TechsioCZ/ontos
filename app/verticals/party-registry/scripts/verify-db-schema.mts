@@ -3,6 +3,7 @@ import { DatabaseConfig, loadDatabaseConfig, loadDatabaseConnectionPair } from '
 import { sql } from 'drizzle-orm';
 import { getTableConfig } from 'drizzle-orm/pg-core';
 import { Effect, Layer, Schema } from 'effect';
+
 import { comparePartyCatalog } from '../src/db/catalog.ts';
 import { PartyDatabase, PartyDatabaseLive } from '../src/db/client.ts';
 import { PARTY_SCHEMA_NAME, PARTY_TABLES } from '../src/db/schema.ts';
@@ -107,9 +108,7 @@ const verification = Effect.gen(function* verifyPartyDatabase() {
           }),
       ),
     );
-  const difference = comparePartyCatalog(
-    catalog.map((row) => `${PARTY_SCHEMA_NAME}.${row.table_name}`),
-  );
+  const difference = comparePartyCatalog(catalog.map((row) => `${PARTY_SCHEMA_NAME}.${row.table_name}`));
   if (difference.missing.length > 0 || difference.unexpected.length > 0) {
     return yield* new PartyDatabaseVerificationError({
       reason: `Party Registry catalog mismatch; missing=[${difference.missing.join(', ')}], unexpected=[${difference.unexpected.join(', ')}]`,
@@ -190,8 +189,7 @@ const verification = Effect.gen(function* verifyPartyDatabase() {
     )
   ) {
     return yield* new PartyDatabaseVerificationError({
-      reason:
-        'Party Registry tables do not match their ownership, forced-RLS, policy, or runtime-grant contract',
+      reason: 'Party Registry tables do not match their ownership, forced-RLS, policy, or runtime-grant contract',
     });
   }
 
@@ -278,11 +276,7 @@ const verification = Effect.gen(function* verifyPartyDatabase() {
   return { typedTableCount: PARTY_TABLES.length };
 });
 
-const runtime = PartyDatabaseLive.pipe(
-  Layer.provide(Layer.effect(DatabaseConfig, loadDatabaseConfig())),
-);
+const runtime = PartyDatabaseLive.pipe(Layer.provide(Layer.effect(DatabaseConfig, loadDatabaseConfig())));
 const result = await Effect.runPromise(Effect.provide(verification, runtime));
 
-console.log(
-  `Verified ${result.typedTableCount} typed tables in PostgreSQL schema ${PARTY_SCHEMA_NAME}`,
-);
+console.log(`Verified ${result.typedTableCount} typed tables in PostgreSQL schema ${PARTY_SCHEMA_NAME}`);

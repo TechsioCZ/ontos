@@ -80,7 +80,6 @@
  * Report-only: no fixers, no suggestions.
  */
 import { defineRule } from '@oxlint/plugins';
-
 import type { ESTree, Variable } from '@oxlint/plugins';
 
 import { memberName, skipWrappers, staticString, unwrapNode as unwrap } from '../shared/ast.ts';
@@ -120,10 +119,7 @@ const DEFAULTS: RuleOptions = {
 };
 
 function readOptions(raw: unknown): RuleOptions {
-  const given =
-    typeof raw === 'object' && raw !== null && !Array.isArray(raw)
-      ? (raw as Record<string, unknown>)
-      : {};
+  const given = typeof raw === 'object' && raw !== null && !Array.isArray(raw) ? (raw as Record<string, unknown>) : {};
   return {
     allowPaths: stringList(given.allowPaths, DEFAULTS.allowPaths),
     modules: stringList(given.modules, DEFAULTS.modules),
@@ -155,15 +151,11 @@ function staticStringValue(node: AnyNode | null | undefined): string | null {
 }
 
 function matchesRequiredBinding(variable: Variable, declarators: ReadonlySet<number>): boolean {
-  return variable.defs.some(
-    (definition) => definition.type === 'Variable' && declarators.has(definition.node.start),
-  );
+  return variable.defs.some((definition) => definition.type === 'Variable' && declarators.has(definition.node.start));
 }
 
 /** The base identifier of a (possibly nested, possibly optional) member chain: `fs.promises.readFile`. */
-function memberChainRoot(
-  node: ESTree.MemberExpression,
-): { readonly root: AnyNode; readonly path: string[] } | null {
+function memberChainRoot(node: ESTree.MemberExpression): { readonly root: AnyNode; readonly path: string[] } | null {
   const path: string[] = [];
   let current: AnyNode = node;
   while (current.type === 'MemberExpression') {
@@ -266,10 +258,7 @@ export const rule = defineRule({
       const variable = resolveVariable(context, name, node);
       // Unresolved: the module-level declaration already proved the binding exists.
       if (variable === null || variable.defs.length === 0) return recordedModule;
-      if (
-        fromImport !== undefined &&
-        variable.defs.some((definition) => definition.type === 'ImportBinding')
-      ) {
+      if (fromImport !== undefined && variable.defs.some((definition) => definition.type === 'ImportBinding')) {
         return fromImport;
       }
       if (fromRequire === undefined) return null;
@@ -300,10 +289,13 @@ export const rule = defineRule({
     const reportRequireCall = (node: ESTree.CallExpression, callee: AnyNode): boolean => {
       if (callee.type !== 'Identifier') return false;
       const required = staticStringValue(node.arguments[0] as AnyNode | undefined);
-      if (required === null || !isNodeIo(required) || provenance(context, callee) !== 'require')
-        return false;
+      if (required === null || !isNodeIo(required) || provenance(context, callee) !== 'require') return false;
       registerRequireBinding(node, required);
-      context.report({ node, messageId: 'nodeIoRequire', data: { module: required } });
+      context.report({
+        node,
+        messageId: 'nodeIoRequire',
+        data: { module: required },
+      });
       return true;
     };
 
@@ -329,24 +321,34 @@ export const rule = defineRule({
           (node.specifiers.length > 0 && node.specifiers.every((s) => s.exportKind === 'type'))
         )
           return;
-        context.report({ node, messageId: 'nodeIoImport', data: { module: source.value } });
+        context.report({
+          node,
+          messageId: 'nodeIoImport',
+          data: { module: source.value },
+        });
       },
       ExportAllDeclaration(node) {
         if (!isNodeIo(node.source.value)) return;
         if (node.exportKind === 'type') return;
-        context.report({ node, messageId: 'nodeIoImport', data: { module: node.source.value } });
+        context.report({
+          node,
+          messageId: 'nodeIoImport',
+          data: { module: node.source.value },
+        });
       },
       ImportExpression(node) {
         const module = staticStringValue(node.source as AnyNode);
         if (module === null || !isNodeIo(module)) return;
-        context.report({ node, messageId: 'nodeIoDynamicImport', data: { module } });
+        context.report({
+          node,
+          messageId: 'nodeIoDynamicImport',
+          data: { module },
+        });
       },
       TSImportEqualsDeclaration(node) {
         const reference = node.moduleReference as AnyNode;
         if (reference.type !== 'TSExternalModuleReference') return;
-        const module = staticStringValue(
-          (reference as ESTree.TSExternalModuleReference).expression as AnyNode,
-        );
+        const module = staticStringValue((reference as ESTree.TSExternalModuleReference).expression as AnyNode);
         if (module === null || !isNodeIo(module)) return;
         if (node.importKind === 'type') return;
         importedLocals.set(node.id.name, module);
@@ -364,7 +366,11 @@ export const rule = defineRule({
           const name = (callee as ESTree.IdentifierReference).name;
           const module = resolvesToNodeIo(callee as AnyNode, name);
           if (module === null) return;
-          context.report({ node, messageId: 'nodeIoCall', data: { call: `${name}()`, module } });
+          context.report({
+            node,
+            messageId: 'nodeIoCall',
+            data: { call: `${name}()`, module },
+          });
           return;
         }
 

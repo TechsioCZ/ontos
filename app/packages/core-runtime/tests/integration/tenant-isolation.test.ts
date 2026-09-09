@@ -1,10 +1,11 @@
-import { expect, it } from 'effect-rstest';
+import { randomUUID } from 'node:crypto';
 
 import { getTableConfig, pgSchema, text, uuid } from 'drizzle-orm/pg-core';
 import { Effect, Option, Schema } from 'effect';
-import { randomUUID } from 'node:crypto';
+import { expect, it } from 'effect-rstest';
 import type { PoolClient, QueryResult, QueryResultRow } from 'pg';
 import { Pool } from 'pg';
+
 import { loadDatabaseConnectionPair } from '../../src/db/config.ts';
 import {
   actionInvocations,
@@ -23,10 +24,7 @@ import {
   tenantModuleStateChanges,
 } from '../../src/db/schema.ts';
 import { defineSystemModuleEntrypoint } from '../../src/modules/module-entrypoint.ts';
-import {
-  makeOperationalScopeRepository,
-  makeOperationalScopeResolver,
-} from '../../src/operations/context.ts';
+import { makeOperationalScopeRepository, makeOperationalScopeResolver } from '../../src/operations/context.ts';
 import type { ReadHandlerContext } from '../../src/reads/context.ts';
 import { defineRead } from '../../src/reads/definition.ts';
 import { makeReadRuntime } from '../../src/reads/runtime.ts';
@@ -37,17 +35,15 @@ type DatabaseQueryFailureSelf = typeof DatabaseQueryFailureContract.Type;
 const DatabaseQueryFailureContract = Schema.TaggedStruct('DatabaseQueryFailure', {
   code: Schema.String,
 });
-const DatabaseQueryFailure = Schema.TaggedError<DatabaseQueryFailureSelf>()(
-  'DatabaseQueryFailure',
-  { code: Schema.String },
-);
+const DatabaseQueryFailure = Schema.TaggedError<DatabaseQueryFailureSelf>()('DatabaseQueryFailure', {
+  code: Schema.String,
+});
 const DatabaseErrorCode = Schema.Struct({ code: Schema.String });
 const queryEffect = <Row extends QueryResultRow = QueryResultRow>(
   client: Pool | PoolClient,
   statement: string,
   parameters?: readonly unknown[],
-): Effect.Effect<QueryResult<Row>> =>
-  Effect.promise(() => client.query<Row>(statement, [...(parameters ?? [])]));
+): Effect.Effect<QueryResult<Row>> => Effect.promise(() => client.query<Row>(statement, [...(parameters ?? [])]));
 const queryTryEffect = <Row extends QueryResultRow = QueryResultRow>(
   client: Pool | PoolClient,
   statement: string,
@@ -103,9 +99,7 @@ it('declares the composite same-tenant parent keys used by isolation foreign key
       .foreignKeys.map((foreignKey) => foreignKey.reference().columns.map((column) => column.name))
       .filter((columns) => columns.some((column) => column !== 'tenant_id'));
     expect(businessReferences.length > 0).toBe(true);
-    expect(
-      businessReferences.every((columns) => columns.length === 2 && columns[0] === 'tenant_id'),
-    ).toBe(true);
+    expect(businessReferences.every((columns) => columns.length === 2 && columns[0] === 'tenant_id')).toBe(true);
   }
 });
 
@@ -118,7 +112,11 @@ it.live('runtime RLS isolates tenant and legal-entity rows and never leaks trans
     );
     const runtime = yield* Effect.acquireRelease(
       Effect.sync(
-        () => new Pool({ connectionString: connections.runtime.connectionString, max: 1 }),
+        () =>
+          new Pool({
+            connectionString: connections.runtime.connectionString,
+            max: 1,
+          }),
       ),
       (pool) => Effect.promise(() => pool.end()),
     );
@@ -164,10 +162,7 @@ it.live('runtime RLS isolates tenant and legal-entity rows and never leaks trans
         `create policy records_delete on ${schema}.records for delete to ontos_runtime using (${predicate})`,
       );
       yield* queryEffect(admin, `grant usage on schema ${schema} to ontos_runtime`);
-      yield* queryEffect(
-        admin,
-        `grant select, insert, update, delete on ${schema}.records to ontos_runtime`,
-      );
+      yield* queryEffect(admin, `grant select, insert, update, delete on ${schema}.records to ontos_runtime`);
       yield* queryEffect(
         admin,
         `insert into ${schema}.records (tenant_id, legal_entity_id, resource_id, value) values ($1, $2, $4, 'entity-a'), ($1, $3, $4, 'entity-b'), ($5, $6, $4, 'tenant-b')`,
@@ -205,20 +200,14 @@ it.live('runtime RLS isolates tenant and legal-entity rows and never leaks trans
           "select set_config('ontos.tenant_id', $1, true), set_config('ontos.legal_entity_id', $2, true)",
           [tenantA, entityA],
         );
-        const entityARows = yield* queryEffect<{ value: string }>(
-          client,
-          `select value from ${schema}.records`,
-        );
+        const entityARows = yield* queryEffect<{ value: string }>(client, `select value from ${schema}.records`);
         expect(entityARows.rows).toEqual([{ value: 'entity-a' }]);
         const foreignUpdate = yield* queryEffect(
           client,
           `update ${schema}.records set value = 'hacked' where value = 'tenant-b'`,
         );
         expect(foreignUpdate.rowCount).toBe(0);
-        const foreignDelete = yield* queryEffect(
-          client,
-          `delete from ${schema}.records where value = 'entity-b'`,
-        );
+        const foreignDelete = yield* queryEffect(client, `delete from ${schema}.records where value = 'entity-b'`);
         expect(foreignDelete.rowCount).toBe(0);
         const forbiddenInsert = yield* Effect.flip(
           queryTryEffect(
@@ -236,10 +225,7 @@ it.live('runtime RLS isolates tenant and legal-entity rows and never leaks trans
           "select set_config('ontos.tenant_id', $1, true), set_config('ontos.legal_entity_id', $2, true)",
           [tenantA, entityB],
         );
-        const entityBRows = yield* queryEffect<{ value: string }>(
-          client,
-          `select value from ${schema}.records`,
-        );
+        const entityBRows = yield* queryEffect<{ value: string }>(client, `select value from ${schema}.records`);
         expect(entityBRows.rows).toEqual([{ value: 'entity-b' }]);
         yield* queryEffect(client, 'commit');
       }).pipe(Effect.ensuring(Effect.sync(() => client.release())));
@@ -250,11 +236,7 @@ it.live('runtime RLS isolates tenant and legal-entity rows and never leaks trans
         admin,
         `select value from ${schema}.records order by value`,
       );
-      expect(protectedRows.rows).toEqual([
-        { value: 'entity-a' },
-        { value: 'entity-b' },
-        { value: 'tenant-b' },
-      ]);
+      expect(protectedRows.rows).toEqual([{ value: 'entity-a' }, { value: 'entity-b' }, { value: 'tenant-b' }]);
     });
     const release = queryEffect(admin, `drop schema if exists ${schema} cascade`);
     yield* exercise.pipe(Effect.ensuring(release));
@@ -294,7 +276,10 @@ it.live('an unscoped owner repository remains isolated inside a governed read tr
     const predicate = `tenant_id = nullif(current_setting('ontos.tenant_id', true), '')::uuid and legal_entity_id = nullif(current_setting('ontos.legal_entity_id', true), '')::uuid`;
     const entrypoint = defineSystemModuleEntrypoint({
       access: 'read',
-      authorization: { kind: 'context_permission', permission: 'module.access' },
+      authorization: {
+        kind: 'context_permission',
+        permission: 'module.access',
+      },
       entrypointKey: 'core.shell.governed-isolation-fixture',
       moduleKey: 'core.shell',
       role: 'api',
@@ -328,9 +313,7 @@ it.live('an unscoped owner repository remains isolated inside a governed read tr
         (
           _input,
           context: ReadHandlerContext<{
-            readonly listWithoutPredicates: () => Effect.Effect<
-              readonly { readonly value: string }[]
-            >;
+            readonly listWithoutPredicates: () => Effect.Effect<readonly { readonly value: string }[]>;
           }>,
         ) => context.services.listWithoutPredicates().pipe(Effect.map(toReadResult)),
         (transaction) => {
@@ -344,7 +327,12 @@ it.live('an unscoped owner repository remains isolated inside a governed read tr
       );
       const contextAccess = {
         legalEntities: ({ legalEntityIds }: { readonly legalEntityIds: readonly string[] }) =>
-          Effect.succeed(legalEntityIds.map((key) => ({ decision: 'allowed' as const, key }))),
+          Effect.succeed(
+            legalEntityIds.map((key) => ({
+              decision: 'allowed' as const,
+              key,
+            })),
+          ),
         modules: () => Effect.succeed([]),
         resources: () => Effect.succeed([]),
         tenants: () => Effect.succeed([]),
@@ -352,10 +340,7 @@ it.live('an unscoped owner repository remains isolated inside a governed read tr
       const runtime = makeReadRuntime(
         { executor: runtimeDatabase },
         openModuleEntrypointGateway,
-        makeOperationalScopeResolver(
-          makeOperationalScopeRepository({ executor: runtimeDatabase }),
-          contextAccess,
-        ),
+        makeOperationalScopeResolver(makeOperationalScopeRepository({ executor: runtimeDatabase }), contextAccess),
         contextAccess,
       );
       return runtime.runRead({
@@ -403,16 +388,7 @@ it.live('an unscoped owner repository remains isolated inside a governed read tr
       yield* queryEffect(
         admin,
         `insert into core.legal_entities (legal_entity_id, tenant_id, legal_name, registration_country, registration_number, status) values ($1, $4, 'Entity A', 'CZ', $6, 'active'), ($2, $4, 'Entity B', 'CZ', $7, 'active'), ($3, $5, 'Entity C', 'CZ', $8, 'active')`,
-        [
-          entityA,
-          entityB,
-          entityC,
-          tenantA,
-          tenantB,
-          `A-${entityA}`,
-          `B-${entityB}`,
-          `C-${entityC}`,
-        ],
+        [entityA, entityB, entityC, tenantA, tenantB, `A-${entityA}`, `B-${entityB}`, `C-${entityC}`],
       );
       yield* queryEffect(
         admin,
@@ -422,16 +398,7 @@ it.live('an unscoped owner repository remains isolated inside a governed read tr
       yield* queryEffect(
         admin,
         `insert into core.principal_auth_bindings (principal_auth_binding_id, tenant_id, principal_id, provider, subject_type, provider_subject_id, status) values ($1, $3, $5, 'better_auth', 'user', $7, 'active'), ($2, $4, $6, 'better_auth', 'user', $8, 'active')`,
-        [
-          bindingA,
-          bindingB,
-          tenantA,
-          tenantB,
-          principalA,
-          principalB,
-          `user-${principalA}`,
-          `user-${principalB}`,
-        ],
+        [bindingA, bindingB, tenantA, tenantB, principalA, principalB, `user-${principalA}`, `user-${principalB}`],
       );
       yield* queryEffect(
         admin,
@@ -471,27 +438,14 @@ it.live('an unscoped owner repository remains isolated inside a governed read tr
       ).toEqual(['tenant-b-entity-c']);
     });
     const release = Effect.gen(function* cleanGovernedReadIsolation() {
-      yield* queryEffect(admin, 'delete from core.data_access_events where tenant_id in ($1, $2)', [
+      yield* queryEffect(admin, 'delete from core.data_access_events where tenant_id in ($1, $2)', [tenantA, tenantB]);
+      yield* queryEffect(admin, 'delete from core.principal_auth_bindings where tenant_id in ($1, $2)', [
         tenantA,
         tenantB,
       ]);
-      yield* queryEffect(
-        admin,
-        'delete from core.principal_auth_bindings where tenant_id in ($1, $2)',
-        [tenantA, tenantB],
-      );
-      yield* queryEffect(admin, 'delete from core.principals where tenant_id in ($1, $2)', [
-        tenantA,
-        tenantB,
-      ]);
-      yield* queryEffect(admin, 'delete from core.legal_entities where tenant_id in ($1, $2)', [
-        tenantA,
-        tenantB,
-      ]);
-      yield* queryEffect(admin, 'delete from core.tenants where tenant_id in ($1, $2)', [
-        tenantA,
-        tenantB,
-      ]);
+      yield* queryEffect(admin, 'delete from core.principals where tenant_id in ($1, $2)', [tenantA, tenantB]);
+      yield* queryEffect(admin, 'delete from core.legal_entities where tenant_id in ($1, $2)', [tenantA, tenantB]);
+      yield* queryEffect(admin, 'delete from core.tenants where tenant_id in ($1, $2)', [tenantA, tenantB]);
       yield* queryEffect(admin, `drop schema if exists ${schemaName} cascade`);
     }).pipe(Effect.orDie);
     yield* exercise.pipe(Effect.ensuring(release));
@@ -541,27 +495,15 @@ it.live('PostgreSQL rejects cross-tenant entity, principal, and Action reference
       );
 
       const invocationInsert = `insert into core.action_invocations (action_invocation_id, tenant_id, legal_entity_id, principal_id, action_key, status, request_hash) values ($1, $2, $3, $4, 'isolation.test', 'received', 'bounded-hash')`;
-      yield* expectForeignKeyFailure(invocationInsert, [
-        randomUUID(),
-        tenantA,
-        entityB,
-        principalA,
-      ]);
-      yield* expectForeignKeyFailure(invocationInsert, [
-        randomUUID(),
-        tenantA,
-        entityA,
-        principalB,
-      ]);
+      yield* expectForeignKeyFailure(invocationInsert, [randomUUID(), tenantA, entityB, principalA]);
+      yield* expectForeignKeyFailure(invocationInsert, [randomUUID(), tenantA, entityA, principalB]);
       yield* queryEffect(client, invocationInsert, [invocationA, tenantA, entityA, principalA]);
       yield* expectForeignKeyFailure(
         `insert into core.tenant_module_state_changes (tenant_id, module_key, new_state, changed_by_principal_id, action_invocation_id, change_source) values ($1, 'core.shell', 'active', $2, $3, 'user')`,
         [tenantB, principalB, invocationA],
       );
     });
-    const release = queryEffect(client, 'rollback').pipe(
-      Effect.ensuring(Effect.sync(() => client.release())),
-    );
+    const release = queryEffect(client, 'rollback').pipe(Effect.ensuring(Effect.sync(() => client.release())));
     yield* exercise.pipe(Effect.ensuring(release));
   }),
 );

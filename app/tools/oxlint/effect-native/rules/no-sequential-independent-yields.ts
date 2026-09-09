@@ -1,4 +1,3 @@
-import { optionRecord } from '../shared/options.ts';
 /**
  * effect-native/no-sequential-independent-yields
  *
@@ -73,31 +72,17 @@ import { optionRecord } from '../shared/options.ts';
  * hatch for known ordering steps, not a proof that all other calls commute. Report-only: no fixer, no suggestion.
  */
 import { defineRule } from '@oxlint/plugins';
-
 import type { Context, ESTree } from '@oxlint/plugins';
 
-import {
-  asNode as sharedAsNode,
-  childrenOf,
-  memberName as sharedMemberName,
-} from '../shared/ast.ts';
+import { asNode as sharedAsNode, childrenOf, memberName as sharedMemberName } from '../shared/ast.ts';
 import { bindingPath, isGenCallee as sharedIsGenCallee } from '../shared/effect-identity.ts';
-import {
-  bindingsWithExtraModules,
-  collectRootNamespaces,
-  collectNamedImports,
-} from '../shared/imports.ts';
+import { bindingsWithExtraModules, collectRootNamespaces, collectNamedImports } from '../shared/imports.ts';
+import { optionRecord } from '../shared/options.ts';
 import { booleanOption as boolean, stringArray, safeRegExp } from '../shared/options.ts';
 import { isScriptFile, isTestFile, scopePath, matchesGlobs } from '../shared/paths.ts';
 
 const DEFAULT_INCLUDE: readonly string[] = ['apps/**', 'verticals/**', 'packages/**'];
-const DEFAULT_IGNORE: readonly string[] = [
-  '**/dist/**',
-  '**/build/**',
-  '**/node_modules/**',
-  'tools/**',
-  '**/*.d.ts',
-];
+const DEFAULT_IGNORE: readonly string[] = ['**/dist/**', '**/build/**', '**/node_modules/**', 'tools/**', '**/*.d.ts'];
 const DEFAULT_SCRIPT_GLOBS: readonly string[] = ['scripts/**', '**/scripts/**'];
 const DEFAULT_GEN_MEMBERS: readonly string[] = ['gen', 'fn', 'fnUntraced'];
 /** Barrels that re-export `Effect` verbatim, so `Effect.gen` there is the same generator. */
@@ -143,9 +128,7 @@ function readOptions(context: Context) {
     includeScripts: boolean(record.includeScripts, false),
     includeFunctionCallees: boolean(record.includeFunctionCallees, true),
     orderingCalleePattern:
-      typeof record.orderingCalleePattern === 'string'
-        ? record.orderingCalleePattern
-        : DEFAULT_ORDERING_PATTERN,
+      typeof record.orderingCalleePattern === 'string' ? record.orderingCalleePattern : DEFAULT_ORDERING_PATTERN,
     genMembers: stringArray(record.genMembers, DEFAULT_GEN_MEMBERS),
     effectModules: stringArray(record.effectModules, DEFAULT_EFFECT_MODULES),
   };
@@ -178,8 +161,7 @@ function unwrap(value: unknown): AnyNode | null {
 function memberName(node: AnyNode): string | null {
   const property = asNode(node.property);
   if (property === null) return null;
-  if (node.computed !== true)
-    return property.type === 'Identifier' ? (property.name as string) : null;
+  if (node.computed !== true) return property.type === 'Identifier' ? (property.name as string) : null;
   return sharedMemberName(node, { templates: true, babelStrings: true });
 }
 
@@ -191,20 +173,14 @@ interface GeneratorMatcher {
 
 /** `Effect.gen` / `E.gen` / `X.Effect.gen` / bare `gen` (direct member import), incl. computed + optional. */
 function isGenCallee(callee: AnyNode | null, matcher: GeneratorMatcher): boolean {
-  return sharedIsGenCallee(
-    matcher.context,
-    callee as ESTree.Node | null,
-    matcher.genMembers,
-    matcher.effectModules,
-  );
+  return sharedIsGenCallee(matcher.context, callee as ESTree.Node | null, matcher.genMembers, matcher.effectModules);
 }
 
 /** `true` when `fn` is a generator function handed to `Effect.gen` / `Effect.fn` / `Effect.fnUntraced`. */
 function isEffectGenerator(fn: AnyNode, matcher: GeneratorMatcher): boolean {
   if (fn.generator !== true) return false;
   let outer = fn;
-  while (parentOf(outer) !== null && WRAPPER_TYPES.has(parentOf(outer)!.type))
-    outer = parentOf(outer)!;
+  while (parentOf(outer) !== null && WRAPPER_TYPES.has(parentOf(outer)!.type)) outer = parentOf(outer)!;
   const call = parentOf(outer);
   if (call === null || call.type !== 'CallExpression') return false;
   const args = call.arguments;
@@ -220,11 +196,7 @@ function isEffectGenerator(fn: AnyNode, matcher: GeneratorMatcher): boolean {
 type Walker = (node: AnyNode) => boolean;
 
 /** Preserve the generator traversal budget while sharing child enumeration and ordering. */
-function walk(
-  node: AnyNode,
-  visitorKeys: Readonly<Record<string, readonly string[]>>,
-  visit: Walker,
-): void {
+function walk(node: AnyNode, visitorKeys: Readonly<Record<string, readonly string[]>>, visit: Walker): void {
   const stack = [node];
   for (let visited = 0; stack.length > 0 && visited < 200_000; visited += 1) {
     const current = stack.pop()!;
@@ -237,11 +209,7 @@ function walk(
 }
 
 /** Peel method and imported pipe calls down to their subject. */
-function pipeSubject(
-  current: AnyNode,
-  context: Context,
-  modules: readonly string[],
-): AnyNode | null {
+function pipeSubject(current: AnyNode, context: Context, modules: readonly string[]): AnyNode | null {
   if (current.type !== 'CallExpression') return current;
   const callee = unwrap(current.callee);
   if (callee === null) return current;
@@ -273,11 +241,7 @@ function collectPatternNames(
       names.add(node.name as string);
       return false;
     }
-    if (
-      node.type === 'Property' ||
-      node.type === 'ObjectProperty' ||
-      node.type === 'PropertyDefinition'
-    ) {
+    if (node.type === 'Property' || node.type === 'ObjectProperty' || node.type === 'PropertyDefinition') {
       // `{ key: local }` binds `local`; `{ key }` is shorthand and binds `key` via the same node.
       if (node.computed === true) {
         const key = asNode(node.key);
@@ -308,10 +272,7 @@ function collectPatternNames(
 }
 
 /** Identifiers *read* by an expression: member property names and literal object keys are not reads. */
-function collectReferencedNames(
-  node: AnyNode,
-  visitorKeys: Readonly<Record<string, readonly string[]>>,
-): Set<string> {
+function collectReferencedNames(node: AnyNode, visitorKeys: Readonly<Record<string, readonly string[]>>): Set<string> {
   const names = new Set<string>();
   walk(node, visitorKeys, (current) => collectInto(current, names, visitorKeys));
   return names;
@@ -329,14 +290,10 @@ function collectInto(
   }
   if (MEMBER_TYPES.has(current.type) && current.computed !== true) {
     const object = asNode(current.object);
-    if (object !== null)
-      walk(object, visitorKeys, (inner) => collectInto(inner, names, visitorKeys));
+    if (object !== null) walk(object, visitorKeys, (inner) => collectInto(inner, names, visitorKeys));
     return false;
   }
-  if (
-    (current.type === 'Property' || current.type === 'ObjectProperty') &&
-    current.computed !== true
-  ) {
+  if ((current.type === 'Property' || current.type === 'ObjectProperty') && current.computed !== true) {
     if (current.shorthand === true) return true;
     const value = asNode(current.value);
     if (value !== null) walk(value, visitorKeys, (inner) => collectInto(inner, names, visitorKeys));
@@ -368,24 +325,11 @@ function singleDeclarator(statement: AnyNode): AnyNode | null {
   const declarations = statement.declarations;
   return Array.isArray(declarations) && declarations.length === 1 ? asNode(declarations[0]) : null;
 }
-const TRANSPARENT_MEMBERS = new Set([
-  'withSpan',
-  'annotateLogs',
-  'timeout',
-  'timeoutOption',
-  'retry',
-]);
-function transparentArguments(
-  subject: AnyNode,
-  context: Context,
-  modules: readonly string[],
-): unknown[] | null {
+const TRANSPARENT_MEMBERS = new Set(['withSpan', 'annotateLogs', 'timeout', 'timeoutOption', 'retry']);
+function transparentArguments(subject: AnyNode, context: Context, modules: readonly string[]): unknown[] | null {
   const path = bindingPath(context, subject.callee as unknown as ESTree.Node, modules);
-  if (path?.length !== 2 || path[0] !== 'Effect' || !TRANSPARENT_MEMBERS.has(path[1] ?? ''))
-    return null;
-  return Array.isArray(subject.arguments) && subject.arguments.length >= 2
-    ? subject.arguments
-    : null;
+  if (path?.length !== 2 || path[0] !== 'Effect' || !TRANSPARENT_MEMBERS.has(path[1] ?? '')) return null;
+  return Array.isArray(subject.arguments) && subject.arguments.length >= 2 ? subject.arguments : null;
 }
 /** Only known data-first wrappers preserve the effect; constructors and callbacks remain opaque. */
 function readSubject(value: unknown, context: Context, modules: readonly string[]): AnyNode | null {
@@ -483,12 +427,8 @@ export const rule = defineRule({
       const calleeNode = readCallee(subject, options.includeFunctionCallees);
       if (calleeNode === null) return null;
       // `Effect.all(...)`, `Schema.decodeUnknown(...)`, … are the target shape, never the anti-pattern.
-      if (
-        bindingPath(context, calleeNode as unknown as ESTree.Node, options.effectModules) !== null
-      )
-        return null;
-      const calleeName =
-        calleeNode.type === 'Identifier' ? (calleeNode.name as string) : memberName(calleeNode);
+      if (bindingPath(context, calleeNode as unknown as ESTree.Node, options.effectModules) !== null) return null;
+      const calleeName = calleeNode.type === 'Identifier' ? (calleeNode.name as string) : memberName(calleeNode);
       if (calleeName === null) return null;
 
       return {
@@ -538,7 +478,10 @@ export const rule = defineRule({
           continue;
         }
         context.report({
-          data: { first: [...head.bound].join(', '), second: [...candidate.bound].join(', ') },
+          data: {
+            first: [...head.bound].join(', '),
+            second: [...candidate.bound].join(', '),
+          },
           messageId: 'sequentialIndependentYields',
           node: candidate.calleeNode as unknown as ESTree.Node,
         });
@@ -551,10 +494,8 @@ export const rule = defineRule({
       if (body === null) return;
       walk(body, visitorKeys, (node) => {
         if (node !== body && FUNCTION_TYPES.has(node.type)) return false;
-        if (node.type === 'BlockStatement' && Array.isArray(node.body))
-          analyseStatements(node.body);
-        else if (node.type === 'SwitchCase' && Array.isArray(node.consequent))
-          analyseStatements(node.consequent);
+        if (node.type === 'BlockStatement' && Array.isArray(node.body)) analyseStatements(node.body);
+        else if (node.type === 'SwitchCase' && Array.isArray(node.consequent)) analyseStatements(node.consequent);
         return true;
       });
     };

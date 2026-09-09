@@ -1,4 +1,3 @@
-import { snippet } from '../shared/reporting.ts';
 /**
  * effect-native/no-environment-record-type
  *
@@ -74,23 +73,18 @@ import { snippet } from '../shared/reporting.ts';
  * Report-only: no fixers, no suggestions.
  */
 import { defineRule } from '@oxlint/plugins';
-
 import type { ESTree, Variable } from '@oxlint/plugins';
 
-import { collectEffectBindings } from '../shared/effect-imports.ts';
-import { includesRuleFile } from '../shared/paths.ts';
 import { parentOf } from '../shared/ast.ts';
 import { resolveVariable } from '../shared/bindings.ts';
+import { collectEffectBindings } from '../shared/effect-imports.ts';
 import { stringList } from '../shared/options.ts';
+import { includesRuleFile } from '../shared/paths.ts';
+import { snippet } from '../shared/reporting.ts';
 
 type AnyNode = ESTree.Node;
 
-const DEFAULT_INCLUDE_PATHS: readonly string[] = [
-  'apps/**',
-  'verticals/**',
-  'packages/**',
-  'scripts/**',
-];
+const DEFAULT_INCLUDE_PATHS: readonly string[] = ['apps/**', 'verticals/**', 'packages/**', 'scripts/**'];
 
 /** Type constructors that spell "string-keyed dictionary". */
 const RECORD_NAMES = new Set(['Record', 'ReadonlyRecord', 'Record.ReadonlyRecord']);
@@ -126,8 +120,7 @@ function readOptions(raw: unknown): RuleOptions {
   const includePaths = stringList(given.includePaths, DEFAULTS.includePaths);
   return {
     allowPaths: stringList(given.allowPaths, DEFAULTS.allowPaths),
-    ignoreTestFiles:
-      typeof given.ignoreTestFiles === 'boolean' ? given.ignoreTestFiles : DEFAULTS.ignoreTestFiles,
+    ignoreTestFiles: typeof given.ignoreTestFiles === 'boolean' ? given.ignoreTestFiles : DEFAULTS.ignoreTestFiles,
     includePaths: includePaths.length > 0 ? includePaths : DEFAULTS.includePaths,
   };
 }
@@ -187,8 +180,7 @@ function isOptionalStringUnion(node: AnyNode): boolean {
       continue;
     }
     if (member.type === 'TSStringKeyword') hasString = true;
-    else if (member.type === 'TSUndefinedKeyword' || member.type === 'TSNullKeyword')
-      hasAbsence = true;
+    else if (member.type === 'TSUndefinedKeyword' || member.type === 'TSNullKeyword') hasAbsence = true;
     else return false;
   }
   return pending.length === 0 && hasString && hasAbsence;
@@ -205,8 +197,7 @@ function isInsidePartial(node: AnyNode): boolean {
       current = parent;
       continue;
     }
-    if (!['TSTypeReference', 'TSInterfaceHeritage', 'TSClassImplements'].includes(parent.type))
-      return false;
+    if (!['TSTypeReference', 'TSInterfaceHeritage', 'TSClassImplements'].includes(parent.type)) return false;
     const name = typeReferenceName(parent);
     if (name === null || !TRANSPARENT_WRAPPERS.has(name)) return false;
     if (name === 'Partial') return true;
@@ -221,11 +212,7 @@ function singleImport(variable: Variable) {
   return definition?.type === 'ImportBinding' ? definition.node : null;
 }
 
-function importedRecordName(
-  variable: Variable,
-  imported: string | undefined,
-  rest: readonly string[],
-): string | null {
+function importedRecordName(variable: Variable, imported: string | undefined, rest: readonly string[]): string | null {
   const specifier = singleImport(variable);
   if (!specifier) return null;
   const declaration = parentOf(specifier) as ESTree.ImportDeclaration | null;
@@ -237,9 +224,7 @@ function importedRecordName(
     rest.length === 0
   )
     return 'ReadonlyRecord';
-  return imported === 'Record' && rest.join('.') === 'ReadonlyRecord'
-    ? 'Record.ReadonlyRecord'
-    : null;
+  return imported === 'Record' && rest.join('.') === 'ReadonlyRecord' ? 'Record.ReadonlyRecord' : null;
 }
 
 function isImportedEnvQuery(variable: Variable, segments: readonly string[]): boolean {
@@ -258,10 +243,7 @@ function isImportedEnvQuery(variable: Variable, segments: readonly string[]): bo
 function isGlobalEnvQuery(segments: readonly string[]): boolean {
   if (segments.length === 2) return ENV_HOSTS.has(segments[0]) && segments[1] === 'env';
   return (
-    segments.length === 3 &&
-    CONTAINER_GLOBALS.has(segments[0]) &&
-    ENV_HOSTS.has(segments[1]) &&
-    segments[2] === 'env'
+    segments.length === 3 && CONTAINER_GLOBALS.has(segments[0]) && ENV_HOSTS.has(segments[1]) && segments[2] === 'env'
   );
 }
 
@@ -281,20 +263,14 @@ function isWithinConstraint(node: AnyNode): boolean {
 }
 
 function isStringValue(node: AnyNode | undefined): boolean {
-  return (
-    node !== undefined &&
-    (unwrapParens(node).type === 'TSStringKeyword' || isOptionalStringUnion(node))
-  );
+  return node !== undefined && (unwrapParens(node).type === 'TSStringKeyword' || isOptionalStringUnion(node));
 }
 
 function isEnvironmentRecord(node: AnyNode): boolean {
   const args = typeArgumentsOf(node);
   if (args.length !== 2 || unwrapParens(args[0]).type !== 'TSStringKeyword') return false;
   const value = args[1];
-  return (
-    isOptionalStringUnion(value) ||
-    (unwrapParens(value).type === 'TSStringKeyword' && isInsidePartial(node))
-  );
+  return isOptionalStringUnion(value) || (unwrapParens(value).type === 'TSStringKeyword' && isInsidePartial(node));
 }
 
 /** Effect-native rule: configuration is a Schema decoded through Config and injected as a service. */
@@ -335,22 +311,24 @@ export const rule = defineRule({
           includePaths: {
             type: 'array',
             items: { type: 'string' },
-            description:
-              'Globs the rule applies to (default: apps/**, verticals/**, packages/**, scripts/**).',
+            description: 'Globs the rule applies to (default: apps/**, verticals/**, packages/**, scripts/**).',
           },
         },
       },
     ],
     defaultOptions: [
-      { allowPaths: [], ignoreTestFiles: true, includePaths: [...DEFAULT_INCLUDE_PATHS] },
+      {
+        allowPaths: [],
+        ignoreTestFiles: true,
+        includePaths: [...DEFAULT_INCLUDE_PATHS],
+      },
     ],
   },
   create(context) {
     const options = readOptions(context.options[0]);
     if (!includesRuleFile(context.filename, options)) return {};
 
-    const printed = (node: AnyNode): string =>
-      snippet(context.sourceCode.getText(node), 80, 77, '...');
+    const printed = (node: AnyNode): string => snippet(context.sourceCode.getText(node), 80, 77, '...');
 
     const report = (node: AnyNode, messageId: string): void => {
       context.report({
@@ -375,9 +353,7 @@ export const rule = defineRule({
       if (!name) return false;
       const segments = (indexed ? `${name}.env` : name).split('.');
       const variable = resolveVariable(context, segments[0], expression);
-      return variable && variable.defs.length > 0
-        ? isImportedEnvQuery(variable, segments)
-        : isGlobalEnvQuery(segments);
+      return variable && variable.defs.length > 0 ? isImportedEnvQuery(variable, segments) : isGlobalEnvQuery(segments);
     };
     const inspectReference = (node: AnyNode): void => {
       // A generic utility constraint is not a declaration of configuration authority.
@@ -398,17 +374,10 @@ export const rule = defineRule({
       TSMappedType(node) {
         const constraint = node.constraint;
         const value = node.typeAnnotation;
-        if (
-          !constraint ||
-          unwrapParens(constraint).type !== 'TSStringKeyword' ||
-          !value ||
-          node.nameType
-        )
-          return;
+        if (!constraint || unwrapParens(constraint).type !== 'TSStringKeyword' || !value || node.nameType) return;
         if (
           isOptionalStringUnion(value) ||
-          ((node.optional === true || node.optional === '+') &&
-            unwrapParens(value).type === 'TSStringKeyword')
+          ((node.optional === true || node.optional === '+') && unwrapParens(value).type === 'TSStringKeyword')
         )
           report(node, 'environmentIndexSignature');
       },
@@ -429,11 +398,9 @@ export const rule = defineRule({
       TSIndexSignature(node) {
         const parameter = (node.parameters as readonly AnyNode[])[0];
         if (parameter === undefined) return;
-        const keyType = (parameter as { typeAnnotation?: { typeAnnotation?: AnyNode } })
-          .typeAnnotation?.typeAnnotation;
+        const keyType = (parameter as { typeAnnotation?: { typeAnnotation?: AnyNode } }).typeAnnotation?.typeAnnotation;
         if (keyType === undefined || unwrapParens(keyType).type !== 'TSStringKeyword') return;
-        const valueType = (node.typeAnnotation as { typeAnnotation?: AnyNode } | null)
-          ?.typeAnnotation;
+        const valueType = (node.typeAnnotation as { typeAnnotation?: AnyNode } | null)?.typeAnnotation;
         if (valueType === undefined || valueType === null) return;
         if (!isOptionalStringUnion(valueType)) return;
         report(node as unknown as AnyNode, 'environmentIndexSignature');

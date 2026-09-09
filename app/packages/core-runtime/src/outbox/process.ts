@@ -12,11 +12,8 @@ import {
   Tracer,
 } from 'effect';
 import type { Layer } from 'effect';
-import type {
-  AnyOutboxWorkerRegistration,
-  OutboxWorkerRequirements,
-  OutboxWorkerSubscription,
-} from './definition.ts';
+
+import type { AnyOutboxWorkerRegistration, OutboxWorkerRequirements, OutboxWorkerSubscription } from './definition.ts';
 import type { createOutboxWorkerHealth, serveOutboxWorkerHealth } from './health.ts';
 import { parseOutboxPollingConfig, runOutboxPollingLoop } from './poller.ts';
 import type { RunOutboxPollingLoopInput } from './poller.ts';
@@ -91,7 +88,9 @@ export const runOutboxWorkerProcess = <Registration extends AnyOutboxWorkerRegis
       if (health !== undefined && healthApi !== undefined) {
         const configuredHealthPort = yield* healthPortConfig;
         if (Option.isSome(configuredHealthPort)) {
-          yield* healthApi.serveOutboxWorkerHealth(health, { port: configuredHealthPort.value });
+          yield* healthApi.serveOutboxWorkerHealth(health, {
+            port: configuredHealthPort.value,
+          });
         }
       }
       yield* Effect.annotateLogs(Effect.logInfo('Outbox Worker process started'), {
@@ -110,18 +109,13 @@ export const runOutboxWorkerProcess = <Registration extends AnyOutboxWorkerRegis
         pollingInput = { ...pollingInput, health };
       }
       const signal = yield* waitForShutdownSignal.pipe(
-        Effect.raceFirst(
-          runOutboxPollingLoop(pollingInput).pipe(Effect.as<ShutdownSignal>('SIGTERM')),
-        ),
+        Effect.raceFirst(runOutboxPollingLoop(pollingInput).pipe(Effect.as<ShutdownSignal>('SIGTERM'))),
       );
       yield* Effect.logInfo(`Outbox Worker process received ${signal}; shutting down`);
     }),
   );
 
-export const startOutboxWorkerProcess = <
-  Registration extends AnyOutboxWorkerRegistration,
-  LayerError,
->(
+export const startOutboxWorkerProcess = <Registration extends AnyOutboxWorkerRegistration, LayerError>(
   input: StartOutboxWorkerProcessInput<Registration, LayerError>,
 ): void => {
   let processInput: RunOutboxWorkerProcessInput<Registration> = {

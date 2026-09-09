@@ -1,4 +1,3 @@
-import { optionRecord } from '../shared/options.ts';
 /**
  * Audit findings: **A2** — "Make Schema the sole authority for contracts and domain models" — and
  * **B5** — "Adopt Effect's ADTs and temporal model consistently"
@@ -79,22 +78,16 @@ import { optionRecord } from '../shared/options.ts';
  * Unknown pipe steps are not assumed transparent, and generic/cross-file type aliases are not inferred. Report-only; this rule never fixes or suggests.
  */
 import { defineRule } from '@oxlint/plugins';
-
 import type { Context, ESTree, Variable } from '@oxlint/plugins';
 
-import { collectEffectBindings, type EffectBindings } from '../shared/effect-imports.ts';
-import { globToRegExp, isTestFile, scopePath, matchesGlobs } from '../shared/paths.ts';
-
-import {
-  memberName as staticMemberName,
-  unwrapNode,
-  skipWrappers,
-  keyName,
-} from '../shared/ast.ts';
+import { memberName as staticMemberName, unwrapNode, skipWrappers, keyName } from '../shared/ast.ts';
 import { resolveVariable } from '../shared/bindings.ts';
+import { collectEffectBindings, type EffectBindings } from '../shared/effect-imports.ts';
 import { importedName } from '../shared/imports.ts';
-import { isSchemaConstructorArgument as isConstructorArgument } from '../shared/schema-constructor.ts';
+import { optionRecord } from '../shared/options.ts';
 import { stringArray, stringOption, safeRegExp } from '../shared/options.ts';
+import { globToRegExp, isTestFile, scopePath, matchesGlobs } from '../shared/paths.ts';
+import { isSchemaConstructorArgument as isConstructorArgument } from '../shared/schema-constructor.ts';
 
 const SCHEMA_NAMESPACE = 'Schema';
 
@@ -153,9 +146,7 @@ function normaliseRegexSource(source: string): string {
   const repeat = (run: string, count: string): string => run.repeat(Math.min(Number(count), 12));
   let text = source.replace(QUANTIFIED_DIGIT, (_match, count: string) => repeat('D', count));
   text = text.replace(BARE_DIGIT, 'D');
-  text = text.replace(GROUPED_DIGIT_RUN, (_match, run: string, count: string) =>
-    repeat(run, count),
-  );
+  text = text.replace(GROUPED_DIGIT_RUN, (_match, run: string, count: string) => repeat(run, count));
   return text.replace(REDUNDANT_ESCAPE, '$1');
 }
 
@@ -246,11 +237,7 @@ function readOptions(context: Context): RuleOptions {
     include: stringArray(record.include, DEFAULT_INCLUDE),
     includeTypeMembers: record.includeTypeMembers !== false,
     schemaModules: stringArray(record.schemaModules, DEFAULT_SCHEMA_MODULES),
-    temporalKeyPattern: stringOption(
-      record.temporalKeyPattern,
-      DEFAULT_TEMPORAL_KEY_PATTERN,
-      false,
-    ),
+    temporalKeyPattern: stringOption(record.temporalKeyPattern, DEFAULT_TEMPORAL_KEY_PATTERN, false),
   };
 }
 
@@ -388,17 +375,18 @@ export const rule = defineRule({
     if (options.ignoreTests && isTestFile(path)) return {};
 
     const keyPattern = safeRegExp(options.temporalKeyPattern, DEFAULT_TEMPORAL_KEY_PATTERN);
-    const ignoreKey =
-      options.ignoreKeyPattern.length > 0 ? safeRegExp(options.ignoreKeyPattern, '$^') : null;
-    const ignoreType =
-      options.ignoreTypePattern.length > 0 ? safeRegExp(options.ignoreTypePattern, '$^') : null;
+    const ignoreKey = options.ignoreKeyPattern.length > 0 ? safeRegExp(options.ignoreKeyPattern, '$^') : null;
+    const ignoreType = options.ignoreTypePattern.length > 0 ? safeRegExp(options.ignoreTypePattern, '$^') : null;
 
     const isTemporalKey = (key: string): boolean => {
       if (!keyPattern.test(key)) return false;
       return ignoreKey === null || !ignoreKey.test(key);
     };
 
-    let bindings: EffectBindings = { importsEffect: false, namespaces: new Map() };
+    let bindings: EffectBindings = {
+      importsEffect: false,
+      namespaces: new Map(),
+    };
     let locals: SchemaLocals = {
       barrel: new Set(),
       members: new Map(),
@@ -474,8 +462,7 @@ export const rule = defineRule({
     const localDeclarator = (node: ESTree.Node, name: string): ESTree.VariableDeclarator | null => {
       const variable = lookupVariable(context, node, name);
       if (variable === null || variable.defs.length !== 1) return null;
-      if (variable.references.some((reference) => reference.isWrite() && !reference.init))
-        return null;
+      if (variable.references.some((reference) => reference.isWrite() && !reference.init)) return null;
       const definition = variable.defs[0];
       if (definition === undefined || definition.type !== 'Variable') return null;
       const declarator = definition.node;
@@ -522,12 +509,7 @@ export const rule = defineRule({
       return isStringRooted(declarator.init, seen, depth + 1, trace);
     };
 
-    const stringCall = (
-      expression: ESTree.Node,
-      seen: Set<number>,
-      depth: number,
-      trace: StringRootTrace,
-    ): boolean => {
+    const stringCall = (expression: ESTree.Node, seen: Set<number>, depth: number, trace: StringRootTrace): boolean => {
       if (expression.type !== 'CallExpression') return false;
       const callee = unwrap(expression.callee);
 
@@ -540,8 +522,7 @@ export const rule = defineRule({
         return isStringRooted(first, seen, depth + 1, trace);
       }
 
-      if (callee.type === 'MemberExpression')
-        return stringMethod(callee, expression.arguments, seen, depth, trace);
+      if (callee.type === 'MemberExpression') return stringMethod(callee, expression.arguments, seen, depth, trace);
 
       return importedStringPipeline(callee, expression.arguments, seen, depth, trace);
     };
@@ -553,11 +534,7 @@ export const rule = defineRule({
       trace: StringRootTrace,
     ): boolean => {
       // `pipe(Schema.String, Schema.brand('X'))`.
-      if (
-        callee.type === 'Identifier' &&
-        locals.pipe.has(callee.name) &&
-        resolvesToImport(callee, callee.name)
-      ) {
+      if (callee.type === 'Identifier' && locals.pipe.has(callee.name) && resolvesToImport(callee, callee.name)) {
         const first = args[0];
         if (first === undefined || first.type === 'SpreadElement') return false;
         return stringPipeline(first, args.slice(1), seen, depth, trace);
@@ -614,8 +591,7 @@ export const rule = defineRule({
       const expression = unwrap(node);
       if (expression.type !== 'Identifier') return null;
       const declarator = localDeclarator(expression, expression.name);
-      if (declarator === null || declarator.init === null || declarator.init === undefined)
-        return null;
+      if (declarator === null || declarator.init === null || declarator.init === undefined) return null;
       const init = unwrap(declarator.init);
       return init.type === 'ObjectExpression' ? init : null;
     };
@@ -680,27 +656,18 @@ export const rule = defineRule({
       if (type.type === 'TSStringKeyword') return true;
 
       if (type.type === 'TSTypeReference') return stringTypeAlias(type, seen, depth);
-      if (type.type === 'TSUnionType')
-        return stringTypeMembers(type.types, seen, depth, NULLISH_KEYWORDS);
+      if (type.type === 'TSUnionType') return stringTypeMembers(type.types, seen, depth, NULLISH_KEYWORDS);
       if (type.type === 'TSIntersectionType')
         return stringTypeMembers(type.types, seen, depth, new Set(['TSTypeLiteral']));
       return false;
     };
 
-    const stringTypeAlias = (
-      type: ESTree.TSTypeReference,
-      seen: Set<string>,
-      depth: number,
-    ): boolean => {
+    const stringTypeAlias = (type: ESTree.TSTypeReference, seen: Set<string>, depth: number): boolean => {
       const name = type.typeName;
       if (name.type !== 'Identifier' || seen.has(name.name)) return false;
       const variable = lookupVariable(context, name, name.name);
       const definition = variable?.defs.length === 1 ? variable.defs[0] : undefined;
-      if (
-        definition?.node.type !== 'TSTypeAliasDeclaration' ||
-        definition.node.typeParameters != null
-      )
-        return false;
+      if (definition?.node.type !== 'TSTypeAliasDeclaration' || definition.node.typeParameters != null) return false;
       seen.add(name.name);
       return isPlainStringType(definition.node.typeAnnotation, seen, depth + 1);
     };
@@ -749,8 +716,7 @@ export const rule = defineRule({
     const isParameterTypeLiteral = (owner: ESTree.Node): boolean => {
       if (owner.type !== 'TSTypeLiteral') return false;
       const annotation = owner.parent;
-      if (annotation === null || annotation === undefined || annotation.type !== 'TSTypeAnnotation')
-        return false;
+      if (annotation === null || annotation === undefined || annotation.type !== 'TSTypeAnnotation') return false;
       const target = annotation.parent;
       if (target === null || target === undefined) return false;
       const owner2 = target.parent;
@@ -762,9 +728,7 @@ export const rule = defineRule({
     /** The declared member names of the interface body / type literal that owns a signature. */
     const siblingKeys = (owner: ESTree.Node): ReadonlySet<string> => {
       const members: readonly ESTree.Node[] =
-        owner.type === 'TSInterfaceBody'
-          ? owner.body
-          : ((owner as { members?: readonly ESTree.Node[] }).members ?? []);
+        owner.type === 'TSInterfaceBody' ? owner.body : ((owner as { members?: readonly ESTree.Node[] }).members ?? []);
       const names = new Set<string>();
       for (const member of members) {
         if (member.type !== 'TSPropertySignature') continue;
@@ -804,9 +768,7 @@ export const rule = defineRule({
       return null;
     };
 
-    const literalRegexSource = (
-      expression: Extract<ESTree.Node, { type: 'Literal' }>,
-    ): string | null => {
+    const literalRegexSource = (expression: Extract<ESTree.Node, { type: 'Literal' }>): string | null => {
       const regex = (expression as { regex?: { pattern: string } }).regex;
       if (regex !== undefined) return regex.pattern;
       return typeof expression.value === 'string' ? expression.value : null;
@@ -822,10 +784,7 @@ export const rule = defineRule({
       return text;
     };
 
-    const concatenatedRegexSource = (
-      expression: ESTree.BinaryExpression,
-      depth: number,
-    ): string | null => {
+    const concatenatedRegexSource = (expression: ESTree.BinaryExpression, depth: number): string | null => {
       const left = regexSource(expression.left, depth + 1);
       const right = regexSource(expression.right, depth + 1);
       return left === null && right === null ? null : `${left ?? ''}${right ?? ''}`;
@@ -851,9 +810,7 @@ export const rule = defineRule({
 
     const isTransparentCall = (call: ESTree.CallExpression): boolean => {
       const callee = unwrap(call.callee);
-      return (
-        callee.type === 'MemberExpression' && TRANSPARENT_METHODS.has(memberName(callee) ?? '')
-      );
+      return callee.type === 'MemberExpression' && TRANSPARENT_METHODS.has(memberName(callee) ?? '');
     };
 
     /** Walk out of `Schema.isPattern(...)` to the `.check(...)` / `.pipe(...)` that owns it. */
@@ -873,10 +830,7 @@ export const rule = defineRule({
 
     const reports: Array<{
       readonly node: ESTree.Node;
-      readonly messageId:
-        | 'stringTemporalField'
-        | 'handRolledTemporalCodec'
-        | 'stringTemporalMember';
+      readonly messageId: 'stringTemporalField' | 'handRolledTemporalCodec' | 'stringTemporalMember';
       readonly data: Record<string, string>;
       readonly start: number;
     }> = [];
@@ -903,10 +857,7 @@ export const rule = defineRule({
         return parent.parent;
       return enclosingPipe(result, parent);
     };
-    const enclosingPipe = (
-      result: ESTree.Node,
-      parent: ESTree.Node | null | undefined,
-    ): ESTree.Node | null => {
+    const enclosingPipe = (result: ESTree.Node, parent: ESTree.Node | null | undefined): ESTree.Node | null => {
       if (
         parent?.type === 'CallExpression' &&
         parent.arguments.some((argument) => argument === result) &&
@@ -927,8 +878,7 @@ export const rule = defineRule({
       if (!isCalendarDate && !isIsoTime) return;
       const target = enclosingCheck(call);
       const result = outerCodecResult(target);
-      if (result !== target && !isStringRooted(result, new Set(), 0, { viaReportedCodec: false }))
-        return;
+      if (result !== target && !isStringRooted(result, new Set(), 0, { viaReportedCodec: false })) return;
       codecSpans.push({ end: target.end, start: target.start });
       const owner = enclosingDeclarator(target);
       if (owner !== null) reportedCodecDeclarators.add(owner.start);
@@ -1008,8 +958,7 @@ export const rule = defineRule({
       },
       SpreadElement(node) {
         const container = node.parent;
-        if (container === null || container === undefined || container.type !== 'ObjectExpression')
-          return;
+        if (container === null || container === undefined || container.type !== 'ObjectExpression') return;
         const argument = unwrap(node.argument);
         if (argument.type === 'Identifier') spreads.push({ container, id: argument });
       },
@@ -1019,8 +968,7 @@ export const rule = defineRule({
       'Program:exit'() {
         reports.length = 0;
         codecSpans.length = 0;
-        const hasSchema =
-          locals.schema.size > 0 || locals.barrel.size > 0 || locals.members.size > 0;
+        const hasSchema = locals.schema.size > 0 || locals.barrel.size > 0 || locals.members.size > 0;
         if (hasSchema) {
           patternCalls.forEach(reportCodec);
           reportFields();
@@ -1028,7 +976,11 @@ export const rule = defineRule({
         if (options.includeTypeMembers) typeMembers.forEach(reportTypeMember);
         reports.sort((left, right) => left.start - right.start);
         for (const report of reports) {
-          context.report({ data: report.data, messageId: report.messageId, node: report.node });
+          context.report({
+            data: report.data,
+            messageId: report.messageId,
+            node: report.node,
+          });
         }
       },
     };

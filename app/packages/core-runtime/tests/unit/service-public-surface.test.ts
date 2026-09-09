@@ -1,4 +1,5 @@
 import { expect, it } from 'effect-rstest';
+
 import type {
   ContextAccessService,
   InstalledModuleCatalogServiceContract,
@@ -22,9 +23,7 @@ type PublicServiceContract =
   | SupportRecoveryPrincipalContextResolverService
   | TenantModuleStateServiceContract;
 
-const preservePublicServiceContract = <Service extends PublicServiceContract>(
-  service: Service,
-): Service => service;
+const preservePublicServiceContract = <Service extends PublicServiceContract>(service: Service): Service => service;
 
 it('exports the anti-slop-compliant Core service contracts', () => {
   expect(preservePublicServiceContract.length).toBe(1);

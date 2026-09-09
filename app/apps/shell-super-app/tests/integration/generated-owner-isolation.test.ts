@@ -1,27 +1,7 @@
-import { makeContextAccessDouble } from '../support/context-access-double.ts';
-import { TestClock } from 'effect/testing';
-import { expect, it } from 'effect-rstest';
-import { NodeServices } from '@effect/platform-node';
-import {
-  makeFaultInjectableCoreDatabase,
-  TestQueryHook,
-} from '../../../../packages/core-runtime/tests/support/database-faults.ts';
-import { SqlError, UnknownError } from 'effect/unstable/sql/SqlError';
-import {
-  Clock,
-  Config,
-  ConfigProvider,
-  Effect,
-  Layer,
-  Logger,
-  Predicate,
-  Redacted,
-  Schema,
-} from 'effect';
 import { randomUUID } from 'node:crypto';
 import { readFile } from 'node:fs/promises';
 import { pathToFileURL } from 'node:url';
-import { v1 } from '@authzed/authzed-node';
+
 import {
   ContextAccess,
   GatewayAssertionRedemptionService,
@@ -42,12 +22,18 @@ import type {
   TrustedPrincipalContext,
   VerticalRuntimeRegistration,
 } from '@app/core-runtime';
+import { v1 } from '@authzed/authzed-node';
+import { NodeServices } from '@effect/platform-node';
 import { defineEffectBff, HttpApiBuilder } from '@modern-js/plugin-bff/effect-edge';
 import type { EffectRuntimeLayer } from '@modern-js/plugin-bff/effect-edge';
+import { Clock, Config, ConfigProvider, Effect, Layer, Logger, Predicate, Redacted, Schema } from 'effect';
+import { expect, it } from 'effect-rstest';
+import { TestClock } from 'effect/testing';
 import { HttpApi } from 'effect/unstable/httpapi';
+import { SqlError, UnknownError } from 'effect/unstable/sql/SqlError';
 import { exportJWK, generateKeyPair } from 'jose';
 import { Pool } from 'pg';
-import { GatewayPrincipalVerifierLive } from '../../../../packages/gateway-principal-verifier/src/server.ts';
+
 import { makeActionRepository } from '../../../../packages/core-runtime/src/actions/repository.ts';
 import { makeActionRuntime } from '../../../../packages/core-runtime/src/actions/runtime.ts';
 import { loadDatabaseConnectionPair } from '../../../../packages/core-runtime/src/db/config.ts';
@@ -73,18 +59,17 @@ import {
   toSpiceDbActionObjectId,
 } from '../../../../packages/core-runtime/src/permissions/service.ts';
 import { makeReadRuntime } from '../../../../packages/core-runtime/src/reads/runtime.ts';
+import {
+  makeFaultInjectableCoreDatabase,
+  TestQueryHook,
+} from '../../../../packages/core-runtime/tests/support/database-faults.ts';
+import { GatewayPrincipalVerifierLive } from '../../../../packages/gateway-principal-verifier/src/server.ts';
 import { deriveOntosModuleDeploymentContract } from '../../../../scripts/generate-ontos-module-contract.mts';
-import {
-  issueGatewayContextAssertion,
-  makeGatewayIssuerLayer,
-} from '../../api/auth/gateway-issuer.ts';
 import type { GatewayIssuerConfigValue } from '../../api/auth/gateway-issuer-config.ts';
-import {
-  ShellGovernedReads,
-  createShellGovernedReadsLayer,
-} from '../../api/modules/shell-governed-reads.ts';
+import { issueGatewayContextAssertion, makeGatewayIssuerLayer } from '../../api/auth/gateway-issuer.ts';
 import { ShellInstalledModuleCatalog } from '../../api/modules/installed-module-catalog.ts';
 import { ShellCompositionFactoryLive } from '../../api/modules/shell-composition.ts';
+import { ShellGovernedReads, createShellGovernedReadsLayer } from '../../api/modules/shell-governed-reads.ts';
 import {
   ResourceRefSchema,
   ShellProviderUnavailableError,
@@ -92,14 +77,10 @@ import {
   makeShellSearch,
 } from '../../api/modules/shell-resources.ts';
 import type { ShellResourceGateways } from '../../api/modules/shell-resources.ts';
+import { makeContextAccessDouble } from '../support/context-access-double.ts';
 import { GENERATED_OWNER, createGeneratedOwnerFixture } from './generated-owner-fixture.ts';
 
-const withOptionalProperty = <
-  Base extends object,
-  Key extends PropertyKey,
-  Value,
-  Trailing extends object,
->(
+const withOptionalProperty = <Base extends object, Key extends PropertyKey, Value, Trailing extends object>(
   base: Base,
   condition: boolean,
   key: Key,
@@ -126,8 +107,7 @@ type OwnerHttpHandler = ReturnType<ReturnType<typeof defineEffectBff>['createHan
 const disposeOwnerHandlers = (handlers: readonly OwnerHttpHandler[]) =>
   Effect.forEach(
     handlers,
-    (handler) =>
-      Effect.tryPromise(() => handler.dispose()).pipe(Effect.catchCause(() => Effect.void)),
+    (handler) => Effect.tryPromise(() => handler.dispose()).pipe(Effect.catchCause(() => Effect.void)),
     { concurrency: 'unbounded', discard: true },
   );
 const OwnerDetailSchema = Schema.Struct({
@@ -144,9 +124,7 @@ const OwnerTimelineSchema = Schema.Struct({
   ),
   projectionLagging: Schema.Boolean,
 });
-const OwnerSearchSchema = Schema.Array(
-  Schema.Struct({ ref: ResourceRefSchema, title: Schema.String }),
-);
+const OwnerSearchSchema = Schema.Array(Schema.Struct({ ref: ResourceRefSchema, title: Schema.String }));
 interface GeneratedOwnerModules {
   // Generated source is imported from a temporary path, so TypeScript cannot retain the private
   // Action-registration symbols across the dynamic module boundary. Runtime checks below prove it.
@@ -191,8 +169,8 @@ const OwnerCountsSchema = Schema.Struct({
 const OwnerVerifierSchema = Schema.declare<GeneratedOwnerModules['verifyActionPrincipal']>(
   (value): value is GeneratedOwnerModules['verifyActionPrincipal'] => Predicate.isFunction(value),
 );
-const EffectRuntimeLayerSchema = Schema.declare<EffectRuntimeLayer>(
-  (value): value is EffectRuntimeLayer => Predicate.isObjectKeyword(value),
+const EffectRuntimeLayerSchema = Schema.declare<EffectRuntimeLayer>((value): value is EffectRuntimeLayer =>
+  Predicate.isObjectKeyword(value),
 );
 const isEffectRuntimeLayer = Schema.is(EffectRuntimeLayerSchema);
 const requiredValue = <Value>(value: Value | null | undefined, label: string): Value => {
@@ -201,15 +179,9 @@ const requiredValue = <Value>(value: Value | null | undefined, label: string): V
   }
   return value;
 };
-const isOperationContextDenied = Schema.is(
-  Schema.Struct({ _tag: Schema.Literal('OperationContextDenied') }),
-);
-const isCreateRecordRejected = Schema.is(
-  Schema.Struct({ _tag: Schema.Literal('CreateRecordRejected') }),
-);
-const isActionHandlerExecutionError = Schema.is(
-  Schema.Struct({ _tag: Schema.Literal('ActionHandlerExecutionError') }),
-);
+const isOperationContextDenied = Schema.is(Schema.Struct({ _tag: Schema.Literal('OperationContextDenied') }));
+const isCreateRecordRejected = Schema.is(Schema.Struct({ _tag: Schema.Literal('CreateRecordRejected') }));
+const isActionHandlerExecutionError = Schema.is(Schema.Struct({ _tag: Schema.Literal('ActionHandlerExecutionError') }));
 const relationship = (
   resourceType: string,
   resourceId: string,
@@ -219,9 +191,15 @@ const relationship = (
 ) =>
   v1.Relationship.create({
     relation,
-    resource: v1.ObjectReference.create({ objectId: resourceId, objectType: resourceType }),
+    resource: v1.ObjectReference.create({
+      objectId: resourceId,
+      objectType: resourceType,
+    }),
     subject: v1.SubjectReference.create({
-      object: v1.ObjectReference.create({ objectId: subjectId, objectType: subjectType }),
+      object: v1.ObjectReference.create({
+        objectId: subjectId,
+        objectType: subjectType,
+      }),
     }),
   });
 const makeCatalog = (contract: OntosModuleDeploymentContract): InstalledModuleCatalog =>
@@ -268,19 +246,14 @@ const loadClientWiring = Effect.fnUntraced(function* loadClientWiring(
     detailClient:
       detailClient !== undefined &&
       Predicate.isFunction(
-        Object.getOwnPropertyDescriptor(detailClient, 'executeResourceDetailWithAuthorization')
-          ?.value,
+        Object.getOwnPropertyDescriptor(detailClient, 'executeResourceDetailWithAuthorization')?.value,
       ),
     listClient:
       listClient !== undefined &&
-      Predicate.isFunction(
-        Object.getOwnPropertyDescriptor(listClient, 'executeResourceListWithAuthorization')?.value,
-      ),
+      Predicate.isFunction(Object.getOwnPropertyDescriptor(listClient, 'executeResourceListWithAuthorization')?.value),
     searchClient:
       searchClient !== undefined &&
-      Predicate.isFunction(
-        Object.getOwnPropertyDescriptor(searchClient, 'loadRecordsClientWithAuthorization')?.value,
-      ),
+      Predicate.isFunction(Object.getOwnPropertyDescriptor(searchClient, 'loadRecordsClientWithAuthorization')?.value),
   };
 });
 
@@ -296,61 +269,44 @@ const loadGeneratedOwner = Effect.fnUntraced(function* runIntegration1(
     );
     return yield* Schema.decodeUnknownEffect(DynamicModuleSchema)(importedModule);
   });
-  const [
-    detailApi,
-    detailServer,
-    listApi,
-    listServer,
-    searchApi,
-    searchServer,
-    verifier,
-    state,
-    registrationOwner,
-  ] = yield* Effect.all(
-    [
-      load('shared/apis/resource-detail.ts'),
-      load('api/resource-detail-read-server.ts'),
-      load('shared/apis/resource-list.ts'),
-      load('api/resource-list-read-server.ts'),
-      load('shared/apis/records-search.ts'),
-      load('api/records-search-server.ts'),
-      load('api/auth/action-principal.ts'),
-      load('src/isolation/instrumentation.ts'),
-      load('vertical.registration.ts'),
-    ],
-    { concurrency: 'unbounded' },
-  );
+  const [detailApi, detailServer, listApi, listServer, searchApi, searchServer, verifier, state, registrationOwner] =
+    yield* Effect.all(
+      [
+        load('shared/apis/resource-detail.ts'),
+        load('api/resource-detail-read-server.ts'),
+        load('shared/apis/resource-list.ts'),
+        load('api/resource-list-read-server.ts'),
+        load('shared/apis/records-search.ts'),
+        load('api/records-search-server.ts'),
+        load('api/auth/action-principal.ts'),
+        load('src/isolation/instrumentation.ts'),
+        load('vertical.registration.ts'),
+      ],
+      { concurrency: 'unbounded' },
+    );
   const registration = yield* Schema.decodeUnknownEffect(VerticalRuntimeRegistrationSchema)(
     registrationOwner['isolationOwnerRegistration'],
   );
   const actions = getVerticalRuntimeActions(registration);
   const entrypoints = getVerticalRuntimeEntrypoints(registration);
   const wiring = yield* loadClientWiring(entrypoints);
-  const generatedAction = actions.find(
-    ({ descriptor }) => descriptor.actionKey === GENERATED_OWNER.actionKey,
-  );
+  const generatedAction = actions.find(({ descriptor }) => descriptor.actionKey === GENERATED_OWNER.actionKey);
   if (generatedAction === undefined) {
     throw new TypeError('Generated Action is missing from the owner runtime registration');
   }
   return {
     action: generatedAction,
-    counts: yield* Schema.decodeUnknownEffect(OwnerCountsSchema)(
-      state['generatedOwnerHandlerCounts'],
-    ),
+    counts: yield* Schema.decodeUnknownEffect(OwnerCountsSchema)(state['generatedOwnerHandlerCounts']),
     detail: makeOwnerHandler(
       yield* Schema.decodeUnknownEffect(OwnerApiSchema)(detailApi['ResourceDetailApi']),
-      yield* Schema.decodeUnknownEffect(OwnerGroupLayerSchema)(
-        detailServer['resourceDetailReadApiLive'],
-      ),
+      yield* Schema.decodeUnknownEffect(OwnerGroupLayerSchema)(detailServer['resourceDetailReadApiLive']),
       runtime,
       loggerLayer,
       configLayer,
     ),
     list: makeOwnerHandler(
       yield* Schema.decodeUnknownEffect(OwnerApiSchema)(listApi['ResourceListApi']),
-      yield* Schema.decodeUnknownEffect(OwnerGroupLayerSchema)(
-        listServer['resourceListReadApiLive'],
-      ),
+      yield* Schema.decodeUnknownEffect(OwnerGroupLayerSchema)(listServer['resourceListReadApiLive']),
       runtime,
       loggerLayer,
       configLayer,
@@ -362,9 +318,7 @@ const loadGeneratedOwner = Effect.fnUntraced(function* runIntegration1(
       loggerLayer,
       configLayer,
     ),
-    verifyActionPrincipal: yield* Schema.decodeUnknownEffect(OwnerVerifierSchema)(
-      verifier['verifyActionPrincipal'],
-    ),
+    verifyActionPrincipal: yield* Schema.decodeUnknownEffect(OwnerVerifierSchema)(verifier['verifyActionPrincipal']),
     wiring,
   };
 });
@@ -394,10 +348,7 @@ const decodeResponse = Effect.fnUntraced(function* runIntegration4<
 >(response: Response, schema: ResponseSchema) {
   return yield* Schema.decodeUnknownEffect(schema)(yield* Effect.tryPromise(() => response.json()));
 });
-const createOwnerSchema = Effect.fnUntraced(function* runIntegration5(
-  admin: Pool,
-  schemaName: string,
-) {
+const createOwnerSchema = Effect.fnUntraced(function* runIntegration5(admin: Pool, schemaName: string) {
   const tenantPredicate = `tenant_id = nullif(current_setting('ontos.tenant_id', true), '')::uuid`;
   const entityPredicate = `${tenantPredicate} and legal_entity_id = nullif(current_setting('ontos.legal_entity_id', true), '')::uuid`;
   // Dynamic identifiers are generated locally from UUID hex and never accept external input.
@@ -423,16 +374,9 @@ const createOwnerSchema = Effect.fnUntraced(function* runIntegration5(
     )
   `),
   );
-  const configureTable = Effect.fnUntraced(function* runIntegration6(
-    table: string,
-    predicate: string,
-  ) {
-    yield* Effect.tryPromise(() =>
-      admin.query(`alter table ${schemaName}.${table} enable row level security`),
-    );
-    yield* Effect.tryPromise(() =>
-      admin.query(`alter table ${schemaName}.${table} force row level security`),
-    );
+  const configureTable = Effect.fnUntraced(function* runIntegration6(table: string, predicate: string) {
+    yield* Effect.tryPromise(() => admin.query(`alter table ${schemaName}.${table} enable row level security`));
+    yield* Effect.tryPromise(() => admin.query(`alter table ${schemaName}.${table} force row level security`));
     yield* Effect.tryPromise(() =>
       admin.query(
         `create policy ${table}_select on ${schemaName}.${table} for select to ontos_runtime using (${predicate})`,
@@ -455,19 +399,12 @@ const createOwnerSchema = Effect.fnUntraced(function* runIntegration5(
     );
   });
   yield* Effect.all(
-    [
-      configureTable('tenant_records', tenantPredicate),
-      configureTable('entity_records', entityPredicate),
-    ],
+    [configureTable('tenant_records', tenantPredicate), configureTable('entity_records', entityPredicate)],
     { concurrency: 'unbounded' },
   );
+  yield* Effect.tryPromise(() => admin.query(`grant usage on schema ${schemaName} to ontos_runtime`));
   yield* Effect.tryPromise(() =>
-    admin.query(`grant usage on schema ${schemaName} to ontos_runtime`),
-  );
-  yield* Effect.tryPromise(() =>
-    admin.query(
-      `grant select, insert, update, delete on all tables in schema ${schemaName} to ontos_runtime`,
-    ),
+    admin.query(`grant select, insert, update, delete on all tables in schema ${schemaName} to ontos_runtime`),
   );
 });
 type CoreDatabaseService = Parameters<typeof makeActionRuntime>[0];
@@ -519,9 +456,8 @@ const capturedLoggerLayer = (entries: string[]) =>
       entries.push(JSON.stringify(Logger.formatStructured.log(options)));
     }),
   ]);
-const ignoreOperationFailure = <Value, Failure>(
-  operation: () => Effect.Effect<Value, Failure>,
-): Effect.Effect<void> => operation().pipe(Effect.ignore);
+const ignoreOperationFailure = <Value, Failure>(operation: () => Effect.Effect<Value, Failure>): Effect.Effect<void> =>
+  operation().pipe(Effect.ignore);
 const principal = (
   tenantId: string,
   legalEntityId: string,
@@ -538,9 +474,9 @@ const principal = (
 it.live(
   'Codesmith composes the disposable owner Action and receiving read BFFs',
   Effect.fnUntraced(function* runIntegration7() {
-    const fixture = yield* createGeneratedOwnerFixture(
-      `generated_owner_${randomUUID().replaceAll('-', '')}`,
-    ).pipe(Effect.provide(NodeServices.layer));
+    const fixture = yield* createGeneratedOwnerFixture(`generated_owner_${randomUUID().replaceAll('-', '')}`).pipe(
+      Effect.provide(NodeServices.layer),
+    );
     const contract = yield* deriveOntosModuleDeploymentContract({
       vertical: GENERATED_OWNER.slug,
       workspaceRoot: fixture.root,
@@ -563,7 +499,12 @@ it.live(
     expect(makeCatalog(contract).getByModuleId(GENERATED_OWNER.moduleId)).toEqual(contract);
     expect(generated.action.descriptor.actionKey).toBe(GENERATED_OWNER.actionKey);
     expect(generated.action.descriptor.legalEntityScope).toBe('required');
-    expect(generated.counts).toEqual({ action: 0, detail: 0, list: 0, search: 0 });
+    expect(generated.counts).toEqual({
+      action: 0,
+      detail: 0,
+      list: 0,
+      search: 0,
+    });
     expect(generated.wiring).toEqual({
       action: true,
       detailClient: true,
@@ -608,9 +549,7 @@ it.live(
       (pool) => Effect.tryPromise(() => pool.end()).pipe(Effect.orDie),
     );
     const runtimeDatabase = yield* makeFaultInjectableCoreDatabase(connections.runtime);
-    const fixture = yield* createGeneratedOwnerFixture(schemaName).pipe(
-      Effect.provide(NodeServices.layer),
-    );
+    const fixture = yield* createGeneratedOwnerFixture(schemaName).pipe(Effect.provide(NodeServices.layer));
     const contract = yield* deriveOntosModuleDeploymentContract({
       vertical: GENERATED_OWNER.slug,
       workspaceRoot: fixture.root,
@@ -621,28 +560,16 @@ it.live(
     const spiceAdmin = v1.NewClient(
       testSpiceDb.preSharedKey,
       testSpiceDb.endpoint,
-      testSpiceDb.insecureLocal
-        ? v1.ClientSecurity.INSECURE_LOCALHOST_ALLOWED
-        : v1.ClientSecurity.SECURE,
+      testSpiceDb.insecureLocal ? v1.ClientSecurity.INSECURE_LOCALHOST_ALLOWED : v1.ClientSecurity.SECURE,
     );
     const permissionClient = createSpiceDbPermissionClient(testSpiceDb, SPICEDB_CHECK_TIMEOUT_MS);
     const contextAccess = makeContextAccess(permissionClient);
     const moduleStates = makeTenantModuleStateService(runtimeDatabase);
     const moduleStateGate = makeModuleStateGate(moduleStates);
     const moduleGateway = makeModuleEntrypointGateway(moduleStateGate);
-    const scopeResolver = makeOperationalScopeResolver(
-      makeOperationalScopeRepository(runtimeDatabase),
-      contextAccess,
-    );
-    const readRuntime = makeReadRuntime(
-      runtimeDatabase,
-      moduleGateway,
-      scopeResolver,
-      contextAccess,
-    );
-    const keyPair = yield* Effect.tryPromise(() =>
-      generateKeyPair('EdDSA', { crv: 'Ed25519', extractable: true }),
-    );
+    const scopeResolver = makeOperationalScopeResolver(makeOperationalScopeRepository(runtimeDatabase), contextAccess);
+    const readRuntime = makeReadRuntime(runtimeDatabase, moduleGateway, scopeResolver, contextAccess);
+    const keyPair = yield* Effect.tryPromise(() => generateKeyPair('EdDSA', { crv: 'Ed25519', extractable: true }));
     const privateJwk = yield* Effect.tryPromise(() => exportJWK(keyPair.privateKey));
     const publicJwk = yield* Effect.tryPromise(() => exportJWK(keyPair.publicKey));
     const issuerConfiguration: GatewayIssuerConfigValue = {
@@ -674,17 +601,10 @@ it.live(
       testClockLayer,
       ConfigProvider.layer(ConfigProvider.fromUnknown(verifierEnvironment)),
     );
-    const generated = yield* loadGeneratedOwner(
-      fixture.verticalRoot,
-      readRuntime,
-      loggerLayer,
-      verifierConfigLayer,
-    );
+    const generated = yield* loadGeneratedOwner(fixture.verticalRoot, readRuntime, loggerLayer, verifierConfigLayer);
     const handlers: OwnerHttpHandler[] = [generated.detail, generated.list, generated.search];
     let assertionCount = 0;
-    const issueAuthorization = Effect.fnUntraced(function* runIntegration10(
-      principalContext: TrustedPrincipalContext,
-    ) {
+    const issueAuthorization = Effect.fnUntraced(function* runIntegration10(principalContext: TrustedPrincipalContext) {
       return yield* issueGatewayContextAssertion({
         audience: GENERATED_OWNER.appId,
         principal: principalContext,
@@ -708,9 +628,7 @@ it.live(
     });
     const principalA1 = principal(tenantA, entityA1, principalA, bindingA);
     const principalB1 = principal(tenantB, entityB1, principalB, bindingB);
-    const issueProviderAuthorization = Effect.fnUntraced(function* runIntegration11(
-      context: TrustedPrincipalContext,
-    ) {
+    const issueProviderAuthorization = Effect.fnUntraced(function* runIntegration11(context: TrustedPrincipalContext) {
       return yield* issueAuthorization(
         withOptionalProperty(
           withOptionalProperty(
@@ -751,42 +669,18 @@ it.live(
     const touchedObjects: readonly [string, string][] = [
       ['tenant', tenantA],
       ['tenant', tenantB],
+      ['legal_entity', requiredValue(toLegalEntityAccessObjectId(tenantA, entityA1), 'Tenant A legal entity')],
+      ['legal_entity', requiredValue(toLegalEntityAccessObjectId(tenantB, entityB1), 'Tenant B legal entity')],
       [
-        'legal_entity',
-        requiredValue(toLegalEntityAccessObjectId(tenantA, entityA1), 'Tenant A legal entity'),
-      ],
-      [
-        'legal_entity',
-        requiredValue(toLegalEntityAccessObjectId(tenantB, entityB1), 'Tenant B legal entity'),
+        'module_access',
+        requiredValue(toModuleAccessObjectId(tenantA, entityA1, GENERATED_OWNER.moduleId), 'Tenant A module access'),
       ],
       [
         'module_access',
-        requiredValue(
-          toModuleAccessObjectId(tenantA, entityA1, GENERATED_OWNER.moduleId),
-          'Tenant A module access',
-        ),
+        requiredValue(toModuleAccessObjectId(tenantB, entityB1, GENERATED_OWNER.moduleId), 'Tenant B module access'),
       ],
-      [
-        'module_access',
-        requiredValue(
-          toModuleAccessObjectId(tenantB, entityB1, GENERATED_OWNER.moduleId),
-          'Tenant B module access',
-        ),
-      ],
-      [
-        'resource',
-        requiredValue(
-          toResourceAccessObjectId(tenantA, entityA1, resourceRef),
-          'Tenant A resource',
-        ),
-      ],
-      [
-        'resource',
-        requiredValue(
-          toResourceAccessObjectId(tenantB, entityB1, resourceRef),
-          'Tenant B resource',
-        ),
-      ],
+      ['resource', requiredValue(toResourceAccessObjectId(tenantA, entityA1, resourceRef), 'Tenant A resource')],
+      ['resource', requiredValue(toResourceAccessObjectId(tenantB, entityB1, resourceRef), 'Tenant B resource')],
       ['action', toSpiceDbActionObjectId(GENERATED_OWNER.actionKey)],
     ];
     yield* Effect.acquireRelease(
@@ -813,88 +707,56 @@ it.live(
         const cleanupQueries = [
           Effect.fnUntraced(function* runIntegration15() {
             return yield* Effect.tryPromise(() =>
-              admin.query('delete from core.outbox_messages where tenant_id in ($1, $2)', [
-                tenantA,
-                tenantB,
-              ]),
+              admin.query('delete from core.outbox_messages where tenant_id in ($1, $2)', [tenantA, tenantB]),
             );
           }),
           Effect.fnUntraced(function* runIntegration16() {
             return yield* Effect.tryPromise(() =>
-              admin.query('delete from core.domain_events where tenant_id in ($1, $2)', [
-                tenantA,
-                tenantB,
-              ]),
+              admin.query('delete from core.domain_events where tenant_id in ($1, $2)', [tenantA, tenantB]),
             );
           }),
           Effect.fnUntraced(function* runIntegration17() {
             return yield* Effect.tryPromise(() =>
-              admin.query('delete from core.data_access_events where tenant_id in ($1, $2)', [
-                tenantA,
-                tenantB,
-              ]),
+              admin.query('delete from core.data_access_events where tenant_id in ($1, $2)', [tenantA, tenantB]),
             );
           }),
           Effect.fnUntraced(function* runIntegration18() {
             return yield* Effect.tryPromise(() =>
-              admin.query('delete from core.audit_events where tenant_id in ($1, $2)', [
-                tenantA,
-                tenantB,
-              ]),
+              admin.query('delete from core.audit_events where tenant_id in ($1, $2)', [tenantA, tenantB]),
             );
           }),
           Effect.fnUntraced(function* runIntegration19() {
             return yield* Effect.tryPromise(() =>
-              admin.query('delete from core.action_invocations where tenant_id in ($1, $2)', [
-                tenantA,
-                tenantB,
-              ]),
+              admin.query('delete from core.action_invocations where tenant_id in ($1, $2)', [tenantA, tenantB]),
             );
           }),
           Effect.fnUntraced(function* runIntegration20() {
             return yield* Effect.tryPromise(() =>
-              admin.query('delete from core.tenant_module_states where tenant_id in ($1, $2)', [
-                tenantA,
-                tenantB,
-              ]),
+              admin.query('delete from core.tenant_module_states where tenant_id in ($1, $2)', [tenantA, tenantB]),
             );
           }),
           Effect.fnUntraced(function* runIntegration21() {
             return yield* Effect.tryPromise(() =>
-              admin.query('delete from core.principal_auth_bindings where tenant_id in ($1, $2)', [
-                tenantA,
-                tenantB,
-              ]),
+              admin.query('delete from core.principal_auth_bindings where tenant_id in ($1, $2)', [tenantA, tenantB]),
             );
           }),
           Effect.fnUntraced(function* runIntegration22() {
             return yield* Effect.tryPromise(() =>
-              admin.query('delete from core.principals where tenant_id in ($1, $2)', [
-                tenantA,
-                tenantB,
-              ]),
+              admin.query('delete from core.principals where tenant_id in ($1, $2)', [tenantA, tenantB]),
             );
           }),
           Effect.fnUntraced(function* runIntegration23() {
             return yield* Effect.tryPromise(() =>
-              admin.query('delete from core.legal_entities where tenant_id in ($1, $2)', [
-                tenantA,
-                tenantB,
-              ]),
+              admin.query('delete from core.legal_entities where tenant_id in ($1, $2)', [tenantA, tenantB]),
             );
           }),
           Effect.fnUntraced(function* runIntegration24() {
             return yield* Effect.tryPromise(() =>
-              admin.query('delete from core.tenants where tenant_id in ($1, $2)', [
-                tenantA,
-                tenantB,
-              ]),
+              admin.query('delete from core.tenants where tenant_id in ($1, $2)', [tenantA, tenantB]),
             );
           }),
           Effect.fnUntraced(function* runIntegration25() {
-            return yield* Effect.tryPromise(() =>
-              admin.query(`drop schema if exists ${schemaName} cascade`),
-            );
+            return yield* Effect.tryPromise(() => admin.query(`drop schema if exists ${schemaName} cascade`));
           }),
         ];
         yield* Effect.forEach(cleanupQueries, ignoreOperationFailure, {
@@ -936,16 +798,7 @@ it.live(
     yield* Effect.tryPromise(() =>
       admin.query(
         `insert into core.principal_auth_bindings (principal_auth_binding_id, tenant_id, principal_id, provider, subject_type, provider_subject_id, status) values ($1, $3, $5, 'better_auth', 'user', $7, 'active'), ($2, $4, $6, 'better_auth', 'user', $8, 'active')`,
-        [
-          bindingA,
-          bindingB,
-          tenantA,
-          tenantB,
-          principalA,
-          principalB,
-          `user-${principalA}`,
-          `user-${principalB}`,
-        ],
+        [bindingA, bindingB, tenantA, tenantB, principalA, principalB, `user-${principalA}`, `user-${principalB}`],
       ),
     );
     yield* Effect.tryPromise(() =>
@@ -966,14 +819,8 @@ it.live(
         [tenantA, entityA1, entityA2, tenantB, entityB1, entityB2, collidingResourceId],
       ),
     );
-    const legalA = requiredValue(
-      toLegalEntityAccessObjectId(tenantA, entityA1),
-      'Tenant A legal entity',
-    );
-    const legalB = requiredValue(
-      toLegalEntityAccessObjectId(tenantB, entityB1),
-      'Tenant B legal entity',
-    );
+    const legalA = requiredValue(toLegalEntityAccessObjectId(tenantA, entityA1), 'Tenant A legal entity');
+    const legalB = requiredValue(toLegalEntityAccessObjectId(tenantB, entityB1), 'Tenant B legal entity');
     const moduleA = requiredValue(
       toModuleAccessObjectId(tenantA, entityA1, GENERATED_OWNER.moduleId),
       'Tenant A module access',
@@ -982,14 +829,8 @@ it.live(
       toModuleAccessObjectId(tenantB, entityB1, GENERATED_OWNER.moduleId),
       'Tenant B module access',
     );
-    const resourceA = requiredValue(
-      toResourceAccessObjectId(tenantA, entityA1, resourceRef),
-      'Tenant A resource',
-    );
-    const resourceB = requiredValue(
-      toResourceAccessObjectId(tenantB, entityB1, resourceRef),
-      'Tenant B resource',
-    );
+    const resourceA = requiredValue(toResourceAccessObjectId(tenantA, entityA1, resourceRef), 'Tenant A resource');
+    const resourceB = requiredValue(toResourceAccessObjectId(tenantB, entityB1, resourceRef), 'Tenant B resource');
     const actionId = toSpiceDbActionObjectId(GENERATED_OWNER.actionKey);
     const relationships = [
       relationship('tenant', tenantA, 'member', 'principal', principalA),
@@ -1142,11 +983,7 @@ it.live(
         catalog: Effect.succeed(catalog),
         contextAccess,
         issueAssertion: Effect.fnUntraced(
-          function* integrationEffect29({
-            context,
-          }: {
-            readonly context: TrustedPrincipalContext;
-          }) {
+          function* integrationEffect29({ context }: { readonly context: TrustedPrincipalContext }) {
             return yield* issueProviderAuthorization(context);
           },
           Effect.catchCause(() => Effect.fail(new ShellProviderUnavailableError())),
@@ -1157,7 +994,11 @@ it.live(
     );
     expect(
       yield* directShellSearch.search(
-        { ...principalA1, correlationId: randomUUID(), legalEntityId: entityA1 },
+        {
+          ...principalA1,
+          correlationId: randomUUID(),
+          legalEntityId: entityA1,
+        },
         'searchable',
       ),
     ).toEqual({
@@ -1168,11 +1009,7 @@ it.live(
       gateway,
       {
         issueAssertion: Effect.fnUntraced(
-          function* integrationEffect30({
-            context,
-          }: {
-            readonly context: TrustedPrincipalContext;
-          }) {
+          function* integrationEffect30({ context }: { readonly context: TrustedPrincipalContext }) {
             return yield* issueProviderAuthorization(context);
           },
           Effect.catchCause(() => Effect.fail(new ShellProviderUnavailableError())),
@@ -1185,7 +1022,9 @@ it.live(
           Layer.succeed(ReadRuntime, readRuntime),
           Layer.succeed(ContextAccess, contextAccess),
           Layer.succeed(TenantModuleStateService, moduleStates),
-          Layer.succeed(ShellInstalledModuleCatalog, { load: Effect.succeed(catalog) }),
+          Layer.succeed(ShellInstalledModuleCatalog, {
+            load: Effect.succeed(catalog),
+          }),
           ShellCompositionFactoryLive,
           ShellResourceServicesFactoryLive,
         ),
@@ -1246,10 +1085,7 @@ it.live(
     expect(generated.counts).toEqual(beforeForgedShell);
     expect(assertionCount).toBe(9);
     yield* Effect.all(
-      [
-        principal(tenantA, entityA2, principalA, bindingA),
-        principal(tenantB, entityB1, principalA, bindingA),
-      ].map(
+      [principal(tenantA, entityA2, principalA, bindingA), principal(tenantB, entityB1, principalA, bindingA)].map(
         Effect.fnUntraced(function* runIntegration31(forgedPrincipal) {
           const authorization = yield* issueAuthorization(forgedPrincipal);
           const response = yield* requestOwner(
@@ -1261,9 +1097,7 @@ it.live(
           );
           expect(response.status).toBe(403);
           const problem = JSON.stringify(yield* Effect.tryPromise(() => response.json()));
-          expect(problem).not.toMatch(
-            new RegExp([tenantA, tenantB, entityA2, entityB1].join('|'), 'u'),
-          );
+          expect(problem).not.toMatch(new RegExp([tenantA, tenantB, entityA2, entityB1].join('|'), 'u'));
           expect(problem).not.toMatch(/postgres|spicedb|permission check|row-level/iu);
         }),
       ),
@@ -1342,11 +1176,7 @@ it.live(
       loggerLayer,
       verifierConfigLayer,
     );
-    handlers.push(
-      evidenceFailureOwner.detail,
-      evidenceFailureOwner.list,
-      evidenceFailureOwner.search,
-    );
+    handlers.push(evidenceFailureOwner.detail, evidenceFailureOwner.list, evidenceFailureOwner.search);
     const evidenceFailureResponse = yield* requestOwner(
       evidenceFailureOwner.detail,
       '/reads/resource-detail',
@@ -1355,9 +1185,9 @@ it.live(
       randomUUID(),
     );
     expect(evidenceFailureResponse.status).toBe(503);
-    expect(
-      JSON.stringify(yield* Effect.tryPromise(() => evidenceFailureResponse.json())),
-    ).not.toMatch(/A1 searchable/u);
+    expect(JSON.stringify(yield* Effect.tryPromise(() => evidenceFailureResponse.json()))).not.toMatch(
+      /A1 searchable/u,
+    );
     const actionRuntime = makeActionRuntime(
       runtimeDatabase,
       makeActionRepository(),
@@ -1430,11 +1260,9 @@ it.live(
         },
       ].map(
         Effect.fnUntraced(function* runIntegration33(payload) {
-          expect(
-            isCreateRecordRejected(
-              yield* Effect.flip(invokeAction(principalA1, payload, randomUUID())),
-            ),
-          ).toBe(true);
+          expect(isCreateRecordRejected(yield* Effect.flip(invokeAction(principalA1, payload, randomUUID())))).toBe(
+            true,
+          );
         }),
       ),
     );
@@ -1477,9 +1305,7 @@ it.live(
         legal_entity_id: string;
         tenant_id: string;
         title: string;
-      }>(
-        `select tenant_id, legal_entity_id, title from ${schemaName}.entity_records order by title`,
-      ),
+      }>(`select tenant_id, legal_entity_id, title from ${schemaName}.entity_records order by title`),
     );
     expect(ownerRows.rows.some(({ title }) => title === 'A1 action write')).toBe(true);
     expect(ownerRows.rows.some(({ title }) => title.startsWith('forbidden'))).toBe(false);
@@ -1499,28 +1325,18 @@ it.live(
     const unscopedEntityRows = yield* Effect.tryPromise(() =>
       runtimePool.query(`select * from ${schemaName}.entity_records`),
     );
-    expect(
-      unscopedEntityRows.rowCount,
-      'a reused pooled connection must not retain transaction-local scope',
-    ).toBe(0);
+    expect(unscopedEntityRows.rowCount, 'a reused pooled connection must not retain transaction-local scope').toBe(0);
     const unscopedTenantRows = yield* Effect.tryPromise(() =>
       runtimePool.query(`select * from ${schemaName}.tenant_records`),
     );
     expect(unscopedTenantRows.rowCount).toBe(0);
-    expect(capturedLogs.length > 0, 'the generated-owner path must capture runtime logs').toBe(
-      true,
-    );
+    expect(capturedLogs.length > 0, 'the generated-owner path must capture runtime logs').toBe(true);
     const capturedLogText = capturedLogs.join('\n');
     expect(capturedLogText).toMatch(/Unexpected Action execution defect/u);
     expect(capturedLogText).not.toMatch(
-      new RegExp(
-        [tenantB, entityA2, entityB1, entityB2, principalB, bindingB, deniedResourceId].join('|'),
-        'u',
-      ),
+      new RegExp([tenantB, entityA2, entityB1, entityB2, principalB, bindingB, deniedResourceId].join('|'), 'u'),
     );
-    expect(capturedLogText).not.toMatch(
-      /postgres|spicedb|row-level|database operation scope|permission check/iu,
-    );
+    expect(capturedLogText).not.toMatch(/postgres|spicedb|row-level|database operation scope|permission check/iu);
     const generatedActionSource = yield* Effect.tryPromise(() =>
       readFile(`${fixture.verticalRoot}/src/actions/create-record.action.ts`, 'utf-8'),
     );

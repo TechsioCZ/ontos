@@ -1,5 +1,6 @@
 import { Context } from 'effect';
 import type { Effect } from 'effect';
+
 import type { TrustedPrincipalContext } from '../actions/principal-context.ts';
 import type { OperationContextUnavailable } from './errors.ts';
 

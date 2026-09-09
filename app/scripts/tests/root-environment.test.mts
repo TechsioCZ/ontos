@@ -1,11 +1,11 @@
-import { expect, it } from 'effect-rstest';
-import { Effect } from 'effect';
-
 import { spawnSync } from 'node:child_process';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+
+import { Effect } from 'effect';
+import { expect, it } from 'effect-rstest';
 
 const appRoot = path.resolve(import.meta.dirname, '../..');
 const repositoryRoot = path.dirname(appRoot);
@@ -14,16 +14,7 @@ const expectedEnvironmentPath = path.join(appRoot, '.env');
 it('apps contain no environment files that can override the app-root .env', () => {
   const result = spawnSync(
     '/usr/bin/find',
-    [
-      path.join(appRoot, 'apps'),
-      '-type',
-      'f',
-      '-name',
-      '.env*',
-      '-not',
-      '-path',
-      '*/node_modules/*',
-    ],
+    [path.join(appRoot, 'apps'), '-type', 'f', '-name', '.env*', '-not', '-path', '*/node_modules/*'],
     { encoding: 'utf-8' },
   );
 
@@ -53,13 +44,7 @@ it('all server configuration resolves the app-root .env from any invocation dire
   const probe = new URL('server-environment-paths.fixture.mts', import.meta.url);
   const child = spawnSync(
     '/usr/bin/env',
-    [
-      '-u',
-      'ULTRAMODERN_WORKSPACE_ROOT',
-      `INIT_CWD=${repositoryRoot}`,
-      process.execPath,
-      fileURLToPath(probe),
-    ],
+    ['-u', 'ULTRAMODERN_WORKSPACE_ROOT', `INIT_CWD=${repositoryRoot}`, process.execPath, fileURLToPath(probe)],
     {
       cwd: '/',
       encoding: 'utf-8',

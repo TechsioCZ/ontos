@@ -1,15 +1,10 @@
 import { and, eq } from 'drizzle-orm';
 import type { EffectDrizzleQueryError } from 'drizzle-orm/effect-core';
 import { Context, Effect, Layer, Schema } from 'effect';
+
 import { CoreDatabase } from '../db/client.ts';
 import type { PrincipalKind } from '../db/schema.ts';
-import {
-  actionInvocations,
-  auditEvents,
-  principalAuthBindings,
-  principals,
-  tenants,
-} from '../db/schema.ts';
+import { actionInvocations, auditEvents, principalAuthBindings, principals, tenants } from '../db/schema.ts';
 import type { CoreDatabaseExecutor } from '../db/types.ts';
 import type { PrincipalResolutionError } from './principal-resolver-errors.ts';
 import {
@@ -39,10 +34,9 @@ export interface ApiKeyBindingAdministration {
   readonly status: 'active' | 'disabled' | 'revoked';
 }
 
-const ProviderSubjectIdSchema = Schema.String.check(
-  Schema.isMinLength(1),
-  Schema.isMaxLength(500),
-).pipe(Schema.brand('ProviderSubjectId'));
+const ProviderSubjectIdSchema = Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(500)).pipe(
+  Schema.brand('ProviderSubjectId'),
+);
 
 export const ProviderSubjectSchema = Schema.Struct({
   provider: Schema.Literal('better_auth'),
@@ -79,17 +73,13 @@ export interface PrincipalResolutionRecord {
   readonly tenantStatus: string;
 }
 
-type PrincipalResolutionRecordLoadResult = Effect.Effect<
-  readonly PrincipalResolutionRecord[],
-  EffectDrizzleQueryError
->;
+type PrincipalResolutionRecordLoadResult = Effect.Effect<readonly PrincipalResolutionRecord[], EffectDrizzleQueryError>;
 
 interface PrincipalResolutionRecordReader<Result extends PrincipalResolutionRecordLoadResult> {
   readonly load: (subject: ProviderSubject, tenantId?: string) => Result;
 }
 
-type PrincipalResolutionRecordRepository =
-  PrincipalResolutionRecordReader<PrincipalResolutionRecordLoadResult>;
+type PrincipalResolutionRecordRepository = PrincipalResolutionRecordReader<PrincipalResolutionRecordLoadResult>;
 
 const attachCause = <Failure extends object>(failure: Failure, cause: unknown): Failure =>
   cause === undefined ? failure : Object.defineProperty(failure, 'cause', { value: cause });
@@ -104,11 +94,7 @@ const loadPrincipalResolutionRecords = <Result extends PrincipalResolutionRecord
 ): Effect.Effect<readonly PrincipalResolutionRecord[], PrincipalResolverUnavailableError> =>
   repository
     .load(subject, tenantId)
-    .pipe(
-      Effect.mapError((cause) =>
-        unavailable('Unable to resolve the authenticated principal', cause),
-      ),
-    );
+    .pipe(Effect.mapError((cause) => unavailable('Unable to resolve the authenticated principal', cause)));
 
 const compareText = (left: string, right: string): number => {
   if (left < right) {
@@ -166,9 +152,7 @@ const eligibleHumanRecords = (
   eligibleRecords(records).pipe(
     Effect.flatMap((eligible) => {
       const humans = eligible.filter((record) => record.principalKind === 'human');
-      return humans.length === 0
-        ? Effect.fail(new PrincipalInactiveError())
-        : Effect.succeed(humans);
+      return humans.length === 0 ? Effect.fail(new PrincipalInactiveError()) : Effect.succeed(humans);
     }),
   );
 
@@ -178,11 +162,11 @@ export const classifyAvailableTenants = (
   eligibleHumanRecords(records).pipe(
     Effect.map((eligible) =>
       eligible
-        .map((record) => ({ name: record.tenantName, tenantId: record.tenantId }))
-        .toSorted(
-          (left, right) =>
-            compareText(left.name, right.name) || compareText(left.tenantId, right.tenantId),
-        ),
+        .map((record) => ({
+          name: record.tenantName,
+          tenantId: record.tenantId,
+        }))
+        .toSorted((left, right) => compareText(left.name, right.name) || compareText(left.tenantId, right.tenantId)),
     ),
   );
 
@@ -208,9 +192,7 @@ export const classifyDefaultPrincipal = (
       ),
     ),
     Effect.flatMap(([first]) =>
-      first === undefined
-        ? Effect.fail(new PrincipalBindingMissingError())
-        : Effect.succeed(toResolvedIdentity(first)),
+      first === undefined ? Effect.fail(new PrincipalBindingMissingError()) : Effect.succeed(toResolvedIdentity(first)),
     ),
   );
 
@@ -283,10 +265,9 @@ export interface PrincipalResolverService {
   }) => Effect.Effect<boolean, PrincipalResolverUnavailableError>;
 }
 
-export class PrincipalResolver extends Context.Service<
-  PrincipalResolver,
-  PrincipalResolverService
->()('@app/core-runtime/auth/principal-resolver/PrincipalResolver') {}
+export class PrincipalResolver extends Context.Service<PrincipalResolver, PrincipalResolverService>()(
+  '@app/core-runtime/auth/principal-resolver/PrincipalResolver',
+) {}
 
 export const makePrincipalResolver = (database: {
   readonly executor: CoreDatabaseExecutor;
@@ -354,29 +335,22 @@ export const makePrincipalResolver = (database: {
       );
 
   return {
-    listAvailableTenants: (betterAuthUserId) =>
-      listAvailableTenantsFromRepository(recordRepository, betterAuthUserId),
+    listAvailableTenants: (betterAuthUserId) => listAvailableTenantsFromRepository(recordRepository, betterAuthUserId),
     loadApiKeyBindingForAdministration: (input) =>
       loadApiKeyBindingSubject(input).pipe(
-        Effect.flatMap(
-          (record): Effect.Effect<ApiKeyBindingAdministration, PrincipalBindingMissingError> =>
-            record === undefined
-              ? Effect.fail(new PrincipalBindingMissingError())
-              : Effect.succeed({
-                  providerSubjectId: record.providerSubjectId,
-                  status: record.status,
-                }),
+        Effect.flatMap((record): Effect.Effect<ApiKeyBindingAdministration, PrincipalBindingMissingError> =>
+          record === undefined
+            ? Effect.fail(new PrincipalBindingMissingError())
+            : Effect.succeed({
+                providerSubjectId: record.providerSubjectId,
+                status: record.status,
+              }),
         ),
       ),
     resolveApiKeyBindingSubject: (input) =>
       loadApiKeyBindingSubject(input).pipe(
         Effect.flatMap(
-          (
-            record,
-          ): Effect.Effect<
-            string,
-            PrincipalBindingInactiveError | PrincipalBindingMissingError
-          > => {
+          (record): Effect.Effect<string, PrincipalBindingInactiveError | PrincipalBindingMissingError> => {
             if (record === undefined) {
               return Effect.fail(new PrincipalBindingMissingError());
             }
@@ -419,19 +393,10 @@ export const makePrincipalResolver = (database: {
           ),
         )
         .pipe(
-          Effect.mapError((cause) =>
-            unavailable('Unable to resolve the principal provider subject', cause),
-          ),
+          Effect.mapError((cause) => unavailable('Unable to resolve the principal provider subject', cause)),
           Effect.flatMap(
-            (
-              records,
-            ): Effect.Effect<
-              string,
-              PrincipalBindingAmbiguousError | PrincipalBindingMissingError
-            > => {
-              const active = records.filter(
-                (record) => record.status === 'active' && record.revokedAt === null,
-              );
+            (records): Effect.Effect<string, PrincipalBindingAmbiguousError | PrincipalBindingMissingError> => {
+              const active = records.filter((record) => record.status === 'active' && record.revokedAt === null);
               if (active.length === 0) {
                 return Effect.fail(new PrincipalBindingMissingError());
               }
@@ -493,9 +458,7 @@ export const makePrincipalResolver = (database: {
           ),
         )
         .pipe(
-          Effect.mapError((cause) =>
-            unavailable('Unable to verify the support impersonation lifecycle', cause),
-          ),
+          Effect.mapError((cause) => unavailable('Unable to verify the support impersonation lifecycle', cause)),
           Effect.map((records) =>
             records.some(({ evidence }) => {
               if (!Schema.is(SupportImpersonationStartedEvidenceSchema)(evidence)) {

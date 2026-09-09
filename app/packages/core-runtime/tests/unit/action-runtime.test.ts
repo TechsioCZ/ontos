@@ -1,32 +1,14 @@
+import { Cause, DateTime, Deferred, Effect, Exit, Fiber, Option, Predicate, Schema, Struct } from 'effect';
 import { expect, it } from 'effect-rstest';
-import {
-  Cause,
-  DateTime,
-  Deferred,
-  Effect,
-  Exit,
-  Fiber,
-  Option,
-  Predicate,
-  Schema,
-  Struct,
-} from 'effect';
 import { ConnectionError, SqlError } from 'effect/unstable/sql/SqlError';
-import {
-  defineAction,
-  defineActionResourcePermission,
-  getActionHandler,
-} from '../../src/actions/definition.ts';
+
+import { defineAction, defineActionResourcePermission, getActionHandler } from '../../src/actions/definition.ts';
 import {
   ActionInvocationPersistenceError,
   ActionPermissionCheckError,
   ActionTransactionError,
 } from '../../src/actions/errors.ts';
-import {
-  defineGlobalPolicy,
-  defineMicroverticalPolicy,
-  denyPolicy,
-} from '../../src/actions/policy.ts';
+import { defineGlobalPolicy, defineMicroverticalPolicy, denyPolicy } from '../../src/actions/policy.ts';
 import type {
   ActionInvocationRecord,
   ActionRepositoryService,
@@ -50,23 +32,14 @@ import { CoreDatabase } from '../../src/db/client.ts';
 import { recordSupportImpersonationAction } from '../../src/modules/actions/record-support-impersonation.action.ts';
 import { makeModuleEntrypointGateway } from '../../src/modules/module-entrypoint-gateway.ts';
 import type { ModuleEntrypointDescriptor } from '../../src/modules/module-entrypoint.ts';
-import {
-  defineSystemModuleEntrypoint,
-  defineTenantModuleEntrypoint,
-} from '../../src/modules/module-entrypoint.ts';
+import { defineSystemModuleEntrypoint, defineTenantModuleEntrypoint } from '../../src/modules/module-entrypoint.ts';
 import {
   ModuleStateCheckUnavailableError,
   ModuleStateDeniedError,
 } from '../../src/modules/module-state-gate-errors.ts';
-import {
-  checkModuleEntrypoint,
-  makeModuleStateSnapshot,
-} from '../../src/modules/module-state-gate.ts';
+import { checkModuleEntrypoint, makeModuleStateSnapshot } from '../../src/modules/module-state-gate.ts';
 import type { TenantModuleState } from '../../src/modules/tenant-module-state-service.ts';
-import type {
-  ActionPermissionDecision,
-  CheckActionPermissionInput,
-} from '../../src/permissions/service.ts';
+import type { ActionPermissionDecision, CheckActionPermissionInput } from '../../src/permissions/service.ts';
 import { testOperationalScopeResolver } from '../fixtures/operational-scope.ts';
 import { makeTestDatabase } from '../support/database.ts';
 
@@ -97,10 +70,8 @@ const expectSameJson = (actual: RetainedCauseError, expected: RetainedCauseError
 
 const completionTime = () => DateTime.toDateUtc(DateTime.makeUnsafe(0));
 
-const forEachSequential = <Item, E, R>(
-  items: readonly Item[],
-  run: (item: Item) => Effect.Effect<void, E, R>,
-) => Effect.forEach(items, run, { discard: true });
+const forEachSequential = <Item, E, R>(items: readonly Item[], run: (item: Item) => Effect.Effect<void, E, R>) =>
+  Effect.forEach(items, run, { discard: true });
 
 const unusedPrincipalManagementOperation = () =>
   Effect.die('The ambient PrincipalManagementRepository must not be used by the Action runtime');
@@ -250,14 +221,19 @@ const makeHarness = Effect.fn(function* makeHarness(options: HarnessOptions = {}
   let installedLegalEntityId: string = principal.legalEntityId;
   const commitTransaction = () =>
     Effect.gen(function* commitTransactionEffect() {
-      const defaultCommitCodes = { 'commit-definite': '40001', uncertain: '08007' };
+      const defaultCommitCodes = {
+        'commit-definite': '40001',
+        uncertain: '08007',
+      };
       const defaultCode =
         options.transactionMode === 'uncertain' || options.transactionMode === 'commit-definite'
           ? defaultCommitCodes[options.transactionMode]
           : undefined;
       const code = options.commitFailureCode ?? defaultCode;
       if (code !== undefined) {
-        return yield* new SqlError({ reason: new ConnectionError({ cause: { code } }) });
+        return yield* new SqlError({
+          reason: new ConnectionError({ cause: { code } }),
+        });
       }
       if (options.commit !== undefined) {
         return yield* options.commit;
@@ -277,7 +253,9 @@ const makeHarness = Effect.fn(function* makeHarness(options: HarnessOptions = {}
       transactionCount += 1;
       if (options.transactionMode === 'definite-failure') {
         return yield* new SqlError({
-          reason: new ConnectionError({ cause: new Error('transaction unavailable') }),
+          reason: new ConnectionError({
+            cause: new Error('transaction unavailable'),
+          }),
         });
       }
     }
@@ -285,7 +263,12 @@ const makeHarness = Effect.fn(function* makeHarness(options: HarnessOptions = {}
       return yield* commitTransaction();
     }
     if (text.includes('current_setting')) {
-      return [{ legal_entity_id: installedLegalEntityId, tenant_id: installedTenantId }];
+      return [
+        {
+          legal_entity_id: installedLegalEntityId,
+          tenant_id: installedTenantId,
+        },
+      ];
     }
     if (text.startsWith('select')) {
       return [{ authBindingId: principal.authBindingId }];
@@ -327,9 +310,7 @@ const makeHarness = Effect.fn(function* makeHarness(options: HarnessOptions = {}
         );
       }
       const availableState: TenantModuleState =
-        options.moduleState === undefined || options.moduleState === 'missing'
-          ? 'active'
-          : options.moduleState;
+        options.moduleState === undefined || options.moduleState === 'missing' ? 'active' : options.moduleState;
       return Effect.succeed(
         makeModuleStateSnapshot(
           tenantId,
@@ -364,56 +345,55 @@ const makeHarness = Effect.fn(function* makeHarness(options: HarnessOptions = {}
       return Effect.void;
     },
   } as const;
-  const runtime = makeActionRuntime(
-    database,
-    repository,
-    permission,
-    testOperationalScopeResolver,
-    {
-      contextAccess: {
-        legalEntities: (input) => {
-          legalEntityChecks.push(input);
-          return Effect.succeed(
-            input.legalEntityIds.map((key) => ({
-              decision: options.legalEntityPermissionDecision ?? ('allowed' as const),
-              key,
-            })),
-          );
-        },
-        modules: () => Effect.succeed([]),
-        resources: (input) => {
-          resourceChecks.push(input);
-          return Effect.succeed(
-            input.resources.map(({ moduleId, resourceId, resourceType }) => ({
-              decision: options.resourcePermissionDecision ?? ('allowed' as const),
-              key: `${moduleId}:${resourceType}:${resourceId}`,
-            })),
-          );
-        },
-        tenants: (input) => {
-          tenantChecks.push(input);
-          return Effect.succeed(
-            input.tenantIds.map((key) => ({
-              decision: options.tenantPermissionDecision ?? ('allowed' as const),
-              key,
-            })),
-          );
-        },
+  const runtime = makeActionRuntime(database, repository, permission, testOperationalScopeResolver, {
+    contextAccess: {
+      legalEntities: (input) => {
+        legalEntityChecks.push(input);
+        return Effect.succeed(
+          input.legalEntityIds.map((key) => ({
+            decision: options.legalEntityPermissionDecision ?? ('allowed' as const),
+            key,
+          })),
+        );
       },
-      moduleEntrypointGateway: makeModuleEntrypointGateway(moduleStateGate),
-      moduleStateGate,
-      onStage: (stage) => {
-        stages.push(stage);
+      modules: () => Effect.succeed([]),
+      resources: (input) => {
+        resourceChecks.push(input);
+        return Effect.succeed(
+          input.resources.map(({ moduleId, resourceId, resourceType }) => ({
+            decision: options.resourcePermissionDecision ?? ('allowed' as const),
+            key: `${moduleId}:${resourceType}:${resourceId}`,
+          })),
+        );
       },
-      resolveHandler: (action) => {
-        handlerResolutionCount += 1;
-        return getActionHandler(action);
+      tenants: (input) => {
+        tenantChecks.push(input);
+        return Effect.succeed(
+          input.tenantIds.map((key) => ({
+            decision: options.tenantPermissionDecision ?? ('allowed' as const),
+            key,
+          })),
+        );
       },
     },
-  );
+    moduleEntrypointGateway: makeModuleEntrypointGateway(moduleStateGate),
+    moduleStateGate,
+    onStage: (stage) => {
+      stages.push(stage);
+    },
+    resolveHandler: (action) => {
+      handlerResolutionCount += 1;
+      return getActionHandler(action);
+    },
+  });
 
   return {
-    counts: () => ({ createCount, lockCount, transactionCount, transitionCount }),
+    counts: () => ({
+      createCount,
+      lockCount,
+      transactionCount,
+      transitionCount,
+    }),
     finalized,
     flushed,
     gateCounts: () => ({
@@ -435,7 +415,9 @@ const makeHarness = Effect.fn(function* makeHarness(options: HarnessOptions = {}
 
 const makeRepositoryFailures = Effect.fn(function* testProgram1() {
   const cause = new SqlError({
-    reason: new ConnectionError({ cause: new Error('private repository defect') }),
+    reason: new ConnectionError({
+      cause: new Error('private repository defect'),
+    }),
   });
   const executor = yield* makeTestDatabase(() => Effect.fail(cause));
   const repository = makeActionRepository();
@@ -469,18 +451,12 @@ it.effect(
   'repository constructors retain original causes across Effect Cause propagation',
   Effect.fn(function* testProgram2() {
     const { cause, persistenceFailure, transactionFailure } = yield* makeRepositoryFailures();
-    const propagatedTransaction = yield* Effect.flip(
-      Effect.failCause(Cause.fail(transactionFailure)),
-    );
-    const propagatedPersistence = yield* Effect.flip(
-      Effect.failCause(Cause.fail(persistenceFailure)),
-    );
+    const propagatedTransaction = yield* Effect.flip(Effect.failCause(Cause.fail(transactionFailure)));
+    const propagatedPersistence = yield* Effect.flip(Effect.failCause(Cause.fail(persistenceFailure)));
     expect(propagatedTransaction).toBe(transactionFailure);
     expect(propagatedPersistence).toBe(persistenceFailure);
     expect(getActionTransactionFailureCause(propagatedTransaction)).toEqual(Cause.die(cause));
-    expect(getActionInvocationPersistenceFailureCause(propagatedPersistence)).toEqual(
-      Cause.die(cause),
-    );
+    expect(getActionInvocationPersistenceFailureCause(propagatedPersistence)).toEqual(Cause.die(cause));
   }),
 );
 
@@ -509,21 +485,14 @@ it.effect(
     expect(Reflect.ownKeys(persistenceFailure)).toEqual(Reflect.ownKeys(publicPersistence));
     expectSameJson(transactionFailure, publicTransaction);
     expectSameJson(persistenceFailure, publicPersistence);
-    const encodedTransactionFailure =
-      yield* Schema.encodeEffect(ActionTransactionError)(transactionFailure);
-    expect(Schema.is(Schema.toEncoded(ActionTransactionError))(encodedTransactionFailure)).toBe(
-      true,
-    );
+    const encodedTransactionFailure = yield* Schema.encodeEffect(ActionTransactionError)(transactionFailure);
+    expect(Schema.is(Schema.toEncoded(ActionTransactionError))(encodedTransactionFailure)).toBe(true);
     expect(Struct.omit(encodedTransactionFailure, ['_tag'])).toEqual({
       code: transactionFailure.code,
       reason: transactionFailure.reason,
     });
-    const encodedPersistenceFailure = yield* Schema.encodeEffect(ActionInvocationPersistenceError)(
-      persistenceFailure,
-    );
-    expect(
-      Schema.is(Schema.toEncoded(ActionInvocationPersistenceError))(encodedPersistenceFailure),
-    ).toBe(true);
+    const encodedPersistenceFailure = yield* Schema.encodeEffect(ActionInvocationPersistenceError)(persistenceFailure);
+    expect(Schema.is(Schema.toEncoded(ActionInvocationPersistenceError))(encodedPersistenceFailure)).toBe(true);
     expect(Struct.omit(encodedPersistenceFailure, ['_tag'])).toEqual({
       code: persistenceFailure.code,
       reason: persistenceFailure.reason,
@@ -555,7 +524,10 @@ it('repository cause readers reject foreign objects carrying the former cause pr
 const registration = () =>
   defineAction(
     {
-      accessEvidencePolicy: { captureMode: 'metadata_only', policyKey: 'counter.read.v1' },
+      accessEvidencePolicy: {
+        captureMode: 'metadata_only',
+        policyKey: 'counter.read.v1',
+      },
       actionKey: 'shell.counter.change',
       auditProfile: 'standard',
       domainErrorSchema: Schema.Never,
@@ -564,7 +536,10 @@ const registration = () =>
       },
       entrypoint: defineSystemModuleEntrypoint({
         access: 'write',
-        authorization: { kind: 'action_execution', provisioning: 'tenant_membership_default' },
+        authorization: {
+          kind: 'action_execution',
+          provisioning: 'tenant_membership_default',
+        },
         entrypointKey: 'shell.counter.change',
         moduleKey: 'core.shell',
         role: 'action',
@@ -654,7 +629,10 @@ it.effect(
     });
     const action = defineAction(
       {
-        accessEvidencePolicy: { captureMode: 'metadata_only', policyKey: 'shell.temporal.v1' },
+        accessEvidencePolicy: {
+          captureMode: 'metadata_only',
+          policyKey: 'shell.temporal.v1',
+        },
         actionKey: 'shell.temporal.change',
         auditProfile: 'standard',
         domainErrorSchema: Schema.Never,
@@ -708,9 +686,7 @@ it.effect(
     ]);
     expect(DateTime.formatIso(result.occurredAt)).toBe(occurredAt);
     expect(Option.isNone(result.note)).toBe(true);
-    expect(harness.flushed[0]?.resultHash).toBe(
-      computeCanonicalValueHash({ note: null, occurredAt }),
-    );
+    expect(harness.flushed[0]?.resultHash).toBe(computeCanonicalValueHash({ note: null, occurredAt }));
   }),
 );
 
@@ -719,15 +695,13 @@ it.effect(
   Effect.fn(function* testProgram6() {
     const recoveryPrincipal = yield* supportRecoveryPrincipalContextResolverFromRepository({
       load: () =>
-        Effect.succeed(
-          Option.some({
-            bindingPrincipalId: principal.principalId,
-            bindingTenantId: principal.tenantId,
-            principalKind: 'human' as const,
-            principalTenantId: principal.tenantId,
-            tenantId: principal.tenantId,
-          }),
-        ),
+        Effect.succeedSome({
+          bindingPrincipalId: principal.principalId,
+          bindingTenantId: principal.tenantId,
+          principalKind: 'human' as const,
+          principalTenantId: principal.tenantId,
+          tenantId: principal.tenantId,
+        }),
     }).resolveStoppedImpersonation({
       originalAuthBindingId: principal.authBindingId,
       originalPrincipalId: principal.principalId,
@@ -755,7 +729,10 @@ it.effect(
       .pipe(providePrincipalManagementRepository);
 
     expect(result).toEqual({ checkpoint: 'stopped', recorded: true });
-    expect(harness.permissionCounts()).toEqual({ permissionCheckCount: 1, rejectionCount: 0 });
+    expect(harness.permissionCounts()).toEqual({
+      permissionCheckCount: 1,
+      rejectionCount: 0,
+    });
 
     const deniedHarness = yield* makeHarness({ permissionDecision: 'denied' });
     const denied = yield* Effect.flip(
@@ -814,24 +791,19 @@ it.effect(
   'fails business Actions closed before invocation, permission, Policy, or handler access',
   Effect.fn(function* testProgram7() {
     yield* forEachSequential(
-      (
-        [
-          'inactive',
-          'read_only',
-          'suspended',
-          'quarantined',
-          'deprecated',
-          'archived',
-          'missing',
-        ] as const
-      ).map((state, index) => [index, state] as const),
+      (['inactive', 'read_only', 'suspended', 'quarantined', 'deprecated', 'archived', 'missing'] as const).map(
+        (state, index) => [index, state] as const,
+      ),
       Effect.fn(function* testProgram8([index, state]) {
         let handlerCalls = 0;
         let policyCalls = 0;
         const harness = yield* makeHarness({ moduleState: state });
         const action = defineAction(
           {
-            accessEvidencePolicy: { captureMode: 'metadata_only', policyKey: 'stock.read.v1' },
+            accessEvidencePolicy: {
+              captureMode: 'metadata_only',
+              policyKey: 'stock.read.v1',
+            },
             actionKey: `inventory.stock.reserve-state-${index}`,
             auditProfile: 'standard',
             domainErrorSchema: Schema.Never,
@@ -901,7 +873,10 @@ it.effect(
   Effect.fn(function* testProgram9() {
     const action = defineAction(
       {
-        accessEvidencePolicy: { captureMode: 'metadata_only', policyKey: 'stock.read.v1' },
+        accessEvidencePolicy: {
+          captureMode: 'metadata_only',
+          policyKey: 'stock.read.v1',
+        },
         actionKey: 'inventory.stock.reserve-locked',
         auditProfile: 'standard',
         domainErrorSchema: Schema.Never,
@@ -977,9 +952,7 @@ it.effect(
     });
 
     expect(result).toEqual({ total: 2 });
-    expect(
-      harness.stages.indexOf('permission_checked') < harness.stages.indexOf('policy_boundary'),
-    ).toBe(true);
+    expect(harness.stages.indexOf('permission_checked') < harness.stages.indexOf('policy_boundary')).toBe(true);
     expect(harness.counts().transitionCount).toBe(1);
     expect(harness.counts().transactionCount).toBe(1);
   }),
@@ -990,7 +963,10 @@ it.effect(
   Effect.fn(function* testProgram11() {
     const tenantAuthorizedRegistration = defineAction(
       {
-        accessEvidencePolicy: { captureMode: 'metadata_only', policyKey: 'identity.read.v1' },
+        accessEvidencePolicy: {
+          captureMode: 'metadata_only',
+          policyKey: 'identity.read.v1',
+        },
         actionKey: 'core.identity.tenant-authorized',
         auditProfile: 'sensitive',
         domainErrorSchema: Schema.Never,
@@ -1070,7 +1046,10 @@ it.effect(
         const actionKey = `party.registry.permission-${index}`;
         const action = defineAction(
           {
-            accessEvidencePolicy: { captureMode: 'metadata_only', policyKey: 'party.read.v1' },
+            accessEvidencePolicy: {
+              captureMode: 'metadata_only',
+              policyKey: 'party.read.v1',
+            },
             actionKey,
             auditProfile: 'sensitive',
             domainErrorSchema: Schema.Never,
@@ -1124,7 +1103,10 @@ it.effect(
   Effect.fn(function* testProgram15() {
     const action = defineAction(
       {
-        accessEvidencePolicy: { captureMode: 'metadata_only', policyKey: 'identity.read.v1' },
+        accessEvidencePolicy: {
+          captureMode: 'metadata_only',
+          policyKey: 'identity.read.v1',
+        },
         actionKey: 'core.identity.rotate-managed-key',
         auditProfile: 'sensitive',
         domainErrorSchema: Schema.Never,
@@ -1239,7 +1221,9 @@ it.effect(
       targetResourceType: 'legal_entity',
     };
 
-    const denied = yield* makeHarness({ legalEntityPermissionDecision: 'denied' });
+    const denied = yield* makeHarness({
+      legalEntityPermissionDecision: 'denied',
+    });
     const failure = yield* Effect.flip(
       denied.runtime.runAction({
         payload: undefined,
@@ -1267,7 +1251,9 @@ it.effect(
     });
     expect(denied.stages.at(-1)).toBe('permission_checked');
 
-    const unavailable = yield* makeHarness({ legalEntityPermissionDecision: 'unavailable' });
+    const unavailable = yield* makeHarness({
+      legalEntityPermissionDecision: 'unavailable',
+    });
     const unavailableFailure = yield* Effect.flip(
       unavailable.runtime.runAction({
         payload: undefined,
@@ -1298,9 +1284,7 @@ it.effect(
       correlationId: 'correlation-legal-entity-denied',
       idempotencyKey: 'legal-entity-allowed',
     });
-    expect(
-      allowed.stages.indexOf('permission_checked') < allowed.stages.indexOf('policy_boundary'),
-    ).toBe(true);
+    expect(allowed.stages.indexOf('permission_checked') < allowed.stages.indexOf('policy_boundary')).toBe(true);
   }),
 );
 
@@ -1412,7 +1396,9 @@ it.effect(
       targetResourceType: 'counterparty',
     });
 
-    const unavailable = yield* makeHarness({ resourcePermissionDecision: 'unavailable' });
+    const unavailable = yield* makeHarness({
+      resourcePermissionDecision: 'unavailable',
+    });
     const unavailableFailure = yield* Effect.flip(
       unavailable.runtime.runAction({
         payload: { counterpartyId: 'counterparty-1' },
@@ -1437,7 +1423,10 @@ it.effect(
     const harness = yield* makeHarness({ permissionDecision: 'denied' });
     const deniedRegistration = defineAction(
       {
-        accessEvidencePolicy: { captureMode: 'metadata_only', policyKey: 'counter.read.v1' },
+        accessEvidencePolicy: {
+          captureMode: 'metadata_only',
+          policyKey: 'counter.read.v1',
+        },
         actionKey: 'shell.counter.denied',
         auditProfile: 'sensitive',
         domainErrorSchema: Schema.Never,
@@ -1610,7 +1599,10 @@ it.effect(
     });
     const action = defineAction(
       {
-        accessEvidencePolicy: { captureMode: 'metadata_only', policyKey: 'counter.read.v1' },
+        accessEvidencePolicy: {
+          captureMode: 'metadata_only',
+          policyKey: 'counter.read.v1',
+        },
         actionKey: 'inventory.stock.policy-allowed',
         auditProfile: 'standard',
         domainErrorSchema: Schema.Never,
@@ -1676,9 +1668,7 @@ it.effect(
       defineGlobalPolicy<{ readonly amount: number }>({
         evaluate: () => {
           observed.push('denied');
-          return Effect.fail(
-            denyPolicy('counter_locked', 'Counter changes are locked — try later'),
-          );
+          return Effect.fail(denyPolicy('counter_locked', 'Counter changes are locked — try later'));
         },
         policyKey: 'global.counter-locked.v1',
       }),
@@ -1692,7 +1682,10 @@ it.effect(
     ] as const;
     const action = defineAction(
       {
-        accessEvidencePolicy: { captureMode: 'metadata_only', policyKey: 'counter.read.v1' },
+        accessEvidencePolicy: {
+          captureMode: 'metadata_only',
+          policyKey: 'counter.read.v1',
+        },
         actionKey: 'shell.counter.policy-denied',
         auditProfile: 'sensitive',
         domainErrorSchema: Schema.Never,
@@ -1770,10 +1763,7 @@ it.effect(
 it.effect(
   'sanitizes Policy defects and interrupts without finalizing',
   Effect.fn(function* testProgram23() {
-    const evaluators = [
-      () => Effect.die('secret evaluator defect'),
-      () => Effect.interrupt,
-    ] as const;
+    const evaluators = [() => Effect.die('secret evaluator defect'), () => Effect.interrupt] as const;
 
     yield* forEachSequential(
       evaluators.map((evaluate, index) => [index, evaluate] as const),
@@ -1852,7 +1842,10 @@ it.effect(
     });
     const action = defineAction(
       {
-        accessEvidencePolicy: { captureMode: 'metadata_only', policyKey: 'counter.read.v1' },
+        accessEvidencePolicy: {
+          captureMode: 'metadata_only',
+          policyKey: 'counter.read.v1',
+        },
         actionKey: 'shell.counter.policy-persistence-failure',
         auditProfile: 'standard',
         domainErrorSchema: Schema.Never,
@@ -1937,7 +1930,10 @@ it.effect(
     });
     const action = defineAction(
       {
-        accessEvidencePolicy: { captureMode: 'metadata_only', policyKey: 'counter.read.v1' },
+        accessEvidencePolicy: {
+          captureMode: 'metadata_only',
+          policyKey: 'counter.read.v1',
+        },
         actionKey: 'shell.counter.fresh-policy',
         auditProfile: 'standard',
         domainErrorSchema: Schema.Never,
@@ -2033,9 +2029,7 @@ it.effect(
     expect(Predicate.isTagged(invalidPrincipal, 'ActionTrustedContextValidationError')).toBe(true);
     expect(Predicate.isTagged(missingKey, 'ActionIdempotencyKeyRequired')).toBe(true);
 
-    expect(Predicate.isTagged(forgedSystemPrincipal, 'ActionTrustedContextValidationError')).toBe(
-      true,
-    );
+    expect(Predicate.isTagged(forgedSystemPrincipal, 'ActionTrustedContextValidationError')).toBe(true);
     expect(harness.counts().createCount).toBe(0);
   }),
 );
@@ -2061,7 +2055,10 @@ it.effect(
     });
     const rejected = defineAction(
       {
-        accessEvidencePolicy: { captureMode: 'metadata_only', policyKey: 'counter.read.v1' },
+        accessEvidencePolicy: {
+          captureMode: 'metadata_only',
+          policyKey: 'counter.read.v1',
+        },
         actionKey: 'shell.counter.reject',
         auditProfile: 'standard',
         domainErrorSchema: DomainRejected,
@@ -2122,7 +2119,10 @@ it.effect(
     const defectHarness = yield* makeHarness();
     const defective = defineAction(
       {
-        accessEvidencePolicy: { captureMode: 'metadata_only', policyKey: 'counter.read.v1' },
+        accessEvidencePolicy: {
+          captureMode: 'metadata_only',
+          policyKey: 'counter.read.v1',
+        },
         actionKey: 'shell.counter.defect',
         auditProfile: 'standard',
         domainErrorSchema: Schema.Never,
@@ -2159,7 +2159,10 @@ it.effect(
     const resultHarness = yield* makeHarness();
     const invalidResult = defineAction(
       {
-        accessEvidencePolicy: { captureMode: 'metadata_only', policyKey: 'counter.read.v1' },
+        accessEvidencePolicy: {
+          captureMode: 'metadata_only',
+          policyKey: 'counter.read.v1',
+        },
         actionKey: 'shell.counter.invalid-result',
         auditProfile: 'standard',
         domainErrorSchema: Schema.Never,
@@ -2214,12 +2217,9 @@ it.effect(
       reason: Schema.String,
     });
     type DeclaredDomainErrorSelf = typeof DeclaredDomainErrorContract.Type;
-    const DeclaredDomainError = Schema.TaggedError<DeclaredDomainErrorSelf>()(
-      'DeclaredDomainError',
-      {
-        reason: Schema.String,
-      },
-    );
+    const DeclaredDomainError = Schema.TaggedError<DeclaredDomainErrorSelf>()('DeclaredDomainError', {
+      reason: Schema.String,
+    });
     const undeclaredDomainError = new DeclaredDomainError({
       reason: 'secret undeclared failure',
     });
@@ -2229,7 +2229,10 @@ it.effect(
     const harness = yield* makeHarness();
     const action = defineAction(
       {
-        accessEvidencePolicy: { captureMode: 'metadata_only', policyKey: 'counter.read.v1' },
+        accessEvidencePolicy: {
+          captureMode: 'metadata_only',
+          policyKey: 'counter.read.v1',
+        },
         actionKey: 'shell.counter.undeclared-error',
         auditProfile: 'standard',
         domainErrorSchema: DeclaredDomainError,
@@ -2307,7 +2310,9 @@ it.effect(
       }),
     );
 
-    const definite = yield* makeHarness({ transactionMode: 'definite-failure' });
+    const definite = yield* makeHarness({
+      transactionMode: 'definite-failure',
+    });
     const definiteError = yield* Effect.flip(
       definite.runtime.runAction({
         payload: { amount: 1 },
@@ -2327,7 +2332,9 @@ it.effect(
       }),
     );
 
-    const definiteCommit = yield* makeHarness({ transactionMode: 'commit-definite' });
+    const definiteCommit = yield* makeHarness({
+      transactionMode: 'commit-definite',
+    });
     const definiteCommitError = yield* Effect.flip(
       definiteCommit.runtime.runAction({
         payload: { amount: 1 },
@@ -2338,20 +2345,19 @@ it.effect(
     );
 
     const acknowledgementFailureCodes = ['ETIMEDOUT', 'ECONNABORTED', 'ENETRESET', '08007'];
-    const acknowledgementErrors = yield* Effect.all(
-      acknowledgementFailureCodes.map(
-        Effect.fn(function* testProgram35(code) {
-          const harness = yield* makeHarness({ commitFailureCode: code });
-          return yield* Effect.flip(
-            harness.runtime.runAction({
-              payload: { amount: 1 },
-              principal,
-              registration: registration(),
-              transport: transport(`uncertain-${code}`),
-            }),
-          );
-        }),
-      ),
+    const acknowledgementErrors = yield* Effect.forEach(
+      acknowledgementFailureCodes,
+      Effect.fn(function* testProgram35(code) {
+        const harness = yield* makeHarness({ commitFailureCode: code });
+        return yield* Effect.flip(
+          harness.runtime.runAction({
+            payload: { amount: 1 },
+            principal,
+            registration: registration(),
+            transport: transport(`uncertain-${code}`),
+          }),
+        );
+      }),
       { concurrency: 'unbounded' },
     );
 
@@ -2383,9 +2389,7 @@ it.effect(
     const commitStarted = Deferred.makeUnsafe<null>();
     const commitSettlement = Deferred.makeUnsafe<readonly object[]>();
     const harness = yield* makeHarness({
-      commit: Deferred.succeed(commitStarted, null).pipe(
-        Effect.andThen(Deferred.await(commitSettlement)),
-      ),
+      commit: Deferred.succeed(commitStarted, null).pipe(Effect.andThen(Deferred.await(commitSettlement))),
     });
 
     const actionFiber = yield* harness.runtime
@@ -2427,7 +2431,10 @@ it.effect(
         status: 'running',
       },
     });
-    const openResolution = yield* open.runtime.resolveActionCommit({ invocationId, principal });
+    const openResolution = yield* open.runtime.resolveActionCommit({
+      invocationId,
+      principal,
+    });
 
     const committed = yield* makeHarness({
       createRecord: {
@@ -2437,9 +2444,7 @@ it.effect(
         status: 'succeeded',
       },
     });
-    const committedResolution = yield* Effect.flip(
-      committed.runtime.resolveActionCommit({ invocationId, principal }),
-    );
+    const committedResolution = yield* Effect.flip(committed.runtime.resolveActionCommit({ invocationId, principal }));
 
     const unavailable = yield* makeHarness({
       createRecord: {
@@ -2502,7 +2507,10 @@ it.effect(
     const microvertical = yield* makeHarness();
     const moduleRegistration = defineAction(
       {
-        accessEvidencePolicy: { captureMode: 'metadata_only', policyKey: 'stock.read.v1' },
+        accessEvidencePolicy: {
+          captureMode: 'metadata_only',
+          policyKey: 'stock.read.v1',
+        },
         actionKey: 'inventory.stock.reserve',
         auditProfile: 'standard',
         domainErrorSchema: Schema.Never,

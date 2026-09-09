@@ -1,6 +1,7 @@
 import { ReadHandlerNotFound, ReadHandlerUnavailable } from '@app/core-runtime';
 import { Effect, Schema } from 'effect';
 import { assert, it } from 'effect-rstest';
+
 import { CounterpartyPersistenceUnavailable } from '../../shared/domain/counterparty-errors.ts';
 import { resolveCounterpartyRead } from '../../src/api/counterparty-read-support.ts';
 

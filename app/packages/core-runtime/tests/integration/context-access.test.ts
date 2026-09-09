@@ -1,18 +1,16 @@
-import { expect, it } from 'effect-rstest';
-import { NodeServices } from '@effect/platform-node';
 import { v1 } from '@authzed/authzed-node';
+import { NodeServices } from '@effect/platform-node';
 import { Crypto, Effect, FileSystem } from 'effect';
+import { expect, it } from 'effect-rstest';
+
+import { SPICEDB_CHECK_TIMEOUT_MS, createSpiceDbPermissionClient } from '../../src/permissions/client.ts';
+import { loadSpiceDbConfig } from '../../src/permissions/config.ts';
 import {
   makeContextAccess,
   toLegalEntityAccessObjectId,
   toModuleAccessObjectId,
   toResourceAccessObjectId,
 } from '../../src/permissions/context-access.ts';
-import {
-  SPICEDB_CHECK_TIMEOUT_MS,
-  createSpiceDbPermissionClient,
-} from '../../src/permissions/client.ts';
-import { loadSpiceDbConfig } from '../../src/permissions/config.ts';
 
 const spiceDbEffect = <Value>(operation: PromiseLike<Value>) => Effect.tryPromise(() => operation);
 
@@ -25,9 +23,15 @@ const relationship = (
 ) =>
   v1.Relationship.create({
     relation,
-    resource: v1.ObjectReference.create({ objectId: resourceId, objectType: resourceType }),
+    resource: v1.ObjectReference.create({
+      objectId: resourceId,
+      objectType: resourceType,
+    }),
     subject: v1.SubjectReference.create({
-      object: v1.ObjectReference.create({ objectId: subjectId, objectType: subjectType }),
+      object: v1.ObjectReference.create({
+        objectId: subjectId,
+        objectType: subjectType,
+      }),
     }),
   });
 
@@ -35,40 +39,31 @@ const contextAccessProgram = Effect.gen(function* contextAccessIntegration() {
   const configuration = yield* loadSpiceDbConfig();
   const crypto = yield* Crypto.Crypto;
   const fileSystem = yield* FileSystem.FileSystem;
-  const [tenantId, otherTenantId, legalEntityId, otherLegalEntityId, principalId, resourceId] =
-    yield* Effect.all(
-      [
-        crypto.randomUUIDv4,
-        crypto.randomUUIDv4,
-        crypto.randomUUIDv4,
-        crypto.randomUUIDv4,
-        crypto.randomUUIDv4,
-        crypto.randomUUIDv4,
-      ],
-      { concurrency: 'unbounded' },
-    );
+  const [tenantId, otherTenantId, legalEntityId, otherLegalEntityId, principalId, resourceId] = yield* Effect.all(
+    [
+      crypto.randomUUIDv4,
+      crypto.randomUUIDv4,
+      crypto.randomUUIDv4,
+      crypto.randomUUIDv4,
+      crypto.randomUUIDv4,
+      crypto.randomUUIDv4,
+    ],
+    { concurrency: 'unbounded' },
+  );
   const moduleId = 'property.registry';
   const resource = { moduleId, resourceId, resourceType: 'property.unit' };
   const legalObjectId = toLegalEntityAccessObjectId(tenantId, legalEntityId);
   const moduleObjectId = toModuleAccessObjectId(tenantId, legalEntityId, moduleId);
   const resourceObjectId = toResourceAccessObjectId(tenantId, legalEntityId, resource);
-  if (
-    legalObjectId === undefined ||
-    moduleObjectId === undefined ||
-    resourceObjectId === undefined
-  ) {
+  if (legalObjectId === undefined || moduleObjectId === undefined || resourceObjectId === undefined) {
     throw new Error('Expected valid SpiceDB object identifiers');
   }
   const client = v1.NewClient(
     configuration.preSharedKey,
     configuration.endpoint,
-    configuration.insecureLocal
-      ? v1.ClientSecurity.INSECURE_LOCALHOST_ALLOWED
-      : v1.ClientSecurity.SECURE,
+    configuration.insecureLocal ? v1.ClientSecurity.INSECURE_LOCALHOST_ALLOWED : v1.ClientSecurity.SECURE,
   );
-  const bootstrap = yield* fileSystem.readFileString(
-    new URL('../../spicedb/bootstrap.yaml', import.meta.url).pathname,
-  );
+  const bootstrap = yield* fileSystem.readFileString(new URL('../../spicedb/bootstrap.yaml', import.meta.url).pathname);
   const bootstrapLines = bootstrap.split('\n');
   const schemaStart = bootstrapLines.indexOf('schema: |-') + 1;
   const schemaEnd = bootstrapLines.indexOf('relationships: |-');
@@ -161,7 +156,12 @@ const contextAccessProgram = Effect.gen(function* contextAccessIntegration() {
         ]);
       }
       expect(
-        yield* access.modules({ legalEntityId, moduleIds: [moduleId], principalId, tenantId }),
+        yield* access.modules({
+          legalEntityId,
+          moduleIds: [moduleId],
+          principalId,
+          tenantId,
+        }),
       ).toEqual([{ decision: 'allowed', key: moduleId }]);
       expect(
         yield* access.modules({
@@ -172,8 +172,18 @@ const contextAccessProgram = Effect.gen(function* contextAccessIntegration() {
         }),
       ).toEqual([{ decision: 'denied', key: moduleId }]);
       expect(
-        yield* access.resources({ legalEntityId, principalId, resources: [resource], tenantId }),
-      ).toEqual([{ decision: 'allowed', key: `${moduleId}:property.unit:${resource.resourceId}` }]);
+        yield* access.resources({
+          legalEntityId,
+          principalId,
+          resources: [resource],
+          tenantId,
+        }),
+      ).toEqual([
+        {
+          decision: 'allowed',
+          key: `${moduleId}:property.unit:${resource.resourceId}`,
+        },
+      ]);
     }).pipe(Effect.ensuring(Effect.sync(() => permissionClient.close())));
   }).pipe(
     Effect.ensuring(

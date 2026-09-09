@@ -2,12 +2,10 @@
 // @ontos-outbox-producer party.registry
 // @ontos-outbox-topic party.registry.counterparty-role-ended.v1
 import { Schema } from 'effect';
-import {
-  CounterpartyIsoTimestampSchema,
-  CounterpartyRoleTypeSchema,
-} from '../domain/counterparty-contract.ts';
-import { CounterpartyRefSchema } from '../resources/counterparty.ts';
+
+import { CounterpartyIsoTimestampSchema, CounterpartyRoleTypeSchema } from '../domain/counterparty-contract.ts';
 import { CounterpartyRolePeriodRefSchema } from '../resources/counterparty-role-period.ts';
+import { CounterpartyRefSchema } from '../resources/counterparty.ts';
 
 export const OutboxPayloadSchema = Schema.Struct({
   counterpartyRef: CounterpartyRefSchema,

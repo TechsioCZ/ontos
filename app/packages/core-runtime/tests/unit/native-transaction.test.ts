@@ -1,7 +1,8 @@
-import { expect, it } from 'effect-rstest';
 import { sql } from 'drizzle-orm';
 import { Cause, Context, Deferred, Effect, Exit, Fiber } from 'effect';
+import { expect, it } from 'effect-rstest';
 import { ConnectionError, SqlError } from 'effect/unstable/sql/SqlError';
+
 import { makeTestDatabase } from '../support/database.ts';
 
 const harness = Effect.fn(function* makeHarness(
@@ -101,21 +102,15 @@ for (const phase of ['COMMIT', 'ROLLBACK']) {
       const failure = new SqlError({
         reason: new ConnectionError({ cause: new Error(`${phase} failed`) }),
       });
-      const h = yield* harness((statement) =>
-        statement === phase ? Effect.fail(failure) : Effect.void,
-      );
+      const h = yield* harness((statement) => (statement === phase ? Effect.fail(failure) : Effect.void));
       const exit = yield* Effect.exit(
-        h.executor.transaction(() =>
-          phase === 'COMMIT' ? Effect.succeed(42) : Effect.fail('body failure'),
-        ),
+        h.executor.transaction(() => (phase === 'COMMIT' ? Effect.succeed(42) : Effect.fail('body failure'))),
       );
       expect(Exit.isFailure(exit)).toBe(true);
       if (!Exit.isFailure(exit)) {
         throw new Error('Expected assertion to hold');
       }
-      expect(
-        exit.cause.reasons.some((reason) => Cause.isDieReason(reason) && reason.defect === failure),
-      ).toBe(true);
+      expect(exit.cause.reasons.some((reason) => Cause.isDieReason(reason) && reason.defect === failure)).toBe(true);
       expect(h.events).toEqual(['BEGIN', phase]);
     }),
   );
@@ -132,20 +127,14 @@ it.effect(
       const releaseRollback = yield* Deferred.make<null>();
       const h = yield* harness((statement) =>
         statement === 'ROLLBACK'
-          ? Deferred.succeed(rollingBack, null).pipe(
-              Effect.andThen(Deferred.await(releaseRollback)),
-            )
+          ? Deferred.succeed(rollingBack, null).pipe(Effect.andThen(Deferred.await(releaseRollback)))
           : Effect.void,
       );
       const fiber = yield* h.executor
         .transaction(() =>
           Deferred.succeed(started, null).pipe(
             Effect.andThen(Effect.never),
-            Effect.ensuring(
-              Deferred.succeed(finalizing, null).pipe(
-                Effect.andThen(Deferred.await(releaseFinalizer)),
-              ),
-            ),
+            Effect.ensuring(Deferred.succeed(finalizing, null).pipe(Effect.andThen(Deferred.await(releaseFinalizer)))),
           ),
         )
         .pipe(Effect.forkChild);
@@ -176,7 +165,9 @@ for (const phase of ['COMMIT', 'ROLLBACK']) {
     () =>
       Effect.gen(function* preserveSettlementFailure() {
         const failure = new SqlError({
-          reason: new ConnectionError({ cause: new Error(`${phase} rejected`) }),
+          reason: new ConnectionError({
+            cause: new Error(`${phase} rejected`),
+          }),
         });
         const started = yield* Deferred.make<null>();
         const release = yield* Deferred.make<null>();
@@ -189,9 +180,7 @@ for (const phase of ['COMMIT', 'ROLLBACK']) {
             : Effect.void,
         );
         const fiber = yield* h.executor
-          .transaction(() =>
-            phase === 'COMMIT' ? Effect.succeed(42) : Effect.fail('domain failure'),
-          )
+          .transaction(() => (phase === 'COMMIT' ? Effect.succeed(42) : Effect.fail('domain failure')))
           .pipe(Effect.forkChild);
         yield* Deferred.await(started);
         const interrupt = yield* Fiber.interrupt(fiber).pipe(Effect.forkChild);
@@ -205,11 +194,7 @@ for (const phase of ['COMMIT', 'ROLLBACK']) {
           throw new Error('Expected assertion to hold');
         }
         // Native settlement defects take precedence over pending interruption.
-        expect(
-          exit.cause.reasons.some(
-            (reason) => Cause.isDieReason(reason) && reason.defect === failure,
-          ),
-        ).toBe(true);
+        expect(exit.cause.reasons.some((reason) => Cause.isDieReason(reason) && reason.defect === failure)).toBe(true);
       }),
     2000,
   );

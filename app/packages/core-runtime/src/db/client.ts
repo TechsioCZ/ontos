@@ -5,6 +5,7 @@ import { Context, Effect, Layer, Redacted } from 'effect';
 import { Reactivity } from 'effect/unstable/reactivity';
 import type { PoolConfig } from 'pg';
 import { Pool } from 'pg';
+
 import type { DatabaseConfigValue } from './config.ts';
 import { DatabaseConfig } from './config.ts';
 import { DatabaseConnectionError } from './connection-error.ts';
@@ -40,8 +41,7 @@ export const acquirePoolResource = <Resource extends PoolResource>(
 ): Effect.Effect<Resource, DatabaseConnectionError, Scope.Scope> =>
   Effect.acquireRelease(
     Effect.try({
-      catch: (cause) =>
-        connectionFailure('Unable to initialize the PostgreSQL connection pool', cause),
+      catch: (cause) => connectionFailure('Unable to initialize the PostgreSQL connection pool', cause),
       try: acquire,
     }),
     // pg overloads end(callback); invoke it with no arguments so the AbortSignal is never a callback.
@@ -65,11 +65,11 @@ export const makeCoreDatabase = Effect.fn('Client.makeCoreDatabase')(function* m
   );
   const pool = yield* acquirePoolResource(() => poolFactory(poolConfiguration));
   const reactivity = yield* Reactivity.make;
-  const client = yield* PgClient.fromPool({ acquire: Effect.succeed(pool) }).pipe(
+  const client = yield* PgClient.fromPool({
+    acquire: Effect.succeed(pool),
+  }).pipe(
     Effect.provideService(Reactivity.Reactivity, reactivity),
-    Effect.mapError((cause) =>
-      connectionFailure('Unable to initialize the native PostgreSQL client', cause),
-    ),
+    Effect.mapError((cause) => connectionFailure('Unable to initialize the native PostgreSQL client', cause)),
   );
   return {
     executor: yield* makeWithDefaults({ relations: coreRelations }).pipe(

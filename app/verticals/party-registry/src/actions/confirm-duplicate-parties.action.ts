@@ -2,16 +2,16 @@
 // @ontos-action-owner party.registry
 // @ontos-action-slug confirm-duplicate-parties
 import { defineAction, defineTenantModuleEntrypoint } from '@app/core-runtime';
+
 import {
   ConfirmDuplicatePartiesPayloadSchema,
   ConfirmDuplicatePartiesResultSchema,
 } from '../../shared/actions/confirm-duplicate-parties.ts';
-
+import { handleDuplicateCaseResolution } from './duplicate-case-resolution-handler.ts';
 import {
   DuplicateCaseResolutionErrorSchema,
   duplicateCaseResolutionService,
 } from './duplicate-case-resolution-service.ts';
-import { handleDuplicateCaseResolution } from './duplicate-case-resolution-handler.ts';
 
 export const confirmDuplicatePartiesAction = defineAction(
   {
@@ -25,7 +25,10 @@ export const confirmDuplicatePartiesAction = defineAction(
     domainEvents: {},
     entrypoint: defineTenantModuleEntrypoint({
       access: 'write',
-      authorization: { kind: 'action_execution', provisioning: 'tenant_membership_default' },
+      authorization: {
+        kind: 'action_execution',
+        provisioning: 'tenant_membership_default',
+      },
       entrypointKey: 'party.registry.confirm-duplicate-parties',
       moduleKey: 'party.registry',
       role: 'action',
@@ -40,8 +43,7 @@ export const confirmDuplicatePartiesAction = defineAction(
     tenantPermission: () => 'review_party_identity',
   },
   handleDuplicateCaseResolution,
-  (transaction, scope) =>
-    duplicateCaseResolutionService(transaction, scope.tenantId, 'CONFIRMED_DUPLICATE_PARTIES'),
+  (transaction, scope) => duplicateCaseResolutionService(transaction, scope.tenantId, 'CONFIRMED_DUPLICATE_PARTIES'),
 );
 // Production merge remains deliberately absent: this Action records reviewed readiness only.
 // <generated-outbox-message-exports>

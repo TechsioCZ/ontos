@@ -1,7 +1,8 @@
-import { expect, it, rstest } from 'effect-rstest';
 import { v1 } from '@authzed/authzed-node';
 import { Cause, Effect, Fiber, Predicate, Schema } from 'effect';
+import { expect, it, rstest } from 'effect-rstest';
 import { TestClock } from 'effect/testing';
+
 import {
   SpiceDbPermissionClientError,
   createSpiceDbPermissionClient,
@@ -66,21 +67,17 @@ it.effect('SDK rejections become typed permission failures without leaking diagn
       details: 'private transport diagnostic',
       metadata: rstest.fn<() => PermissionRpcError['metadata']>()(),
     });
-    rstest
-      .spyOn(v1.PermissionsServiceClient.prototype, 'checkPermission')
-      .mockImplementation((request, metadata) => {
-        if (Predicate.isFunction(metadata)) {
-          metadata(cause);
-        }
-        return rstest.fn<v1.PermissionsServiceClient['checkPermission']>()(request, metadata);
-      });
+    rstest.spyOn(v1.PermissionsServiceClient.prototype, 'checkPermission').mockImplementation((request, metadata) => {
+      if (Predicate.isFunction(metadata)) {
+        metadata(cause);
+      }
+      return rstest.fn<v1.PermissionsServiceClient['checkPermission']>()(request, metadata);
+    });
     const client = yield* Effect.acquireRelease(
       Effect.sync(() => createSpiceDbPermissionClient(configuration, SPICEDB_CHECK_TIMEOUT_MS)),
       (acquiredClient) => Effect.sync(() => acquiredClient.close()),
     );
-    const failure = yield* Effect.flip(
-      client.checkPermission(v1.CheckPermissionRequest.create({})),
-    );
+    const failure = yield* Effect.flip(client.checkPermission(v1.CheckPermissionRequest.create({})));
     expect(Schema.is(SpiceDbPermissionClientError)(failure)).toBe(true);
     expect(failure.reason.includes(cause.message)).toBe(false);
     expect(Object.getOwnPropertyDescriptor(failure, 'cause')?.value).toBe(cause);
@@ -99,14 +96,12 @@ it.effect('an SDK call that never replies is bounded by the permission deadline'
       Effect.sync(() => createSpiceDbPermissionClient(configuration, SPICEDB_CHECK_TIMEOUT_MS)),
       (acquiredClient) => Effect.sync(() => acquiredClient.close()),
     );
-    const fiber = yield* Effect.flip(
-      client.checkPermission(v1.CheckPermissionRequest.create({})),
-    ).pipe(Effect.forkChild);
+    const fiber = yield* Effect.flip(client.checkPermission(v1.CheckPermissionRequest.create({}))).pipe(
+      Effect.forkChild,
+    );
     yield* TestClock.adjust(SPICEDB_CHECK_TIMEOUT_MS);
     const failure = yield* Fiber.join(fiber);
     expect(Schema.is(SpiceDbPermissionClientError)(failure)).toBe(true);
-    expect(Cause.isTimeoutError(Object.getOwnPropertyDescriptor(failure, 'cause')?.value)).toBe(
-      true,
-    );
+    expect(Cause.isTimeoutError(Object.getOwnPropertyDescriptor(failure, 'cause')?.value)).toBe(true);
   }),
 );

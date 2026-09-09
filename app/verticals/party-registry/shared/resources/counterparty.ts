@@ -3,10 +3,8 @@
 // @ontos-resource-slug counterparty
 import type { OntosResourceType } from '@app/core-runtime';
 import { Schema } from 'effect';
-import {
-  PartyRegistryResourceIdJsonSchema,
-  PartyRegistryTenantIdJsonSchema,
-} from './resource-ref-identifiers.ts';
+
+import { PartyRegistryResourceIdJsonSchema, PartyRegistryTenantIdJsonSchema } from './resource-ref-identifiers.ts';
 
 export const CounterpartyRefSchema = Schema.Struct({
   moduleId: Schema.Literal('party.registry'),

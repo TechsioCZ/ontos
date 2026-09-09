@@ -1,8 +1,8 @@
 import { defineConfig } from 'oxfmt';
-import ultracite from 'ultracite/oxfmt';
 
 export default defineConfig({
-  extends: [ultracite],
+  printWidth: 120,
+  trailingComma: 'all',
   ignorePatterns: [
     '.agents',
     '.codex/skills',

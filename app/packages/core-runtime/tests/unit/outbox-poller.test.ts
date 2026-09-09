@@ -1,8 +1,9 @@
-import { expect, it } from 'effect-rstest';
 import { Effect, Fiber, Schema } from 'effect';
+import { expect, it } from 'effect-rstest';
 import { TestClock } from 'effect/testing';
-import { defineOutboxWorker } from '../../src/outbox/definition.ts';
+
 import { defineTenantModuleEntrypoint } from '../../src/modules/module-entrypoint.ts';
+import { defineOutboxWorker } from '../../src/outbox/definition.ts';
 import { OutboxPersistenceError, OutboxPollerConfigError } from '../../src/outbox/errors.ts';
 import { parseOutboxPollingConfig, runOutboxPollingLoop } from '../../src/outbox/poller.ts';
 import type { OutboxCycleRunner } from '../../src/outbox/poller.ts';
@@ -104,7 +105,11 @@ it.effect('runs immediately, survives a typed cycle failure, and continues polli
       });
     const running = yield* runOutboxPollingLoop(
       {
-        config: { claimOwner: 'consumer:test', maxDeliveries: 10, pollIntervalMs: 10 },
+        config: {
+          claimOwner: 'consumer:test',
+          maxDeliveries: 10,
+          pollIntervalMs: 10,
+        },
         health: {
           cycleFailed: Effect.sync(() => healthTransitions.push('failed')),
           cycleSucceeded: Effect.sync(() => healthTransitions.push('ready')),

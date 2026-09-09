@@ -1,15 +1,9 @@
 import { DateTime, Option, Schema } from 'effect';
+
 import type { CounterpartyRef } from '../resources/counterparty.ts';
 import type { PartyRef } from '../resources/party.ts';
-import type {
-  CounterpartySearchProjectionHit,
-  PartySearchProjectionHit,
-} from './search-projection-gateway.ts';
-import type {
-  CounterpartySearchResult,
-  CurrentCounterpartyRole,
-  PartySearchResult,
-} from './search-result.ts';
+import type { CounterpartySearchProjectionHit, PartySearchProjectionHit } from './search-projection-gateway.ts';
+import type { CounterpartySearchResult, CurrentCounterpartyRole, PartySearchResult } from './search-result.ts';
 
 const SearchProjectionViolationSchema = Schema.TaggedStruct('SearchProjectionViolation', {
   reason: Schema.String,
@@ -24,16 +18,14 @@ export type SearchResults<Result> = SearchResultsTag & {
 
 export type SearchNormalizationResult<Result> = SearchProjectionViolation | SearchResults<Result>;
 
-const violation = (reason: string): SearchProjectionViolation =>
-  SearchProjectionViolationSchema.make({ reason });
+const violation = (reason: string): SearchProjectionViolation => SearchProjectionViolationSchema.make({ reason });
 
 const searchResults = <Result>(items: readonly Result[]): SearchResults<Result> => ({
   ...SearchResultsTagSchema.make({}),
   items,
 });
 
-const refKey = (ref: PartyRef | CounterpartyRef): string =>
-  `${ref.tenantId}:${ref.resourceType}:${ref.resourceId}`;
+const refKey = (ref: PartyRef | CounterpartyRef): string => `${ref.tenantId}:${ref.resourceType}:${ref.resourceId}`;
 
 const samePartyRef = (left: PartyRef, right: PartyRef): boolean => refKey(left) === refKey(right);
 
@@ -46,7 +38,10 @@ const partyHitViolatesScope = (hit: PartySearchProjectionHit, tenantId: string):
   hit.title.trim().length === 0;
 
 export const normalizePartySearchHits = (
-  scope: Readonly<{ readonly includeArchived: boolean; readonly tenantId: string }>,
+  scope: Readonly<{
+    readonly includeArchived: boolean;
+    readonly tenantId: string;
+  }>,
   hits: readonly PartySearchProjectionHit[],
 ): SearchNormalizationResult<PartySearchResult> => {
   const byCanonicalParty = new Map<string, PartySearchResult>();
@@ -56,10 +51,7 @@ export const normalizePartySearchHits = (
     }
     const key = refKey(hit.canonicalPartyRef);
     const existing = byCanonicalParty.get(key);
-    if (
-      existing !== undefined &&
-      (existing.archived !== hit.archived || existing.title !== hit.title.trim())
-    ) {
+    if (existing !== undefined && (existing.archived !== hit.archived || existing.title !== hit.title.trim())) {
       return violation('Party Search projection returned conflicting canonical Party facts');
     }
     const matchedViaAlias = isAliasHit(hit.canonicalPartyRef, hit.matchedPartyRef);
@@ -75,9 +67,7 @@ export const normalizePartySearchHits = (
     }
   }
 
-  return searchResults(
-    [...byCanonicalParty.values()].filter(({ archived }) => scope.includeArchived || !archived),
-  );
+  return searchResults([...byCanonicalParty.values()].filter(({ archived }) => scope.includeArchived || !archived));
 };
 
 const parseInstant = Schema.decodeUnknownOption(Schema.DateTimeUtcFromString);
@@ -198,10 +188,7 @@ export const normalizeCounterpartySearchHits = (
         },
         ref: hit.counterpartyRef,
       });
-    } else if (
-      isAliasHit(hit.canonicalPartyRef, hit.matchedPartyRef) &&
-      !existing.party.matchedViaAlias
-    ) {
+    } else if (isAliasHit(hit.canonicalPartyRef, hit.matchedPartyRef) && !existing.party.matchedViaAlias) {
       byCounterparty.set(key, {
         ...existing,
         party: { ...existing.party, matchedViaAlias: true },

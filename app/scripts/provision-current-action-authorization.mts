@@ -1,5 +1,6 @@
 #!/usr/bin/env node
 import { pathToFileURL } from 'node:url';
+
 import { v1 } from '@authzed/authzed-node';
 import { NodeRuntime, NodeServices } from '@effect/platform-node';
 import {
@@ -16,6 +17,8 @@ import {
   Schema,
 } from 'effect';
 import { Command } from 'effect/unstable/cli';
+
+import { coreActionCatalog } from '../packages/core-runtime/src/index.ts';
 import {
   ActionAuthorizationProvisioningError,
   provisionActionAuthorization,
@@ -26,13 +29,12 @@ import type {
   ActionAuthorizationProvisioningClient,
   ActionAuthorizationProvisioningResult,
 } from '../packages/core-runtime/src/install/action-authorization-provisioning.ts';
-import { coreActionCatalog } from '../packages/core-runtime/src/index.ts';
+import { STAGE_CONTEXTS } from '../packages/core-runtime/src/install/stage-context-bootstrap.ts';
 import { spiceDbClientSecurity } from '../packages/core-runtime/src/permissions/client.ts';
 import { loadSpiceDbConfig } from '../packages/core-runtime/src/permissions/config.ts';
 import type { SpiceDbConfigValue } from '../packages/core-runtime/src/permissions/config.ts';
-import { STAGE_CONTEXTS } from '../packages/core-runtime/src/install/stage-context-bootstrap.ts';
-import { LOCAL_DEVELOPMENT_CONTEXT } from './initialize-local-development.mts';
 import { deriveOntosModuleDeploymentContract } from './generate-ontos-module-contract.mts';
+import { LOCAL_DEVELOPMENT_CONTEXT } from './initialize-local-development.mts';
 
 const TopologySchema = Schema.Struct({
   verticals: Schema.Array(
@@ -88,8 +90,7 @@ export const selectActionAuthorizationProvisioningTarget = (
   configuration: SpiceDbConfigValue,
 ): Effect.Effect<ActionAuthorizationProvisioningTarget, ActionAuthorizationProvisioningError> => {
   if (
-    (configuration.deploymentEnvironment === undefined ||
-      configuration.deploymentEnvironment === 'development') &&
+    (configuration.deploymentEnvironment === undefined || configuration.deploymentEnvironment === 'development') &&
     isLoopbackSpiceDb(configuration)
   ) {
     return Effect.succeed({
@@ -127,10 +128,7 @@ export const selectActionAuthorizationProvisioningTarget = (
 };
 
 const discoveryFailure = (): ActionAuthorizationProvisioningError =>
-  failure(
-    'action_authorization_discovery_failed',
-    'The complete current Action set could not be derived safely',
-  );
+  failure('action_authorization_discovery_failed', 'The complete current Action set could not be derived safely');
 
 const decodeRepositoryInventory = (workspaceRoot: string) =>
   Effect.gen(function* decodeRepositoryInventoryEffect() {
@@ -138,10 +136,7 @@ const decodeRepositoryInventory = (workspaceRoot: string) =>
     const path = yield* Path.Path;
     const [topologySource, ownershipSource] = yield* Effect.all(
       [
-        fileSystem.readFileString(
-          path.join(workspaceRoot, 'topology/reference-topology.json'),
-          'utf-8',
-        ),
+        fileSystem.readFileString(path.join(workspaceRoot, 'topology/reference-topology.json'), 'utf-8'),
         fileSystem.readFileString(path.join(workspaceRoot, 'topology/ownership.json'), 'utf-8'),
       ],
       { concurrency: 'unbounded' },
@@ -171,8 +166,7 @@ export const discoverCurrentActions = (
     }
     const ownerKeys = new Set(
       ownership.owners.map(
-        ({ id, package: packageName, path: ownerPath }) =>
-          `${id}\u0000${packageName}\u0000${ownerPath}`,
+        ({ id, package: packageName, path: ownerPath }) => `${id}\u0000${packageName}\u0000${ownerPath}`,
       ),
     );
     const verticals = EffectArray.sortWith(topology.verticals, ({ id }) => id, Order.String);
@@ -199,17 +193,17 @@ export const discoverCurrentActions = (
     const collectVerticalActions = Effect.gen(function* collectVerticalActionsEffect() {
       const verticalActions: ActionAuthorizationProvisioningAction[] = [];
       for (const { contract, id } of contracts) {
-        if (
-          contract.deployment.appId !== id ||
-          contract.manifest.publicSurface.actions.length === 0
-        ) {
+        if (contract.deployment.appId !== id || contract.manifest.publicSurface.actions.length === 0) {
           return yield* discoveryFailure();
         }
         for (const { actionKey, entrypoint } of contract.manifest.publicSurface.actions) {
           if (entrypoint?.authorization.kind !== 'action_execution') {
             return yield* discoveryFailure();
           }
-          verticalActions.push({ actionKey, provisioning: entrypoint.authorization.provisioning });
+          verticalActions.push({
+            actionKey,
+            provisioning: entrypoint.authorization.provisioning,
+          });
         }
       }
 
@@ -221,7 +215,10 @@ export const discoverCurrentActions = (
       if (entrypoint.authorization.kind !== 'action_execution') {
         return yield* discoveryFailure();
       }
-      coreActions.push({ actionKey, provisioning: entrypoint.authorization.provisioning });
+      coreActions.push({
+        actionKey,
+        provisioning: entrypoint.authorization.provisioning,
+      });
     }
     const actions = EffectArray.sortWith(
       [...coreActions, ...verticalActions],
@@ -238,11 +235,7 @@ export const discoverCurrentActions = (
 export const discoverCurrentActionKeys = (
   workspaceRoot: string,
   deriveContract: DeriveContract = deriveOntosModuleDeploymentContract,
-): Effect.Effect<
-  readonly string[],
-  ActionAuthorizationProvisioningError,
-  NodeServices.NodeServices
-> =>
+): Effect.Effect<readonly string[], ActionAuthorizationProvisioningError, NodeServices.NodeServices> =>
   discoverCurrentActions(workspaceRoot, deriveContract).pipe(
     Effect.map((actions) => actions.map(({ actionKey }) => actionKey)),
   );
@@ -264,21 +257,13 @@ const callProvisioningClient = <Value,>(operation: () => PromiseLike<Value>) =>
       duration: Duration.seconds(30),
       orElse: () =>
         Effect.fail(
-          provisioningServiceFailure(
-            new Cause.TimeoutError('SpiceDB authorization provisioning request timed out'),
-          ),
+          provisioningServiceFailure(new Cause.TimeoutError('SpiceDB authorization provisioning request timed out')),
         ),
     }),
   );
 
-const createProvisioningClient = (
-  configuration: SpiceDbConfigValue,
-): CloseableProvisioningClient => {
-  const client = v1.NewClient(
-    configuration.preSharedKey,
-    configuration.endpoint,
-    spiceDbClientSecurity(configuration),
-  );
+const createProvisioningClient = (configuration: SpiceDbConfigValue): CloseableProvisioningClient => {
+  const client = v1.NewClient(configuration.preSharedKey, configuration.endpoint, spiceDbClientSecurity(configuration));
   return {
     checkPermission: (request) =>
       callProvisioningClient(client.promises.checkPermission.bind(client.promises, request)).pipe(
@@ -287,8 +272,7 @@ const createProvisioningClient = (
     close: () => client.close(),
     writeRelationships: (request) =>
       callProvisioningClient(client.promises.writeRelationships.bind(client.promises, request)),
-    writeSchema: (request) =>
-      callProvisioningClient(client.promises.writeSchema.bind(client.promises, request)),
+    writeSchema: (request) => callProvisioningClient(client.promises.writeSchema.bind(client.promises, request)),
   };
 };
 
@@ -309,7 +293,9 @@ const runCurrentActionAuthorizationProvisioningWithServices = (
   workspaceRoot: string,
   commandArguments: readonly string[] = [],
 ): Effect.Effect<
-  ActionAuthorizationProvisioningResult & { readonly environment: 'development' | 'stage' },
+  ActionAuthorizationProvisioningResult & {
+    readonly environment: 'development' | 'stage';
+  },
   ActionAuthorizationProvisioningError,
   NodeServices.NodeServices
 > =>
@@ -322,10 +308,7 @@ const runCurrentActionAuthorizationProvisioningWithServices = (
     }
     const configuration = yield* loadSpiceDbConfig().pipe(
       Effect.mapError(() =>
-        failure(
-          'action_authorization_configuration_invalid',
-          'The SpiceDB provisioning configuration is invalid',
-        ),
+        failure('action_authorization_configuration_invalid', 'The SpiceDB provisioning configuration is invalid'),
       ),
     );
     const target = yield* selectActionAuthorizationProvisioningTarget(configuration);
@@ -342,13 +325,15 @@ export function runCurrentActionAuthorizationProvisioning(
   workspaceRoot: string,
   commandArguments: readonly [string, ...string[]],
 ): Effect.Effect<
-  ActionAuthorizationProvisioningResult & { readonly environment: 'development' | 'stage' },
+  ActionAuthorizationProvisioningResult & {
+    readonly environment: 'development' | 'stage';
+  },
   ActionAuthorizationProvisioningError
 >;
-export function runCurrentActionAuthorizationProvisioning(
-  workspaceRoot: string,
-): Effect.Effect<
-  ActionAuthorizationProvisioningResult & { readonly environment: 'development' | 'stage' },
+export function runCurrentActionAuthorizationProvisioning(workspaceRoot: string): Effect.Effect<
+  ActionAuthorizationProvisioningResult & {
+    readonly environment: 'development' | 'stage';
+  },
   ActionAuthorizationProvisioningError,
   NodeServices.NodeServices
 >;
@@ -356,7 +341,9 @@ export function runCurrentActionAuthorizationProvisioning(
   workspaceRoot: string,
   commandArguments: readonly string[] = [],
 ): Effect.Effect<
-  ActionAuthorizationProvisioningResult & { readonly environment: 'development' | 'stage' },
+  ActionAuthorizationProvisioningResult & {
+    readonly environment: 'development' | 'stage';
+  },
   ActionAuthorizationProvisioningError,
   NodeServices.NodeServices
 > {
@@ -373,9 +360,7 @@ const command = Command.make('authorization-provision-current-actions', {}, () =
     const path = yield* Path.Path;
     const workspaceRoot = path.resolve(import.meta.dirname, '..');
     const result = yield* runCurrentActionAuthorizationProvisioningWithServices(workspaceRoot).pipe(
-      Effect.tapError((cause) =>
-        Console.error(formatActionAuthorizationProvisioningFailure(cause)),
-      ),
+      Effect.tapError((cause) => Console.error(formatActionAuthorizationProvisioningFailure(cause))),
     );
     yield* Console.log(
       `Provisioned ${result.grantCount} explicit Action grants for ${result.actionCount} Actions across ${result.tenantCount} ${result.environment} Tenant(s).`,

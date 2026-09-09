@@ -1,10 +1,9 @@
-import { makeInstalledCatalogFixture as catalog } from '../support/installed-catalog.ts';
-import { makeModuleContractFixture } from '../../src/testing/module-contract.ts';
+import { Effect, Schema, Predicate } from 'effect';
 // @effect-diagnostics preferSchemaOverJson:off -- Verifies native JSON serialization of errors and schema AST metadata; expires: 2026-12-31.
 import { expect, it } from 'effect-rstest';
-import { Effect, Schema, Predicate } from 'effect';
-import { changeTenantModuleStateAction } from '../../src/modules/actions/change-tenant-module-state.action.ts';
+
 import type { OntosModuleDeploymentContract } from '../../src/index.ts';
+import { changeTenantModuleStateAction } from '../../src/modules/actions/change-tenant-module-state.action.ts';
 import {
   TenantModuleStateConcurrentChangeError,
   TenantModuleStatePersistenceUnavailableError,
@@ -23,6 +22,8 @@ import {
   resolveTenantModuleStateChangeSource,
   validateTenantModuleStateTransition,
 } from '../../src/modules/tenant-module-state-service.ts';
+import { makeModuleContractFixture } from '../../src/testing/module-contract.ts';
+import { makeInstalledCatalogFixture as catalog } from '../support/installed-catalog.ts';
 
 const contract = (
   moduleId: string,
@@ -40,13 +41,11 @@ const contract = (
 it.effect('uses one canonical tenant module state schema', () =>
   Effect.gen(function* testScenario1() {
     const decodedStates = yield* Effect.forEach((state: (typeof TENANT_MODULE_STATES)[number]) =>
-      Schema.decodeUnknownEffect(TenantModuleStateSchema)(state),
+      Schema.decodeEffect(TenantModuleStateSchema)(state),
     )(TENANT_MODULE_STATES);
     expect(decodedStates).toEqual(TENANT_MODULE_STATES);
 
-    const failure = yield* Effect.flip(
-      Schema.decodeUnknownEffect(TenantModuleStateSchema)('enabled'),
-    );
+    const failure = yield* Effect.flip(Schema.decodeUnknownEffect(TenantModuleStateSchema)('enabled'));
     expect(Predicate.isTagged(failure, 'SchemaError')).toBe(true);
   }),
 );
@@ -58,9 +57,7 @@ it.effect('maps only trusted supported authentication methods to history sources
     expect(yield* resolveTenantModuleStateChangeSource('system')).toBe('system');
 
     const unsupported = yield* Effect.flip(resolveTenantModuleStateChangeSource('api_key'));
-    expect(Predicate.isTagged(unsupported, 'TenantModuleStateUnsupportedChangeSourceError')).toBe(
-      true,
-    );
+    expect(Predicate.isTagged(unsupported, 'TenantModuleStateUnsupportedChangeSourceError')).toBe(true);
     expect(unsupported.code).toBe('tenant_module_state_change_source_unsupported');
   }),
 );
@@ -128,9 +125,7 @@ it.effect('validates only installed membership and the target module supported s
     const target = contract('property.registry', ['inactive', 'active', 'read_only']);
     const installed = catalog(other, target);
 
-    const unknown = yield* Effect.flip(
-      validateTenantModuleStateTransition(installed, 'unknown.module', 'active'),
-    );
+    const unknown = yield* Effect.flip(validateTenantModuleStateTransition(installed, 'unknown.module', 'active'));
     expect(Predicate.isTagged(unknown, 'TenantModuleStateUnknownModuleError')).toBe(true);
     const unsupported = yield* Effect.flip(
       validateTenantModuleStateTransition(installed, 'property.registry', 'archived'),
@@ -153,7 +148,7 @@ it.effect('declares the generated Core Action contract and bounded business payl
     expect(JSON.stringify(descriptor.domainErrorSchema.ast)).not.toMatch(/dependency/iu);
 
     expect(
-      yield* Schema.decodeUnknownEffect(descriptor.payloadSchema)({
+      yield* Schema.decodeEffect(descriptor.payloadSchema)({
         expectedState: 'inactive',
         moduleKey: 'testing.module',
         newState: 'active',
@@ -167,7 +162,7 @@ it.effect('declares the generated Core Action contract and bounded business payl
     });
     expect(
       yield* Effect.flip(
-        Schema.decodeUnknownEffect(descriptor.payloadSchema)({
+        Schema.decodeEffect(descriptor.payloadSchema)({
           moduleKey: 'testing.module',
           newState: 'active',
           reason: 'x'.repeat(501),

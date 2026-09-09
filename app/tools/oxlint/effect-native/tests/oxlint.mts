@@ -9,10 +9,7 @@ export const pluginDirectory = resolve(testsDirectory, '..');
 export const appRoot = resolve(pluginDirectory, '..', '..', '..');
 export const fixturesDirectory = join(testsDirectory, 'fixtures');
 // Rstest bundles this harness through Rspack, which has no `import.meta.resolve`.
-const oxlintEntryPoint = join(
-  dirname(createRequire(import.meta.url).resolve('oxlint/package.json')),
-  'bin/oxlint',
-);
+const oxlintEntryPoint = join(dirname(createRequire(import.meta.url).resolve('oxlint/package.json')), 'bin/oxlint');
 
 interface Diagnostic {
   readonly code: string;
@@ -87,17 +84,9 @@ export function parseOxlintOutput(stdout: string, stderr: string, status: number
 }
 
 /** Run oxlint with a fixture config against the given paths (relative to `cwd`). */
-export function runOxlint(
-  configPath: string,
-  paths: readonly string[],
-  cwd: string,
-  selectedRule?: string,
-): LintRun {
+export function runOxlint(configPath: string, paths: readonly string[], cwd: string, selectedRule?: string): LintRun {
   const fixtureRule =
-    selectedRule ??
-    (basename(dirname(dirname(configPath))) === 'fixtures'
-      ? basename(dirname(configPath))
-      : undefined);
+    selectedRule ?? (basename(dirname(dirname(configPath))) === 'fixtures' ? basename(dirname(configPath)) : undefined);
   const result = spawnSync(
     process.execPath,
     [oxlintEntryPoint, '-c', configPath, '--format=json', '--disable-nested-config', ...paths],

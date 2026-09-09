@@ -1,4 +1,5 @@
 import type { EffectPgDatabase } from 'drizzle-orm/effect-postgres';
+
 import type { contactsRelations } from './engagement-schema.ts';
 
 type ContactsDatabaseExecutor = EffectPgDatabase<typeof contactsRelations>;

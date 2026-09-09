@@ -1,4 +1,3 @@
-import { optionRecord } from '../shared/options.ts';
 /**
  * Audit finding: **A8** — "Fix the generators before generating more code"
  * (`docs/architecture/EFFECT_V4_ANTIPATTERN_AUDIT.md`). A8's Effect v4 target ends with an explicit
@@ -69,20 +68,14 @@ import { optionRecord } from '../shared/options.ts';
  * `tools/` is edited to satisfy this rule, and no disable comment is added to silence it.
  */
 import { defineRule } from '@oxlint/plugins';
-
 import type { Comment, Context } from '@oxlint/plugins';
 
-import { scopePath, matchesGlobs } from '../shared/paths.ts';
+import { optionRecord } from '../shared/options.ts';
 import { stringArray, booleanOption as boolean } from '../shared/options.ts';
+import { scopePath, matchesGlobs } from '../shared/paths.ts';
 
 /** A8 names `scripts/` and `tools/oxlint` explicitly; the seam suppressions live across all roots. */
-const DEFAULT_PATHS: readonly string[] = [
-  'apps/**',
-  'verticals/**',
-  'packages/**',
-  'scripts/**',
-  'tools/**',
-];
+const DEFAULT_PATHS: readonly string[] = ['apps/**', 'verticals/**', 'packages/**', 'scripts/**', 'tools/**'];
 
 /** This rule's own fixtures deliberately contain ungoverned suppressions. */
 const DEFAULT_IGNORE_PATHS: readonly string[] = []; // Production config excludes fixtures; synthetic paths stay testable.
@@ -175,9 +168,7 @@ function compileExpiry(pattern: string): RegExp | null {
 function normaliseRuleName(name: string): string {
   const lower = name.trim().toLowerCase().replace(/^@/u, '');
   if (lower.startsWith('eslint/')) return lower.slice('eslint/'.length);
-  return lower.startsWith('typescript-eslint/')
-    ? `typescript/${lower.slice('typescript-eslint/'.length)}`
-    : lower;
+  return lower.startsWith('typescript-eslint/') ? `typescript/${lower.slice('typescript-eslint/'.length)}` : lower;
 }
 
 /** Rule names in a directive are comma- and/or whitespace-separated. */
@@ -219,7 +210,10 @@ function parseDirective(value: string): Directive | null {
   // `-disable-next-line`, `-disable-line` and any other `-disable-…` suffix are not file-wide.
   if (rest.startsWith('-')) return null;
   const parsed = splitDescription(rest);
-  return { justification: parsed.description, rules: parseRuleList(parsed.head) };
+  return {
+    justification: parsed.description,
+    rules: parseRuleList(parsed.head),
+  };
 }
 
 /** The justification and expiry criteria, shared by every kind of file-wide waiver. */
@@ -241,10 +235,7 @@ function justificationReasons(
 }
 
 /** Returns null when a later enable fully bounds this disable region. */
-function unboundedRules(
-  directive: Directive,
-  laterComments: readonly Comment[],
-): readonly string[] | null {
+function unboundedRules(directive: Directive, laterComments: readonly Comment[]): readonly string[] | null {
   const remaining = new Set(directive.rules.map(normaliseRuleName));
   for (const later of laterComments) {
     const enable = ENABLE.exec(later.value.trim());
@@ -332,10 +323,7 @@ export const rule = defineRule({
     const seamRules = new Set(options.effectSeamRules.map(normaliseRuleName));
     const expiry = compileExpiry(options.expiryPattern);
 
-    const inspectEffectDiagnostics = (
-      comment: Comment,
-      effectDiagnostics: RegExpExecArray,
-    ): void => {
+    const inspectEffectDiagnostics = (comment: Comment, effectDiagnostics: RegExpExecArray): void => {
       if (!options.includeEffectDiagnosticsDirectives) return;
       const body = effectDiagnostics.groups?.rest ?? '';
       const parsed = splitDescription(body);
@@ -406,10 +394,7 @@ export const rule = defineRule({
 
       const parsedDirective = parseDirective(comment.value);
       if (parsedDirective === null) return;
-      const directive =
-        unboundedRules === undefined
-          ? parsedDirective
-          : { ...parsedDirective, rules: unboundedRules };
+      const directive = unboundedRules === undefined ? parsedDirective : { ...parsedDirective, rules: unboundedRules };
 
       inspectDirective(comment, directive);
     };

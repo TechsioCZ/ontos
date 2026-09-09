@@ -1,5 +1,6 @@
 import { Schema } from 'effect';
 import type { Effect } from 'effect';
+
 import type { ActionTransportMetadata, TrustedPrincipalContext } from './context.ts';
 
 const policyReference = '__actionPolicyReference' as const;
@@ -30,10 +31,7 @@ const policyDeniedFields = {
 };
 const PolicyDeniedContract = Schema.TaggedStruct('PolicyDenied', policyDeniedFields);
 type PolicyDeniedSelf = typeof PolicyDeniedContract.Type;
-const PolicyDeniedValue = Schema.TaggedError<PolicyDeniedSelf>()(
-  'PolicyDenied',
-  policyDeniedFields,
-);
+const PolicyDeniedValue = Schema.TaggedError<PolicyDeniedSelf>()('PolicyDenied', policyDeniedFields);
 export type PolicyDenied = InstanceType<typeof PolicyDeniedValue>;
 export { PolicyDeniedValue as PolicyDenied };
 
@@ -51,10 +49,7 @@ export interface GlobalActionPolicy<Payload> extends ActionPolicyBase<Payload> {
   readonly scope: 'global';
 }
 
-export interface MicroverticalActionPolicy<
-  Payload,
-  Owner extends string,
-> extends ActionPolicyBase<Payload> {
+export interface MicroverticalActionPolicy<Payload, Owner extends string> extends ActionPolicyBase<Payload> {
   readonly owningModuleKey: Owner;
   readonly scope: 'microvertical';
 }
@@ -84,7 +79,10 @@ const requireStableIdentifier = (value: string, field: string): void => {
 };
 
 const registerPolicy = <Policy extends object>(policy: Policy): Readonly<Policy> => {
-  Object.defineProperty(policy, policyReference, { enumerable: false, value: true });
+  Object.defineProperty(policy, policyReference, {
+    enumerable: false,
+    value: true,
+  });
   const frozen = Object.freeze(policy);
   return frozen;
 };
@@ -95,9 +93,7 @@ export const denyPolicy = (reasonCode: string, reason: string): PolicyDenied => 
   return Object.freeze(new PolicyDeniedValue({ reason, reasonCode }));
 };
 
-export const defineGlobalPolicy = <Payload>(
-  input: DefineGlobalPolicyInput<Payload>,
-): GlobalActionPolicy<Payload> => {
+export const defineGlobalPolicy = <Payload>(input: DefineGlobalPolicyInput<Payload>): GlobalActionPolicy<Payload> => {
   requireStableIdentifier(input.policyKey, 'Policy key');
   return registerPolicy({
     evaluate: input.evaluate,
@@ -131,16 +127,12 @@ const ActionPolicyReferenceSchema = Schema.Union([
   }),
   Schema.Struct({
     evaluate: Schema.Any,
-    owningModuleKey: Schema.String.pipe(
-      Schema.brand('OwningModuleKey'),
-      Schema.decodeTo(Schema.String),
-    ),
+    owningModuleKey: Schema.String.pipe(Schema.brand('OwningModuleKey'), Schema.decodeTo(Schema.String)),
     policyKey: Schema.String.pipe(Schema.brand('PolicyKey'), Schema.decodeTo(Schema.String)),
     [policyReference]: Schema.Literal(true),
     scope: Schema.Literal('microvertical'),
   }),
 ]);
 
-export const isActionPolicy: (
-  value: ActionPolicy<never, string>,
-) => value is ActionPolicy<never, string> = Schema.is(ActionPolicyReferenceSchema);
+export const isActionPolicy: (value: ActionPolicy<never, string>) => value is ActionPolicy<never, string> =
+  Schema.is(ActionPolicyReferenceSchema);

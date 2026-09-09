@@ -48,9 +48,7 @@ export const EntrypointAuthorizationSchema = Schema.Union([
 ]);
 
 export type EntrypointAuthorization = Schema.Schema.Type<typeof EntrypointAuthorizationSchema>;
-export type ActionExecutionAuthorization = Schema.Schema.Type<
-  typeof ActionExecutionAuthorizationSchema
->;
+export type ActionExecutionAuthorization = Schema.Schema.Type<typeof ActionExecutionAuthorizationSchema>;
 
 export const decodeEntrypointAuthorization = <Input>(input: Input): EntrypointAuthorization =>
   Object.freeze(

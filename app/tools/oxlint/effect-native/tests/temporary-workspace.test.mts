@@ -1,7 +1,9 @@
-import { expect, it } from 'effect-rstest';
 import { spawnSync } from 'node:child_process';
 import { existsSync, mkdirSync, readdirSync, writeFileSync } from 'node:fs';
 import nodePath from 'node:path';
+
+import { expect, it } from 'effect-rstest';
+
 import { withTemporaryWorkspace } from './temporary-workspace.mts';
 
 const callerOwned = 'caller-owned';

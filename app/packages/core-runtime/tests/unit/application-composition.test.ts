@@ -1,5 +1,6 @@
-import { expect, it } from 'effect-rstest';
 import { Effect, Schema, Struct } from 'effect';
+import { expect, it } from 'effect-rstest';
+
 import {
   canonicalizeApplicationComposition,
   ApplicationCompositionSchema,
@@ -83,7 +84,11 @@ const evidence = () => ({
       federationExposes: ['./Navigation', './PageContacts'],
       mfBoundaryId: 'contacts',
       moduleId: 'contacts.core',
-      publicContract: { id: 'contacts.core', sha256: sha256('c'), version: '2' },
+      publicContract: {
+        id: 'contacts.core',
+        sha256: sha256('c'),
+        version: '2',
+      },
       sha256: sha256('a'),
     },
   },
@@ -113,11 +118,11 @@ const federationManifest = (observations: Evidence) =>
 
 it.effect('defaults the validation error code without changing its encoded contract', () =>
   Effect.gen(function* encodeValidationError() {
-    const error = new ApplicationCompositionValidationError({ reason: 'Invalid candidate' });
+    const error = new ApplicationCompositionValidationError({
+      reason: 'Invalid candidate',
+    });
     const encodedError = yield* Schema.encodeEffect(ApplicationCompositionValidationError)(error);
-    expect(Schema.is(Schema.toEncoded(ApplicationCompositionValidationError))(encodedError)).toBe(
-      true,
-    );
+    expect(Schema.is(Schema.toEncoded(ApplicationCompositionValidationError))(encodedError)).toBe(true);
     expect(Struct.omit(encodedError, ['_tag'])).toEqual({
       code: 'application_composition_invalid',
       reason: 'Invalid candidate',
@@ -125,10 +130,7 @@ it.effect('defaults the validation error code without changing its encoded contr
   }),
 );
 
-const addModuleCopy = (
-  input: Candidate,
-  overrides: Partial<ReturnType<typeof onlyModule>>,
-): number => {
+const addModuleCopy = (input: Candidate, overrides: Partial<ReturnType<typeof onlyModule>>): number => {
   const module = onlyModule(input);
   return input.modules.push({
     ...structuredClone(module),
@@ -177,18 +179,17 @@ it.effect(
       version,
       id,
     }));
-    reorderedModule.sharedSingletons = reorderedModule.sharedSingletons.map(
-      ({ packageName, version }) => ({ version, packageName }),
-    );
+    reorderedModule.sharedSingletons = reorderedModule.sharedSingletons.map(({ packageName, version }) => ({
+      version,
+      packageName,
+    }));
     reorderedModule.contract = {
       url: reorderedModule.contract.url,
       sha256: reorderedModule.contract.sha256,
     };
     /* oxlint-enable perfectionist/sort-objects */
     expect(
-      canonicalizeApplicationComposition(
-        yield* validateApplicationCompositionCandidate(reordered, evidence()),
-      ),
+      canonicalizeApplicationComposition(yield* validateApplicationCompositionCandidate(reordered, evidence())),
     ).toBe(canonicalizeApplicationComposition(composition));
     expect(
       yield* Schema.decodeEffect(Schema.fromJsonString(ApplicationCompositionSchema))(
@@ -220,7 +221,10 @@ it.effect(
         };
         for (const environment of [{}, { environment: 'stage' }, { environment: 'production' }]) {
           yield* assertInvalid(
-            validateApplicationCompositionCandidate(input, { ...observed, ...environment }),
+            validateApplicationCompositionCandidate(input, {
+              ...observed,
+              ...environment,
+            }),
             /HTTPS outside development/u,
           );
         }
@@ -235,7 +239,10 @@ it.effect(
     const input = candidate();
     onlyModule(input).contract.url = 'http://contacts.example/manifest.json';
     yield* assertInvalid(
-      validateApplicationCompositionCandidate(input, { ...evidence(), environment: 'development' }),
+      validateApplicationCompositionCandidate(input, {
+        ...evidence(),
+        environment: 'development',
+      }),
       /supported .* schema/u,
     );
   }),
@@ -248,10 +255,7 @@ it.effect(
       mutate: (input: Candidate, observations: Evidence) => number | readonly string[] | string,
       reason: RegExp,
     ][] = [
-      [
-        (input) => (onlyModule(input).federation.remoteName = 'anotherRemote'),
-        /observed deployment contract/u,
-      ],
+      [(input) => (onlyModule(input).federation.remoteName = 'anotherRemote'), /observed deployment contract/u],
       [
         (_input, observations) => (observations.contracts.contacts.mfBoundaryId = 'anotherRemote'),
         /observed deployment contract/u,
@@ -260,32 +264,17 @@ it.effect(
         (_input, observations) => (federationManifest(observations).remoteName = 'anotherRemote'),
         /Module Federation manifest/u,
       ],
-      [
-        (_input, observations) => (observations.contracts.contacts.contractUrl = 'invalid-url'),
-        /observation schema/u,
-      ],
+      [(_input, observations) => (observations.contracts.contacts.contractUrl = 'invalid-url'), /observation schema/u],
       [(input) => onlyModule(input).dependencies.push('billing.core'), /dependency billing\.core/u],
       [(input) => onlyModule(input).dependencies.push('contacts.core'), /dependency cycle/u],
-      [
-        (input) => onlyModule(input).dependencies.push('contacts.core', 'contacts.core'),
-        /duplicate dependency/u,
-      ],
-      [
-        (input) => addModuleCopy(input, { moduleId: 'inventory.stock' }),
-        /duplicate Shell contribution/u,
-      ],
-      [
-        (input) => addModuleCopy(input, { allowedContributions: [] }),
-        /duplicate module ID contacts\.core/u,
-      ],
+      [(input) => onlyModule(input).dependencies.push('contacts.core', 'contacts.core'), /duplicate dependency/u],
+      [(input) => addModuleCopy(input, { moduleId: 'inventory.stock' }), /duplicate Shell contribution/u],
+      [(input) => addModuleCopy(input, { allowedContributions: [] }), /duplicate module ID contacts\.core/u],
       [
         (input) => (onlyModule(input).allowedContributions = ['contacts.core.page.contacts']),
         /observed deployment contract/u,
       ],
-      [
-        (input) => (onlyModule(input).federation.exposes = ['./Navigation']),
-        /observed deployment contract/u,
-      ],
+      [(input) => (onlyModule(input).federation.exposes = ['./Navigation']), /observed deployment contract/u],
       [
         (input) => {
           const module = onlyModule(input);
@@ -353,19 +342,19 @@ it.effect(
         /Core capability core\.authorization/u,
       ],
       [
-        (input) => input.shell.sharedSingletons.push({ packageName: 'react', version: '18.3.1' }),
+        (input) =>
+          input.shell.sharedSingletons.push({
+            packageName: 'react',
+            version: '18.3.1',
+          }),
         /shared singleton react/u,
       ],
       [(input) => (onlyModule(input).federation.execution = 'server'), /supported .* schema/u],
       [
-        (input) =>
-          (onlyModule(input).contract.url = 'https://contacts.example/manifest.json?tag=live'),
+        (input) => (onlyModule(input).contract.url = 'https://contacts.example/manifest.json?tag=live'),
         /supported .* schema/u,
       ],
-      [
-        (_input, observations) => (federationManifest(observations).exposes = []),
-        /Module Federation manifest/u,
-      ],
+      [(_input, observations) => (federationManifest(observations).exposes = []), /Module Federation manifest/u],
       [
         (_input, observations) => {
           const singleton = required(federationManifest(observations).sharedSingletons[0]);

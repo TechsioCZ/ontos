@@ -2,6 +2,7 @@
 // @ontos-action-boundary-owner party-registry
 import { bindGovernedActionHttp } from '@app/core-runtime/http/action-runner';
 import type { PrincipalAuthenticationProblems } from '@app/core-runtime/http/principal-authentication';
+
 import { authenticateOperationPrincipal } from './auth/action-principal.ts';
 
 /**

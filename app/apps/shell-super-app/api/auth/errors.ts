@@ -2,10 +2,7 @@ import { Schema } from 'effect';
 
 const InvalidCredentialsErrorSchema = Schema.TaggedStruct('InvalidCredentialsError', {});
 export type InvalidCredentialsFailure = typeof InvalidCredentialsErrorSchema.Type;
-export const InvalidCredentialsError = Schema.TaggedError<InvalidCredentialsFailure>()(
-  'InvalidCredentialsError',
-  {},
-);
+export const InvalidCredentialsError = Schema.TaggedError<InvalidCredentialsFailure>()('InvalidCredentialsError', {});
 
 const OntosIdentityForbiddenErrorSchema = Schema.TaggedStruct('OntosIdentityForbiddenError', {});
 export type OntosIdentityForbiddenFailure = typeof OntosIdentityForbiddenErrorSchema.Type;
@@ -21,13 +18,12 @@ export const TenantAccessForbiddenError = Schema.TaggedError<TenantAccessForbidd
   {},
 );
 
-const AuthenticationUnavailableErrorSchema = Schema.TaggedStruct(
+const AuthenticationUnavailableErrorSchema = Schema.TaggedStruct('AuthenticationUnavailableError', {});
+export type AuthenticationUnavailableFailure = typeof AuthenticationUnavailableErrorSchema.Type;
+export const AuthenticationUnavailableError = Schema.TaggedError<AuthenticationUnavailableFailure>()(
   'AuthenticationUnavailableError',
   {},
 );
-export type AuthenticationUnavailableFailure = typeof AuthenticationUnavailableErrorSchema.Type;
-export const AuthenticationUnavailableError =
-  Schema.TaggedError<AuthenticationUnavailableFailure>()('AuthenticationUnavailableError', {});
 
 const AuthenticationInternalErrorSchema = Schema.TaggedStruct('AuthenticationInternalError', {});
 export type AuthenticationInternalFailure = typeof AuthenticationInternalErrorSchema.Type;

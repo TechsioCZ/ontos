@@ -1,10 +1,10 @@
+import { Predicate } from 'effect';
 import { expect, it } from 'effect-rstest';
 
-import { Predicate } from 'effect';
-import runtime from '../../src/modern.runtime.ts';
 import csResource from '../../locales/cs/translation.json' with { type: 'json' };
 import enResource from '../../locales/en/translation.json' with { type: 'json' };
 import { partyRegistryI18nResources } from '../../src/i18n/resources.ts';
+import runtime from '../../src/modern.runtime.ts';
 
 it('runtime registers the Party Registry page namespace alongside shared translations', () => {
   const configuration = Predicate.isFunction(runtime) ? runtime('index') : runtime;

@@ -1,3 +1,5 @@
+import { fileURLToPath } from 'node:url';
+
 /**
  * Audit A6 (`docs/architecture/EFFECT_V4_ANTIPATTERN_AUDIT.md`) targets repeated request
  * identity inputs and asks for ambient services/references plus one instrumentation seam.
@@ -24,14 +26,12 @@
  * Report-only, with no fixer or suggestions.
  */
 import { defineRule } from '@oxlint/plugins';
-import { fileURLToPath } from 'node:url';
-
 import type { Context, ESTree, Variable } from '@oxlint/plugins';
 
-import { isTestFile, matchesGlobs, rootedScopePath } from '../shared/paths.ts';
 import { keyName as staticKeyName, parentOf, unwrapBinding } from '../shared/ast.ts';
 import { lookupVariable } from '../shared/bindings.ts';
 import { compile, stringList } from '../shared/options.ts';
+import { isTestFile, matchesGlobs, rootedScopePath } from '../shared/paths.ts';
 
 type AnyNode = ESTree.Node;
 
@@ -46,12 +46,7 @@ const DEFAULT_IGNORE: readonly string[] = [];
 const MEMBER_CONTAINERS = new Set(['TSInterfaceBody', 'TSTypeLiteral']);
 
 /** Type wrappers that never change which members an object type declares. */
-const TYPE_WRAPPERS = new Set([
-  'TSParenthesizedType',
-  'TSTypeOperator',
-  'TSArrayType',
-  'TSOptionalType',
-]);
+const TYPE_WRAPPERS = new Set(['TSParenthesizedType', 'TSTypeOperator', 'TSArrayType', 'TSOptionalType']);
 
 interface RuleOptions {
   readonly ambientKeys: ReadonlySet<string>;
@@ -140,9 +135,7 @@ function inlineMemberKeys(annotation: AnyNode | null | undefined, depth = 0): Re
   const keys = new Set<string>();
   if (annotation === null || annotation === undefined || depth > 4) return keys;
   const node =
-    annotation.type === 'TSTypeAnnotation'
-      ? (annotation as { typeAnnotation: AnyNode }).typeAnnotation
-      : annotation;
+    annotation.type === 'TSTypeAnnotation' ? (annotation as { typeAnnotation: AnyNode }).typeAnnotation : annotation;
   for (const child of inlineTypeChildren(node)) {
     for (const key of inlineMemberKeys(child, depth + 1)) keys.add(key);
   }
@@ -167,9 +160,7 @@ function inlineTypeChildren(node: AnyNode): readonly (AnyNode | null | undefined
   }
   if (node.type === 'TSUnionType' || node.type === 'TSIntersectionType') return node.types;
   if (node.type !== 'TSTypeLiteral') return [];
-  return node.members.flatMap((member) =>
-    member.type === 'TSPropertySignature' ? [member.typeAnnotation] : [],
-  );
+  return node.members.flatMap((member) => (member.type === 'TSPropertySignature' ? [member.typeAnnotation] : []));
 }
 
 function importedContextBinding(definition: Variable['defs'][number]): string | null {
@@ -183,19 +174,13 @@ function importedContextBinding(definition: Variable['defs'][number]): string | 
 
 function contextImportName(source: string, specifier: AnyNode): string | null {
   if (source === 'effect/Context')
-    return specifier.type === 'ImportSpecifier'
-      ? `Context.${keyName(specifier.imported, false)}`
-      : 'Context';
+    return specifier.type === 'ImportSpecifier' ? `Context.${keyName(specifier.imported, false)}` : 'Context';
   if (source !== 'effect' && source !== '@modern-js/plugin-bff/effect-edge') return null;
   if (specifier.type === 'ImportNamespaceSpecifier') return '$root';
   return specifier.type === 'ImportSpecifier' ? keyName(specifier.imported, false) : null;
 }
 
-function variableContextBinding(
-  context: Context,
-  node: AnyNode,
-  seen: Set<Variable>,
-): string | null {
+function variableContextBinding(context: Context, node: AnyNode, seen: Set<Variable>): string | null {
   const variable = lookupVariable(context, node);
   if (!variable || seen.has(variable)) return null;
   seen.add(variable);
@@ -207,11 +192,7 @@ function variableContextBinding(
   return contextBinding(context, definition.node.init, seen);
 }
 
-function contextBinding(
-  context: Context,
-  node: AnyNode,
-  seen = new Set<Variable>(),
-): string | null {
+function contextBinding(context: Context, node: AnyNode, seen = new Set<Variable>()): string | null {
   if (
     [
       'TSAsExpression',
@@ -236,11 +217,7 @@ function contextBinding(
 function isAmbientOrReadType(context: Context, from: AnyNode): boolean {
   let node = parentOf(from);
   while (node) {
-    if (
-      ['TSAsExpression', 'TSTypeAssertion', 'TSTypePredicate', 'TSSatisfiesExpression'].includes(
-        node.type,
-      )
-    )
+    if (['TSAsExpression', 'TSTypeAssertion', 'TSTypePredicate', 'TSSatisfiesExpression'].includes(node.type))
       return true;
     if (
       node.type === 'CallExpression' &&
@@ -264,8 +241,7 @@ function isAmbientOrReadType(context: Context, from: AnyNode): boolean {
 }
 
 function isConciseWireProjection(owner: AnyNode, wireTypeNames: RegExp): boolean {
-  if (owner.type !== 'ArrowFunctionExpression' || owner.body.type !== 'ObjectExpression')
-    return false;
+  if (owner.type !== 'ArrowFunctionExpression' || owner.body.type !== 'ObjectExpression') return false;
   const output = owner.returnType?.typeAnnotation;
   return (
     output?.type === 'TSTypeReference' &&
@@ -279,16 +255,9 @@ function isWireProjection(from: AnyNode, wireTypeNames: RegExp): boolean {
   let owner = parentOf(from);
   while (
     owner &&
-    ![
-      'BlockStatement',
-      'TSPropertySignature',
-      'TSInterfaceDeclaration',
-      'TSTypeAliasDeclaration',
-    ].includes(owner.type)
+    !['BlockStatement', 'TSPropertySignature', 'TSInterfaceDeclaration', 'TSTypeAliasDeclaration'].includes(owner.type)
   ) {
-    if (
-      ['ArrowFunctionExpression', 'FunctionDeclaration', 'FunctionExpression'].includes(owner.type)
-    )
+    if (['ArrowFunctionExpression', 'FunctionDeclaration', 'FunctionExpression'].includes(owner.type))
       return isConciseWireProjection(owner, wireTypeNames);
     owner = parentOf(owner);
   }
@@ -358,18 +327,14 @@ export const rule = defineRule({
     const options = readOptions(context.options[0]);
     const path = scopePath(context.filename);
     if (!matchesGlobs(path, options.includePaths)) return {};
-    if (
-      /\.d\.[cm]?ts$/u.test(path) ||
-      /(?:^|\/)(?:dist(?:-[^/]+)?|build|\.output|node_modules)\//u.test(path)
-    )
+    if (/\.d\.[cm]?ts$/u.test(path) || /(?:^|\/)(?:dist(?:-[^/]+)?|build|\.output|node_modules)\//u.test(path))
       return {};
     if (matchesGlobs(path, options.ignore)) return {};
     if (/(?:^|\/)scripts\//u.test(path)) return {};
     if (!options.includeTests && isTestFile(path)) return {};
 
     /** The HTTP/transport edge the audit blesses: a wire-named enclosing declaration. */
-    const isWireEdge = (names: readonly string[]): boolean =>
-      names.some((name) => options.wireTypeNames.test(name));
+    const isWireEdge = (names: readonly string[]): boolean => names.some((name) => options.wireTypeNames.test(name));
 
     /**
      * `node` is what gets underlined; `from` is where the enclosing-declaration walk starts, so a
@@ -387,7 +352,11 @@ export const rule = defineRule({
         if (isAmbientOrReadType(context, from)) return;
         if (isWireProjection(from, options.wireTypeNames)) return;
       }
-      context.report({ data: { key, owner: names[0] ?? '<anonymous>' }, messageId, node });
+      context.report({
+        data: { key, owner: names[0] ?? '<anonymous>' },
+        messageId,
+        node,
+      });
     };
 
     /** Report every ambient key destructured by a parameter pattern (top level + one nesting). */
@@ -395,7 +364,11 @@ export const rule = defineRule({
       if (pattern.type !== 'ObjectPattern') return;
       for (const property of (pattern as { properties: readonly AnyNode[] }).properties) {
         if (property.type !== 'Property') continue;
-        const entry = property as unknown as { key: AnyNode; computed: boolean; value: AnyNode };
+        const entry = property as unknown as {
+          key: AnyNode;
+          computed: boolean;
+          value: AnyNode;
+        };
         const name = keyName(entry.key, entry.computed);
         if (name !== null && options.ambientKeys.has(name) && !skip.has(name)) {
           report(entry.key, property, 'threadedParameter', name);
@@ -415,9 +388,7 @@ export const rule = defineRule({
         }
         // An inline object type on the pattern declares the same keys; let the member visitor
         // report those so `({ correlationId }: { readonly correlationId: string })` counts once.
-        const skip = inlineMemberKeys(
-          (binding as { typeAnnotation?: AnyNode | null }).typeAnnotation,
-        );
+        const skip = inlineMemberKeys((binding as { typeAnnotation?: AnyNode | null }).typeAnnotation);
         inspectPattern(binding, skip, 0);
       }
     };
@@ -446,7 +417,10 @@ export const rule = defineRule({
       TSAbstractPropertyDefinition: inspectClassField,
       TSAbstractAccessorProperty: inspectClassField,
       TSPropertySignature(node) {
-        const signature = node as unknown as { key: AnyNode; computed: boolean };
+        const signature = node as unknown as {
+          key: AnyNode;
+          computed: boolean;
+        };
         const parent = parentOf(node as unknown as AnyNode);
         if (parent === null || !MEMBER_CONTAINERS.has(parent.type)) return;
         const name = keyName(signature.key, signature.computed);

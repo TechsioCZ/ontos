@@ -1,6 +1,7 @@
-import { expect, it } from 'effect-rstest';
 import { DateTime, Effect, Layer, Match, Option, Result, Schema } from 'effect';
+import { expect, it } from 'effect-rstest';
 import { TestClock } from 'effect/testing';
+
 import {
   AresAppliedEvidenceSchema,
   makeAresAppliedEvidence,
@@ -8,10 +9,7 @@ import {
 } from '../../shared/domain/ares-application.ts';
 import type { AresAppliedEvidence } from '../../shared/domain/ares-application.ts';
 import { AresSubjectEvidenceSchema } from '../../shared/domain/ares-evidence.ts';
-import {
-  AssertionIdSchema,
-  TargetAssertionIdSchema,
-} from '../../shared/domain/correction-contracts.ts';
+import { AssertionIdSchema, TargetAssertionIdSchema } from '../../shared/domain/correction-contracts.ts';
 import { PartyIdSchema } from '../../shared/domain/identity-contracts.ts';
 import {
   AresApplySelectionInvalid,
@@ -37,7 +35,7 @@ const actionValidFrom = DateTime.makeUnsafe('2026-09-03T09:59:00.000Z');
 const partyCreatedAt = DateTime.makeUnsafe('2026-09-01T10:00:00.000Z');
 const partyUpdatedAt = DateTime.makeUnsafe('2026-09-03T10:00:00.000Z');
 const currentAssertionId = Result.getOrThrow(
-  Schema.decodeUnknownResult(AssertionIdSchema)('30000000-0000-4000-8000-000000000001'),
+  Schema.decodeResult(AssertionIdSchema)('30000000-0000-4000-8000-000000000001'),
 );
 const application = {
   decidedAt: confirmedAt,
@@ -90,9 +88,7 @@ const application = {
   outcome: 'APPLY_ENRICHMENT' as const,
   userConfirmed: true,
 };
-const decodedObservation = Result.getOrThrow(
-  Schema.decodeUnknownResult(AresSubjectEvidenceSchema)(application.evidence),
-);
+const decodedObservation = Result.getOrThrow(Schema.decodeResult(AresSubjectEvidenceSchema)(application.evidence));
 const request: AresApplyRequest = {
   correlationId: 'ares-test-correlation',
   observation: application.evidence,
@@ -133,10 +129,7 @@ const request: AresApplyRequest = {
 class TestFailure extends Schema.TaggedError<TestFailure>()('TestFailure', {
   action: Schema.String,
 }) {}
-const makeInvoker = (
-  calls: string[],
-  failAction?: string,
-): PartyRegistryStandardActionInvoker<TestFailure> => {
+const makeInvoker = (calls: string[], failAction?: string): PartyRegistryStandardActionInvoker<TestFailure> => {
   const complete = <Value>(action: string, value: Value) => {
     calls.push(action);
     return failAction === action ? Effect.fail(new TestFailure({ action })) : Effect.succeed(value);
@@ -165,9 +158,7 @@ const makeInvoker = (
       }),
   };
 };
-const gateway = makeOperationGateway(() =>
-  Effect.succeed({ expiresAt: 1_788_430_000, token: 'signed-gateway-token' }),
-);
+const gateway = makeOperationGateway(() => Effect.succeed({ expiresAt: 1_788_430_000, token: 'signed-gateway-token' }));
 const makeReads = (displayName: string | null = null): AresApplyReads => ({
   contactPoints: () => Effect.succeed({ items: [] }),
   identifiers: () => Effect.succeed({ items: [] }),
@@ -211,10 +202,7 @@ it.layer(Layer.effectDiscard(TestClock.setTime(confirmedAtEpoch)))('ARES applica
           Match.orElse(() => false),
         ),
       ).toBe(true);
-      expect(outcome.completed.map(({ route }) => route)).toEqual([
-        'PARTY_UPDATE',
-        'IDENTIFIER_ADD',
-      ]);
+      expect(outcome.completed.map(({ route }) => route)).toEqual(['PARTY_UPDATE', 'IDENTIFIER_ADD']);
     }),
   );
   aresIt.effect('propagates bounded evidence and independent command delivery keys', () =>
@@ -247,10 +235,7 @@ it.layer(Layer.effectDiscard(TestClock.setTime(confirmedAtEpoch)))('ARES applica
         gateway,
         reads: makeReads(),
       });
-      expect(recorded.map(({ idempotencyKey }) => idempotencyKey)).toEqual([
-        'ares-name-1',
-        'ares-ico-1',
-      ]);
+      expect(recorded.map(({ idempotencyKey }) => idempotencyKey)).toEqual(['ares-name-1', 'ares-ico-1']);
       expect(
         recorded.every(({ evidenceRef }) =>
           evidenceRef === undefined ? false : evidenceRef.includes('ares:12345678'),
@@ -299,7 +284,11 @@ it.layer(Layer.effectDiscard(TestClock.setTime(confirmedAtEpoch)))('ARES applica
         ),
       ).toBe(true);
       expect(outcome.skipped).toEqual([
-        { fact: 'BUSINESS_NAME', reason: 'ALREADY_SATISFIED', route: 'PARTY_UPDATE' },
+        {
+          fact: 'BUSINESS_NAME',
+          reason: 'ALREADY_SATISFIED',
+          route: 'PARTY_UPDATE',
+        },
       ]);
       expect(outcome.completed.map(({ route }) => route)).toEqual(['IDENTIFIER_ADD']);
     }),
@@ -311,7 +300,10 @@ it.layer(Layer.effectDiscard(TestClock.setTime(confirmedAtEpoch)))('ARES applica
         ...request,
         selections: request.selections.map((selection) =>
           selection.route === 'PARTY_UPDATE'
-            ? { ...selection, payload: { ...selection.payload, expectedRevision: 2 } }
+            ? {
+                ...selection,
+                payload: { ...selection.payload, expectedRevision: 2 },
+              }
             : selection,
         ),
       };
@@ -332,7 +324,10 @@ it.layer(Layer.effectDiscard(TestClock.setTime(confirmedAtEpoch)))('ARES applica
             gateway,
             reads: makeReads(),
           }),
-          applyAresObservation(request, makeInvoker(calls), { gateway, reads: changedReads }),
+          applyAresObservation(request, makeInvoker(calls), {
+            gateway,
+            reads: changedReads,
+          }),
         ],
         { concurrency: 'unbounded' },
       );
@@ -351,109 +346,108 @@ it.layer(Layer.effectDiscard(TestClock.setTime(confirmedAtEpoch)))('ARES applica
       expect(calls).toEqual([]);
     }),
   );
-  aresIt.effect(
-    'rejects unconfirmed or observation-mismatched selections before invoking an Action',
-    () =>
-      Effect.gen(function* rejectsUnconfirmedOrObservationmismatchedSelections() {
-        const calls: string[] = [];
-        const invalidRequests: readonly AresApplyRequest[] = [
-          {
-            ...request,
-            userConfirmed: false,
-          },
-          {
-            correlationId: request.correlationId,
-            observation: request.observation,
-            partyRef,
-            selections: [
-              {
-                fact: 'BUSINESS_NAME',
-                idempotencyKey: 'ares-invalid-name-1',
-                payload: {
-                  displayName: 'Injected name',
-                  expectedRevision: 1,
-                  partyRef,
-                  provenanceMethod: 'ARES_USER_CONFIRMED',
-                  provenanceSource: 'ares:12345678',
-                  validFrom: actionValidFrom,
-                },
-                route: 'PARTY_UPDATE',
-              },
-            ],
-            userConfirmed: true,
-          },
-        ];
-        const results = yield* Effect.all(
-          invalidRequests.map((invalidRequest) =>
-            applyAresObservation(invalidRequest, makeInvoker(calls), {
-              gateway,
-              reads: makeReads(),
-            }).pipe(Effect.result),
-          ),
-          { concurrency: 'unbounded' },
-        );
-        for (const result of results) {
-          expect('failure' in result).toBe(true);
-          if ('failure' in result) {
-            expect(Schema.is(AresApplySelectionInvalid)(result.failure)).toBe(true);
-          }
-        }
-        expect(calls).toEqual([]);
-      }),
-  );
-  aresIt.effect(
-    'does not accept a different street number as the observed registered address',
-    () =>
-      Effect.gen(function* doesNotAcceptADifferent() {
-        const calls: string[] = [];
-        const invalidRequest: AresApplyRequest = {
+  aresIt.effect('rejects unconfirmed or observation-mismatched selections before invoking an Action', () =>
+    Effect.gen(function* rejectsUnconfirmedOrObservationmismatchedSelections() {
+      const calls: string[] = [];
+      const invalidRequests: readonly AresApplyRequest[] = [
+        {
+          ...request,
+          userConfirmed: false,
+        },
+        {
           correlationId: request.correlationId,
           observation: request.observation,
           partyRef,
           selections: [
             {
-              fact: 'REGISTERED_ADDRESS',
-              idempotencyKey: 'ares-address-1',
+              fact: 'BUSINESS_NAME',
+              idempotencyKey: 'ares-invalid-name-1',
               payload: {
-                contactPoint: {
-                  address: {
-                    addressLine1: 'Main 100',
-                    city: 'Prague',
-                    countryCode: 'CZ',
-                    postalCode: '11000',
-                  },
-                  purposes: [
-                    {
-                      preferred: false,
-                      purpose: 'REGISTERED',
-                      registryContext: { jurisdiction: 'CZ', registryKey: 'ARES' },
-                    },
-                  ],
-                  type: 'ADDRESS',
-                },
+                displayName: 'Injected name',
+                expectedRevision: 1,
                 partyRef,
-                privacyClassification: 'PUBLIC',
-                provenance: {
-                  authoritative: true,
-                  evidenceReference: 'ares:12345678',
-                  method: 'PROVIDER_OBSERVATION',
-                  source: 'EXTERNAL_EVIDENCE',
-                },
-                validFrom: decodedObservation.observedAt,
-                verification: { state: 'UNVERIFIED' },
+                provenanceMethod: 'ARES_USER_CONFIRMED',
+                provenanceSource: 'ares:12345678',
+                validFrom: actionValidFrom,
               },
-              route: 'CONTACT_POINT_ADD',
+              route: 'PARTY_UPDATE',
             },
           ],
           userConfirmed: true,
-        };
-        const result = yield* applyAresObservation(invalidRequest, makeInvoker(calls), {
-          gateway,
-          reads: makeReads(),
-        }).pipe(Effect.result);
+        },
+      ];
+      const results = yield* Effect.forEach(
+        invalidRequests,
+        (invalidRequest) =>
+          applyAresObservation(invalidRequest, makeInvoker(calls), {
+            gateway,
+            reads: makeReads(),
+          }).pipe(Effect.result),
+        { concurrency: 'unbounded' },
+      );
+      for (const result of results) {
         expect('failure' in result).toBe(true);
-        expect(calls).toEqual([]);
-      }),
+        if ('failure' in result) {
+          expect(Schema.is(AresApplySelectionInvalid)(result.failure)).toBe(true);
+        }
+      }
+      expect(calls).toEqual([]);
+    }),
+  );
+  aresIt.effect('does not accept a different street number as the observed registered address', () =>
+    Effect.gen(function* doesNotAcceptADifferent() {
+      const calls: string[] = [];
+      const invalidRequest: AresApplyRequest = {
+        correlationId: request.correlationId,
+        observation: request.observation,
+        partyRef,
+        selections: [
+          {
+            fact: 'REGISTERED_ADDRESS',
+            idempotencyKey: 'ares-address-1',
+            payload: {
+              contactPoint: {
+                address: {
+                  addressLine1: 'Main 100',
+                  city: 'Prague',
+                  countryCode: 'CZ',
+                  postalCode: '11000',
+                },
+                purposes: [
+                  {
+                    preferred: false,
+                    purpose: 'REGISTERED',
+                    registryContext: {
+                      jurisdiction: 'CZ',
+                      registryKey: 'ARES',
+                    },
+                  },
+                ],
+                type: 'ADDRESS',
+              },
+              partyRef,
+              privacyClassification: 'PUBLIC',
+              provenance: {
+                authoritative: true,
+                evidenceReference: 'ares:12345678',
+                method: 'PROVIDER_OBSERVATION',
+                source: 'EXTERNAL_EVIDENCE',
+              },
+              validFrom: decodedObservation.observedAt,
+              verification: { state: 'UNVERIFIED' },
+            },
+            route: 'CONTACT_POINT_ADD',
+          },
+        ],
+        userConfirmed: true,
+      };
+      const result = yield* applyAresObservation(invalidRequest, makeInvoker(calls), {
+        gateway,
+        reads: makeReads(),
+      }).pipe(Effect.result);
+      expect('failure' in result).toBe(true);
+      expect(calls).toEqual([]);
+    }),
   );
   const historicalEvidence = (fact: 'BUSINESS_NAME' | 'ICO'): AresAppliedEvidence => {
     const result = deriveAresEvidenceApplication({
@@ -481,167 +475,148 @@ it.layer(Layer.effectDiscard(TestClock.setTime(confirmedAtEpoch)))('ARES applica
       evidenceRefs: ['review:ares'],
       evidenceSource: 'MANUAL_REVIEW',
       factKind: 'DISPLAY_NAME',
-      partyId: Result.getOrThrow(Schema.decodeUnknownResult(PartyIdSchema)(partyRef.resourceId)),
+      partyId: Result.getOrThrow(Schema.decodeResult(PartyIdSchema)(partyRef.resourceId)),
       policyVersion: 'party-correction.v1',
       provenance: { method: 'REVIEW', source: 'ARES' },
       reasonCode: 'WRONG_IDENTITY_VALUE',
       replacementValue: 'Example s.r.o.',
       targetAssertionId: Result.getOrThrow(
-        Schema.decodeUnknownResult(TargetAssertionIdSchema)('30000000-0000-4000-8000-000000000001'),
+        Schema.decodeResult(TargetAssertionIdSchema)('30000000-0000-4000-8000-000000000001'),
       ),
     },
     route: 'PARTY_CORRECTION',
   };
-  aresIt.effect(
-    'review-authorized assertion context returns explicit Correction handoff without a write',
-    () =>
-      Effect.gen(function* reviewauthorizedAssertionContextReturnsExplicit() {
-        const calls: string[] = [];
-        const reads = makeReads('Wrong name');
-        let reviewed = false;
-        const result = yield* applyAresObservation(
-          { ...request, selections: [correctionSelection] },
-          makeInvoker(calls),
-          {
-            gateway,
-            reads: {
-              ...reads,
-              party: (payload, ...args) => {
-                reviewed = payload.includeFactHistory === true;
-                return reads.party(payload, ...args).pipe(
-                  Effect.map((detail) => ({
-                    ...detail,
-                    currentFactAssertions: [
-                      {
-                        assertionId: currentAssertionId,
-                        externalEvidence: Option.some(historicalEvidence('BUSINESS_NAME')),
-                        factKind: 'DISPLAY_NAME' as const,
-                        isCurrent: true,
-                        partyRef,
-                        recordedAt: confirmedInstant,
-                        retractsAssertionId: Option.none(),
-                        state: 'ACTIVE' as const,
-                        supersedesAssertionId: Option.none(),
-                        validFrom: confirmedInstant,
-                        validTo: Option.none(),
-                        value: 'Wrong name',
-                      },
-                    ],
-                  })),
-                );
-              },
-            },
-          },
-        );
-        expect(reviewed).toBe(true);
-        const deferred = Match.value(result).pipe(
-          Match.tag('AresApplyDeferred', (value) => value),
-          Match.orElse(() => expect.unreachable('Expected a deferred ARES application')),
-        );
-        expect(deferred.application.outcome).toBe('CORRECTION_CANDIDATE');
-        expect(deferred.correctionCandidates[0]?.targetAssertionId).toBe(
-          '30000000-0000-4000-8000-000000000001',
-        );
-        expect(deferred.correctionCandidates[0]?.observedValue).toBe('Example s.r.o.');
-        expect(calls).toEqual([]);
-      }),
-  );
-  aresIt.effect(
-    'governed identifier history supports ICO correction suspicion without claiming the identifier',
-    () =>
-      Effect.gen(function* governedIdentifierHistorySupportsIco() {
-        const calls: string[] = [];
-        const selection = Option.getOrThrow(Option.fromNullishOr(request.selections[1]));
-        expect(selection).toBeDefined();
-        const encodedEvidence = yield* Schema.encodeEffect(AresAppliedEvidenceSchema)(
-          historicalEvidence('ICO'),
-        );
-        const outcome = yield* applyAresObservation(
-          { ...request, selections: [selection] },
-          makeInvoker(calls),
-          {
-            gateway,
-            reads: {
-              ...makeReads(),
-              identifiers: () =>
-                Effect.succeed({
-                  items: [
+  aresIt.effect('review-authorized assertion context returns explicit Correction handoff without a write', () =>
+    Effect.gen(function* reviewauthorizedAssertionContextReturnsExplicit() {
+      const calls: string[] = [];
+      const reads = makeReads('Wrong name');
+      let reviewed = false;
+      const result = yield* applyAresObservation(
+        { ...request, selections: [correctionSelection] },
+        makeInvoker(calls),
+        {
+          gateway,
+          reads: {
+            ...reads,
+            party: (payload, ...args) => {
+              reviewed = payload.includeFactHistory === true;
+              return reads.party(payload, ...args).pipe(
+                Effect.map((detail) => ({
+                  ...detail,
+                  currentFactAssertions: [
                     {
-                      externalEvidence: encodedEvidence,
-                      identifierType: 'ICO' as const,
-                      namespace: 'CZ:ICO',
-                      normalizedValue: '87654321',
-                      officialIdentifierRef: {
-                        moduleId: 'party.registry' as const,
-                        resourceId: '40000000-0000-4000-8000-000000000001',
-                        resourceType: 'party.registry.party-official-identifier' as const,
-                        tenantId: partyRef.tenantId,
-                      },
+                      assertionId: currentAssertionId,
+                      externalEvidence: Option.some(historicalEvidence('BUSINESS_NAME')),
+                      factKind: 'DISPLAY_NAME' as const,
+                      isCurrent: true,
                       partyRef,
-                      recordedAt: application.decidedAt,
+                      recordedAt: confirmedInstant,
+                      retractsAssertionId: Option.none(),
                       state: 'ACTIVE' as const,
-                      validFrom: application.decidedAt,
-                      validTo: null,
-                      verification: 'VERIFIED' as const,
+                      supersedesAssertionId: Option.none(),
+                      validFrom: confirmedInstant,
+                      validTo: Option.none(),
+                      value: 'Wrong name',
                     },
                   ],
-                }),
+                })),
+              );
             },
           },
-        );
-        const deferred = Match.value(outcome).pipe(
-          Match.tag('AresApplyDeferred', (value) => value),
-          Match.orElse(() => expect.unreachable('Expected a deferred ARES application')),
-        );
-        expect(deferred.application.outcome).toBe('CORRECTION_CANDIDATE');
-        expect(deferred.correctionCandidates[0]?.fact).toBe('ICO');
-        expect(calls).toEqual([]);
-      }),
+        },
+      );
+      expect(reviewed).toBe(true);
+      const deferred = Match.value(result).pipe(
+        Match.tag('AresApplyDeferred', (value) => value),
+        Match.orElse(() => expect.unreachable('Expected a deferred ARES application')),
+      );
+      expect(deferred.application.outcome).toBe('CORRECTION_CANDIDATE');
+      expect(deferred.correctionCandidates[0]?.targetAssertionId).toBe('30000000-0000-4000-8000-000000000001');
+      expect(deferred.correctionCandidates[0]?.observedValue).toBe('Example s.r.o.');
+      expect(calls).toEqual([]);
+    }),
   );
-  aresIt.effect(
-    'every governed read and selected Action receives fresh audience-scoped authorization',
-    () =>
-      Effect.gen(function* everyGovernedReadAndSelected() {
-        const tokens: string[] = [];
-        const calls: string[] = [];
-        const delegate = makeReads();
-        const issued = makeOperationGateway(() => {
-          const token = `token-${tokens.length + 1}`;
-          tokens.push(token);
-          return Effect.succeed({ expiresAt: 1_788_430_000, token });
-        });
-        const authorized: string[] = [];
-        const reads: AresApplyReads = {
-          contactPoints: (payload, authorization, ...rest) => {
-            authorized.push(authorization);
-            return delegate.contactPoints(payload, authorization, ...rest);
-          },
-          identifiers: (payload, authorization, ...rest) => {
-            authorized.push(authorization);
-            return delegate.identifiers(payload, authorization, ...rest);
-          },
-          observation: (payload, authorization, ...rest) => {
-            authorized.push(authorization);
-            return delegate.observation(payload, authorization, ...rest);
-          },
-          party: (payload, authorization, ...rest) => {
-            authorized.push(authorization);
-            expect(payload.includeFactHistory).toBe(undefined);
-            return delegate.party(payload, authorization, ...rest);
-          },
-        };
-        yield* applyAresObservation(request, makeInvoker(calls), { gateway: issued, reads });
-        expect(authorized).toEqual([
-          'Bearer token-1',
-          'Bearer token-2',
-          'Bearer token-3',
-          'Bearer token-4',
-        ]);
-        expect(calls).toEqual([
-          'update-party|Bearer token-5',
-          'add-party-official-identifier|Bearer token-6',
-        ]);
-      }),
+  aresIt.effect('governed identifier history supports ICO correction suspicion without claiming the identifier', () =>
+    Effect.gen(function* governedIdentifierHistorySupportsIco() {
+      const calls: string[] = [];
+      const selection = Option.getOrThrow(Option.fromNullishOr(request.selections[1]));
+      expect(selection).toBeDefined();
+      const encodedEvidence = yield* Schema.encodeEffect(AresAppliedEvidenceSchema)(historicalEvidence('ICO'));
+      const outcome = yield* applyAresObservation({ ...request, selections: [selection] }, makeInvoker(calls), {
+        gateway,
+        reads: {
+          ...makeReads(),
+          identifiers: () =>
+            Effect.succeed({
+              items: [
+                {
+                  externalEvidence: encodedEvidence,
+                  identifierType: 'ICO' as const,
+                  namespace: 'CZ:ICO',
+                  normalizedValue: '87654321',
+                  officialIdentifierRef: {
+                    moduleId: 'party.registry' as const,
+                    resourceId: '40000000-0000-4000-8000-000000000001',
+                    resourceType: 'party.registry.party-official-identifier' as const,
+                    tenantId: partyRef.tenantId,
+                  },
+                  partyRef,
+                  recordedAt: application.decidedAt,
+                  state: 'ACTIVE' as const,
+                  validFrom: application.decidedAt,
+                  validTo: null,
+                  verification: 'VERIFIED' as const,
+                },
+              ],
+            }),
+        },
+      });
+      const deferred = Match.value(outcome).pipe(
+        Match.tag('AresApplyDeferred', (value) => value),
+        Match.orElse(() => expect.unreachable('Expected a deferred ARES application')),
+      );
+      expect(deferred.application.outcome).toBe('CORRECTION_CANDIDATE');
+      expect(deferred.correctionCandidates[0]?.fact).toBe('ICO');
+      expect(calls).toEqual([]);
+    }),
+  );
+  aresIt.effect('every governed read and selected Action receives fresh audience-scoped authorization', () =>
+    Effect.gen(function* everyGovernedReadAndSelected() {
+      const tokens: string[] = [];
+      const calls: string[] = [];
+      const delegate = makeReads();
+      const issued = makeOperationGateway(() => {
+        const token = `token-${tokens.length + 1}`;
+        tokens.push(token);
+        return Effect.succeed({ expiresAt: 1_788_430_000, token });
+      });
+      const authorized: string[] = [];
+      const reads: AresApplyReads = {
+        contactPoints: (payload, authorization, ...rest) => {
+          authorized.push(authorization);
+          return delegate.contactPoints(payload, authorization, ...rest);
+        },
+        identifiers: (payload, authorization, ...rest) => {
+          authorized.push(authorization);
+          return delegate.identifiers(payload, authorization, ...rest);
+        },
+        observation: (payload, authorization, ...rest) => {
+          authorized.push(authorization);
+          return delegate.observation(payload, authorization, ...rest);
+        },
+        party: (payload, authorization, ...rest) => {
+          authorized.push(authorization);
+          expect(payload.includeFactHistory).toBe(undefined);
+          return delegate.party(payload, authorization, ...rest);
+        },
+      };
+      yield* applyAresObservation(request, makeInvoker(calls), {
+        gateway: issued,
+        reads,
+      });
+      expect(authorized).toEqual(['Bearer token-1', 'Bearer token-2', 'Bearer token-3', 'Bearer token-4']);
+      expect(calls).toEqual(['update-party|Bearer token-5', 'add-party-official-identifier|Bearer token-6']);
+    }),
   );
   aresIt.effect('read denial fails before writes and preserves its declared error', () =>
     Effect.gen(function* readDenialFailsBeforeWrites() {
@@ -677,8 +652,7 @@ it.layer(Layer.effectDiscard(TestClock.setTime(confirmedAtEpoch)))('ARES applica
                     ...detail,
                     party: {
                       ...detail.party,
-                      archivedAt:
-                        kind === 'ARCHIVED' ? Option.some(confirmedInstant) : Option.none(),
+                      archivedAt: kind === 'ARCHIVED' ? Option.some(confirmedInstant) : Option.none(),
                     },
                     resolution: {
                       ...detail.resolution,
@@ -695,9 +669,7 @@ it.layer(Layer.effectDiscard(TestClock.setTime(confirmedAtEpoch)))('ARES applica
             if ('success' in result) {
               Match.value(result.success).pipe(
                 Match.tag('AresApplyDeferred', () => null),
-                Match.orElse(() =>
-                  expect.unreachable('Expected an archived Party to defer ARES application'),
-                ),
+                Match.orElse(() => expect.unreachable('Expected an archived Party to defer ARES application')),
               );
             }
           }
@@ -733,141 +705,126 @@ it.layer(Layer.effectDiscard(TestClock.setTime(confirmedAtEpoch)))('ARES applica
       expect(calls).toEqual([]);
     }),
   );
-  aresIt.effect(
-    'retry preserves exact command payload and reports required standard recovery',
-    () =>
-      Effect.gen(function* retryPreservesExactCommandPayload() {
-        const payloads: unknown[] = [];
-        const calls: string[] = [];
-        const delegate = makeInvoker(calls, 'update-party|Bearer signed-gateway-token');
-        const invoker: PartyRegistryStandardActionInvoker<TestFailure> = {
-          ...delegate,
-          updateParty: (payload, auth, options) => {
-            payloads.push({ options, payload });
-            return delegate.updateParty(payload, auth, options);
-          },
-        };
-        for (let retry = 0; retry < 2; retry += 1) {
-          const result = yield* applyAresObservation(request, invoker, {
-            gateway,
-            reads: makeReads(),
-          });
-          const partial = Match.value(result).pipe(
-            Match.tag('AresApplyPartiallyCompleted', (value) => value),
-            Match.orElse(() =>
-              expect.unreachable('Expected a partially completed ARES application'),
-            ),
-          );
-          expect(partial.failed.idempotencyKey).toBe('ares-name-1');
-          expect(partial.failed.recovery).toBe('RESOLVE_STANDARD_ACTION_BEFORE_RETRY');
-        }
-        expect(payloads[0]).toEqual(payloads[1]);
-        expect(calls).toEqual([
-          'update-party|Bearer signed-gateway-token',
-          'update-party|Bearer signed-gateway-token',
-        ]);
-      }),
-  );
-  aresIt.effect(
-    'failed second Action stops the following supported address and retains prior commit receipt',
-    () =>
-      Effect.gen(function* failedSecondActionStopsThe() {
-        const calls: string[] = [];
-        const address: AresApplyRequest['selections'][number] = {
-          fact: 'REGISTERED_ADDRESS',
-          idempotencyKey: 'ares-address-1',
-          payload: {
-            contactPoint: {
-              address: {
-                addressLine1: 'Main 10',
-                city: 'Prague',
-                countryCode: 'CZ',
-                postalCode: '11000',
-              },
-              purposes: [
-                {
-                  preferred: false,
-                  purpose: 'REGISTERED',
-                  registryContext: { jurisdiction: 'CZ', registryKey: 'ARES' },
-                },
-              ],
-              type: 'ADDRESS',
-            },
-            partyRef,
-            privacyClassification: 'PUBLIC',
-            provenance: {
-              authoritative: true,
-              evidenceReference: 'ares:12345678',
-              method: 'PROVIDER_OBSERVATION',
-              source: 'EXTERNAL_EVIDENCE',
-            },
-            validFrom: decodedObservation.observedAt,
-            verification: { state: 'UNVERIFIED' },
-          },
-          route: 'CONTACT_POINT_ADD',
-        };
-        const delegate = makeInvoker(
-          calls,
-          'add-party-official-identifier|Bearer signed-gateway-token',
-        );
-        const outcome = yield* applyAresObservation(
-          { ...request, selections: [...request.selections, address] },
-          {
-            ...delegate,
-            addContactPoint: () => {
-              calls.push('unexpected-address');
-              return Effect.fail(new TestFailure({ action: 'address' }));
-            },
-          },
-          { gateway, reads: makeReads() },
-        );
-        expect(
-          Match.value(outcome).pipe(
-            Match.tag('AresApplyPartiallyCompleted', () => true),
-            Match.orElse(() => false),
-          ),
-        ).toBe(true);
-        expect(outcome.completed.length).toBe(1);
-        expect(calls).toEqual([
-          'update-party|Bearer signed-gateway-token',
-          'add-party-official-identifier|Bearer signed-gateway-token',
-        ]);
-      }),
-  );
-  aresIt.effect(
-    'stale refreshed evidence and missing canonical target cannot execute enrichment',
-    () =>
-      Effect.gen(function* staleRefreshedEvidenceAndMissing() {
-        const calls: string[] = [];
-        const stale = yield* applyAresObservation(request, makeInvoker(calls), {
+  aresIt.effect('retry preserves exact command payload and reports required standard recovery', () =>
+    Effect.gen(function* retryPreservesExactCommandPayload() {
+      const payloads: unknown[] = [];
+      const calls: string[] = [];
+      const delegate = makeInvoker(calls, 'update-party|Bearer signed-gateway-token');
+      const invoker: PartyRegistryStandardActionInvoker<TestFailure> = {
+        ...delegate,
+        updateParty: (payload, auth, options) => {
+          payloads.push({ options, payload });
+          return delegate.updateParty(payload, auth, options);
+        },
+      };
+      for (let retry = 0; retry < 2; retry += 1) {
+        const result = yield* applyAresObservation(request, invoker, {
           gateway,
-          reads: {
-            ...makeReads(),
-            observation: () =>
-              Effect.succeed({
-                ...decodedObservation,
-                observedAt: DateTime.makeUnsafe('2026-09-03T09:59:00.000Z'),
-                servedAt: DateTime.makeUnsafe('2026-09-03T10:00:00.000Z'),
-              }),
-          },
+          reads: makeReads(),
         });
-        expect(
-          Match.value(stale).pipe(
-            Match.tag('AresApplyDeferred', () => true),
-            Match.orElse(() => false),
-          ),
-        ).toBe(true);
-        const absent = yield* applyAresObservation(
-          { ...request, partyRef: null },
-          makeInvoker(calls),
-          {
-            gateway,
-            reads: makeReads(),
+        const partial = Match.value(result).pipe(
+          Match.tag('AresApplyPartiallyCompleted', (value) => value),
+          Match.orElse(() => expect.unreachable('Expected a partially completed ARES application')),
+        );
+        expect(partial.failed.idempotencyKey).toBe('ares-name-1');
+        expect(partial.failed.recovery).toBe('RESOLVE_STANDARD_ACTION_BEFORE_RETRY');
+      }
+      expect(payloads[0]).toEqual(payloads[1]);
+      expect(calls).toEqual(['update-party|Bearer signed-gateway-token', 'update-party|Bearer signed-gateway-token']);
+    }),
+  );
+  aresIt.effect('failed second Action stops the following supported address and retains prior commit receipt', () =>
+    Effect.gen(function* failedSecondActionStopsThe() {
+      const calls: string[] = [];
+      const address: AresApplyRequest['selections'][number] = {
+        fact: 'REGISTERED_ADDRESS',
+        idempotencyKey: 'ares-address-1',
+        payload: {
+          contactPoint: {
+            address: {
+              addressLine1: 'Main 10',
+              city: 'Prague',
+              countryCode: 'CZ',
+              postalCode: '11000',
+            },
+            purposes: [
+              {
+                preferred: false,
+                purpose: 'REGISTERED',
+                registryContext: {
+                  jurisdiction: 'CZ',
+                  registryKey: 'ARES',
+                },
+              },
+            ],
+            type: 'ADDRESS',
           },
-        ).pipe(Effect.result);
-        expect('failure' in absent).toBe(true);
-        expect(calls).toEqual([]);
-      }),
+          partyRef,
+          privacyClassification: 'PUBLIC',
+          provenance: {
+            authoritative: true,
+            evidenceReference: 'ares:12345678',
+            method: 'PROVIDER_OBSERVATION',
+            source: 'EXTERNAL_EVIDENCE',
+          },
+          validFrom: decodedObservation.observedAt,
+          verification: { state: 'UNVERIFIED' },
+        },
+        route: 'CONTACT_POINT_ADD',
+      };
+      const delegate = makeInvoker(calls, 'add-party-official-identifier|Bearer signed-gateway-token');
+      const outcome = yield* applyAresObservation(
+        { ...request, selections: [...request.selections, address] },
+        {
+          ...delegate,
+          addContactPoint: () => {
+            calls.push('unexpected-address');
+            return Effect.fail(new TestFailure({ action: 'address' }));
+          },
+        },
+        { gateway, reads: makeReads() },
+      );
+      expect(
+        Match.value(outcome).pipe(
+          Match.tag('AresApplyPartiallyCompleted', () => true),
+          Match.orElse(() => false),
+        ),
+      ).toBe(true);
+      expect(outcome.completed.length).toBe(1);
+      expect(calls).toEqual([
+        'update-party|Bearer signed-gateway-token',
+        'add-party-official-identifier|Bearer signed-gateway-token',
+      ]);
+    }),
+  );
+  aresIt.effect('stale refreshed evidence and missing canonical target cannot execute enrichment', () =>
+    Effect.gen(function* staleRefreshedEvidenceAndMissing() {
+      const calls: string[] = [];
+      const stale = yield* applyAresObservation(request, makeInvoker(calls), {
+        gateway,
+        reads: {
+          ...makeReads(),
+          observation: () =>
+            Effect.succeed({
+              ...decodedObservation,
+              observedAt: DateTime.makeUnsafe('2026-09-03T09:59:00.000Z'),
+              servedAt: DateTime.makeUnsafe('2026-09-03T10:00:00.000Z'),
+            }),
+        },
+      });
+      expect(
+        Match.value(stale).pipe(
+          Match.tag('AresApplyDeferred', () => true),
+          Match.orElse(() => false),
+        ),
+      ).toBe(true);
+      const absent = yield* applyAresObservation({ ...request, partyRef: null }, makeInvoker(calls), {
+        gateway,
+        reads: makeReads(),
+      }).pipe(Effect.result);
+      expect('failure' in absent).toBe(true);
+      expect(calls).toEqual([]);
+    }),
   );
   aresIt.effect('fresh identical refresh cannot revive an expired original confirmation', () =>
     Effect.gen(function* freshIdenticalRefreshCannotRevive() {
@@ -886,9 +843,7 @@ it.layer(Layer.effectDiscard(TestClock.setTime(confirmedAtEpoch)))('ARES applica
       );
       const deferred = Match.value(outcome).pipe(
         Match.tag('AresApplyDeferred', (value) => value),
-        Match.orElse(() =>
-          expect.unreachable('Expected an expired confirmation to defer ARES application'),
-        ),
+        Match.orElse(() => expect.unreachable('Expected an expired confirmation to defer ARES application')),
       );
       expect(deferred.application.factDecisions[0]?.reasonCode).toBe('observation_not_fresh');
       expect(deferred.correctionCandidates).toEqual([]);
@@ -908,9 +863,7 @@ it.layer(Layer.effectDiscard(TestClock.setTime(confirmedAtEpoch)))('ARES applica
       );
       const deferred = Match.value(outcome).pipe(
         Match.tag('AresApplyDeferred', (value) => value),
-        Match.orElse(() =>
-          expect.unreachable('Expected the correction selection to defer ARES application'),
-        ),
+        Match.orElse(() => expect.unreachable('Expected the correction selection to defer ARES application')),
       );
       expect(deferred.application.outcome).toBe('NEEDS_CONFIRMATION');
       expect(deferred.correctionCandidates).toEqual([]);

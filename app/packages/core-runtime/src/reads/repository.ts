@@ -1,4 +1,5 @@
 import { Duration, Effect } from 'effect';
+
 import { dataAccessEvents } from '../db/schema.ts';
 import type { CoreDbExecutor } from '../db/types.ts';
 import type { OperationalScope } from '../operations/context.ts';
@@ -34,7 +35,10 @@ const readEvidencePersistenceFailure = (cause: unknown): ReadEvidencePersistence
     code: 'read_evidence_persistence_failed',
     reason: 'Required read evidence could not be persisted',
   });
-  return Object.defineProperty(failure, 'cause', { configurable: true, value: cause });
+  return Object.defineProperty(failure, 'cause', {
+    configurable: true,
+    value: cause,
+  });
 };
 
 export const persistReadEvidence = (
@@ -70,8 +74,7 @@ export const persistReadEvidence = (
       Effect.mapError(readEvidencePersistenceFailure),
       Effect.timeoutOrElse({
         duration: READ_EVIDENCE_PERSISTENCE_TIMEOUT,
-        orElse: () =>
-          Effect.fail(readEvidencePersistenceFailure('Read evidence persistence timed out')),
+        orElse: () => Effect.fail(readEvidencePersistenceFailure('Read evidence persistence timed out')),
       }),
       Effect.asVoid,
     );

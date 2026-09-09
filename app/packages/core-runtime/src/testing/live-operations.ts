@@ -2,6 +2,7 @@ import { v1 } from '@authzed/authzed-node';
 import { eq } from 'drizzle-orm';
 import { Context, Duration, Effect, Exit, Layer, Random, Redacted, Schema, Scope } from 'effect';
 import { Pool } from 'pg';
+
 import { ActionCommitIndeterminate, ActionTransactionError } from '../actions/errors.ts';
 import type { ActionRepositoryService } from '../actions/repository.ts';
 import { makeActionRepository } from '../actions/repository.ts';
@@ -24,10 +25,7 @@ import { buildActionAuthorizationRelationships } from '../install/action-authori
 import { makeModuleEntrypointGateway } from '../modules/module-entrypoint-gateway.ts';
 import { makeModuleStateGate } from '../modules/module-state-gate.ts';
 import { makeTenantModuleStateService } from '../modules/tenant-module-state-service.ts';
-import {
-  makeOperationalScopeRepository,
-  makeOperationalScopeResolver,
-} from '../operations/context.ts';
+import { makeOperationalScopeRepository, makeOperationalScopeResolver } from '../operations/context.ts';
 import { loadSpiceDbConfig } from '../permissions/config.ts';
 import {
   makeContextAccessLive,
@@ -60,15 +58,11 @@ const LiveOperationFixtureConfigurationSchema = Schema.Struct({
   runtimeConnectionString: Schema.Redacted(Schema.String),
 });
 
-export type LiveOperationFixtureConfiguration =
-  typeof LiveOperationFixtureConfigurationSchema.Encoded;
+export type LiveOperationFixtureConfiguration = typeof LiveOperationFixtureConfigurationSchema.Encoded;
 
-class LiveOperationFixtureError extends Schema.TaggedError<LiveOperationFixtureError>()(
-  'LiveOperationFixtureError',
-  {
-    reason: Schema.String,
-  },
-) {}
+class LiveOperationFixtureError extends Schema.TaggedError<LiveOperationFixtureError>()('LiveOperationFixtureError', {
+  reason: Schema.String,
+}) {}
 
 const fixtureFailure = (reason: string, cause?: unknown): LiveOperationFixtureError => {
   const failure = new LiveOperationFixtureError({ reason });
@@ -114,20 +108,20 @@ const makeFixtureId = Effect.fn('LiveOperations.makeFixtureId')(function* makeFi
   return `${value.slice(0, 8)}-${value.slice(8, 12)}-4${value.slice(13, 16)}-a${value.slice(17, 20)}-${value.slice(20)}`;
 });
 
-const makeFixtureActor = Effect.fn('LiveOperations.makeFixtureActor')(
-  function* makeFixtureActorEffect(tenantId: string) {
-    const [authBindingId, principalId] = yield* Effect.all([makeFixtureId(), makeFixtureId()], {
-      concurrency: 2,
-    });
-    return {
-      authBindingId,
-      authContextRef: `better-auth-session:${authBindingId}`,
-      authMethod: 'session' as const,
-      principalId,
-      tenantId,
-    };
-  },
-);
+const makeFixtureActor = Effect.fn('LiveOperations.makeFixtureActor')(function* makeFixtureActorEffect(
+  tenantId: string,
+) {
+  const [authBindingId, principalId] = yield* Effect.all([makeFixtureId(), makeFixtureId()], {
+    concurrency: 2,
+  });
+  return {
+    authBindingId,
+    authContextRef: `better-auth-session:${authBindingId}`,
+    authMethod: 'session' as const,
+    principalId,
+    tenantId,
+  };
+});
 
 type FixtureActor = Effect.Success<ReturnType<typeof makeFixtureActor>>;
 
@@ -162,24 +156,13 @@ const fixtureAuthorizationRelationships = (input: {
   ...input.actors.map((principal) =>
     relationship('tenant', input.tenantId, 'member', 'principal', principal.principalId),
   ),
-  ...[
-    'party_identity_manager',
-    'party_identity_reader',
-    'party_identity_reviewer',
-    'party_relationship_manager',
-  ].map((relation) =>
-    relationship('tenant', input.tenantId, relation, 'principal', input.manager.principalId),
+  ...['party_identity_manager', 'party_identity_reader', 'party_identity_reviewer', 'party_relationship_manager'].map(
+    (relation) => relationship('tenant', input.tenantId, relation, 'principal', input.manager.principalId),
   ),
   relationship('legal_entity', input.entityObject, 'tenant', 'tenant', input.tenantId),
   ...[input.manager, input.legalEntityOnly].flatMap((principal) =>
     ['member', 'counterparty_manager', 'counterparty_reader'].map((relation) =>
-      relationship(
-        'legal_entity',
-        input.entityObject,
-        relation,
-        'principal',
-        principal.principalId,
-      ),
+      relationship('legal_entity', input.entityObject, relation, 'principal', principal.principalId),
     ),
   ),
   ...buildActionAuthorizationRelationships(input.actionKeys, [
@@ -207,11 +190,7 @@ const setupLiveOperationFixture = Effect.fn('LiveOperations.setupLiveOperationFi
         status: 'active',
         tenantId: input.tenantId,
       })
-      .pipe(
-        Effect.mapError((cause) =>
-          fixtureFailure('Unable to create the live fixture tenant', cause),
-        ),
-      );
+      .pipe(Effect.mapError((cause) => fixtureFailure('Unable to create the live fixture tenant', cause)));
     yield* input.executor
       .insert(legalEntities)
       .values({
@@ -222,35 +201,23 @@ const setupLiveOperationFixture = Effect.fn('LiveOperations.setupLiveOperationFi
         status: 'active',
         tenantId: input.tenantId,
       })
-      .pipe(
-        Effect.mapError((cause) =>
-          fixtureFailure('Unable to create the live fixture Legal Entity', cause),
-        ),
-      );
+      .pipe(Effect.mapError((cause) => fixtureFailure('Unable to create the live fixture Legal Entity', cause)));
     yield* input.executor
       .insert(tenantModuleStates)
-      .values({ moduleKey: 'party.registry', state: 'active', tenantId: input.tenantId })
-      .pipe(
-        Effect.mapError((cause) =>
-          fixtureFailure('Unable to activate the live fixture module', cause),
-        ),
-      );
+      .values({
+        moduleKey: 'party.registry',
+        state: 'active',
+        tenantId: input.tenantId,
+      })
+      .pipe(Effect.mapError((cause) => fixtureFailure('Unable to activate the live fixture module', cause)));
     yield* input.executor
       .insert(principals)
       .values(fixturePrincipalValues(input.actors, input.tenantId))
-      .pipe(
-        Effect.mapError((cause) =>
-          fixtureFailure('Unable to create the live fixture principals', cause),
-        ),
-      );
+      .pipe(Effect.mapError((cause) => fixtureFailure('Unable to create the live fixture principals', cause)));
     yield* input.executor
       .insert(principalAuthBindings)
       .values(fixtureAuthBindingValues(input.actors, input.tenantId))
-      .pipe(
-        Effect.mapError((cause) =>
-          fixtureFailure('Unable to bind the live fixture principals', cause),
-        ),
-      );
+      .pipe(Effect.mapError((cause) => fixtureFailure('Unable to bind the live fixture principals', cause)));
     const entityObject = toLegalEntityAccessObjectId(input.tenantId, input.legalEntityId);
     if (entityObject === undefined) {
       return yield* fixtureFailure('Invalid fixture Legal Entity');
@@ -281,18 +248,18 @@ const setupLiveOperationFixture = Effect.fn('LiveOperations.setupLiveOperationFi
 
 const makeFaultActionRepository = (state: FixtureFaultState): ActionRepositoryService => {
   const repository = makeActionRepository();
-  const flushSuccess: ActionRepositoryService['flushSuccess'] = Effect.fn(
-    'LiveOperations.flushSuccess',
-  )(function* flushSuccessEffect(transaction, input) {
-    state.invocationId = input.actionInvocationId;
-    if (state.active === 'rollback') {
-      return yield* new ActionTransactionError({
-        code: 'action_transaction_failed',
-        reason: 'Controlled precommit rollback',
-      });
-    }
-    return yield* repository.flushSuccess(transaction, input);
-  });
+  const flushSuccess: ActionRepositoryService['flushSuccess'] = Effect.fn('LiveOperations.flushSuccess')(
+    function* flushSuccessEffect(transaction, input) {
+      state.invocationId = input.actionInvocationId;
+      if (state.active === 'rollback') {
+        return yield* new ActionTransactionError({
+          code: 'action_transaction_failed',
+          reason: 'Controlled precommit rollback',
+        });
+      }
+      return yield* repository.flushSuccess(transaction, input);
+    },
+  );
   return { ...repository, flushSuccess };
 };
 
@@ -373,12 +340,8 @@ const grantFixtureResourceAccess = Effect.fn('LiveOperations.grantResourceAccess
 /** Real Core persistence and SpiceDB. Call only against a disposable local database. */
 const makeLiveOperationFixtureEffect = Effect.fn('LiveOperations.makeLiveOperationFixture')(
   function* makeLiveOperationFixtureEffect(input: LiveOperationFixtureConfiguration) {
-    const configuration = yield* Schema.decodeUnknownEffect(
-      LiveOperationFixtureConfigurationSchema,
-    )(input).pipe(
-      Effect.mapError((cause) =>
-        fixtureFailure('Invalid live operation fixture configuration', cause),
-      ),
+    const configuration = yield* Schema.decodeEffect(LiveOperationFixtureConfigurationSchema)(input).pipe(
+      Effect.mapError((cause) => fixtureFailure('Invalid live operation fixture configuration', cause)),
     );
     const spiceDb = yield* loadSpiceDbConfig().pipe(
       Effect.mapError((cause) => fixtureFailure('Unable to load the SpiceDB configuration', cause)),
@@ -387,10 +350,7 @@ const makeLiveOperationFixtureEffect = Effect.fn('LiveOperations.makeLiveOperati
     const address = yield* Schema.decodeEffect(Schema.URLFromString)(runtimeConnectionString).pipe(
       Effect.mapError((cause) => fixtureFailure('Invalid live operation database URL', cause)),
     );
-    if (
-      !['localhost', '127.0.0.1'].includes(address.hostname) ||
-      !spiceDb.endpoint.startsWith('localhost:')
-    ) {
+    if (!['localhost', '127.0.0.1'].includes(address.hostname) || !spiceDb.endpoint.startsWith('localhost:')) {
       return yield* fixtureFailure('Live test fixtures require disposable localhost services');
     }
 
@@ -403,11 +363,7 @@ const makeLiveOperationFixtureEffect = Effect.fn('LiveOperations.makeLiveOperati
       Scope.provide(databaseScope),
       Effect.mapError((cause) => fixtureFailure('Unable to initialize fixture database', cause)),
     );
-    const spice = v1.NewClient(
-      spiceDb.preSharedKey,
-      spiceDb.endpoint,
-      v1.ClientSecurity.INSECURE_LOCALHOST_ALLOWED,
-    );
+    const spice = v1.NewClient(spiceDb.preSharedKey, spiceDb.endpoint, v1.ClientSecurity.INSECURE_LOCALHOST_ALLOWED);
     const [tenantId, legalEntityId] = yield* Effect.all([makeFixtureId(), makeFixtureId()], {
       concurrency: 2,
     });
@@ -432,8 +388,14 @@ const makeLiveOperationFixtureEffect = Effect.fn('LiveOperations.makeLiveOperati
       tenantId,
     }).pipe(Effect.onExit((exit) => (Exit.isFailure(exit) ? closeResources : Effect.void)));
 
-    const faultState: FixtureFaultState = { active: null, invocationId: null, next: null };
-    const actionDatabase = { executor } satisfies (typeof CoreDatabase)['Service'];
+    const faultState: FixtureFaultState = {
+      active: null,
+      invocationId: null,
+      next: null,
+    };
+    const actionDatabase = {
+      executor,
+    } satisfies (typeof CoreDatabase)['Service'];
     const readDatabase = { executor } satisfies (typeof CoreDatabase)['Service'];
     const layer = Layer.effectContext(
       Effect.gen(function* makeLiveOperationRuntimeContext() {
@@ -444,9 +406,7 @@ const makeLiveOperationFixtureEffect = Effect.fn('LiveOperations.makeLiveOperati
           ],
           { concurrency: 2 },
         );
-        const actionModuleStateGate = makeModuleStateGate(
-          makeTenantModuleStateService(actionDatabase),
-        );
+        const actionModuleStateGate = makeModuleStateGate(makeTenantModuleStateService(actionDatabase));
         const actionModuleEntrypointGateway = makeModuleEntrypointGateway(actionModuleStateGate);
         const actionScopeResolver = makeOperationalScopeResolver(
           makeOperationalScopeRepository(actionDatabase),
@@ -469,32 +429,32 @@ const makeLiveOperationFixtureEffect = Effect.fn('LiveOperations.makeLiveOperati
             moduleStateGate: actionModuleStateGate,
           },
         );
-        const runAction: (typeof ActionRuntime)['Service']['runAction'] = Effect.fn(
-          'LiveOperations.runAction',
-        )(function* runActionEffect(actionInput) {
-          const fault = faultState.next;
-          faultState.active = fault;
-          faultState.invocationId = null;
-          faultState.next = null;
-          const actionExit = yield* Effect.exit(baseActionRuntime.runAction(actionInput)).pipe(
-            Effect.ensuring(
-              Effect.sync(() => {
-                faultState.active = null;
-              }),
-            ),
-          );
-          if (Exit.isFailure(actionExit)) {
-            return yield* Effect.failCause(actionExit.cause);
-          }
-          if (fault === 'lost-ack' && faultState.invocationId !== null) {
-            return yield* new ActionCommitIndeterminate({
-              code: 'action_commit_indeterminate',
-              invocationId: faultState.invocationId,
-              reason: 'Controlled lost commit acknowledgement',
-            });
-          }
-          return actionExit.value;
-        });
+        const runAction: (typeof ActionRuntime)['Service']['runAction'] = Effect.fn('LiveOperations.runAction')(
+          function* runActionEffect(actionInput) {
+            const fault = faultState.next;
+            faultState.active = fault;
+            faultState.invocationId = null;
+            faultState.next = null;
+            const actionExit = yield* Effect.exit(baseActionRuntime.runAction(actionInput)).pipe(
+              Effect.ensuring(
+                Effect.sync(() => {
+                  faultState.active = null;
+                }),
+              ),
+            );
+            if (Exit.isFailure(actionExit)) {
+              return yield* Effect.failCause(actionExit.cause);
+            }
+            if (fault === 'lost-ack' && faultState.invocationId !== null) {
+              return yield* new ActionCommitIndeterminate({
+                code: 'action_commit_indeterminate',
+                invocationId: faultState.invocationId,
+                reason: 'Controlled lost commit acknowledgement',
+              });
+            }
+            return actionExit.value;
+          },
+        );
         const actionRuntime = { ...baseActionRuntime, runAction };
         const readRuntime = makeReadRuntime(
           readDatabase,
@@ -524,15 +484,7 @@ const makeLiveOperationFixtureEffect = Effect.fn('LiveOperations.makeLiveOperati
         },
         principalId: string,
         permission: 'reader' | 'writer' = 'reader',
-      ) =>
-        grantFixtureResourceAccess(
-          spice,
-          tenantId,
-          legalEntityId,
-          resource,
-          principalId,
-          permission,
-        ),
+      ) => grantFixtureResourceAccess(spice, tenantId, legalEntityId, resource, principalId, permission),
       layer,
       legalEntityId,
       legalEntityOnly,

@@ -1,10 +1,11 @@
+import { createHash } from 'node:crypto';
+
 import {
   GATEWAY_ASSERTION_TTL_SECONDS,
   GATEWAY_ASSERTION_VERSION,
   GatewayTrustedPrincipalContextSchema,
 } from '@app/shared-contracts';
 import type { GatewayContextResponse, GatewayTrustedPrincipalContext } from '@app/shared-contracts';
-import { createHash } from 'node:crypto';
 import {
   Cache,
   Clock,
@@ -21,13 +22,11 @@ import {
   Semaphore,
 } from 'effect';
 import { SignJWT, importJWK } from 'jose';
+
 import { installedVerticalIds } from '../verticals/installed-verticals.ts';
 import type { InstalledVerticalTopologyError } from '../verticals/installed-verticals.ts';
 import { loadGatewayIssuerConfig } from './gateway-issuer-config.ts';
-import type {
-  GatewayIssuerConfigError,
-  GatewayIssuerConfigValue,
-} from './gateway-issuer-config.ts';
+import type { GatewayIssuerConfigError, GatewayIssuerConfigValue } from './gateway-issuer-config.ts';
 
 const SIGNING_CONFIGURATION_REFRESH = Duration.seconds(30);
 
@@ -40,13 +39,11 @@ const gatewayIssuerErrorFields = {
   reason: Schema.String,
   stage: Schema.Literals(['audience', 'clock', 'configuration', 'principal', 'signing']),
 };
-const GatewayIssuerErrorSchema = Schema.TaggedStruct(
+const GatewayIssuerErrorSchema = Schema.TaggedStruct('GatewayIssuerError', gatewayIssuerErrorFields);
+const GatewayIssuerErrorConstructor = Schema.TaggedError<Schema.Schema.Type<typeof GatewayIssuerErrorSchema>>()(
   'GatewayIssuerError',
   gatewayIssuerErrorFields,
 );
-const GatewayIssuerErrorConstructor = Schema.TaggedError<
-  Schema.Schema.Type<typeof GatewayIssuerErrorSchema>
->()('GatewayIssuerError', gatewayIssuerErrorFields);
 export { GatewayIssuerErrorConstructor as GatewayIssuerError };
 export type GatewayIssuerError = Schema.Schema.Type<typeof GatewayIssuerErrorSchema>;
 
@@ -58,10 +55,7 @@ export interface IssueGatewayAssertionInput<Principal = GatewayTrustedPrincipalC
 export interface GatewayIssuerLayerOptions {
   readonly currentTimeSeconds: Effect.Effect<number>;
   readonly generateJti: Effect.Effect<string, GatewayIssuerError>;
-  readonly loadAudiences: Effect.Effect<
-    ReadonlySet<string>,
-    InstalledVerticalTopologyError | GatewayIssuerError
-  >;
+  readonly loadAudiences: Effect.Effect<ReadonlySet<string>, InstalledVerticalTopologyError | GatewayIssuerError>;
   readonly loadConfig: Effect.Effect<GatewayIssuerConfigValue, GatewayIssuerConfigError>;
 }
 
@@ -138,12 +132,8 @@ const gatewayCrypto = Crypto.make({
 });
 
 const gatewayIssuerLiveOptions: GatewayIssuerLayerOptions = {
-  currentTimeSeconds: Clock.currentTimeMillis.pipe(
-    Effect.map((milliseconds) => Math.floor(milliseconds / 1000)),
-  ),
-  generateJti: gatewayCrypto.randomUUIDv4.pipe(
-    Effect.mapError((failureCause) => unavailable('signing', failureCause)),
-  ),
+  currentTimeSeconds: Clock.currentTimeMillis.pipe(Effect.map((milliseconds) => Math.floor(milliseconds / 1000))),
+  generateJti: gatewayCrypto.randomUUIDv4.pipe(Effect.mapError((failureCause) => unavailable('signing', failureCause))),
   loadAudiences: installedVerticalIds,
   loadConfig: loadGatewayIssuerConfig(),
 };
@@ -153,18 +143,16 @@ const makeGatewayIssuer = Effect.fn('GatewayIssuer.make')(function* gatewayIssue
 ) {
   const configurationCache = yield* Cache.makeWith(
     (_key: 'configuration') =>
-      options.loadConfig.pipe(
-        Effect.mapError((failureCause) => unavailable('configuration', failureCause)),
-      ),
+      options.loadConfig.pipe(Effect.mapError((failureCause) => unavailable('configuration', failureCause))),
     {
       capacity: 1,
-      timeToLive: (exit, _key) =>
-        Exit.isSuccess(exit) ? SIGNING_CONFIGURATION_REFRESH : '0 seconds',
+      timeToLive: (exit, _key) => (Exit.isSuccess(exit) ? SIGNING_CONFIGURATION_REFRESH : '0 seconds'),
     },
   );
-  const slot = yield* Ref.make<{ readonly fingerprint: string; readonly key: CryptoKey } | null>(
-    null,
-  );
+  const slot = yield* Ref.make<{
+    readonly fingerprint: string;
+    readonly key: CryptoKey;
+  } | null>(null);
   const gate = yield* Semaphore.make(1);
 
   const loadSigningKey = (
@@ -202,9 +190,7 @@ const makeGatewayIssuer = Effect.fn('GatewayIssuer.make')(function* gatewayIssue
   ) {
     const principal = yield* Schema.decodeUnknownEffect(GatewayTrustedPrincipalContextSchema, {
       onExcessProperty: 'error',
-    })(input.principal).pipe(
-      Effect.mapError((failureCause) => unavailable('principal', failureCause)),
-    );
+    })(input.principal).pipe(Effect.mapError((failureCause) => unavailable('principal', failureCause)));
     const audiences = yield* options.loadAudiences.pipe(
       Effect.mapError((failureCause) => unavailable('audience', failureCause)),
     );
@@ -264,9 +250,7 @@ export const makeGatewayIssuerLayer = (options: GatewayIssuerLayerOptions) =>
 export const GatewayIssuerLive = makeGatewayIssuerLayer(gatewayIssuerLiveOptions);
 
 export const issueGatewayContextAssertion = Effect.fn('GatewayIssuer.issueGatewayContextAssertion')(
-  function* issueGatewayContextAssertionEffect<Principal>(
-    input: IssueGatewayAssertionInput<Principal>,
-  ) {
+  function* issueGatewayContextAssertionEffect<Principal>(input: IssueGatewayAssertionInput<Principal>) {
     const gatewayIssuer = yield* GatewayIssuer;
     return yield* gatewayIssuer.issue(input);
   },

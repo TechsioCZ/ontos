@@ -1,3 +1,5 @@
+import { Schema } from 'effect';
+
 import type {
   ConfirmedDuplicateSet,
   MergeSelectionEvidenceCriterion,
@@ -14,7 +16,6 @@ import {
 } from '../../shared/domain/merge-selection.ts';
 import { PartyRefSchema } from '../../shared/resources/party.ts';
 import type { PartyRef } from '../../shared/resources/party.ts';
-import { Schema } from 'effect';
 
 const CanonicalSurvivorSelectionSchema = Schema.Union([
   Schema.TaggedStruct('CanonicalSurvivorSelected', {
@@ -204,12 +205,9 @@ const findDecidingCriterion = (
   survivor: MergeSurvivorCandidate,
   runnerUp: MergeSurvivorCandidate,
 ): MergeSurvivorSelectionReason =>
-  criteria.find(({ compare }) => compare(survivor, runnerUp) !== 0)?.reason ??
-  'STABLE_RESOURCE_IDENTITY';
+  criteria.find(({ compare }) => compare(survivor, runnerUp) !== 0)?.reason ?? 'STABLE_RESOURCE_IDENTITY';
 
-export const selectCanonicalSurvivor = (
-  input: MergeSurvivorSelectionInput,
-): CanonicalSurvivorSelection => {
+export const selectCanonicalSurvivor = (input: MergeSurvivorSelectionInput): CanonicalSurvivorSelection => {
   const { confirmation } = input;
   const candidates = input.candidates
     .map((candidate) =>
@@ -226,9 +224,7 @@ export const selectCanonicalSurvivor = (
       conflictingPartyRefs: candidates.map(({ partyRef }) => partyRef),
     };
   }
-  const candidateKeys = candidates.map(
-    ({ partyRef }) => `${partyRef.tenantId}:${partyRef.resourceId}`,
-  );
+  const candidateKeys = candidates.map(({ partyRef }) => `${partyRef.tenantId}:${partyRef.resourceId}`);
   if (new Set(candidateKeys).size !== candidates.length) {
     return {
       _tag: 'SurvivorSelectionBlocked',
@@ -251,9 +247,7 @@ export const selectCanonicalSurvivor = (
       conflictingPartyRefs: candidates.map(({ partyRef }) => partyRef),
     };
   }
-  const conflicts = candidates.filter(
-    ({ blockingAuthoritativeConflict }) => blockingAuthoritativeConflict,
-  );
+  const conflicts = candidates.filter(({ blockingAuthoritativeConflict }) => blockingAuthoritativeConflict);
   if (conflicts.length > 0) {
     return {
       _tag: 'SurvivorSelectionBlocked',

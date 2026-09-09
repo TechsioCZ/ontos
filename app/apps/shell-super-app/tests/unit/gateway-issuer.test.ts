@@ -1,22 +1,14 @@
-import { expect, rs, it } from 'effect-rstest';
 import { Effect, Exit, Fiber, Predicate } from 'effect';
+import { expect, rs, it } from 'effect-rstest';
 import { TestClock } from 'effect/testing';
 import { decodeJwt, decodeProtectedHeader, exportJWK, generateKeyPair, jwtVerify } from 'jose';
+
 import { parseGatewayIssuerConfig } from '../../api/auth/gateway-issuer-config.ts';
 import type { GatewayIssuerConfigValue } from '../../api/auth/gateway-issuer-config.ts';
-import {
-  GatewayIssuer,
-  issueGatewayContextAssertion,
-  makeGatewayIssuerLayer,
-} from '../../api/auth/gateway-issuer.ts';
+import { GatewayIssuer, issueGatewayContextAssertion, makeGatewayIssuerLayer } from '../../api/auth/gateway-issuer.ts';
 import type { GatewayIssuerLayerOptions } from '../../api/auth/gateway-issuer.ts';
 
-const withOptionalProperty = <
-  Base extends object,
-  Key extends PropertyKey,
-  Value,
-  Trailing extends object,
->(
+const withOptionalProperty = <Base extends object, Key extends PropertyKey, Value, Trailing extends object>(
   base: Base,
   condition: boolean,
   key: Key,
@@ -97,8 +89,14 @@ it.effect('memoises configuration within the refresh window and issues signed as
     );
     const [result] = yield* Effect.all(
       [
-        issueGatewayContextAssertion({ audience: 'property-registry', principal }),
-        issueGatewayContextAssertion({ audience: 'property-registry', principal }),
+        issueGatewayContextAssertion({
+          audience: 'property-registry',
+          principal,
+        }),
+        issueGatewayContextAssertion({
+          audience: 'property-registry',
+          principal,
+        }),
       ],
       { concurrency: 2 },
     ).pipe(Effect.provide(layer));
@@ -114,7 +112,11 @@ it.effect('memoises configuration within the refresh window and issues signed as
     );
 
     expect(result.expiresAt).toBe(1_700_000_300);
-    expect(header).toEqual({ alg: 'EdDSA', kid: 'current-2026-08', typ: 'JWT' });
+    expect(header).toEqual({
+      alg: 'EdDSA',
+      kid: 'current-2026-08',
+      typ: 'JWT',
+    });
     expect(claims).toEqual({
       aud: 'property-registry',
       exp: 1_700_000_300,
@@ -153,7 +155,10 @@ it.effect('shares cached configuration across concurrent valid issuances', () =>
     const importKey = rs.spyOn(globalThis.crypto.subtle, 'importKey');
     const results = yield* Effect.all(
       Array.from({ length: 8 }, () =>
-        issueGatewayContextAssertion({ audience: 'property-registry', principal }),
+        issueGatewayContextAssertion({
+          audience: 'property-registry',
+          principal,
+        }),
       ),
       { concurrency: 8 },
     ).pipe(Effect.provide(layer));
@@ -197,13 +202,14 @@ it.effect('allows the next issuance after interrupting a pending key import', ()
     });
     const result = yield* Effect.gen(function* interruptedImport() {
       const gatewayIssuer = yield* GatewayIssuer;
-      const first = yield* gatewayIssuer
-        .issue({ audience: 'property-registry', principal })
-        .pipe(Effect.forkChild);
+      const first = yield* gatewayIssuer.issue({ audience: 'property-registry', principal }).pipe(Effect.forkChild);
       yield* Effect.promise(() => started.promise);
       yield* Fiber.interrupt(first);
       expect(Exit.isFailure(yield* Fiber.await(first))).toBe(true);
-      return yield* gatewayIssuer.issue({ audience: 'property-registry', principal });
+      return yield* gatewayIssuer.issue({
+        audience: 'property-registry',
+        principal,
+      });
     }).pipe(Effect.provide(makeGatewayIssuerLayer(dependencies(configuration))));
     yield* Effect.promise(() =>
       jwtVerify(result.token, publicKey, {
@@ -218,10 +224,8 @@ it.effect('allows the next issuance after interrupting a pending key import', ()
 
 it.effect('refreshes configuration after 30 seconds and replaces the rotated signing key', () =>
   Effect.gen(function* testProgram6() {
-    const { configuration: initialConfiguration, publicKey: initialPublicKey } =
-      yield* makeConfiguration();
-    const { configuration: generatedRotatedConfiguration, publicKey: rotatedPublicKey } =
-      yield* makeConfiguration();
+    const { configuration: initialConfiguration, publicKey: initialPublicKey } = yield* makeConfiguration();
+    const { configuration: generatedRotatedConfiguration, publicKey: rotatedPublicKey } = yield* makeConfiguration();
     const rotatedConfiguration = {
       ...generatedRotatedConfiguration,
       privateJwk: {
@@ -290,15 +294,16 @@ it.effect('does not cache configuration failures', () =>
       dependencies(configuration, {
         loadConfig: Effect.suspend(() => {
           loadConfigCount += 1;
-          return loadConfigCount === 1
-            ? parseGatewayIssuerConfig({})
-            : Effect.succeed(configuration);
+          return loadConfigCount === 1 ? parseGatewayIssuerConfig({}) : Effect.succeed(configuration);
         }),
       }),
     );
     const [configurationError, result] = yield* Effect.gen(function* gatewayFailureSequence() {
       const configurationFailure = yield* Effect.flip(
-        issueGatewayContextAssertion({ audience: 'property-registry', principal }),
+        issueGatewayContextAssertion({
+          audience: 'property-registry',
+          principal,
+        }),
       );
       const issuedResult = yield* issueGatewayContextAssertion({
         audience: 'property-registry',
@@ -320,12 +325,13 @@ it.effect('retries a failed key import on the next issuance', () =>
         rs.restoreAllMocks();
       }),
     );
-    rs.spyOn(globalThis.crypto.subtle, 'importKey').mockRejectedValueOnce(
-      new Error('transient import failure'),
-    );
+    rs.spyOn(globalThis.crypto.subtle, 'importKey').mockRejectedValueOnce(new Error('transient import failure'));
     const [error, result] = yield* Effect.gen(function* retryImport() {
       const failed = yield* Effect.flip(
-        issueGatewayContextAssertion({ audience: 'property-registry', principal }),
+        issueGatewayContextAssertion({
+          audience: 'property-registry',
+          principal,
+        }),
       );
       const issued = yield* issueGatewayContextAssertion({
         audience: 'property-registry',
@@ -350,17 +356,9 @@ it.effect('fails closed for unknown audiences and invalid Effect-managed time', 
     const { configuration } = yield* makeConfiguration();
     const audienceErrors = yield* Effect.all(
       [
+        Effect.flip(issueGatewayContextAssertionWith({ audience: 'billing', principal }, dependencies(configuration))),
         Effect.flip(
-          issueGatewayContextAssertionWith(
-            { audience: 'billing', principal },
-            dependencies(configuration),
-          ),
-        ),
-        Effect.flip(
-          issueGatewayContextAssertionWith(
-            { audience: 'property.registry', principal },
-            dependencies(configuration),
-          ),
+          issueGatewayContextAssertionWith({ audience: 'property.registry', principal }, dependencies(configuration)),
         ),
       ].map((effect) =>
         Effect.gen(function* testProgram10() {
@@ -372,7 +370,9 @@ it.effect('fails closed for unknown audiences and invalid Effect-managed time', 
     const timeError = yield* Effect.flip(
       issueGatewayContextAssertionWith(
         { audience: 'property-registry', principal },
-        dependencies(configuration, { currentTimeSeconds: Effect.succeed(-1) }),
+        dependencies(configuration, {
+          currentTimeSeconds: Effect.succeed(-1),
+        }),
       ),
     );
 
@@ -432,7 +432,14 @@ it.effect('rejects missing configuration, HMAC keys, non-Ed25519 keys, and missi
   Effect.gen(function* testProgram13() {
     const invalidJwks = [
       undefined,
-      { alg: 'HS256', d: 'secret', kid: 'hmac', kty: 'oct', use: 'sig', x: 'secret' },
+      {
+        alg: 'HS256',
+        d: 'secret',
+        kid: 'hmac',
+        kty: 'oct',
+        use: 'sig',
+        x: 'secret',
+      },
       {
         alg: 'EdDSA',
         crv: 'X25519',
@@ -442,7 +449,14 @@ it.effect('rejects missing configuration, HMAC keys, non-Ed25519 keys, and missi
         use: 'sig',
         x: 'public',
       },
-      { alg: 'EdDSA', crv: 'Ed25519', d: 'private', kty: 'OKP', use: 'sig', x: 'public' },
+      {
+        alg: 'EdDSA',
+        crv: 'Ed25519',
+        d: 'private',
+        kty: 'OKP',
+        use: 'sig',
+        x: 'public',
+      },
     ];
 
     const errors = yield* Effect.all(
@@ -465,8 +479,6 @@ it.effect('rejects missing configuration, HMAC keys, non-Ed25519 keys, and missi
       ),
       { concurrency: 'unbounded' },
     );
-    expect(errors.every((error) => Predicate.isTagged(error, 'GatewayIssuerConfigError'))).toBe(
-      true,
-    );
+    expect(errors.every((error) => Predicate.isTagged(error, 'GatewayIssuerConfigError'))).toBe(true);
   }),
 );

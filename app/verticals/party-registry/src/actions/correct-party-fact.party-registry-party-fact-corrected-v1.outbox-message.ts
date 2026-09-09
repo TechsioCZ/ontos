@@ -5,8 +5,7 @@ import {
 } from '@app/party-registry/outbox/party-registry-party-fact-corrected-v1';
 import type { OutboxPayload } from '@app/party-registry/outbox/party-registry-party-fact-corrected-v1';
 
-const CorrectPartyFactPartyRegistryPartyFactCorrectedV1OutboxProducerModuleKey =
-  outboxProducerModuleKey;
+const CorrectPartyFactPartyRegistryPartyFactCorrectedV1OutboxProducerModuleKey = outboxProducerModuleKey;
 const CorrectPartyFactPartyRegistryPartyFactCorrectedV1OutboxTopic = outboxTopic;
 
 export const createCorrectPartyFactPartyRegistryPartyFactCorrectedV1OutboxMessage = (

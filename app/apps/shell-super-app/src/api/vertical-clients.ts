@@ -1,4 +1,5 @@
 import type { ComponentType } from 'react';
+
 import type { ResolvedModuleTarget } from '../../shared/api.ts';
 
 export type ApprovedVerticalPageComponent = ComponentType<{
@@ -9,7 +10,9 @@ export type ApprovedVerticalPageComponent = ComponentType<{
 export interface ApprovedVerticalPageClient {
   readonly appId: string;
   readonly componentKey: string;
-  readonly load: () => Promise<{ readonly default: ApprovedVerticalPageComponent }>;
+  readonly load: () => Promise<{
+    readonly default: ApprovedVerticalPageComponent;
+  }>;
 }
 
 /** Codesmith-owned allowlist. Executable imports remain lazy and owner-deployment-specific. */

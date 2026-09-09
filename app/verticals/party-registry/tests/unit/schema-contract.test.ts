@@ -1,11 +1,11 @@
-// @effect-diagnostics nodeBuiltinImport:off -- Filesystem migration contract verifies actual checked-in SQL files; expires: 2026-12-31.
-import { assert, expect, it } from 'effect-rstest';
-import { Effect } from 'effect';
+import { fileURLToPath } from 'node:url';
 
-import { readdir, readFile } from 'node:fs/promises';
-
+import { NodeFileSystem } from '@effect/platform-node';
 import { getTableName, isTable } from 'drizzle-orm';
 import { getTableConfig, PgDialect } from 'drizzle-orm/pg-core';
+import { FileSystem, Effect } from 'effect';
+import { assert, expect, it } from 'effect-rstest';
+
 import * as schemaExports from '../../src/db/schema.ts';
 import {
   PARTY_SCHEMA_NAME,
@@ -71,9 +71,7 @@ const foreignKey = (table: (typeof configuredTables)[number], name: string) => {
 };
 
 it('owns the complete Party Registry operational catalog in the party schema', () => {
-  const exportedTables = Object.values(schemaExports).flatMap((value) =>
-    isTable(value) ? [value] : [],
-  );
+  const exportedTables = Object.values(schemaExports).flatMap((value) => (isTable(value) ? [value] : []));
   const qualifiedNames = exportedTables
     .map((table) => {
       const config = getTableConfig(table);
@@ -145,18 +143,13 @@ it('keeps tenant-admin Counterparty reads on an atomic owner-local projection', 
   }
   expect(
     getTableName(
-      foreignKey(
-        counterpartyAdminReadModels,
-        'party_counterparty_admin_model_source_fk',
-      ).reference().foreignTable,
+      foreignKey(counterpartyAdminReadModels, 'party_counterparty_admin_model_source_fk').reference().foreignTable,
     ),
   ).toBe(getTableName(counterparties));
   expect(
     getTableName(
-      foreignKey(
-        counterpartyRoleAdminReadModels,
-        'party_counterparty_role_admin_model_source_fk',
-      ).reference().foreignTable,
+      foreignKey(counterpartyRoleAdminReadModels, 'party_counterparty_role_admin_model_source_fk').reference()
+        .foreignTable,
     ),
   ).toBe(getTableName(counterpartyRolePeriods));
   expect(
@@ -202,9 +195,7 @@ it('gives every tenant-owned record a tenant-qualified identity and forced-RLS p
 
 it('models Party identity and assertion history without conflating effective and recorded time', () => {
   const partyConfig = configOf(parties);
-  expect(
-    partyConfig.columns.some((column) => column.name === 'current_display_name' && !column.notNull),
-  ).toBeTruthy();
+  expect(partyConfig.columns.some((column) => column.name === 'current_display_name' && !column.notNull)).toBeTruthy();
   expect(uniqueColumns(parties, 'party_parties_tenant_id_uk')).toEqual(['tenant_id', 'party_id']);
   expect(partyConfig.checks.map((candidate) => candidate.name).toSorted()).toEqual([
     'party_parties_display_name_ck',
@@ -232,10 +223,7 @@ it('models Party identity and assertion history without conflating effective and
     ).toBeTruthy();
   }
   expect(
-    getTableName(
-      foreignKey(partyFactAssertions, 'party_fact_assertions_tenant_party_fk').reference()
-        .foreignTable,
-    ),
+    getTableName(foreignKey(partyFactAssertions, 'party_fact_assertions_tenant_party_fk').reference().foreignTable),
   ).toBe(getTableName(parties));
 });
 
@@ -260,26 +248,15 @@ it('keeps official assertions historical while exclusive claims own exact matchi
   ]);
   const claims = configOf(partyIdentifierClaims);
   expect(
-    claims.indexes.some(
-      (candidate) => candidate.config.name === 'party_identifier_claims_party_lookup_idx',
-    ),
+    claims.indexes.some((candidate) => candidate.config.name === 'party_identifier_claims_party_lookup_idx'),
   ).toBeTruthy();
 });
 
 it('preserves bounded external observation evidence separately from trusted actor and effective time', () => {
-  for (const table of [
-    partyFactAssertions,
-    partyOfficialIdentifiers,
-    partyContactPoints,
-    partyContactPointPurposes,
-  ]) {
+  for (const table of [partyFactAssertions, partyOfficialIdentifiers, partyContactPoints, partyContactPointPurposes]) {
     const config = configOf(table);
-    expect(
-      config.columns.some((column) => column.name === 'external_evidence' && !column.notNull),
-    ).toBeTruthy();
-    const evidenceCheck = config.checks.find(
-      (candidate) => candidate.name === `${config.name}_external_evidence_ck`,
-    );
+    expect(config.columns.some((column) => column.name === 'external_evidence' && !column.notNull)).toBeTruthy();
+    const evidenceCheck = config.checks.find((candidate) => candidate.name === `${config.name}_external_evidence_ck`);
     expect(evidenceCheck).toBeTruthy();
     if (evidenceCheck === undefined) {
       throw new Error('Expected value to be present');
@@ -296,10 +273,7 @@ it('preserves bounded external observation evidence separately from trusted acto
 
 const checksOf = (table: (typeof configuredTables)[number]) =>
   Object.fromEntries(
-    configOf(table).checks.map((candidate) => [
-      candidate.name,
-      dialect.sqlToQuery(candidate.value).sql,
-    ]),
+    configOf(table).checks.map((candidate) => [candidate.name, dialect.sqlToQuery(candidate.value).sql]),
   );
 
 const checkSql = (checks: Readonly<Record<string, string>>, name: string) => checks[name] ?? '';
@@ -354,10 +328,7 @@ it('models typed contact point lifecycles with owner-local references', () => {
 it('models contact point purpose lifecycles with owner-local references', () => {
   const purposeConfig = configOf(partyContactPointPurposes);
   const purposeChecks = Object.fromEntries(
-    purposeConfig.checks.map((candidate) => [
-      candidate.name,
-      dialect.sqlToQuery(candidate.value).sql,
-    ]),
+    purposeConfig.checks.map((candidate) => [candidate.name, dialect.sqlToQuery(candidate.value).sql]),
   );
   assert.match(checkSql(purposeChecks, 'party_contact_point_purposes_key_ck'), /REGISTERED/u);
   assert.match(checkSql(purposeChecks, 'party_contact_point_purposes_key_ck'), /BILLING/u);
@@ -391,8 +362,7 @@ it('models contact point purpose lifecycles with owner-local references', () => 
   );
   assert.equal(
     getTableName(
-      foreignKey(partyContactPointPurposes, 'party_contact_point_purposes_contact_fk').reference()
-        .foreignTable,
+      foreignKey(partyContactPointPurposes, 'party_contact_point_purposes_contact_fk').reference().foreignTable,
     ),
     getTableName(partyContactPoints),
   );
@@ -411,20 +381,13 @@ it('models contact point purpose lifecycles with owner-local references', () => 
 it('models relationship lifecycles with owner-local references', () => {
   const relationshipChecks = checksOf(partyRelationships);
   assert.match(checkSql(relationshipChecks, 'party_relationships_type_ck'), /CONTACT_PERSON_OF/u);
-  assert.notMatch(
-    checkSql(relationshipChecks, 'party_relationships_type_ck'),
-    /EMPLOYEE_OF|BRANCH_OF|OTHER/u,
-  );
+  assert.notMatch(checkSql(relationshipChecks, 'party_relationships_type_ck'), /EMPLOYEE_OF|BRANCH_OF|OTHER/u);
   assert.ok(
     configOf(partyRelationships).columns.some(
       (column) => column.name === 'revision' && column.notNull && column.hasDefault,
     ),
   );
-  assert.ok(
-    configOf(partyRelationships).columns.some(
-      (column) => column.name === 'valid_from' && !column.notNull,
-    ),
-  );
+  assert.ok(configOf(partyRelationships).columns.some((column) => column.name === 'valid_from' && !column.notNull));
   assert.ok(
     configOf(partyRelationships).columns.some(
       (column) => column.name === 'assertion_state' && column.notNull && column.hasDefault,
@@ -468,10 +431,7 @@ it('models relationship lifecycles with owner-local references', () => {
     );
   }
   assert.equal(
-    getTableName(
-      foreignKey(partyRelationships, 'party_relationships_tenant_from_party_fk').reference()
-        .foreignTable,
-    ),
+    getTableName(foreignKey(partyRelationships, 'party_relationships_tenant_from_party_fk').reference().foreignTable),
     getTableName(parties),
   );
 });
@@ -491,10 +451,7 @@ it('models Counterparty lifecycles with owner-local references', () => {
   const roleChecks = checksOf(counterpartyRolePeriods);
   assert.match(checkSql(roleChecks, 'party_counterparty_role_periods_type_ck'), /CUSTOMER/u);
   assert.match(checkSql(roleChecks, 'party_counterparty_role_periods_type_ck'), /SUPPLIER/u);
-  assert.notMatch(
-    checkSql(roleChecks, 'party_counterparty_role_periods_type_ck'),
-    /BUSINESS_PARTNER/u,
-  );
+  assert.notMatch(checkSql(roleChecks, 'party_counterparty_role_periods_type_ck'), /BUSINESS_PARTNER/u);
   for (const column of [
     'add_reason',
     'add_evidence_refs',
@@ -516,10 +473,7 @@ it('models Counterparty lifecycles with owner-local references', () => {
     roleEndEvidence,
     /valid_to[^)]*is null[^)]*end_provenance_source[^)]*is null[^)]*end_provenance_method[^)]*is null/u,
   );
-  assert.match(
-    roleEndEvidence,
-    /valid_to.*is not null.*end_provenance_source.*btrim.*end_provenance_method.*btrim/u,
-  );
+  assert.match(roleEndEvidence, /valid_to.*is not null.*end_provenance_source.*btrim.*end_provenance_method.*btrim/u);
   assert.equal(
     configOf(counterpartyRolePeriods).indexes.some(
       (candidate) => candidate.config.name === 'party_counterparty_role_periods_current_uk',
@@ -527,10 +481,7 @@ it('models Counterparty lifecycles with owner-local references', () => {
     false,
     'effective intervals, not an is_current unique index, own role-period uniqueness',
   );
-  assert.notMatch(
-    checkSql(roleChecks, 'party_counterparty_role_periods_state_ck'),
-    /ACTIVE' and [^)]*is_current/u,
-  );
+  assert.notMatch(checkSql(roleChecks, 'party_counterparty_role_periods_state_ck'), /ACTIVE' and [^)]*is_current/u);
 });
 
 it('persists one recoverable match decision per Action and bounded duplicate review state', () => {
@@ -543,9 +494,7 @@ it('persists one recoverable match decision per Action and bounded duplicate rev
   expect(decisionChecks['party_match_decisions_outcome_ck'] ?? '').toMatch(/MATCHED/u);
   expect(decisionChecks['party_match_decisions_outcome_ck'] ?? '').toMatch(/AMBIGUOUS/u);
   expect(decisionChecks['party_match_decisions_outcome_ck'] ?? '').toMatch(/NO_MATCH/u);
-  expect(
-    configOf(duplicateCandidateCases).columns.some((column) => column.name === 'revision'),
-  ).toBeTruthy();
+  expect(configOf(duplicateCandidateCases).columns.some((column) => column.name === 'revision')).toBeTruthy();
   const activeCaseIndex = configOf(duplicateCandidateCases).indexes.find(
     (candidate) => candidate.config.name === 'party_duplicate_cases_fingerprint_uk',
   );
@@ -556,10 +505,7 @@ it('persists one recoverable match decision per Action and bounded duplicate rev
     'match_rule_version',
   ]);
   expect(
-    getTableName(
-      foreignKey(duplicateCandidateCases, 'party_duplicate_cases_prior_case_fk').reference()
-        .foreignTable,
-    ),
+    getTableName(foreignKey(duplicateCandidateCases, 'party_duplicate_cases_prior_case_fk').reference().foreignTable),
   ).toBe('duplicate_candidate_cases');
   expect(activeCaseIndex?.config.where).toBeTruthy();
   if (activeCaseIndex?.config.where === undefined) {
@@ -573,15 +519,11 @@ it('persists one recoverable match decision per Action and bounded duplicate rev
   if (snapshotCheck === undefined) {
     throw new Error('Expected value to be present');
   }
-  expect(dialect.sqlToQuery(snapshotCheck.value).sql).toMatch(
-    /provenance.*source.*method.*validFrom/u,
-  );
+  expect(dialect.sqlToQuery(snapshotCheck.value).sql).toMatch(/provenance.*source.*method.*validFrom/u);
   expect(
     getTableName(
-      foreignKey(
-        duplicateCandidateCaseParties,
-        'party_duplicate_candidate_case_parties_tenant_party_fk',
-      ).reference().foreignTable,
+      foreignKey(duplicateCandidateCaseParties, 'party_duplicate_candidate_case_parties_tenant_party_fk').reference()
+        .foreignTable,
     ),
   ).toBe(getTableName(parties));
 });
@@ -590,20 +532,12 @@ it('prepares append-only correction and non-executable merge records with safe a
   const correctionConfig = configOf(partyCorrections);
   expect(correctionConfig.columns.some((column) => column.name === 'reason')).toBeTruthy();
   expect(correctionConfig.columns.some((column) => column.name === 'evidence_refs')).toBeTruthy();
-  expect(
-    correctionConfig.columns.some((column) => column.name === 'acting_principal_id'),
-  ).toBeTruthy();
-  expect(
-    correctionConfig.columns.some((column) => column.name === 'approving_principal_id'),
-  ).toBeTruthy();
+  expect(correctionConfig.columns.some((column) => column.name === 'acting_principal_id')).toBeTruthy();
+  expect(correctionConfig.columns.some((column) => column.name === 'approving_principal_id')).toBeTruthy();
   expect(correctionConfig.columns.some((column) => column.name === 'policy_version')).toBeTruthy();
-  expect(
-    correctionConfig.checks.some((candidate) => candidate.name === 'party_corrections_target_ck'),
-  ).toBeTruthy();
+  expect(correctionConfig.checks.some((candidate) => candidate.name === 'party_corrections_target_ck')).toBeTruthy();
 
-  const mergeStatus = configOf(partyMerges).checks.find(
-    (candidate) => candidate.name === 'party_merges_status_ck',
-  );
+  const mergeStatus = configOf(partyMerges).checks.find((candidate) => candidate.name === 'party_merges_status_ck');
   expect(mergeStatus).toBeTruthy();
   if (mergeStatus === undefined) {
     throw new Error('Expected value to be present');
@@ -630,58 +564,52 @@ it('prepares append-only correction and non-executable merge records with safe a
   ]) {
     expect(dialect.sqlToQuery(preparedEvidence.value).sql.includes(field), field).toBeTruthy();
   }
-  expect(uniqueColumns(partyAliases, 'party_aliases_alias_uk')).toEqual([
-    'tenant_id',
-    'alias_party_id',
-  ]);
+  expect(uniqueColumns(partyAliases, 'party_aliases_alias_uk')).toEqual(['tenant_id', 'alias_party_id']);
   expect(
-    configOf(partyAliases).checks.some(
-      (candidate) => candidate.name === 'party_aliases_not_self_ck',
-    ),
+    configOf(partyAliases).checks.some((candidate) => candidate.name === 'party_aliases_not_self_ck'),
   ).toBeTruthy();
 });
 
-it.effect(
-  'ships an independent Party migration with forced RLS and append-only correction evidence',
-  () =>
+it.layer(NodeFileSystem.layer)('schema-contract', (suite) => {
+  suite.effect('ships an independent Party migration with forced RLS and append-only correction evidence', () =>
     Effect.gen(function* testScenario() {
-      const drizzleConfig = yield* Effect.promise(() =>
-        readFile(new URL('../../drizzle.config.ts', import.meta.url), 'utf-8'),
+      const drizzleConfig = yield* FileSystem.FileSystem.use((fs) =>
+        fs.readFileString(fileURLToPath(new URL('../../drizzle.config.ts', import.meta.url))),
       );
       expect(drizzleConfig).toMatch(/__drizzle_migrations_party/u);
       expect(drizzleConfig).toMatch(/\.\/src\/db\/schema\.ts/u);
 
       const migrationDirectory = new URL('../../drizzle/', import.meta.url);
-      const migrationDirectoryEntries = yield* Effect.promise(() =>
-        readdir(migrationDirectory, { withFileTypes: true }),
-      );
-      const migrationFolders = migrationDirectoryEntries
-        .filter((entry) => entry.isDirectory())
-        .map((entry) => entry.name)
-        .toSorted();
+      const fileSystem = yield* FileSystem.FileSystem;
+      const migrationDirectoryEntries = yield* fileSystem.readDirectory(fileURLToPath(migrationDirectory));
+      const migrationDirectories: string[] = [];
+      for (const entry of migrationDirectoryEntries) {
+        const info = yield* fileSystem.stat(fileURLToPath(new URL(entry, migrationDirectory)));
+        if (info.type === 'Directory') {
+          migrationDirectories.push(entry);
+        }
+      }
+      const migrationFolders = migrationDirectories.toSorted();
       expect(migrationFolders.length >= 2).toBeTruthy();
       const remediationFolder = migrationFolders.find((name) => name.endsWith('_nebulous_cardiac'));
       expect(remediationFolder).toBeTruthy();
       if (remediationFolder === undefined) {
         throw new Error('Expected value to be present');
       }
-      const remediation = yield* Effect.promise(() =>
-        readFile(new URL(`${remediationFolder}/migration.sql`, migrationDirectory), 'utf-8'),
+      const remediation = yield* FileSystem.FileSystem.use((fs) =>
+        fs.readFileString(fileURLToPath(new URL(`${remediationFolder}/migration.sql`, migrationDirectory))),
       );
       expect(remediation).toMatch(/party_match_decisions_create_result_ck/u);
       expect(remediation).toMatch(/committed_create_outcome/u);
-      const migration = yield* Effect.promise(() =>
-        readFile(
-          new URL(`${migrationFolders[0] ?? ''}/migration.sql`, migrationDirectory),
-          'utf-8',
-        ),
+      const migration = yield* FileSystem.FileSystem.use((fs) =>
+        fs.readFileString(fileURLToPath(new URL(`${migrationFolders[0] ?? ''}/migration.sql`, migrationDirectory))),
       );
-      expect(
-        migration.match(/ALTER TABLE "party"\."[^"]+" ENABLE ROW LEVEL SECURITY;/gu)?.length,
-      ).toBe(PARTY_TABLE_INVENTORY.length);
-      expect(
-        migration.match(/ALTER TABLE "party"\."[^"]+" FORCE ROW LEVEL SECURITY;/gu)?.length,
-      ).toBe(PARTY_TABLE_INVENTORY.length);
+      expect(migration.match(/ALTER TABLE "party"\."[^"]+" ENABLE ROW LEVEL SECURITY;/gu)?.length).toBe(
+        PARTY_TABLE_INVENTORY.length,
+      );
+      expect(migration.match(/ALTER TABLE "party"\."[^"]+" FORCE ROW LEVEL SECURITY;/gu)?.length).toBe(
+        PARTY_TABLE_INVENTORY.length,
+      );
       expect(migration).not.toMatch(/REFERENCES "(?:core|auth|contacts)"\./u);
       expect(migration).toMatch(/party_reject_correction_mutation/u);
       expect(migration).toMatch(/before update or delete on "party"\."party_corrections"/iu);
@@ -693,25 +621,24 @@ it.effect(
         /party_counterparty_role_periods_no_overlap_excl[\s\S]*EXCLUDE USING gist[\s\S]*tstzrange/iu,
       );
     }),
-);
+  );
 
-it.effect('registers Party ownership in application database grants and exact verification', () =>
-  Effect.gen(function* testScenario() {
-    const bootstrap = yield* Effect.promise(() =>
-      readFile(
-        new URL('../../../../scripts/postgres/bootstrap-runtime-role.mts', import.meta.url),
-        'utf-8',
-      ),
-    );
-    const verifier = yield* Effect.promise(() =>
-      readFile(
-        new URL('../../../../scripts/verify-application-db-schema.mts', import.meta.url),
-        'utf-8',
-      ),
-    );
-    expect(bootstrap).toMatch(/\['core', 'auth', 'contacts', 'party'\]/u);
-    expect(verifier).toMatch(/\['auth', 'contacts', 'core', 'party'\]/u);
-    expect(verifier).toMatch(/__drizzle_migrations_party/u);
-    expect(verifier).toMatch(/verticals\/party-registry\/scripts\/verify-db-schema\.mts/u);
-  }),
-);
+  suite.effect('registers Party ownership in application database grants and exact verification', () =>
+    Effect.gen(function* testScenario() {
+      const bootstrap = yield* FileSystem.FileSystem.use((fs) =>
+        fs.readFileString(
+          fileURLToPath(new URL('../../../../scripts/postgres/bootstrap-runtime-role.mts', import.meta.url)),
+        ),
+      );
+      const verifier = yield* FileSystem.FileSystem.use((fs) =>
+        fs.readFileString(
+          fileURLToPath(new URL('../../../../scripts/verify-application-db-schema.mts', import.meta.url)),
+        ),
+      );
+      expect(bootstrap).toMatch(/\['core', 'auth', 'contacts', 'party'\]/u);
+      expect(verifier).toMatch(/\[\s*'auth',\s*'contacts',\s*'core',\s*'party',?\s*\]/u);
+      expect(verifier).toMatch(/__drizzle_migrations_party/u);
+      expect(verifier).toMatch(/verticals\/party-registry\/scripts\/verify-db-schema\.mts/u);
+    }),
+  );
+});

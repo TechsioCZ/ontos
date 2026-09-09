@@ -1,9 +1,10 @@
 import { deadlineInterceptor, v1 } from '@authzed/authzed-node';
 import { Cause, Duration, Effect, Schema } from 'effect';
 import type { Scope } from 'effect';
+
+import { SpiceDbConfigError } from './config-error.ts';
 import { allowsInsecureSpiceDbTransport } from './config.ts';
 import type { SpiceDbConfigValue } from './config.ts';
-import { SpiceDbConfigError } from './config-error.ts';
 
 export const SPICEDB_CHECK_TIMEOUT_MS = 2000;
 
@@ -45,10 +46,7 @@ export interface SpiceDbPermissionClient extends CloseableSpiceDbClient {
 
 const permissionTimeout = Effect.timeoutOrElse({
   duration: Duration.millis(SPICEDB_CHECK_TIMEOUT_MS),
-  orElse: () =>
-    Effect.fail(
-      spiceDbPermissionClientError(new Cause.TimeoutError('SpiceDB client operation timed out')),
-    ),
+  orElse: () => Effect.fail(spiceDbPermissionClientError(new Cause.TimeoutError('SpiceDB client operation timed out'))),
 });
 
 export const spiceDbClientSecurity = (
@@ -59,9 +57,7 @@ export const spiceDbClientSecurity = (
       reason: 'Insecure SpiceDB client credentials are not allowed for this endpoint',
     });
   }
-  return configuration.insecureLocal
-    ? v1.ClientSecurity.INSECURE_PLAINTEXT_CREDENTIALS
-    : v1.ClientSecurity.SECURE;
+  return configuration.insecureLocal ? v1.ClientSecurity.INSECURE_PLAINTEXT_CREDENTIALS : v1.ClientSecurity.SECURE;
 };
 
 export const createSpiceDbPermissionClient = (
@@ -96,6 +92,4 @@ export const acquireSpiceDbClientResource = <Client extends CloseableSpiceDbClie
   acquire: () => Client,
   onFailure: (cause: unknown) => Error,
 ): Effect.Effect<Client, Error, Scope.Scope> =>
-  Effect.acquireRelease(Effect.try({ catch: onFailure, try: acquire }), (client) =>
-    Effect.sync(() => client.close()),
-  );
+  Effect.acquireRelease(Effect.try({ catch: onFailure, try: acquire }), (client) => Effect.sync(() => client.close()));

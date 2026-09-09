@@ -16,9 +16,7 @@ it('JSON rule scope preserves defaults, overrides, and exclusions', () => {
   expect(inJsonRuleScope(sourceFile, { allowPaths: ['apps/**'] }, includePaths)).toBe(false);
   expect(inJsonRuleScope(sourceFile, { includePaths: [] }, includePaths)).toBe(true);
   expect(inJsonRuleScope(sourceFile, { includePaths: [1] }, includePaths)).toBe(true);
-  expect(
-    inJsonRuleScope('packages/example/main.ts', { includePaths: ['packages/**'] }, includePaths),
-  ).toBe(true);
+  expect(inJsonRuleScope('packages/example/main.ts', { includePaths: ['packages/**'] }, includePaths)).toBe(true);
   expect(inJsonRuleScope(testFile, { ignoreTestFiles: 'false' }, includePaths)).toBe(false);
 });
 

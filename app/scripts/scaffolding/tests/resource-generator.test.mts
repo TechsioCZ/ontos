@@ -1,20 +1,19 @@
-import { linkFixtureDependencies, withCreatedFixture } from './fixture-ownership.mts';
-import { snapshotTree, write } from './fixture-files.mts';
-import { Cause, Effect, Fiber, FileSystem, Schema } from 'effect';
-import { afterEach, expect, it, rs } from 'effect-rstest';
-
-import { CodeSmith, GeneratorCore } from '@modern-js/codesmith';
-import { applyMutationPlanEffect } from '../shared.mts';
-import { NodeServices } from '@effect/platform-node';
-
 import { spawnSync } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
 import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
-
 import { pathToFileURL } from 'node:url';
+
+import { NodeServices } from '@effect/platform-node';
+import { CodeSmith, GeneratorCore } from '@modern-js/codesmith';
+import { Cause, Effect, Fiber, FileSystem, Schema } from 'effect';
+import { afterEach, expect, it, rs } from 'effect-rstest';
+
 import { getHelpText, runScaffoldEffect, ScaffoldingError } from '../cli.mts';
+import { applyMutationPlanEffect } from '../shared.mts';
+import { snapshotTree, write } from './fixture-files.mts';
+import { linkFixtureDependencies, withCreatedFixture } from './fixture-ownership.mts';
 
 afterEach(() => {
   rs.restoreAllMocks();
@@ -38,21 +37,13 @@ const generatedResourceModuleSchema = Schema.Struct({
   RentalUnitRefSchema: Schema.declare<Schema.Top>(Schema.isSchema),
 });
 
-type JsonValue =
-  | boolean
-  | number
-  | string
-  | null
-  | readonly JsonValue[]
-  | { readonly [key: string]: JsonValue };
+type JsonValue = boolean | number | string | null | readonly JsonValue[] | { readonly [key: string]: JsonValue };
 
 const json = (value: JsonValue): string => `${JSON.stringify(value, null, 2)}\n`;
 
 const createFixture = (): Effect.Effect<string, unknown> =>
   Effect.gen(function* mergedScenario9() {
-    const root = yield* Effect.promise(() =>
-      mkdtemp(path.join(tmpdir(), 'ontos-resource-scaffold-')),
-    );
+    const root = yield* Effect.promise(() => mkdtemp(path.join(tmpdir(), 'ontos-resource-scaffold-')));
     yield* write(root, 'package.json', json({ name: 'fixture', private: true, type: 'module' }));
     yield* write(
       root,
@@ -87,11 +78,7 @@ const createFixture = (): Effect.Effect<string, unknown> =>
         references: [],
       }),
     );
-    yield* write(
-      root,
-      'verticals/property-registry/module-federation.config.ts',
-      'export default { exposes: {} };\n',
-    );
+    yield* write(root, 'verticals/property-registry/module-federation.config.ts', 'export default { exposes: {} };\n');
     yield* write(
       root,
       'verticals/property-registry/shared/api.ts',
@@ -165,26 +152,18 @@ export declare const ShellSearchContributionSchema: Schema.Codec<unknown, unknow
       '@app/core-runtime': 'packages/core-runtime',
       effect: 'node_modules/effect',
     });
-    yield* runScaffoldEffect(
-      'module-contract',
-      [verticalFlag, verticalName, '--module', moduleId],
-      {
-        workspaceRoot: root,
-      },
-    ).pipe(Effect.provide(NodeServices.layer));
+    yield* runScaffoldEffect('module-contract', [verticalFlag, verticalName, '--module', moduleId], {
+      workspaceRoot: root,
+    }).pipe(Effect.provide(NodeServices.layer));
     return root;
   });
 
 const withFixture = withCreatedFixture(createFixture());
 
 const scaffoldResource = Effect.fn(function* scenario7(root: string, resource = resourceName) {
-  return yield* runScaffoldEffect(
-    'resource',
-    [verticalFlag, verticalName, '--resource', resource],
-    {
-      workspaceRoot: root,
-    },
-  ).pipe(Effect.provide(NodeServices.layer));
+  return yield* runScaffoldEffect('resource', [verticalFlag, verticalName, '--resource', resource], {
+    workspaceRoot: root,
+  }).pipe(Effect.provide(NodeServices.layer));
 });
 
 /** Refusal must preserve the fixture byte-for-byte. */
@@ -210,9 +189,7 @@ it.live(
     if (result.kind !== 'help') {
       throw new Error('Expected help result');
     }
-    expect(result.help).toMatch(
-      /scaffold:resource -- --vertical <vertical> --resource <resource>/u,
-    );
+    expect(result.help).toMatch(/scaffold:resource -- --vertical <vertical> --resource <resource>/u);
     expect(result.help).toMatch(/lower-kebab-case/u);
   }),
 );
@@ -225,10 +202,7 @@ it.live(
         const result = yield* scaffoldResource(root);
         expect(result.kind).toBe('generated');
 
-        const resourcePath = path.join(
-          root,
-          'verticals/property-registry/shared/resources/rental-unit.ts',
-        );
+        const resourcePath = path.join(root, 'verticals/property-registry/shared/resources/rental-unit.ts');
         const [resource, manifest, packageSource] = yield* Effect.all(
           [
             Effect.promise(() => readFile(resourcePath, 'utf-8')),
@@ -241,13 +215,9 @@ it.live(
         expect(resource).toMatch(/import \{ Schema \} from 'effect';/u);
         expect(resource).toMatch(/export const RentalUnitRefSchema = Schema\.Struct/u);
         expect(resource).toMatch(/Schema\.isMaxLength\(300\)/u);
-        expect(resource).toMatch(
-          /const TenantIdSchema = Schema\.String\.check\(Schema\.isUUID\(\)\)/u,
-        );
+        expect(resource).toMatch(/const TenantIdSchema = Schema\.String\.check\(Schema\.isUUID\(\)\)/u);
         expect(resource).toMatch(/moduleId: Schema\.Literal\('property\.registry'\)/u);
-        expect(resource).toMatch(
-          /resourceType: Schema\.Literal\('property\.registry\.rental-unit'\)/u,
-        );
+        expect(resource).toMatch(/resourceType: Schema\.Literal\('property\.registry\.rental-unit'\)/u);
         expect(resource).toMatch(/resourceId: ResourceIdSchema/u);
         expect(resource).toMatch(/tenantId: TenantIdSchema/u);
         expect(resource).toMatch(/export type RentalUnitRef = typeof RentalUnitRefSchema\.Type;/u);
@@ -263,14 +233,10 @@ it.live(
         const modulePackage = yield* Schema.decodeUnknownEffect(packageJsonSchema, {
           onExcessProperty: 'preserve',
         })(JSON.parse(packageSource));
-        expect(modulePackage.exports['./resources/rental-unit']).toBe(
-          './shared/resources/rental-unit.ts',
-        );
+        expect(modulePackage.exports['./resources/rental-unit']).toBe('./shared/resources/rental-unit.ts');
 
         const generatedModule = yield* Schema.decodeUnknownEffect(generatedResourceModuleSchema)(
-          yield* Effect.promise(
-            () => import(`${pathToFileURL(resourcePath).href}?test=${randomUUID()}`),
-          ),
+          yield* Effect.promise(() => import(`${pathToFileURL(resourcePath).href}?test=${randomUUID()}`)),
         );
         const rentalUnitRefSchema = Schema.make<Schema.Codec<unknown, unknown>>(
           generatedModule.RentalUnitRefSchema.ast,
@@ -331,9 +297,7 @@ it.live(
     yield* withFixture(
       Effect.fn(function* scenario12(root) {
         const beforeTraversal = yield* snapshotTree(root, ['node_modules']);
-        const failureCause1 = yield* Effect.flip(
-          Effect.sandbox(scaffoldResource(root, '../unsafe')),
-        );
+        const failureCause1 = yield* Effect.flip(Effect.sandbox(scaffoldResource(root, '../unsafe')));
         expect(String(Cause.squash(failureCause1))).toMatch(/lower-kebab-case/u);
         expect(yield* snapshotTree(root, ['node_modules'])).toEqual(beforeTraversal);
 
@@ -354,10 +318,7 @@ it.live(
         yield* Effect.promise(() =>
           writeFile(
             manifestPath,
-            manifest.replace(
-              '// <generated-module-manifest-resources>',
-              '// invalid-resource-slot',
-            ),
+            manifest.replace('// <generated-module-manifest-resources>', '// invalid-resource-slot'),
             'utf-8',
           ),
         );
@@ -378,9 +339,7 @@ it.live(
             './resources/rental-unit': './someone-elses-contract.ts',
           },
         };
-        yield* Effect.promise(() =>
-          writeFile(packagePath, json(packageWithExportCollision), 'utf-8'),
-        );
+        yield* Effect.promise(() => writeFile(packagePath, json(packageWithExportCollision), 'utf-8'));
         yield* assertResourceScaffoldRefused(root, /resource contract export .* already exists/u);
       }),
     );
@@ -451,7 +410,11 @@ it.live(
             );
             yield* applyMutationPlanEffect(core, {
               mutations: [
-                { content: 'export {};', kind: 'create', path: path.join(root, 'generated.ts') },
+                {
+                  content: 'export {};',
+                  kind: 'create',
+                  path: path.join(root, 'generated.ts'),
+                },
               ],
               result: null,
             });
@@ -477,13 +440,9 @@ it.live(
       Effect.fn(function* scenario20(root) {
         yield* Effect.promise(() => writeFile(path.join(root, verticalPackagePath), '[]'));
         const before = yield* snapshotTree(root, ['node_modules']);
-        const failure = yield* runScaffoldEffect(
-          'resource',
-          [verticalFlag, verticalName, '--resource', resourceName],
-          {
-            workspaceRoot: root,
-          },
-        ).pipe(Effect.flip, Effect.provide(NodeServices.layer));
+        const failure = yield* runScaffoldEffect('resource', [verticalFlag, verticalName, '--resource', resourceName], {
+          workspaceRoot: root,
+        }).pipe(Effect.flip, Effect.provide(NodeServices.layer));
         expect(Schema.is(ScaffoldingError)(failure)).toBe(true);
         expect(failure.message).toMatch(/JSON object/u);
         expect(yield* snapshotTree(root, ['node_modules'])).toEqual(before);

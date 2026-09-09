@@ -1,17 +1,15 @@
 import fs from 'node:fs';
-import { expect, test } from 'effect-rstest';
+
 import { Schema } from 'effect';
+import { expect, test } from 'effect-rstest';
 
 const workspaceRoot = new URL('../../../../', import.meta.url);
 const readJson = <JsonSchema extends Schema.ConstraintDecoder<unknown>>(
   relativePath: string,
   schema: JsonSchema,
 ): JsonSchema['Type'] =>
-  Schema.decodeUnknownSync(schema)(
-    JSON.parse(fs.readFileSync(new URL(relativePath, workspaceRoot), 'utf-8')),
-  );
-const readText = (relativePath: string) =>
-  fs.readFileSync(new URL(relativePath, workspaceRoot), 'utf-8');
+  Schema.decodeUnknownSync(schema)(JSON.parse(fs.readFileSync(new URL(relativePath, workspaceRoot), 'utf-8')));
+const readText = (relativePath: string) => fs.readFileSync(new URL(relativePath, workspaceRoot), 'utf-8');
 
 const TopologySchema = Schema.Struct({
   shell: Schema.Struct({
@@ -56,15 +54,9 @@ test('keeps authentication in the existing Shell/Core ownership boundary', () =>
 test('keeps the Contacts page in the Party Registry lazy browser allowlist', () => {
   const source = readText('apps/shell-super-app/src/api/vertical-clients.ts');
   const shellConfig = readText('apps/shell-super-app/modern.config.ts');
-  const lazyRemotes = [...source.matchAll(/import\('(?<remote>[^']+)'\)/gu)].map(
-    (match) => match.groups?.['remote'],
-  );
-  const componentKeys = [...source.matchAll(/componentKey: '(?<key>[^']+)'/gu)].map(
-    (match) => match.groups?.['key'],
-  );
+  const lazyRemotes = [...source.matchAll(/import\('(?<remote>[^']+)'\)/gu)].map((match) => match.groups?.['remote']);
+  const componentKeys = [...source.matchAll(/componentKey: '(?<key>[^']+)'/gu)].map((match) => match.groups?.['key']);
   expect(lazyRemotes).toEqual(['partyRegistry/PageContacts']);
   expect(componentKeys).toEqual(['party.registry.page-contacts']);
-  expect(shellConfig).toContain(
-    'new rspack.NormalModuleReplacementPlugin(\n                  /^partyRegistry\\//u,',
-  );
+  expect(shellConfig).toMatch(/new rspack\.NormalModuleReplacementPlugin\(\s*\/\^partyRegistry\\\/\/u,/u);
 });

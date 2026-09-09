@@ -1,5 +1,6 @@
 import type { ActionHandlerContext } from '@app/core-runtime';
 import { Effect, Schema } from 'effect';
+
 import {
   EngagementProfileConflict,
   EngagementProfileNotFound,
@@ -26,15 +27,10 @@ export const handleEngagementLifecycle =
   ) =>
   (
     payload: Payload,
-    context: Pick<
-      ActionHandlerContext<Readonly<Record<string, never>>, LifecycleServices<Value>>,
-      'services'
-    >,
+    context: Pick<ActionHandlerContext<Readonly<Record<string, never>>, LifecycleServices<Value>>, 'services'>,
   ) =>
     context.services
       .transition(payload.profileRef.resourceId)
       .pipe(
-        Effect.flatMap((result) =>
-          resolveEngagementLifecycle(result, payload.profileRef.resourceId, requestedState),
-        ),
+        Effect.flatMap((result) => resolveEngagementLifecycle(result, payload.profileRef.resourceId, requestedState)),
       );

@@ -9,10 +9,12 @@ import {
   OperationContextUnavailable,
 } from '@app/core-runtime';
 import { Effect, Match, Schema } from 'effect';
+
 import {
-  counterpartyRoleWritePermission,
-  failCounterpartyNotFound,
-} from './counterparty-role-action-support.ts';
+  CounterpartyRoleEndPayloadSchema,
+  CounterpartyRoleEndResultSchema,
+} from '../../shared/actions/counterparty-role-end.ts';
+import type { CounterpartyRoleEndPayload } from '../../shared/actions/counterparty-role-end.ts';
 import { CounterpartyAuditEvidenceSchema } from '../../shared/domain/counterparty-contract.ts';
 import {
   CounterpartyNotFound,
@@ -26,13 +28,8 @@ import {
 import { OutboxPayloadSchema as CounterpartyRoleEndedEventSchema } from '../../shared/outbox/party-registry-counterparty-role-ended-v1.ts';
 import { endCounterpartyRoleRecord } from '../services/counterparty-persistence.service.ts';
 import type { EndCounterpartyRoleResult as PersistenceResult } from '../services/counterparty-persistence.service.ts';
+import { counterpartyRoleWritePermission, failCounterpartyNotFound } from './counterparty-role-action-support.ts';
 import { createCounterpartyRoleEndPartyRegistryCounterpartyRoleEndedV1OutboxMessage } from './counterparty-role-end.party-registry-counterparty-role-ended-v1.outbox-message.ts';
-
-import {
-  CounterpartyRoleEndPayloadSchema,
-  CounterpartyRoleEndResultSchema,
-} from '../../shared/actions/counterparty-role-end.ts';
-import type { CounterpartyRoleEndPayload } from '../../shared/actions/counterparty-role-end.ts';
 
 export {
   CounterpartyRoleEndPayloadSchema,
@@ -177,7 +174,10 @@ export const counterpartyRoleEndAction = defineAction(
     },
     entrypoint: defineTenantModuleEntrypoint({
       access: 'write',
-      authorization: { kind: 'action_execution', provisioning: 'tenant_membership_default' },
+      authorization: {
+        kind: 'action_execution',
+        provisioning: 'tenant_membership_default',
+      },
       entrypointKey: 'party.registry.counterparty-role-end',
       moduleKey: 'party.registry',
       role: 'action',
@@ -187,9 +187,7 @@ export const counterpartyRoleEndAction = defineAction(
     owningModuleKey: 'party.registry',
     payloadSchema: CounterpartyRoleEndPayloadSchema,
     policies: [],
-    resourcePermission: defineActionResourcePermission<CounterpartyRoleEndPayload>(
-      counterpartyRoleWritePermission,
-    ),
+    resourcePermission: defineActionResourcePermission<CounterpartyRoleEndPayload>(counterpartyRoleWritePermission),
     resultSchema: CounterpartyRoleEndResultSchema,
     schemaVersion: '1',
   },

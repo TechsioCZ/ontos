@@ -1,18 +1,17 @@
-import {
-  matchingDelimiter,
-  separatedSource,
-  topLevelSeparators,
-} from './boundary-source-structure.mts';
-import { toCamelCase, toPascalCase, isCodePosition, maskNonCode } from './scaffolding/shared.mts';
 import path from 'node:path';
+
+import { Schema } from 'effect';
+
+import { matchingDelimiter, separatedSource, topLevelSeparators } from './boundary-source-structure.mts';
 import {
   hasGeneratedGovernedClientContract,
+  hasGeneratedSourceHeader,
   hasGeneratedModuleApiContract,
   hasGeneratedModuleApiReadContract,
   hasGeneratedOperationGatewayContract,
   hasGeneratedOperationPrincipalContract,
 } from './generated-module-api-boundary.mts';
-import { Schema } from 'effect';
+import { toCamelCase, toPascalCase, isCodePosition, maskNonCode } from './scaffolding/shared.mts';
 
 const GOVERNED_API_SLOT_END = '// </generated-governed-http-api-additions>';
 const GOVERNED_API_SLOT_START = '// <generated-governed-http-api-additions>';
@@ -28,12 +27,9 @@ const SEARCH_PROVIDER_KIND = 'search-provider';
 const GOVERNED_HANDLER_LAYER_SLOT_START = '// <generated-governed-http-handler-layers>';
 const GOVERNED_HANDLER_LAYER_SLOT_END = '// </generated-governed-http-handler-layers>';
 const HTTP_API_CONTRACT_MODULE = 'effect/unstable/httpapi';
+const GOVERNED_HTTP_API_IDENTITY_ALIAS = 'governedHttpApiIdentity';
 
-const GovernedReadKindSchema = Schema.Literals([
-  MODULE_API_KIND,
-  REPORT_KIND,
-  SEARCH_PROVIDER_KIND,
-]);
+const GovernedReadKindSchema = Schema.Literals([MODULE_API_KIND, REPORT_KIND, SEARCH_PROVIDER_KIND]);
 type GovernedReadKind = typeof GovernedReadKindSchema.Type;
 const isGovernedReadKind = Schema.is(GovernedReadKindSchema);
 
@@ -43,8 +39,7 @@ interface GovernedReadContribution {
   readonly name: string;
 }
 
-const escapeRegExp = (value: string): string =>
-  value.replaceAll(/[.*+?^${}()|[\]\\]/gu, String.raw`\$&`);
+const escapeRegExp = (value: string): string => value.replaceAll(/[.*+?^${}()|[\]\\]/gu, String.raw`\$&`);
 
 const matches = (source: string | undefined, expression: RegExp): boolean =>
   source !== undefined && expression.test(source);
@@ -52,20 +47,12 @@ const matches = (source: string | undefined, expression: RegExp): boolean =>
 const hasExactlyOne = (source: string | undefined, expression: RegExp): boolean =>
   source !== undefined && [...source.matchAll(expression)].length === 1;
 
-const matchingDelimiterEnd = (
-  source: string,
-  start: number,
-  opening: string,
-  closing: string,
-): number | undefined => matchingDelimiter(maskNonCode(source), start, opening, closing);
+const matchingDelimiterEnd = (source: string, start: number, opening: string, closing: string): number | undefined =>
+  matchingDelimiter(maskNonCode(source), start, opening, closing);
 
 const maskComments = (source: string): string => maskNonCode(source, true);
 
-const callArgument = (
-  source: string | undefined,
-  declaration: RegExp,
-  argumentIndex = 0,
-): string | undefined => {
+const callArgument = (source: string | undefined, declaration: RegExp, argumentIndex = 0): string | undefined => {
   if (source === undefined) {
     return undefined;
   }
@@ -83,19 +70,12 @@ const callArgument = (
   if (callEnd === undefined) {
     return undefined;
   }
-  return separatedSource(
-    code,
-    topLevelSeparators(structure, ',', callStart + 1, callEnd),
-    callStart + 1,
-    callEnd,
-  )[argumentIndex];
+  return separatedSource(code, topLevelSeparators(structure, ',', callStart + 1, callEnd), callStart + 1, callEnd)[
+    argumentIndex
+  ];
 };
 
-const objectArgument = (
-  source: string | undefined,
-  declaration: RegExp,
-  argumentIndex = 0,
-): string | undefined => {
+const objectArgument = (source: string | undefined, declaration: RegExp, argumentIndex = 0): string | undefined => {
   const argument = callArgument(source, declaration, argumentIndex);
   if (argument === undefined) {
     return undefined;
@@ -184,8 +164,7 @@ const codeDepthBeforePosition = (source: string, target: number): number =>
 const codeDepthAtPosition = (source: string, target: number): number | undefined =>
   isCodePosition(source, target) ? codeDepthBeforePosition(source, target) : undefined;
 
-const isTopLevelCodePosition = (source: string, target: number): boolean =>
-  codeDepthAtPosition(source, target) === 0;
+const isTopLevelCodePosition = (source: string, target: number): boolean => codeDepthAtPosition(source, target) === 0;
 
 interface SourceRange {
   readonly end: number;
@@ -215,7 +194,11 @@ const assignedExpressionRange = (source: string, declaration: RegExp): SourceRan
   const value = code.slice(start, index);
   const valueStart = start + value.length - value.trimStart().length;
   const valueEnd = start + value.trimEnd().length;
-  return { end: valueEnd, start: valueStart, value: code.slice(valueStart, valueEnd) };
+  return {
+    end: valueEnd,
+    start: valueStart,
+    value: code.slice(valueStart, valueEnd),
+  };
 };
 
 const assignedExpression = (source: string, declaration: RegExp): string | undefined =>
@@ -228,9 +211,7 @@ const isEffectFnCallback = (source: string): boolean => {
   const opening = source.indexOf('(');
   const closing = matchingDelimiterEnd(source, opening, '(', ')');
   const invocation = closing === undefined ? '' : source.slice(closing + 1).trim();
-  const callback = invocation.startsWith('(')
-    ? callArgument(`invoke${invocation}`, /^invoke\(/u)
-    : undefined;
+  const callback = invocation.startsWith('(') ? callArgument(`invoke${invocation}`, /^invoke\(/u) : undefined;
   return (
     callback !== undefined &&
     matchingDelimiterEnd(invocation, 0, '(', ')') === invocation.length - 1 &&
@@ -257,9 +238,7 @@ const isExecutableCallback = (candidate: string | undefined, ownerSource?: strin
     ownerSource,
     new RegExp(`(?:export\\s+)?const ${escapeRegExp(candidate)}\\s*=\\s*`, 'u'),
   );
-  return (
-    initializer !== undefined && initializer !== candidate && isExecutableCallback(initializer)
-  );
+  return initializer !== undefined && initializer !== candidate && isExecutableCallback(initializer);
 };
 
 const callbackReturnedExpression = (handlerSource: string): string | undefined => {
@@ -290,10 +269,7 @@ const isReadHandlerCallback = (candidate: string | undefined, ownerSource: strin
     return false;
   }
   const resolved = /^[A-Za-z_$][A-Za-z0-9_$]*$/u.test(candidate)
-    ? assignedExpression(
-        ownerSource,
-        new RegExp(`(?:export\\s+)?const ${escapeRegExp(candidate)}\\s*=\\s*`, 'u'),
-      )
+    ? assignedExpression(ownerSource, new RegExp(`(?:export\\s+)?const ${escapeRegExp(candidate)}\\s*=\\s*`, 'u'))
     : candidate;
   if (resolved === undefined) {
     return false;
@@ -302,9 +278,7 @@ const isReadHandlerCallback = (candidate: string | undefined, ownerSource: strin
     return /\byield\*|\.pipe\(/u.test(maskNonCode(resolved, true));
   }
   const expression = callbackReturnedExpression(resolved);
-  return /\bEffect\.[A-Za-z_$][A-Za-z0-9_$]*\s*\(|\.pipe\(/u.test(
-    maskNonCode(expression ?? '', true),
-  );
+  return /\bEffect\.[A-Za-z_$][A-Za-z0-9_$]*\s*\(|\.pipe\(/u.test(maskNonCode(expression ?? '', true));
 };
 
 interface GeneratedSlotRange {
@@ -315,11 +289,7 @@ interface GeneratedSlotRange {
   readonly markerStart: number;
 }
 
-const generatedSlotRange = (
-  source: string,
-  startMarker: string,
-  endMarker: string,
-): GeneratedSlotRange | undefined => {
+const generatedSlotRange = (source: string, startMarker: string, endMarker: string): GeneratedSlotRange | undefined => {
   const markerStart = source.indexOf(startMarker);
   const markerEnd = source.indexOf(endMarker);
   const depth = markerStart === -1 ? undefined : codeDepthBeforePosition(source, markerStart);
@@ -383,8 +353,7 @@ const entriesAcrossSlots = (
 };
 
 const objectEntryKey = (entry: string): string | undefined => {
-  const match =
-    /^(?:'(?<single>[^']+)'|"(?<double>[^"]+)"|(?<bare>[A-Za-z][A-Za-z0-9-]*))\s*:/u.exec(entry);
+  const match = /^(?:'(?<single>[^']+)'|"(?<double>[^"]+)"|(?<bare>[A-Za-z][A-Za-z0-9-]*))\s*:/u.exec(entry);
   return match?.groups?.single ?? match?.groups?.double ?? match?.groups?.bare;
 };
 
@@ -401,15 +370,15 @@ const slotHasExactlyOneCodeMatch = (
   }
   const flags = expression.flags.includes('g') ? expression.flags : `${expression.flags}g`;
   return (
-    [
-      ...source.slice(slot.bodyStart, slot.bodyEnd).matchAll(new RegExp(expression.source, flags)),
-    ].filter((candidate) => {
-      if (candidate.index === undefined) {
-        return false;
-      }
-      const depth = codeDepthAtPosition(source, slot.bodyStart + candidate.index);
-      return depth !== undefined && (depthOffset === null || depth === slot.depth + depthOffset);
-    }).length === 1
+    [...source.slice(slot.bodyStart, slot.bodyEnd).matchAll(new RegExp(expression.source, flags))].filter(
+      (candidate) => {
+        if (candidate.index === undefined) {
+          return false;
+        }
+        const depth = codeDepthAtPosition(source, slot.bodyStart + candidate.index);
+        return depth !== undefined && (depthOffset === null || depth === slot.depth + depthOffset);
+      },
+    ).length === 1
   );
 };
 
@@ -444,24 +413,18 @@ const defaultExportExpression = (source: string): string | undefined =>
 
 const returnedEffectBffDefinition = (source: string): string | undefined => {
   const structure = maskNonCode(source);
-  const returnedCalls = [
-    ...structure.matchAll(/\breturn\s+(?:defineEffectBff|assembleEffectBffRuntime)\(/gu),
-  ];
+  const returnedCalls = [...structure.matchAll(/\breturn\s+(?:defineEffectBff|assembleEffectBffRuntime)\(/gu)];
   if (returnedCalls.length !== 1 || returnedCalls[0]?.index === undefined) {
     return undefined;
   }
   const callStart =
-    returnedCalls[0].index +
-    returnedCalls[0][0].search(/(?:defineEffectBff|assembleEffectBffRuntime)\(/u);
+    returnedCalls[0].index + returnedCalls[0][0].search(/(?:defineEffectBff|assembleEffectBffRuntime)\(/u);
   const opening = structure.indexOf('(', callStart);
   const closing = matchingDelimiterEnd(structure, opening, '(', ')');
   if (closing === undefined) {
     return undefined;
   }
-  return objectArgument(
-    source.slice(callStart, closing + 1),
-    /^(?:defineEffectBff|assembleEffectBffRuntime)\(/u,
-  );
+  return objectArgument(source.slice(callStart, closing + 1), /^(?:defineEffectBff|assembleEffectBffRuntime)\(/u);
 };
 
 const exportedRuntimeFactory = (source: string): SourceRange | undefined => {
@@ -469,26 +432,15 @@ const exportedRuntimeFactory = (source: string): SourceRange | undefined => {
   if (exported === undefined || !/^[A-Za-z][A-Za-z0-9]*$/u.test(exported)) {
     return undefined;
   }
-  const runtimeInitializer = assignedExpression(
-    source,
-    new RegExp(`const ${escapeRegExp(exported)}\\s*=\\s*`, 'u'),
-  );
-  const factory = /^(?<factory>make[A-Za-z][A-Za-z0-9]*ApiRuntime)\(/u.exec(
-    runtimeInitializer ?? '',
-  )?.groups?.factory;
+  const runtimeInitializer = assignedExpression(source, new RegExp(`const ${escapeRegExp(exported)}\\s*=\\s*`, 'u'));
+  const factory = /^(?<factory>make[A-Za-z][A-Za-z0-9]*ApiRuntime)\(/u.exec(runtimeInitializer ?? '')?.groups?.factory;
   const factoryExpression =
     factory === undefined
       ? undefined
-      : assignedExpressionRange(
-          source,
-          new RegExp(`export const ${escapeRegExp(factory)}\\s*=\\s*`, 'u'),
-        );
+      : assignedExpressionRange(source, new RegExp(`export const ${escapeRegExp(factory)}\\s*=\\s*`, 'u'));
   return factoryExpression === undefined ||
     runtimeInitializer === undefined ||
-    !isWholeCallExpression(
-      runtimeInitializer,
-      new RegExp(`^${escapeRegExp(factory ?? '')}\\(`, 'u'),
-    )
+    !isWholeCallExpression(runtimeInitializer, new RegExp(`^${escapeRegExp(factory ?? '')}\\(`, 'u'))
     ? undefined
     : factoryExpression;
 };
@@ -510,28 +462,26 @@ const effectBffDefinition = (source: string): string | undefined => {
   return factory === undefined ? undefined : returnedEffectBffDefinition(factory.value);
 };
 
-const hasExactValueImport = (source: string, value: string, modulePath: string): boolean => {
+const hasExactValueImport = (
+  source: string,
+  value: string,
+  modulePath: string,
+  allowAdditionalImports = false,
+): boolean => {
   const code = maskComments(source);
   const imports = [
     ...source.matchAll(
-      new RegExp(
-        `^\\s*import\\s*\\{(?<values>[^}]*)\\}\\s*from\\s*'${escapeRegExp(modulePath)}';`,
-        'gmu',
-      ),
+      new RegExp(`^\\s*import\\s*\\{(?<values>[^}]*)\\}\\s*from\\s*'${escapeRegExp(modulePath)}';`, 'gmu'),
     ),
-  ].filter(
-    (candidate) => candidate.index !== undefined && isTopLevelCodePosition(source, candidate.index),
-  );
+  ].filter((candidate) => candidate.index !== undefined && isTopLevelCodePosition(source, candidate.index));
   const importedValues = imports.flatMap((candidate) =>
     (candidate.groups?.values ?? '').split(',').map((entry) => entry.trim()),
   );
+  const importedBinding = /\bas\s+(?<binding>[A-Za-z_$][A-Za-z0-9_$]*)\s*$/u.exec(value)?.groups?.binding ?? value;
   return (
-    imports.length === 1 &&
+    (allowAdditionalImports || imports.length === 1) &&
     importedValues.filter((candidate) => candidate === value).length === 1 &&
-    !matches(
-      code,
-      new RegExp(`\\b(?:class|const|function|let|var)\\s+${escapeRegExp(value)}\\b`, 'u'),
-    )
+    !matches(code, new RegExp(`\\b(?:class|const|function|let|var)\\s+${escapeRegExp(importedBinding)}\\b`, 'u'))
   );
 };
 
@@ -558,21 +508,13 @@ const slotIsMountedByAssembler = (
   if (handlers === undefined || !/^[A-Za-z][A-Za-z0-9]*$/u.test(handlers)) {
     return false;
   }
-  const resolved = assignedExpression(
-    runtimeSource,
-    new RegExp(`const ${escapeRegExp(handlers)}\\s*=\\s*`, 'u'),
-  );
+  const resolved = assignedExpression(runtimeSource, new RegExp(`const ${escapeRegExp(handlers)}\\s*=\\s*`, 'u'));
   return (
-    resolved !== undefined &&
-    isWholeCallExpression(resolved, new RegExp(`^${escapeRegExp(layerName)}\\.pipe\\(`, 'u'))
+    resolved !== undefined && isWholeCallExpression(resolved, new RegExp(`^${escapeRegExp(layerName)}\\.pipe\\(`, 'u'))
   );
 };
 
-const definesExpectedRuntime = (
-  definition: string | undefined,
-  expectedApi: string,
-  runtimeName: string,
-): boolean =>
+const definesExpectedRuntime = (definition: string | undefined, expectedApi: string, runtimeName: string): boolean =>
   definition !== undefined &&
   !definition.includes('...') &&
   objectPropertyValue(definition, 'api') === expectedApi &&
@@ -591,8 +533,7 @@ const legacyRuntimeMount = (
   layerName: string,
   expectedApi: string,
 ): boolean => {
-  const runtimeDeclaration =
-    /const\s+(?<name>[A-Za-z][A-Za-z0-9]*)\s*=\s*HttpApiBuilder\.layer\(/u.exec(runtimeSource);
+  const runtimeDeclaration = /const\s+(?<name>[A-Za-z][A-Za-z0-9]*)\s*=\s*HttpApiBuilder\.layer\(/u.exec(runtimeSource);
   const runtimeName = runtimeDeclaration?.groups?.name;
   if (runtimeDeclaration === null || runtimeName === undefined) {
     return false;
@@ -606,10 +547,7 @@ const legacyRuntimeMount = (
   const definition = effectBffDefinition(source);
   return (
     callArgument(runtimeSlice, /HttpApiBuilder\.layer\(/u) === expectedApi &&
-    matches(
-      runtimeSlice,
-      new RegExp(`(?:GovernedReadLayer|Layer)\\.provide\\(${escapeRegExp(layerName)}\\)`, 'u'),
-    ) &&
+    matches(runtimeSlice, new RegExp(`(?:GovernedReadLayer|Layer)\\.provide\\(${escapeRegExp(layerName)}\\)`, 'u')) &&
     hasExactlyOne(code, /\bdefineEffectBff\(/gu) &&
     definesExpectedRuntime(definition, expectedApi, runtimeName)
   );
@@ -629,9 +567,7 @@ const slotIsInsideMountedLayer = (
   const declarations = [
     ...code
       .slice(0, slot.markerStart)
-      .matchAll(
-        /(?:export\s+)?const\s+(?<name>[A-Za-z][A-Za-z0-9]*)\s*=\s*(?:GovernedReadLayer|Layer)\.mergeAll\(/gu,
-      ),
+      .matchAll(/(?:export\s+)?const\s+(?<name>[A-Za-z][A-Za-z0-9]*)\s*=\s*(?:GovernedReadLayer|Layer)\.mergeAll\(/gu),
   ];
   let declaration: RegExpExecArray | undefined;
   for (const candidate of declarations) {
@@ -676,9 +612,7 @@ export const governedApiBinding = (source: string): string | undefined => {
     return undefined;
   }
   const candidates = [
-    ...maskComments(source).matchAll(
-      /export const (?<name>[A-Za-z][A-Za-z0-9]*)\s*=\s*HttpApi\.make\(/gu,
-    ),
+    ...maskComments(source).matchAll(/export const (?<name>[A-Za-z][A-Za-z0-9]*)\s*=\s*HttpApi\.make\(/gu),
   ]
     .filter((match) => isTopLevelCodePosition(source, match.index))
     .map((match) => match.groups?.name)
@@ -686,10 +620,7 @@ export const governedApiBinding = (source: string): string | undefined => {
       if (name === undefined) {
         return false;
       }
-      const root = assignedExpressionRange(
-        source,
-        new RegExp(`export const ${escapeRegExp(name)}\\s*=\\s*`, 'u'),
-      );
+      const root = assignedExpressionRange(source, new RegExp(`export const ${escapeRegExp(name)}\\s*=\\s*`, 'u'));
       const statementEnd = root === undefined ? undefined : apiStatementEnd(source, root.start);
       return (
         root !== undefined &&
@@ -706,10 +637,7 @@ const governedSharedApiRoot = (source: string): SourceRange | undefined => {
   const apiRoot =
     binding === undefined
       ? undefined
-      : assignedExpressionRange(
-          source,
-          new RegExp(`export const ${escapeRegExp(binding)}\\s*=\\s*`, 'u'),
-        );
+      : assignedExpressionRange(source, new RegExp(`export const ${escapeRegExp(binding)}\\s*=\\s*`, 'u'));
   const slot = generatedSlotRange(source, GOVERNED_API_SLOT_START, GOVERNED_API_SLOT_END);
   if (apiRoot === undefined || slot === undefined) {
     return undefined;
@@ -720,18 +648,18 @@ const governedSharedApiRoot = (source: string): SourceRange | undefined => {
   }
   const additions = maskNonCode(source.slice(slot.bodyStart, slot.bodyEnd), true).trim();
   const trailing = maskComments(
-    source
-      .slice(slot.markerEnd + GOVERNED_API_SLOT_END.length, statementEnd)
-      .replace(/^;(?=\r?\n)/u, ''),
+    source.slice(slot.markerEnd + GOVERNED_API_SLOT_END.length, statementEnd).replace(/^;(?=\r?\n)/u, ''),
   ).trim();
+  const hasStableIdentityTail =
+    trailing === `.pipe(${GOVERNED_HTTP_API_IDENTITY_ALIAS})` &&
+    hasExactValueImport(source, `identity as ${GOVERNED_HTTP_API_IDENTITY_ALIAS}`, 'effect', true);
   return /^(?:\.addHttpApi\([A-Za-z][A-Za-z0-9]*\)\s*)*$/u.test(additions) &&
-    (trailing === '' || trailing === '.pipe(identity)')
+    (trailing === '' || trailing === '.pipe(identity)' || hasStableIdentityTail)
     ? apiRoot
     : undefined;
 };
 
-const hasGovernedSharedApiRoot = (source: string): boolean =>
-  governedSharedApiRoot(source) !== undefined;
+const hasGovernedSharedApiRoot = (source: string): boolean => governedSharedApiRoot(source) !== undefined;
 
 const hasInjectedGovernedReadRuntime = (source: string): boolean => {
   const factory = exportedRuntimeFactory(source);
@@ -742,9 +670,7 @@ const hasInjectedGovernedReadRuntime = (source: string): boolean => {
   // The generated binding may be the first explicitly typed injection in an owner runtime
   // factory. Its caller and mounted layers are checked separately, and TS checks the layer type.
   const injection =
-    /const\s+\[\s*governedReadRuntimeLive,\s*[A-Za-z0-9_,\s]+\]\s*=\s*(?<args>[A-Za-z][A-Za-z0-9]*)\s*;/u.exec(
-      code,
-    );
+    /const\s+\[\s*governedReadRuntimeLive,\s*[A-Za-z0-9_,\s]+\]\s*=\s*(?<args>[A-Za-z][A-Za-z0-9]*)\s*;/u.exec(code);
   const args = injection?.groups?.args;
   if (
     args === undefined ||
@@ -753,15 +679,12 @@ const hasInjectedGovernedReadRuntime = (source: string): boolean => {
   ) {
     return false;
   }
-  const signature = new RegExp(
-    `\\.\\.\\.${escapeRegExp(args)}:\\s*(?<type>[A-Za-z][A-Za-z0-9]*)`,
-    'u',
-  ).exec(code);
+  const signature = new RegExp(`\\.\\.\\.${escapeRegExp(args)}:\\s*(?<type>[A-Za-z][A-Za-z0-9]*)`, 'u').exec(code);
   const type = signature?.groups?.type;
   return (
     type !== undefined &&
     new RegExp(
-      `type ${escapeRegExp(type)}\\s*=\\s*readonly\\s*\\[\\s*readRuntime:\\s*Layer\\.Layer<ReadRuntime\\s*[,>]`,
+      `type ${escapeRegExp(type)}\\s*=\\s*readonly\\s*\\[\\s*readRuntime:\\s*Layer\\.Layer<\\s*ReadRuntime\\s*[,>]`,
       'u',
     ).test(maskNonCode(source)) &&
     effectBffDefinition(source) !== undefined
@@ -786,8 +709,7 @@ const hasGovernedHandlerRoot = (source: string): boolean => {
     const ownerRuntime = assignedExpression(source, /const readRuntimeLive\s*=\s*/u);
     if (
       !wholeCall(ownerRuntime, /^ReadRuntimeLive\.pipe\(/u) ||
-      callArgument(ownerRuntime, /^ReadRuntimeLive\.pipe\(/u) !==
-        'Layer.provide(readRuntimeDependenciesLive)'
+      callArgument(ownerRuntime, /^ReadRuntimeLive\.pipe\(/u) !== 'Layer.provide(readRuntimeDependenciesLive)'
     ) {
       return false;
     }
@@ -805,23 +727,12 @@ const hasGovernedSupportSlots = (handlerRoot: string): boolean => {
   const supportImportStart = '// <generated-governed-http-handler-support-imports>';
   const supportLayerStart = '// <generated-governed-http-handler-support-layers>';
   const supportImports = handlerRoot.includes(supportImportStart)
-    ? generatedSlotRange(
-        handlerRoot,
-        supportImportStart,
-        '// </generated-governed-http-handler-support-imports>',
-      )
+    ? generatedSlotRange(handlerRoot, supportImportStart, '// </generated-governed-http-handler-support-imports>')
     : null;
   const supportLayers = handlerRoot.includes(supportLayerStart)
-    ? generatedSlotRange(
-        handlerRoot,
-        supportLayerStart,
-        '// </generated-governed-http-handler-support-layers>',
-      )
+    ? generatedSlotRange(handlerRoot, supportLayerStart, '// </generated-governed-http-handler-support-layers>')
     : null;
-  const generatedHandlers = assignedExpressionRange(
-    handlerRoot,
-    /export const governedReadApiHandlersLive\s*=\s*/u,
-  );
+  const generatedHandlers = assignedExpressionRange(handlerRoot, /export const governedReadApiHandlersLive\s*=\s*/u);
   return (
     (supportImports === null || supportImports?.depth === 0) &&
     (supportLayers === null ||
@@ -832,10 +743,7 @@ const hasGovernedSupportSlots = (handlerRoot: string): boolean => {
   );
 };
 
-export const hasValidGovernedHttpCompositionRoot = (
-  sharedApi: string,
-  handlerRoot: string,
-): boolean => {
+export const hasValidGovernedHttpCompositionRoot = (sharedApi: string, handlerRoot: string): boolean => {
   const sharedRoot = governedSharedApiRoot(sharedApi);
   const expectedApi = governedApiBinding(sharedApi);
   const sharedImports = generatedSlotRange(
@@ -866,17 +774,12 @@ export const hasValidGovernedHttpCompositionRoot = (
   );
 };
 
-const governedReadContribution = (
-  contractStem: string,
-  source: string,
-): GovernedReadContribution | undefined => {
-  if (source.startsWith(MODULE_API_HEADER)) {
+const governedReadContribution = (contractStem: string, source: string): GovernedReadContribution | undefined => {
+  if (hasGeneratedSourceHeader(source, MODULE_API_HEADER)) {
     return { contractStem, kind: MODULE_API_KIND, name: contractStem };
   }
-  const candidateKind = /^\/\/ @ontos-contribution-kind (?<kind>report|search-provider)$/mu.exec(
-    source,
-  )?.groups?.kind;
-  if (!source.startsWith(GOVERNED_CONTRIBUTION_HEADER) || !isGovernedReadKind(candidateKind)) {
+  const candidateKind = /^\/\/ @ontos-contribution-kind (?<kind>report|search-provider)$/mu.exec(source)?.groups?.kind;
+  if (!hasGeneratedSourceHeader(source, GOVERNED_CONTRIBUTION_HEADER) || !isGovernedReadKind(candidateKind)) {
     return undefined;
   }
   const kind = candidateKind;
@@ -892,9 +795,7 @@ const governedReadContribution = (
 };
 
 const generatedHeader = (kind: GovernedReadKind): string =>
-  kind === MODULE_API_KIND
-    ? MODULE_API_HEADER
-    : `${GOVERNED_CONTRIBUTION_HEADER}// @ontos-contribution-kind ${kind}\n`;
+  kind === MODULE_API_KIND ? MODULE_API_HEADER : `${GOVERNED_CONTRIBUTION_HEADER}// @ontos-contribution-kind ${kind}\n`;
 
 const contributionProfiles = {
   'module-api': {
@@ -937,8 +838,7 @@ const contributionGroup = (kind: GovernedReadKind, name: string): string =>
   `${toCamelCase(name)}${contributionProfiles[kind].typeSuffix}`;
 const contributionApiValue = (kind: GovernedReadKind, name: string): string =>
   `${toPascalCase(name)}${contributionProfiles[kind].typeSuffix}Api`;
-const contributionReadDirectory = (kind: GovernedReadKind): string =>
-  contributionProfiles[kind].directory;
+const contributionReadDirectory = (kind: GovernedReadKind): string => contributionProfiles[kind].directory;
 const contributionSchemaStem = (kind: GovernedReadKind, name: string): string =>
   `${toPascalCase(name)}${contributionProfiles[kind].schemaSuffix}`;
 const contributionEndpoint = (contribution: GovernedReadContribution, moduleId: string): string =>
@@ -950,43 +850,27 @@ const hasObjectProperties = (source: string, expected: Readonly<Record<string, s
   Object.entries(expected).every(([property, value]) => objectProperty(source, property) === value);
 
 const hasContractImports = (source: string, expected: Readonly<Record<string, string>>): boolean =>
-  Object.entries(expected).every(([name, specifier]) =>
-    hasExactValueImport(source, name, specifier),
-  );
+  Object.entries(expected).every(([name, specifier]) => hasExactValueImport(source, name, specifier));
 
-const isWholeObjectCall = (
-  expression: string | undefined,
-  value: string | undefined,
-  callee: RegExp,
-): boolean =>
+const isWholeObjectCall = (expression: string | undefined, value: string | undefined, callee: RegExp): boolean =>
   expression !== undefined &&
   value !== undefined &&
   !value.includes('...') &&
   isWholeCallExpression(expression, callee);
 
-const hasReadDescriptorPolicy = (
-  read: string,
-  allowedAccessKinds: ReadonlySet<string>,
-): boolean => {
+const hasReadDescriptorPolicy = (read: string, allowedAccessKinds: ReadonlySet<string>): boolean => {
   const policies = objectProperty(read, 'policies');
   return (
     allowedAccessKinds.has(objectProperty(read, 'accessKind') ?? '') &&
     matches(objectProperty(read, 'legalEntityScope'), /^'(?:required|optional|forbidden)'$/u) &&
-    matches(
-      objectProperty(read, 'permissionTarget'),
-      /^'(?:legal_entity|module|resource|tenant)'$/u,
-    ) &&
+    matches(objectProperty(read, 'permissionTarget'), /^'(?:legal_entity|module|resource|tenant)'$/u) &&
     policies !== undefined &&
     policies.startsWith('[') &&
     matchingDelimiterEnd(policies, 0, '[', ']') === policies.length - 1
   );
 };
 
-const hasReadCallbacks = (
-  source: string,
-  readExpression: string,
-  kind: GovernedReadKind,
-): boolean => {
+const hasReadCallbacks = (source: string, readExpression: string, kind: GovernedReadKind): boolean => {
   const handler = callArgument(readExpression, /^defineRead\(/u, 1);
   const callbacks = [2, 3];
   if (kind === SEARCH_PROVIDER_KIND) {
@@ -994,28 +878,16 @@ const hasReadCallbacks = (
   }
   return (
     isReadHandlerCallback(handler, source) &&
-    callbacks.every((index) =>
-      isExecutableCallback(callArgument(readExpression, /^defineRead\(/u, index), source),
-    )
+    callbacks.every((index) => isExecutableCallback(callArgument(readExpression, /^defineRead\(/u, index), source))
   );
 };
 
-const hasReadEntrypoint = (
-  entrypoint: string,
-  identity: Readonly<Record<string, string>>,
-): boolean => {
+const hasReadEntrypoint = (entrypoint: string, identity: Readonly<Record<string, string>>): boolean => {
   const access = objectProperty(entrypoint, 'access');
-  return (
-    (access === "'read'" || access === "'historical_read'") &&
-    hasObjectProperties(entrypoint, identity)
-  );
+  return (access === "'read'" || access === "'historical_read'") && hasObjectProperties(entrypoint, identity);
 };
 
-const hasReadContract = (
-  source: string,
-  contribution: GovernedReadContribution,
-  moduleId: string,
-): boolean => {
+const hasReadContract = (source: string, contribution: GovernedReadContribution, moduleId: string): boolean => {
   const camel = toCamelCase(contribution.name);
   const schemaStem = contributionSchemaStem(contribution.kind, contribution.name);
   const escapedCamel = escapeRegExp(camel);
@@ -1026,10 +898,7 @@ const hasReadContract = (
     source,
     new RegExp(`(?:export )?const ${escapedCamel}Entrypoint\\s*=\\s*`, 'u'),
   );
-  const readExpression = assignedExpression(
-    source,
-    new RegExp(`export const ${escapedCamel}Read\\s*=\\s*`, 'u'),
-  );
+  const readExpression = assignedExpression(source, new RegExp(`export const ${escapedCamel}Read\\s*=\\s*`, 'u'));
   const entrypoint = objectArgument(entrypointExpression, /^defineTenantModuleEntrypoint\(/u);
   const read = objectArgument(readExpression, /^defineRead\(/u);
   const inputSchema = `${schemaStem}RequestSchema`;
@@ -1137,10 +1006,7 @@ const hasOnlyThinServerStatements = (
   }
   const imports = /\bimport\s+\{[^}]*\}\s+from\s+['"](?<module>[^'"]+)['"]\s*;/gu;
   for (const match of source.matchAll(imports)) {
-    if (
-      isTopLevelCodePosition(source, match.index) &&
-      allowedImports.has(match.groups?.module ?? '')
-    ) {
+    if (isTopLevelCodePosition(source, match.index) && allowedImports.has(match.groups?.module ?? '')) {
       spans.push({ end: match.index + match[0].length, start: match.index });
     }
   }
@@ -1205,10 +1071,7 @@ const hasServerContract = (
   apiBinding: string,
 ): boolean => {
   const code = maskComments(source);
-  const layerExpression = assignedExpression(
-    code,
-    new RegExp(`export const ${escapedCamel}ReadApiLive\\s*=\\s*`, 'u'),
-  );
+  const layerExpression = assignedExpression(code, new RegExp(`export const ${escapedCamel}ReadApiLive\\s*=\\s*`, 'u'));
   const options = serverHandlerOptions(layerExpression, escapedGroup, apiBinding);
   return (
     options !== undefined &&
@@ -1234,22 +1097,12 @@ const hasServerContract = (
       makeGovernedReadHttpHandler: GOVERNED_READ_HTTP_MODULE,
     }) &&
     hasProblemSet(source, schemaStem, contractImport) &&
-    [/HttpApiBuilder\.group\(/gu, /makeGovernedReadHttpHandler\(/gu].every((pattern) =>
-      hasExactlyOne(code, pattern),
-    )
+    [/HttpApiBuilder\.group\(/gu, /makeGovernedReadHttpHandler\(/gu].every((pattern) => hasExactlyOne(code, pattern))
   );
 };
 
-const hasProblemSchemaContract = (
-  source: string,
-  schema: string,
-  status: number,
-  retryable: boolean,
-): boolean => {
-  const expression = assignedExpression(
-    source,
-    new RegExp(`export const ${escapeRegExp(schema)}\\s*=\\s*`, 'u'),
-  );
+const hasProblemSchemaContract = (source: string, schema: string, status: number, retryable: boolean): boolean => {
+  const expression = assignedExpression(source, new RegExp(`export const ${escapeRegExp(schema)}\\s*=\\s*`, 'u'));
   const factory = retryable ? 'makeRetryableProblemDetailsSchema' : 'makeProblemDetailsSchema';
   const call = new RegExp(`^${factory}\\(`, 'u');
   return (
@@ -1263,11 +1116,7 @@ const hasProblemSchemaContract = (
   );
 };
 
-const addedContractMember = (
-  expression: string | undefined,
-  factory: string,
-  name: string,
-): string | undefined => {
+const addedContractMember = (expression: string | undefined, factory: string, name: string): string | undefined => {
   if (expression === undefined || !expression.startsWith(`${factory}.make(`)) {
     return undefined;
   }
@@ -1298,10 +1147,7 @@ const hasHttpContract = (
   endpointPath: string,
 ): boolean => {
   const escapedApiValue = escapeRegExp(apiValue);
-  const expression = assignedExpression(
-    source,
-    new RegExp(`export const ${escapedApiValue}\\s*=\\s*`, 'u'),
-  );
+  const expression = assignedExpression(source, new RegExp(`export const ${escapedApiValue}\\s*=\\s*`, 'u'));
   const groupExpression = addedContractMember(expression, 'HttpApi', apiValue);
   const endpointExpression = addedContractMember(groupExpression, 'HttpApiGroup', group);
   if (!isExecuteEndpoint(endpointExpression, endpointPath)) {
@@ -1338,40 +1184,25 @@ const hasHttpContract = (
   );
 };
 
-const hasManifestContract = (
-  manifest: string,
-  contribution: GovernedReadContribution,
-  moduleId: string,
-  escapedContractStem: string,
-  escapedApiValue: string,
-): boolean => {
+const hasManifestContract = (manifest: string, contribution: GovernedReadContribution, moduleId: string): boolean => {
   const allOwnerManifestEntries = entriesAcrossSlots(manifest, [
     [MANIFEST_API_SLOT_START, MANIFEST_API_SLOT_END],
     ['// <generated-module-manifest-reports>', '// </generated-module-manifest-reports>'],
     ['// <generated-module-manifest-search>', '// </generated-module-manifest-search>'],
   ]);
   if (contribution.kind === MODULE_API_KIND) {
-    const apiEntries = generatedSlotEntries(
-      manifest,
-      MANIFEST_API_SLOT_START,
-      MANIFEST_API_SLOT_END,
-    );
+    const apiEntries = generatedSlotEntries(manifest, MANIFEST_API_SLOT_START, MANIFEST_API_SLOT_END);
     return (
-      slotHasExactlyOneCodeMatch(
+      hasExactValueImport(
         manifest,
-        '// <generated-module-manifest-imports>',
-        '// </generated-module-manifest-imports>',
-        new RegExp(
-          `import \\{ ${escapedApiValue} \\} from './shared/apis/${escapedContractStem}\\.ts';`,
-          'gu',
-        ),
+        contributionApiValue(contribution.kind, contribution.name),
+        `./shared/apis/${contribution.contractStem}.ts`,
       ) &&
       [apiEntries, allOwnerManifestEntries].every(
         (entries) =>
           entries?.filter(
             (entry) =>
-              entry ===
-              `'${contribution.contractStem}': ${contributionApiValue(contribution.kind, contribution.name)}`,
+              entry === `'${contribution.contractStem}': ${contributionApiValue(contribution.kind, contribution.name)}`,
           ).length === 1,
       )
     );
@@ -1390,18 +1221,12 @@ const hasManifestContract = (
   );
   const manifestKey = `${moduleId}.${contribution.name}`;
   const entrypointKey = `${moduleId}.${role}.${contribution.name}`;
-  const published = manifestEntries?.filter(
-    (entry) => objectProperty(entry, 'key') === `'${manifestKey}'`,
-  );
-  const allPublished = allOwnerManifestEntries?.filter(
-    (entry) => objectProperty(entry, 'key') === `'${manifestKey}'`,
-  );
-  const shellFunction =
-    contribution.kind === REPORT_KIND ? 'reportContribution' : 'searchContribution';
+  const published = manifestEntries?.filter((entry) => objectProperty(entry, 'key') === `'${manifestKey}'`);
+  const allPublished = allOwnerManifestEntries?.filter((entry) => objectProperty(entry, 'key') === `'${manifestKey}'`);
+  const shellFunction = contribution.kind === REPORT_KIND ? 'reportContribution' : 'searchContribution';
   const shell = shellEntries?.filter((entry) => {
     const shellObject = objectArgument(entry, new RegExp(`^${shellFunction}\\(`, 'u'));
-    const entrypoint =
-      shellObject === undefined ? undefined : objectProperty(shellObject, 'entrypoint');
+    const entrypoint = shellObject === undefined ? undefined : objectProperty(shellObject, 'entrypoint');
     return (
       shellObject !== undefined &&
       isWholeCallExpression(entry, new RegExp(`^${shellFunction}\\(`, 'u')) &&
@@ -1414,10 +1239,7 @@ const hasManifestContract = (
   return published?.length === 1 && allPublished?.length === 1 && shell?.length === 1;
 };
 
-const hasPublishedRegistration = (
-  registration: string,
-  contribution: GovernedReadContribution,
-): boolean => {
+const hasPublishedRegistration = (registration: string, contribution: GovernedReadContribution): boolean => {
   const escapedName = escapeRegExp(contribution.name);
   const escapedContractStem = escapeRegExp(contribution.contractStem);
   const { registrationCategory, registrationSection } = contributionProfiles[contribution.kind];
@@ -1449,8 +1271,7 @@ const hasPublishedRegistration = (
         (file === name || file === `${name}-report` || file === `${name}-search`)
       );
     }) === true &&
-    allRegistrationEntries?.filter((entry) => objectEntryKey(entry) === contribution.name)
-      .length === 1 &&
+    allRegistrationEntries?.filter((entry) => objectEntryKey(entry) === contribution.name).length === 1 &&
     slotIsInsideObjectProperty(
       registration,
       registrationCategory,
@@ -1460,30 +1281,19 @@ const hasPublishedRegistration = (
   );
 };
 
-const publishesSharedApiContribution = (
-  sharedApi: string,
-  escapedApiValue: string,
-  escapedContractStem: string,
-): boolean =>
-  hasExactlyOne(
-    maskComments(sharedApi),
-    new RegExp(`\\.addHttpApi\\(${escapedApiValue}\\)`, 'gu'),
-  ) &&
-  slotHasExactlyOneCodeMatch(
-    sharedApi,
-    '// <generated-governed-http-api-imports>',
-    '// </generated-governed-http-api-imports>',
-    new RegExp(
-      `import \\{ ${escapedApiValue} \\} from './apis/${escapedContractStem}\\.ts';`,
-      'gu',
-    ),
-  ) &&
-  slotHasExactlyOneCodeMatch(
-    sharedApi,
-    GOVERNED_API_SLOT_START,
-    GOVERNED_API_SLOT_END,
-    new RegExp(`\\.addHttpApi\\(${escapedApiValue}\\)`, 'gu'),
+const publishesSharedApiContribution = (sharedApi: string, apiValue: string, contractStem: string): boolean => {
+  const escapedApiValue = escapeRegExp(apiValue);
+  return (
+    hasExactlyOne(maskComments(sharedApi), new RegExp(`\\.addHttpApi\\(${escapedApiValue}\\)`, 'gu')) &&
+    hasExactValueImport(sharedApi, apiValue, `./apis/${contractStem}.ts`) &&
+    slotHasExactlyOneCodeMatch(
+      sharedApi,
+      GOVERNED_API_SLOT_START,
+      GOVERNED_API_SLOT_END,
+      new RegExp(`\\.addHttpApi\\(${escapedApiValue}\\)`, 'gu'),
+    )
   );
+};
 
 const hasPublishedContract = (
   sharedApi: string,
@@ -1492,15 +1302,13 @@ const hasPublishedContract = (
   handlerRoot: string,
   contribution: GovernedReadContribution,
   moduleId: string,
+  diagnostics?: string[],
 ): boolean => {
   const expectedApi = governedApiBinding(sharedApi);
   const apiValue = contributionApiValue(contribution.kind, contribution.name);
   const camel = toCamelCase(contribution.name);
   const serverStem = contributionServerStem(contribution);
-  const escapedContractStem = escapeRegExp(contribution.contractStem);
-  const escapedApiValue = escapeRegExp(apiValue);
   const escapedCamel = escapeRegExp(camel);
-  const escapedServerStem = escapeRegExp(serverStem);
   const handlerLayers = generatedSlotEntries(
     handlerRoot,
     GOVERNED_HANDLER_LAYER_SLOT_START,
@@ -1516,57 +1324,44 @@ const hasPublishedContract = (
       return false;
     }
     let index = 1;
-    let argument = callArgument(
-      entry,
-      new RegExp(`^${escapedCamel}ReadApiLive\\.pipe\\(`, 'u'),
-      index,
-    );
+    let argument = callArgument(entry, new RegExp(`^${escapedCamel}ReadApiLive\\.pipe\\(`, 'u'), index);
     while (argument !== undefined) {
       if (argument === '') {
-        return (
-          callArgument(
-            entry,
-            new RegExp(`^${escapedCamel}ReadApiLive\\.pipe\\(`, 'u'),
-            index + 1,
-          ) === undefined
-        );
+        return callArgument(entry, new RegExp(`^${escapedCamel}ReadApiLive\\.pipe\\(`, 'u'), index + 1) === undefined;
       }
       if (!/^Layer\.provide\([A-Za-z][A-Za-z0-9]*\)$/u.test(argument)) {
         return false;
       }
       index += 1;
-      argument = callArgument(
-        entry,
-        new RegExp(`^${escapedCamel}ReadApiLive\\.pipe\\(`, 'u'),
-        index,
-      );
+      argument = callArgument(entry, new RegExp(`^${escapedCamel}ReadApiLive\\.pipe\\(`, 'u'), index);
     }
     return entry.startsWith(`${expectedLayer}.pipe(`);
   };
-  return (
-    expectedApi !== undefined &&
-    hasGovernedSharedApiRoot(sharedApi) &&
-    hasGovernedHandlerRoot(handlerRoot) &&
-    publishesSharedApiContribution(sharedApi, escapedApiValue, escapedContractStem) &&
-    hasManifestContract(manifest, contribution, moduleId, escapedContractStem, escapedApiValue) &&
-    hasPublishedRegistration(registration, contribution) &&
-    slotHasExactlyOneCodeMatch(
-      handlerRoot,
-      '// <generated-governed-http-handler-imports>',
-      '// </generated-governed-http-handler-imports>',
-      new RegExp(
-        `import \\{ ${escapedCamel}ReadApiLive \\} from './${escapedServerStem}-server\\.ts';`,
-        'gu',
+  const publicationChecks = {
+    apiBinding: expectedApi !== undefined,
+    handlerImport: hasExactValueImport(handlerRoot, `${camel}ReadApiLive`, `./${serverStem}-server.ts`),
+    handlerLayer: handlerLayers?.filter(isExpectedHandlerLayer).length === 1,
+    handlerRoot: hasGovernedHandlerRoot(handlerRoot),
+    manifest: hasManifestContract(manifest, contribution, moduleId),
+    mountedLayer:
+      expectedApi !== undefined &&
+      slotIsInsideMountedLayer(
+        handlerRoot,
+        GOVERNED_HANDLER_LAYER_SLOT_START,
+        GOVERNED_HANDLER_LAYER_SLOT_END,
+        expectedApi,
       ),
-    ) &&
-    handlerLayers?.filter(isExpectedHandlerLayer).length === 1 &&
-    slotIsInsideMountedLayer(
-      handlerRoot,
-      GOVERNED_HANDLER_LAYER_SLOT_START,
-      GOVERNED_HANDLER_LAYER_SLOT_END,
-      expectedApi,
-    )
-  );
+    registration: hasPublishedRegistration(registration, contribution),
+    sharedContribution: publishesSharedApiContribution(sharedApi, apiValue, contribution.contractStem),
+    sharedRoot: hasGovernedSharedApiRoot(sharedApi),
+  };
+  const failed = Object.entries(publicationChecks)
+    .filter(([, valid]) => !valid)
+    .map(([name]) => name);
+  if (failed.length > 0) {
+    diagnostics?.push(`${contribution.name} publication: ${failed.join(', ')}`);
+  }
+  return failed.length === 0;
 };
 
 /**
@@ -1579,10 +1374,7 @@ const hasActionBoundaryAuthentication = (source: string | undefined): boolean =>
   if (source === undefined || !source.startsWith(actionBoundaryHeader)) {
     return false;
   }
-  const expression = assignedExpression(
-    source,
-    /export const authenticateOperationPrincipal\s*=\s*/u,
-  );
+  const expression = assignedExpression(source, /export const authenticateOperationPrincipal\s*=\s*/u);
   return (
     expression !== undefined &&
     isWholeCallExpression(expression, /^makeMicroverticalHttpPrincipalAuthentication\(/u) &&
@@ -1597,8 +1389,7 @@ const hasActionBoundaryAuthentication = (source: string | undefined): boolean =>
 const hasActionBoundaryGateway = (source: string | undefined, appId: string): boolean =>
   source !== undefined &&
   source.startsWith(actionBoundaryHeader) &&
-  assignedExpression(source, /export const operationGateway\s*=\s*/u) ===
-    'makeOperationGateway()' &&
+  assignedExpression(source, /export const operationGateway\s*=\s*/u) === 'makeOperationGateway()' &&
   hasGeneratedOperationGatewayContract(source, appId);
 
 type GeneratedContribution = readonly [string, string, GovernedReadContribution | undefined];
@@ -1608,11 +1399,7 @@ const hasMatchingModuleApiSlots = (
   contributions: readonly GeneratedContribution[],
 ): boolean => {
   const moduleApiCount = contributions.filter((entry) => entry[2]?.kind === MODULE_API_KIND).length;
-  const manifestApis = generatedSlotEntries(
-    manifest,
-    MANIFEST_API_SLOT_START,
-    MANIFEST_API_SLOT_END,
-  );
+  const manifestApis = generatedSlotEntries(manifest, MANIFEST_API_SLOT_START, MANIFEST_API_SLOT_END);
   const registrationApis = generatedSlotEntries(
     registration,
     '// <generated-module-registration-apis>',
@@ -1631,15 +1418,12 @@ const generatedReadContributions = (
       candidate.startsWith(contractPrefix) &&
       candidate.endsWith('.ts') &&
       !candidate.slice(contractPrefix.length).includes('/') &&
-      (source.startsWith(MODULE_API_HEADER) || source.startsWith(GOVERNED_CONTRIBUTION_HEADER)),
+      (hasGeneratedSourceHeader(source, MODULE_API_HEADER) ||
+        hasGeneratedSourceHeader(source, GOVERNED_CONTRIBUTION_HEADER)),
   );
   return generatedContracts.map(
     ([candidate, source]) =>
-      [
-        candidate,
-        source,
-        governedReadContribution(path.posix.basename(candidate, '.ts'), source),
-      ] as const,
+      [candidate, source, governedReadContribution(path.posix.basename(candidate, '.ts'), source)] as const,
   );
 };
 
@@ -1663,30 +1447,32 @@ const loadContributionSources = (
   const { readSuffix } = contributionProfiles[contribution.kind];
   const readPath = `src/${readDirectory}/${contribution.name}${readSuffix}.ts`;
   const readSource = sources.get(`${verticalPath}/${readPath}`);
-  const clientSource = sources.get(
-    `${verticalPath}/src/api/${contribution.contractStem}-client.ts`,
-  );
-  const serverSource = sources.get(
-    `${verticalPath}/api/${contributionServerStem(contribution)}-server.ts`,
-  );
+  const clientSource = sources.get(`${verticalPath}/src/api/${contribution.contractStem}-client.ts`);
+  const serverSource = sources.get(`${verticalPath}/api/${contributionServerStem(contribution)}-server.ts`);
   const header = generatedHeader(contribution.kind);
   if (
     readSource === undefined ||
     clientSource === undefined ||
     serverSource === undefined ||
     ![contractSource, readSource, clientSource, serverSource].every((source) =>
-      source.startsWith(header),
+      hasGeneratedSourceHeader(source, header),
     )
   ) {
     return undefined;
   }
-  return { clientSource, readImport: `../${readPath}`, readSource, serverSource };
+  return {
+    clientSource,
+    readImport: `../${readPath}`,
+    readSource,
+    serverSource,
+  };
 };
 
 export const hasCompleteGeneratedModuleApiSeam = (
   sources: ReadonlyMap<string, string>,
   sharedApiFile: string,
   deploymentAppId = path.posix.basename(sharedApiFile.slice(0, -'/shared/api.ts'.length)),
+  diagnostics?: string[],
 ): boolean => {
   const verticalPath = sharedApiFile.slice(0, -'/shared/api.ts'.length);
   const sharedApi = sources.get(sharedApiFile);
@@ -1705,10 +1491,8 @@ export const hasCompleteGeneratedModuleApiSeam = (
   ) {
     return false;
   }
-  if (
-    !hasActionBoundaryAuthentication(principal) ||
-    !hasActionBoundaryGateway(gateway, deploymentAppId)
-  ) {
+  if (!hasActionBoundaryAuthentication(principal) || !hasActionBoundaryGateway(gateway, deploymentAppId)) {
+    diagnostics?.push('owner authentication or gateway');
     return false;
   }
 
@@ -1718,6 +1502,7 @@ export const hasCompleteGeneratedModuleApiSeam = (
   }
 
   if (!hasMatchingModuleApiSlots(manifest, registration, contributions)) {
+    diagnostics?.push('manifest or registration contribution inventory');
     return false;
   }
 
@@ -1730,6 +1515,7 @@ export const hasCompleteGeneratedModuleApiSeam = (
     const apiValue = contributionApiValue(contribution.kind, contribution.name);
     const loaded = loadContributionSources(sources, verticalPath, contribution, contractSource);
     if (loaded === undefined) {
+      diagnostics?.push(`${contribution.name}: missing source or provenance marker`);
       return false;
     }
     const { clientSource, readImport, readSource, serverSource } = loaded;
@@ -1751,6 +1537,7 @@ export const hasCompleteGeneratedModuleApiSeam = (
         handlerRoot,
         contribution,
         moduleId,
+        diagnostics,
       ),
       read:
         hasReadContract(readSource, contribution, moduleId) &&
@@ -1766,7 +1553,13 @@ export const hasCompleteGeneratedModuleApiSeam = (
         governedApiBinding(sharedApi) ?? '',
       ),
     };
-    return Object.values(checks).every(Boolean);
+    const failed = Object.entries(checks)
+      .filter(([, valid]) => !valid)
+      .map(([name]) => name);
+    if (failed.length > 0) {
+      diagnostics?.push(`${contribution.name}: ${failed.join(', ')}`);
+    }
+    return failed.length === 0;
   });
 };
 
@@ -1787,12 +1580,7 @@ export const hasGeneratedGovernedServerContract = (
       source,
     );
   const [, readPath, directory, name] = readImport ?? [];
-  if (
-    readPath === undefined ||
-    name === undefined ||
-    directory === undefined ||
-    camel !== toCamelCase(name)
-  ) {
+  if (readPath === undefined || name === undefined || directory === undefined || camel !== toCamelCase(name)) {
     return false;
   }
   const kind = readDirectoryKinds.get(directory);
@@ -1802,7 +1590,7 @@ export const hasGeneratedGovernedServerContract = (
   const stem = kind === MODULE_API_KIND ? name : `${name}-${contributionRole(kind)}`;
   const schemaStem = contributionSchemaStem(kind, name);
   return (
-    source.startsWith(generatedHeader(kind)) &&
+    hasGeneratedSourceHeader(source, generatedHeader(kind)) &&
     hasServerContract(
       source,
       escapeRegExp(camel),

@@ -1,4 +1,3 @@
-import { optionRecord } from '../shared/options.ts';
 /**
  * effect-native/no-imperative-loop-in-effect-gen
  *
@@ -71,7 +70,6 @@ import { optionRecord } from '../shared/options.ts';
  * those stay reported on purpose. Report-only: no fixer, no suggestion.
  */
 import { defineRule } from '@oxlint/plugins';
-
 import type { Context, ESTree } from '@oxlint/plugins';
 
 import {
@@ -85,11 +83,8 @@ import {
 } from '../shared/ast.ts';
 import { lookupVariable as lexicalVariable } from '../shared/bindings.ts';
 import { isGenCallee } from '../shared/effect-identity.ts';
-import {
-  bindingsWithExtraModules,
-  collectDirectMemberImports,
-  collectRootNamespaces,
-} from '../shared/imports.ts';
+import { bindingsWithExtraModules, collectDirectMemberImports, collectRootNamespaces } from '../shared/imports.ts';
+import { optionRecord } from '../shared/options.ts';
 import { booleanOption as boolean, stringArray } from '../shared/options.ts';
 import { isScriptFile, isTestFile, matchesGlobs, scopePath } from '../shared/paths.ts';
 
@@ -98,16 +93,9 @@ const DEFAULT_IGNORE = ['**/dist/**', '**/build/**', '**/node_modules/**', 'tool
 /** Wrappers whose generator argument is an Effect program body. */
 const DEFAULT_GEN_MEMBERS = ['gen', 'fn', 'fnUntraced'];
 /** Barrels that re-export `Effect` verbatim, so `Effect.gen` there is the same generator. */
-const DEFAULT_EFFECT_MODULES = [
-  '@modern-js/plugin-bff/effect-client',
-  '@modern-js/plugin-bff/effect-edge',
-];
+const DEFAULT_EFFECT_MODULES = ['@modern-js/plugin-bff/effect-client', '@modern-js/plugin-bff/effect-edge'];
 
-const MEMBER_TYPES = new Set([
-  'ComputedMemberExpression',
-  'MemberExpression',
-  'StaticMemberExpression',
-]);
+const MEMBER_TYPES = new Set(['ComputedMemberExpression', 'MemberExpression', 'StaticMemberExpression']);
 const LOOP_LABELS: Record<string, string> = {
   DoWhileStatement: 'do...while',
   ForInStatement: 'for...in',
@@ -173,10 +161,7 @@ function isTerminalYield(node: AnyNode, loop: AnyNode): boolean {
  * `true` when the loop contains a delegating `yield*` that belongs to the loop's own generator —
  * nested functions (including nested generators) own their own yields and are not descended into.
  */
-function containsDelegatingYield(
-  loop: AnyNode,
-  visitorKeys: Readonly<Record<string, readonly string[]>>,
-): boolean {
+function containsDelegatingYield(loop: AnyNode, visitorKeys: Readonly<Record<string, readonly string[]>>): boolean {
   let found = false;
   walk(loop, visitorKeys, (node) => {
     if (found) return false;
@@ -216,9 +201,7 @@ function collectLoopMutations(
     return true;
   });
   const mutatesOuter = [...assigned].some((variable) =>
-    variable.defs.some(
-      (definition) => definition.node.start < loop.start || definition.node.end > loop.end,
-    ),
+    variable.defs.some((definition) => definition.node.start < loop.start || definition.node.end > loop.end),
   );
   return { assigned, mutatesOuter };
 }
@@ -234,11 +217,7 @@ function patternIdentifiers(pattern: AnyNode): AnyNode[] {
     return left === null ? [] : patternIdentifiers(left);
   }
   const entries =
-    pattern.type === 'ObjectPattern'
-      ? pattern.properties
-      : pattern.type === 'ArrayPattern'
-        ? pattern.elements
-        : [];
+    pattern.type === 'ObjectPattern' ? pattern.properties : pattern.type === 'ArrayPattern' ? pattern.elements : [];
   if (!Array.isArray(entries)) return [];
   return entries.flatMap((entry) => {
     const node = asNode(entry);
@@ -301,20 +280,13 @@ function isIncludedFile(context: Context, options: RuleOptions): boolean {
   return options.includeTests || !isTestFile(path);
 }
 
-function allowsUnmutatingForOf(
-  loop: AnyNode,
-  options: RuleOptions,
-  mutatesOuter: boolean,
-): boolean {
+function allowsUnmutatingForOf(loop: AnyNode, options: RuleOptions, mutatesOuter: boolean): boolean {
   return options.allowForOfWithoutMutation && loop.type === 'ForOfStatement' && !mutatesOuter;
 }
 
 function hasGeneratorImports(program: ESTree.Program, options: RuleOptions): boolean {
   const rootNamespaces = collectRootNamespaces(program);
-  const directMembers = collectDirectMemberImports(
-    program,
-    new Map([['Effect', new Set(options.genMembers)]]),
-  );
+  const directMembers = collectDirectMemberImports(program, new Map([['Effect', new Set(options.genMembers)]]));
   const bindings = bindingsWithExtraModules(program, options.effectModules);
   return bindings.importsEffect || rootNamespaces.size > 0 || directMembers.size > 0;
 }
@@ -331,14 +303,9 @@ function generatorDefinitionValue(
   return declaration.init === null ? null : generatorValue(context, declaration.init, seen);
 }
 
-function generatorValue(
-  context: Context,
-  value: ESTree.Node,
-  seen = new Set<unknown>(),
-): ESTree.Node | null {
+function generatorValue(context: Context, value: ESTree.Node, seen = new Set<unknown>()): ESTree.Node | null {
   const node = identityUnwrap(value);
-  if (node.type === 'FunctionExpression' || node.type === 'FunctionDeclaration')
-    return node.generator ? node : null;
+  if (node.type === 'FunctionExpression' || node.type === 'FunctionDeclaration') return node.generator ? node : null;
   if (node.type !== 'Identifier') return null;
   const variable = lexicalVariable(context, node);
   if (variable === null || seen.has(variable) || variable.defs.length !== 1) return null;
@@ -461,8 +428,7 @@ export const rule = defineRule({
     };
     return {
       CallExpression(node) {
-        if (!isGenCallee(context, asNode(node.callee), options.genMembers, options.effectModules))
-          return;
+        if (!isGenCallee(context, asNode(node.callee), options.genMembers, options.effectModules)) return;
         for (const argument of node.arguments) {
           const generator = generatorValue(context, argument);
           if (generator !== null) effectGenerators.add(generator.start);

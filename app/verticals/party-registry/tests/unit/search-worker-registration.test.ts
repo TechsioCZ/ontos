@@ -1,12 +1,11 @@
-import { expect, it } from 'effect-rstest';
 import { CORE_SEARCH_INGESTION_REGISTRATIONS } from '@app/core-runtime';
+import { expect, it } from 'effect-rstest';
+
 import { outboxWorkers } from '../../src/workers/index.ts';
 
 it('every accepted Party search lifecycle and explicit rebuild topic has its exact generated self-consumer', () => {
   for (const registration of CORE_SEARCH_INGESTION_REGISTRATIONS) {
-    const matches = outboxWorkers.filter(
-      ({ descriptor }) => descriptor.workerKey === registration.workerKey,
-    );
+    const matches = outboxWorkers.filter(({ descriptor }) => descriptor.workerKey === registration.workerKey);
     expect(matches.length, registration.workerKey).toBe(1);
     const [worker] = matches;
     expect(worker).toBeDefined();

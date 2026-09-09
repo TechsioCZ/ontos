@@ -51,7 +51,6 @@
  * Report-only: no fixer, no suggestion. Existing violations are the intended output.
  */
 import { defineRule } from '@oxlint/plugins';
-
 import type { Context, ESTree, Scope } from '@oxlint/plugins';
 
 import { globToRegExp, isTestFile, matchesAny, normalisePath } from '../shared/paths.ts';
@@ -74,12 +73,7 @@ const DEFAULT_SERVER_MODULES: readonly string[] = [
 const DEFAULT_SERVER_FACTORIES: readonly string[] = ['createServer', 'createSecureServer'];
 
 /** D-tier: browser drivers legitimately drive a real server they own. */
-const DEFAULT_IGNORE_PATHS: readonly string[] = [
-  '**/tests/e2e/**',
-  '**/*.e2e.*',
-  '**/e2e/**',
-  '**/playwright/**',
-];
+const DEFAULT_IGNORE_PATHS: readonly string[] = ['**/tests/e2e/**', '**/*.e2e.*', '**/e2e/**', '**/playwright/**'];
 
 interface RuleOptions {
   readonly serverModules?: readonly string[];
@@ -223,13 +217,11 @@ export const rule = defineRule({
   create(context) {
     const options = readOptions(context);
     const filename = normalisePath(context.filename).replace(FIXTURE_PREFIX, '');
-    if (matchesAny(filename, options.allowPaths) || matchesAny(filename, options.ignorePaths))
-      return {};
+    if (matchesAny(filename, options.allowPaths) || matchesAny(filename, options.ignorePaths)) return {};
     if (!isTestFile(filename) && !matchesAny(filename, options.testPaths)) return {};
 
     const modulePatterns = options.serverModules.map(globToRegExp);
-    const isServerModule = (source: string): boolean =>
-      modulePatterns.some((pattern) => pattern.test(source));
+    const isServerModule = (source: string): boolean => modulePatterns.some((pattern) => pattern.test(source));
 
     type Variable = Scope['variables'][number];
     function variable(node: Extract<ESTree.Node, { type: 'Identifier' }>): Variable | undefined {
@@ -244,12 +236,7 @@ export const rule = defineRule({
     const writes = new Map<Variable, ESTree.Node[]>();
     const calls: Array<ESTree.CallExpression | ESTree.NewExpression> = [];
     const reports: Report[] = [];
-    const factoryNames = new Set([
-      ...options.serverFactories,
-      'Server',
-      'Http2Server',
-      'Http2SecureServer',
-    ]);
+    const factoryNames = new Set([...options.serverFactories, 'Server', 'Http2Server', 'Http2SecureServer']);
     // Provenance is local and scope-resolved, not type inference. Unknown writes invalidate
     // aliases; object fields, function returns and cross-file re-exports are not followed.
     function isTypeSpecifier(spec: ESTree.Node): boolean {
@@ -258,8 +245,7 @@ export const rule = defineRule({
     function importOrigin(def: Variable['defs'][number]): string | null {
       const spec = def.node;
       const declaration = def.parent;
-      if (declaration?.type !== 'ImportDeclaration' || declaration.importKind === 'type')
-        return null;
+      if (declaration?.type !== 'ImportDeclaration' || declaration.importKind === 'type') return null;
       if (isTypeSpecifier(spec)) return null;
       const source = declaration.source.value;
       const name = spec.type === 'ImportSpecifier' ? staticKey(spec.imported, false) : '*';
@@ -274,11 +260,7 @@ export const rule = defineRule({
     function factoryOrigin(key: string | null): string | null {
       return key !== null && factoryNames.has(key) ? 'factory' : null;
     }
-    function destructuredOrigin(
-      pattern: ESTree.ObjectPattern,
-      name: string,
-      value: string | null,
-    ): string | null {
+    function destructuredOrigin(pattern: ESTree.ObjectPattern, name: string, value: string | null): string | null {
       const property = pattern.properties.find(
         (p) => p.type === 'Property' && p.value.type === 'Identifier' && p.value.name === name,
       );
@@ -296,18 +278,13 @@ export const rule = defineRule({
         if (def.type !== 'Variable' || def.node.type !== 'VariableDeclarator') return null;
         if (def.node.init === null) continue;
         let value = origin(def.node.init, next);
-        if (def.node.id.type === 'ObjectPattern')
-          value = destructuredOrigin(def.node.id, node.name, value);
+        if (def.node.id.type === 'ObjectPattern') value = destructuredOrigin(def.node.id, node.name, value);
         if (value === null) return null;
         values.push(value);
       }
       return writtenOrigin(binding, values, next);
     }
-    function writtenOrigin(
-      binding: Variable,
-      values: string[],
-      next: Set<ESTree.Node>,
-    ): string | null {
+    function writtenOrigin(binding: Variable, values: string[], next: Set<ESTree.Node>): string | null {
       for (const write of writes.get(binding) ?? []) {
         const value = origin(write, next);
         if (value === null) return null;
@@ -320,8 +297,7 @@ export const rule = defineRule({
       next: Set<ESTree.Node>,
     ): string | null {
       const binding = variable(node);
-      if (binding === undefined || binding.defs.length === 0)
-        return node.name === 'require' ? 'require' : null;
+      if (binding === undefined || binding.defs.length === 0) return node.name === 'require' ? 'require' : null;
       return variableOrigin(node, binding, next);
     }
     function memberOrigin(node: ESTree.MemberExpression, next: Set<ESTree.Node>): string | null {
@@ -334,15 +310,11 @@ export const rule = defineRule({
       const source = literalSource(node);
       return source !== null && isServerModule(source) ? 'namespace' : null;
     }
-    function callOrigin(
-      node: ESTree.CallExpression | ESTree.NewExpression,
-      next: Set<ESTree.Node>,
-    ): string | null {
+    function callOrigin(node: ESTree.CallExpression | ESTree.NewExpression, next: Set<ESTree.Node>): string | null {
       const callee = origin(node.callee, next);
       if (callee === 'factory') return 'server';
       if (callee === 'createRequire') return 'require';
-      if (callee === 'require' && node.arguments[0] !== undefined)
-        return sourceOrigin(unwrap(node.arguments[0]));
+      if (callee === 'require' && node.arguments[0] !== undefined) return sourceOrigin(unwrap(node.arguments[0]));
       return null;
     }
     function origin(input: ESTree.Node, seen = new Set<ESTree.Node>()): string | null {
@@ -372,7 +344,11 @@ export const rule = defineRule({
       const member = staticKey(callee.property as ESTree.Node, callee.computed);
       const object = unwrap(callee.object as ESTree.Node);
       if (member === 'listen' && object.type === 'Identifier' && origin(object) === 'server') {
-        reports.push({ node, messageId: 'serverListen', data: { name: object.name } });
+        reports.push({
+          node,
+          messageId: 'serverListen',
+          data: { name: object.name },
+        });
       }
       if (
         options.includeFetch &&
@@ -406,7 +382,11 @@ export const rule = defineRule({
       if (identity === 'require' && node.arguments[0] !== undefined) {
         const source = literalSource(unwrap(node.arguments[0] as ESTree.Node));
         if (source !== null && isServerModule(source))
-          reports.push({ node, messageId: 'dynamicServerModuleImport', data: { source } });
+          reports.push({
+            node,
+            messageId: 'dynamicServerModuleImport',
+            data: { source },
+          });
       }
       if (callee.type === 'MemberExpression') {
         inspectMemberCall(node, callee);
@@ -415,14 +395,13 @@ export const rule = defineRule({
       }
     }
     function exported(node: ESTree.ExportNamedDeclaration | ESTree.ExportAllDeclaration): void {
-      if (node.source === null || node.exportKind === 'type' || !isServerModule(node.source.value))
-        return;
-      if (
-        node.type === 'ExportNamedDeclaration' &&
-        node.specifiers.every((spec) => spec.exportKind === 'type')
-      )
-        return;
-      reports.push({ node, messageId: 'serverModuleImport', data: { source: node.source.value } });
+      if (node.source === null || node.exportKind === 'type' || !isServerModule(node.source.value)) return;
+      if (node.type === 'ExportNamedDeclaration' && node.specifiers.every((spec) => spec.exportKind === 'type')) return;
+      reports.push({
+        node,
+        messageId: 'serverModuleImport',
+        data: { source: node.source.value },
+      });
     }
     return {
       ImportDeclaration(node) {
@@ -451,7 +430,11 @@ export const rule = defineRule({
       ImportExpression(node) {
         const source = literalSource(node.source as ESTree.Node);
         if (source !== null && isServerModule(source))
-          reports.push({ node, messageId: 'dynamicServerModuleImport', data: { source } });
+          reports.push({
+            node,
+            messageId: 'dynamicServerModuleImport',
+            data: { source },
+          });
       },
       AssignmentExpression(node) {
         if (node.left.type !== 'Identifier') return;
@@ -469,8 +452,7 @@ export const rule = defineRule({
       },
       'Program:exit'() {
         for (const node of calls) inspectCall(node);
-        for (const report of reports.sort((a, b) => a.node.start - b.node.start))
-          context.report(report);
+        for (const report of reports.sort((a, b) => a.node.start - b.node.start)) context.report(report);
       },
     };
   },

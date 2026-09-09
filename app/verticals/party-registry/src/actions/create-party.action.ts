@@ -4,31 +4,19 @@
 import { defineAction, defineTenantModuleEntrypoint } from '@app/core-runtime';
 import type { ActionHandlerContext } from '@app/core-runtime';
 import { Effect, Schema } from 'effect';
-import {
-  PartyEvidenceInsufficient,
-  PartyPersistenceUnavailable,
-} from '../../shared/domain/identity-contracts.ts';
-import type { PartyCandidate } from '../../shared/domain/identity-contracts.ts';
-import { AddPartyOfficialIdentifierResultSchema } from '../../shared/actions/add-party-official-identifier.ts';
-import { PartyRefSchema } from '../../shared/resources/party.ts';
-import {
-  candidateFingerprint,
-  createOrMatchParty,
-} from '../services/party-matching-persistence.service.ts';
-import { createCreatePartyPartyRegistryPartyCreatedV1OutboxMessage } from './create-party.party-registry-party-created-v1.outbox-message.ts';
-import { publishAttachedOfficialIdentifiers } from './attached-official-identifier-events.ts';
 
-import {
-  CreatePartyPayloadSchema,
-  CreatePartyResultSchema,
-} from '../../shared/actions/create-party.ts';
+import { AddPartyOfficialIdentifierResultSchema } from '../../shared/actions/add-party-official-identifier.ts';
+import { CreatePartyPayloadSchema, CreatePartyResultSchema } from '../../shared/actions/create-party.ts';
 import type { CreatePartyPayload } from '../../shared/actions/create-party.ts';
+import { PartyEvidenceInsufficient, PartyPersistenceUnavailable } from '../../shared/domain/identity-contracts.ts';
+import type { PartyCandidate } from '../../shared/domain/identity-contracts.ts';
+import { PartyRefSchema } from '../../shared/resources/party.ts';
+import { candidateFingerprint, createOrMatchParty } from '../services/party-matching-persistence.service.ts';
+import { publishAttachedOfficialIdentifiers } from './attached-official-identifier-events.ts';
+import { createCreatePartyPartyRegistryPartyCreatedV1OutboxMessage } from './create-party.party-registry-party-created-v1.outbox-message.ts';
 
 export type { CreatePartyPayload } from '../../shared/actions/create-party.ts';
-const CreatePartyErrorSchema = Schema.Union([
-  PartyEvidenceInsufficient,
-  PartyPersistenceUnavailable,
-]);
+const CreatePartyErrorSchema = Schema.Union([PartyEvidenceInsufficient, PartyPersistenceUnavailable]);
 const PartyCreatedEventSchema = Schema.Struct({ partyRef: PartyRefSchema });
 const domainEvents = {
   'party.registry.official-identifier-added.v1': AddPartyOfficialIdentifierResultSchema,
@@ -71,15 +59,13 @@ const handleCreateParty = Effect.fn('CreatePartyAction.handleCreateParty')(funct
     });
     yield* context.addOutboxMessage(
       event,
-      createCreatePartyPartyRegistryPartyCreatedV1OutboxMessage({ partyRef: result.partyRef }),
+      createCreatePartyPartyRegistryPartyCreatedV1OutboxMessage({
+        partyRef: result.partyRef,
+      }),
     );
   }
   if (result.outcome === 'MATCHED_EXISTING') {
-    yield* publishAttachedOfficialIdentifiers(
-      context,
-      result.partyRef,
-      addedOfficialIdentifierRefs,
-    );
+    yield* publishAttachedOfficialIdentifiers(context, result.partyRef, addedOfficialIdentifierRefs);
   }
   return result;
 });
@@ -96,7 +82,10 @@ export const createPartyAction = defineAction(
     domainEvents,
     entrypoint: defineTenantModuleEntrypoint({
       access: 'write',
-      authorization: { kind: 'action_execution', provisioning: 'tenant_membership_default' },
+      authorization: {
+        kind: 'action_execution',
+        provisioning: 'tenant_membership_default',
+      },
       entrypointKey: 'party.registry.create-party',
       moduleKey: 'party.registry',
       role: 'action',

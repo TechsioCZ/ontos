@@ -1,5 +1,6 @@
-import { expect, it } from 'effect-rstest';
 import { Effect } from 'effect';
+import { expect, it } from 'effect-rstest';
+
 import type { PoolResource } from '../../api/auth/db/client.ts';
 import { acquirePoolResource } from '../../api/auth/db/client.ts';
 

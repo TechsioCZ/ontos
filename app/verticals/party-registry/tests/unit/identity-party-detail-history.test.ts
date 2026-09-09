@@ -1,12 +1,10 @@
-import { expect, it } from 'effect-rstest';
 import { Effect, Option, Schema } from 'effect';
+import { expect, it } from 'effect-rstest';
+
 import { makeTestDatabase } from '../../../../packages/core-runtime/tests/support/database.ts';
 import { PartyFactAssertionSchema } from '../../shared/apis/party-detail.ts';
 import { PartySchema } from '../../shared/domain/identity-contracts.ts';
-import {
-  partyDetailPermissionTarget,
-  readPartyDetailFromServices,
-} from '../../src/api/party-detail.read.ts';
+import { partyDetailPermissionTarget, readPartyDetailFromServices } from '../../src/api/party-detail.read.ts';
 import { findPartyDetailAssertions } from '../../src/services/party-detail-persistence.service.ts';
 
 const tenantId = '11111111-1111-4111-8111-111111111111';
@@ -32,40 +30,30 @@ const wireFact = {
   validTo: null,
   value: 'Corrected name',
 } as const;
-const fact = Schema.decodeUnknownSync(PartyFactAssertionSchema)(wireFact);
+const fact = Schema.decodeSync(PartyFactAssertionSchema)(wireFact);
 
-it.effect(
-  'Party fact assertion contract exposes usable correction identities without sensitive evidence',
-  () =>
-    Effect.gen(function* verifySchema1() {
-      expect(yield* Schema.encodeEffect(PartyFactAssertionSchema)(fact)).toEqual(wireFact);
-      expect(() =>
-        Schema.decodeUnknownSync(PartyFactAssertionSchema)({
-          ...wireFact,
-          assertionId: 'not-a-uuid',
-        }),
-      ).toThrow();
-      const decodedWithSensitiveFields = yield* Schema.decodeUnknownEffect(
-        PartyFactAssertionSchema,
-      )({
+it.effect('Party fact assertion contract exposes usable correction identities without sensitive evidence', () =>
+  Effect.gen(function* verifySchema1() {
+    expect(yield* Schema.encodeEffect(PartyFactAssertionSchema)(fact)).toEqual(wireFact);
+    expect(() =>
+      Schema.decodeSync(PartyFactAssertionSchema)({
         ...wireFact,
-        evidenceRefs: ['secret'],
-        provenance: { source: 'secret' },
-      });
-      expect(
-        yield* Schema.encodeEffect(PartyFactAssertionSchema)(decodedWithSensitiveFields),
-      ).toEqual(wireFact);
-    }),
+        assertionId: 'not-a-uuid',
+      }),
+    ).toThrow();
+    const decodedWithSensitiveFields = yield* Schema.decodeUnknownEffect(PartyFactAssertionSchema)({
+      ...wireFact,
+      evidenceRefs: ['secret'],
+      provenance: { source: 'secret' },
+    });
+    expect(yield* Schema.encodeEffect(PartyFactAssertionSchema)(decodedWithSensitiveFields)).toEqual(wireFact);
+  }),
 );
 
 it('Party Detail history derives reviewer authority while current fact targets retain normal read authority', () => {
   expect(partyDetailPermissionTarget({ partyRef }).permission).toBe('read_party_identity');
-  expect(partyDetailPermissionTarget({ includeFactHistory: false, partyRef }).permission).toBe(
-    'read_party_identity',
-  );
-  expect(partyDetailPermissionTarget({ includeFactHistory: true, partyRef }).permission).toBe(
-    'review_party_identity',
-  );
+  expect(partyDetailPermissionTarget({ includeFactHistory: false, partyRef }).permission).toBe('read_party_identity');
+  expect(partyDetailPermissionTarget({ includeFactHistory: true, partyRef }).permission).toBe('review_party_identity');
 });
 
 it.effect(
@@ -106,9 +94,7 @@ it.effect(
         Effect.sync(() => {
           queries.push(text);
           values.push(parameters);
-          return rows.map((row) =>
-            Object.fromEntries(row.map((value, index) => [String(index), value])),
-          );
+          return rows.map((row) => Object.fromEntries(row.map((value, index) => [String(index), value])));
         }),
       );
 
@@ -119,7 +105,10 @@ it.effect(
       expect(history[0]?.value).toBe('Original name');
       expect(history[0]?.state).toBe('SUPERSEDED');
       const current = yield* findPartyDetailAssertions(database, tenantId, partyId, false);
-      expect(current).toEqual({ currentFactAssertions: [fact], factHistory: Option.none() });
+      expect(current).toEqual({
+        currentFactAssertions: [fact],
+        factHistory: Option.none(),
+      });
       expect(values).toEqual([
         [tenantId, partyId],
         [tenantId, partyId, 'ACTIVE', true],
@@ -140,7 +129,7 @@ it.effect(
           find: () =>
             Effect.succeed({
               _tag: 'found' as const,
-              value: Schema.decodeUnknownSync(PartySchema)({
+              value: Schema.decodeSync(PartySchema)({
                 archivedAt: null,
                 createdAt: '2026-09-01T10:00:00.000Z',
                 displayName: 'Corrected name',

@@ -1,11 +1,9 @@
-import { expect, it } from 'effect-rstest';
-import {
-  GatewayAssertionRedemptionUnavailableError,
-  GatewayAssertionReplayError,
-} from '@app/core-runtime';
+import { GatewayAssertionRedemptionUnavailableError, GatewayAssertionReplayError } from '@app/core-runtime';
 import { Effect, Redacted, Schema } from 'effect';
+import { expect, it } from 'effect-rstest';
 import { SignJWT, exportJWK, generateKeyPair } from 'jose';
 import type { JWK, LocalJWKSet } from 'jose';
+
 import {
   ActionPrincipalConfigurationErrorSchema,
   ActionPrincipalInvalidErrorSchema,
@@ -36,7 +34,11 @@ const makeFixture = (audience: string, version = 1) =>
     };
     const token = yield* Effect.promise(() =>
       new SignJWT({ principal, ver: version })
-        .setProtectedHeader({ alg: 'EdDSA', kid: 'shared-verifier-test', typ: 'JWT' })
+        .setProtectedHeader({
+          alg: 'EdDSA',
+          kid: 'shared-verifier-test',
+          typ: 'JWT',
+        })
         .setIssuer(issuer)
         .setAudience(audience)
         .setSubject(principal.principalId)
@@ -48,9 +50,7 @@ const makeFixture = (audience: string, version = 1) =>
     return {
       environment: {
         ONTOS_GATEWAY_ISSUER: issuer,
-        ONTOS_GATEWAY_PUBLIC_JWKS: yield* Schema.encodeEffect(
-          Schema.fromJsonString(Schema.Unknown),
-        )({
+        ONTOS_GATEWAY_PUBLIC_JWKS: yield* Schema.encodeEffect(Schema.fromJsonString(Schema.Unknown))({
           keys: [publicJwk],
         }),
       },
@@ -63,10 +63,9 @@ const isConfigurationError = Schema.is(ActionPrincipalConfigurationErrorSchema);
 const isInvalidError = Schema.is(ActionPrincipalInvalidErrorSchema);
 const isScopeError = Schema.is(ActionPrincipalScopeErrorSchema);
 const isUnavailableError = Schema.is(ActionPrincipalUnavailableErrorSchema);
-const failingKeySet = Object.assign(
-  () => Promise.reject(new Error('fixture verifier details must be discarded')),
-  { jwks: () => ({ keys: [] }) },
-) satisfies LocalJWKSet;
+const failingKeySet = Object.assign(() => Promise.reject(new Error('fixture verifier details must be discarded')), {
+  jwks: () => ({ keys: [] }),
+}) satisfies LocalJWKSet;
 
 it.effect('an audience-bound verifier accepts only its exact topology app ID', () =>
   Effect.gen(function* verifyAudienceBinding() {
@@ -80,9 +79,7 @@ it.effect('an audience-bound verifier accepts only its exact topology app ID', (
       });
 
     expect(yield* verify(partyFixture.token, partyFixture.environment)).toEqual(principal);
-    expect(
-      isScopeError(yield* Effect.flip(verify(billingFixture.token, billingFixture.environment))),
-    ).toBe(true);
+    expect(isScopeError(yield* Effect.flip(verify(billingFixture.token, billingFixture.environment)))).toBe(true);
   }),
 );
 
@@ -142,13 +139,10 @@ it.effect('empty and malformed audience bindings fail closed as configuration er
       (audience) =>
         Effect.gen(function* checkMalformedBinding() {
           const failure = yield* Effect.flip(
-            bindGatewayPrincipalVerifier(audience).verify(
-              Redacted.make(`Bearer ${fixture.token}`),
-              {
-                currentTimeSeconds: Effect.succeed(currentTimeSeconds),
-                environment: fixture.environment,
-              },
-            ),
+            bindGatewayPrincipalVerifier(audience).verify(Redacted.make(`Bearer ${fixture.token}`), {
+              currentTimeSeconds: Effect.succeed(currentTimeSeconds),
+              environment: fixture.environment,
+            }),
           );
           expect(isConfigurationError(failure)).toBe(true);
         }),
@@ -172,14 +166,16 @@ it.effect('redemption failures remain sanitized and distinguish replay from unav
       verify({
         consume: () =>
           Effect.fail(
-            new GatewayAssertionReplayError({ reason: 'fixture replay details must be discarded' }),
+            new GatewayAssertionReplayError({
+              reason: 'fixture replay details must be discarded',
+            }),
           ),
       }),
     );
     expect(isInvalidError(replayFailure)).toBe(true);
-    expect(
-      yield* Schema.encodeEffect(Schema.fromJsonString(Schema.Unknown))(replayFailure),
-    ).not.toMatch(/fixture|eyJ/u);
+    expect(yield* Schema.encodeEffect(Schema.fromJsonString(Schema.Unknown))(replayFailure)).not.toMatch(
+      /fixture|eyJ/u,
+    );
     const unavailableFailure = yield* Effect.flip(
       verify({
         consume: () =>
@@ -191,9 +187,9 @@ it.effect('redemption failures remain sanitized and distinguish replay from unav
       }),
     );
     expect(isUnavailableError(unavailableFailure)).toBe(true);
-    expect(
-      yield* Schema.encodeEffect(Schema.fromJsonString(Schema.Unknown))(unavailableFailure),
-    ).not.toMatch(/fixture|eyJ/u);
+    expect(yield* Schema.encodeEffect(Schema.fromJsonString(Schema.Unknown))(unavailableFailure)).not.toMatch(
+      /fixture|eyJ/u,
+    );
   }),
 );
 
@@ -222,9 +218,7 @@ it.effect('unsupported assertion versions and unexpected verifier failures fail 
         ),
     );
     expect(isUnavailableError(failure)).toBe(true);
-    expect(yield* Schema.encodeEffect(Schema.fromJsonString(Schema.Unknown))(failure)).not.toMatch(
-      /fixture|eyJ/u,
-    );
+    expect(yield* Schema.encodeEffect(Schema.fromJsonString(Schema.Unknown))(failure)).not.toMatch(/fixture|eyJ/u);
   }),
 );
 

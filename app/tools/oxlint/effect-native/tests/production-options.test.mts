@@ -1,26 +1,19 @@
-import { expect, it } from 'effect-rstest';
-import { Schema } from 'effect';
 import { cpSync, readFileSync } from 'node:fs';
 import nodePath from 'node:path';
 
+import { Schema } from 'effect';
+import { expect, it } from 'effect-rstest';
+
 import { listRuleNames } from '../shared/discover-rules.ts';
 import { globToRegExp } from '../shared/paths.ts';
-import {
-  fixtureConfigPath,
-  fixturesDirectory,
-  listFilesRecursively,
-  runOxlint,
-  testsDirectory,
-} from './oxlint.mts';
+import { fixtureConfigPath, fixturesDirectory, listFilesRecursively, runOxlint, testsDirectory } from './oxlint.mts';
 import { withTemporaryWorkspace } from './temporary-workspace.mts';
 
 const RuleSetting = Schema.Union([Schema.String, Schema.Array(Schema.Unknown)]);
 const RuleMap = Schema.Record(Schema.String, RuleSetting);
 const FixtureConfig = Schema.fromJsonString(
   Schema.Struct({
-    overrides: Schema.optional(
-      Schema.Array(Schema.Struct({ files: Schema.Array(Schema.String), rules: RuleMap })),
-    ),
+    overrides: Schema.optional(Schema.Array(Schema.Struct({ files: Schema.Array(Schema.String), rules: RuleMap }))),
     rules: RuleMap,
   }),
 );
@@ -35,15 +28,8 @@ for (const rule of listRuleNames()) {
           recursive: true,
         });
       }
-      const paths = listFilesRecursively(directory).map((file) =>
-        nodePath.relative(directory, file),
-      );
-      const run = runOxlint(
-        nodePath.join(testsDirectory, 'production-fixture.config.ts'),
-        paths,
-        directory,
-        rule,
-      );
+      const paths = listFilesRecursively(directory).map((file) => nodePath.relative(directory, file));
+      const run = runOxlint(nodePath.join(testsDirectory, 'production-fixture.config.ts'), paths, directory, rule);
       expect(run.numberOfFiles, `${rule}: production run skipped fixture files`).toBe(paths.length);
       expect(run.exitCode, `${rule}: production defaults must have a positive fixture`).toBe(1);
       expect(
@@ -56,8 +42,7 @@ for (const rule of listRuleNames()) {
       expect(
         run.diagnostics.filter(
           (diagnostic) =>
-            diagnostic.filename.startsWith('valid/') &&
-            diagnostic.filename.endsWith('/production-default.ts'),
+            diagnostic.filename.startsWith('valid/') && diagnostic.filename.endsWith('/production-default.ts'),
         ),
         `${rule}: explicit default negative reported`,
       ).toEqual([]);
@@ -67,13 +52,11 @@ for (const rule of listRuleNames()) {
         // Non-default option fixtures remain owned by the ordinary fixture suite.
         const usesOverride = (file: string): boolean =>
           fixture.overrides?.some(
-            (override) =>
-              key in override.rules && override.files.some((glob) => globToRegExp(glob).test(file)),
+            (override) => key in override.rules && override.files.some((glob) => globToRegExp(glob).test(file)),
           ) ?? false;
         expect(
           run.diagnostics.filter(
-            (diagnostic) =>
-              diagnostic.filename.startsWith('valid/') && !usesOverride(diagnostic.filename),
+            (diagnostic) => diagnostic.filename.startsWith('valid/') && !usesOverride(diagnostic.filename),
           ),
           `${rule}: production false positive`,
         ).toEqual([]);

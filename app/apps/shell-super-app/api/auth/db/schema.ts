@@ -1,14 +1,5 @@
 import { defineRelations, sql } from 'drizzle-orm';
-import {
-  boolean,
-  index,
-  integer,
-  pgSchema,
-  text,
-  timestamp,
-  uniqueIndex,
-  uuid,
-} from 'drizzle-orm/pg-core';
+import { boolean, index, integer, pgSchema, text, timestamp, uniqueIndex, uuid } from 'drizzle-orm/pg-core';
 
 export const AUTH_SCHEMA_NAME = 'auth';
 export const AUTH_TABLE_INVENTORY = [
@@ -75,9 +66,7 @@ export const supportImpersonationRecovery = authSchema.table(
     reason: text('reason').notNull(),
     createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
   },
-  (table) => [
-    index('auth_support_impersonation_recovery_original_session_idx').on(table.originalSessionId),
-  ],
+  (table) => [index('auth_support_impersonation_recovery_original_session_idx').on(table.originalSessionId)],
 );
 
 export const account = authSchema.table(
@@ -96,8 +85,12 @@ export const account = authSchema.table(
     accessToken: text('access_token'),
     refreshToken: text('refresh_token'),
     idToken: text('id_token'),
-    accessTokenExpiresAt: timestamp('access_token_expires_at', { withTimezone: true }),
-    refreshTokenExpiresAt: timestamp('refresh_token_expires_at', { withTimezone: true }),
+    accessTokenExpiresAt: timestamp('access_token_expires_at', {
+      withTimezone: true,
+    }),
+    refreshTokenExpiresAt: timestamp('refresh_token_expires_at', {
+      withTimezone: true,
+    }),
     scope: text('scope'),
     password: text('password'),
     createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
@@ -179,21 +172,26 @@ export const authRelations = defineRelations(authDatabaseSchema, (r) => ({
     apiKeys: r.many.apikey(),
   },
   session: {
-    user: r.one.user({ from: r.session.userId, to: r.user.id, optional: false }),
+    user: r.one.user({
+      from: r.session.userId,
+      to: r.user.id,
+      optional: false,
+    }),
   },
   account: {
-    user: r.one.user({ from: r.account.userId, to: r.user.id, optional: false }),
+    user: r.one.user({
+      from: r.account.userId,
+      to: r.user.id,
+      optional: false,
+    }),
   },
   apikey: {
-    user: r.one.user({ from: r.apikey.referenceId, to: r.user.id, optional: false }),
+    user: r.one.user({
+      from: r.apikey.referenceId,
+      to: r.user.id,
+      optional: false,
+    }),
   },
 }));
 
-export const AUTH_TABLES = [
-  user,
-  session,
-  account,
-  verification,
-  apikey,
-  supportImpersonationRecovery,
-] as const;
+export const AUTH_TABLES = [user, session, account, verification, apikey, supportImpersonationRecovery] as const;

@@ -1,5 +1,6 @@
-import { expect, it } from 'effect-rstest';
 import { Effect, Predicate } from 'effect';
+import { expect, it } from 'effect-rstest';
+
 import { acquirePoolResource, makePartyDatabase } from '../../src/db/client.ts';
 
 it.effect('finalizes the Party Registry pool when its Effect scope closes', () =>

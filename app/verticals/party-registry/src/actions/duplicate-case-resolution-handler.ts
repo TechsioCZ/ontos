@@ -1,6 +1,8 @@
 import { createHash } from 'node:crypto';
+
 import type { ActionHandlerContext } from '@app/core-runtime';
 import { Effect } from 'effect';
+
 import type { ConfirmDuplicatePartiesPayload } from '../../shared/actions/confirm-duplicate-parties.ts';
 import type { transitionDuplicateCandidateCase } from '../services/party-matching-persistence.service.ts';
 
@@ -18,9 +20,7 @@ export const handleDuplicateCaseResolution = (
     Effect.tap((result) =>
       context.recordDataAccess({
         accessKind: 'read',
-        queryHash: createHash('sha256')
-          .update(`duplicate-case-invariants:${payload.caseRef.resourceId}`)
-          .digest('hex'),
+        queryHash: createHash('sha256').update(`duplicate-case-invariants:${payload.caseRef.resourceId}`).digest('hex'),
         resultCount: 1,
         servingModuleKey: 'party.registry',
         targetModuleKey: 'party.registry',

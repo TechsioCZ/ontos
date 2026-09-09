@@ -1,4 +1,3 @@
-import { optionRecord } from '../shared/options.ts';
 /**
  * effect-native/no-hand-built-problem-details
  *
@@ -72,11 +71,11 @@ import { optionRecord } from '../shared/options.ts';
  * Report-only: no fixer, no suggestion. The existing violations are the intended output.
  */
 import { defineRule } from '@oxlint/plugins';
-
 import type { Context, ESTree } from '@oxlint/plugins';
 
 import { unwrapNode } from '../shared/ast.ts';
 import { effectOrigin } from '../shared/effect-identity.ts';
+import { optionRecord } from '../shared/options.ts';
 import { compile, stringArray } from '../shared/options.ts';
 import { isScriptFile, isTestFile, matchesGlobs, scopePath } from '../shared/paths.ts';
 
@@ -137,10 +136,7 @@ interface RuleOptions {
   readonly reportRawDriverMessages: boolean;
 }
 
-function statusRange(
-  value: unknown,
-  fallback: readonly [number, number],
-): readonly [number, number] {
+function statusRange(value: unknown, fallback: readonly [number, number]): readonly [number, number] {
   if (!Array.isArray(value) || value.length !== 2) return fallback;
   const [low, high] = value;
   if (typeof low !== 'number' || typeof high !== 'number') return fallback;
@@ -209,15 +205,13 @@ function isUriLike(node: ESTree.Node | null): boolean {
   const text = stringLiteralValue(node);
   if (text !== null) return /^(?:https?:\/\/|urn:|about:blank$|\/|#)/u.test(text);
   return (
-    node.type === 'TemplateLiteral' &&
-    node.quasis.some((quasi) => /(?:problems?\/|https?:\/\/)/u.test(quasi.value.raw))
+    node.type === 'TemplateLiteral' && node.quasis.some((quasi) => /(?:problems?\/|https?:\/\/)/u.test(quasi.value.raw))
   );
 }
 
 function integerLiteral(node: ESTree.Node | null): number | null {
   if (node === null) return null;
-  if (node.type === 'Literal' && typeof node.value === 'number' && Number.isInteger(node.value))
-    return node.value;
+  if (node.type === 'Literal' && typeof node.value === 'number' && Number.isInteger(node.value)) return node.value;
   return null;
 }
 
@@ -248,24 +242,14 @@ const EXEMPT_WALK_BOUNDARIES: ReadonlySet<string> = new Set([
   'BlockStatement',
 ]);
 
-function isSchemaArgument(
-  context: Context,
-  node: ESTree.Node,
-  argument: ESTree.Node,
-  options: RuleOptions,
-): boolean {
+function isSchemaArgument(context: Context, node: ESTree.Node, argument: ESTree.Node, options: RuleOptions): boolean {
   if (node.type !== 'CallExpression' && node.type !== 'NewExpression') return false;
   return (
-    node.arguments.some((candidate) => Object.is(candidate, argument)) &&
-    isSchemaCallee(context, node.callee, options)
+    node.arguments.some((candidate) => Object.is(candidate, argument)) && isSchemaCallee(context, node.callee, options)
   );
 }
 
-function isExemptContext(
-  context: Context,
-  node: ESTree.ObjectExpression,
-  options: RuleOptions,
-): boolean {
+function isExemptContext(context: Context, node: ESTree.ObjectExpression, options: RuleOptions): boolean {
   let previous: ESTree.Node = node;
   let current: ESTree.Node | null | undefined = node.parent;
   for (let depth = 0; depth < MAX_ANCESTOR_DEPTH; depth += 1) {
@@ -324,9 +308,7 @@ function leaksDriverMessage(node: ESTree.Node, options: RuleOptions, depth: numb
     case 'CallExpression':
       return leaksCallMessage(target, options, depth);
     default:
-      return messageExpressions(target).some((expression) =>
-        leaksDriverMessage(expression, options, depth + 1),
-      );
+      return messageExpressions(target).some((expression) => leaksDriverMessage(expression, options, depth + 1));
   }
 }
 
@@ -368,11 +350,7 @@ function isStringifyCallee(node: ESTree.Node): boolean {
   );
 }
 
-function leaksCallMessage(
-  node: ESTree.CallExpression,
-  options: RuleOptions,
-  depth: number,
-): boolean {
+function leaksCallMessage(node: ESTree.CallExpression, options: RuleOptions, depth: number): boolean {
   const callee = unwrap(node.callee);
   const jsonStringify = isJsonStringify(callee);
   if (!jsonStringify && !isStringifyCallee(callee)) return false;
@@ -409,8 +387,7 @@ function problemFields(properties: Properties, options: RuleOptions) {
 function problemShape(properties: Properties, options: RuleOptions) {
   const fields = problemFields(properties, options);
   const status = integerLiteral(indexedValue(properties, 'status'));
-  const inRange =
-    status !== null && status >= options.statusRange[0] && status <= options.statusRange[1];
+  const inRange = status !== null && status >= options.statusRange[0] && status <= options.statusRange[1];
   const corroborated = fields.taggedProblem || (fields.hasProblemType && fields.hasProse);
   const reportStatus = inRange && corroborated;
   const reportTag = shouldReportTag(fields, reportStatus, options);
@@ -431,10 +408,7 @@ function shouldReportTag(
   options: RuleOptions,
 ): boolean {
   return (
-    !reportStatus &&
-    options.reportTagOnlyLiterals &&
-    fields.taggedProblem &&
-    (fields.hasProse || fields.hasProblemType)
+    !reportStatus && options.reportTagOnlyLiterals && fields.taggedProblem && (fields.hasProse || fields.hasProblemType)
   );
 }
 
@@ -457,17 +431,17 @@ function reportProblemShape(context: Context, shape: ReturnType<typeof problemSh
   }
 }
 
-function reportDriverMessages(
-  context: Context,
-  properties: Properties,
-  options: RuleOptions,
-): void {
+function reportDriverMessages(context: Context, properties: Properties, options: RuleOptions): void {
   for (const key of options.messageKeys) {
     const property = properties.get(key);
     if (property === undefined) continue;
     const value = propertyValue(property);
     if (value === null || !leaksDriverMessage(value, options, 0)) continue;
-    context.report({ node: property, messageId: 'rawDriverMessage', data: { key } });
+    context.report({
+      node: property,
+      messageId: 'rawDriverMessage',
+      data: { key },
+    });
   }
 }
 
@@ -504,7 +478,12 @@ export const rule = defineRule({
           ignore: { type: 'array', items: { type: 'string' } },
           includeTests: { type: 'boolean' },
           allowPaths: { type: 'array', items: { type: 'string' } },
-          statusRange: { type: 'array', items: { type: 'number' }, minItems: 2, maxItems: 2 },
+          statusRange: {
+            type: 'array',
+            items: { type: 'number' },
+            minItems: 2,
+            maxItems: 2,
+          },
           schemaNamespaces: { type: 'array', items: { type: 'string' } },
           tagSuffixes: { type: 'array', items: { type: 'string' } },
           messageKeys: { type: 'array', items: { type: 'string' } },
@@ -546,8 +525,7 @@ export const rule = defineRule({
         const properties = indexProperties(node);
         const shape = problemShape(properties, options);
         reportProblemShape(context, shape);
-        if (shape.problemShaped && options.reportRawDriverMessages)
-          reportDriverMessages(context, properties, options);
+        if (shape.problemShaped && options.reportRawDriverMessages) reportDriverMessages(context, properties, options);
       },
     };
   },

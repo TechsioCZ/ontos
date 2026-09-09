@@ -1,6 +1,8 @@
-import { expect, it } from 'effect-rstest';
 import { readFile } from 'node:fs/promises';
+
 import { Effect } from 'effect';
+import { expect, it } from 'effect-rstest';
+
 import {
   STAGE_DEMO_ACCOUNTS,
   classifyExactStageDemoRecord,
@@ -72,7 +74,9 @@ it.effect('refuses to provision outside stage or without an operator-supplied pa
           STAGE_DEMO_PASSWORD: undefined,
         }),
       ),
-    ).toMatchObject({ reason: expect.stringMatching(/STAGE_DEMO_PASSWORD/u) });
+    ).toMatchObject({
+      reason: expect.stringMatching(/STAGE_DEMO_PASSWORD/u),
+    });
     expect(
       yield* Effect.flip(
         parseStageDemoBootstrapConfig({
@@ -80,18 +84,22 @@ it.effect('refuses to provision outside stage or without an operator-supplied pa
           STAGE_SIAMPARK_PASSWORD: undefined,
         }),
       ),
-    ).toMatchObject({ reason: expect.stringMatching(/STAGE_SIAMPARK_PASSWORD/u) });
+    ).toMatchObject({
+      reason: expect.stringMatching(/STAGE_SIAMPARK_PASSWORD/u),
+    });
   }),
 );
 it.effect('treats an exact record as idempotent and rejects conflicting state', () =>
   Effect.gen(function* treatsAnExactRecordAsIdempotent() {
-    const expected = { name: 'Techsio', slug: 'techsio', status: 'active' } as const;
+    const expected = {
+      name: 'Techsio',
+      slug: 'techsio',
+      status: 'active',
+    } as const;
     expect(yield* classifyExactStageDemoRecord('tenant', undefined, expected)).toBe('create');
     expect(yield* classifyExactStageDemoRecord('tenant', expected, expected)).toBe('existing');
     expect(
-      yield* Effect.flip(
-        classifyExactStageDemoRecord('tenant', { ...expected, name: 'Other tenant' }, expected),
-      ),
+      yield* Effect.flip(classifyExactStageDemoRecord('tenant', { ...expected, name: 'Other tenant' }, expected)),
     ).toMatchObject({ reason: expect.stringMatching(/conflicts/u) });
   }),
 );
@@ -100,36 +108,24 @@ it.live('keeps the demo bootstrap operator-invoked and excludes its password fro
     const rootPackage = yield* Effect.promise(() =>
       readFile(new URL('../../../../package.json', import.meta.url), 'utf-8'),
     );
-    const shellPackage = yield* Effect.promise(() =>
-      readFile(new URL('../../package.json', import.meta.url), 'utf-8'),
-    );
+    const shellPackage = yield* Effect.promise(() => readFile(new URL('../../package.json', import.meta.url), 'utf-8'));
     const bootstrapCommand = yield* Effect.promise(() =>
       readFile(new URL('../../scripts/bootstrap-stage-demo.sh', import.meta.url), 'utf-8'),
     );
-    const zerops = yield* Effect.promise(() =>
-      readFile(new URL('../../../../zerops.yaml', import.meta.url), 'utf-8'),
-    );
+    const zerops = yield* Effect.promise(() => readFile(new URL('../../../../zerops.yaml', import.meta.url), 'utf-8'));
     const coreBootstrap = yield* Effect.promise(() =>
       readFile(
-        new URL(
-          '../../../../packages/core-runtime/src/install/stage-context-bootstrap.ts',
-          import.meta.url,
-        ),
+        new URL('../../../../packages/core-runtime/src/install/stage-context-bootstrap.ts', import.meta.url),
         'utf-8',
       ),
     );
     const shellBootstrap = yield* Effect.promise(() =>
-      readFile(
-        new URL('../../api/auth/stage-demo-bootstrap-runtime-infrastructure.ts', import.meta.url),
-        'utf-8',
-      ),
+      readFile(new URL('../../api/auth/stage-demo-bootstrap-runtime-infrastructure.ts', import.meta.url), 'utf-8'),
     );
     expect(JSON.parse(rootPackage).scripts['stage:bootstrap-demo']).toBe(
       'pnpm --filter @app/shell-super-app stage:bootstrap-demo',
     );
-    expect(JSON.parse(shellPackage).scripts['stage:bootstrap-demo']).toBe(
-      'sh scripts/bootstrap-stage-demo.sh',
-    );
+    expect(JSON.parse(shellPackage).scripts['stage:bootstrap-demo']).toBe('sh scripts/bootstrap-stage-demo.sh');
     expect(bootstrapCommand).toMatch(/stty -echo/u);
     expect(bootstrapCommand).toMatch(/STAGE_DEMO_PASSWORD/u);
     expect(bootstrapCommand).toMatch(/STAGE_SIAMPARK_PASSWORD/u);

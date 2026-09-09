@@ -1,5 +1,6 @@
-import { afterEach, expect, rstest, test } from 'effect-rstest';
 import { cleanup, render, screen } from '@testing-library/react';
+import { afterEach, expect, rstest, test } from 'effect-rstest';
+
 import csCatalog from '../../locales/cs/party-registry.json';
 import enCatalog from '../../locales/en/party-registry.json';
 import ContactsPage from '../../src/routes/[lang]/contacts/page.tsx';
@@ -47,8 +48,6 @@ test.each([
   render(<ContactsPage />);
 
   expect(screen.getByRole('heading', { level: 1, name: title })).toBeTruthy();
-  expect(
-    screen.getByText(catalogs[language]['party-registry'].pages.contacts.description),
-  ).toBeTruthy();
+  expect(screen.getByText(catalogs[language]['party-registry'].pages.contacts.description)).toBeTruthy();
   expect(screen.queryByRole('link')).toBeNull();
 });

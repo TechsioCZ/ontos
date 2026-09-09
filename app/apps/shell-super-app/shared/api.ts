@@ -1,14 +1,6 @@
-import {
-  makeProblemDetailsSchema,
-  makeRetryableProblemDetailsSchema,
-} from '@app/shared-contracts/problem-details';
-import {
-  HttpApi,
-  HttpApiEndpoint,
-  HttpApiGroup,
-  Schema,
-} from '@modern-js/plugin-bff/effect-client';
 import { GatewayContextApiGroup } from '@app/shared-contracts';
+import { makeProblemDetailsSchema, makeRetryableProblemDetailsSchema } from '@app/shared-contracts/problem-details';
+import { HttpApi, HttpApiEndpoint, HttpApiGroup, Schema } from '@modern-js/plugin-bff/effect-client';
 
 export type SafeTenantIdentity = typeof SafeTenantIdentitySchema.Type;
 export type SafeAuthenticatedIdentity = typeof SafeAuthenticatedIdentitySchema.Type;
@@ -38,38 +30,28 @@ export type MediaAttachmentResponse = typeof MediaAttachmentResponseSchema.Type;
 
 const SafePrincipalIdSchema = Schema.String.pipe(Schema.brand('PrincipalId'));
 export const PrincipalIdSchema = SafePrincipalIdSchema.check(Schema.isUUID());
-export const AuthBindingIdSchema = Schema.String.check(Schema.isUUID()).pipe(
-  Schema.brand('AuthBindingId'),
-);
+export const AuthBindingIdSchema = Schema.String.check(Schema.isUUID()).pipe(Schema.brand('AuthBindingId'));
 const SafeTenantIdSchema = Schema.String.pipe(Schema.brand('TenantId'));
 export const TenantIdSchema = SafeTenantIdSchema.check(Schema.isUUID());
-export const LegalEntityIdSchema = Schema.String.check(Schema.isUUID()).pipe(
-  Schema.brand('LegalEntityId'),
-);
+export const LegalEntityIdSchema = Schema.String.check(Schema.isUUID()).pipe(Schema.brand('LegalEntityId'));
 export const AppIdSchema = Schema.String.pipe(Schema.brand('AppId'));
 export const GroupKeySchema = Schema.String.pipe(Schema.brand('GroupKey'));
-export const ModuleIdSchema = Schema.String.check(Schema.isMinLength(3)).pipe(
-  Schema.brand('ModuleId'),
-);
+export const ModuleIdSchema = Schema.String.check(Schema.isMinLength(3)).pipe(Schema.brand('ModuleId'));
 export const ComponentKeySchema = Schema.String.pipe(Schema.brand('ComponentKey'));
 export const EntrypointKeySchema = Schema.String.check(
   Schema.isMinLength(3),
   Schema.isMaxLength(200),
   Schema.isPattern(/^[a-z][a-z0-9]*(?:[.-][a-z0-9]+)*$/u),
 ).pipe(Schema.brand('EntrypointKey'));
-export const ResourceIdSchema = Schema.String.check(
-  Schema.isMinLength(1),
-  Schema.isMaxLength(300),
-).pipe(Schema.brand('ResourceId'));
-export const TimelineEntryIdSchema = Schema.String.check(
-  Schema.isMinLength(1),
-  Schema.isMaxLength(300),
-).pipe(Schema.brand('TimelineEntryId'));
+export const ResourceIdSchema = Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(300)).pipe(
+  Schema.brand('ResourceId'),
+);
+export const TimelineEntryIdSchema = Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(300)).pipe(
+  Schema.brand('TimelineEntryId'),
+);
 
 export const IdentityRequestHeadersSchema = Schema.Struct({
-  'idempotency-key': Schema.optionalKey(
-    Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(200)),
-  ),
+  'idempotency-key': Schema.optionalKey(Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(200))),
 });
 export const CreateNonHumanPrincipalPayloadSchema = Schema.Struct({
   displayName: Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(200)),
@@ -183,34 +165,22 @@ export const SupportImpersonationResponseSchema = Schema.Struct({
   targetPrincipalId: Schema.optionalKey(PrincipalIdSchema),
 });
 
-export type CreateNonHumanPrincipalPayload = Schema.Schema.Type<
-  typeof CreateNonHumanPrincipalPayloadSchema
->;
-export type ChangePrincipalStatusPayload = Schema.Schema.Type<
-  typeof ChangePrincipalStatusPayloadSchema
->;
+export type CreateNonHumanPrincipalPayload = Schema.Schema.Type<typeof CreateNonHumanPrincipalPayloadSchema>;
+export type ChangePrincipalStatusPayload = Schema.Schema.Type<typeof ChangePrincipalStatusPayloadSchema>;
 export type IssueApiKeyPayload = Schema.Schema.Type<typeof IssueApiKeyPayloadSchema>;
 export type IssueManagedApiKeyPayload = Schema.Schema.Type<typeof IssueManagedApiKeyPayloadSchema>;
 export type SetApiKeyStatusPayload = Schema.Schema.Type<typeof SetApiKeyStatusPayloadSchema>;
-export type SetManagedApiKeyStatusPayload = Schema.Schema.Type<
-  typeof SetManagedApiKeyStatusPayloadSchema
->;
+export type SetManagedApiKeyStatusPayload = Schema.Schema.Type<typeof SetManagedApiKeyStatusPayloadSchema>;
 export type RotateApiKeyPayload = Schema.Schema.Type<typeof RotateApiKeyPayloadSchema>;
-export type RotateManagedApiKeyPayload = Schema.Schema.Type<
-  typeof RotateManagedApiKeyPayloadSchema
->;
+export type RotateManagedApiKeyPayload = Schema.Schema.Type<typeof RotateManagedApiKeyPayloadSchema>;
 export type IdentityListPayload = Schema.Schema.Type<typeof IdentityListPayloadSchema>;
 export type ApiKeyLifecycleResponse = Schema.Schema.Type<typeof ApiKeyLifecycleResponseSchema>;
 export type ApiKeyIssueResponse = Schema.Schema.Type<typeof ApiKeyIssueResponseSchema>;
 export type PrincipalMutationResponse = Schema.Schema.Type<typeof PrincipalMutationResponseSchema>;
 export type SelfApiKeyListResponse = Schema.Schema.Type<typeof SelfApiKeyListResponseSchema>;
 export type ManagedApiKeyListResponse = Schema.Schema.Type<typeof ManagedApiKeyListResponseSchema>;
-export type StartSupportImpersonationPayload = Schema.Schema.Type<
-  typeof StartSupportImpersonationPayloadSchema
->;
-export type SupportImpersonationResponse = Schema.Schema.Type<
-  typeof SupportImpersonationResponseSchema
->;
+export type StartSupportImpersonationPayload = Schema.Schema.Type<typeof StartSupportImpersonationPayloadSchema>;
+export type SupportImpersonationResponse = Schema.Schema.Type<typeof SupportImpersonationResponseSchema>;
 
 export type InvalidCredentialsProblem = typeof InvalidCredentialsProblemSchema.Type;
 export type OntosIdentityForbiddenProblem = typeof OntosIdentityForbiddenProblemSchema.Type;
@@ -223,11 +193,9 @@ export type AuthenticationProblem =
   | AuthenticationUnavailableProblem
   | AuthenticationInternalProblem;
 
-export type TenantAuthenticationRequiredProblem =
-  typeof TenantAuthenticationRequiredProblemSchema.Type;
+export type TenantAuthenticationRequiredProblem = typeof TenantAuthenticationRequiredProblemSchema.Type;
 export type TenantAccessForbiddenProblem = typeof TenantAccessForbiddenProblemSchema.Type;
-export type TenantCapabilityUnavailableProblem =
-  typeof TenantCapabilityUnavailableProblemSchema.Type;
+export type TenantCapabilityUnavailableProblem = typeof TenantCapabilityUnavailableProblemSchema.Type;
 export type TenantInternalProblem = typeof TenantInternalProblemSchema.Type;
 
 export type AvailableTenantsProblem =
@@ -241,8 +209,7 @@ export type LegalEntityAccessForbiddenProblem = typeof LegalEntityAccessForbidde
 
 export type LegalEntityProblem = AvailableTenantsProblem | LegalEntityAccessForbiddenProblem;
 
-export type ShellAuthenticationRequiredProblem =
-  typeof ShellAuthenticationRequiredProblemSchema.Type;
+export type ShellAuthenticationRequiredProblem = typeof ShellAuthenticationRequiredProblemSchema.Type;
 export type ShellTargetForbiddenProblem = typeof ShellTargetForbiddenProblemSchema.Type;
 export type ShellTargetNotFoundProblem = typeof ShellTargetNotFoundProblemSchema.Type;
 export type ShellSelectionRequiredProblem = typeof ShellSelectionRequiredProblemSchema.Type;
@@ -372,7 +339,10 @@ export const ShellNavigationItemSchema = Schema.Struct({
 });
 
 export const ShellUnavailableDeploymentSchema = Schema.Union([
-  Schema.Struct({ appId: AppIdSchema, status: Schema.Literals(['disabled', 'revoked']) }),
+  Schema.Struct({
+    appId: AppIdSchema,
+    status: Schema.Literals(['disabled', 'revoked']),
+  }),
   Schema.Struct({
     appId: AppIdSchema,
     reason: Schema.Literals(['incompatible', 'timeout', 'unavailable']),
@@ -381,8 +351,14 @@ export const ShellUnavailableDeploymentSchema = Schema.Union([
 ]);
 
 export const ShellCompositionSchema = Schema.Union([
-  Schema.Struct({ navigation: Schema.Tuple([]), state: Schema.Literal('access_blocked') }),
-  Schema.Struct({ navigation: Schema.Tuple([]), state: Schema.Literal('selection_required') }),
+  Schema.Struct({
+    navigation: Schema.Tuple([]),
+    state: Schema.Literal('access_blocked'),
+  }),
+  Schema.Struct({
+    navigation: Schema.Tuple([]),
+    state: Schema.Literal('selection_required'),
+  }),
   Schema.Struct({
     navigation: Schema.Array(ShellNavigationItemSchema),
     state: Schema.Literal('available'),
@@ -413,7 +389,11 @@ export const ResourceRefSchema = Schema.Struct({
 const searchTitle = Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(300));
 const PartyRoleSchema = Schema.Literals(['CUSTOMER', 'SUPPLIER']);
 const ShellSearchResultSchema = Schema.Union([
-  Schema.Struct({ kind: Schema.Literal('resource'), ref: ResourceRefSchema, title: searchTitle }),
+  Schema.Struct({
+    kind: Schema.Literal('resource'),
+    ref: ResourceRefSchema,
+    title: searchTitle,
+  }),
   Schema.Struct({
     archived: Schema.Boolean,
     kind: Schema.Literal('party'),
@@ -485,35 +465,20 @@ export const MediaAttachmentResponseSchema = Schema.Struct({
   attached: Schema.Literal(true),
 });
 
-export const InvalidCredentialsProblemSchema = makeProblemDetailsSchema(
-  'InvalidCredentialsProblem',
-  401,
-);
+export const InvalidCredentialsProblemSchema = makeProblemDetailsSchema('InvalidCredentialsProblem', 401);
 
-export const OntosIdentityForbiddenProblemSchema = makeProblemDetailsSchema(
-  'OntosIdentityForbiddenProblem',
-  403,
-);
+export const OntosIdentityForbiddenProblemSchema = makeProblemDetailsSchema('OntosIdentityForbiddenProblem', 403);
 
-export const AuthenticationUnavailableProblemSchema = makeProblemDetailsSchema(
-  'AuthenticationUnavailableProblem',
-  503,
-);
+export const AuthenticationUnavailableProblemSchema = makeProblemDetailsSchema('AuthenticationUnavailableProblem', 503);
 
-export const AuthenticationInternalProblemSchema = makeProblemDetailsSchema(
-  'AuthenticationInternalProblem',
-  500,
-);
+export const AuthenticationInternalProblemSchema = makeProblemDetailsSchema('AuthenticationInternalProblem', 500);
 
 export const TenantAuthenticationRequiredProblemSchema = makeProblemDetailsSchema(
   'TenantAuthenticationRequiredProblem',
   401,
 );
 
-export const TenantAccessForbiddenProblemSchema = makeProblemDetailsSchema(
-  'TenantAccessForbiddenProblem',
-  403,
-);
+export const TenantAccessForbiddenProblemSchema = makeProblemDetailsSchema('TenantAccessForbiddenProblem', 403);
 
 export const TenantCapabilityUnavailableProblemSchema = makeRetryableProblemDetailsSchema(
   'TenantCapabilityUnavailableProblem',
@@ -532,40 +497,19 @@ export const ShellAuthenticationRequiredProblemSchema = makeProblemDetailsSchema
   401,
 );
 
-export const ShellTargetForbiddenProblemSchema = makeProblemDetailsSchema(
-  'ShellTargetForbiddenProblem',
-  403,
-);
+export const ShellTargetForbiddenProblemSchema = makeProblemDetailsSchema('ShellTargetForbiddenProblem', 403);
 
-export const ShellTargetNotFoundProblemSchema = makeProblemDetailsSchema(
-  'ShellTargetNotFoundProblem',
-  404,
-);
+export const ShellTargetNotFoundProblemSchema = makeProblemDetailsSchema('ShellTargetNotFoundProblem', 404);
 
-export const ShellSelectionRequiredProblemSchema = makeProblemDetailsSchema(
-  'ShellSelectionRequiredProblem',
-  409,
-);
+export const ShellSelectionRequiredProblemSchema = makeProblemDetailsSchema('ShellSelectionRequiredProblem', 409);
 
-export const ShellPolicyConflictProblemSchema = makeProblemDetailsSchema(
-  'ShellPolicyConflictProblem',
-  409,
-);
+export const ShellPolicyConflictProblemSchema = makeProblemDetailsSchema('ShellPolicyConflictProblem', 409);
 
-export const ShellPolicyUnprocessableProblemSchema = makeProblemDetailsSchema(
-  'ShellPolicyUnprocessableProblem',
-  422,
-);
+export const ShellPolicyUnprocessableProblemSchema = makeProblemDetailsSchema('ShellPolicyUnprocessableProblem', 422);
 
-export const ShellInvalidRequestProblemSchema = makeProblemDetailsSchema(
-  'ShellInvalidRequestProblem',
-  400,
-);
+export const ShellInvalidRequestProblemSchema = makeProblemDetailsSchema('ShellInvalidRequestProblem', 400);
 
-export const ShellPreconditionRequiredProblemSchema = makeProblemDetailsSchema(
-  'ShellPreconditionRequiredProblem',
-  428,
-);
+export const ShellPreconditionRequiredProblemSchema = makeProblemDetailsSchema('ShellPreconditionRequiredProblem', 428);
 
 export const ShellCapabilityUnavailableProblemSchema = makeRetryableProblemDetailsSchema(
   'ShellCapabilityUnavailableProblem',
@@ -573,13 +517,9 @@ export const ShellCapabilityUnavailableProblemSchema = makeRetryableProblemDetai
 );
 
 export const ShellInternalProblemSchema = makeProblemDetailsSchema('ShellInternalProblem', 500);
-export const ShellRateLimitedProblemSchema = makeProblemDetailsSchema(
-  'ShellRateLimitedProblem',
-  429,
-  {
-    retryAfterSeconds: Schema.Finite,
-  },
-);
+export const ShellRateLimitedProblemSchema = makeProblemDetailsSchema('ShellRateLimitedProblem', 429, {
+  retryAfterSeconds: Schema.Finite,
+});
 
 const identityErrors = [
   ShellAuthenticationRequiredProblemSchema,
@@ -867,10 +807,6 @@ const authenticationEndpointPath = (endpoint: { readonly path: string }) =>
 
 export const shellAuthenticationApiContract = {
   apiPrefix: '/shell-super-app-api',
-  signInPath: authenticationEndpointPath(
-    ShellAuthenticationApi.groups.authentication.endpoints.signIn,
-  ),
-  switchTenantPath: authenticationEndpointPath(
-    ShellAuthenticationApi.groups.tenants.endpoints.switchTenant,
-  ),
+  signInPath: authenticationEndpointPath(ShellAuthenticationApi.groups.authentication.endpoints.signIn),
+  switchTenantPath: authenticationEndpointPath(ShellAuthenticationApi.groups.tenants.endpoints.switchTenant),
 } as const;

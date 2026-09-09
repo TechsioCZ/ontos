@@ -1,12 +1,10 @@
-import { expect, it } from 'effect-rstest';
 import { Schema } from 'effect';
-import {
-  PartySubjectEvidenceSchema,
-  makePartyRef,
-} from '../../shared/domain/identity-contracts.ts';
+import { expect, it } from 'effect-rstest';
+
+import { PartySubjectEvidenceSchema, makePartyRef } from '../../shared/domain/identity-contracts.ts';
 import { PartyMatchDecisionRecordSchema } from '../../shared/domain/matching-contracts.ts';
-import { makePartyMatchDecisionRef } from '../../shared/resources/party-match-decision.ts';
 import { makeDuplicateCandidateCaseRef } from '../../shared/resources/duplicate-candidate-case.ts';
+import { makePartyMatchDecisionRef } from '../../shared/resources/party-match-decision.ts';
 
 const tenant = '11111111-1111-4111-8111-111111111111';
 const id = '22222222-2222-4222-8222-222222222222';
@@ -27,7 +25,10 @@ it('typed subject evidence accepts arbitrary reference spelling, rejects unsuppo
     }),
   ).toThrow();
   expect(() =>
-    Schema.decodeUnknownSync(PartySubjectEvidenceSchema)({ ...evidence, statement: '' }),
+    Schema.decodeUnknownSync(PartySubjectEvidenceSchema)({
+      ...evidence,
+      statement: '',
+    }),
   ).toThrow();
 });
 it('Create recovery distinguishes matching outcome and enforces reference invariants', () => {
@@ -50,7 +51,12 @@ it('Create recovery distinguishes matching outcome and enforces reference invari
   expect(() => decode({ ...record, operation: 'MATCH' })).toThrow();
   expect(() => decode({ ...record, caseRef: makeDuplicateCandidateCaseRef(tenant, id) })).toThrow();
   expect(() =>
-    decode({ ...record, committedCreateOutcome: null, outcome: 'NO_MATCH', partyRef: null }),
+    decode({
+      ...record,
+      committedCreateOutcome: null,
+      outcome: 'NO_MATCH',
+      partyRef: null,
+    }),
   ).toThrow();
   expect(
     decode({
@@ -75,10 +81,8 @@ it('matching decision JSON keeps nullable and optional wire fields compatible', 
     outcome: 'NO_MATCH' as const,
     partyRef: null,
   };
-  const decoded = Schema.decodeUnknownSync(PartyMatchDecisionRecordSchema)(record);
-  const encoded = Schema.encodeUnknownSync(Schema.toCodecJson(PartyMatchDecisionRecordSchema))(
-    decoded,
-  );
+  const decoded = Schema.decodeSync(PartyMatchDecisionRecordSchema)(record);
+  const encoded = Schema.encodeUnknownSync(Schema.toCodecJson(PartyMatchDecisionRecordSchema))(decoded);
   expect(encoded).toEqual(record);
   const omitted = {
     caseRef: record.caseRef,
@@ -90,12 +94,10 @@ it('matching decision JSON keeps nullable and optional wire fields compatible', 
     outcome: record.outcome,
     partyRef: record.partyRef,
   };
-  const omittedEncoded = Schema.encodeUnknownSync(
-    Schema.toCodecJson(PartyMatchDecisionRecordSchema),
-  )(Schema.decodeUnknownSync(PartyMatchDecisionRecordSchema)(omitted));
-  const omittedEncodedObject = Schema.decodeUnknownSync(Schema.Record(Schema.String, Schema.Json))(
-    omittedEncoded,
+  const omittedEncoded = Schema.encodeUnknownSync(Schema.toCodecJson(PartyMatchDecisionRecordSchema))(
+    Schema.decodeSync(PartyMatchDecisionRecordSchema)(omitted),
   );
+  const omittedEncodedObject = Schema.decodeUnknownSync(Schema.Record(Schema.String, Schema.Json))(omittedEncoded);
   expect('committedCreateOutcome' in omittedEncodedObject).toBe(false);
   expect('evidenceEvaluation' in omittedEncodedObject).toBe(false);
 });

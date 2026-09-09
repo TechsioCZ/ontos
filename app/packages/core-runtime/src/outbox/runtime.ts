@@ -2,6 +2,7 @@
 /* eslint-disable unicorn/no-array-method-this-argument -- Effect's dual flatMap API is intentional. expires: 2026-12-31. */
 // @effect-diagnostics effectFnOpportunity:off globalDateInEffect:off instanceOfSchema:off -- Existing compatibility boundary; expires: 2026-12-31.
 import { Context, DateTime, Effect, Exit, Layer, Option, Schema } from 'effect';
+
 import type {
   AnyOutboxWorkerRegistration,
   OutboxWorkerHandlerContext,
@@ -14,21 +15,12 @@ import {
   validateOutboxWorkerRegistrations,
   validateOutboxWorkerSubscriptions,
 } from './definition.ts';
-import {
-  OutboxHandlerExecutionError,
-  OutboxPayloadDecodeError,
-  OutboxWorkerDescriptorError,
-} from './errors.ts';
+import { OutboxHandlerExecutionError, OutboxPayloadDecodeError, OutboxWorkerDescriptorError } from './errors.ts';
 import type { OutboxClaimLostError, OutboxPersistenceError } from './errors.ts';
 import { OutboxRepository } from './repository.ts';
 import type { OutboxClaim, OutboxRepositoryService as OutboxRepositoryPort } from './repository.ts';
 
-const withOptionalProperty = <
-  Base extends object,
-  Key extends PropertyKey,
-  Value,
-  Trailing extends object,
->(
+const withOptionalProperty = <Base extends object, Key extends PropertyKey, Value, Trailing extends object>(
   base: Base,
   condition: boolean,
   key: Key,
@@ -36,9 +28,7 @@ const withOptionalProperty = <
   trailing: Trailing,
 ) => (condition ? { ...base, [key]: value, ...trailing } : { ...base, ...trailing });
 
-export interface RunOutboxCycleInput<
-  Registration extends AnyOutboxWorkerRegistration = AnyOutboxWorkerRegistration,
-> {
+export interface RunOutboxCycleInput<Registration extends AnyOutboxWorkerRegistration = AnyOutboxWorkerRegistration> {
   readonly claimOwner: string;
   readonly maxDeliveries?: number;
   readonly now?: Date;
@@ -66,10 +56,7 @@ export interface OutboxCycleResult {
   readonly succeeded: number;
 }
 
-export type OutboxCycleError =
-  | OutboxClaimLostError
-  | OutboxPersistenceError
-  | OutboxWorkerDescriptorError;
+export type OutboxCycleError = OutboxClaimLostError | OutboxPersistenceError | OutboxWorkerDescriptorError;
 
 export interface OutboxRuntimeService {
   readonly matchMessages: (
@@ -81,38 +68,39 @@ export interface OutboxRuntimeService {
 }
 
 const descriptorFailure = (reason: string): OutboxWorkerDescriptorError =>
-  new OutboxWorkerDescriptorError({ code: 'outbox_worker_descriptor_invalid', reason });
+  new OutboxWorkerDescriptorError({
+    code: 'outbox_worker_descriptor_invalid',
+    reason,
+  });
 
-const validateCycleInput = Effect.fn('OutboxRuntime.validateCycleInput')(
-  function* validateCycleInputEffect<Registration extends AnyOutboxWorkerRegistration>(
-    input: RunOutboxCycleInput<Registration>,
-  ) {
-    if (input.claimOwner.trim().length === 0 || input.claimOwner.length > 200) {
-      return yield* descriptorFailure('claimOwner must be a non-empty stable runtime identity');
-    }
-    const maxDeliveries = input.maxDeliveries ?? 100;
-    if (!Number.isSafeInteger(maxDeliveries) || maxDeliveries < 1 || maxDeliveries > 1000) {
-      return yield* descriptorFailure('maxDeliveries must be an integer from 1 through 1000');
-    }
-    const now = input.now ?? (yield* DateTime.nowAsDate);
-    if (Number.isNaN(now.getTime())) {
-      return yield* descriptorFailure('now must be a valid timestamp');
-    }
-    const registrations = yield* Effect.try({
-      catch: (error) =>
-        Schema.is(OutboxWorkerDescriptorError)(error)
-          ? error
-          : descriptorFailure('The Outbox Worker descriptor set is invalid'),
-      try: () => validateOutboxWorkerRegistrations(input.registrations),
-    });
-    return {
-      claimOwner: input.claimOwner,
-      maxDeliveries,
-      now,
-      registrations,
-    };
-  },
-);
+const validateCycleInput = Effect.fn('OutboxRuntime.validateCycleInput')(function* validateCycleInputEffect<
+  Registration extends AnyOutboxWorkerRegistration,
+>(input: RunOutboxCycleInput<Registration>) {
+  if (input.claimOwner.trim().length === 0 || input.claimOwner.length > 200) {
+    return yield* descriptorFailure('claimOwner must be a non-empty stable runtime identity');
+  }
+  const maxDeliveries = input.maxDeliveries ?? 100;
+  if (!Number.isSafeInteger(maxDeliveries) || maxDeliveries < 1 || maxDeliveries > 1000) {
+    return yield* descriptorFailure('maxDeliveries must be an integer from 1 through 1000');
+  }
+  const now = input.now ?? (yield* DateTime.nowAsDate);
+  if (Number.isNaN(now.getTime())) {
+    return yield* descriptorFailure('now must be a valid timestamp');
+  }
+  const registrations = yield* Effect.try({
+    catch: (error) =>
+      Schema.is(OutboxWorkerDescriptorError)(error)
+        ? error
+        : descriptorFailure('The Outbox Worker descriptor set is invalid'),
+    try: () => validateOutboxWorkerRegistrations(input.registrations),
+  });
+  return {
+    claimOwner: input.claimOwner,
+    maxDeliveries,
+    now,
+    registrations,
+  };
+});
 
 const claimAnnotations = (claim: OutboxClaim, outcome?: string) =>
   withOptionalProperty(
@@ -144,9 +132,7 @@ const claimAnnotations = (claim: OutboxClaim, outcome?: string) =>
 const logUnexpectedPersistence = (claim?: OutboxClaim) =>
   Effect.annotateLogs(
     Effect.logError('Unexpected Outbox persistence failure'),
-    claim === undefined
-      ? { outcome: 'persistence_failure' }
-      : claimAnnotations(claim, 'persistence_failure'),
+    claim === undefined ? { outcome: 'persistence_failure' } : claimAnnotations(claim, 'persistence_failure'),
   );
 
 const withOutcomeSpan = <Value, Error, Requirements>(
@@ -197,33 +183,26 @@ const subscriptionMatchesRegistration = (
   subscription.producerModuleKey === registration.descriptor.producerModuleKey &&
   subscription.topic === registration.descriptor.topic;
 
-const validateDeployedRegistrationSnapshot = Effect.fn(
-  'OutboxRuntime.validateDeployedRegistrationSnapshot',
-)(function* validateDeployedRegistrationSnapshotEffect(
-  registrations: readonly AnyOutboxWorkerRegistration[],
-  subscriptions: readonly OutboxWorkerSubscription[],
-) {
-  const subscriptionsByKey = new Map(
-    subscriptions.map((subscription) => [subscription.workerKey, subscription]),
-  );
-  for (const registration of registrations) {
-    if (
-      !subscriptionMatchesRegistration(
-        subscriptionsByKey.get(registration.descriptor.workerKey),
-        registration,
-      )
-    ) {
+const validateDeployedRegistrationSnapshot = Effect.fn('OutboxRuntime.validateDeployedRegistrationSnapshot')(
+  function* validateDeployedRegistrationSnapshotEffect(
+    registrations: readonly AnyOutboxWorkerRegistration[],
+    subscriptions: readonly OutboxWorkerSubscription[],
+  ) {
+    const subscriptionsByKey = new Map(subscriptions.map((subscription) => [subscription.workerKey, subscription]));
+    for (const registration of registrations) {
+      if (!subscriptionMatchesRegistration(subscriptionsByKey.get(registration.descriptor.workerKey), registration)) {
+        return yield* descriptorFailure(
+          `worker ${registration.descriptor.workerKey} is absent from the installed subscription catalog`,
+        );
+      }
+    }
+    if (subscriptions.length !== registrations.length) {
       return yield* descriptorFailure(
-        `worker ${registration.descriptor.workerKey} is absent from the installed subscription catalog`,
+        'the owner-local worker registration set contradicts its deployed descriptor snapshot',
       );
     }
-  }
-  if (subscriptions.length !== registrations.length) {
-    return yield* descriptorFailure(
-      'the owner-local worker registration set contradicts its deployed descriptor snapshot',
-    );
-  }
-});
+  },
+);
 
 interface OutboxCycleProgress {
   readonly claimed: number;
@@ -251,10 +230,7 @@ interface OutboxCycleExecution<Registration extends AnyOutboxWorkerRegistration>
 }
 
 const matchMessagesWithRepository = Effect.fn('makeOutboxRuntime.matchMessages')(
-  function* matchMessagesWithRepositoryEffect(
-    repository: OutboxRepositoryPort,
-    input: MatchOutboxMessagesInput,
-  ) {
+  function* matchMessagesWithRepositoryEffect(repository: OutboxRepositoryPort, input: MatchOutboxMessagesInput) {
     const subscriptions = yield* Effect.try({
       catch: (error) => {
         void error;
@@ -266,33 +242,29 @@ const matchMessagesWithRepository = Effect.fn('makeOutboxRuntime.matchMessages')
     if (Number.isNaN(now.getTime())) {
       return yield* descriptorFailure('now must be a valid timestamp');
     }
-    return yield* repository
-      .matchUnmatched(subscriptions, now)
-      .pipe(Effect.tapError(() => logUnexpectedPersistence()));
+    return yield* repository.matchUnmatched(subscriptions, now).pipe(Effect.tapError(() => logUnexpectedPersistence()));
   },
 );
 
-const failOutboxDelivery = Effect.fn('OutboxRuntime.failDelivery')(
-  function* failOutboxDeliveryEffect(
-    repository: OutboxRepositoryPort,
-    claim: OutboxClaim,
-    now: Date,
-    state: OutboxCycleProgress,
-    reason: string,
-    outcome: string,
-  ) {
-    const status = yield* repository.fail(claim, reason, now).pipe(
-      Effect.tapErrorTag('OutboxPersistenceError', () => logUnexpectedPersistence(claim)),
-      (effect) => withOutcomeSpan(effect, claim, outcome),
-    );
-    return {
-      ...state,
-      dead: state.dead + (status === 'dead' ? 1 : 0),
-      failed: state.failed + 1,
-      retried: state.retried + (status === 'pending' ? 1 : 0),
-    };
-  },
-);
+const failOutboxDelivery = Effect.fn('OutboxRuntime.failDelivery')(function* failOutboxDeliveryEffect(
+  repository: OutboxRepositoryPort,
+  claim: OutboxClaim,
+  now: Date,
+  state: OutboxCycleProgress,
+  reason: string,
+  outcome: string,
+) {
+  const status = yield* repository.fail(claim, reason, now).pipe(
+    Effect.tapErrorTag('OutboxPersistenceError', () => logUnexpectedPersistence(claim)),
+    (effect) => withOutcomeSpan(effect, claim, outcome),
+  );
+  return {
+    ...state,
+    dead: state.dead + (status === 'dead' ? 1 : 0),
+    failed: state.failed + 1,
+    retried: state.retried + (status === 'pending' ? 1 : 0),
+  };
+});
 
 const processNextOutboxDelivery = Effect.fn('makeOutboxRuntime.processNextDelivery')(
   function* processNextOutboxDeliveryEffect<Registration extends AnyOutboxWorkerRegistration>(
@@ -310,9 +282,7 @@ const processNextOutboxDelivery = Effect.fn('makeOutboxRuntime.processNextDelive
     const claimedState = { ...state, claimed: state.claimed + 1 };
     const registration = execution.registrationsByKey.get(claim.workerKey);
     if (registration === undefined) {
-      return yield* descriptorFailure(
-        `claimed delivery references unknown worker ${claim.workerKey}`,
-      );
+      return yield* descriptorFailure(`claimed delivery references unknown worker ${claim.workerKey}`);
     }
     const decoded = yield* Effect.exit(
       Schema.decodeUnknownEffect(registration.descriptor.payloadSchema)(claim.payloadJson),
@@ -342,7 +312,9 @@ const processNextOutboxDelivery = Effect.fn('makeOutboxRuntime.processNextDelive
           },
           onSuccess: () => 'success' as const,
         }),
-        Effect.withSpan('OutboxWorker.handle', { attributes: claimAnnotations(claim) }),
+        Effect.withSpan('OutboxWorker.handle', {
+          attributes: claimAnnotations(claim),
+        }),
       ),
     );
     if (Exit.isFailure(handlerExit)) {
@@ -376,57 +348,47 @@ const processNextOutboxDelivery = Effect.fn('makeOutboxRuntime.processNextDelive
   },
 );
 
-const runCycleWithRepository = Effect.fn('makeOutboxRuntime.runCycle')(
-  function* runCycleWithRepositoryEffect<Registration extends AnyOutboxWorkerRegistration>(
-    repository: OutboxRepositoryPort,
-    input: RunOutboxCycleInput<Registration>,
-  ) {
-    const validated = yield* validateCycleInput(input);
-    const deployedSubscriptions = yield* Effect.try({
-      catch: (error) => {
-        void error;
-        return descriptorFailure('The deployed subscription snapshot is invalid');
-      },
-      try: () => validateOutboxWorkerSubscriptions(input.subscriptions),
-    });
-    yield* validateDeployedRegistrationSnapshot(validated.registrations, deployedSubscriptions);
-    const registrationsByKey = new Map<string, Registration>(
-      validated.registrations.map(
-        (registration) => [registration.descriptor.workerKey, registration] as const,
-      ),
-    );
-    const execution: OutboxCycleExecution<Registration> = {
-      claimOwner: validated.claimOwner,
-      now: validated.now,
-      registrations: validated.registrations,
-      registrationsByKey,
-    };
-    const progress = yield* Effect.reduce(
-      Array.from({ length: validated.maxDeliveries }),
-      initialCycleProgress,
-      (state) =>
-        state.stopped
-          ? Effect.succeed(state)
-          : processNextOutboxDelivery(repository, execution, state),
-    );
+const runCycleWithRepository = Effect.fn('makeOutboxRuntime.runCycle')(function* runCycleWithRepositoryEffect<
+  Registration extends AnyOutboxWorkerRegistration,
+>(repository: OutboxRepositoryPort, input: RunOutboxCycleInput<Registration>) {
+  const validated = yield* validateCycleInput(input);
+  const deployedSubscriptions = yield* Effect.try({
+    catch: (error) => {
+      void error;
+      return descriptorFailure('The deployed subscription snapshot is invalid');
+    },
+    try: () => validateOutboxWorkerSubscriptions(input.subscriptions),
+  });
+  yield* validateDeployedRegistrationSnapshot(validated.registrations, deployedSubscriptions);
+  const registrationsByKey = new Map<string, Registration>(
+    validated.registrations.map((registration) => [registration.descriptor.workerKey, registration] as const),
+  );
+  const execution: OutboxCycleExecution<Registration> = {
+    claimOwner: validated.claimOwner,
+    now: validated.now,
+    registrations: validated.registrations,
+    registrationsByKey,
+  };
+  const progress = yield* Effect.reduce(
+    Array.from({ length: validated.maxDeliveries }),
+    initialCycleProgress,
+    (state) => (state.stopped ? Effect.succeed(state) : processNextOutboxDelivery(repository, execution, state)),
+  );
 
-    return Object.freeze({
-      claimed: progress.claimed,
-      dead: progress.dead,
-      deliveriesCreated: 0,
-      failed: progress.failed,
-      messagesMatched: 0,
-      retried: progress.retried,
-      succeeded: progress.succeeded,
-    });
-  },
-);
+  return Object.freeze({
+    claimed: progress.claimed,
+    dead: progress.dead,
+    deliveriesCreated: 0,
+    failed: progress.failed,
+    messagesMatched: 0,
+    retried: progress.retried,
+    succeeded: progress.succeeded,
+  });
+});
 
 export const makeOutboxRuntime = (repository: OutboxRepositoryPort): OutboxRuntimeService => {
   const matchMessages: OutboxRuntimeService['matchMessages'] = (input) =>
-    matchMessagesWithRepository(repository, input).pipe(
-      Effect.withSpan('OutboxMatcher.matchMessages'),
-    );
+    matchMessagesWithRepository(repository, input).pipe(Effect.withSpan('OutboxMatcher.matchMessages'));
   const runCycle: OutboxRuntimeService['runCycle'] = (input) =>
     runCycleWithRepository(repository, input).pipe(
       Effect.withSpan('OutboxWorker.runCycle', {
@@ -451,16 +413,10 @@ export const OutboxRuntimeLive = Layer.effect(
 
 export const runOutboxCycle = <Registration extends AnyOutboxWorkerRegistration>(
   input: RunOutboxCycleInput<Registration>,
-): Effect.Effect<
-  OutboxCycleResult,
-  OutboxCycleError,
-  OutboxRuntime | OutboxWorkerRequirements<Registration>
-> => Effect.flatMap(OutboxRuntime, (runtime) => runtime.runCycle(input));
+): Effect.Effect<OutboxCycleResult, OutboxCycleError, OutboxRuntime | OutboxWorkerRequirements<Registration>> =>
+  Effect.flatMap(OutboxRuntime, (runtime) => runtime.runCycle(input));
 
 export const matchOutboxMessages = (
   input: MatchOutboxMessagesInput,
-): Effect.Effect<
-  OutboxMatchResult,
-  OutboxPersistenceError | OutboxWorkerDescriptorError,
-  OutboxRuntime
-> => Effect.flatMap(OutboxRuntime, (runtime) => runtime.matchMessages(input));
+): Effect.Effect<OutboxMatchResult, OutboxPersistenceError | OutboxWorkerDescriptorError, OutboxRuntime> =>
+  Effect.flatMap(OutboxRuntime, (runtime) => runtime.matchMessages(input));

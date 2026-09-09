@@ -1,4 +1,5 @@
 import { Effect, Match, Schema } from 'effect';
+
 import { ResourceRefSchema } from '../../../../../../../shared/api.ts';
 import type { ShellResourceResponse } from '../../../../../../../shared/api.ts';
 import { resourceDetail } from '../../../../../../api/auth-client.ts';
@@ -41,11 +42,15 @@ export const loader = ({ params, request }: ResourceLoaderArguments): Promise<Re
         }
         return shellAuthenticationClientOptionsFromRequest(request).pipe(
           Effect.flatMap((options) =>
-            Schema.decodeUnknownEffect(ResourceRefSchema)(params).pipe(
+            Schema.decodeEffect(ResourceRefSchema)(params).pipe(
               Effect.flatMap((resourceRef) => resourceDetail(resourceRef, options)),
             ),
           ),
-          Effect.map((resource): ResourcePageModel => ({ resource, shell, state: 'ready' })),
+          Effect.map((resource): ResourcePageModel => ({
+            resource,
+            shell,
+            state: 'ready',
+          })),
           Effect.matchEffect({
             onFailure: (error) =>
               Effect.succeed<ResourcePageModel>({

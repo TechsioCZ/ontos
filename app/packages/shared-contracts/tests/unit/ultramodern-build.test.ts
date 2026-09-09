@@ -1,5 +1,5 @@
-import { expect, it } from 'effect-rstest';
 import { withUltramodernBuildIdentity } from '@app/shared-contracts/ultramodern-build';
+import { expect, it } from 'effect-rstest';
 
 it('injected build identity updates all surfaces without mutating generated metadata', () => {
   const deliveryUnit = {

@@ -1,10 +1,9 @@
-import { makeModuleContractFixture } from '../../src/testing/module-contract.ts';
 import { expect, it } from 'effect-rstest';
-import {
-  buildInstalledModuleCatalog,
-  resolveInstalledModuleCatalog,
-} from '../../src/modules/catalog.ts';
+
+import { buildInstalledModuleCatalog, resolveInstalledModuleCatalog } from '../../src/modules/catalog.ts';
 import type { OntosOutboxSubscriptionContract } from '../../src/modules/manifest.ts';
+import { validateOutboxWorkerSubscriptions } from '../../src/outbox/definition.ts';
+import { makeModuleContractFixture } from '../../src/testing/module-contract.ts';
 
 const contract = (
   appId: string,
@@ -32,9 +31,7 @@ it('builds immutable deterministic dual indexes for distinct deployment and modu
 
   expect(catalog.deploymentAppIds).toEqual(['documents-center', 'property-registry']);
   expect(catalog.moduleIds).toEqual(['documents.center', 'property.registry']);
-  expect(catalog.getByDeploymentAppId('property-registry')?.manifest.module.id).toBe(
-    'property.registry',
-  );
+  expect(catalog.getByDeploymentAppId('property-registry')?.manifest.module.id).toBe('property.registry');
   expect(catalog.getByModuleId('property.registry')?.deployment.appId).toBe('property-registry');
   expect(Object.isFrozen(catalog)).toBe(true);
   expect(Object.isFrozen(catalog.contracts)).toBe(true);
@@ -63,6 +60,9 @@ it('accepts a valid owner-local subscription whose producer is not installed', (
     },
   ]);
   expect(catalog.outboxSubscriptions).toEqual([subscription]);
+  expect(() => validateOutboxWorkerSubscriptions(catalog.outboxSubscriptions)).not.toThrow();
+  expect(Object.isFrozen(catalog.outboxSubscriptions[0]?.entrypoint)).toBe(true);
+  expect(Object.isFrozen(subscription.entrypoint)).toBe(false);
 });
 
 it('rejects contradictory or incomplete Outbox subscription snapshots', () => {
@@ -186,7 +186,10 @@ it('rejects unsupported contract versions without weakening catalog safety', () 
   expect(() =>
     buildInstalledModuleCatalog([
       {
-        contract: { ...contract('property-registry', 'property.registry'), schemaVersion: '0' },
+        contract: {
+          ...contract('property-registry', 'property.registry'),
+          schemaVersion: '0',
+        },
         expectedAppId: 'property-registry',
       },
     ]),
@@ -217,8 +220,16 @@ it('resolves healthy, incompatible, and unreachable deployments independently', 
   expect(catalog.moduleIds).toEqual(['documents.center']);
   expect(catalog.deploymentStatuses).toEqual([
     { appId: 'disabled-center', status: 'disabled' },
-    { appId: 'documents-center', moduleId: 'documents.center', status: 'available' },
-    { appId: 'property-registry', reason: 'incompatible', status: 'unavailable' },
+    {
+      appId: 'documents-center',
+      moduleId: 'documents.center',
+      status: 'available',
+    },
+    {
+      appId: 'property-registry',
+      reason: 'incompatible',
+      status: 'unavailable',
+    },
     { appId: 'reporting-center', reason: 'timeout', status: 'unavailable' },
     { appId: 'revoked-center', status: 'revoked' },
   ]);
@@ -234,9 +245,21 @@ for (const scenario of [
     moduleIds: ['reporting.center'],
     name: 'excludes every contradictory claimant while preserving unrelated deployments',
     statuses: [
-      { appId: 'documents-center', reason: 'incompatible', status: 'unavailable' },
-      { appId: 'property-registry', reason: 'incompatible', status: 'unavailable' },
-      { appId: 'reporting-center', moduleId: 'reporting.center', status: 'available' },
+      {
+        appId: 'documents-center',
+        reason: 'incompatible',
+        status: 'unavailable',
+      },
+      {
+        appId: 'property-registry',
+        reason: 'incompatible',
+        status: 'unavailable',
+      },
+      {
+        appId: 'reporting-center',
+        moduleId: 'reporting.center',
+        status: 'available',
+      },
     ],
   },
   {
@@ -248,8 +271,16 @@ for (const scenario of [
     moduleIds: ['documents.center'],
     name: 'rejects duplicate deployment identities from tolerant candidate promotion',
     statuses: [
-      { appId: 'documents-center', moduleId: 'documents.center', status: 'available' },
-      { appId: 'property-registry', reason: 'incompatible', status: 'unavailable' },
+      {
+        appId: 'documents-center',
+        moduleId: 'documents.center',
+        status: 'available',
+      },
+      {
+        appId: 'property-registry',
+        reason: 'incompatible',
+        status: 'unavailable',
+      },
     ],
   },
 ] as const) {
@@ -284,7 +315,11 @@ it('keeps authoritative revocation ahead of a stale fetched candidate', () => {
 
   expect(catalog.moduleIds).toEqual(['documents.center']);
   expect(catalog.deploymentStatuses).toEqual([
-    { appId: 'documents-center', moduleId: 'documents.center', status: 'available' },
+    {
+      appId: 'documents-center',
+      moduleId: 'documents.center',
+      status: 'available',
+    },
     { appId: 'property-registry', status: 'revoked' },
   ]);
 });

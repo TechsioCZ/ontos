@@ -8,33 +8,22 @@ import type {
   OutboxWorkerDescriptorError,
 } from '@app/core-runtime';
 import { Duration, Effect, Layer, Schedule } from 'effect';
+
 import { installedModuleCatalog } from './installed-module-catalog.ts';
 import type { ShellInstalledModuleCatalog } from './installed-module-catalog.ts';
 
 export type InstalledOutboxMatch<Requirements = OutboxRuntime> = (
   input: MatchOutboxMessagesInput,
-) => Effect.Effect<
-  OutboxMatchResult,
-  OutboxPersistenceError | OutboxWorkerDescriptorError,
-  Requirements
->;
+) => Effect.Effect<OutboxMatchResult, OutboxPersistenceError | OutboxWorkerDescriptorError, Requirements>;
 
 /** One explicit provenance seam from the validated installed catalog into Core matching. */
 export function matchInstalledOutboxMessagesOnce(
   catalog: InstalledModuleCatalog,
-): Effect.Effect<
-  OutboxMatchResult,
-  OutboxPersistenceError | OutboxWorkerDescriptorError,
-  OutboxRuntime
->;
+): Effect.Effect<OutboxMatchResult, OutboxPersistenceError | OutboxWorkerDescriptorError, OutboxRuntime>;
 export function matchInstalledOutboxMessagesOnce<Requirements>(
   catalog: InstalledModuleCatalog,
   match: InstalledOutboxMatch<Requirements>,
-): Effect.Effect<
-  OutboxMatchResult,
-  OutboxPersistenceError | OutboxWorkerDescriptorError,
-  Requirements
->;
+): Effect.Effect<OutboxMatchResult, OutboxPersistenceError | OutboxWorkerDescriptorError, Requirements>;
 export function matchInstalledOutboxMessagesOnce<Requirements>(
   catalog: InstalledModuleCatalog,
   match?: InstalledOutboxMatch<Requirements>,
@@ -68,8 +57,5 @@ const installedOutboxMatcherLoop = installedOutboxMatcherTick.pipe(
   Effect.asVoid,
 );
 
-export const InstalledOutboxMatcherLive: Layer.Layer<
-  never,
-  never,
-  OutboxRuntime | ShellInstalledModuleCatalog
-> = Layer.effectDiscard(installedOutboxMatcherLoop.pipe(Effect.forkScoped, Effect.asVoid));
+export const InstalledOutboxMatcherLive: Layer.Layer<never, never, OutboxRuntime | ShellInstalledModuleCatalog> =
+  Layer.effectDiscard(installedOutboxMatcherLoop.pipe(Effect.forkScoped, Effect.asVoid));

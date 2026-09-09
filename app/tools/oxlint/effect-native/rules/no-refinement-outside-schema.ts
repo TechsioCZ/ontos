@@ -1,4 +1,3 @@
-import { optionRecord } from '../shared/options.ts';
 /**
  * effect-native/no-refinement-outside-schema
  *
@@ -85,28 +84,21 @@ import { optionRecord } from '../shared/options.ts';
  * Report-only: no fixer, no suggestion. Existing violations are the intended output.
  */
 import { defineRule } from '@oxlint/plugins';
-
 import type { Context, ESTree } from '@oxlint/plugins';
 
+import { parentOf, unwrapNode } from '../shared/ast.ts';
 import { collectEffectBindings } from '../shared/effect-imports.ts';
 import type { EffectBindings } from '../shared/effect-imports.ts';
-import { isTestFile, scopePath, matchesGlobs } from '../shared/paths.ts';
+import { optionRecord } from '../shared/options.ts';
 import { stringArray } from '../shared/options.ts';
-import { parentOf, unwrapNode } from '../shared/ast.ts';
+import { isTestFile, scopePath, matchesGlobs } from '../shared/paths.ts';
 
 const DEFAULT_INCLUDE: readonly string[] = ['apps/**', 'verticals/**', 'packages/**', 'scripts/**'];
 
 const DEFAULT_IGNORE: readonly string[] = [];
 
 /** Workspace-internal module specifiers: first-party code can never be the "existing authority". */
-const DEFAULT_INTERNAL_MODULES: readonly string[] = [
-  '@app/**',
-  '@ontos/**',
-  '@akros/**',
-  '~/**',
-  '#*',
-  '#*/**',
-];
+const DEFAULT_INTERNAL_MODULES: readonly string[] = ['@app/**', '@ontos/**', '@akros/**', '~/**', '#*', '#*/**'];
 
 const DEFAULT_ALLOW_DELEGATED_GUARDS: readonly string[] = [];
 
@@ -213,14 +205,24 @@ function collectStatementBindings(
     if ((specifier as { importKind?: string }).importKind === 'type') continue;
     if (specifier.type === 'ImportSpecifier') {
       const imported =
-        specifier.imported.type === 'Identifier'
-          ? specifier.imported.name
-          : String(specifier.imported.value);
-      bindings.set(specifier.local.name, { module, imported, namespace: false });
+        specifier.imported.type === 'Identifier' ? specifier.imported.name : String(specifier.imported.value);
+      bindings.set(specifier.local.name, {
+        module,
+        imported,
+        namespace: false,
+      });
     } else if (specifier.type === 'ImportDefaultSpecifier') {
-      bindings.set(specifier.local.name, { module, imported: 'default', namespace: false });
+      bindings.set(specifier.local.name, {
+        module,
+        imported: 'default',
+        namespace: false,
+      });
     } else if (specifier.type === 'ImportNamespaceSpecifier') {
-      bindings.set(specifier.local.name, { module, imported: '*', namespace: true });
+      bindings.set(specifier.local.name, {
+        module,
+        imported: '*',
+        namespace: true,
+      });
     }
   }
 }
@@ -273,11 +275,7 @@ function resolveNamespaceMember(
 function isArrayIsArrayCall(callee: ESTree.Node): boolean {
   if (callee.type !== 'MemberExpression') return false;
   const object = unwrap(callee.object);
-  return (
-    object.type === 'Identifier' &&
-    object.name === 'Array' &&
-    staticPropertyName(callee) === 'isArray'
-  );
+  return object.type === 'Identifier' && object.name === 'Array' && staticPropertyName(callee) === 'isArray';
 }
 
 /** Everything the file has learned about which local names really are existing authorities. */
@@ -299,27 +297,17 @@ function collectAuthorities(program: ESTree.Program, context: Context): Authorit
   return {
     context,
     bindings: collectEffectBindings(program),
-    barrelLocals: localsFrom(
-      imports,
-      (binding) => binding.namespace && binding.module === 'effect',
-    ),
-    predicateLocals: localsFrom(
-      imports,
-      (binding) => !binding.namespace && PREDICATE_MODULES.has(binding.module),
-    ),
+    barrelLocals: localsFrom(imports, (binding) => binding.namespace && binding.module === 'effect'),
+    predicateLocals: localsFrom(imports, (binding) => !binding.namespace && PREDICATE_MODULES.has(binding.module)),
     schemaNarrowingLocals: localsFrom(
       imports,
       (binding) =>
-        !binding.namespace &&
-        SCHEMA_MODULES.has(binding.module) &&
-        SCHEMA_NARROWING_MEMBERS.has(binding.imported),
+        !binding.namespace && SCHEMA_MODULES.has(binding.module) && SCHEMA_NARROWING_MEMBERS.has(binding.imported),
     ),
     collectionLocals: localsFrom(
       imports,
       (binding) =>
-        !binding.namespace &&
-        EFFECT_MODULE.test(binding.module) &&
-        ARRAY_CALLBACK_METHODS.has(binding.imported),
+        !binding.namespace && EFFECT_MODULE.test(binding.module) && ARRAY_CALLBACK_METHODS.has(binding.imported),
     ),
     imports,
   };
@@ -330,12 +318,10 @@ function hasImportedRoot(node: ESTree.Node, authorities: Authorities): boolean {
   let root = unwrap(node);
   while (root.type === 'MemberExpression') root = unwrap(root.object);
   if (root.type !== 'Identifier' || !authorities.imports.has(root.name)) return false;
-  let scope: ReturnType<Context['sourceCode']['getScope']> | null =
-    authorities.context.sourceCode.getScope(root);
+  let scope: ReturnType<Context['sourceCode']['getScope']> | null = authorities.context.sourceCode.getScope(root);
   while (scope !== null) {
     const variable = scope.set.get(root.name);
-    if (variable !== undefined)
-      return variable.defs.some((definition) => definition.type === 'ImportBinding');
+    if (variable !== undefined) return variable.defs.some((definition) => definition.type === 'ImportBinding');
     scope = scope.upper;
   }
   return false;
@@ -345,8 +331,7 @@ function hasImportedRoot(node: ESTree.Node, authorities: Authorities): boolean {
 function isNativeArray(callee: ESTree.Node, authorities: Authorities): boolean {
   if (!isArrayIsArrayCall(callee) || callee.type !== 'MemberExpression') return false;
   const root = unwrap(callee.object);
-  let scope: ReturnType<Context['sourceCode']['getScope']> | null =
-    authorities.context.sourceCode.getScope(root);
+  let scope: ReturnType<Context['sourceCode']['getScope']> | null = authorities.context.sourceCode.getScope(root);
   while (scope !== null) {
     const variable = scope.set.get('Array');
     if (variable !== undefined) return variable.defs.length === 0;
@@ -385,11 +370,7 @@ function moduleIsExternal(module: string, internalModules: readonly string[]): b
 }
 
 /** `"drizzle-orm#isTable"` (module-qualified) or `"isTable"` (bare) entries of `allowDelegatedGuards`. */
-function matchesDelegateAllowlist(
-  name: string,
-  binding: ImportBinding,
-  allowlist: readonly string[],
-): boolean {
+function matchesDelegateAllowlist(name: string, binding: ImportBinding, allowlist: readonly string[]): boolean {
   return allowlist.some((entry) => {
     const hash = entry.indexOf('#');
     if (hash === -1) return entry === name;
@@ -402,11 +383,7 @@ function matchesDelegateAllowlist(
  * such as Drizzle's `isTable`. Locally declared names — and first-party workspace packages — are never
  * authorities: those are the hand-written refinements A2 is about, merely renamed.
  */
-function isExternalGuardDelegate(
-  name: string,
-  authorities: Authorities,
-  options: RuleOptions,
-): boolean {
+function isExternalGuardDelegate(name: string, authorities: Authorities, options: RuleOptions): boolean {
   const binding = authorities.imports.get(name);
   if (binding === undefined || binding.namespace) return false;
   if (matchesDelegateAllowlist(name, binding, options.allowDelegatedGuards)) return true;
@@ -450,11 +427,7 @@ function delegatesToAuthority(
   return isAuthorityCallee(unwrap(node.callee), authorities, options);
 }
 
-function isAuthorityCallee(
-  callee: ESTree.Node,
-  authorities: Authorities,
-  options: RuleOptions,
-): boolean {
+function isAuthorityCallee(callee: ESTree.Node, authorities: Authorities, options: RuleOptions): boolean {
   if (isNativeArray(callee, authorities)) return true;
   if (isPredicateAuthority(callee, authorities)) return true;
   if (isSchemaNarrowingApplication(callee, authorities)) return true;
@@ -471,11 +444,7 @@ function isAuthorityCallee(
  * Point-free: the annotated value *is* the narrowing function — `= Schema.is(S)`, `= is(S)`,
  * `= isString`, `= Predicate.isString`. There is no argument to check; the delegate is the guard.
  */
-function isAuthorityFunction(
-  expression: ESTree.Node,
-  authorities: Authorities,
-  options: RuleOptions,
-): boolean {
+function isAuthorityFunction(expression: ESTree.Node, authorities: Authorities, options: RuleOptions): boolean {
   const node = unwrap(expression);
   if (isSchemaNarrowingApplication(node, authorities)) return true;
   if (node.type === 'Identifier') {
@@ -524,8 +493,7 @@ function annotatedInitialiser(owner: ESTree.Node): ESTree.Node | null {
 }
 
 function initialiserAt(node: ESTree.Node): ESTree.Node | null | undefined {
-  if (node.type === 'TSAsExpression' || node.type === 'TSSatisfiesExpression')
-    return node.expression;
+  if (node.type === 'TSAsExpression' || node.type === 'TSSatisfiesExpression') return node.expression;
   if (node.type === 'VariableDeclarator') return node.init ?? null;
   if (node.type === 'PropertyDefinition') return node.value ?? null;
   return undefined;
@@ -610,8 +578,7 @@ function isStructuralNarrowingOnly(expression: ESTree.Node): boolean {
   if (node.type === 'LogicalExpression') {
     return isStructuralNarrowingOnly(node.left) && isStructuralNarrowingOnly(node.right);
   }
-  if (node.type === 'UnaryExpression' && node.operator === '!')
-    return isStructuralNarrowingOnly(node.argument);
+  if (node.type === 'UnaryExpression' && node.operator === '!') return isStructuralNarrowingOnly(node.argument);
   return false;
 }
 
@@ -636,16 +603,13 @@ function guardedParameterType(owner: ESTree.Node, parameterName: string | null):
   for (const param of params) {
     const identifier = parameterIdentifier(param);
     if (identifier === null || identifier.name !== parameterName) continue;
-    const annotation =
-      (identifier as { typeAnnotation?: ESTree.TSTypeAnnotation | null }).typeAnnotation ?? null;
+    const annotation = (identifier as { typeAnnotation?: ESTree.TSTypeAnnotation | null }).typeAnnotation ?? null;
     return annotation?.typeAnnotation.type ?? null;
   }
   return null;
 }
 
-function parameterIdentifier(
-  param: ESTree.Node,
-): Extract<ESTree.Node, { type: 'Identifier' }> | null {
+function parameterIdentifier(param: ESTree.Node): Extract<ESTree.Node, { type: 'Identifier' }> | null {
   let target = param;
   if (target.type === 'RestElement') target = target.argument;
   if (target.type === 'AssignmentPattern') target = target.left;
@@ -696,26 +660,18 @@ const NAME_TRANSPARENT_PARENTS = new Set([
 ]);
 
 /** Best-effort declaration name for the diagnostic (`isNonEmptyString`, `#isReady`, `(anonymous)`). */
-const NAMED_PROPERTY_TYPES = new Set([
-  'Property',
-  'PropertyDefinition',
-  'MethodDefinition',
-  'TSPropertySignature',
-]);
+const NAMED_PROPERTY_TYPES = new Set(['Property', 'PropertyDefinition', 'MethodDefinition', 'TSPropertySignature']);
 
 function assignmentName(left: ESTree.Node): string {
   const node = unwrap(left);
   if (node.type === 'Identifier') return node.name;
-  return node.type === 'MemberExpression'
-    ? (staticPropertyName(node) ?? '(anonymous)')
-    : '(anonymous)';
+  return node.type === 'MemberExpression' ? (staticPropertyName(node) ?? '(anonymous)') : '(anonymous)';
 }
 
 function declarationName(node: ESTree.Node): string | null {
   if (node.type === 'VariableDeclarator' || node.type === 'TSTypeAliasDeclaration')
     return keyName(node.id) ?? '(anonymous)';
-  if (NAMED_PROPERTY_TYPES.has(node.type))
-    return keyName((node as { key?: ESTree.Node }).key ?? null) ?? '(anonymous)';
+  if (NAMED_PROPERTY_TYPES.has(node.type)) return keyName((node as { key?: ESTree.Node }).key ?? null) ?? '(anonymous)';
   if (node.type === 'AssignmentExpression') return assignmentName(node.left);
   return null;
 }
@@ -746,18 +702,9 @@ function condense(text: string, limit: number): string {
   return collapsed.length > limit ? `${collapsed.slice(0, limit - 1)}…` : collapsed;
 }
 
-function allowsStructuralBody(
-  owner: ESTree.Node,
-  body: ESTree.Node,
-  parameterName: string | null,
-): boolean {
+function allowsStructuralBody(owner: ESTree.Node, body: ESTree.Node, parameterName: string | null): boolean {
   const parameterType = guardedParameterType(owner, parameterName);
-  if (
-    parameterType !== null &&
-    OPAQUE_INPUT_TYPES.has(parameterType) &&
-    isStructuralNarrowingOnly(body)
-  )
-    return true;
+  if (parameterType !== null && OPAQUE_INPUT_TYPES.has(parameterType) && isStructuralNarrowingOnly(body)) return true;
   return isInstanceofAnchored(body, parameterName);
 }
 

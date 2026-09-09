@@ -1,6 +1,8 @@
-import { Effect, FileSystem } from 'effect';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
+
+import { Effect, FileSystem } from 'effect';
+
 import { runScaffoldEffect } from '../../../../scripts/scaffolding/cli.mts';
 import {
   MODULE_MANIFEST_RESOURCE_SLOT_END,
@@ -25,7 +27,9 @@ const writeFixtureFile = Effect.fn('writeFixtureFile')(function* writeFixtureFil
 ) {
   const fileSystem = yield* FileSystem.FileSystem;
   const filePath = path.join(root, relativePath);
-  yield* fileSystem.makeDirectory(path.dirname(filePath), { recursive: true });
+  yield* fileSystem.makeDirectory(path.dirname(filePath), {
+    recursive: true,
+  });
   yield* fileSystem.writeFileString(filePath, content);
 });
 
@@ -37,11 +41,7 @@ const replaceRequired = (source: string, current: string, replacement: string): 
 };
 
 const createWorkspace = Effect.fn('createWorkspace')(function* createWorkspaceEffect(root: string) {
-  yield* writeFixtureFile(
-    root,
-    'package.json',
-    json({ name: 'generated-owner-fixture', private: true }),
-  );
+  yield* writeFixtureFile(root, 'package.json', json({ name: 'generated-owner-fixture', private: true }));
   yield* writeFixtureFile(
     root,
     `verticals/${GENERATED_OWNER.slug}/module-federation.config.ts`,
@@ -50,7 +50,10 @@ const createWorkspace = Effect.fn('createWorkspace')(function* createWorkspaceEf
   yield* writeFixtureFile(
     root,
     `verticals/${GENERATED_OWNER.slug}/tsconfig.json`,
-    json({ compilerOptions: { composite: true }, include: ['api', 'shared', 'src'] }),
+    json({
+      compilerOptions: { composite: true },
+      include: ['api', 'shared', 'src'],
+    }),
   );
   yield* writeFixtureFile(
     root,
@@ -110,7 +113,10 @@ export default defineEffectBff({ api: isolationOwnerApi, layer });
           domain: 'isolation',
           id: GENERATED_OWNER.appId,
           kind: 'vertical',
-          moduleFederation: { name: 'verticalIsolationOwner', role: 'remote' },
+          moduleFederation: {
+            name: 'verticalIsolationOwner',
+            role: 'remote',
+          },
           package: '@app/isolation-owner',
           path: `verticals/${GENERATED_OWNER.slug}`,
         },
@@ -119,48 +125,47 @@ export default defineEffectBff({ api: isolationOwnerApi, layer });
   );
 });
 
-const linkRuntimeDependencies = Effect.fn('linkRuntimeDependencies')(
-  function* linkRuntimeDependenciesEffect(root: string) {
-    const fileSystem = yield* FileSystem.FileSystem;
-    yield* fileSystem.makeDirectory(path.join(root, 'node_modules', '@app'), { recursive: true });
-    yield* fileSystem.makeDirectory(path.join(root, 'node_modules', '@modern-js'), {
-      recursive: true,
-    });
-    yield* Effect.all(
-      [
-        fileSystem.symlink(
-          path.join(appRoot, 'packages/core-runtime'),
-          path.join(root, 'node_modules/@app/core-runtime'),
-        ),
-        fileSystem.symlink(
-          path.join(appRoot, 'packages/shared-contracts'),
-          path.join(root, 'node_modules/@app/shared-contracts'),
-        ),
-        fileSystem.symlink(
-          path.join(appRoot, 'packages/gateway-principal-verifier'),
-          path.join(root, 'node_modules/@app/gateway-principal-verifier'),
-        ),
-        fileSystem.symlink(
-          path.join(appRoot, 'apps/shell-super-app/node_modules/@modern-js/plugin-bff'),
-          path.join(root, 'node_modules/@modern-js/plugin-bff'),
-        ),
-        fileSystem.symlink(
-          path.join(appRoot, 'apps/shell-super-app/node_modules/drizzle-orm'),
-          path.join(root, 'node_modules/drizzle-orm'),
-        ),
-        fileSystem.symlink(
-          path.join(appRoot, 'node_modules/effect'),
-          path.join(root, 'node_modules/effect'),
-        ),
-        fileSystem.symlink(
-          path.join(appRoot, 'apps/shell-super-app/node_modules/jose'),
-          path.join(root, 'node_modules/jose'),
-        ),
-      ],
-      { concurrency: 'unbounded', discard: true },
-    );
-  },
-);
+const linkRuntimeDependencies = Effect.fn('linkRuntimeDependencies')(function* linkRuntimeDependenciesEffect(
+  root: string,
+) {
+  const fileSystem = yield* FileSystem.FileSystem;
+  yield* fileSystem.makeDirectory(path.join(root, 'node_modules', '@app'), {
+    recursive: true,
+  });
+  yield* fileSystem.makeDirectory(path.join(root, 'node_modules', '@modern-js'), {
+    recursive: true,
+  });
+  yield* Effect.all(
+    [
+      fileSystem.symlink(
+        path.join(appRoot, 'packages/core-runtime'),
+        path.join(root, 'node_modules/@app/core-runtime'),
+      ),
+      fileSystem.symlink(
+        path.join(appRoot, 'packages/shared-contracts'),
+        path.join(root, 'node_modules/@app/shared-contracts'),
+      ),
+      fileSystem.symlink(
+        path.join(appRoot, 'packages/gateway-principal-verifier'),
+        path.join(root, 'node_modules/@app/gateway-principal-verifier'),
+      ),
+      fileSystem.symlink(
+        path.join(appRoot, 'apps/shell-super-app/node_modules/@modern-js/plugin-bff'),
+        path.join(root, 'node_modules/@modern-js/plugin-bff'),
+      ),
+      fileSystem.symlink(
+        path.join(appRoot, 'apps/shell-super-app/node_modules/drizzle-orm'),
+        path.join(root, 'node_modules/drizzle-orm'),
+      ),
+      fileSystem.symlink(path.join(appRoot, 'node_modules/effect'), path.join(root, 'node_modules/effect')),
+      fileSystem.symlink(
+        path.join(appRoot, 'apps/shell-super-app/node_modules/jose'),
+        path.join(root, 'node_modules/jose'),
+      ),
+    ],
+    { concurrency: 'unbounded', discard: true },
+  );
+});
 
 const addResourceType = Effect.fn('addResourceType')(function* addResourceTypeEffect(root: string) {
   const fileSystem = yield* FileSystem.FileSystem;
@@ -543,16 +548,8 @@ const adaptGeneratedOwner = Effect.fn('adaptGeneratedOwner')(function* adaptGene
   );
   yield* Effect.all(
     [
-      writeFixtureFile(
-        root,
-        `${verticalRoot}/src/isolation/instrumentation.ts`,
-        instrumentationSource,
-      ),
-      writeFixtureFile(
-        root,
-        `${verticalRoot}/src/isolation/owner-repository.ts`,
-        ownerRepositorySource(schemaName),
-      ),
+      writeFixtureFile(root, `${verticalRoot}/src/isolation/instrumentation.ts`, instrumentationSource),
+      writeFixtureFile(root, `${verticalRoot}/src/isolation/owner-repository.ts`, ownerRepositorySource(schemaName)),
       writeFixtureFile(root, `${verticalRoot}/src/api/resource-detail.read.ts`, detailReadSource),
       writeFixtureFile(root, `${verticalRoot}/src/api/resource-list.read.ts`, listReadSource),
       writeFixtureFile(root, `${verticalRoot}/src/search/records.provider.ts`, searchReadSource),

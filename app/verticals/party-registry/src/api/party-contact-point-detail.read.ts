@@ -7,12 +7,13 @@ import {
 } from '@app/core-runtime';
 import type { ReadHandlerContext } from '@app/core-runtime';
 import { Effect, Option } from 'effect';
+
 import {
   PartyContactPointDetailRequestSchema,
   PartyContactPointDetailResponseSchema,
 } from '../../shared/apis/party-contact-point-detail.ts';
-import type { PartyContactPoint } from '../../shared/domain/contact-point.ts';
 import type { PartyContactPointPersistenceUnavailable } from '../../shared/domain/contact-point-errors.ts';
+import type { PartyContactPoint } from '../../shared/domain/contact-point.ts';
 import { findPartyContactPointRecord } from '../services/party-contact-point-persistence.service.ts';
 
 const partyContactPointDetailEntrypoint = defineTenantModuleEntrypoint({
@@ -65,13 +66,15 @@ export const partyContactPointDetailRead = defineRead(
                 reason: 'The requested Party Contact Point does not exist',
               }),
             )
-          : Effect.succeed({ evidence: { resultCount: 1 }, result: contactPoint.value }),
+          : Effect.succeed({
+              evidence: { resultCount: 1 },
+              result: contactPoint.value,
+            }),
       ),
     ),
   (transaction, scope) =>
     Effect.succeed({
-      find: (contactPointId: string) =>
-        findPartyContactPointRecord(transaction, scope, contactPointId),
+      find: (contactPointId: string) => findPartyContactPointRecord(transaction, scope, contactPointId),
     }),
   () => ({ kind: 'tenant', permission: 'read_party_identity' }),
 );

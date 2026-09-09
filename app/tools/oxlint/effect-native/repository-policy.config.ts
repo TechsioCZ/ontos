@@ -1,5 +1,6 @@
-import { testRestrictedImports } from './shared/test-restricted-imports.ts';
 import { defineConfig } from 'oxlint';
+
+import { testRestrictedImports } from './shared/test-restricted-imports.ts';
 
 /** Repository policies also cover tooling tests and root configuration files. */
 export default defineConfig({

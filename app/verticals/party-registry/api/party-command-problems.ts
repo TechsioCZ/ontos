@@ -1,4 +1,3 @@
-import { failAuthenticatedProblem } from './fail-authenticated-problem.ts';
 import type { ActionCoreError } from '@app/core-runtime';
 import { Effect, HttpApiMiddleware } from '@modern-js/plugin-bff/effect-edge';
 import { Match, Schema } from 'effect';
@@ -20,15 +19,13 @@ import {
 } from '../shared/command-api.ts';
 import type { PartyCommandProblem } from '../shared/command-api.ts';
 import { ActionInvocationIdSchema } from '../shared/domain/correction-contracts.ts';
+import { failAuthenticatedProblem } from './fail-authenticated-problem.ts';
 import type { partyCommandRegistrations } from './party-command-registrations.ts';
 
 export type PartyActionError =
   | ActionCoreError
   | (typeof partyCommandRegistrations)[keyof typeof partyCommandRegistrations]['descriptor']['domainErrorSchema']['Type'];
-type ProblemOf<Tag extends PartyCommandProblem['_tag']> = Extract<
-  PartyCommandProblem,
-  { readonly _tag: Tag }
->;
+type ProblemOf<Tag extends PartyCommandProblem['_tag']> = Extract<PartyCommandProblem, { readonly _tag: Tag }>;
 
 const problemStatus = {
   authentication: 401,
@@ -71,13 +68,10 @@ export const partyCommandProblem = {
       title: 'Party Registry resource not found',
       type: 'https://ontos.dev/problems/party-command-not-found',
     }),
-  conflict: (
-    code: ProblemOf<'PartyCommandConflictProblem'>['code'],
-  ): ProblemOf<'PartyCommandConflictProblem'> =>
+  conflict: (code: ProblemOf<'PartyCommandConflictProblem'>['code']): ProblemOf<'PartyCommandConflictProblem'> =>
     PartyCommandConflictProblemSchema.make({
       code,
-      detail:
-        'The command conflicts with the current state. Review the resource before trying again.',
+      detail: 'The command conflicts with the current state. Review the resource before trying again.',
       status: problemStatus.conflict,
       title: 'Party Registry command conflict',
       type: 'https://ontos.dev/problems/party-command-conflict',
@@ -109,8 +103,7 @@ export const partyCommandProblem = {
     }),
   indeterminate: (invocationId: string): ProblemOf<'PartyCommandCommitIndeterminateProblem'> =>
     PartyCommandCommitIndeterminateProblemSchema.make({
-      detail:
-        'The command commit is uncertain. Resolve this invocation before considering any further command.',
+      detail: 'The command commit is uncertain. Resolve this invocation before considering any further command.',
       invocationId: ActionInvocationIdSchema.make(invocationId),
       resolution: 'RESOLVE_COMMIT',
       retryCommand: false,
@@ -127,9 +120,7 @@ export const partyCommandProblem = {
     }),
 };
 
-export const isPartyCommandAuthenticationProblem = Schema.is(
-  PartyCommandAuthenticationProblemSchema,
-);
+export const isPartyCommandAuthenticationProblem = Schema.is(PartyCommandAuthenticationProblemSchema);
 export const failPartyCommandProblem = <Problem extends PartyCommandProblem>(mapped: Problem) =>
   failAuthenticatedProblem(mapped, isPartyCommandAuthenticationProblem);
 
@@ -144,8 +135,7 @@ export const mapPartyActionProblem = (error: PartyActionError): PartyCommandProb
       ActionAlreadyCommitted: (failure) =>
         PartyCommandAlreadyCommittedProblemSchema.make({
           code: failure.code,
-          detail:
-            'This command is already committed. Refresh governed reads to retrieve its outcome.',
+          detail: 'This command is already committed. Refresh governed reads to retrieve its outcome.',
           invocationId: ActionInvocationIdSchema.make(failure.invocationId),
           resolution: 'REFRESH_GOVERNED_READS',
           retryCommand: false,
@@ -154,8 +144,7 @@ export const mapPartyActionProblem = (error: PartyActionError): PartyCommandProb
           type: 'https://ontos.dev/problems/party-command-already-committed',
         }),
       ActionCollectorError: partyCommandProblem.internal,
-      ActionCommitIndeterminate: (failure) =>
-        partyCommandProblem.indeterminate(failure.invocationId),
+      ActionCommitIndeterminate: (failure) => partyCommandProblem.indeterminate(failure.invocationId),
       ActionHandlerExecutionError: partyCommandProblem.internal,
       ActionIdempotencyKeyRequired: partyCommandProblem.precondition,
       ActionInvocationNotFound: partyCommandProblem.notFound,
@@ -199,8 +188,7 @@ export const mapPartyActionProblem = (error: PartyActionError): PartyCommandProb
           aliasPartyRef: failure.aliasPartyRef,
           canonicalPartyRef: failure.canonicalPartyRef,
           code: failure.code,
-          detail:
-            'This Party is an alias. Review the canonical Party before issuing a new command.',
+          detail: 'This Party is an alias. Review the canonical Party before issuing a new command.',
           status: problemStatus.conflict,
           title: 'Alias write rejected',
           type: 'https://ontos.dev/problems/party-alias-write-rejected',
@@ -218,13 +206,11 @@ export const mapPartyActionProblem = (error: PartyActionError): PartyCommandProb
       PartyLifecycleConflict: (failure) => partyCommandProblem.conflict(failure.code),
       PartyNotFound: partyCommandProblem.notFound,
       PartyOfficialIdentifierNotFound: partyCommandProblem.notFound,
-      PartyOfficialIdentifierUpdateConflict: (failure) =>
-        partyCommandProblem.conflict(failure.code),
+      PartyOfficialIdentifierUpdateConflict: (failure) => partyCommandProblem.conflict(failure.code),
       PartyPersistenceUnavailable: partyCommandProblem.unavailable,
       PartyRelationshipCorrectionRequired: (failure) => partyCommandProblem.conflict(failure.code),
       PartyRelationshipEndpointNotFound: partyCommandProblem.notFound,
-      PartyRelationshipEndpointTypeMismatch: (failure) =>
-        partyCommandProblem.ineligible(failure.code),
+      PartyRelationshipEndpointTypeMismatch: (failure) => partyCommandProblem.ineligible(failure.code),
       PartyRelationshipInvalidInterval: (failure) => partyCommandProblem.ineligible(failure.code),
       PartyRelationshipNotFound: partyCommandProblem.notFound,
       PartyRelationshipOverlapConflict: (failure) => partyCommandProblem.conflict(failure.code),

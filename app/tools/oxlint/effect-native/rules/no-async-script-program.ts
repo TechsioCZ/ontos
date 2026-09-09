@@ -52,14 +52,11 @@
  * Report-only: no fixers, no suggestions.
  */
 import { defineRule } from '@oxlint/plugins';
-
 import type { Context, ESTree, Ranged } from '@oxlint/plugins';
 
 import { collectEffectBindings } from '../shared/effect-imports.ts';
 import type { EffectBindings as ImportedEffectBindings } from '../shared/effect-imports.ts';
 type EffectBindings = ImportedEffectBindings & { context: Context };
-import { globToRegExp, inScriptScope, scriptScope, matchesAny } from '../shared/paths.ts';
-
 import {
   parentOf,
   skipWrappers as climbWrappers,
@@ -69,8 +66,9 @@ import {
   literalText,
   propertyText,
 } from '../shared/ast.ts';
-import { provenance } from '../shared/provenance.ts';
 import { stringList, booleanOption } from '../shared/options.ts';
+import { globToRegExp, inScriptScope, scriptScope, matchesAny } from '../shared/paths.ts';
+import { provenance } from '../shared/provenance.ts';
 
 type AnyNode = ESTree.Node;
 
@@ -84,12 +82,7 @@ const TRANSPARENT_PARENTS = new Set([
   'TSTypeAssertion',
 ]);
 
-const FUNCTION_LIKE = new Set([
-  'ArrowFunctionExpression',
-  'FunctionDeclaration',
-  'FunctionExpression',
-  'StaticBlock',
-]);
+const FUNCTION_LIKE = new Set(['ArrowFunctionExpression', 'FunctionDeclaration', 'FunctionExpression', 'StaticBlock']);
 
 /** Length of the `async` / `await` keyword, used to anchor a diagnostic on the keyword itself. */
 const KEYWORD_LENGTH = 5;
@@ -158,16 +151,9 @@ function qualifiedEffectName(node: AnyNode, bindings: EffectBindings): string | 
 }
 
 /** `call` is one of the configured driver-edge constructors (`Effect.tryPromise`, …). */
-function isDriverEdgeCall(
-  call: AnyNode,
-  bindings: EffectBindings,
-  callees: readonly string[],
-): boolean {
+function isDriverEdgeCall(call: AnyNode, bindings: EffectBindings, callees: readonly string[]): boolean {
   if (call.type !== 'CallExpression') return false;
-  const qualified = qualifiedEffectName(
-    unwrap((call as ESTree.CallExpression).callee as AnyNode),
-    bindings,
-  );
+  const qualified = qualifiedEffectName(unwrap((call as ESTree.CallExpression).callee as AnyNode), bindings);
   return qualified !== null && callees.includes(qualified);
 }
 
@@ -183,11 +169,7 @@ function isFirstArgumentOf(node: AnyNode, call: AnyNode): boolean {
  *   `Effect.promise(async () => …)`, `Effect.callback(async (resume) => …)` or
  *   `Effect.tryPromise({ try: async () => …, catch: toFailure })`.
  */
-function isDriverEdgeFunction(
-  fn: AnyNode,
-  bindings: EffectBindings,
-  callees: readonly string[],
-): boolean {
+function isDriverEdgeFunction(fn: AnyNode, bindings: EffectBindings, callees: readonly string[]): boolean {
   const { node, parent } = skipWrappers(fn);
   if (parent === null) return false;
   if (isFirstArgumentOf(node, parent)) return isDriverEdgeCall(parent, bindings, callees);
@@ -203,11 +185,7 @@ function isDriverEdgeFunction(
 }
 
 /** The function, or any enclosing function, is a driver-edge Promise seam. */
-function insideDriverEdge(
-  fn: AnyNode,
-  bindings: EffectBindings,
-  callees: readonly string[],
-): boolean {
+function insideDriverEdge(fn: AnyNode, bindings: EffectBindings, callees: readonly string[]): boolean {
   let current: AnyNode | null = fn;
   while (current !== null) {
     if (isDriverEdgeFunction(current, bindings, callees)) return true;
@@ -237,29 +215,16 @@ function isRunAdapterExpression(node: AnyNode, context: Context): boolean {
   if (expression?.type !== 'CallExpression') return false;
   const callee = syntax(expression.callee);
   if (isRunAdapter(context, callee)) return true;
-  if (
-    callee?.type === 'MemberExpression' &&
-    ['then', 'catch', 'finally'].includes(propertyText(callee) ?? '')
-  )
+  if (callee?.type === 'MemberExpression' && ['then', 'catch', 'finally'].includes(propertyText(callee) ?? ''))
     return isRunAdapterExpression(callee.object, context);
-  return (
-    isPipeCall(context, callee) &&
-    expression.arguments.some((arg: AnyNode) => isRunAdapter(context, arg))
-  );
+  return isPipeCall(context, callee) && expression.arguments.some((arg: AnyNode) => isRunAdapter(context, arg));
 }
 
-const MEMBER_PARENTS = new Set([
-  'Property',
-  'MethodDefinition',
-  'PropertyDefinition',
-  'TSAbstractMethodDefinition',
-]);
+const MEMBER_PARENTS = new Set(['Property', 'MethodDefinition', 'PropertyDefinition', 'TSAbstractMethodDefinition']);
 
 function variableFunctionName(fn: AnyNode): Extract<AnyNode, { type: 'Identifier' }> | null {
   const parent = parentOf(fn);
-  return parent?.type === 'VariableDeclarator' &&
-    parent.init === fn &&
-    parent.id?.type === 'Identifier'
+  return parent?.type === 'VariableDeclarator' && parent.init === fn && parent.id?.type === 'Identifier'
     ? parent.id
     : null;
 }
@@ -272,8 +237,7 @@ function declaredFunctionName(fn: AnyNode): Extract<AnyNode, { type: 'Identifier
 /** A tight report anchor: the declared name, the member key, or the `async` keyword itself. */
 function functionAnchor(fn: AnyNode): Ranged {
   const parent = parentOf(fn);
-  const memberKey =
-    parent && MEMBER_PARENTS.has(parent.type) && parent.value === fn ? parent.key : null;
+  const memberKey = parent && MEMBER_PARENTS.has(parent.type) && parent.value === fn ? parent.key : null;
   const anchor = memberKey ?? variableFunctionName(fn) ?? declaredFunctionName(fn);
   return anchor ? { range: [...(anchor as ESTree.Span).range] } : keywordAnchor(fn, KEYWORD_LENGTH);
 }
@@ -352,10 +316,13 @@ export const rule = defineRule({
     // `scriptPaths` is an explicit opt-in that overrides both built-in scope checks.
     const forced = matchesAny(filename, options.scriptPaths);
     if (!forced && !inScriptScope(scriptScope(filename))) return {};
-    if (options.allowPaths.some((glob) => globToRegExp(glob).test(scriptScope(filename))))
-      return {};
+    if (options.allowPaths.some((glob) => globToRegExp(glob).test(scriptScope(filename)))) return {};
 
-    let bindings: EffectBindings = { importsEffect: false, namespaces: new Map(), context };
+    let bindings: EffectBindings = {
+      importsEffect: false,
+      namespaces: new Map(),
+      context,
+    };
 
     const reportAsync = (node: AnyNode, isAsync: boolean): void => {
       if (!isAsync) return;
@@ -389,21 +356,26 @@ export const rule = defineRule({
         // `await` inside an async function is covered by the `asyncFunction` diagnostic.
         if (nearestFunction(site) !== null) return;
         if (isRunAdapterExpression(node.argument as unknown as AnyNode, context)) return;
-        context.report({ node: keywordAnchor(site, KEYWORD_LENGTH), messageId: 'topLevelAwait' });
+        context.report({
+          node: keywordAnchor(site, KEYWORD_LENGTH),
+          messageId: 'topLevelAwait',
+        });
       },
       VariableDeclaration(node) {
-        if (
-          options.reportTopLevelAwait &&
-          node.kind === 'await using' &&
-          nearestFunction(node) === null
-        )
-          context.report({ node: keywordAnchor(node, KEYWORD_LENGTH), messageId: 'topLevelAwait' });
+        if (options.reportTopLevelAwait && node.kind === 'await using' && nearestFunction(node) === null)
+          context.report({
+            node: keywordAnchor(node, KEYWORD_LENGTH),
+            messageId: 'topLevelAwait',
+          });
       },
       ForOfStatement(node) {
         if (!options.reportTopLevelAwait || node.await !== true) return;
         const site = node as unknown as AnyNode;
         if (nearestFunction(site) !== null) return;
-        context.report({ node: keywordAnchor(site, 3), messageId: 'topLevelForAwait' });
+        context.report({
+          node: keywordAnchor(site, 3),
+          messageId: 'topLevelForAwait',
+        });
       },
     };
   },

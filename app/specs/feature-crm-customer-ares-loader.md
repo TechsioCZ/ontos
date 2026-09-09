@@ -8,27 +8,19 @@ created: 2026-08-17
 
 ## Feature Description
 
-Add an owner-private Customer presentation component containing exactly one IČO input and one lookup
-button. It validates and emits a normalized IČO; its parent owns the generated BFF Effect, typed
-errors, and returned Customer data.
+Add an owner-private Customer presentation component containing exactly one IČO input and one lookup button. It validates and emits a normalized IČO; its parent owns the generated BFF Effect, typed errors, and returned Customer data.
 
 ## User Story
 
-As a CRM user creating a Customer
-I want a small ARES lookup control
-So that I can request business data only after entering a valid IČO
+As a CRM user creating a Customer I want a small ARES lookup control So that I can request business data only after entering a valid IČO
 
 ## Problem Statement
 
-The create page needs a reusable interaction surface, but frontend architecture prohibits reusable
-presentation from fetching, executing Effects, receiving query objects, or decoding domain errors.
-It must also avoid accidentally submitting the adjacent Customer form.
+The create page needs a reusable interaction surface, but frontend architecture prohibits reusable presentation from fetching, executing Effects, receiving query objects, or decoding domain errors. It must also avoid accidentally submitting the adjacent Customer form.
 
 ## Solution Statement
 
-Create `CustomerAresLoader` inside the Customer feature. Compose UI-kit `FormInput`, `Button`, and
-`StatusText`; keep local input/validation interaction only; emit `onLookup(ico)` once per valid user
-intent; and receive pending/disabled/status state as plain props.
+Create `CustomerAresLoader` inside the Customer feature. Compose UI-kit `FormInput`, `Button`, and `StatusText`; keep local input/validation interaction only; emit `onLookup(ico)` once per valid user intent; and receive pending/disabled/status state as plain props.
 
 ## Relevant Files
 
@@ -48,18 +40,15 @@ Use these files to implement the feature:
 
 ### Phase 1: Foundation
 
-Define plain copy/status/callback props and an exact IČO normalization rule, without importing the
-generated lookup client or Customer domain contract.
+Define plain copy/status/callback props and an exact IČO normalization rule, without importing the generated lookup client or Customer domain contract.
 
 ### Phase 2: Core Implementation
 
-Compose one input, one button, inline validation, loading/disabled behavior, and keyboard submission
-using existing UI-kit components.
+Compose one input, one button, inline validation, loading/disabled behavior, and keyboard submission using existing UI-kit components.
 
 ### Phase 3: Integration
 
-Prove the component can render as a sibling form next to `CustomerForm`, with all application and
-result handling left to the future create-page owner.
+Prove the component can render as a sibling form next to `CustomerForm`, with all application and result handling left to the future create-page owner.
 
 ## Step by Step Tasks
 
@@ -93,13 +82,11 @@ IMPORTANT: Execute every step in order, top to bottom.
 
 ### Unit Tests
 
-Render with plain callbacks and test IČO validation, keyboard/pointer behavior, interaction guards,
-accessible errors/status, and sibling-form isolation.
+Render with plain callbacks and test IČO validation, keyboard/pointer behavior, interaction guards, accessible errors/status, and sibling-form isolation.
 
 ### Integration Tests
 
-Not required here; the create-page integration spec owns the real generated BFF client and returned
-data flow.
+Not required here; the create-page integration spec owns the real generated BFF client and returned data flow.
 
 ### Edge Cases
 

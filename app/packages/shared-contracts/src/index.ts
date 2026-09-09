@@ -54,11 +54,7 @@ export type {
   MicroVerticalReadiness,
 } from './microvertical-api-baseline.ts';
 export { makeOperationGateway } from './operation-gateway.ts';
-export type {
-  OperationGateway,
-  OperationGatewayAttempt,
-  OperationGatewayIssuer,
-} from './operation-gateway.ts';
+export type { OperationGateway, OperationGatewayAttempt, OperationGatewayIssuer } from './operation-gateway.ts';
 
 export const UltramodernPublicSitemapChangeFrequencySchema = Schema.Literals([
   'always',
@@ -69,8 +65,7 @@ export const UltramodernPublicSitemapChangeFrequencySchema = Schema.Literals([
   'yearly',
   'never',
 ]);
-export type UltramodernPublicSitemapChangeFrequency =
-  typeof UltramodernPublicSitemapChangeFrequencySchema.Type;
+export type UltramodernPublicSitemapChangeFrequency = typeof UltramodernPublicSitemapChangeFrequencySchema.Type;
 
 export interface UltramodernPublicSitemapEntry {
   changeFrequency?: UltramodernPublicSitemapChangeFrequency;
@@ -97,8 +92,7 @@ export const UltramodernPerformanceReadinessSignalIdSchema = Schema.Literals([
   'save-data-behavior',
   'cloudflare-ssr-cache-hints',
 ]);
-export type UltramodernPerformanceReadinessSignalId =
-  typeof UltramodernPerformanceReadinessSignalIdSchema.Type;
+export type UltramodernPerformanceReadinessSignalId = typeof UltramodernPerformanceReadinessSignalIdSchema.Type;
 
 export interface UltramodernPerformanceReadinessDiagnosticsConfig {
   /**
@@ -143,13 +137,8 @@ export const ultramodernWorkspaceContract = {
 export const UltramodernWorkspaceLocaleSchema = Schema.Literals(['en', 'cs']);
 export type UltramodernWorkspaceLocale = typeof UltramodernWorkspaceLocaleSchema.Type;
 
-export const UltramodernPerformanceReadinessSignalStatusSchema = Schema.Literals([
-  'pass',
-  'warn',
-  'fail',
-]);
-export type UltramodernPerformanceReadinessSignalStatus =
-  typeof UltramodernPerformanceReadinessSignalStatusSchema.Type;
+export const UltramodernPerformanceReadinessSignalStatusSchema = Schema.Literals(['pass', 'warn', 'fail']);
+export type UltramodernPerformanceReadinessSignalStatus = typeof UltramodernPerformanceReadinessSignalStatusSchema.Type;
 
 export const ultramodernWorkspaceEventNames = {
   navigate: 'ultramodern:navigate',
@@ -172,16 +161,11 @@ const UltramodernWorkspaceJsonValueSchema: Schema.Codec<Schema.Json> = Schema.su
   ]),
 );
 
-export const UltramodernWorkspaceJsonObjectSchema = Schema.Record(
-  Schema.String,
-  UltramodernWorkspaceJsonValueSchema,
-);
+export const UltramodernWorkspaceJsonObjectSchema = Schema.Record(Schema.String, UltramodernWorkspaceJsonValueSchema);
 export type UltramodernWorkspaceJsonObject = typeof UltramodernWorkspaceJsonObjectSchema.Type;
 
 const UltramodernWorkspaceNonEmptyStringSchema = Schema.String.check(Schema.isPattern(/\S/u));
-const UltramodernWorkspaceNonNegativeNumberSchema = Schema.Finite.check(
-  Schema.isGreaterThanOrEqualTo(0),
-);
+const UltramodernWorkspaceNonNegativeNumberSchema = Schema.Finite.check(Schema.isGreaterThanOrEqualTo(0));
 const UltramodernWorkspaceAppIdSchema = UltramodernWorkspaceNonEmptyStringSchema.pipe(
   Schema.brand('UltramodernWorkspaceAppId'),
 );
@@ -214,8 +198,7 @@ export const UltramodernPerformanceSignalPayloadSchema = Schema.Struct({
   signalId: UltramodernPerformanceReadinessSignalIdSchema,
   status: UltramodernPerformanceReadinessSignalStatusSchema,
 });
-export type UltramodernPerformanceSignalPayload =
-  typeof UltramodernPerformanceSignalPayloadSchema.Type;
+export type UltramodernPerformanceSignalPayload = typeof UltramodernPerformanceSignalPayloadSchema.Type;
 
 export interface UltramodernWorkspaceEventPayloadMap {
   'ultramodern:navigate': UltramodernNavigatePayload;
@@ -239,18 +222,15 @@ export class UltramodernWorkspaceEventValidationError<Payload = never> {
 
 export const isUltramodernNavigatePayload = <Payload>(
   payload: Payload,
-): payload is Payload & UltramodernNavigatePayload =>
-  Schema.is(UltramodernNavigatePayloadSchema)(payload);
+): payload is Payload & UltramodernNavigatePayload => Schema.is(UltramodernNavigatePayloadSchema)(payload);
 
 export const isUltramodernRouteSettledPayload = <Payload>(
   payload: Payload,
-): payload is Payload & UltramodernRouteSettledPayload =>
-  Schema.is(UltramodernRouteSettledPayloadSchema)(payload);
+): payload is Payload & UltramodernRouteSettledPayload => Schema.is(UltramodernRouteSettledPayloadSchema)(payload);
 
 export const isUltramodernRemoteReadyPayload = <Payload>(
   payload: Payload,
-): payload is Payload & UltramodernRemoteReadyPayload =>
-  Schema.is(UltramodernRemoteReadyPayloadSchema)(payload);
+): payload is Payload & UltramodernRemoteReadyPayload => Schema.is(UltramodernRemoteReadyPayloadSchema)(payload);
 
 export const isUltramodernPerformanceSignalPayload = <Payload>(
   payload: Payload,
@@ -264,9 +244,7 @@ const ultramodernWorkspaceEventPayloadSchemas = {
   [ultramodernWorkspaceEventNames.routeSettled]: UltramodernRouteSettledPayloadSchema,
 };
 
-const ultramodernWorkspaceCustomEventSchema = <Name extends UltramodernWorkspaceEventName>(
-  eventName: Name,
-) =>
+const ultramodernWorkspaceCustomEventSchema = <Name extends UltramodernWorkspaceEventName>(eventName: Name) =>
   Schema.Opaque<CustomEvent<UltramodernWorkspaceEventPayloadMap[Name]>>()(
     Schema.Struct({
       detail: ultramodernWorkspaceEventPayloadSchemas[eventName],
@@ -274,19 +252,13 @@ const ultramodernWorkspaceCustomEventSchema = <Name extends UltramodernWorkspace
     }),
   );
 
-export const isUltramodernWorkspaceEventPayload = <
-  Name extends UltramodernWorkspaceEventName,
-  Payload,
->(
+export const isUltramodernWorkspaceEventPayload = <Name extends UltramodernWorkspaceEventName, Payload>(
   eventName: Name,
   payload: Payload,
 ): payload is Payload & UltramodernWorkspaceEventPayloadMap[Name] =>
   Schema.is(ultramodernWorkspaceEventPayloadSchemas[eventName])(payload);
 
-export const assertUltramodernWorkspaceEventPayload = <
-  Name extends UltramodernWorkspaceEventName,
-  Payload,
->(
+export const assertUltramodernWorkspaceEventPayload = <Name extends UltramodernWorkspaceEventName, Payload>(
   eventName: Name,
   payload: Payload,
 ): Payload & UltramodernWorkspaceEventPayloadMap[Name] => {
@@ -340,54 +312,33 @@ export const onUltramodernWorkspaceEvent = <Name extends UltramodernWorkspaceEve
   };
 };
 
-export const dispatchUltramodernNavigate = (
-  target: EventTarget,
-  payload: UltramodernNavigatePayload,
-) => dispatchUltramodernWorkspaceEvent(target, ultramodernWorkspaceEventNames.navigate, payload);
+export const dispatchUltramodernNavigate = (target: EventTarget, payload: UltramodernNavigatePayload) =>
+  dispatchUltramodernWorkspaceEvent(target, ultramodernWorkspaceEventNames.navigate, payload);
 
-export const dispatchUltramodernRouteSettled = (
-  target: EventTarget,
-  payload: UltramodernRouteSettledPayload,
-) =>
+export const dispatchUltramodernRouteSettled = (target: EventTarget, payload: UltramodernRouteSettledPayload) =>
   dispatchUltramodernWorkspaceEvent(target, ultramodernWorkspaceEventNames.routeSettled, payload);
 
-export const dispatchUltramodernRemoteReady = (
-  target: EventTarget,
-  payload: UltramodernRemoteReadyPayload,
-) => dispatchUltramodernWorkspaceEvent(target, ultramodernWorkspaceEventNames.remoteReady, payload);
+export const dispatchUltramodernRemoteReady = (target: EventTarget, payload: UltramodernRemoteReadyPayload) =>
+  dispatchUltramodernWorkspaceEvent(target, ultramodernWorkspaceEventNames.remoteReady, payload);
 
 export const dispatchUltramodernPerformanceSignal = (
   target: EventTarget,
   payload: UltramodernPerformanceSignalPayload,
-) =>
-  dispatchUltramodernWorkspaceEvent(
-    target,
-    ultramodernWorkspaceEventNames.performanceSignal,
-    payload,
-  );
+) => dispatchUltramodernWorkspaceEvent(target, ultramodernWorkspaceEventNames.performanceSignal, payload);
 
 export const onUltramodernNavigate = (
   target: EventTarget,
-  handler: (
-    payload: UltramodernNavigatePayload,
-    event: CustomEvent<UltramodernNavigatePayload>,
-  ) => void,
+  handler: (payload: UltramodernNavigatePayload, event: CustomEvent<UltramodernNavigatePayload>) => void,
 ) => onUltramodernWorkspaceEvent(target, ultramodernWorkspaceEventNames.navigate, handler);
 
 export const onUltramodernRouteSettled = (
   target: EventTarget,
-  handler: (
-    payload: UltramodernRouteSettledPayload,
-    event: CustomEvent<UltramodernRouteSettledPayload>,
-  ) => void,
+  handler: (payload: UltramodernRouteSettledPayload, event: CustomEvent<UltramodernRouteSettledPayload>) => void,
 ) => onUltramodernWorkspaceEvent(target, ultramodernWorkspaceEventNames.routeSettled, handler);
 
 export const onUltramodernRemoteReady = (
   target: EventTarget,
-  handler: (
-    payload: UltramodernRemoteReadyPayload,
-    event: CustomEvent<UltramodernRemoteReadyPayload>,
-  ) => void,
+  handler: (payload: UltramodernRemoteReadyPayload, event: CustomEvent<UltramodernRemoteReadyPayload>) => void,
 ) => onUltramodernWorkspaceEvent(target, ultramodernWorkspaceEventNames.remoteReady, handler);
 
 export const onUltramodernPerformanceSignal = (

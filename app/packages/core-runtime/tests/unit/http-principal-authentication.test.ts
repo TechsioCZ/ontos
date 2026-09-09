@@ -1,7 +1,7 @@
-import { expect, it } from 'effect-rstest';
 // @effect-diagnostics strictEffectProvide:off -- Test-owned HTTP application entrypoint; expires: 2026-12-31.
 import { NodeHttpServer } from '@effect/platform-node';
 import { Effect, Match, Redacted, Schema, Predicate } from 'effect';
+import { expect, it } from 'effect-rstest';
 import {
   FetchHttpClient,
   HttpClient,
@@ -9,6 +9,7 @@ import {
   HttpServerRequest,
   HttpServerResponse,
 } from 'effect/unstable/http';
+
 import {
   OperationPrincipalVerificationErrorSchema,
   makeMicroverticalHttpPrincipalAuthentication,
@@ -22,10 +23,8 @@ const principal = {
   tenantId: 'a3000000-0000-4000-8000-000000000001',
 };
 
-const verificationFailure = (
-  _tag: (typeof OperationPrincipalVerificationErrorSchema.Type)['_tag'],
-) =>
-  Schema.decodeUnknownEffect(OperationPrincipalVerificationErrorSchema)({
+const verificationFailure = (_tag: (typeof OperationPrincipalVerificationErrorSchema.Type)['_tag']) =>
+  Schema.decodeEffect(OperationPrincipalVerificationErrorSchema)({
     _tag,
     reason: 'Private verifier diagnostic',
   }).pipe(Effect.orDie);
@@ -51,15 +50,12 @@ const ProblemResponseSchema = Schema.Struct({
 });
 const SuccessResponseSchema = Schema.Struct({ principal: Schema.Unknown });
 
-const problemResponse = (
-  problem: ReturnType<typeof authenticationProblem | typeof unavailableProblem>,
-) =>
+const problemResponse = (problem: ReturnType<typeof authenticationProblem | typeof unavailableProblem>) =>
   HttpServerResponse.jsonUnsafe(problem, { status: problem.status }).pipe(
     HttpServerResponse.setHeader('content-type', 'application/problem+json'),
   );
-const respondWithProblem = (
-  error: ReturnType<typeof authenticationProblem | typeof unavailableProblem>,
-) => Effect.succeed(problemResponse(error));
+const respondWithProblem = (error: ReturnType<typeof authenticationProblem | typeof unavailableProblem>) =>
+  Effect.succeed(problemResponse(error));
 
 it.live(
   'mounted HTTP authentication maps verifier classes, challenges unusable credentials, and stops before private logic',
@@ -85,10 +81,10 @@ it.live(
     });
 
     return Effect.gen(function* mountedAuthenticationHandler() {
-      const server = yield* NodeHttpServer.make(
-        () => process.getBuiltinModule('http').createServer(),
-        { host: '127.0.0.1', port: 0 },
-      );
+      const server = yield* NodeHttpServer.make(() => process.getBuiltinModule('http').createServer(), {
+        host: '127.0.0.1',
+        port: 0,
+      });
       const application = HttpServerRequest.HttpServerRequest.use((request) =>
         authenticate(Redacted.make(request.headers['authorization']), {
           authentication: authenticationProblem,
@@ -97,7 +93,9 @@ it.live(
           Effect.flatMap((trustedPrincipal) =>
             Effect.sync(() => {
               privateOperationReached += 1;
-              return HttpServerResponse.jsonUnsafe({ principal: trustedPrincipal });
+              return HttpServerResponse.jsonUnsafe({
+                principal: trustedPrincipal,
+              });
             }),
           ),
           Effect.catch(respondWithProblem),
@@ -121,19 +119,13 @@ it.live(
         const request =
           authorization === undefined
             ? HttpClientRequest.get(url)
-            : HttpClientRequest.get(url).pipe(
-                HttpClientRequest.setHeader('authorization', authorization),
-              );
+            : HttpClientRequest.get(url).pipe(HttpClientRequest.setHeader('authorization', authorization));
         const response = yield* client.execute(request);
         expect(response.status).toBe(expectedStatus);
         expect(response.headers['content-type']).toBe('application/problem+json');
-        expect(response.headers['www-authenticate']).toBe(
-          expectedStatus === 401 ? 'Bearer' : undefined,
-        );
+        expect(response.headers['www-authenticate']).toBe(expectedStatus === 401 ? 'Bearer' : undefined);
         const rawBody = yield* response.json;
-        expect(rawBody).toEqual(
-          expectedStatus === 401 ? authenticationProblem() : unavailableProblem(),
-        );
+        expect(rawBody).toEqual(expectedStatus === 401 ? authenticationProblem() : unavailableProblem());
         const body = yield* Schema.decodeUnknownEffect(ProblemResponseSchema)(rawBody);
         expect(
           Predicate.isTagged(
@@ -146,14 +138,10 @@ it.live(
       expect(privateOperationReached).toBe(0);
 
       const success = yield* client.execute(
-        HttpClientRequest.get(url).pipe(
-          HttpClientRequest.setHeader('authorization', 'Bearer valid'),
-        ),
+        HttpClientRequest.get(url).pipe(HttpClientRequest.setHeader('authorization', 'Bearer valid')),
       );
       expect(success.status).toBe(200);
-      const successBody = yield* success.json.pipe(
-        Effect.flatMap(Schema.decodeUnknownEffect(SuccessResponseSchema)),
-      );
+      const successBody = yield* success.json.pipe(Effect.flatMap(Schema.decodeUnknownEffect(SuccessResponseSchema)));
       expect(successBody.principal).toEqual(principal);
       expect(privateOperationReached).toBe(1);
     }).pipe(Effect.provide(FetchHttpClient.layer));

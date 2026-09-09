@@ -79,14 +79,13 @@
  * Report-only: no fixer, no suggestion. Existing violations are the intended output.
  */
 import { defineRule } from '@oxlint/plugins';
-
 import type { Context, ESTree } from '@oxlint/plugins';
 
+import { keyName } from '../shared/ast.ts';
 import { collectEffectBindings } from '../shared/effect-imports.ts';
 import type { EffectBindings } from '../shared/effect-imports.ts';
-import { isTestFile, matchesGlobs, scopePath } from '../shared/paths.ts';
 import { optionRecord, stringArray } from '../shared/options.ts';
-import { keyName } from '../shared/ast.ts';
+import { isTestFile, matchesGlobs, scopePath } from '../shared/paths.ts';
 
 const DEFAULT_DISCRIMINANT_KEYS: readonly string[] = ['_tag'];
 
@@ -138,10 +137,7 @@ function propertyKeyName(node: ESTree.TSPropertySignature): string | null {
  * same TypeScript type as `'Found'`, so swapping the quote style must not defeat the rule. A
  * template with substitutions (`` `contacts/${string}` ``) is a *derived* tag and returns `null`.
  */
-function noSubstitutionTemplate(
-  quasis: readonly ESTree.TemplateElement[],
-  substitutions: number,
-): string | null {
+function noSubstitutionTemplate(quasis: readonly ESTree.TemplateElement[], substitutions: number): string | null {
   if (substitutions !== 0 || quasis.length !== 1) return null;
   const only = quasis[0];
   if (only === undefined) return null;
@@ -185,9 +181,7 @@ function tagLiterals(type: ESTree.Node): readonly string[] | null {
 }
 
 /** `Readonly` → `{ name: "Readonly", qualifier: null }`; `Types.Simplify` → `{ …, qualifier: "Types" }`. */
-function referenceName(
-  node: ESTree.TSTypeReference,
-): { name: string; qualifier: string | null } | null {
+function referenceName(node: ESTree.TSTypeReference): { name: string; qualifier: string | null } | null {
   const typeName = node.typeName;
   if (typeName.type === 'Identifier') return { name: typeName.name, qualifier: null };
   if (typeName.type !== 'TSQualifiedName') return null;
@@ -202,11 +196,7 @@ function referenceName(
  * *declared* here. A qualified wrapper (`Types.Simplify<…>`) is only transparent when its qualifier
  * is a tracked `effect` / `effect/*` namespace binding, so a same-named local helper stays opaque.
  */
-function isTransparentWrapper(
-  node: ESTree.TSTypeReference,
-  options: RuleOptions,
-  bindings: EffectBindings,
-): boolean {
+function isTransparentWrapper(node: ESTree.TSTypeReference, options: RuleOptions, bindings: EffectBindings): boolean {
   const reference = referenceName(node);
   if (reference === null) return false;
   if (!options.wrapperTypes.includes(reference.name)) return false;
@@ -230,9 +220,7 @@ function isTransparentHeritage(
 }
 
 /** `Readonly` / `Types.Simplify` written as an expression (heritage clauses, `extends` bases). */
-function expressionReferenceName(
-  node: ESTree.Node,
-): { name: string; qualifier: string | null } | null {
+function expressionReferenceName(node: ESTree.Node): { name: string; qualifier: string | null } | null {
   if (node.type === 'Identifier') return { name: node.name, qualifier: null };
   if (node.type !== 'MemberExpression' || node.computed) return null;
   if (node.property.type !== 'Identifier') return null;
@@ -263,11 +251,7 @@ const TRANSPARENT_TYPE_ANCESTORS: ReadonlySet<string> = new Set([
   'TSTypeReference',
 ]);
 
-function hasTransparentParameterOwner(
-  node: ESTree.Node,
-  options: RuleOptions,
-  bindings: EffectBindings,
-): boolean {
+function hasTransparentParameterOwner(node: ESTree.Node, options: RuleOptions, bindings: EffectBindings): boolean {
   const owner = node.parent;
   if (owner == null) return false;
   if (owner.type === 'TSTypeReference') return isTransparentWrapper(owner, options, bindings);
@@ -301,8 +285,7 @@ function declarationName(current: ESTree.Node, previous: ESTree.Node): string | 
     const owns = current.body === previous || previous.type === 'TSInterfaceHeritage';
     return owns ? current.id.name : null;
   }
-  if (current.type === 'TSTypeAliasDeclaration')
-    return current.typeAnnotation === previous ? current.id.name : null;
+  if (current.type === 'TSTypeAliasDeclaration') return current.typeAnnotation === previous ? current.id.name : null;
   return null;
 }
 
@@ -335,13 +318,11 @@ function classKeyName(node: ESTree.PropertyDefinition): string | null {
  * `null` when the initialiser is anything else (a parameter, a computed value, a call, …).
  */
 function initialiserTag(node: ESTree.Node): string | null {
-  if (node.type === 'TSAsExpression' || node.type === 'TSSatisfiesExpression')
-    return initialiserTag(node.expression);
+  if (node.type === 'TSAsExpression' || node.type === 'TSSatisfiesExpression') return initialiserTag(node.expression);
   if (node.type === 'ParenthesizedExpression' || node.type === 'TSNonNullExpression')
     return initialiserTag(node.expression);
   if (node.type === 'Literal') return typeof node.value === 'string' ? node.value : null;
-  if (node.type === 'TemplateLiteral')
-    return noSubstitutionTemplate(node.quasis, node.expressions.length);
+  if (node.type === 'TemplateLiteral') return noSubstitutionTemplate(node.quasis, node.expressions.length);
   return null;
 }
 
@@ -402,10 +383,7 @@ function isAmbient(node: ESTree.Node): boolean {
   while (current != null && current.type !== 'Program') {
     if ((current as { declare?: boolean }).declare === true) return true;
     if (current.type === 'TSModuleDeclaration') {
-      if (
-        current.kind === 'global' ||
-        (current.id.type === 'Literal' && typeof current.id.value === 'string')
-      )
+      if (current.kind === 'global' || (current.id.type === 'Literal' && typeof current.id.value === 'string'))
         return true;
     }
     current = current.parent;
@@ -491,7 +469,10 @@ export const rule = defineRule({
     if (options.discriminantKeys.length === 0) return {};
     if (options.ignoreAmbient && /\.d\.[cm]?ts$/u.test(path)) return {};
 
-    let bindings: EffectBindings = { namespaces: new Map<string, string>(), importsEffect: false };
+    let bindings: EffectBindings = {
+      namespaces: new Map<string, string>(),
+      importsEffect: false,
+    };
 
     function reportClassField(node: ESTree.PropertyDefinition): void {
       if (!shouldCheckClassField(node, options)) return;

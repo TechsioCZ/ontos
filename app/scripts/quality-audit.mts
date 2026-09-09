@@ -1,32 +1,28 @@
 #!/usr/bin/env node
 import nodePath from 'node:path';
-import {
-  Array as EffectArray,
-  Clock,
-  Console,
-  Effect,
-  FileSystem,
-  Order,
-  Path,
-  Result,
-  Schema,
-  Stream,
-} from 'effect';
+
+import { Array as EffectArray, Clock, Console, Effect, FileSystem, Order, Path, Result, Schema, Stream } from 'effect';
 import { Command, Flag } from 'effect/unstable/cli';
-import { runQualityCli } from './quality-cli-lifecycle.mts';
 import { ChildProcess, ChildProcessSpawner } from 'effect/unstable/process';
-import {
-  buildKnipModel,
-  KnipConfigSchema,
-  KnipModelEvidenceSchema,
-} from '../quality-audit/knip-model.mts';
+
+import { importCloneEvidence } from '../quality-audit/import-clone-evidence.mts';
+import { buildKnipModel, KnipConfigSchema, KnipModelEvidenceSchema } from '../quality-audit/knip-model.mts';
 import type { KnipModelEvidence } from '../quality-audit/knip-model.mts';
+import { runQualityCli } from './quality-cli-lifecycle.mts';
 
 const FALLOW_FILES = 'fallow-files';
 const FALLOW_HEALTH = 'fallow-health';
 const FALLOW_SIMILARITY = 'fallow-similarity';
-const TOOL_VERSIONS = { fallow: '3.22.0', jscpd: '5.1.2', knip: '6.34.0' } as const;
-const TOOL_BINS = { fallow: 'bin/fallow', jscpd: 'run-jscpd.js', knip: 'bin/knip.js' } as const;
+const TOOL_VERSIONS = {
+  fallow: '3.22.0',
+  jscpd: '5.1.2',
+  knip: '6.34.0',
+} as const;
+const TOOL_BINS = {
+  fallow: 'bin/fallow',
+  jscpd: 'run-jscpd.js',
+  knip: 'bin/knip.js',
+} as const;
 const COMPLEXITY_LIMITS = { cognitive: 15, cyclomatic: 10 } as const;
 const SOURCE_GROUPS = {
   fixtures: 'fixtures',
@@ -91,7 +87,11 @@ const FallowClonesSchema = Schema.Struct({
     Schema.Struct({
       fingerprint: Schema.String,
       instances: Schema.Array(
-        Schema.Struct({ end_line: CountSchema, file: Schema.String, start_line: CountSchema }),
+        Schema.Struct({
+          end_line: CountSchema,
+          file: Schema.String,
+          start_line: CountSchema,
+        }),
       ).check(Schema.isMinLength(2)),
       line_count: CountSchema,
       token_count: CountSchema,
@@ -153,6 +153,7 @@ interface AuditResult {
     readonly analyzedFiles?: number;
     readonly analyzedFunctions?: number;
     readonly controlFlowFindings?: number;
+    readonly declarationOnlyClones?: number;
     readonly discoveredFiles?: number;
     readonly findingCounts?: Readonly<Record<string, number>>;
     readonly modeledUsages?: number;
@@ -185,20 +186,13 @@ const errorResult = (name: string, directory: string, diagnostic: string): Audit
 const failure = (reason: string): QualityAuditError => new QualityAuditError({ reason });
 const jsonCodec = Schema.fromJsonString(Schema.Unknown, { space: 2 });
 
-const writeJson = Effect.fn('qualityAudit.writeJson')(function* writeJsonEffect<A>(
-  file: string,
-  value: A,
-) {
+const writeJson = Effect.fn('qualityAudit.writeJson')(function* writeJsonEffect<A>(file: string, value: A) {
   const fs = yield* FileSystem.FileSystem;
   const source = yield* Schema.encodeEffect(jsonCodec)(value);
   yield* fs.writeFileString(file, `${source}\n`);
 });
 
-const decodeReport = <S extends Schema.Top>(
-  schema: S,
-  source: string,
-  subject = 'analyzer report',
-) =>
+const decodeReport = <S extends Schema.Top>(schema: S, source: string, subject = 'analyzer report') =>
   Schema.decodeUnknownEffect(Schema.fromJsonString(schema))(source).pipe(
     Effect.mapError((issue) => failure(`Malformed ${subject}: ${String(issue)}`)),
   );
@@ -219,19 +213,13 @@ const sourceGroup = (file: string) => {
   return SOURCE_GROUPS.runtime;
 };
 
-const validateKnip = Effect.fn('qualityAudit.validateKnip')(function* validateKnipEffect(
-  name: string,
-  source: string,
-) {
+const validateKnip = Effect.fn('qualityAudit.validateKnip')(function* validateKnipEffect(name: string, source: string) {
   const records = source.trim().split('\n');
   if (records.length !== 2) {
     return yield* failure('Knip must emit findings and coverage records');
   }
   const [, coverage] = yield* Effect.all(
-    [
-      decodeReport(KnipSchema, records[0] ?? ''),
-      decodeReport(KnipCoverageSchema, records[1] ?? ''),
-    ],
+    [decodeReport(KnipSchema, records[0] ?? ''), decodeReport(KnipCoverageSchema, records[1] ?? '')],
     { concurrency: 'unbounded' },
   );
   yield* nonempty(coverage.coverage.processed, name);
@@ -264,11 +252,7 @@ const modeledUsage = (
       return false;
     }
     if (entry.kind === 'resolver') {
-      return (
-        entry.line === issue.line &&
-        entry.column === issue.col &&
-        entry.owningManifest !== undefined
-      );
+      return entry.line === issue.line && entry.column === issue.col && entry.owningManifest !== undefined;
     }
     return entry.kind === 'compiler-option' && issue.line === undefined && issue.col === undefined;
   });
@@ -287,9 +271,7 @@ const calibrateKnip = Effect.fn('qualityAudit.calibrateKnip')(function* calibrat
   const modeled = report.issues.flatMap((record) =>
     record.unlisted.flatMap((issue) => {
       const consumer = modeledUsage(record.file, issue, evidence);
-      return consumer === undefined
-        ? []
-        : [{ category: 'unlisted', consumer, file: record.file, issue }];
+      return consumer === undefined ? [] : [{ category: 'unlisted', consumer, file: record.file, issue }];
     }),
   );
   yield* writeJson(path.join(directory, 'modeled-usages.json'), modeled);
@@ -336,20 +318,21 @@ const validateJscpd = Effect.fn('qualityAudit.validateJscpd')(function* validate
   };
 });
 
-const validateDiscovery = Effect.fn('qualityAudit.validateDiscovery')(
-  function* validateDiscoveryEffect(name: string, source: string) {
-    const report = yield* decodeReport(FallowFilesSchema, source);
-    yield* nonempty(report.file_count, name);
-    if (report.file_count !== report.files.length) {
-      return yield* failure('Fallow discovery count disagrees with file list');
-    }
-    return {
-      coverage: { discoveredFiles: report.file_count },
-      files: report.file_count,
-      findings: 0,
-    };
-  },
-);
+const validateDiscovery = Effect.fn('qualityAudit.validateDiscovery')(function* validateDiscoveryEffect(
+  name: string,
+  source: string,
+) {
+  const report = yield* decodeReport(FallowFilesSchema, source);
+  yield* nonempty(report.file_count, name);
+  if (report.file_count !== report.files.length) {
+    return yield* failure('Fallow discovery count disagrees with file list');
+  }
+  return {
+    coverage: { discoveredFiles: report.file_count },
+    files: report.file_count,
+    findings: 0,
+  };
+});
 
 const validateClones = Effect.fn('qualityAudit.validateClones')(function* validateClonesEffect(
   name: string,
@@ -403,8 +386,7 @@ const validateHealth = Effect.fn('qualityAudit.validateHealth')(function* valida
       controlFlowCognitive,
       cyclomatic: finding.cyclomatic,
       exceedsControlFlowLimits:
-        finding.cyclomatic > COMPLEXITY_LIMITS.cyclomatic ||
-        controlFlowCognitive > COMPLEXITY_LIMITS.cognitive,
+        finding.cyclomatic > COMPLEXITY_LIMITS.cyclomatic || controlFlowCognitive > COMPLEXITY_LIMITS.cognitive,
       hookDensityWeight,
       line: finding.line,
       name: finding.name,
@@ -420,15 +402,12 @@ const validateHealth = Effect.fn('qualityAudit.validateHealth')(function* valida
   if (
     report.findings.some(
       (finding) =>
-        finding.cyclomatic <= COMPLEXITY_LIMITS.cyclomatic &&
-        finding.cognitive <= COMPLEXITY_LIMITS.cognitive,
+        finding.cyclomatic <= COMPLEXITY_LIMITS.cyclomatic && finding.cognitive <= COMPLEXITY_LIMITS.cognitive,
     )
   ) {
     return yield* failure('Fallow reported a function below both configured thresholds');
   }
-  const controlFlowFindings = complexity.filter(
-    (finding) => finding.exceedsControlFlowLimits,
-  ).length;
+  const controlFlowFindings = complexity.filter((finding) => finding.exceedsControlFlowLimits).length;
   return {
     complexity,
     coverage: {
@@ -443,164 +422,137 @@ const validateHealth = Effect.fn('qualityAudit.validateHealth')(function* valida
   };
 });
 
-export const validateReport = Effect.fn('qualityAudit.validateReport')(
-  function* validateReportEffect(name: string, source: string) {
-    switch (name) {
-      case 'knip': {
-        return yield* validateKnip(name, source);
-      }
-      case 'jscpd': {
-        return yield* validateJscpd(name, source);
-      }
-      case FALLOW_FILES: {
-        return yield* validateDiscovery(name, source);
-      }
-      case 'fallow-clones':
-      case FALLOW_SIMILARITY: {
-        return yield* validateClones(name, source);
-      }
-      case FALLOW_HEALTH: {
-        return yield* validateHealth(name, source);
-      }
-      default: {
-        return yield* failure(`Unknown analyzer report: ${name}`);
-      }
+export const validateReport = Effect.fn('qualityAudit.validateReport')(function* validateReportEffect(
+  name: string,
+  source: string,
+) {
+  switch (name) {
+    case 'knip': {
+      return yield* validateKnip(name, source);
     }
-  },
-);
-
-const collectSourceFiles = Effect.fn('qualityAudit.collectSourceFiles')(
-  function* collectSourceFilesEffect(root: string, output: string) {
-    const fs = yield* FileSystem.FileSystem;
-    const path = yield* Path.Path;
-    const source = yield* fs.readFileString(path.join(root, 'quality-audit/scope.json'));
-    const scope = yield* decodeReport(ScopeSchema, source, 'quality-audit/scope.json');
-    const [canonicalRoot, canonicalOutput] = yield* Effect.all([
-      fs.realPath(root),
-      fs.realPath(output),
-    ]);
-    const outputPaths = [
-      path.relative(root, output),
-      path.relative(canonicalRoot, canonicalOutput),
-    ];
-    if (
-      outputPaths.some((directory) =>
-        scope.patterns.some((pattern) =>
-          nodePath.matchesGlob(path.join(directory, 'knip-consumers.mts'), pattern),
-        ),
-      )
-    ) {
-      return yield* failure(
-        'Choose an output directory outside configured source roots, such as .codex/reports/quality-audit',
-      );
+    case 'jscpd': {
+      return yield* validateJscpd(name, source);
     }
-    const groups = yield* Effect.forEach(
-      scope.patterns,
-      (pattern) =>
-        fs.glob(pattern, {
-          exclude: scope.exclude,
-          root,
-        }),
-      { concurrency: 'unbounded' },
-    );
-    const files = EffectArray.sort([...new Set(groups.flat())], Order.String);
-    yield* nonempty(files.length, 'Source inventory');
-    return files;
-  },
-);
+    case FALLOW_FILES: {
+      return yield* validateDiscovery(name, source);
+    }
+    case 'fallow-clones':
+    case FALLOW_SIMILARITY: {
+      return yield* validateClones(name, source);
+    }
+    case FALLOW_HEALTH: {
+      return yield* validateHealth(name, source);
+    }
+    default: {
+      return yield* failure(`Unknown analyzer report: ${name}`);
+    }
+  }
+});
 
-const readSourceProvenance = Effect.fn('qualityAudit.readSourceProvenance')(
-  function* readProvenance(root: string) {
-    const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
-    const git = (args: readonly string[]) =>
-      spawner
-        .string(ChildProcess.make('git', args, { cwd: root }))
-        .pipe(Effect.timeout('10 seconds'), Effect.result);
-    const [revision, status] = yield* Effect.all(
-      [git(['rev-parse', 'HEAD']), git(['status', '--porcelain=v1', '--untracked-files=all'])],
-      { concurrency: 'unbounded' },
-    );
-    return {
-      sourceRevision: Result.isSuccess(revision)
-        ? revision.success.trim()
-        : 'unavailable (no Git HEAD)',
-      sourceState: Result.match(status, {
-        onFailure: () => 'unavailable',
-        onSuccess: (output) => (output.trim().length > 0 ? 'modified' : 'clean'),
-      }),
-      workingTreeChanges: Result.isSuccess(status)
-        ? status.success.trimEnd().split('\n').filter(Boolean)
-        : [],
-    };
-  },
-);
-
-const snapshotConfiguration = Effect.fn('qualityAudit.snapshotConfiguration')(
-  function* snapshotConfigurationEffect(
-    root: string,
-    directory: string,
-    tool: AuditTool,
-    consumerPath: string | undefined,
+const collectSourceFiles = Effect.fn('qualityAudit.collectSourceFiles')(function* collectSourceFilesEffect(
+  root: string,
+  output: string,
+) {
+  const fs = yield* FileSystem.FileSystem;
+  const path = yield* Path.Path;
+  const source = yield* fs.readFileString(path.join(root, 'quality-audit/scope.json'));
+  const scope = yield* decodeReport(ScopeSchema, source, 'quality-audit/scope.json');
+  const [canonicalRoot, canonicalOutput] = yield* Effect.all([fs.realPath(root), fs.realPath(output)]);
+  const outputPaths = [path.relative(root, output), path.relative(canonicalRoot, canonicalOutput)];
+  if (
+    outputPaths.some((directory) =>
+      scope.patterns.some((pattern) => nodePath.matchesGlob(path.join(directory, 'knip-consumers.mts'), pattern)),
+    )
   ) {
-    const fs = yield* FileSystem.FileSystem;
-    const path = yield* Path.Path;
-    const selected = ['knip', 'jscpd', 'fallow'].filter((name) => tool === 'all' || tool === name);
-    const configs = [
-      'scope.json',
-      ...selected.map((name) => `${name}.json`),
-      ...(selected.includes('knip') ? ['knip-reporter.mts'] : []),
-    ];
-    yield* fs.makeDirectory(path.join(directory, 'configs'));
-    yield* Effect.forEach(
-      configs,
-      (name) =>
-        fs.copyFile(path.join(root, 'quality-audit', name), path.join(directory, 'configs', name)),
-      { concurrency: 'unbounded' },
+    return yield* failure(
+      'Choose an output directory outside configured source roots, such as .codex/reports/quality-audit',
     );
-    if (selected.includes('knip')) {
-      const target = path.join(directory, 'configs/knip.json');
-      yield* fs.copyFile(target, path.join(directory, 'configs/knip-base.json'));
-      const source = yield* fs.readFileString(target);
-      const config = yield* decodeReport(KnipConfigSchema, source, target);
-      const model = yield* buildKnipModel(root, config, consumerPath);
-      if (model.consumerSource !== undefined && consumerPath !== undefined) {
-        yield* fs.writeFileString(consumerPath, model.consumerSource);
-        yield* fs.copyFile(consumerPath, path.join(directory, 'knip-consumers.mts'));
-      }
-      yield* writeJson(target, model.config);
-      yield* writeJson(path.join(directory, 'knip-model.json'), model.evidence);
+  }
+  const groups = yield* Effect.forEach(
+    scope.patterns,
+    (pattern) =>
+      fs.glob(pattern, {
+        exclude: scope.exclude,
+        root,
+      }),
+    { concurrency: 'unbounded' },
+  );
+  const files = EffectArray.sort([...new Set(groups.flat())], Order.String);
+  yield* nonempty(files.length, 'Source inventory');
+  return files;
+});
+
+const readSourceProvenance = Effect.fn('qualityAudit.readSourceProvenance')(function* readProvenance(root: string) {
+  const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+  const git = (args: readonly string[]) =>
+    spawner.string(ChildProcess.make('git', args, { cwd: root })).pipe(Effect.timeout('10 seconds'), Effect.result);
+  const [revision, status] = yield* Effect.all(
+    [git(['rev-parse', 'HEAD']), git(['status', '--porcelain=v1', '--untracked-files=all'])],
+    { concurrency: 'unbounded' },
+  );
+  return {
+    sourceRevision: Result.isSuccess(revision) ? revision.success.trim() : 'unavailable (no Git HEAD)',
+    sourceState: Result.match(status, {
+      onFailure: () => 'unavailable',
+      onSuccess: (output) => (output.trim().length > 0 ? 'modified' : 'clean'),
+    }),
+    workingTreeChanges: Result.isSuccess(status) ? status.success.trimEnd().split('\n').filter(Boolean) : [],
+  };
+});
+
+const snapshotConfiguration = Effect.fn('qualityAudit.snapshotConfiguration')(function* snapshotConfigurationEffect(
+  root: string,
+  directory: string,
+  tool: AuditTool,
+  consumerPath: string | undefined,
+) {
+  const fs = yield* FileSystem.FileSystem;
+  const path = yield* Path.Path;
+  const selected = ['knip', 'jscpd', 'fallow'].filter((name) => tool === 'all' || tool === name);
+  const configs = [
+    'scope.json',
+    ...selected.map((name) => `${name}.json`),
+    ...(selected.includes('knip') ? ['knip-reporter.mts'] : []),
+  ];
+  yield* fs.makeDirectory(path.join(directory, 'configs'));
+  yield* Effect.forEach(
+    configs,
+    (name) => fs.copyFile(path.join(root, 'quality-audit', name), path.join(directory, 'configs', name)),
+    { concurrency: 'unbounded' },
+  );
+  if (selected.includes('knip')) {
+    const target = path.join(directory, 'configs/knip.json');
+    yield* fs.copyFile(target, path.join(directory, 'configs/knip-base.json'));
+    const source = yield* fs.readFileString(target);
+    const config = yield* decodeReport(KnipConfigSchema, source, target);
+    const model = yield* buildKnipModel(root, config, consumerPath);
+    if (model.consumerSource !== undefined && consumerPath !== undefined) {
+      yield* fs.writeFileString(consumerPath, model.consumerSource);
+      yield* fs.copyFile(consumerPath, path.join(directory, 'knip-consumers.mts'));
     }
-    if (selected.includes('fallow')) {
-      const target = path.join(directory, 'configs/fallow.json');
-      const source = yield* fs.readFileString(target);
-      const config = yield* decodeReport(Schema.Record(Schema.String, Schema.Json), source, target);
-      const ignores = yield* decodeReport(
-        Schema.Struct({ ignorePatterns: Schema.Array(Schema.String) }),
-        source,
-        target,
-      );
-      const relativeOutput = path.relative(root, path.dirname(directory));
-      const outputIsInsideRoot =
-        relativeOutput !== '..' &&
-        !relativeOutput.startsWith(`..${path.sep}`) &&
-        !path.isAbsolute(relativeOutput);
-      yield* writeJson(target, {
-        ...config,
-        ignorePatterns: outputIsInsideRoot
-          ? [...ignores.ignorePatterns, `${relativeOutput}/**`]
-          : ignores.ignorePatterns,
-      });
-    }
-    return configs;
-  },
-);
+    yield* writeJson(target, model.config);
+    yield* writeJson(path.join(directory, 'knip-model.json'), model.evidence);
+  }
+  if (selected.includes('fallow')) {
+    const target = path.join(directory, 'configs/fallow.json');
+    const source = yield* fs.readFileString(target);
+    const config = yield* decodeReport(Schema.Record(Schema.String, Schema.Json), source, target);
+    const ignores = yield* decodeReport(Schema.Struct({ ignorePatterns: Schema.Array(Schema.String) }), source, target);
+    const relativeOutput = path.relative(root, path.dirname(directory));
+    const outputIsInsideRoot =
+      relativeOutput !== '..' && !relativeOutput.startsWith(`..${path.sep}`) && !path.isAbsolute(relativeOutput);
+    yield* writeJson(target, {
+      ...config,
+      ignorePatterns: outputIsInsideRoot ? [...ignores.ignorePatterns, `${relativeOutput}/**`] : ignores.ignorePatterns,
+    });
+  }
+  return configs;
+});
 
 const verifyFallowCounts = (results: readonly AuditResult[]) => {
   const discovery = results.find((result) => result.name === FALLOW_FILES);
   const health = results.find((result) => result.name === FALLOW_HEALTH);
-  return discovery?.status === 'reported' &&
-    health?.status === 'reported' &&
-    discovery.files !== health.files
+  return discovery?.status === 'reported' && health?.status === 'reported' && discovery.files !== health.files
     ? Effect.fail(failure('Fallow discovery and complexity file counts disagree'))
     : Effect.void;
 };
@@ -614,9 +566,7 @@ const reconcileFallowCoverage = Effect.fn('qualityAudit.reconcileFallowCoverage'
   ) {
     const fs = yield* FileSystem.FileSystem;
     const path = yield* Path.Path;
-    const fallow = results.find(
-      (result) => result.name === FALLOW_FILES && result.status === 'reported',
-    );
+    const fallow = results.find((result) => result.name === FALLOW_FILES && result.status === 'reported');
     if (fallow !== undefined) {
       const report = yield* decodeReport(
         FallowFilesSchema,
@@ -651,38 +601,36 @@ const reconcileFallowCoverage = Effect.fn('qualityAudit.reconcileFallowCoverage'
   },
 );
 
-const reconcileCoverage = Effect.fn('qualityAudit.reconcileCoverage')(
-  function* reconcileCoverageEffect(
-    root: string,
-    directory: string,
-    files: readonly string[],
-    results: readonly AuditResult[],
-  ) {
-    const fs = yield* FileSystem.FileSystem;
-    const path = yield* Path.Path;
-    const canonicalRoot = yield* fs.realPath(root);
-    const expectedManifests = yield* fs.glob('{apps,verticals,packages}/*/package.json', {
-      exclude: ['**/node_modules/**'],
-      root,
-    });
-    const expectedWorkspaces = ['.', ...expectedManifests.map((file) => path.dirname(file))];
-    const knip = results.find((result) => result.name === 'knip' && result.status === 'reported');
-    if (knip !== undefined) {
-      const observed = (knip.coverage.workspaces ?? []).map(
-        (workspace) => path.relative(canonicalRoot, workspace) || '.',
+const reconcileCoverage = Effect.fn('qualityAudit.reconcileCoverage')(function* reconcileCoverageEffect(
+  root: string,
+  directory: string,
+  files: readonly string[],
+  results: readonly AuditResult[],
+) {
+  const fs = yield* FileSystem.FileSystem;
+  const path = yield* Path.Path;
+  const canonicalRoot = yield* fs.realPath(root);
+  const expectedManifests = yield* fs.glob('{apps,verticals,packages}/*/package.json', {
+    exclude: ['**/node_modules/**'],
+    root,
+  });
+  const expectedWorkspaces = ['.', ...expectedManifests.map((file) => path.dirname(file))];
+  const knip = results.find((result) => result.name === 'knip' && result.status === 'reported');
+  if (knip !== undefined) {
+    const observed = (knip.coverage.workspaces ?? []).map(
+      (workspace) => path.relative(canonicalRoot, workspace) || '.',
+    );
+    if (
+      observed.length !== expectedWorkspaces.length ||
+      expectedWorkspaces.some((workspace) => !observed.includes(workspace))
+    ) {
+      return yield* failure(
+        `Knip workspace coverage mismatch: expected ${expectedWorkspaces.join(', ')}, observed ${observed.join(', ')}`,
       );
-      if (
-        observed.length !== expectedWorkspaces.length ||
-        expectedWorkspaces.some((workspace) => !observed.includes(workspace))
-      ) {
-        return yield* failure(
-          `Knip workspace coverage mismatch: expected ${expectedWorkspaces.join(', ')}, observed ${observed.join(', ')}`,
-        );
-      }
     }
-    return yield* reconcileFallowCoverage(directory, files, results, expectedWorkspaces);
-  },
-);
+  }
+  return yield* reconcileFallowCoverage(directory, files, results, expectedWorkspaces);
+});
 
 const executeStep = Effect.fn('qualityAudit.executeStep')(function* executeStepEffect(
   root: string,
@@ -710,9 +658,7 @@ const executeStep = Effect.fn('qualityAudit.executeStep')(function* executeStepE
       yield* fs.readFileString(path.join(root, 'node_modules', step.tool, 'package.json')),
     );
     if (installed.version !== TOOL_VERSIONS[step.tool]) {
-      return yield* failure(
-        `Expected ${step.tool} ${TOOL_VERSIONS[step.tool]}, found ${installed.version}`,
-      );
+      return yield* failure(`Expected ${step.tool} ${TOOL_VERSIONS[step.tool]}, found ${installed.version}`);
     }
     const processHandle = yield* spawner.spawn(
       ChildProcess.make(process.execPath, [binary, ...step.args], {
@@ -757,23 +703,26 @@ const executeStep = Effect.fn('qualityAudit.executeStep')(function* executeStepE
       return yield* failure(`Analyzer exited ${exitCode}; inspect stdout.txt and stderr.txt`);
     }
     const stderr = yield* fs.readFileString(stderrPath);
-    if (
-      stderr.trim().length > 0 &&
-      !(step.name === 'jscpd' && stderr.trim() === `Using config from ${step.args[1]}`)
-    ) {
-      return yield* failure(
-        'Analyzer emitted diagnostics; inspect stderr.txt before trusting coverage',
-      );
+    if (stderr.trim().length > 0 && !(step.name === 'jscpd' && stderr.trim() === `Using config from ${step.args[1]}`)) {
+      return yield* failure('Analyzer emitted diagnostics; inspect stderr.txt before trusting coverage');
     }
     const reportPath = step.report ?? stdoutPath;
     const report = yield* fs.readFileString(reportPath);
-    yield* fs.writeFileString(
-      path.join(directory, step.name === 'knip' ? 'report.ndjson' : 'report.json'),
-      report,
-    );
-    return step.name === 'knip'
-      ? yield* evaluateKnip(report, directory)
-      : yield* validateReport(step.name, report);
+    yield* fs.writeFileString(path.join(directory, step.name === 'knip' ? 'report.ndjson' : 'report.json'), report);
+    if (step.name === 'jscpd') {
+      const validated = yield* validateReport(step.name, report);
+      const imports = yield* importCloneEvidence(root, report);
+      yield* writeJson(path.join(directory, 'import-clone-evidence.json'), imports);
+      return {
+        ...validated,
+        coverage: {
+          ...validated.coverage,
+          declarationOnlyClones: imports.length,
+        },
+        findings: validated.findings - imports.length,
+      };
+    }
+    return step.name === 'knip' ? yield* evaluateKnip(report, directory) : yield* validateReport(step.name, report);
   }).pipe(Effect.result);
   if (Result.isFailure(evaluated)) {
     const diagnostic = String(evaluated.failure);
@@ -783,16 +732,24 @@ const executeStep = Effect.fn('qualityAudit.executeStep')(function* executeStepE
   if ('complexity' in evaluated.success) {
     const { complexity, ...summary } = evaluated.success;
     yield* writeJson(path.join(directory, 'complexity.json'), complexity);
-    return { name: step.name, status: 'reported', ...summary, diagnostic: '', directory };
+    return {
+      name: step.name,
+      status: 'reported',
+      ...summary,
+      diagnostic: '',
+      directory,
+    };
   }
-  return { name: step.name, status: 'reported', ...evaluated.success, diagnostic: '', directory };
+  return {
+    name: step.name,
+    status: 'reported',
+    ...evaluated.success,
+    diagnostic: '',
+    directory,
+  };
 });
 
-export const auditSteps = (
-  root: string,
-  runDirectory: string,
-  tool: AuditTool,
-): readonly AuditStep[] => {
+export const auditSteps = (root: string, runDirectory: string, tool: AuditTool): readonly AuditStep[] => {
   const config = `${runDirectory}/configs`;
   const common = [
     '--root',
@@ -828,7 +785,11 @@ export const auditSteps = (
       report: `${runDirectory}/jscpd/jscpd-report.json`,
       tool: 'jscpd',
     },
-    { args: ['list', '--files', ...common], name: FALLOW_FILES, tool: 'fallow' },
+    {
+      args: ['list', '--files', ...common],
+      name: FALLOW_FILES,
+      tool: 'fallow',
+    },
     {
       args: ['dupes', '--mode', 'strict', '--min-tokens', '100', '--min-lines', '10', ...common],
       name: 'fallow-clones',
@@ -861,16 +822,21 @@ export const auditSteps = (
 };
 
 const REPORT_MEANINGS = {
-  [FALLOW_HEALTH]: { advisory: false, unit: 'functions above control-flow limits' },
+  [FALLOW_HEALTH]: {
+    advisory: false,
+    unit: 'functions above control-flow limits',
+  },
   'fallow-clones': { advisory: false, unit: 'strict clone groups' },
   'fallow-files': { advisory: false, unit: 'discovery only' },
-  'fallow-similarity': { advisory: true, unit: 'semantic similarity groups (advisory)' },
+  'fallow-similarity': {
+    advisory: true,
+    unit: 'semantic similarity groups (advisory)',
+  },
   jscpd: { advisory: false, unit: 'token clone pairs' },
   knip: { advisory: false, unit: 'unused/dependency records' },
 };
 
-const reportMeaning = (name: string) =>
-  Object.entries(REPORT_MEANINGS).find(([analysis]) => analysis === name)?.[1];
+const reportMeaning = (name: string) => Object.entries(REPORT_MEANINGS).find(([analysis]) => analysis === name)?.[1];
 
 const writeSummary = Effect.fn('qualityAudit.writeSummary')(function* writeSummaryEffect(
   output: string,
@@ -889,7 +855,10 @@ const writeSummary = Effect.fn('qualityAudit.writeSummary')(function* writeSumma
     mode: 'report-only',
     parserCompleteness: 'unavailable; use existing lint and compiler checks',
     provenance: `${runDirectory}/provenance.json`,
-    results: results.map((result) => ({ ...result, ...reportMeaning(result.name) })),
+    results: results.map((result) => ({
+      ...result,
+      ...reportMeaning(result.name),
+    })),
     runDirectory,
     status: errors.length > 0 ? 'error' : 'reported',
   });
@@ -918,6 +887,7 @@ const writeSummary = Effect.fn('qualityAudit.writeSummary')(function* writeSumma
           `Proven modeled usages retained separately: ${result.coverage.modeledUsages ?? 0}.`,
         ]),
       'Unused exports describe an unused public binding; they do not establish that the implementation body is unused.',
+      'JSCPD implementation counts exclude only complete static import-binding spans proven by parsing both files; raw clones and per-pair evidence remain in jscpd/report.json and jscpd/import-clone-evidence.json.',
       'Fallow strict clones preserve literal differences. Semantic similarity normalizes them and remains advisory; inspect both together with JSCPD before choosing a shared implementation.',
       `Health counts cyclomatic > ${COMPLEXITY_LIMITS.cyclomatic} or control-flow cognitive > ${COMPLEXITY_LIMITS.cognitive}. The latter subtracts hook-density and prop-count penalties from the native weighted metric, with contribution arithmetic verified for every finding.`,
       ...results
@@ -937,101 +907,99 @@ const writeSummary = Effect.fn('qualityAudit.writeSummary')(function* writeSumma
   );
 });
 
-const createConsumerPath = Effect.fn('qualityAudit.createConsumerPath')(
-  function* createConsumerPathEffect(root: string) {
-    const fs = yield* FileSystem.FileSystem;
-    const path = yield* Path.Path;
-    const parent = path.join(root, '.codex');
-    yield* fs.makeDirectory(parent, { recursive: true });
-    const directory = yield* fs.makeTempDirectoryScoped({
-      directory: parent,
-      prefix: 'quality-audit-model-',
-    });
-    return path.join(directory, 'consumers.mts');
-  },
-);
+const createConsumerPath = Effect.fn('qualityAudit.createConsumerPath')(function* createConsumerPathEffect(
+  root: string,
+) {
+  const fs = yield* FileSystem.FileSystem;
+  const path = yield* Path.Path;
+  const parent = path.join(root, '.codex');
+  yield* fs.makeDirectory(parent, { recursive: true });
+  const directory = yield* fs.makeTempDirectoryScoped({
+    directory: parent,
+    prefix: 'quality-audit-model-',
+  });
+  return path.join(directory, 'consumers.mts');
+});
 
-export const runQualityAudit = Effect.fn('qualityAudit.runQualityAudit')(
-  function* runQualityAuditEffect(root: string, output: string, tool: AuditTool) {
-    const fs = yield* FileSystem.FileSystem;
-    const path = yield* Path.Path;
-    const provenance = yield* readSourceProvenance(root);
-    yield* fs.makeDirectory(output, { recursive: true });
-    const runDirectory = yield* fs.makeTempDirectory({ directory: output, prefix: 'run-' });
-    yield* writeSummary(output, runDirectory, [
-      errorResult('setup', runDirectory, 'Audit has not completed'),
-    ]);
-    const results = yield* Effect.gen(function* collectAudit() {
-      const files = yield* collectSourceFiles(root, output);
-      yield* writeJson(path.join(runDirectory, 'source-inventory.json'), {
-        count: files.length,
-        entries: files.map((file) => ({ group: sourceGroup(file), path: file })),
-        files,
-        groupCounts: Object.fromEntries(
-          Object.values(SOURCE_GROUPS).map((group) => [
-            group,
-            files.filter((file) => sourceGroup(file) === group).length,
-          ]),
-        ),
-        root,
-      });
-      const consumerPath =
-        tool === 'all' || tool === 'knip' ? yield* createConsumerPath(root) : undefined;
-      const configs = yield* snapshotConfiguration(root, runDirectory, tool, consumerPath);
-      yield* writeJson(path.join(runDirectory, 'provenance.json'), {
-        ...provenance,
-        configs: configs.map((name) => `configs/${name}`),
-        expectedToolVersions: TOOL_VERSIONS,
-        parserCompleteness: 'unavailable',
-      });
-      if (tool === 'all' || tool === 'jscpd') {
-        const jscpdConfig = yield* decodeReport(
-          Schema.Record(Schema.String, Schema.Json),
-          yield* fs.readFileString(path.join(runDirectory, 'configs/jscpd.json')),
-          'configs/jscpd.json',
-        );
-        yield* writeJson(path.join(runDirectory, 'jscpd.config.json'), {
-          ...jscpdConfig,
-          path: files.map((file) => path.resolve(root, file)),
-        });
-      }
-      const stepResults = yield* Effect.forEach(
-        auditSteps(root, runDirectory, tool),
-        (step) => executeStep(root, path.join(runDirectory, step.name), step),
-        { concurrency: 1 },
+export const runQualityAudit = Effect.fn('qualityAudit.runQualityAudit')(function* runQualityAuditEffect(
+  root: string,
+  output: string,
+  tool: AuditTool,
+) {
+  const fs = yield* FileSystem.FileSystem;
+  const path = yield* Path.Path;
+  const provenance = yield* readSourceProvenance(root);
+  yield* fs.makeDirectory(output, { recursive: true });
+  const runDirectory = yield* fs.makeTempDirectory({
+    directory: output,
+    prefix: 'run-',
+  });
+  yield* writeSummary(output, runDirectory, [errorResult('setup', runDirectory, 'Audit has not completed')]);
+  const results = yield* Effect.gen(function* collectAudit() {
+    const files = yield* collectSourceFiles(root, output);
+    yield* writeJson(path.join(runDirectory, 'source-inventory.json'), {
+      count: files.length,
+      entries: files.map((file) => ({
+        group: sourceGroup(file),
+        path: file,
+      })),
+      files,
+      groupCounts: Object.fromEntries(
+        Object.values(SOURCE_GROUPS).map((group) => [
+          group,
+          files.filter((file) => sourceGroup(file) === group).length,
+        ]),
+      ),
+      root,
+    });
+    const consumerPath = tool === 'all' || tool === 'knip' ? yield* createConsumerPath(root) : undefined;
+    const configs = yield* snapshotConfiguration(root, runDirectory, tool, consumerPath);
+    yield* writeJson(path.join(runDirectory, 'provenance.json'), {
+      ...provenance,
+      configs: configs.map((name) => `configs/${name}`),
+      expectedToolVersions: TOOL_VERSIONS,
+      parserCompleteness: 'unavailable',
+    });
+    if (tool === 'all' || tool === 'jscpd') {
+      const jscpdConfig = yield* decodeReport(
+        Schema.Record(Schema.String, Schema.Json),
+        yield* fs.readFileString(path.join(runDirectory, 'configs/jscpd.json')),
+        'configs/jscpd.json',
       );
-      return yield* reconcileCoverage(root, runDirectory, files, stepResults).pipe(
-        Effect.match({
-          onFailure: (issue) => [
-            ...stepResults,
-            errorResult('coverage', runDirectory, String(issue)),
-          ],
-          onSuccess: () => stepResults,
-        }),
-      );
-    }).pipe(
-      Effect.scoped,
+      yield* writeJson(path.join(runDirectory, 'jscpd.config.json'), {
+        ...jscpdConfig,
+        path: files.map((file) => path.resolve(root, file)),
+      });
+    }
+    const stepResults = yield* Effect.forEach(
+      auditSteps(root, runDirectory, tool),
+      (step) => executeStep(root, path.join(runDirectory, step.name), step),
+      { concurrency: 1 },
+    );
+    return yield* reconcileCoverage(root, runDirectory, files, stepResults).pipe(
       Effect.match({
-        onFailure: (issue) => [errorResult('setup', runDirectory, String(issue))],
-        onSuccess: (collected) => collected,
+        onFailure: (issue) => [...stepResults, errorResult('coverage', runDirectory, String(issue))],
+        onSuccess: () => stepResults,
       }),
     );
-    yield* writeSummary(output, runDirectory, results);
-    yield* Console.log(`Quality audit: ${path.join(output, 'summary.md')}`);
-    const errors = results.filter((result) => result.status === 'error');
-    if (errors.length > 0) {
-      yield* Effect.forEach(
-        errors,
-        (result) => Console.error(`${result.name}: ${result.diagnostic}`),
-        { concurrency: 1 },
-      );
-      return yield* failure(
-        'Quality audit analysis failed; diagnostics preserved in summary and raw artifacts',
-      );
-    }
-    return yield* Effect.void;
-  },
-);
+  }).pipe(
+    Effect.scoped,
+    Effect.match({
+      onFailure: (issue) => [errorResult('setup', runDirectory, String(issue))],
+      onSuccess: (collected) => collected,
+    }),
+  );
+  yield* writeSummary(output, runDirectory, results);
+  yield* Console.log(`Quality audit: ${path.join(output, 'summary.md')}`);
+  const errors = results.filter((result) => result.status === 'error');
+  if (errors.length > 0) {
+    yield* Effect.forEach(errors, (result) => Console.error(`${result.name}: ${result.diagnostic}`), {
+      concurrency: 1,
+    });
+    return yield* failure('Quality audit analysis failed; diagnostics preserved in summary and raw artifacts');
+  }
+  return yield* Effect.void;
+});
 
 const cli = Command.make(
   'quality-audit',

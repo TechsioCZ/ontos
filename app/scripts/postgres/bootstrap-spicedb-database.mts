@@ -3,6 +3,7 @@ import { Config, ConfigProvider, Console, Effect, Exit, Match, Redacted, Schema 
 import type { FileSystem } from 'effect';
 import { Client } from 'pg';
 import type { QueryResult, QueryResultRow } from 'pg';
+
 import { APP_ENV_PATH } from '../../packages/core-runtime/src/environment/workspace-environment.ts';
 import { parseSpiceDbDatabaseBootstrapConfig } from '../../packages/core-runtime/src/install/spicedb-database-config.ts';
 import type { SpiceDbDatabaseBootstrapConfig } from '../../packages/core-runtime/src/install/spicedb-database-config.ts';
@@ -42,36 +43,23 @@ const loadRootConfiguration = (): Effect.Effect<
     }).pipe(
       Effect.catchTag('PlatformError', (failure) =>
         Match.value(failure.reason).pipe(
-          Match.tag('NotFound', () =>
-            Effect.succeed(ConfigProvider.fromUnknown({}, { preserveEmptyStrings: true })),
-          ),
+          Match.tag('NotFound', () => Effect.succeed(ConfigProvider.fromUnknown({}, { preserveEmptyStrings: true }))),
           Match.orElse(() => Effect.fail(failure)),
         ),
       ),
-      Effect.mapError((cause) =>
-        bootstrapFailure(`Unable to load the root environment from ${APP_ENV_PATH}`, cause),
-      ),
+      Effect.mapError((cause) => bootstrapFailure(`Unable to load the root environment from ${APP_ENV_PATH}`, cause)),
     );
 
-    const provider = ConfigProvider.orElse(
-      ConfigProvider.fromEnv({ preserveEmptyStrings: true }),
-      fileProvider,
-    );
+    const provider = ConfigProvider.orElse(ConfigProvider.fromEnv({ preserveEmptyStrings: true }), fileProvider);
     const [adminUrl, spiceDbUrl] = yield* Effect.all(
-      [
-        Config.redacted('DATABASE_ADMIN_URL').parse(provider),
-        Config.redacted('SPICEDB_DATABASE_URL').parse(provider),
-      ],
+      [Config.redacted('DATABASE_ADMIN_URL').parse(provider), Config.redacted('SPICEDB_DATABASE_URL').parse(provider)],
       { concurrency: 1 },
     ).pipe(
-      Effect.mapError((cause) =>
-        bootstrapFailure('SpiceDB PostgreSQL bootstrap configuration is invalid', cause),
-      ),
+      Effect.mapError((cause) => bootstrapFailure('SpiceDB PostgreSQL bootstrap configuration is invalid', cause)),
     );
 
     return yield* Effect.try({
-      catch: (cause) =>
-        bootstrapFailure('SpiceDB PostgreSQL bootstrap configuration is invalid', cause),
+      catch: (cause) => bootstrapFailure('SpiceDB PostgreSQL bootstrap configuration is invalid', cause),
       try: () =>
         parseSpiceDbDatabaseBootstrapConfig({
           DATABASE_ADMIN_URL: Redacted.value(adminUrl),
@@ -80,14 +68,13 @@ const loadRootConfiguration = (): Effect.Effect<
     });
   });
 
-const connectAdmin = (
-  connectionString: Redacted.Redacted,
-): Effect.Effect<Client, SpiceDbDatabaseBootstrapError> =>
+const connectAdmin = (connectionString: Redacted.Redacted): Effect.Effect<Client, SpiceDbDatabaseBootstrapError> =>
   Effect.tryPromise({
-    catch: (cause) =>
-      bootstrapFailure('Unable to connect to the administrative PostgreSQL database', cause),
+    catch: (cause) => bootstrapFailure('Unable to connect to the administrative PostgreSQL database', cause),
     try: async () => {
-      const client = new Client({ connectionString: Redacted.value(connectionString) });
+      const client = new Client({
+        connectionString: Redacted.value(connectionString),
+      });
       await client.connect();
       return client;
     },
@@ -95,8 +82,7 @@ const connectAdmin = (
 
 const closeAdmin = (client: Client): Effect.Effect<void, SpiceDbDatabaseBootstrapError> =>
   Effect.tryPromise({
-    catch: (cause) =>
-      bootstrapFailure('Unable to close the administrative PostgreSQL connection', cause),
+    catch: (cause) => bootstrapFailure('Unable to close the administrative PostgreSQL connection', cause),
     try: async () => await client.end(),
   });
 

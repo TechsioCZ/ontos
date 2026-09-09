@@ -1,4 +1,6 @@
 import { Effect, FileSystem } from 'effect';
+
+import { createCodesmithGenerator } from '../generator-adapter.mts';
 import {
   ACTION_GENERATOR_HEADER,
   CORE_ACTION_CATALOG_IMPORT_SLOT_END,
@@ -33,7 +35,6 @@ import {
   updateMutation,
   withCoreDependency,
 } from '../shared.mts';
-import { createCodesmithGenerator } from '../generator-adapter.mts';
 import type { ActionScaffoldConfig, OntosVerticalMetadata } from '../shared.mts';
 
 const CORE_RUNTIME_DIRECTORY = 'core-runtime';
@@ -188,112 +189,93 @@ const coreCatalogImportEntry = (action: string): string =>
   `import { ${toCamelCase(action)}Action } from './${action}.action.ts';`;
 
 const isCoreActionCatalogImport = (candidate: string): boolean =>
-  /^import \{ [a-z][A-Za-z0-9]*Action \} from '\.\/[a-z][a-z0-9]*(?:-[a-z0-9]+)*\.action\.ts';$/u.test(
-    candidate,
-  );
+  /^import \{ [a-z][A-Za-z0-9]*Action \} from '\.\/[a-z][a-z0-9]*(?:-[a-z0-9]+)*\.action\.ts';$/u.test(candidate);
 
-const coreCatalogValueEntry = (action: string): string =>
-  `${toCamelCase(action)}Action.descriptor,`;
+const coreCatalogValueEntry = (action: string): string => `${toCamelCase(action)}Action.descriptor,`;
 
 const isCoreActionCatalogValue = (candidate: string): boolean =>
   /^[a-z][A-Za-z0-9]*Action\.descriptor,$/u.test(candidate);
 
-const planCoreActionScaffold = Effect.fn('ActionScaffold.planCore')(
-  function* planCoreActionScaffold(
-    workspaceRoot: string,
-    moduleKeyInput: string,
-    action: string,
-    legalEntityScope: ActionScaffoldConfig['legalEntityScope'],
-    provisioning: ActionScaffoldConfig['provisioning'],
-  ) {
-    const moduleKey = yield* tryScaffold('Core module key is invalid', () =>
-      requireCoreModuleKey(moduleKeyInput),
-    );
-    const [actionPath, indexPath, catalogPath] = yield* tryScaffold(
-      'failed to resolve Core Action paths',
-      () =>
-        [
-          resolveContainedPath(
-            workspaceRoot,
-            'packages',
-            CORE_RUNTIME_DIRECTORY,
-            'src',
-            'modules',
-            'actions',
-            `${action}.action.ts`,
-          ),
-          resolveContainedPath(
-            workspaceRoot,
-            'packages',
-            CORE_RUNTIME_DIRECTORY,
-            'src',
-            'index.ts',
-          ),
-          resolveContainedPath(
-            workspaceRoot,
-            'packages',
-            CORE_RUNTIME_DIRECTORY,
-            'src',
-            'modules',
-            'actions',
-            'catalog.ts',
-          ),
-        ] as const,
-    );
-    const actionMutation = yield* createMutationEffect(
-      actionPath,
-      renderCoreAction(moduleKey, action, legalEntityScope, provisioning),
-    );
-    const fileSystem = yield* FileSystem.FileSystem;
-    const indexContent = yield* fileSystem
-      .readFileString(indexPath)
-      .pipe(Effect.mapError((cause) => scaffoldFailure(`failed to read ${indexPath}`, cause)));
-    const nextIndex = yield* tryScaffold('failed to patch the Core Action export slot', () =>
-      insertSortedSlot(
-        indexContent,
-        CORE_ACTION_SLOT_START,
-        CORE_ACTION_SLOT_END,
-        [coreExportEntry(action)],
-        isCoreActionExport,
-      ),
-    );
-    const indexMutation = updateMutation(indexPath, indexContent, nextIndex);
-    const catalogContent = yield* fileSystem
-      .readFileString(catalogPath)
-      .pipe(Effect.mapError((cause) => scaffoldFailure(`failed to read ${catalogPath}`, cause)));
-    const nextCatalog = yield* tryScaffold('failed to patch the Core Action catalog', () =>
-      insertSortedSlot(
-        insertSortedSlot(
-          catalogContent,
-          CORE_ACTION_CATALOG_IMPORT_SLOT_START,
-          CORE_ACTION_CATALOG_IMPORT_SLOT_END,
-          [coreCatalogImportEntry(action)],
-          isCoreActionCatalogImport,
+const planCoreActionScaffold = Effect.fn('ActionScaffold.planCore')(function* planCoreActionScaffold(
+  workspaceRoot: string,
+  moduleKeyInput: string,
+  action: string,
+  legalEntityScope: ActionScaffoldConfig['legalEntityScope'],
+  provisioning: ActionScaffoldConfig['provisioning'],
+) {
+  const moduleKey = yield* tryScaffold('Core module key is invalid', () => requireCoreModuleKey(moduleKeyInput));
+  const [actionPath, indexPath, catalogPath] = yield* tryScaffold(
+    'failed to resolve Core Action paths',
+    () =>
+      [
+        resolveContainedPath(
+          workspaceRoot,
+          'packages',
+          CORE_RUNTIME_DIRECTORY,
+          'src',
+          'modules',
+          'actions',
+          `${action}.action.ts`,
         ),
-        CORE_ACTION_CATALOG_VALUE_SLOT_START,
-        CORE_ACTION_CATALOG_VALUE_SLOT_END,
-        [coreCatalogValueEntry(action)],
-        isCoreActionCatalogValue,
+        resolveContainedPath(workspaceRoot, 'packages', CORE_RUNTIME_DIRECTORY, 'src', 'index.ts'),
+        resolveContainedPath(
+          workspaceRoot,
+          'packages',
+          CORE_RUNTIME_DIRECTORY,
+          'src',
+          'modules',
+          'actions',
+          'catalog.ts',
+        ),
+      ] as const,
+  );
+  const actionMutation = yield* createMutationEffect(
+    actionPath,
+    renderCoreAction(moduleKey, action, legalEntityScope, provisioning),
+  );
+  const fileSystem = yield* FileSystem.FileSystem;
+  const indexContent = yield* fileSystem
+    .readFileString(indexPath)
+    .pipe(Effect.mapError((cause) => scaffoldFailure(`failed to read ${indexPath}`, cause)));
+  const nextIndex = yield* tryScaffold('failed to patch the Core Action export slot', () =>
+    insertSortedSlot(
+      indexContent,
+      CORE_ACTION_SLOT_START,
+      CORE_ACTION_SLOT_END,
+      [coreExportEntry(action)],
+      isCoreActionExport,
+    ),
+  );
+  const indexMutation = updateMutation(indexPath, indexContent, nextIndex);
+  const catalogContent = yield* fileSystem
+    .readFileString(catalogPath)
+    .pipe(Effect.mapError((cause) => scaffoldFailure(`failed to read ${catalogPath}`, cause)));
+  const nextCatalog = yield* tryScaffold('failed to patch the Core Action catalog', () =>
+    insertSortedSlot(
+      insertSortedSlot(
+        catalogContent,
+        CORE_ACTION_CATALOG_IMPORT_SLOT_START,
+        CORE_ACTION_CATALOG_IMPORT_SLOT_END,
+        [coreCatalogImportEntry(action)],
+        isCoreActionCatalogImport,
       ),
-    );
-    const catalogMutation = updateMutation(catalogPath, catalogContent, nextCatalog);
-    const mutations = [actionMutation, indexMutation, catalogMutation].filter(
-      (mutation) => mutation !== undefined,
-    );
-    yield* tryScaffold('Core Action mutation paths are invalid', () =>
-      ensureUniqueMutationPaths(mutations),
-    );
-    return { mutations, result: { actionPath } };
-  },
-);
+      CORE_ACTION_CATALOG_VALUE_SLOT_START,
+      CORE_ACTION_CATALOG_VALUE_SLOT_END,
+      [coreCatalogValueEntry(action)],
+      isCoreActionCatalogValue,
+    ),
+  );
+  const catalogMutation = updateMutation(catalogPath, catalogContent, nextCatalog);
+  const mutations = [actionMutation, indexMutation, catalogMutation].filter((mutation) => mutation !== undefined);
+  yield* tryScaffold('Core Action mutation paths are invalid', () => ensureUniqueMutationPaths(mutations));
+  return { mutations, result: { actionPath } };
+});
 
 const planActionScaffold = Effect.fn('ActionScaffold.plan')(function* planActionScaffold(
   workspaceRoot: string,
   config: ActionScaffoldConfig,
 ) {
-  const action = yield* tryScaffold('Action name is invalid', () =>
-    requireCanonicalSlug(config.action, 'action'),
-  );
+  const action = yield* tryScaffold('Action name is invalid', () => requireCanonicalSlug(config.action, 'action'));
   if (config.scope === 'core') {
     return yield* planCoreActionScaffold(
       workspaceRoot,
@@ -305,14 +287,7 @@ const planActionScaffold = Effect.fn('ActionScaffold.plan')(function* planAction
   }
   const vertical = yield* discoverOntosModuleEffect(workspaceRoot, config.vertical);
   const actionPath = yield* tryScaffold('failed to resolve Action path', () =>
-    resolveContainedPath(
-      workspaceRoot,
-      'verticals',
-      vertical.slug,
-      'src',
-      'actions',
-      `${action}.action.ts`,
-    ),
+    resolveContainedPath(workspaceRoot, 'verticals', vertical.slug, 'src', 'actions', `${action}.action.ts`),
   );
   const actionMutation = yield* createMutationEffect(
     actionPath,
@@ -358,11 +333,7 @@ const planActionScaffold = Effect.fn('ActionScaffold.plan')(function* planAction
         ),
       ] as const,
   );
-  const manifestMutation = updateMutation(
-    vertical.manifestPath,
-    vertical.manifestContent,
-    nextManifest,
-  );
+  const manifestMutation = updateMutation(vertical.manifestPath, vertical.manifestContent, nextManifest);
   const registrationMutation = updateMutation(
     vertical.registrationPath,
     vertical.registrationContent,
@@ -371,15 +342,10 @@ const planActionScaffold = Effect.fn('ActionScaffold.plan')(function* planAction
   const dependencyMutation = yield* tryScaffold('failed to patch the Core dependency', () =>
     withCoreDependency(vertical),
   );
-  const mutations = [
-    actionMutation,
-    manifestMutation,
-    registrationMutation,
-    dependencyMutation,
-  ].filter((mutation) => mutation !== undefined);
-  yield* tryScaffold('Action mutation paths are invalid', () =>
-    ensureUniqueMutationPaths(mutations),
+  const mutations = [actionMutation, manifestMutation, registrationMutation, dependencyMutation].filter(
+    (mutation) => mutation !== undefined,
   );
+  yield* tryScaffold('Action mutation paths are invalid', () => ensureUniqueMutationPaths(mutations));
   return { mutations, result: { actionPath } };
 });
 

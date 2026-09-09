@@ -1,6 +1,4 @@
-const { default: config } = await import(
-  new URL('../../../../oxlint.config.ts', import.meta.url).href
-);
+const { default: config } = await import(new URL('../../../../oxlint.config.ts', import.meta.url).href);
 const name = process.env.EFFECT_NATIVE_FIXTURE_RULE;
 if (!name) throw new Error('Production fixture config requires an explicit rule name');
 const key = `effect-native/${name}`;

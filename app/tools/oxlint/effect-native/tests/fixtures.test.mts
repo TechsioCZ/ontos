@@ -3,13 +3,7 @@ import path from 'node:path';
 
 import { expect, it } from 'effect-rstest';
 
-import {
-  fixtureConfigPath,
-  fixturesDirectory,
-  listFilesRecursively,
-  listFixtureRules,
-  runOxlint,
-} from './oxlint.mts';
+import { fixtureConfigPath, fixturesDirectory, listFilesRecursively, listFixtureRules, runOxlint } from './oxlint.mts';
 
 const onlyRule = process.env.RULE;
 const rules = listFixtureRules().filter((rule) => onlyRule === undefined || rule === onlyRule);
@@ -46,8 +40,7 @@ const fixtureFailures = (
   for (const file of invalid) {
     const key = path.relative(fixtureDirectory, file).replaceAll('\\', '/');
     const count = byFile.get(key) ?? 0;
-    const expected = /^\/\/\s*expect-count:\s*(?<count>\d+)/u.exec(readFileSync(file, 'utf-8'))
-      ?.groups?.count;
+    const expected = /^\/\/\s*expect-count:\s*(?<count>\d+)/u.exec(readFileSync(file, 'utf-8'))?.groups?.count;
     if (expected !== undefined) {
       if (Number(expected) <= 0 || count !== Number(expected)) {
         failures.push(`${key} expected ${expected} positive diagnostics, got ${count}`);
@@ -74,19 +67,14 @@ for (const rule of rules) {
     const code = `effect-native(${rule})`;
     const byFile = new Map<string, number>();
     for (const diagnostic of run.diagnostics) {
-      expect(
-        diagnostic.code,
-        `unexpected diagnostic ${diagnostic.code} in ${diagnostic.filename}`,
-      ).toBe(code);
+      expect(diagnostic.code, `unexpected diagnostic ${diagnostic.code} in ${diagnostic.filename}`).toBe(code);
       const key = diagnostic.filename.replaceAll('\\', '/');
       byFile.set(key, (byFile.get(key) ?? 0) + 1);
     }
     expect(invalid.length, `${rule}: add at least one file under invalid/`).toBeGreaterThan(0);
     expect(valid.length, `${rule}: add at least one file under valid/`).toBeGreaterThan(0);
     expect(run.exitCode, `${rule}: invalid fixtures must make Oxlint fail`).toBe(1);
-    expect(run.numberOfFiles, `${rule}: not every fixture was linted`).toBe(
-      invalid.length + valid.length,
-    );
+    expect(run.numberOfFiles, `${rule}: not every fixture was linted`).toBe(invalid.length + valid.length);
     const failures = fixtureFailures(fixtureDirectory, invalid, valid, byFile);
     expect(failures, `${rule}:\n${failures.join('\n')}`).toStrictEqual([]);
   });

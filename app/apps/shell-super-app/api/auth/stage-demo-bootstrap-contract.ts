@@ -45,35 +45,25 @@ export interface StageDemoBootstrapResult {
   readonly accounts: readonly StageDemoAccountResult[];
 }
 
-export class StageDemoBootstrapError extends Schema.TaggedError<StageDemoBootstrapError>()(
-  'StageDemoBootstrapError',
-  {
-    code: Schema.Literals([
-      'stage_demo_configuration_invalid',
-      'stage_demo_conflict',
-      'stage_demo_persistence_failed',
-    ]),
-    reason: Schema.String,
-  },
-) {}
+export class StageDemoBootstrapError extends Schema.TaggedError<StageDemoBootstrapError>()('StageDemoBootstrapError', {
+  code: Schema.Literals(['stage_demo_configuration_invalid', 'stage_demo_conflict', 'stage_demo_persistence_failed']),
+  reason: Schema.String,
+}) {}
 
 const configurationFailure = (reason: string): StageDemoBootstrapError =>
-  new StageDemoBootstrapError({ code: 'stage_demo_configuration_invalid', reason });
+  new StageDemoBootstrapError({
+    code: 'stage_demo_configuration_invalid',
+    reason,
+  });
 
 const StageEnvironmentSchema = Schema.Trim.pipe(Schema.decodeTo(Schema.Literal('stage')));
-const StageDemoPasswordSchema = Schema.Redacted(
-  Schema.Trim.check(Schema.isNonEmpty(), Schema.isMinLength(8)),
-);
-const StageAuthSecretSchema = Schema.Redacted(
-  Schema.Trim.check(Schema.isNonEmpty(), Schema.isMinLength(32)),
-);
+const StageDemoPasswordSchema = Schema.Redacted(Schema.Trim.check(Schema.isNonEmpty(), Schema.isMinLength(8)));
+const StageAuthSecretSchema = Schema.Redacted(Schema.Trim.check(Schema.isNonEmpty(), Schema.isMinLength(32)));
 const HttpOriginSchema = Schema.Trim.check(
   Schema.isNonEmpty(),
   Schema.makeFilter((value) => {
     const url = URL.parse(value);
-    return url !== null &&
-      (url.protocol === 'http:' || url.protocol === 'https:') &&
-      url.origin === value
+    return url !== null && (url.protocol === 'http:' || url.protocol === 'https:') && url.origin === value
       ? undefined
       : 'URL must be an HTTP origin';
   }),
@@ -93,10 +83,7 @@ const stageDemoBootstrapSource = Config.all({
   authSecret: Config.schema(StageAuthSecretSchema, 'BETTER_AUTH_SECRET'),
   databaseAdminUrl: Config.schema(PostgreSqlUrlSchema, 'DATABASE_ADMIN_URL'),
   demoPassword: Config.schema(StageDemoPasswordSchema, 'STAGE_DEMO_PASSWORD'),
-  deploymentEnvironment: Config.schema(
-    StageEnvironmentSchema,
-    'ULTRAMODERN_DEPLOYMENT_ENVIRONMENT',
-  ),
+  deploymentEnvironment: Config.schema(StageEnvironmentSchema, 'ULTRAMODERN_DEPLOYMENT_ENVIRONMENT'),
   siamparkPassword: Config.schema(StageDemoPasswordSchema, 'STAGE_SIAMPARK_PASSWORD'),
 });
 
@@ -108,9 +95,7 @@ const configurationRequirements = [
   ['DATABASE_ADMIN_URL', 'must use PostgreSQL'],
 ] as const;
 
-const configurationFailureFromConfigError = (
-  error: Config.ConfigError,
-): StageDemoBootstrapError => {
+const configurationFailureFromConfigError = (error: Config.ConfigError): StageDemoBootstrapError => {
   const { message } = error;
   if (message.includes('ULTRAMODERN_DEPLOYMENT_ENVIRONMENT')) {
     return configurationFailure('The demo bootstrap can run only in the stage environment');
@@ -120,9 +105,7 @@ const configurationFailureFromConfigError = (
     return configurationFailure('The stage demo configuration is invalid');
   }
   const [key, invalidReason] = requirement;
-  return configurationFailure(
-    `${key} ${message.includes('Expected string') ? 'is required' : invalidReason}`,
-  );
+  return configurationFailure(`${key} ${message.includes('Expected string') ? 'is required' : invalidReason}`);
 };
 
 const environmentProvider = (environment: StageDemoEnvironment): ConfigProvider.ConfigProvider =>
@@ -140,11 +123,7 @@ const parseStageDemoBootstrapConfigFromProvider = Effect.fn(
 )(function* parseConfiguration(provider: ConfigProvider.ConfigProvider) {
   const source = yield* stageDemoBootstrapSource
     .parse(provider)
-    .pipe(
-      Effect.catchTag('ConfigError', (error) =>
-        Effect.fail(configurationFailureFromConfigError(error)),
-      ),
-    );
+    .pipe(Effect.catchTag('ConfigError', (error) => Effect.fail(configurationFailureFromConfigError(error))));
   return {
     accounts: [
       {

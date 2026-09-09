@@ -1,6 +1,7 @@
-import { Effect, Predicate } from 'effect';
 import { expect, test as base } from '@playwright/test';
 import type { Page } from '@playwright/test';
+import { Effect, Predicate } from 'effect';
+
 import { shellAuthenticationApiContract } from '../../shared/api.ts';
 import { createAuthenticationFixture } from './auth-fixture.ts';
 import type { AuthenticationFixture } from './auth-fixture.ts';
@@ -11,9 +12,7 @@ const hydratedLoginForm = (page: Page) => page.locator('form[data-e2e-hydrated-l
 // installs React props and moves its matching content portal to document.body.
 const waitForInteractiveAccountMenu = async (page: Page) => {
   await page.waitForFunction(() => {
-    const trigger = document.querySelector<HTMLButtonElement>(
-      'button[data-scope="menu"][data-part="trigger"]',
-    );
+    const trigger = document.querySelector<HTMLButtonElement>('button[data-scope="menu"][data-part="trigger"]');
     if (trigger === null) {
       return false;
     }
@@ -60,16 +59,17 @@ const gotoHydratedLogin = async (page: Page, language: 'cs' | 'en') => {
   });
 };
 
-const login = async (
-  page: Page,
-  language: 'cs' | 'en',
-  credentials: AuthenticationFixture['credentials'],
-) => {
+const login = async (page: Page, language: 'cs' | 'en', credentials: AuthenticationFixture['credentials']) => {
   await gotoHydratedLogin(page, language);
   const form = hydratedLoginForm(page);
   const labels =
     language === 'en'
-      ? { login: /^Login\s*\*$/u, password: /^Password/u, submit: 'Login', url: /\/en\/?$/u }
+      ? {
+          login: /^Login\s*\*$/u,
+          password: /^Password/u,
+          submit: 'Login',
+          url: /\/en\/?$/u,
+        }
       : {
           login: /^Přihlašovací jméno\s*\*$/u,
           password: /^Heslo/u,
@@ -95,10 +95,7 @@ const test = base.extend<Record<never, never>, { authentication: AuthenticationF
     async ({ browserName: _browserName }, use) => {
       await Effect.runPromise(
         Effect.gen(function* useAuthenticationFixture() {
-          const fixture = yield* Effect.timeout(
-            createAuthenticationFixture(),
-            workerFixtureAcquisitionTimeout,
-          );
+          const fixture = yield* Effect.timeout(createAuthenticationFixture(), workerFixtureAcquisitionTimeout);
           yield* Effect.tryPromise(async () => await use(fixture));
         }).pipe(Effect.scoped),
       );
@@ -124,9 +121,7 @@ test('renders the exact anonymous English and Czech home states', async ({ page 
   await expectAnonymousHome('cs', 'Přihlásit se');
 });
 
-test('keeps English and Czech login pages free of authenticated dashboard chrome', async ({
-  page,
-}) => {
+test('keeps English and Czech login pages free of authenticated dashboard chrome', async ({ page }) => {
   const expectDashboardAbsent = async () =>
     await Promise.all([
       expect(page.locator('header[aria-label]')).toHaveCount(0),
@@ -163,10 +158,7 @@ test('shows one generic error for invalid English credentials', async ({ authent
         ]),
     ));
 
-test('logs a user in without any server-error response', async ({
-  authentication,
-  page,
-}, testInfo) => {
+test('logs a user in without any server-error response', async ({ authentication, page }, testInfo) => {
   const { baseURL } = testInfo.project.use;
   if (!Predicate.isString(baseURL)) {
     throw new TypeError('The login E2E test requires a configured base URL');
@@ -177,11 +169,7 @@ test('logs a user in without any server-error response', async ({
 
   page.on('response', (response) => {
     const responseURL = new URL(response.url());
-    if (
-      responseURL.origin === applicationOrigin &&
-      response.status() >= 500 &&
-      response.status() < 600
-    ) {
+    if (responseURL.origin === applicationOrigin && response.status() >= 500 && response.status() < 600) {
       serverErrors.push(
         `${response.request().method()} ${responseURL.pathname}${responseURL.search} returned ${response.status()}`,
       );
@@ -210,10 +198,7 @@ test('logs a user in without any server-error response', async ({
   expect(serverErrors, 'Login and the authenticated page must not return HTTP 5xx').toEqual([]);
 });
 
-test('loads localized English and Czech Contacts pages only after login', async ({
-  authentication,
-  page,
-}) => {
+test('loads localized English and Czech Contacts pages only after login', async ({ authentication, page }) => {
   const pageErrors: string[] = [];
   page.on('pageerror', (error) => pageErrors.push(error.message));
 
@@ -245,8 +230,7 @@ test('loads localized English and Czech Contacts pages only after login', async 
     await expect(page.getByText(content.empty)).toHaveCount(0);
   };
   await expectContacts({
-    description:
-      'Party Registry uchovává kanonické strany, protistrany a jejich profily zapojení v jednom modulu.',
+    description: 'Party Registry uchovává kanonické strany, protistrany a jejich profily zapojení v jednom modulu.',
     empty: 'Zatím zde není žádný obsah.',
     heading: 'Kontakty',
     module: 'Modul',
@@ -257,8 +241,7 @@ test('loads localized English and Czech Contacts pages only after login', async 
 
   await page.goto('/en/contacts');
   await expectContacts({
-    description:
-      'Party Registry keeps canonical Parties, Counterparties, and their engagement profiles in one module.',
+    description: 'Party Registry keeps canonical Parties, Counterparties, and their engagement profiles in one module.',
     empty: 'No content has been added yet.',
     heading: 'Contacts',
     module: 'Module',
@@ -266,18 +249,15 @@ test('loads localized English and Czech Contacts pages only after login', async 
     url: /\/en\/contacts\/?$/u,
   });
   await expect(page.getByText('The module is temporarily unavailable. Try again.')).toHaveCount(0);
-  const dashboardSidebar = page.getByRole('complementary', { name: 'Dashboard sidebar' });
+  const dashboardSidebar = page.getByRole('complementary', {
+    name: 'Dashboard sidebar',
+  });
   await expect(dashboardSidebar).toBeVisible();
-  const [sidebarBox, mainBox] = await Promise.all([
-    dashboardSidebar.boundingBox(),
-    page.locator('main').boundingBox(),
-  ]);
+  const [sidebarBox, mainBox] = await Promise.all([dashboardSidebar.boundingBox(), page.locator('main').boundingBox()]);
   expect(sidebarBox?.width).toBe(256);
   expect(mainBox?.x).toBe(256);
   expect(
-    pageErrors.filter((message) =>
-      message.includes('FederatedI18nBoundary must be used within ModernI18nProvider'),
-    ),
+    pageErrors.filter((message) => message.includes('FederatedI18nBoundary must be used within ModernI18nProvider')),
   ).toEqual([]);
 });
 
@@ -294,10 +274,7 @@ test('keeps authenticated Shell chrome on search and guarded direct-target route
     await expect(page.getByText(status)).toBeVisible();
   };
   await expectPersistentShell('/en/search', 'No authorized results found.');
-  await expectPersistentShell(
-    '/en/modules/not-installed',
-    'You do not have permission to open this module.',
-  );
+  await expectPersistentShell('/en/modules/not-installed', 'You do not have permission to open this module.');
   await expectPersistentShell(
     '/en/resources/not-installed/example/missing',
     'You do not have permission to view this resource.',
@@ -365,7 +342,9 @@ test('switches tenant by pointer, fully reloads, and persists the selected conte
       response.request().method() === 'POST',
   );
   await Promise.all([
-    page.waitForEvent('framenavigated', { predicate: (frame) => frame === page.mainFrame() }),
+    page.waitForEvent('framenavigated', {
+      predicate: (frame) => frame === page.mainFrame(),
+    }),
     page.getByRole('option', { name: authentication.tenants.second.name }).click(),
   ]);
   const switchResponse = await switchResponsePromise;
@@ -409,7 +388,9 @@ test('retains Czech tenant context after one failed switch and supports keyboard
 
   await tenant.focus();
   await page.keyboard.press('Enter');
-  const secondTenantOption = page.getByRole('option', { name: authentication.tenants.second.name });
+  const secondTenantOption = page.getByRole('option', {
+    name: authentication.tenants.second.name,
+  });
   await expect(secondTenantOption).toBeVisible();
   const tenantListbox = page.getByRole('listbox');
   await tenantListbox.press('End');
@@ -417,7 +398,9 @@ test('retains Czech tenant context after one failed switch and supports keyboard
   expect(secondTenantOptionId).not.toBeNull();
   await expect(tenantListbox).toHaveAttribute('aria-activedescendant', secondTenantOptionId ?? '');
   await Promise.all([
-    page.waitForEvent('framenavigated', { predicate: (frame) => frame === page.mainFrame() }),
+    page.waitForEvent('framenavigated', {
+      predicate: (frame) => frame === page.mainFrame(),
+    }),
     tenantListbox.press('Enter'),
   ]);
   await expect(page.getByRole('combobox', { name: 'Aktuální tenant' })).toContainText(
@@ -425,29 +408,18 @@ test('retains Czech tenant context after one failed switch and supports keyboard
   );
 });
 
-test('keeps keyboard logout operable after a Czech failure and succeeds on retry', async ({
-  authentication,
-  page,
-}) => {
+test('keeps keyboard logout operable after a Czech failure and succeeds on retry', async ({ authentication, page }) => {
   let failLogout = true;
 
   await gotoHydratedLogin(page, 'cs')
     .then(
-      async () =>
-        await hydratedLoginForm(page)
-          .locator('input[name="login"]')
-          .fill(authentication.credentials.email),
+      async () => await hydratedLoginForm(page).locator('input[name="login"]').fill(authentication.credentials.email),
     )
     .then(
       async () =>
-        await hydratedLoginForm(page)
-          .locator('input[name="password"]')
-          .fill(authentication.credentials.password),
+        await hydratedLoginForm(page).locator('input[name="password"]').fill(authentication.credentials.password),
     )
-    .then(
-      async () =>
-        await hydratedLoginForm(page).getByRole('button', { name: 'Přihlásit se' }).click(),
-    )
+    .then(async () => await hydratedLoginForm(page).getByRole('button', { name: 'Přihlásit se' }).click())
     .then(async () => await expect(page).toHaveURL(/\/cs\/?$/u))
     .then(
       async () =>
@@ -464,10 +436,7 @@ test('keeps keyboard logout operable after a Czech failure and succeeds on retry
     .then(async () => await page.keyboard.press('Enter'))
     .then(
       async () =>
-        await expect(page.getByRole('menuitem', { name: 'Odhlásit se' })).toHaveAttribute(
-          'data-highlighted',
-          '',
-        ),
+        await expect(page.getByRole('menuitem', { name: 'Odhlásit se' })).toHaveAttribute('data-highlighted', ''),
     )
     .then(async () => await page.getByRole('menuitem', { name: 'Odhlásit se' }).click())
     .then(
@@ -481,10 +450,7 @@ test('keeps keyboard logout operable after a Czech failure and succeeds on retry
     .then(async () => await page.keyboard.press('Enter'))
     .then(
       async () =>
-        await expect(page.getByRole('menuitem', { name: 'Odhlásit se' })).toHaveAttribute(
-          'data-highlighted',
-          '',
-        ),
+        await expect(page.getByRole('menuitem', { name: 'Odhlásit se' })).toHaveAttribute('data-highlighted', ''),
     )
     .then(async () => await page.getByRole('menuitem', { name: 'Odhlásit se' }).click())
     .then(async () => await expect(page).toHaveURL(/\/cs\/login\/?$/u));
@@ -494,11 +460,15 @@ test('keeps the login form keyboard- and mobile-usable', async ({ page }) => {
   await page.setViewportSize({ height: 667, width: 375 });
   await gotoHydratedLogin(page, 'cs');
   const form = hydratedLoginForm(page);
-  const loginInput = form.getByRole('textbox', { name: /^Přihlašovací jméno\s*\*$/u });
+  const loginInput = form.getByRole('textbox', {
+    name: /^Přihlašovací jméno\s*\*$/u,
+  });
   await expect(async () => {
     await loginInput.fill('hydration-probe');
     await form.getByRole('button', { name: 'Přihlásit se' }).click();
-    await expect(page.getByText('Zadejte heslo.')).toBeInViewport({ timeout: 1000 });
+    await expect(page.getByText('Zadejte heslo.')).toBeInViewport({
+      timeout: 1000,
+    });
   }).toPass({ timeout: 5000 });
   await loginInput.clear();
   await loginInput.focus();
@@ -529,14 +499,14 @@ test('keeps the authenticated dashboard reachable without horizontal overflow at
   const tenant = page.getByRole('combobox', { name: 'Current tenant' });
   await expect(tenant).toBeInViewport();
   await tenant.click();
-  const secondTenant = page.getByRole('option', { name: authentication.tenants.second.name });
+  const secondTenant = page.getByRole('option', {
+    name: authentication.tenants.second.name,
+  });
   await expect(secondTenant).toBeInViewport();
   await secondTenant.click();
   await expect(page.getByText('Tenant switching failed. Try again.')).toBeInViewport();
   await expect(tenant).toContainText(authentication.tenants.first.name);
-  expect(
-    await page.evaluate(
-      () => document.documentElement.scrollWidth <= document.documentElement.clientWidth,
-    ),
-  ).toBe(true);
+  expect(await page.evaluate(() => document.documentElement.scrollWidth <= document.documentElement.clientWidth)).toBe(
+    true,
+  );
 });

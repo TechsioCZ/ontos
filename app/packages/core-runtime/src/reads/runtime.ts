@@ -1,7 +1,8 @@
-import { SqlError, isSqlError } from 'effect/unstable/sql/SqlError';
 /* oxlint-disable sonarjs/no-duplicate-string -- Existing compatibility boundary; expires: 2026-12-31. */
 // @effect-diagnostics asyncFunction:off -- Existing compatibility boundary; expires: 2026-12-31.
 import { Cause, Context, Effect, Exit, Layer, Schema } from 'effect';
+import { SqlError, isSqlError } from 'effect/unstable/sql/SqlError';
+
 import { computeCanonicalValueHash } from '../actions/repository.ts';
 import {
   decodeTrustedPrincipalContext,
@@ -55,15 +56,9 @@ const withOptionalProperty = <
   trailing: Trailing,
 ) => (condition ? { ...base, [key]: value, ...trailing } : { ...base, ...trailing });
 
-const CorrelationIdSchema = Schema.String.check(Schema.isMinLength(1)).pipe(
-  Schema.brand('ReadCorrelationId'),
-);
-const TargetModuleKeySchema = Schema.String.check(Schema.isMinLength(1)).pipe(
-  Schema.brand('ReadTargetModuleKey'),
-);
-const TargetResourceIdSchema = Schema.String.check(Schema.isMinLength(1)).pipe(
-  Schema.brand('ReadTargetResourceId'),
-);
+const CorrelationIdSchema = Schema.String.check(Schema.isMinLength(1)).pipe(Schema.brand('ReadCorrelationId'));
+const TargetModuleKeySchema = Schema.String.check(Schema.isMinLength(1)).pipe(Schema.brand('ReadTargetModuleKey'));
+const TargetResourceIdSchema = Schema.String.check(Schema.isMinLength(1)).pipe(Schema.brand('ReadTargetResourceId'));
 const TargetResourceTypeSchema = Schema.String.check(Schema.isMinLength(1)).pipe(
   Schema.brand('ReadTargetResourceType'),
 );
@@ -117,15 +112,11 @@ const atomicTargetIsValid = (target: AtomicResolvedReadPermissionTarget): boolea
   );
 };
 
-const usesForbiddenAlternativeTenantPermission = (
-  target: AtomicResolvedReadPermissionTarget,
-): boolean =>
-  target.kind === 'tenant' &&
-  (target.permission === 'access' || target.permission === 'impersonate');
+const usesForbiddenAlternativeTenantPermission = (target: AtomicResolvedReadPermissionTarget): boolean =>
+  target.kind === 'tenant' && (target.permission === 'access' || target.permission === 'impersonate');
 
-const canonicalPermissionTarget = (
-  target: ResolvedReadPermissionTarget,
-): AtomicResolvedReadPermissionTarget => (target.kind === 'any_of' ? target.targets[0] : target);
+const canonicalPermissionTarget = (target: ResolvedReadPermissionTarget): AtomicResolvedReadPermissionTarget =>
+  target.kind === 'any_of' ? target.targets[0] : target;
 
 const targetIsValid = (
   declared: 'legal_entity' | 'module' | 'resource' | 'tenant',
@@ -142,8 +133,7 @@ const targetIsValid = (
     target.targets.length >= 2 &&
     target.targets.length <= 5 &&
     target.targets.every(
-      (candidate) =>
-        atomicTargetIsValid(candidate) && !usesForbiddenAlternativeTenantPermission(candidate),
+      (candidate) => atomicTargetIsValid(candidate) && !usesForbiddenAlternativeTenantPermission(candidate),
     )
   );
 };
@@ -164,13 +154,14 @@ const targetMetadata = (target: ResolvedReadPermissionTarget) => {
 };
 
 const decisionFor = (
-  decisions: readonly { readonly decision: PermissionDecision; readonly key: string }[],
+  decisions: readonly {
+    readonly decision: PermissionDecision;
+    readonly key: string;
+  }[],
   expectedKey: string,
 ): PermissionDecision => {
   const [decision, ...unexpected] = decisions;
-  return unexpected.length === 0 && decision?.key === expectedKey
-    ? decision.decision
-    : 'unavailable';
+  return unexpected.length === 0 && decision?.key === expectedKey ? decision.decision : 'unavailable';
 };
 
 const checkAtomicPermissionTarget = <AccessValue extends (typeof ContextAccess)['Service']>(
@@ -298,90 +289,85 @@ const checkTenantResultPermission = Effect.fnUntraced(function* checkTenantResul
   return yield* Effect.void;
 });
 
-const checkResultPermissions = Effect.fn('ReadRuntime.checkResultPermissions')(
-  function* checkResultPermissionsEffect<
-    Result,
-    AccessValue extends (typeof ContextAccess)['Service'],
-  >(
-    contextAccess: AccessValue,
+const checkResultPermissions = Effect.fn('ReadRuntime.checkResultPermissions')(function* checkResultPermissionsEffect<
+  Result,
+  AccessValue extends (typeof ContextAccess)['Service'],
+>(
+  contextAccess: AccessValue,
+  result: Result,
+  scope: OperationalScope,
+  permissionTarget: ResolvedReadPermissionTarget,
+  resolver: (
     result: Result,
     scope: OperationalScope,
-    permissionTarget: ResolvedReadPermissionTarget,
-    resolver: (
-      result: Result,
-      scope: OperationalScope,
-    ) => readonly {
-      readonly moduleId: string;
-      readonly resourceId: string;
-      readonly resourceType: string;
-    }[],
+  ) => readonly {
+    readonly moduleId: string;
+    readonly resourceId: string;
+    readonly resourceType: string;
+  }[],
+) {
+  const resultTargets = yield* Effect.try({
+    catch: (resolverDefect) =>
+      preserveFailureCause(
+        new ReadHandlerExecutionError({
+          code: 'read_handler_execution_failed',
+          reason: 'The read result permission targets are invalid',
+        }),
+        resolverDefect,
+      ),
+    try: () => resolver(result, scope),
+  });
+  if (
+    resultTargets.some(
+      (target) =>
+        !stableTargetKey(target.moduleId) ||
+        !stableTargetKey(target.resourceId) ||
+        !stableTargetKey(target.resourceType),
+    )
   ) {
-    const resultTargets = yield* Effect.try({
-      catch: (resolverDefect) =>
-        preserveFailureCause(
-          new ReadHandlerExecutionError({
-            code: 'read_handler_execution_failed',
-            reason: 'The read result permission targets are invalid',
-          }),
-          resolverDefect,
-        ),
-      try: () => resolver(result, scope),
+    return yield* new ReadHandlerExecutionError({
+      code: 'read_handler_execution_failed',
+      reason: 'The read result permission targets are invalid',
     });
-    if (
-      resultTargets.some(
-        (target) =>
-          !stableTargetKey(target.moduleId) ||
-          !stableTargetKey(target.resourceId) ||
-          !stableTargetKey(target.resourceType),
-      )
-    ) {
-      return yield* new ReadHandlerExecutionError({
-        code: 'read_handler_execution_failed',
-        reason: 'The read result permission targets are invalid',
-      });
-    }
-    if (resultTargets.length === 0) {
-      return yield* Effect.void;
-    }
-    if (permissionTarget.kind === 'tenant') {
-      return yield* checkTenantResultPermission(contextAccess, scope, permissionTarget);
-    }
-    if (scope.legalEntityId === undefined) {
-      return yield* new ReadHandlerExecutionError({
-        code: 'read_handler_execution_failed',
-        reason: 'The read result permission targets are invalid',
-      });
-    }
-    const decisions = yield* contextAccess.resources({
-      legalEntityId: scope.legalEntityId,
-      principalId: scope.principalId,
-      resources: resultTargets,
-      tenantId: scope.tenantId,
-    });
-    const malformed =
-      decisions.length !== resultTargets.length ||
-      decisions.some(({ key }, index) => {
-        const target = resultTargets[index];
-        return (
-          target === undefined ||
-          key !== `${target.moduleId}:${target.resourceType}:${target.resourceId}`
-        );
-      });
-    if (malformed || decisions.some(({ decision }) => decision === 'unavailable')) {
-      return yield* new ReadPermissionUnavailable({
-        code: 'read_permission_unavailable',
-        reason: 'Read result authorization is temporarily unavailable',
-      });
-    }
-    if (decisions.some(({ decision }) => decision === 'denied')) {
-      return yield* new ReadPermissionDenied({
-        code: 'read_permission_denied',
-        reason: 'The read result contains a forbidden resource',
-      });
-    }
+  }
+  if (resultTargets.length === 0) {
     return yield* Effect.void;
-  },
-);
+  }
+  if (permissionTarget.kind === 'tenant') {
+    return yield* checkTenantResultPermission(contextAccess, scope, permissionTarget);
+  }
+  if (scope.legalEntityId === undefined) {
+    return yield* new ReadHandlerExecutionError({
+      code: 'read_handler_execution_failed',
+      reason: 'The read result permission targets are invalid',
+    });
+  }
+  const decisions = yield* contextAccess.resources({
+    legalEntityId: scope.legalEntityId,
+    principalId: scope.principalId,
+    resources: resultTargets,
+    tenantId: scope.tenantId,
+  });
+  const malformed =
+    decisions.length !== resultTargets.length ||
+    decisions.some(({ key }, index) => {
+      const target = resultTargets[index];
+      return target === undefined || key !== `${target.moduleId}:${target.resourceType}:${target.resourceId}`;
+    });
+  if (malformed || decisions.some(({ decision }) => decision === 'unavailable')) {
+    return yield* new ReadPermissionUnavailable({
+      code: 'read_permission_unavailable',
+      reason: 'Read result authorization is temporarily unavailable',
+    });
+  }
+  if (decisions.some(({ decision }) => decision === 'denied')) {
+    return yield* new ReadPermissionDenied({
+      code: 'read_permission_denied',
+      reason: 'The read result contains a forbidden resource',
+    });
+  }
+  return yield* Effect.void;
+});
 
 const readRuntimeFromDependencies = <
   DatabaseValue extends (typeof CoreDatabase)['Service'],
@@ -407,19 +393,10 @@ const readRuntimeFromDependencies = <
   >(input: {
     readonly input: unknown;
     readonly principal: unknown;
-    readonly registration: ReadRegistration<
-      InputSchema,
-      ResultSchema,
-      Owner,
-      Services,
-      HandlerError,
-      Requirements
-    >;
+    readonly registration: ReadRegistration<InputSchema, ResultSchema, Owner, Services, HandlerError, Requirements>;
     readonly transport: unknown;
   }) {
-    const decodedInput = yield* Schema.decodeUnknownEffect(
-      input.registration.descriptor.inputSchema,
-    )(input.input).pipe(
+    const decodedInput = yield* Schema.decodeUnknownEffect(input.registration.descriptor.inputSchema)(input.input).pipe(
       Effect.mapError((parseIssue) =>
         preserveFailureCause(
           new ReadInputValidationError({
@@ -502,8 +479,7 @@ const readRuntimeFromDependencies = <
     });
     if (
       !targetIsValid(input.registration.descriptor.permissionTarget, permissionTarget) ||
-      (getReadResultPermissionTargetResolver(input.registration) !== undefined &&
-        permissionTarget.kind === 'any_of')
+      (getReadResultPermissionTargetResolver(input.registration) !== undefined && permissionTarget.kind === 'any_of')
     ) {
       return yield* new ReadHandlerExecutionError({
         code: 'read_handler_execution_failed',
@@ -511,9 +487,7 @@ const readRuntimeFromDependencies = <
       });
     }
     const permissionTargetMetadata = targetMetadata(permissionTarget);
-    const snapshot = yield* gateway.prepareSnapshot(scope, [
-      input.registration.descriptor.entrypoint,
-    ]);
+    const snapshot = yield* gateway.prepareSnapshot(scope, [input.registration.descriptor.entrypoint]);
     yield* gateway.check(snapshot, input.registration.descriptor.entrypoint);
     stage('module_state_checked');
 
@@ -636,9 +610,7 @@ const readRuntimeFromDependencies = <
 
     const transactionResult = database.executor
       .transaction(
-        Effect.fn('ReadRuntime.readTransactionBody')(function* readTransactionBody(
-          transaction: CoreTransaction,
-        ) {
+        Effect.fn('ReadRuntime.readTransactionBody')(function* readTransactionBody(transaction: CoreTransaction) {
           const scoped = yield* installOperationalScope(transaction, scope);
           stage('scope_installed');
           const services = yield* getReadServiceFactory(input.registration)(scoped, scope);
@@ -653,9 +625,9 @@ const readRuntimeFromDependencies = <
             ),
           ).pipe(Effect.mapError(sanitizeReadHandlerFailure));
           stage('handler_executed');
-          const result = yield* Schema.decodeUnknownEffect(
-            Schema.toType(input.registration.descriptor.resultSchema),
-          )(handlerResult.result).pipe(
+          const result = yield* Schema.decodeUnknownEffect(Schema.toType(input.registration.descriptor.resultSchema))(
+            handlerResult.result,
+          ).pipe(
             Effect.mapError((parseIssue) =>
               preserveFailureCause(
                 new ReadResultValidationError({
@@ -667,17 +639,9 @@ const readRuntimeFromDependencies = <
             ),
           );
           stage('result_decoded');
-          const resultPermissionResolver = getReadResultPermissionTargetResolver(
-            input.registration,
-          );
+          const resultPermissionResolver = getReadResultPermissionTargetResolver(input.registration);
           if (resultPermissionResolver !== undefined) {
-            yield* checkResultPermissions(
-              contextAccess,
-              result,
-              scope,
-              permissionTarget,
-              resultPermissionResolver,
-            );
+            yield* checkResultPermissions(contextAccess, result, scope, permissionTarget, resultPermissionResolver);
           }
           const evidence = yield* validateReadEvidenceMetadata(
             input.registration.descriptor.evidencePolicy.captureMode,
@@ -724,9 +688,7 @@ const readRuntimeFromDependencies = <
         }),
       )
       .pipe(
-        Effect.catchDefect((defect) =>
-          isSqlError(defect) ? Effect.fail(defect) : Effect.die(defect),
-        ),
+        Effect.catchDefect((defect) => (isSqlError(defect) ? Effect.fail(defect) : Effect.die(defect))),
         Effect.tapError((failure) =>
           Schema.is(SqlError)(failure)
             ? Effect.logError('Unexpected governed read transaction failure', failure)
@@ -749,11 +711,7 @@ const readRuntimeFromDependencies = <
       return transactionExit.value;
     }
     const { cause } = transactionExit;
-    if (
-      !cause.reasons.some(
-        (reason) => Cause.isFailReason(reason) && Schema.is(ReadPermissionDenied)(reason.error),
-      )
-    ) {
+    if (!cause.reasons.some((reason) => Cause.isFailReason(reason) && Schema.is(ReadPermissionDenied)(reason.error))) {
       return yield* Effect.failCause(cause);
     }
     const evidenceExit = yield* Effect.exit(
@@ -781,9 +739,7 @@ const readRuntimeFromDependencies = <
         ),
       ),
     );
-    return yield* Effect.failCause(
-      Exit.isFailure(evidenceExit) ? Cause.combine(evidenceExit.cause, cause) : cause,
-    );
+    return yield* Effect.failCause(Exit.isFailure(evidenceExit) ? Cause.combine(evidenceExit.cause, cause) : cause);
   });
 
   return Object.freeze({ runRead });

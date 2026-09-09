@@ -2,14 +2,12 @@
 // @ontos-action-owner core.identity
 // @ontos-action-slug record-support-impersonation
 import { Effect, Schema } from 'effect';
+
 import type { ActionHandlerContext } from '../../actions/context.ts';
 import { defineAction } from '../../actions/definition.ts';
+import { IdentityTargetInvalidError, PrincipalManagementErrorSchema } from '../../auth/principal-management-errors.ts';
 import { principalManagementRepositoryFromTransaction } from '../../auth/principal-management.ts';
 import type { PrincipalManagementRepositoryService } from '../../auth/principal-management.ts';
-import {
-  IdentityTargetInvalidError,
-  PrincipalManagementErrorSchema,
-} from '../../auth/principal-management-errors.ts';
 import { defineSystemModuleEntrypoint } from '../module-entrypoint.ts';
 
 const PrincipalIdSchema = Schema.String.check(Schema.isUUID()).pipe(Schema.brand('PrincipalId'));
@@ -24,87 +22,85 @@ const checkpointFields = {
   targetPrincipalId: PrincipalIdSchema,
 };
 const RecordSupportImpersonationPayloadSchema = Schema.Union([
-  Schema.Struct({ ...checkpointFields, checkpoint: Schema.Literal('requested') }),
+  Schema.Struct({
+    ...checkpointFields,
+    checkpoint: Schema.Literal('requested'),
+  }),
   Schema.Struct({
     ...checkpointFields,
     checkpoint: Schema.Literals(['started', 'stopped']),
     sessionRef: safeSessionRef,
   }),
 ]);
-export type RecordSupportImpersonationPayload = Schema.Schema.Type<
-  typeof RecordSupportImpersonationPayloadSchema
->;
+export type RecordSupportImpersonationPayload = Schema.Schema.Type<typeof RecordSupportImpersonationPayloadSchema>;
 const RecordSupportImpersonationResultSchema = Schema.Struct({
   checkpoint: Schema.Literals(['requested', 'started', 'stopped']),
   recorded: Schema.Literal(true),
 });
-type ValidateSupportImpersonation =
-  PrincipalManagementRepositoryService['validateSupportImpersonation'];
-const handle = Effect.fn('RecordSupportImpersonationAction.handle')(
-  function* recordSupportImpersonationActionHandle(
-    payload: RecordSupportImpersonationPayload,
-    context: ActionHandlerContext<
-      Readonly<Record<never, never>>,
-      {
-        readonly validate: (
-          input: Parameters<ValidateSupportImpersonation>[0],
-        ) => ReturnType<ValidateSupportImpersonation>;
-      }
-    >,
-  ) {
-    if (
-      payload.originalPrincipalId !== context.scope.principalId ||
-      payload.targetPrincipalId === payload.originalPrincipalId ||
-      context.scope.authMethod !== 'session' ||
-      context.scope.authBindingId === undefined
-    ) {
-      return yield* new IdentityTargetInvalidError({
-        code: 'identity_target_invalid',
-        reason: 'The impersonation checkpoint is invalid',
-      });
+type ValidateSupportImpersonation = PrincipalManagementRepositoryService['validateSupportImpersonation'];
+const handle = Effect.fn('RecordSupportImpersonationAction.handle')(function* recordSupportImpersonationActionHandle(
+  payload: RecordSupportImpersonationPayload,
+  context: ActionHandlerContext<
+    Readonly<Record<never, never>>,
+    {
+      readonly validate: (
+        input: Parameters<ValidateSupportImpersonation>[0],
+      ) => ReturnType<ValidateSupportImpersonation>;
     }
-    yield* context.services.validate({
-      checkpoint: payload.checkpoint,
-      originalAuthBindingId: context.scope.authBindingId,
-      originalPrincipalId: payload.originalPrincipalId,
-      targetPrincipalId: payload.targetPrincipalId,
-      tenantId: context.scope.tenantId,
+  >,
+) {
+  if (
+    payload.originalPrincipalId !== context.scope.principalId ||
+    payload.targetPrincipalId === payload.originalPrincipalId ||
+    context.scope.authMethod !== 'session' ||
+    context.scope.authBindingId === undefined
+  ) {
+    return yield* new IdentityTargetInvalidError({
+      code: 'identity_target_invalid',
+      reason: 'The impersonation checkpoint is invalid',
     });
-    yield* context.recordDataAccess({
-      accessKind: 'read',
-      queryHash: `support-original-eligibility:${payload.originalPrincipalId}`,
-      resultCount: 1,
-      servingModuleKey: 'core.identity',
-      targetModuleKey: 'core.identity',
-      targetResourceId: payload.originalPrincipalId,
-      targetResourceType: 'principal',
-    });
-    yield* context.recordDataAccess({
-      accessKind: 'read',
-      queryHash: `support-target-eligibility:${payload.targetPrincipalId}`,
-      resultCount: 1,
-      servingModuleKey: 'core.identity',
-      targetModuleKey: 'core.identity',
-      targetResourceId: payload.targetPrincipalId,
-      targetResourceType: 'principal',
-    });
-    yield* payload.checkpoint === 'requested'
-      ? context.recordAuditEvidence({
-          checkpoint: payload.checkpoint,
-          originalPrincipalId: payload.originalPrincipalId,
-          reason: payload.reason,
-          targetPrincipalId: payload.targetPrincipalId,
-        })
-      : context.recordAuditEvidence({
-          checkpoint: payload.checkpoint,
-          originalPrincipalId: payload.originalPrincipalId,
-          reason: payload.reason,
-          sessionRef: payload.sessionRef,
-          targetPrincipalId: payload.targetPrincipalId,
-        });
-    return { checkpoint: payload.checkpoint, recorded: true as const };
-  },
-);
+  }
+  yield* context.services.validate({
+    checkpoint: payload.checkpoint,
+    originalAuthBindingId: context.scope.authBindingId,
+    originalPrincipalId: payload.originalPrincipalId,
+    targetPrincipalId: payload.targetPrincipalId,
+    tenantId: context.scope.tenantId,
+  });
+  yield* context.recordDataAccess({
+    accessKind: 'read',
+    queryHash: `support-original-eligibility:${payload.originalPrincipalId}`,
+    resultCount: 1,
+    servingModuleKey: 'core.identity',
+    targetModuleKey: 'core.identity',
+    targetResourceId: payload.originalPrincipalId,
+    targetResourceType: 'principal',
+  });
+  yield* context.recordDataAccess({
+    accessKind: 'read',
+    queryHash: `support-target-eligibility:${payload.targetPrincipalId}`,
+    resultCount: 1,
+    servingModuleKey: 'core.identity',
+    targetModuleKey: 'core.identity',
+    targetResourceId: payload.targetPrincipalId,
+    targetResourceType: 'principal',
+  });
+  yield* payload.checkpoint === 'requested'
+    ? context.recordAuditEvidence({
+        checkpoint: payload.checkpoint,
+        originalPrincipalId: payload.originalPrincipalId,
+        reason: payload.reason,
+        targetPrincipalId: payload.targetPrincipalId,
+      })
+    : context.recordAuditEvidence({
+        checkpoint: payload.checkpoint,
+        originalPrincipalId: payload.originalPrincipalId,
+        reason: payload.reason,
+        sessionRef: payload.sessionRef,
+        targetPrincipalId: payload.targetPrincipalId,
+      });
+  return { checkpoint: payload.checkpoint, recorded: true as const };
+});
 export const recordSupportImpersonationAction = defineAction(
   {
     accessEvidencePolicy: {
@@ -118,7 +114,10 @@ export const recordSupportImpersonationAction = defineAction(
     domainEvents: {},
     entrypoint: defineSystemModuleEntrypoint({
       access: 'write',
-      authorization: { kind: 'action_execution', provisioning: 'tenant_membership_default' },
+      authorization: {
+        kind: 'action_execution',
+        provisioning: 'tenant_membership_default',
+      },
       entrypointKey: 'core.identity.record-support-impersonation',
       moduleKey: 'core.identity',
       role: 'action',
@@ -135,6 +134,8 @@ export const recordSupportImpersonationAction = defineAction(
   handle,
   (transaction) => {
     const repository = principalManagementRepositoryFromTransaction(transaction);
-    return Effect.succeed({ validate: repository.validateSupportImpersonation });
+    return Effect.succeed({
+      validate: repository.validateSupportImpersonation,
+    });
   },
 );

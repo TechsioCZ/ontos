@@ -1,11 +1,7 @@
-import { expect, it } from 'effect-rstest';
 import { Effect, Predicate } from 'effect';
-import {
-  defineGlobalPolicy,
-  defineMicroverticalPolicy,
-  denyPolicy,
-  isActionPolicy,
-} from '../../src/actions/policy.ts';
+import { expect, it } from 'effect-rstest';
+
+import { defineGlobalPolicy, defineMicroverticalPolicy, denyPolicy, isActionPolicy } from '../../src/actions/policy.ts';
 import type { ActionPolicyEvaluatorInput } from '../../src/actions/policy.ts';
 
 const input = {
@@ -39,7 +35,10 @@ it('defines immutable global and owner-local Policy references', () => {
     policyKey: 'inventory.stock.available.v1',
   });
 
-  expect({ policyKey: globalPolicy.policyKey, scope: globalPolicy.scope }).toEqual({
+  expect({
+    policyKey: globalPolicy.policyKey,
+    scope: globalPolicy.scope,
+  }).toEqual({
     policyKey: 'global.tenant-active.v1',
     scope: 'global',
   });
@@ -70,10 +69,7 @@ it.effect(
       policyKey: 'global.allowed.v1',
     });
     const denied = defineMicroverticalPolicy<typeof input.payload, 'inventory.stock'>({
-      evaluate: () =>
-        Effect.fail(
-          denyPolicy('stock_unavailable', 'Requested stock is unavailable — retry later'),
-        ),
+      evaluate: () => Effect.fail(denyPolicy('stock_unavailable', 'Requested stock is unavailable — retry later')),
       owningModuleKey: 'inventory.stock',
       policyKey: 'inventory.stock.available.v1',
     });
@@ -91,9 +87,7 @@ it.effect(
 );
 
 it('rejects empty stable identifiers and denial messages', () => {
-  expect(() => defineGlobalPolicy({ evaluate: () => Effect.void, policyKey: '  ' })).toThrow(
-    TypeError,
-  );
+  expect(() => defineGlobalPolicy({ evaluate: () => Effect.void, policyKey: '  ' })).toThrow(TypeError);
   expect(() => denyPolicy('', 'Safe message')).toThrow(TypeError);
   expect(() => denyPolicy('stable_code', '')).toThrow(TypeError);
 });

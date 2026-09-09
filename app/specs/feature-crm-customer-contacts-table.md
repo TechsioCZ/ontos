@@ -14,9 +14,7 @@ The layout follows the `Pre-Alpha Repo` / `Audit Log — Naplněný` Figma wiref
 
 ## User Story
 
-As a CRM user
-I want to see a Customer's Contacts on the Customer detail page
-So that I can review the relevant names, email addresses, and phone numbers without leaving the Customer context
+As a CRM user I want to see a Customer's Contacts on the Customer detail page So that I can review the relevant names, email addresses, and phone numbers without leaving the Customer context
 
 ## Problem Statement
 

@@ -3,6 +3,7 @@
 // @ontos-action-slug unarchive-person-engagement
 import { defineAction, OperationContextUnavailable } from '@app/core-runtime';
 import { Effect } from 'effect';
+
 import {
   PersonEngagementLifecyclePayloadSchema,
   PersonEngagementProfileSchema,
@@ -17,9 +18,7 @@ import { engagementLifecycleRegistration } from './engagement-lifecycle-registra
 
 export const unarchivePersonEngagementAction = defineAction(
   {
-    ...engagementLifecycleRegistration<PersonEngagementLifecyclePayload>(
-      'party.registry.unarchive-person-engagement',
-    ),
+    ...engagementLifecycleRegistration<PersonEngagementLifecyclePayload>('party.registry.unarchive-person-engagement'),
     payloadSchema: PersonEngagementLifecyclePayloadSchema,
     resultSchema: PersonEngagementProfileSchema,
   },
@@ -34,8 +33,7 @@ export const unarchivePersonEngagementAction = defineAction(
       );
     }
     return Effect.succeed({
-      transition: (profileId) =>
-        transitionPersonEngagementProfile(transaction, scope.tenantId, profileId, 'active'),
+      transition: (profileId) => transitionPersonEngagementProfile(transaction, scope.tenantId, profileId, 'active'),
     });
   },
 );

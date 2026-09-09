@@ -1,4 +1,5 @@
-import { optionRecord } from '../shared/options.ts';
+import { fileURLToPath } from 'node:url';
+
 /**
  * Audit A6/B4 (`docs/architecture/EFFECT_V4_ANTIPATTERN_AUDIT.md`) asks for Effect.fn
  * on service operations and handlers. Named Effect.fn standardizes spans and definition/call-site
@@ -19,14 +20,8 @@ import { optionRecord } from '../shared/options.ts';
  * Report-only, with no fixer or suggestions.
  */
 import { defineRule } from '@oxlint/plugins';
-import { fileURLToPath } from 'node:url';
-
 import type { Context, ESTree } from '@oxlint/plugins';
 
-import { collectEffectBindings, effectMember } from '../shared/effect-imports.ts';
-import type { EffectBindings } from '../shared/effect-imports.ts';
-import { matchesGlobs, isTestFile, normalisePath, rootedScopePath } from '../shared/paths.ts';
-import { stringArray } from '../shared/options.ts';
 import {
   parentOf,
   unwrapNode as unwrap,
@@ -34,11 +29,16 @@ import {
   keyName as sharedKeyName,
 } from '../shared/ast.ts';
 import { resolvesToImport as sharedResolvesToImport } from '../shared/bindings.ts';
+import { collectEffectBindings, effectMember } from '../shared/effect-imports.ts';
+import type { EffectBindings } from '../shared/effect-imports.ts';
 import {
   collectRootNamespaces as sharedRootNamespaces,
   collectNamedImports,
   importDeclarations,
 } from '../shared/imports.ts';
+import { optionRecord } from '../shared/options.ts';
+import { stringArray } from '../shared/options.ts';
+import { matchesGlobs, isTestFile, normalisePath, rootedScopePath } from '../shared/paths.ts';
 
 const DEFAULT_INCLUDE: readonly string[] = ['apps/**', 'verticals/**', 'packages/**'];
 
@@ -76,10 +76,7 @@ interface RuleOptions {
 
 function readOptions(context: Context): RuleOptions {
   const record = optionRecord(context.options?.[0]);
-  const minParams =
-    typeof record.minParams === 'number' && Number.isInteger(record.minParams)
-      ? record.minParams
-      : 1;
+  const minParams = typeof record.minParams === 'number' && Number.isInteger(record.minParams) ? record.minParams : 1;
   return {
     minParams: minParams < 0 ? 0 : minParams,
     allowLeadingConstants: record.allowLeadingConstants !== false,
@@ -110,14 +107,8 @@ function resolvesToImport(context: Context, identifier: ESTree.Node): boolean {
  * Locals bound by `import * as E from "effect"` — `E.Effect.gen` must still be caught. Barrels that
  * re-export the Effect namespaces verbatim (the Modern.js BFF edge barrel) behave identically.
  */
-function collectRootNamespaces(
-  program: ESTree.Program,
-  reexportModules: readonly string[],
-): ReadonlySet<string> {
-  return sharedRootNamespaces(
-    program,
-    (source) => source === EFFECT_ROOT_MODULE || reexportModules.includes(source),
-  );
+function collectRootNamespaces(program: ESTree.Program, reexportModules: readonly string[]): ReadonlySet<string> {
+  return sharedRootNamespaces(program, (source) => source === EFFECT_ROOT_MODULE || reexportModules.includes(source));
 }
 
 /**
@@ -127,7 +118,10 @@ function collectRootNamespaces(
 function collectReexportBindings(
   program: ESTree.Program,
   reexportModules: readonly string[],
-): { readonly namespaces: ReadonlyMap<string, string>; readonly found: boolean } {
+): {
+  readonly namespaces: ReadonlyMap<string, string>;
+  readonly found: boolean;
+} {
   const accepts = (source: string): boolean => reexportModules.includes(source);
   return {
     namespaces: collectNamedImports(program, accepts),
@@ -137,13 +131,7 @@ function collectReexportBindings(
 
 /** Locals bound by `import { gen as effectGen } from "effect/Effect"`. */
 function collectDirectMemberImports(program: ESTree.Program, member: string): ReadonlySet<string> {
-  return new Set(
-    collectNamedImports(
-      program,
-      (source) => EFFECT_EFFECT_MODULE.test(source),
-      new Set([member]),
-    ).keys(),
-  );
+  return new Set(collectNamedImports(program, (source) => EFFECT_EFFECT_MODULE.test(source), new Set([member])).keys());
 }
 
 interface Resolver {
@@ -161,15 +149,12 @@ function resolveNamespaceMember(
 ): { namespace: string; member: string } | null {
   const shared = effectMember(node, resolver.bindings);
   if (shared !== null) {
-    return resolvesToImport(context, node.object as Extract<ESTree.Node, { type: 'Identifier' }>)
-      ? shared
-      : null;
+    return resolvesToImport(context, node.object as Extract<ESTree.Node, { type: 'Identifier' }>) ? shared : null;
   }
   const member = memberName(node);
   if (member === null) return null;
   const object = unwrap(node.object);
-  if (object.type === 'Identifier')
-    return resolveIdentifierMember(object, member, context, resolver);
+  if (object.type === 'Identifier') return resolveIdentifierMember(object, member, context, resolver);
   // `E.Effect.gen` where `E` is `import * as E from "effect"`.
   if (object.type !== 'MemberExpression') return null;
   const namespace = memberName(object);
@@ -185,11 +170,7 @@ function resolveIdentifierMember(
   context: Context,
   resolver: Resolver,
 ): { namespace: string; member: string } | null {
-  if (
-    resolver.rootNamespaces.has(object.name) &&
-    member === PIPE_MEMBER &&
-    resolvesToImport(context, object)
-  )
+  if (resolver.rootNamespaces.has(object.name) && member === PIPE_MEMBER && resolvesToImport(context, object))
     return { namespace: 'Function', member };
   const namespace = resolver.bindings.namespaces.get(object.name);
   if (namespace === undefined) return null;
@@ -205,9 +186,7 @@ function isEffectGenCall(node: ESTree.Node, context: Context, resolver: Resolver
   }
   if (callee.type !== 'MemberExpression') return false;
   const matched = resolveNamespaceMember(callee, context, resolver);
-  return (
-    matched !== null && matched.namespace === EFFECT_NAMESPACE && matched.member === GEN_MEMBER
-  );
+  return matched !== null && matched.namespace === EFFECT_NAMESPACE && matched.member === GEN_MEMBER;
 }
 
 /** The `Effect.gen` callee node, used as the report anchor. */
@@ -254,20 +233,13 @@ const preserving = new Set([
 ]);
 
 function isDataFirstPipe(callee: ESTree.Node, context: Context, resolver: Resolver): boolean {
-  if (callee.type === 'Identifier')
-    return resolver.pipeLocals.has(callee.name) && resolvesToImport(context, callee);
+  if (callee.type === 'Identifier') return resolver.pipeLocals.has(callee.name) && resolvesToImport(context, callee);
   if (callee.type !== 'MemberExpression') return false;
   const matched = resolveNamespaceMember(callee, context, resolver);
-  return (
-    matched !== null && matched.member === PIPE_MEMBER && PIPE_NAMESPACES.has(matched.namespace)
-  );
+  return matched !== null && matched.member === PIPE_MEMBER && PIPE_NAMESPACES.has(matched.namespace);
 }
 
-function isPreservingOperator(
-  argument: ESTree.Node,
-  context: Context,
-  resolver: Resolver,
-): boolean {
+function isPreservingOperator(argument: ESTree.Node, context: Context, resolver: Resolver): boolean {
   let operator = unwrap(argument);
   if (operator.type === 'CallExpression') operator = unwrap(operator.callee);
   if (operator.type !== 'MemberExpression') return false;
@@ -290,9 +262,7 @@ function peelPipes(expression: ESTree.Node, context: Context, resolver: Resolver
     // A pipeline can leave Effect (runners, predicates, or arbitrary user functions). Only
     // peel syntactically known Effect-to-Effect operators, never assume a pipe preserves types.
     if (
-      !current.arguments
-        .slice(dataFirst ? 1 : 0)
-        .every((argument) => isPreservingOperator(argument, context, resolver))
+      !current.arguments.slice(dataFirst ? 1 : 0).every((argument) => isPreservingOperator(argument, context, resolver))
     )
       return expression;
     const next = dataFirst ? current.arguments[0] : (callee as ESTree.MemberExpression).object;
@@ -306,15 +276,8 @@ function peelPipes(expression: ESTree.Node, context: Context, resolver: Resolver
  * The single expression the function evaluates to, or `null` when the body does more than that.
  * Leading `const`/`let`/`var` declarations are tolerated when `allowLeadingConstants`.
  */
-function isAllowedLeadingStatement(
-  statement: ESTree.Node,
-  allowLeadingConstants: boolean,
-): boolean {
-  if (
-    new Set(['TSTypeAliasDeclaration', 'TSInterfaceDeclaration', 'TSDeclareFunction']).has(
-      statement.type,
-    )
-  )
+function isAllowedLeadingStatement(statement: ESTree.Node, allowLeadingConstants: boolean): boolean {
+  if (new Set(['TSTypeAliasDeclaration', 'TSInterfaceDeclaration', 'TSDeclareFunction']).has(statement.type))
     return true;
   return allowLeadingConstants && statement.type === 'VariableDeclaration';
 }
@@ -329,11 +292,7 @@ function soleReturnedExpression(
   const statements = body.body.filter((statement) => statement.type !== 'EmptyStatement');
   const last = statements.at(-1);
   if (last === undefined || last.type !== 'ReturnStatement' || last.argument === null) return null;
-  if (
-    !statements
-      .slice(0, -1)
-      .every((statement) => isAllowedLeadingStatement(statement, allowLeadingConstants))
-  )
+  if (!statements.slice(0, -1).every((statement) => isAllowedLeadingStatement(statement, allowLeadingConstants)))
     return null;
   return last.argument;
 }
@@ -362,20 +321,14 @@ function enclosingCallArgument(fn: ESTree.Node): ESTree.CallExpression | null {
  * (`Effect.fn`, `Effect.fnUntraced`, `Effect.suspend`, `Effect.gen`, or the curried
  * `Effect.fn('span')(fn)` form) or to a caller-exempted combinator.
  */
-function isExemptArgument(
-  fn: ESTree.Node,
-  context: Context,
-  resolver: Resolver,
-  exempt: ReadonlySet<string>,
-): boolean {
+function isExemptArgument(fn: ESTree.Node, context: Context, resolver: Resolver, exempt: ReadonlySet<string>): boolean {
   const call = enclosingCallArgument(fn);
   if (call === null) return false;
   const callee = unwrap(call.callee);
   if (callee.type === 'MemberExpression') {
     const matched = resolveNamespaceMember(callee, context, resolver);
     if (matched === null) return false;
-    if (matched.namespace === EFFECT_NAMESPACE && CONSTRUCTOR_MEMBERS.has(matched.member))
-      return true;
+    if (matched.namespace === EFFECT_NAMESPACE && CONSTRUCTOR_MEMBERS.has(matched.member)) return true;
     return exempt.has(matched.member);
   }
   // `Effect.fn('span')(function* () {})`
@@ -384,9 +337,7 @@ function isExemptArgument(
     if (inner.type !== 'MemberExpression') return false;
     const matched = resolveNamespaceMember(inner, context, resolver);
     return (
-      matched !== null &&
-      matched.namespace === EFFECT_NAMESPACE &&
-      CURRIED_CONSTRUCTOR_MEMBERS.has(matched.member)
+      matched !== null && matched.namespace === EFFECT_NAMESPACE && CURRIED_CONSTRUCTOR_MEMBERS.has(matched.member)
     );
   }
   return false;
@@ -498,7 +449,10 @@ function describeOperation(fn: ESTree.Node, filename: string): OperationName {
   const span = `${qualifier}.${operation}`;
   if (span.length <= MAX_SPAN_NAME) return { name, suggestedSpanName: span };
   const fallback = `${fileQualifier(filename)}.${operation}`;
-  return { name, suggestedSpanName: fallback.length <= MAX_SPAN_NAME ? fallback : operation };
+  return {
+    name,
+    suggestedSpanName: fallback.length <= MAX_SPAN_NAME ? fallback : operation,
+  };
 }
 
 function parameterCount(fn: ESTree.Node): number {
@@ -510,10 +464,7 @@ function parameterCount(fn: ESTree.Node): number {
 function parameterList(fn: ESTree.Node): string {
   const params = (fn as { params?: readonly ESTree.Node[] }).params ?? [];
   const names = params.map((param) => {
-    const target =
-      param.type === 'TSParameterProperty'
-        ? (param as { parameter: ESTree.Node }).parameter
-        : param;
+    const target = param.type === 'TSParameterProperty' ? (param as { parameter: ESTree.Node }).parameter : param;
     if (target.type === 'Identifier') return target.name;
     if (target.type === 'AssignmentPattern') {
       const left = (target as { left: ESTree.Node }).left;
@@ -527,9 +478,7 @@ function parameterList(fn: ESTree.Node): string {
     if (target.type === 'ObjectPattern') {
       const keys = (target as { properties: readonly ESTree.Node[] }).properties
         .map((property) =>
-          property.type === 'Property'
-            ? keyName(property.key as ESTree.Node, property.computed === true)
-            : '…',
+          property.type === 'Property' ? keyName(property.key as ESTree.Node, property.computed === true) : '…',
         )
         .filter((key): key is string => key !== null);
       return keys.length === 0 ? '{ … }' : `{ ${keys.join(', ')} }`;
@@ -541,10 +490,7 @@ function parameterList(fn: ESTree.Node): string {
 
 function isIncludedPath(path: string, options: RuleOptions): boolean {
   if (!matchesGlobs(path, options.include)) return false;
-  if (
-    /\.d\.[cm]?ts$/u.test(path) ||
-    /(?:^|\/)(?:dist(?:-[^/]+)?|build|\.output|node_modules)\//u.test(path)
-  )
+  if (/\.d\.[cm]?ts$/u.test(path) || /(?:^|\/)(?:dist(?:-[^/]+)?|build|\.output|node_modules)\//u.test(path))
     return false;
   if (matchesGlobs(path, options.ignore)) return false;
   if (!options.includeTests && isTestFile(path)) return false;
@@ -620,7 +566,12 @@ export const rule = defineRule({
     for (const [local, namespace] of bindings.namespaces) {
       if (namespace === PIPE_MEMBER) pipeLocals.add(local);
     }
-    const resolver: Resolver = { bindings, rootNamespaces, genImports, pipeLocals };
+    const resolver: Resolver = {
+      bindings,
+      rootNamespaces,
+      genImports,
+      pipeLocals,
+    };
     const exempt = new Set(options.exemptCombinators);
 
     const check = (fn: ESTree.Node): void => {

@@ -8,28 +8,19 @@ created: 2026-08-17
 
 ## Feature Description
 
-Add a private CRM-owned Effect adapter for the Czech ARES consolidated economic-subject endpoint.
-The adapter normalizes one valid IČO into Customer-compatible business fields and deliberately drops
-all address, provenance, CZ-NACE, and activity data.
+Add a private CRM-owned Effect adapter for the Czech ARES consolidated economic-subject endpoint. The adapter normalizes one valid IČO into Customer-compatible business fields and deliberately drops all address, provenance, CZ-NACE, and activity data.
 
 ## User Story
 
-As the CRM ARES lookup API
-I want a typed and resilient server-side ARES adapter
-So that upstream transport and schema details never leak into Customer UI or contracts
+As the CRM ARES lookup API I want a typed and resilient server-side ARES adapter So that upstream transport and schema details never leak into Customer UI or contracts
 
 ## Problem Statement
 
-ARES is an external public service with documented input, availability, and blocking conditions.
-Calling it directly from a browser would duplicate validation and couple the UI to unstable CORS,
-raw Czech field names, upstream errors, and response evolution.
+ARES is an external public service with documented input, availability, and blocking conditions. Calling it directly from a browser would duplicate validation and couple the UI to unstable CORS, raw Czech field names, upstream errors, and response evolution.
 
 ## Solution Statement
 
-Create a private `verticals/crm/src/integrations/ares/` Effect service using the repository's Effect
-HTTP facilities. Decode only the consolidated response fields required by Customer, map them to the
-canonical names, apply one request per valid IČO with timeout and bounded retry, and expose a closed
-internal error union for the governed lookup read.
+Create a private `verticals/crm/src/integrations/ares/` Effect service using the repository's Effect HTTP facilities. Decode only the consolidated response fields required by Customer, map them to the canonical names, apply one request per valid IČO with timeout and bounded retry, and expose a closed internal error union for the governed lookup read.
 
 ## Relevant Files
 
@@ -51,18 +42,15 @@ Use these files to implement the feature:
 
 ### Phase 1: Foundation
 
-Define internal raw ARES response codecs, a Customer-prefill value, and tagged failures without
-publishing them as a module API or importing browser/framework concerns.
+Define internal raw ARES response codecs, a Customer-prefill value, and tagged failures without publishing them as a module API or importing browser/framework concerns.
 
 ### Phase 2: Core Implementation
 
-Implement the exact consolidated GET, safe URL construction, timeout, cache/coalescing, concurrency
-limit, and retry/error classification in Effect.
+Implement the exact consolidated GET, safe URL construction, timeout, cache/coalescing, concurrency limit, and retry/error classification in Effect.
 
 ### Phase 3: Integration
 
-Verify mapping and resilience with deterministic fake HTTP responses and document operational
-limits without requiring live ARES in automated tests.
+Verify mapping and resilience with deterministic fake HTTP responses and document operational limits without requiring live ARES in automated tests.
 
 ## Step by Step Tasks
 
@@ -96,13 +84,11 @@ IMPORTANT: Execute every step in order, top to bottom.
 
 ### Unit Tests
 
-Substitute the Effect HTTP client and a test clock to prove request construction, decoding, failure
-classification, retry timing, cache/coalescing, and cancellation deterministically.
+Substitute the Effect HTTP client and a test clock to prove request construction, decoding, failure classification, retry timing, cache/coalescing, and cancellation deterministically.
 
 ### Integration Tests
 
-Not required for this task: the following governed BFF spec provides the cross-boundary integration
-test. Automated validation must not depend on ARES availability.
+Not required for this task: the following governed BFF spec provides the cross-boundary integration test. Automated validation must not depend on ARES availability.
 
 ### Edge Cases
 

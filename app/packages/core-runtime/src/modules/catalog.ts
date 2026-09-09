@@ -1,5 +1,6 @@
 import { Context, Schema } from 'effect';
 import type { Cause, Effect } from 'effect';
+
 import type {
   OntosDeploymentAppId,
   OntosModuleDeploymentContract,
@@ -10,23 +11,20 @@ import { decodeOntosModuleDeploymentContract } from './manifest.ts';
 import { validateShellContributions } from './shell-contribution.ts';
 import type { TenantModuleStateValidationUnavailableError } from './tenant-module-state-errors.ts';
 
-const OntosModuleCatalogValidationErrorContract = Schema.TaggedStruct(
+const OntosModuleCatalogValidationErrorContract = Schema.TaggedStruct('OntosModuleCatalogValidationError', {
+  code: Schema.Literal('ontos_module_catalog_invalid'),
+  reason: Schema.String,
+});
+type OntosModuleCatalogValidationErrorSelf = typeof OntosModuleCatalogValidationErrorContract.Type &
+  Cause.YieldableError;
+const OntosModuleCatalogValidationErrorValue = Schema.TaggedError<OntosModuleCatalogValidationErrorSelf>()(
   'OntosModuleCatalogValidationError',
   {
     code: Schema.Literal('ontos_module_catalog_invalid'),
     reason: Schema.String,
   },
 );
-type OntosModuleCatalogValidationErrorSelf = typeof OntosModuleCatalogValidationErrorContract.Type &
-  Cause.YieldableError;
-const OntosModuleCatalogValidationErrorValue =
-  Schema.TaggedError<OntosModuleCatalogValidationErrorSelf>()('OntosModuleCatalogValidationError', {
-    code: Schema.Literal('ontos_module_catalog_invalid'),
-    reason: Schema.String,
-  });
-export type OntosModuleCatalogValidationError = InstanceType<
-  typeof OntosModuleCatalogValidationErrorValue
->;
+export type OntosModuleCatalogValidationError = InstanceType<typeof OntosModuleCatalogValidationErrorValue>;
 export { OntosModuleCatalogValidationErrorValue as OntosModuleCatalogValidationError };
 
 export interface InstalledDeploymentContractInput {
@@ -34,11 +32,7 @@ export interface InstalledDeploymentContractInput {
   readonly expectedAppId: OntosDeploymentAppId;
 }
 
-const InstalledDeploymentFailureReasonSchema = Schema.Literals([
-  'incompatible',
-  'timeout',
-  'unavailable',
-]);
+const InstalledDeploymentFailureReasonSchema = Schema.Literals(['incompatible', 'timeout', 'unavailable']);
 export type InstalledDeploymentFailureReason = typeof InstalledDeploymentFailureReasonSchema.Type;
 
 export type InstalledDeploymentStatus =
@@ -78,9 +72,7 @@ export interface InstalledModuleCatalog {
   readonly contracts: readonly OntosModuleDeploymentContract[];
   readonly deploymentAppIds: readonly OntosDeploymentAppId[];
   readonly deploymentStatuses: readonly InstalledDeploymentStatus[];
-  readonly getByDeploymentAppId: (
-    appId: OntosDeploymentAppId,
-  ) => OntosModuleDeploymentContract | undefined;
+  readonly getByDeploymentAppId: (appId: OntosDeploymentAppId) => OntosModuleDeploymentContract | undefined;
   readonly getByModuleId: (moduleId: OntosModuleId) => OntosModuleDeploymentContract | undefined;
   readonly moduleIds: readonly OntosModuleId[];
   readonly outboxSubscriptions: readonly OntosOutboxSubscriptionContract[];
@@ -155,28 +147,30 @@ const assembleInstalledModuleCatalog = (
   contractsInput: readonly OntosModuleDeploymentContract[],
   deploymentStatuses: readonly InstalledDeploymentStatus[],
 ): InstalledModuleCatalog => {
-  const byAppId = new Map(
-    contractsInput.map((contract) => [contract.deployment.appId, contract] as const),
-  );
-  const byModuleId = new Map(
-    contractsInput.map((contract) => [contract.manifest.module.id, contract] as const),
-  );
+  const byAppId = new Map(contractsInput.map((contract) => [contract.deployment.appId, contract] as const));
+  const byModuleId = new Map(contractsInput.map((contract) => [contract.manifest.module.id, contract] as const));
   const outboxSubscriptions = Object.freeze(
     contractsInput
-      .flatMap(({ runtime }) => runtime.outboxSubscriptions)
+      .flatMap(({ runtime }) =>
+        runtime.outboxSubscriptions.map((subscription) =>
+          Object.freeze({
+            ...subscription,
+            entrypoint: Object.freeze({
+              ...subscription.entrypoint,
+              authorization: Object.freeze({
+                ...subscription.entrypoint.authorization,
+              }),
+            }),
+          }),
+        ),
+      )
       .toSorted((left, right) => left.workerKey.localeCompare(right.workerKey)),
   );
   const contracts = Object.freeze(
-    [...contractsInput].toSorted((left, right) =>
-      left.manifest.module.id.localeCompare(right.manifest.module.id),
-    ),
+    [...contractsInput].toSorted((left, right) => left.manifest.module.id.localeCompare(right.manifest.module.id)),
   );
-  const deploymentAppIds = Object.freeze(
-    [...byAppId.keys()].toSorted((left, right) => left.localeCompare(right)),
-  );
-  const moduleIds = Object.freeze(
-    [...byModuleId.keys()].toSorted((left, right) => left.localeCompare(right)),
-  );
+  const deploymentAppIds = Object.freeze([...byAppId.keys()].toSorted((left, right) => left.localeCompare(right)));
+  const moduleIds = Object.freeze([...byModuleId.keys()].toSorted((left, right) => left.localeCompare(right)));
   return Object.freeze({
     contracts,
     deploymentAppIds,
@@ -198,12 +192,15 @@ const collectAuthoritativeDeploymentStatuses = (
   const statuses = new Map<OntosDeploymentAppId, AuthoritativeInstalledDeploymentStatus>();
   for (const input of inputs) {
     if (input.outcome === 'revoked') {
-      statuses.set(input.expectedAppId, { appId: input.expectedAppId, status: 'revoked' });
-    } else if (
-      input.outcome === 'disabled' &&
-      statuses.get(input.expectedAppId)?.status !== 'revoked'
-    ) {
-      statuses.set(input.expectedAppId, { appId: input.expectedAppId, status: 'disabled' });
+      statuses.set(input.expectedAppId, {
+        appId: input.expectedAppId,
+        status: 'revoked',
+      });
+    } else if (input.outcome === 'disabled' && statuses.get(input.expectedAppId)?.status !== 'revoked') {
+      statuses.set(input.expectedAppId, {
+        appId: input.expectedAppId,
+        status: 'disabled',
+      });
     }
   }
   return statuses;
@@ -331,9 +328,7 @@ export const resolveInstalledModuleCatalog = (
   const candidates = collectDeploymentCandidates(inputs, authoritativeStatuses, statuses);
   const conflictingAppIds = findConflictingDeploymentAppIds(candidates);
 
-  const healthy = candidates.filter(
-    (contract) => !conflictingAppIds.has(contract.deployment.appId),
-  );
+  const healthy = candidates.filter((contract) => !conflictingAppIds.has(contract.deployment.appId));
   for (const contract of candidates) {
     const {
       deployment: { appId },

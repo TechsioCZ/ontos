@@ -1,5 +1,6 @@
 import { and, asc, eq, or } from 'drizzle-orm';
 import { Cause, DateTime, Effect, Schema } from 'effect';
+
 import { principalAuthBindings, principals } from '../db/schema.ts';
 import type { ScopedTransactionExecutor } from '../db/scoped-transaction.ts';
 import { defineSystemModuleEntrypoint } from '../modules/module-entrypoint.ts';
@@ -44,7 +45,10 @@ const SelfResultJson = Schema.toCodecJson(SelfResult);
 const ManagedResultJson = Schema.toCodecJson(ManagedResult);
 
 const readUnavailable = (reason: string, cause: unknown): ReadHandlerUnavailable => {
-  const error = new ReadHandlerUnavailable({ code: 'read_handler_unavailable', reason });
+  const error = new ReadHandlerUnavailable({
+    code: 'read_handler_unavailable',
+    reason,
+  });
   Object.defineProperty(error, 'cause', { configurable: true, value: cause });
   return error;
 };
@@ -87,22 +91,13 @@ const services = (
         ),
       )
       .where(
-        and(
-          eq(principals.tenantId, tenantId),
-          or(eq(principals.kind, 'service'), eq(principals.kind, 'integration')),
-        ),
+        and(eq(principals.tenantId, tenantId), or(eq(principals.kind, 'service'), eq(principals.kind, 'integration'))),
       )
-      .orderBy(
-        asc(principals.displayName),
-        asc(principals.principalId),
-        asc(principalAuthBindings.createdAt),
-      )
+      .orderBy(asc(principals.displayName), asc(principals.principalId), asc(principalAuthBindings.createdAt))
       .limit(limit + 1)
       .offset(offset)
       .pipe(
-        Effect.mapError((cause) =>
-          readUnavailable('Managed identities are temporarily unavailable', cause),
-        ),
+        Effect.mapError((cause) => readUnavailable('Managed identities are temporarily unavailable', cause)),
         Effect.timeoutOrElse({
           duration: databaseReadTimeout,
           orElse: () =>
@@ -115,8 +110,11 @@ const services = (
         }),
         Effect.map((rows) => {
           const eligible = rows.filter(
-            (row): row is typeof row & { readonly kind: 'integration' | 'service' } =>
-              row.kind === 'service' || row.kind === 'integration',
+            (
+              row,
+            ): row is typeof row & {
+              readonly kind: 'integration' | 'service';
+            } => row.kind === 'service' || row.kind === 'integration',
           );
           return {
             items: eligible.slice(0, limit).map((row) => ({
@@ -135,10 +133,8 @@ const services = (
           };
         }),
         Effect.flatMap((result) =>
-          Schema.decodeUnknownEffect(ManagedResultJson)(result).pipe(
-            Effect.mapError((cause) =>
-              readUnavailable('Managed identities are temporarily unavailable', cause),
-            ),
+          Schema.decodeEffect(ManagedResultJson)(result).pipe(
+            Effect.mapError((cause) => readUnavailable('Managed identities are temporarily unavailable', cause)),
           ),
         ),
       ),
@@ -158,16 +154,11 @@ const services = (
           eq(principalAuthBindings.subjectType, 'api_key'),
         ),
       )
-      .orderBy(
-        asc(principalAuthBindings.createdAt),
-        asc(principalAuthBindings.principalAuthBindingId),
-      )
+      .orderBy(asc(principalAuthBindings.createdAt), asc(principalAuthBindings.principalAuthBindingId))
       .limit(limit + 1)
       .offset(offset)
       .pipe(
-        Effect.mapError((cause) =>
-          readUnavailable('Identity bindings are temporarily unavailable', cause),
-        ),
+        Effect.mapError((cause) => readUnavailable('Identity bindings are temporarily unavailable', cause)),
         Effect.timeoutOrElse({
           duration: databaseReadTimeout,
           orElse: () =>
@@ -182,18 +173,13 @@ const services = (
           items: rows.slice(0, limit).map((row) => ({
             ...row,
             createdAt: DateTime.formatIso(DateTime.fromDateUnsafe(row.createdAt)),
-            revokedAt:
-              row.revokedAt === null
-                ? null
-                : DateTime.formatIso(DateTime.fromDateUnsafe(row.revokedAt)),
+            revokedAt: row.revokedAt === null ? null : DateTime.formatIso(DateTime.fromDateUnsafe(row.revokedAt)),
           })),
           nextOffset: rows.length > limit ? offset + limit : null,
         })),
         Effect.flatMap((result) =>
-          Schema.decodeUnknownEffect(SelfResultJson)(result).pipe(
-            Effect.mapError((cause) =>
-              readUnavailable('Identity bindings are temporarily unavailable', cause),
-            ),
+          Schema.decodeEffect(SelfResultJson)(result).pipe(
+            Effect.mapError((cause) => readUnavailable('Identity bindings are temporarily unavailable', cause)),
           ),
         ),
       ),
@@ -211,7 +197,10 @@ export const selfApiKeyBindingsRead = defineRead<
     accessKind: 'list',
     entrypoint: defineSystemModuleEntrypoint({
       access: 'read',
-      authorization: { kind: 'context_permission', permission: 'module.access' },
+      authorization: {
+        kind: 'context_permission',
+        permission: 'module.access',
+      },
       entrypointKey: 'core.identity.self-api-key-bindings',
       moduleKey: 'core.identity',
       role: 'api',
@@ -230,9 +219,12 @@ export const selfApiKeyBindingsRead = defineRead<
     schemaVersion: '1',
   },
   (input, context) =>
-    context.services
-      .listSelf(input)
-      .pipe(Effect.map((result) => ({ evidence: { resultCount: result.items.length }, result }))),
+    context.services.listSelf(input).pipe(
+      Effect.map((result) => ({
+        evidence: { resultCount: result.items.length },
+        result,
+      })),
+    ),
   (transaction, scope) => Effect.succeed(services(transaction, scope.tenantId, scope.principalId)),
   () => ({ kind: 'tenant', permission: 'access' }),
 );
@@ -249,7 +241,10 @@ export const managedPrincipalsRead = defineRead<
     accessKind: 'list',
     entrypoint: defineSystemModuleEntrypoint({
       access: 'read',
-      authorization: { kind: 'context_permission', permission: 'module.access' },
+      authorization: {
+        kind: 'context_permission',
+        permission: 'module.access',
+      },
       entrypointKey: 'core.identity.managed-principals',
       moduleKey: 'core.identity',
       role: 'api',
@@ -268,9 +263,12 @@ export const managedPrincipalsRead = defineRead<
     schemaVersion: '1',
   },
   (input, context) =>
-    context.services
-      .listManaged(input)
-      .pipe(Effect.map((result) => ({ evidence: { resultCount: result.items.length }, result }))),
+    context.services.listManaged(input).pipe(
+      Effect.map((result) => ({
+        evidence: { resultCount: result.items.length },
+        result,
+      })),
+    ),
   (transaction, scope) => Effect.succeed(services(transaction, scope.tenantId, scope.principalId)),
   () => ({ kind: 'tenant', permission: 'manage_identity' }),
 );

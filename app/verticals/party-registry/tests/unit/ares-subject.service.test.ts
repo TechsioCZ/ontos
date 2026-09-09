@@ -1,14 +1,11 @@
+import { DateTime, Effect, Fiber, Logger, Option, Predicate, Schema } from 'effect';
 // @effect-diagnostics strictEffectProvide:off -- Tests intentionally provide isolated adapter and logger layers. expires: 2026-12-31.
 import { expect, it } from 'effect-rstest';
-
-import { DateTime, Effect, Fiber, Logger, Option, Predicate, Schema } from 'effect';
 import { TestClock } from 'effect/testing';
 import { HttpClient, HttpClientError, HttpClientResponse } from 'effect/unstable/http';
 import type { HttpClientRequest } from 'effect/unstable/http';
-import {
-  AresSubjectService,
-  AresSubjectServiceLive,
-} from '../../src/integrations/ares/ares-subject.service.ts';
+
+import { AresSubjectService, AresSubjectServiceLive } from '../../src/integrations/ares/ares-subject.service.ts';
 
 type HttpRunner = Parameters<typeof HttpClient.make>[0];
 
@@ -38,7 +35,10 @@ const jsonResponse = <Body>(
 ): HttpClientResponse.HttpClientResponse =>
   HttpClientResponse.fromWeb(
     request,
-    Response.json(body, { headers: { 'content-type': 'application/json' }, status }),
+    Response.json(body, {
+      headers: { 'content-type': 'application/json' },
+      status,
+    }),
   );
 
 const rawResponse = (
@@ -48,7 +48,10 @@ const rawResponse = (
 ): HttpClientResponse.HttpClientResponse =>
   HttpClientResponse.fromWeb(
     request,
-    new Response(body, { headers: { 'content-type': 'application/json' }, status }),
+    new Response(body, {
+      headers: { 'content-type': 'application/json' },
+      status,
+    }),
   );
 
 const clientFrom = (runner: HttpRunner): HttpClient.HttpClient => HttpClient.make(runner);
@@ -57,10 +60,7 @@ const lookup = (client: HttpClient.HttpClient, ico = '48039101', correlationId =
   Effect.gen(function* lookupAresSubject() {
     const service = yield* AresSubjectService;
     return yield* service.subject({ correlationId, ico });
-  }).pipe(
-    Effect.provide(AresSubjectServiceLive),
-    Effect.provideService(HttpClient.HttpClient, client),
-  );
+  }).pipe(Effect.provide(AresSubjectServiceLive), Effect.provideService(HttpClient.HttpClient, client));
 
 const capturedLoggerLayer = (entries: string[]) =>
   Logger.layer([
@@ -71,8 +71,10 @@ const capturedLoggerLayer = (entries: string[]) =>
 
 it.effect('maps a bounded ARES observation and sends an exact credential-free JSON request', () =>
   Effect.gen(function* aresSubjectServiceCase1() {
-    const requests: { readonly request: HttpClientRequest.HttpClientRequest; readonly url: URL }[] =
-      [];
+    const requests: {
+      readonly request: HttpClientRequest.HttpClientRequest;
+      readonly url: URL;
+    }[] = [];
     const client = clientFrom((request, url) => {
       requests.push({ request, url });
       return Effect.succeed(
@@ -96,9 +98,9 @@ it.effect('maps a bounded ARES observation and sends an exact credential-free JS
       throw new Error('Expected registeredAddress to be defined');
     }
     expect(Option.getOrUndefined(registeredAddress.municipality)).toBe('Praha');
-    expect(
-      result.providerChangedOn.pipe(Option.map(DateTime.formatIsoDateUtc), Option.getOrUndefined),
-    ).toBe('2026-09-01');
+    expect(result.providerChangedOn.pipe(Option.map(DateTime.formatIsoDateUtc), Option.getOrUndefined)).toBe(
+      '2026-09-01',
+    );
     expect(Option.getOrUndefined(result.providerRecordRef)).toBe('provider-record-123');
     expect(Object.hasOwn(result, 'czNace')).toBe(false);
     expect(Object.hasOwn(result, 'seznamRegistraci')).toBe(false);
@@ -121,100 +123,96 @@ it.effect('rejects malformed IČOs before provider I/O', () =>
       return Effect.succeed(jsonResponse(request, 200, rawSubject()));
     });
 
-    yield* Effect.all(
-      ['1234567', '123456789', '1234 5678', 'abcdefgh', '../48039101'].map((ico) =>
+    yield* Effect.forEach(
+      ['1234567', '123456789', '1234 5678', 'abcdefgh', '../48039101'],
+      (ico) =>
         Effect.gen(function* aresSubjectServiceCase3() {
           const error = yield* Effect.flip(lookup(client, ico));
           expect(Predicate.isTagged(error, 'AresSubjectInvalidIco')).toBe(true);
         }),
-      ),
       { concurrency: 'unbounded' },
     );
     expect(requests).toBe(0);
   }),
 );
 
-it.effect(
-  'represents absent optional provider facts explicitly without inventing Party facts',
-  () =>
-    Effect.gen(function* aresSubjectServiceCase4() {
-      const client = clientFrom((request) =>
-        Effect.succeed(
-          jsonResponse(request, 200, {
-            ico: '48039101',
-            obchodniJmeno: null,
-            sidlo: {},
-          }),
-        ),
-      );
-      const result = yield* client.pipe(lookup);
+it.effect('represents absent optional provider facts explicitly without inventing Party facts', () =>
+  Effect.gen(function* aresSubjectServiceCase4() {
+    const client = clientFrom((request) =>
+      Effect.succeed(
+        jsonResponse(request, 200, {
+          ico: '48039101',
+          obchodniJmeno: null,
+          sidlo: {},
+        }),
+      ),
+    );
+    const result = yield* client.pipe(lookup);
 
-      expect(result.subject).toEqual({
-        businessName: Option.none(),
-        dic: Option.none(),
-        dissolvedOn: Option.none(),
-        establishedOn: Option.none(),
-        ico: '48039101',
-        legalFormCode: Option.none(),
-        registeredAddress: Option.none(),
-      });
-      expect(Option.isNone(result.providerChangedOn)).toBe(true);
-      expect(Option.isNone(result.providerRecordRef)).toBe(true);
-    }),
+    expect(result.subject).toEqual({
+      businessName: Option.none(),
+      dic: Option.none(),
+      dissolvedOn: Option.none(),
+      establishedOn: Option.none(),
+      ico: '48039101',
+      legalFormCode: Option.none(),
+      registeredAddress: Option.none(),
+    });
+    expect(Option.isNone(result.providerChangedOn)).toBe(true);
+    expect(Option.isNone(result.providerRecordRef)).toBe(true);
+  }),
 );
 
-it.effect(
-  'keeps not-found, denial, throttling, timeout, and unavailable failures distinct and safe',
-  () =>
-    Effect.gen(function* aresSubjectServiceCase5() {
-      const statusCases = [
-        [400, 'AresSubjectResponseInvalid', 1],
-        [401, 'AresSubjectDenied', 1],
-        [403, 'AresSubjectDenied', 1],
-        [404, 'AresSubjectNotFound', 1],
-        [418, 'AresSubjectResponseInvalid', 1],
-        [429, 'AresSubjectThrottled', 3],
-        [500, 'AresSubjectUnavailable', 3],
-        [502, 'AresSubjectUnavailable', 3],
-      ] as const;
-      yield* Effect.all(
-        statusCases.map(([status, tag, expectedAttempts]) =>
-          Effect.gen(function* aresSubjectServiceCase6() {
-            let attempts = 0;
-            const client = clientFrom((request) => {
-              attempts += 1;
-              return Effect.succeed(
-                jsonResponse(request, status, {
-                  kod: 'PRIVATE_PROVIDER_CODE',
-                  popis: 'private provider detail',
-                }),
-              );
-            });
-            const program = Effect.flip(lookup(client));
-            const fiberProgram = Effect.gen(function* finishRetries() {
-              const fiber = yield* program.pipe(Effect.forkChild);
-              yield* Effect.yieldNow;
-              yield* TestClock.adjust('10 seconds');
-              return yield* Fiber.join(fiber);
-            });
-            const error = yield* expectedAttempts === 3 ? fiberProgram : program;
-            expect(Predicate.isTagged(error, tag)).toBe(true);
-            expect(attempts).toBe(expectedAttempts);
-            expect(
-              (yield* Schema.encodeEffect(Schema.fromJsonString(Schema.Unknown))(error)).includes(
-                'PRIVATE_PROVIDER_CODE',
-              ),
-            ).toBe(false);
-            expect(
-              (yield* Schema.encodeEffect(Schema.fromJsonString(Schema.Unknown))(error)).includes(
-                'private provider detail',
-              ),
-            ).toBe(false);
-          }),
-        ),
-        { concurrency: 'unbounded' },
-      );
-    }),
+it.effect('keeps not-found, denial, throttling, timeout, and unavailable failures distinct and safe', () =>
+  Effect.gen(function* aresSubjectServiceCase5() {
+    const statusCases = [
+      [400, 'AresSubjectResponseInvalid', 1],
+      [401, 'AresSubjectDenied', 1],
+      [403, 'AresSubjectDenied', 1],
+      [404, 'AresSubjectNotFound', 1],
+      [418, 'AresSubjectResponseInvalid', 1],
+      [429, 'AresSubjectThrottled', 3],
+      [500, 'AresSubjectUnavailable', 3],
+      [502, 'AresSubjectUnavailable', 3],
+    ] as const;
+    yield* Effect.all(
+      statusCases.map(([status, tag, expectedAttempts]) =>
+        Effect.gen(function* aresSubjectServiceCase6() {
+          let attempts = 0;
+          const client = clientFrom((request) => {
+            attempts += 1;
+            return Effect.succeed(
+              jsonResponse(request, status, {
+                kod: 'PRIVATE_PROVIDER_CODE',
+                popis: 'private provider detail',
+              }),
+            );
+          });
+          const program = Effect.flip(lookup(client));
+          const fiberProgram = Effect.gen(function* finishRetries() {
+            const fiber = yield* program.pipe(Effect.forkChild);
+            yield* Effect.yieldNow;
+            yield* TestClock.adjust('10 seconds');
+            return yield* Fiber.join(fiber);
+          });
+          const error = yield* expectedAttempts === 3 ? fiberProgram : program;
+          expect(Predicate.isTagged(error, tag)).toBe(true);
+          expect(attempts).toBe(expectedAttempts);
+          expect(
+            (yield* Schema.encodeEffect(Schema.fromJsonString(Schema.Unknown))(error)).includes(
+              'PRIVATE_PROVIDER_CODE',
+            ),
+          ).toBe(false);
+          expect(
+            (yield* Schema.encodeEffect(Schema.fromJsonString(Schema.Unknown))(error)).includes(
+              'private provider detail',
+            ),
+          ).toBe(false);
+        }),
+      ),
+      { concurrency: 'unbounded' },
+    );
+  }),
 );
 
 it.effect('retries transport faults with bounded backoff without exposing diagnostics', () =>
@@ -234,9 +232,7 @@ it.effect('retries transport faults with bounded backoff without exposing diagno
       );
     });
     const program = Effect.gen(function* runTransportRetries() {
-      const fiber = yield* Effect.flip(lookup(client, '48039101', 'corr\nprivate')).pipe(
-        Effect.forkChild,
-      );
+      const fiber = yield* Effect.flip(lookup(client, '48039101', 'corr\nprivate')).pipe(Effect.forkChild);
       yield* Effect.yieldNow;
       yield* TestClock.adjust('10 seconds');
       return yield* Fiber.join(fiber);
@@ -246,9 +242,7 @@ it.effect('retries transport faults with bounded backoff without exposing diagno
     expect(Predicate.isTagged(error, 'AresSubjectUnavailable')).toBe(true);
     expect(attempts).toBe(3);
     expect(
-      (yield* Schema.encodeEffect(Schema.fromJsonString(Schema.Unknown))(error)).includes(
-        'private socket diagnostic',
-      ),
+      (yield* Schema.encodeEffect(Schema.fromJsonString(Schema.Unknown))(error)).includes('private socket diagnostic'),
     ).toBe(false);
     expect(logs.join('\n')).toMatch(/private socket diagnostic/u);
     expect(logs.join('\n')).toMatch(/corr private/u);
@@ -292,9 +286,7 @@ it.effect('bounds stalled response bodies with the same three-attempt timeout po
       );
     });
     const program = Effect.gen(function* runBodyTimeouts() {
-      const fiber = yield* Effect.flip(lookup(client).pipe(Effect.timeout('20 seconds'))).pipe(
-        Effect.forkChild,
-      );
+      const fiber = yield* Effect.flip(lookup(client).pipe(Effect.timeout('20 seconds'))).pipe(Effect.forkChild);
       yield* Effect.yieldNow;
       yield* TestClock.adjust('30 seconds');
       return yield* Fiber.join(fiber);
@@ -305,36 +297,37 @@ it.effect('bounds stalled response bodies with the same three-attempt timeout po
   }),
 );
 
-it.effect(
-  'rejects malformed JSON, schema drift, mismatched IČO, and oversized text without partial evidence',
-  () =>
-    Effect.gen(function* aresSubjectServiceCase10() {
-      const responses: readonly ((
-        request: HttpClientRequest.HttpClientRequest,
-      ) => HttpClientResponse.HttpClientResponse)[] = [
-        (request) => rawResponse(request, 200, '{'),
-        (request) => jsonResponse(request, 200, { obchodniJmeno: 'missing IČO' }),
-        (request) => jsonResponse(request, 200, rawSubject('12345678')),
-        (request) =>
-          jsonResponse(request, 200, { ...rawSubject(), obchodniJmeno: 'x'.repeat(501) }),
-      ];
+it.effect('rejects malformed JSON, schema drift, mismatched IČO, and oversized text without partial evidence', () =>
+  Effect.gen(function* aresSubjectServiceCase10() {
+    const responses: readonly ((
+      request: HttpClientRequest.HttpClientRequest,
+    ) => HttpClientResponse.HttpClientResponse)[] = [
+      (request) => rawResponse(request, 200, '{'),
+      (request) => jsonResponse(request, 200, { obchodniJmeno: 'missing IČO' }),
+      (request) => jsonResponse(request, 200, rawSubject('12345678')),
+      (request) =>
+        jsonResponse(request, 200, {
+          ...rawSubject(),
+          obchodniJmeno: 'x'.repeat(501),
+        }),
+    ];
 
-      yield* Effect.all(
-        responses.map((response) =>
-          Effect.gen(function* aresSubjectServiceCase11() {
-            let requests = 0;
-            const client = clientFrom((request) => {
-              requests += 1;
-              return Effect.succeed(response(request));
-            });
-            const error = yield* Effect.flip(lookup(client));
-            expect(Predicate.isTagged(error, 'AresSubjectResponseInvalid')).toBe(true);
-            expect(requests).toBe(1);
-          }),
-        ),
-        { concurrency: 'unbounded' },
-      );
-    }),
+    yield* Effect.forEach(
+      responses,
+      (response) =>
+        Effect.gen(function* aresSubjectServiceCase11() {
+          let requests = 0;
+          const client = clientFrom((request) => {
+            requests += 1;
+            return Effect.succeed(response(request));
+          });
+          const error = yield* Effect.flip(lookup(client));
+          expect(Predicate.isTagged(error, 'AresSubjectResponseInvalid')).toBe(true);
+          expect(requests).toBe(1);
+        }),
+      { concurrency: 'unbounded' },
+    );
+  }),
 );
 
 it.effect('coalesces identical requests and exposes cache age without changing observedAt', () =>
@@ -342,9 +335,7 @@ it.effect('coalesces identical requests and exposes cache age without changing o
     let requests = 0;
     const client = clientFrom((request) => {
       requests += 1;
-      return Effect.sleep('1 second').pipe(
-        Effect.andThen(Effect.succeed(jsonResponse(request, 200, rawSubject()))),
-      );
+      return Effect.sleep('1 second').pipe(Effect.andThen(Effect.succeed(jsonResponse(request, 200, rawSubject()))));
     });
     const program = Effect.gen(function* exerciseCache() {
       const service = yield* AresSubjectService;
@@ -360,12 +351,12 @@ it.effect('coalesces identical requests and exposes cache age without changing o
       yield* TestClock.adjust('1 second');
       const initial = yield* Fiber.join(concurrent);
       yield* TestClock.adjust('2 minutes');
-      const cached = yield* service.subject({ correlationId: 'cached', ico: '48039101' });
+      const cached = yield* service.subject({
+        correlationId: 'cached',
+        ico: '48039101',
+      });
       return { cached, initial };
-    }).pipe(
-      Effect.provide(AresSubjectServiceLive),
-      Effect.provideService(HttpClient.HttpClient, client),
-    );
+    }).pipe(Effect.provide(AresSubjectServiceLive), Effect.provideService(HttpClient.HttpClient, client));
     const result = yield* program;
 
     expect(requests).toBe(1);
@@ -412,10 +403,7 @@ it.effect('bounds distinct upstream lookups to four concurrent requests', () =>
       expect(active).toBe(4);
       yield* TestClock.adjust('2 seconds');
       return yield* Fiber.join(fiber);
-    }).pipe(
-      Effect.provide(AresSubjectServiceLive),
-      Effect.provideService(HttpClient.HttpClient, client),
-    );
+    }).pipe(Effect.provide(AresSubjectServiceLive), Effect.provideService(HttpClient.HttpClient, client));
     const results = yield* program;
 
     expect(results.length).toBe(8);

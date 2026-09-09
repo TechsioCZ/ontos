@@ -2,6 +2,7 @@ import { defineOutboxWorker } from '@app/core-runtime';
 import type { OutboxWorkerDescriptor, OutboxWorkerHandlerContext } from '@app/core-runtime';
 import { Effect } from 'effect';
 import type { Schema } from 'effect';
+
 import { PartySearchProjector } from '../services/party-search-projection.service.ts';
 import type { PartySearchProjectionTarget } from '../services/party-search-projection.service.ts';
 

@@ -1,5 +1,6 @@
-import { describe, expect, test } from 'effect-rstest';
 import { Schema } from 'effect';
+import { describe, expect, test } from 'effect-rstest';
+
 import {
   GovernedResolvedModuleTargetSchema,
   GovernedResolveModuleTargetPayloadSchema,
@@ -24,9 +25,7 @@ describe('Shell governed module-target schemas', () => {
 
     expect(decodedInput).toEqual(input);
     expect(decodedResult).toEqual(result);
-    expect(Schema.encodeSync(GovernedResolveModuleTargetPayloadSchema)(decodedInput)).toEqual(
-      input,
-    );
+    expect(Schema.encodeSync(GovernedResolveModuleTargetPayloadSchema)(decodedInput)).toEqual(input);
     expect(Schema.encodeSync(GovernedResolvedModuleTargetSchema)(decodedResult)).toEqual(result);
   });
 });

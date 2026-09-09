@@ -7,6 +7,7 @@ import {
 } from '@app/core-runtime';
 import type { ReadHandlerContext } from '@app/core-runtime';
 import { Effect, Option } from 'effect';
+
 import {
   PartyRelationshipDetailRequestSchema,
   PartyRelationshipDetailResponseSchema,
@@ -39,10 +40,7 @@ const relationshipUnavailable = (cause: unknown) =>
 interface Services {
   readonly find: (
     relationshipId: string,
-  ) => Effect.Effect<
-    Option.Option<PartyRelationshipDetail>,
-    PartyRelationshipPersistenceUnavailable
-  >;
+  ) => Effect.Effect<Option.Option<PartyRelationshipDetail>, PartyRelationshipPersistenceUnavailable>;
 }
 
 export const partyRelationshipDetailRead = defineRead(
@@ -86,9 +84,7 @@ export const partyRelationshipDetailRead = defineRead(
   (transaction, scope) =>
     Effect.succeed({
       find: (relationshipId: string) =>
-        findPartyRelationshipRecord(transaction, scope.tenantId, relationshipId).pipe(
-          Effect.map(Option.fromNullishOr),
-        ),
+        findPartyRelationshipRecord(transaction, scope.tenantId, relationshipId).pipe(Effect.map(Option.fromNullishOr)),
     }),
   () => ({ kind: 'tenant', permission: 'read_party_identity' }),
 );

@@ -1,4 +1,5 @@
 import { expect, it } from 'effect-rstest';
+
 import {
   makeProtectedEntrypointInventory,
   serializeProtectedEntrypointInventory,
@@ -27,9 +28,7 @@ const entries = [
 it('inventory normalization, hashing, and serialization are deterministic', () => {
   const left = makeProtectedEntrypointInventory('revision', entries);
   const right = makeProtectedEntrypointInventory('revision', [entries[1], entries[0]]);
-  expect(serializeProtectedEntrypointInventory(left)).toBe(
-    serializeProtectedEntrypointInventory(right),
-  );
+  expect(serializeProtectedEntrypointInventory(left)).toBe(serializeProtectedEntrypointInventory(right));
   expect(left.inventoryHash).toMatch(/^[a-f0-9]{64}$/u);
   expect(left.entries.map((entry) => entry.surface)).toEqual(['action', 'route']);
 });
@@ -39,9 +38,7 @@ it('inventory rejects duplicate and unsafe entrypoint identities', () => {
     /duplicate protected entrypoint/u,
   );
   expect(() =>
-    makeProtectedEntrypointInventory('revision', [
-      { ...entries[0], entrypointKey: 'tenant@example.com' },
-    ]),
+    makeProtectedEntrypointInventory('revision', [{ ...entries[0], entrypointKey: 'tenant@example.com' }]),
   ).toThrow(/stable, non-sensitive identifier/u);
 });
 
@@ -62,7 +59,10 @@ it('inventory rejects malformed and excess authorization classification data', (
     makeProtectedEntrypointInventory('revision', [
       {
         ...entries[0],
-        authorization: { kind: 'context_permission', permission: 'tenant@example.com' },
+        authorization: {
+          kind: 'context_permission',
+          permission: 'tenant@example.com',
+        },
       },
     ]),
   ).toThrow(/classification is invalid/u);

@@ -1,4 +1,3 @@
-import { optionRecord } from '../shared/options.ts';
 /**
  * effect-native/no-raw-effect-adt-tag-check
  *
@@ -54,14 +53,14 @@ import { optionRecord } from '../shared/options.ts';
  * Report-only: no fixers, no suggestions.
  */
 import { defineRule } from '@oxlint/plugins';
-
 import type { Context, ESTree, Variable } from '@oxlint/plugins';
 
-import { collectEffectBindings } from '../shared/effect-imports.ts';
-import { isTestFile, scopePath, matchesGlobs } from '../shared/paths.ts';
 import { asNamedMember, staticString, unwrapNode } from '../shared/ast.ts';
 import { resolveVariable } from '../shared/bindings.ts';
+import { collectEffectBindings } from '../shared/effect-imports.ts';
+import { optionRecord } from '../shared/options.ts';
 import { stringArray } from '../shared/options.ts';
+import { isTestFile, scopePath, matchesGlobs } from '../shared/paths.ts';
 
 const DEFAULT_INCLUDE = ['apps/**', 'verticals/**', 'packages/**', 'scripts/**'];
 
@@ -110,7 +109,9 @@ function unwrap(node: ESTree.Node): ESTree.Node {
 }
 
 function asTagMember(node: ESTree.Node): ESTree.MemberExpression | null {
-  return asNamedMember(node, TAG_PROPERTY, asStringLiteral, { maxDepth: MAX_UNWRAP_DEPTH });
+  return asNamedMember(node, TAG_PROPERTY, asStringLiteral, {
+    maxDepth: MAX_UNWRAP_DEPTH,
+  });
 }
 
 function asStringLiteral(node: ESTree.Node): string | null {
@@ -208,10 +209,8 @@ const OPTION_COMBINATORS =
 const EXIT_COMBINATORS =
   '`Exit.match(exit, { onFailure, onSuccess })`, `Exit.isFailure`/`Exit.isSuccess`, or ' +
   '`Cause.findErrorOption(exit.cause).pipe(Option.match({ onNone, onSome }))` when the failure matters';
-const RESULT_COMBINATORS =
-  '`Result.match(result, { onFailure, onSuccess })` or `Result.isSuccess`/`Result.isFailure`';
-const EITHER_COMBINATORS =
-  '`Either.match(value, { onLeft, onRight })` or `Either.isLeft`/`Either.isRight`';
+const RESULT_COMBINATORS = '`Result.match(result, { onFailure, onSuccess })` or `Result.isSuccess`/`Result.isFailure`';
+const EITHER_COMBINATORS = '`Either.match(value, { onLeft, onRight })` or `Either.isLeft`/`Either.isRight`';
 
 /** Name the ADT from the tag, disambiguating the shared `Success`/`Failure` vocabulary by receiver. */
 function describeAdt(tag: string, receiver: string | null): { adt: string; combinators: string } {
@@ -220,7 +219,10 @@ function describeAdt(tag: string, receiver: string | null): { adt: string; combi
   const name = receiver?.toLowerCase() ?? '';
   if (name.includes('exit')) return { adt: 'Exit', combinators: EXIT_COMBINATORS };
   if (name.includes('result')) return { adt: 'Result', combinators: RESULT_COMBINATORS };
-  return { adt: 'Exit/Result', combinators: `${EXIT_COMBINATORS}, or ${RESULT_COMBINATORS}` };
+  return {
+    adt: 'Exit/Result',
+    combinators: `${EXIT_COMBINATORS}, or ${RESULT_COMBINATORS}`,
+  };
 }
 
 function isEffectSource(source: string, reexportModules: readonly string[]): boolean {
@@ -233,10 +235,7 @@ function isEffectSource(source: string, reexportModules: readonly string[]): boo
  * Dynamic `import('effect')` is picked up by the `ImportExpression` visitor, because it can appear
  * anywhere in the file rather than only in the module body.
  */
-function hasStaticEffectLinkage(
-  program: ESTree.Program,
-  reexportModules: readonly string[],
-): boolean {
+function hasStaticEffectLinkage(program: ESTree.Program, reexportModules: readonly string[]): boolean {
   if (collectEffectBindings(program).importsEffect) return true;
   return program.body.some((statement) => statementLinksEffect(statement, reexportModules));
 }
@@ -315,8 +314,7 @@ export const rule = defineRule({
 
     const tags = new Set(options.adtTags);
     let hasEffectLinkage =
-      !options.requireEffectImport ||
-      hasStaticEffectLinkage(context.sourceCode.ast, options.reexportModules);
+      !options.requireEffectImport || hasStaticEffectLinkage(context.sourceCode.ast, options.reexportModules);
     // Reports are buffered so a dynamic `import('effect')` appearing *after* a comparison still
     // counts as Effect linkage; the buffer is flushed in source order at `Program:exit`.
     const pending: PendingReport[] = [];
@@ -325,8 +323,7 @@ export const rule = defineRule({
       ImportExpression(node) {
         if (hasEffectLinkage) return;
         const source = asStringLiteral(node.source);
-        if (source !== null && isEffectSource(source, options.reexportModules))
-          hasEffectLinkage = true;
+        if (source !== null && isEffectSource(source, options.reexportModules)) hasEffectLinkage = true;
       },
 
       BinaryExpression(node) {
@@ -381,7 +378,11 @@ export const rule = defineRule({
       'Program:exit'() {
         if (!hasEffectLinkage) return;
         for (const report of pending) {
-          context.report({ node: report.node, messageId: report.messageId, data: report.data });
+          context.report({
+            node: report.node,
+            messageId: report.messageId,
+            data: report.data,
+          });
         }
       },
     };

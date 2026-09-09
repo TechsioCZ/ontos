@@ -1,4 +1,5 @@
 import { assert, expect, it } from 'effect-rstest';
+
 import { comparePartyCatalog, expectedPartyTableCatalog } from '../../src/db/catalog.ts';
 
 it('reports exact Party Registry catalog differences', () => {

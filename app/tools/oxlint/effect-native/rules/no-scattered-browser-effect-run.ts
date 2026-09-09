@@ -46,7 +46,6 @@
  *    passing Effects around stay untouched — the rule only objects to *running* them ad hoc.
  */
 import { defineRule } from '@oxlint/plugins';
-
 import type { Context, ESTree, Scope } from '@oxlint/plugins';
 
 import { memberName as staticMemberName, unwrapNode } from '../shared/ast.ts';
@@ -112,11 +111,7 @@ interface RuleOptions {
   readonly includeTestFiles?: boolean;
 }
 
-const FUNCTION_TYPES = new Set([
-  'ArrowFunctionExpression',
-  'FunctionDeclaration',
-  'FunctionExpression',
-]);
+const FUNCTION_TYPES = new Set(['ArrowFunctionExpression', 'FunctionDeclaration', 'FunctionExpression']);
 
 function readOptions(context: Context): Required<RuleOptions> {
   const raw = (context.options[0] ?? {}) as RuleOptions;
@@ -156,25 +151,19 @@ function resolvesToModuleImport(context: Context, node: ESTree.Node, name: strin
   return true;
 }
 
-function runnerImportName(
-  specifier: ESTree.ImportDeclaration['specifiers'][number],
-): string | null {
+function runnerImportName(specifier: ESTree.ImportDeclaration['specifiers'][number]): string | null {
   if (specifier.type !== 'ImportSpecifier') return specifier.local.name;
   return specifier.importKind === 'type' ? null : moduleExportName(specifier.imported);
 }
 
 /** Locals bound to an ad hoc runner by name, default or namespace import; local → imported name. */
-function collectRunnerImports(
-  program: ESTree.Program,
-  runnerNames: readonly string[],
-): ReadonlyMap<string, string> {
+function collectRunnerImports(program: ESTree.Program, runnerNames: readonly string[]): ReadonlyMap<string, string> {
   const locals = new Map<string, string>();
   for (const statement of program.body) {
     if (statement.type !== 'ImportDeclaration' || statement.importKind === 'type') continue;
     for (const specifier of statement.specifiers) {
       const imported = runnerImportName(specifier);
-      if (imported !== null && runnerNames.includes(imported))
-        locals.set(specifier.local.name, imported);
+      if (imported !== null && runnerNames.includes(imported)) locals.set(specifier.local.name, imported);
     }
   }
   return locals;
@@ -221,8 +210,7 @@ function unwrap(node: ESTree.Node): ESTree.Node {
 
 function ancestorsOf(node: ESTree.Node): ESTree.Node[] {
   const ancestors: ESTree.Node[] = [];
-  for (let current = node.parent; current !== null; current = current.parent)
-    ancestors.push(current);
+  for (let current = node.parent; current !== null; current = current.parent) ancestors.push(current);
   return ancestors.reverse();
 }
 
@@ -266,13 +254,9 @@ const DECLARATION_PARENTS = new Set([
 ]);
 const CLASS_KEY_PARENTS = new Set(['PropertyDefinition', 'MethodDefinition', 'AccessorProperty']);
 
-function isNonReferenceKey(
-  node: Extract<ESTree.Node, { type: 'Identifier' }>,
-  parent: ESTree.Node,
-): boolean {
+function isNonReferenceKey(node: Extract<ESTree.Node, { type: 'Identifier' }>, parent: ESTree.Node): boolean {
   if (parent.type === 'MemberExpression') return !parent.computed && parent.property === node;
-  if (parent.type === 'Property')
-    return !parent.computed && parent.key === node && !parent.shorthand;
+  if (parent.type === 'Property') return !parent.computed && parent.key === node && !parent.shorthand;
   if (!CLASS_KEY_PARENTS.has(parent.type)) return false;
   const property = parent as ESTree.PropertyDefinition;
   return property.key === node && !property.computed;
@@ -338,7 +322,10 @@ export const rule = defineRule({
     if (!options.includeTestFiles && isTestFile(filename)) return {};
 
     const effectModulePatterns = options.effectModules.map((glob) => globToRegExp(glob));
-    let bindings: EffectBindings = { importsEffect: false, namespaces: new Map() };
+    let bindings: EffectBindings = {
+      importsEffect: false,
+      namespaces: new Map(),
+    };
     let runnerImports: ReadonlyMap<string, string> = new Map();
     let namespaceImports: ReadonlyMap<string, string> = new Map();
     let rootNamespaces: ReadonlySet<string> = new Set();
@@ -347,9 +334,7 @@ export const rule = defineRule({
     const importedNamespace = (node: Extract<ESTree.Node, { type: 'Identifier' }>): boolean => {
       const namespace = bindings.namespaces.get(node.name);
       return (
-        namespace !== undefined &&
-        RUNNER_NAMESPACES.has(namespace) &&
-        resolvesToModuleImport(context, node, node.name)
+        namespace !== undefined && RUNNER_NAMESPACES.has(namespace) && resolvesToModuleImport(context, node, node.name)
       );
     };
 
@@ -367,8 +352,7 @@ export const rule = defineRule({
       const object = unwrap(node.object);
       const member = memberName(node);
       if (member === null || !RUN_MEMBER.test(member)) return null;
-      if (object.type === 'Identifier')
-        return importedNamespace(object) ? `${object.name}.${member}` : null;
+      if (object.type === 'Identifier') return importedNamespace(object) ? `${object.name}.${member}` : null;
       return object.type === 'MemberExpression' ? rootRunSeam(object, member) : null;
     };
 
@@ -426,7 +410,11 @@ export const rule = defineRule({
       if (key === null) {
         context.report({ data: { runner }, messageId: 'adHocRun', node });
       } else {
-        context.report({ data: { key, runner }, messageId: 'queryBoundary', node });
+        context.report({
+          data: { key, runner },
+          messageId: 'queryBoundary',
+          node,
+        });
       }
     };
 
@@ -444,11 +432,7 @@ export const rule = defineRule({
       });
     };
 
-    const isRunnerExport = (
-      specifier: ESTree.ExportSpecifier,
-      source: string | null,
-      local: string,
-    ): boolean => {
+    const isRunnerExport = (specifier: ESTree.ExportSpecifier, source: string | null, local: string): boolean => {
       if (source === null)
         return (
           (runnerImports.has(local) || importedRunMember(local)) &&
@@ -496,8 +480,7 @@ export const rule = defineRule({
       },
       ExportNamedDeclaration(node) {
         if (node.exportKind === 'type') return;
-        for (const specifier of node.specifiers)
-          reportRunnerExport(specifier, node.source?.value ?? null);
+        for (const specifier of node.specifiers) reportRunnerExport(specifier, node.source?.value ?? null);
       },
       ExportAllDeclaration(node) {
         if (node.exportKind === 'type') return;

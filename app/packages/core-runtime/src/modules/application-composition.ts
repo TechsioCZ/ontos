@@ -1,9 +1,6 @@
 import { Effect, Order, Predicate, Result, Schema } from 'effect';
-import {
-  OntosComponentContractSchema,
-  OntosDeploymentIdentitySchema,
-  OntosModuleIdSchema,
-} from './manifest.ts';
+
+import { OntosComponentContractSchema, OntosDeploymentIdentitySchema, OntosModuleIdSchema } from './manifest.ts';
 
 export const ONTOS_APPLICATION_COMPOSITION_SCHEMA_VERSION = '1' as const;
 
@@ -79,8 +76,7 @@ export const ApplicationCompositionSchema = Schema.Struct({
 
 export type ApplicationComposition = typeof ApplicationCompositionSchema.Type;
 export type ApplicationCompositionModule = typeof ApplicationCompositionModuleSchema.Type;
-export type ApplicationCompositionVersionedIdentity =
-  typeof ApplicationCompositionVersionedIdentitySchema.Type;
+export type ApplicationCompositionVersionedIdentity = typeof ApplicationCompositionVersionedIdentitySchema.Type;
 
 const observedContractSchema = Schema.Struct({
   contractUrl: artifactUrl,
@@ -117,22 +113,16 @@ export class ApplicationCompositionValidationError extends Schema.TaggedError<Ap
   },
 ) {}
 
-const identityKey = (identity: ApplicationCompositionVersionedIdentity): string =>
-  `${identity.id}@${identity.version}`;
+const identityKey = (identity: ApplicationCompositionVersionedIdentity): string => `${identity.id}@${identity.version}`;
 
 const identityOrder = Order.mapInput(Order.String, identityKey);
-const moduleOrder = Order.mapInput(
-  Order.String,
-  (module: ApplicationCompositionModule) => module.moduleId,
-);
+const moduleOrder = Order.mapInput(Order.String, (module: ApplicationCompositionModule) => module.moduleId);
 const singletonOrder = Order.Struct({
   packageName: Order.String,
   version: Order.String,
 });
 const sameDeployment = Schema.toEquivalence(OntosDeploymentIdentitySchema);
-const samePublicContract = Schema.toEquivalence(
-  ApplicationCompositionModuleSchema.fields.publicContract,
-);
+const samePublicContract = Schema.toEquivalence(ApplicationCompositionModuleSchema.fields.publicContract);
 
 const sameUniqueStrings = (left: readonly string[], right: readonly string[]): boolean => {
   const leftSet = new Set(left);
@@ -160,11 +150,7 @@ const sameVersionClaims = <Value extends { readonly version: string }>(
   );
 };
 
-const claim = Effect.fnUntraced(function* claimUnique(
-  claims: Set<string>,
-  value: string,
-  label: string,
-) {
+const claim = Effect.fnUntraced(function* claimUnique(claims: Set<string>, value: string, label: string) {
   if (claims.has(value)) {
     return yield* new ApplicationCompositionValidationError({
       reason: `duplicate ${label} ${value}`,
@@ -180,25 +166,26 @@ const assertAcyclicDependencies = Effect.fnUntraced(function* checkCycles(
   const dependencies = new Map(modules.map((module) => [module.moduleId, module.dependencies]));
   const visiting = new Set<string>();
   const visited = new Set<string>();
-  const visit: (moduleId: string) => Effect.Effect<void, ApplicationCompositionValidationError> =
-    Effect.fn('assertAcyclicDependencies.visit')(function* visitDependency(moduleId) {
-      if (visiting.has(moduleId)) {
-        return yield* new ApplicationCompositionValidationError({
-          reason: `dependency cycle includes module ${moduleId}`,
-        });
-      }
-      if (visited.has(moduleId)) {
-        return yield* Effect.void;
-      }
-      visiting.add(moduleId);
-      yield* Effect.forEach(dependencies.get(moduleId) ?? [], visit, {
-        concurrency: 1,
-        discard: true,
+  const visit: (moduleId: string) => Effect.Effect<void, ApplicationCompositionValidationError> = Effect.fn(
+    'assertAcyclicDependencies.visit',
+  )(function* visitDependency(moduleId) {
+    if (visiting.has(moduleId)) {
+      return yield* new ApplicationCompositionValidationError({
+        reason: `dependency cycle includes module ${moduleId}`,
       });
-      visiting.delete(moduleId);
-      visited.add(moduleId);
+    }
+    if (visited.has(moduleId)) {
       return yield* Effect.void;
+    }
+    visiting.add(moduleId);
+    yield* Effect.forEach(dependencies.get(moduleId) ?? [], visit, {
+      concurrency: 1,
+      discard: true,
     });
+    visiting.delete(moduleId);
+    visited.add(moduleId);
+    return yield* Effect.void;
+  });
   yield* Effect.forEach(modules, ({ moduleId }) => visit(moduleId), {
     concurrency: 1,
     discard: true,
@@ -317,11 +304,7 @@ const assertObservedFederationManifest = Effect.fnUntraced(function* checkFedera
     manifest.remoteName !== module.federation.remoteName ||
     manifest.sha256 !== module.federation.manifest.sha256 ||
     !sameUniqueStrings(module.federation.exposes, manifest.exposes) ||
-    !sameVersionClaims(
-      module.sharedSingletons,
-      manifest.sharedSingletons,
-      ({ packageName }) => packageName,
-    )
+    !sameVersionClaims(module.sharedSingletons, manifest.sharedSingletons, ({ packageName }) => packageName)
   ) {
     return yield* new ApplicationCompositionValidationError({
       reason: `module ${module.moduleId} does not match its observed Module Federation manifest`,
@@ -337,11 +320,7 @@ const assertObservedRuntime = Effect.fnUntraced(function* checkRuntime(
   if (
     identityKey(shell.contributionAbi) !== identityKey(runtime.contributionAbi) ||
     !sameVersionClaims(shell.coreCapabilities, runtime.coreCapabilities, ({ id }) => id) ||
-    !sameVersionClaims(
-      shell.sharedSingletons,
-      runtime.sharedSingletons,
-      ({ packageName }) => packageName,
-    )
+    !sameVersionClaims(shell.sharedSingletons, runtime.sharedSingletons, ({ packageName }) => packageName)
   ) {
     return yield* new ApplicationCompositionValidationError({
       reason: 'Shell and Core claims do not match the observed runtime contract',
@@ -393,7 +372,7 @@ export const validateApplicationCompositionCandidate = Effect.fnUntraced(functio
       ),
     ),
   );
-  const observed = yield* Schema.decodeUnknownEffect(candidateEvidenceSchema)(evidence).pipe(
+  const observed = yield* Schema.decodeEffect(candidateEvidenceSchema)(evidence).pipe(
     Effect.catchTag('SchemaError', () =>
       Effect.fail(
         new ApplicationCompositionValidationError({
@@ -452,12 +431,7 @@ export const validateApplicationCompositionCandidate = Effect.fnUntraced(functio
         { concurrency: 1, discard: true },
       );
       yield* assertDependenciesPresent(module, moduleIds);
-      yield* assertShellCompatibility(
-        module,
-        composition.shell,
-        shellCapabilities,
-        shellSingletons,
-      );
+      yield* assertShellCompatibility(module, composition.shell, shellCapabilities, shellSingletons);
       yield* assertObservedDeployment(module, observed.contracts[module.deployment.appId]);
       yield* assertObservedFederationManifest(module, observed.federationManifests[manifestUrl]);
       return yield* Effect.void;

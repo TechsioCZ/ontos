@@ -2,6 +2,7 @@
 import { NodeFileSystem, NodePath, NodeRuntime } from '@effect/platform-node';
 import { Config, Console, Effect, FileSystem, Layer, Path, Schema } from 'effect';
 import type { PlatformError } from 'effect/PlatformError';
+
 import { hasCompleteGeneratedModuleApiSeam } from './generated-governed-http-boundary.mts';
 import {
   configuredMicroVerticalApiStem,
@@ -14,10 +15,9 @@ import {
   unconstrainedHttpApiContractSchemaViolation,
 } from './ultramodern-api-boundary-rules.mts';
 
-class ApiBoundaryCheckFailed extends Schema.TaggedError<ApiBoundaryCheckFailed>()(
-  'ApiBoundaryCheckFailed',
-  { failureCount: Schema.Int },
-) {}
+class ApiBoundaryCheckFailed extends Schema.TaggedError<ApiBoundaryCheckFailed>()('ApiBoundaryCheckFailed', {
+  failureCount: Schema.Int,
+}) {}
 
 const PackageJsonSchema = Schema.Struct({
   exports: Schema.optionalKey(Schema.Record(Schema.String, Schema.String)),
@@ -38,9 +38,7 @@ const TopologySchema = Schema.Struct({
               }),
             ),
             effect: Schema.optionalKey(Schema.Json),
-            readiness: Schema.optionalKey(
-              Schema.Struct({ endpoint: Schema.optionalKey(Schema.String) }),
-            ),
+            readiness: Schema.optionalKey(Schema.Struct({ endpoint: Schema.optionalKey(Schema.String) })),
             runtime: Schema.optionalKey(Schema.String),
             serverEntry: Schema.optionalKey(Schema.String),
           }),
@@ -94,10 +92,7 @@ const listWorkspaceFiles = (
             if (info.type === 'Directory') {
               yield* visit(absoluteEntry);
             } else if (info.type === 'File') {
-              const normalized = path
-                .relative(workspaceRoot, absoluteEntry)
-                .split(path.sep)
-                .join('/');
+              const normalized = path.relative(workspaceRoot, absoluteEntry).split(path.sep).join('/');
               files.push(normalized);
             }
           }
@@ -111,30 +106,23 @@ const listWorkspaceFiles = (
 const checkApiBoundaries = Effect.gen(function* checkApiBoundariesEffect() {
   const fileSystem = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
-  const workspaceRoot = yield* Config.string('ULTRAMODERN_WORKSPACE_ROOT').pipe(
-    Config.withDefault(path.resolve()),
-  );
+  const workspaceRoot = yield* Config.string('ULTRAMODERN_WORKSPACE_ROOT').pipe(Config.withDefault(path.resolve()));
   const failures: string[] = [];
   const sourceByFile = new Map<string, string>();
 
-  const exists = (relativePath: string) =>
-    fileSystem.exists(path.join(workspaceRoot, relativePath));
+  const exists = (relativePath: string) => fileSystem.exists(path.join(workspaceRoot, relativePath));
 
-  const readText = (relativePath: string) =>
-    fileSystem.readFileString(path.join(workspaceRoot, relativePath), 'utf-8');
+  const readText = (relativePath: string) => fileSystem.readFileString(path.join(workspaceRoot, relativePath), 'utf-8');
 
   const topology = (yield* exists('topology/reference-topology.json'))
     ? yield* readText('topology/reference-topology.json').pipe(Effect.flatMap(decodeTopology))
     : { verticals: [] };
 
   const verticalApiStem = (verticalPath: string): string =>
-    configuredMicroVerticalApiStem(verticalPath, topology.verticals ?? []) ??
-    path.basename(verticalPath);
+    configuredMicroVerticalApiStem(verticalPath, topology.verticals ?? []) ?? path.basename(verticalPath);
 
   const topologyVertical = (verticalPath: string) =>
-    (topology.verticals ?? []).find(
-      (vertical) => (vertical.path ?? `verticals/${vertical.id}`) === verticalPath,
-    );
+    (topology.verticals ?? []).find((vertical) => (vertical.path ?? `verticals/${vertical.id}`) === verticalPath);
 
   const fail = (message: string): void => {
     failures.push(message);
@@ -146,8 +134,7 @@ const checkApiBoundaries = Effect.gen(function* checkApiBoundariesEffect() {
     }
   };
 
-  const listFiles = (startDirectory: string) =>
-    listWorkspaceFiles({ fileSystem, path, workspaceRoot }, startDirectory);
+  const listFiles = (startDirectory: string) => listWorkspaceFiles({ fileSystem, path, workspaceRoot }, startDirectory);
 
   const listDirectories = (startDirectory: string) =>
     Effect.gen(function* listDirectoriesEffect() {
@@ -175,37 +162,20 @@ const checkApiBoundaries = Effect.gen(function* checkApiBoundariesEffect() {
       }
     });
 
-  const assertContains = (
-    relativePath: string,
-    content: string,
-    pattern: RegExp,
-    message: string,
-  ): void => {
+  const assertContains = (relativePath: string, content: string, pattern: RegExp, message: string): void => {
     assert(pattern.test(content), `${relativePath}: ${message}`);
   };
 
-  const assertNotContains = (
-    relativePath: string,
-    content: string,
-    pattern: RegExp,
-    message: string,
-  ): void => {
+  const assertNotContains = (relativePath: string, content: string, pattern: RegExp, message: string): void => {
     assert(!pattern.test(content), `${relativePath}: ${message}`);
   };
 
-  const isGeneratedInfrastructureReadinessApi = (
-    verticalPath: string,
-    content: string,
-  ): boolean => {
+  const isGeneratedInfrastructureReadinessApi = (verticalPath: string, content: string): boolean => {
     const stem = verticalApiStem(verticalPath);
     const apiPrefix = topologyVertical(verticalPath)?.api?.bff?.prefix;
-    const contractStem = stem.replaceAll(/-(?<letter>[a-z0-9])/gu, (_match, letter: string) =>
-      letter.toUpperCase(),
-    );
+    const contractStem = stem.replaceAll(/-(?<letter>[a-z0-9])/gu, (_match, letter: string) => letter.toUpperCase());
     const endpoints = [
-      ...content.matchAll(
-        /HttpApiEndpoint\.(?<method>get|post)\(\s*'(?<name>[^']+)'\s*,\s*'(?<route>[^']+)'/gu,
-      ),
+      ...content.matchAll(/HttpApiEndpoint\.(?<method>get|post)\(\s*'(?<name>[^']+)'\s*,\s*'(?<route>[^']+)'/gu),
     ].map((match) => {
       const method = match.groups?.method ?? '';
       const name = match.groups?.name ?? '';
@@ -223,9 +193,7 @@ const checkApiBoundaries = Effect.gen(function* checkApiBoundariesEffect() {
   };
 
   const assertPrivateOwnerImports = (file: string, content: string): void => {
-    const imports = content.matchAll(
-      /(?:from\s+|import\s*\(|require\s*\()\s*['"](?<specifier>[^'"]+)['"]/gu,
-    );
+    const imports = content.matchAll(/(?:from\s+|import\s*\(|require\s*\()\s*['"](?<specifier>[^'"]+)['"]/gu);
     for (const match of imports) {
       const specifier = match.groups?.specifier;
       if (specifier !== undefined) {
@@ -265,9 +233,7 @@ const checkApiBoundaries = Effect.gen(function* checkApiBoundariesEffect() {
       ...(yield* listFiles('verticals')),
       ...(yield* listFiles('packages')),
     ];
-    const textFiles = generatedFiles.filter((file) =>
-      /\.(?:[cm]?[jt]sx?|json|md|mjs|mts|cts)$/u.test(file),
-    );
+    const textFiles = generatedFiles.filter((file) => /\.(?:[cm]?[jt]sx?|json|md|mjs|mts|cts)$/u.test(file));
 
     for (const file of textFiles) {
       sourceByFile.set(file, yield* readText(file));
@@ -277,7 +243,10 @@ const checkApiBoundaries = Effect.gen(function* checkApiBoundariesEffect() {
       assertPrivateOwnerImports(file, content);
       const unconstrainedContractSchema = file.includes('/tests/')
         ? undefined
-        : unconstrainedHttpApiContractSchemaViolation(content, { file, sources: sourceByFile });
+        : unconstrainedHttpApiContractSchemaViolation(content, {
+            file,
+            sources: sourceByFile,
+          });
       if (unconstrainedContractSchema !== undefined) {
         fail(`${file}: ${unconstrainedContractSchema}.`);
       }
@@ -378,19 +347,11 @@ const checkApiBoundaries = Effect.gen(function* checkApiBoundariesEffect() {
       if (yield* exists(apiEntry)) {
         const entry = yield* readText(apiEntry);
         const usesRpcRuntime = usesStrictRpcRuntimeTopology(entry, topologyResolverFor(apiEntry));
-        const runtimeTopologyViolation = strictEffectRuntimeTopologyViolation(
-          entry,
-          topologyResolverFor(apiEntry),
-        );
+        const runtimeTopologyViolation = strictEffectRuntimeTopologyViolation(entry, topologyResolverFor(apiEntry));
         if (runtimeTopologyViolation !== undefined) {
           fail(`${apiEntry}: ${runtimeTopologyViolation}.`);
         }
-        assertContains(
-          apiEntry,
-          entry,
-          /\bLayer\b/u,
-          'must compose dependencies with Effect Layer.',
-        );
+        assertContains(apiEntry, entry, /\bLayer\b/u, 'must compose dependencies with Effect Layer.');
         if (!usesRpcRuntime) {
           assertContains(
             apiEntry,
@@ -414,19 +375,15 @@ const checkApiBoundaries = Effect.gen(function* checkApiBoundariesEffect() {
     } else if (apiPrefix === undefined || apiPrefix.length === 0) {
       fail(`${sharedApi}: topology must declare api.bff.prefix.`);
     } else {
-      const baselineViolation = microVerticalApiBaselineViolation(
-        apiStem,
-        path.join(workspaceRoot, sharedApi),
-        {
-          additionalPaths: apiStem === 'checkout' ? { checkoutCartPath: `${basePath}/cart` } : {},
-          apiPrefix,
-          basePath,
-          effectClientPackage: '@modern-js/plugin-bff/effect-client',
-          ownerId: vertical.id,
-          readinessPath: `${basePath}/readiness`,
-          sharedContractsPackage: '@app/shared-contracts',
-        },
-      );
+      const baselineViolation = microVerticalApiBaselineViolation(apiStem, path.join(workspaceRoot, sharedApi), {
+        additionalPaths: apiStem === 'checkout' ? { checkoutCartPath: `${basePath}/cart` } : {},
+        apiPrefix,
+        basePath,
+        effectClientPackage: '@modern-js/plugin-bff/effect-client',
+        ownerId: vertical.id,
+        readinessPath: `${basePath}/readiness`,
+        sharedContractsPackage: '@app/shared-contracts',
+      });
       assert(
         baselineViolation === undefined,
         `${sharedApi}: ${baselineViolation ?? 'invalid MicroVertical API baseline'}.`,
@@ -439,30 +396,10 @@ const checkApiBoundaries = Effect.gen(function* checkApiBoundariesEffect() {
       const sharedApi = `${appPath}/shared/api.ts`;
       if (yield* exists(sharedApi)) {
         const contract = yield* readText(sharedApi);
-        assertContains(
-          sharedApi,
-          contract,
-          /\bHttpApi\.make\b/u,
-          'must declare the HttpApi contract.',
-        );
-        assertContains(
-          sharedApi,
-          contract,
-          /\bHttpApiGroup\.make\b/u,
-          'must declare HttpApi groups.',
-        );
-        assertContains(
-          sharedApi,
-          contract,
-          /\bHttpApiEndpoint\./u,
-          'must declare endpoints through HttpApiEndpoint.',
-        );
-        assertContains(
-          sharedApi,
-          contract,
-          /\bSchema\./u,
-          'must use Schema for request, response and error shapes.',
-        );
+        assertContains(sharedApi, contract, /\bHttpApi\.make\b/u, 'must declare the HttpApi contract.');
+        assertContains(sharedApi, contract, /\bHttpApiGroup\.make\b/u, 'must declare HttpApi groups.');
+        assertContains(sharedApi, contract, /\bHttpApiEndpoint\./u, 'must declare endpoints through HttpApiEndpoint.');
+        assertContains(sharedApi, contract, /\bSchema\./u, 'must use Schema for request, response and error shapes.');
         if (appPath.startsWith('verticals/')) {
           assertVerticalBaseline(appPath, sharedApi);
         }
@@ -483,9 +420,7 @@ const checkApiBoundaries = Effect.gen(function* checkApiBoundariesEffect() {
       assert(yield* exists(srcApiDirectory), `${srcApiDirectory} is required.`);
 
       if (yield* exists(srcApiDirectory)) {
-        const clientFiles = (yield* listFiles(srcApiDirectory)).filter((file) =>
-          file.endsWith('-client.ts'),
-        );
+        const clientFiles = (yield* listFiles(srcApiDirectory)).filter((file) => file.endsWith('-client.ts'));
         assert(clientFiles.length > 0, `${srcApiDirectory} must contain a generated API client.`);
       }
 
@@ -553,17 +488,14 @@ const checkApiBoundaries = Effect.gen(function* checkApiBoundariesEffect() {
 
       const validateApiPackage = Effect.gen(function* validateApiPackageEffect() {
         if (yield* exists(packageJsonPath)) {
-          const packageJson = yield* readText(packageJsonPath).pipe(
-            Effect.flatMap(decodePackageJson),
-          );
+          const packageJson = yield* readText(packageJsonPath).pipe(Effect.flatMap(decodePackageJson));
           const isPrivateVerticalInfrastructureApi =
             appPath.startsWith('verticals/') &&
             (yield* exists(sharedApi)) &&
             isGeneratedInfrastructureReadinessApi(appPath, yield* readText(sharedApi));
           if (isPrivateVerticalInfrastructureApi) {
             assert(
-              packageJson.exports?.['./api'] === undefined &&
-                packageJson.exports?.['./api/client'] === undefined,
+              packageJson.exports?.['./api'] === undefined && packageJson.exports?.['./api/client'] === undefined,
               `${packageJsonPath}: infrastructure-only vertical APIs must remain private deployment surfaces.`,
             );
           } else {
@@ -583,10 +515,7 @@ const checkApiBoundaries = Effect.gen(function* checkApiBoundariesEffect() {
 
   const inspectApiSurfaces = Effect.gen(function* inspectApiSurfacesEffect() {
     for (const appPath of appDirectories) {
-      if (
-        (yield* exists(`${appPath}/api/index.ts`)) ||
-        (yield* exists(`${appPath}/shared/api.ts`))
-      ) {
+      if ((yield* exists(`${appPath}/api/index.ts`)) || (yield* exists(`${appPath}/shared/api.ts`))) {
         yield* assertApiSurface(appPath);
       }
     }
@@ -624,12 +553,9 @@ const checkApiBoundaries = Effect.gen(function* checkApiBoundariesEffect() {
     }
 
     if (yield* exists('package.json')) {
-      const rootPackageJson = yield* readText('package.json').pipe(
-        Effect.flatMap(decodePackageJson),
-      );
+      const rootPackageJson = yield* readText('package.json').pipe(Effect.flatMap(decodePackageJson));
       assert(
-        rootPackageJson.scripts?.['api:check'] ===
-          'node ./scripts/check-ultramodern-api-boundaries.mts',
+        rootPackageJson.scripts?.['api:check'] === 'node ./scripts/check-ultramodern-api-boundaries.mts',
         'Root package.json must expose api:check.',
       );
       assert(

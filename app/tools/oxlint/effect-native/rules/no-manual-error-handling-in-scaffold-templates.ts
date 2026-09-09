@@ -1,4 +1,3 @@
-import { maskText, driverText, emittedText, reportNode } from '../shared/scaffold-text.ts';
 /**
  * effect-native/no-manual-error-handling-in-scaffold-templates
  *
@@ -78,11 +77,11 @@ import { maskText, driverText, emittedText, reportNode } from '../shared/scaffol
  * Report-only: no fixers, no suggestions.
  */
 import { defineRule } from '@oxlint/plugins';
-import { optionRecord, stringArray } from '../shared/options.ts';
-
 import type { Context, ESTree } from '@oxlint/plugins';
 
+import { optionRecord, stringArray } from '../shared/options.ts';
 import { isTestFile, matchesAny, normalisePath } from '../shared/paths.ts';
+import { maskText, driverText, emittedText, reportNode } from '../shared/scaffold-text.ts';
 
 /**
  * Fixture files live at `tools/oxlint/<plugin>/tests/fixtures/<rule>/{valid,invalid}/<repo-like path>`.
@@ -157,9 +156,7 @@ function snippetOf(text: string): string {
 }
 
 /** Which `messageId` names the right Effect-native replacement for this shape. */
-function messageIdFor(
-  text: string,
-): 'tagSwitch' | 'instanceofError' | 'promiseCatchBranch' | 'tagComparison' {
+function messageIdFor(text: string): 'tagSwitch' | 'instanceofError' | 'promiseCatchBranch' | 'tagComparison' {
   if (SWITCH_SHAPE.test(text.trimStart())) return 'tagSwitch';
   if (CATCH_SHAPE.test(text.trimStart())) return 'promiseCatchBranch';
   if (INSTANCEOF_SHAPE.test(text)) return 'instanceofError';
@@ -176,11 +173,12 @@ function collectMatches(text: string, patterns: readonly RegExp[]): readonly Mat
     pattern.lastIndex = 0;
     let match = pattern.exec(text);
     while (match !== null) {
-      if (
-        match[0].length > 0 &&
-        !(CATCH_SHAPE.test(match[0]) && /\bEffect\s*$/u.test(text.slice(0, match.index)))
-      ) {
-        found.push({ start: match.index, end: match.index + match[0].length, text: match[0] });
+      if (match[0].length > 0 && !(CATCH_SHAPE.test(match[0]) && /\bEffect\s*$/u.test(text.slice(0, match.index)))) {
+        found.push({
+          start: match.index,
+          end: match.index + match[0].length,
+          text: match[0],
+        });
       }
       // Guard against zero-length matches from a user-supplied pattern.
       if (match[0].length === 0) pattern.lastIndex += 1;
@@ -260,7 +258,11 @@ export const rule = defineRule({
       },
     ],
     defaultOptions: [
-      { templatePaths: [...DEFAULT_TEMPLATE_PATHS], patterns: [...DEFAULT_PATTERNS], ignore: [] },
+      {
+        templatePaths: [...DEFAULT_TEMPLATE_PATHS],
+        patterns: [...DEFAULT_PATTERNS],
+        ignore: [],
+      },
     ],
   },
   create(context) {

@@ -1,4 +1,5 @@
 import type { Context, ESTree, Variable } from '@oxlint/plugins';
+
 import { asNode, literalText, parentOf, propertyText, syntax, type Syntax } from './ast.ts';
 import { lookupVariable } from './bindings.ts';
 
@@ -19,8 +20,7 @@ const CONTAINER_MEMBERS = new Set(['process', 'console', 'Bun']);
 const DEFAULT_MODULES = new Set(['process', 'console', 'util', 'module']);
 
 function moduleIdentity(source: string): string {
-  if (/^(?:node:)?(?:process|console|util|module)$/u.test(source))
-    return source.replace(/^node:/u, '');
+  if (/^(?:node:)?(?:process|console|util|module)$/u.test(source)) return source.replace(/^node:/u, '');
   if (source === 'effect/Effect') return 'Effect';
   if (source === 'effect/ManagedRuntime') return 'ManagedRuntime';
   return source;
@@ -50,18 +50,13 @@ function importOrigin(definition: Variable['defs'][number]): string | null {
   return importedOrigin(spec, base);
 }
 function importedOrigin(spec: Syntax, base: string): string | null {
-  if (spec.type === 'ImportNamespaceSpecifier' || spec.type === 'ImportDefaultSpecifier')
-    return base;
+  if (spec.type === 'ImportNamespaceSpecifier' || spec.type === 'ImportDefaultSpecifier') return base;
   const name = spec.imported?.name ?? spec.imported?.value;
   if (name === 'default') return base;
   return base === 'effect' ? name : `${base}.${name}`;
 }
 
-function variableOrigin(
-  context: Context,
-  node: Syntax,
-  seen: ReadonlySet<Variable>,
-): string | null {
+function variableOrigin(context: Context, node: Syntax, seen: ReadonlySet<Variable>): string | null {
   const variable = lookupVariable(context, node);
   if (!variable || variable.defs.length === 0) return GLOBALS.has(node.name) ? node.name : null;
   if (seen.has(variable) || variable.defs.length !== 1) return null;
@@ -78,8 +73,7 @@ function aliasOrigin(
   seen: ReadonlySet<Variable>,
 ): string | null {
   if (definition.type !== 'Variable' || definition.node.type !== 'VariableDeclarator') return null;
-  if (variable.references.some((reference) => reference.init !== true && reference.isWrite()))
-    return null;
+  if (variable.references.some((reference) => reference.init !== true && reference.isWrite())) return null;
   const base = provenance(context, definition.node.init, seen);
   const path = destructuringPath(definition.node.id, name);
   return base !== null && path !== null ? [base, ...path].join('.') : null;
@@ -107,11 +101,7 @@ function callOrigin(context: Context, node: Syntax, seen: ReadonlySet<Variable>)
 /** Script runtime identity: imports, require/createRequire, globals, immutable aliases and destructuring.
  * Unlike Effect bindingPath, await is transparent and unwritten let aliases are accepted.
  */
-export function provenance(
-  context: Context,
-  input: unknown,
-  seen: ReadonlySet<Variable> = new Set(),
-): string | null {
+export function provenance(context: Context, input: unknown, seen: ReadonlySet<Variable> = new Set()): string | null {
   const node = syntax(input);
   if (!node) return null;
   switch (node.type) {
@@ -145,8 +135,7 @@ const TS_VALUES = new Set([
 ]);
 function nonReferenceName(node: Syntax, parent: Syntax): boolean {
   if (parent.type.startsWith('Import') || parent.type === 'ExportSpecifier') return true;
-  if (parent.type === 'MemberExpression' && parent.property === node && !parent.computed)
-    return true;
+  if (parent.type === 'MemberExpression' && parent.property === node && !parent.computed) return true;
   if (LABEL_PARENTS.has(parent.type)) return true;
   return nonReferenceKey(node, parent);
 }
@@ -162,16 +151,8 @@ function typePosition(node: Syntax, parent: Syntax): boolean {
   let child = node;
   let current: Syntax | null = parent;
   while (current) {
-    if (
-      current.type.startsWith('TS') &&
-      !(TS_VALUES.has(current.type) && current.expression === child)
-    )
-      return true;
-    if (
-      current.type.endsWith('Statement') ||
-      current.type.endsWith('Declaration') ||
-      current.type.includes('Function')
-    )
+    if (current.type.startsWith('TS') && !(TS_VALUES.has(current.type) && current.expression === child)) return true;
+    if (current.type.endsWith('Statement') || current.type.endsWith('Declaration') || current.type.includes('Function'))
       break;
     child = current;
     current = parentOf(current);
@@ -183,13 +164,14 @@ function typePosition(node: Syntax, parent: Syntax): boolean {
 export function valueReference(context: Context, input: unknown): boolean {
   const node = asNode(input);
   const parent = parentOf(node);
-  if (!node || !parent || nonReferenceName(node, parent) || typePosition(node, parent))
-    return false;
+  if (!node || !parent || nonReferenceName(node, parent) || typePosition(node, parent)) return false;
   const variable = lookupVariable(context, node);
   return (
     !variable ||
     variable.references.some((reference) => {
-      const value = reference as typeof reference & { isValueReference?: () => boolean };
+      const value = reference as typeof reference & {
+        isValueReference?: () => boolean;
+      };
       return (
         reference.identifier === node &&
         reference.isRead() &&

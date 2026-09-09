@@ -1,11 +1,14 @@
 import { createRequire } from 'node:module';
+
 import { withModernConfig } from '@modern-js/adapter-rstest';
 import { defineConfig } from '@rstest/core';
 
 Object.assign(globalThis, { require: createRequire(import.meta.url) });
 
 // Migration scripts contain generic arrows in .mts files, supported by TypeScript.
-const swc = { jsc: { parser: { disallowAmbiguousJsxLike: false, syntax: 'typescript' } } } as const;
+const swc = {
+  jsc: { parser: { disallowAmbiguousJsxLike: false, syntax: 'typescript' } },
+} as const;
 
 export default defineConfig({
   projects: [

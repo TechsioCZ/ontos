@@ -1,6 +1,6 @@
+import { DateTime, Match, Struct, Predicate } from 'effect';
 import { expect, it } from 'effect-rstest';
 
-import { DateTime, Match, Struct, Predicate } from 'effect';
 import type { PartyRef } from '../../shared/resources/party.ts';
 import { analyzeMergeCollisions } from '../../src/merge/merge-collision-analysis.ts';
 import { planReferencePreservation } from '../../src/merge/reference-preservation-plan.ts';
@@ -48,8 +48,16 @@ it('requires reconciliation for Counterparty and consumer uniqueness collisions'
   const collisions = analyzeMergeCollisions({
     absorbedPartyRefs: [party('party-b')],
     connectorCorrelations: [
-      { connectorKey: 'erp', externalSubjectId: 'erp-a', partyRef: party('party-a') },
-      { connectorKey: 'erp', externalSubjectId: 'erp-b', partyRef: party('party-b') },
+      {
+        connectorKey: 'erp',
+        externalSubjectId: 'erp-a',
+        partyRef: party('party-a'),
+      },
+      {
+        connectorKey: 'erp',
+        externalSubjectId: 'erp-b',
+        partyRef: party('party-b'),
+      },
     ],
     consumerProfiles: [
       {
@@ -66,8 +74,16 @@ it('requires reconciliation for Counterparty and consumer uniqueness collisions'
       },
     ],
     counterparties: [
-      { counterpartyId: 'cp-a', legalEntityId: 'le-1', partyRef: party('party-a') },
-      { counterpartyId: 'cp-b', legalEntityId: 'le-1', partyRef: party('party-b') },
+      {
+        counterpartyId: 'cp-a',
+        legalEntityId: 'le-1',
+        partyRef: party('party-a'),
+      },
+      {
+        counterpartyId: 'cp-b',
+        legalEntityId: 'le-1',
+        partyRef: party('party-b'),
+      },
     ],
     counterpartyRoles: [],
     officialIdentifiers: [],
@@ -145,8 +161,14 @@ it('blocks strong identifier conflicts and flags forbidden relationship and role
 
   expect(collisions.map(({ code, resolution }) => ({ code, resolution }))).toEqual([
     { code: 'STRONG_IDENTIFIER_CONFLICT', resolution: 'CORRECTION_REQUIRED' },
-    { code: 'RELATIONSHIP_SELF_REFERENCE', resolution: 'RECONCILIATION_REQUIRED' },
-    { code: 'COUNTERPARTY_ROLE_PERIOD_COLLISION', resolution: 'RECONCILIATION_REQUIRED' },
+    {
+      code: 'RELATIONSHIP_SELF_REFERENCE',
+      resolution: 'RECONCILIATION_REQUIRED',
+    },
+    {
+      code: 'COUNTERPARTY_ROLE_PERIOD_COLLISION',
+      resolution: 'RECONCILIATION_REQUIRED',
+    },
   ]);
 });
 
@@ -169,26 +191,41 @@ it('plans canonical resolution for supported refs without rewriting historical s
         survivorPartyRef: party('party-a'),
       },
     ],
-    consumerReconciliation: [
-      'core',
-      'events',
-      'engagement',
-      'commerce',
-      'connector.registry',
-      'invoicing',
-    ].map((consumerKey) => ({
-      collisionBehaviorTested: true,
-      consumerKey,
-      evidenceRefs: [`test:${consumerKey}`],
-      idempotent: true,
-      partialRetrySupported: true,
-    })),
+    consumerReconciliation: ['core', 'events', 'engagement', 'commerce', 'connector.registry', 'invoicing'].map(
+      (consumerKey) => ({
+        collisionBehaviorTested: true,
+        consumerKey,
+        evidenceRefs: [`test:${consumerKey}`],
+        idempotent: true,
+        partialRetrySupported: true,
+      }),
+    ),
     references: [
-      { class: 'DIRECT_RESOURCE_REF', ownerKey: 'core', partyRef: party('party-b') },
-      { class: 'EVENT_OR_OUTBOX_PAYLOAD', ownerKey: 'events', partyRef: party('party-b') },
-      { class: 'COUNTERPARTY', ownerKey: 'party.registry', partyRef: party('party-b') },
-      { class: 'ENGAGEMENT_PROFILE', ownerKey: 'engagement', partyRef: party('party-b') },
-      { class: 'COMMERCE_PROFILE', ownerKey: 'commerce', partyRef: party('party-b') },
+      {
+        class: 'DIRECT_RESOURCE_REF',
+        ownerKey: 'core',
+        partyRef: party('party-b'),
+      },
+      {
+        class: 'EVENT_OR_OUTBOX_PAYLOAD',
+        ownerKey: 'events',
+        partyRef: party('party-b'),
+      },
+      {
+        class: 'COUNTERPARTY',
+        ownerKey: 'party.registry',
+        partyRef: party('party-b'),
+      },
+      {
+        class: 'ENGAGEMENT_PROFILE',
+        ownerKey: 'engagement',
+        partyRef: party('party-b'),
+      },
+      {
+        class: 'COMMERCE_PROFILE',
+        ownerKey: 'commerce',
+        partyRef: party('party-b'),
+      },
       {
         class: 'CONNECTOR_CORRELATION',
         ownerKey: 'connector.registry',
@@ -212,9 +249,7 @@ it('plans canonical resolution for supported refs without rewriting historical s
     ),
     Match.exhaustive,
   );
-  expect(
-    planned.references.every(({ canonicalPartyRef }) => canonicalPartyRef.resourceId === 'party-a'),
-  ).toBe(true);
+  expect(planned.references.every(({ canonicalPartyRef }) => canonicalPartyRef.resourceId === 'party-a')).toBe(true);
   expect(planned.references.at(-1)?.historicalSnapshot).toEqual(snapshot);
   expect(planned.requiresPhysicalRewrite).toBe(false);
 });
@@ -290,8 +325,16 @@ it('blocks readiness for unsupported references and incomplete retry contracts',
       },
     ],
     references: [
-      { class: 'UNSUPPORTED', ownerKey: 'custom-module', partyRef: party('party-b') },
-      { class: 'ENGAGEMENT_PROFILE', ownerKey: 'engagement', partyRef: party('party-b') },
+      {
+        class: 'UNSUPPORTED',
+        ownerKey: 'custom-module',
+        partyRef: party('party-b'),
+      },
+      {
+        class: 'ENGAGEMENT_PROFILE',
+        ownerKey: 'engagement',
+        partyRef: party('party-b'),
+      },
     ],
   });
 
@@ -307,7 +350,13 @@ it('blocks readiness for unsupported references and incomplete retry contracts',
 it('blocks every external reference owner without reconciliation evidence', () => {
   const result = planReferencePreservation({
     aliases: [],
-    references: [{ class: 'COMMERCE_PROFILE', ownerKey: 'commerce', partyRef: party('party-b') }],
+    references: [
+      {
+        class: 'COMMERCE_PROFILE',
+        ownerKey: 'commerce',
+        partyRef: party('party-b'),
+      },
+    ],
   });
 
   expect(Predicate.isTagged(result, 'ReferencePreservationBlocked')).toBe(true);

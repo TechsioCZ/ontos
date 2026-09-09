@@ -2,6 +2,7 @@ import { readFileSync } from 'node:fs';
 import { createRequire } from 'node:module';
 import path from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
+
 import { withModernConfig } from '@modern-js/adapter-rstest';
 import { defineConfig } from '@rstest/core';
 import type { Rspack } from '@rstest/core';
@@ -25,17 +26,14 @@ const moduleDeploymentAllowlistJsonSchema = Schema.fromJsonString(
 );
 const siteUrlJsonSchema = Schema.fromJsonString(Schema.String);
 const referenceTopology = Result.getOrThrow(
-  Schema.decodeUnknownResult(topologyJsonSchema, { onExcessProperty: 'preserve' })(
-    readFileSync(new URL('../../topology/reference-topology.json', import.meta.url), 'utf-8'),
-  ),
+  Schema.decodeUnknownResult(topologyJsonSchema, {
+    onExcessProperty: 'preserve',
+  })(readFileSync(new URL('../../topology/reference-topology.json', import.meta.url), 'utf-8')),
 );
 const developmentOverlay = Result.getOrThrow(
-  Schema.decodeUnknownResult(overlayJsonSchema, { onExcessProperty: 'preserve' })(
-    readFileSync(
-      new URL('../../topology/local-overlays/development.json', import.meta.url),
-      'utf-8',
-    ),
-  ),
+  Schema.decodeUnknownResult(overlayJsonSchema, {
+    onExcessProperty: 'preserve',
+  })(readFileSync(new URL('../../topology/local-overlays/development.json', import.meta.url), 'utf-8')),
 );
 const encodeOptions = { onExcessProperty: 'preserve' } as const;
 const encodedReferenceTopology = Result.getOrThrow(
@@ -51,9 +49,7 @@ const encodedModuleDeploymentAllowlist = Result.getOrThrow(
     topology: referenceTopology,
   }),
 );
-const encodedSiteUrl = Result.getOrThrow(
-  Schema.encodeResult(siteUrlJsonSchema)('http://localhost:3020'),
-);
+const encodedSiteUrl = Result.getOrThrow(Schema.encodeResult(siteUrlJsonSchema)('http://localhost:3020'));
 
 const coreRuntimeRoot = fileURLToPath(new URL('../../packages/core-runtime/', import.meta.url));
 // Generated owner modules are imported natively from disk, so core-runtime must be one Node
@@ -81,7 +77,9 @@ const externalizeCoreRuntime = (
 // SWC rejects every generic arrow function in the imported `scripts/**/*.mts` files (even
 // `<T,>(...)`) under its default mts/cts parser mode. The parser key is missing from the
 // bundled swc types, so the object is declared here instead of inline.
-const swc = { jsc: { parser: { disallowAmbiguousJsxLike: false, syntax: 'typescript' } } } as const;
+const swc = {
+  jsc: { parser: { disallowAmbiguousJsxLike: false, syntax: 'typescript' } },
+} as const;
 
 export default defineConfig({
   projects: [

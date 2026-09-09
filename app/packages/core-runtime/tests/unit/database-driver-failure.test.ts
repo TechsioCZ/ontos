@@ -1,6 +1,6 @@
-import { expect, it } from 'effect-rstest';
 import { EffectDrizzleQueryError } from 'drizzle-orm/effect-core';
 import { Cause, Option, Schema, Predicate } from 'effect';
+import { expect, it } from 'effect-rstest';
 import { SqlError, UniqueViolation } from 'effect/unstable/sql/SqlError';
 
 import {
@@ -35,7 +35,10 @@ it('finds PostgreSQL metadata through Error and plain-object cause wrappers', ()
   const failure = new Error('outer wrapper', {
     cause: {
       cause: {
-        cause: { code: '23505', constraint: 'principal_auth_bindings_provider_subject_uk' },
+        cause: {
+          code: '23505',
+          constraint: 'principal_auth_bindings_provider_subject_uk',
+        },
       },
     },
   });
@@ -49,7 +52,10 @@ it('finds PostgreSQL metadata through Error and plain-object cause wrappers', ()
 it('ignores a non-string constraint while retaining a valid code', () => {
   expect(
     Option.getOrThrow(
-      findPostgresFailure({ code: '23505', constraint: { private: 'diagnostic object' } }),
+      findPostgresFailure({
+        code: '23505',
+        constraint: { private: 'diagnostic object' },
+      }),
     ),
   ).toEqual({ code: '23505' });
 });
@@ -103,10 +109,7 @@ it('supports owner-local matching without changing default root precedence', () 
   });
   expect(
     Option.getOrThrow(
-      findPostgresFailure(
-        failure,
-        ({ code, constraint }) => code === '23505' && constraint === 'owner_constraint',
-      ),
+      findPostgresFailure(failure, ({ code, constraint }) => code === '23505' && constraint === 'owner_constraint'),
     ),
   ).toEqual({ code: '23505', constraint: 'owner_constraint' });
 });
@@ -120,7 +123,9 @@ it('terminates on cyclic cause graphs with a first match or no match', () => {
   first.cause = second;
   second.cause = first;
 
-  expect(Option.getOrThrow(findPostgresFailure(matched))).toEqual({ code: '23505' });
+  expect(Option.getOrThrow(findPostgresFailure(matched))).toEqual({
+    code: '23505',
+  });
   expect(Option.isNone(findPostgresFailure(first))).toBe(true);
 });
 
@@ -151,8 +156,7 @@ it('distinguishes commit ambiguity from definite transaction failures', () => {
       Predicate.isTagged(administrativeShutdown.value, 'DatabaseCommitAcknowledgementAmbiguous'),
   ).toBe(true);
   expect(
-    Option.isSome(serializationFailure) &&
-      Predicate.isTagged(serializationFailure.value, 'DatabaseTransactionFailure'),
+    Option.isSome(serializationFailure) && Predicate.isTagged(serializationFailure.value, 'DatabaseTransactionFailure'),
   ).toBe(true);
   expect(isDatabaseCommitAcknowledgementAmbiguous({ code: '40001' })).toBe(false);
   expect(isDatabaseCommitAcknowledgementAmbiguous({ code: '57014' })).toBe(false);
@@ -229,13 +233,18 @@ it('terminates safely when a cause chain contains a cycle', () => {
 it('decodes native Drizzle and Effect SQL causes without exposing query data', () => {
   const constraint = 'principal_auth_bindings_provider_subject_uk';
   const driver = { code: '23505', constraint, detail: 'private detail' };
-  const sqlError = new SqlError({ reason: new UniqueViolation({ cause: driver, constraint }) });
+  const sqlError = new SqlError({
+    reason: new UniqueViolation({ cause: driver, constraint }),
+  });
   const failure = new EffectDrizzleQueryError({
     cause: Cause.fail(sqlError),
     params: ['private parameter'],
     query: 'private SQL',
   });
-  expect(Option.getOrThrow(findPostgresFailure(failure))).toEqual({ code: '23505', constraint });
+  expect(Option.getOrThrow(findPostgresFailure(failure))).toEqual({
+    code: '23505',
+    constraint,
+  });
   expect(Option.getOrThrow(findPostgresFailure(Cause.die(sqlError)))).toEqual({
     code: '23505',
     constraint,

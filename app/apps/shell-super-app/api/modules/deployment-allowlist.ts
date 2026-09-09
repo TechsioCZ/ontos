@@ -77,10 +77,7 @@ export interface DeploymentAllowlistInput {
 }
 
 const isLoopback = (hostname: string): boolean =>
-  hostname === 'localhost' ||
-  hostname === '127.0.0.1' ||
-  hostname === '[::1]' ||
-  hostname.endsWith('.localhost');
+  hostname === 'localhost' || hostname === '127.0.0.1' || hostname === '[::1]' || hostname.endsWith('.localhost');
 
 const isContractDocumentUrl = (url: URL): boolean =>
   url.username === '' &&
@@ -94,15 +91,11 @@ const normalizedContractUrl = (value: string, environment: string): string | und
   if (url === null || !isContractDocumentUrl(url)) {
     return undefined;
   }
-  const developmentLoopback =
-    environment === 'development' && url.protocol === 'http:' && isLoopback(url.hostname);
+  const developmentLoopback = environment === 'development' && url.protocol === 'http:' && isLoopback(url.hostname);
   return url.protocol === 'https:' || developmentLoopback ? url.href : undefined;
 };
 
-const contractUrlIssues = (
-  overlay: DeploymentAllowlistOverlay,
-  environment: string,
-): FilterIssue[] => {
+const contractUrlIssues = (overlay: DeploymentAllowlistOverlay, environment: string): FilterIssue[] => {
   const issues: FilterIssue[] = [];
   const normalizedUrls = new Set<string>();
   for (const [appId, contractUrl] of Object.entries(overlay.ontosModuleManifests)) {
@@ -132,7 +125,10 @@ const DeploymentAllowlistInputSchema = Struct({
   makeFilter((input) => {
     const issues: FilterIssue[] = [];
     if (input.overlay.environment !== input.environment) {
-      issues.push({ issue: 'topology and environment disagree', path: ['overlay', 'environment'] });
+      issues.push({
+        issue: 'topology and environment disagree',
+        path: ['overlay', 'environment'],
+      });
     }
 
     const expectedIds = new Set<string>();

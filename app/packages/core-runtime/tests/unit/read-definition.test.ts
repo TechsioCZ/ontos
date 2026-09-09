@@ -1,11 +1,11 @@
-// @effect-diagnostics nodeBuiltinImport:off -- Verifies package source files via the Node filesystem boundary; expires: 2026-12-31.
+import { fileURLToPath } from 'node:url';
+
+import { NodeFileSystem } from '@effect/platform-node';
+import { Effect, FileSystem, Schema } from 'effect';
 import { expect, it } from 'effect-rstest';
 
-import { readFile } from 'node:fs/promises';
-
-import { Effect, Schema } from 'effect';
-import { defineRead, validateReadDescriptorInput } from '../../src/reads/definition.ts';
 import { defineSystemModuleEntrypoint } from '../../src/modules/module-entrypoint.ts';
+import { defineRead, validateReadDescriptorInput } from '../../src/reads/definition.ts';
 
 const modulePermissionTarget = () => ({ kind: 'module', moduleId: 'core.shell' }) as const;
 it('defines immutable read metadata while keeping handler and service factory private', () => {
@@ -14,12 +14,18 @@ it('defines immutable read metadata while keeping handler and service factory pr
       accessKind: 'list',
       entrypoint: defineSystemModuleEntrypoint({
         access: 'read',
-        authorization: { kind: 'context_permission', permission: 'module.access' },
+        authorization: {
+          kind: 'context_permission',
+          permission: 'module.access',
+        },
         entrypointKey: 'core.shell.list',
         moduleKey: 'core.shell',
         role: 'api',
       }),
-      evidencePolicy: { captureMode: 'metadata_only', policyKey: 'core.shell.list.evidence.v1' },
+      evidencePolicy: {
+        captureMode: 'metadata_only',
+        policyKey: 'core.shell.list.evidence.v1',
+      },
       inputSchema: Schema.Struct({}),
       legalEntityScope: 'forbidden',
       owningModuleKey: 'core.shell',
@@ -42,7 +48,10 @@ it('requires an explicit valid owner-scoped read entrypoint', () => {
     validateReadDescriptorInput({
       entrypoint: defineSystemModuleEntrypoint({
         access: 'read',
-        authorization: { kind: 'context_permission', permission: 'module.access' },
+        authorization: {
+          kind: 'context_permission',
+          permission: 'module.access',
+        },
         entrypointKey: 'core.foreign.detail',
         moduleKey: 'core.foreign',
         role: 'api',
@@ -60,7 +69,10 @@ it('supports every governed access kind and rejects forged scope metadata', () =
           accessKind,
           entrypoint: defineSystemModuleEntrypoint({
             access: 'read',
-            authorization: { kind: 'context_permission', permission: 'module.access' },
+            authorization: {
+              kind: 'context_permission',
+              permission: 'module.access',
+            },
             entrypointKey: `core.shell.${accessKind}`,
             moduleKey: 'core.shell',
             role: 'api',
@@ -89,7 +101,10 @@ it('supports every governed access kind and rejects forged scope metadata', () =
     validateReadDescriptorInput({
       entrypoint: defineSystemModuleEntrypoint({
         access: 'read',
-        authorization: { kind: 'context_permission', permission: 'module.access' },
+        authorization: {
+          kind: 'context_permission',
+          permission: 'module.access',
+        },
         entrypointKey: 'core.shell.valid',
         moduleKey: 'core.shell',
         role: 'api',
@@ -99,16 +114,19 @@ it('supports every governed access kind and rejects forged scope metadata', () =
     }),
   ).toThrow();
 });
-it.effect('keeps low-level read runtime construction and Core schema out of package exports', () =>
-  Effect.gen(function* migratedTest1() {
-    const [indexSource, packageSource] = yield* Effect.all(
-      [
-        Effect.promise(() => readFile(new URL('../../src/index.ts', import.meta.url), 'utf-8')),
-        Effect.promise(() => readFile(new URL('../../package.json', import.meta.url), 'utf-8')),
-      ],
-      { concurrency: 'unbounded' },
-    );
-    expect(indexSource).not.toMatch(/\bmakeReadRuntime,?$/mu);
-    expect(packageSource).not.toMatch(/"\.\/db\/schema"/u);
-  }),
-);
+it.layer(NodeFileSystem.layer)('read package boundary', (suite) => {
+  suite.effect('keeps low-level read runtime construction and Core schema out of package exports', () =>
+    Effect.gen(function* readPackageBoundary() {
+      const fs = yield* FileSystem.FileSystem;
+      const [indexSource, packageSource] = yield* Effect.all(
+        [
+          fs.readFileString(fileURLToPath(new URL('../../src/index.ts', import.meta.url))),
+          fs.readFileString(fileURLToPath(new URL('../../package.json', import.meta.url))),
+        ],
+        { concurrency: 'unbounded' },
+      );
+      expect(indexSource).not.toMatch(/\bmakeReadRuntime,?$/mu);
+      expect(packageSource).not.toMatch(/"\.\/db\/schema"/u);
+    }),
+  );
+});
