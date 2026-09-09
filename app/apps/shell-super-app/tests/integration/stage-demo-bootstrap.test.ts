@@ -1,12 +1,101 @@
 import { describe, expect, it, rstest } from 'effect-rstest';
 import { randomUUID } from 'node:crypto';
 import { memoryAdapter } from 'better-auth/adapters/memory';
-import { Cause, Deferred, Effect, Exit, Fiber } from 'effect';
+import { verifyPassword } from 'better-auth/crypto';
+import { eq } from 'drizzle-orm';
+import { Cause, DateTime, Deferred, Effect, Exit, Fiber } from 'effect';
 import { loadAuthConfig } from '../../api/auth/config.ts';
 import { AuthDatabase, makeAuthDatabase } from '../../api/auth/db/client.ts';
-import { bootstrapStageDemo } from '../../api/auth/stage-demo-bootstrap-runtime-infrastructure.ts';
+import { account, session, user } from '../../api/auth/db/schema.ts';
+import {
+  bootstrapStageDemo,
+  ensureStageDemoAuthUser,
+} from '../../api/auth/stage-demo-bootstrap-runtime-infrastructure.ts';
 
 describe('stage-demo-bootstrap', () => {
+  it.live('replaces an unreadable demo password and revokes its sessions', () =>
+    Effect.scoped(
+      Effect.gen(function* replacesPassword() {
+        const baseConfiguration = yield* loadAuthConfig();
+        const persistence = yield* makeAuthDatabase(baseConfiguration);
+        const database = persistence.executor;
+        const email = `stage-password-reset-${randomUUID()}@example.test`;
+        const initialPassword = `initial-${randomUUID()}`;
+        const replacementPassword = `replacement-${randomUUID()}`;
+        const configuration = {
+          accounts: [
+            { email, password: initialPassword, principalDisplayName: 'Password reset fixture' },
+            {
+              email: `unused-${randomUUID()}@example.test`,
+              password: randomUUID(),
+              principalDisplayName: 'Unused fixture',
+            },
+          ],
+          authBaseUrl: baseConfiguration.baseUrl,
+          authSecret: baseConfiguration.secret,
+          databaseAdminUrl: baseConfiguration.connectionString,
+        } as const;
+        const cleanup = Effect.gen(function* cleanupPasswordFixture() {
+          const users = yield* database
+            .select({ id: user.id })
+            .from(user)
+            .where(eq(user.email, email));
+          for (const existingUser of users) {
+            yield* database.delete(session).where(eq(session.userId, existingUser.id));
+            yield* database.delete(account).where(eq(account.userId, existingUser.id));
+            yield* database.delete(user).where(eq(user.id, existingUser.id));
+          }
+        }).pipe(Effect.orDie);
+        yield* cleanup;
+        yield* Effect.addFinalizer(() => cleanup);
+        const created = yield* ensureStageDemoAuthUser(
+          configuration,
+          configuration.accounts[0],
+        ).pipe(Effect.provideService(AuthDatabase, persistence));
+        yield* database
+          .update(account)
+          .set({ password: randomUUID() })
+          .where(eq(account.userId, created.userId));
+        const sessionCreatedAt = yield* DateTime.nowAsDate;
+        const sessionExpiresAt = DateTime.makeUnsafe(sessionCreatedAt).pipe(
+          DateTime.add({ minutes: 1 }),
+          DateTime.toDateUtc,
+        );
+        yield* database.insert(session).values({
+          createdAt: sessionCreatedAt,
+          expiresAt: sessionExpiresAt,
+          id: randomUUID(),
+          token: randomUUID(),
+          updatedAt: sessionCreatedAt,
+          userId: created.userId,
+        });
+        const replaced = yield* ensureStageDemoAuthUser(configuration, {
+          ...configuration.accounts[0],
+          password: replacementPassword,
+        }).pipe(Effect.provideService(AuthDatabase, persistence));
+        expect(replaced).toEqual({ status: 'password-reset', userId: created.userId });
+        const [credential] = yield* database
+          .select({ password: account.password })
+          .from(account)
+          .where(eq(account.userId, created.userId));
+        expect(credential?.password).toBeDefined();
+        const replacementMatches = yield* Effect.promise(() =>
+          verifyPassword({ hash: credential?.password ?? '', password: replacementPassword }),
+        );
+        const initialMatches = yield* Effect.promise(() =>
+          verifyPassword({ hash: credential?.password ?? '', password: initialPassword }),
+        );
+        expect(replacementMatches).toBe(true);
+        expect(initialMatches).toBe(false);
+        const remainingSessions = yield* database
+          .select({ id: session.id })
+          .from(session)
+          .where(eq(session.userId, created.userId));
+        expect(remainingSessions).toHaveLength(0);
+      }),
+    ),
+  );
+
   it.live(
     'stage bootstrap waits for non-cancellable SDK writes before closing its database scope',
     () =>
