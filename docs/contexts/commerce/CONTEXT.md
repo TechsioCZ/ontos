@@ -27,7 +27,8 @@ profiles, policies, definitions, Permissions, or exchange rates.
 
 **Snapshot** — Immutable historical representation of Accepted values and safe source references
 needed to explain a committed business result. A Snapshot does not acquire ownership of the Current
-source fact.
+source fact. An immutable prospective representation, such as a Purchase Proposal Revision, is not
+an Accepted Order Snapshot.
 
 **Monetary Amount** — Exact decimal amount paired with an explicit currency and supported precision.
 Binary floating-point values and currency-less amounts are forbidden at business boundaries. The
@@ -322,154 +323,312 @@ existence, or invitation delivery alone never grant authority.
 
 ## Catalog language and exact selection
 
-The following Catalog terms are canonical Commerce vocabulary. They refine the shorter domain
-summaries below and are the authoritative meaning for Catalog planning, public contracts, Cart,
-Pricing, Assortment, Availability, Purchasing Approval, Repeat Order, and Order acceptance.
+Catalog terms describe shared Commerce semantics, not customer-specific implementations. Product,
+Variant and definition identities are Tenant-scoped. A ResourceRef names its owning Resource; an
+immutable value or source revision must not acquire a fabricated Resource identity merely because a
+consumer needs to retain it. A planning branch is not automatically a separate deployable module.
 
 **Product** — Tenant-scoped Catalog Resource representing one good or service with stable commercial
 identity. Channel, Selling Legal Entity, name, SKU, Price, Assortment, Inventory, Availability, or
 presentation do not by themselves create another Product. A materially different real-world thing
-must not silently replace an existing Product.
+must not silently replace the meaning of an existing selection.
 
-**Variant** — Catalog Resource representing one predefined concrete realization of exactly one
-Product. Every Product has `1..N` Variants, including a Product with only one predefined realization.
-A Variant is not an SKU, Package Option, Product Configuration, Set Composition, Price, stock record,
-or Assortment decision.
+**Variant** — Catalog Resource identifying one predefined independently distinguishable realization
+of exactly one Product. Every Product has `1..N` Variants, including a Product with only one
+realization. A draft Variant may be incomplete and is not thereby a validated selection. A material
+change of an atomic realization requires a different Variant; a Set Variant uses the explicitly
+versioned succession semantics of Set Composition Revision. Variant is not SKU, Quantity, stock,
+Price, or an Assortment decision.
 
-**Catalog Selection Target** — Stable predefined target that can be selected before quantity is
-applied. It is exactly one Variant or one Package Option belonging to that Variant. Product alone is
-not an exact Catalog Selection Target because every exact predefined selection resolves a Variant.
-A Product Configuration refines a target but is not another predefined target.
+**Catalog Selection Target** — Stable predefined target before purchase Quantity is applied: exactly
+one Variant, or a Package Option belonging to that Variant. Product alone is not an exact target.
+Product Configuration refines a target but is not another predefined target. A target reference alone
+does not replace required configuration, package-content or set-composition revisions.
 
-**Catalog Selection** — Canonical immutable business value describing exactly what Catalog subject a
-prospective line requests, before purchase quantity and non-Catalog commercial decisions are added.
-It contains the Product ResourceRef, exact Variant ResourceRef, optional Package Option ResourceRef,
-and optional Product Configuration. For a Set Product it also carries the Current Set Composition
-Revision needed to explain the selected Variant. Catalog Selection is the common semantic input for
-Cart, Assortment, Pricing, Availability, Purchasing Approval, Repeat Order, and Order acceptance; a
-consumer must not invent a different product-selection identity from display name or SKU.
+**Catalog Revision Reference** — Owner-qualified reference to one immutable version of a Catalog
+fact or definition, identifying its source Resource and exact revision. It is not a bare revision
+number, edit timestamp, ResourceRef with an implicit latest value, or necessarily a separate Resource.
+It preserves the version used without claiming that this version remains Current.
 
-**Catalog Selection Evidence** — Owner-issued result of Current Catalog validation for one exact
-Catalog Selection at trusted operation time. It contains the selection, material Catalog revision or
-freshness identities, and the unit/package/composition semantics required to detect stale meaning.
-It does not include Price, Assortment, Inventory, Availability, Permission, approval, Payment, or
-Order acceptance decisions and is not a second Order Acceptance Decision Bundle.
+**Catalog Selection** — Canonical immutable business value describing exactly what a prospective
+line requests before purchase Quantity and non-Catalog commercial decisions. It contains Product and
+Variant ResourceRefs, optional Package Option reference with exact Package Content Revision,
+optional complete Product Configuration, and exact Set Composition Revision when the Variant is a
+Set, including a packaged Set. It never contains a moving latest-composition reference. Cart and all
+purchase consumers use this same meaning rather than reconstructing identity from SKU or display.
 
-**Catalog-ready** — Current condition that a Product and the concrete Catalog shape required for a
-new use satisfy all applicable Catalog-owned minimum rules. Catalog-ready is not Assortment
-eligibility, a Price, stock, Availability, publication, or Permission. A draft/incomplete Product may
-exist without being Catalog-ready.
+**Catalog Selection Evidence** — Catalog-issued validation result for one exact selection at trusted
+operation time. It preserves relevant lifecycle, definition, inherited-value, component, unit and
+other source revisions, applicable validity, and material facts needed to detect stale meaning.
+Indirect changes can invalidate it without editing the selected Variant. It contains no Price,
+Assortment, Inventory, Availability, Permission, approval, Payment or Order decision. A timestamp or
+hash alone is not an owner guarantee of validity through a later commitment window.
 
-**SKU** — Tenant-wide unique Current internal commercial code for one Catalog Selection Target. One
-target has at most one primary Current SKU. SKU is not Product identity and does not encode purchase
-quantity. A legitimately used historical SKU remains addressable to its original target and is not
-reassigned to another target.
+**Catalog-ready** — Current condition that the concrete selection and its Product satisfy all
+applicable Catalog-owned minimum rules. Readiness is assessed for the required use and realization;
+it is not merely a manually set flag and is not Assortment, Price, stock, Availability, publication,
+or Permission. Draft, retirement and incomplete data are distinct from this derived condition.
 
-**GTIN/EAN** — Standard trade-item identifier for one predefined trade item, which may be a Variant
-or independently identified Package Option. It is not internal SKU, serial identity of one physical
-instance, Product identity, or an External Business System record ID.
+**Catalog Correction** — Evidence-backed correction of an incorrectly recorded Catalog fact about
+the same real-world subject. It may preserve stable identity while changing the meaning of an open
+selection, which then needs revalidation. It never rewrites retained prior evidence or Accepted Order
+values. An unclassified material change is not presumed to be a correction.
 
-**Product Type** — Catalog-owned definition of structured-data requirements for a kind of Product.
-One Product has at most one Current Product Type; a draft Product may temporarily have none. Product
-Type defines an explicit allowed set of Attribute Definitions and a required subset. It is not a
-Category, Product identity, Set marker, packaging marker, or selling policy.
+**SKU** — Internal commercial code for one Catalog Selection Target. One target has `0..1` primary
+Current SKU, unique within its Tenant; quantity is separate. Comparison ignores outer whitespace and
+letter case, not inner characters or leading zeroes. The original presentation is retained. SKU is
+not Product identity and is not universally required merely for Product existence.
 
-**Attribute Definition** — Stable Catalog-owned definition of one structured Product/Variant fact,
-including its business meaning, value kind, canonical unit where relevant, precision/range semantics,
-and `single` or `multiple` multiplicity. Similar display names do not establish equal meaning.
+**Historical SKU** — Previously used internal SKU preserved against its original target. A
+legitimately used code is not reassigned to another target, including after retirement. Correction
+of a proven mistaken assignment retains the old attribution and ambiguity rather than pretending
+all historical occurrences identified the corrected target. Lookup does not grant new sellability.
 
-**Attribute Value** — Concrete value of one Attribute Definition for a Product or Variant. Missing
-value is not automatically `0`, `unknown`, `not applicable`, or empty text. A Variant may inherit a
-Product value where the definition applies, or hold an explicit Variant override; removing an
-override means returning to inheritance, not asserting an unknown value.
+**GTIN/EAN** — Standard trade-item identifier for a predefined item or identified packaging level.
+It is not internal SKU, serial identity of one physical instance, Product identity or external record
+ID. Format validity and correct attribution are separate facts. Packaging-level identification does
+not by itself make that level a separately selectable Package Option.
 
-**Variant Axis** — Product-specific role of an existing Attribute Definition used to distinguish
-predefined Variants. It does not copy the Attribute Definition or its controlled values. Allowed
-individual axis values do not create a Cartesian product of Variants; an exact predefined Variant
-must explicitly exist.
+**Product Type** — Catalog Resource defining structured-data requirements for a kind of Product.
+One Product has `0..1` Current Product Type; a draft may have none. A type declares its allowed
+Attribute Definitions and required subset. Required/optional belongs to that use, not globally to
+the attribute. Product Type is not Category, identity, Set marker, packaging marker or selling policy.
+Absence of a type does not permit arbitrary undeclared structured attributes.
 
-**Controlled Attribute Value** — Stable Catalog-owned value from a governed vocabulary for an
-Attribute Definition. Rename preserves identity when meaning is unchanged. Retirement prevents new
-assignment but does not erase historical/current references that still need explanation. `Color` and
-`Size` are specialized controlled-value semantics, not free-text aliases.
+**Attribute Definition** — Stable Catalog Resource defining one structured Product/Variant fact,
+its business meaning, value kind, applicable subject levels, canonical measurement unit where
+relevant, range/precision and single/multiple multiplicity. Similar names do not establish equal
+meaning. Materially changing what is measured or described requires a distinct definition.
 
-**Product Category** — Stable Catalog classification Resource. A Category has `0..1` direct parent;
-a Product has `0..N` direct Category assignments. Ancestor classification is derived, not another
-direct assignment. No shared primary/main Product Category exists in the Current model. Category is
-not Product Type, Storefront navigation, publication, Assortment, or Permission.
+**Attribute Value** — Concrete value of one Attribute Definition for a Product or Variant, not a
+copy of the definition. Missing is not automatically zero, empty text, unknown or not applicable.
+Every value follows its definition and the Product Type allowed set; measured values preserve exact
+business meaning under permitted unit conversions.
 
-**Brand** — Stable Catalog-owned commercial identity under which a Product is presented. Product has
-`0..1` Current Brand in the base model. Brand is not Party identity, Manufacturer, Supplier, Product
-identity, or marketing Content. Missing Brand and confirmed unbranded are distinct states.
+**Variant Attribute Override** — Explicit Variant-level value taking precedence over an inherited
+Product value where that attribute applies. Product edits do not overwrite it. Removing it restores
+inheritance; an explicitly allowed unknown/not-applicable value is a different state and must not
+silently fall back. Inheritance cannot silently change the identity of an existing Variant.
 
-**Manufacturer Relation** — Catalog-owned Product/Variant fact identifying who actually manufactures
-the subject. Its target is either an external organization Party ResourceRef from Party Registry or
-a managed Legal Entity ResourceRef when the manufacturer is inside the Tenant's managed structure.
-Catalog owns the relation, never the referenced Party or Legal Entity identity. Supplier/Counterparty
-role, Brand, similar name, or External Business System value does not create a Manufacturer Relation.
+**Variant Axis** — Product-specific role of an existing Attribute Definition distinguishing its
+predefined Variants. Complete axis combinations distinguish Current Variants within one Product;
+SKU cannot substitute for a missing distinguishing axis. An axis copies neither definitions nor
+controlled values. Individual allowed values never create a Cartesian product of existing Variants.
+A single-Variant Product may have no axes.
+
+**Controlled Attribute Value** — Stable Catalog-owned value in a governed vocabulary for an
+Attribute Definition. Rename preserves identity only when meaning is unchanged. Retirement prevents
+new assignment while retaining existing references and their explanation; it is not automatically
+Product retirement. Reactivation preserves the same identity. Color and Size are specialized values.
+
+**Color** — Shared Catalog-owned controlled identity of a color meaning, separate from its name,
+general color group or visual preview. Same name or HEX/RGB does not prove the same actual color;
+an authoritative swatch system may provide evidence, not replace Catalog identity. Product/Variant
+uses the shared value without copying it.
+
+**Color Preview** — Illustrative display representation of a Color, for example a swatch or
+HEX/RGB value. It is not proof of physical shade, material, finish, compatibility or identity.
+
+**Size** — Shared Catalog-owned controlled value such as S, M, L or 80, without a mandatory separate
+Size System identity scope. Products using the same Size may have different physical dimensions.
+Order belongs to the concrete usage list, not a universal Size ordering. Equivalence or conversion
+requires scoped evidence; a numeric Size label is not a measured value with an inferred unit.
+
+**Product Category** — Stable Catalog classification Resource with `0..1` direct parent; multiple
+roots are allowed. Rename preserves identity only for unchanged classification meaning. Hierarchy
+is acyclic. No shared primary/main Product Category exists in the Current model. Category is not
+Product Type, navigation, publication, Assortment or Permission.
+
+**Direct Category Assignment** — Explicit Product-to-Product Category relation. A Product has
+`0..N` such assignments; removing one preserves independent others. A Variant uses the classification
+of its Product, not an implicit second category taxonomy.
+
+**Ancestor Classification** — Broader classification derived from the current ancestors of a direct
+Product Category. It is not another direct assignment. A consumer explicitly chooses direct or
+ancestor-inclusive meaning; moving a category can change its result even if direct assignment stays.
+
+**Brand** — Stable Catalog-owned identity of the commercial designation under which a Product is
+presented, with `0..1` Current Brand per Product in the base model. Missing Brand differs from
+confirmed unbranded; neither requires a pseudo-Brand. Variants normally use their Product's Brand;
+a different Brand requires an identity-boundary review, not an ordinary attribute override.
+Brand is not Party, Manufacturer, Supplier, Product identity or marketing Content.
+
+**Manufacturer** — The real-world subject that manufactures a Product or Variant, not a Brand,
+Supplier, Counterparty Role or acting Principal. It may be an external person/organization Party or
+a managed Legal Entity; the latter must not be mirrored as a Party to fill a manufacturer field.
+
+**Manufacturer Relation** — Catalog-owned Product/Variant fact pointing to the Manufacturer's typed
+Party ResourceRef or managed Legal Entity ResourceRef. Catalog owns applicability and provenance,
+never the referenced identity. Base scope has at most one resolved Current Manufacturer for an
+exact realization. Unknown/ambiguous evidence is not a guessed relation. Identity correction or
+alias resolution remains with the respective identity owner and does not automatically prove a
+product relation or grant Permission.
 
 **Supplier** — Commercial sourcing meaning describing from whom a managed Legal Entity obtains or
-may obtain a Product. It is distinct from Brand and Manufacturer. Shared external Supplier identity
-and Counterparty role truth belong to Party Registry; any Product-specific sourcing relation needs an
-explicit owning capability and must not be inferred into Catalog Manufacturer semantics.
+may obtain a Product. Shared external identity and Counterparty Role truth belong to Party Registry.
+Product-specific sourcing requires an explicit procurement owner; a Supplier role alone does not
+prove supply of a particular Product and is never inferred into Manufacturer semantics.
 
-**Package Option** — Catalog Resource attached to exactly one Variant and representing a concrete
-packaged form that is independently selectable only when the packaging itself is part of a
-legitimately different customer requirement. It has stable identity and Current package-content
-semantics. Same quantity, different Price, package label, or ordering multiple alone does not create
-a Package Option. A Package Option may carry its own SKU or GTIN/EAN.
+**Unit** — Explicit Catalog-governed unit meaning used by Quantity or measurement. A label alone is
+not a unit identity or conversion rule. Compatible measurement conversion preserves the same
+quantity kind; product attributes and purchase Quantity retain their different purposes.
 
-**Package Content Revision** — Immutable semantic revision explaining the concrete contents of one
-Package Option: contained Catalog Selection Target, amount, and unit. Material change of package
-contents creates a new revision and makes prospective evidence based on the old revision stale; it
-does not rewrite an Accepted Order or automatically create a new Product.
+**Quantity** — Exact amount paired with an explicit Unit and target meaning. Purchase Quantity is
+separate from dimensions of one item. Accepted Quantity preserves the unit and any package-content
+basis used; a count of packages is not a count of their contained pieces.
 
-**Product Configuration Definition** — Catalog-owned Product-level definition of permitted
-individual configuration choices and constraints. Current Launch scope supports `Single Choice` and
-`Measured Value`; additional generic choice kinds require a separately accepted business need.
-Variant-specific rules may constrain applicability without creating a private duplicate definition.
+**Quantity Step** — Smallest permitted purchase-quantity increment declared for a Unit in the
+Tenant's Catalog, together with deterministic rounding semantics. Target divisibility is a separate
+Catalog fact. This unit-level rule does not impose purchase rounding on measured Attribute Values or
+Product Configuration choices; stricter commercial multiples belong to Commerce Quantity Rules.
 
-**Product Configuration Definition Revision** — Immutable semantic revision of a Product
-Configuration Definition with explicit `effective_from`. Missing minimum, maximum, boundary, step,
-or compatibility rule is not an implicit default. A materially affected prospective selection must
-be revalidated against the Current revision.
+**Quantity Normalization** — Catalog-governed interpretation of a requested purchase Quantity under
+its unit step and target divisibility. A meaningful off-step divisible amount may be automatically
+rounded under the explicit unit rule, retaining and reporting requested and resulting values.
+A nonsensical fractional indivisible item is rejected, not legalized by rounding. A changed amount
+must belong to the explicitly presented candidate before Pricing, approval and final acceptance;
+normalization never silently modifies an already approved or committing candidate.
 
-**Product Configuration** — Immutable value refining one Catalog Selection Target with the complete
-set of business-significant selected choices, values, and units. Its business identity is determined
-by the Product/Variant/Package target plus those significant values; display labels and ordering are
-not identity. Product Configuration does not create a new Product, Variant, Package Option, or SKU.
-Validation returns `VALID`, `INVALID`, or `INDETERMINATE` and never silently changes the selection.
+**Package Definition** — Catalog Resource describing a required homogeneous packaging level for
+exactly one Variant. Its content and conversions are versioned. A higher level may refer to a
+precisely versioned lower level of the same Variant, with finite acyclic contents. A packaging level
+used only to explain a quantity is not automatically independently selectable or separately stocked.
 
-**Set Product** — Ordinary Product whose one or more Variants represent a multi-component item sold
-as one whole. Set is not a parallel top-level identity system: stable family identity is Product and
-the exact predefined selectable realization is Variant. Launch Set Products are fixed and flat;
-buyers do not choose internal component alternatives and another Set Product is not a component.
+**Package Option** — Independently selectable role of a Package Definition whose packaging itself
+is part of a legitimately different requested item. It uses that definition's stable Resource
+identity, not a parallel duplicate record. The option belongs to exactly one Variant and may have
+its own SKU/GTIN. Same quantity, different Price, package name or commercial multiple alone does not
+establish this role; replacing it with loose pieces requires an explicit changed selection.
 
-**Set Composition Revision** — Immutable Catalog-owned semantic revision of the exact fixed content
-of one Set Product Variant. It contains explicit component Catalog Selections, quantities, and units.
-Material change of component identity, exact realization, Product Configuration, Package Option, or
-quantity creates a new composition revision. If two materially different set realizations must be
-simultaneously independently selectable, they require distinct Variants (and a distinct Product only
-when the stable commercial family itself is different). A later revision never silently substitutes
-components in prospective or Accepted purchases.
+**Package Content Revision** — Immutable, owner-qualified revision of a Package Definition's exact
+homogeneous contents, quantities, units and lower-level revision references. A material change always
+creates a distinguishable revision, not automatically another Product or SKU. Successive contents
+may retain the packaging identity; concurrently independently selected different packages require
+distinct Package Options. An exact package selection pins its revision, never latest contents.
 
-**Product Relationship** — Explicit directional Catalog relation between Product or Variant
-endpoints using a supported business type. Current supported types are `ACCESSORY_FOR`,
-`RELATED_PRODUCT`, and `SUCCESSOR`. Reverse lookup does not invert business meaning. `SUCCESSOR` is
-a candidate for a new explicit selection and never authorizes silent substitution. Product
-Relationships never define Set Composition.
+**Product Configuration Definition** — Product-level Catalog Resource defining supported individual
+choices and constraints. Variant rules can refine applicability without copying the definition.
+Launch scope supports Single Choice and Measured Value, not an unrestricted expression engine,
+free-text configurator, multi-choice tree or buyer-configurable Set composition.
 
-**Catalog Local Override** — Explicit governed Catalog decision that temporarily changes Current
-resolution of one Catalog-owned fact/scope over an accepted authoritative external base assertion.
-It is not a second System of Record and does not stop newer source assertions from being retained as
-base evidence. Release re-evaluates Current state from the newest usable authoritative base fact.
+**Configuration Choice** — Stably distinguished question within a Product Configuration Definition,
+with explicit meaning, required/optional status and allowed kind. Its display label is not its
+identity. An optional omitted choice is distinct from a missing definition or required value.
 
-**Catalog Policy Scope** — Optional typed selector by which a consuming Commerce Business Policy may
-apply a rule to Catalog-owned identities. A policy field contract must explicitly declare which
-selector kinds it supports, such as Product, Variant, Package Option, Product Type, or Product
-Category, and the exact precedence/inheritance semantics. There is no arbitrary Catalog query or
-implicit matching by name/SKU. Customer-specific assignments remain separate unless an explicit
-capability owns them.
+**Single Choice** — One chosen value from an explicitly defined set for a Configuration Choice.
+A binary choice can use two named alternatives without a separate Boolean type. Selection does not
+create a new predefined Variant or SKU.
+
+**Measured Value** — One exact numeric configuration value with an explicit compatible Unit,
+applicable bounds, boundary inclusion and step/origin when constrained. No minimum, maximum,
+inclusion or step is inferred from absence. Confirmed lack of a constraint differs from unknown.
+
+**Product Configuration Definition Revision** — Immutable semantic revision with explicit
+`effective_from` and unambiguous Current applicability. It is separate from the selected values.
+A materially affected prospective selection requires Current revalidation; an old Cart has no
+implicit entitlement to obsolete rules. Equivalence across revisions is confirmed by Catalog only
+for the actual target, meaning and admissibility being evaluated.
+
+**Product Configuration** — Immutable value refining an exact Catalog Selection Target with its
+complete business-significant choices, values and units. Product/Variant/Package target is part of
+its meaning; display labels and presentation order are not. It is not a required new Resource,
+Product, Variant, Package Option or SKU. Its definition revision is retained as validation evidence,
+not confused with the identity of the chosen physical meaning.
+
+**Product Configuration Validation** — Catalog decision returning VALID for a fully admissible
+selection, INVALID with a known violated rule, or INDETERMINATE when decisive facts cannot be
+established. Validation never silently rounds a Measured Value or substitutes another choice.
+Permission denial, dependency outage and an uncertain write outcome are not fabricated product rules.
+
+**Set Product** — Ordinary Product representing a multi-component whole, not another top-level
+identity registry. Set is the short Catalog alias for Set Product. Its independently selectable
+whole is a Variant; the exact selected content additionally requires Set Composition Revision.
+Launch Sets are fixed and flat: no buyer component alternatives, optional extras inside composition,
+or nested Set component, including nesting hidden through a Package Option.
+
+**Set Composition Revision** — Immutable Catalog-owned revision of one Set Variant's exact fixed
+components, component Catalog Selections, quantities and units. Every material content change has a
+different revision. A successor of the same stable Set may retain Product/Variant identity; two
+concurrently or independently selected different wholes need distinct Variants, and different stable
+product families need distinct Products. This explicit Set succession rule does not permit in-place
+replacement of an atomic Variant. Existing selections retain their exact revision, not the successor.
+
+**Product Relationship Type** — Governed meaning of a product relation. Supported semantics are
+ACCESSORY_FOR (doložené příslušenství pro), RELATED_PRODUCT (související produkt without implied
+technical compatibility) and SUCCESSOR (nástupce for a new explicit selection). These names are
+semantic identifiers, not a prescribed wire encoding. OTHER plus arbitrary text is not a new type.
+
+**Product Relationship** — Explicit directional Catalog relation with Product or Variant endpoints
+and evidence for the entire stated scope. Reverse lookup preserves meaning. Multiplicity is `0..N`
+unless a supported type explicitly narrows it; successor is not implicitly singular. Effective Period
+is used where known/needed, without inventing historical dates. Retirement of an endpoint does not
+automatically erase a still-meaningful relation. Relations never define Set contents or authorize
+silent substitution.
+
+**Catalog Descriptive Fact** — Catalog-owned factual name or description of a Product, distinct from
+Content-owned marketing copy. A completed Product has at least one nonempty catalog name; a general
+long description is not universally required. A display text never overrides an authoritative
+structured fact merely because it is newer or more prominent.
+
+**Catalog Localized Value** — Language representation of the same Catalog fact, not another Product
+or another fact owner. A missing requested locale is explicit; Storefront presentation fallback does
+not create the absent translation.
+
+**Catalog Document Reference** — Catalog-owned applicability relation from Product/Variant to a
+Documents Center Resource. Live use follows that same Resource's Current version without a separate
+Catalog approval for each compatible version; replacing the Resource is an explicit relation change.
+Applicability and access still govern. Evidence required for an Accepted result pins the actual
+version/bytes, not the later live reference. Catalog owns no duplicate document store.
+
+**Catalog Media Assignment** — Catalog-owned relation recording media Resource, Product/Variant
+applicability, purpose and explicit order. Variant media takes precedence; absent Variant media uses
+the Product media set. Main medium means the first item, including after removal, regardless of
+purpose. A fallback depicting another realization is illustrative, not proof of the selected Color
+or dimensions. Presentation must preserve this distinction; access and bytes remain document-owned.
+
+**Catalog Permission** — Atomic OntOS Permission for a declared Catalog Action or governed read in
+an explicit Resource/Tenant scope. Purchasing access, job title, identity relations, client identity
+or commercial eligibility do not create it. Its enforcement uses existing Core authorization.
+
+**Catalog Authority Bundle** — Reviewed named grouping of Catalog Permissions, not another role or
+authorization engine. Catalog Reader groups bounded reads; Product Editor groups ordinary product
+editing; Catalog Definition Manager groups shared-definition changes; Catalog Lifecycle Manager
+groups high-impact lifecycle changes. These bundles do not imply one another or grant newly added
+Actions without explicit permission-catalog review.
+
+**Catalog Source Assertion** — Provenance-backed claim received about a Catalog fact, retaining
+issuing source, source record, source revision/validity, recorded time and acceptance outcome.
+Received is not automatically Current. Fact-specific authority, exact target resolution and Catalog
+invariants govern adoption; later delivery, omission or duplicate delivery is not a new authority.
+
+**Catalog Local Override** — Explicit governed Catalog decision changing Current resolution of one
+Catalog-owned fact/scope over an accepted authoritative external base assertion. It retains actor,
+reason, scope and lifecycle without changing the source System of Record. New source assertions
+continue to be retained as base evidence. Release resolves the newest usable authoritative base;
+a conflict or absent base is explicit, not a fallback to stale data. Override is not an identity,
+Permission, price or stock override.
+
+**Catalog Policy Scope** — Typed selector through which a consuming Business Policy refers to
+Catalog identities. Supported selector kinds and precedence must be declared by that policy family;
+there is no implicit SKU/name matching, arbitrary Catalog query or automatic category inheritance.
+A declared selector does not transfer Catalog facts to the consumer.
+
+**Commerce Quantity Rule** — Customer Commerce Policy-owned typed, versioned commercial rule for
+purchase quantities, packaging multiples or minimum-order conditions. Its exact commercial context,
+Catalog Policy Scope, unit/basis and fallback or non-relaxable-constraint meaning are explicit. It
+consumes Catalog quantity facts without redefining divisibility, content, Price or physical identity.
+
+**Customer Quantity Rule Assignment** — Explicit, effective Customer Commerce Policy-owned binding
+of a Commerce Quantity Rule to one concrete Commerce Customer Profile. It is the bounded
+quantity-specific assignment, not ownership of the profile, Party or other customer settings.
+An assignment cannot relax Catalog validity or a non-relaxable commercial constraint and cannot be
+inferred from Principal identity, group membership or a missing rule.
+
+**Commerce Quantity Resolution** — Current policy-owned result for exact Catalog Selection and
+Quantity in a trusted Commerce Purchasing Context, retaining rule/assignment revisions and Catalog
+basis. It distinguishes permitted quantity, known violated commercial conditions and explicit
+missing/conflicting/unverifiable inputs. It neither changes the requested candidate silently nor
+creates Permission, Price, Availability or an Order.
 
 ## Purchasing limits and approval
 
@@ -523,12 +682,12 @@ blocking, approval, or an Order.
 It is the canonical meaning previously described by the planning alias `Approval Threshold`; there
 is no second stored Approval Threshold amount or currency.
 
-**Purchase Proposal Revision** — Immutable Snapshot of one submitted Cart revision that can be
-reviewed and approved. It contains exact Purchasing Subject, acting Buyer, Catalog Selections and
-quantities, Purchase Value, currency, resolved commercial terms, Invoice Recipient, Delivery
-Destination, and source revisions needed to identify what was approved. It is not an Order and does
-not reserve stock, guarantee price, or authorize Payment unless a separate owner-issued
-reservation/quotation/Payment contract explicitly says so.
+**Purchase Proposal Revision** — Immutable prospective representation of one submitted Cart revision
+that can be reviewed and approved. It contains exact Purchasing Subject, acting Buyer, Catalog
+Selections and Quantities, Purchase Value, currency, resolved commercial terms, Invoice Recipient,
+Delivery Destination and source revisions needed to identify what was approved. It is not an
+Accepted Order Snapshot and does not reserve stock, guarantee price or authorize Payment unless a
+separate owner-issued reservation/quotation/Payment contract explicitly says so.
 
 **Purchase Approval Request** — Purchasing Approval-owned workflow for one Purchase Proposal
 Revision. Its lifecycle is `PENDING`, `RETURNED`, `APPROVED`, `REJECTED`, `CANCELLED`, `EXPIRED`, or
@@ -555,18 +714,19 @@ Counterparty Approver Permission, Purchase Limits, Cart, Pricing, or Order. An a
 authorizes only the exact proposal revision to attempt final Order acceptance.
 
 **Approval Revalidation** — Check that an approved Purchase Proposal Revision still matches the Cart
-and Current acceptance inputs. Any material change to Purchasing Subject, Buyer, Catalog Selection,
-quantity, Accepted price/discount/fee/tax, currency, Payment Term, Invoice Recipient, Delivery
-Destination, Purchase Value, or applicable approval policy supersedes approval and requires a new
-revision and route. Final Availability, reservation, Payment, and Order acceptance checks still run.
+and Current acceptance inputs. A material change to Purchasing Subject, Buyer, Catalog Selection,
+Quantity, proposed price/discount/fee/tax, currency, Payment Term, Invoice Recipient, Delivery
+Destination, Purchase Value or applicable approval policy supersedes approval and requires a new
+revision and route. Owner-attested non-material source changes may retain approval, not fabricate
+unchanged evidence hashes. Final Availability, reservation, Payment and acceptance checks still run.
 
 ## Order acceptance and recovery
 
 **Reservation Confirmation** — Inventory/Availability-owner-issued proof that specified Catalog
-Selection Targets or owner-specific stock quantities are provisionally reserved for one exact Order
-Commitment Attempt until an explicit expiry/lease boundary. It has owner-scoped idempotency and
-correlation. It is not an Order or permanent Availability guarantee, and an expired/unverifiable
-confirmation is not Current.
+Selections and quantities, or their explicitly mapped stock requirements, are provisionally reserved
+for one exact Order Commitment Attempt until an explicit expiry/lease boundary. It has owner-scoped
+idempotency and correlation. Mapping to stock does not reinterpret package or Set contents. It is not
+an Order or permanent Availability guarantee; an expired/unverifiable confirmation is not Current.
 
 **Payment Authorization** — Payment-owned proof that the required Payment method/amount/currency is
 authorized for one exact Order Commitment Attempt under the resolved Payment Term. It is distinct
@@ -575,10 +735,12 @@ Current status, and validity; secrets or payment instruments never enter Commerc
 
 **Order Acceptance Decision Bundle** — Immutable, versioned, canonical-hashable representation of
 one exact purchase candidate and its owner-issued Current decisions. It includes trusted scope,
-Purchasing Subject/Actor, Cart revision, exact Catalog Selections and quantities, Monetary Amounts,
+Purchasing Subject/Actor, Cart revision, exact Catalog Selections and Quantities, Monetary Amounts,
 Pricing/Tax/currency, Payment Term, Invoice Recipient, Delivery Destination, Purchase Value/limit
-result, Assortment/Availability evidence, approval evidence when required, and source
-revisions/validity needed for final acceptance. It is prospective and owns none of the source facts.
+result, Assortment/Availability evidence, approval evidence when required and exact source
+revisions/validity. Product Configuration is retained as a value, not a fabricated Configuration
+ResourceRef. Changed evidence produces a distinct representation even when owners prove unchanged
+business meaning. The bundle is prospective and owns none of the source facts.
 
 **Order Commitment Attempt** — Durable idempotency and recovery anchor for attempting to turn one
 exact Order Acceptance Decision Bundle into at most one Order. It tracks preparation correlations,
@@ -589,7 +751,8 @@ same idempotency identity.
 rechecks Current profile/Permissions/Business Policies, validates one exact Decision Bundle and any
 approved proposal revision, verifies required Reservation Confirmations and Payment Authorization,
 and commits exactly one Order. It coordinates public contracts and never opens a shared cross-module
-business transaction or silently modifies customer choices.
+business transaction or silently modifies customer choices. Owner validity through commitment must
+be established rather than inferred from an earlier read or an undelivered change event.
 
 **Order Commitment Reconciliation** — Owner-governed recovery that first proves whether Order commit
 occurred, then converges provisional reservation/Payment effects and downstream work without
@@ -625,10 +788,10 @@ not the statutory accounting or tax archive, retention owner, duplicate record s
 
 **Repeat Order** — Authorized Action constructing a new Cart from historical Order-line Catalog
 Selections on a best-effort basis. Every line is resolved and revalidated as a new Current Catalog
-Selection; no historical SKU, successor relation, Set component, Package Content Revision, or Product
+Selection; no historical SKU, successor relation, Set component, Package Content Revision or Product
 Configuration rule silently substitutes a Current alternative. Current Permissions, Assortment,
-quantities, Pricing, Availability, currency, Invoice Recipient, Delivery Destination, Payment Terms,
-Purchase Limits, and approval policy apply; historical terms and authority are not reinstated.
+Quantities, Pricing, Availability, currency, Invoice Recipient, Delivery Destination, Payment Terms,
+Purchase Limits and approval policy apply; historical terms and authority are not reinstated.
 
 **Assisted Support** — Audited staff capability exposing customer context without silently assuming
 customer identity. Customer-affecting Actions remain explicit and attributed to the operator.
@@ -636,43 +799,48 @@ customer identity. Customer-affecting Actions remain explicit and attributed to 
 ## Commerce domains
 
 **Catalog** — Domain owning Product, Variant, Product Type, Attribute Definition/Value, Brand,
-Manufacturer Relation, Product Category, Package Option, Product Configuration, Set Composition,
-Product Relationship, product identifiers, descriptive facts, media/document reference semantics,
-and Current Catalog Selection validation. It provides Catalog Selection Evidence but owns no Price,
-Assortment, Inventory, Availability, Permission, purchase approval, Payment, or Accepted Order.
+Manufacturer Relation, Product Category, Package Definition/Option, Product Configuration meaning,
+Set Composition, Product Relationship, product identifiers, descriptive facts, media/document
+reference semantics and Current Catalog Selection validation. It provides Catalog Selection Evidence
+but owns no Price, Assortment, Inventory, Availability, Permission, approval, Payment or Accepted Order.
 
 **Assortment** — Domain determining eligibility of an exact Product/Catalog Selection for visibility
-or purchase in a Channel, Commerce Market, Storefront, Retail Customer context, or Counterparty
-context. Catalog existence or publication does not imply Assortment eligibility.
+or purchase in a Channel, Commerce Market, Storefront, Retail Customer context or Counterparty
+context. A Product-level browsing result is not proof that every Variant or Package Option may be
+purchased. Catalog existence or publication does not imply eligibility.
 
 **Pricing** — Domain determining prices, discounts, fees, tax inputs, quantity tiers, quotations,
-and Price Group definitions for an explicit Commerce Purchasing Context and exact Catalog Selection.
+and Price Group definitions for an explicit Commerce Purchasing Context and exact Catalog Selection
+and Quantity. Set/Package prices are not silently derived from component sums or loose-piece prices.
 
 **Inventory** — Domain owning stock and reservations when the Customer Configuration owns those
-lifecycles. Inventory may use Catalog Selection Targets as references but does not redefine Catalog
-identity or package/composition semantics.
+lifecycles. Inventory maps exact Catalog selections to explicitly owned stock requirements without
+redefining product identity or package/composition semantics. Separate Catalog selection identity
+neither requires separate stock nor permits double reservation of a Set and its components.
 
-**Availability** — Current promise that an exact Catalog Selection can be sold and delivered in a
-Commerce Purchasing Context. It may derive from Inventory or an External Business System that owns
-the relevant fact. A Catalog-ready or Assortment-eligible selection is not automatically Available.
+**Availability** — Current promise that an exact Catalog Selection and Quantity can be sold and
+delivered in a Commerce Purchasing Context. It may derive from Inventory or an External Business
+System that owns the relevant fact. Catalog-ready or Assortment-eligible does not mean Available.
 
-**Cart** — Mutable prospective collection of exact Catalog Selections, quantities, and Current
-customer choices under one Commerce Purchasing Context. A Cart is not an Order, approval,
-Reservation Confirmation, quotation, or historical fact.
+**Cart** — Mutable prospective collection of Catalog Selections, Quantities and Current choices in
+one Commerce Purchasing Context. Incomplete preparation may be retained but is not a validated
+complete selection for submission. A Cart is not an Order, approval, Reservation Confirmation,
+quotation or Accepted historical fact.
 
-**Checkout** — Process coordinating Current validation, customer choices, Cart submission, and the
+**Checkout** — Process coordinating Current validation, customer choices, Cart submission and the
 handoff to Purchasing Approval or Order Commitment Gate. It owns no source facts or resulting Order.
 
-**Order** — Durable Accepted purchase and Snapshot of Accepted Catalog Selections, commercial terms,
-source evidence, and Actor attribution. It remains the System of Record for the historical purchase
-even when Current Catalog or other source definitions later change.
+**Order** — Durable Accepted purchase and Snapshot of Accepted Catalog Selections, Quantities,
+commercial terms, source evidence and Actor attribution. It remains the System of Record for the
+historical purchase even when Current Catalog or other source definitions later change.
 
 **Payment** — Domain owning Payment Term definitions plus Payment authorization, collection,
 settlement, cancellation, refund, and reconciliation outcomes. Customer entitlement, preference,
 purchase selection, and Order Snapshot remain separate facts.
 
-**Fulfillment** — Domain for preparation, handoff, delivery, tracking, partial fulfillment, and
-delivery exceptions.
+**Fulfillment** — Domain for preparation, handoff, delivery, tracking, partial fulfillment and
+delivery exceptions. It acts on Accepted line and component meaning; current Catalog revisions do
+not silently replace the items to be fulfilled.
 
 **Aftercare** — Customer and operator work coordinated over Order, Payment, Fulfillment, Billing
 Documents, and Claim lifecycles without replacing their ownership.
@@ -681,8 +849,9 @@ Documents, and Claim lifecycles without replacing their ownership.
 deadlines, state, and resolution history.
 
 **Customer Commerce Policy** — Declarative Customer Configuration of shared Channel, purchasing,
-quantity, Commerce Market, currency, Payment Terms, approval, delivery, and legal Business Policy.
-A typed policy field may additionally declare an explicit Catalog Policy Scope when its business
-meaning is Product/Variant/Package/Category/Type-specific. It supplies explicit defaults and
-constraints, not arbitrary hidden executable logic or customer-specific assignments. Different
-executable semantics require a shared module change or an explicitly catalogued implementation.
+quantity, Commerce Market, currency, Payment Terms, approval, delivery and legal Business Policy.
+A typed field may declare Catalog Policy Scope; the bounded Commerce Quantity Rule family also owns
+explicit Customer Quantity Rule Assignments. Other profiles, customer settings and domain facts keep
+their respective owners. Defaults, constraints, scope precedence and absence are explicit, never
+arbitrary executable logic. Different executable semantics require a shared module change or an
+explicitly catalogued implementation.
