@@ -2,396 +2,553 @@
 
 Consent + Privacy is the shared OntOS privacy capability for processing purposes, legal-basis evidence,
 privacy notices, Consent, Processing Eligibility, Data Subject Requests, retention/disposition, and
-cross-owner privacy work. This context owns canonical privacy product semantics and vocabulary, not
-storage, file layout, transport, provider implementation, or legal advice. It extends
-`../ontos/CONTEXT.md`; when the two contexts conflict, the OntOS context and accepted ADRs govern.
+cross-owner privacy work. This context owns canonical product semantics and vocabulary, not storage,
+transport, provider implementation, or legal advice. It extends [OntOS language](../ontos/CONTEXT.md);
+OntOS context and accepted ADRs govern shared concepts. Commerce-specific concepts retain their owner
+in [Commerce language](../commerce/CONTEXT.md).
+
+These are product and target-contract semantics, not evidence that a runtime module, owner adapter,
+legal configuration, or production workflow is implemented. GitHub issues own delivery scope and
+readiness; code, contracts, configuration, and tests establish implementation reality.
 
 ## Product boundary
 
 **Consent + Privacy** — One OntOS Foundational Module with Module Contract Identity `privacy`. It owns
 privacy-specific facts, decisions, cases, policies, and coordination shared by Commerce,
-Communications, Measurement, Content/Channel Applications, integrations, and other consuming
-capabilities. The planning branches under issue #509 are capability areas of this one module contract;
-they are not separate deployable modules unless a later accepted decision creates a real independent
-public semantic boundary.
+Communications, Measurement, Content/Channel Applications, integrations, and other capabilities.
+The eight planning branches under #509 are internal capability areas, not eight independently
+deployable modules. Splitting public module semantics requires a subsequent explicit accepted decision.
 
-Consent + Privacy is not OntOS Core. Core continues to own generic authorization, Action execution,
-audit, events/outbox, ResourceRef, Evidence Registry, and other business-neutral runtime guarantees.
-Consent + Privacy uses those guarantees for privacy behavior.
+Consent + Privacy is outside OntOS Core. Core retains business-neutral authorization, Action
+execution, audit, events/outbox, ResourceRef, Evidence Registry, and runtime composition guarantees.
+Privacy uses those guarantees; it does not introduce a parallel authorization, audit, or identity stack.
 
-Consent + Privacy is not a central personal-data store. Every owning capability remains the System of
-Record for the Resources and business facts it owns. Privacy coordination uses public contracts and
-stable ResourceRefs and never gains ownership merely by reading, referencing, exporting, restricting,
-anonymizing, or deleting owner data.
+Consent + Privacy is not a central personal-data store. Each owning capability remains System of
+Record for its Resources and facts. Reading, referencing, exporting, coordinating, restricting,
+anonymizing, or deleting through public owner contracts does not transfer their ownership to privacy.
+Privacy is itself the System of Record for its own privacy facts and applies retention to its own data.
 
 ## Language guardrails
 
 **Privacy role versus identity** — Data Subject, Requester, Representative, Controller, Processor,
-Recipient, DSR Resolver, Retention Rule Authority, and Legal Hold Authority are privacy or business
-roles/responsibilities. They are not new Party, Principal, Legal Entity, account, or Permission types.
-When a system operation is performed, the actual Actor remains a Principal under the OntOS context.
+Recipient, DSR Resolver, Retention Rule Authority, Exception Authority, and Legal Hold Authority are
+roles or business responsibilities, not new Party, Principal, account, or Permission types. An actual
+protected system operation remains attributable to a Principal; Actor is its narrative name.
 
-**Privacy responsibility versus authorization** — A privacy role or responsibility never grants a
-Permission. Protected Actions and governed Reads still require the exact authorization required by
-the owning module. A privacy Business Policy result never replaces authentication or authorization.
+**Privacy responsibility versus authorization** — A role, Representation, identity verification,
+Consent, applicability result, or Business Policy result does not create a Permission. Protected
+Actions and governed Reads still use the owning contract's exact authorization and Module State Gate.
 
-**Privacy responsibility versus fact ownership** — Controller/Processor/Recipient roles do not imply
-System-of-Record ownership of the data. Conversely, an owning capability that is System of Record for
-a Resource does not automatically become Controller, Processor, or Recipient for every processing of
-that Resource.
+**Privacy responsibility versus fact ownership** — Controller/Processor/Recipient describes a role
+in processing, not ownership of an OntOS fact. System-of-Record ownership likewise does not establish
+one of those roles. A technical provider, Integration Route, or host does not become a legal role holder
+merely because bytes pass through it.
 
-**Current** — Always uses the canonical OntOS meaning: authoritative facts and Effective Periods at
-the trusted operation time. A cached Consent, stored eligibility result, queued message, export, or
-previous policy decision is not Current merely because it still exists.
+**Current** — Uses OntOS meaning: authoritative facts and Effective Periods at trusted operation time.
+A cached Consent, stored decision, queued task, export, or old policy result is not Current merely
+because it exists. Effective Period starts are inclusive and ends exclusive unless the owning
+capability explicitly defines otherwise. Effective time and recorded time are distinguishable facts.
 
-**Historical truth** — Later privacy changes do not rewrite Accepted Facts, historical Snapshots,
-previous Consent Decisions, previous Privacy Notice Provision facts, or previously proven execution
-outcomes. Historical retention still requires its own applicable reason; historical status is not a
-blanket retention exception.
+**Historical truth** — Current changes do not recalculate Accepted Facts, retained Snapshots,
+Consent Decisions, Privacy Notice Provisions, or proven execution outcomes. Immutability of retained
+values is not unlimited retention of the Resource. Historical content needs its own applicable reason.
 
-**Customer** — Do not use unqualified `customer` when the privacy meaning is Data Subject, Party,
-Requester, Principal, Controller, Retail Customer, Counterparty, or Commerce Customer Profile. Use the
-exact role or Resource defined by its owning context.
+**Customer / User / Subject / Owner** — Qualify ambiguous wording. Use Data Subject, Requester,
+Representative, Principal, Retail Customer, Counterparty, Commerce Customer Profile, Privacy Subject,
+Controller, or owning capability/System of Record as appropriate. A broad role or label must not hide
+a different identity, permission, or ownership model.
 
-**User** — Avoid `user` in canonical privacy rules where the actual meaning can be Data Subject,
-Requester, Representative, Principal, visitor, or recipient. Resolve the concrete role.
+**Communication Channel** — Means of communication such as EMAIL, SMS, PHONE, or push when that
+meaning is material to Consent or processing. It is not Commerce B2C/B2B Channel, a Channel Application,
+or necessarily the channel where a choice was collected. A choice submitted on a website may govern
+EMAIL marketing. Plans using `Channel` for EMAIL/SMS refer to Communication Channel, not Commerce Channel.
+No channel dimension is mandatory for every Consent merely for persistence convenience.
 
-**Subject** — Avoid bare `subject` when it could mean Data Subject, Purchasing Subject, Party,
-Principal, or an anonymous context. Use `Privacy Subject` for the privacy-specific tagged meaning
-below, or the exact underlying concept when known.
+**Jurisdiction** — Explicit legal/country/region context where relevant to approved applicability.
+Geography alone does not determine Controller, Consent, Legal Basis, DSR, or retention. Commerce Market
+may carry jurisdiction references but is not itself a privacy regime.
 
-**Owner** — Avoid bare `owner` when it could mean Controller, data subject, account owner, or System
-of Record. Say `owning capability` / `System of Record`, `Controller`, or the exact responsibility.
-
-**Channel** — A channel is not universally part of every Consent scope. It is included only when the
-channel changes the business meaning of the Consent or the governed processing, such as independent
-EMAIL versus SMS marketing choices.
-
-**Jurisdiction** — Jurisdiction/country/region facts can be inputs to a Privacy Applicability Policy,
-but geography alone does not determine Controller, Consent scope, Legal Basis, DSR obligations, or
-retention. Commerce Market may carry jurisdiction references, but is not itself a privacy regime.
-
-**No legal inference from technical topology** — Tenant, Legal Entity, Selling Legal Entity,
-Commerce Market, Storefront, hostname, Deployment Topology, provider, Integration Route, IP address,
-locale, or client-supplied identifier must never silently determine privacy responsibility or legal
-obligations. They may be trusted inputs only where an explicit Privacy Applicability Policy declares
-their meaning.
+**No legal inference from topology** — Tenant, Legal Entity, Selling Legal Entity, Commerce Market,
+Storefront, hostname, Deployment Topology, provider, Integration Route, IP address, locale, and
+client-supplied identifiers cannot silently determine privacy responsibility or obligations. Approved
+policies may use trusted business facts with an explicitly defined meaning; configuration is not
+permission to waive an applicable legal requirement.
 
 ## Privacy subjects and responsibility
 
-**Data Subject** — The natural person whose personal data or privacy rights are being considered. Data
-Subject is a privacy role, not a new OntOS identity type. The role does not require creation of a Party,
-Principal, or account. When an existing Party safely represents the person, Consent + Privacy may hold
-a stable ResourceRef to that Party without taking Party identity ownership.
+**Data Subject** — Natural person whose personal data or rights are being considered. This privacy
+role does not require creation of a Party, Principal, or account. Where a Party safely represents that
+person, privacy uses its stable ResourceRef without taking identity ownership. A supplied name,
+Contact Point, or account identifier is not automatically verified Data Subject identity.
 
-**Anonymous Privacy Context** — Bounded context that allows a privacy choice or evidence to exist
-without creating a Party, Principal, or account, for example a browser-scoped technology choice. It
-is not the Commerce Guest Purchase Context and it is not automatically a legally anonymous dataset.
-The term describes the lack of an asserted canonical person identity in this privacy flow. Later
-login, Party matching, device reuse, or technical continuity does not silently convert it into a
-Data Subject identity or personal Consent.
+**Anonymous Privacy Context** — Bounded privacy context without an asserted canonical person identity,
+for example a browser-scoped technology choice. It is not Party, Principal, Commerce Portal Account,
+or Commerce Guest Purchase Context. `Anonymous` here does not claim that the associated data is
+legally anonymized. Later login, device reuse, matching, or technical continuity does not convert
+historical choices into personal Consent. Explicit linking preserves original provenance and does
+not itself create a new Consent Decision.
 
-**Privacy Subject** — Explicit tagged privacy subject of a fact or decision: either a Data Subject
-reference where sufficiently resolved, or an Anonymous Privacy Context where that capability supports
-anonymous handling. A Privacy Subject is not a new identity registry and cannot hide uncertainty by
-coercing one variant into the other.
+**Privacy Subject** — Explicit tagged subject of a privacy fact: a sufficiently resolved Data Subject
+reference or, only where supported, an Anonymous Privacy Context. It is not a new identity registry.
+Unresolved intake may be recorded without coercing uncertainty into a supposedly verified subject;
+sensitive reads and measures wait for their required assurance.
 
-**Requester** — Person or supported requester context that submits a Data Subject Request. Requester
-is not automatically the Data Subject and does not gain authority merely by knowing or sharing a
-Contact Point.
+**Requester** — Person or supported request context submitting a privacy request or choice, including
+a DSR. It is not automatically the Data Subject, Representative, or Principal executing the protected
+system Action. Knowledge of a Contact Point does not establish authority.
 
-**Representative** — Requester acting for a Data Subject under evidence sufficient for the exact
-requested scope. Representation is scope-bound and does not create general account, profile, Party,
-or Counterparty authority.
+**Representative** — Requester acting for a Data Subject with sufficient evidence for the requested
+scope. It is a role, not itself a Party Relationship or a universal access grant.
 
-**Controller** — Explicit privacy responsibility role holder for a declared Processing Scope. The
-role may be held by a managed Legal Entity or another real organization represented by its canonical
-owner; it is never inferred merely because that identity hosts a Storefront, sells an Order, stores a
-record, or appears in a technical route.
+**Representation** — Evidenced, scope-bound authority of a Representative for a particular Data
+Subject and operation/right, with relevant validity and provenance. It does not create a general
+Party Relationship, account binding, Counterparty access, or Permission. Verification and system
+authorization remain separate gates.
 
-**Processor** — Explicit privacy role holder processing personal data for a declared Processing Scope
-under the relevant Controller responsibility. Processor is a role in the processing model, not an
-Integration Route, provider category, or automatic System of Record designation.
+**Controller** — Privacy role that determines why and how personal data is processed, alone or
+jointly, in the declared Processing Scope. It can be a natural person, legal person, public authority,
+or other qualifying body; it is not restricted to managed companies. In OntOS the assignment references
+the existing canonical role-holder identity. Legal Entity and Party references remain distinctly typed;
+no implicit mirror Party or conversion is created for a managed Legal Entity.
 
-**Recipient** — Explicit party or organization category that receives personal data in a declared
-Processing Scope. A downstream system or provider is not automatically a Recipient merely because a
-transport exists; the business disclosure/processing relationship must be explicit.
+**Processor** — Privacy role processing personal data on behalf of the Controller in the declared
+scope. Its real role holder is referenced through the relevant identity owner; it is not the
+External Business System, Integration Route, or adapter used to perform the processing.
 
-**Privacy Responsibility Assignment** — Effective, historically explainable assignment of one or
-more Controller, Processor, or Recipient roles to a Processing Activity or narrower Processing Scope.
-The assignment references existing identities and does not create another company/person registry.
-Multiple Controllers are allowed when explicitly required; no implicit `primary controller` exists.
+**Recipient** — Concrete real role holder to whom data is disclosed in a declared scope, subject to
+applicable legal distinctions. A Recipient Category is not that concrete identity. One role holder
+may also be a Processor in the same or another scope, but the roles are not inferred from topology.
+
+**Recipient Category** — Governed grouping used where descriptions of recipients by category are
+appropriate. It is not proof that every specific recipient is known or that downstream obligations
+are complete. Actual known relevant recipients retain their concrete responsibility and outcomes.
+
+**Privacy Responsibility Assignment** — Effective, historically explainable assignment of Controller,
+Processor, or Recipient roles to a Processing Activity or narrower scope. Multiple Controllers remain
+explicit; there is no implicit primary Controller. Changing arrangements preserves prior assignments.
+Role-holder identity, role assignment, and the technical External Business System are distinct.
 
 ## Applicability and processing model
 
-**Privacy Applicability Policy** — Explicit, versioned Controller/governance policy that determines
-which privacy rules and obligations apply to an exact privacy operation or Processing Scope from
-trusted business facts. It may use declared jurisdiction, Data Subject relationship/location where
-legitimately relevant, Controller, Purpose Version, Commerce Market, Storefront, or other facts, but
-must define their meaning explicitly. It is not an automatic legal-advice engine and has no silent
-fallback to another legal regime.
+**Privacy Applicability Policy** — Explicit versioned Controller/governance policy resolving which
+rules and obligations apply from trusted business facts. It can use declared jurisdiction, relevant
+Data Subject context, Controller, purpose, market, or site where their meaning is approved. It is not
+an executable general legal-advice engine or a silent fallback chain between legal regimes. Multiple
+applicable layers require an explicit composition rule; unresolved conflicts remain unresolved.
 
-**Privacy Applicability Decision** — Current, explainable decision produced from a specific Privacy
-Applicability Policy version and trusted context. It records the exact scope and policy references
-used by downstream Notice, Legal Basis, Consent, DSR, Processing Eligibility, and Retention behavior.
-Missing, conflicting, or insufficient authoritative inputs remain explicit and fail closed where a
-protected processing operation requires a reliable result.
+**Privacy Applicability Decision** — Explainable result for one exact privacy operation/scope and
+trusted time, preserving policy identities/versions and the facts used. Notice, Legal Basis, Consent,
+DSR, Eligibility, and Retention use this shared model rather than incompatible local jurisdiction
+resolvers. Missing mandatory applicability prevents dependent use, but does not prevent supported
+DSR intake from recording an unresolved request. Applicability can evaluate a declared prospective
+activity; an already-eligible activity is not a circular prerequisite for assessing its applicability.
 
-**Personal Data Category** — Governed description of a category of personal data used to declare
-Processing Activities, owner coverage, retention, export, and disposition scope. It classifies data;
-it is not a copied payload or a central privacy-owned record.
+**Personal Data Category** — Governed classification used for Processing Activities, coverage,
+right-specific outputs, retention, and disposition. It is not a payload, a new Resource instance, or
+a central copy. A category may span several owners only with distinguishable fact/Resource scopes.
 
-**Processing Purpose** — Stable business meaning explaining why a declared processing exists. A
-Processing Purpose is not Consent, Legal Basis, Permission, a provider, or a technical workflow.
+**Processing Purpose** — Stable business reason why processing exists. It is not Consent, Legal
+Basis, Permission, a provider, or a technical workflow identifier.
 
-**Purpose Version** — Historically distinct version of a Processing Purpose. A material change that
-changes what the purpose means creates a new Purpose Version or new purpose identity; wording-only
-changes that do not alter business meaning do not reinterpret historical processing.
+**Purpose Version** — Historically distinct definition of a Processing Purpose's meaning. Material
+changes create a new definition/meaning or purpose identity; cosmetic wording cannot reinterpret
+history. The exact definition relevant to a past decision stays explainable.
 
-**Processing Scope** — Exact business scope to which a privacy fact or decision applies. It includes
-at least the relevant Controller, Purpose Version, Processing Activity or declared use, Privacy
-Subject where applicable, Personal Data Categories, and any further dimensions whose difference
-changes business meaning. Dimensions such as Channel, Storefront, Commerce Market, technology
-category, recipient, or jurisdiction are included only when relevant to that exact rule.
+**Processing Scope** — Exact declared use and boundaries to which a privacy fact applies: relevant
+Controller, purpose meaning/version, activity or intended use, Privacy Subject where required, data
+categories, and any material recipient, communication, technology, market, site, or jurisdiction
+dimensions. Policy-level scope and one operation's fully resolved scope are distinguishable. Missing
+a required dimension is not a wildcard or permission to widen the operation.
 
-**Processing Activity** — Privacy-owned description of a real processing activity and its approved
-scope: Controllers, Processing Purpose/Purpose Version, Personal Data Categories, owning
-capabilities, Recipients, downstream systems, applicable Privacy Applicability Policy references,
-Legal Basis Assignment, and Retention Rule references as applicable. It is a map of processing and
-responsibility, not a copy of personal data or an integration orchestrator.
+**Processing Activity** — Privacy-owned map of real or proposed processing: purpose/version,
+Controllers and roles, data categories and Systems of Record, relevant recipients and systems,
+applicability, Legal Basis Assignments, retention references, and lifecycle/provenance. Proposed
+activity is not Effective processing. Activation requires complete approved applicable inputs.
+Material changes are historically distinct and require assessment of related Notice/Consent/Eligibility
+and retention impacts. Ending an activity stops its new use but does not itself delete owner data.
 
-**Legal Basis** — Typed legal basis used by a Controller for a declared Processing Scope under the
-applicable policy. Consent is one possible Legal Basis where appropriate; it is never a universal
-fallback for every Processing Activity.
+**Legal Basis** — Typed legal ground assigned for a declared Processing Scope under the applicable
+rules. Consent is one possible ground, never a universal substitute for missing configuration.
 
-**Legal Basis Assignment** — Explicit, Effective and historically explainable decision linking one
-Legal Basis to an exact `Controller × Purpose Version × Processing Scope`. For the exact same scope
-and time there is one unambiguous Current Legal Basis decision. Different legitimate Legal Bases
-require distinguishable Processing Scopes; missing/conflicting basis is never repaired by a silent
-technical fallback chain.
+**Legal Basis Assignment** — Explicit Effective decision for `Controller × Purpose Version × exact
+Processing Scope`. There is one unambiguous Current decision for that exact scope and time. Legitimate
+different grounds require distinguishable uses/scopes, not an opaque fallback chain. Withdrawal or a
+missing/expired ground does not authorize switching grounds silently. Assignments preserve historical
+versions, reasons, and evidence without transferring fact ownership or Permission.
 
 ## Privacy notices and information
 
-**Privacy Notice** — Privacy information intended for provision to a Privacy Subject in a declared
-scope. Content/Channel Applications may own authoring or presentation, but Consent + Privacy owns the
-privacy applicability and historical meaning of the information step.
+**Privacy Notice** — Privacy information intended for provision in a declared scope. Content may own
+authoring/publication and Channel Applications own presentation; privacy owns notice meaning,
+applicability, and the historical information-step fact.
 
-**Privacy Notice Version** — Stable historical identity of exact notice wording in one language and
-its declared applicability. It is distinct from Purpose Version and from Evidence Artifact. A later
-Current text must never change what a historical Privacy Notice Version meant or contained.
+**Privacy Notice Version** — Stable identity of exact notice wording/language and its declared
+applicability. It is distinct from Purpose Version and Evidence Artifact. Changing current text creates
+a distinguishable version and cannot replace wording used by a historical information step.
 
-**Privacy Notice Provision** — Historical privacy fact that a particular Privacy Notice Version was
-actually provided for a specific Privacy Subject/context and business interaction at a stated time.
-Publication, render attempt, queued delivery, or page availability alone is not proven provision.
-The evidence references the exact version and actual language used without storing unnecessary
-credentials, tokens, or request payloads.
+**Privacy Notice Provision** — Historical fact that a specific notice version and actual language
+were provided for the relevant Privacy Subject/context and interaction, with business and recorded
+time where different. Publication, a render/send attempt, queue receipt, or a page that could have
+been visited is not proof for that interaction. Each supported channel defines sufficient provision
+evidence; proof of reading or comprehension is not invented as a universal technical requirement.
 
-**Material Privacy Change** — Change that alters the business meaning or material Processing Scope
-relevant to a Privacy Subject. It is determined by semantic impact, not by textual diff size. A
-material change can require new information and, where the new scope depends on Consent, a new Consent
-Decision; publication of new text alone satisfies neither.
+**Material Privacy Change** — Change in meaning or material processing conditions, not textual diff
+size. Affected subjects must be informed no later than application of that changed condition under the
+approved contract. Where the new scope requires Consent, information alone is insufficient: a new
+explicit Consent Decision is required. Editorial notice change can create a Notice Version without
+changing purpose meaning or requiring new Consent.
+
+Privacy Notice Provision, Terms acceptance, and Consent are separate facts. A common form submission
+may record independently expressed choices; one compulsory acceptance of Terms must not silently
+include optional marketing/technology Consent. Silence, preselected choices, closing a banner,
+registration, and Order submission are not affirmative Consent by themselves.
 
 ## Consent
 
-**Consent** — Privacy business fact formed from an explicit, provable decision for one exact Consent
-Scope. Consent is not a global boolean, Permission, account state, subscription, communication
-preference, Contact Point verification, Terms acceptance, or proof of identity.
+**Consent** — Privacy fact grounded in a demonstrable, freely made, specific, informed affirmative
+choice for an exact Consent Scope. It is not a global boolean, Permission, account state, subscription,
+communication preference, Contact Point verification, Terms acceptance, or identity proof. Withdrawal
+must not be made harder than granting; a supporting flow must not require unnecessary account creation
+or disproportionate identity evidence merely to stop its own consent-dependent use.
 
-**Consent Scope** — Minimum stable business scope is `Privacy Subject × Controller × Processing
-Purpose/Purpose Version`. Add Channel, Storefront, technology category/provider set, jurisdiction, or
-another dimension only when that dimension changes what the person is deciding about. Two values of
-a material dimension are independent Consent Scopes. A technical property is not added merely because
-it is convenient as a database key.
+**Consent Scope** — Stable business scope: one Privacy Subject, one Controller, one Processing Purpose
+with a precisely known meaning, plus dimensions that materially affect that choice. Decisions pin the
+relevant historical Purpose Version and information evidence. `Processing Purpose/Purpose Version` in
+plans means the named purpose with that pinned meaning, not interchangeable IDs or optional historical
+evidence. An editorial information version alone does not create a new scope; changed purpose meaning
+or materially expanded scope cannot inherit an old grant. Communication Channel is material for
+independent EMAIL/SMS choices, not a universal required field for every kind of Consent. Scope dimensions
+cannot be added or omitted merely to simplify a database key.
 
-**Consent Decision** — One historical decision in the Consent lifecycle: grant, refusal, withdrawal,
-or a new grant after withdrawal. Absence of a decision is none of those states. Each decision preserves
-its effective time, recorded time, provenance, relevant Privacy Notice Version/Purpose Version, and
-Actor/flow evidence where applicable. Later decisions do not overwrite earlier decisions.
+**Consent Decision** — One historical grant, refusal, withdrawal, or new grant after withdrawal.
+Absence of a decision is not refusal or grant. Every decision preserves exact scope, effective and
+recorded time, provenance, relevant versions, and actual Actor/flow evidence. Withdrawal ends relevant
+Current effect, not the existence of the historical grant. Re-grant is new evidence and cannot
+retroactively legitimize earlier use.
 
-**Current Consent** — Current result derived for one exact Consent Scope from authoritative Consent
-Decisions at the trusted operation time. It is not a mutable boolean field whose latest technical
-arrival wins. Delayed older grants or retries must not resurrect a later withdrawn Consent.
+**Current Consent** — Result for one exact scope from authoritative decision history at trusted
+operation time. Delayed older grants and retries cannot resurrect a later withdrawal. Indistinguishable
+conflicting decisions require explicit resolution rather than arrival-time or row-order preference.
+A new technical retry is not a new business choice.
 
-**Marketing Consent** — Consent specialization for marketing Processing Purposes. Channel normally
-is material here when EMAIL, SMS, PHONE, push, or another communication channel is independently
-selectable. Marketing Consent remains distinct from subscription and communication preferences owned
-by Communications.
+**Marketing Consent** — Specialization using the common lifecycle for marketing purposes. Independent
+Communication Channels have independent material scopes. Communications owns subscriptions and
+preferences; neither creates Consent nor is automatically changed by every Consent transition.
+A flow may explicitly perform both changes, preserving their separate facts. Contact Point verification
+is another independent gate where required. Transactional use with a distinct purpose is not silently
+blocked by an unrelated marketing choice, nor may marketing be relabeled transactional to bypass it.
 
-**Technology Consent** — Consent specialization for cookies and comparable client technologies. It
-may be scoped by Anonymous Privacy Context, Storefront/site, browser/device context, technology
-category, Purpose, and provider set where those dimensions change the meaning of the choice. It uses
-the common Consent lifecycle; it does not create a second consent registry or analytics identity.
+**Technology Consent** — Common Consent lifecycle applied to cookies and comparable technologies,
+using Anonymous Privacy Context or sufficiently evidenced personal context as supported. Site, device,
+category, and provider set matter where they change the meaning of the choice. `COOKIE_CONSENT` is a
+planning capability name for this specialization, not a second registry. A necessary-technology label
+is not by itself a legal ground or allow decision. Missing/lost choice is not a grant. Material provider
+or purpose changes require reassessment before new use.
+
+Personal Consent is never reused for a different Data Subject. Cross-site/device reuse requires the
+same legitimate scope and sufficient evidence; shared storage or login is insufficient. Anonymous
+linking cannot rewrite who historically made a decision. Retail portal self-service uses Current
+Retail Portal Profile Binding and the concrete `retail.consent.manage` Permission under Commerce
+contracts; non-account flows are strictly operation-scoped and still use governed system entrypoints.
+A verification token is sensitive access material, not durable Consent evidence.
 
 ## Processing Eligibility
 
-**Processing Eligibility** — Consent + Privacy-owned Current Business Policy decision answering
-whether personal data may be used for one exact intended Processing Scope according to relevant
-Current privacy facts and Privacy Applicability Decision. It evaluates the applicable Legal Basis,
-Consent, withdrawal, objection, restriction, and other privacy blockers without performing the
-consumer operation.
+**Processing Eligibility** — Privacy-owned Current Business Policy decision for an exact intended
+Processing Scope. It evaluates applicable Legal Basis, relevant Consent, objection/restriction and
+other required Current privacy facts without executing the consumer operation.
 
-A completed Processing Eligibility evaluation returns exactly one of:
+Exactly one outcome is returned for a completed evaluation:
 
-- `ALLOWED` — relevant Current privacy facts allow the exact intended processing;
-- `NOT_ALLOWED` — an authoritative Current privacy fact provides a definite blocking reason;
-- `INDETERMINATE` — the required Current privacy facts or applicability cannot be resolved reliably.
+- `NOT_ALLOWED` when a reliable applicable Current fact independently establishes a blocking reason
+  for the exact intended processing, even if another input is unavailable;
+- `INDETERMINATE` when a mandatory fact, scope, or applicability cannot be reliably resolved and there
+  is no such established definite blocking reason;
+- `ALLOWED` only when all necessary Current inputs are reliable and no applicable blocker remains.
 
-`NOT_ALLOWED` and `INDETERMINATE` both fail closed for the protected processing. `ALLOWED` is not a
-Permission and does not bypass authentication, authorization, module state, or a consuming module's
-own Business Policy.
+The first two outcomes stop the intended use. A partial or older allow never overrides an unknown
+mandatory blocker. ALLOWED is not Permission and never bypasses authentication, authorization, module
+state, or another owner Business Policy. Confirmed absence of a required legal ground/Consent can be a
+blocking fact; an unavailable source is not proof of that absence.
 
-**Eligibility Evidence** — Minimal explainability of one Processing Eligibility result: exact
-Processing Scope, trusted decision time, outcome/reason, Privacy Applicability Policy version, and
-references to the authoritative facts/versions used. It must not become a copied personal-data
-archive.
+**Eligibility Evidence** — Minimal explainability of exact evaluated scope, time, outcome/reason,
+applicability/policy revisions, authoritative fact references, and relevant currentness conditions.
+It is not a copied archive, permission token, or perpetual guarantee for another operation.
+
+**Eligibility Currentness** — Explicit conditions under which a decision remains usable for a concrete
+consumer operation. There is no universal TTL. Each consumer declares its last controllable boundary
+before irreversible use/handoff, required recheck and invalidation/race behavior. An earlier check or
+pending invalidation event alone does not prove safety at that boundary. Missing required recheck
+stops use. Proven past irreversible handoff is not rewritten by later withdrawal; indeterminate
+handoff requires Reconciliation before a potentially duplicating retry.
 
 ## Data Subject Requests
 
-**Data Subject Request (DSR)** — One durable privacy Case for a Requester/Data Subject interaction.
-One DSR can contain several requested rights and several Controller-specific obligations while
-preserving a single intake and communication case. It is not six separate request systems and is not
-a universal mutation/export engine.
+**Data Subject Request (DSR)** — Durable privacy Case preserving original intake, received time,
+requester context, requested scope, verification, responsibility, decisions, owner work, and response.
+It can coordinate several rights and Controller obligations, not six separate engines. Intake can
+remain unresolved without fabricating a Controller or identity. New intentional submission is a new
+Case with its own received time; a transport retry is not. Where an intake concerns multiple people,
+each person's verification, Representation, rights, and output scope remain separate.
 
-**DSR Right** — Requested privacy right within a DSR, such as Access, Portability, Rectification,
-Erasure, Restriction, or Objection. Each right preserves its own substantive scope and outcome even
-when several rights share one DSR Case.
+**DSR Right** — Access, Portability, Rectification, Erasure, Restriction, or Objection requested within
+a Case, with its own substantive and execution scope. Access is not ordinary portal history;
+Portability is not automatically the full Access dataset. Rectification uses the named owner lifecycle;
+Erasure uses the shared retention model. Restriction and Objection are not implicit Consent withdrawal.
 
-**DSR Controller Obligation** — Explicit sub-scope of one DSR for one Controller and one applicable
-Privacy Applicability Policy result. It owns the Controller-specific requested rights, deadlines,
-substantive decisions, owner tasks, and completion evidence needed to prevent obligations of several
-Controllers or legal regimes from being silently collapsed into one rule. A single DSR Case can have
-one or more Controller Obligations.
+**DSR Controller Obligation** — One Controller-specific obligation scope under an explicit applicability
+result, preserving rights, deadline bases, decisions, tasks, and completion evidence. A resolved Case
+can have several obligations. During intake unresolved portions remain explicitly unresolved; there
+may initially be no resolved obligation. Decomposition never resets original receipt or invents a
+later legal commencement. Different legal receipt bases require evidence, not assignment timestamps.
 
-**DSR Resolver** — Narrative business responsibility of the Principal coordinating a DSR Case. It is
-not a Principal type, role that grants Permission, or System of Record for owner data. Assignment and
-reassignment preserve responsibility history and do not silently reset deadlines.
+**DSR Resolver** — Narrative responsibility of the Principal coordinating the Case. Every open Case
+has an identifiable Current responsibility and assignment history. Reassignment/substitution does not
+create Permission, change original receipt, or reset a deadline.
 
-**DSR Verification** — Evidence that the Requester and any Representation are sufficiently verified
-for the exact requested operation/risk. A shared Contact Point, active account, login, or Commerce
-profile is not by itself sufficient proof for every DSR right.
+**DSR Verification** — Proportionate assurance that the Requester, Data Subject resolution, and any
+Representation support the exact operation. Existing trustworthy evidence may be reused where its
+scope and freshness suffice. No account is universally required; no Contact Point, login, or profile
+is automatically sufficient for every right. Verification does not create account bindings or wider
+access and must avoid unnecessary sensitive evidence.
 
-**DSR Substantive Decision** — Controller-specific decision to grant, partially grant, or deny an
-exact requested right/scope with an explainable reason. It is distinct from technical execution.
-Owner outage or transport failure is not a substantive denial.
+**DSR Substantive Decision** — Controller/right/scope-specific grant, partial grant, or denial with
+an applicable reason and history. It is separate from owner execution and delivery. Technical failure,
+missing coverage, or owner outage is not a legal denial. An owner rejection does not replace the
+responsible Controller's substantive decision.
 
-**DSR Owner Task** — Durable task sent to an owning capability through a Privacy Owner Contract for a
-specific approved lookup, export contribution, correction, restriction, anonymization, or deletion
-scope. Dispatch/acceptance is not execution success.
+**Processing Restriction** — Effective privacy limitation on exact stored content or intended use,
+with reason, decision, review/release, and enforcement evidence. In DSR descriptions `Restriction`
+refers to the requested right or this resulting limitation as explicitly identified. It is not erasure,
+archive, Consent withdrawal, or a whole-person flag. Overlapping restrictions remain independent;
+release does not restore withdrawn Consent or another missing prerequisite.
 
-**Final DSR Response** — Response to the verified recipient that truthfully separates substantive
-decisions, measures actually completed, justified exceptions/denials, and unresolved or technically
-blocked work. Successful Case closure requires the response/delivery outcome required by the
-applicable DSR contract; sending tasks alone is insufficient.
+**Processing Objection** — Evidenced objection and its applicable effect for an exact purpose/use,
+kept distinct from the DSR intake, substantive assessment, and owner enforcement. An applicable
+immediate effect cannot be postponed by an internal approval queue. Direct-marketing and other
+objections use their own legal rules; resolving an objection does not silently create a new Consent
+or Legal Basis. Plans using `Objection` must retain these distinctions.
+
+**DSR Owner Task** — Durable Case/Controller Obligation/right-linked work item requesting supported
+lookup, contribution, or execution through a Privacy Owner Contract. `DSR Owner Work Item` in older
+discovery is the same concept, not another workflow. An intake does not automatically authorize its
+sensitive tasks. Dispatch/acceptance is distinct from required outcome completion.
+
+**Final DSR Response** — Truthful response separating substantive decisions, actual measures,
+justified exclusions, and unresolved work per Controller/right scope. Coordinated Case handling must
+not delay an earlier obligation's required response while another obligation remains open. Bounded
+partial/interim responses can precede final Case response. Closure requires each relevant obligation's
+supported outcome and the required delivery evidence, not merely dispatched owner tasks.
+
+## DSR outputs and delivery
+
+**Temporary DSR Export** — Bounded output prepared from approved Owner Contributions for Access,
+Portability, or another permitted response. It is not a permanent archive, canonical owner record, or
+automatically an Evidence Artifact. Its scope, capture times, identity/revision, secure availability,
+and retention are explicit. Regeneration, when permitted, must not pretend to be the original output
+or resurrect prohibited old source data.
+
+**DSR Delivery Access** — Effective, output- and recipient-scoped access mechanism for one approved
+DSR delivery. It is not a general OntOS Permission or portal binding. Approved policy determines
+expiry; no universal TTL is implied. Revocation prevents new access. Reissue invalidates the previous
+active access for the same delivery output when the new one takes effect; concurrent reissues must
+not leave competing Current replacement accesses. Governed access still validates exact recipient,
+output, system authorization, and Current access conditions.
+
+**Successful DSR Delivery** — Proven successful sending or secure availability of the approved output
+to the correct verified/authorized recipient through its approved delivery contract. It does not
+require open/read/download proof. Queue acceptance, an attempted send, a generated file, or failed or
+indeterminate handoff is insufficient. A later authoritative failure is recorded with a necessary
+follow-up, not hidden by rewriting past observations. This is the qualified meaning of `Successful
+Delivery` in DSR discovery, not a general guarantee for every messaging provider.
+
+**DSR Delivery Evidence** — Minimal linkage of exact output/revision, verified recipient/Representation
+scope, channel, policy, relevant business times, delivery result, and access lifecycle. It need not
+retain the full output or usable access secrets. Access expiry, Case closure, and physical payload
+deletion are distinct facts; expiry without a download does not undo already proven Successful DSR
+Delivery under its contract.
 
 ## Retention and disposition
 
-**Retention Rule** — Versioned privacy rule scoped to a Personal Data Category or other exact
-Record/content scope, relevant Controller, Processing Purpose, applicable policy, business start
-event, duration/end semantics, and disposition behavior. Retention is never one global period for a
-Data Subject.
+**Record Content Scope** — Precisely delimited owner Resource, field/content portion, artifact, or
+explicit collection to which retention or a measure applies. `Record/content scope` in plans means
+this business boundary, not a universal Record table or automatic whole-person aggregate. Multiple
+subjects, purposes, or Controllers can have obligations over the same physical content; they must not
+be ignored when evaluating destructive operations.
 
-**Retention Rule Authority** — Narrative business responsibility for governing Retention Rules. It
-is not a Principal type or Permission grant.
+**Retention Rule** — Versioned rule for an exact Record Content Scope/category and relevant Controller,
+purpose, applicability, business trigger, duration/end, and disposition behavior. Multiple legitimate
+requirements need explicit applicability/composition, not arbitrary longest/latest/first-wins choice.
+No generic module/table/Tenant/whole-person retention period is inferred.
 
-**Retention Evaluation** — Current decision applying the relevant Retention Rule, exceptions, Legal
-Holds, and owner facts to one exact Record/content scope. Periodic retention and DSR Erasure use the
-same shared rule model.
+**Retention Rule Authority** — Business responsibility for rule governance and approved applicability.
+It is not a Principal type or Permission grant.
 
-**Retention Exception** — Explicit, evidenced, time/review-bounded exception for a precise
-Record/content scope. An exception for one Resource does not retain every item of the same Data
-Subject and does not itself authorize other processing.
+**Retention Period** — Interval determined from an authoritative business start event and the rule
+version applicable to the content. Import, retry, replay, ordinary read, technical update, exception,
+and hold activation/release do not restart it merely by occurring.
 
-**Legal Hold** — Explicit business/legal blocker of destructive disposition for a precise scope. It
-has reason, authority, effective lifecycle, review, and release semantics. Legal Hold is not a blanket
-Data Subject marker, Permission, Processing Purpose, Retention Rule, or storage feature.
+**Retention Rule Version Applicability** — Explicit determination of which version governs which
+content. Without an approved decision applying a new version to existing content, a version change is
+prospective-only. A changed Current catalog is not a silent migration of old content. Approved changes
+to existing content preserve original business triggers, historical rule references, and outcomes.
+This product default is not permission to ignore newly applicable legal obligations; required changes
+must be expressly qualified, approved, and applied.
 
-**Legal Hold Reason Type** — Governed typed reason for a Legal Hold. Free-text justification may add
-detail but cannot replace the governed reason type.
+**Retention Evaluation** — Current evaluation using the rule versions applicable to the precise content,
+Current exceptions/holds, all relevant legitimate obligations, and authoritative owner facts. DSR
+Erasure and periodic evaluation share this model. Unresolved mandatory inputs remain an unresolved
+evaluation: not fabricated RETAIN, DELETE, or a fifth substantive disposition outcome. Destructive
+execution stops and responsibility for resolution remains; uncertainty is not unlimited-retention
+justification.
 
-**Legal Hold Authority** — Narrative business responsibility authorized under the relevant governance
-to activate, review, and release Legal Holds. The label itself grants no Permission.
+**Retention Exception** — Evidenced, time/review-bounded exception for exact content with an approved
+Exception Reason Type, Exception Authority, scope, validity, and provenance. Scope changes are explicit
+and historically distinguishable, not necessarily a new Resource for every edit. One exception cannot
+retain all of a person's data or authorize another processing purpose.
 
-**Storage-level WORM / Object Lock** — Uses the OntOS canonical meaning. It can technically prevent a
-DELETE after a business Legal Hold has been released; this leaves execution blocked/pending but does
-not make the Legal Hold active again and does not create a new retention reason.
+**Exception Reason Type** — Governed versioned meaning of an ordinary Retention Exception reason.
+Free-text explanation supplements, not replaces, the approved reason. It is distinct from Legal Hold
+Reason Type.
 
-**Disposition Decision** — Result of Retention Evaluation for an exact content scope. Supported
-business outcomes are `RETAIN`, `RESTRICT`, `ANONYMIZE`, and `DELETE`. The decision is distinct from
-confirmed owner execution. Hiding/archiving is not DELETE, and pseudonymization is not ANONYMIZE when
-owner semantics still permit person identification.
+**Exception Authority** — Business responsibility for approving, reviewing, changing, and ending
+ordinary retention exceptions. It is distinct from Retention Rule Authority and Legal Hold Authority.
+These distinct responsibilities do not themselves require three different people or silently impose
+a universal four-eyes rule; each protected operation still requires its exact Permission/governance.
+
+**Legal Hold** — Explicit legal/business blocker of destructive disposition for exact content, with
+reason type, responsible authority, effective time, review, release, and enforcement evidence. It is
+not a blanket Data Subject marker, Permission, Processing Purpose, ordinary Retention Rule/Exception,
+or storage feature. Overlapping holds are independent. Release of the last blocker triggers Current
+Retention Evaluation; it neither resets the ordinary period nor performs an automatic DELETE.
+
+**Legal Hold Reason Type** — Governed versioned legal-hold reason, distinct from an ordinary exception
+reason. Free-text justification is supplementary, not a replacement for the approved type.
+
+**Legal Hold Authority** — Business responsibility for authorized hold activation, review, change,
+and release. The label itself does not grant a Permission or implicitly inherit another authority.
+
+**Storage-level WORM / Object Lock** — Retains its OntOS meaning: provider-enforced technical
+immutability. Ending a technical lock does not release a business hold; releasing a business hold does
+not remove a technical lock. A DELETE blocked only by the lock remains DELETE with blocked/pending
+execution, not RETAIN or a supposedly still-active business hold.
+
+**Disposition Decision** — Substantive result for exact content: RETAIN, RESTRICT, ANONYMIZE, or DELETE,
+separate from Owner Execution Outcome. RETAIN needs a real applicable reason; RESTRICT limits use
+without claiming erasure. Hiding/archiving is not DELETE. ANONYMIZE requires supported evidence that
+identifiability has actually been removed in the relevant context, not merely an owner label or removal
+of direct identifiers while usable linkage remains. Pseudonymized content remains subject to privacy
+rules. Technical inability to execute does not change the substantive decision.
+
+**Historical Content Disposition** — Owner-supported end of retention for a historical Resource or
+explicitly separable content. Retained Snapshot values are not recalculated from Current sources.
+Deleting an eligible entire historical Resource is not rewriting values inside a retained Snapshot.
+Partial removal needs the owner's explicit content lifecycle and truthful unavailable/redacted
+representation; no generic permission to edit immutable Snapshots is created. Redacted bytes are not
+the original Evidence Artifact. This retains OntOS/Commerce historical ownership boundaries.
+
+Consent evidence, DSR case/verification evidence, Eligibility Evidence, delivery evidence,
+Anti-Resurrection Protection, and temporary outputs have distinguishable retention purposes.
+Withdrawal need not erase minimum consent evidence immediately; CLOSED DSR does not authorize keeping
+all contributions forever. Full temporary exports are retained only for legitimate preparation,
+approved delivery/access, and retry needs unless a separate applicable reason/exception/hold exists.
+After that need ends, full payloads are disposed while minimal delivery evidence may remain. Privacy
+must not become a replacement copy of data legitimately removed by another owner.
 
 ## Privacy owner contracts and cross-module work
 
-**Privacy Owner Contract** — Public business contract by which an owning capability contributes to
-DSR, retention, or another approved privacy measure while retaining ownership of its Resources and
-facts. Consent + Privacy never reaches through the contract into private owner tables/repositories.
+**Privacy Owner Contract** — Public contract through which a capability contributes coverage, output,
+or measures while retaining its Resources and facts. It declares supported scope, authorization,
+currentness, idempotency, evidence, failure and recovery semantics. Privacy never reaches into private
+owner tables/repositories or invents a generic mutation bypass.
 
-**Owner Coverage Result** — Owner-declared result describing how completely the requested owner scope
-was searched/evaluated. `NO_DATA` is valid only when the owning capability proves complete coverage of
-the requested scope. An empty Core Search result, missing projection, or customer-facing history view
-is not coverage proof. Partial and indeterminate coverage stay explicit.
+**Privacy Owner Inventory** — Declared required owning capabilities and relevant historical, derived,
+temporary, external-copy, and recovery responsibilities for an exact privacy scope. It connects
+Processing Activities/categories to the real Application Composition without copying personal data.
+Global completeness is checked against required owners, not only respondents. An unavailable,
+disabled, or replaced module does not imply NO_DATA or erase retained obligations. Authorized recovery
+or supported module operations must respect Module State Gate, not bypass it.
 
-**Owner Contribution** — Owner-produced contribution to an approved DSR output with explicit owner
-scope, business/data instant, content classification, and completion state. Combining available
-contributions does not make an incomplete result complete, and incompatible data instants must not be
-silently presented as one coherent snapshot.
+**Owner Coverage Result** — Owner evidence of how completely its requested scope was examined. Found
+data and completeness are distinct. NO_DATA is valid only with full coverage; search absence or
+missing portal history is insufficient. Partial, unavailable, and indeterminate portions stay explicit.
+An owner does not claim completeness for other owners merely by completing its own scope.
 
-**Privacy Measure** — Approved owner-local action request such as correction, restriction,
-anonymization, or deletion with exact Privacy Subject/Resource/content scope, decision reference,
-expected outcome, and evidence expectation. The owning capability executes it through its own public
-Actions/contracts and authorization boundary.
+**Owner Contribution** — Right-specific contribution with exact owner scope, coverage, content
+classification/exclusions, its own observation/capture time, and completion. Different capture times
+do not alone make otherwise complete contributions incomplete. The assembled output exposes those
+times and cannot claim a global atomic Snapshot. Owner-local multi-batch consistency/completeness must
+be explainable. Missing contributions are not legal exclusions and cannot disappear by merging all
+available files. Later owner changes do not silently rewrite a captured contribution.
 
-**Owner Execution Outcome** — Proven owner result for a Privacy Measure, distinguished from message
-or transport success. It must support at least successful, partial, rejected/exception, and
-indeterminate meanings as required by the exact contract. Retry after indeterminate outcome first
-uses owner state/idempotency/Reconciliation rather than assuming failure or success.
+**Privacy Measure** — Approved exact-scope request for correction, restriction, anonymization, or
+deletion, with stable work identity, source decision/revision, intended outcome and evidence expectations.
+It is executed through the owning capability's public Actions. A retry retains the same meaning;
+a changed target/payload under the same idempotency identity is a conflict. Before irreversible
+execution, the owner contract must safely resolve Current target/blocker races and all legitimate
+obligations over that content. An eventual event alone does not prove that a new hold cannot be missed.
 
-**Cross-owner privacy workflow** — Coordination over independently owned modules using public
-contracts, durable messages/outbox work, idempotency, and Reconciliation. It never opens a shared
-business transaction, performs synchronous dual write, or fabricates rollback of an already committed
-fact in another module.
+**Owner Execution Outcome** — Authoritative owner result, distinct from transport acknowledgement.
+Contracts distinguish receipt, in-progress, achieved, partial, business rejected/not-applicable,
+technical failed, blocked/pending, and indeterminate meanings. This does not prescribe one universal
+implementation enum. Each result matches the measure/revision, actual scope and business time;
+late/misassigned confirmations cannot finish another task. Partial results preserve known progress.
+Indeterminate mutation uses owner state/Action invocation/idempotency evidence and Reconciliation
+before a potentially duplicating retry. Rejection does not rewrite a DSR Substantive Decision.
 
-**Anti-Resurrection Protection** — Minimal durable, scope-bound evidence required to prevent a proven
-DELETE, ANONYMIZE, or current RESTRICT outcome from being silently reversed by stale import, event
-replay, projection rebuild, or backup recovery. It does not retain the deleted payload, create a
-global Data Subject blacklist, or block legitimately new processing based on new Current inputs.
+**Cross-owner privacy workflow** — Coordination of independently committed owner operations through
+public contracts, durable messages/outbox, idempotency and Reconciliation. It cannot create a shared
+business transaction, synchronous dual write, private cross-owner mutation, or fictional rollback of
+another owner's committed result. A supported compensation is a separate business Action and cannot
+be a shortcut to resurrecting legitimately deleted content.
 
-## Evidence, access, and external systems
+## Anti-resurrection and external obligations
 
-Privacy evidence uses the canonical OntOS `Evidence Artifact` and `Evidence Registry` concepts where
-content proof is required. Evidence Registry does not become the System of Record for Processing
-Purpose, Consent, DSR, Retention, or owner business facts and must not be used as a permanent payload
-archive.
+**Anti-Resurrection Protection** — Minimal durable exact-scope protection of proven DELETE/ANONYMIZE
+and Current RESTRICT against stale import, replay, projection rebuild, or backup recovery. Completion
+must not leave an unprotected window until a later message arrives. Evidence preserves needed scope,
+outcome, references and provenance, not the original deleted payload or a global person blacklist.
+Its own retention covers remaining relevant stale-source risks; safe retirement requires evidence,
+not an arbitrary timestamp. It never blocks independent legitimate new processing with Current grounds
+and a new legitimate input, but new grounds alone do not authorize reuse of the old removed copy.
 
-External Business Systems, External Evidence Providers, Processors, and Recipients keep their exact
-business roles. Provider/product category and Integration Route never determine fact ownership or
-privacy responsibility by themselves. External privacy measures use the owning capability's existing
-Integration Route or adapter boundary; changing the route does not erase the business obligation or
-historical provenance.
+**Privacy-safe Recovery** — Import/replay/rebuild/restore contract that reconciles relevant
+post-backup authoritative privacy facts and owner outcomes before ordinary access or consumer use.
+Restoring old protection metadata together with old content is not proof that later measures do not
+exist. Unproven scope stays unavailable for that use; recovery may reopen only proven safe portions.
+Recovery sources are technical copies, not canonical domain Snapshots or Systems of Record. Recovery
+must not reset retention or falsify independently retained historical facts.
 
-## Required cross-context invariants
+**External Privacy Obligation** — Exact role-holder/measure/scope-linked duty to notify, forward, or
+obtain a required outcome through an owning integration boundary. These are different expected results:
+notification is not proof of downstream deletion. All known relevant downstream Recipients/Processors
+are included, not merely the first hop. Unknown required downstream scope remains unresolved. Existing
+public contracts, Integration Routes, Symmy Connector or owner-local Direct Provider Adapters handle
+provider work; privacy is not a second integration hub. Historical recipient A remains relevant after
+replacement with Current provider B. Legitimate rejection/exception is distinguished from technical
+uncertainty and cannot be bypassed through private provider access.
 
-1. `Party`, `Principal`, `Legal Entity`, `Counterparty`, `Commerce Customer Profile`, `Privacy Subject`,
-   `Data Subject`, and `Anonymous Privacy Context` remain distinct concepts.
-2. Consent never creates identity, authentication, Permission, subscription, profile binding, or
-   Counterparty authority.
-3. Party correction, Party Alias, Resource Alias, Party Merge, login, shared Contact Point, device
-   continuity, or profile reconciliation never silently union or transfer Consent.
-4. Commerce Market, Storefront, Selling Legal Entity, Tenant, provider, or Deployment Topology never
-   silently determine Controller or Privacy Applicability.
-5. Privacy Notice Provision, Terms acceptance, and Consent are separate facts.
-6. Privacy Applicability, Legal Basis Assignment, Consent, Processing Eligibility, DSR substantive
-   decision, owner execution, and retention/disposition are separate decisions/facts with independent
-   ownership and evidence.
-7. Processing Eligibility `ALLOWED` never creates Permission. `NOT_ALLOWED` and `INDETERMINATE` both
-   fail closed for the intended privacy-protected processing.
-8. DSR coordinates owner work but never writes canonical owner data directly.
-9. One DSR Case may contain several Controller Obligations; Controller-specific applicable policies,
-   deadlines, decisions, and outcomes must remain distinguishable.
-10. Retention is evaluated per exact Record/content scope, not per whole person. Legal Hold blocks only
-    its explicit scope and does not authorize other processing.
-11. Historical Accepted Facts, Snapshots, Evidence Artifacts, and proven outcomes remain explainable
-    without becoming blanket reasons to retain unrelated Current personal data.
-12. No privacy workflow creates shared cross-module business transactions or synchronous dual writes.
-13. Anti-Resurrection Protection preserves only the minimal scope/outcome evidence needed for
-    enforcement and Reconciliation; it is never a hidden archive of deleted data.
+Privacy evidence uses OntOS Evidence Artifact/Evidence Registry where appropriate. These foundations
+do not own privacy purposes, decisions, or business facts and are not permanent payload archives.
+Production use requires approved concrete policies, rule applicability, reason catalogs, intervals,
+owner inventory, public contracts and tested recovery. A catalog value or GOLD label is not that proof.
+
+## Terminology aliases and authority
+
+`DSR Case` means Data Subject Request. `DSR Owner Work Item` means DSR Owner Task. In privacy-owner
+plans, unqualified `Execution Outcome` means Owner Execution Outcome, not Action transport status.
+`Privacy Policy` in these plans means the relevant explicit Privacy Applicability Policy or the named
+owning rule, not a generic configurable script. `COOKIE_CONSENT` names Technology Consent capability.
+Lowercase `snapshot` used for a contribution's capture must not imply a canonical retained domain
+Snapshot or a cross-module atomic transaction. Prefer observation/capture time for contribution data.
+
+Shared definitions of Party, Principal, Legal Entity, Counterparty, ResourceRef, Resource Alias,
+System of Record, Permission, Action, Reconciliation, Evidence Artifact and Evidence Registry remain
+owned by OntOS context. Commerce owns Retail Portal Profile Binding, retail Permissions, Guest Purchase
+Context, Commerce Customer Profiles, Commerce Market, Storefront and its accepted Snapshot meaning.
+Neither glossary extension nor a planning example enables production Party Merge contrary to ADR-0018.
+
+Legal terminology is grounded in the [GDPR definitions and consent conditions](https://eur-lex.europa.eu/eli/reg/2016/679/oj)
+and the [European Commission guidance on legal grounds and consent](https://commission.europa.eu/law/law-topic/data-protection/information-business-and-organisations/legal-grounds-processing-data_en).
+These references do not replace the Controller's explicit assessment of actual processing, applicable
+jurisdictions, notice obligations, retention durations, or other deployment-specific legal requirements.
