@@ -9,6 +9,7 @@ more than one. Stop when the required product meaning is resolved.
 | [OntOS](docs/contexts/ontos/CONTEXT.md)       | Core, modules, identity, shared business semantics, integrations, deployment, or evidence                  |
 | [Projects](docs/contexts/projects/CONTEXT.md) | Tasks, collections, properties, views, access, search, sorting, or change history                          |
 | [Commerce](docs/contexts/commerce/CONTEXT.md) | B2C/B2B channels, catalog, customers, ordering, payments, fulfillment, storefronts, or commerce operations |
+| [Consent + Privacy](docs/contexts/privacy/CONTEXT.md) | personal data, privacy responsibility/applicability, processing purposes, legal basis, notices, Consent, Processing Eligibility, DSR, retention/disposition, Legal Hold, or privacy owner contracts |
 
 Contexts own canonical product semantics and vocabulary, not storage, file layout, transport, or
 other implementation mechanics. Accepted durable architecture lives in
