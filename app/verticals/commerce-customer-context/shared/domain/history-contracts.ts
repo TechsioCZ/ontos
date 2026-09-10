@@ -220,30 +220,3 @@ export const RepeatOrderPreparationResultSchema = Schema.Struct({
   sourceOrderRef: HistoricalRecordRefSchema,
 });
 export type RepeatOrderPreparationResult = typeof RepeatOrderPreparationResultSchema.Type;
-
-export const GuestOrderClaimInputSchema = Schema.Struct({
-  now: HistoryInstantJsonSchema,
-  orderRef: HistoricalRecordRefSchema,
-  principalId: HistoryPrincipalIdSchema,
-  profileRef: RetailCustomerProfileRefSchema,
-  verificationEvidenceRef: NonEmptyTextSchema,
-});
-export type GuestOrderClaimInput = typeof GuestOrderClaimInputSchema.Type;
-
-export const GuestOrderClaimEligibilitySchema = Schema.Union([
-  Schema.Struct({ outcome: Schema.Literal('ELIGIBLE') }),
-  Schema.Struct({ outcome: Schema.Literal('ALREADY_CLAIMED_EQUIVALENT') }),
-  Schema.Struct({
-    outcome: Schema.Literals([
-      'CLAIM_CONFLICT',
-      'CURRENT_BINDING_REQUIRED',
-      'GUEST_CLAIM_PERMISSION_REQUIRED',
-      'NOT_GUEST_ORDER',
-      'OWNER_POLICY_DENIED',
-      'RECORD_NOT_CLAIMABLE',
-      'TARGET_CONTEXT_MISMATCH',
-      'VERIFICATION_REQUIRED',
-    ]),
-  }),
-]);
-export type GuestOrderClaimEligibility = typeof GuestOrderClaimEligibilitySchema.Type;

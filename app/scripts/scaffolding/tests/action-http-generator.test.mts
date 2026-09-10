@@ -14,23 +14,23 @@ import { createOrUpdateOwnedGeneratedMutationEffect } from '../shared.mts';
 import type { OntosVerticalMetadata } from '../shared.mts';
 
 const vertical = {
-  appId: 'commerce-fx',
-  directory: '/workspace/verticals/commerce-fx',
+  appId: 'pricing-policy',
+  directory: '/workspace/verticals/pricing-policy',
   manifestContent: '',
-  manifestPath: '/workspace/verticals/commerce-fx/vertical.manifest.ts',
-  moduleId: 'commerce.fx',
+  manifestPath: '/workspace/verticals/pricing-policy/vertical.manifest.ts',
+  moduleId: 'pricing.policy',
   packageContent: '{}',
   packageJson: {},
-  packageName: '@app/commerce-fx',
-  packagePath: '/workspace/verticals/commerce-fx/package.json',
+  packageName: '@app/pricing-policy',
+  packagePath: '/workspace/verticals/pricing-policy/package.json',
   registrationContent: '',
-  registrationPath: '/workspace/verticals/commerce-fx/vertical.registration.ts',
-  slug: 'commerce-fx',
+  registrationPath: '/workspace/verticals/pricing-policy/vertical.registration.ts',
+  slug: 'pricing-policy',
   topologyEntry: {},
 } satisfies OntosVerticalMetadata;
 
 it('renders one exact typed Action endpoint and exhaustive domain mapping', () => {
-  const action = 'change-manual-rate';
+  const action = 'change-rate';
   const errors = [
     {
       code: 'manual_rate_conflict',
@@ -50,14 +50,14 @@ it('renders one exact typed Action endpoint and exhaustive domain mapping', () =
   const contract = renderActionHttpContract(vertical, action, errors);
   const problems = renderActionHttpProblems(vertical, action, errors);
   expect(contract).toContain(
-    "HttpApiEndpoint.post('execute', '/commerce-fx/actions/change-manual-rate'",
+    "HttpApiEndpoint.post('execute', '/pricing-policy/actions/change-rate'",
   );
   expect(contract).not.toMatch(/actions\/:|catch-all|generic/u);
-  expect(contract).toContain('ChangeManualRatePayloadSchema');
-  expect(contract).toContain('ChangeManualRateResultSchema');
+  expect(contract).toContain('ChangeRatePayloadSchema');
+  expect(contract).toContain('ChangeRateResultSchema');
   expect(problems).toContain('Match.tags({');
   expect(problems).toContain(
-    "ManualRateConflict: () => changeManualRateActionProblem.conflict('manual_rate_conflict')",
+    "ManualRateConflict: () => changeRateActionProblem.conflict('manual_rate_conflict')",
   );
   expect(problems).toContain('Match.exhaustive');
 });
@@ -65,48 +65,48 @@ it('renders one exact typed Action endpoint and exhaustive domain mapping', () =
 it('renders exact secondary reason-code mappings without collapsing HTTP semantics', () => {
   const errors = [
     {
-      code: 'guest_order_claim_rejected',
+      code: 'fulfillment_request_rejected',
       discriminator: 'reasonCode' as const,
       kind: 'conflict' as const,
-      tag: 'GuestOrderClaimRejected',
-      value: 'CLAIM_CONFLICT',
+      tag: 'FulfillmentRequestRejected',
+      value: 'REQUEST_CONFLICT',
     },
     {
-      code: 'guest_order_claim_rejected',
+      code: 'fulfillment_request_rejected',
       discriminator: 'reasonCode' as const,
       kind: 'rateLimited' as const,
-      tag: 'GuestOrderClaimRejected',
+      tag: 'FulfillmentRequestRejected',
       value: 'RATE_LIMITED',
     },
     {
-      code: 'guest_order_claim_rejected',
+      code: 'fulfillment_request_rejected',
       discriminator: 'reasonCode' as const,
       kind: 'ineligible' as const,
-      tag: 'GuestOrderClaimRejected',
-      value: 'ORDER_NOT_ELIGIBLE',
+      tag: 'FulfillmentRequestRejected',
+      value: 'REQUEST_NOT_ELIGIBLE',
     },
   ];
-  const contract = renderActionHttpContract(vertical, 'claim-guest-order', errors);
-  const problems = renderActionHttpProblems(vertical, 'claim-guest-order', errors);
+  const contract = renderActionHttpContract(vertical, 'submit-fulfillment-request', errors);
+  const problems = renderActionHttpProblems(vertical, 'submit-fulfillment-request', errors);
 
-  expect(contract).toContain("ClaimGuestOrderActionConflictProblem', 409");
-  expect(contract).toContain("ClaimGuestOrderActionRateLimitedProblem', 429");
-  expect(contract).toContain("ClaimGuestOrderActionIneligibleProblem', 422");
+  expect(contract).toContain("SubmitFulfillmentRequestActionConflictProblem', 409");
+  expect(contract).toContain("SubmitFulfillmentRequestActionRateLimitedProblem', 429");
+  expect(contract).toContain("SubmitFulfillmentRequestActionIneligibleProblem', 422");
   expect(problems).toContain(
-    "'CLAIM_CONFLICT': { code: 'guest_order_claim_rejected', kind: 'conflict' }",
+    "'REQUEST_CONFLICT': { code: 'fulfillment_request_rejected', kind: 'conflict' }",
   );
   expect(problems).toContain(
-    "'RATE_LIMITED': { code: 'guest_order_claim_rejected', kind: 'rateLimited' }",
+    "'RATE_LIMITED': { code: 'fulfillment_request_rejected', kind: 'rateLimited' }",
   );
-  expect(problems).toContain('guestOrderClaimRejectedProblemByReasonCode[failure.reasonCode]');
+  expect(problems).toContain('fulfillmentRequestRejectedProblemByReasonCode[failure.reasonCode]');
 });
 
 it('renders required idempotency and governed assertion acquisition in the Action client', () => {
-  const client = renderActionHttpClient(vertical, 'change-manual-rate', true);
+  const client = renderActionHttpClient(vertical, 'change-rate', true);
   expect(client).toContain('readonly idempotencyKey: string;');
   expect(client).toContain('operationGateway.invoke(');
   expect(client).toContain("headers: { 'idempotency-key': options.idempotencyKey }");
-  expect(client).toContain("defaultApiPrefix: '/commerce-fx-api'");
+  expect(client).toContain("defaultApiPrefix: '/pricing-policy-api'");
 });
 
 it.live(

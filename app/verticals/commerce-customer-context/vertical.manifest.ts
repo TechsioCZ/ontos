@@ -25,12 +25,10 @@ import { attributeGuestRetailCustomerAction } from './src/actions/attribute-gues
 import { bindRetailPortalProfileAction } from './src/actions/bind-retail-portal-profile.action.ts';
 import { bootstrapCounterpartyAccessAdministratorAction } from './src/actions/bootstrap-counterparty-access-administrator.action.ts';
 import { changeCounterpartyPurchaseLimitAction } from './src/actions/change-counterparty-purchase-limit.action.ts';
-import { changeCustomerCurrencyPreferenceAction } from './src/actions/change-customer-currency-preference.action.ts';
 import { changeCustomerPaymentTermsAction } from './src/actions/change-customer-payment-terms.action.ts';
 import { changePrincipalPurchaseLimitOverrideAction } from './src/actions/change-principal-purchase-limit-override.action.ts';
 import { changeRetailPaymentTermPreferenceAction } from './src/actions/change-retail-payment-term-preference.action.ts';
 import { claimCounterpartyAccessInvitationAction } from './src/actions/claim-counterparty-access-invitation.action.ts';
-import { claimGuestOrderAction } from './src/actions/claim-guest-order.action.ts';
 import { clearDefaultBillingAddressAction } from './src/actions/clear-default-billing-address.action.ts';
 import { clearDefaultDeliveryDestinationAction } from './src/actions/clear-default-delivery-destination.action.ts';
 import { consumePurchaseApprovalAction } from './src/actions/consume-purchase-approval.action.ts';
@@ -59,7 +57,6 @@ import { counterpartyPurchaseLimitManagePermission } from './shared/permissions/
 import { counterpartyPurchasePreparePermission } from './shared/permissions/counterparty-purchase-prepare.ts';
 import { counterpartyPurchaseSubmitPermission } from './shared/permissions/counterparty-purchase-submit.ts';
 import { counterpartyPurchasingProfileResourceDescriptor } from './shared/resources/counterparty-purchasing-profile.ts';
-import { counterpartySettingsCurrencyManagePermission } from './shared/permissions/counterparty-settings-currency-manage.ts';
 import { counterpartySettingsPaymentTermsManagePermission } from './shared/permissions/counterparty-settings-payment-terms-manage.ts';
 import { counterpartySettingsPriceGroupManagePermission } from './shared/permissions/counterparty-settings-price-group-manage.ts';
 import { createApprovalHierarchyAction } from './src/actions/create-approval-hierarchy.action.ts';
@@ -68,8 +65,6 @@ import { createCounterpartyPurchasingProfileAction } from './src/actions/create-
 import { createCustomerGroupAction } from './src/actions/create-customer-group.action.ts';
 import { createPurchaseProposalRevisionAction } from './src/actions/create-purchase-proposal-revision.action.ts';
 import { CustomerArchiveApi } from './shared/apis/customer-archive.ts';
-import { CustomerCurrencyPreferenceReadApi } from './shared/apis/customer-currency-preference-read.ts';
-import { customerCurrencyPreferenceResourceDescriptor } from './shared/resources/customer-currency-preference.ts';
 import { CustomerGroupDetailApi } from './shared/apis/customer-group-detail.ts';
 import { CustomerGroupHistoryApi } from './shared/apis/customer-group-history.ts';
 import { CustomerGroupMembersApi } from './shared/apis/customer-group-members.ts';
@@ -89,7 +84,6 @@ import { EffectiveCustomerGroupMembershipsApi } from './shared/apis/effective-cu
 import { ensureRetailCustomerProfileAction } from './src/actions/ensure-retail-customer-profile.action.ts';
 import { grantCounterpartyCommerceAccessAction } from './src/actions/grant-counterparty-commerce-access.action.ts';
 import { GuestAttributionStatusApi } from './shared/apis/guest-attribution-status.ts';
-import { GuestOrderClaimApi } from './shared/apis/guest-order-claim.ts';
 import { GuestPaymentTermsResolutionApi } from './shared/apis/guest-payment-terms-resolution.ts';
 import { InvoiceRecipientResolutionApi } from './shared/apis/invoice-recipient-resolution.ts';
 import { migrateCounterpartyPriceGroupAction } from './src/actions/migrate-counterparty-price-group.action.ts';
@@ -127,7 +121,6 @@ import { retailAftercareReadPermission } from './shared/permissions/retail-after
 import { retailClaimCreatePermission } from './shared/permissions/retail-claim-create.ts';
 import { retailConsentManagePermission } from './shared/permissions/retail-consent-manage.ts';
 import { retailCustomerProfileResourceDescriptor } from './shared/resources/retail-customer-profile.ts';
-import { retailGuestOrderClaimPermission } from './shared/permissions/retail-guest-order-claim.ts';
 import { retailHistoryReadPermission } from './shared/permissions/retail-history-read.ts';
 import { retailNotificationsManagePermission } from './shared/permissions/retail-notifications-manage.ts';
 import { RetailOrderHistoryApi } from './shared/apis/retail-order-history.ts';
@@ -137,7 +130,6 @@ import { retailPortalProfileBindingResourceDescriptor } from './shared/resources
 import { RetailPrincipalResolutionApi } from './shared/apis/retail-principal-resolution.ts';
 import { retailProfileReadPermission } from './shared/permissions/retail-profile-read.ts';
 import { retailRepeatOrderPermission } from './shared/permissions/retail-repeat-order.ts';
-import { retailSettingsCurrencyManagePermission } from './shared/permissions/retail-settings-currency-manage.ts';
 import { retailSettingsPaymentTermPreferenceManagePermission } from './shared/permissions/retail-settings-payment-term-preference-manage.ts';
 import { revalidatePurchaseApprovalAction } from './src/actions/revalidate-purchase-approval.action.ts';
 import { revokeCounterpartyAccessInvitationAction } from './src/actions/revoke-counterparty-access-invitation.action.ts';
@@ -208,12 +200,10 @@ export const commerceCustomerContextManifest = defineOntosModuleManifest({
       bindRetailPortalProfileAction,
       bootstrapCounterpartyAccessAdministratorAction,
       changeCounterpartyPurchaseLimitAction,
-      changeCustomerCurrencyPreferenceAction,
       changeCustomerPaymentTermsAction,
       changePrincipalPurchaseLimitOverrideAction,
       changeRetailPaymentTermPreferenceAction,
       claimCounterpartyAccessInvitationAction,
-      claimGuestOrderAction,
       clearDefaultBillingAddressAction,
       clearDefaultDeliveryDestinationAction,
       consumePurchaseApprovalAction,
@@ -267,7 +257,6 @@ export const commerceCustomerContextManifest = defineOntosModuleManifest({
       'counterparty-order-history': CounterpartyOrderHistoryApi,
       'counterparty-order-history-detail': CounterpartyOrderHistoryDetailApi,
       'customer-archive': CustomerArchiveApi,
-      'customer-currency-preference-read': CustomerCurrencyPreferenceReadApi,
       'customer-group-detail': CustomerGroupDetailApi,
       'customer-group-history': CustomerGroupHistoryApi,
       'customer-group-members': CustomerGroupMembersApi,
@@ -280,7 +269,6 @@ export const commerceCustomerContextManifest = defineOntosModuleManifest({
       'delivery-destination-resolution': DeliveryDestinationResolutionApi,
       'effective-customer-group-memberships': EffectiveCustomerGroupMembershipsApi,
       'guest-attribution-status': GuestAttributionStatusApi,
-      'guest-order-claim': GuestOrderClaimApi,
       'guest-payment-terms-resolution': GuestPaymentTermsResolutionApi,
       'invoice-recipient-resolution': InvoiceRecipientResolutionApi,
       'payment-term-affected-use-assessment': PaymentTermAffectedUseAssessmentApi,
@@ -315,7 +303,6 @@ export const commerceCustomerContextManifest = defineOntosModuleManifest({
       counterpartyPurchaseLimitManagePermission,
       counterpartyPurchasePreparePermission,
       counterpartyPurchaseSubmitPermission,
-      counterpartySettingsCurrencyManagePermission,
       counterpartySettingsPaymentTermsManagePermission,
       counterpartySettingsPriceGroupManagePermission,
       retailAddressBookManagePermission,
@@ -323,12 +310,10 @@ export const commerceCustomerContextManifest = defineOntosModuleManifest({
       retailAftercareReadPermission,
       retailClaimCreatePermission,
       retailConsentManagePermission,
-      retailGuestOrderClaimPermission,
       retailHistoryReadPermission,
       retailNotificationsManagePermission,
       retailProfileReadPermission,
       retailRepeatOrderPermission,
-      retailSettingsCurrencyManagePermission,
       retailSettingsPaymentTermPreferenceManagePermission,
       // </generated-module-manifest-business-permissions>
     ],
@@ -350,7 +335,6 @@ export const commerceCustomerContextManifest = defineOntosModuleManifest({
       counterpartyAccessInvitationResourceDescriptor,
       counterpartyCommerceAccessGrantResourceDescriptor,
       counterpartyPurchasingProfileResourceDescriptor,
-      customerCurrencyPreferenceResourceDescriptor,
       customerGroupMembershipResourceDescriptor,
       customerGroupResourceDescriptor,
       customerPaymentTermEntitlementResourceDescriptor,

@@ -49,12 +49,10 @@ import { AttributeGuestRetailCustomerActionApi } from './apis/attribute-guest-re
 import { BindRetailPortalProfileActionApi } from './apis/bind-retail-portal-profile-action.ts';
 import { BootstrapCounterpartyAccessAdministratorActionApi } from './apis/bootstrap-counterparty-access-administrator-action.ts';
 import { ChangeCounterpartyPurchaseLimitActionApi } from './apis/change-counterparty-purchase-limit-action.ts';
-import { ChangeCustomerCurrencyPreferenceActionApi } from './apis/change-customer-currency-preference-action.ts';
 import { ChangeCustomerPaymentTermsActionApi } from './apis/change-customer-payment-terms-action.ts';
 import { ChangePrincipalPurchaseLimitOverrideActionApi } from './apis/change-principal-purchase-limit-override-action.ts';
 import { ChangeRetailPaymentTermPreferenceActionApi } from './apis/change-retail-payment-term-preference-action.ts';
 import { ClaimCounterpartyAccessInvitationActionApi } from './apis/claim-counterparty-access-invitation-action.ts';
-import { ClaimGuestOrderActionApi } from './apis/claim-guest-order-action.ts';
 import { ClearDefaultBillingAddressActionApi } from './apis/clear-default-billing-address-action.ts';
 import { ClearDefaultDeliveryDestinationActionApi } from './apis/clear-default-delivery-destination-action.ts';
 import { ConsumePurchaseApprovalActionApi } from './apis/consume-purchase-approval-action.ts';
@@ -73,7 +71,6 @@ import { CreateCounterpartyPurchasingProfileActionApi } from './apis/create-coun
 import { CreateCustomerGroupActionApi } from './apis/create-customer-group-action.ts';
 import { CreatePurchaseProposalRevisionActionApi } from './apis/create-purchase-proposal-revision-action.ts';
 import { CustomerArchiveApi } from './apis/customer-archive.ts';
-import { CustomerCurrencyPreferenceReadApi } from './apis/customer-currency-preference-read.ts';
 import { CustomerGroupDetailApi } from './apis/customer-group-detail.ts';
 import { CustomerGroupHistoryApi } from './apis/customer-group-history.ts';
 import { CustomerGroupMembersApi } from './apis/customer-group-members.ts';
@@ -89,7 +86,6 @@ import { EffectiveCustomerGroupMembershipsApi } from './apis/effective-customer-
 import { EnsureRetailCustomerProfileActionApi } from './apis/ensure-retail-customer-profile-action.ts';
 import { GrantCounterpartyCommerceAccessActionApi } from './apis/grant-counterparty-commerce-access-action.ts';
 import { GuestAttributionStatusApi } from './apis/guest-attribution-status.ts';
-import { GuestOrderClaimApi } from './apis/guest-order-claim.ts';
 import { GuestPaymentTermsResolutionApi } from './apis/guest-payment-terms-resolution.ts';
 import { InvoiceRecipientResolutionApi } from './apis/invoice-recipient-resolution.ts';
 import { MigrateCounterpartyPriceGroupActionApi } from './apis/migrate-counterparty-price-group-action.ts';
@@ -152,12 +148,10 @@ export const commerceCustomerContextApi = HttpApi.make('CommerceCustomerContextA
   .addHttpApi(BindRetailPortalProfileActionApi)
   .addHttpApi(BootstrapCounterpartyAccessAdministratorActionApi)
   .addHttpApi(ChangeCounterpartyPurchaseLimitActionApi)
-  .addHttpApi(ChangeCustomerCurrencyPreferenceActionApi)
   .addHttpApi(ChangeCustomerPaymentTermsActionApi)
   .addHttpApi(ChangePrincipalPurchaseLimitOverrideActionApi)
   .addHttpApi(ChangeRetailPaymentTermPreferenceActionApi)
   .addHttpApi(ClaimCounterpartyAccessInvitationActionApi)
-  .addHttpApi(ClaimGuestOrderActionApi)
   .addHttpApi(ClearDefaultBillingAddressActionApi)
   .addHttpApi(ClearDefaultDeliveryDestinationActionApi)
   .addHttpApi(ConsumePurchaseApprovalActionApi)
@@ -176,7 +170,6 @@ export const commerceCustomerContextApi = HttpApi.make('CommerceCustomerContextA
   .addHttpApi(CreateCustomerGroupActionApi)
   .addHttpApi(CreatePurchaseProposalRevisionActionApi)
   .addHttpApi(CustomerArchiveApi)
-  .addHttpApi(CustomerCurrencyPreferenceReadApi)
   .addHttpApi(CustomerGroupDetailApi)
   .addHttpApi(CustomerGroupHistoryApi)
   .addHttpApi(CustomerGroupMembersApi)
@@ -192,7 +185,6 @@ export const commerceCustomerContextApi = HttpApi.make('CommerceCustomerContextA
   .addHttpApi(EnsureRetailCustomerProfileActionApi)
   .addHttpApi(GrantCounterpartyCommerceAccessActionApi)
   .addHttpApi(GuestAttributionStatusApi)
-  .addHttpApi(GuestOrderClaimApi)
   .addHttpApi(GuestPaymentTermsResolutionApi)
   .addHttpApi(InvoiceRecipientResolutionApi)
   .addHttpApi(MigrateCounterpartyPriceGroupActionApi)

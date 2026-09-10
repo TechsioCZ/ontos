@@ -182,24 +182,6 @@
           ]
         }
       }
-    },
-    {
-      "id": "commerce-fx",
-      "package": "@app/commerce-fx",
-      "path": "verticals/commerce-fx",
-      "ownership": {
-        "team": "super-app-platform",
-        "slack": "#super-app-platform",
-        "pagerDuty": "pd-super-app-platform",
-        "runbookRef": "runbooks/verticals/commerce-fx.md",
-        "adrRef": "docs/super-app-rfc-adr/verticals.md#commerce-fx",
-        "blastRadius": {
-          "tier": "tier-2-vertical",
-          "references": [
-            "docs/super-app-rfc-adr/blast-radius.md#commerce-fx"
-          ]
-        }
-      }
     }
   ]
 }

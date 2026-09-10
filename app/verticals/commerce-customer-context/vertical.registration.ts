@@ -14,12 +14,10 @@ import { attributeGuestRetailCustomerAction } from './src/actions/attribute-gues
 import { bindRetailPortalProfileAction } from './src/actions/bind-retail-portal-profile.action.ts';
 import { bootstrapCounterpartyAccessAdministratorAction } from './src/actions/bootstrap-counterparty-access-administrator.action.ts';
 import { changeCounterpartyPurchaseLimitAction } from './src/actions/change-counterparty-purchase-limit.action.ts';
-import { changeCustomerCurrencyPreferenceAction } from './src/actions/change-customer-currency-preference.action.ts';
 import { changeCustomerPaymentTermsAction } from './src/actions/change-customer-payment-terms.action.ts';
 import { changePrincipalPurchaseLimitOverrideAction } from './src/actions/change-principal-purchase-limit-override.action.ts';
 import { changeRetailPaymentTermPreferenceAction } from './src/actions/change-retail-payment-term-preference.action.ts';
 import { claimCounterpartyAccessInvitationAction } from './src/actions/claim-counterparty-access-invitation.action.ts';
-import { claimGuestOrderAction } from './src/actions/claim-guest-order.action.ts';
 import { clearDefaultBillingAddressAction } from './src/actions/clear-default-billing-address.action.ts';
 import { clearDefaultDeliveryDestinationAction } from './src/actions/clear-default-delivery-destination.action.ts';
 import { consumePurchaseApprovalAction } from './src/actions/consume-purchase-approval.action.ts';
@@ -82,12 +80,10 @@ export const commerceCustomerContextRegistration = defineVerticalRuntimeRegistra
     bindRetailPortalProfileAction,
     bootstrapCounterpartyAccessAdministratorAction,
     changeCounterpartyPurchaseLimitAction,
-    changeCustomerCurrencyPreferenceAction,
     changeCustomerPaymentTermsAction,
     changePrincipalPurchaseLimitOverrideAction,
     changeRetailPaymentTermPreferenceAction,
     claimCounterpartyAccessInvitationAction,
-    claimGuestOrderAction,
     clearDefaultBillingAddressAction,
     clearDefaultDeliveryDestinationAction,
     consumePurchaseApprovalAction,
@@ -150,8 +146,6 @@ export const commerceCustomerContextRegistration = defineVerticalRuntimeRegistra
       'counterparty-order-history-detail': () =>
         import('./src/api/counterparty-order-history-detail-client.ts'),
       'customer-archive': () => import('./src/api/customer-archive-client.ts'),
-      'customer-currency-preference-read': () =>
-        import('./src/api/customer-currency-preference-read-client.ts'),
       'customer-group-detail': () => import('./src/api/customer-group-detail-client.ts'),
       'customer-group-history': () => import('./src/api/customer-group-history-client.ts'),
       'customer-group-members': () => import('./src/api/customer-group-members-client.ts'),
@@ -170,7 +164,6 @@ export const commerceCustomerContextRegistration = defineVerticalRuntimeRegistra
       'effective-customer-group-memberships': () =>
         import('./src/api/effective-customer-group-memberships-client.ts'),
       'guest-attribution-status': () => import('./src/api/guest-attribution-status-client.ts'),
-      'guest-order-claim': () => import('./src/api/guest-order-claim-client.ts'),
       'guest-payment-terms-resolution': () =>
         import('./src/api/guest-payment-terms-resolution-client.ts'),
       'invoice-recipient-resolution': () =>

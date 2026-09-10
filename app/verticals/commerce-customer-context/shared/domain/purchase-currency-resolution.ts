@@ -1,10 +1,10 @@
 import { Schema } from 'effect';
 import {
-  CustomerCurrencyAuthorizationSubjectSchema,
   CustomerProfileRefSchema,
-  isCustomerCurrencyAuthorizationSubjectCompatible,
-} from './customer-currency-preference.ts';
-import type { CustomerProfileRef } from './customer-currency-preference.ts';
+  PurchaseCurrencyAuthorizationSubjectSchema,
+  isPurchaseCurrencyAuthorizationSubjectCompatible,
+} from './customer-profile-ref.ts';
+import type { CustomerProfileRef } from './customer-profile-ref.ts';
 import { AKROS_LAUNCH_CURRENCY, CurrencyCodeSchema, CurrencyCodeSetSchema } from './currency.ts';
 import type { CurrencyCode } from './currency.ts';
 import { ProfileInstantSchema } from './profile-contracts.ts';
@@ -62,7 +62,7 @@ export const PurchaseCurrencySubjectSchema = Schema.Union([
     kind: Schema.Literal('GUEST'),
   }),
   Schema.Struct({
-    authorizationSubject: CustomerCurrencyAuthorizationSubjectSchema,
+    authorizationSubject: PurchaseCurrencyAuthorizationSubjectSchema,
     kind: Schema.Literal('PROFILE'),
     profileRef: CustomerProfileRefSchema,
   }),
@@ -86,7 +86,7 @@ export const PurchaseCurrencyResolutionRequestSchema = Schema.Struct({
   Schema.makeFilter(({ purchasingContext, subject }) =>
     subject.kind === 'GUEST' ||
     (subject.profileRef.tenantId === purchasingContext.tenantId &&
-      isCustomerCurrencyAuthorizationSubjectCompatible(
+      isPurchaseCurrencyAuthorizationSubjectCompatible(
         subject.profileRef,
         subject.authorizationSubject,
       ))
@@ -97,7 +97,6 @@ export const PurchaseCurrencyResolutionRequestSchema = Schema.Struct({
 export type PurchaseCurrencyResolutionRequest = typeof PurchaseCurrencyResolutionRequestSchema.Type;
 
 export const CurrencyPolicyDecisionSchema = Schema.Struct({
-  customerPreferenceEnabled: Schema.Boolean,
   defaultCurrency: Schema.Union([CurrencyCodeSchema, Schema.Null]),
   explicitChoiceEnabled: Schema.Boolean,
   policyRevision: PolicyRevisionSchema,
@@ -111,13 +110,6 @@ export const PricingCurrencySupportSchema = Schema.Struct({
 });
 export type PricingCurrencySupport = typeof PricingCurrencySupportSchema.Type;
 
-export const CurrencyPreferenceCandidateSchema = Schema.Struct({
-  currencyCode: CurrencyCodeSchema,
-  profileRef: CustomerProfileRefSchema,
-  revision: Schema.Finite.check(Schema.isInt(), Schema.isGreaterThan(0)),
-});
-export type CurrencyPreferenceCandidate = typeof CurrencyPreferenceCandidateSchema.Type;
-
 const resolutionEvidenceFields = {
   contextRevision: ContextRevisionSchema,
   policyRevision: PolicyRevisionSchema,
@@ -129,13 +121,8 @@ export const PurchaseCurrencyResolvedSchema = Schema.TaggedStruct('PURCHASE_CURR
   currencyCode: CurrencyCodeSchema,
   evidence: Schema.Struct({
     ...resolutionEvidenceFields,
-    ignoredPreferenceReason: Schema.Union([Schema.String, Schema.Null]),
-    preferenceRevision: Schema.Union([
-      Schema.Finite.check(Schema.isInt(), Schema.isGreaterThan(0)),
-      Schema.Null,
-    ]),
   }),
-  source: Schema.Literals(['EXPLICIT_CHOICE', 'CUSTOMER_PREFERENCE', 'POLICY_DEFAULT']),
+  source: Schema.Literals(['EXPLICIT_CHOICE', 'POLICY_DEFAULT']),
 });
 export type PurchaseCurrencyResolved = typeof PurchaseCurrencyResolvedSchema.Type;
 
@@ -154,7 +141,6 @@ export type ExplicitPurchaseCurrencyChoiceInvalidError =
   typeof ExplicitPurchaseCurrencyChoiceInvalid.Type;
 
 export const NoUsablePurchaseCurrency = Schema.TaggedStruct('NO_USABLE_CURRENCY', {
-  ignoredPreferenceReason: Schema.Union([Schema.String, Schema.Null]),
   reason: Schema.String,
 });
 export type NoUsablePurchaseCurrencyError = typeof NoUsablePurchaseCurrency.Type;
@@ -181,7 +167,6 @@ export type PurchaseCurrencyResolutionOutcome = typeof PurchaseCurrencyResolutio
 
 export interface PurchaseCurrencyResolutionInput {
   readonly policy: CurrencyPolicyDecision;
-  readonly preference?: CurrencyPreferenceCandidate;
   readonly pricing: PricingCurrencySupport;
   readonly request: PurchaseCurrencyResolutionRequest;
 }
@@ -190,7 +175,6 @@ export interface PurchaseCurrencyResolutionInput {
 export interface PurchaseCurrencyCurrentFacts {
   readonly contextRevision: PurchaseCurrencyResolutionRequest['contextRevision'];
   readonly policy: CurrencyPolicyDecision;
-  readonly preference?: CurrencyPreferenceCandidate;
   readonly pricing: PricingCurrencySupport;
   readonly purchasingContext: PurchaseCurrencyResolutionRequest['purchasingContext'];
   readonly subject: PurchaseCurrencySubject;
@@ -207,14 +191,9 @@ const supported = (
   return pricing.supportedCurrencies.includes(code) ? 'SUPPORTED' : 'PRICING_UNSUPPORTED';
 };
 
-const evidence = (
-  input: PurchaseCurrencyResolutionInput,
-  ignoredPreferenceReason: string | null,
-) => ({
+const evidence = (input: PurchaseCurrencyResolutionInput) => ({
   contextRevision: input.request.contextRevision,
-  ignoredPreferenceReason,
   policyRevision: input.policy.policyRevision,
-  preferenceRevision: input.preference?.revision ?? null,
   pricingRevision: input.pricing.pricingRevision,
   requestedAt: input.request.requestedAt,
 });
@@ -223,30 +202,17 @@ const resolved = (
   input: PurchaseCurrencyResolutionInput,
   currencyCode: CurrencyCode,
   source: PurchaseCurrencyResolved['source'],
-  ignoredPreferenceReason: string | null,
 ): PurchaseCurrencyResolved => ({
   _tag: 'PURCHASE_CURRENCY_RESOLVED',
   currencyCode,
-  evidence: evidence(input, ignoredPreferenceReason),
+  evidence: evidence(input),
   source,
 });
 
 export const resolvePurchaseCurrency = (
   input: PurchaseCurrencyResolutionInput,
 ): PurchaseCurrencyResolutionOutcome => {
-  const { policy, preference, pricing, request } = input;
-  if (
-    preference !== undefined &&
-    (request.subject.kind === 'GUEST' ||
-      preference.profileRef.moduleId !== request.subject.profileRef.moduleId ||
-      preference.profileRef.resourceId !== request.subject.profileRef.resourceId ||
-      preference.profileRef.resourceType !== request.subject.profileRef.resourceType ||
-      preference.profileRef.tenantId !== request.subject.profileRef.tenantId)
-  ) {
-    return InconsistentPurchaseCurrencyPolicy.make({
-      reason: 'The Current preference does not belong to the exact purchase subject profile',
-    });
-  }
+  const { policy, pricing, request } = input;
   if (
     new Set(policy.supportedCurrencies).size !== policy.supportedCurrencies.length ||
     new Set(pricing.supportedCurrencies).size !== pricing.supportedCurrencies.length ||
@@ -267,41 +233,26 @@ export const resolvePurchaseCurrency = (
     }
     const support = supported(request.explicitChoice, policy, pricing);
     return support === 'SUPPORTED'
-      ? resolved(input, request.explicitChoice, 'EXPLICIT_CHOICE', null)
+      ? resolved(input, request.explicitChoice, 'EXPLICIT_CHOICE')
       : ExplicitPurchaseCurrencyChoiceInvalid.make({
           currencyCode: request.explicitChoice,
           reason: support,
         });
   }
 
-  let ignoredPreferenceReason: string | null = null;
-  if (preference !== undefined) {
-    if (policy.customerPreferenceEnabled) {
-      const support = supported(preference.currencyCode, policy, pricing);
-      if (support === 'SUPPORTED') {
-        return resolved(input, preference.currencyCode, 'CUSTOMER_PREFERENCE', null);
-      }
-      ignoredPreferenceReason = support;
-    } else {
-      ignoredPreferenceReason = 'CUSTOMER_PREFERENCE_DISABLED';
-    }
-  }
-
   if (policy.defaultCurrency !== null) {
     const support = supported(policy.defaultCurrency, policy, pricing);
     if (support === 'SUPPORTED') {
-      return resolved(input, policy.defaultCurrency, 'POLICY_DEFAULT', ignoredPreferenceReason);
+      return resolved(input, policy.defaultCurrency, 'POLICY_DEFAULT');
     }
   }
 
   return NoUsablePurchaseCurrency.make({
-    ignoredPreferenceReason,
-    reason: 'No explicit choice, usable preference, or valid unambiguous policy default exists',
+    reason: 'No explicit choice or valid unambiguous policy default exists',
   });
 };
 
 export const AKROS_LAUNCH_CURRENCY_POLICY: CurrencyPolicyDecision = Object.freeze({
-  customerPreferenceEnabled: false,
   defaultCurrency: AKROS_LAUNCH_CURRENCY,
   explicitChoiceEnabled: true,
   policyRevision: 'akros-launch-czk-v1',

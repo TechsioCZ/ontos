@@ -36,11 +36,9 @@ import { PurchaseCurrencyPurchasingContextPort } from '../../shared/domain/purch
 import type { PurchaseCurrencyTrustedScope } from '../../shared/domain/purchase-currency-context-port.ts';
 import { PurchaseCurrencyPolicyPort } from '../../shared/domain/purchase-currency-policy-port.ts';
 import { PurchaseCurrencyPricingPort } from '../../shared/domain/purchase-currency-pricing-port.ts';
-import { customerCurrencyPreferencePersistenceForTransaction } from '../persistence/currency-persistence.ts';
-import type { CustomerCurrencyPreferencePersistence } from '../persistence/currency-persistence.ts';
 
 export interface PurchaseCurrencyResolutionServices {
-  /** Resolves Current profile preference, Commerce policy, pricing support, and trusted context. */
+  /** Resolves Current Commerce policy, pricing support, and trusted purchasing context. */
   readonly loadCurrent: (
     input: PurchaseCurrencyResolutionRequest,
     observedAt: string,
@@ -52,7 +50,6 @@ const moduleKey = 'commerce.customer-context';
 export const makePurchaseCurrencyResolutionServices = Effect.fn(
   'PurchaseCurrencyResolutionRead.makeServices',
 )(function* makePurchaseCurrencyResolutionServicesEffect(input: {
-  readonly persistence: CustomerCurrencyPreferencePersistence;
   readonly scope: PurchaseCurrencyTrustedScope;
 }) {
   const contextPort = yield* PurchaseCurrencyPurchasingContextPort;
@@ -70,23 +67,6 @@ export const makePurchaseCurrencyResolutionServices = Effect.fn(
         observedAt,
         scope: input.scope,
       });
-      const preferenceSnapshot =
-        currentContext.subject.kind === 'GUEST'
-          ? undefined
-          : yield* input.persistence
-              .findCurrent({
-                authorizationSubject: currentContext.subject.authorizationSubject,
-                profileRef: currentContext.subject.profileRef,
-              })
-              .pipe(
-                Effect.mapError((failure) =>
-                  PurchaseCurrencyDependencyUnavailable.make({
-                    code: 'customer_currency_preference_unavailable',
-                    reason: failure.reason,
-                    retryable: true,
-                  }),
-                ),
-              );
       const [policy, pricing] = yield* Effect.all(
         [
           policyPort.resolveCurrent({
@@ -103,16 +83,7 @@ export const makePurchaseCurrencyResolutionServices = Effect.fn(
         policy,
         pricing,
       };
-      return preferenceSnapshot?.state === 'PRESENT'
-        ? {
-            ...current,
-            preference: {
-              currencyCode: preferenceSnapshot.preference.currencyCode,
-              profileRef: preferenceSnapshot.profileRef,
-              revision: preferenceSnapshot.revision,
-            },
-          }
-        : current;
+      return current;
     },
   );
   return {
@@ -229,11 +200,7 @@ export const handlePurchaseCurrencyResolution = Effect.fn(
         subject: current.subject,
       },
     };
-    result = resolvePurchaseCurrency(
-      current.preference === undefined
-        ? resolutionInput
-        : { ...resolutionInput, preference: current.preference },
-    );
+    result = resolvePurchaseCurrency(resolutionInput);
   } else {
     result = InconsistentPurchaseCurrencyPolicy.make({
       reason: 'The claimed purchasing context does not match the Current trusted context',
@@ -342,7 +309,7 @@ export const purchaseCurrencyResolutionRead = defineRead(
   },
   handlePurchaseCurrencyResolution,
   Effect.fn('PurchaseCurrencyResolutionRead.serviceFactory')(
-    function* purchaseCurrencyResolutionServiceFactory(transaction, scope) {
+    function* purchaseCurrencyResolutionServiceFactory(_transaction, scope) {
       if (scope.legalEntityId === undefined) {
         return yield* new OperationContextUnavailable({
           code: 'operation_context_unavailable',
@@ -357,10 +324,6 @@ export const purchaseCurrencyResolutionRead = defineRead(
         });
       }
       return yield* makePurchaseCurrencyResolutionServices({
-        persistence: customerCurrencyPreferencePersistenceForTransaction(transaction, {
-          legalEntityId: scope.legalEntityId,
-          tenantId: scope.tenantId,
-        }),
         scope: {
           legalEntityId: scope.legalEntityId,
           storefrontId,

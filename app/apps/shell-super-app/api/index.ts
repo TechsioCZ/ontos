@@ -100,10 +100,6 @@ import { AuthConfigLive } from './auth/config.ts';
 import type { AuthenticationRuntimeError, SwitchTenantRuntimeError } from './auth/errors.ts';
 import { GatewayIssuer, GatewayIssuerLive, issueGatewayContextAssertion } from './auth/gateway-issuer.ts';
 import type { GatewayIssuerError } from './auth/gateway-issuer.ts';
-import {
-  GatewayApiKeyBindingResolver,
-  gatewayApiKeyBindingResolverLive,
-} from './auth/gateway-api-key-binding.ts';
 import { IdentityLifecycle, IdentityLifecycleLive } from './auth/identity-lifecycle.ts';
 import type { IdentityLifecycleError } from './auth/identity-lifecycle.ts';
 import {
@@ -1569,7 +1565,6 @@ const gatewayContextGroupLive = HttpApiBuilder.group(ShellAuthenticationApi, 'ga
       Effect.gen(function* issueApiKeyGatewayContextHandler() {
         const keys = yield* ApiKeyService;
         const resolver = yield* PrincipalResolver;
-        const apiKeyBindingResolver = yield* GatewayApiKeyBindingResolver;
         const { 'x-api-key': rawKey } = headers;
         if (rawKey === undefined || rawKey.trim().length === 0) {
           return yield* failApiKeyGatewayProblem(gatewayAuthenticationRequiredProblem());
@@ -1597,44 +1592,17 @@ const gatewayContextGroupLive = HttpApiBuilder.group(ShellAuthenticationApi, 'ga
           );
           ({ legalEntityId } = selected);
         }
-        let trustedStorefrontId: string | undefined;
-        if (payload.audience === 'commerce-fx') {
-          if (legalEntityId === undefined) {
-            return yield* failApiKeyGatewayProblem(gatewayForbiddenProblem());
-          }
-          const bindingOption = yield* apiKeyBindingResolver.resolve({
-            audience: payload.audience,
-            legalEntityId,
-            principalId: identity.principalId,
-            providerKeyId: verified.providerKeyId,
-            tenantId: identity.tenantId,
-          });
-          if (Option.isNone(bindingOption)) {
-            return yield* failApiKeyGatewayProblem(gatewayForbiddenProblem());
-          }
-          trustedStorefrontId = yield* Option.match(bindingOption, {
-            onNone: () => failApiKeyGatewayProblem(gatewayForbiddenProblem()),
-            onSome: ({ trustedStorefrontId: resolvedTrustedStorefrontId }) =>
-              Effect.succeed(resolvedTrustedStorefrontId),
-          });
-        }
         const principal = withOptionalProperty(
-          withOptionalProperty(
-            {
-              authBindingId: identity.authBindingId,
-              authContextRef: `better-auth-api-key:${verified.providerKeyId}`,
-              authMethod: 'api_key' as const,
-              principalId: identity.principalId,
-              tenantId: identity.tenantId,
-            },
-            legalEntityId !== undefined,
-            'legalEntityId',
-            legalEntityId,
-            {},
-          ),
-          trustedStorefrontId !== undefined,
-          'trustedStorefrontId',
-          trustedStorefrontId,
+          {
+            authBindingId: identity.authBindingId,
+            authContextRef: `better-auth-api-key:${verified.providerKeyId}`,
+            authMethod: 'api_key' as const,
+            principalId: identity.principalId,
+            tenantId: identity.tenantId,
+          },
+          legalEntityId !== undefined,
+          'legalEntityId',
+          legalEntityId,
           {},
         );
         return yield* issueGatewayContextAssertion({
@@ -1690,7 +1658,6 @@ type ShellAuthenticationApiRuntimeArguments = readonly [
   contextAccessLayer?: Layer.Layer<ContextAccess>,
   resourceGateways?: ShellResourceGateways,
   scopedModuleStateFactory?: ShellScopedModuleStateFactory,
-  gatewayApiKeyBindingLayer?: Layer.Layer<GatewayApiKeyBindingResolver>,
 ];
 
 export const makeShellAuthenticationApiRuntime = (
@@ -1705,7 +1672,6 @@ export const makeShellAuthenticationApiRuntime = (
     contextAccessLayer = ContextAccessLive,
     resourceGateways = unavailableResourceGateways,
     scopedModuleStateFactory = defaultScopedModuleStateFactory,
-    gatewayApiKeyBindingLayer = gatewayApiKeyBindingResolverLive,
   ] = args;
   const moduleCatalogLayer =
     loadInstalledModuleCatalog === undefined
@@ -1813,7 +1779,6 @@ export const makeShellAuthenticationApiRuntime = (
     authPersistenceLive,
     actionRuntimeLayer,
     apiKeyServiceLive,
-    gatewayApiKeyBindingLayer,
     identityLifecycleLayer,
     supportImpersonationServiceLive,
     principalResolverLive,

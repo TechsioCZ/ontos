@@ -21,7 +21,6 @@ it.effect('derives installed vertical IDs from the injected topology without har
       'party-registry',
       'commerce-customer-context',
       'payment-term-catalog',
-      'commerce-fx',
     ]);
     expect(expectedInstalledIds.has('party.registry')).toBe(false);
     expect([...(yield* installedVerticalIds)]).toEqual([...expectedInstalledIds]);

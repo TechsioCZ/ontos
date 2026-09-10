@@ -13,7 +13,6 @@ export const counterpartyProfileReadPermission = defineBusinessPermission({
   meaning: 'Read the permitted current Commerce Counterparty Purchasing Profile view.',
   owningCapability: 'commerce.customer-context.profile',
   protectedEntrypoints: [
-    'commerce.customer-context.api.customer-currency-preference-read',
     'commerce.customer-context.api.customer-profile-read',
     'commerce.customer-context.api.purchase-currency-resolution',
   ],

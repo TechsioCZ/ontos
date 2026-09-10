@@ -87,12 +87,10 @@ const addedVerticalActionKeys = [
   'commerce.customer-context.bind-retail-portal-profile',
   'commerce.customer-context.bootstrap-counterparty-access-administrator',
   'commerce.customer-context.change-counterparty-purchase-limit',
-  'commerce.customer-context.change-customer-currency-preference',
   'commerce.customer-context.change-customer-payment-terms',
   'commerce.customer-context.change-principal-purchase-limit-override',
   'commerce.customer-context.change-retail-payment-term-preference',
   'commerce.customer-context.claim-counterparty-access-invitation',
-  'commerce.customer-context.claim-guest-order',
   'commerce.customer-context.clear-default-billing-address',
   'commerce.customer-context.clear-default-delivery-destination',
   'commerce.customer-context.consume-purchase-approval',
@@ -132,7 +130,6 @@ const addedVerticalActionKeys = [
   'commerce.customer-context.trigger-purchase-approval',
   'commerce.customer-context.update-customer-group',
   'commerce.customer-context.update-saved-address',
-  'commerce.fx.change-manual-commercial-rate-policy',
   'payment.term-catalog.correct-payment-term',
   'payment.term-catalog.create-payment-term',
   'payment.term-catalog.reconcile-payment-term-reference',
@@ -276,7 +273,6 @@ it.effect(
     expect(currentActionKeys.filter((key) => key.startsWith('party.registry.')).length).toBe(30);
     expect(new Set(completeCurrentActionKeys).size).toBe(completeCurrentActionKeys.length);
     expect(completeCurrentActionKeys).toContain('commerce.customer-context.claim-counterparty-access-invitation');
-    expect(completeCurrentActionKeys).toContain('commerce.fx.change-manual-commercial-rate-policy');
     expect(completeCurrentActionKeys).toContain('payment.term-catalog.retire-payment-term');
   }),
 );

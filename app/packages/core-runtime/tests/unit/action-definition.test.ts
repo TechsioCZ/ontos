@@ -92,12 +92,14 @@ it('accepts conjunctive business and Resource permission declarations', () => {
   const entrypoint = defineTenantModuleEntrypoint({
     access: 'write',
     authorization: { kind: 'action_execution', provisioning: 'tenant_membership_default' },
-    entrypointKey: 'commerce.customer-context.change-currency',
+    entrypointKey: 'commerce.customer-context.change-payment-term',
     moduleKey: 'commerce.customer-context',
     role: 'action',
   });
   const businessPermission = defineActionBusinessPermission((_payload, scope) => ({
-    permission: Schema.decodeSync(BusinessPermissionCodeSchema)('retail.settings.currency.manage'),
+    permission: Schema.decodeSync(BusinessPermissionCodeSchema)(
+      'retail.settings.payment_term_preference.manage',
+    ),
     target: {
       kind: 'retail_profile',
       legalEntityId: scope.legalEntityId ?? '',

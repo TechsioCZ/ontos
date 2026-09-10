@@ -27,7 +27,6 @@
   },
   "dependencies": {
     "@app/commerce-customer-context": "workspace:*",
-    "@app/commerce-fx": "workspace:*",
     "@app/core-runtime": "workspace:*",
     "@app/party-registry": "workspace:*",
     "@app/payment-term-catalog": "workspace:*",

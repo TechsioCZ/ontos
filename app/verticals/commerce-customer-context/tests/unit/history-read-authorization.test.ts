@@ -18,9 +18,14 @@ import { counterpartyAllCustomerArchiveRead } from '../../src/api/counterparty-a
 import { counterpartyAllOrderHistoryDetailRead } from '../../src/api/counterparty-all-order-history-detail.read.ts';
 import { counterpartyOrderHistoryRead } from '../../src/api/counterparty-order-history.read.ts';
 import { counterpartyOrderHistoryDetailRead } from '../../src/api/counterparty-order-history-detail.read.ts';
-import { guestOrderClaimRead } from '../../src/api/guest-order-claim.read.ts';
 import { retailOrderHistoryRead } from '../../src/api/retail-order-history.read.ts';
 import { retailOrderHistoryDetailRead } from '../../src/api/retail-order-history-detail.read.ts';
+import { customerHistoryPortsForOperation } from '../../src/history-production-services.ts';
+import type {
+  ProfilePersistenceScope,
+  ProfileScopedRoutineInvoker,
+} from '../../src/persistence/profile-persistence.ts';
+import { profilePersistenceServicesForTransaction } from '../../src/persistence/profile-persistence.ts';
 import {
   CustomerHistoryPortsService,
   unavailableCustomerHistoryPorts,
@@ -56,18 +61,121 @@ const counterpartyProfileRef = {
   resourceType: 'commerce.customer-context.counterparty-purchasing-profile' as const,
   tenantId,
 };
+const taggedCounterpartyProfileRef = {
+  ...counterpartyProfileRef,
+  kind: 'COUNTERPARTY' as const,
+};
 const counterpartyRef = {
   moduleId: 'party.registry' as const,
   resourceId: 'counterparty-1',
   resourceType: 'party.registry.counterparty' as const,
   tenantId,
 };
+
+const profileScope: ProfilePersistenceScope = {
+  legalEntityId: scope.legalEntityId,
+  principalId: scope.principalId,
+  tenantId,
+};
+
+const counterpartyProfilePayload = (
+  state: 'ACTIVE' | 'SUSPENDED' | 'ARCHIVED',
+  overrides: {
+    readonly counterpartyResourceId?: string;
+    readonly profileId?: string;
+  } = {},
+) => ({
+  createdAt: '2026-09-09T09:00:00.000Z',
+  profileId: overrides.profileId ?? counterpartyProfileRef.resourceId,
+  profileKind: 'COUNTERPARTY' as const,
+  revision: 3,
+  scopeLegalEntityId: scope.legalEntityId,
+  state,
+  subject: {
+    counterpartyResourceId: overrides.counterpartyResourceId ?? counterpartyRef.resourceId,
+    counterpartyResourceRevision: 'counterparty:7',
+    customerRoleResourceId: 'customer-role-1',
+    customerRoleResourceRevision: 'customer-role:4',
+    kind: 'COUNTERPARTY' as const,
+  },
+  updatedAt: '2026-09-09T09:00:00.000Z',
+});
+
+const profileTransaction = (
+  state: 'ACTIVE' | 'SUSPENDED' | 'ARCHIVED',
+  overrides: Parameters<typeof counterpartyProfilePayload>[1] = {},
+): ProfileScopedRoutineInvoker => ({
+  invoke: () =>
+    Effect.succeed([
+      {
+        outcome: 'PROFILE_AVAILABLE',
+        payload: counterpartyProfilePayload(state, overrides),
+      },
+    ]),
+});
 const orderRef = {
   moduleId: 'commerce.order',
   resourceId: 'order-1',
   resourceType: 'commerce.order.order',
   tenantId,
 };
+
+it.effect(
+  'keeps exact Counterparty history association independent from the new-order lifecycle gate',
+  () =>
+    Effect.gen(function* counterpartyLifecycleSeparation() {
+      const states = ['ACTIVE', 'SUSPENDED', 'ARCHIVED'] as const;
+      const profileInput = {
+        authorizationSubject: { counterpartyRef, kind: 'COUNTERPARTY' as const },
+        profileRef: taggedCounterpartyProfileRef,
+      };
+      const role = {
+        managedLegalEntityId: scope.legalEntityId,
+        outcome: 'ELIGIBLE' as const,
+        roleResourceId: 'customer-role-1',
+        roleResourceRevision: 'customer-role:4',
+      };
+
+      for (const state of states) {
+        const historyPorts = yield* customerHistoryPortsForOperation(
+          unavailableCustomerHistoryPorts(),
+          profileTransaction(state),
+          scope,
+        );
+        const association = yield* historyPorts.counterpartyProfiles.current({
+          counterpartyRef,
+          profileRef: counterpartyProfileRef,
+        });
+        expect(association).toBe('CURRENT');
+
+        const tradingGate = yield* profilePersistenceServicesForTransaction(
+          profileTransaction(state),
+          profileScope,
+          { resolveCounterpartyRole: () => Effect.succeed(role) },
+        ).customerProfileTradingGate.evaluateGate(profileInput, tenantId);
+        expect(tradingGate.gate).toEqual({
+          canAcceptNewOrder: state === 'ACTIVE',
+          outcome: state,
+        });
+      }
+
+      for (const mismatch of [
+        { counterpartyResourceId: counterpartyRef.resourceId, profileId: 'counterparty-profile-2' },
+        { counterpartyResourceId: 'counterparty-2', profileId: counterpartyProfileRef.resourceId },
+      ]) {
+        const historyPorts = yield* customerHistoryPortsForOperation(
+          unavailableCustomerHistoryPorts(),
+          profileTransaction('SUSPENDED', mismatch),
+          scope,
+        );
+        const association = yield* historyPorts.counterpartyProfiles.current({
+          counterpartyRef,
+          profileRef: counterpartyProfileRef,
+        });
+        expect(association).toBe('ABSENT');
+      }
+    }),
+);
 
 it('declares exact business and Resource authorization before history handlers', () => {
   const retailInput = { profileRef: retailProfileRef };
@@ -164,12 +272,12 @@ it('makes cross-tenant references invalid before any owner port can be resolved'
     ...retailProfileRef,
     tenantId: '44444444-4444-4444-8444-444444444444',
   };
-  const resolver = getReadPermissionTargetResolver(guestOrderClaimRead);
+  const resolver = getReadPermissionTargetResolver(retailOrderHistoryRead);
   expect(Predicate.isFunction(resolver)).toBe(true);
   if (!Predicate.isFunction(resolver)) {
     return;
   }
-  const target = resolver({ orderRef, profileRef: foreignProfile }, scope);
+  const target = resolver({ profileRef: foreignProfile }, scope);
 
   expect(target).toMatchObject({
     businessPermission: { target: { tenantId: '' } },

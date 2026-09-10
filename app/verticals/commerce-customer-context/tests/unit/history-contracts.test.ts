@@ -7,8 +7,6 @@ import {
   composeCustomerArchive,
   composeRetailOrderHistoryDetail,
   composeRetailOrderHistory,
-  evaluateGuestOrderClaim,
-  preflightGuestOrderClaim,
   prepareRepeatOrder,
   resolveCustomerRecordVisibility,
 } from '../../shared/domain/history-composition.ts';
@@ -17,6 +15,7 @@ import type {
   HistoricalOrderCandidate,
 } from '../../shared/domain/history-ports.ts';
 import {
+  HistoryAccessDenied,
   HistoryOwnerUnavailable,
   HistoryRecordNotFound,
 } from '../../shared/domain/history-errors.ts';
@@ -125,7 +124,6 @@ const makePorts = (orders: readonly HistoricalOrderCandidate[]): CustomerHistory
       Effect.succeed({
         archivePermission: 'CURRENT',
         binding: 'CURRENT',
-        guestClaimPermission: 'CURRENT',
         historyPermission: 'CURRENT',
         policy: 'ALLOWED',
         repeatPermission: 'CURRENT',
@@ -160,16 +158,6 @@ const makePorts = (orders: readonly HistoricalOrderCandidate[]): CustomerHistory
   counterpartyProfiles: { current: () => Effect.succeed('CURRENT') },
   orders: {
     getCustomerFacingDetail: () => Effect.succeed({ outcome: 'NOT_FOUND' }),
-    getForGuestClaim: (input) =>
-      Effect.succeed({
-        outcome: 'FOUND',
-        value: {
-          claimState: 'UNCLAIMED',
-          customerFacingClaimAllowed: true,
-          orderKind: 'GUEST',
-          orderRef: input.orderRef,
-        },
-      }),
     getForHistoryDetailAuthorization: ({ orderRef: requestedOrderRef }) => {
       const order = orders.find(
         (candidate) => candidate.orderRef.resourceId === requestedOrderRef.resourceId,
@@ -241,9 +229,6 @@ const makePorts = (orders: readonly HistoricalOrderCandidate[]): CustomerHistory
       }),
   },
   resources: { current: () => Effect.succeed('CURRENT') },
-  verification: {
-    verifyGuestClaim: () => Effect.succeed('VERIFIED'),
-  },
   visibility: {
     get: ({ recordRef, subject }) =>
       Effect.succeed({
@@ -596,6 +581,220 @@ it.effect('enforces every owner-declared policy in the keyed authorization proje
       retryable: true,
     });
   }),
+);
+
+it.effect(
+  'keeps Retail and Counterparty history access, permission, visibility, and privacy gates independent',
+  () =>
+    Effect.gen(function* independentHistoryGates() {
+      const retailOrder = historicalOrder('order-retail-gates', principalId, retailSubject);
+      const counterpartyOrder = historicalOrder(
+        'order-counterparty-gates',
+        principalId,
+        counterpartySubject,
+      );
+      const retailInput = {
+        now,
+        principalId,
+        profileRef: retailProfileRef,
+      };
+      const counterpartyInput = {
+        counterpartyRef: counterpartySubject.counterpartyRef,
+        now,
+        principalId,
+        profileRef: counterpartyProfileRef,
+      };
+      const retailPorts = makePorts([retailOrder]);
+      const counterpartyBasePorts = makePorts([counterpartyOrder]);
+      const counterpartyPorts: CustomerHistoryPorts = {
+        ...counterpartyBasePorts,
+        access: {
+          ...counterpartyBasePorts.access,
+          counterparty: (input) =>
+            counterpartyBasePorts.access.counterparty(input).pipe(
+              Effect.map((facts) => ({
+                ...facts,
+                historyPermission: 'counterparty.history.read_own',
+              })),
+            ),
+        },
+      };
+
+      const retailHistory = yield* composeRetailOrderHistory(retailPorts, retailInput);
+      const counterpartyHistory = yield* composeCounterpartyOrderHistory(
+        counterpartyPorts,
+        counterpartyInput,
+      );
+      expect(retailHistory.items).toHaveLength(1);
+      expect(counterpartyHistory.items).toHaveLength(1);
+
+      const retailAccessDenied = yield* Effect.flip(
+        composeRetailOrderHistory(
+          {
+            ...retailPorts,
+            access: {
+              ...retailPorts.access,
+              retail: (input) =>
+                retailPorts.access
+                  .retail(input)
+                  .pipe(Effect.map((facts) => ({ ...facts, binding: 'ABSENT' as const }))),
+            },
+          },
+          retailInput,
+        ),
+      );
+      expect(Schema.is(HistoryAccessDenied)(retailAccessDenied)).toBe(true);
+      if (Schema.is(HistoryAccessDenied)(retailAccessDenied)) {
+        expect(retailAccessDenied.reason).toBe('CURRENT_BINDING_REQUIRED');
+      }
+
+      const counterpartyAccessDenied = yield* Effect.flip(
+        composeCounterpartyOrderHistory(
+          {
+            ...counterpartyPorts,
+            access: {
+              ...counterpartyPorts.access,
+              counterparty: (input) =>
+                counterpartyPorts.access
+                  .counterparty(input)
+                  .pipe(Effect.map((facts) => ({ ...facts, access: 'ABSENT' as const }))),
+            },
+          },
+          counterpartyInput,
+        ),
+      );
+      expect(Schema.is(HistoryAccessDenied)(counterpartyAccessDenied)).toBe(true);
+      if (Schema.is(HistoryAccessDenied)(counterpartyAccessDenied)) {
+        expect(counterpartyAccessDenied.reason).toBe('COUNTERPARTY_ACCESS_REQUIRED');
+      }
+
+      const retailPermissionDenied = yield* Effect.flip(
+        composeRetailOrderHistory(
+          {
+            ...retailPorts,
+            access: {
+              ...retailPorts.access,
+              retail: (input) =>
+                retailPorts.access
+                  .retail(input)
+                  .pipe(
+                    Effect.map((facts) => ({ ...facts, historyPermission: 'ABSENT' as const })),
+                  ),
+            },
+          },
+          retailInput,
+        ),
+      );
+      expect(Schema.is(HistoryAccessDenied)(retailPermissionDenied)).toBe(true);
+      if (Schema.is(HistoryAccessDenied)(retailPermissionDenied)) {
+        expect(retailPermissionDenied.reason).toBe('HISTORY_PERMISSION_REQUIRED');
+      }
+
+      const counterpartyPermissionDenied = yield* Effect.flip(
+        composeCounterpartyOrderHistory(
+          {
+            ...counterpartyPorts,
+            access: {
+              ...counterpartyPorts.access,
+              counterparty: (input) =>
+                counterpartyPorts.access
+                  .counterparty(input)
+                  .pipe(Effect.map((facts) => ({ ...facts, historyPermission: null }))),
+            },
+          },
+          counterpartyInput,
+        ),
+      );
+      expect(Schema.is(HistoryAccessDenied)(counterpartyPermissionDenied)).toBe(true);
+      if (Schema.is(HistoryAccessDenied)(counterpartyPermissionDenied)) {
+        expect(counterpartyPermissionDenied.reason).toBe(
+          'COUNTERPARTY_HISTORY_PERMISSION_REQUIRED',
+        );
+      }
+
+      const retailPolicyDenied = yield* Effect.flip(
+        composeRetailOrderHistory(
+          {
+            ...retailPorts,
+            access: {
+              ...retailPorts.access,
+              retail: (input) =>
+                retailPorts.access
+                  .retail(input)
+                  .pipe(Effect.map((facts) => ({ ...facts, policy: 'DENIED' as const }))),
+            },
+          },
+          retailInput,
+        ),
+      );
+      expect(Schema.is(HistoryAccessDenied)(retailPolicyDenied)).toBe(true);
+      if (Schema.is(HistoryAccessDenied)(retailPolicyDenied)) {
+        expect(retailPolicyDenied.reason).toBe('OWNER_POLICY_DENIED');
+      }
+
+      const counterpartyPolicyDenied = yield* Effect.flip(
+        composeCounterpartyOrderHistory(
+          {
+            ...counterpartyPorts,
+            access: {
+              ...counterpartyPorts.access,
+              counterparty: (input) =>
+                counterpartyPorts.access
+                  .counterparty(input)
+                  .pipe(Effect.map((facts) => ({ ...facts, policy: 'DENIED' as const }))),
+            },
+          },
+          counterpartyInput,
+        ),
+      );
+      expect(Schema.is(HistoryAccessDenied)(counterpartyPolicyDenied)).toBe(true);
+      if (Schema.is(HistoryAccessDenied)(counterpartyPolicyDenied)) {
+        expect(counterpartyPolicyDenied.reason).toBe('OWNER_POLICY_DENIED');
+      }
+
+      const counterpartyAssociationDenied = yield* Effect.flip(
+        composeCounterpartyOrderHistory(
+          {
+            ...counterpartyPorts,
+            counterpartyProfiles: { current: () => Effect.succeed('ABSENT' as const) },
+          },
+          counterpartyInput,
+        ),
+      );
+      expect(Schema.is(HistoryAccessDenied)(counterpartyAssociationDenied)).toBe(true);
+      if (Schema.is(HistoryAccessDenied)(counterpartyAssociationDenied)) {
+        expect(counterpartyAssociationDenied.reason).toBe('TARGET_CONTEXT_MISMATCH');
+      }
+
+      const hiddenRetail = yield* composeRetailOrderHistory(
+        {
+          ...retailPorts,
+          visibility: {
+            get: ({ recordRef, subject }) =>
+              Effect.succeed({
+                fact: { ...visibleFact(recordRef.resourceId, subject), state: 'CUSTOMER_HIDDEN' },
+                outcome: 'FOUND' as const,
+              }),
+          },
+        },
+        retailInput,
+      );
+      const hiddenCounterparty = yield* composeCounterpartyOrderHistory(
+        {
+          ...counterpartyPorts,
+          visibility: {
+            get: ({ recordRef, subject }) =>
+              Effect.succeed({
+                fact: { ...visibleFact(recordRef.resourceId, subject), state: 'CUSTOMER_HIDDEN' },
+                outcome: 'FOUND' as const,
+              }),
+          },
+        },
+        counterpartyInput,
+      );
+      expect(hiddenRetail.items).toEqual([]);
+      expect(hiddenCounterparty.items).toEqual([]);
+    }),
 );
 
 it.effect('authorizes direct visibility evidence references before returning a grant', () =>
@@ -1117,49 +1316,4 @@ it.effect(
       );
       expect(failure._tag).toBe('Failure');
     }),
-);
-
-it.effect('requires exact current retail authority and strong order-bound verification', () =>
-  Effect.gen(function* guestClaim() {
-    const basePorts = makePorts([]);
-    const ports: CustomerHistoryPorts = {
-      ...basePorts,
-      verification: { verifyGuestClaim: () => Effect.succeed('NOT_VERIFIED') },
-    };
-
-    const result = yield* evaluateGuestOrderClaim(ports, {
-      now,
-      orderRef: orderRef('guest-order-1'),
-      principalId,
-      profileRef: retailProfileRef,
-      verificationEvidenceRef: 'verification-attempt-1',
-    });
-
-    expect(result).toEqual({ outcome: 'VERIFICATION_REQUIRED' });
-  }),
-);
-
-it.effect('does not classify Guest Order existence or state before proof submission', () =>
-  Effect.gen(function* opaqueGuestPreflight() {
-    const basePorts = makePorts([]);
-    let candidateLookups = 0;
-    const ports: CustomerHistoryPorts = {
-      ...basePorts,
-      orders: {
-        ...basePorts.orders,
-        getForGuestClaim: () => {
-          candidateLookups += 1;
-          return Effect.succeed({ outcome: 'NOT_FOUND' });
-        },
-      },
-    };
-    const result = yield* preflightGuestOrderClaim(ports, {
-      now,
-      orderRef: orderRef('unknown-order'),
-      principalId,
-      profileRef: retailProfileRef,
-    });
-    expect(result).toEqual({ outcome: 'VERIFICATION_REQUIRED' });
-    expect(candidateLookups).toBe(0);
-  }),
 );

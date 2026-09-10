@@ -1,8 +1,7 @@
 /* eslint-disable anti-slop/no-chained-type-assertions, typescript/no-unsafe-type-assertion -- The test harness decodes database-shaped fixture rows through each owner routine schema before exposing Core's private branded transaction capability; expires: 2027-03-31. */
 import { ScopedRoutineInvocationError, TrustedPrincipalContextSchema } from '@app/core-runtime';
 import type { ScopedRoutineDefinition, ScopedTransactionExecutor } from '@app/core-runtime';
-import { CommercialFxConversionResponseSchema } from '@app/commerce-fx/api/client';
-import { DateTime, Effect, Match, Option, Schema } from 'effect';
+import { Effect, Match, Option, Schema } from 'effect';
 import { expect, it } from 'effect-rstest';
 
 import {
@@ -10,7 +9,6 @@ import {
   changePrincipalPurchaseLimitOverride,
   purchaseApprovalTriggerEvidenceSourceForTransaction,
   purchaseLimitEvaluationSourceForTransaction,
-  purchaseLimitFxFromCommerceFxClient,
   purchaseLimitRoutineAllowlist,
   readCurrentPurchaseLimitPolicy,
   readCurrentPurchaseLimitPolicyState,
@@ -18,7 +16,6 @@ import {
 import { TriggerPurchaseApprovalPayloadSchema } from '../../shared/actions/trigger-purchase-approval.ts';
 import { PurchaseApprovalDependencyUnavailableSchema } from '../../shared/domain/purchase-limit-approval-trigger.ts';
 import {
-  evaluatePurchaseLimit,
   PurchaseLimitEvaluationContextSchema,
   PurchaseLimitEvaluationQuerySchema,
 } from '../../shared/domain/purchase-limit-evaluation.ts';
@@ -28,7 +25,6 @@ import {
   PurchaseLimitPolicyConflictSchema,
 } from '../../shared/domain/purchase-limit-policy.ts';
 import { ExactNonNegativeDecimalSchema } from '../../shared/domain/purchase-limit.ts';
-import { PurchaseLimitFxUnavailableSchema } from '../../shared/domain/purchase-limit-fx-port.ts';
 
 const { readFileSync } = process.getBuiltinModule('node:fs');
 
@@ -38,7 +34,7 @@ const actorPrincipalId = '30000000-0000-4000-8000-000000000001';
 const targetPrincipalId = '30000000-0000-4000-8000-000000000002';
 const actionInvocationId = '40000000-0000-4000-8000-000000000001';
 const amount100 = Schema.decodeUnknownSync(ExactNonNegativeDecimalSchema)('100');
-const fxContext = {
+const evaluationContext = {
   contextRevision: 'commerce-context-9',
   purchasingContext: {
     channelId: 'b2b-web',
@@ -50,40 +46,6 @@ const fxContext = {
   requestCorrelation: 'purchase-limit-evaluation-9',
   requestedAt: '2026-09-09T10:05:00.000Z',
 } as const;
-const sameCurrencyFxResponse = Schema.decodeUnknownSync(CommercialFxConversionResponseSchema)({
-  _tag: 'SAME_CURRENCY_NO_CONVERSION',
-  arithmeticVersion: 'commercial-fx-arithmetic.v1',
-  contextRevision: 'commerce-context-9',
-  decidedAt: '2026-09-09T10:05:00.000Z',
-  purpose: 'PURCHASE_LIMIT_COMPARISON',
-  resultAmount: { amount: '100', currencyCode: 'CZK' },
-  sourceAmount: { amount: '100', currencyCode: 'CZK' },
-});
-const resolvedFxResponse = Schema.decodeUnknownSync(CommercialFxConversionResponseSchema)({
-  _tag: 'FX_CONVERSION_RESOLVED',
-  arithmeticVersion: 'commercial-fx-arithmetic.v1',
-  contextRevision: 'commerce-context-9',
-  decidedAt: '2026-09-09T10:04:30.000Z',
-  direction: 'SOURCE_TO_TARGET',
-  maximumRateAgeSeconds: 300,
-  normalizedRate: '25',
-  observedAt: '2026-09-09T10:04:00.000Z',
-  policyRevision: 'fx-policy-7',
-  providerCorrelationRef: 'provider-quote-88',
-  purpose: 'PURCHASE_LIMIT_COMPARISON',
-  quotedRate: '25',
-  rateSourceId: 'cnb-commercial',
-  resultAmount: { amount: '2500.000000000000000000', currencyCode: 'CZK' },
-  retrievedAt: '2026-09-09T10:04:10.000Z',
-  roundingIncrement: '0.01',
-  roundingMode: 'half-even',
-  roundingRule: 'QUANTIZE_TO_INCREMENT',
-  roundingRuleRevision: 'fx-rounding-7',
-  sourceAmount: { amount: '100', currencyCode: 'EUR' },
-  targetMinorUnits: 2,
-  validFrom: '2026-09-09T10:00:00.000Z',
-  validTo: '2026-09-09T11:00:00.000Z',
-});
 const counterpartyRef = {
   moduleId: 'party.registry',
   resourceId: '50000000-0000-4000-8000-000000000001',
@@ -97,13 +59,13 @@ const trustedPrincipal = Schema.decodeUnknownSync(TrustedPrincipalContextSchema)
   legalEntityId,
   principalId: targetPrincipalId,
   tenantId,
-  trustedStorefrontId: fxContext.purchasingContext.storefrontId,
+  trustedStorefrontId: evaluationContext.purchasingContext.storefrontId,
 });
 const evaluationScope = {
   ...trustedPrincipal,
   correlationId: 'purchase-limit-evaluation-test',
   legalEntityId,
-  trustedStorefrontId: fxContext.purchasingContext.storefrontId,
+  trustedStorefrontId: evaluationContext.purchasingContext.storefrontId,
 } as const;
 const currentCounterpartyRole = {
   managedLegalEntityId: legalEntityId,
@@ -411,114 +373,8 @@ it.effect('maps Core routine failure to a sanitized typed dependency failure', (
   }),
 );
 
-it.effect('uses a local exact same-currency fast path without invoking Commercial FX', () =>
-  Effect.gen(function* sameCurrency() {
-    let invocations = 0;
-    const fx = purchaseLimitFxFromCommerceFxClient(fxContext, () => {
-      invocations += 1;
-      return Effect.succeed(sameCurrencyFxResponse);
-    });
-    const comparable = yield* fx.comparableValue({
-      purchaseValue: {
-        monetaryAmount: { amount: amount100, currency: 'CZK' },
-        roundingRuleRevision: 'pricing-rounding-4',
-        sourceRef: 'purchase-value-9',
-        sourceRevision: 'purchase-value-revision-9',
-      },
-      targetCurrency: 'CZK',
-    });
-    expect(invocations).toBe(0);
-    expect(comparable).toMatchObject({
-      decisionRef: 'purchase-value-9',
-      monetaryAmount: { amount: '100', currency: 'CZK' },
-      source: 'purchase-value',
-      sourceRevision: 'purchase-value-revision-9',
-    });
-  }),
-);
-
-it.effect('requests purpose-specific public Commercial FX and maps resolved evidence exactly', () =>
-  Effect.gen(function* crossCurrency() {
-    const requests: object[] = [];
-    const fx = purchaseLimitFxFromCommerceFxClient(fxContext, (request) => {
-      requests.push(request);
-      return Effect.succeed(resolvedFxResponse);
-    });
-    const comparable = yield* fx.comparableValue({
-      purchaseValue: {
-        monetaryAmount: { amount: amount100, currency: 'EUR' },
-        roundingRuleRevision: 'pricing-rounding-4',
-        sourceRef: 'purchase-value-9',
-        sourceRevision: 'purchase-value-revision-9',
-      },
-      targetCurrency: 'CZK',
-    });
-    expect(requests).toMatchObject([
-      {
-        contextRevision: 'commerce-context-9',
-        purpose: 'PURCHASE_LIMIT_COMPARISON',
-        sourceAmount: { amount: '100', currencyCode: 'EUR' },
-        targetCurrencyCode: 'CZK',
-      },
-    ]);
-    expect(comparable).toMatchObject({
-      arithmeticVersion: 'commercial-fx-arithmetic.v1',
-      decisionRef: 'provider-quote-88',
-      monetaryAmount: { amount: '2500', currency: 'CZK' },
-      normalizedRate: '25',
-      policyRevision: 'fx-policy-7',
-      roundingIncrement: '0.01',
-      roundingMode: 'half-even',
-      roundingRule: 'QUANTIZE_TO_INCREMENT',
-      roundingRuleRevision: 'fx-rounding-7',
-      source: 'commercial-fx',
-      sourcePurchaseValueRevision: 'purchase-value-revision-9',
-      sourceRevision: 'provider-quote-88',
-      targetMinorUnits: 2,
-    });
-    expect(DateTime.formatIso(comparable.decidedAt)).toBe('2026-09-09T10:04:30.000Z');
-  }),
-);
-
-it.effect('rejects valid FX responses that do not match the exact comparison request', () =>
-  Effect.gen(function* rejectMismatchedFxEvidence() {
-    const encoded = Schema.encodeUnknownSync(CommercialFxConversionResponseSchema)(
-      resolvedFxResponse,
-    );
-    const mismatches = [
-      { ...encoded, contextRevision: 'other-context' },
-      { ...encoded, purpose: 'PRICING' },
-      { ...encoded, sourceAmount: { amount: '101', currencyCode: 'EUR' } },
-      { ...encoded, resultAmount: { amount: '2500', currencyCode: 'USD' } },
-      { ...encoded, observedAt: '2026-09-09T10:04:31.000Z' },
-      { ...encoded, retrievedAt: '2026-09-09T10:04:31.000Z' },
-      { ...encoded, validFrom: '2026-09-09T10:04:31.000Z' },
-      { ...encoded, validTo: '2026-09-09T10:04:30.000Z' },
-      { ...encoded, maximumRateAgeSeconds: 29 },
-    ];
-    for (const candidate of mismatches) {
-      const response = Schema.decodeUnknownSync(CommercialFxConversionResponseSchema)(candidate);
-      const fx = purchaseLimitFxFromCommerceFxClient(fxContext, () => Effect.succeed(response));
-      const failure = yield* Effect.flip(
-        fx.comparableValue({
-          purchaseValue: {
-            monetaryAmount: { amount: amount100, currency: 'EUR' },
-            roundingRuleRevision: 'pricing-rounding-4',
-            sourceRef: 'purchase-value-9',
-            sourceRevision: 'purchase-value-revision-9',
-          },
-          targetCurrency: 'CZK',
-        }),
-      );
-      expect(Schema.is(PurchaseLimitFxUnavailableSchema)(failure)).toBe(true);
-      expect(failure.reason).toContain('does not match the exact request');
-    }
-  }),
-);
-
 it.effect('composes trusted Current facts with both owner-local policy revisions', () =>
   Effect.gen(function* composeEvaluationSource() {
-    let fxInvocations = 0;
     const authoritativePurchaseValue = {
       monetaryAmount: { amount: amount100, currency: 'CZK' },
       roundingRuleRevision: 'pricing-rounding-4',
@@ -542,21 +398,17 @@ it.effect('composes trusted Current facts with both owner-local policy revisions
       evaluationScope,
       {
         resolveCurrent: ({ scope }) => {
-          expect(scope.storefrontId).toBe(fxContext.purchasingContext.storefrontId);
+          expect(scope.storefrontId).toBe(evaluationContext.purchasingContext.storefrontId);
           return Effect.succeed(
             Schema.decodeUnknownSync(PurchaseLimitEvaluationCurrentFactsSchema)({
-              channelId: fxContext.purchasingContext.channelId,
-              contextRevision: fxContext.contextRevision,
+              channelId: evaluationContext.purchasingContext.channelId,
+              contextRevision: evaluationContext.contextRevision,
               currentSourceRevisions: externalSourceRevisions,
-              marketId: fxContext.purchasingContext.marketId,
+              marketId: evaluationContext.purchasingContext.marketId,
               purchaseValue: authoritativePurchaseValue,
             }),
           );
         },
-      },
-      () => {
-        fxInvocations += 1;
-        return Effect.succeed(resolvedFxResponse);
       },
     );
     const query = Schema.decodeUnknownSync(PurchaseLimitEvaluationQuerySchema)({
@@ -573,7 +425,7 @@ it.effect('composes trusted Current facts with both owner-local policy revisions
         ...authoritativePurchaseValue,
         monetaryAmount: { amount: '999', currency: 'CZK' },
       },
-      storefrontId: fxContext.purchasingContext.storefrontId,
+      storefrontId: evaluationContext.purchasingContext.storefrontId,
     });
     const input = yield* source.loadCurrent({
       principalId: targetPrincipalId,
@@ -585,11 +437,10 @@ it.effect('composes trusted Current facts with both owner-local policy revisions
       { revision: 'counterparty-policy:1', source: 'counterparty-policy' },
       { revision: 'principal-override:absent', source: 'principal-override' },
     ]);
-    expect(fxInvocations).toBe(0);
   }),
 );
 
-it.effect('allows an initial cross-currency evaluation without predicting the FX decision', () =>
+it.effect('fails closed with a typed dependency outcome for cross-currency Launch inputs', () =>
   Effect.gen(function* firstCrossCurrencyEvaluation() {
     const authoritativePurchaseValue = {
       monetaryAmount: { amount: amount100, currency: 'EUR' },
@@ -616,15 +467,14 @@ it.effect('allows an initial cross-currency evaluation without predicting the FX
         resolveCurrent: () =>
           Effect.succeed(
             Schema.decodeUnknownSync(PurchaseLimitEvaluationCurrentFactsSchema)({
-              channelId: fxContext.purchasingContext.channelId,
-              contextRevision: fxContext.contextRevision,
+              channelId: evaluationContext.purchasingContext.channelId,
+              contextRevision: evaluationContext.contextRevision,
               currentSourceRevisions: externalSourceRevisions,
-              marketId: fxContext.purchasingContext.marketId,
+              marketId: evaluationContext.purchasingContext.marketId,
               purchaseValue: authoritativePurchaseValue,
             }),
           ),
       },
-      () => Effect.succeed(resolvedFxResponse),
     );
     const query = Schema.decodeUnknownSync(PurchaseLimitEvaluationQuerySchema)({
       counterpartyRef,
@@ -637,21 +487,21 @@ it.effect('allows an initial cross-currency evaluation without predicting the FX
         },
       ],
       purchaseValue: authoritativePurchaseValue,
-      storefrontId: fxContext.purchasingContext.storefrontId,
+      storefrontId: evaluationContext.purchasingContext.storefrontId,
     });
-    const input = yield* source.loadCurrent({
-      principalId: targetPrincipalId,
-      query,
-    });
-    expect(input.currentSourceRevisions).toContainEqual({
-      revision: 'provider-quote-88',
-      source: 'commercial-fx',
-    });
-    expect(
-      Schema.is(Schema.Struct({ _tag: Schema.Literal('APPROVAL_REQUIRED') }))(
-        evaluatePurchaseLimit(input),
-      ),
-    ).toBe(true);
+    const failure = yield* Effect.flip(
+      source.loadCurrent({
+        principalId: targetPrincipalId,
+        query,
+      }),
+    );
+    if (!Schema.is(PurchaseLimitDependencyUnavailableSchema)(failure)) {
+      throw new Error('Expected a typed Purchase Limit dependency failure');
+    }
+    expect(failure.dependency).toBe('commerce.customer-context.purchase-limit-cross-currency');
+    expect(failure.reason).toContain(
+      'Current purpose-specific comparable Purchase Value is unavailable',
+    );
   }),
 );
 
@@ -745,10 +595,10 @@ it.effect('re-reads exact profile and proposal evidence for the approval trigger
         resolveCurrent: () =>
           Effect.succeed(
             Schema.decodeUnknownSync(PurchaseLimitEvaluationCurrentFactsSchema)({
-              channelId: fxContext.purchasingContext.channelId,
-              contextRevision: fxContext.contextRevision,
+              channelId: evaluationContext.purchasingContext.channelId,
+              contextRevision: evaluationContext.contextRevision,
               currentSourceRevisions: approvalExternalRevisions,
-              marketId: fxContext.purchasingContext.marketId,
+              marketId: evaluationContext.purchasingContext.marketId,
               purchaseValue: proposalValue,
             }),
           ),
@@ -870,14 +720,14 @@ it.effect('rejects approval evidence when the profile revision is not owner-curr
         resolveCurrent: () =>
           Effect.succeed(
             Schema.decodeUnknownSync(PurchaseLimitEvaluationCurrentFactsSchema)({
-              channelId: fxContext.purchasingContext.channelId,
-              contextRevision: fxContext.contextRevision,
+              channelId: evaluationContext.purchasingContext.channelId,
+              contextRevision: evaluationContext.contextRevision,
               currentSourceRevisions: expectedSourceRevisions.filter(
                 ({ source: candidateSource }) =>
                   candidateSource !== 'counterparty-policy' &&
                   candidateSource !== 'principal-override',
               ),
-              marketId: fxContext.purchasingContext.marketId,
+              marketId: evaluationContext.purchasingContext.marketId,
               purchaseValue: proposalValue,
             }),
           ),
@@ -904,8 +754,8 @@ it.effect('rejects an external Currentness provider claiming owner-local revisio
         resolveCurrent: () =>
           Effect.succeed(
             Schema.decodeUnknownSync(PurchaseLimitEvaluationCurrentFactsSchema)({
-              channelId: fxContext.purchasingContext.channelId,
-              contextRevision: fxContext.contextRevision,
+              channelId: evaluationContext.purchasingContext.channelId,
+              contextRevision: evaluationContext.contextRevision,
               currentSourceRevisions: [
                 ...externalSourceRevisions,
                 {
@@ -913,7 +763,7 @@ it.effect('rejects an external Currentness provider claiming owner-local revisio
                   source: 'counterparty-policy',
                 },
               ],
-              marketId: fxContext.purchasingContext.marketId,
+              marketId: evaluationContext.purchasingContext.marketId,
               purchaseValue: {
                 monetaryAmount: { amount: amount100, currency: 'CZK' },
                 roundingRuleRevision: 'pricing-rounding-4',
@@ -943,68 +793,13 @@ it.effect('rejects an external Currentness provider claiming owner-local revisio
         sourceRef: 'purchase-value-9',
         sourceRevision: 'purchase-value-revision-9',
       },
-      storefrontId: fxContext.purchasingContext.storefrontId,
+      storefrontId: evaluationContext.purchasingContext.storefrontId,
     });
     const failure = yield* Effect.flip(
       source.loadCurrent({ principalId: targetPrincipalId, query }),
     );
     expect(Schema.is(PurchaseLimitDependencyUnavailableSchema)(failure)).toBe(true);
     expect(failure.reason).toContain('claimed owner-local sources');
-  }),
-);
-
-it.effect('maps a non-resolution Commercial FX success to a typed fail-closed failure', () =>
-  Effect.gen(function* fxUnavailable() {
-    const fx = purchaseLimitFxFromCommerceFxClient(fxContext, () =>
-      Effect.succeed(sameCurrencyFxResponse),
-    );
-    const failure = yield* Effect.flip(
-      fx.comparableValue({
-        purchaseValue: {
-          monetaryAmount: { amount: amount100, currency: 'EUR' },
-          roundingRuleRevision: 'pricing-rounding-4',
-          sourceRef: 'purchase-value-9',
-          sourceRevision: 'purchase-value-revision-9',
-        },
-        targetCurrency: 'CZK',
-      }),
-    );
-    expect(Schema.is(PurchaseLimitFxUnavailableSchema)(failure)).toBe(true);
-    expect(failure.reason).toContain('SAME_CURRENCY_NO_CONVERSION');
-  }),
-);
-
-it.effect('rejects redacted Commercial FX evidence when an exact comparison is required', () =>
-  Effect.gen(function* redactedFxUnavailable() {
-    const redacted = Schema.decodeUnknownSync(CommercialFxConversionResponseSchema)({
-      _tag: 'FX_CONVERSION_REDACTED',
-      arithmeticVersion: 'commercial-fx-arithmetic.v1',
-      contextRevision: fxContext.contextRevision,
-      decidedAt: '2026-09-09T10:04:30.000Z',
-      policyRevision: 'fx-policy-7',
-      purpose: 'PURCHASE_LIMIT_COMPARISON',
-      resultAmount: { amount: '2500', currencyCode: 'CZK' },
-      roundingIncrement: '0.01',
-      roundingMode: 'half-even',
-      roundingRule: 'QUANTIZE_TO_INCREMENT',
-      roundingRuleRevision: 'fx-rounding-7',
-      sourceAmount: { amount: '100', currencyCode: 'EUR' },
-      targetMinorUnits: 2,
-    });
-    const fx = purchaseLimitFxFromCommerceFxClient(fxContext, () => Effect.succeed(redacted));
-    const failure = yield* Effect.flip(
-      fx.comparableValue({
-        purchaseValue: {
-          monetaryAmount: { amount: amount100, currency: 'EUR' },
-          roundingRuleRevision: 'pricing-rounding-4',
-          sourceRef: 'purchase-value-9',
-          sourceRevision: 'purchase-value-revision-9',
-        },
-        targetCurrency: 'CZK',
-      }),
-    );
-    expect(Schema.is(PurchaseLimitFxUnavailableSchema)(failure)).toBe(true);
-    expect(failure.reason).toContain('FX_CONVERSION_REDACTED');
   }),
 );
 

@@ -7,7 +7,6 @@ import { loadDatabaseConnectionPair } from '../packages/core-runtime/src/db/conf
 const EXPECTED_APPLICATION_SCHEMAS = [
   'auth',
   'commerce_customer_context',
-  'commerce_fx',
   'contacts',
   'core',
   'party',
@@ -16,7 +15,6 @@ const EXPECTED_APPLICATION_SCHEMAS = [
 const EXPECTED_MIGRATION_JOURNALS = [
   '__drizzle_migrations_auth',
   '__drizzle_migrations_commerce_customer_context',
-  '__drizzle_migrations_commerce_fx',
   '__drizzle_migrations_contacts',
   '__drizzle_migrations_core',
   '__drizzle_migrations_party',
@@ -97,7 +95,6 @@ const ownerVerifierPaths = [
   '../verticals/party-registry/scripts/verify-db-schema.mts',
   '../verticals/party-registry/scripts/verify-engagement-db-schema.mts',
   '../verticals/payment-term-catalog/scripts/verify-db-schema.mts',
-  '../verticals/commerce-fx/scripts/verify-db-schema.mts',
   '../verticals/commerce-customer-context/scripts/verify-db-schema.mts',
 ] as const;
 

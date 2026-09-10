@@ -114,7 +114,6 @@ export const customerHistoryPortsForOperation = Effect.fn(
                     Match.tag('PROFILE_RECONCILIATION_REQUIRED', () => 'INDETERMINATE' as const),
                     Match.tag('PROFILE_AVAILABLE', ({ profile }) =>
                       profile.kind === 'COUNTERPARTY' &&
-                      profile.state === 'ACTIVE' &&
                       exactRef(profile.profileRef, input.profileRef) &&
                       exactRef(profile.subject.counterpartyRef, input.counterpartyRef)
                         ? ('CURRENT' as const)

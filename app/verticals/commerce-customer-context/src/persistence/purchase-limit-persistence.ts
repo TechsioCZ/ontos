@@ -4,16 +4,7 @@ import type {
   ScopedRoutineInvocationError,
   ScopedTransactionExecutor,
 } from '@app/core-runtime';
-import {
-  CommercialFxConversionRequestSchema,
-  executeCommercialFxConversionWithAuthorization,
-} from '@app/commerce-fx/api/client';
-import type {
-  CommercialFxConversionClientOptions,
-  CommercialFxConversionRequest,
-  CommercialFxConversionResponse,
-} from '@app/commerce-fx/api/client';
-import { DateTime, Duration, Effect, Layer, Match, Option, Redacted, Schema } from 'effect';
+import { DateTime, Effect, Layer, Match, Option, Schema } from 'effect';
 
 import { PurchaseApprovalTriggerEvidenceSourceFactory } from '../actions/trigger-purchase-approval.action.ts';
 import type {
@@ -72,8 +63,6 @@ import type {
   PurchaseLimitEvaluationCurrentFacts,
   PurchaseLimitEvaluationCurrentnessPortService,
 } from '../../shared/domain/purchase-limit-evaluation-currentness-port.ts';
-import { CommerceFxGatewayCredentialService } from '../../shared/domain/commerce-fx-gateway-credential.ts';
-import type { CommerceFxGatewayCredentialIssuer } from '../../shared/domain/commerce-fx-gateway-credential.ts';
 import { PurchaseLimitFxUnavailableSchema } from '../../shared/domain/purchase-limit-fx-port.ts';
 import type {
   PurchaseLimitFxPort,
@@ -625,35 +614,7 @@ export const purchaseLimitPolicyServiceFactoryLayer = Layer.succeed(
   policyFactory,
 );
 
-type CommercialFxConversionRequestEncoded = typeof CommercialFxConversionRequestSchema.Encoded;
-
-export interface CommerceFxPurchaseLimitContext {
-  readonly clientOptions?: CommercialFxConversionClientOptions;
-  readonly contextRevision: CommercialFxConversionRequestEncoded['contextRevision'];
-  readonly purchasingContext: CommercialFxConversionRequestEncoded['purchasingContext'];
-  readonly requestCorrelation: string;
-  readonly requestedAt: CommercialFxConversionRequestEncoded['requestedAt'];
-}
-
-type CommercialFxClientFailure =
-  ReturnType<typeof executeCommercialFxConversionWithAuthorization> extends Effect.Effect<
-    unknown,
-    infer Failure,
-    unknown
-  >
-    ? Failure
-    : never;
-
-type CommercialFxExecutor = (
-  request: CommercialFxConversionRequest,
-  requestCorrelation: string,
-  options?: CommercialFxConversionClientOptions,
-) => Effect.Effect<
-  CommercialFxConversionResponse,
-  CommercialFxClientFailure | PurchaseLimitFxUnavailable
->;
-
-const fxUnavailable = (reason: string, cause?: unknown) => {
+const fxUnavailable = (reason: string, cause?: unknown): PurchaseLimitFxUnavailable => {
   const failure = PurchaseLimitFxUnavailableSchema.make({
     code: 'purchase_limit_fx_unavailable',
     reason,
@@ -667,190 +628,43 @@ const fxUnavailable = (reason: string, cause?: unknown) => {
   return failure;
 };
 
-const unavailableCommercialFxExecutor: CommercialFxExecutor = () =>
-  Effect.fail(fxUnavailable('No server-authorized Commercial FX executor is configured'));
-
-const authorizedCommercialFxExecutor =
-  (
-    issuer: CommerceFxGatewayCredentialIssuer,
-    legalEntityId: string,
-    trustedStorefrontId: string,
-  ): CommercialFxExecutor =>
-  (request, requestCorrelation, options) => {
-    if (request.purchasingContext.storefrontId !== trustedStorefrontId) {
+/** Launch supports exact same-currency Purchase Limit comparisons only. */
+const purchaseLimitFxForLaunch = (decidedAt: string): PurchaseLimitFxPort => ({
+  comparableValue: ({ purchaseValue, targetCurrency }) => {
+    if (purchaseValue.monetaryAmount.currency !== targetCurrency) {
       return Effect.fail(
         fxUnavailable(
-          'The Commercial FX request Storefront does not match the trusted owner scope',
-        ),
-      );
-    }
-    return issuer
-      .issue({
-        audience: 'commerce-fx',
-        legalEntityId,
-        requestCorrelation,
-      })
-      .pipe(
-        Effect.flatMap((credential) =>
-          executeCommercialFxConversionWithAuthorization(
-            request,
-            Redacted.value(credential),
-            requestCorrelation,
-            options,
-          ),
-        ),
-      );
-  };
-
-type CommercialFxResolved = Extract<
-  CommercialFxConversionResponse,
-  { readonly _tag: 'FX_CONVERSION_RESOLVED' }
->;
-
-const hasCurrentCommercialFxEvidence = (resolved: CommercialFxResolved): boolean =>
-  DateTime.isLessThanOrEqualTo(resolved.observedAt, resolved.decidedAt) &&
-  DateTime.isLessThanOrEqualTo(resolved.retrievedAt, resolved.decidedAt) &&
-  DateTime.isLessThanOrEqualTo(resolved.observedAt, resolved.retrievedAt) &&
-  DateTime.isLessThanOrEqualTo(resolved.validFrom, resolved.decidedAt) &&
-  DateTime.isLessThan(resolved.decidedAt, resolved.validTo) &&
-  DateTime.toEpochMillis(resolved.decidedAt) - DateTime.toEpochMillis(resolved.observedAt) <=
-    Duration.toMillis(Duration.seconds(resolved.maximumRateAgeSeconds));
-
-const comparableValueFromFxResolution = (
-  request: CommercialFxConversionRequest,
-  purchaseValue: PurchaseValue,
-  resolved: CommercialFxResolved,
-) => {
-  if (
-    resolved.contextRevision !== request.contextRevision ||
-    resolved.purpose !== 'PURCHASE_LIMIT_COMPARISON' ||
-    resolved.sourceAmount.currencyCode !== request.sourceAmount.currencyCode ||
-    canonicalDecimal(resolved.sourceAmount.amount) !==
-      canonicalDecimal(request.sourceAmount.amount) ||
-    resolved.resultAmount.currencyCode !== request.targetCurrencyCode ||
-    !hasCurrentCommercialFxEvidence(resolved)
-  ) {
-    return Effect.fail(
-      fxUnavailable('Commercial FX returned evidence that does not match the exact request'),
-    );
-  }
-  return Schema.decodeUnknownEffect(PurchaseLimitComparableValueSchema)({
-    ...resolved,
-    contextRevision: resolved.contextRevision,
-    decidedAt: DateTime.formatIso(resolved.decidedAt),
-    decisionRef: resolved.providerCorrelationRef,
-    direction: resolved.direction,
-    maximumRateAgeSeconds: resolved.maximumRateAgeSeconds,
-    monetaryAmount: {
-      amount: canonicalDecimal(resolved.resultAmount.amount),
-      currency: resolved.resultAmount.currencyCode,
-    },
-    normalizedRate: resolved.normalizedRate,
-    observedAt: DateTime.formatIso(resolved.observedAt),
-    policyRevision: resolved.policyRevision,
-    purpose: 'PURCHASE_LIMIT_COMPARISON',
-    quotedRate: resolved.quotedRate,
-    rateSourceId: resolved.rateSourceId,
-    retrievedAt: DateTime.formatIso(resolved.retrievedAt),
-    roundingMode: resolved.roundingMode,
-    source: 'commercial-fx',
-    sourcePurchaseValueRevision: purchaseValue.sourceRevision,
-    sourceRevision: resolved.providerCorrelationRef,
-    targetMinorUnits: resolved.targetMinorUnits,
-    validFrom: DateTime.formatIso(resolved.validFrom),
-    validTo: DateTime.formatIso(resolved.validTo),
-  }).pipe(
-    Effect.mapError((cause) =>
-      fxUnavailable('Commercial FX returned invalid comparable-value evidence', cause),
-    ),
-  );
-};
-
-const comparableValueFromFxOutcome = (
-  request: CommercialFxConversionRequest,
-  purchaseValue: PurchaseValue,
-  outcome: CommercialFxConversionResponse,
-) =>
-  Match.value(outcome).pipe(
-    Match.tag('FX_CONVERSION_RESOLVED', (resolved) =>
-      comparableValueFromFxResolution(request, purchaseValue, resolved),
-    ),
-    Match.orElse((failure) =>
-      Effect.fail(
-        fxUnavailable(
-          `Commercial FX could not resolve a Current comparable value (${failure._tag})`,
-        ),
-      ),
-    ),
-  );
-
-/**
- * Maps the published Commercial FX Read into the Purchase Limit owner port. Callers must supply
- * owner-validated Current purchasing context; no FX context is inferred from request data.
- */
-export const purchaseLimitFxFromCommerceFxClient = (
-  context: CommerceFxPurchaseLimitContext,
-  execute: CommercialFxExecutor = unavailableCommercialFxExecutor,
-): PurchaseLimitFxPort => ({
-  comparableValue: ({ purchaseValue, targetCurrency }) => {
-    if (purchaseValue.monetaryAmount.currency === targetCurrency) {
-      return Schema.decodeUnknownEffect(PurchaseLimitComparableValueSchema)({
-        decidedAt: context.requestedAt,
-        decisionRef: purchaseValue.sourceRef,
-        monetaryAmount: purchaseValue.monetaryAmount,
-        purpose: 'PURCHASE_LIMIT_COMPARISON',
-        roundingRuleRevision: purchaseValue.roundingRuleRevision,
-        source: 'purchase-value',
-        sourcePurchaseValueRevision: purchaseValue.sourceRevision,
-        sourceRevision: purchaseValue.sourceRevision,
-      }).pipe(
-        Effect.mapError((cause) =>
-          fxUnavailable('The same-currency Purchase Value evidence is invalid', cause),
+          `Cross-currency Purchase Limit comparison is not supported in the CZK Launch cutline (${purchaseValue.monetaryAmount.currency} to ${targetCurrency})`,
         ),
       );
     }
 
-    return Schema.decodeUnknownEffect(CommercialFxConversionRequestSchema)({
-      contextRevision: context.contextRevision,
-      purchasingContext: context.purchasingContext,
+    return Schema.decodeUnknownEffect(PurchaseLimitComparableValueSchema)({
+      decidedAt,
+      decisionRef: purchaseValue.sourceRef,
+      monetaryAmount: purchaseValue.monetaryAmount,
       purpose: 'PURCHASE_LIMIT_COMPARISON',
-      requestedAt: context.requestedAt,
-      sourceAmount: {
-        amount: purchaseValue.monetaryAmount.amount,
-        currencyCode: purchaseValue.monetaryAmount.currency,
-      },
-      targetCurrencyCode: targetCurrency,
+      roundingRuleRevision: purchaseValue.roundingRuleRevision,
+      source: 'purchase-value',
+      sourcePurchaseValueRevision: purchaseValue.sourceRevision,
+      sourceRevision: purchaseValue.sourceRevision,
     }).pipe(
       Effect.mapError((cause) =>
-        fxUnavailable('The Current Commercial FX request context is invalid', cause),
-      ),
-      Effect.flatMap((request) =>
-        execute(request, context.requestCorrelation, context.clientOptions).pipe(
-          Effect.mapError((cause) =>
-            fxUnavailable('The Commercial FX service is temporarily unavailable', cause),
-          ),
-          Effect.flatMap((outcome) =>
-            comparableValueFromFxOutcome(request, purchaseValue, outcome),
-          ),
-        ),
+        fxUnavailable('The same-currency Purchase Value evidence is invalid', cause),
       ),
     );
   },
 });
 
 const EVALUATION_CURRENTNESS_DEPENDENCY = 'commerce.purchase-limit-evaluation-currentness';
-const FX_DEPENDENCY = 'commerce.fx.purchase-limit-comparison';
+const FX_DEPENDENCY = 'commerce.customer-context.purchase-limit-cross-currency';
 const REQUIRED_EXTERNAL_REVISION_SOURCES = [
   'customer-commerce-policy',
   PURCHASE_PROPOSAL_SOURCE,
   PURCHASING_PROFILE_SOURCE,
   'storefront-context',
 ] as const;
-const OWNER_REVISION_SOURCES = new Set([
-  'commercial-fx',
-  COUNTERPARTY_POLICY_SOURCE,
-  PRINCIPAL_OVERRIDE_SOURCE,
-]);
+const OWNER_REVISION_SOURCES = new Set([COUNTERPARTY_POLICY_SOURCE, PRINCIPAL_OVERRIDE_SOURCE]);
 
 const dependencyUnavailableFromCause = (
   dependency: string,
@@ -986,7 +800,6 @@ export const purchaseLimitEvaluationSourceForTransaction = (
   },
   // eslint-disable-next-line effect-native/no-dependency-parameters -- This owner-local constructor is used only by the factory after yielding the Context service and by focused adapter tests; expires: 2027-09-09.
   currentness: PurchaseLimitEvaluationCurrentnessPortService,
-  executeFx: CommercialFxExecutor = unavailableCommercialFxExecutor,
 ): PurchaseLimitEvaluationSourceService => {
   const currentnessForTransaction =
     currentness.forTransaction?.(transaction, {
@@ -1067,21 +880,7 @@ export const purchaseLimitEvaluationSourceForTransaction = (
           );
         }
 
-        const fx = purchaseLimitFxFromCommerceFxClient(
-          {
-            contextRevision: facts.contextRevision,
-            purchasingContext: {
-              channelId: facts.channelId,
-              marketId: facts.marketId,
-              sellingLegalEntityId: scope.legalEntityId,
-              storefrontId: scope.trustedStorefrontId,
-              tenantId: scope.tenantId,
-            },
-            requestCorrelation: scope.correlationId,
-            requestedAt: DateTime.formatIso(decidedAt),
-          },
-          executeFx,
-        );
+        const fx = purchaseLimitFxForLaunch(DateTime.formatIso(decidedAt));
         const comparableValue = yield* comparableForPolicy(policyState, facts.purchaseValue, fx);
         const currentSourceRevisions = yield* combinedSourceRevisions(
           facts.currentSourceRevisions,
@@ -1517,7 +1316,6 @@ export const purchaseApprovalTriggerEvidenceSourceForTransaction = (
 const evaluationSourceFactoryForCurrentness = (
   // eslint-disable-next-line effect-native/no-dependency-parameters -- The layer yields this Context service before closing it into the transaction factory; expires: 2027-09-09.
   currentness: PurchaseLimitEvaluationCurrentnessPortService,
-  credentialIssuer: CommerceFxGatewayCredentialIssuer,
 ): PurchaseLimitEvaluationSourceFactoryContract => ({
   make: <Transaction>(transaction: Transaction, scope: OperationalScope) => {
     if (scope.legalEntityId === undefined || scope.trustedStorefrontId === undefined) {
@@ -1539,11 +1337,6 @@ const evaluationSourceFactoryForCurrentness = (
           trustedStorefrontId: scope.trustedStorefrontId,
         },
         currentness,
-        authorizedCommercialFxExecutor(
-          credentialIssuer,
-          scope.legalEntityId,
-          scope.trustedStorefrontId,
-        ),
       ),
     );
   },
@@ -1639,12 +1432,8 @@ export const purchaseLimitEvaluationCurrentnessLive = Layer.succeed(
 /** Real owner composition over scoped persistence, explicit Currentness, and published FX. */
 export const purchaseLimitEvaluationSourceFactoryLayer = Layer.effect(
   PurchaseLimitEvaluationSourceFactory,
-  Effect.all([PurchaseLimitEvaluationCurrentnessPort, CommerceFxGatewayCredentialService], {
-    concurrency: 2,
-  }).pipe(
-    Effect.map(([currentness, credentialIssuer]) =>
-      evaluationSourceFactoryForCurrentness(currentness, credentialIssuer),
-    ),
+  Effect.map(PurchaseLimitEvaluationCurrentnessPort, (currentness) =>
+    evaluationSourceFactoryForCurrentness(currentness),
   ),
 );
 

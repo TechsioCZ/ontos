@@ -36,7 +36,6 @@ export const COMMERCE_CUSTOMER_CONTEXT_TABLE_INVENTORY = [
   'counterparty_purchase_limit_defaults',
   'counterparty_purchasing_profiles',
   'customer_address_defaults',
-  'customer_currency_preferences',
   'customer_group_memberships',
   'customer_group_lifecycle_periods',
   'customer_group_revisions',
@@ -182,7 +181,7 @@ export const customerSettingRevisions = commerceCustomerContextSchema.table.with
     }).onDelete('restrict'),
     check(
       'ccc_setting_revisions_kind_ck',
-      sql`${table.settingKind} in ('ADDRESS_DEFAULTS', 'CURRENCY', 'GROUP_MEMBERSHIP', 'PAYMENT_TERMS', 'PRICE_GROUP')`,
+      sql`${table.settingKind} in ('ADDRESS_DEFAULTS', 'GROUP_MEMBERSHIP', 'PAYMENT_TERMS', 'PRICE_GROUP')`,
     ),
     check('ccc_setting_revisions_revision_ck', sql`${table.currentRevision} >= 0`),
     ...scopedPolicies('ccc_setting_revisions_scope', table),
@@ -876,7 +875,7 @@ export const profileReconciliationOwnerOutcomes = commerceCustomerContextSchema.
     }).onDelete('restrict'),
     check(
       'ccc_reconciliation_owner_outcomes_owner_ck',
-      sql`${table.owner} in ('PROFILE_LIFECYCLE', 'CUSTOMER_GROUP_MEMBERSHIP', 'PRICE_GROUP_ASSIGNMENT', 'CURRENCY_PREFERENCE', 'PAYMENT_TERMS', 'ADDRESS_BOOK', 'RETAIL_PORTAL_BINDING', 'COUNTERPARTY_ACCESS', 'PURCHASE_LIMITS', 'APPROVAL', 'CONNECTOR_CORRELATION')`,
+      sql`${table.owner} in ('PROFILE_LIFECYCLE', 'CUSTOMER_GROUP_MEMBERSHIP', 'PRICE_GROUP_ASSIGNMENT', 'PAYMENT_TERMS', 'ADDRESS_BOOK', 'RETAIL_PORTAL_BINDING', 'COUNTERPARTY_ACCESS', 'PURCHASE_LIMITS', 'APPROVAL', 'CONNECTOR_CORRELATION')`,
     ),
     check(
       'ccc_reconciliation_owner_outcomes_status_ck',
@@ -1238,51 +1237,6 @@ export const customerPriceGroupAssignments = commerceCustomerContextSchema.table
     positiveRevision('ccc_price_assignments_revision_ck', table.revision),
     optionalTrimmed('ccc_price_assignments_reason_ck', table.reason),
     ...scopedPolicies('ccc_price_assignments_scope', table),
-  ],
-);
-
-export const customerCurrencyPreferences = commerceCustomerContextSchema.table.withRLS(
-  'customer_currency_preferences',
-  {
-    customerCurrencyPreferenceId: uuid('customer_currency_preference_id')
-      .defaultRandom()
-      .primaryKey(),
-    ...scopeColumns(),
-    customerProfileId: uuid('customer_profile_id').notNull(),
-    currencyCode: text('currency_code'),
-    effectiveFrom: effectiveFrom(),
-    effectiveTo: effectiveTo(),
-    lifecycle: text('lifecycle').default('ACTIVE').notNull(),
-    revision: integer('revision').notNull(),
-    ...operationAttribution(),
-  },
-  (table) => [
-    scopeIdentity(
-      'ccc_currency_preferences_scope_id_uk',
-      table,
-      table.customerCurrencyPreferenceId,
-    ),
-    foreignKey({
-      columns: [table.tenantId, table.legalEntityId, table.customerProfileId],
-      foreignColumns: [
-        customerProfiles.tenantId,
-        customerProfiles.legalEntityId,
-        customerProfiles.customerProfileId,
-      ],
-      name: 'ccc_currency_preferences_profile_fk',
-    }).onDelete('restrict'),
-    check(
-      'ccc_currency_preferences_code_ck',
-      sql`(${table.lifecycle} in ('ACTIVE', 'ENDED') and ${table.currencyCode} ~ '^[A-Z]{3}$') or (${table.lifecycle} = 'CLEARED' and ${table.currencyCode} is null)`,
-    ),
-    halfOpenPeriod('ccc_currency_preferences_period_ck', table),
-    check(
-      'ccc_currency_preferences_lifecycle_ck',
-      sql`${table.lifecycle} in ('ACTIVE', 'ENDED', 'CLEARED') and (${table.lifecycle} <> 'ENDED' or ${table.effectiveTo} is not null)`,
-    ),
-    positiveRevision('ccc_currency_preferences_revision_ck', table.revision),
-    optionalTrimmed('ccc_currency_preferences_reason_ck', table.reason),
-    ...scopedPolicies('ccc_currency_preferences_scope', table),
   ],
 );
 
@@ -2352,7 +2306,6 @@ export const commerceCustomerContextDatabaseSchema = {
   counterpartyPurchaseLimitDefaults,
   counterpartyPurchasingProfiles,
   customerAddressDefaults,
-  customerCurrencyPreferences,
   customerGroupMemberships,
   customerGroupLifecyclePeriods,
   customerGroupRevisions,
@@ -2394,7 +2347,6 @@ export const COMMERCE_CUSTOMER_CONTEXT_TABLES = [
   counterpartyPurchaseLimitDefaults,
   counterpartyPurchasingProfiles,
   customerAddressDefaults,
-  customerCurrencyPreferences,
   customerGroupMemberships,
   customerGroupLifecyclePeriods,
   customerGroupRevisions,
@@ -2435,7 +2387,6 @@ export type CustomerProfileRecord = typeof customerProfiles.$inferSelect;
 export type NewCustomerProfileRecord = typeof customerProfiles.$inferInsert;
 export type CustomerGroupRecord = typeof customerGroups.$inferSelect;
 export type CustomerGroupMembershipRecord = typeof customerGroupMemberships.$inferSelect;
-export type CustomerCurrencyPreferenceRecord = typeof customerCurrencyPreferences.$inferSelect;
 export type CustomerPaymentTermEntitlementRecord =
   typeof customerPaymentTermEntitlements.$inferSelect;
 export type SavedAddressRecord = typeof savedAddresses.$inferSelect;

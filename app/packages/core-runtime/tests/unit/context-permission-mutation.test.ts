@@ -11,7 +11,7 @@ import { toContextPermissionAccessObjectId } from '../../src/permissions/context
 const tenantId = '20000000-0000-4000-8000-000000000001';
 const legalEntityId = '30000000-0000-4000-8000-000000000001';
 const principalId = '40000000-0000-4000-8000-000000000001';
-const target = { moduleId: 'commerce.fx', permission: 'rates.read' } as const;
+const target = { moduleId: 'inventory.stock', permission: 'rates.read' } as const;
 
 it.effect('touches the exact tenant and grantee relationships idempotently for a grant', () =>
   Effect.gen(function* grantContextPermission() {

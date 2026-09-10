@@ -13,7 +13,6 @@ export const retailProfileReadPermission = defineBusinessPermission({
   meaning: 'Read the permitted current Commerce Retail Customer Profile view.',
   owningCapability: 'commerce.customer-context.profile',
   protectedEntrypoints: [
-    'commerce.customer-context.api.customer-currency-preference-read',
     'commerce.customer-context.api.customer-profile-read',
     'commerce.customer-context.api.purchase-currency-resolution',
     'commerce.customer-context.api.retail-access-decision',

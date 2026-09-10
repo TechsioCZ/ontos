@@ -208,13 +208,11 @@ export type ProfileReadProvenance = typeof ProfileReadProvenanceSchema.Type;
 
 export const RETAIL_PORTAL_PERMISSION_CODES = [
   'retail.profile.read',
-  'retail.settings.currency.manage',
   'retail.settings.payment_term_preference.manage',
   'retail.address_book.use',
   'retail.address_book.manage',
   'retail.history.read',
   'retail.repeat_order',
-  'retail.guest_order.claim',
   'retail.aftercare.read',
   'retail.claim.create',
   'retail.consent.manage',
@@ -230,12 +228,6 @@ export const RETAIL_PORTAL_PERMISSION_CATALOG = [
     launchBaseline: true,
     meaning: 'Read the permitted Current Commerce Retail Customer Profile view.',
     optionalCapability: null,
-  },
-  {
-    code: 'retail.settings.currency.manage',
-    launchBaseline: false,
-    meaning: 'Set or clear the bound profile currency preference.',
-    optionalCapability: 'CUSTOMER_CURRENCY_PREFERENCE',
   },
   {
     code: 'retail.settings.payment_term_preference.manage',
@@ -266,12 +258,6 @@ export const RETAIL_PORTAL_PERMISSION_CATALOG = [
     launchBaseline: true,
     meaning: 'Prepare a new Cart from an eligible visible historical Order.',
     optionalCapability: null,
-  },
-  {
-    code: 'retail.guest_order.claim',
-    launchBaseline: false,
-    meaning: 'Invoke explicitly verified Guest Order Claim when enabled.',
-    optionalCapability: 'GUEST_ORDER_CLAIM',
   },
   {
     code: 'retail.aftercare.read',
@@ -356,7 +342,6 @@ export const RECONCILIATION_REQUIRED_OWNERS = [
   'PROFILE_LIFECYCLE',
   'CUSTOMER_GROUP_MEMBERSHIP',
   'PRICE_GROUP_ASSIGNMENT',
-  'CURRENCY_PREFERENCE',
   'PAYMENT_TERMS',
   'ADDRESS_BOOK',
   'RETAIL_PORTAL_BINDING',

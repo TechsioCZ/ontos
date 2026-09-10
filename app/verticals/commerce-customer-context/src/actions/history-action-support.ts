@@ -1,35 +1,23 @@
 import type { ActionHandlerContext, OperationalScope } from '@app/core-runtime';
-import { commitActionThenReject } from '@app/core-runtime';
 import { DateTime, Effect, Option } from 'effect';
 import type {
-  ClaimGuestOrderPayload,
   RepeatCounterpartyOrderPayload,
   RepeatOrderActionResult,
   RepeatRetailOrderPayload,
 } from '../../shared/domain/history-action-contracts.ts';
 import {
-  GuestOrderClaimConflict,
-  GuestOrderClaimRateLimited,
-  GuestOrderClaimRejected,
   HistoryActionUnavailable,
   RepeatOrderConflict,
   RepeatOrderNoRepeatableLines,
 } from '../../shared/domain/history-action-errors.ts';
 import type { HistoryActionOwnerPorts } from '../../shared/domain/history-action-ports.ts';
 import {
-  GuestOrderClaimOwner,
   repeatCartResult,
   RepeatCartOwner,
   unavailableHistoryActionOwnerPorts,
 } from '../../shared/domain/history-action-ports.ts';
-import type {
-  HistoryAccessDenied,
-  HistoryOwnerUnavailable,
-} from '../../shared/domain/history-errors.ts';
-import {
-  preflightGuestOrderClaim,
-  prepareRepeatOrder,
-} from '../../shared/domain/history-composition.ts';
+import type { HistoryOwnerUnavailable } from '../../shared/domain/history-errors.ts';
+import { prepareRepeatOrder } from '../../shared/domain/history-composition.ts';
 import type { RepeatOrderPreparationResult } from '../../shared/domain/history-contracts.ts';
 import type { CustomerHistoryPorts } from '../../shared/domain/history-ports.ts';
 import {
@@ -55,7 +43,6 @@ export const loadHistoryActionServices = Effect.fn('HistoryActions.loadHistoryAc
   function* loadServices(transaction: ProfileScopedRoutineInvoker, scope: OperationalScope) {
     const history = yield* Effect.serviceOption(CustomerHistoryPortsService);
     const carts = yield* Effect.serviceOption(RepeatCartOwner);
-    const guestOrders = yield* Effect.serviceOption(GuestOrderClaimOwner);
     const unavailableOwners = unavailableHistoryActionOwnerPorts();
     return {
       history: yield* customerHistoryPortsForOperation(
@@ -66,7 +53,6 @@ export const loadHistoryActionServices = Effect.fn('HistoryActions.loadHistoryAc
       now: DateTime.now.pipe(Effect.map(DateTime.formatIso)),
       owners: {
         carts: Option.getOrElse(carts, () => unavailableOwners.carts),
-        guestOrders: Option.getOrElse(guestOrders, () => unavailableOwners.guestOrders),
       },
     } satisfies HistoryActionServices;
   },
@@ -267,122 +253,3 @@ export const handleRepeatCounterpartyOrder = Effect.fn(
   yield* recordRepeatEvidence(context, { actionKind: 'REPEAT_COUNTERPARTY_ORDER', result });
   return result;
 });
-
-const claimRejected = (reasonCode: GuestOrderClaimRejected['reasonCode']) =>
-  new GuestOrderClaimRejected({
-    code: 'guest_order_claim_rejected',
-    reason: 'The Guest Order Claim did not satisfy the governed claim policy',
-    reasonCode,
-  });
-
-const auditClaimOutcome = (
-  payload: ClaimGuestOrderPayload,
-  context: ActionHandlerContext<NoDomainEvents, HistoryActionServices>,
-  outcome: string,
-) =>
-  context.recordAuditEvidence({
-    actionKind: 'CLAIM_GUEST_ORDER',
-    outcome,
-    sourceOwnerModuleId: payload.orderRef.moduleId,
-    targetResourceId: payload.orderRef.resourceId,
-  });
-
-const rejectClaim = Effect.fn('HistoryActions.rejectClaim')(function* reject(
-  payload: ClaimGuestOrderPayload,
-  context: ActionHandlerContext<NoDomainEvents, HistoryActionServices>,
-  reasonCode: GuestOrderClaimRejected['reasonCode'],
-) {
-  yield* auditClaimOutcome(payload, context, `REJECTED_${reasonCode}`);
-  let rejection: GuestOrderClaimConflict | GuestOrderClaimRateLimited | GuestOrderClaimRejected;
-  if (reasonCode === 'CLAIM_CONFLICT') {
-    rejection = new GuestOrderClaimConflict({
-      code: 'guest_order_claim_conflict',
-      reason: 'The verified Guest Order is already claimed by another customer context',
-    });
-  } else if (reasonCode === 'RATE_LIMITED') {
-    rejection = new GuestOrderClaimRateLimited({
-      code: 'guest_order_claim_rate_limited',
-      reason: 'Guest Order Claim verification is rate limited',
-    });
-  } else {
-    rejection = claimRejected(reasonCode);
-  }
-  // A denied claim is still a governed outcome.  Ask Core to flush the audit/data
-  // evidence transaction before re-raising the typed rejection to the caller.
-  return commitActionThenReject(rejection);
-});
-
-export const handleClaimGuestOrder = Effect.fn('HistoryActions.handleClaimGuestOrder')(
-  function* claim(
-    payload: ClaimGuestOrderPayload,
-    context: ActionHandlerContext<NoDomainEvents, HistoryActionServices>,
-  ) {
-    if (
-      payload.orderRef.tenantId !== context.scope.tenantId ||
-      payload.profileRef.tenantId !== context.scope.tenantId
-    ) {
-      return yield* rejectClaim(payload, context, 'CLAIM_CONFLICT');
-    }
-    const now = yield* context.services.now;
-    const handleAccessDenied = (error: HistoryAccessDenied) =>
-      auditClaimOutcome(payload, context, `DENIED_${error.reason}`).pipe(
-        Effect.as(commitActionThenReject(error)),
-      );
-    const handleOwnerUnavailable = (error: HistoryOwnerUnavailable) =>
-      Effect.fail(ownerUnavailable(error));
-    const preflight = yield* preflightGuestOrderClaim(context.services.history, {
-      now,
-      orderRef: payload.orderRef,
-      principalId: context.scope.principalId,
-      profileRef: payload.profileRef,
-    }).pipe(
-      Effect.map(() => null),
-      Effect.catchTags({
-        HistoryAccessDenied: handleAccessDenied,
-        HistoryOwnerUnavailable: handleOwnerUnavailable,
-      }),
-    );
-    if (preflight !== null) {
-      return preflight;
-    }
-    const claimed = yield* context.services.owners.guestOrders.claim({
-      ...payload,
-      actionInvocationId: context.actionInvocationId,
-      principalId: context.scope.principalId,
-    });
-    if (
-      claimed.committedAttemptEvidenceRef.tenantId !== context.scope.tenantId ||
-      claimed.committedAttemptEvidenceRef.moduleId !== payload.orderRef.moduleId
-    ) {
-      return yield* new HistoryActionUnavailable({
-        code: 'history_action_unavailable',
-        ownerModuleId: payload.orderRef.moduleId,
-        reason: 'Order owner did not return a trusted committed claim-attempt receipt',
-      });
-    }
-    if (claimed.outcome !== 'CLAIMED' && claimed.outcome !== 'ALREADY_CLAIMED_EQUIVALENT') {
-      return yield* rejectClaim(payload, context, claimed.outcome);
-    }
-    const result = {
-      orderRef: payload.orderRef,
-      outcome: claimed.outcome,
-      profileRef: payload.profileRef,
-    } as const;
-    yield* context.recordDataAccess({
-      accessKind: 'read',
-      queryHash: `guest-order-claim:${payload.orderRef.moduleId}:${payload.orderRef.resourceId}`,
-      resultCount: 1,
-      servingModuleKey: moduleKey,
-      targetModuleKey: payload.orderRef.moduleId,
-      targetResourceId: payload.orderRef.resourceId,
-      targetResourceType: payload.orderRef.resourceType,
-    });
-    yield* context.recordAuditEvidence({
-      actionKind: 'CLAIM_GUEST_ORDER',
-      outcome: result.outcome,
-      sourceOwnerModuleId: payload.orderRef.moduleId,
-      targetResourceId: payload.orderRef.resourceId,
-    });
-    return result;
-  },
-);

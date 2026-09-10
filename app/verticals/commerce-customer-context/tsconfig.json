@@ -40,9 +40,6 @@
       "path": "../../packages/shared-design-tokens"
     },
     {
-      "path": "../commerce-fx"
-    },
-    {
       "path": "../party-registry"
     }
   ]

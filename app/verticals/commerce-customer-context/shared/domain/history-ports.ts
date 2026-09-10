@@ -24,7 +24,6 @@ import { HistoryOwnerUnavailable } from './history-errors.ts';
 export interface RetailHistoryAuthorizationFacts {
   readonly archivePermission: CurrentGateState;
   readonly binding: CurrentGateState;
-  readonly guestClaimPermission: CurrentGateState;
   readonly historyPermission: CurrentGateState;
   /**
    * Owner-published policy decisions keyed by the onboarding contract's policy identity.
@@ -85,17 +84,6 @@ export interface ArchiveRecordCandidate {
   readonly submittedByPrincipalId?: string;
 }
 
-export interface GuestOrderClaimCandidate {
-  readonly claimState: 'CLAIMED_EQUIVALENT' | 'CLAIMED_OTHER_PROFILE' | 'UNCLAIMED';
-  readonly customerFacingClaimAllowed: boolean;
-  readonly orderKind: 'COUNTERPARTY' | 'GUEST' | 'RETAIL';
-  readonly orderRef: HistoricalRecordRef;
-}
-
-export type GuestOrderClaimLookup =
-  | { readonly outcome: 'FOUND'; readonly value: GuestOrderClaimCandidate }
-  | { readonly outcome: 'NOT_FOUND' };
-
 export type HistoricalOrderLookup =
   | { readonly outcome: 'FOUND'; readonly value: HistoricalOrderCandidate }
   | { readonly outcome: 'NOT_FOUND' };
@@ -138,10 +126,6 @@ export interface OrderHistoryPort {
     readonly orderRef: HistoricalRecordRef;
     readonly subject: CustomerHistorySubject;
   }) => Effect.Effect<CustomerOrderHistoryDetailLookup, HistoryOwnerUnavailable>;
-  readonly getForGuestClaim: (input: {
-    readonly orderRef: HistoricalRecordRef;
-    readonly profileRef: RetailCustomerProfileRef;
-  }) => Effect.Effect<GuestOrderClaimLookup, HistoryOwnerUnavailable>;
   readonly getForHistoryDetailAuthorization: (input: {
     readonly orderRef: HistoricalRecordRef;
   }) => Effect.Effect<HistoricalOrderDetailAuthorizationLookup, HistoryOwnerUnavailable>;
@@ -195,15 +179,6 @@ export interface CartPreparationPort {
   ) => Effect.Effect<RepeatOrderLineResult, HistoryOwnerUnavailable>;
 }
 
-export interface GuestClaimVerificationPort {
-  readonly verifyGuestClaim: (input: {
-    readonly orderRef: HistoricalRecordRef;
-    readonly principalId: string;
-    readonly profileRef: RetailCustomerProfileRef;
-    readonly verificationEvidenceRef: string;
-  }) => Effect.Effect<'NOT_VERIFIED' | 'VERIFIED', HistoryOwnerUnavailable>;
-}
-
 export interface CustomerHistoryPorts {
   readonly access: HistoryAccessPort;
   readonly archiveSources: readonly CustomerArchiveSourcePort[];
@@ -212,7 +187,6 @@ export interface CustomerHistoryPorts {
   readonly orders: OrderHistoryPort;
   readonly recordTypes: CustomerRecordTypeCatalogPort;
   readonly resources: HistoricalResourceAccessPort;
-  readonly verification: GuestClaimVerificationPort;
   readonly visibility: CustomerRecordVisibilityPort;
 }
 
@@ -223,7 +197,7 @@ export class CustomerHistoryPortsService extends Context.Service<
 >()('@app/commerce-customer-context/shared/domain/history-ports/CustomerHistoryPortsService') {}
 
 /**
- * Explicit deployment boundary until Order, Cart, Billing, Claim, and customer-visibility owners
+ * Explicit deployment boundary until Order, Cart, Billing, and customer-visibility owners
  * publish transport-backed public adapters. Consumers must replace these ports as each owner ships;
  * no local table, fabricated history, or permissive fallback is allowed.
  */
@@ -243,7 +217,6 @@ export const unavailableCustomerHistoryPorts = (): CustomerHistoryPorts =>
     counterpartyProfiles: { current: () => unavailableHistoryOwner(CUSTOMER_CONTEXT_OWNER) },
     orders: {
       getCustomerFacingDetail: () => unavailableHistoryOwner(ORDER_OWNER),
-      getForGuestClaim: () => unavailableHistoryOwner(ORDER_OWNER),
       getForHistoryDetailAuthorization: () => unavailableHistoryOwner(ORDER_OWNER),
       getForRepeat: () => unavailableHistoryOwner(ORDER_OWNER),
       listCounterparty: () => unavailableHistoryOwner(ORDER_OWNER),
@@ -251,6 +224,5 @@ export const unavailableCustomerHistoryPorts = (): CustomerHistoryPorts =>
     },
     recordTypes: { get: () => unavailableHistoryOwner(CUSTOMER_CONTEXT_OWNER) },
     resources: { current: () => unavailableHistoryOwner('commerce.authorization') },
-    verification: { verifyGuestClaim: () => unavailableHistoryOwner(ORDER_OWNER) },
     visibility: { get: () => unavailableHistoryOwner(ORDER_OWNER) },
   });

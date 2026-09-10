@@ -71,9 +71,6 @@ export const retailHistoryTarget = (input: RetailTargetInput, scope: Operational
 export const retailRepeatTarget = (input: RetailTargetInput, scope: OperationalScope) =>
   retailTarget(input, scope, 'retail.repeat_order');
 
-export const retailClaimTarget = (input: RetailTargetInput, scope: OperationalScope) =>
-  retailTarget(input, scope, 'retail.guest_order.claim');
-
 export const counterpartyOwnHistoryTarget = (
   input: CounterpartyTargetInput,
   scope: OperationalScope,

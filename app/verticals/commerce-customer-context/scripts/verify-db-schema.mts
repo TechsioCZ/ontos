@@ -44,7 +44,6 @@ const EXPECTED_RUNTIME_ROUTINES = [
   'begin_access_grant',
   'begin_access_revoke',
   'change_address_default',
-  'change_currency_preference',
   'change_purchase_limit_policy',
   'consume_invitation_claim_proof',
   'consume_purchase_approval',
@@ -74,7 +73,6 @@ const EXPECTED_RUNTIME_ROUTINES = [
   'read_access_invitation_claim_reconciliation',
   'read_access_reconciliation',
   'read_address_defaults',
-  'read_currency_preference',
   'read_current_purchase_approval_revalidation',
   'read_current_purchase_proposal_revision',
   'read_customer_group',
@@ -116,7 +114,6 @@ const EXPECTED_RUNTIME_ROUTINES = [
   'update_customer_group',
   'update_saved_address',
   'verify_address_book_reconciliation',
-  'verify_currency_preference_reconciliation_owner',
   'verify_invitation_claim_authority',
   'verify_payment_terms_reconciliation_owner',
 ] as const;
@@ -150,7 +147,6 @@ const PROFILE_RUNTIME_ROUTINES = [
   'stage_retail_portal_profile_binding_permission_mutations',
   'transition_profile',
   'verify_address_book_reconciliation',
-  'verify_currency_preference_reconciliation_owner',
   'verify_payment_terms_reconciliation_owner',
 ] as const;
 

@@ -8,7 +8,6 @@ import {
   profileReconciliationOwnerVerifierForTransaction,
 } from './persistence/profile-persistence.ts';
 import { addressBookReconciliationOwnerVerifierForTransaction } from './persistence/address-persistence.ts';
-import { currencyPreferenceReconciliationOwnerVerifierForTransaction } from './persistence/currency-persistence.ts';
 import { paymentTermsReconciliationOwnerEvidenceVerifierForTransaction } from './persistence/payment-term-persistence.ts';
 import type {
   ProfilePersistenceServices,
@@ -90,8 +89,6 @@ export const profileServicesForVerifiedScope = (
       transaction,
       scope,
     );
-    const currencyPreferenceOwnerVerifier =
-      currencyPreferenceReconciliationOwnerVerifierForTransaction(transaction, verifiedScope);
     const reconciliationOwnerVerifier: ProfileReconciliationOwnerVerifierService = {
       verify: (request, context) => {
         if (request.desiredOutcome.owner === 'PAYMENT_TERMS') {
@@ -99,9 +96,6 @@ export const profileServicesForVerifiedScope = (
         }
         if (request.desiredOutcome.owner === 'ADDRESS_BOOK') {
           return addressBookOwnerVerifier.verify(request, context);
-        }
-        if (request.desiredOutcome.owner === 'CURRENCY_PREFERENCE') {
-          return currencyPreferenceOwnerVerifier.verify(request, context);
         }
         return profileOwnerVerifier.verify(request, context);
       },

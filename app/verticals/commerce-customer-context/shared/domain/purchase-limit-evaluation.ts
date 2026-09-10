@@ -113,7 +113,7 @@ export const PurchaseLimitComparableValueSchema = Schema.Union([
     roundingIncrement: ExactNonNegativeDecimalSchema,
     roundingMode: Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(100)),
     roundingRule: Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(100)),
-    source: Schema.Literal('commercial-fx'),
+    source: Schema.Literal('comparable-value'),
     targetMinorUnits: Schema.Finite.check(
       Schema.isInt(),
       Schema.isBetween({ maximum: 18, minimum: 0 }),
@@ -224,9 +224,10 @@ export const findStalePurchaseLimitSources = (
   return [...new Set([...expectedBySource.keys(), ...currentBySource.keys()])]
     .filter(
       (source) =>
-        // A first cross-currency evaluation resolves FX after the caller's claim. Once FX evidence
-        // is supplied in the expected vector, its exact revision is revalidated like every source.
-        (source !== 'commercial-fx' || expectedBySource.has(source)) &&
+        // A first cross-currency evaluation resolves a comparable value after the caller's claim.
+        // Once comparable-value evidence is supplied in the expected vector, its exact revision is
+        // revalidated like every source.
+        (source !== 'comparable-value' || expectedBySource.has(source)) &&
         expectedBySource.get(source) !== currentBySource.get(source),
     )
     .toSorted();
@@ -371,7 +372,7 @@ export const resolveComparablePurchaseValue = (input: {
   );
 
 export type PurchaseLimitEvaluationSourceService = Readonly<{
-  /** Revalidates the request against Current owner facts and supplies trusted policy/FX evidence. */
+  /** Revalidates the request against Current owner facts and supplies trusted policy/comparable-value evidence. */
   loadCurrent: (input: {
     readonly principalId: string;
     readonly query: PurchaseLimitEvaluationQuery;

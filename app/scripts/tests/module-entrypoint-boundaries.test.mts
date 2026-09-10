@@ -2430,7 +2430,7 @@ it('rejects Action HTTP client leaves with mismatched owner or filename slug', (
   for (const invalidSource of [
     generatedPartyActionHttpClientSource.replace(
       '@ontos-action-http-owner party.registry',
-      '@ontos-action-http-owner commerce.fx',
+      '@ontos-action-http-owner commerce.customer-context',
     ),
     generatedPartyActionHttpClientSource.replace(
       '@ontos-action-http-slug archive-party',

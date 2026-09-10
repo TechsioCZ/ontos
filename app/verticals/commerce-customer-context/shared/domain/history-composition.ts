@@ -8,8 +8,6 @@ import type {
   CustomerOrderHistoryItem,
   CustomerOrderHistoryDetail,
   CounterpartyHistoryScope,
-  GuestOrderClaimEligibility,
-  GuestOrderClaimInput,
   HistoryDegradation,
   RepeatOrderLineResult,
   RepeatOrderPreparationInput,
@@ -1223,70 +1221,6 @@ export const prepareRepeatOrder = Effect.fn('HistoryComposition.prepareRepeatOrd
         : 'NO_REPEATABLE_LINES',
       sourceOrderRef: order.orderRef,
     } satisfies RepeatOrderPreparationResult;
-  },
-);
-
-export const evaluateGuestOrderClaim = Effect.fn('HistoryComposition.evaluateGuestOrderClaim')(
-  function* guestClaim(ports: CustomerHistoryPorts, input: GuestOrderClaimInput) {
-    const facts = yield* ports.access.retail({
-      principalId: input.principalId,
-      profileRef: input.profileRef,
-    });
-    yield* requireGate(facts.binding, 'CURRENT_BINDING_REQUIRED');
-    yield* requireGate(facts.guestClaimPermission, 'GUEST_CLAIM_PERMISSION_REQUIRED');
-    yield* requirePolicy(facts.policy);
-    const verification = yield* ports.verification.verifyGuestClaim({
-      orderRef: input.orderRef,
-      principalId: input.principalId,
-      profileRef: input.profileRef,
-      verificationEvidenceRef: input.verificationEvidenceRef,
-    });
-    if (verification !== 'VERIFIED') {
-      return { outcome: 'VERIFICATION_REQUIRED' } satisfies GuestOrderClaimEligibility;
-    }
-    const candidateLookup = yield* ports.orders.getForGuestClaim({
-      orderRef: input.orderRef,
-      profileRef: input.profileRef,
-    });
-    if (candidateLookup.outcome === 'NOT_FOUND') {
-      return yield* new HistoryRecordNotFound({
-        code: 'history_record_not_found',
-        reason: 'HISTORICAL_RECORD_NOT_FOUND',
-      });
-    }
-    const candidate = candidateLookup.value;
-    if (candidate.orderKind !== 'GUEST') {
-      return { outcome: 'NOT_GUEST_ORDER' } satisfies GuestOrderClaimEligibility;
-    }
-    if (candidate.claimState === 'CLAIMED_OTHER_PROFILE') {
-      return { outcome: 'CLAIM_CONFLICT' } satisfies GuestOrderClaimEligibility;
-    }
-    if (candidate.claimState === 'CLAIMED_EQUIVALENT') {
-      return { outcome: 'ALREADY_CLAIMED_EQUIVALENT' } satisfies GuestOrderClaimEligibility;
-    }
-    if (!candidate.customerFacingClaimAllowed) {
-      return { outcome: 'RECORD_NOT_CLAIMABLE' } satisfies GuestOrderClaimEligibility;
-    }
-    return { outcome: 'ELIGIBLE' } satisfies GuestOrderClaimEligibility;
-  },
-);
-
-/** Public preflight never submits proof or invokes verification, preventing a verification oracle. */
-export const preflightGuestOrderClaim = Effect.fn('HistoryComposition.preflightGuestOrderClaim')(
-  function* guestClaimPreflight(
-    ports: CustomerHistoryPorts,
-    input: Omit<GuestOrderClaimInput, 'verificationEvidenceRef'>,
-  ) {
-    const facts = yield* ports.access.retail({
-      principalId: input.principalId,
-      profileRef: input.profileRef,
-    });
-    yield* requireGate(facts.binding, 'CURRENT_BINDING_REQUIRED');
-    yield* requireGate(facts.guestClaimPermission, 'GUEST_CLAIM_PERMISSION_REQUIRED');
-    yield* requirePolicy(facts.policy);
-    // Eligibility is intentionally opaque until the one-time proof is submitted to the Order
-    // owner. Looking up existence, kind, or claim state here would create a public Order oracle.
-    return { outcome: 'VERIFICATION_REQUIRED' } satisfies GuestOrderClaimEligibility;
   },
 );
 

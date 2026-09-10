@@ -16,7 +16,6 @@ import { counterpartyProfileReadPermission } from '../../shared/permissions/coun
 import { counterpartyPurchaseLimitManagePermission } from '../../shared/permissions/counterparty-purchase-limit-manage.ts';
 import { counterpartyPurchasePreparePermission } from '../../shared/permissions/counterparty-purchase-prepare.ts';
 import { counterpartyPurchaseSubmitPermission } from '../../shared/permissions/counterparty-purchase-submit.ts';
-import { counterpartySettingsCurrencyManagePermission } from '../../shared/permissions/counterparty-settings-currency-manage.ts';
 import { counterpartySettingsPaymentTermsManagePermission } from '../../shared/permissions/counterparty-settings-payment-terms-manage.ts';
 import { counterpartySettingsPriceGroupManagePermission } from '../../shared/permissions/counterparty-settings-price-group-manage.ts';
 import { retailAddressBookManagePermission } from '../../shared/permissions/retail-address-book-manage.ts';
@@ -24,18 +23,15 @@ import { retailAddressBookUsePermission } from '../../shared/permissions/retail-
 import { retailAftercareReadPermission } from '../../shared/permissions/retail-aftercare-read.ts';
 import { retailClaimCreatePermission } from '../../shared/permissions/retail-claim-create.ts';
 import { retailConsentManagePermission } from '../../shared/permissions/retail-consent-manage.ts';
-import { retailGuestOrderClaimPermission } from '../../shared/permissions/retail-guest-order-claim.ts';
 import { retailHistoryReadPermission } from '../../shared/permissions/retail-history-read.ts';
 import { retailNotificationsManagePermission } from '../../shared/permissions/retail-notifications-manage.ts';
 import { retailProfileReadPermission } from '../../shared/permissions/retail-profile-read.ts';
 import { retailRepeatOrderPermission } from '../../shared/permissions/retail-repeat-order.ts';
-import { retailSettingsCurrencyManagePermission } from '../../shared/permissions/retail-settings-currency-manage.ts';
 import { retailSettingsPaymentTermPreferenceManagePermission } from '../../shared/permissions/retail-settings-payment-term-preference-manage.ts';
 import { assignCounterpartyPriceGroupAction } from '../../src/actions/assign-counterparty-price-group.action.ts';
 import { migrateCounterpartyPriceGroupAction } from '../../src/actions/migrate-counterparty-price-group.action.ts';
 import { removeCounterpartyPriceGroupAction } from '../../src/actions/remove-counterparty-price-group.action.ts';
 import { changeRetailPaymentTermPreferenceAction } from '../../src/actions/change-retail-payment-term-preference.action.ts';
-import { claimGuestOrderAction } from '../../src/actions/claim-guest-order.action.ts';
 import { repeatCounterpartyOrderAction } from '../../src/actions/repeat-counterparty-order.action.ts';
 import { repeatRetailOrderAction } from '../../src/actions/repeat-retail-order.action.ts';
 import { consumePurchaseApprovalAction } from '../../src/actions/consume-purchase-approval.action.ts';
@@ -58,7 +54,6 @@ const counterpartyPermissions = [
   counterpartyAccessReadPermission,
   counterpartyAccessManagePermission,
   counterpartySettingsPriceGroupManagePermission,
-  counterpartySettingsCurrencyManagePermission,
   counterpartySettingsPaymentTermsManagePermission,
   counterpartyAddressBookUsePermission,
   counterpartyAddressBookManagePermission,
@@ -70,13 +65,11 @@ const counterpartyPermissions = [
 
 const retailPermissions = [
   retailProfileReadPermission,
-  retailSettingsCurrencyManagePermission,
   retailSettingsPaymentTermPreferenceManagePermission,
   retailAddressBookUsePermission,
   retailAddressBookManagePermission,
   retailHistoryReadPermission,
   retailRepeatOrderPermission,
-  retailGuestOrderClaimPermission,
   retailAftercareReadPermission,
   retailClaimCreatePermission,
   retailConsentManagePermission,
@@ -85,7 +78,7 @@ const retailPermissions = [
 
 describe('generated Commerce customer permission descriptors', () => {
   it('matches every Counterparty descriptor to the canonical #328 catalog', () => {
-    expect(counterpartyPermissions).toHaveLength(16);
+    expect(counterpartyPermissions).toHaveLength(15);
     for (const code of COUNTERPARTY_PERMISSION_CODES) {
       const canonical = COUNTERPARTY_PERMISSION_CATALOG[code];
       const generated = counterpartyPermissions.find((candidate) => candidate.key === code);
@@ -108,7 +101,7 @@ describe('generated Commerce customer permission descriptors', () => {
   });
 
   it('publishes the exact #332 retail baseline without silently bundling optional permissions', () => {
-    expect(retailPermissions).toHaveLength(12);
+    expect(retailPermissions).toHaveLength(10);
     expect(
       retailPermissions
         .filter(({ authorityGroups }) => authorityGroups.includes('RETAIL_PORTAL_SELF_SERVICE'))
@@ -144,15 +137,9 @@ describe('generated Commerce customer permission descriptors', () => {
     );
   });
 
-  it('inventories Counterparty profile authorization at both currency Reads', () => {
-    expect(counterpartyProfileReadPermission.protectedEntrypoints).toContain(
-      'commerce.customer-context.api.customer-currency-preference-read',
-    );
+  it('inventories Counterparty and Retail profile authorization at the Launch currency Read', () => {
     expect(counterpartyProfileReadPermission.protectedEntrypoints).toContain(
       'commerce.customer-context.api.purchase-currency-resolution',
-    );
-    expect(retailProfileReadPermission.protectedEntrypoints).toContain(
-      'commerce.customer-context.api.customer-currency-preference-read',
     );
     expect(retailProfileReadPermission.protectedEntrypoints).toContain(
       'commerce.customer-context.api.purchase-currency-resolution',
@@ -175,14 +162,8 @@ describe('generated Commerce customer permission descriptors', () => {
     expect(retailRepeatOrderPermission.protectedEntrypoints).toContain(
       repeatRetailOrderAction.descriptor.actionKey,
     );
-    expect(retailGuestOrderClaimPermission.protectedEntrypoints).toContain(
-      claimGuestOrderAction.descriptor.actionKey,
-    );
     expect(counterpartyPurchasePreparePermission.protectedEntrypoints).toContain(
       'commerce.customer-context.api.repeat-order-preparation',
-    );
-    expect(retailGuestOrderClaimPermission.protectedEntrypoints).toContain(
-      'commerce.customer-context.api.guest-order-claim',
     );
   });
 

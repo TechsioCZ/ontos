@@ -24,7 +24,6 @@ zerops:
         - 'app/scripts'
         - 'app/tsconfig.base.json'
         - 'app/verticals/commerce-customer-context'
-        - 'app/verticals/commerce-fx'
         - 'app/verticals/party-registry'
         - 'app/verticals/payment-term-catalog'
     deploy:
@@ -234,53 +233,6 @@ zerops:
           port: 4103
           path: '/payment-term-catalog-api/payment-term-catalog/readiness'
       start: sh -c 'cd app/.zerops/runtime/payment-term-catalog && PATH="/var/www/.local/node-26.7.0/bin:$PATH" exec npm run serve'
-
-  - setup: 'commerce-fx'
-    build:
-      base: 'alpine@3.23'
-      prepareCommands:
-        - sudo apk add --no-cache curl libstdc++
-        - sh /build/source/app/scripts/install-zerops-node.sh --with-pnpm 11.25.0
-      buildCommands:
-        - cd app && PATH="$HOME/.local/node-26.7.0/bin:$PATH" node scripts/reset-workspace-dependencies.mjs
-        - cd app && PNPM_CONFIG_ENABLE_GLOBAL_VIRTUAL_STORE=false PATH="$HOME/.local/node-26.7.0/bin:$PATH" pnpm install --frozen-lockfile --force --config.enable-global-virtual-store=false --virtual-store-dir=node_modules/.pnpm
-        - cd app && NODE_OPTIONS=--max-old-space-size=4096 PNPM_CONFIG_ENABLE_GLOBAL_VIRTUAL_STORE=false ULTRAMODERN_SOURCE_REVISION="$(git rev-parse HEAD)" PATH="$HOME/.local/node-26.7.0/bin:$PATH" pnpm --config.enable-global-virtual-store=false --filter '@app/commerce-fx' run build
-        - cd app && PNPM_CONFIG_ENABLE_GLOBAL_VIRTUAL_STORE=false PATH="$HOME/.local/node-26.7.0/bin:$PATH" pnpm --config.enable-global-virtual-store=false run zerops:materialize --app 'commerce-fx' --package '@app/commerce-fx' --package-dir 'verticals/commerce-fx'
-        - cp 'app/topology/reference-topology.json' 'app/.zerops/runtime/commerce-fx/topology.json'
-        - cp 'app/topology/local-overlays/development.json' 'app/.zerops/runtime/commerce-fx/local-overlay.json'
-      deployFiles:
-        - 'app/.zerops/runtime/commerce-fx'
-        - 'app/scripts/install-zerops-node.sh'
-    deploy:
-      temporaryShutdown: false
-      readinessCheck:
-        httpGet:
-          port: 4104
-          path: '/commerce-fx-api/commerce-fx/readiness'
-        failureTimeout: 3m
-        retryPeriod: 10s
-    run:
-      base: 'nodejs@24'
-      initCommands:
-        - ZEROPS_NODE_ROOT=/var/www sh app/scripts/install-zerops-node.sh
-      ports:
-        - port: 4104
-          protocol: tcp
-          httpSupport: true
-      envVariables:
-        NODE_ENV: production
-        PORT: '4104'
-        SPICEDB_ENDPOINT: 'spicedb:50051'
-        SPICEDB_INSECURE: 'true'
-        SPICEDB_PRESHARED_KEY: ${spicedb_SPICEDB_GRPC_PRESHARED_KEY}
-        ULTRAMODERN_DEPLOYMENT_ENVIRONMENT: stage
-        ULTRAMODERN_ZEROPS_SERVICE: commerce-fx
-        VERTICAL_COMMERCE_FX_PORT: '4104'
-      healthCheck:
-        httpGet:
-          port: 4104
-          path: '/commerce-fx-api/commerce-fx/readiness'
-      start: sh -c 'cd app/.zerops/runtime/commerce-fx && PATH="/var/www/.local/node-26.7.0/bin:$PATH" exec npm run serve'
 
   - setup: 'shellsuperapp'
     build:

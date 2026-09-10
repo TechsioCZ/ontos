@@ -46,7 +46,6 @@ test('keeps authentication in the existing Shell/Core ownership boundary', () =>
     'party-registry',
     'commerce-customer-context',
     'payment-term-catalog',
-    'commerce-fx',
   ]);
   expect(browserRemoteIds).toEqual(['party-registry']);
   expect(verticalRefs).toEqual(browserRemoteIds);

@@ -83,7 +83,7 @@ const revisions = [
   { revision: 'proposal:1', source: 'purchase-proposal' },
   { revision: '1', source: 'purchasing-profile' },
   { revision: 'storefront:1', source: 'storefront-context' },
-  { revision: 'fx-rate:7', source: 'commercial-fx' },
+  { revision: 'comparable-value:7', source: 'comparable-value' },
 ] as const;
 
 const purchaseValue = (
@@ -295,27 +295,27 @@ it('requires purpose-specific authoritative comparable value for cross-currency 
   const input = evaluationInput(purchaseValue('4', 'EUR'), [monetaryDefault('100', 'CZK')]);
   expect(hasTag('COMPARABLE_VALUE_REQUIRED')(evaluatePurchaseLimit(input))).toBe(true);
   const comparableValue = Schema.decodeUnknownSync(PurchaseLimitComparableValueSchema)({
-    arithmeticVersion: 'commercial-fx-arithmetic.v1',
+    arithmeticVersion: 'comparable-value-arithmetic.v1',
     contextRevision: 'commerce-context:1',
     decidedAt: decidedAtText,
-    decisionRef: 'fx-decision:1',
+    decisionRef: 'comparable-value-decision:1',
     direction: 'SOURCE_TO_TARGET',
     maximumRateAgeSeconds: 300,
     monetaryAmount: purchaseValue('101').monetaryAmount,
     normalizedRate: '25',
     observedAt: '2026-09-09T09:59:00.000Z',
-    policyRevision: 'fx-policy:1',
+    policyRevision: 'comparable-value-policy:1',
     purpose: 'PURCHASE_LIMIT_COMPARISON' as const,
     quotedRate: '25',
-    rateSourceId: 'cnb-commercial',
+    rateSourceId: 'reference-rate-source',
     retrievedAt: '2026-09-09T09:59:10.000Z',
     roundingIncrement: '0.01',
     roundingMode: 'half-even',
     roundingRule: 'QUANTIZE_TO_INCREMENT',
-    roundingRuleRevision: 'fx-rounding:2',
-    source: 'commercial-fx',
+    roundingRuleRevision: 'comparable-value-rounding:2',
+    source: 'comparable-value',
     sourcePurchaseValueRevision: input.purchaseValue.sourceRevision,
-    sourceRevision: 'fx-rate:7',
+    sourceRevision: 'comparable-value:7',
     targetMinorUnits: 2,
     validFrom: '2026-09-09T09:00:00.000Z',
     validTo: '2026-09-09T11:00:00.000Z',
@@ -333,7 +333,7 @@ it('requires purpose-specific authoritative comparable value for cross-currency 
     ...input,
     comparableValue,
     expectedSourceRevisions: input.expectedSourceRevisions.filter(
-      ({ source }) => source !== 'commercial-fx',
+      ({ source }) => source !== 'comparable-value',
     ),
   });
   expect(hasTag('APPROVAL_REQUIRED')(firstEvaluation)).toBe(true);
@@ -349,10 +349,10 @@ it('reports every changed or missing source revision as stale before policy comp
   ).toEqual(['principal-override', 'purchase-proposal']);
   expect(
     findStalePurchaseLimitSources(revisions, [
-      ...revisions.filter(({ source }) => source !== 'commercial-fx'),
-      { revision: 'fx-rate:8', source: 'commercial-fx' },
+      ...revisions.filter(({ source }) => source !== 'comparable-value'),
+      { revision: 'comparable-value:8', source: 'comparable-value' },
     ]),
-  ).toEqual(['commercial-fx']);
+  ).toEqual(['comparable-value']);
   const outcome = evaluatePurchaseLimit({
     ...evaluationInput(purchaseValue('101')),
     currentSourceRevisions: [{ revision: 'proposal:2', source: 'purchase-proposal' }],

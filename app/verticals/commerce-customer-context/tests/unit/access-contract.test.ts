@@ -22,7 +22,6 @@ import {
   COUNTERPARTY_PERMISSION_CATALOG,
   COUNTERPARTY_PERMISSION_CODES,
   CounterpartyPermissionCodeSchema,
-  permissionAllowsScope,
 } from '../../shared/domain/permission-catalog.ts';
 
 const tenantId = '10000000-0000-4000-8000-000000000001';
@@ -97,7 +96,7 @@ const progressGrantRef = {
 };
 
 describe('Counterparty Permission catalog', () => {
-  it('publishes exactly the governed sixteen codes and three bundles', () => {
+  it('publishes exactly the governed fifteen codes and three bundles', () => {
     expect(COUNTERPARTY_PERMISSION_CODES).toEqual([
       'counterparty.profile.read',
       'counterparty.purchase.prepare',
@@ -107,7 +106,6 @@ describe('Counterparty Permission catalog', () => {
       'counterparty.access.read',
       'counterparty.access.manage',
       'counterparty.settings.price_group.manage',
-      'counterparty.settings.currency.manage',
       'counterparty.settings.payment_terms.manage',
       'counterparty.address_book.use',
       'counterparty.address_book.manage',
@@ -129,7 +127,7 @@ describe('Counterparty Permission catalog', () => {
         'counterparty.address_book.use',
       ],
     });
-    expect(COUNTERPARTY_BUSINESS_PERMISSION_CATALOG.permissions).toHaveLength(16);
+    expect(COUNTERPARTY_BUSINESS_PERMISSION_CATALOG.permissions).toHaveLength(15);
     expect(Object.isFrozen(COUNTERPARTY_BUSINESS_PERMISSION_CATALOG)).toBe(true);
     for (const metadata of Object.values(COUNTERPARTY_PERMISSION_CATALOG)) {
       expect(metadata.owningCapability.length).toBeGreaterThan(0);
@@ -140,7 +138,6 @@ describe('Counterparty Permission catalog', () => {
   it('makes high-impact settings internal-only and rejects unknown permission strings', () => {
     for (const permission of [
       'counterparty.settings.price_group.manage',
-      'counterparty.settings.currency.manage',
       'counterparty.settings.payment_terms.manage',
       'counterparty.purchase_limit.manage',
       'counterparty.approval_hierarchy.manage',
@@ -148,9 +145,6 @@ describe('Counterparty Permission catalog', () => {
       expect(COUNTERPARTY_PERMISSION_CATALOG[permission].customerDelegable).toBe(false);
       expect(COUNTERPARTY_PERMISSION_CATALOG[permission].reasonRequired).toBe(true);
     }
-    expect(permissionAllowsScope('counterparty.settings.currency.manage', 'storefront')).toBe(
-      false,
-    );
     expect(() =>
       Schema.decodeUnknownSync(CounterpartyPermissionCodeSchema)('counterparty.*'),
     ).toThrow();

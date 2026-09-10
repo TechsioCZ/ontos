@@ -11,7 +11,6 @@ import {
   COMMERCE_CUSTOMER_CONTEXT_TABLES,
   counterpartyPurchasingProfiles,
   counterpartyPurchaseLimitDefaults,
-  customerCurrencyPreferences,
   customerGroupMemberships,
   customerGroupRevisions,
   customerPaymentTermEntitlements,
@@ -66,7 +65,6 @@ const profileRoutineNames = [
   'stage_retail_portal_profile_binding_permission_mutations',
   'transition_profile',
   'verify_address_book_reconciliation',
-  'verify_currency_preference_reconciliation_owner',
   'verify_payment_terms_reconciliation_owner',
 ] as const;
 
@@ -86,7 +84,7 @@ it('owns an exact private Commerce Customer Context table catalog', () => {
   );
 
   expect(COMMERCE_CUSTOMER_CONTEXT_SCHEMA_NAME).toBe('commerce_customer_context');
-  expect(COMMERCE_CUSTOMER_CONTEXT_TABLES).toHaveLength(39);
+  expect(COMMERCE_CUSTOMER_CONTEXT_TABLES).toHaveLength(38);
   expect(actual).toEqual(expected);
 });
 
@@ -137,7 +135,6 @@ it('models independently revised, half-open temporal customer facts', () => {
   for (const table of [
     customerGroupMemberships,
     customerPriceGroupAssignments,
-    customerCurrencyPreferences,
     customerPaymentTermEntitlements,
     customerPaymentTermPreferences,
   ]) {
@@ -384,12 +381,6 @@ it('checks in the non-generated database security and temporal assertions', () =
   );
   expect(sql.match(/SECURITY DEFINER/gu)?.length ?? 0).toBeGreaterThanOrEqual(2);
   expect(sql).toContain(
-    'REVOKE ALL ON FUNCTION "commerce_customer_context"."read_currency_preference"',
-  );
-  expect(sql).toContain(
-    '"read_currency_preference"(uuid, uuid, text, text, text) TO "ontos_runtime"',
-  );
-  expect(sql).toContain(
     'counterparty_profile.counterparty_resource_id = p_counterparty_resource_id',
   );
   expect(
@@ -401,18 +392,6 @@ it('checks in the non-generated database security and temporal assertions', () =
     'ALTER TABLE "commerce_customer_context"."customer_group_revisions" ALTER COLUMN "description" SET NOT NULL',
   );
   expect(sql).toContain('"amount" <> trunc("amount", 9)');
-  expect(sql).toContain(
-    'GRANT EXECUTE ON FUNCTION "commerce_customer_context"."change_currency_preference"',
-  );
-  const currencyOwnerVerifierSignature =
-    '"verify_currency_preference_reconciliation_owner"(uuid,uuid,uuid,text,uuid,text,integer,bigint,timestamptz,uuid,uuid,text)';
-  expect(sql).toContain(
-    `REVOKE ALL ON FUNCTION "commerce_customer_context".${currencyOwnerVerifierSignature} FROM PUBLIC`,
-  );
-  expect(sql).toContain(
-    `GRANT EXECUTE ON FUNCTION "commerce_customer_context".${currencyOwnerVerifierSignature} TO "ontos_runtime"`,
-  );
-  expect(sql).toContain("p_owner IS DISTINCT FROM 'CURRENCY_PREFERENCE'");
   expect(sql).toContain('v_conflicting_present<>0');
   expect(sql).toContain("'beforeFacts',v_member_facts");
   expect(sql).toContain("'afterFacts',v_member_facts");
@@ -429,7 +408,6 @@ it('checks in the non-generated database security and temporal assertions', () =
   for (const constraint of [
     'ccc_memberships_no_overlap_excl',
     'ccc_price_assignments_no_overlap_excl',
-    'ccc_currency_preferences_no_overlap_excl',
     'ccc_payment_entitlements_no_overlap_excl',
     'ccc_payment_preferences_no_overlap_excl',
     'ccc_address_defaults_no_overlap_excl',

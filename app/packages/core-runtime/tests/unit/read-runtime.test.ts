@@ -645,7 +645,7 @@ it.effect(
     const observed: string[] = [];
     let handlerCalls = 0;
     const permission = yield* Schema.decodeUnknownEffect(BusinessPermissionCodeSchema)(
-      'retail.settings.currency.manage',
+      'retail.settings.payment_term_preference.manage',
     );
     const currencyRead = defineRead(
       {
@@ -656,20 +656,20 @@ it.effect(
             kind: 'context_permission',
             permission: 'module.access',
           },
-          entrypointKey: 'commerce.customer-context.currency-preference',
+          entrypointKey: 'commerce.customer-context.payment-term-preference',
           moduleKey: 'commerce.customer-context',
           role: 'api',
         }),
         evidencePolicy: {
           captureMode: 'metadata_only',
-          policyKey: 'commerce.customer-context.currency-preference.v1',
+          policyKey: 'commerce.customer-context.payment-term-preference.v1',
         },
         inputSchema: CurrencyReadInputSchema,
         legalEntityScope: 'required',
         owningModuleKey: 'commerce.customer-context',
         permissionTarget: 'business_permission',
         policies: [],
-        readKey: 'commerce.customer-context.currency-preference',
+        readKey: 'commerce.customer-context.payment-term-preference',
         resourcePermission: defineReadResourcePermission<CurrencyReadInput>(
           ({ requestedProfileId }) => ({
             permission: 'read',

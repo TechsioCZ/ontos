@@ -59,12 +59,10 @@ import { attributeGuestRetailCustomerActionApiLive } from './attribute-guest-ret
 import { bindRetailPortalProfileActionApiLive } from './bind-retail-portal-profile-action-server.ts';
 import { bootstrapCounterpartyAccessAdministratorActionApiLive } from './bootstrap-counterparty-access-administrator-action-server.ts';
 import { changeCounterpartyPurchaseLimitActionApiLive } from './change-counterparty-purchase-limit-action-server.ts';
-import { changeCustomerCurrencyPreferenceActionApiLive } from './change-customer-currency-preference-action-server.ts';
 import { changeCustomerPaymentTermsActionApiLive } from './change-customer-payment-terms-action-server.ts';
 import { changePrincipalPurchaseLimitOverrideActionApiLive } from './change-principal-purchase-limit-override-action-server.ts';
 import { changeRetailPaymentTermPreferenceActionApiLive } from './change-retail-payment-term-preference-action-server.ts';
 import { claimCounterpartyAccessInvitationActionApiLive } from './claim-counterparty-access-invitation-action-server.ts';
-import { claimGuestOrderActionApiLive } from './claim-guest-order-action-server.ts';
 import { clearDefaultBillingAddressActionApiLive } from './clear-default-billing-address-action-server.ts';
 import { clearDefaultDeliveryDestinationActionApiLive } from './clear-default-delivery-destination-action-server.ts';
 import { consumePurchaseApprovalActionApiLive } from './consume-purchase-approval-action-server.ts';
@@ -83,7 +81,6 @@ import { createCounterpartyPurchasingProfileActionApiLive } from './create-count
 import { createCustomerGroupActionApiLive } from './create-customer-group-action-server.ts';
 import { createPurchaseProposalRevisionActionApiLive } from './create-purchase-proposal-revision-action-server.ts';
 import { customerArchiveReadApiLive } from './customer-archive-read-server.ts';
-import { customerCurrencyPreferenceReadReadApiLive } from './customer-currency-preference-read-read-server.ts';
 import { customerGroupDetailReadApiLive } from './customer-group-detail-read-server.ts';
 import { customerGroupHistoryReadApiLive } from './customer-group-history-read-server.ts';
 import { customerGroupMembersReadApiLive } from './customer-group-members-read-server.ts';
@@ -99,7 +96,6 @@ import { effectiveCustomerGroupMembershipsReadApiLive } from './effective-custom
 import { ensureRetailCustomerProfileActionApiLive } from './ensure-retail-customer-profile-action-server.ts';
 import { grantCounterpartyCommerceAccessActionApiLive } from './grant-counterparty-commerce-access-action-server.ts';
 import { guestAttributionStatusReadApiLive } from './guest-attribution-status-read-server.ts';
-import { guestOrderClaimReadApiLive } from './guest-order-claim-read-server.ts';
 import { guestPaymentTermsResolutionReadApiLive } from './guest-payment-terms-resolution-read-server.ts';
 import { invoiceRecipientResolutionReadApiLive } from './invoice-recipient-resolution-read-server.ts';
 import { migrateCounterpartyPriceGroupActionApiLive } from './migrate-counterparty-price-group-action-server.ts';
@@ -316,9 +312,6 @@ export const makeCommerceCustomerContextApiRuntime = (
     changeCounterpartyPurchaseLimitActionApiLive.pipe(
       GovernedReadLayer.provide(governedActionRuntimeLive),
     ),
-    changeCustomerCurrencyPreferenceActionApiLive.pipe(
-      GovernedReadLayer.provide(governedActionRuntimeLive),
-    ),
     changeCustomerPaymentTermsActionApiLive.pipe(
       GovernedReadLayer.provide(governedActionRuntimeLive),
     ),
@@ -331,7 +324,6 @@ export const makeCommerceCustomerContextApiRuntime = (
     claimCounterpartyAccessInvitationActionApiLive.pipe(
       GovernedReadLayer.provide(governedActionRuntimeLive),
     ),
-    claimGuestOrderActionApiLive.pipe(GovernedReadLayer.provide(governedActionRuntimeLive)),
     clearDefaultBillingAddressActionApiLive.pipe(
       GovernedReadLayer.provide(governedActionRuntimeLive),
     ),
@@ -374,9 +366,6 @@ export const makeCommerceCustomerContextApiRuntime = (
       GovernedReadLayer.provide(governedActionRuntimeLive),
     ),
     customerArchiveReadApiLive.pipe(GovernedReadLayer.provide(governedReadRuntimeLive)),
-    customerCurrencyPreferenceReadReadApiLive.pipe(
-      GovernedReadLayer.provide(governedReadRuntimeLive),
-    ),
     customerGroupDetailReadApiLive.pipe(GovernedReadLayer.provide(governedReadRuntimeLive)),
     customerGroupHistoryReadApiLive.pipe(GovernedReadLayer.provide(governedReadRuntimeLive)),
     customerGroupMembersReadApiLive.pipe(GovernedReadLayer.provide(governedReadRuntimeLive)),
@@ -408,7 +397,6 @@ export const makeCommerceCustomerContextApiRuntime = (
       GovernedReadLayer.provide(governedActionRuntimeLive),
     ),
     guestAttributionStatusReadApiLive.pipe(GovernedReadLayer.provide(governedReadRuntimeLive)),
-    guestOrderClaimReadApiLive.pipe(GovernedReadLayer.provide(governedReadRuntimeLive)),
     guestPaymentTermsResolutionReadApiLive.pipe(GovernedReadLayer.provide(governedReadRuntimeLive)),
     invoiceRecipientResolutionReadApiLive.pipe(GovernedReadLayer.provide(governedReadRuntimeLive)),
     migrateCounterpartyPriceGroupActionApiLive.pipe(

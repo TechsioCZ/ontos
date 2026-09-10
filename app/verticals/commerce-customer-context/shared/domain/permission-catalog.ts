@@ -16,7 +16,6 @@ export const COUNTERPARTY_PERMISSION_CODES = [
   // oxlint-disable-next-line sonarjs/no-duplicate-string -- Exact #328 catalog key repeated in its descriptor and bundle; remove-when: catalog generation owns canonical bundle derivation.
   'counterparty.access.manage',
   'counterparty.settings.price_group.manage',
-  'counterparty.settings.currency.manage',
   'counterparty.settings.payment_terms.manage',
   // oxlint-disable-next-line sonarjs/no-duplicate-string -- Exact #328 catalog key repeated in its descriptor and bundle; remove-when: catalog generation owns canonical bundle derivation.
   'counterparty.address_book.use',
@@ -221,7 +220,6 @@ export const COUNTERPARTY_PERMISSION_CATALOG = Object.freeze({
     owningCapability: 'commerce.customer-context.profile',
     permission: 'counterparty.profile.read',
     protectedEntrypoints: [
-      'commerce.customer-context.api.customer-currency-preference-read',
       'commerce.customer-context.api.customer-profile-read',
       'commerce.customer-context.api.purchase-currency-resolution',
     ],
@@ -275,18 +273,6 @@ export const COUNTERPARTY_PERMISSION_CATALOG = Object.freeze({
       'commerce.customer-context.submit-purchase-approval-request',
       'commerce.customer-context.api.customer-profile-trading-gate',
     ],
-    reasonRequired: true,
-  }),
-  'counterparty.settings.currency.manage': descriptor({
-    allowedScopes: ['counterparty'],
-    authorityGroups: [],
-    customerDelegable: false,
-    evidenceSensitivity: 'sensitive',
-    internalGrantable: true,
-    meaning: 'Manage the Counterparty customer currency preference.',
-    owningCapability: 'commerce.customer-context.customer-currency',
-    permission: 'counterparty.settings.currency.manage',
-    protectedEntrypoints: ['commerce.customer-context.change-customer-currency-preference'],
     reasonRequired: true,
   }),
   'counterparty.settings.payment_terms.manage': descriptor({

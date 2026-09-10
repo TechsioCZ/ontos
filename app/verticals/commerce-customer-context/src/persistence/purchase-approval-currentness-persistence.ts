@@ -483,7 +483,7 @@ const verifyCurrentApprovalEvaluation = (
 ): Effect.Effect<void, PurchasingApprovalRejected> => {
   if (evaluationSource === undefined) {
     return Effect.fail(
-      currentnessRejected('Current policy and Commercial FX evidence is unavailable'),
+      currentnessRejected('Current policy and comparable purchase-value evidence is unavailable'),
     );
   }
   return Schema.decodeUnknownEffect(PurchaseLimitCounterpartyRefSchema)(
@@ -509,7 +509,7 @@ const verifyCurrentApprovalEvaluation = (
       ),
     ),
     Effect.mapError(() =>
-      currentnessRejected('Current policy and Commercial FX evidence is unavailable'),
+      currentnessRejected('Current policy and comparable purchase-value evidence is unavailable'),
     ),
     Effect.map(evaluatePurchaseLimit),
     Effect.filterOrFail(
@@ -525,7 +525,7 @@ const verifyCurrentApprovalEvaluation = (
         sameSourceVector(evaluation.currentSourceRevisions, snapshot.sourceRevisions),
       () =>
         currentnessRejected(
-          'The current Purchase Limit policy or Commercial FX evidence no longer matches the approval proposal',
+          'The current Purchase Limit policy or comparable purchase-value evidence no longer matches the approval proposal',
         ),
     ),
     Effect.asVoid,

@@ -7,7 +7,6 @@ export class PurchaseCurrencyDependencyUnavailable extends Schema.TaggedError<Pu
       'purchasing_context_unavailable',
       'currency_policy_unavailable',
       'pricing_currency_support_unavailable',
-      'customer_currency_preference_unavailable',
     ]),
     reason: Schema.String,
     retryable: Schema.Literal(true),

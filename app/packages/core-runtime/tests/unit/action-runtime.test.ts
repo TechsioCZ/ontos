@@ -1528,7 +1528,7 @@ it.effect(
     let handlerCalls = 0;
     let policyCalls = 0;
     const permission = yield* Schema.decodeUnknownEffect(BusinessPermissionCodeSchema)(
-      'retail.settings.currency.manage',
+      'retail.settings.payment_term_preference.manage',
     );
     const action = defineAction(
       {
@@ -1536,7 +1536,7 @@ it.effect(
           captureMode: 'metadata_only',
           policyKey: 'retail-profile.write.v1',
         },
-        actionKey: 'commerce.customer-context.change-currency',
+        actionKey: 'commerce.customer-context.change-payment-term',
         auditProfile: 'sensitive',
         businessPermission: defineActionBusinessPermission<{ readonly profileId: RetailProfileId }>(
           ({ profileId }, scope) => ({
@@ -1557,7 +1557,7 @@ it.effect(
             kind: 'action_execution',
             provisioning: 'tenant_membership_default',
           },
-          entrypointKey: 'commerce.customer-context.change-currency',
+          entrypointKey: 'commerce.customer-context.change-payment-term',
           moduleKey: 'commerce.customer-context',
           role: 'action',
         }),

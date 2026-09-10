@@ -6,30 +6,22 @@ import {
   getActionHandler,
   getActionResourcePermissionTargetResolver,
 } from '../../../../packages/core-runtime/src/actions/definition.ts';
-import { claimGuestOrderAction } from '../../src/actions/claim-guest-order.action.ts';
-import type { ClaimGuestOrderPayload } from '../../src/actions/claim-guest-order.action.ts';
 import { repeatCounterpartyOrderAction } from '../../src/actions/repeat-counterparty-order.action.ts';
 import type { RepeatCounterpartyOrderPayload } from '../../src/actions/repeat-counterparty-order.action.ts';
 import { repeatRetailOrderAction } from '../../src/actions/repeat-retail-order.action.ts';
 import type { RepeatRetailOrderPayload } from '../../src/actions/repeat-retail-order.action.ts';
 import {
-  GuestOrderClaimConflict,
-  GuestOrderClaimRateLimited,
   HistoryActionUnavailable,
   RepeatOrderConflict,
   RepeatOrderNoRepeatableLines,
 } from '../../shared/domain/history-action-errors.ts';
-import { mapClaimGuestOrderActionProblem } from '../../api/claim-guest-order-action-problems.ts';
 import type { HistoryActionOwnerPorts } from '../../shared/domain/history-action-ports.ts';
 import type {
   CustomerHistoryPorts,
   HistoricalOrderCandidate,
 } from '../../shared/domain/history-ports.ts';
 import type { CustomerHistorySubject } from '../../shared/domain/record-visibility-contracts.ts';
-import {
-  handleClaimGuestOrder,
-  handleRepeatRetailOrder,
-} from '../../src/actions/history-action-support.ts';
+import { handleRepeatRetailOrder } from '../../src/actions/history-action-support.ts';
 
 const tenantId = '11111111-1111-4111-8111-111111111111';
 const legalEntityId = '22222222-2222-4222-8222-222222222222';
@@ -64,14 +56,6 @@ const cartRef = {
   resourceId: 'new-cart-1',
   resourceType: 'commerce.cart.cart',
   tenantId,
-};
-const committedClaimAttempt = {
-  committedAttemptEvidenceRef: {
-    moduleId: 'commerce.order' as const,
-    resourceId: 'claim-attempt-1',
-    resourceType: 'commerce.order.guest-order-claim-attempt' as const,
-    tenantId,
-  },
 };
 const cartLines = [
   { cartLineRef: 'new-cart-1:line-1', outcome: 'ADDED' as const, sourceLineRef: 'line-1' },
@@ -114,7 +98,6 @@ const makePorts = (subject: CustomerHistorySubject): CustomerHistoryPorts => {
         Effect.succeed({
           archivePermission: 'CURRENT',
           binding: 'CURRENT',
-          guestClaimPermission: 'CURRENT',
           historyPermission: 'CURRENT',
           policy: 'ALLOWED',
           repeatPermission: 'CURRENT',
@@ -142,16 +125,6 @@ const makePorts = (subject: CustomerHistorySubject): CustomerHistoryPorts => {
     counterpartyProfiles: { current: () => Effect.succeed('CURRENT') },
     orders: {
       getCustomerFacingDetail: () => Effect.succeed({ outcome: 'NOT_FOUND' as const }),
-      getForGuestClaim: () =>
-        Effect.succeed({
-          outcome: 'FOUND' as const,
-          value: {
-            claimState: 'UNCLAIMED' as const,
-            customerFacingClaimAllowed: true,
-            orderKind: 'GUEST' as const,
-            orderRef,
-          },
-        }),
       getForHistoryDetailAuthorization: () =>
         Effect.succeed({ outcome: 'FOUND' as const, value: order }),
       getForRepeat: () => Effect.succeed({ outcome: 'FOUND' as const, value: order }),
@@ -206,7 +179,6 @@ const makePorts = (subject: CustomerHistorySubject): CustomerHistoryPorts => {
         }),
     },
     resources: { current: () => Effect.succeed('CURRENT') },
-    verification: { verifyGuestClaim: () => Effect.succeed('VERIFIED') },
     visibility: {
       get: () =>
         Effect.succeed({
@@ -230,7 +202,9 @@ const makePorts = (subject: CustomerHistorySubject): CustomerHistoryPorts => {
   };
 };
 
-const collectors = <A extends typeof repeatRetailOrderAction | typeof claimGuestOrderAction>(
+const collectors = <
+  A extends typeof repeatRetailOrderAction | typeof repeatCounterpartyOrderAction,
+>(
   action: A,
 ) =>
   createActionCollector(
@@ -251,12 +225,6 @@ it('declares exact pre-handler business and Order resource permissions', () => {
     sourceOrderRef: orderRef,
     storefrontId: 'storefront-1',
   };
-  const claimPayload: ClaimGuestOrderPayload = {
-    orderRef,
-    profileRef: retailProfileRef,
-    proof: { assurance: 'HIGH', proofId: 'opaque-proof-handle' },
-  };
-
   expect(
     getActionBusinessPermissionTargetResolver(repeatRetailOrderAction)?.(retailPayload, scope),
   ).toMatchObject({ permission: 'retail.repeat_order', target: { kind: 'retail_profile' } });
@@ -282,14 +250,8 @@ it('declares exact pre-handler business and Order resource permissions', () => {
     ),
   ).toMatchObject({ trustedStorefrontId: 'gateway-storefront' });
   expect(
-    getActionBusinessPermissionTargetResolver(claimGuestOrderAction)?.(claimPayload, scope),
-  ).toMatchObject({ permission: 'retail.guest_order.claim', target: { kind: 'retail_profile' } });
-  expect(
     getActionResourcePermissionTargetResolver(repeatRetailOrderAction)?.(retailPayload, scope),
   ).toEqual({ permission: 'read', resource: orderRef });
-  expect(
-    getActionResourcePermissionTargetResolver(claimGuestOrderAction)?.(claimPayload, scope),
-  ).toBeUndefined();
 });
 
 it.effect(
@@ -308,9 +270,6 @@ it.effect(
             ownerInput = input;
             return Effect.succeed({ cartRef, lines: cartLines, outcome: 'CREATED' });
           },
-        },
-        guestOrders: {
-          claim: () => Effect.succeed({ ...committedClaimAttempt, outcome: 'CLAIMED' }),
         },
       };
       const result = yield* handleRepeatRetailOrder(payload, {
@@ -394,9 +353,6 @@ it.effect('fails closed for cross-tenant and wrong-type Cart ResourceRefs', () =
               createFromHistoricalIntent: () =>
                 Effect.succeed({ cartRef: returnedCartRef, lines: cartLines, outcome: 'CREATED' }),
             },
-            guestOrders: {
-              claim: () => Effect.succeed({ ...committedClaimAttempt, outcome: 'CLAIMED' }),
-            },
           },
         },
       }).pipe(Effect.flip);
@@ -405,55 +361,6 @@ it.effect('fails closed for cross-tenant and wrong-type Cart ResourceRefs', () =
       expect(collector.snapshot().auditEvidence).toEqual({});
     }
   }),
-);
-
-it.effect(
-  'delegates one-time proof to the Order owner without exposing it in result or evidence',
-  () =>
-    Effect.gen(function* claimGuest() {
-      const payload: ClaimGuestOrderPayload = {
-        orderRef,
-        profileRef: retailProfileRef,
-        proof: { assurance: 'HIGH', proofId: 'secret-proof-handle' },
-      };
-      const collector = collectors(claimGuestOrderAction);
-      let ownerInput: unknown;
-      const result = yield* handleClaimGuestOrder(payload, {
-        actionInvocationId: 'claim-invocation-1',
-        addDomainEvent: collector.addDomainEvent,
-        addOutboxMessage: collector.addOutboxMessage,
-        recordAuditEvidence: collector.recordAuditEvidence,
-        recordDataAccess: collector.recordDataAccess,
-        scope,
-        services: {
-          history: makePorts({ kind: 'RETAIL_PROFILE', profileRef: retailProfileRef }),
-          now: Effect.succeed(now),
-          owners: {
-            carts: {
-              createFromHistoricalIntent: () =>
-                Effect.succeed({ cartRef, lines: cartLines, outcome: 'CREATED' }),
-            },
-            guestOrders: {
-              claim: (input) => {
-                ownerInput = input;
-                return Effect.succeed({ ...committedClaimAttempt, outcome: 'CLAIMED' });
-              },
-            },
-          },
-        },
-      });
-
-      expect(result).toEqual({ orderRef, outcome: 'CLAIMED', profileRef: retailProfileRef });
-      expect(ownerInput).toMatchObject({
-        actionInvocationId: 'claim-invocation-1',
-        orderRef,
-        principalId,
-        proof: { assurance: 'HIGH', proofId: 'secret-proof-handle' },
-      });
-      expect(result).not.toHaveProperty('proof');
-      expect(collector.snapshot().auditEvidence).not.toHaveProperty('proof');
-      expect(collector.snapshot().domainEvents).toHaveLength(0);
-    }),
 );
 
 it.effect('returns typed repeat failures for conflict, empty intent, and owner outage', () =>
@@ -474,12 +381,7 @@ it.effect('returns typed repeat failures for conflict, empty intent, and owner o
         services: {
           history,
           now: Effect.succeed(now),
-          owners: {
-            carts,
-            guestOrders: {
-              claim: () => Effect.succeed({ ...committedClaimAttempt, outcome: 'CLAIMED' }),
-            },
-          },
+          owners: { carts },
         },
       });
     };
@@ -525,106 +427,6 @@ it.effect('returns typed repeat failures for conflict, empty intent, and owner o
     }
   }),
 );
-
-it.effect('maps the Order owner rate limit to a secret-safe typed rejection', () =>
-  Effect.gen(function* rateLimitedClaim() {
-    const payload: ClaimGuestOrderPayload = {
-      orderRef,
-      profileRef: retailProfileRef,
-      proof: { assurance: 'HIGH', proofId: 'rate-limited-secret-proof' },
-    };
-    const collector = collectors(claimGuestOrderAction);
-    const committed = yield* getActionHandler(claimGuestOrderAction)(payload, {
-      actionInvocationId: 'claim-rate-limit-invocation',
-      addDomainEvent: collector.addDomainEvent,
-      addOutboxMessage: collector.addOutboxMessage,
-      recordAuditEvidence: collector.recordAuditEvidence,
-      recordDataAccess: collector.recordDataAccess,
-      scope,
-      services: {
-        history: makePorts({ kind: 'RETAIL_PROFILE', profileRef: retailProfileRef }),
-        now: Effect.succeed(now),
-        owners: {
-          carts: {
-            createFromHistoricalIntent: () =>
-              Effect.succeed({ cartRef, lines: cartLines, outcome: 'CREATED' }),
-          },
-          guestOrders: {
-            claim: () => Effect.succeed({ ...committedClaimAttempt, outcome: 'RATE_LIMITED' }),
-          },
-        },
-      },
-    });
-
-    expect(committed).toBeDefined();
-    expect(collector.snapshot().auditEvidence).toMatchObject({
-      actionKind: 'CLAIM_GUEST_ORDER',
-      outcome: 'REJECTED_RATE_LIMITED',
-    });
-  }),
-);
-
-it.effect('fails closed when the Order owner cannot prove its claim attempt committed', () =>
-  Effect.gen(function* committedClaimReceipt() {
-    const payload: ClaimGuestOrderPayload = {
-      orderRef,
-      profileRef: retailProfileRef,
-      proof: { assurance: 'HIGH', proofId: 'receipt-validation-secret-proof' },
-    };
-    const collector = collectors(claimGuestOrderAction);
-    const failure = yield* handleClaimGuestOrder(payload, {
-      actionInvocationId: 'claim-untrusted-receipt-invocation',
-      addDomainEvent: collector.addDomainEvent,
-      addOutboxMessage: collector.addOutboxMessage,
-      recordAuditEvidence: collector.recordAuditEvidence,
-      recordDataAccess: collector.recordDataAccess,
-      scope,
-      services: {
-        history: makePorts({ kind: 'RETAIL_PROFILE', profileRef: retailProfileRef }),
-        now: Effect.succeed(now),
-        owners: {
-          carts: {
-            createFromHistoricalIntent: () =>
-              Effect.succeed({ cartRef, lines: cartLines, outcome: 'CREATED' }),
-          },
-          guestOrders: {
-            claim: () =>
-              Effect.succeed({
-                ...committedClaimAttempt,
-                committedAttemptEvidenceRef: {
-                  ...committedClaimAttempt.committedAttemptEvidenceRef,
-                  tenantId: '44444444-4444-4444-8444-444444444444',
-                },
-                outcome: 'RATE_LIMITED',
-              }),
-          },
-        },
-      },
-    }).pipe(Effect.flip);
-
-    expect(Schema.is(HistoryActionUnavailable)(failure)).toBe(true);
-    expect(failure).not.toHaveProperty('proof');
-  }),
-);
-
-it('maps verified claim conflict and rate limiting to exact HTTP statuses', () => {
-  expect(
-    mapClaimGuestOrderActionProblem(
-      new GuestOrderClaimConflict({
-        code: 'guest_order_claim_conflict',
-        reason: 'verified conflict',
-      }),
-    ),
-  ).toMatchObject({ code: 'guest_order_claim_conflict', status: 409 });
-  expect(
-    mapClaimGuestOrderActionProblem(
-      new GuestOrderClaimRateLimited({
-        code: 'guest_order_claim_rate_limited',
-        reason: 'rate limited',
-      }),
-    ),
-  ).toMatchObject({ code: 'guest_order_claim_rate_limited', status: 429 });
-});
 
 it.effect(
   'rejects untrusted Storefront and mismatched Counterparty profile before owner reads',
@@ -672,9 +474,6 @@ it.effect(
               carts: {
                 createFromHistoricalIntent: () =>
                   Effect.succeed({ cartRef, lines: cartLines, outcome: 'CREATED' }),
-              },
-              guestOrders: {
-                claim: () => Effect.succeed({ ...committedClaimAttempt, outcome: 'CLAIMED' }),
               },
             },
           },

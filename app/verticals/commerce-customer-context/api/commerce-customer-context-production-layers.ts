@@ -9,10 +9,6 @@ import {
   unavailableCounterpartyInvitationProofDelivery,
 } from '../shared/domain/access-port.ts';
 import {
-  RecognizedCurrencyCatalogPort,
-  unavailableRecognizedCurrencyCatalogPort,
-} from '../shared/domain/currency-catalog-port.ts';
-import {
   PurchaseCurrencyPurchasingContextPort,
   unavailablePurchaseCurrencyPurchasingContextPort,
 } from '../shared/domain/purchase-currency-context-port.ts';
@@ -34,7 +30,6 @@ import {
   unavailablePaymentTermCatalogGatewayCredentialIssuer,
 } from '../shared/domain/payment-term-catalog-gateway-credential.ts';
 import {
-  GuestOrderClaimOwner,
   unavailableHistoryActionOwnerPorts,
   RepeatCartOwner,
 } from '../shared/domain/history-action-ports.ts';
@@ -43,7 +38,6 @@ import {
   unavailableCustomerHistoryPorts,
 } from '../shared/domain/history-ports.ts';
 import { paymentTermCatalogGatewayCredentialLive } from './payment-term-catalog-gateway-credential.ts';
-import { commerceFxGatewayCredentialLive } from './commerce-fx-gateway-credential.ts';
 
 type CommerceCustomerContextOwnerRuntimeServices =
   | Layer.Success<typeof BusinessPermissionRelationshipMutationLive>
@@ -92,10 +86,6 @@ export const unavailablePurchaseCurrencyPricingPortLive = Layer.succeed(
   PurchaseCurrencyPricingPort,
   unavailablePurchaseCurrencyPricingPort(),
 );
-export const unavailableRecognizedCurrencyCatalogPortLive = Layer.succeed(
-  RecognizedCurrencyCatalogPort,
-  unavailableRecognizedCurrencyCatalogPort(),
-);
 export const unavailablePaymentTermCatalogGatewayCredentialLive = Layer.succeed(
   PaymentTermCatalogGatewayCredentialService,
   unavailablePaymentTermCatalogGatewayCredentialIssuer,
@@ -119,27 +109,20 @@ export const unavailableRepeatCartOwnerLive = Layer.succeed(
   RepeatCartOwner,
   unavailableHistoryActionOwners.carts,
 );
-export const unavailableGuestOrderClaimOwnerLive = Layer.succeed(
-  GuestOrderClaimOwner,
-  unavailableHistoryActionOwners.guestOrders,
-);
 
 /**
- * Production owner composition.  The FX and Payment Term Catalog issuers are server-owned
- * gateway credentials; their configuration layers fail closed when a deployment has not supplied
- * the corresponding secret or gateway URL.  They are intentionally composed next to the other
- * external owner ports so no request/session credential can be substituted by a caller.
+ * Production owner composition.  The Payment Term Catalog issuer is a server-owned gateway
+ * credential; its configuration layer fails closed when a deployment has not supplied the
+ * corresponding secret or gateway URL. It is intentionally composed next to the other external
+ * owner ports so no request/session credential can be substituted by a caller.
  */
 export const commerceCustomerContextProductionExternalPortsLive = Layer.mergeAll(
   unavailableCounterpartyInvitationProofDeliveryLive,
   unavailablePurchaseCurrencyPurchasingContextPortLive,
   unavailablePurchaseCurrencyPolicyPortLive,
   unavailablePurchaseCurrencyPricingPortLive,
-  unavailableRecognizedCurrencyCatalogPortLive,
-  commerceFxGatewayCredentialLive,
   paymentTermCatalogGatewayCredentialLive,
   unavailableRepeatCartOwnerLive,
-  unavailableGuestOrderClaimOwnerLive,
 );
 
 /** Backwards-compatible name for hosts that still import the complete fail-closed port graph. */
