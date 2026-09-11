@@ -2,8 +2,6 @@
 // Author route metadata in colocated src/routes/**/route.meta.ts files.
 // This compatibility manifest is regenerated from route-owned metadata.
 
-import { createUltramodernI18nUrlStrategy } from '@app/shared-contracts/ultramodern-i18n-url-strategy';
-
 export const ultramodernRouteNamespace = 'party-registry' as const;
 
 const ultramodernRouteMetadata = [
@@ -40,6 +38,3 @@ const ultramodernRouteMetadata = [
 export const ultramodernLocalisedUrls = {
   [ultramodernRouteMetadata[0].canonicalPath]: ultramodernRouteMetadata[0].localisedPaths,
 } as const;
-
-/** Adapts the generated localised-URL map to the 3.9.0-ultramodern.5+ `I18nUrlStrategy` contract. */
-export const ultramodernI18nUrlStrategy = createUltramodernI18nUrlStrategy(ultramodernLocalisedUrls);

@@ -8,7 +8,6 @@
     ".": "./src/index.ts",
     "./server/effect-bff-runtime": "./src/effect-bff-runtime.ts",
     "./ultramodern-build": "./src/ultramodern-build.ts",
-    "./ultramodern-i18n-url-strategy": "./src/ultramodern-i18n-url-strategy.ts",
     "./problem-details": "./src/problem-details.ts",
     "./client-runtime": "./src/client-runtime.ts"
   },
