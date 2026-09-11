@@ -34,6 +34,8 @@ Privacy is itself the System of Record for its own privacy facts and applies ret
 Recipient, DSR Resolver, Retention Rule Authority, Exception Authority, and Legal Hold Authority are
 roles or business responsibilities, not new Party, Principal, account, or Permission types. An actual
 protected system operation remains attributable to a Principal; Actor is its narrative name.
+_Avoid_: `System Actor` as a separate privacy identity or role type. Use the actual `Principal`, and
+`Actor` only as the shared OntOS narrative label for who performed the operation.
 
 **Privacy responsibility versus authorization** — A role, Representation, identity verification,
 Consent, applicability result, or Business Policy result does not create a Permission. Protected
@@ -135,6 +137,8 @@ rules and obligations apply from trusted business facts. It can use declared jur
 Data Subject context, Controller, purpose, market, or site where their meaning is approved. It is not
 an executable general legal-advice engine or a silent fallback chain between legal regimes. Multiple
 applicable layers require an explicit composition rule; unresolved conflicts remain unresolved.
+_Avoid_: unqualified `Privacy Policy` when the intended authority is this applicability model. Name
+`Privacy Applicability Policy`, or name the other owning policy explicitly when a different rule owns it.
 
 **Privacy Applicability Decision** — Explainable result for one exact privacy operation/scope and
 trusted time, preserving policy identities/versions and the facts used. Notice, Legal Basis, Consent,
@@ -225,6 +229,8 @@ Absence of a decision is not refusal or grant. Every decision preserves exact sc
 recorded time, provenance, relevant versions, and actual Actor/flow evidence. Withdrawal ends relevant
 Current effect, not the existence of the historical grant. Re-grant is new evidence and cannot
 retroactively legitimize earlier use.
+_Avoid_: `Consent Action` when naming this business fact. Use the shared OntOS `Action` for the
+operation and `Consent Decision` for the privacy fact produced or confirmed by that operation.
 
 **Current Consent** — Result for one exact scope from authoritative decision history at trusted
 operation time. Delayed older grants and retries cannot resurrect a later withdrawal. Indistinguishable
@@ -238,12 +244,25 @@ A flow may explicitly perform both changes, preserving their separate facts. Con
 is another independent gate where required. Transactional use with a distinct purpose is not silently
 blocked by an unrelated marketing choice, nor may marketing be relabeled transactional to bypass it.
 
+**Technology Category** — Governed business grouping of technology uses with explicit meaning and
+mapping to Processing Purpose/Purpose Version. The label itself is not a Legal Basis, Processing
+Eligibility result, provider identity, or authorization to use the technology.
+_Avoid_: treating labels such as `necessary`, `analytics`, `marketing`, `OTHER`, or free text as
+privacy authority without the declared Processing Activity and applicable privacy facts.
+
+**Technology Provider Set** — Explicit set of technology providers relevant to a Technology Consent
+scope when changing that set materially changes the meaning of the choice or the obligations around it.
+It is not a universally required Consent Scope dimension and does not replace concrete Recipient or
+Processor role assignments where those roles apply.
+_Avoid_: making provider identifiers mandatory Consent-key fields when provider differences do not
+change business meaning, or treating a provider set as a substitute for Processing Activity ownership.
+
 **Technology Consent** — Common Consent lifecycle applied to cookies and comparable technologies,
 using Anonymous Privacy Context or sufficiently evidenced personal context as supported. Site, device,
-category, and provider set matter where they change the meaning of the choice. `COOKIE_CONSENT` is a
-planning capability name for this specialization, not a second registry. A necessary-technology label
-is not by itself a legal ground or allow decision. Missing/lost choice is not a grant. Material provider
-or purpose changes require reassessment before new use.
+Technology Category, and Technology Provider Set matter where they change the meaning of the choice.
+`COOKIE_CONSENT` is a planning capability name for this specialization, not a second registry. A
+necessary-technology label is not by itself a legal ground or allow decision. Missing/lost choice is
+not a grant. Material Technology Provider Set or purpose changes require reassessment before new use.
 
 Personal Consent is never reused for a different Data Subject. Cross-site/device reuse requires the
 same legitimate scope and sufficient evidence; shared storage or login is insufficient. Anonymous
@@ -255,8 +274,8 @@ A verification token is sensitive access material, not durable Consent evidence.
 ## Processing Eligibility
 
 **Processing Eligibility** — Privacy-owned Current Business Policy decision for an exact intended
-Processing Scope. It evaluates applicable Legal Basis, relevant Consent, objection/restriction and
-other required Current privacy facts without executing the consumer operation.
+Processing Scope. It evaluates applicable Legal Basis, relevant Consent, Processing Objection,
+Processing Restriction and other required Current privacy facts without executing the consumer operation.
 
 Exactly one outcome is returned for a completed evaluation:
 
@@ -286,7 +305,7 @@ handoff requires Reconciliation before a potentially duplicating retry.
 
 **Data Subject Request (DSR)** — Durable privacy Case preserving original intake, received time,
 requester context, requested scope, verification, responsibility, decisions, owner work, and response.
-It can coordinate several rights and Controller obligations, not six separate engines. Intake can
+It can coordinate several rights and DSR Controller Obligations, not six separate engines. Intake can
 remain unresolved without fabricating a Controller or identity. New intentional submission is a new
 Case with its own received time; a transport retry is not. Where an intake concerns multiple people,
 each person's verification, Representation, rights, and output scope remain separate.
@@ -301,6 +320,8 @@ result, preserving rights, deadline bases, decisions, tasks, and completion evid
 can have several obligations. During intake unresolved portions remain explicitly unresolved; there
 may initially be no resolved obligation. Decomposition never resets original receipt or invents a
 later legal commencement. Different legal receipt bases require evidence, not assignment timestamps.
+_Avoid_: unqualified `Controller Obligation` as a competing canonical term. Use the full
+`DSR Controller Obligation` unless a tightly local sentence has already established the DSR meaning.
 
 **DSR Resolver** — Narrative responsibility of the Principal coordinating the Case. Every open Case
 has an identifiable Current responsibility and assignment history. Reassignment/substitution does not
@@ -318,21 +339,31 @@ missing coverage, or owner outage is not a legal denial. An owner rejection does
 responsible Controller's substantive decision.
 
 **Processing Restriction** — Effective privacy limitation on exact stored content or intended use,
-with reason, decision, review/release, and enforcement evidence. In DSR descriptions `Restriction`
-refers to the requested right or this resulting limitation as explicitly identified. It is not erasure,
-archive, Consent withdrawal, or a whole-person flag. Overlapping restrictions remain independent;
-release does not restore withdrawn Consent or another missing prerequisite.
+with reason, decision, review/release, and enforcement evidence. `Restriction` alone names the DSR
+Right/request; the resulting Current privacy fact is Processing Restriction. It is not erasure,
+archive, Consent withdrawal, or a whole-person flag. Overlapping Processing Restrictions remain
+independent; release does not restore withdrawn Consent or another missing prerequisite.
+_Avoid_: `Current Restriction`, `Restriction Outcome`, or an unqualified `Restriction` when naming the
+resulting privacy fact rather than the DSR Right.
 
-**Processing Objection** — Evidenced objection and its applicable effect for an exact purpose/use,
-kept distinct from the DSR intake, substantive assessment, and owner enforcement. An applicable
+**Processing Objection** — Effective, scope-bound privacy fact resulting from the applicable Objection
+assessment, kept distinct from DSR intake, DSR Substantive Decision and owner enforcement. An applicable
 immediate effect cannot be postponed by an internal approval queue. Direct-marketing and other
-objections use their own legal rules; resolving an objection does not silently create a new Consent
-or Legal Basis. Plans using `Objection` must retain these distinctions.
+objections use their own approved rules; resolving a Processing Objection does not silently create a
+new Consent or Legal Basis.
+_Avoid_: `Objection Outcome`, `Objection Effect`, or unqualified `Objection` when naming the resulting
+Current privacy fact rather than the DSR Right/request.
 
-**DSR Owner Task** — Durable Case/Controller Obligation/right-linked work item requesting supported
+**DSR Owner Task** — Durable Case/DSR Controller Obligation/right-linked work item requesting supported
 lookup, contribution, or execution through a Privacy Owner Contract. `DSR Owner Work Item` in older
 discovery is the same concept, not another workflow. An intake does not automatically authorize its
 sensitive tasks. Dispatch/acceptance is distinct from required outcome completion.
+
+**DSR Case Summary** — Derived truthful composition of each DSR Controller Obligation's DSR Substantive
+Decisions, owner coverage/execution, response and delivery states. It is read/coordination semantics;
+it does not create a new DSR Substantive Decision, Owner Execution Outcome, or global completion fact.
+_Avoid_: `Case Outcome`, `Aggregate DSR Outcome`, or a global `completed` boolean as a competing
+canonical business fact.
 
 **Final DSR Response** — Truthful response separating substantive decisions, actual measures,
 justified exclusions, and unresolved work per Controller/right scope. Coordinated Case handling must
@@ -461,6 +492,8 @@ must not become a replacement copy of data legitimately removed by another owner
 or measures while retaining its Resources and facts. It declares supported scope, authorization,
 currentness, idempotency, evidence, failure and recovery semantics. Privacy never reaches into private
 owner tables/repositories or invents a generic mutation bypass.
+_Avoid_: `DSR Owner Contract` as a competing canonical contract family. The same Privacy Owner Contract
+family spans DSR, retention, Privacy Measures, delivery support and recovery responsibilities.
 
 **Privacy Owner Inventory** — Declared required owning capabilities and relevant historical, derived,
 temporary, external-copy, and recovery responsibilities for an exact privacy scope. It connects
@@ -537,8 +570,15 @@ owner inventory, public contracts and tested recovery. A catalog value or GOLD l
 
 `DSR Case` means Data Subject Request. `DSR Owner Work Item` means DSR Owner Task. In privacy-owner
 plans, unqualified `Execution Outcome` means Owner Execution Outcome, not Action transport status.
-`Privacy Policy` in these plans means the relevant explicit Privacy Applicability Policy or the named
+`Privacy Policy` in older plans means the relevant explicit Privacy Applicability Policy or the named
 owning rule, not a generic configurable script. `COOKIE_CONSENT` names Technology Consent capability.
+`System Actor` is not a separate type: use the actual Principal and the shared Actor narrative label.
+`Consent Action` is not the Consent business fact: use Action for the operation and Consent Decision
+for the resulting privacy fact. `Objection Outcome`/`Objection Effect` map to Processing Objection when
+they mean the Current privacy fact; `Restriction Outcome`/`Current Restriction` map to Processing
+Restriction when they mean the Current privacy fact. `Controller Obligation` means DSR Controller
+Obligation in DSR plans. `DSR Owner Contract` means Privacy Owner Contract. `Case Outcome` or
+`Aggregate DSR Outcome` should be expressed as DSR Case Summary when referring to the derived Case view.
 Lowercase `snapshot` used for a contribution's capture must not imply a canonical retained domain
 Snapshot or a cross-module atomic transaction. Prefer observation/capture time for contribution data.
 
