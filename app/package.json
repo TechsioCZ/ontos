@@ -105,7 +105,6 @@
     "@noble/hashes": "2.2.0",
     "@modern-js/code-tools": "npm:@bleedingdev/modern-js-code-tools@3.9.0-ultramodern.8",
     "@modern-js/codesmith": "2.6.9",
-    "@modern-js/plugin-bff": "npm:@bleedingdev/modern-js-plugin-bff@3.9.0-ultramodern.8",
     "@oxlint/plugins": "1.81.0",
     "@types/node": "^26.4.1",
     "@types/pg": "8.20.0",
@@ -130,15 +129,12 @@
     "jscpd": "5.1.2",
     "jsonc-parser": "3.3.1",
     "fallow": "3.22.0",
-    "@vercel/nft": "0.29.2",
     "@modern-js/app-tools": "npm:@bleedingdev/modern-js-app-tools@3.9.0-ultramodern.8",
     "@modern-js/ultramodern-create": "npm:@bleedingdev/modern-js-ultramodern-create@3.9.0-ultramodern.8",
     "cross-env": "10.1.0",
     "@effect/opentelemetry": "4.0.0-rc.112",
     "@modern-js/app-tools-extensions": "npm:@bleedingdev/modern-js-app-tools-extensions@3.9.0-ultramodern.8",
-    "@modern-js/bff-effect": "npm:@bleedingdev/modern-js-bff-effect@3.9.0-ultramodern.8",
-    "@modern-js/plugin-bff-extensions": "npm:@bleedingdev/modern-js-plugin-bff-extensions@3.9.0-ultramodern.8",
-    "@modern-js/plugin-bff-build-extensions": "npm:@bleedingdev/modern-js-plugin-bff-build-extensions@3.9.0-ultramodern.8"
+    "@modern-js/bff-effect": "npm:@bleedingdev/modern-js-bff-effect@3.9.0-ultramodern.8"
   },
   "engines": {
     "node": ">=26",

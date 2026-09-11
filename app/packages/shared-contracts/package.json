@@ -8,6 +8,7 @@
     ".": "./src/index.ts",
     "./server/effect-bff-runtime": "./src/effect-bff-runtime.ts",
     "./ultramodern-build": "./src/ultramodern-build.ts",
+    "./ultramodern-i18n-url-strategy": "./src/ultramodern-i18n-url-strategy.ts",
     "./problem-details": "./src/problem-details.ts",
     "./client-runtime": "./src/client-runtime.ts"
   },
@@ -19,7 +20,6 @@
   "dependencies": {
     "@effect/opentelemetry": "4.0.0-rc.112",
     "effect": "4.0.0-rc.112",
-    "@modern-js/plugin-bff": "npm:@bleedingdev/modern-js-plugin-bff@3.9.0-ultramodern.8",
     "@app/core-runtime": "workspace:*",
     "@modern-js/bff-effect": "npm:@bleedingdev/modern-js-bff-effect@3.9.0-ultramodern.8"
   },

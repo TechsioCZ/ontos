@@ -12,10 +12,74 @@ const Manifest = Schema.fromJsonString(
   Schema.Struct({
     dependencies: Schema.optional(Schema.Record(Schema.String, Schema.String)),
     devDependencies: Schema.optional(Schema.Record(Schema.String, Schema.String)),
+    peerDependencies: Schema.optional(Schema.Record(Schema.String, Schema.String)),
     scripts: Schema.optional(Schema.Record(Schema.String, Schema.String)),
   }),
 );
 const InstalledPackage = Schema.fromJsonString(Schema.Struct({ name: Schema.String, version: Schema.String }));
+const WORKSPACE_CONTRACT = '.modernjs/ultramodern.json';
+const CONTRACT_GENERATOR = '@modern-js/create';
+const GENERATOR_PACKAGE = '@modern-js/ultramodern-create';
+const GENERATOR_WORKSPACE_MANIFEST = `node_modules/${GENERATOR_PACKAGE}/dist/cjs/ultramodern-workspace/package-json.cjs`;
+const TYPE_BRIDGE_PACKAGE = '@modern-js/runtime';
+const TYPE_BRIDGE_DECLARATIONS = 'dist/types';
+const BUILD_FACADE_EXPORTS = ['ultramodernApiMarker', 'ultramodernDeliveryUnit', 'ultramodernUiMarker'];
+const ROUTE_MANIFEST_EXPORTS = ['ultramodernLocalisedUrls', 'ultramodernRouteMetadata', 'ultramodernRouteNamespace'];
+const sourceModuleExtension = /\.[cm]?tsx?$/u;
+const WorkspaceContract = Schema.fromJsonString(
+  Schema.Struct({
+    generator: Schema.optional(Schema.Struct({ package: Schema.optional(Schema.String) })),
+    tooling: Schema.optional(Schema.Struct({ wrappers: Schema.optional(Schema.Record(Schema.String, Schema.String)) })),
+    topology: Schema.optional(
+      Schema.Struct({
+        apps: Schema.optional(
+          Schema.Array(
+            Schema.Struct({
+              deliveryUnit: Schema.optional(Schema.Struct({ unitId: Schema.String })),
+              path: Schema.String,
+            }),
+          ),
+        ),
+      }),
+    ),
+  }),
+);
+type ContractApp = typeof WorkspaceContract.Type extends { readonly topology?: { readonly apps?: infer Apps } }
+  ? NonNullable<Apps> extends readonly (infer App)[]
+    ? App
+    : never
+  : never;
+const isContainedDirectory = (value: string): boolean =>
+  value.length > 0 && !value.includes('..') && !value.startsWith('/');
+const isContainedSourceModule = (value: string): boolean =>
+  isContainedDirectory(value) && sourceModuleExtension.test(value);
+const declaredNames = (source: string, names: readonly string[]): readonly string[] =>
+  names.filter((name) => new RegExp(String.raw`^export\s+const\s+${name}\b`, 'mu').test(source));
+const declaredCohort = (manifest: typeof Manifest.Type, cohort: readonly string[]): readonly string[] =>
+  cohort.filter((name) => (manifest.dependencies?.[name] ?? manifest.devDependencies?.[name]) !== undefined);
+const frameworkTypeSpecifiers = (declaration: string): readonly string[] => [
+  ...new Set(
+    [...declaration.matchAll(/from '(?<name>@modern-js\/[\w.-]+)'/gu)].flatMap((match) => match.groups?.name ?? []),
+  ),
+];
+/** Framework type declarations that only the workspace root can satisfy under an isolated store. */
+const unsatisfiedTypeBridges = (
+  specifiers: ReadonlySet<string>,
+  provider: typeof Manifest.Type,
+  root: typeof Manifest.Type,
+): readonly string[] =>
+  [...specifiers].filter(
+    (name) =>
+      (provider.dependencies?.[name] ?? provider.peerDependencies?.[name]) === undefined &&
+      (root.dependencies?.[name] ?? root.devDependencies?.[name]) !== undefined,
+  );
+const generatedCohortPackages = (source: string): readonly string[] => [
+  ...new Set(
+    [...source.matchAll(/\)\('(?<name>@modern-js\/[\w.-]+)',\s*packageSource\)/gu)].flatMap(
+      (match) => match.groups?.name ?? [],
+    ),
+  ),
+];
 const documentsBuiltInPlugin = (readme: string): boolean =>
   readme.includes('A wrapper around [TypeScript-Go]') &&
   readme.includes('Adding the `@effect/tsgo` dependency to your project.') &&
@@ -67,6 +131,23 @@ const at = (
   target,
   workspace,
 });
+const contractFact = (
+  contractText: string,
+  anchor: string,
+  workspace: string,
+  kind: KnipModelEvidence['kind'],
+  target: string,
+  reason: string,
+): KnipModelEvidence =>
+  at(
+    WORKSPACE_CONTRACT,
+    contractText,
+    Math.max(contractText.indexOf(JSON.stringify(anchor)), 0),
+    workspace,
+    kind,
+    target,
+    reason,
+  );
 const packageName = (specifier: string): string | undefined => {
   if (/^(?:[./#]|[a-z]+:)/u.test(specifier)) {
     return undefined;
@@ -474,6 +555,187 @@ export const buildKnipRuntimeEvidence = Effect.fn('QualityAudit.buildKnipRuntime
         }
       }
     });
+    // The installed generator owns the framework cohort a generated workspace
+    // must declare. Read the emitted contract as source; never execute it.
+    const cohortPackages = Effect.fn('QualityAudit.cohortPackages')(function* cohortPackages() {
+      const source = yield* read(GENERATOR_WORKSPACE_MANIFEST);
+      return source === undefined ? [] : generatedCohortPackages(source);
+    });
+    const wrapperEvidence = Effect.fn('QualityAudit.wrapperEvidence')(function* wrapperEvidence(
+      contractText: string,
+      wrappers: Readonly<Record<string, string>>,
+    ) {
+      for (const [wrapper, target] of Object.entries(wrappers)) {
+        if (!isContainedSourceModule(target) || (yield* read(target)) === undefined) {
+          continue;
+        }
+        evidence.push(
+          contractFact(
+            contractText,
+            target,
+            '.',
+            'file',
+            target,
+            `Workspace contract tooling.wrappers.${wrapper} invokes this repository wrapper for the framework command`,
+          ),
+        );
+      }
+    });
+    const buildFacadeEvidence = Effect.fn('QualityAudit.buildFacadeEvidence')(function* buildFacadeEvidence(
+      contractText: string,
+      app: ContractApp,
+    ) {
+      const unitId = app.deliveryUnit?.unitId;
+      if (unitId === undefined) {
+        return;
+      }
+      const file = `${app.path}/shared/ultramodern-build.ts`;
+      const source = uncomment(file, yield* read(file));
+      if (source === undefined) {
+        return;
+      }
+      evidence.push(
+        contractFact(
+          contractText,
+          app.path,
+          '.',
+          'file',
+          file,
+          `Workspace contract declares delivery unit ${unitId}; the framework build reads this build-identity facade`,
+        ),
+      );
+      for (const name of declaredNames(source, BUILD_FACADE_EXPORTS)) {
+        evidence.push(
+          contractFact(
+            contractText,
+            app.path,
+            '.',
+            'export',
+            `${file}#${name}`,
+            `Framework build-identity facade export for the declared delivery unit ${unitId}`,
+          ),
+        );
+      }
+    });
+    const routeManifestEvidence = Effect.fn('QualityAudit.routeManifestEvidence')(function* routeManifestEvidence(
+      contractText: string,
+      app: ContractApp,
+    ) {
+      const file = `${app.path}/src/routes/ultramodern-route-metadata.ts`;
+      const source = uncomment(file, yield* read(file));
+      if (source === undefined) {
+        return;
+      }
+      for (const name of declaredNames(source, ROUTE_MANIFEST_EXPORTS)) {
+        evidence.push(
+          contractFact(
+            contractText,
+            app.path,
+            '.',
+            'export',
+            `${file}#${name}`,
+            'Generated route manifest surface owned by the framework route generator',
+          ),
+        );
+      }
+    });
+    const declarationSpecifiers = Effect.fn('QualityAudit.declarationSpecifiers')(function* declarationSpecifiers(
+      directory: string,
+    ) {
+      const specifiers = new Set<string>();
+      const pending = [directory];
+      while (pending.length > 0) {
+        const current = pending.pop() ?? directory;
+        for (const entry of yield* fs.readDirectory(current)) {
+          const child = path.join(current, entry);
+          if ((yield* fs.stat(child)).type === 'Directory') {
+            pending.push(child);
+          } else if (entry.endsWith('.d.ts')) {
+            for (const name of frameworkTypeSpecifiers(yield* fs.readFileString(child))) {
+              specifiers.add(name);
+            }
+          }
+        }
+      }
+      return specifiers;
+    });
+    const typeBridgeEvidence = Effect.fn('QualityAudit.typeBridgeEvidence')(function* typeBridgeEvidence(
+      contractText: string,
+      app: ContractApp,
+      root: typeof Manifest.Type,
+    ) {
+      const installed = `${app.path}/node_modules/${TYPE_BRIDGE_PACKAGE}`;
+      const providerText = yield* read(`${installed}/package.json`);
+      const declarations = path.join(appRoot, installed, TYPE_BRIDGE_DECLARATIONS);
+      if (providerText === undefined || !(yield* fs.exists(declarations))) {
+        return;
+      }
+      const provider = yield* Schema.decodeUnknownEffect(Manifest)(providerText);
+      const specifiers = yield* declarationSpecifiers(declarations);
+      for (const name of unsatisfiedTypeBridges(specifiers, provider, root)) {
+        evidence.push(
+          contractFact(
+            contractText,
+            app.path,
+            '.',
+            'dependency',
+            name,
+            `Installed ${TYPE_BRIDGE_PACKAGE} type declarations import ${name} without declaring it, so the workspace root resolves it for the referenced TypeScript build`,
+          ),
+        );
+      }
+    });
+    const cohortEvidence = Effect.fn('QualityAudit.cohortEvidence')(function* cohortEvidence(
+      contractText: string,
+      app: ContractApp,
+      cohort: readonly string[],
+    ) {
+      const manifestText = yield* read(`${app.path}/package.json`);
+      if (manifestText === undefined) {
+        return;
+      }
+      const manifest = yield* Schema.decodeUnknownEffect(Manifest)(manifestText);
+      for (const name of declaredCohort(manifest, cohort)) {
+        evidence.push(
+          contractFact(
+            contractText,
+            app.path,
+            app.path,
+            'dependency',
+            name,
+            `Installed ${GENERATOR_PACKAGE} declares this framework cohort dependency for the contracted workspace app`,
+          ),
+        );
+      }
+    });
+    // The framework command owns workspace validation, so the declared workspace
+    // contract — not a repository validator implementation — is the evidence.
+    const workspaceContractEvidence = Effect.fn('QualityAudit.workspaceContractEvidence')(
+      function* workspaceContractEvidence() {
+        const contractText = yield* read(WORKSPACE_CONTRACT);
+        if (contractText === undefined) {
+          return;
+        }
+        const contract = yield* Schema.decodeUnknownEffect(WorkspaceContract)(contractText);
+        if (contract.generator?.package !== CONTRACT_GENERATOR) {
+          return;
+        }
+        yield* wrapperEvidence(contractText, contract.tooling?.wrappers ?? {});
+        const cohort = yield* cohortPackages();
+        const rootManifest = yield* Schema.decodeUnknownEffect(Manifest)(
+          yield* fs.readFileString(path.join(appRoot, 'package.json')),
+        );
+        for (const app of contract.topology?.apps ?? []) {
+          if (!isContainedDirectory(app.path)) {
+            continue;
+          }
+          yield* buildFacadeEvidence(contractText, app);
+          yield* routeManifestEvidence(contractText, app);
+          yield* cohortEvidence(contractText, app, cohort);
+          yield* typeBridgeEvidence(contractText, app, rootManifest);
+        }
+      },
+    );
     const workspaces = yield* workspaceDirectories(appRoot);
     for (const workspace of workspaces) {
       const prefix = workspace === '.' ? '' : `${workspace}/`;
@@ -497,6 +759,7 @@ export const buildKnipRuntimeEvidence = Effect.fn('QualityAudit.buildKnipRuntime
     yield* tsgoEvidence();
     yield* readinessEvidence();
     yield* lefthookEvidence();
+    yield* workspaceContractEvidence();
     return evidence;
   },
 );

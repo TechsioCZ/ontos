@@ -150,6 +150,10 @@ const linkRuntimeDependencies = Effect.fn('linkRuntimeDependencies')(function* l
         path.join(root, 'node_modules/@app/gateway-principal-verifier'),
       ),
       fileSystem.symlink(
+        path.join(appRoot, 'apps/shell-super-app/node_modules/@modern-js/bff-effect'),
+        path.join(root, 'node_modules/@modern-js/bff-effect'),
+      ),
+      fileSystem.symlink(
         path.join(appRoot, 'apps/shell-super-app/node_modules/@modern-js/plugin-bff'),
         path.join(root, 'node_modules/@modern-js/plugin-bff'),
       ),
