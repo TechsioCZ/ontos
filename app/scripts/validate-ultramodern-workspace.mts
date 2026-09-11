@@ -80,6 +80,7 @@ const SHARED_VALIDATOR_STRING_022 = '@modern-js/app-tools';
 const SHARED_VALIDATOR_STRING_023 = '@modern-js/code-tools';
 const SHARED_VALIDATOR_STRING_024 = '@modern-js/ultramodern-create';
 const SHARED_VALIDATOR_STRING_025 = '@modern-js/plugin-bff';
+const SHARED_VALIDATOR_STRING_APICHECK = 'modern-api-check';
 const SHARED_VALIDATOR_STRING_026 = '@modern-js/plugin-bff-extensions/backend-federation-manifest/node';
 const SHARED_VALIDATOR_STRING_027 = '@modern-js/plugin-i18n';
 const SHARED_VALIDATOR_STRING_028 = '@modern-js/plugin-tanstack';
@@ -1254,7 +1255,7 @@ const workspaceValidationContractDefinition = {
     'action:test:unit': 'pnpm --filter @app/core-runtime action:test:unit',
     'agents:refs:check': 'node ./scripts/setup-agent-reference-repos.mts --check',
     'agents:refs:install': 'node ./scripts/setup-agent-reference-repos.mts',
-    'api:check': 'node ./scripts/check-ultramodern-api-boundaries.mts',
+    'api:check': SHARED_VALIDATOR_STRING_APICHECK,
     build: 'pnpm --filter "./apps/shell-super-app" run build && pnpm mf:types && pnpm performance:readiness',
     check:
       'pnpm format:check && pnpm lint && pnpm action:test:unit && pnpm typecheck && pnpm skills:check && pnpm i18n:boundaries && pnpm api:check && pnpm database-access:check && pnpm module-entrypoints:check && pnpm check:module-contracts && pnpm contract:check && pnpm performance:readiness',
@@ -1377,11 +1378,12 @@ const workspaceValidationContractDefinition = {
       tooling: {
         command: 'ultramodern-create ultramodern',
         wrappers: {
-          apiBoundaries: 'scripts/check-ultramodern-api-boundaries.mts',
+          apiBoundaries: SHARED_VALIDATOR_STRING_APICHECK,
           backendFederationGenerate: SHARED_VALIDATOR_STRING_116,
           backendFederationProof: SHARED_VALIDATOR_STRING_120,
           cloudflareOutputVerify: SHARED_VALIDATOR_STRING_125,
           cloudflareProof: SHARED_VALIDATOR_STRING_119,
+          cloudflareSsrProof: 'scripts/proof-workerd-ssr.mts',
           mfTypes: SHARED_VALIDATOR_STRING_114,
           performanceReadiness: SHARED_VALIDATOR_STRING_122,
           publicSurface: SHARED_VALIDATOR_STRING_117,
@@ -1389,6 +1391,7 @@ const workspaceValidationContractDefinition = {
           skills: SHARED_VALIDATOR_STRING_115,
           typecheck: SHARED_VALIDATOR_STRING_123,
           validate: SHARED_VALIDATOR_STRING_124,
+          zeropsMaterialize: 'scripts/materialize-zerops-runtime.mjs',
         },
       },
       workspace: {
@@ -5830,10 +5833,7 @@ assert(
     !installedVerticalSource.includes('ultramodernGatewayAudienceTopology'),
   'Shell installed verticals must not introduce a second topology registry',
 );
-assert(
-  rootPackage.scripts?.['api:check'] === 'node ./scripts/check-ultramodern-api-boundaries.mts',
-  'Root must expose api:check',
-);
+assert(rootPackage.scripts?.['api:check'] === SHARED_VALIDATOR_STRING_APICHECK, 'Root must expose api:check');
 assert(
   rootPackage.scripts?.['i18n:boundaries'] === 'node ./scripts/check-ultramodern-i18n-boundaries.mts',
   'Root must expose i18n:boundaries',

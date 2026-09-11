@@ -615,18 +615,20 @@
   "tooling": {
     "command": "ultramodern-create ultramodern",
     "wrappers": {
-      "validate": "scripts/validate-ultramodern-workspace.mts",
-      "typecheck": "scripts/ultramodern-typecheck.mts",
-      "mfTypes": "scripts/assert-mf-types.mts",
-      "publicSurface": "scripts/generate-public-surface-assets.mts",
+      "apiBoundaries": "modern-api-check",
       "backendFederationGenerate": "scripts/generate-node-backend-federation.mts",
       "backendFederationProof": "scripts/proof-node-backend-federation.mts",
-      "cloudflareProof": "scripts/proof-cloudflare-version.mts",
       "cloudflareOutputVerify": "scripts/verify-cloudflare-output.mts",
+      "cloudflareProof": "scripts/proof-cloudflare-version.mts",
+      "cloudflareSsrProof": "scripts/proof-workerd-ssr.mts",
+      "mfTypes": "scripts/assert-mf-types.mts",
       "performanceReadiness": "scripts/ultramodern-performance-readiness.mts",
+      "publicSurface": "scripts/generate-public-surface-assets.mts",
       "routesGenerate": "scripts/generate-tanstack-routes.mts",
-      "apiBoundaries": "scripts/check-ultramodern-api-boundaries.mts",
-      "skills": "scripts/bootstrap-agent-skills.mts"
+      "skills": "scripts/bootstrap-agent-skills.mts",
+      "typecheck": "scripts/ultramodern-typecheck.mts",
+      "validate": "scripts/validate-ultramodern-workspace.mts",
+      "zeropsMaterialize": "scripts/materialize-zerops-runtime.mjs"
     }
   }
 }

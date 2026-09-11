@@ -561,12 +561,12 @@ const checkApiBoundaries = Effect.gen(function* checkApiBoundariesEffect() {
     if (yield* exists('package.json')) {
       const rootPackageJson = yield* readText('package.json').pipe(Effect.flatMap(decodePackageJson));
       assert(
-        rootPackageJson.scripts?.['api:check'] === 'node ./scripts/check-ultramodern-api-boundaries.mts',
-        'Root package.json must expose api:check.',
+        rootPackageJson.scripts?.['api:check:ontos'] === 'node ./scripts/check-ultramodern-api-boundaries.mts',
+        'Root package.json must expose api:check:ontos.',
       );
       assert(
-        rootPackageJson.scripts?.check?.includes('pnpm api:check') ?? false,
-        'Root check script must include pnpm api:check.',
+        rootPackageJson.scripts?.check?.includes('pnpm api:check:ontos') ?? false,
+        'Root check script must include pnpm api:check:ontos.',
       );
     }
 
