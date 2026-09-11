@@ -1,6 +1,6 @@
 // expect-count: 3
 // Evasion: the BFF factory's runtime type sits on the variable annotation, not on the arrow.
-import type { EffectBffRuntime } from '@modern-js/plugin-bff/effect-edge';
+import type { EffectBffRuntime } from '@modern-js/bff-effect/effect-edge';
 import { Layer } from 'effect';
 
 declare const shellApi: unknown;

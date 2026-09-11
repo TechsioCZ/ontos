@@ -1,5 +1,5 @@
 // expect-count: 3
-import { HttpApiSchema, Schema } from '@modern-js/plugin-bff/effect-client';
+import { HttpApiSchema, Schema } from '@modern-js/bff-effect/effect-client';
 
 // The BFF client re-exports Effect's Schema; 1 createdAt, 2 expiresAt, 3 occurredAt.
 export const ApiKeyLifecycleResponseSchema = Schema.Struct({

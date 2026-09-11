@@ -1,11 +1,11 @@
-import { Effect, makeEffectHttpApiClient } from '@modern-js/plugin-bff/effect-client';
+import { Effect, makeEffectHttpApiClient } from '@modern-js/bff-effect/effect-client';
 import type {
   HttpApi,
   HttpApiClient,
   HttpApiGroup,
   HttpClientError,
   Schema,
-} from '@modern-js/plugin-bff/effect-client';
+} from '@modern-js/bff-effect/effect-client';
 import { Context } from 'effect';
 import { HttpClient, HttpClientRequest } from 'effect/unstable/http';
 
@@ -377,4 +377,4 @@ export const stopSupportImpersonation = (
     }),
   );
 
-export { Effect } from '@modern-js/plugin-bff/effect-client';
+export { Effect } from '@modern-js/bff-effect/effect-client';

@@ -1,5 +1,5 @@
 // expect-count: 6
-import { Schema } from '@modern-js/plugin-bff/effect-client';
+import { Schema } from '@modern-js/bff-effect/effect-client';
 
 export const ApiKeyIssueResponseSchema = Schema.Struct({
   keyId: Schema.String,

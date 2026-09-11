@@ -1,4 +1,4 @@
-import { Schema } from '@modern-js/plugin-bff/effect-client';
+import { Schema } from '@modern-js/bff-effect/effect-client';
 
 // Redacted through the Modern.js BFF barrel re-export of `effect/Schema`.
 export const ApiKeyIssueResponseSchema = Schema.Struct({

@@ -1,4 +1,7 @@
 #!/usr/bin/env node
+import { createRequire } from 'node:module';
+import nodePath from 'node:path';
+
 import { NodeFileSystem, NodePath, NodeRuntime } from '@effect/platform-node';
 import { Config, Console, Effect, FileSystem, Layer, Path, Schema } from 'effect';
 import type { PlatformError } from 'effect/PlatformError';
@@ -7,7 +10,7 @@ import { hasCompleteGeneratedModuleApiSeam } from './generated-governed-http-bou
 import {
   configuredMicroVerticalApiStem,
   microVerticalApiBaselineViolation,
-} from './microvertical-api-baseline-boundary.mts';
+} from '@modern-js/code-tools/microvertical-api-boundary';
 import {
   privateOwnerImportViolation,
   strictEffectRuntimeTopologyViolation,
@@ -294,7 +297,7 @@ const checkApiBoundaries = Effect.gen(function* checkApiBoundariesEffect() {
         file,
         content,
         /@modern-js\/plugin-bff\/hono-server/u,
-        'UltraModern API workspaces must not import Hono server helpers; use @modern-js/plugin-bff/effect-edge and HttpApi.',
+        'UltraModern API workspaces must not import Hono server helpers; use @modern-js/bff-effect/effect-edge and HttpApi.',
       );
       assertNotContains(
         file,
@@ -378,11 +381,14 @@ const checkApiBoundaries = Effect.gen(function* checkApiBoundariesEffect() {
       const baselineViolation = microVerticalApiBaselineViolation(apiStem, path.join(workspaceRoot, sharedApi), {
         additionalPaths: apiStem === 'checkout' ? { checkoutCartPath: `${basePath}/cart` } : {},
         apiPrefix,
+        baselinePackage: '@modern-js/bff-effect/microvertical-api',
+        baselinePackageDirectory: nodePath.dirname(
+          createRequire(import.meta.url).resolve('@modern-js/bff-effect/package.json'),
+        ),
         basePath,
-        effectClientPackage: '@modern-js/plugin-bff/effect-client',
+        effectClientPackage: '@modern-js/bff-effect/effect-client',
         ownerId: vertical.id,
         readinessPath: `${basePath}/readiness`,
-        sharedContractsPackage: '@app/shared-contracts',
       });
       assert(
         baselineViolation === undefined,

@@ -70,7 +70,7 @@ const DEFAULT_IGNORE: readonly string[] = [];
 const DEFAULT_ADT_TAGS = ['Some', 'None', 'Success', 'Failure', 'Left', 'Right'];
 
 /** Barrels that re-export Effect namespaces verbatim (the Modern.js BFF edge barrel). */
-const DEFAULT_REEXPORT_MODULES = ['@modern-js/plugin-bff/effect-edge'];
+const DEFAULT_REEXPORT_MODULES = ['@modern-js/bff-effect/effect-edge'];
 
 const EFFECT_MODULE = /^effect(?:\/.*)?$/u;
 

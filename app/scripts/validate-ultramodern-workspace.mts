@@ -80,7 +80,7 @@ const SHARED_VALIDATOR_STRING_022 = '@modern-js/app-tools';
 const SHARED_VALIDATOR_STRING_023 = '@modern-js/code-tools';
 const SHARED_VALIDATOR_STRING_024 = '@modern-js/ultramodern-create';
 const SHARED_VALIDATOR_STRING_025 = '@modern-js/plugin-bff';
-const SHARED_VALIDATOR_STRING_026 = '@modern-js/plugin-bff/effect';
+const SHARED_VALIDATOR_STRING_026 = '@modern-js/bff-effect/effect';
 const SHARED_VALIDATOR_STRING_027 = '@modern-js/plugin-i18n';
 const SHARED_VALIDATOR_STRING_028 = '@modern-js/plugin-tanstack';
 const SHARED_VALIDATOR_STRING_029 = '@modern-js/runtime';
@@ -91,7 +91,7 @@ const SHARED_VALIDATOR_STRING_033 = '/party-registry-api/openapi.json';
 const SHARED_VALIDATOR_STRING_034 = '/party-registry-api/party-registry/readiness';
 const SHARED_VALIDATOR_STRING_035 = '#super-app-platform';
 const SHARED_VALIDATOR_STRING_036 = '2026-06-02';
-const SHARED_VALIDATOR_STRING_037 = '3.9.0-ultramodern.4';
+const SHARED_VALIDATOR_STRING_037 = '3.9.0-ultramodern.7';
 const SHARED_VALIDATOR_STRING_038 = '3f023644c8a07e9a';
 const SHARED_VALIDATOR_STRING_039 = '4.0.0-rc.112';
 const SHARED_VALIDATOR_STRING_040 = 'additionalShellBuildMarkerIds';
@@ -137,7 +137,6 @@ const SHARED_VALIDATOR_STRING_079 = 'microvertical-server-effect-v1';
 const SHARED_VALIDATOR_STRING_080 = 'MODERN_ASSET_PREFIX';
 const SHARED_VALIDATOR_STRING_081 = 'MODERN_PUBLIC_SITE_URL';
 const SHARED_VALIDATOR_STRING_082 = 'node ./scripts/assert-mf-types.mts';
-const SHARED_VALIDATOR_STRING_083 = 'node ./scripts/migrate-strict-effect.mts';
 const SHARED_VALIDATOR_STRING_084 =
   'node ./scripts/proof-cloudflare-version.mts --out .codex/reports/cloudflare-version-proof/public-url-proof.json';
 const SHARED_VALIDATOR_STRING_085 = 'node ./scripts/ultramodern-performance-readiness.mts';
@@ -583,18 +582,23 @@ const workspaceValidationContractDefinition = {
         '@modern-js/adapter-rstest': '@bleedingdev/modern-js-adapter-rstest',
         '@modern-js/app-tools': '@bleedingdev/modern-js-app-tools',
         '@modern-js/app-tools-extensions': '@bleedingdev/modern-js-app-tools-extensions',
+        '@modern-js/backend-federation-contracts': '@bleedingdev/modern-js-backend-federation-contracts',
         '@modern-js/bff-core': '@bleedingdev/modern-js-bff-core',
         '@modern-js/bff-effect': '@bleedingdev/modern-js-bff-effect',
         '@modern-js/bff-runtime': '@bleedingdev/modern-js-bff-runtime',
+        '@modern-js/boundary-debugger': '@bleedingdev/modern-js-boundary-debugger',
         '@modern-js/builder': '@bleedingdev/modern-js-builder',
         '@modern-js/code-tools': '@bleedingdev/modern-js-code-tools',
         '@modern-js/create-request': '@bleedingdev/modern-js-create-request',
+        '@modern-js/federation-runtime': '@bleedingdev/modern-js-federation-runtime',
+        '@modern-js/i18n-integration': '@bleedingdev/modern-js-i18n-integration',
         '@modern-js/i18n-runtime-extensions': '@bleedingdev/modern-js-i18n-runtime-extensions',
         '@modern-js/i18n-utils': '@bleedingdev/modern-js-i18n-utils',
         '@modern-js/image': '@bleedingdev/modern-js-image',
         '@modern-js/main-doc': '@bleedingdev/modern-js-main-doc',
         '@modern-js/plugin': '@bleedingdev/modern-js-plugin',
         '@modern-js/plugin-bff': '@bleedingdev/modern-js-plugin-bff',
+        '@modern-js/plugin-bff-build-extensions': '@bleedingdev/modern-js-plugin-bff-build-extensions',
         '@modern-js/plugin-bff-extensions': '@bleedingdev/modern-js-plugin-bff-extensions',
         '@modern-js/plugin-data-loader': '@bleedingdev/modern-js-plugin-data-loader',
         '@modern-js/plugin-i18n': '@bleedingdev/modern-js-plugin-i18n',
@@ -606,6 +610,7 @@ const workspaceValidationContractDefinition = {
         '@modern-js/render': '@bleedingdev/modern-js-render',
         '@modern-js/runtime': '@bleedingdev/modern-js-runtime',
         '@modern-js/runtime-extensions': '@bleedingdev/modern-js-runtime-extensions',
+        '@modern-js/runtime-renderer-extensions': '@bleedingdev/modern-js-runtime-renderer-extensions',
         '@modern-js/runtime-utils': '@bleedingdev/modern-js-runtime-utils',
         '@modern-js/sandpack-react': '@bleedingdev/modern-js-sandpack-react',
         '@modern-js/server': '@bleedingdev/modern-js-server',
@@ -613,8 +618,10 @@ const workspaceValidationContractDefinition = {
         '@modern-js/server-runtime': '@bleedingdev/modern-js-server-runtime',
         '@modern-js/server-runtime-extensions': '@bleedingdev/modern-js-server-runtime-extensions',
         '@modern-js/server-utils': '@bleedingdev/modern-js-server-utils',
+        '@modern-js/surface-resolution': '@bleedingdev/modern-js-surface-resolution',
         '@modern-js/tsconfig': '@bleedingdev/modern-js-tsconfig',
         '@modern-js/types': '@bleedingdev/modern-js-types',
+        '@modern-js/ultramodern-app-tools': '@bleedingdev/modern-js-ultramodern-app-tools',
         '@modern-js/ultramodern-create': '@bleedingdev/modern-js-ultramodern-create',
         '@modern-js/ultramodern-sandpack-profile': '@bleedingdev/modern-js-ultramodern-sandpack-profile',
         '@modern-js/utils': '@bleedingdev/modern-js-utils',
@@ -636,6 +643,11 @@ const workspaceValidationContractDefinition = {
           version: SHARED_VALIDATOR_STRING_037,
         },
         {
+          sourceName: '@modern-js/backend-federation-contracts',
+          targetName: '@bleedingdev/modern-js-backend-federation-contracts',
+          version: SHARED_VALIDATOR_STRING_037,
+        },
+        {
           sourceName: '@modern-js/bff-core',
           targetName: '@bleedingdev/modern-js-bff-core',
           version: SHARED_VALIDATOR_STRING_037,
@@ -651,6 +663,11 @@ const workspaceValidationContractDefinition = {
           version: SHARED_VALIDATOR_STRING_037,
         },
         {
+          sourceName: '@modern-js/boundary-debugger',
+          targetName: '@bleedingdev/modern-js-boundary-debugger',
+          version: SHARED_VALIDATOR_STRING_037,
+        },
+        {
           sourceName: '@modern-js/builder',
           targetName: '@bleedingdev/modern-js-builder',
           version: SHARED_VALIDATOR_STRING_037,
@@ -663,6 +680,16 @@ const workspaceValidationContractDefinition = {
         {
           sourceName: '@modern-js/create-request',
           targetName: '@bleedingdev/modern-js-create-request',
+          version: SHARED_VALIDATOR_STRING_037,
+        },
+        {
+          sourceName: '@modern-js/federation-runtime',
+          targetName: '@bleedingdev/modern-js-federation-runtime',
+          version: SHARED_VALIDATOR_STRING_037,
+        },
+        {
+          sourceName: '@modern-js/i18n-integration',
+          targetName: '@bleedingdev/modern-js-i18n-integration',
           version: SHARED_VALIDATOR_STRING_037,
         },
         {
@@ -693,6 +720,11 @@ const workspaceValidationContractDefinition = {
         {
           sourceName: '@modern-js/plugin-bff',
           targetName: '@bleedingdev/modern-js-plugin-bff',
+          version: SHARED_VALIDATOR_STRING_037,
+        },
+        {
+          sourceName: '@modern-js/plugin-bff-build-extensions',
+          targetName: '@bleedingdev/modern-js-plugin-bff-build-extensions',
           version: SHARED_VALIDATOR_STRING_037,
         },
         {
@@ -751,6 +783,11 @@ const workspaceValidationContractDefinition = {
           version: SHARED_VALIDATOR_STRING_037,
         },
         {
+          sourceName: '@modern-js/runtime-renderer-extensions',
+          targetName: '@bleedingdev/modern-js-runtime-renderer-extensions',
+          version: SHARED_VALIDATOR_STRING_037,
+        },
+        {
           sourceName: '@modern-js/runtime-utils',
           targetName: '@bleedingdev/modern-js-runtime-utils',
           version: SHARED_VALIDATOR_STRING_037,
@@ -786,6 +823,11 @@ const workspaceValidationContractDefinition = {
           version: SHARED_VALIDATOR_STRING_037,
         },
         {
+          sourceName: '@modern-js/surface-resolution',
+          targetName: '@bleedingdev/modern-js-surface-resolution',
+          version: SHARED_VALIDATOR_STRING_037,
+        },
+        {
           sourceName: '@modern-js/tsconfig',
           targetName: '@bleedingdev/modern-js-tsconfig',
           version: SHARED_VALIDATOR_STRING_037,
@@ -793,6 +835,11 @@ const workspaceValidationContractDefinition = {
         {
           sourceName: '@modern-js/types',
           targetName: '@bleedingdev/modern-js-types',
+          version: SHARED_VALIDATOR_STRING_037,
+        },
+        {
+          sourceName: '@modern-js/ultramodern-app-tools',
+          targetName: '@bleedingdev/modern-js-ultramodern-app-tools',
           version: SHARED_VALIDATOR_STRING_037,
         },
         {
@@ -818,7 +865,7 @@ const workspaceValidationContractDefinition = {
       schema: 'bleedingdev.ultramodern.release-cohort',
       schemaVersion: 1,
       source: {
-        commit: 'ef99279246046685f1684c59ca145f2a6a3f9d53',
+        commit: '6f86e7edb4440ddc223d1c81750a52c4c01fddd6',
         repository: 'BleedingDev/ultramodern.js',
       },
     },
@@ -1238,7 +1285,6 @@ const workspaceValidationContractDefinition = {
     lint: 'oxlint apps verticals packages',
     'lint:fix': 'oxlint apps verticals packages --fix',
     'mf:types': SHARED_VALIDATOR_STRING_082,
-    'migrate:strict-effect': SHARED_VALIDATOR_STRING_083,
     'module-entrypoints:check': 'node ./scripts/check-module-entrypoint-boundaries.mts',
     'outbox:test':
       'pnpm --filter @app/core-runtime outbox:test:unit && pnpm --filter @app/core-runtime outbox:test:integration',
@@ -1337,7 +1383,6 @@ const workspaceValidationContractDefinition = {
           cloudflareOutputVerify: SHARED_VALIDATOR_STRING_125,
           cloudflareProof: SHARED_VALIDATOR_STRING_119,
           mfTypes: SHARED_VALIDATOR_STRING_114,
-          migrateStrictEffect: 'scripts/migrate-strict-effect.mts',
           performanceReadiness: SHARED_VALIDATOR_STRING_122,
           publicSurface: SHARED_VALIDATOR_STRING_117,
           routesGenerate: SHARED_VALIDATOR_STRING_118,
@@ -1380,7 +1425,6 @@ const workspaceValidationContractDefinition = {
     cloudflareSsrProof: 'node ./scripts/proof-workerd-ssr.mts',
     contractCheck: SHARED_VALIDATOR_STRING_087,
     mfTypes: SHARED_VALIDATOR_STRING_082,
-    migrateStrictEffect: SHARED_VALIDATOR_STRING_083,
     nodeProof: 'node ./scripts/proof-node-backend-federation.mts',
     performanceReadiness: SHARED_VALIDATOR_STRING_085,
     typecheck: SHARED_VALIDATOR_STRING_086,
@@ -3361,7 +3405,7 @@ const createApiContract = (app: NormalizedApp) => {
       client: SHARED_VALIDATOR_STRING_003,
       contract: './api',
       group: toCamelCase(api.stem),
-      import: '@modern-js/plugin-bff/effect-edge',
+      import: '@modern-js/bff-effect/effect-edge',
       prefix: api.prefix,
       protocol: 'rpc',
       rpc: { path: '/rpc', serialization: 'json' },
@@ -3375,7 +3419,7 @@ const createApiContract = (app: NormalizedApp) => {
     client: app.apiClientExport,
     contract: app.apiContractExport,
     domainOperations: app.apiContractExport === undefined ? undefined : createEffectDomainOperations(app),
-    import: '@modern-js/plugin-bff/effect-edge',
+    import: '@modern-js/bff-effect/effect-edge',
     openapi: '/openapi.json',
     prefix: api.prefix,
     readiness: createEffectReadiness(app),
@@ -6158,10 +6202,6 @@ assert(
   'Root must expose cloudflare:proof',
 );
 assert(
-  rootPackage.scripts?.['migrate:strict-effect'] === SHARED_VALIDATOR_STRING_083,
-  'Root must expose migrate:strict-effect',
-);
-assert(
   rootPackage.scripts?.['skills:install'] === 'node ./scripts/bootstrap-agent-skills.mts',
   'Root must expose skills:install',
 );
@@ -6187,7 +6227,6 @@ assertToolWrapper(SHARED_VALIDATOR_STRING_117, 'public-surface');
 assertToolWrapper(SHARED_VALIDATOR_STRING_118, 'routes-generate');
 assertToolWrapper(SHARED_VALIDATOR_STRING_119, 'cloudflare-proof');
 assertToolWrapper(SHARED_VALIDATOR_STRING_125, 'cloudflare-output-verify');
-assertToolWrapper('scripts/migrate-strict-effect.mts', 'migrate-strict-effect');
 assertToolWrapper(SHARED_VALIDATOR_STRING_115, 'skills');
 assert(
   !agentSkillsBootstrap.includes("run('brew'") && !agentSkillsBootstrap.includes('runShell('),

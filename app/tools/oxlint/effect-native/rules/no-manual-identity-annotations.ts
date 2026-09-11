@@ -81,7 +81,7 @@ const DEFAULT_ANNOTATION_MEMBERS = [
 const DEFAULT_SPAN_MEMBERS = ['Effect.withSpan', 'Effect.withLogSpan'];
 
 /** Barrels that re-export Effect namespaces verbatim; `Effect` from them is Effect's `Effect`. */
-const DEFAULT_REEXPORT_MODULES = ['@modern-js/plugin-bff/effect-edge'];
+const DEFAULT_REEXPORT_MODULES = ['@modern-js/bff-effect/effect-edge'];
 
 type RuleOptions = Readonly<ReturnType<typeof readOptions>>;
 

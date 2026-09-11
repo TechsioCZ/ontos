@@ -1,5 +1,5 @@
 // expect-count: 3
-import { Layer } from "@modern-js/plugin-bff/effect-edge";
+import { Layer } from "@modern-js/bff-effect/effect-edge";
 
 interface ActionRuntime {
   readonly run: () => void;

@@ -93,7 +93,7 @@ const DEFAULT_IGNORE = ['**/dist/**', '**/build/**', '**/node_modules/**', 'tool
 /** Wrappers whose generator argument is an Effect program body. */
 const DEFAULT_GEN_MEMBERS = ['gen', 'fn', 'fnUntraced'];
 /** Barrels that re-export `Effect` verbatim, so `Effect.gen` there is the same generator. */
-const DEFAULT_EFFECT_MODULES = ['@modern-js/plugin-bff/effect-client', '@modern-js/plugin-bff/effect-edge'];
+const DEFAULT_EFFECT_MODULES = ['@modern-js/bff-effect/effect-client', '@modern-js/bff-effect/effect-edge'];
 
 const MEMBER_TYPES = new Set(['ComputedMemberExpression', 'MemberExpression', 'StaticMemberExpression']);
 const LOOP_LABELS: Record<string, string> = {

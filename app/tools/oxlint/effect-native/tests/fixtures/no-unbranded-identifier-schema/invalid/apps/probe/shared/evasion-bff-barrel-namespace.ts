@@ -1,5 +1,5 @@
 // expect-count: 2
-import * as Bff from '@modern-js/plugin-bff/effect-client';
+import * as Bff from '@modern-js/bff-effect/effect-client';
 
 // 1 — the BFF barrel imported as a namespace: `Bff.Schema.Struct`.
 export const RowSchema = Bff.Schema.Struct({

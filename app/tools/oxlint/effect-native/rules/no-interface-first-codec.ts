@@ -86,9 +86,9 @@ const DEFAULT_IGNORE_TYPE_ARGUMENTS = ['unknown', 'any', 'never'];
  * every shared contract file in this repo reaches Schema.
  */
 const DEFAULT_REEXPORT_MODULES = [
-  '@modern-js/plugin-bff/effect-client',
-  '@modern-js/plugin-bff/effect-edge',
-  '@modern-js/plugin-bff/effect-*',
+  '@modern-js/bff-effect/effect-client',
+  '@modern-js/bff-effect/effect-edge',
+  '@modern-js/bff-effect/effect-*',
 ];
 
 const SUSPEND_MEMBER = 'suspend';

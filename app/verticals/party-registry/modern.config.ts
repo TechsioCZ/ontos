@@ -2,10 +2,11 @@ import { readFileSync } from 'node:fs';
 import { createRequire } from 'node:module';
 import { fileURLToPath } from 'node:url';
 
-import { appTools, defineConfig, presetUltramodern, ultramodernReleaseEnvelopePlugin } from '@modern-js/app-tools';
+import { defineConfig } from '@modern-js/app-tools';
+import { presetUltramodern, ultramodernAppTools } from '@modern-js/ultramodern-app-tools';
 import type { AppTools, AppToolsUserConfig, CliPlugin } from '@modern-js/app-tools';
-import { getBuildConfigEnvironment, withBuildConfigEnvironment } from '@modern-js/app-tools/config';
-import { bffPlugin } from '@modern-js/plugin-bff';
+import { getBuildConfigEnvironment, withBuildConfigEnvironment } from '@modern-js/app-tools-extensions/config';
+import { bffPlugin } from '@modern-js/plugin-bff-build-extensions';
 import { i18nPlugin } from '@modern-js/plugin-i18n';
 import { tanstackRouterPlugin } from '@modern-js/plugin-tanstack';
 import { moduleFederationPlugin } from '@module-federation/modern-js-v3';
@@ -19,9 +20,7 @@ import {
   createZephyrRspackPlugin,
   resolveCloudflareExternal,
 } from '../../packages/shared-contracts/tooling/modern-config.ts';
-import { ultramodernLocalisedUrls } from './src/routes/ultramodern-route-metadata';
-
-const localisedUrls = ultramodernLocalisedUrls;
+import { ultramodernI18nUrlStrategy } from './src/routes/ultramodern-route-metadata';
 
 Object.assign(globalThis, { require: createRequire(import.meta.url) });
 
@@ -204,8 +203,7 @@ export default defineConfig(
         },
       },
       plugins: [
-        appTools(),
-        ultramodernReleaseEnvelopePlugin(),
+        ultramodernAppTools(),
         tanstackRouterPlugin(),
         i18nPlugin({
           backend: {
@@ -232,9 +230,9 @@ export default defineConfig(
             ],
             languages: ['en', 'cs'],
             localePathRedirect: true,
-            localisedUrls,
           },
           reactI18next: false,
+          urlStrategy: ultramodernI18nUrlStrategy,
         }),
         bffPlugin(),
         moduleFederationPlugin({

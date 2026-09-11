@@ -1,6 +1,6 @@
 import { ActionRuntime } from '@app/core-runtime';
 import type { ActionRegistration, DomainEventContractMap } from '@app/core-runtime';
-import { Effect, HttpApiBuilder, Layer } from '@modern-js/plugin-bff/effect-edge';
+import { Effect, HttpApiBuilder, Layer } from '@modern-js/bff-effect/effect-edge';
 import { Redacted, Schema } from 'effect';
 import type { HttpServerRequest } from 'effect/unstable/http';
 

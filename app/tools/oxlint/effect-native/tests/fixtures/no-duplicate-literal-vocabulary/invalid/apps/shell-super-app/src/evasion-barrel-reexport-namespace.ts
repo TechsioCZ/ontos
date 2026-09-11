@@ -1,6 +1,6 @@
 // expect-count: 1
 // Evasion: namespace import of the BFF Effect re-export barrel.
-import * as Bff from '@modern-js/plugin-bff/effect-edge';
+import * as Bff from '@modern-js/bff-effect/effect-edge';
 
 export const Visibility = Bff.Schema.Literals(['public_module_event', 'internal_module_event']);
 export const Row = Bff.Schema.Struct({

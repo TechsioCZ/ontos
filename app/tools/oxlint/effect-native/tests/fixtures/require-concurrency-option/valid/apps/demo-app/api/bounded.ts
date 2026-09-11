@@ -1,5 +1,5 @@
 import { Effect, Stream, pipe } from 'effect';
-import { Effect as EdgeEffect } from '@modern-js/plugin-bff/effect-edge';
+import { Effect as EdgeEffect } from '@modern-js/bff-effect/effect-edge';
 
 declare const providers: readonly string[];
 declare const search: (provider: string) => Effect.Effect<string>;

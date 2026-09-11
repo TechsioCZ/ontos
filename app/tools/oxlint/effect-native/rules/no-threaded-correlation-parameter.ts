@@ -175,7 +175,7 @@ function importedContextBinding(definition: Variable['defs'][number]): string | 
 function contextImportName(source: string, specifier: AnyNode): string | null {
   if (source === 'effect/Context')
     return specifier.type === 'ImportSpecifier' ? `Context.${keyName(specifier.imported, false)}` : 'Context';
-  if (source !== 'effect' && source !== '@modern-js/plugin-bff/effect-edge') return null;
+  if (source !== 'effect' && source !== '@modern-js/bff-effect/effect-edge') return null;
   if (specifier.type === 'ImportNamespaceSpecifier') return '$root';
   return specifier.type === 'ImportSpecifier' ? keyName(specifier.imported, false) : null;
 }

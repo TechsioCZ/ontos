@@ -211,7 +211,7 @@ it.live(
     const root = yield* fixture();
     const configFile = `${shellRoot}/module-federation.config.ts`;
     const source =
-      "import { resolveEffectTsgoCompiler } from '@modern-js/app-tools/config';\nconst compiler = resolveEffectTsgoCompiler({\n from: import.meta.url,\n });\nvoid compiler;";
+      "import { resolveEffectTsgoCompiler } from '@modern-js/app-tools-extensions/config';\nconst compiler = resolveEffectTsgoCompiler({\n from: import.meta.url,\n });\nvoid compiler;";
     write(root, configFile, source);
     write(root, `${shellRoot}/${tsgoReadme}`, 'tries `typescript`, then `@typescript/native`');
     const initial = yield* facts(root);

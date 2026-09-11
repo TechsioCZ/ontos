@@ -1,7 +1,7 @@
 import { Schema } from 'effect';
 import { Schema as Codec } from 'effect';
 import * as Contract from 'effect/Schema';
-import { HttpApiSchema } from '@modern-js/plugin-bff/effect-edge';
+import { HttpApiSchema } from '@modern-js/bff-effect/effect-edge';
 
 // The audit-blessed shape: the problem is declared once, and the status belongs to the contract.
 const asProblemDetails = HttpApiSchema.asJson({ contentType: 'application/problem+json' });

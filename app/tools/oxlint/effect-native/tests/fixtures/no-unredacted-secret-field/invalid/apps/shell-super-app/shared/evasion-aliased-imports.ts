@@ -2,7 +2,7 @@
 // Alias / submodule-namespace / barrel-glob / optional-chain / cast reachability.
 import { Config as Cfg } from 'effect';
 import * as S from 'effect/Schema';
-import { Schema as BffSchema } from '@modern-js/plugin-bff/effect-edge/runtime';
+import { Schema as BffSchema } from '@modern-js/bff-effect/effect-edge/runtime';
 
 export const CredentialSchema = S.Struct({
   apiKey: S.String as unknown as typeof S.String,

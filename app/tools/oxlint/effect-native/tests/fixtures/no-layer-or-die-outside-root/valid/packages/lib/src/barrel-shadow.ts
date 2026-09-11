@@ -1,4 +1,4 @@
-import { Layer } from '@modern-js/plugin-bff/effect-edge';
+import { Layer } from '@modern-js/bff-effect/effect-edge';
 
 declare const target: Layer.Layer<never>;
 

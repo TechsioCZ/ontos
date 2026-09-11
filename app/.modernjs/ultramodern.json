@@ -3,7 +3,7 @@
   "profile": "cloudflare-ssr-mf-effect-v1",
   "generator": {
     "package": "@modern-js/create",
-    "version": "3.9.0-ultramodern.4"
+    "version": "3.9.0-ultramodern.7"
   },
   "workspace": {
     "packageScope": "app",
@@ -18,7 +18,7 @@
   },
   "packageSource": {
     "strategy": "install",
-    "modernPackageVersion": "3.9.0-ultramodern.4",
+    "modernPackageVersion": "3.9.0-ultramodern.7",
     "registry": "https://registry.npmjs.org/",
     "aliasScope": "bleedingdev",
     "aliasPackageNamePrefix": "modern-js-"
@@ -299,7 +299,7 @@
               "containerEntry": "http://localhost:4102/backendRemoteEntry.cjs",
               "remoteType": "commonjs-module",
               "expose": "./effect-api",
-              "runtimePackage": "@modern-js/plugin-bff/effect",
+              "runtimePackage": "@modern-js/bff-effect/effect",
               "expected": {
                 "unitId": "app/party-registry",
                 "buildMarker": "3f023644c8a07e9a"
@@ -591,7 +591,7 @@
             "containerEntry": "http://localhost:4102/backendRemoteEntry.cjs",
             "remoteType": "commonjs-module",
             "expose": "./effect-api",
-            "runtimePackage": "@modern-js/plugin-bff/effect",
+            "runtimePackage": "@modern-js/bff-effect/effect",
             "expected": {
               "unitId": "app/party-registry",
               "buildMarker": "3f023644c8a07e9a"

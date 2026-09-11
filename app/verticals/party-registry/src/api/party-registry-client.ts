@@ -1,6 +1,6 @@
 /* eslint-disable oxc/no-barrel-file -- The published client entrypoint must aggregate the governed generated operation clients. expires: 2026-12-31. */
-import { Effect } from '@modern-js/plugin-bff/effect-client';
-import type { HttpClientError, Schema } from '@modern-js/plugin-bff/effect-client';
+import { Effect } from '@modern-js/bff-effect/effect-client';
+import type { HttpClientError, Schema } from '@modern-js/bff-effect/effect-client';
 
 import { partyRegistryOperationContexts } from '../../shared/api.ts';
 import type { PartyRegistryReadiness } from '../../shared/api.ts';
@@ -59,7 +59,7 @@ export type {
   AresApplySelection,
   PartyRegistryStandardActionInvoker,
 } from './action-gateway.ts';
-export { Effect } from '@modern-js/plugin-bff/effect-client';
+export { Effect } from '@modern-js/bff-effect/effect-client';
 
 export interface PartyRegistryClient {
   readonly executeAresLookup: typeof executeAresLookup;

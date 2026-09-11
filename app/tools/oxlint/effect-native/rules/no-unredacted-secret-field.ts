@@ -107,12 +107,12 @@ const DEFAULT_ALLOW_PATHS: readonly string[] = [];
  * every shared BFF contract in this repository reaches Schema.
  */
 const DEFAULT_REEXPORT_MODULES: readonly string[] = [
-  '@modern-js/plugin-bff/effect',
-  '@modern-js/plugin-bff/effect-client',
-  '@modern-js/plugin-bff/effect-client-runtime',
-  '@modern-js/plugin-bff/effect-edge',
-  '@modern-js/plugin-bff/effect-edge/*',
-  '@modern-js/plugin-bff/effect-server',
+  '@modern-js/bff-effect/effect',
+  '@modern-js/bff-effect/effect-client',
+  '@modern-js/bff-effect/effect-client-runtime',
+  '@modern-js/bff-effect/effect-edge',
+  '@modern-js/bff-effect/effect-edge/*',
+  '@modern-js/bff-effect/effect-server',
 ];
 
 /** Credential-shaped identifier names, matched case-insensitively and anchored at the end. */

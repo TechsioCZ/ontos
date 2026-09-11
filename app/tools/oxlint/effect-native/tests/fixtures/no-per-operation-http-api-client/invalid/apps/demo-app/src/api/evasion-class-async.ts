@@ -1,6 +1,6 @@
 // expect-count: 4
 // Class members, curried arrows, async functions and async generators are all operation bodies.
-import { Effect, makeEffectHttpApiClient } from '@modern-js/plugin-bff/effect-client';
+import { Effect, makeEffectHttpApiClient } from '@modern-js/bff-effect/effect-client';
 import { contactsApi } from './api.ts';
 
 export class ContactsGateway {

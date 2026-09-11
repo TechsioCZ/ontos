@@ -34,8 +34,8 @@ import {
 } from '@app/core-runtime/actions/runtime-wiring';
 import type { GatewayContextProblem } from '@app/shared-contracts';
 import { assembleEffectBffRuntime } from '@app/shared-contracts/server/effect-bff-runtime';
-import { Cookies, HttpApiBuilder, HttpEffect, HttpServerResponse, Layer } from '@modern-js/plugin-bff/effect-edge';
-import type { EffectBffDefinition, EffectBffRuntime } from '@modern-js/plugin-bff/effect-edge';
+import { Cookies, HttpApiBuilder, HttpEffect, HttpServerResponse, Layer } from '@modern-js/bff-effect/effect-edge';
+import type { EffectBffDefinition, EffectBffRuntime } from '@modern-js/bff-effect/effect-edge';
 import {
   Cause,
   Effect,

@@ -17,7 +17,7 @@
  * - TypeScript expression wrappers around the namespace: `(Layer as typeof Layer).orDie`,
  *   `Layer!.orDie`, `(Layer satisfies typeof Layer).orDie`, `Layer<never>.orDie`, `(Layer).orDie`.
  * - `Layer` re-exported through an Effect barrel (`reexportModules`, default the Modern.js
- *   `@modern-js/plugin-bff/effect-edge` edge barrel the BFF entry points import from).
+ *   `@modern-js/bff-effect/effect-edge` edge barrel the BFF entry points import from).
  *
  * What is deliberately allowed
  * - The final `Layer.orDie` in a file that matches `rootFiles` (default: the process/BFF entry
@@ -68,7 +68,7 @@ const DEFAULT_ROOT_FILES = [
 const DEFAULT_MEMBERS = ['orDie', 'orDieWith'];
 
 /** Barrels that re-export Effect namespaces verbatim; `Layer` from them is Effect's `Layer`. */
-const DEFAULT_REEXPORT_MODULES = ['@modern-js/plugin-bff/effect-edge'];
+const DEFAULT_REEXPORT_MODULES = ['@modern-js/bff-effect/effect-edge'];
 
 /**
  * TypeScript nodes that wrap a *value* and are erased at runtime. `(Layer as typeof Layer).orDie`

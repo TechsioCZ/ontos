@@ -1,5 +1,5 @@
 // The BFF composition root: one Layer graph, one host runtime, `Layer.orDie` at the startup edge.
-import { Effect, Layer, ManagedRuntime } from '@modern-js/plugin-bff/effect-edge';
+import { Effect, Layer, ManagedRuntime } from '@modern-js/bff-effect/effect-edge';
 
 declare const persistenceLive: Layer.Layer<never>;
 declare const gatewayLive: Layer.Layer<never>;

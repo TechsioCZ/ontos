@@ -1,5 +1,5 @@
 // Pure type declarations: a factory *signature* installs nothing and is not a runtime root.
-import type { EffectBffRuntime } from '@modern-js/plugin-bff/effect-edge';
+import type { EffectBffRuntime } from '@modern-js/bff-effect/effect-edge';
 
 declare const demoApi: unknown;
 

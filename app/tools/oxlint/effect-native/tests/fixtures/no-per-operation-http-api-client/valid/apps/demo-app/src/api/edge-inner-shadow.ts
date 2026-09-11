@@ -1,5 +1,5 @@
 // A local declaration inside the operation shadows the imported constructor.
-import { makeEffectHttpApiClient } from '@modern-js/plugin-bff/effect-client';
+import { makeEffectHttpApiClient } from '@modern-js/bff-effect/effect-client';
 import { contactsApi } from './api.ts';
 
 export const sharedClient = makeEffectHttpApiClient(contactsApi, { baseUrl: '/api' });

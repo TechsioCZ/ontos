@@ -1,11 +1,11 @@
-// False positive: this root DOES install a Tracer. `@modern-js/plugin-bff/effect-server`
+// False positive: this root DOES install a Tracer. `@modern-js/bff-effect/effect-server`
 // (`./server`, `./effect`, `./effect-server` all resolve to the same entry) contains
 // `export * as OpenTelemetry from '@effect/opentelemetry'`, so `OpenTelemetry.NodeSdk.layer(...)`
 // is the framework-sanctioned way to install OTel in this codebase. `otelModules` only matches the
 // raw `@effect/opentelemetry` specifier and `reexportModules` lists only `.../effect-edge`, so the
 // rule reports `missingTracer` on a fully compliant root.
 import { Layer, Logger, ManagedRuntime, References } from 'effect';
-import { OpenTelemetry } from '@modern-js/plugin-bff/effect-server';
+import { OpenTelemetry } from '@modern-js/bff-effect/effect-server';
 
 declare const appLayer: Layer.Layer<never>;
 

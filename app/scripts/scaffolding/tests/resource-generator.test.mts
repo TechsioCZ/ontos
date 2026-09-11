@@ -90,8 +90,8 @@ export const propertyRegistryApi = HttpApi.make('PropertyRegistryApi');
     yield* write(
       root,
       'verticals/property-registry/api/index.ts',
-      `import { defineEffectBff, HttpApiBuilder, Layer } from '@modern-js/plugin-bff/effect-edge';
-import type { EffectRuntimeLayer } from '@modern-js/plugin-bff/effect-edge';
+      `import { defineEffectBff, HttpApiBuilder, Layer } from '@modern-js/bff-effect/effect-edge';
+import type { EffectRuntimeLayer } from '@modern-js/bff-effect/effect-edge';
 import { propertyRegistryApi } from '../shared/api.ts';
 
 const layer = HttpApiBuilder.layer(propertyRegistryApi).pipe(

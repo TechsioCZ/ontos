@@ -96,7 +96,7 @@ const DEFAULT_LAYER_CONSTRUCTOR_MEMBERS: readonly string[] = [
 /** `Effect.fn`/`Effect.fnUntraced` are NOT transparent: they return a function, so the body re-runs. */
 const DEFAULT_TRANSPARENT_MEMBERS: readonly string[] = ['Effect.gen'];
 /** Modules that re-export the `effect` namespaces verbatim (Modern.js BFF client). */
-const DEFAULT_EFFECT_REEXPORT_MODULES: readonly string[] = ['@modern-js/plugin-bff/effect-client'];
+const DEFAULT_EFFECT_REEXPORT_MODULES: readonly string[] = ['@modern-js/bff-effect/effect-client'];
 /** Call wrappers that do not change which binding an effect/function is stored under. */
 const NAME_WRAPPER_MEMBERS: ReadonlySet<string> = new Set(['Effect.gen', 'Effect.fn', 'Effect.fnUntraced']);
 
@@ -192,7 +192,7 @@ function collectModuleImports(program: ESTree.Program): ModuleImports {
 
 /**
  * `effect`/`effect/*` bindings plus the namespaces re-exported by `effectReexportModules`
- * (`import { Effect, makeEffectHttpApiClient } from "@modern-js/plugin-bff/effect-client"`), so
+ * (`import { Effect, makeEffectHttpApiClient } from "@modern-js/bff-effect/effect-client"`), so
  * `Effect.gen`, `Layer.effect` and `HttpApiClient.make` resolve in BFF client modules too.
  */
 function mergedBindings(program: ESTree.Program, options: ResolvedOptions): EffectBindings {

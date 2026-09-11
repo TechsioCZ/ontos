@@ -1,6 +1,6 @@
 import { createRequire } from 'node:module';
 
-import { resolveEffectTsgoCompiler } from '@modern-js/app-tools/config';
+import { resolveEffectTsgoCompiler } from '@modern-js/app-tools-extensions/config';
 import { createModuleFederationConfig } from '@module-federation/modern-js-v3';
 import * as Schema from 'effect/Schema';
 

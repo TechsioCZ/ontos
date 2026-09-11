@@ -5,13 +5,13 @@ import {
   HttpApiEndpoint,
   HttpApiGroup,
   Layer,
-} from '@modern-js/plugin-bff/effect-edge';
+} from '@modern-js/bff-effect/effect-edge';
 import type {
   EffectBffDefinition,
   EffectBffRuntime,
   EffectRuntimeRequirements,
   HttpRouter,
-} from '@modern-js/plugin-bff/effect-edge';
+} from '@modern-js/bff-effect/effect-edge';
 import { Context, Data, Schema } from 'effect';
 
 import { assembleEffectBffRuntime } from './effect-bff-runtime.ts';

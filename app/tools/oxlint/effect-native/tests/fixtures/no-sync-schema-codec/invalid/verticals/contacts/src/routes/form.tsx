@@ -1,6 +1,6 @@
 // expect-count: 2
 // TSX + the Modern.js BFF barrel that re-exports Effect's `Schema` verbatim.
-import { pipe, Schema } from '@modern-js/plugin-bff/effect-client';
+import { pipe, Schema } from '@modern-js/bff-effect/effect-client';
 
 const ContactFormSchema = Schema.Struct({ email: Schema.String });
 

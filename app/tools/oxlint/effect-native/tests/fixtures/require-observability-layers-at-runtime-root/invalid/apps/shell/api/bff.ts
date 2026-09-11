@@ -1,7 +1,7 @@
 // expect-count: 3
 // Intersection return type: `EffectBffDefinition<A> & EffectBffRuntime<A>` is still a root.
-import type { EffectBffDefinition, EffectBffRuntime } from '@modern-js/plugin-bff/effect-edge';
-import { Effect, Layer } from '@modern-js/plugin-bff/effect-edge';
+import type { EffectBffDefinition, EffectBffRuntime } from '@modern-js/bff-effect/effect-edge';
+import { Effect, Layer } from '@modern-js/bff-effect/effect-edge';
 
 declare const shellApi: unknown;
 

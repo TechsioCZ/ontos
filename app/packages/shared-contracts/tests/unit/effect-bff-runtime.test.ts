@@ -6,8 +6,8 @@ import {
   HttpApiGroup,
   HttpRouter,
   Layer,
-} from '@modern-js/plugin-bff/effect-edge';
-import type { EffectBffDefinition, EffectBffRuntime } from '@modern-js/plugin-bff/effect-edge';
+} from '@modern-js/bff-effect/effect-edge';
+import type { EffectBffDefinition, EffectBffRuntime } from '@modern-js/bff-effect/effect-edge';
 import { Context, Schema } from 'effect';
 import { expect, it } from 'effect-rstest';
 

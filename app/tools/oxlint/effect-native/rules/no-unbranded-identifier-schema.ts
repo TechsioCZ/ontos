@@ -20,7 +20,7 @@
  *        "effect/Schema"`), root barrel imports (`import * as Effect from "effect"` →
  *        `Effect.Schema.Struct`), computed access (`Schema["Struct"]`), optional chaining and the
  *        Modern.js BFF barrels that re-export `effect/Schema` verbatim (`reexportModules`, default
- *        `@modern-js/plugin-bff/effect-client` and friends — how every `shared/api.ts` contract in this
+ *        `@modern-js/bff-effect/effect-client` and friends — how every `shared/api.ts` contract in this
  *        repository imports `Schema`) all work;
  *      - a module-level `const *Fields` / `const *fields` object that is spread (`...apiKeyStatusFields`)
  *        into another object literal somewhere in the same file — the repository's dominant way of
@@ -91,17 +91,17 @@ const DEFAULT_SCHEMA_NAME_PATTERN = '(?:Ids?|Ico|Keys?)Schema$';
 const DEFAULT_BRAND_HELPERS: string[] = [];
 
 /**
- * Barrels that re-export Effect namespaces verbatim. `@modern-js/plugin-bff/effect-client` re-exports
+ * Barrels that re-export Effect namespaces verbatim. `@modern-js/bff-effect/effect-client` re-exports
  * `effect/Schema` as `Schema` and is how the BFF contracts (`apps/*​/shared/api.ts`,
  * `verticals/*​/shared/**`) import it — nearly a third of all `Schema` imports in the repository.
  */
 const DEFAULT_REEXPORT_MODULES = [
-  '@modern-js/plugin-bff/effect',
-  '@modern-js/plugin-bff/effect-client',
-  '@modern-js/plugin-bff/effect-client-runtime',
-  '@modern-js/plugin-bff/effect-edge',
-  '@modern-js/plugin-bff/effect-edge/*',
-  '@modern-js/plugin-bff/effect-server',
+  '@modern-js/bff-effect/effect',
+  '@modern-js/bff-effect/effect-client',
+  '@modern-js/bff-effect/effect-client-runtime',
+  '@modern-js/bff-effect/effect-edge',
+  '@modern-js/bff-effect/effect-edge/*',
+  '@modern-js/bff-effect/effect-server',
 ];
 
 /** `Schema.<X>` combinators whose object arguments are field bags (`{ tenantId: ... }`). */

@@ -1,6 +1,6 @@
 // expect-count: 3
 // The BFF factory return type marks this as a composition root.
-import type { EffectBffRuntime } from '@modern-js/plugin-bff/effect-edge';
+import type { EffectBffRuntime } from '@modern-js/bff-effect/effect-edge';
 import { Layer } from 'effect';
 
 declare const demoApi: unknown;

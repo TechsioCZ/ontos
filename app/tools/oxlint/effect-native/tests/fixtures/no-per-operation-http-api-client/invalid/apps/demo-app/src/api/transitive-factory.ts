@@ -1,6 +1,6 @@
 // expect-count: 4
 // The factory set closes transitively through functions that return the client directly.
-import { Effect, makeEffectHttpApiClient } from '@modern-js/plugin-bff/effect-client';
+import { Effect, makeEffectHttpApiClient } from '@modern-js/bff-effect/effect-client';
 import { contactsApi } from './api.ts';
 
 interface ContactsClientOptions {

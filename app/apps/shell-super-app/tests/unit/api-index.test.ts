@@ -1,4 +1,4 @@
-import { HttpServerResponse } from '@modern-js/plugin-bff/effect-edge';
+import { HttpServerResponse } from '@modern-js/bff-effect/effect-edge';
 import { expect, test } from 'effect-rstest';
 
 import { noStoreResponse } from '../../api/index.ts';

@@ -224,7 +224,7 @@ function isSchemaCallee(context: Context, callee: ESTree.Node, options: RuleOpti
   let target = unwrap(callee);
   for (let depth = 0; depth < MAX_EXPRESSION_DEPTH && target.type === 'CallExpression'; depth += 1)
     target = unwrap(target.callee);
-  const origin = effectOrigin(context, target, ['@modern-js/plugin-bff/effect-edge']);
+  const origin = effectOrigin(context, target, ['@modern-js/bff-effect/effect-edge']);
   return origin !== null && origin.length >= 2 && options.schemaNamespaces.includes(origin[0]!);
 }
 

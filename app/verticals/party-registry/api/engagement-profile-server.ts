@@ -1,5 +1,5 @@
 import type { ActionRegistration, DomainEventContractMap } from '@app/core-runtime';
-import { Effect, HttpApiBuilder, Layer } from '@modern-js/plugin-bff/effect-edge';
+import { Effect, HttpApiBuilder, Layer } from '@modern-js/bff-effect/effect-edge';
 import { Redacted, Schema } from 'effect';
 
 import { partyRegistryApi } from '../shared/api.ts';

@@ -57,7 +57,7 @@
         "containerEntry": "http://localhost:4102/backendRemoteEntry.cjs",
         "remoteType": "commonjs-module",
         "expose": "./effect-api",
-        "runtimePackage": "@modern-js/plugin-bff/effect",
+        "runtimePackage": "@modern-js/bff-effect/effect",
         "expected": {
           "unitId": "app/party-registry",
           "buildMarker": "3f023644c8a07e9a"

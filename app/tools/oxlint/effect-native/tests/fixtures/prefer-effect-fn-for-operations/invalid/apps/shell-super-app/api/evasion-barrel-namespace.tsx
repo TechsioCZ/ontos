@@ -1,6 +1,6 @@
 // expect-count: 2
-import * as Edge from "@modern-js/plugin-bff/effect-edge";
-import { Effect as BffEffect } from "@modern-js/plugin-bff/effect-edge";
+import * as Edge from "@modern-js/bff-effect/effect-edge";
+import { Effect as BffEffect } from "@modern-js/bff-effect/effect-edge";
 
 /** Namespace import of the BFF barrel: `Edge.Effect.gen` is the same handler anti-pattern. */
 export const loadPanel = (tenantId: string) =>

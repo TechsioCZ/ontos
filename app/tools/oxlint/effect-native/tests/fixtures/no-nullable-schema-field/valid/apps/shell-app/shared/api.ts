@@ -1,4 +1,4 @@
-import { HttpApiSchema, Schema } from '@modern-js/plugin-bff/effect-client';
+import { HttpApiSchema, Schema } from '@modern-js/bff-effect/effect-client';
 
 // The audit blesses HttpApi-driven bodies and Drizzle JSONB; `OptionFromNullOr` keeps the wire form.
 export const ApiKeyResponseSchema = Schema.Struct({

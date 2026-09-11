@@ -1,4 +1,4 @@
-import { Effect, HttpEffect, HttpServerResponse } from '@modern-js/plugin-bff/effect-edge';
+import { Effect, HttpEffect, HttpServerResponse } from '@modern-js/bff-effect/effect-edge';
 
 const bearerChallenge = HttpEffect.appendPreResponseHandler((_request, response) =>
   Effect.succeed(HttpServerResponse.setHeader(response, 'www-authenticate', 'Bearer')),

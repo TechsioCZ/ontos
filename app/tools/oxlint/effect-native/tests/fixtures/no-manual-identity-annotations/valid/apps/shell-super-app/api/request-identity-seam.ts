@@ -1,5 +1,5 @@
 // The single outer HTTP instrumentation seam A6 asks for: matches `seamFiles`, so it may annotate once.
-import { Effect } from '@modern-js/plugin-bff/effect-edge';
+import { Effect } from '@modern-js/bff-effect/effect-edge';
 
 declare const handler: Effect.Effect<unknown>;
 declare const request: { headers: Record<string, string | undefined> };

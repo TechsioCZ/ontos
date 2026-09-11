@@ -1,7 +1,7 @@
 import { makeEffectBffClient } from '@app/shared-contracts/client-runtime';
 import type { EffectBffClientOptions, EffectBffRequestContext } from '@app/shared-contracts/client-runtime';
-import { Effect } from '@modern-js/plugin-bff/effect-client';
-import type { HttpApi, HttpApiClient, HttpApiGroup, Schema } from '@modern-js/plugin-bff/effect-client';
+import { Effect } from '@modern-js/bff-effect/effect-client';
+import type { HttpApi, HttpApiClient, HttpApiGroup, Schema } from '@modern-js/bff-effect/effect-client';
 import { Redacted } from 'effect';
 
 import { partyRegistryApi, partyRegistryApiContract } from '../../shared/api.ts';

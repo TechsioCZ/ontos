@@ -2,8 +2,8 @@
 // Alias imports, namespace imports and `Effect.gen` bodies are all per-operation construction.
 import { Effect } from 'effect';
 import { HttpApiClient } from 'effect/unstable/httpapi';
-import * as bff from '@modern-js/plugin-bff/effect-client';
-import { makeEffectHttpApiClient as buildClient } from '@modern-js/plugin-bff/effect-client';
+import * as bff from '@modern-js/bff-effect/effect-client';
+import { makeEffectHttpApiClient as buildClient } from '@modern-js/bff-effect/effect-client';
 import { contactsApi } from './api.ts';
 
 export const readinessCheck = (baseUrl: string) =>

@@ -2,7 +2,7 @@
 // A8/A9: the generated `execute*WithAuthorization` helper shape.
 import { Effect } from 'effect';
 import { HttpClient, HttpClientRequest } from 'effect/unstable/http';
-import { makeEffectHttpApiClient } from '@modern-js/plugin-bff/effect-client';
+import { makeEffectHttpApiClient } from '@modern-js/bff-effect/effect-client';
 import { CustomerListApi } from './api.ts';
 import { operationGateway } from './gateway.ts';
 

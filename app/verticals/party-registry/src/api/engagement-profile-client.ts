@@ -1,7 +1,7 @@
 /* eslint-disable oxc/no-barrel-file -- This is the generated client aggregate; remove-when: Codesmith emits direct re-exports. */
 import type { GatewayContextClientOptions } from '@app/shared-contracts';
-import { Effect } from '@modern-js/plugin-bff/effect-client';
-import type { HttpClientError, Schema } from '@modern-js/plugin-bff/effect-client';
+import { Effect } from '@modern-js/bff-effect/effect-client';
+import type { HttpClientError, Schema } from '@modern-js/bff-effect/effect-client';
 import { Redacted } from 'effect';
 
 import { engagementProfileOperationContexts, partyRegistryOperationContexts } from '../../shared/api.ts';
@@ -17,7 +17,7 @@ import type { PartyRegistryHttpClient } from './party-registry-http-client.ts';
 
 export * from './organization-engagement-profile-client.ts';
 export * from './person-engagement-profile-client.ts';
-export { Effect } from '@modern-js/plugin-bff/effect-client';
+export { Effect } from '@modern-js/bff-effect/effect-client';
 
 export type ContactsClient = PartyRegistryHttpClient;
 export type ContactsClientError = HttpClientError.HttpClientError | Schema.SchemaError;

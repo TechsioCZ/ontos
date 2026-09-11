@@ -38,3 +38,31 @@ const ultramodernRouteMetadata = [
 export const ultramodernLocalisedUrls = {
   [ultramodernRouteMetadata[0].canonicalPath]: ultramodernRouteMetadata[0].localisedPaths,
 } as const;
+
+/** Adapts the generated localised-URL map to the 3.9.0-ultramodern.5+ `I18nUrlStrategy` contract. */
+export const ultramodernI18nUrlStrategy = {
+  canonicalPathname: (pathname: string, languages: readonly string[]): string => {
+    const knownLanguages = new Set(languages);
+    for (const [canonicalPath, localisedPaths] of Object.entries(ultramodernLocalisedUrls)) {
+      for (const [language, localisedPath] of Object.entries(localisedPaths)) {
+        if (localisedPath === pathname && knownLanguages.has(language)) {
+          return canonicalPath;
+        }
+      }
+    }
+    return pathname;
+  },
+  localizePathname: (pathname: string, language: string, _languages: readonly string[]): string => {
+    for (const [canonicalPath, localisedPaths] of Object.entries(ultramodernLocalisedUrls)) {
+      if (canonicalPath !== pathname) {
+        continue;
+      }
+      for (const [candidate, localisedPath] of Object.entries(localisedPaths)) {
+        if (candidate === language) {
+          return localisedPath;
+        }
+      }
+    }
+    return pathname;
+  },
+};

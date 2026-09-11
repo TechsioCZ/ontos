@@ -282,7 +282,7 @@ export const buildKnipRuntimeEvidence = Effect.fn('QualityAudit.buildKnipRuntime
       const federationFile = `${prefix}module-federation.config.ts`;
       const federation = uncomment(federationFile, yield* read(federationFile));
       if (
-        federation?.includes("from '@modern-js/app-tools/config'") === true &&
+        federation?.includes("from '@modern-js/app-tools-extensions/config'") === true &&
         /resolveEffectTsgoCompiler\s*\(\s*\{\s*from:\s*import\.meta\.url\s*,?\s*\}\s*\)/u.test(federation)
       ) {
         const offset = federation.indexOf('resolveEffectTsgoCompiler');

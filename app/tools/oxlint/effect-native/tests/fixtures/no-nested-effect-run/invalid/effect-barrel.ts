@@ -1,5 +1,5 @@
 // expect-count: 2
-import { Effect } from "@modern-js/plugin-bff/effect-edge";
+import { Effect } from "@modern-js/bff-effect/effect-edge";
 
 declare const load: () => Effect.Effect<string>;
 

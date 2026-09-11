@@ -1,6 +1,6 @@
 // expect-count: 7
 // Shell BFF: every handler group repeats the same correlation annotation (audit A6, index.ts:724).
-import { Effect, HttpApiBuilder } from '@modern-js/plugin-bff/effect-edge';
+import { Effect, HttpApiBuilder } from '@modern-js/bff-effect/effect-edge';
 import { Cause } from 'effect';
 
 declare const ShellApi: never;
