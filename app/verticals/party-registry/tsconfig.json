@@ -15,6 +15,7 @@
     "locales/**/*.json",
     "package.json",
     "shared",
+    "shared/ultramodern-build.json",
     "server",
     "api",
     "scripts",

@@ -989,6 +989,7 @@ const workspaceValidationContractDefinition = {
         SHARED_VALIDATOR_STRING_075,
         SHARED_VALIDATOR_STRING_091,
         'shared',
+        'shared/ultramodern-build.json',
         'server',
         'api',
         'vertical.manifest.ts',
@@ -4414,7 +4415,15 @@ const assertTsConfigReferenceGraph = () => {
   assertSameJson(
     EffectArray.sort(shellTsConfig.include ?? [], Order.String),
     EffectArray.sort(
-      ['api', 'server', 'src', SHARED_VALIDATOR_STRING_075, SHARED_VALIDATOR_STRING_091, 'shared'],
+      [
+        'api',
+        'server',
+        'src',
+        SHARED_VALIDATOR_STRING_075,
+        SHARED_VALIDATOR_STRING_091,
+        'shared',
+        'shared/ultramodern-build.json',
+      ],
       Order.String,
     ),
     'apps/shell-super-app/tsconfig.json include',
