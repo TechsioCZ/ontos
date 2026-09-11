@@ -624,7 +624,6 @@
       "cloudflareProof": "scripts/proof-cloudflare-version.mts",
       "cloudflareOutputVerify": "scripts/verify-cloudflare-output.mts",
       "performanceReadiness": "scripts/ultramodern-performance-readiness.mts",
-      "migrateStrictEffect": "scripts/migrate-strict-effect.mts",
       "routesGenerate": "scripts/generate-tanstack-routes.mts",
       "apiBoundaries": "scripts/check-ultramodern-api-boundaries.mts",
       "skills": "scripts/bootstrap-agent-skills.mts"

@@ -612,12 +612,7 @@ it.live(
       yield* Effect.promise(() =>
         readFile(path.join(generatorRoot, 'templates/packages/effect-bff-runtime.ts'), 'utf-8'),
       ),
-    ).toMatch(/export const assembleEffectBffRuntime/u);
-    expect(
-      yield* Effect.promise(() =>
-        readFile(path.join(generatorRoot, 'templates/workspace-scripts/check-ultramodern-api-boundaries.mts'), 'utf-8'),
-      ),
-    ).toMatch(/strictEffectRuntimeTopologyViolation/u);
+    ).toMatch(/export \{ assembleEffectBffRuntime \} from '@modern-js\/bff-effect\/assembly'/u);
   }),
 );
 
