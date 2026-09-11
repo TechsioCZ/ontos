@@ -84,6 +84,11 @@ const configuredCloudflareUrl = envValue('ULTRAMODERN_PUBLIC_URL_PARTY_REGISTRY'
 const configuredUltramodernAssetPrefix = envValue('ULTRAMODERN_ASSET_PREFIX');
 const configuredModernAssetPrefix = envValue('MODERN_ASSET_PREFIX');
 const moduleFederationDevServerOrigin = envValue('ULTRAMODERN_MF_DEV_ORIGIN') ?? 'http://localhost:3020';
+// The dev server serves federated assets to every local app origin, so the
+// allowed origin is negotiated per request instead of pinned to one header.
+const moduleFederationDevServerAllowedOrigins = [
+  ...new Set([moduleFederationDevServerOrigin, `http://localhost:${port}`]),
+];
 const cloudflareWorkersDevSubdomain = envValue('ULTRAMODERN_CLOUDFLARE_WORKERS_DEV_SUBDOMAIN');
 const inferredCloudflareUrl =
   cloudflareDeployEnabled && cloudflareWorkersDevSubdomain !== undefined
@@ -128,7 +133,6 @@ const whenEnabled = <Configuration>(enabled: boolean, configuration: Configurati
 const appDevServerHeaders: NonNullable<NonNullable<NonNullable<AppToolsUserConfig['dev']>['server']>['headers']> = {
   'Access-Control-Allow-Headers': 'Accept, Authorization, Content-Type, X-Requested-With',
   'Access-Control-Allow-Methods': 'GET, HEAD, OPTIONS',
-  'Access-Control-Allow-Origin': moduleFederationDevServerOrigin,
 };
 
 const cloudflareDeployment = whenEnabled(cloudflareDeployEnabled, {
@@ -164,6 +168,10 @@ export default defineConfig(
         // shells load remoteEntry.js and exposed chunks from this dev server.
         assetPrefix,
         server: {
+          // MF assets are non-credentialed and only permit configured local app origins.
+          cors: {
+            origin: moduleFederationDevServerAllowedOrigins,
+          },
           headers: appDevServerHeaders,
         },
         setupMiddlewares: [

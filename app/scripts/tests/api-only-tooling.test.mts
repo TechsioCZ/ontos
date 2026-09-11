@@ -39,6 +39,7 @@ const EXPECTED_PROOF_VALUE = 'Expected a defined proof value';
 const workspaceRoot = fileURLToPath(new URL('../..', import.meta.url));
 
 const modernConfigFile = 'modern.config.ts';
+const packageJsonFile = 'package.json';
 const ultramodernConfigFile = '.modernjs/ultramodern.json';
 
 const partyId = 'party-registry';
@@ -1947,7 +1948,7 @@ const releaseFixture = Effect.fn(function* scenario5(moduleFormat: 'cjs' | 'esm'
     },
   });
   yield* putJson('route.json', { routes: [{ bundle: ssrBundlePath }] });
-  yield* putJson('package.json', { type: 'module' });
+  yield* putJson(packageJsonFile, { type: 'module' });
   yield* Effect.all(
     [compiledUiAssetPath, ssrBundlePath, apiBundlePath, 'index.js', 'backendRemoteEntry.cjs'].map(
       Effect.fn(function* scenario8(file) {
@@ -2790,7 +2791,7 @@ it.live(
               scope: 'app',
             }),
           );
-          yield* writeJson(ownerRoot, 'package.json', { type: 'module' });
+          yield* writeJson(ownerRoot, packageJsonFile, { type: 'module' });
           yield* writeJson(ownerRoot, tsconfigFile, {
             compilerOptions: {
               allowImportingTsExtensions: true,
@@ -3800,7 +3801,7 @@ describe('consumer migration preserves native tooling and governed safety', () =
             ),
             release: Schema.Struct({ version: Schema.Literal(releaseVersion) }),
             source: Schema.Struct({
-              commit: Schema.Literal('ef99279246046685f1684c59ca145f2a6a3f9d53'),
+              commit: Schema.Literal('905cd7ae5b0f74460f00e2e0c11625c5a2662b0f'),
             }),
           }),
         ),
@@ -3837,10 +3838,29 @@ describe('consumer migration preserves native tooling and governed safety', () =
           `Release-age exception must name an exact authenticated package: ${entry}`,
         ).toBeTruthy();
       }
+      // The vendored validator snapshot is gone: the workspace contract gate now runs the
+      // authenticated cohort's own `ultramodern validate`, so the pin is proved against the
+      // adoption manifest and the installed cohort package instead of a copied source block.
       const validator = yield* source('scripts/validate-ultramodern-workspace.mts');
-      expect(validator).toMatch(/authenticated release cohort projection/u);
-      expect(validator.includes(cohort.source.commit)).toBeTruthy();
+      expect(validator).toMatch(/runUltramodernScript\(/u);
+      expect(validator).toMatch(/command: 'validate'/u);
       expect(validator).not.toMatch(/['"]@modern-js\/create['"]/u);
+      const adoption = Schema.decodeUnknownSync(
+        Schema.fromJsonString(
+          Schema.Struct({
+            generator: Schema.Struct({ version: Schema.Literal(releaseVersion) }),
+            packageSource: Schema.Struct({
+              aliasScope: Schema.Literal('bleedingdev'),
+              modernPackageVersion: Schema.Literal(releaseVersion),
+            }),
+          }),
+        ),
+      )(yield* source(ultramodernConfigFile));
+      const installedGenerator = Schema.decodeUnknownSync(
+        Schema.fromJsonString(Schema.Struct({ name: Schema.String, version: Schema.Literal(releaseVersion) })),
+      )(yield* Effect.promise(() => readFile(path.join(generatorRoot, packageJsonFile), 'utf-8')));
+      expect(installedGenerator.name).toBe(cohort.aliases['@modern-js/ultramodern-create']);
+      expect(installedGenerator.name.startsWith(`@${adoption.packageSource.aliasScope}/`)).toBeTruthy();
     }),
   );
   it.live(
