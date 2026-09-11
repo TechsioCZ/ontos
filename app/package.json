@@ -135,7 +135,9 @@
     "cross-env": "10.1.0",
     "@effect/opentelemetry": "4.0.0-rc.112",
     "@modern-js/app-tools-extensions": "npm:@bleedingdev/modern-js-app-tools-extensions@3.9.0-ultramodern.7",
-    "@modern-js/bff-effect": "npm:@bleedingdev/modern-js-bff-effect@3.9.0-ultramodern.7"
+    "@modern-js/bff-effect": "npm:@bleedingdev/modern-js-bff-effect@3.9.0-ultramodern.7",
+    "@modern-js/plugin-bff-extensions": "npm:@bleedingdev/modern-js-plugin-bff-extensions@3.9.0-ultramodern.7",
+    "@modern-js/plugin-bff-build-extensions": "npm:@bleedingdev/modern-js-plugin-bff-build-extensions@3.9.0-ultramodern.7"
   },
   "engines": {
     "node": ">=26",

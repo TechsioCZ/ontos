@@ -51,7 +51,8 @@
     "react-dom": "19.2.8",
     "@effect/opentelemetry": "4.0.0-rc.112",
     "@modern-js/runtime-extensions": "npm:@bleedingdev/modern-js-runtime-extensions@3.9.0-ultramodern.7",
-    "@modern-js/bff-effect": "npm:@bleedingdev/modern-js-bff-effect@3.9.0-ultramodern.7"
+    "@modern-js/bff-effect": "npm:@bleedingdev/modern-js-bff-effect@3.9.0-ultramodern.7",
+    "@modern-js/plugin-bff-extensions": "npm:@bleedingdev/modern-js-plugin-bff-extensions@3.9.0-ultramodern.7"
   },
   "devDependencies": {
     "@cloudflare/workers-types": "5.20260810.1",
