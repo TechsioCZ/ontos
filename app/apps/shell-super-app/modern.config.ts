@@ -45,7 +45,6 @@ import {
   DeploymentAllowlistTopologySchema,
 } from './api/modules/deployment-allowlist.ts';
 import { createModuleDeploymentAllowlistBuildInput } from './module-deployment-allowlist.config.ts';
-import { ultramodernI18nUrlStrategy } from './src/routes/ultramodern-route-metadata';
 
 const withOptionalProperty = <Base extends object, Key extends PropertyKey, Value, Trailing extends object>(
   base: Base,
@@ -283,7 +282,6 @@ export default defineConfig(
               localePathRedirect: true,
             },
             reactI18next: false,
-            urlStrategy: ultramodernI18nUrlStrategy,
           }),
           moduleFederationPlugin({
             configPath: moduleFederationConfigPath,

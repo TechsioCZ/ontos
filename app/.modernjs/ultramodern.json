@@ -355,6 +355,7 @@
             ],
             "assetsBinding": "ASSETS",
             "routes": {
+              "ssr": "/en/contacts",
               "mfManifest": "/mf-manifest.json",
               "apiReadiness": "/party-registry-api/party-registry/readiness"
             },
