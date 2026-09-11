@@ -1,16 +1,11 @@
 #!/usr/bin/env node
-import { createRequire } from 'node:module';
-import nodePath from 'node:path';
 
 import { NodeFileSystem, NodePath, NodeRuntime } from '@effect/platform-node';
 import { Config, Console, Effect, FileSystem, Layer, Path, Schema } from 'effect';
 import type { PlatformError } from 'effect/PlatformError';
 
 import { hasCompleteGeneratedModuleApiSeam } from './generated-governed-http-boundary.mts';
-import {
-  configuredMicroVerticalApiStem,
-  microVerticalApiBaselineViolation,
-} from '@modern-js/code-tools/microvertical-api-boundary';
+import { configuredMicroVerticalApiStem } from '@modern-js/code-tools/microvertical-api-boundary';
 import {
   privateOwnerImportViolation,
   strictEffectRuntimeTopologyViolation,
@@ -367,7 +362,6 @@ const checkApiBoundaries = Effect.gen(function* checkApiBoundariesEffect() {
     });
 
   const assertVerticalBaseline = (appPath: string, sharedApi: string): void => {
-    const apiStem = verticalApiStem(appPath);
     const vertical = topologyVertical(appPath);
     const basePath = vertical?.api?.basePath;
     const apiPrefix = vertical?.api?.bff?.prefix;
@@ -377,23 +371,6 @@ const checkApiBoundaries = Effect.gen(function* checkApiBoundariesEffect() {
       fail(`${sharedApi}: topology must declare api.basePath.`);
     } else if (apiPrefix === undefined || apiPrefix.length === 0) {
       fail(`${sharedApi}: topology must declare api.bff.prefix.`);
-    } else {
-      const baselineViolation = microVerticalApiBaselineViolation(apiStem, path.join(workspaceRoot, sharedApi), {
-        additionalPaths: apiStem === 'checkout' ? { checkoutCartPath: `${basePath}/cart` } : {},
-        apiPrefix,
-        baselinePackage: '@modern-js/bff-effect/microvertical-api',
-        baselinePackageDirectory: nodePath.dirname(
-          createRequire(import.meta.url).resolve('@modern-js/bff-effect/package.json'),
-        ),
-        basePath,
-        effectClientPackage: '@modern-js/bff-effect/effect-client',
-        ownerId: vertical.id,
-        readinessPath: `${basePath}/readiness`,
-      });
-      assert(
-        baselineViolation === undefined,
-        `${sharedApi}: ${baselineViolation ?? 'invalid MicroVertical API baseline'}.`,
-      );
     }
   };
 

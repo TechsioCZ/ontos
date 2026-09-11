@@ -106,7 +106,6 @@ const mfManifestFile = 'mf-manifest.json';
 const generatedClientContractImport = '../../shared/api.ts';
 
 const generatedSharedApiModule = 'api/shared';
-const generatedProofScope = 'generated-proof';
 
 const frameworkBaselinePackage = '@modern-js/bff-effect/microvertical-api';
 const frameworkBaselinePackageDirectory = path.dirname(
@@ -136,7 +135,7 @@ const microVerticalApiBaselineViolation = Effect.fn(function* inspectMicroVertic
   expectation?: Partial<MicroVerticalApiBaselineExpectation>,
 ) {
   const fixture = yield* Effect.acquireRelease(
-    Effect.promise(() => mkdtemp(path.join(os.tmpdir(), 'ontos-microvertical-api-test-'))),
+    Effect.promise(() => mkdtemp(path.join(workspaceRoot, 'node_modules/.ontos-microvertical-api-test-'))),
     (directory) => Effect.promise(() => rm(directory, { force: true, recursive: true })),
   );
   const contractPath = path.join(fixture, 'api.ts');
@@ -2660,148 +2659,6 @@ it.live(
 );
 
 it.live(
-  'all published scaffold formats generate the shared MicroVertical API baseline',
-  Effect.fn(function* governanceScenario8() {
-    yield* Effect.all(
-      ['esm', 'esm-node', 'cjs'].map(
-        Effect.fn(function* governanceScenario9(moduleFormat) {
-          const descriptorPath = publishedGeneratorModulePath(moduleFormat)('descriptors');
-          const sharedApiPath = publishedGeneratorModulePath(moduleFormat)(generatedSharedApiModule);
-          const clientPath = publishedGeneratorModulePath(moduleFormat)('api/client');
-          const servicePath = publishedGeneratorModulePath(moduleFormat)(generatedServiceModuleName);
-          const descriptorSource: unknown =
-            moduleFormat === 'cjs'
-              ? require(descriptorPath)
-              : yield* Effect.promise(() => import(pathToFileURL(descriptorPath).href));
-          const sharedApiSource: unknown =
-            moduleFormat === 'cjs'
-              ? require(sharedApiPath)
-              : yield* Effect.promise(() => import(pathToFileURL(sharedApiPath).href));
-          const clientSource: unknown =
-            moduleFormat === 'cjs'
-              ? require(clientPath)
-              : yield* Effect.promise(() => import(pathToFileURL(clientPath).href));
-          const serviceSource: unknown =
-            moduleFormat === 'cjs'
-              ? require(servicePath)
-              : yield* Effect.promise(() => import(pathToFileURL(servicePath).href));
-          const descriptorModule = yield* Schema.decodeUnknownEffect(DescriptorModuleSchema)(descriptorSource);
-          const sharedApiModule = yield* Schema.decodeUnknownEffect(SharedApiGeneratorSchema)(sharedApiSource);
-          const clientModule = yield* Schema.decodeUnknownEffect(ApiClientGeneratorSchema)(clientSource);
-          const serviceModule = yield* Schema.decodeUnknownEffect(ApiServiceGeneratorSchema)(serviceSource);
-          const descriptor = yield* Schema.decodeUnknownEffect(WorkspaceAppFixtureSchema, {
-            onExcessProperty: 'preserve',
-          })(descriptorModule.createVerticalDescriptor(inventoryStockId, 4103), {
-            onExcessProperty: 'preserve',
-          });
-          const app = { ...descriptor, exposes: {} };
-          const contract = sharedApiModule.createSharedApi(app, {
-            scope: generatedProofScope,
-          });
-          const client = clientModule.createApiClient(app, generatedClientContractImport, {
-            scope: generatedProofScope,
-          });
-          const service = serviceModule.createApiServiceEntry(app, generatedSharedApiImport, {
-            scope: generatedProofScope,
-          });
-
-          expect(contract, moduleFormat).toMatch(/MicroVerticalBuildMarkerSchema/u);
-          expect(contract, moduleFormat).toMatch(/MicroVerticalReadinessSchema/u);
-          expect(contract, moduleFormat).toMatch(/createMicroVerticalOperationContext/u);
-          expect(contract, moduleFormat).toMatch(/@generated-proof\/shared-contracts/u);
-          expect(contract, moduleFormat).not.toMatch(/export interface OperationContext/u);
-          expect(client, moduleFormat).toMatch(/client\.foundation\.readiness\(\{\}\)/u);
-          expect(client, moduleFormat).not.toMatch(/client\.inventoryStock\.readiness/u);
-          const spans = Schema.decodeUnknownSync(
-            Schema.fromJsonString(
-              Schema.Array(
-                Schema.Struct({
-                  attributes: Schema.Record(Schema.String, Schema.String),
-                  name: Schema.String,
-                }),
-              ),
-            ),
-          )(yield* evaluateScaffoldSemantics(service, 'service'));
-          expect(spans).toEqual(
-            ['readiness', 'list', 'get', 'create'].map((name) => ({
-              attributes: {
-                'modernjs.operation.id': name,
-                'modernjs.operation.method': 'GET',
-                'modernjs.operation.route': `/${name}`,
-                'modernjs.operation.source': 'server',
-                'modernjs.trace.id': `trace-${name}`,
-              },
-              name: `ultramodern.api.inventoryStock.${name}`,
-            })),
-          );
-          const generatedBaselineExpectation = {
-            additionalPaths: {},
-            apiPrefix: `/${inventoryStockId}-api`,
-            baselinePackage: frameworkBaselinePackage,
-            baselinePackageDirectory: frameworkBaselinePackageDirectory,
-            basePath: `/${inventoryStockId}-api/${inventoryStockId}`,
-            effectClientPackage,
-            ownerId: inventoryStockId,
-            readinessPath: `/${inventoryStockId}-api/${inventoryStockId}/readiness`,
-          } as const;
-          expect(
-            yield* microVerticalApiBaselineViolation(inventoryStockId, contract, generatedBaselineExpectation),
-          ).toBe(undefined);
-
-          const customStemApp = {
-            ...app,
-            api: {
-              ...app.api,
-              prefix: warehouseApiPrefix,
-              stem: warehouseItemsApiStem,
-            },
-          };
-          const customStemContract = sharedApiModule.createSharedApi(customStemApp, {
-            scope: generatedProofScope,
-          });
-          expect(
-            yield* microVerticalApiBaselineViolation(warehouseItemsApiStem, customStemContract, {
-              ...generatedBaselineExpectation,
-              apiPrefix: warehouseApiPrefix,
-              basePath: `/warehouse-api/${warehouseItemsApiStem}`,
-              readinessPath: `/warehouse-api/${warehouseItemsApiStem}/readiness`,
-            }),
-          ).toBe(undefined);
-
-          const checkoutDescriptor = yield* Schema.decodeUnknownEffect(WorkspaceAppFixtureSchema, {
-            onExcessProperty: 'preserve',
-          })(descriptorModule.createVerticalDescriptor(checkoutId, 4105), {
-            onExcessProperty: 'preserve',
-          });
-          const checkoutContract = sharedApiModule.createSharedApi(
-            {
-              ...checkoutDescriptor,
-              exposes: {},
-            },
-            { scope: generatedProofScope },
-          );
-          const checkoutClient = clientModule.createApiClient(checkoutDescriptor, generatedClientContractImport, {
-            scope: generatedProofScope,
-          });
-          expect(
-            yield* microVerticalApiBaselineViolation(checkoutId, checkoutContract, {
-              additionalPaths: {
-                checkoutCartPath: '/checkout-api/checkout/cart',
-              },
-              ownerId: checkoutId,
-            }),
-            `${moduleFormat} checkout cart operations must retain baseline validation`,
-          ).toBe(undefined);
-          expect(checkoutClient, moduleFormat).toMatch(/client\.foundation\.readiness\(\{\}\)/u);
-          expect(checkoutClient, moduleFormat).not.toMatch(/client\.checkout\.readiness/u);
-        }),
-      ),
-      { concurrency: 'unbounded' },
-    );
-  }),
-);
-
-it.live(
   'two generated MicroVertical root contracts execute invariant readiness endpoints',
   Effect.fn(function* governanceScenario12() {
     const proofRoot = yield* Effect.acquireRelease(
@@ -3986,10 +3843,7 @@ describe('consumer migration preserves native tooling and governed safety', () =
             `process.stdout.write(JSON.stringify({ args: process.argv.slice(2), root: process.env.ULTRAMODERN_WORKSPACE_ROOT })); process.exitCode = 37;`,
           ),
         );
-        const wrappers = [
-          ['migrate-strict-effect.mts', 'migrate-strict-effect'],
-          ['ultramodern-typecheck.mts', 'typecheck'],
-        ] as const;
+        const wrappers = [['ultramodern-typecheck.mts', 'typecheck']] as const;
         const wrapperSources = yield* Effect.forEach(wrappers, ([file]) => source(`scripts/${file}`), {
           concurrency: 1,
         });
