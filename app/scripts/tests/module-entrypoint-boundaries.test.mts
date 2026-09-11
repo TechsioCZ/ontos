@@ -296,7 +296,7 @@ const governedServerFixture = (options: {
     directory = options.apiValue.endsWith('ReportApi') ? 'reports' : 'search';
   }
   const readSuffix = provider ? 'provider' : 'read';
-  return `${options.generatedHeader}import { HttpApiBuilder } from '@modern-js/plugin-bff/effect-edge';
+  return `${options.generatedHeader}import { HttpApiBuilder } from '@modern-js/bff-effect/effect-edge';
 import { makeGovernedReadHttpHandler } from '@app/core-runtime/http/governed-read';
 import { makeGovernedReadProblems } from '@app/shared-contracts/server/effect-bff-runtime';
 import { authenticateOperationPrincipal } from './auth/action-principal.ts';
@@ -1255,7 +1255,7 @@ export const executeStockList = (payload, requestCorrelation, options) =>
   const clientConfig = {`,
     );
     const invalidClients = [
-      validClient.replace("from '@app/shared-contracts/client-runtime'", "from '@modern-js/plugin-bff/effect-client'"),
+      validClient.replace("from '@app/shared-contracts/client-runtime'", "from '@modern-js/bff-effect/effect-client'"),
       validClient.replace(GATEWAY_INVOKE_MARKER, GATEWAY_BYPASS_MARKER),
       validClient.replace(AUTHORIZATION_VALUE, "'x-authorization': Redacted.value(credential)"),
       validClient.replace(CORRELATION_VALUE, "'x-trace-id': requestCorrelation"),
@@ -2183,7 +2183,7 @@ const partyPackage = {
   name: PARTY_PACKAGE_NAME,
 };
 
-const partyClientSource = `import { Effect, makeEffectHttpApiClient } from '@modern-js/plugin-bff/effect-client';
+const partyClientSource = `import { Effect, makeEffectHttpApiClient } from '@modern-js/bff-effect/effect-client';
 import { partyRegistryApiContract } from '../../shared/api.ts';
 import { executePartyDetail } from './party-detail-client.ts';
 export * from './party-detail-client.ts';

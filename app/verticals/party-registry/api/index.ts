@@ -1,8 +1,8 @@
 import { DatabaseConfigLive } from '@app/core-runtime';
 import type { ActionRuntime, ReadRuntime, GatewayAssertionRedemptionService } from '@app/core-runtime';
 import { assembleEffectBffRuntime } from '@app/shared-contracts/server/effect-bff-runtime';
-import { HttpRouter, Layer } from '@modern-js/plugin-bff/effect-edge';
-import type { EffectBffDefinition, EffectBffRuntime, EffectRuntimeLayer } from '@modern-js/plugin-bff/effect-edge';
+import { HttpRouter, Layer } from '@modern-js/bff-effect/effect-edge';
+import type { EffectBffDefinition, EffectBffRuntime, EffectRuntimeLayer } from '@modern-js/bff-effect/effect-edge';
 import { Layer as GovernedReadLayer, Logger, References, Schema, Tracer } from 'effect';
 
 import { partyRegistryApi } from '../shared/api.ts';

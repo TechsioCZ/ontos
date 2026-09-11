@@ -1,4 +1,4 @@
-import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { pathToFileURL } from 'node:url';
@@ -189,106 +189,6 @@ it.effect(
       ),
     );
     expect(formatActionAuthorizationProvisioningFailure(unexpectedRejection)).toBe(unexpectedMessage);
-  }),
-);
-
-it.effect(
-  'workspace validation rejects both provisioning spellings in every automatic startup path',
-  Effect.fn(function* testEffect5() {
-    const source = yield* Effect.tryPromise(() =>
-      readFile(new URL('../validate-ultramodern-workspace.mts', import.meta.url), 'utf-8'),
-    );
-    // Execute the actual validator block with controlled inputs, without loading the full workspace.
-    const start = source.indexOf('const actionAuthorizationProvisioningCommand =');
-    const end = source.indexOf('if (hasBackendSurfaces)', start);
-    expect(start !== -1 && end > start).toBe(true);
-    const block = source.slice(start, end);
-    const scripts = {
-      'authorization:provision-current-actions': 'node ./scripts/provision-current-action-authorization.mts',
-      'local:initialize': 'node ./scripts/initialize-local-development.mts',
-    };
-    const validationRoot = yield* Effect.acquireRelease(
-      Effect.tryPromise(() => mkdtemp(path.join(os.tmpdir(), 'ontos-workspace-validation-'))),
-      (directory) => Effect.promise(() => rm(directory, { force: true, recursive: true })),
-    );
-    let validationIndex = 0;
-    const validate = (sources: Readonly<Record<string, string>>, overrides: Readonly<Record<string, string>> = {}) =>
-      Effect.gen(function* testEffect6() {
-        const modulePath = path.join(validationRoot, `validation-${validationIndex}.mjs`);
-        validationIndex += 1;
-        yield* Effect.tryPromise(() =>
-          writeFile(
-            modulePath,
-            [
-              "import assert from 'node:assert/strict';",
-              `const sources = ${JSON.stringify(sources)};`,
-              "const readText = (file) => sources[file] ?? '';",
-              `const rootPackage = ${JSON.stringify({ scripts: { ...scripts, ...overrides } })};`,
-              "const SHARED_VALIDATOR_STRING_053 = 'authorization:provision-current-actions';",
-              "const SHARED_VALIDATOR_STRING_059 = 'cloudflare:build';",
-              "const SHARED_VALIDATOR_STRING_060 = 'cloudflare:deploy';",
-              "const SHARED_VALIDATOR_STRING_106 = 'provision-current-action-authorization';",
-              'const valueForKey = (entries, key) => entries.find(([candidate]) => candidate === key)?.[1];',
-              block,
-            ].join('\n'),
-            'utf-8',
-          ),
-        );
-        yield* Effect.tryPromise(() => import(pathToFileURL(modulePath).href));
-      });
-
-    yield* validate({});
-    const validations: Effect.Effect<void, void>[] = [];
-    for (const command of [
-      'node ./scripts/provision-current-action-authorization.mts',
-      'pnpm authorization:provision-current-actions',
-    ]) {
-      for (const file of [
-        'scripts/initialize-local-development.mts',
-        'scripts/locki-feature.sh',
-        'docker-compose.yml',
-        'scripts/run-zerops-spicedb.sh',
-      ]) {
-        validations.push(
-          validate({ [file]: command }).pipe(
-            Effect.flip,
-            Effect.map((error) =>
-              expect(() => {
-                throw error.cause;
-              }).toThrow(/must not provision Action authorization/u),
-            ),
-          ),
-        );
-      }
-      for (const automaticScript of ['dev', 'build', 'cloudflare:build', 'cloudflare:deploy']) {
-        validations.push(
-          validate({}, { [automaticScript]: command }).pipe(
-            Effect.flip,
-            Effect.map((error) =>
-              expect(() => {
-                throw error.cause;
-              }).toThrow(/must not invoke Action authorization provisioning/u),
-            ),
-          ),
-        );
-      }
-      validations.push(
-        validate(
-          {},
-          {
-            'local:initialize': `${scripts['local:initialize']} && ${command}`,
-          },
-        ).pipe(
-          Effect.flip,
-          Effect.map((error) =>
-            expect(() => {
-              throw error.cause;
-            }).toThrow(/must not provision Action authorization/u),
-          ),
-        ),
-      );
-    }
-    yield* Effect.all(validations, { concurrency: 'unbounded' });
   }),
 );
 

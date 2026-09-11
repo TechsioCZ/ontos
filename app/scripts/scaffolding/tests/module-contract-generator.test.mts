@@ -1000,7 +1000,7 @@ it('follows local re-exports of imported schemas', () => {
 
 it('rejects direct Effect schema imports used through an aliased endpoint factory', () => {
   const content = `
-    import { HttpApiEndpoint as Endpoint } from '@modern-js/plugin-bff/effect-client';
+    import { HttpApiEndpoint as Endpoint } from '@modern-js/bff-effect/effect-client';
     import { Any as UnsafeSchema } from 'effect';
     Endpoint.get('read', '/reads/example', { success: UnsafeSchema });
   `;
@@ -1083,7 +1083,7 @@ it('covers ordinary endpoint aliases and TypeScript module forms', () => {
       HttpApiEndpoint.get('read', '/reads/example', { success: S.Unknown });
     `,
     `
-      import { HttpApiEndpoint, Schema as S } from '@modern-js/plugin-bff/effect-client';
+      import { HttpApiEndpoint, Schema as S } from '@modern-js/bff-effect/effect-client';
       HttpApiEndpoint.get('read', '/reads/example', { success: S.Any });
     `,
   ]) {

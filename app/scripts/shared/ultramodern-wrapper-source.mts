@@ -20,23 +20,6 @@ const hasSharedUltramodernDispatch = (source: string): boolean =>
   source.includes('resolveUltramodernInvocation(options).pipe(') &&
   source.includes('Effect.flatMap(launchUltramodern)');
 
-export const hasUltramodernSkillsDispatch = (source: string, implementation: string): boolean => {
-  const wrapper = withoutComments(source);
-  const runner = withoutComments(implementation);
-  return (
-    wrapper.includes("from './shared/ultramodern-launch.mts'") &&
-    wrapper.includes("['skills', 'check',") &&
-    wrapper.includes("['skills', 'install',") &&
-    wrapper.includes("['ultramodern', ...skillArgs]") &&
-    /ultramodernLaunch\(\s*createBin\s*,\s*ultramodernArgs\s*,\s*workspaceRoot\s*,\s*path\.sep\s*,?\s*\)/u.test(
-      wrapper,
-    ) &&
-    wrapper.includes("Config.string('ULTRAMODERN_CREATE_BIN')") &&
-    runner.includes("executable: 'ultramodern-create'") &&
-    runner.includes('ChildProcess.make(launch.executable, launch.args,')
-  );
-};
-
 /** Recognize the explicit wrapper contract, not a dependency mentioned in prose. */
 export const hasUltramodernDispatch = (
   source: string | undefined,

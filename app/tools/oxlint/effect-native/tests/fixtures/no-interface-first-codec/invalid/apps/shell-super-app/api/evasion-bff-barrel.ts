@@ -1,6 +1,6 @@
 // expect-count: 3
-import * as BFF from "@modern-js/plugin-bff/effect-edge";
-import { Schema as S } from "@modern-js/plugin-bff/effect-client";
+import * as BFF from "@modern-js/bff-effect/effect-edge";
+import { Schema as S } from "@modern-js/bff-effect/effect-client";
 
 export interface GovernedRead {
 	readonly id: string;

@@ -32,7 +32,7 @@
  *   (`import * as Schema from "effect/Schema"`), the Effect barrel (`import * as Effect from "effect"`
  *   then `Effect.Schema.decodeUnknownSync`), direct member imports
  *   (`import { decodeUnknownSync } from "effect/Schema"`), Effect re-export barrels
- *   (`@modern-js/plugin-bff/effect-client`, configurable via `reexportModules`), computed access
+ *   (`@modern-js/bff-effect/effect-client`, configurable via `reexportModules`), computed access
  *   (`Schema["decodeUnknownSync"]`) and optional chaining (`Schema?.decodeUnknownSync`).
  * - `.ts`, `.mts`, `.cts` and `.tsx`/`.jsx` alike, across `apps/`, `verticals/`, `packages/` and
  *   `scripts/`. Library code that is not currently inside any Effect is still an A7 target: the
@@ -86,9 +86,9 @@ const DEFAULT_ALLOW_PATHS = [
  * `Schema` imported from them *is* Effect's `Schema`.
  */
 const DEFAULT_REEXPORT_MODULES = [
-  '@modern-js/plugin-bff/effect-client',
-  '@modern-js/plugin-bff/effect-edge',
-  '@modern-js/plugin-bff/effect-*',
+  '@modern-js/bff-effect/effect-client',
+  '@modern-js/bff-effect/effect-edge',
+  '@modern-js/bff-effect/effect-*',
 ];
 
 interface RuleOptions {

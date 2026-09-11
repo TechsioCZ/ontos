@@ -30,7 +30,7 @@
  *     submodule namespace imports (`import * as Effect from "effect/Effect"`), root namespace imports
  *     (`import * as EFX from "effect"` → `EFX.Effect.forEach`) and direct member imports
  *     (`import { forEach } from "effect/Effect"`) are all recognised. `reexportModules` widens that to
- *     the BFF barrels (`@modern-js/plugin-bff/effect-edge` / `effect-client`), which re-export Effect's
+ *     the BFF barrels (`@modern-js/bff-effect/effect-edge` / `effect-client`), which re-export Effect's
  *     namespaces verbatim and carry the whole Shell/vertical API surface.
  *   - Computed access (`Effect["forEach"]`), optional chaining (`Effect?.forEach(...)`), parenthesised
  *     and `as`/`satisfies`/`!`-wrapped callees are all resolved.
@@ -92,8 +92,8 @@ const DEFAULT_IGNORE: readonly string[] = [];
  * `effect-edge`, including the audit's `apps/shell-super-app/api/index.ts:1243,1315` fan-outs.
  */
 const DEFAULT_REEXPORT_MODULES: readonly string[] = [
-  '@modern-js/plugin-bff/effect-client',
-  '@modern-js/plugin-bff/effect-edge',
+  '@modern-js/bff-effect/effect-client',
+  '@modern-js/bff-effect/effect-edge',
 ];
 const DEFAULT_STREAM_MEMBERS: readonly string[] = ['mapEffect', 'flatMap', 'forEach'];
 const DEFAULT_MIN_ITEMS = 2;
@@ -206,7 +206,7 @@ function memberName(node: ESTree.MemberExpression): string | null {
 
 /**
  * The shared `effect`/`effect/*` bindings, widened with the named imports of the Effect re-export
- * barrels. `import { Effect } from "@modern-js/plugin-bff/effect-edge"` binds Effect's own `Effect`.
+ * barrels. `import { Effect } from "@modern-js/bff-effect/effect-edge"` binds Effect's own `Effect`.
  */
 function collectBindings(program: ESTree.Program, reexportModules: readonly string[]): EffectBindings {
   const shared = collectEffectBindings(program);

@@ -725,7 +725,7 @@ export const rule = defineRule({
       if (body?.type === 'ImportExpression') return true;
       return (
         body?.type === 'CallExpression' &&
-        imported(body.callee) === '@modern-js/plugin-bff/effect-client:runEffectRequest'
+        imported(body.callee) === '@modern-js/bff-effect/effect-client:runEffectRequest'
       );
     };
     const exportedOwner = (owner: any): boolean =>

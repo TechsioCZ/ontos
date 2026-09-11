@@ -41,6 +41,8 @@ jobs:
             command: pnpm i18n:boundaries
           - name: API Boundaries
             command: pnpm api:check
+          - name: OntOS API Boundary Rules
+            command: pnpm api:check:ontos
           - name: Database Access Boundaries
             command: pnpm database-access:check
           - name: Module Entrypoint Contracts

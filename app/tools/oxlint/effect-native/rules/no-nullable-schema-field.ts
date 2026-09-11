@@ -32,7 +32,7 @@
  *   no-substitution template spelling ``Schema[`NullOr`](...)``, at both the namespace and the member
  *   level), optional chaining (`Schema?.NullOr(...)`), casts (`(Schema.NullOr as F)(x)`), and the
  *   Modern.js BFF barrels that re-export `effect/Schema` verbatim (`reexportModules`, default
- *   `@modern-js/plugin-bff/effect-client` and friends — how every `shared/api.ts` contract in this
+ *   `@modern-js/bff-effect/effect-client` and friends — how every `shared/api.ts` contract in this
  *   repository imports `Schema`). A local shadow of any of those identifiers (a parameter, a
  *   block-scoped `const Schema = ...`) resolves to the shadow and is **not** reported: every lexical
  *   match is confirmed against the binding it actually resolves to.
@@ -100,12 +100,12 @@ const DEFAULT_IGNORE: readonly string[] = [];
  * every shared BFF contract in this repository reaches Schema.
  */
 const DEFAULT_REEXPORT_MODULES = [
-  '@modern-js/plugin-bff/effect',
-  '@modern-js/plugin-bff/effect-client',
-  '@modern-js/plugin-bff/effect-client-runtime',
-  '@modern-js/plugin-bff/effect-edge',
-  '@modern-js/plugin-bff/effect-edge/*',
-  '@modern-js/plugin-bff/effect-server',
+  '@modern-js/bff-effect/effect',
+  '@modern-js/bff-effect/effect-client',
+  '@modern-js/bff-effect/effect-client-runtime',
+  '@modern-js/bff-effect/effect-edge',
+  '@modern-js/bff-effect/effect-edge/*',
+  '@modern-js/bff-effect/effect-server',
 ];
 
 /** Combinators that decode absence into `null` / `undefined` instead of an `Option`. */

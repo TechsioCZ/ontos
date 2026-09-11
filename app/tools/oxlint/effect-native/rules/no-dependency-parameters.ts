@@ -229,7 +229,7 @@ export const rule = defineRule({
     const variableFor = (node: AnyNode, name: string): any => resolveVariable(context, name, node);
     const importSourcePath = (def: any): string | null => {
       const source = def.parent?.source?.value;
-      const isRoot = ['effect', '@modern-js/plugin-bff/effect-edge'].includes(source);
+      const isRoot = ['effect', '@modern-js/bff-effect/effect-edge'].includes(source);
       if (!isRoot && !source?.startsWith('effect/')) return null;
       const imported = def.node.imported?.name ?? def.node.imported?.value;
       if (isRoot) return imported ?? 'root';

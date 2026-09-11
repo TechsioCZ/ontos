@@ -1082,7 +1082,7 @@ const hasServerContract = (
       new Set([
         GOVERNED_READ_HTTP_MODULE,
         GOVERNED_HTTP_RUNTIME_MODULE,
-        '@modern-js/plugin-bff/effect-edge',
+        '@modern-js/bff-effect/effect-edge',
         './auth/action-principal.ts',
         '../shared/api.ts',
         readImport,
@@ -1093,7 +1093,7 @@ const hasServerContract = (
       [`${escapedCamel}Read`]: readImport,
       [apiBinding]: '../shared/api.ts',
       authenticateOperationPrincipal: './auth/action-principal.ts',
-      HttpApiBuilder: '@modern-js/plugin-bff/effect-edge',
+      HttpApiBuilder: '@modern-js/bff-effect/effect-edge',
       makeGovernedReadHttpHandler: GOVERNED_READ_HTTP_MODULE,
     }) &&
     hasProblemSet(source, schemaStem, contractImport) &&

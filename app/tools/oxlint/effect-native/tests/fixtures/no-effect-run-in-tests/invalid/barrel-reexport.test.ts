@@ -1,5 +1,5 @@
 // expect-count: 2
-import { Effect, Layer } from "@modern-js/plugin-bff/effect-edge";
+import { Effect, Layer } from "@modern-js/bff-effect/effect-edge";
 
 declare const program: Effect.Effect<string>;
 declare const it: (name: string, body: () => Promise<void>) => void;

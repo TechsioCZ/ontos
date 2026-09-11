@@ -1,4 +1,4 @@
-import { Effect, HttpApiBuilder } from '@modern-js/plugin-bff/effect-edge';
+import { Effect, HttpApiBuilder } from '@modern-js/bff-effect/effect-edge';
 
 import {
   partyRegistryApi,

@@ -46,13 +46,13 @@ export {
   MicroVerticalReadinessSchema,
   createMicroVerticalOperationContext,
   microVerticalOperationAttributes,
-} from './microvertical-api-baseline.ts';
+} from '@modern-js/bff-effect/microvertical-api';
 export type {
   MicroVerticalBuildMarker,
   MicroVerticalOperationContext,
   MicroVerticalOperationSource,
   MicroVerticalReadiness,
-} from './microvertical-api-baseline.ts';
+} from '@modern-js/bff-effect/microvertical-api';
 export { makeOperationGateway } from './operation-gateway.ts';
 export type { OperationGateway, OperationGatewayAttempt, OperationGatewayIssuer } from './operation-gateway.ts';
 

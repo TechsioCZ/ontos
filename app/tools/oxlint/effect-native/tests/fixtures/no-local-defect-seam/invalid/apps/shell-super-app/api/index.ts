@@ -1,7 +1,7 @@
 // expect-count: 7
 // A4: the Shell BFF repeats one `catchCause` + `Cause.hasDies` seam per handler.
 // `Effect` comes from the Modern.js edge barrel that re-exports effect verbatim.
-import { Effect, HttpApiBuilder } from '@modern-js/plugin-bff/effect-edge';
+import { Effect, HttpApiBuilder } from '@modern-js/bff-effect/effect-edge';
 import { Cause, pipe } from 'effect';
 
 declare const shellInternalProblem: () => { readonly _tag: 'ShellInternal' };

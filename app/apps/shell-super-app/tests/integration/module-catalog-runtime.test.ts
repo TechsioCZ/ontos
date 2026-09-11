@@ -9,7 +9,7 @@ import {
   getVerticalRuntimeActions,
   getVerticalRuntimeOutboxWorkers,
 } from '@app/core-runtime';
-import { makeEffectHttpApiClient } from '@modern-js/plugin-bff/effect-client';
+import { makeEffectHttpApiClient } from '@modern-js/bff-effect/effect-client';
 import { Effect, Schema } from 'effect';
 import { expect, it } from 'effect-rstest';
 import { HttpApi, HttpApiEndpoint, HttpApiGroup } from 'effect/unstable/httpapi';

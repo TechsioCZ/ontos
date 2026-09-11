@@ -7,8 +7,8 @@ import {
   HttpApiGroup,
   Schema,
   makeEffectHttpApiClient,
-} from '@modern-js/plugin-bff/effect-client';
-import type { HttpClientError } from '@modern-js/plugin-bff/effect-client';
+} from '@modern-js/bff-effect/effect-client';
+import type { HttpClientError } from '@modern-js/bff-effect/effect-client';
 import { Context } from 'effect';
 import { HttpClient, HttpClientRequest } from 'effect/unstable/http';
 

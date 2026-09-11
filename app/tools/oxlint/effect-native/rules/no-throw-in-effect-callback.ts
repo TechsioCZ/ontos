@@ -120,7 +120,7 @@ const DEFAULT_NAMESPACES = ['Effect', 'Layer', 'Stream', 'Schedule', 'Cause', 'E
 const DEFAULT_LOCAL_IMPORT_PREFIXES = ['./', '../', '@app/'];
 
 /** Barrels that re-export Effect namespaces verbatim (the Modern.js BFF edge barrel). */
-const DEFAULT_EFFECT_MODULES = ['@modern-js/plugin-bff/effect-edge'];
+const DEFAULT_EFFECT_MODULES = ['@modern-js/bff-effect/effect-edge'];
 
 const EFFECT_ROOT_MODULE = 'effect';
 const EFFECT_SUBMODULE = /^effect\/(?:.*\/)?([A-Za-z0-9_$]+)$/u;

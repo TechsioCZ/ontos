@@ -1,5 +1,5 @@
 // Root namespace import (`import * as EffectNs from "effect"`) on both the root and the evidence.
-import type { EffectBffRuntime } from '@modern-js/plugin-bff/effect-edge';
+import type { EffectBffRuntime } from '@modern-js/bff-effect/effect-edge';
 import * as EffectNs from 'effect';
 import * as Otel from '@effect/opentelemetry';
 

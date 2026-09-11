@@ -14,7 +14,7 @@ import {
   ModuleStateGateLive,
   OperationalScopeResolverLive,
 } from '@app/core-runtime/actions/runtime-wiring';
-import { Layer } from '@modern-js/plugin-bff/effect-edge';
+import { Layer } from '@modern-js/bff-effect/effect-edge';
 import { FetchHttpClient } from 'effect/unstable/http';
 
 import { AresSubjectServiceLive } from '../src/integrations/ares/ares-subject.service.ts';

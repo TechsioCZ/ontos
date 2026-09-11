@@ -85,7 +85,7 @@ const WITH_MEMBERS = new Set([
 /** Namespaces whose call arguments are Effect-owned code: callbacks there run inside a fiber. */
 const OWNING_NAMESPACES = new Set(['Effect', 'Fiber', 'Layer', 'Schedule', 'Scope', 'Stream']);
 
-const DEFAULT_EFFECT_MODULES = ['@modern-js/plugin-bff/effect-client', '@modern-js/plugin-bff/effect-edge'];
+const DEFAULT_EFFECT_MODULES = ['@modern-js/bff-effect/effect-client', '@modern-js/bff-effect/effect-edge'];
 
 const EFFECT_MODULE = /^effect(?:\/.*)?$/u;
 
@@ -186,7 +186,7 @@ interface FileImports {
 
 /**
  * Extend the shared `effect` import bindings with the shapes the shared collector does not model:
- * re-export barrels (`@modern-js/plugin-bff/effect-edge` re-exports `Effect` verbatim), the root
+ * re-export barrels (`@modern-js/bff-effect/effect-edge` re-exports `Effect` verbatim), the root
  * `effect` namespace import, and flat named imports of combinators / run functions from
  * `effect/<Namespace>`.
  */

@@ -3,7 +3,7 @@
   "profile": "cloudflare-ssr-mf-effect-v1",
   "generator": {
     "package": "@modern-js/create",
-    "version": "3.9.0-ultramodern.4"
+    "version": "3.9.0-ultramodern.8"
   },
   "workspace": {
     "packageScope": "app",
@@ -18,7 +18,7 @@
   },
   "packageSource": {
     "strategy": "install",
-    "modernPackageVersion": "3.9.0-ultramodern.4",
+    "modernPackageVersion": "3.9.0-ultramodern.8",
     "registry": "https://registry.npmjs.org/",
     "aliasScope": "bleedingdev",
     "aliasPackageNamePrefix": "modern-js-"
@@ -299,7 +299,7 @@
               "containerEntry": "http://localhost:4102/backendRemoteEntry.cjs",
               "remoteType": "commonjs-module",
               "expose": "./effect-api",
-              "runtimePackage": "@modern-js/plugin-bff/effect",
+              "runtimePackage": "@modern-js/plugin-bff-extensions/backend-federation-manifest/node",
               "expected": {
                 "unitId": "app/party-registry",
                 "buildMarker": "3f023644c8a07e9a"
@@ -354,6 +354,9 @@
               "global_fetch_strictly_public"
             ],
             "assetsBinding": "ASSETS",
+            "distributedSsrProofRoutes": [
+              "/en/contacts"
+            ],
             "routes": {
               "mfManifest": "/mf-manifest.json",
               "apiReadiness": "/party-registry-api/party-registry/readiness"
@@ -591,7 +594,7 @@
             "containerEntry": "http://localhost:4102/backendRemoteEntry.cjs",
             "remoteType": "commonjs-module",
             "expose": "./effect-api",
-            "runtimePackage": "@modern-js/plugin-bff/effect",
+            "runtimePackage": "@modern-js/plugin-bff-extensions/backend-federation-manifest/node",
             "expected": {
               "unitId": "app/party-registry",
               "buildMarker": "3f023644c8a07e9a"
@@ -615,19 +618,20 @@
   "tooling": {
     "command": "ultramodern-create ultramodern",
     "wrappers": {
-      "validate": "scripts/validate-ultramodern-workspace.mts",
-      "typecheck": "scripts/ultramodern-typecheck.mts",
-      "mfTypes": "scripts/assert-mf-types.mts",
-      "publicSurface": "scripts/generate-public-surface-assets.mts",
+      "apiBoundaries": "modern-api-check",
       "backendFederationGenerate": "scripts/generate-node-backend-federation.mts",
       "backendFederationProof": "scripts/proof-node-backend-federation.mts",
-      "cloudflareProof": "scripts/proof-cloudflare-version.mts",
       "cloudflareOutputVerify": "scripts/verify-cloudflare-output.mts",
+      "cloudflareProof": "scripts/proof-cloudflare-version.mts",
+      "cloudflareSsrProof": "scripts/proof-workerd-ssr.mts",
+      "mfTypes": "scripts/assert-mf-types.mts",
       "performanceReadiness": "scripts/ultramodern-performance-readiness.mts",
-      "migrateStrictEffect": "scripts/migrate-strict-effect.mts",
+      "publicSurface": "scripts/generate-public-surface-assets.mts",
       "routesGenerate": "scripts/generate-tanstack-routes.mts",
-      "apiBoundaries": "scripts/check-ultramodern-api-boundaries.mts",
-      "skills": "scripts/bootstrap-agent-skills.mts"
+      "skills": "scripts/bootstrap-agent-skills.mts",
+      "typecheck": "scripts/ultramodern-typecheck.mts",
+      "validate": "scripts/validate-ultramodern-workspace.mts",
+      "zeropsMaterialize": "scripts/materialize-zerops-runtime.mjs"
     }
   }
 }

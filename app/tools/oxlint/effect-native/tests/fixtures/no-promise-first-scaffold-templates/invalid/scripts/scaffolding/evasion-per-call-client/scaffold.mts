@@ -6,7 +6,7 @@
  */
 export const renderApiClient = (name: string): string => `import { Effect } from 'effect';
 import { HttpApiClient, HttpClient, HttpClientRequest } from 'effect/unstable/http';
-import { makeEffectHttpApiClient } from '@modern-js/plugin-bff/effect-client';
+import { makeEffectHttpApiClient } from '@modern-js/bff-effect/effect-client';
 
 export function execute${name}(payload: ${name}Request, authorization: string) {
   const transform = HttpClient.mapRequest(HttpClientRequest.setHeaders({ authorization }));

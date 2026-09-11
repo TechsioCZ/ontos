@@ -2,8 +2,8 @@
 // EVASION: rebinding the import at module level (plain alias or namespace destructuring) hides
 // it from `constructorNames`, and the alias never becomes a "factory" either because no
 // constructor CallExpression sits inside a function.
-import * as bff from '@modern-js/plugin-bff/effect-client';
-import { Effect, makeEffectHttpApiClient } from '@modern-js/plugin-bff/effect-client';
+import * as bff from '@modern-js/bff-effect/effect-client';
+import { Effect, makeEffectHttpApiClient } from '@modern-js/bff-effect/effect-client';
 import { contactsApi } from './api.ts';
 
 const buildClient = makeEffectHttpApiClient;

@@ -25,7 +25,7 @@
  *   that re-export the constructor (`export { make as makeRuntime } from "effect/ManagedRuntime"`,
  *   `import { make } from "effect/ManagedRuntime"; export { make }`).
  * - Effect namespaces re-exported verbatim through a barrel (`reexportModules`, default the Modern.js
- *   `@modern-js/plugin-bff/effect-edge` edge barrel every BFF entry point imports from).
+ *   `@modern-js/bff-effect/effect-edge` edge barrel every BFF entry point imports from).
  * - More than `maxPerRoot` (default 1) construction sites inside a single composition root: "exactly
  *   one ManagedRuntime per long-lived host" is the whole point of A1, so a root that builds two
  *   runtimes is still a finding.
@@ -106,7 +106,7 @@ const DEFAULT_ROOT_FILES = [
 const DEFAULT_MEMBERS = ['ManagedRuntime.make', 'Layer.toRuntime', 'Layer.toRuntimeWithMemoMap'];
 
 /** Barrels that re-export Effect namespaces verbatim; `Layer` from them is Effect's `Layer`. */
-const DEFAULT_REEXPORT_MODULES = ['@modern-js/plugin-bff/effect-edge'];
+const DEFAULT_REEXPORT_MODULES = ['@modern-js/bff-effect/effect-edge'];
 
 /** Expressions that are erased (or transparent) at runtime and wrap the real namespace identifier. */
 const TRANSPARENT_EXPRESSIONS = new Set([

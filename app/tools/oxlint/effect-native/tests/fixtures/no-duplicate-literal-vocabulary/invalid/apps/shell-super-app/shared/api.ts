@@ -1,7 +1,7 @@
 // expect-count: 3
 // Mirrors apps/shell-super-app/shared/api.ts: Schema comes from the BFF effect-client barrel and the
 // same principal / API-key status vocabularies are inlined again next to their named declaration.
-import { Schema } from '@modern-js/plugin-bff/effect-client';
+import { Schema } from '@modern-js/bff-effect/effect-client';
 
 const principalStatus = Schema.Literals(['active', 'disabled', 'archived']);
 const identityReason = Schema.String;

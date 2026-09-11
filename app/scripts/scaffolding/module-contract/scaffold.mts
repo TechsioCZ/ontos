@@ -94,7 +94,7 @@ const MANIFEST_FILE_NAME = 'vertical.manifest.ts';
 
 const renderGovernedHttpApiRoot = (vertical: VerticalMetadata): string => `${MODULE_CONTRACT_GENERATOR_HEADER}
 // @ontos-deployment-app-id ${vertical.appId}
-import { HttpApi } from '@modern-js/plugin-bff/effect-client';
+import { HttpApi } from '@modern-js/bff-effect/effect-client';
 import { identity } from 'effect';
 
 ${GOVERNED_HTTP_API_IMPORT_SLOT_START}

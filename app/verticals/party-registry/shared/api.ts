@@ -2,10 +2,10 @@ import {
   MicroVerticalBuildMarkerSchema,
   MicroVerticalReadinessSchema,
   createMicroVerticalOperationContext,
-} from '@app/shared-contracts';
-import type { MicroVerticalOperationContext } from '@app/shared-contracts';
+} from '@modern-js/bff-effect/microvertical-api';
+import type { MicroVerticalOperationContext } from '@modern-js/bff-effect/microvertical-api';
 /* eslint-disable oxc/no-barrel-file -- The published Effect API entrypoint composes and exports all governed owner contracts. expires: 2026-12-31. */
-import { HttpApi, HttpApiEndpoint, HttpApiGroup, Schema } from '@modern-js/plugin-bff/effect-client';
+import { HttpApi, HttpApiEndpoint, HttpApiGroup, Schema } from '@modern-js/bff-effect/effect-client';
 import { Brand, identity } from 'effect';
 
 // <generated-governed-http-api-imports>

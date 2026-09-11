@@ -2,7 +2,7 @@
 // @ontos-contribution-kind search-provider
 import { makeGovernedReadHttpHandler } from '@app/core-runtime/http/governed-read';
 import { makeGovernedReadProblems } from '@app/shared-contracts/server/effect-bff-runtime';
-import { HttpApiBuilder } from '@modern-js/plugin-bff/effect-edge';
+import { HttpApiBuilder } from '@modern-js/bff-effect/effect-edge';
 
 import { partyRegistryApi } from '../shared/api.ts';
 import {

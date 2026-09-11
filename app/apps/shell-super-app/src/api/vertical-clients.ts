@@ -2,6 +2,10 @@ import type { ComponentType } from 'react';
 
 import type { ResolvedModuleTarget } from '../../shared/api.ts';
 
+/** Static vertical API client surface required by the UltraModern shell contract. */
+export { getPartyRegistryReadiness, partyRegistryClient } from '@app/party-registry/api/client';
+export type { PartyRegistryClientOptions } from '@app/party-registry/api/client';
+
 export type ApprovedVerticalPageComponent = ComponentType<{
   readonly routeParams: Readonly<Record<string, string>>;
   readonly target: ResolvedModuleTarget;

@@ -18,7 +18,7 @@ import {
   HttpServerResponse,
   Layer,
   Schema,
-} from '@modern-js/plugin-bff/effect-edge';
+} from '@modern-js/bff-effect/effect-edge';
 import { Cause, Clock, ConfigProvider, Predicate, Redacted } from 'effect';
 import type { Scope } from 'effect';
 import { expect, it } from 'effect-rstest';
@@ -471,6 +471,7 @@ const inventoryEnglishLocaleFile = 'verticals/inventory-stock/locales/en/invento
 const inventoryOrdersRouteFile = 'verticals/inventory-stock/src/routes/[lang]/orders/page.tsx';
 const effectNodeModulePath = 'node_modules/effect';
 const pluginBffNodeModulePath = 'node_modules/@modern-js/plugin-bff';
+const bffEffectNodeModulePath = 'node_modules/@modern-js/bff-effect';
 
 const inventoryVertical: FixtureVertical = {
   appId: inventorySlug,
@@ -589,8 +590,8 @@ const createVertical = (root: string, vertical: FixtureVertical): Effect.Effect<
     yield* write(
       root,
       `verticals/${vertical.slug}/api/index.ts`,
-      `import { defineEffectBff, Effect, HttpApiBuilder, Layer } from '@modern-js/plugin-bff/effect-edge';
-import type { EffectRuntimeLayer } from '@modern-js/plugin-bff/effect-edge';
+      `import { defineEffectBff, Effect, HttpApiBuilder, Layer } from '@modern-js/bff-effect/effect-edge';
+import type { EffectRuntimeLayer } from '@modern-js/bff-effect/effect-edge';
 import { fixtureApi } from '../shared/api.ts';
 
 const fixtureLayer = HttpApiBuilder.group(fixtureApi, 'fixture', (handlers) =>
@@ -1063,6 +1064,7 @@ it.live(
         ]);
         yield* linkFixtureDependencies(fixture.root, appRoot, {
           '@app/shared-contracts': sharedContractsPackagePath,
+          '@modern-js/bff-effect': bffEffectNodeModulePath,
           '@modern-js/plugin-bff': pluginBffNodeModulePath,
           effect: effectNodeModulePath,
         });
@@ -1529,6 +1531,7 @@ it.live(
         yield* linkFixtureDependencies(fixture.root, appRoot, {
           '@app/core-runtime': 'packages/core-runtime',
           '@app/shared-contracts': sharedContractsPackagePath,
+          '@modern-js/bff-effect': bffEffectNodeModulePath,
           '@modern-js/plugin-bff': pluginBffNodeModulePath,
           effect: effectNodeModulePath,
         });
@@ -1561,7 +1564,7 @@ import {
   Effect,
   HttpApiBuilder,
   Layer,
-} from '@modern-js/plugin-bff/effect-edge';
+} from '@modern-js/bff-effect/effect-edge';
 import { resourceDetailReadApiLive } from './verticals/inventory-stock/api/resource-detail-read-server.ts';
 import { resourceHistoryReadApiLive } from './verticals/inventory-stock/api/resource-history-read-server.ts';
 import { inventoryItemsReadApiLive } from './verticals/inventory-stock/api/inventory-items-search-server.ts';
@@ -5654,6 +5657,7 @@ it.live(
                 'dir',
               ],
               ['apps/shell-super-app/node_modules/@modern-js/plugin-bff', pluginBffNodeModulePath, 'dir'],
+              ['apps/shell-super-app/node_modules/@modern-js/bff-effect', bffEffectNodeModulePath, 'dir'],
               ['apps/shell-super-app/node_modules/@types/react', 'node_modules/@types/react', 'dir'],
               ['packages/core-runtime/node_modules/@types/pg', 'node_modules/@types/pg', 'dir'],
               ['node_modules/@types/node', 'node_modules/@types/node', 'dir'],

@@ -1,6 +1,6 @@
 import type { GatewayContextClientOptions } from '@app/shared-contracts';
-import { Effect, makeEffectHttpApiClient } from '@modern-js/plugin-bff/effect-client';
-import type { HttpApi, HttpApiClient, HttpApiGroup } from '@modern-js/plugin-bff/effect-client';
+import { Effect, makeEffectHttpApiClient } from '@modern-js/bff-effect/effect-client';
+import type { HttpApi, HttpApiClient, HttpApiGroup } from '@modern-js/bff-effect/effect-client';
 import { Context, Redacted, Schema } from 'effect';
 import { HttpClient, HttpClientRequest } from 'effect/unstable/http';
 

@@ -74,10 +74,10 @@ interface SourceModel {
 const forbiddenSchemaMembers = new Set(['Any', 'Json', 'Unknown', 'UnknownFromJsonString']);
 const problemDetailsFactoryNames = new Set(['makeProblemDetailsSchema', 'makeRetryableProblemDetailsSchema']);
 const endpointMethods = new Set(['delete', 'get', 'head', 'options', 'patch', 'post', 'put']);
-const schemaProviderSpecifiers = new Set(['@modern-js/plugin-bff/effect-client', 'effect', 'effect/Schema']);
+const schemaProviderSpecifiers = new Set(['@modern-js/bff-effect/effect-client', 'effect', 'effect/Schema']);
 const endpointProviderSpecifiers = new Set([
-  '@modern-js/plugin-bff/effect-client',
-  '@modern-js/plugin-bff/effect-edge',
+  '@modern-js/bff-effect/effect-client',
+  '@modern-js/bff-effect/effect-edge',
   'effect/unstable/httpapi',
   'effect/unstable/httpapi/HttpApiEndpoint',
 ]);

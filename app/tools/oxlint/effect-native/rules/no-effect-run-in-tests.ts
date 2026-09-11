@@ -20,7 +20,7 @@
  * - root namespace imports — `import * as EffectLib from "effect"` reaches the same functions
  *   through `EffectLib.Effect.runPromise` because `effect`'s barrel is `export * as Effect from …`;
  * - Effect namespaces re-exported by a first-party barrel (`effectModuleSources`), such as
- *   `import { Effect } from "@modern-js/plugin-bff/effect-edge"` used by the Contacts BFF tests;
+ *   `import { Effect } from "@modern-js/bff-effect/effect-edge"` used by the Contacts BFF tests;
  * - optional chaining (`Effect?.runPromise`), computed access (`Effect["runPromise"]`) and
  *   substitution-free template keys (`` Effect[`runPromise`] ``);
  * - erased TS wrappers around the namespace — `Effect!.runPromise`, `(Effect as typeof Effect)
@@ -88,8 +88,8 @@ const DEFAULT_EFFECT_MODULES: readonly string[] = ['Effect'];
 const DEFAULT_EFFECT_MODULE_SOURCES: readonly string[] = [
   'effect',
   'effect/**',
-  '@modern-js/plugin-bff/effect-edge',
-  '@modern-js/plugin-bff/effect-client',
+  '@modern-js/bff-effect/effect-edge',
+  '@modern-js/bff-effect/effect-client',
 ];
 
 interface RuleOptions {
@@ -153,7 +153,7 @@ function moduleExportName(node: ESTree.Node): string | null {
 
 /**
  * Supplement `collectEffectBindings` with namespaces re-exported by non-`effect` barrels, so
- * `import { Effect } from "@modern-js/plugin-bff/effect-edge"` is tracked exactly like `from "effect"`.
+ * `import { Effect } from "@modern-js/bff-effect/effect-edge"` is tracked exactly like `from "effect"`.
  */
 function collectBarrelBindings(program: ESTree.Program, sources: readonly string[]): Map<string, string> {
   const patterns = sources.map(globToRegExp);

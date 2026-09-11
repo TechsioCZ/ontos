@@ -1,5 +1,5 @@
 // expect-count: 2
-import { Effect, HttpApiBuilder } from "@modern-js/plugin-bff/effect-edge";
+import { Effect, HttpApiBuilder } from "@modern-js/bff-effect/effect-edge";
 
 declare const ShellAuthenticationApi: never;
 declare const problem: (error: unknown) => unknown;

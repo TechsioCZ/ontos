@@ -1,5 +1,5 @@
-import { Effect, Schema, makeEffectHttpApiClient } from '@modern-js/plugin-bff/effect-client';
-import type { EffectHttpApiClientOptions, HttpApi, HttpApiGroup } from '@modern-js/plugin-bff/effect-client';
+import { Effect, Schema, makeEffectHttpApiClient } from '@modern-js/bff-effect/effect-client';
+import type { EffectHttpApiClientOptions, HttpApi, HttpApiGroup } from '@modern-js/bff-effect/effect-client';
 import { Redacted } from 'effect';
 import { Headers as HttpHeaders, HttpClient, HttpClientRequest } from 'effect/unstable/http';
 

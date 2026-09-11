@@ -34,7 +34,7 @@
  * - bare member imports — `import { Literals } from "effect/Schema"` then `Literals([...])`;
  * - root barrel access — `import * as Effect from "effect"` then `Effect.Schema.Literals([...])`;
  * - the Effect re-export barrels in `reexportModules`
- *   (`@modern-js/plugin-bff/effect-client`, `@modern-js/plugin-bff/effect-edge`), which the shell's
+ *   (`@modern-js/bff-effect/effect-client`, `@modern-js/bff-effect/effect-edge`), which the shell's
  *   `shared/api.ts` and every Contacts client import `Schema` from — the audit's own B5 example file;
  * - optional chaining (`Schema?.Literals?.([...])`) and computed access (`Schema['Literals'](...)`);
  * - one hop of local `const` aliasing — `const Literals = Schema.Literals` or `const Sch = Schema`,
@@ -100,8 +100,8 @@ const DEFAULT_FACTORIES: readonly string[] = ['Literals'];
 
 /** Barrels that re-export Effect namespaces verbatim; `Schema` from them is Effect's `Schema`. */
 const DEFAULT_REEXPORT_MODULES: readonly string[] = [
-  '@modern-js/plugin-bff/effect-client',
-  '@modern-js/plugin-bff/effect-edge',
+  '@modern-js/bff-effect/effect-client',
+  '@modern-js/bff-effect/effect-edge',
 ];
 
 /** Below this, a literal set is a union-branch discriminant rather than a vocabulary. */

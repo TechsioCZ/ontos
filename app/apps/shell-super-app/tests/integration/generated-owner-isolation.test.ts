@@ -24,8 +24,8 @@ import type {
 } from '@app/core-runtime';
 import { v1 } from '@authzed/authzed-node';
 import { NodeServices } from '@effect/platform-node';
-import { defineEffectBff, HttpApiBuilder } from '@modern-js/plugin-bff/effect-edge';
-import type { EffectRuntimeLayer } from '@modern-js/plugin-bff/effect-edge';
+import { defineEffectBff, HttpApiBuilder } from '@modern-js/bff-effect/effect-edge';
+import type { EffectRuntimeLayer } from '@modern-js/bff-effect/effect-edge';
 import { Clock, Config, ConfigProvider, Effect, Layer, Logger, Predicate, Redacted, Schema } from 'effect';
 import { expect, it } from 'effect-rstest';
 import { TestClock } from 'effect/testing';

@@ -2,7 +2,7 @@ import { createMicroVerticalOperationContext } from '@app/shared-contracts';
 import type { MicroVerticalOperationContext } from '@app/shared-contracts';
 import { makeProblemDetailsSchema, makeRetryableProblemDetailsSchema } from '@app/shared-contracts/problem-details';
 /* eslint-disable oxc/no-barrel-file -- This is the generated public contract aggregate; remove-when: Codesmith emits direct re-exports. */
-import { HttpApi, HttpApiEndpoint, HttpApiGroup, Schema } from '@modern-js/plugin-bff/effect-client';
+import { HttpApi, HttpApiEndpoint, HttpApiGroup, Schema } from '@modern-js/bff-effect/effect-client';
 
 import {
   AttachOrganizationEngagementPayloadSchema,

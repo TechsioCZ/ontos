@@ -1,4 +1,4 @@
-import { makeEffectHttpApiClient } from '@modern-js/plugin-bff/effect-client';
+import { makeEffectHttpApiClient } from '@modern-js/bff-effect/effect-client';
 import {
   HttpApi,
   HttpApiBuilder,
@@ -6,7 +6,7 @@ import {
   HttpApiGroup,
   HttpRouter,
   HttpServer,
-} from '@modern-js/plugin-bff/effect-edge';
+} from '@modern-js/bff-effect/effect-edge';
 import { Context, Effect, Layer, Predicate, Schema, SchemaAST, Struct } from 'effect';
 import { expect, it } from 'effect-rstest';
 import { FetchHttpClient } from 'effect/unstable/http';

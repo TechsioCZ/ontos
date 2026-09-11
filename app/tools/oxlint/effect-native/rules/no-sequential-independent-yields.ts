@@ -87,8 +87,8 @@ const DEFAULT_SCRIPT_GLOBS: readonly string[] = ['scripts/**', '**/scripts/**'];
 const DEFAULT_GEN_MEMBERS: readonly string[] = ['gen', 'fn', 'fnUntraced'];
 /** Barrels that re-export `Effect` verbatim, so `Effect.gen` there is the same generator. */
 const DEFAULT_EFFECT_MODULES: readonly string[] = [
-  '@modern-js/plugin-bff/effect-client',
-  '@modern-js/plugin-bff/effect-edge',
+  '@modern-js/bff-effect/effect-client',
+  '@modern-js/bff-effect/effect-edge',
 ];
 /**
  * Callee prefixes that assert the step's position in a program is semantic. Mirrors the S1 target

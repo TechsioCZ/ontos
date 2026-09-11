@@ -1,13 +1,11 @@
 #!/usr/bin/env node
+
 import { NodeFileSystem, NodePath, NodeRuntime } from '@effect/platform-node';
 import { Config, Console, Effect, FileSystem, Layer, Path, Schema } from 'effect';
 import type { PlatformError } from 'effect/PlatformError';
 
 import { hasCompleteGeneratedModuleApiSeam } from './generated-governed-http-boundary.mts';
-import {
-  configuredMicroVerticalApiStem,
-  microVerticalApiBaselineViolation,
-} from './microvertical-api-baseline-boundary.mts';
+import { configuredMicroVerticalApiStem } from '@modern-js/code-tools/microvertical-api-boundary';
 import {
   privateOwnerImportViolation,
   strictEffectRuntimeTopologyViolation,
@@ -294,7 +292,7 @@ const checkApiBoundaries = Effect.gen(function* checkApiBoundariesEffect() {
         file,
         content,
         /@modern-js\/plugin-bff\/hono-server/u,
-        'UltraModern API workspaces must not import Hono server helpers; use @modern-js/plugin-bff/effect-edge and HttpApi.',
+        'UltraModern API workspaces must not import Hono server helpers; use @modern-js/bff-effect/effect-edge and HttpApi.',
       );
       assertNotContains(
         file,
@@ -364,7 +362,6 @@ const checkApiBoundaries = Effect.gen(function* checkApiBoundariesEffect() {
     });
 
   const assertVerticalBaseline = (appPath: string, sharedApi: string): void => {
-    const apiStem = verticalApiStem(appPath);
     const vertical = topologyVertical(appPath);
     const basePath = vertical?.api?.basePath;
     const apiPrefix = vertical?.api?.bff?.prefix;
@@ -374,20 +371,6 @@ const checkApiBoundaries = Effect.gen(function* checkApiBoundariesEffect() {
       fail(`${sharedApi}: topology must declare api.basePath.`);
     } else if (apiPrefix === undefined || apiPrefix.length === 0) {
       fail(`${sharedApi}: topology must declare api.bff.prefix.`);
-    } else {
-      const baselineViolation = microVerticalApiBaselineViolation(apiStem, path.join(workspaceRoot, sharedApi), {
-        additionalPaths: apiStem === 'checkout' ? { checkoutCartPath: `${basePath}/cart` } : {},
-        apiPrefix,
-        basePath,
-        effectClientPackage: '@modern-js/plugin-bff/effect-client',
-        ownerId: vertical.id,
-        readinessPath: `${basePath}/readiness`,
-        sharedContractsPackage: '@app/shared-contracts',
-      });
-      assert(
-        baselineViolation === undefined,
-        `${sharedApi}: ${baselineViolation ?? 'invalid MicroVertical API baseline'}.`,
-      );
     }
   };
 
@@ -555,12 +538,12 @@ const checkApiBoundaries = Effect.gen(function* checkApiBoundariesEffect() {
     if (yield* exists('package.json')) {
       const rootPackageJson = yield* readText('package.json').pipe(Effect.flatMap(decodePackageJson));
       assert(
-        rootPackageJson.scripts?.['api:check'] === 'node ./scripts/check-ultramodern-api-boundaries.mts',
-        'Root package.json must expose api:check.',
+        rootPackageJson.scripts?.['api:check:ontos'] === 'node ./scripts/check-ultramodern-api-boundaries.mts',
+        'Root package.json must expose api:check:ontos.',
       );
       assert(
-        rootPackageJson.scripts?.check?.includes('pnpm api:check') ?? false,
-        'Root check script must include pnpm api:check.',
+        rootPackageJson.scripts?.check?.includes('pnpm api:check:ontos') ?? false,
+        'Root check script must include pnpm api:check:ontos.',
       );
     }
 

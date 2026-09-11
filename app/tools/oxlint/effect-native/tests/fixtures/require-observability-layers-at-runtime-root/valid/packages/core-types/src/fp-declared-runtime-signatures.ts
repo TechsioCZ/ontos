@@ -3,7 +3,7 @@
 // value at all — so none of them is a runtime root. `EffectRuntimeLayer` is additionally a *Layer*
 // type (`Layer.Layer<never, never, EffectRuntimeRequirements>`), not a runtime, so a function that
 // returns one is a layer factory, not a composition root.
-import type { EffectBffRuntime, EffectRuntimeLayer } from '@modern-js/plugin-bff/effect-edge';
+import type { EffectBffRuntime, EffectRuntimeLayer } from '@modern-js/bff-effect/effect-edge';
 
 declare const demoApi: unknown;
 

@@ -1,5 +1,5 @@
 // expect-count: 5
-import { HttpApiSchema, Schema } from '@modern-js/plugin-bff/effect-client';
+import { HttpApiSchema, Schema } from '@modern-js/bff-effect/effect-client';
 
 // The BFF barrel re-exports `effect/Schema` verbatim; contracts imported this way count.
 // 1 principalId, 2 authBindingId (spread field bag), 3 tenantId, 4 targetPrincipalId

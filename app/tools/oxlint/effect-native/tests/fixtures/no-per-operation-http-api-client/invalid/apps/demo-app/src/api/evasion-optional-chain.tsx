@@ -1,6 +1,6 @@
 // expect-count: 3
 // Optional-call / optional-member forms of the constructor and of a client factory, in TSX.
-import { Effect, makeEffectHttpApiClient } from '@modern-js/plugin-bff/effect-client';
+import { Effect, makeEffectHttpApiClient } from '@modern-js/bff-effect/effect-client';
 import { HttpApiClient } from 'effect/unstable/httpapi';
 import { contactsApi } from './api.ts';
 

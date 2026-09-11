@@ -104,7 +104,7 @@ const OPTION_PROPERTY: ReadonlyMap<string, string> = new Map([
 ]);
 
 /** Barrels that re-export the Effect namespace verbatim. */
-const DEFAULT_EFFECT_MODULES = ['@modern-js/plugin-bff/effect-edge'];
+const DEFAULT_EFFECT_MODULES = ['@modern-js/bff-effect/effect-edge'];
 
 interface RuleOptions {
   readonly include: readonly string[];

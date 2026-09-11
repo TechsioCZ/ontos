@@ -1,7 +1,7 @@
 // expect-count: 3
 // Direct member import (`import { gen } from "effect/Effect"`) and a re-export barrel binding.
 import { gen } from 'effect/Effect';
-import { Effect } from '@modern-js/plugin-bff/effect-edge';
+import { Effect } from '@modern-js/bff-effect/effect-edge';
 
 declare const database: { readonly rows: (id: string) => unknown };
 declare const entrypointGateway: { readonly fetchProjection: (id: string) => unknown };

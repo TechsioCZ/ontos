@@ -2,7 +2,7 @@
 // re-export the repo already uses, aliased. Both are Schema-owned contracts, not hand-built payloads.
 import { annotations } from 'effect/unstable/httpapi/HttpApiSchema';
 import { String as SchemaString, TaggedError } from 'effect/Schema';
-import { HttpApiSchema as EdgeApiSchema, Schema as EdgeSchema } from '@modern-js/plugin-bff/effect-edge';
+import { HttpApiSchema as EdgeApiSchema, Schema as EdgeSchema } from '@modern-js/bff-effect/effect-edge';
 
 export class CProblem extends TaggedError<CProblem>()(
   'CProblem',

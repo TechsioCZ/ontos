@@ -15,7 +15,6 @@ const wrappers = [
   ['assert-mf-types', 'mf-types'],
   ['generate-node-backend-federation', 'backend-federation-generate'],
   ['generate-public-surface-assets', 'public-surface'],
-  ['migrate-strict-effect', 'migrate-strict-effect'],
   ['proof-cloudflare-version', 'cloudflare-proof'],
   ['ultramodern-performance-readiness', 'performance-readiness'],
   ['ultramodern-typecheck', 'typecheck'],

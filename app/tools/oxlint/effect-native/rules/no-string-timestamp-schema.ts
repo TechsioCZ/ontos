@@ -28,7 +28,7 @@
  *    "effect/Schema"`), the root barrel (`import * as Effect from "effect"` → `Effect.Schema.Struct`),
  *    computed access (`Schema["Struct"]`, `` Schema[`Struct`] ``) and optional chaining all work, and a
  *    locally shadowed `Schema` / `Struct` is ignored. `schemaModules` also covers the framework
- *    re-exports this repository actually imports from — `@modern-js/plugin-bff/effect-client` and
+ *    re-exports this repository actually imports from — `@modern-js/bff-effect/effect-client` and
  *    `…/effect-edge` — which is where the shell and Contacts HTTP contracts live.
  * 2. **Hand-rolled temporal string codecs.** `Schema.isPattern(...)` / `Schema.pattern(...)` (also
  *    when imported directly) whose RegExp source spells out a calendar date or an ISO time-of-day.
@@ -113,10 +113,10 @@ const DEFAULT_IGNORE_TYPE_PATTERN = '(?:Copy|Labels?|Messages|Strings|Translatio
 const PROJECTION_SUFFIXES = ['Iso', 'IsoString', 'Raw', 'Timestamp', 'Utc'];
 /**
  * Modules that re-export Effect's `Schema`. The repository's BFF contracts import `Schema` from
- * `@modern-js/plugin-bff/effect-client` (and `…/effect-edge`), which is the same `effect` Schema
+ * `@modern-js/bff-effect/effect-client` (and `…/effect-edge`), which is the same `effect` Schema
  * behind a framework barrel; without these the shell/contacts API contracts would be invisible.
  */
-const DEFAULT_SCHEMA_MODULES = ['effect', 'effect/**', '@modern-js/plugin-bff/effect-*'];
+const DEFAULT_SCHEMA_MODULES = ['effect', 'effect/**', '@modern-js/bff-effect/effect-*'];
 /** Of those, the ones whose namespace import is a *barrel* (`import * as X` → `X.Schema.Struct`). */
 const SCHEMA_SUBMODULE = /(?:^|\/)Schema$/u;
 

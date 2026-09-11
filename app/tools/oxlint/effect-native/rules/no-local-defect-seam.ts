@@ -32,7 +32,7 @@
  *   (`import { hasDies } from "effect/Cause"`), computed access (`Cause["hasDies"]`) and optional
  *   chaining (`Cause?.hasDies`).
  * - Effect re-export barrels (`reexportModules`, default the Modern.js
- *   `@modern-js/plugin-bff/effect-edge` edge barrel that both BFF entry points import `Effect` from).
+ *   `@modern-js/bff-effect/effect-edge` edge barrel that both BFF entry points import `Effect` from).
  *
  * What is deliberately allowed
  * - Files matching `seamPaths`: the single outer HTTP instrumentation/error seam the audit asks for.
@@ -110,7 +110,7 @@ const DEFAULT_MEMBERS = [
 ];
 
 /** Barrels that re-export Effect namespaces verbatim; `Effect` from them is Effect's `Effect`. */
-const DEFAULT_REEXPORT_MODULES = ['@modern-js/plugin-bff/effect-edge'];
+const DEFAULT_REEXPORT_MODULES = ['@modern-js/bff-effect/effect-edge'];
 
 type RuleOptions = Readonly<ReturnType<typeof readOptions>>;
 

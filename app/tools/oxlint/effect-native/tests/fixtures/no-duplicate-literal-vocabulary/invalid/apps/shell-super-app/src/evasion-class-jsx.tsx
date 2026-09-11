@@ -1,6 +1,6 @@
 // expect-count: 3
 // Evasion: TSX file, BFF re-export barrel, class static field, JSX attribute and nested arrow body.
-import { Schema } from '@modern-js/plugin-bff/effect-client';
+import { Schema } from '@modern-js/bff-effect/effect-client';
 
 export class ApiKeyContracts {
   static readonly BindingStatus = Schema.Literals(['active', 'disabled']);

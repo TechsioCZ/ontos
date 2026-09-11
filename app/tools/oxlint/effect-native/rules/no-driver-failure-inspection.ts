@@ -227,7 +227,7 @@ function objectLooksLikeExit(object: unknown, pattern: RegExp): boolean {
 function isCauseSink(context: Context, callee: unknown, sinks: readonly string[]): boolean {
   const target = unwrap(callee);
   if (target === null) return false;
-  const origin = effectOrigin(context, target as unknown as ESTree.Node, ['@modern-js/plugin-bff/effect-edge']);
+  const origin = effectOrigin(context, target as unknown as ESTree.Node, ['@modern-js/bff-effect/effect-edge']);
   if (origin?.length !== 2) return false;
   const resolved = { namespace: origin[0], member: origin[1] };
   return sinks.some((sink) => {

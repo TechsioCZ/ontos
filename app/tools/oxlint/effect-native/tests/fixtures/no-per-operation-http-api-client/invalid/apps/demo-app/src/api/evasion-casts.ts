@@ -1,7 +1,7 @@
 // expect-count: 3
 // `as` / `!` / `satisfies` wrappers around the callee must not hide the constructor.
-import * as bff from '@modern-js/plugin-bff/effect-client';
-import { makeEffectHttpApiClient } from '@modern-js/plugin-bff/effect-client';
+import * as bff from '@modern-js/bff-effect/effect-client';
+import { makeEffectHttpApiClient } from '@modern-js/bff-effect/effect-client';
 import { HttpApiClient } from 'effect/unstable/httpapi';
 import { contactsApi } from './api.ts';
 

@@ -64,10 +64,10 @@ const DEFAULT_OTEL_MODULES = ['@effect/opentelemetry', '@effect/opentelemetry/**
 
 /** Barrels that re-export Effect namespaces verbatim; `Logger` from them is Effect's `Logger`. */
 const DEFAULT_REEXPORT_MODULES = [
-  '@modern-js/plugin-bff/effect-edge',
-  '@modern-js/plugin-bff/effect-server',
+  '@modern-js/bff-effect/effect-edge',
+  '@modern-js/bff-effect/effect-server',
   '@modern-js/plugin-bff/server',
-  '@modern-js/plugin-bff/effect',
+  '@modern-js/bff-effect/effect',
 ];
 
 const DEFAULT_MINIMUM_LOG_LEVEL_MEMBERS = [

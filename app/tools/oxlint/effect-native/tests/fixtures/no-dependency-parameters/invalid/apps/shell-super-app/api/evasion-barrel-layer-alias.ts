@@ -1,5 +1,5 @@
 // expect-count: 2
-import { Layer as Lyr } from "@modern-js/plugin-bff/effect-edge";
+import { Layer as Lyr } from "@modern-js/bff-effect/effect-edge";
 
 interface AuthenticationService {
   readonly verify: () => void;

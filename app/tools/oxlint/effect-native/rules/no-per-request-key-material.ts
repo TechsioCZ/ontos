@@ -125,7 +125,7 @@ const DEFAULT_LAYER_BUILDER_WRAPPERS = ['effect', 'scoped', 'sync', 'unwrap', 'u
 const DEFAULT_EFFECT_WRAPPERS = ['cached', 'cachedWithTTL', 'cachedFunction', 'cachedInvalidateWithTTL', 'once'];
 
 /** Barrels that re-export Effect namespaces verbatim; `Layer` from them is Effect's `Layer`. */
-const DEFAULT_REEXPORT_MODULES = ['@modern-js/plugin-bff/effect-edge'];
+const DEFAULT_REEXPORT_MODULES = ['@modern-js/bff-effect/effect-edge'];
 
 /** Files whose template literals carry generated source (audit A8). */
 const DEFAULT_GENERATOR_FILES = [

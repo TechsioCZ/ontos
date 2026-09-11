@@ -174,7 +174,7 @@ const toPascalCase = (value: string): string =>
 const isAllowedEffectClientAggregateImport = (specifier: string): boolean =>
   specifier === '../../shared/api.ts' ||
   specifier === '@app/shared-contracts' ||
-  specifier === '@modern-js/plugin-bff/effect-client' ||
+  specifier === '@modern-js/bff-effect/effect-client' ||
   specifier === 'effect' ||
   specifier.startsWith('effect/') ||
   /^\.\/(?:action-gateway|[a-z][a-z0-9]*(?:-[a-z0-9]+)*-client)\.ts$/u.test(specifier);

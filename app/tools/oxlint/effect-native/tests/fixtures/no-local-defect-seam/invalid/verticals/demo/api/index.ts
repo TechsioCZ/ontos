@@ -1,6 +1,6 @@
 // expect-count: 3
 // A4: every Contacts read server owns a copy-pasted `catchDefect` → sanitized 500.
-import { Effect } from '@modern-js/plugin-bff/effect-edge';
+import { Effect } from '@modern-js/bff-effect/effect-edge';
 
 declare const problems: { readonly internal: () => { readonly _tag: 'Internal' } };
 declare const customerDetail: Effect.Effect<string, never>;

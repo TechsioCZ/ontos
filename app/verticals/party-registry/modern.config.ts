@@ -2,10 +2,11 @@ import { readFileSync } from 'node:fs';
 import { createRequire } from 'node:module';
 import { fileURLToPath } from 'node:url';
 
-import { appTools, defineConfig, presetUltramodern, ultramodernReleaseEnvelopePlugin } from '@modern-js/app-tools';
+import { defineConfig } from '@modern-js/app-tools';
+import { presetUltramodern, ultramodernAppTools } from '@modern-js/ultramodern-app-tools';
 import type { AppTools, AppToolsUserConfig, CliPlugin } from '@modern-js/app-tools';
-import { getBuildConfigEnvironment, withBuildConfigEnvironment } from '@modern-js/app-tools/config';
-import { bffPlugin } from '@modern-js/plugin-bff';
+import { getBuildConfigEnvironment, withBuildConfigEnvironment } from '@modern-js/app-tools-extensions/config';
+import { bffPlugin } from '@modern-js/plugin-bff-build-extensions';
 import { i18nPlugin } from '@modern-js/plugin-i18n';
 import { tanstackRouterPlugin } from '@modern-js/plugin-tanstack';
 import { moduleFederationPlugin } from '@module-federation/modern-js-v3';
@@ -19,9 +20,6 @@ import {
   createZephyrRspackPlugin,
   resolveCloudflareExternal,
 } from '../../packages/shared-contracts/tooling/modern-config.ts';
-import { ultramodernLocalisedUrls } from './src/routes/ultramodern-route-metadata';
-
-const localisedUrls = ultramodernLocalisedUrls;
 
 Object.assign(globalThis, { require: createRequire(import.meta.url) });
 
@@ -85,6 +83,11 @@ const configuredCloudflareUrl = envValue('ULTRAMODERN_PUBLIC_URL_PARTY_REGISTRY'
 const configuredUltramodernAssetPrefix = envValue('ULTRAMODERN_ASSET_PREFIX');
 const configuredModernAssetPrefix = envValue('MODERN_ASSET_PREFIX');
 const moduleFederationDevServerOrigin = envValue('ULTRAMODERN_MF_DEV_ORIGIN') ?? 'http://localhost:3020';
+// The dev server serves federated assets to every local app origin, so the
+// allowed origin is negotiated per request instead of pinned to one header.
+const moduleFederationDevServerAllowedOrigins = [
+  ...new Set([moduleFederationDevServerOrigin, `http://localhost:${port}`]),
+];
 const cloudflareWorkersDevSubdomain = envValue('ULTRAMODERN_CLOUDFLARE_WORKERS_DEV_SUBDOMAIN');
 const inferredCloudflareUrl =
   cloudflareDeployEnabled && cloudflareWorkersDevSubdomain !== undefined
@@ -129,7 +132,6 @@ const whenEnabled = <Configuration>(enabled: boolean, configuration: Configurati
 const appDevServerHeaders: NonNullable<NonNullable<NonNullable<AppToolsUserConfig['dev']>['server']>['headers']> = {
   'Access-Control-Allow-Headers': 'Accept, Authorization, Content-Type, X-Requested-With',
   'Access-Control-Allow-Methods': 'GET, HEAD, OPTIONS',
-  'Access-Control-Allow-Origin': moduleFederationDevServerOrigin,
 };
 
 const cloudflareDeployment = whenEnabled(cloudflareDeployEnabled, {
@@ -165,6 +167,10 @@ export default defineConfig(
         // shells load remoteEntry.js and exposed chunks from this dev server.
         assetPrefix,
         server: {
+          // MF assets are non-credentialed and only permit configured local app origins.
+          cors: {
+            origin: moduleFederationDevServerAllowedOrigins,
+          },
           headers: appDevServerHeaders,
         },
         setupMiddlewares: [
@@ -204,8 +210,7 @@ export default defineConfig(
         },
       },
       plugins: [
-        appTools(),
-        ultramodernReleaseEnvelopePlugin(),
+        ultramodernAppTools(),
         tanstackRouterPlugin(),
         i18nPlugin({
           backend: {
@@ -232,7 +237,6 @@ export default defineConfig(
             ],
             languages: ['en', 'cs'],
             localePathRedirect: true,
-            localisedUrls,
           },
           reactI18next: false,
         }),

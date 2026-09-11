@@ -45,7 +45,7 @@ const DEFAULT_INCLUDE: readonly string[] = ['apps/**', 'verticals/**', 'packages
 const DEFAULT_IGNORE: readonly string[] = [];
 
 /** Barrels that re-export Effect namespaces verbatim (the Modern.js BFF edge barrel). */
-const DEFAULT_REEXPORT_MODULES: readonly string[] = ['@modern-js/plugin-bff/effect-edge'];
+const DEFAULT_REEXPORT_MODULES: readonly string[] = ['@modern-js/bff-effect/effect-edge'];
 
 /** Effect combinators whose function argument is already the Effect-native definition site. */
 const CONSTRUCTOR_MEMBERS: ReadonlySet<string> = new Set(['fn', 'fnUntraced', 'suspend', 'gen']);
@@ -112,7 +112,7 @@ function collectRootNamespaces(program: ESTree.Program, reexportModules: readonl
 }
 
 /**
- * `import { Effect, HttpApiBuilder } from "@modern-js/plugin-bff/effect-edge"` binds the very same
+ * `import { Effect, HttpApiBuilder } from "@modern-js/bff-effect/effect-edge"` binds the very same
  * `Effect` namespace as `import { Effect } from "effect"`, so BFF handlers must resolve identically.
  */
 function collectReexportBindings(

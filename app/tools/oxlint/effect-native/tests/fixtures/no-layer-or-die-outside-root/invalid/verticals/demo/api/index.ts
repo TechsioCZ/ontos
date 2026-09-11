@@ -1,6 +1,6 @@
 // expect-count: 2
-import { Effect, Layer } from '@modern-js/plugin-bff/effect-edge';
-import * as Edge from '@modern-js/plugin-bff/effect-edge';
+import { Effect, Layer } from '@modern-js/bff-effect/effect-edge';
+import * as Edge from '@modern-js/bff-effect/effect-edge';
 
 declare const CorePersistenceLive: Layer.Layer<never>;
 declare const ActionRuntimeLive: Layer.Layer<never>;

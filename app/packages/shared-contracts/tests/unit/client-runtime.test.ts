@@ -6,7 +6,7 @@ import {
   HttpApiGroup,
   HttpApiSchema,
   Schema,
-} from '@modern-js/plugin-bff/effect-client';
+} from '@modern-js/bff-effect/effect-client';
 import { Predicate, Struct } from 'effect';
 import { expect, it } from 'effect-rstest';
 import { FetchHttpClient } from 'effect/unstable/http';

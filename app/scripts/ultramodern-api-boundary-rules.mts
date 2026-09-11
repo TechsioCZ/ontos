@@ -8,7 +8,7 @@ const normalize = (filePath: string): string => filePath.split(path.sep).join('/
 
 const privateOwnerSpecifierPattern = /vertical\.(?:manifest|registration)(?:\.ts)?$/u;
 const identifierPattern = String.raw`[$A-Z_a-z][$\w]*`;
-const effectEdgeSpecifier = '@modern-js/plugin-bff/effect-edge';
+const effectEdgeSpecifier = '@modern-js/bff-effect/effect-edge';
 const layerMergeAllCallee = 'Layer.mergeAll';
 
 const escapesRegularExpression = (value: string): string => value.replaceAll(/[.*+?^${}()|[\]\\]/gu, String.raw`\$&`);
