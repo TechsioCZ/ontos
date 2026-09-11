@@ -342,9 +342,12 @@ responsible Controller's substantive decision.
 with reason, decision, review/release, and enforcement evidence. `Restriction` alone names the DSR
 Right/request; the resulting Current privacy fact is Processing Restriction. It is not erasure,
 archive, Consent withdrawal, or a whole-person flag. Overlapping Processing Restrictions remain
-independent; release does not restore withdrawn Consent or another missing prerequisite.
+independent; release does not restore withdrawn Consent or another missing prerequisite. A Retention
+`Disposition Decision` outcome `RESTRICT` is a separate substantive disposition result and does not
+become a Processing Restriction unless an explicit supported measure/contract establishes that fact.
 _Avoid_: `Current Restriction`, `Restriction Outcome`, or an unqualified `Restriction` when naming the
-resulting privacy fact rather than the DSR Right.
+resulting privacy fact rather than the DSR Right. Do not use bare `RESTRICT` as shorthand for
+Processing Restriction; `RESTRICT` is reserved for the Disposition Decision outcome enum.
 
 **Processing Objection** — Effective, scope-bound privacy fact resulting from the applicable Objection
 assessment, kept distinct from DSR intake, DSR Substantive Decision and owner enforcement. An applicable
@@ -465,11 +468,14 @@ not remove a technical lock. A DELETE blocked only by the lock remains DELETE wi
 execution, not RETAIN or a supposedly still-active business hold.
 
 **Disposition Decision** — Substantive result for exact content: RETAIN, RESTRICT, ANONYMIZE, or DELETE,
-separate from Owner Execution Outcome. RETAIN needs a real applicable reason; RESTRICT limits use
-without claiming erasure. Hiding/archiving is not DELETE. ANONYMIZE requires supported evidence that
-identifiability has actually been removed in the relevant context, not merely an owner label or removal
-of direct identifiers while usable linkage remains. Pseudonymized content remains subject to privacy
-rules. Technical inability to execute does not change the substantive decision.
+separate from Owner Execution Outcome. RETAIN needs a real applicable reason. RESTRICT is a
+retention/disposition result requiring restriction of the exact content/use under the applicable
+contract; it is not itself the Current privacy fact Processing Restriction. If a workflow needs both,
+that relationship is established explicitly through a supported Privacy Measure/owner contract.
+Hiding/archiving is not DELETE. ANONYMIZE requires supported evidence that identifiability has actually
+been removed in the relevant context, not merely an owner label or removal of direct identifiers while
+usable linkage remains. Pseudonymized content remains subject to privacy rules. Technical inability to
+execute does not change the substantive decision.
 
 **Historical Content Disposition** — Owner-supported end of retention for a historical Resource or
 explicitly separable content. Retained Snapshot values are not recalculated from Current sources.
@@ -516,10 +522,12 @@ available files. Later owner changes do not silently rewrite a captured contribu
 
 **Privacy Measure** — Approved exact-scope request for correction, restriction, anonymization, or
 deletion, with stable work identity, source decision/revision, intended outcome and evidence expectations.
-It is executed through the owning capability's public Actions. A retry retains the same meaning;
-a changed target/payload under the same idempotency identity is a conflict. Before irreversible
-execution, the owner contract must safely resolve Current target/blocker races and all legitimate
-obligations over that content. An eventual event alone does not prove that a new hold cannot be missed.
+It is executed through the owning capability's public Actions. A restriction measure must identify
+whether it enforces a Disposition Decision RESTRICT or a Processing Restriction; the concepts are not
+interchangeable. A retry retains the same meaning; a changed target/payload under the same idempotency
+identity is a conflict. Before irreversible execution, the owner contract must safely resolve Current
+target/blocker races and all legitimate obligations over that content. An eventual event alone does
+not prove that a new hold cannot be missed.
 
 **Owner Execution Outcome** — Authoritative owner result, distinct from transport acknowledgement.
 Contracts distinguish receipt, in-progress, achieved, partial, business rejected/not-applicable,
@@ -538,12 +546,15 @@ be a shortcut to resurrecting legitimately deleted content.
 ## Anti-resurrection and external obligations
 
 **Anti-Resurrection Protection** — Minimal durable exact-scope protection of proven DELETE/ANONYMIZE
-and Current RESTRICT against stale import, replay, projection rebuild, or backup recovery. Completion
-must not leave an unprotected window until a later message arrives. Evidence preserves needed scope,
-outcome, references and provenance, not the original deleted payload or a global person blacklist.
-Its own retention covers remaining relevant stale-source risks; safe retirement requires evidence,
-not an arbitrary timestamp. It never blocks independent legitimate new processing with Current grounds
-and a new legitimate input, but new grounds alone do not authorize reuse of the old removed copy.
+and of an owner-enforced restriction state against stale import, replay, projection rebuild, or backup
+recovery. The restriction state may originate from a Disposition Decision RESTRICT or a Processing
+Restriction according to the workflow, but those facts remain distinct and require their own evidence.
+Completion must not leave an unprotected window until a later message arrives. Protection evidence
+preserves needed scope, outcome, references and provenance, not the original deleted payload or a
+global person blacklist. Its own retention covers remaining relevant stale-source risks; safe retirement
+requires evidence, not an arbitrary timestamp. It never blocks independent legitimate new processing
+with Current grounds and a new legitimate input, but new grounds alone do not authorize reuse of the
+old removed copy.
 
 **Privacy-safe Recovery** — Import/replay/rebuild/restore contract that reconciles relevant
 post-backup authoritative privacy facts and owner outcomes before ordinary access or consumer use.
@@ -576,11 +587,13 @@ owning rule, not a generic configurable script. `COOKIE_CONSENT` names Technolog
 `Consent Action` is not the Consent business fact: use Action for the operation and Consent Decision
 for the resulting privacy fact. `Objection Outcome`/`Objection Effect` map to Processing Objection when
 they mean the Current privacy fact; `Restriction Outcome`/`Current Restriction` map to Processing
-Restriction when they mean the Current privacy fact. `Controller Obligation` means DSR Controller
-Obligation in DSR plans. `DSR Owner Contract` means Privacy Owner Contract. `Case Outcome` or
-`Aggregate DSR Outcome` should be expressed as DSR Case Summary when referring to the derived Case view.
-Lowercase `snapshot` used for a contribution's capture must not imply a canonical retained domain
-Snapshot or a cross-module atomic transaction. Prefer observation/capture time for contribution data.
+Restriction when they mean the Current privacy fact. Bare `RESTRICT` is reserved for the
+Disposition Decision outcome and must not be used as shorthand for Processing Restriction.
+`Controller Obligation` means DSR Controller Obligation in DSR plans. `DSR Owner Contract` means
+Privacy Owner Contract. `Case Outcome` or `Aggregate DSR Outcome` should be expressed as DSR Case
+Summary when referring to the derived Case view. Lowercase `snapshot` used for a contribution's capture
+must not imply a canonical retained domain Snapshot or a cross-module atomic transaction. Prefer
+observation/capture time for contribution data.
 
 Shared definitions of Party, Principal, Legal Entity, Counterparty, ResourceRef, Resource Alias,
 System of Record, Permission, Action, Reconciliation, Evidence Artifact and Evidence Registry remain
