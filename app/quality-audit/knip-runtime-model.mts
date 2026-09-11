@@ -21,8 +21,8 @@ const WORKSPACE_CONTRACT = '.modernjs/ultramodern.json';
 const CONTRACT_GENERATOR = '@modern-js/create';
 const GENERATOR_PACKAGE = '@modern-js/ultramodern-create';
 const GENERATOR_WORKSPACE_MANIFEST = `node_modules/${GENERATOR_PACKAGE}/dist/cjs/ultramodern-workspace/package-json.cjs`;
-const TYPE_BRIDGE_PACKAGE = '@modern-js/runtime';
-const TYPE_BRIDGE_DECLARATIONS = 'dist/types';
+const WORKSPACE_VALIDATOR = 'scripts/validate-ultramodern-workspace.mts';
+const VALIDATOR_TEMPLATE = `node_modules/${GENERATOR_PACKAGE}/templates/workspace-scripts/validate-ultramodern-workspace.mjs.handlebars`;
 const BUILD_FACADE_EXPORTS = ['ultramodernApiMarker', 'ultramodernDeliveryUnit', 'ultramodernUiMarker'];
 const ROUTE_MANIFEST_EXPORTS = ['ultramodernLocalisedUrls', 'ultramodernRouteMetadata', 'ultramodernRouteNamespace'];
 const sourceModuleExtension = /\.[cm]?tsx?$/u;
@@ -57,22 +57,27 @@ const declaredNames = (source: string, names: readonly string[]): readonly strin
   names.filter((name) => new RegExp(String.raw`^export\s+const\s+${name}\b`, 'mu').test(source));
 const declaredCohort = (manifest: typeof Manifest.Type, cohort: readonly string[]): readonly string[] =>
   cohort.filter((name) => (manifest.dependencies?.[name] ?? manifest.devDependencies?.[name]) !== undefined);
-const frameworkTypeSpecifiers = (declaration: string): readonly string[] => [
+/** Root dependencies the installed workspace validator asserts on every `validate` run. */
+const validatedRootDependencies = (validator: string): readonly string[] => [
   ...new Set(
-    [...declaration.matchAll(/from '(?<name>@modern-js\/[\w.-]+)'/gu)].flatMap((match) => match.groups?.name ?? []),
+    [...validator.matchAll(/rootPackage\.devDependencies\?\.\['(?<name>[^']+)'\]/gu)].flatMap(
+      (match) => match.groups?.name ?? [],
+    ),
   ),
 ];
-/** Framework type declarations that only the workspace root can satisfy under an isolated store. */
-const unsatisfiedTypeBridges = (
-  specifiers: ReadonlySet<string>,
-  provider: typeof Manifest.Type,
-  root: typeof Manifest.Type,
-): readonly string[] =>
-  [...specifiers].filter(
-    (name) =>
-      (provider.dependencies?.[name] ?? provider.peerDependencies?.[name]) === undefined &&
-      (root.dependencies?.[name] ?? root.devDependencies?.[name]) !== undefined,
-  );
+/** Exact `name@version` specifiers pnpm patches, which the declaring manifest must pin. */
+const patchedSpecifiers = (workspaceYaml: string): readonly string[] => {
+  const section = workspaceYaml.split('\npatchedDependencies:')[1]?.split(/\n(?=\S)/u)[0] ?? '';
+  return [...section.matchAll(/^\s+'?(?<specifier>[^'\s:]+)'?:/gmu)].flatMap((match) => match.groups?.specifier ?? []);
+};
+const pinnedPatchedDependencies = (manifest: typeof Manifest.Type, specifiers: readonly string[]): readonly string[] =>
+  specifiers.flatMap((specifier) => {
+    const separator = specifier.lastIndexOf('@');
+    const name = specifier.slice(0, separator);
+    const version = specifier.slice(separator + 1);
+    const declared = manifest.dependencies?.[name] ?? manifest.devDependencies?.[name];
+    return declared === version ? [name] : [];
+  });
 const generatedCohortPackages = (source: string): readonly string[] => [
   ...new Set(
     [...source.matchAll(/\)\('(?<name>@modern-js\/[\w.-]+)',\s*packageSource\)/gu)].flatMap(
@@ -561,6 +566,33 @@ export const buildKnipRuntimeEvidence = Effect.fn('QualityAudit.buildKnipRuntime
       const source = yield* read(GENERATOR_WORKSPACE_MANIFEST);
       return source === undefined ? [] : generatedCohortPackages(source);
     });
+    // The delegated `validate` command rejects a root that drops these, so they
+    // are required workspace dependencies even though no repository source imports them.
+    const validatorRootEvidence = Effect.fn('QualityAudit.validatorRootEvidence')(function* validatorRootEvidence(
+      contractText: string,
+    ) {
+      const validator = yield* read(VALIDATOR_TEMPLATE);
+      const dispatches = hasUltramodernDispatch(
+        yield* read(WORKSPACE_VALIDATOR),
+        'validate',
+        yield* read('scripts/shared/ultramodern-command.mts'),
+      );
+      if (validator === undefined || !dispatches) {
+        return;
+      }
+      for (const name of validatedRootDependencies(validator)) {
+        evidence.push(
+          contractFact(
+            contractText,
+            CONTRACT_GENERATOR,
+            '.',
+            'dependency',
+            name,
+            `Installed workspace validator rejects a root that does not declare ${name}`,
+          ),
+        );
+      }
+    });
     const wrapperEvidence = Effect.fn('QualityAudit.wrapperEvidence')(function* wrapperEvidence(
       contractText: string,
       wrappers: Readonly<Record<string, string>>,
@@ -639,48 +671,45 @@ export const buildKnipRuntimeEvidence = Effect.fn('QualityAudit.buildKnipRuntime
         );
       }
     });
-    const declarationSpecifiers = Effect.fn('QualityAudit.declarationSpecifiers')(function* declarationSpecifiers(
-      directory: string,
-    ) {
-      const specifiers = new Set<string>();
-      const pending = [directory];
-      while (pending.length > 0) {
-        const current = pending.pop() ?? directory;
-        for (const entry of yield* fs.readDirectory(current)) {
-          const child = path.join(current, entry);
-          if ((yield* fs.stat(child)).type === 'Directory') {
-            pending.push(child);
-          } else if (entry.endsWith('.d.ts')) {
-            for (const name of frameworkTypeSpecifiers(yield* fs.readFileString(child))) {
-              specifiers.add(name);
-            }
-          }
-        }
-      }
-      return specifiers;
-    });
-    const typeBridgeEvidence = Effect.fn('QualityAudit.typeBridgeEvidence')(function* typeBridgeEvidence(
+    // Under the isolated store an aliased framework package resolves its own
+    // cohort siblings from the workspace root, so the root must declare them.
+    const rootCohortEvidence = Effect.fn('QualityAudit.rootCohortEvidence')(function* rootCohortEvidence(
       contractText: string,
-      app: ContractApp,
       root: typeof Manifest.Type,
+      cohort: readonly string[],
     ) {
-      const installed = `${app.path}/node_modules/${TYPE_BRIDGE_PACKAGE}`;
-      const providerText = yield* read(`${installed}/package.json`);
-      const declarations = path.join(appRoot, installed, TYPE_BRIDGE_DECLARATIONS);
-      if (providerText === undefined || !(yield* fs.exists(declarations))) {
-        return;
-      }
-      const provider = yield* Schema.decodeUnknownEffect(Manifest)(providerText);
-      const specifiers = yield* declarationSpecifiers(declarations);
-      for (const name of unsatisfiedTypeBridges(specifiers, provider, root)) {
+      for (const name of declaredCohort(root, cohort)) {
         evidence.push(
           contractFact(
             contractText,
-            app.path,
+            CONTRACT_GENERATOR,
             '.',
             'dependency',
             name,
-            `Installed ${TYPE_BRIDGE_PACKAGE} type declarations import ${name} without declaring it, so the workspace root resolves it for the referenced TypeScript build`,
+            `Installed framework packages resolve the aliased cohort package ${name} from the workspace root`,
+          ),
+        );
+      }
+    });
+    // A patched dependency only keeps its patched identity while the declaring
+    // manifest pins the exact version pnpm patches.
+    const patchedRootEvidence = Effect.fn('QualityAudit.patchedRootEvidence')(function* patchedRootEvidence(
+      contractText: string,
+      root: typeof Manifest.Type,
+    ) {
+      const workspaceYaml = yield* read('pnpm-workspace.yaml');
+      if (workspaceYaml === undefined) {
+        return;
+      }
+      for (const name of pinnedPatchedDependencies(root, patchedSpecifiers(workspaceYaml))) {
+        evidence.push(
+          contractFact(
+            contractText,
+            CONTRACT_GENERATOR,
+            '.',
+            'dependency',
+            name,
+            `pnpm-workspace patchedDependencies pins ${name}; the root declaration keeps that patched identity resolvable`,
           ),
         );
       }
@@ -721,10 +750,13 @@ export const buildKnipRuntimeEvidence = Effect.fn('QualityAudit.buildKnipRuntime
           return;
         }
         yield* wrapperEvidence(contractText, contract.tooling?.wrappers ?? {});
+        yield* validatorRootEvidence(contractText);
         const cohort = yield* cohortPackages();
         const rootManifest = yield* Schema.decodeUnknownEffect(Manifest)(
           yield* fs.readFileString(path.join(appRoot, 'package.json')),
         );
+        yield* rootCohortEvidence(contractText, rootManifest, cohort);
+        yield* patchedRootEvidence(contractText, rootManifest);
         for (const app of contract.topology?.apps ?? []) {
           if (!isContainedDirectory(app.path)) {
             continue;
@@ -732,7 +764,6 @@ export const buildKnipRuntimeEvidence = Effect.fn('QualityAudit.buildKnipRuntime
           yield* buildFacadeEvidence(contractText, app);
           yield* routeManifestEvidence(contractText, app);
           yield* cohortEvidence(contractText, app, cohort);
-          yield* typeBridgeEvidence(contractText, app, rootManifest);
         }
       },
     );
