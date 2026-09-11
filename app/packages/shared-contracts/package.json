@@ -19,9 +19,9 @@
   "dependencies": {
     "@effect/opentelemetry": "4.0.0-rc.112",
     "effect": "4.0.0-rc.112",
-    "@modern-js/plugin-bff": "npm:@bleedingdev/modern-js-plugin-bff@3.9.0-ultramodern.7",
+    "@modern-js/plugin-bff": "npm:@bleedingdev/modern-js-plugin-bff@3.9.0-ultramodern.8",
     "@app/core-runtime": "workspace:*",
-    "@modern-js/bff-effect": "npm:@bleedingdev/modern-js-bff-effect@3.9.0-ultramodern.7"
+    "@modern-js/bff-effect": "npm:@bleedingdev/modern-js-bff-effect@3.9.0-ultramodern.8"
   },
   "devDependencies": {
     "@types/node": "^26.4.1",

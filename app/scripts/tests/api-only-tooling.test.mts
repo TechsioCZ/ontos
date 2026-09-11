@@ -2,6 +2,8 @@ import { execFileSync, spawnSync } from 'node:child_process';
 import type { ExecFileSyncOptionsWithStringEncoding } from 'node:child_process';
 import { mkdtemp, mkdir, readFile, realpath, rm, writeFile } from 'node:fs/promises';
 import { createRequire } from 'node:module';
+import { randomUUID } from 'node:crypto';
+import { existsSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
@@ -134,12 +136,27 @@ const microVerticalApiBaselineViolation = Effect.fn(function* inspectMicroVertic
   source: string,
   expectation?: Partial<MicroVerticalApiBaselineExpectation>,
 ) {
+  const ownerShared = path.join(workspaceRoot, `verticals/${stem}/shared`);
+  const ownerExists = existsSync(ownerShared);
   const fixture = yield* Effect.acquireRelease(
-    Effect.promise(() => mkdtemp(path.join(workspaceRoot, 'node_modules/.ontos-microvertical-api-test-'))),
-    (directory) => Effect.promise(() => rm(directory, { force: true, recursive: true })),
+    Effect.promise(() =>
+      ownerExists
+        ? mkdtemp(path.join(ownerShared, '.api-fixture-')).then(async (directory) => {
+            await rm(directory, { force: true, recursive: true });
+            return ownerShared;
+          })
+        : mkdtemp(path.join(workspaceRoot, 'node_modules/.ontos-microvertical-api-test-')),
+    ),
+    (directory) =>
+      Effect.promise(() =>
+        directory === ownerShared ? Promise.resolve() : rm(directory, { force: true, recursive: true }),
+      ),
   );
-  const contractPath = path.join(fixture, 'api.ts');
-  yield* Effect.promise(() => writeFile(contractPath, source));
+  const contractPath = path.join(fixture, fixture === ownerShared ? `.api-fixture-${randomUUID()}.ts` : 'api.ts');
+  yield* Effect.acquireRelease(
+    Effect.promise(() => writeFile(contractPath, source).then(() => contractPath)),
+    () => Effect.promise(() => rm(contractPath, { force: true })),
+  );
   return microVerticalApiBaselineViolationForFile(stem, contractPath, {
     additionalPaths: {},
     apiPrefix: `/${stem}-api`,
@@ -3006,7 +3023,7 @@ it.live(
   MicroVerticalBuildMarkerSchema,
   MicroVerticalReadinessSchema,
   createMicroVerticalOperationContext,
-} from '@app/shared-contracts';`;
+} from '@modern-js/bff-effect/microvertical-api';`;
     for (const [label, mutated, expected] of [
       [
         'renamed readiness endpoint',
@@ -3028,8 +3045,8 @@ it.live(
       ],
       [
         'baseline primitives imported from a copied package',
-        contract.replace("from '@app/shared-contracts';", "from '@app/copied-contracts';"),
-        /import exact baseline primitives from the shared contracts package/u,
+        contract.replace("from '@modern-js/bff-effect/microvertical-api';", "from '@evil/copied-microvertical-api';"),
+        /import exact baseline primitives from the framework baseline package/u,
       ],
       [
         'Effect API primitives imported from a foreign client',
@@ -3044,7 +3061,7 @@ it.live(
 const MicroVerticalReadinessSchema = Schema.Struct({ copied: Schema.String });
 const createMicroVerticalOperationContext = <Value>(value: Value): Value => value;`,
         ),
-        /import exact baseline primitives from the shared contracts package/u,
+        /import exact baseline primitives from the framework baseline package/u,
       ],
       [
         'renamed readiness endpoint with a decoy API name',
@@ -3769,7 +3786,7 @@ describe('consumer migration preserves native tooling and governed safety', () =
   it.live(
     'authenticated cohort and scoped release-age policy remain pinned',
     Effect.fn(function* consumerScenario() {
-      const releaseVersion = '3.9.0-ultramodern.7';
+      const releaseVersion = '3.9.0-ultramodern.8';
       const cohort = Schema.decodeUnknownSync(
         Schema.fromJsonString(
           Schema.Struct({
