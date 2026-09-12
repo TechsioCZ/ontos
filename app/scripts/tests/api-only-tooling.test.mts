@@ -3801,7 +3801,7 @@ describe('consumer migration preserves native tooling and governed safety', () =
             ),
             release: Schema.Struct({ version: Schema.Literal(releaseVersion) }),
             source: Schema.Struct({
-              commit: Schema.Literal('905cd7ae5b0f74460f00e2e0c11625c5a2662b0f'),
+              commit: Schema.Literal('40bd94bfc127ebc46180eb07684c82c26fedee62'),
             }),
           }),
         ),
