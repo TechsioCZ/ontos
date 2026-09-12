@@ -286,7 +286,7 @@
   "schema": "bleedingdev.ultramodern.release-cohort",
   "schemaVersion": 1,
   "source": {
-    "commit": "905cd7ae5b0f74460f00e2e0c11625c5a2662b0f",
+    "commit": "40bd94bfc127ebc46180eb07684c82c26fedee62",
     "repository": "BleedingDev/ultramodern.js"
   }
 }
