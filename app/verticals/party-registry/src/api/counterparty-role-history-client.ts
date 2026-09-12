@@ -22,7 +22,7 @@ type CounterpartyRoleHistoryOperationInvocation = readonly [
 ];
 
 const counterpartyRoleHistoryClient = (
-  credential: Redacted.Redacted<string>,
+  credential: Redacted.Redacted,
   requestCorrelation: string,
   options: CounterpartyRoleHistoryClientOptions,
 ) =>

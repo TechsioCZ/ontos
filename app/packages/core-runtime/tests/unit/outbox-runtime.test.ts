@@ -31,6 +31,7 @@ const retryPolicy = {
 } as const;
 
 const claim = (attemptNumber = 1, payloadJson?: OutboxClaim['payloadJson']): OutboxClaim => ({
+  actorPrincipalId: '10000000-0000-4000-8000-000000000010',
   attemptId: `attempt-${attemptNumber}`,
   attemptNumber,
   claimId: `runtime:claim-${attemptNumber}`,
@@ -228,8 +229,10 @@ it.effect('decodes a published payload, supplies exact context, and completes su
     expect(controlled.probe.failed).toEqual([]);
     expect(observed).toEqual({
       context: {
+        actorPrincipalId: '10000000-0000-4000-8000-000000000010',
         attemptNumber: 1,
         claimId: 'runtime:claim-1',
+        consumerModuleKey: 'consumer',
         correlationId: 'correlation-1',
         deliveryId: 'delivery-1',
         domainEventId: 'event-1',

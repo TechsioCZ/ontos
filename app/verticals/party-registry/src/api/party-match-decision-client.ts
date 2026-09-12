@@ -22,7 +22,7 @@ type PartyMatchDecisionOperationInvocation = readonly [
 ];
 
 const partyMatchDecisionClient = (
-  credential: Redacted.Redacted<string>,
+  credential: Redacted.Redacted,
   requestCorrelation: string,
   options: PartyMatchDecisionClientOptions,
 ) =>

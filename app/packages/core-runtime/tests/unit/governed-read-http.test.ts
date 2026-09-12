@@ -362,3 +362,123 @@ it.effect('sanitizes unexpected defects at the complete governed handler boundar
     expect(logEntries[0] ?? '').toMatch(/correlation-defect/u);
   }),
 );
+
+it.effect('maps only schema-declared owner failures to concrete public Problems', () =>
+  Effect.gen(function* mapsDeclaredOwnerFailure() {
+    class DeclaredHttpDomainFailure extends Schema.TaggedError<DeclaredHttpDomainFailure>()(
+      'DeclaredHttpDomainFailure',
+      { reasonCode: Schema.Literal('PURPOSE_NOT_ALLOWED') },
+    ) {}
+    const DeclaredHttpDomainProblemSchema = Schema.TaggedStruct('DeclaredHttpDomainProblem', {
+      detail: Schema.String,
+      reasonCode: Schema.Literal('PURPOSE_NOT_ALLOWED'),
+      status: Schema.Literal(422),
+      title: Schema.String,
+      type: Schema.String,
+    });
+    const domainRegistration = defineRead(
+      {
+        ...registration.descriptor,
+        domainErrorSchema: DeclaredHttpDomainFailure,
+      },
+      () =>
+        Effect.fail(
+          new DeclaredHttpDomainFailure({
+            reasonCode: 'PURPOSE_NOT_ALLOWED',
+          }),
+        ),
+      () => Effect.succeed({}),
+      () => ({ kind: 'module', moduleId: 'core.shell' }),
+    );
+    // SAFETY: This test double exercises only the handler's runRead call and deliberately omits no
+    // other ReadRuntimeService member; remove when the generic runtime interface exposes a test port.
+    const domainRuntime = {
+      runRead: () =>
+        Effect.fail(
+          new DeclaredHttpDomainFailure({
+            reasonCode: 'PURPOSE_NOT_ALLOWED',
+          }),
+        ),
+    } as ReadRuntimeService;
+    const handler = makeGovernedReadHttpHandler({
+      authenticatePrincipal: () => Effect.succeed(principal),
+      mapDomainError: (error: DeclaredHttpDomainFailure) => ({
+        _tag: 'DeclaredHttpDomainProblem' as const,
+        detail: 'The requested purpose is not allowed.',
+        reasonCode: error.reasonCode,
+        status: 422 as const,
+        title: 'Request cannot be fulfilled',
+        type: 'https://ontos.test/problems/domain-policy',
+      }),
+      problems,
+      registration: domainRegistration,
+    });
+    const exit = yield* Effect.exit(
+      handler({
+        payload: { query: 'fixture' },
+        request: {
+          headers: Headers.fromInput({
+            'x-correlation-id': 'correlation-domain',
+          }),
+        },
+      }),
+    ).pipe(
+      Effect.provideService(ReadRuntime, domainRuntime),
+      Effect.provideService(HttpServerRequest.HttpServerRequest, requestService),
+    );
+    expect(Exit.isFailure(exit)).toBe(true);
+    if (Exit.isFailure(exit)) {
+      const failure = Cause.squash(exit.cause);
+      expect(Schema.is(DeclaredHttpDomainProblemSchema)(failure)).toBe(true);
+      expect(failure).toMatchObject({
+        detail: 'The requested purpose is not allowed.',
+        reasonCode: 'PURPOSE_NOT_ALLOWED',
+        status: 422,
+        title: 'Request cannot be fulfilled',
+        type: 'https://ontos.test/problems/domain-policy',
+      });
+    }
+
+    const compileOnlyInvalidMapper = () =>
+      makeGovernedReadHttpHandler({
+        authenticatePrincipal: () => Effect.succeed(principal),
+        // @ts-expect-error Domain mappers must return a declared public Problem Details value.
+        mapDomainError: () => 'not-a-problem',
+        problems,
+        registration: domainRegistration,
+      });
+    void compileOnlyInvalidMapper;
+
+    const leakingHandler = makeGovernedReadHttpHandler({
+      authenticatePrincipal: () => Effect.succeed(principal),
+      mapDomainError: (error: DeclaredHttpDomainFailure) => ({
+        _tag: 'DeclaredHttpDomainProblem' as const,
+        detail: 'The requested purpose is not allowed.',
+        reasonCode: error.reasonCode,
+        secret: 'owner-private-diagnostic',
+        status: 422 as const,
+        title: 'Request cannot be fulfilled',
+        type: 'https://ontos.test/problems/domain-policy',
+      }),
+      problems,
+      registration: domainRegistration,
+    });
+    const leakingExit = yield* Effect.exit(
+      leakingHandler({
+        payload: { query: 'fixture' },
+        request: {
+          headers: Headers.fromInput({
+            'x-correlation-id': 'correlation-domain-leak',
+          }),
+        },
+      }),
+    ).pipe(
+      Effect.provideService(ReadRuntime, domainRuntime),
+      Effect.provideService(HttpServerRequest.HttpServerRequest, requestService),
+    );
+    expect(Exit.isFailure(leakingExit)).toBe(true);
+    if (Exit.isFailure(leakingExit)) {
+      expect(Cause.squash(leakingExit.cause)).toEqual(problems.internal());
+    }
+  }),
+);

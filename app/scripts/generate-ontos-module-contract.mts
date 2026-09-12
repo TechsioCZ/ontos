@@ -251,6 +251,13 @@ const componentExposes = (verticalDirectory: string) =>
   Effect.gen(function* componentExposesEffect() {
     const fileSystem = yield* FileSystem.FileSystem;
     const platformPath = yield* Path.Path;
+    const configPath = platformPath.join(verticalDirectory, 'module-federation.config.ts');
+    if (!(yield* fileSystem.exists(configPath))) {
+      // API-only verticals intentionally do not ship a browser Module Federation config.
+      // Their manifest must therefore contain no public components; callers still validate
+      // every authored component against this empty exposure set below.
+      return new Set<string>();
+    }
     const config = yield* fileSystem
       .readFileString(platformPath.join(verticalDirectory, 'module-federation.config.ts'))
       .pipe(Effect.mapError((cause) => failure('unable to read the Module Federation configuration', cause)));
@@ -395,6 +402,7 @@ const deriveContract = (workspaceRoot: string, vertical: string, owner: LoadedOw
         publicSurface: {
           actions: safeRuntime.actions,
           api: sorted(apiContracts, (left, right) => left.key.localeCompare(right.key)),
+          businessPermissions: owner.manifest.publicSurface.businessPermissions ?? [],
           components: sorted(
             componentKeys.map((key) => ({
               expose: `./${toPascalCase(key)}`,

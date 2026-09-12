@@ -22,7 +22,7 @@ type PartyMergeReadinessOperationInvocation = readonly [
 ];
 
 const partyMergeReadinessClient = (
-  credential: Redacted.Redacted<string>,
+  credential: Redacted.Redacted,
   requestCorrelation: string,
   options: PartyMergeReadinessClientOptions,
 ) =>

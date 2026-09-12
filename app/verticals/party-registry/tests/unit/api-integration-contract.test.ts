@@ -15,6 +15,7 @@ const apiNames = [
   'counterpartyRoleHistory',
   'duplicateCandidateDetail',
   'foundation',
+  'guestPartyResolution',
   'organizationEngagementMutations',
   'organizationEngagementProfile',
   'partiesSearch',

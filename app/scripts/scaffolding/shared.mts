@@ -56,6 +56,8 @@ export const MODULE_MANIFEST_ACTION_SLOT_START = '// <generated-module-manifest-
 export const MODULE_MANIFEST_ACTION_SLOT_END = '// </generated-module-manifest-actions>';
 export const MODULE_MANIFEST_API_SLOT_START = '// <generated-module-manifest-apis>';
 export const MODULE_MANIFEST_API_SLOT_END = '// </generated-module-manifest-apis>';
+export const MODULE_MANIFEST_PERMISSION_SLOT_START = '// <generated-module-manifest-business-permissions>';
+export const MODULE_MANIFEST_PERMISSION_SLOT_END = '// </generated-module-manifest-business-permissions>';
 export const MODULE_MANIFEST_COMPONENT_SLOT_START = '// <generated-module-manifest-components>';
 export const MODULE_MANIFEST_COMPONENT_SLOT_END = '// </generated-module-manifest-components>';
 export const MODULE_MANIFEST_REPORT_SLOT_START = '// <generated-module-manifest-reports>';
@@ -129,6 +131,17 @@ interface CoreActionScaffoldConfig {
 
 export type ActionScaffoldConfig = CoreActionScaffoldConfig | VerticalActionScaffoldConfig;
 
+export interface ActionHttpScaffoldConfig {
+  readonly action: string;
+  readonly vertical: string;
+}
+
+export interface ActionHttpScaffoldResult {
+  readonly clientPath: string;
+  readonly contractPath: string;
+  readonly serverPath: string;
+}
+
 export interface ActionServiceScaffoldConfig {
   readonly service: string;
   readonly vertical: string;
@@ -199,6 +212,12 @@ export interface ResourceScaffoldConfig {
   readonly vertical: string;
 }
 
+export interface PermissionScaffoldConfig {
+  readonly permission: string;
+  readonly scope: 'counterparty' | 'counterparty_storefront' | 'retail_profile';
+  readonly vertical: string;
+}
+
 export interface RetireContributionScaffoldConfig {
   readonly kind: 'action' | 'api' | 'page';
   readonly name: string;
@@ -251,6 +270,10 @@ export interface PolicyScaffoldResult {
 
 export interface ResourceScaffoldResult {
   readonly resourcePath: string;
+}
+
+export interface PermissionScaffoldResult {
+  readonly permissionPath: string;
 }
 
 export interface RetireContributionScaffoldResult {
@@ -768,7 +791,7 @@ export const toTitle = (slug: string): string => words(slug).map(capitalise).joi
 export const topicToSlug = (topic: string): string => topic.replaceAll('.', '-');
 
 export const isModuleManifestImport = (candidate: string): boolean =>
-  /^(?:import \{ [a-z][A-Za-z0-9]*Action \} from '\.\/src\/actions\/[a-z][a-z0-9-]*\.action\.ts';|import \{ [A-Z][A-Za-z0-9]*Api \} from '\.\/shared\/apis\/[a-z][a-z0-9-]*\.ts';|import \{ [A-Z][A-Za-z0-9]*Page \} from '\.\/src\/routes\/.+\/page\.tsx';|import \{ [A-Z][A-Za-z0-9]* \} from '\.\/src\/components\/[a-z][a-z0-9-]*\.tsx';|import \{ [a-z][A-Za-z0-9]*ResourceDescriptor \} from '\.\/shared\/resources\/[a-z][a-z0-9-]*\.ts';)$/u.test(
+  /^(?:import \{ [a-z][A-Za-z0-9]*Action \} from '\.\/src\/actions\/[a-z][a-z0-9-]*\.action\.ts';|import \{ [A-Z][A-Za-z0-9]*Api \} from '\.\/shared\/apis\/[a-z][a-z0-9-]*\.ts';|import \{ [A-Z][A-Za-z0-9]*Page \} from '\.\/src\/routes\/.+\/page\.tsx';|import \{ [A-Z][A-Za-z0-9]* \} from '\.\/src\/components\/[a-z][a-z0-9-]*\.tsx';|import \{ [a-z][A-Za-z0-9]*ResourceDescriptor \} from '\.\/shared\/resources\/[a-z][a-z0-9-]*\.ts';|import \{ [a-z][A-Za-z0-9]*Permission \} from '\.\/shared\/permissions\/[a-z][a-z0-9-]*\.ts';)$/u.test(
     candidate,
   );
 
@@ -1221,6 +1244,31 @@ export const createOrAcceptGeneratedMutationEffect = (
     return yield* scaffoldFailure(`refusing to overwrite existing business file: ${filePath}`);
   });
 
+export const createOrUpdateOwnedGeneratedMutationEffect = (
+  filePath: string,
+  content: string,
+  ownsCurrent: (current: string) => boolean,
+): Effect.Effect<Option.Option<Mutation>, ScaffoldFailure, FileSystem.FileSystem> =>
+  Effect.gen(function* createOrUpdateOwnedGeneratedMutationProgram() {
+    if (!(yield* pathExistsEffect(filePath))) {
+      return Option.some(yield* createMutationEffect(filePath, content));
+    }
+    const fileSystem = yield* FileSystem.FileSystem;
+    const [current, expected] = yield* Effect.all([
+      fileSystem
+        .readFileString(filePath)
+        .pipe(Effect.mapError((cause) => scaffoldFailure(`failed to read generated business file ${filePath}`, cause))),
+      formatGeneratedMutationContent(filePath, content),
+    ]);
+    if (current === expected) {
+      return Option.none();
+    }
+    if (!ownsCurrent(current)) {
+      return yield* scaffoldFailure(`refusing to overwrite existing business file: ${filePath}`);
+    }
+    return Option.some({ content: expected, kind: 'update', path: filePath });
+  });
+
 export const updateMutation = (filePath: string, previous: string, content: string): Mutation | undefined =>
   previous === content ? undefined : { content, kind: 'update', path: filePath };
 
@@ -1531,9 +1579,8 @@ const normalizeGeneratedSlotEntry = (entry: string): string =>
   entry
     .replaceAll(/,\s*(?<closing>[\]})])/gu, '$<closing>')
     .replaceAll(/\s+/gu, ' ')
-    .replaceAll(/\(\s+/gu, '(')
-    .replaceAll(/\s+\)/gu, ')')
-    .replaceAll(/\s+(?<closing>[}\]])/gu, '$<closing>')
+    .replaceAll(/(?<opening>[[({])\s+/gu, '$<opening>')
+    .replaceAll(/\s+(?<closing>[}\])])/gu, '$<closing>')
     .trim();
 
 const generatedSlotSortKey = (entry: string): string => {
@@ -1567,6 +1614,44 @@ export const readGeneratedSlotEntries = (
   return entries.success;
 };
 
+/**
+ * Upgrades the legacy governed-API fluent chain whose formatter-owned semicolon became part of
+ * the generated additions slot. The identity terminator is the module-contract generator's
+ * canonical stable tail and keeps every `.addHttpApi(...)` entry independently rerunnable.
+ */
+export const stabilizeGovernedHttpApiAdditionSlot = (content: string): string => {
+  const end = content.indexOf(GOVERNED_HTTP_API_ADDITION_SLOT_END);
+  if (end === -1) {
+    return raiseScaffoldFailure(
+      `generated owner file does not contain one valid ${GOVERNED_HTTP_API_ADDITION_SLOT_START} slot`,
+    );
+  }
+  const afterMarker = end + GOVERNED_HTTP_API_ADDITION_SLOT_END.length;
+  const trailing = content.slice(afterMarker);
+  if (/^\s*\.pipe\((?:identity|governedHttpApiIdentity)\);/u.test(trailing)) {
+    return content;
+  }
+
+  let prefix = content.slice(0, end);
+  let suffix = trailing;
+  if (/;\s*$/u.test(prefix)) {
+    prefix = prefix.replace(/;(?<whitespace>\s*)$/u, '$<whitespace>');
+  } else if (/^\s*;/u.test(suffix)) {
+    suffix = suffix.replace(/^(?<whitespace>\s*);/u, '$<whitespace>');
+  } else if (/\.addHttpApi\([A-Za-z][A-Za-z0-9]*\)\s*$/u.test(prefix)) {
+    // A concurrent/legacy formatter may already have removed the unstable semicolon. The exact
+    // fluent-call tail is sufficient proof that this remains the generated API composition chain.
+  } else {
+    return raiseScaffoldFailure(
+      `generated owner API chain lacks a stable terminator at ${GOVERNED_HTTP_API_ADDITION_SLOT_END}`,
+    );
+  }
+  const withTerminator = `${prefix}${GOVERNED_HTTP_API_ADDITION_SLOT_END}\n  .pipe(identity);${suffix}`;
+  return withTerminator.includes("import { identity } from 'effect';")
+    ? withTerminator
+    : `import { identity } from 'effect';\n${withTerminator}`;
+};
+
 const renderGeneratedSlotEntries = (
   content: string,
   startMarker: string,
@@ -1587,6 +1672,22 @@ const renderGeneratedSlotEntries = (
     )
     .join('\n');
   return `${content.slice(0, bodyStart)}\n${rendered}\n${content.slice(end)}`;
+};
+
+export const deduplicateGeneratedSlotEntries = (content: string, startMarker: string, endMarker: string): string => {
+  const entries = readGeneratedSlotEntries(content, startMarker, endMarker);
+  const seen = new Set<string>();
+  const unique = entries.filter((entry) => {
+    const normalized = normalizeGeneratedSlotEntry(entry);
+    if (seen.has(normalized)) {
+      return false;
+    }
+    seen.add(normalized);
+    return true;
+  });
+  return unique.length === entries.length
+    ? content
+    : renderGeneratedSlotEntries(content, startMarker, endMarker, unique);
 };
 
 export const removeGeneratedSlotEntry = (

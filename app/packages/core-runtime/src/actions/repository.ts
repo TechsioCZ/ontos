@@ -228,6 +228,7 @@ export interface FinalizeActionPolicyDenialInput {
   readonly actionInvocationId: string;
   readonly actionKey: string;
   readonly auditProfile: ActionAuditProfile;
+  readonly deniedAuditEvidence?: Readonly<Record<string, Schema.Schema.Type<typeof Schema.Json>>>;
   readonly policy: ActionPolicyEvidence;
   readonly principal: TrustedPrincipalContext;
   readonly reasonCode: string;
@@ -249,9 +250,12 @@ export interface RejectPermissionDeniedInput {
   readonly actionInvocationId: string;
   readonly actionKey: string;
   readonly auditProfile: ActionAuditProfile;
+  readonly deniedAuditEvidence?: Readonly<Record<string, Schema.Schema.Type<typeof Schema.Json>>>;
   readonly principal: TrustedPrincipalContext;
   readonly transport: ActionTransportMetadata;
 }
+
+type ActionInvocationStateExecutor = Pick<CoreDatabaseExecutor, 'select' | 'update'>;
 
 export interface ActionRepositoryService {
   readonly createOrResolveInvocation: (
@@ -279,7 +283,7 @@ export interface ActionRepositoryService {
     input: ResolveActionInvocationInput,
   ) => Effect.Effect<ActionInvocationRecord, ActionInvocationNotFound | ActionInvocationPersistenceError>;
   readonly transitionInvocationToRunning: (
-    executor: CoreDatabaseExecutor,
+    executor: ActionInvocationStateExecutor,
     invocationId: string,
   ) => Effect.Effect<ActionInvocationRecord, ActionInvocationPersistenceError>;
 }
@@ -481,7 +485,7 @@ export const makeActionRepository = (): ActionRepositoryService => {
 
   const transitionInvocationToRunning: ActionRepositoryService['transitionInvocationToRunning'] = Effect.fn(
     'makeActionRepository.transitionInvocationToRunning',
-  )(function* transitionInvocationToRunningEffect(executor: CoreDatabaseExecutor, invocationId: string) {
+  )(function* transitionInvocationToRunningEffect(executor: ActionInvocationStateExecutor, invocationId: string) {
     const failureReason = 'Unable to transition the Action invocation to running';
     const transitioned = yield* executor
       .update(actionInvocations)
@@ -509,9 +513,7 @@ export const makeActionRepository = (): ActionRepositoryService => {
     if (resolved === undefined) {
       return yield* persistenceFailure(
         failureReason,
-        new RepositoryInvariantError({
-          reason: 'The Action invocation no longer exists',
-        }),
+        new RepositoryInvariantError({ reason: 'The Action invocation no longer exists' }),
       );
     }
     return resolved;
@@ -561,7 +563,7 @@ export const makeActionRepository = (): ActionRepositoryService => {
             authContextRef: input.principal.authContextRef,
             authMethod: input.principal.authMethod,
             eventType: 'action.rejected',
-            evidenceJson: { actionKey: input.actionKey },
+            evidenceJson: { ...input.deniedAuditEvidence, actionKey: input.actionKey },
             impersonatedByPrincipalId: input.principal.impersonatedByPrincipalId,
             legalEntityId: input.principal.legalEntityId,
             outcome: 'denied',
@@ -627,14 +629,11 @@ export const makeActionRepository = (): ActionRepositoryService => {
       }
 
       const policyEvidence = withOptionalProperty(
-        { actionKey: input.actionKey },
+        { ...input.deniedAuditEvidence, actionKey: input.actionKey },
         input.policy.owningModuleKey !== undefined,
         'owningModuleKey',
         input.policy.owningModuleKey,
-        {
-          policyKey: input.policy.policyKey,
-          policyScope: input.policy.scope,
-        },
+        { policyKey: input.policy.policyKey, policyScope: input.policy.scope },
       );
       yield* transaction
         .insert(auditEvents)

@@ -12,6 +12,43 @@ import type {
 } from './events.ts';
 import { decodedStringBrand, nonEmptyString, TargetModuleKeySchema, TargetResourceIdSchema } from './string-schemas.ts';
 
+const committedActionDomainRejection: unique symbol = Symbol('@app/core-runtime/actions/committed-domain-rejection');
+
+class CommittedActionDomainRejectionStorage<DomainError extends { readonly _tag: string }> {
+  readonly [committedActionDomainRejection] = true;
+  readonly #domainError: DomainError;
+
+  constructor(domainError: DomainError) {
+    this.#domainError = domainError;
+    Object.freeze(this);
+  }
+
+  static domainError<DomainError extends { readonly _tag: string }>(
+    rejection: CommittedActionDomainRejectionStorage<DomainError>,
+  ): DomainError {
+    return rejection.#domainError;
+  }
+}
+
+/**
+ * Opaque successful handler value requesting that Core commit the Action transaction and then
+ * raise the enclosed declared domain error to the caller.
+ */
+export type CommittedActionDomainRejection<DomainError extends { readonly _tag: string }> =
+  CommittedActionDomainRejectionStorage<DomainError>;
+
+export const commitActionThenReject = <DomainError extends { readonly _tag: string }>(
+  domainError: DomainError,
+): CommittedActionDomainRejection<DomainError> => new CommittedActionDomainRejectionStorage(domainError);
+
+/** Internal Core runtime schema for the opaque committed-domain-rejection value. */
+export const CommittedActionDomainRejectionSchema = Schema.instanceOf(CommittedActionDomainRejectionStorage);
+
+/** Internal Core runtime accessor. The public package root intentionally does not export it. */
+export const getCommittedActionDomainError = <DomainError extends { readonly _tag: string }>(
+  rejection: CommittedActionDomainRejection<DomainError>,
+): DomainError => CommittedActionDomainRejectionStorage.domainError(rejection);
+
 export { TrustedPrincipalContextSchema } from './principal-context.ts';
 export type { TrustedPrincipalContext } from './principal-context.ts';
 

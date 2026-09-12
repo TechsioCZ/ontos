@@ -1,0 +1,1 @@
+ALTER TABLE "commerce_customer_context"."customer_address_defaults" ALTER COLUMN "lifecycle" SET DEFAULT 'ACTIVE';

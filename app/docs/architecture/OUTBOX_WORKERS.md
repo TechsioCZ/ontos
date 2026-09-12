@@ -33,7 +33,15 @@ Each Worker declares a structured tenant `worker`/`background` entrypoint govern
 
 Core claims an eligible delivery transactionally with a unique claim identity and expiry, changes it to `processing`, increments its attempt count, and creates one unfinished attempt before handler execution. Concurrent dispatchers use lock-safe selection so only one live claim executes. A later dispatcher may reclaim only an expired lease; reclaiming finishes the abandoned open attempt with a safe error before starting the next attempt. A stale claimant can never finalize a newer claim.
 
-The handler receives decoded payload data and a restricted context containing message, delivery, Domain Event, tenant sequence, producer/topic, correlation, attempt, worker, and claim identities. It receives no raw database executor. Payload decoding and handler execution happen outside the claim transaction.
+The handler receives decoded payload data and a restricted context containing message, delivery, Domain Event, tenant sequence, producer/topic, correlation, verified originating actor when present, attempt, worker, and claim identities. It receives no raw database executor. Payload decoding and handler execution happen outside the claim transaction.
+
+Tenant-wide maintenance handlers that must observe owner data in every Legal Entity use Core's
+verified Legal Entity scope fan-out. Core enumerates every current Tenant-owned Legal Entity,
+including suspended and archived entities, and revalidates the exact Tenant, Legal Entity, and
+lifecycle row inside one independent transaction per scope. The owner callback receives only the
+exact identifiers and a lifetime-bound scoped-routine invoker; it never receives a transaction or
+database executor. Callback failure rolls back its scope transaction, an empty or indeterminate
+enumeration fails retryably, and at-least-once retries therefore require idempotent owner routines.
 
 ## Outcomes, Safety, and Observability
 
@@ -44,6 +52,31 @@ Worker execution is at-least-once. Handlers must be idempotent because a process
 - Payload decode failures, declared handler failures, unexpected defects, persistence failures, module-state failures, and lost claims remain distinct typed Effect failures. Stored errors and runtime telemetry contain no arbitrary payload, secret, raw Effect cause, stack, or database diagnostic. Core retains unexpected persistence causes only behind its private runtime boundary; they are not part of public failures or routine telemetry.
 
 Runtime telemetry identifies the worker, consumer and producer modules, topic, tenant, message, delivery, attempt, correlation, and outcome. It never logs arbitrary message payloads.
+
+### Durable external-projection completion
+
+An owner may use the narrow worker completion publisher only to finish an external-projection saga
+that a previously committed Action explicitly requested. The initiating Action persists the owner
+intent and its self-outbox request atomically and reports a pending or reconciliation-required
+outcome; it must not perform the external write or publish the terminal business fact.
+
+The self-consuming owner Worker loads the intent by its opaque persisted identity under Core's
+verified Legal Entity scope, applies the exact idempotent external mutation, then finalizes owner
+state through a scoped routine. A completion definition is immutable and bound to the exact Worker,
+owner/producer module, event type, topic, and payload schema. The lifetime-bound publisher accepts
+only the persisted mutation UUID as completion identity and verifies that the originating Action is
+durably succeeded in the same Tenant and Legal Entity. It persists the terminal Domain Event and
+Outbox Message in the same transaction as the owner routine. It cannot publish as another module,
+choose an arbitrary topic, receive a raw database executor, or broaden system-principal scope.
+
+The mutation UUID is the idempotent completion Domain Event identity. After an ambiguous external
+acknowledgement the Worker repeats only the same exact idempotent mutation. If the process stops
+after the external mutation but before transaction commit, the durable pending intent remains. If
+delivery acknowledgement is lost after commit, redelivery observes terminal owner state and the
+existing identical completion; a different event, topic, scope, source Action, subject, timestamp,
+or payload under that identity is a non-retryable conflict. The publisher does not make arbitrary
+Worker state changes an Action substitute: it is limited to completing the already authorized,
+durably requested external projection.
 
 ## Checkpoints
 

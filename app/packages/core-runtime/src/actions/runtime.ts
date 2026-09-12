@@ -18,13 +18,31 @@ import type { ModuleStateGateService } from '../modules/module-state-gate.ts';
 import { ModuleStateGate } from '../modules/module-state-gate.ts';
 import type { OperationalScope, OperationalScopeResolverService } from '../operations/context.ts';
 import { OperationalScopeResolver } from '../operations/context.ts';
-import { ContextAccess } from '../permissions/context-access.ts';
+import { ContextAccess, toBusinessPermissionAccessKey } from '../permissions/context-access.ts';
+import { BusinessPermissionCodeSchema } from '../permissions/business-permission.ts';
+import { ActionAuthorizationPreflight } from '../permissions/action-authorization-preflight.ts';
+import type { ActionAuthorizationPreflightService } from '../permissions/action-authorization-preflight.ts';
+import {
+  OwnerAuthorizationOverlay,
+  failClosedOwnerAuthorizationOverlay,
+} from '../permissions/owner-authorization-overlay.ts';
+import type {
+  OwnerAuthorizationDecision,
+  OwnerAuthorizationTarget,
+} from '../permissions/owner-authorization-overlay.ts';
 import type { ActionPermissionService } from '../permissions/service.ts';
 import { ActionPermission } from '../permissions/service.ts';
 import { createActionCollector } from './collector.ts';
-import type { ActionTransportMetadata, TrustedPrincipalContext } from './context.ts';
-import { ActionTransportMetadataSchema } from './context.ts';
+import type { ActionTransportMetadata, CommittedActionDomainRejection, TrustedPrincipalContext } from './context.ts';
+import {
+  ActionTransportMetadataSchema,
+  CommittedActionDomainRejectionSchema,
+  commitActionThenReject,
+  getCommittedActionDomainError,
+} from './context.ts';
 import type {
+  ActionBusinessPermissionTarget,
+  ActionDeniedAuditEvidenceDeclaration,
   ActionLegalEntityPermission,
   ActionRegistration,
   ActionResourcePermissionTarget,
@@ -33,6 +51,7 @@ import type {
 import {
   decodeActionPayload,
   decodeActionResult,
+  getActionBusinessPermissionTargetResolver,
   getActionHandler,
   getActionResourcePermissionTargetResolver,
   getActionServiceFactory,
@@ -93,6 +112,49 @@ const attachFailureCause = <Failure extends object, FailureCause>(failure: Failu
     value: cause,
   });
   return failure;
+};
+
+// The descriptor's action-owned Schema is authoritative; this final object check only bounds the
+// generic runtime seam before opaque audit JSON is persisted.
+// oxlint-disable-next-line effect-native/no-json-schema-as-document-contract
+const DeniedAuditEvidenceJsonObjectSchema = Schema.Record(Schema.String, Schema.Json);
+
+const resolveDeniedAuditEvidence = <Payload>(
+  declaration: ActionDeniedAuditEvidenceDeclaration<Payload>,
+  payload: Payload,
+  scope: OperationalScope,
+): Effect.Effect<Readonly<Record<string, Schema.Schema.Type<typeof Schema.Json>>>, ActionPayloadValidationError> => {
+  const invalidEvidence = (reason: string, cause?: unknown) =>
+    attachFailureCause(
+      new ActionPayloadValidationError({
+        code: 'action_payload_invalid',
+        reason,
+      }),
+      cause,
+    );
+  return Effect.try({
+    catch: (cause) => invalidEvidence('The Action denial evidence could not be resolved safely', cause),
+    try: () => declaration.resolve(payload, scope),
+  }).pipe(
+    Effect.flatMap((resolved) =>
+      Schema.decodeEffect(declaration.schema)(resolved).pipe(
+        Effect.mapError((cause) =>
+          invalidEvidence('The Action denial evidence does not match its declared schema', cause),
+        ),
+      ),
+    ),
+    Effect.flatMap((decoded) =>
+      Schema.encodeUnknownEffect(Schema.make<Schema.ConstraintEncoder<unknown>>(declaration.schema.ast))(decoded).pipe(
+        Effect.mapError((cause) => invalidEvidence('The Action denial evidence cannot be encoded safely', cause)),
+      ),
+    ),
+    Effect.flatMap((encoded) =>
+      // oxlint-disable-next-line effect-native/no-json-schema-as-document-contract
+      Schema.decodeUnknownEffect(DeniedAuditEvidenceJsonObjectSchema)(encoded).pipe(
+        Effect.mapError((cause) => invalidEvidence('The Action denial evidence must be a JSON object', cause)),
+      ),
+    ),
+  );
 };
 
 export const ACTION_RUNTIME_STAGES = [
@@ -185,11 +247,13 @@ export interface ActionRuntimeService {
 }
 
 export interface ActionRuntimeOptions {
+  readonly authorizationPreflight?: ActionAuthorizationPreflightService;
   readonly contextAccess?: (typeof ContextAccess)['Service'];
   readonly installScope?: typeof installOperationalScope;
   readonly moduleEntrypointGateway: ModuleEntrypointGatewayService;
   readonly moduleStateGate: ModuleStateGateService;
   readonly onStage?: (stage: ActionRuntimeStage) => void;
+  readonly ownerAuthorizationOverlay?: (typeof OwnerAuthorizationOverlay)['Service'];
   readonly resolveHandler?: typeof getActionHandler;
   readonly resolveServiceFactory?: typeof getActionServiceFactory;
 }
@@ -228,6 +292,18 @@ const permissionUnavailable = () =>
     code: 'action_permission_check_failed',
     reason: 'The authorization service could not determine permission safely',
   });
+
+const ownerAuthorizationFailure = (decision: Exclude<OwnerAuthorizationDecision, 'allowed'>) => {
+  if (decision === 'denied') {
+    return Effect.fail(
+      new ActionPermissionDenied({
+        code: 'action_permission_denied',
+        reason: 'The owner-local authorization state denies this Action',
+      }),
+    );
+  }
+  return Effect.fail(permissionUnavailable());
+};
 
 const resolveActionTenantPermission = <Payload>(
   payload: Payload,
@@ -298,6 +374,111 @@ const resolveActionResourcePermissionTarget = <Payload>(
           }),
         ),
       ),
+    );
+  });
+
+const BusinessTenantIdSchema = Schema.String.check(Schema.isUUID()).pipe(
+  Schema.brand('BusinessTenantId'),
+  Schema.decodeTo(Schema.String),
+);
+const BusinessLegalEntityIdSchema = Schema.String.check(Schema.isUUID()).pipe(
+  Schema.brand('BusinessLegalEntityId'),
+  Schema.decodeTo(Schema.String),
+);
+const BusinessProfileIdSchema = Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(300)).pipe(
+  Schema.brand('BusinessProfileId'),
+  Schema.decodeTo(Schema.String),
+);
+const BusinessCounterpartyIdSchema = Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(300)).pipe(
+  Schema.brand('BusinessCounterpartyId'),
+  Schema.decodeTo(Schema.String),
+);
+const BusinessStorefrontIdSchema = Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(300)).pipe(
+  Schema.brand('BusinessStorefrontId'),
+  Schema.decodeTo(Schema.String),
+);
+
+const BusinessAccessTargetSchema = Schema.Union([
+  Schema.Struct({
+    kind: Schema.Literal('retail_profile'),
+    legalEntityId: BusinessLegalEntityIdSchema,
+    profileId: BusinessProfileIdSchema,
+    tenantId: BusinessTenantIdSchema,
+  }),
+  Schema.Struct({
+    counterpartyId: BusinessCounterpartyIdSchema,
+    kind: Schema.Literal('counterparty'),
+    legalEntityId: BusinessLegalEntityIdSchema,
+    tenantId: BusinessTenantIdSchema,
+  }),
+  Schema.Struct({
+    counterpartyId: BusinessCounterpartyIdSchema,
+    kind: Schema.Literal('counterparty_storefront'),
+    legalEntityId: BusinessLegalEntityIdSchema,
+    storefrontId: BusinessStorefrontIdSchema,
+    tenantId: BusinessTenantIdSchema,
+  }),
+]);
+const ActionBusinessPermissionTargetSchema = Schema.Struct({
+  permission: BusinessPermissionCodeSchema,
+  target: BusinessAccessTargetSchema,
+  trustedStorefrontId: Schema.optionalKey(BusinessStorefrontIdSchema),
+});
+
+const businessTargetResourceId = (target: ActionBusinessPermissionTarget['target']): string => {
+  if (target.kind === 'retail_profile') {
+    return target.profileId;
+  }
+  return target.kind === 'counterparty' ? target.counterpartyId : `${target.counterpartyId}:${target.storefrontId}`;
+};
+
+const resolveActionBusinessPermissionTarget = <Payload>(
+  payload: Payload,
+  scope: OperationalScope,
+  resolver: ((payload: Payload, scope: OperationalScope) => ActionBusinessPermissionTarget) | undefined,
+): Effect.Effect<Option.Option<ActionBusinessPermissionTarget>, ActionPermissionCheckError> =>
+  Effect.suspend(() => {
+    if (resolver === undefined) {
+      return Effect.succeed(Option.none<ActionBusinessPermissionTarget>());
+    }
+    return Effect.try({
+      catch: (cause) =>
+        attachFailureCause(
+          new ActionPermissionCheckError({
+            code: 'action_permission_check_failed',
+            reason: 'The declared business permission target could not be resolved safely',
+          }),
+          cause,
+        ),
+      try: () => resolver(payload, scope),
+    }).pipe(
+      Effect.flatMap(Schema.decodeUnknownEffect(ActionBusinessPermissionTargetSchema)),
+      Effect.filterOrFail(
+        (resolved) =>
+          resolved.target.tenantId === scope.tenantId &&
+          resolved.target.legalEntityId === scope.legalEntityId &&
+          (resolved.target.kind === 'counterparty_storefront'
+            ? scope.trustedStorefrontId === resolved.target.storefrontId &&
+              resolved.trustedStorefrontId === scope.trustedStorefrontId
+            : resolved.trustedStorefrontId === undefined),
+        () =>
+          new ActionPermissionCheckError({
+            code: 'action_permission_check_failed',
+            reason: 'The declared business permission target does not match trusted scope',
+          }),
+      ),
+      Effect.mapError((cause) =>
+        Schema.is(ActionPermissionCheckError)(cause)
+          ? cause
+          : attachFailureCause(
+              new ActionPermissionCheckError({
+                code: 'action_permission_check_failed',
+                reason: 'The declared business permission target is invalid',
+              }),
+              cause,
+            ),
+      ),
+      Effect.asSome,
     );
   });
 
@@ -420,7 +601,13 @@ type ActionRuntimeConstruction = readonly [
 
 export const makeActionRuntime = (...construction: ActionRuntimeConstruction): ActionRuntimeService => {
   const [database, repository, permission, operationalScopeResolver, options] = construction;
-  const { contextAccess, moduleEntrypointGateway, moduleStateGate } = options;
+  const {
+    authorizationPreflight,
+    contextAccess,
+    moduleEntrypointGateway,
+    moduleStateGate,
+    ownerAuthorizationOverlay = failClosedOwnerAuthorizationOverlay,
+  } = options;
   const resolveHandler = options.resolveHandler ?? getActionHandler;
   const resolveServiceFactory = options.resolveServiceFactory ?? getActionServiceFactory;
   const installScope = options.installScope ?? installOperationalScope;
@@ -511,12 +698,43 @@ export const makeActionRuntime = (...construction: ActionRuntimeConstruction): A
       );
   };
 
+  const checkActionBusinessPermission = (
+    scope: OperationalScope,
+    businessTarget: Option.Option<ActionBusinessPermissionTarget>,
+  ): Effect.Effect<'allowed' | 'denied', ActionPermissionCheckError> => {
+    if (Option.isNone(businessTarget)) {
+      return Effect.succeed('allowed');
+    }
+    if (contextAccess?.businessPermissions === undefined) {
+      return Effect.fail(permissionUnavailable());
+    }
+    const resolved = businessTarget.value;
+    const checkInput = withOptionalProperty(
+      {
+        principal: { principalId: scope.principalId, tenantId: scope.tenantId },
+        targets: [{ permission: resolved.permission, target: resolved.target }],
+      },
+      scope.trustedStorefrontId !== undefined,
+      'trustedStorefrontId',
+      scope.trustedStorefrontId,
+      {},
+    );
+    return contextAccess
+      .businessPermissions(checkInput)
+      .pipe(
+        Effect.flatMap(([decision]) =>
+          decision?.key === toBusinessPermissionAccessKey(resolved) &&
+          (decision.decision === 'allowed' || decision.decision === 'denied')
+            ? Effect.succeed(decision.decision)
+            : Effect.fail(permissionUnavailable()),
+        ),
+      );
+  };
+
   const runAction: ActionRuntimeService['runAction'] = Effect.fn('ActionRuntime.runAction')(function* runActionEffect<
     PayloadSchema extends Schema.ConstraintDecoder<unknown>,
     ResultSchema extends Schema.ConstraintDecoder<unknown>,
-    DomainErrorSchema extends Schema.ConstraintDecoder<{
-      readonly _tag: string;
-    }>,
+    DomainErrorSchema extends Schema.ConstraintDecoder<{ readonly _tag: string }>,
     DomainEvents extends DomainEventContractMap,
     Owner extends string,
     Services,
@@ -532,62 +750,89 @@ export const makeActionRuntime = (...construction: ActionRuntimeConstruction): A
       HandlerRequirements
     >,
   ) {
-    const payload = yield* decodeActionPayload(input.registration.descriptor.payloadSchema, input.payload);
-    notifyStage('payload_decoded');
+    const prepareTrustedInputAndContext = Effect.fn('ActionRuntime.prepareTrustedInputAndContext')(
+      function* prepareTrustedInputAndContextEffect() {
+        const payload = yield* decodeActionPayload(input.registration.descriptor.payloadSchema, input.payload);
+        notifyStage('payload_decoded');
 
-    const principal = yield* validatePrincipal(input.principal, input.registration, payload);
-    const transport = yield* validateTransport(input.transport);
-    const scope = yield* operationalScopeResolver.resolve(
+        const principal = yield* validatePrincipal(input.principal, input.registration, payload);
+        const transport = yield* validateTransport(input.transport);
+        const scope = yield* operationalScopeResolver.resolve(
+          withOptionalProperty(
+            {
+              correlationId: transport.correlationId,
+              legalEntityScope: input.registration.descriptor.legalEntityScope,
+              principal,
+            },
+            transport.traceId !== undefined,
+            'traceId',
+            transport.traceId,
+            {},
+          ),
+        );
+        notifyStage('trusted_context_validated');
+        const deniedAuditEvidenceDeclaration = input.registration.descriptor.deniedAuditEvidence;
+        const deniedAuditEvidence =
+          deniedAuditEvidenceDeclaration === undefined
+            ? undefined
+            : yield* resolveDeniedAuditEvidence(deniedAuditEvidenceDeclaration, payload, scope);
+        return { deniedAuditEvidence, payload, principal, scope, transport };
+      },
+    );
+
+    // oxlint-disable-next-line effect-native/no-wide-factory-signature -- Trusted scope and the four resolved optional permission targets are cohesive authorization data for this Action run.
+    const buildOwnerAuthorizationTargets = (
+      scope: OperationalScope,
+      tenantPermission: Option.Option<ActionTenantPermission>,
+      legalEntityPermission: ActionLegalEntityPermission | undefined,
+      businessPermissionTarget: Option.Option<ActionBusinessPermissionTarget>,
+      resourcePermissionTarget: Option.Option<ActionResourcePermissionTarget>,
+    ): readonly OwnerAuthorizationTarget[] => {
+      const targets: OwnerAuthorizationTarget[] = [];
+      if (Option.isSome(tenantPermission)) {
+        targets.push({ kind: 'tenant', permission: tenantPermission.value, tenantId: scope.tenantId });
+      }
+      if (legalEntityPermission !== undefined && scope.legalEntityId !== undefined) {
+        targets.push({ kind: 'legal_entity', legalEntityId: scope.legalEntityId, permission: legalEntityPermission });
+      }
+      if (Option.isSome(businessPermissionTarget)) {
+        const businessTarget = businessPermissionTarget.value;
+        targets.push(
+          withOptionalProperty(
+            {
+              kind: 'business_permission' as const,
+              permission: businessTarget.permission,
+              target: businessTarget.target,
+            },
+            businessTarget.trustedStorefrontId !== undefined,
+            'trustedStorefrontId',
+            businessTarget.trustedStorefrontId,
+            {},
+          ),
+        );
+      }
+      if (Option.isSome(resourcePermissionTarget)) {
+        targets.push({
+          kind: 'resource',
+          permission: resourcePermissionTarget.value.permission,
+          resource: resourcePermissionTarget.value.resource,
+        });
+      }
+      return Object.freeze(targets);
+    };
+
+    type ActionTransportTarget = Pick<
+      ActionTransportMetadata,
+      'targetModuleKey' | 'targetResourceId' | 'targetResourceType'
+    >;
+
+    const buildGovernedTransport = (
+      transport: ActionTransportMetadata,
+      target: ActionTransportTarget,
+    ): ActionTransportMetadata =>
       withOptionalProperty(
-        {
-          correlationId: transport.correlationId,
-          legalEntityScope: input.registration.descriptor.legalEntityScope,
-          principal,
-        },
-        transport.traceId !== undefined,
-        'traceId',
-        transport.traceId,
-        {},
-      ),
-    );
-    notifyStage('trusted_context_validated');
-
-    const moduleStateSnapshot = yield* moduleEntrypointGateway.prepareSnapshot(scope, [
-      input.registration.descriptor.entrypoint,
-    ]);
-    yield* moduleEntrypointGateway.check(moduleStateSnapshot, input.registration.descriptor.entrypoint);
-    notifyStage('module_state_gate');
-
-    yield* requireIdempotencyKey(input.registration.descriptor.idempotency, transport);
-
-    const tenantPermission = isTrustedSupportRecoveryPrincipalContext(principal, input.registration)
-      ? Option.none<ActionTenantPermission>()
-      : yield* resolveActionTenantPermission(payload, input.registration.descriptor.tenantPermission);
-    const { legalEntityPermission } = input.registration.descriptor;
-    const hasCanonicalScopeTarget = Option.isSome(tenantPermission) || legalEntityPermission !== undefined;
-
-    const resourcePermissionTarget = yield* resolveActionResourcePermissionTarget(
-      payload,
-      scope,
-      getActionResourcePermissionTargetResolver(input.registration),
-    );
-    let actionTarget: Pick<ActionTransportMetadata, 'targetModuleKey' | 'targetResourceId' | 'targetResourceType'>;
-    let governedTransport: ActionTransportMetadata;
-    if (Option.isSome(resourcePermissionTarget)) {
-      const target = resourcePermissionTarget.value;
-      actionTarget = {
-        targetModuleKey: target.resource.moduleId,
-        targetResourceId: target.resource.resourceId,
-        targetResourceType: target.resource.resourceType,
-      };
-      governedTransport = withOptionalProperty(
         withOptionalProperty(
-          {
-            correlationId: transport.correlationId,
-            targetModuleKey: target.resource.moduleId,
-            targetResourceId: target.resource.resourceId,
-            targetResourceType: target.resource.resourceType,
-          },
+          { correlationId: transport.correlationId, ...target },
           transport.idempotencyKey !== undefined,
           'idempotencyKey',
           transport.idempotencyKey,
@@ -598,23 +843,40 @@ export const makeActionRuntime = (...construction: ActionRuntimeConstruction): A
         transport.traceId,
         {},
       );
-    } else if (hasCanonicalScopeTarget) {
-      actionTarget = {};
-      governedTransport = withOptionalProperty(
-        withOptionalProperty(
-          { correlationId: transport.correlationId },
-          transport.idempotencyKey !== undefined,
-          'idempotencyKey',
-          transport.idempotencyKey,
-          {},
-        ),
-        transport.traceId !== undefined,
-        'traceId',
-        transport.traceId,
-        {},
-      );
-    } else {
-      actionTarget = withOptionalProperty(
+
+    /* oxlint-disable anti-slop/no-known-value-widening -- The normalized governed-target result intentionally preserves the existing owner authorization contract across all branches. */
+    const prepareGovernedTarget = (
+      transport: ActionTransportMetadata,
+      businessPermissionTarget: Option.Option<ActionBusinessPermissionTarget>,
+      resourcePermissionTarget: Option.Option<ActionResourcePermissionTarget>,
+      hasCanonicalScopeTarget: boolean,
+    ): Readonly<{
+      actionTarget: Pick<ActionTransportMetadata, 'targetModuleKey' | 'targetResourceId' | 'targetResourceType'>;
+      governedTransport: ActionTransportMetadata;
+    }> => {
+      if (Option.isSome(businessPermissionTarget)) {
+        const { permission: targetPermission, target } = businessPermissionTarget.value;
+        const actionTarget = {
+          targetModuleKey: input.registration.descriptor.owningModuleKey,
+          targetResourceId: businessTargetResourceId(target),
+          targetResourceType: `${target.kind}:${targetPermission}`,
+        };
+        return { actionTarget, governedTransport: buildGovernedTransport(transport, actionTarget) };
+      }
+      if (Option.isSome(resourcePermissionTarget)) {
+        const target = resourcePermissionTarget.value;
+        const actionTarget = {
+          targetModuleKey: target.resource.moduleId,
+          targetResourceId: target.resource.resourceId,
+          targetResourceType: target.resource.resourceType,
+        };
+        return { actionTarget, governedTransport: buildGovernedTransport(transport, actionTarget) };
+      }
+      if (hasCanonicalScopeTarget) {
+        const actionTarget = {};
+        return { actionTarget, governedTransport: buildGovernedTransport(transport, actionTarget) };
+      }
+      const actionTarget = withOptionalProperty(
         withOptionalProperty(
           withOptionalProperty(
             {},
@@ -633,68 +895,173 @@ export const makeActionRuntime = (...construction: ActionRuntimeConstruction): A
         transport.targetResourceType,
         {},
       );
-      governedTransport = transport;
-    }
+      return { actionTarget, governedTransport: transport };
+    };
+    /* oxlint-enable anti-slop/no-known-value-widening */
 
-    const normalizedPayload = yield* Effect.try({
-      catch: (cause) =>
-        attachFailureCause(
-          new ActionPayloadValidationError({
-            code: 'action_payload_invalid',
-            reason: 'The decoded Action payload cannot be encoded safely',
-          }),
-          cause,
-        ),
-      try: () =>
-        Result.getOrThrow(
-          Schema.encodeUnknownResult(
-            Schema.make<Schema.ConstraintEncoder<unknown>>(input.registration.descriptor.payloadSchema.ast),
-          )(payload),
-        ),
-    });
+    const prepareAuthorizationContext = Effect.fn('ActionRuntime.prepareAuthorizationContext')(
+      function* prepareAuthorizationContextEffect(
+        payload: PayloadSchema['Type'],
+        principal: TrustedPrincipalContext,
+        scope: OperationalScope,
+        transport: ActionTransportMetadata,
+      ) {
+        const moduleStateSnapshot = yield* moduleEntrypointGateway.prepareSnapshot(scope, [
+          input.registration.descriptor.entrypoint,
+        ]);
+        yield* moduleEntrypointGateway.check(moduleStateSnapshot, input.registration.descriptor.entrypoint);
+        notifyStage('module_state_gate');
 
-    const requestHash = yield* Effect.try({
-      catch: (cause) =>
-        attachFailureCause(
-          new ActionPayloadValidationError({
-            code: 'action_payload_invalid',
-            reason: 'The decoded Action payload cannot be normalized safely',
-          }),
-          cause,
-        ),
-      try: () =>
-        computeActionRequestHash({
-          actionKey: input.registration.descriptor.actionKey,
-          normalizedPayload,
-          owningModuleKey: input.registration.descriptor.owningModuleKey,
-          principal,
-          schemaVersion: input.registration.descriptor.schemaVersion,
-          target: actionTarget,
-        }),
-    });
+        yield* requireIdempotencyKey(input.registration.descriptor.idempotency, transport);
 
-    const invocation = yield* repository
-      .createOrResolveInvocation(database.executor, {
-        actionKey: input.registration.descriptor.actionKey,
-        idempotencyKey: transport.idempotencyKey,
-        principal,
-        requestHash,
-        transport: governedTransport,
-      })
-      .pipe(
-        Effect.tapError((error) =>
-          logInvocationPersistenceFailure(error, {
+        const tenantPermission = isTrustedSupportRecoveryPrincipalContext(principal, input.registration)
+          ? Option.none<ActionTenantPermission>()
+          : yield* resolveActionTenantPermission(payload, input.registration.descriptor.tenantPermission);
+        const { legalEntityPermission } = input.registration.descriptor;
+        const businessPermissionTarget = yield* resolveActionBusinessPermissionTarget(
+          payload,
+          scope,
+          getActionBusinessPermissionTargetResolver(input.registration),
+        );
+        // oxlint-disable-next-line effect-native/no-sequential-independent-yields -- Preserve business-before-resource resolver execution because owner callbacks may throw or observe mutable state.
+        const resourcePermissionTarget = yield* resolveActionResourcePermissionTarget(
+          payload,
+          scope,
+          getActionResourcePermissionTargetResolver(input.registration),
+        );
+        const hasCanonicalScopeTarget =
+          Option.isSome(tenantPermission) ||
+          legalEntityPermission !== undefined ||
+          Option.isSome(businessPermissionTarget);
+        const frozenOwnerAuthorizationTargets = buildOwnerAuthorizationTargets(
+          scope,
+          tenantPermission,
+          legalEntityPermission,
+          businessPermissionTarget,
+          resourcePermissionTarget,
+        );
+        const { actionTarget, governedTransport } = prepareGovernedTarget(
+          transport,
+          businessPermissionTarget,
+          resourcePermissionTarget,
+          hasCanonicalScopeTarget,
+        );
+        return {
+          actionTarget,
+          businessPermissionTarget,
+          frozenOwnerAuthorizationTargets,
+          governedTransport,
+          legalEntityPermission,
+          resourcePermissionTarget,
+          tenantPermission,
+        };
+      },
+    );
+
+    const prepareInvocation = Effect.fn('ActionRuntime.prepareInvocation')(function* prepareInvocationEffect(
+      payload: PayloadSchema['Type'],
+      principal: TrustedPrincipalContext,
+      transport: ActionTransportMetadata,
+      actionTarget: Pick<ActionTransportMetadata, 'targetModuleKey' | 'targetResourceId' | 'targetResourceType'>,
+      governedTransport: ActionTransportMetadata,
+    ) {
+      const normalizedPayload = yield* Effect.try({
+        catch: (cause) =>
+          attachFailureCause(
+            new ActionPayloadValidationError({
+              code: 'action_payload_invalid',
+              reason: 'The decoded Action payload cannot be encoded safely',
+            }),
+            cause,
+          ),
+        try: () =>
+          Result.getOrThrow(
+            Schema.encodeUnknownResult(
+              Schema.make<Schema.ConstraintEncoder<unknown>>(input.registration.descriptor.payloadSchema.ast),
+            )(payload),
+          ),
+      });
+      const requestHash = yield* Effect.try({
+        catch: (cause) =>
+          attachFailureCause(
+            new ActionPayloadValidationError({
+              code: 'action_payload_invalid',
+              reason: 'The decoded Action payload cannot be normalized safely',
+            }),
+            cause,
+          ),
+        try: () =>
+          computeActionRequestHash({
             actionKey: input.registration.descriptor.actionKey,
-            correlationId: transport.correlationId,
+            normalizedPayload,
+            owningModuleKey: input.registration.descriptor.owningModuleKey,
+            principal,
+            schemaVersion: input.registration.descriptor.schemaVersion,
+            target: actionTarget,
           }),
-        ),
-      );
-    notifyStage('invocation_prepared');
-    yield* verifyInvocation(invocation, requestHash);
+      });
+      const invocation = yield* repository
+        .createOrResolveInvocation(database.executor, {
+          actionKey: input.registration.descriptor.actionKey,
+          idempotencyKey: transport.idempotencyKey,
+          principal,
+          requestHash,
+          transport: governedTransport,
+        })
+        .pipe(
+          Effect.tapError((error) =>
+            logInvocationPersistenceFailure(error, {
+              actionKey: input.registration.descriptor.actionKey,
+              correlationId: transport.correlationId,
+            }),
+          ),
+        );
+      notifyStage('invocation_prepared');
+      yield* verifyInvocation(invocation, requestHash);
+      return { invocation, requestHash };
+    });
 
-    // The trusted context already represents authentication. Authorization
-    // uses only the immutable Action key and trusted principal identity.
-    notifyStage('authentication_boundary');
+    const prepareInputAndContext = Effect.fn('ActionRuntime.prepareInputAndContext')(
+      function* prepareInputAndContextEffect() {
+        const { deniedAuditEvidence, payload, principal, scope, transport } = yield* prepareTrustedInputAndContext();
+        const authorizationContext = yield* prepareAuthorizationContext(payload, principal, scope, transport);
+        const { invocation, requestHash } = yield* prepareInvocation(
+          payload,
+          principal,
+          transport,
+          authorizationContext.actionTarget,
+          authorizationContext.governedTransport,
+        );
+
+        return {
+          ...authorizationContext,
+          deniedAuditEvidence,
+          invocation,
+          payload,
+          principal,
+          requestHash,
+          scope,
+          transport,
+        };
+      },
+    );
+    const {
+      actionTarget,
+      businessPermissionTarget,
+      deniedAuditEvidence,
+      frozenOwnerAuthorizationTargets,
+      governedTransport,
+      invocation,
+      legalEntityPermission,
+      payload,
+      principal,
+      requestHash,
+      resourcePermissionTarget,
+      scope,
+      tenantPermission,
+      transport,
+    } = yield* prepareInputAndContext();
+
     const logPermissionInvocationFailure = Effect.fn('ActionRuntime.logPermissionInvocationFailure')(
       function* logPermissionInvocationFailureEffect(failure: ActionInvocationPersistenceError) {
         yield* logInvocationPersistenceFailure(failure, {
@@ -715,13 +1082,22 @@ export const makeActionRuntime = (...construction: ActionRuntimeConstruction): A
     );
     const rejectPermission = () =>
       repository
-        .rejectPermissionDenied(database.executor, {
-          actionInvocationId: invocation.actionInvocationId,
-          actionKey: input.registration.descriptor.actionKey,
-          auditProfile: input.registration.descriptor.auditProfile,
-          principal,
-          transport: governedTransport,
-        })
+        .rejectPermissionDenied(
+          database.executor,
+          withOptionalProperty(
+            {
+              actionInvocationId: invocation.actionInvocationId,
+              actionKey: input.registration.descriptor.actionKey,
+              auditProfile: input.registration.descriptor.auditProfile,
+              principal,
+              transport: governedTransport,
+            },
+            deniedAuditEvidence !== undefined,
+            'deniedAuditEvidence',
+            deniedAuditEvidence,
+            {},
+          ),
+        )
         .pipe(
           Effect.tapErrorTag('ActionInvocationPersistenceError', logPermissionInvocationFailure),
           Effect.tapErrorTag('ActionTransactionError', logPermissionTransactionFailure),
@@ -734,284 +1110,420 @@ export const makeActionRuntime = (...construction: ActionRuntimeConstruction): A
             ),
           ),
         );
-    const permissionDecision = yield* permission
-      .checkActionPermission({
-        actionKey: input.registration.descriptor.actionKey,
-        correlationId: transport.correlationId,
-        principalId: principal.principalId,
-      })
-      .pipe(Effect.tapError((error) => Effect.logError(error.reason)));
-    const tenantPermissionDecision = yield* checkTenantActionPermission(principal, tenantPermission);
 
-    const legalEntityPermissionDecision = yield* checkActionLegalEntityPermission(scope, legalEntityPermission);
-
-    const resourcePermissionDecision = yield* checkActionResourcePermission(scope, resourcePermissionTarget);
-    notifyStage('permission_checked');
-    if (
-      permissionDecision === 'denied' ||
-      tenantPermissionDecision === 'denied' ||
-      legalEntityPermissionDecision === 'denied' ||
-      resourcePermissionDecision === 'denied'
-    ) {
-      return yield* rejectPermission();
-    }
-
-    notifyStage('policy_boundary');
-
-    const policyInput: ActionPolicyEvaluatorInput<typeof payload> = Object.freeze({
-      action: Object.freeze({
-        actionKey: input.registration.descriptor.actionKey,
-        owningModuleKey: input.registration.descriptor.owningModuleKey,
-        schemaVersion: input.registration.descriptor.schemaVersion,
-      }),
-      payload,
-      principal: Object.freeze({ ...principal }),
-      target: Object.freeze({ ...actionTarget }),
-      transport: Object.freeze(
-        withOptionalProperty(
-          {
-            correlationId: transport.correlationId,
-          },
-          transport.traceId !== undefined,
-          'traceId',
-          transport.traceId,
-          {},
-        ),
-      ),
-    });
-    const evaluateActionPolicy = Effect.fn('ActionRuntime.evaluatePolicy')(function* evaluatePolicy(
-      policy: ActionPolicy<typeof payload, Owner>,
-    ) {
-      const policyExit = yield* Effect.exit(Effect.suspend(() => policy.evaluate(policyInput)));
-      if (Exit.isSuccess(policyExit)) {
-        return policyEvidence(policy);
-      }
-
-      const failureReasons = policyExit.cause.reasons.filter(Cause.isFailReason);
-      const [failureReason] = failureReasons;
-      if (
-        failureReasons.length === policyExit.cause.reasons.length &&
-        failureReason !== undefined &&
-        Schema.is(PolicyDenied)(failureReason.error)
-      ) {
-        const denial = failureReason.error;
-        yield* repository
-          .finalizePolicyDenial(database.executor, {
-            actionInvocationId: invocation.actionInvocationId,
-            actionKey: input.registration.descriptor.actionKey,
-            auditProfile: input.registration.descriptor.auditProfile,
-            policy: policyEvidence(policy),
-            principal,
-            reasonCode: denial.reasonCode,
-            transport: governedTransport,
-          })
-          .pipe(
-            Effect.tapError((error) =>
-              logInvocationPersistenceFailure(error, {
-                actionKey: input.registration.descriptor.actionKey,
-                correlationId: transport.correlationId,
-                invocationId: invocation.actionInvocationId,
-                policyKey: policy.policyKey,
-              }),
-            ),
-          );
-        return yield* new ActionPolicyDenied({
-          code: 'action_policy_denied',
-          policyReasonCode: denial.reasonCode,
-          reason: denial.reason,
-        });
-      }
-
-      yield* Effect.logError('Unexpected Action Policy evaluation failure', policyExit.cause);
-      return yield* new ActionPolicyEvaluationError({
-        code: 'action_policy_evaluation_failed',
-        reason: 'A required Action Policy could not be evaluated',
-      });
-    });
-    const allowedPolicies = yield* Effect.forEach(input.registration.descriptor.policies, evaluateActionPolicy, {
-      concurrency: 1,
-    });
-
-    const runningInvocation = yield* repository
-      .transitionInvocationToRunning(database.executor, invocation.actionInvocationId)
-      .pipe(
-        Effect.tapError((error) =>
-          logInvocationPersistenceFailure(error, {
-            actionKey: input.registration.descriptor.actionKey,
-            correlationId: transport.correlationId,
-            invocationId: invocation.actionInvocationId,
-          }),
-        ),
-      );
-    yield* verifyInvocation(runningInvocation, requestHash);
-    notifyStage('invocation_running');
-
-    const transactionBodyCompleted = yield* Ref.make(false);
-    const transactionBodyExit = yield* Ref.make<Exit.Exit<unknown, unknown> | null>(null);
-    const transactionProgram = Effect.fn('ActionRuntime.transaction')(function* executeTransaction(
-      drizzleTransaction: CoreTransaction,
-    ) {
-      const lockedInvocation = yield* repository.lockInvocation(drizzleTransaction, invocation.actionInvocationId).pipe(
-        Effect.tapError((error) =>
-          logInvocationPersistenceFailure(error, {
-            actionKey: input.registration.descriptor.actionKey,
-            correlationId: transport.correlationId,
-            invocationId: invocation.actionInvocationId,
-          }),
-        ),
-      );
-      notifyStage('invocation_locked');
-      yield* verifyInvocation(lockedInvocation, requestHash);
-
-      const scopedTransaction = yield* installScope(drizzleTransaction, scope);
-      notifyStage('database_scope_installed');
-
-      const actionEntrypoint = input.registration.descriptor.entrypoint;
-      if (actionEntrypoint.scope === 'tenant') {
-        const tenantEntrypoint = Object.freeze({
-          ...actionEntrypoint,
-          scope: 'tenant' as const,
-        }) satisfies TenantModuleEntrypoint<'action', 'write', Owner>;
-        yield* moduleStateGate.recheckWrite(drizzleTransaction, scope.tenantId, tenantEntrypoint);
-      }
-      notifyStage('module_state_rechecked');
-      const serviceFactory = resolveServiceFactory(input.registration);
-      const services = yield* serviceFactory(scopedTransaction, scope);
-      const handler = resolveHandler(input.registration);
-
-      const collector = createActionCollector(
-        input.registration.descriptor.domainEvents,
-        input.registration.descriptor.owningModuleKey,
-        input.registration.descriptor.accessEvidencePolicy,
-        input.registration.descriptor.auditEvidenceSchema,
-      );
-      const handlerContext = Object.freeze({
-        actionInvocationId: lockedInvocation.actionInvocationId,
-        addDomainEvent: collector.addDomainEvent,
-        addOutboxMessage: collector.addOutboxMessage,
-        recordAuditEvidence: collector.recordAuditEvidence,
-        recordDataAccess: collector.recordDataAccess,
-        scope,
-        services,
-      });
-
-      const handlerExit = yield* Effect.exit(Effect.suspend(() => handler(payload, handlerContext)));
-
-      if (Exit.isFailure(handlerExit)) {
-        const failureReasons = handlerExit.cause.reasons.filter(Cause.isFailReason);
-        const [failureReason] = failureReasons;
-        if (failureReasons.length === handlerExit.cause.reasons.length && failureReason !== undefined) {
-          if (Schema.is(ActionCollectorError)(failureReason.error)) {
-            return yield* failureReason.error;
-          }
-          const decodedDomainError = yield* Effect.option(
-            Schema.decodeUnknownEffect(input.registration.descriptor.domainErrorSchema)(failureReason.error),
-          );
-          if (Option.isSome(decodedDomainError)) {
-            return yield* Effect.fail(decodedDomainError.value);
-          }
-        }
-        yield* Effect.logError('Unexpected Action execution defect', handlerExit.cause);
-        return yield* makeHandlerExecutionError();
-      }
-      notifyStage('handler_executed');
-
-      const result = yield* decodeActionResult(input.registration.descriptor.resultSchema, handlerExit.value);
-
-      const resultHash = yield* Effect.try({
-        catch: (cause) =>
-          attachFailureCause(
-            new ActionResultValidationError({
-              code: 'action_result_invalid',
-              reason: 'The decoded Action result cannot be normalized safely',
-            }),
-            cause,
-          ),
-        try: () =>
-          computeCanonicalValueHash(
-            Result.getOrThrow(
-              Schema.encodeUnknownResult(
-                Schema.make<Schema.ConstraintEncoder<unknown>>(input.registration.descriptor.resultSchema.ast),
-              )(result),
-            ),
-          ),
-      });
-      yield* repository
-        .flushSuccess(drizzleTransaction, {
-          actionInvocationId: invocation.actionInvocationId,
-          actionKey: input.registration.descriptor.actionKey,
-          allowedPolicies,
-          auditProfile: input.registration.descriptor.auditProfile,
-          evidence: collector.snapshot(),
-          principal,
-          resultHash,
-          transport: governedTransport,
-        })
-        .pipe(
-          Effect.tapError((error) =>
-            logActionTransactionFailureCause(error, 'Unexpected Action success evidence persistence failure', {
-              actionKey: input.registration.descriptor.actionKey,
-              correlationId: transport.correlationId,
-              invocationId: invocation.actionInvocationId,
-            }),
-          ),
-        );
-      notifyStage('success_evidence_flushed');
-      yield* Ref.set(transactionBodyCompleted, true);
-      return result;
-    });
-    // The driver/body stay interruptible; classify the settled Cause before interruption resumes.
-    return yield* Effect.uninterruptibleMask(
-      Effect.fn('ActionRuntime.classifyTransactionOutcome')(function* classifyTransactionOutcome(
-        restore: <Value, Failure, Requirements>(
-          effect: Effect.Effect<Value, Failure, Requirements>,
-        ) => Effect.Effect<Value, Failure, Requirements>,
-      ) {
-        const transactionExit = yield* Effect.exit(
-          restore(
-            database.executor.transaction((transaction) =>
-              transactionProgram(transaction).pipe(Effect.onExit((exit) => Ref.set(transactionBodyExit, exit))),
-            ),
-          ),
-        );
-        if (Exit.isSuccess(transactionExit)) {
-          return transactionExit.value;
-        }
-
-        const bodyExit = yield* Ref.get(transactionBodyExit);
-        const bodyCompleted =
-          (yield* Ref.get(transactionBodyCompleted)) && bodyExit !== null && Exit.isSuccess(bodyExit);
+    const prepareAuthorizationPreflight = Effect.fn('ActionRuntime.prepareAuthorizationPreflight')(
+      function* prepareAuthorizationPreflightEffect() {
+        const decision =
+          authorizationPreflight === undefined
+            ? ({ outcome: 'not_applicable' } as const)
+            : yield* authorizationPreflight
+                .prepare({
+                  actionInvocationId: invocation.actionInvocationId,
+                  actionKey: input.registration.descriptor.actionKey,
+                  correlationId: transport.correlationId,
+                  payload,
+                  principal,
+                  scope,
+                })
+                .pipe(Effect.tapError((error) => Effect.logError(error.reason)));
+        const permit = decision.outcome === 'allowed' ? decision.permit : undefined;
         if (
-          bodyExit !== null &&
-          Exit.isFailure(bodyExit) &&
-          transactionExit.cause.reasons.some((reason) => Cause.isDieReason(reason) && isSqlError(reason.defect))
+          permit !== undefined &&
+          (permit.actionInvocationId !== invocation.actionInvocationId ||
+            permit.actionKey !== input.registration.descriptor.actionKey ||
+            permit.principalId !== principal.principalId)
         ) {
-          yield* Effect.logError('Action body failed before transaction rollback failed', bodyExit.cause);
+          return yield* permissionUnavailable();
         }
-        return yield* Effect.failCause(
-          Cause.fromReasons(
-            transactionExit.cause.reasons.map((reason) => {
-              if (Cause.isInterruptReason(reason)) {
-                return reason;
+        return { denied: decision.outcome === 'denied', permit };
+      },
+    );
+
+    const hasPermissionDenial = Effect.fn('ActionRuntime.hasPermissionDenial')(function* hasPermissionDenialEffect(
+      preflightDenied: boolean,
+      hasPreflightPermit: boolean,
+    ) {
+      const permissionDecision = yield* permission
+        .checkActionPermission({
+          actionKey: input.registration.descriptor.actionKey,
+          correlationId: transport.correlationId,
+          principalId: principal.principalId,
+        })
+        .pipe(Effect.tapError((error) => Effect.logError(error.reason)));
+      const tenantPermissionDecision = yield* checkTenantActionPermission(principal, tenantPermission);
+      const legalEntityPermissionDecision = yield* checkActionLegalEntityPermission(scope, legalEntityPermission);
+      const resourcePermissionDecision = yield* checkActionResourcePermission(scope, resourcePermissionTarget);
+      const businessPermissionDecision = yield* checkActionBusinessPermission(scope, businessPermissionTarget);
+      return (
+        preflightDenied ||
+        (permissionDecision === 'denied' && !hasPreflightPermit) ||
+        tenantPermissionDecision === 'denied' ||
+        legalEntityPermissionDecision === 'denied' ||
+        resourcePermissionDecision === 'denied' ||
+        businessPermissionDecision === 'denied'
+      );
+    });
+
+    const authorizePermissions = Effect.fn('ActionRuntime.authorizePermissions')(
+      function* authorizePermissionsEffect() {
+        // The trusted context already represents authentication. Authorization
+        // uses only the immutable Action key and trusted principal identity.
+        notifyStage('authentication_boundary');
+        const { denied: preflightDenied, permit: preflightPermit } = yield* prepareAuthorizationPreflight();
+        const permissionDenied = yield* hasPermissionDenial(preflightDenied, preflightPermit !== undefined);
+        notifyStage('permission_checked');
+        if (permissionDenied) {
+          return yield* rejectPermission();
+        }
+        if (preflightPermit !== undefined) {
+          yield* preflightPermit.consume;
+        }
+        return rejectPermission;
+      },
+    );
+
+    const evaluatePolicies = Effect.fn('ActionRuntime.evaluatePolicies')(function* evaluatePoliciesEffect() {
+      notifyStage('policy_boundary');
+
+      const policyInput: ActionPolicyEvaluatorInput<typeof payload> = Object.freeze({
+        action: Object.freeze({
+          actionKey: input.registration.descriptor.actionKey,
+          owningModuleKey: input.registration.descriptor.owningModuleKey,
+          schemaVersion: input.registration.descriptor.schemaVersion,
+        }),
+        payload,
+        principal: Object.freeze({ ...principal }),
+        target: Object.freeze({ ...actionTarget }),
+        transport: Object.freeze(
+          withOptionalProperty(
+            {
+              correlationId: transport.correlationId,
+            },
+            transport.traceId !== undefined,
+            'traceId',
+            transport.traceId,
+            {},
+          ),
+        ),
+      });
+      const evaluateActionPolicy = Effect.fn('ActionRuntime.evaluatePolicy')(function* evaluatePolicy(
+        policy: ActionPolicy<typeof payload, Owner>,
+      ) {
+        const policyExit = yield* Effect.exit(Effect.suspend(() => policy.evaluate(policyInput)));
+        if (Exit.isSuccess(policyExit)) {
+          return policyEvidence(policy);
+        }
+
+        const failureReasons = policyExit.cause.reasons.filter(Cause.isFailReason);
+        const [failureReason] = failureReasons;
+        if (
+          failureReasons.length === policyExit.cause.reasons.length &&
+          failureReason !== undefined &&
+          Schema.is(PolicyDenied)(failureReason.error)
+        ) {
+          const denial = failureReason.error;
+          yield* repository
+            .finalizePolicyDenial(
+              database.executor,
+              withOptionalProperty(
+                {
+                  actionInvocationId: invocation.actionInvocationId,
+                  actionKey: input.registration.descriptor.actionKey,
+                  auditProfile: input.registration.descriptor.auditProfile,
+                  policy: policyEvidence(policy),
+                  principal,
+                  reasonCode: denial.reasonCode,
+                  transport: governedTransport,
+                },
+                deniedAuditEvidence !== undefined,
+                'deniedAuditEvidence',
+                deniedAuditEvidence,
+                {},
+              ),
+            )
+            .pipe(
+              Effect.tapError((error) =>
+                logInvocationPersistenceFailure(error, {
+                  actionKey: input.registration.descriptor.actionKey,
+                  correlationId: transport.correlationId,
+                  invocationId: invocation.actionInvocationId,
+                  policyKey: policy.policyKey,
+                }),
+              ),
+            );
+          return yield* new ActionPolicyDenied({
+            code: 'action_policy_denied',
+            policyReasonCode: denial.reasonCode,
+            reason: denial.reason,
+          });
+        }
+
+        yield* Effect.logError('Unexpected Action Policy evaluation failure', policyExit.cause);
+        return yield* new ActionPolicyEvaluationError({
+          code: 'action_policy_evaluation_failed',
+          reason: 'A required Action Policy could not be evaluated',
+        });
+      });
+      const allowedPolicies = yield* Effect.forEach(input.registration.descriptor.policies, evaluateActionPolicy, {
+        concurrency: 1,
+      });
+      return allowedPolicies;
+    });
+
+    const authorizeAndEvaluatePolicies = Effect.fn('ActionRuntime.authorizeAndEvaluatePolicies')(
+      function* authorizeAndEvaluatePoliciesEffect() {
+        yield* authorizePermissions();
+        const allowedPolicies = yield* evaluatePolicies();
+        // Keep the public stage contract stable. The durable status transition happens inside the
+        // owner-authorized transaction below, after the transaction-local fence has passed.
+        notifyStage('invocation_running');
+        return allowedPolicies;
+      },
+    );
+    const allowedPolicies = yield* authorizeAndEvaluatePolicies();
+
+    const executeTransactionAndHandleExit = Effect.fn('ActionRuntime.executeTransactionAndHandleExit')(
+      function* executeTransactionAndHandleExitEffect() {
+        const transactionBodyCompleted = yield* Ref.make(false);
+        const transactionBodyExit = yield* Ref.make<Exit.Exit<unknown, unknown> | null>(null);
+        const transactionProgram: (
+          drizzleTransaction: CoreTransaction,
+        ) => Effect.Effect<
+          ResultSchema['Type'] | CommittedActionDomainRejection<DomainErrorSchema['Type']>,
+          ActionCoreError | DomainErrorSchema['Type'],
+          HandlerRequirements
+        > = Effect.fn('ActionRuntime.transaction')(function* executeTransaction(drizzleTransaction: CoreTransaction) {
+          const lockedInvocation = yield* repository
+            .lockInvocation(drizzleTransaction, invocation.actionInvocationId)
+            .pipe(
+              Effect.tapError((error) =>
+                logInvocationPersistenceFailure(error, {
+                  actionKey: input.registration.descriptor.actionKey,
+                  correlationId: transport.correlationId,
+                  invocationId: invocation.actionInvocationId,
+                }),
+              ),
+            );
+          notifyStage('invocation_locked');
+          yield* verifyInvocation(lockedInvocation, requestHash);
+
+          const scopedTransaction = yield* installScope(drizzleTransaction, scope);
+          notifyStage('database_scope_installed');
+
+          const actionEntrypoint = input.registration.descriptor.entrypoint;
+          if (actionEntrypoint.scope === 'tenant') {
+            const tenantEntrypoint = Object.freeze({
+              ...actionEntrypoint,
+              scope: 'tenant' as const,
+            }) satisfies TenantModuleEntrypoint<'action', 'write', Owner>;
+            yield* moduleStateGate.recheckWrite(drizzleTransaction, scope.tenantId, tenantEntrypoint);
+          }
+          notifyStage('module_state_rechecked');
+          const ownerAuthorizationDecision = yield* ownerAuthorizationOverlay.authorize(
+            scopedTransaction,
+            Object.freeze({
+              operation: 'action' as const,
+              operationKey: input.registration.descriptor.actionKey,
+              owningModuleKey: input.registration.descriptor.owningModuleKey,
+              scope,
+              targets: frozenOwnerAuthorizationTargets,
+            }),
+          );
+          if (ownerAuthorizationDecision !== 'allowed') {
+            return yield* ownerAuthorizationFailure(ownerAuthorizationDecision);
+          }
+          const runningInvocation = yield* repository
+            .transitionInvocationToRunning(scopedTransaction, invocation.actionInvocationId)
+            .pipe(
+              Effect.tapError((error) =>
+                logInvocationPersistenceFailure(error, {
+                  actionKey: input.registration.descriptor.actionKey,
+                  correlationId: transport.correlationId,
+                  invocationId: invocation.actionInvocationId,
+                }),
+              ),
+            );
+          yield* verifyInvocation(runningInvocation, requestHash);
+          const serviceFactory = resolveServiceFactory(input.registration);
+          const services = yield* serviceFactory(scopedTransaction, scope);
+          const handler = resolveHandler(input.registration);
+
+          const collector = createActionCollector(
+            input.registration.descriptor.domainEvents,
+            input.registration.descriptor.owningModuleKey,
+            input.registration.descriptor.accessEvidencePolicy,
+            input.registration.descriptor.auditEvidenceSchema,
+          );
+          const handlerContext = Object.freeze({
+            actionInvocationId: lockedInvocation.actionInvocationId,
+            addDomainEvent: collector.addDomainEvent,
+            addOutboxMessage: collector.addOutboxMessage,
+            recordAuditEvidence: collector.recordAuditEvidence,
+            recordDataAccess: collector.recordDataAccess,
+            scope,
+            services,
+          });
+
+          const handlerExit = yield* Effect.exit(Effect.suspend(() => handler(payload, handlerContext)));
+
+          if (Exit.isFailure(handlerExit)) {
+            const failureReasons = handlerExit.cause.reasons.filter(Cause.isFailReason);
+            const [failureReason] = failureReasons;
+            if (failureReasons.length === handlerExit.cause.reasons.length && failureReason !== undefined) {
+              if (Schema.is(ActionCollectorError)(failureReason.error)) {
+                return yield* failureReason.error;
               }
-              const failure = Cause.isFailReason(reason) ? reason.error : reason.defect;
-              if (!isSqlError(failure)) {
-                return reason;
+              const decodedDomainError = yield* Effect.option(
+                Schema.decodeUnknownEffect(input.registration.descriptor.domainErrorSchema)(failureReason.error),
+              );
+              if (Option.isSome(decodedDomainError)) {
+                return yield* Effect.fail(decodedDomainError.value);
               }
-              return Cause.makeFailReason(
-                bodyCompleted && isCommitAcknowledgementFailure(failure)
-                  ? new ActionCommitIndeterminate({
-                      code: 'action_commit_indeterminate',
-                      invocationId: invocation.actionInvocationId,
-                      reason: 'The database did not confirm whether the Action commit completed',
-                    })
-                  : transactionFailure(),
+            }
+            yield* Effect.logError('Unexpected Action execution defect', handlerExit.cause);
+            return yield* makeHandlerExecutionError();
+          }
+          notifyStage('handler_executed');
+
+          const handlerValue = handlerExit.value;
+          let transactionValue: ResultSchema['Type'] | CommittedActionDomainRejection<DomainErrorSchema['Type']>;
+          let resultHash: string;
+          if (Schema.is(CommittedActionDomainRejectionSchema)(handlerValue)) {
+            const committedDomainError = yield* Schema.encodeUnknownEffect(
+              Schema.make<Schema.ConstraintEncoder<unknown>>(input.registration.descriptor.domainErrorSchema.ast),
+            )(getCommittedActionDomainError(handlerValue)).pipe(
+              Effect.flatMap((encodedDomainError) =>
+                Schema.decodeUnknownEffect(input.registration.descriptor.domainErrorSchema)(encodedDomainError).pipe(
+                  Effect.map((domainError) => ({ domainError, encodedDomainError })),
+                ),
+              ),
+              Effect.tapError((cause) =>
+                Effect.logError('Invalid committed Action domain rejection returned by handler', cause),
+              ),
+              Effect.mapError((cause) => attachFailureCause(makeHandlerExecutionError(), cause)),
+            );
+            transactionValue = commitActionThenReject(committedDomainError.domainError);
+            resultHash = yield* Effect.try({
+              catch: (cause) => attachFailureCause(makeHandlerExecutionError(), cause),
+              try: () => computeCanonicalValueHash(committedDomainError.encodedDomainError),
+            });
+          } else {
+            const result = yield* decodeActionResult(input.registration.descriptor.resultSchema, handlerValue);
+            transactionValue = result;
+            resultHash = yield* Effect.try({
+              catch: (cause) =>
+                attachFailureCause(
+                  new ActionResultValidationError({
+                    code: 'action_result_invalid',
+                    reason: 'The decoded Action result cannot be normalized safely',
+                  }),
+                  cause,
+                ),
+              try: () =>
+                computeCanonicalValueHash(
+                  Result.getOrThrow(
+                    Schema.encodeUnknownResult(
+                      Schema.make<Schema.ConstraintEncoder<unknown>>(input.registration.descriptor.resultSchema.ast),
+                    )(result),
+                  ),
+                ),
+            });
+          }
+          yield* repository
+            .flushSuccess(drizzleTransaction, {
+              actionInvocationId: invocation.actionInvocationId,
+              actionKey: input.registration.descriptor.actionKey,
+              allowedPolicies,
+              auditProfile: input.registration.descriptor.auditProfile,
+              evidence: collector.snapshot(),
+              principal,
+              resultHash,
+              transport: governedTransport,
+            })
+            .pipe(
+              Effect.tapError((error) =>
+                logActionTransactionFailureCause(error, 'Unexpected Action success evidence persistence failure', {
+                  actionKey: input.registration.descriptor.actionKey,
+                  correlationId: transport.correlationId,
+                  invocationId: invocation.actionInvocationId,
+                }),
+              ),
+            );
+          notifyStage('success_evidence_flushed');
+          yield* Ref.set(transactionBodyCompleted, true);
+          return transactionValue;
+        });
+        // The driver/body stay interruptible; classify the settled Cause before interruption resumes.
+        const transactionOutcomeExit = yield* Effect.exit(
+          Effect.uninterruptibleMask(
+            Effect.fn('ActionRuntime.classifyTransactionOutcome')(function* classifyTransactionOutcome(
+              restore: <Value, Failure, Requirements>(
+                effect: Effect.Effect<Value, Failure, Requirements>,
+              ) => Effect.Effect<Value, Failure, Requirements>,
+            ) {
+              const transactionExit = yield* Effect.exit(
+                restore(
+                  database.executor.transaction((transaction) =>
+                    transactionProgram(transaction).pipe(Effect.onExit((exit) => Ref.set(transactionBodyExit, exit))),
+                  ),
+                ),
+              );
+              if (Exit.isSuccess(transactionExit)) {
+                return transactionExit.value;
+              }
+
+              const bodyExit = yield* Ref.get(transactionBodyExit);
+              const bodyCompleted =
+                (yield* Ref.get(transactionBodyCompleted)) && bodyExit !== null && Exit.isSuccess(bodyExit);
+              if (
+                bodyExit !== null &&
+                Exit.isFailure(bodyExit) &&
+                transactionExit.cause.reasons.some((reason) => Cause.isDieReason(reason) && isSqlError(reason.defect))
+              ) {
+                yield* Effect.logError('Action body failed before transaction rollback failed', bodyExit.cause);
+              }
+              return yield* Effect.failCause(
+                Cause.fromReasons(
+                  transactionExit.cause.reasons.map((reason) => {
+                    if (Cause.isInterruptReason(reason)) {
+                      return reason;
+                    }
+                    const failure = Cause.isFailReason(reason) ? reason.error : reason.defect;
+                    if (!isSqlError(failure)) {
+                      return reason;
+                    }
+                    return Cause.makeFailReason(
+                      bodyCompleted && isCommitAcknowledgementFailure(failure)
+                        ? new ActionCommitIndeterminate({
+                            code: 'action_commit_indeterminate',
+                            invocationId: invocation.actionInvocationId,
+                            reason: 'The database did not confirm whether the Action commit completed',
+                          })
+                        : transactionFailure(),
+                    );
+                  }),
+                ),
               );
             }),
           ),
         );
-      }),
+        if (Exit.isFailure(transactionOutcomeExit)) {
+          const ownerDenied = transactionOutcomeExit.cause.reasons.some(
+            (reason) => Cause.isFailReason(reason) && Schema.is(ActionPermissionDenied)(reason.error),
+          );
+          if (ownerDenied) {
+            return yield* rejectPermission();
+          }
+          return yield* Effect.failCause(transactionOutcomeExit.cause);
+        }
+        const transactionResult = transactionOutcomeExit.value;
+        if (Schema.is(CommittedActionDomainRejectionSchema)(transactionResult)) {
+          return yield* Effect.fail(getCommittedActionDomainError<DomainErrorSchema['Type']>(transactionResult));
+        }
+        return transactionResult;
+      },
     );
+    return yield* executeTransactionAndHandleExit();
   });
 
   const resolveActionCommit: ActionRuntimeService['resolveActionCommit'] = Effect.fn(
@@ -1073,6 +1585,8 @@ export class ActionRuntime extends Context.Service<ActionRuntime, ActionRuntimeS
 export const ActionRuntimeLive = Layer.effect(
   ActionRuntime,
   Effect.gen(function* makeActionRuntimeService() {
+    const ownerAuthorizationOverlay = yield* Effect.serviceOption(OwnerAuthorizationOverlay);
+    const authorizationPreflight = yield* Effect.serviceOption(ActionAuthorizationPreflight);
     const [database, repository, permission, moduleEntrypointGateway, moduleStateGate, scopeResolver, contextAccess] =
       yield* Effect.all(
         [
@@ -1086,11 +1600,18 @@ export const ActionRuntimeLive = Layer.effect(
         ] as const,
         { concurrency: 7 },
       );
-    return makeActionRuntime(database, repository, permission, scopeResolver, {
+    let runtimeOptions: ActionRuntimeOptions = {
       contextAccess,
       moduleEntrypointGateway,
       moduleStateGate,
-    });
+      ownerAuthorizationOverlay: Option.isSome(ownerAuthorizationOverlay)
+        ? ownerAuthorizationOverlay.value
+        : failClosedOwnerAuthorizationOverlay,
+    };
+    if (Option.isSome(authorizationPreflight)) {
+      runtimeOptions = { ...runtimeOptions, authorizationPreflight: authorizationPreflight.value };
+    }
+    return makeActionRuntime(database, repository, permission, scopeResolver, runtimeOptions);
   }),
 );
 

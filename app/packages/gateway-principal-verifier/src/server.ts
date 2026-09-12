@@ -1,4 +1,5 @@
-import type { GatewayAssertionRedemption } from '@app/core-runtime';
+import { trustVerifiedGatewayPrincipalContext } from '@app/core-runtime/auth/system-principal-context-provenance';
+import type { GatewayAssertionRedemption } from '@app/core-runtime/auth/gateway-assertion-redemption';
 import { TrustedPrincipalContextSchema } from '@app/core-runtime/actions/principal-context';
 import type { TrustedPrincipalContext } from '@app/core-runtime/actions/principal-context';
 import {
@@ -385,7 +386,7 @@ export const bindGatewayPrincipalVerifier = <const Audience extends string>(expe
             }),
           ),
       ),
-      Effect.map(({ principal }) => principal),
+      Effect.map(({ principal }) => trustVerifiedGatewayPrincipalContext(principal)),
     );
   }
 

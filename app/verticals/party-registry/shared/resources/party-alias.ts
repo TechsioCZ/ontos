@@ -9,13 +9,13 @@ import { PartyMergeRefSchema } from './party-merge.ts';
 import { PartyRefSchema } from './party.ts';
 import { PartyRegistryResourceIdJsonSchema, PartyRegistryTenantIdJsonSchema } from './resource-ref-identifiers.ts';
 
-export const PartyAliasRefSchema = Schema.Struct({
+// oxlint-disable-next-line eslint/no-unused-vars -- Reserved generated ResourceRef schema retained without publishing a new API.
+const PartyAliasRefSchema = Schema.Struct({
   moduleId: Schema.Literal('party.registry'),
   resourceId: PartyRegistryResourceIdJsonSchema,
   resourceType: Schema.Literal('party.registry.party-alias'),
   tenantId: PartyRegistryTenantIdJsonSchema,
 });
-export type PartyAliasRef = typeof PartyAliasRefSchema.Type;
 
 /** Permanent tenant-scoped absorbed Party identity mapping; never an alternate business name. */
 export const PartyAliasSchema = Schema.Struct({

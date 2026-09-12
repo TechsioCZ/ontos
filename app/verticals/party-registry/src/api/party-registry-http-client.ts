@@ -50,7 +50,7 @@ export const partyRegistryHttpRequestContext = (
 
 export const authenticatePartyRegistryHttpRequest = (
   context: PartyRegistryHttpRequestContextValue,
-  credential: Redacted.Redacted<string>,
+  credential: Redacted.Redacted,
   requestCorrelation: string,
   requestCorrelationHeader = requestCorrelationHeaderName,
   requestTrace?: string,

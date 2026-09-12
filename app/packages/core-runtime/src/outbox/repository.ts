@@ -36,6 +36,7 @@ interface OutboxMatchResult {
   readonly messagesMatched: number;
 }
 export interface OutboxClaim {
+  readonly actorPrincipalId?: string;
   readonly attemptId: string;
   readonly attemptNumber: number;
   readonly claimId: string;
@@ -90,18 +91,37 @@ const claimLost = (): OutboxClaimLostError =>
 const streamKeyFor = (producerModuleKey: string, topic: string): string => `${producerModuleKey}:${topic}`;
 const addMilliseconds = (date: Date, milliseconds: number): Date =>
   DateTime.toDateUtc(DateTime.addDuration(DateTime.makeUnsafe(date), milliseconds));
-const loadClaimCorrelationId = Effect.fnUntraced(function* loadClaimCorrelationId(
+const loadClaimInvocationEvidence = Effect.fnUntraced(function* loadClaimInvocationEvidence(
   transaction: CoreTransaction,
   actionInvocationId: string | null,
+  tenantId: string,
 ) {
   if (actionInvocationId === null) {
-    return null;
+    return {} as const;
   }
   const [invocation] = yield* transaction
-    .select({ correlationId: actionInvocations.correlationId })
+    .select({
+      actorPrincipalId: actionInvocations.principalId,
+      correlationId: actionInvocations.correlationId,
+    })
     .from(actionInvocations)
-    .where(eq(actionInvocations.actionInvocationId, actionInvocationId));
-  return invocation?.correlationId;
+    .where(and(eq(actionInvocations.actionInvocationId, actionInvocationId), eq(actionInvocations.tenantId, tenantId)));
+  if (invocation === undefined) {
+    return {} as const;
+  }
+  return withOptionalProperty(
+    withOptionalProperty(
+      {},
+      invocation.actorPrincipalId !== null,
+      'actorPrincipalId',
+      invocation.actorPrincipalId ?? '',
+      {},
+    ),
+    invocation.correlationId !== null,
+    'correlationId',
+    invocation.correlationId ?? '',
+    {},
+  );
 });
 
 export const makeOutboxRepository = (executor: CoreDatabaseExecutor): OutboxRepositoryService => ({
@@ -214,31 +234,29 @@ export const makeOutboxRepository = (executor: CoreDatabaseExecutor): OutboxRepo
               reason: 'Attempt insert returned no row',
             });
           }
-          const correlationId = yield* loadClaimCorrelationId(transaction, candidate.actionInvocationId);
+          const invocationEvidence = yield* loadClaimInvocationEvidence(
+            transaction,
+            candidate.actionInvocationId,
+            candidate.tenantId,
+          );
           return Option.some(
-            withOptionalProperty(
-              {
-                attemptId: attempt.attemptId,
-                attemptNumber: claimed.attemptsCount,
-                claimId,
-                consumerModuleKey: candidate.consumerModuleKey,
-              },
-              !(correlationId === null || correlationId === undefined),
-              'correlationId',
-              correlationId ?? '',
-              {
-                deliveryId: candidate.deliveryId,
-                domainEventId: candidate.domainEventId,
-                messageId: candidate.messageId,
-                payloadJson: candidate.payloadJson,
-                producerModuleKey: candidate.producerModuleKey,
-                retryPolicy: registration.descriptor.retryPolicy,
-                tenantId: candidate.tenantId,
-                tenantSequenceNo: candidate.tenantSequenceNo,
-                topic: candidate.topic,
-                workerKey: candidate.workerKey,
-              },
-            ) satisfies OutboxClaim,
+            Object.freeze({
+              attemptId: attempt.attemptId,
+              attemptNumber: claimed.attemptsCount,
+              claimId,
+              consumerModuleKey: candidate.consumerModuleKey,
+              deliveryId: candidate.deliveryId,
+              domainEventId: candidate.domainEventId,
+              ...invocationEvidence,
+              messageId: candidate.messageId,
+              payloadJson: candidate.payloadJson,
+              producerModuleKey: candidate.producerModuleKey,
+              retryPolicy: registration.descriptor.retryPolicy,
+              tenantId: candidate.tenantId,
+              tenantSequenceNo: candidate.tenantSequenceNo,
+              topic: candidate.topic,
+              workerKey: candidate.workerKey,
+            } satisfies OutboxClaim),
           );
         }),
       )

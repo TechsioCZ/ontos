@@ -453,6 +453,58 @@ export default defineConfig({
       },
     },
     {
+      // Codesmith derives these filenames from the governed Action and outbox identities; their
+      // dotted contract names are intentional and the generated adapters must retain local aliases.
+      files: [
+        'verticals/commerce-customer-context/src/actions/archive-customer-profile.commerce-customer-context-customer-profile-archived-v1.outbox-message.ts',
+        'verticals/commerce-customer-context/src/actions/attribute-guest-retail-customer.commerce-customer-context-guest-retail-customer-attributed-v1.outbox-message.ts',
+        'verticals/commerce-customer-context/src/actions/bind-retail-portal-profile.commerce-customer-context-retail-portal-profile-binding-activated-v1.outbox-message.ts',
+        'verticals/commerce-customer-context/src/actions/bootstrap-counterparty-access-administrator.commerce-customer-context-counterparty-access-administrator-bootstrap-authorization-mutation-requested-v1.outbox-message.ts',
+        'verticals/commerce-customer-context/src/actions/bootstrap-counterparty-access-administrator.commerce-customer-context-counterparty-access-administrator-bootstrapped-v1.outbox-message.ts',
+        'verticals/commerce-customer-context/src/actions/claim-counterparty-access-invitation.commerce-customer-context-counterparty-access-invitation-claim-authorization-mutation-requested-v1.outbox-message.ts',
+        'verticals/commerce-customer-context/src/actions/claim-counterparty-access-invitation.commerce-customer-context-counterparty-access-invitation-claimed-v1.outbox-message.ts',
+        'verticals/commerce-customer-context/src/actions/create-counterparty-access-invitation.commerce-customer-context-counterparty-access-invitation-created-v1.outbox-message.ts',
+        'verticals/commerce-customer-context/src/actions/create-counterparty-purchasing-profile.commerce-customer-context-counterparty-purchasing-profile-created-v1.outbox-message.ts',
+        'verticals/commerce-customer-context/src/actions/ensure-retail-customer-profile.commerce-customer-context-retail-customer-profile-created-v1.outbox-message.ts',
+        'verticals/commerce-customer-context/src/actions/grant-counterparty-commerce-access.commerce-customer-context-counterparty-access-grant-authorization-mutation-requested-v1.outbox-message.ts',
+        'verticals/commerce-customer-context/src/actions/grant-counterparty-commerce-access.commerce-customer-context-counterparty-access-granted-v1.outbox-message.ts',
+        'verticals/commerce-customer-context/src/actions/open-profile-reconciliation.commerce-customer-context-profile-reconciliation-opened-v1.outbox-message.ts',
+        'verticals/commerce-customer-context/src/actions/reactivate-customer-profile.commerce-customer-context-customer-profile-reactivated-v1.outbox-message.ts',
+        'verticals/commerce-customer-context/src/actions/recover-retail-portal-profile-binding.commerce-customer-context-retail-portal-profile-binding-recovered-v1.outbox-message.ts',
+        'verticals/commerce-customer-context/src/actions/resend-counterparty-access-invitation.commerce-customer-context-counterparty-access-invitation-resent-v1.outbox-message.ts',
+        'verticals/commerce-customer-context/src/actions/resolve-profile-reconciliation.commerce-customer-context-profile-reconciliation-completed-v1.outbox-message.ts',
+        'verticals/commerce-customer-context/src/actions/revoke-counterparty-access-invitation.commerce-customer-context-counterparty-access-invitation-revoked-v1.outbox-message.ts',
+        'verticals/commerce-customer-context/src/actions/revoke-counterparty-commerce-access.commerce-customer-context-counterparty-access-revoke-authorization-mutation-requested-v1.outbox-message.ts',
+        'verticals/commerce-customer-context/src/actions/revoke-counterparty-commerce-access.commerce-customer-context-counterparty-access-revoked-v1.outbox-message.ts',
+        'verticals/commerce-customer-context/src/actions/revoke-retail-portal-profile-binding.commerce-customer-context-retail-portal-profile-binding-revoked-v1.outbox-message.ts',
+        'verticals/commerce-customer-context/src/actions/suspend-customer-profile.commerce-customer-context-customer-profile-suspended-v1.outbox-message.ts',
+        'verticals/commerce-customer-context/tests/access.rstest.config.ts',
+        'verticals/commerce-customer-context/tests/address.rstest.config.ts',
+        'verticals/payment-term-catalog/src/actions/correct-payment-term.payment-term-catalog-payment-term-metadata-corrected-v1.outbox-message.ts',
+        'verticals/payment-term-catalog/src/actions/create-payment-term.payment-term-catalog-payment-term-created-v1.outbox-message.ts',
+        'verticals/payment-term-catalog/src/actions/reconcile-payment-term-reference.payment-term-catalog-payment-term-reference-reconciled-v1.outbox-message.ts',
+        'verticals/payment-term-catalog/src/actions/retire-payment-term.payment-term-catalog-payment-term-retired-v1.outbox-message.ts',
+      ],
+      rules: {
+        'github/filenames-match-regex': 'off',
+        'unicorn/prefer-export-from': 'off',
+      },
+    },
+    {
+      // These generated/public roots are intentionally aggregate entrypoints for the complete
+      // typed API surface; keep the barrel contract explicit until a registry replaces it.
+      files: [
+        'verticals/commerce-customer-context/shared/api.ts',
+        'verticals/commerce-customer-context/src/api/commerce-customer-context-client.ts',
+        'verticals/payment-term-catalog/shared/api.ts',
+        'verticals/payment-term-catalog/src/api/payment-term-catalog-client.ts',
+      ],
+      rules: {
+        'oxc/no-barrel-file': 'off',
+        'sonarjs/no-wildcard-import': 'off',
+      },
+    },
+    {
       // These files define intentionally non-production demo/test credentials.
       files: [
         'apps/shell-super-app/api/auth/stage-demo-bootstrap-contract.ts',
@@ -810,6 +862,7 @@ export default defineConfig({
         'react-doctor/js-combine-iterations': 'off',
         'react-doctor/js-index-maps': 'off',
         'react-doctor/js-set-map-lookups': 'off',
+        'effect-native/no-unbranded-identifier-schema': 'off',
         'sonarjs/function-name': 'off',
         'sonarjs/no-duplicate-string': 'off',
         'sonarjs/no-identical-functions': 'off',

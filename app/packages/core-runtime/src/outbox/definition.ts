@@ -14,9 +14,13 @@ export interface OutboxWorkerRetryPolicy {
   readonly multiplier: number;
 }
 
-export interface OutboxWorkerHandlerContext extends Readonly<Partial<Record<'correlationId', string>>> {
+export interface OutboxWorkerHandlerContext extends Readonly<
+  Partial<Record<'actorPrincipalId' | 'correlationId', string>>
+> {
   readonly attemptNumber: number;
   readonly claimId: string;
+  /** Core-attested owner identity. Legacy test contexts may omit it but cannot publish. */
+  readonly consumerModuleKey?: string;
   readonly deliveryId: string;
   readonly domainEventId: string;
   readonly messageId: string;

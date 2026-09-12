@@ -1,0 +1,35 @@
+{
+  "name": "@app/payment-term-catalog-contracts",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Payment-owned public Payment Term contracts and generated Current catalog client.",
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts",
+    "./current-payment-terms": "./src/apis/current-payment-terms.ts",
+    "./current-payment-terms/client": "./src/api/current-payment-terms-client.ts",
+    "./payment-term": "./src/domain/payment-term.ts",
+    "./payment-term-reference": "./src/domain/payment-term-reference.ts",
+    "./resources/payment-term": "./src/resources/payment-term.ts"
+  },
+  "scripts": {
+    "test:unit": "rstest --project unit",
+    "typecheck": "node ../../scripts/ultramodern-typecheck.mts --project tsconfig.json"
+  },
+  "dependencies": {
+    "@app/core-runtime": "workspace:*",
+    "@app/shared-contracts": "workspace:*",
+    "effect": "4.0.0-rc.112"
+  },
+  "devDependencies": {
+    "@rstest/core": "0.11.11",
+    "@types/node": "20.19.43",
+    "effect-rstest": "https://pkg.pr.new/ScriptedAlchemy/effect-rstest@79abbf684c7b150ee5f32694129a7caf969903bc"
+  },
+  "ontosContractOwner": {
+    "appId": "payment-term-catalog",
+    "moduleApis": ["current-payment-terms"],
+    "moduleId": "payment.term-catalog",
+    "packageName": "@app/payment-term-catalog"
+  }
+}

@@ -1,0 +1,1 @@
+ALTER TABLE "commerce_customer_context"."payment_term_retirement_reservations" DROP CONSTRAINT "ccc_payment_term_retirement_reservations_ids_ck", ADD CONSTRAINT "ccc_payment_term_retirement_reservations_ids_ck" CHECK (cardinality("payment_term_resource_ids") between 1 and 200 and array_position("payment_term_resource_ids", null) is null);

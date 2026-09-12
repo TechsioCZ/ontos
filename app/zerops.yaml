@@ -23,7 +23,9 @@ zerops:
         - 'app/pnpm-workspace.yaml'
         - 'app/scripts'
         - 'app/tsconfig.base.json'
+        - 'app/verticals/commerce-customer-context'
         - 'app/verticals/party-registry'
+        - 'app/verticals/payment-term-catalog'
     deploy:
       temporaryShutdown: false
       readinessCheck:
@@ -128,6 +130,7 @@ zerops:
         PORT: '4102'
         SPICEDB_ENDPOINT: 'spicedb:50051'
         SPICEDB_INSECURE: 'true'
+        SPICEDB_PRESHARED_KEY: ${spicedb_SPICEDB_GRPC_PRESHARED_KEY}
         ULTRAMODERN_DEPLOYMENT_ENVIRONMENT: stage
         ULTRAMODERN_ZEROPS_SERVICE: party-registry
         VERTICAL_PARTY_REGISTRY_PORT: '4102'
@@ -136,6 +139,100 @@ zerops:
           port: 4102
           path: '/party-registry-api/party-registry/readiness'
       start: sh -c 'cd app/.zerops/runtime/party-registry && PATH="/var/www/.local/node-26.7.0/bin:$PATH" exec npm run serve'
+
+  - setup: 'commerce-customer-context'
+    build:
+      base: 'alpine@3.23'
+      prepareCommands:
+        - sudo apk add --no-cache curl libstdc++
+        - sh /build/source/app/scripts/install-zerops-node.sh --with-pnpm 11.25.0
+      buildCommands:
+        - cd app && PATH="$HOME/.local/node-26.7.0/bin:$PATH" node scripts/reset-workspace-dependencies.mjs
+        - cd app && PNPM_CONFIG_ENABLE_GLOBAL_VIRTUAL_STORE=false PATH="$HOME/.local/node-26.7.0/bin:$PATH" pnpm install --frozen-lockfile --force --config.enable-global-virtual-store=false --virtual-store-dir=node_modules/.pnpm
+        - cd app && NODE_OPTIONS=--max-old-space-size=4096 PNPM_CONFIG_ENABLE_GLOBAL_VIRTUAL_STORE=false ULTRAMODERN_SOURCE_REVISION="$(git rev-parse HEAD)" PATH="$HOME/.local/node-26.7.0/bin:$PATH" pnpm --config.enable-global-virtual-store=false --filter '@app/commerce-customer-context' run build
+        - cd app && PNPM_CONFIG_ENABLE_GLOBAL_VIRTUAL_STORE=false PATH="$HOME/.local/node-26.7.0/bin:$PATH" pnpm --config.enable-global-virtual-store=false run zerops:materialize --app 'commerce-customer-context' --package '@app/commerce-customer-context' --package-dir 'verticals/commerce-customer-context'
+        - cp 'app/topology/reference-topology.json' 'app/.zerops/runtime/commerce-customer-context/topology.json'
+        - cp 'app/topology/local-overlays/development.json' 'app/.zerops/runtime/commerce-customer-context/local-overlay.json'
+      deployFiles:
+        - 'app/.zerops/runtime/commerce-customer-context'
+        - 'app/scripts/install-zerops-node.sh'
+    deploy:
+      temporaryShutdown: false
+      readinessCheck:
+        httpGet:
+          port: 4101
+          path: '/commerce-customer-context-api/commerce-customer-context/readiness'
+        failureTimeout: 3m
+        retryPeriod: 10s
+    run:
+      base: 'nodejs@24'
+      initCommands:
+        - ZEROPS_NODE_ROOT=/var/www sh app/scripts/install-zerops-node.sh
+      ports:
+        - port: 4101
+          protocol: tcp
+          httpSupport: true
+      envVariables:
+        NODE_ENV: production
+        PORT: '4101'
+        SPICEDB_ENDPOINT: 'spicedb:50051'
+        SPICEDB_INSECURE: 'true'
+        SPICEDB_PRESHARED_KEY: ${spicedb_SPICEDB_GRPC_PRESHARED_KEY}
+        ULTRAMODERN_DEPLOYMENT_ENVIRONMENT: stage
+        ULTRAMODERN_ZEROPS_SERVICE: commerce-customer-context
+        VERTICAL_COMMERCE_CUSTOMER_CONTEXT_PORT: '4101'
+      healthCheck:
+        httpGet:
+          port: 4101
+          path: '/commerce-customer-context-api/commerce-customer-context/readiness'
+      start: sh -c 'cd app/.zerops/runtime/commerce-customer-context && PATH="/var/www/.local/node-26.7.0/bin:$PATH" exec npm run serve'
+
+  - setup: 'payment-term-catalog'
+    build:
+      base: 'alpine@3.23'
+      prepareCommands:
+        - sudo apk add --no-cache curl libstdc++
+        - sh /build/source/app/scripts/install-zerops-node.sh --with-pnpm 11.25.0
+      buildCommands:
+        - cd app && PATH="$HOME/.local/node-26.7.0/bin:$PATH" node scripts/reset-workspace-dependencies.mjs
+        - cd app && PNPM_CONFIG_ENABLE_GLOBAL_VIRTUAL_STORE=false PATH="$HOME/.local/node-26.7.0/bin:$PATH" pnpm install --frozen-lockfile --force --config.enable-global-virtual-store=false --virtual-store-dir=node_modules/.pnpm
+        - cd app && NODE_OPTIONS=--max-old-space-size=4096 PNPM_CONFIG_ENABLE_GLOBAL_VIRTUAL_STORE=false ULTRAMODERN_SOURCE_REVISION="$(git rev-parse HEAD)" PATH="$HOME/.local/node-26.7.0/bin:$PATH" pnpm --config.enable-global-virtual-store=false --filter '@app/payment-term-catalog' run build
+        - cd app && PNPM_CONFIG_ENABLE_GLOBAL_VIRTUAL_STORE=false PATH="$HOME/.local/node-26.7.0/bin:$PATH" pnpm --config.enable-global-virtual-store=false run zerops:materialize --app 'payment-term-catalog' --package '@app/payment-term-catalog' --package-dir 'verticals/payment-term-catalog'
+        - cp 'app/topology/reference-topology.json' 'app/.zerops/runtime/payment-term-catalog/topology.json'
+        - cp 'app/topology/local-overlays/development.json' 'app/.zerops/runtime/payment-term-catalog/local-overlay.json'
+      deployFiles:
+        - 'app/.zerops/runtime/payment-term-catalog'
+        - 'app/scripts/install-zerops-node.sh'
+    deploy:
+      temporaryShutdown: false
+      readinessCheck:
+        httpGet:
+          port: 4103
+          path: '/payment-term-catalog-api/payment-term-catalog/readiness'
+        failureTimeout: 3m
+        retryPeriod: 10s
+    run:
+      base: 'nodejs@24'
+      initCommands:
+        - ZEROPS_NODE_ROOT=/var/www sh app/scripts/install-zerops-node.sh
+      ports:
+        - port: 4103
+          protocol: tcp
+          httpSupport: true
+      envVariables:
+        NODE_ENV: production
+        PORT: '4103'
+        SPICEDB_ENDPOINT: 'spicedb:50051'
+        SPICEDB_INSECURE: 'true'
+        SPICEDB_PRESHARED_KEY: ${spicedb_SPICEDB_GRPC_PRESHARED_KEY}
+        ULTRAMODERN_DEPLOYMENT_ENVIRONMENT: stage
+        ULTRAMODERN_ZEROPS_SERVICE: payment-term-catalog
+        VERTICAL_PAYMENT_TERM_CATALOG_PORT: '4103'
+      healthCheck:
+        httpGet:
+          port: 4103
+          path: '/payment-term-catalog-api/payment-term-catalog/readiness'
+      start: sh -c 'cd app/.zerops/runtime/payment-term-catalog && PATH="/var/www/.local/node-26.7.0/bin:$PATH" exec npm run serve'
 
   - setup: 'shellsuperapp'
     build:
@@ -177,6 +274,7 @@ zerops:
         SHELL_SUPER_APP_PORT: '3020'
         SPICEDB_ENDPOINT: 'spicedb:50051'
         SPICEDB_INSECURE: 'true'
+        SPICEDB_PRESHARED_KEY: ${spicedb_SPICEDB_GRPC_PRESHARED_KEY}
         ULTRAMODERN_DEPLOYMENT_ENVIRONMENT: stage
         ULTRAMODERN_ZEROPS_SERVICE: 'shell-super-app'
       healthCheck:
@@ -222,6 +320,7 @@ zerops:
         DATABASE_URL: ${partyregistry_DATABASE_URL}
         SPICEDB_ENDPOINT: 'spicedb:50051'
         SPICEDB_INSECURE: 'true'
+        SPICEDB_PRESHARED_KEY: ${spicedb_SPICEDB_GRPC_PRESHARED_KEY}
         ULTRAMODERN_DEPLOYMENT_ENVIRONMENT: stage
         ULTRAMODERN_ZEROPS_SERVICE: party-registry-worker
       healthCheck:
@@ -229,4 +328,49 @@ zerops:
           port: 4102
           path: '/ready'
       start: sh -c 'cd app/.zerops/runtime/party-registry-worker && PATH="/var/www/.local/node-26.7.0/bin:$PATH" exec npm run serve'
+
+  - setup: 'commerce-customer-context-worker'
+    build:
+      base: 'alpine@3.23'
+      prepareCommands:
+        - sudo apk add --no-cache curl libstdc++
+        - sh /build/source/app/scripts/install-zerops-node.sh --with-pnpm 11.25.0
+      buildCommands:
+        - cd app && PATH="$HOME/.local/node-26.7.0/bin:$PATH" node scripts/reset-workspace-dependencies.mjs
+        - cd app && PNPM_CONFIG_ENABLE_GLOBAL_VIRTUAL_STORE=false PATH="$HOME/.local/node-26.7.0/bin:$PATH" pnpm install --frozen-lockfile --force --config.enable-global-virtual-store=false --virtual-store-dir=node_modules/.pnpm
+        - cd app && ULTRAMODERN_SOURCE_REVISION="$(git rev-parse HEAD)" PNPM_CONFIG_ENABLE_GLOBAL_VIRTUAL_STORE=false PATH="$HOME/.local/node-26.7.0/bin:$PATH" pnpm --config.enable-global-virtual-store=false run zerops:materialize --app 'commerce-customer-context' --package '@app/commerce-customer-context' --package-dir 'verticals/commerce-customer-context' --worker
+      deployFiles:
+        - 'app/.zerops/runtime/commerce-customer-context-worker'
+        - 'app/scripts/install-zerops-node.sh'
+    deploy:
+      temporaryShutdown: false
+      readinessCheck:
+        httpGet:
+          port: 4101
+          path: '/ready'
+        failureTimeout: 3m
+        retryPeriod: 10s
+    run:
+      base: 'nodejs@24'
+      initCommands:
+        - ZEROPS_NODE_ROOT=/var/www sh app/scripts/install-zerops-node.sh
+      ports:
+        - port: 4101
+          protocol: tcp
+          httpSupport: true
+      envVariables:
+        NODE_ENV: production
+        PORT: '4101'
+        OUTBOX_WORKER_HEALTH_PORT: '4101'
+        DATABASE_URL: ${commercecustomercontext_DATABASE_URL}
+        SPICEDB_ENDPOINT: 'spicedb:50051'
+        SPICEDB_INSECURE: 'true'
+        SPICEDB_PRESHARED_KEY: ${spicedb_SPICEDB_GRPC_PRESHARED_KEY}
+        ULTRAMODERN_DEPLOYMENT_ENVIRONMENT: stage
+        ULTRAMODERN_ZEROPS_SERVICE: commerce-customer-context-worker
+      healthCheck:
+        httpGet:
+          port: 4101
+          path: '/ready'
+      start: sh -c 'cd app/.zerops/runtime/commerce-customer-context-worker && PATH="/var/www/.local/node-26.7.0/bin:$PATH" exec npm run serve'
   # </generated-outbox-worker-deployments>

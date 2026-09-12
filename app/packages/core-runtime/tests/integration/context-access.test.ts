@@ -1,16 +1,21 @@
 import { v1 } from '@authzed/authzed-node';
 import { NodeServices } from '@effect/platform-node';
-import { Crypto, Effect, FileSystem } from 'effect';
+import { Crypto, Effect, FileSystem, Schema } from 'effect';
 import { expect, it } from 'effect-rstest';
 
 import { SPICEDB_CHECK_TIMEOUT_MS, createSpiceDbPermissionClient } from '../../src/permissions/client.ts';
 import { loadSpiceDbConfig } from '../../src/permissions/config.ts';
 import {
   makeContextAccess,
+  toBusinessPermissionAccessKey,
+  toBusinessPermissionAccessObjectId,
+  toContextPermissionAccessKey,
+  toContextPermissionAccessObjectId,
   toLegalEntityAccessObjectId,
   toModuleAccessObjectId,
   toResourceAccessObjectId,
 } from '../../src/permissions/context-access.ts';
+import { BusinessPermissionCodeSchema } from '../../src/permissions/business-permission.ts';
 
 const spiceDbEffect = <Value>(operation: PromiseLike<Value>) => Effect.tryPromise(() => operation);
 
@@ -35,6 +40,16 @@ const relationship = (
     }),
   });
 
+const requireBusinessPermissions = (
+  access: ReturnType<typeof makeContextAccess>,
+): NonNullable<ReturnType<typeof makeContextAccess>['businessPermissions']> => {
+  const check = access.businessPermissions;
+  if (check === undefined) {
+    throw new Error('Expected business permission access');
+  }
+  return check;
+};
+
 const contextAccessProgram = Effect.gen(function* contextAccessIntegration() {
   const configuration = yield* loadSpiceDbConfig();
   const crypto = yield* Crypto.Crypto;
@@ -55,7 +70,30 @@ const contextAccessProgram = Effect.gen(function* contextAccessIntegration() {
   const legalObjectId = toLegalEntityAccessObjectId(tenantId, legalEntityId);
   const moduleObjectId = toModuleAccessObjectId(tenantId, legalEntityId, moduleId);
   const resourceObjectId = toResourceAccessObjectId(tenantId, legalEntityId, resource);
-  if (legalObjectId === undefined || moduleObjectId === undefined || resourceObjectId === undefined) {
+  const businessPermission = yield* Schema.decodeEffect(BusinessPermissionCodeSchema)('counterparty.purchase.submit');
+  const businessTarget = {
+    permission: businessPermission,
+    target: {
+      counterpartyId: 'counterparty-live',
+      kind: 'counterparty_storefront' as const,
+      legalEntityId,
+      storefrontId: 'storefront-live',
+      tenantId,
+    },
+  };
+  const businessPermissionObjectId = toBusinessPermissionAccessObjectId(businessPermission, businessTarget.target);
+  const contextPermissionTarget = {
+    moduleId: 'commerce.customer-context',
+    permission: 'customer.group.history.read',
+  } as const;
+  const contextPermissionObjectId = toContextPermissionAccessObjectId(tenantId, legalEntityId, contextPermissionTarget);
+  if (
+    legalObjectId === undefined ||
+    moduleObjectId === undefined ||
+    resourceObjectId === undefined ||
+    businessPermissionObjectId === undefined ||
+    contextPermissionObjectId === undefined
+  ) {
     throw new Error('Expected valid SpiceDB object identifiers');
   }
   const client = v1.NewClient(
@@ -96,6 +134,10 @@ const contextAccessProgram = Effect.gen(function* contextAccessIntegration() {
     relationship('module_access', moduleObjectId, 'accessor', 'principal', principalId),
     relationship('resource', resourceObjectId, 'module', 'module_access', moduleObjectId),
     relationship('resource', resourceObjectId, 'reader', 'principal', principalId),
+    relationship('business_permission', businessPermissionObjectId, 'legal_entity', 'legal_entity', legalObjectId),
+    relationship('business_permission', businessPermissionObjectId, 'grantee', 'principal', principalId),
+    relationship('context_permission', contextPermissionObjectId, 'tenant', 'tenant', tenantId),
+    relationship('context_permission', contextPermissionObjectId, 'grantee', 'principal', principalId),
   ];
 
   yield* Effect.gen(function* exerciseContextAccess() {
@@ -171,17 +213,36 @@ const contextAccessProgram = Effect.gen(function* contextAccessIntegration() {
           tenantId: otherTenantId,
         }),
       ).toEqual([{ decision: 'denied', key: moduleId }]);
+      expect(yield* access.resources({ legalEntityId, principalId, resources: [resource], tenantId })).toEqual([
+        { decision: 'allowed', key: `${moduleId}:property.unit:${resource.resourceId}` },
+      ]);
+      const checkBusinessPermissions = requireBusinessPermissions(access);
       expect(
-        yield* access.resources({
+        yield* checkBusinessPermissions({
+          principal: { principalId, tenantId },
+          targets: [businessTarget],
+          trustedStorefrontId: 'storefront-live',
+        }),
+      ).toEqual([{ decision: 'allowed', key: toBusinessPermissionAccessKey(businessTarget) }]);
+      const checkContextPermissions = access.contextPermissions;
+      if (checkContextPermissions === undefined) {
+        throw new Error('Expected context permission access');
+      }
+      expect(
+        yield* checkContextPermissions({
           legalEntityId,
           principalId,
-          resources: [resource],
+          targets: [contextPermissionTarget, { ...contextPermissionTarget, permission: 'customer.group.read' }],
           tenantId,
         }),
       ).toEqual([
         {
           decision: 'allowed',
-          key: `${moduleId}:property.unit:${resource.resourceId}`,
+          key: toContextPermissionAccessKey(contextPermissionTarget),
+        },
+        {
+          decision: 'denied',
+          key: 'commerce.customer-context:customer.group.read',
         },
       ]);
     }).pipe(Effect.ensuring(Effect.sync(() => permissionClient.close())));
@@ -189,6 +250,8 @@ const contextAccessProgram = Effect.gen(function* contextAccessIntegration() {
     Effect.ensuring(
       Effect.forEach(
         [
+          ['context_permission', contextPermissionObjectId],
+          ['business_permission', businessPermissionObjectId],
           ['resource', resourceObjectId],
           ['module_access', moduleObjectId],
           ['legal_entity', legalObjectId],

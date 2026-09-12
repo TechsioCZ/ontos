@@ -2,6 +2,7 @@
 /// <reference types="node" />
 
 import { NodeServices } from '@effect/platform-node';
+import { transform } from 'esbuild';
 import { Config, Effect, FileSystem, Layer, Path, Predicate, Schema } from 'effect';
 import { Command, Flag } from 'effect/unstable/cli';
 import { ChildProcess, ChildProcessSpawner } from 'effect/unstable/process';
@@ -458,32 +459,27 @@ const listTsFiles = (directory) =>
       .map((item) => `${directory}/${item}`);
   });
 
-/** @param {string} parameters - TypeScript parameter source. */
-const stripParameterTypes = (parameters) =>
-  parameters.replaceAll(/(?<parameter>[A-Za-z_$][\w$]*)\??:\s*[^,]+/gu, '$<parameter>');
-
-/** @param {string} _match - Full match. @param {string} parameters - Parameter source. */
-const rewriteArrowParameters = (_match, parameters) => `(${stripParameterTypes(parameters)}) =>`;
-
-/** @param {string} _match - Full match. @param {string} name - Function name. @param {string} parameters - Parameter source. */
-const rewriteFunctionParameters = (_match, name, parameters) => `function${name}(${stripParameterTypes(parameters)})`;
-
-/** @param {string} source - TypeScript source. */
-const transpileGeneratedPackageTs = (source) =>
-  source
-    .replaceAll(/^\s*import\s+type\s+[^;]+;\s*$/gmu, '')
-    .replaceAll(/^\s*export\s+type\s+[^;]+;\s*$/gmu, '')
-    .replaceAll(/^\s*type\s+\w+\s*=\s*[^;]+;\s*$/gmu, '')
-    .replaceAll(/^\s*interface\s+\w+\s*\{[^}]*\}\s*$/gmsu, '')
-    .replaceAll(
-      /\b(?<declaration>const|let|var)\s+(?<binding>[A-Za-z_$][\w$]*)\s*:\s*[^=]+=/gu,
-      '$<declaration> $<binding> =',
-    )
-    .replaceAll(/\((?<parameters>[^)]*)\)\s*:\s*[^=]+=>/gu, rewriteArrowParameters)
-    .replaceAll(/\((?<parameters>[^)]*)\)\s*=>/gu, rewriteArrowParameters)
-    .replaceAll(/function(?<name>\s+\w+\s*)\((?<parameters>[^)]*)\)/gu, rewriteFunctionParameters)
-    .replaceAll(/\s+as\s+const\b/gu, '')
-    .replaceAll(/\s+satisfies\s+[A-Za-z_$][\w$]*(?:<[^>]+>)?/gu, '');
+/** @param {string} source - TypeScript source. @param {string} sourcePath - Source path. */
+const transpileWorkspacePackageTs = (source, sourcePath) =>
+  Effect.tryPromise({
+    catch: (cause) =>
+      new MaterializationError(`Unable to transpile copied workspace package source ${sourcePath}: ${String(cause)}`),
+    try: async () =>
+      await transform(source, {
+        format: 'esm',
+        legalComments: 'inline',
+        loader: 'ts',
+        sourcefile: sourcePath,
+        target: 'node24',
+      }),
+  }).pipe(
+    Effect.map((result) =>
+      result.code.replaceAll(
+        /(?<quote>['"])(?<specifier>\.{1,2}\/[^'"]+)\.ts\k<quote>/gu,
+        '$<quote>$<specifier>.js$<quote>',
+      ),
+    ),
+  );
 
 /** @param {string} packageDirectory - Copied workspace package directory. */
 const makeWorkspacePackageRuntimeSafe = (packageDirectory) =>
@@ -506,7 +502,8 @@ const makeWorkspacePackageRuntimeSafe = (packageDirectory) =>
       (tsFile) =>
         Effect.gen(function* transpileWorkspacePackageFileEffect() {
           const source = yield* fileSystem.readFileString(tsFile);
-          yield* fileSystem.writeFileString(tsFile.replace(/\.ts$/u, '.js'), transpileGeneratedPackageTs(source));
+          const transpiled = yield* transpileWorkspacePackageTs(source, tsFile);
+          yield* fileSystem.writeFileString(tsFile.replace(/\.ts$/u, '.js'), transpiled);
         }),
       { concurrency: 'unbounded', discard: true },
     );

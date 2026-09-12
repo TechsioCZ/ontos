@@ -22,7 +22,7 @@ type PartyOfficialIdentifierHistoryOperationInvocation = readonly [
 ];
 
 const partyOfficialIdentifierHistoryClient = (
-  credential: Redacted.Redacted<string>,
+  credential: Redacted.Redacted,
   requestCorrelation: string,
   options: PartyOfficialIdentifierHistoryClientOptions,
 ) =>

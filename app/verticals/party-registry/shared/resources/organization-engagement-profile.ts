@@ -12,7 +12,6 @@ export const OrganizationEngagementProfileRefSchema = Schema.Struct({
   resourceType: Schema.Literal('party.registry.organization-engagement-profile'),
   tenantId: PartyRegistryTenantIdJsonSchema,
 });
-export type OrganizationEngagementProfileRef = typeof OrganizationEngagementProfileRefSchema.Type;
 
 export const organizationEngagementProfileResourceDescriptor = {
   capabilities: {

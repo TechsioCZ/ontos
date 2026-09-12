@@ -22,7 +22,7 @@ type PartyOfficialIdentifierDetailOperationInvocation = readonly [
 ];
 
 const partyOfficialIdentifierDetailClient = (
-  credential: Redacted.Redacted<string>,
+  credential: Redacted.Redacted,
   requestCorrelation: string,
   options: PartyOfficialIdentifierDetailClientOptions,
 ) =>

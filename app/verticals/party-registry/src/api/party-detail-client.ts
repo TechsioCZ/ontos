@@ -19,7 +19,7 @@ type PartyDetailAuthorizedInvocation = readonly [
 type PartyDetailOperationInvocation = readonly [requestCorrelation: string, options?: PartyDetailClientOptions];
 
 const partyDetailClient = (
-  credential: Redacted.Redacted<string>,
+  credential: Redacted.Redacted,
   requestCorrelation: string,
   options: PartyDetailClientOptions,
 ) =>

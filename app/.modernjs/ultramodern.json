@@ -339,6 +339,7 @@
           "prefix": "/party-registry-api",
           "consumedBy": [
             "shell-super-app",
+            "commerce-customer-context",
             "party-registry"
           ],
           "serverEntry": "verticals/party-registry/api/index.ts"
@@ -488,6 +489,578 @@
             ]
           }
         }
+      },
+      {
+        "id": "commerce-customer-context",
+        "kind": "vertical",
+        "package": "@app/commerce-customer-context",
+        "packageSuffix": "commerce-customer-context",
+        "displayName": "CommerceCustomerContext Vertical",
+        "path": "verticals/commerce-customer-context",
+        "domain": "commerce-customer-context",
+        "surfaceProfile": "api-only",
+        "port": 4101,
+        "portEnv": "VERTICAL_COMMERCE_CUSTOMER_CONTEXT_PORT",
+        "moduleFederation": {
+          "role": "remote",
+          "name": "verticalCommerceCustomerContext",
+          "exposes": [],
+          "ssr": true,
+          "dts": {
+            "compilerInstance": "effect-tsgo",
+            "tsConfigPath": "./tsconfig.mf-types.json"
+          }
+        },
+        "backendFederation": {
+          "role": "microvertical-server",
+          "name": "verticalCommerceCustomerContextBackend",
+          "runtimeFramework": "effect",
+          "strictEffectApproach": true,
+          "deliveryUnit": {
+            "schemaVersion": 1,
+            "kind": "microvertical-delivery-unit",
+            "unitId": "app/commerce-customer-context",
+            "packageName": "@app/commerce-customer-context",
+            "version": "0.1.0",
+            "buildMarker": "2b4d72d8d032dd53",
+            "sourceRevision": "workspace"
+          },
+          "exposes": {
+            "./effect-api": {
+              "contract": "verticals/commerce-customer-context/shared/api.ts",
+              "runtime": "verticals/commerce-customer-context/api/index.ts",
+              "client": "verticals/commerce-customer-context/src/api/commerce-customer-context-client.ts",
+              "openapi": "/commerce-customer-context-api/openapi.json",
+              "readiness": "/commerce-customer-context-api/commerce-customer-context/readiness"
+            }
+          },
+          "versionBoundary": {
+            "invariant": "web-and-api-same-build",
+            "identityRoot": "deliveryUnit",
+            "packageName": "@app/commerce-customer-context",
+            "ui": {
+              "manifestEnv": "VERTICAL_COMMERCE_CUSTOMER_CONTEXT_MF_MANIFEST",
+              "manifestUrl": "http://localhost:4101/mf-manifest.json",
+              "buildMarker": "verticals/commerce-customer-context/src/routes/ultramodern-route-metadata.ts"
+            },
+            "api": {
+              "readiness": "/commerce-customer-context-api/commerce-customer-context/readiness",
+              "buildMarker": "verticals/commerce-customer-context/shared/ultramodern-build.ts",
+              "publicUrlEnv": "ULTRAMODERN_PUBLIC_URL_COMMERCE_CUSTOMER_CONTEXT"
+            }
+          },
+          "executionSurfaces": {
+            "cloudflare": {
+              "kind": "cloudflare-worker-snapshot",
+              "workerName": "app-commerce-customer-context",
+              "publicUrlEnv": "ULTRAMODERN_PUBLIC_URL_COMMERCE_CUSTOMER_CONTEXT",
+              "ssr": {
+                "workerEntry": ".output/server/index.mjs",
+                "workerManifest": ".output/server/modern-worker-manifest.json",
+                "routeManifest": ".output/server/route.json",
+                "ssrBundle": ".output/worker/index.js",
+                "effectBffBundle": ".output/worker/__modern_bff_effect.js",
+                "assetsBinding": "ASSETS"
+              },
+              "zephyr": {
+                "runtime": "ssr-worker",
+                "integration": "managed-cloudflare",
+                "snapshotIdEnv": "ZEPHYR_COMMERCE_CUSTOMER_CONTEXT_SNAPSHOT_ID",
+                "versionIdEnv": "ZEPHYR_COMMERCE_CUSTOMER_CONTEXT_VERSION_ID",
+                "applicationUidEnv": "ZEPHYR_COMMERCE_CUSTOMER_CONTEXT_APPLICATION_UID"
+              },
+              "workerDispatch": {
+                "preferred": "service-binding",
+                "serviceBinding": "VERTICAL_COMMERCE_CUSTOMER_CONTEXT_WORKER",
+                "serviceBindingEnv": "VERTICAL_COMMERCE_CUSTOMER_CONTEXT_WORKER_BINDING",
+                "dispatchNamespaceEnv": "VERTICAL_COMMERCE_CUSTOMER_CONTEXT_DISPATCH_NAMESPACE",
+                "dispatchWorkerNameEnv": "VERTICAL_COMMERCE_CUSTOMER_CONTEXT_WORKER_NAME",
+                "requestInterface": "fetch"
+              }
+            },
+            "node": {
+              "kind": "node-mf-runtime",
+              "adapterVersion": "backend-mf-effect-v1",
+              "remoteName": "verticalCommerceCustomerContextBackend",
+              "manifestEnv": "VERTICAL_COMMERCE_CUSTOMER_CONTEXT_BACKEND_MF_MANIFEST",
+              "manifestUrl": "http://localhost:4101/backend-mf-manifest.json",
+              "containerEntry": "http://localhost:4101/backendRemoteEntry.cjs",
+              "remoteType": "commonjs-module",
+              "expose": "./effect-api",
+              "runtimePackage": "@modern-js/plugin-bff/effect",
+              "expected": {
+                "unitId": "app/commerce-customer-context",
+                "buildMarker": "2b4d72d8d032dd53"
+              }
+            }
+          },
+          "compatibility": {
+            "contractVersion": "microvertical-server-effect-v1",
+            "packageName": "@app/commerce-customer-context",
+            "effectVersion": "4.0.0-beta.107",
+            "moduleFederationVersion": "2.8.2"
+          },
+          "cache": {
+            "cloudflareSnapshot": "immutable",
+            "nodeManifest": "no-store",
+            "nodeVersionedContainer": "immutable",
+            "nodeUnpinnedContainer": "revalidate"
+          },
+          "fallback": {
+            "timeoutMs": 1500,
+            "failureEvent": "modernjs:microvertical-server-fallback",
+            "strategy": "typed-effect-error"
+          }
+        },
+        "deliveryUnit": {
+          "schemaVersion": 1,
+          "kind": "microvertical-delivery-unit",
+          "unitId": "app/commerce-customer-context",
+          "packageName": "@app/commerce-customer-context",
+          "version": "0.1.0",
+          "buildMarker": "2b4d72d8d032dd53",
+          "sourceRevision": "workspace"
+        },
+        "api": {
+          "runtime": "effect",
+          "stem": "commerce-customer-context",
+          "prefix": "/commerce-customer-context-api",
+          "consumedBy": [
+            "shell-super-app",
+            "commerce-customer-context"
+          ],
+          "serverEntry": "verticals/commerce-customer-context/api/index.ts"
+        },
+        "deploy": {
+          "cloudflare": {
+            "target": "cloudflare",
+            "workerName": "app-commerce-customer-context",
+            "publicUrlEnv": "ULTRAMODERN_PUBLIC_URL_COMMERCE_CUSTOMER_CONTEXT",
+            "compatibilityDate": "2026-06-02",
+            "compatibilityFlags": [
+              "nodejs_compat",
+              "global_fetch_strictly_public"
+            ],
+            "assetsBinding": "ASSETS",
+            "routes": {
+              "ssr": "/en",
+              "mfManifest": "/mf-manifest.json",
+              "locale": "/locales/en/commerce-customer-context.json",
+              "apiReadiness": "/commerce-customer-context-api/commerce-customer-context/readiness"
+            },
+            "security": {
+              "enabled": true,
+              "headers": {
+                "referrerPolicy": "strict-origin-when-cross-origin",
+                "contentTypeOptions": "nosniff",
+                "permissionsPolicy": "camera=(), geolocation=(), microphone=(), payment=(), usb=()"
+              },
+              "contentSecurityPolicy": {
+                "mode": "report-only",
+                "directives": {
+                  "base-uri": [
+                    "'self'"
+                  ],
+                  "connect-src": [
+                    "'self'",
+                    "https:",
+                    "http:",
+                    "wss:",
+                    "ws:"
+                  ],
+                  "default-src": [
+                    "'self'"
+                  ],
+                  "font-src": [
+                    "'self'",
+                    "data:",
+                    "https:",
+                    "http:"
+                  ],
+                  "form-action": [
+                    "'self'"
+                  ],
+                  "frame-ancestors": [
+                    "'self'"
+                  ],
+                  "img-src": [
+                    "'self'",
+                    "data:",
+                    "blob:",
+                    "https:",
+                    "http:"
+                  ],
+                  "manifest-src": [
+                    "'self'",
+                    "https:",
+                    "http:"
+                  ],
+                  "object-src": [
+                    "'none'"
+                  ],
+                  "script-src": [
+                    "'self'",
+                    "'unsafe-inline'",
+                    "'unsafe-eval'",
+                    "https:",
+                    "http:",
+                    "blob:"
+                  ],
+                  "style-src": [
+                    "'self'",
+                    "'unsafe-inline'",
+                    "https:",
+                    "http:"
+                  ],
+                  "worker-src": [
+                    "'self'",
+                    "blob:"
+                  ]
+                },
+                "reason": "Report-only by default so Cloudflare Module Federation SSR can prove remote script, style, and connect compatibility before enforcement."
+              },
+              "noindex": {
+                "workersDev": true,
+                "localhost": true,
+                "previewHostnames": []
+              }
+            },
+            "qualityGates": {
+              "publicRoutes": {
+                "requireSitemapWhenPresent": true,
+                "requireRobotsSitemapConsistency": true,
+                "requireWebManifestWhenPresent": true
+              },
+              "statusCodes": {
+                "notFoundRoute": "/__ultramodern-smoke-missing/nope",
+                "unknownRouteStatus": 404
+              },
+              "indexing": {
+                "previewNoindex": true,
+                "productionPublicRoutesIndexable": true
+              },
+              "assets": {
+                "cssPreloadRequired": true,
+                "cssResponseRequired": true,
+                "cacheControlRequiredForCss": true,
+                "sourcemapsPubliclyReferenced": false
+              },
+              "budgets": {
+                "ssrHtmlMaxBytes": 250000,
+                "mfManifestMaxBytes": 500000,
+                "localeJsonMaxBytes": 100000,
+                "sitemapXmlMaxBytes": 500000,
+                "cssAssetMaxBytes": 750000
+              },
+              "csp": {
+                "finalMode": "report-only-dogfood",
+                "decision": "Report-only remains the generated final mode until public smoke proof records MF SSR script/style/connect compatibility for the deployed surface."
+              }
+            },
+            "evidence": {
+              "proofScript": "scripts/proof-cloudflare-version.mts",
+              "reportDefault": ".codex/reports/cloudflare-version-proof/public-url-proof.json"
+            },
+            "jsonSmokeChecks": [
+              {
+                "id": "commerce-customer-context-readiness-smoke",
+                "route": "/commerce-customer-context-api/commerce-customer-context/readiness",
+                "expect": {
+                  "status": "ready",
+                  "checks.api": "ready",
+                  "checks.moduleFederation": "ready",
+                  "checks.ssr": "ready"
+                }
+              }
+            ]
+          }
+        }
+      },
+      {
+        "id": "payment-term-catalog",
+        "kind": "vertical",
+        "package": "@app/payment-term-catalog",
+        "packageSuffix": "payment-term-catalog",
+        "displayName": "PaymentTermCatalog Vertical",
+        "path": "verticals/payment-term-catalog",
+        "domain": "payment-term-catalog",
+        "surfaceProfile": "api-only",
+        "port": 4103,
+        "portEnv": "VERTICAL_PAYMENT_TERM_CATALOG_PORT",
+        "moduleFederation": {
+          "role": "remote",
+          "name": "verticalPaymentTermCatalog",
+          "exposes": [],
+          "ssr": true,
+          "dts": {
+            "compilerInstance": "effect-tsgo",
+            "tsConfigPath": "./tsconfig.mf-types.json"
+          }
+        },
+        "backendFederation": {
+          "role": "microvertical-server",
+          "name": "verticalPaymentTermCatalogBackend",
+          "runtimeFramework": "effect",
+          "strictEffectApproach": true,
+          "deliveryUnit": {
+            "schemaVersion": 1,
+            "kind": "microvertical-delivery-unit",
+            "unitId": "app/payment-term-catalog",
+            "packageName": "@app/payment-term-catalog",
+            "version": "0.1.0",
+            "buildMarker": "3812f892cf5544cf",
+            "sourceRevision": "workspace"
+          },
+          "exposes": {
+            "./effect-api": {
+              "contract": "verticals/payment-term-catalog/shared/api.ts",
+              "runtime": "verticals/payment-term-catalog/api/index.ts",
+              "client": "verticals/payment-term-catalog/src/api/payment-term-catalog-client.ts",
+              "openapi": "/payment-term-catalog-api/openapi.json",
+              "readiness": "/payment-term-catalog-api/payment-term-catalog/readiness"
+            }
+          },
+          "versionBoundary": {
+            "invariant": "web-and-api-same-build",
+            "identityRoot": "deliveryUnit",
+            "packageName": "@app/payment-term-catalog",
+            "ui": {
+              "manifestEnv": "VERTICAL_PAYMENT_TERM_CATALOG_MF_MANIFEST",
+              "manifestUrl": "http://localhost:4103/mf-manifest.json",
+              "buildMarker": "verticals/payment-term-catalog/src/routes/ultramodern-route-metadata.ts"
+            },
+            "api": {
+              "readiness": "/payment-term-catalog-api/payment-term-catalog/readiness",
+              "buildMarker": "verticals/payment-term-catalog/shared/ultramodern-build.ts",
+              "publicUrlEnv": "ULTRAMODERN_PUBLIC_URL_PAYMENT_TERM_CATALOG"
+            }
+          },
+          "executionSurfaces": {
+            "cloudflare": {
+              "kind": "cloudflare-worker-snapshot",
+              "workerName": "app-payment-term-catalog",
+              "publicUrlEnv": "ULTRAMODERN_PUBLIC_URL_PAYMENT_TERM_CATALOG",
+              "ssr": {
+                "workerEntry": ".output/server/index.mjs",
+                "workerManifest": ".output/server/modern-worker-manifest.json",
+                "routeManifest": ".output/server/route.json",
+                "ssrBundle": ".output/worker/index.js",
+                "effectBffBundle": ".output/worker/__modern_bff_effect.js",
+                "assetsBinding": "ASSETS"
+              },
+              "zephyr": {
+                "runtime": "ssr-worker",
+                "integration": "managed-cloudflare",
+                "snapshotIdEnv": "ZEPHYR_PAYMENT_TERM_CATALOG_SNAPSHOT_ID",
+                "versionIdEnv": "ZEPHYR_PAYMENT_TERM_CATALOG_VERSION_ID",
+                "applicationUidEnv": "ZEPHYR_PAYMENT_TERM_CATALOG_APPLICATION_UID"
+              },
+              "workerDispatch": {
+                "preferred": "service-binding",
+                "serviceBinding": "VERTICAL_PAYMENT_TERM_CATALOG_WORKER",
+                "serviceBindingEnv": "VERTICAL_PAYMENT_TERM_CATALOG_WORKER_BINDING",
+                "dispatchNamespaceEnv": "VERTICAL_PAYMENT_TERM_CATALOG_DISPATCH_NAMESPACE",
+                "dispatchWorkerNameEnv": "VERTICAL_PAYMENT_TERM_CATALOG_WORKER_NAME",
+                "requestInterface": "fetch"
+              }
+            },
+            "node": {
+              "kind": "node-mf-runtime",
+              "adapterVersion": "backend-mf-effect-v1",
+              "remoteName": "verticalPaymentTermCatalogBackend",
+              "manifestEnv": "VERTICAL_PAYMENT_TERM_CATALOG_BACKEND_MF_MANIFEST",
+              "manifestUrl": "http://localhost:4103/backend-mf-manifest.json",
+              "containerEntry": "http://localhost:4103/backendRemoteEntry.cjs",
+              "remoteType": "commonjs-module",
+              "expose": "./effect-api",
+              "runtimePackage": "@modern-js/plugin-bff/effect",
+              "expected": {
+                "unitId": "app/payment-term-catalog",
+                "buildMarker": "3812f892cf5544cf"
+              }
+            }
+          },
+          "compatibility": {
+            "contractVersion": "microvertical-server-effect-v1",
+            "packageName": "@app/payment-term-catalog",
+            "effectVersion": "4.0.0-beta.107",
+            "moduleFederationVersion": "2.8.2"
+          },
+          "cache": {
+            "cloudflareSnapshot": "immutable",
+            "nodeManifest": "no-store",
+            "nodeVersionedContainer": "immutable",
+            "nodeUnpinnedContainer": "revalidate"
+          },
+          "fallback": {
+            "timeoutMs": 1500,
+            "failureEvent": "modernjs:microvertical-server-fallback",
+            "strategy": "typed-effect-error"
+          }
+        },
+        "deliveryUnit": {
+          "schemaVersion": 1,
+          "kind": "microvertical-delivery-unit",
+          "unitId": "app/payment-term-catalog",
+          "packageName": "@app/payment-term-catalog",
+          "version": "0.1.0",
+          "buildMarker": "3812f892cf5544cf",
+          "sourceRevision": "workspace"
+        },
+        "api": {
+          "runtime": "effect",
+          "stem": "payment-term-catalog",
+          "prefix": "/payment-term-catalog-api",
+          "consumedBy": [
+            "shell-super-app",
+            "payment-term-catalog"
+          ],
+          "serverEntry": "verticals/payment-term-catalog/api/index.ts"
+        },
+        "deploy": {
+          "cloudflare": {
+            "target": "cloudflare",
+            "workerName": "app-payment-term-catalog",
+            "publicUrlEnv": "ULTRAMODERN_PUBLIC_URL_PAYMENT_TERM_CATALOG",
+            "compatibilityDate": "2026-06-02",
+            "compatibilityFlags": [
+              "nodejs_compat",
+              "global_fetch_strictly_public"
+            ],
+            "assetsBinding": "ASSETS",
+            "routes": {
+              "ssr": "/en",
+              "mfManifest": "/mf-manifest.json",
+              "locale": "/locales/en/payment-term-catalog.json",
+              "apiReadiness": "/payment-term-catalog-api/payment-term-catalog/readiness"
+            },
+            "security": {
+              "enabled": true,
+              "headers": {
+                "referrerPolicy": "strict-origin-when-cross-origin",
+                "contentTypeOptions": "nosniff",
+                "permissionsPolicy": "camera=(), geolocation=(), microphone=(), payment=(), usb=()"
+              },
+              "contentSecurityPolicy": {
+                "mode": "report-only",
+                "directives": {
+                  "base-uri": [
+                    "'self'"
+                  ],
+                  "connect-src": [
+                    "'self'",
+                    "https:",
+                    "http:",
+                    "wss:",
+                    "ws:"
+                  ],
+                  "default-src": [
+                    "'self'"
+                  ],
+                  "font-src": [
+                    "'self'",
+                    "data:",
+                    "https:",
+                    "http:"
+                  ],
+                  "form-action": [
+                    "'self'"
+                  ],
+                  "frame-ancestors": [
+                    "'self'"
+                  ],
+                  "img-src": [
+                    "'self'",
+                    "data:",
+                    "blob:",
+                    "https:",
+                    "http:"
+                  ],
+                  "manifest-src": [
+                    "'self'",
+                    "https:",
+                    "http:"
+                  ],
+                  "object-src": [
+                    "'none'"
+                  ],
+                  "script-src": [
+                    "'self'",
+                    "'unsafe-inline'",
+                    "'unsafe-eval'",
+                    "https:",
+                    "http:",
+                    "blob:"
+                  ],
+                  "style-src": [
+                    "'self'",
+                    "'unsafe-inline'",
+                    "https:",
+                    "http:"
+                  ],
+                  "worker-src": [
+                    "'self'",
+                    "blob:"
+                  ]
+                },
+                "reason": "Report-only by default so Cloudflare Module Federation SSR can prove remote script, style, and connect compatibility before enforcement."
+              },
+              "noindex": {
+                "workersDev": true,
+                "localhost": true,
+                "previewHostnames": []
+              }
+            },
+            "qualityGates": {
+              "publicRoutes": {
+                "requireSitemapWhenPresent": true,
+                "requireRobotsSitemapConsistency": true,
+                "requireWebManifestWhenPresent": true
+              },
+              "statusCodes": {
+                "notFoundRoute": "/__ultramodern-smoke-missing/nope",
+                "unknownRouteStatus": 404
+              },
+              "indexing": {
+                "previewNoindex": true,
+                "productionPublicRoutesIndexable": true
+              },
+              "assets": {
+                "cssPreloadRequired": true,
+                "cssResponseRequired": true,
+                "cacheControlRequiredForCss": true,
+                "sourcemapsPubliclyReferenced": false
+              },
+              "budgets": {
+                "ssrHtmlMaxBytes": 250000,
+                "mfManifestMaxBytes": 500000,
+                "localeJsonMaxBytes": 100000,
+                "sitemapXmlMaxBytes": 500000,
+                "cssAssetMaxBytes": 750000
+              },
+              "csp": {
+                "finalMode": "report-only-dogfood",
+                "decision": "Report-only remains the generated final mode until public smoke proof records MF SSR script/style/connect compatibility for the deployed surface."
+              }
+            },
+            "evidence": {
+              "proofScript": "scripts/proof-cloudflare-version.mts",
+              "reportDefault": ".codex/reports/cloudflare-version-proof/public-url-proof.json"
+            },
+            "jsonSmokeChecks": [
+              {
+                "id": "payment-term-catalog-readiness-smoke",
+                "route": "/payment-term-catalog-api/payment-term-catalog/readiness",
+                "expect": {
+                  "status": "ready",
+                  "checks.api": "ready",
+                  "checks.moduleFederation": "ready",
+                  "checks.ssr": "ready"
+                }
+              }
+            ]
+          }
+        }
       }
     ]
   },
@@ -533,6 +1106,22 @@
         "exposes": [
           "./PageContacts"
         ],
+        "hostOnly": false
+      },
+      {
+        "id": "commerce-customer-context",
+        "path": "verticals/commerce-customer-context",
+        "role": "remote",
+        "name": "verticalCommerceCustomerContext",
+        "exposes": [],
+        "hostOnly": false
+      },
+      {
+        "id": "payment-term-catalog",
+        "path": "verticals/payment-term-catalog",
+        "role": "remote",
+        "name": "verticalPaymentTermCatalog",
+        "exposes": [],
         "hostOnly": false
       }
     ]
@@ -598,6 +1187,132 @@
             "expected": {
               "unitId": "app/party-registry",
               "buildMarker": "3f023644c8a07e9a"
+            }
+          }
+        }
+      },
+      {
+        "id": "commerce-customer-context",
+        "path": "verticals/commerce-customer-context",
+        "role": "microvertical-server",
+        "name": "verticalCommerceCustomerContextBackend",
+        "runtimeFramework": "effect",
+        "strictEffectApproach": true,
+        "contractVersion": "microvertical-server-effect-v1",
+        "deliveryUnit": {
+          "schemaVersion": 1,
+          "kind": "microvertical-delivery-unit",
+          "unitId": "app/commerce-customer-context",
+          "packageName": "@app/commerce-customer-context",
+          "version": "0.1.0",
+          "buildMarker": "2b4d72d8d032dd53",
+          "sourceRevision": "workspace"
+        },
+        "executionSurfaces": {
+          "cloudflare": {
+            "kind": "cloudflare-worker-snapshot",
+            "workerName": "app-commerce-customer-context",
+            "publicUrlEnv": "ULTRAMODERN_PUBLIC_URL_COMMERCE_CUSTOMER_CONTEXT",
+            "ssr": {
+              "workerEntry": ".output/server/index.mjs",
+              "workerManifest": ".output/server/modern-worker-manifest.json",
+              "routeManifest": ".output/server/route.json",
+              "ssrBundle": ".output/worker/index.js",
+              "effectBffBundle": ".output/worker/__modern_bff_effect.js",
+              "assetsBinding": "ASSETS"
+            },
+            "zephyr": {
+              "runtime": "ssr-worker",
+              "integration": "managed-cloudflare",
+              "snapshotIdEnv": "ZEPHYR_COMMERCE_CUSTOMER_CONTEXT_SNAPSHOT_ID",
+              "versionIdEnv": "ZEPHYR_COMMERCE_CUSTOMER_CONTEXT_VERSION_ID",
+              "applicationUidEnv": "ZEPHYR_COMMERCE_CUSTOMER_CONTEXT_APPLICATION_UID"
+            },
+            "workerDispatch": {
+              "preferred": "service-binding",
+              "serviceBinding": "VERTICAL_COMMERCE_CUSTOMER_CONTEXT_WORKER",
+              "serviceBindingEnv": "VERTICAL_COMMERCE_CUSTOMER_CONTEXT_WORKER_BINDING",
+              "dispatchNamespaceEnv": "VERTICAL_COMMERCE_CUSTOMER_CONTEXT_DISPATCH_NAMESPACE",
+              "dispatchWorkerNameEnv": "VERTICAL_COMMERCE_CUSTOMER_CONTEXT_WORKER_NAME",
+              "requestInterface": "fetch"
+            }
+          },
+          "node": {
+            "kind": "node-mf-runtime",
+            "adapterVersion": "backend-mf-effect-v1",
+            "remoteName": "verticalCommerceCustomerContextBackend",
+            "manifestEnv": "VERTICAL_COMMERCE_CUSTOMER_CONTEXT_BACKEND_MF_MANIFEST",
+            "manifestUrl": "http://localhost:4101/backend-mf-manifest.json",
+            "containerEntry": "http://localhost:4101/backendRemoteEntry.cjs",
+            "remoteType": "commonjs-module",
+            "expose": "./effect-api",
+            "runtimePackage": "@modern-js/plugin-bff/effect",
+            "expected": {
+              "unitId": "app/commerce-customer-context",
+              "buildMarker": "2b4d72d8d032dd53"
+            }
+          }
+        }
+      },
+      {
+        "id": "payment-term-catalog",
+        "path": "verticals/payment-term-catalog",
+        "role": "microvertical-server",
+        "name": "verticalPaymentTermCatalogBackend",
+        "runtimeFramework": "effect",
+        "strictEffectApproach": true,
+        "contractVersion": "microvertical-server-effect-v1",
+        "deliveryUnit": {
+          "schemaVersion": 1,
+          "kind": "microvertical-delivery-unit",
+          "unitId": "app/payment-term-catalog",
+          "packageName": "@app/payment-term-catalog",
+          "version": "0.1.0",
+          "buildMarker": "3812f892cf5544cf",
+          "sourceRevision": "workspace"
+        },
+        "executionSurfaces": {
+          "cloudflare": {
+            "kind": "cloudflare-worker-snapshot",
+            "workerName": "app-payment-term-catalog",
+            "publicUrlEnv": "ULTRAMODERN_PUBLIC_URL_PAYMENT_TERM_CATALOG",
+            "ssr": {
+              "workerEntry": ".output/server/index.mjs",
+              "workerManifest": ".output/server/modern-worker-manifest.json",
+              "routeManifest": ".output/server/route.json",
+              "ssrBundle": ".output/worker/index.js",
+              "effectBffBundle": ".output/worker/__modern_bff_effect.js",
+              "assetsBinding": "ASSETS"
+            },
+            "zephyr": {
+              "runtime": "ssr-worker",
+              "integration": "managed-cloudflare",
+              "snapshotIdEnv": "ZEPHYR_PAYMENT_TERM_CATALOG_SNAPSHOT_ID",
+              "versionIdEnv": "ZEPHYR_PAYMENT_TERM_CATALOG_VERSION_ID",
+              "applicationUidEnv": "ZEPHYR_PAYMENT_TERM_CATALOG_APPLICATION_UID"
+            },
+            "workerDispatch": {
+              "preferred": "service-binding",
+              "serviceBinding": "VERTICAL_PAYMENT_TERM_CATALOG_WORKER",
+              "serviceBindingEnv": "VERTICAL_PAYMENT_TERM_CATALOG_WORKER_BINDING",
+              "dispatchNamespaceEnv": "VERTICAL_PAYMENT_TERM_CATALOG_DISPATCH_NAMESPACE",
+              "dispatchWorkerNameEnv": "VERTICAL_PAYMENT_TERM_CATALOG_WORKER_NAME",
+              "requestInterface": "fetch"
+            }
+          },
+          "node": {
+            "kind": "node-mf-runtime",
+            "adapterVersion": "backend-mf-effect-v1",
+            "remoteName": "verticalPaymentTermCatalogBackend",
+            "manifestEnv": "VERTICAL_PAYMENT_TERM_CATALOG_BACKEND_MF_MANIFEST",
+            "manifestUrl": "http://localhost:4103/backend-mf-manifest.json",
+            "containerEntry": "http://localhost:4103/backendRemoteEntry.cjs",
+            "remoteType": "commonjs-module",
+            "expose": "./effect-api",
+            "runtimePackage": "@modern-js/plugin-bff/effect",
+            "expected": {
+              "unitId": "app/payment-term-catalog",
+              "buildMarker": "3812f892cf5544cf"
             }
           }
         }

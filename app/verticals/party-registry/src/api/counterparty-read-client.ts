@@ -22,7 +22,7 @@ type CounterpartyReadOperationInvocation = readonly [
 ];
 
 const counterpartyReadClient = (
-  credential: Redacted.Redacted<string>,
+  credential: Redacted.Redacted,
   requestCorrelation: string,
   options: CounterpartyReadClientOptions,
 ) =>

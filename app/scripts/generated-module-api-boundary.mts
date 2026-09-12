@@ -33,6 +33,8 @@ const MANIFEST_SHELL_SEARCH_SLOT = [
 
 export { toPascalCase } from './boundary-source-structure.mts';
 
+const escapeRegExp = (value: string): string => value.replaceAll(/[.*+?^${}()|[\]\\]/gu, String.raw`\$&`);
+
 export interface GovernedClientToken {
   readonly kind: SyntaxKind;
   readonly value: string;
@@ -804,6 +806,7 @@ const parametersBindIdentifier = (
       ({ kind, value }, offset) =>
         kind === SyntaxKind.Identifier &&
         names.has(value) &&
+        tokenKind(tokens, start + offset - 1) !== SyntaxKind.DotToken &&
         bindingFollowers.has(tokenKind(tokens, start + offset + 1) ?? SyntaxKind.Unknown),
     );
 };
@@ -879,6 +882,26 @@ const hasExactGeneratedOperationParameters = (
   const authorizedClose = findClosingParenthesis(tokens, authorizedOpen, authorizedArrow);
   const operationOpen = operation.start + 4;
   const operationClose = findClosingParenthesis(tokens, operationOpen, operationArrow);
+  const helperExpected = (optionsType: string, explicitString: boolean, trailingComma: boolean) =>
+    [
+      [SyntaxKind.Identifier, 'credential'],
+      [SyntaxKind.ColonToken],
+      [SyntaxKind.Identifier, 'Redacted'],
+      [SyntaxKind.DotToken],
+      [SyntaxKind.Identifier, 'Redacted'],
+      ...(explicitString
+        ? ([[SyntaxKind.LessThanToken], [SyntaxKind.StringKeyword], [SyntaxKind.GreaterThanToken]] as const)
+        : []),
+      [SyntaxKind.CommaToken],
+      [SyntaxKind.Identifier, 'requestCorrelation'],
+      [SyntaxKind.ColonToken],
+      [SyntaxKind.StringKeyword],
+      [SyntaxKind.CommaToken],
+      [SyntaxKind.Identifier, 'options'],
+      [SyntaxKind.ColonToken],
+      [SyntaxKind.Identifier, optionsType],
+      ...(trailingComma ? ([[SyntaxKind.CommaToken]] as const) : []),
+    ] satisfies readonly ExpectedToken[];
   const authorizedExpected = (trailingComma: boolean) =>
     [
       [SyntaxKind.Identifier, 'payload'],
@@ -921,26 +944,15 @@ const hasExactGeneratedOperationParameters = (
     ] satisfies readonly ExpectedToken[];
   return (
     types.options.some((optionsType) =>
-      [false, true].some((trailingComma) =>
-        hasExactParameterTokens(tokens, helperOpen, helper.parametersEnd, [
-          [SyntaxKind.Identifier, 'credential'],
-          [SyntaxKind.ColonToken],
-          [SyntaxKind.Identifier, 'Redacted'],
-          [SyntaxKind.DotToken],
-          [SyntaxKind.Identifier, 'Redacted'],
-          [SyntaxKind.LessThanToken],
-          [SyntaxKind.StringKeyword],
-          [SyntaxKind.GreaterThanToken],
-          [SyntaxKind.CommaToken],
-          [SyntaxKind.Identifier, 'requestCorrelation'],
-          [SyntaxKind.ColonToken],
-          [SyntaxKind.StringKeyword],
-          [SyntaxKind.CommaToken],
-          [SyntaxKind.Identifier, 'options'],
-          [SyntaxKind.ColonToken],
-          [SyntaxKind.Identifier, optionsType],
-          ...(trailingComma ? ([[SyntaxKind.CommaToken]] as const) : []),
-        ]),
+      [false, true].some((explicitString) =>
+        [false, true].some((trailingComma) =>
+          hasExactParameterTokens(
+            tokens,
+            helperOpen,
+            helper.parametersEnd,
+            helperExpected(optionsType, explicitString, trailingComma),
+          ),
+        ),
       ),
     ) &&
     authorizedClose !== undefined &&
@@ -1127,8 +1139,7 @@ const exportedOperationsUseClientHelperAndGateway = (
   const authorizedInvocationEnd = authorizedArrow + 1 + authorizedInvocation.length;
   const authorizedInvocationTail = matchingSequenceEnd(tokens, authorizedInvocationEnd, invocationPayloads);
   const authorizedUsesHelper =
-    matchesSequence(tokens, authorizedArrow + 1, authorizedInvocation) &&
-    hasInvocationClosure(tokens, authorizedInvocationTail);
+    authorizedInvocationEnd !== undefined && hasInvocationClosure(tokens, authorizedInvocationTail);
   const gatewayInvocation = [
     [SyntaxKind.Identifier, 'operationGateway'],
     [SyntaxKind.DotToken],
@@ -1162,8 +1173,11 @@ const exportedOperationsUseClientHelperAndGateway = (
     operation,
     operationArrow,
   );
-  return (
-    hasExactGeneratedOperationParameters(
+  const operationChecks = {
+    authorizedUsesHelper,
+    helperDoesNotShadowImports: !helperShadowsImports,
+    operationUsesGateway,
+    parameters: hasExactGeneratedOperationParameters(
       tokens,
       helper,
       authorized,
@@ -1171,12 +1185,10 @@ const exportedOperationsUseClientHelperAndGateway = (
       operation,
       operationArrow,
       expectation,
-    ) &&
-    authorizedUsesHelper &&
-    operationUsesGateway &&
-    !helperShadowsImports &&
-    !shadowsBindings
-  );
+    ),
+    parametersDoNotShadowBindings: !shadowsBindings,
+  };
+  return Object.values(operationChecks).every(Boolean);
 };
 
 export const generatedApiGroup = (source: string, ownerApiValue: string): string | undefined => {
@@ -1568,6 +1580,40 @@ const objectHasExactStrings = (
 ): boolean =>
   Object.entries(expected).every(([property, value]) => objectHasExactString(tokens, open, close, property, value));
 
+const objectHasExactStringsOrConstAliases = (
+  tokens: readonly GovernedClientToken[],
+  open: number,
+  close: number,
+  expected: Readonly<Record<string, string>>,
+): boolean =>
+  Object.entries(expected).every(([property, value]) => {
+    if (directObjectPropertyOccurrences(tokens, open, close, property) !== 1) {
+      return false;
+    }
+    const valueStart = findObjectPropertyValue(tokens, open, close, property);
+    if (hasExactObjectPropertyValue(tokens, valueStart, [[SyntaxKind.StringLiteral, value]])) {
+      return true;
+    }
+    const alias = valueStart === undefined ? undefined : tokenValue(tokens, valueStart);
+    return (
+      alias !== undefined &&
+      valueStart !== undefined &&
+      tokenKind(tokens, valueStart) === SyntaxKind.Identifier &&
+      hasExactObjectPropertyValue(tokens, valueStart, [[SyntaxKind.Identifier, alias]]) &&
+      sequenceOccurrencesAtBraceDepth(
+        tokens,
+        [
+          [SyntaxKind.ConstKeyword],
+          [SyntaxKind.Identifier, alias],
+          [SyntaxKind.EqualsToken],
+          [SyntaxKind.StringLiteral, value],
+          [SyntaxKind.SemicolonToken],
+        ],
+        0,
+      ) === 1
+    );
+  });
+
 const objectReferencesEntrypoint = (
   tokens: readonly GovernedClientToken[],
   open: number,
@@ -1772,24 +1818,37 @@ export const hasMatchingGeneratedProviderAuthorization = (
   return matchesGeneratedReadAuthorization(providerAuthorization, manifestAuthorization);
 };
 
-export const hasGeneratedModuleApiReadContract = (
-  source: string,
+const normalizedModuleApiReadContractSource = (source: string, moduleId: string): string => {
+  const aliases = [
+    ...source.matchAll(
+      new RegExp(
+        `^const\\s+(?<name>[A-Za-z_$][A-Za-z0-9_$]*)\\s*=\\s*(['"])${escapeRegExp(moduleId)}\\2(?:\\s+as\\s+const)?;\\s*$`,
+        'gmu',
+      ),
+    ),
+  ];
+  const alias = aliases.length === 1 ? aliases[0]?.groups?.name : undefined;
+  if (alias === undefined) {
+    return source;
+  }
+  return source
+    .replaceAll(
+      new RegExp(`(?<property>\\b(?:moduleKey|owningModuleKey))\\s*:\\s*${escapeRegExp(alias)}(?=\\s*[,}])`, 'gu'),
+      `$<property>: '${moduleId}'`,
+    )
+    .replaceAll(new RegExp(`\\b${escapeRegExp(alias)}(?=\\s*[,}])`, 'gu'), `moduleKey: '${moduleId}'`);
+};
+
+const hasGeneratedModuleApiEntrypointContract = (
+  tokens: readonly GovernedClientToken[],
+  entrypoint: readonly [number, number],
   moduleId: string,
   name: string,
-  authorization?: GeneratedReadAuthorization,
+  authorization: GeneratedReadAuthorization | undefined,
 ): boolean => {
-  const tokens = tokenizeGovernedClient(source);
-  const camel = toCamelCase(name);
-  const entrypointName = `${camel}Entrypoint`;
-  const entrypoint = topLevelCallObject(tokens, entrypointName, 'defineTenantModuleEntrypoint', false);
-  const read = topLevelCallObject(tokens, `${camel}Read`, 'defineRead');
-  if (entrypoint === undefined || read === undefined) {
-    return false;
-  }
   const access = findObjectPropertyValue(tokens, entrypoint[0], entrypoint[1], 'access');
   return (
     directObjectHasNoSpread(tokens, entrypoint[0], entrypoint[1]) &&
-    directObjectHasNoSpread(tokens, read[0], read[1]) &&
     matchesGeneratedReadAuthorization(
       generatedReadAuthorization(tokens, entrypoint[0], entrypoint[1]),
       authorization,
@@ -1797,20 +1856,49 @@ export const hasGeneratedModuleApiReadContract = (
     ['read', 'historical_read'].some((value) =>
       hasExactObjectPropertyValue(tokens, access, [[SyntaxKind.StringLiteral, value]]),
     ) &&
-    objectHasExactStrings(tokens, entrypoint[0], entrypoint[1], {
+    objectHasExactStringsOrConstAliases(tokens, entrypoint[0], entrypoint[1], {
       entrypointKey: `${moduleId}.api.${name}`,
       moduleKey: moduleId,
       role: 'api',
-    }) &&
-    objectReferencesEntrypoint(tokens, read[0], read[1], entrypointName) &&
-    ['legalEntityScope', 'permissionTarget', 'policies'].every(
-      (property) => directObjectPropertyOccurrences(tokens, read[0], read[1], property) === 1,
-    ) &&
-    objectHasExactStrings(tokens, read[0], read[1], {
-      owningModuleKey: moduleId,
-      readKey: `${moduleId}.api.${name}`,
-      schemaVersion: '1',
     })
+  );
+};
+
+const hasGeneratedModuleApiReadDefinition = (
+  tokens: readonly GovernedClientToken[],
+  read: readonly [number, number],
+  entrypointName: string,
+  moduleId: string,
+  name: string,
+): boolean =>
+  directObjectHasNoSpread(tokens, read[0], read[1]) &&
+  objectReferencesEntrypoint(tokens, read[0], read[1], entrypointName) &&
+  ['legalEntityScope', 'permissionTarget', 'policies'].every(
+    (property) => directObjectPropertyOccurrences(tokens, read[0], read[1], property) === 1,
+  ) &&
+  objectHasExactStringsOrConstAliases(tokens, read[0], read[1], {
+    owningModuleKey: moduleId,
+    readKey: `${moduleId}.api.${name}`,
+    schemaVersion: '1',
+  });
+
+export const hasGeneratedModuleApiReadContract = (
+  source: string,
+  moduleId: string,
+  name: string,
+  authorization?: GeneratedReadAuthorization,
+): boolean => {
+  const tokens = tokenizeGovernedClient(normalizedModuleApiReadContractSource(source, moduleId));
+  const camel = toCamelCase(name);
+  const entrypointName = `${camel}Entrypoint`;
+  const entrypoint = topLevelCallObject(tokens, entrypointName, 'defineTenantModuleEntrypoint', false);
+  const read = topLevelCallObject(tokens, `${camel}Read`, 'defineRead');
+  if (entrypoint === undefined || read === undefined) {
+    return false;
+  }
+  return (
+    hasGeneratedModuleApiEntrypointContract(tokens, [entrypoint[0], entrypoint[1]], moduleId, name, authorization) &&
+    hasGeneratedModuleApiReadDefinition(tokens, [read[0], read[1]], entrypointName, moduleId, name)
   );
 };
 
@@ -1825,17 +1913,22 @@ export const hasGeneratedGovernedClientContract = (source: string, expectation: 
     return false;
   }
   const helper = findClientHelper(tokens, authorized.start);
-  return (
-    helper !== undefined &&
-    hasExactGeneratedImports(tokens, expectation) &&
-    hasGovernedTransportInvocation(tokens, helper, expectation.ownerApiValue, expectation.defaultApiPrefix) &&
-    exportedOperationsUseClientHelperAndGateway(tokens, helper, expectation) &&
-    hasOnlyAllowedModuleStatements(tokens, helper, expectation) &&
-    ['makeGovernedEffectBffClient', 'operationGateway', expectation.ownerApiValue, 'Effect', helper.name].every(
-      (name) => identifierOccurrences(tokens, name) === 2,
-    ) &&
-    !tokens.some(({ value }) => value === 'makeEffectHttpApiClient' || value === 'HttpClientRequest')
-  );
+  const checks = {
+    forbidden: !tokens.some(({ value }) => value === 'makeEffectHttpApiClient' || value === 'HttpClientRequest'),
+    helper: helper !== undefined,
+    imports: hasExactGeneratedImports(tokens, expectation),
+    occurrences:
+      helper !== undefined &&
+      ['makeGovernedEffectBffClient', 'operationGateway', expectation.ownerApiValue, 'Effect', helper.name].every(
+        (name) => identifierOccurrences(tokens, name) === 2,
+      ),
+    operations: helper !== undefined && exportedOperationsUseClientHelperAndGateway(tokens, helper, expectation),
+    statements: helper !== undefined && hasOnlyAllowedModuleStatements(tokens, helper, expectation),
+    transport:
+      helper !== undefined &&
+      hasGovernedTransportInvocation(tokens, helper, expectation.ownerApiValue, expectation.defaultApiPrefix),
+  };
+  return Object.values(checks).every(Boolean);
 };
 
 const slotHasDirectPropertyKey = (source: string | undefined, key: string): boolean => {

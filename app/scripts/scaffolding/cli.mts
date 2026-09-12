@@ -8,7 +8,7 @@ import type { GeneratorContext } from '@modern-js/codesmith';
 import { Console, Effect, Option, Predicate, Schema } from 'effect';
 import { Argument, CliConfig, Command, Flag, GlobalFlag } from 'effect/unstable/cli';
 import { ChildProcess, ChildProcessSpawner } from 'effect/unstable/process';
-
+import actionHttpGenerator from './action-http/scaffold.mts';
 import actionServiceGenerator from './action-service/scaffold.mts';
 import actionGenerator from './action/scaffold.mts';
 import externalHttpAdapterGenerator from './external-http-adapter/scaffold.mts';
@@ -19,6 +19,7 @@ import moduleContractGenerator from './module-contract/scaffold.mts';
 import outboxMessageGenerator from './outbox-message/scaffold.mts';
 import outboxWorkerGenerator from './outbox-worker/scaffold.mts';
 import policyGenerator from './policy/scaffold.mts';
+import permissionGenerator from './permission/scaffold.mts';
 import publicComponentGenerator from './public-component/scaffold.mts';
 import reportGenerator from './report/scaffold.mts';
 import resourceGenerator from './resource/scaffold.mts';
@@ -28,6 +29,8 @@ import searchProviderGenerator from './search-provider/scaffold.mts';
 import type {
   ActionScaffoldConfig,
   ActionScaffoldResult,
+  ActionHttpScaffoldConfig,
+  ActionHttpScaffoldResult,
   ActionServiceScaffoldConfig,
   ActionServiceScaffoldResult,
   ExternalHttpAdapterScaffoldConfig,
@@ -44,6 +47,8 @@ import type {
   PageScaffoldResult,
   PolicyScaffoldConfig,
   PolicyScaffoldResult,
+  PermissionScaffoldConfig,
+  PermissionScaffoldResult,
   ResourceScaffoldConfig,
   ResourceScaffoldResult,
   RetireContributionScaffoldConfig,
@@ -56,6 +61,7 @@ import type {
 
 const scaffoldCommandValues = [
   'action',
+  'action-http',
   'action-service',
   'external-http-adapter',
   'microvertical-action-boundary',
@@ -65,6 +71,7 @@ const scaffoldCommandValues = [
   'outbox-message',
   'outbox-worker',
   'policy',
+  'permission',
   'public-component',
   'report',
   'resource',
@@ -88,6 +95,7 @@ export class ScaffoldingError extends Schema.TaggedError<ScaffoldingError>()('Sc
 
 type GeneratorResult =
   | ActionBoundaryScaffoldResult
+  | ActionHttpScaffoldResult
   | ActionScaffoldResult
   | ActionServiceScaffoldResult
   | ExternalHttpAdapterScaffoldResult
@@ -97,12 +105,14 @@ type GeneratorResult =
   | OutboxWorkerScaffoldResult
   | PageScaffoldResult
   | PolicyScaffoldResult
+  | PermissionScaffoldResult
   | ResourceScaffoldResult
   | RetireContributionScaffoldResult
   | SearchProviderAccessScaffoldResult;
 
 type GeneratorConfig =
   | ActionBoundaryScaffoldConfig
+  | ActionHttpScaffoldConfig
   | ActionScaffoldConfig
   | ActionServiceScaffoldConfig
   | ExternalHttpAdapterScaffoldConfig
@@ -112,6 +122,7 @@ type GeneratorConfig =
   | OutboxWorkerScaffoldConfig
   | PageScaffoldConfig
   | PolicyScaffoldConfig
+  | PermissionScaffoldConfig
   | ResourceScaffoldConfig
   | RetireContributionScaffoldConfig
   | SearchProviderAccessScaffoldConfig;
@@ -393,6 +404,27 @@ Options:
         };
       }),
   }),
+  'action-http': defineCommand({
+    flags: ['action', 'vertical'],
+    generator: actionHttpGenerator,
+    help: `Usage: pnpm scaffold:action-http -- --vertical <vertical> --action <action>
+
+Generate one explicit, typed public HTTP transport for an existing MicroVertical Action.
+
+Required flags:
+  --action <action>      Existing Action name (lower-kebab-case)
+  --vertical <vertical>  Existing generated vertical folder (lower-kebab-case)
+
+Options:
+  --help                 Show this help without writing
+`,
+    requiredFlags: ['action', 'vertical'],
+    toConfig: (flags) =>
+      Effect.succeed({
+        action: flags.action ?? '',
+        vertical: flags.vertical ?? '',
+      }),
+  }),
   'action-service': defineCommand({
     flags: ['service', 'vertical'],
     generator: actionServiceGenerator,
@@ -601,6 +633,36 @@ Options:
           topic: flags.topic ?? '',
           vertical: flags.vertical ?? '',
           worker: flags.worker ?? '',
+        };
+      }),
+  }),
+  permission: defineCommand({
+    flags: ['permission', 'scope', 'vertical'],
+    generator: permissionGenerator,
+    help: `Usage: pnpm scaffold:permission -- --vertical <vertical> --permission <retail.*|counterparty.*> --scope <retail_profile|counterparty|counterparty_storefront>
+
+Generate one versioned, fail-closed business Permission declaration and register it in the module manifest.
+Generated Permissions start non-delegable and with no authority-group or protected-entrypoint membership.
+
+Required flags:
+  --vertical <vertical>  Existing generated vertical folder (lower-kebab-case)
+  --permission <code>    Stable lowercase retail.* or counterparty.* Permission code
+  --scope <scope>        Exact business target scope
+
+Options:
+  --help                 Show this help without writing
+`,
+    requiredFlags: ['permission', 'scope', 'vertical'],
+    toConfig: (flags) =>
+      Effect.gen(function* permissionConfigEffect() {
+        const { scope } = flags;
+        if (scope !== 'retail_profile' && scope !== 'counterparty' && scope !== 'counterparty_storefront') {
+          return yield* failScaffolding('--scope must be retail_profile, counterparty, or counterparty_storefront');
+        }
+        return {
+          permission: flags.permission ?? '',
+          scope,
+          vertical: flags.vertical ?? '',
         };
       }),
   }),

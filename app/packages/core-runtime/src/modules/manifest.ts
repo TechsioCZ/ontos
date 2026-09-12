@@ -4,6 +4,8 @@ import { HttpApi } from 'effect/unstable/httpapi';
 import type { AnyActionRegistration } from '../actions/definition.ts';
 import { isActionRegistration } from '../actions/definition.ts';
 import { TENANT_PERMISSION_KEYS } from '../permissions/context-access.ts';
+import { BusinessPermissionDescriptorSchema, defineBusinessPermission } from '../permissions/business-permission.ts';
+import type { BusinessPermissionDescriptor } from '../permissions/business-permission.ts';
 import { ModuleEntrypointSchema } from './module-entrypoint.ts';
 import { OntosShellContributionsSchema, validateShellContributions } from './shell-contribution.ts';
 import type { OntosShellContributions } from './shell-contribution.ts';
@@ -145,6 +147,7 @@ export const OntosOutboxSubscriptionContractSchema = Schema.Struct({
 export const OntosSerializedPublicSurfaceSchema = Schema.Struct({
   actions: Schema.Array(OntosActionContractSchema),
   api: Schema.Array(OntosApiContractSchema),
+  businessPermissions: Schema.optionalKey(Schema.Array(BusinessPermissionDescriptorSchema)),
   components: Schema.Array(OntosComponentContractSchema),
   events: Schema.Array(OntosPublicEventContractSchema),
   reports: Schema.Array(OntosReportDescriptorSchema),
@@ -200,6 +203,7 @@ export interface OntosAuthoredPublicEvent<
 export interface OntosAuthoredPublicSurface {
   readonly actions: readonly OntosManifestActionValue[];
   readonly api: Readonly<Record<string, HttpApi.Constraint>>;
+  readonly businessPermissions?: readonly BusinessPermissionDescriptor[];
   readonly components: Readonly<Record<string, OntosManifestComponentValue>>;
   readonly events: readonly OntosAuthoredPublicEvent[];
   readonly reports: readonly OntosReportDescriptor[];
@@ -275,7 +279,17 @@ export const validateOntosModuleManifestFields = <Input extends object, PublicSu
   assertExactKeys(input, ['activation', 'module', 'publicSurface'], 'manifest');
   assertExactKeys(
     publicSurface,
-    ['actions', 'api', 'components', 'events', 'reports', 'resourceTypes', 'search', 'shellContributions'],
+    [
+      'actions',
+      'api',
+      'businessPermissions',
+      'components',
+      'events',
+      'reports',
+      'resourceTypes',
+      'search',
+      'shellContributions',
+    ],
     'manifest public surface',
   );
 };
@@ -354,6 +368,12 @@ export const defineOntosModuleManifest = <const Input extends OntosModuleManifes
   );
   const actionKeys = input.publicSurface.actions.map(({ descriptor }) => descriptor.actionKey);
   assertUnique(actionKeys, 'Action key');
+
+  const businessPermissions = (input.publicSurface.businessPermissions ?? []).map(defineBusinessPermission);
+  assertUnique(
+    businessPermissions.map(({ key }) => key),
+    'business permission code',
+  );
 
   const resources = input.publicSurface.resourceTypes.map((resource) => exactDecode(OntosResourceTypeSchema, resource));
   const resourceKeys = resources.map(({ key }) => key);
@@ -441,6 +461,7 @@ export const defineOntosModuleManifest = <const Input extends OntosModuleManifes
       ...input.publicSurface,
       actions: Object.freeze([...input.publicSurface.actions]),
       api: Object.freeze({ ...input.publicSurface.api }),
+      businessPermissions: Object.freeze(businessPermissions),
       components: Object.freeze({ ...input.publicSurface.components }),
       events: Object.freeze(events),
       reports: Object.freeze(

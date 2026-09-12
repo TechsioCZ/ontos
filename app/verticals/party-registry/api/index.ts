@@ -19,6 +19,7 @@ import { counterpartiesReadApiLive } from './counterparties-search-server.ts';
 import { counterpartyReadReadApiLive } from './counterparty-read-read-server.ts';
 import { counterpartyRoleHistoryReadApiLive } from './counterparty-role-history-read-server.ts';
 import { duplicateCandidateDetailReadApiLive } from './duplicate-candidate-detail-read-server.ts';
+import { guestPartyResolutionReadApiLive } from './guest-party-resolution-read-server.ts';
 // </generated-governed-http-handler-imports>
 import { engagementProfileApiHandlersLive } from './engagement-profile-server.ts';
 import { organizationEngagementProfileReadApiLive } from './organization-engagement-profile-read-server.ts';
@@ -117,6 +118,7 @@ export const makePartyRegistryApiRuntime = (
     counterpartyReadReadApiLive.pipe(GovernedReadLayer.provide(governedReadRuntimeLive)),
     counterpartyRoleHistoryReadApiLive.pipe(GovernedReadLayer.provide(governedReadRuntimeLive)),
     duplicateCandidateDetailReadApiLive.pipe(GovernedReadLayer.provide(governedReadRuntimeLive)),
+    guestPartyResolutionReadApiLive.pipe(GovernedReadLayer.provide(governedReadRuntimeLive)),
     organizationEngagementProfileReadApiLive.pipe(GovernedReadLayer.provide(governedReadRuntimeLive)),
     partyContactPointDetailReadApiLive.pipe(GovernedReadLayer.provide(governedReadRuntimeLive)),
     partyContactPointsReadApiLive.pipe(GovernedReadLayer.provide(governedReadRuntimeLive)),

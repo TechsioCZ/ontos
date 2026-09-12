@@ -37,16 +37,14 @@ import {
   PartyAliasWriteRejected,
 } from '../../shared/domain/merge-alias-resolution.ts';
 import type { PartyAliasResolutionError } from '../../shared/domain/merge-alias-resolution.ts';
-import {
-  PartyOfficialIdentifierRefSchema,
-  makePartyOfficialIdentifierRef,
-} from '../../shared/resources/party-official-identifier.ts';
+import { PartyOfficialIdentifierRefSchema } from '../../shared/resources/party-official-identifier.ts';
 import { PartyRefSchema } from '../../shared/resources/party.ts';
 import {
   PARTY_EXACT_CLAIM_RULE_VERSION,
   endOfficialIdentifierRecord,
   updateOfficialIdentifierVerificationRecord,
 } from '../services/party-official-identifier-persistence.service.ts';
+import { makePartyOfficialIdentifierRef } from '../services/party-official-identifier-reference.ts';
 import { createUpdatePartyOfficialIdentifierPartyRegistryOfficialIdentifierUpdatedV1OutboxMessage } from './update-party-official-identifier.party-registry-official-identifier-updated-v1.outbox-message.ts';
 
 export { UpdatePartyOfficialIdentifierPayloadSchema } from '../../shared/actions/update-party-official-identifier.ts';

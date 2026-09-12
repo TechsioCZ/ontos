@@ -42,9 +42,9 @@ test('keeps authentication in the existing Shell/Core ownership boundary', () =>
 
   expect(authentication.kind).toBe('shell-core-capability');
   expect(authentication.owners).toEqual(['shell-super-app', 'core-runtime']);
-  expect(installedVerticalIds).toEqual(['party-registry']);
-  expect(verticalRefs).toEqual(installedVerticalIds);
+  expect(installedVerticalIds).toEqual(['party-registry', 'commerce-customer-context', 'payment-term-catalog']);
   expect(browserRemoteIds).toEqual(['party-registry']);
+  expect(verticalRefs).toEqual(browserRemoteIds);
   expect(moduleFederation.remotes.map(({ id }) => id)).toEqual(browserRemoteIds);
   expect(fs.existsSync(new URL('verticals/auth', workspaceRoot))).toBe(false);
   expect(shellPackageSource).not.toContain('@app/auth');

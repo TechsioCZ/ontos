@@ -1592,22 +1592,22 @@ const gatewayContextGroupLive = HttpApiBuilder.group(ShellAuthenticationApi, 'ga
           );
           ({ legalEntityId } = selected);
         }
+        const principal = withOptionalProperty(
+          {
+            authBindingId: identity.authBindingId,
+            authContextRef: `better-auth-api-key:${verified.providerKeyId}`,
+            authMethod: 'api_key' as const,
+            principalId: identity.principalId,
+            tenantId: identity.tenantId,
+          },
+          legalEntityId !== undefined,
+          'legalEntityId',
+          legalEntityId,
+          {},
+        );
         return yield* issueGatewayContextAssertion({
           audience: payload.audience,
-          principal: withOptionalProperty(
-            {
-              authBindingId: identity.authBindingId,
-              authContextRef: `better-auth-api-key:${verified.providerKeyId}`,
-              authMethod: 'api_key',
-            },
-            legalEntityId !== undefined,
-            'legalEntityId',
-            legalEntityId,
-            {
-              principalId: identity.principalId,
-              tenantId: identity.tenantId,
-            },
-          ),
+          principal,
         }).pipe(
           Effect.tapError((error) => logGatewayIssuerFailure('api_key', request, error)),
           Effect.catch((error) => pipe(error, gatewayIssuerProblem, failGatewayProblem)),

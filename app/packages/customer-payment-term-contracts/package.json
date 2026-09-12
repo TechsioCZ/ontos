@@ -1,0 +1,37 @@
+{
+  "name": "@app/customer-payment-term-contracts",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Customer-owned public Payment Term affected-use contracts and generated client.",
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts",
+    "./payment-term-affected-use-assessment": "./src/apis/payment-term-affected-use-assessment.ts",
+    "./payment-term-affected-use-assessment/client": "./src/api/payment-term-affected-use-assessment-client.ts",
+    "./reserve-payment-term-retirement": "./src/apis/reserve-payment-term-retirement.ts",
+    "./reserve-payment-term-retirement/client": "./src/api/reserve-payment-term-retirement-client.ts"
+  },
+  "scripts": {
+    "test:unit": "rstest --project unit",
+    "typecheck": "node ../../scripts/ultramodern-typecheck.mts --project tsconfig.json"
+  },
+  "dependencies": {
+    "@app/payment-term-catalog-contracts": "workspace:*",
+    "@app/shared-contracts": "workspace:*",
+    "effect": "4.0.0-rc.112"
+  },
+  "devDependencies": {
+    "@rstest/core": "0.11.11",
+    "@types/node": "20.19.43",
+    "effect-rstest": "https://pkg.pr.new/ScriptedAlchemy/effect-rstest@79abbf684c7b150ee5f32694129a7caf969903bc"
+  },
+  "ontosContractOwner": {
+    "appId": "commerce-customer-context",
+    "moduleApis": [
+      "payment-term-affected-use-assessment",
+      "reserve-payment-term-retirement"
+    ],
+    "moduleId": "commerce.customer-context",
+    "packageName": "@app/commerce-customer-context"
+  }
+}

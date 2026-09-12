@@ -135,6 +135,25 @@ export {
 } from './db/schema.ts';
 export type { BindingStatus, BindingSubjectType, PrincipalKind, PrincipalStatus } from './db/schema.ts';
 export { tenantLegalEntityRlsPolicies, tenantRlsPolicies } from './db/scoped-transaction.ts';
+export type { ScopedTransactionExecutor } from './db/scoped-transaction.ts';
+export {
+  SCOPED_ROUTINE_INVOCATION_ERROR_CODES,
+  SCOPED_ROUTINE_PARAMETER_TYPES,
+  ScopedRoutineInvocationError,
+  defineScopedRoutine,
+  scopedRoutineInvokerFromTransaction,
+} from './db/scoped-routine.ts';
+export type {
+  ScopedRoutineContextParameter,
+  ScopedRoutineDefinition,
+  ScopedRoutineDefinitionInput,
+  ScopedRoutineInputParameter,
+  ScopedRoutineInputValues,
+  ScopedRoutineInvocationErrorCode,
+  ScopedRoutineInvoker,
+  ScopedRoutineParameter,
+  ScopedRoutineParameterType,
+} from './db/scoped-routine.ts';
 export {
   DatabaseCommitAcknowledgementAmbiguous,
   DatabaseDriverFailureKindSchema,
@@ -160,23 +179,154 @@ export {
   TENANT_PERMISSION_KEYS,
   makeContextAccess,
   makeContextAccessLive,
+  toBusinessPermissionAccessKey,
+  toBusinessPermissionAccessObjectId,
+  toContextPermissionAccessKey,
+  toContextPermissionAccessObjectId,
   toLegalEntityAccessObjectId,
   toModuleAccessObjectId,
   toResourceAccessObjectId,
 } from './permissions/context-access.ts';
 export type {
+  BusinessAccessTarget,
+  BusinessPermissionAccessTarget,
   ContextAccessClientFactory,
   ContextAccessDecision,
   ContextAccessResult,
   ContextAccessService,
+  ContextPermissionAccessTarget,
   LegalEntityPermissionKey,
   ResourceAccessTarget,
   TenantPermissionKey,
 } from './permissions/context-access.ts';
-export { defineAction, defineActionResourcePermission, isActionRegistration } from './actions/definition.ts';
+export {
+  OwnerAuthorizationDecisionSchema,
+  OwnerAuthorizationOverlay,
+  OwnerAuthorizationOverlayAllowLive,
+  allowOwnerAuthorizationOverlay,
+  failClosedOwnerAuthorizationOverlay,
+} from './permissions/owner-authorization-overlay.ts';
 export type {
+  OwnerAuthorizationDecision,
+  OwnerAuthorizationInput,
+  OwnerAuthorizationOverlayService,
+  OwnerAuthorizationTarget,
+} from './permissions/owner-authorization-overlay.ts';
+export {
+  ActionAuthorizationPreflight,
+  ActionAuthorizationPreflightDatabase,
+  ActionAuthorizationPreflightDatabaseLive,
+  makeActionAuthorizationPreflightPermit,
+  unavailableActionAuthorizationPreflight,
+} from './permissions/action-authorization-preflight.ts';
+export type {
+  ActionAuthorizationPreflightDecision,
+  ActionAuthorizationPreflightDatabaseService,
+  ActionAuthorizationPreflightInput,
+  ActionAuthorizationPreflightPermit,
+  ActionAuthorizationPreflightService,
+  ActionAuthorizationPreflightTransaction,
+} from './permissions/action-authorization-preflight.ts';
+export {
+  BusinessPermissionAuditSensitivitySchema,
+  BusinessPermissionCodeSchema,
+  BusinessPermissionDescriptorSchema,
+  BusinessPermissionScopeKindSchema,
+  defineBusinessPermission,
+  defineBusinessPermissionCatalog,
+  isBusinessPermissionDescriptor,
+} from './permissions/business-permission.ts';
+export type {
+  BusinessPermissionAuditSensitivity,
+  BusinessPermissionCatalog,
+  BusinessPermissionCode,
+  BusinessPermissionDescriptor,
+  BusinessPermissionScopeKind,
+} from './permissions/business-permission.ts';
+export {
+  PrincipalEligibility,
+  PrincipalEligibilityDecisionSchema,
+  PrincipalRefSchema,
+  unavailablePrincipalEligibility,
+} from './permissions/principal-ref.ts';
+export type {
+  PrincipalEligibilityDecision,
+  PrincipalEligibilityResult,
+  PrincipalEligibilityService,
+  PrincipalRef,
+} from './permissions/principal-ref.ts';
+export { PrincipalEligibilityLive, principalEligibilityForTransaction } from './permissions/principal-eligibility.ts';
+export {
+  AUTHORIZATION_MUTATION_STATES,
+  AUTHORIZATION_MUTATION_TRANSITIONS,
+  AuthorizationMutationJournal,
+  AuthorizationMutationStateSchema,
+  canTransitionAuthorizationMutation,
+} from './permissions/authorization-mutation.ts';
+export type {
+  AuthorizationMutationJournalEntry,
+  AuthorizationMutationJournalService,
+  AuthorizationMutationState,
+} from './permissions/authorization-mutation.ts';
+export {
+  AuthorizationMutationReconciler,
+  AuthorizationMutationReconciliationUnavailable,
+} from './permissions/authorization-reconciler.ts';
+export type {
+  AuthorizationMutationReconcilerService,
+  AuthorizationMutationReconciliationSummary,
+} from './permissions/authorization-reconciler.ts';
+export {
+  AuthorizationMutationSagaError,
+  reconcileCommittedAuthorizationMutation,
+} from './permissions/authorization-mutation-saga.ts';
+export type {
+  AuthorizationMutationSagaErrorCode,
+  AuthorizationMutationSagaFinalizer,
+  AuthorizationMutationSagaResult,
+} from './permissions/authorization-mutation-saga.ts';
+export {
+  BusinessPermissionMutationUnavailable,
+  BusinessPermissionRelationshipMutation,
+  BusinessPermissionRelationshipMutationLive,
+  createBusinessPermissionRelationshipMutationClient,
+  makeBusinessPermissionRelationshipMutation,
+  makeBusinessPermissionRelationshipMutationLive,
+} from './permissions/business-permission-mutation.ts';
+export type {
+  BusinessPermissionRelationshipMutationClient,
+  BusinessPermissionRelationshipMutationInput,
+  BusinessPermissionRelationshipMutationService,
+} from './permissions/business-permission-mutation.ts';
+export {
+  ContextPermissionMutationUnavailable,
+  ContextPermissionRelationshipMutation,
+  ContextPermissionRelationshipMutationLive,
+  createContextPermissionRelationshipMutationClient,
+  makeContextPermissionRelationshipMutation,
+  makeContextPermissionRelationshipMutationLive,
+} from './permissions/context-permission-mutation.ts';
+export type {
+  ContextPermissionRelationshipMutationClient,
+  ContextPermissionRelationshipMutationInput,
+  ContextPermissionRelationshipMutationService,
+} from './permissions/context-permission-mutation.ts';
+export {
+  defineAction,
+  defineActionBusinessPermission,
+  defineActionResourcePermission,
+  isActionRegistration,
+} from './actions/definition.ts';
+export type {
+  ActionBusinessPermissionDeclaration,
+  ActionBusinessPermissionTarget,
+  ActionBusinessPermissionTargetResolver,
   ActionAuditProfile,
   ActionDescriptor,
+  ActionDeniedAuditEvidenceDeclaration,
+  ActionDeniedAuditEvidenceJsonValue,
+  ActionDeniedAuditEvidenceResolver,
+  ActionDeniedAuditEvidenceValue,
   ActionHandler,
   ActionIdempotencyRule,
   ActionLegalEntityPermission,
@@ -208,13 +358,24 @@ export type {
   ResolveActionCommitInput,
   RunActionInput,
 } from './actions/runtime.ts';
-export { ActionTransportMetadataSchema, TrustedPrincipalContextSchema } from './actions/context.ts';
+export {
+  ActionTransportMetadataSchema,
+  TrustedPrincipalContextSchema,
+  commitActionThenReject,
+} from './actions/context.ts';
 export type {
   ActionCollectorMethods,
   ActionHandlerContext,
   ActionTransportMetadata,
+  CommittedActionDomainRejection,
   TrustedPrincipalContext,
 } from './actions/context.ts';
+export {
+  isTrustedSystemPrincipalContext,
+  isVerifiedGatewayPrincipalContext,
+  trustResolvedSystemPrincipalContext,
+  trustVerifiedGatewayPrincipalContext,
+} from './auth/system-principal-context-provenance.ts';
 export {
   LEGAL_ENTITY_SCOPES,
   OperationalScopeRepositoryLive,
@@ -241,13 +402,20 @@ export {
 export type { OperationContextError } from './operations/errors.ts';
 export {
   READ_ACCESS_KINDS,
+  READ_CONDITIONAL_PERMISSION_REQUIREMENTS,
   READ_EVIDENCE_CAPTURE_MODES,
   READ_PERMISSION_TARGETS,
   defineRead,
+  defineReadConditionalPermission,
+  defineReadResourcePermission,
 } from './reads/definition.ts';
 export type {
   AlternativeResolvedReadPermissionTarget,
   AtomicResolvedReadPermissionTarget,
+  ReadConditionalPermissionBranch,
+  ReadConditionalPermissionBranches,
+  ReadConditionalPermissionDeclaration,
+  ReadConditionalPermissionRequirement,
   ReadAlternativeTenantPermission,
   ReadAccessKind,
   ReadDescriptor,
@@ -259,8 +427,12 @@ export type {
   ReadPolicyDescriptor,
   ReadResultPermissionTargetResolver,
   ReadRegistration,
+  ReadResourcePermissionDeclaration,
+  ReadResourcePermissionTarget,
+  ReadResourcePermissionTargetResolver,
   ReadServiceFactory,
   ResolvedReadPermissionTarget,
+  ResolvedReadConditionalPermissionRequirement,
 } from './reads/definition.ts';
 export type { ReadEvidenceMetadata, ReadHandlerContext, ReadHandlerResult } from './reads/context.ts';
 export { READ_RUNTIME_STAGES, ReadRuntime, ReadRuntimeLive } from './reads/runtime.ts';
@@ -277,6 +449,8 @@ export {
   ReadPolicyDenied,
   ReadPolicyEvaluationError,
   ReadResultValidationError,
+  ReadCoreErrorSchema,
+  isReadCoreError,
 } from './reads/errors.ts';
 export type { ReadCoreError } from './reads/errors.ts';
 export {
@@ -570,6 +744,16 @@ export type {
   OutboxWorkerSubscription,
 } from './outbox/definition.ts';
 export {
+  defineOutboxWorkerCompletion,
+  OutboxWorkerCompletionPublicationError,
+} from './outbox/completion-publication.ts';
+export type {
+  OutboxWorkerCompletionDefinition,
+  OutboxWorkerCompletionInput,
+  OutboxWorkerCompletionPublicationResult,
+  OutboxWorkerCompletionPublisher,
+} from './outbox/completion-publication.ts';
+export {
   OutboxClaimLostError,
   OutboxHandlerExecutionError,
   OutboxPayloadDecodeError,
@@ -586,6 +770,18 @@ export type {
   RunOutboxPollingLoopInput,
 } from './outbox/poller.ts';
 export { OutboxRepositoryLive } from './outbox/repository.ts';
+export {
+  makeOutboxWorkerLegalEntityScopeFanout,
+  OutboxWorkerLegalEntityScopeError,
+  OutboxWorkerLegalEntityScopeFanout,
+  OutboxWorkerLegalEntityScopeFanoutLive,
+} from './outbox/legal-entity-scope-fanout.ts';
+export type {
+  OutboxWorkerLegalEntityScope,
+  OutboxWorkerLegalEntityScopeBackend,
+  OutboxWorkerLegalEntityScopeFanoutService,
+  OutboxWorkerLegalEntityScopeRecord,
+} from './outbox/legal-entity-scope-fanout.ts';
 export type { RunOutboxWorkerProcessInput, StartOutboxWorkerProcessInput } from './outbox/process.ts';
 export { OutboxRuntime, OutboxRuntimeLive, matchOutboxMessages, runOutboxCycle } from './outbox/runtime.ts';
 export type {

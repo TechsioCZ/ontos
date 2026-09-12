@@ -1,0 +1,2 @@
+DROP INDEX "payment_term_catalog"."payment_term_catalog_revisions_semantics_uk";--> statement-breakpoint
+CREATE INDEX "payment_term_catalog_revisions_semantics_idx" ON "payment_term_catalog"."payment_term_revisions" ("tenant_id","legal_entity_id","semantic_fingerprint");

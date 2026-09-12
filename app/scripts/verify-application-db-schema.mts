@@ -4,12 +4,21 @@ import type { QueryResult, QueryResultRow } from 'pg';
 
 import { loadDatabaseConnectionPair } from '../packages/core-runtime/src/db/config.ts';
 
-const EXPECTED_APPLICATION_SCHEMAS = ['auth', 'contacts', 'core', 'party'] as const;
+const EXPECTED_APPLICATION_SCHEMAS = [
+  'auth',
+  'commerce_customer_context',
+  'contacts',
+  'core',
+  'party',
+  'payment_term_catalog',
+] as const;
 const EXPECTED_MIGRATION_JOURNALS = [
   '__drizzle_migrations_auth',
+  '__drizzle_migrations_commerce_customer_context',
   '__drizzle_migrations_contacts',
   '__drizzle_migrations_core',
   '__drizzle_migrations_party',
+  '__drizzle_migrations_payment_term_catalog',
 ] as const;
 
 class ApplicationDatabaseVerificationError extends Schema.TaggedError<ApplicationDatabaseVerificationError>()(
@@ -85,6 +94,8 @@ const ownerVerifierPaths = [
   '../apps/shell-super-app/scripts/verify-auth-db-schema.mts',
   '../verticals/party-registry/scripts/verify-db-schema.mts',
   '../verticals/party-registry/scripts/verify-engagement-db-schema.mts',
+  '../verticals/payment-term-catalog/scripts/verify-db-schema.mts',
+  '../verticals/commerce-customer-context/scripts/verify-db-schema.mts',
 ] as const;
 
 const main = Effect.gen(function* verifyApplicationDatabase() {
@@ -115,7 +126,7 @@ const main = Effect.gen(function* verifyApplicationDatabase() {
   yield* Console.log('Verified exact application schemas and migration journals');
   for (const ownerVerifierPath of ownerVerifierPaths) {
     yield* Effect.tryPromise({
-      catch: (cause) => verificationFailure('An owner database verifier failed', cause),
+      catch: (cause) => verificationFailure(`Owner database verifier ${ownerVerifierPath} failed`, cause),
       try: async () => {
         await import(ownerVerifierPath);
       },

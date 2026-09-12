@@ -7,6 +7,10 @@ const AuthBindingIdSchema = decodedStringBrand(uuid, 'AuthBindingId');
 const ImpersonatedByPrincipalIdSchema = decodedStringBrand(uuid, 'ImpersonatedByPrincipalId');
 const LegalEntityIdSchema = decodedStringBrand(uuid, 'LegalEntityId');
 const PrincipalIdSchema = decodedStringBrand(uuid, 'PrincipalId');
+const TrustedStorefrontIdSchema = decodedStringBrand(
+  Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(300)),
+  'TrustedStorefrontId',
+);
 const TenantIdSchema = decodedStringBrand(uuid, 'TenantId');
 
 const TrustedPrincipalContextFieldsSchema = Schema.Struct({
@@ -17,6 +21,7 @@ const TrustedPrincipalContextFieldsSchema = Schema.Struct({
   legalEntityId: Schema.optionalKey(LegalEntityIdSchema),
   principalId: PrincipalIdSchema,
   tenantId: TenantIdSchema,
+  trustedStorefrontId: Schema.optionalKey(TrustedStorefrontIdSchema),
 });
 
 type TrustedPrincipalContextFields = typeof TrustedPrincipalContextFieldsSchema.Type;
@@ -50,6 +55,7 @@ const validateSystemContext: PrincipalContextValidator = (context) =>
   context.authBindingId !== undefined ||
   context.impersonatedByPrincipalId !== undefined ||
   context.legalEntityId !== undefined ||
+  context.trustedStorefrontId !== undefined ||
   !/^job:[^:]{1,100}:run:[^:]{1,200}$/u.test(context.authContextRef ?? '')
     ? issue('system context requires only a safe job/run reference')
     : [];
@@ -62,7 +68,17 @@ const principalContextValidators = {
 } satisfies Record<TrustedPrincipalContextFields['authMethod'], PrincipalContextValidator>;
 
 export const TrustedPrincipalContextSchema = TrustedPrincipalContextFieldsSchema.check(
-  Schema.makeFilter((context) => principalContextValidators[context.authMethod](context)),
+  Schema.makeFilter((context) => [
+    ...principalContextValidators[context.authMethod](context),
+    ...(context.trustedStorefrontId !== undefined && context.legalEntityId === undefined
+      ? [
+          {
+            issue: 'trusted Storefront context requires a legal entity',
+            path: ['trustedStorefrontId'],
+          },
+        ]
+      : []),
+  ]),
 );
 
 export type TrustedPrincipalContext = Schema.Schema.Type<typeof TrustedPrincipalContextSchema>;

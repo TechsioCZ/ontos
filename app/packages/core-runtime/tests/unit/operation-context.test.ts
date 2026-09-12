@@ -4,7 +4,9 @@ import { expect, it } from 'effect-rstest';
 import { supportRecoveryPrincipalContextResolverFromRepository } from '../../src/auth/support-recovery-principal-context.ts';
 import {
   decodeTrustedPrincipalContext,
+  isVerifiedGatewayPrincipalContext,
   isTrustedSupportRecoveryPrincipalContext,
+  trustVerifiedGatewayPrincipalContext,
 } from '../../src/auth/system-principal-context-provenance.ts';
 import {
   registerSystemWorkload,
@@ -173,6 +175,26 @@ it.effect('preserves resolver-issued system provenance across operational scope 
     expect(decoded.principalId).toBe(scope.principalId);
     const untrusted = yield* Effect.exit(decodeTrustedPrincipalContext({ ...scope }));
     expect(Exit.isFailure(untrusted)).toBe(true);
+  }),
+);
+
+it.effect('preserves verified Storefront scope through persisted tenant and legal-entity checks', () =>
+  Effect.gen(function* verifiedStorefrontScope() {
+    const storefrontPrincipal = trustVerifiedGatewayPrincipalContext({
+      ...principal,
+      trustedStorefrontId: 'storefront-akros-b2b',
+    });
+    const resolver = makeOperationalScopeResolver({ load: () => Effect.succeed(active) }, access('allowed'));
+
+    const resolved = yield* resolver.resolve({
+      correlationId: 'storefront-scope',
+      legalEntityScope: 'required',
+      principal: storefrontPrincipal,
+    });
+
+    expect(resolved.trustedStorefrontId).toBe('storefront-akros-b2b');
+    expect(isVerifiedGatewayPrincipalContext(resolved)).toBe(true);
+    expect(Exit.isFailure(yield* Effect.exit(decodeTrustedPrincipalContext({ ...resolved })))).toBe(true);
   }),
 );
 

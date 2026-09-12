@@ -1,11 +1,17 @@
 import { Cause, DateTime, Deferred, Effect, Exit, Fiber, Option, Predicate, Schema, Struct } from 'effect';
 import { expect, it } from 'effect-rstest';
 import { ConnectionError, SqlError } from 'effect/unstable/sql/SqlError';
-
-import { defineAction, defineActionResourcePermission, getActionHandler } from '../../src/actions/definition.ts';
+import {
+  defineAction,
+  defineActionBusinessPermission,
+  defineActionResourcePermission,
+  getActionHandler,
+} from '../../src/actions/definition.ts';
+import { commitActionThenReject } from '../../src/actions/context.ts';
 import {
   ActionInvocationPersistenceError,
   ActionPermissionCheckError,
+  ActionPermissionDenied,
   ActionTransactionError,
 } from '../../src/actions/errors.ts';
 import { defineGlobalPolicy, defineMicroverticalPolicy, denyPolicy } from '../../src/actions/policy.ts';
@@ -25,9 +31,12 @@ import {
 } from '../../src/actions/repository.ts';
 import type { ActionRuntimeStage } from '../../src/actions/runtime.ts';
 import { ACTION_RUNTIME_STAGES, makeActionRuntime } from '../../src/actions/runtime.ts';
+import { allowOwnerAuthorizationOverlay } from '../../src/permissions/owner-authorization-overlay.ts';
+import type { OwnerAuthorizationOverlayService } from '../../src/permissions/owner-authorization-overlay.ts';
 import type { PrincipalManagementRepositoryService } from '../../src/auth/principal-management.ts';
 import { PrincipalManagementRepository } from '../../src/auth/principal-management.ts';
 import { supportRecoveryPrincipalContextResolverFromRepository } from '../../src/auth/support-recovery-principal-context.ts';
+import { trustVerifiedGatewayPrincipalContext } from '../../src/auth/system-principal-context-provenance.ts';
 import { CoreDatabase } from '../../src/db/client.ts';
 import { recordSupportImpersonationAction } from '../../src/modules/actions/record-support-impersonation.action.ts';
 import { makeModuleEntrypointGateway } from '../../src/modules/module-entrypoint-gateway.ts';
@@ -40,6 +49,8 @@ import {
 import { checkModuleEntrypoint, makeModuleStateSnapshot } from '../../src/modules/module-state-gate.ts';
 import type { TenantModuleState } from '../../src/modules/tenant-module-state-service.ts';
 import type { ActionPermissionDecision, CheckActionPermissionInput } from '../../src/permissions/service.ts';
+import { BusinessPermissionCodeSchema } from '../../src/permissions/business-permission.ts';
+import { toBusinessPermissionAccessKey } from '../../src/permissions/context-access.ts';
 import { testOperationalScopeResolver } from '../fixtures/operational-scope.ts';
 import { makeTestDatabase } from '../support/database.ts';
 
@@ -62,6 +73,8 @@ const transport = (idempotencyKey = 'intent-1') => ({
 
 const CounterpartyIdSchema = Schema.String.pipe(Schema.brand('CounterpartyId'));
 type CounterpartyId = typeof CounterpartyIdSchema.Type;
+const RetailProfileIdSchema = Schema.String.pipe(Schema.brand('RetailProfileId'));
+type RetailProfileId = typeof RetailProfileIdSchema.Type;
 type RetainedCauseError = ActionTransactionError | ActionInvocationPersistenceError;
 
 const expectSameJson = (actual: RetainedCauseError, expected: RetainedCauseError) => {
@@ -91,12 +104,17 @@ const PermissionDecisionSchema = Schema.Literals(['allowed', 'denied', 'unavaila
 type PermissionDecision = typeof PermissionDecisionSchema.Type;
 
 interface HarnessOptions {
+  readonly businessPermissionDecision?: PermissionDecision;
   readonly commit?: Effect.Effect<readonly object[], SqlError>;
   readonly commitFailureCode?: string;
   readonly createRecord?: ActionInvocationRecord;
   readonly legalEntityPermissionDecision?: PermissionDecision;
   readonly lockedModuleState?: 'active' | 'denied' | 'unavailable';
   readonly moduleState?: TenantModuleState | 'missing' | 'unavailable';
+  readonly omitOwnerAuthorizationOverlay?: boolean;
+  readonly onBusinessPermissionCheck?: () => void;
+  readonly onResourcePermissionCheck?: () => void;
+  readonly ownerAuthorizationOverlay?: OwnerAuthorizationOverlayService;
   readonly permissionDecision?: ActionPermissionDecision;
   readonly permissionFailure?: boolean;
   readonly policyFinalizationFailure?: boolean;
@@ -110,6 +128,7 @@ interface HarnessOptions {
 const makeHarness = Effect.fn(function* makeHarness(options: HarnessOptions = {}) {
   const finalized: FinalizeActionPolicyDenialInput[] = [];
   const flushed: FlushActionSuccessInput[] = [];
+  const businessPermissionChecks: unknown[] = [];
   const legalEntityChecks: unknown[] = [];
   const permissionChecks: CheckActionPermissionInput[] = [];
   const rejections: RejectPermissionDeniedInput[] = [];
@@ -126,6 +145,8 @@ const makeHarness = Effect.fn(function* makeHarness(options: HarnessOptions = {}
   let rejectionCount = 0;
   let transitionCount = 0;
   let transactionCount = 0;
+  let committedTransactionCount = 0;
+  let rolledBackTransactionCount = 0;
   const invocation =
     options.createRecord ??
     ({
@@ -260,7 +281,13 @@ const makeHarness = Effect.fn(function* makeHarness(options: HarnessOptions = {}
       }
     }
     if (text === 'commit') {
-      return yield* commitTransaction();
+      const committed = yield* commitTransaction();
+      committedTransactionCount += 1;
+      return committed;
+    }
+    if (text === 'rollback') {
+      rolledBackTransactionCount += 1;
+      return [];
     }
     if (text.includes('current_setting')) {
       return [
@@ -345,8 +372,24 @@ const makeHarness = Effect.fn(function* makeHarness(options: HarnessOptions = {}
       return Effect.void;
     },
   } as const;
+  const ownerAuthorizationOptions =
+    options.omitOwnerAuthorizationOverlay === true
+      ? {}
+      : {
+          ownerAuthorizationOverlay: options.ownerAuthorizationOverlay ?? allowOwnerAuthorizationOverlay,
+        };
   const runtime = makeActionRuntime(database, repository, permission, testOperationalScopeResolver, {
     contextAccess: {
+      businessPermissions: (input) => {
+        options.onBusinessPermissionCheck?.();
+        businessPermissionChecks.push(input);
+        return Effect.succeed(
+          input.targets.map((target) => ({
+            decision: options.businessPermissionDecision ?? ('allowed' as const),
+            key: toBusinessPermissionAccessKey(target),
+          })),
+        );
+      },
       legalEntities: (input) => {
         legalEntityChecks.push(input);
         return Effect.succeed(
@@ -358,6 +401,7 @@ const makeHarness = Effect.fn(function* makeHarness(options: HarnessOptions = {}
       },
       modules: () => Effect.succeed([]),
       resources: (input) => {
+        options.onResourcePermissionCheck?.();
         resourceChecks.push(input);
         return Effect.succeed(
           input.resources.map(({ moduleId, resourceId, resourceType }) => ({
@@ -378,6 +422,7 @@ const makeHarness = Effect.fn(function* makeHarness(options: HarnessOptions = {}
     },
     moduleEntrypointGateway: makeModuleEntrypointGateway(moduleStateGate),
     moduleStateGate,
+    ...ownerAuthorizationOptions,
     onStage: (stage) => {
       stages.push(stage);
     },
@@ -388,6 +433,7 @@ const makeHarness = Effect.fn(function* makeHarness(options: HarnessOptions = {}
   });
 
   return {
+    businessPermissionChecks,
     counts: () => ({
       createCount,
       lockCount,
@@ -410,6 +456,10 @@ const makeHarness = Effect.fn(function* makeHarness(options: HarnessOptions = {}
     runtime,
     stages,
     tenantChecks,
+    transactionOutcomes: () => ({
+      committedTransactionCount,
+      rolledBackTransactionCount,
+    }),
   };
 });
 
@@ -616,6 +666,54 @@ it.effect(
       moduleStateReadCount: 0,
       moduleStateRecheckCount: 0,
     });
+  }),
+);
+
+it.effect(
+  'runs the owner overlay inside the transaction and persists an owner denial before the handler',
+  Effect.fn(function* testOwnerOverlayDenial() {
+    const ownerInputs: unknown[] = [];
+    const harness = yield* makeHarness({
+      ownerAuthorizationOverlay: {
+        authorize: (_transaction, input) => {
+          ownerInputs.push(input);
+          return Effect.succeed('denied' as const);
+        },
+      },
+    });
+    const failure = yield* Effect.flip(
+      harness.runtime.runAction({
+        payload: { amount: 3 },
+        principal,
+        registration: registration(),
+        transport: transport('owner-denied'),
+      }),
+    );
+
+    expect(Schema.is(ActionPermissionDenied)(failure)).toBe(true);
+    expect(ownerInputs).toHaveLength(1);
+    expect(harness.gateCounts().handlerResolutionCount).toBe(0);
+    expect(harness.counts()).toEqual({
+      createCount: 1,
+      lockCount: 1,
+      transactionCount: 1,
+      transitionCount: 0,
+    });
+    expect(harness.permissionCounts().rejectionCount).toBe(1);
+  }),
+);
+
+it.effect('keeps owner-neutral Actions available without an owner adapter', () =>
+  Effect.gen(function* ownerNeutralActionWithoutOverlay() {
+    const harness = yield* makeHarness({ omitOwnerAuthorizationOverlay: true });
+    const result = yield* harness.runtime.runAction({
+      payload: { amount: 2 },
+      principal,
+      registration: registration(),
+      transport: transport('owner-neutral-without-overlay'),
+    });
+    expect(result).toEqual({ total: 2 });
+    expect(harness.rejections).toHaveLength(0);
   }),
 );
 
@@ -935,7 +1033,7 @@ it.effect(
       createCount: 1,
       lockCount: 1,
       transactionCount: 1,
-      transitionCount: 1,
+      transitionCount: 0,
     });
   }),
 );
@@ -1415,6 +1513,245 @@ it.effect(
 );
 
 it.effect(
+  'enforces conjunctive business and Resource permissions before Policy and handler execution',
+  Effect.fn(function* testConjunctiveBusinessAndResourcePermissions() {
+    const observed: string[] = [];
+    let handlerCalls = 0;
+    let policyCalls = 0;
+    const permission = yield* Schema.decodeEffect(BusinessPermissionCodeSchema)(
+      'retail.settings.payment_term_preference.manage',
+    );
+    const action = defineAction(
+      {
+        accessEvidencePolicy: {
+          captureMode: 'metadata_only',
+          policyKey: 'retail-profile.write.v1',
+        },
+        actionKey: 'commerce.customer-context.change-payment-term',
+        auditProfile: 'sensitive',
+        businessPermission: defineActionBusinessPermission<{ readonly profileId: RetailProfileId }>(
+          ({ profileId }, scope) => ({
+            permission,
+            target: {
+              kind: 'retail_profile',
+              legalEntityId: scope.legalEntityId ?? '',
+              profileId,
+              tenantId: scope.tenantId,
+            },
+          }),
+        ),
+        domainErrorSchema: Schema.Never,
+        domainEvents: {},
+        entrypoint: defineTenantModuleEntrypoint({
+          access: 'write',
+          authorization: {
+            kind: 'action_execution',
+            provisioning: 'tenant_membership_default',
+          },
+          entrypointKey: 'commerce.customer-context.change-payment-term',
+          moduleKey: 'commerce.customer-context',
+          role: 'action',
+        }),
+        idempotency: 'required',
+        legalEntityScope: 'required',
+        owningModuleKey: 'commerce.customer-context',
+        payloadSchema: Schema.Struct({ profileId: RetailProfileIdSchema }),
+        policies: [
+          defineGlobalPolicy({
+            evaluate: () => {
+              policyCalls += 1;
+              observed.push('policy');
+              return Effect.void;
+            },
+            policyKey: 'global.retail-profile-write.v1',
+          }),
+        ],
+        resourcePermission: defineActionResourcePermission<{
+          readonly profileId: RetailProfileId;
+        }>(({ profileId }) => ({
+          permission: 'write',
+          resource: {
+            moduleId: 'commerce.customer-context',
+            resourceId: profileId,
+            resourceType: 'retail-profile',
+          },
+        })),
+        resultSchema: Schema.Void,
+        schemaVersion: '1',
+      },
+      () => {
+        observed.push('handler');
+        handlerCalls += 1;
+        return Effect.void;
+      },
+    );
+    const run = (harness: Effect.Success<ReturnType<typeof makeHarness>>, idempotencyKey: string) =>
+      harness.runtime.runAction({
+        payload: { profileId: 'profile-1' },
+        principal,
+        registration: action,
+        transport: transport(idempotencyKey),
+      });
+
+    const allowed = yield* makeHarness({
+      onBusinessPermissionCheck: () => {
+        observed.push('business_permission');
+      },
+      onResourcePermissionCheck: () => {
+        observed.push('resource_permission');
+      },
+    });
+    yield* run(allowed, 'conjunctive-allowed');
+    expect(observed).toEqual(['resource_permission', 'business_permission', 'policy', 'handler']);
+    expect(handlerCalls).toBe(1);
+    expect(policyCalls).toBe(1);
+
+    const ownerMissing = yield* makeHarness({
+      businessPermissionDecision: 'allowed',
+      omitOwnerAuthorizationOverlay: true,
+      resourcePermissionDecision: 'allowed',
+    });
+    const ownerMissingFailure = yield* Effect.flip(run(ownerMissing, 'owner-overlay-missing'));
+    expect(Predicate.isTagged(ownerMissingFailure, 'ActionPermissionCheckError')).toBe(true);
+    expect(ownerMissing.rejections).toHaveLength(0);
+    expect(ownerMissing.counts().transactionCount).toBe(1);
+    expect(handlerCalls).toBe(1);
+
+    const resourceDenied = yield* makeHarness({ resourcePermissionDecision: 'denied' });
+    const resourceDeniedFailure = yield* Effect.flip(run(resourceDenied, 'resource-denied'));
+    expect(Predicate.isTagged(resourceDeniedFailure, 'ActionPermissionDenied')).toBe(true);
+    expect(resourceDenied.resourceChecks).toHaveLength(1);
+    expect(resourceDenied.businessPermissionChecks).toHaveLength(1);
+
+    const businessDenied = yield* makeHarness({ businessPermissionDecision: 'denied' });
+    const businessDeniedFailure = yield* Effect.flip(run(businessDenied, 'business-denied'));
+    expect(Predicate.isTagged(businessDeniedFailure, 'ActionPermissionDenied')).toBe(true);
+    expect(businessDenied.resourceChecks).toHaveLength(1);
+    expect(businessDenied.businessPermissionChecks).toHaveLength(1);
+
+    const resourceUnavailable = yield* makeHarness({ resourcePermissionDecision: 'unavailable' });
+    const resourceUnavailableFailure = yield* Effect.flip(run(resourceUnavailable, 'resource-unavailable'));
+    expect(Predicate.isTagged(resourceUnavailableFailure, 'ActionPermissionCheckError')).toBe(true);
+
+    const businessUnavailable = yield* makeHarness({ businessPermissionDecision: 'unavailable' });
+    const businessUnavailableFailure = yield* Effect.flip(run(businessUnavailable, 'business-unavailable'));
+    expect(Predicate.isTagged(businessUnavailableFailure, 'ActionPermissionCheckError')).toBe(true);
+    expect(businessUnavailable.resourceChecks).toHaveLength(1);
+    expect(businessUnavailable.businessPermissionChecks).toHaveLength(1);
+
+    expect(handlerCalls).toBe(1);
+    expect(policyCalls).toBe(2);
+  }),
+);
+
+it.effect(
+  'accepts Storefront business targets only from exact gateway-verified scope',
+  Effect.fn(function* testTrustedStorefrontBusinessPermission() {
+    const permission = yield* Schema.decodeEffect(BusinessPermissionCodeSchema)('counterparty.purchase.submit');
+    const StorefrontIdSchema = Schema.String.pipe(Schema.brand('StorefrontId'));
+    let handlerCalls = 0;
+    const action = defineAction(
+      {
+        accessEvidencePolicy: {
+          captureMode: 'metadata_only',
+          policyKey: 'counterparty-storefront.write.v1',
+        },
+        actionKey: 'commerce.customer-context.storefront-command',
+        auditProfile: 'sensitive',
+        businessPermission: defineActionBusinessPermission<{
+          readonly counterpartyId: CounterpartyId;
+          readonly storefrontId: string;
+        }>(({ counterpartyId, storefrontId }, scope) => ({
+          permission,
+          target: {
+            counterpartyId,
+            kind: 'counterparty_storefront',
+            legalEntityId: scope.legalEntityId ?? '',
+            storefrontId,
+            tenantId: scope.tenantId,
+          },
+          // Deliberately mirrors untrusted payload to prove Core does not accept self-promotion.
+          trustedStorefrontId: storefrontId,
+        })),
+        domainErrorSchema: Schema.Never,
+        domainEvents: {},
+        entrypoint: defineTenantModuleEntrypoint({
+          access: 'write',
+          authorization: {
+            kind: 'action_execution',
+            provisioning: 'tenant_membership_default',
+          },
+          entrypointKey: 'commerce.customer-context.storefront-command',
+          moduleKey: 'commerce.customer-context',
+          role: 'action',
+        }),
+        idempotency: 'required',
+        legalEntityScope: 'required',
+        owningModuleKey: 'commerce.customer-context',
+        payloadSchema: Schema.Struct({
+          counterpartyId: CounterpartyIdSchema,
+          storefrontId: StorefrontIdSchema,
+        }),
+        policies: [],
+        resultSchema: Schema.Void,
+        schemaVersion: '1',
+      },
+      () => {
+        handlerCalls += 1;
+        return Effect.void;
+      },
+    );
+    const run = (storefrontPrincipal: typeof principal, storefrontId: string, key: string) =>
+      Effect.gen(function* runStorefrontAction() {
+        const harness = yield* makeHarness();
+        const result = yield* Effect.exit(
+          harness.runtime.runAction({
+            payload: { counterpartyId: 'counterparty-1', storefrontId },
+            principal: storefrontPrincipal,
+            registration: action,
+            transport: transport(key),
+          }),
+        );
+        return { harness, result };
+      });
+
+    const untrusted = yield* run(principal, 'storefront-a', 'storefront-untrusted');
+    expect(Exit.isFailure(untrusted.result)).toBe(true);
+    expect(untrusted.harness.businessPermissionChecks).toHaveLength(0);
+
+    const trusted = trustVerifiedGatewayPrincipalContext({
+      ...principal,
+      trustedStorefrontId: 'storefront-a',
+    });
+    const mismatch = yield* run(trusted, 'storefront-b', 'storefront-mismatch');
+    expect(Exit.isFailure(mismatch.result)).toBe(true);
+    expect(mismatch.harness.businessPermissionChecks).toHaveLength(0);
+
+    const allowed = yield* run(trusted, 'storefront-a', 'storefront-allowed');
+    expect(Exit.isSuccess(allowed.result)).toBe(true);
+    expect(allowed.harness.businessPermissionChecks).toEqual([
+      {
+        principal: { principalId: principal.principalId, tenantId: principal.tenantId },
+        targets: [
+          {
+            permission,
+            target: {
+              counterpartyId: 'counterparty-1',
+              kind: 'counterparty_storefront',
+              legalEntityId: principal.legalEntityId,
+              storefrontId: 'storefront-a',
+              tenantId: principal.tenantId,
+            },
+          },
+        ],
+        trustedStorefrontId: 'storefront-a',
+      },
+    ]);
+    expect(handlerCalls).toBe(1);
+  }),
+);
+
+it.effect(
   'persists a definite permission denial before returning it and never evaluates Policies',
   Effect.fn(function* testProgram18() {
     let handlerCount = 0;
@@ -1429,6 +1766,18 @@ it.effect(
         },
         actionKey: 'shell.counter.denied',
         auditProfile: 'sensitive',
+        deniedAuditEvidence: {
+          resolve: () => ({
+            operation: 'grant',
+            recipient: '00000000-0000-4000-8000-000000000003',
+            requestedScope: { kind: 'counterparty' },
+          }),
+          schema: Schema.Struct({
+            operation: Schema.Literal('grant'),
+            recipient: Schema.String,
+            requestedScope: Schema.Struct({ kind: Schema.Literal('counterparty') }),
+          }),
+        },
         domainErrorSchema: Schema.Never,
         domainEvents: {},
         entrypoint: defineSystemModuleEntrypoint({
@@ -1505,6 +1854,11 @@ it.effect(
         actionInvocationId: 'invocation-1',
         actionKey: 'shell.counter.denied',
         auditProfile: 'sensitive',
+        deniedAuditEvidence: {
+          operation: 'grant',
+          recipient: '00000000-0000-4000-8000-000000000003',
+          requestedScope: { kind: 'counterparty' },
+        },
         principal,
         transport: transport('denied'),
       },
@@ -2110,6 +2464,178 @@ it.effect(
     expect(error.reason).toBe('counter_locked');
     expect(policyEvaluations).toBe(1);
     expect(harness.flushed.length).toBe(0);
+  }),
+);
+
+it.effect(
+  'commits business work and success evidence before raising a declared domain rejection',
+  Effect.fn(function* commitsBusinessWorkAndSuccessEvidenceBeforeRaisingDeclaredRejection() {
+    const CommittedDomainRejectedContract = Schema.TaggedStruct('CommittedDomainRejected', {
+      reason: Schema.String,
+    });
+    type CommittedDomainRejectedSelf = typeof CommittedDomainRejectedContract.Type;
+    const CommittedDomainRejected = Schema.TaggedError<CommittedDomainRejectedSelf>()('CommittedDomainRejected', {
+      reason: Schema.String,
+    });
+    const businessWrites: number[] = [];
+    const harness = yield* makeHarness();
+    const action = defineAction(
+      {
+        accessEvidencePolicy: { captureMode: 'metadata_only', policyKey: 'counter.read.v1' },
+        actionKey: 'shell.counter.commit-then-reject',
+        auditProfile: 'standard',
+        domainErrorSchema: CommittedDomainRejected,
+        domainEvents: {
+          'counter.rejection-recorded': Schema.Struct({ amount: Schema.Finite }),
+        },
+        entrypoint: defineSystemModuleEntrypoint({
+          access: 'write',
+          authorization: {
+            kind: 'action_execution',
+            provisioning: 'tenant_membership_default',
+          },
+          entrypointKey: 'shell.counter.commit-then-reject',
+          moduleKey: 'core.shell',
+          role: 'action',
+        }),
+        idempotency: 'required',
+        legalEntityScope: 'optional',
+        owningModuleKey: 'core.shell',
+        payloadSchema: Schema.Struct({ amount: Schema.Finite }),
+        policies: [],
+        resultSchema: Schema.Struct({ total: Schema.Finite }),
+        schemaVersion: '1',
+      },
+      Effect.fn(function* commitThenReject(payload, context) {
+        yield* context.services.write(payload.amount);
+        yield* context.recordDataAccess({
+          accessKind: 'read',
+          queryHash: 'counter-rejection-check',
+          resultCount: 1,
+          servingModuleKey: 'core.shell',
+        });
+        yield* context.addDomainEvent({
+          eventType: 'counter.rejection-recorded',
+          payloadJson: { amount: payload.amount },
+          producerModuleKey: 'core.shell',
+          subjectModuleKey: 'core.shell',
+          subjectResourceId: 'primary',
+          subjectResourceType: 'counter',
+        });
+        return commitActionThenReject(new CommittedDomainRejected({ reason: 'proof_expired' }));
+      }),
+      () =>
+        Effect.succeed({
+          write: (amount: number) =>
+            Effect.sync(() => {
+              businessWrites.push(amount);
+            }),
+        }),
+    );
+
+    const error = yield* Effect.flip(
+      harness.runtime.runAction({
+        payload: { amount: 7 },
+        principal,
+        registration: action,
+        transport: transport('commit-then-reject'),
+      }),
+    );
+
+    expect(Predicate.isTagged(error, 'CommittedDomainRejected')).toBe(true);
+    expect(error.reason).toBe('proof_expired');
+    expect(businessWrites).toEqual([7]);
+    expect(harness.flushed).toHaveLength(1);
+    expect(harness.flushed[0]?.actionInvocationId).toBe('invocation-1');
+    expect(harness.flushed[0]?.evidence.dataAccessEvents).toHaveLength(1);
+    expect(harness.flushed[0]?.evidence.domainEvents).toHaveLength(1);
+    expect(harness.flushed[0]?.resultHash).toBe(
+      computeCanonicalValueHash({ _tag: 'CommittedDomainRejected', reason: 'proof_expired' }),
+    );
+    expect(harness.transactionOutcomes()).toEqual({
+      committedTransactionCount: 1,
+      rolledBackTransactionCount: 0,
+    });
+  }),
+);
+
+it.effect(
+  'rolls back malformed and undeclared committed domain rejection sentinels',
+  Effect.fn(function* rollsBackMalformedAndUndeclaredCommittedDomainRejectionSentinels() {
+    const DeclaredCommittedRejectionContract = Schema.TaggedStruct('DeclaredCommittedRejection', {
+      reason: Schema.String,
+    });
+    type DeclaredCommittedRejectionSelf = typeof DeclaredCommittedRejectionContract.Type;
+    const DeclaredCommittedRejection = Schema.TaggedError<DeclaredCommittedRejectionSelf>()(
+      'DeclaredCommittedRejection',
+      { reason: Schema.String },
+    );
+    const malformed = new DeclaredCommittedRejection({ reason: 'malformed' });
+    Object.defineProperty(malformed, 'reason', { value: 42 });
+    const undeclared = new DeclaredCommittedRejection({ reason: 'undeclared' });
+    Object.defineProperty(undeclared, '_tag', { value: 'UndeclaredCommittedRejection' });
+
+    for (const [id, rejection] of [
+      ['malformed', malformed],
+      ['undeclared', undeclared],
+    ] as const) {
+      const harness = yield* makeHarness();
+      const action = defineAction(
+        {
+          accessEvidencePolicy: { captureMode: 'metadata_only', policyKey: 'counter.read.v1' },
+          actionKey: `shell.counter.${id}-committed-rejection`,
+          auditProfile: 'standard',
+          domainErrorSchema: DeclaredCommittedRejection,
+          domainEvents: {
+            'counter.rejection-considered': Schema.Struct({}),
+          },
+          entrypoint: defineSystemModuleEntrypoint({
+            access: 'write',
+            authorization: {
+              kind: 'action_execution',
+              provisioning: 'tenant_membership_default',
+            },
+            entrypointKey: `shell.counter.${id}-committed-rejection`,
+            moduleKey: 'core.shell',
+            role: 'action',
+          }),
+          idempotency: 'required',
+          legalEntityScope: 'optional',
+          owningModuleKey: 'core.shell',
+          payloadSchema: Schema.Void,
+          policies: [],
+          resultSchema: Schema.Void,
+          schemaVersion: '1',
+        },
+        Effect.fn(function* invalidCommitThenReject(_payload, context) {
+          yield* context.addDomainEvent({
+            eventType: 'counter.rejection-considered',
+            payloadJson: {},
+            producerModuleKey: 'core.shell',
+            subjectModuleKey: 'core.shell',
+            subjectResourceId: 'primary',
+            subjectResourceType: 'counter',
+          });
+          return commitActionThenReject(rejection);
+        }),
+      );
+
+      const error = yield* Effect.flip(
+        harness.runtime.runAction({
+          payload: undefined,
+          principal,
+          registration: action,
+          transport: transport(`${id}-committed-rejection`),
+        }),
+      );
+
+      expect(Predicate.isTagged(error, 'ActionHandlerExecutionError')).toBe(true);
+      expect(harness.flushed).toHaveLength(0);
+      expect(harness.transactionOutcomes()).toEqual({
+        committedTransactionCount: 0,
+        rolledBackTransactionCount: 1,
+      });
+    }
   }),
 );
 

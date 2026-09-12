@@ -1,0 +1,19 @@
+{
+  "extends": "../../tsconfig.base.json",
+  "compilerOptions": {
+    "composite": true,
+    "declaration": true,
+    "declarationMap": false,
+    "emitDeclarationOnly": true,
+    "incremental": true,
+    "noEmit": false,
+    "outDir": "../../node_modules/.cache/tsgo/declarations/packages__payment-term-catalog-contracts",
+    "tsBuildInfoFile": "../../node_modules/.cache/tsgo/packages__payment-term-catalog-contracts.tsbuildinfo",
+    "types": ["node"]
+  },
+  "include": ["src", "tests"],
+  "references": [
+    { "path": "../core-runtime" },
+    { "path": "../shared-contracts" }
+  ]
+}

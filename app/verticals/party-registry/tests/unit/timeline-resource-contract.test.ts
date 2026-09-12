@@ -5,6 +5,7 @@ import * as duplicateCase from '../../shared/resources/duplicate-candidate-case.
 import * as correction from '../../shared/resources/party-correction.ts';
 import * as matchDecision from '../../shared/resources/party-match-decision.ts';
 import * as identifier from '../../shared/resources/party-official-identifier.ts';
+import { makePartyOfficialIdentifierRef } from '../../src/services/party-official-identifier-reference.ts';
 
 const resources = [
   {
@@ -27,7 +28,7 @@ const resources = [
   },
   {
     descriptor: identifier.partyOfficialIdentifierResourceDescriptor,
-    makeRef: identifier.makePartyOfficialIdentifierRef,
+    makeRef: makePartyOfficialIdentifierRef,
     schema: identifier.PartyOfficialIdentifierRefSchema,
     slug: 'party-official-identifier',
   },

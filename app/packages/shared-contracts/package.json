@@ -9,7 +9,8 @@
     "./server/effect-bff-runtime": "./src/effect-bff-runtime.ts",
     "./ultramodern-build": "./src/ultramodern-build.ts",
     "./problem-details": "./src/problem-details.ts",
-    "./client-runtime": "./src/client-runtime.ts"
+    "./client-runtime": "./src/client-runtime.ts",
+    "./server/gateway-context-api-key": "./src/gateway-context-api-key.ts"
   },
   "scripts": {
     "test:types": "node ../../scripts/ultramodern-typecheck.mts --project tests/tsconfig.json && node ../../scripts/ultramodern-typecheck.mts --project tests/client-runtime-types.tsconfig.json",

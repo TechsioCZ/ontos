@@ -4,7 +4,7 @@ import { and, eq } from 'drizzle-orm';
 import { Cause, Deferred, Effect, Layer, Exit, Fiber, Option, Schema, Predicate } from 'effect';
 import { expect, it } from 'effect-rstest';
 import { ConnectionError, SqlError, UnknownError } from 'effect/unstable/sql/SqlError';
-
+import { commitActionThenReject } from '../../src/actions/context.ts';
 import type { ActionHandlerContext } from '../../src/actions/context.ts';
 import { defineAction } from '../../src/actions/definition.ts';
 import { ActionInvocationPersistenceError } from '../../src/actions/errors.ts';
@@ -155,6 +155,16 @@ const invocationEvidence = (database: ContextServiceContract, key: string) =>
     return { audits, invocation };
   });
 
+const persistedActionEvidence = (database: ContextServiceContract, key: string, moduleStateKey: string) =>
+  Effect.all([
+    database.executor.select().from(tenantModuleStates).where(eq(tenantModuleStates.moduleKey, moduleStateKey)),
+    database.executor.select().from(actionInvocations).where(eq(actionInvocations.idempotencyKey, key)),
+    database.executor.select().from(auditEvents).where(eq(auditEvents.tenantId, tenantId)),
+    database.executor.select().from(dataAccessEvents).where(eq(dataAccessEvents.tenantId, tenantId)),
+    database.executor.select().from(domainEvents).where(eq(domainEvents.subjectResourceId, moduleStateKey)),
+    database.executor.select().from(outboxMessages).where(eq(outboxMessages.tenantId, tenantId)),
+  ]);
+
 const EvidencePersistenceStageSchema = Schema.Literals([
   'audit',
   'data-access',
@@ -284,7 +294,7 @@ type TestActionContext = ActionHandlerContext<typeof TestDomainEvents, TestActio
 interface RegistrationOptions {
   readonly actionKey: string;
   readonly completionGate?: Deferred.Deferred<null>;
-  readonly mode?: 'orphan-outbox' | 'reject' | 'success';
+  readonly mode?: 'commit-reject' | 'orphan-outbox' | 'reject' | 'success';
   readonly moduleStateKey: string;
   readonly onExecute?: () => void;
   readonly onExecuteEffect?: Effect.Effect<unknown>;
@@ -387,6 +397,9 @@ const makeRegistration = ({
         return yield* new TestDomainRejected({
           reason: 'test domain rejection',
         });
+      }
+      if (mode === 'commit-reject') {
+        return commitActionThenReject(new TestDomainRejected({ reason: 'test committed domain rejection' }));
       }
 
       const [row] = inserted;
@@ -567,14 +580,11 @@ const testProgram2 = Effect.fn(function* integrationProgram4() {
         transport: transport(key, moduleStateKey),
       });
 
-      const [states, invocations, audits, accesses, events, messages] = yield* Effect.all([
-        database.executor.select().from(tenantModuleStates).where(eq(tenantModuleStates.moduleKey, moduleStateKey)),
-        database.executor.select().from(actionInvocations).where(eq(actionInvocations.idempotencyKey, key)),
-        database.executor.select().from(auditEvents).where(eq(auditEvents.tenantId, tenantId)),
-        database.executor.select().from(dataAccessEvents).where(eq(dataAccessEvents.tenantId, tenantId)),
-        database.executor.select().from(domainEvents).where(eq(domainEvents.subjectResourceId, moduleStateKey)),
-        database.executor.select().from(outboxMessages).where(eq(outboxMessages.tenantId, tenantId)),
-      ]);
+      const [states, invocations, audits, accesses, events, messages] = yield* persistedActionEvidence(
+        database,
+        key,
+        moduleStateKey,
+      );
 
       expect(result.value).toBe('committed');
       expect(states.length).toBe(1);
@@ -635,6 +645,52 @@ const testProgram3 = Effect.fn(function* integrationProgram6() {
       expect(executionAudit?.outcomeStage).toBe('execution');
       expect(encodeJson(policyAudit?.evidenceJson).includes('committed')).toBe(false);
       expect(encodeJson(policyAudit?.evidenceJson).includes(policy.policyKey)).toBe(true);
+    }),
+  );
+});
+
+const testCommittedDomainRejection = Effect.fn(function* committedDomainRejectionIntegration() {
+  const key = 'committed-domain-rejection';
+  const moduleStateKey = `test.${key}.${tenantId}`;
+
+  yield* withDatabase(
+    Effect.fn(function* verifyCommittedDomainRejection(database) {
+      const runtime = makeActionRuntime(
+        database,
+        makeActionRepository(),
+        allowedPermission,
+        testOperationalScopeResolver,
+        openActionRuntimeOptions,
+      );
+      const rejection = yield* Effect.flip(
+        runtime.runAction({
+          payload: { value: 'durable-rejection-evidence' },
+          principal,
+          registration: makeRegistration({
+            actionKey: 'shell.test.committed-domain-rejection',
+            mode: 'commit-reject',
+            moduleStateKey,
+          }),
+          transport: transport(key, moduleStateKey),
+        }),
+      );
+
+      const [states, invocations, audits, accesses, events, messages] = yield* persistedActionEvidence(
+        database,
+        key,
+        moduleStateKey,
+      );
+
+      expect(Predicate.isTagged(rejection, 'TestDomainRejected')).toBe(true);
+      expect(rejection.reason).toBe('test committed domain rejection');
+      expect(states).toHaveLength(1);
+      expect(invocations).toHaveLength(1);
+      expect(invocations[0]?.status).toBe('succeeded');
+      expect(invocations[0]?.completedAt).toBeTruthy();
+      expect(audits.filter((row) => row.actionInvocationId === invocations[0]?.actionInvocationId)).toHaveLength(1);
+      expect(accesses.filter((row) => row.actionInvocationId === invocations[0]?.actionInvocationId)).toHaveLength(1);
+      expect(events).toHaveLength(1);
+      expect(messages.filter((row) => row.domainEventId === events[0]?.domainEventId)).toHaveLength(1);
     }),
   );
 });
@@ -1667,6 +1723,11 @@ it.layer(Layer.effectDiscard(Effect.acquireRelease(prepare, () => cleanup.pipe(E
   suite.effect('atomically commits business state, all success evidence, and the succeeded marker', testProgram2);
 
   suite.effect('commits allowed Policy checkpoints atomically before handler success evidence', testProgram3);
+
+  suite.effect(
+    'commits business state, evidence, and succeeded marker before a declared domain rejection',
+    testCommittedDomainRejection,
+  );
 
   suite.effect(
     'atomically rejects denied global and same-owner MicroVertical Policies without handler evidence',

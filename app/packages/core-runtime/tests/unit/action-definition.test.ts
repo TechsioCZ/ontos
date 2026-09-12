@@ -5,11 +5,13 @@ import {
   decodeActionPayload,
   decodeActionResult,
   defineAction,
+  defineActionBusinessPermission,
   defineActionResourcePermission,
   validateActionDescriptorInput,
 } from '../../src/actions/definition.ts';
 import { defineGlobalPolicy, defineMicroverticalPolicy } from '../../src/actions/policy.ts';
 import { defineSystemModuleEntrypoint, defineTenantModuleEntrypoint } from '../../src/modules/module-entrypoint.ts';
+import { BusinessPermissionCodeSchema } from '../../src/permissions/business-permission.ts';
 
 const counterActionDescriptor = () =>
   ({
@@ -81,6 +83,44 @@ it('keeps the Resource permission resolver private behind an immutable declarati
   expect(Object.keys(permission)).toEqual(['kind']);
   expect(permission.kind).toBe('resource');
   expect('resolver' in permission).toBe(false);
+});
+
+it('accepts conjunctive business and Resource permission declarations', () => {
+  const entrypoint = defineTenantModuleEntrypoint({
+    access: 'write',
+    authorization: { kind: 'action_execution', provisioning: 'tenant_membership_default' },
+    entrypointKey: 'commerce.customer-context.change-payment-term',
+    moduleKey: 'commerce.customer-context',
+    role: 'action',
+  });
+  const businessPermission = defineActionBusinessPermission((_payload, scope) => ({
+    permission: Schema.decodeSync(BusinessPermissionCodeSchema)('retail.settings.payment_term_preference.manage'),
+    target: {
+      kind: 'retail_profile',
+      legalEntityId: scope.legalEntityId ?? '',
+      profileId: 'profile-1',
+      tenantId: scope.tenantId,
+    },
+  }));
+  const resourcePermission = defineActionResourcePermission(() => ({
+    permission: 'write',
+    resource: {
+      moduleId: 'commerce.customer-context',
+      resourceId: 'profile-1',
+      resourceType: 'retail-profile',
+    },
+  }));
+
+  expect(() =>
+    validateActionDescriptorInput({
+      businessPermission,
+      entrypoint,
+      legalEntityScope: 'required',
+      owningModuleKey: 'commerce.customer-context',
+      policies: [],
+      resourcePermission,
+    }),
+  ).not.toThrow();
 });
 
 it('requires trusted Legal Entity scope for a Counterparty permission declaration', () => {
