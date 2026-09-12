@@ -1,92 +1,78 @@
+import { withUltramodernBuildIdentity } from '@app/shared-contracts/ultramodern-build';
+
 declare const ULTRAMODERN_BUILD_MARKER: string;
 declare const ULTRAMODERN_SOURCE_REVISION: string;
 
+const generatedAppId = 'payment-term-catalog';
+const generatedDeployProfile = 'cloudflare-ssr-mf-effect-v1';
+const generatedDeliveryUnitKind = 'microvertical-delivery-unit';
+const generatedPackageName = '@app/payment-term-catalog';
+const generatedUnitId = 'app/payment-term-catalog';
+
 const ultramodernGeneratedBuildArtifact = {
   deliveryUnit: {
-    appId: 'payment-term-catalog',
+    appId: generatedAppId,
     build: '3812f892cf5544cf',
     buildMarker: '3812f892cf5544cf',
-    deployProfile: 'cloudflare-ssr-mf-effect-v1',
-    kind: 'microvertical-delivery-unit',
-    packageName: '@app/payment-term-catalog',
+    deployProfile: generatedDeployProfile,
+    kind: generatedDeliveryUnitKind,
+    packageName: generatedPackageName,
     schemaVersion: 1,
     sourceRevision: 'workspace',
-    unitId: 'app/payment-term-catalog',
+    unitId: generatedUnitId,
     version: '0.1.0',
   },
   kind: 'ultramodern-build-artifact',
   schemaVersion: 1,
   surfaces: {
     api: {
-      appId: 'payment-term-catalog',
+      appId: generatedAppId,
       build: '3812f892cf5544cf',
       buildMarker: '3812f892cf5544cf',
-      deployProfile: 'cloudflare-ssr-mf-effect-v1',
-      kind: 'microvertical-delivery-unit',
-      packageName: '@app/payment-term-catalog',
+      deployProfile: generatedDeployProfile,
+      kind: generatedDeliveryUnitKind,
+      packageName: generatedPackageName,
       schemaVersion: 1,
       sourceRevision: 'workspace',
       surface: 'api',
-      unitId: 'app/payment-term-catalog',
+      unitId: generatedUnitId,
       version: '0.1.0',
     },
     ui: {
-      appId: 'payment-term-catalog',
+      appId: generatedAppId,
       build: '3812f892cf5544cf',
       buildMarker: '3812f892cf5544cf',
-      deployProfile: 'cloudflare-ssr-mf-effect-v1',
-      kind: 'microvertical-delivery-unit',
-      packageName: '@app/payment-term-catalog',
+      deployProfile: generatedDeployProfile,
+      kind: generatedDeliveryUnitKind,
+      packageName: generatedPackageName,
       schemaVersion: 1,
       sourceRevision: 'workspace',
       surface: 'ui',
-      unitId: 'app/payment-term-catalog',
+      unitId: generatedUnitId,
       version: '0.1.0',
     },
   },
 } as const;
-const readInjectedBuildMarker = (): string => {
+const readInjectedBuildValue = (readInjectedValue: () => string, fallback: string): string => {
   try {
-    return ULTRAMODERN_BUILD_MARKER;
+    return readInjectedValue();
   } catch {
-    return ultramodernGeneratedBuildArtifact.deliveryUnit.buildMarker;
+    return fallback;
   }
 };
 
-const readInjectedSourceRevision = (): string => {
-  try {
-    return ULTRAMODERN_SOURCE_REVISION;
-  } catch {
-    return ultramodernGeneratedBuildArtifact.deliveryUnit.sourceRevision;
-  }
-};
+const ultramodernBuildMarker = readInjectedBuildValue(
+  () => ULTRAMODERN_BUILD_MARKER,
+  ultramodernGeneratedBuildArtifact.deliveryUnit.buildMarker,
+);
+const ultramodernSourceRevision = readInjectedBuildValue(
+  () => ULTRAMODERN_SOURCE_REVISION,
+  ultramodernGeneratedBuildArtifact.deliveryUnit.sourceRevision,
+);
+const ultramodernBuildArtifact = withUltramodernBuildIdentity(
+  ultramodernGeneratedBuildArtifact,
+  ultramodernBuildMarker,
+  ultramodernSourceRevision,
+);
 
-const ultramodernBuildMarker = readInjectedBuildMarker();
-const ultramodernSourceRevision = readInjectedSourceRevision();
-const ultramodernBuildArtifact = {
-  ...ultramodernGeneratedBuildArtifact,
-  deliveryUnit: {
-    ...ultramodernGeneratedBuildArtifact.deliveryUnit,
-    build: ultramodernBuildMarker,
-    buildMarker: ultramodernBuildMarker,
-    sourceRevision: ultramodernSourceRevision,
-  },
-  surfaces: {
-    api: {
-      ...ultramodernGeneratedBuildArtifact.surfaces.api,
-      build: ultramodernBuildMarker,
-      buildMarker: ultramodernBuildMarker,
-      sourceRevision: ultramodernSourceRevision,
-    },
-    ui: {
-      ...ultramodernGeneratedBuildArtifact.surfaces.ui,
-      build: ultramodernBuildMarker,
-      buildMarker: ultramodernBuildMarker,
-      sourceRevision: ultramodernSourceRevision,
-    },
-  },
-} as const;
-
-export const ultramodernDeliveryUnit = ultramodernBuildArtifact.deliveryUnit;
-export const ultramodernUiMarker = ultramodernBuildArtifact.surfaces.ui;
 export const ultramodernApiMarker = ultramodernBuildArtifact.surfaces.api;

@@ -151,9 +151,7 @@ describe('Commerce Customer Group contracts', () => {
       effectiveAt: callerTime,
       groupRef,
     });
-    const currentProfileGroups = Schema.decodeUnknownSync(
-      EffectiveCustomerGroupMembershipsRequestSchema,
-    )({
+    const currentProfileGroups = Schema.decodeUnknownSync(EffectiveCustomerGroupMembershipsRequestSchema)({
       asOf: callerTime,
       profile: retailProfile,
     });
@@ -177,9 +175,7 @@ describe('Commerce Customer Group contracts', () => {
       asOf: '1900-01-01T00:00:00.000Z',
       profile: retailProfile,
     });
-    const scheduledFuture = Schema.decodeUnknownSync(
-      EffectiveCustomerGroupMembershipsRequestSchema,
-    )({
+    const scheduledFuture = Schema.decodeUnknownSync(EffectiveCustomerGroupMembershipsRequestSchema)({
       asOf: '2200-01-01T00:00:00.000Z',
       profile: retailProfile,
     });

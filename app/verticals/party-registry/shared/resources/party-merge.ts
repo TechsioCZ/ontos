@@ -21,7 +21,6 @@ export const PartyMergeRefSchema = Schema.Struct({
   resourceType: Schema.Literal('party.registry.party-merge'),
   tenantId: PartyRegistryTenantIdJsonSchema,
 });
-export type PartyMergeRef = typeof PartyMergeRefSchema.Type;
 
 const selectionEvidenceIsInvalid = (
   selectionEvidenceChain: readonly (typeof MergeSelectionEvidenceStepSchema.Type)[],

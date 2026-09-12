@@ -8,4 +8,5 @@ export const RepeatCounterpartyOrderPayloadSchema = HistoryRepeatCounterpartyOrd
 export type RepeatCounterpartyOrderPayload = typeof RepeatCounterpartyOrderPayloadSchema.Type;
 
 export const RepeatCounterpartyOrderResultSchema = RepeatOrderActionResultSchema;
-export type RepeatCounterpartyOrderResult = typeof RepeatCounterpartyOrderResultSchema.Type;
+// eslint-disable-next-line no-unused-vars -- Preserve the generated named result contract for this schema alias.
+type RepeatCounterpartyOrderResult = typeof RepeatCounterpartyOrderResultSchema.Type;

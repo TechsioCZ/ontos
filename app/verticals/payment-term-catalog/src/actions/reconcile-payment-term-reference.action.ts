@@ -2,11 +2,7 @@
 // @ontos-action-owner payment.term-catalog
 // @ontos-action-slug reconcile-payment-term-reference
 import type { ActionHandlerContext } from '@app/core-runtime';
-import {
-  defineAction,
-  defineActionResourcePermission,
-  defineTenantModuleEntrypoint,
-} from '@app/core-runtime';
+import { defineAction, defineActionResourcePermission, defineTenantModuleEntrypoint } from '@app/core-runtime';
 import { Effect, Match, Schema } from 'effect';
 import {
   ReconcilePaymentTermReferencePayloadSchema,
@@ -24,18 +20,12 @@ import type { PaymentTermCatalogPersistence } from '../persistence/payment-term-
 import {
   PaymentTermCatalogPersistenceConflict,
   PaymentTermCatalogPersistenceUnavailable,
-  makePaymentTermCatalogPersistence,
+  paymentTermCatalogPersistenceForScope,
 } from '../persistence/payment-term-catalog-persistence.ts';
 import { createReconcilePaymentTermReferencePaymentTermCatalogPaymentTermReferenceReconciledV1OutboxMessage } from './reconcile-payment-term-reference.payment-term-catalog-payment-term-reference-reconciled-v1.outbox-message.ts';
 
-export {
-  ReconcilePaymentTermReferencePayloadSchema,
-  ReconcilePaymentTermReferenceResultSchema,
-} from '../../shared/actions/reconcile-payment-term-reference.ts';
-export type {
-  ReconcilePaymentTermReferencePayload,
-  ReconcilePaymentTermReferenceResult,
-} from '../../shared/actions/reconcile-payment-term-reference.ts';
+export { ReconcilePaymentTermReferencePayloadSchema } from '../../shared/actions/reconcile-payment-term-reference.ts';
+export type { ReconcilePaymentTermReferencePayload } from '../../shared/actions/reconcile-payment-term-reference.ts';
 
 const ErrorSchema = Schema.Union([
   PaymentTermNotFound,
@@ -44,15 +34,15 @@ const ErrorSchema = Schema.Union([
   PaymentTermCatalogPersistenceConflict,
   PaymentTermCatalogPersistenceUnavailable,
 ]);
+const MODULE_KEY = 'payment.term-catalog' as const;
 const domainEvents = {
-  'payment.term-catalog.payment-term-reference-reconciled.v1':
-    ReconcilePaymentTermReferenceResultSchema,
+  'payment.term-catalog.payment-term-reference-reconciled.v1': ReconcilePaymentTermReferenceResultSchema,
 } as const;
 type Services = PaymentTermCatalogPersistence;
 const isPersistenceId = Schema.is(Schema.String.check(Schema.isUUID()));
 
 const toPaymentTermRef = (tenantId: string, resourceId: string): PaymentTermRef => ({
-  moduleId: 'payment.term-catalog',
+  moduleId: MODULE_KEY,
   resourceId,
   resourceType: 'payment.term-catalog.payment-term',
   tenantId,
@@ -70,110 +60,111 @@ const reconciliationConflict = (reason: string) =>
     reason,
   });
 
-export const handleReconcilePaymentTermReference = Effect.fn(
-  'ReconcilePaymentTermReferenceAction.handle',
-)(function* reconcilePaymentTermReference(
-  payload: ReconcilePaymentTermReferencePayload,
-  context: ActionHandlerContext<typeof domainEvents, Services>,
-) {
-  if (
-    payload.aliasPaymentTermRef.tenantId !== context.scope.tenantId ||
-    payload.canonicalPaymentTermRef.tenantId !== context.scope.tenantId ||
-    !isPersistenceId(payload.aliasPaymentTermRef.resourceId) ||
-    !isPersistenceId(payload.canonicalPaymentTermRef.resourceId)
+export const handleReconcilePaymentTermReference = Effect.fn('ReconcilePaymentTermReferenceAction.handle')(
+  function* reconcilePaymentTermReference(
+    payload: ReconcilePaymentTermReferencePayload,
+    context: ActionHandlerContext<typeof domainEvents, Services>,
   ) {
-    return yield* notFound(payload.aliasPaymentTermRef);
-  }
-  const outcome = yield* context.services.reconcile({
-    actingPrincipalId: context.scope.principalId,
-    actionInvocationId: context.actionInvocationId,
-    aliasPaymentTermId: payload.aliasPaymentTermRef.resourceId,
-    canonicalPaymentTermId: payload.canonicalPaymentTermRef.resourceId,
-    expectedAliasMetadataRevision: payload.expectedAliasMetadataRevision,
-    expectedCanonicalMetadataRevision: payload.expectedCanonicalMetadataRevision,
-    reason: payload.reason,
-  });
-  const resolution = yield* Match.value(outcome).pipe(
-    Match.tags({
-      already_reconciled: ({ canonicalPaymentTermId }) =>
-        Effect.succeed({ canonicalPaymentTermId, changed: false }),
-      canonical_is_alias: () =>
-        Effect.fail(
-          reconciliationConflict(
-            'The proposed canonical Payment Term is already an alias; use its canonical identity',
-          ),
-        ),
-      incompatible_semantics: () =>
-        Effect.fail(
-          reconciliationConflict(
-            'Only genuinely equivalent Payment Term semantics may be reconciled as aliases',
-          ),
-        ),
-      not_found: ({ missing }) =>
-        Effect.fail(
-          notFound(
-            missing === 'alias' ? payload.aliasPaymentTermRef : payload.canonicalPaymentTermRef,
-          ),
-        ),
-      reconciled: ({ alias }) =>
-        Effect.succeed({ canonicalPaymentTermId: alias.canonicalRef.resourceId, changed: true }),
-      reconciliation_conflict: ({ canonicalPaymentTermId }) =>
-        Effect.fail(
-          reconciliationConflict(`The alias is already reconciled to ${canonicalPaymentTermId}`),
-        ),
-      revision_conflict: ({ actualMetadataRevision, target }) =>
-        Effect.fail(
-          new PaymentTermRevisionConflict({
-            actualRevision: actualMetadataRevision,
-            code: 'payment_term_revision_conflict',
-            expectedRevision:
-              target === 'alias'
-                ? payload.expectedAliasMetadataRevision
-                : payload.expectedCanonicalMetadataRevision,
-            reason: `The ${target} Payment Term changed concurrently with reconciliation`,
-          }),
-        ),
-      same_identity: () =>
-        Effect.fail(
-          reconciliationConflict('A Payment Term cannot be reconciled as an alias of itself'),
-        ),
-    }),
-    Match.exhaustive,
-  );
-  const { canonicalPaymentTermId } = resolution;
-  const result = {
-    aliasPaymentTermRef: payload.aliasPaymentTermRef,
-    canonicalPaymentTermRef: toPaymentTermRef(context.scope.tenantId, canonicalPaymentTermId),
-    changed: resolution.changed,
-  };
-  yield* context.recordAuditEvidence({ reason: payload.reason });
-  yield* context.recordDataAccess({
-    accessKind: 'read',
-    queryHash: `payment-term-reconcile:${payload.aliasPaymentTermRef.resourceId}:${canonicalPaymentTermId}`,
-    resultCount: 2,
-    servingModuleKey: 'payment.term-catalog',
-    targetModuleKey: 'payment.term-catalog',
-    targetResourceId: payload.aliasPaymentTermRef.resourceId,
-    targetResourceType: payload.aliasPaymentTermRef.resourceType,
-  });
-  if (result.changed) {
-    const event = yield* context.addDomainEvent({
-      eventType: 'payment.term-catalog.payment-term-reference-reconciled.v1',
-      payloadJson: result,
-      producerModuleKey: 'payment.term-catalog',
-      subjectModuleKey: 'payment.term-catalog',
-      subjectResourceId: result.aliasPaymentTermRef.resourceId,
-      subjectResourceType: result.aliasPaymentTermRef.resourceType,
+    if (
+      payload.aliasPaymentTermRef.tenantId !== context.scope.tenantId ||
+      payload.canonicalPaymentTermRef.tenantId !== context.scope.tenantId ||
+      !isPersistenceId(payload.aliasPaymentTermRef.resourceId) ||
+      !isPersistenceId(payload.canonicalPaymentTermRef.resourceId)
+    ) {
+      return yield* notFound(payload.aliasPaymentTermRef);
+    }
+    const outcome = yield* context.services.reconcile({
+      actingPrincipalId: context.scope.principalId,
+      actionInvocationId: context.actionInvocationId,
+      aliasPaymentTermId: payload.aliasPaymentTermRef.resourceId,
+      canonicalPaymentTermId: payload.canonicalPaymentTermRef.resourceId,
+      expectedAliasMetadataRevision: payload.expectedAliasMetadataRevision,
+      expectedCanonicalMetadataRevision: payload.expectedCanonicalMetadataRevision,
+      reason: payload.reason,
     });
-    yield* context.addOutboxMessage(
-      event,
-      createReconcilePaymentTermReferencePaymentTermCatalogPaymentTermReferenceReconciledV1OutboxMessage(
-        { ...result, changed: true },
-      ),
+    // oxlint-disable-next-line unicorn/consistent-function-scoping -- This named handler stays beside the protocol-keyed Match table it documents.
+    const alreadyReconciled = ({ canonicalPaymentTermId }: { readonly canonicalPaymentTermId: string }) =>
+      Effect.succeed({ canonicalPaymentTermId, changed: false });
+    const canonicalIsAlias = () =>
+      Effect.fail(
+        reconciliationConflict('The proposed canonical Payment Term is already an alias; use its canonical identity'),
+      );
+    const incompatibleSemantics = () =>
+      Effect.fail(
+        reconciliationConflict('Only genuinely equivalent Payment Term semantics may be reconciled as aliases'),
+      );
+    const notFoundOutcome = ({ missing }: { readonly missing: 'alias' | 'canonical' }) =>
+      Effect.fail(notFound(missing === 'alias' ? payload.aliasPaymentTermRef : payload.canonicalPaymentTermRef));
+    const reconciliationConflictOutcome = ({ canonicalPaymentTermId }: { readonly canonicalPaymentTermId: string }) =>
+      Effect.fail(reconciliationConflict(`The alias is already reconciled to ${canonicalPaymentTermId}`));
+    const revisionConflict = ({
+      actualMetadataRevision,
+      target,
+    }: {
+      readonly actualMetadataRevision: number;
+      readonly target: 'alias' | 'canonical';
+    }) =>
+      Effect.fail(
+        new PaymentTermRevisionConflict({
+          actualRevision: actualMetadataRevision,
+          code: 'payment_term_revision_conflict',
+          expectedRevision:
+            target === 'alias' ? payload.expectedAliasMetadataRevision : payload.expectedCanonicalMetadataRevision,
+          reason: `The ${target} Payment Term changed concurrently with reconciliation`,
+        }),
+      );
+    const sameIdentity = () =>
+      Effect.fail(reconciliationConflict('A Payment Term cannot be reconciled as an alias of itself'));
+    const resolution = yield* Match.value(outcome).pipe(
+      Match.tags({
+        already_reconciled: alreadyReconciled,
+        canonical_is_alias: canonicalIsAlias,
+        incompatible_semantics: incompatibleSemantics,
+        not_found: notFoundOutcome,
+        reconciled: ({ alias }) =>
+          Effect.succeed({ canonicalPaymentTermId: alias.canonicalRef.resourceId, changed: true }),
+        reconciliation_conflict: reconciliationConflictOutcome,
+        revision_conflict: revisionConflict,
+        same_identity: sameIdentity,
+      }),
+      Match.exhaustive,
     );
-  }
-  return result;
-});
+    const { canonicalPaymentTermId } = resolution;
+    const result = {
+      aliasPaymentTermRef: payload.aliasPaymentTermRef,
+      canonicalPaymentTermRef: toPaymentTermRef(context.scope.tenantId, canonicalPaymentTermId),
+      changed: resolution.changed,
+    };
+    yield* context.recordAuditEvidence({ reason: payload.reason });
+    yield* context.recordDataAccess({
+      accessKind: 'read',
+      queryHash: `payment-term-reconcile:${payload.aliasPaymentTermRef.resourceId}:${canonicalPaymentTermId}`,
+      resultCount: 2,
+      servingModuleKey: MODULE_KEY,
+      targetModuleKey: MODULE_KEY,
+      targetResourceId: payload.aliasPaymentTermRef.resourceId,
+      targetResourceType: payload.aliasPaymentTermRef.resourceType,
+    });
+    if (result.changed) {
+      const event = yield* context.addDomainEvent({
+        eventType: 'payment.term-catalog.payment-term-reference-reconciled.v1',
+        payloadJson: result,
+        producerModuleKey: MODULE_KEY,
+        subjectModuleKey: MODULE_KEY,
+        subjectResourceId: result.aliasPaymentTermRef.resourceId,
+        subjectResourceType: result.aliasPaymentTermRef.resourceType,
+      });
+      yield* context.addOutboxMessage(
+        event,
+        createReconcilePaymentTermReferencePaymentTermCatalogPaymentTermReferenceReconciledV1OutboxMessage({
+          ...result,
+          changed: true,
+        }),
+      );
+    }
+    return result;
+  },
+);
 
 export const reconcilePaymentTermReferenceAction = defineAction(
   {
@@ -190,31 +181,24 @@ export const reconcilePaymentTermReferenceAction = defineAction(
       access: 'write',
       authorization: { kind: 'action_execution', provisioning: 'explicit' },
       entrypointKey: 'payment.term-catalog.reconcile-payment-term-reference',
-      moduleKey: 'payment.term-catalog',
+      moduleKey: MODULE_KEY,
       role: 'action',
     }),
     idempotency: 'required',
     legalEntityScope: 'required',
-    owningModuleKey: 'payment.term-catalog',
+    owningModuleKey: MODULE_KEY,
     payloadSchema: ReconcilePaymentTermReferencePayloadSchema,
     policies: [],
-    resourcePermission: defineActionResourcePermission<ReconcilePaymentTermReferencePayload>(
-      (payload) => ({
-        permission: 'write',
-        resource: payload.aliasPaymentTermRef,
-      }),
-    ),
+    resourcePermission: defineActionResourcePermission<ReconcilePaymentTermReferencePayload>((payload) => ({
+      permission: 'write',
+      resource: payload.aliasPaymentTermRef,
+    })),
     resultSchema: ReconcilePaymentTermReferenceResultSchema,
     schemaVersion: '1',
   },
   handleReconcilePaymentTermReference,
-  makePaymentTermCatalogPersistence,
+  paymentTermCatalogPersistenceForScope,
 );
 
 // <generated-outbox-message-exports>
-export { createReconcilePaymentTermReferencePaymentTermCatalogPaymentTermReferenceReconciledV1OutboxMessage } from './reconcile-payment-term-reference.payment-term-catalog-payment-term-reference-reconciled-v1.outbox-message.ts';
-export { ReconcilePaymentTermReferencePaymentTermCatalogPaymentTermReferenceReconciledV1OutboxPayloadSchema } from './reconcile-payment-term-reference.payment-term-catalog-payment-term-reference-reconciled-v1.outbox-message.ts';
-export { ReconcilePaymentTermReferencePaymentTermCatalogPaymentTermReferenceReconciledV1OutboxProducerModuleKey } from './reconcile-payment-term-reference.payment-term-catalog-payment-term-reference-reconciled-v1.outbox-message.ts';
-export { ReconcilePaymentTermReferencePaymentTermCatalogPaymentTermReferenceReconciledV1OutboxTopic } from './reconcile-payment-term-reference.payment-term-catalog-payment-term-reference-reconciled-v1.outbox-message.ts';
-export type { ReconcilePaymentTermReferencePaymentTermCatalogPaymentTermReferenceReconciledV1OutboxPayload } from './reconcile-payment-term-reference.payment-term-catalog-payment-term-reference-reconciled-v1.outbox-message.ts';
 // </generated-outbox-message-exports>

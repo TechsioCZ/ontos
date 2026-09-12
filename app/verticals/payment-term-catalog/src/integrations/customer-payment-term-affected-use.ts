@@ -15,18 +15,10 @@ import {
 import { CustomerContextGatewayCredentialService } from '../../shared/domain/customer-context-gateway-credential.ts';
 import type { PaymentTermAffectedUseAuthority } from '../actions/retire-payment-term.action.ts';
 
-export {
-  CustomerContextGatewayCredentialService,
-  unavailableCustomerContextGatewayCredentialIssuer,
-} from '../../shared/domain/customer-context-gateway-credential.ts';
-export type { CustomerContextGatewayCredentialIssuer } from '../../shared/domain/customer-context-gateway-credential.ts';
+export { CustomerContextGatewayCredentialService } from '../../shared/domain/customer-context-gateway-credential.ts';
 
 type AffectedUseClientError =
-  ReturnType<typeof executePaymentTermAffectedUseAssessment> extends Effect.Effect<
-    unknown,
-    infer Failure,
-    unknown
-  >
+  ReturnType<typeof executePaymentTermAffectedUseAssessment> extends Effect.Effect<unknown, infer Failure, unknown>
     ? Failure
     : never;
 type AffectedUseExecutor = (
@@ -44,16 +36,8 @@ type AuthorizedAffectedUseExecutor = (
   PaymentTermAffectedUseAssessmentResponse,
   AffectedUseClientError | PaymentTermAffectedUseAssessmentUnavailable
 >;
-const executeAuthorizedAffectedUse: AuthorizedAffectedUseExecutor = (
-  payload,
-  credential,
-  requestCorrelation,
-) =>
-  executePaymentTermAffectedUseAssessmentWithAuthorization(
-    payload,
-    Redacted.value(credential),
-    requestCorrelation,
-  );
+const executeAuthorizedAffectedUse: AuthorizedAffectedUseExecutor = (payload, credential, requestCorrelation) =>
+  executePaymentTermAffectedUseAssessmentWithAuthorization(payload, Redacted.value(credential), requestCorrelation);
 
 const unavailable = (cause: unknown): PaymentTermAffectedUseAssessmentUnavailable => {
   const failure = new PaymentTermAffectedUseAssessmentUnavailable({
@@ -98,9 +82,7 @@ export const customerPaymentTermAffectedUseAuthority = (
 
 const unavailableAuthority: PaymentTermAffectedUseAuthority = {
   verifyRetirementGovernance: () =>
-    Effect.fail(
-      unavailable('No server-owned Commerce Customer Context credential issuer is configured'),
-    ),
+    Effect.fail(unavailable('No server-owned Commerce Customer Context credential issuer is configured')),
 };
 
 export const customerPaymentTermAffectedUseAuthorityFromEnvironment = (

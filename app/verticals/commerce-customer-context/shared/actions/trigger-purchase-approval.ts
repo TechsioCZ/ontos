@@ -8,10 +8,7 @@ import { PurchaseLimitCounterpartyRefSchema } from '../domain/purchase-limit-pol
 import { PurchaseValueSchema } from '../domain/purchase-limit.ts';
 import { CounterpartyPurchasingProfileRefSchema } from '../resources/counterparty-purchasing-profile.ts';
 
-const ProposalRevisionRefSchema = Schema.String.check(
-  Schema.isMinLength(1),
-  Schema.isMaxLength(300),
-);
+const ProposalRevisionRefSchema = Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(300));
 
 export const TriggerPurchaseApprovalPayloadSchema = Schema.Struct({
   counterpartyRef: PurchaseLimitCounterpartyRefSchema,
@@ -33,4 +30,5 @@ export const TriggerPurchaseApprovalPayloadSchema = Schema.Struct({
 export type TriggerPurchaseApprovalPayload = typeof TriggerPurchaseApprovalPayloadSchema.Type;
 
 export const TriggerPurchaseApprovalResultSchema = PurchaseApprovalTriggerResultSchema;
-export type TriggerPurchaseApprovalResult = typeof TriggerPurchaseApprovalResultSchema.Type;
+// eslint-disable-next-line no-unused-vars -- Preserve the generated named result contract for this schema alias.
+type TriggerPurchaseApprovalResult = typeof TriggerPurchaseApprovalResultSchema.Type;

@@ -69,11 +69,6 @@ export const executeChangePrincipalPurchaseLimitOverride = (
 ) =>
   operationGateway.invoke(
     (credential) =>
-      executeChangePrincipalPurchaseLimitOverrideWithAuthorization(
-        payload,
-        credential,
-        requestCorrelation,
-        options,
-      ),
+      executeChangePrincipalPurchaseLimitOverrideWithAuthorization(payload, credential, requestCorrelation, options),
     options.gateway,
   );

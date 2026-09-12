@@ -3,40 +3,10 @@ import {
   MicroVerticalBuildMarkerSchema,
   MicroVerticalReadinessSchema,
   createMicroVerticalOperationContext,
-} from '@app/shared-contracts';
-import type {
-  MicroVerticalBuildMarker,
-  MicroVerticalOperationContext,
-  MicroVerticalReadiness,
-} from '@app/shared-contracts';
-import {
-  HttpApi,
-  HttpApiEndpoint,
-  HttpApiGroup,
-  Schema,
-} from '@modern-js/plugin-bff/effect-client';
-
-export type CommerceCustomerContextMarker = MicroVerticalBuildMarker;
-
-export type CommerceCustomerContextReadiness = MicroVerticalReadiness;
-
-export const commerceCustomerContextMarkerSchema: Schema.Codec<CommerceCustomerContextMarker> =
-  MicroVerticalBuildMarkerSchema;
-
-export const commerceCustomerContextReadinessSchema: Schema.Codec<CommerceCustomerContextReadiness> =
-  MicroVerticalReadinessSchema;
-
-export type OperationContext = MicroVerticalOperationContext;
-
-export const commerceCustomerContextFoundationApi = HttpApi.make(
-  'CommerceCustomerContextApiFoundation',
-).add(
-  HttpApiGroup.make('foundation').add(
-    HttpApiEndpoint.get('readiness', '/commerce-customer-context/readiness', {
-      success: commerceCustomerContextReadinessSchema,
-    }),
-  ),
-);
+} from '@modern-js/bff-effect/microvertical-api';
+import type { MicroVerticalOperationContext } from '@modern-js/bff-effect/microvertical-api';
+// oxlint-disable-next-line typescript/consistent-type-imports -- The framework baseline requires Schema in the exact value import.
+import { HttpApi, HttpApiEndpoint, HttpApiGroup, Schema } from '@modern-js/bff-effect/effect-client';
 
 // <generated-governed-http-api-imports>
 import { AddSavedAddressActionApi } from './apis/add-saved-address-action.ts';
@@ -133,6 +103,23 @@ import { UpdateCustomerGroupActionApi } from './apis/update-customer-group-actio
 import { UpdateSavedAddressActionApi } from './apis/update-saved-address-action.ts';
 // </generated-governed-http-api-imports>
 
+export const commerceCustomerContextMarkerSchema: Schema.Codec<typeof MicroVerticalBuildMarkerSchema.Type> =
+  MicroVerticalBuildMarkerSchema;
+export type CommerceCustomerContextMarker = typeof commerceCustomerContextMarkerSchema.Type;
+
+export const commerceCustomerContextReadinessSchema: Schema.Codec<typeof MicroVerticalReadinessSchema.Type> =
+  MicroVerticalReadinessSchema;
+export type CommerceCustomerContextReadiness = typeof commerceCustomerContextReadinessSchema.Type;
+
+export type OperationContext = MicroVerticalOperationContext;
+
+export const commerceCustomerContextFoundationApi = HttpApi.make('CommerceCustomerContextApiFoundation').add(
+  HttpApiGroup.make('foundation').add(
+    HttpApiEndpoint.get('readiness', '/commerce-customer-context/readiness', {
+      success: commerceCustomerContextReadinessSchema,
+    }),
+  ),
+);
 export * from './apis/payment-term-affected-use-assessment.ts';
 
 export const commerceCustomerContextApi = HttpApi.make('CommerceCustomerContextApi')

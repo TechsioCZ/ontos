@@ -3,17 +3,14 @@
 // @ontos-action-slug assign-customer-price-group
 /* eslint-disable effect-native/no-manual-tag-comparison, sonarjs/no-duplicate-string -- Generated Action shape uses explicit public outcome narrowing and canonical owner keys; expires: 2027-03-01. */
 import type { ActionHandlerContext } from '@app/core-runtime';
-import {
-  defineAction,
-  defineActionResourcePermission,
-  defineTenantModuleEntrypoint,
-} from '@app/core-runtime';
+import { defineAction, defineActionResourcePermission, defineTenantModuleEntrypoint } from '@app/core-runtime';
 import { Effect, Schema } from 'effect';
 import {
   CustomerPriceGroupAssignedEventSchema,
   isPriceGroupInstantBefore,
   samePriceGroupRef,
 } from '../../shared/domain/price-group-contracts.ts';
+import type { PriceGroupCatalogOutcome } from '../../shared/domain/price-group-contracts.ts';
 import {
   AssignCustomerPriceGroupPayloadSchema,
   AssignCustomerPriceGroupResultSchema,
@@ -32,6 +29,7 @@ import {
   CustomerPriceGroupScopeMismatch,
 } from '../../shared/domain/price-group-errors.ts';
 import type {
+  AssignCustomerPriceGroupStoreResult,
   CustomerPriceGroupAssignmentStorePort,
   CustomerPriceGroupProfileValidationPort,
   PriceGroupCatalogPort,
@@ -40,14 +38,8 @@ import { CUSTOMER_PRICE_GROUP_COMPATIBILITY_CONTRACT } from '../../shared/domain
 import { createAssignCustomerPriceGroupCommerceCustomerContextCustomerPriceGroupAssignedV1OutboxMessage } from './assign-customer-price-group.commerce-customer-context-customer-price-group-assigned-v1.outbox-message.ts';
 import { priceGroupActionServicesForTransaction } from './price-group-action-services.ts';
 
-export {
-  AssignCustomerPriceGroupPayloadSchema,
-  AssignCustomerPriceGroupResultSchema,
-} from '../../shared/actions/assign-customer-price-group.ts';
-export type {
-  AssignCustomerPriceGroupPayload,
-  AssignCustomerPriceGroupResult,
-} from '../../shared/actions/assign-customer-price-group.ts';
+export { AssignCustomerPriceGroupPayloadSchema } from '../../shared/actions/assign-customer-price-group.ts';
+export type { AssignCustomerPriceGroupPayload } from '../../shared/actions/assign-customer-price-group.ts';
 
 const AssignCustomerPriceGroupErrorSchema = Schema.Union([
   CustomerPriceGroupCatalogRejected,
@@ -66,18 +58,21 @@ type DomainEvents = Readonly<{
   'commerce.customer-context.customer-price-group-assigned.v1': typeof CustomerPriceGroupAssignedEventSchema;
 }>;
 
-export interface AssignCustomerPriceGroupServices {
+interface AssignCustomerPriceGroupServices {
   readonly catalog: PriceGroupCatalogPort;
   readonly now: Effect.Effect<string>;
   readonly profileValidation: CustomerPriceGroupProfileValidationPort;
   readonly store: CustomerPriceGroupAssignmentStorePort;
 }
 
-export const handleAssignCustomerPriceGroup = Effect.fn(
-  'AssignCustomerPriceGroupAction.handleAssignCustomerPriceGroup',
-)(function* assign(
+type AssignCustomerPriceGroupContext = ActionHandlerContext<DomainEvents, AssignCustomerPriceGroupServices>;
+type AssignedCustomerPriceGroup = Extract<AssignCustomerPriceGroupStoreResult, { readonly _tag: 'assigned' }>;
+type UsablePriceGroupCatalogOutcome = Extract<PriceGroupCatalogOutcome, { readonly _tag: 'USABLE' }>;
+
+/* oxlint-disable typescript/consistent-return -- Effect failure branches return yielded domain errors while successful validation intentionally falls through with void. */
+const validateAssignmentScope = Effect.fn('AssignCustomerPriceGroupAction.validateAssignmentScope')(function* validate(
   payload: AssignCustomerPriceGroupPayload,
-  context: ActionHandlerContext<DomainEvents, AssignCustomerPriceGroupServices>,
+  context: AssignCustomerPriceGroupContext,
 ) {
   if (
     payload.profile.tenantId !== context.scope.tenantId ||
@@ -88,7 +83,13 @@ export const handleAssignCustomerPriceGroup = Effect.fn(
       reason: 'The Profile and PriceGroup references must belong to the trusted Tenant',
     });
   }
+});
+/* oxlint-enable typescript/consistent-return */
 
+const recordAssignmentTime = Effect.fn('AssignCustomerPriceGroupAction.recordAssignmentTime')(function* record(
+  payload: AssignCustomerPriceGroupPayload,
+  context: AssignCustomerPriceGroupContext,
+) {
   const recordedAt = yield* context.services.now;
   if (isPriceGroupInstantBefore(payload.effectiveFrom, recordedAt)) {
     return yield* new CustomerPriceGroupRetroactiveScheduleRejected({
@@ -96,32 +97,39 @@ export const handleAssignCustomerPriceGroup = Effect.fn(
       reason: 'PriceGroup assignment must take effect now or in the future',
     });
   }
+  return recordedAt;
+});
 
-  const profileValidation = yield* context.services.profileValidation.inspect(
-    payload.profile,
-    payload.effectiveFrom,
-  );
-  if (profileValidation._tag === 'NOT_FOUND') {
-    return yield* new CustomerPriceGroupProfileNotFound({
-      code: 'customer_price_group_profile_not_found',
-      reason: 'The customer profile does not exist',
-    });
-  }
-  if (profileValidation.revision !== payload.expectedProfileRevision) {
-    return yield* new CustomerPriceGroupRevisionConflict({
-      code: 'customer_price_group_revision_conflict',
-      currentRevision: profileValidation.revision,
-      reason: 'The customer profile changed after it was read',
-    });
-  }
-  if (profileValidation.state !== 'ACTIVE') {
-    return yield* new CustomerPriceGroupProfileIneligible({
-      code: 'customer_price_group_profile_ineligible',
-      profileState: profileValidation.state,
-      reason: `A ${profileValidation.state} customer profile cannot receive a PriceGroup assignment`,
-    });
-  }
+const validateAssignableProfile = Effect.fn('AssignCustomerPriceGroupAction.validateAssignableProfile')(
+  function* validate(payload: AssignCustomerPriceGroupPayload, context: AssignCustomerPriceGroupContext) {
+    const profileValidation = yield* context.services.profileValidation.inspect(payload.profile, payload.effectiveFrom);
+    if (profileValidation._tag === 'NOT_FOUND') {
+      return yield* new CustomerPriceGroupProfileNotFound({
+        code: 'customer_price_group_profile_not_found',
+        reason: 'The customer profile does not exist',
+      });
+    }
+    if (profileValidation.revision !== payload.expectedProfileRevision) {
+      return yield* new CustomerPriceGroupRevisionConflict({
+        code: 'customer_price_group_revision_conflict',
+        currentRevision: profileValidation.revision,
+        reason: 'The customer profile changed after it was read',
+      });
+    }
+    if (profileValidation.state !== 'ACTIVE') {
+      return yield* new CustomerPriceGroupProfileIneligible({
+        code: 'customer_price_group_profile_ineligible',
+        profileState: profileValidation.state,
+        reason: `A ${profileValidation.state} customer profile cannot receive a PriceGroup assignment`,
+      });
+    }
+    return profileValidation;
+  },
+);
 
+const resolveAssignableCatalogPriceGroup = Effect.fn(
+  'AssignCustomerPriceGroupAction.resolveAssignableCatalogPriceGroup',
+)(function* resolve(payload: AssignCustomerPriceGroupPayload, context: AssignCustomerPriceGroupContext) {
   const catalogOutcome = yield* context.services.catalog.resolveCurrent(
     payload.priceGroupRef,
     CUSTOMER_PRICE_GROUP_COMPATIBILITY_CONTRACT,
@@ -144,20 +152,33 @@ export const handleAssignCustomerPriceGroup = Effect.fn(
       reasonCode: 'INCOMPATIBLE',
     });
   }
+  return catalogOutcome;
+});
 
-  const stored = yield* context.services.store.assign({
-    actionInvocationId: context.actionInvocationId,
-    compatibility: catalogOutcome.compatibility,
-    effectiveFrom: payload.effectiveFrom,
-    effectiveTo: payload.effectiveTo ?? null,
-    expectedProfileRevision: payload.expectedProfileRevision,
-    priceGroupRef: catalogOutcome.priceGroupRef,
-    principalId: context.scope.principalId,
-    profile: payload.profile,
-    reason: payload.reason,
-    recordedAt,
-    tenantId: context.scope.tenantId,
-  });
+const resolveAssignmentRevisionConflict = Effect.fn('AssignCustomerPriceGroupAction.resolveAssignmentRevisionConflict')(
+  function* resolve(payload: AssignCustomerPriceGroupPayload, context: AssignCustomerPriceGroupContext) {
+    const latest = yield* context.services.profileValidation.inspect(payload.profile, payload.effectiveFrom);
+    if (latest._tag === 'NOT_FOUND') {
+      return yield* new CustomerPriceGroupProfileNotFound({
+        code: 'customer_price_group_profile_not_found',
+        reason: 'The customer profile no longer exists',
+      });
+    }
+    return yield* new CustomerPriceGroupRevisionConflict({
+      code: 'customer_price_group_revision_conflict',
+      currentRevision: latest.revision,
+      reason: 'The customer profile changed during assignment',
+    });
+  },
+);
+
+const resolveAssignmentPersistenceResult = Effect.fn(
+  'AssignCustomerPriceGroupAction.resolveAssignmentPersistenceResult',
+)(function* resolve(
+  stored: AssignCustomerPriceGroupStoreResult,
+  payload: AssignCustomerPriceGroupPayload,
+  context: AssignCustomerPriceGroupContext,
+) {
   if (stored._tag === 'overlap') {
     return yield* new CustomerPriceGroupOverlapConflict({
       code: 'customer_price_group_overlap_conflict',
@@ -171,21 +192,7 @@ export const handleAssignCustomerPriceGroup = Effect.fn(
     });
   }
   if (stored._tag === 'profile_revision_conflict') {
-    const latest = yield* context.services.profileValidation.inspect(
-      payload.profile,
-      payload.effectiveFrom,
-    );
-    if (latest._tag === 'NOT_FOUND') {
-      return yield* new CustomerPriceGroupProfileNotFound({
-        code: 'customer_price_group_profile_not_found',
-        reason: 'The customer profile no longer exists',
-      });
-    }
-    return yield* new CustomerPriceGroupRevisionConflict({
-      code: 'customer_price_group_revision_conflict',
-      currentRevision: latest.revision,
-      reason: 'The customer profile changed during assignment',
-    });
+    return yield* resolveAssignmentRevisionConflict(payload, context);
   }
   if (stored._tag === 'profile_ineligible') {
     return yield* new CustomerPriceGroupProfileIneligible({
@@ -200,51 +207,88 @@ export const handleAssignCustomerPriceGroup = Effect.fn(
       reason: 'The assignment became retroactive before it could be persisted',
     });
   }
-  const result = stored;
+  return stored;
+});
 
-  yield* context.recordDataAccess({
-    accessKind: 'read',
-    queryHash: `customer-price-group-assign:${payload.profile.resourceId}:${payload.effectiveFrom}`,
-    resultCount: 1,
-    servingModuleKey: 'commerce.customer-context',
-    targetModuleKey: payload.profile.moduleId,
-    targetResourceId: payload.profile.resourceId,
-    targetResourceType: payload.profile.resourceType,
-  });
-  yield* context.recordDataAccess({
-    accessKind: 'read',
-    queryHash: `price-group-catalog:${payload.priceGroupRef.resourceId}:${catalogOutcome.compatibility.catalogRevision}`,
-    resultCount: 1,
-    servingModuleKey: 'commerce.customer-context',
-    targetModuleKey: payload.priceGroupRef.moduleId,
-    targetResourceId: payload.priceGroupRef.resourceId,
-    targetResourceType: payload.priceGroupRef.resourceType,
-  });
-
-  if (result.changed) {
-    const eventPayload = {
-      assignmentRef: result.assignment.assignmentRef,
-      assignmentRevision: result.assignment.revision,
-      change: 'ASSIGNED',
-      effectiveAt: result.assignment.effectiveFrom,
-      priceGroupRef: result.assignment.priceGroupRef,
-      profile: result.assignment.profile,
-    } as const;
-    const event = yield* context.addDomainEvent({
-      eventType: 'commerce.customer-context.customer-price-group-assigned.v1',
-      payloadJson: eventPayload,
-      producerModuleKey: 'commerce.customer-context',
-      subjectModuleKey: 'commerce.customer-context',
-      subjectResourceId: result.assignment.assignmentRef.resourceId,
-      subjectResourceType: result.assignment.assignmentRef.resourceType,
+const recordAssignmentDataAccess = Effect.fn('AssignCustomerPriceGroupAction.recordAssignmentDataAccess')(
+  function* record(
+    payload: AssignCustomerPriceGroupPayload,
+    catalogOutcome: UsablePriceGroupCatalogOutcome,
+    context: AssignCustomerPriceGroupContext,
+  ) {
+    yield* context.recordDataAccess({
+      accessKind: 'read',
+      queryHash: `customer-price-group-assign:${payload.profile.resourceId}:${payload.effectiveFrom}`,
+      resultCount: 1,
+      servingModuleKey: 'commerce.customer-context',
+      targetModuleKey: payload.profile.moduleId,
+      targetResourceId: payload.profile.resourceId,
+      targetResourceType: payload.profile.resourceType,
     });
-    yield* context.addOutboxMessage(
-      event,
-      createAssignCustomerPriceGroupCommerceCustomerContextCustomerPriceGroupAssignedV1OutboxMessage(
-        eventPayload,
-      ),
-    );
+    yield* context.recordDataAccess({
+      accessKind: 'read',
+      queryHash: `price-group-catalog:${payload.priceGroupRef.resourceId}:${catalogOutcome.compatibility.catalogRevision}`,
+      resultCount: 1,
+      servingModuleKey: 'commerce.customer-context',
+      targetModuleKey: payload.priceGroupRef.moduleId,
+      targetResourceId: payload.priceGroupRef.resourceId,
+      targetResourceType: payload.priceGroupRef.resourceType,
+    });
+  },
+);
+
+const publishAssignmentEvent = Effect.fn('AssignCustomerPriceGroupAction.publishAssignmentEvent')(function* publish(
+  result: AssignedCustomerPriceGroup,
+  context: AssignCustomerPriceGroupContext,
+) {
+  if (!result.changed) {
+    return;
   }
+  const eventPayload = {
+    assignmentRef: result.assignment.assignmentRef,
+    assignmentRevision: result.assignment.revision,
+    change: 'ASSIGNED',
+    effectiveAt: result.assignment.effectiveFrom,
+    priceGroupRef: result.assignment.priceGroupRef,
+    profile: result.assignment.profile,
+  } as const;
+  const event = yield* context.addDomainEvent({
+    eventType: 'commerce.customer-context.customer-price-group-assigned.v1',
+    payloadJson: eventPayload,
+    producerModuleKey: 'commerce.customer-context',
+    subjectModuleKey: 'commerce.customer-context',
+    subjectResourceId: result.assignment.assignmentRef.resourceId,
+    subjectResourceType: result.assignment.assignmentRef.resourceType,
+  });
+  yield* context.addOutboxMessage(
+    event,
+    createAssignCustomerPriceGroupCommerceCustomerContextCustomerPriceGroupAssignedV1OutboxMessage(eventPayload),
+  );
+});
+
+export const handleAssignCustomerPriceGroup = Effect.fn(
+  'AssignCustomerPriceGroupAction.handleAssignCustomerPriceGroup',
+)(function* assign(payload: AssignCustomerPriceGroupPayload, context: AssignCustomerPriceGroupContext) {
+  yield* validateAssignmentScope(payload, context);
+  const recordedAt = yield* recordAssignmentTime(payload, context);
+  yield* validateAssignableProfile(payload, context);
+  const catalogOutcome = yield* resolveAssignableCatalogPriceGroup(payload, context);
+  const stored = yield* context.services.store.assign({
+    actionInvocationId: context.actionInvocationId,
+    compatibility: catalogOutcome.compatibility,
+    effectiveFrom: payload.effectiveFrom,
+    effectiveTo: payload.effectiveTo ?? null,
+    expectedProfileRevision: payload.expectedProfileRevision,
+    priceGroupRef: catalogOutcome.priceGroupRef,
+    principalId: context.scope.principalId,
+    profile: payload.profile,
+    reason: payload.reason,
+    recordedAt,
+    tenantId: context.scope.tenantId,
+  });
+  const result = yield* resolveAssignmentPersistenceResult(stored, payload, context);
+  yield* recordAssignmentDataAccess(payload, catalogOutcome, context);
+  yield* publishAssignmentEvent(result, context);
 
   return {
     assignment: result.assignment,
@@ -263,8 +307,7 @@ export const assignCustomerPriceGroupAction = defineAction(
     auditProfile: 'standard',
     domainErrorSchema: AssignCustomerPriceGroupErrorSchema,
     domainEvents: {
-      'commerce.customer-context.customer-price-group-assigned.v1':
-        CustomerPriceGroupAssignedEventSchema,
+      'commerce.customer-context.customer-price-group-assigned.v1': CustomerPriceGroupAssignedEventSchema,
     },
     entrypoint: defineTenantModuleEntrypoint({
       access: 'write',
@@ -278,20 +321,13 @@ export const assignCustomerPriceGroupAction = defineAction(
     owningModuleKey: 'commerce.customer-context',
     payloadSchema: AssignCustomerPriceGroupPayloadSchema,
     policies: [],
-    resourcePermission: defineActionResourcePermission<AssignCustomerPriceGroupPayload>(
-      (payload) => ({ permission: 'write', resource: payload.profile }),
-    ),
+    resourcePermission: defineActionResourcePermission<AssignCustomerPriceGroupPayload>((payload) => ({
+      permission: 'write',
+      resource: payload.profile,
+    })),
     resultSchema: AssignCustomerPriceGroupResultSchema,
     schemaVersion: '1',
   },
   handleAssignCustomerPriceGroup,
   priceGroupActionServicesForTransaction,
 );
-
-// <generated-outbox-message-exports>
-export { AssignCustomerPriceGroupCommerceCustomerContextCustomerPriceGroupAssignedV1OutboxPayloadSchema } from './assign-customer-price-group.commerce-customer-context-customer-price-group-assigned-v1.outbox-message.ts';
-export { AssignCustomerPriceGroupCommerceCustomerContextCustomerPriceGroupAssignedV1OutboxProducerModuleKey } from './assign-customer-price-group.commerce-customer-context-customer-price-group-assigned-v1.outbox-message.ts';
-export { AssignCustomerPriceGroupCommerceCustomerContextCustomerPriceGroupAssignedV1OutboxTopic } from './assign-customer-price-group.commerce-customer-context-customer-price-group-assigned-v1.outbox-message.ts';
-export { createAssignCustomerPriceGroupCommerceCustomerContextCustomerPriceGroupAssignedV1OutboxMessage } from './assign-customer-price-group.commerce-customer-context-customer-price-group-assigned-v1.outbox-message.ts';
-export type { AssignCustomerPriceGroupCommerceCustomerContextCustomerPriceGroupAssignedV1OutboxPayload } from './assign-customer-price-group.commerce-customer-context-customer-price-group-assigned-v1.outbox-message.ts';
-// </generated-outbox-message-exports>

@@ -1,11 +1,9 @@
-import {
-  CreateApprovalHierarchyInputSchema,
-  CreateApprovalHierarchyResultSchema as DomainCreateApprovalHierarchyResultSchema,
-  PurchasingApprovalRejected,
+export {
+  CreateApprovalHierarchyInputSchema as CreateApprovalHierarchyPayloadSchema,
+  CreateApprovalHierarchyResultSchema,
+  PurchasingApprovalRejected as CreateApprovalHierarchyRejected,
 } from '../domain/purchasing-approval.ts';
-export const CreateApprovalHierarchyPayloadSchema = CreateApprovalHierarchyInputSchema;
-export type CreateApprovalHierarchyPayload = typeof CreateApprovalHierarchyPayloadSchema.Type;
-export const CreateApprovalHierarchyResultSchema = DomainCreateApprovalHierarchyResultSchema;
-export type CreateApprovalHierarchyResult = typeof CreateApprovalHierarchyResultSchema.Type;
-export const CreateApprovalHierarchyRejected = PurchasingApprovalRejected;
-export type CreateApprovalHierarchyRejected = InstanceType<typeof PurchasingApprovalRejected>;
+export type {
+  CreateApprovalHierarchyInput as CreateApprovalHierarchyPayload,
+  CreateApprovalHierarchyResult,
+} from '../domain/purchasing-approval.ts';

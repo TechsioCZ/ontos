@@ -45,14 +45,12 @@ export const isPaymentTermsAuthorizationSubjectCompatible = (
   profileRef: CommerceCustomerProfileRef,
   subject: PaymentTermsAuthorizationSubject,
 ): boolean =>
-  profileRef.tenantId ===
-    (subject.kind === 'COUNTERPARTY' ? subject.counterpartyRef.tenantId : profileRef.tenantId) &&
-  ((profileRef.resourceType === 'commerce.customer-context.retail-customer-profile' &&
-    subject.kind === 'RETAIL') ||
+  profileRef.tenantId === (subject.kind === 'COUNTERPARTY' ? subject.counterpartyRef.tenantId : profileRef.tenantId) &&
+  ((profileRef.resourceType === 'commerce.customer-context.retail-customer-profile' && subject.kind === 'RETAIL') ||
     (profileRef.resourceType === 'commerce.customer-context.counterparty-purchasing-profile' &&
       subject.kind === 'COUNTERPARTY'));
 
-export const PaymentTermSemanticSchema = Schema.Union([
+const PaymentTermSemanticSchema = Schema.Union([
   Schema.Struct({
     calculationRuleVersion: Schema.Literal(1),
     calendarRule: Schema.Literal('NOT_APPLICABLE'),
@@ -66,7 +64,6 @@ export const PaymentTermSemanticSchema = Schema.Union([
     kind: Schema.Literal('NET_DAYS'),
   }),
 ]);
-export type PaymentTermSemantic = typeof PaymentTermSemanticSchema.Type;
 
 const paymentTermCompatibilityId = boundedText.pipe(
   Schema.brand('CustomerPaymentTermsCompatibilityId'),

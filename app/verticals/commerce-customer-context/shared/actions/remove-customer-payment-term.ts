@@ -1,10 +1,7 @@
 // Canonical schema-only contract extracted from the generated remove-customer-payment-term Action.
 import { Schema } from 'effect';
 import { CounterpartyRefSchema } from '../domain/access-contract.ts';
-import {
-  CustomerPaymentTermsStateSchema,
-  PaymentTermsTimestampSchema,
-} from '../domain/payment-term-contracts.ts';
+import { CustomerPaymentTermsStateSchema, PaymentTermsTimestampSchema } from '../domain/payment-term-contracts.ts';
 import { CustomerPaymentTermRemovalKindSchema } from '../domain/payment-terms.ts';
 import { CounterpartyPurchasingProfileRefSchema } from '../resources/counterparty-purchasing-profile.ts';
 import { CustomerPaymentTermEntitlementRefSchema } from '../resources/customer-payment-term-entitlement.ts';

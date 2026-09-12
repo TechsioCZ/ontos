@@ -69,11 +69,6 @@ export const executeReservePaymentTermRetirement = (
 ) =>
   operationGateway.invoke(
     (credential) =>
-      executeReservePaymentTermRetirementWithAuthorization(
-        payload,
-        credential,
-        requestCorrelation,
-        options,
-      ),
+      executeReservePaymentTermRetirementWithAuthorization(payload, credential, requestCorrelation, options),
     options.gateway,
   );

@@ -66,22 +66,20 @@ const requireContextPermissions = (
   return check;
 };
 
-it.effect(
-  'uses one fully consistent batch and correlates allowed and denied module decisions',
-  () =>
-    Effect.gen(function* correlatesModuleDecisions() {
-      const requests: v1.CheckBulkPermissionsRequest[] = [];
-      const access = makeContextAccess(
-        makeClient((request) =>
-          Effect.sync(() => {
-            requests.push(request);
-            return responseFor(request, [
-              v1.CheckPermissionResponse_Permissionship.HAS_PERMISSION,
-              v1.CheckPermissionResponse_Permissionship.NO_PERMISSION,
-            ]);
-          }),
-        ),
-      );
+it.effect('uses one fully consistent batch and correlates allowed and denied module decisions', () =>
+  Effect.gen(function* correlatesModuleDecisions() {
+    const requests: v1.CheckBulkPermissionsRequest[] = [];
+    const access = makeContextAccess(
+      makeClient((request) =>
+        Effect.sync(() => {
+          requests.push(request);
+          return responseFor(request, [
+            v1.CheckPermissionResponse_Permissionship.HAS_PERMISSION,
+            v1.CheckPermissionResponse_Permissionship.NO_PERMISSION,
+          ]);
+        }),
+      ),
+    );
 
     const result = yield* access.modules({
       legalEntityId,
@@ -216,9 +214,7 @@ it.effect('checks exact business permissions and rejects untrusted storefront sc
         }),
       ),
     );
-    const permission = yield* Schema.decodeUnknownEffect(BusinessPermissionCodeSchema)(
-      'counterparty.purchase.submit',
-    );
+    const permission = yield* Schema.decodeEffect(BusinessPermissionCodeSchema)('counterparty.purchase.submit');
     const businessTarget = {
       permission,
       target: {
@@ -265,9 +261,7 @@ it.effect('checks exact business permissions and rejects untrusted storefront sc
 it.effect('accepts either an exact Storefront or exact Counterparty-wide positive grant', () =>
   Effect.gen(function* acceptsBusinessPermissionAlternatives() {
     const observedObjectIds: string[][] = [];
-    const permission = yield* Schema.decodeUnknownEffect(BusinessPermissionCodeSchema)(
-      'counterparty.purchase.submit',
-    );
+    const permission = yield* Schema.decodeEffect(BusinessPermissionCodeSchema)('counterparty.purchase.submit');
     const target = {
       permission,
       target: {
@@ -287,10 +281,7 @@ it.effect('accepts either an exact Storefront or exact Counterparty-wide positiv
         v1.CheckPermissionResponse_Permissionship.NO_PERMISSION,
         v1.CheckPermissionResponse_Permissionship.HAS_PERMISSION,
       ],
-      [
-        v1.CheckPermissionResponse_Permissionship.NO_PERMISSION,
-        v1.CheckPermissionResponse_Permissionship.UNSPECIFIED,
-      ],
+      [v1.CheckPermissionResponse_Permissionship.NO_PERMISSION, v1.CheckPermissionResponse_Permissionship.UNSPECIFIED],
       [
         v1.CheckPermissionResponse_Permissionship.NO_PERMISSION,
         v1.CheckPermissionResponse_Permissionship.NO_PERMISSION,
@@ -315,18 +306,10 @@ it.effect('accepts either an exact Storefront or exact Counterparty-wide positiv
         trustedStorefrontId: 'storefront-1',
       });
 
-    expect(yield* run()).toEqual([
-      { decision: 'allowed', key: toBusinessPermissionAccessKey(target) },
-    ]);
-    expect(yield* run()).toEqual([
-      { decision: 'allowed', key: toBusinessPermissionAccessKey(target) },
-    ]);
-    expect(yield* run()).toEqual([
-      { decision: 'unavailable', key: toBusinessPermissionAccessKey(target) },
-    ]);
-    expect(yield* run()).toEqual([
-      { decision: 'denied', key: toBusinessPermissionAccessKey(target) },
-    ]);
+    expect(yield* run()).toEqual([{ decision: 'allowed', key: toBusinessPermissionAccessKey(target) }]);
+    expect(yield* run()).toEqual([{ decision: 'allowed', key: toBusinessPermissionAccessKey(target) }]);
+    expect(yield* run()).toEqual([{ decision: 'unavailable', key: toBusinessPermissionAccessKey(target) }]);
+    expect(yield* run()).toEqual([{ decision: 'denied', key: toBusinessPermissionAccessKey(target) }]);
     expect(observedObjectIds[0]).toEqual([
       toBusinessPermissionAccessObjectId(permission, target.target),
       toBusinessPermissionAccessObjectId(permission, {
@@ -339,53 +322,49 @@ it.effect('accepts either an exact Storefront or exact Counterparty-wide positiv
   }),
 );
 
-it.effect(
-  'reuses exact and Counterparty-wide alternatives across repeated Storefront targets',
-  () =>
-    Effect.gen(function* reusesBusinessPermissionAlternative() {
-      const permission = yield* Schema.decodeUnknownEffect(BusinessPermissionCodeSchema)(
-        'counterparty.purchase.submit',
-      );
-      const target = {
-        permission,
-        target: {
-          counterpartyId: 'counterparty-1',
-          kind: 'counterparty_storefront' as const,
-          legalEntityId,
-          storefrontId: 'storefront-1',
-          tenantId,
-        },
-      };
-      const targets = [target, target];
-      const access = makeContextAccess(
-        makeClient((request) =>
-          Effect.sync(() => {
-            expect(request.items).toHaveLength(2);
-            return responseFor(request, [
-              v1.CheckPermissionResponse_Permissionship.NO_PERMISSION,
-              v1.CheckPermissionResponse_Permissionship.HAS_PERMISSION,
-            ]);
-          }),
-        ),
-      );
-
-      expect(
-        yield* requireBusinessPermissions(access)({
-          principal: { principalId, tenantId },
-          targets,
-          trustedStorefrontId: 'storefront-1',
+it.effect('reuses exact and Counterparty-wide alternatives across repeated Storefront targets', () =>
+  Effect.gen(function* reusesBusinessPermissionAlternative() {
+    const permission = yield* Schema.decodeEffect(BusinessPermissionCodeSchema)('counterparty.purchase.submit');
+    const target = {
+      permission,
+      target: {
+        counterpartyId: 'counterparty-1',
+        kind: 'counterparty_storefront' as const,
+        legalEntityId,
+        storefrontId: 'storefront-1',
+        tenantId,
+      },
+    };
+    const targets = [target, target];
+    const access = makeContextAccess(
+      makeClient((request) =>
+        Effect.sync(() => {
+          expect(request.items).toHaveLength(2);
+          return responseFor(request, [
+            v1.CheckPermissionResponse_Permissionship.NO_PERMISSION,
+            v1.CheckPermissionResponse_Permissionship.HAS_PERMISSION,
+          ]);
         }),
-      ).toEqual([
-        {
-          decision: 'allowed',
-          key: toBusinessPermissionAccessKey(target),
-        },
-        {
-          decision: 'allowed',
-          key: toBusinessPermissionAccessKey(target),
-        },
-      ]);
-    }),
+      ),
+    );
+
+    expect(
+      yield* requireBusinessPermissions(access)({
+        principal: { principalId, tenantId },
+        targets,
+        trustedStorefrontId: 'storefront-1',
+      }),
+    ).toEqual([
+      {
+        decision: 'allowed',
+        key: toBusinessPermissionAccessKey(target),
+      },
+      {
+        decision: 'allowed',
+        key: toBusinessPermissionAccessKey(target),
+      },
+    ]);
+  }),
 );
 
 it.effect('checks exact named context permissions in tenant-qualified scope', () =>
@@ -433,9 +412,7 @@ it.effect('rejects cross-tenant business permission checks before calling SpiceD
       ),
     );
     const target = {
-      permission: yield* Schema.decodeUnknownEffect(BusinessPermissionCodeSchema)(
-        'retail.profile.read',
-      ),
+      permission: yield* Schema.decodeEffect(BusinessPermissionCodeSchema)('retail.profile.read'),
       target: {
         kind: 'retail_profile' as const,
         legalEntityId,

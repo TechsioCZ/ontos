@@ -22,7 +22,7 @@ type PersonEngagementProfileOperationInvocation = readonly [
 ];
 
 const personEngagementProfileClient = (
-  credential: Redacted.Redacted<string>,
+  credential: Redacted.Redacted,
   requestCorrelation: string,
   options: PersonEngagementProfileClientOptions,
 ) =>

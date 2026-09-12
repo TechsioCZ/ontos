@@ -17,13 +17,12 @@ export class CustomerContextGatewayCredentialService extends Context.Service<
   '@app/payment-term-catalog/shared/domain/customer-context-gateway-credential/CustomerContextGatewayCredentialService',
 ) {}
 
-export const unavailableCustomerContextGatewayCredentialIssuer: CustomerContextGatewayCredentialIssuer =
-  Object.freeze({
-    issue: () =>
-      Effect.fail(
-        new PaymentTermAffectedUseAssessmentUnavailable({
-          code: 'payment_term_affected_use_assessment_unavailable',
-          reason: 'No server-owned Commerce Customer Context credential issuer is configured',
-        }),
-      ),
-  });
+export const unavailableCustomerContextGatewayCredentialIssuer: CustomerContextGatewayCredentialIssuer = Object.freeze({
+  issue: () =>
+    Effect.fail(
+      new PaymentTermAffectedUseAssessmentUnavailable({
+        code: 'payment_term_affected_use_assessment_unavailable',
+        reason: 'No server-owned Commerce Customer Context credential issuer is configured',
+      }),
+    ),
+});

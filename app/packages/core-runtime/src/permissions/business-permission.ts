@@ -5,9 +5,10 @@ const dottedEntrypointPattern = /^[a-z][a-z0-9]*(?:-[a-z0-9]+)*(?:\.[a-z][a-z0-9
 const schemaVersionPattern = /^[1-9][0-9]*$/u;
 const nonEmptyString = Schema.String.check(Schema.isMinLength(1));
 
-export const BusinessPermissionCodeSchema = Schema.String.check(
-  Schema.isPattern(dottedPermissionPattern),
-).pipe(Schema.brand('BusinessPermissionCode'), Schema.decodeTo(Schema.String));
+export const BusinessPermissionCodeSchema = Schema.String.check(Schema.isPattern(dottedPermissionPattern)).pipe(
+  Schema.brand('BusinessPermissionCode'),
+  Schema.decodeTo(Schema.String),
+);
 
 export const BusinessPermissionScopeKindSchema = Schema.Literals([
   'counterparty',
@@ -18,8 +19,7 @@ export const BusinessPermissionAuditSensitivitySchema = Schema.Literals(['sensit
 
 export type BusinessPermissionCode = typeof BusinessPermissionCodeSchema.Type;
 export type BusinessPermissionScopeKind = typeof BusinessPermissionScopeKindSchema.Type;
-export type BusinessPermissionAuditSensitivity =
-  typeof BusinessPermissionAuditSensitivitySchema.Type;
+export type BusinessPermissionAuditSensitivity = typeof BusinessPermissionAuditSensitivitySchema.Type;
 
 export const BusinessPermissionDescriptorSchema = Schema.Struct({
   allowedScopeKinds: Schema.Array(BusinessPermissionScopeKindSchema),
@@ -30,9 +30,7 @@ export const BusinessPermissionDescriptorSchema = Schema.Struct({
   key: BusinessPermissionCodeSchema,
   meaning: nonEmptyString,
   owningCapability: nonEmptyString,
-  protectedEntrypoints: Schema.Array(
-    Schema.String.check(Schema.isPattern(dottedEntrypointPattern)),
-  ),
+  protectedEntrypoints: Schema.Array(Schema.String.check(Schema.isPattern(dottedEntrypointPattern))),
   schemaVersion: Schema.String.check(Schema.isPattern(schemaVersionPattern)),
 });
 
@@ -55,9 +53,7 @@ const invalid = (message: string): never => {
   throw new BusinessPermissionCatalogInvariantError({ message });
 };
 
-const freezeDescriptor = (
-  descriptor: BusinessPermissionDescriptor,
-): Readonly<BusinessPermissionDescriptor> =>
+const freezeDescriptor = (descriptor: BusinessPermissionDescriptor): Readonly<BusinessPermissionDescriptor> =>
   Object.freeze({
     ...descriptor,
     allowedScopeKinds: Object.freeze([...descriptor.allowedScopeKinds]),
@@ -69,7 +65,7 @@ export const defineBusinessPermission = (
   input: BusinessPermissionDescriptor,
 ): Readonly<BusinessPermissionDescriptor> => {
   const descriptor = Result.getOrThrow(
-    Schema.decodeUnknownResult(BusinessPermissionDescriptorSchema, {
+    Schema.decodeResult(BusinessPermissionDescriptorSchema, {
       onExcessProperty: 'error',
     })(input),
   );
@@ -96,7 +92,7 @@ export const defineBusinessPermissionCatalog = (input: {
     return invalid('business permission catalog must be an object');
   }
   const decoded = Result.getOrThrow(
-    Schema.decodeUnknownResult(BusinessPermissionCatalogInputSchema, {
+    Schema.decodeResult(BusinessPermissionCatalogInputSchema, {
       onExcessProperty: 'error',
     })(input),
   );
@@ -113,9 +109,7 @@ export const defineBusinessPermissionCatalog = (input: {
       for (const permission of entries) {
         const descriptor = byKey.get(permission);
         if (descriptor === undefined || !descriptor.authorityGroups.includes(group)) {
-          return invalid(
-            `authority group ${group} and permission ${permission} must declare each other`,
-          );
+          return invalid(`authority group ${group} and permission ${permission} must declare each other`);
         }
       }
       return [group, Object.freeze([...entries])] as const;
@@ -125,9 +119,7 @@ export const defineBusinessPermissionCatalog = (input: {
     for (const group of permission.authorityGroups) {
       const entries = authorityGroups[group];
       if (entries === undefined || !entries.includes(permission.key)) {
-        return invalid(
-          `business permission ${permission.key} references undeclared authority group ${group}`,
-        );
+        return invalid(`business permission ${permission.key} references undeclared authority group ${group}`);
       }
     }
   }

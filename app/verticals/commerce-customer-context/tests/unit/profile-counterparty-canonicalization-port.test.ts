@@ -69,22 +69,15 @@ describe('Counterparty canonicalization observation port', () => {
     expect(() =>
       Schema.decodeUnknownSync(CounterpartyCanonicalizationEvidenceSchema)({
         ...evidence,
-        aliasedCounterpartyRefs: [
-          counterpartyRef('counterparty-alias'),
-          counterpartyRef('counterparty-alias'),
-        ],
+        aliasedCounterpartyRefs: [counterpartyRef('counterparty-alias'), counterpartyRef('counterparty-alias')],
       }),
     ).toThrow();
   });
 
   it.effect('fails closed when Party Registry has no Counterparty canonicalization producer', () =>
     Effect.gen(function* counterpartyCanonicalizationUnavailableEffect() {
-      const decoded = Schema.decodeUnknownSync(CounterpartyCanonicalizationEvidenceSchema)(
-        evidence,
-      );
-      const failure = yield* Effect.flip(
-        unavailableCounterpartyCanonicalizationObservationPort().observe(decoded),
-      );
+      const decoded = Schema.decodeUnknownSync(CounterpartyCanonicalizationEvidenceSchema)(evidence);
+      const failure = yield* Effect.flip(unavailableCounterpartyCanonicalizationObservationPort().observe(decoded));
 
       expect(Schema.is(CounterpartyCanonicalizationOwnerUnavailable)(failure)).toBe(true);
       expect(failure.ownerModuleId).toBe('party.registry');

@@ -15,9 +15,7 @@ const ResourceIdSchema = Schema.toEncoded(
     Schema.brand('CounterpartyPurchasingProfileResourceId'),
   ),
 );
-const TenantIdSchema = Schema.toEncoded(
-  Schema.String.check(Schema.isUUID()).pipe(Schema.brand('TenantId')),
-);
+const TenantIdSchema = Schema.toEncoded(Schema.String.check(Schema.isUUID()).pipe(Schema.brand('TenantId')));
 
 export const CounterpartyPurchasingProfileRefSchema = Schema.Struct({
   moduleId: Schema.Literal('commerce.customer-context'),
@@ -56,8 +54,7 @@ export const CommerceCounterpartyPurchasingProfileSchema = Schema.Struct({
     return issues;
   }),
 );
-export type CommerceCounterpartyPurchasingProfile =
-  typeof CommerceCounterpartyPurchasingProfileSchema.Type;
+export type CommerceCounterpartyPurchasingProfile = typeof CommerceCounterpartyPurchasingProfileSchema.Type;
 
 export const counterpartyPurchasingProfileResourceDescriptor = {
   capabilities: {

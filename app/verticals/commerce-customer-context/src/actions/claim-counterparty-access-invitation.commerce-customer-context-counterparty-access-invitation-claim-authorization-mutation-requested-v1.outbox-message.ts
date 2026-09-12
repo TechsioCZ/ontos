@@ -3,21 +3,21 @@
 // @ontos-outbox-topic commerce.customer-context.counterparty-access-invitation-claim-authorization-mutation-requested.v1
 import type { OutboxMessage } from '@app/core-runtime';
 import {
-  outboxProducerModuleKey,
-  outboxTopic,
-  type OutboxPayload,
-} from '@app/commerce-customer-context/outbox/commerce-customer-context-counterparty-access-invitation-claim-authorization-mutation-requested-v1';
-
-export {
   OutboxPayloadSchema as ClaimCounterpartyAccessInvitationCommerceCustomerContextCounterpartyAccessInvitationClaimAuthorizationMutationRequestedV1OutboxPayloadSchema,
   outboxProducerModuleKey as ClaimCounterpartyAccessInvitationCommerceCustomerContextCounterpartyAccessInvitationClaimAuthorizationMutationRequestedV1OutboxProducerModuleKey,
   outboxTopic as ClaimCounterpartyAccessInvitationCommerceCustomerContextCounterpartyAccessInvitationClaimAuthorizationMutationRequestedV1OutboxTopic,
 } from '@app/commerce-customer-context/outbox/commerce-customer-context-counterparty-access-invitation-claim-authorization-mutation-requested-v1';
-export type { OutboxPayload as ClaimCounterpartyAccessInvitationCommerceCustomerContextCounterpartyAccessInvitationClaimAuthorizationMutationRequestedV1OutboxPayload } from '@app/commerce-customer-context/outbox/commerce-customer-context-counterparty-access-invitation-claim-authorization-mutation-requested-v1';
+import type { OutboxPayload as ClaimCounterpartyAccessInvitationCommerceCustomerContextCounterpartyAccessInvitationClaimAuthorizationMutationRequestedV1OutboxPayload } from '@app/commerce-customer-context/outbox/commerce-customer-context-counterparty-access-invitation-claim-authorization-mutation-requested-v1';
+
+export { ClaimCounterpartyAccessInvitationCommerceCustomerContextCounterpartyAccessInvitationClaimAuthorizationMutationRequestedV1OutboxPayloadSchema };
 
 export const createClaimCounterpartyAccessInvitationCommerceCustomerContextCounterpartyAccessInvitationClaimAuthorizationMutationRequestedV1OutboxMessage =
-  (payload: OutboxPayload): OutboxMessage => ({
+  (
+    payload: ClaimCounterpartyAccessInvitationCommerceCustomerContextCounterpartyAccessInvitationClaimAuthorizationMutationRequestedV1OutboxPayload,
+  ): OutboxMessage => ({
     payloadJson: payload,
-    producerModuleKey: outboxProducerModuleKey,
-    topic: outboxTopic,
+    producerModuleKey:
+      ClaimCounterpartyAccessInvitationCommerceCustomerContextCounterpartyAccessInvitationClaimAuthorizationMutationRequestedV1OutboxProducerModuleKey,
+    topic:
+      ClaimCounterpartyAccessInvitationCommerceCustomerContextCounterpartyAccessInvitationClaimAuthorizationMutationRequestedV1OutboxTopic,
   });

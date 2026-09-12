@@ -45,10 +45,7 @@ export const listCounterpartyCommerceAccessFromServices = (
   legalEntityId: string,
   tenantId: string,
   services: CounterpartyCommerceAccessListServices,
-): Effect.Effect<
-  CounterpartyCommerceAccessListResponse,
-  ReadHandlerNotFound | ReadHandlerUnavailable
-> =>
+): Effect.Effect<CounterpartyCommerceAccessListResponse, ReadHandlerNotFound | ReadHandlerUnavailable> =>
   input.counterpartyRef.tenantId !== tenantId ||
   (input.recipient !== undefined && input.recipient.tenantId !== tenantId)
     ? Effect.fail(notFound())
@@ -69,15 +66,14 @@ export const listCounterpartyCommerceAccessFromServices = (
               (grant) =>
                 grant.counterpartyRef.tenantId === tenantId &&
                 grant.counterpartyRef.resourceId === input.counterpartyRef.resourceId &&
-                (input.recipient === undefined ||
-                  grant.recipient.principalId === input.recipient.principalId) &&
+                (input.recipient === undefined || grant.recipient.principalId === input.recipient.principalId) &&
                 scopeContains(grant.scope, input.scope),
             ),
           })),
           Effect.mapError((failure) => unavailable(failure._tag)),
         );
 
-export const counterpartyCommerceAccessListEntrypoint = defineTenantModuleEntrypoint({
+const counterpartyCommerceAccessListEntrypoint = defineTenantModuleEntrypoint({
   access: 'read',
   authorization: { kind: 'context_permission', permission: 'counterparty.access.read' },
   entrypointKey: 'commerce.customer-context.api.counterparty-commerce-access-list',
@@ -116,8 +112,6 @@ export const counterpartyCommerceAccessListRead = defineRead(
     ).pipe(Effect.map((result) => ({ evidence: { resultCount: result.grants.length }, result })));
   },
   (transaction, scope) =>
-    counterpartyAccessServicesForTransaction(transaction, scope).pipe(
-      Effect.map((port) => ({ list: port.list })),
-    ),
+    counterpartyAccessServicesForTransaction(transaction, scope).pipe(Effect.map((port) => ({ list: port.list }))),
   counterpartyAccessReadPermissionTarget,
 );

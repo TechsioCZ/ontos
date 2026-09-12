@@ -16,9 +16,7 @@ const principalId = '40000000-0000-4000-8000-000000000001';
 
 const intent = (
   operation: 'grant' | 'revoke' = 'grant',
-  state: AuthorizationMutationJournalEntry['state'] = operation === 'grant'
-    ? 'PENDING_GRANT'
-    : 'PENDING_REVOKE',
+  state: AuthorizationMutationJournalEntry['state'] = operation === 'grant' ? 'PENDING_GRANT' : 'PENDING_REVOKE',
 ): AuthorizationMutationJournalEntry => ({
   attemptCount: 0,
   businessTarget: {
@@ -99,36 +97,34 @@ it.effect('applies only the exact persisted storefront scope and finalizes the s
   }),
 );
 
-it.effect(
-  'leaves the durable intent retryable when the relationship acknowledgement is ambiguous',
-  () =>
-    Effect.gen(function* retainIntentAfterMutationFailure() {
-      let finalizations = 0;
-      const failure = yield* Effect.flip(
-        reconcileCommittedAuthorizationMutation(
-          intent(),
-          {
-            mutate: () =>
-              Effect.fail(
-                new BusinessPermissionMutationUnavailable({
-                  reason: 'sanitized unavailable',
-                }),
-              ),
-          },
-          {
-            finalize: () =>
-              Effect.sync(() => {
-                finalizations += 1;
-                return intent('grant', 'ACTIVE');
+it.effect('leaves the durable intent retryable when the relationship acknowledgement is ambiguous', () =>
+  Effect.gen(function* retainIntentAfterMutationFailure() {
+    let finalizations = 0;
+    const failure = yield* Effect.flip(
+      reconcileCommittedAuthorizationMutation(
+        intent(),
+        {
+          mutate: () =>
+            Effect.fail(
+              new BusinessPermissionMutationUnavailable({
+                reason: 'sanitized unavailable',
               }),
-          },
-        ),
-      );
-      expect(failure.code).toBe('authorization_mutation_relationship_indeterminate');
-      expect(failure.externalMutationMayHaveSucceeded).toBe(true);
-      expect(failure.retryable).toBe(true);
-      expect(finalizations).toBe(0);
-    }),
+            ),
+        },
+        {
+          finalize: () =>
+            Effect.sync(() => {
+              finalizations += 1;
+              return intent('grant', 'ACTIVE');
+            }),
+        },
+      ),
+    );
+    expect(failure.code).toBe('authorization_mutation_relationship_indeterminate');
+    expect(failure.externalMutationMayHaveSucceeded).toBe(true);
+    expect(failure.retryable).toBe(true);
+    expect(finalizations).toBe(0);
+  }),
 );
 
 it.effect('repeats an idempotent external write after a crash before durable finalization', () =>
@@ -168,25 +164,23 @@ it.effect('repeats an idempotent external write after a crash before durable fin
   }),
 );
 
-it.effect(
-  'does not repeat the external write after an ambiguous finalization actually committed',
-  () =>
-    Effect.gen(function* resolveCommittedFinalization() {
-      let writes = 0;
-      const result = yield* reconcileCommittedAuthorizationMutation(
-        intent('revoke', 'REVOKED'),
-        {
-          mutate: () =>
-            Effect.sync(() => {
-              writes += 1;
-            }),
-        },
-        { finalize: () => Effect.die('must not finalize a terminal intent') },
-      );
-      expect(result.outcome).toBe('ALREADY_FINAL');
-      expect(result.entry.state).toBe('REVOKED');
-      expect(writes).toBe(0);
-    }),
+it.effect('does not repeat the external write after an ambiguous finalization actually committed', () =>
+  Effect.gen(function* resolveCommittedFinalization() {
+    let writes = 0;
+    const result = yield* reconcileCommittedAuthorizationMutation(
+      intent('revoke', 'REVOKED'),
+      {
+        mutate: () =>
+          Effect.sync(() => {
+            writes += 1;
+          }),
+      },
+      { finalize: () => Effect.die('must not finalize a terminal intent') },
+    );
+    expect(result.outcome).toBe('ALREADY_FINAL');
+    expect(result.entry.state).toBe('REVOKED');
+    expect(writes).toBe(0);
+  }),
 );
 
 it.effect('rejects a finalizer response for another tuple without claiming success', () =>

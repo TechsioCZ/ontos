@@ -47,56 +47,50 @@ export interface PurchaseCurrencyResolutionServices {
 
 const moduleKey = 'commerce.customer-context';
 
-export const makePurchaseCurrencyResolutionServices = Effect.fn(
-  'PurchaseCurrencyResolutionRead.makeServices',
-)(function* makePurchaseCurrencyResolutionServicesEffect(input: {
-  readonly scope: PurchaseCurrencyTrustedScope;
-}) {
-  const contextPort = yield* PurchaseCurrencyPurchasingContextPort;
-  const policyPort = yield* PurchaseCurrencyPolicyPort;
-  const pricingPort = yield* PurchaseCurrencyPricingPort;
-  const loadCurrent = Effect.fn('PurchaseCurrencyResolutionRead.loadCurrent')(
-    function* loadCurrentPurchaseCurrencyFacts(
-      request: PurchaseCurrencyResolutionRequest,
-      observedAt: string,
-    ) {
-      const currentContext = yield* contextPort.resolveCurrent({
-        claimedContext: request.purchasingContext,
-        claimedContextRevision: request.contextRevision,
-        claimedSubject: request.subject,
-        observedAt,
-        scope: input.scope,
-      });
-      const [policy, pricing] = yield* Effect.all(
-        [
-          policyPort.resolveCurrent({
-            context: currentContext,
-            observedAt,
-            subject: currentContext.subject,
-          }),
-          pricingPort.resolveCurrent({ context: currentContext, observedAt }),
-        ],
-        { concurrency: 2 },
-      );
-      const current = {
-        ...currentContext,
-        policy,
-        pricing,
-      };
-      return current;
-    },
-  );
-  return {
-    loadCurrent,
-  } satisfies PurchaseCurrencyResolutionServices;
-});
+export const makePurchaseCurrencyResolutionServices = Effect.fn('PurchaseCurrencyResolutionRead.makeServices')(
+  function* makePurchaseCurrencyResolutionServicesEffect(input: { readonly scope: PurchaseCurrencyTrustedScope }) {
+    const contextPort = yield* PurchaseCurrencyPurchasingContextPort;
+    const policyPort = yield* PurchaseCurrencyPolicyPort;
+    const pricingPort = yield* PurchaseCurrencyPricingPort;
+    const loadCurrent = Effect.fn('PurchaseCurrencyResolutionRead.loadCurrent')(
+      function* loadCurrentPurchaseCurrencyFacts(request: PurchaseCurrencyResolutionRequest, observedAt: string) {
+        const currentContext = yield* contextPort.resolveCurrent({
+          claimedContext: request.purchasingContext,
+          claimedContextRevision: request.contextRevision,
+          claimedSubject: request.subject,
+          observedAt,
+          scope: input.scope,
+        });
+        const [policy, pricing] = yield* Effect.all(
+          [
+            policyPort.resolveCurrent({
+              context: currentContext,
+              observedAt,
+              subject: currentContext.subject,
+            }),
+            pricingPort.resolveCurrent({ context: currentContext, observedAt }),
+          ],
+          { concurrency: 2 },
+        );
+        const current = {
+          ...currentContext,
+          policy,
+          pricing,
+        };
+        return current;
+      },
+    );
+    return {
+      loadCurrent,
+    } satisfies PurchaseCurrencyResolutionServices;
+  },
+);
 
-export const PurchaseCurrencyResolutionDomainErrorSchema = Schema.Union([
+const PurchaseCurrencyResolutionDomainErrorSchema = Schema.Union([
   PurchaseCurrencyResolutionFailureSchema,
   PurchaseCurrencyDependencyUnavailable,
 ]);
-export type PurchaseCurrencyResolutionDomainError =
-  typeof PurchaseCurrencyResolutionDomainErrorSchema.Type;
+export type PurchaseCurrencyResolutionDomainError = typeof PurchaseCurrencyResolutionDomainErrorSchema.Type;
 
 const samePurchaseCurrencyContext = (
   left: PurchaseCurrencyResolutionRequest['purchasingContext'],
@@ -109,43 +103,88 @@ const samePurchaseCurrencyContext = (
   left.storefrontId === right.storefrontId &&
   left.tenantId === right.tenantId;
 
-const samePurchaseCurrencySubject = (
-  left: PurchaseCurrencySubject,
-  right: PurchaseCurrencySubject,
+type PurchaseCurrencyGuestSubject = Extract<PurchaseCurrencySubject, { readonly kind: 'GUEST' }>;
+type PurchaseCurrencyProfileSubject = Extract<PurchaseCurrencySubject, { readonly kind: 'PROFILE' }>;
+
+const samePurchaseCurrencyGuestSubject = (
+  left: PurchaseCurrencyGuestSubject,
+  right: PurchaseCurrencyGuestSubject,
+): boolean => left.guestEvidenceRef === right.guestEvidenceRef && left.guestSessionRef === right.guestSessionRef;
+
+const samePurchaseCurrencyAuthorizationSubject = (
+  left: PurchaseCurrencyProfileSubject['authorizationSubject'],
+  right: PurchaseCurrencyProfileSubject['authorizationSubject'],
 ): boolean => {
   if (left.kind !== right.kind) {
     return false;
   }
-  if (left.kind === 'GUEST') {
-    return (
-      right.kind === 'GUEST' &&
-      left.guestEvidenceRef === right.guestEvidenceRef &&
-      left.guestSessionRef === right.guestSessionRef
-    );
+  if (left.kind === 'RETAIL') {
+    return right.kind === 'RETAIL';
   }
-  if (right.kind !== 'PROFILE') {
-    return false;
-  }
-  const authorizationSubjectMatches =
-    left.authorizationSubject.kind === right.authorizationSubject.kind &&
-    (left.authorizationSubject.kind === 'RETAIL' ||
-      (right.authorizationSubject.kind === 'COUNTERPARTY' &&
-        left.authorizationSubject.counterpartyRef.moduleId ===
-          right.authorizationSubject.counterpartyRef.moduleId &&
-        left.authorizationSubject.counterpartyRef.resourceId ===
-          right.authorizationSubject.counterpartyRef.resourceId &&
-        left.authorizationSubject.counterpartyRef.resourceType ===
-          right.authorizationSubject.counterpartyRef.resourceType &&
-        left.authorizationSubject.counterpartyRef.tenantId ===
-          right.authorizationSubject.counterpartyRef.tenantId));
   return (
-    authorizationSubjectMatches &&
-    left.profileRef.moduleId === right.profileRef.moduleId &&
-    left.profileRef.resourceId === right.profileRef.resourceId &&
-    left.profileRef.resourceType === right.profileRef.resourceType &&
-    left.profileRef.tenantId === right.profileRef.tenantId
+    right.kind === 'COUNTERPARTY' &&
+    left.counterpartyRef.moduleId === right.counterpartyRef.moduleId &&
+    left.counterpartyRef.resourceId === right.counterpartyRef.resourceId &&
+    left.counterpartyRef.resourceType === right.counterpartyRef.resourceType &&
+    left.counterpartyRef.tenantId === right.counterpartyRef.tenantId
   );
 };
+
+const samePurchaseCurrencyProfileSubject = (
+  left: PurchaseCurrencyProfileSubject,
+  right: PurchaseCurrencyProfileSubject,
+): boolean =>
+  samePurchaseCurrencyAuthorizationSubject(left.authorizationSubject, right.authorizationSubject) &&
+  left.profileRef.moduleId === right.profileRef.moduleId &&
+  left.profileRef.resourceId === right.profileRef.resourceId &&
+  left.profileRef.resourceType === right.profileRef.resourceType &&
+  left.profileRef.tenantId === right.profileRef.tenantId;
+
+const samePurchaseCurrencySubject = (left: PurchaseCurrencySubject, right: PurchaseCurrencySubject): boolean => {
+  if (left.kind !== right.kind) {
+    return false;
+  }
+  if (left.kind === 'GUEST') {
+    return right.kind === 'GUEST' && samePurchaseCurrencyGuestSubject(left, right);
+  }
+  return right.kind === 'PROFILE' && samePurchaseCurrencyProfileSubject(left, right);
+};
+
+type PurchaseCurrencyResolutionOutcome = PurchaseCurrencyResolutionResponse | PurchaseCurrencyResolutionFailure;
+
+const resolvePurchaseCurrencyReadOutcome = (
+  input: PurchaseCurrencyResolutionRequest,
+  current: PurchaseCurrencyCurrentFacts,
+  observedAt: string,
+): PurchaseCurrencyResolutionOutcome => {
+  const contextMatches =
+    input.contextRevision === current.contextRevision &&
+    samePurchaseCurrencyContext(input.purchasingContext, current.purchasingContext);
+  const subjectMatches = samePurchaseCurrencySubject(input.subject, current.subject);
+  if (!contextMatches || !subjectMatches) {
+    return InconsistentPurchaseCurrencyPolicy.make({
+      reason: 'The claimed purchasing context does not match the Current trusted context',
+    });
+  }
+  return resolvePurchaseCurrency({
+    policy: current.policy,
+    pricing: current.pricing,
+    request: {
+      ...input,
+      contextRevision: current.contextRevision,
+      purchasingContext: current.purchasingContext,
+      requestedAt: observedAt,
+      subject: current.subject,
+    },
+  });
+};
+
+const completePurchaseCurrencyResolutionRead = (
+  result: PurchaseCurrencyResolutionOutcome,
+): Effect.Effect<ReadHandlerResult<PurchaseCurrencyResolutionResponse>, PurchaseCurrencyResolutionFailure> =>
+  Schema.is(PurchaseCurrencyResolutionResponseSchema)(result)
+    ? Effect.succeed({ evidence: { resultCount: 1 }, result })
+    : Effect.fail(result);
 
 export const handlePurchaseCurrencyResolution = Effect.fn(
   'PurchaseCurrencyResolutionRead.handlePurchaseCurrencyResolution',
@@ -159,8 +198,7 @@ export const handlePurchaseCurrencyResolution = Effect.fn(
   if (
     input.purchasingContext.tenantId !== context.scope.tenantId ||
     input.purchasingContext.sellingLegalEntityId !== context.scope.legalEntityId ||
-    (input.subject.kind === 'PROFILE' &&
-      input.subject.profileRef.tenantId !== context.scope.tenantId)
+    (input.subject.kind === 'PROFILE' && input.subject.profileRef.tenantId !== context.scope.tenantId)
   ) {
     return yield* new ReadPermissionDenied({
       code: 'read_permission_denied',
@@ -183,36 +221,11 @@ export const handlePurchaseCurrencyResolution = Effect.fn(
   }
   const observedAt = yield* DateTime.now.pipe(Effect.map(DateTime.formatIso));
   const current = yield* context.services.loadCurrent(input, observedAt);
-  const contextMatches =
-    input.contextRevision === current.contextRevision &&
-    samePurchaseCurrencyContext(input.purchasingContext, current.purchasingContext);
-  const subjectMatches = samePurchaseCurrencySubject(input.subject, current.subject);
-  let result: PurchaseCurrencyResolutionResponse | PurchaseCurrencyResolutionFailure;
-  if (contextMatches && subjectMatches) {
-    const resolutionInput = {
-      policy: current.policy,
-      pricing: current.pricing,
-      request: {
-        ...input,
-        contextRevision: current.contextRevision,
-        purchasingContext: current.purchasingContext,
-        requestedAt: observedAt,
-        subject: current.subject,
-      },
-    };
-    result = resolvePurchaseCurrency(resolutionInput);
-  } else {
-    result = InconsistentPurchaseCurrencyPolicy.make({
-      reason: 'The claimed purchasing context does not match the Current trusted context',
-    });
-  }
-  if (!Schema.is(PurchaseCurrencyResolutionResponseSchema)(result)) {
-    return yield* Effect.fail(result);
-  }
-  return { evidence: { resultCount: 1 }, result };
+  const result = resolvePurchaseCurrencyReadOutcome(input, current, observedAt);
+  return yield* completePurchaseCurrencyResolutionRead(result);
 });
 
-export const purchaseCurrencyResolutionEntrypoint = defineTenantModuleEntrypoint({
+const purchaseCurrencyResolutionEntrypoint = defineTenantModuleEntrypoint({
   access: 'read',
   authorization: { kind: 'context_permission', permission: 'module.access' },
   entrypointKey: 'commerce.customer-context.api.purchase-currency-resolution',
@@ -220,15 +233,9 @@ export const purchaseCurrencyResolutionEntrypoint = defineTenantModuleEntrypoint
   role: 'api',
 });
 
-type PurchaseCurrencyProfileSubject = Extract<
-  PurchaseCurrencySubject,
-  { readonly kind: 'PROFILE' }
->;
-
-export const purchaseCurrencyGuestPermissionTargets =
-  (): readonly ResolvedReadConditionalPermissionRequirement[] => [
-    { kind: 'module', moduleId: moduleKey },
-  ];
+export const purchaseCurrencyGuestPermissionTargets = (): readonly ResolvedReadConditionalPermissionRequirement[] => [
+  { kind: 'module', moduleId: moduleKey },
+];
 
 export const purchaseCurrencyProfilePermissionTargets = (
   _input: PurchaseCurrencyResolutionRequest,

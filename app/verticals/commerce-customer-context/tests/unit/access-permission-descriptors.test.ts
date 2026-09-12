@@ -87,9 +87,7 @@ describe('generated Commerce customer permission descriptors', () => {
         continue;
       }
       expect(generated.allowedScopeKinds).toEqual(
-        canonical.allowedScopes.map((scope) =>
-          scope === 'counterparty' ? 'counterparty' : 'counterparty_storefront',
-        ),
+        canonical.allowedScopes.map((scope) => (scope === 'counterparty' ? 'counterparty' : 'counterparty_storefront')),
       );
       expect(generated.authorityGroups).toEqual(canonical.authorityGroups);
       expect(generated.customerDelegable).toBe(canonical.customerDelegable);
@@ -126,11 +124,9 @@ describe('generated Commerce customer permission descriptors', () => {
 
   it('protects the exact Counterparty price-group Action inventory', () => {
     expect(counterpartySettingsPriceGroupManagePermission.protectedEntrypoints).toEqual(
-      [
-        assignCounterpartyPriceGroupAction,
-        migrateCounterpartyPriceGroupAction,
-        removeCounterpartyPriceGroupAction,
-      ].map(({ descriptor }) => descriptor.actionKey),
+      [assignCounterpartyPriceGroupAction, migrateCounterpartyPriceGroupAction, removeCounterpartyPriceGroupAction].map(
+        ({ descriptor }) => descriptor.actionKey,
+      ),
     );
     expect(counterpartySettingsPriceGroupManagePermission.protectedEntrypoints).not.toContain(
       'commerce.customer-context.assign-customer-price-group',
@@ -159,9 +155,7 @@ describe('generated Commerce customer permission descriptors', () => {
     expect(counterpartyPurchasePreparePermission.protectedEntrypoints).toContain(
       repeatCounterpartyOrderAction.descriptor.actionKey,
     );
-    expect(retailRepeatOrderPermission.protectedEntrypoints).toContain(
-      repeatRetailOrderAction.descriptor.actionKey,
-    );
+    expect(retailRepeatOrderPermission.protectedEntrypoints).toContain(repeatRetailOrderAction.descriptor.actionKey);
     expect(counterpartyPurchasePreparePermission.protectedEntrypoints).toContain(
       'commerce.customer-context.api.repeat-order-preparation',
     );
@@ -204,8 +198,6 @@ describe('generated Commerce customer permission descriptors', () => {
     expect(counterpartyHistoryReadAllPermission.protectedEntrypoints).toContain(
       counterpartyAllOrderHistoryDetailRead.descriptor.readKey,
     );
-    expect(retailHistoryReadPermission.protectedEntrypoints).toContain(
-      retailOrderHistoryDetailRead.descriptor.readKey,
-    );
+    expect(retailHistoryReadPermission.protectedEntrypoints).toContain(retailOrderHistoryDetailRead.descriptor.readKey);
   });
 });

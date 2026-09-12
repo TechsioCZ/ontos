@@ -136,6 +136,7 @@ const addedVerticalActionKeys = [
   'payment.term-catalog.retire-payment-term',
 ] as const;
 
+// oxlint-disable-next-line unicorn/no-array-sort -- The spread creates a private aggregate before sorting it.
 const completeCurrentActionKeys = [...addedVerticalActionKeys, ...currentActionKeys].sort();
 
 const currentActions = currentActionKeys.map((actionKey) => ({

@@ -68,8 +68,7 @@ const governedReadDomainProblemFields = new Set([
 ]);
 const domainProblemSchemaAccepts = Schema.is(GovernedReadDomainProblemSchema);
 const isGovernedReadDomainProblem = (value: unknown): boolean =>
-  domainProblemSchemaAccepts(value) &&
-  Object.keys(value).every((key) => governedReadDomainProblemFields.has(key));
+  domainProblemSchemaAccepts(value) && Object.keys(value).every((key) => governedReadDomainProblemFields.has(key));
 
 export const governedReadHttpStatus = {
   authentication: 401,
@@ -201,15 +200,7 @@ type GovernedReadHttpFailures<
   PolicyConflict,
   PolicyIneligible,
   Unavailable,
-> =
-  | Authentication
-  | Forbidden
-  | Internal
-  | Invalid
-  | NotFound
-  | PolicyConflict
-  | PolicyIneligible
-  | Unavailable;
+> = Authentication | Forbidden | Internal | Invalid | NotFound | PolicyConflict | PolicyIneligible | Unavailable;
 
 type GovernedReadHttpRequirements<VerifierRequirements> =
   | HttpServerRequest.HttpServerRequest
@@ -228,9 +219,7 @@ type GovernedReadAuthenticatorRequirements<Authenticator> = Authenticator extend
   ? Requirements
   : never;
 
-type GovernedReadDomainMapperResult<Mapper> = Mapper extends (
-  ...arguments_: never[]
-) => infer Problem
+type GovernedReadDomainMapperResult<Mapper> = Mapper extends (...arguments_: never[]) => infer Problem
   ? Problem
   : never;
 
@@ -290,6 +279,7 @@ interface GovernedReadHttpOptions<
   >;
 }
 
+/* jscpd:ignore-start -- The overload declaration intentionally repeats the generic HTTP contract; the implementation is singular below. */
 export function makeGovernedReadHttpHandler<
   InputSchema extends Schema.ConstraintDecoder<unknown>,
   ResultSchema extends Schema.ConstraintDecoder<unknown>,
@@ -356,6 +346,7 @@ export function makeGovernedReadHttpHandler<
   | GovernedReadAuthenticatorFailure<Authenticator>,
   GovernedReadHttpRequirements<GovernedReadAuthenticatorRequirements<Authenticator>>
 >;
+/* jscpd:ignore-end */
 export function makeGovernedReadHttpHandler<
   InputSchema extends Schema.ConstraintDecoder<unknown>,
   ResultSchema extends Schema.ConstraintDecoder<unknown>,
@@ -441,9 +432,7 @@ export function makeGovernedReadHttpHandler<
   DomainErrorSchema extends Schema.ConstraintDecoder<{
     readonly _tag: string;
   }> = typeof Schema.Never,
-  DomainErrorMapper extends
-    | ((error: DomainErrorSchema['Type']) => GovernedReadDomainProblem)
-    | undefined = undefined,
+  DomainErrorMapper extends ((error: DomainErrorSchema['Type']) => GovernedReadDomainProblem) | undefined = undefined,
 >(
   options: {
     readonly authenticatePrincipal: GovernedReadPrincipalAuthentication<

@@ -69,11 +69,6 @@ export const executeChangeCounterpartyPurchaseLimit = (
 ) =>
   operationGateway.invoke(
     (credential) =>
-      executeChangeCounterpartyPurchaseLimitWithAuthorization(
-        payload,
-        credential,
-        requestCorrelation,
-        options,
-      ),
+      executeChangeCounterpartyPurchaseLimitWithAuthorization(payload, credential, requestCorrelation, options),
     options.gateway,
   );

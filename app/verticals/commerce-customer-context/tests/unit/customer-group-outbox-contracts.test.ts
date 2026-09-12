@@ -209,9 +209,6 @@ it('builds seven distinct owner messages without generic data envelopes', () => 
 it('attaches every generated message to its returned Domain Event only inside a material-change branch', () => {
   const actionSources = [
     ['create-customer-group.action.ts', 'if (resolved.created) {'],
-    ['update-customer-group.action.ts', 'if (resolved.changed) {'],
-    ['archive-customer-group.action.ts', 'if (resolved.changed) {'],
-    ['reactivate-customer-group.action.ts', 'if (resolved.changed) {'],
     ['assign-customer-group.action.ts', 'if (resolved.created) {'],
     ['remove-customer-group.action.ts', 'if (resolved.changed) {'],
   ] as const;
@@ -225,19 +222,38 @@ it('attaches every generated message to its returned Domain Event only inside a 
     expect(source).toContain('event,');
     expect(source.match(/context\.addOutboxMessage\(/gu)).toHaveLength(1);
   }
+
+  const delegatedActionSources = [
+    ['archive-customer-group.action.ts', 'outboxMessage: createCustomerGroupArchivedOutboxMessage'],
+    ['reactivate-customer-group.action.ts', 'outboxMessage: createCustomerGroupReactivatedOutboxMessage'],
+    ['update-customer-group.action.ts', 'outboxMessage: createCustomerGroupUpdatedOutboxMessage'],
+  ] as const;
+  for (const [file, outboxMessageBinding] of delegatedActionSources) {
+    const source = readFileSync(new URL(`../../src/actions/${file}`, import.meta.url), {
+      encoding: 'utf-8',
+    });
+    expect(source).toContain('executeCustomerGroupAction(payload, context, {');
+    expect(source).toContain(outboxMessageBinding);
+  }
+
+  const sharedHandlerSource = readFileSync(
+    new URL('../../src/actions/customer-group-action-handler.ts', import.meta.url),
+    { encoding: 'utf-8' },
+  );
+  expect(sharedHandlerSource).toContain('if (resolved.changed) {');
+  expect(sharedHandlerSource).toContain('const event = yield* context.addDomainEvent({');
+  expect(sharedHandlerSource).toContain('yield* context.addOutboxMessage(event,');
+  expect(sharedHandlerSource.match(/context\.addOutboxMessage\(/gu)).toHaveLength(1);
 });
 
 it('composes the governed transaction adapter for both Action and Read services', () => {
-  const source = readFileSync(
-    new URL('../../src/actions/customer-group-action-support.ts', import.meta.url),
-    { encoding: 'utf-8' },
-  );
+  const source = readFileSync(new URL('../../src/actions/customer-group-action-support.ts', import.meta.url), {
+    encoding: 'utf-8',
+  });
   expect(source).toContain(
     "import { customerGroupPersistenceForTransaction } from '../persistence/group-persistence.ts';",
   );
-  expect(source).toContain(
-    'customerGroupPersistenceForTransaction(transaction, { ...scope, legalEntityId })',
-  );
+  expect(source).toContain('customerGroupPersistenceForTransaction(transaction, { ...scope, legalEntityId })');
   expect(source).not.toContain('failClosedCustomerGroupPersistence');
 });
 
@@ -322,10 +338,7 @@ it.effect('records bounded audit evidence for a maximum-size valid group definit
   }),
 );
 
-const collectRemoval = (
-  membership: typeof CommerceCustomerGroupMembershipSchema.Type,
-  changed: boolean,
-) =>
+const collectRemoval = (membership: typeof CommerceCustomerGroupMembershipSchema.Type, changed: boolean) =>
   Effect.gen(function* collectCustomerGroupRemoval() {
     const collector = createActionCollector(
       removeCustomerGroupAction.descriptor.domainEvents,
@@ -375,9 +388,7 @@ it.effect('selects the removal topic from persisted state and emits nothing on r
     expect(cancelledEvidence.domainEvents).toHaveLength(1);
     expect(cancelledEvidence.outboxMessages).toHaveLength(1);
     expect(cancelledEvidence.outboxMessages[0]?.domainEventIndex).toBe(0);
-    expect(cancelledEvidence.outboxMessages[0]?.message.topic).toBe(
-      customerGroupMembershipCancelledTopic,
-    );
+    expect(cancelledEvidence.outboxMessages[0]?.message.topic).toBe(customerGroupMembershipCancelledTopic);
 
     const replayEvidence = yield* collectRemoval(endedMembership, false);
     expect(replayEvidence.domainEvents).toHaveLength(0);

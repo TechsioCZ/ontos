@@ -48,33 +48,15 @@ export const paymentTerms = paymentTermCatalogSchema.table.withRLS(
     updatedAt: timestamp('updated_at', { withTimezone: true }).defaultNow().notNull(),
   },
   (table) => [
-    unique('payment_term_catalog_terms_scope_id_uk').on(
-      table.tenantId,
-      table.legalEntityId,
-      table.paymentTermId,
-    ),
-    unique('payment_term_catalog_terms_scope_code_uk').on(
-      table.tenantId,
-      table.legalEntityId,
-      table.businessCode,
-    ),
-    index('payment_term_catalog_terms_current_idx').on(
-      table.tenantId,
-      table.legalEntityId,
-      table.lifecycleState,
-    ),
-    check(
-      'payment_term_catalog_terms_code_ck',
-      sql`${table.businessCode} ~ '^[A-Z][A-Z0-9_]{0,63}$'`,
-    ),
+    unique('payment_term_catalog_terms_scope_id_uk').on(table.tenantId, table.legalEntityId, table.paymentTermId),
+    unique('payment_term_catalog_terms_scope_code_uk').on(table.tenantId, table.legalEntityId, table.businessCode),
+    index('payment_term_catalog_terms_current_idx').on(table.tenantId, table.legalEntityId, table.lifecycleState),
+    check('payment_term_catalog_terms_code_ck', sql`${table.businessCode} ~ '^[A-Z][A-Z0-9_]{0,63}$'`),
     check(
       'payment_term_catalog_terms_creation_reason_ck',
       sql`${table.creationReason} = btrim(${table.creationReason}) and length(${table.creationReason}) between 1 and 1000`,
     ),
-    check(
-      'payment_term_catalog_terms_lifecycle_ck',
-      sql`${table.lifecycleState} in ('ACTIVE', 'RETIRED')`,
-    ),
+    check('payment_term_catalog_terms_lifecycle_ck', sql`${table.lifecycleState} in ('ACTIVE', 'RETIRED')`),
     check(
       'payment_term_catalog_terms_effective_period_ck',
       sql`${table.retiredEffectiveAt} is null or ${table.retiredEffectiveAt} >= ${table.activeFrom}`,
@@ -83,11 +65,7 @@ export const paymentTerms = paymentTermCatalogSchema.table.withRLS(
       'payment_term_catalog_terms_retirement_ck',
       sql`(${table.lifecycleState} = 'ACTIVE' and ${table.retiredEffectiveAt} is null and ${table.retirementReason} is null and ${table.retiredByActionInvocationId} is null and ${table.retiredByPrincipalId} is null) or (${table.lifecycleState} = 'RETIRED' and ${table.retiredEffectiveAt} is not null and ${table.retirementReason} is not null and ${table.retirementReason} = btrim(${table.retirementReason}) and length(${table.retirementReason}) between 1 and 1000 and ${table.retiredByActionInvocationId} is not null and ${table.retiredByPrincipalId} is not null)`,
     ),
-    ...tenantLegalEntityRlsPolicies(
-      'payment_term_catalog_terms_scope',
-      table.tenantId,
-      table.legalEntityId,
-    ),
+    ...tenantLegalEntityRlsPolicies('payment_term_catalog_terms_scope', table.tenantId, table.legalEntityId),
   ],
 );
 
@@ -134,11 +112,7 @@ export const paymentTermRevisions = paymentTermCatalogSchema.table.withRLS(
     ),
     foreignKey({
       columns: [table.tenantId, table.legalEntityId, table.paymentTermId],
-      foreignColumns: [
-        paymentTerms.tenantId,
-        paymentTerms.legalEntityId,
-        paymentTerms.paymentTermId,
-      ],
+      foreignColumns: [paymentTerms.tenantId, paymentTerms.legalEntityId, paymentTerms.paymentTermId],
       name: 'payment_term_catalog_revisions_term_fk',
     }).onDelete('restrict'),
     index('payment_term_catalog_revisions_history_idx').on(
@@ -161,44 +135,29 @@ export const paymentTermRevisions = paymentTermCatalogSchema.table.withRLS(
       'payment_term_catalog_revisions_display_ck',
       sql`${table.displayName} = btrim(${table.displayName}) and length(${table.displayName}) between 1 and 160 and ${table.explanation} = btrim(${table.explanation}) and length(${table.explanation}) between 1 and 2000`,
     ),
-    check(
-      'payment_term_catalog_revisions_semantic_kind_ck',
-      sql`${table.semanticKind} in ('IMMEDIATE', 'NET_DAYS')`,
-    ),
+    check('payment_term_catalog_revisions_semantic_kind_ck', sql`${table.semanticKind} in ('IMMEDIATE', 'NET_DAYS')`),
     check(
       'payment_term_catalog_revisions_semantics_ck',
       sql`(${table.semanticKind} = 'IMMEDIATE' and ${table.netDays} is null and ${table.dueDateAnchor} is null and ${table.calendarRule} = 'NOT_APPLICABLE') or (${table.semanticKind} = 'NET_DAYS' and ${table.netDays} is not null and ${table.netDays} between 0 and 9007199254740991 and ${table.dueDateAnchor} is not null and ${table.dueDateAnchor} = 'INVOICE_ISSUED_AT' and ${table.calendarRule} = 'CALENDAR_DAYS_UTC')`,
     ),
-    check(
-      'payment_term_catalog_revisions_calculation_version_ck',
-      sql`${table.calculationRuleVersion} = 1`,
-    ),
+    check('payment_term_catalog_revisions_calculation_version_ck', sql`${table.calculationRuleVersion} = 1`),
     check(
       'payment_term_catalog_revisions_compatibility_ck',
       sql`${table.compatibilityKey} ~ '^[a-z][a-z0-9._-]{0,99}$'`,
     ),
-    check(
-      'payment_term_catalog_revisions_fingerprint_ck',
-      sql`${table.semanticFingerprint} ~ '^[0-9a-f]{64}$'`,
-    ),
+    check('payment_term_catalog_revisions_fingerprint_ck', sql`${table.semanticFingerprint} ~ '^[0-9a-f]{64}$'`),
     check(
       'payment_term_catalog_revisions_reason_ck',
       sql`${table.changeReason} = btrim(${table.changeReason}) and length(${table.changeReason}) between 1 and 1000`,
     ),
-    ...tenantLegalEntityRlsPolicies(
-      'payment_term_catalog_revisions_scope',
-      table.tenantId,
-      table.legalEntityId,
-    ),
+    ...tenantLegalEntityRlsPolicies('payment_term_catalog_revisions_scope', table.tenantId, table.legalEntityId),
   ],
 );
 
 export const paymentTermLifecycleEvents = paymentTermCatalogSchema.table.withRLS(
   'payment_term_lifecycle_events',
   {
-    paymentTermLifecycleEventId: uuid('payment_term_lifecycle_event_id')
-      .defaultRandom()
-      .primaryKey(),
+    paymentTermLifecycleEventId: uuid('payment_term_lifecycle_event_id').defaultRandom().primaryKey(),
     tenantId: uuid('tenant_id').notNull(),
     legalEntityId: uuid('legal_entity_id').notNull(),
     paymentTermId: uuid('payment_term_id').notNull(),
@@ -222,11 +181,7 @@ export const paymentTermLifecycleEvents = paymentTermCatalogSchema.table.withRLS
     ),
     foreignKey({
       columns: [table.tenantId, table.legalEntityId, table.paymentTermId],
-      foreignColumns: [
-        paymentTerms.tenantId,
-        paymentTerms.legalEntityId,
-        paymentTerms.paymentTermId,
-      ],
+      foreignColumns: [paymentTerms.tenantId, paymentTerms.legalEntityId, paymentTerms.paymentTermId],
       name: 'payment_term_catalog_lifecycle_term_fk',
     }).onDelete('restrict'),
     index('payment_term_catalog_lifecycle_history_idx').on(
@@ -235,19 +190,12 @@ export const paymentTermLifecycleEvents = paymentTermCatalogSchema.table.withRLS
       table.paymentTermId,
       table.effectiveAt,
     ),
-    check(
-      'payment_term_catalog_lifecycle_kind_ck',
-      sql`${table.eventKind} in ('ACTIVATED', 'RETIRED')`,
-    ),
+    check('payment_term_catalog_lifecycle_kind_ck', sql`${table.eventKind} in ('ACTIVATED', 'RETIRED')`),
     check(
       'payment_term_catalog_lifecycle_reason_ck',
       sql`${table.reason} = btrim(${table.reason}) and length(${table.reason}) between 1 and 1000`,
     ),
-    ...tenantLegalEntityRlsPolicies(
-      'payment_term_catalog_lifecycle_scope',
-      table.tenantId,
-      table.legalEntityId,
-    ),
+    ...tenantLegalEntityRlsPolicies('payment_term_catalog_lifecycle_scope', table.tenantId, table.legalEntityId),
   ],
 );
 
@@ -270,11 +218,7 @@ export const paymentTermAliases = paymentTermCatalogSchema.table.withRLS(
       table.legalEntityId,
       table.paymentTermAliasId,
     ),
-    unique('payment_term_catalog_aliases_alias_uk').on(
-      table.tenantId,
-      table.legalEntityId,
-      table.aliasPaymentTermId,
-    ),
+    unique('payment_term_catalog_aliases_alias_uk').on(table.tenantId, table.legalEntityId, table.aliasPaymentTermId),
     unique('payment_term_catalog_aliases_invocation_uk').on(
       table.tenantId,
       table.legalEntityId,
@@ -282,20 +226,12 @@ export const paymentTermAliases = paymentTermCatalogSchema.table.withRLS(
     ),
     foreignKey({
       columns: [table.tenantId, table.legalEntityId, table.aliasPaymentTermId],
-      foreignColumns: [
-        paymentTerms.tenantId,
-        paymentTerms.legalEntityId,
-        paymentTerms.paymentTermId,
-      ],
+      foreignColumns: [paymentTerms.tenantId, paymentTerms.legalEntityId, paymentTerms.paymentTermId],
       name: 'payment_term_catalog_aliases_alias_fk',
     }).onDelete('restrict'),
     foreignKey({
       columns: [table.tenantId, table.legalEntityId, table.canonicalPaymentTermId],
-      foreignColumns: [
-        paymentTerms.tenantId,
-        paymentTerms.legalEntityId,
-        paymentTerms.paymentTermId,
-      ],
+      foreignColumns: [paymentTerms.tenantId, paymentTerms.legalEntityId, paymentTerms.paymentTermId],
       name: 'payment_term_catalog_aliases_canonical_fk',
     }).onDelete('restrict'),
     uniqueIndex('payment_term_catalog_aliases_pair_uk').on(
@@ -312,15 +248,11 @@ export const paymentTermAliases = paymentTermCatalogSchema.table.withRLS(
       'payment_term_catalog_aliases_reason_ck',
       sql`${table.reason} = btrim(${table.reason}) and length(${table.reason}) between 1 and 1000`,
     ),
-    ...tenantLegalEntityRlsPolicies(
-      'payment_term_catalog_aliases_scope',
-      table.tenantId,
-      table.legalEntityId,
-    ),
+    ...tenantLegalEntityRlsPolicies('payment_term_catalog_aliases_scope', table.tenantId, table.legalEntityId),
   ],
 );
 
-export const paymentTermCatalogDatabaseSchema = {
+const paymentTermCatalogDatabaseSchema = {
   paymentTermAliases,
   paymentTermLifecycleEvents,
   paymentTermRevisions,
@@ -333,11 +265,6 @@ export const PAYMENT_TERM_CATALOG_TABLES = [
   paymentTermRevisions,
   paymentTerms,
 ] as const;
-
-export type PaymentTermRecord = typeof paymentTerms.$inferSelect;
-export type PaymentTermRevisionRecord = typeof paymentTermRevisions.$inferSelect;
-export type PaymentTermLifecycleEventRecord = typeof paymentTermLifecycleEvents.$inferSelect;
-export type PaymentTermAliasRecord = typeof paymentTermAliases.$inferSelect;
 
 /** Relational Queries v2 entry point for this owner. */
 export const paymentTermCatalogRelations = defineRelations(paymentTermCatalogDatabaseSchema);

@@ -2,11 +2,7 @@
 // @ontos-action-owner payment.term-catalog
 // @ontos-action-slug create-payment-term
 import type { ActionHandlerContext } from '@app/core-runtime';
-import {
-  defineAction,
-  defineActionResourcePermission,
-  defineTenantModuleEntrypoint,
-} from '@app/core-runtime';
+import { defineAction, defineActionResourcePermission, defineTenantModuleEntrypoint } from '@app/core-runtime';
 import { DateTime, Effect, Match, Schema } from 'effect';
 import {
   CreatePaymentTermPayloadSchema,
@@ -14,28 +10,19 @@ import {
 } from '../../shared/actions/create-payment-term.ts';
 import type { CreatePaymentTermPayload } from '../../shared/actions/create-payment-term.ts';
 import { PaymentTermAuditEvidenceSchema } from '../../shared/domain/payment-term.ts';
-import {
-  PaymentTermCodeConflict,
-  PaymentTermDuplicateSemantics,
-} from '../../shared/domain/payment-term-errors.ts';
+import { PaymentTermCodeConflict, PaymentTermDuplicateSemantics } from '../../shared/domain/payment-term-errors.ts';
 import type { PaymentTermRef } from '../../shared/resources/payment-term.ts';
 import type { PaymentTermCatalogPersistence } from '../persistence/payment-term-catalog-persistence.ts';
 import { paymentTermCompatibilityId } from '../domain/payment-term-behavior.ts';
 import {
   PaymentTermCatalogPersistenceConflict,
   PaymentTermCatalogPersistenceUnavailable,
-  makePaymentTermCatalogPersistence,
+  paymentTermCatalogPersistenceForScope,
 } from '../persistence/payment-term-catalog-persistence.ts';
 import { createCreatePaymentTermPaymentTermCatalogPaymentTermCreatedV1OutboxMessage } from './create-payment-term.payment-term-catalog-payment-term-created-v1.outbox-message.ts';
 
-export {
-  CreatePaymentTermPayloadSchema,
-  CreatePaymentTermResultSchema,
-} from '../../shared/actions/create-payment-term.ts';
-export type {
-  CreatePaymentTermPayload,
-  CreatePaymentTermResult,
-} from '../../shared/actions/create-payment-term.ts';
+export { CreatePaymentTermPayloadSchema } from '../../shared/actions/create-payment-term.ts';
+export type { CreatePaymentTermPayload } from '../../shared/actions/create-payment-term.ts';
 
 const ErrorSchema = Schema.Union([
   PaymentTermCodeConflict,
@@ -43,93 +30,90 @@ const ErrorSchema = Schema.Union([
   PaymentTermCatalogPersistenceConflict,
   PaymentTermCatalogPersistenceUnavailable,
 ]);
+const MODULE_KEY = 'payment.term-catalog' as const;
 const domainEvents = {
   'payment.term-catalog.payment-term-created.v1': CreatePaymentTermResultSchema,
 } as const;
 type Services = PaymentTermCatalogPersistence;
 
 const toPaymentTermRef = (tenantId: string, resourceId: string): PaymentTermRef => ({
-  moduleId: 'payment.term-catalog',
+  moduleId: MODULE_KEY,
   resourceId,
   resourceType: 'payment.term-catalog.payment-term',
   tenantId,
 });
 
-export const handleCreatePaymentTerm = Effect.fn('CreatePaymentTermAction.handle')(
-  function* createPaymentTerm(
-    payload: CreatePaymentTermPayload,
-    context: ActionHandlerContext<typeof domainEvents, Services>,
-  ) {
-    const compatibilityId = paymentTermCompatibilityId(payload.semantics);
-    const outcome = yield* context.services.create({
-      actingPrincipalId: context.scope.principalId,
-      actionInvocationId: context.actionInvocationId,
-      activeFrom: DateTime.toDateUtc(DateTime.makeUnsafe(payload.activeFrom)),
-      businessCode: payload.code,
-      compatibilityKey: compatibilityId,
-      displayName: payload.name,
-      explanation: payload.description,
-      reason: payload.reason,
-      semantics: payload.semantics,
-    });
-    const definition = yield* Match.value(outcome).pipe(
-      Match.tags({
-        business_code_conflict: () =>
-          Effect.fail(
-            new PaymentTermCodeConflict({
-              code: 'payment_term_code_conflict',
-              conflictingCode: payload.code,
-              reason: 'A Payment Term with this business code already exists in the legal entity',
-            }),
-          ),
-        created: ({ definition }) => Effect.succeed(definition),
-        duplicate_semantics: ({ existingPaymentTermId }) =>
-          Effect.fail(
-            new PaymentTermDuplicateSemantics({
-              canonicalPaymentTermRef: toPaymentTermRef(
-                context.scope.tenantId,
-                existingPaymentTermId,
-              ),
-              code: 'payment_term_duplicate_semantics',
-              reason:
-                'Equivalent semantics already exist and require explicit alias reconciliation',
-            }),
-          ),
+export const handleCreatePaymentTerm = Effect.fn('CreatePaymentTermAction.handle')(function* createPaymentTerm(
+  payload: CreatePaymentTermPayload,
+  context: ActionHandlerContext<typeof domainEvents, Services>,
+) {
+  const compatibilityId = paymentTermCompatibilityId(payload.semantics);
+  const outcome = yield* context.services.create({
+    actingPrincipalId: context.scope.principalId,
+    actionInvocationId: context.actionInvocationId,
+    activeFrom: DateTime.toDateUtc(DateTime.makeUnsafe(payload.activeFrom)),
+    businessCode: payload.code,
+    compatibilityKey: compatibilityId,
+    displayName: payload.name,
+    explanation: payload.description,
+    reason: payload.reason,
+    semantics: payload.semantics,
+  });
+  const businessCodeConflict = () =>
+    Effect.fail(
+      new PaymentTermCodeConflict({
+        code: 'payment_term_code_conflict',
+        conflictingCode: payload.code,
+        reason: 'A Payment Term with this business code already exists in the legal entity',
       }),
-      Match.exhaustive,
     );
-    const result = {
-      compatibilityId: definition.compatibilityId,
-      definitionRevisionId: definition.definitionRevisionId,
-      metadataRevision: definition.metadataRevision,
-      paymentTermRef: definition.paymentTermRef,
-      semanticRevisionId: definition.semanticRevisionId,
-    };
-    yield* context.recordAuditEvidence({ reason: payload.reason });
-    yield* context.recordDataAccess({
-      accessKind: 'read',
-      queryHash: `payment-term-create:${payload.code}`,
-      resultCount: 0,
-      servingModuleKey: 'payment.term-catalog',
-      targetModuleKey: 'payment.term-catalog',
-      targetResourceId: result.paymentTermRef.resourceId,
-      targetResourceType: result.paymentTermRef.resourceType,
-    });
-    const event = yield* context.addDomainEvent({
-      eventType: 'payment.term-catalog.payment-term-created.v1',
-      payloadJson: result,
-      producerModuleKey: 'payment.term-catalog',
-      subjectModuleKey: 'payment.term-catalog',
-      subjectResourceId: result.paymentTermRef.resourceId,
-      subjectResourceType: result.paymentTermRef.resourceType,
-    });
-    yield* context.addOutboxMessage(
-      event,
-      createCreatePaymentTermPaymentTermCatalogPaymentTermCreatedV1OutboxMessage(result),
+  const duplicateSemantics = ({ existingPaymentTermId }: { readonly existingPaymentTermId: string }) =>
+    Effect.fail(
+      new PaymentTermDuplicateSemantics({
+        canonicalPaymentTermRef: toPaymentTermRef(context.scope.tenantId, existingPaymentTermId),
+        code: 'payment_term_duplicate_semantics',
+        reason: 'Equivalent semantics already exist and require explicit alias reconciliation',
+      }),
     );
-    return result;
-  },
-);
+  const definition = yield* Match.value(outcome).pipe(
+    Match.tags({
+      business_code_conflict: businessCodeConflict,
+      created: ({ definition: createdDefinition }) => Effect.succeed(createdDefinition),
+      duplicate_semantics: duplicateSemantics,
+    }),
+    Match.exhaustive,
+  );
+  const result = {
+    compatibilityId: definition.compatibilityId,
+    definitionRevisionId: definition.definitionRevisionId,
+    metadataRevision: definition.metadataRevision,
+    paymentTermRef: definition.paymentTermRef,
+    semanticRevisionId: definition.semanticRevisionId,
+  };
+  yield* context.recordAuditEvidence({ reason: payload.reason });
+  yield* context.recordDataAccess({
+    accessKind: 'read',
+    queryHash: `payment-term-create:${payload.code}`,
+    resultCount: 0,
+    servingModuleKey: MODULE_KEY,
+    targetModuleKey: MODULE_KEY,
+    targetResourceId: result.paymentTermRef.resourceId,
+    targetResourceType: result.paymentTermRef.resourceType,
+  });
+  const event = yield* context.addDomainEvent({
+    eventType: 'payment.term-catalog.payment-term-created.v1',
+    payloadJson: result,
+    producerModuleKey: MODULE_KEY,
+    subjectModuleKey: MODULE_KEY,
+    subjectResourceId: result.paymentTermRef.resourceId,
+    subjectResourceType: result.paymentTermRef.resourceType,
+  });
+  yield* context.addOutboxMessage(
+    event,
+    createCreatePaymentTermPaymentTermCatalogPaymentTermCreatedV1OutboxMessage(result),
+  );
+  return result;
+});
 
 export const createPaymentTermAction = defineAction(
   {
@@ -146,35 +130,28 @@ export const createPaymentTermAction = defineAction(
       access: 'write',
       authorization: { kind: 'action_execution', provisioning: 'explicit' },
       entrypointKey: 'payment.term-catalog.create-payment-term',
-      moduleKey: 'payment.term-catalog',
+      moduleKey: MODULE_KEY,
       role: 'action',
     }),
     idempotency: 'required',
     legalEntityScope: 'required',
-    owningModuleKey: 'payment.term-catalog',
+    owningModuleKey: MODULE_KEY,
     payloadSchema: CreatePaymentTermPayloadSchema,
     policies: [],
-    resourcePermission: defineActionResourcePermission<CreatePaymentTermPayload>(
-      (_payload, scope) => ({
-        permission: 'write',
-        resource: {
-          moduleId: 'payment.term-catalog',
-          resourceId: scope.legalEntityId ?? '',
-          resourceType: 'payment.term-catalog.payment-term-catalog-root',
-        },
-      }),
-    ),
+    resourcePermission: defineActionResourcePermission<CreatePaymentTermPayload>((_payload, scope) => ({
+      permission: 'write',
+      resource: {
+        moduleId: MODULE_KEY,
+        resourceId: scope.legalEntityId ?? '',
+        resourceType: 'payment.term-catalog.payment-term-catalog-root',
+      },
+    })),
     resultSchema: CreatePaymentTermResultSchema,
     schemaVersion: '1',
   },
   handleCreatePaymentTerm,
-  makePaymentTermCatalogPersistence,
+  paymentTermCatalogPersistenceForScope,
 );
 
 // <generated-outbox-message-exports>
-export { createCreatePaymentTermPaymentTermCatalogPaymentTermCreatedV1OutboxMessage } from './create-payment-term.payment-term-catalog-payment-term-created-v1.outbox-message.ts';
-export { CreatePaymentTermPaymentTermCatalogPaymentTermCreatedV1OutboxPayloadSchema } from './create-payment-term.payment-term-catalog-payment-term-created-v1.outbox-message.ts';
-export { CreatePaymentTermPaymentTermCatalogPaymentTermCreatedV1OutboxProducerModuleKey } from './create-payment-term.payment-term-catalog-payment-term-created-v1.outbox-message.ts';
-export { CreatePaymentTermPaymentTermCatalogPaymentTermCreatedV1OutboxTopic } from './create-payment-term.payment-term-catalog-payment-term-created-v1.outbox-message.ts';
-export type { CreatePaymentTermPaymentTermCatalogPaymentTermCreatedV1OutboxPayload } from './create-payment-term.payment-term-catalog-payment-term-created-v1.outbox-message.ts';
 // </generated-outbox-message-exports>

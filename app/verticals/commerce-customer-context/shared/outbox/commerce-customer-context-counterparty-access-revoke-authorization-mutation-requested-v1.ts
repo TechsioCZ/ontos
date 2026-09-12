@@ -4,8 +4,7 @@
 import type { Schema } from 'effect';
 import { CounterpartyAccessRevokeAuthorizationMutationRequestedPayloadSchema } from '../domain/access-authorization-mutation.ts';
 
-export const OutboxPayloadSchema =
-  CounterpartyAccessRevokeAuthorizationMutationRequestedPayloadSchema;
+export const OutboxPayloadSchema = CounterpartyAccessRevokeAuthorizationMutationRequestedPayloadSchema;
 export type OutboxPayload = Schema.Schema.Type<typeof OutboxPayloadSchema>;
 
 export const outboxTopic =

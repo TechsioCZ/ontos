@@ -2,11 +2,7 @@
 // @ontos-action-owner commerce.customer-context
 // @ontos-action-slug reroute-purchase-approval-request
 import type { ActionHandlerContext } from '@app/core-runtime';
-import {
-  defineAction,
-  defineActionBusinessPermission,
-  defineTenantModuleEntrypoint,
-} from '@app/core-runtime';
+import { defineAction, defineActionBusinessPermission, defineTenantModuleEntrypoint } from '@app/core-runtime';
 import { Effect, Schema } from 'effect';
 import {
   ReroutePurchaseApprovalRequestPayloadSchema,
@@ -28,19 +24,20 @@ import { purchasingApprovalPolicy } from '../policies/purchasing-approval.policy
 import { createReroutePurchaseApprovalRequestCommerceCustomerContextApprovalRouteReroutedV1OutboxMessage as createOutboxMessage } from './reroute-purchase-approval-request-commerce-customer-context-approval-route-rerouted-v1.outbox-message.ts';
 
 const MODULE_KEY = 'commerce.customer-context' as const;
+const ApprovalRouteOutcomeSchema = Schema.Literals(['REROUTED', 'REROUTE_REQUIRED']);
 const ApprovalRouteReroutedEventSchema = Schema.Struct({
-  outcome: Schema.Literals(['REROUTED', 'REROUTE_REQUIRED']),
-  requestRef: Schema.String,
-  routeRef: Schema.String,
-  requestRevision: Schema.Finite,
   completionRule: Schema.Literal('ONE_APPROVER'),
+  outcome: ApprovalRouteOutcomeSchema,
+  requestRef: Schema.String,
+  requestRevision: Schema.Finite,
+  routeRef: Schema.String,
 });
-export const ReroutePurchaseApprovalRequestAuditEvidenceSchema = Schema.Struct({
-  outcome: Schema.Literals(['REROUTED', 'REROUTE_REQUIRED']),
+const ReroutePurchaseApprovalRequestAuditEvidenceSchema = Schema.Struct({
+  completionRule: Schema.Literal('ONE_APPROVER'),
+  outcome: ApprovalRouteOutcomeSchema,
   requestRef: Schema.String,
   routeRef: Schema.String,
   routeRevision: Schema.Finite,
-  completionRule: Schema.Literal('ONE_APPROVER'),
 });
 type DomainEvents = Readonly<{
   'commerce.customer-context.approval-route-rerouted.v1': typeof ApprovalRouteReroutedEventSchema;
@@ -49,9 +46,7 @@ interface ReroutePurchaseApprovalRequestServices {
   readonly workflow: PurchasingApprovalWorkflowService;
 }
 
-const handleReroutePurchaseApprovalRequest = Effect.fn(
-  'ReroutePurchaseApprovalRequestAction.handle',
-)(function* handle(
+const handleReroutePurchaseApprovalRequest = Effect.fn('ReroutePurchaseApprovalRequestAction.handle')(function* handle(
   payload: ReroutePurchaseApprovalRequestPayload,
   context: ActionHandlerContext<DomainEvents, ReroutePurchaseApprovalRequestServices>,
 ) {
@@ -93,19 +88,20 @@ const handleReroutePurchaseApprovalRequest = Effect.fn(
     ],
     { concurrency: 1, discard: true },
   );
+  const completionRule = result.route.levels[0]?.completionRule ?? 'ONE_APPROVER';
   yield* context.recordAuditEvidence({
+    completionRule,
     outcome: result.outcome,
     requestRef: result.request.requestRef.resourceId,
     routeRef: result.route.routeRef.resourceId,
     routeRevision: result.request.requestRevision,
-    completionRule: result.route.levels[0]!.completionRule,
   });
   const payloadJson = {
+    completionRule,
     outcome: result.outcome,
     requestRef: result.request.requestRef.resourceId,
-    routeRef: result.route.routeRef.resourceId,
     requestRevision: result.request.requestRevision,
-    completionRule: result.route.levels[0]!.completionRule,
+    routeRef: result.route.routeRef.resourceId,
   };
   const event = yield* context.addDomainEvent({
     eventType: 'commerce.customer-context.approval-route-rerouted.v1',
@@ -128,14 +124,13 @@ export const reroutePurchaseApprovalRequestAction = defineAction(
     actionKey: 'commerce.customer-context.reroute-purchase-approval-request',
     auditEvidenceSchema: ReroutePurchaseApprovalRequestAuditEvidenceSchema,
     auditProfile: 'sensitive',
-    businessPermission: defineActionBusinessPermission(
-      (payload: ReroutePurchaseApprovalRequestPayload, scope) =>
-        purchasingApprovalPermissionTarget({
-          permission: 'counterparty.approval.request.manage',
-          counterpartyRef: payload.counterpartyRef,
-          storefrontId: payload.storefrontId,
-          scope,
-        }),
+    businessPermission: defineActionBusinessPermission((payload: ReroutePurchaseApprovalRequestPayload, scope) =>
+      purchasingApprovalPermissionTarget({
+        counterpartyRef: payload.counterpartyRef,
+        permission: 'counterparty.approval.request.manage',
+        scope,
+        storefrontId: payload.storefrontId,
+      }),
     ),
     domainErrorSchema: ReroutePurchaseApprovalRequestRejected,
     domainEvents: {
@@ -158,15 +153,8 @@ export const reroutePurchaseApprovalRequestAction = defineAction(
   },
   handleReroutePurchaseApprovalRequest,
   (transaction, scope) =>
-    purchasingApprovalWorkflowForScope(transaction, scope).pipe(
-      Effect.map((workflow) => ({ workflow })),
-    ),
+    purchasingApprovalWorkflowForScope(transaction, scope).pipe(Effect.map((workflow) => ({ workflow }))),
 );
 
 // <generated-outbox-message-exports>
-export { createReroutePurchaseApprovalRequestCommerceCustomerContextApprovalRouteReroutedV1OutboxMessage } from './reroute-purchase-approval-request-commerce-customer-context-approval-route-rerouted-v1.outbox-message.ts';
-export { ReroutePurchaseApprovalRequestCommerceCustomerContextApprovalRouteReroutedV1OutboxPayloadSchema } from './reroute-purchase-approval-request-commerce-customer-context-approval-route-rerouted-v1.outbox-message.ts';
-export { ReroutePurchaseApprovalRequestCommerceCustomerContextApprovalRouteReroutedV1OutboxProducerModuleKey } from './reroute-purchase-approval-request-commerce-customer-context-approval-route-rerouted-v1.outbox-message.ts';
-export { ReroutePurchaseApprovalRequestCommerceCustomerContextApprovalRouteReroutedV1OutboxTopic } from './reroute-purchase-approval-request-commerce-customer-context-approval-route-rerouted-v1.outbox-message.ts';
-export type { ReroutePurchaseApprovalRequestCommerceCustomerContextApprovalRouteReroutedV1OutboxPayload } from './reroute-purchase-approval-request-commerce-customer-context-approval-route-rerouted-v1.outbox-message.ts';
 // </generated-outbox-message-exports>

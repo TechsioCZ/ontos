@@ -3,7 +3,7 @@
 // @ontos-action-http-slug assign-customer-price-group
 // oxlint-disable sonarjs/function-name -- Effect Match.tags requires owner-declared tag keys; remove-when: sonarjs accepts discriminant-map properties.
 import type { ActionCoreError } from '@app/core-runtime';
-import { Effect, HttpApiMiddleware } from '@modern-js/plugin-bff/effect-edge';
+import { Effect, HttpApiMiddleware } from '@modern-js/bff-effect/effect-edge';
 import { Match, Schema } from 'effect';
 import {
   AssignCustomerPriceGroupActionAlreadyCommittedProblemSchema,
@@ -21,6 +21,21 @@ import {
 } from '../shared/apis/assign-customer-price-group-action.ts';
 import type { AssignCustomerPriceGroupActionProblem } from '../shared/apis/assign-customer-price-group-action.ts';
 import { assignCustomerPriceGroupAction } from '../src/actions/assign-customer-price-group.action.ts';
+/* oxlint-disable anti-slop-effect/no-service-constructor-imports -- These pure helpers construct problem values rather than Effect services. */
+import {
+  actionProblemStatus as problemStatus,
+  makeAuthenticationProblem,
+  makeConflictProblem,
+  makeForbiddenProblem,
+  makeIneligibleProblem,
+  makeInternalProblem,
+  makeInvalidProblem,
+  makeNotFoundProblem,
+  makePreconditionProblem,
+  makeUnavailableProblem,
+} from './action-problem-support.ts';
+/* oxlint-enable anti-slop-effect/no-service-constructor-imports */
+import { customerPriceGroupCatalogRejectedProblemByReasonCode } from './price-group-assignment-action-problem-identity.ts';
 
 type DomainError = typeof assignCustomerPriceGroupAction.descriptor.domainErrorSchema.Type;
 type ProblemOf<Tag extends AssignCustomerPriceGroupActionProblem['_tag']> = Extract<
@@ -28,143 +43,51 @@ type ProblemOf<Tag extends AssignCustomerPriceGroupActionProblem['_tag']> = Extr
   { readonly _tag: Tag }
 >;
 type DomainProblemIdentity =
+  | { readonly code: ProblemOf<'AssignCustomerPriceGroupActionConflictProblem'>['code']; readonly kind: 'conflict' }
+  | { readonly code: ProblemOf<'AssignCustomerPriceGroupActionForbiddenProblem'>['code']; readonly kind: 'forbidden' }
+  | { readonly code: ProblemOf<'AssignCustomerPriceGroupActionIneligibleProblem'>['code']; readonly kind: 'ineligible' }
+  | { readonly code: ProblemOf<'AssignCustomerPriceGroupActionNotFoundProblem'>['code']; readonly kind: 'notFound' }
   | {
-      readonly code:
-        | 'customer_price_group_overlap_conflict'
-        | 'customer_price_group_revision_conflict';
-      readonly kind: 'conflict';
-    }
-  | { readonly code: 'customer_price_group_scope_mismatch'; readonly kind: 'forbidden' }
-  | {
-      readonly code:
-        | 'customer_price_group_catalog_rejected'
-        | 'customer_price_group_profile_ineligible'
-        | 'customer_price_group_retroactive_schedule_rejected';
-      readonly kind: 'ineligible';
-    }
-  | {
-      readonly code:
-        | 'customer_price_group_catalog_rejected'
-        | 'customer_price_group_profile_not_found';
-      readonly kind: 'notFound';
-    }
-  | {
-      readonly code:
-        | 'customer_price_group_catalog_unavailable'
-        | 'customer_price_group_persistence_unavailable'
-        | 'customer_price_group_profile_unavailable';
+      readonly code: ProblemOf<'AssignCustomerPriceGroupActionUnavailableProblem'>['code'];
       readonly kind: 'unavailable';
     };
-
-const problemStatus = {
-  authentication: 401,
-  conflict: 409,
-  forbidden: 403,
-  ineligible: 422,
-  internal: 500,
-  invalid: 400,
-  notFound: 404,
-  precondition: 428,
-  rateLimited: 429,
-  timeout: 504,
-  unavailable: 503,
-} as const;
-
-const customerPriceGroupCatalogRejectedProblemByReasonCode = {
-  INCOMPATIBLE: { code: 'customer_price_group_catalog_rejected', kind: 'ineligible' },
-  MISSING: { code: 'customer_price_group_catalog_rejected', kind: 'notFound' },
-  RETIRED: { code: 'customer_price_group_catalog_rejected', kind: 'ineligible' },
-  UNUSABLE: { code: 'customer_price_group_catalog_rejected', kind: 'ineligible' },
-} as const satisfies Record<
-  Extract<DomainError, { readonly _tag: 'CustomerPriceGroupCatalogRejected' }>['reasonCode'],
-  DomainProblemIdentity
->;
-
 export const assignCustomerPriceGroupActionProblem = {
-  authentication: (): ProblemOf<'AssignCustomerPriceGroupActionAuthenticationProblem'> =>
-    AssignCustomerPriceGroupActionAuthenticationProblemSchema.make({
-      detail: 'A valid audience-scoped Bearer assertion is required.',
-      status: problemStatus.authentication,
-      title: 'Authentication required',
-      type: 'https://ontos.dev/problems/operation-authentication-required',
-    }),
-  conflict: (
-    code: ProblemOf<'AssignCustomerPriceGroupActionConflictProblem'>['code'],
-  ): ProblemOf<'AssignCustomerPriceGroupActionConflictProblem'> =>
-    AssignCustomerPriceGroupActionConflictProblemSchema.make({
-      code,
-      detail: 'The Action conflicts with current state.',
-      status: problemStatus.conflict,
-      title: 'Action conflict',
-      type: 'https://ontos.dev/problems/action-conflict',
-    }),
-  forbidden: (
-    code: ProblemOf<'AssignCustomerPriceGroupActionForbiddenProblem'>['code'],
-  ): ProblemOf<'AssignCustomerPriceGroupActionForbiddenProblem'> =>
-    AssignCustomerPriceGroupActionForbiddenProblemSchema.make({
-      code,
-      detail: 'The principal is not permitted to perform this Action.',
-      status: problemStatus.forbidden,
-      title: 'Action forbidden',
-      type: 'https://ontos.dev/problems/action-forbidden',
-    }),
-  ineligible: (
-    code: ProblemOf<'AssignCustomerPriceGroupActionIneligibleProblem'>['code'],
-  ): ProblemOf<'AssignCustomerPriceGroupActionIneligibleProblem'> =>
-    AssignCustomerPriceGroupActionIneligibleProblemSchema.make({
-      code,
-      detail: 'The request is not eligible for this Action.',
-      status: problemStatus.ineligible,
-      title: 'Action ineligible',
-      type: 'https://ontos.dev/problems/action-ineligible',
-    }),
-  internal: (): ProblemOf<'AssignCustomerPriceGroupActionInternalProblem'> =>
-    AssignCustomerPriceGroupActionInternalProblemSchema.make({
-      detail: 'The Action could not be completed.',
-      status: problemStatus.internal,
-      title: 'Action failed',
-      type: 'https://ontos.dev/problems/action-failed',
-    }),
-  invalid: (): ProblemOf<'AssignCustomerPriceGroupActionInvalidProblem'> =>
-    AssignCustomerPriceGroupActionInvalidProblemSchema.make({
-      detail: 'The assign-customer-price-group Action request is invalid.',
-      status: problemStatus.invalid,
-      title: 'Invalid Action request',
-      type: 'https://ontos.dev/problems/action-invalid',
-    }),
-  notFound: (
-    code: ProblemOf<'AssignCustomerPriceGroupActionNotFoundProblem'>['code'],
-  ): ProblemOf<'AssignCustomerPriceGroupActionNotFoundProblem'> =>
-    AssignCustomerPriceGroupActionNotFoundProblemSchema.make({
-      code,
-      detail: 'The requested resource was not found.',
-      status: problemStatus.notFound,
-      title: 'Resource not found',
-      type: 'https://ontos.dev/problems/action-resource-not-found',
-    }),
-  precondition: (): ProblemOf<'AssignCustomerPriceGroupActionPreconditionProblem'> =>
-    AssignCustomerPriceGroupActionPreconditionProblemSchema.make({
-      detail: 'An Idempotency-Key header is required.',
-      status: problemStatus.precondition,
-      title: 'Idempotency key required',
-      type: 'https://ontos.dev/problems/idempotency-key-required',
-    }),
-  unavailable: (
-    code: ProblemOf<'AssignCustomerPriceGroupActionUnavailableProblem'>['code'],
-  ): ProblemOf<'AssignCustomerPriceGroupActionUnavailableProblem'> =>
-    AssignCustomerPriceGroupActionUnavailableProblemSchema.make({
-      code,
-      detail: 'The Action capability is temporarily unavailable.',
-      retryable: true,
-      status: problemStatus.unavailable,
-      title: 'Action unavailable',
-      type: 'https://ontos.dev/problems/action-unavailable',
-    }),
+  authentication: makeAuthenticationProblem<ProblemOf<'AssignCustomerPriceGroupActionAuthenticationProblem'>>((input) =>
+    AssignCustomerPriceGroupActionAuthenticationProblemSchema.make(input),
+  ),
+  conflict: makeConflictProblem<
+    ProblemOf<'AssignCustomerPriceGroupActionConflictProblem'>['code'],
+    ProblemOf<'AssignCustomerPriceGroupActionConflictProblem'>
+  >((input) => AssignCustomerPriceGroupActionConflictProblemSchema.make(input)),
+  forbidden: makeForbiddenProblem<
+    ProblemOf<'AssignCustomerPriceGroupActionForbiddenProblem'>['code'],
+    ProblemOf<'AssignCustomerPriceGroupActionForbiddenProblem'>
+  >((input) => AssignCustomerPriceGroupActionForbiddenProblemSchema.make(input)),
+  ineligible: makeIneligibleProblem<
+    ProblemOf<'AssignCustomerPriceGroupActionIneligibleProblem'>['code'],
+    ProblemOf<'AssignCustomerPriceGroupActionIneligibleProblem'>
+  >((input) => AssignCustomerPriceGroupActionIneligibleProblemSchema.make(input)),
+  internal: makeInternalProblem<ProblemOf<'AssignCustomerPriceGroupActionInternalProblem'>>((input) =>
+    AssignCustomerPriceGroupActionInternalProblemSchema.make(input),
+  ),
+  invalid: makeInvalidProblem<ProblemOf<'AssignCustomerPriceGroupActionInvalidProblem'>>(
+    (input) => AssignCustomerPriceGroupActionInvalidProblemSchema.make(input),
+    'assign-customer-price-group',
+  ),
+  notFound: makeNotFoundProblem<
+    ProblemOf<'AssignCustomerPriceGroupActionNotFoundProblem'>['code'],
+    ProblemOf<'AssignCustomerPriceGroupActionNotFoundProblem'>
+  >((input) => AssignCustomerPriceGroupActionNotFoundProblemSchema.make(input)),
+  precondition: makePreconditionProblem<ProblemOf<'AssignCustomerPriceGroupActionPreconditionProblem'>>((input) =>
+    AssignCustomerPriceGroupActionPreconditionProblemSchema.make(input),
+  ),
+  unavailable: makeUnavailableProblem<
+    ProblemOf<'AssignCustomerPriceGroupActionUnavailableProblem'>['code'],
+    ProblemOf<'AssignCustomerPriceGroupActionUnavailableProblem'>
+  >((input) => AssignCustomerPriceGroupActionUnavailableProblemSchema.make(input)),
 } as const;
 
-const mapDomainIdentity = (
-  identity: DomainProblemIdentity,
-): AssignCustomerPriceGroupActionProblem =>
+const mapDomainIdentity = (identity: DomainProblemIdentity): AssignCustomerPriceGroupActionProblem =>
   Match.value(identity).pipe(
     Match.when({ kind: 'conflict' as const }, (matched) =>
       assignCustomerPriceGroupActionProblem.conflict(matched.code),
@@ -190,27 +113,19 @@ const mapDomainProblem = (error: DomainError): AssignCustomerPriceGroupActionPro
       CustomerPriceGroupCatalogRejected: (failure) =>
         mapDomainIdentity(customerPriceGroupCatalogRejectedProblemByReasonCode[failure.reasonCode]),
       CustomerPriceGroupCatalogUnavailable: () =>
-        assignCustomerPriceGroupActionProblem.unavailable(
-          'customer_price_group_catalog_unavailable',
-        ),
+        assignCustomerPriceGroupActionProblem.unavailable('customer_price_group_catalog_unavailable'),
       CustomerPriceGroupOverlapConflict: () =>
         assignCustomerPriceGroupActionProblem.conflict('customer_price_group_overlap_conflict'),
       CustomerPriceGroupPersistenceUnavailable: () =>
-        assignCustomerPriceGroupActionProblem.unavailable(
-          'customer_price_group_persistence_unavailable',
-        ),
+        assignCustomerPriceGroupActionProblem.unavailable('customer_price_group_persistence_unavailable'),
       CustomerPriceGroupProfileIneligible: () =>
         assignCustomerPriceGroupActionProblem.ineligible('customer_price_group_profile_ineligible'),
       CustomerPriceGroupProfileNotFound: () =>
         assignCustomerPriceGroupActionProblem.notFound('customer_price_group_profile_not_found'),
       CustomerPriceGroupProfileUnavailable: () =>
-        assignCustomerPriceGroupActionProblem.unavailable(
-          'customer_price_group_profile_unavailable',
-        ),
+        assignCustomerPriceGroupActionProblem.unavailable('customer_price_group_profile_unavailable'),
       CustomerPriceGroupRetroactiveScheduleRejected: () =>
-        assignCustomerPriceGroupActionProblem.ineligible(
-          'customer_price_group_retroactive_schedule_rejected',
-        ),
+        assignCustomerPriceGroupActionProblem.ineligible('customer_price_group_retroactive_schedule_rejected'),
       CustomerPriceGroupRevisionConflict: () =>
         assignCustomerPriceGroupActionProblem.conflict('customer_price_group_revision_conflict'),
       CustomerPriceGroupScopeMismatch: () =>
@@ -246,38 +161,24 @@ const mapCoreProblem = (error: ActionCoreError): AssignCustomerPriceGroupActionP
         }),
       ActionHandlerExecutionError: assignCustomerPriceGroupActionProblem.internal,
       ActionIdempotencyKeyRequired: assignCustomerPriceGroupActionProblem.precondition,
-      ActionInvocationNotFound: (failure) =>
-        assignCustomerPriceGroupActionProblem.notFound(failure.code),
-      ActionInvocationPersistenceError: (failure) =>
-        assignCustomerPriceGroupActionProblem.unavailable(failure.code),
-      ActionInvocationStateError: (failure) =>
-        assignCustomerPriceGroupActionProblem.conflict(failure.code),
+      ActionInvocationNotFound: (failure) => assignCustomerPriceGroupActionProblem.notFound(failure.code),
+      ActionInvocationPersistenceError: (failure) => assignCustomerPriceGroupActionProblem.unavailable(failure.code),
+      ActionInvocationStateError: (failure) => assignCustomerPriceGroupActionProblem.conflict(failure.code),
       ActionPayloadValidationError: assignCustomerPriceGroupActionProblem.invalid,
-      ActionPermissionCheckError: (failure) =>
-        assignCustomerPriceGroupActionProblem.unavailable(failure.code),
-      ActionPermissionDenied: (failure) =>
-        assignCustomerPriceGroupActionProblem.forbidden(failure.code),
-      ActionPolicyDenied: (failure) =>
-        assignCustomerPriceGroupActionProblem.ineligible(failure.code),
-      ActionPolicyEvaluationError: (failure) =>
-        assignCustomerPriceGroupActionProblem.unavailable(failure.code),
-      ActionRequestHashConflict: (failure) =>
-        assignCustomerPriceGroupActionProblem.conflict(failure.code),
+      ActionPermissionCheckError: (failure) => assignCustomerPriceGroupActionProblem.unavailable(failure.code),
+      ActionPermissionDenied: (failure) => assignCustomerPriceGroupActionProblem.forbidden(failure.code),
+      ActionPolicyDenied: (failure) => assignCustomerPriceGroupActionProblem.ineligible(failure.code),
+      ActionPolicyEvaluationError: (failure) => assignCustomerPriceGroupActionProblem.unavailable(failure.code),
+      ActionRequestHashConflict: (failure) => assignCustomerPriceGroupActionProblem.conflict(failure.code),
       ActionResultValidationError: assignCustomerPriceGroupActionProblem.internal,
-      ActionTransactionError: (failure) =>
-        assignCustomerPriceGroupActionProblem.unavailable(failure.code),
+      ActionTransactionError: (failure) => assignCustomerPriceGroupActionProblem.unavailable(failure.code),
       ActionTrustedContextValidationError: assignCustomerPriceGroupActionProblem.authentication,
-      ModuleStateCheckUnavailableError: (failure) =>
-        assignCustomerPriceGroupActionProblem.unavailable(failure.code),
-      ModuleStateDeniedError: (failure) =>
-        assignCustomerPriceGroupActionProblem.forbidden(failure.code),
+      ModuleStateCheckUnavailableError: (failure) => assignCustomerPriceGroupActionProblem.unavailable(failure.code),
+      ModuleStateDeniedError: (failure) => assignCustomerPriceGroupActionProblem.forbidden(failure.code),
       OperationAuthenticationRequired: assignCustomerPriceGroupActionProblem.authentication,
-      OperationContextDenied: (failure) =>
-        assignCustomerPriceGroupActionProblem.forbidden(failure.code),
-      OperationContextInvalid: (failure) =>
-        assignCustomerPriceGroupActionProblem.forbidden(failure.code),
-      OperationContextUnavailable: (failure) =>
-        assignCustomerPriceGroupActionProblem.unavailable(failure.code),
+      OperationContextDenied: (failure) => assignCustomerPriceGroupActionProblem.forbidden(failure.code),
+      OperationContextInvalid: (failure) => assignCustomerPriceGroupActionProblem.forbidden(failure.code),
+      OperationContextUnavailable: (failure) => assignCustomerPriceGroupActionProblem.unavailable(failure.code),
     }),
     Match.exhaustive,
   );
@@ -285,11 +186,9 @@ const mapCoreProblem = (error: ActionCoreError): AssignCustomerPriceGroupActionP
 const isDomainError = Schema.is(assignCustomerPriceGroupAction.descriptor.domainErrorSchema);
 export const mapAssignCustomerPriceGroupActionProblem = (
   error: ActionCoreError | DomainError,
-): AssignCustomerPriceGroupActionProblem =>
-  isDomainError(error) ? mapDomainProblem(error) : mapCoreProblem(error);
+): AssignCustomerPriceGroupActionProblem => (isDomainError(error) ? mapDomainProblem(error) : mapCoreProblem(error));
 
-export const assignCustomerPriceGroupActionSchemaErrorLive =
-  HttpApiMiddleware.layerSchemaErrorTransform(
-    AssignCustomerPriceGroupActionSchemaErrorMiddleware,
-    () => Effect.fail(assignCustomerPriceGroupActionProblem.invalid()),
-  );
+export const assignCustomerPriceGroupActionSchemaErrorLive = HttpApiMiddleware.layerSchemaErrorTransform(
+  AssignCustomerPriceGroupActionSchemaErrorMiddleware,
+  () => Effect.fail(assignCustomerPriceGroupActionProblem.invalid()),
+);

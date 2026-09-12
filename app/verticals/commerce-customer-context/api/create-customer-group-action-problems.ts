@@ -3,7 +3,7 @@
 // @ontos-action-http-slug create-customer-group
 // oxlint-disable sonarjs/function-name -- Effect Match.tags requires owner-declared tag keys; remove-when: sonarjs accepts discriminant-map properties.
 import type { ActionCoreError } from '@app/core-runtime';
-import { Effect, HttpApiMiddleware } from '@modern-js/plugin-bff/effect-edge';
+import { Effect, HttpApiMiddleware } from '@modern-js/bff-effect/effect-edge';
 import { Match, Schema } from 'effect';
 import {
   CreateCustomerGroupActionAlreadyCommittedProblemSchema,
@@ -131,8 +131,7 @@ const mapDomainProblem = (error: DomainError): CreateCustomerGroupActionProblem 
         createCustomerGroupActionProblem.conflict('customer_group_business_code_conflict'),
       CustomerGroupPersistenceUnavailable: () =>
         createCustomerGroupActionProblem.unavailable('customer_group_persistence_unavailable'),
-      CustomerGroupScopeMismatch: () =>
-        createCustomerGroupActionProblem.forbidden('customer_group_scope_mismatch'),
+      CustomerGroupScopeMismatch: () => createCustomerGroupActionProblem.forbidden('customer_group_scope_mismatch'),
       CustomerGroupSemanticDuplicate: () =>
         createCustomerGroupActionProblem.conflict('customer_group_semantic_duplicate'),
     }),
@@ -166,34 +165,24 @@ const mapCoreProblem = (error: ActionCoreError): CreateCustomerGroupActionProble
         }),
       ActionHandlerExecutionError: createCustomerGroupActionProblem.internal,
       ActionIdempotencyKeyRequired: createCustomerGroupActionProblem.precondition,
-      ActionInvocationNotFound: (failure) =>
-        createCustomerGroupActionProblem.notFound(failure.code),
-      ActionInvocationPersistenceError: (failure) =>
-        createCustomerGroupActionProblem.unavailable(failure.code),
-      ActionInvocationStateError: (failure) =>
-        createCustomerGroupActionProblem.conflict(failure.code),
+      ActionInvocationNotFound: (failure) => createCustomerGroupActionProblem.notFound(failure.code),
+      ActionInvocationPersistenceError: (failure) => createCustomerGroupActionProblem.unavailable(failure.code),
+      ActionInvocationStateError: (failure) => createCustomerGroupActionProblem.conflict(failure.code),
       ActionPayloadValidationError: createCustomerGroupActionProblem.invalid,
-      ActionPermissionCheckError: (failure) =>
-        createCustomerGroupActionProblem.unavailable(failure.code),
+      ActionPermissionCheckError: (failure) => createCustomerGroupActionProblem.unavailable(failure.code),
       ActionPermissionDenied: (failure) => createCustomerGroupActionProblem.forbidden(failure.code),
       ActionPolicyDenied: (failure) => createCustomerGroupActionProblem.ineligible(failure.code),
-      ActionPolicyEvaluationError: (failure) =>
-        createCustomerGroupActionProblem.unavailable(failure.code),
-      ActionRequestHashConflict: (failure) =>
-        createCustomerGroupActionProblem.conflict(failure.code),
+      ActionPolicyEvaluationError: (failure) => createCustomerGroupActionProblem.unavailable(failure.code),
+      ActionRequestHashConflict: (failure) => createCustomerGroupActionProblem.conflict(failure.code),
       ActionResultValidationError: createCustomerGroupActionProblem.internal,
-      ActionTransactionError: (failure) =>
-        createCustomerGroupActionProblem.unavailable(failure.code),
+      ActionTransactionError: (failure) => createCustomerGroupActionProblem.unavailable(failure.code),
       ActionTrustedContextValidationError: createCustomerGroupActionProblem.authentication,
-      ModuleStateCheckUnavailableError: (failure) =>
-        createCustomerGroupActionProblem.unavailable(failure.code),
+      ModuleStateCheckUnavailableError: (failure) => createCustomerGroupActionProblem.unavailable(failure.code),
       ModuleStateDeniedError: (failure) => createCustomerGroupActionProblem.forbidden(failure.code),
       OperationAuthenticationRequired: createCustomerGroupActionProblem.authentication,
       OperationContextDenied: (failure) => createCustomerGroupActionProblem.forbidden(failure.code),
-      OperationContextInvalid: (failure) =>
-        createCustomerGroupActionProblem.forbidden(failure.code),
-      OperationContextUnavailable: (failure) =>
-        createCustomerGroupActionProblem.unavailable(failure.code),
+      OperationContextInvalid: (failure) => createCustomerGroupActionProblem.forbidden(failure.code),
+      OperationContextUnavailable: (failure) => createCustomerGroupActionProblem.unavailable(failure.code),
     }),
     Match.exhaustive,
   );
@@ -201,8 +190,7 @@ const mapCoreProblem = (error: ActionCoreError): CreateCustomerGroupActionProble
 const isDomainError = Schema.is(createCustomerGroupAction.descriptor.domainErrorSchema);
 export const mapCreateCustomerGroupActionProblem = (
   error: ActionCoreError | DomainError,
-): CreateCustomerGroupActionProblem =>
-  isDomainError(error) ? mapDomainProblem(error) : mapCoreProblem(error);
+): CreateCustomerGroupActionProblem => (isDomainError(error) ? mapDomainProblem(error) : mapCoreProblem(error));
 
 export const createCustomerGroupActionSchemaErrorLive = HttpApiMiddleware.layerSchemaErrorTransform(
   CreateCustomerGroupActionSchemaErrorMiddleware,

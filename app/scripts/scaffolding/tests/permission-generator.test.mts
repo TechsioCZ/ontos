@@ -20,9 +20,7 @@ const PackageExportsSchema = Schema.Struct({
 
 const createFixture = (): Effect.Effect<string, unknown> =>
   Effect.gen(function* createPermissionFixture() {
-    const root = yield* Effect.promise(() =>
-      mkdtemp(path.join(tmpdir(), 'ontos-permission-scaffold-')),
-    );
+    const root = yield* Effect.promise(() => mkdtemp(path.join(tmpdir(), 'ontos-permission-scaffold-')));
     yield* write(root, 'package.json', json({ name: 'fixture', private: true, type: 'module' }));
     yield* write(
       root,
@@ -118,39 +116,28 @@ it.live('generates and registers conservative versioned business permissions seq
       expect(secondResult.kind).toBe('generated');
       const thirdResult = yield* scaffoldPermission(root, repeatOrderPermission);
       expect(thirdResult.kind).toBe('generated');
-      const [permission, secondPermission, repeatOrder, manifest, packageSource] =
-        yield* Effect.all([
-          Effect.promise(() =>
-            readFile(
-              path.join(
-                root,
-                `verticals/${vertical}/shared/permissions/counterparty-address-book-use.ts`,
-              ),
-              'utf-8',
+      const [permission, secondPermission, repeatOrder, manifest, packageSource] = yield* Effect.all([
+        Effect.promise(() =>
+          readFile(
+            path.join(root, `verticals/${vertical}/shared/permissions/counterparty-address-book-use.ts`),
+            'utf-8',
+          ),
+        ),
+        Effect.promise(() =>
+          readFile(
+            path.join(
+              root,
+              `verticals/${vertical}/shared/permissions/retail-settings-payment-term-preference-manage.ts`,
             ),
+            'utf-8',
           ),
-          Effect.promise(() =>
-            readFile(
-              path.join(
-                root,
-                `verticals/${vertical}/shared/permissions/retail-settings-payment-term-preference-manage.ts`,
-              ),
-              'utf-8',
-            ),
-          ),
-          Effect.promise(() =>
-            readFile(
-              path.join(root, `verticals/${vertical}/shared/permissions/retail-repeat-order.ts`),
-              'utf-8',
-            ),
-          ),
-          Effect.promise(() =>
-            readFile(path.join(root, `verticals/${vertical}/vertical.manifest.ts`), 'utf-8'),
-          ),
-          Effect.promise(() =>
-            readFile(path.join(root, `verticals/${vertical}/package.json`), 'utf-8'),
-          ),
-        ]);
+        ),
+        Effect.promise(() =>
+          readFile(path.join(root, `verticals/${vertical}/shared/permissions/retail-repeat-order.ts`), 'utf-8'),
+        ),
+        Effect.promise(() => readFile(path.join(root, `verticals/${vertical}/vertical.manifest.ts`), 'utf-8')),
+        Effect.promise(() => readFile(path.join(root, `verticals/${vertical}/package.json`), 'utf-8')),
+      ]);
       expect(permission).toMatch(/key: 'counterparty\.address_book\.use'/u);
       expect(permission).toMatch(/allowedScopeKinds: \['counterparty_storefront'\]/u);
       expect(permission).toMatch(/customerDelegable: false/u);
@@ -173,15 +160,13 @@ it.live('generates and registers conservative versioned business permissions seq
       expect(manifest.indexOf('counterpartyAddressBookUsePermission,')).toBeLessThan(
         manifest.indexOf('retailSettingsPaymentTermPreferenceManagePermission,'),
       );
-      const packageValue = yield* Schema.decodeUnknownEffect(PackageExportsSchema)(
-        JSON.parse(packageSource),
-      );
+      const packageValue = yield* Schema.decodeUnknownEffect(PackageExportsSchema)(JSON.parse(packageSource));
       expect(packageValue.exports['./permissions/counterparty.address_book.use']).toBe(
         './shared/permissions/counterparty-address-book-use.ts',
       );
-      expect(
-        packageValue.exports['./permissions/retail.settings.payment_term_preference.manage'],
-      ).toBe('./shared/permissions/retail-settings-payment-term-preference-manage.ts');
+      expect(packageValue.exports['./permissions/retail.settings.payment_term_preference.manage']).toBe(
+        './shared/permissions/retail-settings-payment-term-preference-manage.ts',
+      );
       expect(packageValue.exports['./permissions/retail.repeat_order']).toBe(
         './shared/permissions/retail-repeat-order.ts',
       );
@@ -193,18 +178,13 @@ it.live('rejects malformed and duplicate permissions without partial writes', ()
   withFixture(
     Effect.fn(function* rejectsUnsafePermission(root) {
       const before = yield* snapshotTree(root);
-      const malformed = yield* scaffoldPermission(root, 'generic.manage').pipe(
-        Effect.sandbox,
-        Effect.flip,
-      );
+      const malformed = yield* scaffoldPermission(root, 'generic.manage').pipe(Effect.sandbox, Effect.flip);
       expect(String(Cause.squash(malformed))).toMatch(/retail\.\* or counterparty\.\*/u);
       expect(yield* snapshotTree(root)).toEqual(before);
       yield* scaffoldPermission(root);
       const after = yield* snapshotTree(root);
       const duplicate = yield* scaffoldPermission(root).pipe(Effect.sandbox, Effect.flip);
-      expect(String(Cause.squash(duplicate))).toMatch(
-        /refusing to overwrite existing business file/u,
-      );
+      expect(String(Cause.squash(duplicate))).toMatch(/refusing to overwrite existing business file/u);
       expect(yield* snapshotTree(root)).toEqual(after);
     }),
   ),

@@ -101,8 +101,7 @@ export const ensureRetailCustomerProfileAction = defineAction(
     auditProfile: 'standard',
     domainErrorSchema: EnsureRetailCustomerProfileRejected,
     domainEvents: {
-      'commerce.customer-context.retail-customer-profile-created.v1':
-        EnsureRetailCustomerProfileResultSchema,
+      'commerce.customer-context.retail-customer-profile-created.v1': EnsureRetailCustomerProfileResultSchema,
     },
     entrypoint: defineTenantModuleEntrypoint({
       access: 'write',
@@ -122,23 +121,6 @@ export const ensureRetailCustomerProfileAction = defineAction(
   handleEnsureRetailCustomerProfile,
   (transaction, scope) =>
     profileServicesForVerifiedScope(transaction, scope).pipe(
-      Effect.map(({ ensureRetailCustomerProfile }) => ensureRetailCustomerProfile),
+      Effect.map(({ ensureRetailCustomerProfile }): EnsureRetailCustomerProfileServices => ensureRetailCustomerProfile),
     ),
 );
-
-// <generated-outbox-message-exports>
-export { createEnsureRetailCustomerProfileCommerceCustomerContextRetailCustomerProfileCreatedV1OutboxMessage } from './ensure-retail-customer-profile.commerce-customer-context-retail-customer-profile-created-v1.outbox-message.ts';
-export { EnsureRetailCustomerProfileCommerceCustomerContextRetailCustomerProfileCreatedV1OutboxPayloadSchema } from './ensure-retail-customer-profile.commerce-customer-context-retail-customer-profile-created-v1.outbox-message.ts';
-export { EnsureRetailCustomerProfileCommerceCustomerContextRetailCustomerProfileCreatedV1OutboxProducerModuleKey } from './ensure-retail-customer-profile.commerce-customer-context-retail-customer-profile-created-v1.outbox-message.ts';
-export { EnsureRetailCustomerProfileCommerceCustomerContextRetailCustomerProfileCreatedV1OutboxTopic } from './ensure-retail-customer-profile.commerce-customer-context-retail-customer-profile-created-v1.outbox-message.ts';
-export type { EnsureRetailCustomerProfileCommerceCustomerContextRetailCustomerProfileCreatedV1OutboxPayload } from './ensure-retail-customer-profile.commerce-customer-context-retail-customer-profile-created-v1.outbox-message.ts';
-export {
-  EnsureRetailCustomerProfilePayloadSchema,
-  EnsureRetailCustomerProfileRejected,
-  EnsureRetailCustomerProfileResultSchema,
-} from '../../shared/actions/ensure-retail-customer-profile.ts';
-export type {
-  EnsureRetailCustomerProfilePayload,
-  EnsureRetailCustomerProfileResult,
-} from '../../shared/actions/ensure-retail-customer-profile.ts';
-// </generated-outbox-message-exports>

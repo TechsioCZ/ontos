@@ -3,7 +3,7 @@
 // @ontos-action-http-slug remove-customer-group
 // oxlint-disable sonarjs/function-name -- Effect Match.tags requires owner-declared tag keys; remove-when: sonarjs accepts discriminant-map properties.
 import type { ActionCoreError } from '@app/core-runtime';
-import { Effect, HttpApiMiddleware } from '@modern-js/plugin-bff/effect-edge';
+import { Effect, HttpApiMiddleware } from '@modern-js/bff-effect/effect-edge';
 import { Match, Schema } from 'effect';
 import {
   RemoveCustomerGroupActionAlreadyCommittedProblemSchema,
@@ -133,8 +133,7 @@ const mapDomainProblem = (error: DomainError): RemoveCustomerGroupActionProblem 
         removeCustomerGroupActionProblem.conflict('customer_group_membership_removal_conflict'),
       CustomerGroupPersistenceUnavailable: () =>
         removeCustomerGroupActionProblem.unavailable('customer_group_persistence_unavailable'),
-      CustomerGroupScopeMismatch: () =>
-        removeCustomerGroupActionProblem.forbidden('customer_group_scope_mismatch'),
+      CustomerGroupScopeMismatch: () => removeCustomerGroupActionProblem.forbidden('customer_group_scope_mismatch'),
     }),
     Match.exhaustive,
   );
@@ -166,34 +165,24 @@ const mapCoreProblem = (error: ActionCoreError): RemoveCustomerGroupActionProble
         }),
       ActionHandlerExecutionError: removeCustomerGroupActionProblem.internal,
       ActionIdempotencyKeyRequired: removeCustomerGroupActionProblem.precondition,
-      ActionInvocationNotFound: (failure) =>
-        removeCustomerGroupActionProblem.notFound(failure.code),
-      ActionInvocationPersistenceError: (failure) =>
-        removeCustomerGroupActionProblem.unavailable(failure.code),
-      ActionInvocationStateError: (failure) =>
-        removeCustomerGroupActionProblem.conflict(failure.code),
+      ActionInvocationNotFound: (failure) => removeCustomerGroupActionProblem.notFound(failure.code),
+      ActionInvocationPersistenceError: (failure) => removeCustomerGroupActionProblem.unavailable(failure.code),
+      ActionInvocationStateError: (failure) => removeCustomerGroupActionProblem.conflict(failure.code),
       ActionPayloadValidationError: removeCustomerGroupActionProblem.invalid,
-      ActionPermissionCheckError: (failure) =>
-        removeCustomerGroupActionProblem.unavailable(failure.code),
+      ActionPermissionCheckError: (failure) => removeCustomerGroupActionProblem.unavailable(failure.code),
       ActionPermissionDenied: (failure) => removeCustomerGroupActionProblem.forbidden(failure.code),
       ActionPolicyDenied: (failure) => removeCustomerGroupActionProblem.ineligible(failure.code),
-      ActionPolicyEvaluationError: (failure) =>
-        removeCustomerGroupActionProblem.unavailable(failure.code),
-      ActionRequestHashConflict: (failure) =>
-        removeCustomerGroupActionProblem.conflict(failure.code),
+      ActionPolicyEvaluationError: (failure) => removeCustomerGroupActionProblem.unavailable(failure.code),
+      ActionRequestHashConflict: (failure) => removeCustomerGroupActionProblem.conflict(failure.code),
       ActionResultValidationError: removeCustomerGroupActionProblem.internal,
-      ActionTransactionError: (failure) =>
-        removeCustomerGroupActionProblem.unavailable(failure.code),
+      ActionTransactionError: (failure) => removeCustomerGroupActionProblem.unavailable(failure.code),
       ActionTrustedContextValidationError: removeCustomerGroupActionProblem.authentication,
-      ModuleStateCheckUnavailableError: (failure) =>
-        removeCustomerGroupActionProblem.unavailable(failure.code),
+      ModuleStateCheckUnavailableError: (failure) => removeCustomerGroupActionProblem.unavailable(failure.code),
       ModuleStateDeniedError: (failure) => removeCustomerGroupActionProblem.forbidden(failure.code),
       OperationAuthenticationRequired: removeCustomerGroupActionProblem.authentication,
       OperationContextDenied: (failure) => removeCustomerGroupActionProblem.forbidden(failure.code),
-      OperationContextInvalid: (failure) =>
-        removeCustomerGroupActionProblem.forbidden(failure.code),
-      OperationContextUnavailable: (failure) =>
-        removeCustomerGroupActionProblem.unavailable(failure.code),
+      OperationContextInvalid: (failure) => removeCustomerGroupActionProblem.forbidden(failure.code),
+      OperationContextUnavailable: (failure) => removeCustomerGroupActionProblem.unavailable(failure.code),
     }),
     Match.exhaustive,
   );
@@ -201,8 +190,7 @@ const mapCoreProblem = (error: ActionCoreError): RemoveCustomerGroupActionProble
 const isDomainError = Schema.is(removeCustomerGroupAction.descriptor.domainErrorSchema);
 export const mapRemoveCustomerGroupActionProblem = (
   error: ActionCoreError | DomainError,
-): RemoveCustomerGroupActionProblem =>
-  isDomainError(error) ? mapDomainProblem(error) : mapCoreProblem(error);
+): RemoveCustomerGroupActionProblem => (isDomainError(error) ? mapDomainProblem(error) : mapCoreProblem(error));
 
 export const removeCustomerGroupActionSchemaErrorLive = HttpApiMiddleware.layerSchemaErrorTransform(
   RemoveCustomerGroupActionSchemaErrorMiddleware,

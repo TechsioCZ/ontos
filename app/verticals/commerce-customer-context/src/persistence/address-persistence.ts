@@ -1,8 +1,4 @@
-import {
-  defineScopedRoutine,
-  ReadHandlerNotFound,
-  ReadHandlerUnavailable,
-} from '@app/core-runtime';
+import { defineScopedRoutine, ReadHandlerNotFound, ReadHandlerUnavailable } from '@app/core-runtime';
 import type {
   OperationalScope,
   ScopedRoutineDefinition,
@@ -20,14 +16,8 @@ import type {
   ProfileReconciliationOwnerVerification,
   ProfileReconciliationOwnerVerificationRequest,
 } from '../../shared/actions/resolve-profile-reconciliation.ts';
-import type {
-  SavedAddressDetailRequest,
-  SavedAddressDetailResponse,
-} from '../../shared/apis/saved-address-detail.ts';
-import type {
-  SavedAddressListRequest,
-  SavedAddressListResponse,
-} from '../../shared/apis/saved-address-list.ts';
+import type { SavedAddressDetailRequest, SavedAddressDetailResponse } from '../../shared/apis/saved-address-detail.ts';
+import type { SavedAddressListRequest, SavedAddressListResponse } from '../../shared/apis/saved-address-list.ts';
 import type {
   AddSavedAddressPayload,
   AddSavedAddressResultSchema,
@@ -150,7 +140,7 @@ export interface CustomerContextAddressRoutineInvoker {
 }
 
 const ownerModuleKey = 'commerce.customer-context';
-export const addressBookReconciliationPolicyVersion = 'address-book-reconciliation.v2';
+const addressBookReconciliationPolicyVersion = 'address-book-reconciliation.v2';
 const profileAnotherTenantReason = 'The profile belongs to another Tenant';
 const scopeMismatchDependency = 'commerce.customer-context.persistence:scope-mismatch';
 
@@ -368,8 +358,7 @@ const postalJson = (origin: SavedAddressOrigin | undefined): PostalAddress | nul
   origin?.kind === 'COMMERCE_ONLY' ? origin.postalAddress : null;
 
 const sourceFields = (origin: SavedAddressOrigin | undefined) => ({
-  contactPointResourceId:
-    origin?.kind === 'PARTY_BACKED' ? origin.contactPointRef.resourceId : null,
+  contactPointResourceId: origin?.kind === 'PARTY_BACKED' ? origin.contactPointRef.resourceId : null,
   contactPointRevision: origin?.kind === 'PARTY_BACKED' ? origin.sourceRevision : null,
   partyResourceId: origin?.kind === 'PARTY_BACKED' ? origin.partyRef.resourceId : null,
   postalAddress: postalJson(origin),
@@ -383,66 +372,73 @@ const resourceRef = (tenantId: string, resourceId: string) => ({
   tenantId,
 });
 
-const originFromRow = (tenantId: string, row: AddressRow): SavedAddressOrigin | undefined => {
+const partyBackedOriginFromRow = (tenantId: string, row: AddressRow): SavedAddressOrigin | undefined => {
   if (
-    row.source_kind === 'PARTY_BACKED' &&
-    row.party_resource_id !== null &&
-    row.party_contact_point_resource_id !== null &&
-    row.party_contact_point_revision !== null
+    row.party_resource_id === null ||
+    row.party_contact_point_resource_id === null ||
+    row.party_contact_point_revision === null
   ) {
-    return {
-      contactPointRef: {
-        moduleId: 'party.registry',
-        resourceId: row.party_contact_point_resource_id,
-        resourceType: 'party.registry.party-contact-point',
-        tenantId,
-      },
-      kind: 'PARTY_BACKED',
-      partyRef: {
-        moduleId: 'party.registry',
-        resourceId: row.party_resource_id,
-        resourceType: 'party.registry.party',
-        tenantId,
-      },
-      sourceRevision: row.party_contact_point_revision,
-    };
+    return undefined;
   }
-  if (
-    row.source_kind === 'COMMERCE_ONLY' &&
-    row.address_line_1 !== null &&
-    row.city !== null &&
-    row.country_code !== null &&
-    row.postal_code !== null
-  ) {
-    const postalAddress = {
-      addressLine1: row.address_line_1,
-      city: row.city,
-      countryCode: row.country_code,
-      postalCode: row.postal_code,
-    };
-    if (row.address_line_2 !== null) {
-      return {
-        kind: 'COMMERCE_ONLY',
-        postalAddress:
-          row.administrative_area === null
-            ? { ...postalAddress, addressLine2: row.address_line_2 }
-            : {
-                ...postalAddress,
-                addressLine2: row.address_line_2,
-                region: row.administrative_area,
-              },
-      };
-    }
-    if (row.administrative_area !== null) {
-      return {
-        kind: 'COMMERCE_ONLY',
-        postalAddress: { ...postalAddress, region: row.administrative_area },
-      };
-    }
+  return {
+    contactPointRef: {
+      moduleId: 'party.registry',
+      resourceId: row.party_contact_point_resource_id,
+      resourceType: 'party.registry.party-contact-point',
+      tenantId,
+    },
+    kind: 'PARTY_BACKED',
+    partyRef: {
+      moduleId: 'party.registry',
+      resourceId: row.party_resource_id,
+      resourceType: 'party.registry.party',
+      tenantId,
+    },
+    sourceRevision: row.party_contact_point_revision,
+  };
+};
+
+const commerceOnlyOriginFromRow = (row: AddressRow): SavedAddressOrigin | undefined => {
+  if (row.address_line_1 === null || row.city === null || row.country_code === null || row.postal_code === null) {
+    return undefined;
+  }
+  const postalAddress = {
+    addressLine1: row.address_line_1,
+    city: row.city,
+    countryCode: row.country_code,
+    postalCode: row.postal_code,
+  };
+  if (row.address_line_2 !== null) {
     return {
       kind: 'COMMERCE_ONLY',
-      postalAddress,
+      postalAddress:
+        row.administrative_area === null
+          ? { ...postalAddress, addressLine2: row.address_line_2 }
+          : {
+              ...postalAddress,
+              addressLine2: row.address_line_2,
+              region: row.administrative_area,
+            },
     };
+  }
+  if (row.administrative_area !== null) {
+    return {
+      kind: 'COMMERCE_ONLY',
+      postalAddress: { ...postalAddress, region: row.administrative_area },
+    };
+  }
+  return {
+    kind: 'COMMERCE_ONLY',
+    postalAddress,
+  };
+};
+
+const originFromRow = (tenantId: string, row: AddressRow): SavedAddressOrigin | undefined => {
+  if (row.source_kind === 'PARTY_BACKED') {
+    return partyBackedOriginFromRow(tenantId, row);
+  }
+  if (row.source_kind === 'COMMERCE_ONLY') {
+    return commerceOnlyOriginFromRow(row);
   }
   return undefined;
 };
@@ -475,37 +471,36 @@ const addressFromRow = (
   return Effect.succeed(address);
 };
 
-const mapAddressFailure = (
-  row: AddressRow | undefined,
-): Effect.Effect<never, AddressDomainError> => {
-  if (row?.outcome === 'REVISION_CONFLICT') {
-    return Effect.fail(
-      conflict(`The Saved Address changed concurrently at revision ${row.revision}`),
-    );
+const addressFailureFromRow = (row: AddressRow | undefined): AddressDomainError => {
+  // oxlint-disable-next-line effect-native/prefer-match-over-tag-switch, typescript/switch-exhaustiveness-check -- This shared routine row intentionally maps successful, unrelated, and missing outcomes through the existing unavailable default.
+  switch (row?.outcome) {
+    case 'REVISION_CONFLICT': {
+      return conflict(`The Saved Address changed concurrently at revision ${row.revision}`);
+    }
+    case 'INVALID': {
+      return invalid('The Saved Address command is invalid for its current state');
+    }
+    case 'NOT_FOUND':
+    case 'PROFILE_NOT_FOUND': {
+      return notFoundError('The Saved Address was not found in the verified profile');
+    }
+    case 'SUBJECT_MISMATCH': {
+      return notFoundError('The Saved Address was not found in the authorized subject');
+    }
+    case 'RECONCILIATION_REQUIRED': {
+      return reconciliationRequired('An equivalent Saved Address requires explicit reconciliation');
+    }
+    case 'SOURCE_TRANSITION_REQUIRED': {
+      return sourceTransitionRequired('Changing Saved Address source ownership requires an explicit transition');
+    }
+    default: {
+      return unavailable('commerce.customer-context.persistence:missing-outcome');
+    }
   }
-  if (row?.outcome === 'INVALID') {
-    return Effect.fail(invalid('The Saved Address command is invalid for its current state'));
-  }
-  if (row?.outcome === 'NOT_FOUND' || row?.outcome === 'PROFILE_NOT_FOUND') {
-    return Effect.fail(notFoundError('The Saved Address was not found in the verified profile'));
-  }
-  if (row?.outcome === 'SUBJECT_MISMATCH') {
-    return Effect.fail(notFoundError('The Saved Address was not found in the authorized subject'));
-  }
-  if (row?.outcome === 'RECONCILIATION_REQUIRED') {
-    return Effect.fail(
-      reconciliationRequired('An equivalent Saved Address requires explicit reconciliation'),
-    );
-  }
-  if (row?.outcome === 'SOURCE_TRANSITION_REQUIRED') {
-    return Effect.fail(
-      sourceTransitionRequired(
-        'Changing Saved Address source ownership requires an explicit transition',
-      ),
-    );
-  }
-  return Effect.fail(unavailable('commerce.customer-context.persistence:missing-outcome'));
 };
+
+const mapAddressFailure = (row: AddressRow | undefined): Effect.Effect<never, AddressDomainError> =>
+  Effect.fail(addressFailureFromRow(row));
 
 export interface AddressPersistenceAttribution {
   readonly actionInvocationId: string;
@@ -519,9 +514,7 @@ const addedAddressFromRow = (
 ): Effect.Effect<AddSavedAddressResult, AddressBookUnavailable> =>
   addressFromRow(profile, row).pipe(
     Effect.map((address) =>
-      outcome === 'ADDED'
-        ? { address, outcome: 'ADDED' as const }
-        : { address, outcome: 'REUSED' as const },
+      outcome === 'ADDED' ? { address, outcome: 'ADDED' as const } : { address, outcome: 'REUSED' as const },
     ),
   );
 
@@ -553,10 +546,7 @@ export const addSavedAddress = (
         }
         return mapAddressFailure(row);
       }),
-    ) satisfies Effect.Effect<
-    typeof AddSavedAddressResultSchema.Type,
-    typeof AddressBookDomainErrorSchema.Type
-  >;
+    ) satisfies Effect.Effect<typeof AddSavedAddressResultSchema.Type, typeof AddressBookDomainErrorSchema.Type>;
 };
 
 export const updateSavedAddress = (
@@ -608,10 +598,7 @@ export const updateSavedAddress = (
             )
           : mapAddressFailure(row),
       ),
-    ) satisfies Effect.Effect<
-    typeof UpdateSavedAddressResultSchema.Type,
-    typeof AddressBookDomainErrorSchema.Type
-  >;
+    ) satisfies Effect.Effect<typeof UpdateSavedAddressResultSchema.Type, typeof AddressBookDomainErrorSchema.Type>;
 };
 
 export const removeSavedAddress = (
@@ -649,15 +636,9 @@ export const removeSavedAddress = (
             )
           : mapAddressFailure(row),
       ),
-    ) satisfies Effect.Effect<
-    typeof RemoveSavedAddressResultSchema.Type,
-    typeof AddressBookDomainErrorSchema.Type
-  >;
+    ) satisfies Effect.Effect<typeof RemoveSavedAddressResultSchema.Type, typeof AddressBookDomainErrorSchema.Type>;
 
-const defaultsFromRow = (
-  profile: AddressBookProfile,
-  row: AddressDefaultsRow,
-): SavedAddressDefaults => {
+const defaultsFromRow = (profile: AddressBookProfile, row: AddressDefaultsRow): SavedAddressDefaults => {
   const revisionAndProfile = { profile, revision: row.revision };
   const billing =
     row.billing_saved_address_id === null
@@ -670,32 +651,33 @@ const defaultsFromRow = (
   if (billing === undefined) {
     return delivery === undefined ? revisionAndProfile : { ...revisionAndProfile, delivery };
   }
-  return delivery === undefined
-    ? { ...revisionAndProfile, billing }
-    : { ...revisionAndProfile, billing, delivery };
+  return delivery === undefined ? { ...revisionAndProfile, billing } : { ...revisionAndProfile, billing, delivery };
 };
 
-const mapDefaultsFailure = (
-  row: AddressDefaultsRow | undefined,
-): Effect.Effect<never, AddressDomainError> => {
-  if (row?.outcome === 'REVISION_CONFLICT') {
-    return Effect.fail(
-      conflict(`The address defaults changed concurrently at revision ${row.revision}`),
-    );
+const defaultsFailureFromRow = (row: AddressDefaultsRow | undefined): AddressDomainError => {
+  // oxlint-disable-next-line effect-native/prefer-match-over-tag-switch, typescript/switch-exhaustiveness-check -- This shared defaults row intentionally maps successful, unrelated, and missing outcomes through the existing unavailable default.
+  switch (row?.outcome) {
+    case 'REVISION_CONFLICT': {
+      return conflict(`The address defaults changed concurrently at revision ${row.revision}`);
+    }
+    case 'INVALID': {
+      return invalid('The Saved Address is not active and eligible for this default');
+    }
+    case 'NOT_FOUND':
+    case 'PROFILE_NOT_FOUND': {
+      return notFoundError('The Saved Address or profile was not found');
+    }
+    case 'SUBJECT_MISMATCH': {
+      return notFoundError('The address defaults were not found in the authorized subject');
+    }
+    default: {
+      return unavailable('commerce.customer-context.persistence:missing-default-outcome');
+    }
   }
-  if (row?.outcome === 'INVALID') {
-    return Effect.fail(invalid('The Saved Address is not active and eligible for this default'));
-  }
-  if (row?.outcome === 'NOT_FOUND' || row?.outcome === 'PROFILE_NOT_FOUND') {
-    return Effect.fail(notFoundError('The Saved Address or profile was not found'));
-  }
-  if (row?.outcome === 'SUBJECT_MISMATCH') {
-    return Effect.fail(
-      notFoundError('The address defaults were not found in the authorized subject'),
-    );
-  }
-  return Effect.fail(unavailable('commerce.customer-context.persistence:missing-default-outcome'));
 };
+
+const mapDefaultsFailure = (row: AddressDefaultsRow | undefined): Effect.Effect<never, AddressDomainError> =>
+  Effect.fail(defaultsFailureFromRow(row));
 
 export const setAddressDefault = (
   transaction: CustomerContextAddressRoutineInvoker,
@@ -724,10 +706,7 @@ export const setAddressDefault = (
             })
           : mapDefaultsFailure(row),
       ),
-    ) satisfies Effect.Effect<
-    typeof SetAddressDefaultResultSchema.Type,
-    typeof AddressBookDomainErrorSchema.Type
-  >;
+    ) satisfies Effect.Effect<typeof SetAddressDefaultResultSchema.Type, typeof AddressBookDomainErrorSchema.Type>;
 
 export const clearAddressDefault = (
   transaction: CustomerContextAddressRoutineInvoker,
@@ -746,10 +725,7 @@ export const clearAddressDefault = (
     }
     if (row?.outcome === 'CLEARED' && row.cleared_saved_address_id !== null) {
       return Effect.succeed({
-        clearedSavedAddressRef: resourceRef(
-          payload.profile.profileRef.tenantId,
-          row.cleared_saved_address_id,
-        ),
+        clearedSavedAddressRef: resourceRef(payload.profile.profileRef.tenantId, row.cleared_saved_address_id),
         defaults: defaultsFromRow(payload.profile, row),
         outcome: 'CLEARED',
       });
@@ -794,54 +770,75 @@ const ownerVerificationFailure = (
   return failure;
 };
 
+const verifiedAddressReconciliationFromRow = (
+  row: typeof AddressReconciliationRowSchema.Type,
+): ProfileReconciliationOwnerVerification | undefined => {
+  if (row.status === null || row.evidence_ref === null || row.correlation_ref === null) {
+    return undefined;
+  }
+  return {
+    _tag: 'VERIFIED',
+    correlationRef: row.correlation_ref,
+    durableOutcome: {
+      evidenceRef: row.evidence_ref,
+      owner: 'ADDRESS_BOOK',
+      status: row.status,
+    },
+  };
+};
+
+const addressReconciliationConflictFromRow = (
+  outcome: 'CONFLICT' | 'NOT_FOUND',
+): ProfileReconciliationOwnerVerification => ({
+  _tag: 'CONFLICT',
+  owner: 'ADDRESS_BOOK',
+  reason:
+    outcome === 'NOT_FOUND'
+      ? 'The exact reconciliation case and survivor membership were not found'
+      : 'The losing profiles still own Current address-book state',
+});
+
 const addressReconciliationVerificationFromRow = (
   row: typeof AddressReconciliationRowSchema.Type | undefined,
-): Effect.Effect<
-  ProfileReconciliationOwnerVerification,
-  ProfileReconciliationOwnerVerificationFailure
-> => {
-  if (
-    row?.outcome === 'VERIFIED' &&
-    row.status !== null &&
-    row.evidence_ref !== null &&
-    row.correlation_ref !== null
-  ) {
-    return Effect.succeed({
-      _tag: 'VERIFIED',
-      correlationRef: row.correlation_ref,
-      durableOutcome: {
-        evidenceRef: row.evidence_ref,
-        owner: 'ADDRESS_BOOK',
-        status: row.status,
-      },
-    });
+): Effect.Effect<ProfileReconciliationOwnerVerification, ProfileReconciliationOwnerVerificationFailure> => {
+  // oxlint-disable-next-line effect-native/prefer-match-over-tag-switch, typescript/switch-exhaustiveness-check -- Missing or unrecognized owner evidence intentionally follows the existing indeterminate failure default.
+  switch (row?.outcome) {
+    case 'VERIFIED': {
+      const verified = verifiedAddressReconciliationFromRow(row);
+      if (verified !== undefined) {
+        return Effect.succeed(verified);
+      }
+      return Effect.fail(
+        ownerVerificationFailure(
+          'OUTCOME_INDETERMINATE',
+          'Address Book reconciliation verification returned invalid evidence',
+          false,
+        ),
+      );
+    }
+    case 'CONFLICT':
+    case 'NOT_FOUND': {
+      return Effect.succeed(addressReconciliationConflictFromRow(row.outcome));
+    }
+    case 'OWNER_UNAVAILABLE': {
+      return Effect.fail(
+        ownerVerificationFailure(
+          'OWNER_UNAVAILABLE',
+          'Address Book reconciliation evidence is temporarily unavailable',
+          true,
+        ),
+      );
+    }
+    default: {
+      return Effect.fail(
+        ownerVerificationFailure(
+          'OUTCOME_INDETERMINATE',
+          'Address Book reconciliation verification returned invalid evidence',
+          false,
+        ),
+      );
+    }
   }
-  if (row?.outcome === 'CONFLICT' || row?.outcome === 'NOT_FOUND') {
-    return Effect.succeed({
-      _tag: 'CONFLICT',
-      owner: 'ADDRESS_BOOK',
-      reason:
-        row.outcome === 'NOT_FOUND'
-          ? 'The exact reconciliation case and survivor membership were not found'
-          : 'The losing profiles still own Current address-book state',
-    });
-  }
-  if (row?.outcome === 'OWNER_UNAVAILABLE') {
-    return Effect.fail(
-      ownerVerificationFailure(
-        'OWNER_UNAVAILABLE',
-        'Address Book reconciliation evidence is temporarily unavailable',
-        true,
-      ),
-    );
-  }
-  return Effect.fail(
-    ownerVerificationFailure(
-      'OUTCOME_INDETERMINATE',
-      'Address Book reconciliation verification returned invalid evidence',
-      false,
-    ),
-  );
 };
 
 export const addressBookReconciliationOwnerVerifierForTransaction = (
@@ -900,8 +897,7 @@ const validateTenant = (scope: OperationalScope, profile: AddressBookProfile) =>
 const validateOriginTenant = (scope: OperationalScope, origin: SavedAddressOrigin | undefined) =>
   origin === undefined ||
   origin.kind === 'COMMERCE_ONLY' ||
-  (origin.partyRef.tenantId === scope.tenantId &&
-    origin.contactPointRef.tenantId === scope.tenantId);
+  (origin.partyRef.tenantId === scope.tenantId && origin.contactPointRef.tenantId === scope.tenantId);
 
 const validateSavedAddressTenant = (
   scope: OperationalScope,
@@ -917,9 +913,7 @@ const invokeList = (
   if (!validateTenant(scope, profile)) {
     return Effect.fail(unavailable(scopeMismatchDependency));
   }
-  return transaction
-    .invoke(listSavedAddressesRoutine, profileValues(profile))
-    .pipe(Effect.mapError(unavailable));
+  return transaction.invoke(listSavedAddressesRoutine, profileValues(profile)).pipe(Effect.mapError(unavailable));
 };
 
 const invokeDetail = (
@@ -944,9 +938,7 @@ const invokeDefaults = (
   if (!validateTenant(scope, profile)) {
     return Effect.fail(unavailable(scopeMismatchDependency));
   }
-  return transaction
-    .invoke(readAddressDefaultsRoutine, profileValues(profile))
-    .pipe(Effect.mapError(unavailable));
+  return transaction.invoke(readAddressDefaultsRoutine, profileValues(profile)).pipe(Effect.mapError(unavailable));
 };
 
 const readUnavailable = (dependency: string, cause?: unknown) => {
@@ -1110,16 +1102,15 @@ const loadDefaultAddress = (
     return Effect.succeed({ kind: 'NONE' });
   }
   return invokeDetail(transaction, scope, profile, savedAddressResourceId).pipe(
-    Effect.flatMap(
-      ([row]): Effect.Effect<AddressDefaultLookup<SavedAddress>, AddressBookUnavailable> =>
-        row?.outcome === 'FOUND' && row.lifecycle === 'ACTIVE'
-          ? addressFromRow(profile, row).pipe(
-              Effect.map((address) => ({
-                kind: 'FOUND' as const,
-                value: address,
-              })),
-            )
-          : Effect.succeed({ kind: 'INVALID', reason: invalidReason }),
+    Effect.flatMap(([row]): Effect.Effect<AddressDefaultLookup<SavedAddress>, AddressBookUnavailable> =>
+      row?.outcome === 'FOUND' && row.lifecycle === 'ACTIVE'
+        ? addressFromRow(profile, row).pipe(
+            Effect.map((address) => ({
+              kind: 'FOUND' as const,
+              value: address,
+            })),
+          )
+        : Effect.succeed({ kind: 'INVALID', reason: invalidReason }),
     ),
   );
 };
@@ -1199,8 +1190,7 @@ export const addressActionPersistenceForTransaction = (
   scope: OperationalScope,
   validatePartySource: (
     payload: AddSavedAddressPayload | UpdateSavedAddressPayload,
-  ) => Effect.Effect<void, typeof AddressBookDomainErrorSchema.Type> = () =>
-    Effect.fail(unavailable('party-registry')),
+  ) => Effect.Effect<void, typeof AddressBookDomainErrorSchema.Type> = () => Effect.fail(unavailable('party-registry')),
 ) => ({
   add: (payload: AddSavedAddressPayload, attribution: AddressPersistenceAttribution) =>
     validateTenant(scope, payload.profile) && validateOriginTenant(scope, payload.origin)

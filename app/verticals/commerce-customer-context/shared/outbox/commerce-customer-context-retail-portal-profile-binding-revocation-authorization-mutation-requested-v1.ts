@@ -4,8 +4,7 @@
 import type { Schema } from 'effect';
 import { RetailPortalProfileBindingRevocationAuthorizationMutationRequestedPayloadSchema } from '../actions/bind-retail-portal-profile.ts';
 
-export const OutboxPayloadSchema =
-  RetailPortalProfileBindingRevocationAuthorizationMutationRequestedPayloadSchema;
+export const OutboxPayloadSchema = RetailPortalProfileBindingRevocationAuthorizationMutationRequestedPayloadSchema;
 export type OutboxPayload = Schema.Schema.Type<typeof OutboxPayloadSchema>;
 
 export const outboxTopic =

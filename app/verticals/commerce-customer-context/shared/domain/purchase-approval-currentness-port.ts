@@ -1,5 +1,6 @@
-import type { ContextAccessService, OperationalScope } from '@app/core-runtime';
-import { Context, Effect } from 'effect';
+import type { ContextAccessService, OperationalScope, ScopedTransactionExecutor } from '@app/core-runtime'; // eslint-disable-line eslint/max-classes-per-file -- This owner-local port intentionally colocates its implementation and composition service tags; expires: 2027-09-10.
+import type { Effect } from 'effect';
+import { Context } from 'effect';
 
 import type {
   RevalidatePurchaseApprovalInput,
@@ -14,8 +15,11 @@ import type {
   PurchaseLimitEvaluationCurrentFacts,
   PurchaseLimitEvaluationCurrentnessPortService,
 } from './purchase-limit-evaluation-currentness-port.ts';
-import type { PurchaseLimitEvaluationSourceService } from './purchase-limit-evaluation.ts';
-import type { PurchaseLimitSourceRevisionVector } from './purchase-limit-evaluation.ts';
+import type {
+  PurchaseLimitEvaluationSourceService,
+  PurchaseLimitSourceRevisionVector,
+  PurchaseLimitUtcTimestampSchema,
+} from './purchase-limit-evaluation.ts';
 
 export interface PurchaseApprovalCandidateCurrentEvidence {
   readonly currentSourceRevisions: PurchaseLimitSourceRevisionVector;
@@ -23,11 +27,11 @@ export interface PurchaseApprovalCandidateCurrentEvidence {
   readonly proposalEvidence: PurchaseApprovalProposalEvidence;
 }
 
-export interface PurchaseApprovalCandidateCurrentnessInput {
+interface PurchaseApprovalCandidateCurrentnessInput {
   readonly claimedPurchaseValue: PurchaseApprovalCandidateCurrentEvidence['proposalEvidence']['purchaseValue'];
   readonly counterpartyRef: PurchaseApprovalCandidateCurrentEvidence['profileEvidence']['counterpartyRef'];
   readonly expectedSourceRevisions: PurchaseLimitSourceRevisionVector;
-  readonly observedAt: string;
+  readonly observedAt: typeof PurchaseLimitUtcTimestampSchema.Type;
   readonly profileRef: PurchaseApprovalCandidateCurrentEvidence['profileEvidence']['profileRef'];
   readonly scope: PurchaseApprovalCurrentnessTrustedScope;
 }
@@ -46,9 +50,17 @@ export interface PurchaseApprovalCurrentnessTrustedScope {
 export interface PurchaseApprovalCurrentnessService {
   /** Bind all reads to the same scoped transaction as the Action mutation. */
   readonly forTransaction?: (
-    transaction: unknown,
+    transaction: ScopedTransactionExecutor,
     scope: PurchaseApprovalCurrentnessTrustedScope,
   ) => PurchaseApprovalCurrentnessService;
+  /**
+   * Candidate currentness for first proposal creation.  A production adapter may fail closed
+   * when an external Cart/policy owner is not configured, but it must never read the proposal row
+   * being created and call that row current.
+   */
+  readonly resolveCandidate?: (input: {
+    readonly input: PurchaseApprovalCandidateCurrentnessInput;
+  }) => Effect.Effect<PurchaseLimitEvaluationCurrentFacts, PurchasingApprovalRejected>;
   /**
    * Revalidate from owner-held request/proposal/route/decision snapshots and current external
    * owner facts.  The returned payload is a trusted replacement; caller currentness fields are
@@ -67,17 +79,10 @@ export interface PurchaseApprovalCurrentnessService {
     readonly claimed: SubmitPurchaseApprovalRequestInput;
     readonly scope: PurchaseApprovalCurrentnessTrustedScope;
   }) => Effect.Effect<SubmitPurchaseApprovalRequestInput, PurchasingApprovalRejected>;
-  /**
-   * Candidate currentness for first proposal creation.  A production adapter may fail closed
-   * when an external Cart/policy owner is not configured, but it must never read the proposal row
-   * being created and call that row current.
-   */
-  readonly resolveCandidate?: (input: {
-    readonly input: PurchaseApprovalCandidateCurrentnessInput;
-  }) => Effect.Effect<PurchaseLimitEvaluationCurrentFacts, PurchasingApprovalRejected>;
 }
 
-export class PurchaseApprovalCurrentnessPort extends Context.Service<
+// eslint-disable-next-line no-unused-vars -- Retain the Context tag that connects this effectful currentness contract to its Layer boundary.
+class PurchaseApprovalCurrentnessPort extends Context.Service<
   PurchaseApprovalCurrentnessPort,
   PurchaseApprovalCurrentnessService
 >()(
@@ -92,13 +97,16 @@ export class PurchaseApprovalCurrentnessPort extends Context.Service<
  */
 export interface PurchaseApprovalCurrentnessFactoryContract {
   readonly make: (
-    transaction: unknown,
+    transaction: ScopedTransactionExecutor,
     scope: OperationalScope & {
       readonly legalEntityId: string;
       readonly trustedStorefrontId: string;
     },
+    // eslint-disable-next-line effect-native/no-dependency-parameters -- The factory receives this already-yielded Core service before closing the owner-local Action adapter; expires: 2027-09-10.
     contextAccess: ContextAccessService,
+    // eslint-disable-next-line effect-native/no-dependency-parameters -- The factory receives this already-yielded currentness port before closing the owner-local Action adapter; expires: 2027-09-10.
     purchaseLimitCurrentness: PurchaseLimitEvaluationCurrentnessPortService,
+    // eslint-disable-next-line effect-native/no-dependency-parameters -- The factory receives this already-yielded evaluation source before closing the owner-local Action adapter; expires: 2027-09-10.
     evaluationSource: PurchaseLimitEvaluationSourceService,
   ) => PurchaseApprovalCurrentnessService;
 }

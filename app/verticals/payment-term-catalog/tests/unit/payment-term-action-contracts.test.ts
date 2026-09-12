@@ -151,9 +151,7 @@ describe('Payment Term mutation contracts', () => {
       semanticRevisionId: '55555555-5555-4555-8555-555555555555',
     };
 
-    expect(Schema.decodeUnknownSync(CreatedOutboxPayloadSchema)(definitionEvidence)).toEqual(
-      definitionEvidence,
-    );
+    expect(Schema.decodeUnknownSync(CreatedOutboxPayloadSchema)(definitionEvidence)).toEqual(definitionEvidence);
     expect(
       Schema.decodeUnknownSync(CorrectedOutboxPayloadSchema)({
         ...definitionEvidence,
@@ -206,9 +204,7 @@ describe('Payment Term mutation contracts', () => {
       reason: 'Copy correction',
     };
 
-    expect(
-      getActionResourcePermissionTargetResolver(createPaymentTermAction)?.(createPayload, scope),
-    ).toEqual({
+    expect(getActionResourcePermissionTargetResolver(createPaymentTermAction)?.(createPayload, scope)).toEqual({
       permission: 'write',
       resource: {
         moduleId: 'payment.term-catalog',
@@ -216,9 +212,10 @@ describe('Payment Term mutation contracts', () => {
         resourceType: 'payment.term-catalog.payment-term-catalog-root',
       },
     });
-    expect(
-      getActionResourcePermissionTargetResolver(correctPaymentTermAction)?.(existingPayload, scope),
-    ).toEqual({ permission: 'write', resource: first });
+    expect(getActionResourcePermissionTargetResolver(correctPaymentTermAction)?.(existingPayload, scope)).toEqual({
+      permission: 'write',
+      resource: first,
+    });
     expect(
       getActionResourcePermissionTargetResolver(retirePaymentTermAction)?.(
         {
@@ -262,12 +259,9 @@ describe('Payment Term mutation contracts', () => {
         resourceType: 'payment.term-catalog.payment-term-catalog-root',
       },
     });
-    expect(
-      getReadResourcePermissionTargetResolver(paymentTermHistoryRead)?.(
-        { paymentTermRef: first },
-        scope,
-      ),
-    ).toEqual({ permission: 'read', resource: first });
+    expect(getReadResourcePermissionTargetResolver(paymentTermHistoryRead)?.({ paymentTermRef: first }, scope)).toEqual(
+      { permission: 'read', resource: first },
+    );
   });
 
   it.effect('denies unavailable or refused exact catalog authority before owner execution', () =>

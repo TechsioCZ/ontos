@@ -98,9 +98,7 @@ const fanout = (
 const runGrant = (
   service: AccessAuthorizationMutationReconciliationService,
   completionPublisher: OutboxWorkerCompletionPublisher,
-  workerRequest: Parameters<
-    typeof handleReconcileCounterpartyAccessGrantAuthorizationMutation
-  >[0] = request,
+  workerRequest: Parameters<typeof handleReconcileCounterpartyAccessGrantAuthorizationMutation>[0] = request,
   workerContext: OutboxWorkerHandlerContext = context,
 ) =>
   handleReconcileCounterpartyAccessGrantAuthorizationMutation(workerRequest, workerContext).pipe(
@@ -256,16 +254,11 @@ it.effect('supports an aggregate claim trigger with no fabricated grant mutation
   let published: OutboxWorkerCompletionInput<unknown> | undefined;
   const claimContext = {
     ...context,
-    topic:
-      'commerce.customer-context.counterparty-access-invitation-claim-authorization-mutation-requested.v1',
-    workerKey:
-      'commerce.customer-context.reconcile-counterparty-access-invitation-claim-authorization-mutation',
+    topic: 'commerce.customer-context.counterparty-access-invitation-claim-authorization-mutation-requested.v1',
+    workerKey: 'commerce.customer-context.reconcile-counterparty-access-invitation-claim-authorization-mutation',
   };
   return Effect.gen(function* aggregateClaim() {
-    yield* handleReconcileCounterpartyAccessInvitationClaimAuthorizationMutation(
-      claimRequest,
-      claimContext,
-    ).pipe(
+    yield* handleReconcileCounterpartyAccessInvitationClaimAuthorizationMutation(claimRequest, claimContext).pipe(
       Effect.provideService(AccessAuthorizationMutationReconciliation, {
         reconcile: () =>
           Effect.succeed({

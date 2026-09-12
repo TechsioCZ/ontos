@@ -16,8 +16,7 @@ import {
   CustomerPriceGroupProfileUnavailable,
 } from './price-group-errors.ts';
 
-export const CUSTOMER_PRICE_GROUP_COMPATIBILITY_CONTRACT =
-  'commerce.customer-price-group-assignment.v1' as const;
+export const CUSTOMER_PRICE_GROUP_COMPATIBILITY_CONTRACT = 'commerce.customer-price-group-assignment.v1' as const;
 
 export interface PriceGroupCatalogPort {
   readonly resolveCurrent: (
@@ -28,7 +27,7 @@ export interface PriceGroupCatalogPort {
   ) => Effect.Effect<PriceGroupCatalogOutcome, CustomerPriceGroupCatalogUnavailable>;
 }
 
-export type CustomerProfileState = 'ACTIVE' | 'ARCHIVED' | 'RECONCILIATION_REQUIRED' | 'SUSPENDED';
+type CustomerProfileState = 'ACTIVE' | 'ARCHIVED' | 'RECONCILIATION_REQUIRED' | 'SUSPENDED';
 
 export type CustomerPriceGroupProfileValidation =
   | Readonly<{
@@ -107,7 +106,7 @@ export type RemoveCustomerPriceGroupStoreResult =
   | Readonly<{ readonly _tag: 'retroactive_schedule' }>
   | Readonly<{ readonly _tag: 'revision_conflict'; readonly currentRevision: number }>;
 
-export interface CustomerPriceGroupMigrationTarget {
+interface CustomerPriceGroupMigrationTarget {
   readonly assignmentRef: CustomerPriceGroupAssignmentRef;
   readonly expectedProfileRevision: number;
   readonly expectedRevision: number;
@@ -163,10 +162,7 @@ export interface CustomerPriceGroupAssignmentStorePort {
   ) => Effect.Effect<CustomerPriceGroupAssignmentLookup, CustomerPriceGroupPersistenceUnavailable>;
   readonly migrate: (
     input: MigrateCustomerPriceGroupStoreInput,
-  ) => Effect.Effect<
-    MigrateCustomerPriceGroupStoreResult,
-    CustomerPriceGroupPersistenceUnavailable
-  >;
+  ) => Effect.Effect<MigrateCustomerPriceGroupStoreResult, CustomerPriceGroupPersistenceUnavailable>;
   readonly remove: (
     input: RemoveCustomerPriceGroupStoreInput,
   ) => Effect.Effect<RemoveCustomerPriceGroupStoreResult, CustomerPriceGroupPersistenceUnavailable>;
@@ -186,7 +182,8 @@ const persistenceNotWired = () =>
   );
 
 /** Fail-closed runtime default; deployment wiring must replace it with the owner-local adapter. */
-export const unavailableCustomerPriceGroupAssignmentStore: CustomerPriceGroupAssignmentStorePort = {
+// eslint-disable-next-line no-unused-vars -- Retain the default that keeps the shared fail-closed persistence helper structurally exercised.
+const unavailableCustomerPriceGroupAssignmentStore: CustomerPriceGroupAssignmentStorePort = {
   assign: persistenceNotWired,
   list: persistenceNotWired,
   migrate: persistenceNotWired,
@@ -194,13 +191,13 @@ export const unavailableCustomerPriceGroupAssignmentStore: CustomerPriceGroupAss
   resolve: persistenceNotWired,
 };
 
-export const unavailableCustomerPriceGroupProfileValidationPort: CustomerPriceGroupProfileValidationPort =
-  {
-    inspect: () =>
-      Effect.fail(
-        new CustomerPriceGroupProfileUnavailable({
-          code: 'customer_price_group_profile_unavailable',
-          reason: 'The governed Customer Profile trading gate is not available',
-        }),
-      ),
-  };
+// eslint-disable-next-line no-unused-vars -- Retain the fail-closed value that keeps profile validation a runtime port rather than a type-only seam.
+const unavailableCustomerPriceGroupProfileValidationPort: CustomerPriceGroupProfileValidationPort = {
+  inspect: () =>
+    Effect.fail(
+      new CustomerPriceGroupProfileUnavailable({
+        code: 'customer_price_group_profile_unavailable',
+        reason: 'The governed Customer Profile trading gate is not available',
+      }),
+    ),
+};

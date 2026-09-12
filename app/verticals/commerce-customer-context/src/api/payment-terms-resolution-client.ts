@@ -40,9 +40,7 @@ export const executePaymentTermsResolutionWithAuthorization = (
   ...[credential, requestCorrelation, options = {}]: PaymentTermsResolutionAuthorizedInvocation
 ) =>
   paymentTermsResolutionClient(Redacted.make(credential), requestCorrelation, options).pipe(
-    Effect.flatMap((client) =>
-      client.paymentTermsResolution.execute({ headers: {}, params: {}, payload, query: {} }),
-    ),
+    Effect.flatMap((client) => client.paymentTermsResolution.execute({ headers: {}, params: {}, payload, query: {} })),
   );
 
 export const executePaymentTermsResolution = (
@@ -50,10 +48,5 @@ export const executePaymentTermsResolution = (
   ...[requestCorrelation, options = {}]: PaymentTermsResolutionOperationInvocation
 ) =>
   operationGateway.invoke((credential) =>
-    executePaymentTermsResolutionWithAuthorization(
-      payload,
-      credential,
-      requestCorrelation,
-      options,
-    ),
+    executePaymentTermsResolutionWithAuthorization(payload, credential, requestCorrelation, options),
   );

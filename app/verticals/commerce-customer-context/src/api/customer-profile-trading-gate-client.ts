@@ -21,7 +21,7 @@ type CustomerProfileTradingGateOperationInvocation = readonly [
 ];
 
 const customerProfileTradingGateClient = (
-  credential: Redacted.Redacted<string>,
+  credential: Redacted.Redacted,
   requestCorrelation: string,
   options: CustomerProfileTradingGateClientOptions,
 ) =>
@@ -50,10 +50,5 @@ export const executeCustomerProfileTradingGate = (
   ...[requestCorrelation, options = {}]: CustomerProfileTradingGateOperationInvocation
 ) =>
   operationGateway.invoke((credential) =>
-    executeCustomerProfileTradingGateWithAuthorization(
-      payload,
-      credential,
-      requestCorrelation,
-      options,
-    ),
+    executeCustomerProfileTradingGateWithAuthorization(payload, credential, requestCorrelation, options),
   );

@@ -27,57 +27,55 @@ export interface ReactivateCustomerProfileServices {
     context: ActionHandlerContext<DomainEvents, ReactivateCustomerProfileServices>,
   ) => Effect.Effect<ReactivateCustomerProfileResult, ProfileLifecycleActionRejected>;
 }
-const handle = Effect.fn('ReactivateCustomerProfileAction.handle')(
-  function* handleReactivateCustomerProfileEffect(
-    payload: ReactivateCustomerProfilePayload,
-    context: ActionHandlerContext<DomainEvents, ReactivateCustomerProfileServices>,
-  ) {
-    if (payload.profileRef.tenantId !== context.scope.tenantId) {
-      return yield* new ProfileLifecycleActionRejected({
-        code: 'CURRENT_STATE_CONFLICT',
-        reason: 'The profile must belong to the trusted Tenant',
-        retryable: false,
-      });
-    }
-    const result = yield* context.services.transition(payload, context);
-    if (
-      result.profileRef.tenantId !== context.scope.tenantId ||
-      result.outcome !== 'PROFILE_REACTIVATED' ||
-      (result.previousState !== 'SUSPENDED' && result.previousState !== 'ARCHIVED') ||
-      result.state !== 'ACTIVE'
-    ) {
-      return yield* new ProfileLifecycleActionRejected({
-        code: 'CURRENT_STATE_CONFLICT',
-        reason: 'The transition service returned an inconsistent lifecycle result',
-        retryable: false,
-      });
-    }
-    yield* recordProfileResourceLookup(
-      context,
-      result.profileRef,
-      `profile-reactivation:${result.profileRef.resourceId}:${payload.expectedRevision}`,
-    );
-    const event = yield* context.addDomainEvent({
-      eventType: 'commerce.customer-context.customer-profile-reactivated.v1',
-      payloadJson: result,
-      producerModuleKey: MODULE_KEY,
-      subjectModuleKey: MODULE_KEY,
-      subjectResourceId: result.profileRef.resourceId,
-      subjectResourceType: result.profileRef.resourceType,
+const handle = Effect.fn('ReactivateCustomerProfileAction.handle')(function* handleReactivateCustomerProfileEffect(
+  payload: ReactivateCustomerProfilePayload,
+  context: ActionHandlerContext<DomainEvents, ReactivateCustomerProfileServices>,
+) {
+  if (payload.profileRef.tenantId !== context.scope.tenantId) {
+    return yield* new ProfileLifecycleActionRejected({
+      code: 'CURRENT_STATE_CONFLICT',
+      reason: 'The profile must belong to the trusted Tenant',
+      retryable: false,
     });
-    yield* context.addOutboxMessage(
-      event,
-      createProfileReactivatedOutboxMessage({
-        effectiveAt: result.effectiveAt,
-        previousState: result.previousState,
-        profileRef: result.profileRef,
-        revision: result.revision,
-        state: 'ACTIVE',
-      }),
-    );
-    return result;
-  },
-);
+  }
+  const result = yield* context.services.transition(payload, context);
+  if (
+    result.profileRef.tenantId !== context.scope.tenantId ||
+    result.outcome !== 'PROFILE_REACTIVATED' ||
+    (result.previousState !== 'SUSPENDED' && result.previousState !== 'ARCHIVED') ||
+    result.state !== 'ACTIVE'
+  ) {
+    return yield* new ProfileLifecycleActionRejected({
+      code: 'CURRENT_STATE_CONFLICT',
+      reason: 'The transition service returned an inconsistent lifecycle result',
+      retryable: false,
+    });
+  }
+  yield* recordProfileResourceLookup(
+    context,
+    result.profileRef,
+    `profile-reactivation:${result.profileRef.resourceId}:${payload.expectedRevision}`,
+  );
+  const event = yield* context.addDomainEvent({
+    eventType: 'commerce.customer-context.customer-profile-reactivated.v1',
+    payloadJson: result,
+    producerModuleKey: MODULE_KEY,
+    subjectModuleKey: MODULE_KEY,
+    subjectResourceId: result.profileRef.resourceId,
+    subjectResourceType: result.profileRef.resourceType,
+  });
+  yield* context.addOutboxMessage(
+    event,
+    createProfileReactivatedOutboxMessage({
+      effectiveAt: result.effectiveAt,
+      previousState: result.previousState,
+      profileRef: result.profileRef,
+      revision: result.revision,
+      state: 'ACTIVE',
+    }),
+  );
+  return result;
+});
 export const reactivateCustomerProfileAction = defineAction(
   {
     accessEvidencePolicy: {
@@ -88,8 +86,7 @@ export const reactivateCustomerProfileAction = defineAction(
     auditProfile: 'standard',
     domainErrorSchema: ProfileLifecycleActionRejected,
     domainEvents: {
-      'commerce.customer-context.customer-profile-reactivated.v1':
-        ReactivateCustomerProfileResultSchema,
+      'commerce.customer-context.customer-profile-reactivated.v1': ReactivateCustomerProfileResultSchema,
     },
     entrypoint: defineTenantModuleEntrypoint({
       access: 'write',
@@ -109,22 +106,10 @@ export const reactivateCustomerProfileAction = defineAction(
   handle,
   (transaction, scope) =>
     profileServicesForVerifiedScope(transaction, scope).pipe(
-      Effect.map(({ reactivateCustomerProfile }) => reactivateCustomerProfile),
+      Effect.map(({ reactivateCustomerProfile }): ReactivateCustomerProfileServices => reactivateCustomerProfile),
     ),
 );
 
 // <generated-outbox-message-exports>
-export { createReactivateCustomerProfileCommerceCustomerContextCustomerProfileReactivatedV1OutboxMessage } from './reactivate-customer-profile.commerce-customer-context-customer-profile-reactivated-v1.outbox-message.ts';
-export { ReactivateCustomerProfileCommerceCustomerContextCustomerProfileReactivatedV1OutboxPayloadSchema } from './reactivate-customer-profile.commerce-customer-context-customer-profile-reactivated-v1.outbox-message.ts';
-export { ReactivateCustomerProfileCommerceCustomerContextCustomerProfileReactivatedV1OutboxProducerModuleKey } from './reactivate-customer-profile.commerce-customer-context-customer-profile-reactivated-v1.outbox-message.ts';
-export { ReactivateCustomerProfileCommerceCustomerContextCustomerProfileReactivatedV1OutboxTopic } from './reactivate-customer-profile.commerce-customer-context-customer-profile-reactivated-v1.outbox-message.ts';
-export type { ReactivateCustomerProfileCommerceCustomerContextCustomerProfileReactivatedV1OutboxPayload } from './reactivate-customer-profile.commerce-customer-context-customer-profile-reactivated-v1.outbox-message.ts';
-export {
-  ReactivateCustomerProfilePayloadSchema,
-  ReactivateCustomerProfileResultSchema,
-} from '../../shared/actions/reactivate-customer-profile.ts';
-export type {
-  ReactivateCustomerProfilePayload,
-  ReactivateCustomerProfileResult,
-} from '../../shared/actions/reactivate-customer-profile.ts';
+export type { ReactivateCustomerProfilePayload } from '../../shared/actions/reactivate-customer-profile.ts';
 // </generated-outbox-message-exports>

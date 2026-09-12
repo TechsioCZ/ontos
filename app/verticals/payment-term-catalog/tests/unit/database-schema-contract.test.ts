@@ -38,18 +38,9 @@ it('forces every governed table through tenant and legal-entity policy dimension
   for (const table of PAYMENT_TERM_CATALOG_TABLES) {
     const config = getTableConfig(table);
     expect(config.enableRLS, `${config.name} must enable RLS`).toBe(true);
-    expect(config.columns.some((column) => column.name === 'tenant_id' && column.notNull)).toBe(
-      true,
-    );
-    expect(
-      config.columns.some((column) => column.name === 'legal_entity_id' && column.notNull),
-    ).toBe(true);
-    expect(config.policies.map((policy) => policy.for)).toEqual([
-      'select',
-      'insert',
-      'update',
-      'delete',
-    ]);
+    expect(config.columns.some((column) => column.name === 'tenant_id' && column.notNull)).toBe(true);
+    expect(config.columns.some((column) => column.name === 'legal_entity_id' && column.notNull)).toBe(true);
+    expect(config.policies.map((policy) => policy.for)).toEqual(['select', 'insert', 'update', 'delete']);
     for (const policy of config.policies) {
       expect(policy.to).toBe('ontos_runtime');
     }
@@ -75,20 +66,14 @@ it('stores only the approved typed semantic kinds and immutable revision identit
     'payment_term_catalog_revisions_semantics_ck',
   ]);
   expect(
-    revisions.uniqueConstraints.some(
-      (constraint) => constraint.name === 'payment_term_catalog_revisions_number_uk',
-    ),
+    revisions.uniqueConstraints.some((constraint) => constraint.name === 'payment_term_catalog_revisions_number_uk'),
   ).toBe(true);
   expect(revisions.foreignKeys.map((foreignKey) => foreignKey.getName())).toContain(
     'payment_term_catalog_revisions_term_fk',
   );
-  expect(revisions.indexes.map((index) => index.config.name)).toContain(
-    'payment_term_catalog_revisions_semantics_idx',
-  );
+  expect(revisions.indexes.map((index) => index.config.name)).toContain('payment_term_catalog_revisions_semantics_idx');
   expect(revisions.columns.find(({ name }) => name === 'net_days')?.getSQLType()).toBe('bigint');
-  expect(
-    revisions.columns.some((column) => column.name === 'semantic_revision_id' && column.notNull),
-  ).toBe(true);
+  expect(revisions.columns.some((column) => column.name === 'semantic_revision_id' && column.notNull)).toBe(true);
 });
 
 it('preserves stable identity, lifecycle evidence, and reconciliation aliases', () => {
@@ -113,23 +98,17 @@ it('checks in generated migration history plus explicit force-RLS and append-onl
   const migrationRoot = new URL('../../drizzle/', import.meta.url);
   const folders = EffectArray.sort(readdirSync(migrationRoot), Order.String);
   expect(folders.length).toBeGreaterThanOrEqual(2);
-  const sqlFiles = folders.map((folder) =>
-    readFileSync(new URL(`${folder}/migration.sql`, migrationRoot), 'utf-8'),
-  );
+  const sqlFiles = folders.map((folder) => readFileSync(new URL(`${folder}/migration.sql`, migrationRoot), 'utf-8'));
   const combined = sqlFiles.join('\n');
   for (const table of PAYMENT_TERM_CATALOG_TABLE_INVENTORY) {
-    expect(combined).toContain(
-      `ALTER TABLE "payment_term_catalog"."${table}" FORCE ROW LEVEL SECURITY`,
-    );
+    expect(combined).toContain(`ALTER TABLE "payment_term_catalog"."${table}" FORCE ROW LEVEL SECURITY`);
   }
   expect(combined).toContain('payment_term_revisions_append_only');
   expect(combined).toContain('payment_term_lifecycle_events_append_only');
   expect(combined).toContain('payment_term_aliases_append_only');
   expect(combined).toContain('payment_terms_identity_immutable');
   expect(combined).toContain('CREATE UNIQUE INDEX "payment_term_catalog_revisions_semantics_uk"');
-  expect(combined).toContain(
-    'DROP INDEX "payment_term_catalog"."payment_term_catalog_revisions_semantics_uk"',
-  );
+  expect(combined).toContain('DROP INDEX "payment_term_catalog"."payment_term_catalog_revisions_semantics_uk"');
   expect(combined).toContain('CREATE INDEX "payment_term_catalog_revisions_semantics_idx"');
   expect(
     sqlFiles.some(
@@ -138,15 +117,9 @@ it('checks in generated migration history plus explicit force-RLS and append-onl
         migration.includes('"net_days" between 0 and 9007199254740991'),
     ),
   ).toBe(true);
-  expect(combined).toContain(
-    '"net_days" is not null and "net_days" between 0 and 9007199254740991',
-  );
-  expect(combined).toContain(
-    '"retirement_reason" is not null and "retirement_reason" = btrim("retirement_reason")',
-  );
-  expect(combined).toContain(
-    "v_net_days bigint := CASE WHEN p_input->'semantics'->>'kind' = 'NET_DAYS'",
-  );
+  expect(combined).toContain('"net_days" is not null and "net_days" between 0 and 9007199254740991');
+  expect(combined).toContain('"retirement_reason" is not null and "retirement_reason" = btrim("retirement_reason")');
+  expect(combined).toContain("v_net_days bigint := CASE WHEN p_input->'semantics'->>'kind' = 'NET_DAYS'");
 });
 
 it('hardens governed routines against concurrent conflicts, alias corruption, and page loss', () => {
@@ -155,10 +128,7 @@ it('hardens governed routines against concurrent conflicts, alias corruption, an
     folder.endsWith('_harden-governed-payment-term-routines'),
   );
   expect(hardeningFolder).toBeDefined();
-  const hardening = readFileSync(
-    new URL(`${hardeningFolder}/migration.sql`, migrationRoot),
-    'utf-8',
-  );
+  const hardening = readFileSync(new URL(`${hardeningFolder}/migration.sql`, migrationRoot), 'utf-8');
 
   expect(hardening).toContain("'payment-term-code|'");
   expect(hardening).toContain("'payment-term-semantics|'");
@@ -200,12 +170,8 @@ it('exposes only audited scope-bound SECURITY DEFINER routines to the runtime ro
   const combined = EffectArray.sort(readdirSync(migrationRoot), Order.String)
     .map((folder) => readFileSync(new URL(`${folder}/migration.sql`, migrationRoot), 'utf-8'))
     .join('\n');
-  expect(combined).toContain(
-    'REVOKE ALL ON ALL TABLES IN SCHEMA "payment_term_catalog" FROM "ontos_runtime"',
-  );
-  expect(combined).toContain(
-    'REVOKE ALL ON ALL SEQUENCES IN SCHEMA "payment_term_catalog" FROM "ontos_runtime"',
-  );
+  expect(combined).toContain('REVOKE ALL ON ALL TABLES IN SCHEMA "payment_term_catalog" FROM "ontos_runtime"');
+  expect(combined).toContain('REVOKE ALL ON ALL SEQUENCES IN SCHEMA "payment_term_catalog" FROM "ontos_runtime"');
   expect(combined).toContain('CREATE FUNCTION "payment_term_catalog"."assert_operation_scope"');
   expect(combined).toContain('SECURITY DEFINER');
   expect(combined).toContain("current_setting('ontos.tenant_id', true)");
@@ -222,14 +188,9 @@ it('exposes only audited scope-bound SECURITY DEFINER routines to the runtime ro
   ]) {
     expect(combined).toContain(`GRANT EXECUTE ON FUNCTION "payment_term_catalog"."${routine}"`);
   }
-  expect(combined).not.toContain(
-    'GRANT EXECUTE ON FUNCTION "payment_term_catalog"."definition_json"',
-  );
+  expect(combined).not.toContain('GRANT EXECUTE ON FUNCTION "payment_term_catalog"."definition_json"');
 
-  const verifier = readFileSync(
-    new URL('../../scripts/verify-db-schema.mts', import.meta.url),
-    'utf-8',
-  );
+  const verifier = readFileSync(new URL('../../scripts/verify-db-schema.mts', import.meta.url), 'utf-8');
   expect(verifier).toContain('bool_or(has_table_privilege');
   expect(verifier).toContain('routine.oid::regprocedure::text in');
   expect(verifier).toContain('routine.prosecdef');

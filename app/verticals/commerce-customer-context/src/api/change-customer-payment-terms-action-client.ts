@@ -69,11 +69,6 @@ export const executeChangeCustomerPaymentTerms = (
 ) =>
   operationGateway.invoke(
     (credential) =>
-      executeChangeCustomerPaymentTermsWithAuthorization(
-        payload,
-        credential,
-        requestCorrelation,
-        options,
-      ),
+      executeChangeCustomerPaymentTermsWithAuthorization(payload, credential, requestCorrelation, options),
     options.gateway,
   );

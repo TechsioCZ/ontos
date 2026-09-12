@@ -84,15 +84,15 @@ export interface ArchiveRecordCandidate {
   readonly submittedByPrincipalId?: string;
 }
 
-export type HistoricalOrderLookup =
+type HistoricalOrderLookup =
   | { readonly outcome: 'FOUND'; readonly value: HistoricalOrderCandidate }
   | { readonly outcome: 'NOT_FOUND' };
 
-export type CustomerOrderHistoryDetailLookup =
+type CustomerOrderHistoryDetailLookup =
   | { readonly outcome: 'FOUND'; readonly value: CustomerOrderHistoryDetail }
   | { readonly outcome: 'NOT_FOUND' };
 
-export type HistoricalOrderDetailAuthorizationLookup =
+type HistoricalOrderDetailAuthorizationLookup =
   | { readonly outcome: 'FOUND'; readonly value: HistoricalOrderDetailAuthorizationCandidate }
   | { readonly outcome: 'NOT_FOUND' };
 
@@ -101,7 +101,7 @@ export type CustomerRecordVisibilityLookup =
   | { readonly outcome: 'INDETERMINATE' }
   | { readonly outcome: 'MISSING' };
 
-export interface HistoryAccessPort {
+interface HistoryAccessPort {
   readonly counterparty: (input: {
     readonly principalId: string;
     readonly profileRef: CounterpartyPurchasingProfileRef;
@@ -112,7 +112,7 @@ export interface HistoryAccessPort {
   }) => Effect.Effect<RetailHistoryAuthorizationFacts, HistoryOwnerUnavailable>;
 }
 
-export interface CounterpartyProfileAssociationPort {
+interface CounterpartyProfileAssociationPort {
   /** Resolves the owner-current exact Counterparty ↔ purchasing-profile association. */
   readonly current: (input: {
     readonly counterpartyRef: CounterpartyRef;
@@ -120,7 +120,7 @@ export interface CounterpartyProfileAssociationPort {
   }) => Effect.Effect<'ABSENT' | 'CURRENT' | 'INDETERMINATE', HistoryOwnerUnavailable>;
 }
 
-export interface OrderHistoryPort {
+interface OrderHistoryPort {
   /** Returns owner-current, already customer-minimized detail after the caller gates pass. */
   readonly getCustomerFacingDetail: (input: {
     readonly orderRef: HistoricalRecordRef;
@@ -141,14 +141,14 @@ export interface OrderHistoryPort {
   }) => Effect.Effect<readonly HistoricalOrderCandidate[], HistoryOwnerUnavailable>;
 }
 
-export interface CustomerRecordVisibilityPort {
+interface CustomerRecordVisibilityPort {
   readonly get: (input: {
     readonly recordRef: HistoricalRecordRef;
     readonly subject: CustomerHistorySubject;
   }) => Effect.Effect<CustomerRecordVisibilityLookup, HistoryOwnerUnavailable>;
 }
 
-export interface CustomerRecordTypeCatalogPort {
+interface CustomerRecordTypeCatalogPort {
   /** Owner-published admission contract; `null` is the closed, not-onboarded state. */
   readonly get: (input: {
     readonly ownerModuleId: string;
@@ -164,14 +164,14 @@ export interface HistoricalResourceAccessPort {
   }) => Effect.Effect<CurrentGateState, HistoryOwnerUnavailable>;
 }
 
-export interface CustomerArchiveSourcePort {
+interface CustomerArchiveSourcePort {
   readonly list: (input: {
     readonly subject: CustomerHistorySubject;
   }) => Effect.Effect<readonly ArchiveRecordCandidate[], HistoryOwnerUnavailable>;
   readonly ownerModuleId: string;
 }
 
-export interface CartPreparationPort {
+interface CartPreparationPort {
   /** Evaluates one line against Current Cart/Catalog rules; it performs no Cart write. */
   readonly prepareLine: (
     subject: CustomerHistorySubject,
@@ -191,10 +191,9 @@ export interface CustomerHistoryPorts {
 }
 
 /** Deployment-owned composition of current customer access and external record-owner ports. */
-export class CustomerHistoryPortsService extends Context.Service<
-  CustomerHistoryPortsService,
-  CustomerHistoryPorts
->()('@app/commerce-customer-context/shared/domain/history-ports/CustomerHistoryPortsService') {}
+export class CustomerHistoryPortsService extends Context.Service<CustomerHistoryPortsService, CustomerHistoryPorts>()(
+  '@app/commerce-customer-context/shared/domain/history-ports/CustomerHistoryPortsService',
+) {}
 
 /**
  * Explicit deployment boundary until Order, Cart, Billing, and customer-visibility owners
@@ -203,8 +202,7 @@ export class CustomerHistoryPortsService extends Context.Service<
  */
 const CUSTOMER_CONTEXT_OWNER = 'commerce.customer-context';
 const ORDER_OWNER = 'commerce.order';
-const unavailableHistoryOwner = (ownerModuleId: string) =>
-  Effect.fail(new HistoryOwnerUnavailable({ ownerModuleId }));
+const unavailableHistoryOwner = (ownerModuleId: string) => Effect.fail(new HistoryOwnerUnavailable({ ownerModuleId }));
 
 export const unavailableCustomerHistoryPorts = (): CustomerHistoryPorts =>
   Object.freeze({

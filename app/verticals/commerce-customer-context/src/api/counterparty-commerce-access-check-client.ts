@@ -21,7 +21,7 @@ type CounterpartyCommerceAccessCheckOperationInvocation = readonly [
 ];
 
 const counterpartyCommerceAccessCheckClient = (
-  credential: Redacted.Redacted<string>,
+  credential: Redacted.Redacted,
   requestCorrelation: string,
   options: CounterpartyCommerceAccessCheckClientOptions,
 ) =>
@@ -37,17 +37,9 @@ const counterpartyCommerceAccessCheckClient = (
 
 export const executeCounterpartyCommerceAccessCheckWithAuthorization = (
   payload: CounterpartyCommerceAccessCheckRequest,
-  ...[
-    credential,
-    requestCorrelation,
-    options = {},
-  ]: CounterpartyCommerceAccessCheckAuthorizedInvocation
+  ...[credential, requestCorrelation, options = {}]: CounterpartyCommerceAccessCheckAuthorizedInvocation
 ) =>
-  counterpartyCommerceAccessCheckClient(
-    Redacted.make(credential),
-    requestCorrelation,
-    options,
-  ).pipe(
+  counterpartyCommerceAccessCheckClient(Redacted.make(credential), requestCorrelation, options).pipe(
     Effect.flatMap((client) =>
       client.counterpartyCommerceAccessCheck.execute({
         headers: {},
@@ -63,10 +55,5 @@ export const executeCounterpartyCommerceAccessCheck = (
   ...[requestCorrelation, options = {}]: CounterpartyCommerceAccessCheckOperationInvocation
 ) =>
   operationGateway.invoke((credential) =>
-    executeCounterpartyCommerceAccessCheckWithAuthorization(
-      payload,
-      credential,
-      requestCorrelation,
-      options,
-    ),
+    executeCounterpartyCommerceAccessCheckWithAuthorization(payload, credential, requestCorrelation, options),
   );

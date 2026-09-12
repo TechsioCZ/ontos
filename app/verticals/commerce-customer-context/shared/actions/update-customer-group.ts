@@ -24,4 +24,3 @@ export const UpdateCustomerGroupResultSchema = Schema.Struct({
   changed: Schema.Boolean,
   group: CommerceCustomerGroupSchema,
 });
-export type UpdateCustomerGroupResult = typeof UpdateCustomerGroupResultSchema.Type;

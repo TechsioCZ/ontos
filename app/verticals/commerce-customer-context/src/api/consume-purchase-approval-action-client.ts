@@ -14,6 +14,7 @@ export interface ConsumePurchaseApprovalActionClientOptions {
   readonly baseUrl?: string | URL;
   readonly gateway?: Parameters<typeof operationGateway.invoke>[1];
   readonly idempotencyKey: string;
+  // eslint-disable-next-line effect-native/no-threaded-correlation-parameter -- Generated action-client compatibility option; this field is not threaded into the request and remains part of the published client signature. expires: 2027-03-31.
   readonly traceId?: string;
 }
 
@@ -22,16 +23,15 @@ type AuthorizedInvocation = readonly [
   requestCorrelation: string,
   options: ConsumePurchaseApprovalActionClientOptions,
 ];
-type OperationInvocation = readonly [
-  requestCorrelation: string,
-  options: ConsumePurchaseApprovalActionClientOptions,
-];
+type OperationInvocation = readonly [requestCorrelation: string, options: ConsumePurchaseApprovalActionClientOptions];
 
-const makeClient = (
-  credential: Redacted.Redacted,
-  requestCorrelation: string,
-  options: ConsumePurchaseApprovalActionClientOptions,
-) =>
+interface MakeClientOptions {
+  readonly credential: Redacted.Redacted;
+  readonly options: ConsumePurchaseApprovalActionClientOptions;
+  readonly requestCorrelation: string;
+}
+
+const makeClient = ({ credential, options, requestCorrelation }: MakeClientOptions) =>
   makeGovernedEffectBffClient(
     {
       api: ConsumePurchaseApprovalActionApi,
@@ -48,7 +48,7 @@ export const executeConsumePurchaseApprovalWithAuthorization = (
 ) =>
   Schema.encodeUnknownEffect(ConsumePurchaseApprovalPayloadSchema)(payload).pipe(
     Effect.flatMap((encoded) =>
-      makeClient(Redacted.make(credential), requestCorrelation, options).pipe(
+      makeClient({ credential: Redacted.make(credential), options, requestCorrelation }).pipe(
         Effect.flatMap((client) =>
           client.consumePurchaseApprovalAction.execute({
             headers: { 'idempotency-key': options.idempotencyKey },
@@ -64,12 +64,6 @@ export const executeConsumePurchaseApproval = (
   ...[requestCorrelation, options]: OperationInvocation
 ) =>
   operationGateway.invoke(
-    (credential) =>
-      executeConsumePurchaseApprovalWithAuthorization(
-        payload,
-        credential,
-        requestCorrelation,
-        options,
-      ),
+    (credential) => executeConsumePurchaseApprovalWithAuthorization(payload, credential, requestCorrelation, options),
     options.gateway,
   );

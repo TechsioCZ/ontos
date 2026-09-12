@@ -174,10 +174,7 @@ it.effect('publishes each exact terminal binding fact only after durable finaliz
       completionPublisher,
     );
     yield* provideWorkerServices(
-      handleReconcileRetailPortalProfileBindingRecoveryAuthorizationMutation(
-        recoveryRequest,
-        contextFor('recovery'),
-      ),
+      handleReconcileRetailPortalProfileBindingRecoveryAuthorizationMutation(recoveryRequest, contextFor('recovery')),
       {
         reconcile: () =>
           Effect.succeed({
@@ -214,44 +211,35 @@ it.effect('publishes each exact terminal binding fact only after durable finaliz
       completionPublisher,
     );
     expect(published).toHaveLength(3);
-    expect(published.map(({ payloadJson }) => payloadJson)).toEqual([
-      activePayload,
-      activePayload,
-      revokedPayload,
-    ]);
+    expect(published.map(({ payloadJson }) => payloadJson)).toEqual([activePayload, activePayload, revokedPayload]);
     expect(published.every(({ completionId }) => completionId === mutationId)).toBe(true);
-    expect(
-      published.every(
-        ({ sourceActionInvocationId }) => sourceActionInvocationId === actionInvocationId,
-      ),
-    ).toBe(true);
+    expect(published.every(({ sourceActionInvocationId }) => sourceActionInvocationId === actionInvocationId)).toBe(
+      true,
+    );
   });
 });
 
-it.effect(
-  'fails the delivery after committing an indeterminate scoped reconciliation attempt',
-  () => {
-    const callbackCompleted = { value: false };
-    return Effect.gen(function* indeterminateMutation() {
-      const failure = yield* Effect.flip(
-        handleReconcileRetailPortalProfileBindingActivationAuthorizationMutation(
-          activationRequest,
-          contextFor('activation'),
-        ).pipe(
-          Effect.provideService(RetailBindingAuthorizationMutationReconciliation, {
-            reconcile: () => Effect.succeed({ outcome: 'INDETERMINATE' }),
-          }),
-          Effect.provideService(
-            OutboxWorkerLegalEntityScopeFanout,
-            fanout(publisher(), legalEntityId, callbackCompleted),
-          ),
+it.effect('fails the delivery after committing an indeterminate scoped reconciliation attempt', () => {
+  const callbackCompleted = { value: false };
+  return Effect.gen(function* indeterminateMutation() {
+    const failure = yield* Effect.flip(
+      handleReconcileRetailPortalProfileBindingActivationAuthorizationMutation(
+        activationRequest,
+        contextFor('activation'),
+      ).pipe(
+        Effect.provideService(RetailBindingAuthorizationMutationReconciliation, {
+          reconcile: () => Effect.succeed({ outcome: 'INDETERMINATE' }),
+        }),
+        Effect.provideService(
+          OutboxWorkerLegalEntityScopeFanout,
+          fanout(publisher(), legalEntityId, callbackCompleted),
         ),
-      );
-      expect(callbackCompleted.value).toBe(true);
-      expect(failure.code).toBe('RECONCILIATION_INDETERMINATE');
-    });
-  },
-);
+      ),
+    );
+    expect(callbackCompleted.value).toBe(true);
+    expect(failure.code).toBe('RECONCILIATION_INDETERMINATE');
+  });
+});
 
 it.effect('rejects a cross-Tenant trigger before owner reconciliation', () => {
   let reconcileCalls = 0;
@@ -259,9 +247,7 @@ it.effect('rejects a cross-Tenant trigger before owner reconciliation', () => {
   const foreignRequest = {
     ...activationRequest,
     profileRef: { ...profileRef, tenantId: otherTenantId },
-  } as Parameters<
-    typeof handleReconcileRetailPortalProfileBindingActivationAuthorizationMutation
-  >[0];
+  } as Parameters<typeof handleReconcileRetailPortalProfileBindingActivationAuthorizationMutation>[0];
   return Effect.gen(function* crossTenantTrigger() {
     const failure = yield* Effect.flip(
       provideWorkerServices(
@@ -324,9 +310,9 @@ it('publishes a fail-closed request schema and three exact owner-local workers',
     sellingLegalEntityRef: { ...sellingLegalEntityRef, resourceId: otherTenantId },
   };
   expect(() =>
-    Schema.decodeUnknownSync(
-      RetailPortalProfileBindingActivationAuthorizationMutationRequestedPayloadSchema,
-    )(malformed),
+    Schema.decodeUnknownSync(RetailPortalProfileBindingActivationAuthorizationMutationRequestedPayloadSchema)(
+      malformed,
+    ),
   ).toThrow();
 
   const workers = [

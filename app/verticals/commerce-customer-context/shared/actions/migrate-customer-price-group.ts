@@ -31,12 +31,7 @@ export type MigrateCustomerPriceGroupPayload = typeof MigrateCustomerPriceGroupP
 
 const MigrationConflictItemSchema = Schema.Struct({
   assignmentRef: CustomerPriceGroupAssignmentRefSchema,
-  reason: Schema.Literals([
-    'ASSIGNMENT_CHANGED',
-    'ASSIGNMENT_MISSING',
-    'OVERLAP',
-    'PROFILE_INELIGIBLE',
-  ]),
+  reason: Schema.Literals(['ASSIGNMENT_CHANGED', 'ASSIGNMENT_MISSING', 'OVERLAP', 'PROFILE_INELIGIBLE']),
 });
 export const MigrateCustomerPriceGroupResultSchema = Schema.Union([
   Schema.TaggedStruct('MIGRATED', {
@@ -44,10 +39,6 @@ export const MigrateCustomerPriceGroupResultSchema = Schema.Union([
     changed: Schema.Boolean,
   }),
   Schema.TaggedStruct('CONFLICTS', {
-    conflicts: Schema.Array(MigrationConflictItemSchema).check(
-      Schema.isMinLength(1),
-      Schema.isMaxLength(100),
-    ),
+    conflicts: Schema.Array(MigrationConflictItemSchema).check(Schema.isMinLength(1), Schema.isMaxLength(100)),
   }),
 ]);
-export type MigrateCustomerPriceGroupResult = typeof MigrateCustomerPriceGroupResultSchema.Type;

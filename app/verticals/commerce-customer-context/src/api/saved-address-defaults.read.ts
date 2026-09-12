@@ -19,7 +19,7 @@ export interface SavedAddressDefaultsServices {
     tenantId: string,
   ) => Effect.Effect<SavedAddressDefaultsResponse, ReadHandlerUnavailable>;
 }
-export const savedAddressDefaultsEntrypoint = defineTenantModuleEntrypoint({
+const savedAddressDefaultsEntrypoint = defineTenantModuleEntrypoint({
   access: 'read',
   authorization: { kind: 'authenticated_principal' },
   entrypointKey: 'commerce.customer-context.api.saved-address-defaults',
@@ -48,8 +48,6 @@ export const savedAddressDefaultsRead = defineRead(
       .defaults(input, context.scope.tenantId)
       .pipe(Effect.map((result) => ({ evidence: { resultCount: 1 }, result }))),
   (transaction, scope) =>
-    Effect.succeed<SavedAddressDefaultsServices>(
-      addressReadServicesForTransaction(transaction, scope),
-    ),
+    Effect.succeed<SavedAddressDefaultsServices>(addressReadServicesForTransaction(transaction, scope)),
   profileTarget,
 );

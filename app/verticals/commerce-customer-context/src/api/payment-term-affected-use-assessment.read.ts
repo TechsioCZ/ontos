@@ -37,10 +37,7 @@ export interface PaymentTermAffectedUseExternalAuthority {
       'effectiveAt' | 'equivalentPaymentTermRefs' | 'paymentTermRef'
     >,
   ) => Effect.Effect<
-    Pick<
-      PaymentTermAffectedUseAssessment,
-      'evidenceReference' | 'observedAt' | 'openPurchaseCount'
-    >,
+    Pick<PaymentTermAffectedUseAssessment, 'evidenceReference' | 'observedAt' | 'openPurchaseCount'>,
     ReadHandlerUnavailable
   >;
   /** Verifies a migration/grace reference in the separately owned policy or migration registry. */
@@ -49,7 +46,7 @@ export interface PaymentTermAffectedUseExternalAuthority {
   ) => Effect.Effect<boolean, ReadHandlerUnavailable>;
 }
 
-export class PaymentTermAffectedUseExternalAuthorityService extends Context.Service<
+class PaymentTermAffectedUseExternalAuthorityService extends Context.Service<
   PaymentTermAffectedUseExternalAuthorityService,
   PaymentTermAffectedUseExternalAuthority
 >()(
@@ -66,10 +63,7 @@ interface CustomerPaymentTermAffectedUseAuthority {
       ];
     }>,
   ) => Effect.Effect<
-    Pick<
-      PaymentTermAffectedUseAssessment,
-      'currentCustomerEntitlementCount' | 'evidenceReference' | 'observedAt'
-    >,
+    Pick<PaymentTermAffectedUseAssessment, 'currentCustomerEntitlementCount' | 'evidenceReference' | 'observedAt'>,
     ReadHandlerUnavailable
   >;
 }
@@ -91,14 +85,10 @@ export const makePaymentTermAffectedUseAssessmentServices = (dependencies: {
     ].filter(
       (candidate, index, refs) =>
         refs.findIndex(
-          ({ resourceId, tenantId }) =>
-            resourceId === candidate.resourceId && tenantId === candidate.tenantId,
+          ({ resourceId, tenantId }) => resourceId === candidate.resourceId && tenantId === candidate.tenantId,
         ) === index,
     );
-    const paymentTermRefs = [
-      primaryPaymentTermRef ?? input.paymentTermRef,
-      ...equivalentPaymentTermRefs,
-    ] as const;
+    const paymentTermRefs = [primaryPaymentTermRef ?? input.paymentTermRef, ...equivalentPaymentTermRefs] as const;
     const [customerUse, purchaseUse] = yield* Effect.all(
       [
         dependencies.customerEntitlementUse.assess({
@@ -120,22 +110,17 @@ export const makePaymentTermAffectedUseAssessmentServices = (dependencies: {
         .update('\0')
         .update(purchaseUse.evidenceReference)
         .digest('hex')}`,
-      observedAt:
-        customerUse.observedAt < purchaseUse.observedAt
-          ? customerUse.observedAt
-          : purchaseUse.observedAt,
+      observedAt: customerUse.observedAt < purchaseUse.observedAt ? customerUse.observedAt : purchaseUse.observedAt,
       openPurchaseCount: purchaseUse.openPurchaseCount,
     };
     if (
-      input.claimedAssessment.currentCustomerEntitlementCount !==
-        assessment.currentCustomerEntitlementCount ||
+      input.claimedAssessment.currentCustomerEntitlementCount !== assessment.currentCustomerEntitlementCount ||
       input.claimedAssessment.openPurchaseCount !== assessment.openPurchaseCount ||
       input.claimedAssessment.observedAt > assessment.observedAt
     ) {
       return {
         kind: 'REJECTED' as const,
-        reason:
-          'The caller-provided affected-use inventory does not match the authoritative owner observation',
+        reason: 'The caller-provided affected-use inventory does not match the authoritative owner observation',
       };
     }
     if (input.claimedDisposition.kind !== 'REJECT_IF_IN_USE') {
@@ -143,8 +128,7 @@ export const makePaymentTermAffectedUseAssessmentServices = (dependencies: {
       if (!verified) {
         return {
           kind: 'REJECTED' as const,
-          reason:
-            'The migration or grace-policy reference is not authoritative for this Payment Term',
+          reason: 'The migration or grace-policy reference is not authoritative for this Payment Term',
         };
       }
     }
@@ -208,12 +192,10 @@ export const paymentTermAffectedUseAssessmentRead = defineRead(
     permissionTarget: 'module',
     policies: [],
     readKey: 'commerce.customer-context.api.payment-term-affected-use-assessment',
-    resourcePermission: defineReadResourcePermission<PaymentTermAffectedUseAssessmentRequest>(
-      ({ paymentTermRef }) => ({
-        permission: 'read',
-        resource: paymentTermRef,
-      }),
-    ),
+    resourcePermission: defineReadResourcePermission<PaymentTermAffectedUseAssessmentRequest>(({ paymentTermRef }) => ({
+      permission: 'read',
+      resource: paymentTermRef,
+    })),
     resultSchema: PaymentTermAffectedUseAssessmentResponseSchema,
     schemaVersion: '1',
   },
@@ -229,9 +211,7 @@ export const paymentTermAffectedUseAssessmentRead = defineRead(
       );
     }
     return Effect.gen(function* makeAffectedUseServices() {
-      const externalAuthority = yield* Effect.serviceOption(
-        PaymentTermAffectedUseExternalAuthorityService,
-      );
+      const externalAuthority = yield* Effect.serviceOption(PaymentTermAffectedUseExternalAuthorityService);
       const services = paymentTermsPersistenceForTransaction({
         invoker: transaction,
         scope: { ...scope, legalEntityId },

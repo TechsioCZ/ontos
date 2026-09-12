@@ -2,20 +2,13 @@
 // @ontos-action-owner payment.term-catalog
 // @ontos-action-slug retire-payment-term
 import type { ActionHandlerContext } from '@app/core-runtime';
-import {
-  defineAction,
-  defineActionResourcePermission,
-  defineTenantModuleEntrypoint,
-} from '@app/core-runtime';
+import { defineAction, defineActionResourcePermission, defineTenantModuleEntrypoint } from '@app/core-runtime';
 import { Context, DateTime, Effect, Match, Option, Schema } from 'effect';
 import {
   RetirePaymentTermPayloadSchema,
   RetirePaymentTermResultSchema,
 } from '../../shared/actions/retire-payment-term.ts';
-import type {
-  RetirePaymentTermPayload,
-  RetirePaymentTermResult,
-} from '../../shared/actions/retire-payment-term.ts';
+import type { RetirePaymentTermPayload, RetirePaymentTermResult } from '../../shared/actions/retire-payment-term.ts';
 import type {
   PaymentTermAffectedUseAssessment,
   PaymentTermAffectedUseDisposition,
@@ -37,20 +30,14 @@ import type { PaymentTermCatalogPersistence } from '../persistence/payment-term-
 import {
   PaymentTermCatalogPersistenceConflict,
   PaymentTermCatalogPersistenceUnavailable,
-  makePaymentTermCatalogPersistence,
+  paymentTermCatalogPersistenceForScope,
 } from '../persistence/payment-term-catalog-persistence.ts';
 import { customerPaymentTermAffectedUseAuthorityFromEnvironment } from '../integrations/customer-payment-term-affected-use.ts';
 import { customerPaymentTermRetirementAuthorityFromEnvironment } from '../integrations/customer-payment-term-retirement.ts';
 import { createRetirePaymentTermPaymentTermCatalogPaymentTermRetiredV1OutboxMessage } from './retire-payment-term.payment-term-catalog-payment-term-retired-v1.outbox-message.ts';
 
-export {
-  RetirePaymentTermPayloadSchema,
-  RetirePaymentTermResultSchema,
-} from '../../shared/actions/retire-payment-term.ts';
-export type {
-  RetirePaymentTermPayload,
-  RetirePaymentTermResult,
-} from '../../shared/actions/retire-payment-term.ts';
+export { RetirePaymentTermPayloadSchema } from '../../shared/actions/retire-payment-term.ts';
+export type { RetirePaymentTermPayload, RetirePaymentTermResult } from '../../shared/actions/retire-payment-term.ts';
 
 const ErrorSchema = Schema.Union([
   PaymentTermAffectedUseAssessmentRejected,
@@ -64,6 +51,7 @@ const ErrorSchema = Schema.Union([
   PaymentTermRetirementReservationRejected,
   PaymentTermRetirementReservationUnavailable,
 ]);
+const MODULE_KEY = 'payment.term-catalog' as const;
 const domainEvents = {
   'payment.term-catalog.payment-term-retired.v1': RetirePaymentTermResultSchema,
 } as const;
@@ -82,12 +70,10 @@ export interface PaymentTermAffectedUseAuthority {
     PaymentTermAffectedUseAssessmentRejected | PaymentTermAffectedUseAssessmentUnavailable
   >;
 }
-export class PaymentTermAffectedUseAuthorityService extends Context.Service<
+class PaymentTermAffectedUseAuthorityService extends Context.Service<
   PaymentTermAffectedUseAuthorityService,
   PaymentTermAffectedUseAuthority
->()(
-  '@app/payment-term-catalog/actions/retire-payment-term.action/PaymentTermAffectedUseAuthorityService',
-) {}
+>()('@app/payment-term-catalog/actions/retire-payment-term.action/PaymentTermAffectedUseAuthorityService') {}
 export interface PaymentTermRetirementAuthority {
   readonly commitRetirement: (input: {
     readonly actionInvocationId: string;
@@ -126,27 +112,45 @@ export type RetirePaymentTermServices = PaymentTermCatalogPersistence &
   PaymentTermAffectedUseAuthority &
   Partial<PaymentTermRetirementAuthority>;
 
-const makeRetirePaymentTermServices = (
-  transaction: Parameters<typeof makePaymentTermCatalogPersistence>[0],
-  scope: Parameters<typeof makePaymentTermCatalogPersistence>[1],
-) =>
-  Effect.gen(function* makeRetirementServices() {
-    const catalog = yield* makePaymentTermCatalogPersistence(transaction, scope);
+const makeRetirePaymentTermServices = Effect.fn('RetirePaymentTermAction.makeRetirePaymentTermServices')(
+  function* makeRetirementServices(
+    transaction: Parameters<typeof paymentTermCatalogPersistenceForScope>[0],
+    scope: Parameters<typeof paymentTermCatalogPersistenceForScope>[1],
+  ) {
+    const catalog = yield* paymentTermCatalogPersistenceForScope(transaction, scope);
     const authorityOption = yield* Effect.serviceOption(PaymentTermAffectedUseAuthorityService);
     const authority = Option.isSome(authorityOption)
       ? authorityOption.value
       : yield* customerPaymentTermAffectedUseAuthorityFromEnvironment(scope.correlationId);
-    const retirementAuthority = yield* customerPaymentTermRetirementAuthorityFromEnvironment(
-      scope.correlationId,
-    );
-    return {
+    const retirementAuthority = yield* customerPaymentTermRetirementAuthorityFromEnvironment(scope.correlationId);
+    const services: RetirePaymentTermServices = {
       ...catalog,
       ...authority,
       ...retirementAuthority,
     };
-  });
+    return services;
+  },
+);
 type Definition = PaymentTermDefinition;
 const isPersistenceId = Schema.is(Schema.String.check(Schema.isUUID()));
+
+const isTrustedPaymentTermRef = (paymentTermRef: PaymentTermRef, trustedTenantId: string) =>
+  paymentTermRef.tenantId === trustedTenantId && isPersistenceId(paymentTermRef.resourceId);
+
+const reserveRetirement = (
+  services: RetirePaymentTermServices,
+  input: Parameters<PaymentTermRetirementAuthority['reserveRetirement']>[0],
+) => {
+  const reserve = services.reserveRetirement;
+  return reserve === undefined ? Effect.void : reserve(input);
+};
+
+const retirementIsBlockedByUse = (
+  assessment: PaymentTermAffectedUseAssessment,
+  disposition: PaymentTermAffectedUseDisposition,
+) =>
+  (assessment.currentCustomerEntitlementCount > 0 || assessment.openPurchaseCount > 0) &&
+  disposition.kind === 'REJECT_IF_IN_USE';
 
 const notFound = (paymentTermRef: PaymentTermRef) =>
   new PaymentTermNotFound({
@@ -169,6 +173,7 @@ const resultFromDefinition = (
 });
 
 const affectedUseAuditEvidence = (payload: RetirePaymentTermPayload) => {
+  // oxlint-disable-next-line anti-slop/no-known-value-widening -- The mutable optional field intentionally matches the owner audit-evidence schema across disposition branches.
   const handling: { affectedUseHandlingReference?: string } = {};
   if (payload.affectedUseDisposition.kind === 'EXPLICIT_MIGRATION') {
     handling.affectedUseHandlingReference = payload.affectedUseDisposition.migrationReference;
@@ -187,265 +192,245 @@ const affectedUseAuditEvidence = (payload: RetirePaymentTermPayload) => {
   };
 };
 
-export const handleRetirePaymentTerm = Effect.fn('RetirePaymentTermAction.handle')(
-  function* retirePaymentTerm(
-    payload: RetirePaymentTermPayload,
-    context: ActionHandlerContext<typeof domainEvents, RetirePaymentTermServices>,
-  ) {
-    if (
-      payload.paymentTermRef.tenantId !== context.scope.tenantId ||
-      !isPersistenceId(payload.paymentTermRef.resourceId)
-    ) {
-      return yield* notFound(payload.paymentTermRef);
-    }
-    const currentOption = yield* context.services.getCurrent(payload.paymentTermRef.resourceId);
-    if (Option.isNone(currentOption)) {
-      return yield* notFound(payload.paymentTermRef);
-    }
-    const current = currentOption.value;
-    if (payload.effectiveAt < current.lifecycle.effectiveFrom) {
-      return yield* new PaymentTermLifecycleConflict({
-        code: 'payment_term_lifecycle_conflict',
-        reason: 'Retirement cannot become effective before the Payment Term activation',
-      });
-    }
-    if (current.metadataRevision !== payload.expectedMetadataRevision) {
-      return yield* new PaymentTermRevisionConflict({
-        actualRevision: current.metadataRevision,
-        code: 'payment_term_revision_conflict',
-        expectedRevision: payload.expectedMetadataRevision,
-        reason: 'The Payment Term changed after the retirement was prepared',
-      });
-    }
-    const historyOption = yield* context.services.getHistory(payload.paymentTermRef.resourceId);
-    if (Option.isNone(historyOption)) {
-      return yield* new PaymentTermAffectedUseAssessmentUnavailable({
-        code: 'payment_term_affected_use_assessment_unavailable',
-        reason: 'Payment Term alias inventory is unavailable',
-      });
-    }
-    const history = historyOption.value;
-    if (
-      history.aliases.some(
-        ({ aliasRef }) => aliasRef.resourceId === payload.paymentTermRef.resourceId,
-      )
-    ) {
-      return yield* new PaymentTermLifecycleConflict({
-        code: 'payment_term_lifecycle_conflict',
-        reason: 'A reconciled alias cannot be retired independently of its canonical Payment Term',
-      });
-    }
-    const equivalentPaymentTermRefs = [
-      ...new Map(
-        [
-          payload.paymentTermRef,
-          ...history.aliases.flatMap(({ aliasRef, canonicalRef }) =>
-            canonicalRef.resourceId === payload.paymentTermRef.resourceId ? [aliasRef] : [],
-          ),
-        ].map(
-          (reference) =>
-            [
-              `${reference.tenantId}:${reference.moduleId}:${reference.resourceType}:${reference.resourceId}`,
-              reference,
-            ] as const,
+export const handleRetirePaymentTerm = Effect.fn('RetirePaymentTermAction.handle')(function* retirePaymentTerm(
+  payload: RetirePaymentTermPayload,
+  context: ActionHandlerContext<typeof domainEvents, RetirePaymentTermServices>,
+) {
+  if (!isTrustedPaymentTermRef(payload.paymentTermRef, context.scope.tenantId)) {
+    return yield* notFound(payload.paymentTermRef);
+  }
+  const currentOption = yield* context.services.getCurrent(payload.paymentTermRef.resourceId);
+  if (Option.isNone(currentOption)) {
+    return yield* notFound(payload.paymentTermRef);
+  }
+  const current = currentOption.value;
+  if (payload.effectiveAt < current.lifecycle.effectiveFrom) {
+    return yield* new PaymentTermLifecycleConflict({
+      code: 'payment_term_lifecycle_conflict',
+      reason: 'Retirement cannot become effective before the Payment Term activation',
+    });
+  }
+  if (current.metadataRevision !== payload.expectedMetadataRevision) {
+    return yield* new PaymentTermRevisionConflict({
+      actualRevision: current.metadataRevision,
+      code: 'payment_term_revision_conflict',
+      expectedRevision: payload.expectedMetadataRevision,
+      reason: 'The Payment Term changed after the retirement was prepared',
+    });
+  }
+  const historyOption = yield* context.services.getHistory(payload.paymentTermRef.resourceId);
+  if (Option.isNone(historyOption)) {
+    return yield* new PaymentTermAffectedUseAssessmentUnavailable({
+      code: 'payment_term_affected_use_assessment_unavailable',
+      reason: 'Payment Term alias inventory is unavailable',
+    });
+  }
+  const history = historyOption.value;
+  if (history.aliases.some(({ aliasRef }) => aliasRef.resourceId === payload.paymentTermRef.resourceId)) {
+    return yield* new PaymentTermLifecycleConflict({
+      code: 'payment_term_lifecycle_conflict',
+      reason: 'A reconciled alias cannot be retired independently of its canonical Payment Term',
+    });
+  }
+  const equivalentPaymentTermRefs = [
+    ...new Map(
+      [
+        payload.paymentTermRef,
+        ...history.aliases.flatMap(({ aliasRef, canonicalRef }) =>
+          canonicalRef.resourceId === payload.paymentTermRef.resourceId ? [aliasRef] : [],
         ),
-      ).values(),
-    ];
-    if (equivalentPaymentTermRefs.length > 200) {
-      return yield* new PaymentTermAffectedUseAssessmentUnavailable({
-        code: 'payment_term_affected_use_assessment_unavailable',
-        reason: 'The Payment Term alias inventory exceeds the safe atomic retirement batch size',
-      });
+      ].map(
+        (reference) =>
+          [
+            `${reference.tenantId}:${reference.moduleId}:${reference.resourceType}:${reference.resourceId}`,
+            reference,
+          ] as const,
+      ),
+    ).values(),
+  ];
+  if (equivalentPaymentTermRefs.length > 200) {
+    return yield* new PaymentTermAffectedUseAssessmentUnavailable({
+      code: 'payment_term_affected_use_assessment_unavailable',
+      reason: 'The Payment Term alias inventory exceeds the safe atomic retirement batch size',
+    });
+  }
+  const releaseReservation = (reservationRef: string | undefined) => {
+    const release = context.services.releaseRetirement;
+    if (reservationRef === undefined || release === undefined) {
+      return Effect.void;
     }
-    const releaseReservation = (reservationRef: string | undefined) => {
-      const release = context.services.releaseRetirement;
-      if (reservationRef === undefined || release === undefined) {
-        return Effect.void;
-      }
-      return release({
-        actionInvocationId: context.actionInvocationId,
-        effectiveAt: payload.effectiveAt,
-        equivalentPaymentTermRefs,
-        paymentTermRef: payload.paymentTermRef,
-        reason: payload.reason,
-        reservationRef,
-      }).pipe(Effect.ignore);
-    };
-    const reserve = context.services.reserveRetirement;
-    const reservation =
-      reserve === undefined
-        ? undefined
-        : yield* reserve({
+    return release({
+      actionInvocationId: context.actionInvocationId,
+      effectiveAt: payload.effectiveAt,
+      equivalentPaymentTermRefs,
+      paymentTermRef: payload.paymentTermRef,
+      reason: payload.reason,
+      reservationRef,
+    }).pipe(Effect.ignore);
+  };
+  const reservation = yield* reserveRetirement(context.services, {
+    actionInvocationId: context.actionInvocationId,
+    effectiveAt: payload.effectiveAt,
+    equivalentPaymentTermRefs,
+    paymentTermRef: payload.paymentTermRef,
+    reason: payload.reason,
+  });
+  const verifiedGovernance = yield* context.services
+    .verifyRetirementGovernance({
+      claimedAssessment: payload.affectedUseAssessment,
+      claimedDisposition: payload.affectedUseDisposition,
+      effectiveAt: payload.effectiveAt,
+      equivalentPaymentTermRefs,
+      paymentTermRef: payload.paymentTermRef,
+    })
+    .pipe(Effect.tapError(() => releaseReservation(reservation?.reservationRef)));
+  const affectedUseAssessment = verifiedGovernance.assessment;
+  const affectedUseDisposition = verifiedGovernance.disposition;
+  const recordRetirementDataAccess = () =>
+    Effect.all(
+      [
+        context.recordDataAccess({
+          accessKind: 'read',
+          queryHash: `payment-term-current:${payload.paymentTermRef.resourceId}`,
+          resultCount: 1,
+          servingModuleKey: MODULE_KEY,
+          targetModuleKey: MODULE_KEY,
+          targetResourceId: payload.paymentTermRef.resourceId,
+          targetResourceType: payload.paymentTermRef.resourceType,
+        }),
+        context.recordDataAccess({
+          accessKind: 'read',
+          queryHash: `payment-term-history:${payload.paymentTermRef.resourceId}`,
+          resultCount: history.aliases.length + history.lifecycle.length + history.revisions.length,
+          servingModuleKey: MODULE_KEY,
+          targetModuleKey: MODULE_KEY,
+          targetResourceId: payload.paymentTermRef.resourceId,
+          targetResourceType: payload.paymentTermRef.resourceType,
+        }),
+        context.recordDataAccess({
+          accessKind: 'read',
+          queryHash: `customer-payment-term-affected-use:${payload.paymentTermRef.resourceId}`,
+          resultCount: affectedUseAssessment.currentCustomerEntitlementCount + affectedUseAssessment.openPurchaseCount,
+          servingModuleKey: MODULE_KEY,
+        }),
+      ],
+      { concurrency: 1, discard: true },
+    );
+  if (retirementIsBlockedByUse(affectedUseAssessment, affectedUseDisposition)) {
+    yield* releaseReservation(reservation?.reservationRef);
+    return yield* new PaymentTermInUse({
+      code: 'payment_term_in_use',
+      currentCustomerEntitlementCount: affectedUseAssessment.currentCustomerEntitlementCount,
+      openPurchaseCount: affectedUseAssessment.openPurchaseCount,
+      reason: 'Current customer entitlements or open purchases require an explicit migration or grace policy',
+    });
+  }
+
+  const outcome = yield* context.services
+    .retire({
+      actingPrincipalId: context.scope.principalId,
+      actionInvocationId: context.actionInvocationId,
+      effectiveAt: DateTime.toDateUtc(DateTime.makeUnsafe(payload.effectiveAt)),
+      expectedMetadataRevision: payload.expectedMetadataRevision,
+      paymentTermId: payload.paymentTermRef.resourceId,
+      reason: payload.reason,
+    })
+    .pipe(Effect.tapError(() => releaseReservation(reservation?.reservationRef)));
+  return yield* Match.value(outcome).pipe(
+    Match.tag('not_found', () => Effect.fail(notFound(payload.paymentTermRef))),
+    Match.tag('revision_conflict', ({ actualMetadataRevision }) =>
+      Effect.fail(
+        new PaymentTermRevisionConflict({
+          actualRevision: actualMetadataRevision,
+          code: 'payment_term_revision_conflict',
+          expectedRevision: payload.expectedMetadataRevision,
+          reason: 'The Payment Term changed concurrently with retirement',
+        }),
+      ),
+    ),
+    Match.tag('already_retired', (alreadyRetired) =>
+      // oxlint-disable-next-line effect-native/prefer-effect-fn-for-operations -- Effect.fn erases Match.tag's contextual parameter type and introduces unsafe-any diagnostics.
+      Effect.gen(function* idempotentRetirement() {
+        const { retiredEffectiveAt } = alreadyRetired;
+        if (retiredEffectiveAt !== payload.effectiveAt) {
+          return yield* new PaymentTermLifecycleConflict({
+            code: 'payment_term_lifecycle_conflict',
+            reason: 'A different retirement schedule is already recorded for this Payment Term',
+          });
+        }
+        const retiredOption = yield* context.services.getCurrent(payload.paymentTermRef.resourceId);
+        if (Option.isNone(retiredOption)) {
+          return yield* notFound(payload.paymentTermRef);
+        }
+        const commit = context.services.commitRetirement;
+        if (commit !== undefined && reservation !== undefined) {
+          yield* commit({
             actionInvocationId: context.actionInvocationId,
             effectiveAt: payload.effectiveAt,
             equivalentPaymentTermRefs,
             paymentTermRef: payload.paymentTermRef,
             reason: payload.reason,
+            reservationRef: reservation.reservationRef,
           });
-    const verifiedGovernance = yield* context.services
-      .verifyRetirementGovernance({
-        claimedAssessment: payload.affectedUseAssessment,
-        claimedDisposition: payload.affectedUseDisposition,
-        effectiveAt: payload.effectiveAt,
-        equivalentPaymentTermRefs,
-        paymentTermRef: payload.paymentTermRef,
-      })
-      .pipe(Effect.tapError(() => releaseReservation(reservation?.reservationRef)));
-    const affectedUseAssessment = verifiedGovernance.assessment;
-    const affectedUseDisposition = verifiedGovernance.disposition;
-    const recordRetirementDataAccess = () =>
-      Effect.all(
-        [
-          context.recordDataAccess({
-            accessKind: 'read',
-            queryHash: `payment-term-current:${payload.paymentTermRef.resourceId}`,
-            resultCount: 1,
-            servingModuleKey: 'payment.term-catalog',
-            targetModuleKey: 'payment.term-catalog',
-            targetResourceId: payload.paymentTermRef.resourceId,
-            targetResourceType: payload.paymentTermRef.resourceType,
+        }
+        const retired = retiredOption.value;
+        const result = resultFromDefinition(retired, retiredEffectiveAt, false);
+        yield* context.recordAuditEvidence(
+          affectedUseAuditEvidence({
+            ...payload,
+            affectedUseAssessment,
+            affectedUseDisposition,
           }),
-          context.recordDataAccess({
-            accessKind: 'read',
-            queryHash: `payment-term-history:${payload.paymentTermRef.resourceId}`,
-            resultCount:
-              history.aliases.length + history.lifecycle.length + history.revisions.length,
-            servingModuleKey: 'payment.term-catalog',
-            targetModuleKey: 'payment.term-catalog',
-            targetResourceId: payload.paymentTermRef.resourceId,
-            targetResourceType: payload.paymentTermRef.resourceType,
-          }),
-          context.recordDataAccess({
-            accessKind: 'read',
-            queryHash: `customer-payment-term-affected-use:${payload.paymentTermRef.resourceId}`,
-            resultCount:
-              affectedUseAssessment.currentCustomerEntitlementCount +
-              affectedUseAssessment.openPurchaseCount,
-            servingModuleKey: 'payment.term-catalog',
-          }),
-        ],
-        { concurrency: 1, discard: true },
-      );
-    const isInUse =
-      affectedUseAssessment.currentCustomerEntitlementCount > 0 ||
-      affectedUseAssessment.openPurchaseCount > 0;
-    if (isInUse && affectedUseDisposition.kind === 'REJECT_IF_IN_USE') {
-      yield* releaseReservation(reservation?.reservationRef);
-      return yield* new PaymentTermInUse({
-        code: 'payment_term_in_use',
-        currentCustomerEntitlementCount: affectedUseAssessment.currentCustomerEntitlementCount,
-        openPurchaseCount: affectedUseAssessment.openPurchaseCount,
-        reason:
-          'Current customer entitlements or open purchases require an explicit migration or grace policy',
-      });
-    }
-
-    const outcome = yield* context.services
-      .retire({
-        actingPrincipalId: context.scope.principalId,
-        actionInvocationId: context.actionInvocationId,
-        effectiveAt: DateTime.toDateUtc(DateTime.makeUnsafe(payload.effectiveAt)),
-        expectedMetadataRevision: payload.expectedMetadataRevision,
-        paymentTermId: payload.paymentTermRef.resourceId,
-        reason: payload.reason,
-      })
-      .pipe(Effect.tapError(() => releaseReservation(reservation?.reservationRef)));
-    return yield* Match.value(outcome).pipe(
-      Match.tag('not_found', () => Effect.fail(notFound(payload.paymentTermRef))),
-      Match.tag('revision_conflict', ({ actualMetadataRevision }) =>
-        Effect.fail(
-          new PaymentTermRevisionConflict({
-            actualRevision: actualMetadataRevision,
-            code: 'payment_term_revision_conflict',
-            expectedRevision: payload.expectedMetadataRevision,
-            reason: 'The Payment Term changed concurrently with retirement',
-          }),
-        ),
-      ),
-      Match.tag('already_retired', (alreadyRetired) =>
-        Effect.gen(function* idempotentRetirement() {
-          const { retiredEffectiveAt } = alreadyRetired;
-          if (retiredEffectiveAt !== payload.effectiveAt) {
-            return yield* new PaymentTermLifecycleConflict({
-              code: 'payment_term_lifecycle_conflict',
-              reason: 'A different retirement schedule is already recorded for this Payment Term',
-            });
-          }
-          const retiredOption = yield* context.services.getCurrent(
-            payload.paymentTermRef.resourceId,
-          );
-          if (Option.isNone(retiredOption)) {
-            return yield* notFound(payload.paymentTermRef);
-          }
-          const commit = context.services.commitRetirement;
-          if (commit !== undefined && reservation !== undefined) {
-            yield* commit({
-              actionInvocationId: context.actionInvocationId,
-              effectiveAt: payload.effectiveAt,
-              equivalentPaymentTermRefs,
-              paymentTermRef: payload.paymentTermRef,
-              reason: payload.reason,
-              reservationRef: reservation.reservationRef,
-            });
-          }
-          const retired = retiredOption.value;
-          const result = resultFromDefinition(retired, retiredEffectiveAt, false);
-          yield* context.recordAuditEvidence(
-            affectedUseAuditEvidence({
-              ...payload,
-              affectedUseAssessment,
-              affectedUseDisposition,
-            }),
-          );
-          yield* recordRetirementDataAccess();
-          return result;
-        }),
-      ),
-      Match.tag('retired', ({ definition }) =>
-        Effect.gen(function* changedRetirement() {
-          const result = resultFromDefinition(definition, payload.effectiveAt, true);
-          const commit = context.services.commitRetirement;
-          if (commit !== undefined && reservation !== undefined) {
-            yield* commit({
-              actionInvocationId: context.actionInvocationId,
-              effectiveAt: payload.effectiveAt,
-              equivalentPaymentTermRefs,
-              paymentTermRef: payload.paymentTermRef,
-              reason: payload.reason,
-              reservationRef: reservation.reservationRef,
-            });
-          }
-          yield* context.recordAuditEvidence(
-            affectedUseAuditEvidence({
-              ...payload,
-              affectedUseAssessment,
-              affectedUseDisposition,
-            }),
-          );
-          yield* recordRetirementDataAccess();
-          const event = yield* context.addDomainEvent({
-            eventType: 'payment.term-catalog.payment-term-retired.v1',
-            payloadJson: result,
-            producerModuleKey: 'payment.term-catalog',
-            subjectModuleKey: 'payment.term-catalog',
-            subjectResourceId: result.paymentTermRef.resourceId,
-            subjectResourceType: result.paymentTermRef.resourceType,
+        );
+        yield* recordRetirementDataAccess();
+        return result;
+      }),
+    ),
+    Match.tag('retired', ({ definition }) =>
+      // oxlint-disable-next-line effect-native/prefer-effect-fn-for-operations -- Effect.fn erases Match.tag's contextual destructuring type and introduces unsafe-any diagnostics.
+      Effect.gen(function* changedRetirement() {
+        const result = resultFromDefinition(definition, payload.effectiveAt, true);
+        const commit = context.services.commitRetirement;
+        if (commit !== undefined && reservation !== undefined) {
+          yield* commit({
+            actionInvocationId: context.actionInvocationId,
+            effectiveAt: payload.effectiveAt,
+            equivalentPaymentTermRefs,
+            paymentTermRef: payload.paymentTermRef,
+            reason: payload.reason,
+            reservationRef: reservation.reservationRef,
           });
-          yield* context.addOutboxMessage(
-            event,
-            createRetirePaymentTermPaymentTermCatalogPaymentTermRetiredV1OutboxMessage({
-              ...result,
-              changed: true,
-            }),
-          );
-          return result;
-        }),
-      ),
-      Match.exhaustive,
-      Effect.tapError(() => releaseReservation(reservation?.reservationRef)),
-    );
-  },
-);
+        }
+        yield* context.recordAuditEvidence(
+          affectedUseAuditEvidence({
+            ...payload,
+            affectedUseAssessment,
+            affectedUseDisposition,
+          }),
+        );
+        yield* recordRetirementDataAccess();
+        const event = yield* context.addDomainEvent({
+          eventType: 'payment.term-catalog.payment-term-retired.v1',
+          payloadJson: result,
+          producerModuleKey: MODULE_KEY,
+          subjectModuleKey: MODULE_KEY,
+          subjectResourceId: result.paymentTermRef.resourceId,
+          subjectResourceType: result.paymentTermRef.resourceType,
+        });
+        yield* context.addOutboxMessage(
+          event,
+          createRetirePaymentTermPaymentTermCatalogPaymentTermRetiredV1OutboxMessage({
+            ...result,
+            changed: true,
+          }),
+        );
+        return result;
+      }),
+    ),
+    Match.exhaustive,
+    Effect.tapError(() => releaseReservation(reservation?.reservationRef)),
+  );
+});
 
 export const retirePaymentTermAction = defineAction(
   {
@@ -462,12 +447,12 @@ export const retirePaymentTermAction = defineAction(
       access: 'write',
       authorization: { kind: 'action_execution', provisioning: 'explicit' },
       entrypointKey: 'payment.term-catalog.retire-payment-term',
-      moduleKey: 'payment.term-catalog',
+      moduleKey: MODULE_KEY,
       role: 'action',
     }),
     idempotency: 'required',
     legalEntityScope: 'required',
-    owningModuleKey: 'payment.term-catalog',
+    owningModuleKey: MODULE_KEY,
     payloadSchema: RetirePaymentTermPayloadSchema,
     policies: [],
     resourcePermission: defineActionResourcePermission<RetirePaymentTermPayload>((payload) => ({
@@ -480,11 +465,3 @@ export const retirePaymentTermAction = defineAction(
   handleRetirePaymentTerm,
   makeRetirePaymentTermServices,
 );
-
-// <generated-outbox-message-exports>
-export { createRetirePaymentTermPaymentTermCatalogPaymentTermRetiredV1OutboxMessage } from './retire-payment-term.payment-term-catalog-payment-term-retired-v1.outbox-message.ts';
-export { RetirePaymentTermPaymentTermCatalogPaymentTermRetiredV1OutboxPayloadSchema } from './retire-payment-term.payment-term-catalog-payment-term-retired-v1.outbox-message.ts';
-export { RetirePaymentTermPaymentTermCatalogPaymentTermRetiredV1OutboxProducerModuleKey } from './retire-payment-term.payment-term-catalog-payment-term-retired-v1.outbox-message.ts';
-export { RetirePaymentTermPaymentTermCatalogPaymentTermRetiredV1OutboxTopic } from './retire-payment-term.payment-term-catalog-payment-term-retired-v1.outbox-message.ts';
-export type { RetirePaymentTermPaymentTermCatalogPaymentTermRetiredV1OutboxPayload } from './retire-payment-term.payment-term-catalog-payment-term-retired-v1.outbox-message.ts';
-// </generated-outbox-message-exports>

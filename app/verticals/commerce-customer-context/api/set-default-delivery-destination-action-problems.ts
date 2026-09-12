@@ -3,7 +3,7 @@
 // @ontos-action-http-slug set-default-delivery-destination
 // oxlint-disable sonarjs/function-name -- Effect Match.tags requires owner-declared tag keys; remove-when: sonarjs accepts discriminant-map properties.
 import type { ActionCoreError } from '@app/core-runtime';
-import { Effect, HttpApiMiddleware } from '@modern-js/plugin-bff/effect-edge';
+import { Effect, HttpApiMiddleware } from '@modern-js/bff-effect/effect-edge';
 import { Match, Schema } from 'effect';
 import {
   SetDefaultDeliveryDestinationActionAlreadyCommittedProblemSchema,
@@ -127,22 +127,14 @@ export const setDefaultDeliveryDestinationActionProblem = {
 const mapDomainProblem = (error: DomainError): SetDefaultDeliveryDestinationActionProblem =>
   Match.value(error).pipe(
     Match.tags({
-      AddressBookUnavailable: () =>
-        setDefaultDeliveryDestinationActionProblem.unavailable('address_book_unavailable'),
-      SavedAddressConflict: () =>
-        setDefaultDeliveryDestinationActionProblem.conflict('saved_address_conflict'),
-      SavedAddressInvalid: () =>
-        setDefaultDeliveryDestinationActionProblem.ineligible('saved_address_invalid'),
-      SavedAddressNotFound: () =>
-        setDefaultDeliveryDestinationActionProblem.notFound('saved_address_not_found'),
+      AddressBookUnavailable: () => setDefaultDeliveryDestinationActionProblem.unavailable('address_book_unavailable'),
+      SavedAddressConflict: () => setDefaultDeliveryDestinationActionProblem.conflict('saved_address_conflict'),
+      SavedAddressInvalid: () => setDefaultDeliveryDestinationActionProblem.ineligible('saved_address_invalid'),
+      SavedAddressNotFound: () => setDefaultDeliveryDestinationActionProblem.notFound('saved_address_not_found'),
       SavedAddressReconciliationRequired: () =>
-        setDefaultDeliveryDestinationActionProblem.ineligible(
-          'saved_address_reconciliation_required',
-        ),
+        setDefaultDeliveryDestinationActionProblem.ineligible('saved_address_reconciliation_required'),
       SavedAddressSourceTransitionRequired: () =>
-        setDefaultDeliveryDestinationActionProblem.ineligible(
-          'saved_address_source_transition_required',
-        ),
+        setDefaultDeliveryDestinationActionProblem.ineligible('saved_address_source_transition_required'),
     }),
     Match.exhaustive,
   );
@@ -174,39 +166,26 @@ const mapCoreProblem = (error: ActionCoreError): SetDefaultDeliveryDestinationAc
         }),
       ActionHandlerExecutionError: setDefaultDeliveryDestinationActionProblem.internal,
       ActionIdempotencyKeyRequired: setDefaultDeliveryDestinationActionProblem.precondition,
-      ActionInvocationNotFound: (failure) =>
-        setDefaultDeliveryDestinationActionProblem.notFound(failure.code),
+      ActionInvocationNotFound: (failure) => setDefaultDeliveryDestinationActionProblem.notFound(failure.code),
       ActionInvocationPersistenceError: (failure) =>
         setDefaultDeliveryDestinationActionProblem.unavailable(failure.code),
-      ActionInvocationStateError: (failure) =>
-        setDefaultDeliveryDestinationActionProblem.conflict(failure.code),
+      ActionInvocationStateError: (failure) => setDefaultDeliveryDestinationActionProblem.conflict(failure.code),
       ActionPayloadValidationError: setDefaultDeliveryDestinationActionProblem.invalid,
-      ActionPermissionCheckError: (failure) =>
-        setDefaultDeliveryDestinationActionProblem.unavailable(failure.code),
-      ActionPermissionDenied: (failure) =>
-        setDefaultDeliveryDestinationActionProblem.forbidden(failure.code),
-      ActionPolicyDenied: (failure) =>
-        setDefaultDeliveryDestinationActionProblem.ineligible(failure.code),
-      ActionPolicyEvaluationError: (failure) =>
-        setDefaultDeliveryDestinationActionProblem.unavailable(failure.code),
-      ActionRequestHashConflict: (failure) =>
-        setDefaultDeliveryDestinationActionProblem.conflict(failure.code),
+      ActionPermissionCheckError: (failure) => setDefaultDeliveryDestinationActionProblem.unavailable(failure.code),
+      ActionPermissionDenied: (failure) => setDefaultDeliveryDestinationActionProblem.forbidden(failure.code),
+      ActionPolicyDenied: (failure) => setDefaultDeliveryDestinationActionProblem.ineligible(failure.code),
+      ActionPolicyEvaluationError: (failure) => setDefaultDeliveryDestinationActionProblem.unavailable(failure.code),
+      ActionRequestHashConflict: (failure) => setDefaultDeliveryDestinationActionProblem.conflict(failure.code),
       ActionResultValidationError: setDefaultDeliveryDestinationActionProblem.internal,
-      ActionTransactionError: (failure) =>
-        setDefaultDeliveryDestinationActionProblem.unavailable(failure.code),
-      ActionTrustedContextValidationError:
-        setDefaultDeliveryDestinationActionProblem.authentication,
+      ActionTransactionError: (failure) => setDefaultDeliveryDestinationActionProblem.unavailable(failure.code),
+      ActionTrustedContextValidationError: setDefaultDeliveryDestinationActionProblem.authentication,
       ModuleStateCheckUnavailableError: (failure) =>
         setDefaultDeliveryDestinationActionProblem.unavailable(failure.code),
-      ModuleStateDeniedError: (failure) =>
-        setDefaultDeliveryDestinationActionProblem.forbidden(failure.code),
+      ModuleStateDeniedError: (failure) => setDefaultDeliveryDestinationActionProblem.forbidden(failure.code),
       OperationAuthenticationRequired: setDefaultDeliveryDestinationActionProblem.authentication,
-      OperationContextDenied: (failure) =>
-        setDefaultDeliveryDestinationActionProblem.forbidden(failure.code),
-      OperationContextInvalid: (failure) =>
-        setDefaultDeliveryDestinationActionProblem.forbidden(failure.code),
-      OperationContextUnavailable: (failure) =>
-        setDefaultDeliveryDestinationActionProblem.unavailable(failure.code),
+      OperationContextDenied: (failure) => setDefaultDeliveryDestinationActionProblem.forbidden(failure.code),
+      OperationContextInvalid: (failure) => setDefaultDeliveryDestinationActionProblem.forbidden(failure.code),
+      OperationContextUnavailable: (failure) => setDefaultDeliveryDestinationActionProblem.unavailable(failure.code),
     }),
     Match.exhaustive,
   );
@@ -217,8 +196,7 @@ export const mapSetDefaultDeliveryDestinationActionProblem = (
 ): SetDefaultDeliveryDestinationActionProblem =>
   isDomainError(error) ? mapDomainProblem(error) : mapCoreProblem(error);
 
-export const setDefaultDeliveryDestinationActionSchemaErrorLive =
-  HttpApiMiddleware.layerSchemaErrorTransform(
-    SetDefaultDeliveryDestinationActionSchemaErrorMiddleware,
-    () => Effect.fail(setDefaultDeliveryDestinationActionProblem.invalid()),
-  );
+export const setDefaultDeliveryDestinationActionSchemaErrorLive = HttpApiMiddleware.layerSchemaErrorTransform(
+  SetDefaultDeliveryDestinationActionSchemaErrorMiddleware,
+  () => Effect.fail(setDefaultDeliveryDestinationActionProblem.invalid()),
+);

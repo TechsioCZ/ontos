@@ -24,10 +24,7 @@ type AuthorizedInvocation = readonly [
   requestCorrelation: string,
   options: MigrateCustomerPriceGroupActionClientOptions,
 ];
-type OperationInvocation = readonly [
-  requestCorrelation: string,
-  options: MigrateCustomerPriceGroupActionClientOptions,
-];
+type OperationInvocation = readonly [requestCorrelation: string, options: MigrateCustomerPriceGroupActionClientOptions];
 
 interface MakeClientOptions {
   readonly credential: Redacted.Redacted;
@@ -68,12 +65,6 @@ export const executeMigrateCustomerPriceGroup = (
   ...[requestCorrelation, options]: OperationInvocation
 ) =>
   operationGateway.invoke(
-    (credential) =>
-      executeMigrateCustomerPriceGroupWithAuthorization(
-        payload,
-        credential,
-        requestCorrelation,
-        options,
-      ),
+    (credential) => executeMigrateCustomerPriceGroupWithAuthorization(payload, credential, requestCorrelation, options),
     options.gateway,
   );

@@ -12,10 +12,7 @@ import {
   CommerceCustomerGroupMembershipSchema,
   CommerceCustomerGroupSchema,
 } from '../../shared/domain/group-contract.ts';
-import type {
-  CommerceCustomerGroup,
-  CommerceCustomerGroupMembership,
-} from '../../shared/domain/group-contract.ts';
+import type { CommerceCustomerGroup, CommerceCustomerGroupMembership } from '../../shared/domain/group-contract.ts';
 import { CustomerGroupPersistenceUnavailable } from '../../shared/domain/group-errors.ts';
 import type { CustomerGroupPersistenceUnavailableError } from '../../shared/domain/group-errors.ts';
 import type {
@@ -254,9 +251,7 @@ const effectiveMembershipsRoutine = defineScopedRoutine({
   schema: 'commerce_customer_context',
 });
 
-const unavailable = (
-  failure: ScopedRoutineInvocationError | string,
-): CustomerGroupPersistenceUnavailableError =>
+const unavailable = (failure: ScopedRoutineInvocationError | string): CustomerGroupPersistenceUnavailableError =>
   new CustomerGroupPersistenceUnavailable({
     code: 'customer_group_persistence_unavailable',
     reason: Schema.is(Schema.String)(failure)
@@ -288,10 +283,8 @@ const decodeMembership = (
 
 const decodeMemberships = (
   values: readonly JsonObject[],
-): Effect.Effect<
-  readonly CommerceCustomerGroupMembership[],
-  CustomerGroupPersistenceUnavailableError
-> => Effect.forEach(values, (value) => decodeMembership(value), { concurrency: 1 });
+): Effect.Effect<readonly CommerceCustomerGroupMembership[], CustomerGroupPersistenceUnavailableError> =>
+  Effect.forEach(values, (value) => decodeMembership(value), { concurrency: 1 });
 
 const requireRow = <Row>(
   rows: readonly Row[],
@@ -308,8 +301,7 @@ const requireGroup = (row: GroupRow) =>
     ? Effect.fail(unavailable('The Customer Group routine omitted its group result'))
     : decodeGroup(row.group_json.value);
 
-const profileKind = (command: AssignCustomerGroupCommand | RemoveCustomerGroupCommand) =>
-  command.profile.profileKind;
+const profileKind = (command: AssignCustomerGroupCommand | RemoveCustomerGroupCommand) => command.profile.profileKind;
 
 const scopeMatches = (
   scope: OperationalScope & { readonly legalEntityId: string },
@@ -327,10 +319,7 @@ const commandScopeMatches = (
 
 const mapArchiveRow = (
   row: typeof ArchiveRowSchema.Type,
-): Effect.Effect<
-  ArchiveCustomerGroupPersistenceOutcome,
-  CustomerGroupPersistenceUnavailableError
-> => {
+): Effect.Effect<ArchiveCustomerGroupPersistenceOutcome, CustomerGroupPersistenceUnavailableError> => {
   if (row.outcome === 'NOT_FOUND') {
     return Effect.succeed({ _tag: 'not_found' });
   }
@@ -357,10 +346,7 @@ const mapArchiveRow = (
 
 const mapAssignRow = (
   row: typeof MembershipRowSchema.Type,
-): Effect.Effect<
-  AssignCustomerGroupPersistenceOutcome,
-  CustomerGroupPersistenceUnavailableError
-> => {
+): Effect.Effect<AssignCustomerGroupPersistenceOutcome, CustomerGroupPersistenceUnavailableError> => {
   if (row.outcome === 'NOT_FOUND') {
     return Effect.succeed({ _tag: 'not_found' });
   }
@@ -410,10 +396,7 @@ const mapAssignRow = (
 
 const mapCreateRow = (
   row: GroupRow,
-): Effect.Effect<
-  CreateCustomerGroupPersistenceOutcome,
-  CustomerGroupPersistenceUnavailableError
-> => {
+): Effect.Effect<CreateCustomerGroupPersistenceOutcome, CustomerGroupPersistenceUnavailableError> => {
   if (row.outcome === 'BUSINESS_CODE_CONFLICT') {
     return Effect.succeed({ _tag: 'business_code_conflict' });
   }
@@ -432,10 +415,7 @@ const mapCreateRow = (
 
 const mapReactivateRow = (
   row: GroupRow,
-): Effect.Effect<
-  ReactivateCustomerGroupPersistenceOutcome,
-  CustomerGroupPersistenceUnavailableError
-> => {
+): Effect.Effect<ReactivateCustomerGroupPersistenceOutcome, CustomerGroupPersistenceUnavailableError> => {
   if (row.outcome === 'NOT_FOUND') {
     return Effect.succeed({ _tag: 'not_found' });
   }
@@ -448,17 +428,12 @@ const mapReactivateRow = (
   if (row.outcome !== 'REACTIVATED') {
     return Effect.fail(unavailable('The Customer Group reactivation outcome is invalid'));
   }
-  return requireGroup(row).pipe(
-    Effect.map((group) => ({ _tag: 'reactivated' as const, changed: row.changed, group })),
-  );
+  return requireGroup(row).pipe(Effect.map((group) => ({ _tag: 'reactivated' as const, changed: row.changed, group })));
 };
 
 const mapRemoveRow = (
   row: typeof MembershipRowSchema.Type,
-): Effect.Effect<
-  RemoveCustomerGroupPersistenceOutcome,
-  CustomerGroupPersistenceUnavailableError
-> => {
+): Effect.Effect<RemoveCustomerGroupPersistenceOutcome, CustomerGroupPersistenceUnavailableError> => {
   if (row.outcome === 'NOT_FOUND') {
     return Effect.succeed({ _tag: 'not_found' });
   }
@@ -493,10 +468,7 @@ const mapRemoveRow = (
 
 const mapUpdateRow = (
   row: GroupRow,
-): Effect.Effect<
-  UpdateCustomerGroupPersistenceOutcome,
-  CustomerGroupPersistenceUnavailableError
-> => {
+): Effect.Effect<UpdateCustomerGroupPersistenceOutcome, CustomerGroupPersistenceUnavailableError> => {
   if (row.outcome === 'NOT_FOUND') {
     return Effect.succeed({ _tag: 'not_found' });
   }
@@ -512,9 +484,7 @@ const mapUpdateRow = (
   if (row.outcome !== 'UPDATED') {
     return Effect.fail(unavailable('The Customer Group update outcome is invalid'));
   }
-  return requireGroup(row).pipe(
-    Effect.map((group) => ({ _tag: 'updated' as const, changed: row.changed, group })),
-  );
+  return requireGroup(row).pipe(Effect.map((group) => ({ _tag: 'updated' as const, changed: row.changed, group })));
 };
 
 export const customerGroupPersistenceForTransaction = (
@@ -523,10 +493,7 @@ export const customerGroupPersistenceForTransaction = (
 ): CustomerGroupPersistence => ({
   archive: (
     command,
-  ): Effect.Effect<
-    ArchiveCustomerGroupPersistenceOutcome,
-    CustomerGroupPersistenceUnavailableError
-  > => {
+  ): Effect.Effect<ArchiveCustomerGroupPersistenceOutcome, CustomerGroupPersistenceUnavailableError> => {
     if (!commandScopeMatches(scope, command) || command.groupRef.tenantId !== scope.tenantId) {
       return Effect.fail(unavailable('The Customer Group archive scope is inconsistent'));
     }
@@ -546,12 +513,7 @@ export const customerGroupPersistenceForTransaction = (
         Effect.flatMap(mapArchiveRow),
       );
   },
-  assign: (
-    command,
-  ): Effect.Effect<
-    AssignCustomerGroupPersistenceOutcome,
-    CustomerGroupPersistenceUnavailableError
-  > => {
+  assign: (command): Effect.Effect<AssignCustomerGroupPersistenceOutcome, CustomerGroupPersistenceUnavailableError> => {
     if (
       !commandScopeMatches(scope, command) ||
       command.groupRef.tenantId !== scope.tenantId ||
@@ -577,12 +539,7 @@ export const customerGroupPersistenceForTransaction = (
         Effect.flatMap(mapAssignRow),
       );
   },
-  create: (
-    command,
-  ): Effect.Effect<
-    CreateCustomerGroupPersistenceOutcome,
-    CustomerGroupPersistenceUnavailableError
-  > => {
+  create: (command): Effect.Effect<CreateCustomerGroupPersistenceOutcome, CustomerGroupPersistenceUnavailableError> => {
     if (!commandScopeMatches(scope, command)) {
       return Effect.fail(unavailable('The Customer Group creation scope is inconsistent'));
     }
@@ -615,15 +572,13 @@ export const customerGroupPersistenceForTransaction = (
       Effect.flatMap((row) =>
         row.outcome === 'NOT_FOUND'
           ? Effect.succeed(Option.none<CommerceCustomerGroup>())
-          : requireGroup(row).pipe(Effect.map(Option.some)),
+          : requireGroup(row).pipe(Effect.asSome),
       ),
     );
   },
   effectiveMemberships: (query) => {
     if (!scopeMatches(scope, query) || query.profile.profileRef.tenantId !== scope.tenantId) {
-      return Effect.fail(
-        unavailable('The effective Customer Group Membership scope is inconsistent'),
-      );
+      return Effect.fail(unavailable('The effective Customer Group Membership scope is inconsistent'));
     }
     return transaction
       .invoke(effectiveMembershipsRoutine, [
@@ -638,9 +593,7 @@ export const customerGroupPersistenceForTransaction = (
           row.outcome === 'PROFILE_NOT_FOUND'
             ? Effect.succeed(Option.none<EffectiveCustomerGroupMembershipsResult>())
             : decodeMemberships(row.items_json).pipe(
-                Effect.map((items) =>
-                  Option.some({ effectiveAt: query.effectiveAt, items, profile: query.profile }),
-                ),
+                Effect.map((items) => Option.some({ effectiveAt: query.effectiveAt, items, profile: query.profile })),
               ),
         ),
       );
@@ -649,33 +602,31 @@ export const customerGroupPersistenceForTransaction = (
     if (!scopeMatches(scope, query) || query.groupRef.tenantId !== scope.tenantId) {
       return Effect.fail(unavailable('The Customer Group history scope is inconsistent'));
     }
-    return transaction
-      .invoke(historyRoutine, [query.groupRef.resourceId, query.asOf, query.cursor, query.limit])
-      .pipe(
-        Effect.mapError(unavailable),
-        Effect.flatMap((rows) => requireRow(rows, historyRoutine.routineKey)),
-        Effect.flatMap((row) => {
-          if (row.outcome === 'NOT_FOUND' || Option.isNone(row.group_json)) {
-            return Effect.succeed(Option.none<CustomerGroupHistoryResult>());
-          }
-          return Effect.all(
-            {
-              group: decodeGroup(row.group_json.value),
-              memberships: decodeMemberships(row.items_json),
-            },
-            { concurrency: 2 },
-          ).pipe(
-            Effect.map(({ group, memberships }) =>
-              Option.some({
-                asOf: query.asOf,
-                group,
-                memberships,
-                nextCursor: Option.getOrNull(row.next_cursor),
-              }),
-            ),
-          );
-        }),
-      );
+    return transaction.invoke(historyRoutine, [query.groupRef.resourceId, query.asOf, query.cursor, query.limit]).pipe(
+      Effect.mapError(unavailable),
+      Effect.flatMap((rows) => requireRow(rows, historyRoutine.routineKey)),
+      Effect.flatMap((row) => {
+        if (row.outcome === 'NOT_FOUND' || Option.isNone(row.group_json)) {
+          return Effect.succeed(Option.none<CustomerGroupHistoryResult>());
+        }
+        return Effect.all(
+          {
+            group: decodeGroup(row.group_json.value),
+            memberships: decodeMemberships(row.items_json),
+          },
+          { concurrency: 2 },
+        ).pipe(
+          Effect.map(({ group, memberships }) =>
+            Option.some({
+              asOf: query.asOf,
+              group,
+              memberships,
+              nextCursor: Option.getOrNull(row.next_cursor),
+            }),
+          ),
+        );
+      }),
+    );
   },
   members: (query) => {
     if (!scopeMatches(scope, query) || query.groupRef.tenantId !== scope.tenantId) {
@@ -710,10 +661,7 @@ export const customerGroupPersistenceForTransaction = (
   },
   reactivate: (
     command,
-  ): Effect.Effect<
-    ReactivateCustomerGroupPersistenceOutcome,
-    CustomerGroupPersistenceUnavailableError
-  > => {
+  ): Effect.Effect<ReactivateCustomerGroupPersistenceOutcome, CustomerGroupPersistenceUnavailableError> => {
     if (!commandScopeMatches(scope, command) || command.groupRef.tenantId !== scope.tenantId) {
       return Effect.fail(unavailable('The Customer Group reactivation scope is inconsistent'));
     }
@@ -733,12 +681,7 @@ export const customerGroupPersistenceForTransaction = (
         Effect.flatMap(mapReactivateRow),
       );
   },
-  remove: (
-    command,
-  ): Effect.Effect<
-    RemoveCustomerGroupPersistenceOutcome,
-    CustomerGroupPersistenceUnavailableError
-  > => {
+  remove: (command): Effect.Effect<RemoveCustomerGroupPersistenceOutcome, CustomerGroupPersistenceUnavailableError> => {
     if (
       !commandScopeMatches(scope, command) ||
       command.groupRef.tenantId !== scope.tenantId ||
@@ -765,12 +708,7 @@ export const customerGroupPersistenceForTransaction = (
         Effect.flatMap(mapRemoveRow),
       );
   },
-  update: (
-    command,
-  ): Effect.Effect<
-    UpdateCustomerGroupPersistenceOutcome,
-    CustomerGroupPersistenceUnavailableError
-  > => {
+  update: (command): Effect.Effect<UpdateCustomerGroupPersistenceOutcome, CustomerGroupPersistenceUnavailableError> => {
     if (!commandScopeMatches(scope, command) || command.groupRef.tenantId !== scope.tenantId) {
       return Effect.fail(unavailable('The Customer Group update scope is inconsistent'));
     }

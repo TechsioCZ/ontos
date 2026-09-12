@@ -3,7 +3,7 @@
 // @ontos-action-http-slug submit-purchase-approval-request
 // oxlint-disable sonarjs/function-name -- Effect Match.tags requires owner-declared tag keys; remove-when: sonarjs accepts discriminant-map properties.
 import type { ActionCoreError } from '@app/core-runtime';
-import { Effect, HttpApiMiddleware } from '@modern-js/plugin-bff/effect-edge';
+import { Effect, HttpApiMiddleware } from '@modern-js/bff-effect/effect-edge';
 import { Match, Schema } from 'effect';
 import {
   SubmitPurchaseApprovalRequestActionAlreadyCommittedProblemSchema,
@@ -21,175 +21,66 @@ import {
 } from '../shared/apis/submit-purchase-approval-request-action.ts';
 import type { SubmitPurchaseApprovalRequestActionProblem } from '../shared/apis/submit-purchase-approval-request-action.ts';
 import { submitPurchaseApprovalRequestAction } from '../src/actions/submit-purchase-approval-request.action.ts';
+/* oxlint-disable anti-slop-effect/no-service-constructor-imports -- These pure helpers construct problem values rather than Effect services. */
+import {
+  actionProblemStatus as problemStatus,
+  makeAuthenticationProblem,
+  makeConflictProblem,
+  makeForbiddenProblem,
+  makeIneligibleProblem,
+  makeInternalProblem,
+  makeInvalidProblem,
+  makeNotFoundProblem,
+  makePreconditionProblem,
+  makeUnavailableProblem,
+  purchasingApprovalRejectedProblemByCode,
+} from './action-problem-support.ts';
+/* oxlint-enable anti-slop-effect/no-service-constructor-imports */
+import type { PurchasingApprovalDomainProblemIdentity } from './action-problem-support.ts';
 
 type DomainError = typeof submitPurchaseApprovalRequestAction.descriptor.domainErrorSchema.Type;
 type ProblemOf<Tag extends SubmitPurchaseApprovalRequestActionProblem['_tag']> = Extract<
   SubmitPurchaseApprovalRequestActionProblem,
   { readonly _tag: Tag }
 >;
-type DomainProblemIdentity =
-  | {
-      readonly code:
-        | 'COMMIT_CONFLICT'
-        | 'IDEMPOTENCY_CONFLICT'
-        | 'LEVEL_ALREADY_COMPLETED'
-        | 'STALE_PROPOSAL_REVISION';
-      readonly kind: 'conflict';
-    }
-  | { readonly code: 'BUYER_PERMISSION_DENIED' | 'PERMISSION_DENIED'; readonly kind: 'forbidden' }
-  | {
-      readonly code:
-        | 'HIERARCHY_AMBIGUOUS'
-        | 'HIERARCHY_RANGE_INVALID'
-        | 'NO_ELIGIBLE_ROUTE'
-        | 'NOT_ROUTE_ELIGIBLE'
-        | 'OWNER_CONFIRMATION_EXPIRED'
-        | 'POLICY_ROUTE_INVALID'
-        | 'PROFILE_INACTIVE'
-        | 'PROPOSAL_MATERIAL_CHANGE'
-        | 'PROPOSAL_NOT_CURRENT'
-        | 'REQUEST_EXPIRED'
-        | 'REQUEST_NOT_PENDING'
-        | 'REQUEST_SUPERSEDED'
-        | 'SELF_APPROVAL_DENIED';
-      readonly kind: 'ineligible';
-    }
-  | { readonly code: 'HIERARCHY_NOT_FOUND'; readonly kind: 'notFound' }
-  | {
-      readonly code:
-        | 'CURRENT_STATE_INDETERMINATE'
-        | 'DEPENDENCY_UNAVAILABLE'
-        | 'EVIDENCE_PERSISTENCE_FAILED';
-      readonly kind: 'unavailable';
-    };
-
-const problemStatus = {
-  authentication: 401,
-  conflict: 409,
-  forbidden: 403,
-  ineligible: 422,
-  internal: 500,
-  invalid: 400,
-  notFound: 404,
-  precondition: 428,
-  rateLimited: 429,
-  timeout: 504,
-  unavailable: 503,
-} as const;
-
-const purchasingApprovalRejectedProblemByCode = {
-  BUYER_PERMISSION_DENIED: { code: 'BUYER_PERMISSION_DENIED', kind: 'forbidden' },
-  COMMIT_CONFLICT: { code: 'COMMIT_CONFLICT', kind: 'conflict' },
-  CURRENT_STATE_INDETERMINATE: { code: 'CURRENT_STATE_INDETERMINATE', kind: 'unavailable' },
-  DEPENDENCY_UNAVAILABLE: { code: 'DEPENDENCY_UNAVAILABLE', kind: 'unavailable' },
-  EVIDENCE_PERSISTENCE_FAILED: { code: 'EVIDENCE_PERSISTENCE_FAILED', kind: 'unavailable' },
-  HIERARCHY_AMBIGUOUS: { code: 'HIERARCHY_AMBIGUOUS', kind: 'ineligible' },
-  HIERARCHY_NOT_FOUND: { code: 'HIERARCHY_NOT_FOUND', kind: 'notFound' },
-  HIERARCHY_RANGE_INVALID: { code: 'HIERARCHY_RANGE_INVALID', kind: 'ineligible' },
-  IDEMPOTENCY_CONFLICT: { code: 'IDEMPOTENCY_CONFLICT', kind: 'conflict' },
-  LEVEL_ALREADY_COMPLETED: { code: 'LEVEL_ALREADY_COMPLETED', kind: 'conflict' },
-  NO_ELIGIBLE_ROUTE: { code: 'NO_ELIGIBLE_ROUTE', kind: 'ineligible' },
-  NOT_ROUTE_ELIGIBLE: { code: 'NOT_ROUTE_ELIGIBLE', kind: 'ineligible' },
-  OWNER_CONFIRMATION_EXPIRED: { code: 'OWNER_CONFIRMATION_EXPIRED', kind: 'ineligible' },
-  PERMISSION_DENIED: { code: 'PERMISSION_DENIED', kind: 'forbidden' },
-  POLICY_ROUTE_INVALID: { code: 'POLICY_ROUTE_INVALID', kind: 'ineligible' },
-  PROFILE_INACTIVE: { code: 'PROFILE_INACTIVE', kind: 'ineligible' },
-  PROPOSAL_MATERIAL_CHANGE: { code: 'PROPOSAL_MATERIAL_CHANGE', kind: 'ineligible' },
-  PROPOSAL_NOT_CURRENT: { code: 'PROPOSAL_NOT_CURRENT', kind: 'ineligible' },
-  REQUEST_EXPIRED: { code: 'REQUEST_EXPIRED', kind: 'ineligible' },
-  REQUEST_NOT_PENDING: { code: 'REQUEST_NOT_PENDING', kind: 'ineligible' },
-  REQUEST_SUPERSEDED: { code: 'REQUEST_SUPERSEDED', kind: 'ineligible' },
-  SELF_APPROVAL_DENIED: { code: 'SELF_APPROVAL_DENIED', kind: 'ineligible' },
-  STALE_PROPOSAL_REVISION: { code: 'STALE_PROPOSAL_REVISION', kind: 'conflict' },
-} as const satisfies Record<
-  Extract<DomainError, { readonly _tag: 'PurchasingApprovalRejected' }>['code'],
-  DomainProblemIdentity
->;
-
 export const submitPurchaseApprovalRequestActionProblem = {
-  authentication: (): ProblemOf<'SubmitPurchaseApprovalRequestActionAuthenticationProblem'> =>
-    SubmitPurchaseApprovalRequestActionAuthenticationProblemSchema.make({
-      detail: 'A valid audience-scoped Bearer assertion is required.',
-      status: problemStatus.authentication,
-      title: 'Authentication required',
-      type: 'https://ontos.dev/problems/operation-authentication-required',
-    }),
-  conflict: (
-    code: ProblemOf<'SubmitPurchaseApprovalRequestActionConflictProblem'>['code'],
-  ): ProblemOf<'SubmitPurchaseApprovalRequestActionConflictProblem'> =>
-    SubmitPurchaseApprovalRequestActionConflictProblemSchema.make({
-      code,
-      detail: 'The Action conflicts with current state.',
-      status: problemStatus.conflict,
-      title: 'Action conflict',
-      type: 'https://ontos.dev/problems/action-conflict',
-    }),
-  forbidden: (
-    code: ProblemOf<'SubmitPurchaseApprovalRequestActionForbiddenProblem'>['code'],
-  ): ProblemOf<'SubmitPurchaseApprovalRequestActionForbiddenProblem'> =>
-    SubmitPurchaseApprovalRequestActionForbiddenProblemSchema.make({
-      code,
-      detail: 'The principal is not permitted to perform this Action.',
-      status: problemStatus.forbidden,
-      title: 'Action forbidden',
-      type: 'https://ontos.dev/problems/action-forbidden',
-    }),
-  ineligible: (
-    code: ProblemOf<'SubmitPurchaseApprovalRequestActionIneligibleProblem'>['code'],
-  ): ProblemOf<'SubmitPurchaseApprovalRequestActionIneligibleProblem'> =>
-    SubmitPurchaseApprovalRequestActionIneligibleProblemSchema.make({
-      code,
-      detail: 'The request is not eligible for this Action.',
-      status: problemStatus.ineligible,
-      title: 'Action ineligible',
-      type: 'https://ontos.dev/problems/action-ineligible',
-    }),
-  internal: (): ProblemOf<'SubmitPurchaseApprovalRequestActionInternalProblem'> =>
-    SubmitPurchaseApprovalRequestActionInternalProblemSchema.make({
-      detail: 'The Action could not be completed.',
-      status: problemStatus.internal,
-      title: 'Action failed',
-      type: 'https://ontos.dev/problems/action-failed',
-    }),
-  invalid: (): ProblemOf<'SubmitPurchaseApprovalRequestActionInvalidProblem'> =>
-    SubmitPurchaseApprovalRequestActionInvalidProblemSchema.make({
-      detail: 'The submit-purchase-approval-request Action request is invalid.',
-      status: problemStatus.invalid,
-      title: 'Invalid Action request',
-      type: 'https://ontos.dev/problems/action-invalid',
-    }),
-  notFound: (
-    code: ProblemOf<'SubmitPurchaseApprovalRequestActionNotFoundProblem'>['code'],
-  ): ProblemOf<'SubmitPurchaseApprovalRequestActionNotFoundProblem'> =>
-    SubmitPurchaseApprovalRequestActionNotFoundProblemSchema.make({
-      code,
-      detail: 'The requested resource was not found.',
-      status: problemStatus.notFound,
-      title: 'Resource not found',
-      type: 'https://ontos.dev/problems/action-resource-not-found',
-    }),
-  precondition: (): ProblemOf<'SubmitPurchaseApprovalRequestActionPreconditionProblem'> =>
-    SubmitPurchaseApprovalRequestActionPreconditionProblemSchema.make({
-      detail: 'An Idempotency-Key header is required.',
-      status: problemStatus.precondition,
-      title: 'Idempotency key required',
-      type: 'https://ontos.dev/problems/idempotency-key-required',
-    }),
-  unavailable: (
-    code: ProblemOf<'SubmitPurchaseApprovalRequestActionUnavailableProblem'>['code'],
-  ): ProblemOf<'SubmitPurchaseApprovalRequestActionUnavailableProblem'> =>
-    SubmitPurchaseApprovalRequestActionUnavailableProblemSchema.make({
-      code,
-      detail: 'The Action capability is temporarily unavailable.',
-      retryable: true,
-      status: problemStatus.unavailable,
-      title: 'Action unavailable',
-      type: 'https://ontos.dev/problems/action-unavailable',
-    }),
+  authentication: makeAuthenticationProblem<ProblemOf<'SubmitPurchaseApprovalRequestActionAuthenticationProblem'>>(
+    (input) => SubmitPurchaseApprovalRequestActionAuthenticationProblemSchema.make(input),
+  ),
+  conflict: makeConflictProblem<
+    ProblemOf<'SubmitPurchaseApprovalRequestActionConflictProblem'>['code'],
+    ProblemOf<'SubmitPurchaseApprovalRequestActionConflictProblem'>
+  >((input) => SubmitPurchaseApprovalRequestActionConflictProblemSchema.make(input)),
+  forbidden: makeForbiddenProblem<
+    ProblemOf<'SubmitPurchaseApprovalRequestActionForbiddenProblem'>['code'],
+    ProblemOf<'SubmitPurchaseApprovalRequestActionForbiddenProblem'>
+  >((input) => SubmitPurchaseApprovalRequestActionForbiddenProblemSchema.make(input)),
+  ineligible: makeIneligibleProblem<
+    ProblemOf<'SubmitPurchaseApprovalRequestActionIneligibleProblem'>['code'],
+    ProblemOf<'SubmitPurchaseApprovalRequestActionIneligibleProblem'>
+  >((input) => SubmitPurchaseApprovalRequestActionIneligibleProblemSchema.make(input)),
+  internal: makeInternalProblem<ProblemOf<'SubmitPurchaseApprovalRequestActionInternalProblem'>>((input) =>
+    SubmitPurchaseApprovalRequestActionInternalProblemSchema.make(input),
+  ),
+  invalid: makeInvalidProblem<ProblemOf<'SubmitPurchaseApprovalRequestActionInvalidProblem'>>(
+    (input) => SubmitPurchaseApprovalRequestActionInvalidProblemSchema.make(input),
+    'submit-purchase-approval-request',
+  ),
+  notFound: makeNotFoundProblem<
+    ProblemOf<'SubmitPurchaseApprovalRequestActionNotFoundProblem'>['code'],
+    ProblemOf<'SubmitPurchaseApprovalRequestActionNotFoundProblem'>
+  >((input) => SubmitPurchaseApprovalRequestActionNotFoundProblemSchema.make(input)),
+  precondition: makePreconditionProblem<ProblemOf<'SubmitPurchaseApprovalRequestActionPreconditionProblem'>>((input) =>
+    SubmitPurchaseApprovalRequestActionPreconditionProblemSchema.make(input),
+  ),
+  unavailable: makeUnavailableProblem<
+    ProblemOf<'SubmitPurchaseApprovalRequestActionUnavailableProblem'>['code'],
+    ProblemOf<'SubmitPurchaseApprovalRequestActionUnavailableProblem'>
+  >((input) => SubmitPurchaseApprovalRequestActionUnavailableProblemSchema.make(input)),
 } as const;
 
 const mapDomainIdentity = (
-  identity: DomainProblemIdentity,
+  identity: PurchasingApprovalDomainProblemIdentity,
 ): SubmitPurchaseApprovalRequestActionProblem =>
   Match.value(identity).pipe(
     Match.when({ kind: 'conflict' as const }, (matched) =>
@@ -213,8 +104,7 @@ const mapDomainIdentity = (
 const mapDomainProblem = (error: DomainError): SubmitPurchaseApprovalRequestActionProblem =>
   Match.value(error).pipe(
     Match.tags({
-      PurchasingApprovalRejected: (failure) =>
-        mapDomainIdentity(purchasingApprovalRejectedProblemByCode[failure.code]),
+      PurchasingApprovalRejected: (failure) => mapDomainIdentity(purchasingApprovalRejectedProblemByCode[failure.code]),
     }),
     Match.exhaustive,
   );
@@ -246,39 +136,26 @@ const mapCoreProblem = (error: ActionCoreError): SubmitPurchaseApprovalRequestAc
         }),
       ActionHandlerExecutionError: submitPurchaseApprovalRequestActionProblem.internal,
       ActionIdempotencyKeyRequired: submitPurchaseApprovalRequestActionProblem.precondition,
-      ActionInvocationNotFound: (failure) =>
-        submitPurchaseApprovalRequestActionProblem.notFound(failure.code),
+      ActionInvocationNotFound: (failure) => submitPurchaseApprovalRequestActionProblem.notFound(failure.code),
       ActionInvocationPersistenceError: (failure) =>
         submitPurchaseApprovalRequestActionProblem.unavailable(failure.code),
-      ActionInvocationStateError: (failure) =>
-        submitPurchaseApprovalRequestActionProblem.conflict(failure.code),
+      ActionInvocationStateError: (failure) => submitPurchaseApprovalRequestActionProblem.conflict(failure.code),
       ActionPayloadValidationError: submitPurchaseApprovalRequestActionProblem.invalid,
-      ActionPermissionCheckError: (failure) =>
-        submitPurchaseApprovalRequestActionProblem.unavailable(failure.code),
-      ActionPermissionDenied: (failure) =>
-        submitPurchaseApprovalRequestActionProblem.forbidden(failure.code),
-      ActionPolicyDenied: (failure) =>
-        submitPurchaseApprovalRequestActionProblem.ineligible(failure.code),
-      ActionPolicyEvaluationError: (failure) =>
-        submitPurchaseApprovalRequestActionProblem.unavailable(failure.code),
-      ActionRequestHashConflict: (failure) =>
-        submitPurchaseApprovalRequestActionProblem.conflict(failure.code),
+      ActionPermissionCheckError: (failure) => submitPurchaseApprovalRequestActionProblem.unavailable(failure.code),
+      ActionPermissionDenied: (failure) => submitPurchaseApprovalRequestActionProblem.forbidden(failure.code),
+      ActionPolicyDenied: (failure) => submitPurchaseApprovalRequestActionProblem.ineligible(failure.code),
+      ActionPolicyEvaluationError: (failure) => submitPurchaseApprovalRequestActionProblem.unavailable(failure.code),
+      ActionRequestHashConflict: (failure) => submitPurchaseApprovalRequestActionProblem.conflict(failure.code),
       ActionResultValidationError: submitPurchaseApprovalRequestActionProblem.internal,
-      ActionTransactionError: (failure) =>
-        submitPurchaseApprovalRequestActionProblem.unavailable(failure.code),
-      ActionTrustedContextValidationError:
-        submitPurchaseApprovalRequestActionProblem.authentication,
+      ActionTransactionError: (failure) => submitPurchaseApprovalRequestActionProblem.unavailable(failure.code),
+      ActionTrustedContextValidationError: submitPurchaseApprovalRequestActionProblem.authentication,
       ModuleStateCheckUnavailableError: (failure) =>
         submitPurchaseApprovalRequestActionProblem.unavailable(failure.code),
-      ModuleStateDeniedError: (failure) =>
-        submitPurchaseApprovalRequestActionProblem.forbidden(failure.code),
+      ModuleStateDeniedError: (failure) => submitPurchaseApprovalRequestActionProblem.forbidden(failure.code),
       OperationAuthenticationRequired: submitPurchaseApprovalRequestActionProblem.authentication,
-      OperationContextDenied: (failure) =>
-        submitPurchaseApprovalRequestActionProblem.forbidden(failure.code),
-      OperationContextInvalid: (failure) =>
-        submitPurchaseApprovalRequestActionProblem.forbidden(failure.code),
-      OperationContextUnavailable: (failure) =>
-        submitPurchaseApprovalRequestActionProblem.unavailable(failure.code),
+      OperationContextDenied: (failure) => submitPurchaseApprovalRequestActionProblem.forbidden(failure.code),
+      OperationContextInvalid: (failure) => submitPurchaseApprovalRequestActionProblem.forbidden(failure.code),
+      OperationContextUnavailable: (failure) => submitPurchaseApprovalRequestActionProblem.unavailable(failure.code),
     }),
     Match.exhaustive,
   );
@@ -289,8 +166,7 @@ export const mapSubmitPurchaseApprovalRequestActionProblem = (
 ): SubmitPurchaseApprovalRequestActionProblem =>
   isDomainError(error) ? mapDomainProblem(error) : mapCoreProblem(error);
 
-export const submitPurchaseApprovalRequestActionSchemaErrorLive =
-  HttpApiMiddleware.layerSchemaErrorTransform(
-    SubmitPurchaseApprovalRequestActionSchemaErrorMiddleware,
-    () => Effect.fail(submitPurchaseApprovalRequestActionProblem.invalid()),
-  );
+export const submitPurchaseApprovalRequestActionSchemaErrorLive = HttpApiMiddleware.layerSchemaErrorTransform(
+  SubmitPurchaseApprovalRequestActionSchemaErrorMiddleware,
+  () => Effect.fail(submitPurchaseApprovalRequestActionProblem.invalid()),
+);

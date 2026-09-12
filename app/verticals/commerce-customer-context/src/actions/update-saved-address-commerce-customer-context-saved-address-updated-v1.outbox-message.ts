@@ -11,9 +11,7 @@ import type { OutboxPayload } from '@app/commerce-customer-context/outbox/commer
 export {
   OutboxPayloadSchema as UpdateSavedAddressCommerceCustomerContextSavedAddressUpdatedV1OutboxPayloadSchema,
   outboxProducerModuleKey as UpdateSavedAddressCommerceCustomerContextSavedAddressUpdatedV1OutboxProducerModuleKey,
-  outboxTopic as UpdateSavedAddressCommerceCustomerContextSavedAddressUpdatedV1OutboxTopic,
 } from '@app/commerce-customer-context/outbox/commerce-customer-context-saved-address-updated-v1';
-export type { OutboxPayload as UpdateSavedAddressCommerceCustomerContextSavedAddressUpdatedV1OutboxPayload } from '@app/commerce-customer-context/outbox/commerce-customer-context-saved-address-updated-v1';
 
 export const createUpdateSavedAddressCommerceCustomerContextSavedAddressUpdatedV1OutboxMessage = (
   payload: OutboxPayload,

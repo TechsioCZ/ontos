@@ -8,18 +8,19 @@ import type { OutboxPayload } from '@app/commerce-customer-context/outbox/commer
 
 export const CreateCounterpartyAccessInvitationCommerceCustomerContextCounterpartyAccessInvitationCreatedV1OutboxPayloadSchema =
   OutboxPayloadSchema;
-export type CreateCounterpartyAccessInvitationCommerceCustomerContextCounterpartyAccessInvitationCreatedV1OutboxPayload =
+type CreateCounterpartyAccessInvitationCommerceCustomerContextCounterpartyAccessInvitationCreatedV1OutboxPayload =
   OutboxPayload;
-export const CreateCounterpartyAccessInvitationCommerceCustomerContextCounterpartyAccessInvitationCreatedV1OutboxProducerModuleKey =
+const CreateCounterpartyAccessInvitationCommerceCustomerContextCounterpartyAccessInvitationCreatedV1OutboxProducerModuleKey =
   outboxProducerModuleKey;
-export const CreateCounterpartyAccessInvitationCommerceCustomerContextCounterpartyAccessInvitationCreatedV1OutboxTopic =
+const CreateCounterpartyAccessInvitationCommerceCustomerContextCounterpartyAccessInvitationCreatedV1OutboxTopic =
   outboxTopic;
 
 export const createCreateCounterpartyAccessInvitationCommerceCustomerContextCounterpartyAccessInvitationCreatedV1OutboxMessage =
-  (payload: OutboxPayload): OutboxMessage => ({
+  (
+    payload: CreateCounterpartyAccessInvitationCommerceCustomerContextCounterpartyAccessInvitationCreatedV1OutboxPayload,
+  ): OutboxMessage => ({
     payloadJson: payload,
     producerModuleKey:
       CreateCounterpartyAccessInvitationCommerceCustomerContextCounterpartyAccessInvitationCreatedV1OutboxProducerModuleKey,
-    topic:
-      CreateCounterpartyAccessInvitationCommerceCustomerContextCounterpartyAccessInvitationCreatedV1OutboxTopic,
+    topic: CreateCounterpartyAccessInvitationCommerceCustomerContextCounterpartyAccessInvitationCreatedV1OutboxTopic,
   });

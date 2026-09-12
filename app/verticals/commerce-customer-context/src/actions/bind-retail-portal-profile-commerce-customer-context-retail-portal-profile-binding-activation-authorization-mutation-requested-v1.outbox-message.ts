@@ -3,21 +3,19 @@
 // @ontos-outbox-topic commerce.customer-context.retail-portal-profile-binding-activation-authorization-mutation-requested.v1
 import type { OutboxMessage } from '@app/core-runtime';
 import {
-  outboxProducerModuleKey,
-  outboxTopic,
-} from '@app/commerce-customer-context/outbox/commerce-customer-context-retail-portal-profile-binding-activation-authorization-mutation-requested-v1';
-import type { OutboxPayload } from '@app/commerce-customer-context/outbox/commerce-customer-context-retail-portal-profile-binding-activation-authorization-mutation-requested-v1';
-
-export {
-  OutboxPayloadSchema as BindRetailPortalProfileCommerceCustomerContextRetailPortalProfileBindingActivationAuthorizationMutationRequestedV1OutboxPayloadSchema,
   outboxProducerModuleKey as BindRetailPortalProfileCommerceCustomerContextRetailPortalProfileBindingActivationAuthorizationMutationRequestedV1OutboxProducerModuleKey,
   outboxTopic as BindRetailPortalProfileCommerceCustomerContextRetailPortalProfileBindingActivationAuthorizationMutationRequestedV1OutboxTopic,
 } from '@app/commerce-customer-context/outbox/commerce-customer-context-retail-portal-profile-binding-activation-authorization-mutation-requested-v1';
+import type { OutboxPayload } from '@app/commerce-customer-context/outbox/commerce-customer-context-retail-portal-profile-binding-activation-authorization-mutation-requested-v1';
+
+export { OutboxPayloadSchema as BindRetailPortalProfileCommerceCustomerContextRetailPortalProfileBindingActivationAuthorizationMutationRequestedV1OutboxPayloadSchema } from '@app/commerce-customer-context/outbox/commerce-customer-context-retail-portal-profile-binding-activation-authorization-mutation-requested-v1';
 export type { OutboxPayload as BindRetailPortalProfileCommerceCustomerContextRetailPortalProfileBindingActivationAuthorizationMutationRequestedV1OutboxPayload } from '@app/commerce-customer-context/outbox/commerce-customer-context-retail-portal-profile-binding-activation-authorization-mutation-requested-v1';
 
 export const createBindRetailPortalProfileCommerceCustomerContextRetailPortalProfileBindingActivationAuthorizationMutationRequestedV1OutboxMessage =
   (payload: OutboxPayload): OutboxMessage => ({
     payloadJson: payload,
-    producerModuleKey: outboxProducerModuleKey,
-    topic: outboxTopic,
+    producerModuleKey:
+      BindRetailPortalProfileCommerceCustomerContextRetailPortalProfileBindingActivationAuthorizationMutationRequestedV1OutboxProducerModuleKey,
+    topic:
+      BindRetailPortalProfileCommerceCustomerContextRetailPortalProfileBindingActivationAuthorizationMutationRequestedV1OutboxTopic,
   });

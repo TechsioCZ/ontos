@@ -1,10 +1,7 @@
 import { expect, it } from 'effect-rstest';
 import { Effect, Schema } from 'effect';
 import { createActionCollector } from '../../../../packages/core-runtime/src/actions/collector.ts';
-import {
-  getActionHandler,
-  getActionServiceFactory,
-} from '../../../../packages/core-runtime/src/actions/definition.ts';
+import { getActionHandler, getActionServiceFactory } from '../../../../packages/core-runtime/src/actions/definition.ts';
 import { getReadServiceFactory } from '../../../../packages/core-runtime/src/reads/definition.ts';
 import { OutboxPayloadSchema as AddedSchema } from '../../shared/outbox/commerce-customer-context-saved-address-added-v1.ts';
 import {
@@ -128,27 +125,13 @@ it('attaches every address Action and Read registration to its production persis
   expect(getActionServiceFactory(clearDefaultDeliveryDestinationAction).toString()).toContain(
     'addressActionPersistenceForTransaction',
   );
-  expect(getReadServiceFactory(savedAddressListRead).toString()).toContain(
-    'addressReadServicesForTransaction',
-  );
-  expect(getReadServiceFactory(savedAddressDetailRead).toString()).toContain(
-    'addressReadServicesForTransaction',
-  );
-  expect(getReadServiceFactory(savedAddressDefaultsRead).toString()).toContain(
-    'addressReadServicesForTransaction',
-  );
-  expect(getReadServiceFactory(invoiceRecipientResolutionRead)).toBe(
-    invoiceRecipientReadServiceFactory,
-  );
-  expect(getReadServiceFactory(deliveryDestinationResolutionRead)).toBe(
-    deliveryDestinationReadServiceFactory,
-  );
-  expect(invoiceRecipientReadServiceFactory.toString()).toContain(
-    'invoiceRecipientPortsForTransaction',
-  );
-  expect(deliveryDestinationReadServiceFactory.toString()).toContain(
-    'deliveryDestinationPortsForTransaction',
-  );
+  expect(getReadServiceFactory(savedAddressListRead).toString()).toContain('addressReadServicesForTransaction');
+  expect(getReadServiceFactory(savedAddressDetailRead).toString()).toContain('addressReadServicesForTransaction');
+  expect(getReadServiceFactory(savedAddressDefaultsRead).toString()).toContain('addressReadServicesForTransaction');
+  expect(getReadServiceFactory(invoiceRecipientResolutionRead)).toBe(invoiceRecipientReadServiceFactory);
+  expect(getReadServiceFactory(deliveryDestinationResolutionRead)).toBe(deliveryDestinationReadServiceFactory);
+  expect(invoiceRecipientReadServiceFactory.toString()).toContain('invoiceRecipientPortsForTransaction');
+  expect(deliveryDestinationReadServiceFactory.toString()).toContain('deliveryDestinationPortsForTransaction');
 });
 
 it.effect('forwards trusted attribution and attaches outbox only for a material update', () =>
@@ -188,7 +171,10 @@ it.effect('forwards trusted attribution and attaches outbox only for a material 
         validatePartySource: () => Effect.void,
       },
     });
-    expect(result.outcome).toBe('UPDATED');
+    expect('outcome' in result).toBe(true);
+    if ('outcome' in result) {
+      expect(result.outcome).toBe('UPDATED');
+    }
     expect(forwardedAttribution).toEqual({
       actionInvocationId: '20000000-0000-4000-8000-000000000002',
       principalId: '40000000-0000-4000-8000-000000000004',
@@ -265,7 +251,10 @@ it.effect('does not attach a duplicate add event when an exact business replay i
         validatePartySource: () => Effect.void,
       },
     });
-    expect(result.outcome).toBe('REUSED');
+    expect('outcome' in result).toBe(true);
+    if ('outcome' in result) {
+      expect(result.outcome).toBe('REUSED');
+    }
     expect(forwardedAttribution).toEqual({
       actionInvocationId: '60000000-0000-4000-8000-000000000006',
       principalId: '40000000-0000-4000-8000-000000000004',
@@ -340,8 +329,7 @@ it.effect('records the contributing Party Contact Point read for add and update'
           tenantId,
         },
         services: {
-          update: () =>
-            Effect.succeed({ address: partyAddress, clearedDefaults: [], outcome: 'UNCHANGED' }),
+          update: () => Effect.succeed({ address: partyAddress, clearedDefaults: [], outcome: 'UNCHANGED' }),
           validatePartySource: () => Effect.void,
         },
       },

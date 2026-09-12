@@ -6,12 +6,9 @@ import {
 } from '@app/commerce-customer-context/outbox/commerce-customer-context-principal-purchase-limit-override-changed-v1';
 import type { OutboxPayload } from '@app/commerce-customer-context/outbox/commerce-customer-context-principal-purchase-limit-override-changed-v1';
 
-export { OutboxPayloadSchema as ChangePrincipalPurchaseLimitOverrideCommerceCustomerContextPrincipalPurchaseLimitOverrideChangedV1OutboxPayloadSchema } from '@app/commerce-customer-context/outbox/commerce-customer-context-principal-purchase-limit-override-changed-v1';
-export type ChangePrincipalPurchaseLimitOverrideCommerceCustomerContextPrincipalPurchaseLimitOverrideChangedV1OutboxPayload =
-  OutboxPayload;
-export const ChangePrincipalPurchaseLimitOverrideCommerceCustomerContextPrincipalPurchaseLimitOverrideChangedV1OutboxProducerModuleKey =
+const ChangePrincipalPurchaseLimitOverrideCommerceCustomerContextPrincipalPurchaseLimitOverrideChangedV1OutboxProducerModuleKey =
   outboxProducerModuleKey;
-export const ChangePrincipalPurchaseLimitOverrideCommerceCustomerContextPrincipalPurchaseLimitOverrideChangedV1OutboxTopic =
+const ChangePrincipalPurchaseLimitOverrideCommerceCustomerContextPrincipalPurchaseLimitOverrideChangedV1OutboxTopic =
   outboxTopic;
 
 export const createChangePrincipalPurchaseLimitOverrideCommerceCustomerContextPrincipalPurchaseLimitOverrideChangedV1OutboxMessage =

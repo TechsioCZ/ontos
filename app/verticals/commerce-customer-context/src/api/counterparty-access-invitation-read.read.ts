@@ -45,10 +45,7 @@ export const readCounterpartyAccessInvitationFromServices = (
   legalEntityId: string,
   tenantId: string,
   services: CounterpartyAccessInvitationReadServices,
-): Effect.Effect<
-  CounterpartyAccessInvitationReadResponse,
-  ReadHandlerNotFound | ReadHandlerUnavailable
-> =>
+): Effect.Effect<CounterpartyAccessInvitationReadResponse, ReadHandlerNotFound | ReadHandlerUnavailable> =>
   input.invitationRef.tenantId !== tenantId || input.counterpartyRef.tenantId !== tenantId
     ? Effect.fail(notFound())
     : services
@@ -73,7 +70,7 @@ export const readCounterpartyAccessInvitationFromServices = (
           ),
         );
 
-export const counterpartyAccessInvitationReadEntrypoint = defineTenantModuleEntrypoint({
+const counterpartyAccessInvitationReadEntrypoint = defineTenantModuleEntrypoint({
   access: 'read',
   authorization: { kind: 'context_permission', permission: 'counterparty.access.read' },
   entrypointKey: 'commerce.customer-context.api.counterparty-access-invitation-read',

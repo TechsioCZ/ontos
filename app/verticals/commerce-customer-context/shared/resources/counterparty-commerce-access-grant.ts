@@ -19,8 +19,7 @@ export const CounterpartyCommerceAccessGrantRefSchema = Schema.Struct({
   resourceType: Schema.Literal('commerce.customer-context.counterparty-commerce-access-grant'),
   tenantId: TenantIdSchema,
 });
-export type CounterpartyCommerceAccessGrantRef =
-  typeof CounterpartyCommerceAccessGrantRefSchema.Type;
+export type CounterpartyCommerceAccessGrantRef = typeof CounterpartyCommerceAccessGrantRefSchema.Type;
 
 export const counterpartyCommerceAccessGrantResourceDescriptor = {
   capabilities: {
@@ -30,8 +29,7 @@ export const counterpartyCommerceAccessGrantResourceDescriptor = {
     searchable: false,
     timelineVisible: true,
   },
-  description:
-    'Auditable current and historical atomic Principal-to-Counterparty Commerce Permission grant.',
+  description: 'Auditable current and historical atomic Principal-to-Counterparty Commerce Permission grant.',
   key: 'commerce.customer-context.counterparty-commerce-access-grant',
   label: 'Counterparty Commerce Access Grant',
   owningModuleId: 'commerce.customer-context',

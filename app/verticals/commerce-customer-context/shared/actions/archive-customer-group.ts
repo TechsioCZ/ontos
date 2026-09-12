@@ -23,4 +23,3 @@ export const ArchiveCustomerGroupResultSchema = Schema.Struct({
   endedCount: Schema.Finite.check(Schema.isInt(), Schema.isGreaterThanOrEqualTo(0)),
   group: CommerceCustomerGroupSchema,
 });
-export type ArchiveCustomerGroupResult = typeof ArchiveCustomerGroupResultSchema.Type;

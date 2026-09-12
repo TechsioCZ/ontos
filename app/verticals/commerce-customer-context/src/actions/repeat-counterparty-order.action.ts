@@ -21,10 +21,7 @@ import {
   RepeatOrderNoRepeatableLines,
 } from '../../shared/domain/history-action-errors.ts';
 import { HistoryAccessDenied, HistoryRecordNotFound } from '../../shared/domain/history-errors.ts';
-import {
-  handleRepeatCounterpartyOrder,
-  loadHistoryActionServices,
-} from './history-action-support.ts';
+import { handleRepeatCounterpartyOrder, loadHistoryActionServices } from './history-action-support.ts';
 
 const RepeatCounterpartyOrderErrorSchema = Schema.Union([
   HistoryAccessDenied,
@@ -34,7 +31,7 @@ const RepeatCounterpartyOrderErrorSchema = Schema.Union([
   RepeatOrderNoRepeatableLines,
 ]);
 
-export const repeatCounterpartyOrderPermissionTarget = (
+const repeatCounterpartyOrderPermissionTarget = (
   payload: RepeatCounterpartyOrderPayload,
   scope: OperationalScope,
 ): ActionBusinessPermissionTarget => {
@@ -82,9 +79,10 @@ export const repeatCounterpartyOrderAction = defineAction(
     owningModuleKey: 'commerce.customer-context',
     payloadSchema: RepeatCounterpartyOrderPayloadSchema,
     policies: [],
-    resourcePermission: defineActionResourcePermission<RepeatCounterpartyOrderPayload>(
-      ({ sourceOrderRef }) => ({ permission: 'read', resource: sourceOrderRef }),
-    ),
+    resourcePermission: defineActionResourcePermission<RepeatCounterpartyOrderPayload>(({ sourceOrderRef }) => ({
+      permission: 'read',
+      resource: sourceOrderRef,
+    })),
     resultSchema: RepeatCounterpartyOrderResultSchema,
     schemaVersion: '1',
   },
@@ -92,14 +90,7 @@ export const repeatCounterpartyOrderAction = defineAction(
   (transaction, scope) => loadHistoryActionServices(transaction, scope),
 );
 
-export {
-  RepeatCounterpartyOrderPayloadSchema,
-  RepeatCounterpartyOrderResultSchema,
-} from '../../shared/actions/repeat-counterparty-order.ts';
-export type {
-  RepeatCounterpartyOrderPayload,
-  RepeatCounterpartyOrderResult,
-} from '../../shared/actions/repeat-counterparty-order.ts';
+export type { RepeatCounterpartyOrderPayload } from '../../shared/actions/repeat-counterparty-order.ts';
 
 // <generated-outbox-message-exports>
 // </generated-outbox-message-exports>

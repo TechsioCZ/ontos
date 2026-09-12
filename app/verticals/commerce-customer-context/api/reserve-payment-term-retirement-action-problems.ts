@@ -3,7 +3,7 @@
 // @ontos-action-http-slug reserve-payment-term-retirement
 // oxlint-disable sonarjs/function-name -- Effect Match.tags requires owner-declared tag keys; remove-when: sonarjs accepts discriminant-map properties.
 import type { ActionCoreError } from '@app/core-runtime';
-import { Effect, HttpApiMiddleware } from '@modern-js/plugin-bff/effect-edge';
+import { Effect, HttpApiMiddleware } from '@modern-js/bff-effect/effect-edge';
 import { Match, Schema } from 'effect';
 import {
   ReservePaymentTermRetirementActionAlreadyCommittedProblemSchema,
@@ -145,9 +145,7 @@ export const reservePaymentTermRetirementActionProblem = {
     }),
 } as const;
 
-const mapDomainIdentity = (
-  identity: DomainProblemIdentity,
-): ReservePaymentTermRetirementActionProblem =>
+const mapDomainIdentity = (identity: DomainProblemIdentity): ReservePaymentTermRetirementActionProblem =>
   Match.value(identity).pipe(
     Match.when({ kind: 'conflict' as const }, (matched) =>
       reservePaymentTermRetirementActionProblem.conflict(matched.code),
@@ -203,38 +201,26 @@ const mapCoreProblem = (error: ActionCoreError): ReservePaymentTermRetirementAct
         }),
       ActionHandlerExecutionError: reservePaymentTermRetirementActionProblem.internal,
       ActionIdempotencyKeyRequired: reservePaymentTermRetirementActionProblem.precondition,
-      ActionInvocationNotFound: (failure) =>
-        reservePaymentTermRetirementActionProblem.notFound(failure.code),
+      ActionInvocationNotFound: (failure) => reservePaymentTermRetirementActionProblem.notFound(failure.code),
       ActionInvocationPersistenceError: (failure) =>
         reservePaymentTermRetirementActionProblem.unavailable(failure.code),
-      ActionInvocationStateError: (failure) =>
-        reservePaymentTermRetirementActionProblem.conflict(failure.code),
+      ActionInvocationStateError: (failure) => reservePaymentTermRetirementActionProblem.conflict(failure.code),
       ActionPayloadValidationError: reservePaymentTermRetirementActionProblem.invalid,
-      ActionPermissionCheckError: (failure) =>
-        reservePaymentTermRetirementActionProblem.unavailable(failure.code),
-      ActionPermissionDenied: (failure) =>
-        reservePaymentTermRetirementActionProblem.forbidden(failure.code),
-      ActionPolicyDenied: (failure) =>
-        reservePaymentTermRetirementActionProblem.ineligible(failure.code),
-      ActionPolicyEvaluationError: (failure) =>
-        reservePaymentTermRetirementActionProblem.unavailable(failure.code),
-      ActionRequestHashConflict: (failure) =>
-        reservePaymentTermRetirementActionProblem.conflict(failure.code),
+      ActionPermissionCheckError: (failure) => reservePaymentTermRetirementActionProblem.unavailable(failure.code),
+      ActionPermissionDenied: (failure) => reservePaymentTermRetirementActionProblem.forbidden(failure.code),
+      ActionPolicyDenied: (failure) => reservePaymentTermRetirementActionProblem.ineligible(failure.code),
+      ActionPolicyEvaluationError: (failure) => reservePaymentTermRetirementActionProblem.unavailable(failure.code),
+      ActionRequestHashConflict: (failure) => reservePaymentTermRetirementActionProblem.conflict(failure.code),
       ActionResultValidationError: reservePaymentTermRetirementActionProblem.internal,
-      ActionTransactionError: (failure) =>
-        reservePaymentTermRetirementActionProblem.unavailable(failure.code),
+      ActionTransactionError: (failure) => reservePaymentTermRetirementActionProblem.unavailable(failure.code),
       ActionTrustedContextValidationError: reservePaymentTermRetirementActionProblem.authentication,
       ModuleStateCheckUnavailableError: (failure) =>
         reservePaymentTermRetirementActionProblem.unavailable(failure.code),
-      ModuleStateDeniedError: (failure) =>
-        reservePaymentTermRetirementActionProblem.forbidden(failure.code),
+      ModuleStateDeniedError: (failure) => reservePaymentTermRetirementActionProblem.forbidden(failure.code),
       OperationAuthenticationRequired: reservePaymentTermRetirementActionProblem.authentication,
-      OperationContextDenied: (failure) =>
-        reservePaymentTermRetirementActionProblem.forbidden(failure.code),
-      OperationContextInvalid: (failure) =>
-        reservePaymentTermRetirementActionProblem.forbidden(failure.code),
-      OperationContextUnavailable: (failure) =>
-        reservePaymentTermRetirementActionProblem.unavailable(failure.code),
+      OperationContextDenied: (failure) => reservePaymentTermRetirementActionProblem.forbidden(failure.code),
+      OperationContextInvalid: (failure) => reservePaymentTermRetirementActionProblem.forbidden(failure.code),
+      OperationContextUnavailable: (failure) => reservePaymentTermRetirementActionProblem.unavailable(failure.code),
     }),
     Match.exhaustive,
   );
@@ -245,8 +231,7 @@ export const mapReservePaymentTermRetirementActionProblem = (
 ): ReservePaymentTermRetirementActionProblem =>
   isDomainError(error) ? mapDomainProblem(error) : mapCoreProblem(error);
 
-export const reservePaymentTermRetirementActionSchemaErrorLive =
-  HttpApiMiddleware.layerSchemaErrorTransform(
-    ReservePaymentTermRetirementActionSchemaErrorMiddleware,
-    () => Effect.fail(reservePaymentTermRetirementActionProblem.invalid()),
-  );
+export const reservePaymentTermRetirementActionSchemaErrorLive = HttpApiMiddleware.layerSchemaErrorTransform(
+  ReservePaymentTermRetirementActionSchemaErrorMiddleware,
+  () => Effect.fail(reservePaymentTermRetirementActionProblem.invalid()),
+);

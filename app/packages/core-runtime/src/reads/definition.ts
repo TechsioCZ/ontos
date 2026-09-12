@@ -18,12 +18,8 @@ import type {
 import type { ReadHandlerContext, ReadHandlerResult } from './context.ts';
 
 const registrationMarker: unique symbol = Symbol('@app/core-runtime/reads/registration');
-const resourcePermissionDeclarationMarker: unique symbol = Symbol(
-  '@app/core-runtime/reads/resource-permission',
-);
-const conditionalPermissionDeclarationMarker: unique symbol = Symbol(
-  '@app/core-runtime/reads/conditional-permission',
-);
+const resourcePermissionDeclarationMarker: unique symbol = Symbol('@app/core-runtime/reads/resource-permission');
+const conditionalPermissionDeclarationMarker: unique symbol = Symbol('@app/core-runtime/reads/conditional-permission');
 
 class ReadPrivateStorage<Value> {
   declare readonly [registrationMarker]?: true;
@@ -146,8 +142,7 @@ export const READ_CONDITIONAL_PERMISSION_REQUIREMENTS = [
   'resource_read',
   'tenant',
 ] as const;
-export type ReadConditionalPermissionRequirement =
-  (typeof READ_CONDITIONAL_PERMISSION_REQUIREMENTS)[number];
+export type ReadConditionalPermissionRequirement = (typeof READ_CONDITIONAL_PERMISSION_REQUIREMENTS)[number];
 export type ResolvedReadConditionalPermissionRequirement =
   | AtomicResolvedReadPermissionTarget
   | Readonly<{
@@ -161,10 +156,7 @@ export interface ReadConditionalPermissionBranch<
   Selected extends Readonly<{ readonly kind: string }>,
   Kind extends Selected['kind'],
 > {
-  readonly requiredKinds: readonly [
-    ReadConditionalPermissionRequirement,
-    ...ReadConditionalPermissionRequirement[],
-  ];
+  readonly requiredKinds: readonly [ReadConditionalPermissionRequirement, ...ReadConditionalPermissionRequirement[]];
   readonly resolve: (
     input: Input,
     selected: Extract<Selected, { readonly kind: Kind }>,
@@ -172,18 +164,12 @@ export interface ReadConditionalPermissionBranch<
   ) => readonly ResolvedReadConditionalPermissionRequirement[];
 }
 
-export type ReadConditionalPermissionBranches<
-  Input,
-  Selected extends Readonly<{ readonly kind: string }>,
-> = {
+export type ReadConditionalPermissionBranches<Input, Selected extends Readonly<{ readonly kind: string }>> = {
   readonly [Kind in Selected['kind']]: ReadConditionalPermissionBranch<Input, Selected, Kind>;
 };
 
 interface ReadConditionalPermissionRuntimeBranch<Input> {
-  readonly requiredKinds: readonly [
-    ReadConditionalPermissionRequirement,
-    ...ReadConditionalPermissionRequirement[],
-  ];
+  readonly requiredKinds: readonly [ReadConditionalPermissionRequirement, ...ReadConditionalPermissionRequirement[]];
   readonly resolve: (
     input: Input,
     selected: Readonly<{ readonly kind: string }>,
@@ -216,43 +202,41 @@ const failReadDefinition = (message: string): never => {
 const stableConditionalKey = (value: string): boolean =>
   value.length >= 3 && value.length <= 200 && /^[A-Za-z][A-Za-z0-9_.-]*$/u.test(value);
 
+const hasValidConditionalBranchTags = (branchTags: readonly string[]): boolean =>
+  branchTags.length >= 2 &&
+  branchTags.length <= 8 &&
+  branchTags.every((tag) => tag !== 'default' && stableConditionalKey(tag));
+
+const hasValidConditionalBranch = (branch: {
+  readonly requiredKinds: readonly ReadConditionalPermissionRequirement[];
+  readonly resolve: unknown;
+}): boolean =>
+  Array.isArray(branch.requiredKinds) &&
+  branch.requiredKinds.length > 0 &&
+  branch.requiredKinds.length <= 3 &&
+  branch.requiredKinds[0] !== 'resource_read' &&
+  new Set(branch.requiredKinds).size === branch.requiredKinds.length &&
+  branch.requiredKinds.every((kind) => READ_CONDITIONAL_PERMISSION_REQUIREMENTS.includes(kind)) &&
+  Predicate.isFunction(branch.resolve);
+
 const validateConditionalBranches = <Input, Selected extends Readonly<{ readonly kind: string }>>(
   branches: ReadConditionalPermissionBranches<Input, Selected>,
 ): readonly string[] => {
   const branchTags = Object.keys(branches);
-  if (
-    branchTags.length < 2 ||
-    branchTags.length > 8 ||
-    branchTags.some((tag) => tag === 'default' || !stableConditionalKey(tag))
-  ) {
+  if (!hasValidConditionalBranchTags(branchTags)) {
     return failReadDefinition('Conditional Read permission branches must be finite and explicit');
   }
   for (const branchTag of branchTags) {
     const branch = branches[branchTag as Selected['kind']];
-    if (
-      !Array.isArray(branch.requiredKinds) ||
-      branch.requiredKinds.length === 0 ||
-      branch.requiredKinds.length > 3 ||
-      branch.requiredKinds[0] === 'resource_read' ||
-      new Set(branch.requiredKinds).size !== branch.requiredKinds.length ||
-      branch.requiredKinds.some(
-        (kind) => !READ_CONDITIONAL_PERMISSION_REQUIREMENTS.includes(kind),
-      ) ||
-      !Predicate.isFunction(branch.resolve)
-    ) {
-      return failReadDefinition(
-        'Conditional Read permission branches must declare exact bounded requirements',
-      );
+    if (!hasValidConditionalBranch(branch)) {
+      return failReadDefinition('Conditional Read permission branches must declare exact bounded requirements');
     }
   }
   return branchTags;
 };
 
 /** Declares a finite tagged-input authorization plan without a default or fallback branch. */
-export const defineReadConditionalPermission = <
-  Input,
-  Selected extends Readonly<{ readonly kind: string }>,
->(input: {
+export const defineReadConditionalPermission = <Input, Selected extends Readonly<{ readonly kind: string }>>(input: {
   readonly branches: ReadConditionalPermissionBranches<Input, Selected>;
   readonly permissionKey: string;
   readonly select: (input: Input) => Selected;
@@ -345,6 +329,12 @@ export interface ReadDescriptorValidationInput {
   readonly resourcePermission?: ReadResourcePermissionDeclaration<never>;
 }
 
+const hasValidReadEntrypoint = (descriptor: ReadDescriptorValidationInput): boolean =>
+  descriptor.entrypoint.moduleKey === descriptor.owningModuleKey &&
+  descriptor.entrypoint.scope === (descriptor.owningModuleKey.startsWith('core.') ? 'system' : 'tenant') &&
+  ['read', 'historical_read'].includes(descriptor.entrypoint.access) &&
+  Object.isFrozen(descriptor.entrypoint);
+
 const ReadResourcePermissionDeclarationSchema = Schema.instanceOf(ReadPrivateStorage).check(
   Schema.makeFilter((declaration) =>
     declaration[resourcePermissionDeclarationMarker] === true &&
@@ -387,12 +377,7 @@ export const defineReadResourcePermission = <Input>(
 };
 
 export const validateReadDescriptorInput = (descriptor: ReadDescriptorValidationInput): void => {
-  if (
-    descriptor.entrypoint.moduleKey !== descriptor.owningModuleKey ||
-    descriptor.entrypoint.scope !== (descriptor.owningModuleKey.startsWith('core.') ? 'system' : 'tenant') ||
-    !['read', 'historical_read'].includes(descriptor.entrypoint.access) ||
-    !Object.isFrozen(descriptor.entrypoint)
-  ) {
+  if (!hasValidReadEntrypoint(descriptor)) {
     return failReadDefinition('Read entrypoint must be immutable, read-only, and owner-scoped');
   }
   if (!LEGAL_ENTITY_SCOPES.some((scope) => scope === descriptor.legalEntityScope)) {
@@ -404,10 +389,7 @@ export const validateReadDescriptorInput = (descriptor: ReadDescriptorValidation
   ) {
     return failReadDefinition('Read Resource permission declaration and resolver must be valid');
   }
-  if (
-    descriptor.domainErrorSchema !== undefined &&
-    !Schema.isSchema(descriptor.domainErrorSchema)
-  ) {
+  if (descriptor.domainErrorSchema !== undefined && !Schema.isSchema(descriptor.domainErrorSchema)) {
     return failReadDefinition('Read domain error schema must be a valid Effect Schema');
   }
 };
@@ -446,10 +428,46 @@ export type ReadRegistration<
   readonly _error?: Error;
   readonly _requirements?: Requirements;
   readonly _services?: Services;
-  readonly descriptor: Readonly<
-    ReadDescriptor<InputSchema, ResultSchema, Owner, DomainErrorSchema>
-  >;
+  readonly descriptor: Readonly<ReadDescriptor<InputSchema, ResultSchema, Owner, DomainErrorSchema>>;
   readonly [registrationMarker]: true;
+};
+
+const hasClosedReadVocabulary = (descriptor: {
+  readonly accessKind: string;
+  readonly captureMode: string;
+  readonly permissionTarget: string;
+  readonly policyKey: string;
+  readonly readKey: string;
+  readonly schemaVersion: string;
+}): boolean =>
+  READ_ACCESS_KINDS.some((kind) => kind === descriptor.accessKind) &&
+  READ_EVIDENCE_CAPTURE_MODES.some((mode) => mode === descriptor.captureMode) &&
+  READ_PERMISSION_TARGETS.some((target) => target === descriptor.permissionTarget) &&
+  descriptor.policyKey.length > 0 &&
+  descriptor.readKey.length > 0 &&
+  descriptor.schemaVersion.length > 0;
+
+const hasValidReadPermissionResolvers = (
+  conditional: boolean,
+  permissionTargetResolver: unknown,
+  conditionalResolver: ReadConditionalPermissionDeclaration<unknown> | undefined,
+  entrypoint: ModuleEntrypointDescriptor,
+  resourcePermission: unknown,
+  resultPermissionTargetResolver: unknown,
+): boolean => {
+  if (!conditional) {
+    return conditionalResolver === undefined && Predicate.isFunction(permissionTargetResolver);
+  }
+  if (conditionalResolver === undefined) {
+    return false;
+  }
+  const { authorization } = entrypoint;
+  return (
+    authorization.kind === 'context_permission' &&
+    conditionalResolver.permissionKey === authorization.permission &&
+    resourcePermission === undefined &&
+    resultPermissionTargetResolver === undefined
+  );
 };
 
 const validateReadVocabulary = <
@@ -462,32 +480,30 @@ const validateReadVocabulary = <
   permissionTargetResolver:
     | ReadConditionalPermissionDeclaration<InputSchema['Type']>
     | ReadPermissionTargetResolver<InputSchema['Type']>,
-  resultPermissionTargetResolver:
-    | ReadResultPermissionTargetResolver<ResultSchema['Type']>
-    | undefined,
+  resultPermissionTargetResolver: ReadResultPermissionTargetResolver<ResultSchema['Type']> | undefined,
 ): void => {
   const conditional = descriptor.permissionTarget === 'conditional';
   const conditionalResolver = isReadConditionalPermissionDeclaration(permissionTargetResolver)
     ? permissionTargetResolver
     : undefined;
   if (
-    !READ_ACCESS_KINDS.includes(descriptor.accessKind) ||
-    !READ_EVIDENCE_CAPTURE_MODES.includes(descriptor.evidencePolicy.captureMode) ||
-    !READ_PERMISSION_TARGETS.includes(descriptor.permissionTarget) ||
+    !hasClosedReadVocabulary({
+      accessKind: descriptor.accessKind,
+      captureMode: descriptor.evidencePolicy.captureMode,
+      permissionTarget: descriptor.permissionTarget,
+      policyKey: descriptor.evidencePolicy.policyKey,
+      readKey: descriptor.readKey,
+      schemaVersion: descriptor.schemaVersion,
+    }) ||
     (descriptor.accessKind === 'search' && !Predicate.isFunction(resultPermissionTargetResolver)) ||
-    (conditional
-      ? conditionalResolver === undefined
-      : !Predicate.isFunction(permissionTargetResolver)) ||
-    (conditional &&
-      (conditionalResolver === undefined ||
-        descriptor.entrypoint.authorization.kind !== 'context_permission' ||
-        conditionalResolver.permissionKey !== descriptor.entrypoint.authorization.permission ||
-        descriptor.resourcePermission !== undefined ||
-        resultPermissionTargetResolver !== undefined)) ||
-    (!conditional && conditionalResolver !== undefined) ||
-    descriptor.evidencePolicy.policyKey.length === 0 ||
-    descriptor.readKey.length === 0 ||
-    descriptor.schemaVersion.length === 0
+    !hasValidReadPermissionResolvers(
+      conditional,
+      permissionTargetResolver,
+      conditionalResolver,
+      descriptor.entrypoint,
+      descriptor.resourcePermission,
+      resultPermissionTargetResolver,
+    )
   ) {
     return failReadDefinition('Read metadata must use the closed governed-read vocabulary');
   }
@@ -514,22 +530,9 @@ export const defineRead = <
     resultPermissionTargetResolver?: ReadResultPermissionTargetResolver<ResultSchema['Type']>,
     executablePolicies?: readonly ActionPolicy<InputSchema['Type'], NoInfer<Owner>>[],
   ]
-): ReadRegistration<
-  InputSchema,
-  ResultSchema,
-  Owner,
-  Services,
-  Error,
-  Requirements,
-  DomainErrorSchema
-> => {
-  const [
-    handler,
-    serviceFactory,
-    permissionTargetResolver,
-    resultPermissionTargetResolver,
-    executablePolicies = [],
-  ] = definition;
+): ReadRegistration<InputSchema, ResultSchema, Owner, Services, Error, Requirements, DomainErrorSchema> => {
+  const [handler, serviceFactory, permissionTargetResolver, resultPermissionTargetResolver, executablePolicies = []] =
+    definition;
   validateReadDescriptorInput(descriptor);
   validateReadVocabulary(descriptor, permissionTargetResolver, resultPermissionTargetResolver);
   if (
@@ -578,17 +581,8 @@ export const getReadPolicyImplementations = <
   Requirements,
   DomainErrorSchema extends Schema.ConstraintDecoder<{ readonly _tag: string }>,
 >(
-  registration: ReadRegistration<
-    InputSchema,
-    ResultSchema,
-    Owner,
-    Services,
-    Error,
-    Requirements,
-    DomainErrorSchema
-  >,
-): readonly ActionPolicy<InputSchema['Type'], Owner>[] =>
-  ReadPrivateStorage.getValue(registration).policies;
+  registration: ReadRegistration<InputSchema, ResultSchema, Owner, Services, Error, Requirements, DomainErrorSchema>,
+): readonly ActionPolicy<InputSchema['Type'], Owner>[] => ReadPrivateStorage.getValue(registration).policies;
 
 export const getReadResultPermissionTargetResolver = <
   InputSchema extends Schema.ConstraintDecoder<unknown>,
@@ -599,15 +593,7 @@ export const getReadResultPermissionTargetResolver = <
   Requirements,
   DomainErrorSchema extends Schema.ConstraintDecoder<{ readonly _tag: string }>,
 >(
-  registration: ReadRegistration<
-    InputSchema,
-    ResultSchema,
-    Owner,
-    Services,
-    Error,
-    Requirements,
-    DomainErrorSchema
-  >,
+  registration: ReadRegistration<InputSchema, ResultSchema, Owner, Services, Error, Requirements, DomainErrorSchema>,
 ): ReadResultPermissionTargetResolver<ResultSchema['Type']> | undefined =>
   ReadPrivateStorage.getValue(registration).resultPermissionTargetResolver;
 
@@ -620,18 +606,8 @@ export const getReadPermissionTargetResolver = <
   Requirements,
   DomainErrorSchema extends Schema.ConstraintDecoder<{ readonly _tag: string }>,
 >(
-  registration: ReadRegistration<
-    InputSchema,
-    ResultSchema,
-    Owner,
-    Services,
-    Error,
-    Requirements,
-    DomainErrorSchema
-  >,
-):
-  | ReadConditionalPermissionDeclaration<InputSchema['Type']>
-  | ReadPermissionTargetResolver<InputSchema['Type']> =>
+  registration: ReadRegistration<InputSchema, ResultSchema, Owner, Services, Error, Requirements, DomainErrorSchema>,
+): ReadConditionalPermissionDeclaration<InputSchema['Type']> | ReadPermissionTargetResolver<InputSchema['Type']> =>
   ReadPrivateStorage.getValue(registration).permissionTargetResolver;
 
 export const getReadConditionalPermissionPlan = <Input>(
@@ -647,15 +623,7 @@ export const getReadDomainErrorSchema = <
   Requirements,
   DomainErrorSchema extends Schema.ConstraintDecoder<{ readonly _tag: string }>,
 >(
-  registration: ReadRegistration<
-    InputSchema,
-    ResultSchema,
-    Owner,
-    Services,
-    Error,
-    Requirements,
-    DomainErrorSchema
-  >,
+  registration: ReadRegistration<InputSchema, ResultSchema, Owner, Services, Error, Requirements, DomainErrorSchema>,
 ): DomainErrorSchema | undefined => registration.descriptor.domainErrorSchema;
 
 export const getReadResourcePermissionTargetResolver = <
@@ -667,15 +635,7 @@ export const getReadResourcePermissionTargetResolver = <
   Requirements,
   DomainErrorSchema extends Schema.ConstraintDecoder<{ readonly _tag: string }>,
 >(
-  registration: ReadRegistration<
-    InputSchema,
-    ResultSchema,
-    Owner,
-    Services,
-    Error,
-    Requirements,
-    DomainErrorSchema
-  >,
+  registration: ReadRegistration<InputSchema, ResultSchema, Owner, Services, Error, Requirements, DomainErrorSchema>,
 ): ReadResourcePermissionTargetResolver<InputSchema['Type']> | undefined =>
   registration.descriptor.resourcePermission === undefined
     ? undefined
@@ -690,15 +650,7 @@ export const getReadHandler = <
   Requirements,
   DomainErrorSchema extends Schema.ConstraintDecoder<{ readonly _tag: string }>,
 >(
-  registration: ReadRegistration<
-    InputSchema,
-    ResultSchema,
-    Owner,
-    Services,
-    Error,
-    Requirements,
-    DomainErrorSchema
-  >,
+  registration: ReadRegistration<InputSchema, ResultSchema, Owner, Services, Error, Requirements, DomainErrorSchema>,
 ): ReadHandler<InputSchema, ResultSchema, Services, Error, Requirements> =>
   ReadPrivateStorage.getValue(registration).handler;
 
@@ -711,14 +663,5 @@ export const getReadServiceFactory = <
   Requirements,
   DomainErrorSchema extends Schema.ConstraintDecoder<{ readonly _tag: string }>,
 >(
-  registration: ReadRegistration<
-    InputSchema,
-    ResultSchema,
-    Owner,
-    Services,
-    Error,
-    Requirements,
-    DomainErrorSchema
-  >,
-): ReadServiceFactory<Services, Requirements> =>
-  ReadPrivateStorage.getValue(registration).serviceFactory;
+  registration: ReadRegistration<InputSchema, ResultSchema, Owner, Services, Error, Requirements, DomainErrorSchema>,
+): ReadServiceFactory<Services, Requirements> => ReadPrivateStorage.getValue(registration).serviceFactory;

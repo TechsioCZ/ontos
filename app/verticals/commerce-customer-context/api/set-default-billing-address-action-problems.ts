@@ -3,7 +3,7 @@
 // @ontos-action-http-slug set-default-billing-address
 // oxlint-disable sonarjs/function-name -- Effect Match.tags requires owner-declared tag keys; remove-when: sonarjs accepts discriminant-map properties.
 import type { ActionCoreError } from '@app/core-runtime';
-import { Effect, HttpApiMiddleware } from '@modern-js/plugin-bff/effect-edge';
+import { Effect, HttpApiMiddleware } from '@modern-js/bff-effect/effect-edge';
 import { Match, Schema } from 'effect';
 import {
   SetDefaultBillingAddressActionAlreadyCommittedProblemSchema,
@@ -127,20 +127,14 @@ export const setDefaultBillingAddressActionProblem = {
 const mapDomainProblem = (error: DomainError): SetDefaultBillingAddressActionProblem =>
   Match.value(error).pipe(
     Match.tags({
-      AddressBookUnavailable: () =>
-        setDefaultBillingAddressActionProblem.unavailable('address_book_unavailable'),
-      SavedAddressConflict: () =>
-        setDefaultBillingAddressActionProblem.conflict('saved_address_conflict'),
-      SavedAddressInvalid: () =>
-        setDefaultBillingAddressActionProblem.ineligible('saved_address_invalid'),
-      SavedAddressNotFound: () =>
-        setDefaultBillingAddressActionProblem.notFound('saved_address_not_found'),
+      AddressBookUnavailable: () => setDefaultBillingAddressActionProblem.unavailable('address_book_unavailable'),
+      SavedAddressConflict: () => setDefaultBillingAddressActionProblem.conflict('saved_address_conflict'),
+      SavedAddressInvalid: () => setDefaultBillingAddressActionProblem.ineligible('saved_address_invalid'),
+      SavedAddressNotFound: () => setDefaultBillingAddressActionProblem.notFound('saved_address_not_found'),
       SavedAddressReconciliationRequired: () =>
         setDefaultBillingAddressActionProblem.ineligible('saved_address_reconciliation_required'),
       SavedAddressSourceTransitionRequired: () =>
-        setDefaultBillingAddressActionProblem.ineligible(
-          'saved_address_source_transition_required',
-        ),
+        setDefaultBillingAddressActionProblem.ineligible('saved_address_source_transition_required'),
     }),
     Match.exhaustive,
   );
@@ -172,38 +166,24 @@ const mapCoreProblem = (error: ActionCoreError): SetDefaultBillingAddressActionP
         }),
       ActionHandlerExecutionError: setDefaultBillingAddressActionProblem.internal,
       ActionIdempotencyKeyRequired: setDefaultBillingAddressActionProblem.precondition,
-      ActionInvocationNotFound: (failure) =>
-        setDefaultBillingAddressActionProblem.notFound(failure.code),
-      ActionInvocationPersistenceError: (failure) =>
-        setDefaultBillingAddressActionProblem.unavailable(failure.code),
-      ActionInvocationStateError: (failure) =>
-        setDefaultBillingAddressActionProblem.conflict(failure.code),
+      ActionInvocationNotFound: (failure) => setDefaultBillingAddressActionProblem.notFound(failure.code),
+      ActionInvocationPersistenceError: (failure) => setDefaultBillingAddressActionProblem.unavailable(failure.code),
+      ActionInvocationStateError: (failure) => setDefaultBillingAddressActionProblem.conflict(failure.code),
       ActionPayloadValidationError: setDefaultBillingAddressActionProblem.invalid,
-      ActionPermissionCheckError: (failure) =>
-        setDefaultBillingAddressActionProblem.unavailable(failure.code),
-      ActionPermissionDenied: (failure) =>
-        setDefaultBillingAddressActionProblem.forbidden(failure.code),
-      ActionPolicyDenied: (failure) =>
-        setDefaultBillingAddressActionProblem.ineligible(failure.code),
-      ActionPolicyEvaluationError: (failure) =>
-        setDefaultBillingAddressActionProblem.unavailable(failure.code),
-      ActionRequestHashConflict: (failure) =>
-        setDefaultBillingAddressActionProblem.conflict(failure.code),
+      ActionPermissionCheckError: (failure) => setDefaultBillingAddressActionProblem.unavailable(failure.code),
+      ActionPermissionDenied: (failure) => setDefaultBillingAddressActionProblem.forbidden(failure.code),
+      ActionPolicyDenied: (failure) => setDefaultBillingAddressActionProblem.ineligible(failure.code),
+      ActionPolicyEvaluationError: (failure) => setDefaultBillingAddressActionProblem.unavailable(failure.code),
+      ActionRequestHashConflict: (failure) => setDefaultBillingAddressActionProblem.conflict(failure.code),
       ActionResultValidationError: setDefaultBillingAddressActionProblem.internal,
-      ActionTransactionError: (failure) =>
-        setDefaultBillingAddressActionProblem.unavailable(failure.code),
+      ActionTransactionError: (failure) => setDefaultBillingAddressActionProblem.unavailable(failure.code),
       ActionTrustedContextValidationError: setDefaultBillingAddressActionProblem.authentication,
-      ModuleStateCheckUnavailableError: (failure) =>
-        setDefaultBillingAddressActionProblem.unavailable(failure.code),
-      ModuleStateDeniedError: (failure) =>
-        setDefaultBillingAddressActionProblem.forbidden(failure.code),
+      ModuleStateCheckUnavailableError: (failure) => setDefaultBillingAddressActionProblem.unavailable(failure.code),
+      ModuleStateDeniedError: (failure) => setDefaultBillingAddressActionProblem.forbidden(failure.code),
       OperationAuthenticationRequired: setDefaultBillingAddressActionProblem.authentication,
-      OperationContextDenied: (failure) =>
-        setDefaultBillingAddressActionProblem.forbidden(failure.code),
-      OperationContextInvalid: (failure) =>
-        setDefaultBillingAddressActionProblem.forbidden(failure.code),
-      OperationContextUnavailable: (failure) =>
-        setDefaultBillingAddressActionProblem.unavailable(failure.code),
+      OperationContextDenied: (failure) => setDefaultBillingAddressActionProblem.forbidden(failure.code),
+      OperationContextInvalid: (failure) => setDefaultBillingAddressActionProblem.forbidden(failure.code),
+      OperationContextUnavailable: (failure) => setDefaultBillingAddressActionProblem.unavailable(failure.code),
     }),
     Match.exhaustive,
   );
@@ -211,11 +191,9 @@ const mapCoreProblem = (error: ActionCoreError): SetDefaultBillingAddressActionP
 const isDomainError = Schema.is(setDefaultBillingAddressAction.descriptor.domainErrorSchema);
 export const mapSetDefaultBillingAddressActionProblem = (
   error: ActionCoreError | DomainError,
-): SetDefaultBillingAddressActionProblem =>
-  isDomainError(error) ? mapDomainProblem(error) : mapCoreProblem(error);
+): SetDefaultBillingAddressActionProblem => (isDomainError(error) ? mapDomainProblem(error) : mapCoreProblem(error));
 
-export const setDefaultBillingAddressActionSchemaErrorLive =
-  HttpApiMiddleware.layerSchemaErrorTransform(
-    SetDefaultBillingAddressActionSchemaErrorMiddleware,
-    () => Effect.fail(setDefaultBillingAddressActionProblem.invalid()),
-  );
+export const setDefaultBillingAddressActionSchemaErrorLive = HttpApiMiddleware.layerSchemaErrorTransform(
+  SetDefaultBillingAddressActionSchemaErrorMiddleware,
+  () => Effect.fail(setDefaultBillingAddressActionProblem.invalid()),
+);

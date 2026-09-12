@@ -2,21 +2,14 @@
 // @ontos-action-owner commerce.customer-context
 // @ontos-action-slug create-counterparty-access-invitation
 import type { ActionHandlerContext } from '@app/core-runtime';
-import {
-  defineAction,
-  defineActionBusinessPermission,
-  defineTenantModuleEntrypoint,
-} from '@app/core-runtime';
+import { defineAction, defineActionBusinessPermission, defineTenantModuleEntrypoint } from '@app/core-runtime';
 import { Effect } from 'effect';
 import {
   CreateCounterpartyAccessInvitationPayloadSchema,
   CreateCounterpartyAccessInvitationResultSchema,
 } from '../../shared/actions/create-counterparty-access-invitation.ts';
 import type { CreateCounterpartyAccessInvitationPayload } from '../../shared/actions/create-counterparty-access-invitation.ts';
-import {
-  AccessAuditEvidenceSchema,
-  AccessDeniedAuditEvidenceSchema,
-} from '../../shared/domain/access-contract.ts';
+import { AccessAuditEvidenceSchema, AccessDeniedAuditEvidenceSchema } from '../../shared/domain/access-contract.ts';
 import { CounterpartyAccessDomainErrorSchema } from '../../shared/domain/access-port.ts';
 import type { CounterpartyAccessPortService } from '../../shared/domain/access-port.ts';
 import { counterpartyAccessServicesForTransaction } from '../access-services.ts';
@@ -36,8 +29,7 @@ import {
 } from './create-counterparty-access-invitation.commerce-customer-context-counterparty-access-invitation-created-v1.outbox-message.ts';
 
 const domainEvents = {
-  'commerce.customer-context.counterparty-access-invitation-created.v1':
-    AccessInvitationCreatedEventSchema,
+  'commerce.customer-context.counterparty-access-invitation-created.v1': AccessInvitationCreatedEventSchema,
 } as const;
 
 interface Services {
@@ -78,11 +70,7 @@ const handle = Effect.fn('CreateCounterpartyAccessInvitation.handle')(function* 
     scope: payload.scope,
   });
   const { invitation } = result;
-  yield* recordAccessRead(
-    context,
-    payload.counterpartyRef,
-    'counterparty-access-invitation-create',
-  );
+  yield* recordAccessRead(context, payload.counterpartyRef, 'counterparty-access-invitation-create');
   yield* context.recordAuditEvidence(
     auditEvidence({
       actor,
@@ -166,19 +154,5 @@ export const createCounterpartyAccessInvitationAction = defineAction(
     ),
 );
 
-export {
-  CreateCounterpartyAccessInvitationPayloadSchema,
-  CreateCounterpartyAccessInvitationResultSchema,
-} from '../../shared/actions/create-counterparty-access-invitation.ts';
-export type {
-  CreateCounterpartyAccessInvitationPayload,
-  CreateCounterpartyAccessInvitationResult,
-} from '../../shared/actions/create-counterparty-access-invitation.ts';
-
-// <generated-outbox-message-exports>
-export { CreateCounterpartyAccessInvitationCommerceCustomerContextCounterpartyAccessInvitationCreatedV1OutboxPayloadSchema } from './create-counterparty-access-invitation.commerce-customer-context-counterparty-access-invitation-created-v1.outbox-message.ts';
-export { CreateCounterpartyAccessInvitationCommerceCustomerContextCounterpartyAccessInvitationCreatedV1OutboxProducerModuleKey } from './create-counterparty-access-invitation.commerce-customer-context-counterparty-access-invitation-created-v1.outbox-message.ts';
-export { CreateCounterpartyAccessInvitationCommerceCustomerContextCounterpartyAccessInvitationCreatedV1OutboxTopic } from './create-counterparty-access-invitation.commerce-customer-context-counterparty-access-invitation-created-v1.outbox-message.ts';
-export { createCreateCounterpartyAccessInvitationCommerceCustomerContextCounterpartyAccessInvitationCreatedV1OutboxMessage } from './create-counterparty-access-invitation.commerce-customer-context-counterparty-access-invitation-created-v1.outbox-message.ts';
-export type { CreateCounterpartyAccessInvitationCommerceCustomerContextCounterpartyAccessInvitationCreatedV1OutboxPayload } from './create-counterparty-access-invitation.commerce-customer-context-counterparty-access-invitation-created-v1.outbox-message.ts';
-// </generated-outbox-message-exports>
+export { CreateCounterpartyAccessInvitationPayloadSchema } from '../../shared/actions/create-counterparty-access-invitation.ts';
+export type { CreateCounterpartyAccessInvitationPayload } from '../../shared/actions/create-counterparty-access-invitation.ts';

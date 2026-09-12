@@ -15,10 +15,7 @@ export const ChangePrincipalPurchaseLimitOverridePayloadSchema = Schema.Struct({
   principalRef: PrincipalRefSchema,
   reason: Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(1000)),
 });
-export type ChangePrincipalPurchaseLimitOverridePayload =
-  typeof ChangePrincipalPurchaseLimitOverridePayloadSchema.Type;
+export type ChangePrincipalPurchaseLimitOverridePayload = typeof ChangePrincipalPurchaseLimitOverridePayloadSchema.Type;
 
-export const ChangePrincipalPurchaseLimitOverrideResultSchema =
-  PurchaseLimitPolicyMutationResultSchema;
-export type ChangePrincipalPurchaseLimitOverrideResult =
-  typeof ChangePrincipalPurchaseLimitOverrideResultSchema.Type;
+export const ChangePrincipalPurchaseLimitOverrideResultSchema = PurchaseLimitPolicyMutationResultSchema;
+export type ChangePrincipalPurchaseLimitOverrideResult = typeof ChangePrincipalPurchaseLimitOverrideResultSchema.Type;

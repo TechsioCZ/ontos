@@ -25,9 +25,7 @@ const retailProfile = {
 } as const;
 
 it('keeps the permission catalog exact and the launch baseline explicit', () => {
-  expect(RETAIL_PORTAL_PERMISSION_CATALOG.map(({ code }) => code)).toEqual(
-    RETAIL_PORTAL_PERMISSION_CODES,
-  );
+  expect(RETAIL_PORTAL_PERMISSION_CATALOG.map(({ code }) => code)).toEqual(RETAIL_PORTAL_PERMISSION_CODES);
   expect(RETAIL_PORTAL_SELF_SERVICE_BASELINE).toEqual([
     'retail.profile.read',
     'retail.address_book.use',
@@ -41,9 +39,9 @@ it('keeps the permission catalog exact and the launch baseline explicit', () => 
 });
 
 it('reuses non-Active profiles without reactivation and gates new Orders', () => {
-  expect(
-    decideProfileCreateOutcome({ observedState: 'ARCHIVED', profile: retailProfile }).outcome,
-  ).toBe('PROFILE_ALREADY_EXISTS_ARCHIVED');
+  expect(decideProfileCreateOutcome({ observedState: 'ARCHIVED', profile: retailProfile }).outcome).toBe(
+    'PROFILE_ALREADY_EXISTS_ARCHIVED',
+  );
   expect(
     decideProfileTradingGate({
       dependencyAvailable: true,
@@ -180,9 +178,11 @@ it('keeps Guest attribution fail-closed and never grants portal access', () => {
     portalAccessGranted: false,
     profile: retailProfile,
   });
-  expect(
-    decideGuestAttribution({ partyResolution: { caseRef: 'case-1', outcome: 'AMBIGUOUS_MATCH' } }),
-  ).toEqual({ canAcceptOrder: false, outcome: 'AMBIGUOUS_MATCH', portalAccessGranted: false });
+  expect(decideGuestAttribution({ partyResolution: { caseRef: 'case-1', outcome: 'AMBIGUOUS_MATCH' } })).toEqual({
+    canAcceptOrder: false,
+    outcome: 'AMBIGUOUS_MATCH',
+    portalAccessGranted: false,
+  });
 });
 
 it('classifies every accidental generic profile mutation without creating an endpoint', () => {

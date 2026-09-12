@@ -5,7 +5,7 @@ import { CommerceCustomerProfileRefSchema } from '../domain/profile-decisions.ts
 const StateSchema = Schema.Literals(['ACTIVE', 'SUSPENDED', 'ARCHIVED']);
 const RevisionSchema = Schema.Finite.check(Schema.isInt(), Schema.isGreaterThanOrEqualTo(1));
 
-export const ProfileLifecyclePayloadSchema = Schema.Struct({
+const ProfileLifecyclePayloadSchema = Schema.Struct({
   effectiveAt: ProfileInstantSchema,
   expectedRevision: RevisionSchema,
   expectedState: StateSchema,
@@ -42,6 +42,4 @@ export class ProfileLifecycleActionRejected extends Schema.TaggedError<ProfileLi
 ) {}
 
 export const SuspendCustomerProfilePayloadSchema = ProfileLifecyclePayloadSchema;
-export const SuspendCustomerProfileResultSchema = ProfileLifecycleResultSchema;
 export type SuspendCustomerProfilePayload = typeof SuspendCustomerProfilePayloadSchema.Type;
-export type SuspendCustomerProfileResult = typeof SuspendCustomerProfileResultSchema.Type;

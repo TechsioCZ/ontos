@@ -6,16 +6,9 @@ interface EvidenceResourceRef {
   readonly resourceType: string;
 }
 
-type ProfileActionContext = Pick<
-  ActionHandlerContext<Readonly<Record<string, never>>, unknown>,
-  'recordDataAccess'
->;
+type ProfileActionContext = Pick<ActionHandlerContext<Readonly<Record<string, never>>, unknown>, 'recordDataAccess'>;
 
-export const recordProfileLookup = (
-  context: ProfileActionContext,
-  queryHash: string,
-  resultCount: number,
-) =>
+export const recordProfileLookup = (context: ProfileActionContext, queryHash: string, resultCount: number) =>
   context.recordDataAccess({
     accessKind: 'read',
     queryHash,

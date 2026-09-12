@@ -3,6 +3,7 @@
 // @ontos-module-id commerce.customer-context
 import { defineVerticalRuntimeRegistration } from '@app/core-runtime';
 import { commerceCustomerContextManifest } from './vertical.manifest.ts';
+/* jscpd:ignore-start -- generated imports intentionally mirror the manifest's generated action imports. */
 // <generated-module-registration-imports>
 import { addSavedAddressAction } from './src/actions/add-saved-address.action.ts';
 import { archiveCustomerGroupAction } from './src/actions/archive-customer-group.action.ts';
@@ -34,14 +35,6 @@ import { migrateCustomerPriceGroupAction } from './src/actions/migrate-customer-
 import { openProfileReconciliationAction } from './src/actions/open-profile-reconciliation.action.ts';
 import { reactivateCustomerGroupAction } from './src/actions/reactivate-customer-group.action.ts';
 import { reactivateCustomerProfileAction } from './src/actions/reactivate-customer-profile.action.ts';
-import { reconcileCounterpartyAccessAdministratorBootstrapAuthorizationMutationWorker } from './src/workers/reconcile-counterparty-access-administrator-bootstrap-authorization-mutation.worker.ts';
-import { reconcileCounterpartyAccessGrantAuthorizationMutationWorker } from './src/workers/reconcile-counterparty-access-grant-authorization-mutation.worker.ts';
-import { reconcileCounterpartyAccessInvitationClaimAuthorizationMutationWorker } from './src/workers/reconcile-counterparty-access-invitation-claim-authorization-mutation.worker.ts';
-import { reconcileCounterpartyAccessRevokeAuthorizationMutationWorker } from './src/workers/reconcile-counterparty-access-revoke-authorization-mutation.worker.ts';
-import { reconcilePartyMergeWorker } from './src/workers/reconcile-party-merge.worker.ts';
-import { reconcileRetailPortalProfileBindingActivationAuthorizationMutationWorker } from './src/workers/reconcile-retail-portal-profile-binding-activation-authorization-mutation.worker.ts';
-import { reconcileRetailPortalProfileBindingRecoveryAuthorizationMutationWorker } from './src/workers/reconcile-retail-portal-profile-binding-recovery-authorization-mutation.worker.ts';
-import { reconcileRetailPortalProfileBindingRevocationAuthorizationMutationWorker } from './src/workers/reconcile-retail-portal-profile-binding-revocation-authorization-mutation.worker.ts';
 import { recoverRetailPortalProfileBindingAction } from './src/actions/recover-retail-portal-profile-binding.action.ts';
 import { removeCounterpartyPriceGroupAction } from './src/actions/remove-counterparty-price-group.action.ts';
 import { removeCustomerGroupAction } from './src/actions/remove-customer-group.action.ts';
@@ -65,10 +58,20 @@ import { suspendCustomerProfileAction } from './src/actions/suspend-customer-pro
 import { triggerPurchaseApprovalAction } from './src/actions/trigger-purchase-approval.action.ts';
 import { updateCustomerGroupAction } from './src/actions/update-customer-group.action.ts';
 import { updateSavedAddressAction } from './src/actions/update-saved-address.action.ts';
+import { reconcileCounterpartyAccessAdministratorBootstrapAuthorizationMutationWorker } from './src/workers/reconcile-counterparty-access-administrator-bootstrap-authorization-mutation.worker.ts';
+import { reconcileCounterpartyAccessGrantAuthorizationMutationWorker } from './src/workers/reconcile-counterparty-access-grant-authorization-mutation.worker.ts';
+import { reconcileCounterpartyAccessInvitationClaimAuthorizationMutationWorker } from './src/workers/reconcile-counterparty-access-invitation-claim-authorization-mutation.worker.ts';
+import { reconcileCounterpartyAccessRevokeAuthorizationMutationWorker } from './src/workers/reconcile-counterparty-access-revoke-authorization-mutation.worker.ts';
+import { reconcilePartyMergeWorker } from './src/workers/reconcile-party-merge.worker.ts';
+import { reconcileRetailPortalProfileBindingActivationAuthorizationMutationWorker } from './src/workers/reconcile-retail-portal-profile-binding-activation-authorization-mutation.worker.ts';
+import { reconcileRetailPortalProfileBindingRecoveryAuthorizationMutationWorker } from './src/workers/reconcile-retail-portal-profile-binding-recovery-authorization-mutation.worker.ts';
+import { reconcileRetailPortalProfileBindingRevocationAuthorizationMutationWorker } from './src/workers/reconcile-retail-portal-profile-binding-revocation-authorization-mutation.worker.ts';
 // </generated-module-registration-imports>
+/* jscpd:ignore-end */
 
 export const commerceCustomerContextRegistration = defineVerticalRuntimeRegistration({
   actions: [
+    /* jscpd:ignore-start -- generated runtime actions intentionally mirror the manifest's public action list. */
     // <generated-module-registration-actions>
     addSavedAddressAction,
     archiveCustomerGroupAction,
@@ -124,68 +127,49 @@ export const commerceCustomerContextRegistration = defineVerticalRuntimeRegistra
     updateCustomerGroupAction,
     updateSavedAddressAction,
     // </generated-module-registration-actions>
+    /* jscpd:ignore-end */
   ],
   entrypoints: {
     api: {
       // <generated-module-registration-apis>
-      'counterparty-access-invitation-read': () =>
-        import('./src/api/counterparty-access-invitation-read-client.ts'),
-      'counterparty-all-customer-archive': () =>
-        import('./src/api/counterparty-all-customer-archive-client.ts'),
-      'counterparty-all-order-history': () =>
-        import('./src/api/counterparty-all-order-history-client.ts'),
+      'counterparty-access-invitation-read': () => import('./src/api/counterparty-access-invitation-read-client.ts'),
+      'counterparty-all-customer-archive': () => import('./src/api/counterparty-all-customer-archive-client.ts'),
+      'counterparty-all-order-history': () => import('./src/api/counterparty-all-order-history-client.ts'),
       'counterparty-all-order-history-detail': () =>
         import('./src/api/counterparty-all-order-history-detail-client.ts'),
-      'counterparty-commerce-access-check': () =>
-        import('./src/api/counterparty-commerce-access-check-client.ts'),
-      'counterparty-commerce-access-detail': () =>
-        import('./src/api/counterparty-commerce-access-detail-client.ts'),
-      'counterparty-commerce-access-list': () =>
-        import('./src/api/counterparty-commerce-access-list-client.ts'),
+      'counterparty-commerce-access-check': () => import('./src/api/counterparty-commerce-access-check-client.ts'),
+      'counterparty-commerce-access-detail': () => import('./src/api/counterparty-commerce-access-detail-client.ts'),
+      'counterparty-commerce-access-list': () => import('./src/api/counterparty-commerce-access-list-client.ts'),
       'counterparty-order-history': () => import('./src/api/counterparty-order-history-client.ts'),
-      'counterparty-order-history-detail': () =>
-        import('./src/api/counterparty-order-history-detail-client.ts'),
+      'counterparty-order-history-detail': () => import('./src/api/counterparty-order-history-detail-client.ts'),
       'customer-archive': () => import('./src/api/customer-archive-client.ts'),
       'customer-group-detail': () => import('./src/api/customer-group-detail-client.ts'),
       'customer-group-history': () => import('./src/api/customer-group-history-client.ts'),
       'customer-group-members': () => import('./src/api/customer-group-members-client.ts'),
       'customer-payment-term-entitlement-read': () =>
         import('./src/api/customer-payment-term-entitlement-read-client.ts'),
-      'customer-price-group-assignment-read': () =>
-        import('./src/api/customer-price-group-assignment-read-client.ts'),
-      'customer-price-group-resolution': () =>
-        import('./src/api/customer-price-group-resolution-client.ts'),
+      'customer-price-group-assignment-read': () => import('./src/api/customer-price-group-assignment-read-client.ts'),
+      'customer-price-group-resolution': () => import('./src/api/customer-price-group-resolution-client.ts'),
       'customer-profile-read': () => import('./src/api/customer-profile-read-client.ts'),
-      'customer-profile-trading-gate': () =>
-        import('./src/api/customer-profile-trading-gate-client.ts'),
+      'customer-profile-trading-gate': () => import('./src/api/customer-profile-trading-gate-client.ts'),
       'customer-record-visibility': () => import('./src/api/customer-record-visibility-client.ts'),
-      'delivery-destination-resolution': () =>
-        import('./src/api/delivery-destination-resolution-client.ts'),
-      'effective-customer-group-memberships': () =>
-        import('./src/api/effective-customer-group-memberships-client.ts'),
+      'delivery-destination-resolution': () => import('./src/api/delivery-destination-resolution-client.ts'),
+      'effective-customer-group-memberships': () => import('./src/api/effective-customer-group-memberships-client.ts'),
       'guest-attribution-status': () => import('./src/api/guest-attribution-status-client.ts'),
-      'guest-payment-terms-resolution': () =>
-        import('./src/api/guest-payment-terms-resolution-client.ts'),
-      'invoice-recipient-resolution': () =>
-        import('./src/api/invoice-recipient-resolution-client.ts'),
-      'payment-term-affected-use-assessment': () =>
-        import('./src/api/payment-term-affected-use-assessment-client.ts'),
+      'guest-payment-terms-resolution': () => import('./src/api/guest-payment-terms-resolution-client.ts'),
+      'invoice-recipient-resolution': () => import('./src/api/invoice-recipient-resolution-client.ts'),
+      'payment-term-affected-use-assessment': () => import('./src/api/payment-term-affected-use-assessment-client.ts'),
       'payment-terms-resolution': () => import('./src/api/payment-terms-resolution-client.ts'),
-      'profile-reconciliation-read': () =>
-        import('./src/api/profile-reconciliation-read-client.ts'),
-      'purchase-currency-resolution': () =>
-        import('./src/api/purchase-currency-resolution-client.ts'),
+      'profile-reconciliation-read': () => import('./src/api/profile-reconciliation-read-client.ts'),
+      'purchase-currency-resolution': () => import('./src/api/purchase-currency-resolution-client.ts'),
       'purchase-limit-evaluation': () => import('./src/api/purchase-limit-evaluation-client.ts'),
       'purchase-limit-policy-read': () => import('./src/api/purchase-limit-policy-read-client.ts'),
       'repeat-order-preparation': () => import('./src/api/repeat-order-preparation-client.ts'),
       'retail-access-decision': () => import('./src/api/retail-access-decision-client.ts'),
       'retail-order-history': () => import('./src/api/retail-order-history-client.ts'),
-      'retail-order-history-detail': () =>
-        import('./src/api/retail-order-history-detail-client.ts'),
-      'retail-portal-profile-binding-read': () =>
-        import('./src/api/retail-portal-profile-binding-read-client.ts'),
-      'retail-principal-resolution': () =>
-        import('./src/api/retail-principal-resolution-client.ts'),
+      'retail-order-history-detail': () => import('./src/api/retail-order-history-detail-client.ts'),
+      'retail-portal-profile-binding-read': () => import('./src/api/retail-portal-profile-binding-read-client.ts'),
+      'retail-principal-resolution': () => import('./src/api/retail-principal-resolution-client.ts'),
       'saved-address-defaults': () => import('./src/api/saved-address-defaults-client.ts'),
       'saved-address-detail': () => import('./src/api/saved-address-detail-client.ts'),
       'saved-address-list': () => import('./src/api/saved-address-list-client.ts'),

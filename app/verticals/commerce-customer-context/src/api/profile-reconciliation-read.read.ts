@@ -16,10 +16,7 @@ export interface ProfileReconciliationReadServices {
   readonly readCase: (
     input: ProfileReconciliationReadRequest,
     tenantId: string,
-  ) => Effect.Effect<
-    ProfileReconciliationReadResponse,
-    ReadHandlerNotFound | ReadHandlerUnavailable
-  >;
+  ) => Effect.Effect<ProfileReconciliationReadResponse, ReadHandlerNotFound | ReadHandlerUnavailable>;
 }
 
 const notFound = () =>
@@ -28,18 +25,13 @@ const notFound = () =>
     reason: 'The Profile Reconciliation Case does not exist in the trusted Tenant',
   });
 
-export const readProfileReconciliationFromServices = (
+const readProfileReconciliationFromServices = (
   input: ProfileReconciliationReadRequest,
   tenantId: string,
   services: ProfileReconciliationReadServices,
-) =>
-  input.reconciliationCaseRef.tenantId === tenantId
-    ? services.readCase(input, tenantId)
-    : Effect.fail(notFound());
+) => (input.reconciliationCaseRef.tenantId === tenantId ? services.readCase(input, tenantId) : Effect.fail(notFound()));
 
-export const profileReconciliationReadPermissionTarget = (
-  input: ProfileReconciliationReadRequest,
-) => ({
+export const profileReconciliationReadPermissionTarget = (input: ProfileReconciliationReadRequest) => ({
   kind: 'resource' as const,
   resource: {
     moduleId: input.reconciliationCaseRef.moduleId,
@@ -48,7 +40,7 @@ export const profileReconciliationReadPermissionTarget = (
   },
 });
 
-export const profileReconciliationReadEntrypoint = defineTenantModuleEntrypoint({
+const profileReconciliationReadEntrypoint = defineTenantModuleEntrypoint({
   access: 'read',
   authorization: { kind: 'context_permission', permission: 'retail.profile.reconcile' },
   entrypointKey: 'commerce.customer-context.api.profile-reconciliation-read',
@@ -79,7 +71,7 @@ export const profileReconciliationReadRead = defineRead(
     ),
   (transaction, scope) =>
     profileServicesForVerifiedScope(transaction, scope).pipe(
-      Effect.map(({ profileReconciliationRead }) => profileReconciliationRead),
+      Effect.map(({ profileReconciliationRead }): ProfileReconciliationReadServices => profileReconciliationRead),
     ),
   profileReconciliationReadPermissionTarget,
 );

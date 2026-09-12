@@ -7,6 +7,5 @@ import { CounterpartyAccessInvitationRevokedEventPayloadSchema } from '../domain
 export const OutboxPayloadSchema = CounterpartyAccessInvitationRevokedEventPayloadSchema;
 export type OutboxPayload = Schema.Schema.Type<typeof OutboxPayloadSchema>;
 
-export const outboxTopic =
-  'commerce.customer-context.counterparty-access-invitation-revoked.v1' as const;
+export const outboxTopic = 'commerce.customer-context.counterparty-access-invitation-revoked.v1' as const;
 export const outboxProducerModuleKey = 'commerce.customer-context' as const;

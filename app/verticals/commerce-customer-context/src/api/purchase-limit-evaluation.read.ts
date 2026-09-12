@@ -18,15 +18,12 @@ import {
 } from '../../shared/domain/purchase-limit-evaluation.ts';
 import type { PurchaseLimitEvaluationSourceService } from '../../shared/domain/purchase-limit-evaluation.ts';
 
-const preserveFailureCause = <Failure extends object>(
-  failure: Failure,
-  cause: unknown,
-): Failure => {
+const preserveFailureCause = <Failure extends object>(failure: Failure, cause: unknown): Failure => {
   Object.defineProperty(failure, 'cause', { configurable: true, value: cause });
   return failure;
 };
 
-export const purchaseLimitEvaluationEntrypoint = defineTenantModuleEntrypoint({
+const purchaseLimitEvaluationEntrypoint = defineTenantModuleEntrypoint({
   access: 'read',
   authorization: { kind: 'context_permission', permission: 'counterparty.purchase.submit' },
   entrypointKey: 'commerce.customer-context.api.purchase-limit-evaluation',
@@ -57,21 +54,19 @@ export const purchaseLimitEvaluationRead = defineRead(
       readonly source: PurchaseLimitEvaluationSourceService;
     }>,
   ) =>
-    context.services.source
-      .loadCurrent({ principalId: context.scope.principalId, query: input })
-      .pipe(
-        Effect.mapError((cause) =>
-          preserveFailureCause(
-            new ReadHandlerUnavailable({
-              code: 'read_handler_unavailable',
-              reason: 'Current Purchase Limit evaluation inputs are temporarily unavailable',
-            }),
-            cause,
-          ),
+    context.services.source.loadCurrent({ principalId: context.scope.principalId, query: input }).pipe(
+      Effect.mapError((cause) =>
+        preserveFailureCause(
+          new ReadHandlerUnavailable({
+            code: 'read_handler_unavailable',
+            reason: 'Current Purchase Limit evaluation inputs are temporarily unavailable',
+          }),
+          cause,
         ),
-        Effect.map(evaluatePurchaseLimit),
-        Effect.map((result) => ({ evidence: { resultCount: 1 }, result })),
       ),
+      Effect.map(evaluatePurchaseLimit),
+      Effect.map((result) => ({ evidence: { resultCount: 1 }, result })),
+    ),
   (transaction, scope) =>
     PurchaseLimitEvaluationSourceFactory.pipe(
       Effect.flatMap((factory) => factory.make(transaction, scope)),

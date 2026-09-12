@@ -20,9 +20,7 @@ const ResourceIdSchema = Schema.toEncoded(
     Schema.brand('RetailPortalProfileBindingResourceId'),
   ),
 );
-const TenantIdSchema = Schema.toEncoded(
-  Schema.String.check(Schema.isUUID()).pipe(Schema.brand('TenantId')),
-);
+const TenantIdSchema = Schema.toEncoded(Schema.String.check(Schema.isUUID()).pipe(Schema.brand('TenantId')));
 
 export const RetailPortalProfileBindingRefSchema = Schema.Struct({
   moduleId: Schema.Literal('commerce.customer-context'),
@@ -59,16 +57,7 @@ export const RetailPortalProfileBindingSchema = Schema.Struct({
   updatedAt: ProfileInstantSchema,
 }).check(
   Schema.makeFilter(
-    ({
-      bindingRef,
-      createdAt,
-      principalRef,
-      profileRef,
-      revokedAt,
-      sellingLegalEntityRef,
-      state,
-      updatedAt,
-    }) => {
+    ({ bindingRef, createdAt, principalRef, profileRef, revokedAt, sellingLegalEntityRef, state, updatedAt }) => {
       const issues: Schema.FilterIssue[] = [];
       if (
         bindingRef.tenantId !== principalRef.tenantId ||

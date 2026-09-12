@@ -27,76 +27,74 @@ export interface OpenProfileReconciliationServices {
     context: ActionHandlerContext<DomainEvents, OpenProfileReconciliationServices>,
   ) => Effect.Effect<OpenProfileReconciliationResult, ProfileReconciliationActionRejected>;
 }
-const handle = Effect.fn('OpenProfileReconciliationAction.handle')(
-  function* handleOpenProfileReconciliationEffect(
-    payload: OpenProfileReconciliationPayload,
-    context: ActionHandlerContext<DomainEvents, OpenProfileReconciliationServices>,
+const handle = Effect.fn('OpenProfileReconciliationAction.handle')(function* handleOpenProfileReconciliationEffect(
+  payload: OpenProfileReconciliationPayload,
+  context: ActionHandlerContext<DomainEvents, OpenProfileReconciliationServices>,
+) {
+  const targetTenantId =
+    payload.targetSubject.kind === 'RETAIL'
+      ? payload.targetSubject.partyRef.tenantId
+      : payload.targetSubject.counterpartyRef.tenantId;
+  if (
+    targetTenantId !== context.scope.tenantId ||
+    payload.profileRefs.some((ref) => ref.tenantId !== context.scope.tenantId) ||
+    (payload.targetSubject.kind === 'RETAIL' &&
+      payload.targetSubject.sellingLegalEntityRef.resourceId !== context.scope.legalEntityId)
   ) {
-    const targetTenantId =
-      payload.targetSubject.kind === 'RETAIL'
-        ? payload.targetSubject.partyRef.tenantId
-        : payload.targetSubject.counterpartyRef.tenantId;
-    if (
-      targetTenantId !== context.scope.tenantId ||
-      payload.profileRefs.some((ref) => ref.tenantId !== context.scope.tenantId) ||
-      (payload.targetSubject.kind === 'RETAIL' &&
-        payload.targetSubject.sellingLegalEntityRef.resourceId !== context.scope.legalEntityId)
-    ) {
-      return yield* new ProfileReconciliationActionRejected({
-        code: 'CURRENT_STATE_CONFLICT',
-        reason: 'Every profile and the target subject must match the trusted scope',
-        retryable: false,
-      });
-    }
-    const result = yield* context.services.open(payload, context);
-    if (result.caseRef.tenantId !== context.scope.tenantId) {
-      return yield* new ProfileReconciliationActionRejected({
-        code: 'CURRENT_STATE_CONFLICT',
-        reason: 'The reconciliation service returned a case outside the trusted Tenant',
-        retryable: false,
-      });
-    }
-    yield* Effect.forEach(
-      payload.profileRefs,
-      (profileRef) =>
-        recordProfileResourceLookup(
-          context,
-          profileRef,
-          `profile-reconciliation-member:${result.caseRef.resourceId}:${profileRef.resourceId}`,
-        ),
-      { concurrency: 1, discard: true },
+    return yield* new ProfileReconciliationActionRejected({
+      code: 'CURRENT_STATE_CONFLICT',
+      reason: 'Every profile and the target subject must match the trusted scope',
+      retryable: false,
+    });
+  }
+  const result = yield* context.services.open(payload, context);
+  if (result.caseRef.tenantId !== context.scope.tenantId) {
+    return yield* new ProfileReconciliationActionRejected({
+      code: 'CURRENT_STATE_CONFLICT',
+      reason: 'The reconciliation service returned a case outside the trusted Tenant',
+      retryable: false,
+    });
+  }
+  yield* Effect.forEach(
+    payload.profileRefs,
+    (profileRef) =>
+      recordProfileResourceLookup(
+        context,
+        profileRef,
+        `profile-reconciliation-member:${result.caseRef.resourceId}:${profileRef.resourceId}`,
+      ),
+    { concurrency: 1, discard: true },
+  );
+  yield* recordProfileResourceLookup(
+    context,
+    result.caseRef,
+    `profile-reconciliation-case:${result.caseRef.resourceId}:${result.revision}`,
+  );
+  if (result.outcome === 'RECONCILIATION_OPENED') {
+    const event = yield* context.addDomainEvent({
+      eventType: 'commerce.customer-context.profile-reconciliation-opened.v1',
+      payloadJson: result,
+      producerModuleKey: MODULE_KEY,
+      subjectModuleKey: MODULE_KEY,
+      subjectResourceId: result.caseRef.resourceId,
+      subjectResourceType: result.caseRef.resourceType,
+    });
+    yield* context.addOutboxMessage(
+      event,
+      createReconciliationOpenedOutboxMessage({
+        canonicalizationEvidence: payload.canonicalizationEvidence,
+        caseRef: result.caseRef,
+        detectedAt: payload.detectedAt,
+        profileRefs: payload.profileRefs,
+        revision: result.revision,
+        state: 'OPEN',
+        targetSubject: payload.targetSubject,
+        trigger: payload.trigger,
+      }),
     );
-    yield* recordProfileResourceLookup(
-      context,
-      result.caseRef,
-      `profile-reconciliation-case:${result.caseRef.resourceId}:${result.revision}`,
-    );
-    if (result.outcome === 'RECONCILIATION_OPENED') {
-      const event = yield* context.addDomainEvent({
-        eventType: 'commerce.customer-context.profile-reconciliation-opened.v1',
-        payloadJson: result,
-        producerModuleKey: MODULE_KEY,
-        subjectModuleKey: MODULE_KEY,
-        subjectResourceId: result.caseRef.resourceId,
-        subjectResourceType: result.caseRef.resourceType,
-      });
-      yield* context.addOutboxMessage(
-        event,
-        createReconciliationOpenedOutboxMessage({
-          canonicalizationEvidence: payload.canonicalizationEvidence,
-          caseRef: result.caseRef,
-          detectedAt: payload.detectedAt,
-          profileRefs: payload.profileRefs,
-          revision: result.revision,
-          state: 'OPEN',
-          targetSubject: payload.targetSubject,
-          trigger: payload.trigger,
-        }),
-      );
-    }
-    return result;
-  },
-);
+  }
+  return result;
+});
 export const openProfileReconciliationAction = defineAction(
   {
     accessEvidencePolicy: {
@@ -107,8 +105,7 @@ export const openProfileReconciliationAction = defineAction(
     auditProfile: 'sensitive',
     domainErrorSchema: ProfileReconciliationActionRejected,
     domainEvents: {
-      'commerce.customer-context.profile-reconciliation-opened.v1':
-        OpenProfileReconciliationResultSchema,
+      'commerce.customer-context.profile-reconciliation-opened.v1': OpenProfileReconciliationResultSchema,
     },
     entrypoint: defineTenantModuleEntrypoint({
       access: 'write',
@@ -128,23 +125,11 @@ export const openProfileReconciliationAction = defineAction(
   handle,
   (transaction, scope) =>
     profileServicesForVerifiedScope(transaction, scope).pipe(
-      Effect.map(({ openProfileReconciliation }) => openProfileReconciliation),
+      Effect.map(({ openProfileReconciliation }): OpenProfileReconciliationServices => openProfileReconciliation),
     ),
 );
 
 // <generated-outbox-message-exports>
-export { createOpenProfileReconciliationCommerceCustomerContextProfileReconciliationOpenedV1OutboxMessage } from './open-profile-reconciliation.commerce-customer-context-profile-reconciliation-opened-v1.outbox-message.ts';
-export { OpenProfileReconciliationCommerceCustomerContextProfileReconciliationOpenedV1OutboxPayloadSchema } from './open-profile-reconciliation.commerce-customer-context-profile-reconciliation-opened-v1.outbox-message.ts';
-export { OpenProfileReconciliationCommerceCustomerContextProfileReconciliationOpenedV1OutboxProducerModuleKey } from './open-profile-reconciliation.commerce-customer-context-profile-reconciliation-opened-v1.outbox-message.ts';
-export { OpenProfileReconciliationCommerceCustomerContextProfileReconciliationOpenedV1OutboxTopic } from './open-profile-reconciliation.commerce-customer-context-profile-reconciliation-opened-v1.outbox-message.ts';
-export type { OpenProfileReconciliationCommerceCustomerContextProfileReconciliationOpenedV1OutboxPayload } from './open-profile-reconciliation.commerce-customer-context-profile-reconciliation-opened-v1.outbox-message.ts';
-export {
-  OpenProfileReconciliationPayloadSchema,
-  OpenProfileReconciliationResultSchema,
-  ProfileReconciliationActionRejected,
-} from '../../shared/actions/open-profile-reconciliation.ts';
-export type {
-  OpenProfileReconciliationPayload,
-  OpenProfileReconciliationResult,
-} from '../../shared/actions/open-profile-reconciliation.ts';
+export { OpenProfileReconciliationPayloadSchema } from '../../shared/actions/open-profile-reconciliation.ts';
+export type { OpenProfileReconciliationPayload } from '../../shared/actions/open-profile-reconciliation.ts';
 // </generated-outbox-message-exports>

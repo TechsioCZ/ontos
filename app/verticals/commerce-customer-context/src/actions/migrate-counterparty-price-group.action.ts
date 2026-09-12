@@ -3,22 +3,22 @@
 // @ontos-action-slug migrate-counterparty-price-group
 /* eslint-disable effect-native/no-imperative-loop-in-effect-gen, effect-native/no-manual-tag-comparison, sonarjs/no-duplicate-string -- A bounded Counterparty migration validates association/conflicts sequentially before one atomic routine call; expires: 2027-03-01. */
 import type { ActionHandlerContext } from '@app/core-runtime';
-import {
-  defineAction,
-  defineActionBusinessPermission,
-  defineTenantModuleEntrypoint,
-} from '@app/core-runtime';
+import { defineAction, defineActionBusinessPermission, defineTenantModuleEntrypoint } from '@app/core-runtime';
 import { Effect, Schema } from 'effect';
 import {
   CounterpartyPriceGroupMigrationEventSchema,
   isPriceGroupInstantBefore,
   samePriceGroupRef,
 } from '../../shared/domain/price-group-contracts.ts';
+import type { PriceGroupCatalogOutcome } from '../../shared/domain/price-group-contracts.ts';
 import {
   MigrateCounterpartyPriceGroupPayloadSchema,
   MigrateCounterpartyPriceGroupResultSchema,
 } from '../../shared/actions/migrate-counterparty-price-group.ts';
-import type { MigrateCounterpartyPriceGroupPayload } from '../../shared/actions/migrate-counterparty-price-group.ts';
+import type {
+  MigrateCounterpartyPriceGroupPayload,
+  MigrateCounterpartyPriceGroupResult,
+} from '../../shared/actions/migrate-counterparty-price-group.ts';
 import {
   CustomerPriceGroupCatalogRejected,
   CustomerPriceGroupCatalogUnavailable,
@@ -29,6 +29,7 @@ import {
   CustomerPriceGroupScopeMismatch,
 } from '../../shared/domain/price-group-errors.ts';
 import type {
+  MigrateCustomerPriceGroupStoreResult,
   CustomerPriceGroupAssignmentStorePort,
   CustomerPriceGroupProfileValidationPort,
   PriceGroupCatalogPort,
@@ -36,15 +37,6 @@ import type {
 import { CUSTOMER_PRICE_GROUP_COMPATIBILITY_CONTRACT } from '../../shared/domain/price-group-ports.ts';
 import { createMigrateCounterpartyPriceGroupCommerceCustomerContextCounterpartyPriceGroupMigratedV1OutboxMessage } from './migrate-counterparty-price-group.commerce-customer-context-counterparty-price-group-migrated-v1.outbox-message.ts';
 import { priceGroupActionServicesForTransaction } from './price-group-action-services.ts';
-
-export {
-  MigrateCounterpartyPriceGroupPayloadSchema,
-  MigrateCounterpartyPriceGroupResultSchema,
-} from '../../shared/actions/migrate-counterparty-price-group.ts';
-export type {
-  MigrateCounterpartyPriceGroupPayload,
-  MigrateCounterpartyPriceGroupResult,
-} from '../../shared/actions/migrate-counterparty-price-group.ts';
 
 const MigrateCounterpartyPriceGroupErrorSchema = Schema.Union([
   CustomerPriceGroupCatalogRejected,
@@ -76,12 +68,20 @@ const sameCounterparty = (
   left.resourceType === right.resourceType &&
   left.tenantId === right.tenantId;
 
-export const handleMigrateCounterpartyPriceGroup = Effect.fn(
-  'MigrateCounterpartyPriceGroupAction.handleMigrateCounterpartyPriceGroup',
-  // oxlint-disable-next-line complexity -- The generated handler exhaustively validates scope, Counterparty association, catalog compatibility, conflicts, audit evidence, and event emission; expires: 2027-03-01.
-)(function* migrate(
+type MigrateCounterpartyPriceGroupContext = ActionHandlerContext<DomainEvents, MigrateCounterpartyPriceGroupServices>;
+type UsablePriceGroupCatalogOutcome = Extract<PriceGroupCatalogOutcome, { readonly _tag: 'USABLE' }>;
+type MigratedCounterpartyPriceGroup = Extract<MigrateCounterpartyPriceGroupResult, { readonly _tag: 'MIGRATED' }>;
+type CounterpartyPriceGroupMigrationConflicts = {
+  readonly assignmentRef: MigrateCounterpartyPriceGroupPayload['targets'][number]['assignmentRef'];
+  readonly reason: 'ASSIGNMENT_CHANGED' | 'PROFILE_INELIGIBLE';
+}[];
+
+/* oxlint-disable typescript/consistent-return -- Effect failure branches return yielded domain errors while successful validation intentionally falls through with void. */
+const validateMigrateCounterpartyPriceGroupScope = Effect.fn(
+  'MigrateCounterpartyPriceGroupAction.validateMigrateCounterpartyPriceGroupScope',
+)(function* validateMigrateCounterpartyPriceGroupScopeEffect(
   payload: MigrateCounterpartyPriceGroupPayload,
-  context: ActionHandlerContext<DomainEvents, MigrateCounterpartyPriceGroupServices>,
+  tenantId: string,
 ) {
   const scopedRefs = [
     payload.counterpartyRef,
@@ -89,71 +89,79 @@ export const handleMigrateCounterpartyPriceGroup = Effect.fn(
     payload.targetPriceGroupRef,
     ...payload.targets.flatMap((target) => [target.assignmentRef, target.profile]),
   ];
-  if (scopedRefs.some((ref) => ref.tenantId !== context.scope.tenantId)) {
+  if (scopedRefs.some((ref) => ref.tenantId !== tenantId)) {
     return yield* new CustomerPriceGroupScopeMismatch({
       code: 'customer_price_group_scope_mismatch',
       reason: 'Every migration reference must belong to the trusted Tenant',
     });
   }
-  if (samePriceGroupRef(payload.sourcePriceGroupRef, payload.targetPriceGroupRef)) {
-    return yield* new CustomerPriceGroupCatalogRejected({
-      code: 'customer_price_group_catalog_rejected',
-      reason: 'Source and target PriceGroups must be different',
-      reasonCode: 'INCOMPATIBLE',
-    });
-  }
+});
+/* oxlint-enable typescript/consistent-return */
 
-  const recordedAt = yield* context.services.now;
-  if (isPriceGroupInstantBefore(payload.effectiveFrom, recordedAt)) {
-    return yield* new CustomerPriceGroupRetroactiveScheduleRejected({
-      code: 'customer_price_group_retroactive_schedule_rejected',
-      reason: 'Counterparty PriceGroup migration must take effect now or in the future',
-    });
-  }
-
-  const profileConflicts: {
-    readonly assignmentRef: (typeof payload.targets)[number]['assignmentRef'];
-    readonly reason: 'ASSIGNMENT_CHANGED' | 'PROFILE_INELIGIBLE';
-  }[] = [];
-  for (const target of payload.targets) {
-    const validation = yield* context.services.profileValidation.inspect(
-      target.profile,
-      payload.effectiveFrom,
-      payload.counterpartyRef,
+const validateMigrateCounterpartyPriceGroupCatalogIdentity = (
+  sourcePriceGroupRef: MigrateCounterpartyPriceGroupPayload['sourcePriceGroupRef'],
+  targetPriceGroupRef: MigrateCounterpartyPriceGroupPayload['targetPriceGroupRef'],
+) => {
+  if (samePriceGroupRef(sourcePriceGroupRef, targetPriceGroupRef)) {
+    return Effect.fail(
+      new CustomerPriceGroupCatalogRejected({
+        code: 'customer_price_group_catalog_rejected',
+        reason: 'Source and target PriceGroups must be different',
+        reasonCode: 'INCOMPATIBLE',
+      }),
     );
-    if (
-      validation._tag === 'CURRENT' &&
-      (validation.counterpartyRef === null ||
-        !sameCounterparty(validation.counterpartyRef, payload.counterpartyRef))
-    ) {
-      return yield* new CustomerPriceGroupProfileAssociationMismatch({
-        code: 'customer_price_group_profile_association_mismatch',
-        reason: 'A purchasing profile is not associated with the authorized Counterparty',
-      });
-    }
-    if (
-      validation._tag === 'NOT_FOUND' ||
-      (validation._tag === 'CURRENT' && validation.state !== 'ACTIVE')
-    ) {
-      profileConflicts.push({
-        assignmentRef: target.assignmentRef,
-        reason: 'PROFILE_INELIGIBLE',
-      });
-    } else if (validation.revision !== target.expectedProfileRevision) {
-      profileConflicts.push({
-        assignmentRef: target.assignmentRef,
-        reason: 'ASSIGNMENT_CHANGED',
-      });
-    }
   }
-  if (profileConflicts.length > 0) {
-    return { _tag: 'CONFLICTS', conflicts: profileConflicts } as const;
-  }
+  return Effect.void;
+};
 
-  const catalogOutcome = yield* context.services.catalog.resolveCurrent(
-    payload.targetPriceGroupRef,
+const validateMigrateCounterpartyPriceGroupProfiles = Effect.fn('validateMigrateCounterpartyPriceGroupProfiles')(
+  function* validateMigrateCounterpartyPriceGroupProfilesEffect(
+    payload: MigrateCounterpartyPriceGroupPayload,
+    profileValidation: CustomerPriceGroupProfileValidationPort,
+  ) {
+    const profileConflicts: CounterpartyPriceGroupMigrationConflicts = [];
+    for (const target of payload.targets) {
+      const validation = yield* profileValidation.inspect(
+        target.profile,
+        payload.effectiveFrom,
+        payload.counterpartyRef,
+      );
+      if (
+        validation._tag === 'CURRENT' &&
+        (validation.counterpartyRef === null || !sameCounterparty(validation.counterpartyRef, payload.counterpartyRef))
+      ) {
+        return yield* new CustomerPriceGroupProfileAssociationMismatch({
+          code: 'customer_price_group_profile_association_mismatch',
+          reason: 'A purchasing profile is not associated with the authorized Counterparty',
+        });
+      }
+      if (validation._tag === 'NOT_FOUND' || (validation._tag === 'CURRENT' && validation.state !== 'ACTIVE')) {
+        profileConflicts.push({
+          assignmentRef: target.assignmentRef,
+          reason: 'PROFILE_INELIGIBLE',
+        });
+      } else if (validation.revision !== target.expectedProfileRevision) {
+        profileConflicts.push({
+          assignmentRef: target.assignmentRef,
+          reason: 'ASSIGNMENT_CHANGED',
+        });
+      }
+    }
+    return profileConflicts.length > 0 ? ({ _tag: 'CONFLICTS', conflicts: profileConflicts } as const) : undefined;
+  },
+);
+
+const resolveMigrateCounterpartyPriceGroupCatalog = Effect.fn(
+  'MigrateCounterpartyPriceGroupAction.resolveMigrateCounterpartyPriceGroupCatalog',
+)(function* resolveMigrateCounterpartyPriceGroupCatalogEffect(
+  priceGroupRef: MigrateCounterpartyPriceGroupPayload['targetPriceGroupRef'],
+  effectiveFrom: MigrateCounterpartyPriceGroupPayload['effectiveFrom'],
+  catalog: PriceGroupCatalogPort,
+) {
+  const catalogOutcome = yield* catalog.resolveCurrent(
+    priceGroupRef,
     CUSTOMER_PRICE_GROUP_COMPATIBILITY_CONTRACT,
-    payload.effectiveFrom,
+    effectiveFrom,
   );
   if (catalogOutcome._tag !== 'USABLE') {
     return yield* new CustomerPriceGroupCatalogRejected({
@@ -163,7 +171,7 @@ export const handleMigrateCounterpartyPriceGroup = Effect.fn(
     });
   }
   if (
-    !samePriceGroupRef(catalogOutcome.priceGroupRef, payload.targetPriceGroupRef) ||
+    !samePriceGroupRef(catalogOutcome.priceGroupRef, priceGroupRef) ||
     catalogOutcome.compatibility.contractId !== CUSTOMER_PRICE_GROUP_COMPATIBILITY_CONTRACT
   ) {
     return yield* new CustomerPriceGroupCatalogRejected({
@@ -172,6 +180,131 @@ export const handleMigrateCounterpartyPriceGroup = Effect.fn(
       reasonCode: 'INCOMPATIBLE',
     });
   }
+  return catalogOutcome;
+});
+
+const mapMigrateCounterpartyPriceGroupPersistenceResult = Effect.fn(
+  'mapMigrateCounterpartyPriceGroupPersistenceResult',
+)(function* mapMigrateCounterpartyPriceGroupPersistenceResultEffect(stored: MigrateCustomerPriceGroupStoreResult) {
+  if (stored._tag === 'conflicts') {
+    return { _tag: 'CONFLICTS', conflicts: stored.conflicts } as const;
+  }
+  if (stored._tag === 'retroactive_schedule') {
+    return yield* new CustomerPriceGroupRetroactiveScheduleRejected({
+      code: 'customer_price_group_retroactive_schedule_rejected',
+      reason: 'The migration became retroactive before it could be persisted',
+    });
+  }
+  return { _tag: 'MIGRATED', assignments: stored.assignments, changed: stored.changed } as const;
+});
+
+const recordMigrateCounterpartyPriceGroupDataAccess = Effect.fn('recordMigrateCounterpartyPriceGroupDataAccess')(
+  function* recordMigrateCounterpartyPriceGroupDataAccessEffect(
+    payload: MigrateCounterpartyPriceGroupPayload,
+    catalogOutcome: UsablePriceGroupCatalogOutcome,
+    context: MigrateCounterpartyPriceGroupContext,
+  ) {
+    yield* context.recordDataAccess({
+      accessKind: 'read',
+      queryHash: `counterparty-price-group-migration:${payload.counterpartyRef.resourceId}:${catalogOutcome.compatibility.catalogRevision}`,
+      resultCount: payload.targets.length,
+      servingModuleKey: 'commerce.customer-context',
+      targetModuleKey: payload.counterpartyRef.moduleId,
+      targetResourceId: payload.counterpartyRef.resourceId,
+      targetResourceType: payload.counterpartyRef.resourceType,
+    });
+    for (const target of payload.targets) {
+      yield* context.recordDataAccess({
+        accessKind: 'read',
+        queryHash: `counterparty-price-group-migration-target:${target.assignmentRef.resourceId}:${target.expectedRevision}`,
+        resultCount: 1,
+        servingModuleKey: 'commerce.customer-context',
+        targetModuleKey: target.profile.moduleId,
+        targetResourceId: target.profile.resourceId,
+        targetResourceType: target.profile.resourceType,
+      });
+    }
+    yield* context.recordDataAccess({
+      accessKind: 'read',
+      queryHash: `counterparty-price-group-migration-catalog:${payload.targetPriceGroupRef.resourceId}:${catalogOutcome.compatibility.catalogRevision}`,
+      resultCount: 1,
+      servingModuleKey: 'commerce.customer-context',
+      targetModuleKey: payload.targetPriceGroupRef.moduleId,
+      targetResourceId: payload.targetPriceGroupRef.resourceId,
+      targetResourceType: payload.targetPriceGroupRef.resourceType,
+    });
+  },
+);
+
+const emitMigrateCounterpartyPriceGroupEvent = Effect.fn(
+  'MigrateCounterpartyPriceGroupAction.emitMigrateCounterpartyPriceGroupEvent',
+)(function* emitMigrateCounterpartyPriceGroupEventEffect(
+  payload: MigrateCounterpartyPriceGroupPayload,
+  catalogOutcome: UsablePriceGroupCatalogOutcome,
+  result: MigratedCounterpartyPriceGroup,
+  context: MigrateCounterpartyPriceGroupContext,
+) {
+  if (!result.changed) {
+    return;
+  }
+  const eventPayload = {
+    assignmentRefs: result.assignments.map((assignment) => assignment.assignmentRef),
+    counterpartyRef: payload.counterpartyRef,
+    effectiveAt: payload.effectiveFrom,
+    profiles: payload.targets.map((target) => target.profile),
+    sourceAssignmentRefs: payload.targets.map((target) => target.assignmentRef),
+    sourcePriceGroupRef: payload.sourcePriceGroupRef,
+    targetPriceGroupRef: catalogOutcome.priceGroupRef,
+  };
+  const event = yield* context.addDomainEvent({
+    eventType: 'commerce.customer-context.counterparty-price-group-migrated.v1',
+    payloadJson: eventPayload,
+    producerModuleKey: 'commerce.customer-context',
+    subjectModuleKey: 'commerce.customer-context',
+    subjectResourceId:
+      result.assignments[0]?.assignmentRef.resourceId ??
+      payload.targets[0]?.assignmentRef.resourceId ??
+      payload.counterpartyRef.resourceId,
+    subjectResourceType: 'commerce.customer-context.customer-price-group-assignment',
+  });
+  yield* context.addOutboxMessage(
+    event,
+    createMigrateCounterpartyPriceGroupCommerceCustomerContextCounterpartyPriceGroupMigratedV1OutboxMessage(
+      eventPayload,
+    ),
+  );
+});
+
+export const handleMigrateCounterpartyPriceGroup = Effect.fn(
+  'MigrateCounterpartyPriceGroupAction.handleMigrateCounterpartyPriceGroup',
+)(function* migrate(
+  payload: MigrateCounterpartyPriceGroupPayload,
+  context: ActionHandlerContext<DomainEvents, MigrateCounterpartyPriceGroupServices>,
+) {
+  yield* validateMigrateCounterpartyPriceGroupScope(payload, context.scope.tenantId);
+  yield* validateMigrateCounterpartyPriceGroupCatalogIdentity(payload.sourcePriceGroupRef, payload.targetPriceGroupRef);
+
+  const recordedAt = yield* context.services.now;
+  if (isPriceGroupInstantBefore(payload.effectiveFrom, recordedAt)) {
+    return yield* new CustomerPriceGroupRetroactiveScheduleRejected({
+      code: 'customer_price_group_retroactive_schedule_rejected',
+      reason: 'Counterparty PriceGroup migration must take effect now or in the future',
+    });
+  }
+
+  const profileConflicts = yield* validateMigrateCounterpartyPriceGroupProfiles(
+    payload,
+    context.services.profileValidation,
+  );
+  if (profileConflicts !== undefined) {
+    return profileConflicts;
+  }
+
+  const catalogOutcome = yield* resolveMigrateCounterpartyPriceGroupCatalog(
+    payload.targetPriceGroupRef,
+    payload.effectiveFrom,
+    context.services.catalog,
+  );
 
   const stored = yield* context.services.store.migrate({
     actionInvocationId: context.actionInvocationId,
@@ -186,75 +319,12 @@ export const handleMigrateCounterpartyPriceGroup = Effect.fn(
     targets: payload.targets,
     tenantId: context.scope.tenantId,
   });
-
-  yield* context.recordDataAccess({
-    accessKind: 'read',
-    queryHash: `counterparty-price-group-migration:${payload.counterpartyRef.resourceId}:${catalogOutcome.compatibility.catalogRevision}`,
-    resultCount: payload.targets.length,
-    servingModuleKey: 'commerce.customer-context',
-    targetModuleKey: payload.counterpartyRef.moduleId,
-    targetResourceId: payload.counterpartyRef.resourceId,
-    targetResourceType: payload.counterpartyRef.resourceType,
-  });
-  for (const target of payload.targets) {
-    yield* context.recordDataAccess({
-      accessKind: 'read',
-      queryHash: `counterparty-price-group-migration-target:${target.assignmentRef.resourceId}:${target.expectedRevision}`,
-      resultCount: 1,
-      servingModuleKey: 'commerce.customer-context',
-      targetModuleKey: target.profile.moduleId,
-      targetResourceId: target.profile.resourceId,
-      targetResourceType: target.profile.resourceType,
-    });
+  yield* recordMigrateCounterpartyPriceGroupDataAccess(payload, catalogOutcome, context);
+  const result = yield* mapMigrateCounterpartyPriceGroupPersistenceResult(stored);
+  if (result._tag === 'MIGRATED') {
+    yield* emitMigrateCounterpartyPriceGroupEvent(payload, catalogOutcome, result, context);
   }
-  yield* context.recordDataAccess({
-    accessKind: 'read',
-    queryHash: `counterparty-price-group-migration-catalog:${payload.targetPriceGroupRef.resourceId}:${catalogOutcome.compatibility.catalogRevision}`,
-    resultCount: 1,
-    servingModuleKey: 'commerce.customer-context',
-    targetModuleKey: payload.targetPriceGroupRef.moduleId,
-    targetResourceId: payload.targetPriceGroupRef.resourceId,
-    targetResourceType: payload.targetPriceGroupRef.resourceType,
-  });
-
-  if (stored._tag === 'conflicts') {
-    return { _tag: 'CONFLICTS', conflicts: stored.conflicts } as const;
-  }
-  if (stored._tag === 'retroactive_schedule') {
-    return yield* new CustomerPriceGroupRetroactiveScheduleRejected({
-      code: 'customer_price_group_retroactive_schedule_rejected',
-      reason: 'The migration became retroactive before it could be persisted',
-    });
-  }
-  if (stored.changed) {
-    const eventPayload = {
-      assignmentRefs: stored.assignments.map((assignment) => assignment.assignmentRef),
-      counterpartyRef: payload.counterpartyRef,
-      effectiveAt: payload.effectiveFrom,
-      profiles: payload.targets.map((target) => target.profile),
-      sourceAssignmentRefs: payload.targets.map((target) => target.assignmentRef),
-      sourcePriceGroupRef: payload.sourcePriceGroupRef,
-      targetPriceGroupRef: catalogOutcome.priceGroupRef,
-    };
-    const event = yield* context.addDomainEvent({
-      eventType: 'commerce.customer-context.counterparty-price-group-migrated.v1',
-      payloadJson: eventPayload,
-      producerModuleKey: 'commerce.customer-context',
-      subjectModuleKey: 'commerce.customer-context',
-      subjectResourceId:
-        stored.assignments[0]?.assignmentRef.resourceId ??
-        payload.targets[0]?.assignmentRef.resourceId ??
-        payload.counterpartyRef.resourceId,
-      subjectResourceType: 'commerce.customer-context.customer-price-group-assignment',
-    });
-    yield* context.addOutboxMessage(
-      event,
-      createMigrateCounterpartyPriceGroupCommerceCustomerContextCounterpartyPriceGroupMigratedV1OutboxMessage(
-        eventPayload,
-      ),
-    );
-  }
-  return { _tag: 'MIGRATED', assignments: stored.assignments, changed: stored.changed } as const;
+  return result;
 });
 
 export const migrateCounterpartyPriceGroupAction = defineAction(
@@ -265,21 +335,18 @@ export const migrateCounterpartyPriceGroupAction = defineAction(
     },
     actionKey: 'commerce.customer-context.migrate-counterparty-price-group',
     auditProfile: 'sensitive',
-    businessPermission: defineActionBusinessPermission<MigrateCounterpartyPriceGroupPayload>(
-      (payload, scope) => ({
-        permission: 'counterparty.settings.price_group.manage',
-        target: {
-          counterpartyId: payload.counterpartyRef.resourceId,
-          kind: 'counterparty',
-          legalEntityId: scope.legalEntityId ?? '',
-          tenantId: scope.tenantId,
-        },
-      }),
-    ),
+    businessPermission: defineActionBusinessPermission<MigrateCounterpartyPriceGroupPayload>((payload, scope) => ({
+      permission: 'counterparty.settings.price_group.manage',
+      target: {
+        counterpartyId: payload.counterpartyRef.resourceId,
+        kind: 'counterparty',
+        legalEntityId: scope.legalEntityId ?? '',
+        tenantId: scope.tenantId,
+      },
+    })),
     domainErrorSchema: MigrateCounterpartyPriceGroupErrorSchema,
     domainEvents: {
-      'commerce.customer-context.counterparty-price-group-migrated.v1':
-        CounterpartyPriceGroupMigrationEventSchema,
+      'commerce.customer-context.counterparty-price-group-migrated.v1': CounterpartyPriceGroupMigrationEventSchema,
     },
     entrypoint: defineTenantModuleEntrypoint({
       access: 'write',
@@ -299,11 +366,3 @@ export const migrateCounterpartyPriceGroupAction = defineAction(
   handleMigrateCounterpartyPriceGroup,
   priceGroupActionServicesForTransaction,
 );
-
-// <generated-outbox-message-exports>
-export { createMigrateCounterpartyPriceGroupCommerceCustomerContextCounterpartyPriceGroupMigratedV1OutboxMessage } from './migrate-counterparty-price-group.commerce-customer-context-counterparty-price-group-migrated-v1.outbox-message.ts';
-export { MigrateCounterpartyPriceGroupCommerceCustomerContextCounterpartyPriceGroupMigratedV1OutboxPayloadSchema } from './migrate-counterparty-price-group.commerce-customer-context-counterparty-price-group-migrated-v1.outbox-message.ts';
-export { MigrateCounterpartyPriceGroupCommerceCustomerContextCounterpartyPriceGroupMigratedV1OutboxProducerModuleKey } from './migrate-counterparty-price-group.commerce-customer-context-counterparty-price-group-migrated-v1.outbox-message.ts';
-export { MigrateCounterpartyPriceGroupCommerceCustomerContextCounterpartyPriceGroupMigratedV1OutboxTopic } from './migrate-counterparty-price-group.commerce-customer-context-counterparty-price-group-migrated-v1.outbox-message.ts';
-export type { MigrateCounterpartyPriceGroupCommerceCustomerContextCounterpartyPriceGroupMigratedV1OutboxPayload } from './migrate-counterparty-price-group.commerce-customer-context-counterparty-price-group-migrated-v1.outbox-message.ts';
-// </generated-outbox-message-exports>

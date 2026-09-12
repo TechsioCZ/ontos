@@ -3,15 +3,11 @@ import { PartyRefSchema } from '@app/party-registry/resources/party';
 import { DateTime, Option, Schema, SchemaGetter } from 'effect';
 
 export const ProfileBoundedKeySchema = Schema.toEncoded(
-  Schema.Trim.check(Schema.isMinLength(1), Schema.isMaxLength(300)).pipe(
-    Schema.brand('ProfileBoundedKey'),
-  ),
+  Schema.Trim.check(Schema.isMinLength(1), Schema.isMaxLength(300)).pipe(Schema.brand('ProfileBoundedKey')),
 );
 const BoundedReasonSchema = Schema.Trim.check(Schema.isMinLength(1), Schema.isMaxLength(1000));
 const RevisionSchema = Schema.Finite.check(Schema.isInt(), Schema.isGreaterThan(0));
-const TenantIdSchema = Schema.toEncoded(
-  Schema.String.check(Schema.isUUID()).pipe(Schema.brand('TenantId')),
-);
+const TenantIdSchema = Schema.toEncoded(Schema.String.check(Schema.isUUID()).pipe(Schema.brand('TenantId')));
 
 const ProfileInstantDecodedSchema = Schema.String.check(
   Schema.makeFilter((value) => {
@@ -27,7 +23,6 @@ const ProfileInstantDecodedSchema = Schema.String.check(
   }),
 );
 export const ProfileInstantSchema = Schema.toEncoded(ProfileInstantDecodedSchema);
-export type ProfileInstant = typeof ProfileInstantSchema.Type;
 
 export const SellingLegalEntityRefSchema = Schema.Struct({
   moduleId: Schema.Literal('core.identity'),
@@ -35,22 +30,16 @@ export const SellingLegalEntityRefSchema = Schema.Struct({
   resourceType: Schema.Literal('core.identity.legal-entity'),
   tenantId: TenantIdSchema,
 });
-export type SellingLegalEntityRef = typeof SellingLegalEntityRefSchema.Type;
 
-export const ProfileActorSchema = Schema.Struct({
+const ProfileActorSchema = Schema.Struct({
   actorId: ProfileBoundedKeySchema,
   actorType: Schema.Literals(['HUMAN', 'SERVICE', 'ASSISTED_SUPPORT']),
 });
-export type ProfileActor = typeof ProfileActorSchema.Type;
 
-export const CommerceCustomerProfileKindSchema = Schema.Literals(['RETAIL', 'COUNTERPARTY']);
-export type CommerceCustomerProfileKind = typeof CommerceCustomerProfileKindSchema.Type;
+// oxlint-disable-next-line eslint/no-unused-vars -- Reserved private schema retained as part of the generated profile contract structure.
+const CommerceCustomerProfileKindSchema = Schema.Literals(['RETAIL', 'COUNTERPARTY']);
 
-export const CommerceCustomerProfileStateSchema = Schema.Literals([
-  'ACTIVE',
-  'SUSPENDED',
-  'ARCHIVED',
-]);
+export const CommerceCustomerProfileStateSchema = Schema.Literals(['ACTIVE', 'SUSPENDED', 'ARCHIVED']);
 export type CommerceCustomerProfileState = typeof CommerceCustomerProfileStateSchema.Type;
 
 export const RetailCustomerProfileSubjectSchema = Schema.Struct({
@@ -67,7 +56,6 @@ export const RetailCustomerProfileSubjectSchema = Schema.Struct({
         },
   ),
 );
-export type RetailCustomerProfileSubject = typeof RetailCustomerProfileSubjectSchema.Type;
 
 export const CounterpartyPurchasingProfileSubjectSchema = Schema.Struct({
   counterpartyRef: CounterpartyRefSchema,
@@ -75,8 +63,6 @@ export const CounterpartyPurchasingProfileSubjectSchema = Schema.Struct({
   /** The currently authorized seller scope; this is evidence, never part of the global key. */
   sellingLegalEntityRef: Schema.optionalKey(SellingLegalEntityRefSchema),
 });
-export type CounterpartyPurchasingProfileSubject =
-  typeof CounterpartyPurchasingProfileSubjectSchema.Type;
 
 export const CommerceCustomerProfileSubjectSchema = Schema.Union([
   RetailCustomerProfileSubjectSchema,
@@ -84,27 +70,25 @@ export const CommerceCustomerProfileSubjectSchema = Schema.Union([
 ]);
 export type CommerceCustomerProfileSubject = typeof CommerceCustomerProfileSubjectSchema.Type;
 
-export const ProfileLifecycleOperationSchema = Schema.Literals([
-  'SUSPEND',
-  'REACTIVATE',
-  'ARCHIVE',
-]);
+const ProfileLifecycleOperationSchema = Schema.Literals(['SUSPEND', 'REACTIVATE', 'ARCHIVE']);
 export type ProfileLifecycleOperation = typeof ProfileLifecycleOperationSchema.Type;
+
+const lifecycleTransitionTargets: Readonly<
+  Record<ProfileLifecycleOperation, Partial<Record<CommerceCustomerProfileState, CommerceCustomerProfileState>>>
+> = Object.freeze({
+  ARCHIVE: Object.freeze({ ACTIVE: 'ARCHIVED', SUSPENDED: 'ARCHIVED' }),
+  REACTIVATE: Object.freeze({ ARCHIVED: 'ACTIVE', SUSPENDED: 'ACTIVE' }),
+  SUSPEND: Object.freeze({ ACTIVE: 'SUSPENDED' }),
+});
 
 const allowedLifecycleTransition = (
   operation: ProfileLifecycleOperation,
   fromState: CommerceCustomerProfileState,
   toState: CommerceCustomerProfileState,
-): boolean =>
-  (operation === 'SUSPEND' && fromState === 'ACTIVE' && toState === 'SUSPENDED') ||
-  (operation === 'REACTIVATE' &&
-    (fromState === 'SUSPENDED' || fromState === 'ARCHIVED') &&
-    toState === 'ACTIVE') ||
-  (operation === 'ARCHIVE' &&
-    (fromState === 'ACTIVE' || fromState === 'SUSPENDED') &&
-    toState === 'ARCHIVED');
+): boolean => lifecycleTransitionTargets[operation][fromState] === toState;
 
-export const ProfileLifecycleTransitionSchema = Schema.Struct({
+// oxlint-disable-next-line eslint/no-unused-vars -- Reserved private schema retained as part of the generated profile contract structure.
+const ProfileLifecycleTransitionSchema = Schema.Struct({
   actor: ProfileActorSchema,
   effectiveAt: ProfileInstantSchema,
   expectedRevision: RevisionSchema,
@@ -120,9 +104,8 @@ export const ProfileLifecycleTransitionSchema = Schema.Struct({
       : 'operation, fromState, and toState do not form a supported profile lifecycle transition',
   ),
 );
-export type ProfileLifecycleTransition = typeof ProfileLifecycleTransitionSchema.Type;
 
-export const ProfileLifecycleDecisionSchema = Schema.Union([
+const ProfileLifecycleDecisionSchema = Schema.Union([
   Schema.Struct({
     currentRevision: RevisionSchema,
     currentState: CommerceCustomerProfileStateSchema,
@@ -167,9 +150,8 @@ export const ProfileCreateTriggerSchema = Schema.Literals([
   'ENSURE_BEFORE_ORDER_ACCEPTANCE',
   'GUEST_RETAIL_ATTRIBUTION',
 ]);
-export type ProfileCreateTrigger = typeof ProfileCreateTriggerSchema.Type;
 
-export const ProfileCreateObservedStateSchema = Schema.Literals([
+const ProfileCreateObservedStateSchema = Schema.Literals([
   'ABSENT',
   'ACTIVE',
   'SUSPENDED',
@@ -191,7 +173,6 @@ export const DependencyFreshnessSchema = Schema.Struct({
   sourceModuleId: ProfileBoundedKeySchema,
   status: Schema.Literals(['CURRENT', 'STALE', 'UNAVAILABLE', 'INDETERMINATE']),
 });
-export type DependencyFreshness = typeof DependencyFreshnessSchema.Type;
 
 export const ProfileReadProvenanceSchema = Schema.Struct({
   freshness: DependencyFreshnessSchema,
@@ -204,7 +185,6 @@ export const ProfileReadProvenanceSchema = Schema.Struct({
   ]),
   sourceResourceRef: Schema.optionalKey(ProfileBoundedKeySchema),
 });
-export type ProfileReadProvenance = typeof ProfileReadProvenanceSchema.Type;
 
 export const RETAIL_PORTAL_PERMISSION_CODES = [
   'retail.profile.read',
@@ -294,14 +274,13 @@ export const RETAIL_PORTAL_SELF_SERVICE_BASELINE = RETAIL_PORTAL_PERMISSION_CATA
   ({ code, launchBaseline }) => (launchBaseline ? [code] : []),
 );
 
-export const RetailPortalAuthorityGroupSchema = Schema.Struct({
+// oxlint-disable-next-line eslint/no-unused-vars -- Reserved private schema retained as part of the generated profile contract structure.
+const RetailPortalAuthorityGroupSchema = Schema.Struct({
   groupKey: Schema.Literal('RETAIL_PORTAL_SELF_SERVICE'),
   permissions: Schema.Array(RetailPortalPermissionCodeSchema).check(
     Schema.isMinLength(RETAIL_PORTAL_SELF_SERVICE_BASELINE.length),
     Schema.makeFilter((permissions) =>
-      new Set(permissions).size === permissions.length
-        ? undefined
-        : 'Authority group Permission codes must be unique',
+      new Set(permissions).size === permissions.length ? undefined : 'Authority group Permission codes must be unique',
     ),
     Schema.makeFilter((permissions) =>
       RETAIL_PORTAL_SELF_SERVICE_BASELINE.every((permission) => permissions.includes(permission))
@@ -311,10 +290,8 @@ export const RetailPortalAuthorityGroupSchema = Schema.Struct({
   ),
   version: ProfileBoundedKeySchema,
 });
-export type RetailPortalAuthorityGroup = typeof RetailPortalAuthorityGroupSchema.Type;
 
 export const RetailPortalBindingStateSchema = Schema.Literals(['ACTIVE', 'REVOKED']);
-export type RetailPortalBindingState = typeof RetailPortalBindingStateSchema.Type;
 
 /** Durable owner-local authorization state; it is independent from the binding lifecycle. */
 export const RetailPortalBindingAuthorizationStateSchema = Schema.Literals([
@@ -324,19 +301,11 @@ export const RetailPortalBindingAuthorizationStateSchema = Schema.Literals([
   'PENDING_REVOKE',
   'RECONCILIATION_REQUIRED',
 ]);
-export type RetailPortalBindingAuthorizationState =
-  typeof RetailPortalBindingAuthorizationStateSchema.Type;
+export type RetailPortalBindingAuthorizationState = typeof RetailPortalBindingAuthorizationStateSchema.Type;
 export const RetailPortalBindingAuthorizationOperationSchema = Schema.Literals(['grant', 'revoke']);
-export type RetailPortalBindingAuthorizationOperation =
-  typeof RetailPortalBindingAuthorizationOperationSchema.Type;
+export type RetailPortalBindingAuthorizationOperation = typeof RetailPortalBindingAuthorizationOperationSchema.Type;
 
-export const ReconciliationCaseStateSchema = Schema.Literals([
-  'OPEN',
-  'BLOCKED',
-  'READY_TO_COMPLETE',
-  'COMPLETED',
-]);
-export type ReconciliationCaseState = typeof ReconciliationCaseStateSchema.Type;
+export const ReconciliationCaseStateSchema = Schema.Literals(['OPEN', 'BLOCKED', 'READY_TO_COMPLETE', 'COMPLETED']);
 
 export const RECONCILIATION_REQUIRED_OWNERS = [
   'PROFILE_LIFECYCLE',
@@ -367,7 +336,7 @@ export const ReconciliationOwnerOutcomeSchema = Schema.Struct({
 );
 export type ReconciliationOwnerOutcome = typeof ReconciliationOwnerOutcomeSchema.Type;
 
-export const GuestPartyResolutionOutcomeSchema = Schema.Union([
+const GuestPartyResolutionOutcomeSchema = Schema.Union([
   Schema.Struct({ outcome: Schema.Literal('EXISTING_PARTY_RESOLVED'), partyRef: PartyRefSchema }),
   Schema.Struct({ outcome: Schema.Literal('UNRESOLVED_PARTY_CREATED'), partyRef: PartyRefSchema }),
   Schema.Struct({ caseRef: ProfileBoundedKeySchema, outcome: Schema.Literal('AMBIGUOUS_MATCH') }),

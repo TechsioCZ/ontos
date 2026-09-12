@@ -21,9 +21,7 @@ import { ProfileRetailPermissionReaderFactory } from '../integrations/retail-per
 import { lockingCurrentOwnerAccessForTransaction } from './access-persistence.ts';
 import { profilePersistenceServicesForTransaction } from './profile-persistence.ts';
 
-const ownerDecision = (
-  decision: 'ALLOWED' | 'DENIED' | 'UNAVAILABLE',
-): OwnerAuthorizationDecision => {
+const ownerDecision = (decision: 'ALLOWED' | 'DENIED' | 'UNAVAILABLE'): OwnerAuthorizationDecision => {
   if (decision === 'ALLOWED') {
     return 'allowed';
   }
@@ -34,9 +32,7 @@ const ownerDecision = (
 };
 
 /** Positive-union semantics: a current ACTIVE owner grant wins over narrower stale rows. */
-const combineOwnerDecisions = (
-  decisions: readonly OwnerAuthorizationDecision[],
-): OwnerAuthorizationDecision => {
+const combineOwnerDecisions = (decisions: readonly OwnerAuthorizationDecision[]): OwnerAuthorizationDecision => {
   if (decisions.length === 0) {
     return 'allowed';
   }
@@ -49,62 +45,67 @@ const combineOwnerDecisions = (
   return 'denied';
 };
 
-const decodeCounterpartyTarget = (
-  target: Extract<OwnerAuthorizationTarget, { readonly kind: 'business_permission' }>,
+interface DecodedCounterpartyTarget {
+  readonly counterpartyRef: typeof CounterpartyRefSchema.Type;
+  readonly permission: typeof CounterpartyPermissionCodeSchema.Type;
+  readonly permissionScope: CounterpartyPermissionScope;
+  readonly principal: typeof CounterpartyPrincipalRefSchema.Type;
+}
+type BusinessPermissionTarget = Extract<OwnerAuthorizationTarget, { readonly kind: 'business_permission' }>;
+type CounterpartyBusinessTarget = Exclude<BusinessPermissionTarget['target'], { readonly kind: 'retail_profile' }>;
+
+const counterpartyTargetMatchesScope = (
+  target: CounterpartyBusinessTarget,
+  trustedStorefrontId: BusinessPermissionTarget['trustedStorefrontId'],
   scope: OwnerAuthorizationInput['scope'],
-): Effect.Effect<
-  Option.Option<{
-    readonly counterpartyRef: typeof CounterpartyRefSchema.Type;
-    readonly permission: typeof CounterpartyPermissionCodeSchema.Type;
-    readonly permissionScope: CounterpartyPermissionScope;
-    readonly principal: typeof CounterpartyPrincipalRefSchema.Type;
-  }>
-> => {
-  if (target.target.kind === 'retail_profile') {
-    return Effect.succeed(Option.none());
-  }
-  if (
-    scope.legalEntityId === undefined ||
-    target.target.tenantId !== scope.tenantId ||
-    target.target.legalEntityId !== scope.legalEntityId ||
-    (target.target.kind === 'counterparty_storefront' &&
-      (target.target.storefrontId !== scope.trustedStorefrontId ||
-        target.trustedStorefrontId !== target.target.storefrontId))
-  ) {
-    return Effect.succeed(Option.none());
-  }
-  const permission = Schema.decodeUnknownResult(CounterpartyPermissionCodeSchema)(
-    target.permission,
-  );
-  const counterpartyRef = Schema.decodeUnknownResult(CounterpartyRefSchema)({
+): boolean =>
+  scope.legalEntityId !== undefined &&
+  target.tenantId === scope.tenantId &&
+  target.legalEntityId === scope.legalEntityId &&
+  (target.kind === 'counterparty' ||
+    (target.storefrontId === scope.trustedStorefrontId && trustedStorefrontId === target.storefrontId));
+
+const decodeCounterpartyTargetValues = (
+  target: CounterpartyBusinessTarget,
+  permissionCode: BusinessPermissionTarget['permission'],
+  scope: OwnerAuthorizationInput['scope'],
+): Option.Option<DecodedCounterpartyTarget> => {
+  const permission = Schema.decodeUnknownResult(CounterpartyPermissionCodeSchema)(permissionCode);
+  const counterpartyRef = Schema.decodeResult(CounterpartyRefSchema)({
     moduleId: 'party.registry',
-    resourceId: target.target.counterpartyId,
+    resourceId: target.counterpartyId,
     resourceType: 'party.registry.counterparty',
-    tenantId: target.target.tenantId,
+    tenantId: target.tenantId,
   });
-  const principal = Schema.decodeUnknownResult(CounterpartyPrincipalRefSchema)({
+  const principal = Schema.decodeResult(CounterpartyPrincipalRefSchema)({
     principalId: scope.principalId,
     tenantId: scope.tenantId,
   });
-  if (
-    Result.isFailure(permission) ||
-    Result.isFailure(counterpartyRef) ||
-    Result.isFailure(principal)
-  ) {
-    return Effect.succeed(Option.none());
+  if (Result.isFailure(permission) || Result.isFailure(counterpartyRef) || Result.isFailure(principal)) {
+    return Option.none();
   }
-  const permissionScope: CounterpartyPermissionScope =
-    target.target.kind === 'counterparty'
-      ? { kind: 'counterparty' }
-      : { kind: 'storefront', storefrontKey: target.target.storefrontId };
-  return Effect.succeed(
-    Option.some({
-      counterpartyRef: counterpartyRef.success,
-      permission: permission.success,
-      permissionScope,
-      principal: principal.success,
-    }),
-  );
+  return Option.some({
+    counterpartyRef: counterpartyRef.success,
+    permission: permission.success,
+    permissionScope:
+      target.kind === 'counterparty'
+        ? { kind: 'counterparty' }
+        : { kind: 'storefront', storefrontKey: target.storefrontId },
+    principal: principal.success,
+  });
+};
+
+const decodeCounterpartyTarget = (
+  target: Extract<OwnerAuthorizationTarget, { readonly kind: 'business_permission' }>,
+  scope: OwnerAuthorizationInput['scope'],
+): Effect.Effect<Option.Option<DecodedCounterpartyTarget>> => {
+  if (target.target.kind === 'retail_profile') {
+    return Effect.succeedNone;
+  }
+  if (!counterpartyTargetMatchesScope(target.target, target.trustedStorefrontId, scope)) {
+    return Effect.succeedNone;
+  }
+  return Effect.succeed(decodeCounterpartyTargetValues(target.target, target.permission, scope));
 };
 
 const checkCounterpartyTarget = (
@@ -160,12 +161,8 @@ const checkRetailTarget = (
   if (Result.isFailure(request)) {
     return Effect.succeed('unavailable' as const);
   }
-  const profileRef = Schema.decodeUnknownResult(RetailCustomerProfileRefSchema)(
-    request.success.profileRef,
-  );
-  const permission = Schema.decodeUnknownResult(RetailPortalPermissionCodeSchema)(
-    request.success.requiredPermission,
-  );
+  const profileRef = Schema.decodeResult(RetailCustomerProfileRefSchema)(request.success.profileRef);
+  const permission = Schema.decodeResult(RetailPortalPermissionCodeSchema)(request.success.requiredPermission);
   if (Result.isFailure(profileRef) || Result.isFailure(permission)) {
     return Effect.succeed('unavailable' as const);
   }
@@ -219,20 +216,14 @@ export const makeCommerceCustomerContextOwnerAuthorizationOverlay = (
           return Effect.succeed(Option.none<OwnerAuthorizationDecision>());
         }
         if (target.target.kind === 'retail_profile') {
-          return checkRetailTarget(transaction, target, input.scope, readerFactory).pipe(
-            Effect.map(Option.some),
-          );
+          return checkRetailTarget(transaction, target, input.scope, readerFactory).pipe(Effect.asSome);
         }
-        return checkCounterpartyTarget(transaction, target, input.scope).pipe(
-          Effect.map(Option.some),
-        );
+        return checkCounterpartyTarget(transaction, target, input.scope).pipe(Effect.asSome);
       },
       { concurrency: 1 },
     ).pipe(
       Effect.map((decisions) =>
-        combineOwnerDecisions(
-          decisions.flatMap((decision) => (Option.isSome(decision) ? [decision.value] : [])),
-        ),
+        combineOwnerDecisions(decisions.flatMap((decision) => (Option.isSome(decision) ? [decision.value] : []))),
       ),
     ),
 });

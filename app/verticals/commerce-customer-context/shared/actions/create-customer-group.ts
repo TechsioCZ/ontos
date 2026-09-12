@@ -25,4 +25,3 @@ export const CreateCustomerGroupResultSchema = Schema.Struct({
   created: Schema.Boolean,
   group: CommerceCustomerGroupSchema,
 });
-export type CreateCustomerGroupResult = typeof CreateCustomerGroupResultSchema.Type;

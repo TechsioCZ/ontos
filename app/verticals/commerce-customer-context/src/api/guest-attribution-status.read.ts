@@ -27,18 +27,17 @@ const notFound = () =>
     reason: 'The Guest attribution does not exist in the trusted purchasing context',
   });
 
-export const readGuestAttributionStatusFromServices = (
+const readGuestAttributionStatusFromServices = (
   input: GuestAttributionStatusRequest,
   tenantId: string,
   legalEntityId: string | undefined,
   services: GuestAttributionStatusServices,
 ) =>
-  input.sellingLegalEntityRef.tenantId === tenantId &&
-  input.sellingLegalEntityRef.resourceId === legalEntityId
+  input.sellingLegalEntityRef.tenantId === tenantId && input.sellingLegalEntityRef.resourceId === legalEntityId
     ? services.readStatus(input, tenantId)
     : Effect.fail(notFound());
 
-export const guestAttributionStatusEntrypoint = defineTenantModuleEntrypoint({
+const guestAttributionStatusEntrypoint = defineTenantModuleEntrypoint({
   access: 'read',
   authorization: { kind: 'context_permission', permission: 'module.access' },
   entrypointKey: 'commerce.customer-context.api.guest-attribution-status',
@@ -72,7 +71,7 @@ export const guestAttributionStatusRead = defineRead(
     ).pipe(Effect.map((result) => ({ evidence: { resultCount: 1 }, result }))),
   (transaction, scope) =>
     profileServicesForVerifiedScope(transaction, scope).pipe(
-      Effect.map(({ guestAttributionStatus }) => guestAttributionStatus),
+      Effect.map(({ guestAttributionStatus }): GuestAttributionStatusServices => guestAttributionStatus),
     ),
   () => ({ kind: 'module', moduleId: MODULE_KEY }),
 );

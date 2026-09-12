@@ -3,7 +3,7 @@
 // @ontos-action-http-slug repeat-counterparty-order
 // oxlint-disable sonarjs/function-name -- Effect Match.tags requires owner-declared tag keys; remove-when: sonarjs accepts discriminant-map properties.
 import type { ActionCoreError } from '@app/core-runtime';
-import { Effect, HttpApiMiddleware } from '@modern-js/plugin-bff/effect-edge';
+import { Effect, HttpApiMiddleware } from '@modern-js/bff-effect/effect-edge';
 import { Match, Schema } from 'effect';
 import {
   RepeatCounterpartyOrderActionAlreadyCommittedProblemSchema,
@@ -127,14 +127,10 @@ export const repeatCounterpartyOrderActionProblem = {
 const mapDomainProblem = (error: DomainError): RepeatCounterpartyOrderActionProblem =>
   Match.value(error).pipe(
     Match.tags({
-      HistoryAccessDenied: () =>
-        repeatCounterpartyOrderActionProblem.forbidden('history_access_denied'),
-      HistoryActionUnavailable: () =>
-        repeatCounterpartyOrderActionProblem.unavailable('history_action_unavailable'),
-      HistoryRecordNotFound: () =>
-        repeatCounterpartyOrderActionProblem.notFound('history_record_not_found'),
-      RepeatOrderConflict: () =>
-        repeatCounterpartyOrderActionProblem.conflict('repeat_order_conflict'),
+      HistoryAccessDenied: () => repeatCounterpartyOrderActionProblem.forbidden('history_access_denied'),
+      HistoryActionUnavailable: () => repeatCounterpartyOrderActionProblem.unavailable('history_action_unavailable'),
+      HistoryRecordNotFound: () => repeatCounterpartyOrderActionProblem.notFound('history_record_not_found'),
+      RepeatOrderConflict: () => repeatCounterpartyOrderActionProblem.conflict('repeat_order_conflict'),
       RepeatOrderNoRepeatableLines: () =>
         repeatCounterpartyOrderActionProblem.ineligible('repeat_order_no_repeatable_lines'),
     }),
@@ -168,38 +164,24 @@ const mapCoreProblem = (error: ActionCoreError): RepeatCounterpartyOrderActionPr
         }),
       ActionHandlerExecutionError: repeatCounterpartyOrderActionProblem.internal,
       ActionIdempotencyKeyRequired: repeatCounterpartyOrderActionProblem.precondition,
-      ActionInvocationNotFound: (failure) =>
-        repeatCounterpartyOrderActionProblem.notFound(failure.code),
-      ActionInvocationPersistenceError: (failure) =>
-        repeatCounterpartyOrderActionProblem.unavailable(failure.code),
-      ActionInvocationStateError: (failure) =>
-        repeatCounterpartyOrderActionProblem.conflict(failure.code),
+      ActionInvocationNotFound: (failure) => repeatCounterpartyOrderActionProblem.notFound(failure.code),
+      ActionInvocationPersistenceError: (failure) => repeatCounterpartyOrderActionProblem.unavailable(failure.code),
+      ActionInvocationStateError: (failure) => repeatCounterpartyOrderActionProblem.conflict(failure.code),
       ActionPayloadValidationError: repeatCounterpartyOrderActionProblem.invalid,
-      ActionPermissionCheckError: (failure) =>
-        repeatCounterpartyOrderActionProblem.unavailable(failure.code),
-      ActionPermissionDenied: (failure) =>
-        repeatCounterpartyOrderActionProblem.forbidden(failure.code),
-      ActionPolicyDenied: (failure) =>
-        repeatCounterpartyOrderActionProblem.ineligible(failure.code),
-      ActionPolicyEvaluationError: (failure) =>
-        repeatCounterpartyOrderActionProblem.unavailable(failure.code),
-      ActionRequestHashConflict: (failure) =>
-        repeatCounterpartyOrderActionProblem.conflict(failure.code),
+      ActionPermissionCheckError: (failure) => repeatCounterpartyOrderActionProblem.unavailable(failure.code),
+      ActionPermissionDenied: (failure) => repeatCounterpartyOrderActionProblem.forbidden(failure.code),
+      ActionPolicyDenied: (failure) => repeatCounterpartyOrderActionProblem.ineligible(failure.code),
+      ActionPolicyEvaluationError: (failure) => repeatCounterpartyOrderActionProblem.unavailable(failure.code),
+      ActionRequestHashConflict: (failure) => repeatCounterpartyOrderActionProblem.conflict(failure.code),
       ActionResultValidationError: repeatCounterpartyOrderActionProblem.internal,
-      ActionTransactionError: (failure) =>
-        repeatCounterpartyOrderActionProblem.unavailable(failure.code),
+      ActionTransactionError: (failure) => repeatCounterpartyOrderActionProblem.unavailable(failure.code),
       ActionTrustedContextValidationError: repeatCounterpartyOrderActionProblem.authentication,
-      ModuleStateCheckUnavailableError: (failure) =>
-        repeatCounterpartyOrderActionProblem.unavailable(failure.code),
-      ModuleStateDeniedError: (failure) =>
-        repeatCounterpartyOrderActionProblem.forbidden(failure.code),
+      ModuleStateCheckUnavailableError: (failure) => repeatCounterpartyOrderActionProblem.unavailable(failure.code),
+      ModuleStateDeniedError: (failure) => repeatCounterpartyOrderActionProblem.forbidden(failure.code),
       OperationAuthenticationRequired: repeatCounterpartyOrderActionProblem.authentication,
-      OperationContextDenied: (failure) =>
-        repeatCounterpartyOrderActionProblem.forbidden(failure.code),
-      OperationContextInvalid: (failure) =>
-        repeatCounterpartyOrderActionProblem.forbidden(failure.code),
-      OperationContextUnavailable: (failure) =>
-        repeatCounterpartyOrderActionProblem.unavailable(failure.code),
+      OperationContextDenied: (failure) => repeatCounterpartyOrderActionProblem.forbidden(failure.code),
+      OperationContextInvalid: (failure) => repeatCounterpartyOrderActionProblem.forbidden(failure.code),
+      OperationContextUnavailable: (failure) => repeatCounterpartyOrderActionProblem.unavailable(failure.code),
     }),
     Match.exhaustive,
   );
@@ -207,11 +189,9 @@ const mapCoreProblem = (error: ActionCoreError): RepeatCounterpartyOrderActionPr
 const isDomainError = Schema.is(repeatCounterpartyOrderAction.descriptor.domainErrorSchema);
 export const mapRepeatCounterpartyOrderActionProblem = (
   error: ActionCoreError | DomainError,
-): RepeatCounterpartyOrderActionProblem =>
-  isDomainError(error) ? mapDomainProblem(error) : mapCoreProblem(error);
+): RepeatCounterpartyOrderActionProblem => (isDomainError(error) ? mapDomainProblem(error) : mapCoreProblem(error));
 
-export const repeatCounterpartyOrderActionSchemaErrorLive =
-  HttpApiMiddleware.layerSchemaErrorTransform(
-    RepeatCounterpartyOrderActionSchemaErrorMiddleware,
-    () => Effect.fail(repeatCounterpartyOrderActionProblem.invalid()),
-  );
+export const repeatCounterpartyOrderActionSchemaErrorLive = HttpApiMiddleware.layerSchemaErrorTransform(
+  RepeatCounterpartyOrderActionSchemaErrorMiddleware,
+  () => Effect.fail(repeatCounterpartyOrderActionProblem.invalid()),
+);

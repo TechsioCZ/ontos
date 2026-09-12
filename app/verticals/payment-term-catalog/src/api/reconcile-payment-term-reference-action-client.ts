@@ -69,11 +69,6 @@ export const executeReconcilePaymentTermReference = (
 ) =>
   operationGateway.invoke(
     (credential) =>
-      executeReconcilePaymentTermReferenceWithAuthorization(
-        payload,
-        credential,
-        requestCorrelation,
-        options,
-      ),
+      executeReconcilePaymentTermReferenceWithAuthorization(payload, credential, requestCorrelation, options),
     options.gateway,
   );

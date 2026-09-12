@@ -98,10 +98,6 @@ export const executeStockWithAuthorization = () => undefined;
 export const executeStock = () => undefined;
 `;
 
-  expect(() =>
-    hasGeneratedGovernedClientContract(malformedClient, governedModuleClientExpectation),
-  ).not.toThrow();
-  expect(hasGeneratedGovernedClientContract(malformedClient, governedModuleClientExpectation)).toBe(
-    false,
-  );
+  expect(() => hasGeneratedGovernedClientContract(malformedClient, governedModuleClientExpectation)).not.toThrow();
+  expect(hasGeneratedGovernedClientContract(malformedClient, governedModuleClientExpectation)).toBe(false);
 });

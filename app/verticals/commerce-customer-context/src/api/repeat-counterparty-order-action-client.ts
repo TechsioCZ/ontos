@@ -24,10 +24,7 @@ type AuthorizedInvocation = readonly [
   requestCorrelation: string,
   options: RepeatCounterpartyOrderActionClientOptions,
 ];
-type OperationInvocation = readonly [
-  requestCorrelation: string,
-  options: RepeatCounterpartyOrderActionClientOptions,
-];
+type OperationInvocation = readonly [requestCorrelation: string, options: RepeatCounterpartyOrderActionClientOptions];
 
 interface MakeClientOptions {
   readonly credential: Redacted.Redacted;
@@ -68,12 +65,6 @@ export const executeRepeatCounterpartyOrder = (
   ...[requestCorrelation, options]: OperationInvocation
 ) =>
   operationGateway.invoke(
-    (credential) =>
-      executeRepeatCounterpartyOrderWithAuthorization(
-        payload,
-        credential,
-        requestCorrelation,
-        options,
-      ),
+    (credential) => executeRepeatCounterpartyOrderWithAuthorization(payload, credential, requestCorrelation, options),
     options.gateway,
   );

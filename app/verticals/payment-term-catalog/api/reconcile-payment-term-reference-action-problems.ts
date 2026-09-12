@@ -3,7 +3,7 @@
 // @ontos-action-http-slug reconcile-payment-term-reference
 // oxlint-disable sonarjs/function-name -- Effect Match.tags requires owner-declared tag keys; remove-when: sonarjs accepts discriminant-map properties.
 import type { ActionCoreError } from '@app/core-runtime';
-import { Effect, HttpApiMiddleware } from '@modern-js/plugin-bff/effect-edge';
+import { Effect, HttpApiMiddleware } from '@modern-js/bff-effect/effect-edge';
 import { Match, Schema } from 'effect';
 import {
   ReconcilePaymentTermReferenceActionAlreadyCommittedProblemSchema,
@@ -128,15 +128,10 @@ const mapDomainProblem = (error: DomainError): ReconcilePaymentTermReferenceActi
   Match.value(error).pipe(
     Match.tags({
       PaymentTermCatalogPersistenceConflict: () =>
-        reconcilePaymentTermReferenceActionProblem.unavailable(
-          'payment_term_catalog_persistence_conflict',
-        ),
+        reconcilePaymentTermReferenceActionProblem.unavailable('payment_term_catalog_persistence_conflict'),
       PaymentTermCatalogPersistenceUnavailable: () =>
-        reconcilePaymentTermReferenceActionProblem.unavailable(
-          'payment_term_catalog_persistence_unavailable',
-        ),
-      PaymentTermNotFound: () =>
-        reconcilePaymentTermReferenceActionProblem.notFound('payment_term_not_found'),
+        reconcilePaymentTermReferenceActionProblem.unavailable('payment_term_catalog_persistence_unavailable'),
+      PaymentTermNotFound: () => reconcilePaymentTermReferenceActionProblem.notFound('payment_term_not_found'),
       PaymentTermReconciliationConflict: () =>
         reconcilePaymentTermReferenceActionProblem.conflict('payment_term_reconciliation_conflict'),
       PaymentTermRevisionConflict: () =>
@@ -172,39 +167,26 @@ const mapCoreProblem = (error: ActionCoreError): ReconcilePaymentTermReferenceAc
         }),
       ActionHandlerExecutionError: reconcilePaymentTermReferenceActionProblem.internal,
       ActionIdempotencyKeyRequired: reconcilePaymentTermReferenceActionProblem.precondition,
-      ActionInvocationNotFound: (failure) =>
-        reconcilePaymentTermReferenceActionProblem.notFound(failure.code),
+      ActionInvocationNotFound: (failure) => reconcilePaymentTermReferenceActionProblem.notFound(failure.code),
       ActionInvocationPersistenceError: (failure) =>
         reconcilePaymentTermReferenceActionProblem.unavailable(failure.code),
-      ActionInvocationStateError: (failure) =>
-        reconcilePaymentTermReferenceActionProblem.conflict(failure.code),
+      ActionInvocationStateError: (failure) => reconcilePaymentTermReferenceActionProblem.conflict(failure.code),
       ActionPayloadValidationError: reconcilePaymentTermReferenceActionProblem.invalid,
-      ActionPermissionCheckError: (failure) =>
-        reconcilePaymentTermReferenceActionProblem.unavailable(failure.code),
-      ActionPermissionDenied: (failure) =>
-        reconcilePaymentTermReferenceActionProblem.forbidden(failure.code),
-      ActionPolicyDenied: (failure) =>
-        reconcilePaymentTermReferenceActionProblem.ineligible(failure.code),
-      ActionPolicyEvaluationError: (failure) =>
-        reconcilePaymentTermReferenceActionProblem.unavailable(failure.code),
-      ActionRequestHashConflict: (failure) =>
-        reconcilePaymentTermReferenceActionProblem.conflict(failure.code),
+      ActionPermissionCheckError: (failure) => reconcilePaymentTermReferenceActionProblem.unavailable(failure.code),
+      ActionPermissionDenied: (failure) => reconcilePaymentTermReferenceActionProblem.forbidden(failure.code),
+      ActionPolicyDenied: (failure) => reconcilePaymentTermReferenceActionProblem.ineligible(failure.code),
+      ActionPolicyEvaluationError: (failure) => reconcilePaymentTermReferenceActionProblem.unavailable(failure.code),
+      ActionRequestHashConflict: (failure) => reconcilePaymentTermReferenceActionProblem.conflict(failure.code),
       ActionResultValidationError: reconcilePaymentTermReferenceActionProblem.internal,
-      ActionTransactionError: (failure) =>
-        reconcilePaymentTermReferenceActionProblem.unavailable(failure.code),
-      ActionTrustedContextValidationError:
-        reconcilePaymentTermReferenceActionProblem.authentication,
+      ActionTransactionError: (failure) => reconcilePaymentTermReferenceActionProblem.unavailable(failure.code),
+      ActionTrustedContextValidationError: reconcilePaymentTermReferenceActionProblem.authentication,
       ModuleStateCheckUnavailableError: (failure) =>
         reconcilePaymentTermReferenceActionProblem.unavailable(failure.code),
-      ModuleStateDeniedError: (failure) =>
-        reconcilePaymentTermReferenceActionProblem.forbidden(failure.code),
+      ModuleStateDeniedError: (failure) => reconcilePaymentTermReferenceActionProblem.forbidden(failure.code),
       OperationAuthenticationRequired: reconcilePaymentTermReferenceActionProblem.authentication,
-      OperationContextDenied: (failure) =>
-        reconcilePaymentTermReferenceActionProblem.forbidden(failure.code),
-      OperationContextInvalid: (failure) =>
-        reconcilePaymentTermReferenceActionProblem.forbidden(failure.code),
-      OperationContextUnavailable: (failure) =>
-        reconcilePaymentTermReferenceActionProblem.unavailable(failure.code),
+      OperationContextDenied: (failure) => reconcilePaymentTermReferenceActionProblem.forbidden(failure.code),
+      OperationContextInvalid: (failure) => reconcilePaymentTermReferenceActionProblem.forbidden(failure.code),
+      OperationContextUnavailable: (failure) => reconcilePaymentTermReferenceActionProblem.unavailable(failure.code),
     }),
     Match.exhaustive,
   );
@@ -215,8 +197,7 @@ export const mapReconcilePaymentTermReferenceActionProblem = (
 ): ReconcilePaymentTermReferenceActionProblem =>
   isDomainError(error) ? mapDomainProblem(error) : mapCoreProblem(error);
 
-export const reconcilePaymentTermReferenceActionSchemaErrorLive =
-  HttpApiMiddleware.layerSchemaErrorTransform(
-    ReconcilePaymentTermReferenceActionSchemaErrorMiddleware,
-    () => Effect.fail(reconcilePaymentTermReferenceActionProblem.invalid()),
-  );
+export const reconcilePaymentTermReferenceActionSchemaErrorLive = HttpApiMiddleware.layerSchemaErrorTransform(
+  ReconcilePaymentTermReferenceActionSchemaErrorMiddleware,
+  () => Effect.fail(reconcilePaymentTermReferenceActionProblem.invalid()),
+);

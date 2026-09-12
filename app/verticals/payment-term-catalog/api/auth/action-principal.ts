@@ -4,49 +4,18 @@
 import { GatewayAssertionRedemptionService } from '@app/core-runtime/auth/gateway-assertion-redemption';
 import { makeMicroverticalHttpPrincipalAuthentication } from '@app/core-runtime/http/principal-authentication';
 import { bindGatewayPrincipalVerifier } from '@app/gateway-principal-verifier/server';
-import type { GatewayPrincipalVerificationWithRedemptionOptions } from '@app/gateway-principal-verifier/server';
-import { Effect, Redacted } from 'effect';
+import { Effect } from 'effect';
+import type { Redacted } from 'effect';
 
-export {
-  ACTION_PRINCIPAL_BEARER_CHALLENGE,
-  ActionPrincipalConfigurationErrorSchema,
-  ActionPrincipalExpiredErrorSchema,
-  ActionPrincipalInvalidErrorSchema,
-  ActionPrincipalMissingErrorSchema,
-  ActionPrincipalScopeErrorSchema,
-  ActionPrincipalUnavailableErrorSchema,
-} from '@app/gateway-principal-verifier/server';
-export type {
-  ActionPrincipalConfigurationError,
-  ActionPrincipalError,
-  ActionPrincipalExpiredError,
-  ActionPrincipalInvalidError,
-  ActionPrincipalMissingError,
-  ActionPrincipalScopeError,
-  ActionPrincipalUnavailableError,
-} from '@app/gateway-principal-verifier/server';
-
-export const ACTION_GATEWAY_AUDIENCE = 'payment-term-catalog' as const;
-export {
-  GatewayPrincipalVerifierConfiguration as ActionPrincipalVerifier,
-  GatewayPrincipalVerifierLive as ActionPrincipalVerifierLive,
-} from '@app/gateway-principal-verifier/server';
-export type ActionPrincipalVerificationOptions = GatewayPrincipalVerificationWithRedemptionOptions;
+const ACTION_GATEWAY_AUDIENCE = 'payment-term-catalog' as const;
+export { GatewayPrincipalVerifierLive as ActionPrincipalVerifierLive } from '@app/gateway-principal-verifier/server';
 
 const principalVerifier = bindGatewayPrincipalVerifier(ACTION_GATEWAY_AUDIENCE);
 
-export const verifyActionPrincipal = (
-  authorization: string | undefined,
-  options: ActionPrincipalVerificationOptions,
-) => principalVerifier.verifyAndRedeem(Redacted.make(authorization), options);
-
 const verifyOperationPrincipal = (authorization: Redacted.Redacted<string | undefined>) =>
   GatewayAssertionRedemptionService.pipe(
-    Effect.flatMap((redemption) =>
-      principalVerifier.verifyAndRedeem(authorization, { redemption }),
-    ),
+    Effect.flatMap((redemption) => principalVerifier.verifyAndRedeem(authorization, { redemption })),
   );
 
 /** Shared HTTP acquisition bound to this deployment's audience-specific verifier. */
-export const authenticateOperationPrincipal =
-  makeMicroverticalHttpPrincipalAuthentication(verifyOperationPrincipal);
+export const authenticateOperationPrincipal = makeMicroverticalHttpPrincipalAuthentication(verifyOperationPrincipal);

@@ -12,10 +12,7 @@ export {
 } from '../search/projection.ts';
 export { CoreSearchWorkerSnapshot, CoreSearchWorkerSnapshotLive } from '../search/worker-snapshot.ts';
 export { defineOutboxWorker, extractOutboxWorkerSubscriptions } from './definition.ts';
-export {
-  defineOutboxWorkerCompletion,
-  OutboxWorkerCompletionPublicationError,
-} from './completion-publication.ts';
+export { defineOutboxWorkerCompletion, OutboxWorkerCompletionPublicationError } from './completion-publication.ts';
 export { OutboxWorkerInfrastructureLive, startOutboxWorkerProcess } from './process.ts';
 export { OutboxRepositoryLive } from './repository.ts';
 export {

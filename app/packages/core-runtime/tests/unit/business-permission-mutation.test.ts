@@ -156,8 +156,6 @@ it.effect('sanitizes relationship client diagnostics', () =>
       }),
     );
     expect(`${failure._tag}:${failure.reason}`).not.toContain('secret-spicedb-key');
-    expect(failure.reason).toBe(
-      'The business permission relationship mutation could not be completed safely',
-    );
+    expect(failure.reason).toBe('The business permission relationship mutation could not be completed safely');
   }),
 );

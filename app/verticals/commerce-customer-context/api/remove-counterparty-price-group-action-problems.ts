@@ -3,7 +3,7 @@
 // @ontos-action-http-slug remove-counterparty-price-group
 // oxlint-disable sonarjs/function-name -- Effect Match.tags requires owner-declared tag keys; remove-when: sonarjs accepts discriminant-map properties.
 import type { ActionCoreError } from '@app/core-runtime';
-import { Effect, HttpApiMiddleware } from '@modern-js/plugin-bff/effect-edge';
+import { Effect, HttpApiMiddleware } from '@modern-js/bff-effect/effect-edge';
 import { Match, Schema } from 'effect';
 import {
   RemoveCounterpartyPriceGroupActionAlreadyCommittedProblemSchema,
@@ -128,35 +128,21 @@ const mapDomainProblem = (error: DomainError): RemoveCounterpartyPriceGroupActio
   Match.value(error).pipe(
     Match.tags({
       CustomerPriceGroupAssignmentNotFound: () =>
-        removeCounterpartyPriceGroupActionProblem.notFound(
-          'customer_price_group_assignment_not_found',
-        ),
+        removeCounterpartyPriceGroupActionProblem.notFound('customer_price_group_assignment_not_found'),
       CustomerPriceGroupPersistenceUnavailable: () =>
-        removeCounterpartyPriceGroupActionProblem.unavailable(
-          'customer_price_group_persistence_unavailable',
-        ),
+        removeCounterpartyPriceGroupActionProblem.unavailable('customer_price_group_persistence_unavailable'),
       CustomerPriceGroupProfileAssociationMismatch: () =>
-        removeCounterpartyPriceGroupActionProblem.ineligible(
-          'customer_price_group_profile_association_mismatch',
-        ),
+        removeCounterpartyPriceGroupActionProblem.ineligible('customer_price_group_profile_association_mismatch'),
       CustomerPriceGroupProfileNotFound: () =>
-        removeCounterpartyPriceGroupActionProblem.notFound(
-          'customer_price_group_profile_not_found',
-        ),
+        removeCounterpartyPriceGroupActionProblem.notFound('customer_price_group_profile_not_found'),
       CustomerPriceGroupProfileUnavailable: () =>
-        removeCounterpartyPriceGroupActionProblem.unavailable(
-          'customer_price_group_profile_unavailable',
-        ),
+        removeCounterpartyPriceGroupActionProblem.unavailable('customer_price_group_profile_unavailable'),
       CustomerPriceGroupRemovalConflict: () =>
         removeCounterpartyPriceGroupActionProblem.conflict('customer_price_group_removal_conflict'),
       CustomerPriceGroupRetroactiveScheduleRejected: () =>
-        removeCounterpartyPriceGroupActionProblem.ineligible(
-          'customer_price_group_retroactive_schedule_rejected',
-        ),
+        removeCounterpartyPriceGroupActionProblem.ineligible('customer_price_group_retroactive_schedule_rejected'),
       CustomerPriceGroupRevisionConflict: () =>
-        removeCounterpartyPriceGroupActionProblem.conflict(
-          'customer_price_group_revision_conflict',
-        ),
+        removeCounterpartyPriceGroupActionProblem.conflict('customer_price_group_revision_conflict'),
       CustomerPriceGroupScopeMismatch: () =>
         removeCounterpartyPriceGroupActionProblem.forbidden('customer_price_group_scope_mismatch'),
     }),
@@ -190,38 +176,26 @@ const mapCoreProblem = (error: ActionCoreError): RemoveCounterpartyPriceGroupAct
         }),
       ActionHandlerExecutionError: removeCounterpartyPriceGroupActionProblem.internal,
       ActionIdempotencyKeyRequired: removeCounterpartyPriceGroupActionProblem.precondition,
-      ActionInvocationNotFound: (failure) =>
-        removeCounterpartyPriceGroupActionProblem.notFound(failure.code),
+      ActionInvocationNotFound: (failure) => removeCounterpartyPriceGroupActionProblem.notFound(failure.code),
       ActionInvocationPersistenceError: (failure) =>
         removeCounterpartyPriceGroupActionProblem.unavailable(failure.code),
-      ActionInvocationStateError: (failure) =>
-        removeCounterpartyPriceGroupActionProblem.conflict(failure.code),
+      ActionInvocationStateError: (failure) => removeCounterpartyPriceGroupActionProblem.conflict(failure.code),
       ActionPayloadValidationError: removeCounterpartyPriceGroupActionProblem.invalid,
-      ActionPermissionCheckError: (failure) =>
-        removeCounterpartyPriceGroupActionProblem.unavailable(failure.code),
-      ActionPermissionDenied: (failure) =>
-        removeCounterpartyPriceGroupActionProblem.forbidden(failure.code),
-      ActionPolicyDenied: (failure) =>
-        removeCounterpartyPriceGroupActionProblem.ineligible(failure.code),
-      ActionPolicyEvaluationError: (failure) =>
-        removeCounterpartyPriceGroupActionProblem.unavailable(failure.code),
-      ActionRequestHashConflict: (failure) =>
-        removeCounterpartyPriceGroupActionProblem.conflict(failure.code),
+      ActionPermissionCheckError: (failure) => removeCounterpartyPriceGroupActionProblem.unavailable(failure.code),
+      ActionPermissionDenied: (failure) => removeCounterpartyPriceGroupActionProblem.forbidden(failure.code),
+      ActionPolicyDenied: (failure) => removeCounterpartyPriceGroupActionProblem.ineligible(failure.code),
+      ActionPolicyEvaluationError: (failure) => removeCounterpartyPriceGroupActionProblem.unavailable(failure.code),
+      ActionRequestHashConflict: (failure) => removeCounterpartyPriceGroupActionProblem.conflict(failure.code),
       ActionResultValidationError: removeCounterpartyPriceGroupActionProblem.internal,
-      ActionTransactionError: (failure) =>
-        removeCounterpartyPriceGroupActionProblem.unavailable(failure.code),
+      ActionTransactionError: (failure) => removeCounterpartyPriceGroupActionProblem.unavailable(failure.code),
       ActionTrustedContextValidationError: removeCounterpartyPriceGroupActionProblem.authentication,
       ModuleStateCheckUnavailableError: (failure) =>
         removeCounterpartyPriceGroupActionProblem.unavailable(failure.code),
-      ModuleStateDeniedError: (failure) =>
-        removeCounterpartyPriceGroupActionProblem.forbidden(failure.code),
+      ModuleStateDeniedError: (failure) => removeCounterpartyPriceGroupActionProblem.forbidden(failure.code),
       OperationAuthenticationRequired: removeCounterpartyPriceGroupActionProblem.authentication,
-      OperationContextDenied: (failure) =>
-        removeCounterpartyPriceGroupActionProblem.forbidden(failure.code),
-      OperationContextInvalid: (failure) =>
-        removeCounterpartyPriceGroupActionProblem.forbidden(failure.code),
-      OperationContextUnavailable: (failure) =>
-        removeCounterpartyPriceGroupActionProblem.unavailable(failure.code),
+      OperationContextDenied: (failure) => removeCounterpartyPriceGroupActionProblem.forbidden(failure.code),
+      OperationContextInvalid: (failure) => removeCounterpartyPriceGroupActionProblem.forbidden(failure.code),
+      OperationContextUnavailable: (failure) => removeCounterpartyPriceGroupActionProblem.unavailable(failure.code),
     }),
     Match.exhaustive,
   );
@@ -232,8 +206,7 @@ export const mapRemoveCounterpartyPriceGroupActionProblem = (
 ): RemoveCounterpartyPriceGroupActionProblem =>
   isDomainError(error) ? mapDomainProblem(error) : mapCoreProblem(error);
 
-export const removeCounterpartyPriceGroupActionSchemaErrorLive =
-  HttpApiMiddleware.layerSchemaErrorTransform(
-    RemoveCounterpartyPriceGroupActionSchemaErrorMiddleware,
-    () => Effect.fail(removeCounterpartyPriceGroupActionProblem.invalid()),
-  );
+export const removeCounterpartyPriceGroupActionSchemaErrorLive = HttpApiMiddleware.layerSchemaErrorTransform(
+  RemoveCounterpartyPriceGroupActionSchemaErrorMiddleware,
+  () => Effect.fail(removeCounterpartyPriceGroupActionProblem.invalid()),
+);

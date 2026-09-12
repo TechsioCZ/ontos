@@ -8,7 +8,7 @@ import type {
   ScopedRoutineInvocationError,
   ScopedRoutineParameter,
 } from '@app/core-runtime';
-import { Effect, Layer, Redacted, Schema } from 'effect';
+import { Effect, Redacted, Schema } from 'effect';
 import type { Crypto } from 'effect';
 
 import type {
@@ -22,7 +22,6 @@ import {
   CounterpartyAccessContractViolation,
   CounterpartyAccessUnavailable,
 } from '../../shared/domain/access-error.ts';
-import { CounterpartyInvitationClaimAuthority } from '../../shared/domain/invitation-claim-authority.ts';
 import type { CounterpartyInvitationClaimRedemptionService } from '../../shared/domain/invitation-claim-redemption.ts';
 import type { CounterpartyInvitationProofDeliveryService } from '../../shared/domain/invitation-proof-delivery.ts';
 import type { CounterpartyInvitationClaimAuthorityService } from '../../shared/domain/invitation-claim-authority.ts';
@@ -37,13 +36,12 @@ import { CounterpartyPermissionCodeSchema } from '../../shared/domain/permission
 const ownerModuleKey = 'commerce.customer-context';
 const proofVersion = 'commerce-invitation-proof.v1' as const;
 const invitationExpiredReason = 'The invitation has expired';
+const invitationClaimProofInvalidReason = 'The invitation claim proof is invalid';
 const accessManagementPermission = 'counterparty.access.manage' as const;
 // oxlint-disable-next-line effect-native/no-nullable-schema-field -- PostgreSQL routine result codecs intentionally preserve SQL NULL at the owner boundary.
 const nullableText = Schema.NullOr(Schema.String);
 const timestamp = Schema.Union([Schema.Date, Schema.String]);
-type ClaimVerificationInput = Parameters<
-  CounterpartyInvitationClaimAuthorityService['verifyAndConsume']
->[0];
+type ClaimVerificationInput = Parameters<CounterpartyInvitationClaimAuthorityService['verifyAndConsume']>[0];
 type ClaimRedemptionInput = Parameters<CounterpartyInvitationClaimRedemptionService['redeem']>[0];
 
 export interface InvitationClaimScopedRoutineInvoker {
@@ -56,11 +54,7 @@ export interface InvitationClaimScopedRoutineInvoker {
   ) => Effect.Effect<readonly RowSchema['Type'][], ScopedRoutineInvocationError>;
 }
 
-export const CurrentOwnerAccessDecisionSchema = Schema.Literals([
-  'ALLOWED',
-  'DENIED',
-  'UNAVAILABLE',
-]);
+const CurrentOwnerAccessDecisionSchema = Schema.Literals(['ALLOWED', 'DENIED', 'UNAVAILABLE']);
 export type CurrentOwnerAccessDecision = typeof CurrentOwnerAccessDecisionSchema.Type;
 
 export interface CurrentOwnerAccessDecisionInput {
@@ -80,6 +74,7 @@ const RegistrationRowSchema = Schema.Struct({
   operation_outcome: Schema.Literals(['INVALID', 'EXPIRED', 'REGISTERED', 'REPLAYED']),
   proof_reference: nullableText,
 });
+type RegistrationRow = typeof RegistrationRowSchema.Type;
 
 const registerProofRoutine = defineScopedRoutine({
   name: 'register_invitation_claim_proof',
@@ -109,6 +104,7 @@ const DeliveryStageRowSchema = Schema.Struct({
   operation_outcome: Schema.Literals(['INVALID', 'STAGED', 'REPLAYED']),
   proof_reference: nullableText,
 });
+type DeliveryStageRow = typeof DeliveryStageRowSchema.Type;
 
 const stageDeliveryRoutine = defineScopedRoutine({
   name: 'stage_invitation_claim_proof_delivery',
@@ -129,13 +125,7 @@ const RedemptionRowSchema = Schema.Struct({
   counterparty_resource_id: Schema.String,
   expires_at: timestamp,
   intended_permission_codes: Schema.Array(CounterpartyPermissionCodeSchema),
-  operation_outcome: Schema.Literals([
-    'EXPIRED',
-    'INVALID',
-    'RATE_LIMITED',
-    'REDEEMED',
-    'REPLAYED',
-  ]),
+  operation_outcome: Schema.Literals(['EXPIRED', 'INVALID', 'RATE_LIMITED', 'REDEEMED', 'REPLAYED']),
   proof_reference: nullableText,
   storefront_resource_id: nullableText,
 });
@@ -169,6 +159,7 @@ const ConsumptionRowSchema = Schema.Struct({
   // oxlint-disable-next-line effect-native/no-nullable-schema-field -- PostgreSQL returns SQL NULL before successful consumption.
   verified_at: Schema.NullOr(timestamp),
 });
+type ConsumptionRow = typeof ConsumptionRowSchema.Type;
 
 const consumeProofRoutine = defineScopedRoutine({
   name: 'consume_invitation_claim_proof',
@@ -193,11 +184,13 @@ const consumeProofRoutine = defineScopedRoutine({
 
 const InvitationClaimPreflightRowSchema = Schema.Struct({
   counterparty_resource_id: nullableText,
+  // oxlint-disable-next-line effect-native/no-nullable-schema-field -- PostgreSQL returns SQL NULL when no intended permission projection exists; verification fails closed without changing the external codec; expires: 2027-03-31.
   intended_permission_codes: Schema.NullOr(Schema.Array(CounterpartyPermissionCodeSchema)),
   inviter_principal_id: nullableText,
   operation_outcome: Schema.Literals(['CONSUMED', 'EXPIRED', 'INVALID', 'REVOKED', 'VERIFIED']),
   storefront_resource_id: nullableText,
 });
+type InvitationClaimPreflightRow = typeof InvitationClaimPreflightRowSchema.Type;
 
 const verifyInvitationClaimAuthorityRoutine = defineScopedRoutine({
   name: 'verify_invitation_claim_authority',
@@ -224,9 +217,7 @@ const unavailable = (cause?: unknown) => {
     code: 'counterparty_access_unavailable',
     reason: 'Invitation claim verification is temporarily unavailable',
   });
-  return cause === undefined
-    ? error
-    : Object.defineProperty(error, 'cause', { enumerable: false, value: cause });
+  return cause === undefined ? error : Object.defineProperty(error, 'cause', { enumerable: false, value: cause });
 };
 
 const digestRawProof = (crypto: Crypto.Crypto, rawProof: Redacted.Redacted) =>
@@ -249,8 +240,7 @@ const permissionScope = (storefrontResourceId: string | null): CounterpartyPermi
     ? { kind: 'counterparty' }
     : { kind: 'storefront', storefrontKey: storefrontResourceId };
 
-const instant = (value: Date | string): string =>
-  Schema.is(Schema.String)(value) ? value : value.toISOString();
+const instant = (value: Date | string): string => (Schema.is(Schema.String)(value) ? value : value.toISOString());
 
 const counterpartyRef = (tenantId: string, resourceId: string): CounterpartyRef => ({
   moduleId: 'party.registry',
@@ -260,9 +250,7 @@ const counterpartyRef = (tenantId: string, resourceId: string): CounterpartyRef 
 });
 
 const proofReference = (value: string) =>
-  Schema.decodeUnknownEffect(InvitationClaimProofReferenceSchema)(value).pipe(
-    Effect.mapError(unavailable),
-  );
+  Schema.decodeEffect(InvitationClaimProofReferenceSchema)(value).pipe(Effect.mapError(unavailable));
 
 const invitationTarget = (
   tenantId: string,
@@ -382,6 +370,136 @@ export interface CounterpartyInvitationClaimPreflightInput {
   readonly scope: CounterpartyPermissionScope;
 }
 
+const validatePreflightTenant = (
+  input: CounterpartyInvitationClaimPreflightInput,
+): Effect.Effect<void, CounterpartyAccessContractViolation> =>
+  input.claimant.tenantId !== input.invitationRef.tenantId ||
+  input.counterpartyRef.tenantId !== input.invitationRef.tenantId
+    ? Effect.fail(violation('invitation_claimant_mismatch', 'The invitation claim proof is outside the trusted Tenant'))
+    : Effect.void;
+
+const validateRegistrationTenant = (
+  input: CounterpartyInvitationProofRegistrationInput,
+): Effect.Effect<void, CounterpartyAccessContractViolation> =>
+  input.counterpartyRef.tenantId !== input.invitationRef.tenantId ||
+  input.inviter.tenantId !== input.invitationRef.tenantId
+    ? Effect.fail(
+        violation('counterparty_scope_mismatch', 'The invitation proof registration is outside the trusted Tenant'),
+      )
+    : Effect.void;
+
+const validateClaimTenant = (
+  input: ClaimVerificationInput,
+): Effect.Effect<void, CounterpartyAccessContractViolation> =>
+  input.claimant.tenantId !== input.invitationRef.tenantId ||
+  input.counterpartyRef.tenantId !== input.invitationRef.tenantId ||
+  input.inviter.tenantId !== input.invitationRef.tenantId
+    ? Effect.fail(violation('invitation_claimant_mismatch', 'The invitation claim proof is outside the trusted Tenant'))
+    : Effect.void;
+
+// oxlint-disable-next-line typescript/consistent-return -- The decoded operation outcome is an exhaustive schema union, so every reachable switch branch returns an Effect.
+const validatePreflightOutcome = (
+  row: InvitationClaimPreflightRow | undefined,
+): Effect.Effect<InvitationClaimPreflightRow, CounterpartyAccessContractViolation> => {
+  if (row === undefined) {
+    return Effect.fail(violation('invitation_claim_proof_invalid', invitationClaimProofInvalidReason));
+  }
+  // oxlint-disable-next-line eslint/default-case, effect-native/prefer-match-over-tag-switch -- The decoded operation-outcome schema is exhaustive here, and the grouped invalid/revoked branches are the validator's established failure mapping.
+  switch (row.operation_outcome) {
+    case 'INVALID':
+    case 'REVOKED': {
+      return Effect.fail(violation('invitation_claim_proof_invalid', invitationClaimProofInvalidReason));
+    }
+    case 'EXPIRED': {
+      return Effect.fail(violation('invitation_expired', invitationExpiredReason));
+    }
+    case 'CONSUMED': {
+      return Effect.fail(
+        violation('invitation_claim_proof_consumed', 'The invitation claim proof has already been consumed'),
+      );
+    }
+    case 'VERIFIED': {
+      return Effect.succeed(row);
+    }
+  }
+};
+
+const validatePreflightBinding = (
+  row: InvitationClaimPreflightRow,
+  input: CounterpartyInvitationClaimPreflightInput,
+): Effect.Effect<PrincipalRef, CounterpartyAccessContractViolation> => {
+  if (
+    row.counterparty_resource_id === null ||
+    row.inviter_principal_id === null ||
+    row.intended_permission_codes === null ||
+    row.storefront_resource_id !== storefrontId(input.scope)
+  ) {
+    return Effect.fail(violation('invitation_claim_proof_invalid', invitationClaimProofInvalidReason));
+  }
+  if (row.counterparty_resource_id !== input.counterpartyRef.resourceId) {
+    return Effect.fail(violation('invitation_claim_proof_invalid', invitationClaimProofInvalidReason));
+  }
+  return Effect.succeed({
+    principalId: row.inviter_principal_id,
+    tenantId: input.invitationRef.tenantId,
+  });
+};
+
+const validateRegistration = Effect.fn('InvitationClaimAuthorityPersistence.validateRegistration')(
+  function* validateInvitationProofRegistration(registration: RegistrationRow | undefined) {
+    if (
+      registration === undefined ||
+      registration.proof_reference === null ||
+      registration.operation_outcome === 'INVALID'
+    ) {
+      return yield* violation('invitation_invalid', 'The invitation proof cannot be registered');
+    }
+    if (registration.operation_outcome === 'EXPIRED') {
+      return yield* violation('invitation_expired', invitationExpiredReason);
+    }
+    return {
+      proofReference: yield* proofReference(registration.proof_reference),
+      replayed: registration.operation_outcome === 'REPLAYED',
+    };
+  },
+);
+
+const validateDeliveryStage = (staged: DeliveryStageRow | undefined) =>
+  staged?.operation_outcome === 'STAGED' || staged?.operation_outcome === 'REPLAYED'
+    ? Effect.void
+    : Effect.fail(unavailable());
+
+const validateConsumption = Effect.fn('InvitationClaimAuthorityPersistence.validateConsumption')(
+  function* validateInvitationProofConsumption(row: ConsumptionRow | undefined): Effect.fn.Return<
+    // oxlint-disable-next-line effect-native/no-string-timestamp-schema -- The PostgreSQL routine returns the verified timestamp as an external transport string before the owning result Schema decodes it.
+    { readonly attestationReference: typeof InvitationClaimProofReferenceSchema.Type; readonly verifiedAt: string },
+    CounterpartyAccessDomainError
+  > {
+    if (row === undefined || row.operation_outcome === 'INVALID') {
+      return yield* violation('invitation_claim_proof_invalid', invitationClaimProofInvalidReason);
+    }
+    if (row.operation_outcome === 'EXPIRED') {
+      return yield* violation('invitation_expired', invitationExpiredReason);
+    }
+    if (row.operation_outcome === 'RATE_LIMITED') {
+      return yield* violation('invitation_rate_limited', 'Invitation claim attempts are temporarily rate limited');
+    }
+    if (row.operation_outcome === 'USED_BY_ANOTHER_ACTION') {
+      return yield* violation(
+        'invitation_claim_proof_consumed',
+        'The invitation claim proof has already been consumed',
+      );
+    }
+    if (row.attestation_reference === null || row.verified_at === null) {
+      return yield* unavailable();
+    }
+    return {
+      attestationReference: yield* proofReference(row.attestation_reference),
+      verifiedAt: instant(row.verified_at),
+    };
+  },
+);
+
 /**
  * Read-only owner proof gate used before Core's Action executor check.  It intentionally does
  * not redeem, consume, or retain the raw proof.  The claim Action repeats the authoritative
@@ -391,21 +509,10 @@ export interface CounterpartyInvitationClaimPreflightInput {
 export const verifyCounterpartyInvitationClaimAuthorityForOwnerScope = Effect.fn(
   'InvitationClaimAuthorityPersistence.verifyClaimAuthority',
 )(function* verifyClaimAuthority(
-  ownerScope: Pick<
-    ClaimAuthorityOwnerScope,
-    'contextAccess' | 'currentOwnerAccess' | 'transaction'
-  >,
+  ownerScope: Pick<ClaimAuthorityOwnerScope, 'contextAccess' | 'currentOwnerAccess' | 'transaction'>,
   input: CounterpartyInvitationClaimPreflightInput,
 ): Effect.fn.Return<void, CounterpartyAccessDomainError> {
-  if (
-    input.claimant.tenantId !== input.invitationRef.tenantId ||
-    input.counterpartyRef.tenantId !== input.invitationRef.tenantId
-  ) {
-    return yield* violation(
-      'invitation_claimant_mismatch',
-      'The invitation claim proof is outside the trusted Tenant',
-    );
-  }
+  yield* validatePreflightTenant(input);
   const [row] = yield* ownerScope.transaction
     .invoke(verifyInvitationClaimAuthorityRoutine, [
       input.invitationRef.resourceId,
@@ -415,47 +522,9 @@ export const verifyCounterpartyInvitationClaimAuthorityForOwnerScope = Effect.fn
       input.claimant.principalId,
     ])
     .pipe(Effect.mapError(routineFailure));
-  if (
-    row === undefined ||
-    row.operation_outcome === 'INVALID' ||
-    row.operation_outcome === 'REVOKED'
-  ) {
-    return yield* violation(
-      'invitation_claim_proof_invalid',
-      'The invitation claim proof is invalid',
-    );
-  }
-  if (row.operation_outcome === 'EXPIRED') {
-    return yield* violation('invitation_expired', invitationExpiredReason);
-  }
-  if (row.operation_outcome === 'CONSUMED') {
-    return yield* violation(
-      'invitation_claim_proof_consumed',
-      'The invitation claim proof has already been consumed',
-    );
-  }
-  if (
-    row.counterparty_resource_id === null ||
-    row.inviter_principal_id === null ||
-    row.intended_permission_codes === null ||
-    row.storefront_resource_id !== storefrontId(input.scope)
-  ) {
-    return yield* violation(
-      'invitation_claim_proof_invalid',
-      'The invitation claim proof is invalid',
-    );
-  }
-  if (row.counterparty_resource_id !== input.counterpartyRef.resourceId) {
-    return yield* violation(
-      'invitation_claim_proof_invalid',
-      'The invitation claim proof is invalid',
-    );
-  }
-  const inviter: PrincipalRef = {
-    principalId: row.inviter_principal_id,
-    tenantId: input.invitationRef.tenantId,
-  };
-  yield* requireInviterAuthority(ownerScope, {
+  const verifiedRow = yield* validatePreflightOutcome(row);
+  const inviter = yield* validatePreflightBinding(verifiedRow, input);
+  return yield* requireInviterAuthority(ownerScope, {
     counterpartyRef: input.counterpartyRef,
     inviter,
     legalEntityId: input.legalEntityId,
@@ -469,18 +538,8 @@ const registerAndStage = Effect.fn('InvitationClaimAuthorityPersistence.register
     operation: 'ISSUE' | 'ROTATE',
     input: CounterpartyInvitationProofRegistrationInput,
   ) {
-    if (
-      input.counterpartyRef.tenantId !== input.invitationRef.tenantId ||
-      input.inviter.tenantId !== input.invitationRef.tenantId
-    ) {
-      return yield* violation(
-        'counterparty_scope_mismatch',
-        'The invitation proof registration is outside the trusted Tenant',
-      );
-    }
-    const rawProofBytes = yield* ownerScope.crypto
-      .randomBytes(32)
-      .pipe(Effect.mapError(unavailable));
+    yield* validateRegistrationTenant(input);
+    const rawProofBytes = yield* ownerScope.crypto.randomBytes(32).pipe(Effect.mapError(unavailable));
     const rawProof = Redacted.make(bytesToHex(rawProofBytes));
     const digest = yield* digestRawProof(ownerScope.crypto, rawProof);
     const reference = yield* ownerScope.crypto.randomUUIDv4.pipe(
@@ -503,20 +562,10 @@ const registerAndStage = Effect.fn('InvitationClaimAuthorityPersistence.register
         operation,
       ])
       .pipe(Effect.mapError(routineFailure));
-    if (
-      registration === undefined ||
-      registration.proof_reference === null ||
-      registration.operation_outcome === 'INVALID'
-    ) {
-      return yield* violation('invitation_invalid', 'The invitation proof cannot be registered');
-    }
-    if (registration.operation_outcome === 'EXPIRED') {
-      return yield* violation('invitation_expired', invitationExpiredReason);
-    }
-    const registeredReference = yield* proofReference(registration.proof_reference);
-    if (registration.operation_outcome === 'REPLAYED') {
+    const validatedRegistration = yield* validateRegistration(registration);
+    if (validatedRegistration.replayed) {
       return {
-        proofReference: registeredReference,
+        proofReference: validatedRegistration.proofReference,
         proofVersion,
         state: 'DELIVERY_STAGE_REPLAYED' as const,
       };
@@ -529,21 +578,23 @@ const registerAndStage = Effect.fn('InvitationClaimAuthorityPersistence.register
       expiresAt: input.expiresAt,
       invitationRef: input.invitationRef,
       legalEntityId: input.legalEntityId,
-      proofReference: registeredReference,
+      proofReference: validatedRegistration.proofReference,
       rawProof,
       scope: input.scope,
     });
     const [staged] = yield* ownerScope.transaction
       .invoke(stageDeliveryRoutine, [
         input.invitationRef.resourceId,
-        registeredReference,
+        validatedRegistration.proofReference,
         input.actionInvocationId,
       ])
       .pipe(Effect.mapError(routineFailure));
-    if (staged?.operation_outcome !== 'STAGED' && staged?.operation_outcome !== 'REPLAYED') {
-      return yield* unavailable();
-    }
-    return { proofReference: registeredReference, proofVersion, state: 'DELIVERY_STAGED' as const };
+    yield* validateDeliveryStage(staged);
+    return {
+      proofReference: validatedRegistration.proofReference,
+      proofVersion,
+      state: 'DELIVERY_STAGED' as const,
+    };
   },
 );
 
@@ -563,16 +614,7 @@ const claimAuthorityForOwnerScope = (
   Object.freeze({
     verifyAndConsume: Effect.fn('InvitationClaimAuthorityPersistence.verifyAndConsume')(
       function* verifyAndConsumeInvitationProof(input: ClaimVerificationInput) {
-        if (
-          input.claimant.tenantId !== input.invitationRef.tenantId ||
-          input.counterpartyRef.tenantId !== input.invitationRef.tenantId ||
-          input.inviter.tenantId !== input.invitationRef.tenantId
-        ) {
-          return yield* violation(
-            'invitation_claimant_mismatch',
-            'The invitation claim proof is outside the trusted Tenant',
-          );
-        }
+        yield* validateClaimTenant(input);
         yield* requireInviterAuthority(ownerScope, input);
         const attestation = yield* ownerScope.crypto.randomUUIDv4.pipe(
           Effect.mapError(unavailable),
@@ -591,33 +633,9 @@ const claimAuthorityForOwnerScope = (
             attestation,
           ])
           .pipe(Effect.mapError(routineFailure));
-        if (row === undefined || row.operation_outcome === 'INVALID') {
-          return yield* violation(
-            'invitation_claim_proof_invalid',
-            'The invitation claim proof is invalid',
-          );
-        }
-        if (row.operation_outcome === 'EXPIRED') {
-          return yield* violation('invitation_expired', invitationExpiredReason);
-        }
-        if (row.operation_outcome === 'RATE_LIMITED') {
-          return yield* violation(
-            'invitation_rate_limited',
-            'Invitation claim attempts are temporarily rate limited',
-          );
-        }
-        if (row.operation_outcome === 'USED_BY_ANOTHER_ACTION') {
-          return yield* violation(
-            'invitation_claim_proof_consumed',
-            'The invitation claim proof has already been consumed',
-          );
-        }
-        if (row.attestation_reference === null || row.verified_at === null) {
-          return yield* unavailable();
-        }
-        const attestationReference = yield* proofReference(row.attestation_reference);
+        const consumption = yield* validateConsumption(row);
         return {
-          attestationReference,
+          attestationReference: consumption.attestationReference,
           claimant: input.claimant,
           counterpartyRef: input.counterpartyRef,
           invitationRef: input.invitationRef,
@@ -629,27 +647,11 @@ const claimAuthorityForOwnerScope = (
           },
           proofVersion,
           state: 'VERIFIED_AND_CONSUMED',
-          verifiedAt: instant(row.verified_at),
+          verifiedAt: consumption.verifiedAt,
         } satisfies VerifiedInvitationClaimAttestation;
       },
     ),
   });
-
-export const counterpartyInvitationClaimAuthorityLayerForTransaction = (
-  transaction: InvitationClaimScopedRoutineInvoker,
-  contextAccess: Pick<ContextAccessService, 'businessPermissions'>,
-  crypto: Crypto.Crypto,
-  currentOwnerAccess?: CurrentOwnerAccessDecisionReader,
-) =>
-  Layer.succeed(
-    CounterpartyInvitationClaimAuthority,
-    claimAuthorityForOwnerScope({
-      contextAccess,
-      crypto,
-      currentOwnerAccess,
-      transaction,
-    }),
-  );
 
 export const counterpartyInvitationClaimServicesForTransaction = (
   transaction: InvitationClaimScopedRoutineInvoker,
@@ -696,19 +698,13 @@ export const counterpartyInvitationClaimRedemptionForTransaction = (
       ])
       .pipe(Effect.mapError(routineFailure));
     if (row === undefined || row.operation_outcome === 'INVALID') {
-      return yield* violation(
-        'invitation_claim_proof_invalid',
-        'The invitation claim proof is invalid',
-      );
+      return yield* violation('invitation_claim_proof_invalid', invitationClaimProofInvalidReason);
     }
     if (row.operation_outcome === 'EXPIRED') {
       return yield* violation('invitation_expired', invitationExpiredReason);
     }
     if (row.operation_outcome === 'RATE_LIMITED') {
-      return yield* violation(
-        'invitation_rate_limited',
-        'Invitation claim attempts are temporarily rate limited',
-      );
+      return yield* violation('invitation_rate_limited', 'Invitation claim attempts are temporarily rate limited');
     }
     if (row.proof_reference === null) {
       return yield* unavailable();

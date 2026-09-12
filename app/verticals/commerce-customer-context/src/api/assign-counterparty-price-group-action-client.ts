@@ -69,11 +69,6 @@ export const executeAssignCounterpartyPriceGroup = (
 ) =>
   operationGateway.invoke(
     (credential) =>
-      executeAssignCounterpartyPriceGroupWithAuthorization(
-        payload,
-        credential,
-        requestCorrelation,
-        options,
-      ),
+      executeAssignCounterpartyPriceGroupWithAuthorization(payload, credential, requestCorrelation, options),
     options.gateway,
   );

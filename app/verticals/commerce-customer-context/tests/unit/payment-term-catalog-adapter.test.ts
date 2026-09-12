@@ -78,9 +78,7 @@ it('attaches production Payment Terms factories to persistence and the public ca
   expect(retailFactory).toContain('paymentTermCatalogPort');
   expect(resolutionFactory).toContain('paymentTermsPersistenceForTransaction');
   expect(resolutionFactory).toContain('paymentTermCatalogPort');
-  expect(getReadServiceFactory(guestPaymentTermsResolutionRead)).toBe(
-    makeGuestPaymentTermsResolutionServices,
-  );
+  expect(getReadServiceFactory(guestPaymentTermsResolutionRead)).toBe(makeGuestPaymentTermsResolutionServices);
 });
 
 it.effect('groups catalog requests by effective instant and keeps only USABLE definitions', () =>
@@ -121,17 +119,11 @@ it.effect('groups catalog requests by effective instant and keeps only USABLE de
         paymentTermRef: secondPaymentTermRef,
       },
     ];
-    const definitions = yield* paymentTermCatalogPort(
-      'payment-correlation',
-      execute,
-    ).resolveDefinitions(requests);
+    const definitions = yield* paymentTermCatalogPort('payment-correlation', execute).resolveDefinitions(requests);
 
     expect(definitions).toEqual([definition]);
     expect(calls).toHaveLength(2);
-    expect(calls.map(({ correlation }) => correlation)).toEqual([
-      'payment-correlation',
-      'payment-correlation',
-    ]);
+    expect(calls.map(({ correlation }) => correlation)).toEqual(['payment-correlation', 'payment-correlation']);
     expect(calls[0]?.payload.references[0]).toMatchObject({
       expectedConsumerCompatibility: 'customer-payment-terms.v1',
       expectedSemanticRevisionId: definition.semanticRevisionId,
@@ -197,10 +189,7 @@ it.effect('preserves requested identity and retired lifecycle for customer resol
         ],
         truncated: false,
       });
-    const definitions = yield* paymentTermCatalogPort(
-      'payment-correlation',
-      execute,
-    ).resolveDefinitions([
+    const definitions = yield* paymentTermCatalogPort('payment-correlation', execute).resolveDefinitions([
       {
         at: '2026-10-02T00:00:00.000Z',
         paymentTermRef: secondPaymentTermRef,
@@ -227,10 +216,7 @@ it.effect('preserves a broken catalog alias as an absent deterministic definitio
         ],
         truncated: false,
       });
-    const definitions = yield* paymentTermCatalogPort(
-      'payment-correlation',
-      execute,
-    ).resolveDefinitions([
+    const definitions = yield* paymentTermCatalogPort('payment-correlation', execute).resolveDefinitions([
       {
         at: '2026-09-09T10:00:00.000Z',
         paymentTermRef: firstPaymentTermRef,

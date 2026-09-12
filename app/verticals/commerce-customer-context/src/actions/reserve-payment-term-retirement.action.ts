@@ -2,11 +2,7 @@
 // @ontos-action-owner commerce.customer-context
 // @ontos-action-slug reserve-payment-term-retirement
 import type { ActionHandlerContext } from '@app/core-runtime';
-import {
-  OperationContextUnavailable,
-  defineAction,
-  defineTenantModuleEntrypoint,
-} from '@app/core-runtime';
+import { OperationContextUnavailable, defineAction, defineTenantModuleEntrypoint } from '@app/core-runtime';
 import { Effect, Schema } from 'effect';
 import {
   ReservePaymentTermRetirementPayloadSchema,
@@ -16,28 +12,15 @@ import type {
   ReservePaymentTermRetirementPayload,
   ReservePaymentTermRetirementResult,
 } from '../../shared/actions/reserve-payment-term-retirement.ts';
-import { makePaymentTermRetirementReservationServices } from '../persistence/payment-term-persistence.ts';
+import { paymentTermsPersistenceForTransaction } from '../persistence/payment-term-persistence.ts';
 import type { PaymentTermRetirementReservationFailure } from '../persistence/payment-term-persistence.ts';
-import {
-  PaymentTermRetirementReservationConflict,
-  PaymentTermRetirementReservationInvalidRequest,
-  PaymentTermRetirementReservationNotFound,
-  PaymentTermRetirementReservationUnavailable,
-} from '../persistence/payment-term-persistence.ts';
 
 const moduleKey = 'commerce.customer-context' as const;
 const domainEvents = {} as const;
 
-export {
-  ReservePaymentTermRetirementPayloadSchema,
-  ReservePaymentTermRetirementResultSchema,
-} from '../../shared/actions/reserve-payment-term-retirement.ts';
-export type {
-  ReservePaymentTermRetirementPayload,
-  ReservePaymentTermRetirementResult,
-} from '../../shared/actions/reserve-payment-term-retirement.ts';
+export type { ReservePaymentTermRetirementPayload } from '../../shared/actions/reserve-payment-term-retirement.ts';
 
-export class ReservePaymentTermRetirementRejected extends Schema.TaggedError<ReservePaymentTermRetirementRejected>()(
+class ReservePaymentTermRetirementRejected extends Schema.TaggedError<ReservePaymentTermRetirementRejected>()(
   'ReservePaymentTermRetirementRejected',
   {
     code: Schema.Literals([
@@ -53,7 +36,7 @@ export class ReservePaymentTermRetirementRejected extends Schema.TaggedError<Res
   },
 ) {}
 
-export const ReservePaymentTermRetirementAuditEvidenceSchema = Schema.Struct({
+const ReservePaymentTermRetirementAuditEvidenceSchema = Schema.Struct({
   effectiveAt: ReservePaymentTermRetirementPayloadSchema.fields.effectiveAt,
   lifecycle: Schema.Literals(['RESERVED', 'COMMITTED', 'RELEASED']),
   paymentTermResourceIds: ReservePaymentTermRetirementResultSchema.fields.paymentTermResourceIds,
@@ -77,56 +60,54 @@ const reject = (
   retryable = false,
 ) => new ReservePaymentTermRetirementRejected({ code, reason, retryable });
 
-const handleReservePaymentTermRetirement = Effect.fn('ReservePaymentTermRetirementAction.handle')(
-  function* handle(
-    payload: ReservePaymentTermRetirementPayload,
-    context: ActionHandlerContext<typeof domainEvents, ReservePaymentTermRetirementActionServices>,
+const handleReservePaymentTermRetirement = Effect.fn('ReservePaymentTermRetirementAction.handle')(function* handle(
+  payload: ReservePaymentTermRetirementPayload,
+  context: ActionHandlerContext<typeof domainEvents, ReservePaymentTermRetirementActionServices>,
+) {
+  if (
+    payload.paymentTermRef.tenantId !== context.scope.tenantId ||
+    payload.equivalentPaymentTermRefs.some((paymentTermRef) => paymentTermRef.tenantId !== context.scope.tenantId)
   ) {
-    if (
-      payload.paymentTermRef.tenantId !== context.scope.tenantId ||
-      payload.equivalentPaymentTermRefs.some(
-        (paymentTermRef) => paymentTermRef.tenantId !== context.scope.tenantId,
-      )
-    ) {
-      return yield* reject(
-        'SCOPE_MISMATCH',
-        'The canonical Payment Term and every alias must belong to the trusted Tenant',
-      );
-    }
-    const result = yield* context.services
-      .execute(payload, {
-        actionInvocationId: context.actionInvocationId,
-        actorPrincipalId: context.scope.principalId,
-        tenantId: context.scope.tenantId,
-      })
-      .pipe(
-        Effect.catchTags({
-          PaymentTermRetirementReservationConflict: ({ reason }) =>
-            Effect.fail(
-              reject(
-                payload.operation === 'RESERVE'
-                  ? 'RETIREMENT_RESERVATION_CONFLICT'
-                  : 'RESERVATION_STATE_CONFLICT',
-                reason,
-              ),
-            ),
-          PaymentTermRetirementReservationInvalidRequest: ({ reason }) =>
-            Effect.fail(reject('INVALID_REQUEST', reason)),
-          PaymentTermRetirementReservationNotFound: ({ reason }) =>
-            Effect.fail(reject('RETIREMENT_RESERVATION_NOT_FOUND', reason)),
-          PaymentTermRetirementReservationUnavailable: ({ reason }) =>
-            Effect.fail(reject('PERSISTENCE_UNAVAILABLE', reason, true)),
-        }),
-      );
-    yield* context.recordAuditEvidence({
-      effectiveAt: result.effectiveAt,
-      lifecycle: result.lifecycle,
-      paymentTermResourceIds: result.paymentTermResourceIds,
-      reservationRef: result.reservationRef,
-    });
-    return result;
-  },
-);
+    return yield* reject(
+      'SCOPE_MISMATCH',
+      'The canonical Payment Term and every alias must belong to the trusted Tenant',
+    );
+  }
+  const paymentTermRetirementReservationConflict = ({ reason }: { readonly reason: string }) =>
+    Effect.fail(
+      reject(
+        payload.operation === 'RESERVE' ? 'RETIREMENT_RESERVATION_CONFLICT' : 'RESERVATION_STATE_CONFLICT',
+        reason,
+      ),
+    );
+  const paymentTermRetirementReservationInvalidRequest = ({ reason }: { readonly reason: string }) =>
+    Effect.fail(reject('INVALID_REQUEST', reason));
+  const paymentTermRetirementReservationNotFound = ({ reason }: { readonly reason: string }) =>
+    Effect.fail(reject('RETIREMENT_RESERVATION_NOT_FOUND', reason));
+  const paymentTermRetirementReservationUnavailable = ({ reason }: { readonly reason: string }) =>
+    Effect.fail(reject('PERSISTENCE_UNAVAILABLE', reason, true));
+  const result = yield* context.services
+    .execute(payload, {
+      actionInvocationId: context.actionInvocationId,
+      actorPrincipalId: context.scope.principalId,
+      tenantId: context.scope.tenantId,
+    })
+    .pipe(
+      Effect.catchTags({
+        PaymentTermRetirementReservationConflict: paymentTermRetirementReservationConflict,
+        PaymentTermRetirementReservationInvalidRequest: paymentTermRetirementReservationInvalidRequest,
+        PaymentTermRetirementReservationNotFound: paymentTermRetirementReservationNotFound,
+        PaymentTermRetirementReservationUnavailable: paymentTermRetirementReservationUnavailable,
+      }),
+    );
+  yield* context.recordAuditEvidence({
+    effectiveAt: result.effectiveAt,
+    lifecycle: result.lifecycle,
+    paymentTermResourceIds: result.paymentTermResourceIds,
+    reservationRef: result.reservationRef,
+  });
+  return result;
+});
 
 export const reservePaymentTermRetirementAction = defineAction(
   {
@@ -165,11 +146,11 @@ export const reservePaymentTermRetirementAction = defineAction(
         }),
       );
     }
-    const persistence = makePaymentTermRetirementReservationServices({
+    const persistence = paymentTermsPersistenceForTransaction({
       invoker: transaction,
       scope: { ...scope, legalEntityId },
     });
-    return Effect.succeed<ReservePaymentTermRetirementActionServices>(persistence);
+    return Effect.succeed<ReservePaymentTermRetirementActionServices>(persistence.retirementReservation);
   },
 );
 

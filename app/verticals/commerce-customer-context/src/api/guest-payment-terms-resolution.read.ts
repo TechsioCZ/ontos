@@ -27,10 +27,7 @@ import type {
 } from '../../shared/domain/payment-term-contracts.ts';
 import type { PaymentTermsDependencyUnavailable } from '../../shared/domain/payment-term-errors.ts';
 import { resolveGuestPaymentTerms } from '../../shared/domain/payment-terms.ts';
-import type {
-  PaymentTermsPolicyDecision,
-  PaymentTermsPolicyResolution,
-} from '../../shared/domain/payment-terms.ts';
+import type { PaymentTermsPolicyDecision, PaymentTermsPolicyResolution } from '../../shared/domain/payment-terms.ts';
 import { customerCommercePaymentTermsPolicyResolver } from '../integrations/customer-commerce-payment-terms-policy.ts';
 import { paymentTermCatalogPortFromEnvironment } from '../integrations/payment-term-catalog.ts';
 
@@ -61,8 +58,7 @@ const unavailable = (failure: PaymentTermsDependencyUnavailable): ReadHandlerUna
   return error;
 };
 
-const referenceKey = (reference: PaymentTermReference): string =>
-  `${reference.tenantId}:${reference.resourceId}`;
+const referenceKey = (reference: PaymentTermReference): string => `${reference.tenantId}:${reference.resourceId}`;
 
 export const handleGuestPaymentTermsResolution = (
   input: GuestPaymentTermsResolutionRequest,
@@ -94,9 +90,7 @@ export const handleGuestPaymentTermsResolution = (
   return Effect.gen(function* resolveGuestTerms() {
     const currentAt = yield* context.services.currentInstant;
     const currentInput = { ...input, at: currentAt };
-    const policy = yield* context.services
-      .resolvePolicy(currentInput)
-      .pipe(Effect.mapError(unavailable));
+    const policy = yield* context.services.resolvePolicy(currentInput).pipe(Effect.mapError(unavailable));
     if (Predicate.isTagged(policy, 'INCONSISTENT_CONFIGURATION')) {
       return { evidence: { resultCount: 1 }, result: policy };
     }
@@ -144,34 +138,31 @@ export const guestPaymentTermsResolutionEntrypoint = defineTenantModuleEntrypoin
   role: 'api',
 });
 
-export const makeGuestPaymentTermsResolutionServices = Effect.fn(
-  'GuestPaymentTermsResolutionRead.makeServices',
-)(function* makeGuestPaymentTermResolutionServices(
-  _transaction: ScopedTransactionExecutor,
-  scope: OperationalScope,
-) {
-  const { legalEntityId, trustedStorefrontId } = scope;
-  if (legalEntityId === undefined || trustedStorefrontId === undefined) {
-    return yield* new OperationContextUnavailable({
-      code: 'operation_context_unavailable',
-      reason: 'Guest Payment Term resolution requires trusted Legal Entity and Storefront scope',
+export const makeGuestPaymentTermsResolutionServices = Effect.fn('GuestPaymentTermsResolutionRead.makeServices')(
+  function* makeGuestPaymentTermResolutionServices(_transaction: ScopedTransactionExecutor, scope: OperationalScope) {
+    const { legalEntityId, trustedStorefrontId } = scope;
+    if (legalEntityId === undefined || trustedStorefrontId === undefined) {
+      return yield* new OperationContextUnavailable({
+        code: 'operation_context_unavailable',
+        reason: 'Guest Payment Term resolution requires trusted Legal Entity and Storefront scope',
+      });
+    }
+    const catalog = yield* paymentTermCatalogPortFromEnvironment({
+      legalEntityId,
+      requestCorrelation: scope.correlationId,
     });
-  }
-  const catalog = yield* paymentTermCatalogPortFromEnvironment({
-    legalEntityId,
-    requestCorrelation: scope.correlationId,
-  });
-  const policy = customerCommercePaymentTermsPolicyResolver('GUEST', {
-    tenantId: scope.tenantId,
-    trustedStorefrontId,
-  });
-  return {
-    currentInstant: DateTime.now.pipe(Effect.map(DateTime.formatIso)),
-    resolveDefinitions: (references, at) =>
-      catalog.resolveDefinitions(references.map((paymentTermRef) => ({ at, paymentTermRef }))),
-    resolvePolicy: policy.resolve,
-  } satisfies GuestPaymentTermsResolutionServices;
-});
+    const policy = customerCommercePaymentTermsPolicyResolver('GUEST', {
+      tenantId: scope.tenantId,
+      trustedStorefrontId,
+    });
+    return {
+      currentInstant: DateTime.now.pipe(Effect.map(DateTime.formatIso)),
+      resolveDefinitions: (references, at) =>
+        catalog.resolveDefinitions(references.map((paymentTermRef) => ({ at, paymentTermRef }))),
+      resolvePolicy: policy.resolve,
+    } satisfies GuestPaymentTermsResolutionServices;
+  },
+);
 
 export const guestPaymentTermsResolutionRead = defineRead(
   {

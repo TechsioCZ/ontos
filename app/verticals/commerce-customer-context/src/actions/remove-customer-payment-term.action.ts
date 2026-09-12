@@ -32,15 +32,6 @@ import type { RemoveCustomerPaymentTermCommerceCustomerContextCustomerPaymentTer
 const revision = RemoveCustomerPaymentTermPayloadSchema.fields.expectedRevision;
 const moduleKey = 'commerce.customer-context' as const;
 
-export {
-  RemoveCustomerPaymentTermPayloadSchema,
-  RemoveCustomerPaymentTermResultSchema,
-} from '../../shared/actions/remove-customer-payment-term.ts';
-export type {
-  RemoveCustomerPaymentTermPayload,
-  RemoveCustomerPaymentTermResult,
-} from '../../shared/actions/remove-customer-payment-term.ts';
-
 export const CustomerPaymentTermRemovedEventSchema = Schema.Struct({
   effectiveAt: PaymentTermsTimestampSchema,
   entitlementRef: CustomerPaymentTermEntitlementRefSchema,
@@ -113,15 +104,14 @@ export const handleRemoveCustomerPaymentTerm = Effect.fn(
     targetResourceType: payload.profileRef.resourceType,
   });
   if (result.changed) {
-    const eventPayload: RemoveCustomerPaymentTermCommerceCustomerContextCustomerPaymentTermRemovedV1OutboxPayload =
-      {
-        effectiveAt: payload.effectiveAt,
-        entitlementRef: payload.entitlementRef,
-        preferenceCleared: result.preferenceCleared,
-        profileRef: payload.profileRef,
-        removalKind: result.removalKind,
-        revision: result.state.revision,
-      };
+    const eventPayload: RemoveCustomerPaymentTermCommerceCustomerContextCustomerPaymentTermRemovedV1OutboxPayload = {
+      effectiveAt: payload.effectiveAt,
+      entitlementRef: payload.entitlementRef,
+      preferenceCleared: result.preferenceCleared,
+      profileRef: payload.profileRef,
+      removalKind: result.removalKind,
+      revision: result.state.revision,
+    };
     const event = yield* context.addDomainEvent({
       eventType: 'commerce.customer-context.customer-payment-term-removed.v1',
       payloadJson: eventPayload,
@@ -132,9 +122,7 @@ export const handleRemoveCustomerPaymentTerm = Effect.fn(
     });
     yield* context.addOutboxMessage(
       event,
-      createRemoveCustomerPaymentTermCommerceCustomerContextCustomerPaymentTermRemovedV1OutboxMessage(
-        eventPayload,
-      ),
+      createRemoveCustomerPaymentTermCommerceCustomerContextCustomerPaymentTermRemovedV1OutboxMessage(eventPayload),
     );
   }
   return result;
@@ -149,21 +137,18 @@ export const removeCustomerPaymentTermAction = defineAction(
     actionKey: 'commerce.customer-context.remove-customer-payment-term',
     auditEvidenceSchema: CustomerPaymentTermsAuditEvidenceSchema,
     auditProfile: 'standard',
-    businessPermission: defineActionBusinessPermission<RemoveCustomerPaymentTermPayload>(
-      (payload, scope) => ({
-        permission: 'counterparty.settings.payment_terms.manage',
-        target: {
-          counterpartyId: payload.counterpartyRef.resourceId,
-          kind: 'counterparty',
-          legalEntityId: scope.legalEntityId ?? '',
-          tenantId: scope.tenantId,
-        },
-      }),
-    ),
+    businessPermission: defineActionBusinessPermission<RemoveCustomerPaymentTermPayload>((payload, scope) => ({
+      permission: 'counterparty.settings.payment_terms.manage',
+      target: {
+        counterpartyId: payload.counterpartyRef.resourceId,
+        kind: 'counterparty',
+        legalEntityId: scope.legalEntityId ?? '',
+        tenantId: scope.tenantId,
+      },
+    })),
     domainErrorSchema: CustomerPaymentTermsActionRejected,
     domainEvents: {
-      'commerce.customer-context.customer-payment-term-removed.v1':
-        CustomerPaymentTermRemovedEventSchema,
+      'commerce.customer-context.customer-payment-term-removed.v1': CustomerPaymentTermRemovedEventSchema,
     },
     entrypoint: defineTenantModuleEntrypoint({
       access: 'write',
@@ -199,9 +184,4 @@ export const removeCustomerPaymentTermAction = defineAction(
 );
 
 // <generated-outbox-message-exports>
-export { createRemoveCustomerPaymentTermCommerceCustomerContextCustomerPaymentTermRemovedV1OutboxMessage } from './remove-customer-payment-term.commerce-customer-context-customer-payment-term-removed-v1.outbox-message.ts';
-export { RemoveCustomerPaymentTermCommerceCustomerContextCustomerPaymentTermRemovedV1OutboxPayloadSchema } from './remove-customer-payment-term.commerce-customer-context-customer-payment-term-removed-v1.outbox-message.ts';
-export { RemoveCustomerPaymentTermCommerceCustomerContextCustomerPaymentTermRemovedV1OutboxProducerModuleKey } from './remove-customer-payment-term.commerce-customer-context-customer-payment-term-removed-v1.outbox-message.ts';
-export { RemoveCustomerPaymentTermCommerceCustomerContextCustomerPaymentTermRemovedV1OutboxTopic } from './remove-customer-payment-term.commerce-customer-context-customer-payment-term-removed-v1.outbox-message.ts';
-export type { RemoveCustomerPaymentTermCommerceCustomerContextCustomerPaymentTermRemovedV1OutboxPayload } from './remove-customer-payment-term.commerce-customer-context-customer-payment-term-removed-v1.outbox-message.ts';
 // </generated-outbox-message-exports>

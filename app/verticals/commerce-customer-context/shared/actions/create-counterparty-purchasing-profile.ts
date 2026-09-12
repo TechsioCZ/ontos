@@ -20,8 +20,7 @@ export const CreateCounterpartyPurchasingProfilePayloadSchema = Schema.Struct({
   subject: CounterpartyPurchasingProfileSubjectSchema,
   trigger: ProfileCreateTriggerSchema,
 });
-export type CreateCounterpartyPurchasingProfilePayload =
-  typeof CreateCounterpartyPurchasingProfilePayloadSchema.Type;
+export type CreateCounterpartyPurchasingProfilePayload = typeof CreateCounterpartyPurchasingProfilePayloadSchema.Type;
 
 export const CreateCounterpartyPurchasingProfileResultSchema = Schema.Struct({
   outcome: OutcomeSchema,
@@ -29,8 +28,7 @@ export const CreateCounterpartyPurchasingProfileResultSchema = Schema.Struct({
   revision: RevisionSchema,
   state: StateSchema,
 });
-export type CreateCounterpartyPurchasingProfileResult =
-  typeof CreateCounterpartyPurchasingProfileResultSchema.Type;
+export type CreateCounterpartyPurchasingProfileResult = typeof CreateCounterpartyPurchasingProfileResultSchema.Type;
 
 export class CreateCounterpartyPurchasingProfileRejected extends Schema.TaggedError<CreateCounterpartyPurchasingProfileRejected>()(
   'CreateCounterpartyPurchasingProfileRejected',

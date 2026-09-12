@@ -44,7 +44,7 @@ const ProfileCreateSuccessSchema = Schema.Struct({
   ]),
   profile: CommerceCustomerProfileRefSchema,
 });
-export const ProfileCreateOutcomeSchema = Schema.Union([
+const ProfileCreateOutcomeSchema = Schema.Union([
   ProfileCreateSuccessSchema,
   Schema.Struct({
     outcome: Schema.Literals([
@@ -56,11 +56,7 @@ export const ProfileCreateOutcomeSchema = Schema.Union([
     ]),
   }),
   Schema.Struct({
-    outcome: Schema.Literals([
-      'SUBJECT_RESOLUTION_UNAVAILABLE',
-      'PERSISTENCE_UNAVAILABLE',
-      'COMMIT_INDETERMINATE',
-    ]),
+    outcome: Schema.Literals(['SUBJECT_RESOLUTION_UNAVAILABLE', 'PERSISTENCE_UNAVAILABLE', 'COMMIT_INDETERMINATE']),
     retryable: Schema.Literal(true),
   }),
 ]);
@@ -108,23 +104,7 @@ export const decideProfileCreateOutcome = (input: {
   );
 };
 
-const targetState = (
-  operation: ProfileLifecycleOperation,
-  current: CommerceCustomerProfileState,
-): CommerceCustomerProfileState | undefined => {
-  if (operation === 'SUSPEND' && current === 'ACTIVE') {
-    return 'SUSPENDED';
-  }
-  if (operation === 'REACTIVATE' && (current === 'SUSPENDED' || current === 'ARCHIVED')) {
-    return 'ACTIVE';
-  }
-  if (operation === 'ARCHIVE' && (current === 'ACTIVE' || current === 'SUSPENDED')) {
-    return 'ARCHIVED';
-  }
-  return undefined;
-};
-
-export const decideProfileLifecycleTransition = (input: {
+interface ProfileLifecycleTransitionInput {
   readonly currentRevision: number;
   readonly currentState: CommerceCustomerProfileState;
   readonly dependencyStatus: 'AVAILABLE' | 'UNAVAILABLE' | 'INDETERMINATE';
@@ -133,37 +113,17 @@ export const decideProfileLifecycleTransition = (input: {
   readonly operation: ProfileLifecycleOperation;
   readonly reconciliationRequired: boolean;
   readonly reconfirmationRequired: boolean;
-}): ProfileLifecycleDecision => {
-  if (input.reconciliationRequired) {
-    return {
-      currentRevision: input.currentRevision,
-      currentState: input.currentState,
-      outcome: 'PROFILE_RECONCILIATION_REQUIRED',
-    };
-  }
-  if (
-    input.expectedRevision !== input.currentRevision ||
-    input.expectedState !== input.currentState
-  ) {
-    return {
-      currentRevision: input.currentRevision,
-      currentState: input.currentState,
-      outcome: 'CURRENT_STATE_CONFLICT',
-    };
-  }
-  if (
-    (input.operation === 'SUSPEND' && input.currentState === 'SUSPENDED') ||
-    (input.operation === 'REACTIVATE' && input.currentState === 'ACTIVE') ||
-    (input.operation === 'ARCHIVE' && input.currentState === 'ARCHIVED')
-  ) {
+}
+
+const decideSuspendProfileTransition = (input: ProfileLifecycleTransitionInput): ProfileLifecycleDecision => {
+  if (input.currentState === 'SUSPENDED') {
     return {
       currentRevision: input.currentRevision,
       outcome: 'IDEMPOTENT',
       resultingState: input.currentState,
     };
   }
-  const next = targetState(input.operation, input.currentState);
-  if (next === undefined) {
+  if (input.currentState === 'ARCHIVED') {
     return {
       currentRevision: input.currentRevision,
       currentState: input.currentState,
@@ -171,21 +131,64 @@ export const decideProfileLifecycleTransition = (input: {
       requestedOperation: input.operation,
     };
   }
-  if (input.operation === 'REACTIVATE' && input.dependencyStatus !== 'AVAILABLE') {
+  return { outcome: 'APPLIED', resultingRevision: input.currentRevision + 1, resultingState: 'SUSPENDED' };
+};
+
+const decideReactivateProfileTransition = (input: ProfileLifecycleTransitionInput): ProfileLifecycleDecision => {
+  if (input.currentState === 'ACTIVE') {
+    return {
+      currentRevision: input.currentRevision,
+      outcome: 'IDEMPOTENT',
+      resultingState: input.currentState,
+    };
+  }
+  if (input.dependencyStatus !== 'AVAILABLE') {
     return {
       currentRevision: input.currentRevision,
       currentState: input.currentState,
       outcome: 'DEPENDENCY_UNAVAILABLE',
     };
   }
-  if (input.operation === 'REACTIVATE' && input.reconfirmationRequired) {
+  if (input.reconfirmationRequired) {
     return {
       currentRevision: input.currentRevision,
       currentState: input.currentState,
       outcome: 'REACTIVATION_RECONFIRMATION_REQUIRED',
     };
   }
-  return { outcome: 'APPLIED', resultingRevision: input.currentRevision + 1, resultingState: next };
+  return { outcome: 'APPLIED', resultingRevision: input.currentRevision + 1, resultingState: 'ACTIVE' };
+};
+
+const decideArchiveProfileTransition = (input: ProfileLifecycleTransitionInput): ProfileLifecycleDecision =>
+  input.currentState === 'ARCHIVED'
+    ? {
+        currentRevision: input.currentRevision,
+        outcome: 'IDEMPOTENT',
+        resultingState: input.currentState,
+      }
+    : { outcome: 'APPLIED', resultingRevision: input.currentRevision + 1, resultingState: 'ARCHIVED' };
+
+export const decideProfileLifecycleTransition = (input: ProfileLifecycleTransitionInput): ProfileLifecycleDecision => {
+  if (input.reconciliationRequired) {
+    return {
+      currentRevision: input.currentRevision,
+      currentState: input.currentState,
+      outcome: 'PROFILE_RECONCILIATION_REQUIRED',
+    };
+  }
+  if (input.expectedRevision !== input.currentRevision || input.expectedState !== input.currentState) {
+    return {
+      currentRevision: input.currentRevision,
+      currentState: input.currentState,
+      outcome: 'CURRENT_STATE_CONFLICT',
+    };
+  }
+  return Match.value(input.operation).pipe(
+    Match.when('SUSPEND', () => decideSuspendProfileTransition(input)),
+    Match.when('REACTIVATE', () => decideReactivateProfileTransition(input)),
+    Match.when('ARCHIVE', () => decideArchiveProfileTransition(input)),
+    Match.exhaustive,
+  );
 };
 
 export const ProfileTradingGateSchema = Schema.Struct({
@@ -227,13 +230,8 @@ export const RetailPortalAccessDecisionSchema = Schema.Struct({
   ]),
 });
 export type RetailPortalAccessDecision = typeof RetailPortalAccessDecisionSchema.Type;
-export const RetailBindingAuthorizationCurrentnessSchema = Schema.Literals([
-  'ACTIVE',
-  'REVOKED',
-  'UNAVAILABLE',
-]);
-export type RetailBindingAuthorizationCurrentness =
-  typeof RetailBindingAuthorizationCurrentnessSchema.Type;
+const RetailBindingAuthorizationCurrentnessSchema = Schema.Literals(['ACTIVE', 'REVOKED', 'UNAVAILABLE']);
+export type RetailBindingAuthorizationCurrentness = typeof RetailBindingAuthorizationCurrentnessSchema.Type;
 
 export const decideRetailBindingAuthorizationCurrentness = (input: {
   readonly authorizationOperation: 'grant' | 'revoke';
@@ -244,17 +242,14 @@ export const decideRetailBindingAuthorizationCurrentness = (input: {
     input.bindingState === 'REVOKED' ||
     input.authorizationState === 'REVOKED' ||
     input.authorizationState === 'PENDING_REVOKE' ||
-    (input.authorizationOperation === 'revoke' &&
-      input.authorizationState === 'RECONCILIATION_REQUIRED')
+    (input.authorizationOperation === 'revoke' && input.authorizationState === 'RECONCILIATION_REQUIRED')
   ) {
     return 'REVOKED';
   }
-  return input.bindingState === 'ACTIVE' && input.authorizationState === 'ACTIVE'
-    ? 'ACTIVE'
-    : 'UNAVAILABLE';
+  return input.bindingState === 'ACTIVE' && input.authorizationState === 'ACTIVE' ? 'ACTIVE' : 'UNAVAILABLE';
 };
 
-export const decideRetailPortalAccess = (input: {
+interface RetailPortalAccessInput {
   readonly authorizationOperation: 'grant' | 'revoke';
   readonly authorizationState: AuthorizationMutationState;
   readonly authorizationStatus: 'AVAILABLE' | 'INDETERMINATE';
@@ -263,41 +258,67 @@ export const decideRetailPortalAccess = (input: {
   readonly grantedPermissions: readonly RetailPortalPermissionCode[];
   readonly requestedPermission: RetailPortalPermissionCode;
   readonly requestedProfile: CommerceCustomerProfileRef;
-}): RetailPortalAccessDecision => {
-  if (input.bindingState === 'MISSING') {
-    return { allowed: false, outcome: 'BINDING_NOT_FOUND' };
-  }
-  if (input.bindingState === 'AMBIGUOUS') {
-    return { allowed: false, outcome: 'BINDING_AMBIGUOUS' };
-  }
-  if (input.bindingState === 'REVOKED') {
-    return { allowed: false, outcome: 'BINDING_REVOKED' };
-  }
+}
+
+const retailProfileScopeKey = (profile: CommerceCustomerProfileRef | undefined): string | undefined =>
+  Match.value(profile).pipe(
+    // oxlint-disable-next-line unicorn/no-useless-undefined -- The Match branch must explicitly produce the optional string result.
+    Match.when(undefined, () => undefined),
+    // oxlint-disable-next-line unicorn/no-useless-undefined -- The Match branch must explicitly produce the optional string result.
+    Match.when({ kind: 'COUNTERPARTY' }, () => undefined),
+    Match.when({ kind: 'RETAIL' }, ({ resourceId, tenantId }) => `${tenantId}\u0000${resourceId}`),
+    Match.exhaustive,
+  );
+
+const hasMatchingRetailProfileScope = (
+  boundProfile: CommerceCustomerProfileRef | undefined,
+  requestedProfile: CommerceCustomerProfileRef,
+): boolean => {
+  const boundScopeKey = retailProfileScopeKey(boundProfile);
+  return boundScopeKey === undefined ? false : boundScopeKey === retailProfileScopeKey(requestedProfile);
+};
+
+const decideCurrentRetailPortalAccess = (input: RetailPortalAccessInput): RetailPortalAccessDecision =>
+  Match.value(hasMatchingRetailProfileScope(input.boundProfile, input.requestedProfile)).pipe(
+    Match.when(false, () => ({ allowed: false, outcome: 'PROFILE_SCOPE_MISMATCH' }) as const),
+    Match.when(true, () =>
+      Match.value(input.grantedPermissions.includes(input.requestedPermission)).pipe(
+        Match.when(false, () => ({ allowed: false, outcome: 'PERMISSION_DENIED' }) as const),
+        Match.when(true, () => ({ allowed: true, outcome: 'ALLOWED' }) as const),
+        Match.exhaustive,
+      ),
+    ),
+    Match.exhaustive,
+  );
+
+const decideActiveRetailPortalAccess = (input: RetailPortalAccessInput): RetailPortalAccessDecision => {
   const currentness = decideRetailBindingAuthorizationCurrentness({
     authorizationOperation: input.authorizationOperation,
     authorizationState: input.authorizationState,
-    bindingState: input.bindingState,
+    bindingState: 'ACTIVE',
   });
-  if (currentness === 'REVOKED') {
-    return { allowed: false, outcome: 'BINDING_REVOKED' };
-  }
-  if (currentness === 'UNAVAILABLE' || input.authorizationStatus === 'INDETERMINATE') {
-    return { allowed: false, outcome: 'AUTHORIZATION_UNAVAILABLE' };
-  }
-  if (
-    input.boundProfile === undefined ||
-    input.boundProfile.kind !== 'RETAIL' ||
-    input.requestedProfile.kind !== 'RETAIL' ||
-    input.boundProfile.resourceId !== input.requestedProfile.resourceId ||
-    input.boundProfile.tenantId !== input.requestedProfile.tenantId
-  ) {
-    return { allowed: false, outcome: 'PROFILE_SCOPE_MISMATCH' };
-  }
-  if (!input.grantedPermissions.includes(input.requestedPermission)) {
-    return { allowed: false, outcome: 'PERMISSION_DENIED' };
-  }
-  return { allowed: true, outcome: 'ALLOWED' };
+  return Match.value(currentness).pipe(
+    Match.when('REVOKED', () => ({ allowed: false, outcome: 'BINDING_REVOKED' }) as const),
+    Match.when('UNAVAILABLE', () => ({ allowed: false, outcome: 'AUTHORIZATION_UNAVAILABLE' }) as const),
+    Match.when('ACTIVE', () =>
+      Match.value(input.authorizationStatus).pipe(
+        Match.when('INDETERMINATE', () => ({ allowed: false, outcome: 'AUTHORIZATION_UNAVAILABLE' }) as const),
+        Match.when('AVAILABLE', () => decideCurrentRetailPortalAccess(input)),
+        Match.exhaustive,
+      ),
+    ),
+    Match.exhaustive,
+  );
 };
+
+export const decideRetailPortalAccess = (input: RetailPortalAccessInput): RetailPortalAccessDecision =>
+  Match.value(input.bindingState).pipe(
+    Match.when('MISSING', () => ({ allowed: false, outcome: 'BINDING_NOT_FOUND' }) as const),
+    Match.when('AMBIGUOUS', () => ({ allowed: false, outcome: 'BINDING_AMBIGUOUS' }) as const),
+    Match.when('REVOKED', () => ({ allowed: false, outcome: 'BINDING_REVOKED' }) as const),
+    Match.when('ACTIVE', () => decideActiveRetailPortalAccess(input)),
+    Match.exhaustive,
+  );
 
 export const ReconciliationCompletionDecisionSchema = Schema.Struct({
   complete: Schema.Boolean,
@@ -324,10 +345,7 @@ export const decideReconciliationCompletion = (input: {
   if (input.caseState === 'COMPLETED') {
     return { complete: true, outcome: 'ALREADY_COMPLETED' };
   }
-  if (
-    input.caseState === 'BLOCKED' ||
-    input.ownerOutcomes.some(({ status }) => status === 'BLOCKED')
-  ) {
+  if (input.caseState === 'BLOCKED' || input.ownerOutcomes.some(({ status }) => status === 'BLOCKED')) {
     return { complete: false, outcome: 'RECONCILIATION_BLOCKED' };
   }
   const byOwner = new Map(input.ownerOutcomes.map((entry) => [entry.owner, entry.status]));
@@ -362,65 +380,91 @@ export const GuestAttributionOutcomeSchema = Schema.Union([
   }),
 ]);
 export type GuestAttributionOutcome = typeof GuestAttributionOutcomeSchema.Type;
-export const decideGuestAttribution = (input: {
+interface GuestAttributionInput {
   readonly partyResolution: GuestPartyResolutionOutcome;
   readonly profileOutcome?: ProfileCreateOutcome;
-}): GuestAttributionOutcome => {
-  if (input.partyResolution.outcome === 'AMBIGUOUS_MATCH') {
-    return { canAcceptOrder: false, outcome: 'AMBIGUOUS_MATCH', portalAccessGranted: false };
-  }
-  if (input.partyResolution.outcome === 'INVALID_OR_INSUFFICIENT_EVIDENCE') {
-    return {
-      canAcceptOrder: false,
-      outcome: 'INVALID_OR_INSUFFICIENT_EVIDENCE',
-      portalAccessGranted: false,
-    };
-  }
-  if (
-    input.partyResolution.outcome === 'PARTY_OWNER_UNAVAILABLE' ||
-    input.partyResolution.outcome === 'PARTY_OWNER_INDETERMINATE'
-  ) {
-    return {
-      canAcceptOrder: false,
-      outcome: 'PARTY_RESOLUTION_UNAVAILABLE',
-      portalAccessGranted: false,
-    };
-  }
-  if (input.profileOutcome?.outcome === 'PROFILE_RECONCILIATION_REQUIRED') {
-    return {
-      canAcceptOrder: false,
-      outcome: 'PROFILE_RECONCILIATION_REQUIRED',
-      portalAccessGranted: false,
-    };
-  }
-  if (
-    input.profileOutcome?.outcome === 'PROFILE_ALREADY_EXISTS_SUSPENDED' ||
-    input.profileOutcome?.outcome === 'PROFILE_ALREADY_EXISTS_ARCHIVED'
-  ) {
-    return { canAcceptOrder: false, outcome: 'PROFILE_NOT_ACTIVE', portalAccessGranted: false };
-  }
-  if (
-    input.profileOutcome === undefined ||
-    (input.profileOutcome.outcome !== 'PROFILE_CREATED' &&
-      input.profileOutcome.outcome !== 'PROFILE_ALREADY_EXISTS_ACTIVE') ||
-    input.profileOutcome.profile.kind !== 'RETAIL'
-  ) {
-    return {
-      canAcceptOrder: false,
-      outcome: 'PROFILE_ENSURE_UNAVAILABLE',
-      portalAccessGranted: false,
-    };
-  }
-  return {
-    canAcceptOrder: true,
-    outcome: 'ATTRIBUTION_COMPLETED',
-    partyRef: input.partyResolution.partyRef,
-    portalAccessGranted: false,
-    profile: input.profileOutcome.profile,
-  };
-};
+}
+type ResolvedGuestPartyOutcome = Extract<GuestPartyResolutionOutcome, { readonly partyRef: unknown }>;
+type UnresolvedGuestPartyOutcome = Exclude<GuestPartyResolutionOutcome, ResolvedGuestPartyOutcome>;
+type GuestAttributionFailureOutcome = Exclude<GuestAttributionOutcome['outcome'], 'ATTRIBUTION_COMPLETED'>;
 
-export const GenericProfileMutationOutcomeSchema = Schema.Literals([
+const guestAttributionFailure = (outcome: GuestAttributionFailureOutcome): GuestAttributionOutcome => ({
+  canAcceptOrder: false,
+  outcome,
+  portalAccessGranted: false,
+});
+
+const decideUnresolvedGuestAttribution = (partyResolution: UnresolvedGuestPartyOutcome): GuestAttributionOutcome =>
+  Match.value(partyResolution.outcome).pipe(
+    Match.when('AMBIGUOUS_MATCH', () => guestAttributionFailure('AMBIGUOUS_MATCH')),
+    Match.when('INVALID_OR_INSUFFICIENT_EVIDENCE', () => guestAttributionFailure('INVALID_OR_INSUFFICIENT_EVIDENCE')),
+    Match.when('PARTY_OWNER_UNAVAILABLE', () => guestAttributionFailure('PARTY_RESOLUTION_UNAVAILABLE')),
+    Match.when('PARTY_OWNER_INDETERMINATE', () => guestAttributionFailure('PARTY_RESOLUTION_UNAVAILABLE')),
+    Match.exhaustive,
+  );
+
+const decideGuestAttributionForProfile = (
+  partyResolution: ResolvedGuestPartyOutcome,
+  profile: CommerceCustomerProfileRef,
+): GuestAttributionOutcome =>
+  Match.value(profile).pipe(
+    Match.when({ kind: 'COUNTERPARTY' }, () => guestAttributionFailure('PROFILE_ENSURE_UNAVAILABLE')),
+    Match.when(
+      { kind: 'RETAIL' },
+      (retailProfile) =>
+        ({
+          canAcceptOrder: true,
+          outcome: 'ATTRIBUTION_COMPLETED',
+          partyRef: partyResolution.partyRef,
+          portalAccessGranted: false,
+          profile: retailProfile,
+        }) as const,
+    ),
+    Match.exhaustive,
+  );
+
+const decideResolvedGuestAttribution = (
+  partyResolution: ResolvedGuestPartyOutcome,
+  profileOutcome: ProfileCreateOutcome | undefined,
+): GuestAttributionOutcome =>
+  Match.value(profileOutcome).pipe(
+    Match.when(undefined, () => guestAttributionFailure('PROFILE_ENSURE_UNAVAILABLE')),
+    Match.when({ outcome: 'PROFILE_RECONCILIATION_REQUIRED' }, () =>
+      guestAttributionFailure('PROFILE_RECONCILIATION_REQUIRED'),
+    ),
+    Match.when({ outcome: 'PROFILE_ALREADY_EXISTS_SUSPENDED' }, () => guestAttributionFailure('PROFILE_NOT_ACTIVE')),
+    Match.when({ outcome: 'PROFILE_ALREADY_EXISTS_ARCHIVED' }, () => guestAttributionFailure('PROFILE_NOT_ACTIVE')),
+    Match.when({ outcome: 'PROFILE_CREATED' }, ({ profile }) =>
+      decideGuestAttributionForProfile(partyResolution, profile),
+    ),
+    Match.when({ outcome: 'PROFILE_ALREADY_EXISTS_ACTIVE' }, ({ profile }) =>
+      decideGuestAttributionForProfile(partyResolution, profile),
+    ),
+    Match.when({ outcome: 'SUBJECT_NOT_RESOLVED_OR_INVALID' }, () =>
+      guestAttributionFailure('PROFILE_ENSURE_UNAVAILABLE'),
+    ),
+    Match.when({ outcome: 'COUNTERPARTY_ROLE_NOT_ELIGIBLE' }, () =>
+      guestAttributionFailure('PROFILE_ENSURE_UNAVAILABLE'),
+    ),
+    Match.when({ outcome: 'PROFILE_KIND_OR_SUBJECT_CONFLICT' }, () =>
+      guestAttributionFailure('PROFILE_ENSURE_UNAVAILABLE'),
+    ),
+    Match.when({ outcome: 'CURRENT_STATE_CONFLICT' }, () => guestAttributionFailure('PROFILE_ENSURE_UNAVAILABLE')),
+    Match.when({ outcome: 'SUBJECT_RESOLUTION_UNAVAILABLE' }, () =>
+      guestAttributionFailure('PROFILE_ENSURE_UNAVAILABLE'),
+    ),
+    Match.when({ outcome: 'PERSISTENCE_UNAVAILABLE' }, () => guestAttributionFailure('PROFILE_ENSURE_UNAVAILABLE')),
+    Match.when({ outcome: 'COMMIT_INDETERMINATE' }, () => guestAttributionFailure('PROFILE_ENSURE_UNAVAILABLE')),
+    Match.exhaustive,
+  );
+
+export const decideGuestAttribution = (input: GuestAttributionInput): GuestAttributionOutcome =>
+  input.partyResolution.outcome === 'EXISTING_PARTY_RESOLVED' ||
+  input.partyResolution.outcome === 'UNRESOLVED_PARTY_CREATED'
+    ? decideResolvedGuestAttribution(input.partyResolution, input.profileOutcome)
+    : decideUnresolvedGuestAttribution(input.partyResolution);
+
+const GenericProfileMutationOutcomeSchema = Schema.Literals([
   'GENERIC_PROFILE_UPDATE_NOT_SUPPORTED',
   'FIELD_OWNED_BY_PARTY_REGISTRY',
   'FIELD_OWNED_BY_NAMED_COMMERCE_CAPABILITY',
@@ -438,24 +482,13 @@ const GenericProfileFieldOwnerSchema = Schema.Literals([
   'RECONCILIATION',
 ]);
 type GenericProfileFieldOwner = typeof GenericProfileFieldOwnerSchema.Type;
-export const classifyGenericProfileMutation = (
-  fieldOwner: GenericProfileFieldOwner,
-): GenericProfileMutationOutcome =>
+export const classifyGenericProfileMutation = (fieldOwner: GenericProfileFieldOwner): GenericProfileMutationOutcome =>
   Match.value(fieldOwner).pipe(
     Match.when('PARTY_REGISTRY', () => 'FIELD_OWNED_BY_PARTY_REGISTRY' as const),
-    Match.when(
-      'NAMED_COMMERCE_CAPABILITY',
-      () => 'FIELD_OWNED_BY_NAMED_COMMERCE_CAPABILITY' as const,
-    ),
+    Match.when('NAMED_COMMERCE_CAPABILITY', () => 'FIELD_OWNED_BY_NAMED_COMMERCE_CAPABILITY' as const),
     Match.when('PROFILE_SUBJECT', () => 'IMMUTABLE_PROFILE_SUBJECT' as const),
     Match.when('LIFECYCLE', () => 'LIFECYCLE_ACTION_REQUIRED' as const),
     Match.when('RECONCILIATION', () => 'RECONCILIATION_REQUIRED' as const),
     Match.when('GENERIC', () => 'GENERIC_PROFILE_UPDATE_NOT_SUPPORTED' as const),
     Match.exhaustive,
   );
-
-export {
-  CommerceCustomerProfileStateSchema,
-  ProfileCreateObservedStateSchema,
-  RetailPortalPermissionCodeSchema,
-} from './profile-contracts.ts';

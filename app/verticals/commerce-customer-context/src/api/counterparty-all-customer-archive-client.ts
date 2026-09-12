@@ -21,8 +21,7 @@ type CounterpartyAllCustomerArchiveOperationInvocation = readonly [
 ];
 
 const counterpartyAllCustomerArchiveClient = (
-  // oxlint-disable-next-line typescript/no-unnecessary-type-arguments -- Codesmith keeps the credential payload explicit as part of the governed-client structural contract.
-  credential: Redacted.Redacted<string>,
+  credential: Redacted.Redacted,
   requestCorrelation: string,
   options: CounterpartyAllCustomerArchiveClientOptions,
 ) =>
@@ -38,11 +37,7 @@ const counterpartyAllCustomerArchiveClient = (
 
 export const executeCounterpartyAllCustomerArchiveWithAuthorization = (
   payload: CounterpartyAllCustomerArchiveRequest,
-  ...[
-    credential,
-    requestCorrelation,
-    options = {},
-  ]: CounterpartyAllCustomerArchiveAuthorizedInvocation
+  ...[credential, requestCorrelation, options = {}]: CounterpartyAllCustomerArchiveAuthorizedInvocation
 ) =>
   counterpartyAllCustomerArchiveClient(Redacted.make(credential), requestCorrelation, options).pipe(
     Effect.flatMap((client) =>
@@ -60,10 +55,5 @@ export const executeCounterpartyAllCustomerArchive = (
   ...[requestCorrelation, options = {}]: CounterpartyAllCustomerArchiveOperationInvocation
 ) =>
   operationGateway.invoke((credential) =>
-    executeCounterpartyAllCustomerArchiveWithAuthorization(
-      payload,
-      credential,
-      requestCorrelation,
-      options,
-    ),
+    executeCounterpartyAllCustomerArchiveWithAuthorization(payload, credential, requestCorrelation, options),
   );

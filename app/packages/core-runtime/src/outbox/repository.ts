@@ -105,12 +105,7 @@ const loadClaimInvocationEvidence = Effect.fnUntraced(function* loadClaimInvocat
       correlationId: actionInvocations.correlationId,
     })
     .from(actionInvocations)
-    .where(
-      and(
-        eq(actionInvocations.actionInvocationId, actionInvocationId),
-        eq(actionInvocations.tenantId, tenantId),
-      ),
-    );
+    .where(and(eq(actionInvocations.actionInvocationId, actionInvocationId), eq(actionInvocations.tenantId, tenantId)));
   if (invocation === undefined) {
     return {} as const;
   }

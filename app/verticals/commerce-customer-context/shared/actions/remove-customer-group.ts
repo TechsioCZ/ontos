@@ -23,4 +23,3 @@ export const RemoveCustomerGroupResultSchema = Schema.Struct({
   changed: Schema.Boolean,
   membership: CommerceCustomerGroupMembershipSchema,
 });
-export type RemoveCustomerGroupResult = typeof RemoveCustomerGroupResultSchema.Type;

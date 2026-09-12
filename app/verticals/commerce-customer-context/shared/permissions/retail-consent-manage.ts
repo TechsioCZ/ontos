@@ -10,8 +10,7 @@ export const retailConsentManagePermission = defineBusinessPermission({
   customerDelegable: false,
   internalGrantable: true,
   key: 'retail.consent.manage',
-  meaning:
-    'Read or change Principal/Profile-scoped consent preferences owned by Consent and Privacy.',
+  meaning: 'Read or change Principal/Profile-scoped consent preferences owned by Consent and Privacy.',
   owningCapability: 'privacy.consent',
   protectedEntrypoints: ['privacy.consent.manage-retail-profile-consent'],
   schemaVersion: '1',

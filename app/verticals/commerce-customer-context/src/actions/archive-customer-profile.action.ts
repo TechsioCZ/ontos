@@ -27,57 +27,55 @@ export interface ArchiveCustomerProfileServices {
     context: ActionHandlerContext<DomainEvents, ArchiveCustomerProfileServices>,
   ) => Effect.Effect<ArchiveCustomerProfileResult, ProfileLifecycleActionRejected>;
 }
-const handle = Effect.fn('ArchiveCustomerProfileAction.handle')(
-  function* handleArchiveCustomerProfileEffect(
-    payload: ArchiveCustomerProfilePayload,
-    context: ActionHandlerContext<DomainEvents, ArchiveCustomerProfileServices>,
-  ) {
-    if (payload.profileRef.tenantId !== context.scope.tenantId) {
-      return yield* new ProfileLifecycleActionRejected({
-        code: 'CURRENT_STATE_CONFLICT',
-        reason: 'The profile must belong to the trusted Tenant',
-        retryable: false,
-      });
-    }
-    const result = yield* context.services.transition(payload, context);
-    if (
-      result.profileRef.tenantId !== context.scope.tenantId ||
-      result.outcome !== 'PROFILE_ARCHIVED' ||
-      (result.previousState !== 'ACTIVE' && result.previousState !== 'SUSPENDED') ||
-      result.state !== 'ARCHIVED'
-    ) {
-      return yield* new ProfileLifecycleActionRejected({
-        code: 'CURRENT_STATE_CONFLICT',
-        reason: 'The transition service returned an inconsistent lifecycle result',
-        retryable: false,
-      });
-    }
-    yield* recordProfileResourceLookup(
-      context,
-      result.profileRef,
-      `profile-archive:${result.profileRef.resourceId}:${payload.expectedRevision}`,
-    );
-    const event = yield* context.addDomainEvent({
-      eventType: 'commerce.customer-context.customer-profile-archived.v1',
-      payloadJson: result,
-      producerModuleKey: MODULE_KEY,
-      subjectModuleKey: MODULE_KEY,
-      subjectResourceId: result.profileRef.resourceId,
-      subjectResourceType: result.profileRef.resourceType,
+const handle = Effect.fn('ArchiveCustomerProfileAction.handle')(function* handleArchiveCustomerProfileEffect(
+  payload: ArchiveCustomerProfilePayload,
+  context: ActionHandlerContext<DomainEvents, ArchiveCustomerProfileServices>,
+) {
+  if (payload.profileRef.tenantId !== context.scope.tenantId) {
+    return yield* new ProfileLifecycleActionRejected({
+      code: 'CURRENT_STATE_CONFLICT',
+      reason: 'The profile must belong to the trusted Tenant',
+      retryable: false,
     });
-    yield* context.addOutboxMessage(
-      event,
-      createProfileArchivedOutboxMessage({
-        effectiveAt: result.effectiveAt,
-        previousState: result.previousState,
-        profileRef: result.profileRef,
-        revision: result.revision,
-        state: 'ARCHIVED',
-      }),
-    );
-    return result;
-  },
-);
+  }
+  const result = yield* context.services.transition(payload, context);
+  if (
+    result.profileRef.tenantId !== context.scope.tenantId ||
+    result.outcome !== 'PROFILE_ARCHIVED' ||
+    (result.previousState !== 'ACTIVE' && result.previousState !== 'SUSPENDED') ||
+    result.state !== 'ARCHIVED'
+  ) {
+    return yield* new ProfileLifecycleActionRejected({
+      code: 'CURRENT_STATE_CONFLICT',
+      reason: 'The transition service returned an inconsistent lifecycle result',
+      retryable: false,
+    });
+  }
+  yield* recordProfileResourceLookup(
+    context,
+    result.profileRef,
+    `profile-archive:${result.profileRef.resourceId}:${payload.expectedRevision}`,
+  );
+  const event = yield* context.addDomainEvent({
+    eventType: 'commerce.customer-context.customer-profile-archived.v1',
+    payloadJson: result,
+    producerModuleKey: MODULE_KEY,
+    subjectModuleKey: MODULE_KEY,
+    subjectResourceId: result.profileRef.resourceId,
+    subjectResourceType: result.profileRef.resourceType,
+  });
+  yield* context.addOutboxMessage(
+    event,
+    createProfileArchivedOutboxMessage({
+      effectiveAt: result.effectiveAt,
+      previousState: result.previousState,
+      profileRef: result.profileRef,
+      revision: result.revision,
+      state: 'ARCHIVED',
+    }),
+  );
+  return result;
+});
 export const archiveCustomerProfileAction = defineAction(
   {
     accessEvidencePolicy: {
@@ -108,22 +106,6 @@ export const archiveCustomerProfileAction = defineAction(
   handle,
   (transaction, scope) =>
     profileServicesForVerifiedScope(transaction, scope).pipe(
-      Effect.map(({ archiveCustomerProfile }) => archiveCustomerProfile),
+      Effect.map(({ archiveCustomerProfile }): ArchiveCustomerProfileServices => archiveCustomerProfile),
     ),
 );
-
-// <generated-outbox-message-exports>
-export { ArchiveCustomerProfileCommerceCustomerContextCustomerProfileArchivedV1OutboxPayloadSchema } from './archive-customer-profile.commerce-customer-context-customer-profile-archived-v1.outbox-message.ts';
-export { ArchiveCustomerProfileCommerceCustomerContextCustomerProfileArchivedV1OutboxProducerModuleKey } from './archive-customer-profile.commerce-customer-context-customer-profile-archived-v1.outbox-message.ts';
-export { ArchiveCustomerProfileCommerceCustomerContextCustomerProfileArchivedV1OutboxTopic } from './archive-customer-profile.commerce-customer-context-customer-profile-archived-v1.outbox-message.ts';
-export { createArchiveCustomerProfileCommerceCustomerContextCustomerProfileArchivedV1OutboxMessage } from './archive-customer-profile.commerce-customer-context-customer-profile-archived-v1.outbox-message.ts';
-export type { ArchiveCustomerProfileCommerceCustomerContextCustomerProfileArchivedV1OutboxPayload } from './archive-customer-profile.commerce-customer-context-customer-profile-archived-v1.outbox-message.ts';
-export {
-  ArchiveCustomerProfilePayloadSchema,
-  ArchiveCustomerProfileResultSchema,
-} from '../../shared/actions/archive-customer-profile.ts';
-export type {
-  ArchiveCustomerProfilePayload,
-  ArchiveCustomerProfileResult,
-} from '../../shared/actions/archive-customer-profile.ts';
-// </generated-outbox-message-exports>

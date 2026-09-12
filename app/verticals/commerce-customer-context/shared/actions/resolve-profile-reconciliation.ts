@@ -13,18 +13,13 @@ const RevisionSchema = Schema.Finite.check(Schema.isInt(), Schema.isGreaterThanO
 const EventVersionSchema = Schema.BigIntFromString.check(Schema.isGreaterThanOrEqualToBigInt(0n));
 const BoundedEvidenceSchema = Schema.Trim.check(Schema.isMinLength(1), Schema.isMaxLength(300));
 const BoundedReasonSchema = Schema.Trim.check(Schema.isMinLength(1), Schema.isMaxLength(500));
-const ReconciliationIncompleteStateSchema = Schema.Literals([
-  'OPEN',
-  'BLOCKED',
-  'READY_TO_COMPLETE',
-]);
+const ReconciliationIncompleteStateSchema = Schema.Literals(['OPEN', 'BLOCKED', 'READY_TO_COMPLETE']);
 const TerminalReconciliationOwnerStatusSchema = Schema.Literals(['RESOLVED', 'NOT_APPLICABLE']);
 
-export const DesiredReconciliationOwnerOutcomeSchema = Schema.Struct({
+const DesiredReconciliationOwnerOutcomeSchema = Schema.Struct({
   owner: ReconciliationOwnerSchema,
   status: TerminalReconciliationOwnerStatusSchema,
 });
-export type DesiredReconciliationOwnerOutcome = typeof DesiredReconciliationOwnerOutcomeSchema.Type;
 
 const ExactDesiredOwnerOutcomesSchema = Schema.Array(DesiredReconciliationOwnerOutcomeSchema).check(
   Schema.isMinLength(RECONCILIATION_REQUIRED_OWNERS.length),
@@ -48,8 +43,7 @@ export const ResolveProfileReconciliationPayloadSchema = Schema.Struct({
   resultingState: CommerceCustomerProfileStateSchema,
   survivorProfileRef: CommerceCustomerProfileRefSchema,
 });
-export type ResolveProfileReconciliationPayload =
-  typeof ResolveProfileReconciliationPayloadSchema.Type;
+export type ResolveProfileReconciliationPayload = typeof ResolveProfileReconciliationPayloadSchema.Type;
 
 export const ProfileReconciliationOwnerVerificationRequestSchema = Schema.Struct({
   caseRef: ProfileReconciliationCaseRefSchema,
@@ -87,8 +81,7 @@ export const ProfileReconciliationOwnerVerificationSchema = Schema.Union([
   ProfileReconciliationOwnerUnavailableSchema,
   ProfileReconciliationOwnerConflictSchema,
 ]);
-export type ProfileReconciliationOwnerVerification =
-  typeof ProfileReconciliationOwnerVerificationSchema.Type;
+export type ProfileReconciliationOwnerVerification = typeof ProfileReconciliationOwnerVerificationSchema.Type;
 
 const ExactDurableOwnerOutcomesSchema = Schema.Array(ReconciliationOwnerOutcomeSchema).check(
   Schema.isMinLength(RECONCILIATION_REQUIRED_OWNERS.length),
@@ -109,10 +102,9 @@ export const ProfileReconciliationDurableProgressSchema = Schema.Struct({
   revision: RevisionSchema,
   state: ReconciliationIncompleteStateSchema,
 });
-export type ProfileReconciliationDurableProgress =
-  typeof ProfileReconciliationDurableProgressSchema.Type;
+export type ProfileReconciliationDurableProgress = typeof ProfileReconciliationDurableProgressSchema.Type;
 
-export const ProfileReconciliationOwnerOutcomeRecordRequestSchema = Schema.Struct({
+const ProfileReconciliationOwnerOutcomeRecordRequestSchema = Schema.Struct({
   caseRef: ProfileReconciliationCaseRefSchema,
   correlationRef: BoundedEvidenceSchema,
   durableOutcome: VerifiedReconciliationOwnerOutcomeSchema,
@@ -148,5 +140,4 @@ export const ResolveProfileReconciliationResultSchema = Schema.Union([
   ReconciliationResolvedSchema,
   ReconciliationProgressRecordedSchema,
 ]);
-export type ResolveProfileReconciliationResult =
-  typeof ResolveProfileReconciliationResultSchema.Type;
+export type ResolveProfileReconciliationResult = typeof ResolveProfileReconciliationResultSchema.Type;

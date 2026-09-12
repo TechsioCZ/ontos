@@ -21,10 +21,7 @@ export interface ProfileReconciliationOwnerEvidenceVerifier {
   readonly verify: (
     request: ProfileReconciliationOwnerVerificationRequest,
     context: ProfileReconciliationOwnerVerificationContext,
-  ) => Effect.Effect<
-    ProfileReconciliationOwnerVerification,
-    ProfileReconciliationOwnerVerificationFailure
-  >;
+  ) => Effect.Effect<ProfileReconciliationOwnerVerification, ProfileReconciliationOwnerVerificationFailure>;
 }
 
 export interface ProfileReconciliationOwnerVerifierService {
@@ -34,15 +31,14 @@ export interface ProfileReconciliationOwnerVerifierService {
 export class ProfileReconciliationOwnerVerifier extends Context.Service<
   ProfileReconciliationOwnerVerifier,
   ProfileReconciliationOwnerVerifierService
->()(
-  '@app/commerce-customer-context/profile-reconciliation-owner-verifier/ProfileReconciliationOwnerVerifier',
-) {}
+>()('@app/commerce-customer-context/profile-reconciliation-owner-verifier/ProfileReconciliationOwnerVerifier') {}
 
-export type ProfileReconciliationOwnerVerifierCatalog = Readonly<
+type ProfileReconciliationOwnerVerifierCatalog = Readonly<
   Record<ReconciliationOwner, ProfileReconciliationOwnerEvidenceVerifier>
 >;
 
-export const makeProfileReconciliationOwnerVerifier = (
+// eslint-disable-next-line no-unused-vars -- Retain the catalog-backed factory that structurally connects the private verifier catalog to its service contract.
+const makeProfileReconciliationOwnerVerifier = (
   catalog: ProfileReconciliationOwnerVerifierCatalog,
 ): ProfileReconciliationOwnerVerifierService => ({
   verify: (request, context) => {
@@ -59,22 +55,6 @@ export const makeProfileReconciliationOwnerVerifier = (
     }
     return verifier.verify(request, context);
   },
-});
-
-export const unavailableProfileReconciliationOwnerEvidenceVerifier = (
-  owner: ReconciliationOwner,
-  reason: string,
-): ProfileReconciliationOwnerEvidenceVerifier => ({
-  owner,
-  verify: () =>
-    Effect.fail(
-      new ProfileReconciliationOwnerVerificationFailure({
-        code: 'OWNER_UNAVAILABLE',
-        owner,
-        reason,
-        retryable: true,
-      }),
-    ),
 });
 
 export const profileReconciliationOwnerVerifierUnavailable = Object.freeze({

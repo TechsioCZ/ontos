@@ -2,21 +2,14 @@
 // @ontos-action-owner commerce.customer-context
 // @ontos-action-slug revoke-counterparty-access-invitation
 import type { ActionHandlerContext } from '@app/core-runtime';
-import {
-  defineAction,
-  defineActionBusinessPermission,
-  defineTenantModuleEntrypoint,
-} from '@app/core-runtime';
+import { defineAction, defineActionBusinessPermission, defineTenantModuleEntrypoint } from '@app/core-runtime';
 import { Effect } from 'effect';
 import {
   RevokeCounterpartyAccessInvitationPayloadSchema,
   RevokeCounterpartyAccessInvitationResultSchema,
 } from '../../shared/actions/revoke-counterparty-access-invitation.ts';
 import type { RevokeCounterpartyAccessInvitationPayload } from '../../shared/actions/revoke-counterparty-access-invitation.ts';
-import {
-  AccessAuditEvidenceSchema,
-  AccessDeniedAuditEvidenceSchema,
-} from '../../shared/domain/access-contract.ts';
+import { AccessAuditEvidenceSchema, AccessDeniedAuditEvidenceSchema } from '../../shared/domain/access-contract.ts';
 import {
   CounterpartyAccessContractViolation,
   CounterpartyAccessDomainErrorSchema,
@@ -37,78 +30,84 @@ import {
 } from './revoke-counterparty-access-invitation.commerce-customer-context-counterparty-access-invitation-revoked-v1.outbox-message.ts';
 
 const domainEvents = {
-  'commerce.customer-context.counterparty-access-invitation-revoked.v1':
-    AccessInvitationRevokedEventSchema,
+  'commerce.customer-context.counterparty-access-invitation-revoked.v1': AccessInvitationRevokedEventSchema,
 } as const;
 
 interface Services {
   readonly revoke: CounterpartyAccessPortService['revokeInvitation'];
 }
 
-const handle = Effect.fn('RevokeCounterpartyAccessInvitation.handle')(
-  function* handleRevokeInvitation(
-    payload: RevokeCounterpartyAccessInvitationPayload,
-    context: ActionHandlerContext<typeof domainEvents, Services>,
+const resolveDeniedAuditEvidence = (
+  payload: RevokeCounterpartyAccessInvitationPayload,
+  scope: Parameters<typeof principalRefFromContext>[0],
+) =>
+  deniedAccessAuditEvidence({
+    actor: principalRefFromContext(scope),
+    counterpartyRef: payload.counterpartyRef,
+    invitationId: payload.invitationRef.resourceId,
+    operation: 'invite',
+    recipient: { invitationId: payload.invitationRef.resourceId, kind: 'invitation' },
+    requestedScope: payload.scope,
+  });
+
+const handle = Effect.fn('RevokeCounterpartyAccessInvitation.handle')(function* handleRevokeInvitation(
+  payload: RevokeCounterpartyAccessInvitationPayload,
+  context: ActionHandlerContext<typeof domainEvents, Services>,
+) {
+  const actor = principalRefFromContext(context.scope);
+  const legalEntityId = yield* requireAccessLegalEntity(context.scope);
+  if (
+    payload.invitationRef.tenantId !== context.scope.tenantId ||
+    payload.counterpartyRef.tenantId !== context.scope.tenantId
   ) {
-    const actor = principalRefFromContext(context.scope);
-    const legalEntityId = yield* requireAccessLegalEntity(context.scope);
-    if (
-      payload.invitationRef.tenantId !== context.scope.tenantId ||
-      payload.counterpartyRef.tenantId !== context.scope.tenantId
-    ) {
-      return yield* new CounterpartyAccessContractViolation({
-        code: 'counterparty_scope_mismatch',
-        reason: 'The invitation must belong to the trusted Tenant',
-      });
-    }
-    const result = yield* context.services.revoke({
-      actionInvocationId: context.actionInvocationId,
-      actor,
-      counterpartyRef: payload.counterpartyRef,
-      expectedRevision: payload.expectedRevision,
-      invitationRef: payload.invitationRef,
-      legalEntityId,
-      reason: payload.reason,
-      scope: payload.scope,
+    return yield* new CounterpartyAccessContractViolation({
+      code: 'counterparty_scope_mismatch',
+      reason: 'The invitation must belong to the trusted Tenant',
     });
-    const { invitation } = result;
-    yield* recordAccessRead(
-      context,
-      invitation.counterpartyRef,
-      'counterparty-access-invitation-revoke',
-    );
-    yield* context.recordAuditEvidence(
-      auditEvidence({
-        actor,
-        counterpartyRef: invitation.counterpartyRef,
-        invitationRef: invitation.invitationRef,
-        outcome: result.outcome,
-        reason: payload.reason,
-        scope: invitation.scope,
-      }),
-    );
-    if (result.outcome === 'REVOKED') {
-      const eventPayload = {
-        catalogVersion: invitation.catalogVersion,
-        counterpartyRef: invitation.counterpartyRef,
-        invitationRef: invitation.invitationRef,
-        revision: invitation.revision,
-        revokedBy: actor,
-        scope: invitation.scope,
-      };
-      const event = yield* context.addDomainEvent({
-        eventType: 'commerce.customer-context.counterparty-access-invitation-revoked.v1',
-        payloadJson: eventPayload,
-        producerModuleKey: invitation.invitationRef.moduleId,
-        subjectModuleKey: invitation.invitationRef.moduleId,
-        subjectResourceId: invitation.invitationRef.resourceId,
-        subjectResourceType: invitation.invitationRef.resourceType,
-      });
-      yield* context.addOutboxMessage(event, createInvitationRevokedOutboxMessage(eventPayload));
-    }
-    return result;
-  },
-);
+  }
+  const result = yield* context.services.revoke({
+    actionInvocationId: context.actionInvocationId,
+    actor,
+    counterpartyRef: payload.counterpartyRef,
+    expectedRevision: payload.expectedRevision,
+    invitationRef: payload.invitationRef,
+    legalEntityId,
+    reason: payload.reason,
+    scope: payload.scope,
+  });
+  const { invitation } = result;
+  yield* recordAccessRead(context, invitation.counterpartyRef, 'counterparty-access-invitation-revoke');
+  yield* context.recordAuditEvidence(
+    auditEvidence({
+      actor,
+      counterpartyRef: invitation.counterpartyRef,
+      invitationRef: invitation.invitationRef,
+      outcome: result.outcome,
+      reason: payload.reason,
+      scope: invitation.scope,
+    }),
+  );
+  if (result.outcome === 'REVOKED') {
+    const eventPayload = {
+      catalogVersion: invitation.catalogVersion,
+      counterpartyRef: invitation.counterpartyRef,
+      invitationRef: invitation.invitationRef,
+      revision: invitation.revision,
+      revokedBy: actor,
+      scope: invitation.scope,
+    };
+    const event = yield* context.addDomainEvent({
+      eventType: 'commerce.customer-context.counterparty-access-invitation-revoked.v1',
+      payloadJson: eventPayload,
+      producerModuleKey: invitation.invitationRef.moduleId,
+      subjectModuleKey: invitation.invitationRef.moduleId,
+      subjectResourceId: invitation.invitationRef.resourceId,
+      subjectResourceType: invitation.invitationRef.resourceType,
+    });
+    yield* context.addOutboxMessage(event, createInvitationRevokedOutboxMessage(eventPayload));
+  }
+  return result;
+});
 
 export const revokeCounterpartyAccessInvitationAction = defineAction(
   {
@@ -121,15 +120,7 @@ export const revokeCounterpartyAccessInvitationAction = defineAction(
     auditProfile: 'sensitive',
     businessPermission: defineActionBusinessPermission(accessManagementPermissionTarget),
     deniedAuditEvidence: {
-      resolve: (payload, scope) =>
-        deniedAccessAuditEvidence({
-          actor: principalRefFromContext(scope),
-          counterpartyRef: payload.counterpartyRef,
-          invitationId: payload.invitationRef.resourceId,
-          operation: 'invite',
-          recipient: { invitationId: payload.invitationRef.resourceId, kind: 'invitation' },
-          requestedScope: payload.scope,
-        }),
+      resolve: resolveDeniedAuditEvidence,
       schema: AccessDeniedAuditEvidenceSchema,
     },
     domainErrorSchema: CounterpartyAccessDomainErrorSchema,
@@ -156,19 +147,4 @@ export const revokeCounterpartyAccessInvitationAction = defineAction(
     ),
 );
 
-export {
-  RevokeCounterpartyAccessInvitationPayloadSchema,
-  RevokeCounterpartyAccessInvitationResultSchema,
-} from '../../shared/actions/revoke-counterparty-access-invitation.ts';
-export type {
-  RevokeCounterpartyAccessInvitationPayload,
-  RevokeCounterpartyAccessInvitationResult,
-} from '../../shared/actions/revoke-counterparty-access-invitation.ts';
-
-// <generated-outbox-message-exports>
-export { createRevokeCounterpartyAccessInvitationCommerceCustomerContextCounterpartyAccessInvitationRevokedV1OutboxMessage } from './revoke-counterparty-access-invitation.commerce-customer-context-counterparty-access-invitation-revoked-v1.outbox-message.ts';
-export { RevokeCounterpartyAccessInvitationCommerceCustomerContextCounterpartyAccessInvitationRevokedV1OutboxPayloadSchema } from './revoke-counterparty-access-invitation.commerce-customer-context-counterparty-access-invitation-revoked-v1.outbox-message.ts';
-export { RevokeCounterpartyAccessInvitationCommerceCustomerContextCounterpartyAccessInvitationRevokedV1OutboxProducerModuleKey } from './revoke-counterparty-access-invitation.commerce-customer-context-counterparty-access-invitation-revoked-v1.outbox-message.ts';
-export { RevokeCounterpartyAccessInvitationCommerceCustomerContextCounterpartyAccessInvitationRevokedV1OutboxTopic } from './revoke-counterparty-access-invitation.commerce-customer-context-counterparty-access-invitation-revoked-v1.outbox-message.ts';
-export type { RevokeCounterpartyAccessInvitationCommerceCustomerContextCounterpartyAccessInvitationRevokedV1OutboxPayload } from './revoke-counterparty-access-invitation.commerce-customer-context-counterparty-access-invitation-revoked-v1.outbox-message.ts';
-// </generated-outbox-message-exports>
+export type { RevokeCounterpartyAccessInvitationPayload } from '../../shared/actions/revoke-counterparty-access-invitation.ts';

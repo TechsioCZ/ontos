@@ -5,10 +5,7 @@ import {
   PaymentTermMillisecondInstantSchema,
 } from '@app/payment-term-catalog-contracts/payment-term';
 import { PaymentTermRefSchema } from '@app/payment-term-catalog-contracts/resources/payment-term';
-import {
-  makeProblemDetailsSchema,
-  makeRetryableProblemDetailsSchema,
-} from '@app/shared-contracts/problem-details';
+import { makeProblemDetailsSchema, makeRetryableProblemDetailsSchema } from '@app/shared-contracts/problem-details';
 import { Schema } from 'effect';
 import { HttpApi, HttpApiEndpoint, HttpApiGroup } from 'effect/unstable/httpapi';
 
@@ -21,11 +18,7 @@ export type {
   PaymentTermAffectedUseDisposition,
 } from '@app/payment-term-catalog-contracts/payment-term';
 
-const nonEmptyText = Schema.String.check(
-  Schema.isMinLength(1),
-  Schema.isMaxLength(1000),
-  Schema.isTrimmed(),
-);
+const nonEmptyText = Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(1000), Schema.isTrimmed());
 export const PaymentTermAffectedUseAssessmentRequestSchema = Schema.Struct({
   claimedAssessment: PaymentTermAffectedUseAssessmentSchema,
   claimedDisposition: PaymentTermAffectedUseDispositionSchema,
@@ -33,8 +26,7 @@ export const PaymentTermAffectedUseAssessmentRequestSchema = Schema.Struct({
   equivalentPaymentTermRefs: Schema.Array(PaymentTermRefSchema).check(Schema.isMaxLength(199)),
   paymentTermRef: PaymentTermRefSchema,
 });
-export type PaymentTermAffectedUseAssessmentRequest =
-  typeof PaymentTermAffectedUseAssessmentRequestSchema.Type;
+export type PaymentTermAffectedUseAssessmentRequest = typeof PaymentTermAffectedUseAssessmentRequestSchema.Type;
 export const PaymentTermAffectedUseAssessmentResponseSchema = Schema.Union([
   Schema.Struct({
     assessment: PaymentTermAffectedUseAssessmentSchema,
@@ -46,8 +38,7 @@ export const PaymentTermAffectedUseAssessmentResponseSchema = Schema.Union([
     reason: nonEmptyText,
   }),
 ]);
-export type PaymentTermAffectedUseAssessmentResponse =
-  typeof PaymentTermAffectedUseAssessmentResponseSchema.Type;
+export type PaymentTermAffectedUseAssessmentResponse = typeof PaymentTermAffectedUseAssessmentResponseSchema.Type;
 
 export const PaymentTermAffectedUseAssessmentAuthenticationProblemSchema = makeProblemDetailsSchema(
   'PaymentTermAffectedUseAssessmentAuthenticationProblem',
@@ -57,8 +48,10 @@ export const PaymentTermAffectedUseAssessmentInvalidProblemSchema = makeProblemD
   'PaymentTermAffectedUseAssessmentInvalidProblem',
   400,
 );
-export const PaymentTermAffectedUseAssessmentUnavailableProblemSchema =
-  makeRetryableProblemDetailsSchema('PaymentTermAffectedUseAssessmentUnavailableProblem', 503);
+export const PaymentTermAffectedUseAssessmentUnavailableProblemSchema = makeRetryableProblemDetailsSchema(
+  'PaymentTermAffectedUseAssessmentUnavailableProblem',
+  503,
+);
 export const PaymentTermAffectedUseAssessmentForbiddenProblemSchema = makeProblemDetailsSchema(
   'PaymentTermAffectedUseAssessmentForbiddenProblem',
   403,
@@ -80,9 +73,7 @@ export const PaymentTermAffectedUseAssessmentInternalProblemSchema = makeProblem
   500,
 );
 
-export const PaymentTermAffectedUseAssessmentApi = HttpApi.make(
-  'PaymentTermAffectedUseAssessmentApi',
-).add(
+export const PaymentTermAffectedUseAssessmentApi = HttpApi.make('PaymentTermAffectedUseAssessmentApi').add(
   HttpApiGroup.make('paymentTermAffectedUseAssessment').add(
     HttpApiEndpoint.post('execute', '/reads/payment-term-affected-use-assessment', {
       error: [

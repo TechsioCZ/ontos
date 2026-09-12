@@ -3,7 +3,7 @@
 // @ontos-action-http-slug open-profile-reconciliation
 // oxlint-disable sonarjs/function-name -- Effect Match.tags requires owner-declared tag keys; remove-when: sonarjs accepts discriminant-map properties.
 import type { ActionCoreError } from '@app/core-runtime';
-import { Effect, HttpApiMiddleware } from '@modern-js/plugin-bff/effect-edge';
+import { Effect, HttpApiMiddleware } from '@modern-js/bff-effect/effect-edge';
 import { Match, Schema } from 'effect';
 import {
   OpenProfileReconciliationActionAlreadyCommittedProblemSchema,
@@ -21,141 +21,66 @@ import {
 } from '../shared/apis/open-profile-reconciliation-action.ts';
 import type { OpenProfileReconciliationActionProblem } from '../shared/apis/open-profile-reconciliation-action.ts';
 import { openProfileReconciliationAction } from '../src/actions/open-profile-reconciliation.action.ts';
+/* oxlint-disable anti-slop-effect/no-service-constructor-imports -- These pure helpers construct problem values rather than Effect services. */
+import {
+  actionProblemStatus as problemStatus,
+  makeAuthenticationProblem,
+  makeConflictProblem,
+  makeForbiddenProblem,
+  makeIneligibleProblem,
+  makeInternalProblem,
+  makeInvalidProblem,
+  makeNotFoundProblem,
+  makePreconditionProblem,
+  makeUnavailableProblem,
+} from './action-problem-support.ts';
+/* oxlint-enable anti-slop-effect/no-service-constructor-imports */
+import { profileReconciliationActionRejectedProblemByCode } from './profile-reconciliation-action-problem-identity.ts';
+import type { ProfileReconciliationDomainProblemIdentity } from './profile-reconciliation-action-problem-identity.ts';
 
 type DomainError = typeof openProfileReconciliationAction.descriptor.domainErrorSchema.Type;
 type ProblemOf<Tag extends OpenProfileReconciliationActionProblem['_tag']> = Extract<
   OpenProfileReconciliationActionProblem,
   { readonly _tag: Tag }
 >;
-type DomainProblemIdentity =
-  | { readonly code: 'CURRENT_STATE_CONFLICT'; readonly kind: 'conflict' }
-  | { readonly code: 'CROSS_LEGAL_ENTITY_RECONCILIATION_FORBIDDEN'; readonly kind: 'forbidden' }
-  | {
-      readonly code: 'RECONCILIATION_INCOMPLETE' | 'RECONCILIATION_OUT_OF_ORDER';
-      readonly kind: 'ineligible';
-    }
-  | { readonly code: 'PROFILE_NOT_FOUND' | 'RECONCILIATION_NOT_FOUND'; readonly kind: 'notFound' }
-  | {
-      readonly code: 'DEPENDENCY_UNAVAILABLE' | 'OUTCOME_INDETERMINATE' | 'PERSISTENCE_UNAVAILABLE';
-      readonly kind: 'unavailable';
-    };
-
-const problemStatus = {
-  authentication: 401,
-  conflict: 409,
-  forbidden: 403,
-  ineligible: 422,
-  internal: 500,
-  invalid: 400,
-  notFound: 404,
-  precondition: 428,
-  rateLimited: 429,
-  timeout: 504,
-  unavailable: 503,
-} as const;
-
-const profileReconciliationActionRejectedProblemByCode = {
-  CROSS_LEGAL_ENTITY_RECONCILIATION_FORBIDDEN: {
-    code: 'CROSS_LEGAL_ENTITY_RECONCILIATION_FORBIDDEN',
-    kind: 'forbidden',
-  },
-  CURRENT_STATE_CONFLICT: { code: 'CURRENT_STATE_CONFLICT', kind: 'conflict' },
-  DEPENDENCY_UNAVAILABLE: { code: 'DEPENDENCY_UNAVAILABLE', kind: 'unavailable' },
-  OUTCOME_INDETERMINATE: { code: 'OUTCOME_INDETERMINATE', kind: 'unavailable' },
-  PERSISTENCE_UNAVAILABLE: { code: 'PERSISTENCE_UNAVAILABLE', kind: 'unavailable' },
-  PROFILE_NOT_FOUND: { code: 'PROFILE_NOT_FOUND', kind: 'notFound' },
-  RECONCILIATION_INCOMPLETE: { code: 'RECONCILIATION_INCOMPLETE', kind: 'ineligible' },
-  RECONCILIATION_NOT_FOUND: { code: 'RECONCILIATION_NOT_FOUND', kind: 'notFound' },
-  RECONCILIATION_OUT_OF_ORDER: { code: 'RECONCILIATION_OUT_OF_ORDER', kind: 'ineligible' },
-} as const satisfies Record<
-  Extract<DomainError, { readonly _tag: 'ProfileReconciliationActionRejected' }>['code'],
-  DomainProblemIdentity
->;
-
 export const openProfileReconciliationActionProblem = {
-  authentication: (): ProblemOf<'OpenProfileReconciliationActionAuthenticationProblem'> =>
-    OpenProfileReconciliationActionAuthenticationProblemSchema.make({
-      detail: 'A valid audience-scoped Bearer assertion is required.',
-      status: problemStatus.authentication,
-      title: 'Authentication required',
-      type: 'https://ontos.dev/problems/operation-authentication-required',
-    }),
-  conflict: (
-    code: ProblemOf<'OpenProfileReconciliationActionConflictProblem'>['code'],
-  ): ProblemOf<'OpenProfileReconciliationActionConflictProblem'> =>
-    OpenProfileReconciliationActionConflictProblemSchema.make({
-      code,
-      detail: 'The Action conflicts with current state.',
-      status: problemStatus.conflict,
-      title: 'Action conflict',
-      type: 'https://ontos.dev/problems/action-conflict',
-    }),
-  forbidden: (
-    code: ProblemOf<'OpenProfileReconciliationActionForbiddenProblem'>['code'],
-  ): ProblemOf<'OpenProfileReconciliationActionForbiddenProblem'> =>
-    OpenProfileReconciliationActionForbiddenProblemSchema.make({
-      code,
-      detail: 'The principal is not permitted to perform this Action.',
-      status: problemStatus.forbidden,
-      title: 'Action forbidden',
-      type: 'https://ontos.dev/problems/action-forbidden',
-    }),
-  ineligible: (
-    code: ProblemOf<'OpenProfileReconciliationActionIneligibleProblem'>['code'],
-  ): ProblemOf<'OpenProfileReconciliationActionIneligibleProblem'> =>
-    OpenProfileReconciliationActionIneligibleProblemSchema.make({
-      code,
-      detail: 'The request is not eligible for this Action.',
-      status: problemStatus.ineligible,
-      title: 'Action ineligible',
-      type: 'https://ontos.dev/problems/action-ineligible',
-    }),
-  internal: (): ProblemOf<'OpenProfileReconciliationActionInternalProblem'> =>
-    OpenProfileReconciliationActionInternalProblemSchema.make({
-      detail: 'The Action could not be completed.',
-      status: problemStatus.internal,
-      title: 'Action failed',
-      type: 'https://ontos.dev/problems/action-failed',
-    }),
-  invalid: (): ProblemOf<'OpenProfileReconciliationActionInvalidProblem'> =>
-    OpenProfileReconciliationActionInvalidProblemSchema.make({
-      detail: 'The open-profile-reconciliation Action request is invalid.',
-      status: problemStatus.invalid,
-      title: 'Invalid Action request',
-      type: 'https://ontos.dev/problems/action-invalid',
-    }),
-  notFound: (
-    code: ProblemOf<'OpenProfileReconciliationActionNotFoundProblem'>['code'],
-  ): ProblemOf<'OpenProfileReconciliationActionNotFoundProblem'> =>
-    OpenProfileReconciliationActionNotFoundProblemSchema.make({
-      code,
-      detail: 'The requested resource was not found.',
-      status: problemStatus.notFound,
-      title: 'Resource not found',
-      type: 'https://ontos.dev/problems/action-resource-not-found',
-    }),
-  precondition: (): ProblemOf<'OpenProfileReconciliationActionPreconditionProblem'> =>
-    OpenProfileReconciliationActionPreconditionProblemSchema.make({
-      detail: 'An Idempotency-Key header is required.',
-      status: problemStatus.precondition,
-      title: 'Idempotency key required',
-      type: 'https://ontos.dev/problems/idempotency-key-required',
-    }),
-  unavailable: (
-    code: ProblemOf<'OpenProfileReconciliationActionUnavailableProblem'>['code'],
-  ): ProblemOf<'OpenProfileReconciliationActionUnavailableProblem'> =>
-    OpenProfileReconciliationActionUnavailableProblemSchema.make({
-      code,
-      detail: 'The Action capability is temporarily unavailable.',
-      retryable: true,
-      status: problemStatus.unavailable,
-      title: 'Action unavailable',
-      type: 'https://ontos.dev/problems/action-unavailable',
-    }),
+  authentication: makeAuthenticationProblem<ProblemOf<'OpenProfileReconciliationActionAuthenticationProblem'>>(
+    (input) => OpenProfileReconciliationActionAuthenticationProblemSchema.make(input),
+  ),
+  conflict: makeConflictProblem<
+    ProblemOf<'OpenProfileReconciliationActionConflictProblem'>['code'],
+    ProblemOf<'OpenProfileReconciliationActionConflictProblem'>
+  >((input) => OpenProfileReconciliationActionConflictProblemSchema.make(input)),
+  forbidden: makeForbiddenProblem<
+    ProblemOf<'OpenProfileReconciliationActionForbiddenProblem'>['code'],
+    ProblemOf<'OpenProfileReconciliationActionForbiddenProblem'>
+  >((input) => OpenProfileReconciliationActionForbiddenProblemSchema.make(input)),
+  ineligible: makeIneligibleProblem<
+    ProblemOf<'OpenProfileReconciliationActionIneligibleProblem'>['code'],
+    ProblemOf<'OpenProfileReconciliationActionIneligibleProblem'>
+  >((input) => OpenProfileReconciliationActionIneligibleProblemSchema.make(input)),
+  internal: makeInternalProblem<ProblemOf<'OpenProfileReconciliationActionInternalProblem'>>((input) =>
+    OpenProfileReconciliationActionInternalProblemSchema.make(input),
+  ),
+  invalid: makeInvalidProblem<ProblemOf<'OpenProfileReconciliationActionInvalidProblem'>>(
+    (input) => OpenProfileReconciliationActionInvalidProblemSchema.make(input),
+    'open-profile-reconciliation',
+  ),
+  notFound: makeNotFoundProblem<
+    ProblemOf<'OpenProfileReconciliationActionNotFoundProblem'>['code'],
+    ProblemOf<'OpenProfileReconciliationActionNotFoundProblem'>
+  >((input) => OpenProfileReconciliationActionNotFoundProblemSchema.make(input)),
+  precondition: makePreconditionProblem<ProblemOf<'OpenProfileReconciliationActionPreconditionProblem'>>((input) =>
+    OpenProfileReconciliationActionPreconditionProblemSchema.make(input),
+  ),
+  unavailable: makeUnavailableProblem<
+    ProblemOf<'OpenProfileReconciliationActionUnavailableProblem'>['code'],
+    ProblemOf<'OpenProfileReconciliationActionUnavailableProblem'>
+  >((input) => OpenProfileReconciliationActionUnavailableProblemSchema.make(input)),
 } as const;
 
 const mapDomainIdentity = (
-  identity: DomainProblemIdentity,
+  identity: ProfileReconciliationDomainProblemIdentity,
 ): OpenProfileReconciliationActionProblem =>
   Match.value(identity).pipe(
     Match.when({ kind: 'conflict' as const }, (matched) =>
@@ -212,38 +137,24 @@ const mapCoreProblem = (error: ActionCoreError): OpenProfileReconciliationAction
         }),
       ActionHandlerExecutionError: openProfileReconciliationActionProblem.internal,
       ActionIdempotencyKeyRequired: openProfileReconciliationActionProblem.precondition,
-      ActionInvocationNotFound: (failure) =>
-        openProfileReconciliationActionProblem.notFound(failure.code),
-      ActionInvocationPersistenceError: (failure) =>
-        openProfileReconciliationActionProblem.unavailable(failure.code),
-      ActionInvocationStateError: (failure) =>
-        openProfileReconciliationActionProblem.conflict(failure.code),
+      ActionInvocationNotFound: (failure) => openProfileReconciliationActionProblem.notFound(failure.code),
+      ActionInvocationPersistenceError: (failure) => openProfileReconciliationActionProblem.unavailable(failure.code),
+      ActionInvocationStateError: (failure) => openProfileReconciliationActionProblem.conflict(failure.code),
       ActionPayloadValidationError: openProfileReconciliationActionProblem.invalid,
-      ActionPermissionCheckError: (failure) =>
-        openProfileReconciliationActionProblem.unavailable(failure.code),
-      ActionPermissionDenied: (failure) =>
-        openProfileReconciliationActionProblem.forbidden(failure.code),
-      ActionPolicyDenied: (failure) =>
-        openProfileReconciliationActionProblem.ineligible(failure.code),
-      ActionPolicyEvaluationError: (failure) =>
-        openProfileReconciliationActionProblem.unavailable(failure.code),
-      ActionRequestHashConflict: (failure) =>
-        openProfileReconciliationActionProblem.conflict(failure.code),
+      ActionPermissionCheckError: (failure) => openProfileReconciliationActionProblem.unavailable(failure.code),
+      ActionPermissionDenied: (failure) => openProfileReconciliationActionProblem.forbidden(failure.code),
+      ActionPolicyDenied: (failure) => openProfileReconciliationActionProblem.ineligible(failure.code),
+      ActionPolicyEvaluationError: (failure) => openProfileReconciliationActionProblem.unavailable(failure.code),
+      ActionRequestHashConflict: (failure) => openProfileReconciliationActionProblem.conflict(failure.code),
       ActionResultValidationError: openProfileReconciliationActionProblem.internal,
-      ActionTransactionError: (failure) =>
-        openProfileReconciliationActionProblem.unavailable(failure.code),
+      ActionTransactionError: (failure) => openProfileReconciliationActionProblem.unavailable(failure.code),
       ActionTrustedContextValidationError: openProfileReconciliationActionProblem.authentication,
-      ModuleStateCheckUnavailableError: (failure) =>
-        openProfileReconciliationActionProblem.unavailable(failure.code),
-      ModuleStateDeniedError: (failure) =>
-        openProfileReconciliationActionProblem.forbidden(failure.code),
+      ModuleStateCheckUnavailableError: (failure) => openProfileReconciliationActionProblem.unavailable(failure.code),
+      ModuleStateDeniedError: (failure) => openProfileReconciliationActionProblem.forbidden(failure.code),
       OperationAuthenticationRequired: openProfileReconciliationActionProblem.authentication,
-      OperationContextDenied: (failure) =>
-        openProfileReconciliationActionProblem.forbidden(failure.code),
-      OperationContextInvalid: (failure) =>
-        openProfileReconciliationActionProblem.forbidden(failure.code),
-      OperationContextUnavailable: (failure) =>
-        openProfileReconciliationActionProblem.unavailable(failure.code),
+      OperationContextDenied: (failure) => openProfileReconciliationActionProblem.forbidden(failure.code),
+      OperationContextInvalid: (failure) => openProfileReconciliationActionProblem.forbidden(failure.code),
+      OperationContextUnavailable: (failure) => openProfileReconciliationActionProblem.unavailable(failure.code),
     }),
     Match.exhaustive,
   );
@@ -251,11 +162,9 @@ const mapCoreProblem = (error: ActionCoreError): OpenProfileReconciliationAction
 const isDomainError = Schema.is(openProfileReconciliationAction.descriptor.domainErrorSchema);
 export const mapOpenProfileReconciliationActionProblem = (
   error: ActionCoreError | DomainError,
-): OpenProfileReconciliationActionProblem =>
-  isDomainError(error) ? mapDomainProblem(error) : mapCoreProblem(error);
+): OpenProfileReconciliationActionProblem => (isDomainError(error) ? mapDomainProblem(error) : mapCoreProblem(error));
 
-export const openProfileReconciliationActionSchemaErrorLive =
-  HttpApiMiddleware.layerSchemaErrorTransform(
-    OpenProfileReconciliationActionSchemaErrorMiddleware,
-    () => Effect.fail(openProfileReconciliationActionProblem.invalid()),
-  );
+export const openProfileReconciliationActionSchemaErrorLive = HttpApiMiddleware.layerSchemaErrorTransform(
+  OpenProfileReconciliationActionSchemaErrorMiddleware,
+  () => Effect.fail(openProfileReconciliationActionProblem.invalid()),
+);

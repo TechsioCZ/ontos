@@ -9,17 +9,13 @@ import { OutboxWorkerCompletionPublicationError } from './completion-publication
 
 export { OutboxWorkerCompletionPublicationError } from './completion-publication-error.ts';
 
-const completionDefinition: unique symbol = Symbol(
-  '@app/core-runtime/outbox/worker-completion-definition',
-);
+const completionDefinition: unique symbol = Symbol('@app/core-runtime/outbox/worker-completion-definition');
 const moduleKeyPattern = /^[a-z][a-z0-9]*(?:[.-][a-z0-9]+)*$/u;
 const eventTypePattern = /^[a-z][a-z0-9]*(?:-[a-z0-9]+)*(?:\.[a-z][a-z0-9]*(?:-[a-z0-9]+)*)+$/u;
 const uuidPattern = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/iu;
 const boundedKeyPattern = /^[a-zA-Z0-9][a-zA-Z0-9._:/-]{0,299}$/u;
 
-class OutboxWorkerCompletionDefinitionValue<
-  PayloadSchema extends Schema.ConstraintDecoder<unknown>,
-> {
+class OutboxWorkerCompletionDefinitionValue<PayloadSchema extends Schema.ConstraintDecoder<unknown>> {
   readonly [completionDefinition] = true;
   readonly consumerModuleKey: string;
   readonly eventType: string;
@@ -38,9 +34,7 @@ class OutboxWorkerCompletionDefinitionValue<
   }
 }
 
-export interface OutboxWorkerCompletionDefinitionInput<
-  PayloadSchema extends Schema.ConstraintDecoder<unknown>,
-> {
+export interface OutboxWorkerCompletionDefinitionInput<PayloadSchema extends Schema.ConstraintDecoder<unknown>> {
   readonly consumerModuleKey: string;
   readonly eventType: string;
   readonly payloadSchema: PayloadSchema;
@@ -49,9 +43,9 @@ export interface OutboxWorkerCompletionDefinitionInput<
   readonly workerKey: string;
 }
 
-export type OutboxWorkerCompletionDefinition<
-  PayloadSchema extends Schema.ConstraintDecoder<unknown>,
-> = Readonly<OutboxWorkerCompletionDefinitionValue<PayloadSchema>>;
+export type OutboxWorkerCompletionDefinition<PayloadSchema extends Schema.ConstraintDecoder<unknown>> = Readonly<
+  OutboxWorkerCompletionDefinitionValue<PayloadSchema>
+>;
 
 export interface OutboxWorkerCompletionInput<Payload> {
   /** Stable owner mutation UUID. It is also the idempotent completion Domain Event identity. */
@@ -73,10 +67,7 @@ export interface OutboxWorkerCompletionPublisher {
   readonly publish: <PayloadSchema extends Schema.ConstraintDecoder<unknown>>(
     definition: OutboxWorkerCompletionDefinition<PayloadSchema>,
     input: OutboxWorkerCompletionInput<PayloadSchema['Type']>,
-  ) => Effect.Effect<
-    OutboxWorkerCompletionPublicationResult,
-    OutboxWorkerCompletionPublicationError
-  >;
+  ) => Effect.Effect<OutboxWorkerCompletionPublicationResult, OutboxWorkerCompletionPublicationError>;
 }
 
 export interface PersistOutboxWorkerCompletionInput {
@@ -127,9 +118,7 @@ const unavailable = (cause?: unknown): OutboxWorkerCompletionPublicationError =>
       });
 };
 
-export const defineOutboxWorkerCompletion = <
-  PayloadSchema extends Schema.ConstraintDecoder<unknown>,
->(
+export const defineOutboxWorkerCompletion = <PayloadSchema extends Schema.ConstraintDecoder<unknown>>(
   input: OutboxWorkerCompletionDefinitionInput<PayloadSchema>,
 ): OutboxWorkerCompletionDefinition<PayloadSchema> => {
   if (
@@ -216,124 +205,148 @@ const epochMillis = (value: Date): number | undefined =>
 
 const sameInstant = (left: Date, right: Date): boolean => epochMillis(left) === epochMillis(right);
 
-export const persistOutboxWorkerCompletion = (
-  transaction: CoreTransaction,
-): PersistOutboxWorkerCompletion =>
-  Effect.fn('OutboxWorkerCompletionPublisher.persist')(
-    function* persistOutboxWorkerCompletionEffect(input) {
-      const [sourceInvocation] = yield* transaction
-        .select({
-          actionInvocationId: actionInvocations.actionInvocationId,
-          legalEntityId: actionInvocations.legalEntityId,
-          status: actionInvocations.status,
-        })
-        .from(actionInvocations)
-        .where(
-          and(
-            eq(actionInvocations.tenantId, input.tenantId),
-            eq(actionInvocations.actionInvocationId, input.sourceActionInvocationId),
-          ),
-        )
-        .limit(1)
-        .pipe(Effect.mapError(unavailable));
-      if (
-        sourceInvocation === undefined ||
-        sourceInvocation.legalEntityId !== input.legalEntityId ||
-        sourceInvocation.status !== 'succeeded'
-      ) {
-        return yield* invalid(
-          'The completion source Action is not durably succeeded in the exact Legal Entity scope',
-        );
-      }
+const sourceInvocationIsEligible = (
+  sourceInvocation: Readonly<{ legalEntityId: string | null; status: string }> | undefined,
+  input: PersistOutboxWorkerCompletionInput,
+): boolean =>
+  sourceInvocation !== undefined &&
+  sourceInvocation.legalEntityId === input.legalEntityId &&
+  sourceInvocation.status === 'succeeded';
 
-      const [lockedTenant] = yield* transaction
-        .select({ tenantId: tenants.tenantId })
-        .from(tenants)
-        .where(eq(tenants.tenantId, input.tenantId))
-        .for('update')
-        .limit(1)
-        .pipe(Effect.mapError(unavailable));
-      if (lockedTenant === undefined) {
-        return yield* unavailable();
-      }
+const completionSubjectMatches = (
+  existing: Readonly<{
+    subjectModuleKey: string;
+    subjectResourceId: string;
+    subjectResourceType: string;
+  }>,
+  input: PersistOutboxWorkerCompletionInput,
+): boolean =>
+  existing.subjectModuleKey === input.subjectModuleKey &&
+  existing.subjectResourceId === input.subjectResourceId &&
+  existing.subjectResourceType === input.subjectResourceType;
 
-      const created = yield* transaction
-        .insert(domainEvents)
+const existingCompletionMatches = (
+  existing:
+    | Readonly<{
+        actionInvocationId: string | null;
+        eventType: string;
+        legalEntityId: string | null;
+        occurredAt: Date;
+        payloadJson: unknown;
+        producerModuleKey: string;
+        subjectModuleKey: string;
+        subjectResourceId: string;
+        subjectResourceType: string;
+        topic: string;
+      }>
+    | undefined,
+  input: PersistOutboxWorkerCompletionInput,
+): boolean =>
+  existing !== undefined &&
+  existing.actionInvocationId === input.sourceActionInvocationId &&
+  existing.eventType === input.eventType &&
+  existing.legalEntityId === input.legalEntityId &&
+  sameInstant(existing.occurredAt, input.occurredAt) &&
+  existing.producerModuleKey === input.producerModuleKey &&
+  completionSubjectMatches(existing, input) &&
+  existing.topic === input.topic &&
+  computeCanonicalValueHash(existing.payloadJson) === computeCanonicalValueHash(input.payloadJson);
+
+const completionPublicationResult = (
+  completionId: string,
+  outcome: OutboxWorkerCompletionPublicationResult['outcome'],
+): OutboxWorkerCompletionPublicationResult => ({ domainEventId: completionId, outcome });
+
+export const persistOutboxWorkerCompletion = (transaction: CoreTransaction): PersistOutboxWorkerCompletion =>
+  Effect.fn('OutboxWorkerCompletionPublisher.persist')(function* persistOutboxWorkerCompletionEffect(input) {
+    const [sourceInvocation] = yield* transaction
+      .select({
+        actionInvocationId: actionInvocations.actionInvocationId,
+        legalEntityId: actionInvocations.legalEntityId,
+        status: actionInvocations.status,
+      })
+      .from(actionInvocations)
+      .where(
+        and(
+          eq(actionInvocations.tenantId, input.tenantId),
+          eq(actionInvocations.actionInvocationId, input.sourceActionInvocationId),
+        ),
+      )
+      .limit(1)
+      .pipe(Effect.mapError(unavailable));
+    if (!sourceInvocationIsEligible(sourceInvocation, input)) {
+      return yield* invalid('The completion source Action is not durably succeeded in the exact Legal Entity scope');
+    }
+
+    const [lockedTenant] = yield* transaction
+      .select({ tenantId: tenants.tenantId })
+      .from(tenants)
+      .where(eq(tenants.tenantId, input.tenantId))
+      .for('update')
+      .limit(1)
+      .pipe(Effect.mapError(unavailable));
+    if (lockedTenant === undefined) {
+      return yield* unavailable();
+    }
+
+    const created = yield* transaction
+      .insert(domainEvents)
+      .values({
+        actionInvocationId: input.sourceActionInvocationId,
+        domainEventId: input.completionId,
+        eventType: input.eventType,
+        legalEntityId: input.legalEntityId,
+        occurredAt: input.occurredAt,
+        payloadJson: input.payloadJson,
+        producerModuleKey: input.producerModuleKey,
+        subjectModuleKey: input.subjectModuleKey,
+        subjectResourceId: input.subjectResourceId,
+        subjectResourceType: input.subjectResourceType,
+        tenantId: input.tenantId,
+      })
+      .onConflictDoNothing()
+      .returning({ domainEventId: domainEvents.domainEventId })
+      .pipe(Effect.mapError(unavailable));
+    if (created.length === 1) {
+      yield* transaction
+        .insert(outboxMessages)
         .values({
-          actionInvocationId: input.sourceActionInvocationId,
           domainEventId: input.completionId,
-          eventType: input.eventType,
-          legalEntityId: input.legalEntityId,
-          occurredAt: input.occurredAt,
           payloadJson: input.payloadJson,
           producerModuleKey: input.producerModuleKey,
-          subjectModuleKey: input.subjectModuleKey,
-          subjectResourceId: input.subjectResourceId,
-          subjectResourceType: input.subjectResourceType,
           tenantId: input.tenantId,
+          topic: input.topic,
         })
-        .onConflictDoNothing()
-        .returning({ domainEventId: domainEvents.domainEventId })
         .pipe(Effect.mapError(unavailable));
-      if (created.length === 1) {
-        yield* transaction
-          .insert(outboxMessages)
-          .values({
-            domainEventId: input.completionId,
-            payloadJson: input.payloadJson,
-            producerModuleKey: input.producerModuleKey,
-            tenantId: input.tenantId,
-            topic: input.topic,
-          })
-          .pipe(Effect.mapError(unavailable));
-        return { domainEventId: input.completionId, outcome: 'PUBLISHED' };
-      }
+      return completionPublicationResult(input.completionId, 'PUBLISHED');
+    }
 
-      const [existing] = yield* transaction
-        .select({
-          actionInvocationId: domainEvents.actionInvocationId,
-          eventType: domainEvents.eventType,
-          legalEntityId: domainEvents.legalEntityId,
-          occurredAt: domainEvents.occurredAt,
-          payloadJson: domainEvents.payloadJson,
-          producerModuleKey: domainEvents.producerModuleKey,
-          subjectModuleKey: domainEvents.subjectModuleKey,
-          subjectResourceId: domainEvents.subjectResourceId,
-          subjectResourceType: domainEvents.subjectResourceType,
-          topic: outboxMessages.topic,
-        })
-        .from(domainEvents)
-        .innerJoin(
-          outboxMessages,
-          and(
-            eq(outboxMessages.tenantId, domainEvents.tenantId),
-            eq(outboxMessages.domainEventId, domainEvents.domainEventId),
-          ),
-        )
-        .where(
-          and(
-            eq(domainEvents.tenantId, input.tenantId),
-            eq(domainEvents.domainEventId, input.completionId),
-          ),
-        )
-        .limit(1)
-        .pipe(Effect.mapError(unavailable));
-      if (
-        existing === undefined ||
-        existing.actionInvocationId !== input.sourceActionInvocationId ||
-        existing.eventType !== input.eventType ||
-        existing.legalEntityId !== input.legalEntityId ||
-        !sameInstant(existing.occurredAt, input.occurredAt) ||
-        existing.producerModuleKey !== input.producerModuleKey ||
-        existing.subjectModuleKey !== input.subjectModuleKey ||
-        existing.subjectResourceId !== input.subjectResourceId ||
-        existing.subjectResourceType !== input.subjectResourceType ||
-        existing.topic !== input.topic ||
-        computeCanonicalValueHash(existing.payloadJson) !==
-          computeCanonicalValueHash(input.payloadJson)
-      ) {
-        return yield* conflict();
-      }
-      return { domainEventId: input.completionId, outcome: 'ALREADY_PUBLISHED' };
-    },
-  );
+    const [existing] = yield* transaction
+      .select({
+        actionInvocationId: domainEvents.actionInvocationId,
+        eventType: domainEvents.eventType,
+        legalEntityId: domainEvents.legalEntityId,
+        occurredAt: domainEvents.occurredAt,
+        payloadJson: domainEvents.payloadJson,
+        producerModuleKey: domainEvents.producerModuleKey,
+        subjectModuleKey: domainEvents.subjectModuleKey,
+        subjectResourceId: domainEvents.subjectResourceId,
+        subjectResourceType: domainEvents.subjectResourceType,
+        topic: outboxMessages.topic,
+      })
+      .from(domainEvents)
+      .innerJoin(
+        outboxMessages,
+        and(
+          eq(outboxMessages.tenantId, domainEvents.tenantId),
+          eq(outboxMessages.domainEventId, domainEvents.domainEventId),
+        ),
+      )
+      .where(and(eq(domainEvents.tenantId, input.tenantId), eq(domainEvents.domainEventId, input.completionId)))
+      .limit(1)
+      .pipe(Effect.mapError(unavailable));
+    if (!existingCompletionMatches(existing, input)) {
+      return yield* conflict();
+    }
+    return completionPublicationResult(input.completionId, 'ALREADY_PUBLISHED');
+  });

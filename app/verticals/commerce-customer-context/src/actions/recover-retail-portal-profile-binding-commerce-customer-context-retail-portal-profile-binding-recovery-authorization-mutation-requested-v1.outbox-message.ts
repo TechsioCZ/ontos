@@ -3,21 +3,19 @@
 // @ontos-outbox-topic commerce.customer-context.retail-portal-profile-binding-recovery-authorization-mutation-requested.v1
 import type { OutboxMessage } from '@app/core-runtime';
 import {
-  outboxProducerModuleKey,
-  outboxTopic,
-} from '@app/commerce-customer-context/outbox/commerce-customer-context-retail-portal-profile-binding-recovery-authorization-mutation-requested-v1';
-import type { OutboxPayload } from '@app/commerce-customer-context/outbox/commerce-customer-context-retail-portal-profile-binding-recovery-authorization-mutation-requested-v1';
-
-export {
-  OutboxPayloadSchema as RecoverRetailPortalProfileBindingCommerceCustomerContextRetailPortalProfileBindingRecoveryAuthorizationMutationRequestedV1OutboxPayloadSchema,
   outboxProducerModuleKey as RecoverRetailPortalProfileBindingCommerceCustomerContextRetailPortalProfileBindingRecoveryAuthorizationMutationRequestedV1OutboxProducerModuleKey,
   outboxTopic as RecoverRetailPortalProfileBindingCommerceCustomerContextRetailPortalProfileBindingRecoveryAuthorizationMutationRequestedV1OutboxTopic,
 } from '@app/commerce-customer-context/outbox/commerce-customer-context-retail-portal-profile-binding-recovery-authorization-mutation-requested-v1';
+import type { OutboxPayload } from '@app/commerce-customer-context/outbox/commerce-customer-context-retail-portal-profile-binding-recovery-authorization-mutation-requested-v1';
+
+export { OutboxPayloadSchema as RecoverRetailPortalProfileBindingCommerceCustomerContextRetailPortalProfileBindingRecoveryAuthorizationMutationRequestedV1OutboxPayloadSchema } from '@app/commerce-customer-context/outbox/commerce-customer-context-retail-portal-profile-binding-recovery-authorization-mutation-requested-v1';
 export type { OutboxPayload as RecoverRetailPortalProfileBindingCommerceCustomerContextRetailPortalProfileBindingRecoveryAuthorizationMutationRequestedV1OutboxPayload } from '@app/commerce-customer-context/outbox/commerce-customer-context-retail-portal-profile-binding-recovery-authorization-mutation-requested-v1';
 
 export const createRecoverRetailPortalProfileBindingCommerceCustomerContextRetailPortalProfileBindingRecoveryAuthorizationMutationRequestedV1OutboxMessage =
   (payload: OutboxPayload): OutboxMessage => ({
     payloadJson: payload,
-    producerModuleKey: outboxProducerModuleKey,
-    topic: outboxTopic,
+    producerModuleKey:
+      RecoverRetailPortalProfileBindingCommerceCustomerContextRetailPortalProfileBindingRecoveryAuthorizationMutationRequestedV1OutboxProducerModuleKey,
+    topic:
+      RecoverRetailPortalProfileBindingCommerceCustomerContextRetailPortalProfileBindingRecoveryAuthorizationMutationRequestedV1OutboxTopic,
   });

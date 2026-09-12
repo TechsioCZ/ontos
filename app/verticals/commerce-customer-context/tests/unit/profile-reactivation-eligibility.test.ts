@@ -108,8 +108,7 @@ const counterpartyProfileRow = (outcome = 'PROFILE_AVAILABLE') => ({
   },
 });
 
-const roleResolver = (eligibility: CounterpartyRoleEligibility) => () =>
-  Effect.succeed(eligibility);
+const roleResolver = (eligibility: CounterpartyRoleEligibility) => () => Effect.succeed(eligibility);
 const noReconfirmationRequired = () => Effect.succeed(true);
 
 it.effect('re-reads a Retail profile subject through the exact scoped owner routine', () => {
@@ -197,14 +196,10 @@ it.effect('rejects a reconciliation-required profile snapshot before dependency 
         return Effect.succeed({ outcome: 'INELIGIBLE' });
       },
       scope,
-      transaction: transactionReturning([
-        counterpartyProfileRow('PROFILE_RECONCILIATION_REQUIRED'),
-      ]),
+      transaction: transactionReturning([counterpartyProfileRow('PROFILE_RECONCILIATION_REQUIRED')]),
     });
 
-    const failure = yield* Effect.flip(
-      evaluate({ ...lifecyclePayload, profileRef: counterpartyProfileRef }),
-    );
+    const failure = yield* Effect.flip(evaluate({ ...lifecyclePayload, profileRef: counterpartyProfileRef }));
 
     expect(failure.reason).toContain('could not be resolved exactly');
     expect(roleCalls).toBe(0);
@@ -232,45 +227,39 @@ it.effect('fails closed on an indeterminate role or a different managed Legal En
     });
 
     expect(
-      (yield* Effect.flip(
-        indeterminate({ ...lifecyclePayload, profileRef: counterpartyProfileRef }),
-      )).reason,
+      (yield* Effect.flip(indeterminate({ ...lifecyclePayload, profileRef: counterpartyProfileRef }))).reason,
     ).toContain('indeterminate');
     expect(
-      (yield* Effect.flip(
-        wrongLegalEntity({ ...lifecyclePayload, profileRef: counterpartyProfileRef }),
-      )).reason,
+      (yield* Effect.flip(wrongLegalEntity({ ...lifecyclePayload, profileRef: counterpartyProfileRef }))).reason,
     ).toContain('another managed Legal Entity');
   }),
 );
 
-it.effect(
-  'uses an explicit owner reconfirmation evaluator without exposing the Action reason',
-  () =>
-    Effect.gen(function* explicitReconfirmation() {
-      let observedFacts: unknown;
-      const evaluate = makeProfileReactivationEligibilityEvaluator({
-        evaluateReconfirmation: (facts) => {
-          observedFacts = facts;
-          return Effect.succeed(false);
-        },
-        resolveCounterpartyRole: roleResolver({ outcome: 'INDETERMINATE' }),
-        scope,
-        transaction: transactionReturning([retailProfileRow()]),
-      });
+it.effect('uses an explicit owner reconfirmation evaluator without exposing the Action reason', () =>
+  Effect.gen(function* explicitReconfirmation() {
+    let observedFacts: unknown;
+    const evaluate = makeProfileReactivationEligibilityEvaluator({
+      evaluateReconfirmation: (facts) => {
+        observedFacts = facts;
+        return Effect.succeed(false);
+      },
+      resolveCounterpartyRole: roleResolver({ outcome: 'INDETERMINATE' }),
+      scope,
+      transaction: transactionReturning([retailProfileRow()]),
+    });
 
-      expect(yield* evaluate({ ...lifecyclePayload, profileRef: retailProfileRef })).toEqual({
-        dependenciesSatisfied: true,
-        reconfirmationSatisfied: false,
-      });
-      expect(observedFacts).not.toHaveProperty('reason');
-      expect(observedFacts).toMatchObject({
-        profileId,
-        profileKind: 'RETAIL',
-        revision: 4,
-        state: 'SUSPENDED',
-      });
-    }),
+    expect(yield* evaluate({ ...lifecyclePayload, profileRef: retailProfileRef })).toEqual({
+      dependenciesSatisfied: true,
+      reconfirmationSatisfied: false,
+    });
+    expect(observedFacts).not.toHaveProperty('reason');
+    expect(observedFacts).toMatchObject({
+      profileId,
+      profileKind: 'RETAIL',
+      revision: 4,
+      state: 'SUSPENDED',
+    });
+  }),
 );
 
 it.effect('preserves typed failures from role and reconfirmation dependencies', () =>
@@ -296,16 +285,12 @@ it.effect('preserves typed failures from role and reconfirmation dependencies', 
 
     expect(
       Schema.is(ProfilePersistenceDependencyFailure)(
-        yield* Effect.flip(
-          roleUnavailable({ ...lifecyclePayload, profileRef: counterpartyProfileRef }),
-        ),
+        yield* Effect.flip(roleUnavailable({ ...lifecyclePayload, profileRef: counterpartyProfileRef })),
       ),
     ).toBe(true);
-    expect(
-      yield* Effect.flip(
-        reconfirmationUnavailable({ ...lifecyclePayload, profileRef: retailProfileRef }),
-      ),
-    ).toBe(reconfirmationFailure);
+    expect(yield* Effect.flip(reconfirmationUnavailable({ ...lifecyclePayload, profileRef: retailProfileRef }))).toBe(
+      reconfirmationFailure,
+    );
   }),
 );
 
@@ -336,9 +321,7 @@ it.effect('rejects cross-Tenant references and stored kind mismatches before rea
         profileRef: { ...retailProfileRef, tenantId: '60000000-0000-4000-8000-000000000006' },
       }),
     );
-    const kindFailure = yield* Effect.flip(
-      kindMismatch({ ...lifecyclePayload, profileRef: retailProfileRef }),
-    );
+    const kindFailure = yield* Effect.flip(kindMismatch({ ...lifecyclePayload, profileRef: retailProfileRef }));
 
     expect(crossTenantFailure.reason).toContain('another Tenant');
     expect(transactionCalls).toBe(0);
@@ -375,17 +358,14 @@ it.effect('maps missing, mismatched, and unavailable durable profile facts to ty
       transaction: unavailable,
     });
 
+    expect((yield* Effect.flip(missing({ ...lifecyclePayload, profileRef: retailProfileRef }))).reason).toContain(
+      'could not be resolved exactly',
+    );
+    expect((yield* Effect.flip(mismatched({ ...lifecyclePayload, profileRef: retailProfileRef }))).reason).toContain(
+      'could not be resolved exactly',
+    );
     expect(
-      (yield* Effect.flip(missing({ ...lifecyclePayload, profileRef: retailProfileRef }))).reason,
-    ).toContain('could not be resolved exactly');
-    expect(
-      (yield* Effect.flip(mismatched({ ...lifecyclePayload, profileRef: retailProfileRef })))
-        .reason,
-    ).toContain('could not be resolved exactly');
-    expect(
-      (yield* Effect.flip(
-        unavailableEvaluation({ ...lifecyclePayload, profileRef: retailProfileRef }),
-      )).reason,
+      (yield* Effect.flip(unavailableEvaluation({ ...lifecyclePayload, profileRef: retailProfileRef }))).reason,
     ).toContain('unavailable');
   }),
 );
@@ -399,9 +379,7 @@ it.effect('fails closed when its factory has no reviewed reconfirmation policy',
       transaction: transactionReturning([retailProfileRow()]),
     });
 
-    const failure = yield* Effect.flip(
-      evaluate({ ...lifecyclePayload, profileRef: retailProfileRef }),
-    );
+    const failure = yield* Effect.flip(evaluate({ ...lifecyclePayload, profileRef: retailProfileRef }));
     expect(failure.reason).toContain('reconfirmation policy is configured');
   }).pipe(
     Effect.provide(profileReactivationEligibilityEvaluatorFactoryLive),

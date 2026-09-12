@@ -3,7 +3,7 @@
 // @ontos-action-http-slug suspend-customer-profile
 // oxlint-disable sonarjs/function-name -- Effect Match.tags requires owner-declared tag keys; remove-when: sonarjs accepts discriminant-map properties.
 import type { ActionCoreError } from '@app/core-runtime';
-import { Effect, HttpApiMiddleware } from '@modern-js/plugin-bff/effect-edge';
+import { Effect, HttpApiMiddleware } from '@modern-js/bff-effect/effect-edge';
 import { Match, Schema } from 'effect';
 import {
   SuspendCustomerProfileActionAlreadyCommittedProblemSchema,
@@ -21,147 +21,68 @@ import {
 } from '../shared/apis/suspend-customer-profile-action.ts';
 import type { SuspendCustomerProfileActionProblem } from '../shared/apis/suspend-customer-profile-action.ts';
 import { suspendCustomerProfileAction } from '../src/actions/suspend-customer-profile.action.ts';
+/* oxlint-disable anti-slop-effect/no-service-constructor-imports -- These pure helpers construct problem values rather than Effect services. */
+import {
+  actionProblemStatus as problemStatus,
+  makeAuthenticationProblem,
+  makeConflictProblem,
+  makeForbiddenProblem,
+  makeIneligibleProblem,
+  makeInternalProblem,
+  makeInvalidProblem,
+  makeNotFoundProblem,
+  makePreconditionProblem,
+  makeUnavailableProblem,
+} from './action-problem-support.ts';
+/* oxlint-enable anti-slop-effect/no-service-constructor-imports */
+import { profileLifecycleActionRejectedProblemByCode } from './profile-lifecycle-action-problem-identity.ts';
+import type { ProfileLifecycleDomainProblemIdentity } from './profile-lifecycle-action-problem-identity.ts';
 
 type DomainError = typeof suspendCustomerProfileAction.descriptor.domainErrorSchema.Type;
 type ProblemOf<Tag extends SuspendCustomerProfileActionProblem['_tag']> = Extract<
   SuspendCustomerProfileActionProblem,
   { readonly _tag: Tag }
 >;
-type DomainProblemIdentity =
-  | {
-      readonly code:
-        | 'CURRENT_STATE_CONFLICT'
-        | 'INVALID_LIFECYCLE_TRANSITION'
-        | 'PROFILE_RECONCILIATION_REQUIRED'
-        | 'REACTIVATION_RECONFIRMATION_REQUIRED';
-      readonly kind: 'conflict';
-    }
-  | { readonly code: 'PROFILE_NOT_FOUND'; readonly kind: 'notFound' }
-  | {
-      readonly code: 'OUTCOME_INDETERMINATE' | 'PERSISTENCE_UNAVAILABLE';
-      readonly kind: 'unavailable';
-    };
-
-const problemStatus = {
-  authentication: 401,
-  conflict: 409,
-  forbidden: 403,
-  ineligible: 422,
-  internal: 500,
-  invalid: 400,
-  notFound: 404,
-  precondition: 428,
-  rateLimited: 429,
-  timeout: 504,
-  unavailable: 503,
-} as const;
-
-const profileLifecycleActionRejectedProblemByCode = {
-  CURRENT_STATE_CONFLICT: { code: 'CURRENT_STATE_CONFLICT', kind: 'conflict' },
-  INVALID_LIFECYCLE_TRANSITION: { code: 'INVALID_LIFECYCLE_TRANSITION', kind: 'conflict' },
-  OUTCOME_INDETERMINATE: { code: 'OUTCOME_INDETERMINATE', kind: 'unavailable' },
-  PERSISTENCE_UNAVAILABLE: { code: 'PERSISTENCE_UNAVAILABLE', kind: 'unavailable' },
-  PROFILE_NOT_FOUND: { code: 'PROFILE_NOT_FOUND', kind: 'notFound' },
-  PROFILE_RECONCILIATION_REQUIRED: { code: 'PROFILE_RECONCILIATION_REQUIRED', kind: 'conflict' },
-  REACTIVATION_RECONFIRMATION_REQUIRED: {
-    code: 'REACTIVATION_RECONFIRMATION_REQUIRED',
-    kind: 'conflict',
-  },
-} as const satisfies Record<
-  Extract<DomainError, { readonly _tag: 'ProfileLifecycleActionRejected' }>['code'],
-  DomainProblemIdentity
->;
-
 export const suspendCustomerProfileActionProblem = {
-  authentication: (): ProblemOf<'SuspendCustomerProfileActionAuthenticationProblem'> =>
-    SuspendCustomerProfileActionAuthenticationProblemSchema.make({
-      detail: 'A valid audience-scoped Bearer assertion is required.',
-      status: problemStatus.authentication,
-      title: 'Authentication required',
-      type: 'https://ontos.dev/problems/operation-authentication-required',
-    }),
-  conflict: (
-    code: ProblemOf<'SuspendCustomerProfileActionConflictProblem'>['code'],
-  ): ProblemOf<'SuspendCustomerProfileActionConflictProblem'> =>
-    SuspendCustomerProfileActionConflictProblemSchema.make({
-      code,
-      detail: 'The Action conflicts with current state.',
-      status: problemStatus.conflict,
-      title: 'Action conflict',
-      type: 'https://ontos.dev/problems/action-conflict',
-    }),
-  forbidden: (
-    code: ProblemOf<'SuspendCustomerProfileActionForbiddenProblem'>['code'],
-  ): ProblemOf<'SuspendCustomerProfileActionForbiddenProblem'> =>
-    SuspendCustomerProfileActionForbiddenProblemSchema.make({
-      code,
-      detail: 'The principal is not permitted to perform this Action.',
-      status: problemStatus.forbidden,
-      title: 'Action forbidden',
-      type: 'https://ontos.dev/problems/action-forbidden',
-    }),
-  ineligible: (
-    code: ProblemOf<'SuspendCustomerProfileActionIneligibleProblem'>['code'],
-  ): ProblemOf<'SuspendCustomerProfileActionIneligibleProblem'> =>
-    SuspendCustomerProfileActionIneligibleProblemSchema.make({
-      code,
-      detail: 'The request is not eligible for this Action.',
-      status: problemStatus.ineligible,
-      title: 'Action ineligible',
-      type: 'https://ontos.dev/problems/action-ineligible',
-    }),
-  internal: (): ProblemOf<'SuspendCustomerProfileActionInternalProblem'> =>
-    SuspendCustomerProfileActionInternalProblemSchema.make({
-      detail: 'The Action could not be completed.',
-      status: problemStatus.internal,
-      title: 'Action failed',
-      type: 'https://ontos.dev/problems/action-failed',
-    }),
-  invalid: (): ProblemOf<'SuspendCustomerProfileActionInvalidProblem'> =>
-    SuspendCustomerProfileActionInvalidProblemSchema.make({
-      detail: 'The suspend-customer-profile Action request is invalid.',
-      status: problemStatus.invalid,
-      title: 'Invalid Action request',
-      type: 'https://ontos.dev/problems/action-invalid',
-    }),
-  notFound: (
-    code: ProblemOf<'SuspendCustomerProfileActionNotFoundProblem'>['code'],
-  ): ProblemOf<'SuspendCustomerProfileActionNotFoundProblem'> =>
-    SuspendCustomerProfileActionNotFoundProblemSchema.make({
-      code,
-      detail: 'The requested resource was not found.',
-      status: problemStatus.notFound,
-      title: 'Resource not found',
-      type: 'https://ontos.dev/problems/action-resource-not-found',
-    }),
-  precondition: (): ProblemOf<'SuspendCustomerProfileActionPreconditionProblem'> =>
-    SuspendCustomerProfileActionPreconditionProblemSchema.make({
-      detail: 'An Idempotency-Key header is required.',
-      status: problemStatus.precondition,
-      title: 'Idempotency key required',
-      type: 'https://ontos.dev/problems/idempotency-key-required',
-    }),
-  unavailable: (
-    code: ProblemOf<'SuspendCustomerProfileActionUnavailableProblem'>['code'],
-  ): ProblemOf<'SuspendCustomerProfileActionUnavailableProblem'> =>
-    SuspendCustomerProfileActionUnavailableProblemSchema.make({
-      code,
-      detail: 'The Action capability is temporarily unavailable.',
-      retryable: true,
-      status: problemStatus.unavailable,
-      title: 'Action unavailable',
-      type: 'https://ontos.dev/problems/action-unavailable',
-    }),
+  authentication: makeAuthenticationProblem<ProblemOf<'SuspendCustomerProfileActionAuthenticationProblem'>>((input) =>
+    SuspendCustomerProfileActionAuthenticationProblemSchema.make(input),
+  ),
+  conflict: makeConflictProblem<
+    ProblemOf<'SuspendCustomerProfileActionConflictProblem'>['code'],
+    ProblemOf<'SuspendCustomerProfileActionConflictProblem'>
+  >((input) => SuspendCustomerProfileActionConflictProblemSchema.make(input)),
+  forbidden: makeForbiddenProblem<
+    ProblemOf<'SuspendCustomerProfileActionForbiddenProblem'>['code'],
+    ProblemOf<'SuspendCustomerProfileActionForbiddenProblem'>
+  >((input) => SuspendCustomerProfileActionForbiddenProblemSchema.make(input)),
+  ineligible: makeIneligibleProblem<
+    ProblemOf<'SuspendCustomerProfileActionIneligibleProblem'>['code'],
+    ProblemOf<'SuspendCustomerProfileActionIneligibleProblem'>
+  >((input) => SuspendCustomerProfileActionIneligibleProblemSchema.make(input)),
+  internal: makeInternalProblem<ProblemOf<'SuspendCustomerProfileActionInternalProblem'>>((input) =>
+    SuspendCustomerProfileActionInternalProblemSchema.make(input),
+  ),
+  invalid: makeInvalidProblem<ProblemOf<'SuspendCustomerProfileActionInvalidProblem'>>(
+    (input) => SuspendCustomerProfileActionInvalidProblemSchema.make(input),
+    'suspend-customer-profile',
+  ),
+  notFound: makeNotFoundProblem<
+    ProblemOf<'SuspendCustomerProfileActionNotFoundProblem'>['code'],
+    ProblemOf<'SuspendCustomerProfileActionNotFoundProblem'>
+  >((input) => SuspendCustomerProfileActionNotFoundProblemSchema.make(input)),
+  precondition: makePreconditionProblem<ProblemOf<'SuspendCustomerProfileActionPreconditionProblem'>>((input) =>
+    SuspendCustomerProfileActionPreconditionProblemSchema.make(input),
+  ),
+  unavailable: makeUnavailableProblem<
+    ProblemOf<'SuspendCustomerProfileActionUnavailableProblem'>['code'],
+    ProblemOf<'SuspendCustomerProfileActionUnavailableProblem'>
+  >((input) => SuspendCustomerProfileActionUnavailableProblemSchema.make(input)),
 } as const;
 
-const mapDomainIdentity = (identity: DomainProblemIdentity): SuspendCustomerProfileActionProblem =>
+const mapDomainIdentity = (identity: ProfileLifecycleDomainProblemIdentity): SuspendCustomerProfileActionProblem =>
   Match.value(identity).pipe(
-    Match.when({ kind: 'conflict' as const }, (matched) =>
-      suspendCustomerProfileActionProblem.conflict(matched.code),
-    ),
-    Match.when({ kind: 'notFound' as const }, (matched) =>
-      suspendCustomerProfileActionProblem.notFound(matched.code),
-    ),
+    Match.when({ kind: 'conflict' as const }, (matched) => suspendCustomerProfileActionProblem.conflict(matched.code)),
+    Match.when({ kind: 'notFound' as const }, (matched) => suspendCustomerProfileActionProblem.notFound(matched.code)),
     Match.when({ kind: 'unavailable' as const }, (matched) =>
       suspendCustomerProfileActionProblem.unavailable(matched.code),
     ),
@@ -204,37 +125,24 @@ const mapCoreProblem = (error: ActionCoreError): SuspendCustomerProfileActionPro
         }),
       ActionHandlerExecutionError: suspendCustomerProfileActionProblem.internal,
       ActionIdempotencyKeyRequired: suspendCustomerProfileActionProblem.precondition,
-      ActionInvocationNotFound: (failure) =>
-        suspendCustomerProfileActionProblem.notFound(failure.code),
-      ActionInvocationPersistenceError: (failure) =>
-        suspendCustomerProfileActionProblem.unavailable(failure.code),
-      ActionInvocationStateError: (failure) =>
-        suspendCustomerProfileActionProblem.conflict(failure.code),
+      ActionInvocationNotFound: (failure) => suspendCustomerProfileActionProblem.notFound(failure.code),
+      ActionInvocationPersistenceError: (failure) => suspendCustomerProfileActionProblem.unavailable(failure.code),
+      ActionInvocationStateError: (failure) => suspendCustomerProfileActionProblem.conflict(failure.code),
       ActionPayloadValidationError: suspendCustomerProfileActionProblem.invalid,
-      ActionPermissionCheckError: (failure) =>
-        suspendCustomerProfileActionProblem.unavailable(failure.code),
-      ActionPermissionDenied: (failure) =>
-        suspendCustomerProfileActionProblem.forbidden(failure.code),
+      ActionPermissionCheckError: (failure) => suspendCustomerProfileActionProblem.unavailable(failure.code),
+      ActionPermissionDenied: (failure) => suspendCustomerProfileActionProblem.forbidden(failure.code),
       ActionPolicyDenied: (failure) => suspendCustomerProfileActionProblem.ineligible(failure.code),
-      ActionPolicyEvaluationError: (failure) =>
-        suspendCustomerProfileActionProblem.unavailable(failure.code),
-      ActionRequestHashConflict: (failure) =>
-        suspendCustomerProfileActionProblem.conflict(failure.code),
+      ActionPolicyEvaluationError: (failure) => suspendCustomerProfileActionProblem.unavailable(failure.code),
+      ActionRequestHashConflict: (failure) => suspendCustomerProfileActionProblem.conflict(failure.code),
       ActionResultValidationError: suspendCustomerProfileActionProblem.internal,
-      ActionTransactionError: (failure) =>
-        suspendCustomerProfileActionProblem.unavailable(failure.code),
+      ActionTransactionError: (failure) => suspendCustomerProfileActionProblem.unavailable(failure.code),
       ActionTrustedContextValidationError: suspendCustomerProfileActionProblem.authentication,
-      ModuleStateCheckUnavailableError: (failure) =>
-        suspendCustomerProfileActionProblem.unavailable(failure.code),
-      ModuleStateDeniedError: (failure) =>
-        suspendCustomerProfileActionProblem.forbidden(failure.code),
+      ModuleStateCheckUnavailableError: (failure) => suspendCustomerProfileActionProblem.unavailable(failure.code),
+      ModuleStateDeniedError: (failure) => suspendCustomerProfileActionProblem.forbidden(failure.code),
       OperationAuthenticationRequired: suspendCustomerProfileActionProblem.authentication,
-      OperationContextDenied: (failure) =>
-        suspendCustomerProfileActionProblem.forbidden(failure.code),
-      OperationContextInvalid: (failure) =>
-        suspendCustomerProfileActionProblem.forbidden(failure.code),
-      OperationContextUnavailable: (failure) =>
-        suspendCustomerProfileActionProblem.unavailable(failure.code),
+      OperationContextDenied: (failure) => suspendCustomerProfileActionProblem.forbidden(failure.code),
+      OperationContextInvalid: (failure) => suspendCustomerProfileActionProblem.forbidden(failure.code),
+      OperationContextUnavailable: (failure) => suspendCustomerProfileActionProblem.unavailable(failure.code),
     }),
     Match.exhaustive,
   );
@@ -242,11 +150,9 @@ const mapCoreProblem = (error: ActionCoreError): SuspendCustomerProfileActionPro
 const isDomainError = Schema.is(suspendCustomerProfileAction.descriptor.domainErrorSchema);
 export const mapSuspendCustomerProfileActionProblem = (
   error: ActionCoreError | DomainError,
-): SuspendCustomerProfileActionProblem =>
-  isDomainError(error) ? mapDomainProblem(error) : mapCoreProblem(error);
+): SuspendCustomerProfileActionProblem => (isDomainError(error) ? mapDomainProblem(error) : mapCoreProblem(error));
 
-export const suspendCustomerProfileActionSchemaErrorLive =
-  HttpApiMiddleware.layerSchemaErrorTransform(
-    SuspendCustomerProfileActionSchemaErrorMiddleware,
-    () => Effect.fail(suspendCustomerProfileActionProblem.invalid()),
-  );
+export const suspendCustomerProfileActionSchemaErrorLive = HttpApiMiddleware.layerSchemaErrorTransform(
+  SuspendCustomerProfileActionSchemaErrorMiddleware,
+  () => Effect.fail(suspendCustomerProfileActionProblem.invalid()),
+);

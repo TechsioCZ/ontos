@@ -3,7 +3,7 @@
 // @ontos-action-http-slug create-counterparty-purchasing-profile
 // oxlint-disable sonarjs/function-name -- Effect Match.tags requires owner-declared tag keys; remove-when: sonarjs accepts discriminant-map properties.
 import type { ActionCoreError } from '@app/core-runtime';
-import { Effect, HttpApiMiddleware } from '@modern-js/plugin-bff/effect-edge';
+import { Effect, HttpApiMiddleware } from '@modern-js/bff-effect/effect-edge';
 import { Match, Schema } from 'effect';
 import {
   CreateCounterpartyPurchasingProfileActionAlreadyCommittedProblemSchema,
@@ -22,8 +22,7 @@ import {
 import type { CreateCounterpartyPurchasingProfileActionProblem } from '../shared/apis/create-counterparty-purchasing-profile-action.ts';
 import { createCounterpartyPurchasingProfileAction } from '../src/actions/create-counterparty-purchasing-profile.action.ts';
 
-type DomainError =
-  typeof createCounterpartyPurchasingProfileAction.descriptor.domainErrorSchema.Type;
+type DomainError = typeof createCounterpartyPurchasingProfileAction.descriptor.domainErrorSchema.Type;
 type ProblemOf<Tag extends CreateCounterpartyPurchasingProfileActionProblem['_tag']> = Extract<
   CreateCounterpartyPurchasingProfileActionProblem,
   { readonly _tag: Tag }
@@ -155,9 +154,7 @@ export const createCounterpartyPurchasingProfileActionProblem = {
     }),
 } as const;
 
-const mapDomainIdentity = (
-  identity: DomainProblemIdentity,
-): CreateCounterpartyPurchasingProfileActionProblem =>
+const mapDomainIdentity = (identity: DomainProblemIdentity): CreateCounterpartyPurchasingProfileActionProblem =>
   Match.value(identity).pipe(
     Match.when({ kind: 'conflict' as const }, (matched) =>
       createCounterpartyPurchasingProfileActionProblem.conflict(matched.code),
@@ -207,54 +204,40 @@ const mapCoreProblem = (error: ActionCoreError): CreateCounterpartyPurchasingPro
         }),
       ActionHandlerExecutionError: createCounterpartyPurchasingProfileActionProblem.internal,
       ActionIdempotencyKeyRequired: createCounterpartyPurchasingProfileActionProblem.precondition,
-      ActionInvocationNotFound: (failure) =>
-        createCounterpartyPurchasingProfileActionProblem.notFound(failure.code),
+      ActionInvocationNotFound: (failure) => createCounterpartyPurchasingProfileActionProblem.notFound(failure.code),
       ActionInvocationPersistenceError: (failure) =>
         createCounterpartyPurchasingProfileActionProblem.unavailable(failure.code),
-      ActionInvocationStateError: (failure) =>
-        createCounterpartyPurchasingProfileActionProblem.conflict(failure.code),
+      ActionInvocationStateError: (failure) => createCounterpartyPurchasingProfileActionProblem.conflict(failure.code),
       ActionPayloadValidationError: createCounterpartyPurchasingProfileActionProblem.invalid,
       ActionPermissionCheckError: (failure) =>
         createCounterpartyPurchasingProfileActionProblem.unavailable(failure.code),
-      ActionPermissionDenied: (failure) =>
-        createCounterpartyPurchasingProfileActionProblem.forbidden(failure.code),
-      ActionPolicyDenied: (failure) =>
-        createCounterpartyPurchasingProfileActionProblem.ineligible(failure.code),
+      ActionPermissionDenied: (failure) => createCounterpartyPurchasingProfileActionProblem.forbidden(failure.code),
+      ActionPolicyDenied: (failure) => createCounterpartyPurchasingProfileActionProblem.ineligible(failure.code),
       ActionPolicyEvaluationError: (failure) =>
         createCounterpartyPurchasingProfileActionProblem.unavailable(failure.code),
-      ActionRequestHashConflict: (failure) =>
-        createCounterpartyPurchasingProfileActionProblem.conflict(failure.code),
+      ActionRequestHashConflict: (failure) => createCounterpartyPurchasingProfileActionProblem.conflict(failure.code),
       ActionResultValidationError: createCounterpartyPurchasingProfileActionProblem.internal,
-      ActionTransactionError: (failure) =>
-        createCounterpartyPurchasingProfileActionProblem.unavailable(failure.code),
-      ActionTrustedContextValidationError:
-        createCounterpartyPurchasingProfileActionProblem.authentication,
+      ActionTransactionError: (failure) => createCounterpartyPurchasingProfileActionProblem.unavailable(failure.code),
+      ActionTrustedContextValidationError: createCounterpartyPurchasingProfileActionProblem.authentication,
       ModuleStateCheckUnavailableError: (failure) =>
         createCounterpartyPurchasingProfileActionProblem.unavailable(failure.code),
-      ModuleStateDeniedError: (failure) =>
-        createCounterpartyPurchasingProfileActionProblem.forbidden(failure.code),
-      OperationAuthenticationRequired:
-        createCounterpartyPurchasingProfileActionProblem.authentication,
-      OperationContextDenied: (failure) =>
-        createCounterpartyPurchasingProfileActionProblem.forbidden(failure.code),
-      OperationContextInvalid: (failure) =>
-        createCounterpartyPurchasingProfileActionProblem.forbidden(failure.code),
+      ModuleStateDeniedError: (failure) => createCounterpartyPurchasingProfileActionProblem.forbidden(failure.code),
+      OperationAuthenticationRequired: createCounterpartyPurchasingProfileActionProblem.authentication,
+      OperationContextDenied: (failure) => createCounterpartyPurchasingProfileActionProblem.forbidden(failure.code),
+      OperationContextInvalid: (failure) => createCounterpartyPurchasingProfileActionProblem.forbidden(failure.code),
       OperationContextUnavailable: (failure) =>
         createCounterpartyPurchasingProfileActionProblem.unavailable(failure.code),
     }),
     Match.exhaustive,
   );
 
-const isDomainError = Schema.is(
-  createCounterpartyPurchasingProfileAction.descriptor.domainErrorSchema,
-);
+const isDomainError = Schema.is(createCounterpartyPurchasingProfileAction.descriptor.domainErrorSchema);
 export const mapCreateCounterpartyPurchasingProfileActionProblem = (
   error: ActionCoreError | DomainError,
 ): CreateCounterpartyPurchasingProfileActionProblem =>
   isDomainError(error) ? mapDomainProblem(error) : mapCoreProblem(error);
 
-export const createCounterpartyPurchasingProfileActionSchemaErrorLive =
-  HttpApiMiddleware.layerSchemaErrorTransform(
-    CreateCounterpartyPurchasingProfileActionSchemaErrorMiddleware,
-    () => Effect.fail(createCounterpartyPurchasingProfileActionProblem.invalid()),
-  );
+export const createCounterpartyPurchasingProfileActionSchemaErrorLive = HttpApiMiddleware.layerSchemaErrorTransform(
+  CreateCounterpartyPurchasingProfileActionSchemaErrorMiddleware,
+  () => Effect.fail(createCounterpartyPurchasingProfileActionProblem.invalid()),
+);

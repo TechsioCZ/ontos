@@ -1,8 +1,5 @@
 import { Schema } from 'effect';
-import {
-  PaymentTermReferenceSchema,
-  PaymentTermsTimestampSchema,
-} from '../domain/payment-term-contracts.ts';
+import { PaymentTermReferenceSchema, PaymentTermsTimestampSchema } from '../domain/payment-term-contracts.ts';
 
 const ReservationIdSchema = Schema.String.check(Schema.isUUID()).pipe(
   Schema.brand('PaymentTermRetirementReservationId'),
@@ -11,13 +8,7 @@ const ReservationIdSchema = Schema.String.check(Schema.isUUID()).pipe(
 const PaymentTermResourceIdSchema = PaymentTermReferenceSchema.fields.resourceId;
 const BoundedReasonSchema = Schema.Trim.check(Schema.isMinLength(1), Schema.isMaxLength(500));
 
-export const PaymentTermRetirementReservationOperationSchema = Schema.Literals([
-  'RESERVE',
-  'COMMIT',
-  'RELEASE',
-]);
-export type PaymentTermRetirementReservationOperation =
-  typeof PaymentTermRetirementReservationOperationSchema.Type;
+const PaymentTermRetirementReservationOperationSchema = Schema.Literals(['RESERVE', 'COMMIT', 'RELEASE']);
 
 /**
  * The canonical term is sent separately so the owner can reject a request whose alias inventory
@@ -26,16 +17,13 @@ export type PaymentTermRetirementReservationOperation =
  */
 export const ReservePaymentTermRetirementPayloadSchema = Schema.Struct({
   effectiveAt: PaymentTermsTimestampSchema,
-  equivalentPaymentTermRefs: Schema.Array(PaymentTermReferenceSchema).check(
-    Schema.isMaxLength(199),
-  ),
+  equivalentPaymentTermRefs: Schema.Array(PaymentTermReferenceSchema).check(Schema.isMaxLength(199)),
   operation: PaymentTermRetirementReservationOperationSchema,
   paymentTermRef: PaymentTermReferenceSchema,
   reason: BoundedReasonSchema,
   reservationRef: Schema.optionalKey(ReservationIdSchema),
 });
-export type ReservePaymentTermRetirementPayload =
-  typeof ReservePaymentTermRetirementPayloadSchema.Type;
+export type ReservePaymentTermRetirementPayload = typeof ReservePaymentTermRetirementPayloadSchema.Type;
 
 export const ReservePaymentTermRetirementResultSchema = Schema.Struct({
   effectiveAt: PaymentTermsTimestampSchema,
@@ -46,5 +34,4 @@ export const ReservePaymentTermRetirementResultSchema = Schema.Struct({
   ),
   reservationRef: ReservationIdSchema,
 });
-export type ReservePaymentTermRetirementResult =
-  typeof ReservePaymentTermRetirementResultSchema.Type;
+export type ReservePaymentTermRetirementResult = typeof ReservePaymentTermRetirementResultSchema.Type;

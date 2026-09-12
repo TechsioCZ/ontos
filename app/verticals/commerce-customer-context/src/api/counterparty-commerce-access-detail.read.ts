@@ -45,10 +45,7 @@ export const readCounterpartyCommerceAccessDetailFromServices = (
   legalEntityId: string,
   tenantId: string,
   services: CounterpartyCommerceAccessDetailServices,
-): Effect.Effect<
-  CounterpartyCommerceAccessDetailResponse,
-  ReadHandlerNotFound | ReadHandlerUnavailable
-> => {
+): Effect.Effect<CounterpartyCommerceAccessDetailResponse, ReadHandlerNotFound | ReadHandlerUnavailable> => {
   if (input.counterpartyRef.tenantId !== tenantId || input.grantRef.tenantId !== tenantId) {
     return Effect.fail(notFound());
   }
@@ -78,7 +75,7 @@ export const readCounterpartyCommerceAccessDetailFromServices = (
     );
 };
 
-export const counterpartyCommerceAccessDetailEntrypoint = defineTenantModuleEntrypoint({
+const counterpartyCommerceAccessDetailEntrypoint = defineTenantModuleEntrypoint({
   access: 'read',
   authorization: { kind: 'context_permission', permission: 'counterparty.access.read' },
   entrypointKey: 'commerce.customer-context.api.counterparty-commerce-access-detail',
@@ -117,8 +114,6 @@ export const counterpartyCommerceAccessDetailRead = defineRead(
     ).pipe(Effect.map((result) => ({ evidence: { resultCount: 1 }, result })));
   },
   (transaction, scope) =>
-    counterpartyAccessServicesForTransaction(transaction, scope).pipe(
-      Effect.map((port) => ({ list: port.list })),
-    ),
+    counterpartyAccessServicesForTransaction(transaction, scope).pipe(Effect.map((port) => ({ list: port.list }))),
   counterpartyAccessReadPermissionTarget,
 );

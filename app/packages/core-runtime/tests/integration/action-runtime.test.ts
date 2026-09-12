@@ -155,6 +155,16 @@ const invocationEvidence = (database: ContextServiceContract, key: string) =>
     return { audits, invocation };
   });
 
+const persistedActionEvidence = (database: ContextServiceContract, key: string, moduleStateKey: string) =>
+  Effect.all([
+    database.executor.select().from(tenantModuleStates).where(eq(tenantModuleStates.moduleKey, moduleStateKey)),
+    database.executor.select().from(actionInvocations).where(eq(actionInvocations.idempotencyKey, key)),
+    database.executor.select().from(auditEvents).where(eq(auditEvents.tenantId, tenantId)),
+    database.executor.select().from(dataAccessEvents).where(eq(dataAccessEvents.tenantId, tenantId)),
+    database.executor.select().from(domainEvents).where(eq(domainEvents.subjectResourceId, moduleStateKey)),
+    database.executor.select().from(outboxMessages).where(eq(outboxMessages.tenantId, tenantId)),
+  ]);
+
 const EvidencePersistenceStageSchema = Schema.Literals([
   'audit',
   'data-access',
@@ -389,9 +399,7 @@ const makeRegistration = ({
         });
       }
       if (mode === 'commit-reject') {
-        return commitActionThenReject(
-          new TestDomainRejected({ reason: 'test committed domain rejection' }),
-        );
+        return commitActionThenReject(new TestDomainRejected({ reason: 'test committed domain rejection' }));
       }
 
       const [row] = inserted;
@@ -572,14 +580,11 @@ const testProgram2 = Effect.fn(function* integrationProgram4() {
         transport: transport(key, moduleStateKey),
       });
 
-      const [states, invocations, audits, accesses, events, messages] = yield* Effect.all([
-        database.executor.select().from(tenantModuleStates).where(eq(tenantModuleStates.moduleKey, moduleStateKey)),
-        database.executor.select().from(actionInvocations).where(eq(actionInvocations.idempotencyKey, key)),
-        database.executor.select().from(auditEvents).where(eq(auditEvents.tenantId, tenantId)),
-        database.executor.select().from(dataAccessEvents).where(eq(dataAccessEvents.tenantId, tenantId)),
-        database.executor.select().from(domainEvents).where(eq(domainEvents.subjectResourceId, moduleStateKey)),
-        database.executor.select().from(outboxMessages).where(eq(outboxMessages.tenantId, tenantId)),
-      ]);
+      const [states, invocations, audits, accesses, events, messages] = yield* persistedActionEvidence(
+        database,
+        key,
+        moduleStateKey,
+      );
 
       expect(result.value).toBe('committed');
       expect(states.length).toBe(1);
@@ -670,29 +675,11 @@ const testCommittedDomainRejection = Effect.fn(function* committedDomainRejectio
         }),
       );
 
-      const [states, invocations, audits, accesses, events, messages] = yield* Effect.all([
-        database.executor
-          .select()
-          .from(tenantModuleStates)
-          .where(eq(tenantModuleStates.moduleKey, moduleStateKey)),
-        database.executor
-          .select()
-          .from(actionInvocations)
-          .where(eq(actionInvocations.idempotencyKey, key)),
-        database.executor.select().from(auditEvents).where(eq(auditEvents.tenantId, tenantId)),
-        database.executor
-          .select()
-          .from(dataAccessEvents)
-          .where(eq(dataAccessEvents.tenantId, tenantId)),
-        database.executor
-          .select()
-          .from(domainEvents)
-          .where(eq(domainEvents.subjectResourceId, moduleStateKey)),
-        database.executor
-          .select()
-          .from(outboxMessages)
-          .where(eq(outboxMessages.tenantId, tenantId)),
-      ]);
+      const [states, invocations, audits, accesses, events, messages] = yield* persistedActionEvidence(
+        database,
+        key,
+        moduleStateKey,
+      );
 
       expect(Predicate.isTagged(rejection, 'TestDomainRejected')).toBe(true);
       expect(rejection.reason).toBe('test committed domain rejection');
@@ -700,16 +687,10 @@ const testCommittedDomainRejection = Effect.fn(function* committedDomainRejectio
       expect(invocations).toHaveLength(1);
       expect(invocations[0]?.status).toBe('succeeded');
       expect(invocations[0]?.completedAt).toBeTruthy();
-      expect(
-        audits.filter((row) => row.actionInvocationId === invocations[0]?.actionInvocationId),
-      ).toHaveLength(1);
-      expect(
-        accesses.filter((row) => row.actionInvocationId === invocations[0]?.actionInvocationId),
-      ).toHaveLength(1);
+      expect(audits.filter((row) => row.actionInvocationId === invocations[0]?.actionInvocationId)).toHaveLength(1);
+      expect(accesses.filter((row) => row.actionInvocationId === invocations[0]?.actionInvocationId)).toHaveLength(1);
       expect(events).toHaveLength(1);
-      expect(messages.filter((row) => row.domainEventId === events[0]?.domainEventId)).toHaveLength(
-        1,
-      );
+      expect(messages.filter((row) => row.domainEventId === events[0]?.domainEventId)).toHaveLength(1);
     }),
   );
 });

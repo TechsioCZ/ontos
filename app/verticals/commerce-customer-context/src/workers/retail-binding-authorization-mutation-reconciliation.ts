@@ -13,12 +13,9 @@ import type { OutboxPayload as RevokedPayload } from '@app/commerce-customer-con
 import type { OutboxPayload as RevocationRequest } from '@app/commerce-customer-context/outbox/commerce-customer-context-retail-portal-profile-binding-revocation-authorization-mutation-requested-v1';
 import { Context, Effect, Ref, Schema } from 'effect';
 
-export type RetailBindingAuthorizationMutationRequest =
-  | ActivationRequest
-  | RecoveryRequest
-  | RevocationRequest;
+export type RetailBindingAuthorizationMutationRequest = ActivationRequest | RecoveryRequest | RevocationRequest;
 
-export type RetailBindingAuthorizationMutationTerminalEvidence =
+type RetailBindingAuthorizationMutationTerminalEvidence =
   | Readonly<{
       readonly completionId: string;
       readonly kind: 'ACTIVATION';
@@ -92,16 +89,6 @@ const rejected = (
   reason: string,
 ) => new RetailBindingAuthorizationMutationWorkerRejected({ code, reason });
 
-export const retailBindingAuthorizationMutationReconciliationUnavailable = Object.freeze({
-  reconcile: () =>
-    Effect.fail(
-      rejected(
-        'RECONCILIATION_UNAVAILABLE',
-        'Retail binding authorization reconciliation is unavailable',
-      ),
-    ),
-}) satisfies RetailBindingAuthorizationMutationReconciliationService;
-
 type CompletionKind = RetailBindingAuthorizationMutationTerminalEvidence['kind'];
 
 const sameRef = (
@@ -123,10 +110,7 @@ const sameRef = (
   left.resourceType === right.resourceType &&
   left.tenantId === right.tenantId;
 
-const requestMatchesTenant = (
-  request: RetailBindingAuthorizationMutationRequest,
-  tenantId: string,
-): boolean =>
+const requestMatchesTenant = (request: RetailBindingAuthorizationMutationRequest, tenantId: string): boolean =>
   request.bindingRef.tenantId === tenantId &&
   request.principalRef.tenantId === tenantId &&
   request.profileRef.tenantId === tenantId &&
@@ -147,78 +131,78 @@ const terminalMatchesRequest = (
   ((expectedKind === 'REVOCATION' && terminal.payload.state === 'REVOKED') ||
     (expectedKind !== 'REVOCATION' && terminal.payload.state === 'ACTIVE'));
 
-export const handleRetailBindingAuthorizationMutation = Effect.fn(
-  'RetailBindingAuthorizationMutationWorker.handle',
-)(function* handleRetailBindingAuthorizationMutationEffect(
-  request: RetailBindingAuthorizationMutationRequest,
-  context: OutboxWorkerHandlerContext,
-  expected: {
-    readonly completion: OutboxWorkerCompletionDefinition<Schema.ConstraintDecoder<unknown>>;
-    readonly completionKind: CompletionKind;
-    readonly requestTopic: string;
-    readonly workerKey: string;
-  },
-): Effect.fn.Return<
-  void,
-  RetailBindingAuthorizationMutationWorkerError | OutboxWorkerLegalEntityScopeError,
-  RetailBindingAuthorizationMutationReconciliation | OutboxWorkerLegalEntityScopeFanout
-> {
-  if (
-    context.workerKey !== expected.workerKey ||
-    context.consumerModuleKey !== 'commerce.customer-context' ||
-    context.producerModuleKey !== 'commerce.customer-context' ||
-    context.topic !== expected.requestTopic ||
-    !requestMatchesTenant(request, context.tenantId)
-  ) {
-    return yield* rejected(
-      'CROSS_TENANT_REQUEST',
-      'The Retail binding authorization request does not match its verified worker delivery',
-    );
-  }
+export const handleRetailBindingAuthorizationMutation = Effect.fn('RetailBindingAuthorizationMutationWorker.handle')(
+  function* handleRetailBindingAuthorizationMutationEffect(
+    request: RetailBindingAuthorizationMutationRequest,
+    context: OutboxWorkerHandlerContext,
+    expected: {
+      readonly completion: OutboxWorkerCompletionDefinition<Schema.ConstraintDecoder<unknown>>;
+      readonly completionKind: CompletionKind;
+      readonly requestTopic: string;
+      readonly workerKey: string;
+    },
+  ): Effect.fn.Return<
+    void,
+    RetailBindingAuthorizationMutationWorkerError | OutboxWorkerLegalEntityScopeError,
+    RetailBindingAuthorizationMutationReconciliation | OutboxWorkerLegalEntityScopeFanout
+  > {
+    if (
+      context.workerKey !== expected.workerKey ||
+      context.consumerModuleKey !== 'commerce.customer-context' ||
+      context.producerModuleKey !== 'commerce.customer-context' ||
+      context.topic !== expected.requestTopic ||
+      !requestMatchesTenant(request, context.tenantId)
+    ) {
+      return yield* rejected(
+        'CROSS_TENANT_REQUEST',
+        'The Retail binding authorization request does not match its verified worker delivery',
+      );
+    }
 
-  const indeterminate = yield* Ref.make(false);
-  const matchedScope = yield* Ref.make(false);
-  const fanout = yield* OutboxWorkerLegalEntityScopeFanout;
-  yield* fanout.forEachScope(context, (scope) =>
-    scope.legalEntityId === request.legalEntityId
-      ? Effect.gen(function* reconcileExactScope() {
-          yield* Ref.set(matchedScope, true);
-          const reconciliation = yield* RetailBindingAuthorizationMutationReconciliation;
-          const result = yield* reconciliation.reconcile(scope, request, context.actorPrincipalId);
-          if (result.outcome === 'INDETERMINATE') {
-            yield* Ref.set(indeterminate, true);
+    const indeterminate = yield* Ref.make(false);
+    const matchedScope = yield* Ref.make(false);
+    const fanout = yield* OutboxWorkerLegalEntityScopeFanout;
+    yield* fanout.forEachScope(context, (scope) =>
+      scope.legalEntityId === request.legalEntityId
+        ? Effect.gen(function* reconcileExactScope() {
+            yield* Ref.set(matchedScope, true);
+            const reconciliation = yield* RetailBindingAuthorizationMutationReconciliation;
+            const result = yield* reconciliation.reconcile(scope, request, context.actorPrincipalId);
+            if (result.outcome === 'INDETERMINATE') {
+              yield* Ref.set(indeterminate, true);
+              return yield* Effect.void;
+            }
+            if (!terminalMatchesRequest(result.terminal, request, expected.completionKind)) {
+              return yield* rejected(
+                'RECONCILIATION_RESULT_INVALID',
+                'The reconciler returned terminal evidence for a different mutation or scope',
+              );
+            }
+            yield* scope.completionPublisher.publish(expected.completion, {
+              completionId: result.terminal.completionId,
+              occurredAt: result.terminal.occurredAt,
+              payloadJson: result.terminal.payload,
+              sourceActionInvocationId: result.terminal.sourceActionInvocationId,
+              subjectModuleKey: result.terminal.payload.bindingRef.moduleId,
+              subjectResourceId: result.terminal.payload.bindingRef.resourceId,
+              subjectResourceType: result.terminal.payload.bindingRef.resourceType,
+            });
             return yield* Effect.void;
-          }
-          if (!terminalMatchesRequest(result.terminal, request, expected.completionKind)) {
-            return yield* rejected(
-              'RECONCILIATION_RESULT_INVALID',
-              'The reconciler returned terminal evidence for a different mutation or scope',
-            );
-          }
-          yield* scope.completionPublisher.publish(expected.completion, {
-            completionId: result.terminal.completionId,
-            occurredAt: result.terminal.occurredAt,
-            payloadJson: result.terminal.payload,
-            sourceActionInvocationId: result.terminal.sourceActionInvocationId,
-            subjectModuleKey: result.terminal.payload.bindingRef.moduleId,
-            subjectResourceId: result.terminal.payload.bindingRef.resourceId,
-            subjectResourceType: result.terminal.payload.bindingRef.resourceType,
-          });
-          return yield* Effect.void;
-        })
-      : Effect.void,
-  );
-  if (!(yield* Ref.get(matchedScope))) {
-    return yield* rejected(
-      'WORKER_CONTEXT_INVALID',
-      'The requested Legal Entity is not available in the verified Tenant scope',
+          })
+        : Effect.void,
     );
-  }
-  if (yield* Ref.get(indeterminate)) {
-    return yield* rejected(
-      'RECONCILIATION_INDETERMINATE',
-      'The Retail binding authorization mutation is not yet durably finalized',
-    );
-  }
-  return yield* Effect.void;
-});
+    if (!(yield* Ref.get(matchedScope))) {
+      return yield* rejected(
+        'WORKER_CONTEXT_INVALID',
+        'The requested Legal Entity is not available in the verified Tenant scope',
+      );
+    }
+    if (yield* Ref.get(indeterminate)) {
+      return yield* rejected(
+        'RECONCILIATION_INDETERMINATE',
+        'The Retail binding authorization mutation is not yet durably finalized',
+      );
+    }
+    return yield* Effect.void;
+  },
+);

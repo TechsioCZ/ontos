@@ -19,7 +19,7 @@ type AresLookupAuthorizedInvocation = readonly [
 type AresLookupOperationInvocation = readonly [requestCorrelation: string, options?: AresLookupClientOptions];
 
 const aresLookupClient = (
-  credential: Redacted.Redacted<string>,
+  credential: Redacted.Redacted,
   requestCorrelation: string,
   options: AresLookupClientOptions,
 ) =>

@@ -3,10 +3,7 @@ import type {
   OutboxWorkerLegalEntityScope,
   OutboxWorkerLegalEntityScopeFanoutService,
 } from '@app/core-runtime';
-import {
-  OutboxWorkerLegalEntityScopeError,
-  OutboxWorkerLegalEntityScopeFanout,
-} from '@app/core-runtime';
+import { OutboxWorkerLegalEntityScopeError, OutboxWorkerLegalEntityScopeFanout } from '@app/core-runtime';
 import type { OutboxPayload } from '@app/party-registry/outbox/party-registry-party-merged-v1';
 import { expect, it } from 'effect-rstest';
 import { Effect, Predicate, Schema } from 'effect';
@@ -74,14 +71,15 @@ const unavailableInvoker: OutboxWorkerLegalEntityScope['routineInvoker'] = {
   invoke: () => Effect.die(new Error('The worker unit test does not execute routines')),
 };
 
-const fanout = (
-  legalEntityIds: readonly string[] = [legalEntityId],
-): OutboxWorkerLegalEntityScopeFanoutService => ({
+const fanout = (legalEntityIds: readonly string[] = [legalEntityId]): OutboxWorkerLegalEntityScopeFanoutService => ({
   forEachScope: (workerContext, observe) =>
     Effect.forEach(
       legalEntityIds,
       (scopeLegalEntityId) =>
         observe({
+          completionPublisher: {
+            publish: () => Effect.die(new Error('The worker unit test does not publish completion events')),
+          },
           legalEntityId: scopeLegalEntityId,
           routineInvoker: unavailableInvoker,
           tenantId: workerContext.tenantId,
@@ -126,12 +124,9 @@ it.effect('acknowledges a durable duplicate without opening another reconciliati
     yield* runWorker(
       payload,
       context,
-      persistence(
-        { currentEventVersion: context.tenantSequenceNo, outcome: 'DUPLICATE' },
-        (value) => {
-          observation = value;
-        },
-      ),
+      persistence({ currentEventVersion: context.tenantSequenceNo, outcome: 'DUPLICATE' }, (value) => {
+        observation = value;
+      }),
     );
     expect(observation?.mergeId).toBe(payload.mergeId);
     expect(observation?.domainEventId).toBe(context.domainEventId);
@@ -141,17 +136,9 @@ it.effect('acknowledges a durable duplicate without opening another reconciliati
 
 it.effect('acknowledges an out-of-order event only behind a strictly newer durable version', () =>
   Effect.gen(function* outOfOrderPartyMerge() {
-    yield* runWorker(
-      payload,
-      context,
-      persistence({ currentEventVersion: 11n, outcome: 'OUT_OF_ORDER' }),
-    );
+    yield* runWorker(payload, context, persistence({ currentEventVersion: 11n, outcome: 'OUT_OF_ORDER' }));
     const failure = yield* Effect.flip(
-      runWorker(
-        payload,
-        context,
-        persistence({ currentEventVersion: 10n, outcome: 'OUT_OF_ORDER' }),
-      ),
+      runWorker(payload, context, persistence({ currentEventVersion: 10n, outcome: 'OUT_OF_ORDER' })),
     );
     expect(failure.code).toBe('CURRENT_STATE_CONFLICT');
     expect(failure.retryable).toBe(true);
@@ -237,9 +224,7 @@ it.effect('opens fail-closed Retail reconciliation with every required owner pen
 it.effect('rejects any persistence result that silently pre-resolves owner state', () => {
   let observationKeys: string[] = [];
   const unsafeOutcomes = pendingOwnerOutcomes().map((outcome, index) =>
-    index === 0
-      ? { ...outcome, evidenceRef: 'unsafe-union', status: 'RESOLVED' as const }
-      : outcome,
+    index === 0 ? { ...outcome, evidenceRef: 'unsafe-union', status: 'RESOLVED' as const } : outcome,
   );
   return Effect.gen(function* noSilentUnion() {
     const failure = yield* Effect.flip(
@@ -302,9 +287,7 @@ it.effect('rejects a persistence case attributed to a different legal-entity sco
 
 it.effect('keeps the generated worker fail closed until durable persistence is injected', () =>
   Effect.gen(function* unavailablePersistence() {
-    const failure = yield* Effect.flip(
-      runWorker(payload, context, reconcilePartyMergePersistenceUnavailable),
-    );
+    const failure = yield* Effect.flip(runWorker(payload, context, reconcilePartyMergePersistenceUnavailable));
     expect(Predicate.isTagged(failure, 'ReconcilePartyMergeWorkerRejected')).toBe(true);
     expect(failure).toBeInstanceOf(ReconcilePartyMergeWorkerRejected);
     expect(failure.code).toBe('PERSISTENCE_UNAVAILABLE');
@@ -318,20 +301,16 @@ it.effect('observes the event independently in every Core-verified legal-entity 
     yield* runWorker(
       payload,
       context,
-      persistence(
-        { currentEventVersion: context.tenantSequenceNo, outcome: 'DUPLICATE' },
-        (observation) => {
-          observed.push(observation);
-        },
-      ),
+      persistence({ currentEventVersion: context.tenantSequenceNo, outcome: 'DUPLICATE' }, (observation) => {
+        observed.push(observation);
+      }),
       fanout([otherLegalEntityId, legalEntityId]),
     );
-    expect(
-      observed.map(({ legalEntityId: observedLegalEntityId }) => observedLegalEntityId),
-    ).toEqual([otherLegalEntityId, legalEntityId]);
-    expect(observed.every(({ tenantId: observedTenantId }) => observedTenantId === tenantId)).toBe(
-      true,
-    );
+    expect(observed.map(({ legalEntityId: observedLegalEntityId }) => observedLegalEntityId)).toEqual([
+      otherLegalEntityId,
+      legalEntityId,
+    ]);
+    expect(observed.every(({ tenantId: observedTenantId }) => observedTenantId === tenantId)).toBe(true);
   });
 });
 

@@ -11,9 +11,7 @@ import type { OutboxPayload } from '@app/commerce-customer-context/outbox/commer
 export {
   OutboxPayloadSchema as ClearDefaultDeliveryDestinationCommerceCustomerContextDefaultDeliveryDestinationClearedV1OutboxPayloadSchema,
   outboxProducerModuleKey as ClearDefaultDeliveryDestinationCommerceCustomerContextDefaultDeliveryDestinationClearedV1OutboxProducerModuleKey,
-  outboxTopic as ClearDefaultDeliveryDestinationCommerceCustomerContextDefaultDeliveryDestinationClearedV1OutboxTopic,
 } from '@app/commerce-customer-context/outbox/commerce-customer-context-default-delivery-destination-cleared-v1';
-export type { OutboxPayload as ClearDefaultDeliveryDestinationCommerceCustomerContextDefaultDeliveryDestinationClearedV1OutboxPayload } from '@app/commerce-customer-context/outbox/commerce-customer-context-default-delivery-destination-cleared-v1';
 
 export const createClearDefaultDeliveryDestinationCommerceCustomerContextDefaultDeliveryDestinationClearedV1OutboxMessage =
   (payload: OutboxPayload): OutboxMessage => ({

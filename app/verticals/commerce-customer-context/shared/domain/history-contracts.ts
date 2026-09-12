@@ -13,39 +13,29 @@ const NonEmptyTextSchema = Schema.String.check(Schema.isMinLength(1), Schema.isM
 export const HistoryOwnerModuleIdSchema = Schema.toEncoded(
   NonEmptyTextSchema.pipe(Schema.brand('HistoryOwnerModuleId')),
 );
-const HistoryPrincipalIdSchema = Schema.toEncoded(
-  NonEmptyTextSchema.pipe(Schema.brand('HistoryPrincipalId')),
-);
-const QuantitySchema = Schema.String.check(
-  Schema.isPattern(/^(?:0|[1-9]\d*)(?:\.\d+)?$/u),
-  Schema.isMaxLength(80),
-);
+const HistoryPrincipalIdSchema = Schema.toEncoded(NonEmptyTextSchema.pipe(Schema.brand('HistoryPrincipalId')));
+const QuantitySchema = Schema.String.check(Schema.isPattern(/^(?:0|[1-9]\d*)(?:\.\d+)?$/u), Schema.isMaxLength(80));
 
-export const CurrentGateStateSchema = Schema.Literals(['CURRENT', 'ABSENT', 'INDETERMINATE']);
+const CurrentGateStateSchema = Schema.Literals(['CURRENT', 'ABSENT', 'INDETERMINATE']);
 export type CurrentGateState = typeof CurrentGateStateSchema.Type;
-export const BusinessPolicyStateSchema = Schema.Literals(['ALLOWED', 'DENIED', 'INDETERMINATE']);
+const BusinessPolicyStateSchema = Schema.Literals(['ALLOWED', 'DENIED', 'INDETERMINATE']);
 export type BusinessPolicyState = typeof BusinessPolicyStateSchema.Type;
 
-export const HistoryFreshnessSchema = Schema.Struct({
+const HistoryFreshnessSchema = Schema.Struct({
   observedAt: HistoryInstantJsonSchema,
   sourceRevision: NonEmptyTextSchema,
   status: Schema.Literals(['CURRENT', 'STALE']),
 });
 export type HistoryFreshness = typeof HistoryFreshnessSchema.Type;
 
-export const HistoryDegradationSchema = Schema.Struct({
-  code: Schema.Literals([
-    'ONBOARDING_UNAVAILABLE',
-    'SOURCE_STALE',
-    'SOURCE_UNAVAILABLE',
-    'VISIBILITY_UNAVAILABLE',
-  ]),
+const HistoryDegradationSchema = Schema.Struct({
+  code: Schema.Literals(['ONBOARDING_UNAVAILABLE', 'SOURCE_STALE', 'SOURCE_UNAVAILABLE', 'VISIBILITY_UNAVAILABLE']),
   ownerModuleId: HistoryOwnerModuleIdSchema,
   retryable: Schema.Boolean,
 });
 export type HistoryDegradation = typeof HistoryDegradationSchema.Type;
 
-export const CustomerOrderHistoryItemSchema = Schema.Struct({
+const CustomerOrderHistoryItemSchema = Schema.Struct({
   acceptedAt: HistoryInstantJsonSchema,
   displayLabel: NonEmptyTextSchema,
   freshness: HistoryFreshnessSchema,
@@ -54,24 +44,21 @@ export const CustomerOrderHistoryItemSchema = Schema.Struct({
 });
 export type CustomerOrderHistoryItem = typeof CustomerOrderHistoryItemSchema.Type;
 
-export const CustomerFacingHistoricalFieldValueSchema = Schema.Union([
+const CustomerFacingHistoricalFieldValueSchema = Schema.Union([
   Schema.Struct({ kind: Schema.Literal('BOOLEAN'), value: Schema.Boolean }),
   Schema.Struct({ kind: Schema.Literal('DECIMAL'), value: NonEmptyTextSchema }),
   Schema.Struct({ kind: Schema.Literal('INSTANT'), value: HistoryInstantJsonSchema }),
   Schema.Struct({ kind: Schema.Literal('REFERENCE'), value: HistoricalRecordRefSchema }),
   Schema.Struct({ kind: Schema.Literal('TEXT'), value: Schema.String }),
 ]);
-export type CustomerFacingHistoricalFieldValue =
-  typeof CustomerFacingHistoricalFieldValueSchema.Type;
 
-export const CustomerFacingHistoricalFieldSchema = Schema.Struct({
+const CustomerFacingHistoricalFieldSchema = Schema.Struct({
   fieldName: NonEmptyTextSchema,
   ownerModuleId: HistoryOwnerModuleIdSchema,
   sourceRevision: NonEmptyTextSchema,
   value: CustomerFacingHistoricalFieldValueSchema,
   visibility: CustomerRecordVisibilityGrantSchema,
 });
-export type CustomerFacingHistoricalField = typeof CustomerFacingHistoricalFieldSchema.Type;
 
 export const CustomerOrderHistoryDetailSchema = Schema.Struct({
   acceptedAt: HistoryInstantJsonSchema,
@@ -82,7 +69,7 @@ export const CustomerOrderHistoryDetailSchema = Schema.Struct({
 });
 export type CustomerOrderHistoryDetail = typeof CustomerOrderHistoryDetailSchema.Type;
 
-export const RetailOrderHistoryDetailInputSchema = Schema.Struct({
+const RetailOrderHistoryDetailInputSchema = Schema.Struct({
   now: HistoryInstantJsonSchema,
   orderRef: HistoricalRecordRefSchema,
   principalId: HistoryPrincipalIdSchema,
@@ -90,17 +77,16 @@ export const RetailOrderHistoryDetailInputSchema = Schema.Struct({
 });
 export type RetailOrderHistoryDetailInput = typeof RetailOrderHistoryDetailInputSchema.Type;
 
-export const CounterpartyOrderHistoryDetailInputSchema = Schema.Struct({
+const CounterpartyOrderHistoryDetailInputSchema = Schema.Struct({
   counterpartyRef: CounterpartyRefSchema,
   now: HistoryInstantJsonSchema,
   orderRef: HistoricalRecordRefSchema,
   principalId: HistoryPrincipalIdSchema,
   profileRef: CounterpartyPurchasingProfileRefSchema,
 });
-export type CounterpartyOrderHistoryDetailInput =
-  typeof CounterpartyOrderHistoryDetailInputSchema.Type;
+export type CounterpartyOrderHistoryDetailInput = typeof CounterpartyOrderHistoryDetailInputSchema.Type;
 
-export const RetailOrderHistoryInputSchema = Schema.Struct({
+const RetailOrderHistoryInputSchema = Schema.Struct({
   now: HistoryInstantJsonSchema,
   principalId: HistoryPrincipalIdSchema,
   profileRef: RetailCustomerProfileRefSchema,
@@ -112,15 +98,11 @@ export const RetailOrderHistoryResultSchema = Schema.Struct({
   items: Schema.Array(CustomerOrderHistoryItemSchema),
   profileRef: RetailCustomerProfileRefSchema,
 });
-export type RetailOrderHistoryResult = typeof RetailOrderHistoryResultSchema.Type;
 
-export const CounterpartyHistoryScopeSchema = Schema.Literals([
-  'OWN_ORDERS',
-  'ALL_COUNTERPARTY_ORDERS',
-]);
+const CounterpartyHistoryScopeSchema = Schema.Literals(['OWN_ORDERS', 'ALL_COUNTERPARTY_ORDERS']);
 export type CounterpartyHistoryScope = typeof CounterpartyHistoryScopeSchema.Type;
 
-export const CounterpartyOrderHistoryInputSchema = Schema.Struct({
+const CounterpartyOrderHistoryInputSchema = Schema.Struct({
   counterpartyRef: CounterpartyRefSchema,
   now: HistoryInstantJsonSchema,
   principalId: HistoryPrincipalIdSchema,
@@ -134,16 +116,10 @@ export const CounterpartyOrderHistoryResultSchema = Schema.Struct({
   profileRef: CounterpartyPurchasingProfileRefSchema,
   scope: CounterpartyHistoryScopeSchema,
 });
-export type CounterpartyOrderHistoryResult = typeof CounterpartyOrderHistoryResultSchema.Type;
 
-export const CustomerArchiveRecordKindSchema = Schema.Literals([
-  'ORDER',
-  'BILLING_DOCUMENT',
-  'CLAIM',
-]);
-export type CustomerArchiveRecordKind = typeof CustomerArchiveRecordKindSchema.Type;
+const CustomerArchiveRecordKindSchema = Schema.Literals(['ORDER', 'BILLING_DOCUMENT', 'CLAIM']);
 
-export const CustomerArchiveItemSchema = Schema.Struct({
+const CustomerArchiveItemSchema = Schema.Struct({
   displayLabel: NonEmptyTextSchema,
   freshness: HistoryFreshnessSchema,
   occurredAt: HistoryInstantJsonSchema,
@@ -153,7 +129,7 @@ export const CustomerArchiveItemSchema = Schema.Struct({
 });
 export type CustomerArchiveItem = typeof CustomerArchiveItemSchema.Type;
 
-export const CustomerArchiveInputSchema = Schema.Struct({
+const CustomerArchiveInputSchema = Schema.Struct({
   now: HistoryInstantJsonSchema,
   principalId: HistoryPrincipalIdSchema,
   subject: CustomerHistorySubjectSchema,
@@ -165,9 +141,8 @@ export const CustomerArchiveResultSchema = Schema.Struct({
   items: Schema.Array(CustomerArchiveItemSchema),
   subject: CustomerHistorySubjectSchema,
 });
-export type CustomerArchiveResult = typeof CustomerArchiveResultSchema.Type;
 
-export const HistoricalOrderLineIntentSchema = Schema.Struct({
+const HistoricalOrderLineIntentSchema = Schema.Struct({
   configurationRef: Schema.optionalKey(NonEmptyTextSchema),
   productRef: NonEmptyTextSchema,
   requestedQuantity: QuantitySchema,
@@ -175,7 +150,7 @@ export const HistoricalOrderLineIntentSchema = Schema.Struct({
 });
 export type HistoricalOrderLineIntent = typeof HistoricalOrderLineIntentSchema.Type;
 
-export const RepeatOrderLineResultSchema = Schema.Union([
+const RepeatOrderLineResultSchema = Schema.Union([
   Schema.Struct({
     currentProductRef: NonEmptyTextSchema,
     requestedQuantity: QuantitySchema,
@@ -183,11 +158,7 @@ export const RepeatOrderLineResultSchema = Schema.Union([
     status: Schema.Literal('REPEATABLE'),
   }),
   Schema.Struct({
-    reason: Schema.Literals([
-      'CONFIGURATION_CHANGED',
-      'QUANTITY_RULE_CONFLICT',
-      'CURRENT_SELECTION_REQUIRED',
-    ]),
+    reason: Schema.Literals(['CONFIGURATION_CHANGED', 'QUANTITY_RULE_CONFLICT', 'CURRENT_SELECTION_REQUIRED']),
     requestedQuantity: QuantitySchema,
     sourceLineRef: NonEmptyTextSchema,
     status: Schema.Literal('REQUIRES_EXPLICIT_CHANGE'),
@@ -206,7 +177,7 @@ export const RepeatOrderLineResultSchema = Schema.Union([
 ]);
 export type RepeatOrderLineResult = typeof RepeatOrderLineResultSchema.Type;
 
-export const RepeatOrderPreparationInputSchema = Schema.Struct({
+const RepeatOrderPreparationInputSchema = Schema.Struct({
   now: HistoryInstantJsonSchema,
   orderRef: HistoricalRecordRefSchema,
   principalId: HistoryPrincipalIdSchema,

@@ -2,13 +2,7 @@
 // @ontos-action-owner commerce.customer-context
 // @ontos-action-slug submit-purchase-approval-request
 import type { ActionHandlerContext } from '@app/core-runtime';
-import {
-  ContextAccess,
-  defineAction,
-  defineActionBusinessPermission,
-  defineTenantModuleEntrypoint,
-  OperationContextUnavailable,
-} from '@app/core-runtime';
+import { defineAction, defineActionBusinessPermission, defineTenantModuleEntrypoint } from '@app/core-runtime';
 import { Effect, Schema } from 'effect';
 import {
   SubmitPurchaseApprovalRequestPayloadSchema,
@@ -20,12 +14,10 @@ import type {
   SubmitPurchaseApprovalRequestResult,
 } from '../../shared/actions/submit-purchase-approval-request.ts';
 import type { PurchasingApprovalWorkflowService } from '../persistence/purchasing-approval-persistence.ts';
-import { purchasingApprovalWorkflowForScope } from '../persistence/purchasing-approval-persistence.ts';
-import { PurchaseApprovalCurrentnessFactory } from '../../shared/domain/purchase-approval-currentness-port.ts';
-import { PurchaseLimitEvaluationCurrentnessPort } from '../../shared/domain/purchase-limit-evaluation-currentness-port.ts';
-import { PurchaseLimitEvaluationSourceFactory } from '../../shared/domain/purchase-limit-evaluation.ts';
 import type { PurchaseApprovalCurrentnessService } from '../../shared/domain/purchase-approval-currentness-port.ts';
 import {
+  purchasingApprovalCurrentnessServicesForScope,
+  recordPurchasingApprovalRequestResources,
   recordPurchasingApprovalResourceAccess,
   purchasingApprovalPermissionTarget,
   trustedPurchasingContext,
@@ -34,132 +26,117 @@ import { purchasingApprovalPolicy } from '../policies/purchasing-approval.policy
 import { createSubmitPurchaseApprovalRequestCommerceCustomerContextPurchaseApprovalRequestSubmittedV1OutboxMessage as createOutboxMessage } from './submit-purchase-approval-request-commerce-customer-context-purchase-approval-request-submitted-v1.outbox-message.ts';
 
 const MODULE_KEY = 'commerce.customer-context' as const;
+const PurchaseApprovalRequestOutcomeSchema = Schema.Literals(['SUBMITTED', 'ALREADY_SUBMITTED']);
 const PurchaseApprovalRequestSubmittedEventSchema = Schema.Struct({
-  outcome: Schema.Literals(['SUBMITTED', 'ALREADY_SUBMITTED']),
-  requestRef: Schema.String,
+  completionRule: Schema.Literal('ONE_APPROVER'),
+  outcome: PurchaseApprovalRequestOutcomeSchema,
   proposalRevisionRef: Schema.String,
+  requestRef: Schema.String,
   status: Schema.String,
-  completionRule: Schema.Literal('ONE_APPROVER'),
 });
-export const SubmitPurchaseApprovalRequestAuditEvidenceSchema = Schema.Struct({
-  outcome: Schema.Literals(['SUBMITTED', 'ALREADY_SUBMITTED']),
-  requestRef: Schema.String,
-  proposalRevisionRef: Schema.String,
+const SubmitPurchaseApprovalRequestAuditEvidenceSchema = Schema.Struct({
   completionRule: Schema.Literal('ONE_APPROVER'),
+  outcome: PurchaseApprovalRequestOutcomeSchema,
+  proposalRevisionRef: Schema.String,
+  requestRef: Schema.String,
 });
 type DomainEvents = Readonly<{
   'commerce.customer-context.purchase-approval-request-submitted.v1': typeof PurchaseApprovalRequestSubmittedEventSchema;
 }>;
 interface SubmitPurchaseApprovalRequestServices {
-  readonly workflow: PurchasingApprovalWorkflowService;
   readonly currentness: PurchaseApprovalCurrentnessService;
+  readonly workflow: PurchasingApprovalWorkflowService;
 }
 
-const handleSubmitPurchaseApprovalRequest = Effect.fn('SubmitPurchaseApprovalRequestAction.handle')(
-  function* handle(
-    payload: SubmitPurchaseApprovalRequestPayload,
-    context: ActionHandlerContext<DomainEvents, SubmitPurchaseApprovalRequestServices>,
-  ) {
-    if (!trustedPurchasingContext(payload.counterpartyRef, payload.storefrontId, context.scope)) {
-      return yield* new SubmitPurchaseApprovalRequestRejected({
-        code: 'PERMISSION_DENIED',
-        reason: 'Approval requests require the trusted Counterparty Storefront context',
-        retryable: false,
-      });
-    }
-    const trustedStorefrontId = context.scope.trustedStorefrontId;
-    const legalEntityId = context.scope.legalEntityId;
-    if (trustedStorefrontId === undefined || legalEntityId === undefined) {
-      return yield* new SubmitPurchaseApprovalRequestRejected({
-        code: 'PERMISSION_DENIED',
-        reason: 'Approval requests require trusted Legal Entity and Storefront scope',
-        retryable: false,
-      });
-    }
-    if (context.services.currentness.resolveSubmission === undefined) {
-      return yield* new SubmitPurchaseApprovalRequestRejected({
-        code: 'CURRENT_STATE_INDETERMINATE',
-        reason: 'Current buyer, profile, policy, and proposal evidence is unavailable',
-        retryable: true,
-      });
-    }
-    const trustedPayload = yield* context.services.currentness.resolveSubmission({
-      claimed: payload,
-      scope: {
-        legalEntityId,
-        principalId: context.scope.principalId,
-        storefrontId: trustedStorefrontId,
-        tenantId: context.scope.tenantId,
+const handleSubmitPurchaseApprovalRequest = Effect.fn('SubmitPurchaseApprovalRequestAction.handle')(function* handle(
+  payload: SubmitPurchaseApprovalRequestPayload,
+  context: ActionHandlerContext<DomainEvents, SubmitPurchaseApprovalRequestServices>,
+) {
+  if (!trustedPurchasingContext(payload.counterpartyRef, payload.storefrontId, context.scope)) {
+    return yield* new SubmitPurchaseApprovalRequestRejected({
+      code: 'PERMISSION_DENIED',
+      reason: 'Approval requests require the trusted Counterparty Storefront context',
+      retryable: false,
+    });
+  }
+  const { trustedStorefrontId } = context.scope;
+  const { legalEntityId } = context.scope;
+  if (trustedStorefrontId === undefined || legalEntityId === undefined) {
+    return yield* new SubmitPurchaseApprovalRequestRejected({
+      code: 'PERMISSION_DENIED',
+      reason: 'Approval requests require trusted Legal Entity and Storefront scope',
+      retryable: false,
+    });
+  }
+  if (context.services.currentness.resolveSubmission === undefined) {
+    return yield* new SubmitPurchaseApprovalRequestRejected({
+      code: 'CURRENT_STATE_INDETERMINATE',
+      reason: 'Current buyer, profile, policy, and proposal evidence is unavailable',
+      retryable: true,
+    });
+  }
+  const trustedPayload = yield* context.services.currentness.resolveSubmission({
+    claimed: payload,
+    scope: {
+      legalEntityId,
+      principalId: context.scope.principalId,
+      storefrontId: trustedStorefrontId,
+      tenantId: context.scope.tenantId,
+    },
+  });
+  const workflow = context.services.workflow.forActionInvocation(context.actionInvocationId);
+  const result = yield* workflow.submitRequest(trustedPayload);
+  yield* Effect.all(
+    [
+      recordPurchasingApprovalRequestResources(context, result.request, payload.storefrontId),
+      recordPurchasingApprovalResourceAccess(context, {
+        queryHash: `purchasing-approval-profile:${result.request.proposal.identity.profileRef.resourceId}:${payload.storefrontId}`,
+        resourceRef: result.request.proposal.identity.profileRef,
+      }),
+      recordPurchasingApprovalResourceAccess(context, {
+        queryHash: `purchasing-approval-counterparty:${trustedPayload.counterpartyRef.resourceId}:${trustedPayload.storefrontId}`,
+        resourceRef: trustedPayload.counterpartyRef,
+      }),
+    ],
+    { concurrency: 1, discard: true },
+  );
+  const completionRule = result.request.route.levels[0]?.completionRule ?? 'ONE_APPROVER';
+  yield* context.recordAuditEvidence({
+    completionRule,
+    outcome: result.outcome,
+    proposalRevisionRef: result.request.proposal.proposalRevisionRef.resourceId,
+    requestRef: result.request.requestRef.resourceId,
+  });
+  if (result.outcome === 'SUBMITTED') {
+    const event = yield* context.addDomainEvent({
+      eventType: 'commerce.customer-context.purchase-approval-request-submitted.v1',
+      payloadJson: {
+        completionRule,
+        outcome: result.outcome,
+        proposalRevisionRef: result.request.proposal.proposalRevisionRef.resourceId,
+        requestRef: result.request.requestRef.resourceId,
+        status: result.request.status,
       },
+      producerModuleKey: MODULE_KEY,
+      subjectModuleKey: MODULE_KEY,
+      subjectResourceId: result.request.requestRef.resourceId,
+      subjectResourceType: result.request.requestRef.resourceType,
     });
-    const workflow = context.services.workflow.forActionInvocation(context.actionInvocationId);
-    const result = yield* workflow.submitRequest(trustedPayload);
-    yield* Effect.all(
-      [
-        recordPurchasingApprovalResourceAccess(context, {
-          queryHash: `purchasing-approval-request:${result.request.requestRef.resourceId}:${payload.storefrontId}`,
-          resourceRef: result.request.requestRef,
-        }),
-        recordPurchasingApprovalResourceAccess(context, {
-          queryHash: `purchasing-approval-proposal:${result.request.proposal.proposalRevisionRef.resourceId}:${payload.storefrontId}`,
-          resourceRef: result.request.proposal.proposalRevisionRef,
-        }),
-        recordPurchasingApprovalResourceAccess(context, {
-          queryHash: `purchasing-approval-route:${result.request.route.routeRef.resourceId}:${payload.storefrontId}`,
-          resourceRef: result.request.route.routeRef,
-        }),
-        recordPurchasingApprovalResourceAccess(context, {
-          queryHash: `purchasing-approval-hierarchy:${result.request.route.hierarchyRef.resourceId}:${payload.storefrontId}`,
-          resourceRef: result.request.route.hierarchyRef,
-        }),
-        recordPurchasingApprovalResourceAccess(context, {
-          queryHash: `purchasing-approval-profile:${result.request.proposal.identity.profileRef.resourceId}:${payload.storefrontId}`,
-          resourceRef: result.request.proposal.identity.profileRef,
-        }),
-        recordPurchasingApprovalResourceAccess(context, {
-          queryHash: `purchasing-approval-counterparty:${trustedPayload.counterpartyRef.resourceId}:${trustedPayload.storefrontId}`,
-          resourceRef: trustedPayload.counterpartyRef,
-        }),
-      ],
-      { concurrency: 1, discard: true },
-    );
-    yield* context.recordAuditEvidence({
-      outcome: result.outcome,
-      requestRef: result.request.requestRef.resourceId,
-      proposalRevisionRef: result.request.proposal.proposalRevisionRef.resourceId,
-      completionRule: result.request.route.levels[0]!.completionRule,
-    });
-    if (result.outcome === 'SUBMITTED') {
-      const event = yield* context.addDomainEvent({
-        eventType: 'commerce.customer-context.purchase-approval-request-submitted.v1',
-        payloadJson: {
+    yield* context.addOutboxMessage(
+      event,
+      createOutboxMessage({
+        data: {
+          completionRule,
           outcome: result.outcome,
-          requestRef: result.request.requestRef.resourceId,
           proposalRevisionRef: result.request.proposal.proposalRevisionRef.resourceId,
+          requestRef: result.request.requestRef.resourceId,
           status: result.request.status,
-          completionRule: result.request.route.levels[0]!.completionRule,
         },
-        producerModuleKey: MODULE_KEY,
-        subjectModuleKey: MODULE_KEY,
-        subjectResourceId: result.request.requestRef.resourceId,
-        subjectResourceType: result.request.requestRef.resourceType,
-      });
-      yield* context.addOutboxMessage(
-        event,
-        createOutboxMessage({
-          data: {
-            outcome: result.outcome,
-            requestRef: result.request.requestRef.resourceId,
-            proposalRevisionRef: result.request.proposal.proposalRevisionRef.resourceId,
-            status: result.request.status,
-            completionRule: result.request.route.levels[0]!.completionRule,
-          },
-        }),
-      );
-    }
-    return result satisfies SubmitPurchaseApprovalRequestResult;
-  },
-);
+      }),
+    );
+  }
+  return result satisfies SubmitPurchaseApprovalRequestResult;
+});
 
 export const submitPurchaseApprovalRequestAction = defineAction(
   {
@@ -170,19 +147,17 @@ export const submitPurchaseApprovalRequestAction = defineAction(
     actionKey: 'commerce.customer-context.submit-purchase-approval-request',
     auditEvidenceSchema: SubmitPurchaseApprovalRequestAuditEvidenceSchema,
     auditProfile: 'sensitive',
-    businessPermission: defineActionBusinessPermission(
-      (payload: SubmitPurchaseApprovalRequestPayload, scope) =>
-        purchasingApprovalPermissionTarget({
-          permission: 'counterparty.purchase.submit',
-          counterpartyRef: payload.counterpartyRef,
-          storefrontId: payload.storefrontId,
-          scope,
-        }),
+    businessPermission: defineActionBusinessPermission((payload: SubmitPurchaseApprovalRequestPayload, scope) =>
+      purchasingApprovalPermissionTarget({
+        counterpartyRef: payload.counterpartyRef,
+        permission: 'counterparty.purchase.submit',
+        scope,
+        storefrontId: payload.storefrontId,
+      }),
     ),
     domainErrorSchema: SubmitPurchaseApprovalRequestRejected,
     domainEvents: {
-      'commerce.customer-context.purchase-approval-request-submitted.v1':
-        PurchaseApprovalRequestSubmittedEventSchema,
+      'commerce.customer-context.purchase-approval-request-submitted.v1': PurchaseApprovalRequestSubmittedEventSchema,
     },
     entrypoint: defineTenantModuleEntrypoint({
       access: 'write',
@@ -200,72 +175,5 @@ export const submitPurchaseApprovalRequestAction = defineAction(
     schemaVersion: '1',
   },
   handleSubmitPurchaseApprovalRequest,
-  (transaction, scope) => {
-    const legalEntityId = scope.legalEntityId;
-    const trustedStorefrontId = scope.trustedStorefrontId;
-    return Effect.all(
-      {
-        workflow: purchasingApprovalWorkflowForScope(transaction, scope),
-        currentness: Effect.all({
-          contextAccess: ContextAccess,
-          currentnessFactory: PurchaseApprovalCurrentnessFactory,
-          purchaseLimitCurrentness: PurchaseLimitEvaluationCurrentnessPort,
-          evaluationSourceFactory: PurchaseLimitEvaluationSourceFactory,
-        }).pipe(
-          Effect.flatMap(
-            ({
-              contextAccess,
-              currentnessFactory,
-              purchaseLimitCurrentness,
-              evaluationSourceFactory,
-            }) =>
-              legalEntityId === undefined || trustedStorefrontId === undefined
-                ? Effect.void
-                : evaluationSourceFactory.make(transaction, scope).pipe(
-                    Effect.mapError(
-                      () =>
-                        new OperationContextUnavailable({
-                          code: 'operation_context_unavailable',
-                          reason: 'Current Purchase Proposal evaluation evidence is unavailable',
-                        }),
-                    ),
-                    Effect.map((evaluationSource) =>
-                      currentnessFactory.make(
-                        transaction,
-                        {
-                          ...scope,
-                          legalEntityId,
-                          trustedStorefrontId,
-                        },
-                        contextAccess,
-                        purchaseLimitCurrentness,
-                        evaluationSource,
-                      ),
-                    ),
-                  ),
-          ),
-        ),
-      },
-      { concurrency: 2 },
-    ).pipe(
-      Effect.flatMap(({ workflow, currentness }) =>
-        currentness === undefined
-          ? Effect.fail(
-              new OperationContextUnavailable({
-                code: 'operation_context_unavailable',
-                reason: 'Current Purchasing Approval evidence requires trusted owner scope',
-              }),
-            )
-          : Effect.succeed({ workflow, currentness }),
-      ),
-    );
-  },
+  purchasingApprovalCurrentnessServicesForScope,
 );
-
-// <generated-outbox-message-exports>
-export { createSubmitPurchaseApprovalRequestCommerceCustomerContextPurchaseApprovalRequestSubmittedV1OutboxMessage } from './submit-purchase-approval-request-commerce-customer-context-purchase-approval-request-submitted-v1.outbox-message.ts';
-export { SubmitPurchaseApprovalRequestCommerceCustomerContextPurchaseApprovalRequestSubmittedV1OutboxPayloadSchema } from './submit-purchase-approval-request-commerce-customer-context-purchase-approval-request-submitted-v1.outbox-message.ts';
-export { SubmitPurchaseApprovalRequestCommerceCustomerContextPurchaseApprovalRequestSubmittedV1OutboxProducerModuleKey } from './submit-purchase-approval-request-commerce-customer-context-purchase-approval-request-submitted-v1.outbox-message.ts';
-export { SubmitPurchaseApprovalRequestCommerceCustomerContextPurchaseApprovalRequestSubmittedV1OutboxTopic } from './submit-purchase-approval-request-commerce-customer-context-purchase-approval-request-submitted-v1.outbox-message.ts';
-export type { SubmitPurchaseApprovalRequestCommerceCustomerContextPurchaseApprovalRequestSubmittedV1OutboxPayload } from './submit-purchase-approval-request-commerce-customer-context-purchase-approval-request-submitted-v1.outbox-message.ts';
-// </generated-outbox-message-exports>

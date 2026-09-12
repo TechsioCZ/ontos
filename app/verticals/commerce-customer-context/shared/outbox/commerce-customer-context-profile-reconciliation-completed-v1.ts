@@ -2,10 +2,7 @@
 // @ontos-outbox-producer commerce.customer-context
 // @ontos-outbox-topic commerce.customer-context.profile-reconciliation-completed.v1
 import { Schema } from 'effect';
-import {
-  CommerceCustomerProfileStateSchema,
-  ProfileInstantSchema,
-} from '../domain/profile-contracts.ts';
+import { CommerceCustomerProfileStateSchema, ProfileInstantSchema } from '../domain/profile-contracts.ts';
 import { CommerceCustomerProfileRefSchema } from '../domain/profile-decisions.ts';
 import { ProfileReconciliationCaseRefSchema } from '../resources/profile-reconciliation-case.ts';
 

@@ -2,11 +2,7 @@
 // @ontos-action-owner commerce.customer-context
 // @ontos-action-slug archive-customer-group
 import type { ActionHandlerContext } from '@app/core-runtime';
-import {
-  defineAction,
-  defineActionResourcePermission,
-  defineTenantModuleEntrypoint,
-} from '@app/core-runtime';
+import { defineAction, defineActionResourcePermission, defineTenantModuleEntrypoint } from '@app/core-runtime';
 import { Effect, Match, Schema } from 'effect';
 import {
   ArchiveCustomerGroupPayloadSchema,
@@ -26,27 +22,13 @@ import {
   OutboxPayloadSchema as CustomerGroupArchivedEventSchema,
   outboxProducerModuleKey as MODULE_KEY,
 } from '../../shared/outbox/commerce-customer-context-customer-group-archived-v1.ts';
-import {
-  customerGroupRecordedAt,
-  requireCustomerGroupLegalEntityId,
-  customerGroupScopeMatches,
-  customerGroupServiceFactory,
-  customerGroupWritePermission,
-} from './customer-group-action-support.ts';
+import { customerGroupServiceFactory, customerGroupWritePermission } from './customer-group-action-support.ts';
+import { executeCustomerGroupAction } from './customer-group-action-handler.ts';
 import { createArchiveCustomerGroupCommerceCustomerContextCustomerGroupArchivedV1OutboxMessage as createCustomerGroupArchivedOutboxMessage } from './archive-customer-group.commerce-customer-context-customer-group-archived-v1.outbox-message.ts';
 
 const domainEvents = {
   'commerce.customer-context.customer-group-archived.v1': CustomerGroupArchivedEventSchema,
 } as const;
-
-export {
-  ArchiveCustomerGroupPayloadSchema,
-  ArchiveCustomerGroupResultSchema,
-} from '../../shared/actions/archive-customer-group.ts';
-export type {
-  ArchiveCustomerGroupPayload,
-  ArchiveCustomerGroupResult,
-} from '../../shared/actions/archive-customer-group.ts';
 
 const ArchiveCustomerGroupErrorSchema = Schema.Union([
   CustomerGroupLifecycleConflict,
@@ -57,102 +39,60 @@ const ArchiveCustomerGroupErrorSchema = Schema.Union([
 ]);
 
 const handleArchiveCustomerGroup = Effect.fn('ArchiveCustomerGroupAction.handle')(
-  function* archiveCustomerGroup(
+  (
     payload: ArchiveCustomerGroupPayload,
     context: ActionHandlerContext<typeof domainEvents, CustomerGroupPersistence>,
-  ) {
-    if (!customerGroupScopeMatches(context.scope.tenantId, payload.groupRef)) {
-      return yield* new CustomerGroupScopeMismatch({
-        code: 'customer_group_scope_mismatch',
-        reason: 'The customer-group reference must belong to the trusted Tenant',
-      });
-    }
-    const recordedAt = yield* customerGroupRecordedAt;
-    const legalEntityId = yield* requireCustomerGroupLegalEntityId(context.scope.legalEntityId);
-    const result = yield* context.services.archive({
-      actionInvocationId: context.actionInvocationId,
-      effectiveAt: payload.effectiveAt,
-      expectedRevision: payload.expectedRevision,
-      groupRef: payload.groupRef,
-      legalEntityId,
-      principalId: context.scope.principalId,
-      reason: payload.reason,
-      recordedAt,
-      tenantId: context.scope.tenantId,
-    });
-    const resolved = yield* Match.value(result).pipe(
-      Match.tag('not_found', () =>
-        Effect.fail(
-          new CustomerGroupNotFound({
-            code: 'customer_group_not_found',
-            reason: 'The customer group does not exist',
-          }),
+  ) =>
+    executeCustomerGroupAction(payload, context, {
+      invoke: ({ command, context: actionContext, payload: actionPayload }) =>
+        actionContext.services.archive({ ...command, effectiveAt: actionPayload.effectiveAt }),
+      resolve: (result) =>
+        Match.value(result).pipe(
+          Match.tag('lifecycle_conflict', () =>
+            Effect.fail(
+              new CustomerGroupLifecycleConflict({
+                code: 'customer_group_lifecycle_conflict',
+                reason: 'The archive instant conflicts with the customer-group lifecycle',
+              }),
+            ),
+          ),
+          Match.tag('archived', ({ cancelledCount, changed, endedCount, group }) =>
+            Effect.succeed({ cancelledCount, changed, endedCount, group } as const),
+          ),
+          Match.exhaustive,
         ),
-      ),
-      Match.tag('revision_conflict', ({ actualRevision }) =>
-        Effect.fail(
-          new CustomerGroupRevisionConflict({
-            actualRevision,
-            code: 'customer_group_revision_conflict',
-            reason: 'The customer group was changed by another operation',
-          }),
-        ),
-      ),
-      Match.tag('lifecycle_conflict', () =>
-        Effect.fail(
-          new CustomerGroupLifecycleConflict({
-            code: 'customer_group_lifecycle_conflict',
-            reason: 'The archive instant conflicts with the customer-group lifecycle',
-          }),
-        ),
-      ),
-      Match.tag('archived', ({ cancelledCount, changed, endedCount, group }) =>
-        Effect.succeed({ cancelledCount, changed, endedCount, group } as const),
-      ),
-      Match.exhaustive,
-    );
-    yield* context.recordAuditEvidence({
-      affectedMembershipCount: resolved.endedCount + resolved.cancelledCount,
-      changed: resolved.changed,
-      effectiveAt: payload.effectiveAt,
-      groupRef: resolved.group.groupRef,
-      operation: 'ARCHIVE',
-      reason: payload.reason,
-      revision: resolved.group.revision,
-    });
-    yield* context.recordDataAccess({
-      accessKind: 'read',
-      queryHash: `customer-group-archive:${payload.groupRef.resourceId}:${payload.effectiveAt}`,
-      resultCount: resolved.endedCount + resolved.cancelledCount,
-      servingModuleKey: MODULE_KEY,
-      targetModuleKey: MODULE_KEY,
-      targetResourceId: payload.groupRef.resourceId,
-      targetResourceType: payload.groupRef.resourceType,
-    });
-    if (resolved.changed) {
-      const eventPayload = {
-        cancelledMembershipCount: resolved.cancelledCount,
-        effectiveAt: payload.effectiveAt,
-        endedMembershipCount: resolved.endedCount,
+      // eslint-disable-next-line perfectionist/sort-objects -- resolve establishes the inferred result type for later callbacks.
+      auditEvidence: ({ payload: evidencePayload, resolved }) => ({
+        affectedMembershipCount: resolved.endedCount + resolved.cancelledCount,
+        changed: resolved.changed,
+        effectiveAt: evidencePayload.effectiveAt,
         groupRef: resolved.group.groupRef,
-        recordedAt,
+        operation: 'ARCHIVE',
+        reason: evidencePayload.reason,
         revision: resolved.group.revision,
-      };
-      const event = yield* context.addDomainEvent({
+      }),
+      dataAccess: ({ payload: accessPayload, resolved }) => ({
+        accessKind: 'read',
+        queryHash: `customer-group-archive:${accessPayload.groupRef.resourceId}:${accessPayload.effectiveAt}`,
+        resultCount: resolved.endedCount + resolved.cancelledCount,
+        servingModuleKey: MODULE_KEY,
+        targetModuleKey: MODULE_KEY,
+        targetResourceId: accessPayload.groupRef.resourceId,
+        targetResourceType: accessPayload.groupRef.resourceType,
+      }),
+      event: {
         eventType: 'commerce.customer-context.customer-group-archived.v1',
-        payloadJson: eventPayload,
-        producerModuleKey: MODULE_KEY,
-        subjectModuleKey: MODULE_KEY,
-        subjectResourceId: resolved.group.groupRef.resourceId,
-        subjectResourceType: resolved.group.groupRef.resourceType,
-      });
-      yield* context.addOutboxMessage(
-        event,
-        createCustomerGroupArchivedOutboxMessage(eventPayload),
-      );
-    }
-    return resolved;
-  },
+        outboxMessage: createCustomerGroupArchivedOutboxMessage,
+        payload: (eventPayload, resolved, recordedAt) => ({
+          cancelledMembershipCount: resolved.cancelledCount,
+          effectiveAt: eventPayload.effectiveAt,
+          endedMembershipCount: resolved.endedCount,
+          groupRef: resolved.group.groupRef,
+          recordedAt,
+          revision: resolved.group.revision,
+        }),
+      },
+    }),
 );
 
 export const archiveCustomerGroupAction = defineAction(
@@ -178,8 +118,8 @@ export const archiveCustomerGroupAction = defineAction(
     owningModuleKey: 'commerce.customer-context',
     payloadSchema: ArchiveCustomerGroupPayloadSchema,
     policies: [],
-    resourcePermission: defineActionResourcePermission<ArchiveCustomerGroupPayload>(
-      ({ groupRef }) => customerGroupWritePermission(groupRef),
+    resourcePermission: defineActionResourcePermission<ArchiveCustomerGroupPayload>(({ groupRef }) =>
+      customerGroupWritePermission(groupRef),
     ),
     resultSchema: ArchiveCustomerGroupResultSchema,
     schemaVersion: '1',
@@ -187,11 +127,3 @@ export const archiveCustomerGroupAction = defineAction(
   handleArchiveCustomerGroup,
   customerGroupServiceFactory,
 );
-
-// <generated-outbox-message-exports>
-export { ArchiveCustomerGroupCommerceCustomerContextCustomerGroupArchivedV1OutboxPayloadSchema } from './archive-customer-group.commerce-customer-context-customer-group-archived-v1.outbox-message.ts';
-export { ArchiveCustomerGroupCommerceCustomerContextCustomerGroupArchivedV1OutboxProducerModuleKey } from './archive-customer-group.commerce-customer-context-customer-group-archived-v1.outbox-message.ts';
-export { ArchiveCustomerGroupCommerceCustomerContextCustomerGroupArchivedV1OutboxTopic } from './archive-customer-group.commerce-customer-context-customer-group-archived-v1.outbox-message.ts';
-export { createArchiveCustomerGroupCommerceCustomerContextCustomerGroupArchivedV1OutboxMessage } from './archive-customer-group.commerce-customer-context-customer-group-archived-v1.outbox-message.ts';
-export type { ArchiveCustomerGroupCommerceCustomerContextCustomerGroupArchivedV1OutboxPayload } from './archive-customer-group.commerce-customer-context-customer-group-archived-v1.outbox-message.ts';
-// </generated-outbox-message-exports>

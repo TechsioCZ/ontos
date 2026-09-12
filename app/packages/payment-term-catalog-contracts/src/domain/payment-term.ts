@@ -53,9 +53,7 @@ export const PaymentTermCompatibilityIdSchema = checkedCompatibilityId.pipe(
   Schema.brand('PaymentTermCompatibilityId'),
   Schema.decodeTo(checkedCompatibilityId),
 );
-export const PaymentTermSemanticFingerprintSchema = Schema.String.check(
-  Schema.isPattern(/^[0-9a-f]{64}$/u),
-);
+export const PaymentTermSemanticFingerprintSchema = Schema.String.check(Schema.isPattern(/^[0-9a-f]{64}$/u));
 export const PaymentTermConsumerCompatibilitySchema = Schema.Literal('customer-payment-terms.v1');
 
 export const ImmediatePaymentTermSemanticsSchema = Schema.Struct({
@@ -89,12 +87,8 @@ export const PaymentTermLifecycleSchema = Schema.Struct({
 export type PaymentTermLifecycle = typeof PaymentTermLifecycleSchema.Type;
 
 export const PaymentTermProvenanceSchema = Schema.Struct({
-  actionInvocationId: Schema.toEncoded(
-    nonEmptyText.pipe(Schema.brand('PaymentTermActionInvocationId')),
-  ),
-  actorPrincipalId: Schema.toEncoded(
-    nonEmptyText.pipe(Schema.brand('PaymentTermActorPrincipalId')),
-  ),
+  actionInvocationId: Schema.toEncoded(nonEmptyText.pipe(Schema.brand('PaymentTermActionInvocationId'))),
+  actorPrincipalId: Schema.toEncoded(nonEmptyText.pipe(Schema.brand('PaymentTermActorPrincipalId'))),
   at: PaymentTermInstantSchema,
   reason: PaymentTermReasonSchema,
 });
@@ -108,10 +102,7 @@ const PaymentTermDefinitionFieldsSchema = Schema.Struct({
   definitionRevisionId: PaymentTermDefinitionRevisionIdSchema,
   description: PaymentTermDescriptionSchema,
   lifecycle: PaymentTermLifecycleSchema,
-  metadataRevision: Schema.Finite.check(
-    Schema.isInt(),
-    Schema.isBetween({ maximum: 2_147_483_647, minimum: 1 }),
-  ),
+  metadataRevision: Schema.Finite.check(Schema.isInt(), Schema.isBetween({ maximum: 2_147_483_647, minimum: 1 })),
   name: PaymentTermNameSchema,
   paymentTermRef: PaymentTermRefSchema,
   // oxlint-disable-next-line effect-native/no-nullable-schema-field -- null is the stable public wire sentinel for a definition that has not been retired; expires: 2027-03-31.
@@ -165,17 +156,12 @@ export const PaymentTermAuditEvidenceSchema = Schema.Struct({
   currentCustomerEntitlementCount: Schema.optionalKey(
     Schema.Finite.check(Schema.isInt(), Schema.isGreaterThanOrEqualTo(0)),
   ),
-  openPurchaseCount: Schema.optionalKey(
-    Schema.Finite.check(Schema.isInt(), Schema.isGreaterThanOrEqualTo(0)),
-  ),
+  openPurchaseCount: Schema.optionalKey(Schema.Finite.check(Schema.isInt(), Schema.isGreaterThanOrEqualTo(0))),
   reason: PaymentTermReasonSchema,
 });
 
 export const PaymentTermAffectedUseAssessmentSchema = Schema.Struct({
-  currentCustomerEntitlementCount: Schema.Finite.check(
-    Schema.isInt(),
-    Schema.isGreaterThanOrEqualTo(0),
-  ),
+  currentCustomerEntitlementCount: Schema.Finite.check(Schema.isInt(), Schema.isGreaterThanOrEqualTo(0)),
   evidenceReference: nonEmptyText,
   observedAt: PaymentTermMillisecondInstantSchema,
   openPurchaseCount: Schema.Finite.check(Schema.isInt(), Schema.isGreaterThanOrEqualTo(0)),

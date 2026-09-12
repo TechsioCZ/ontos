@@ -1,5 +1,3 @@
-export { microVerticalOperationAttributes as operationAttributes } from '@app/shared-contracts';
-
 const DEFAULT_SHELL_ORIGIN = 'http://localhost:3020';
 
 export const resolveCommerceCustomerContextShellOrigin = (value?: string): string =>
@@ -19,16 +17,9 @@ export const commerceCustomerContextCorsAllowedHeaders = [
   'X-Trace-Id',
 ] as const;
 
-export const commerceCustomerContextCorsAllowedMethods = [
-  'GET',
-  'HEAD',
-  'OPTIONS',
-  'POST',
-] as const;
+export const commerceCustomerContextCorsAllowedMethods = ['GET', 'HEAD', 'OPTIONS', 'POST'] as const;
 
-export const commerceCustomerContextCorsAllowedOrigins = (
-  configuredOrigin: string,
-): readonly string[] => {
+export const commerceCustomerContextCorsAllowedOrigins = (configuredOrigin: string): readonly string[] => {
   const origin = new URL(configuredOrigin);
   if (origin.hostname !== 'localhost' && origin.hostname !== '127.0.0.1') {
     return [origin.origin];

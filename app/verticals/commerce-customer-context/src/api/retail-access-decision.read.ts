@@ -6,11 +6,7 @@ import {
   defineRead,
   defineTenantModuleEntrypoint,
 } from '@app/core-runtime';
-import type {
-  AuthorizationMutationState,
-  OperationalScope,
-  ReadHandlerContext,
-} from '@app/core-runtime';
+import type { AuthorizationMutationState, OperationalScope, ReadHandlerContext } from '@app/core-runtime';
 import { Effect, Option, Result, Schema } from 'effect';
 import {
   RetailAccessDecisionRequestSchema,
@@ -85,7 +81,7 @@ export const decideRetailAccessFromCurrentOwnerSnapshot = (
   };
 };
 
-export const decideRetailAccessFromServices = (
+const decideRetailAccessFromServices = (
   input: RetailAccessDecisionRequest,
   principalId: string,
   tenantId: string,
@@ -95,14 +91,9 @@ export const decideRetailAccessFromServices = (
     ? services.decideAccess(input, principalId, tenantId)
     : Effect.fail(notFound());
 
-export const retailAccessDecisionPermissionTarget = (
-  input: RetailAccessDecisionRequest,
-  scope: OperationalScope,
-) => ({
+export const retailAccessDecisionPermissionTarget = (input: RetailAccessDecisionRequest, scope: OperationalScope) => ({
   businessPermission: {
-    permission: Result.getOrThrow(
-      Schema.decodeUnknownResult(BusinessPermissionCodeSchema)(input.requiredPermission),
-    ),
+    permission: Result.getOrThrow(Schema.decodeResult(BusinessPermissionCodeSchema)(input.requiredPermission)),
     target: {
       kind: 'retail_profile' as const,
       legalEntityId: scope.legalEntityId ?? '',
@@ -113,7 +104,7 @@ export const retailAccessDecisionPermissionTarget = (
   kind: 'business_permission' as const,
 });
 
-export const retailAccessDecisionEntrypoint = defineTenantModuleEntrypoint({
+const retailAccessDecisionEntrypoint = defineTenantModuleEntrypoint({
   access: 'read',
   authorization: { kind: 'context_permission', permission: 'retail.profile.read' },
   entrypointKey: 'commerce.customer-context.api.retail-access-decision',
@@ -139,12 +130,9 @@ export const retailAccessDecisionRead = defineRead(
     schemaVersion: '1',
   },
   (input, context: ReadHandlerContext<RetailAccessDecisionServices>) =>
-    decideRetailAccessFromServices(
-      input,
-      context.scope.principalId,
-      context.scope.tenantId,
-      context.services,
-    ).pipe(Effect.map((result) => ({ evidence: { resultCount: 1 }, result }))),
+    decideRetailAccessFromServices(input, context.scope.principalId, context.scope.tenantId, context.services).pipe(
+      Effect.map((result) => ({ evidence: { resultCount: 1 }, result })),
+    ),
   (transaction, scope) =>
     profileServicesForVerifiedScope(transaction, scope).pipe(
       Effect.map(({ retailAccessDecision }) => retailAccessDecision),

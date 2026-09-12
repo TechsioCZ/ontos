@@ -32,14 +32,8 @@ const domainEvents = {
   'commerce.customer-context.customer-group-created.v1': CustomerGroupCreatedEventSchema,
 } as const;
 
-export {
-  CreateCustomerGroupPayloadSchema,
-  CreateCustomerGroupResultSchema,
-} from '../../shared/actions/create-customer-group.ts';
-export type {
-  CreateCustomerGroupPayload,
-  CreateCustomerGroupResult,
-} from '../../shared/actions/create-customer-group.ts';
+export { CreateCustomerGroupPayloadSchema } from '../../shared/actions/create-customer-group.ts';
+export type { CreateCustomerGroupPayload } from '../../shared/actions/create-customer-group.ts';
 
 const CreateCustomerGroupErrorSchema = Schema.Union([
   CustomerGroupBusinessCodeConflict,
@@ -48,88 +42,86 @@ const CreateCustomerGroupErrorSchema = Schema.Union([
   CustomerGroupSemanticDuplicate,
 ]);
 
-const handleCreateCustomerGroup = Effect.fn('CreateCustomerGroupAction.handle')(
-  function* createCustomerGroup(
-    payload: CreateCustomerGroupPayload,
-    context: ActionHandlerContext<typeof domainEvents, CustomerGroupPersistence>,
-  ) {
-    const recordedAt = yield* customerGroupRecordedAt;
-    const legalEntityId = yield* requireCustomerGroupLegalEntityId(context.scope.legalEntityId);
-    const result = yield* context.services.create({
-      actionInvocationId: context.actionInvocationId,
-      businessCode: payload.businessCode,
-      description: payload.description,
-      legalEntityId,
-      meaningKey: payload.meaningKey,
-      membershipCriteria: payload.membershipCriteria,
-      name: payload.name,
-      principalId: context.scope.principalId,
-      purpose: payload.purpose,
-      reason: payload.reason,
-      recordedAt,
-      tenantId: context.scope.tenantId,
-    });
-    const resolved = yield* Match.value(result).pipe(
-      Match.tag('business_code_conflict', () =>
-        Effect.fail(
-          new CustomerGroupBusinessCodeConflict({
-            code: 'customer_group_business_code_conflict',
-            reason: 'The requested customer-group business code is already in use',
-          }),
-        ),
+const handleCreateCustomerGroup = Effect.fn('CreateCustomerGroupAction.handle')(function* createCustomerGroup(
+  payload: CreateCustomerGroupPayload,
+  context: ActionHandlerContext<typeof domainEvents, CustomerGroupPersistence>,
+) {
+  const recordedAt = yield* customerGroupRecordedAt;
+  const legalEntityId = yield* requireCustomerGroupLegalEntityId(context.scope.legalEntityId);
+  const result = yield* context.services.create({
+    actionInvocationId: context.actionInvocationId,
+    businessCode: payload.businessCode,
+    description: payload.description,
+    legalEntityId,
+    meaningKey: payload.meaningKey,
+    membershipCriteria: payload.membershipCriteria,
+    name: payload.name,
+    principalId: context.scope.principalId,
+    purpose: payload.purpose,
+    reason: payload.reason,
+    recordedAt,
+    tenantId: context.scope.tenantId,
+  });
+  const resolved = yield* Match.value(result).pipe(
+    Match.tag('business_code_conflict', () =>
+      Effect.fail(
+        new CustomerGroupBusinessCodeConflict({
+          code: 'customer_group_business_code_conflict',
+          reason: 'The requested customer-group business code is already in use',
+        }),
       ),
-      Match.tag('semantic_duplicate', () =>
-        Effect.fail(
-          new CustomerGroupSemanticDuplicate({
-            code: 'customer_group_semantic_duplicate',
-            reason: 'An equivalent customer-group business meaning already exists',
-          }),
-        ),
+    ),
+    Match.tag('semantic_duplicate', () =>
+      Effect.fail(
+        new CustomerGroupSemanticDuplicate({
+          code: 'customer_group_semantic_duplicate',
+          reason: 'An equivalent customer-group business meaning already exists',
+        }),
       ),
-      Match.tag('created', ({ group }) => Effect.succeed({ created: true, group } as const)),
-      Match.tag('reused', ({ group }) => Effect.succeed({ created: false, group } as const)),
-      Match.exhaustive,
-    );
-    yield* context.recordAuditEvidence({
-      afterDefinitionRevision: resolved.group.currentDefinition.revision,
-      changed: resolved.created,
-      definitionChangeKind: resolved.group.currentDefinition.changeKind,
-      effectiveAt: recordedAt,
+    ),
+    Match.tag('created', ({ group }) => Effect.succeed({ created: true, group } as const)),
+    Match.tag('reused', ({ group }) => Effect.succeed({ created: false, group } as const)),
+    Match.exhaustive,
+  );
+  yield* context.recordAuditEvidence({
+    afterDefinitionRevision: resolved.group.currentDefinition.revision,
+    changed: resolved.created,
+    definitionChangeKind: resolved.group.currentDefinition.changeKind,
+    effectiveAt: recordedAt,
+    groupRef: resolved.group.groupRef,
+    operation: 'CREATE',
+    reason: payload.reason,
+    revision: resolved.group.revision,
+  });
+  yield* context.recordDataAccess({
+    accessKind: 'read',
+    queryHash: `customer-group-semantic-uniqueness:${payload.businessCode}:${payload.meaningKey}`,
+    resultCount: resolved.created ? 0 : 1,
+    servingModuleKey: MODULE_KEY,
+    targetModuleKey: MODULE_KEY,
+    targetResourceId: resolved.group.groupRef.resourceId,
+    targetResourceType: resolved.group.groupRef.resourceType,
+  });
+  if (resolved.created) {
+    const eventPayload = {
+      businessCode: resolved.group.businessCode,
+      definition: resolved.group.currentDefinition,
       groupRef: resolved.group.groupRef,
-      operation: 'CREATE',
-      reason: payload.reason,
+      meaningKey: resolved.group.meaningKey,
       revision: resolved.group.revision,
+    };
+    const event = yield* context.addDomainEvent({
+      eventType: 'commerce.customer-context.customer-group-created.v1',
+      payloadJson: eventPayload,
+      producerModuleKey: MODULE_KEY,
+      subjectModuleKey: MODULE_KEY,
+      subjectResourceId: resolved.group.groupRef.resourceId,
+      subjectResourceType: resolved.group.groupRef.resourceType,
     });
-    yield* context.recordDataAccess({
-      accessKind: 'read',
-      queryHash: `customer-group-semantic-uniqueness:${payload.businessCode}:${payload.meaningKey}`,
-      resultCount: resolved.created ? 0 : 1,
-      servingModuleKey: MODULE_KEY,
-      targetModuleKey: MODULE_KEY,
-      targetResourceId: resolved.group.groupRef.resourceId,
-      targetResourceType: resolved.group.groupRef.resourceType,
-    });
-    if (resolved.created) {
-      const eventPayload = {
-        businessCode: resolved.group.businessCode,
-        definition: resolved.group.currentDefinition,
-        groupRef: resolved.group.groupRef,
-        meaningKey: resolved.group.meaningKey,
-        revision: resolved.group.revision,
-      };
-      const event = yield* context.addDomainEvent({
-        eventType: 'commerce.customer-context.customer-group-created.v1',
-        payloadJson: eventPayload,
-        producerModuleKey: MODULE_KEY,
-        subjectModuleKey: MODULE_KEY,
-        subjectResourceId: resolved.group.groupRef.resourceId,
-        subjectResourceType: resolved.group.groupRef.resourceType,
-      });
-      yield* context.addOutboxMessage(event, createCustomerGroupCreatedOutboxMessage(eventPayload));
-    }
-    return resolved;
-  },
-);
+    yield* context.addOutboxMessage(event, createCustomerGroupCreatedOutboxMessage(eventPayload));
+  }
+  return resolved;
+});
 
 export const createCustomerGroupAction = defineAction(
   {
@@ -162,9 +154,4 @@ export const createCustomerGroupAction = defineAction(
 );
 
 // <generated-outbox-message-exports>
-export { createCreateCustomerGroupCommerceCustomerContextCustomerGroupCreatedV1OutboxMessage } from './create-customer-group.commerce-customer-context-customer-group-created-v1.outbox-message.ts';
-export { CreateCustomerGroupCommerceCustomerContextCustomerGroupCreatedV1OutboxPayloadSchema } from './create-customer-group.commerce-customer-context-customer-group-created-v1.outbox-message.ts';
-export { CreateCustomerGroupCommerceCustomerContextCustomerGroupCreatedV1OutboxProducerModuleKey } from './create-customer-group.commerce-customer-context-customer-group-created-v1.outbox-message.ts';
-export { CreateCustomerGroupCommerceCustomerContextCustomerGroupCreatedV1OutboxTopic } from './create-customer-group.commerce-customer-context-customer-group-created-v1.outbox-message.ts';
-export type { CreateCustomerGroupCommerceCustomerContextCustomerGroupCreatedV1OutboxPayload } from './create-customer-group.commerce-customer-context-customer-group-created-v1.outbox-message.ts';
 // </generated-outbox-message-exports>

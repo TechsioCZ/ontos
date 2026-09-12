@@ -21,16 +21,13 @@ export const PurchaseCurrencyAuthorizationSubjectSchema = Schema.Union([
     kind: Schema.Literal('COUNTERPARTY'),
   }),
 ]);
-export type PurchaseCurrencyAuthorizationSubject =
-  typeof PurchaseCurrencyAuthorizationSubjectSchema.Type;
+export type PurchaseCurrencyAuthorizationSubject = typeof PurchaseCurrencyAuthorizationSubjectSchema.Type;
 
 export const isPurchaseCurrencyAuthorizationSubjectCompatible = (
   profileRef: CustomerProfileRef,
   subject: PurchaseCurrencyAuthorizationSubject,
 ): boolean =>
-  profileRef.tenantId ===
-    (subject.kind === 'COUNTERPARTY' ? subject.counterpartyRef.tenantId : profileRef.tenantId) &&
-  ((profileRef.resourceType === 'commerce.customer-context.retail-customer-profile' &&
-    subject.kind === 'RETAIL') ||
+  profileRef.tenantId === (subject.kind === 'COUNTERPARTY' ? subject.counterpartyRef.tenantId : profileRef.tenantId) &&
+  ((profileRef.resourceType === 'commerce.customer-context.retail-customer-profile' && subject.kind === 'RETAIL') ||
     (profileRef.resourceType === 'commerce.customer-context.counterparty-purchasing-profile' &&
       subject.kind === 'COUNTERPARTY'));

@@ -8,16 +8,10 @@ import {
 } from '@app/commerce-customer-context/outbox/commerce-customer-context-purchase-approval-consumed-v1';
 import type { OutboxPayload } from '@app/commerce-customer-context/outbox/commerce-customer-context-purchase-approval-consumed-v1';
 
-export {
-  OutboxPayloadSchema as ConsumePurchaseApprovalCommerceCustomerContextPurchaseApprovalConsumedV1OutboxPayloadSchema,
-  outboxProducerModuleKey as ConsumePurchaseApprovalCommerceCustomerContextPurchaseApprovalConsumedV1OutboxProducerModuleKey,
-  outboxTopic as ConsumePurchaseApprovalCommerceCustomerContextPurchaseApprovalConsumedV1OutboxTopic,
-} from '@app/commerce-customer-context/outbox/commerce-customer-context-purchase-approval-consumed-v1';
-export type { OutboxPayload as ConsumePurchaseApprovalCommerceCustomerContextPurchaseApprovalConsumedV1OutboxPayload } from '@app/commerce-customer-context/outbox/commerce-customer-context-purchase-approval-consumed-v1';
-
-export const createConsumePurchaseApprovalCommerceCustomerContextPurchaseApprovalConsumedV1OutboxMessage =
-  (payload: OutboxPayload): OutboxMessage => ({
-    payloadJson: payload,
-    producerModuleKey: outboxProducerModuleKey,
-    topic: outboxTopic,
-  });
+export const createConsumePurchaseApprovalCommerceCustomerContextPurchaseApprovalConsumedV1OutboxMessage = (
+  payload: OutboxPayload,
+): OutboxMessage => ({
+  payloadJson: payload,
+  producerModuleKey: outboxProducerModuleKey,
+  topic: outboxTopic,
+});

@@ -1,3 +1,4 @@
+// oxlint-disable-next-line max-classes-per-file -- The two Context.Service tags define one proof-gated Core boundary and its read-only transaction capability; expires: 2027-09-10.
 import { Context, Effect, Exit, Layer } from 'effect';
 import type { EffectDrizzleQueryError } from 'drizzle-orm/effect-core';
 import type { TrustedPrincipalContext } from '../actions/context.ts';
@@ -23,6 +24,7 @@ export type ActionAuthorizationPreflightDecision =
 export interface ActionAuthorizationPreflightInput {
   readonly actionInvocationId: string;
   readonly actionKey: string;
+  // oxlint-disable-next-line effect-native/no-threaded-correlation-parameter -- This is the request correlation identifier carried across the Core-to-owner preflight boundary, not ambient context threading; expires: 2027-09-10.
   readonly correlationId: string;
   readonly payload: unknown;
   readonly principal: TrustedPrincipalContext;
@@ -32,9 +34,9 @@ export interface ActionAuthorizationPreflightInput {
 export interface ActionAuthorizationPreflightPermit {
   readonly actionInvocationId: string;
   readonly actionKey: string;
-  readonly principalId: string;
   /** Consumes the process-local permit exactly once after all Core permission gates pass. */
   readonly consume: Effect.Effect<void, ActionPermissionCheckError>;
+  readonly principalId: string;
 }
 
 export interface ActionAuthorizationPreflightService {
@@ -65,9 +67,7 @@ export class ActionAuthorizationPreflight extends Context.Service<
 export class ActionAuthorizationPreflightDatabase extends Context.Service<
   ActionAuthorizationPreflightDatabase,
   ActionAuthorizationPreflightDatabaseService
->()(
-  '@app/core-runtime/permissions/action-authorization-preflight/ActionAuthorizationPreflightDatabase',
-) {}
+>()('@app/core-runtime/permissions/action-authorization-preflight/ActionAuthorizationPreflightDatabase') {}
 
 const transactionFailure = (cause: unknown) =>
   Object.defineProperty(
@@ -80,18 +80,15 @@ const transactionFailure = (cause: unknown) =>
   );
 
 const makeActionAuthorizationPreflightDatabase = (
+  // oxlint-disable-next-line effect-native/no-dependency-parameters -- The Layer has already yielded the Core-owned database and closes this read-only capability over that service; expires: 2027-09-10.
   database: (typeof CoreDatabase)['Service'],
 ): ActionAuthorizationPreflightDatabaseService => ({
   transaction: (body) =>
     database.executor
-      .transaction((transaction) =>
-        Effect.exit(body({ execute: transaction.execute.bind(transaction) })),
-      )
+      .transaction((transaction) => Effect.exit(body({ execute: transaction.execute.bind(transaction) })))
       .pipe(
         Effect.mapError(transactionFailure),
-        Effect.flatMap((exit) =>
-          Exit.isSuccess(exit) ? Effect.succeed(exit.value) : Effect.failCause(exit.cause),
-        ),
+        Effect.flatMap((exit) => (Exit.isSuccess(exit) ? Effect.succeed(exit.value) : Effect.failCause(exit.cause))),
       ),
 });
 
@@ -122,7 +119,6 @@ export const makeActionAuthorizationPreflightPermit = (input: {
   return Object.freeze({
     actionInvocationId: input.actionInvocationId,
     actionKey: input.actionKey,
-    principalId: input.principalId,
     consume: Effect.suspend(() => {
       if (consumed) {
         return Effect.fail(permitUnavailable());
@@ -130,16 +126,16 @@ export const makeActionAuthorizationPreflightPermit = (input: {
       consumed = true;
       return Effect.void;
     }),
+    principalId: input.principalId,
   });
 };
 
-export const unavailableActionAuthorizationPreflight: ActionAuthorizationPreflightService =
-  Object.freeze({
-    prepare: () =>
-      Effect.fail(
-        new ActionPermissionCheckError({
-          code: 'action_permission_check_failed',
-          reason: 'The proof-gated Action authorization service is unavailable',
-        }),
-      ),
-  });
+export const unavailableActionAuthorizationPreflight: ActionAuthorizationPreflightService = Object.freeze({
+  prepare: () =>
+    Effect.fail(
+      new ActionPermissionCheckError({
+        code: 'action_permission_check_failed',
+        reason: 'The proof-gated Action authorization service is unavailable',
+      }),
+    ),
+});

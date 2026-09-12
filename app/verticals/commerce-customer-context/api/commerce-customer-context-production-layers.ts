@@ -1,7 +1,4 @@
-import {
-  BusinessPermissionRelationshipMutationLive,
-  PrincipalEligibilityLive,
-} from '@app/core-runtime';
+import { BusinessPermissionRelationshipMutationLive, PrincipalEligibilityLive } from '@app/core-runtime';
 import { Layer } from 'effect';
 
 import {
@@ -25,18 +22,7 @@ import {
   PurchaseCurrencyPricingPort,
   unavailablePurchaseCurrencyPricingPort,
 } from '../shared/domain/purchase-currency-pricing-port.ts';
-import {
-  PaymentTermCatalogGatewayCredentialService,
-  unavailablePaymentTermCatalogGatewayCredentialIssuer,
-} from '../shared/domain/payment-term-catalog-gateway-credential.ts';
-import {
-  unavailableHistoryActionOwnerPorts,
-  RepeatCartOwner,
-} from '../shared/domain/history-action-ports.ts';
-import {
-  CustomerHistoryPortsService,
-  unavailableCustomerHistoryPorts,
-} from '../shared/domain/history-ports.ts';
+import { unavailableHistoryActionOwnerPorts, RepeatCartOwner } from '../shared/domain/history-action-ports.ts';
 import { paymentTermCatalogGatewayCredentialLive } from './payment-term-catalog-gateway-credential.ts';
 
 type CommerceCustomerContextOwnerRuntimeServices =
@@ -69,46 +55,25 @@ export const commerceCustomerContextOwnerRuntimeServicesLive: Layer.Layer<
 );
 
 /** Proof delivery is an explicit after-commit deployment integration; absence fails closed. */
-export const unavailableCounterpartyInvitationProofDeliveryLive = Layer.succeed(
+const unavailableCounterpartyInvitationProofDeliveryLive = Layer.succeed(
   CounterpartyInvitationProofDelivery,
   unavailableCounterpartyInvitationProofDelivery(),
 );
 
-export const unavailablePurchaseCurrencyPurchasingContextPortLive = Layer.succeed(
+const unavailablePurchaseCurrencyPurchasingContextPortLive = Layer.succeed(
   PurchaseCurrencyPurchasingContextPort,
   unavailablePurchaseCurrencyPurchasingContextPort(),
 );
-export const unavailablePurchaseCurrencyPolicyPortLive = Layer.succeed(
+const unavailablePurchaseCurrencyPolicyPortLive = Layer.succeed(
   PurchaseCurrencyPolicyPort,
   unavailablePurchaseCurrencyPolicyPort(),
 );
-export const unavailablePurchaseCurrencyPricingPortLive = Layer.succeed(
+const unavailablePurchaseCurrencyPricingPortLive = Layer.succeed(
   PurchaseCurrencyPricingPort,
   unavailablePurchaseCurrencyPricingPort(),
 );
-export const unavailablePaymentTermCatalogGatewayCredentialLive = Layer.succeed(
-  PaymentTermCatalogGatewayCredentialService,
-  unavailablePaymentTermCatalogGatewayCredentialIssuer,
-);
-
-/**
- * Explicit fail-closed history boundary until each canonical owner publishes its adapter.
- *
- * This Layer is exported for hosts that want a complete default dependency graph, but it is
- * intentionally not installed into the API runtimes below.  The History loaders resolve the
- * Context service optionally and use this same adapter when no deployment-owned service is
- * supplied.  That keeps the production seam injectable while Order/Cart/catalog owners remain
- * visibly fail-closed rather than being replaced by local stand-ins.
- */
-export const unavailableCustomerHistoryPortsLive = Layer.succeed(
-  CustomerHistoryPortsService,
-  unavailableCustomerHistoryPorts(),
-);
 const unavailableHistoryActionOwners = unavailableHistoryActionOwnerPorts();
-export const unavailableRepeatCartOwnerLive = Layer.succeed(
-  RepeatCartOwner,
-  unavailableHistoryActionOwners.carts,
-);
+const unavailableRepeatCartOwnerLive = Layer.succeed(RepeatCartOwner, unavailableHistoryActionOwners.carts);
 
 /**
  * Production owner composition.  The Payment Term Catalog issuer is a server-owned gateway
@@ -124,7 +89,3 @@ export const commerceCustomerContextProductionExternalPortsLive = Layer.mergeAll
   paymentTermCatalogGatewayCredentialLive,
   unavailableRepeatCartOwnerLive,
 );
-
-/** Backwards-compatible name for hosts that still import the complete fail-closed port graph. */
-export const unavailableCommerceCustomerContextExternalPortsLive =
-  commerceCustomerContextProductionExternalPortsLive;

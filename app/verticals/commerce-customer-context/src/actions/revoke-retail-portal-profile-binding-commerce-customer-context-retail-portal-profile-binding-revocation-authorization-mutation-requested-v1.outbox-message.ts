@@ -3,21 +3,19 @@
 // @ontos-outbox-topic commerce.customer-context.retail-portal-profile-binding-revocation-authorization-mutation-requested.v1
 import type { OutboxMessage } from '@app/core-runtime';
 import {
-  outboxProducerModuleKey,
-  outboxTopic,
-} from '@app/commerce-customer-context/outbox/commerce-customer-context-retail-portal-profile-binding-revocation-authorization-mutation-requested-v1';
-import type { OutboxPayload } from '@app/commerce-customer-context/outbox/commerce-customer-context-retail-portal-profile-binding-revocation-authorization-mutation-requested-v1';
-
-export {
-  OutboxPayloadSchema as RevokeRetailPortalProfileBindingCommerceCustomerContextRetailPortalProfileBindingRevocationAuthorizationMutationRequestedV1OutboxPayloadSchema,
   outboxProducerModuleKey as RevokeRetailPortalProfileBindingCommerceCustomerContextRetailPortalProfileBindingRevocationAuthorizationMutationRequestedV1OutboxProducerModuleKey,
   outboxTopic as RevokeRetailPortalProfileBindingCommerceCustomerContextRetailPortalProfileBindingRevocationAuthorizationMutationRequestedV1OutboxTopic,
 } from '@app/commerce-customer-context/outbox/commerce-customer-context-retail-portal-profile-binding-revocation-authorization-mutation-requested-v1';
+import type { OutboxPayload } from '@app/commerce-customer-context/outbox/commerce-customer-context-retail-portal-profile-binding-revocation-authorization-mutation-requested-v1';
+
+export { OutboxPayloadSchema as RevokeRetailPortalProfileBindingCommerceCustomerContextRetailPortalProfileBindingRevocationAuthorizationMutationRequestedV1OutboxPayloadSchema } from '@app/commerce-customer-context/outbox/commerce-customer-context-retail-portal-profile-binding-revocation-authorization-mutation-requested-v1';
 export type { OutboxPayload as RevokeRetailPortalProfileBindingCommerceCustomerContextRetailPortalProfileBindingRevocationAuthorizationMutationRequestedV1OutboxPayload } from '@app/commerce-customer-context/outbox/commerce-customer-context-retail-portal-profile-binding-revocation-authorization-mutation-requested-v1';
 
 export const createRevokeRetailPortalProfileBindingCommerceCustomerContextRetailPortalProfileBindingRevocationAuthorizationMutationRequestedV1OutboxMessage =
   (payload: OutboxPayload): OutboxMessage => ({
     payloadJson: payload,
-    producerModuleKey: outboxProducerModuleKey,
-    topic: outboxTopic,
+    producerModuleKey:
+      RevokeRetailPortalProfileBindingCommerceCustomerContextRetailPortalProfileBindingRevocationAuthorizationMutationRequestedV1OutboxProducerModuleKey,
+    topic:
+      RevokeRetailPortalProfileBindingCommerceCustomerContextRetailPortalProfileBindingRevocationAuthorizationMutationRequestedV1OutboxTopic,
   });

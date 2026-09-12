@@ -33,28 +33,18 @@ export {
   unavailableCounterpartyInvitationClaimAuthority,
 } from './invitation-claim-authority.ts';
 export type { CounterpartyInvitationClaimAuthorityService } from './invitation-claim-authority.ts';
-export { CounterpartyInvitationClaimRedemption } from './invitation-claim-redemption.ts';
-export type { CounterpartyInvitationClaimRedemptionService } from './invitation-claim-redemption.ts';
 export {
   CounterpartyInvitationProofDelivery,
   secureQueuedCounterpartyInvitationProofDelivery,
   unavailableCounterpartyInvitationProofDelivery,
 } from './invitation-proof-delivery.ts';
-export type {
-  CounterpartyInvitationProofDeliveryService,
-  CounterpartyInvitationProofSecureQueue,
-} from './invitation-proof-delivery.ts';
 export {
   CounterpartyInvitationProofLifecycle,
   unavailableCounterpartyInvitationProofLifecycle,
 } from './invitation-proof-lifecycle.ts';
-export type {
-  CounterpartyInvitationProofLifecycleService,
-  CounterpartyInvitationProofRegistration,
-  CounterpartyInvitationProofRegistrationInput,
-} from './invitation-proof-lifecycle.ts';
+export type { CounterpartyInvitationProofLifecycleService } from './invitation-proof-lifecycle.ts';
 
-export interface AccessOperationContext {
+interface AccessOperationContext {
   readonly actionInvocationId: string;
   readonly actor: PrincipalRef;
   readonly legalEntityId: string;
@@ -72,7 +62,7 @@ export interface RevokeCounterpartyAccessInput extends GrantCounterpartyAccessIn
   readonly grantRef?: CounterpartyCommerceAccessGrantRef | undefined;
 }
 
-export type GrantCounterpartyAccessOutcome =
+type GrantCounterpartyAccessOutcome =
   | Readonly<{
       readonly grant: CounterpartyAccessGrant;
       readonly outcome: 'APPLIED' | 'ALREADY_ACTIVE' | 'CONFLICT';
@@ -85,7 +75,7 @@ export type GrantCounterpartyAccessOutcome =
       };
     }>;
 
-export type RevokeCounterpartyAccessOutcome =
+type RevokeCounterpartyAccessOutcome =
   | Readonly<{
       readonly grant: CounterpartyAccessGrant;
       readonly outcome: 'REVOKED' | 'ALREADY_REVOKED' | 'LAST_ADMIN_PROTECTED' | 'SCOPE_MISMATCH';
@@ -98,7 +88,7 @@ export type RevokeCounterpartyAccessOutcome =
       };
     }>;
 
-export type BootstrapCounterpartyAccessAdministratorOutcome =
+type BootstrapCounterpartyAccessAdministratorOutcome =
   | Readonly<{
       readonly grant: CounterpartyAccessGrant;
       readonly outcome: 'APPLIED' | 'ALREADY_ACTIVE' | 'CONFLICT';
@@ -144,7 +134,7 @@ export type ResendCounterpartyAccessInvitationOutcome = Readonly<{
   readonly outcome: 'RESENT' | 'ALREADY_SENT';
 }>;
 
-export type RevokeCounterpartyAccessInvitationOutcome = Readonly<{
+type RevokeCounterpartyAccessInvitationOutcome = Readonly<{
   readonly invitation: CounterpartyAccessInvitation;
   readonly outcome: 'REVOKED' | 'ALREADY_REVOKED';
 }>;
@@ -161,7 +151,7 @@ export const InvitationClaimRejectionSchema = Schema.Literals([
 ]);
 export type InvitationClaimRejection = typeof InvitationClaimRejectionSchema.Type;
 
-export type ClaimCounterpartyAccessInvitationOutcome =
+type ClaimCounterpartyAccessInvitationOutcome =
   | Readonly<{
       readonly attestation: VerifiedInvitationClaimAttestation;
       readonly invitation: CounterpartyAccessInvitation;
@@ -186,10 +176,7 @@ export type ClaimCounterpartyAccessInvitationOutcome =
 export interface CounterpartyAccessPortService {
   readonly bootstrapAdministrator: (
     input: GrantCounterpartyAccessInput,
-  ) => Effect.Effect<
-    BootstrapCounterpartyAccessAdministratorOutcome,
-    CounterpartyAccessDomainError
-  >;
+  ) => Effect.Effect<BootstrapCounterpartyAccessAdministratorOutcome, CounterpartyAccessDomainError>;
   readonly check: (input: {
     readonly counterpartyRef: CounterpartyRef;
     readonly permission: CounterpartyPermissionCode;
@@ -230,10 +217,10 @@ export interface CounterpartyAccessPortService {
   ) => Effect.Effect<RevokeCounterpartyAccessInvitationOutcome, CounterpartyAccessDomainError>;
 }
 
-export class CounterpartyAccessPort extends Context.Service<
-  CounterpartyAccessPort,
-  CounterpartyAccessPortService
->()('@app/commerce-customer-context/shared/domain/access-port/CounterpartyAccessPort') {}
+// eslint-disable-next-line no-unused-vars -- Retain the Context tag that connects this effectful service contract to Effect dependency injection.
+class CounterpartyAccessPort extends Context.Service<CounterpartyAccessPort, CounterpartyAccessPortService>()(
+  '@app/commerce-customer-context/shared/domain/access-port/CounterpartyAccessPort',
+) {}
 
 export const unavailableCounterpartyAccessPort = (
   reason = 'Counterparty Commerce Access is temporarily unavailable',

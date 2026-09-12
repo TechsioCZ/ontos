@@ -2,20 +2,13 @@
 // @ontos-action-owner payment.term-catalog
 // @ontos-action-slug correct-payment-term
 import type { ActionHandlerContext } from '@app/core-runtime';
-import {
-  defineAction,
-  defineActionResourcePermission,
-  defineTenantModuleEntrypoint,
-} from '@app/core-runtime';
+import { defineAction, defineActionResourcePermission, defineTenantModuleEntrypoint } from '@app/core-runtime';
 import { Effect, Match, Option, Schema } from 'effect';
 import {
   CorrectPaymentTermPayloadSchema,
   CorrectPaymentTermResultSchema,
 } from '../../shared/actions/correct-payment-term.ts';
-import type {
-  CorrectPaymentTermPayload,
-  CorrectPaymentTermResult,
-} from '../../shared/actions/correct-payment-term.ts';
+import type { CorrectPaymentTermPayload, CorrectPaymentTermResult } from '../../shared/actions/correct-payment-term.ts';
 import type { PaymentTermDefinition } from '../../shared/domain/payment-term.ts';
 import { PaymentTermAuditEvidenceSchema } from '../../shared/domain/payment-term.ts';
 import {
@@ -28,18 +21,12 @@ import type { PaymentTermCatalogPersistence } from '../persistence/payment-term-
 import {
   PaymentTermCatalogPersistenceConflict,
   PaymentTermCatalogPersistenceUnavailable,
-  makePaymentTermCatalogPersistence,
+  paymentTermCatalogPersistenceForScope,
 } from '../persistence/payment-term-catalog-persistence.ts';
 import { createCorrectPaymentTermPaymentTermCatalogPaymentTermMetadataCorrectedV1OutboxMessage } from './correct-payment-term.payment-term-catalog-payment-term-metadata-corrected-v1.outbox-message.ts';
 
-export {
-  CorrectPaymentTermPayloadSchema,
-  CorrectPaymentTermResultSchema,
-} from '../../shared/actions/correct-payment-term.ts';
-export type {
-  CorrectPaymentTermPayload,
-  CorrectPaymentTermResult,
-} from '../../shared/actions/correct-payment-term.ts';
+export { CorrectPaymentTermPayloadSchema } from '../../shared/actions/correct-payment-term.ts';
+export type { CorrectPaymentTermPayload, CorrectPaymentTermResult } from '../../shared/actions/correct-payment-term.ts';
 
 const ErrorSchema = Schema.Union([
   PaymentTermLifecycleConflict,
@@ -48,6 +35,7 @@ const ErrorSchema = Schema.Union([
   PaymentTermCatalogPersistenceConflict,
   PaymentTermCatalogPersistenceUnavailable,
 ]);
+const MODULE_KEY = 'payment.term-catalog' as const;
 const domainEvents = {
   'payment.term-catalog.payment-term-metadata-corrected.v1': CorrectPaymentTermResultSchema,
 } as const;
@@ -56,7 +44,7 @@ type StoredDefinition = PaymentTermDefinition;
 const isPersistenceId = Schema.is(Schema.String.check(Schema.isUUID()));
 
 const toPaymentTermRef = (tenantId: string, resourceId: string): PaymentTermRef => ({
-  moduleId: 'payment.term-catalog',
+  moduleId: MODULE_KEY,
   resourceId,
   resourceType: 'payment.term-catalog.payment-term',
   tenantId,
@@ -81,105 +69,105 @@ const notFound = (paymentTermRef: PaymentTermRef) =>
     reason: `Payment Term ${paymentTermRef.resourceId} does not exist in the trusted scope`,
   });
 
-export const handleCorrectPaymentTerm = Effect.fn('CorrectPaymentTermAction.handle')(
-  function* correctPaymentTerm(
-    payload: CorrectPaymentTermPayload,
-    context: ActionHandlerContext<typeof domainEvents, Services>,
+export const handleCorrectPaymentTerm = Effect.fn('CorrectPaymentTermAction.handle')(function* correctPaymentTerm(
+  payload: CorrectPaymentTermPayload,
+  context: ActionHandlerContext<typeof domainEvents, Services>,
+) {
+  if (
+    payload.paymentTermRef.tenantId !== context.scope.tenantId ||
+    !isPersistenceId(payload.paymentTermRef.resourceId)
   ) {
-    if (
-      payload.paymentTermRef.tenantId !== context.scope.tenantId ||
-      !isPersistenceId(payload.paymentTermRef.resourceId)
-    ) {
-      return yield* notFound(payload.paymentTermRef);
-    }
-    const currentOption = yield* context.services.getCurrent(payload.paymentTermRef.resourceId);
-    if (Option.isNone(currentOption)) {
-      return yield* notFound(payload.paymentTermRef);
-    }
-    const current = currentOption.value;
-    if (current.lifecycle.state === 'RETIRED') {
-      return yield* new PaymentTermLifecycleConflict({
-        code: 'payment_term_lifecycle_conflict',
-        reason: 'Retired Payment Term metadata is historical and cannot be overwritten',
-      });
-    }
-    if (current.metadataRevision !== payload.expectedMetadataRevision) {
-      return yield* new PaymentTermRevisionConflict({
-        actualRevision: current.metadataRevision,
-        code: 'payment_term_revision_conflict',
-        expectedRevision: payload.expectedMetadataRevision,
-        reason: 'The Payment Term metadata changed after the correction was prepared',
-      });
-    }
-
-    const unchanged = current.name === payload.name && current.description === payload.description;
-    let result = resultFromDefinition(context.scope.tenantId, current, false);
-    if (!unchanged) {
-      const outcome = yield* context.services.correct({
-        actingPrincipalId: context.scope.principalId,
-        actionInvocationId: context.actionInvocationId,
-        displayName: payload.name,
-        expectedMetadataRevision: payload.expectedMetadataRevision,
-        explanation: payload.description,
-        paymentTermId: payload.paymentTermRef.resourceId,
-        reason: payload.reason,
-      });
-      const definition = yield* Match.value(outcome).pipe(
-        Match.tags({
-          corrected: ({ definition }) => Effect.succeed(definition),
-          not_found: () => Effect.fail(notFound(payload.paymentTermRef)),
-          retired: () =>
-            Effect.fail(
-              new PaymentTermLifecycleConflict({
-                code: 'payment_term_lifecycle_conflict',
-                reason: 'Retired Payment Term metadata is historical and cannot be overwritten',
-              }),
-            ),
-          revision_conflict: ({ actualMetadataRevision }) =>
-            Effect.fail(
-              new PaymentTermRevisionConflict({
-                actualRevision: actualMetadataRevision,
-                code: 'payment_term_revision_conflict',
-                expectedRevision: payload.expectedMetadataRevision,
-                reason: 'The Payment Term changed concurrently with the correction',
-              }),
-            ),
-        }),
-        Match.exhaustive,
-      );
-      result = resultFromDefinition(context.scope.tenantId, definition, true);
-    }
-
-    yield* context.recordAuditEvidence({ reason: payload.reason });
-    yield* context.recordDataAccess({
-      accessKind: 'read',
-      queryHash: `payment-term-current:${payload.paymentTermRef.resourceId}`,
-      resultCount: 1,
-      servingModuleKey: 'payment.term-catalog',
-      targetModuleKey: 'payment.term-catalog',
-      targetResourceId: payload.paymentTermRef.resourceId,
-      targetResourceType: payload.paymentTermRef.resourceType,
+    return yield* notFound(payload.paymentTermRef);
+  }
+  const currentOption = yield* context.services.getCurrent(payload.paymentTermRef.resourceId);
+  if (Option.isNone(currentOption)) {
+    return yield* notFound(payload.paymentTermRef);
+  }
+  const current = currentOption.value;
+  if (current.lifecycle.state === 'RETIRED') {
+    return yield* new PaymentTermLifecycleConflict({
+      code: 'payment_term_lifecycle_conflict',
+      reason: 'Retired Payment Term metadata is historical and cannot be overwritten',
     });
-    if (result.changed) {
-      const event = yield* context.addDomainEvent({
-        eventType: 'payment.term-catalog.payment-term-metadata-corrected.v1',
-        payloadJson: result,
-        producerModuleKey: 'payment.term-catalog',
-        subjectModuleKey: 'payment.term-catalog',
-        subjectResourceId: result.paymentTermRef.resourceId,
-        subjectResourceType: result.paymentTermRef.resourceType,
-      });
-      yield* context.addOutboxMessage(
-        event,
-        createCorrectPaymentTermPaymentTermCatalogPaymentTermMetadataCorrectedV1OutboxMessage({
-          ...result,
-          changed: true,
+  }
+  if (current.metadataRevision !== payload.expectedMetadataRevision) {
+    return yield* new PaymentTermRevisionConflict({
+      actualRevision: current.metadataRevision,
+      code: 'payment_term_revision_conflict',
+      expectedRevision: payload.expectedMetadataRevision,
+      reason: 'The Payment Term metadata changed after the correction was prepared',
+    });
+  }
+
+  const unchanged = current.name === payload.name && current.description === payload.description;
+  let result = resultFromDefinition(context.scope.tenantId, current, false);
+  if (!unchanged) {
+    const outcome = yield* context.services.correct({
+      actingPrincipalId: context.scope.principalId,
+      actionInvocationId: context.actionInvocationId,
+      displayName: payload.name,
+      expectedMetadataRevision: payload.expectedMetadataRevision,
+      explanation: payload.description,
+      paymentTermId: payload.paymentTermRef.resourceId,
+      reason: payload.reason,
+    });
+    const notFoundOutcome = () => Effect.fail(notFound(payload.paymentTermRef));
+    const revisionConflict = ({ actualMetadataRevision }: { readonly actualMetadataRevision: number }) =>
+      Effect.fail(
+        new PaymentTermRevisionConflict({
+          actualRevision: actualMetadataRevision,
+          code: 'payment_term_revision_conflict',
+          expectedRevision: payload.expectedMetadataRevision,
+          reason: 'The Payment Term changed concurrently with the correction',
         }),
       );
-    }
-    return result;
-  },
-);
+    const definition = yield* Match.value(outcome).pipe(
+      Match.tags({
+        corrected: ({ definition: correctedDefinition }) => Effect.succeed(correctedDefinition),
+        not_found: notFoundOutcome,
+        retired: () =>
+          Effect.fail(
+            new PaymentTermLifecycleConflict({
+              code: 'payment_term_lifecycle_conflict',
+              reason: 'Retired Payment Term metadata is historical and cannot be overwritten',
+            }),
+          ),
+        revision_conflict: revisionConflict,
+      }),
+      Match.exhaustive,
+    );
+    result = resultFromDefinition(context.scope.tenantId, definition, true);
+  }
+
+  yield* context.recordAuditEvidence({ reason: payload.reason });
+  yield* context.recordDataAccess({
+    accessKind: 'read',
+    queryHash: `payment-term-current:${payload.paymentTermRef.resourceId}`,
+    resultCount: 1,
+    servingModuleKey: MODULE_KEY,
+    targetModuleKey: MODULE_KEY,
+    targetResourceId: payload.paymentTermRef.resourceId,
+    targetResourceType: payload.paymentTermRef.resourceType,
+  });
+  if (result.changed) {
+    const event = yield* context.addDomainEvent({
+      eventType: 'payment.term-catalog.payment-term-metadata-corrected.v1',
+      payloadJson: result,
+      producerModuleKey: MODULE_KEY,
+      subjectModuleKey: MODULE_KEY,
+      subjectResourceId: result.paymentTermRef.resourceId,
+      subjectResourceType: result.paymentTermRef.resourceType,
+    });
+    yield* context.addOutboxMessage(
+      event,
+      createCorrectPaymentTermPaymentTermCatalogPaymentTermMetadataCorrectedV1OutboxMessage({
+        ...result,
+        changed: true,
+      }),
+    );
+  }
+  return result;
+});
 
 export const correctPaymentTermAction = defineAction(
   {
@@ -196,12 +184,12 @@ export const correctPaymentTermAction = defineAction(
       access: 'write',
       authorization: { kind: 'action_execution', provisioning: 'explicit' },
       entrypointKey: 'payment.term-catalog.correct-payment-term',
-      moduleKey: 'payment.term-catalog',
+      moduleKey: MODULE_KEY,
       role: 'action',
     }),
     idempotency: 'required',
     legalEntityScope: 'required',
-    owningModuleKey: 'payment.term-catalog',
+    owningModuleKey: MODULE_KEY,
     payloadSchema: CorrectPaymentTermPayloadSchema,
     policies: [],
     resourcePermission: defineActionResourcePermission<CorrectPaymentTermPayload>((payload) => ({
@@ -212,13 +200,5 @@ export const correctPaymentTermAction = defineAction(
     schemaVersion: '1',
   },
   handleCorrectPaymentTerm,
-  makePaymentTermCatalogPersistence,
+  paymentTermCatalogPersistenceForScope,
 );
-
-// <generated-outbox-message-exports>
-export { CorrectPaymentTermPaymentTermCatalogPaymentTermMetadataCorrectedV1OutboxPayloadSchema } from './correct-payment-term.payment-term-catalog-payment-term-metadata-corrected-v1.outbox-message.ts';
-export { CorrectPaymentTermPaymentTermCatalogPaymentTermMetadataCorrectedV1OutboxProducerModuleKey } from './correct-payment-term.payment-term-catalog-payment-term-metadata-corrected-v1.outbox-message.ts';
-export { CorrectPaymentTermPaymentTermCatalogPaymentTermMetadataCorrectedV1OutboxTopic } from './correct-payment-term.payment-term-catalog-payment-term-metadata-corrected-v1.outbox-message.ts';
-export { createCorrectPaymentTermPaymentTermCatalogPaymentTermMetadataCorrectedV1OutboxMessage } from './correct-payment-term.payment-term-catalog-payment-term-metadata-corrected-v1.outbox-message.ts';
-export type { CorrectPaymentTermPaymentTermCatalogPaymentTermMetadataCorrectedV1OutboxPayload } from './correct-payment-term.payment-term-catalog-payment-term-metadata-corrected-v1.outbox-message.ts';
-// </generated-outbox-message-exports>

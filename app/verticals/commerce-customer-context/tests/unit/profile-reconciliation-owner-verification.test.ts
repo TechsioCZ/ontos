@@ -51,106 +51,101 @@ const scope = {
   tenantId,
 };
 
-it.effect(
-  'accepts evidence only from trusted owner verifiers and preserves conflicts as partial progress',
-  () =>
-    Effect.gen(function* fabricatedOwnerEvidence() {
-      const [firstOwnerOutcome] = payload.ownerOutcomes;
-      expect(firstOwnerOutcome).toBeDefined();
-      if (firstOwnerOutcome !== undefined) {
-        expect('evidenceRef' in firstOwnerOutcome).toBe(false);
-      }
-      const collector = createActionCollector(
-        resolveProfileReconciliationAction.descriptor.domainEvents,
-        'commerce.customer-context',
-        resolveProfileReconciliationAction.descriptor.accessEvidencePolicy,
-        resolveProfileReconciliationAction.descriptor.auditEvidenceSchema,
-      );
-      const recordedOwners: string[] = [];
-      const result = yield* getActionHandler(resolveProfileReconciliationAction)(payload, {
-        actionInvocationId: '44444444-4444-4444-8444-444444444444',
-        addDomainEvent: collector.addDomainEvent,
-        addOutboxMessage: collector.addOutboxMessage,
-        recordAuditEvidence: collector.recordAuditEvidence,
-        recordDataAccess: collector.recordDataAccess,
-        scope,
-        services: {
-          ownerReconciler: {
-            finalize: (requested, expectedCaseRevision, unavailableOwners, conflictingOwners) =>
-              Effect.succeed({
-                caseRef: requested.caseRef,
-                conflictingOwners,
-                lastProcessedEventVersion: requested.expectedEventVersion,
-                outcome: 'RECONCILIATION_PROGRESS_RECORDED' as const,
-                ownerOutcomes: pendingOwnerOutcomes,
-                revision: expectedCaseRevision,
-                state: 'BLOCKED' as const,
-                unavailableOwners,
-              }),
-            load: (caseRef) =>
-              Effect.succeed({
-                caseRef,
-                lastProcessedEventVersion: payload.expectedEventVersion,
-                ownerOutcomes: pendingOwnerOutcomes,
-                revision: payload.expectedRevision,
-                state: 'OPEN' as const,
-              }),
-            record: (request) => {
-              recordedOwners.push(request.durableOutcome.owner);
-              return Effect.succeed({
-                caseRef: request.caseRef,
-                lastProcessedEventVersion: request.expectedEventVersion,
-                ownerOutcomes: pendingOwnerOutcomes.map((outcome) =>
-                  outcome.owner === request.durableOutcome.owner ? request.durableOutcome : outcome,
-                ),
-                revision: request.expectedCaseRevision + 1,
-                state: 'OPEN' as const,
-              });
-            },
-          },
-          ownerVerifier: {
-            verify: (request) =>
-              Effect.succeed(
-                request.desiredOutcome.owner === 'PROFILE_LIFECYCLE'
-                  ? {
-                      _tag: 'CONFLICT' as const,
-                      owner: request.desiredOutcome.owner,
-                      reason: 'Lifecycle resolution receipt is absent',
-                    }
-                  : {
-                      _tag: 'VERIFIED' as const,
-                      correlationRef: `verification:${request.desiredOutcome.owner}`,
-                      durableOutcome: {
-                        ...request.desiredOutcome,
-                        evidenceRef: `trusted-proof:${request.desiredOutcome.owner}`,
-                      },
-                    },
+it.effect('accepts evidence only from trusted owner verifiers and preserves conflicts as partial progress', () =>
+  // @ts-expect-error -- This direct-handler test intentionally supplies owner verifier doubles instead of the production service Layers.
+  Effect.gen(function* fabricatedOwnerEvidence() {
+    const [firstOwnerOutcome] = payload.ownerOutcomes;
+    expect(firstOwnerOutcome).toBeDefined();
+    if (firstOwnerOutcome !== undefined) {
+      expect('evidenceRef' in firstOwnerOutcome).toBe(false);
+    }
+    const collector = createActionCollector(
+      resolveProfileReconciliationAction.descriptor.domainEvents,
+      'commerce.customer-context',
+      resolveProfileReconciliationAction.descriptor.accessEvidencePolicy,
+      resolveProfileReconciliationAction.descriptor.auditEvidenceSchema,
+    );
+    const recordedOwners: string[] = [];
+    const result = yield* getActionHandler(resolveProfileReconciliationAction)(payload, {
+      actionInvocationId: '44444444-4444-4444-8444-444444444444',
+      addDomainEvent: collector.addDomainEvent,
+      addOutboxMessage: collector.addOutboxMessage,
+      recordAuditEvidence: collector.recordAuditEvidence,
+      recordDataAccess: collector.recordDataAccess,
+      scope,
+      services: {
+        ownerReconciler: {
+          finalize: (requested, expectedCaseRevision, unavailableOwners, conflictingOwners) =>
+            Effect.succeed({
+              caseRef: requested.caseRef,
+              conflictingOwners,
+              lastProcessedEventVersion: requested.expectedEventVersion,
+              outcome: 'RECONCILIATION_PROGRESS_RECORDED' as const,
+              ownerOutcomes: pendingOwnerOutcomes,
+              revision: expectedCaseRevision,
+              state: 'BLOCKED' as const,
+              unavailableOwners,
+            }),
+          load: (caseRef) =>
+            Effect.succeed({
+              caseRef,
+              lastProcessedEventVersion: payload.expectedEventVersion,
+              ownerOutcomes: pendingOwnerOutcomes,
+              revision: payload.expectedRevision,
+              state: 'OPEN' as const,
+            }),
+          record: (request) => {
+            recordedOwners.push(request.durableOutcome.owner);
+            return Effect.succeed({
+              caseRef: request.caseRef,
+              lastProcessedEventVersion: request.expectedEventVersion,
+              ownerOutcomes: pendingOwnerOutcomes.map((outcome) =>
+                outcome.owner === request.durableOutcome.owner ? request.durableOutcome : outcome,
               ),
+              revision: request.expectedCaseRevision + 1,
+              state: 'OPEN' as const,
+            });
           },
         },
-      }).pipe(
-        Effect.provideService(
-          ProfileReconciliationOwnerVerifier,
-          profileReconciliationOwnerVerifierUnavailable,
-        ),
-      );
+        ownerVerifier: {
+          verify: (request) =>
+            Effect.succeed(
+              request.desiredOutcome.owner === 'PROFILE_LIFECYCLE'
+                ? {
+                    _tag: 'CONFLICT' as const,
+                    owner: request.desiredOutcome.owner,
+                    reason: 'Lifecycle resolution receipt is absent',
+                  }
+                : {
+                    _tag: 'VERIFIED' as const,
+                    correlationRef: `verification:${request.desiredOutcome.owner}`,
+                    durableOutcome: {
+                      ...request.desiredOutcome,
+                      evidenceRef: `trusted-proof:${request.desiredOutcome.owner}`,
+                    },
+                  },
+            ),
+        },
+      },
+    }).pipe(Effect.provideService(ProfileReconciliationOwnerVerifier, profileReconciliationOwnerVerifierUnavailable));
 
-      expect(Schema.is(ResolveProfileReconciliationResultSchema)(result)).toBe(true);
-      if (
-        Schema.is(ResolveProfileReconciliationResultSchema)(result) &&
-        result.outcome === 'RECONCILIATION_PROGRESS_RECORDED'
-      ) {
-        expect(result.conflictingOwners).toEqual(['PROFILE_LIFECYCLE']);
-        expect(result.state).toBe('BLOCKED');
-      }
-      expect(recordedOwners).not.toContain('PROFILE_LIFECYCLE');
-      expect(recordedOwners).toHaveLength(RECONCILIATION_REQUIRED_OWNERS.length - 1);
-      expect(collector.snapshot().domainEvents).toHaveLength(0);
-      expect(collector.snapshot().outboxMessages).toHaveLength(0);
-    }),
+    expect(Schema.is(ResolveProfileReconciliationResultSchema)(result)).toBe(true);
+    if (
+      Schema.is(ResolveProfileReconciliationResultSchema)(result) &&
+      result.outcome === 'RECONCILIATION_PROGRESS_RECORDED'
+    ) {
+      expect(result.conflictingOwners).toEqual(['PROFILE_LIFECYCLE']);
+      expect(result.state).toBe('BLOCKED');
+    }
+    expect(recordedOwners).not.toContain('PROFILE_LIFECYCLE');
+    expect(recordedOwners).toHaveLength(RECONCILIATION_REQUIRED_OWNERS.length - 1);
+    expect(collector.snapshot().domainEvents).toHaveLength(0);
+    expect(collector.snapshot().outboxMessages).toHaveLength(0);
+  }),
 );
 
 it.effect('resumes from durable terminal outcomes without replacing their attribution', () =>
+  // @ts-expect-error -- This direct-handler test intentionally supplies owner verifier doubles instead of the production service Layers.
   Effect.gen(function* retryFromDurableProgress() {
     const collector = createActionCollector(
       resolveProfileReconciliationAction.descriptor.domainEvents,
@@ -161,15 +156,14 @@ it.effect('resumes from durable terminal outcomes without replacing their attrib
     const verifiedOwners: string[] = [];
     const recordedOwners: string[] = [];
     let revision = payload.expectedRevision + 2;
-    let durableOwnerOutcomes: ReconciliationOwnerOutcome[] = pendingOwnerOutcomes.map(
-      (outcome, index) =>
-        index < 2
-          ? {
-              evidenceRef: `original-owner-proof:${outcome.owner}`,
-              owner: outcome.owner,
-              status: 'RESOLVED' as const,
-            }
-          : outcome,
+    let durableOwnerOutcomes: ReconciliationOwnerOutcome[] = pendingOwnerOutcomes.map((outcome, index) =>
+      index < 2
+        ? {
+            evidenceRef: `original-owner-proof:${outcome.owner}`,
+            owner: outcome.owner,
+            status: 'RESOLVED' as const,
+          }
+        : outcome,
     );
     const result = yield* getActionHandler(resolveProfileReconciliationAction)(payload, {
       actionInvocationId: '55555555-5555-4555-8555-555555555555',
@@ -236,12 +230,7 @@ it.effect('resumes from durable terminal outcomes without replacing their attrib
           },
         },
       },
-    }).pipe(
-      Effect.provideService(
-        ProfileReconciliationOwnerVerifier,
-        profileReconciliationOwnerVerifierUnavailable,
-      ),
-    );
+    }).pipe(Effect.provideService(ProfileReconciliationOwnerVerifier, profileReconciliationOwnerVerifierUnavailable));
 
     expect(Schema.is(ResolveProfileReconciliationResultSchema)(result)).toBe(true);
     expect(verifiedOwners).not.toContain(RECONCILIATION_REQUIRED_OWNERS[0]);

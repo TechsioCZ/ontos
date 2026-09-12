@@ -8,12 +8,8 @@ import {
   ProfileLifecycleActionRejected,
   ProfileLifecycleResultSchema,
   SuspendCustomerProfilePayloadSchema,
-  SuspendCustomerProfileResultSchema,
 } from '../../shared/actions/suspend-customer-profile.ts';
-import type {
-  ProfileLifecyclePayload,
-  ProfileLifecycleResult,
-} from '../../shared/actions/suspend-customer-profile.ts';
+import type { ProfileLifecyclePayload, ProfileLifecycleResult } from '../../shared/actions/suspend-customer-profile.ts';
 import { profileServicesForVerifiedScope } from '../profile-service-factory.ts';
 import { createSuspendCustomerProfileCommerceCustomerContextCustomerProfileSuspendedV1OutboxMessage as createProfileSuspendedOutboxMessage } from './suspend-customer-profile.commerce-customer-context-customer-profile-suspended-v1.outbox-message.ts';
 import { recordProfileResourceLookup } from './profile-action-data-access.ts';
@@ -28,57 +24,55 @@ export interface SuspendCustomerProfileServices {
     context: ActionHandlerContext<DomainEvents, SuspendCustomerProfileServices>,
   ) => Effect.Effect<ProfileLifecycleResult, ProfileLifecycleActionRejected>;
 }
-const handle = Effect.fn('SuspendCustomerProfileAction.handle')(
-  function* handleSuspendCustomerProfileEffect(
-    payload: ProfileLifecyclePayload,
-    context: ActionHandlerContext<DomainEvents, SuspendCustomerProfileServices>,
-  ) {
-    if (payload.profileRef.tenantId !== context.scope.tenantId) {
-      return yield* new ProfileLifecycleActionRejected({
-        code: 'CURRENT_STATE_CONFLICT',
-        reason: 'The profile must belong to the trusted Tenant',
-        retryable: false,
-      });
-    }
-    const result = yield* context.services.transition(payload, context);
-    if (
-      result.profileRef.tenantId !== context.scope.tenantId ||
-      result.outcome !== 'PROFILE_SUSPENDED' ||
-      result.previousState !== 'ACTIVE' ||
-      result.state !== 'SUSPENDED'
-    ) {
-      return yield* new ProfileLifecycleActionRejected({
-        code: 'CURRENT_STATE_CONFLICT',
-        reason: 'The transition service returned an inconsistent lifecycle result',
-        retryable: false,
-      });
-    }
-    yield* recordProfileResourceLookup(
-      context,
-      result.profileRef,
-      `profile-lifecycle:${result.profileRef.resourceId}:${payload.expectedRevision}`,
-    );
-    const event = yield* context.addDomainEvent({
-      eventType: 'commerce.customer-context.customer-profile-suspended.v1',
-      payloadJson: result,
-      producerModuleKey: MODULE_KEY,
-      subjectModuleKey: MODULE_KEY,
-      subjectResourceId: result.profileRef.resourceId,
-      subjectResourceType: result.profileRef.resourceType,
+const handle = Effect.fn('SuspendCustomerProfileAction.handle')(function* handleSuspendCustomerProfileEffect(
+  payload: ProfileLifecyclePayload,
+  context: ActionHandlerContext<DomainEvents, SuspendCustomerProfileServices>,
+) {
+  if (payload.profileRef.tenantId !== context.scope.tenantId) {
+    return yield* new ProfileLifecycleActionRejected({
+      code: 'CURRENT_STATE_CONFLICT',
+      reason: 'The profile must belong to the trusted Tenant',
+      retryable: false,
     });
-    yield* context.addOutboxMessage(
-      event,
-      createProfileSuspendedOutboxMessage({
-        effectiveAt: result.effectiveAt,
-        previousState: 'ACTIVE',
-        profileRef: result.profileRef,
-        revision: result.revision,
-        state: 'SUSPENDED',
-      }),
-    );
-    return result;
-  },
-);
+  }
+  const result = yield* context.services.transition(payload, context);
+  if (
+    result.profileRef.tenantId !== context.scope.tenantId ||
+    result.outcome !== 'PROFILE_SUSPENDED' ||
+    result.previousState !== 'ACTIVE' ||
+    result.state !== 'SUSPENDED'
+  ) {
+    return yield* new ProfileLifecycleActionRejected({
+      code: 'CURRENT_STATE_CONFLICT',
+      reason: 'The transition service returned an inconsistent lifecycle result',
+      retryable: false,
+    });
+  }
+  yield* recordProfileResourceLookup(
+    context,
+    result.profileRef,
+    `profile-lifecycle:${result.profileRef.resourceId}:${payload.expectedRevision}`,
+  );
+  const event = yield* context.addDomainEvent({
+    eventType: 'commerce.customer-context.customer-profile-suspended.v1',
+    payloadJson: result,
+    producerModuleKey: MODULE_KEY,
+    subjectModuleKey: MODULE_KEY,
+    subjectResourceId: result.profileRef.resourceId,
+    subjectResourceType: result.profileRef.resourceType,
+  });
+  yield* context.addOutboxMessage(
+    event,
+    createProfileSuspendedOutboxMessage({
+      effectiveAt: result.effectiveAt,
+      previousState: 'ACTIVE',
+      profileRef: result.profileRef,
+      revision: result.revision,
+      state: 'SUSPENDED',
+    }),
+  );
+  return result;
+});
 export const suspendCustomerProfileAction = defineAction(
   {
     accessEvidencePolicy: {
@@ -103,31 +97,12 @@ export const suspendCustomerProfileAction = defineAction(
     owningModuleKey: MODULE_KEY,
     payloadSchema: SuspendCustomerProfilePayloadSchema,
     policies: [],
-    resultSchema: SuspendCustomerProfileResultSchema,
+    resultSchema: ProfileLifecycleResultSchema,
     schemaVersion: '1',
   },
   handle,
   (transaction, scope) =>
     profileServicesForVerifiedScope(transaction, scope).pipe(
-      Effect.map(({ suspendCustomerProfile }) => suspendCustomerProfile),
+      Effect.map(({ suspendCustomerProfile }): SuspendCustomerProfileServices => suspendCustomerProfile),
     ),
 );
-
-// <generated-outbox-message-exports>
-export { createSuspendCustomerProfileCommerceCustomerContextCustomerProfileSuspendedV1OutboxMessage } from './suspend-customer-profile.commerce-customer-context-customer-profile-suspended-v1.outbox-message.ts';
-export { SuspendCustomerProfileCommerceCustomerContextCustomerProfileSuspendedV1OutboxPayloadSchema } from './suspend-customer-profile.commerce-customer-context-customer-profile-suspended-v1.outbox-message.ts';
-export { SuspendCustomerProfileCommerceCustomerContextCustomerProfileSuspendedV1OutboxProducerModuleKey } from './suspend-customer-profile.commerce-customer-context-customer-profile-suspended-v1.outbox-message.ts';
-export { SuspendCustomerProfileCommerceCustomerContextCustomerProfileSuspendedV1OutboxTopic } from './suspend-customer-profile.commerce-customer-context-customer-profile-suspended-v1.outbox-message.ts';
-export type { SuspendCustomerProfileCommerceCustomerContextCustomerProfileSuspendedV1OutboxPayload } from './suspend-customer-profile.commerce-customer-context-customer-profile-suspended-v1.outbox-message.ts';
-export {
-  ProfileLifecycleActionRejected,
-  ProfileLifecyclePayloadSchema,
-  ProfileLifecycleResultSchema,
-  SuspendCustomerProfilePayloadSchema,
-  SuspendCustomerProfileResultSchema,
-} from '../../shared/actions/suspend-customer-profile.ts';
-export type {
-  ProfileLifecyclePayload,
-  ProfileLifecycleResult,
-} from '../../shared/actions/suspend-customer-profile.ts';
-// </generated-outbox-message-exports>

@@ -5,13 +5,9 @@ import type { OntosResourceType } from '@app/core-runtime';
 import { Schema } from 'effect';
 
 const ResourceIdSchema = Schema.toEncoded(
-  Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(300)).pipe(
-    Schema.brand('SavedAddressResourceId'),
-  ),
+  Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(300)).pipe(Schema.brand('SavedAddressResourceId')),
 );
-const TenantIdSchema = Schema.toEncoded(
-  Schema.String.check(Schema.isUUID()).pipe(Schema.brand('TenantId')),
-);
+const TenantIdSchema = Schema.toEncoded(Schema.String.check(Schema.isUUID()).pipe(Schema.brand('TenantId')));
 
 export const SavedAddressRefSchema = Schema.Struct({
   moduleId: Schema.Literal('commerce.customer-context'),

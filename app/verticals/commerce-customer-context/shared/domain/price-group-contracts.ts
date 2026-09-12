@@ -7,39 +7,37 @@ import { CounterpartyRefSchema } from './access-contract.ts';
 import { CommerceCustomerProfileRefSchema } from './profile-decisions.ts';
 
 const BoundedIdentifierSchema = Schema.Trim.check(Schema.isMinLength(1), Schema.isMaxLength(300));
-export const PriceGroupReasonSchema = Schema.Trim.check(
-  Schema.isMinLength(1),
-  Schema.isMaxLength(1000),
-);
-export const PriceGroupRevisionSchema = Schema.Finite.check(
-  Schema.isInt(),
-  Schema.isGreaterThanOrEqualTo(1),
-);
+export const PriceGroupReasonSchema = Schema.Trim.check(Schema.isMinLength(1), Schema.isMaxLength(1000));
+export const PriceGroupRevisionSchema = Schema.Finite.check(Schema.isInt(), Schema.isGreaterThanOrEqualTo(1));
 
+const isCanonicalPriceGroupInstant = (value: string): boolean => {
+  const parsed = DateTime.make(value);
+  return Option.isSome(parsed) && DateTime.formatIso(parsed.value) === value;
+};
 const PriceGroupInstantSchema = Schema.String.check(
-  Schema.makeFilter((value) => {
-    const parsed = DateTime.make(value);
-    return Option.isSome(parsed) && DateTime.formatIso(parsed.value) === value
+  Schema.makeFilter((value) =>
+    isCanonicalPriceGroupInstant(value)
       ? undefined
-      : 'timestamp must be one canonical UTC instant with millisecond precision';
-  }),
+      : 'timestamp must be one canonical UTC instant with millisecond precision',
+  ),
 ).pipe(
-  Schema.decodeTo(Schema.toType(Schema.DateTimeUtc), {
-    decode: SchemaGetter.transform(DateTime.makeUnsafe),
-    encode: SchemaGetter.transform(DateTime.formatIso),
-  }),
+  Schema.decodeTo(
+    Schema.toType(Schema.DateTimeUtc),
+    (function priceGroupInstantSchemaGetter() {
+      return {
+        decode: SchemaGetter.transform(DateTime.makeUnsafe),
+        encode: SchemaGetter.transform(DateTime.formatIso),
+      };
+    })(),
+  ),
 );
 
 /** Browser-safe representation of one trusted UTC instant. */
 export const PriceGroupInstantJsonSchema = Schema.toEncoded(PriceGroupInstantSchema);
 export type PriceGroupInstant = typeof PriceGroupInstantJsonSchema.Type;
 
-export const isPriceGroupInstantBefore = (
-  requested: PriceGroupInstant,
-  trustedNow: PriceGroupInstant,
-): boolean =>
-  DateTime.toEpochMillis(DateTime.makeUnsafe(requested)) <
-  DateTime.toEpochMillis(DateTime.makeUnsafe(trustedNow));
+export const isPriceGroupInstantBefore = (requested: PriceGroupInstant, trustedNow: PriceGroupInstant): boolean =>
+  DateTime.toEpochMillis(DateTime.makeUnsafe(requested)) < DateTime.toEpochMillis(DateTime.makeUnsafe(trustedNow));
 
 /**
  * The reference deliberately does not fix Pricing's future module/resource identifiers. #334 owns
@@ -67,24 +65,20 @@ export const isPriceGroupAuthorizationSubjectCompatible = (
   profile: CommerceCustomerProfileTarget,
   subject: PriceGroupAuthorizationSubject,
 ): boolean =>
-  profile.kind === subject.kind &&
-  (subject.kind === 'RETAIL' || subject.counterpartyRef.tenantId === profile.tenantId);
+  profile.kind === subject.kind && (subject.kind === 'RETAIL' || subject.counterpartyRef.tenantId === profile.tenantId);
 
 /** Staff-only Retail mutation target. Counterparty mutations use separate Permission-bound Actions. */
 export const RetailPriceGroupProfileTargetSchema = Schema.Struct({
   kind: Schema.Literal('RETAIL'),
   ...RetailCustomerProfileRefSchema.fields,
 });
-export type RetailPriceGroupProfileTarget = typeof RetailPriceGroupProfileTargetSchema.Type;
 
 export const CounterpartyPriceGroupProfileTargetSchema = Schema.Struct({
   kind: Schema.Literal('COUNTERPARTY'),
   ...CounterpartyPurchasingProfileRefSchema.fields,
 });
-export type CounterpartyPriceGroupProfileTarget =
-  typeof CounterpartyPriceGroupProfileTargetSchema.Type;
 
-export const PriceGroupCompatibilityIdentitySchema = Schema.Struct({
+const PriceGroupCompatibilityIdentitySchema = Schema.Struct({
   catalogRevision: PriceGroupRevisionSchema,
   contractId: BoundedIdentifierSchema,
   contractRevision: PriceGroupRevisionSchema,
@@ -92,7 +86,7 @@ export const PriceGroupCompatibilityIdentitySchema = Schema.Struct({
 });
 export type PriceGroupCompatibilityIdentity = typeof PriceGroupCompatibilityIdentitySchema.Type;
 
-export const CustomerPriceGroupAssignmentStateSchema = Schema.Literals(['ACTIVE', 'CANCELLED']);
+const CustomerPriceGroupAssignmentStateSchema = Schema.Literals(['ACTIVE', 'CANCELLED']);
 
 export const CustomerPriceGroupAssignmentSchema = Schema.Struct({
   assignmentRef: CustomerPriceGroupAssignmentRefSchema,
@@ -116,7 +110,7 @@ export const CustomerPriceGroupAssignmentSchema = Schema.Struct({
 );
 export type CustomerPriceGroupAssignment = typeof CustomerPriceGroupAssignmentSchema.Type;
 
-export const PriceGroupCatalogOutcomeSchema = Schema.Union([
+const PriceGroupCatalogOutcomeSchema = Schema.Union([
   Schema.TaggedStruct('USABLE', {
     compatibility: PriceGroupCompatibilityIdentitySchema,
     priceGroupRef: PriceGroupRefSchema,
@@ -190,21 +184,13 @@ export const CounterpartyPriceGroupRemovedEventSchema = Schema.Struct({
   counterpartyRef: CounterpartyRefSchema,
 });
 
-export const CustomerPriceGroupAssignmentChangedEventSchema = Schema.Union([
-  CustomerPriceGroupAssignedEventSchema,
-  CustomerPriceGroupRemovedEventSchema,
-]);
-
 export const CustomerPriceGroupMigrationEventSchema = Schema.Struct({
   assignmentRefs: Schema.Array(CustomerPriceGroupAssignmentRefSchema).check(
     Schema.isMinLength(1),
     Schema.isMaxLength(100),
   ),
   effectiveAt: PriceGroupInstantJsonSchema,
-  profiles: Schema.Array(CommerceCustomerProfileTargetSchema).check(
-    Schema.isMinLength(1),
-    Schema.isMaxLength(100),
-  ),
+  profiles: Schema.Array(CommerceCustomerProfileTargetSchema).check(Schema.isMinLength(1), Schema.isMaxLength(100)),
   sourceAssignmentRefs: Schema.Array(CustomerPriceGroupAssignmentRefSchema).check(
     Schema.isMinLength(1),
     Schema.isMaxLength(100),
@@ -227,13 +213,10 @@ const sameReference = (
   left.resourceType === right.resourceType &&
   left.tenantId === right.tenantId;
 
-export const samePriceGroupRef = (left: PriceGroupRef, right: PriceGroupRef): boolean =>
-  sameReference(left, right);
+export const samePriceGroupRef = (left: PriceGroupRef, right: PriceGroupRef): boolean => sameReference(left, right);
 
-export const sameProfileTarget = (
-  left: CommerceCustomerProfileTarget,
-  right: CommerceCustomerProfileTarget,
-): boolean => left.kind === right.kind && sameReference(left, right);
+export const sameProfileTarget = (left: CommerceCustomerProfileTarget, right: CommerceCustomerProfileTarget): boolean =>
+  left.kind === right.kind && sameReference(left, right);
 
 export const isCustomerPriceGroupAssignmentCurrent = (
   assignment: CustomerPriceGroupAssignment,
@@ -242,10 +225,3 @@ export const isCustomerPriceGroupAssignmentCurrent = (
   assignment.state === 'ACTIVE' &&
   assignment.effectiveFrom <= effectiveAt &&
   (assignment.effectiveTo === null || effectiveAt < assignment.effectiveTo);
-
-export const customerPriceGroupPeriodsOverlap = (
-  left: Pick<CustomerPriceGroupAssignment, 'effectiveFrom' | 'effectiveTo'>,
-  right: Pick<CustomerPriceGroupAssignment, 'effectiveFrom' | 'effectiveTo'>,
-): boolean =>
-  (left.effectiveTo === null || right.effectiveFrom < left.effectiveTo) &&
-  (right.effectiveTo === null || left.effectiveFrom < right.effectiveTo);

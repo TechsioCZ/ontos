@@ -26,10 +26,7 @@ import type {
   ProfileScopedRoutineInvoker,
 } from '../../src/persistence/profile-persistence.ts';
 import { profilePersistenceServicesForTransaction } from '../../src/persistence/profile-persistence.ts';
-import {
-  CustomerHistoryPortsService,
-  unavailableCustomerHistoryPorts,
-} from '../../shared/domain/history-ports.ts';
+import { CustomerHistoryPortsService, unavailableCustomerHistoryPorts } from '../../shared/domain/history-ports.ts';
 
 const tenantId = '11111111-1111-4111-8111-111111111111';
 const scope = {
@@ -70,6 +67,12 @@ const counterpartyRef = {
   resourceId: 'counterparty-1',
   resourceType: 'party.registry.counterparty' as const,
   tenantId,
+};
+
+const expectFunctions = (values: readonly unknown[]) => {
+  for (const value of values) {
+    expect(Predicate.isFunction(value)).toBe(true);
+  }
 };
 
 const profileScope: ProfilePersistenceScope = {
@@ -120,61 +123,57 @@ const orderRef = {
   tenantId,
 };
 
-it.effect(
-  'keeps exact Counterparty history association independent from the new-order lifecycle gate',
-  () =>
-    Effect.gen(function* counterpartyLifecycleSeparation() {
-      const states = ['ACTIVE', 'SUSPENDED', 'ARCHIVED'] as const;
-      const profileInput = {
-        authorizationSubject: { counterpartyRef, kind: 'COUNTERPARTY' as const },
-        profileRef: taggedCounterpartyProfileRef,
-      };
-      const role = {
-        managedLegalEntityId: scope.legalEntityId,
-        outcome: 'ELIGIBLE' as const,
-        roleResourceId: 'customer-role-1',
-        roleResourceRevision: 'customer-role:4',
-      };
+it.effect('keeps exact Counterparty history association independent from the new-order lifecycle gate', () =>
+  Effect.gen(function* counterpartyLifecycleSeparation() {
+    const states = ['ACTIVE', 'SUSPENDED', 'ARCHIVED'] as const;
+    const profileInput = {
+      authorizationSubject: { counterpartyRef, kind: 'COUNTERPARTY' as const },
+      profileRef: taggedCounterpartyProfileRef,
+    };
+    const role = {
+      managedLegalEntityId: scope.legalEntityId,
+      outcome: 'ELIGIBLE' as const,
+      roleResourceId: 'customer-role-1',
+      roleResourceRevision: 'customer-role:4',
+    };
 
-      for (const state of states) {
-        const historyPorts = yield* customerHistoryPortsForOperation(
-          unavailableCustomerHistoryPorts(),
-          profileTransaction(state),
-          scope,
-        );
-        const association = yield* historyPorts.counterpartyProfiles.current({
-          counterpartyRef,
-          profileRef: counterpartyProfileRef,
-        });
-        expect(association).toBe('CURRENT');
+    for (const state of states) {
+      const historyPorts = yield* customerHistoryPortsForOperation(
+        unavailableCustomerHistoryPorts(),
+        profileTransaction(state),
+        scope,
+      );
+      const association = yield* historyPorts.counterpartyProfiles.current({
+        counterpartyRef,
+        profileRef: counterpartyProfileRef,
+      });
+      expect(association).toBe('CURRENT');
 
-        const tradingGate = yield* profilePersistenceServicesForTransaction(
-          profileTransaction(state),
-          profileScope,
-          { resolveCounterpartyRole: () => Effect.succeed(role) },
-        ).customerProfileTradingGate.evaluateGate(profileInput, tenantId);
-        expect(tradingGate.gate).toEqual({
-          canAcceptNewOrder: state === 'ACTIVE',
-          outcome: state,
-        });
-      }
+      const tradingGate = yield* profilePersistenceServicesForTransaction(profileTransaction(state), profileScope, {
+        resolveCounterpartyRole: () => Effect.succeed(role),
+      }).customerProfileTradingGate.evaluateGate(profileInput, tenantId);
+      expect(tradingGate.gate).toEqual({
+        canAcceptNewOrder: state === 'ACTIVE',
+        outcome: state,
+      });
+    }
 
-      for (const mismatch of [
-        { counterpartyResourceId: counterpartyRef.resourceId, profileId: 'counterparty-profile-2' },
-        { counterpartyResourceId: 'counterparty-2', profileId: counterpartyProfileRef.resourceId },
-      ]) {
-        const historyPorts = yield* customerHistoryPortsForOperation(
-          unavailableCustomerHistoryPorts(),
-          profileTransaction('SUSPENDED', mismatch),
-          scope,
-        );
-        const association = yield* historyPorts.counterpartyProfiles.current({
-          counterpartyRef,
-          profileRef: counterpartyProfileRef,
-        });
-        expect(association).toBe('ABSENT');
-      }
-    }),
+    for (const mismatch of [
+      { counterpartyResourceId: counterpartyRef.resourceId, profileId: 'counterparty-profile-2' },
+      { counterpartyResourceId: 'counterparty-2', profileId: counterpartyProfileRef.resourceId },
+    ]) {
+      const historyPorts = yield* customerHistoryPortsForOperation(
+        unavailableCustomerHistoryPorts(),
+        profileTransaction('SUSPENDED', mismatch),
+        scope,
+      );
+      const association = yield* historyPorts.counterpartyProfiles.current({
+        counterpartyRef,
+        profileRef: counterpartyProfileRef,
+      });
+      expect(association).toBe('ABSENT');
+    }
+  }),
 );
 
 it('declares exact business and Resource authorization before history handlers', () => {
@@ -183,9 +182,7 @@ it('declares exact business and Resource authorization before history handlers',
   const retailResolver = getReadPermissionTargetResolver(retailOrderHistoryRead);
   const counterpartyOwnResolver = getReadPermissionTargetResolver(counterpartyOrderHistoryRead);
   const counterpartyAllResolver = getReadPermissionTargetResolver(counterpartyAllOrderHistoryRead);
-  expect(Predicate.isFunction(retailResolver)).toBe(true);
-  expect(Predicate.isFunction(counterpartyOwnResolver)).toBe(true);
-  expect(Predicate.isFunction(counterpartyAllResolver)).toBe(true);
+  expectFunctions([retailResolver, counterpartyOwnResolver, counterpartyAllResolver]);
   if (
     !Predicate.isFunction(retailResolver) ||
     !Predicate.isFunction(counterpartyOwnResolver) ||
@@ -206,9 +203,10 @@ it('declares exact business and Resource authorization before history handlers',
     },
     kind: 'business_permission',
   });
-  expect(
-    getReadResourcePermissionTargetResolver(retailOrderHistoryRead)?.(retailInput, scope),
-  ).toEqual({ permission: 'read', resource: retailProfileRef });
+  expect(getReadResourcePermissionTargetResolver(retailOrderHistoryRead)?.(retailInput, scope)).toEqual({
+    permission: 'read',
+    resource: retailProfileRef,
+  });
   expect(counterpartyOwnResolver(counterpartyInput, scope)).toMatchObject({
     businessPermission: { permission: 'counterparty.history.read_own' },
     kind: 'business_permission',
@@ -235,15 +233,9 @@ it('gates authoritative detail with the exact scope and Order Resource before ow
     profileRef: counterpartyProfileRef,
   };
   const retailResolver = getReadPermissionTargetResolver(retailOrderHistoryDetailRead);
-  const counterpartyOwnResolver = getReadPermissionTargetResolver(
-    counterpartyOrderHistoryDetailRead,
-  );
-  const counterpartyAllResolver = getReadPermissionTargetResolver(
-    counterpartyAllOrderHistoryDetailRead,
-  );
-  expect(Predicate.isFunction(retailResolver)).toBe(true);
-  expect(Predicate.isFunction(counterpartyOwnResolver)).toBe(true);
-  expect(Predicate.isFunction(counterpartyAllResolver)).toBe(true);
+  const counterpartyOwnResolver = getReadPermissionTargetResolver(counterpartyOrderHistoryDetailRead);
+  const counterpartyAllResolver = getReadPermissionTargetResolver(counterpartyAllOrderHistoryDetailRead);
+  expectFunctions([retailResolver, counterpartyOwnResolver, counterpartyAllResolver]);
   if (
     !Predicate.isFunction(retailResolver) ||
     !Predicate.isFunction(counterpartyOwnResolver) ||
@@ -255,9 +247,10 @@ it('gates authoritative detail with the exact scope and Order Resource before ow
   expect(retailResolver(retailInput, scope)).toMatchObject({
     businessPermission: { permission: 'retail.history.read' },
   });
-  expect(
-    getReadResourcePermissionTargetResolver(retailOrderHistoryDetailRead)?.(retailInput, scope),
-  ).toEqual({ permission: 'read', resource: orderRef });
+  expect(getReadResourcePermissionTargetResolver(retailOrderHistoryDetailRead)?.(retailInput, scope)).toEqual({
+    permission: 'read',
+    resource: orderRef,
+  });
   expect(counterpartyOwnResolver(counterpartyInput, scope)).toMatchObject({
     businessPermission: { permission: 'counterparty.history.read_own' },
   });
@@ -299,9 +292,7 @@ it.effect('executes exact business and Resource gates before resolving unavailab
     const database = {
       executor: yield* makeTestDatabase((text) =>
         Effect.succeed(
-          text.includes('current_setting')
-            ? [{ legal_entity_id: scope.legalEntityId, tenant_id: tenantId }]
-            : [],
+          text.includes('current_setting') ? [{ legal_entity_id: scope.legalEntityId, tenant_id: tenantId }] : [],
         ),
       ),
     };
@@ -321,8 +312,7 @@ it.effect('executes exact business and Resource gates before resolving unavailab
         },
         legalEntities: ({ legalEntityIds }) =>
           Effect.succeed(legalEntityIds.map((key) => ({ decision: 'allowed' as const, key }))),
-        modules: ({ moduleIds }) =>
-          Effect.succeed(moduleIds.map((key) => ({ decision: 'allowed' as const, key }))),
+        modules: ({ moduleIds }) => Effect.succeed(moduleIds.map((key) => ({ decision: 'allowed' as const, key }))),
         resources: ({ resources }) => {
           resourceChecks += 1;
           return Effect.succeed(
@@ -332,8 +322,7 @@ it.effect('executes exact business and Resource gates before resolving unavailab
             })),
           );
         },
-        tenants: ({ tenantIds }) =>
-          Effect.succeed(tenantIds.map((key) => ({ decision: 'allowed' as const, key }))),
+        tenants: ({ tenantIds }) => Effect.succeed(tenantIds.map((key) => ({ decision: 'allowed' as const, key }))),
       },
       { ownerAuthorizationOverlay: allowOwnerAuthorizationOverlay },
     );
@@ -344,10 +333,7 @@ it.effect('executes exact business and Resource gates before resolving unavailab
         registration: retailOrderHistoryRead,
         transport: { correlationId: scope.correlationId },
       })
-      .pipe(
-        Effect.provideService(CustomerHistoryPortsService, unavailableCustomerHistoryPorts()),
-        Effect.flip,
-      );
+      .pipe(Effect.provideService(CustomerHistoryPortsService, unavailableCustomerHistoryPorts()), Effect.flip);
 
     expect(Schema.is(ReadHandlerUnavailable)(failure)).toBe(true);
     expect(businessChecks).toBe(1);

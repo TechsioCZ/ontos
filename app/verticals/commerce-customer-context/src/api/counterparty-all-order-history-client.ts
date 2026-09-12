@@ -21,7 +21,7 @@ type CounterpartyAllOrderHistoryOperationInvocation = readonly [
 ];
 
 const counterpartyAllOrderHistoryClient = (
-  credential: Redacted.Redacted<string>,
+  credential: Redacted.Redacted,
   requestCorrelation: string,
   options: CounterpartyAllOrderHistoryClientOptions,
 ) =>
@@ -50,10 +50,5 @@ export const executeCounterpartyAllOrderHistory = (
   ...[requestCorrelation, options = {}]: CounterpartyAllOrderHistoryOperationInvocation
 ) =>
   operationGateway.invoke((credential) =>
-    executeCounterpartyAllOrderHistoryWithAuthorization(
-      payload,
-      credential,
-      requestCorrelation,
-      options,
-    ),
+    executeCounterpartyAllOrderHistoryWithAuthorization(payload, credential, requestCorrelation, options),
   );

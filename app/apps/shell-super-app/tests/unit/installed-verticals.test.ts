@@ -17,11 +17,7 @@ it.effect('derives installed vertical IDs from the injected topology without har
     );
     const expectedInstalledIds = yield* deriveInstalledVerticalIds(topology);
 
-    expect([...expectedInstalledIds]).toEqual([
-      'party-registry',
-      'commerce-customer-context',
-      'payment-term-catalog',
-    ]);
+    expect([...expectedInstalledIds]).toEqual(['party-registry', 'commerce-customer-context', 'payment-term-catalog']);
     expect(expectedInstalledIds.has('party.registry')).toBe(false);
     expect([...(yield* installedVerticalIds)]).toEqual([...expectedInstalledIds]);
     const valid = yield* deriveInstalledVerticalIds({

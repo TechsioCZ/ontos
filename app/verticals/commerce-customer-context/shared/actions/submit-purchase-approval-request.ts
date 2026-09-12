@@ -1,20 +1,16 @@
-import { Schema } from 'effect';
-import {
-  SubmitPurchaseApprovalRequestInputSchema,
-  SubmitPurchaseApprovalRequestResultSchema as DomainSubmitPurchaseApprovalRequestResultSchema,
-  PurchasingApprovalRejected,
-} from '../domain/purchasing-approval.ts';
 import { CoreSearchResourceRefSchema } from '@app/core-runtime';
+import { Schema } from 'effect';
+import { StorefrontIdSchema, SubmitPurchaseApprovalRequestInputSchema } from '../domain/purchasing-approval.ts';
+
+export {
+  SubmitPurchaseApprovalRequestResultSchema,
+  PurchasingApprovalRejected as SubmitPurchaseApprovalRequestRejected,
+} from '../domain/purchasing-approval.ts';
+export type { SubmitPurchaseApprovalRequestResult } from '../domain/purchasing-approval.ts';
+
 export const SubmitPurchaseApprovalRequestPayloadSchema = Schema.Struct({
   ...SubmitPurchaseApprovalRequestInputSchema.fields,
   counterpartyRef: CoreSearchResourceRefSchema,
-  storefrontId: Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(300)),
+  storefrontId: StorefrontIdSchema,
 });
-export type SubmitPurchaseApprovalRequestPayload =
-  typeof SubmitPurchaseApprovalRequestPayloadSchema.Type;
-export const SubmitPurchaseApprovalRequestResultSchema =
-  DomainSubmitPurchaseApprovalRequestResultSchema;
-export type SubmitPurchaseApprovalRequestResult =
-  typeof SubmitPurchaseApprovalRequestResultSchema.Type;
-export const SubmitPurchaseApprovalRequestRejected = PurchasingApprovalRejected;
-export type SubmitPurchaseApprovalRequestRejected = InstanceType<typeof PurchasingApprovalRejected>;
+export type SubmitPurchaseApprovalRequestPayload = typeof SubmitPurchaseApprovalRequestPayloadSchema.Type;

@@ -79,16 +79,9 @@ export const profileServicesForVerifiedScope = (
       requestCorrelation: scope.correlationId,
       tenantId: verifiedScope.tenantId,
     });
-    const profileOwnerVerifier = profileReconciliationOwnerVerifierForTransaction(
-      transaction,
-      verifiedScope,
-    );
-    const paymentTermsOwnerVerifier =
-      paymentTermsReconciliationOwnerEvidenceVerifierForTransaction(transaction);
-    const addressBookOwnerVerifier = addressBookReconciliationOwnerVerifierForTransaction(
-      transaction,
-      scope,
-    );
+    const profileOwnerVerifier = profileReconciliationOwnerVerifierForTransaction(transaction, verifiedScope);
+    const paymentTermsOwnerVerifier = paymentTermsReconciliationOwnerEvidenceVerifierForTransaction(transaction);
+    const addressBookOwnerVerifier = addressBookReconciliationOwnerVerifierForTransaction(transaction, scope);
     const reconciliationOwnerVerifier: ProfileReconciliationOwnerVerifierService = {
       verify: (request, context) => {
         if (request.desiredOutcome.owner === 'PAYMENT_TERMS') {

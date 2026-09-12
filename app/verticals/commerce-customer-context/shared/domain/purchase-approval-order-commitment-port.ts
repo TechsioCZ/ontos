@@ -6,19 +6,17 @@
  * commerce-customer-context remains the only writer of the approval aggregate
  * and performs the single-use CAS in its owner routine.
  */
-import { Context, Effect, Schema } from 'effect';
-import {
+// oxlint-disable-next-line max-classes-per-file -- The public port intentionally colocates its tagged owner-unavailable failure with the Context service tag; expires: 2027-09-10.
+import type { Effect } from 'effect';
+import { Context, Schema } from 'effect';
+import type {
   ConsumePurchaseApprovalInputSchema,
   ConsumePurchaseApprovalResultSchema,
   PurchasingApprovalRejected,
 } from './purchasing-approval.ts';
 
-export type PurchaseApprovalOrderCommitmentInput = Schema.Schema.Type<
-  typeof ConsumePurchaseApprovalInputSchema
->;
-export type PurchaseApprovalOrderCommitmentResult = Schema.Schema.Type<
-  typeof ConsumePurchaseApprovalResultSchema
->;
+export type PurchaseApprovalOrderCommitmentInput = Schema.Schema.Type<typeof ConsumePurchaseApprovalInputSchema>;
+export type PurchaseApprovalOrderCommitmentResult = Schema.Schema.Type<typeof ConsumePurchaseApprovalResultSchema>;
 
 export class PurchaseApprovalOrderOwnerUnavailable extends Schema.TaggedError<PurchaseApprovalOrderOwnerUnavailable>()(
   'PurchaseApprovalOrderOwnerUnavailable',

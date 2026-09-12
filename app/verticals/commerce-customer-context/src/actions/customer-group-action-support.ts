@@ -13,9 +13,7 @@ export type CustomerGroupActionContext = ActionHandlerContext<
   CustomerGroupPersistence
 >;
 
-export const customerGroupRecordedAt = DateTime.now.pipe(
-  Effect.map((instant) => DateTime.formatIso(instant)),
-);
+export const customerGroupRecordedAt = DateTime.now.pipe(Effect.map((instant) => DateTime.formatIso(instant)));
 
 export const requireCustomerGroupLegalEntityId = (
   legalEntityId: string | undefined,
@@ -29,10 +27,7 @@ export const requireCustomerGroupLegalEntityId = (
       )
     : Effect.succeed(legalEntityId);
 
-export const customerGroupServiceFactory: ReadServiceFactory<CustomerGroupPersistence> = (
-  transaction,
-  scope,
-) => {
+export const customerGroupServiceFactory: ReadServiceFactory<CustomerGroupPersistence> = (transaction, scope) => {
   const { legalEntityId } = scope;
   if (legalEntityId === undefined) {
     return Effect.fail(
@@ -42,9 +37,7 @@ export const customerGroupServiceFactory: ReadServiceFactory<CustomerGroupPersis
       }),
     );
   }
-  return Effect.succeed(
-    customerGroupPersistenceForTransaction(transaction, { ...scope, legalEntityId }),
-  );
+  return Effect.succeed(customerGroupPersistenceForTransaction(transaction, { ...scope, legalEntityId }));
 };
 
 export const customerGroupWritePermission = (groupRef: CustomerGroupRef) => ({
@@ -56,9 +49,7 @@ export const customerGroupWritePermission = (groupRef: CustomerGroupRef) => ({
   },
 });
 
-export const customerGroupMembershipWritePermission = (
-  membershipRef: CustomerGroupMembershipRef,
-) => ({
+export const customerGroupMembershipWritePermission = (membershipRef: CustomerGroupMembershipRef) => ({
   permission: 'write' as const,
   resource: {
     moduleId: membershipRef.moduleId,

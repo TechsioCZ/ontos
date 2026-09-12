@@ -73,9 +73,7 @@ const scope = {
   tenantId,
   trustedStorefrontId: request.purchasingContext.storefrontId,
 };
-const policy = (
-  overrides: Partial<GuestPaymentTermsPolicyDecision> = {},
-): GuestPaymentTermsPolicyDecision => ({
+const policy = (overrides: Partial<GuestPaymentTermsPolicyDecision> = {}): GuestPaymentTermsPolicyDecision => ({
   eligiblePaymentTermRefs: [paymentTermRef, fallbackRef],
   explicitlyPermittedPaymentTermRefs: [paymentTermRef],
   fallbackPaymentTermRefs: [fallbackRef],
@@ -128,9 +126,7 @@ it.effect('fails closed before policy resolution without a trusted Storefront', 
 
 it.effect('loads one exact Current owner-authored rule from deployment configuration', () =>
   Effect.gen(function* configuredPolicyResolution() {
-    const configuration = Schema.decodeUnknownSync(
-      CustomerCommercePaymentTermsPolicyConfigurationSchema,
-    )({
+    const configuration = Schema.decodeUnknownSync(CustomerCommercePaymentTermsPolicyConfigurationSchema)({
       configurationRevision: 'launch-policy-config-4',
       policySource: 'customer-commerce-policy:launch-config',
       rules: [
@@ -175,9 +171,7 @@ it.effect('loads one exact Current owner-authored rule from deployment configura
 );
 
 it('uses the trusted Storefront to select policy and only verifies request Channel/Market claims', () => {
-  const configuration = Schema.decodeUnknownSync(
-    CustomerCommercePaymentTermsPolicyConfigurationSchema,
-  )({
+  const configuration = Schema.decodeUnknownSync(CustomerCommercePaymentTermsPolicyConfigurationSchema)({
     configurationRevision: 'launch-policy-config-4',
     policySource: 'customer-commerce-policy:launch-config',
     rules: [

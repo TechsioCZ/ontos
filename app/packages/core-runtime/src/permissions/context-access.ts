@@ -13,7 +13,6 @@ import type { SpiceDbPermissionClient } from './client.ts';
 import type { SpiceDbConfigError } from './config-error.ts';
 import { loadSpiceDbConfig } from './config.ts';
 import type { SpiceDbConfigValue } from './config.ts';
-import type { SpiceDbConfigError } from './config-error.ts';
 import type { BusinessPermissionCode } from './business-permission.ts';
 import type { PrincipalRef } from './principal-ref.ts';
 
@@ -174,13 +173,7 @@ const businessTargetParts = (target: BusinessAccessTarget): readonly string[] =>
   }
   return target.kind === 'counterparty'
     ? [target.tenantId, target.legalEntityId, target.kind, target.counterpartyId]
-    : [
-        target.tenantId,
-        target.legalEntityId,
-        target.kind,
-        target.counterpartyId,
-        target.storefrontId,
-      ];
+    : [target.tenantId, target.legalEntityId, target.kind, target.counterpartyId, target.storefrontId];
 };
 
 export const toBusinessPermissionAccessObjectId = (
@@ -188,16 +181,11 @@ export const toBusinessPermissionAccessObjectId = (
   target: BusinessAccessTarget,
 ): string | undefined => encodeObjectId([permission, ...businessTargetParts(target)]);
 
-export const toBusinessPermissionAccessKey = ({
-  permission,
-  target,
-}: BusinessPermissionAccessTarget): string =>
+export const toBusinessPermissionAccessKey = ({ permission, target }: BusinessPermissionAccessTarget): string =>
   [permission, ...businessTargetParts(target)].join(':');
 
-export const toContextPermissionAccessKey = ({
-  moduleId,
-  permission,
-}: ContextPermissionAccessTarget): string => `${moduleId}:${permission}`;
+export const toContextPermissionAccessKey = ({ moduleId, permission }: ContextPermissionAccessTarget): string =>
+  `${moduleId}:${permission}`;
 
 export const toContextPermissionAccessObjectId = (
   tenantId: string,
@@ -229,18 +217,15 @@ const classifyPair = (pair: v1.CheckBulkPermissionsPair): ContextAccessDecision 
   return 'unavailable';
 };
 
-const foldAlternativeDecisions = (
-  decisions: readonly ContextAccessDecision[],
-): ContextAccessDecision => {
+const foldAlternativeDecisions = (decisions: readonly ContextAccessDecision[]): ContextAccessDecision => {
   if (decisions.includes('allowed')) {
     return 'allowed';
   }
   return decisions.includes('unavailable') ? 'unavailable' : 'denied';
 };
 
-const contextAccessDecisions = (
-  results: readonly ContextAccessResult[],
-): readonly ContextAccessDecision[] => results.map(({ decision }) => decision);
+const contextAccessDecisions = (results: readonly ContextAccessResult[]): readonly ContextAccessDecision[] =>
+  results.map(({ decision }) => decision);
 
 const resultsForBatchItems = (
   items: readonly BatchItem[],
@@ -360,10 +345,7 @@ export const makeContextAccess = (client: SpiceDbPermissionClient): ContextAcces
               key: counterpartyKey,
               permission: 'use',
               resourceId:
-                toBusinessPermissionAccessObjectId(
-                  counterpartyTarget.permission,
-                  counterpartyTarget.target,
-                ) ?? '',
+                toBusinessPermissionAccessObjectId(counterpartyTarget.permission, counterpartyTarget.target) ?? '',
               resourceType: 'business_permission',
             },
           ],
@@ -447,10 +429,8 @@ export const makeContextAccess = (client: SpiceDbPermissionClient): ContextAcces
 
 const unavailableContextAccess = (): ContextAccessService => {
   const service: ContextAccessService = {
-    businessPermissions: ({ targets }) =>
-      Effect.succeed(unavailable(targets.map(toBusinessPermissionAccessKey))),
-    contextPermissions: ({ targets }) =>
-      Effect.succeed(unavailable(targets.map(toContextPermissionAccessKey))),
+    businessPermissions: ({ targets }) => Effect.succeed(unavailable(targets.map(toBusinessPermissionAccessKey))),
+    contextPermissions: ({ targets }) => Effect.succeed(unavailable(targets.map(toContextPermissionAccessKey))),
     legalEntities: ({ legalEntityIds }) => Effect.succeed(unavailable(legalEntityIds)),
     modules: ({ moduleIds }) => Effect.succeed(unavailable(moduleIds)),
     resources: ({ resources }) =>

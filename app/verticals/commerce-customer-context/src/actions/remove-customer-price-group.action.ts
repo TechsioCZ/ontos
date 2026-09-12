@@ -3,12 +3,8 @@
 // @ontos-action-slug remove-customer-price-group
 /* eslint-disable sonarjs/no-duplicate-string -- Generated audit/event records intentionally repeat the canonical owner module key; expires: 2027-03-01. */
 import type { ActionHandlerContext } from '@app/core-runtime';
-import {
-  defineAction,
-  defineActionResourcePermission,
-  defineTenantModuleEntrypoint,
-} from '@app/core-runtime';
-import { Effect, Match, Schema } from 'effect';
+import { defineAction, defineActionResourcePermission, defineTenantModuleEntrypoint } from '@app/core-runtime';
+import { Effect, Schema } from 'effect';
 import {
   CustomerPriceGroupRemovedEventSchema,
   isPriceGroupInstantBefore,
@@ -30,15 +26,10 @@ import {
 import type { CustomerPriceGroupAssignmentStorePort } from '../../shared/domain/price-group-ports.ts';
 import { createRemoveCustomerPriceGroupCommerceCustomerContextCustomerPriceGroupRemovedV1OutboxMessage } from './remove-customer-price-group.commerce-customer-context-customer-price-group-removed-v1.outbox-message.ts';
 import { priceGroupActionServicesForTransaction } from './price-group-action-services.ts';
+import { interpretPriceGroupRemovalResult } from './price-group-removal-result.ts';
 
-export {
-  RemoveCustomerPriceGroupPayloadSchema,
-  RemoveCustomerPriceGroupResultSchema,
-} from '../../shared/actions/remove-customer-price-group.ts';
-export type {
-  RemoveCustomerPriceGroupPayload,
-  RemoveCustomerPriceGroupResult,
-} from '../../shared/actions/remove-customer-price-group.ts';
+export { RemoveCustomerPriceGroupPayloadSchema } from '../../shared/actions/remove-customer-price-group.ts';
+export type { RemoveCustomerPriceGroupPayload } from '../../shared/actions/remove-customer-price-group.ts';
 
 const RemoveCustomerPriceGroupErrorSchema = Schema.Union([
   CustomerPriceGroupAssignmentNotFound,
@@ -59,136 +50,85 @@ export interface RemoveCustomerPriceGroupServices {
   readonly store: CustomerPriceGroupAssignmentStorePort;
 }
 
-export const handleRemoveCustomerPriceGroup = Effect.fn(
-  'RemoveCustomerPriceGroupAction.handleRemoveCustomerPriceGroup',
-)(function* remove(
-  payload: RemoveCustomerPriceGroupPayload,
-  context: ActionHandlerContext<DomainEvents, RemoveCustomerPriceGroupServices>,
-) {
-  if (
-    payload.assignmentRef.tenantId !== context.scope.tenantId ||
-    payload.profile.tenantId !== context.scope.tenantId
+const handleRemoveCustomerPriceGroup = Effect.fn('RemoveCustomerPriceGroupAction.handleRemoveCustomerPriceGroup')(
+  function* remove(
+    payload: RemoveCustomerPriceGroupPayload,
+    context: ActionHandlerContext<DomainEvents, RemoveCustomerPriceGroupServices>,
   ) {
-    return yield* new CustomerPriceGroupScopeMismatch({
-      code: 'customer_price_group_scope_mismatch',
-      reason: 'The Assignment and Profile references must belong to the trusted Tenant',
-    });
-  }
+    if (
+      payload.assignmentRef.tenantId !== context.scope.tenantId ||
+      payload.profile.tenantId !== context.scope.tenantId
+    ) {
+      return yield* new CustomerPriceGroupScopeMismatch({
+        code: 'customer_price_group_scope_mismatch',
+        reason: 'The Assignment and Profile references must belong to the trusted Tenant',
+      });
+    }
 
-  const recordedAt = yield* context.services.now;
-  if (isPriceGroupInstantBefore(payload.effectiveAt, recordedAt)) {
-    return yield* new CustomerPriceGroupRetroactiveScheduleRejected({
-      code: 'customer_price_group_retroactive_schedule_rejected',
-      reason: 'PriceGroup removal must take effect now or in the future',
-    });
-  }
-  const stored = yield* context.services.store.remove({
-    actionInvocationId: context.actionInvocationId,
-    assignmentRef: payload.assignmentRef,
-    effectiveAt: payload.effectiveAt,
-    expectedRevision: payload.expectedRevision,
-    principalId: context.scope.principalId,
-    profile: payload.profile,
-    reason: payload.reason,
-    recordedAt,
-    tenantId: context.scope.tenantId,
-  });
-  const result = yield* Match.value(stored).pipe(
-    Match.tag('removed', (removed) => Effect.succeed(removed)),
-    Match.tag('assignment_not_found', () =>
-      Effect.fail(
-        new CustomerPriceGroupAssignmentNotFound({
-          code: 'customer_price_group_assignment_not_found',
-          reason: 'The exact PriceGroup assignment does not exist',
-        }),
-      ),
-    ),
-    Match.tag('profile_not_found', () =>
-      Effect.fail(
-        new CustomerPriceGroupProfileNotFound({
-          code: 'customer_price_group_profile_not_found',
-          reason: 'The customer profile does not exist',
-        }),
-      ),
-    ),
-    Match.tag('profile_mismatch', () =>
-      Effect.fail(
-        new CustomerPriceGroupRemovalConflict({
-          code: 'customer_price_group_removal_conflict',
-          reason: 'The assignment does not belong to the supplied customer profile',
-        }),
-      ),
-    ),
-    Match.tag('removal_conflict', () =>
-      Effect.fail(
-        new CustomerPriceGroupRemovalConflict({
-          code: 'customer_price_group_removal_conflict',
-          reason: 'The requested effective removal conflicts with the assignment period',
-        }),
-      ),
-    ),
-    Match.tag('retroactive_schedule', () =>
-      Effect.fail(
-        new CustomerPriceGroupRetroactiveScheduleRejected({
-          code: 'customer_price_group_retroactive_schedule_rejected',
-          reason: 'The removal became retroactive before it could be persisted',
-        }),
-      ),
-    ),
-    Match.tag('revision_conflict', ({ currentRevision }) =>
-      Effect.fail(
-        new CustomerPriceGroupRevisionConflict({
-          code: 'customer_price_group_revision_conflict',
-          currentRevision,
-          reason: 'The assignment changed after it was read',
-        }),
-      ),
-    ),
-    Match.exhaustive,
-  );
-  if (result.assignment.effectiveTo !== payload.effectiveAt) {
-    return yield* new CustomerPriceGroupRemovalConflict({
-      code: 'customer_price_group_removal_conflict',
-      reason: 'Persistence did not preserve the exact requested removal schedule',
-    });
-  }
-
-  yield* context.recordDataAccess({
-    accessKind: 'read',
-    queryHash: `customer-price-group-remove:${payload.assignmentRef.resourceId}:${payload.expectedRevision}`,
-    resultCount: 1,
-    servingModuleKey: 'commerce.customer-context',
-    targetModuleKey: 'commerce.customer-context',
-    targetResourceId: payload.assignmentRef.resourceId,
-    targetResourceType: payload.assignmentRef.resourceType,
-  });
-
-  if (result.changed) {
-    const eventPayload = {
-      assignmentRef: result.assignment.assignmentRef,
-      assignmentRevision: result.assignment.revision,
-      change: 'REMOVED',
+    const recordedAt = yield* context.services.now;
+    if (isPriceGroupInstantBefore(payload.effectiveAt, recordedAt)) {
+      return yield* new CustomerPriceGroupRetroactiveScheduleRejected({
+        code: 'customer_price_group_retroactive_schedule_rejected',
+        reason: 'PriceGroup removal must take effect now or in the future',
+      });
+    }
+    const stored = yield* context.services.store.remove({
+      actionInvocationId: context.actionInvocationId,
+      assignmentRef: payload.assignmentRef,
       effectiveAt: payload.effectiveAt,
-      priceGroupRef: result.assignment.priceGroupRef,
-      profile: result.assignment.profile,
-    } as const;
-    const event = yield* context.addDomainEvent({
-      eventType: 'commerce.customer-context.customer-price-group-removed.v1',
-      payloadJson: eventPayload,
-      producerModuleKey: 'commerce.customer-context',
-      subjectModuleKey: 'commerce.customer-context',
-      subjectResourceId: result.assignment.assignmentRef.resourceId,
-      subjectResourceType: result.assignment.assignmentRef.resourceType,
+      expectedRevision: payload.expectedRevision,
+      principalId: context.scope.principalId,
+      profile: payload.profile,
+      reason: payload.reason,
+      recordedAt,
+      tenantId: context.scope.tenantId,
     });
-    yield* context.addOutboxMessage(
-      event,
-      createRemoveCustomerPriceGroupCommerceCustomerContextCustomerPriceGroupRemovedV1OutboxMessage(
-        eventPayload,
-      ),
-    );
-  }
-  return { assignment: result.assignment, changed: result.changed };
-});
+    const result = yield* interpretPriceGroupRemovalResult(stored, {
+      profileMismatch: 'The assignment does not belong to the supplied customer profile',
+      profileNotFound: 'The customer profile does not exist',
+    });
+    if (result.assignment.effectiveTo !== payload.effectiveAt) {
+      return yield* new CustomerPriceGroupRemovalConflict({
+        code: 'customer_price_group_removal_conflict',
+        reason: 'Persistence did not preserve the exact requested removal schedule',
+      });
+    }
+
+    yield* context.recordDataAccess({
+      accessKind: 'read',
+      queryHash: `customer-price-group-remove:${payload.assignmentRef.resourceId}:${payload.expectedRevision}`,
+      resultCount: 1,
+      servingModuleKey: 'commerce.customer-context',
+      targetModuleKey: 'commerce.customer-context',
+      targetResourceId: payload.assignmentRef.resourceId,
+      targetResourceType: payload.assignmentRef.resourceType,
+    });
+
+    if (result.changed) {
+      const eventPayload = {
+        assignmentRef: result.assignment.assignmentRef,
+        assignmentRevision: result.assignment.revision,
+        change: 'REMOVED',
+        effectiveAt: payload.effectiveAt,
+        priceGroupRef: result.assignment.priceGroupRef,
+        profile: result.assignment.profile,
+      } as const;
+      const event = yield* context.addDomainEvent({
+        eventType: 'commerce.customer-context.customer-price-group-removed.v1',
+        payloadJson: eventPayload,
+        producerModuleKey: 'commerce.customer-context',
+        subjectModuleKey: 'commerce.customer-context',
+        subjectResourceId: result.assignment.assignmentRef.resourceId,
+        subjectResourceType: result.assignment.assignmentRef.resourceType,
+      });
+      yield* context.addOutboxMessage(
+        event,
+        createRemoveCustomerPriceGroupCommerceCustomerContextCustomerPriceGroupRemovedV1OutboxMessage(eventPayload),
+      );
+    }
+    return { assignment: result.assignment, changed: result.changed };
+  },
+);
 
 export const removeCustomerPriceGroupAction = defineAction(
   {
@@ -200,8 +140,7 @@ export const removeCustomerPriceGroupAction = defineAction(
     auditProfile: 'standard',
     domainErrorSchema: RemoveCustomerPriceGroupErrorSchema,
     domainEvents: {
-      'commerce.customer-context.customer-price-group-removed.v1':
-        CustomerPriceGroupRemovedEventSchema,
+      'commerce.customer-context.customer-price-group-removed.v1': CustomerPriceGroupRemovedEventSchema,
     },
     entrypoint: defineTenantModuleEntrypoint({
       access: 'write',
@@ -215,23 +154,14 @@ export const removeCustomerPriceGroupAction = defineAction(
     owningModuleKey: 'commerce.customer-context',
     payloadSchema: RemoveCustomerPriceGroupPayloadSchema,
     policies: [],
-    resourcePermission: defineActionResourcePermission<RemoveCustomerPriceGroupPayload>(
-      (payload) => ({ permission: 'write', resource: payload.profile }),
-    ),
+    resourcePermission: defineActionResourcePermission<RemoveCustomerPriceGroupPayload>((payload) => ({
+      permission: 'write',
+      resource: payload.profile,
+    })),
     resultSchema: RemoveCustomerPriceGroupResultSchema,
     schemaVersion: '1',
   },
   handleRemoveCustomerPriceGroup,
   (transaction, scope) =>
-    priceGroupActionServicesForTransaction(transaction, scope).pipe(
-      Effect.map(({ now, store }) => ({ now, store })),
-    ),
+    priceGroupActionServicesForTransaction(transaction, scope).pipe(Effect.map(({ now, store }) => ({ now, store }))),
 );
-
-// <generated-outbox-message-exports>
-export { createRemoveCustomerPriceGroupCommerceCustomerContextCustomerPriceGroupRemovedV1OutboxMessage } from './remove-customer-price-group.commerce-customer-context-customer-price-group-removed-v1.outbox-message.ts';
-export { RemoveCustomerPriceGroupCommerceCustomerContextCustomerPriceGroupRemovedV1OutboxPayloadSchema } from './remove-customer-price-group.commerce-customer-context-customer-price-group-removed-v1.outbox-message.ts';
-export { RemoveCustomerPriceGroupCommerceCustomerContextCustomerPriceGroupRemovedV1OutboxProducerModuleKey } from './remove-customer-price-group.commerce-customer-context-customer-price-group-removed-v1.outbox-message.ts';
-export { RemoveCustomerPriceGroupCommerceCustomerContextCustomerPriceGroupRemovedV1OutboxTopic } from './remove-customer-price-group.commerce-customer-context-customer-price-group-removed-v1.outbox-message.ts';
-export type { RemoveCustomerPriceGroupCommerceCustomerContextCustomerPriceGroupRemovedV1OutboxPayload } from './remove-customer-price-group.commerce-customer-context-customer-price-group-removed-v1.outbox-message.ts';
-// </generated-outbox-message-exports>

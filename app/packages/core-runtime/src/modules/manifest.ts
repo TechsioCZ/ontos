@@ -4,10 +4,7 @@ import { HttpApi } from 'effect/unstable/httpapi';
 import type { AnyActionRegistration } from '../actions/definition.ts';
 import { isActionRegistration } from '../actions/definition.ts';
 import { TENANT_PERMISSION_KEYS } from '../permissions/context-access.ts';
-import {
-  BusinessPermissionDescriptorSchema,
-  defineBusinessPermission,
-} from '../permissions/business-permission.ts';
+import { BusinessPermissionDescriptorSchema, defineBusinessPermission } from '../permissions/business-permission.ts';
 import type { BusinessPermissionDescriptor } from '../permissions/business-permission.ts';
 import { ModuleEntrypointSchema } from './module-entrypoint.ts';
 import { OntosShellContributionsSchema, validateShellContributions } from './shell-contribution.ts';
@@ -372,17 +369,13 @@ export const defineOntosModuleManifest = <const Input extends OntosModuleManifes
   const actionKeys = input.publicSurface.actions.map(({ descriptor }) => descriptor.actionKey);
   assertUnique(actionKeys, 'Action key');
 
-  const businessPermissions = (input.publicSurface.businessPermissions ?? []).map(
-    defineBusinessPermission,
-  );
+  const businessPermissions = (input.publicSurface.businessPermissions ?? []).map(defineBusinessPermission);
   assertUnique(
     businessPermissions.map(({ key }) => key),
     'business permission code',
   );
 
-  const resources = input.publicSurface.resourceTypes.map((resource) =>
-    exactDecode(OntosResourceTypeSchema, resource),
-  );
+  const resources = input.publicSurface.resourceTypes.map((resource) => exactDecode(OntosResourceTypeSchema, resource));
   const resourceKeys = resources.map(({ key }) => key);
   assertUnique(resourceKeys, 'resource type key');
   for (const resource of resources) {

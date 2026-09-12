@@ -20,8 +20,7 @@ export const EnsureRetailCustomerProfilePayloadSchema = Schema.Struct({
   subject: RetailCustomerProfileSubjectSchema,
   trigger: ProfileCreateTriggerSchema,
 });
-export type EnsureRetailCustomerProfilePayload =
-  typeof EnsureRetailCustomerProfilePayloadSchema.Type;
+export type EnsureRetailCustomerProfilePayload = typeof EnsureRetailCustomerProfilePayloadSchema.Type;
 
 export const EnsureRetailCustomerProfileResultSchema = Schema.Struct({
   outcome: CreateOutcomeSchema,

@@ -103,13 +103,7 @@ const AccessGrantRowSchema = Schema.Struct({
   revision: Schema.Int,
   revoked_at: nullableTimestampSchema,
   revoked_by: Schema.NullOr(Schema.String),
-  state: Schema.Literals([
-    'PENDING_GRANT',
-    'ACTIVE',
-    'PENDING_REVOKE',
-    'REVOKED',
-    'RECONCILIATION_REQUIRED',
-  ]),
+  state: Schema.Literals(['PENDING_GRANT', 'ACTIVE', 'PENDING_REVOKE', 'REVOKED', 'RECONCILIATION_REQUIRED']),
   storefront_resource_id: Schema.NullOr(Schema.String),
 });
 type AccessGrantRow = typeof AccessGrantRowSchema.Type;
@@ -123,7 +117,7 @@ const AccessMutationIntentRowSchema = Schema.Struct({
 });
 type AccessMutationIntentRow = typeof AccessMutationIntentRowSchema.Type;
 
-const InvitationRowSchema = Schema.Struct({
+const InvitationRowFieldsSchema = Schema.Struct({
   claimed_at: nullableTimestampSchema,
   claimed_by_principal_id: Schema.NullOr(Schema.String),
   counterparty_resource_id: Schema.String,
@@ -154,52 +148,68 @@ const InvitationRowSchema = Schema.Struct({
   reason: Schema.String,
   requested_permission_codes: Schema.Array(CounterpartyPermissionCodeSchema),
   revision: Schema.Int,
-  state: Schema.Literals([
-    'PENDING',
-    'CLAIMING',
-    'CLAIMED',
-    'REVOKED',
-    'EXPIRED',
-    'RECONCILIATION_REQUIRED',
-  ]),
+  state: Schema.Literals(['PENDING', 'CLAIMING', 'CLAIMED', 'REVOKED', 'EXPIRED', 'RECONCILIATION_REQUIRED']),
   storefront_resource_id: Schema.NullOr(Schema.String),
-}).check(
-  // oxlint-disable-next-line eslint/complexity -- The row codec states the complete cross-field lifecycle invariant in one auditable predicate.
-  Schema.makeFilter((row) => {
-    const intended = row.requested_permission_codes;
-    const intendedSet = new Set(intended);
-    const progress = row.grant_progress;
-    const uniqueIntended = intended.length > 0 && intendedSet.size === intended.length;
-    const exactProgress =
+});
+type InvitationRow = typeof InvitationRowFieldsSchema.Type;
+
+const invitationRowProgressFacts = (row: InvitationRow) => {
+  const intended = row.requested_permission_codes;
+  const intendedSet = new Set(intended);
+  const progress = row.grant_progress;
+  return {
+    exactProgress:
       progress.length === intended.length &&
       new Set(progress.map(({ permission }) => permission)).size === progress.length &&
-      progress.every(({ permission }) => intendedSet.has(permission));
-    if (!uniqueIntended) {
-      return 'invitation Permission set must be non-empty and unique';
-    }
-    if (row.state === 'PENDING' || row.state === 'EXPIRED') {
-      return progress.length === 0 && row.claimed_by_principal_id === null
-        ? undefined
-        : 'unclaimed invitation rows cannot expose claimant or grant progress';
-    }
-    if (row.state === 'REVOKED') {
-      return progress.length === 0 || exactProgress
-        ? undefined
-        : 'revoked invitation rows must preserve no progress or exact progress';
-    }
-    if (row.claimed_by_principal_id === null || !exactProgress) {
-      return 'claiming invitation rows require claimant and exact Permission progress';
-    }
-    const anyReconciliation = progress.some(({ state }) => state === 'RECONCILIATION_REQUIRED');
-    const allActive = progress.every(({ state }) => state === 'ACTIVE');
-    return (row.state === 'CLAIMED' && allActive) ||
-      (row.state === 'RECONCILIATION_REQUIRED' && anyReconciliation) ||
-      (row.state === 'CLAIMING' && !anyReconciliation && !allActive)
-      ? undefined
-      : 'invitation row lifecycle must match exact grant progress';
-  }),
-);
-type InvitationRow = typeof InvitationRowSchema.Type;
+      progress.every(({ permission }) => intendedSet.has(permission)),
+    intendedSet,
+    progress,
+    uniqueIntended: intended.length > 0 && intendedSet.size === intended.length,
+  };
+};
+
+const validateInvitationPermissionSet = (uniqueIntended: boolean) =>
+  uniqueIntended ? undefined : 'invitation Permission set must be non-empty and unique';
+
+const validateUnclaimedInvitationRow = (row: InvitationRow) =>
+  row.grant_progress.length === 0 && row.claimed_by_principal_id === null
+    ? undefined
+    : 'unclaimed invitation rows cannot expose claimant or grant progress';
+
+const validateRevokedInvitationRow = (row: InvitationRow, exactProgress: boolean) =>
+  row.grant_progress.length === 0 || exactProgress
+    ? undefined
+    : 'revoked invitation rows must preserve no progress or exact progress';
+
+const validateClaimingInvitationRow = (row: InvitationRow, exactProgress: boolean) => {
+  if (row.claimed_by_principal_id === null || !exactProgress) {
+    return 'claiming invitation rows require claimant and exact Permission progress';
+  }
+  const anyReconciliation = row.grant_progress.some(({ state }) => state === 'RECONCILIATION_REQUIRED');
+  const allActive = row.grant_progress.every(({ state }) => state === 'ACTIVE');
+  return (row.state === 'CLAIMED' && allActive) ||
+    (row.state === 'RECONCILIATION_REQUIRED' && anyReconciliation) ||
+    (row.state === 'CLAIMING' && !anyReconciliation && !allActive)
+    ? undefined
+    : 'invitation row lifecycle must match exact grant progress';
+};
+
+const validateInvitationRow = (row: InvitationRow) => {
+  const facts = invitationRowProgressFacts(row);
+  const permissionError = validateInvitationPermissionSet(facts.uniqueIntended);
+  if (permissionError !== undefined) {
+    return permissionError;
+  }
+  if (row.state === 'PENDING' || row.state === 'EXPIRED') {
+    return validateUnclaimedInvitationRow(row);
+  }
+  if (row.state === 'REVOKED') {
+    return validateRevokedInvitationRow(row, facts.exactProgress);
+  }
+  return validateClaimingInvitationRow(row, facts.exactProgress);
+};
+
+const InvitationRowSchema = InvitationRowFieldsSchema.check(Schema.makeFilter(validateInvitationRow));
 const InvitationMutationRowSchema = Schema.Struct({
   ...InvitationRowSchema.fields,
   mutation_id: Schema.NullOr(Schema.String),
@@ -446,8 +456,7 @@ const mutateAccessInvitationRoutine = defineScopedRoutine({
   schema: 'commerce_customer_context',
 });
 
-const instant = (value: Date | string): string =>
-  Schema.is(Schema.String)(value) ? value : value.toISOString();
+const instant = (value: Date | string): string => (Schema.is(Schema.String)(value) ? value : value.toISOString());
 
 const scopeStorefront = (scope: CounterpartyPermissionScope): string | null =>
   scope.kind === 'storefront' ? scope.storefrontKey : null;
@@ -496,8 +505,7 @@ const accessUnavailable = (failure?: ScopedRoutineInvocationError) => {
 };
 
 type ViolationCode = ConstructorParameters<typeof CounterpartyAccessContractViolation>[0]['code'];
-const violation = (code: ViolationCode, reason: string) =>
-  new CounterpartyAccessContractViolation({ code, reason });
+const violation = (code: ViolationCode, reason: string) => new CounterpartyAccessContractViolation({ code, reason });
 
 /* oxlint-disable anti-slop/no-conditional-empty-object-spread -- Exact optional public contract fields are deliberately omitted when their database value is NULL. */
 const grantFromRow = (tenantId: string, row: AccessGrantRow): CounterpartyAccessGrant => ({
@@ -532,9 +540,7 @@ const grantFromRow = (tenantId: string, row: AccessGrantRow): CounterpartyAccess
 const invitationFromRow = (tenantId: string, row: InvitationRow): CounterpartyAccessInvitation => ({
   catalogVersion: '1',
   claimProofVersion: invitationProofVersion,
-  ...(row.claimed_by_principal_id === null
-    ? {}
-    : { claimant: { principalId: row.claimed_by_principal_id, tenantId } }),
+  ...(row.claimed_by_principal_id === null ? {} : { claimant: { principalId: row.claimed_by_principal_id, tenantId } }),
   counterpartyRef: {
     moduleId: counterpartyModuleKey,
     resourceId: row.counterparty_resource_id,
@@ -575,14 +581,10 @@ const exactScope = (
   (input.legalEntityId === undefined || input.legalEntityId === scope.legalEntityId) &&
   (input.principalRefs ?? []).every(({ tenantId }) => tenantId === scope.tenantId);
 
-const ownerGrantMatchesScope = (
-  row: AccessGrantRow,
-  permissionScope: CounterpartyPermissionScope,
-): boolean =>
+const ownerGrantMatchesScope = (row: AccessGrantRow, permissionScope: CounterpartyPermissionScope): boolean =>
   permissionScope.kind === 'counterparty'
     ? row.storefront_resource_id === null
-    : row.storefront_resource_id === null ||
-      row.storefront_resource_id === permissionScope.storefrontKey;
+    : row.storefront_resource_id === null || row.storefront_resource_id === permissionScope.storefrontKey;
 
 type OwnerGrantReadResult = Result.Result<readonly AccessGrantRow[], ScopedRoutineInvocationError>;
 
@@ -602,11 +604,7 @@ const ownerAccessDecisionFromRows = (
   if (relevant.some(({ state }) => state === 'RECONCILIATION_REQUIRED')) {
     return 'UNAVAILABLE';
   }
-  if (
-    relevant.some(
-      ({ state }) => state === 'PENDING_REVOKE' || state === 'PENDING_GRANT' || state === 'REVOKED',
-    )
-  ) {
+  if (relevant.some(({ state }) => state === 'PENDING_REVOKE' || state === 'PENDING_GRANT' || state === 'REVOKED')) {
     return 'DENIED';
   }
   return 'DENIED';
@@ -659,28 +657,25 @@ export const currentOwnerAccessForTransaction =
 export const lockingCurrentOwnerAccessForTransaction = (
   transaction: CounterpartyAccessScopedRoutineInvoker,
   scope: Pick<OperationalScope, 'tenantId'> & { readonly legalEntityId: string },
-): CurrentOwnerAccessDecisionReader =>
-  currentOwnerAccessForTransaction(transaction, scope, { lock: true });
+): CurrentOwnerAccessDecisionReader => currentOwnerAccessForTransaction(transaction, scope, { lock: true });
 
 /* oxlint-disable effect-native/no-dependency-parameters -- This owner adapter captures one verified transaction-scoped capability and typed collaborators, then exposes only the narrow public port to handlers. */
-const requireEligible = Effect.fn('AccessPersistence.requireEligible')(
-  function* requireEligiblePrincipal(
-    eligibility: PrincipalEligibilityService,
-    principal: PrincipalRef,
-  ): Effect.fn.Return<void, CounterpartyAccessDomainError> {
-    const result = yield* eligibility.resolve(principal);
-    if (result.decision === 'eligible') {
-      return yield* Effect.void;
-    }
-    if (result.decision === 'unavailable') {
-      return yield* accessUnavailable();
-    }
-    return yield* violation(
-      'principal_not_eligible',
-      'The target Principal is not active and eligible in the trusted Tenant',
-    );
-  },
-);
+const requireEligible = Effect.fn('AccessPersistence.requireEligible')(function* requireEligiblePrincipal(
+  eligibility: PrincipalEligibilityService,
+  principal: PrincipalRef,
+): Effect.fn.Return<void, CounterpartyAccessDomainError> {
+  const result = yield* eligibility.resolve(principal);
+  if (result.decision === 'eligible') {
+    return yield* Effect.void;
+  }
+  if (result.decision === 'unavailable') {
+    return yield* accessUnavailable();
+  }
+  return yield* violation(
+    'principal_not_eligible',
+    'The target Principal is not active and eligible in the trusted Tenant',
+  );
+});
 
 export interface CounterpartyAccessPersistenceContext {
   readonly claimAuthority: CounterpartyInvitationClaimAuthorityService;
@@ -703,16 +698,31 @@ interface AccessAuthorizationReconciliationContext {
 const isTrustedPermissionScope = (
   dependencies: CounterpartyAccessPersistenceContext,
   scope: CounterpartyPermissionScope,
-): boolean =>
-  scope.kind === 'counterparty' || dependencies.trustedStorefrontId === scope.storefrontKey;
+): boolean => scope.kind === 'counterparty' || dependencies.trustedStorefrontId === scope.storefrontKey;
 
-const samePermissionScope = (
-  left: CounterpartyPermissionScope,
-  right: CounterpartyPermissionScope,
-): boolean =>
+const samePermissionScope = (left: CounterpartyPermissionScope, right: CounterpartyPermissionScope): boolean =>
   left.kind === right.kind &&
-  (left.kind === 'counterparty' ||
-    (right.kind === 'storefront' && left.storefrontKey === right.storefrontKey));
+  (left.kind === 'counterparty' || (right.kind === 'storefront' && left.storefrontKey === right.storefrontKey));
+
+const attestationMatchesClaimantAndInvitation = (
+  attestation: VerifiedInvitationClaimAttestation,
+  input: ClaimCounterpartyAccessInvitationInput,
+): boolean =>
+  attestation.claimant.tenantId === input.claimant.tenantId &&
+  attestation.claimant.principalId === input.claimant.principalId &&
+  attestation.counterpartyRef.tenantId === input.counterpartyRef.tenantId &&
+  attestation.counterpartyRef.resourceId === input.counterpartyRef.resourceId &&
+  attestation.invitationRef.tenantId === input.invitationRef.tenantId &&
+  attestation.invitationRef.resourceId === input.invitationRef.resourceId;
+
+const attestationMatchesInviterAuthority = (
+  attestation: VerifiedInvitationClaimAttestation,
+  inviter: PrincipalRef,
+): boolean =>
+  attestation.inviterAuthority.decision === 'ALLOWED' &&
+  attestation.inviterAuthority.permission === accessManagementPermission &&
+  attestation.inviterAuthority.inviter.tenantId === inviter.tenantId &&
+  attestation.inviterAuthority.inviter.principalId === inviter.principalId;
 
 const attestationMatchesClaim = (
   attestation: VerifiedInvitationClaimAttestation,
@@ -721,16 +731,8 @@ const attestationMatchesClaim = (
 ): boolean =>
   attestation.state === 'VERIFIED_AND_CONSUMED' &&
   attestation.proofVersion === invitationProofVersion &&
-  attestation.claimant.tenantId === input.claimant.tenantId &&
-  attestation.claimant.principalId === input.claimant.principalId &&
-  attestation.counterpartyRef.tenantId === input.counterpartyRef.tenantId &&
-  attestation.counterpartyRef.resourceId === input.counterpartyRef.resourceId &&
-  attestation.invitationRef.tenantId === input.invitationRef.tenantId &&
-  attestation.invitationRef.resourceId === input.invitationRef.resourceId &&
-  attestation.inviterAuthority.decision === 'ALLOWED' &&
-  attestation.inviterAuthority.permission === accessManagementPermission &&
-  attestation.inviterAuthority.inviter.tenantId === inviter.tenantId &&
-  attestation.inviterAuthority.inviter.principalId === inviter.principalId &&
+  attestationMatchesClaimantAndInvitation(attestation, input) &&
+  attestationMatchesInviterAuthority(attestation, inviter) &&
   samePermissionScope(attestation.inviterAuthority.scope, input.scope);
 
 const requireCurrentInviterAuthority = (
@@ -840,9 +842,7 @@ const requireMutationIntent = <Operation extends 'grant' | 'revoke'>(
         staged: row.mutation_staged,
       });
 
-const durableClaimRejection = (
-  failure: CounterpartyAccessDomainError,
-): InvitationClaimRejection | undefined => {
+const durableClaimRejection = (failure: CounterpartyAccessDomainError): InvitationClaimRejection | undefined => {
   if (!Schema.is(CounterpartyAccessContractViolation)(failure)) {
     return undefined;
   }
@@ -899,8 +899,7 @@ const verifyOrPersistClaimRejection = (
             Effect.mapError(accessUnavailable),
             Effect.flatMap(([rejected]) =>
               rejected !== undefined &&
-              (rejected.operation_outcome === 'CLAIM_REJECTED' ||
-                rejected.operation_outcome === 'EXPIRED')
+              (rejected.operation_outcome === 'CLAIM_REJECTED' || rejected.operation_outcome === 'EXPIRED')
                 ? Effect.succeed({
                     invitation: invitationFromRow(dependencies.scope.tenantId, rejected),
                     rejection,
@@ -928,10 +927,7 @@ const grantAccess = (
     !isTrustedPermissionScope(dependencies, input.scope)
   ) {
     return Effect.fail(
-      violation(
-        'counterparty_scope_mismatch',
-        'The grant does not match the verified operation scope',
-      ),
+      violation('counterparty_scope_mismatch', 'The grant does not match the verified operation scope'),
     );
   }
   return Effect.gen(function* persistAccessGrant() {
@@ -951,10 +947,7 @@ const grantAccess = (
     const row = yield* firstGrant(rows);
     const grant = grantFromRow(dependencies.scope.tenantId, row);
     if (row.operation_outcome === 'PROFILE_NOT_FOUND') {
-      return yield* violation(
-        'counterparty_scope_mismatch',
-        'The Counterparty is unavailable in scope',
-      );
+      return yield* violation('counterparty_scope_mismatch', 'The Counterparty is unavailable in scope');
     }
     if (row.operation_outcome === 'CONFLICT') {
       return { grant, outcome: 'CONFLICT' as const };
@@ -992,10 +985,7 @@ const revokeAccess = (
     (input.grantRef !== undefined && input.grantRef.tenantId !== dependencies.scope.tenantId)
   ) {
     return Effect.fail(
-      violation(
-        'counterparty_scope_mismatch',
-        'The revoke does not match the verified operation scope',
-      ),
+      violation('counterparty_scope_mismatch', 'The revoke does not match the verified operation scope'),
     );
   }
   return Effect.gen(function* persistAccessRevoke() {
@@ -1016,10 +1006,7 @@ const revokeAccess = (
     if (row.operation_outcome === 'LAST_ADMIN_PROTECTED') {
       return { grant, outcome: 'LAST_ADMIN_PROTECTED' as const };
     }
-    if (
-      row.operation_outcome === 'SCOPE_MISMATCH' ||
-      row.operation_outcome === 'PROFILE_NOT_FOUND'
-    ) {
+    if (row.operation_outcome === 'SCOPE_MISMATCH' || row.operation_outcome === 'PROFILE_NOT_FOUND') {
       return { grant, outcome: 'SCOPE_MISMATCH' as const };
     }
     if (row.operation_outcome === 'ALREADY_REVOKED') {
@@ -1100,9 +1087,7 @@ const mutateInvitation = (
           return Effect.fail(violation('invitation_invalid', invitationUnavailableReason));
         }
         if (row.operation_outcome === 'REVISION_CONFLICT') {
-          return Effect.fail(
-            violation('invitation_revision_conflict', 'The invitation changed concurrently'),
-          );
+          return Effect.fail(violation('invitation_revision_conflict', 'The invitation changed concurrently'));
         }
         if (row.operation_outcome === 'EXPIRED') {
           return Effect.fail(violation('invitation_expired', 'The invitation has expired'));
@@ -1111,6 +1096,172 @@ const mutateInvitation = (
       }),
     );
 };
+
+type InvitationClaimReconciliation = Readonly<{
+  readonly mutationId: string;
+  readonly operation: 'claim';
+  readonly staged: boolean;
+}>;
+
+type InvitationClaimStart =
+  | Readonly<{ readonly invitation: CounterpartyAccessInvitation; readonly kind: 'ALREADY_CLAIMED' }>
+  | Readonly<{
+      readonly claimReconciliation: InvitationClaimReconciliation;
+      readonly inviter: PrincipalRef;
+      readonly kind: 'READY';
+      readonly row: InvitationMutationRow;
+    }>
+  | Readonly<{ readonly code: ViolationCode; readonly kind: 'VIOLATION'; readonly reason: string }>
+  | Readonly<{ readonly kind: 'UNAVAILABLE' }>;
+
+const prepareInvitationClaimStart = (
+  dependencies: CounterpartyAccessPersistenceContext,
+  input: ClaimCounterpartyAccessInvitationInput,
+  row: InvitationMutationRow,
+): InvitationClaimStart => {
+  if (row.operation_outcome === 'INVALID') {
+    return { code: 'invitation_invalid', kind: 'VIOLATION', reason: invitationUnavailableReason };
+  }
+  if (row.operation_outcome === 'ALREADY_CLAIMED') {
+    return row.claimed_by_principal_id === input.claimant.principalId
+      ? { invitation: invitationFromRow(dependencies.scope.tenantId, row), kind: 'ALREADY_CLAIMED' }
+      : {
+          code: 'invitation_claimant_mismatch',
+          kind: 'VIOLATION',
+          reason: 'The invitation was claimed by a different Principal',
+        };
+  }
+  if (row.operation_outcome === 'REVISION_CONFLICT') {
+    return { code: 'invitation_revision_conflict', kind: 'VIOLATION', reason: 'The invitation changed concurrently' };
+  }
+  if (row.operation_outcome === 'EXPIRED') {
+    return { code: 'invitation_expired', kind: 'VIOLATION', reason: 'The invitation has expired' };
+  }
+  if (row.mutation_id === null || row.mutation_staged === null) {
+    return { kind: 'UNAVAILABLE' };
+  }
+  return {
+    claimReconciliation: {
+      mutationId: row.mutation_id,
+      operation: 'claim',
+      staged: row.mutation_staged,
+    },
+    inviter: {
+      principalId: row.invited_by,
+      tenantId: dependencies.scope.tenantId,
+    },
+    kind: 'READY',
+    row,
+  };
+};
+
+const beginInvitationClaim = (
+  dependencies: CounterpartyAccessPersistenceContext,
+  input: ClaimCounterpartyAccessInvitationInput,
+) =>
+  dependencies.transaction
+    .invoke(mutateAccessInvitationRoutine, [
+      input.invitationRef.resourceId,
+      input.counterpartyRef.resourceId,
+      scopeStorefront(input.scope),
+      input.expectedRevision,
+      'BEGIN_CLAIM',
+      input.actor.principalId,
+      input.actionInvocationId,
+      input.reason ?? null,
+      input.claimant.principalId,
+      input.claimProofReference,
+    ])
+    .pipe(Effect.mapError(accessUnavailable));
+
+const grantInvitationClaimPermissions = Effect.fn('AccessPersistence.grantInvitationClaimPermissions')(
+  function* grantInvitationClaimPermissionsEffect(
+    dependencies: CounterpartyAccessPersistenceContext,
+    input: ClaimCounterpartyAccessInvitationInput,
+    row: InvitationMutationRow,
+    inviter: PrincipalRef,
+  ) {
+    yield* requireCurrentInviterAuthority(dependencies, inviter, input.counterpartyRef, input.scope);
+    const grants = yield* Effect.forEach(
+      row.requested_permission_codes,
+      (permission) =>
+        grantAccess(
+          dependencies,
+          {
+            actionInvocationId: input.actionInvocationId,
+            actor: input.actor,
+            counterpartyRef: input.counterpartyRef,
+            legalEntityId: input.legalEntityId,
+            permission,
+            reason: input.reason,
+            recipient: input.claimant,
+            scope: input.scope,
+          },
+          false,
+        ),
+      { concurrency: 1 },
+    );
+    yield* requireCurrentInviterAuthority(dependencies, inviter, input.counterpartyRef, input.scope);
+    return grants;
+  },
+);
+
+const claimFinishOperation = (grants: readonly { readonly outcome: string }[]) =>
+  grants.some(({ outcome }) => outcome !== 'APPLIED' && outcome !== 'ALREADY_ACTIVE')
+    ? ('FINISH_RECONCILIATION' as const)
+    : ('FINISH_CLAIM' as const);
+
+type InvitationClaimPermissionMutation = Readonly<{
+  readonly grantRef: CounterpartyAccessGrant['grantRef'];
+  readonly mutationId: string;
+  readonly operation: 'grant';
+  readonly permission: CounterpartyAccessGrant['permission'];
+  readonly staged: boolean;
+}>;
+
+const finishInvitationClaim = Effect.fn('AccessPersistence.finishInvitationClaim')(
+  function* finishInvitationClaimEffect(
+    dependencies: CounterpartyAccessPersistenceContext,
+    input: ClaimCounterpartyAccessInvitationInput,
+    row: InvitationMutationRow,
+    attestation: VerifiedInvitationClaimAttestation,
+    claimReconciliation: InvitationClaimReconciliation,
+    operation: 'FINISH_CLAIM' | 'FINISH_RECONCILIATION',
+    permissionMutations: readonly InvitationClaimPermissionMutation[],
+  ) {
+    const completedRows = yield* dependencies.transaction
+      .invoke(mutateAccessInvitationRoutine, [
+        input.invitationRef.resourceId,
+        input.counterpartyRef.resourceId,
+        scopeStorefront(input.scope),
+        row.revision,
+        operation,
+        input.actor.principalId,
+        input.actionInvocationId,
+        input.reason ?? null,
+        input.claimant.principalId,
+        attestation.attestationReference,
+      ])
+      .pipe(Effect.mapError(accessUnavailable));
+    const [completed] = completedRows;
+    if (completed === undefined) {
+      return yield* accessUnavailable();
+    }
+    const invitation = invitationFromRow(dependencies.scope.tenantId, completed);
+    if (completed.state === 'CLAIMED') {
+      return { attestation, invitation, outcome: 'CLAIMED' as const };
+    }
+    return {
+      attestation,
+      invitation,
+      outcome: 'RECONCILIATION_REQUIRED' as const,
+      reconciliation: {
+        ...claimReconciliation,
+        permissionMutations,
+      },
+    };
+  },
+);
 
 export const counterpartyAccessPortForTransaction = (
   dependencies: CounterpartyAccessPersistenceContext,
@@ -1128,11 +1279,7 @@ export const counterpartyAccessPortForTransaction = (
       ) {
         return Effect.succeed('UNAVAILABLE' as const);
       }
-      const target = businessTarget(
-        dependencies.scope,
-        input.counterpartyRef.resourceId,
-        input.scope,
-      );
+      const target = businessTarget(dependencies.scope, input.counterpartyRef.resourceId, input.scope);
       const checkCore = dependencies.contextAccess
         .businessPermissions({
           principal: input.principal,
@@ -1156,8 +1303,9 @@ export const counterpartyAccessPortForTransaction = (
           scope: input.scope,
         })
         .pipe(
-          Effect.flatMap((decision) =>
-            decision === 'ALLOWED' ? checkCore : Effect.succeed(decision),
+          Effect.filterOrElse(
+            (decision) => decision !== 'ALLOWED',
+            () => checkCore,
           ),
         );
     },
@@ -1171,69 +1319,26 @@ export const counterpartyAccessPortForTransaction = (
         !isTrustedPermissionScope(dependencies, input.scope) ||
         input.invitationRef.tenantId !== dependencies.scope.tenantId
       ) {
-        return Effect.fail(
-          violation('invitation_claimant_mismatch', 'The claimant is outside the trusted scope'),
-        );
+        return Effect.fail(violation('invitation_claimant_mismatch', 'The claimant is outside the trusted scope'));
       }
       return Effect.gen(function* persistInvitationClaim() {
         yield* requireEligible(dependencies.eligibility, input.claimant);
-        const rows = yield* dependencies.transaction
-          .invoke(mutateAccessInvitationRoutine, [
-            input.invitationRef.resourceId,
-            input.counterpartyRef.resourceId,
-            scopeStorefront(input.scope),
-            input.expectedRevision,
-            'BEGIN_CLAIM',
-            input.actor.principalId,
-            input.actionInvocationId,
-            input.reason ?? null,
-            input.claimant.principalId,
-            input.claimProofReference,
-          ])
-          .pipe(Effect.mapError(accessUnavailable));
-        const [row] = rows;
-        if (row === undefined || row.operation_outcome === 'INVALID') {
-          return yield* violation('invitation_invalid', 'The invitation is unavailable in scope');
+        const [row] = yield* beginInvitationClaim(dependencies, input);
+        if (row === undefined) {
+          return yield* violation('invitation_invalid', invitationUnavailableReason);
         }
-        if (row.operation_outcome === 'ALREADY_CLAIMED') {
-          if (row.claimed_by_principal_id !== input.claimant.principalId) {
-            return yield* violation(
-              'invitation_claimant_mismatch',
-              'The invitation was claimed by a different Principal',
-            );
-          }
-          return {
-            invitation: invitationFromRow(dependencies.scope.tenantId, row),
-            outcome: 'ALREADY_CLAIMED' as const,
-          };
+        const start = prepareInvitationClaimStart(dependencies, input, row);
+        if (start.kind === 'VIOLATION') {
+          return yield* violation(start.code, start.reason);
         }
-        if (row.operation_outcome === 'REVISION_CONFLICT') {
-          return yield* violation(
-            'invitation_revision_conflict',
-            'The invitation changed concurrently',
-          );
-        }
-        if (row.operation_outcome === 'EXPIRED') {
-          return yield* violation('invitation_expired', 'The invitation has expired');
-        }
-        if (row.mutation_id === null || row.mutation_staged === null) {
+        if (start.kind === 'UNAVAILABLE') {
           return yield* accessUnavailable();
         }
-        const claimReconciliation = {
-          mutationId: row.mutation_id,
-          operation: 'claim' as const,
-          staged: row.mutation_staged,
-        };
-        const inviter = {
-          principalId: row.invited_by,
-          tenantId: dependencies.scope.tenantId,
-        };
-        const verification = yield* verifyOrPersistClaimRejection(
-          dependencies,
-          input,
-          row,
-          inviter,
-        );
+        if (start.kind === 'ALREADY_CLAIMED') {
+          return { invitation: start.invitation, outcome: 'ALREADY_CLAIMED' as const };
+        }
+        const { claimReconciliation, inviter } = start;
+        const verification = yield* verifyOrPersistClaimRejection(dependencies, input, row, inviter);
         if (!verification.verified) {
           return {
             invitation: verification.invitation,
@@ -1248,139 +1353,78 @@ export const counterpartyAccessPortForTransaction = (
             'The verified claim attestation does not match this invitation claim',
           );
         }
-        yield* requireCurrentInviterAuthority(
+        const grants = yield* grantInvitationClaimPermissions(dependencies, input, row, inviter);
+        const permissionMutations = grants.flatMap((result) =>
+          result.outcome === 'RECONCILIATION_REQUIRED'
+            ? [
+                {
+                  grantRef: result.grant.grantRef,
+                  mutationId: result.reconciliation.mutationId,
+                  operation: 'grant' as const,
+                  permission: result.grant.permission,
+                  staged: result.reconciliation.staged,
+                },
+              ]
+            : [],
+        );
+        return yield* finishInvitationClaim(
           dependencies,
-          inviter,
-          input.counterpartyRef,
-          input.scope,
-        );
-        const grants = yield* Effect.forEach(
-          row.requested_permission_codes,
-          (permission) =>
-            grantAccess(
-              dependencies,
-              {
-                actionInvocationId: input.actionInvocationId,
-                actor: input.actor,
-                counterpartyRef: input.counterpartyRef,
-                legalEntityId: input.legalEntityId,
-                permission,
-                reason: input.reason,
-                recipient: input.claimant,
-                scope: input.scope,
-              },
-              false,
-            ),
-          { concurrency: 1 },
-        );
-        yield* requireCurrentInviterAuthority(
-          dependencies,
-          inviter,
-          input.counterpartyRef,
-          input.scope,
-        );
-        const completedRows = yield* dependencies.transaction
-          .invoke(mutateAccessInvitationRoutine, [
-            input.invitationRef.resourceId,
-            input.counterpartyRef.resourceId,
-            scopeStorefront(input.scope),
-            row.revision,
-            grants.some(({ outcome }) => outcome !== 'APPLIED' && outcome !== 'ALREADY_ACTIVE')
-              ? 'FINISH_RECONCILIATION'
-              : 'FINISH_CLAIM',
-            input.actor.principalId,
-            input.actionInvocationId,
-            input.reason ?? null,
-            input.claimant.principalId,
-            attestation.attestationReference,
-          ])
-          .pipe(Effect.mapError(accessUnavailable));
-        const [completed] = completedRows;
-        if (completed === undefined) {
-          return yield* accessUnavailable();
-        }
-        const invitation = invitationFromRow(dependencies.scope.tenantId, completed);
-        if (completed.state === 'CLAIMED') {
-          return { attestation, invitation, outcome: 'CLAIMED' as const };
-        }
-        return {
+          input,
+          row,
           attestation,
-          invitation,
-          outcome: 'RECONCILIATION_REQUIRED' as const,
-          reconciliation: {
-            ...claimReconciliation,
-            permissionMutations: grants.flatMap((result) =>
-              result.outcome === 'RECONCILIATION_REQUIRED'
-                ? [
-                    {
-                      grantRef: result.grant.grantRef,
-                      mutationId: result.reconciliation.mutationId,
-                      operation: 'grant' as const,
-                      permission: result.grant.permission,
-                      staged: result.reconciliation.staged,
-                    },
-                  ]
-                : [],
-            ),
-          },
-        };
+          claimReconciliation,
+          claimFinishOperation(grants),
+          permissionMutations,
+        );
       });
     },
-    createInvitation: Effect.fn('CounterpartyAccessPort.createInvitation')(
-      function* createInvitation(
-        input: CreateCounterpartyAccessInvitationInput,
-      ): Effect.fn.Return<
-        CreateCounterpartyAccessInvitationOutcome,
-        CounterpartyAccessDomainError
-      > {
-        if (
-          !exactScope(dependencies.scope, {
-            counterpartyRef: input.counterpartyRef,
-            legalEntityId: input.legalEntityId,
-            principalRefs: [input.actor],
-          }) ||
-          !isTrustedPermissionScope(dependencies, input.scope)
-        ) {
-          return yield* violation(
-            'counterparty_scope_mismatch',
-            'The invitation is outside the trusted scope',
-          );
-        }
-        const [row] = yield* dependencies.transaction
-          .invoke(createAccessInvitationRoutine, [
-            input.counterpartyRef.resourceId,
-            input.deliveryMethod,
-            input.deliveryReference,
-            input.intendedPermissions,
-            scopeStorefront(input.scope),
-            input.expiresAt,
-            input.actor.principalId,
-            input.actionInvocationId,
-            input.reason,
-          ])
-          .pipe(Effect.mapError(accessUnavailable));
-        if (row === undefined || row.operation_outcome === 'INVALID') {
-          return yield* violation('invitation_invalid', 'The invitation could not be created');
-        }
-        const invitation = invitationFromRow(dependencies.scope.tenantId, row);
-        if (row.operation_outcome === 'ALREADY_PENDING') {
-          return { invitation, outcome: 'ALREADY_PENDING' };
-        }
-        yield* dependencies.proofLifecycle.issueAndStageDelivery({
-          actionInvocationId: input.actionInvocationId,
-          counterpartyRef: invitation.counterpartyRef,
-          deliveryMethod: invitation.deliveryMethod,
-          deliveryReference: invitation.deliveryReference,
-          expiresAt: invitation.expiresAt,
-          intendedPermissions: invitation.intendedPermissions,
-          invitationRef: invitation.invitationRef,
-          inviter: invitation.invitedBy,
+    createInvitation: Effect.fn('CounterpartyAccessPort.createInvitation')(function* createInvitation(
+      input: CreateCounterpartyAccessInvitationInput,
+    ): Effect.fn.Return<CreateCounterpartyAccessInvitationOutcome, CounterpartyAccessDomainError> {
+      if (
+        !exactScope(dependencies.scope, {
+          counterpartyRef: input.counterpartyRef,
           legalEntityId: input.legalEntityId,
-          scope: invitation.scope,
-        });
-        return { invitation, outcome: 'CREATED' };
-      },
-    ),
+          principalRefs: [input.actor],
+        }) ||
+        !isTrustedPermissionScope(dependencies, input.scope)
+      ) {
+        return yield* violation('counterparty_scope_mismatch', 'The invitation is outside the trusted scope');
+      }
+      const [row] = yield* dependencies.transaction
+        .invoke(createAccessInvitationRoutine, [
+          input.counterpartyRef.resourceId,
+          input.deliveryMethod,
+          input.deliveryReference,
+          input.intendedPermissions,
+          scopeStorefront(input.scope),
+          input.expiresAt,
+          input.actor.principalId,
+          input.actionInvocationId,
+          input.reason,
+        ])
+        .pipe(Effect.mapError(accessUnavailable));
+      if (row === undefined || row.operation_outcome === 'INVALID') {
+        return yield* violation('invitation_invalid', 'The invitation could not be created');
+      }
+      const invitation = invitationFromRow(dependencies.scope.tenantId, row);
+      if (row.operation_outcome === 'ALREADY_PENDING') {
+        return { invitation, outcome: 'ALREADY_PENDING' };
+      }
+      yield* dependencies.proofLifecycle.issueAndStageDelivery({
+        actionInvocationId: input.actionInvocationId,
+        counterpartyRef: invitation.counterpartyRef,
+        deliveryMethod: invitation.deliveryMethod,
+        deliveryReference: invitation.deliveryReference,
+        expiresAt: invitation.expiresAt,
+        intendedPermissions: invitation.intendedPermissions,
+        invitationRef: invitation.invitationRef,
+        inviter: invitation.invitedBy,
+        legalEntityId: input.legalEntityId,
+        scope: invitation.scope,
+      });
+      return { invitation, outcome: 'CREATED' };
+    }),
     getInvitation: (input) =>
       exactScope(dependencies.scope, {
         counterpartyRef: input.counterpartyRef,
@@ -1403,10 +1447,7 @@ export const counterpartyAccessPortForTransaction = (
         principalRefs: [input.actor, ...(input.recipient === undefined ? [] : [input.recipient])],
       }) && isTrustedPermissionScope(dependencies, input.scope)
         ? dependencies.transaction
-            .invoke(listAccessGrantsRoutine, [
-              input.counterpartyRef.resourceId,
-              input.recipient?.principalId ?? null,
-            ])
+            .invoke(listAccessGrantsRoutine, [input.counterpartyRef.resourceId, input.recipient?.principalId ?? null])
             .pipe(
               Effect.mapError(accessUnavailable),
               Effect.map((rows) =>
@@ -1416,49 +1457,40 @@ export const counterpartyAccessPortForTransaction = (
                     input.scope.kind === 'counterparty'
                       ? grant.scope.kind === 'counterparty'
                       : grant.scope.kind === 'counterparty' ||
-                        (grant.scope.kind === 'storefront' &&
-                          grant.scope.storefrontKey === input.scope.storefrontKey);
+                        (grant.scope.kind === 'storefront' && grant.scope.storefrontKey === input.scope.storefrontKey);
                   return included ? [grant] : [];
                 }),
               ),
             )
         : Effect.fail(accessUnavailable()),
-    resendInvitation: Effect.fn('CounterpartyAccessPort.resendInvitation')(
-      function* resendInvitation(
-        input: InvitationMutationInput,
-      ): Effect.fn.Return<
-        ResendCounterpartyAccessInvitationOutcome,
-        CounterpartyAccessDomainError
-      > {
-        const row = yield* mutateInvitation(dependencies, input, 'RESEND');
-        const invitation = invitationFromRow(dependencies.scope.tenantId, row);
-        if (row.operation_outcome === 'ALREADY_SENT') {
-          return { invitation, outcome: 'ALREADY_SENT' };
-        }
-        yield* dependencies.proofLifecycle.rotateAndStageDelivery({
-          actionInvocationId: input.actionInvocationId,
-          counterpartyRef: invitation.counterpartyRef,
-          deliveryMethod: invitation.deliveryMethod,
-          deliveryReference: invitation.deliveryReference,
-          expiresAt: invitation.expiresAt,
-          intendedPermissions: invitation.intendedPermissions,
-          invitationRef: invitation.invitationRef,
-          inviter: invitation.invitedBy,
-          legalEntityId: input.legalEntityId,
-          scope: invitation.scope,
-        });
-        return { invitation, outcome: 'RESENT' };
-      },
-    ),
+    resendInvitation: Effect.fn('CounterpartyAccessPort.resendInvitation')(function* resendInvitation(
+      input: InvitationMutationInput,
+    ): Effect.fn.Return<ResendCounterpartyAccessInvitationOutcome, CounterpartyAccessDomainError> {
+      const row = yield* mutateInvitation(dependencies, input, 'RESEND');
+      const invitation = invitationFromRow(dependencies.scope.tenantId, row);
+      if (row.operation_outcome === 'ALREADY_SENT') {
+        return { invitation, outcome: 'ALREADY_SENT' };
+      }
+      yield* dependencies.proofLifecycle.rotateAndStageDelivery({
+        actionInvocationId: input.actionInvocationId,
+        counterpartyRef: invitation.counterpartyRef,
+        deliveryMethod: invitation.deliveryMethod,
+        deliveryReference: invitation.deliveryReference,
+        expiresAt: invitation.expiresAt,
+        intendedPermissions: invitation.intendedPermissions,
+        invitationRef: invitation.invitationRef,
+        inviter: invitation.invitedBy,
+        legalEntityId: input.legalEntityId,
+        scope: invitation.scope,
+      });
+      return { invitation, outcome: 'RESENT' };
+    }),
     revoke: (input) => revokeAccess(dependencies, input),
     revokeInvitation: (input) =>
       mutateInvitation(dependencies, input, 'REVOKE').pipe(
         Effect.map((row) => ({
           invitation: invitationFromRow(dependencies.scope.tenantId, row),
-          outcome:
-            row.operation_outcome === 'ALREADY_REVOKED'
-              ? ('ALREADY_REVOKED' as const)
-              : ('REVOKED' as const),
+          outcome: row.operation_outcome === 'ALREADY_REVOKED' ? ('ALREADY_REVOKED' as const) : ('REVOKED' as const),
         })),
       ),
   };
@@ -1495,9 +1527,7 @@ export const counterpartyAccessPortForScopedTransaction = Effect.fn(
     proofLifecycle,
     scope,
     transaction,
-    ...(scope.trustedStorefrontId === undefined
-      ? {}
-      : { trustedStorefrontId: scope.trustedStorefrontId }),
+    ...(scope.trustedStorefrontId === undefined ? {} : { trustedStorefrontId: scope.trustedStorefrontId }),
   });
 });
 
@@ -1511,11 +1541,7 @@ const reconciliationEntry = (
       : { kind: 'storefront', storefrontKey: row.storefront_resource_id };
   return {
     attemptCount: 0,
-    businessTarget: businessTarget(
-      dependencies.scope,
-      row.counterparty_resource_id,
-      permissionScope,
-    ),
+    businessTarget: businessTarget(dependencies.scope, row.counterparty_resource_id, permissionScope),
     correlationId: row.action_invocation_id,
     mutationId: row.mutation_id,
     operation: row.recovery_operation,
@@ -1527,9 +1553,7 @@ const reconciliationEntry = (
 
 const reconciliationFailure = (reason: string, cause?: unknown) => {
   const failure = new AuthorizationMutationReconciliationUnavailable({ reason });
-  return cause === undefined
-    ? failure
-    : Object.defineProperty(failure, 'cause', { enumerable: false, value: cause });
+  return cause === undefined ? failure : Object.defineProperty(failure, 'cause', { enumerable: false, value: cause });
 };
 
 const reconcileAccessEntry = (
@@ -1567,17 +1591,6 @@ const reconcileAccessRow = (
     Effect.as(true),
     Effect.orElseSucceed(() => false),
   );
-
-export type AccessAuthorizationMutationReconciliationResult =
-  | Readonly<{
-      readonly grant: CounterpartyAccessGrant;
-      readonly mutationId: string;
-      readonly occurredAt: Date;
-      readonly operation: AccessMutationOperation;
-      readonly outcome: 'ALREADY_FINAL' | 'FINALIZED' | 'INDETERMINATE';
-      readonly sourceActionInvocationId: string;
-    }>
-  | Readonly<{ readonly outcome: 'COMPENSATED' }>;
 
 const finalizedAccessMutationResult = (
   dependencies: AccessAuthorizationReconciliationContext,
@@ -1621,9 +1634,7 @@ export const accessAuthorizationMutationReconciliationForTransaction = (
       readonly operation: AccessMutationOperation;
     }) =>
       dependencies.transaction.invoke(readAccessReconciliationRoutine, [mutationId]).pipe(
-        Effect.mapError((cause) =>
-          reconciliationFailure('Access reconciliation storage is unavailable', cause),
-        ),
+        Effect.mapError((cause) => reconciliationFailure('Access reconciliation storage is unavailable', cause)),
         Effect.flatMap(([row]) => {
           if (
             row === undefined ||
@@ -1631,9 +1642,7 @@ export const accessAuthorizationMutationReconciliationForTransaction = (
             row.counterparty_resource_id !== counterpartyResourceId ||
             row.grant_id !== grantId
           ) {
-            return Effect.fail(
-              reconciliationFailure('The access mutation is unavailable or no longer current'),
-            );
+            return Effect.fail(reconciliationFailure('The access mutation is unavailable or no longer current'));
           }
           const grant = grantFromRow(dependencies.scope.tenantId, row);
           return reconcileAccessEntry(dependencies, mutation, row).pipe(
@@ -1644,9 +1653,7 @@ export const accessAuthorizationMutationReconciliationForTransaction = (
               grant,
               mutationId,
               occurredAt: DateTime.toDateUtc(
-                DateTime.makeUnsafe(
-                  operation === 'grant' ? row.granted_at : (row.revoked_at ?? row.granted_at),
-                ),
+                DateTime.makeUnsafe(operation === 'grant' ? row.granted_at : (row.revoked_at ?? row.granted_at)),
               ),
               operation,
               outcome: 'INDETERMINATE' as const,
@@ -1661,7 +1668,7 @@ export const accessAuthorizationMutationReconciliationForTransaction = (
  * Worker-facing binding over the verified legal-entity fan-out scope. It exposes only the
  * routine invoker already scoped by Core and never asks the worker to construct Action services.
  */
-export const accessAuthorizationMutationReconciliationForScopedWorker = (
+const accessAuthorizationMutationReconciliationForScopedWorker = (
   scope: OutboxWorkerLegalEntityScope,
   mutation: Pick<BusinessPermissionRelationshipMutationService, 'mutate'>,
 ) =>
@@ -1679,77 +1686,124 @@ const workerRejected = (
   cause?: unknown,
 ) => {
   const failure = new AccessAuthorizationMutationWorkerRejected({ code, reason });
-  return cause === undefined
-    ? failure
-    : Object.defineProperty(failure, 'cause', { enumerable: false, value: cause });
+  return cause === undefined ? failure : Object.defineProperty(failure, 'cause', { enumerable: false, value: cause });
 };
 
-const claimRootMatchesRequest = (
-  root: typeof InvitationClaimReconciliationRowSchema.Type,
-  request: Extract<AccessAuthorizationMutationRequest, { readonly operation: 'claim' }>,
-): boolean => {
-  const claimSubjectPrincipalId = root.claim_subject_principal_id ?? root.claimed_by_principal_id;
-  // The request contains only permission mutations that were durably staged by the claim.
-  // Permissions that were already ACTIVE are intentionally absent.  Comparing against the
-  // invitation's intended set therefore accepts a forged subset (or rejects a valid claim with
-  // pre-existing grants); compare every non-terminal progress identity and any partially-applied
-  // terminal identity instead.
-  const pendingProgress = root.grant_progress.filter(
-    ({ state }) => state === 'PENDING_GRANT' || state === 'RECONCILIATION_REQUIRED',
+type DurableClaimRoot = typeof InvitationClaimReconciliationRowSchema.Type;
+type DurableClaimRequest = Extract<AccessAuthorizationMutationRequest, { readonly operation: 'claim' }>;
+type DurableClaimPermission = DurableClaimRequest['permissionMutations'][number]['permission'];
+
+const claimSubjectPrincipalId = (root: DurableClaimRoot) =>
+  root.claim_subject_principal_id ?? root.claimed_by_principal_id;
+
+const claimRootPendingPermissions = (root: DurableClaimRoot) =>
+  new Set(
+    root.grant_progress.flatMap(({ permission, state }) =>
+      state === 'PENDING_GRANT' || state === 'RECONCILIATION_REQUIRED' ? [permission] : [],
+    ),
   );
-  const expectedPermissions = new Set(pendingProgress.map(({ permission }) => permission));
-  const expectedGrantByPermission = new Map(
+
+const claimRootGrantIdsByPermission = (root: DurableClaimRoot) =>
+  new Map(
     root.grant_progress.flatMap((progress) =>
       'grantRef' in progress && progress.grantRef !== undefined
         ? [[progress.permission, progress.grantRef.resourceId] as const]
         : [],
     ),
   );
-  const requestedPermissions = request.permissionMutations.map(({ permission }) => permission);
-  const requestedMutationIds = request.permissionMutations.map(({ mutationId }) => mutationId);
+
+const claimRequestPermissions = (request: DurableClaimRequest) =>
+  request.permissionMutations.map(({ permission }) => permission);
+
+const claimRequestMutationIds = (request: DurableClaimRequest) =>
+  request.permissionMutations.map(({ mutationId }) => mutationId);
+
+const claimRequestHasUniqueValues = (values: readonly string[]) => new Set(values).size === values.length;
+
+const claimRequestOperationsAreGrants = (request: DurableClaimRequest) =>
+  request.permissionMutations.every(({ operation }) => operation === 'grant');
+
+const claimRootRequestGrantRefsMatch = (
+  root: DurableClaimRoot,
+  request: DurableClaimRequest,
+  requestedPermissions: readonly DurableClaimPermission[],
+): boolean => {
   const rootPermissionSet = new Set(root.requested_permission_codes);
-  const requestedPermissionSet = new Set(requestedPermissions);
+  const expectedGrantByPermission = claimRootGrantIdsByPermission(root);
   const requestedGrantByPermission = new Map(
-    request.permissionMutations.map(({ grantRef, permission }) => [
-      permission,
-      grantRef.resourceId,
-    ]),
+    request.permissionMutations.map(({ grantRef, permission }) => [permission, grantRef.resourceId]),
   );
-  // Older request-only envelopes intentionally carry no permission mutation details. The
-  // durable claim root and the subsequent owner-routine row check still provide the complete
-  // authorization boundary in that case. When details are present, require the exact staged
-  // progress identities so a forged subset cannot narrow the claim's grant set.
-  const requestMatchesProgress =
-    root.state === 'REVOKED'
-      ? new Set(requestedPermissions).size === requestedPermissions.length &&
-        requestedPermissions.every((permission) => rootPermissionSet.has(permission)) &&
-        request.permissionMutations.every(({ operation }) => operation === 'grant')
-      : request.permissionMutations.length === 0 ||
-        (requestedPermissions.length >= expectedPermissions.size &&
-          new Set(requestedPermissions).size === requestedPermissions.length &&
-          new Set(requestedMutationIds).size === requestedMutationIds.length &&
-          pendingProgress.every(({ permission }) => requestedPermissionSet.has(permission)) &&
-          requestedPermissions.every((permission) => {
-            const expectedGrantId = expectedGrantByPermission.get(permission);
-            return (
-              rootPermissionSet.has(permission) &&
-              (expectedGrantId === undefined ||
-                requestedGrantByPermission.get(permission) === expectedGrantId)
-            );
-          }) &&
-          request.permissionMutations.every(({ operation }) => operation === 'grant'));
+  return requestedPermissions.every((permission) => {
+    const expectedGrantId = expectedGrantByPermission.get(permission);
+    return (
+      rootPermissionSet.has(permission) &&
+      (expectedGrantId === undefined || requestedGrantByPermission.get(permission) === expectedGrantId)
+    );
+  });
+};
+
+const claimRootRequestMatchesRevokedRoot = (
+  root: DurableClaimRoot,
+  request: DurableClaimRequest,
+  requestedPermissions: readonly DurableClaimPermission[],
+): boolean => {
+  const rootPermissionSet = new Set(root.requested_permission_codes);
+  return (
+    claimRequestHasUniqueValues(requestedPermissions) &&
+    requestedPermissions.every((permission) => rootPermissionSet.has(permission)) &&
+    claimRequestOperationsAreGrants(request)
+  );
+};
+
+const claimRootRequestMatchesActiveRoot = (
+  root: DurableClaimRoot,
+  request: DurableClaimRequest,
+  requestedPermissions: readonly DurableClaimPermission[],
+): boolean => {
+  if (request.permissionMutations.length === 0) {
+    return true;
+  }
+  const pendingPermissions = claimRootPendingPermissions(root);
+  const requestedPermissionSet = new Set(requestedPermissions);
+  return (
+    requestedPermissions.length >= pendingPermissions.size &&
+    claimRequestHasUniqueValues(requestedPermissions) &&
+    claimRequestHasUniqueValues(claimRequestMutationIds(request)) &&
+    root.grant_progress
+      .filter(({ state }) => state === 'PENDING_GRANT' || state === 'RECONCILIATION_REQUIRED')
+      .every(({ permission }) => requestedPermissionSet.has(permission)) &&
+    claimRootRequestGrantRefsMatch(root, request, requestedPermissions) &&
+    claimRequestOperationsAreGrants(request)
+  );
+};
+
+const claimRootRequestMatchesProgress = (root: DurableClaimRoot, request: DurableClaimRequest): boolean => {
+  const requestedPermissions = claimRequestPermissions(request);
+  return root.state === 'REVOKED'
+    ? claimRootRequestMatchesRevokedRoot(root, request, requestedPermissions)
+    : claimRootRequestMatchesActiveRoot(root, request, requestedPermissions);
+};
+
+const claimRootRequestIdentityMatches = (root: DurableClaimRoot, request: DurableClaimRequest): boolean => {
+  const subjectPrincipalId = claimSubjectPrincipalId(root);
   return (
     root.claim_mutation_id === request.mutationId &&
     root.counterparty_resource_id === request.counterpartyRef.resourceId &&
     root.invitation_id === request.invitationRef.resourceId &&
-    claimSubjectPrincipalId !== null &&
-    claimSubjectPrincipalId !== undefined &&
-    requestMatchesProgress &&
-    (request.scope.kind === 'counterparty'
-      ? root.storefront_resource_id === null
-      : root.storefront_resource_id === request.scope.storefrontKey)
+    subjectPrincipalId !== null &&
+    subjectPrincipalId !== undefined
   );
 };
+
+const claimRootRequestScopeMatches = (root: DurableClaimRoot, request: DurableClaimRequest): boolean =>
+  request.scope.kind === 'counterparty'
+    ? root.storefront_resource_id === null
+    : root.storefront_resource_id === request.scope.storefrontKey;
+
+const claimRootMatchesRequest = (root: DurableClaimRoot, request: DurableClaimRequest): boolean =>
+  claimRootRequestIdentityMatches(root, request) &&
+  claimRootRequestMatchesProgress(root, request) &&
+  claimRootRequestScopeMatches(root, request);
 
 const claimInviterAuthorityDecision = (
   contextAccess: Pick<ContextAccessService, 'businessPermissions'>,
@@ -1774,9 +1828,7 @@ const claimInviterAuthorityDecision = (
             target: businessTarget(scope, root.counterparty_resource_id, permissionScope),
           },
         ],
-        ...(root.storefront_resource_id === null
-          ? {}
-          : { trustedStorefrontId: root.storefront_resource_id }),
+        ...(root.storefront_resource_id === null ? {} : { trustedStorefrontId: root.storefront_resource_id }),
       })
       .pipe(Effect.map(([decision]) => decision?.decision ?? ('unavailable' as const)));
   };
@@ -1852,7 +1904,7 @@ const claimPermissionRowsMatchRoot = (
   rows: readonly (typeof InvitationClaimPermissionMutationRowSchema.Type)[],
   operation?: AccessMutationOperation,
 ): boolean => {
-  const claimSubjectPrincipalId = root.claim_subject_principal_id ?? root.claimed_by_principal_id;
+  const rootClaimSubjectPrincipalId = root.claim_subject_principal_id ?? root.claimed_by_principal_id;
   // Normal claim staging is restricted to the currently pending progress identities. A
   // compensation pass is different: it must discover every tuple whose GRANT journal points
   // at this claim, including tuples that became ACTIVE before the revoke won the race.
@@ -1865,9 +1917,7 @@ const claimPermissionRowsMatchRoot = (
   );
   const grantIds = new Set(
     root.grant_progress.flatMap((progress) =>
-      'grantRef' in progress && progress.grantRef !== undefined
-        ? [progress.grantRef.resourceId]
-        : [],
+      'grantRef' in progress && progress.grantRef !== undefined ? [progress.grantRef.resourceId] : [],
     ),
   );
   const rowPermissions = rows.map(({ permission_code }) => permission_code);
@@ -1884,7 +1934,7 @@ const claimPermissionRowsMatchRoot = (
     rows.every(
       (row) =>
         row.counterparty_resource_id === root.counterparty_resource_id &&
-        row.principal_id === claimSubjectPrincipalId &&
+        row.principal_id === rootClaimSubjectPrincipalId &&
         row.storefront_resource_id === root.storefront_resource_id &&
         intended.has(row.permission_code) &&
         (operation === 'revoke' || grantIds.size === 0 || grantIds.has(row.grant_id)) &&
@@ -1902,85 +1952,167 @@ const compensateInvitationClaim = (
   Readonly<{ readonly outcome: 'COMPENSATED' | 'INDETERMINATE' }>,
   AccessAuthorizationMutationWorkerError
 > =>
-  scope.routineInvoker
-    .invoke(stageInvitationClaimGrantsRoutine, [root.claim_mutation_id, true])
-    .pipe(
-      Effect.mapError((cause) =>
+  scope.routineInvoker.invoke(stageInvitationClaimGrantsRoutine, [root.claim_mutation_id, true]).pipe(
+    Effect.mapError((cause) =>
+      workerRejected('RECONCILIATION_UNAVAILABLE', 'Invitation claim compensation is unavailable', cause),
+    ),
+    Effect.filterOrFail(
+      (rows) => claimPermissionRowsMatchRoot(root, rows, 'revoke'),
+      () =>
         workerRejected(
           'RECONCILIATION_UNAVAILABLE',
-          'Invitation claim compensation is unavailable',
-          cause,
+          'An invitation compensation mutation is not linked to the durable claim',
         ),
-      ),
-      Effect.flatMap((rows) =>
-        claimPermissionRowsMatchRoot(root, rows, 'revoke')
-          ? Effect.succeed(rows)
-          : Effect.fail(
-              workerRejected(
-                'RECONCILIATION_UNAVAILABLE',
-                'An invitation compensation mutation is not linked to the durable claim',
+    ),
+    Effect.flatMap(
+      (
+        rows,
+      ): Effect.Effect<
+        Readonly<{ readonly outcome: 'COMPENSATED' | 'INDETERMINATE' }>,
+        AccessAuthorizationMutationWorkerError
+      > => {
+        if (rows.length === 0) {
+          // A claim can lose issuer authority before the owner creates its first grant row.
+          // Persist the same claimant/proof-bound rejection marker used by the synchronous
+          // path so the retry is idempotent and the invitation returns to PENDING instead of
+          // remaining forever in CLAIMING with no tuples left to compensate.
+          return scope.routineInvoker
+            .invoke(mutateAccessInvitationRoutine, [
+              root.invitation_id,
+              root.counterparty_resource_id,
+              root.storefront_resource_id,
+              root.revision,
+              'REJECT_CLAIM',
+              root.invited_by,
+              root.source_action_invocation_id,
+              'Compensate invitation claim after inviter authority was lost',
+              root.claim_subject_principal_id ?? root.claimed_by_principal_id,
+              root.attestation_reference,
+            ])
+            .pipe(
+              Effect.mapError((cause) =>
+                workerRejected('RECONCILIATION_UNAVAILABLE', 'Invitation claim reset is unavailable', cause),
               ),
-            ),
-      ),
-      Effect.flatMap(
-        (
-          rows,
-        ): Effect.Effect<
-          Readonly<{ readonly outcome: 'COMPENSATED' | 'INDETERMINATE' }>,
-          AccessAuthorizationMutationWorkerError
-        > => {
-          if (rows.length === 0) {
-            // A claim can lose issuer authority before the owner creates its first grant row.
-            // Persist the same claimant/proof-bound rejection marker used by the synchronous
-            // path so the retry is idempotent and the invitation returns to PENDING instead of
-            // remaining forever in CLAIMING with no tuples left to compensate.
-            return scope.routineInvoker
-              .invoke(mutateAccessInvitationRoutine, [
-                root.invitation_id,
-                root.counterparty_resource_id,
-                root.storefront_resource_id,
-                root.revision,
-                'REJECT_CLAIM',
-                root.invited_by,
-                root.source_action_invocation_id,
-                'Compensate invitation claim after inviter authority was lost',
-                root.claim_subject_principal_id ?? root.claimed_by_principal_id,
-                root.attestation_reference,
-              ])
-              .pipe(
-                Effect.mapError((cause) =>
-                  workerRejected(
-                    'RECONCILIATION_UNAVAILABLE',
-                    'Invitation claim reset is unavailable',
-                    cause,
-                  ),
-                ),
-                Effect.flatMap(([reset]) =>
-                  reset?.operation_outcome === 'CLAIM_REJECTED'
-                    ? Effect.succeed({ outcome: 'COMPENSATED' as const })
-                    : Effect.fail(
-                        workerRejected(
-                          'RECONCILIATION_INDETERMINATE',
-                          'The invitation issuer no longer has access management authority',
-                        ),
+              Effect.flatMap(([reset]) =>
+                reset?.operation_outcome === 'CLAIM_REJECTED'
+                  ? Effect.succeed({ outcome: 'COMPENSATED' as const })
+                  : Effect.fail(
+                      workerRejected(
+                        'RECONCILIATION_INDETERMINATE',
+                        'The invitation issuer no longer has access management authority',
                       ),
-                ),
-              );
-          }
-          // A compensation staging call can return a mix of rows: a newly staged revoke
-          // is deliberately deferred until the next delivery, while an already staged
-          // row is safe to reconcile now. Do not let one newly staged row suppress the
-          // TOUCH compensation for every other row in the same claim.
-          const readyRows = rows.filter(({ mutation_staged: staged }) => !staged);
-          return Effect.forEach(
-            readyRows,
-            (row) =>
-              reconcileAccessRow({ scope, transaction: scope.routineInvoker }, mutation, row),
-            { concurrency: 1 },
-          ).pipe(Effect.as({ outcome: 'INDETERMINATE' as const }));
-        },
-      ),
-    );
+                    ),
+              ),
+            );
+        }
+        // A compensation staging call can return a mix of rows: a newly staged revoke
+        // is deliberately deferred until the next delivery, while an already staged
+        // row is safe to reconcile now. Do not let one newly staged row suppress the
+        // TOUCH compensation for every other row in the same claim.
+        const readyRows = rows.filter(({ mutation_staged: staged }) => !staged);
+        return Effect.forEach(
+          readyRows,
+          (row) => reconcileAccessRow({ scope, transaction: scope.routineInvoker }, mutation, row),
+          { concurrency: 1 },
+        ).pipe(Effect.as({ outcome: 'INDETERMINATE' as const }));
+      },
+    ),
+  );
+
+const stageInvitationClaimPermissions = (
+  scope: OutboxWorkerLegalEntityScope,
+  root: DurableClaimRoot,
+  request: DurableClaimRequest,
+) =>
+  scope.routineInvoker.invoke(stageInvitationClaimGrantsRoutine, [request.mutationId, false]).pipe(
+    Effect.mapError((cause) =>
+      workerRejected('RECONCILIATION_UNAVAILABLE', 'Invitation permission staging is unavailable', cause),
+    ),
+    Effect.filterOrFail(
+      (rows) => claimPermissionRowsMatchRoot(root, rows),
+      () =>
+        workerRejected(
+          'RECONCILIATION_UNAVAILABLE',
+          'A staged invitation permission mutation is not linked to the durable claim',
+        ),
+    ),
+  );
+
+const reconcileInvitationClaimPermissions = (
+  scope: OutboxWorkerLegalEntityScope,
+  rows: readonly (typeof InvitationClaimPermissionMutationRowSchema.Type)[],
+  mutation: Pick<BusinessPermissionRelationshipMutationService, 'mutate'>,
+) => {
+  if (rows.some(({ mutation_staged: staged }) => staged)) {
+    return Effect.succeed(false);
+  }
+  return Effect.forEach(
+    rows,
+    (row) => reconcileAccessRow({ scope, transaction: scope.routineInvoker }, mutation, row),
+    { concurrency: 1 },
+  ).pipe(Effect.map((results) => results.every(Boolean)));
+};
+
+const finalizeInvitationClaimForWorker = Effect.fn('AccessPersistence.finalizeInvitationClaimForWorker')(
+  function* finalizeInvitationClaimEffect(scope: OutboxWorkerLegalEntityScope, request: DurableClaimRequest) {
+    const [finalized] = yield* scope.routineInvoker
+      .invoke(finalizeInvitationClaimRoutine, [request.mutationId])
+      .pipe(
+        Effect.mapError((cause) =>
+          workerRejected('RECONCILIATION_UNAVAILABLE', 'Invitation claim finalization is unavailable', cause),
+        ),
+      );
+    if (
+      finalized === undefined ||
+      finalized.operation_outcome === 'PENDING_AUTHORIZATION' ||
+      finalized.claimed_at === null ||
+      finalized.claimed_by_principal_id === null
+    ) {
+      return { outcome: 'INDETERMINATE' as const };
+    }
+    const { operation_outcome: _, ...invitationEvidence } = finalized;
+    return {
+      outcome: finalized.operation_outcome === 'CLAIMED' ? ('FINALIZED' as const) : ('ALREADY_FINAL' as const),
+      terminal: {
+        attestation: invitationClaimAttestation(scope, invitationEvidence, finalized.claimed_by_principal_id),
+        completionId: finalized.claim_mutation_id,
+        invitation: invitationFromRow(scope.tenantId, invitationEvidence),
+        kind: 'INVITATION_CLAIM' as const,
+        occurredAt: DateTime.toDateUtc(DateTime.makeUnsafe(finalized.claimed_at)),
+        sourceActionInvocationId: finalized.source_action_invocation_id,
+      },
+    };
+  },
+);
+
+const reconcileDurableClaim = Effect.fn('AccessPersistence.reconcileDurableClaim')(
+  function* reconcileDurableClaimEffect(
+    scope: OutboxWorkerLegalEntityScope,
+    request: DurableClaimRequest,
+    root: DurableClaimRoot,
+    contextAccess: Pick<ContextAccessService, 'businessPermissions'>,
+    mutation: Pick<BusinessPermissionRelationshipMutationService, 'mutate'>,
+    ownerAccessReader?: typeof currentOwnerAccessForTransaction,
+  ) {
+    if (root.state === 'REVOKED') {
+      return yield* compensateInvitationClaim(scope, root, mutation);
+    }
+    const initialAuthority = yield* claimInviterAuthorityDecision(contextAccess, scope, root, ownerAccessReader);
+    if (initialAuthority !== 'allowed') {
+      return yield* compensateInvitationClaim(scope, root, mutation);
+    }
+    const pending = yield* stageInvitationClaimPermissions(scope, root, request);
+    const permissionsReconciled = yield* reconcileInvitationClaimPermissions(scope, pending, mutation);
+    if (!permissionsReconciled) {
+      return { outcome: 'INDETERMINATE' as const };
+    }
+    const terminalAuthority = yield* claimInviterAuthorityDecision(contextAccess, scope, root, ownerAccessReader);
+    if (terminalAuthority !== 'allowed') {
+      return yield* compensateInvitationClaim(scope, root, mutation);
+    }
+    return yield* finalizeInvitationClaimForWorker(scope, request);
+  },
+);
 
 const reconcileInvitationClaimForWorker = (
   scope: OutboxWorkerLegalEntityScope,
@@ -1991,11 +2123,7 @@ const reconcileInvitationClaimForWorker = (
 ) =>
   scope.routineInvoker.invoke(readInvitationClaimReconciliationRoutine, [request.mutationId]).pipe(
     Effect.mapError((cause) =>
-      workerRejected(
-        'RECONCILIATION_UNAVAILABLE',
-        'Invitation claim evidence is unavailable',
-        cause,
-      ),
+      workerRejected('RECONCILIATION_UNAVAILABLE', 'Invitation claim evidence is unavailable', cause),
     ),
     Effect.flatMap(([root]) =>
       root === undefined || !claimRootMatchesRequest(root, request)
@@ -2005,98 +2133,7 @@ const reconcileInvitationClaimForWorker = (
               'The invitation claim mutation is unavailable or outside the verified scope',
             ),
           )
-        : Effect.gen(function* reconcileDurableClaim() {
-            // Revocation clears the active claimant/proof fields, but the owner routine
-            // preserves the immutable claim root so claim-created tuples remain compensatable.
-            if (root.state === 'REVOKED') {
-              return yield* compensateInvitationClaim(scope, root, mutation);
-            }
-            const initialAuthority = yield* claimInviterAuthorityDecision(
-              contextAccess,
-              scope,
-              root,
-              ownerAccessReader,
-            );
-            if (initialAuthority !== 'allowed') {
-              return yield* compensateInvitationClaim(scope, root, mutation);
-            }
-            const pending = yield* scope.routineInvoker
-              .invoke(stageInvitationClaimGrantsRoutine, [request.mutationId, false])
-              .pipe(
-                Effect.mapError((cause) =>
-                  workerRejected(
-                    'RECONCILIATION_UNAVAILABLE',
-                    'Invitation permission staging is unavailable',
-                    cause,
-                  ),
-                ),
-              );
-            if (!claimPermissionRowsMatchRoot(root, pending)) {
-              return yield* workerRejected(
-                'RECONCILIATION_UNAVAILABLE',
-                'A staged invitation permission mutation is not linked to the durable claim',
-              );
-            }
-            if (pending.some(({ mutation_staged: staged }) => staged)) {
-              return { outcome: 'INDETERMINATE' as const };
-            }
-            const results = yield* Effect.forEach(
-              pending,
-              (row) =>
-                reconcileAccessRow({ scope, transaction: scope.routineInvoker }, mutation, row),
-              { concurrency: 1 },
-            );
-            if (results.some((repaired) => !repaired)) {
-              return { outcome: 'INDETERMINATE' as const };
-            }
-            const terminalAuthority = yield* claimInviterAuthorityDecision(
-              contextAccess,
-              scope,
-              root,
-              ownerAccessReader,
-            );
-            if (terminalAuthority !== 'allowed') {
-              return yield* compensateInvitationClaim(scope, root, mutation);
-            }
-            const [finalized] = yield* scope.routineInvoker
-              .invoke(finalizeInvitationClaimRoutine, [request.mutationId])
-              .pipe(
-                Effect.mapError((cause) =>
-                  workerRejected(
-                    'RECONCILIATION_UNAVAILABLE',
-                    'Invitation claim finalization is unavailable',
-                    cause,
-                  ),
-                ),
-              );
-            if (
-              finalized === undefined ||
-              finalized.operation_outcome === 'PENDING_AUTHORIZATION' ||
-              finalized.claimed_at === null ||
-              finalized.claimed_by_principal_id === null
-            ) {
-              return { outcome: 'INDETERMINATE' as const };
-            }
-            const { operation_outcome: _, ...invitationEvidence } = finalized;
-            return {
-              outcome:
-                finalized.operation_outcome === 'CLAIMED'
-                  ? ('FINALIZED' as const)
-                  : ('ALREADY_FINAL' as const),
-              terminal: {
-                attestation: invitationClaimAttestation(
-                  scope,
-                  invitationEvidence,
-                  finalized.claimed_by_principal_id,
-                ),
-                completionId: finalized.claim_mutation_id,
-                invitation: invitationFromRow(scope.tenantId, invitationEvidence),
-                kind: 'INVITATION_CLAIM' as const,
-                occurredAt: DateTime.toDateUtc(DateTime.makeUnsafe(finalized.claimed_at)),
-                sourceActionInvocationId: finalized.source_action_invocation_id,
-              },
-            };
-          }),
+        : reconcileDurableClaim(scope, request, root, contextAccess, mutation, ownerAccessReader),
     ),
   );
 
@@ -2109,13 +2146,7 @@ export const accessAuthorizationMutationReconciliationForWorker = (
   const service: AccessAuthorizationMutationReconciliationService = {
     reconcile: (scope, request) => {
       if (request.operation === 'claim') {
-        return reconcileInvitationClaimForWorker(
-          scope,
-          request,
-          contextAccess,
-          mutation,
-          ownerAccessReader,
-        );
+        return reconcileInvitationClaimForWorker(scope, request, contextAccess, mutation, ownerAccessReader);
       }
       return accessAuthorizationMutationReconciliationForScopedWorker(scope, mutation)
         .reconcileOne({
@@ -2126,11 +2157,7 @@ export const accessAuthorizationMutationReconciliationForWorker = (
         })
         .pipe(
           Effect.mapError((cause) =>
-            workerRejected(
-              'RECONCILIATION_UNAVAILABLE',
-              'Access authorization reconciliation is unavailable',
-              cause,
-            ),
+            workerRejected('RECONCILIATION_UNAVAILABLE', 'Access authorization reconciliation is unavailable', cause),
           ),
           Effect.map((result) => {
             if (result.outcome === 'INDETERMINATE') {
@@ -2158,24 +2185,12 @@ export const accessAuthorizationReconcilerForTransaction = (
   mutation: Pick<BusinessPermissionRelationshipMutationService, 'mutate'>,
 ): AuthorizationMutationReconcilerService => {
   const service: AuthorizationMutationReconcilerService = {
-    reconcile: ({
-      limit,
-      tenantId,
-    }: {
-      readonly limit: number;
-      readonly tenantId?: string | undefined;
-    }) => {
-      if (
-        limit < 1 ||
-        limit > 100 ||
-        (tenantId !== undefined && tenantId !== dependencies.scope.tenantId)
-      ) {
+    reconcile: ({ limit, tenantId }: { readonly limit: number; readonly tenantId?: string | undefined }) => {
+      if (limit < 1 || limit > 100 || (tenantId !== undefined && tenantId !== dependencies.scope.tenantId)) {
         return Effect.fail(reconciliationFailure('The reconciliation request is outside scope'));
       }
       return dependencies.transaction.invoke(listAccessReconciliationRoutine, [limit]).pipe(
-        Effect.mapError((cause) =>
-          reconciliationFailure('Access reconciliation storage is unavailable', cause),
-        ),
+        Effect.mapError((cause) => reconciliationFailure('Access reconciliation storage is unavailable', cause)),
         Effect.flatMap((rows) =>
           Effect.forEach(rows, (row) => reconcileAccessRow(dependencies, mutation, row), {
             concurrency: 1,
@@ -2192,20 +2207,5 @@ export const accessAuthorizationReconcilerForTransaction = (
   return Object.freeze(service);
 };
 
-export const accessPersistenceRoutineAllowlist = Object.freeze([
-  listAccessGrantsRoutine,
-  lockAccessGrantAuthorityRoutine,
-  beginAccessGrantRoutine,
-  beginAccessRevokeRoutine,
-  transitionAccessGrantRoutine,
-  listAccessReconciliationRoutine,
-  readAccessReconciliationRoutine,
-  readInvitationClaimReconciliationRoutine,
-  stageInvitationClaimGrantsRoutine,
-  finalizeInvitationClaimRoutine,
-  createAccessInvitationRoutine,
-  readAccessInvitationRoutine,
-  mutateAccessInvitationRoutine,
-]);
 /* oxlint-enable effect-native/no-dependency-parameters */
 /* oxlint-enable anti-slop/no-conditional-empty-object-spread */

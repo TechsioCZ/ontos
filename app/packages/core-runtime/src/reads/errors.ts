@@ -1,8 +1,5 @@
 import { Schema } from 'effect';
-import {
-  ModuleStateCheckUnavailableError,
-  ModuleStateDeniedError,
-} from '../modules/module-state-gate-errors.ts';
+import { ModuleStateCheckUnavailableError, ModuleStateDeniedError } from '../modules/module-state-gate-errors.ts';
 import {
   OperationAuthenticationRequired,
   OperationContextDenied,

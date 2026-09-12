@@ -8,4 +8,5 @@ export const RepeatRetailOrderPayloadSchema = HistoryRepeatRetailOrderPayloadSch
 export type RepeatRetailOrderPayload = typeof RepeatRetailOrderPayloadSchema.Type;
 
 export const RepeatRetailOrderResultSchema = RepeatOrderActionResultSchema;
-export type RepeatRetailOrderResult = typeof RepeatRetailOrderResultSchema.Type;
+// eslint-disable-next-line no-unused-vars -- Preserve the generated named result contract for this schema alias.
+type RepeatRetailOrderResult = typeof RepeatRetailOrderResultSchema.Type;

@@ -5,20 +5,22 @@ import { ProfilePersistenceDependencyFailure } from '../persistence/profile-pers
 
 const ProfileStateSchema = Schema.Literals(['ACTIVE', 'SUSPENDED', 'ARCHIVED']);
 const ProfileKindSchema = Schema.Literals(['RETAIL', 'COUNTERPARTY']);
+const RetailReactivationProfileSubjectSchema = Schema.Struct({
+  attributionKind: Schema.String,
+  kind: Schema.Literal('RETAIL'),
+  partyResourceId: Schema.String,
+  partyResourceRevision: Schema.NullOr(Schema.String),
+});
+const CounterpartyReactivationProfileSubjectSchema = Schema.Struct({
+  counterpartyResourceId: Schema.String,
+  counterpartyResourceRevision: Schema.NullOr(Schema.String),
+  customerRoleResourceId: Schema.NullOr(Schema.String),
+  customerRoleResourceRevision: Schema.NullOr(Schema.String),
+  kind: Schema.Literal('COUNTERPARTY'),
+});
 const ReactivationProfileSubjectSchema = Schema.Union([
-  Schema.Struct({
-    attributionKind: Schema.String,
-    kind: Schema.Literal('RETAIL'),
-    partyResourceId: Schema.String,
-    partyResourceRevision: Schema.NullOr(Schema.String),
-  }),
-  Schema.Struct({
-    counterpartyResourceId: Schema.String,
-    counterpartyResourceRevision: Schema.NullOr(Schema.String),
-    customerRoleResourceId: Schema.NullOr(Schema.String),
-    customerRoleResourceRevision: Schema.NullOr(Schema.String),
-    kind: Schema.Literal('COUNTERPARTY'),
-  }),
+  RetailReactivationProfileSubjectSchema,
+  CounterpartyReactivationProfileSubjectSchema,
 ]);
 
 export const ReactivationProfileFactsSchema = Schema.Struct({
@@ -42,9 +44,7 @@ export interface ProfileReconfirmationPolicyService {
 export class ProfileReconfirmationPolicy extends Context.Service<
   ProfileReconfirmationPolicy,
   ProfileReconfirmationPolicyService
->()(
-  '@app/commerce-customer-context/integrations/profile-reconfirmation-policy/ProfileReconfirmationPolicy',
-) {}
+>()('@app/commerce-customer-context/integrations/profile-reconfirmation-policy/ProfileReconfirmationPolicy') {}
 
 const reconfirmationUnavailable: ReconfirmationEvaluator = () =>
   Effect.fail(
@@ -54,18 +54,11 @@ const reconfirmationUnavailable: ReconfirmationEvaluator = () =>
   );
 
 /** Explicit fail-closed policy used when a deployment has not supplied an owner policy. */
-export const profileReconfirmationPolicyUnavailable: ProfileReconfirmationPolicyService =
-  Object.freeze({ evaluate: reconfirmationUnavailable });
+export const profileReconfirmationPolicyUnavailable: ProfileReconfirmationPolicyService = Object.freeze({
+  evaluate: reconfirmationUnavailable,
+});
 
 export const profileReconfirmationPolicyUnavailableLive = Layer.succeed(
   ProfileReconfirmationPolicy,
   profileReconfirmationPolicyUnavailable,
 );
-
-/**
- * A deployment may deliberately install this policy after reviewing that no CCC-owned high-risk
- * fact currently requires reconfirmation. It is kept separate from the factory Layer so a missing
- * deployment decision cannot silently become `true`.
- */
-export const noHighRiskProfileReconfirmationPolicy: ProfileReconfirmationPolicyService =
-  Object.freeze({ evaluate: () => Effect.succeed(true) });

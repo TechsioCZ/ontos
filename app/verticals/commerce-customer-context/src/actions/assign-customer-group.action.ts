@@ -2,11 +2,7 @@
 // @ontos-action-owner commerce.customer-context
 // @ontos-action-slug assign-customer-group
 import type { ActionHandlerContext } from '@app/core-runtime';
-import {
-  defineAction,
-  defineActionResourcePermission,
-  defineTenantModuleEntrypoint,
-} from '@app/core-runtime';
+import { defineAction, defineActionResourcePermission, defineTenantModuleEntrypoint } from '@app/core-runtime';
 import { Effect, Match, Schema } from 'effect';
 import {
   AssignCustomerGroupPayloadSchema,
@@ -38,18 +34,11 @@ import {
 import { createAssignCustomerGroupCommerceCustomerContextCustomerGroupMembershipAssignedV1OutboxMessage as createCustomerGroupMembershipAssignedOutboxMessage } from './assign-customer-group.commerce-customer-context-customer-group-membership-assigned-v1.outbox-message.ts';
 
 const domainEvents = {
-  'commerce.customer-context.customer-group-membership-assigned.v1':
-    CustomerGroupMembershipAssignedEventSchema,
+  'commerce.customer-context.customer-group-membership-assigned.v1': CustomerGroupMembershipAssignedEventSchema,
 } as const;
 
-export {
-  AssignCustomerGroupPayloadSchema,
-  AssignCustomerGroupResultSchema,
-} from '../../shared/actions/assign-customer-group.ts';
-export type {
-  AssignCustomerGroupPayload,
-  AssignCustomerGroupResult,
-} from '../../shared/actions/assign-customer-group.ts';
+export { AssignCustomerGroupPayloadSchema } from '../../shared/actions/assign-customer-group.ts';
+export type { AssignCustomerGroupPayload } from '../../shared/actions/assign-customer-group.ts';
 
 const AssignCustomerGroupErrorSchema = Schema.Union([
   CustomerGroupInactive,
@@ -61,123 +50,108 @@ const AssignCustomerGroupErrorSchema = Schema.Union([
   CustomerGroupScopeMismatch,
 ]);
 
-const handleAssignCustomerGroup = Effect.fn('AssignCustomerGroupAction.handle')(
-  function* assignCustomerGroup(
-    payload: AssignCustomerGroupPayload,
-    context: ActionHandlerContext<typeof domainEvents, CustomerGroupPersistence>,
-  ) {
-    if (
-      !customerGroupScopeMatches(
-        context.scope.tenantId,
-        payload.groupRef,
-        payload.profile.profileRef,
-      )
-    ) {
-      return yield* new CustomerGroupScopeMismatch({
-        code: 'customer_group_scope_mismatch',
-        reason: 'The customer group and profile must belong to the trusted Tenant',
-      });
-    }
-    const recordedAt = yield* customerGroupRecordedAt;
-    const legalEntityId = yield* requireCustomerGroupLegalEntityId(context.scope.legalEntityId);
-    const result = yield* context.services.assign({
-      actionInvocationId: context.actionInvocationId,
-      effectiveFrom: payload.effectiveFrom,
-      effectiveTo: payload.effectiveTo ?? null,
-      groupRef: payload.groupRef,
-      legalEntityId,
-      principalId: context.scope.principalId,
-      profile: payload.profile,
-      reason: payload.reason,
-      recordedAt,
-      tenantId: context.scope.tenantId,
+const handleAssignCustomerGroup = Effect.fn('AssignCustomerGroupAction.handle')(function* assignCustomerGroup(
+  payload: AssignCustomerGroupPayload,
+  context: ActionHandlerContext<typeof domainEvents, CustomerGroupPersistence>,
+) {
+  if (!customerGroupScopeMatches(context.scope.tenantId, payload.groupRef, payload.profile.profileRef)) {
+    return yield* new CustomerGroupScopeMismatch({
+      code: 'customer_group_scope_mismatch',
+      reason: 'The customer group and profile must belong to the trusted Tenant',
     });
-    const resolved = yield* Match.value(result).pipe(
-      Match.tag('not_found', () =>
-        Effect.fail(
-          new CustomerGroupNotFound({
-            code: 'customer_group_not_found',
-            reason: 'The customer group does not exist',
-          }),
-        ),
+  }
+  const recordedAt = yield* customerGroupRecordedAt;
+  const legalEntityId = yield* requireCustomerGroupLegalEntityId(context.scope.legalEntityId);
+  const result = yield* context.services.assign({
+    actionInvocationId: context.actionInvocationId,
+    effectiveFrom: payload.effectiveFrom,
+    effectiveTo: payload.effectiveTo ?? null,
+    groupRef: payload.groupRef,
+    legalEntityId,
+    principalId: context.scope.principalId,
+    profile: payload.profile,
+    reason: payload.reason,
+    recordedAt,
+    tenantId: context.scope.tenantId,
+  });
+  const resolved = yield* Match.value(result).pipe(
+    Match.tag('not_found', () =>
+      Effect.fail(
+        new CustomerGroupNotFound({
+          code: 'customer_group_not_found',
+          reason: 'The customer group does not exist',
+        }),
       ),
-      Match.tag('profile_not_found', () =>
-        Effect.fail(
-          new CustomerGroupProfileNotFound({
-            code: 'customer_group_profile_not_found',
-            reason: 'The exact Commerce Customer Profile does not exist',
-          }),
-        ),
+    ),
+    Match.tag('profile_not_found', () =>
+      Effect.fail(
+        new CustomerGroupProfileNotFound({
+          code: 'customer_group_profile_not_found',
+          reason: 'The exact Commerce Customer Profile does not exist',
+        }),
       ),
-      Match.tag('group_inactive', () =>
-        Effect.fail(
-          new CustomerGroupInactive({
-            code: 'customer_group_inactive',
-            reason: 'The customer group is not active at the membership start instant',
-          }),
-        ),
+    ),
+    Match.tag('group_inactive', () =>
+      Effect.fail(
+        new CustomerGroupInactive({
+          code: 'customer_group_inactive',
+          reason: 'The customer group is not active at the membership start instant',
+        }),
       ),
-      Match.tag('profile_ineligible', ({ profileState }) =>
-        Effect.fail(
-          new CustomerGroupProfileIneligible({
-            code: 'customer_group_profile_ineligible',
-            profileState,
-            reason: 'The Commerce Customer Profile lifecycle forbids this membership',
-          }),
-        ),
+    ),
+    Match.tag('profile_ineligible', ({ profileState }) =>
+      Effect.fail(
+        new CustomerGroupProfileIneligible({
+          code: 'customer_group_profile_ineligible',
+          profileState,
+          reason: 'The Commerce Customer Profile lifecycle forbids this membership',
+        }),
       ),
-      Match.tag('overlap', () =>
-        Effect.fail(
-          new CustomerGroupMembershipOverlap({
-            code: 'customer_group_membership_overlap',
-            reason: 'The same profile and group already have an overlapping effective period',
-          }),
-        ),
+    ),
+    Match.tag('overlap', () =>
+      Effect.fail(
+        new CustomerGroupMembershipOverlap({
+          code: 'customer_group_membership_overlap',
+          reason: 'The same profile and group already have an overlapping effective period',
+        }),
       ),
-      Match.tag('assigned', ({ membership }) =>
-        Effect.succeed({ created: true, membership } as const),
-      ),
-      Match.tag('already_assigned', ({ membership }) =>
-        Effect.succeed({ created: false, membership } as const),
-      ),
-      Match.exhaustive,
-    );
-    yield* context.recordAuditEvidence({
-      changed: resolved.created,
-      effectiveAt: payload.effectiveFrom,
-      groupRef: resolved.membership.groupRef,
-      membership: resolved.membership,
-      operation: 'ASSIGN',
-      reason: payload.reason,
-      revision: resolved.membership.revision,
+    ),
+    Match.tag('assigned', ({ membership }) => Effect.succeed({ created: true, membership } as const)),
+    Match.tag('already_assigned', ({ membership }) => Effect.succeed({ created: false, membership } as const)),
+    Match.exhaustive,
+  );
+  yield* context.recordAuditEvidence({
+    changed: resolved.created,
+    effectiveAt: payload.effectiveFrom,
+    groupRef: resolved.membership.groupRef,
+    membership: resolved.membership,
+    operation: 'ASSIGN',
+    reason: payload.reason,
+    revision: resolved.membership.revision,
+  });
+  yield* context.recordDataAccess({
+    accessKind: 'read',
+    queryHash: `customer-group-membership-overlap:${payload.profile.profileKind}:${payload.profile.profileRef.resourceId}:${payload.groupRef.resourceId}`,
+    resultCount: resolved.created ? 0 : 1,
+    servingModuleKey: MODULE_KEY,
+    targetModuleKey: MODULE_KEY,
+    targetResourceId: payload.profile.profileRef.resourceId,
+    targetResourceType: payload.profile.profileRef.resourceType,
+  });
+  if (resolved.created) {
+    const eventPayload = { membership: resolved.membership };
+    const event = yield* context.addDomainEvent({
+      eventType: 'commerce.customer-context.customer-group-membership-assigned.v1',
+      payloadJson: eventPayload,
+      producerModuleKey: MODULE_KEY,
+      subjectModuleKey: MODULE_KEY,
+      subjectResourceId: resolved.membership.membershipRef.resourceId,
+      subjectResourceType: resolved.membership.membershipRef.resourceType,
     });
-    yield* context.recordDataAccess({
-      accessKind: 'read',
-      queryHash: `customer-group-membership-overlap:${payload.profile.profileKind}:${payload.profile.profileRef.resourceId}:${payload.groupRef.resourceId}`,
-      resultCount: resolved.created ? 0 : 1,
-      servingModuleKey: MODULE_KEY,
-      targetModuleKey: MODULE_KEY,
-      targetResourceId: payload.profile.profileRef.resourceId,
-      targetResourceType: payload.profile.profileRef.resourceType,
-    });
-    if (resolved.created) {
-      const eventPayload = { membership: resolved.membership };
-      const event = yield* context.addDomainEvent({
-        eventType: 'commerce.customer-context.customer-group-membership-assigned.v1',
-        payloadJson: eventPayload,
-        producerModuleKey: MODULE_KEY,
-        subjectModuleKey: MODULE_KEY,
-        subjectResourceId: resolved.membership.membershipRef.resourceId,
-        subjectResourceType: resolved.membership.membershipRef.resourceType,
-      });
-      yield* context.addOutboxMessage(
-        event,
-        createCustomerGroupMembershipAssignedOutboxMessage(eventPayload),
-      );
-    }
-    return resolved;
-  },
-);
+    yield* context.addOutboxMessage(event, createCustomerGroupMembershipAssignedOutboxMessage(eventPayload));
+  }
+  return resolved;
+});
 
 export const assignCustomerGroupAction = defineAction(
   {
@@ -211,11 +185,3 @@ export const assignCustomerGroupAction = defineAction(
   handleAssignCustomerGroup,
   customerGroupServiceFactory,
 );
-
-// <generated-outbox-message-exports>
-export { AssignCustomerGroupCommerceCustomerContextCustomerGroupMembershipAssignedV1OutboxPayloadSchema } from './assign-customer-group.commerce-customer-context-customer-group-membership-assigned-v1.outbox-message.ts';
-export { AssignCustomerGroupCommerceCustomerContextCustomerGroupMembershipAssignedV1OutboxProducerModuleKey } from './assign-customer-group.commerce-customer-context-customer-group-membership-assigned-v1.outbox-message.ts';
-export { AssignCustomerGroupCommerceCustomerContextCustomerGroupMembershipAssignedV1OutboxTopic } from './assign-customer-group.commerce-customer-context-customer-group-membership-assigned-v1.outbox-message.ts';
-export { createAssignCustomerGroupCommerceCustomerContextCustomerGroupMembershipAssignedV1OutboxMessage } from './assign-customer-group.commerce-customer-context-customer-group-membership-assigned-v1.outbox-message.ts';
-export type { AssignCustomerGroupCommerceCustomerContextCustomerGroupMembershipAssignedV1OutboxPayload } from './assign-customer-group.commerce-customer-context-customer-group-membership-assigned-v1.outbox-message.ts';
-// </generated-outbox-message-exports>

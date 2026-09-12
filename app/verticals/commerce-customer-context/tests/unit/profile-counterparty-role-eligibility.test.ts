@@ -149,18 +149,8 @@ it('uses inclusive validFrom and exclusive validTo Current-time semantics', () =
   };
   const scope = { legalEntityId, requestCorrelation: 'correlation', tenantId };
 
-  const active = classifyProfileCounterpartyRoleEligibility(
-    startsAtBoundary,
-    scope,
-    counterpartyResourceId,
-    now,
-  );
-  const ended = classifyProfileCounterpartyRoleEligibility(
-    endsAtBoundary,
-    scope,
-    counterpartyResourceId,
-    now,
-  );
+  const active = classifyProfileCounterpartyRoleEligibility(startsAtBoundary, scope, counterpartyResourceId, now);
+  const ended = classifyProfileCounterpartyRoleEligibility(endsAtBoundary, scope, counterpartyResourceId, now);
 
   expect(active.outcome).toBe('ELIGIBLE');
   expect(ended).toEqual({ outcome: 'INELIGIBLE' });

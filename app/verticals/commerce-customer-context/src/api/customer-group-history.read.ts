@@ -21,7 +21,7 @@ import {
 } from './customer-group-read-support.ts';
 import type { CustomerGroupReadServices } from './customer-group-read-support.ts';
 
-export const customerGroupHistoryEntrypoint = defineTenantModuleEntrypoint({
+const customerGroupHistoryEntrypoint = defineTenantModuleEntrypoint({
   access: 'historical_read',
   authorization: { kind: 'context_permission', permission: 'customer.group.history.read' },
   entrypointKey: 'commerce.customer-context.api.customer-group-history',
@@ -29,28 +29,26 @@ export const customerGroupHistoryEntrypoint = defineTenantModuleEntrypoint({
   role: 'api',
 });
 
-const handleCustomerGroupHistory = Effect.fn('CustomerGroupHistoryRead.handle')(
-  function* customerGroupHistory(
-    input: CustomerGroupHistoryRequest,
-    context: ReadHandlerContext<CustomerGroupReadServices>,
-  ) {
-    yield* requireCustomerGroupTenant(context.scope.tenantId, input.groupRef);
-    const legalEntityId = yield* requireCustomerGroupReadLegalEntityId(context.scope.legalEntityId);
-    const asOf = Option.getOrNull(Option.fromNullishOr(input.asOf));
-    const outcome = yield* context.services
-      .history({
-        asOf,
-        cursor: input.cursor ?? null,
-        groupRef: input.groupRef,
-        legalEntityId,
-        limit: input.limit ?? 50,
-        tenantId: context.scope.tenantId,
-      })
-      .pipe(Effect.mapError(customerGroupReadUnavailable));
-    const result = yield* unwrapCustomerGroupLookup(outcome);
-    return { evidence: { resultCount: result.memberships.length }, result };
-  },
-);
+const handleCustomerGroupHistory = Effect.fn('CustomerGroupHistoryRead.handle')(function* customerGroupHistory(
+  input: CustomerGroupHistoryRequest,
+  context: ReadHandlerContext<CustomerGroupReadServices>,
+) {
+  yield* requireCustomerGroupTenant(context.scope.tenantId, input.groupRef);
+  const legalEntityId = yield* requireCustomerGroupReadLegalEntityId(context.scope.legalEntityId);
+  const asOf = Option.getOrNull(Option.fromNullishOr(input.asOf));
+  const outcome = yield* context.services
+    .history({
+      asOf,
+      cursor: input.cursor ?? null,
+      groupRef: input.groupRef,
+      legalEntityId,
+      limit: input.limit ?? 50,
+      tenantId: context.scope.tenantId,
+    })
+    .pipe(Effect.mapError(customerGroupReadUnavailable));
+  const result = yield* unwrapCustomerGroupLookup(outcome);
+  return { evidence: { resultCount: result.memberships.length }, result };
+});
 
 export const customerGroupHistoryRead = defineRead(
   {

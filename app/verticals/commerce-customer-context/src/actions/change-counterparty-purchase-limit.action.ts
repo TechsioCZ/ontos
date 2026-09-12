@@ -31,10 +31,7 @@ import { createChangeCounterpartyPurchaseLimitCommerceCustomerContextCounterpart
 const MODULE_KEY = 'commerce.customer-context';
 const EVENT_TYPE = `${MODULE_KEY}.counterparty-purchase-limit-changed.v1`;
 
-const preserveFailureCause = <Failure extends object>(
-  failure: Failure,
-  cause: unknown,
-): Failure => {
+const preserveFailureCause = <Failure extends object>(failure: Failure, cause: unknown): Failure => {
   Object.defineProperty(failure, 'cause', { configurable: true, value: cause });
   return failure;
 };
@@ -46,31 +43,15 @@ const mutationEvidence = (result: ChangeCounterpartyPurchaseLimitResult) => ({
   previousRevision: result.previousPolicy?.revision ?? null,
 });
 
-const mutationResourceId = (
-  result: ChangeCounterpartyPurchaseLimitResult,
-  fallback: string,
-): string =>
-  result.currentPolicy?.policyRef.resourceId ??
-  result.previousPolicy?.policyRef.resourceId ??
-  fallback;
+const mutationResourceId = (result: ChangeCounterpartyPurchaseLimitResult, fallback: string): string =>
+  result.currentPolicy?.policyRef.resourceId ?? result.previousPolicy?.policyRef.resourceId ?? fallback;
 
-const mutationChangeKind = (
-  result: ChangeCounterpartyPurchaseLimitResult,
-): 'CHANGED' | 'CLEARED' | 'SET' => {
+const mutationChangeKind = (result: ChangeCounterpartyPurchaseLimitResult): 'CHANGED' | 'CLEARED' | 'SET' => {
   if (result.currentPolicy === null) {
     return 'CLEARED';
   }
   return result.previousPolicy === null ? 'SET' : 'CHANGED';
 };
-
-export {
-  ChangeCounterpartyPurchaseLimitPayloadSchema,
-  ChangeCounterpartyPurchaseLimitResultSchema,
-} from '../../shared/actions/change-counterparty-purchase-limit.ts';
-export type {
-  ChangeCounterpartyPurchaseLimitPayload,
-  ChangeCounterpartyPurchaseLimitResult,
-} from '../../shared/actions/change-counterparty-purchase-limit.ts';
 
 const ChangeCounterpartyPurchaseLimitErrorSchema = Schema.Union([
   PurchaseLimitPolicyConflictSchema,
@@ -86,65 +67,55 @@ interface ChangeCounterpartyPurchaseLimitServices {
   readonly policy: PurchaseLimitPolicyService;
 }
 
-const handleChangeCounterpartyPurchaseLimit = Effect.fn('ChangeCounterpartyPurchaseLimit.handle')(
-  function* handle(
-    payload: ChangeCounterpartyPurchaseLimitPayload,
-    context: ActionHandlerContext<
-      ChangeCounterpartyPurchaseLimitEvents,
-      ChangeCounterpartyPurchaseLimitServices
-    >,
-  ) {
-    if (payload.counterpartyRef.tenantId !== context.scope.tenantId) {
-      return yield* Effect.fail({
-        _tag: 'PurchaseLimitSubjectScopeMismatch' as const,
-        code: 'purchase_limit_subject_scope_mismatch' as const,
-        reason: 'The Counterparty policy must belong to the trusted Tenant',
-      });
-    }
-    const result = yield* context.services.policy.changeCounterpartyPolicy({
-      ...payload,
-      actionInvocationId: context.actionInvocationId,
-      actorPrincipalId: context.scope.principalId,
+const handleChangeCounterpartyPurchaseLimit = Effect.fn('ChangeCounterpartyPurchaseLimit.handle')(function* handle(
+  payload: ChangeCounterpartyPurchaseLimitPayload,
+  context: ActionHandlerContext<ChangeCounterpartyPurchaseLimitEvents, ChangeCounterpartyPurchaseLimitServices>,
+) {
+  if (payload.counterpartyRef.tenantId !== context.scope.tenantId) {
+    return yield* Effect.fail({
+      _tag: 'PurchaseLimitSubjectScopeMismatch' as const,
+      code: 'purchase_limit_subject_scope_mismatch' as const,
+      reason: 'The Counterparty policy must belong to the trusted Tenant',
     });
-    yield* context.recordAuditEvidence({
-      changeReason: payload.reason,
+  }
+  const result = yield* context.services.policy.changeCounterpartyPolicy({
+    ...payload,
+    actionInvocationId: context.actionInvocationId,
+    actorPrincipalId: context.scope.principalId,
+  });
+  yield* context.recordAuditEvidence({
+    changeReason: payload.reason,
+    ...mutationEvidence(result),
+  });
+  yield* context.recordDataAccess({
+    accessKind: 'read',
+    queryHash: `purchase-limit-policy:${payload.counterpartyRef.resourceId}`,
+    resultCount: result.previousPolicy === null ? 0 : 1,
+    servingModuleKey: MODULE_KEY,
+    targetModuleKey: MODULE_KEY,
+    targetResourceId: mutationResourceId(result, payload.counterpartyRef.resourceId),
+    targetResourceType: `${MODULE_KEY}.purchase-limit-policy`,
+  });
+  if (result.status === 'CHANGED') {
+    const payloadJson = {
+      changeKind: mutationChangeKind(result),
+      counterpartyRef: payload.counterpartyRef,
+      currentState:
+        result.currentPolicy === null ? ('NO_EXPLICIT_DEFAULT' as const) : ('EXPLICIT_DEFAULT_CURRENT' as const),
       ...mutationEvidence(result),
+    };
+    const event = yield* context.addDomainEvent({
+      eventType: EVENT_TYPE,
+      payloadJson,
+      producerModuleKey: MODULE_KEY,
+      subjectModuleKey: MODULE_KEY,
+      subjectResourceId: mutationResourceId(result, payload.counterpartyRef.resourceId),
+      subjectResourceType: `${MODULE_KEY}.purchase-limit-policy`,
     });
-    yield* context.recordDataAccess({
-      accessKind: 'read',
-      queryHash: `purchase-limit-policy:${payload.counterpartyRef.resourceId}`,
-      resultCount: result.previousPolicy === null ? 0 : 1,
-      servingModuleKey: MODULE_KEY,
-      targetModuleKey: MODULE_KEY,
-      targetResourceId: mutationResourceId(result, payload.counterpartyRef.resourceId),
-      targetResourceType: `${MODULE_KEY}.purchase-limit-policy`,
-    });
-    if (result.status === 'CHANGED') {
-      const payloadJson = {
-        changeKind: mutationChangeKind(result),
-        counterpartyRef: payload.counterpartyRef,
-        currentState:
-          result.currentPolicy === null
-            ? ('NO_EXPLICIT_DEFAULT' as const)
-            : ('EXPLICIT_DEFAULT_CURRENT' as const),
-        ...mutationEvidence(result),
-      };
-      const event = yield* context.addDomainEvent({
-        eventType: EVENT_TYPE,
-        payloadJson,
-        producerModuleKey: MODULE_KEY,
-        subjectModuleKey: MODULE_KEY,
-        subjectResourceId: mutationResourceId(result, payload.counterpartyRef.resourceId),
-        subjectResourceType: `${MODULE_KEY}.purchase-limit-policy`,
-      });
-      yield* context.addOutboxMessage(
-        event,
-        createCounterpartyPurchaseLimitChangedOutboxMessage(payloadJson),
-      );
-    }
-    return result;
-  },
-);
+    yield* context.addOutboxMessage(event, createCounterpartyPurchaseLimitChangedOutboxMessage(payloadJson));
+  }
+  return result;
+});
 
 export const changeCounterpartyPurchaseLimitAction = defineAction(
   {
@@ -155,17 +126,15 @@ export const changeCounterpartyPurchaseLimitAction = defineAction(
     actionKey: 'commerce.customer-context.change-counterparty-purchase-limit',
     auditEvidenceSchema: PurchaseLimitPolicyAuditEvidenceSchema,
     auditProfile: 'sensitive',
-    businessPermission: defineActionBusinessPermission<ChangeCounterpartyPurchaseLimitPayload>(
-      (payload, scope) => ({
-        permission: 'counterparty.purchase_limit.manage',
-        target: {
-          counterpartyId: payload.counterpartyRef.resourceId,
-          kind: 'counterparty',
-          legalEntityId: scope.legalEntityId ?? '',
-          tenantId: scope.tenantId,
-        },
-      }),
-    ),
+    businessPermission: defineActionBusinessPermission<ChangeCounterpartyPurchaseLimitPayload>((payload, scope) => ({
+      permission: 'counterparty.purchase_limit.manage',
+      target: {
+        counterpartyId: payload.counterpartyRef.resourceId,
+        kind: 'counterparty',
+        legalEntityId: scope.legalEntityId ?? '',
+        tenantId: scope.tenantId,
+      },
+    })),
     domainErrorSchema: ChangeCounterpartyPurchaseLimitErrorSchema,
     domainEvents: { [EVENT_TYPE]: CounterpartyPurchaseLimitChangedEventSchema },
     entrypoint: defineTenantModuleEntrypoint({
@@ -199,11 +168,3 @@ export const changeCounterpartyPurchaseLimitAction = defineAction(
       Effect.map((policy) => ({ policy })),
     ),
 );
-
-// <generated-outbox-message-exports>
-export { ChangeCounterpartyPurchaseLimitCommerceCustomerContextCounterpartyPurchaseLimitChangedV1OutboxPayloadSchema } from './change-counterparty-purchase-limit.commerce-customer-context-counterparty-purchase-limit-changed-v1.outbox-message.ts';
-export { ChangeCounterpartyPurchaseLimitCommerceCustomerContextCounterpartyPurchaseLimitChangedV1OutboxProducerModuleKey } from './change-counterparty-purchase-limit.commerce-customer-context-counterparty-purchase-limit-changed-v1.outbox-message.ts';
-export { ChangeCounterpartyPurchaseLimitCommerceCustomerContextCounterpartyPurchaseLimitChangedV1OutboxTopic } from './change-counterparty-purchase-limit.commerce-customer-context-counterparty-purchase-limit-changed-v1.outbox-message.ts';
-export { createChangeCounterpartyPurchaseLimitCommerceCustomerContextCounterpartyPurchaseLimitChangedV1OutboxMessage } from './change-counterparty-purchase-limit.commerce-customer-context-counterparty-purchase-limit-changed-v1.outbox-message.ts';
-export type { ChangeCounterpartyPurchaseLimitCommerceCustomerContextCounterpartyPurchaseLimitChangedV1OutboxPayload } from './change-counterparty-purchase-limit.commerce-customer-context-counterparty-purchase-limit-changed-v1.outbox-message.ts';
-// </generated-outbox-message-exports>

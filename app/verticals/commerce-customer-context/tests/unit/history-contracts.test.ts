@@ -1,5 +1,5 @@
 import { expect, it } from 'effect-rstest';
-import { Effect, Schema } from 'effect';
+import { Effect, Exit, Schema } from 'effect';
 import {
   composeCounterpartyAllOrderHistory,
   composeCounterpartyAllCustomerArchive,
@@ -10,10 +10,7 @@ import {
   prepareRepeatOrder,
   resolveCustomerRecordVisibility,
 } from '../../shared/domain/history-composition.ts';
-import type {
-  CustomerHistoryPorts,
-  HistoricalOrderCandidate,
-} from '../../shared/domain/history-ports.ts';
+import type { CustomerHistoryPorts, HistoricalOrderCandidate } from '../../shared/domain/history-ports.ts';
 import {
   HistoryAccessDenied,
   HistoryOwnerUnavailable,
@@ -159,23 +156,15 @@ const makePorts = (orders: readonly HistoricalOrderCandidate[]): CustomerHistory
   orders: {
     getCustomerFacingDetail: () => Effect.succeed({ outcome: 'NOT_FOUND' }),
     getForHistoryDetailAuthorization: ({ orderRef: requestedOrderRef }) => {
-      const order = orders.find(
-        (candidate) => candidate.orderRef.resourceId === requestedOrderRef.resourceId,
-      );
+      const order = orders.find((candidate) => candidate.orderRef.resourceId === requestedOrderRef.resourceId);
       return Effect.succeed(
-        order === undefined
-          ? { outcome: 'NOT_FOUND' as const }
-          : { outcome: 'FOUND' as const, value: order },
+        order === undefined ? { outcome: 'NOT_FOUND' as const } : { outcome: 'FOUND' as const, value: order },
       );
     },
     getForRepeat: ({ orderRef: requestedOrderRef }) => {
-      const order = orders.find(
-        (candidate) => candidate.orderRef.resourceId === requestedOrderRef.resourceId,
-      );
+      const order = orders.find((candidate) => candidate.orderRef.resourceId === requestedOrderRef.resourceId);
       return Effect.succeed(
-        order === undefined
-          ? { outcome: 'NOT_FOUND' as const }
-          : { outcome: 'FOUND' as const, value: order },
+        order === undefined ? { outcome: 'NOT_FOUND' as const } : { outcome: 'FOUND' as const, value: order },
       );
     },
     listCounterparty: () => Effect.succeed(orders),
@@ -185,11 +174,7 @@ const makePorts = (orders: readonly HistoricalOrderCandidate[]): CustomerHistory
     get: ({ ownerModuleId, resourceType }) =>
       Effect.succeed({
         additionalBusinessPolicies: ['commerce.order.customer-visibility.v1'],
-        callerPermissions: [
-          'retail.history.read',
-          'counterparty.history.read_own',
-          'counterparty.history.read_all',
-        ],
+        callerPermissions: ['retail.history.read', 'counterparty.history.read_own', 'counterparty.history.read_all'],
         canonicalOwnerModuleId: ownerModuleId,
         canonicalResourceType: resourceType,
         customerContextRelationship: 'RETAIL_OR_COUNTERPARTY' as const,
@@ -198,15 +183,7 @@ const makePorts = (orders: readonly HistoricalOrderCandidate[]): CustomerHistory
         fieldAllowlist: {
           detail: ['accepted-currency'],
           download: [],
-          list: [
-            'acceptedAt',
-            'displayLabel',
-            'freshness',
-            'occurredAt',
-            'orderRef',
-            'recordKind',
-            'recordRef',
-          ],
+          list: ['acceptedAt', 'displayLabel', 'freshness', 'occurredAt', 'orderRef', 'recordKind', 'recordRef'],
         },
         fieldContracts: {
           detail: { name: 'customer-order-history.detail', version: '1' },
@@ -530,9 +507,7 @@ it.effect('enforces onboarding caller permission and rejects future list observa
               .get(input)
               .pipe(
                 Effect.map((contract) =>
-                  contract === null
-                    ? null
-                    : { ...contract, callerPermissions: ['billing.history.read'] },
+                  contract === null ? null : { ...contract, callerPermissions: ['billing.history.read'] },
                 ),
               ),
         },
@@ -547,17 +522,12 @@ it.effect('enforces every owner-declared policy in the keyed authorization proje
   Effect.gen(function* keyedPolicySecurity() {
     const order = historicalOrder('order-keyed-policy', principalId);
     const basePorts = makePorts([order]);
-    const withPolicies = (
-      policies: Readonly<Record<string, 'ALLOWED' | 'DENIED' | 'INDETERMINATE'>>,
-    ) =>
+    const withPolicies = (policies: Readonly<Record<string, 'ALLOWED' | 'DENIED' | 'INDETERMINATE'>>) =>
       ({
         ...basePorts,
         access: {
           ...basePorts.access,
-          retail: (input: {
-            readonly principalId: string;
-            readonly profileRef: typeof retailProfileRef;
-          }) =>
+          retail: (input: { readonly principalId: string; readonly profileRef: typeof retailProfileRef }) =>
             basePorts.access.retail(input).pipe(Effect.map((facts) => ({ ...facts, policies }))),
         },
       }) satisfies CustomerHistoryPorts;
@@ -583,218 +553,201 @@ it.effect('enforces every owner-declared policy in the keyed authorization proje
   }),
 );
 
-it.effect(
-  'keeps Retail and Counterparty history access, permission, visibility, and privacy gates independent',
-  () =>
-    Effect.gen(function* independentHistoryGates() {
-      const retailOrder = historicalOrder('order-retail-gates', principalId, retailSubject);
-      const counterpartyOrder = historicalOrder(
-        'order-counterparty-gates',
-        principalId,
-        counterpartySubject,
-      );
-      const retailInput = {
-        now,
-        principalId,
-        profileRef: retailProfileRef,
-      };
-      const counterpartyInput = {
-        counterpartyRef: counterpartySubject.counterpartyRef,
-        now,
-        principalId,
-        profileRef: counterpartyProfileRef,
-      };
-      const retailPorts = makePorts([retailOrder]);
-      const counterpartyBasePorts = makePorts([counterpartyOrder]);
-      const counterpartyPorts: CustomerHistoryPorts = {
-        ...counterpartyBasePorts,
-        access: {
-          ...counterpartyBasePorts.access,
-          counterparty: (input) =>
-            counterpartyBasePorts.access.counterparty(input).pipe(
-              Effect.map((facts) => ({
-                ...facts,
-                historyPermission: 'counterparty.history.read_own',
-              })),
-            ),
-        },
-      };
+it.effect('keeps Retail and Counterparty history access, permission, visibility, and privacy gates independent', () =>
+  Effect.gen(function* independentHistoryGates() {
+    const retailOrder = historicalOrder('order-retail-gates', principalId, retailSubject);
+    const counterpartyOrder = historicalOrder('order-counterparty-gates', principalId, counterpartySubject);
+    const retailInput = {
+      now,
+      principalId,
+      profileRef: retailProfileRef,
+    };
+    const counterpartyInput = {
+      counterpartyRef: counterpartySubject.counterpartyRef,
+      now,
+      principalId,
+      profileRef: counterpartyProfileRef,
+    };
+    const retailPorts = makePorts([retailOrder]);
+    const counterpartyBasePorts = makePorts([counterpartyOrder]);
+    const counterpartyPorts: CustomerHistoryPorts = {
+      ...counterpartyBasePorts,
+      access: {
+        ...counterpartyBasePorts.access,
+        counterparty: (input) =>
+          counterpartyBasePorts.access.counterparty(input).pipe(
+            Effect.map((facts) => ({
+              ...facts,
+              historyPermission: 'counterparty.history.read_own',
+            })),
+          ),
+      },
+    };
 
-      const retailHistory = yield* composeRetailOrderHistory(retailPorts, retailInput);
-      const counterpartyHistory = yield* composeCounterpartyOrderHistory(
-        counterpartyPorts,
-        counterpartyInput,
-      );
-      expect(retailHistory.items).toHaveLength(1);
-      expect(counterpartyHistory.items).toHaveLength(1);
+    const retailHistory = yield* composeRetailOrderHistory(retailPorts, retailInput);
+    const counterpartyHistory = yield* composeCounterpartyOrderHistory(counterpartyPorts, counterpartyInput);
+    expect(retailHistory.items).toHaveLength(1);
+    expect(counterpartyHistory.items).toHaveLength(1);
 
-      const retailAccessDenied = yield* Effect.flip(
-        composeRetailOrderHistory(
-          {
-            ...retailPorts,
-            access: {
-              ...retailPorts.access,
-              retail: (input) =>
-                retailPorts.access
-                  .retail(input)
-                  .pipe(Effect.map((facts) => ({ ...facts, binding: 'ABSENT' as const }))),
-            },
-          },
-          retailInput,
-        ),
-      );
-      expect(Schema.is(HistoryAccessDenied)(retailAccessDenied)).toBe(true);
-      if (Schema.is(HistoryAccessDenied)(retailAccessDenied)) {
-        expect(retailAccessDenied.reason).toBe('CURRENT_BINDING_REQUIRED');
-      }
-
-      const counterpartyAccessDenied = yield* Effect.flip(
-        composeCounterpartyOrderHistory(
-          {
-            ...counterpartyPorts,
-            access: {
-              ...counterpartyPorts.access,
-              counterparty: (input) =>
-                counterpartyPorts.access
-                  .counterparty(input)
-                  .pipe(Effect.map((facts) => ({ ...facts, access: 'ABSENT' as const }))),
-            },
-          },
-          counterpartyInput,
-        ),
-      );
-      expect(Schema.is(HistoryAccessDenied)(counterpartyAccessDenied)).toBe(true);
-      if (Schema.is(HistoryAccessDenied)(counterpartyAccessDenied)) {
-        expect(counterpartyAccessDenied.reason).toBe('COUNTERPARTY_ACCESS_REQUIRED');
-      }
-
-      const retailPermissionDenied = yield* Effect.flip(
-        composeRetailOrderHistory(
-          {
-            ...retailPorts,
-            access: {
-              ...retailPorts.access,
-              retail: (input) =>
-                retailPorts.access
-                  .retail(input)
-                  .pipe(
-                    Effect.map((facts) => ({ ...facts, historyPermission: 'ABSENT' as const })),
-                  ),
-            },
-          },
-          retailInput,
-        ),
-      );
-      expect(Schema.is(HistoryAccessDenied)(retailPermissionDenied)).toBe(true);
-      if (Schema.is(HistoryAccessDenied)(retailPermissionDenied)) {
-        expect(retailPermissionDenied.reason).toBe('HISTORY_PERMISSION_REQUIRED');
-      }
-
-      const counterpartyPermissionDenied = yield* Effect.flip(
-        composeCounterpartyOrderHistory(
-          {
-            ...counterpartyPorts,
-            access: {
-              ...counterpartyPorts.access,
-              counterparty: (input) =>
-                counterpartyPorts.access
-                  .counterparty(input)
-                  .pipe(Effect.map((facts) => ({ ...facts, historyPermission: null }))),
-            },
-          },
-          counterpartyInput,
-        ),
-      );
-      expect(Schema.is(HistoryAccessDenied)(counterpartyPermissionDenied)).toBe(true);
-      if (Schema.is(HistoryAccessDenied)(counterpartyPermissionDenied)) {
-        expect(counterpartyPermissionDenied.reason).toBe(
-          'COUNTERPARTY_HISTORY_PERMISSION_REQUIRED',
-        );
-      }
-
-      const retailPolicyDenied = yield* Effect.flip(
-        composeRetailOrderHistory(
-          {
-            ...retailPorts,
-            access: {
-              ...retailPorts.access,
-              retail: (input) =>
-                retailPorts.access
-                  .retail(input)
-                  .pipe(Effect.map((facts) => ({ ...facts, policy: 'DENIED' as const }))),
-            },
-          },
-          retailInput,
-        ),
-      );
-      expect(Schema.is(HistoryAccessDenied)(retailPolicyDenied)).toBe(true);
-      if (Schema.is(HistoryAccessDenied)(retailPolicyDenied)) {
-        expect(retailPolicyDenied.reason).toBe('OWNER_POLICY_DENIED');
-      }
-
-      const counterpartyPolicyDenied = yield* Effect.flip(
-        composeCounterpartyOrderHistory(
-          {
-            ...counterpartyPorts,
-            access: {
-              ...counterpartyPorts.access,
-              counterparty: (input) =>
-                counterpartyPorts.access
-                  .counterparty(input)
-                  .pipe(Effect.map((facts) => ({ ...facts, policy: 'DENIED' as const }))),
-            },
-          },
-          counterpartyInput,
-        ),
-      );
-      expect(Schema.is(HistoryAccessDenied)(counterpartyPolicyDenied)).toBe(true);
-      if (Schema.is(HistoryAccessDenied)(counterpartyPolicyDenied)) {
-        expect(counterpartyPolicyDenied.reason).toBe('OWNER_POLICY_DENIED');
-      }
-
-      const counterpartyAssociationDenied = yield* Effect.flip(
-        composeCounterpartyOrderHistory(
-          {
-            ...counterpartyPorts,
-            counterpartyProfiles: { current: () => Effect.succeed('ABSENT' as const) },
-          },
-          counterpartyInput,
-        ),
-      );
-      expect(Schema.is(HistoryAccessDenied)(counterpartyAssociationDenied)).toBe(true);
-      if (Schema.is(HistoryAccessDenied)(counterpartyAssociationDenied)) {
-        expect(counterpartyAssociationDenied.reason).toBe('TARGET_CONTEXT_MISMATCH');
-      }
-
-      const hiddenRetail = yield* composeRetailOrderHistory(
+    const retailAccessDenied = yield* Effect.flip(
+      composeRetailOrderHistory(
         {
           ...retailPorts,
-          visibility: {
-            get: ({ recordRef, subject }) =>
-              Effect.succeed({
-                fact: { ...visibleFact(recordRef.resourceId, subject), state: 'CUSTOMER_HIDDEN' },
-                outcome: 'FOUND' as const,
-              }),
+          access: {
+            ...retailPorts.access,
+            retail: (input) =>
+              retailPorts.access.retail(input).pipe(Effect.map((facts) => ({ ...facts, binding: 'ABSENT' as const }))),
           },
         },
         retailInput,
-      );
-      const hiddenCounterparty = yield* composeCounterpartyOrderHistory(
+      ),
+    );
+    expect(Schema.is(HistoryAccessDenied)(retailAccessDenied)).toBe(true);
+    if (Schema.is(HistoryAccessDenied)(retailAccessDenied)) {
+      expect(retailAccessDenied.reason).toBe('CURRENT_BINDING_REQUIRED');
+    }
+
+    const counterpartyAccessDenied = yield* Effect.flip(
+      composeCounterpartyOrderHistory(
         {
           ...counterpartyPorts,
-          visibility: {
-            get: ({ recordRef, subject }) =>
-              Effect.succeed({
-                fact: { ...visibleFact(recordRef.resourceId, subject), state: 'CUSTOMER_HIDDEN' },
-                outcome: 'FOUND' as const,
-              }),
+          access: {
+            ...counterpartyPorts.access,
+            counterparty: (input) =>
+              counterpartyPorts.access
+                .counterparty(input)
+                .pipe(Effect.map((facts) => ({ ...facts, access: 'ABSENT' as const }))),
           },
         },
         counterpartyInput,
-      );
-      expect(hiddenRetail.items).toEqual([]);
-      expect(hiddenCounterparty.items).toEqual([]);
-    }),
+      ),
+    );
+    expect(Schema.is(HistoryAccessDenied)(counterpartyAccessDenied)).toBe(true);
+    if (Schema.is(HistoryAccessDenied)(counterpartyAccessDenied)) {
+      expect(counterpartyAccessDenied.reason).toBe('COUNTERPARTY_ACCESS_REQUIRED');
+    }
+
+    const retailPermissionDenied = yield* Effect.flip(
+      composeRetailOrderHistory(
+        {
+          ...retailPorts,
+          access: {
+            ...retailPorts.access,
+            retail: (input) =>
+              retailPorts.access
+                .retail(input)
+                .pipe(Effect.map((facts) => ({ ...facts, historyPermission: 'ABSENT' as const }))),
+          },
+        },
+        retailInput,
+      ),
+    );
+    expect(Schema.is(HistoryAccessDenied)(retailPermissionDenied)).toBe(true);
+    if (Schema.is(HistoryAccessDenied)(retailPermissionDenied)) {
+      expect(retailPermissionDenied.reason).toBe('HISTORY_PERMISSION_REQUIRED');
+    }
+
+    const counterpartyPermissionDenied = yield* Effect.flip(
+      composeCounterpartyOrderHistory(
+        {
+          ...counterpartyPorts,
+          access: {
+            ...counterpartyPorts.access,
+            counterparty: (input) =>
+              counterpartyPorts.access
+                .counterparty(input)
+                .pipe(Effect.map((facts) => ({ ...facts, historyPermission: null }))),
+          },
+        },
+        counterpartyInput,
+      ),
+    );
+    expect(Schema.is(HistoryAccessDenied)(counterpartyPermissionDenied)).toBe(true);
+    if (Schema.is(HistoryAccessDenied)(counterpartyPermissionDenied)) {
+      expect(counterpartyPermissionDenied.reason).toBe('COUNTERPARTY_HISTORY_PERMISSION_REQUIRED');
+    }
+
+    const retailPolicyDenied = yield* Effect.flip(
+      composeRetailOrderHistory(
+        {
+          ...retailPorts,
+          access: {
+            ...retailPorts.access,
+            retail: (input) =>
+              retailPorts.access.retail(input).pipe(Effect.map((facts) => ({ ...facts, policy: 'DENIED' as const }))),
+          },
+        },
+        retailInput,
+      ),
+    );
+    expect(Schema.is(HistoryAccessDenied)(retailPolicyDenied)).toBe(true);
+    if (Schema.is(HistoryAccessDenied)(retailPolicyDenied)) {
+      expect(retailPolicyDenied.reason).toBe('OWNER_POLICY_DENIED');
+    }
+
+    const counterpartyPolicyDenied = yield* Effect.flip(
+      composeCounterpartyOrderHistory(
+        {
+          ...counterpartyPorts,
+          access: {
+            ...counterpartyPorts.access,
+            counterparty: (input) =>
+              counterpartyPorts.access
+                .counterparty(input)
+                .pipe(Effect.map((facts) => ({ ...facts, policy: 'DENIED' as const }))),
+          },
+        },
+        counterpartyInput,
+      ),
+    );
+    expect(Schema.is(HistoryAccessDenied)(counterpartyPolicyDenied)).toBe(true);
+    if (Schema.is(HistoryAccessDenied)(counterpartyPolicyDenied)) {
+      expect(counterpartyPolicyDenied.reason).toBe('OWNER_POLICY_DENIED');
+    }
+
+    const counterpartyAssociationDenied = yield* Effect.flip(
+      composeCounterpartyOrderHistory(
+        {
+          ...counterpartyPorts,
+          counterpartyProfiles: { current: () => Effect.succeed('ABSENT' as const) },
+        },
+        counterpartyInput,
+      ),
+    );
+    expect(Schema.is(HistoryAccessDenied)(counterpartyAssociationDenied)).toBe(true);
+    if (Schema.is(HistoryAccessDenied)(counterpartyAssociationDenied)) {
+      expect(counterpartyAssociationDenied.reason).toBe('TARGET_CONTEXT_MISMATCH');
+    }
+
+    const hiddenRetail = yield* composeRetailOrderHistory(
+      {
+        ...retailPorts,
+        visibility: {
+          get: ({ recordRef, subject }) =>
+            Effect.succeed({
+              fact: { ...visibleFact(recordRef.resourceId, subject), state: 'CUSTOMER_HIDDEN' },
+              outcome: 'FOUND' as const,
+            }),
+        },
+      },
+      retailInput,
+    );
+    const hiddenCounterparty = yield* composeCounterpartyOrderHistory(
+      {
+        ...counterpartyPorts,
+        visibility: {
+          get: ({ recordRef, subject }) =>
+            Effect.succeed({
+              fact: { ...visibleFact(recordRef.resourceId, subject), state: 'CUSTOMER_HIDDEN' },
+              outcome: 'FOUND' as const,
+            }),
+        },
+      },
+      counterpartyInput,
+    );
+    expect(hiddenRetail.items).toEqual([]);
+    expect(hiddenCounterparty.items).toEqual([]);
+  }),
 );
 
 it.effect('authorizes direct visibility evidence references before returning a grant', () =>
@@ -822,10 +775,7 @@ it.effect('authorizes direct visibility evidence references before returning a g
       },
     );
     expect(decision.outcome).toBe('VISIBLE');
-    expect(checkedResourceIds).toEqual([
-      'order-direct-visibility',
-      'visibility-evidence-order-direct-visibility',
-    ]);
+    expect(checkedResourceIds).toEqual(['order-direct-visibility', 'visibility-evidence-order-direct-visibility']);
   }),
 );
 
@@ -923,7 +873,7 @@ it.effect('uses immutable actor attribution for own orders and not Buyer role in
         profileRef: counterpartyProfileRef,
       }),
     );
-    expect(denied._tag).toBe('Failure');
+    expect(Exit.isFailure(denied)).toBe(true);
   }),
 );
 
@@ -1006,10 +956,7 @@ it.effect('requires read-all explicitly before returning other actors orders', (
     });
 
     expect(result.scope).toBe('ALL_COUNTERPARTY_ORDERS');
-    expect(result.items.map((item) => item.orderRef.resourceId)).toEqual([
-      'order-own',
-      'order-other',
-    ]);
+    expect(result.items.map((item) => item.orderRef.resourceId)).toEqual(['order-own', 'order-other']);
 
     const ownOnlyPorts: CustomerHistoryPorts = {
       ...ports,
@@ -1033,7 +980,7 @@ it.effect('requires read-all explicitly before returning other actors orders', (
         profileRef: counterpartyProfileRef,
       }),
     );
-    expect(denied._tag).toBe('Failure');
+    expect(Exit.isFailure(denied)).toBe(true);
   }),
 );
 
@@ -1098,7 +1045,7 @@ it.effect('does not promote read-all authority through the own-scoped archive en
         subject: counterpartySubject,
       }),
     );
-    expect(result._tag).toBe('Failure');
+    expect(Exit.isFailure(result)).toBe(true);
   }),
 );
 
@@ -1116,10 +1063,7 @@ it.effect('returns Counterparty-wide archive only through the read-all compositi
         profileRef: counterpartyProfileRef,
       },
     );
-    expect(result.items.map((item) => item.recordRef.resourceId)).toEqual([
-      'order-own',
-      'order-other',
-    ]);
+    expect(result.items.map((item) => item.recordRef.resourceId)).toEqual(['order-own', 'order-other']);
   }),
 );
 
@@ -1281,39 +1225,33 @@ it.effect('allows Counterparty repeat with read-all and scopes read-own to the s
   }),
 );
 
-it.effect(
-  'rejects unknown Counterparty repeat permissions instead of defaulting to own scope',
-  () =>
-    Effect.gen(function* malformedRepeatPermission() {
-      const source = historicalOrder(
-        'order-repeat-unknown-permission',
-        'principal-2',
-        counterpartySubject,
-      );
-      const basePorts = makePorts([source]);
-      const malformedPorts: CustomerHistoryPorts = {
-        ...basePorts,
-        access: {
-          ...basePorts.access,
-          counterparty: () =>
-            Effect.succeed({
-              access: 'CURRENT' as const,
-              archivePermission: 'CURRENT' as const,
-              // SAFETY: Deliberately inject a malformed runtime value to verify closed-world authorization.
-              historyPermission: JSON.parse('"counterparty.history.read_unknown"'),
-              policy: 'ALLOWED' as const,
-              purchasePermission: 'CURRENT' as const,
-            }),
-        },
-      };
-      const failure = yield* Effect.exit(
-        prepareRepeatOrder(malformedPorts, {
-          now,
-          orderRef: source.orderRef,
-          principalId,
-          subject: counterpartySubject,
-        }),
-      );
-      expect(failure._tag).toBe('Failure');
-    }),
+it.effect('rejects unknown Counterparty repeat permissions instead of defaulting to own scope', () =>
+  Effect.gen(function* malformedRepeatPermission() {
+    const source = historicalOrder('order-repeat-unknown-permission', 'principal-2', counterpartySubject);
+    const basePorts = makePorts([source]);
+    const malformedPorts: CustomerHistoryPorts = {
+      ...basePorts,
+      access: {
+        ...basePorts.access,
+        counterparty: () =>
+          Effect.succeed({
+            access: 'CURRENT' as const,
+            archivePermission: 'CURRENT' as const,
+            // SAFETY: Deliberately inject a malformed runtime value to verify closed-world authorization.
+            historyPermission: JSON.parse('"counterparty.history.read_unknown"'),
+            policy: 'ALLOWED' as const,
+            purchasePermission: 'CURRENT' as const,
+          }),
+      },
+    };
+    const failure = yield* Effect.exit(
+      prepareRepeatOrder(malformedPorts, {
+        now,
+        orderRef: source.orderRef,
+        principalId,
+        subject: counterpartySubject,
+      }),
+    );
+    expect(Exit.isFailure(failure)).toBe(true);
+  }),
 );

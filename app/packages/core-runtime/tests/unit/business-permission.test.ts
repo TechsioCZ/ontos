@@ -21,14 +21,10 @@ const readPermission = defineBusinessPermission({
 });
 
 it('builds an immutable, reciprocal and versioned permission catalog', () => {
-  expect(Schema.decodeSync(BusinessPermissionCodeSchema)('retail.repeat_order')).toBe(
-    'retail.repeat_order',
-  );
+  expect(Schema.decodeSync(BusinessPermissionCodeSchema)('retail.repeat_order')).toBe('retail.repeat_order');
   const catalog = defineBusinessPermissionCatalog({
     authorityGroups: {
-      'Counterparty Buyer': [
-        Schema.decodeSync(BusinessPermissionCodeSchema)('counterparty.profile.read'),
-      ],
+      'Counterparty Buyer': [Schema.decodeSync(BusinessPermissionCodeSchema)('counterparty.profile.read')],
     },
     catalogVersion: '1',
     permissions: [readPermission],
@@ -44,9 +40,7 @@ it('rejects invalid codes, duplicate catalog entries, and one-sided group member
   expect(() =>
     defineBusinessPermissionCatalog({
       authorityGroups: {
-        'Counterparty Buyer': [
-          Schema.decodeSync(BusinessPermissionCodeSchema)('counterparty.profile.read'),
-        ],
+        'Counterparty Buyer': [Schema.decodeSync(BusinessPermissionCodeSchema)('counterparty.profile.read')],
       },
       catalogVersion: '1',
       permissions: [readPermission, readPermission],

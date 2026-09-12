@@ -1,13 +1,6 @@
-import type {
-  BusinessPermissionCode,
-  OperationalScope,
-  ResolvedReadPermissionTarget,
-} from '@app/core-runtime';
+import type { BusinessPermissionCode, OperationalScope, ResolvedReadPermissionTarget } from '@app/core-runtime';
 import type { CounterpartyRef } from '../../shared/domain/access-contract.ts';
-import type {
-  CustomerHistorySubject,
-  HistoricalRecordRef,
-} from '../../shared/domain/record-visibility-contracts.ts';
+import type { CustomerHistorySubject, HistoricalRecordRef } from '../../shared/domain/record-visibility-contracts.ts';
 import type { CounterpartyPurchasingProfileRef } from '../../shared/resources/counterparty-purchasing-profile.ts';
 import type { RetailCustomerProfileRef } from '../../shared/resources/retail-customer-profile.ts';
 
@@ -22,10 +15,8 @@ interface CounterpartyTargetInput {
   readonly refs?: readonly HistoricalRecordRef[];
 }
 
-const exactTenant = (
-  scope: OperationalScope,
-  refs: readonly { readonly tenantId: string }[],
-): string => (refs.every((ref) => ref.tenantId === scope.tenantId) ? scope.tenantId : '');
+const exactTenant = (scope: OperationalScope, refs: readonly { readonly tenantId: string }[]): string =>
+  refs.every((ref) => ref.tenantId === scope.tenantId) ? scope.tenantId : '';
 
 const retailTarget = (
   input: RetailTargetInput,
@@ -55,11 +46,7 @@ const counterpartyTarget = (
       counterpartyId: input.counterpartyRef.resourceId,
       kind: 'counterparty',
       legalEntityId: scope.legalEntityId ?? '',
-      tenantId: exactTenant(scope, [
-        input.counterpartyRef,
-        input.profileRef,
-        ...(input.refs ?? []),
-      ]),
+      tenantId: exactTenant(scope, [input.counterpartyRef, input.profileRef, ...(input.refs ?? [])]),
     },
   },
   kind: 'business_permission',
@@ -68,23 +55,17 @@ const counterpartyTarget = (
 export const retailHistoryTarget = (input: RetailTargetInput, scope: OperationalScope) =>
   retailTarget(input, scope, 'retail.history.read');
 
-export const retailRepeatTarget = (input: RetailTargetInput, scope: OperationalScope) =>
+const retailRepeatTarget = (input: RetailTargetInput, scope: OperationalScope) =>
   retailTarget(input, scope, 'retail.repeat_order');
 
-export const counterpartyOwnHistoryTarget = (
-  input: CounterpartyTargetInput,
-  scope: OperationalScope,
-) => counterpartyTarget(input, scope, 'counterparty.history.read_own');
+export const counterpartyOwnHistoryTarget = (input: CounterpartyTargetInput, scope: OperationalScope) =>
+  counterpartyTarget(input, scope, 'counterparty.history.read_own');
 
-export const counterpartyAllHistoryTarget = (
-  input: CounterpartyTargetInput,
-  scope: OperationalScope,
-) => counterpartyTarget(input, scope, 'counterparty.history.read_all');
+export const counterpartyAllHistoryTarget = (input: CounterpartyTargetInput, scope: OperationalScope) =>
+  counterpartyTarget(input, scope, 'counterparty.history.read_all');
 
-export const counterpartyPurchaseTarget = (
-  input: CounterpartyTargetInput,
-  scope: OperationalScope,
-) => counterpartyTarget(input, scope, 'counterparty.purchase.prepare');
+const counterpartyPurchaseTarget = (input: CounterpartyTargetInput, scope: OperationalScope) =>
+  counterpartyTarget(input, scope, 'counterparty.purchase.prepare');
 
 export const subjectHistoryTarget = (
   input: {

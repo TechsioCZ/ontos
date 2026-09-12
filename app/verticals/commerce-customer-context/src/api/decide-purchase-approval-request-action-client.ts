@@ -69,11 +69,6 @@ export const executeDecidePurchaseApprovalRequest = (
 ) =>
   operationGateway.invoke(
     (credential) =>
-      executeDecidePurchaseApprovalRequestWithAuthorization(
-        payload,
-        credential,
-        requestCorrelation,
-        options,
-      ),
+      executeDecidePurchaseApprovalRequestWithAuthorization(payload, credential, requestCorrelation, options),
     options.gateway,
   );

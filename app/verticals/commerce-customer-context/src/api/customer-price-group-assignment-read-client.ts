@@ -37,17 +37,9 @@ const customerPriceGroupAssignmentReadClient = (
 
 export const executeCustomerPriceGroupAssignmentReadWithAuthorization = (
   payload: CustomerPriceGroupAssignmentReadRequest,
-  ...[
-    credential,
-    requestCorrelation,
-    options = {},
-  ]: CustomerPriceGroupAssignmentReadAuthorizedInvocation
+  ...[credential, requestCorrelation, options = {}]: CustomerPriceGroupAssignmentReadAuthorizedInvocation
 ) =>
-  customerPriceGroupAssignmentReadClient(
-    Redacted.make(credential),
-    requestCorrelation,
-    options,
-  ).pipe(
+  customerPriceGroupAssignmentReadClient(Redacted.make(credential), requestCorrelation, options).pipe(
     Effect.flatMap((client) =>
       client.customerPriceGroupAssignmentRead.execute({
         headers: {},
@@ -63,10 +55,5 @@ export const executeCustomerPriceGroupAssignmentRead = (
   ...[requestCorrelation, options = {}]: CustomerPriceGroupAssignmentReadOperationInvocation
 ) =>
   operationGateway.invoke((credential) =>
-    executeCustomerPriceGroupAssignmentReadWithAuthorization(
-      payload,
-      credential,
-      requestCorrelation,
-      options,
-    ),
+    executeCustomerPriceGroupAssignmentReadWithAuthorization(payload, credential, requestCorrelation, options),
   );

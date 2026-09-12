@@ -8,4 +8,5 @@ export const RemoveSavedAddressPayloadSchema = AddressPayloadSchema;
 export type RemoveSavedAddressPayload = typeof RemoveSavedAddressPayloadSchema.Type;
 
 export const RemoveSavedAddressResultSchema = AddressResultSchema;
-export type RemoveSavedAddressResult = typeof RemoveSavedAddressResultSchema.Type;
+// eslint-disable-next-line no-unused-vars -- Preserve the generated named result contract for this schema alias.
+type RemoveSavedAddressResult = typeof RemoveSavedAddressResultSchema.Type;

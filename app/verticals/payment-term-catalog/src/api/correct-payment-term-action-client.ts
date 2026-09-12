@@ -24,10 +24,7 @@ type AuthorizedInvocation = readonly [
   requestCorrelation: string,
   options: CorrectPaymentTermActionClientOptions,
 ];
-type OperationInvocation = readonly [
-  requestCorrelation: string,
-  options: CorrectPaymentTermActionClientOptions,
-];
+type OperationInvocation = readonly [requestCorrelation: string, options: CorrectPaymentTermActionClientOptions];
 
 interface MakeClientOptions {
   readonly credential: Redacted.Redacted;
@@ -68,7 +65,6 @@ export const executeCorrectPaymentTerm = (
   ...[requestCorrelation, options]: OperationInvocation
 ) =>
   operationGateway.invoke(
-    (credential) =>
-      executeCorrectPaymentTermWithAuthorization(payload, credential, requestCorrelation, options),
+    (credential) => executeCorrectPaymentTermWithAuthorization(payload, credential, requestCorrelation, options),
     options.gateway,
   );

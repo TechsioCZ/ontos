@@ -21,7 +21,7 @@ type RepeatOrderPreparationOperationInvocation = readonly [
 ];
 
 const repeatOrderPreparationClient = (
-  credential: Redacted.Redacted<string>,
+  credential: Redacted.Redacted,
   requestCorrelation: string,
   options: RepeatOrderPreparationClientOptions,
 ) =>
@@ -40,9 +40,7 @@ export const executeRepeatOrderPreparationWithAuthorization = (
   ...[credential, requestCorrelation, options = {}]: RepeatOrderPreparationAuthorizedInvocation
 ) =>
   repeatOrderPreparationClient(Redacted.make(credential), requestCorrelation, options).pipe(
-    Effect.flatMap((client) =>
-      client.repeatOrderPreparation.execute({ headers: {}, params: {}, payload, query: {} }),
-    ),
+    Effect.flatMap((client) => client.repeatOrderPreparation.execute({ headers: {}, params: {}, payload, query: {} })),
   );
 
 export const executeRepeatOrderPreparation = (
@@ -50,10 +48,5 @@ export const executeRepeatOrderPreparation = (
   ...[requestCorrelation, options = {}]: RepeatOrderPreparationOperationInvocation
 ) =>
   operationGateway.invoke((credential) =>
-    executeRepeatOrderPreparationWithAuthorization(
-      payload,
-      credential,
-      requestCorrelation,
-      options,
-    ),
+    executeRepeatOrderPreparationWithAuthorization(payload, credential, requestCorrelation, options),
   );

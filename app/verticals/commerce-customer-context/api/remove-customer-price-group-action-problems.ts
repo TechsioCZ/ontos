@@ -3,7 +3,7 @@
 // @ontos-action-http-slug remove-customer-price-group
 // oxlint-disable sonarjs/function-name -- Effect Match.tags requires owner-declared tag keys; remove-when: sonarjs accepts discriminant-map properties.
 import type { ActionCoreError } from '@app/core-runtime';
-import { Effect, HttpApiMiddleware } from '@modern-js/plugin-bff/effect-edge';
+import { Effect, HttpApiMiddleware } from '@modern-js/bff-effect/effect-edge';
 import { Match, Schema } from 'effect';
 import {
   RemoveCustomerPriceGroupActionAlreadyCommittedProblemSchema,
@@ -130,17 +130,13 @@ const mapDomainProblem = (error: DomainError): RemoveCustomerPriceGroupActionPro
       CustomerPriceGroupAssignmentNotFound: () =>
         removeCustomerPriceGroupActionProblem.notFound('customer_price_group_assignment_not_found'),
       CustomerPriceGroupPersistenceUnavailable: () =>
-        removeCustomerPriceGroupActionProblem.unavailable(
-          'customer_price_group_persistence_unavailable',
-        ),
+        removeCustomerPriceGroupActionProblem.unavailable('customer_price_group_persistence_unavailable'),
       CustomerPriceGroupProfileNotFound: () =>
         removeCustomerPriceGroupActionProblem.notFound('customer_price_group_profile_not_found'),
       CustomerPriceGroupRemovalConflict: () =>
         removeCustomerPriceGroupActionProblem.conflict('customer_price_group_removal_conflict'),
       CustomerPriceGroupRetroactiveScheduleRejected: () =>
-        removeCustomerPriceGroupActionProblem.ineligible(
-          'customer_price_group_retroactive_schedule_rejected',
-        ),
+        removeCustomerPriceGroupActionProblem.ineligible('customer_price_group_retroactive_schedule_rejected'),
       CustomerPriceGroupRevisionConflict: () =>
         removeCustomerPriceGroupActionProblem.conflict('customer_price_group_revision_conflict'),
       CustomerPriceGroupScopeMismatch: () =>
@@ -176,38 +172,24 @@ const mapCoreProblem = (error: ActionCoreError): RemoveCustomerPriceGroupActionP
         }),
       ActionHandlerExecutionError: removeCustomerPriceGroupActionProblem.internal,
       ActionIdempotencyKeyRequired: removeCustomerPriceGroupActionProblem.precondition,
-      ActionInvocationNotFound: (failure) =>
-        removeCustomerPriceGroupActionProblem.notFound(failure.code),
-      ActionInvocationPersistenceError: (failure) =>
-        removeCustomerPriceGroupActionProblem.unavailable(failure.code),
-      ActionInvocationStateError: (failure) =>
-        removeCustomerPriceGroupActionProblem.conflict(failure.code),
+      ActionInvocationNotFound: (failure) => removeCustomerPriceGroupActionProblem.notFound(failure.code),
+      ActionInvocationPersistenceError: (failure) => removeCustomerPriceGroupActionProblem.unavailable(failure.code),
+      ActionInvocationStateError: (failure) => removeCustomerPriceGroupActionProblem.conflict(failure.code),
       ActionPayloadValidationError: removeCustomerPriceGroupActionProblem.invalid,
-      ActionPermissionCheckError: (failure) =>
-        removeCustomerPriceGroupActionProblem.unavailable(failure.code),
-      ActionPermissionDenied: (failure) =>
-        removeCustomerPriceGroupActionProblem.forbidden(failure.code),
-      ActionPolicyDenied: (failure) =>
-        removeCustomerPriceGroupActionProblem.ineligible(failure.code),
-      ActionPolicyEvaluationError: (failure) =>
-        removeCustomerPriceGroupActionProblem.unavailable(failure.code),
-      ActionRequestHashConflict: (failure) =>
-        removeCustomerPriceGroupActionProblem.conflict(failure.code),
+      ActionPermissionCheckError: (failure) => removeCustomerPriceGroupActionProblem.unavailable(failure.code),
+      ActionPermissionDenied: (failure) => removeCustomerPriceGroupActionProblem.forbidden(failure.code),
+      ActionPolicyDenied: (failure) => removeCustomerPriceGroupActionProblem.ineligible(failure.code),
+      ActionPolicyEvaluationError: (failure) => removeCustomerPriceGroupActionProblem.unavailable(failure.code),
+      ActionRequestHashConflict: (failure) => removeCustomerPriceGroupActionProblem.conflict(failure.code),
       ActionResultValidationError: removeCustomerPriceGroupActionProblem.internal,
-      ActionTransactionError: (failure) =>
-        removeCustomerPriceGroupActionProblem.unavailable(failure.code),
+      ActionTransactionError: (failure) => removeCustomerPriceGroupActionProblem.unavailable(failure.code),
       ActionTrustedContextValidationError: removeCustomerPriceGroupActionProblem.authentication,
-      ModuleStateCheckUnavailableError: (failure) =>
-        removeCustomerPriceGroupActionProblem.unavailable(failure.code),
-      ModuleStateDeniedError: (failure) =>
-        removeCustomerPriceGroupActionProblem.forbidden(failure.code),
+      ModuleStateCheckUnavailableError: (failure) => removeCustomerPriceGroupActionProblem.unavailable(failure.code),
+      ModuleStateDeniedError: (failure) => removeCustomerPriceGroupActionProblem.forbidden(failure.code),
       OperationAuthenticationRequired: removeCustomerPriceGroupActionProblem.authentication,
-      OperationContextDenied: (failure) =>
-        removeCustomerPriceGroupActionProblem.forbidden(failure.code),
-      OperationContextInvalid: (failure) =>
-        removeCustomerPriceGroupActionProblem.forbidden(failure.code),
-      OperationContextUnavailable: (failure) =>
-        removeCustomerPriceGroupActionProblem.unavailable(failure.code),
+      OperationContextDenied: (failure) => removeCustomerPriceGroupActionProblem.forbidden(failure.code),
+      OperationContextInvalid: (failure) => removeCustomerPriceGroupActionProblem.forbidden(failure.code),
+      OperationContextUnavailable: (failure) => removeCustomerPriceGroupActionProblem.unavailable(failure.code),
     }),
     Match.exhaustive,
   );
@@ -215,11 +197,9 @@ const mapCoreProblem = (error: ActionCoreError): RemoveCustomerPriceGroupActionP
 const isDomainError = Schema.is(removeCustomerPriceGroupAction.descriptor.domainErrorSchema);
 export const mapRemoveCustomerPriceGroupActionProblem = (
   error: ActionCoreError | DomainError,
-): RemoveCustomerPriceGroupActionProblem =>
-  isDomainError(error) ? mapDomainProblem(error) : mapCoreProblem(error);
+): RemoveCustomerPriceGroupActionProblem => (isDomainError(error) ? mapDomainProblem(error) : mapCoreProblem(error));
 
-export const removeCustomerPriceGroupActionSchemaErrorLive =
-  HttpApiMiddleware.layerSchemaErrorTransform(
-    RemoveCustomerPriceGroupActionSchemaErrorMiddleware,
-    () => Effect.fail(removeCustomerPriceGroupActionProblem.invalid()),
-  );
+export const removeCustomerPriceGroupActionSchemaErrorLive = HttpApiMiddleware.layerSchemaErrorTransform(
+  RemoveCustomerPriceGroupActionSchemaErrorMiddleware,
+  () => Effect.fail(removeCustomerPriceGroupActionProblem.invalid()),
+);

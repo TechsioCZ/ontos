@@ -3,7 +3,7 @@
 // @ontos-action-http-slug update-saved-address
 // oxlint-disable sonarjs/function-name -- Effect Match.tags requires owner-declared tag keys; remove-when: sonarjs accepts discriminant-map properties.
 import type { ActionCoreError } from '@app/core-runtime';
-import { Effect, HttpApiMiddleware } from '@modern-js/plugin-bff/effect-edge';
+import { Effect, HttpApiMiddleware } from '@modern-js/bff-effect/effect-edge';
 import { Match, Schema } from 'effect';
 import {
   UpdateSavedAddressActionAlreadyCommittedProblemSchema,
@@ -127,14 +127,10 @@ export const updateSavedAddressActionProblem = {
 const mapDomainProblem = (error: DomainError): UpdateSavedAddressActionProblem =>
   Match.value(error).pipe(
     Match.tags({
-      AddressBookUnavailable: () =>
-        updateSavedAddressActionProblem.unavailable('address_book_unavailable'),
-      SavedAddressConflict: () =>
-        updateSavedAddressActionProblem.conflict('saved_address_conflict'),
-      SavedAddressInvalid: () =>
-        updateSavedAddressActionProblem.ineligible('saved_address_invalid'),
-      SavedAddressNotFound: () =>
-        updateSavedAddressActionProblem.notFound('saved_address_not_found'),
+      AddressBookUnavailable: () => updateSavedAddressActionProblem.unavailable('address_book_unavailable'),
+      SavedAddressConflict: () => updateSavedAddressActionProblem.conflict('saved_address_conflict'),
+      SavedAddressInvalid: () => updateSavedAddressActionProblem.ineligible('saved_address_invalid'),
+      SavedAddressNotFound: () => updateSavedAddressActionProblem.notFound('saved_address_not_found'),
       SavedAddressReconciliationRequired: () =>
         updateSavedAddressActionProblem.ineligible('saved_address_reconciliation_required'),
       SavedAddressSourceTransitionRequired: () =>
@@ -171,31 +167,23 @@ const mapCoreProblem = (error: ActionCoreError): UpdateSavedAddressActionProblem
       ActionHandlerExecutionError: updateSavedAddressActionProblem.internal,
       ActionIdempotencyKeyRequired: updateSavedAddressActionProblem.precondition,
       ActionInvocationNotFound: (failure) => updateSavedAddressActionProblem.notFound(failure.code),
-      ActionInvocationPersistenceError: (failure) =>
-        updateSavedAddressActionProblem.unavailable(failure.code),
-      ActionInvocationStateError: (failure) =>
-        updateSavedAddressActionProblem.conflict(failure.code),
+      ActionInvocationPersistenceError: (failure) => updateSavedAddressActionProblem.unavailable(failure.code),
+      ActionInvocationStateError: (failure) => updateSavedAddressActionProblem.conflict(failure.code),
       ActionPayloadValidationError: updateSavedAddressActionProblem.invalid,
-      ActionPermissionCheckError: (failure) =>
-        updateSavedAddressActionProblem.unavailable(failure.code),
+      ActionPermissionCheckError: (failure) => updateSavedAddressActionProblem.unavailable(failure.code),
       ActionPermissionDenied: (failure) => updateSavedAddressActionProblem.forbidden(failure.code),
       ActionPolicyDenied: (failure) => updateSavedAddressActionProblem.ineligible(failure.code),
-      ActionPolicyEvaluationError: (failure) =>
-        updateSavedAddressActionProblem.unavailable(failure.code),
-      ActionRequestHashConflict: (failure) =>
-        updateSavedAddressActionProblem.conflict(failure.code),
+      ActionPolicyEvaluationError: (failure) => updateSavedAddressActionProblem.unavailable(failure.code),
+      ActionRequestHashConflict: (failure) => updateSavedAddressActionProblem.conflict(failure.code),
       ActionResultValidationError: updateSavedAddressActionProblem.internal,
-      ActionTransactionError: (failure) =>
-        updateSavedAddressActionProblem.unavailable(failure.code),
+      ActionTransactionError: (failure) => updateSavedAddressActionProblem.unavailable(failure.code),
       ActionTrustedContextValidationError: updateSavedAddressActionProblem.authentication,
-      ModuleStateCheckUnavailableError: (failure) =>
-        updateSavedAddressActionProblem.unavailable(failure.code),
+      ModuleStateCheckUnavailableError: (failure) => updateSavedAddressActionProblem.unavailable(failure.code),
       ModuleStateDeniedError: (failure) => updateSavedAddressActionProblem.forbidden(failure.code),
       OperationAuthenticationRequired: updateSavedAddressActionProblem.authentication,
       OperationContextDenied: (failure) => updateSavedAddressActionProblem.forbidden(failure.code),
       OperationContextInvalid: (failure) => updateSavedAddressActionProblem.forbidden(failure.code),
-      OperationContextUnavailable: (failure) =>
-        updateSavedAddressActionProblem.unavailable(failure.code),
+      OperationContextUnavailable: (failure) => updateSavedAddressActionProblem.unavailable(failure.code),
     }),
     Match.exhaustive,
   );
@@ -203,8 +191,7 @@ const mapCoreProblem = (error: ActionCoreError): UpdateSavedAddressActionProblem
 const isDomainError = Schema.is(updateSavedAddressAction.descriptor.domainErrorSchema);
 export const mapUpdateSavedAddressActionProblem = (
   error: ActionCoreError | DomainError,
-): UpdateSavedAddressActionProblem =>
-  isDomainError(error) ? mapDomainProblem(error) : mapCoreProblem(error);
+): UpdateSavedAddressActionProblem => (isDomainError(error) ? mapDomainProblem(error) : mapCoreProblem(error));
 
 export const updateSavedAddressActionSchemaErrorLive = HttpApiMiddleware.layerSchemaErrorTransform(
   UpdateSavedAddressActionSchemaErrorMiddleware,

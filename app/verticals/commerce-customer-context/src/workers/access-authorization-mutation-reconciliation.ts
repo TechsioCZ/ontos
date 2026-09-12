@@ -30,10 +30,8 @@ export type AccessAuthorizationMutationRequest =
 
 type AccessGrantedPayload = typeof CounterpartyAccessGrantedEventPayloadSchema.Type;
 type AccessRevokedPayload = typeof CounterpartyAccessRevokedEventPayloadSchema.Type;
-type AccessAdministratorBootstrappedPayload =
-  typeof CounterpartyAccessAdministratorBootstrappedEventPayloadSchema.Type;
-type AccessInvitationClaimedPayload =
-  typeof CounterpartyAccessInvitationClaimedEventPayloadSchema.Type;
+type AccessAdministratorBootstrappedPayload = typeof CounterpartyAccessAdministratorBootstrappedEventPayloadSchema.Type;
+type AccessInvitationClaimedPayload = typeof CounterpartyAccessInvitationClaimedEventPayloadSchema.Type;
 
 interface CompletionEvidence<Kind extends string, Payload> {
   readonly completionId: string;
@@ -49,7 +47,7 @@ export type AccessAuthorizationMutationCompletion =
   | CompletionEvidence<'ADMINISTRATOR_BOOTSTRAPPED', AccessAdministratorBootstrappedPayload>
   | CompletionEvidence<'INVITATION_CLAIMED', AccessInvitationClaimedPayload>;
 
-export type AccessAuthorizationMutationTerminalEvidence =
+type AccessAuthorizationMutationTerminalEvidence =
   | Readonly<{
       readonly completionId: string;
       readonly grant: CounterpartyAccessGrant;
@@ -66,7 +64,7 @@ export type AccessAuthorizationMutationTerminalEvidence =
       readonly sourceActionInvocationId: string;
     }>;
 
-export type AccessAuthorizationMutationReconciliationResult =
+type AccessAuthorizationMutationReconciliationResult =
   | Readonly<{
       readonly outcome: 'ALREADY_FINAL' | 'FINALIZED';
       readonly terminal: AccessAuthorizationMutationTerminalEvidence;
@@ -100,10 +98,7 @@ export interface AccessAuthorizationMutationReconciliationService {
   readonly reconcile: (
     scope: OutboxWorkerLegalEntityScope,
     request: AccessAuthorizationMutationRequest,
-  ) => Effect.Effect<
-    AccessAuthorizationMutationReconciliationResult,
-    AccessAuthorizationMutationWorkerError
-  >;
+  ) => Effect.Effect<AccessAuthorizationMutationReconciliationResult, AccessAuthorizationMutationWorkerError>;
 }
 
 export class AccessAuthorizationMutationReconciliation extends Context.Service<
@@ -118,22 +113,9 @@ const rejected = (
   reason: string,
 ) => new AccessAuthorizationMutationWorkerRejected({ code, reason });
 
-export const accessAuthorizationMutationReconciliationUnavailable = Object.freeze({
-  reconcile: () =>
-    Effect.fail(
-      rejected(
-        'RECONCILIATION_UNAVAILABLE',
-        'Counterparty access authorization reconciliation is unavailable',
-      ),
-    ),
-}) satisfies AccessAuthorizationMutationReconciliationService;
-
 type CompletionKind = AccessAuthorizationMutationCompletion['kind'];
 
-const requestMatchesTenant = (
-  request: AccessAuthorizationMutationRequest,
-  tenantId: string,
-): boolean =>
+const requestMatchesTenant = (request: AccessAuthorizationMutationRequest, tenantId: string): boolean =>
   request.counterpartyRef.tenantId === tenantId &&
   ('grantRef' in request ? request.grantRef.tenantId === tenantId : true) &&
   ('invitationRef' in request ? request.invitationRef.tenantId === tenantId : true) &&
@@ -179,10 +161,7 @@ const grantCompletion = (
 };
 
 const claimCompletion = (
-  terminal: Extract<
-    AccessAuthorizationMutationTerminalEvidence,
-    { readonly kind: 'INVITATION_CLAIM' }
-  >,
+  terminal: Extract<AccessAuthorizationMutationTerminalEvidence, { readonly kind: 'INVITATION_CLAIM' }>,
 ): AccessAuthorizationMutationCompletion | undefined =>
   terminal.invitation.claimant === undefined
     ? undefined
@@ -213,97 +192,94 @@ const completionForRoute = (
   return kind === 'INVITATION_CLAIMED' ? undefined : grantCompletion(terminal, kind);
 };
 
-export const handleAccessAuthorizationMutation = Effect.fn(
-  'AccessAuthorizationMutationWorker.handle',
-)(function* handleAccessAuthorizationMutationEffect(
-  request: AccessAuthorizationMutationRequest,
-  context: OutboxWorkerHandlerContext,
-  expected: {
-    readonly completion: OutboxWorkerCompletionDefinition<Schema.ConstraintDecoder<unknown>>;
-    readonly completionKind: CompletionKind;
-    readonly requestTopic: string;
-    readonly workerKey: string;
-  },
-): Effect.fn.Return<
-  void,
-  AccessAuthorizationMutationWorkerError | OutboxWorkerLegalEntityScopeError,
-  AccessAuthorizationMutationReconciliation | OutboxWorkerLegalEntityScopeFanout
-> {
-  if (
-    context.workerKey !== expected.workerKey ||
-    context.consumerModuleKey !== 'commerce.customer-context' ||
-    context.producerModuleKey !== 'commerce.customer-context' ||
-    context.topic !== expected.requestTopic ||
-    !requestMatchesTenant(request, context.tenantId)
-  ) {
-    return yield* rejected(
-      'CROSS_TENANT_REQUEST',
-      'The access authorization request does not match its verified worker delivery',
-    );
-  }
+export const handleAccessAuthorizationMutation = Effect.fn('AccessAuthorizationMutationWorker.handle')(
+  function* handleAccessAuthorizationMutationEffect(
+    request: AccessAuthorizationMutationRequest,
+    context: OutboxWorkerHandlerContext,
+    expected: {
+      readonly completion: OutboxWorkerCompletionDefinition<Schema.ConstraintDecoder<unknown>>;
+      readonly completionKind: CompletionKind;
+      readonly requestTopic: string;
+      readonly workerKey: string;
+    },
+  ): Effect.fn.Return<
+    void,
+    AccessAuthorizationMutationWorkerError | OutboxWorkerLegalEntityScopeError,
+    AccessAuthorizationMutationReconciliation | OutboxWorkerLegalEntityScopeFanout
+  > {
+    if (
+      context.workerKey !== expected.workerKey ||
+      context.consumerModuleKey !== 'commerce.customer-context' ||
+      context.producerModuleKey !== 'commerce.customer-context' ||
+      context.topic !== expected.requestTopic ||
+      !requestMatchesTenant(request, context.tenantId)
+    ) {
+      return yield* rejected(
+        'CROSS_TENANT_REQUEST',
+        'The access authorization request does not match its verified worker delivery',
+      );
+    }
 
-  const indeterminate = yield* Ref.make(false);
-  const matchedScope = yield* Ref.make(false);
-  const fanout = yield* OutboxWorkerLegalEntityScopeFanout;
-  yield* fanout.forEachScope(context, (scope) =>
-    scope.legalEntityId === request.legalEntityId
-      ? Effect.gen(function* reconcileExactScope() {
-          yield* Ref.set(matchedScope, true);
-          const reconciliation = yield* AccessAuthorizationMutationReconciliation;
-          const result = yield* reconciliation.reconcile(scope, request);
-          if (result.outcome === 'INDETERMINATE') {
-            yield* Ref.set(indeterminate, true);
+    const indeterminate = yield* Ref.make(false);
+    const matchedScope = yield* Ref.make(false);
+    const fanout = yield* OutboxWorkerLegalEntityScopeFanout;
+    yield* fanout.forEachScope(context, (scope) =>
+      scope.legalEntityId === request.legalEntityId
+        ? Effect.gen(function* reconcileExactScope() {
+            yield* Ref.set(matchedScope, true);
+            const reconciliation = yield* AccessAuthorizationMutationReconciliation;
+            const result = yield* reconciliation.reconcile(scope, request);
+            if (result.outcome === 'INDETERMINATE') {
+              yield* Ref.set(indeterminate, true);
+              return yield* Effect.void;
+            }
+            if (result.outcome === 'COMPENSATED') {
+              // Compensation is a terminal owner-side deny/reset. Publishing the claim
+              // completion here would re-grant the invitation in downstream projections.
+              return yield* Effect.void;
+            }
+            const completion = completionForRoute(result.terminal, expected.completionKind);
+            if (
+              completion === undefined ||
+              completion.completionId !== request.mutationId ||
+              completion.payload.counterpartyRef.tenantId !== context.tenantId
+            ) {
+              return yield* rejected(
+                'RECONCILIATION_RESULT_INVALID',
+                'The reconciler returned completion evidence for a different mutation or scope',
+              );
+            }
+            yield* scope.completionPublisher.publish(expected.completion, {
+              completionId: completion.completionId,
+              occurredAt: completion.occurredAt,
+              payloadJson: completion.payload,
+              sourceActionInvocationId: completion.sourceActionInvocationId,
+              subjectModuleKey:
+                completion.kind === 'INVITATION_CLAIMED'
+                  ? completion.payload.invitationRef.moduleId
+                  : completion.payload.grantRef.moduleId,
+              subjectResourceId:
+                completion.kind === 'INVITATION_CLAIMED'
+                  ? completion.payload.invitationRef.resourceId
+                  : completion.payload.grantRef.resourceId,
+              subjectResourceType:
+                completion.kind === 'INVITATION_CLAIMED'
+                  ? completion.payload.invitationRef.resourceType
+                  : completion.payload.grantRef.resourceType,
+            });
             return yield* Effect.void;
-          }
-          if (result.outcome === 'COMPENSATED') {
-            // Compensation is a terminal owner-side deny/reset. Publishing the claim
-            // completion here would re-grant the invitation in downstream projections.
-            return yield* Effect.void;
-          }
-          const completion = completionForRoute(result.terminal, expected.completionKind);
-          if (
-            completion === undefined ||
-            completion.completionId !== request.mutationId ||
-            completion.payload.counterpartyRef.tenantId !== context.tenantId
-          ) {
-            return yield* rejected(
-              'RECONCILIATION_RESULT_INVALID',
-              'The reconciler returned completion evidence for a different mutation or scope',
-            );
-          }
-          yield* scope.completionPublisher.publish(expected.completion, {
-            completionId: completion.completionId,
-            occurredAt: completion.occurredAt,
-            payloadJson: completion.payload,
-            sourceActionInvocationId: completion.sourceActionInvocationId,
-            subjectModuleKey:
-              completion.kind === 'INVITATION_CLAIMED'
-                ? completion.payload.invitationRef.moduleId
-                : completion.payload.grantRef.moduleId,
-            subjectResourceId:
-              completion.kind === 'INVITATION_CLAIMED'
-                ? completion.payload.invitationRef.resourceId
-                : completion.payload.grantRef.resourceId,
-            subjectResourceType:
-              completion.kind === 'INVITATION_CLAIMED'
-                ? completion.payload.invitationRef.resourceType
-                : completion.payload.grantRef.resourceType,
-          });
-          return yield* Effect.void;
-        })
-      : Effect.void,
-  );
-  if (!(yield* Ref.get(matchedScope))) {
-    return yield* rejected(
-      'WORKER_CONTEXT_INVALID',
-      'The requested Legal Entity is not available in the verified Tenant scope',
+          })
+        : Effect.void,
     );
-  }
-  if (yield* Ref.get(indeterminate)) {
-    return yield* rejected(
-      'RECONCILIATION_INDETERMINATE',
-      'The authorization mutation is not yet durably finalized',
-    );
-  }
-  return yield* Effect.void;
-});
+    if (!(yield* Ref.get(matchedScope))) {
+      return yield* rejected(
+        'WORKER_CONTEXT_INVALID',
+        'The requested Legal Entity is not available in the verified Tenant scope',
+      );
+    }
+    if (yield* Ref.get(indeterminate)) {
+      return yield* rejected('RECONCILIATION_INDETERMINATE', 'The authorization mutation is not yet durably finalized');
+    }
+    return yield* Effect.void;
+  },
+);

@@ -5,11 +5,7 @@ import {
   defineRead,
   defineTenantModuleEntrypoint,
 } from '@app/core-runtime';
-import type {
-  OperationalScope,
-  ReadHandlerContext,
-  ResolvedReadPermissionTarget,
-} from '@app/core-runtime';
+import type { OperationalScope, ReadHandlerContext, ResolvedReadPermissionTarget } from '@app/core-runtime';
 import { Effect, Match } from 'effect';
 import {
   RetailPortalProfileBindingReadRequestSchema,
@@ -26,10 +22,7 @@ export interface RetailPortalProfileBindingReadServices {
     input: RetailPortalProfileBindingReadRequest,
     principalId: string,
     tenantId: string,
-  ) => Effect.Effect<
-    RetailPortalProfileBindingReadResponse,
-    ReadHandlerNotFound | ReadHandlerUnavailable
-  >;
+  ) => Effect.Effect<RetailPortalProfileBindingReadResponse, ReadHandlerNotFound | ReadHandlerUnavailable>;
 }
 
 const notFound = () =>
@@ -44,12 +37,11 @@ const unavailable = () =>
     reason: 'The trusted Legal Entity scope is unavailable',
   });
 
-export const retailPortalProfileBindingReadServicesUnavailable =
-  (): RetailPortalProfileBindingReadServices => ({
-    readBinding: () => Effect.fail(unavailable()),
-  });
+export const retailPortalProfileBindingReadServicesUnavailable = (): RetailPortalProfileBindingReadServices => ({
+  readBinding: () => Effect.fail(unavailable()),
+});
 
-export const readRetailPortalProfileBindingFromServices = (
+const readRetailPortalProfileBindingFromServices = (
   input: RetailPortalProfileBindingReadRequest,
   principalId: string,
   tenantId: string,
@@ -93,7 +85,7 @@ export const retailPortalProfileBindingReadPermissionTarget = (
   kind: 'business_permission',
 });
 
-export const retailPortalProfileBindingReadEntrypoint = defineTenantModuleEntrypoint({
+const retailPortalProfileBindingReadEntrypoint = defineTenantModuleEntrypoint({
   access: 'read',
   authorization: { kind: 'context_permission', permission: 'module.access' },
   entrypointKey: 'commerce.customer-context.api.retail-portal-profile-binding-read',
@@ -128,7 +120,9 @@ export const retailPortalProfileBindingReadRead = defineRead(
     ).pipe(Effect.map((result) => ({ evidence: { resultCount: 1 }, result }))),
   (transaction, scope) =>
     profileServicesForVerifiedScope(transaction, scope).pipe(
-      Effect.map(({ retailPortalProfileBindingRead }) => retailPortalProfileBindingRead),
+      Effect.map(
+        ({ retailPortalProfileBindingRead }): RetailPortalProfileBindingReadServices => retailPortalProfileBindingRead,
+      ),
     ),
   retailPortalProfileBindingReadPermissionTarget,
 );

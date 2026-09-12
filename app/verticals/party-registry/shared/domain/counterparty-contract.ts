@@ -6,18 +6,19 @@ import { PartyRefSchema } from '../resources/party.ts';
 
 export const CounterpartyUuidSchema = Schema.String.check(Schema.isUUID());
 const CounterpartyTextSchema = Schema.Trim.check(Schema.isMinLength(1), Schema.isMaxLength(500));
-const CounterpartyInstantSchema = Schema.String.check(
-  Schema.makeFilter((value) => {
-    const parsed = DateTime.make(value);
-    return Option.isSome(parsed) && DateTime.formatIso(parsed.value) === value
-      ? undefined
-      : 'timestamp must be one canonical UTC instant with millisecond precision';
-  }),
-).pipe(
-  Schema.decodeTo(Schema.toType(Schema.DateTimeUtc), {
-    decode: SchemaGetter.transform(DateTime.makeUnsafe),
-    encode: SchemaGetter.transform(DateTime.formatIso),
-  }),
+const counterpartyCanonicalInstant = (value: string): string | undefined => {
+  const parsed = DateTime.make(value);
+  return Option.isSome(parsed) && DateTime.formatIso(parsed.value) === value
+    ? undefined
+    : 'timestamp must be one canonical UTC instant with millisecond precision';
+};
+const CounterpartyInstantSchema = Schema.String.check(Schema.makeFilter(counterpartyCanonicalInstant)).pipe((schema) =>
+  schema.pipe(
+    Schema.decodeTo(Schema.toType(Schema.DateTimeUtc), {
+      decode: SchemaGetter.transform(DateTime.makeUnsafe),
+      encode: SchemaGetter.transform(DateTime.formatIso),
+    }),
+  ),
 );
 /** JSON-compatible view retained for existing action, API, and outbox consumers. */
 export const CounterpartyIsoTimestampSchema = Schema.toEncoded(CounterpartyInstantSchema);

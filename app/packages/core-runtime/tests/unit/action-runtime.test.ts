@@ -31,10 +31,8 @@ import {
 } from '../../src/actions/repository.ts';
 import type { ActionRuntimeStage } from '../../src/actions/runtime.ts';
 import { ACTION_RUNTIME_STAGES, makeActionRuntime } from '../../src/actions/runtime.ts';
-import {
-  allowOwnerAuthorizationOverlay,
-  type OwnerAuthorizationOverlayService,
-} from '../../src/permissions/owner-authorization-overlay.ts';
+import { allowOwnerAuthorizationOverlay } from '../../src/permissions/owner-authorization-overlay.ts';
+import type { OwnerAuthorizationOverlayService } from '../../src/permissions/owner-authorization-overlay.ts';
 import type { PrincipalManagementRepositoryService } from '../../src/auth/principal-management.ts';
 import { PrincipalManagementRepository } from '../../src/auth/principal-management.ts';
 import { supportRecoveryPrincipalContextResolverFromRepository } from '../../src/auth/support-recovery-principal-context.ts';
@@ -113,9 +111,9 @@ interface HarnessOptions {
   readonly legalEntityPermissionDecision?: PermissionDecision;
   readonly lockedModuleState?: 'active' | 'denied' | 'unavailable';
   readonly moduleState?: TenantModuleState | 'missing' | 'unavailable';
+  readonly omitOwnerAuthorizationOverlay?: boolean;
   readonly onBusinessPermissionCheck?: () => void;
   readonly onResourcePermissionCheck?: () => void;
-  readonly omitOwnerAuthorizationOverlay?: boolean;
   readonly ownerAuthorizationOverlay?: OwnerAuthorizationOverlayService;
   readonly permissionDecision?: ActionPermissionDecision;
   readonly permissionFailure?: boolean;
@@ -378,68 +376,61 @@ const makeHarness = Effect.fn(function* makeHarness(options: HarnessOptions = {}
     options.omitOwnerAuthorizationOverlay === true
       ? {}
       : {
-          ownerAuthorizationOverlay:
-            options.ownerAuthorizationOverlay ?? allowOwnerAuthorizationOverlay,
+          ownerAuthorizationOverlay: options.ownerAuthorizationOverlay ?? allowOwnerAuthorizationOverlay,
         };
-  const runtime = makeActionRuntime(
-    database,
-    repository,
-    permission,
-    testOperationalScopeResolver,
-    {
-      contextAccess: {
-        businessPermissions: (input) => {
-          options.onBusinessPermissionCheck?.();
-          businessPermissionChecks.push(input);
-          return Effect.succeed(
-            input.targets.map((target) => ({
-              decision: options.businessPermissionDecision ?? ('allowed' as const),
-              key: toBusinessPermissionAccessKey(target),
-            })),
-          );
-        },
-        legalEntities: (input) => {
-          legalEntityChecks.push(input);
-          return Effect.succeed(
-            input.legalEntityIds.map((key) => ({
-              decision: options.legalEntityPermissionDecision ?? ('allowed' as const),
-              key,
-            })),
-          );
-        },
-        modules: () => Effect.succeed([]),
-        resources: (input) => {
-          options.onResourcePermissionCheck?.();
-          resourceChecks.push(input);
-          return Effect.succeed(
-            input.resources.map(({ moduleId, resourceId, resourceType }) => ({
-              decision: options.resourcePermissionDecision ?? ('allowed' as const),
-              key: `${moduleId}:${resourceType}:${resourceId}`,
-            })),
-          );
-        },
-        tenants: (input) => {
-          tenantChecks.push(input);
-          return Effect.succeed(
-            input.tenantIds.map((key) => ({
-              decision: options.tenantPermissionDecision ?? ('allowed' as const),
-              key,
-            })),
-          );
-        },
+  const runtime = makeActionRuntime(database, repository, permission, testOperationalScopeResolver, {
+    contextAccess: {
+      businessPermissions: (input) => {
+        options.onBusinessPermissionCheck?.();
+        businessPermissionChecks.push(input);
+        return Effect.succeed(
+          input.targets.map((target) => ({
+            decision: options.businessPermissionDecision ?? ('allowed' as const),
+            key: toBusinessPermissionAccessKey(target),
+          })),
+        );
       },
-      moduleEntrypointGateway: makeModuleEntrypointGateway(moduleStateGate),
-      moduleStateGate,
-      ...ownerAuthorizationOptions,
-      onStage: (stage) => {
-        stages.push(stage);
+      legalEntities: (input) => {
+        legalEntityChecks.push(input);
+        return Effect.succeed(
+          input.legalEntityIds.map((key) => ({
+            decision: options.legalEntityPermissionDecision ?? ('allowed' as const),
+            key,
+          })),
+        );
       },
-      resolveHandler: (action) => {
-        handlerResolutionCount += 1;
-        return getActionHandler(action);
+      modules: () => Effect.succeed([]),
+      resources: (input) => {
+        options.onResourcePermissionCheck?.();
+        resourceChecks.push(input);
+        return Effect.succeed(
+          input.resources.map(({ moduleId, resourceId, resourceType }) => ({
+            decision: options.resourcePermissionDecision ?? ('allowed' as const),
+            key: `${moduleId}:${resourceType}:${resourceId}`,
+          })),
+        );
+      },
+      tenants: (input) => {
+        tenantChecks.push(input);
+        return Effect.succeed(
+          input.tenantIds.map((key) => ({
+            decision: options.tenantPermissionDecision ?? ('allowed' as const),
+            key,
+          })),
+        );
       },
     },
-  );
+    moduleEntrypointGateway: makeModuleEntrypointGateway(moduleStateGate),
+    moduleStateGate,
+    ...ownerAuthorizationOptions,
+    onStage: (stage) => {
+      stages.push(stage);
+    },
+    resolveHandler: (action) => {
+      handlerResolutionCount += 1;
+      return getActionHandler(action);
+    },
+  });
 
   return {
     businessPermissionChecks,
@@ -1527,7 +1518,7 @@ it.effect(
     const observed: string[] = [];
     let handlerCalls = 0;
     let policyCalls = 0;
-    const permission = yield* Schema.decodeUnknownEffect(BusinessPermissionCodeSchema)(
+    const permission = yield* Schema.decodeEffect(BusinessPermissionCodeSchema)(
       'retail.settings.payment_term_preference.manage',
     );
     const action = defineAction(
@@ -1639,15 +1630,11 @@ it.effect(
     expect(businessDenied.businessPermissionChecks).toHaveLength(1);
 
     const resourceUnavailable = yield* makeHarness({ resourcePermissionDecision: 'unavailable' });
-    const resourceUnavailableFailure = yield* Effect.flip(
-      run(resourceUnavailable, 'resource-unavailable'),
-    );
+    const resourceUnavailableFailure = yield* Effect.flip(run(resourceUnavailable, 'resource-unavailable'));
     expect(Predicate.isTagged(resourceUnavailableFailure, 'ActionPermissionCheckError')).toBe(true);
 
     const businessUnavailable = yield* makeHarness({ businessPermissionDecision: 'unavailable' });
-    const businessUnavailableFailure = yield* Effect.flip(
-      run(businessUnavailable, 'business-unavailable'),
-    );
+    const businessUnavailableFailure = yield* Effect.flip(run(businessUnavailable, 'business-unavailable'));
     expect(Predicate.isTagged(businessUnavailableFailure, 'ActionPermissionCheckError')).toBe(true);
     expect(businessUnavailable.resourceChecks).toHaveLength(1);
     expect(businessUnavailable.businessPermissionChecks).toHaveLength(1);
@@ -1660,9 +1647,7 @@ it.effect(
 it.effect(
   'accepts Storefront business targets only from exact gateway-verified scope',
   Effect.fn(function* testTrustedStorefrontBusinessPermission() {
-    const permission = yield* Schema.decodeUnknownEffect(BusinessPermissionCodeSchema)(
-      'counterparty.purchase.submit',
-    );
+    const permission = yield* Schema.decodeEffect(BusinessPermissionCodeSchema)('counterparty.purchase.submit');
     const StorefrontIdSchema = Schema.String.pipe(Schema.brand('StorefrontId'));
     let handlerCalls = 0;
     const action = defineAction(
@@ -2489,10 +2474,9 @@ it.effect(
       reason: Schema.String,
     });
     type CommittedDomainRejectedSelf = typeof CommittedDomainRejectedContract.Type;
-    const CommittedDomainRejected = Schema.TaggedError<CommittedDomainRejectedSelf>()(
-      'CommittedDomainRejected',
-      { reason: Schema.String },
-    );
+    const CommittedDomainRejected = Schema.TaggedError<CommittedDomainRejectedSelf>()('CommittedDomainRejected', {
+      reason: Schema.String,
+    });
     const businessWrites: number[] = [];
     const harness = yield* makeHarness();
     const action = defineAction(

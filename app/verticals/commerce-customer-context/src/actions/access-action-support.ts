@@ -9,21 +9,36 @@ import { Effect } from 'effect';
 import type {
   AccessDeniedAuditEvidence,
   AccessAuditEvidence,
+  CounterpartyAccessGrant,
   CounterpartyPermissionScope,
   CounterpartyRef,
   PrincipalRef,
 } from '../../shared/domain/access-contract.ts';
+import type { AccessAuthorizationMutationEvidence } from '../../shared/domain/access-authorization-mutation.ts';
 import { CounterpartyAccessContractViolation } from '../../shared/domain/access-port.ts';
-import {
-  permissionAllowsScope,
-  permissionDescriptor,
-} from '../../shared/domain/permission-catalog.ts';
+import { permissionAllowsScope, permissionDescriptor } from '../../shared/domain/permission-catalog.ts';
 import type { CounterpartyPermissionCode } from '../../shared/domain/permission-catalog.ts';
 import type { CounterpartyAccessInvitationRef } from '../../shared/resources/counterparty-access-invitation.ts';
 
 export const principalRefFromContext = (context: TrustedPrincipalContext): PrincipalRef => ({
   principalId: context.principalId,
   tenantId: context.tenantId,
+});
+
+export const accessAuthorizationMutationEventPayload = <
+  const Operation extends AccessAuthorizationMutationEvidence['operation'],
+>(
+  grant: CounterpartyAccessGrant,
+  reconciliation: AccessAuthorizationMutationEvidence & { readonly operation: Operation },
+  legalEntityId: string,
+) => ({
+  catalogVersion: grant.catalogVersion,
+  counterpartyRef: grant.counterpartyRef,
+  grantRef: grant.grantRef,
+  legalEntityId,
+  mutationId: reconciliation.mutationId,
+  operation: reconciliation.operation,
+  schemaVersion: '1' as const,
 });
 
 export const requireAccessLegalEntity = (

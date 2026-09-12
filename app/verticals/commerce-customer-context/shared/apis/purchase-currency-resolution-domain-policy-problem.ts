@@ -1,4 +1,4 @@
-import { HttpApiSchema } from '@modern-js/plugin-bff/effect-client';
+import { HttpApiSchema } from '@modern-js/bff-effect/effect-client';
 import { Schema } from 'effect';
 
 const problemDetailsRepresentation = HttpApiSchema.asJson({
@@ -16,8 +16,7 @@ export class PurchaseCurrencyResolutionDomainPolicyProblem extends Schema.Tagged
   },
 ) {}
 
-export const PurchaseCurrencyResolutionDomainPolicyProblemSchema =
-  PurchaseCurrencyResolutionDomainPolicyProblem.pipe(
-    problemDetailsRepresentation,
-    HttpApiSchema.status(422),
-  );
+export const PurchaseCurrencyResolutionDomainPolicyProblemSchema = PurchaseCurrencyResolutionDomainPolicyProblem.pipe(
+  problemDetailsRepresentation,
+  HttpApiSchema.status(422),
+);

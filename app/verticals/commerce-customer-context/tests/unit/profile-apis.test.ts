@@ -112,105 +112,99 @@ const unavailable = () =>
     reason: 'Test dependency unavailable',
   });
 
-it.effect(
-  'profile API requests require concrete profile, binding, case, and Permission identity',
-  () =>
-    Effect.gen(function* profileApiRequestContracts() {
-      expect(
-        (yield* Schema.decodeUnknownEffect(CustomerProfileReadRequestSchema)({
-          authorizationSubject: counterpartySubject,
-          profileRef: taggedCounterpartyProfileRef,
-        })).profileRef.resourceType,
-      ).toBe('commerce.customer-context.counterparty-purchasing-profile');
-      expect(
-        (yield* Schema.decodeUnknownEffect(CustomerProfileTradingGateRequestSchema)({
-          authorizationSubject: retailSubject,
-          profileRef: taggedRetailProfileRef,
-        })).profileRef.resourceType,
-      ).toBe('commerce.customer-context.retail-customer-profile');
-      expect(
-        (yield* Schema.decodeUnknownEffect(RetailAccessDecisionRequestSchema)({
-          profileRef: retailProfileRef,
-          requiredPermission: 'retail.profile.read',
-        })).requiredPermission,
-      ).toBe('retail.profile.read');
-      expect(
-        (yield* Schema.decodeUnknownEffect(RetailPortalProfileBindingReadRequestSchema)({
-          bindingRef,
-          profileRef: retailProfileRef,
-        })).bindingRef,
-      ).toEqual(bindingRef);
-      expect(
-        (yield* Schema.decodeUnknownEffect(ProfileReconciliationReadRequestSchema)({
-          reconciliationCaseRef,
-        })).reconciliationCaseRef,
-      ).toEqual(reconciliationCaseRef);
-      expect(
-        (yield* Schema.decodeUnknownEffect(RetailPrincipalResolutionRequestSchema)({
-          profileRef: retailProfileRef,
-        })).profileRef,
-      ).toEqual(retailProfileRef);
-      expect(
-        (yield* Schema.decodeUnknownEffect(GuestAttributionStatusRequestSchema)({
-          attributionCorrelationId: 'checkout-1',
-          sellingLegalEntityRef,
-        })).sellingLegalEntityRef,
-      ).toEqual(sellingLegalEntityRef);
-    }),
+it.effect('profile API requests require concrete profile, binding, case, and Permission identity', () =>
+  Effect.gen(function* profileApiRequestContracts() {
+    expect(
+      (yield* Schema.decodeUnknownEffect(CustomerProfileReadRequestSchema)({
+        authorizationSubject: counterpartySubject,
+        profileRef: taggedCounterpartyProfileRef,
+      })).profileRef.resourceType,
+    ).toBe('commerce.customer-context.counterparty-purchasing-profile');
+    expect(
+      (yield* Schema.decodeUnknownEffect(CustomerProfileTradingGateRequestSchema)({
+        authorizationSubject: retailSubject,
+        profileRef: taggedRetailProfileRef,
+      })).profileRef.resourceType,
+    ).toBe('commerce.customer-context.retail-customer-profile');
+    expect(
+      (yield* Schema.decodeUnknownEffect(RetailAccessDecisionRequestSchema)({
+        profileRef: retailProfileRef,
+        requiredPermission: 'retail.profile.read',
+      })).requiredPermission,
+    ).toBe('retail.profile.read');
+    expect(
+      (yield* Schema.decodeUnknownEffect(RetailPortalProfileBindingReadRequestSchema)({
+        bindingRef,
+        profileRef: retailProfileRef,
+      })).bindingRef,
+    ).toEqual(bindingRef);
+    expect(
+      (yield* Schema.decodeUnknownEffect(ProfileReconciliationReadRequestSchema)({
+        reconciliationCaseRef,
+      })).reconciliationCaseRef,
+    ).toEqual(reconciliationCaseRef);
+    expect(
+      (yield* Schema.decodeUnknownEffect(RetailPrincipalResolutionRequestSchema)({
+        profileRef: retailProfileRef,
+      })).profileRef,
+    ).toEqual(retailProfileRef);
+    expect(
+      (yield* Schema.decodeUnknownEffect(GuestAttributionStatusRequestSchema)({
+        attributionCorrelationId: 'checkout-1',
+        sellingLegalEntityRef,
+      })).sellingLegalEntityRef,
+    ).toEqual(sellingLegalEntityRef);
+  }),
 );
 
-it.effect(
-  'profile reads expose fail-closed reconciliation, trading, and Guest dependency outcomes',
-  () =>
-    Effect.gen(function* profileApiResponseContracts() {
-      const profileRead = yield* Schema.decodeUnknownEffect(CustomerProfileReadResponseSchema)({
-        _tag: 'PROFILE_RECONCILIATION_REQUIRED',
-        profileRef: taggedRetailProfileRef,
-        provenance,
-        reconciliationCaseRef,
-        targetSubject: retailSubject,
-      });
-      expect(
-        Match.value(profileRead).pipe(
-          Match.tag('PROFILE_RECONCILIATION_REQUIRED', () => true),
-          Match.tag('PROFILE_AVAILABLE', () => false),
-          Match.exhaustive,
-        ),
-      ).toBe(true);
+it.effect('profile reads expose fail-closed reconciliation, trading, and Guest dependency outcomes', () =>
+  Effect.gen(function* profileApiResponseContracts() {
+    const profileRead = yield* Schema.decodeUnknownEffect(CustomerProfileReadResponseSchema)({
+      _tag: 'PROFILE_RECONCILIATION_REQUIRED',
+      profileRef: taggedRetailProfileRef,
+      provenance,
+      reconciliationCaseRef,
+      targetSubject: retailSubject,
+    });
+    expect(
+      Match.value(profileRead).pipe(
+        Match.tag('PROFILE_RECONCILIATION_REQUIRED', () => true),
+        Match.tag('PROFILE_AVAILABLE', () => false),
+        Match.exhaustive,
+      ),
+    ).toBe(true);
 
-      const tradingGate = yield* Schema.decodeUnknownEffect(
-        CustomerProfileTradingGateResponseSchema,
-      )({
-        evaluatedAt: '2026-09-09T10:00:00.000Z',
-        gate: { canAcceptNewOrder: false, outcome: 'SUSPENDED' },
-        profileRef: taggedRetailProfileRef,
-        provenance,
-        revision: 3,
-        state: 'SUSPENDED',
-        subject: retailSubject,
-      });
-      expect(tradingGate.gate.canAcceptNewOrder).toBe(false);
+    const tradingGate = yield* Schema.decodeUnknownEffect(CustomerProfileTradingGateResponseSchema)({
+      evaluatedAt: '2026-09-09T10:00:00.000Z',
+      gate: { canAcceptNewOrder: false, outcome: 'SUSPENDED' },
+      profileRef: taggedRetailProfileRef,
+      provenance,
+      revision: 3,
+      state: 'SUSPENDED',
+      subject: retailSubject,
+    });
+    expect(tradingGate.gate.canAcceptNewOrder).toBe(false);
 
-      const guestStatus = yield* Schema.decodeUnknownEffect(GuestAttributionStatusResponseSchema)({
-        attributionCorrelationId: 'checkout-1',
+    const guestStatus = yield* Schema.decodeUnknownEffect(GuestAttributionStatusResponseSchema)({
+      attributionCorrelationId: 'checkout-1',
+      observedAt: '2026-09-09T10:00:00.000Z',
+      outcome: {
+        canAcceptOrder: false,
+        outcome: 'PARTY_RESOLUTION_UNAVAILABLE',
+        portalAccessGranted: false,
+      },
+      partyFreshness: {
         observedAt: '2026-09-09T10:00:00.000Z',
-        outcome: {
-          canAcceptOrder: false,
-          outcome: 'PARTY_RESOLUTION_UNAVAILABLE',
-          portalAccessGranted: false,
-        },
-        partyFreshness: {
-          observedAt: '2026-09-09T10:00:00.000Z',
-          sourceModuleId: 'party.registry',
-          status: 'UNAVAILABLE',
-        },
-        partyRef: null,
-        profileRef: null,
-        provenance,
-        sellingLegalEntityRef,
-      });
-      expect(guestStatus.outcome.canAcceptOrder).toBe(false);
-    }),
+        sourceModuleId: 'party.registry',
+        status: 'UNAVAILABLE',
+      },
+      partyRef: null,
+      profileRef: null,
+      provenance,
+      sellingLegalEntityRef,
+    });
+    expect(guestStatus.outcome.canAcceptOrder).toBe(false);
+  }),
 );
 
 it('targets the exact requested owner business Permission, never broad module authority', () => {
@@ -297,15 +291,12 @@ it('targets the exact requested owner business Permission, never broad module au
     },
     kind: 'business_permission',
   });
-  expect(
-    retailPrincipalResolutionPermissionTarget({ profileRef: retailProfileRef }, scope),
-  ).toEqual(expectedProfileTarget);
-  expect(
-    retailPortalProfileBindingReadPermissionTarget(
-      { bindingRef, profileRef: retailProfileRef },
-      scope,
-    ),
-  ).toEqual(expectedProfileTarget);
+  expect(retailPrincipalResolutionPermissionTarget({ profileRef: retailProfileRef }, scope)).toEqual(
+    expectedProfileTarget,
+  );
+  expect(retailPortalProfileBindingReadPermissionTarget({ bindingRef, profileRef: retailProfileRef }, scope)).toEqual(
+    expectedProfileTarget,
+  );
   expect(profileReconciliationReadPermissionTarget({ reconciliationCaseRef })).toEqual({
     kind: 'resource',
     resource: {
@@ -454,36 +445,32 @@ it('treats a pending owner revoke as revoked even while stale permission facts l
   expect(result.decision).toEqual({ allowed: false, outcome: 'BINDING_REVOKED' });
 });
 
-it.effect(
-  'keeps every Retail binding-dependent production read unavailable without owner state',
-  () =>
-    Effect.gen(function* unavailableRetailOwnerState() {
-      const errors = yield* Effect.all([
-        Effect.flip(
-          retailAccessDecisionServicesUnavailable().decideAccess(
-            { profileRef: retailProfileRef, requiredPermission: 'retail.profile.read' },
-            principalId,
-            tenantId,
-          ),
+it.effect('keeps every Retail binding-dependent production read unavailable without owner state', () =>
+  Effect.gen(function* unavailableRetailOwnerState() {
+    const errors = yield* Effect.all([
+      Effect.flip(
+        retailAccessDecisionServicesUnavailable().decideAccess(
+          { profileRef: retailProfileRef, requiredPermission: 'retail.profile.read' },
+          principalId,
+          tenantId,
         ),
-        Effect.flip(
-          retailPrincipalResolutionServicesUnavailable().resolvePrincipal(
-            { profileRef: retailProfileRef },
-            principalId,
-            tenantId,
-          ),
+      ),
+      Effect.flip(
+        retailPrincipalResolutionServicesUnavailable().resolvePrincipal(
+          { profileRef: retailProfileRef },
+          principalId,
+          tenantId,
         ),
-        Effect.flip(
-          retailPortalProfileBindingReadServicesUnavailable().readBinding(
-            { bindingRef, profileRef: retailProfileRef },
-            principalId,
-            tenantId,
-          ),
+      ),
+      Effect.flip(
+        retailPortalProfileBindingReadServicesUnavailable().readBinding(
+          { bindingRef, profileRef: retailProfileRef },
+          principalId,
+          tenantId,
         ),
-      ]);
+      ),
+    ]);
 
-      expect(errors.every((error) => Predicate.isTagged(error, 'ReadHandlerUnavailable'))).toBe(
-        true,
-      );
-    }),
+    expect(errors.every((error) => Predicate.isTagged(error, 'ReadHandlerUnavailable'))).toBe(true);
+  }),
 );

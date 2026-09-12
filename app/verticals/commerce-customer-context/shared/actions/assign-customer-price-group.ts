@@ -30,4 +30,3 @@ export const AssignCustomerPriceGroupResultSchema = Schema.Struct({
   // oxlint-disable-next-line effect-native/no-nullable-schema-field -- null is the existing wire sentinel for no replaced assignment.
   replacedAssignmentRef: Schema.NullOr(CustomerPriceGroupAssignmentSchema.fields.assignmentRef),
 });
-export type AssignCustomerPriceGroupResult = typeof AssignCustomerPriceGroupResultSchema.Type;

@@ -2,25 +2,19 @@
 // @ontos-action-owner commerce.customer-context
 // @ontos-action-slug revoke-counterparty-commerce-access
 import type { ActionHandlerContext } from '@app/core-runtime';
-import {
-  defineAction,
-  defineActionBusinessPermission,
-  defineTenantModuleEntrypoint,
-} from '@app/core-runtime';
+import { defineAction, defineActionBusinessPermission, defineTenantModuleEntrypoint } from '@app/core-runtime';
 import { Effect } from 'effect';
 import {
   RevokeCounterpartyCommerceAccessPayloadSchema,
   RevokeCounterpartyCommerceAccessResultSchema,
 } from '../../shared/actions/revoke-counterparty-commerce-access.ts';
 import type { RevokeCounterpartyCommerceAccessPayload } from '../../shared/actions/revoke-counterparty-commerce-access.ts';
-import {
-  AccessAuditEvidenceSchema,
-  AccessDeniedAuditEvidenceSchema,
-} from '../../shared/domain/access-contract.ts';
+import { AccessAuditEvidenceSchema, AccessDeniedAuditEvidenceSchema } from '../../shared/domain/access-contract.ts';
 import { CounterpartyAccessDomainErrorSchema } from '../../shared/domain/access-port.ts';
 import type { CounterpartyAccessPortService } from '../../shared/domain/access-port.ts';
 import { counterpartyAccessServicesForTransaction } from '../access-services.ts';
 import {
+  accessAuthorizationMutationEventPayload,
   auditEvidence,
   accessManagementPermissionTarget,
   deniedAccessAuditEvidence,
@@ -82,28 +76,16 @@ const handle = Effect.fn('RevokeCounterpartyCommerceAccess.handle')(function* ha
     }),
   );
   if (result.outcome === 'RECONCILIATION_REQUIRED' && result.reconciliation.staged) {
-    const eventPayload = {
-      catalogVersion: result.grant.catalogVersion,
-      counterpartyRef: result.grant.counterpartyRef,
-      grantRef: result.grant.grantRef,
-      legalEntityId,
-      mutationId: result.reconciliation.mutationId,
-      operation: result.reconciliation.operation,
-      schemaVersion: '1' as const,
-    };
+    const eventPayload = accessAuthorizationMutationEventPayload(result.grant, result.reconciliation, legalEntityId);
     const event = yield* context.addDomainEvent({
-      eventType:
-        'commerce.customer-context.counterparty-access-revoke-authorization-mutation-requested.v1',
+      eventType: 'commerce.customer-context.counterparty-access-revoke-authorization-mutation-requested.v1',
       payloadJson: eventPayload,
       producerModuleKey: result.grant.grantRef.moduleId,
       subjectModuleKey: result.grant.grantRef.moduleId,
       subjectResourceId: result.grant.grantRef.resourceId,
       subjectResourceType: result.grant.grantRef.resourceType,
     });
-    yield* context.addOutboxMessage(
-      event,
-      createAuthorizationMutationRequestedOutboxMessage(eventPayload),
-    );
+    yield* context.addOutboxMessage(event, createAuthorizationMutationRequestedOutboxMessage(eventPayload));
   }
   return result;
 });
@@ -149,29 +131,5 @@ export const revokeCounterpartyCommerceAccessAction = defineAction(
   },
   handle,
   (transaction, scope) =>
-    counterpartyAccessServicesForTransaction(transaction, scope).pipe(
-      Effect.map((port) => ({ revoke: port.revoke })),
-    ),
+    counterpartyAccessServicesForTransaction(transaction, scope).pipe(Effect.map((port) => ({ revoke: port.revoke }))),
 );
-
-export {
-  RevokeCounterpartyCommerceAccessPayloadSchema,
-  RevokeCounterpartyCommerceAccessResultSchema,
-} from '../../shared/actions/revoke-counterparty-commerce-access.ts';
-export type {
-  RevokeCounterpartyCommerceAccessPayload,
-  RevokeCounterpartyCommerceAccessResult,
-} from '../../shared/actions/revoke-counterparty-commerce-access.ts';
-
-// <generated-outbox-message-exports>
-export { createRevokeCounterpartyCommerceAccessCommerceCustomerContextCounterpartyAccessRevokeAuthorizationMutationRequestedV1OutboxMessage } from './revoke-counterparty-commerce-access.commerce-customer-context-counterparty-access-revoke-authorization-mutation-requested-v1.outbox-message.ts';
-export { createRevokeCounterpartyCommerceAccessCommerceCustomerContextCounterpartyAccessRevokedV1OutboxMessage } from './revoke-counterparty-commerce-access.commerce-customer-context-counterparty-access-revoked-v1.outbox-message.ts';
-export { RevokeCounterpartyCommerceAccessCommerceCustomerContextCounterpartyAccessRevokeAuthorizationMutationRequestedV1OutboxPayloadSchema } from './revoke-counterparty-commerce-access.commerce-customer-context-counterparty-access-revoke-authorization-mutation-requested-v1.outbox-message.ts';
-export { RevokeCounterpartyCommerceAccessCommerceCustomerContextCounterpartyAccessRevokeAuthorizationMutationRequestedV1OutboxProducerModuleKey } from './revoke-counterparty-commerce-access.commerce-customer-context-counterparty-access-revoke-authorization-mutation-requested-v1.outbox-message.ts';
-export { RevokeCounterpartyCommerceAccessCommerceCustomerContextCounterpartyAccessRevokeAuthorizationMutationRequestedV1OutboxTopic } from './revoke-counterparty-commerce-access.commerce-customer-context-counterparty-access-revoke-authorization-mutation-requested-v1.outbox-message.ts';
-export { RevokeCounterpartyCommerceAccessCommerceCustomerContextCounterpartyAccessRevokedV1OutboxPayloadSchema } from './revoke-counterparty-commerce-access.commerce-customer-context-counterparty-access-revoked-v1.outbox-message.ts';
-export { RevokeCounterpartyCommerceAccessCommerceCustomerContextCounterpartyAccessRevokedV1OutboxProducerModuleKey } from './revoke-counterparty-commerce-access.commerce-customer-context-counterparty-access-revoked-v1.outbox-message.ts';
-export { RevokeCounterpartyCommerceAccessCommerceCustomerContextCounterpartyAccessRevokedV1OutboxTopic } from './revoke-counterparty-commerce-access.commerce-customer-context-counterparty-access-revoked-v1.outbox-message.ts';
-export type { RevokeCounterpartyCommerceAccessCommerceCustomerContextCounterpartyAccessRevokeAuthorizationMutationRequestedV1OutboxPayload } from './revoke-counterparty-commerce-access.commerce-customer-context-counterparty-access-revoke-authorization-mutation-requested-v1.outbox-message.ts';
-export type { RevokeCounterpartyCommerceAccessCommerceCustomerContextCounterpartyAccessRevokedV1OutboxPayload } from './revoke-counterparty-commerce-access.commerce-customer-context-counterparty-access-revoked-v1.outbox-message.ts';
-// </generated-outbox-message-exports>

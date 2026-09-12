@@ -3,7 +3,7 @@
 // @ontos-action-http-slug reactivate-customer-group
 // oxlint-disable sonarjs/function-name -- Effect Match.tags requires owner-declared tag keys; remove-when: sonarjs accepts discriminant-map properties.
 import type { ActionCoreError } from '@app/core-runtime';
-import { Effect, HttpApiMiddleware } from '@modern-js/plugin-bff/effect-edge';
+import { Effect, HttpApiMiddleware } from '@modern-js/bff-effect/effect-edge';
 import { Match, Schema } from 'effect';
 import {
   ReactivateCustomerGroupActionAlreadyCommittedProblemSchema,
@@ -129,14 +129,12 @@ const mapDomainProblem = (error: DomainError): ReactivateCustomerGroupActionProb
     Match.tags({
       CustomerGroupLifecycleConflict: () =>
         reactivateCustomerGroupActionProblem.conflict('customer_group_lifecycle_conflict'),
-      CustomerGroupNotFound: () =>
-        reactivateCustomerGroupActionProblem.notFound('customer_group_not_found'),
+      CustomerGroupNotFound: () => reactivateCustomerGroupActionProblem.notFound('customer_group_not_found'),
       CustomerGroupPersistenceUnavailable: () =>
         reactivateCustomerGroupActionProblem.unavailable('customer_group_persistence_unavailable'),
       CustomerGroupRevisionConflict: () =>
         reactivateCustomerGroupActionProblem.conflict('customer_group_revision_conflict'),
-      CustomerGroupScopeMismatch: () =>
-        reactivateCustomerGroupActionProblem.forbidden('customer_group_scope_mismatch'),
+      CustomerGroupScopeMismatch: () => reactivateCustomerGroupActionProblem.forbidden('customer_group_scope_mismatch'),
     }),
     Match.exhaustive,
   );
@@ -168,38 +166,24 @@ const mapCoreProblem = (error: ActionCoreError): ReactivateCustomerGroupActionPr
         }),
       ActionHandlerExecutionError: reactivateCustomerGroupActionProblem.internal,
       ActionIdempotencyKeyRequired: reactivateCustomerGroupActionProblem.precondition,
-      ActionInvocationNotFound: (failure) =>
-        reactivateCustomerGroupActionProblem.notFound(failure.code),
-      ActionInvocationPersistenceError: (failure) =>
-        reactivateCustomerGroupActionProblem.unavailable(failure.code),
-      ActionInvocationStateError: (failure) =>
-        reactivateCustomerGroupActionProblem.conflict(failure.code),
+      ActionInvocationNotFound: (failure) => reactivateCustomerGroupActionProblem.notFound(failure.code),
+      ActionInvocationPersistenceError: (failure) => reactivateCustomerGroupActionProblem.unavailable(failure.code),
+      ActionInvocationStateError: (failure) => reactivateCustomerGroupActionProblem.conflict(failure.code),
       ActionPayloadValidationError: reactivateCustomerGroupActionProblem.invalid,
-      ActionPermissionCheckError: (failure) =>
-        reactivateCustomerGroupActionProblem.unavailable(failure.code),
-      ActionPermissionDenied: (failure) =>
-        reactivateCustomerGroupActionProblem.forbidden(failure.code),
-      ActionPolicyDenied: (failure) =>
-        reactivateCustomerGroupActionProblem.ineligible(failure.code),
-      ActionPolicyEvaluationError: (failure) =>
-        reactivateCustomerGroupActionProblem.unavailable(failure.code),
-      ActionRequestHashConflict: (failure) =>
-        reactivateCustomerGroupActionProblem.conflict(failure.code),
+      ActionPermissionCheckError: (failure) => reactivateCustomerGroupActionProblem.unavailable(failure.code),
+      ActionPermissionDenied: (failure) => reactivateCustomerGroupActionProblem.forbidden(failure.code),
+      ActionPolicyDenied: (failure) => reactivateCustomerGroupActionProblem.ineligible(failure.code),
+      ActionPolicyEvaluationError: (failure) => reactivateCustomerGroupActionProblem.unavailable(failure.code),
+      ActionRequestHashConflict: (failure) => reactivateCustomerGroupActionProblem.conflict(failure.code),
       ActionResultValidationError: reactivateCustomerGroupActionProblem.internal,
-      ActionTransactionError: (failure) =>
-        reactivateCustomerGroupActionProblem.unavailable(failure.code),
+      ActionTransactionError: (failure) => reactivateCustomerGroupActionProblem.unavailable(failure.code),
       ActionTrustedContextValidationError: reactivateCustomerGroupActionProblem.authentication,
-      ModuleStateCheckUnavailableError: (failure) =>
-        reactivateCustomerGroupActionProblem.unavailable(failure.code),
-      ModuleStateDeniedError: (failure) =>
-        reactivateCustomerGroupActionProblem.forbidden(failure.code),
+      ModuleStateCheckUnavailableError: (failure) => reactivateCustomerGroupActionProblem.unavailable(failure.code),
+      ModuleStateDeniedError: (failure) => reactivateCustomerGroupActionProblem.forbidden(failure.code),
       OperationAuthenticationRequired: reactivateCustomerGroupActionProblem.authentication,
-      OperationContextDenied: (failure) =>
-        reactivateCustomerGroupActionProblem.forbidden(failure.code),
-      OperationContextInvalid: (failure) =>
-        reactivateCustomerGroupActionProblem.forbidden(failure.code),
-      OperationContextUnavailable: (failure) =>
-        reactivateCustomerGroupActionProblem.unavailable(failure.code),
+      OperationContextDenied: (failure) => reactivateCustomerGroupActionProblem.forbidden(failure.code),
+      OperationContextInvalid: (failure) => reactivateCustomerGroupActionProblem.forbidden(failure.code),
+      OperationContextUnavailable: (failure) => reactivateCustomerGroupActionProblem.unavailable(failure.code),
     }),
     Match.exhaustive,
   );
@@ -207,11 +191,9 @@ const mapCoreProblem = (error: ActionCoreError): ReactivateCustomerGroupActionPr
 const isDomainError = Schema.is(reactivateCustomerGroupAction.descriptor.domainErrorSchema);
 export const mapReactivateCustomerGroupActionProblem = (
   error: ActionCoreError | DomainError,
-): ReactivateCustomerGroupActionProblem =>
-  isDomainError(error) ? mapDomainProblem(error) : mapCoreProblem(error);
+): ReactivateCustomerGroupActionProblem => (isDomainError(error) ? mapDomainProblem(error) : mapCoreProblem(error));
 
-export const reactivateCustomerGroupActionSchemaErrorLive =
-  HttpApiMiddleware.layerSchemaErrorTransform(
-    ReactivateCustomerGroupActionSchemaErrorMiddleware,
-    () => Effect.fail(reactivateCustomerGroupActionProblem.invalid()),
-  );
+export const reactivateCustomerGroupActionSchemaErrorLive = HttpApiMiddleware.layerSchemaErrorTransform(
+  ReactivateCustomerGroupActionSchemaErrorMiddleware,
+  () => Effect.fail(reactivateCustomerGroupActionProblem.invalid()),
+);

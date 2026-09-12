@@ -6,6 +6,5 @@ import { CounterpartyPriceGroupMigrationEventSchema } from '../domain/price-grou
 export const OutboxPayloadSchema = CounterpartyPriceGroupMigrationEventSchema;
 export type OutboxPayload = typeof OutboxPayloadSchema.Type;
 
-export const outboxTopic =
-  'commerce.customer-context.counterparty-price-group-migrated.v1' as const;
+export const outboxTopic = 'commerce.customer-context.counterparty-price-group-migrated.v1' as const;
 export const outboxProducerModuleKey = 'commerce.customer-context' as const;

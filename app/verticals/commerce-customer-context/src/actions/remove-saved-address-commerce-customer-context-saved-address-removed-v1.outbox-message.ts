@@ -11,9 +11,7 @@ import type { OutboxPayload } from '@app/commerce-customer-context/outbox/commer
 export {
   OutboxPayloadSchema as RemoveSavedAddressCommerceCustomerContextSavedAddressRemovedV1OutboxPayloadSchema,
   outboxProducerModuleKey as RemoveSavedAddressCommerceCustomerContextSavedAddressRemovedV1OutboxProducerModuleKey,
-  outboxTopic as RemoveSavedAddressCommerceCustomerContextSavedAddressRemovedV1OutboxTopic,
 } from '@app/commerce-customer-context/outbox/commerce-customer-context-saved-address-removed-v1';
-export type { OutboxPayload as RemoveSavedAddressCommerceCustomerContextSavedAddressRemovedV1OutboxPayload } from '@app/commerce-customer-context/outbox/commerce-customer-context-saved-address-removed-v1';
 
 export const createRemoveSavedAddressCommerceCustomerContextSavedAddressRemovedV1OutboxMessage = (
   payload: OutboxPayload,

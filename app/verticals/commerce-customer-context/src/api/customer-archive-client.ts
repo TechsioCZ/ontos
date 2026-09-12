@@ -15,13 +15,10 @@ type CustomerArchiveAuthorizedInvocation = readonly [
   options?: CustomerArchiveClientOptions,
 ];
 
-type CustomerArchiveOperationInvocation = readonly [
-  requestCorrelation: string,
-  options?: CustomerArchiveClientOptions,
-];
+type CustomerArchiveOperationInvocation = readonly [requestCorrelation: string, options?: CustomerArchiveClientOptions];
 
 const customerArchiveClient = (
-  credential: Redacted.Redacted<string>,
+  credential: Redacted.Redacted,
   requestCorrelation: string,
   options: CustomerArchiveClientOptions,
 ) =>
@@ -40,9 +37,7 @@ export const executeCustomerArchiveWithAuthorization = (
   ...[credential, requestCorrelation, options = {}]: CustomerArchiveAuthorizedInvocation
 ) =>
   customerArchiveClient(Redacted.make(credential), requestCorrelation, options).pipe(
-    Effect.flatMap((client) =>
-      client.customerArchive.execute({ headers: {}, params: {}, payload, query: {} }),
-    ),
+    Effect.flatMap((client) => client.customerArchive.execute({ headers: {}, params: {}, payload, query: {} })),
   );
 
 export const executeCustomerArchive = (

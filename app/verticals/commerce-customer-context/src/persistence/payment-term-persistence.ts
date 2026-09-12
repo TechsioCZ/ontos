@@ -1,4 +1,5 @@
 /* oxlint-disable effect-native/no-dependency-parameters effect-native/no-manual-tag-comparison effect-native/prefer-match-over-tag-switch -- Canonical catalog/policy ports remain explicit fail-closed composition inputs; decoded owner-routine outcomes are exhaustively narrowed here; expires: 2027-03-31. */
+// oxlint-disable-next-line max-classes-per-file -- The four reservation failures form one colocated owner contract and exhaustive union; expires: 2027-03-31.
 import type {
   OperationalScope,
   ScopedRoutineDefinition,
@@ -9,7 +10,7 @@ import type {
 import { ReadHandlerUnavailable, defineScopedRoutine } from '@app/core-runtime';
 import type { CurrentPaymentTermsResponse } from '@app/payment-term-catalog-contracts/current-payment-terms';
 import type { PaymentTermRef } from '@app/payment-term-catalog-contracts/resources/payment-term';
-import { Effect, Match, Option, Schema } from 'effect';
+import { Effect, Option, Schema } from 'effect';
 
 import type {
   CustomerPaymentTermEntitlementReadRequest,
@@ -33,10 +34,7 @@ import {
   CustomerPaymentTermsStateSchema,
   PaymentTermsTimestampSchema,
 } from '../../shared/domain/payment-term-contracts.ts';
-import type {
-  CustomerPaymentTermsState,
-  PaymentTermReference,
-} from '../../shared/domain/payment-term-contracts.ts';
+import type { CustomerPaymentTermsState, PaymentTermReference } from '../../shared/domain/payment-term-contracts.ts';
 import { PaymentTermsDependencyUnavailable } from '../../shared/domain/payment-term-errors.ts';
 import {
   changeCustomerPaymentTerms,
@@ -44,10 +42,7 @@ import {
   removeCustomerPaymentTerm,
   resolvePaymentTerms,
 } from '../../shared/domain/payment-terms.ts';
-import type {
-  CustomerPaymentTermsChange,
-  PaymentTermsPolicyResolution,
-} from '../../shared/domain/payment-terms.ts';
+import type { CustomerPaymentTermsChange, PaymentTermsPolicyResolution } from '../../shared/domain/payment-terms.ts';
 import type { CounterpartyPurchasingProfileRef } from '../../shared/resources/counterparty-purchasing-profile.ts';
 import type { CustomerPaymentTermEntitlementRef } from '../../shared/resources/customer-payment-term-entitlement.ts';
 import type { RetailCustomerProfileRef } from '../../shared/resources/retail-customer-profile.ts';
@@ -90,14 +85,8 @@ const PaymentTermRetirementReservationPayloadSchema = Schema.Struct({
   reservationRef: Schema.String.check(Schema.isUUID()),
 });
 const PaymentTermRetirementReservationRoutineRowSchema = Schema.Struct({
-  outcome: Schema.Literals([
-    'CONFLICT',
-    'INVALID_REQUEST',
-    'NOT_FOUND',
-    'RESERVED',
-    'COMMITTED',
-    'RELEASED',
-  ]),
+  outcome: Schema.Literals(['CONFLICT', 'INVALID_REQUEST', 'NOT_FOUND', 'RESERVED', 'COMMITTED', 'RELEASED']),
+  // oxlint-disable-next-line effect-native/no-nullable-schema-field -- PostgreSQL returns SQL NULL until the owner boundary validates the reservation state; expires: 2027-03-31.
   payload: Schema.NullOr(PaymentTermRetirementReservationPayloadSchema),
 });
 
@@ -109,6 +98,7 @@ const PaymentTermsOwnerVerificationPayloadSchema = Schema.Struct({
 });
 const PaymentTermsOwnerVerificationRowSchema = Schema.Struct({
   outcome: Schema.Literals(['OWNER_CONFLICT', 'OWNER_UNAVAILABLE', 'VERIFIED']),
+  // oxlint-disable-next-line effect-native/no-nullable-schema-field -- PostgreSQL returns SQL NULL when the owner verification has no evidence projection; expires: 2027-03-31.
   payload: Schema.NullOr(PaymentTermsOwnerVerificationPayloadSchema),
 });
 
@@ -157,12 +147,11 @@ const CustomerPaymentTermsActionRejectedSchema = Schema.TaggedStruct(
   'CustomerPaymentTermsActionRejected',
   customerPaymentTermsActionRejectedFields,
 );
-const CustomerPaymentTermsActionRejected = Schema.TaggedError<
-  typeof CustomerPaymentTermsActionRejectedSchema.Type
->()('CustomerPaymentTermsActionRejected', customerPaymentTermsActionRejectedFields);
-type CustomerPaymentTermsActionRejectedError = InstanceType<
-  typeof CustomerPaymentTermsActionRejected
->;
+const CustomerPaymentTermsActionRejected = Schema.TaggedError<typeof CustomerPaymentTermsActionRejectedSchema.Type>()(
+  'CustomerPaymentTermsActionRejected',
+  customerPaymentTermsActionRejectedFields,
+);
+type CustomerPaymentTermsActionRejectedError = InstanceType<typeof CustomerPaymentTermsActionRejected>;
 
 export interface ChangeCustomerPaymentTermsServices {
   readonly change: (
@@ -173,10 +162,7 @@ export interface ChangeCustomerPaymentTermsServices {
 
 interface RemoveCustomerPaymentTermPayload {
   readonly counterpartyRef: CounterpartyRef;
-  readonly effectiveAt: Extract<
-    CustomerPaymentTermsChange,
-    { readonly _tag: 'CLEAR_PREFERENCE' }
-  >['effectiveAt'];
+  readonly effectiveAt: Extract<CustomerPaymentTermsChange, { readonly _tag: 'CLEAR_PREFERENCE' }>['effectiveAt'];
   readonly entitlementRef: CustomerPaymentTermEntitlementRef;
   readonly expectedRevision: number;
   readonly profileRef: CounterpartyPurchasingProfileRef;
@@ -229,12 +215,11 @@ const RetailPaymentTermPreferenceRejectedSchema = Schema.TaggedStruct(
   'RetailPaymentTermPreferenceRejected',
   retailPaymentTermPreferenceRejectedFields,
 );
-const RetailPaymentTermPreferenceRejected = Schema.TaggedError<
-  typeof RetailPaymentTermPreferenceRejectedSchema.Type
->()('RetailPaymentTermPreferenceRejected', retailPaymentTermPreferenceRejectedFields);
-type RetailPaymentTermPreferenceRejectedError = InstanceType<
-  typeof RetailPaymentTermPreferenceRejected
->;
+const RetailPaymentTermPreferenceRejected = Schema.TaggedError<typeof RetailPaymentTermPreferenceRejectedSchema.Type>()(
+  'RetailPaymentTermPreferenceRejected',
+  retailPaymentTermPreferenceRejectedFields,
+);
+type RetailPaymentTermPreferenceRejectedError = InstanceType<typeof RetailPaymentTermPreferenceRejected>;
 
 export interface RetailPaymentTermPreferenceActionServices {
   readonly changePreference: (
@@ -245,10 +230,7 @@ export interface RetailPaymentTermPreferenceActionServices {
       readonly principalId: string;
       readonly tenantId: string;
     },
-  ) => Effect.Effect<
-    ChangeRetailPaymentTermPreferenceResult,
-    RetailPaymentTermPreferenceRejectedError
-  >;
+  ) => Effect.Effect<ChangeRetailPaymentTermPreferenceResult, RetailPaymentTermPreferenceRejectedError>;
 }
 
 export interface CustomerPaymentTermEntitlementReadServices {
@@ -329,6 +311,22 @@ const reservePaymentTermRetirementRoutine = defineScopedRoutine({
   schema,
 });
 
+const paymentTermsReconciliationIdentityParameters = [
+  { source: 'input', type: 'uuid' },
+  { source: 'input', type: 'text' },
+  { source: 'input', type: 'uuid' },
+  { source: 'input', type: 'text' },
+  { source: 'input', type: 'text' },
+] as const;
+const paymentTermsReconciliationEvidenceParameters = [
+  { source: 'input', type: 'integer' },
+  { source: 'input', type: 'bigint' },
+  { source: 'input', type: 'timestamptz' },
+  { source: 'input', type: 'text' },
+  { source: 'input', type: 'uuid' },
+  { source: 'input', type: 'uuid' },
+] as const;
+
 /**
  * Verifies payment-term facts while the profile reconciliation case and all member profiles are
  * locked by the enclosing Resolve Action transaction. This intentionally remains an owner routine:
@@ -340,17 +338,8 @@ const verifyPaymentTermsReconciliationOwnerRoutine = defineScopedRoutine({
   parameters: [
     { source: 'tenantId', type: 'uuid' },
     { source: 'legalEntityId', type: 'uuid' },
-    { source: 'input', type: 'uuid' },
-    { source: 'input', type: 'text' },
-    { source: 'input', type: 'uuid' },
-    { source: 'input', type: 'text' },
-    { source: 'input', type: 'text' },
-    { source: 'input', type: 'integer' },
-    { source: 'input', type: 'bigint' },
-    { source: 'input', type: 'timestamptz' },
-    { source: 'input', type: 'text' },
-    { source: 'input', type: 'uuid' },
-    { source: 'input', type: 'uuid' },
+    ...paymentTermsReconciliationIdentityParameters,
+    ...paymentTermsReconciliationEvidenceParameters,
     { source: 'input', type: 'text' },
   ] as const,
   resultSchema: PaymentTermsOwnerVerificationRowSchema,
@@ -379,7 +368,7 @@ export type PaymentTermCatalogPort = Readonly<{
   ) => Effect.Effect<readonly PaymentTermDefinition[], PaymentTermsDependencyUnavailable>;
 }>;
 
-export type CustomerCommercePaymentTermsPolicyPort = Readonly<{
+type CustomerCommercePaymentTermsPolicyPort = Readonly<{
   readonly resolve: (
     request: PaymentTermsResolutionRequest,
   ) => Effect.Effect<PaymentTermsPolicyResolution, PaymentTermsDependencyUnavailable>;
@@ -394,21 +383,16 @@ const dependencyUnavailable = (
     reason: `${dependency === 'PAYMENT_TERM_CATALOG' ? 'Payment Term Catalog' : 'Customer Commerce Policy'} is not configured`,
   });
 
-export const unavailablePaymentTermCatalogPort: PaymentTermCatalogPort = Object.freeze({
+const unavailablePaymentTermCatalogPort: PaymentTermCatalogPort = Object.freeze({
   resolveDefinitions: () => Effect.fail(dependencyUnavailable('PAYMENT_TERM_CATALOG')),
 });
 
-export const unavailableCustomerCommercePaymentTermsPolicyPort: CustomerCommercePaymentTermsPolicyPort =
-  Object.freeze({
-    resolve: () => Effect.fail(dependencyUnavailable('CUSTOMER_COMMERCE_POLICY')),
-  });
+const unavailableCustomerCommercePaymentTermsPolicyPort: CustomerCommercePaymentTermsPolicyPort = Object.freeze({
+  resolve: () => Effect.fail(dependencyUnavailable('CUSTOMER_COMMERCE_POLICY')),
+});
 
-const profileKind = (
-  profileRef: CustomerPaymentTermsState['profileRef'],
-): 'COUNTERPARTY' | 'RETAIL' =>
-  profileRef.resourceType === 'commerce.customer-context.retail-customer-profile'
-    ? 'RETAIL'
-    : 'COUNTERPARTY';
+const profileKind = (profileRef: CustomerPaymentTermsState['profileRef']): 'COUNTERPARTY' | 'RETAIL' =>
+  profileRef.resourceType === 'commerce.customer-context.retail-customer-profile' ? 'RETAIL' : 'COUNTERPARTY';
 
 const scopeMatches = (
   scope: OperationalScope & { readonly legalEntityId: string },
@@ -418,8 +402,7 @@ const scopeMatches = (
 const operationScopesMatch = (
   expected: OperationalScope & { readonly legalEntityId: string },
   actual: OperationalScope,
-): boolean =>
-  actual.tenantId === expected.tenantId && actual.legalEntityId === expected.legalEntityId;
+): boolean => actual.tenantId === expected.tenantId && actual.legalEntityId === expected.legalEntityId;
 
 const persistenceUnavailable = (failure: ScopedRoutineInvocationError | string): string =>
   Schema.is(Schema.String)(failure)
@@ -429,9 +412,7 @@ const persistenceUnavailable = (failure: ScopedRoutineInvocationError | string):
 const paymentTermRetirementReservedReason =
   'The Payment Term is reserved for retirement and must be explicitly migrated first';
 
-const isPaymentTermRetirementReservationFailure = (
-  failure: ScopedRoutineInvocationError | string,
-): boolean =>
+const isPaymentTermRetirementReservationFailure = (failure: ScopedRoutineInvocationError | string): boolean =>
   !Schema.is(Schema.String)(failure) &&
   Option.isSome(failure.constraint) &&
   failure.constraint.value === 'payment_term_retirement_reservation';
@@ -443,9 +424,7 @@ const decodeState = (
 ): Effect.Effect<CustomerPaymentTermsState, CustomerPaymentTermsActionRejectedError> =>
   Schema.decodeUnknownEffect(CustomerPaymentTermsStateSchema)(payload).pipe(
     // oxlint-disable-next-line effect-native/no-failure-discarding-error-callback -- Owner-boundary decoder diagnostics are deliberately sanitized.
-    Effect.mapError((_decodeFailure) =>
-      failure('Customer Payment Terms persistence returned invalid state'),
-    ),
+    Effect.mapError((_decodeFailure) => failure('Customer Payment Terms persistence returned invalid state')),
   );
 
 const ReadStateFailureSchema = Schema.Union([
@@ -467,11 +446,7 @@ const readState = (
   }
   return Effect.gen(function* readPaymentTermsState() {
     const [row] = yield* invoker
-      .invoke(readPaymentTermsRoutine, [
-        profileRef.resourceId,
-        profileKind(profileRef),
-        counterpartyResourceId,
-      ])
+      .invoke(readPaymentTermsRoutine, [profileRef.resourceId, profileKind(profileRef), counterpartyResourceId])
       .pipe(
         Effect.mapError((failure): ReadStateFailure => ({
           _tag: 'PERSISTENCE_UNAVAILABLE',
@@ -544,9 +519,7 @@ const actionFailure = (
         retryable,
       });
 
-const mapReadFailureToAction = (
-  failure: ReadStateFailure,
-): CustomerPaymentTermsActionRejectedError => {
+const mapReadFailureToAction = (failure: ReadStateFailure): CustomerPaymentTermsActionRejectedError => {
   switch (failure._tag) {
     case 'PROFILE_NOT_FOUND': {
       return actionFailure('PROFILE_NOT_FOUND', 'The Commerce Customer Profile does not exist');
@@ -607,9 +580,25 @@ const catalogResolvedEveryRequest = (
   requests: readonly PaymentTermDefinitionRequest[],
   definitions: readonly PaymentTermDefinition[],
 ): boolean =>
-  requests.every((request) =>
-    definitions.some((definition) => catalogDefinitionIsCurrentFor(definition, request)),
-  );
+  requests.every((request) => definitions.some((definition) => catalogDefinitionIsCurrentFor(definition, request)));
+
+type PaymentTermUnusableReason = Extract<
+  ReturnType<typeof changeCustomerPaymentTerms>,
+  { readonly _tag: 'PAYMENT_TERM_UNUSABLE' }
+>['reason'];
+
+const paymentTermUnusableCode = (
+  reason: PaymentTermUnusableReason,
+): 'PAYMENT_TERM_INCOMPATIBLE' | 'PAYMENT_TERM_NOT_CURRENT' | 'PAYMENT_TERM_NOT_FOUND' => {
+  let code: 'PAYMENT_TERM_INCOMPATIBLE' | 'PAYMENT_TERM_NOT_CURRENT' | 'PAYMENT_TERM_NOT_FOUND' =
+    'PAYMENT_TERM_INCOMPATIBLE';
+  if (reason === 'MISSING_DEFINITION') {
+    code = 'PAYMENT_TERM_NOT_FOUND';
+  } else if (reason === 'NOT_CURRENT') {
+    code = 'PAYMENT_TERM_NOT_CURRENT';
+  }
+  return code;
+};
 
 const mapChangeOutcome = (
   outcome: ReturnType<typeof changeCustomerPaymentTerms>,
@@ -647,16 +636,9 @@ const mapChangeOutcome = (
       return Effect.fail(actionFailure('PREFERENCE_CONFLICT', outcome.reason));
     }
     case 'PAYMENT_TERM_UNUSABLE': {
-      let code:
-        | 'PAYMENT_TERM_INCOMPATIBLE'
-        | 'PAYMENT_TERM_NOT_CURRENT'
-        | 'PAYMENT_TERM_NOT_FOUND' = 'PAYMENT_TERM_INCOMPATIBLE';
-      if (outcome.reason === 'MISSING_DEFINITION') {
-        code = 'PAYMENT_TERM_NOT_FOUND';
-      } else if (outcome.reason === 'NOT_CURRENT') {
-        code = 'PAYMENT_TERM_NOT_CURRENT';
-      }
-      return Effect.fail(actionFailure(code, `Payment Term is unusable: ${outcome.reason}`));
+      return Effect.fail(
+        actionFailure(paymentTermUnusableCode(outcome.reason), `Payment Term is unusable: ${outcome.reason}`),
+      );
     }
     default: {
       return outcome;
@@ -686,9 +668,7 @@ const persistActionResult = (
         );
       }
       if (row.outcome === 'PAYMENT_TERM_RETIREMENT_RESERVED') {
-        return Effect.fail(
-          actionFailure('PAYMENT_TERM_RETIREMENT_RESERVED', paymentTermRetirementReservedReason),
-        );
+        return Effect.fail(actionFailure('PAYMENT_TERM_RETIREMENT_RESERVED', paymentTermRetirementReservedReason));
       }
       if (
         row.outcome === 'PROFILE_NOT_FOUND' ||
@@ -697,9 +677,9 @@ const persistActionResult = (
       ) {
         return Effect.fail(mapReadFailureToAction({ _tag: row.outcome }));
       }
-      return decodeState(row.payload, (reason) =>
-        actionFailure('PERSISTENCE_UNAVAILABLE', reason, true),
-      ).pipe(Effect.map((state) => ({ changed: row.outcome === 'APPLIED', state })));
+      return decodeState(row.payload, (reason) => actionFailure('PERSISTENCE_UNAVAILABLE', reason, true)).pipe(
+        Effect.map((state) => ({ changed: row.outcome === 'APPLIED', state })),
+      );
     }),
   );
 
@@ -711,18 +691,17 @@ export interface PaymentTermsPersistenceContext {
   readonly scope: OperationalScope & { readonly legalEntityId: string };
 }
 
-export interface PaymentTermAffectedUseAssessmentInput {
+interface PaymentTermAffectedUseAssessmentInput {
   readonly at: string;
   readonly paymentTermRefs: readonly PaymentTermRef[];
 }
 
-export const PaymentTermAffectedUseAssessmentResultSchema = Schema.Struct({
+const PaymentTermAffectedUseAssessmentResultSchema = Schema.Struct({
   currentCustomerEntitlementCount: Schema.Int.pipe(Schema.check(Schema.isGreaterThanOrEqualTo(0))),
   evidenceReference: Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(1000)),
   observedAt: PaymentTermsTimestampSchema,
 });
-export type PaymentTermAffectedUseAssessmentResult =
-  typeof PaymentTermAffectedUseAssessmentResultSchema.Type;
+type PaymentTermAffectedUseAssessmentResult = typeof PaymentTermAffectedUseAssessmentResultSchema.Type;
 
 export type PaymentTermAffectedUseAssessmentServices = Readonly<{
   readonly assess: (
@@ -730,28 +709,28 @@ export type PaymentTermAffectedUseAssessmentServices = Readonly<{
   ) => Effect.Effect<PaymentTermAffectedUseAssessmentResult, ReadHandlerUnavailable>;
 }>;
 
-export class PaymentTermRetirementReservationConflict extends Schema.TaggedError<PaymentTermRetirementReservationConflict>()(
+class PaymentTermRetirementReservationConflict extends Schema.TaggedError<PaymentTermRetirementReservationConflict>()(
   'PaymentTermRetirementReservationConflict',
   {
     reason: Schema.String,
   },
 ) {}
 
-export class PaymentTermRetirementReservationInvalidRequest extends Schema.TaggedError<PaymentTermRetirementReservationInvalidRequest>()(
+class PaymentTermRetirementReservationInvalidRequest extends Schema.TaggedError<PaymentTermRetirementReservationInvalidRequest>()(
   'PaymentTermRetirementReservationInvalidRequest',
   {
     reason: Schema.String,
   },
 ) {}
 
-export class PaymentTermRetirementReservationNotFound extends Schema.TaggedError<PaymentTermRetirementReservationNotFound>()(
+class PaymentTermRetirementReservationNotFound extends Schema.TaggedError<PaymentTermRetirementReservationNotFound>()(
   'PaymentTermRetirementReservationNotFound',
   {
     reason: Schema.String,
   },
 ) {}
 
-export class PaymentTermRetirementReservationUnavailable extends Schema.TaggedError<PaymentTermRetirementReservationUnavailable>()(
+class PaymentTermRetirementReservationUnavailable extends Schema.TaggedError<PaymentTermRetirementReservationUnavailable>()(
   'PaymentTermRetirementReservationUnavailable',
   {
     reason: Schema.String,
@@ -793,43 +772,65 @@ export const makePaymentTermAffectedUseAssessmentServices = (
         ),
       );
     }
-    const paymentTermResourceIds = [
-      ...new Set(input.paymentTermRefs.map(({ resourceId }) => resourceId)),
-    ];
-    return persistence.invoker
-      .invoke(assessPaymentTermEntitlementUseRoutine, [paymentTermResourceIds, input.at])
-      .pipe(
-        Effect.mapError((failure) => failure.pipe(persistenceUnavailable, readUnavailable)),
-        Effect.flatMap(([row]) =>
-          row === undefined
-            ? Effect.fail(
-                readUnavailable('The Payment Term affected-use routine returned no outcome'),
-              )
-            : Effect.succeed({
-                currentCustomerEntitlementCount: row.current_customer_entitlement_count,
-                evidenceReference: row.evidence_reference,
-                observedAt: normalizedTimestamp(row.observed_at),
-              }),
-        ),
-      );
+    const paymentTermResourceIds = [...new Set(input.paymentTermRefs.map(({ resourceId }) => resourceId))];
+    return persistence.invoker.invoke(assessPaymentTermEntitlementUseRoutine, [paymentTermResourceIds, input.at]).pipe(
+      Effect.mapError((failure) => failure.pipe(persistenceUnavailable, readUnavailable)),
+      Effect.flatMap(([row]) =>
+        row === undefined
+          ? Effect.fail(readUnavailable('The Payment Term affected-use routine returned no outcome'))
+          : Effect.succeed({
+              currentCustomerEntitlementCount: row.current_customer_entitlement_count,
+              evidenceReference: row.evidence_reference,
+              observedAt: normalizedTimestamp(row.observed_at),
+            }),
+      ),
+    );
   },
 });
 
 const paymentTermRetirementReservationFailure = (
   _tag: 'CONFLICT' | 'INVALID_REQUEST' | 'NOT_FOUND' | 'UNAVAILABLE',
   reason: string,
+  cause?: unknown,
 ): PaymentTermRetirementReservationFailure => {
-  switch (_tag) {
-    case 'CONFLICT':
-      return new PaymentTermRetirementReservationConflict({ reason });
-    case 'INVALID_REQUEST':
-      return new PaymentTermRetirementReservationInvalidRequest({ reason });
-    case 'NOT_FOUND':
-      return new PaymentTermRetirementReservationNotFound({ reason });
-    case 'UNAVAILABLE':
-      return new PaymentTermRetirementReservationUnavailable({ reason });
-  }
+  const failure = (() => {
+    switch (_tag) {
+      case 'CONFLICT': {
+        return new PaymentTermRetirementReservationConflict({ reason });
+      }
+      case 'INVALID_REQUEST': {
+        return new PaymentTermRetirementReservationInvalidRequest({ reason });
+      }
+      case 'NOT_FOUND': {
+        return new PaymentTermRetirementReservationNotFound({ reason });
+      }
+      case 'UNAVAILABLE': {
+        return new PaymentTermRetirementReservationUnavailable({ reason });
+      }
+      default: {
+        return new PaymentTermRetirementReservationUnavailable({ reason });
+      }
+    }
+  })();
+  return cause === undefined ? failure : Object.defineProperty(failure, 'cause', { enumerable: false, value: cause });
 };
+
+const invalidPaymentTermRetirementState = (cause: unknown): PaymentTermRetirementReservationFailure =>
+  paymentTermRetirementReservationFailure(
+    'UNAVAILABLE',
+    'The Payment Term retirement reservation returned invalid state',
+    cause,
+  );
+
+const decodePaymentTermRetirementReservationResult = (
+  result: typeof PaymentTermRetirementReservationPayloadSchema.Type,
+) =>
+  Schema.decodeEffect(ReservePaymentTermRetirementResultSchema)({
+    effectiveAt: result.effectiveAt,
+    lifecycle: result.lifecycle,
+    paymentTermResourceIds: result.paymentTermResourceIds,
+    reservationRef: result.reservationRef,
+  }).pipe(Effect.mapError(invalidPaymentTermRetirementState));
 
 /**
  * Stages Payment Term retirement in Customer Context.  The routine owns the reservation row and
@@ -837,7 +838,7 @@ const paymentTermRetirementReservationFailure = (
  * reservation barrier concurrently.  COMMIT is called only after the Payment catalog retirement
  * succeeds; RELEASE is safe for the compensating path.
  */
-export const makePaymentTermRetirementReservationServices = (
+const makePaymentTermRetirementReservationServices = (
   persistence: PaymentTermsPersistenceContext,
 ): PaymentTermRetirementReservationServices => ({
   execute: (payload, attribution) => {
@@ -868,8 +869,8 @@ export const makePaymentTermRetirementReservationServices = (
         ),
       );
     }
-    const paymentTermResourceIds = [...new Set(refs.map((ref) => ref.resourceId))].toSorted(
-      (left, right) => left.localeCompare(right),
+    const paymentTermResourceIds = [...new Set(refs.map((ref) => ref.resourceId))].toSorted((left, right) =>
+      left.localeCompare(right),
     );
     return persistence.invoker
       .invoke(reservePaymentTermRetirementRoutine, [
@@ -920,30 +921,9 @@ export const makePaymentTermRetirementReservationServices = (
               ),
             );
           }
-          return Schema.decodeUnknownEffect(PaymentTermRetirementReservationPayloadSchema)(
-            row.payload,
-          ).pipe(
-            Effect.mapError(() =>
-              paymentTermRetirementReservationFailure(
-                'UNAVAILABLE',
-                'The Payment Term retirement reservation returned invalid state',
-              ),
-            ),
-            Effect.flatMap((result) =>
-              Schema.decodeUnknownEffect(ReservePaymentTermRetirementResultSchema)({
-                effectiveAt: result.effectiveAt,
-                lifecycle: result.lifecycle,
-                paymentTermResourceIds: result.paymentTermResourceIds,
-                reservationRef: result.reservationRef,
-              }).pipe(
-                Effect.mapError(() =>
-                  paymentTermRetirementReservationFailure(
-                    'UNAVAILABLE',
-                    'The Payment Term retirement reservation returned invalid state',
-                  ),
-                ),
-              ),
-            ),
+          return Schema.decodeEffect(PaymentTermRetirementReservationPayloadSchema)(row.payload).pipe(
+            Effect.mapError(invalidPaymentTermRetirementState),
+            Effect.flatMap(decodePaymentTermRetirementReservationResult),
           );
         }),
       );
@@ -1012,8 +992,7 @@ export const verifyPaymentTermsReconciliationOwner = (
           ? {
               _tag: 'CONFLICT',
               owner: 'PAYMENT_TERMS',
-              reason:
-                'Customer Payment Terms entitlements or preferences conflict with the requested reconciliation',
+              reason: 'Customer Payment Terms entitlements or preferences conflict with the requested reconciliation',
             }
           : {
               _tag: 'UNAVAILABLE',
@@ -1039,110 +1018,102 @@ export const makeChangeCustomerPaymentTermsServices = (
   persistence: PaymentTermsPersistenceContext,
   catalog: PaymentTermCatalogPort = unavailablePaymentTermCatalogPort,
 ): ChangeCustomerPaymentTermsServices => ({
-  change: Effect.fn('CustomerPaymentTermsPersistence.change')(
-    function* changePaymentTerms(payload, context) {
-      if (!operationScopesMatch(persistence.scope, context.scope)) {
-        return yield* actionFailure(
-          'SCOPE_MISMATCH',
-          'The Action scope does not match the scoped Payment Terms persistence capability',
-        );
-      }
-      const state = yield* readState(
-        persistence.invoker,
-        persistence.scope,
-        payload.profileRef,
-        payload.counterpartyRef.resourceId,
-      ).pipe(Effect.mapError(mapReadFailureToAction));
-      const definitionRequests = definitionRequestsForChanges(payload);
-      const definitions =
-        definitionRequests.length === 0
-          ? []
-          : yield* catalog
-              .resolveDefinitions(definitionRequests)
-              .pipe(
-                Effect.mapError((failure) =>
-                  actionFailure('DEPENDENCY_UNAVAILABLE', failure.reason, true),
-                ),
-              );
-      if (!catalogResolvedEveryRequest(definitionRequests, definitions)) {
-        return yield* actionFailure(
-          'PAYMENT_TERM_NOT_CURRENT',
-          'The requested Payment Term is not current in the canonical catalog',
-        );
-      }
-      const outcome = yield* mapChangeOutcome(
-        changeCustomerPaymentTerms({
-          catalogDefinitions: definitions,
-          changes: payload.changes,
-          expectedRevision: payload.expectedRevision,
-          state,
-        }),
+  change: Effect.fn('CustomerPaymentTermsPersistence.change')(function* changePaymentTerms(payload, context) {
+    if (!operationScopesMatch(persistence.scope, context.scope)) {
+      return yield* actionFailure(
+        'SCOPE_MISMATCH',
+        'The Action scope does not match the scoped Payment Terms persistence capability',
       );
-      return yield* persistActionResult(persistence.invoker, {
-        actionInvocationId: context.actionInvocationId,
-        changed: outcome.changed,
-        counterpartyResourceId: payload.counterpartyRef.resourceId,
-        expectedRevision: payload.expectedRevision,
-        principalId: context.scope.principalId,
-        profileKind: 'COUNTERPARTY',
-        profileResourceId: payload.profileRef.resourceId,
-        reason: payload.reason,
-        state: outcome.state,
-      });
-    },
-  ),
-});
-
-export const makeRemoveCustomerPaymentTermServices = (
-  persistence: PaymentTermsPersistenceContext,
-): RemoveCustomerPaymentTermServices => ({
-  remove: Effect.fn('CustomerPaymentTermsPersistence.remove')(
-    function* removePaymentTerm(payload, context) {
-      if (!operationScopesMatch(persistence.scope, context.scope)) {
-        return yield* actionFailure(
-          'SCOPE_MISMATCH',
-          'The Action scope does not match the scoped Payment Terms persistence capability',
-        );
-      }
-      const state = yield* readState(
-        persistence.invoker,
-        persistence.scope,
-        payload.profileRef,
-        payload.counterpartyRef.resourceId,
-      ).pipe(Effect.mapError(mapReadFailureToAction));
-      const outcome = removeCustomerPaymentTerm({
-        effectiveAt: payload.effectiveAt,
-        entitlementRef: payload.entitlementRef,
+    }
+    const state = yield* readState(
+      persistence.invoker,
+      persistence.scope,
+      payload.profileRef,
+      payload.counterpartyRef.resourceId,
+    ).pipe(Effect.mapError(mapReadFailureToAction));
+    const definitionRequests = definitionRequestsForChanges(payload);
+    const definitions =
+      definitionRequests.length === 0
+        ? []
+        : yield* catalog
+            .resolveDefinitions(definitionRequests)
+            .pipe(Effect.mapError((failure) => actionFailure('DEPENDENCY_UNAVAILABLE', failure.reason, true)));
+    if (!catalogResolvedEveryRequest(definitionRequests, definitions)) {
+      return yield* actionFailure(
+        'PAYMENT_TERM_NOT_CURRENT',
+        'The requested Payment Term is not current in the canonical catalog',
+      );
+    }
+    const outcome = yield* mapChangeOutcome(
+      changeCustomerPaymentTerms({
+        catalogDefinitions: definitions,
+        changes: payload.changes,
         expectedRevision: payload.expectedRevision,
         state,
-      });
-      if (outcome._tag !== 'REMOVED') {
-        const mapped = yield* mapChangeOutcome(outcome);
-        return yield* actionFailure(
-          'OUTCOME_INDETERMINATE',
-          `Removal resolved to an unexpected ${mapped._tag} outcome`,
-          false,
-        );
-      }
-      const persisted = yield* persistActionResult(persistence.invoker, {
-        actionInvocationId: context.actionInvocationId,
-        changed: outcome.changed,
-        counterpartyResourceId: payload.counterpartyRef.resourceId,
-        expectedRevision: payload.expectedRevision,
-        principalId: context.scope.principalId,
-        profileKind: 'COUNTERPARTY',
-        profileResourceId: payload.profileRef.resourceId,
-        reason: payload.reason,
-        state: outcome.state,
-      });
-      return {
-        changed: persisted.changed,
-        preferenceCleared: outcome.preferenceCleared,
-        removalKind: outcome.removalKind,
-        state: persisted.state,
-      } satisfies RemoveCustomerPaymentTermResult;
-    },
-  ),
+      }),
+    );
+    return yield* persistActionResult(persistence.invoker, {
+      actionInvocationId: context.actionInvocationId,
+      changed: outcome.changed,
+      counterpartyResourceId: payload.counterpartyRef.resourceId,
+      expectedRevision: payload.expectedRevision,
+      principalId: context.scope.principalId,
+      profileKind: 'COUNTERPARTY',
+      profileResourceId: payload.profileRef.resourceId,
+      reason: payload.reason,
+      state: outcome.state,
+    });
+  }),
+});
+
+const makeRemoveCustomerPaymentTermServices = (
+  persistence: PaymentTermsPersistenceContext,
+): RemoveCustomerPaymentTermServices => ({
+  remove: Effect.fn('CustomerPaymentTermsPersistence.remove')(function* removePaymentTerm(payload, context) {
+    if (!operationScopesMatch(persistence.scope, context.scope)) {
+      return yield* actionFailure(
+        'SCOPE_MISMATCH',
+        'The Action scope does not match the scoped Payment Terms persistence capability',
+      );
+    }
+    const state = yield* readState(
+      persistence.invoker,
+      persistence.scope,
+      payload.profileRef,
+      payload.counterpartyRef.resourceId,
+    ).pipe(Effect.mapError(mapReadFailureToAction));
+    const outcome = removeCustomerPaymentTerm({
+      effectiveAt: payload.effectiveAt,
+      entitlementRef: payload.entitlementRef,
+      expectedRevision: payload.expectedRevision,
+      state,
+    });
+    if (outcome._tag !== 'REMOVED') {
+      const mapped = yield* mapChangeOutcome(outcome);
+      return yield* actionFailure(
+        'OUTCOME_INDETERMINATE',
+        `Removal resolved to an unexpected ${mapped._tag} outcome`,
+        false,
+      );
+    }
+    const persisted = yield* persistActionResult(persistence.invoker, {
+      actionInvocationId: context.actionInvocationId,
+      changed: outcome.changed,
+      counterpartyResourceId: payload.counterpartyRef.resourceId,
+      expectedRevision: payload.expectedRevision,
+      principalId: context.scope.principalId,
+      profileKind: 'COUNTERPARTY',
+      profileResourceId: payload.profileRef.resourceId,
+      reason: payload.reason,
+      state: outcome.state,
+    });
+    return {
+      changed: persisted.changed,
+      preferenceCleared: outcome.preferenceCleared,
+      removalKind: outcome.removalKind,
+      state: persisted.state,
+    } satisfies RemoveCustomerPaymentTermResult;
+  }),
 });
 
 const retailFailure = (
@@ -1160,98 +1131,116 @@ const retailFailure = (
         retryable,
       });
 
-export const makeRetailPaymentTermPreferenceServices = (
+const mapRetailReadStateFailure = (failure: ReadStateFailure): RetailPaymentTermPreferenceRejectedError => {
+  switch (failure._tag) {
+    case 'PROFILE_NOT_FOUND': {
+      return retailFailure('PROFILE_NOT_FOUND', 'The Retail Customer Profile is missing');
+    }
+    case 'PROFILE_INELIGIBLE': {
+      return retailFailure('PROFILE_INELIGIBLE', 'The Retail Customer Profile is not active');
+    }
+    case 'PROFILE_COUNTERPARTY_MISMATCH': {
+      return retailFailure('SCOPE_MISMATCH', 'The Retail Customer Profile kind is invalid');
+    }
+    case 'PERSISTENCE_UNAVAILABLE': {
+      return retailFailure('PERSISTENCE_UNAVAILABLE', failure.reason, true);
+    }
+    default: {
+      return failure;
+    }
+  }
+};
+
+const retailDefinitionRequests = (
+  change: RetailPaymentTermPreferenceChange,
+): readonly PaymentTermDefinitionRequest[] =>
+  change._tag === 'SET_PREFERENCE'
+    ? [
+        {
+          at: change.effectiveFrom,
+          paymentTermRef: change.paymentTermRef,
+        },
+      ]
+    : [];
+
+const mapRetailChangeOutcome = (
+  outcome: ReturnType<typeof changeCustomerPaymentTerms>,
+): Effect.Effect<
+  Extract<ReturnType<typeof changeCustomerPaymentTerms>, { readonly _tag: 'CHANGED' }>,
+  RetailPaymentTermPreferenceRejectedError
+> => {
+  // oxlint-disable-next-line typescript/switch-exhaustiveness-check -- The existing default intentionally groups every non-preference payment-term failure into the owner-defined not-entitled outcome.
+  switch (outcome._tag) {
+    case 'CHANGED': {
+      return Effect.succeed(outcome);
+    }
+    case 'REVISION_CONFLICT': {
+      return Effect.fail(
+        retailFailure(
+          'REVISION_CONFLICT',
+          'Retail Payment Term Preference changed concurrently',
+          false,
+          outcome.currentRevision,
+        ),
+      );
+    }
+    case 'PREFERENCE_CONFLICT': {
+      return Effect.fail(retailFailure('PREFERENCE_CONFLICT', outcome.reason));
+    }
+    default: {
+      return Effect.fail(
+        retailFailure('PAYMENT_TERM_NOT_ENTITLED', 'The selected Payment Term is not a current entitlement'),
+      );
+    }
+  }
+};
+
+const validateRetailPreferenceScope = (
+  scope: PaymentTermsPersistenceContext['scope'],
+  attribution: Parameters<RetailPaymentTermPreferenceActionServices['changePreference']>[1],
+): Effect.Effect<void, RetailPaymentTermPreferenceRejectedError> => {
+  if (attribution.tenantId !== scope.tenantId || attribution.legalEntityId !== scope.legalEntityId) {
+    return Effect.fail(
+      retailFailure(
+        'SCOPE_MISMATCH',
+        'The Action attribution does not match the scoped Payment Terms persistence capability',
+      ),
+    );
+  }
+  return Effect.void;
+};
+
+const makeRetailPaymentTermPreferenceServices = (
   persistence: PaymentTermsPersistenceContext,
   catalog: PaymentTermCatalogPort = unavailablePaymentTermCatalogPort,
 ): RetailPaymentTermPreferenceActionServices => ({
   changePreference: Effect.fn('CustomerPaymentTermsPersistence.changeRetailPreference')(
     function* changeRetailPreference(payload, attribution) {
-      if (
-        attribution.tenantId !== persistence.scope.tenantId ||
-        attribution.legalEntityId !== persistence.scope.legalEntityId
-      ) {
-        return yield* retailFailure(
-          'SCOPE_MISMATCH',
-          'The Action attribution does not match the scoped Payment Terms persistence capability',
-        );
-      }
-      const state = yield* readState(
-        persistence.invoker,
-        persistence.scope,
-        payload.profileRef,
-        null,
-      ).pipe(
-        Effect.mapError((failure) => {
-          switch (failure._tag) {
-            case 'PROFILE_NOT_FOUND': {
-              return retailFailure('PROFILE_NOT_FOUND', 'The Retail Customer Profile is missing');
-            }
-            case 'PROFILE_INELIGIBLE': {
-              return retailFailure(
-                'PROFILE_INELIGIBLE',
-                'The Retail Customer Profile is not active',
-              );
-            }
-            case 'PROFILE_COUNTERPARTY_MISMATCH': {
-              return retailFailure('SCOPE_MISMATCH', 'The Retail Customer Profile kind is invalid');
-            }
-            case 'PERSISTENCE_UNAVAILABLE': {
-              return retailFailure('PERSISTENCE_UNAVAILABLE', failure.reason, true);
-            }
-            default: {
-              return failure;
-            }
-          }
-        }),
+      yield* validateRetailPreferenceScope(persistence.scope, attribution);
+      const state = yield* readState(persistence.invoker, persistence.scope, payload.profileRef, null).pipe(
+        Effect.mapError(mapRetailReadStateFailure),
       );
-      const requests =
-        payload.change._tag === 'SET_PREFERENCE'
-          ? [
-              {
-                at: payload.change.effectiveFrom,
-                paymentTermRef: payload.change.paymentTermRef,
-              },
-            ]
-          : [];
+      const requests = retailDefinitionRequests(payload.change);
       const definitions =
         requests.length === 0
           ? []
           : yield* catalog
               .resolveDefinitions(requests)
-              .pipe(
-                Effect.mapError((failure) =>
-                  retailFailure('PERSISTENCE_UNAVAILABLE', failure.reason, true),
-                ),
-              );
+              .pipe(Effect.mapError((failure) => retailFailure('PERSISTENCE_UNAVAILABLE', failure.reason, true)));
       if (!catalogResolvedEveryRequest(requests, definitions)) {
         return yield* retailFailure(
           'PAYMENT_TERM_NOT_CURRENT',
           'The selected Payment Term is not currently available from its owner',
         );
       }
-      const outcome = changeCustomerPaymentTerms({
-        catalogDefinitions: definitions,
-        changes: [payload.change],
-        expectedRevision: payload.expectedRevision,
-        state,
-      });
-      if (outcome._tag === 'REVISION_CONFLICT') {
-        return yield* retailFailure(
-          'REVISION_CONFLICT',
-          'Retail Payment Term Preference changed concurrently',
-          false,
-          outcome.currentRevision,
-        );
-      }
-      if (outcome._tag === 'PREFERENCE_CONFLICT') {
-        return yield* retailFailure('PREFERENCE_CONFLICT', outcome.reason);
-      }
-      if (outcome._tag !== 'CHANGED') {
-        return yield* retailFailure(
-          'PAYMENT_TERM_NOT_ENTITLED',
-          'The selected Payment Term is not a current entitlement',
-        );
-      }
+      const outcome = yield* mapRetailChangeOutcome(
+        changeCustomerPaymentTerms({
+          catalogDefinitions: definitions,
+          changes: [payload.change],
+          expectedRevision: payload.expectedRevision,
+          state,
+        }),
+      );
       const persisted = yield* persistState(persistence.invoker, {
         actionInvocationId: attribution.actionInvocationId,
         changed: outcome.changed,
@@ -1278,10 +1267,7 @@ export const makeRetailPaymentTermPreferenceServices = (
         );
       }
       if (persisted.outcome === 'PAYMENT_TERM_RETIREMENT_RESERVED') {
-        return yield* retailFailure(
-          'PAYMENT_TERM_RETIREMENT_RESERVED',
-          paymentTermRetirementReservedReason,
-        );
+        return yield* retailFailure('PAYMENT_TERM_RETIREMENT_RESERVED', paymentTermRetirementReservedReason);
       }
       if (persisted.outcome !== 'APPLIED' && persisted.outcome !== 'UNCHANGED') {
         return yield* retailFailure(
@@ -1289,16 +1275,10 @@ export const makeRetailPaymentTermPreferenceServices = (
           'The Retail Customer Profile is unavailable',
         );
       }
-      const persistedState = yield* Schema.decodeUnknownEffect(CustomerPaymentTermsStateSchema)(
-        persisted.payload,
-      ).pipe(
+      const persistedState = yield* Schema.decodeUnknownEffect(CustomerPaymentTermsStateSchema)(persisted.payload).pipe(
         // oxlint-disable-next-line effect-native/no-failure-discarding-error-callback -- Owner-boundary decoder diagnostics are deliberately sanitized.
         Effect.mapError((_decodeFailure) =>
-          retailFailure(
-            'PERSISTENCE_UNAVAILABLE',
-            'Customer Payment Terms persistence returned invalid state',
-            true,
-          ),
+          retailFailure('PERSISTENCE_UNAVAILABLE', 'Customer Payment Terms persistence returned invalid state', true),
         ),
       );
       return {
@@ -1317,17 +1297,13 @@ export const makeCustomerPaymentTermEntitlementReadServices = (
       input.authorizationSubject.kind === 'COUNTERPARTY' &&
       input.authorizationSubject.counterpartyRef.tenantId !== persistence.scope.tenantId
     ) {
-      return Effect.fail(
-        readUnavailable('The authorization subject is outside the scoped Payment Terms capability'),
-      );
+      return Effect.fail(readUnavailable('The authorization subject is outside the scoped Payment Terms capability'));
     }
     return readState(
       persistence.invoker,
       persistence.scope,
       input.profileRef,
-      input.authorizationSubject.kind === 'COUNTERPARTY'
-        ? input.authorizationSubject.counterpartyRef.resourceId
-        : null,
+      input.authorizationSubject.kind === 'COUNTERPARTY' ? input.authorizationSubject.counterpartyRef.resourceId : null,
     ).pipe(
       Effect.map((state) => ({
         _tag: 'CUSTOMER_PAYMENT_TERMS' as const,
@@ -1359,88 +1335,97 @@ export const makeCustomerPaymentTermEntitlementReadServices = (
   },
 });
 
+const definitionRequestsForResolution = (
+  entitlements: CustomerPaymentTermsState['entitlements'],
+  policyResolution: Exclude<PaymentTermsPolicyResolution, { readonly _tag: string }>,
+  explicitChoice: PaymentTermsResolutionRequest['explicitChoice'],
+  at: PaymentTermsResolutionRequest['at'],
+): readonly PaymentTermDefinitionRequest[] => {
+  const candidateRefs = [
+    ...entitlements.map(({ paymentTermRef }) => paymentTermRef),
+    ...policyResolution.eligiblePaymentTermRefs,
+    ...policyResolution.explicitlyPermittedPaymentTermRefs,
+    ...policyResolution.fallbackPaymentTermRefs,
+    ...(explicitChoice === undefined ? [] : [explicitChoice]),
+  ];
+  const definitionRequests = new Map<string, PaymentTermDefinitionRequest>();
+  for (const entitlement of entitlements) {
+    definitionRequests.set(
+      `${entitlement.paymentTermRef.tenantId}:${entitlement.paymentTermRef.moduleId}:${entitlement.paymentTermRef.resourceType}:${entitlement.paymentTermRef.resourceId}`,
+      {
+        at,
+        expectedSemanticRevisionId: entitlement.semanticRevisionId,
+        paymentTermRef: entitlement.paymentTermRef,
+      },
+    );
+  }
+  for (const paymentTermRef of candidateRefs) {
+    const key = `${paymentTermRef.tenantId}:${paymentTermRef.moduleId}:${paymentTermRef.resourceType}:${paymentTermRef.resourceId}`;
+    if (!definitionRequests.has(key)) {
+      definitionRequests.set(key, { at, paymentTermRef });
+    }
+  }
+  return [...definitionRequests.values()];
+};
+
 export const makePaymentTermsResolutionServices = (
   persistence: PaymentTermsPersistenceContext,
   ports: CustomerPaymentTermsPersistencePorts = {},
 ): PaymentTermsResolutionServices => ({
-  resolve: Effect.fn('CustomerPaymentTermsPersistence.resolve')(
-    function* resolveCurrentPaymentTerms(input) {
-      if (input.purchasingContext.sellingLegalEntityId !== persistence.scope.legalEntityId) {
-        return yield* readUnavailable(
-          'The purchasing context is outside the scoped Payment Terms capability',
-        );
-      }
-      const catalog = ports.catalog ?? unavailablePaymentTermCatalogPort;
-      const policy = ports.policy ?? unavailableCustomerCommercePaymentTermsPolicyPort;
-      const state = yield* readState(
-        persistence.invoker,
-        persistence.scope,
-        input.profileRef,
-        input.authorizationSubject.kind === 'COUNTERPARTY'
-          ? input.authorizationSubject.counterpartyRef.resourceId
-          : null,
-      ).pipe(
-        Effect.mapError((failure) =>
-          readUnavailable(
-            failure._tag === 'PERSISTENCE_UNAVAILABLE'
-              ? failure.reason
-              : 'The Commerce Customer Profile is unavailable for Payment Terms resolution',
-          ),
+  resolve: Effect.fn('CustomerPaymentTermsPersistence.resolve')(function* resolveCurrentPaymentTerms(input) {
+    if (input.purchasingContext.sellingLegalEntityId !== persistence.scope.legalEntityId) {
+      return yield* readUnavailable('The purchasing context is outside the scoped Payment Terms capability');
+    }
+    const catalog = ports.catalog ?? unavailablePaymentTermCatalogPort;
+    const policy = ports.policy ?? unavailableCustomerCommercePaymentTermsPolicyPort;
+    const state = yield* readState(
+      persistence.invoker,
+      persistence.scope,
+      input.profileRef,
+      input.authorizationSubject.kind === 'COUNTERPARTY' ? input.authorizationSubject.counterpartyRef.resourceId : null,
+    ).pipe(
+      Effect.mapError((failure) =>
+        readUnavailable(
+          failure._tag === 'PERSISTENCE_UNAVAILABLE'
+            ? failure.reason
+            : 'The Commerce Customer Profile is unavailable for Payment Terms resolution',
         ),
-      );
-      // oxlint-disable-next-line effect-native/no-sequential-independent-yields -- The scope-verified owner read intentionally gates any external policy call for nonexistent or mismatched profiles.
-      const policyResolution = yield* policy
-        .resolve(input)
-        .pipe(Effect.mapError((failure) => readUnavailable(failure.reason)));
-      if ('_tag' in policyResolution) {
-        return policyResolution;
-      }
-      const candidateRefs = [
-        ...state.entitlements.map(({ paymentTermRef }) => paymentTermRef),
-        ...policyResolution.eligiblePaymentTermRefs,
-        ...policyResolution.explicitlyPermittedPaymentTermRefs,
-        ...policyResolution.fallbackPaymentTermRefs,
-        ...(input.explicitChoice === undefined ? [] : [input.explicitChoice]),
-      ];
-      const definitionRequests = new Map<string, PaymentTermDefinitionRequest>();
-      for (const entitlement of state.entitlements) {
-        definitionRequests.set(
-          `${entitlement.paymentTermRef.tenantId}:${entitlement.paymentTermRef.moduleId}:${entitlement.paymentTermRef.resourceType}:${entitlement.paymentTermRef.resourceId}`,
-          {
-            at: input.at,
-            expectedSemanticRevisionId: entitlement.semanticRevisionId,
-            paymentTermRef: entitlement.paymentTermRef,
-          },
-        );
-      }
-      for (const paymentTermRef of candidateRefs) {
-        const key = `${paymentTermRef.tenantId}:${paymentTermRef.moduleId}:${paymentTermRef.resourceType}:${paymentTermRef.resourceId}`;
-        if (!definitionRequests.has(key)) {
-          definitionRequests.set(key, { at: input.at, paymentTermRef });
-        }
-      }
-      const definitions = yield* catalog
-        .resolveDefinitions([...definitionRequests.values()])
-        .pipe(Effect.mapError((failure) => readUnavailable(failure.reason)));
-      const commonResolutionInput = {
-        at: input.at,
-        definitions,
-        eligiblePaymentTermRefs: policyResolution.eligiblePaymentTermRefs,
-        policyExplicitlyPermittedRefs: policyResolution.explicitlyPermittedPaymentTermRefs,
-        policyFallbackRefs: policyResolution.fallbackPaymentTermRefs,
-        policyRevision: policyResolution.policyRevision,
-        policySource: policyResolution.policySource,
-        purchasingContextRevision: input.purchasingContext.contextRevision,
-        state,
-      };
-      return input.explicitChoice === undefined
-        ? resolvePaymentTerms(commonResolutionInput)
-        : resolvePaymentTerms({
-            ...commonResolutionInput,
-            explicitChoice: input.explicitChoice,
-          });
-    },
-  ),
+      ),
+    );
+    // oxlint-disable-next-line effect-native/no-sequential-independent-yields -- The scope-verified owner read intentionally gates any external policy call for nonexistent or mismatched profiles.
+    const policyResolution = yield* policy
+      .resolve(input)
+      .pipe(Effect.mapError((failure) => readUnavailable(failure.reason)));
+    if ('_tag' in policyResolution) {
+      return policyResolution;
+    }
+    const definitionRequests = definitionRequestsForResolution(
+      state.entitlements,
+      policyResolution,
+      input.explicitChoice,
+      input.at,
+    );
+    const definitions = yield* catalog
+      .resolveDefinitions(definitionRequests)
+      .pipe(Effect.mapError((failure) => readUnavailable(failure.reason)));
+    const commonResolutionInput = {
+      at: input.at,
+      definitions,
+      eligiblePaymentTermRefs: policyResolution.eligiblePaymentTermRefs,
+      policyExplicitlyPermittedRefs: policyResolution.explicitlyPermittedPaymentTermRefs,
+      policyFallbackRefs: policyResolution.fallbackPaymentTermRefs,
+      policyRevision: policyResolution.policyRevision,
+      policySource: policyResolution.policySource,
+      purchasingContextRevision: input.purchasingContext.contextRevision,
+      state,
+    };
+    return input.explicitChoice === undefined
+      ? resolvePaymentTerms(commonResolutionInput)
+      : resolvePaymentTerms({
+          ...commonResolutionInput,
+          explicitChoice: input.explicitChoice,
+        });
+  }),
 });
 
 export interface CustomerPaymentTermsPersistencePorts {
@@ -1448,24 +1433,18 @@ export interface CustomerPaymentTermsPersistencePorts {
   readonly policy?: CustomerCommercePaymentTermsPolicyPort;
 }
 
-/** @deprecated Prefer the composition-boundary `CustomerPaymentTermsPersistencePorts` name. */
-export type CustomerPaymentTermsPersistenceDependencies = CustomerPaymentTermsPersistencePorts;
-
 export const paymentTermsPersistenceForTransaction = (
   persistence: PaymentTermsPersistenceContext,
   ports: CustomerPaymentTermsPersistencePorts = {},
 ) => ({
   affectedUseAssessment: makePaymentTermAffectedUseAssessmentServices(persistence),
-  change: makeChangeCustomerPaymentTermsServices(
-    persistence,
-    ports.catalog ?? unavailablePaymentTermCatalogPort,
-  ),
+  change: makeChangeCustomerPaymentTermsServices(persistence, ports.catalog ?? unavailablePaymentTermCatalogPort),
   entitlementRead: makeCustomerPaymentTermEntitlementReadServices(persistence),
   remove: makeRemoveCustomerPaymentTermServices(persistence),
-  retirementReservation: makePaymentTermRetirementReservationServices(persistence),
   resolution: makePaymentTermsResolutionServices(persistence, ports),
   retailPreference: makeRetailPaymentTermPreferenceServices(
     persistence,
     ports.catalog ?? unavailablePaymentTermCatalogPort,
   ),
+  retirementReservation: makePaymentTermRetirementReservationServices(persistence),
 });

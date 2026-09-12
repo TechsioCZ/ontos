@@ -9,7 +9,7 @@ export interface HistoryActionOwnerPorts {
 }
 
 export { RepeatCartOwner } from './repeat-cart-public-port.ts';
-export type { RepeatCartCreationOutcome, RepeatCartPublicPort } from './repeat-cart-public-port.ts';
+export type { RepeatCartCreationOutcome } from './repeat-cart-public-port.ts';
 
 const unavailable = (ownerModuleId: string) =>
   Effect.fail(

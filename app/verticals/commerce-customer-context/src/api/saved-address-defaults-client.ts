@@ -21,7 +21,7 @@ type SavedAddressDefaultsOperationInvocation = readonly [
 ];
 
 const savedAddressDefaultsClient = (
-  credential: Redacted.Redacted<string>,
+  credential: Redacted.Redacted,
   requestCorrelation: string,
   options: SavedAddressDefaultsClientOptions,
 ) =>
@@ -40,9 +40,7 @@ export const executeSavedAddressDefaultsWithAuthorization = (
   ...[credential, requestCorrelation, options = {}]: SavedAddressDefaultsAuthorizedInvocation
 ) =>
   savedAddressDefaultsClient(Redacted.make(credential), requestCorrelation, options).pipe(
-    Effect.flatMap((client) =>
-      client.savedAddressDefaults.execute({ headers: {}, params: {}, payload, query: {} }),
-    ),
+    Effect.flatMap((client) => client.savedAddressDefaults.execute({ headers: {}, params: {}, payload, query: {} })),
   );
 
 export const executeSavedAddressDefaults = (

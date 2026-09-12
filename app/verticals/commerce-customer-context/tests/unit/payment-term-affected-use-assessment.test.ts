@@ -80,33 +80,31 @@ it.effect('denies a cross-Tenant Payment Term before consulting the assessment s
   }),
 );
 
-it.effect(
-  'denies a cross-Tenant equivalent reference before consulting the assessment service',
-  () =>
-    Effect.gen(function* crossTenantAliasDenied() {
-      let assessmentCalls = 0;
-      const failure = yield* handlePaymentTermAffectedUseAssessment(
-        {
-          ...request,
-          equivalentPaymentTermRefs: [
-            {
-              ...paymentTermRef,
-              resourceId: '66666666-6666-4666-8666-666666666666',
-              tenantId: '55555555-5555-4555-8555-555555555555',
-            },
-          ],
-        },
-        context({
-          assess: () => {
-            assessmentCalls += 1;
-            return Effect.succeed({ kind: 'REJECTED', reason: 'must not be observed' });
+it.effect('denies a cross-Tenant equivalent reference before consulting the assessment service', () =>
+  Effect.gen(function* crossTenantAliasDenied() {
+    let assessmentCalls = 0;
+    const failure = yield* handlePaymentTermAffectedUseAssessment(
+      {
+        ...request,
+        equivalentPaymentTermRefs: [
+          {
+            ...paymentTermRef,
+            resourceId: '66666666-6666-4666-8666-666666666666',
+            tenantId: '55555555-5555-4555-8555-555555555555',
           },
-        }),
-      ).pipe(Effect.flip);
+        ],
+      },
+      context({
+        assess: () => {
+          assessmentCalls += 1;
+          return Effect.succeed({ kind: 'REJECTED', reason: 'must not be observed' });
+        },
+      }),
+    ).pipe(Effect.flip);
 
-      expect(Schema.is(ReadPermissionDenied)(failure)).toBe(true);
-      expect(assessmentCalls).toBe(0);
-    }),
+    expect(Schema.is(ReadPermissionDenied)(failure)).toBe(true);
+    expect(assessmentCalls).toBe(0);
+  }),
 );
 
 it.effect('returns the owner-authoritative assessment instead of the caller claim', () =>

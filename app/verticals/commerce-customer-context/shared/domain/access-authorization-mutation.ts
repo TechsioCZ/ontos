@@ -6,45 +6,54 @@ import { CounterpartyCommerceAccessGrantRefSchema } from '../resources/counterpa
 
 const uuid = Schema.String.check(Schema.isUUID()).pipe(Schema.decodeTo(Schema.String));
 
-export const AccessAuthorizationMutationIdSchema = uuid.pipe(
+const AccessAuthorizationMutationIdSchema = uuid.pipe(
   Schema.brand('AccessAuthorizationMutationId'),
   Schema.decodeTo(Schema.String),
 );
-export type AccessAuthorizationMutationId = typeof AccessAuthorizationMutationIdSchema.Type;
+type AccessAuthorizationMutationId = typeof AccessAuthorizationMutationIdSchema.Type;
 
 export const AccessAuthorizationMutationEvidenceSchema = Schema.Struct({
   mutationId: AccessAuthorizationMutationIdSchema,
   operation: Schema.Literals(['grant', 'revoke']),
   staged: Schema.Boolean,
 });
-export type AccessAuthorizationMutationEvidence =
-  typeof AccessAuthorizationMutationEvidenceSchema.Type;
+export type AccessAuthorizationMutationEvidence = typeof AccessAuthorizationMutationEvidenceSchema.Type;
 
-export const InvitationPermissionAuthorizationMutationSchema = Schema.Struct({
+const InvitationPermissionAuthorizationMutationSchema = Schema.Struct({
   grantRef: CounterpartyCommerceAccessGrantRefSchema,
   mutationId: AccessAuthorizationMutationIdSchema,
   operation: Schema.Literal('grant'),
   permission: CounterpartyPermissionCodeSchema,
   staged: Schema.Boolean,
 });
-export type InvitationPermissionAuthorizationMutation =
-  typeof InvitationPermissionAuthorizationMutationSchema.Type;
+
+const hasUniquePermissionMutationIdentities = (
+  mutations: readonly {
+    readonly grantRef: typeof CounterpartyCommerceAccessGrantRefSchema.Type;
+    readonly mutationId: AccessAuthorizationMutationId;
+    readonly permission: typeof CounterpartyPermissionCodeSchema.Type;
+  }[],
+): boolean => {
+  const ids = mutations.map(({ mutationId }) => mutationId);
+  const grants = mutations.map(({ grantRef }) => `${grantRef.tenantId}:${grantRef.resourceId}`);
+  const permissions = mutations.map(({ permission }) => permission);
+  return (
+    new Set(ids).size === ids.length &&
+    new Set(grants).size === grants.length &&
+    new Set(permissions).size === permissions.length
+  );
+};
 
 export const InvitationClaimAuthorizationMutationEvidenceSchema = Schema.Struct({
   mutationId: AccessAuthorizationMutationIdSchema,
   operation: Schema.Literal('claim'),
   permissionMutations: Schema.Array(InvitationPermissionAuthorizationMutationSchema).check(
     Schema.isMaxLength(15),
-    Schema.makeFilter((mutations) => {
-      const ids = mutations.map(({ mutationId }) => mutationId);
-      const grants = mutations.map(({ grantRef }) => `${grantRef.tenantId}:${grantRef.resourceId}`);
-      const permissions = mutations.map(({ permission }) => permission);
-      return new Set(ids).size === ids.length &&
-        new Set(grants).size === grants.length &&
-        new Set(permissions).size === permissions.length
+    Schema.makeFilter((mutations) =>
+      hasUniquePermissionMutationIdentities(mutations)
         ? undefined
-        : 'claim authorization mutations must have unique mutation, grant, and Permission identities';
-    }),
+        : 'claim authorization mutations must have unique mutation, grant, and Permission identities',
+    ),
   ),
   staged: Schema.Boolean,
 });
@@ -90,46 +99,35 @@ export const CounterpartyAccessRevokeAuthorizationMutationRequestedPayloadSchema
 export type CounterpartyAccessRevokeAuthorizationMutationRequestedPayload =
   typeof CounterpartyAccessRevokeAuthorizationMutationRequestedPayloadSchema.Type;
 
-export const CounterpartyAccessAdministratorBootstrapAuthorizationMutationRequestedPayloadSchema =
-  CounterpartyAccessGrantAuthorizationMutationRequestedPayloadSchema;
-export type CounterpartyAccessAdministratorBootstrapAuthorizationMutationRequestedPayload =
-  typeof CounterpartyAccessAdministratorBootstrapAuthorizationMutationRequestedPayloadSchema.Type;
+export { CounterpartyAccessGrantAuthorizationMutationRequestedPayloadSchema as CounterpartyAccessAdministratorBootstrapAuthorizationMutationRequestedPayloadSchema };
 
-export const CounterpartyAccessInvitationClaimAuthorizationMutationRequestedPayloadSchema =
-  Schema.Struct({
-    ...requestedFields,
-    invitationRef: CounterpartyAccessInvitationRefSchema,
-    operation: Schema.Literal('claim'),
-    permissionMutations: Schema.Array(
-      Schema.Struct({
-        grantRef: CounterpartyCommerceAccessGrantRefSchema,
-        mutationId: AccessAuthorizationMutationIdSchema,
-        operation: Schema.Literal('grant'),
-        permission: CounterpartyPermissionCodeSchema,
-      }),
-    ).check(
-      Schema.isMaxLength(15),
-      Schema.makeFilter((mutations) => {
-        const ids = mutations.map(({ mutationId }) => mutationId);
-        const grants = mutations.map(
-          ({ grantRef }) => `${grantRef.tenantId}:${grantRef.resourceId}`,
-        );
-        const permissions = mutations.map(({ permission }) => permission);
-        return new Set(ids).size === ids.length &&
-          new Set(grants).size === grants.length &&
-          new Set(permissions).size === permissions.length
-          ? undefined
-          : 'claim request must contain unique mutation, grant, and Permission identities';
-      }),
-    ),
-    scope: CounterpartyPermissionScopeSchema,
-  }).check(
-    Schema.makeFilter(({ counterpartyRef, invitationRef, permissionMutations }) =>
-      invitationRef.tenantId === counterpartyRef.tenantId &&
-      permissionMutations.every(({ grantRef }) => grantRef.tenantId === counterpartyRef.tenantId)
+export const CounterpartyAccessInvitationClaimAuthorizationMutationRequestedPayloadSchema = Schema.Struct({
+  ...requestedFields,
+  invitationRef: CounterpartyAccessInvitationRefSchema,
+  operation: Schema.Literal('claim'),
+  permissionMutations: Schema.Array(
+    Schema.Struct({
+      grantRef: CounterpartyCommerceAccessGrantRefSchema,
+      mutationId: AccessAuthorizationMutationIdSchema,
+      operation: Schema.Literal('grant'),
+      permission: CounterpartyPermissionCodeSchema,
+    }),
+  ).check(
+    Schema.isMaxLength(15),
+    Schema.makeFilter((mutations) =>
+      hasUniquePermissionMutationIdentities(mutations)
         ? undefined
-        : 'invitation claim mutation references must share one Tenant',
+        : 'claim request must contain unique mutation, grant, and Permission identities',
     ),
-  );
+  ),
+  scope: CounterpartyPermissionScopeSchema,
+}).check(
+  Schema.makeFilter(({ counterpartyRef, invitationRef, permissionMutations }) =>
+    invitationRef.tenantId === counterpartyRef.tenantId &&
+    permissionMutations.every(({ grantRef }) => grantRef.tenantId === counterpartyRef.tenantId)
+      ? undefined
+      : 'invitation claim mutation references must share one Tenant',
+  ),
+);
 export type CounterpartyAccessInvitationClaimAuthorizationMutationRequestedPayload =
   typeof CounterpartyAccessInvitationClaimAuthorizationMutationRequestedPayloadSchema.Type;

@@ -10,10 +10,7 @@ import {
   validateActionDescriptorInput,
 } from '../../src/actions/definition.ts';
 import { defineGlobalPolicy, defineMicroverticalPolicy } from '../../src/actions/policy.ts';
-import {
-  defineSystemModuleEntrypoint,
-  defineTenantModuleEntrypoint,
-} from '../../src/modules/module-entrypoint.ts';
+import { defineSystemModuleEntrypoint, defineTenantModuleEntrypoint } from '../../src/modules/module-entrypoint.ts';
 import { BusinessPermissionCodeSchema } from '../../src/permissions/business-permission.ts';
 
 const counterActionDescriptor = () =>
@@ -97,9 +94,7 @@ it('accepts conjunctive business and Resource permission declarations', () => {
     role: 'action',
   });
   const businessPermission = defineActionBusinessPermission((_payload, scope) => ({
-    permission: Schema.decodeSync(BusinessPermissionCodeSchema)(
-      'retail.settings.payment_term_preference.manage',
-    ),
+    permission: Schema.decodeSync(BusinessPermissionCodeSchema)('retail.settings.payment_term_preference.manage'),
     target: {
       kind: 'retail_profile',
       legalEntityId: scope.legalEntityId ?? '',

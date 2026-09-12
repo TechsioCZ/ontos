@@ -12,18 +12,17 @@ import {
   PaymentTermHistoryRequestSchema,
   PaymentTermHistoryResponseSchema,
 } from '../../shared/apis/payment-term-history.ts';
-import type {
-  PaymentTermHistoryRequest,
-  PaymentTermHistoryResponse,
-} from '../../shared/apis/payment-term-history.ts';
+import type { PaymentTermHistoryRequest, PaymentTermHistoryResponse } from '../../shared/apis/payment-term-history.ts';
 import type { PaymentTermCatalogPersistence } from '../persistence/payment-term-catalog-persistence.ts';
-import { makePaymentTermCatalogPersistence } from '../persistence/payment-term-catalog-persistence.ts';
+import { paymentTermCatalogPersistenceForScope } from '../persistence/payment-term-catalog-persistence.ts';
 
-export const paymentTermHistoryEntrypoint = defineTenantModuleEntrypoint({
+const paymentTermCatalogModuleKey = 'payment.term-catalog';
+
+const paymentTermHistoryEntrypoint = defineTenantModuleEntrypoint({
   access: 'historical_read',
   authorization: { kind: 'context_permission', permission: 'payment.term_catalog.read' },
   entrypointKey: 'payment.term-catalog.api.payment-term-history',
-  moduleKey: 'payment.term-catalog',
+  moduleKey: paymentTermCatalogModuleKey,
   role: 'api',
 });
 
@@ -42,48 +41,37 @@ const unavailable = (cause: unknown) => {
   return error;
 };
 
-export const readPaymentTermHistory = Effect.fn('PaymentTermHistoryRead.read')(
-  function* readPaymentTermHistory(
-    input: PaymentTermHistoryRequest,
-    trustedTenantId: string,
-    services: PaymentTermCatalogPersistence,
-  ): Effect.fn.Return<PaymentTermHistoryResponse, ReadHandlerNotFound | ReadHandlerUnavailable> {
-    if (
-      input.paymentTermRef.tenantId !== trustedTenantId ||
-      !isPersistenceId(input.paymentTermRef.resourceId)
-    ) {
-      return yield* notFound();
-    }
-    const historyOption = yield* services
-      .getHistory(input.paymentTermRef.resourceId)
-      .pipe(Effect.mapError(unavailable));
-    if (Option.isNone(historyOption)) {
-      return yield* notFound();
-    }
-    const history = historyOption.value;
-    const revisions = history.revisions.filter(
-      (revision) =>
-        (input.semanticRevisionId === undefined ||
-          revision.semanticRevisionId === input.semanticRevisionId) &&
-        (input.definitionRevisionId === undefined ||
-          revision.definitionRevisionId === input.definitionRevisionId),
-    );
-    if (revisions.length === 0) {
-      return yield* notFound();
-    }
-    const directAlias = history.aliases.find(
-      (alias) => alias.aliasRef.resourceId === input.paymentTermRef.resourceId,
-    );
-    const observedAt = DateTime.formatIso(yield* DateTime.now);
-    return {
-      aliases: history.aliases,
-      canonicalPaymentTermRef: directAlias?.canonicalRef ?? input.paymentTermRef,
-      observedAt,
-      requestedPaymentTermRef: input.paymentTermRef,
-      revisions,
-    };
-  },
-);
+export const readPaymentTermHistory = Effect.fn('PaymentTermHistoryRead.read')(function* readPaymentTermHistory(
+  input: PaymentTermHistoryRequest,
+  trustedTenantId: string,
+  services: PaymentTermCatalogPersistence,
+): Effect.fn.Return<PaymentTermHistoryResponse, ReadHandlerNotFound | ReadHandlerUnavailable> {
+  if (input.paymentTermRef.tenantId !== trustedTenantId || !isPersistenceId(input.paymentTermRef.resourceId)) {
+    return yield* notFound();
+  }
+  const historyOption = yield* services.getHistory(input.paymentTermRef.resourceId).pipe(Effect.mapError(unavailable));
+  if (Option.isNone(historyOption)) {
+    return yield* notFound();
+  }
+  const history = historyOption.value;
+  const revisions = history.revisions.filter(
+    (revision) =>
+      (input.semanticRevisionId === undefined || revision.semanticRevisionId === input.semanticRevisionId) &&
+      (input.definitionRevisionId === undefined || revision.definitionRevisionId === input.definitionRevisionId),
+  );
+  if (revisions.length === 0) {
+    return yield* notFound();
+  }
+  const directAlias = history.aliases.find((alias) => alias.aliasRef.resourceId === input.paymentTermRef.resourceId);
+  const observedAt = DateTime.formatIso(yield* DateTime.now);
+  return {
+    aliases: history.aliases,
+    canonicalPaymentTermRef: directAlias?.canonicalRef ?? input.paymentTermRef,
+    observedAt,
+    requestedPaymentTermRef: input.paymentTermRef,
+    revisions,
+  };
+});
 
 export const paymentTermHistoryRead = defineRead(
   {
@@ -95,7 +83,7 @@ export const paymentTermHistoryRead = defineRead(
     },
     inputSchema: PaymentTermHistoryRequestSchema,
     legalEntityScope: 'required',
-    owningModuleKey: 'payment.term-catalog',
+    owningModuleKey: paymentTermCatalogModuleKey,
     permissionTarget: 'module',
     policies: [],
     readKey: 'payment.term-catalog.api.payment-term-history',
@@ -113,6 +101,6 @@ export const paymentTermHistoryRead = defineRead(
         result,
       })),
     ),
-  (transaction, scope) => makePaymentTermCatalogPersistence(transaction, scope),
-  () => ({ kind: 'module', moduleId: 'payment.term-catalog' }),
+  (transaction, scope) => paymentTermCatalogPersistenceForScope(transaction, scope),
+  () => ({ kind: 'module', moduleId: paymentTermCatalogModuleKey }),
 );

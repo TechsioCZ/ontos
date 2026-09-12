@@ -90,29 +90,29 @@ const operationalScopeTransactionFromCoreTransaction = (
     ),
 });
 
-export const installOperationalScopeFromTransactionService = Effect.fn(
-  'installOperationalScopeFromTransactionService',
-)(function* installOperationalScopeFromTransactionServiceEffect(scope: OperationalScope) {
-  const transaction = yield* OperationalScopeTransaction;
-  yield* transaction.install(scope);
-  const setting = yield* transaction.verify;
-  if (
-    Option.isNone(setting) ||
-    setting.value.tenant_id !== scope.tenantId ||
-    setting.value.legal_entity_id !== (scope.legalEntityId ?? '')
-  ) {
-    return yield* operationContextUnavailable();
-  }
-  const routineInvoker = transaction.scopedRoutineInvoker(scope);
-  return Object.freeze({
-    delete: transaction.delete.bind(transaction),
-    insert: transaction.insert.bind(transaction),
-    invoke: routineInvoker.invoke,
-    [scopedTransaction]: true as const,
-    select: transaction.select.bind(transaction),
-    update: transaction.update.bind(transaction),
-  });
-});
+export const installOperationalScopeFromTransactionService = Effect.fn('installOperationalScopeFromTransactionService')(
+  function* installOperationalScopeFromTransactionServiceEffect(scope: OperationalScope) {
+    const transaction = yield* OperationalScopeTransaction;
+    yield* transaction.install(scope);
+    const setting = yield* transaction.verify;
+    if (
+      Option.isNone(setting) ||
+      setting.value.tenant_id !== scope.tenantId ||
+      setting.value.legal_entity_id !== (scope.legalEntityId ?? '')
+    ) {
+      return yield* operationContextUnavailable();
+    }
+    const routineInvoker = transaction.scopedRoutineInvoker(scope);
+    return Object.freeze({
+      delete: transaction.delete.bind(transaction),
+      insert: transaction.insert.bind(transaction),
+      invoke: routineInvoker.invoke,
+      [scopedTransaction]: true as const,
+      select: transaction.select.bind(transaction),
+      update: transaction.update.bind(transaction),
+    });
+  },
+);
 
 export const installOperationalScope = (
   transaction: CoreTransaction,

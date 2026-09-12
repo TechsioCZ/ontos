@@ -69,11 +69,6 @@ export const executeRevokeRetailPortalProfileBinding = (
 ) =>
   operationGateway.invoke(
     (credential) =>
-      executeRevokeRetailPortalProfileBindingWithAuthorization(
-        payload,
-        credential,
-        requestCorrelation,
-        options,
-      ),
+      executeRevokeRetailPortalProfileBindingWithAuthorization(payload, credential, requestCorrelation, options),
     options.gateway,
   );

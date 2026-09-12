@@ -101,9 +101,7 @@ it.effect('maps PostgreSQL metadata to a sanitized typed persistence failure', (
       () =>
         Effect.fail(
           new EffectDrizzleQueryError({
-            cause: Cause.fail(
-              new SqlError({ reason: new UniqueViolation({ cause: driver, constraint }) }),
-            ),
+            cause: Cause.fail(new SqlError({ reason: new UniqueViolation({ cause: driver, constraint }) })),
             params: ['private parameter'],
             query: 'private SQL',
           }),

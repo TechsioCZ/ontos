@@ -45,9 +45,7 @@ it.live('derives worker actor evidence from the exact same-Tenant Action invocat
           deliveries.map(({ deliveryId }) => deliveryId),
         ),
       );
-      yield* executor
-        .delete(outboxDeliveries)
-        .where(inArray(outboxDeliveries.outboxMessageId, messageIds));
+      yield* executor.delete(outboxDeliveries).where(inArray(outboxDeliveries.outboxMessageId, messageIds));
       yield* executor.delete(outboxMessages).where(eq(outboxMessages.tenantId, tenantId));
       yield* executor.delete(domainEvents).where(eq(domainEvents.tenantId, tenantId));
       yield* executor.delete(actionInvocations).where(eq(actionInvocations.tenantId, tenantId));
@@ -153,13 +151,8 @@ it.live('derives worker actor evidence from the exact same-Tenant Action invocat
     const repository = makeOutboxRepository(executor);
     const now = yield* DateTime.nowAsDate;
     yield* repository.matchUnmatched([registration.descriptor], now);
-    const claimAt = DateTime.makeUnsafe(now).pipe(
-      DateTime.add({ milliseconds: 1000 }),
-      DateTime.toDateUtc,
-    );
-    const claimed = Option.getOrThrow(
-      yield* repository.claimNext([registration], 'worker-actor-evidence', claimAt),
-    );
+    const claimAt = DateTime.makeUnsafe(now).pipe(DateTime.add({ milliseconds: 1000 }), DateTime.toDateUtc);
+    const claimed = Option.getOrThrow(yield* repository.claimNext([registration], 'worker-actor-evidence', claimAt));
     expect(claimed.actorPrincipalId).toBe(principalId);
     expect(claimed.correlationId).toBe('merge-correlation-1');
     return yield* Effect.void;

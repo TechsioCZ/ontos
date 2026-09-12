@@ -6,19 +6,16 @@ import {
 } from '@app/commerce-customer-context/outbox/commerce-customer-context-customer-payment-terms-changed-v1';
 import type { OutboxPayload } from '@app/commerce-customer-context/outbox/commerce-customer-context-customer-payment-terms-changed-v1';
 
-export { OutboxPayloadSchema as ChangeCustomerPaymentTermsCommerceCustomerContextCustomerPaymentTermsChangedV1OutboxPayloadSchema } from '@app/commerce-customer-context/outbox/commerce-customer-context-customer-payment-terms-changed-v1';
-export type ChangeCustomerPaymentTermsCommerceCustomerContextCustomerPaymentTermsChangedV1OutboxPayload =
-  OutboxPayload;
-export const ChangeCustomerPaymentTermsCommerceCustomerContextCustomerPaymentTermsChangedV1OutboxProducerModuleKey =
+export type ChangeCustomerPaymentTermsCommerceCustomerContextCustomerPaymentTermsChangedV1OutboxPayload = OutboxPayload;
+const ChangeCustomerPaymentTermsCommerceCustomerContextCustomerPaymentTermsChangedV1OutboxProducerModuleKey =
   outboxProducerModuleKey;
-export const ChangeCustomerPaymentTermsCommerceCustomerContextCustomerPaymentTermsChangedV1OutboxTopic =
-  outboxTopic;
+const ChangeCustomerPaymentTermsCommerceCustomerContextCustomerPaymentTermsChangedV1OutboxTopic = outboxTopic;
 
-export const createChangeCustomerPaymentTermsCommerceCustomerContextCustomerPaymentTermsChangedV1OutboxMessage =
-  (payload: OutboxPayload): OutboxMessage => ({
-    payloadJson: payload,
-    producerModuleKey:
-      ChangeCustomerPaymentTermsCommerceCustomerContextCustomerPaymentTermsChangedV1OutboxProducerModuleKey,
-    topic:
-      ChangeCustomerPaymentTermsCommerceCustomerContextCustomerPaymentTermsChangedV1OutboxTopic,
-  });
+export const createChangeCustomerPaymentTermsCommerceCustomerContextCustomerPaymentTermsChangedV1OutboxMessage = (
+  payload: OutboxPayload,
+): OutboxMessage => ({
+  payloadJson: payload,
+  producerModuleKey:
+    ChangeCustomerPaymentTermsCommerceCustomerContextCustomerPaymentTermsChangedV1OutboxProducerModuleKey,
+  topic: ChangeCustomerPaymentTermsCommerceCustomerContextCustomerPaymentTermsChangedV1OutboxTopic,
+});

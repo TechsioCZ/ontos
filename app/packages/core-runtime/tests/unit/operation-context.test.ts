@@ -178,54 +178,45 @@ it.effect('preserves resolver-issued system provenance across operational scope 
   }),
 );
 
-it.effect(
-  'preserves verified Storefront scope through persisted tenant and legal-entity checks',
-  () =>
-    Effect.gen(function* verifiedStorefrontScope() {
-      const storefrontPrincipal = trustVerifiedGatewayPrincipalContext({
-        ...principal,
-        trustedStorefrontId: 'storefront-akros-b2b',
-      });
-      const resolver = makeOperationalScopeResolver(
-        { load: () => Effect.succeed(active) },
-        access('allowed'),
-      );
+it.effect('preserves verified Storefront scope through persisted tenant and legal-entity checks', () =>
+  Effect.gen(function* verifiedStorefrontScope() {
+    const storefrontPrincipal = trustVerifiedGatewayPrincipalContext({
+      ...principal,
+      trustedStorefrontId: 'storefront-akros-b2b',
+    });
+    const resolver = makeOperationalScopeResolver({ load: () => Effect.succeed(active) }, access('allowed'));
 
-      const resolved = yield* resolver.resolve({
-        correlationId: 'storefront-scope',
-        legalEntityScope: 'required',
-        principal: storefrontPrincipal,
-      });
+    const resolved = yield* resolver.resolve({
+      correlationId: 'storefront-scope',
+      legalEntityScope: 'required',
+      principal: storefrontPrincipal,
+    });
 
-      expect(resolved.trustedStorefrontId).toBe('storefront-akros-b2b');
-      expect(isVerifiedGatewayPrincipalContext(resolved)).toBe(true);
-      expect(
-        Exit.isFailure(yield* Effect.exit(decodeTrustedPrincipalContext({ ...resolved }))),
-      ).toBe(true);
-    }),
+    expect(resolved.trustedStorefrontId).toBe('storefront-akros-b2b');
+    expect(isVerifiedGatewayPrincipalContext(resolved)).toBe(true);
+    expect(Exit.isFailure(yield* Effect.exit(decodeTrustedPrincipalContext({ ...resolved })))).toBe(true);
+  }),
 );
 
-it.effect(
-  'permits only a resolver-branded support-stop recovery through inactive historical scope',
-  () =>
-    Effect.gen(function* supportRecovery() {
-      const recoveryPrincipal = yield* supportRecoveryPrincipalContextResolverFromRepository({
-        load: () =>
-          Effect.succeed({
-            bindingPrincipalId: principal.principalId,
-            bindingTenantId: principal.tenantId,
-            principalKind: 'human' as const,
-            principalTenantId: principal.tenantId,
-            tenantId: principal.tenantId,
-          }).pipe(Effect.asSome),
-      }).resolveStoppedImpersonation({
-        originalAuthBindingId: principal.authBindingId,
-        originalPrincipalId: principal.principalId,
-        originalSessionId: 'expired-original-session',
-        tenantId: principal.tenantId,
-      });
-      const resolver = makeOperationalScopeResolver(
-        {
+it.effect('permits only a resolver-branded support-stop recovery through inactive historical scope', () =>
+  Effect.gen(function* supportRecovery() {
+    const recoveryPrincipal = yield* supportRecoveryPrincipalContextResolverFromRepository({
+      load: () =>
+        Effect.succeed({
+          bindingPrincipalId: principal.principalId,
+          bindingTenantId: principal.tenantId,
+          principalKind: 'human' as const,
+          principalTenantId: principal.tenantId,
+          tenantId: principal.tenantId,
+        }).pipe(Effect.asSome),
+    }).resolveStoppedImpersonation({
+      originalAuthBindingId: principal.authBindingId,
+      originalPrincipalId: principal.principalId,
+      originalSessionId: 'expired-original-session',
+      tenantId: principal.tenantId,
+    });
+    const resolver = makeOperationalScopeResolver(
+      {
         load: () =>
           Effect.succeed({
             ...active,

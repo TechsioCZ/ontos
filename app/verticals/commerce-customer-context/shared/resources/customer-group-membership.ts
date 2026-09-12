@@ -4,9 +4,7 @@
 import type { OntosResourceType } from '@app/core-runtime';
 import { Schema } from 'effect';
 
-const ResourceIdSchema = Schema.String.check(Schema.isUUID()).pipe(
-  Schema.brand('CustomerGroupMembershipResourceId'),
-);
+const ResourceIdSchema = Schema.String.check(Schema.isUUID()).pipe(Schema.brand('CustomerGroupMembershipResourceId'));
 const TenantIdSchema = Schema.String.check(Schema.isUUID()).pipe(Schema.brand('TenantId'));
 
 export const CustomerGroupMembershipRefSchema = Schema.Struct({
@@ -25,8 +23,7 @@ export const customerGroupMembershipResourceDescriptor = {
     searchable: false,
     timelineVisible: true,
   },
-  description:
-    'Time-bounded relation between one concrete Commerce Customer Profile and one Commerce Customer Group.',
+  description: 'Time-bounded relation between one concrete Commerce Customer Profile and one Commerce Customer Group.',
   key: 'commerce.customer-context.customer-group-membership',
   label: 'Commerce Customer Group Membership',
   owningModuleId: 'commerce.customer-context',

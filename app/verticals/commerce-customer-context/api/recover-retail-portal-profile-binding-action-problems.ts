@@ -3,7 +3,7 @@
 // @ontos-action-http-slug recover-retail-portal-profile-binding
 // oxlint-disable sonarjs/function-name -- Effect Match.tags requires owner-declared tag keys; remove-when: sonarjs accepts discriminant-map properties.
 import type { ActionCoreError } from '@app/core-runtime';
-import { Effect, HttpApiMiddleware } from '@modern-js/plugin-bff/effect-edge';
+import { Effect, HttpApiMiddleware } from '@modern-js/bff-effect/effect-edge';
 import { Match, Schema } from 'effect';
 import {
   RecoverRetailPortalProfileBindingActionAlreadyCommittedProblemSchema,
@@ -21,144 +21,66 @@ import {
 } from '../shared/apis/recover-retail-portal-profile-binding-action.ts';
 import type { RecoverRetailPortalProfileBindingActionProblem } from '../shared/apis/recover-retail-portal-profile-binding-action.ts';
 import { recoverRetailPortalProfileBindingAction } from '../src/actions/recover-retail-portal-profile-binding.action.ts';
+/* oxlint-disable anti-slop-effect/no-service-constructor-imports -- These pure helpers construct problem values rather than Effect services. */
+import {
+  actionProblemStatus as problemStatus,
+  makeAuthenticationProblem,
+  makeConflictProblem,
+  makeForbiddenProblem,
+  makeIneligibleProblem,
+  makeInternalProblem,
+  makeInvalidProblem,
+  makeNotFoundProblem,
+  makePreconditionProblem,
+  makeUnavailableProblem,
+} from './action-problem-support.ts';
+/* oxlint-enable anti-slop-effect/no-service-constructor-imports */
+import { retailPortalBindingActionRejectedProblemByCode } from './retail-portal-binding-action-problem-identity.ts';
+import type { RetailPortalBindingDomainProblemIdentity } from './retail-portal-binding-action-problem-identity.ts';
 
 type DomainError = typeof recoverRetailPortalProfileBindingAction.descriptor.domainErrorSchema.Type;
 type ProblemOf<Tag extends RecoverRetailPortalProfileBindingActionProblem['_tag']> = Extract<
   RecoverRetailPortalProfileBindingActionProblem,
   { readonly _tag: Tag }
 >;
-type DomainProblemIdentity =
-  | { readonly code: 'BINDING_CONFLICT' | 'CURRENT_STATE_CONFLICT'; readonly kind: 'conflict' }
-  | {
-      readonly code:
-        | 'BINDING_AMBIGUOUS'
-        | 'ENROLLMENT_EVIDENCE_INSUFFICIENT'
-        | 'PROFILE_NOT_ACTIVE';
-      readonly kind: 'ineligible';
-    }
-  | { readonly code: 'BINDING_NOT_FOUND' | 'PROFILE_NOT_FOUND'; readonly kind: 'notFound' }
-  | {
-      readonly code: 'DEPENDENCY_UNAVAILABLE' | 'OUTCOME_INDETERMINATE' | 'PERSISTENCE_UNAVAILABLE';
-      readonly kind: 'unavailable';
-    };
-
-const problemStatus = {
-  authentication: 401,
-  conflict: 409,
-  forbidden: 403,
-  ineligible: 422,
-  internal: 500,
-  invalid: 400,
-  notFound: 404,
-  precondition: 428,
-  rateLimited: 429,
-  timeout: 504,
-  unavailable: 503,
-} as const;
-
-const retailPortalBindingActionRejectedProblemByCode = {
-  BINDING_AMBIGUOUS: { code: 'BINDING_AMBIGUOUS', kind: 'ineligible' },
-  BINDING_CONFLICT: { code: 'BINDING_CONFLICT', kind: 'conflict' },
-  BINDING_NOT_FOUND: { code: 'BINDING_NOT_FOUND', kind: 'notFound' },
-  CURRENT_STATE_CONFLICT: { code: 'CURRENT_STATE_CONFLICT', kind: 'conflict' },
-  DEPENDENCY_UNAVAILABLE: { code: 'DEPENDENCY_UNAVAILABLE', kind: 'unavailable' },
-  ENROLLMENT_EVIDENCE_INSUFFICIENT: {
-    code: 'ENROLLMENT_EVIDENCE_INSUFFICIENT',
-    kind: 'ineligible',
-  },
-  OUTCOME_INDETERMINATE: { code: 'OUTCOME_INDETERMINATE', kind: 'unavailable' },
-  PERSISTENCE_UNAVAILABLE: { code: 'PERSISTENCE_UNAVAILABLE', kind: 'unavailable' },
-  PROFILE_NOT_ACTIVE: { code: 'PROFILE_NOT_ACTIVE', kind: 'ineligible' },
-  PROFILE_NOT_FOUND: { code: 'PROFILE_NOT_FOUND', kind: 'notFound' },
-} as const satisfies Record<
-  Extract<DomainError, { readonly _tag: 'RetailPortalBindingActionRejected' }>['code'],
-  DomainProblemIdentity
->;
-
 export const recoverRetailPortalProfileBindingActionProblem = {
-  authentication: (): ProblemOf<'RecoverRetailPortalProfileBindingActionAuthenticationProblem'> =>
-    RecoverRetailPortalProfileBindingActionAuthenticationProblemSchema.make({
-      detail: 'A valid audience-scoped Bearer assertion is required.',
-      status: problemStatus.authentication,
-      title: 'Authentication required',
-      type: 'https://ontos.dev/problems/operation-authentication-required',
-    }),
-  conflict: (
-    code: ProblemOf<'RecoverRetailPortalProfileBindingActionConflictProblem'>['code'],
-  ): ProblemOf<'RecoverRetailPortalProfileBindingActionConflictProblem'> =>
-    RecoverRetailPortalProfileBindingActionConflictProblemSchema.make({
-      code,
-      detail: 'The Action conflicts with current state.',
-      status: problemStatus.conflict,
-      title: 'Action conflict',
-      type: 'https://ontos.dev/problems/action-conflict',
-    }),
-  forbidden: (
-    code: ProblemOf<'RecoverRetailPortalProfileBindingActionForbiddenProblem'>['code'],
-  ): ProblemOf<'RecoverRetailPortalProfileBindingActionForbiddenProblem'> =>
-    RecoverRetailPortalProfileBindingActionForbiddenProblemSchema.make({
-      code,
-      detail: 'The principal is not permitted to perform this Action.',
-      status: problemStatus.forbidden,
-      title: 'Action forbidden',
-      type: 'https://ontos.dev/problems/action-forbidden',
-    }),
-  ineligible: (
-    code: ProblemOf<'RecoverRetailPortalProfileBindingActionIneligibleProblem'>['code'],
-  ): ProblemOf<'RecoverRetailPortalProfileBindingActionIneligibleProblem'> =>
-    RecoverRetailPortalProfileBindingActionIneligibleProblemSchema.make({
-      code,
-      detail: 'The request is not eligible for this Action.',
-      status: problemStatus.ineligible,
-      title: 'Action ineligible',
-      type: 'https://ontos.dev/problems/action-ineligible',
-    }),
-  internal: (): ProblemOf<'RecoverRetailPortalProfileBindingActionInternalProblem'> =>
-    RecoverRetailPortalProfileBindingActionInternalProblemSchema.make({
-      detail: 'The Action could not be completed.',
-      status: problemStatus.internal,
-      title: 'Action failed',
-      type: 'https://ontos.dev/problems/action-failed',
-    }),
-  invalid: (): ProblemOf<'RecoverRetailPortalProfileBindingActionInvalidProblem'> =>
-    RecoverRetailPortalProfileBindingActionInvalidProblemSchema.make({
-      detail: 'The recover-retail-portal-profile-binding Action request is invalid.',
-      status: problemStatus.invalid,
-      title: 'Invalid Action request',
-      type: 'https://ontos.dev/problems/action-invalid',
-    }),
-  notFound: (
-    code: ProblemOf<'RecoverRetailPortalProfileBindingActionNotFoundProblem'>['code'],
-  ): ProblemOf<'RecoverRetailPortalProfileBindingActionNotFoundProblem'> =>
-    RecoverRetailPortalProfileBindingActionNotFoundProblemSchema.make({
-      code,
-      detail: 'The requested resource was not found.',
-      status: problemStatus.notFound,
-      title: 'Resource not found',
-      type: 'https://ontos.dev/problems/action-resource-not-found',
-    }),
-  precondition: (): ProblemOf<'RecoverRetailPortalProfileBindingActionPreconditionProblem'> =>
-    RecoverRetailPortalProfileBindingActionPreconditionProblemSchema.make({
-      detail: 'An Idempotency-Key header is required.',
-      status: problemStatus.precondition,
-      title: 'Idempotency key required',
-      type: 'https://ontos.dev/problems/idempotency-key-required',
-    }),
-  unavailable: (
-    code: ProblemOf<'RecoverRetailPortalProfileBindingActionUnavailableProblem'>['code'],
-  ): ProblemOf<'RecoverRetailPortalProfileBindingActionUnavailableProblem'> =>
-    RecoverRetailPortalProfileBindingActionUnavailableProblemSchema.make({
-      code,
-      detail: 'The Action capability is temporarily unavailable.',
-      retryable: true,
-      status: problemStatus.unavailable,
-      title: 'Action unavailable',
-      type: 'https://ontos.dev/problems/action-unavailable',
-    }),
+  authentication: makeAuthenticationProblem<ProblemOf<'RecoverRetailPortalProfileBindingActionAuthenticationProblem'>>(
+    (input) => RecoverRetailPortalProfileBindingActionAuthenticationProblemSchema.make(input),
+  ),
+  conflict: makeConflictProblem<
+    ProblemOf<'RecoverRetailPortalProfileBindingActionConflictProblem'>['code'],
+    ProblemOf<'RecoverRetailPortalProfileBindingActionConflictProblem'>
+  >((input) => RecoverRetailPortalProfileBindingActionConflictProblemSchema.make(input)),
+  forbidden: makeForbiddenProblem<
+    ProblemOf<'RecoverRetailPortalProfileBindingActionForbiddenProblem'>['code'],
+    ProblemOf<'RecoverRetailPortalProfileBindingActionForbiddenProblem'>
+  >((input) => RecoverRetailPortalProfileBindingActionForbiddenProblemSchema.make(input)),
+  ineligible: makeIneligibleProblem<
+    ProblemOf<'RecoverRetailPortalProfileBindingActionIneligibleProblem'>['code'],
+    ProblemOf<'RecoverRetailPortalProfileBindingActionIneligibleProblem'>
+  >((input) => RecoverRetailPortalProfileBindingActionIneligibleProblemSchema.make(input)),
+  internal: makeInternalProblem<ProblemOf<'RecoverRetailPortalProfileBindingActionInternalProblem'>>((input) =>
+    RecoverRetailPortalProfileBindingActionInternalProblemSchema.make(input),
+  ),
+  invalid: makeInvalidProblem<ProblemOf<'RecoverRetailPortalProfileBindingActionInvalidProblem'>>(
+    (input) => RecoverRetailPortalProfileBindingActionInvalidProblemSchema.make(input),
+    'recover-retail-portal-profile-binding',
+  ),
+  notFound: makeNotFoundProblem<
+    ProblemOf<'RecoverRetailPortalProfileBindingActionNotFoundProblem'>['code'],
+    ProblemOf<'RecoverRetailPortalProfileBindingActionNotFoundProblem'>
+  >((input) => RecoverRetailPortalProfileBindingActionNotFoundProblemSchema.make(input)),
+  precondition: makePreconditionProblem<ProblemOf<'RecoverRetailPortalProfileBindingActionPreconditionProblem'>>(
+    (input) => RecoverRetailPortalProfileBindingActionPreconditionProblemSchema.make(input),
+  ),
+  unavailable: makeUnavailableProblem<
+    ProblemOf<'RecoverRetailPortalProfileBindingActionUnavailableProblem'>['code'],
+    ProblemOf<'RecoverRetailPortalProfileBindingActionUnavailableProblem'>
+  >((input) => RecoverRetailPortalProfileBindingActionUnavailableProblemSchema.make(input)),
 } as const;
 
 const mapDomainIdentity = (
-  identity: DomainProblemIdentity,
+  identity: RetailPortalBindingDomainProblemIdentity,
 ): RecoverRetailPortalProfileBindingActionProblem =>
   Match.value(identity).pipe(
     Match.when({ kind: 'conflict' as const }, (matched) =>
@@ -212,54 +134,39 @@ const mapCoreProblem = (error: ActionCoreError): RecoverRetailPortalProfileBindi
         }),
       ActionHandlerExecutionError: recoverRetailPortalProfileBindingActionProblem.internal,
       ActionIdempotencyKeyRequired: recoverRetailPortalProfileBindingActionProblem.precondition,
-      ActionInvocationNotFound: (failure) =>
-        recoverRetailPortalProfileBindingActionProblem.notFound(failure.code),
+      ActionInvocationNotFound: (failure) => recoverRetailPortalProfileBindingActionProblem.notFound(failure.code),
       ActionInvocationPersistenceError: (failure) =>
         recoverRetailPortalProfileBindingActionProblem.unavailable(failure.code),
-      ActionInvocationStateError: (failure) =>
-        recoverRetailPortalProfileBindingActionProblem.conflict(failure.code),
+      ActionInvocationStateError: (failure) => recoverRetailPortalProfileBindingActionProblem.conflict(failure.code),
       ActionPayloadValidationError: recoverRetailPortalProfileBindingActionProblem.invalid,
-      ActionPermissionCheckError: (failure) =>
-        recoverRetailPortalProfileBindingActionProblem.unavailable(failure.code),
-      ActionPermissionDenied: (failure) =>
-        recoverRetailPortalProfileBindingActionProblem.forbidden(failure.code),
-      ActionPolicyDenied: (failure) =>
-        recoverRetailPortalProfileBindingActionProblem.ineligible(failure.code),
+      ActionPermissionCheckError: (failure) => recoverRetailPortalProfileBindingActionProblem.unavailable(failure.code),
+      ActionPermissionDenied: (failure) => recoverRetailPortalProfileBindingActionProblem.forbidden(failure.code),
+      ActionPolicyDenied: (failure) => recoverRetailPortalProfileBindingActionProblem.ineligible(failure.code),
       ActionPolicyEvaluationError: (failure) =>
         recoverRetailPortalProfileBindingActionProblem.unavailable(failure.code),
-      ActionRequestHashConflict: (failure) =>
-        recoverRetailPortalProfileBindingActionProblem.conflict(failure.code),
+      ActionRequestHashConflict: (failure) => recoverRetailPortalProfileBindingActionProblem.conflict(failure.code),
       ActionResultValidationError: recoverRetailPortalProfileBindingActionProblem.internal,
-      ActionTransactionError: (failure) =>
-        recoverRetailPortalProfileBindingActionProblem.unavailable(failure.code),
-      ActionTrustedContextValidationError:
-        recoverRetailPortalProfileBindingActionProblem.authentication,
+      ActionTransactionError: (failure) => recoverRetailPortalProfileBindingActionProblem.unavailable(failure.code),
+      ActionTrustedContextValidationError: recoverRetailPortalProfileBindingActionProblem.authentication,
       ModuleStateCheckUnavailableError: (failure) =>
         recoverRetailPortalProfileBindingActionProblem.unavailable(failure.code),
-      ModuleStateDeniedError: (failure) =>
-        recoverRetailPortalProfileBindingActionProblem.forbidden(failure.code),
-      OperationAuthenticationRequired:
-        recoverRetailPortalProfileBindingActionProblem.authentication,
-      OperationContextDenied: (failure) =>
-        recoverRetailPortalProfileBindingActionProblem.forbidden(failure.code),
-      OperationContextInvalid: (failure) =>
-        recoverRetailPortalProfileBindingActionProblem.forbidden(failure.code),
+      ModuleStateDeniedError: (failure) => recoverRetailPortalProfileBindingActionProblem.forbidden(failure.code),
+      OperationAuthenticationRequired: recoverRetailPortalProfileBindingActionProblem.authentication,
+      OperationContextDenied: (failure) => recoverRetailPortalProfileBindingActionProblem.forbidden(failure.code),
+      OperationContextInvalid: (failure) => recoverRetailPortalProfileBindingActionProblem.forbidden(failure.code),
       OperationContextUnavailable: (failure) =>
         recoverRetailPortalProfileBindingActionProblem.unavailable(failure.code),
     }),
     Match.exhaustive,
   );
 
-const isDomainError = Schema.is(
-  recoverRetailPortalProfileBindingAction.descriptor.domainErrorSchema,
-);
+const isDomainError = Schema.is(recoverRetailPortalProfileBindingAction.descriptor.domainErrorSchema);
 export const mapRecoverRetailPortalProfileBindingActionProblem = (
   error: ActionCoreError | DomainError,
 ): RecoverRetailPortalProfileBindingActionProblem =>
   isDomainError(error) ? mapDomainProblem(error) : mapCoreProblem(error);
 
-export const recoverRetailPortalProfileBindingActionSchemaErrorLive =
-  HttpApiMiddleware.layerSchemaErrorTransform(
-    RecoverRetailPortalProfileBindingActionSchemaErrorMiddleware,
-    () => Effect.fail(recoverRetailPortalProfileBindingActionProblem.invalid()),
-  );
+export const recoverRetailPortalProfileBindingActionSchemaErrorLive = HttpApiMiddleware.layerSchemaErrorTransform(
+  RecoverRetailPortalProfileBindingActionSchemaErrorMiddleware,
+  () => Effect.fail(recoverRetailPortalProfileBindingActionProblem.invalid()),
+);

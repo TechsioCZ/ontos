@@ -9,15 +9,9 @@ import {
   defineTenantModuleEntrypoint,
 } from '@app/core-runtime';
 import { Effect, Match, Schema } from 'effect';
-import {
-  PaymentTermReferenceSchema,
-  PaymentTermsTimestampSchema,
-} from '../../shared/domain/payment-term-contracts.ts';
+import { PaymentTermReferenceSchema, PaymentTermsTimestampSchema } from '../../shared/domain/payment-term-contracts.ts';
 import { isEffectiveAt } from '../../shared/domain/payment-terms.ts';
-import type {
-  CustomerPaymentTermsState,
-  PaymentTermReference,
-} from '../../shared/domain/payment-term-contracts.ts';
+import type { CustomerPaymentTermsState, PaymentTermReference } from '../../shared/domain/payment-term-contracts.ts';
 import { RetailCustomerProfileRefSchema } from '../../shared/resources/retail-customer-profile.ts';
 import {
   ChangeRetailPaymentTermPreferencePayloadSchema,
@@ -38,18 +32,7 @@ const eventType = 'commerce.customer-context.retail-payment-term-preference-chan
 const revision = ChangeRetailPaymentTermPreferencePayloadSchema.fields.expectedRevision;
 const preferenceChangeKind = Schema.Literals(['SET_PREFERENCE', 'CLEAR_PREFERENCE']);
 
-export {
-  ChangeRetailPaymentTermPreferencePayloadSchema,
-  ChangeRetailPaymentTermPreferenceResultSchema,
-  RetailPaymentTermPreferenceChangeSchema,
-} from '../../shared/actions/change-retail-payment-term-preference.ts';
-export type {
-  ChangeRetailPaymentTermPreferencePayload,
-  ChangeRetailPaymentTermPreferenceResult,
-  RetailPaymentTermPreferenceChange,
-} from '../../shared/actions/change-retail-payment-term-preference.ts';
-
-export class RetailPaymentTermPreferenceRejected extends Schema.TaggedError<RetailPaymentTermPreferenceRejected>()(
+class RetailPaymentTermPreferenceRejected extends Schema.TaggedError<RetailPaymentTermPreferenceRejected>()(
   'RetailPaymentTermPreferenceRejected',
   {
     code: Schema.Literals([
@@ -70,7 +53,7 @@ export class RetailPaymentTermPreferenceRejected extends Schema.TaggedError<Reta
   },
 ) {}
 
-export const RetailPaymentTermPreferenceChangedEventSchema = Schema.Struct({
+const RetailPaymentTermPreferenceChangedEventSchema = Schema.Struct({
   action: preferenceChangeKind,
   effectiveAt: PaymentTermsTimestampSchema,
   paymentTermRef: Schema.Union([PaymentTermReferenceSchema, Schema.Null]),
@@ -82,7 +65,7 @@ const domainEvents = {
   [eventType]: RetailPaymentTermPreferenceChangedEventSchema,
 } as const;
 
-export const RetailPaymentTermPreferenceAuditEvidenceSchema = Schema.Struct({
+const RetailPaymentTermPreferenceAuditEvidenceSchema = Schema.Struct({
   changed: Schema.Boolean,
   changeType: preferenceChangeKind,
   effectiveAt: PaymentTermsTimestampSchema,
@@ -137,90 +120,72 @@ const resultConfirmsPreferenceChange = (
     ),
     Match.tag(
       'CLEAR_PREFERENCE',
-      (candidate) =>
-        !state.preferences.some((preference) => isEffectiveAt(preference, candidate.effectiveAt)),
+      (candidate) => !state.preferences.some((preference) => isEffectiveAt(preference, candidate.effectiveAt)),
     ),
     Match.exhaustive,
   );
 
-export const handleChangeRetailPaymentTermPreference = Effect.fn(
-  'ChangeRetailPaymentTermPreferenceAction.handle',
-)(function* handle(
-  payload: ChangeRetailPaymentTermPreferencePayload,
-  context: ActionHandlerContext<typeof domainEvents, RetailPaymentTermPreferenceActionServices>,
-) {
-  const changeEvidence = Match.value(payload.change).pipe(
-    Match.tag('SET_PREFERENCE', (change) => ({
-      effectiveAt: change.effectiveFrom,
-      paymentTermRef: change.paymentTermRef,
+const preferenceChangeEvidence = (change: RetailPaymentTermPreferenceChange) =>
+  Match.value(change).pipe(
+    Match.tag('SET_PREFERENCE', (candidate) => ({
+      effectiveAt: candidate.effectiveFrom,
+      paymentTermRef: candidate.paymentTermRef,
     })),
-    Match.tag('CLEAR_PREFERENCE', (change) => ({
-      effectiveAt: change.effectiveAt,
+    Match.tag('CLEAR_PREFERENCE', (candidate) => ({
+      effectiveAt: candidate.effectiveAt,
       paymentTermRef: null,
     })),
     Match.exhaustive,
   );
-  if (
-    payload.profileRef.tenantId !== context.scope.tenantId ||
-    (changeEvidence.paymentTermRef !== null &&
-      changeEvidence.paymentTermRef.tenantId !== context.scope.tenantId)
-  ) {
-    return yield* new RetailPaymentTermPreferenceRejected({
-      code: 'SCOPE_MISMATCH',
-      reason: 'The retail profile and selected Payment Term must belong to the trusted Tenant',
-      retryable: false,
-    });
-  }
 
-  const result = yield* context.services.changePreference(payload, {
-    actionInvocationId: context.actionInvocationId,
-    legalEntityId: context.scope.legalEntityId ?? '',
-    principalId: context.scope.principalId,
-    tenantId: context.scope.tenantId,
-  });
-  if (
-    result.state.profileRef.resourceType !== 'commerce.customer-context.retail-customer-profile' ||
-    result.state.profileRef.tenantId !== payload.profileRef.tenantId ||
-    result.state.profileRef.resourceId !== payload.profileRef.resourceId ||
-    !resultConfirmsPreferenceChange(result.state, payload.change)
-  ) {
-    return yield* new RetailPaymentTermPreferenceRejected({
-      code: 'OUTCOME_INDETERMINATE',
-      reason: 'Persistence returned Payment Terms for a different retail customer profile',
-      retryable: false,
-    });
-  }
+const preferenceOutcomeMatchesProfile = (
+  result: ChangeRetailPaymentTermPreferenceResult,
+  payload: ChangeRetailPaymentTermPreferencePayload,
+): boolean =>
+  result.state.profileRef.resourceType === 'commerce.customer-context.retail-customer-profile' &&
+  result.state.profileRef.tenantId === payload.profileRef.tenantId &&
+  result.state.profileRef.resourceId === payload.profileRef.resourceId &&
+  resultConfirmsPreferenceChange(result.state, payload.change);
 
-  yield* context.recordAuditEvidence({
-    changed: result.changed,
-    changeType: payload.change._tag,
-    effectiveAt: changeEvidence.effectiveAt,
-    expectedRevision: payload.expectedRevision,
-    paymentTermId: changeEvidence.paymentTermRef?.resourceId ?? null,
-    profileId: payload.profileRef.resourceId,
-    resultRevision: result.state.revision,
-  });
-  yield* context.recordDataAccess({
-    accessKind: 'read',
-    queryHash: `retail-payment-term-preference:${payload.profileRef.resourceId}:${payload.expectedRevision}`,
-    resultCount: 1,
-    servingModuleKey: moduleKey,
-    targetModuleKey: payload.profileRef.moduleId,
-    targetResourceId: payload.profileRef.resourceId,
-    targetResourceType: payload.profileRef.resourceType,
-  });
-  if (changeEvidence.paymentTermRef !== null) {
+const recordRetailPaymentTermPreferenceOutcome = Effect.fn('ChangeRetailPaymentTermPreferenceAction.recordOutcome')(
+  function* recordOutcome(
+    payload: ChangeRetailPaymentTermPreferencePayload,
+    result: ChangeRetailPaymentTermPreferenceResult,
+    changeEvidence: ReturnType<typeof preferenceChangeEvidence>,
+    context: ActionHandlerContext<typeof domainEvents, RetailPaymentTermPreferenceActionServices>,
+  ) {
+    yield* context.recordAuditEvidence({
+      changed: result.changed,
+      changeType: payload.change._tag,
+      effectiveAt: changeEvidence.effectiveAt,
+      expectedRevision: payload.expectedRevision,
+      paymentTermId: changeEvidence.paymentTermRef?.resourceId ?? null,
+      profileId: payload.profileRef.resourceId,
+      resultRevision: result.state.revision,
+    });
     yield* context.recordDataAccess({
       accessKind: 'read',
-      queryHash: `retail-payment-term-catalog:${changeEvidence.paymentTermRef.resourceId}`,
+      queryHash: `retail-payment-term-preference:${payload.profileRef.resourceId}:${payload.expectedRevision}`,
       resultCount: 1,
       servingModuleKey: moduleKey,
-      targetModuleKey: changeEvidence.paymentTermRef.moduleId,
-      targetResourceId: changeEvidence.paymentTermRef.resourceId,
-      targetResourceType: changeEvidence.paymentTermRef.resourceType,
+      targetModuleKey: payload.profileRef.moduleId,
+      targetResourceId: payload.profileRef.resourceId,
+      targetResourceType: payload.profileRef.resourceType,
     });
-  }
-  if (result.changed) {
+    if (changeEvidence.paymentTermRef !== null) {
+      yield* context.recordDataAccess({
+        accessKind: 'read',
+        queryHash: `retail-payment-term-catalog:${changeEvidence.paymentTermRef.resourceId}`,
+        resultCount: 1,
+        servingModuleKey: moduleKey,
+        targetModuleKey: changeEvidence.paymentTermRef.moduleId,
+        targetResourceId: changeEvidence.paymentTermRef.resourceId,
+        targetResourceType: changeEvidence.paymentTermRef.resourceType,
+      });
+    }
+    if (!result.changed) {
+      return;
+    }
     const eventPayload: ChangeRetailPaymentTermPreferenceCommerceCustomerContextRetailPaymentTermPreferenceChangedV1OutboxPayload =
       {
         action: payload.change._tag,
@@ -243,9 +208,44 @@ export const handleChangeRetailPaymentTermPreference = Effect.fn(
         eventPayload,
       ),
     );
-  }
-  return result;
-});
+  },
+);
+
+const handleChangeRetailPaymentTermPreference = Effect.fn('ChangeRetailPaymentTermPreferenceAction.handle')(
+  function* handle(
+    payload: ChangeRetailPaymentTermPreferencePayload,
+    context: ActionHandlerContext<typeof domainEvents, RetailPaymentTermPreferenceActionServices>,
+  ) {
+    const changeEvidence = preferenceChangeEvidence(payload.change);
+    if (
+      payload.profileRef.tenantId !== context.scope.tenantId ||
+      (changeEvidence.paymentTermRef !== null && changeEvidence.paymentTermRef.tenantId !== context.scope.tenantId)
+    ) {
+      return yield* new RetailPaymentTermPreferenceRejected({
+        code: 'SCOPE_MISMATCH',
+        reason: 'The retail profile and selected Payment Term must belong to the trusted Tenant',
+        retryable: false,
+      });
+    }
+
+    const result = yield* context.services.changePreference(payload, {
+      actionInvocationId: context.actionInvocationId,
+      legalEntityId: context.scope.legalEntityId ?? '',
+      principalId: context.scope.principalId,
+      tenantId: context.scope.tenantId,
+    });
+    if (!preferenceOutcomeMatchesProfile(result, payload)) {
+      return yield* new RetailPaymentTermPreferenceRejected({
+        code: 'OUTCOME_INDETERMINATE',
+        reason: 'Persistence returned Payment Terms for a different retail customer profile',
+        retryable: false,
+      });
+    }
+
+    yield* recordRetailPaymentTermPreferenceOutcome(payload, result, changeEvidence, context);
+    return result;
+  },
+);
 
 export const changeRetailPaymentTermPreferenceAction = defineAction(
   {
@@ -256,17 +256,15 @@ export const changeRetailPaymentTermPreferenceAction = defineAction(
     actionKey: 'commerce.customer-context.change-retail-payment-term-preference',
     auditEvidenceSchema: RetailPaymentTermPreferenceAuditEvidenceSchema,
     auditProfile: 'standard',
-    businessPermission: defineActionBusinessPermission<ChangeRetailPaymentTermPreferencePayload>(
-      (payload, scope) => ({
-        permission: 'retail.settings.payment_term_preference.manage',
-        target: {
-          kind: 'retail_profile',
-          legalEntityId: scope.legalEntityId ?? '',
-          profileId: payload.profileRef.resourceId,
-          tenantId: scope.tenantId,
-        },
-      }),
-    ),
+    businessPermission: defineActionBusinessPermission<ChangeRetailPaymentTermPreferencePayload>((payload, scope) => ({
+      permission: 'retail.settings.payment_term_preference.manage',
+      target: {
+        kind: 'retail_profile',
+        legalEntityId: scope.legalEntityId ?? '',
+        profileId: payload.profileRef.resourceId,
+        tenantId: scope.tenantId,
+      },
+    })),
     domainErrorSchema: RetailPaymentTermPreferenceRejected,
     domainEvents,
     entrypoint: defineTenantModuleEntrypoint({
@@ -310,11 +308,3 @@ export const changeRetailPaymentTermPreferenceAction = defineAction(
     });
   },
 );
-
-// <generated-outbox-message-exports>
-export { ChangeRetailPaymentTermPreferenceCommerceCustomerContextRetailPaymentTermPreferenceChangedV1OutboxPayloadSchema } from './change-retail-payment-term-preference.commerce-customer-context-retail-payment-term-preference-changed-v1.outbox-message.ts';
-export { ChangeRetailPaymentTermPreferenceCommerceCustomerContextRetailPaymentTermPreferenceChangedV1OutboxProducerModuleKey } from './change-retail-payment-term-preference.commerce-customer-context-retail-payment-term-preference-changed-v1.outbox-message.ts';
-export { ChangeRetailPaymentTermPreferenceCommerceCustomerContextRetailPaymentTermPreferenceChangedV1OutboxTopic } from './change-retail-payment-term-preference.commerce-customer-context-retail-payment-term-preference-changed-v1.outbox-message.ts';
-export { createChangeRetailPaymentTermPreferenceCommerceCustomerContextRetailPaymentTermPreferenceChangedV1OutboxMessage } from './change-retail-payment-term-preference.commerce-customer-context-retail-payment-term-preference-changed-v1.outbox-message.ts';
-export type { ChangeRetailPaymentTermPreferenceCommerceCustomerContextRetailPaymentTermPreferenceChangedV1OutboxPayload } from './change-retail-payment-term-preference.commerce-customer-context-retail-payment-term-preference-changed-v1.outbox-message.ts';
-// </generated-outbox-message-exports>

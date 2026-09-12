@@ -1,10 +1,7 @@
 import { Array as EffectArray, Order } from 'effect';
-import {
-  PAYMENT_TERM_CATALOG_SCHEMA_NAME,
-  PAYMENT_TERM_CATALOG_TABLE_INVENTORY,
-} from './schema.ts';
+import { PAYMENT_TERM_CATALOG_SCHEMA_NAME, PAYMENT_TERM_CATALOG_TABLE_INVENTORY } from './schema.ts';
 
-export const expectedPaymentTermCatalog = PAYMENT_TERM_CATALOG_TABLE_INVENTORY.map(
+const expectedPaymentTermCatalog = PAYMENT_TERM_CATALOG_TABLE_INVENTORY.map(
   (tableName) => `${PAYMENT_TERM_CATALOG_SCHEMA_NAME}.${tableName}`,
 );
 

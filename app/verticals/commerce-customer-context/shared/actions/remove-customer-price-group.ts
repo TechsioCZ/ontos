@@ -21,4 +21,3 @@ export const RemoveCustomerPriceGroupResultSchema = Schema.Struct({
   assignment: CustomerPriceGroupAssignmentSchema,
   changed: Schema.Boolean,
 });
-export type RemoveCustomerPriceGroupResult = typeof RemoveCustomerPriceGroupResultSchema.Type;

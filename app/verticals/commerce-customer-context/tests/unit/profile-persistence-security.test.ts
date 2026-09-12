@@ -22,24 +22,15 @@ const profileEvidenceMigration = readFileSync(
   'utf-8',
 );
 const inactiveGuestAttributionMigration = readFileSync(
-  new URL(
-    '../../drizzle/20260909140125_record-inactive-guest-attribution/migration.sql',
-    import.meta.url,
-  ),
+  new URL('../../drizzle/20260909140125_record-inactive-guest-attribution/migration.sql', import.meta.url),
   'utf-8',
 );
 const profileCanonicalizationMigration = readFileSync(
-  new URL(
-    '../../drizzle/20260909142031_add-profile-canonicalization-evidence/migration.sql',
-    import.meta.url,
-  ),
+  new URL('../../drizzle/20260909142031_add-profile-canonicalization-evidence/migration.sql', import.meta.url),
   'utf-8',
 );
 const globalCounterpartyIdentityMigration = readFileSync(
-  new URL(
-    '../../drizzle/20260909193000_counterparty-profile-global-identity/migration.sql',
-    import.meta.url,
-  ),
+  new URL('../../drizzle/20260909193000_counterparty-profile-global-identity/migration.sql', import.meta.url),
   'utf-8',
 );
 
@@ -63,31 +54,23 @@ const publicProfileRoutines = [
 ] as const;
 
 const functionNames = (sql: string): readonly string[] =>
-  [
-    ...sql.matchAll(/CREATE OR REPLACE FUNCTION "commerce_customer_context"\."(?<name>[^"]+)"\(/gu),
-  ].flatMap(({ groups }) => (groups?.name === undefined ? [] : [groups.name]));
+  [...sql.matchAll(/CREATE OR REPLACE FUNCTION "commerce_customer_context"\."(?<name>[^"]+)"\(/gu)].flatMap(
+    ({ groups }) => (groups?.name === undefined ? [] : [groups.name]),
+  );
 
 const functionBlock = (name: string): string => {
   const marker = `CREATE OR REPLACE FUNCTION "commerce_customer_context"."${name}"(`;
   const start = profileRoutineMigration.indexOf(marker);
   expect(start, `${name} must be declared`).toBeGreaterThanOrEqual(0);
-  const next = profileRoutineMigration.indexOf(
-    '\nCREATE OR REPLACE FUNCTION',
-    start + marker.length,
-  );
+  const next = profileRoutineMigration.indexOf('\nCREATE OR REPLACE FUNCTION', start + marker.length);
   return profileRoutineMigration.slice(start, next === -1 ? undefined : next);
 };
 
 const globalIdentityFunctionBlock = (name: string): string => {
   const marker = `CREATE OR REPLACE FUNCTION commerce_customer_context.${name}(`;
   const start = globalCounterpartyIdentityMigration.indexOf(marker);
-  expect(start, `${name} must be declared in the global identity migration`).toBeGreaterThanOrEqual(
-    0,
-  );
-  const next = globalCounterpartyIdentityMigration.indexOf(
-    '\nCREATE OR REPLACE FUNCTION',
-    start + marker.length,
-  );
+  expect(start, `${name} must be declared in the global identity migration`).toBeGreaterThanOrEqual(0);
+  const next = globalCounterpartyIdentityMigration.indexOf('\nCREATE OR REPLACE FUNCTION', start + marker.length);
   return globalCounterpartyIdentityMigration.slice(start, next === -1 ? undefined : next);
 };
 
@@ -192,9 +175,7 @@ it('replaces broad current-binding uniqueness with the exact profile-principal p
 });
 
 it('persists reconciliation ordering with a bigint watermark and immutable history revisions', () => {
-  expect(profileCompletionMigration).toContain(
-    'ADD COLUMN "last_processed_event_version" bigint DEFAULT 0 NOT NULL;',
-  );
+  expect(profileCompletionMigration).toContain('ADD COLUMN "last_processed_event_version" bigint DEFAULT 0 NOT NULL;');
   expect(profileCompletionMigration).toContain(
     'CONSTRAINT "ccc_portal_binding_history_revision_uk" UNIQUE("tenant_id","legal_entity_id","retail_portal_profile_binding_id","revision")',
   );
@@ -211,18 +192,14 @@ it('serializes tenant-global Counterparty ensures and never translates uniquenes
   );
   expect(ensure).not.toContain("p_legal_entity_id::text || ':counterparty:'");
   expect(ensure).toContain("RETURN QUERY SELECT 'PERSISTENCE_CONFLICT', NULL::jsonb;");
-  expect(ensure).not.toMatch(
-    /EXCEPTION WHEN unique_violation THEN[\s\S]*?COUNTERPARTY_ROLE_NOT_ELIGIBLE/u,
-  );
+  expect(ensure).not.toMatch(/EXCEPTION WHEN unique_violation THEN[\s\S]*?COUNTERPARTY_ROLE_NOT_ELIGIBLE/u);
   expect(ensure).toContain('AND pp.counterparty_resource_id = btrim(p_counterparty_resource_id)');
 });
 
 it('keeps Counterparty read reuse tenant-global while retaining seller-scoped reconciliation evidence', () => {
   const read = globalIdentityFunctionBlock('read_customer_profile');
 
-  expect(read).toContain(
-    'AND customer_profile_id = p_profile_id\n     AND profile_kind = p_profile_kind',
-  );
+  expect(read).toContain('AND customer_profile_id = p_profile_id\n     AND profile_kind = p_profile_kind');
   expect(read).toContain("IF p_profile_kind = 'RETAIL' THEN");
   expect(read).toContain("'kind', 'COUNTERPARTY'");
   expect(read).toContain('AND m.legal_entity_id = p_legal_entity_id');
@@ -242,10 +219,6 @@ it('keeps Counterparty read reuse tenant-global while retaining seller-scoped re
   expect(globalCounterpartyIdentityMigration).toContain(
     'CREATE OR REPLACE FUNCTION commerce_customer_context.verify_invitation_claim_authority',
   );
-  expect(globalCounterpartyIdentityMigration).not.toMatch(
-    /profile\.legal_entity_id = grant_row\.legal_entity_id/gu,
-  );
-  expect(globalCounterpartyIdentityMigration).not.toMatch(
-    /profile\.legal_entity_id = v_invitation\.legal_entity_id/gu,
-  );
+  expect(globalCounterpartyIdentityMigration).not.toMatch(/profile\.legal_entity_id = grant_row\.legal_entity_id/gu);
+  expect(globalCounterpartyIdentityMigration).not.toMatch(/profile\.legal_entity_id = v_invitation\.legal_entity_id/gu);
 });

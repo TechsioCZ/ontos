@@ -1,8 +1,4 @@
-import {
-  ReadHandlerNotFound,
-  ReadHandlerUnavailable,
-  ScopedRoutineInvocationError,
-} from '@app/core-runtime';
+import { ReadHandlerNotFound, ReadHandlerUnavailable, ScopedRoutineInvocationError } from '@app/core-runtime';
 import { Effect, Option, Schema } from 'effect';
 import { expect, it } from 'effect-rstest';
 
@@ -109,8 +105,7 @@ const addressRow = (overrides: Partial<TestAddressRow> = {}): TestAddressRow => 
 });
 
 const transactionReturning = (rows: readonly unknown[]): CustomerContextAddressRoutineInvoker => ({
-  invoke: (routine) =>
-    Effect.succeed(Schema.decodeUnknownSync(Schema.Array(routine.resultSchema))(rows)),
+  invoke: (routine) => Effect.succeed(Schema.decodeUnknownSync(Schema.Array(routine.resultSchema))(rows)),
 });
 
 it('publishes only immutable exact scoped-routine allowlist entries', () => {
@@ -135,40 +130,36 @@ it('publishes only immutable exact scoped-routine allowlist entries', () => {
   }
 });
 
-it.effect(
-  'maps an added Commerce-only address and passes no caller-controlled operation scope',
-  () =>
-    Effect.gen(function* addAddress() {
-      let values: readonly unknown[] = [];
-      const transaction: CustomerContextAddressRoutineInvoker = {
-        invoke: (routine, input) => {
-          values = input;
-          return Effect.succeed(
-            Schema.decodeUnknownSync(Schema.Array(routine.resultSchema))([
-              addressRow({ outcome: 'ADDED' }),
-            ]),
-          );
-        },
-      };
-      const result = yield* addSavedAddress(transaction, commerceOnlyAddPayload, {
-        actionInvocationId,
-        principalId,
-      });
-      expect(result).toMatchObject({
-        address: {
-          lifecycle: 'ACTIVE',
-          origin: { kind: 'COMMERCE_ONLY', postalAddress: postal },
-          profile,
-          revision: 1,
-        },
-        outcome: 'ADDED',
-      });
-      expect(values.slice(0, 3)).toEqual([profileId, 'RETAIL', null]);
-      expect(values).not.toContain(tenantId);
-      expect(values).not.toContain(legalEntityId);
-      expect(values.at(-3)).toBe('Add purchasing address');
-      expect(values.slice(-2)).toEqual([principalId, actionInvocationId]);
-    }),
+it.effect('maps an added Commerce-only address and passes no caller-controlled operation scope', () =>
+  Effect.gen(function* addAddress() {
+    let values: readonly unknown[] = [];
+    const transaction: CustomerContextAddressRoutineInvoker = {
+      invoke: (routine, input) => {
+        values = input;
+        return Effect.succeed(
+          Schema.decodeUnknownSync(Schema.Array(routine.resultSchema))([addressRow({ outcome: 'ADDED' })]),
+        );
+      },
+    };
+    const result = yield* addSavedAddress(transaction, commerceOnlyAddPayload, {
+      actionInvocationId,
+      principalId,
+    });
+    expect(result).toMatchObject({
+      address: {
+        lifecycle: 'ACTIVE',
+        origin: { kind: 'COMMERCE_ONLY', postalAddress: postal },
+        profile,
+        revision: 1,
+      },
+      outcome: 'ADDED',
+    });
+    expect(values.slice(0, 3)).toEqual([profileId, 'RETAIL', null]);
+    expect(values).not.toContain(tenantId);
+    expect(values).not.toContain(legalEntityId);
+    expect(values.at(-3)).toBe('Add purchasing address');
+    expect(values.slice(-2)).toEqual([principalId, actionInvocationId]);
+  }),
 );
 
 it.effect('returns a non-material REUSED outcome for an exact add replay', () =>
@@ -521,16 +512,11 @@ it.effect('exposes no removed-history flag through the ordinary address-book lis
       invoke: (routine, input) => {
         values = input;
         return Effect.succeed(
-          Schema.decodeUnknownSync(Schema.Array(routine.resultSchema))([
-            addressRow({ lifecycle: 'REMOVED' }),
-          ]),
+          Schema.decodeUnknownSync(Schema.Array(routine.resultSchema))([addressRow({ lifecycle: 'REMOVED' })]),
         );
       },
     };
-    const result = yield* addressReadServicesForTransaction(transaction, scope).list(
-      { profile },
-      tenantId,
-    );
+    const result = yield* addressReadServicesForTransaction(transaction, scope).list({ profile }, tenantId);
     expect(values).toEqual([profileId, 'RETAIL', null]);
     expect(result.addresses).toEqual([]);
   }),
@@ -727,15 +713,11 @@ it('hardens every address routine around scope, serialization, and EXECUTE-only 
     'utf-8',
   );
   expect(migration.match(/SECURITY DEFINER/gu)).toHaveLength(8);
-  expect(migration.match(/SET search_path = pg_catalog, commerce_customer_context/gu)).toHaveLength(
-    8,
-  );
+  expect(migration.match(/SET search_path = pg_catalog, commerce_customer_context/gu)).toHaveLength(8);
   expect(migration.match(/current_setting\('ontos\.tenant_id', true\)/gu)).toHaveLength(8);
   expect(migration.match(/current_setting\('ontos\.legal_entity_id', true\)/gu)).toHaveLength(8);
   expect(migration.match(/profile\.profile_kind = p_profile_kind/gu)).toHaveLength(7);
-  expect(
-    migration.match(/counterparty\.counterparty_resource_id = p_counterparty_resource_id/gu),
-  ).toHaveLength(7);
+  expect(migration.match(/counterparty\.counterparty_resource_id = p_counterparty_resource_id/gu)).toHaveLength(7);
   expect(migration.match(/p_counterparty_resource_id IS NULL AND EXISTS/gu)).toHaveLength(3);
   expect(migration.match(/p_counterparty_resource_id IS NOT NULL OR NOT EXISTS/gu)).toHaveLength(4);
   expect(migration).toContain('FOR UPDATE;');
@@ -745,9 +727,7 @@ it('hardens every address routine around scope, serialization, and EXECUTE-only 
   expect(migration).toContain("THEN 'REUSED'");
   expect(migration).toContain("ELSE 'RECONCILIATION_REQUIRED'");
   expect(migration).toContain("'SOURCE_TRANSITION_REQUIRED'::text");
-  expect(migration).toContain(
-    'p_source_transition_from_kind IS DISTINCT FROM v_address.source_kind',
-  );
+  expect(migration).toContain('p_source_transition_from_kind IS DISTINCT FROM v_address.source_kind');
   expect(migration).toContain('p_source_transition_to_kind IS DISTINCT FROM v_target_source_kind');
   expect(migration).toContain('NOT (default_record.default_kind = ANY(v_purposes))');
   expect(migration).toContain("v_address.lifecycle = 'REMOVED'");
@@ -776,27 +756,21 @@ it('hardens every address routine around scope, serialization, and EXECUTE-only 
   const addInsert = addRoutine.indexOf('INSERT INTO commerce_customer_context.saved_addresses');
   expect(addRoutine.indexOf("THEN 'REUSED'")).toBeLessThan(addInsert);
   expect(addRoutine.indexOf("ELSE 'RECONCILIATION_REQUIRED'")).toBeLessThan(addInsert);
-  expect(
-    addRoutine.indexOf('address.last_action_invocation_id = p_action_invocation_id'),
-  ).toBeLessThan(addInsert);
+  expect(addRoutine.indexOf('address.last_action_invocation_id = p_action_invocation_id')).toBeLessThan(addInsert);
 
   const updateRoutine = migration.slice(
     migration.indexOf('CREATE FUNCTION "commerce_customer_context"."update_saved_address"'),
     migration.indexOf('CREATE FUNCTION "commerce_customer_context"."remove_saved_address"'),
   );
-  const addressUpdate = updateRoutine.indexOf(
-    'UPDATE commerce_customer_context.saved_addresses AS address',
-  );
+  const addressUpdate = updateRoutine.indexOf('UPDATE commerce_customer_context.saved_addresses AS address');
   expect(updateRoutine.indexOf("'SOURCE_TRANSITION_REQUIRED'::text")).toBeLessThan(addressUpdate);
-  expect(
-    updateRoutine.indexOf('v_address.last_action_invocation_id = p_action_invocation_id'),
-  ).toBeLessThan(addressUpdate);
+  expect(updateRoutine.indexOf('v_address.last_action_invocation_id = p_action_invocation_id')).toBeLessThan(
+    addressUpdate,
+  );
   expect(updateRoutine).toContain("RETURN QUERY SELECT 'REVISION_CONFLICT'::text");
   const defaultRoutine = migration.slice(
     migration.indexOf('CREATE FUNCTION "commerce_customer_context"."change_address_default"'),
-    migration.indexOf(
-      'CREATE FUNCTION "commerce_customer_context"."verify_address_book_reconciliation"',
-    ),
+    migration.indexOf('CREATE FUNCTION "commerce_customer_context"."verify_address_book_reconciliation"'),
   );
   expect(defaultRoutine.indexOf('p_expected_defaults_revision <> v_current_revision')).toBeLessThan(
     defaultRoutine.indexOf("RETURN QUERY SELECT 'UNCHANGED'::text"),
@@ -820,17 +794,12 @@ it('hardens every address routine around scope, serialization, and EXECUTE-only 
       `GRANT EXECUTE ON FUNCTION "commerce_customer_context".${signature} TO "ontos_runtime";`,
     );
   }
-  expect(migration).not.toMatch(
-    /GRANT\s+(?:SELECT|INSERT|UPDATE|DELETE|ALL)\s+ON\s+(?:TABLE|ALL TABLES)/u,
-  );
+  expect(migration).not.toMatch(/GRANT\s+(?:SELECT|INSERT|UPDATE|DELETE|ALL)\s+ON\s+(?:TABLE|ALL TABLES)/u);
 });
 
 it('keeps ADDRESS_BOOK reconciliation proof append-only and postcondition-bound', () => {
   const migration = readFileSync(
-    new URL(
-      '../../drizzle/20260909150806_address-book-reconciliation-receipt-routines/migration.sql',
-      import.meta.url,
-    ),
+    new URL('../../drizzle/20260909150806_address-book-reconciliation-receipt-routines/migration.sql', import.meta.url),
     'utf-8',
   );
   expect(migration).toContain(
@@ -839,17 +808,13 @@ it('keeps ADDRESS_BOOK reconciliation proof append-only and postcondition-bound'
   expect(migration).toContain(
     'CREATE FUNCTION "commerce_customer_context"."record_address_book_reconciliation_receipt"',
   );
-  expect(migration).toContain(
-    'CREATE FUNCTION "commerce_customer_context"."verify_address_book_reconciliation"',
-  );
+  expect(migration).toContain('CREATE FUNCTION "commerce_customer_context"."verify_address_book_reconciliation"');
   expect(migration).toContain("'EXPLICIT_RECONCILIATION', 'RESOLVED'");
   expect(migration).toContain("ELSE 'ALREADY_SATISFIED'");
   expect(migration).toContain("'NOT_APPLICABLE'");
   expect(migration).toContain('p_after_facts_sha256 IS DISTINCT FROM v_after_facts_sha256');
   expect(migration).toContain('p_postcondition_sha256 IS DISTINCT FROM v_postcondition_sha256');
-  expect(migration).toContain(
-    'CREATE TRIGGER "ccc_address_reconciliation_receipts_append_only_trg"',
-  );
+  expect(migration).toContain('CREATE TRIGGER "ccc_address_reconciliation_receipts_append_only_trg"');
   expect(migration).toContain(
     'ALTER TABLE "commerce_customer_context"."address_book_reconciliation_receipts" FORCE ROW LEVEL SECURITY;',
   );

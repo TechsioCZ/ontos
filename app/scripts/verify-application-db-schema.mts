@@ -126,8 +126,7 @@ const main = Effect.gen(function* verifyApplicationDatabase() {
   yield* Console.log('Verified exact application schemas and migration journals');
   for (const ownerVerifierPath of ownerVerifierPaths) {
     yield* Effect.tryPromise({
-      catch: (cause) =>
-        verificationFailure(`Owner database verifier ${ownerVerifierPath} failed`, cause),
+      catch: (cause) => verificationFailure(`Owner database verifier ${ownerVerifierPath} failed`, cause),
       try: async () => {
         await import(ownerVerifierPath);
       },

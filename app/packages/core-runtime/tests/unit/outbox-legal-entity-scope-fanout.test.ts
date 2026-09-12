@@ -36,10 +36,7 @@ const unavailableCompletionPublisher = {
   publish: () => Effect.die(new Error('The unit backend does not publish worker completions')),
 } as const;
 
-const active = (
-  legalEntityId: string,
-  recordTenantId = tenantId,
-): OutboxWorkerLegalEntityScopeRecord => ({
+const active = (legalEntityId: string, recordTenantId = tenantId): OutboxWorkerLegalEntityScopeRecord => ({
   legalEntityId,
   status: 'active',
   tenantId: recordTenantId,
@@ -131,10 +128,7 @@ it.effect('fails closed for empty, duplicate, and cross-Tenant enumerations', ()
     for (const candidate of records) {
       const calls: string[] = [];
       const failure = yield* Effect.flip(
-        makeOutboxWorkerLegalEntityScopeFanout(backend(candidate, calls)).forEachScope(
-          verified,
-          () => Effect.void,
-        ),
+        makeOutboxWorkerLegalEntityScopeFanout(backend(candidate, calls)).forEachScope(verified, () => Effect.void),
       );
       expect(Predicate.isTagged(failure, 'OutboxWorkerLegalEntityScopeError')).toBe(true);
       expect(calls).toEqual([]);

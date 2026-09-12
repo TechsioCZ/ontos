@@ -2,7 +2,6 @@ import { expect, it } from 'effect-rstest';
 import { DateTime, Effect, Predicate, Schema } from 'effect';
 import {
   OutboxPayloadSchema,
-  PartyMergedEventPayloadSchema,
   outboxProducerModuleKey,
   outboxTopic,
 } from '../../shared/outbox/party-registry-party-merged-v1.ts';
@@ -44,11 +43,9 @@ const merge: PartyMerge = {
 it.effect('publishes the exact identity-only PartyMerged v1 contract', () =>
   Effect.gen(function* exactPartyMergedContract() {
     const payload = createPartyMergedPayload(merge, '2026-09-09T10:00:00.000Z');
-    const decoded = yield* Schema.decodeUnknownEffect(OutboxPayloadSchema, {
+    const decoded = yield* Schema.decodeEffect(OutboxPayloadSchema, {
       onExcessProperty: 'error',
     })(payload);
-    expect(PartyMergedEventPayloadSchema).toBe(OutboxPayloadSchema);
-
     expect(decoded.absorbedPartyRefs).toEqual([party('party-b'), party('party-c')]);
     expect(decoded.mergeId).toBe('merge-1');
     expect(decoded.occurredAt).toBe('2026-09-09T10:00:00.000Z');
@@ -74,22 +71,19 @@ it.effect('publishes the exact identity-only PartyMerged v1 contract', () =>
 it('rejects cross-tenant, duplicate, and survivor-in-absorbed event identities', () => {
   const payload = createPartyMergedPayload(merge, '2026-09-09T10:00:00.000Z');
   expect(() =>
-    Schema.decodeUnknownSync(OutboxPayloadSchema)({
+    Schema.decodeSync(OutboxPayloadSchema)({
       ...payload,
-      absorbedPartyRefs: [
-        party('party-b'),
-        { ...party('party-c'), tenantId: '22222222-2222-4222-8222-222222222222' },
-      ],
+      absorbedPartyRefs: [party('party-b'), { ...party('party-c'), tenantId: '22222222-2222-4222-8222-222222222222' }],
     }),
   ).toThrow();
   expect(() =>
-    Schema.decodeUnknownSync(OutboxPayloadSchema)({
+    Schema.decodeSync(OutboxPayloadSchema)({
       ...payload,
       absorbedPartyRefs: [party('party-b'), party('party-b')],
     }),
   ).toThrow();
   expect(() =>
-    Schema.decodeUnknownSync(OutboxPayloadSchema)({
+    Schema.decodeSync(OutboxPayloadSchema)({
       ...payload,
       absorbedPartyRefs: [party('party-a')],
     }),
@@ -114,15 +108,11 @@ it.effect('keeps publication disabled after complete consumer reconciliation evi
       status: 'DISABLED',
     });
 
-    const failure = yield* publishPartyMerged(['commerce.customer-context'], evidence).pipe(
-      Effect.flip,
-    );
+    const failure = yield* publishPartyMerged(['commerce.customer-context'], evidence).pipe(Effect.flip);
     expect(Predicate.isTagged(failure, 'PartyMergedPublicationDisabled')).toBe(true);
     expect(Schema.is(PartyMergedPublicationDisabled)(failure)).toBe(true);
     expect(failure.publicationEnabled).toBe(false);
-    expect(failure.blockers).toEqual([
-      { code: 'PRODUCTION_MERGE_DISABLED', ownerKey: 'party.registry' },
-    ]);
+    expect(failure.blockers).toEqual([{ code: 'PRODUCTION_MERGE_DISABLED', ownerKey: 'party.registry' }]);
   }),
 );
 

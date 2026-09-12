@@ -1,0 +1,129 @@
+diff --git a/dist/cjs/oxlint-plugin/rules/strict-effect-api-boundaries.cjs b/dist/cjs/oxlint-plugin/rules/strict-effect-api-boundaries.cjs
+--- a/dist/cjs/oxlint-plugin/rules/strict-effect-api-boundaries.cjs
++++ b/dist/cjs/oxlint-plugin/rules/strict-effect-api-boundaries.cjs
+@@ -55 +55 @@
+-                    (0, external_ast_cjs_namespaceObject.reportProgramPattern)(context, node, source, /(?:from|import)\s*['"][^'"]*(?:api\/effect|shared\/effect)[^'"]*['"]|shared-effect-api/u, 'Import API code from direct api/index.ts, shared/api.ts or src/api/* paths, not api/effect, shared/effect or shared Effect API packages.');
++                    (0, external_ast_cjs_namespaceObject.reportProgramPattern)(context, node, source, /(?:from|import)\s*['"][^'"]*(?:api\/effect|shared\/effect)(?=\/|['"])[^'"]*['"]|shared-effect-api/u, 'Import API code from direct api/index.ts, shared/api.ts or src/api/* paths, not api/effect, shared/effect or shared Effect API packages.');
+diff --git a/dist/cjs/strict-effect-runtime.cjs b/dist/cjs/strict-effect-runtime.cjs
+--- a/dist/cjs/strict-effect-runtime.cjs
++++ b/dist/cjs/strict-effect-runtime.cjs
+@@ -96 +96 @@
+-        if (modules.size >= 64 || input.source.length > 1000000) throw invalidSource('API source budget exceeded');
++        if (modules.size >= 256 || input.source.length > 1000000) throw invalidSource('API source budget exceeded');
+diff --git a/dist/esm-node/oxlint-plugin/rules/strict-effect-api-boundaries.js b/dist/esm-node/oxlint-plugin/rules/strict-effect-api-boundaries.js
+--- a/dist/esm-node/oxlint-plugin/rules/strict-effect-api-boundaries.js
++++ b/dist/esm-node/oxlint-plugin/rules/strict-effect-api-boundaries.js
+@@ -24 +24 @@
+-                    reportProgramPattern(context, node, source, /(?:from|import)\s*['"][^'"]*(?:api\/effect|shared\/effect)[^'"]*['"]|shared-effect-api/u, 'Import API code from direct api/index.ts, shared/api.ts or src/api/* paths, not api/effect, shared/effect or shared Effect API packages.');
++                    reportProgramPattern(context, node, source, /(?:from|import)\s*['"][^'"]*(?:api\/effect|shared\/effect)(?=\/|['"])[^'"]*['"]|shared-effect-api/u, 'Import API code from direct api/index.ts, shared/api.ts or src/api/* paths, not api/effect, shared/effect or shared Effect API packages.');
+diff --git a/dist/esm-node/strict-effect-runtime.js b/dist/esm-node/strict-effect-runtime.js
+--- a/dist/esm-node/strict-effect-runtime.js
++++ b/dist/esm-node/strict-effect-runtime.js
+@@ -52 +52 @@
+-        if (modules.size >= 64 || input.source.length > 1000000) throw invalidSource('API source budget exceeded');
++        if (modules.size >= 256 || input.source.length > 1000000) throw invalidSource('API source budget exceeded');
+diff --git a/dist/esm/oxlint-plugin/rules/strict-effect-api-boundaries.js b/dist/esm/oxlint-plugin/rules/strict-effect-api-boundaries.js
+--- a/dist/esm/oxlint-plugin/rules/strict-effect-api-boundaries.js
++++ b/dist/esm/oxlint-plugin/rules/strict-effect-api-boundaries.js
+@@ -23 +23 @@
+-                    reportProgramPattern(context, node, source, /(?:from|import)\s*['"][^'"]*(?:api\/effect|shared\/effect)[^'"]*['"]|shared-effect-api/u, 'Import API code from direct api/index.ts, shared/api.ts or src/api/* paths, not api/effect, shared/effect or shared Effect API packages.');
++                    reportProgramPattern(context, node, source, /(?:from|import)\s*['"][^'"]*(?:api\/effect|shared\/effect)(?=\/|['"])[^'"]*['"]|shared-effect-api/u, 'Import API code from direct api/index.ts, shared/api.ts or src/api/* paths, not api/effect, shared/effect or shared Effect API packages.');
+diff --git a/dist/esm/strict-effect-runtime.js b/dist/esm/strict-effect-runtime.js
+--- a/dist/esm/strict-effect-runtime.js
++++ b/dist/esm/strict-effect-runtime.js
+@@ -51 +51 @@
+-        if (modules.size >= 64 || input.source.length > 1000000) throw invalidSource('API source budget exceeded');
++        if (modules.size >= 256 || input.source.length > 1000000) throw invalidSource('API source budget exceeded');
+diff --git a/dist/cjs/microvertical-api-baseline.cjs b/dist/cjs/microvertical-api-baseline.cjs
+--- a/dist/cjs/microvertical-api-baseline.cjs
++++ b/dist/cjs/microvertical-api-baseline.cjs
+@@ -165,8 +165,25 @@
+     }
+ };
+ const resolveRelativeModulePath = (fromPath, specifier)=>{
+-    if (!/^\.\.?\//u.test(specifier)) return;
+-    const resolved = external_node_path_default().resolve(external_node_path_default().dirname(fromPath), specifier);
++    let resolved;
++    if (/^\.\.?\//u.test(specifier)) resolved = external_node_path_default().resolve(external_node_path_default().dirname(fromPath), specifier);
++    else {
++        const match = /^@app\/([^/]+)(?:\/(.+))?$/u.exec(specifier);
++        const workspaceIndex = Math.max(fromPath.lastIndexOf(`${external_node_path_default().sep}packages${external_node_path_default().sep}`), fromPath.lastIndexOf(`${external_node_path_default().sep}verticals${external_node_path_default().sep}`));
++        if (!match || workspaceIndex < 0) return;
++        const packageRoot = external_node_path_default().join(fromPath.slice(0, workspaceIndex), 'packages', match[1]);
++        const manifestPath = external_node_path_default().join(packageRoot, 'package.json');
++        if (!external_node_fs_default().existsSync(manifestPath)) return;
++        let manifest;
++        try {
++            manifest = JSON.parse(external_node_fs_default().readFileSync(manifestPath, 'utf8'));
++        } catch  {
++            return;
++        }
++        const target = manifest.exports?.[void 0 === match[2] ? '.' : `./${match[2]}`];
++        if ('string' != typeof target) return;
++        resolved = external_node_path_default().resolve(packageRoot, target);
++    }
+     const stem = resolved.replace(/\.(?:[cm]?[jt]sx?)$/u, '');
+     for (const candidate of [
+         `${stem}.ts`,
+diff --git a/dist/esm-node/microvertical-api-baseline.js b/dist/esm-node/microvertical-api-baseline.js
+--- a/dist/esm-node/microvertical-api-baseline.js
++++ b/dist/esm-node/microvertical-api-baseline.js
+@@ -120,8 +120,25 @@
+     }
+ };
+ const resolveRelativeModulePath = (fromPath, specifier)=>{
+-    if (!/^\.\.?\//u.test(specifier)) return;
+-    const resolved = node_path.resolve(node_path.dirname(fromPath), specifier);
++    let resolved;
++    if (/^\.\.?\//u.test(specifier)) resolved = node_path.resolve(node_path.dirname(fromPath), specifier);
++    else {
++        const match = /^@app\/([^/]+)(?:\/(.+))?$/u.exec(specifier);
++        const workspaceIndex = Math.max(fromPath.lastIndexOf(`${node_path.sep}packages${node_path.sep}`), fromPath.lastIndexOf(`${node_path.sep}verticals${node_path.sep}`));
++        if (!match || workspaceIndex < 0) return;
++        const packageRoot = node_path.join(fromPath.slice(0, workspaceIndex), 'packages', match[1]);
++        const manifestPath = node_path.join(packageRoot, 'package.json');
++        if (!node_fs.existsSync(manifestPath)) return;
++        let manifest;
++        try {
++            manifest = JSON.parse(node_fs.readFileSync(manifestPath, 'utf8'));
++        } catch  {
++            return;
++        }
++        const target = manifest.exports?.[void 0 === match[2] ? '.' : `./${match[2]}`];
++        if ('string' != typeof target) return;
++        resolved = node_path.resolve(packageRoot, target);
++    }
+     const stem = resolved.replace(/\.(?:[cm]?[jt]sx?)$/u, '');
+     for (const candidate of [
+         `${stem}.ts`,
+diff --git a/dist/esm/microvertical-api-baseline.js b/dist/esm/microvertical-api-baseline.js
+--- a/dist/esm/microvertical-api-baseline.js
++++ b/dist/esm/microvertical-api-baseline.js
+@@ -119,8 +119,25 @@
+     }
+ };
+ const resolveRelativeModulePath = (fromPath, specifier)=>{
+-    if (!/^\.\.?\//u.test(specifier)) return;
+-    const resolved = node_path.resolve(node_path.dirname(fromPath), specifier);
++    let resolved;
++    if (/^\.\.?\//u.test(specifier)) resolved = node_path.resolve(node_path.dirname(fromPath), specifier);
++    else {
++        const match = /^@app\/([^/]+)(?:\/(.+))?$/u.exec(specifier);
++        const workspaceIndex = Math.max(fromPath.lastIndexOf(`${node_path.sep}packages${node_path.sep}`), fromPath.lastIndexOf(`${node_path.sep}verticals${node_path.sep}`));
++        if (!match || workspaceIndex < 0) return;
++        const packageRoot = node_path.join(fromPath.slice(0, workspaceIndex), 'packages', match[1]);
++        const manifestPath = node_path.join(packageRoot, 'package.json');
++        if (!node_fs.existsSync(manifestPath)) return;
++        let manifest;
++        try {
++            manifest = JSON.parse(node_fs.readFileSync(manifestPath, 'utf8'));
++        } catch  {
++            return;
++        }
++        const target = manifest.exports?.[void 0 === match[2] ? '.' : `./${match[2]}`];
++        if ('string' != typeof target) return;
++        resolved = node_path.resolve(packageRoot, target);
++    }
+     const stem = resolved.replace(/\.(?:[cm]?[jt]sx?)$/u, '');
+     for (const candidate of [
+         `${stem}.ts`,

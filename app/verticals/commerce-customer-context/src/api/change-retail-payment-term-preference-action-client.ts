@@ -69,11 +69,6 @@ export const executeChangeRetailPaymentTermPreference = (
 ) =>
   operationGateway.invoke(
     (credential) =>
-      executeChangeRetailPaymentTermPreferenceWithAuthorization(
-        payload,
-        credential,
-        requestCorrelation,
-        options,
-      ),
+      executeChangeRetailPaymentTermPreferenceWithAuthorization(payload, credential, requestCorrelation, options),
     options.gateway,
   );

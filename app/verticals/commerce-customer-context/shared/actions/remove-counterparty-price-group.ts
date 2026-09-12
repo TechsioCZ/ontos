@@ -17,12 +17,9 @@ export const RemoveCounterpartyPriceGroupPayloadSchema = Schema.Struct({
   profile: CounterpartyPriceGroupProfileTargetSchema,
   reason: PriceGroupReasonSchema,
 });
-export type RemoveCounterpartyPriceGroupPayload =
-  typeof RemoveCounterpartyPriceGroupPayloadSchema.Type;
+export type RemoveCounterpartyPriceGroupPayload = typeof RemoveCounterpartyPriceGroupPayloadSchema.Type;
 
 export const RemoveCounterpartyPriceGroupResultSchema = Schema.Struct({
   assignment: CustomerPriceGroupAssignmentSchema,
   changed: Schema.Boolean,
 });
-export type RemoveCounterpartyPriceGroupResult =
-  typeof RemoveCounterpartyPriceGroupResultSchema.Type;

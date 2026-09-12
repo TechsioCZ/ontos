@@ -21,7 +21,7 @@ type DeliveryDestinationResolutionOperationInvocation = readonly [
 ];
 
 const deliveryDestinationResolutionClient = (
-  credential: Redacted.Redacted<string>,
+  credential: Redacted.Redacted,
   requestCorrelation: string,
   options: DeliveryDestinationResolutionClientOptions,
 ) =>
@@ -37,11 +37,7 @@ const deliveryDestinationResolutionClient = (
 
 export const executeDeliveryDestinationResolutionWithAuthorization = (
   payload: DeliveryDestinationResolutionRequest,
-  ...[
-    credential,
-    requestCorrelation,
-    options = {},
-  ]: DeliveryDestinationResolutionAuthorizedInvocation
+  ...[credential, requestCorrelation, options = {}]: DeliveryDestinationResolutionAuthorizedInvocation
 ) =>
   deliveryDestinationResolutionClient(Redacted.make(credential), requestCorrelation, options).pipe(
     Effect.flatMap((client) =>
@@ -54,10 +50,5 @@ export const executeDeliveryDestinationResolution = (
   ...[requestCorrelation, options = {}]: DeliveryDestinationResolutionOperationInvocation
 ) =>
   operationGateway.invoke((credential) =>
-    executeDeliveryDestinationResolutionWithAuthorization(
-      payload,
-      credential,
-      requestCorrelation,
-      options,
-    ),
+    executeDeliveryDestinationResolutionWithAuthorization(payload, credential, requestCorrelation, options),
   );

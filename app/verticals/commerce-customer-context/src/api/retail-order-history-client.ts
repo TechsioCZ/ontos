@@ -21,7 +21,7 @@ type RetailOrderHistoryOperationInvocation = readonly [
 ];
 
 const retailOrderHistoryClient = (
-  credential: Redacted.Redacted<string>,
+  credential: Redacted.Redacted,
   requestCorrelation: string,
   options: RetailOrderHistoryClientOptions,
 ) =>
@@ -40,9 +40,7 @@ export const executeRetailOrderHistoryWithAuthorization = (
   ...[credential, requestCorrelation, options = {}]: RetailOrderHistoryAuthorizedInvocation
 ) =>
   retailOrderHistoryClient(Redacted.make(credential), requestCorrelation, options).pipe(
-    Effect.flatMap((client) =>
-      client.retailOrderHistory.execute({ headers: {}, params: {}, payload, query: {} }),
-    ),
+    Effect.flatMap((client) => client.retailOrderHistory.execute({ headers: {}, params: {}, payload, query: {} })),
   );
 
 export const executeRetailOrderHistory = (

@@ -69,11 +69,6 @@ export const executeReroutePurchaseApprovalRequest = (
 ) =>
   operationGateway.invoke(
     (credential) =>
-      executeReroutePurchaseApprovalRequestWithAuthorization(
-        payload,
-        credential,
-        requestCorrelation,
-        options,
-      ),
+      executeReroutePurchaseApprovalRequestWithAuthorization(payload, credential, requestCorrelation, options),
     options.gateway,
   );

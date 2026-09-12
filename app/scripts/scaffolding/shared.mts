@@ -1260,7 +1260,9 @@ export const createOrUpdateOwnedGeneratedMutationEffect = (
         .pipe(Effect.mapError((cause) => scaffoldFailure(`failed to read generated business file ${filePath}`, cause))),
       formatGeneratedMutationContent(filePath, content),
     ]);
-    if (current === expected) return Option.none();
+    if (current === expected) {
+      return Option.none();
+    }
     if (!ownsCurrent(current)) {
       return yield* scaffoldFailure(`refusing to overwrite existing business file: ${filePath}`);
     }
@@ -1577,7 +1579,7 @@ const normalizeGeneratedSlotEntry = (entry: string): string =>
   entry
     .replaceAll(/,\s*(?<closing>[\]})])/gu, '$<closing>')
     .replaceAll(/\s+/gu, ' ')
-    .replaceAll(/(?<opening>[\[({])\s+/gu, '$<opening>')
+    .replaceAll(/(?<opening>[[({])\s+/gu, '$<opening>')
     .replaceAll(/\s+(?<closing>[}\])])/gu, '$<closing>')
     .trim();
 
@@ -1626,7 +1628,9 @@ export const stabilizeGovernedHttpApiAdditionSlot = (content: string): string =>
   }
   const afterMarker = end + GOVERNED_HTTP_API_ADDITION_SLOT_END.length;
   const trailing = content.slice(afterMarker);
-  if (/^\s*\.pipe\(identity\);/u.test(trailing)) return content;
+  if (/^\s*\.pipe\((?:identity|governedHttpApiIdentity)\);/u.test(trailing)) {
+    return content;
+  }
 
   let prefix = content.slice(0, end);
   let suffix = trailing;
@@ -1675,7 +1679,9 @@ export const deduplicateGeneratedSlotEntries = (content: string, startMarker: st
   const seen = new Set<string>();
   const unique = entries.filter((entry) => {
     const normalized = normalizeGeneratedSlotEntry(entry);
-    if (seen.has(normalized)) return false;
+    if (seen.has(normalized)) {
+      return false;
+    }
     seen.add(normalized);
     return true;
   });

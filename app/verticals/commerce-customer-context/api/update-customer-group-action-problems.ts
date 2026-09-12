@@ -3,7 +3,7 @@
 // @ontos-action-http-slug update-customer-group
 // oxlint-disable sonarjs/function-name -- Effect Match.tags requires owner-declared tag keys; remove-when: sonarjs accepts discriminant-map properties.
 import type { ActionCoreError } from '@app/core-runtime';
-import { Effect, HttpApiMiddleware } from '@modern-js/plugin-bff/effect-edge';
+import { Effect, HttpApiMiddleware } from '@modern-js/bff-effect/effect-edge';
 import { Match, Schema } from 'effect';
 import {
   UpdateCustomerGroupActionAlreadyCommittedProblemSchema,
@@ -130,17 +130,13 @@ const mapDomainProblem = (error: DomainError): UpdateCustomerGroupActionProblem 
       CustomerGroupArchivedCorrectionForbidden: () =>
         updateCustomerGroupActionProblem.forbidden('customer_group_archived_correction_forbidden'),
       CustomerGroupDefinitionChangeRequiresNewGroup: () =>
-        updateCustomerGroupActionProblem.ineligible(
-          'customer_group_definition_change_requires_new_group',
-        ),
-      CustomerGroupNotFound: () =>
-        updateCustomerGroupActionProblem.notFound('customer_group_not_found'),
+        updateCustomerGroupActionProblem.ineligible('customer_group_definition_change_requires_new_group'),
+      CustomerGroupNotFound: () => updateCustomerGroupActionProblem.notFound('customer_group_not_found'),
       CustomerGroupPersistenceUnavailable: () =>
         updateCustomerGroupActionProblem.unavailable('customer_group_persistence_unavailable'),
       CustomerGroupRevisionConflict: () =>
         updateCustomerGroupActionProblem.conflict('customer_group_revision_conflict'),
-      CustomerGroupScopeMismatch: () =>
-        updateCustomerGroupActionProblem.forbidden('customer_group_scope_mismatch'),
+      CustomerGroupScopeMismatch: () => updateCustomerGroupActionProblem.forbidden('customer_group_scope_mismatch'),
     }),
     Match.exhaustive,
   );
@@ -172,34 +168,24 @@ const mapCoreProblem = (error: ActionCoreError): UpdateCustomerGroupActionProble
         }),
       ActionHandlerExecutionError: updateCustomerGroupActionProblem.internal,
       ActionIdempotencyKeyRequired: updateCustomerGroupActionProblem.precondition,
-      ActionInvocationNotFound: (failure) =>
-        updateCustomerGroupActionProblem.notFound(failure.code),
-      ActionInvocationPersistenceError: (failure) =>
-        updateCustomerGroupActionProblem.unavailable(failure.code),
-      ActionInvocationStateError: (failure) =>
-        updateCustomerGroupActionProblem.conflict(failure.code),
+      ActionInvocationNotFound: (failure) => updateCustomerGroupActionProblem.notFound(failure.code),
+      ActionInvocationPersistenceError: (failure) => updateCustomerGroupActionProblem.unavailable(failure.code),
+      ActionInvocationStateError: (failure) => updateCustomerGroupActionProblem.conflict(failure.code),
       ActionPayloadValidationError: updateCustomerGroupActionProblem.invalid,
-      ActionPermissionCheckError: (failure) =>
-        updateCustomerGroupActionProblem.unavailable(failure.code),
+      ActionPermissionCheckError: (failure) => updateCustomerGroupActionProblem.unavailable(failure.code),
       ActionPermissionDenied: (failure) => updateCustomerGroupActionProblem.forbidden(failure.code),
       ActionPolicyDenied: (failure) => updateCustomerGroupActionProblem.ineligible(failure.code),
-      ActionPolicyEvaluationError: (failure) =>
-        updateCustomerGroupActionProblem.unavailable(failure.code),
-      ActionRequestHashConflict: (failure) =>
-        updateCustomerGroupActionProblem.conflict(failure.code),
+      ActionPolicyEvaluationError: (failure) => updateCustomerGroupActionProblem.unavailable(failure.code),
+      ActionRequestHashConflict: (failure) => updateCustomerGroupActionProblem.conflict(failure.code),
       ActionResultValidationError: updateCustomerGroupActionProblem.internal,
-      ActionTransactionError: (failure) =>
-        updateCustomerGroupActionProblem.unavailable(failure.code),
+      ActionTransactionError: (failure) => updateCustomerGroupActionProblem.unavailable(failure.code),
       ActionTrustedContextValidationError: updateCustomerGroupActionProblem.authentication,
-      ModuleStateCheckUnavailableError: (failure) =>
-        updateCustomerGroupActionProblem.unavailable(failure.code),
+      ModuleStateCheckUnavailableError: (failure) => updateCustomerGroupActionProblem.unavailable(failure.code),
       ModuleStateDeniedError: (failure) => updateCustomerGroupActionProblem.forbidden(failure.code),
       OperationAuthenticationRequired: updateCustomerGroupActionProblem.authentication,
       OperationContextDenied: (failure) => updateCustomerGroupActionProblem.forbidden(failure.code),
-      OperationContextInvalid: (failure) =>
-        updateCustomerGroupActionProblem.forbidden(failure.code),
-      OperationContextUnavailable: (failure) =>
-        updateCustomerGroupActionProblem.unavailable(failure.code),
+      OperationContextInvalid: (failure) => updateCustomerGroupActionProblem.forbidden(failure.code),
+      OperationContextUnavailable: (failure) => updateCustomerGroupActionProblem.unavailable(failure.code),
     }),
     Match.exhaustive,
   );
@@ -207,8 +193,7 @@ const mapCoreProblem = (error: ActionCoreError): UpdateCustomerGroupActionProble
 const isDomainError = Schema.is(updateCustomerGroupAction.descriptor.domainErrorSchema);
 export const mapUpdateCustomerGroupActionProblem = (
   error: ActionCoreError | DomainError,
-): UpdateCustomerGroupActionProblem =>
-  isDomainError(error) ? mapDomainProblem(error) : mapCoreProblem(error);
+): UpdateCustomerGroupActionProblem => (isDomainError(error) ? mapDomainProblem(error) : mapCoreProblem(error));
 
 export const updateCustomerGroupActionSchemaErrorLive = HttpApiMiddleware.layerSchemaErrorTransform(
   UpdateCustomerGroupActionSchemaErrorMiddleware,

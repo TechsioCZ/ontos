@@ -70,87 +70,78 @@ const resultRow = {
   },
 };
 
-const transactionWith = (
-  onInvoke: (values: readonly unknown[]) => void,
-): ProfileScopedRoutineInvoker => ({
+const transactionWith = (onInvoke: (values: readonly unknown[]) => void): ProfileScopedRoutineInvoker => ({
   invoke: (_routine, values) => {
     onInvoke(values);
-    return Effect.succeed([resultRow]) as never;
+    return Effect.succeed([resultRow]);
   },
 });
 
-it.effect(
-  'requires exact current Party owner evidence before invoking Retail ensure persistence',
-  () => {
-    let observedParty: unknown;
-    let observedValues: readonly unknown[] = [];
-    const services = profilePersistenceServicesForTransaction(
-      transactionWith((values) => {
-        observedValues = values;
-      }),
-      scope,
-      {
-        resolveRetailParty: (input) => {
-          observedParty = input;
-          return Effect.succeed({
-            outcome: 'CURRENT_PARTY_RESOLVED' as const,
-            partyResourceId: partyId,
-            partyResourceRevision: '7',
-          });
-        },
+it.effect('requires exact current Party owner evidence before invoking Retail ensure persistence', () => {
+  let observedParty: unknown;
+  let observedValues: readonly unknown[] = [];
+  const services = profilePersistenceServicesForTransaction(
+    transactionWith((values) => {
+      observedValues = values;
+    }),
+    scope,
+    {
+      resolveRetailParty: (input) => {
+        observedParty = input;
+        return Effect.succeed({
+          outcome: 'CURRENT_PARTY_RESOLVED' as const,
+          partyResourceId: partyId,
+          partyResourceRevision: '7',
+        });
       },
-    );
+    },
+  );
 
-    return services.ensureRetailCustomerProfile.ensure(payload, context).pipe(
-      Effect.tap((result) =>
-        Effect.sync(() => {
-          expect(observedParty).toEqual({ partyResourceId: partyId, tenantId });
-          expect(observedValues).toEqual([
-            partyId,
-            '7',
-            'AUTHENTICATED',
-            effectiveAt,
-            'ENSURE_BEFORE_ORDER_ACCEPTANCE',
-            actionInvocationId,
-            principalId,
-          ]);
-          expect(result.profileRef.resourceId).toBe(profileId);
-        }),
-      ),
-    );
-  },
-);
-
-it.effect(
-  'does not mutate persistence when Party Registry returns an alias or non-current owner',
-  () => {
-    let invoked = false;
-    const services = profilePersistenceServicesForTransaction(
-      transactionWith(() => {
-        invoked = true;
+  return services.ensureRetailCustomerProfile.ensure(payload, context).pipe(
+    Effect.tap((result) =>
+      Effect.sync(() => {
+        expect(observedParty).toEqual({ partyResourceId: partyId, tenantId });
+        expect(observedValues).toEqual([
+          partyId,
+          '7',
+          'AUTHENTICATED',
+          effectiveAt,
+          'ENSURE_BEFORE_ORDER_ACCEPTANCE',
+          actionInvocationId,
+          principalId,
+        ]);
+        expect(result.profileRef.resourceId).toBe(profileId);
       }),
-      scope,
-      {
-        resolveRetailParty: () =>
-          Effect.succeed({ outcome: 'INVALID_OR_INSUFFICIENT_EVIDENCE' as const }),
-      },
-    );
+    ),
+  );
+});
 
-    return Effect.flip(services.ensureRetailCustomerProfile.ensure(payload, context)).pipe(
-      Effect.tap((failure) =>
-        Effect.sync(() => {
-          expect(failure).toBeInstanceOf(EnsureRetailCustomerProfileRejected);
-          expect(failure.code).toBe('SUBJECT_NOT_RESOLVED_OR_INVALID');
-          expect(invoked).toBe(false);
-        }),
-      ),
-    );
-  },
-);
+it.effect('does not mutate persistence when Party Registry returns an alias or non-current owner', () => {
+  let invoked = false;
+  const services = profilePersistenceServicesForTransaction(
+    transactionWith(() => {
+      invoked = true;
+    }),
+    scope,
+    {
+      resolveRetailParty: () => Effect.succeed({ outcome: 'INVALID_OR_INSUFFICIENT_EVIDENCE' as const }),
+    },
+  );
+
+  return Effect.flip(services.ensureRetailCustomerProfile.ensure(payload, context)).pipe(
+    Effect.tap((failure) =>
+      Effect.sync(() => {
+        expect(failure).toBeInstanceOf(EnsureRetailCustomerProfileRejected);
+        expect(failure.code).toBe('SUBJECT_NOT_RESOLVED_OR_INVALID');
+        expect(invoked).toBe(false);
+      }),
+    ),
+  );
+});
 
 it.effect('maps owner unavailability to a retryable dependency rejection', () => {
   const services = profilePersistenceServicesForTransaction(
-    transactionWith(() => undefined),
+    transactionWith(() => {}),
     scope,
     {
       resolveRetailParty: () =>

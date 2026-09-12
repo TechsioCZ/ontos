@@ -2,11 +2,7 @@
 // @ontos-action-owner commerce.customer-context
 // @ontos-action-slug update-customer-group
 import type { ActionHandlerContext } from '@app/core-runtime';
-import {
-  defineAction,
-  defineActionResourcePermission,
-  defineTenantModuleEntrypoint,
-} from '@app/core-runtime';
+import { defineAction, defineActionResourcePermission, defineTenantModuleEntrypoint } from '@app/core-runtime';
 import { Effect, Match, Schema } from 'effect';
 import {
   UpdateCustomerGroupPayloadSchema,
@@ -27,27 +23,16 @@ import {
   OutboxPayloadSchema as CustomerGroupUpdatedEventSchema,
   outboxProducerModuleKey as MODULE_KEY,
 } from '../../shared/outbox/commerce-customer-context-customer-group-updated-v1.ts';
-import {
-  customerGroupRecordedAt,
-  requireCustomerGroupLegalEntityId,
-  customerGroupScopeMatches,
-  customerGroupServiceFactory,
-  customerGroupWritePermission,
-} from './customer-group-action-support.ts';
+import { customerGroupServiceFactory, customerGroupWritePermission } from './customer-group-action-support.ts';
+import { executeCustomerGroupAction } from './customer-group-action-handler.ts';
 import { createUpdateCustomerGroupCommerceCustomerContextCustomerGroupUpdatedV1OutboxMessage as createCustomerGroupUpdatedOutboxMessage } from './update-customer-group.commerce-customer-context-customer-group-updated-v1.outbox-message.ts';
 
 const domainEvents = {
   'commerce.customer-context.customer-group-updated.v1': CustomerGroupUpdatedEventSchema,
 } as const;
 
-export {
-  UpdateCustomerGroupPayloadSchema,
-  UpdateCustomerGroupResultSchema,
-} from '../../shared/actions/update-customer-group.ts';
-export type {
-  UpdateCustomerGroupPayload,
-  UpdateCustomerGroupResult,
-} from '../../shared/actions/update-customer-group.ts';
+export { UpdateCustomerGroupPayloadSchema } from '../../shared/actions/update-customer-group.ts';
+export type { UpdateCustomerGroupPayload } from '../../shared/actions/update-customer-group.ts';
 
 const UpdateCustomerGroupErrorSchema = Schema.Union([
   CustomerGroupArchivedCorrectionForbidden,
@@ -59,112 +44,78 @@ const UpdateCustomerGroupErrorSchema = Schema.Union([
 ]);
 
 const handleUpdateCustomerGroup = Effect.fn('UpdateCustomerGroupAction.handle')(
-  function* updateCustomerGroup(
-    payload: UpdateCustomerGroupPayload,
-    context: ActionHandlerContext<typeof domainEvents, CustomerGroupPersistence>,
-  ) {
-    if (!customerGroupScopeMatches(context.scope.tenantId, payload.groupRef)) {
-      return yield* new CustomerGroupScopeMismatch({
-        code: 'customer_group_scope_mismatch',
-        reason: 'The customer-group reference must belong to the trusted Tenant',
-      });
-    }
-    const recordedAt = yield* customerGroupRecordedAt;
-    const legalEntityId = yield* requireCustomerGroupLegalEntityId(context.scope.legalEntityId);
-    const result = yield* context.services.update({
-      actionInvocationId: context.actionInvocationId,
-      description: payload.description,
-      expectedRevision: payload.expectedRevision,
-      groupRef: payload.groupRef,
-      legalEntityId,
-      membershipCriteria: payload.membershipCriteria,
-      name: payload.name,
-      principalId: context.scope.principalId,
-      purpose: payload.purpose,
-      reason: payload.reason,
-      recordedAt,
-      tenantId: context.scope.tenantId,
-    });
-    const resolved = yield* Match.value(result).pipe(
-      Match.tag('not_found', () =>
-        Effect.fail(
-          new CustomerGroupNotFound({
-            code: 'customer_group_not_found',
-            reason: 'The customer group does not exist',
-          }),
-        ),
-      ),
-      Match.tag('revision_conflict', ({ actualRevision }) =>
-        Effect.fail(
-          new CustomerGroupRevisionConflict({
-            actualRevision,
-            code: 'customer_group_revision_conflict',
-            reason: 'The customer group was changed by another operation',
-          }),
-        ),
-      ),
-      Match.tag('new_group_required', () =>
-        Effect.fail(
-          new CustomerGroupDefinitionChangeRequiresNewGroup({
-            code: 'customer_group_definition_change_requires_new_group',
-            reason:
-              'Changing customer-group purpose or member eligibility requires a separately created group',
-          }),
-        ),
-      ),
-      Match.tag('archived_correction_forbidden', () =>
-        Effect.fail(
-          new CustomerGroupArchivedCorrectionForbidden({
-            code: 'customer_group_archived_correction_forbidden',
-            reason: 'This change is not an allowed correction to an archived customer group',
-          }),
-        ),
-      ),
-      Match.tag('updated', ({ changed, group }) => Effect.succeed({ changed, group } as const)),
-      Match.exhaustive,
-    );
-    const beforeDefinition = resolved.changed
-      ? (resolved.group.definitionHistory.at(-2) ?? resolved.group.currentDefinition)
-      : resolved.group.currentDefinition;
-    yield* context.recordAuditEvidence({
-      afterDefinitionRevision: resolved.group.currentDefinition.revision,
-      beforeDefinitionRevision: beforeDefinition.revision,
-      changed: resolved.changed,
-      definitionChangeKind: resolved.group.currentDefinition.changeKind,
-      effectiveAt: recordedAt,
-      groupRef: resolved.group.groupRef,
-      operation: 'UPDATE',
-      reason: payload.reason,
-      revision: resolved.group.revision,
-    });
-    yield* context.recordDataAccess({
-      accessKind: 'read',
-      queryHash: `customer-group-revision:${payload.groupRef.resourceId}:${payload.expectedRevision}`,
-      resultCount: 1,
-      servingModuleKey: MODULE_KEY,
-      targetModuleKey: MODULE_KEY,
-      targetResourceId: payload.groupRef.resourceId,
-      targetResourceType: payload.groupRef.resourceType,
-    });
-    if (resolved.changed) {
-      const eventPayload = {
-        afterDefinition: resolved.group.currentDefinition,
-        beforeDefinition,
-        groupRef: resolved.group.groupRef,
-        revision: resolved.group.revision,
-      };
-      const event = yield* context.addDomainEvent({
+  (payload: UpdateCustomerGroupPayload, context: ActionHandlerContext<typeof domainEvents, CustomerGroupPersistence>) =>
+    executeCustomerGroupAction(payload, context, {
+      auditEvidence: ({ payload: evidencePayload, recordedAt, resolved }) => {
+        const beforeDefinition = resolved.changed
+          ? (resolved.group.definitionHistory.at(-2) ?? resolved.group.currentDefinition)
+          : resolved.group.currentDefinition;
+        return {
+          afterDefinitionRevision: resolved.group.currentDefinition.revision,
+          beforeDefinitionRevision: beforeDefinition.revision,
+          changed: resolved.changed,
+          definitionChangeKind: resolved.group.currentDefinition.changeKind,
+          effectiveAt: recordedAt,
+          groupRef: resolved.group.groupRef,
+          operation: 'UPDATE',
+          reason: evidencePayload.reason,
+          revision: resolved.group.revision,
+        };
+      },
+      dataAccess: ({ payload: accessPayload }) => ({
+        accessKind: 'read',
+        queryHash: `customer-group-revision:${accessPayload.groupRef.resourceId}:${accessPayload.expectedRevision}`,
+        resultCount: 1,
+        servingModuleKey: MODULE_KEY,
+        targetModuleKey: MODULE_KEY,
+        targetResourceId: accessPayload.groupRef.resourceId,
+        targetResourceType: accessPayload.groupRef.resourceType,
+      }),
+      event: {
         eventType: 'commerce.customer-context.customer-group-updated.v1',
-        payloadJson: eventPayload,
-        producerModuleKey: MODULE_KEY,
-        subjectModuleKey: MODULE_KEY,
-        subjectResourceId: resolved.group.groupRef.resourceId,
-        subjectResourceType: resolved.group.groupRef.resourceType,
-      });
-      yield* context.addOutboxMessage(event, createCustomerGroupUpdatedOutboxMessage(eventPayload));
-    }
-    return resolved;
-  },
+        outboxMessage: createCustomerGroupUpdatedOutboxMessage,
+        payload: (_payload, resolved) => {
+          const beforeDefinition = resolved.changed
+            ? (resolved.group.definitionHistory.at(-2) ?? resolved.group.currentDefinition)
+            : resolved.group.currentDefinition;
+          return {
+            afterDefinition: resolved.group.currentDefinition,
+            beforeDefinition,
+            groupRef: resolved.group.groupRef,
+            revision: resolved.group.revision,
+          };
+        },
+      },
+      invoke: ({ command, context: actionContext, payload: actionPayload }) =>
+        actionContext.services.update({
+          ...command,
+          description: actionPayload.description,
+          membershipCriteria: actionPayload.membershipCriteria,
+          name: actionPayload.name,
+          purpose: actionPayload.purpose,
+        }),
+      resolve: (result) =>
+        Match.value(result).pipe(
+          Match.tag('new_group_required', () =>
+            Effect.fail(
+              new CustomerGroupDefinitionChangeRequiresNewGroup({
+                code: 'customer_group_definition_change_requires_new_group',
+                reason: 'Changing customer-group purpose or member eligibility requires a separately created group',
+              }),
+            ),
+          ),
+          Match.tag('archived_correction_forbidden', () =>
+            Effect.fail(
+              new CustomerGroupArchivedCorrectionForbidden({
+                code: 'customer_group_archived_correction_forbidden',
+                reason: 'This change is not an allowed correction to an archived customer group',
+              }),
+            ),
+          ),
+          Match.tag('updated', ({ changed, group }) => Effect.succeed({ changed, group } as const)),
+          Match.exhaustive,
+        ),
+    }),
 );
 
 export const updateCustomerGroupAction = defineAction(
@@ -199,11 +150,3 @@ export const updateCustomerGroupAction = defineAction(
   handleUpdateCustomerGroup,
   customerGroupServiceFactory,
 );
-
-// <generated-outbox-message-exports>
-export { createUpdateCustomerGroupCommerceCustomerContextCustomerGroupUpdatedV1OutboxMessage } from './update-customer-group.commerce-customer-context-customer-group-updated-v1.outbox-message.ts';
-export { UpdateCustomerGroupCommerceCustomerContextCustomerGroupUpdatedV1OutboxPayloadSchema } from './update-customer-group.commerce-customer-context-customer-group-updated-v1.outbox-message.ts';
-export { UpdateCustomerGroupCommerceCustomerContextCustomerGroupUpdatedV1OutboxProducerModuleKey } from './update-customer-group.commerce-customer-context-customer-group-updated-v1.outbox-message.ts';
-export { UpdateCustomerGroupCommerceCustomerContextCustomerGroupUpdatedV1OutboxTopic } from './update-customer-group.commerce-customer-context-customer-group-updated-v1.outbox-message.ts';
-export type { UpdateCustomerGroupCommerceCustomerContextCustomerGroupUpdatedV1OutboxPayload } from './update-customer-group.commerce-customer-context-customer-group-updated-v1.outbox-message.ts';
-// </generated-outbox-message-exports>

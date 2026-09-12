@@ -69,11 +69,6 @@ export const executeAttributeGuestRetailCustomer = (
 ) =>
   operationGateway.invoke(
     (credential) =>
-      executeAttributeGuestRetailCustomerWithAuthorization(
-        payload,
-        credential,
-        requestCorrelation,
-        options,
-      ),
+      executeAttributeGuestRetailCustomerWithAuthorization(payload, credential, requestCorrelation, options),
     options.gateway,
   );

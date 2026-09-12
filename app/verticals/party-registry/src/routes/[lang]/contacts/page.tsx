@@ -2,7 +2,7 @@ import { useModernI18n } from '@modern-js/plugin-i18n/runtime';
 
 import { UltramodernRouteHead } from '../../ultramodern-route-head';
 
-const ContactsPage = (): ReactElement => {
+const ContactsPage = () => {
   const { t } = useModernI18n();
   const headingId = 'contacts-heading';
 

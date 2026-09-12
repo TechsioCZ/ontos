@@ -1,7 +1,4 @@
-import {
-  ActionPermissionCheckError,
-  makeActionAuthorizationPreflightPermit,
-} from '../../src/index.ts';
+import { ActionPermissionCheckError, makeActionAuthorizationPreflightPermit } from '../../src/index.ts';
 import { Effect, Schema } from 'effect';
 import { expect, it } from 'effect-rstest';
 

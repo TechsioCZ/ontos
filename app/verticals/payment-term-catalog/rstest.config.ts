@@ -5,7 +5,6 @@ const swc = {
 } as const;
 
 export default defineConfig({
-  root: new URL('.', import.meta.url).pathname,
   projects: [
     {
       include: ['tests/unit/**/*.test.ts'],
@@ -15,4 +14,5 @@ export default defineConfig({
       tools: { swc },
     },
   ],
+  root: new URL('.', import.meta.url).pathname,
 });

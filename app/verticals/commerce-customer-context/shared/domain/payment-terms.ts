@@ -20,7 +20,7 @@ const refKey = (ref: PaymentTermReference): string =>
 const entitlementRefKey = (ref: CustomerPaymentTermEntitlementRef): string =>
   `${ref.tenantId}:${ref.moduleId}:${ref.resourceType}:${ref.resourceId}`;
 
-export const effectivePeriodsOverlap = (
+const effectivePeriodsOverlap = (
   left: Readonly<{ effectiveFrom: string; effectiveTo?: string | undefined }>,
   right: Readonly<{ effectiveFrom: string; effectiveTo?: string | undefined }>,
 ): boolean =>
@@ -30,8 +30,7 @@ export const effectivePeriodsOverlap = (
 export const isEffectiveAt = (
   period: Readonly<{ effectiveFrom: string; effectiveTo?: string | undefined }>,
   at: string,
-): boolean =>
-  period.effectiveFrom <= at && (period.effectiveTo === undefined || at < period.effectiveTo);
+): boolean => period.effectiveFrom <= at && (period.effectiveTo === undefined || at < period.effectiveTo);
 
 export type CustomerPaymentTermsProjection = Readonly<{
   currentEntitlements: readonly CustomerPaymentTermEntitlement[];
@@ -48,13 +47,9 @@ export const projectCustomerPaymentTermsAt = (
   const currentEntitlements = state.entitlements.filter(
     (entitlement) => entitlement.status === 'ACTIVE' && isEffectiveAt(entitlement, asOf),
   );
-  const currentPreferences = state.preferences.filter((preference) =>
-    isEffectiveAt(preference, asOf),
-  );
+  const currentPreferences = state.preferences.filter((preference) => isEffectiveAt(preference, asOf));
   const visibleEntitlements = includeHistorical
-    ? state.entitlements.filter(
-        (entitlement) => entitlement.status === 'ACTIVE' && entitlement.effectiveFrom <= asOf,
-      )
+    ? state.entitlements.filter((entitlement) => entitlement.status === 'ACTIVE' && entitlement.effectiveFrom <= asOf)
     : currentEntitlements;
   const visiblePreferences = includeHistorical
     ? state.preferences.filter((preference) => preference.effectiveFrom <= asOf)
@@ -74,15 +69,12 @@ const definitionIsCurrent = (definition: PaymentTermDefinitionSnapshot, at: stri
   definition.lifecycle.effectiveFrom <= at &&
   (definition.lifecycle.effectiveTo === null || at < definition.lifecycle.effectiveTo);
 
-const sameTerm = (left: PaymentTermReference, right: PaymentTermReference): boolean =>
-  refKey(left) === refKey(right);
+const sameTerm = (left: PaymentTermReference, right: PaymentTermReference): boolean => refKey(left) === refKey(right);
 
-const validPeriod = (period: {
-  effectiveFrom: string;
-  effectiveTo?: string | undefined;
-}): boolean => period.effectiveTo === undefined || period.effectiveFrom < period.effectiveTo;
+const validPeriod = (period: { effectiveFrom: string; effectiveTo?: string | undefined }): boolean =>
+  period.effectiveTo === undefined || period.effectiveFrom < period.effectiveTo;
 
-export const GrantCustomerPaymentTermEntitlementSchema = Schema.TaggedStruct('GRANT_ENTITLEMENT', {
+const GrantCustomerPaymentTermEntitlementSchema = Schema.TaggedStruct('GRANT_ENTITLEMENT', {
   effectiveFrom: PaymentTermsTimestampSchema,
   effectiveTo: Schema.optionalKey(PaymentTermsTimestampSchema),
   entitlementRef: CustomerPaymentTermEntitlementSchema.fields.entitlementRef,
@@ -97,7 +89,7 @@ export const SetCustomerPaymentTermPreferenceSchema = Schema.TaggedStruct('SET_P
 export const ClearCustomerPaymentTermPreferenceSchema = Schema.TaggedStruct('CLEAR_PREFERENCE', {
   effectiveAt: PaymentTermsTimestampSchema,
 });
-export const EndCustomerPaymentTermEntitlementSchema = Schema.TaggedStruct('END_ENTITLEMENT', {
+const EndCustomerPaymentTermEntitlementSchema = Schema.TaggedStruct('END_ENTITLEMENT', {
   effectiveAt: PaymentTermsTimestampSchema,
   entitlementRef: CustomerPaymentTermEntitlementSchema.fields.entitlementRef,
 });
@@ -109,18 +101,15 @@ export const CustomerPaymentTermsChangeSchema = Schema.Union([
 ]);
 export type CustomerPaymentTermsChange = typeof CustomerPaymentTermsChangeSchema.Type;
 
-export const ChangeCustomerPaymentTermsInputSchema = Schema.Struct({
+const ChangeCustomerPaymentTermsInputSchema = Schema.Struct({
   catalogDefinitions: Schema.Array(PaymentTermDefinitionSnapshotSchema),
-  changes: Schema.Array(CustomerPaymentTermsChangeSchema).check(
-    Schema.isMinLength(1),
-    Schema.isMaxLength(50),
-  ),
+  changes: Schema.Array(CustomerPaymentTermsChangeSchema).check(Schema.isMinLength(1), Schema.isMaxLength(50)),
   expectedRevision: Schema.Finite.check(Schema.isInt(), Schema.isGreaterThanOrEqualTo(1)),
   state: CustomerPaymentTermsStateSchema,
 });
 export type ChangeCustomerPaymentTermsInput = typeof ChangeCustomerPaymentTermsInputSchema.Type;
 
-export const ChangeCustomerPaymentTermsOutcomeSchema = Schema.Union([
+const ChangeCustomerPaymentTermsOutcomeSchema = Schema.Union([
   Schema.TaggedStruct('CHANGED', {
     changed: Schema.Boolean,
     state: CustomerPaymentTermsStateSchema,
@@ -132,12 +121,7 @@ export const ChangeCustomerPaymentTermsOutcomeSchema = Schema.Union([
   Schema.TaggedStruct('ENTITLEMENT_OVERLAP', { paymentTermRef: PaymentTermReferenceSchema }),
   Schema.TaggedStruct('PAYMENT_TERM_UNUSABLE', {
     paymentTermRef: PaymentTermReferenceSchema,
-    reason: Schema.Literals([
-      'MISSING_DEFINITION',
-      'NOT_CURRENT',
-      'INCOMPATIBLE_REVISION',
-      'INCOMPATIBLE_CONSUMER',
-    ]),
+    reason: Schema.Literals(['MISSING_DEFINITION', 'NOT_CURRENT', 'INCOMPATIBLE_REVISION', 'INCOMPATIBLE_CONSUMER']),
   }),
   Schema.TaggedStruct('PREFERENCE_CONFLICT', { reason: Schema.String }),
   Schema.TaggedStruct('ENTITLEMENT_NOT_FOUND', {
@@ -182,8 +166,7 @@ const applyRemoval = (
   effectiveAt: string,
 ): RemovalApplied | Exclude<ChangeCustomerPaymentTermsOutcome, { readonly _tag: 'CHANGED' }> => {
   const index = state.entitlements.findIndex(
-    (entitlement) =>
-      entitlementRefKey(entitlement.entitlementRef) === entitlementRefKey(entitlementRef),
+    (entitlement) => entitlementRefKey(entitlement.entitlementRef) === entitlementRefKey(entitlementRef),
   );
   const entitlement = state.entitlements[index];
   if (entitlement === undefined) {
@@ -221,11 +204,7 @@ const applyRemoval = (
   const replacement: CustomerPaymentTermEntitlement = cancellation
     ? { ...entitlement, cancelledAt: effectiveAt, status: 'CANCELLED' }
     : { ...entitlement, effectiveTo: effectiveAt };
-  const preferences = clearPreferencesAt(
-    state.preferences,
-    effectiveAt,
-    entitlement.paymentTermRef,
-  );
+  const preferences = clearPreferencesAt(state.preferences, effectiveAt, entitlement.paymentTermRef);
   const nextEntitlements = [...state.entitlements];
   nextEntitlements[index] = replacement;
   return {
@@ -234,8 +213,7 @@ const applyRemoval = (
     preferenceCleared:
       preferences.length !== state.preferences.length ||
       preferences.some(
-        (value, preferenceIndex) =>
-          value.effectiveTo !== state.preferences[preferenceIndex]?.effectiveTo,
+        (value, preferenceIndex) => value.effectiveTo !== state.preferences[preferenceIndex]?.effectiveTo,
       ),
     removalKind: cancellation ? 'CANCELLED' : 'ENDED',
     state: { ...state, entitlements: nextEntitlements, preferences },
@@ -252,8 +230,7 @@ const preferenceCoveredByEntitlement = (
       sameTerm(entitlement.paymentTermRef, preference.paymentTermRef) &&
       entitlement.effectiveFrom <= preference.effectiveFrom &&
       (entitlement.effectiveTo === undefined ||
-        (preference.effectiveTo !== undefined &&
-          preference.effectiveTo <= entitlement.effectiveTo)),
+        (preference.effectiveTo !== undefined && preference.effectiveTo <= entitlement.effectiveTo)),
   );
 
 type ChangeRejected = Exclude<ChangeCustomerPaymentTermsOutcome, { readonly _tag: 'CHANGED' }>;
@@ -264,11 +241,10 @@ const ChangeAppliedSchema = Schema.TaggedStruct('CHANGE_APPLIED', {
 type ChangeApplied = typeof ChangeAppliedSchema.Type;
 type ChangeStepOutcome = ChangeApplied | ChangeRejected;
 
-const grantEntitlement = (
+const grantEntitlementInputProblem = (
   state: CustomerPaymentTermsState,
   change: typeof GrantCustomerPaymentTermEntitlementSchema.Type,
-  definitions: ReadonlyMap<string, PaymentTermDefinitionSnapshot>,
-): ChangeStepOutcome => {
+): ChangeRejected | undefined => {
   if (
     !validPeriod(change) ||
     change.entitlementRef.tenantId !== state.profileRef.tenantId ||
@@ -279,6 +255,13 @@ const grantEntitlement = (
       reason: 'Entitlement scope or effective period is invalid',
     };
   }
+  return undefined;
+};
+
+const grantEntitlementDefinitionProblem = (
+  change: typeof GrantCustomerPaymentTermEntitlementSchema.Type,
+  definitions: ReadonlyMap<string, PaymentTermDefinitionSnapshot>,
+): ChangeRejected | undefined => {
   const definition = definitions.get(refKey(change.paymentTermRef));
   if (definition === undefined) {
     return {
@@ -308,10 +291,16 @@ const grantEntitlement = (
       reason: 'INCOMPATIBLE_REVISION',
     };
   }
+  return undefined;
+};
+
+const grantEntitlementConflict = (
+  state: CustomerPaymentTermsState,
+  change: typeof GrantCustomerPaymentTermEntitlementSchema.Type,
+): ChangeRejected | undefined => {
   if (
     state.entitlements.some(
-      (entitlement) =>
-        entitlementRefKey(entitlement.entitlementRef) === entitlementRefKey(change.entitlementRef),
+      (entitlement) => entitlementRefKey(entitlement.entitlementRef) === entitlementRefKey(change.entitlementRef),
     )
   ) {
     return {
@@ -328,6 +317,26 @@ const grantEntitlement = (
     )
   ) {
     return { _tag: 'ENTITLEMENT_OVERLAP', paymentTermRef: change.paymentTermRef };
+  }
+  return undefined;
+};
+
+const grantEntitlement = (
+  state: CustomerPaymentTermsState,
+  change: typeof GrantCustomerPaymentTermEntitlementSchema.Type,
+  definitions: ReadonlyMap<string, PaymentTermDefinitionSnapshot>,
+): ChangeStepOutcome => {
+  const inputProblem = grantEntitlementInputProblem(state, change);
+  if (inputProblem !== undefined) {
+    return inputProblem;
+  }
+  const definitionProblem = grantEntitlementDefinitionProblem(change, definitions);
+  if (definitionProblem !== undefined) {
+    return definitionProblem;
+  }
+  const conflict = grantEntitlementConflict(state, change);
+  if (conflict !== undefined) {
+    return conflict;
   }
   const entitlement: CustomerPaymentTermEntitlement =
     change.effectiveTo === undefined
@@ -408,10 +417,7 @@ const clearPreference = (
   const preferences = clearPreferencesAt(state.preferences, change.effectiveAt);
   const changed =
     preferences.length !== state.preferences.length ||
-    preferences.some(
-      (value, preferenceIndex) =>
-        value.effectiveTo !== state.preferences[preferenceIndex]?.effectiveTo,
-    );
+    preferences.some((value, preferenceIndex) => value.effectiveTo !== state.preferences[preferenceIndex]?.effectiveTo);
   return { _tag: 'CHANGE_APPLIED', changed, state: { ...state, preferences } };
 };
 
@@ -477,7 +483,7 @@ export const changeCustomerPaymentTerms = (
   };
 };
 
-export const RemoveCustomerPaymentTermInputSchema = Schema.Struct({
+const RemoveCustomerPaymentTermInputSchema = Schema.Struct({
   effectiveAt: PaymentTermsTimestampSchema,
   entitlementRef: CustomerPaymentTermEntitlementSchema.fields.entitlementRef,
   expectedRevision: Schema.Finite.check(Schema.isInt(), Schema.isGreaterThanOrEqualTo(1)),
@@ -485,7 +491,7 @@ export const RemoveCustomerPaymentTermInputSchema = Schema.Struct({
 });
 export type RemoveCustomerPaymentTermInput = typeof RemoveCustomerPaymentTermInputSchema.Type;
 
-export const RemoveCustomerPaymentTermOutcomeSchema = Schema.Union([
+const RemoveCustomerPaymentTermOutcomeSchema = Schema.Union([
   Schema.TaggedStruct('REMOVED', {
     changed: Schema.Boolean,
     preferenceCleared: Schema.Boolean,
@@ -496,9 +502,7 @@ export const RemoveCustomerPaymentTermOutcomeSchema = Schema.Union([
 ]);
 export type RemoveCustomerPaymentTermOutcome = typeof RemoveCustomerPaymentTermOutcomeSchema.Type;
 
-export const removeCustomerPaymentTerm = (
-  input: RemoveCustomerPaymentTermInput,
-): RemoveCustomerPaymentTermOutcome => {
+export const removeCustomerPaymentTerm = (input: RemoveCustomerPaymentTermInput): RemoveCustomerPaymentTermOutcome => {
   if (input.expectedRevision !== input.state.revision) {
     return {
       _tag: 'REVISION_CONFLICT',
@@ -515,9 +519,7 @@ export const removeCustomerPaymentTerm = (
     changed: removal.changed,
     preferenceCleared: removal.preferenceCleared,
     removalKind: removal.removalKind,
-    state: removal.changed
-      ? { ...removal.state, revision: removal.state.revision + 1 }
-      : removal.state,
+    state: removal.changed ? { ...removal.state, revision: removal.state.revision + 1 } : removal.state,
   };
 };
 
@@ -532,9 +534,7 @@ const ResolvedPaymentTermSchema = Schema.Struct({
   policySource: Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(300)),
   purchasingContextRevision: Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(300)),
   resolvedAt: PaymentTermsTimestampSchema,
-  sourceEntitlementRef: Schema.optionalKey(
-    CustomerPaymentTermEntitlementSchema.fields.entitlementRef,
-  ),
+  sourceEntitlementRef: Schema.optionalKey(CustomerPaymentTermEntitlementSchema.fields.entitlementRef),
   sourcePreferenceEffectiveFrom: Schema.optionalKey(PaymentTermsTimestampSchema),
 });
 
@@ -556,10 +556,7 @@ export const PaymentTermsResolutionOutcomeSchema = Schema.Union([
 ]);
 export type PaymentTermsResolutionOutcome = typeof PaymentTermsResolutionOutcomeSchema.Type;
 
-const paymentTermsPolicyIdentifier = Schema.String.check(
-  Schema.isMinLength(1),
-  Schema.isMaxLength(300),
-);
+const paymentTermsPolicyIdentifier = Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(300));
 const paymentTermsPolicyChannelId = paymentTermsPolicyIdentifier.pipe(
   Schema.brand('CustomerCommercePaymentTermsPolicyChannelId'),
   Schema.decodeTo(Schema.String),
@@ -581,14 +578,12 @@ const paymentTermsPolicyTenantId = Schema.String.check(Schema.isUUID()).pipe(
   Schema.decodeTo(Schema.String),
 );
 
-export const CustomerCommercePaymentTermsPolicyRuleSchema = Schema.Struct({
+const CustomerCommercePaymentTermsPolicyRuleSchema = Schema.Struct({
   audience: Schema.Literals(['BOTH', 'GUEST', 'PROFILE']),
   effectiveFrom: PaymentTermsTimestampSchema,
   effectiveTo: Schema.optionalKey(PaymentTermsTimestampSchema),
   eligiblePaymentTermRefs: Schema.Array(PaymentTermReferenceSchema).check(Schema.isMaxLength(200)),
-  explicitlyPermittedPaymentTermRefs: Schema.Array(PaymentTermReferenceSchema).check(
-    Schema.isMaxLength(200),
-  ),
+  explicitlyPermittedPaymentTermRefs: Schema.Array(PaymentTermReferenceSchema).check(Schema.isMaxLength(200)),
   fallbackPaymentTermRefs: Schema.Array(PaymentTermReferenceSchema).check(Schema.isMaxLength(200)),
   policyRevision: paymentTermsPolicyIdentifier,
   scope: Schema.Struct({
@@ -599,8 +594,6 @@ export const CustomerCommercePaymentTermsPolicyRuleSchema = Schema.Struct({
     tenantId: paymentTermsPolicyTenantId,
   }),
 });
-export type CustomerCommercePaymentTermsPolicyRule =
-  typeof CustomerCommercePaymentTermsPolicyRuleSchema.Type;
 
 export const CustomerCommercePaymentTermsPolicyConfigurationSchema = Schema.Struct({
   configurationRevision: paymentTermsPolicyIdentifier,
@@ -636,9 +629,7 @@ export type PaymentTermsPolicyResolution =
   | PaymentTermsPolicyDecision
   | Extract<PaymentTermsResolutionOutcome, { readonly _tag: 'INCONSISTENT_CONFIGURATION' }>;
 
-const uniquePaymentTermReferences = (
-  references: readonly PaymentTermReference[],
-): readonly PaymentTermReference[] => [
+const uniquePaymentTermReferences = (references: readonly PaymentTermReference[]): readonly PaymentTermReference[] => [
   ...new Map(references.map((ref) => [refKey(ref), ref])).values(),
 ];
 
@@ -706,16 +697,14 @@ export const resolveCustomerCommercePaymentTermsPolicy = (
   }
   return {
     eligiblePaymentTermRefs,
-    explicitlyPermittedPaymentTermRefs: uniquePaymentTermReferences(
-      rule.explicitlyPermittedPaymentTermRefs,
-    ),
+    explicitlyPermittedPaymentTermRefs: uniquePaymentTermReferences(rule.explicitlyPermittedPaymentTermRefs),
     fallbackPaymentTermRefs: uniquePaymentTermReferences(rule.fallbackPaymentTermRefs),
     policyRevision: rule.policyRevision,
     policySource: configuration.policySource,
   };
 };
 
-export const PaymentTermsResolutionInputSchema = Schema.Struct({
+const PaymentTermsResolutionInputSchema = Schema.Struct({
   at: PaymentTermsTimestampSchema,
   definitions: Schema.Array(PaymentTermDefinitionSnapshotSchema),
   eligiblePaymentTermRefs: Schema.Array(PaymentTermReferenceSchema),
@@ -733,10 +722,7 @@ type InconsistentConfiguration = Extract<
   PaymentTermsResolutionOutcome,
   { readonly _tag: 'INCONSISTENT_CONFIGURATION' }
 >;
-type BrokenEntitlement = Extract<
-  PaymentTermsResolutionOutcome,
-  { readonly _tag: 'BROKEN_ENTITLEMENT' }
->;
+type BrokenEntitlement = Extract<PaymentTermsResolutionOutcome, { readonly _tag: 'BROKEN_ENTITLEMENT' }>;
 
 const findConfigurationProblem = (
   state: CustomerPaymentTermsState,
@@ -800,133 +786,127 @@ const findBrokenEntitlement = (
   return undefined;
 };
 
-export const resolvePaymentTerms = (
+type PaymentTermsResolutionSelection = Readonly<{
+  definition: PaymentTermDefinitionSnapshot;
+  source?: PaymentTermsResolutionSource;
+  tag: 'EXPLICIT_CHOICE' | 'POLICY_FALLBACK' | 'PREFERRED_ENTITLEMENT';
+}>;
+type PaymentTermsResolutionSource = Readonly<{
+  entitlementRef?: CustomerPaymentTermEntitlementRef;
+  preferenceEffectiveFrom?: string;
+}>;
+
+const makeResolvedPaymentTerm = (
   input: PaymentTermsResolutionInput,
+  selection: PaymentTermsResolutionSelection,
 ): PaymentTermsResolutionOutcome => {
-  const activeEntitlements = input.state.entitlements.filter(
-    (entitlement) => entitlement.status === 'ACTIVE' && isEffectiveAt(entitlement, input.at),
-  );
-  const activePreferences = input.state.preferences.filter((preference) =>
-    isEffectiveAt(preference, input.at),
-  );
-  const configurationProblem = findConfigurationProblem(input.state, activePreferences);
-  if (configurationProblem !== undefined) {
-    return configurationProblem;
-  }
-
-  const definitions = new Map(
-    input.definitions.map((definition) => [refKey(definition.paymentTermRef), definition]),
-  );
-  const eligible = new Set(input.eligiblePaymentTermRefs.map(refKey));
-  const permitted = new Set(input.policyExplicitlyPermittedRefs.map(refKey));
-  const makeResolved = (
-    selection: Readonly<{
-      definition: PaymentTermDefinitionSnapshot;
-      tag: 'EXPLICIT_CHOICE' | 'POLICY_FALLBACK' | 'PREFERRED_ENTITLEMENT';
-    }>,
-    source?: Readonly<{
-      entitlementRef?: CustomerPaymentTermEntitlementRef;
-      preferenceEffectiveFrom?: string;
-    }>,
-  ): PaymentTermsResolutionOutcome => {
-    const resolved = {
-      _tag: selection.tag,
-      customerPaymentTermsRevision: input.state.revision,
-      definition: selection.definition,
-      policyRevision: input.policyRevision,
-      policySource: input.policySource,
-      purchasingContextRevision: input.purchasingContextRevision,
-      resolvedAt: input.at,
-    };
-    if (source?.entitlementRef === undefined) {
-      return source?.preferenceEffectiveFrom === undefined
-        ? resolved
-        : { ...resolved, sourcePreferenceEffectiveFrom: source.preferenceEffectiveFrom };
-    }
-    return source.preferenceEffectiveFrom === undefined
-      ? { ...resolved, sourceEntitlementRef: source.entitlementRef }
-      : {
-          ...resolved,
-          sourceEntitlementRef: source.entitlementRef,
-          sourcePreferenceEffectiveFrom: source.preferenceEffectiveFrom,
-        };
+  const { source } = selection;
+  const resolved = {
+    _tag: selection.tag,
+    customerPaymentTermsRevision: input.state.revision,
+    definition: selection.definition,
+    policyRevision: input.policyRevision,
+    policySource: input.policySource,
+    purchasingContextRevision: input.purchasingContextRevision,
+    resolvedAt: input.at,
   };
-
-  if (input.explicitChoice !== undefined) {
-    const { explicitChoice } = input;
-    const key = refKey(explicitChoice);
-    const definition = definitions.get(key);
-    const matchingEntitlements = activeEntitlements.filter((entitlement) =>
-      sameTerm(entitlement.paymentTermRef, explicitChoice),
-    );
-    const selectedEntitlementProblem = findBrokenEntitlement(
-      matchingEntitlements,
-      definitions,
-      input.at,
-    );
-    if (selectedEntitlementProblem !== undefined) {
-      return selectedEntitlementProblem;
-    }
-    if (
-      definition === undefined ||
-      !definitionIsCurrent(definition, input.at) ||
-      !eligible.has(key) ||
-      (matchingEntitlements.length === 0 && !permitted.has(key))
-    ) {
-      return {
-        _tag: 'EXPLICIT_CHOICE_INVALID',
-        paymentTermRef: explicitChoice,
-        reason: 'The explicit Payment Term is not currently entitled, policy-permitted, and usable',
+  if (source?.entitlementRef === undefined) {
+    return source?.preferenceEffectiveFrom === undefined
+      ? resolved
+      : { ...resolved, sourcePreferenceEffectiveFrom: source.preferenceEffectiveFrom };
+  }
+  return source.preferenceEffectiveFrom === undefined
+    ? { ...resolved, sourceEntitlementRef: source.entitlementRef }
+    : {
+        ...resolved,
+        sourceEntitlementRef: source.entitlementRef,
+        sourcePreferenceEffectiveFrom: source.preferenceEffectiveFrom,
       };
-    }
-    const [matchingEntitlement] = matchingEntitlements;
-    return matchingEntitlement === undefined
-      ? makeResolved({ definition, tag: 'EXPLICIT_CHOICE' })
-      : makeResolved(
-          { definition, tag: 'EXPLICIT_CHOICE' },
-          { entitlementRef: matchingEntitlement.entitlementRef },
-        );
-  }
+};
 
-  const brokenEntitlement = findBrokenEntitlement(activeEntitlements, definitions, input.at);
-  if (brokenEntitlement !== undefined) {
-    return brokenEntitlement;
+const resolveExplicitPaymentTerm = (
+  input: PaymentTermsResolutionInput,
+  explicitChoice: PaymentTermReference,
+  activeEntitlements: readonly CustomerPaymentTermEntitlement[],
+  definitions: ReadonlyMap<string, PaymentTermDefinitionSnapshot>,
+  eligible: ReadonlySet<string>,
+  permitted: ReadonlySet<string>,
+): PaymentTermsResolutionOutcome => {
+  const key = refKey(explicitChoice);
+  const definition = definitions.get(key);
+  const matchingEntitlements = activeEntitlements.filter((entitlement) =>
+    sameTerm(entitlement.paymentTermRef, explicitChoice),
+  );
+  const selectedEntitlementProblem = findBrokenEntitlement(matchingEntitlements, definitions, input.at);
+  if (selectedEntitlementProblem !== undefined) {
+    return selectedEntitlementProblem;
   }
+  if (
+    definition === undefined ||
+    !definitionIsCurrent(definition, input.at) ||
+    !eligible.has(key) ||
+    (matchingEntitlements.length === 0 && !permitted.has(key))
+  ) {
+    return {
+      _tag: 'EXPLICIT_CHOICE_INVALID',
+      paymentTermRef: explicitChoice,
+      reason: 'The explicit Payment Term is not currently entitled, policy-permitted, and usable',
+    };
+  }
+  const [matchingEntitlement] = matchingEntitlements;
+  return matchingEntitlement === undefined
+    ? makeResolvedPaymentTerm(input, { definition, tag: 'EXPLICIT_CHOICE' })
+    : makeResolvedPaymentTerm(input, {
+        definition,
+        source: { entitlementRef: matchingEntitlement.entitlementRef },
+        tag: 'EXPLICIT_CHOICE',
+      });
+};
 
+const resolvePreferredPaymentTerm = (
+  input: PaymentTermsResolutionInput,
+  activeEntitlements: readonly CustomerPaymentTermEntitlement[],
+  activePreferences: readonly CustomerPaymentTermPreference[],
+  definitions: ReadonlyMap<string, PaymentTermDefinitionSnapshot>,
+  eligible: ReadonlySet<string>,
+): PaymentTermsResolutionOutcome | undefined => {
   const [preference] = activePreferences;
-  if (preference !== undefined) {
-    const entitlement = activeEntitlements.find((candidate) =>
-      sameTerm(candidate.paymentTermRef, preference.paymentTermRef),
-    );
-    if (entitlement === undefined) {
-      return {
-        _tag: 'INCONSISTENT_CONFIGURATION',
-        reason: 'The current preference is not currently entitled',
-      };
-    }
-    const key = refKey(preference.paymentTermRef);
-    const definition = definitions.get(key);
-    if (
-      definition !== undefined &&
-      definitionIsCurrent(definition, input.at) &&
-      eligible.has(key)
-    ) {
-      return makeResolved(
-        { definition, tag: 'PREFERRED_ENTITLEMENT' },
-        {
-          entitlementRef: entitlement.entitlementRef,
-          preferenceEffectiveFrom: preference.effectiveFrom,
-        },
-      );
-    }
+  if (preference === undefined) {
+    return undefined;
   }
+  const entitlement = activeEntitlements.find((candidate) =>
+    sameTerm(candidate.paymentTermRef, preference.paymentTermRef),
+  );
+  if (entitlement === undefined) {
+    return {
+      _tag: 'INCONSISTENT_CONFIGURATION',
+      reason: 'The current preference is not currently entitled',
+    };
+  }
+  const key = refKey(preference.paymentTermRef);
+  const definition = definitions.get(key);
+  if (definition !== undefined && definitionIsCurrent(definition, input.at) && eligible.has(key)) {
+    return makeResolvedPaymentTerm(input, {
+      definition,
+      source: {
+        entitlementRef: entitlement.entitlementRef,
+        preferenceEffectiveFrom: preference.effectiveFrom,
+      },
+      tag: 'PREFERRED_ENTITLEMENT',
+    });
+  }
+  return undefined;
+};
 
+const resolveFallbackPaymentTerm = (
+  input: PaymentTermsResolutionInput,
+  definitions: ReadonlyMap<string, PaymentTermDefinitionSnapshot>,
+  eligible: ReadonlySet<string>,
+): PaymentTermsResolutionOutcome => {
   const fallbacks = input.policyFallbackRefs.flatMap((reference) => {
     const key = refKey(reference);
     const definition = definitions.get(key);
-    return definition !== undefined &&
-      definitionIsCurrent(definition, input.at) &&
-      eligible.has(key)
+    return definition !== undefined && definitionIsCurrent(definition, input.at) && eligible.has(key)
       ? [definition]
       : [];
   });
@@ -939,7 +919,45 @@ export const resolvePaymentTerms = (
         _tag: 'NO_USABLE_PAYMENT_TERM',
         reason: 'No usable Payment Term exists for the current purchase',
       }
-    : makeResolved({ definition: fallback, tag: 'POLICY_FALLBACK' });
+    : makeResolvedPaymentTerm(input, { definition: fallback, tag: 'POLICY_FALLBACK' });
+};
+
+export const resolvePaymentTerms = (input: PaymentTermsResolutionInput): PaymentTermsResolutionOutcome => {
+  const activeEntitlements = input.state.entitlements.filter(
+    (entitlement) => entitlement.status === 'ACTIVE' && isEffectiveAt(entitlement, input.at),
+  );
+  const activePreferences = input.state.preferences.filter((preference) => isEffectiveAt(preference, input.at));
+  const configurationProblem = findConfigurationProblem(input.state, activePreferences);
+  if (configurationProblem !== undefined) {
+    return configurationProblem;
+  }
+
+  const definitions = new Map(input.definitions.map((definition) => [refKey(definition.paymentTermRef), definition]));
+  const eligible = new Set(input.eligiblePaymentTermRefs.map(refKey));
+  const permitted = new Set(input.policyExplicitlyPermittedRefs.map(refKey));
+
+  if (input.explicitChoice !== undefined) {
+    return resolveExplicitPaymentTerm(
+      input,
+      input.explicitChoice,
+      activeEntitlements,
+      definitions,
+      eligible,
+      permitted,
+    );
+  }
+
+  const brokenEntitlement = findBrokenEntitlement(activeEntitlements, definitions, input.at);
+  if (brokenEntitlement !== undefined) {
+    return brokenEntitlement;
+  }
+
+  const preferred = resolvePreferredPaymentTerm(input, activeEntitlements, activePreferences, definitions, eligible);
+  if (preferred !== undefined) {
+    return preferred;
+  }
+
+  return resolveFallbackPaymentTerm(input, definitions, eligible);
 };
 
 export interface GuestPaymentTermsResolutionInput {
@@ -968,36 +986,38 @@ const guestResolved = (
   resolvedAt: input.at,
 });
 
-/** Guest resolution is policy-only: it never consults a customer profile, entitlement, or preference. */
-export const resolveGuestPaymentTerms = (
+const resolveGuestExplicitChoice = (
   input: GuestPaymentTermsResolutionInput,
-): PaymentTermsResolutionOutcome => {
-  const definitions = new Map(
-    input.definitions.map((definition) => [refKey(definition.paymentTermRef), definition]),
-  );
-  const eligible = new Set(input.eligiblePaymentTermRefs.map(refKey));
-  const permitted = new Set(input.policyExplicitlyPermittedRefs.map(refKey));
-  if (input.explicitChoice !== undefined) {
-    const explicitKey = refKey(input.explicitChoice);
-    const definition = definitions.get(explicitKey);
-    if (
-      definition === undefined ||
-      !definitionIsCurrent(definition, input.at) ||
-      !eligible.has(explicitKey) ||
-      !permitted.has(explicitKey)
-    ) {
-      return {
-        _tag: 'EXPLICIT_CHOICE_INVALID',
-        paymentTermRef: input.explicitChoice,
-        reason: 'The explicit Guest Payment Term is not currently policy-permitted and usable',
-      };
-    }
-    return guestResolved(input, 'EXPLICIT_CHOICE', definition);
+  definitions: ReadonlyMap<string, PaymentTermDefinitionSnapshot>,
+  eligible: ReadonlySet<string>,
+  permitted: ReadonlySet<string>,
+): PaymentTermsResolutionOutcome | undefined => {
+  if (input.explicitChoice === undefined) {
+    return undefined;
   }
+  const explicitKey = refKey(input.explicitChoice);
+  const definition = definitions.get(explicitKey);
+  if (
+    definition === undefined ||
+    !definitionIsCurrent(definition, input.at) ||
+    !eligible.has(explicitKey) ||
+    !permitted.has(explicitKey)
+  ) {
+    return {
+      _tag: 'EXPLICIT_CHOICE_INVALID',
+      paymentTermRef: input.explicitChoice,
+      reason: 'The explicit Guest Payment Term is not currently policy-permitted and usable',
+    };
+  }
+  return guestResolved(input, 'EXPLICIT_CHOICE', definition);
+};
 
-  const uniqueFallbacks = new Map(
-    input.policyFallbackRefs.map((reference) => [refKey(reference), reference]),
-  );
+const resolveGuestFallback = (
+  input: GuestPaymentTermsResolutionInput,
+  definitions: ReadonlyMap<string, PaymentTermDefinitionSnapshot>,
+  eligible: ReadonlySet<string>,
+): PaymentTermsResolutionOutcome => {
+  const uniqueFallbacks = new Map(input.policyFallbackRefs.map((reference) => [refKey(reference), reference]));
   const usableFallbacks: PaymentTermDefinitionSnapshot[] = [];
   for (const [key, reference] of uniqueFallbacks) {
     const definition = definitions.get(key);
@@ -1024,4 +1044,16 @@ export const resolveGuestPaymentTerms = (
         reason: 'No usable Guest Payment Term exists for the current purchase',
       }
     : guestResolved(input, 'POLICY_FALLBACK', fallback);
+};
+
+/** Guest resolution is policy-only: it never consults a customer profile, entitlement, or preference. */
+export const resolveGuestPaymentTerms = (input: GuestPaymentTermsResolutionInput): PaymentTermsResolutionOutcome => {
+  const definitions = new Map(input.definitions.map((definition) => [refKey(definition.paymentTermRef), definition]));
+  const eligible = new Set(input.eligiblePaymentTermRefs.map(refKey));
+  const permitted = new Set(input.policyExplicitlyPermittedRefs.map(refKey));
+  const explicitChoice = resolveGuestExplicitChoice(input, definitions, eligible, permitted);
+  if (explicitChoice !== undefined) {
+    return explicitChoice;
+  }
+  return resolveGuestFallback(input, definitions, eligible);
 };

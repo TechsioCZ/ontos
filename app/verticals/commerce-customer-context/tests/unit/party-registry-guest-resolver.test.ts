@@ -110,9 +110,7 @@ it.effect('rejects owner Party references from another Tenant before CCC mutatio
     Effect.tap((failure) =>
       Effect.sync(() => {
         expect(Schema.is(ProfilePersistenceDependencyFailure)(failure)).toBe(true);
-        expect(failure.reason).toBe(
-          'The Party Registry returned a Party outside the trusted Tenant',
-        );
+        expect(failure.reason).toBe('The Party Registry returned a Party outside the trusted Tenant');
       }),
     ),
   ),

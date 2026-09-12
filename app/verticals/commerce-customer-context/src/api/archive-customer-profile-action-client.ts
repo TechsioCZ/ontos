@@ -24,10 +24,7 @@ type AuthorizedInvocation = readonly [
   requestCorrelation: string,
   options: ArchiveCustomerProfileActionClientOptions,
 ];
-type OperationInvocation = readonly [
-  requestCorrelation: string,
-  options: ArchiveCustomerProfileActionClientOptions,
-];
+type OperationInvocation = readonly [requestCorrelation: string, options: ArchiveCustomerProfileActionClientOptions];
 
 interface MakeClientOptions {
   readonly credential: Redacted.Redacted;
@@ -68,12 +65,6 @@ export const executeArchiveCustomerProfile = (
   ...[requestCorrelation, options]: OperationInvocation
 ) =>
   operationGateway.invoke(
-    (credential) =>
-      executeArchiveCustomerProfileWithAuthorization(
-        payload,
-        credential,
-        requestCorrelation,
-        options,
-      ),
+    (credential) => executeArchiveCustomerProfileWithAuthorization(payload, credential, requestCorrelation, options),
     options.gateway,
   );

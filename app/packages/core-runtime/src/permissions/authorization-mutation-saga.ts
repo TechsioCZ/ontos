@@ -1,8 +1,5 @@
 import { Effect } from 'effect';
-import type {
-  AuthorizationMutationJournalEntry,
-  AuthorizationMutationState,
-} from './authorization-mutation.ts';
+import type { AuthorizationMutationJournalEntry, AuthorizationMutationState } from './authorization-mutation.ts';
 import { canTransitionAuthorizationMutation } from './authorization-mutation.ts';
 import { AuthorizationMutationSagaError } from './authorization-mutation-saga-error.ts';
 import type {
@@ -41,8 +38,7 @@ const failure = (
     externalMutationMayHaveSucceeded,
     reason,
     retryable:
-      code !== 'authorization_mutation_intent_invalid' &&
-      code !== 'authorization_mutation_final_state_invalid',
+      code !== 'authorization_mutation_intent_invalid' && code !== 'authorization_mutation_final_state_invalid',
   });
   return cause === undefined
     ? error
@@ -53,24 +49,18 @@ const failure = (
       });
 };
 
-const desiredState = (
-  operation: AuthorizationMutationJournalEntry['operation'],
-): 'ACTIVE' | 'REVOKED' => (operation === 'grant' ? 'ACTIVE' : 'REVOKED');
+const desiredState = (operation: AuthorizationMutationJournalEntry['operation']): 'ACTIVE' | 'REVOKED' =>
+  operation === 'grant' ? 'ACTIVE' : 'REVOKED';
 
 const expectedPendingState = (
   operation: AuthorizationMutationJournalEntry['operation'],
-): 'PENDING_GRANT' | 'PENDING_REVOKE' =>
-  operation === 'grant' ? 'PENDING_GRANT' : 'PENDING_REVOKE';
+): 'PENDING_GRANT' | 'PENDING_REVOKE' => (operation === 'grant' ? 'PENDING_GRANT' : 'PENDING_REVOKE');
 
 const sameBusinessTarget = (
   left: AuthorizationMutationJournalEntry['businessTarget'],
   right: AuthorizationMutationJournalEntry['businessTarget'],
 ): boolean => {
-  if (
-    left.kind !== right.kind ||
-    left.tenantId !== right.tenantId ||
-    left.legalEntityId !== right.legalEntityId
-  ) {
+  if (left.kind !== right.kind || left.tenantId !== right.tenantId || left.legalEntityId !== right.legalEntityId) {
     return false;
   }
   if (left.kind === 'counterparty') {
@@ -95,8 +85,7 @@ const validIntentScope = (entry: AuthorizationMutationJournalEntry): boolean =>
   (entry.businessTarget.kind === 'retail_profile'
     ? entry.businessTarget.profileId.length > 0
     : entry.businessTarget.counterpartyId.length > 0 &&
-      (entry.businessTarget.kind === 'counterparty' ||
-        entry.businessTarget.storefrontId.length > 0));
+      (entry.businessTarget.kind === 'counterparty' || entry.businessTarget.storefrontId.length > 0));
 
 const validReconciliableState = (entry: AuthorizationMutationJournalEntry): boolean => {
   const terminal = desiredState(entry.operation);
@@ -120,9 +109,7 @@ const sameIntent = (
   sameBusinessTarget(after.businessTarget, before.businessTarget) &&
   after.state === state;
 
-const relationshipInput = (
-  entry: AuthorizationMutationJournalEntry,
-): BusinessPermissionRelationshipMutationInput => {
+const relationshipInput = (entry: AuthorizationMutationJournalEntry): BusinessPermissionRelationshipMutationInput => {
   const input: BusinessPermissionRelationshipMutationInput = {
     operation: entry.operation,
     permission: entry.permission,
@@ -142,63 +129,63 @@ const relationshipInput = (
  * ambiguous acknowledgement and durable finalization then fails, the original intent remains the
  * recovery anchor and a retry safely repeats the exact relationship write.
  */
-export const reconcileCommittedAuthorizationMutation = Effect.fn(
-  'AuthorizationMutationSaga.reconcileCommitted',
-)(function* reconcileCommittedAuthorizationMutationEffect(
-  entry: AuthorizationMutationJournalEntry,
-  relationship: Pick<BusinessPermissionRelationshipMutationService, 'mutate'>,
-  finalizer: AuthorizationMutationSagaFinalizer,
-): Effect.fn.Return<AuthorizationMutationSagaResult, AuthorizationMutationSagaError> {
-  const terminal = desiredState(entry.operation);
-  if (!validIntentScope(entry) || !validReconciliableState(entry)) {
-    return yield* failure(
-      'authorization_mutation_intent_invalid',
-      'The durable authorization mutation intent is invalid or conflicts with its operation',
-      false,
-    );
-  }
-  if (entry.state === terminal) {
-    return { entry, outcome: 'ALREADY_FINAL' };
-  }
-  if (!canTransitionAuthorizationMutation(entry.state, terminal)) {
-    return yield* failure(
-      'authorization_mutation_intent_invalid',
-      'The durable authorization mutation intent cannot enter its requested terminal state',
-      false,
-    );
-  }
+export const reconcileCommittedAuthorizationMutation = Effect.fn('AuthorizationMutationSaga.reconcileCommitted')(
+  function* reconcileCommittedAuthorizationMutationEffect(
+    entry: AuthorizationMutationJournalEntry,
+    relationship: Pick<BusinessPermissionRelationshipMutationService, 'mutate'>,
+    finalizer: AuthorizationMutationSagaFinalizer,
+  ): Effect.fn.Return<AuthorizationMutationSagaResult, AuthorizationMutationSagaError> {
+    const terminal = desiredState(entry.operation);
+    if (!validIntentScope(entry) || !validReconciliableState(entry)) {
+      return yield* failure(
+        'authorization_mutation_intent_invalid',
+        'The durable authorization mutation intent is invalid or conflicts with its operation',
+        false,
+      );
+    }
+    if (entry.state === terminal) {
+      return { entry, outcome: 'ALREADY_FINAL' };
+    }
+    if (!canTransitionAuthorizationMutation(entry.state, terminal)) {
+      return yield* failure(
+        'authorization_mutation_intent_invalid',
+        'The durable authorization mutation intent cannot enter its requested terminal state',
+        false,
+      );
+    }
 
-  yield* relationship
-    .mutate(relationshipInput(entry))
-    .pipe(
-      Effect.mapError((cause) =>
-        failure(
-          'authorization_mutation_relationship_indeterminate',
-          'The authorization relationship mutation remains indeterminate and must be retried',
-          true,
-          cause,
+    yield* relationship
+      .mutate(relationshipInput(entry))
+      .pipe(
+        Effect.mapError((cause) =>
+          failure(
+            'authorization_mutation_relationship_indeterminate',
+            'The authorization relationship mutation remains indeterminate and must be retried',
+            true,
+            cause,
+          ),
         ),
-      ),
-    );
+      );
 
-  const finalized = yield* finalizer
-    .finalize({ mutationId: entry.mutationId, to: terminal })
-    .pipe(
-      Effect.mapError((cause) =>
-        failure(
-          'authorization_mutation_finalization_indeterminate',
-          'The relationship may be current but durable authorization finalization is indeterminate',
-          true,
-          cause,
+    const finalized = yield* finalizer
+      .finalize({ mutationId: entry.mutationId, to: terminal })
+      .pipe(
+        Effect.mapError((cause) =>
+          failure(
+            'authorization_mutation_finalization_indeterminate',
+            'The relationship may be current but durable authorization finalization is indeterminate',
+            true,
+            cause,
+          ),
         ),
-      ),
-    );
-  if (!sameIntent(entry, finalized, terminal)) {
-    return yield* failure(
-      'authorization_mutation_final_state_invalid',
-      'Durable authorization finalization returned a different mutation or state',
-      true,
-    );
-  }
-  return { entry: finalized, outcome: 'FINALIZED' };
-});
+      );
+    if (!sameIntent(entry, finalized, terminal)) {
+      return yield* failure(
+        'authorization_mutation_final_state_invalid',
+        'Durable authorization finalization returned a different mutation or state',
+        true,
+      );
+    }
+    return { entry: finalized, outcome: 'FINALIZED' };
+  },
+);

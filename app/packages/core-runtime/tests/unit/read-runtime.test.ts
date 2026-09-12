@@ -5,10 +5,7 @@ import { ConnectionError, SqlError } from 'effect/unstable/sql/SqlError';
 
 import { defineGlobalPolicy, denyPolicy } from '../../src/actions/policy.ts';
 import { trustVerifiedGatewayPrincipalContext } from '../../src/auth/system-principal-context-provenance.ts';
-import {
-  defineSystemModuleEntrypoint,
-  defineTenantModuleEntrypoint,
-} from '../../src/modules/module-entrypoint.ts';
+import { defineSystemModuleEntrypoint, defineTenantModuleEntrypoint } from '../../src/modules/module-entrypoint.ts';
 import { OperationContextUnavailable } from '../../src/operations/errors.ts';
 import { BusinessPermissionCodeSchema } from '../../src/permissions/business-permission.ts';
 import { toBusinessPermissionAccessKey } from '../../src/permissions/context-access.ts';
@@ -65,11 +62,9 @@ const makeHarness = Effect.fn(function* makeHarness(
     readonly contextPermissionDecision?: 'allowed' | 'denied' | 'unavailable';
     readonly failEvidence?: boolean;
     readonly modulePermissionDecision?: 'allowed' | 'denied' | 'unavailable';
+    readonly omitOwnerAuthorizationOverlay?: boolean;
     readonly onBusinessPermissionTarget?: (target: BusinessPermissionAccessTarget) => void;
-    readonly onContextPermissionTarget?: (target: {
-      readonly moduleId: string;
-      readonly permission: string;
-    }) => void;
+    readonly onContextPermissionTarget?: (target: { readonly moduleId: string; readonly permission: string }) => void;
     readonly onLegalEntityPermission?: (permission: string | undefined) => void;
     readonly onResourcePermission?: (permission: 'read' | 'write' | undefined) => void;
     readonly onResourceTarget?: (target: {
@@ -79,7 +74,6 @@ const makeHarness = Effect.fn(function* makeHarness(
     }) => void;
     readonly onTenantPermission?: (permission: string) => void;
     readonly onTrustedStorefrontId?: (trustedStorefrontId: string | undefined) => void;
-    readonly omitOwnerAuthorizationOverlay?: boolean;
     readonly ownerAuthorizationOverlay?: OwnerAuthorizationOverlayService;
     readonly permissionDecision?: 'allowed' | 'denied' | 'unavailable';
     readonly resolvedScope?: typeof scope & {
@@ -142,8 +136,7 @@ const makeHarness = Effect.fn(function* makeHarness(
     options.omitOwnerAuthorizationOverlay === true
       ? {}
       : {
-          ownerAuthorizationOverlay:
-            options.ownerAuthorizationOverlay ?? allowOwnerAuthorizationOverlay,
+          ownerAuthorizationOverlay: options.ownerAuthorizationOverlay ?? allowOwnerAuthorizationOverlay,
         };
   const runtime = makeReadRuntime(
     database,
@@ -159,10 +152,7 @@ const makeHarness = Effect.fn(function* makeHarness(
         }
         return Effect.succeed(
           targets.map((businessTarget) => ({
-            decision:
-              options.businessPermissionDecision ??
-              options.permissionDecision ??
-              ('unavailable' as const),
+            decision: options.businessPermissionDecision ?? options.permissionDecision ?? ('unavailable' as const),
             key: toBusinessPermissionAccessKey(businessTarget),
           })),
         );
@@ -192,10 +182,7 @@ const makeHarness = Effect.fn(function* makeHarness(
       modules: ({ moduleIds }) =>
         Effect.succeed(
           moduleIds.map((key) => ({
-            decision:
-              options.modulePermissionDecision ??
-              options.permissionDecision ??
-              ('unavailable' as const),
+            decision: options.modulePermissionDecision ?? options.permissionDecision ?? ('unavailable' as const),
             key,
           })),
         ),
@@ -301,48 +288,46 @@ it.effect('runs every gate before the handler and persists evidence before relea
     expect(harness.stages).toEqual(READ_RUNTIME_STAGES);
   }),
 );
-it.effect(
-  'runs the owner authorization overlay inside the transaction before the Read handler',
-  () =>
-    Effect.gen(function* ownerOverlayReadTest() {
-      let handlerCalls = 0;
-      const ownerInputs: OwnerAuthorizationInput[] = [];
-      const ownerAuthorizationOverlay: OwnerAuthorizationOverlayService = {
-        authorize: (_transaction, input) =>
-          Effect.sync(() => {
-            ownerInputs.push(input);
-            return 'denied' as const;
-          }),
-      };
-      const harness = yield* makeHarness({
-        contextPermissionDecision: 'allowed',
-        ownerAuthorizationOverlay,
-        permissionDecision: 'allowed',
-      });
-      const deniedRegistration = defineRead(
-        registration().descriptor,
-        () => {
-          handlerCalls += 1;
-          return Effect.succeed({ evidence: { resultCount: 0 }, result: [] });
-        },
-        () => Effect.succeed({}),
-        () => ({ kind: 'module', moduleId: 'core.shell' }),
-      );
-      const error = yield* Effect.flip(
-        harness.runtime.runRead({
-          input: {},
-          principal: scope,
-          registration: deniedRegistration,
-          transport: { correlationId: scope.correlationId },
+it.effect('runs the owner authorization overlay inside the transaction before the Read handler', () =>
+  Effect.gen(function* ownerOverlayReadTest() {
+    let handlerCalls = 0;
+    const ownerInputs: OwnerAuthorizationInput[] = [];
+    const ownerAuthorizationOverlay: OwnerAuthorizationOverlayService = {
+      authorize: (_transaction, input) =>
+        Effect.sync(() => {
+          ownerInputs.push(input);
+          return 'denied' as const;
         }),
-      );
-      expect(Predicate.isTagged(error, 'ReadPermissionDenied')).toBe(true);
-      expect(ownerInputs).toHaveLength(1);
-      expect(ownerInputs[0]?.operation).toBe('read');
-      expect(ownerInputs[0]?.targets).toEqual([{ kind: 'module', moduleId: 'core.shell' }]);
-      expect(handlerCalls).toBe(0);
-      expect(harness.evidence()).toBe(1);
-    }),
+    };
+    const harness = yield* makeHarness({
+      contextPermissionDecision: 'allowed',
+      ownerAuthorizationOverlay,
+      permissionDecision: 'allowed',
+    });
+    const deniedRegistration = defineRead(
+      registration().descriptor,
+      () => {
+        handlerCalls += 1;
+        return Effect.succeed({ evidence: { resultCount: 0 }, result: [] });
+      },
+      () => Effect.succeed({}),
+      () => ({ kind: 'module', moduleId: 'core.shell' }),
+    );
+    const error = yield* Effect.flip(
+      harness.runtime.runRead({
+        input: {},
+        principal: scope,
+        registration: deniedRegistration,
+        transport: { correlationId: scope.correlationId },
+      }),
+    );
+    expect(Predicate.isTagged(error, 'ReadPermissionDenied')).toBe(true);
+    expect(ownerInputs).toHaveLength(1);
+    expect(ownerInputs[0]?.operation).toBe('read');
+    expect(ownerInputs[0]?.targets).toEqual([{ kind: 'module', moduleId: 'core.shell' }]);
+    expect(handlerCalls).toBe(0);
+    expect(harness.evidence()).toBe(1);
+  }),
 );
 
 it.effect('keeps owner-neutral Reads available without an owner adapter', () =>
@@ -644,7 +629,7 @@ it.effect(
     };
     const observed: string[] = [];
     let handlerCalls = 0;
-    const permission = yield* Schema.decodeUnknownEffect(BusinessPermissionCodeSchema)(
+    const permission = yield* Schema.decodeEffect(BusinessPermissionCodeSchema)(
       'retail.settings.payment_term_preference.manage',
     );
     const currencyRead = defineRead(
@@ -670,16 +655,14 @@ it.effect(
         permissionTarget: 'business_permission',
         policies: [],
         readKey: 'commerce.customer-context.payment-term-preference',
-        resourcePermission: defineReadResourcePermission<CurrencyReadInput>(
-          ({ requestedProfileId }) => ({
-            permission: 'read',
-            resource: {
-              moduleId: 'commerce.customer-context',
-              resourceId: requestedProfileId,
-              resourceType: 'retail-profile',
-            },
-          }),
-        ),
+        resourcePermission: defineReadResourcePermission<CurrencyReadInput>(({ requestedProfileId }) => ({
+          permission: 'read',
+          resource: {
+            moduleId: 'commerce.customer-context',
+            resourceId: requestedProfileId,
+            resourceType: 'retail-profile',
+          },
+        })),
         resultSchema: Schema.String,
         schemaVersion: '1',
       },
@@ -762,9 +745,7 @@ it.effect(
       resolvedScope: { ...scope, legalEntityId },
       resourcePermissionDecision: 'allowed',
     });
-    expect(
-      Predicate.isTagged(yield* Effect.flip(run(businessDenied)), 'ReadPermissionDenied'),
-    ).toBe(true);
+    expect(Predicate.isTagged(yield* Effect.flip(run(businessDenied)), 'ReadPermissionDenied')).toBe(true);
     expect(businessDenied.permissionChecks()).toEqual({
       businessPermissionChecks: 1,
       contextPermissionChecks: 0,
@@ -777,9 +758,7 @@ it.effect(
       resolvedScope: { ...scope, legalEntityId },
       resourcePermissionDecision: 'denied',
     });
-    expect(
-      Predicate.isTagged(yield* Effect.flip(run(resourceDenied)), 'ReadPermissionDenied'),
-    ).toBe(true);
+    expect(Predicate.isTagged(yield* Effect.flip(run(resourceDenied)), 'ReadPermissionDenied')).toBe(true);
     expect(resourceDenied.permissionChecks()).toEqual({
       businessPermissionChecks: 1,
       contextPermissionChecks: 0,
@@ -792,9 +771,7 @@ it.effect(
       resolvedScope: { ...scope, legalEntityId },
       resourcePermissionDecision: 'allowed',
     });
-    expect(
-      Predicate.isTagged(yield* Effect.flip(run(businessUnavailable)), 'ReadPermissionUnavailable'),
-    ).toBe(true);
+    expect(Predicate.isTagged(yield* Effect.flip(run(businessUnavailable)), 'ReadPermissionUnavailable')).toBe(true);
     expect(businessUnavailable.permissionChecks()).toEqual({
       businessPermissionChecks: 1,
       contextPermissionChecks: 0,
@@ -807,9 +784,7 @@ it.effect(
       resolvedScope: { ...scope, legalEntityId },
       resourcePermissionDecision: 'unavailable',
     });
-    expect(
-      Predicate.isTagged(yield* Effect.flip(run(resourceUnavailable)), 'ReadPermissionUnavailable'),
-    ).toBe(true);
+    expect(Predicate.isTagged(yield* Effect.flip(run(resourceUnavailable)), 'ReadPermissionUnavailable')).toBe(true);
     expect(resourceUnavailable.permissionChecks()).toEqual({
       businessPermissionChecks: 1,
       contextPermissionChecks: 0,
@@ -822,12 +797,8 @@ it.effect(
 it.effect('rejects payload Storefront promotion and requires an exact trusted scope match', () =>
   Effect.gen(function* checkTrustedStorefrontReadScope() {
     const legalEntityId = '00000000-0000-4000-8000-000000000004';
-    const permission = yield* Schema.decodeUnknownEffect(BusinessPermissionCodeSchema)(
-      'counterparty.order_history.read',
-    );
-    const StorefrontCounterpartyIdSchema = Schema.String.pipe(
-      Schema.brand('StorefrontCounterpartyId'),
-    );
+    const permission = yield* Schema.decodeEffect(BusinessPermissionCodeSchema)('counterparty.order_history.read');
+    const StorefrontCounterpartyIdSchema = Schema.String.pipe(Schema.brand('StorefrontCounterpartyId'));
     const StorefrontIdSchema = Schema.String.pipe(Schema.brand('StorefrontId'));
     const StorefrontInputSchema = Schema.Struct({
       counterpartyId: StorefrontCounterpartyIdSchema,
@@ -1611,9 +1582,7 @@ it.effect('enforces named entrypoint context permission before services and hand
       resolvedScope: { ...scope, legalEntityId },
       resourcePermissionDecision: 'allowed',
     });
-    expect(
-      Predicate.isTagged(yield* Effect.flip(run(unavailable)), 'ReadPermissionUnavailable'),
-    ).toBe(true);
+    expect(Predicate.isTagged(yield* Effect.flip(run(unavailable)), 'ReadPermissionUnavailable')).toBe(true);
     expect(unavailable.evidence()).toBe(0);
     expect(serviceCalls).toBe(1);
     expect(handlerCalls).toBe(1);
@@ -1633,9 +1602,7 @@ it.effect('executes only the selected finite conditional authorization branch', 
     const InputSchema = Schema.Struct({ subject: SubjectSchema });
     type Input = typeof InputSchema.Type;
     type Subject = typeof SubjectSchema.Type;
-    const permission = yield* Schema.decodeUnknownEffect(BusinessPermissionCodeSchema)(
-      'retail.profile.read',
-    );
+    const permission = yield* Schema.decodeEffect(BusinessPermissionCodeSchema)('retail.profile.read');
     const conditional = defineReadConditionalPermission<Input, Subject>({
       branches: {
         GUEST: {
@@ -1709,9 +1676,7 @@ it.effect('executes only the selected finite conditional authorization branch', 
         registration: read,
         transport: { correlationId: scope.correlationId },
       });
-    const profileId = yield* Schema.decodeUnknownEffect(RetailRequestedProfileIdSchema)(
-      'profile-1',
-    );
+    const profileId = yield* Schema.decodeEffect(RetailRequestedProfileIdSchema)('profile-1');
 
     const guest = yield* makeHarness({
       modulePermissionDecision: 'allowed',
@@ -1755,8 +1720,7 @@ it.effect('executes only the selected finite conditional authorization branch', 
       expect(
         Predicate.isTagged(
           failure,
-          decisions.businessPermissionDecision === 'denied' ||
-            decisions.resourcePermissionDecision === 'denied'
+          decisions.businessPermissionDecision === 'denied' || decisions.resourcePermissionDecision === 'denied'
             ? 'ReadPermissionDenied'
             : 'ReadPermissionUnavailable',
         ),
@@ -1770,10 +1734,9 @@ it.effect('executes only the selected finite conditional authorization branch', 
 
 it.effect('preserves only schema-declared owner Read failures', () =>
   Effect.gen(function* preservesDeclaredDomainFailure() {
-    class DeclaredReadFailure extends Schema.TaggedError<DeclaredReadFailure>()(
-      'DeclaredReadFailure',
-      { reasonCode: Schema.Literal('PURPOSE_NOT_ALLOWED') },
-    ) {}
+    class DeclaredReadFailure extends Schema.TaggedError<DeclaredReadFailure>()('DeclaredReadFailure', {
+      reasonCode: Schema.Literal('PURPOSE_NOT_ALLOWED'),
+    }) {}
     const declared = defineRead(
       { ...registration().descriptor, domainErrorSchema: DeclaredReadFailure },
       () => Effect.fail(new DeclaredReadFailure({ reasonCode: 'PURPOSE_NOT_ALLOWED' })),
@@ -1789,8 +1752,6 @@ it.effect('preserves only schema-declared owner Read failures', () =>
       }),
     );
     expect(Predicate.isTagged(failure, 'DeclaredReadFailure')).toBe(true);
-    expect((yield* Schema.decodeUnknownEffect(DeclaredReadFailure)(failure)).reasonCode).toBe(
-      'PURPOSE_NOT_ALLOWED',
-    );
+    expect((yield* Schema.decodeUnknownEffect(DeclaredReadFailure)(failure)).reasonCode).toBe('PURPOSE_NOT_ALLOWED');
   }),
 );

@@ -4,7 +4,6 @@ import {
   PurchaseCurrencyAuthorizationSubjectSchema,
   isPurchaseCurrencyAuthorizationSubjectCompatible,
 } from './customer-profile-ref.ts';
-import type { CustomerProfileRef } from './customer-profile-ref.ts';
 import { AKROS_LAUNCH_CURRENCY, CurrencyCodeSchema, CurrencyCodeSetSchema } from './currency.ts';
 import type { CurrencyCode } from './currency.ts';
 import { ProfileInstantSchema } from './profile-contracts.ts';
@@ -14,10 +13,7 @@ const ChannelIdSchema = StableReferenceSchema.pipe(
   Schema.brand('PurchaseCurrencyChannelId'),
   Schema.decodeTo(Schema.String),
 );
-const CartIdSchema = StableReferenceSchema.pipe(
-  Schema.brand('PurchaseCurrencyCartId'),
-  Schema.decodeTo(Schema.String),
-);
+const CartIdSchema = StableReferenceSchema.pipe(Schema.brand('PurchaseCurrencyCartId'), Schema.decodeTo(Schema.String));
 const GuestEvidenceRefSchema = StableReferenceSchema.pipe(
   Schema.brand('PurchaseCurrencyGuestEvidenceRef'),
   Schema.decodeTo(Schema.String),
@@ -55,7 +51,7 @@ const PricingRevisionSchema = StableReferenceSchema.pipe(
   Schema.decodeTo(Schema.String),
 );
 
-export const PurchaseCurrencySubjectSchema = Schema.Union([
+const PurchaseCurrencySubjectSchema = Schema.Union([
   Schema.Struct({
     guestEvidenceRef: GuestEvidenceRefSchema,
     guestSessionRef: GuestSessionRefSchema,
@@ -86,17 +82,14 @@ export const PurchaseCurrencyResolutionRequestSchema = Schema.Struct({
   Schema.makeFilter(({ purchasingContext, subject }) =>
     subject.kind === 'GUEST' ||
     (subject.profileRef.tenantId === purchasingContext.tenantId &&
-      isPurchaseCurrencyAuthorizationSubjectCompatible(
-        subject.profileRef,
-        subject.authorizationSubject,
-      ))
+      isPurchaseCurrencyAuthorizationSubjectCompatible(subject.profileRef, subject.authorizationSubject))
       ? undefined
       : 'The purchase subject must identify an exact compatible profile in the purchasing Tenant',
   ),
 );
 export type PurchaseCurrencyResolutionRequest = typeof PurchaseCurrencyResolutionRequestSchema.Type;
 
-export const CurrencyPolicyDecisionSchema = Schema.Struct({
+const CurrencyPolicyDecisionSchema = Schema.Struct({
   defaultCurrency: Schema.Union([CurrencyCodeSchema, Schema.Null]),
   explicitChoiceEnabled: Schema.Boolean,
   policyRevision: PolicyRevisionSchema,
@@ -104,7 +97,7 @@ export const CurrencyPolicyDecisionSchema = Schema.Struct({
 });
 export type CurrencyPolicyDecision = typeof CurrencyPolicyDecisionSchema.Type;
 
-export const PricingCurrencySupportSchema = Schema.Struct({
+const PricingCurrencySupportSchema = Schema.Struct({
   pricingRevision: PricingRevisionSchema,
   supportedCurrencies: CurrencyCodeSetSchema,
 });
@@ -124,33 +117,20 @@ export const PurchaseCurrencyResolvedSchema = Schema.TaggedStruct('PURCHASE_CURR
   }),
   source: Schema.Literals(['EXPLICIT_CHOICE', 'POLICY_DEFAULT']),
 });
-export type PurchaseCurrencyResolved = typeof PurchaseCurrencyResolvedSchema.Type;
+type PurchaseCurrencyResolved = typeof PurchaseCurrencyResolvedSchema.Type;
 
-export const ExplicitPurchaseCurrencyChoiceInvalid = Schema.TaggedStruct(
-  'EXPLICIT_CHOICE_INVALID',
-  {
-    currencyCode: CurrencyCodeSchema,
-    reason: Schema.Literals([
-      'EXPLICIT_CHOICE_DISABLED',
-      'POLICY_UNSUPPORTED',
-      'PRICING_UNSUPPORTED',
-    ]),
-  },
-);
-export type ExplicitPurchaseCurrencyChoiceInvalidError =
-  typeof ExplicitPurchaseCurrencyChoiceInvalid.Type;
+export const ExplicitPurchaseCurrencyChoiceInvalid = Schema.TaggedStruct('EXPLICIT_CHOICE_INVALID', {
+  currencyCode: CurrencyCodeSchema,
+  reason: Schema.Literals(['EXPLICIT_CHOICE_DISABLED', 'POLICY_UNSUPPORTED', 'PRICING_UNSUPPORTED']),
+});
 
 export const NoUsablePurchaseCurrency = Schema.TaggedStruct('NO_USABLE_CURRENCY', {
   reason: Schema.String,
 });
-export type NoUsablePurchaseCurrencyError = typeof NoUsablePurchaseCurrency.Type;
 
-export const InconsistentPurchaseCurrencyPolicy = Schema.TaggedStruct(
-  'INCONSISTENT_CURRENCY_POLICY',
-  { reason: Schema.String },
-);
-export type InconsistentPurchaseCurrencyPolicyError =
-  typeof InconsistentPurchaseCurrencyPolicy.Type;
+export const InconsistentPurchaseCurrencyPolicy = Schema.TaggedStruct('INCONSISTENT_CURRENCY_POLICY', {
+  reason: Schema.String,
+});
 
 export const PurchaseCurrencyResolutionFailureSchema = Schema.Union([
   ExplicitPurchaseCurrencyChoiceInvalid,
@@ -159,7 +139,7 @@ export const PurchaseCurrencyResolutionFailureSchema = Schema.Union([
 ]);
 export type PurchaseCurrencyResolutionFailure = typeof PurchaseCurrencyResolutionFailureSchema.Type;
 
-export const PurchaseCurrencyResolutionOutcomeSchema = Schema.Union([
+const PurchaseCurrencyResolutionOutcomeSchema = Schema.Union([
   PurchaseCurrencyResolvedSchema,
   PurchaseCurrencyResolutionFailureSchema,
 ]);
@@ -209,15 +189,12 @@ const resolved = (
   source,
 });
 
-export const resolvePurchaseCurrency = (
-  input: PurchaseCurrencyResolutionInput,
-): PurchaseCurrencyResolutionOutcome => {
+export const resolvePurchaseCurrency = (input: PurchaseCurrencyResolutionInput): PurchaseCurrencyResolutionOutcome => {
   const { policy, pricing, request } = input;
   if (
     new Set(policy.supportedCurrencies).size !== policy.supportedCurrencies.length ||
     new Set(pricing.supportedCurrencies).size !== pricing.supportedCurrencies.length ||
-    (policy.defaultCurrency !== null &&
-      !policy.supportedCurrencies.includes(policy.defaultCurrency))
+    (policy.defaultCurrency !== null && !policy.supportedCurrencies.includes(policy.defaultCurrency))
   ) {
     return InconsistentPurchaseCurrencyPolicy.make({
       reason: 'Currency policy contains duplicates or a default outside its supported set',
@@ -263,7 +240,3 @@ export const AKROS_LAUNCH_PRICING_CURRENCY_SUPPORT: PricingCurrencySupport = Obj
   pricingRevision: 'akros-launch-czk-v1',
   supportedCurrencies: Object.freeze([AKROS_LAUNCH_CURRENCY]),
 });
-
-export const profileForCurrencyResolution = (
-  subject: PurchaseCurrencySubject,
-): CustomerProfileRef | undefined => (subject.kind === 'PROFILE' ? subject.profileRef : undefined);

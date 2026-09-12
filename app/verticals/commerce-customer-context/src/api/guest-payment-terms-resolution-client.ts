@@ -50,10 +50,5 @@ export const executeGuestPaymentTermsResolution = (
   ...[requestCorrelation, options = {}]: GuestPaymentTermsResolutionOperationInvocation
 ) =>
   operationGateway.invoke((credential) =>
-    executeGuestPaymentTermsResolutionWithAuthorization(
-      payload,
-      credential,
-      requestCorrelation,
-      options,
-    ),
+    executeGuestPaymentTermsResolutionWithAuthorization(payload, credential, requestCorrelation, options),
   );

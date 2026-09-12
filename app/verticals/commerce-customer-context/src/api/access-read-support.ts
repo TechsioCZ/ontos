@@ -1,8 +1,5 @@
 import type { OperationalScope } from '@app/core-runtime';
-import type {
-  CounterpartyPermissionScope,
-  CounterpartyRef,
-} from '../../shared/domain/access-contract.ts';
+import type { CounterpartyPermissionScope, CounterpartyRef } from '../../shared/domain/access-contract.ts';
 
 export const counterpartyAccessReadPermissionTarget = (
   input: {

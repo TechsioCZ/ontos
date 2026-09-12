@@ -13,53 +13,31 @@ import {
   PaymentTermCatalogGatewayCredentialService,
   unavailablePaymentTermCatalogGatewayCredentialIssuer,
 } from '../../shared/domain/payment-term-catalog-gateway-credential.ts';
-import type {
-  PaymentTermCatalogPort,
-  PaymentTermDefinitionRequest,
-} from '../persistence/payment-term-persistence.ts';
+import type { PaymentTermCatalogPort, PaymentTermDefinitionRequest } from '../persistence/payment-term-persistence.ts';
 
-export {
-  PaymentTermCatalogGatewayCredentialService,
-  unavailablePaymentTermCatalogGatewayCredentialIssuer,
-} from '../../shared/domain/payment-term-catalog-gateway-credential.ts';
-export type { PaymentTermCatalogGatewayCredentialIssuer } from '../../shared/domain/payment-term-catalog-gateway-credential.ts';
+export { PaymentTermCatalogGatewayCredentialService } from '../../shared/domain/payment-term-catalog-gateway-credential.ts';
 
 const maximumReferencesPerRequest = 200;
 const consumerCompatibility = 'customer-payment-terms.v1' as const;
 
 type CurrentPaymentTermsClientError =
-  ReturnType<typeof executeCurrentPaymentTerms> extends Effect.Effect<
-    unknown,
-    infer Failure,
-    unknown
-  >
+  ReturnType<typeof executeCurrentPaymentTerms> extends Effect.Effect<unknown, infer Failure, unknown>
     ? Failure
     : never;
 type CurrentPaymentTermsExecutor = (
   payload: CurrentPaymentTermsRequest,
   requestCorrelation: string,
-) => Effect.Effect<
-  CurrentPaymentTermsResponse,
-  CurrentPaymentTermsClientError | PaymentTermsDependencyUnavailable
->;
+) => Effect.Effect<CurrentPaymentTermsResponse, CurrentPaymentTermsClientError | PaymentTermsDependencyUnavailable>;
 type AuthorizedCurrentPaymentTermsExecutor = (
   payload: CurrentPaymentTermsRequest,
   credential: Redacted.Redacted,
   requestCorrelation: string,
-) => Effect.Effect<
-  CurrentPaymentTermsResponse,
-  CurrentPaymentTermsClientError | PaymentTermsDependencyUnavailable
->;
+) => Effect.Effect<CurrentPaymentTermsResponse, CurrentPaymentTermsClientError | PaymentTermsDependencyUnavailable>;
 const executeAuthorizedCurrentPaymentTerms: AuthorizedCurrentPaymentTermsExecutor = (
   payload,
   credential,
   requestCorrelation,
-) =>
-  executeCurrentPaymentTermsWithAuthorization(
-    payload,
-    Redacted.value(credential),
-    requestCorrelation,
-  );
+) => executeCurrentPaymentTermsWithAuthorization(payload, Redacted.value(credential), requestCorrelation);
 
 const unavailable = (cause: unknown): PaymentTermsDependencyUnavailable => {
   const failure = new PaymentTermsDependencyUnavailable({
@@ -111,9 +89,7 @@ const requestPayload = (
   ),
 });
 
-const catalogDefinitions = (
-  response: CurrentPaymentTermsResponse,
-): CurrentPaymentTermsResponse['current'] =>
+const catalogDefinitions = (response: CurrentPaymentTermsResponse): CurrentPaymentTermsResponse['current'] =>
   response.referenceOutcomes.flatMap((outcome) =>
     outcome.kind === 'USABLE' || outcome.kind === 'RETIRED'
       ? [

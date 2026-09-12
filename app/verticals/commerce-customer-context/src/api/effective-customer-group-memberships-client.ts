@@ -37,17 +37,9 @@ const effectiveCustomerGroupMembershipsClient = (
 
 export const executeEffectiveCustomerGroupMembershipsWithAuthorization = (
   payload: EffectiveCustomerGroupMembershipsRequest,
-  ...[
-    credential,
-    requestCorrelation,
-    options = {},
-  ]: EffectiveCustomerGroupMembershipsAuthorizedInvocation
+  ...[credential, requestCorrelation, options = {}]: EffectiveCustomerGroupMembershipsAuthorizedInvocation
 ) =>
-  effectiveCustomerGroupMembershipsClient(
-    Redacted.make(credential),
-    requestCorrelation,
-    options,
-  ).pipe(
+  effectiveCustomerGroupMembershipsClient(Redacted.make(credential), requestCorrelation, options).pipe(
     Effect.flatMap((client) =>
       client.effectiveCustomerGroupMemberships.execute({
         headers: {},
@@ -63,10 +55,5 @@ export const executeEffectiveCustomerGroupMemberships = (
   ...[requestCorrelation, options = {}]: EffectiveCustomerGroupMembershipsOperationInvocation
 ) =>
   operationGateway.invoke((credential) =>
-    executeEffectiveCustomerGroupMembershipsWithAuthorization(
-      payload,
-      credential,
-      requestCorrelation,
-      options,
-    ),
+    executeEffectiveCustomerGroupMembershipsWithAuthorization(payload, credential, requestCorrelation, options),
   );

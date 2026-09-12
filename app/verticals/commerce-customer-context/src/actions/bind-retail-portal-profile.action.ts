@@ -6,9 +6,13 @@ import { defineAction, defineTenantModuleEntrypoint } from '@app/core-runtime';
 import { Effect, Schema } from 'effect';
 import {
   BindRetailPortalProfilePayloadSchema,
-  BindRetailPortalProfileResultSchema,
   LegalEntityIdSchema,
   RetailPortalBindingActionRejected,
+  RetailPortalBindingResultSchema,
+  retailPortalBindingPayloadMatchesTrustedScope,
+  retailPortalBindingPermissionMutationPayloads,
+  retailPortalBindingResultMatches,
+  retailPortalBindingStagedPermissionMutations,
 } from '../../shared/actions/bind-retail-portal-profile.ts';
 import type {
   RetailPortalBindingPayload,
@@ -33,114 +37,118 @@ export interface BindRetailPortalProfileServices {
     context: ActionHandlerContext<typeof domainEvents, BindRetailPortalProfileServices>,
   ) => Effect.Effect<RetailPortalBindingResult, RetailPortalBindingActionRejected>;
 }
-const handle = Effect.fn('BindRetailPortalProfileAction.handle')(
-  function* handleBindRetailPortalProfileEffect(
-    payload: RetailPortalBindingPayload,
-    context: ActionHandlerContext<typeof domainEvents, BindRetailPortalProfileServices>,
-  ) {
-    if (payload.expectedRevision !== null || payload.expectedState !== null) {
-      return yield* new RetailPortalBindingActionRejected({
-        code: 'CURRENT_STATE_CONFLICT',
-        reason: 'A new binding must not claim a pre-existing revision or state',
-        retryable: false,
-      });
-    }
-    if (
-      payload.profileRef.tenantId !== context.scope.tenantId ||
-      payload.principalRef.tenantId !== context.scope.tenantId ||
-      payload.sellingLegalEntityRef.tenantId !== context.scope.tenantId ||
-      payload.sellingLegalEntityRef.resourceId !== context.scope.legalEntityId
-    ) {
-      return yield* new RetailPortalBindingActionRejected({
-        code: 'BINDING_CONFLICT',
-        reason: 'Profile, Principal, and Selling Legal Entity must match the trusted scope',
-        retryable: false,
-      });
-    }
-    const result = yield* context.services.bind(payload, context);
-    if (
-      result.bindingRef.tenantId !== context.scope.tenantId ||
-      result.effectiveAt !== payload.effectiveAt ||
-      result.outcome !== 'BINDING_ACTIVATED' ||
-      result.state !== 'ACTIVE'
-    ) {
-      return yield* new RetailPortalBindingActionRejected({
+
+const bindingScopeConflict = () =>
+  new RetailPortalBindingActionRejected({
+    code: 'BINDING_CONFLICT',
+    reason: 'Profile, Principal, and Selling Legal Entity must match the trusted scope',
+    retryable: false,
+  });
+
+const validateBindPayload = (
+  payload: RetailPortalBindingPayload,
+  context: ActionHandlerContext<typeof domainEvents, BindRetailPortalProfileServices>,
+) => {
+  if (payload.expectedRevision !== null || payload.expectedState !== null) {
+    return new RetailPortalBindingActionRejected({
+      code: 'CURRENT_STATE_CONFLICT',
+      reason: 'A new binding must not claim a pre-existing revision or state',
+      retryable: false,
+    });
+  }
+  const { legalEntityId } = context.scope;
+  if (legalEntityId === undefined) {
+    return bindingScopeConflict();
+  }
+  const trustedScope = { legalEntityId, tenantId: context.scope.tenantId };
+  if (!retailPortalBindingPayloadMatchesTrustedScope(payload, trustedScope)) {
+    return bindingScopeConflict();
+  }
+  return legalEntityId;
+};
+
+const validateBindResult = (
+  result: RetailPortalBindingResult,
+  payload: RetailPortalBindingPayload,
+  context: ActionHandlerContext<typeof domainEvents, BindRetailPortalProfileServices>,
+) =>
+  retailPortalBindingResultMatches(result, context.scope, payload.effectiveAt, 'BINDING_ACTIVATED', 'ACTIVE')
+    ? undefined
+    : new RetailPortalBindingActionRejected({
         code: 'CURRENT_STATE_CONFLICT',
         reason: 'The binding service returned an inconsistent binding result',
         retryable: false,
       });
-    }
-    yield* recordProfileResourceLookup(
-      context,
-      payload.profileRef,
-      `retail-binding-profile:${payload.profileRef.resourceId}:${result.revision}`,
-    );
-    yield* recordProfileResourceLookup(
-      context,
-      payload.principalRef,
-      `retail-binding-principal:${payload.principalRef.resourceId}:${result.revision}`,
-    );
-    yield* recordProfileResourceLookup(
-      context,
-      result.bindingRef,
-      `retail-binding-current:${result.bindingRef.resourceId}:${result.revision}`,
-    );
-    if (
-      (result.permissionMutations === undefined || result.permissionMutations.length === 0) &&
-      result.authorizationState === 'ACTIVE'
-    ) {
-      return result;
-    }
-    if (result.permissionMutations === undefined || result.permissionMutations.length === 0) {
-      return yield* new RetailPortalBindingActionRejected({
-        code: 'OUTCOME_INDETERMINATE',
-        reason: 'The binding authorization intent set was not durably staged',
-        retryable: true,
-      });
-    }
-    const eventPayloadBase = {
-      bindingRef: result.bindingRef,
-      catalogVersion: '1' as const,
-      legalEntityId: yield* Schema.decodeUnknownEffect(LegalEntityIdSchema)(
-        context.scope.legalEntityId,
-      ).pipe(Effect.orDie),
-      mutationId: context.actionInvocationId,
-      operation: 'grant' as const,
-      principalRef: payload.principalRef,
-      profileRef: payload.profileRef,
-      schemaVersion: '1' as const,
-      sellingLegalEntityRef: payload.sellingLegalEntityRef,
-      transition: 'activation' as const,
-    };
-    const eventPayload: BindRetailPortalProfileCommerceCustomerContextRetailPortalProfileBindingActivationAuthorizationMutationRequestedV1OutboxPayload =
-      result.permissionMutations === undefined
-        ? eventPayloadBase
-        : {
-            ...eventPayloadBase,
-            permissionMutations: result.permissionMutations.map(
-              ({ mutationId, operation, permission }) => ({
-                mutationId,
-                operation,
-                permission,
-              }),
-            ),
-          };
-    const event = yield* context.addDomainEvent({
-      eventType:
-        'commerce.customer-context.retail-portal-profile-binding-activation-authorization-mutation-requested.v1',
-      payloadJson: eventPayload,
-      producerModuleKey: MODULE_KEY,
-      subjectModuleKey: MODULE_KEY,
-      subjectResourceId: result.bindingRef.resourceId,
-      subjectResourceType: result.bindingRef.resourceType,
-    });
-    yield* context.addOutboxMessage(
-      event,
-      createAuthorizationMutationRequestedOutboxMessage(eventPayload),
-    );
+
+const handle = Effect.fn('BindRetailPortalProfileAction.handle')(function* handleBindRetailPortalProfileEffect(
+  payload: RetailPortalBindingPayload,
+  context: ActionHandlerContext<typeof domainEvents, BindRetailPortalProfileServices>,
+) {
+  const payloadValidation = validateBindPayload(payload, context);
+  // oxlint-disable-next-line anti-slop/no-runtime-typeof -- This local validator returns either the trusted legal-entity string or a yieldable domain rejection; runtime classification preserves that fail-closed union.
+  if (typeof payloadValidation !== 'string') {
+    return yield* payloadValidation;
+  }
+  const legalEntityId = payloadValidation;
+  const result = yield* context.services.bind(payload, context);
+  const resultError = validateBindResult(result, payload, context);
+  if (resultError !== undefined) {
+    return yield* resultError;
+  }
+  yield* recordProfileResourceLookup(
+    context,
+    payload.profileRef,
+    `retail-binding-profile:${payload.profileRef.resourceId}:${result.revision}`,
+  );
+  yield* recordProfileResourceLookup(
+    context,
+    payload.principalRef,
+    `retail-binding-principal:${payload.principalRef.resourceId}:${result.revision}`,
+  );
+  yield* recordProfileResourceLookup(
+    context,
+    result.bindingRef,
+    `retail-binding-current:${result.bindingRef.resourceId}:${result.revision}`,
+  );
+  const permissionMutations = retailPortalBindingStagedPermissionMutations(result.permissionMutations);
+  if (permissionMutations === undefined && result.authorizationState === 'ACTIVE') {
     return result;
-  },
-);
+  }
+  if (permissionMutations === undefined) {
+    return yield* new RetailPortalBindingActionRejected({
+      code: 'OUTCOME_INDETERMINATE',
+      reason: 'The binding authorization intent set was not durably staged',
+      retryable: true,
+    });
+  }
+  const eventPayloadBase = {
+    bindingRef: result.bindingRef,
+    catalogVersion: '1' as const,
+    legalEntityId: yield* Schema.decodeEffect(LegalEntityIdSchema)(legalEntityId).pipe(Effect.orDie),
+    mutationId: context.actionInvocationId,
+    operation: 'grant' as const,
+    principalRef: payload.principalRef,
+    profileRef: payload.profileRef,
+    schemaVersion: '1' as const,
+    sellingLegalEntityRef: payload.sellingLegalEntityRef,
+    transition: 'activation' as const,
+  };
+  const eventPayload: BindRetailPortalProfileCommerceCustomerContextRetailPortalProfileBindingActivationAuthorizationMutationRequestedV1OutboxPayload =
+    {
+      ...eventPayloadBase,
+      permissionMutations: retailPortalBindingPermissionMutationPayloads(permissionMutations),
+    };
+  const event = yield* context.addDomainEvent({
+    eventType: 'commerce.customer-context.retail-portal-profile-binding-activation-authorization-mutation-requested.v1',
+    payloadJson: eventPayload,
+    producerModuleKey: MODULE_KEY,
+    subjectModuleKey: MODULE_KEY,
+    subjectResourceId: result.bindingRef.resourceId,
+    subjectResourceType: result.bindingRef.resourceType,
+  });
+  yield* context.addOutboxMessage(event, createAuthorizationMutationRequestedOutboxMessage(eventPayload));
+  return result;
+});
 export const bindRetailPortalProfileAction = defineAction(
   {
     accessEvidencePolicy: {
@@ -163,37 +171,17 @@ export const bindRetailPortalProfileAction = defineAction(
     owningModuleKey: MODULE_KEY,
     payloadSchema: BindRetailPortalProfilePayloadSchema,
     policies: [],
-    resultSchema: BindRetailPortalProfileResultSchema,
+    resultSchema: RetailPortalBindingResultSchema,
     schemaVersion: '1',
   },
   handle,
   (transaction, scope) =>
     profileServicesForVerifiedScope(transaction, scope).pipe(
-      Effect.map(({ bindRetailPortalProfile }) => bindRetailPortalProfile),
+      Effect.map(({ bindRetailPortalProfile }): BindRetailPortalProfileServices => bindRetailPortalProfile),
     ),
 );
 
-export {
-  BindRetailPortalProfilePayloadSchema,
-  BindRetailPortalProfileResultSchema,
-  RetailPortalBindingActionRejected,
-  RetailPortalBindingPayloadSchema,
-  RetailPortalBindingResultSchema,
-} from '../../shared/actions/bind-retail-portal-profile.ts';
-export type {
-  RetailPortalBindingPayload,
-  RetailPortalBindingResult,
-} from '../../shared/actions/bind-retail-portal-profile.ts';
+export type { RetailPortalBindingPayload } from '../../shared/actions/bind-retail-portal-profile.ts';
 
 // <generated-outbox-message-exports>
-export { BindRetailPortalProfileCommerceCustomerContextRetailPortalProfileBindingActivatedV1OutboxPayloadSchema } from './bind-retail-portal-profile.commerce-customer-context-retail-portal-profile-binding-activated-v1.outbox-message.ts';
-export { BindRetailPortalProfileCommerceCustomerContextRetailPortalProfileBindingActivatedV1OutboxProducerModuleKey } from './bind-retail-portal-profile.commerce-customer-context-retail-portal-profile-binding-activated-v1.outbox-message.ts';
-export { BindRetailPortalProfileCommerceCustomerContextRetailPortalProfileBindingActivatedV1OutboxTopic } from './bind-retail-portal-profile.commerce-customer-context-retail-portal-profile-binding-activated-v1.outbox-message.ts';
-export { BindRetailPortalProfileCommerceCustomerContextRetailPortalProfileBindingActivationAuthorizationMutationRequestedV1OutboxPayloadSchema } from './bind-retail-portal-profile-commerce-customer-context-retail-portal-profile-binding-activation-authorization-mutation-requested-v1.outbox-message.ts';
-export { BindRetailPortalProfileCommerceCustomerContextRetailPortalProfileBindingActivationAuthorizationMutationRequestedV1OutboxProducerModuleKey } from './bind-retail-portal-profile-commerce-customer-context-retail-portal-profile-binding-activation-authorization-mutation-requested-v1.outbox-message.ts';
-export { BindRetailPortalProfileCommerceCustomerContextRetailPortalProfileBindingActivationAuthorizationMutationRequestedV1OutboxTopic } from './bind-retail-portal-profile-commerce-customer-context-retail-portal-profile-binding-activation-authorization-mutation-requested-v1.outbox-message.ts';
-export { createBindRetailPortalProfileCommerceCustomerContextRetailPortalProfileBindingActivatedV1OutboxMessage } from './bind-retail-portal-profile.commerce-customer-context-retail-portal-profile-binding-activated-v1.outbox-message.ts';
-export { createBindRetailPortalProfileCommerceCustomerContextRetailPortalProfileBindingActivationAuthorizationMutationRequestedV1OutboxMessage } from './bind-retail-portal-profile-commerce-customer-context-retail-portal-profile-binding-activation-authorization-mutation-requested-v1.outbox-message.ts';
-export type { BindRetailPortalProfileCommerceCustomerContextRetailPortalProfileBindingActivatedV1OutboxPayload } from './bind-retail-portal-profile.commerce-customer-context-retail-portal-profile-binding-activated-v1.outbox-message.ts';
-export type { BindRetailPortalProfileCommerceCustomerContextRetailPortalProfileBindingActivationAuthorizationMutationRequestedV1OutboxPayload } from './bind-retail-portal-profile-commerce-customer-context-retail-portal-profile-binding-activation-authorization-mutation-requested-v1.outbox-message.ts';
 // </generated-outbox-message-exports>

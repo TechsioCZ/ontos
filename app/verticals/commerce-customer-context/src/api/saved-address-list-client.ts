@@ -21,7 +21,7 @@ type SavedAddressListOperationInvocation = readonly [
 ];
 
 const savedAddressListClient = (
-  credential: Redacted.Redacted<string>,
+  credential: Redacted.Redacted,
   requestCorrelation: string,
   options: SavedAddressListClientOptions,
 ) =>
@@ -40,9 +40,7 @@ export const executeSavedAddressListWithAuthorization = (
   ...[credential, requestCorrelation, options = {}]: SavedAddressListAuthorizedInvocation
 ) =>
   savedAddressListClient(Redacted.make(credential), requestCorrelation, options).pipe(
-    Effect.flatMap((client) =>
-      client.savedAddressList.execute({ headers: {}, params: {}, payload, query: {} }),
-    ),
+    Effect.flatMap((client) => client.savedAddressList.execute({ headers: {}, params: {}, payload, query: {} })),
   );
 
 export const executeSavedAddressList = (

@@ -29,4 +29,3 @@ export const CreatePaymentTermResultSchema = Schema.Struct({
   paymentTermRef: PaymentTermRefSchema,
   semanticRevisionId: PaymentTermRevisionIdSchema,
 });
-export type CreatePaymentTermResult = typeof CreatePaymentTermResultSchema.Type;

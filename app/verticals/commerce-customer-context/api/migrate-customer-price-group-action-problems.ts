@@ -3,7 +3,7 @@
 // @ontos-action-http-slug migrate-customer-price-group
 // oxlint-disable sonarjs/function-name -- Effect Match.tags requires owner-declared tag keys; remove-when: sonarjs accepts discriminant-map properties.
 import type { ActionCoreError } from '@app/core-runtime';
-import { Effect, HttpApiMiddleware } from '@modern-js/plugin-bff/effect-edge';
+import { Effect, HttpApiMiddleware } from '@modern-js/bff-effect/effect-edge';
 import { Match, Schema } from 'effect';
 import {
   MigrateCustomerPriceGroupActionAlreadyCommittedProblemSchema,
@@ -21,6 +21,21 @@ import {
 } from '../shared/apis/migrate-customer-price-group-action.ts';
 import type { MigrateCustomerPriceGroupActionProblem } from '../shared/apis/migrate-customer-price-group-action.ts';
 import { migrateCustomerPriceGroupAction } from '../src/actions/migrate-customer-price-group.action.ts';
+/* oxlint-disable anti-slop-effect/no-service-constructor-imports -- These pure helpers construct problem values rather than Effect services. */
+import {
+  actionProblemStatus as problemStatus,
+  makeAuthenticationProblem,
+  makeConflictProblem,
+  makeForbiddenProblem,
+  makeIneligibleProblem,
+  makeInternalProblem,
+  makeInvalidProblem,
+  makeNotFoundProblem,
+  makePreconditionProblem,
+  makeUnavailableProblem,
+} from './action-problem-support.ts';
+/* oxlint-enable anti-slop-effect/no-service-constructor-imports */
+import { customerPriceGroupCatalogRejectedProblemByReasonCode } from './price-group-migration-action-problem-identity.ts';
 
 type DomainError = typeof migrateCustomerPriceGroupAction.descriptor.domainErrorSchema.Type;
 type ProblemOf<Tag extends MigrateCustomerPriceGroupActionProblem['_tag']> = Extract<
@@ -28,131 +43,53 @@ type ProblemOf<Tag extends MigrateCustomerPriceGroupActionProblem['_tag']> = Ext
   { readonly _tag: Tag }
 >;
 type DomainProblemIdentity =
-  | { readonly code: 'customer_price_group_scope_mismatch'; readonly kind: 'forbidden' }
+  | { readonly code: ProblemOf<'MigrateCustomerPriceGroupActionForbiddenProblem'>['code']; readonly kind: 'forbidden' }
   | {
-      readonly code:
-        | 'customer_price_group_catalog_rejected'
-        | 'customer_price_group_retroactive_schedule_rejected';
+      readonly code: ProblemOf<'MigrateCustomerPriceGroupActionIneligibleProblem'>['code'];
       readonly kind: 'ineligible';
     }
-  | { readonly code: 'customer_price_group_catalog_rejected'; readonly kind: 'notFound' }
+  | { readonly code: ProblemOf<'MigrateCustomerPriceGroupActionNotFoundProblem'>['code']; readonly kind: 'notFound' }
   | {
-      readonly code:
-        | 'customer_price_group_catalog_unavailable'
-        | 'customer_price_group_persistence_unavailable'
-        | 'customer_price_group_profile_unavailable';
+      readonly code: ProblemOf<'MigrateCustomerPriceGroupActionUnavailableProblem'>['code'];
       readonly kind: 'unavailable';
     };
-
-const problemStatus = {
-  authentication: 401,
-  conflict: 409,
-  forbidden: 403,
-  ineligible: 422,
-  internal: 500,
-  invalid: 400,
-  notFound: 404,
-  precondition: 428,
-  rateLimited: 429,
-  timeout: 504,
-  unavailable: 503,
-} as const;
-
-const customerPriceGroupCatalogRejectedProblemByReasonCode = {
-  INCOMPATIBLE: { code: 'customer_price_group_catalog_rejected', kind: 'ineligible' },
-  MISSING: { code: 'customer_price_group_catalog_rejected', kind: 'notFound' },
-  RETIRED: { code: 'customer_price_group_catalog_rejected', kind: 'ineligible' },
-  UNUSABLE: { code: 'customer_price_group_catalog_rejected', kind: 'ineligible' },
-} as const satisfies Record<
-  Extract<DomainError, { readonly _tag: 'CustomerPriceGroupCatalogRejected' }>['reasonCode'],
-  DomainProblemIdentity
->;
-
 export const migrateCustomerPriceGroupActionProblem = {
-  authentication: (): ProblemOf<'MigrateCustomerPriceGroupActionAuthenticationProblem'> =>
-    MigrateCustomerPriceGroupActionAuthenticationProblemSchema.make({
-      detail: 'A valid audience-scoped Bearer assertion is required.',
-      status: problemStatus.authentication,
-      title: 'Authentication required',
-      type: 'https://ontos.dev/problems/operation-authentication-required',
-    }),
-  conflict: (
-    code: ProblemOf<'MigrateCustomerPriceGroupActionConflictProblem'>['code'],
-  ): ProblemOf<'MigrateCustomerPriceGroupActionConflictProblem'> =>
-    MigrateCustomerPriceGroupActionConflictProblemSchema.make({
-      code,
-      detail: 'The Action conflicts with current state.',
-      status: problemStatus.conflict,
-      title: 'Action conflict',
-      type: 'https://ontos.dev/problems/action-conflict',
-    }),
-  forbidden: (
-    code: ProblemOf<'MigrateCustomerPriceGroupActionForbiddenProblem'>['code'],
-  ): ProblemOf<'MigrateCustomerPriceGroupActionForbiddenProblem'> =>
-    MigrateCustomerPriceGroupActionForbiddenProblemSchema.make({
-      code,
-      detail: 'The principal is not permitted to perform this Action.',
-      status: problemStatus.forbidden,
-      title: 'Action forbidden',
-      type: 'https://ontos.dev/problems/action-forbidden',
-    }),
-  ineligible: (
-    code: ProblemOf<'MigrateCustomerPriceGroupActionIneligibleProblem'>['code'],
-  ): ProblemOf<'MigrateCustomerPriceGroupActionIneligibleProblem'> =>
-    MigrateCustomerPriceGroupActionIneligibleProblemSchema.make({
-      code,
-      detail: 'The request is not eligible for this Action.',
-      status: problemStatus.ineligible,
-      title: 'Action ineligible',
-      type: 'https://ontos.dev/problems/action-ineligible',
-    }),
-  internal: (): ProblemOf<'MigrateCustomerPriceGroupActionInternalProblem'> =>
-    MigrateCustomerPriceGroupActionInternalProblemSchema.make({
-      detail: 'The Action could not be completed.',
-      status: problemStatus.internal,
-      title: 'Action failed',
-      type: 'https://ontos.dev/problems/action-failed',
-    }),
-  invalid: (): ProblemOf<'MigrateCustomerPriceGroupActionInvalidProblem'> =>
-    MigrateCustomerPriceGroupActionInvalidProblemSchema.make({
-      detail: 'The migrate-customer-price-group Action request is invalid.',
-      status: problemStatus.invalid,
-      title: 'Invalid Action request',
-      type: 'https://ontos.dev/problems/action-invalid',
-    }),
-  notFound: (
-    code: ProblemOf<'MigrateCustomerPriceGroupActionNotFoundProblem'>['code'],
-  ): ProblemOf<'MigrateCustomerPriceGroupActionNotFoundProblem'> =>
-    MigrateCustomerPriceGroupActionNotFoundProblemSchema.make({
-      code,
-      detail: 'The requested resource was not found.',
-      status: problemStatus.notFound,
-      title: 'Resource not found',
-      type: 'https://ontos.dev/problems/action-resource-not-found',
-    }),
-  precondition: (): ProblemOf<'MigrateCustomerPriceGroupActionPreconditionProblem'> =>
-    MigrateCustomerPriceGroupActionPreconditionProblemSchema.make({
-      detail: 'An Idempotency-Key header is required.',
-      status: problemStatus.precondition,
-      title: 'Idempotency key required',
-      type: 'https://ontos.dev/problems/idempotency-key-required',
-    }),
-  unavailable: (
-    code: ProblemOf<'MigrateCustomerPriceGroupActionUnavailableProblem'>['code'],
-  ): ProblemOf<'MigrateCustomerPriceGroupActionUnavailableProblem'> =>
-    MigrateCustomerPriceGroupActionUnavailableProblemSchema.make({
-      code,
-      detail: 'The Action capability is temporarily unavailable.',
-      retryable: true,
-      status: problemStatus.unavailable,
-      title: 'Action unavailable',
-      type: 'https://ontos.dev/problems/action-unavailable',
-    }),
+  authentication: makeAuthenticationProblem<ProblemOf<'MigrateCustomerPriceGroupActionAuthenticationProblem'>>(
+    (input) => MigrateCustomerPriceGroupActionAuthenticationProblemSchema.make(input),
+  ),
+  conflict: makeConflictProblem<
+    ProblemOf<'MigrateCustomerPriceGroupActionConflictProblem'>['code'],
+    ProblemOf<'MigrateCustomerPriceGroupActionConflictProblem'>
+  >((input) => MigrateCustomerPriceGroupActionConflictProblemSchema.make(input)),
+  forbidden: makeForbiddenProblem<
+    ProblemOf<'MigrateCustomerPriceGroupActionForbiddenProblem'>['code'],
+    ProblemOf<'MigrateCustomerPriceGroupActionForbiddenProblem'>
+  >((input) => MigrateCustomerPriceGroupActionForbiddenProblemSchema.make(input)),
+  ineligible: makeIneligibleProblem<
+    ProblemOf<'MigrateCustomerPriceGroupActionIneligibleProblem'>['code'],
+    ProblemOf<'MigrateCustomerPriceGroupActionIneligibleProblem'>
+  >((input) => MigrateCustomerPriceGroupActionIneligibleProblemSchema.make(input)),
+  internal: makeInternalProblem<ProblemOf<'MigrateCustomerPriceGroupActionInternalProblem'>>((input) =>
+    MigrateCustomerPriceGroupActionInternalProblemSchema.make(input),
+  ),
+  invalid: makeInvalidProblem<ProblemOf<'MigrateCustomerPriceGroupActionInvalidProblem'>>(
+    (input) => MigrateCustomerPriceGroupActionInvalidProblemSchema.make(input),
+    'migrate-customer-price-group',
+  ),
+  notFound: makeNotFoundProblem<
+    ProblemOf<'MigrateCustomerPriceGroupActionNotFoundProblem'>['code'],
+    ProblemOf<'MigrateCustomerPriceGroupActionNotFoundProblem'>
+  >((input) => MigrateCustomerPriceGroupActionNotFoundProblemSchema.make(input)),
+  precondition: makePreconditionProblem<ProblemOf<'MigrateCustomerPriceGroupActionPreconditionProblem'>>((input) =>
+    MigrateCustomerPriceGroupActionPreconditionProblemSchema.make(input),
+  ),
+  unavailable: makeUnavailableProblem<
+    ProblemOf<'MigrateCustomerPriceGroupActionUnavailableProblem'>['code'],
+    ProblemOf<'MigrateCustomerPriceGroupActionUnavailableProblem'>
+  >((input) => MigrateCustomerPriceGroupActionUnavailableProblemSchema.make(input)),
 } as const;
 
-const mapDomainIdentity = (
-  identity: DomainProblemIdentity,
-): MigrateCustomerPriceGroupActionProblem =>
+const mapDomainIdentity = (identity: DomainProblemIdentity): MigrateCustomerPriceGroupActionProblem =>
   Match.value(identity).pipe(
     Match.when({ kind: 'forbidden' as const }, (matched) =>
       migrateCustomerPriceGroupActionProblem.forbidden(matched.code),
@@ -175,21 +112,13 @@ const mapDomainProblem = (error: DomainError): MigrateCustomerPriceGroupActionPr
       CustomerPriceGroupCatalogRejected: (failure) =>
         mapDomainIdentity(customerPriceGroupCatalogRejectedProblemByReasonCode[failure.reasonCode]),
       CustomerPriceGroupCatalogUnavailable: () =>
-        migrateCustomerPriceGroupActionProblem.unavailable(
-          'customer_price_group_catalog_unavailable',
-        ),
+        migrateCustomerPriceGroupActionProblem.unavailable('customer_price_group_catalog_unavailable'),
       CustomerPriceGroupPersistenceUnavailable: () =>
-        migrateCustomerPriceGroupActionProblem.unavailable(
-          'customer_price_group_persistence_unavailable',
-        ),
+        migrateCustomerPriceGroupActionProblem.unavailable('customer_price_group_persistence_unavailable'),
       CustomerPriceGroupProfileUnavailable: () =>
-        migrateCustomerPriceGroupActionProblem.unavailable(
-          'customer_price_group_profile_unavailable',
-        ),
+        migrateCustomerPriceGroupActionProblem.unavailable('customer_price_group_profile_unavailable'),
       CustomerPriceGroupRetroactiveScheduleRejected: () =>
-        migrateCustomerPriceGroupActionProblem.ineligible(
-          'customer_price_group_retroactive_schedule_rejected',
-        ),
+        migrateCustomerPriceGroupActionProblem.ineligible('customer_price_group_retroactive_schedule_rejected'),
       CustomerPriceGroupScopeMismatch: () =>
         migrateCustomerPriceGroupActionProblem.forbidden('customer_price_group_scope_mismatch'),
     }),
@@ -223,38 +152,24 @@ const mapCoreProblem = (error: ActionCoreError): MigrateCustomerPriceGroupAction
         }),
       ActionHandlerExecutionError: migrateCustomerPriceGroupActionProblem.internal,
       ActionIdempotencyKeyRequired: migrateCustomerPriceGroupActionProblem.precondition,
-      ActionInvocationNotFound: (failure) =>
-        migrateCustomerPriceGroupActionProblem.notFound(failure.code),
-      ActionInvocationPersistenceError: (failure) =>
-        migrateCustomerPriceGroupActionProblem.unavailable(failure.code),
-      ActionInvocationStateError: (failure) =>
-        migrateCustomerPriceGroupActionProblem.conflict(failure.code),
+      ActionInvocationNotFound: (failure) => migrateCustomerPriceGroupActionProblem.notFound(failure.code),
+      ActionInvocationPersistenceError: (failure) => migrateCustomerPriceGroupActionProblem.unavailable(failure.code),
+      ActionInvocationStateError: (failure) => migrateCustomerPriceGroupActionProblem.conflict(failure.code),
       ActionPayloadValidationError: migrateCustomerPriceGroupActionProblem.invalid,
-      ActionPermissionCheckError: (failure) =>
-        migrateCustomerPriceGroupActionProblem.unavailable(failure.code),
-      ActionPermissionDenied: (failure) =>
-        migrateCustomerPriceGroupActionProblem.forbidden(failure.code),
-      ActionPolicyDenied: (failure) =>
-        migrateCustomerPriceGroupActionProblem.ineligible(failure.code),
-      ActionPolicyEvaluationError: (failure) =>
-        migrateCustomerPriceGroupActionProblem.unavailable(failure.code),
-      ActionRequestHashConflict: (failure) =>
-        migrateCustomerPriceGroupActionProblem.conflict(failure.code),
+      ActionPermissionCheckError: (failure) => migrateCustomerPriceGroupActionProblem.unavailable(failure.code),
+      ActionPermissionDenied: (failure) => migrateCustomerPriceGroupActionProblem.forbidden(failure.code),
+      ActionPolicyDenied: (failure) => migrateCustomerPriceGroupActionProblem.ineligible(failure.code),
+      ActionPolicyEvaluationError: (failure) => migrateCustomerPriceGroupActionProblem.unavailable(failure.code),
+      ActionRequestHashConflict: (failure) => migrateCustomerPriceGroupActionProblem.conflict(failure.code),
       ActionResultValidationError: migrateCustomerPriceGroupActionProblem.internal,
-      ActionTransactionError: (failure) =>
-        migrateCustomerPriceGroupActionProblem.unavailable(failure.code),
+      ActionTransactionError: (failure) => migrateCustomerPriceGroupActionProblem.unavailable(failure.code),
       ActionTrustedContextValidationError: migrateCustomerPriceGroupActionProblem.authentication,
-      ModuleStateCheckUnavailableError: (failure) =>
-        migrateCustomerPriceGroupActionProblem.unavailable(failure.code),
-      ModuleStateDeniedError: (failure) =>
-        migrateCustomerPriceGroupActionProblem.forbidden(failure.code),
+      ModuleStateCheckUnavailableError: (failure) => migrateCustomerPriceGroupActionProblem.unavailable(failure.code),
+      ModuleStateDeniedError: (failure) => migrateCustomerPriceGroupActionProblem.forbidden(failure.code),
       OperationAuthenticationRequired: migrateCustomerPriceGroupActionProblem.authentication,
-      OperationContextDenied: (failure) =>
-        migrateCustomerPriceGroupActionProblem.forbidden(failure.code),
-      OperationContextInvalid: (failure) =>
-        migrateCustomerPriceGroupActionProblem.forbidden(failure.code),
-      OperationContextUnavailable: (failure) =>
-        migrateCustomerPriceGroupActionProblem.unavailable(failure.code),
+      OperationContextDenied: (failure) => migrateCustomerPriceGroupActionProblem.forbidden(failure.code),
+      OperationContextInvalid: (failure) => migrateCustomerPriceGroupActionProblem.forbidden(failure.code),
+      OperationContextUnavailable: (failure) => migrateCustomerPriceGroupActionProblem.unavailable(failure.code),
     }),
     Match.exhaustive,
   );
@@ -262,11 +177,9 @@ const mapCoreProblem = (error: ActionCoreError): MigrateCustomerPriceGroupAction
 const isDomainError = Schema.is(migrateCustomerPriceGroupAction.descriptor.domainErrorSchema);
 export const mapMigrateCustomerPriceGroupActionProblem = (
   error: ActionCoreError | DomainError,
-): MigrateCustomerPriceGroupActionProblem =>
-  isDomainError(error) ? mapDomainProblem(error) : mapCoreProblem(error);
+): MigrateCustomerPriceGroupActionProblem => (isDomainError(error) ? mapDomainProblem(error) : mapCoreProblem(error));
 
-export const migrateCustomerPriceGroupActionSchemaErrorLive =
-  HttpApiMiddleware.layerSchemaErrorTransform(
-    MigrateCustomerPriceGroupActionSchemaErrorMiddleware,
-    () => Effect.fail(migrateCustomerPriceGroupActionProblem.invalid()),
-  );
+export const migrateCustomerPriceGroupActionSchemaErrorLive = HttpApiMiddleware.layerSchemaErrorTransform(
+  MigrateCustomerPriceGroupActionSchemaErrorMiddleware,
+  () => Effect.fail(migrateCustomerPriceGroupActionProblem.invalid()),
+);

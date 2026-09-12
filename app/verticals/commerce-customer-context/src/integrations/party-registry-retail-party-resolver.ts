@@ -7,7 +7,7 @@ import { ProfilePersistenceDependencyFailure } from '../persistence/profile-pers
 type RetailPartyResolver = NonNullable<ProfilePersistenceDependencies['resolveRetailParty']>;
 type RetailPartyResolutionExecutor = typeof executePartyDetail;
 
-export type RetailPartyResolution =
+type RetailPartyResolution =
   | {
       readonly outcome: 'CURRENT_PARTY_RESOLVED';
       readonly partyResourceId: string;
@@ -87,36 +87,30 @@ export const makePartyRegistryRetailPartyResolver =
     };
 
     return execute({ partyRef: requestedPartyRef }, input.requestCorrelation).pipe(
-      Effect.mapError((cause) =>
-        dependencyFailure('The Party Registry Party Detail operation is unavailable', cause),
-      ),
-      Effect.flatMap(
-        (response): Effect.Effect<RetailPartyResolution, ProfilePersistenceDependencyFailure> => {
-          if (!Schema.is(PartyDetailResponseSchema)(response)) {
-            return Effect.fail(
-              dependencyFailure('The Party Registry returned an invalid Party Detail outcome'),
-            );
-          }
+      Effect.mapError((cause) => dependencyFailure('The Party Registry Party Detail operation is unavailable', cause)),
+      Effect.flatMap((response): Effect.Effect<RetailPartyResolution, ProfilePersistenceDependencyFailure> => {
+        if (!Schema.is(PartyDetailResponseSchema)(response)) {
+          return Effect.fail(dependencyFailure('The Party Registry returned an invalid Party Detail outcome'));
+        }
 
-          // A direct resolution is deliberately required. Accepting an alias here would make the
-          // authenticated caller's subject differ from the canonical owner identity at ensure time.
-          const directCanonical =
-            response.resolution.kind === 'DIRECT' &&
-            samePartyRef(response.resolution.requestedPartyRef, requestedPartyRef) &&
-            samePartyRef(response.resolution.canonicalPartyRef, requestedPartyRef) &&
-            samePartyRef(response.party.partyRef, requestedPartyRef) &&
-            response.resolution.aliasChain.length === 0 &&
-            Option.isNone(response.party.archivedAt);
+        // A direct resolution is deliberately required. Accepting an alias here would make the
+        // authenticated caller's subject differ from the canonical owner identity at ensure time.
+        const directCanonical =
+          response.resolution.kind === 'DIRECT' &&
+          samePartyRef(response.resolution.requestedPartyRef, requestedPartyRef) &&
+          samePartyRef(response.resolution.canonicalPartyRef, requestedPartyRef) &&
+          samePartyRef(response.party.partyRef, requestedPartyRef) &&
+          response.resolution.aliasChain.length === 0 &&
+          Option.isNone(response.party.archivedAt);
 
-          return directCanonical
-            ? Effect.succeed({
-                outcome: 'CURRENT_PARTY_RESOLVED' as const,
-                partyResourceId: request.partyResourceId,
-                partyResourceRevision: String(response.party.revision),
-              })
-            : Effect.succeed({ outcome: 'INVALID_OR_INSUFFICIENT_EVIDENCE' as const });
-        },
-      ),
+        return directCanonical
+          ? Effect.succeed({
+              outcome: 'CURRENT_PARTY_RESOLVED' as const,
+              partyResourceId: request.partyResourceId,
+              partyResourceRevision: String(response.party.revision),
+            })
+          : Effect.succeed({ outcome: 'INVALID_OR_INSUFFICIENT_EVIDENCE' as const });
+      }),
     );
   };
 

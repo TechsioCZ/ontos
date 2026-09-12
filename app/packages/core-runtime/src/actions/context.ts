@@ -12,9 +12,7 @@ import type {
 } from './events.ts';
 import { decodedStringBrand, nonEmptyString, TargetModuleKeySchema, TargetResourceIdSchema } from './string-schemas.ts';
 
-const committedActionDomainRejection: unique symbol = Symbol(
-  '@app/core-runtime/actions/committed-domain-rejection',
-);
+const committedActionDomainRejection: unique symbol = Symbol('@app/core-runtime/actions/committed-domain-rejection');
 
 class CommittedActionDomainRejectionStorage<DomainError extends { readonly _tag: string }> {
   readonly [committedActionDomainRejection] = true;
@@ -41,13 +39,10 @@ export type CommittedActionDomainRejection<DomainError extends { readonly _tag: 
 
 export const commitActionThenReject = <DomainError extends { readonly _tag: string }>(
   domainError: DomainError,
-): CommittedActionDomainRejection<DomainError> =>
-  new CommittedActionDomainRejectionStorage(domainError);
+): CommittedActionDomainRejection<DomainError> => new CommittedActionDomainRejectionStorage(domainError);
 
 /** Internal Core runtime schema for the opaque committed-domain-rejection value. */
-export const CommittedActionDomainRejectionSchema = Schema.instanceOf(
-  CommittedActionDomainRejectionStorage,
-);
+export const CommittedActionDomainRejectionSchema = Schema.instanceOf(CommittedActionDomainRejectionStorage);
 
 /** Internal Core runtime accessor. The public package root intentionally does not export it. */
 export const getCommittedActionDomainError = <DomainError extends { readonly _tag: string }>(

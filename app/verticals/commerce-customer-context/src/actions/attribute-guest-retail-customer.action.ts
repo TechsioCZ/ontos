@@ -45,8 +45,7 @@ const handle = Effect.fn('AttributeGuestRetailCustomerAction.handle')(
     const result = yield* context.services.attribute(payload, context);
     if (
       result.outcome === 'ATTRIBUTED' &&
-      (result.partyRef.tenantId !== context.scope.tenantId ||
-        result.profileRef.tenantId !== context.scope.tenantId)
+      (result.partyRef.tenantId !== context.scope.tenantId || result.profileRef.tenantId !== context.scope.tenantId)
     ) {
       return yield* new AttributeGuestRetailCustomerRejected({
         code: 'CURRENT_STATE_CONFLICT',
@@ -84,11 +83,7 @@ const handle = Effect.fn('AttributeGuestRetailCustomerAction.handle')(
         }),
       );
     } else {
-      yield* recordProfileLookup(
-        context,
-        `guest-party-resolution:${payload.correlationRoot}:${result.outcome}`,
-        0,
-      );
+      yield* recordProfileLookup(context, `guest-party-resolution:${payload.correlationRoot}:${result.outcome}`, 0);
     }
     return result;
   },
@@ -103,8 +98,7 @@ export const attributeGuestRetailCustomerAction = defineAction(
     auditProfile: 'sensitive',
     domainErrorSchema: AttributeGuestRetailCustomerRejected,
     domainEvents: {
-      'commerce.customer-context.guest-retail-customer-attributed.v1':
-        AttributeGuestRetailCustomerResultSchema,
+      'commerce.customer-context.guest-retail-customer-attributed.v1': AttributeGuestRetailCustomerResultSchema,
     },
     entrypoint: defineTenantModuleEntrypoint({
       access: 'write',
@@ -124,23 +118,12 @@ export const attributeGuestRetailCustomerAction = defineAction(
   handle,
   (transaction, scope) =>
     profileServicesForVerifiedScope(transaction, scope).pipe(
-      Effect.map(({ attributeGuestRetailCustomer }) => attributeGuestRetailCustomer),
+      Effect.map(
+        ({ attributeGuestRetailCustomer }): AttributeGuestRetailCustomerServices => attributeGuestRetailCustomer,
+      ),
     ),
 );
 
 // <generated-outbox-message-exports>
-export { AttributeGuestRetailCustomerCommerceCustomerContextGuestRetailCustomerAttributedV1OutboxPayloadSchema } from './attribute-guest-retail-customer.commerce-customer-context-guest-retail-customer-attributed-v1.outbox-message.ts';
-export { AttributeGuestRetailCustomerCommerceCustomerContextGuestRetailCustomerAttributedV1OutboxProducerModuleKey } from './attribute-guest-retail-customer.commerce-customer-context-guest-retail-customer-attributed-v1.outbox-message.ts';
-export { AttributeGuestRetailCustomerCommerceCustomerContextGuestRetailCustomerAttributedV1OutboxTopic } from './attribute-guest-retail-customer.commerce-customer-context-guest-retail-customer-attributed-v1.outbox-message.ts';
-export { createAttributeGuestRetailCustomerCommerceCustomerContextGuestRetailCustomerAttributedV1OutboxMessage } from './attribute-guest-retail-customer.commerce-customer-context-guest-retail-customer-attributed-v1.outbox-message.ts';
-export type { AttributeGuestRetailCustomerCommerceCustomerContextGuestRetailCustomerAttributedV1OutboxPayload } from './attribute-guest-retail-customer.commerce-customer-context-guest-retail-customer-attributed-v1.outbox-message.ts';
-export {
-  AttributeGuestRetailCustomerPayloadSchema,
-  AttributeGuestRetailCustomerRejected,
-  AttributeGuestRetailCustomerResultSchema,
-} from '../../shared/actions/attribute-guest-retail-customer.ts';
-export type {
-  AttributeGuestRetailCustomerPayload,
-  AttributeGuestRetailCustomerResult,
-} from '../../shared/actions/attribute-guest-retail-customer.ts';
+export type { AttributeGuestRetailCustomerPayload } from '../../shared/actions/attribute-guest-retail-customer.ts';
 // </generated-outbox-message-exports>

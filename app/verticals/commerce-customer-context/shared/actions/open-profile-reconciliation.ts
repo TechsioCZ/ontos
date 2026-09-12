@@ -8,9 +8,7 @@ import { CommerceCustomerProfileRefSchema } from '../domain/profile-decisions.ts
 import { ProfileReconciliationCaseRefSchema } from '../resources/profile-reconciliation-case.ts';
 
 const RevisionSchema = Schema.Finite.check(Schema.isInt(), Schema.isGreaterThanOrEqualTo(1));
-const EventVersionSchema = Schema.toEncoded(
-  Schema.BigIntFromString.check(Schema.isGreaterThanOrEqualToBigInt(1n)),
-);
+const EventVersionSchema = Schema.toEncoded(Schema.BigIntFromString.check(Schema.isGreaterThanOrEqualToBigInt(1n)));
 
 export const ProfileReconciliationCanonicalizationEvidenceSchema = Schema.Union([
   Schema.Struct({
@@ -29,8 +27,6 @@ export const ProfileReconciliationCanonicalizationEvidenceSchema = Schema.Union(
     policyVersion: ProfileBoundedKeySchema,
   }),
 ]);
-export type ProfileReconciliationCanonicalizationEvidence =
-  typeof ProfileReconciliationCanonicalizationEvidenceSchema.Type;
 
 export const OpenProfileReconciliationPayloadSchema = Schema.Struct({
   canonicalizationEvidence: ProfileReconciliationCanonicalizationEvidenceSchema,
@@ -39,12 +35,7 @@ export const OpenProfileReconciliationPayloadSchema = Schema.Struct({
   profileRefs: Schema.Array(CommerceCustomerProfileRefSchema).check(Schema.isMinLength(2)),
   reason: Schema.Trim.check(Schema.isMinLength(1), Schema.isMaxLength(500)),
   targetSubject: CommerceCustomerProfileSubjectSchema,
-  trigger: Schema.Literals([
-    'PARTY_ALIAS',
-    'COUNTERPARTY_ALIAS',
-    'CREATE_COLLISION',
-    'IMPORT_CORRELATION',
-  ]),
+  trigger: Schema.Literals(['PARTY_ALIAS', 'COUNTERPARTY_ALIAS', 'CREATE_COLLISION', 'IMPORT_CORRELATION']),
 }).check(
   Schema.makeFilter(({ canonicalizationEvidence, trigger }) =>
     canonicalizationEvidence.evidenceKind === 'AUTHORIZED_OPERATOR_DECISION' &&
@@ -58,9 +49,7 @@ export const OpenProfileReconciliationPayloadSchema = Schema.Struct({
       (profileRef) =>
         profileRef.kind === targetSubject.kind &&
         profileRef.tenantId ===
-          (targetSubject.kind === 'RETAIL'
-            ? targetSubject.partyRef.tenantId
-            : targetSubject.counterpartyRef.tenantId),
+          (targetSubject.kind === 'RETAIL' ? targetSubject.partyRef.tenantId : targetSubject.counterpartyRef.tenantId),
     )
       ? undefined
       : 'Every reconciliation member must match the target subject kind and Tenant',

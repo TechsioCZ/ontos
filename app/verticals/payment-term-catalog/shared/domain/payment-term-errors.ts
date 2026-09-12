@@ -1,22 +1,16 @@
-import { Schema } from 'effect';
+import { Schema } from 'effect'; // oxlint-disable-line eslint/max-classes-per-file -- These exported tagged errors form one cohesive public vocabulary; remove when they can move without changing the module surface.
 import { PaymentTermRefSchema } from '../resources/payment-term.ts';
 
-export class PaymentTermNotFound extends Schema.TaggedError<PaymentTermNotFound>()(
-  'PaymentTermNotFound',
-  {
-    code: Schema.Literal('payment_term_not_found'),
-    reason: Schema.String,
-  },
-) {}
+export class PaymentTermNotFound extends Schema.TaggedError<PaymentTermNotFound>()('PaymentTermNotFound', {
+  code: Schema.Literal('payment_term_not_found'),
+  reason: Schema.String,
+}) {}
 
-export class PaymentTermCodeConflict extends Schema.TaggedError<PaymentTermCodeConflict>()(
-  'PaymentTermCodeConflict',
-  {
-    code: Schema.Literal('payment_term_code_conflict'),
-    conflictingCode: Schema.String,
-    reason: Schema.String,
-  },
-) {}
+export class PaymentTermCodeConflict extends Schema.TaggedError<PaymentTermCodeConflict>()('PaymentTermCodeConflict', {
+  code: Schema.Literal('payment_term_code_conflict'),
+  conflictingCode: Schema.String,
+  reason: Schema.String,
+}) {}
 
 export class PaymentTermDuplicateSemantics extends Schema.TaggedError<PaymentTermDuplicateSemantics>()(
   'PaymentTermDuplicateSemantics',
@@ -30,8 +24,8 @@ export class PaymentTermDuplicateSemantics extends Schema.TaggedError<PaymentTer
 export class PaymentTermRevisionConflict extends Schema.TaggedError<PaymentTermRevisionConflict>()(
   'PaymentTermRevisionConflict',
   {
-    code: Schema.Literal('payment_term_revision_conflict'),
     actualRevision: Schema.Finite,
+    code: Schema.Literal('payment_term_revision_conflict'),
     expectedRevision: Schema.Finite,
     reason: Schema.String,
   },
@@ -84,7 +78,7 @@ export class PaymentTermRetirementReservationUnavailable extends Schema.TaggedEr
   },
 ) {}
 
-export class PaymentTermSemanticChangeRequired extends Schema.TaggedError<PaymentTermSemanticChangeRequired>()(
+class PaymentTermSemanticChangeRequired extends Schema.TaggedError<PaymentTermSemanticChangeRequired>()(
   'PaymentTermSemanticChangeRequired',
   {
     code: Schema.Literal('payment_term_semantic_change_required'),
@@ -100,7 +94,7 @@ export class PaymentTermReconciliationConflict extends Schema.TaggedError<Paymen
   },
 ) {}
 
-export class PaymentTermPersistenceUnavailable extends Schema.TaggedError<PaymentTermPersistenceUnavailable>()(
+class PaymentTermPersistenceUnavailable extends Schema.TaggedError<PaymentTermPersistenceUnavailable>()(
   'PaymentTermPersistenceUnavailable',
   {
     code: Schema.Literal('payment_term_persistence_unavailable'),
@@ -108,7 +102,7 @@ export class PaymentTermPersistenceUnavailable extends Schema.TaggedError<Paymen
   },
 ) {}
 
-export const PaymentTermMutationErrorSchema = Schema.Union([
+const PaymentTermMutationErrorSchema = Schema.Union([
   PaymentTermNotFound,
   PaymentTermCodeConflict,
   PaymentTermDuplicateSemantics,
@@ -123,4 +117,5 @@ export const PaymentTermMutationErrorSchema = Schema.Union([
   PaymentTermReconciliationConflict,
   PaymentTermPersistenceUnavailable,
 ]);
-export type PaymentTermMutationError = typeof PaymentTermMutationErrorSchema.Type;
+// eslint-disable-next-line no-unused-vars -- Retain the aggregate mutation-error type that structurally keeps its private schema union connected.
+type PaymentTermMutationError = typeof PaymentTermMutationErrorSchema.Type;

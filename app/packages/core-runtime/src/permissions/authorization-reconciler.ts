@@ -14,10 +14,7 @@ export interface AuthorizationMutationReconcilerService {
   readonly reconcile: (input: {
     readonly limit: number;
     readonly tenantId?: string;
-  }) => Effect.Effect<
-    AuthorizationMutationReconciliationSummary,
-    AuthorizationMutationReconciliationUnavailable
-  >;
+  }) => Effect.Effect<AuthorizationMutationReconciliationSummary, AuthorizationMutationReconciliationUnavailable>;
 }
 
 export class AuthorizationMutationReconciler extends Context.Service<

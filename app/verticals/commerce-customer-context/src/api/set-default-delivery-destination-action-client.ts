@@ -69,11 +69,6 @@ export const executeSetDefaultDeliveryDestination = (
 ) =>
   operationGateway.invoke(
     (credential) =>
-      executeSetDefaultDeliveryDestinationWithAuthorization(
-        payload,
-        credential,
-        requestCorrelation,
-        options,
-      ),
+      executeSetDefaultDeliveryDestinationWithAuthorization(payload, credential, requestCorrelation, options),
     options.gateway,
   );

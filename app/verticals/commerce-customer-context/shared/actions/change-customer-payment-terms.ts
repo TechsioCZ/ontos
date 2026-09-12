@@ -9,10 +9,7 @@ const revision = Schema.Finite.check(Schema.isInt(), Schema.isGreaterThanOrEqual
 const reason = Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(500));
 
 export const ChangeCustomerPaymentTermsPayloadSchema = Schema.Struct({
-  changes: Schema.Array(CustomerPaymentTermsChangeSchema).check(
-    Schema.isMinLength(1),
-    Schema.isMaxLength(50),
-  ),
+  changes: Schema.Array(CustomerPaymentTermsChangeSchema).check(Schema.isMinLength(1), Schema.isMaxLength(50)),
   counterpartyRef: CounterpartyRefSchema,
   expectedRevision: revision,
   profileRef: CounterpartyPurchasingProfileRefSchema,

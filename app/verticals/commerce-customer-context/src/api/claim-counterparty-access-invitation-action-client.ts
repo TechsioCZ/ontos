@@ -69,11 +69,6 @@ export const executeClaimCounterpartyAccessInvitation = (
 ) =>
   operationGateway.invoke(
     (credential) =>
-      executeClaimCounterpartyAccessInvitationWithAuthorization(
-        payload,
-        credential,
-        requestCorrelation,
-        options,
-      ),
+      executeClaimCounterpartyAccessInvitationWithAuthorization(payload, credential, requestCorrelation, options),
     options.gateway,
   );

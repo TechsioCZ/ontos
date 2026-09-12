@@ -21,7 +21,7 @@ type CounterpartyOrderHistoryDetailOperationInvocation = readonly [
 ];
 
 const counterpartyOrderHistoryDetailClient = (
-  credential: Redacted.Redacted<string>,
+  credential: Redacted.Redacted,
   requestCorrelation: string,
   options: CounterpartyOrderHistoryDetailClientOptions,
 ) =>
@@ -37,11 +37,7 @@ const counterpartyOrderHistoryDetailClient = (
 
 export const executeCounterpartyOrderHistoryDetailWithAuthorization = (
   payload: CounterpartyOrderHistoryDetailRequest,
-  ...[
-    credential,
-    requestCorrelation,
-    options = {},
-  ]: CounterpartyOrderHistoryDetailAuthorizedInvocation
+  ...[credential, requestCorrelation, options = {}]: CounterpartyOrderHistoryDetailAuthorizedInvocation
 ) =>
   counterpartyOrderHistoryDetailClient(Redacted.make(credential), requestCorrelation, options).pipe(
     Effect.flatMap((client) =>
@@ -59,10 +55,5 @@ export const executeCounterpartyOrderHistoryDetail = (
   ...[requestCorrelation, options = {}]: CounterpartyOrderHistoryDetailOperationInvocation
 ) =>
   operationGateway.invoke((credential) =>
-    executeCounterpartyOrderHistoryDetailWithAuthorization(
-      payload,
-      credential,
-      requestCorrelation,
-      options,
-    ),
+    executeCounterpartyOrderHistoryDetailWithAuthorization(payload, credential, requestCorrelation, options),
   );

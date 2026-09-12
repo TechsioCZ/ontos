@@ -164,86 +164,85 @@ it('declares exact submit authorization without promoting an untrusted Storefron
   });
 });
 
-it.effect(
-  'collects audit/read evidence and publishes the owner-returned approval request ref',
-  () =>
-    Effect.gen(function* collectsApprovalEvidence() {
-      let auditRecords = 0;
-      let dataAccessRecords = 0;
-      let submissionCalls = 0;
-      let boundInvocationId: string | undefined;
-      let publishedRequestRef: string | undefined;
-      const handler = getActionHandler(triggerPurchaseApprovalAction);
-      const boundSubmission = {
-        submit: ({ idempotencyKey }: { readonly idempotencyKey: string }) =>
-          Effect.sync(() => {
-            expect(idempotencyKey).toBe('purchase-approval-trigger:1');
-            submissionCalls += 1;
-            return { _tag: 'APPROVAL_SUBMITTED' as const, approvalRequestRef: 'approval:1' };
-          }),
-      };
-      const submission = {
-        ...boundSubmission,
-        forActionInvocation: (actionInvocationId: string) => {
-          boundInvocationId = actionInvocationId;
-          return boundSubmission;
-        },
-      };
-      const result = yield* handler(payload, {
-        actionInvocationId: 'purchase-approval-trigger:1',
-        addDomainEvent: ({ payloadJson, subjectResourceId }) =>
-          Effect.sync(() => {
-            publishedRequestRef = subjectResourceId;
-            expect(payloadJson).toEqual({ outcome: 'SUBMITTED', requestRef: 'approval:1' });
-            return { eventId: 'event:1' } as never;
-          }),
-        addOutboxMessage: (_event, message) =>
-          Effect.sync(() => {
-            expect(message.payloadJson).toEqual({
-              data: { outcome: 'SUBMITTED', requestRef: 'approval:1' },
-            });
-          }),
-        recordAuditEvidence: () =>
-          Effect.sync(() => {
-            auditRecords += 1;
-          }),
-        recordDataAccess: () =>
-          Effect.sync(() => {
-            dataAccessRecords += 1;
-          }),
-        scope,
-        services: {
-          evaluationSource: { loadCurrent: () => Effect.succeed(evaluationInput) },
-          evidence: {
-            loadCurrent: () =>
-              Effect.succeed({
-                currentSourceRevisions: sourceRevisions,
-                profileEvidence,
-                proposalEvidence,
-              }),
-          },
-          submission,
-        },
-      }).pipe(
-        Effect.provideService(PurchaseApprovalSubmission, submission),
-        Effect.provideService(PurchaseApprovalTriggerEvidenceSourceFactory, {
-          make: () => Effect.die('Factory requirements are not used by the extracted handler'),
+it.effect('collects audit/read evidence and publishes the owner-returned approval request ref', () =>
+  Effect.gen(function* collectsApprovalEvidence() {
+    let auditRecords = 0;
+    let dataAccessRecords = 0;
+    let submissionCalls = 0;
+    let boundInvocationId: string | undefined;
+    let publishedRequestRef: string | undefined;
+    const handler = getActionHandler(triggerPurchaseApprovalAction);
+    const boundSubmission = {
+      submit: ({ idempotencyKey }: { readonly idempotencyKey: string }) =>
+        Effect.sync(() => {
+          expect(idempotencyKey).toBe('purchase-approval-trigger:1');
+          submissionCalls += 1;
+          return { _tag: 'APPROVAL_SUBMITTED' as const, approvalRequestRef: 'approval:1' };
         }),
-        Effect.provideService(PurchaseLimitEvaluationSourceFactory, {
-          make: () => Effect.die('Factory requirements are not used by the extracted handler'),
+    };
+    const submission = {
+      ...boundSubmission,
+      forActionInvocation: (actionInvocationId: string) => {
+        boundInvocationId = actionInvocationId;
+        return boundSubmission;
+      },
+    };
+    const result = yield* handler(payload, {
+      actionInvocationId: 'purchase-approval-trigger:1',
+      addDomainEvent: ({ payloadJson, subjectResourceId }) =>
+        Effect.sync(() => {
+          publishedRequestRef = subjectResourceId;
+          expect(payloadJson).toEqual({ outcome: 'SUBMITTED', requestRef: 'approval:1' });
+          // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- SAFETY: The handler only forwards this placeholder to addOutboxMessage, whose test stub ignores the event argument.
+          return { eventId: 'event:1' } as never;
         }),
-      );
+      addOutboxMessage: (_event, message) =>
+        Effect.sync(() => {
+          expect(message.payloadJson).toEqual({
+            data: { outcome: 'SUBMITTED', requestRef: 'approval:1' },
+          });
+        }),
+      recordAuditEvidence: () =>
+        Effect.sync(() => {
+          auditRecords += 1;
+        }),
+      recordDataAccess: () =>
+        Effect.sync(() => {
+          dataAccessRecords += 1;
+        }),
+      scope,
+      services: {
+        evaluationSource: { loadCurrent: () => Effect.succeed(evaluationInput) },
+        evidence: {
+          loadCurrent: () =>
+            Effect.succeed({
+              currentSourceRevisions: sourceRevisions,
+              profileEvidence,
+              proposalEvidence,
+            }),
+        },
+        submission,
+      },
+    }).pipe(
+      Effect.provideService(PurchaseApprovalSubmission, submission),
+      Effect.provideService(PurchaseApprovalTriggerEvidenceSourceFactory, {
+        make: () => Effect.die('Factory requirements are not used by the extracted handler'),
+      }),
+      Effect.provideService(PurchaseLimitEvaluationSourceFactory, {
+        make: () => Effect.die('Factory requirements are not used by the extracted handler'),
+      }),
+    );
 
-      expect(Schema.is(TriggerPurchaseApprovalResultSchema)(result)).toBe(true);
-      expect(auditRecords).toBe(1);
-      expect(dataAccessRecords).toBe(3);
-      expect(submissionCalls).toBe(1);
-      expect(boundInvocationId).toBe('purchase-approval-trigger:1');
-      expect(publishedRequestRef).toBe('approval:1');
-      expect(Object.keys(triggerPurchaseApprovalAction.descriptor.domainEvents)).toEqual([
-        'commerce.customer-context.purchase-approval-request-submitted.v1',
-      ]);
-    }),
+    expect(Schema.is(TriggerPurchaseApprovalResultSchema)(result)).toBe(true);
+    expect(auditRecords).toBe(1);
+    expect(dataAccessRecords).toBe(3);
+    expect(submissionCalls).toBe(1);
+    expect(boundInvocationId).toBe('purchase-approval-trigger:1');
+    expect(publishedRequestRef).toBe('approval:1');
+    expect(Object.keys(triggerPurchaseApprovalAction.descriptor.domainEvents)).toEqual([
+      'commerce.customer-context.purchase-approval-request-submitted.v1',
+    ]);
+  }),
 );
 
 it.effect('fails closed when a source changes between evaluation and final evidence load', () =>
@@ -259,10 +258,8 @@ it.effect('fails closed when a source changes between evaluation and final evide
     };
     const result = yield* handler(payload, {
       actionInvocationId: 'purchase-approval-trigger:race',
-      addDomainEvent: () =>
-        Effect.die('No event should be emitted after a failed currentness check'),
-      addOutboxMessage: () =>
-        Effect.die('No outbox message should be emitted after a failed currentness check'),
+      addDomainEvent: () => Effect.die('No event should be emitted after a failed currentness check'),
+      addOutboxMessage: () => Effect.die('No outbox message should be emitted after a failed currentness check'),
       recordAuditEvidence: () => Effect.void,
       recordDataAccess: () => Effect.void,
       scope,
@@ -272,9 +269,7 @@ it.effect('fails closed when a source changes between evaluation and final evide
           loadCurrent: () =>
             Effect.succeed({
               currentSourceRevisions: sourceRevisions.map((candidate) =>
-                candidate.source === 'storefront-context'
-                  ? { ...candidate, revision: 'storefront:2' }
-                  : candidate,
+                candidate.source === 'storefront-context' ? { ...candidate, revision: 'storefront:2' } : candidate,
               ),
               profileEvidence,
               proposalEvidence,
@@ -292,9 +287,7 @@ it.effect('fails closed when a source changes between evaluation and final evide
       }),
     );
 
-    expect(
-      Schema.is(Schema.Struct({ _tag: Schema.Literal('APPROVAL_PRECONDITION_FAILED') }))(result),
-    ).toBe(true);
+    expect(Schema.is(Schema.Struct({ _tag: Schema.Literal('APPROVAL_PRECONDITION_FAILED') }))(result)).toBe(true);
     expect(submissionCalls).toBe(0);
   }),
 );

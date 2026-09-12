@@ -49,12 +49,12 @@ const otherCounterpartyRef = {
 } as const;
 const decidedAtText = '2026-09-09T10:00:00.000Z';
 const decidedAt = DateTime.makeUnsafe(decidedAtText);
-const sellingLegalEntityId = Schema.decodeUnknownSync(
-  PurchaseLimitEvaluationContextSchema.fields.sellingLegalEntityId,
-)('50000000-0000-4000-8000-000000000001');
-const storefrontId = Schema.decodeUnknownSync(
-  PurchaseLimitEvaluationContextSchema.fields.storefrontId,
-)('storefront:akros-b2b');
+const sellingLegalEntityId = Schema.decodeUnknownSync(PurchaseLimitEvaluationContextSchema.fields.sellingLegalEntityId)(
+  '50000000-0000-4000-8000-000000000001',
+);
+const storefrontId = Schema.decodeUnknownSync(PurchaseLimitEvaluationContextSchema.fields.storefrontId)(
+  'storefront:akros-b2b',
+);
 const evaluationContext = {
   counterpartyRef,
   principalId,
@@ -86,11 +86,7 @@ const revisions = [
   { revision: 'comparable-value:7', source: 'comparable-value' },
 ] as const;
 
-const purchaseValue = (
-  amount: string,
-  currency = 'CZK',
-  sourceRevision = 'proposal:1',
-): PurchaseValue =>
+const purchaseValue = (amount: string, currency = 'CZK', sourceRevision = 'proposal:1'): PurchaseValue =>
   Schema.decodeUnknownSync(PurchaseValueSchema)({
     monetaryAmount: { amount, currency },
     roundingRuleRevision: 'pricing-rounding:3',
@@ -168,12 +164,9 @@ const evaluationInput = (
   storefrontId,
 });
 
-const hasTag = <Tag extends string>(tag: Tag) =>
-  Schema.is(Schema.Struct({ _tag: Schema.Literal(tag) }));
+const hasTag = <Tag extends string>(tag: Tag) => Schema.is(Schema.Struct({ _tag: Schema.Literal(tag) }));
 
-const requireEffectivePolicy = (
-  result: EffectivePurchaseLimitPolicyResult,
-): EffectivePurchaseLimitPolicy =>
+const requireEffectivePolicy = (result: EffectivePurchaseLimitPolicyResult): EffectivePurchaseLimitPolicy =>
   Match.value(result).pipe(
     Match.tag('EFFECTIVE_POLICY', ({ effectivePolicy }) => effectivePolicy),
     Match.orElse(() => {
@@ -263,21 +256,13 @@ it('distinguishes missing, overlapping, and cross-counterparty policy from unlim
 });
 
 it('evaluates zero, equality, above-boundary, and explicit unlimited semantics exactly', () => {
-  expect(hasTag('WITHIN_LIMIT')(evaluatePurchaseLimit(evaluationInput(purchaseValue('100'))))).toBe(
-    true,
-  );
+  expect(hasTag('WITHIN_LIMIT')(evaluatePurchaseLimit(evaluationInput(purchaseValue('100'))))).toBe(true);
+  expect(hasTag('APPROVAL_REQUIRED')(evaluatePurchaseLimit(evaluationInput(purchaseValue('100.01'))))).toBe(true);
   expect(
-    hasTag('APPROVAL_REQUIRED')(evaluatePurchaseLimit(evaluationInput(purchaseValue('100.01')))),
+    hasTag('WITHIN_LIMIT')(evaluatePurchaseLimit(evaluationInput(purchaseValue('0'), [monetaryDefault('0')]))),
   ).toBe(true);
   expect(
-    hasTag('WITHIN_LIMIT')(
-      evaluatePurchaseLimit(evaluationInput(purchaseValue('0'), [monetaryDefault('0')])),
-    ),
-  ).toBe(true);
-  expect(
-    hasTag('APPROVAL_REQUIRED')(
-      evaluatePurchaseLimit(evaluationInput(purchaseValue('0.01'), [monetaryDefault('0')])),
-    ),
+    hasTag('APPROVAL_REQUIRED')(evaluatePurchaseLimit(evaluationInput(purchaseValue('0.01'), [monetaryDefault('0')]))),
   ).toBe(true);
   const unlimited = evaluatePurchaseLimit(
     evaluationInput(purchaseValue('999999', 'EUR'), [monetaryDefault('0')], [unlimitedOverride()]),
@@ -332,9 +317,7 @@ it('requires purpose-specific authoritative comparable value for cross-currency 
   const firstEvaluation = evaluatePurchaseLimit({
     ...input,
     comparableValue,
-    expectedSourceRevisions: input.expectedSourceRevisions.filter(
-      ({ source }) => source !== 'comparable-value',
-    ),
+    expectedSourceRevisions: input.expectedSourceRevisions.filter(({ source }) => source !== 'comparable-value'),
   });
   expect(hasTag('APPROVAL_REQUIRED')(firstEvaluation)).toBe(true);
 });
@@ -485,10 +468,9 @@ it.effect('submits only a genuine approval-required result and preserves depende
       proposalEvidence: proposalEvidence(approvalRequired),
       trustedContext: evaluationContext,
     }).pipe(Effect.provideService(PurchaseApprovalSubmission, port), Effect.flip);
-    expect(
-      Schema.decodeUnknownSync(PurchaseApprovalDependencyUnavailableSchema)(buyerUnavailable)
-        .dependency,
-    ).toBe('BUYER_AUTHORIZATION');
+    expect(Schema.decodeUnknownSync(PurchaseApprovalDependencyUnavailableSchema)(buyerUnavailable).dependency).toBe(
+      'BUYER_AUTHORIZATION',
+    );
 
     const profileUnavailable = yield* triggerPurchaseApproval({
       buyerPermission: 'ALLOWED',
@@ -501,10 +483,9 @@ it.effect('submits only a genuine approval-required result and preserves depende
       proposalEvidence: proposalEvidence(approvalRequired),
       trustedContext: evaluationContext,
     }).pipe(Effect.provideService(PurchaseApprovalSubmission, port), Effect.flip);
-    expect(
-      Schema.decodeUnknownSync(PurchaseApprovalDependencyUnavailableSchema)(profileUnavailable)
-        .dependency,
-    ).toBe('CUSTOMER_PROFILE');
+    expect(Schema.decodeUnknownSync(PurchaseApprovalDependencyUnavailableSchema)(profileUnavailable).dependency).toBe(
+      'CUSTOMER_PROFILE',
+    );
 
     const proposalIndeterminate = yield* triggerPurchaseApproval({
       buyerPermission: 'ALLOWED',
@@ -514,9 +495,7 @@ it.effect('submits only a genuine approval-required result and preserves depende
       proposalEvidence: proposalEvidence(approvalRequired, 'INDETERMINATE'),
       trustedContext: evaluationContext,
     }).pipe(Effect.provideService(PurchaseApprovalSubmission, port), Effect.flip);
-    expect(Schema.is(PurchaseApprovalCurrentnessIndeterminateSchema)(proposalIndeterminate)).toBe(
-      true,
-    );
+    expect(Schema.is(PurchaseApprovalCurrentnessIndeterminateSchema)(proposalIndeterminate)).toBe(true);
 
     const mixedProfile = yield* triggerPurchaseApproval({
       buyerPermission: 'ALLOWED',
@@ -559,9 +538,9 @@ it.effect('submits only a genuine approval-required result and preserves depende
       proposalEvidence: proposalEvidence(approvalRequired),
       trustedContext: {
         ...evaluationContext,
-        storefrontId: Schema.decodeUnknownSync(
-          PurchaseLimitEvaluationContextSchema.fields.storefrontId,
-        )('storefront:other'),
+        storefrontId: Schema.decodeUnknownSync(PurchaseLimitEvaluationContextSchema.fields.storefrontId)(
+          'storefront:other',
+        ),
       },
     }).pipe(Effect.provideService(PurchaseApprovalSubmission, port));
     expect(

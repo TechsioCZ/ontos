@@ -29,8 +29,7 @@ export const customerPriceGroupAssignmentResourceDescriptor = {
     searchable: false,
     timelineVisible: true,
   },
-  description:
-    'Effective-dated assignment of one Commerce customer profile to one Pricing-owned PriceGroup.',
+  description: 'Effective-dated assignment of one Commerce customer profile to one Pricing-owned PriceGroup.',
   key: 'commerce.customer-context.customer-price-group-assignment',
   label: 'Customer Price Group Assignment',
   owningModuleId: 'commerce.customer-context',

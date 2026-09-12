@@ -2,21 +2,14 @@
 // @ontos-action-owner commerce.customer-context
 // @ontos-action-slug resend-counterparty-access-invitation
 import type { ActionHandlerContext } from '@app/core-runtime';
-import {
-  defineAction,
-  defineActionBusinessPermission,
-  defineTenantModuleEntrypoint,
-} from '@app/core-runtime';
+import { defineAction, defineActionBusinessPermission, defineTenantModuleEntrypoint } from '@app/core-runtime';
 import { Effect } from 'effect';
 import {
   ResendCounterpartyAccessInvitationPayloadSchema,
   ResendCounterpartyAccessInvitationResultSchema,
 } from '../../shared/actions/resend-counterparty-access-invitation.ts';
 import type { ResendCounterpartyAccessInvitationPayload } from '../../shared/actions/resend-counterparty-access-invitation.ts';
-import {
-  AccessAuditEvidenceSchema,
-  AccessDeniedAuditEvidenceSchema,
-} from '../../shared/domain/access-contract.ts';
+import { AccessAuditEvidenceSchema, AccessDeniedAuditEvidenceSchema } from '../../shared/domain/access-contract.ts';
 import {
   CounterpartyAccessContractViolation,
   CounterpartyAccessDomainErrorSchema,
@@ -37,8 +30,7 @@ import {
 } from './resend-counterparty-access-invitation.commerce-customer-context-counterparty-access-invitation-resent-v1.outbox-message.ts';
 
 const domainEvents = {
-  'commerce.customer-context.counterparty-access-invitation-resent.v1':
-    AccessInvitationResentEventSchema,
+  'commerce.customer-context.counterparty-access-invitation-resent.v1': AccessInvitationResentEventSchema,
 } as const;
 
 interface Services {
@@ -71,11 +63,7 @@ const handle = Effect.fn('ResendCounterpartyAccessInvitation.handle')(function* 
     scope: payload.scope,
   });
   const { invitation } = result;
-  yield* recordAccessRead(
-    context,
-    invitation.counterpartyRef,
-    'counterparty-access-invitation-resend',
-  );
+  yield* recordAccessRead(context, invitation.counterpartyRef, 'counterparty-access-invitation-resend');
   yield* context.recordAuditEvidence(
     auditEvidence({
       actor,
@@ -156,20 +144,3 @@ export const resendCounterpartyAccessInvitationAction = defineAction(
       Effect.map((port) => ({ resend: port.resendInvitation })),
     ),
 );
-
-export {
-  ResendCounterpartyAccessInvitationPayloadSchema,
-  ResendCounterpartyAccessInvitationResultSchema,
-} from '../../shared/actions/resend-counterparty-access-invitation.ts';
-export type {
-  ResendCounterpartyAccessInvitationPayload,
-  ResendCounterpartyAccessInvitationResult,
-} from '../../shared/actions/resend-counterparty-access-invitation.ts';
-
-// <generated-outbox-message-exports>
-export { createResendCounterpartyAccessInvitationCommerceCustomerContextCounterpartyAccessInvitationResentV1OutboxMessage } from './resend-counterparty-access-invitation.commerce-customer-context-counterparty-access-invitation-resent-v1.outbox-message.ts';
-export { ResendCounterpartyAccessInvitationCommerceCustomerContextCounterpartyAccessInvitationResentV1OutboxPayloadSchema } from './resend-counterparty-access-invitation.commerce-customer-context-counterparty-access-invitation-resent-v1.outbox-message.ts';
-export { ResendCounterpartyAccessInvitationCommerceCustomerContextCounterpartyAccessInvitationResentV1OutboxProducerModuleKey } from './resend-counterparty-access-invitation.commerce-customer-context-counterparty-access-invitation-resent-v1.outbox-message.ts';
-export { ResendCounterpartyAccessInvitationCommerceCustomerContextCounterpartyAccessInvitationResentV1OutboxTopic } from './resend-counterparty-access-invitation.commerce-customer-context-counterparty-access-invitation-resent-v1.outbox-message.ts';
-export type { ResendCounterpartyAccessInvitationCommerceCustomerContextCounterpartyAccessInvitationResentV1OutboxPayload } from './resend-counterparty-access-invitation.commerce-customer-context-counterparty-access-invitation-resent-v1.outbox-message.ts';
-// </generated-outbox-message-exports>

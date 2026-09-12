@@ -1,17 +1,9 @@
-import {
-  CreatePurchaseProposalRevisionInputSchema,
-  CreatePurchaseProposalRevisionResultSchema as DomainCreatePurchaseProposalRevisionResultSchema,
-  PurchasingApprovalRejected,
+export {
+  CreatePurchaseProposalRevisionInputSchema as CreatePurchaseProposalRevisionPayloadSchema,
+  CreatePurchaseProposalRevisionResultSchema,
+  PurchasingApprovalRejected as CreatePurchaseProposalRevisionRejected,
 } from '../domain/purchasing-approval.ts';
-export const CreatePurchaseProposalRevisionPayloadSchema =
-  CreatePurchaseProposalRevisionInputSchema;
-export type CreatePurchaseProposalRevisionPayload =
-  typeof CreatePurchaseProposalRevisionPayloadSchema.Type;
-export const CreatePurchaseProposalRevisionResultSchema =
-  DomainCreatePurchaseProposalRevisionResultSchema;
-export type CreatePurchaseProposalRevisionResult =
-  typeof CreatePurchaseProposalRevisionResultSchema.Type;
-export const CreatePurchaseProposalRevisionRejected = PurchasingApprovalRejected;
-export type CreatePurchaseProposalRevisionRejected = InstanceType<
-  typeof PurchasingApprovalRejected
->;
+export type {
+  CreatePurchaseProposalRevisionInput as CreatePurchaseProposalRevisionPayload,
+  CreatePurchaseProposalRevisionResult,
+} from '../domain/purchasing-approval.ts';

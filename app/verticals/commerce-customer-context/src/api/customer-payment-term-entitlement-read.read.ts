@@ -21,6 +21,7 @@ import type {
   CustomerPaymentTermEntitlementReadRequest,
   CustomerPaymentTermEntitlementReadResponse,
 } from '../../shared/apis/customer-payment-term-entitlement-read.ts';
+import { resolveCustomerProfileReadPermissionTarget } from './customer-profile-read.read.ts';
 
 export interface CustomerPaymentTermEntitlementReadServices {
   /** Counterparty reads must atomically verify the profile belongs to authorizationSubject.counterpartyRef. */
@@ -29,7 +30,7 @@ export interface CustomerPaymentTermEntitlementReadServices {
   ) => Effect.Effect<CustomerPaymentTermEntitlementReadResponse, ReadHandlerUnavailable>;
 }
 
-export const handleCustomerPaymentTermEntitlementRead = (
+const handleCustomerPaymentTermEntitlementRead = (
   input: CustomerPaymentTermEntitlementReadRequest,
   context: ReadHandlerContext<CustomerPaymentTermEntitlementReadServices>,
 ): Effect.Effect<
@@ -56,7 +57,7 @@ export const handleCustomerPaymentTermEntitlementRead = (
   );
 };
 
-export const customerPaymentTermEntitlementReadEntrypoint = defineTenantModuleEntrypoint({
+const customerPaymentTermEntitlementReadEntrypoint = defineTenantModuleEntrypoint({
   access: 'historical_read',
   authorization: { kind: 'context_permission', permission: 'module.access' },
   entrypointKey: 'commerce.customer-context.api.customer-payment-term-entitlement-read',
@@ -67,32 +68,7 @@ export const customerPaymentTermEntitlementReadEntrypoint = defineTenantModuleEn
 export const customerPaymentTermEntitlementReadPermissionTarget = (
   input: CustomerPaymentTermEntitlementReadRequest,
   scope: { readonly legalEntityId?: string; readonly tenantId: string },
-): ResolvedReadPermissionTarget =>
-  input.authorizationSubject.kind === 'RETAIL'
-    ? {
-        businessPermission: {
-          permission: 'retail.profile.read',
-          target: {
-            kind: 'retail_profile',
-            legalEntityId: scope.legalEntityId ?? '',
-            profileId: input.profileRef.resourceId,
-            tenantId: scope.tenantId,
-          },
-        },
-        kind: 'business_permission',
-      }
-    : {
-        businessPermission: {
-          permission: 'counterparty.profile.read',
-          target: {
-            counterpartyId: input.authorizationSubject.counterpartyRef.resourceId,
-            kind: 'counterparty',
-            legalEntityId: scope.legalEntityId ?? '',
-            tenantId: scope.tenantId,
-          },
-        },
-        kind: 'business_permission',
-      };
+): ResolvedReadPermissionTarget => resolveCustomerProfileReadPermissionTarget(input, scope);
 
 export const customerPaymentTermEntitlementReadRead = defineRead(
   {

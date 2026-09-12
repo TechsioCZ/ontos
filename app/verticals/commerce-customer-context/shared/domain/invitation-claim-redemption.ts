@@ -1,15 +1,11 @@
-import { Context } from 'effect';
 import type { Effect, Redacted } from 'effect';
-import type {
-  AccessInstant,
-  CounterpartyPermissionScope,
-  CounterpartyRef,
-} from './access-contract.ts';
+import type { AccessInstant, CounterpartyPermissionScope, CounterpartyRef } from './access-contract.ts';
 import type { CounterpartyAccessDomainError } from './access-error.ts';
 import type { InvitationClaimProofReference } from './invitation-contract.ts';
 import type { CounterpartyPermissionCode } from './permission-catalog.ts';
 import type { CounterpartyAccessInvitationRef } from '../resources/counterparty-access-invitation.ts';
 
+// oxlint-disable-next-line effect-native/require-context-service-for-service-interface -- This exported port contract is implemented and injected by the owner persistence boundary; introducing a Context.Service would change its public lifetime API.
 export interface CounterpartyInvitationClaimRedemptionService {
   readonly redeem: (input: {
     readonly invitationRef: CounterpartyAccessInvitationRef;
@@ -27,14 +23,3 @@ export interface CounterpartyInvitationClaimRedemptionService {
     CounterpartyAccessDomainError
   >;
 }
-
-/**
- * Authenticated enrollment boundary: an implementation MUST bind claimant/Tenant/Legal Entity
- * from a Core-verified OperationalScope, never these caller-supplied proof fields.
- */
-export class CounterpartyInvitationClaimRedemption extends Context.Service<
-  CounterpartyInvitationClaimRedemption,
-  CounterpartyInvitationClaimRedemptionService
->()(
-  '@app/commerce-customer-context/shared/domain/invitation-claim-redemption/CounterpartyInvitationClaimRedemption',
-) {}

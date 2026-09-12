@@ -33,10 +33,7 @@ import { createChangePrincipalPurchaseLimitOverrideCommerceCustomerContextPrinci
 const MODULE_KEY = 'commerce.customer-context';
 const EVENT_TYPE = `${MODULE_KEY}.principal-purchase-limit-override-changed.v1`;
 
-const preserveFailureCause = <Failure extends object>(
-  failure: Failure,
-  cause: unknown,
-): Failure => {
+const preserveFailureCause = <Failure extends object>(failure: Failure, cause: unknown): Failure => {
   Object.defineProperty(failure, 'cause', { configurable: true, value: cause });
   return failure;
 };
@@ -48,31 +45,18 @@ const mutationEvidence = (result: ChangePrincipalPurchaseLimitOverrideResult) =>
   previousRevision: result.previousPolicy?.revision ?? null,
 });
 
-const mutationResourceId = (
-  result: ChangePrincipalPurchaseLimitOverrideResult,
-  fallback: string,
-): string =>
-  result.currentPolicy?.policyRef.resourceId ??
-  result.previousPolicy?.policyRef.resourceId ??
-  fallback;
+const mutationResourceId = (result: ChangePrincipalPurchaseLimitOverrideResult, fallback: string): string =>
+  result.currentPolicy?.policyRef.resourceId ?? result.previousPolicy?.policyRef.resourceId ?? fallback;
 
-const mutationChangeKind = (
-  result: ChangePrincipalPurchaseLimitOverrideResult,
-): 'CHANGED' | 'CLEARED' | 'SET' => {
+const mutationChangeKind = (result: ChangePrincipalPurchaseLimitOverrideResult): 'CHANGED' | 'CLEARED' | 'SET' => {
   if (result.currentPolicy === null) {
     return 'CLEARED';
   }
   return result.previousPolicy === null ? 'SET' : 'CHANGED';
 };
 
-export {
-  ChangePrincipalPurchaseLimitOverridePayloadSchema,
-  ChangePrincipalPurchaseLimitOverrideResultSchema,
-} from '../../shared/actions/change-principal-purchase-limit-override.ts';
-export type {
-  ChangePrincipalPurchaseLimitOverridePayload,
-  ChangePrincipalPurchaseLimitOverrideResult,
-} from '../../shared/actions/change-principal-purchase-limit-override.ts';
+export { ChangePrincipalPurchaseLimitOverridePayloadSchema } from '../../shared/actions/change-principal-purchase-limit-override.ts';
+export type { ChangePrincipalPurchaseLimitOverridePayload } from '../../shared/actions/change-principal-purchase-limit-override.ts';
 
 const ChangePrincipalPurchaseLimitOverrideErrorSchema = Schema.Union([
   PurchaseLimitPolicyConflictSchema,
@@ -90,84 +74,79 @@ interface ChangePrincipalPurchaseLimitOverrideServices {
   readonly principalEligibility: PrincipalEligibilityService;
 }
 
-const handleChangePrincipalPurchaseLimitOverride = Effect.fn(
-  'ChangePrincipalPurchaseLimitOverride.handle',
-)(function* handle(
-  payload: ChangePrincipalPurchaseLimitOverridePayload,
-  context: ActionHandlerContext<
-    ChangePrincipalPurchaseLimitOverrideEvents,
-    ChangePrincipalPurchaseLimitOverrideServices
-  >,
-) {
-  if (
-    payload.counterpartyRef.tenantId !== context.scope.tenantId ||
-    payload.principalRef.tenantId !== context.scope.tenantId
+const handleChangePrincipalPurchaseLimitOverride = Effect.fn('ChangePrincipalPurchaseLimitOverride.handle')(
+  function* handle(
+    payload: ChangePrincipalPurchaseLimitOverridePayload,
+    context: ActionHandlerContext<
+      ChangePrincipalPurchaseLimitOverrideEvents,
+      ChangePrincipalPurchaseLimitOverrideServices
+    >,
   ) {
-    return yield* Effect.fail({
-      _tag: 'PurchaseLimitSubjectScopeMismatch' as const,
-      code: 'purchase_limit_subject_scope_mismatch' as const,
-      reason: 'The Counterparty and Principal must belong to the trusted Tenant',
+    if (
+      payload.counterpartyRef.tenantId !== context.scope.tenantId ||
+      payload.principalRef.tenantId !== context.scope.tenantId
+    ) {
+      return yield* Effect.fail({
+        _tag: 'PurchaseLimitSubjectScopeMismatch' as const,
+        code: 'purchase_limit_subject_scope_mismatch' as const,
+        reason: 'The Counterparty and Principal must belong to the trusted Tenant',
+      });
+    }
+    const principalEligibility = yield* context.services.principalEligibility.resolve(payload.principalRef);
+    if (principalEligibility.decision === 'unavailable') {
+      return yield* Effect.fail({
+        _tag: 'PurchaseLimitDependencyUnavailable' as const,
+        code: 'purchase_limit_dependency_unavailable' as const,
+        dependency: 'core.identity.principal-eligibility',
+        reason: 'Principal eligibility is temporarily unavailable',
+      });
+    }
+    if (principalEligibility.decision !== 'eligible') {
+      return yield* Effect.fail({
+        _tag: 'PurchaseLimitPrincipalIneligible' as const,
+        code: 'purchase_limit_principal_ineligible' as const,
+        reason: 'The target Principal is not eligible for a Current Purchase Limit override',
+      });
+    }
+    const result = yield* context.services.policy.changePrincipalOverride({
+      ...payload,
+      actionInvocationId: context.actionInvocationId,
+      actorPrincipalId: context.scope.principalId,
     });
-  }
-  const principalEligibility = yield* context.services.principalEligibility.resolve(
-    payload.principalRef,
-  );
-  if (principalEligibility.decision === 'unavailable') {
-    return yield* Effect.fail({
-      _tag: 'PurchaseLimitDependencyUnavailable' as const,
-      code: 'purchase_limit_dependency_unavailable' as const,
-      dependency: 'core.identity.principal-eligibility',
-      reason: 'Principal eligibility is temporarily unavailable',
+    yield* context.recordAuditEvidence({ changeReason: payload.reason, ...mutationEvidence(result) });
+    yield* context.recordDataAccess({
+      accessKind: 'read',
+      queryHash: `purchase-limit-override:${payload.counterpartyRef.resourceId}:${payload.principalRef.principalId}`,
+      resultCount: result.previousPolicy === null ? 0 : 1,
+      servingModuleKey: MODULE_KEY,
+      targetModuleKey: MODULE_KEY,
+      targetResourceId: mutationResourceId(result, payload.counterpartyRef.resourceId),
+      targetResourceType: `${MODULE_KEY}.purchase-limit-policy`,
     });
-  }
-  if (principalEligibility.decision !== 'eligible') {
-    return yield* Effect.fail({
-      _tag: 'PurchaseLimitPrincipalIneligible' as const,
-      code: 'purchase_limit_principal_ineligible' as const,
-      reason: 'The target Principal is not eligible for a Current Purchase Limit override',
-    });
-  }
-  const result = yield* context.services.policy.changePrincipalOverride({
-    ...payload,
-    actionInvocationId: context.actionInvocationId,
-    actorPrincipalId: context.scope.principalId,
-  });
-  yield* context.recordAuditEvidence({ changeReason: payload.reason, ...mutationEvidence(result) });
-  yield* context.recordDataAccess({
-    accessKind: 'read',
-    queryHash: `purchase-limit-override:${payload.counterpartyRef.resourceId}:${payload.principalRef.principalId}`,
-    resultCount: result.previousPolicy === null ? 0 : 1,
-    servingModuleKey: MODULE_KEY,
-    targetModuleKey: MODULE_KEY,
-    targetResourceId: mutationResourceId(result, payload.counterpartyRef.resourceId),
-    targetResourceType: `${MODULE_KEY}.purchase-limit-policy`,
-  });
-  if (result.status === 'CHANGED') {
-    const payloadJson = {
-      changeKind: mutationChangeKind(result),
-      counterpartyRef: payload.counterpartyRef,
-      currentState:
-        result.currentPolicy === null
-          ? ('COUNTERPARTY_DEFAULT_APPLIES' as const)
-          : ('EXPLICIT_OVERRIDE_CURRENT' as const),
-      ...mutationEvidence(result),
-      principalRef: payload.principalRef,
-    };
-    const event = yield* context.addDomainEvent({
-      eventType: EVENT_TYPE,
-      payloadJson,
-      producerModuleKey: MODULE_KEY,
-      subjectModuleKey: MODULE_KEY,
-      subjectResourceId: mutationResourceId(result, payload.counterpartyRef.resourceId),
-      subjectResourceType: `${MODULE_KEY}.purchase-limit-policy`,
-    });
-    yield* context.addOutboxMessage(
-      event,
-      createPrincipalPurchaseLimitOverrideChangedOutboxMessage(payloadJson),
-    );
-  }
-  return result;
-});
+    if (result.status === 'CHANGED') {
+      const payloadJson = {
+        changeKind: mutationChangeKind(result),
+        counterpartyRef: payload.counterpartyRef,
+        currentState:
+          result.currentPolicy === null
+            ? ('COUNTERPARTY_DEFAULT_APPLIES' as const)
+            : ('EXPLICIT_OVERRIDE_CURRENT' as const),
+        ...mutationEvidence(result),
+        principalRef: payload.principalRef,
+      };
+      const event = yield* context.addDomainEvent({
+        eventType: EVENT_TYPE,
+        payloadJson,
+        producerModuleKey: MODULE_KEY,
+        subjectModuleKey: MODULE_KEY,
+        subjectResourceId: mutationResourceId(result, payload.counterpartyRef.resourceId),
+        subjectResourceType: `${MODULE_KEY}.purchase-limit-policy`,
+      });
+      yield* context.addOutboxMessage(event, createPrincipalPurchaseLimitOverrideChangedOutboxMessage(payloadJson));
+    }
+    return result;
+  },
+);
 
 export const changePrincipalPurchaseLimitOverrideAction = defineAction(
   {
@@ -216,9 +195,7 @@ export const changePrincipalPurchaseLimitOverrideAction = defineAction(
       { concurrency: 2 },
     ).pipe(
       Effect.flatMap(({ factory, principalEligibility }) =>
-        factory
-          .make(transaction, scope)
-          .pipe(Effect.map((policy) => ({ policy, principalEligibility }))),
+        factory.make(transaction, scope).pipe(Effect.map((policy) => ({ policy, principalEligibility }))),
       ),
       Effect.mapError((cause) =>
         preserveFailureCause(
@@ -233,9 +210,4 @@ export const changePrincipalPurchaseLimitOverrideAction = defineAction(
 );
 
 // <generated-outbox-message-exports>
-export { ChangePrincipalPurchaseLimitOverrideCommerceCustomerContextPrincipalPurchaseLimitOverrideChangedV1OutboxPayloadSchema } from './change-principal-purchase-limit-override.commerce-customer-context-principal-purchase-limit-override-changed-v1.outbox-message.ts';
-export { ChangePrincipalPurchaseLimitOverrideCommerceCustomerContextPrincipalPurchaseLimitOverrideChangedV1OutboxProducerModuleKey } from './change-principal-purchase-limit-override.commerce-customer-context-principal-purchase-limit-override-changed-v1.outbox-message.ts';
-export { ChangePrincipalPurchaseLimitOverrideCommerceCustomerContextPrincipalPurchaseLimitOverrideChangedV1OutboxTopic } from './change-principal-purchase-limit-override.commerce-customer-context-principal-purchase-limit-override-changed-v1.outbox-message.ts';
-export { createChangePrincipalPurchaseLimitOverrideCommerceCustomerContextPrincipalPurchaseLimitOverrideChangedV1OutboxMessage } from './change-principal-purchase-limit-override.commerce-customer-context-principal-purchase-limit-override-changed-v1.outbox-message.ts';
-export type { ChangePrincipalPurchaseLimitOverrideCommerceCustomerContextPrincipalPurchaseLimitOverrideChangedV1OutboxPayload } from './change-principal-purchase-limit-override.commerce-customer-context-principal-purchase-limit-override-changed-v1.outbox-message.ts';
 // </generated-outbox-message-exports>

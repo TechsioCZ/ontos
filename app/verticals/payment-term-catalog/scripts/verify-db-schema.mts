@@ -4,14 +4,8 @@ import { sql } from 'drizzle-orm';
 import { getTableConfig } from 'drizzle-orm/pg-core';
 import { Array as EffectArray, Effect, Layer, Order, Schema } from 'effect';
 import { comparePaymentTermCatalog } from '../src/database/catalog.ts';
-import {
-  PaymentTermCatalogDatabase,
-  PaymentTermCatalogDatabaseLive,
-} from '../src/database/client.ts';
-import {
-  PAYMENT_TERM_CATALOG_SCHEMA_NAME,
-  PAYMENT_TERM_CATALOG_TABLES,
-} from '../src/database/schema.ts';
+import { PaymentTermCatalogDatabase, PaymentTermCatalogDatabaseLive } from '../src/database/client.ts';
+import { PAYMENT_TERM_CATALOG_SCHEMA_NAME, PAYMENT_TERM_CATALOG_TABLES } from '../src/database/schema.ts';
 
 class PaymentTermCatalogVerificationError extends Schema.TaggedError<PaymentTermCatalogVerificationError>()(
   'PaymentTermCatalogVerificationError',
@@ -265,14 +259,7 @@ const verification = Effect.gen(function* verifyPaymentTermCatalogDatabase() {
 });
 
 const runtime = PaymentTermCatalogDatabaseLive.pipe(
-  Layer.provide(
-    Layer.effect(
-      DatabaseConfig,
-      loadDatabaseConnectionPair().pipe(Effect.map(({ admin }) => admin)),
-    ),
-  ),
+  Layer.provide(Layer.effect(DatabaseConfig, loadDatabaseConnectionPair().pipe(Effect.map(({ admin }) => admin)))),
 );
 const result = await Effect.runPromise(Effect.provide(verification, runtime));
-console.log(
-  `Verified ${result.typedTableCount} typed tables in PostgreSQL schema ${PAYMENT_TERM_CATALOG_SCHEMA_NAME}`,
-);
+console.log(`Verified ${result.typedTableCount} typed tables in PostgreSQL schema ${PAYMENT_TERM_CATALOG_SCHEMA_NAME}`);

@@ -8,13 +8,6 @@ import {
 } from '@app/commerce-customer-context/outbox/commerce-customer-context-purchase-proposal-revision-created-v1';
 import type { OutboxPayload } from '@app/commerce-customer-context/outbox/commerce-customer-context-purchase-proposal-revision-created-v1';
 
-export {
-  OutboxPayloadSchema as CreatePurchaseProposalRevisionCommerceCustomerContextPurchaseProposalRevisionCreatedV1OutboxPayloadSchema,
-  outboxProducerModuleKey as CreatePurchaseProposalRevisionCommerceCustomerContextPurchaseProposalRevisionCreatedV1OutboxProducerModuleKey,
-  outboxTopic as CreatePurchaseProposalRevisionCommerceCustomerContextPurchaseProposalRevisionCreatedV1OutboxTopic,
-} from '@app/commerce-customer-context/outbox/commerce-customer-context-purchase-proposal-revision-created-v1';
-export type { OutboxPayload as CreatePurchaseProposalRevisionCommerceCustomerContextPurchaseProposalRevisionCreatedV1OutboxPayload } from '@app/commerce-customer-context/outbox/commerce-customer-context-purchase-proposal-revision-created-v1';
-
 export const createCreatePurchaseProposalRevisionCommerceCustomerContextPurchaseProposalRevisionCreatedV1OutboxMessage =
   (payload: OutboxPayload): OutboxMessage => ({
     payloadJson: payload,

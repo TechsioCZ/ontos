@@ -21,7 +21,7 @@ type ProfileReconciliationReadOperationInvocation = readonly [
 ];
 
 const profileReconciliationReadClient = (
-  credential: Redacted.Redacted<string>,
+  credential: Redacted.Redacted,
   requestCorrelation: string,
   options: ProfileReconciliationReadClientOptions,
 ) =>
@@ -50,10 +50,5 @@ export const executeProfileReconciliationRead = (
   ...[requestCorrelation, options = {}]: ProfileReconciliationReadOperationInvocation
 ) =>
   operationGateway.invoke((credential) =>
-    executeProfileReconciliationReadWithAuthorization(
-      payload,
-      credential,
-      requestCorrelation,
-      options,
-    ),
+    executeProfileReconciliationReadWithAuthorization(payload, credential, requestCorrelation, options),
   );

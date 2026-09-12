@@ -1,10 +1,6 @@
 // Canonical schema-only contract extracted from the generated bootstrap-counterparty-access-administrator Action.
 import { Schema } from 'effect';
-import {
-  CounterpartyAccessGrantSchema,
-  CounterpartyRefSchema,
-  PrincipalRefSchema,
-} from '../domain/access-contract.ts';
+import { CounterpartyAccessGrantSchema, CounterpartyRefSchema, PrincipalRefSchema } from '../domain/access-contract.ts';
 import { AccessAuthorizationMutationEvidenceSchema } from '../domain/access-authorization-mutation.ts';
 
 export const BootstrapCounterpartyAccessAdministratorPayloadSchema = Schema.Struct({
@@ -26,5 +22,3 @@ export const BootstrapCounterpartyAccessAdministratorResultSchema = Schema.Union
     reconciliation: AccessAuthorizationMutationEvidenceSchema,
   }),
 ]);
-export type BootstrapCounterpartyAccessAdministratorResult =
-  typeof BootstrapCounterpartyAccessAdministratorResultSchema.Type;

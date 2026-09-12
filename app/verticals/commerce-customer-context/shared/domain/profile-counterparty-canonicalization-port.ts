@@ -1,11 +1,7 @@
 import { CounterpartyRefSchema } from '@app/party-registry/resources/counterparty';
 import { Context, Effect, Schema } from 'effect';
 
-import {
-  ProfileBoundedKeySchema,
-  ProfileInstantSchema,
-  SellingLegalEntityRefSchema,
-} from './profile-contracts.ts';
+import { ProfileBoundedKeySchema, ProfileInstantSchema, SellingLegalEntityRefSchema } from './profile-contracts.ts';
 import { CounterpartyCanonicalizationOwnerUnavailable } from './profile-counterparty-canonicalization-error.ts';
 import { ProfileReconciliationCaseRefSchema } from '../resources/profile-reconciliation-case.ts';
 
@@ -38,33 +34,24 @@ export const CounterpartyCanonicalizationEvidenceSchema = Schema.Struct({
       : undefined,
   ),
   Schema.makeFilter(({ aliasedCounterpartyRefs }) =>
-    new Set(aliasedCounterpartyRefs.map(({ resourceId }) => resourceId)).size ===
-    aliasedCounterpartyRefs.length
+    new Set(aliasedCounterpartyRefs.map(({ resourceId }) => resourceId)).size === aliasedCounterpartyRefs.length
       ? undefined
       : 'Aliased Counterparty references must be unique',
   ),
-  Schema.makeFilter(
-    ({ aliasedCounterpartyRefs, canonicalCounterpartyRef, managedLegalEntityRef }) => {
-      const { tenantId } = canonicalCounterpartyRef;
-      return managedLegalEntityRef.tenantId === tenantId &&
-        aliasedCounterpartyRefs.every((ref) => ref.tenantId === tenantId)
-        ? undefined
-        : 'Canonicalization evidence must stay inside one Tenant';
-    },
-  ),
+  Schema.makeFilter(({ aliasedCounterpartyRefs, canonicalCounterpartyRef, managedLegalEntityRef }) => {
+    const { tenantId } = canonicalCounterpartyRef;
+    return managedLegalEntityRef.tenantId === tenantId &&
+      aliasedCounterpartyRefs.every((ref) => ref.tenantId === tenantId)
+      ? undefined
+      : 'Canonicalization evidence must stay inside one Tenant';
+  }),
 );
-export type CounterpartyCanonicalizationEvidence =
-  typeof CounterpartyCanonicalizationEvidenceSchema.Type;
+export type CounterpartyCanonicalizationEvidence = typeof CounterpartyCanonicalizationEvidenceSchema.Type;
 
 export const CounterpartyCanonicalizationObservationResultSchema = Schema.Union([
   Schema.Struct({
     currentEventVersion: CounterpartyCanonicalizationEventVersionSchema,
-    outcome: Schema.Literals([
-      'NO_CONFLICTING_PROFILES',
-      'DUPLICATE',
-      'OUT_OF_ORDER',
-      'COMPLETED_NO_CHANGE',
-    ]),
+    outcome: Schema.Literals(['NO_CONFLICTING_PROFILES', 'DUPLICATE', 'OUT_OF_ORDER', 'COMPLETED_NO_CHANGE']),
   }),
   Schema.Struct({
     caseRefs: Schema.Array(ProfileReconciliationCaseRefSchema).check(Schema.isMinLength(1)),
@@ -78,10 +65,7 @@ export type CounterpartyCanonicalizationObservationResult =
 export interface CounterpartyCanonicalizationObservationPortService {
   readonly observe: (
     evidence: CounterpartyCanonicalizationEvidence,
-  ) => Effect.Effect<
-    CounterpartyCanonicalizationObservationResult,
-    CounterpartyCanonicalizationOwnerUnavailable
-  >;
+  ) => Effect.Effect<CounterpartyCanonicalizationObservationResult, CounterpartyCanonicalizationOwnerUnavailable>;
 }
 
 export class CounterpartyCanonicalizationObservationPort extends Context.Service<
@@ -101,8 +85,7 @@ export const unavailableCounterpartyCanonicalizationObservationPort =
       Effect.fail(
         new CounterpartyCanonicalizationOwnerUnavailable({
           ownerModuleId: 'party.registry',
-          reason:
-            'Party Registry does not publish a Counterparty alias or canonicalization observation',
+          reason: 'Party Registry does not publish a Counterparty alias or canonicalization observation',
           retryable: true,
         }),
       ),

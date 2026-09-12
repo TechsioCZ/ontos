@@ -67,9 +67,7 @@ const group = {
   currentState: 'ACTIVE' as const,
   definitionHistory: [definition],
   groupRef,
-  lifecycleHistory: [
-    { activeFrom: recordedAt, archivedAt: null, reason: definition.reason, recordedAt },
-  ],
+  lifecycleHistory: [{ activeFrom: recordedAt, archivedAt: null, reason: definition.reason, recordedAt }],
   meaningKey,
   revision: 1,
 };
@@ -162,91 +160,89 @@ it.effect('forwards exact actor and Action invocation attribution to create', ()
   }),
 );
 
-it.effect(
-  'maps assignment, removal, and deterministic history documents without inventing scope',
-  () =>
-    Effect.gen(function* membershipPersistence() {
-      const rows = [
-        {
-          changed: true,
-          membership_json: Option.some(membership),
-          outcome: 'ASSIGNED',
-          profile_state: Option.none(),
-        },
-        {
-          changed: false,
-          membership_json: Option.some(membership),
-          outcome: 'REMOVED',
-          profile_state: Option.none(),
-        },
-        {
-          group_json: Option.some(group),
-          items_json: [membership],
-          next_cursor: Option.some(membershipId),
-          outcome: 'PRESENT',
-        },
-      ];
-      let index = 0;
-      const invokedValues: (readonly unknown[])[] = [];
-      // SAFETY: Calls are ordered and every row is the exact decoded result of its invocation.
-      const transaction = {
-        invoke: (_routine: ScopedRoutineDefinition, values: readonly unknown[]) => {
-          invokedValues.push(values);
-          const row = rows[index] ?? rows[2];
-          index += 1;
-          return Effect.succeed([row]);
-        },
-      } as CustomerGroupScopedRoutineInvoker;
-      const persistence = customerGroupPersistenceForTransaction(transaction, scope);
-      const assigned = yield* persistence.assign({
-        actionInvocationId,
-        effectiveFrom: membership.effectiveFrom,
-        effectiveTo: null,
-        groupRef,
-        legalEntityId,
-        principalId,
-        profile,
-        reason: membership.assignmentReason,
-        recordedAt,
-        tenantId,
-      });
-      const removed = yield* persistence.remove({
-        actionInvocationId,
-        effectiveAt: '2026-11-01T00:00:00.000Z',
-        groupRef,
-        legalEntityId,
-        membershipRef,
-        principalId,
-        profile,
-        reason: 'Membership ended',
-        recordedAt,
-        tenantId,
-      });
-      const history = yield* persistence.history({
-        asOf: null,
-        cursor: null,
-        groupRef,
-        legalEntityId,
-        limit: 50,
-        tenantId,
-      });
-      expect(
-        Match.value(assigned).pipe(
-          Match.tag('assigned', () => true),
-          Match.orElse(() => false),
-        ),
-      ).toBe(true);
-      expect(
-        Match.value(removed).pipe(
-          Match.tag('removed', () => true),
-          Match.orElse(() => false),
-        ),
-      ).toBe(true);
-      expect(Option.getOrThrow(history).memberships).toEqual([membership]);
-      expect(Option.getOrThrow(history).asOf).toBeNull();
-      expect(Option.getOrThrow(history).nextCursor).toBe(membershipId);
-      expect(invokedValues[2]).toEqual([groupId, null, null, 50]);
-    }),
+it.effect('maps assignment, removal, and deterministic history documents without inventing scope', () =>
+  Effect.gen(function* membershipPersistence() {
+    const rows = [
+      {
+        changed: true,
+        membership_json: Option.some(membership),
+        outcome: 'ASSIGNED',
+        profile_state: Option.none(),
+      },
+      {
+        changed: false,
+        membership_json: Option.some(membership),
+        outcome: 'REMOVED',
+        profile_state: Option.none(),
+      },
+      {
+        group_json: Option.some(group),
+        items_json: [membership],
+        next_cursor: Option.some(membershipId),
+        outcome: 'PRESENT',
+      },
+    ];
+    let index = 0;
+    const invokedValues: (readonly unknown[])[] = [];
+    // SAFETY: Calls are ordered and every row is the exact decoded result of its invocation.
+    const transaction = {
+      invoke: (_routine: ScopedRoutineDefinition, values: readonly unknown[]) => {
+        invokedValues.push(values);
+        const row = rows[index] ?? rows[2];
+        index += 1;
+        return Effect.succeed([row]);
+      },
+    } as CustomerGroupScopedRoutineInvoker;
+    const persistence = customerGroupPersistenceForTransaction(transaction, scope);
+    const assigned = yield* persistence.assign({
+      actionInvocationId,
+      effectiveFrom: membership.effectiveFrom,
+      effectiveTo: null,
+      groupRef,
+      legalEntityId,
+      principalId,
+      profile,
+      reason: membership.assignmentReason,
+      recordedAt,
+      tenantId,
+    });
+    const removed = yield* persistence.remove({
+      actionInvocationId,
+      effectiveAt: '2026-11-01T00:00:00.000Z',
+      groupRef,
+      legalEntityId,
+      membershipRef,
+      principalId,
+      profile,
+      reason: 'Membership ended',
+      recordedAt,
+      tenantId,
+    });
+    const history = yield* persistence.history({
+      asOf: null,
+      cursor: null,
+      groupRef,
+      legalEntityId,
+      limit: 50,
+      tenantId,
+    });
+    expect(
+      Match.value(assigned).pipe(
+        Match.tag('assigned', () => true),
+        Match.orElse(() => false),
+      ),
+    ).toBe(true);
+    expect(
+      Match.value(removed).pipe(
+        Match.tag('removed', () => true),
+        Match.orElse(() => false),
+      ),
+    ).toBe(true);
+    expect(Option.getOrThrow(history).memberships).toEqual([membership]);
+    expect(Option.getOrThrow(history).asOf).toBeNull();
+    expect(Option.getOrThrow(history).nextCursor).toBe(membershipId);
+    expect(invokedValues[2]).toEqual([groupId, null, null, 50]);
+  }),
 );
 
 it.effect('fails closed before invocation when command scope disagrees with Core scope', () =>
@@ -340,10 +336,7 @@ it('locks down the checked-in SQL to exact scoped SECURITY DEFINER routine grant
     'utf-8',
   );
   const forwardMigration = readFileSync(
-    new URL(
-      '../../drizzle/20260909135000_refresh_customer_group_routines/migration.sql',
-      import.meta.url,
-    ),
+    new URL('../../drizzle/20260909135000_refresh_customer_group_routines/migration.sql', import.meta.url),
     'utf-8',
   );
   const assignStart = migration.indexOf(
@@ -385,9 +378,7 @@ it('locks down the checked-in SQL to exact scoped SECURITY DEFINER routine grant
   expect(migration).toContain('FROM PUBLIC, "ontos_runtime"');
   expect(forwardMigration.match(/CREATE OR REPLACE FUNCTION/gu)).toHaveLength(12);
   expect(forwardMigration.match(/GRANT EXECUTE ON FUNCTION/gu)).toHaveLength(10);
-  expect(forwardMigration).toContain(
-    "routine.proname IN ('create_customer_group', 'update_customer_group')",
-  );
+  expect(forwardMigration).toContain("routine.proname IN ('create_customer_group', 'update_customer_group')");
   expect(forwardMigration).toContain("'DROP FUNCTION %s'");
   expect(forwardMigration).toContain("IF v_profile.lifecycle <> 'ACTIVE'");
   expect(forwardMigration.indexOf('ALREADY_ASSIGNED')).toBeLessThan(

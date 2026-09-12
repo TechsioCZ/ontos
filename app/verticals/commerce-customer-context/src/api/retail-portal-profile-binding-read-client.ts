@@ -21,7 +21,7 @@ type RetailPortalProfileBindingReadOperationInvocation = readonly [
 ];
 
 const retailPortalProfileBindingReadClient = (
-  credential: Redacted.Redacted<string>,
+  credential: Redacted.Redacted,
   requestCorrelation: string,
   options: RetailPortalProfileBindingReadClientOptions,
 ) =>
@@ -37,11 +37,7 @@ const retailPortalProfileBindingReadClient = (
 
 export const executeRetailPortalProfileBindingReadWithAuthorization = (
   payload: RetailPortalProfileBindingReadRequest,
-  ...[
-    credential,
-    requestCorrelation,
-    options = {},
-  ]: RetailPortalProfileBindingReadAuthorizedInvocation
+  ...[credential, requestCorrelation, options = {}]: RetailPortalProfileBindingReadAuthorizedInvocation
 ) =>
   retailPortalProfileBindingReadClient(Redacted.make(credential), requestCorrelation, options).pipe(
     Effect.flatMap((client) =>
@@ -59,10 +55,5 @@ export const executeRetailPortalProfileBindingRead = (
   ...[requestCorrelation, options = {}]: RetailPortalProfileBindingReadOperationInvocation
 ) =>
   operationGateway.invoke((credential) =>
-    executeRetailPortalProfileBindingReadWithAuthorization(
-      payload,
-      credential,
-      requestCorrelation,
-      options,
-    ),
+    executeRetailPortalProfileBindingReadWithAuthorization(payload, credential, requestCorrelation, options),
   );

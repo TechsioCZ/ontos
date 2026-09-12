@@ -19,10 +19,7 @@ type AuthorizedInvocation = readonly [
   requestCorrelation: string,
   options: ReservePaymentTermRetirementClientOptions,
 ];
-type OperationInvocation = readonly [
-  requestCorrelation: string,
-  options: ReservePaymentTermRetirementClientOptions,
-];
+type OperationInvocation = readonly [requestCorrelation: string, options: ReservePaymentTermRetirementClientOptions];
 
 export const executeReservePaymentTermRetirementWithAuthorization = (
   payload: ReservePaymentTermRetirementPayload,
@@ -57,11 +54,6 @@ export const executeReservePaymentTermRetirement = (
 ) =>
   operationGateway.invoke(
     (credential) =>
-      executeReservePaymentTermRetirementWithAuthorization(
-        payload,
-        credential,
-        requestCorrelation,
-        options,
-      ),
+      executeReservePaymentTermRetirementWithAuthorization(payload, credential, requestCorrelation, options),
     options.gateway,
   );

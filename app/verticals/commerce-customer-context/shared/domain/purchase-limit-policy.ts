@@ -7,10 +7,7 @@ import type { Effect } from 'effect';
 import { PurchaseLimitPolicyRefSchema } from '../resources/purchase-limit-policy.ts';
 import { MonetaryAmountSchema } from './purchase-limit.ts';
 
-export const PurchaseLimitRevisionSchema = Schema.Finite.check(
-  Schema.isInt(),
-  Schema.isGreaterThanOrEqualTo(1),
-);
+export const PurchaseLimitRevisionSchema = Schema.Finite.check(Schema.isInt(), Schema.isGreaterThanOrEqualTo(1));
 const UtcTimestampSchema = Schema.DateTimeUtcFromString;
 
 export const PurchaseLimitCounterpartyRefSchema = CounterpartyRefSchema;
@@ -22,7 +19,7 @@ export const PurchaseLimitPolicySchema = Schema.Union([
 ]);
 export type PurchaseLimitPolicy = typeof PurchaseLimitPolicySchema.Type;
 
-export const PurchaseLimitPolicySubjectSchema = Schema.Union([
+const PurchaseLimitPolicySubjectSchema = Schema.Union([
   Schema.TaggedStruct('COUNTERPARTY_DEFAULT', {
     counterpartyRef: PurchaseLimitCounterpartyRefSchema,
   }),
@@ -59,8 +56,7 @@ export const EffectivePurchaseLimitPolicyResultSchema = Schema.Union([
     reasonCode: Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(200)),
   }),
 ]);
-export type EffectivePurchaseLimitPolicyResult =
-  typeof EffectivePurchaseLimitPolicyResultSchema.Type;
+export type EffectivePurchaseLimitPolicyResult = typeof EffectivePurchaseLimitPolicyResultSchema.Type;
 
 export interface ResolveEffectivePurchaseLimitPolicyInput {
   readonly counterpartyPolicies: readonly PurchaseLimitPolicySnapshot[];
@@ -69,10 +65,7 @@ export interface ResolveEffectivePurchaseLimitPolicyInput {
   readonly principalOverrides: readonly PurchaseLimitPolicySnapshot[];
 }
 
-const isSameCounterparty = (
-  expected: PurchaseLimitCounterpartyRef,
-  actual: PurchaseLimitCounterpartyRef,
-) =>
+const isSameCounterparty = (expected: PurchaseLimitCounterpartyRef, actual: PurchaseLimitCounterpartyRef) =>
   actual.moduleId === expected.moduleId &&
   actual.resourceId === expected.resourceId &&
   actual.resourceType === expected.resourceType &&
@@ -131,7 +124,7 @@ export const PurchaseLimitPolicyChangeSchema = Schema.Union([
   Schema.TaggedStruct('SET', { policy: PurchaseLimitPolicySchema }),
   Schema.TaggedStruct('CLEAR', {}),
 ]);
-export type PurchaseLimitPolicyChange = typeof PurchaseLimitPolicyChangeSchema.Type;
+type PurchaseLimitPolicyChange = typeof PurchaseLimitPolicyChangeSchema.Type;
 
 export const PurchaseLimitPolicyMutationResultSchema = Schema.Struct({
   currentPolicy: Schema.Union([PurchaseLimitPolicySnapshotSchema, Schema.Null]),
@@ -171,51 +164,31 @@ export const PrincipalPurchaseLimitOverrideChangedEventSchema = Schema.Struct({
   principalRef: PrincipalRefSchema,
 });
 
-export const PurchaseLimitPolicyConflictSchema = Schema.TaggedStruct(
-  'PurchaseLimitPolicyConflict',
-  {
-    code: Schema.Literal('purchase_limit_policy_conflict'),
-    currentRevision: Schema.Union([PurchaseLimitRevisionSchema, Schema.Null]),
-    reason: Schema.String,
-  },
-);
+export const PurchaseLimitPolicyConflictSchema = Schema.TaggedStruct('PurchaseLimitPolicyConflict', {
+  code: Schema.Literal('purchase_limit_policy_conflict'),
+  currentRevision: Schema.Union([PurchaseLimitRevisionSchema, Schema.Null]),
+  reason: Schema.String,
+});
 export type PurchaseLimitPolicyConflict = typeof PurchaseLimitPolicyConflictSchema.Type;
 
-export const PurchaseLimitDependencyUnavailableSchema = Schema.TaggedStruct(
-  'PurchaseLimitDependencyUnavailable',
-  {
-    code: Schema.Literal('purchase_limit_dependency_unavailable'),
-    dependency: Schema.String,
-    reason: Schema.String,
-  },
-);
-export type PurchaseLimitDependencyUnavailable =
-  typeof PurchaseLimitDependencyUnavailableSchema.Type;
+export const PurchaseLimitDependencyUnavailableSchema = Schema.TaggedStruct('PurchaseLimitDependencyUnavailable', {
+  code: Schema.Literal('purchase_limit_dependency_unavailable'),
+  dependency: Schema.String,
+  reason: Schema.String,
+});
+export type PurchaseLimitDependencyUnavailable = typeof PurchaseLimitDependencyUnavailableSchema.Type;
 
-export const PurchaseLimitSubjectScopeMismatchSchema = Schema.TaggedStruct(
-  'PurchaseLimitSubjectScopeMismatch',
-  {
-    code: Schema.Literal('purchase_limit_subject_scope_mismatch'),
-    reason: Schema.String,
-  },
-);
+export const PurchaseLimitSubjectScopeMismatchSchema = Schema.TaggedStruct('PurchaseLimitSubjectScopeMismatch', {
+  code: Schema.Literal('purchase_limit_subject_scope_mismatch'),
+  reason: Schema.String,
+});
 export type PurchaseLimitSubjectScopeMismatch = typeof PurchaseLimitSubjectScopeMismatchSchema.Type;
 
-export const PurchaseLimitPrincipalIneligibleSchema = Schema.TaggedStruct(
-  'PurchaseLimitPrincipalIneligible',
-  {
-    code: Schema.Literal('purchase_limit_principal_ineligible'),
-    reason: Schema.String,
-  },
-);
-export type PurchaseLimitPrincipalIneligible = typeof PurchaseLimitPrincipalIneligibleSchema.Type;
-
-export const PurchaseLimitPolicyDomainErrorSchema = Schema.Union([
-  PurchaseLimitPolicyConflictSchema,
-  PurchaseLimitDependencyUnavailableSchema,
-  PurchaseLimitPrincipalIneligibleSchema,
-  PurchaseLimitSubjectScopeMismatchSchema,
-]);
+export const PurchaseLimitPrincipalIneligibleSchema = Schema.TaggedStruct('PurchaseLimitPrincipalIneligible', {
+  code: Schema.Literal('purchase_limit_principal_ineligible'),
+  reason: Schema.String,
+});
+type PurchaseLimitPrincipalIneligible = typeof PurchaseLimitPrincipalIneligibleSchema.Type;
 
 export interface ChangeCounterpartyPurchaseLimitInput {
   readonly actionInvocationId: string;
@@ -235,9 +208,7 @@ export type PurchaseLimitPolicyService = Readonly<{
     input: ChangeCounterpartyPurchaseLimitInput,
   ) => Effect.Effect<
     PurchaseLimitPolicyMutationResult,
-    | PurchaseLimitDependencyUnavailable
-    | PurchaseLimitPolicyConflict
-    | PurchaseLimitSubjectScopeMismatch
+    PurchaseLimitDependencyUnavailable | PurchaseLimitPolicyConflict | PurchaseLimitSubjectScopeMismatch
   >;
   changePrincipalOverride: (
     input: ChangePrincipalPurchaseLimitOverrideInput,
@@ -264,6 +235,4 @@ export interface PurchaseLimitPolicyServiceFactoryContract {
 export class PurchaseLimitPolicyServiceFactory extends Context.Service<
   PurchaseLimitPolicyServiceFactory,
   PurchaseLimitPolicyServiceFactoryContract
->()(
-  '@app/commerce-customer-context/shared/domain/purchase-limit-policy/PurchaseLimitPolicyServiceFactory',
-) {}
+>()('@app/commerce-customer-context/shared/domain/purchase-limit-policy/PurchaseLimitPolicyServiceFactory') {}

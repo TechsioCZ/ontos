@@ -24,10 +24,7 @@ type AuthorizedInvocation = readonly [
   requestCorrelation: string,
   options: CreateApprovalHierarchyActionClientOptions,
 ];
-type OperationInvocation = readonly [
-  requestCorrelation: string,
-  options: CreateApprovalHierarchyActionClientOptions,
-];
+type OperationInvocation = readonly [requestCorrelation: string, options: CreateApprovalHierarchyActionClientOptions];
 
 interface MakeClientOptions {
   readonly credential: Redacted.Redacted;
@@ -68,12 +65,6 @@ export const executeCreateApprovalHierarchy = (
   ...[requestCorrelation, options]: OperationInvocation
 ) =>
   operationGateway.invoke(
-    (credential) =>
-      executeCreateApprovalHierarchyWithAuthorization(
-        payload,
-        credential,
-        requestCorrelation,
-        options,
-      ),
+    (credential) => executeCreateApprovalHierarchyWithAuthorization(payload, credential, requestCorrelation, options),
     options.gateway,
   );

@@ -3,21 +3,21 @@
 // @ontos-outbox-topic commerce.customer-context.counterparty-access-administrator-bootstrap-authorization-mutation-requested.v1
 import type { OutboxMessage } from '@app/core-runtime';
 import {
-  outboxProducerModuleKey,
-  outboxTopic,
-  type OutboxPayload,
-} from '@app/commerce-customer-context/outbox/commerce-customer-context-counterparty-access-administrator-bootstrap-authorization-mutation-requested-v1';
-
-export {
   OutboxPayloadSchema as BootstrapCounterpartyAccessAdministratorCommerceCustomerContextCounterpartyAccessAdministratorBootstrapAuthorizationMutationRequestedV1OutboxPayloadSchema,
   outboxProducerModuleKey as BootstrapCounterpartyAccessAdministratorCommerceCustomerContextCounterpartyAccessAdministratorBootstrapAuthorizationMutationRequestedV1OutboxProducerModuleKey,
   outboxTopic as BootstrapCounterpartyAccessAdministratorCommerceCustomerContextCounterpartyAccessAdministratorBootstrapAuthorizationMutationRequestedV1OutboxTopic,
 } from '@app/commerce-customer-context/outbox/commerce-customer-context-counterparty-access-administrator-bootstrap-authorization-mutation-requested-v1';
-export type { OutboxPayload as BootstrapCounterpartyAccessAdministratorCommerceCustomerContextCounterpartyAccessAdministratorBootstrapAuthorizationMutationRequestedV1OutboxPayload } from '@app/commerce-customer-context/outbox/commerce-customer-context-counterparty-access-administrator-bootstrap-authorization-mutation-requested-v1';
+import type { OutboxPayload as BootstrapCounterpartyAccessAdministratorCommerceCustomerContextCounterpartyAccessAdministratorBootstrapAuthorizationMutationRequestedV1OutboxPayload } from '@app/commerce-customer-context/outbox/commerce-customer-context-counterparty-access-administrator-bootstrap-authorization-mutation-requested-v1';
+
+export { BootstrapCounterpartyAccessAdministratorCommerceCustomerContextCounterpartyAccessAdministratorBootstrapAuthorizationMutationRequestedV1OutboxPayloadSchema };
 
 export const createBootstrapCounterpartyAccessAdministratorCommerceCustomerContextCounterpartyAccessAdministratorBootstrapAuthorizationMutationRequestedV1OutboxMessage =
-  (payload: OutboxPayload): OutboxMessage => ({
+  (
+    payload: BootstrapCounterpartyAccessAdministratorCommerceCustomerContextCounterpartyAccessAdministratorBootstrapAuthorizationMutationRequestedV1OutboxPayload,
+  ): OutboxMessage => ({
     payloadJson: payload,
-    producerModuleKey: outboxProducerModuleKey,
-    topic: outboxTopic,
+    producerModuleKey:
+      BootstrapCounterpartyAccessAdministratorCommerceCustomerContextCounterpartyAccessAdministratorBootstrapAuthorizationMutationRequestedV1OutboxProducerModuleKey,
+    topic:
+      BootstrapCounterpartyAccessAdministratorCommerceCustomerContextCounterpartyAccessAdministratorBootstrapAuthorizationMutationRequestedV1OutboxTopic,
   });

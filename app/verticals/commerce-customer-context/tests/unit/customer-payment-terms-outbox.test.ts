@@ -98,11 +98,7 @@ it('uses exact safe payloads instead of generic data envelopes', () => {
       revision: 5,
     }),
   ).toBe(true);
-  for (const schema of [
-    ChangedOutboxPayloadSchema,
-    RemovedOutboxPayloadSchema,
-    RetailOutboxPayloadSchema,
-  ]) {
+  for (const schema of [ChangedOutboxPayloadSchema, RemovedOutboxPayloadSchema, RetailOutboxPayloadSchema]) {
     expect(Schema.is(schema)({ data: { arbitrary: true } })).toBe(false);
   }
 });

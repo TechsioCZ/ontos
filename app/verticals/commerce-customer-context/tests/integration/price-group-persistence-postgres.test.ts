@@ -56,10 +56,7 @@ it.live('proves exact-current resolution and temporal assignment idempotency in 
         (pool) => Effect.promise(() => pool.end()).pipe(Effect.orDie),
       );
       const admin = yield* makeTestDatabaseFromPool(adminPool, commerceCustomerContextRelations);
-      const runtime = yield* makeTestDatabaseFromPool(
-        runtimePool,
-        commerceCustomerContextRelations,
-      );
+      const runtime = yield* makeTestDatabaseFromPool(runtimePool, commerceCustomerContextRelations);
 
       const cleanup = () =>
         admin.transaction((transaction) =>
@@ -85,9 +82,7 @@ it.live('proves exact-current resolution and temporal assignment idempotency in 
         );
 
       const inScope = <Value, Failure>(
-        operation: (
-          transaction: CommerceCustomerContextTransaction,
-        ) => Effect.Effect<Value, Failure>,
+        operation: (transaction: CommerceCustomerContextTransaction) => Effect.Effect<Value, Failure>,
       ) =>
         runtime.transaction((transaction) =>
           Effect.gen(function* scopedOperation() {
@@ -228,15 +223,9 @@ it.live('proves exact-current resolution and temporal assignment idempotency in 
             )
             .pipe(Effect.map(one)),
         );
-      const cancellation = yield* cancelFuture(
-        '2030-01-01T11:00:00Z',
-        'c9300000-0000-4000-8000-000000000009',
-      );
+      const cancellation = yield* cancelFuture('2030-01-01T11:00:00Z', 'c9300000-0000-4000-8000-000000000009');
       expect(cancellation).toMatchObject({ changed: true, outcome: 'REMOVED' });
-      const cancellationReplay = yield* cancelFuture(
-        '2030-01-01T11:00:00Z',
-        'c9300000-0000-4000-8000-000000000010',
-      );
+      const cancellationReplay = yield* cancelFuture('2030-01-01T11:00:00Z', 'c9300000-0000-4000-8000-000000000010');
       expect(cancellationReplay).toMatchObject({ changed: false, outcome: 'REMOVED' });
       const changedCancellationSchedule = yield* cancelFuture(
         '2030-01-01T11:00:01Z',

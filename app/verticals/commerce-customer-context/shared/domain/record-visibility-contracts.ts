@@ -20,14 +20,15 @@ const ResourceIdSchema = NonEmptyTextSchema.pipe(
   Schema.brand('CustomerRecordVisibilityResourceId'),
   Schema.decodeTo(Schema.String),
 );
-const HistoryInstantSchema = Schema.String.check(
-  Schema.makeFilter((value) => {
-    const parsed = DateTime.make(value);
-    return Option.isSome(parsed) && DateTime.formatIso(parsed.value) === value
-      ? undefined
-      : 'timestamp must be one canonical UTC instant with millisecond precision';
-  }),
-).pipe(
+const historyCanonicalInstant = Schema.makeFilter((value: string) => {
+  const parsed = DateTime.make(value);
+  if (Option.isNone(parsed) || DateTime.formatIso(parsed.value) !== value) {
+    return 'timestamp must be one canonical UTC instant with millisecond precision';
+  }
+  // oxlint-disable-next-line unicorn/no-useless-undefined -- Schema filter success is represented explicitly as undefined.
+  return undefined;
+});
+const HistoryInstantSchema = Schema.String.check(historyCanonicalInstant).pipe(
   Schema.decodeTo(Schema.toType(Schema.DateTimeUtc), {
     decode: SchemaGetter.transform(DateTime.makeUnsafe),
     encode: SchemaGetter.transform(DateTime.formatIso),
@@ -48,18 +49,18 @@ export const HistoricalRecordRefSchema = Schema.Struct({
 });
 export type HistoricalRecordRef = typeof HistoricalRecordRefSchema.Type;
 
-export const RetailHistorySubjectSchema = Schema.Struct({
+const RetailHistorySubjectSchema = Schema.Struct({
   kind: Schema.Literal('RETAIL_PROFILE'),
   profileRef: RetailCustomerProfileRefSchema,
 });
-export type RetailHistorySubject = typeof RetailHistorySubjectSchema.Type;
+type RetailHistorySubject = typeof RetailHistorySubjectSchema.Type;
 
-export const CounterpartyHistorySubjectSchema = Schema.Struct({
+const CounterpartyHistorySubjectSchema = Schema.Struct({
   counterpartyRef: CounterpartyRefSchema,
   kind: Schema.Literal('COUNTERPARTY'),
   profileRef: CounterpartyPurchasingProfileRefSchema,
 });
-export type CounterpartyHistorySubject = typeof CounterpartyHistorySubjectSchema.Type;
+type CounterpartyHistorySubject = typeof CounterpartyHistorySubjectSchema.Type;
 
 export const CustomerHistorySubjectSchema = Schema.Union([
   RetailHistorySubjectSchema,
@@ -73,14 +74,13 @@ export const CustomerFacingFieldSetSchema = Schema.Struct({
 });
 export type CustomerFacingFieldSet = typeof CustomerFacingFieldSetSchema.Type;
 
-export const CustomerRecordVisibilityStateSchema = Schema.Literals([
+const CustomerRecordVisibilityStateSchema = Schema.Literals([
   'CUSTOMER_VISIBLE',
   'CUSTOMER_HIDDEN',
   'CUSTOMER_RESTRICTED',
 ]);
-export type CustomerRecordVisibilityState = typeof CustomerRecordVisibilityStateSchema.Type;
 
-export const CustomerRecordVisibilityFactSchema = Schema.Struct({
+const CustomerRecordVisibilityFactSchema = Schema.Struct({
   decidedAt: HistoryInstantJsonSchema,
   effectiveFrom: HistoryInstantJsonSchema,
   effectiveTo: Schema.optionalKey(HistoryInstantJsonSchema),
@@ -108,7 +108,6 @@ export const CustomerRecordVisibilityGrantSchema = Schema.Struct({
   recordRef: HistoricalRecordRefSchema,
   sourceRevision: NonEmptyTextSchema,
 });
-export type CustomerRecordVisibilityGrant = typeof CustomerRecordVisibilityGrantSchema.Type;
 
 export const CustomerRecordVisibilityDecisionSchema = Schema.Union([
   CustomerRecordVisibilityGrantSchema,
@@ -193,19 +192,13 @@ export const CustomerRecordTypeOnboardingSchema = Schema.Struct({
         path: ['transitionContract', 'ownerModuleId'],
       });
     }
-    if (
-      contract.exportPolicy.outcome === 'NOT_SUPPORTED' &&
-      contract.fieldContracts.download !== null
-    ) {
+    if (contract.exportPolicy.outcome === 'NOT_SUPPORTED' && contract.fieldContracts.download !== null) {
       issues.push({
         issue: 'a record type without export support cannot publish a download field contract',
         path: ['fieldContracts', 'download'],
       });
     }
-    if (
-      contract.exportPolicy.outcome === 'NOT_SUPPORTED' &&
-      contract.fieldAllowlist.download.length > 0
-    ) {
+    if (contract.exportPolicy.outcome === 'NOT_SUPPORTED' && contract.fieldAllowlist.download.length > 0) {
       issues.push({
         issue: 'a record type without export support cannot publish download fields',
         path: ['fieldAllowlist', 'download'],
@@ -227,7 +220,8 @@ export const CustomerRecordTypeOnboardingSchema = Schema.Struct({
 );
 export type CustomerRecordTypeOnboarding = typeof CustomerRecordTypeOnboardingSchema.Type;
 
-export const CustomerRecordVisibilityTransitionInputSchema = Schema.Struct({
+// oxlint-disable-next-line eslint/no-unused-vars -- Reserved private schema retained as part of the visibility contract structure.
+const CustomerRecordVisibilityTransitionInputSchema = Schema.Struct({
   effectiveAt: HistoryInstantJsonSchema,
   expectedSourceRevision: NonEmptyTextSchema,
   fieldSet: CustomerFacingFieldSetSchema,
@@ -236,10 +230,9 @@ export const CustomerRecordVisibilityTransitionInputSchema = Schema.Struct({
   requestedState: CustomerRecordVisibilityStateSchema,
   subject: CustomerHistorySubjectSchema,
 });
-export type CustomerRecordVisibilityTransitionInput =
-  typeof CustomerRecordVisibilityTransitionInputSchema.Type;
 
-export const CustomerRecordVisibilityTransitionResultSchema = Schema.Union([
+// oxlint-disable-next-line eslint/no-unused-vars -- Reserved private schema retained as part of the visibility contract structure.
+const CustomerRecordVisibilityTransitionResultSchema = Schema.Union([
   Schema.Struct({
     fact: CustomerRecordVisibilityFactSchema,
     outcome: Schema.Literal('CHANGED'),
@@ -249,49 +242,55 @@ export const CustomerRecordVisibilityTransitionResultSchema = Schema.Union([
     outcome: Schema.Literal('UNCHANGED_EQUIVALENT'),
   }),
 ]);
-export type CustomerRecordVisibilityTransitionResult =
-  typeof CustomerRecordVisibilityTransitionResultSchema.Type;
 
 /** Schema-only owner event payload. The owner Action/Event identity remains owner-local. */
-export const CustomerRecordVisibilityChangedEventSchema = Schema.Struct({
+// oxlint-disable-next-line eslint/no-unused-vars -- Reserved private schema retained as part of the visibility contract structure.
+const CustomerRecordVisibilityChangedEventSchema = Schema.Struct({
   changedAt: HistoryInstantJsonSchema,
   current: CustomerRecordVisibilityFactSchema,
   previousSourceRevision: NonEmptyTextSchema,
   reasonCode: NonEmptyTextSchema,
 });
-export type CustomerRecordVisibilityChangedEvent =
-  typeof CustomerRecordVisibilityChangedEventSchema.Type;
 
-const sameProfileRef = (left: CustomerHistorySubject, right: CustomerHistorySubject): boolean =>
-  left.kind === right.kind &&
-  left.profileRef.moduleId === right.profileRef.moduleId &&
-  left.profileRef.resourceType === right.profileRef.resourceType &&
-  left.profileRef.resourceId === right.profileRef.resourceId &&
-  left.profileRef.tenantId === right.profileRef.tenantId &&
-  (left.kind === 'RETAIL_PROFILE' ||
-    (right.kind === 'COUNTERPARTY' &&
-      left.counterpartyRef.moduleId === right.counterpartyRef.moduleId &&
-      left.counterpartyRef.resourceType === right.counterpartyRef.resourceType &&
-      left.counterpartyRef.resourceId === right.counterpartyRef.resourceId &&
-      left.counterpartyRef.tenantId === right.counterpartyRef.tenantId));
+interface ResourceIdentity {
+  readonly moduleId: string;
+  readonly resourceId: string;
+  readonly resourceType: string;
+  readonly tenantId: string;
+}
+
+const sameResourceIdentity = (left: ResourceIdentity, right: ResourceIdentity): boolean =>
+  left.moduleId === right.moduleId &&
+  left.resourceType === right.resourceType &&
+  left.resourceId === right.resourceId &&
+  left.tenantId === right.tenantId;
+
+const sameRetailProfileRef = (left: RetailHistorySubject, right: RetailHistorySubject): boolean =>
+  sameResourceIdentity(left.profileRef, right.profileRef);
+
+const sameCounterpartyProfileRef = (left: CounterpartyHistorySubject, right: CounterpartyHistorySubject): boolean =>
+  sameResourceIdentity(left.profileRef, right.profileRef) &&
+  sameResourceIdentity(left.counterpartyRef, right.counterpartyRef);
+
+const sameProfileRef = (left: CustomerHistorySubject, right: CustomerHistorySubject): boolean => {
+  if (left.kind === 'RETAIL_PROFILE') {
+    return right.kind === 'RETAIL_PROFILE' && sameRetailProfileRef(left, right);
+  }
+  return right.kind === 'COUNTERPARTY' && sameCounterpartyProfileRef(left, right);
+};
 
 const sameFieldSet = (left: CustomerFacingFieldSet, right: CustomerFacingFieldSet): boolean =>
   left.name === right.name && left.version === right.version;
 
 const sameRecordRef = (left: HistoricalRecordRef, right: HistoricalRecordRef): boolean =>
-  left.moduleId === right.moduleId &&
-  left.resourceType === right.resourceType &&
-  left.resourceId === right.resourceId &&
-  left.tenantId === right.tenantId;
+  sameResourceIdentity(left, right);
 
 const fieldSetDeniedReason = (
   fact: CustomerRecordVisibilityFact,
 ): 'FIELD_SET_NOT_ALLOWED' | 'RESTRICTED_FIELD_SET_REQUIRED' =>
   fact.state === 'CUSTOMER_RESTRICTED' ? 'RESTRICTED_FIELD_SET_REQUIRED' : 'FIELD_SET_NOT_ALLOWED';
 
-const restrictedStateDecision = (
-  fact: CustomerRecordVisibilityFact,
-): CustomerRecordVisibilityDecision | null => {
+const restrictedStateDecision = (fact: CustomerRecordVisibilityFact): CustomerRecordVisibilityDecision | null => {
   if (fact.state !== 'CUSTOMER_RESTRICTED') {
     return null;
   }
@@ -304,26 +303,35 @@ const restrictedStateDecision = (
   return { outcome: 'DENIED', reason: 'RESTRICTED_FIELD_SET_REQUIRED' };
 };
 
-export const evaluateCustomerRecordVisibility = (input: {
+interface CustomerRecordVisibilityEvaluationInput {
   readonly fact: CustomerRecordVisibilityFact | 'INDETERMINATE' | null;
   readonly now: string;
   readonly recordRef: HistoricalRecordRef;
   readonly requestedFieldSet: CustomerFacingFieldSet;
   readonly subject: CustomerHistorySubject;
-}): CustomerRecordVisibilityDecision => {
+}
+
+type ResolvedCustomerRecordVisibilityEvaluationInput = Omit<CustomerRecordVisibilityEvaluationInput, 'fact'> & {
+  readonly fact: CustomerRecordVisibilityFact;
+};
+
+type CustomerRecordVisibilityRuleEvaluator = (
+  input: ResolvedCustomerRecordVisibilityEvaluationInput,
+) => CustomerRecordVisibilityDecision | null;
+
+const evaluateSubjectTenantRule = (
+  input: CustomerRecordVisibilityEvaluationInput,
+): CustomerRecordVisibilityDecision | null => {
   if (
     input.recordRef.tenantId !== input.subject.profileRef.tenantId ||
-    (input.subject.kind === 'COUNTERPARTY' &&
-      input.subject.counterpartyRef.tenantId !== input.recordRef.tenantId)
+    (input.subject.kind === 'COUNTERPARTY' && input.subject.counterpartyRef.tenantId !== input.recordRef.tenantId)
   ) {
     return { outcome: 'DENIED', reason: 'SUBJECT_MISMATCH' };
   }
-  if (input.fact === 'INDETERMINATE') {
-    return { outcome: 'UNAVAILABLE', reason: 'VISIBILITY_INDETERMINATE' };
-  }
-  if (input.fact === null) {
-    return { outcome: 'DENIED', reason: 'VISIBILITY_MISSING' };
-  }
+  return null;
+};
+
+const evaluateVisibilityContractRule: CustomerRecordVisibilityRuleEvaluator = (input) => {
   if (
     !sameRecordRef(input.fact.recordRef, input.recordRef) ||
     input.fact.ownerModuleId !== input.fact.recordRef.moduleId ||
@@ -332,30 +340,67 @@ export const evaluateCustomerRecordVisibility = (input: {
   ) {
     return { outcome: 'UNAVAILABLE', reason: 'VISIBILITY_CONTRACT_INVALID' };
   }
+  return null;
+};
+
+const evaluateVisibilityFreshnessRule: CustomerRecordVisibilityRuleEvaluator = (input) => {
   if (input.fact.freshness === 'STALE' || input.fact.decidedAt > input.now) {
     return { outcome: 'UNAVAILABLE', reason: 'VISIBILITY_STALE' };
   }
+  return null;
+};
+
+const evaluateVisibilitySubjectRule: CustomerRecordVisibilityRuleEvaluator = (input) => {
   if (!sameProfileRef(input.fact.subject, input.subject)) {
     return { outcome: 'DENIED', reason: 'SUBJECT_MISMATCH' };
   }
+  return null;
+};
+
+const evaluateVisibilityEffectiveRule: CustomerRecordVisibilityRuleEvaluator = (input) => {
   if (
     input.now < input.fact.effectiveFrom ||
     (input.fact.effectiveTo !== undefined && input.now >= input.fact.effectiveTo)
   ) {
     return { outcome: 'DENIED', reason: 'VISIBILITY_NOT_EFFECTIVE' };
   }
-  if (input.fact.state === 'CUSTOMER_HIDDEN') {
+  return null;
+};
+
+const evaluateVisibilityStateRule: CustomerRecordVisibilityRuleEvaluator = ({ fact }) => {
+  if (fact.state === 'CUSTOMER_HIDDEN') {
     return { outcome: 'DENIED', reason: 'CUSTOMER_HIDDEN' };
   }
-  const restrictedDecision = restrictedStateDecision(input.fact);
-  if (restrictedDecision !== null) {
-    return restrictedDecision;
-  }
+  return restrictedStateDecision(fact);
+};
+
+const evaluateVisibilityFieldSetRule: CustomerRecordVisibilityRuleEvaluator = (input) => {
   if (!sameFieldSet(input.fact.fieldSet, input.requestedFieldSet)) {
     return {
       outcome: 'DENIED',
       reason: fieldSetDeniedReason(input.fact),
     };
+  }
+  return null;
+};
+
+const visibilityRuleEvaluators = [
+  evaluateVisibilityContractRule,
+  evaluateVisibilityFreshnessRule,
+  evaluateVisibilitySubjectRule,
+  evaluateVisibilityEffectiveRule,
+  evaluateVisibilityStateRule,
+  evaluateVisibilityFieldSetRule,
+] as const satisfies readonly CustomerRecordVisibilityRuleEvaluator[];
+
+const evaluateResolvedCustomerRecordVisibility = (
+  input: ResolvedCustomerRecordVisibilityEvaluationInput,
+): CustomerRecordVisibilityDecision => {
+  for (const evaluateRule of visibilityRuleEvaluators) {
+    const decision = evaluateRule(input);
+    if (decision !== null) {
+      return decision;
+    }
   }
   return {
     evidenceRef: input.fact.evidenceRef,
@@ -367,4 +412,20 @@ export const evaluateCustomerRecordVisibility = (input: {
     recordRef: input.fact.recordRef,
     sourceRevision: input.fact.sourceRevision,
   };
+};
+
+export const evaluateCustomerRecordVisibility = (
+  input: CustomerRecordVisibilityEvaluationInput,
+): CustomerRecordVisibilityDecision => {
+  const subjectTenantDecision = evaluateSubjectTenantRule(input);
+  if (subjectTenantDecision !== null) {
+    return subjectTenantDecision;
+  }
+  if (input.fact === 'INDETERMINATE') {
+    return { outcome: 'UNAVAILABLE', reason: 'VISIBILITY_INDETERMINATE' };
+  }
+  if (input.fact === null) {
+    return { outcome: 'DENIED', reason: 'VISIBILITY_MISSING' };
+  }
+  return evaluateResolvedCustomerRecordVisibility({ ...input, fact: input.fact });
 };

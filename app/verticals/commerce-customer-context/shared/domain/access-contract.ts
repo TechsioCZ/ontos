@@ -1,7 +1,4 @@
-import {
-  AuthorizationMutationStateSchema,
-  PrincipalRefSchema as CorePrincipalRefSchema,
-} from '@app/core-runtime';
+import { AuthorizationMutationStateSchema, PrincipalRefSchema as CorePrincipalRefSchema } from '@app/core-runtime';
 import type { PrincipalRef as CorePrincipalRef } from '@app/core-runtime';
 import { CounterpartyRefSchema as PartyCounterpartyRefSchema } from '@app/party-registry/resources/counterparty';
 import type { CounterpartyRef as PartyCounterpartyRef } from '@app/party-registry/resources/counterparty';
@@ -54,8 +51,7 @@ export const CounterpartyPermissionScopeSchema = Schema.Union([
 ]);
 export type CounterpartyPermissionScope = typeof CounterpartyPermissionScopeSchema.Type;
 
-export const CounterpartyAccessJournalStateSchema = AuthorizationMutationStateSchema;
-export type CounterpartyAccessJournalState = typeof CounterpartyAccessJournalStateSchema.Type;
+const CounterpartyAccessJournalStateSchema = AuthorizationMutationStateSchema;
 
 export const CounterpartyAccessGrantSchema = Schema.Struct({
   catalogVersion: Schema.Literal('1'),
@@ -74,11 +70,7 @@ export const CounterpartyAccessGrantSchema = Schema.Struct({
 });
 export type CounterpartyAccessGrant = typeof CounterpartyAccessGrantSchema.Type;
 
-export const CounterpartyAccessDecisionSchema = Schema.Literals([
-  'ALLOWED',
-  'DENIED',
-  'UNAVAILABLE',
-]);
+export const CounterpartyAccessDecisionSchema = Schema.Literals(['ALLOWED', 'DENIED', 'UNAVAILABLE']);
 export type CounterpartyAccessDecision = typeof CounterpartyAccessDecisionSchema.Type;
 
 export const AccessAuditEvidenceSchema = Schema.Struct({
@@ -169,8 +161,7 @@ export const canRevokeAdministratorGrant = (
 ): boolean => {
   const target = grants.find(
     ({ grantRef }) =>
-      grantRef.resourceId === targetGrantRef.resourceId &&
-      grantRef.tenantId === targetGrantRef.tenantId,
+      grantRef.resourceId === targetGrantRef.resourceId && grantRef.tenantId === targetGrantRef.tenantId,
   );
   if (target?.permission !== 'counterparty.access.manage' || target.state !== 'ACTIVE') {
     return true;

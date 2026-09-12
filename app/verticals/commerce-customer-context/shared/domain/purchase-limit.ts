@@ -1,10 +1,9 @@
 import { Schema } from 'effect';
 import { CurrencyCodeSchema } from './currency.ts';
 
-export const PURCHASE_LIMIT_DECIMAL_PRECISION = 38;
-export const PURCHASE_LIMIT_DECIMAL_SCALE = 9;
-export const PURCHASE_LIMIT_DECIMAL_INTEGER_DIGITS =
-  PURCHASE_LIMIT_DECIMAL_PRECISION - PURCHASE_LIMIT_DECIMAL_SCALE;
+const PURCHASE_LIMIT_DECIMAL_PRECISION = 38;
+const PURCHASE_LIMIT_DECIMAL_SCALE = 9;
+const PURCHASE_LIMIT_DECIMAL_INTEGER_DIGITS = PURCHASE_LIMIT_DECIMAL_PRECISION - PURCHASE_LIMIT_DECIMAL_SCALE;
 
 const canonicalDecimalPattern = /^(?:0|[1-9][0-9]*)(?:\.[0-9]*[1-9])?$/u;
 
@@ -14,16 +13,14 @@ export const ExactNonNegativeDecimalSchema = Schema.String.check(
       return 'amount must be a canonical non-negative decimal without exponent, sign, leading zero, or trailing fractional zero';
     }
     const [integer = '', fraction = ''] = value.split('.');
-    return integer.length <= PURCHASE_LIMIT_DECIMAL_INTEGER_DIGITS &&
-      fraction.length <= PURCHASE_LIMIT_DECIMAL_SCALE
+    return integer.length <= PURCHASE_LIMIT_DECIMAL_INTEGER_DIGITS && fraction.length <= PURCHASE_LIMIT_DECIMAL_SCALE
       ? undefined
       : `amount must fit numeric(${PURCHASE_LIMIT_DECIMAL_PRECISION}, ${PURCHASE_LIMIT_DECIMAL_SCALE}): at most ${PURCHASE_LIMIT_DECIMAL_INTEGER_DIGITS} integer digits and ${PURCHASE_LIMIT_DECIMAL_SCALE} fractional digits`;
   }),
 ).pipe(Schema.brand('ExactNonNegativeDecimal'));
 export type ExactNonNegativeDecimal = typeof ExactNonNegativeDecimalSchema.Type;
 
-export const PurchaseLimitCurrencyCodeSchema = CurrencyCodeSchema;
-export type PurchaseLimitCurrencyCode = typeof PurchaseLimitCurrencyCodeSchema.Type;
+const PurchaseLimitCurrencyCodeSchema = CurrencyCodeSchema;
 
 export const MonetaryAmountSchema = Schema.Struct({
   amount: ExactNonNegativeDecimalSchema,
@@ -53,10 +50,7 @@ const decimalParts = (value: ExactNonNegativeDecimal): DecimalParts => {
 };
 
 /** Compares two already-decoded exact decimal amounts without binary floating point. */
-export const compareExactDecimals = (
-  left: ExactNonNegativeDecimal,
-  right: ExactNonNegativeDecimal,
-): -1 | 0 | 1 => {
+export const compareExactDecimals = (left: ExactNonNegativeDecimal, right: ExactNonNegativeDecimal): -1 | 0 | 1 => {
   const leftParts = decimalParts(left);
   const rightParts = decimalParts(right);
   const scale = Math.max(leftParts.scale, rightParts.scale);

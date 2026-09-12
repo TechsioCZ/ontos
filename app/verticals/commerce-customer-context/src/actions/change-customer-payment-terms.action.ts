@@ -29,15 +29,6 @@ import type { ChangeCustomerPaymentTermsCommerceCustomerContextCustomerPaymentTe
 const { expectedRevision: revision, reason } = ChangeCustomerPaymentTermsPayloadSchema.fields;
 const moduleKey = 'commerce.customer-context' as const;
 
-export {
-  ChangeCustomerPaymentTermsPayloadSchema,
-  ChangeCustomerPaymentTermsResultSchema,
-} from '../../shared/actions/change-customer-payment-terms.ts';
-export type {
-  ChangeCustomerPaymentTermsPayload,
-  ChangeCustomerPaymentTermsResult,
-} from '../../shared/actions/change-customer-payment-terms.ts';
-
 export class CustomerPaymentTermsActionRejected extends Schema.TaggedError<CustomerPaymentTermsActionRejected>()(
   'CustomerPaymentTermsActionRejected',
   {
@@ -98,46 +89,27 @@ export interface ChangeCustomerPaymentTermsServices {
   ) => Effect.Effect<ChangeCustomerPaymentTermsResult, CustomerPaymentTermsActionRejected>;
 }
 
-export const handleChangeCustomerPaymentTerms = Effect.fn(
-  'ChangeCustomerPaymentTermsAction.handleChangeCustomerPaymentTerms',
-)(function* change(
-  payload: ChangeCustomerPaymentTermsPayload,
-  context: ActionHandlerContext<DomainEvents, ChangeCustomerPaymentTermsServices>,
-) {
-  if (
-    payload.counterpartyRef.tenantId !== context.scope.tenantId ||
-    payload.profileRef.tenantId !== context.scope.tenantId ||
-    payload.changes.some(
-      (candidate) =>
-        ('paymentTermRef' in candidate &&
-          candidate.paymentTermRef.tenantId !== context.scope.tenantId) ||
-        ('entitlementRef' in candidate &&
-          candidate.entitlementRef.tenantId !== context.scope.tenantId),
-    )
-  ) {
-    return yield* new CustomerPaymentTermsActionRejected({
-      code: 'SCOPE_MISMATCH',
-      reason:
-        'The Counterparty, profile, entitlement, and Payment Term must belong to the trusted Tenant',
-      retryable: false,
-    });
-  }
+const paymentTermsBelongToTenant = (payload: ChangeCustomerPaymentTermsPayload, tenantId: string): boolean =>
+  payload.counterpartyRef.tenantId === tenantId &&
+  payload.profileRef.tenantId === tenantId &&
+  payload.changes.every(
+    (candidate) =>
+      (!('paymentTermRef' in candidate) || candidate.paymentTermRef.tenantId === tenantId) &&
+      (!('entitlementRef' in candidate) || candidate.entitlementRef.tenantId === tenantId),
+  );
 
-  const result = yield* context.services.change(payload, context);
-  if (
-    result.state.profileRef.tenantId !== payload.profileRef.tenantId ||
-    result.state.profileRef.resourceId !== payload.profileRef.resourceId ||
-    result.state.profileRef.resourceType !== payload.profileRef.resourceType
-  ) {
-    return yield* new CustomerPaymentTermsActionRejected({
-      code: 'OUTCOME_INDETERMINATE',
-      reason: 'Persistence returned Payment Terms for a different customer profile',
-      retryable: false,
-    });
-  }
+const paymentTermsOutcomeMatchesProfile = (
+  result: ChangeCustomerPaymentTermsResult,
+  payload: ChangeCustomerPaymentTermsPayload,
+): boolean =>
+  result.state.profileRef.tenantId === payload.profileRef.tenantId &&
+  result.state.profileRef.resourceId === payload.profileRef.resourceId &&
+  result.state.profileRef.resourceType === payload.profileRef.resourceType;
+
+const paymentTermsEffectiveRange = (changes: ChangeCustomerPaymentTermsPayload['changes']) => {
   let earliestEffectiveAt = '9999-12-31T23:59:59.999Z';
   let latestEffectiveAt = '0000-01-01T00:00:00.000Z';
-  for (const candidate of payload.changes) {
+  for (const candidate of changes) {
     const instant = 'effectiveAt' in candidate ? candidate.effectiveAt : candidate.effectiveFrom;
     if (instant < earliestEffectiveAt) {
       earliestEffectiveAt = instant;
@@ -146,6 +118,79 @@ export const handleChangeCustomerPaymentTerms = Effect.fn(
       latestEffectiveAt = instant;
     }
   }
+  return { earliestEffectiveAt, latestEffectiveAt };
+};
+
+const paymentTermCatalogReferences = (changes: ChangeCustomerPaymentTermsPayload['changes']) =>
+  new Map(
+    changes.flatMap((candidate) =>
+      'paymentTermRef' in candidate
+        ? [
+            [
+              `${candidate.paymentTermRef.tenantId}:${candidate.paymentTermRef.resourceId}`,
+              candidate.paymentTermRef,
+            ] as const,
+          ]
+        : [],
+    ),
+  );
+
+const recordCustomerPaymentTermsOutcome = Effect.fn('ChangeCustomerPaymentTermsAction.recordOutcome')(
+  function* recordOutcome(
+    payload: ChangeCustomerPaymentTermsPayload,
+    result: ChangeCustomerPaymentTermsResult,
+    effectiveAt: string,
+    context: ActionHandlerContext<DomainEvents, ChangeCustomerPaymentTermsServices>,
+  ) {
+    if (!result.changed) {
+      return;
+    }
+    const eventPayload: ChangeCustomerPaymentTermsCommerceCustomerContextCustomerPaymentTermsChangedV1OutboxPayload = {
+      action: 'CHANGED',
+      changed: true,
+      changes: payload.changes,
+      effectiveAt,
+      profileRef: payload.profileRef,
+      revision: result.state.revision,
+    };
+    const event = yield* context.addDomainEvent({
+      eventType: 'commerce.customer-context.customer-payment-terms-changed.v1',
+      payloadJson: eventPayload,
+      producerModuleKey: moduleKey,
+      subjectModuleKey: result.state.profileRef.moduleId,
+      subjectResourceId: result.state.profileRef.resourceId,
+      subjectResourceType: result.state.profileRef.resourceType,
+    });
+    yield* context.addOutboxMessage(
+      event,
+      createChangeCustomerPaymentTermsCommerceCustomerContextCustomerPaymentTermsChangedV1OutboxMessage(eventPayload),
+    );
+  },
+);
+
+export const handleChangeCustomerPaymentTerms = Effect.fn(
+  'ChangeCustomerPaymentTermsAction.handleChangeCustomerPaymentTerms',
+)(function* change(
+  payload: ChangeCustomerPaymentTermsPayload,
+  context: ActionHandlerContext<DomainEvents, ChangeCustomerPaymentTermsServices>,
+) {
+  if (!paymentTermsBelongToTenant(payload, context.scope.tenantId)) {
+    return yield* new CustomerPaymentTermsActionRejected({
+      code: 'SCOPE_MISMATCH',
+      reason: 'The Counterparty, profile, entitlement, and Payment Term must belong to the trusted Tenant',
+      retryable: false,
+    });
+  }
+
+  const result = yield* context.services.change(payload, context);
+  if (!paymentTermsOutcomeMatchesProfile(result, payload)) {
+    return yield* new CustomerPaymentTermsActionRejected({
+      code: 'OUTCOME_INDETERMINATE',
+      reason: 'Persistence returned Payment Terms for a different customer profile',
+      retryable: false,
+    });
+  }
+  const { earliestEffectiveAt, latestEffectiveAt } = paymentTermsEffectiveRange(payload.changes);
   yield* context.recordAuditEvidence({
     changeCount: payload.changes.length,
     changed: result.changed,
@@ -166,18 +211,7 @@ export const handleChangeCustomerPaymentTerms = Effect.fn(
     targetResourceId: payload.profileRef.resourceId,
     targetResourceType: payload.profileRef.resourceType,
   });
-  const catalogReferences = new Map(
-    payload.changes.flatMap((candidate) =>
-      'paymentTermRef' in candidate
-        ? [
-            [
-              `${candidate.paymentTermRef.tenantId}:${candidate.paymentTermRef.resourceId}`,
-              candidate.paymentTermRef,
-            ] as const,
-          ]
-        : [],
-    ),
-  );
+  const catalogReferences = paymentTermCatalogReferences(payload.changes);
   yield* Effect.forEach(
     catalogReferences.values(),
     (paymentTermRef) =>
@@ -192,31 +226,7 @@ export const handleChangeCustomerPaymentTerms = Effect.fn(
       }),
     { concurrency: 1, discard: true },
   );
-  if (result.changed) {
-    const eventPayload: ChangeCustomerPaymentTermsCommerceCustomerContextCustomerPaymentTermsChangedV1OutboxPayload =
-      {
-        action: 'CHANGED',
-        changed: true,
-        changes: payload.changes,
-        effectiveAt: latestEffectiveAt,
-        profileRef: payload.profileRef,
-        revision: result.state.revision,
-      };
-    const event = yield* context.addDomainEvent({
-      eventType: 'commerce.customer-context.customer-payment-terms-changed.v1',
-      payloadJson: eventPayload,
-      producerModuleKey: moduleKey,
-      subjectModuleKey: result.state.profileRef.moduleId,
-      subjectResourceId: result.state.profileRef.resourceId,
-      subjectResourceType: result.state.profileRef.resourceType,
-    });
-    yield* context.addOutboxMessage(
-      event,
-      createChangeCustomerPaymentTermsCommerceCustomerContextCustomerPaymentTermsChangedV1OutboxMessage(
-        eventPayload,
-      ),
-    );
-  }
+  yield* recordCustomerPaymentTermsOutcome(payload, result, latestEffectiveAt, context);
   return result;
 });
 
@@ -229,21 +239,18 @@ export const changeCustomerPaymentTermsAction = defineAction(
     actionKey: 'commerce.customer-context.change-customer-payment-terms',
     auditEvidenceSchema: CustomerPaymentTermsAuditEvidenceSchema,
     auditProfile: 'standard',
-    businessPermission: defineActionBusinessPermission<ChangeCustomerPaymentTermsPayload>(
-      (payload, scope) => ({
-        permission: 'counterparty.settings.payment_terms.manage',
-        target: {
-          counterpartyId: payload.counterpartyRef.resourceId,
-          kind: 'counterparty',
-          legalEntityId: scope.legalEntityId ?? '',
-          tenantId: scope.tenantId,
-        },
-      }),
-    ),
+    businessPermission: defineActionBusinessPermission<ChangeCustomerPaymentTermsPayload>((payload, scope) => ({
+      permission: 'counterparty.settings.payment_terms.manage',
+      target: {
+        counterpartyId: payload.counterpartyRef.resourceId,
+        kind: 'counterparty',
+        legalEntityId: scope.legalEntityId ?? '',
+        tenantId: scope.tenantId,
+      },
+    })),
     domainErrorSchema: CustomerPaymentTermsActionRejected,
     domainEvents: {
-      'commerce.customer-context.customer-payment-terms-changed.v1':
-        CustomerPaymentTermsChangedEventSchema,
+      'commerce.customer-context.customer-payment-terms-changed.v1': CustomerPaymentTermsChangedEventSchema,
     },
     entrypoint: defineTenantModuleEntrypoint({
       access: 'write',
@@ -286,11 +293,3 @@ export const changeCustomerPaymentTermsAction = defineAction(
     });
   },
 );
-
-// <generated-outbox-message-exports>
-export { ChangeCustomerPaymentTermsCommerceCustomerContextCustomerPaymentTermsChangedV1OutboxPayloadSchema } from './change-customer-payment-terms.commerce-customer-context-customer-payment-terms-changed-v1.outbox-message.ts';
-export { ChangeCustomerPaymentTermsCommerceCustomerContextCustomerPaymentTermsChangedV1OutboxProducerModuleKey } from './change-customer-payment-terms.commerce-customer-context-customer-payment-terms-changed-v1.outbox-message.ts';
-export { ChangeCustomerPaymentTermsCommerceCustomerContextCustomerPaymentTermsChangedV1OutboxTopic } from './change-customer-payment-terms.commerce-customer-context-customer-payment-terms-changed-v1.outbox-message.ts';
-export { createChangeCustomerPaymentTermsCommerceCustomerContextCustomerPaymentTermsChangedV1OutboxMessage } from './change-customer-payment-terms.commerce-customer-context-customer-payment-terms-changed-v1.outbox-message.ts';
-export type { ChangeCustomerPaymentTermsCommerceCustomerContextCustomerPaymentTermsChangedV1OutboxPayload } from './change-customer-payment-terms.commerce-customer-context-customer-payment-terms-changed-v1.outbox-message.ts';
-// </generated-outbox-message-exports>

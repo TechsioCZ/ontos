@@ -188,15 +188,11 @@ const isGeneratedEffectClientLeaf = (input: {
 }): boolean => {
   if (
     GENERATED_CLIENT_HEADERS.some((header) => input.source.startsWith(header)) ||
-    input.source.startsWith(
-      `${COMMAND_CLIENT_HEADER}// @ontos-command-client-owner ${input.appId}\n`,
-    )
+    input.source.startsWith(`${COMMAND_CLIENT_HEADER}// @ontos-command-client-owner ${input.appId}\n`)
   ) {
     return true;
   }
-  const actionMatch = /^\.\/(?<slug>[a-z][a-z0-9]*(?:-[a-z0-9]+)*)-action-client\.ts$/u.exec(
-    input.localClient,
-  );
+  const actionMatch = /^\.\/(?<slug>[a-z][a-z0-9]*(?:-[a-z0-9]+)*)-action-client\.ts$/u.exec(input.localClient);
   const slug = actionMatch?.groups?.slug;
   return (
     slug !== undefined &&

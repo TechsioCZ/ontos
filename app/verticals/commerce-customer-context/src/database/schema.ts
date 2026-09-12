@@ -26,6 +26,15 @@ import type { AnyPgColumn } from 'drizzle-orm/pg-core';
  */
 export const COMMERCE_CUSTOMER_CONTEXT_SCHEMA_NAME = 'commerce_customer_context';
 
+type DatabaseJsonValue =
+  | boolean
+  | null
+  | number
+  | readonly DatabaseJsonValue[]
+  | string
+  | { readonly [key: string]: DatabaseJsonValue };
+type DatabaseJsonObject = Readonly<Record<string, DatabaseJsonValue>>;
+
 export const COMMERCE_CUSTOMER_CONTEXT_TABLE_INVENTORY = [
   'access_mutation_journal',
   'address_book_reconciliation_receipts',
@@ -83,8 +92,8 @@ const operationAttribution = () => ({
 });
 
 const scopeColumns = () => ({
-  tenantId: uuid('tenant_id').notNull(),
   legalEntityId: uuid('legal_entity_id').notNull(),
+  tenantId: uuid('tenant_id').notNull(),
 });
 
 const scopeIdentity = (
@@ -93,10 +102,7 @@ const scopeIdentity = (
   id: AnyPgColumn,
 ) => unique(name).on(table.tenantId, table.legalEntityId, id);
 
-const scopedPolicies = (
-  prefix: string,
-  table: Readonly<Record<'tenantId' | 'legalEntityId', AnyPgColumn>>,
-) => {
+const scopedPolicies = (prefix: string, table: Readonly<Record<'tenantId' | 'legalEntityId', AnyPgColumn>>) => {
   const predicate = sql`${table.tenantId} = nullif(current_setting('ontos.tenant_id', true), '')::uuid and ${table.legalEntityId} = nullif(current_setting('ontos.legal_entity_id', true), '')::uuid`;
   return [
     ...tenantLegalEntityRlsPolicies(prefix, table.tenantId, table.legalEntityId),
@@ -119,10 +125,7 @@ const optionalTrimmed = (name: string, column: AnyPgColumn) =>
 
 const positiveRevision = (name: string, revision: AnyPgColumn) => check(name, sql`${revision} > 0`);
 
-const halfOpenPeriod = (
-  name: string,
-  table: Readonly<Record<'effectiveFrom' | 'effectiveTo', AnyPgColumn>>,
-) =>
+const halfOpenPeriod = (name: string, table: Readonly<Record<'effectiveFrom' | 'effectiveTo', AnyPgColumn>>) =>
   check(name, sql`${table.effectiveTo} is null or ${table.effectiveTo} > ${table.effectiveFrom}`);
 
 /** Internal identity/lifecycle row shared by the two concrete profile resources. */
@@ -131,20 +134,17 @@ export const customerProfiles = commerceCustomerContextSchema.table.withRLS(
   {
     customerProfileId: uuid('customer_profile_id').defaultRandom().primaryKey(),
     ...scopeColumns(),
-    profileKind: text('profile_kind').notNull(),
-    lifecycle: text('lifecycle').default('ACTIVE').notNull(),
-    revision: integer('revision').default(1).notNull(),
     createdAt: createdAt(),
+    lifecycle: text('lifecycle').default('ACTIVE').notNull(),
+    profileKind: text('profile_kind').notNull(),
+    revision: integer('revision').default(1).notNull(),
     updatedAt: updatedAt(),
   },
   (table) => [
     scopeIdentity('ccc_profiles_scope_id_uk', table, table.customerProfileId),
     unique('ccc_profiles_tenant_id_uk').on(table.tenantId, table.customerProfileId),
     check('ccc_profiles_kind_ck', sql`${table.profileKind} in ('RETAIL', 'COUNTERPARTY')`),
-    check(
-      'ccc_profiles_lifecycle_ck',
-      sql`${table.lifecycle} in ('ACTIVE', 'SUSPENDED', 'ARCHIVED')`,
-    ),
+    check('ccc_profiles_lifecycle_ck', sql`${table.lifecycle} in ('ACTIVE', 'SUSPENDED', 'ARCHIVED')`),
     positiveRevision('ccc_profiles_revision_ck', table.revision),
     ...scopedPolicies('ccc_profiles_scope', table),
   ],
@@ -156,10 +156,10 @@ export const customerSettingRevisions = commerceCustomerContextSchema.table.with
   {
     customerSettingRevisionId: uuid('customer_setting_revision_id').defaultRandom().primaryKey(),
     ...scopeColumns(),
-    customerProfileId: uuid('customer_profile_id').notNull(),
-    settingKind: text('setting_kind').notNull(),
     currentRevision: integer('current_revision').default(0).notNull(),
+    customerProfileId: uuid('customer_profile_id').notNull(),
     lastActionInvocationId: uuid('last_action_invocation_id'),
+    settingKind: text('setting_kind').notNull(),
     updatedAt: updatedAt(),
   },
   (table) => [
@@ -172,11 +172,7 @@ export const customerSettingRevisions = commerceCustomerContextSchema.table.with
     ),
     foreignKey({
       columns: [table.tenantId, table.legalEntityId, table.customerProfileId],
-      foreignColumns: [
-        customerProfiles.tenantId,
-        customerProfiles.legalEntityId,
-        customerProfiles.customerProfileId,
-      ],
+      foreignColumns: [customerProfiles.tenantId, customerProfiles.legalEntityId, customerProfiles.customerProfileId],
       name: 'ccc_setting_revisions_profile_fk',
     }).onDelete('restrict'),
     check(
@@ -188,30 +184,22 @@ export const customerSettingRevisions = commerceCustomerContextSchema.table.with
   ],
 );
 
-export const retailCustomerProfiles = commerceCustomerContextSchema.table.withRLS(
+const retailCustomerProfiles = commerceCustomerContextSchema.table.withRLS(
   'retail_customer_profiles',
   {
     retailCustomerProfileId: uuid('retail_customer_profile_id').primaryKey(),
     ...scopeColumns(),
-    partyResourceId: text('party_resource_id').notNull(),
-    partyResourceRevision: text('party_resource_revision'),
     attributionKind: text('attribution_kind').default('AUTHENTICATED').notNull(),
     createdAt: createdAt(),
+    partyResourceId: text('party_resource_id').notNull(),
+    partyResourceRevision: text('party_resource_revision'),
   },
   (table) => [
     scopeIdentity('ccc_retail_profiles_scope_id_uk', table, table.retailCustomerProfileId),
-    unique('ccc_retail_profiles_business_key_uk').on(
-      table.tenantId,
-      table.legalEntityId,
-      table.partyResourceId,
-    ),
+    unique('ccc_retail_profiles_business_key_uk').on(table.tenantId, table.legalEntityId, table.partyResourceId),
     foreignKey({
       columns: [table.tenantId, table.legalEntityId, table.retailCustomerProfileId],
-      foreignColumns: [
-        customerProfiles.tenantId,
-        customerProfiles.legalEntityId,
-        customerProfiles.customerProfileId,
-      ],
+      foreignColumns: [customerProfiles.tenantId, customerProfiles.legalEntityId, customerProfiles.customerProfileId],
       name: 'ccc_retail_profiles_parent_fk',
     }).onDelete('restrict'),
     trimmed('ccc_retail_profiles_party_ref_ck', table.partyResourceId),
@@ -231,39 +219,23 @@ export const counterpartyPurchasingProfiles = commerceCustomerContextSchema.tabl
     ...scopeColumns(),
     counterpartyResourceId: text('counterparty_resource_id').notNull(),
     counterpartyResourceRevision: text('counterparty_resource_revision'),
+    createdAt: createdAt(),
     customerRoleResourceId: text('customer_role_resource_id'),
     customerRoleResourceRevision: text('customer_role_resource_revision'),
-    createdAt: createdAt(),
   },
   (table) => [
-    scopeIdentity(
-      'ccc_counterparty_profiles_scope_id_uk',
-      table,
-      table.counterpartyPurchasingProfileId,
-    ),
-    unique('ccc_counterparty_profiles_tenant_id_uk').on(
-      table.tenantId,
-      table.counterpartyPurchasingProfileId,
-    ),
-    unique('ccc_counterparty_profiles_business_key_uk').on(
-      table.tenantId,
-      table.counterpartyResourceId,
-    ),
+    scopeIdentity('ccc_counterparty_profiles_scope_id_uk', table, table.counterpartyPurchasingProfileId),
+    unique('ccc_counterparty_profiles_tenant_id_uk').on(table.tenantId, table.counterpartyPurchasingProfileId),
+    unique('ccc_counterparty_profiles_business_key_uk').on(table.tenantId, table.counterpartyResourceId),
     foreignKey({
       columns: [table.tenantId, table.counterpartyPurchasingProfileId],
       foreignColumns: [customerProfiles.tenantId, customerProfiles.customerProfileId],
       name: 'ccc_counterparty_profiles_parent_fk',
     }).onDelete('restrict'),
     trimmed('ccc_counterparty_profiles_counterparty_ref_ck', table.counterpartyResourceId),
-    optionalTrimmed(
-      'ccc_counterparty_profiles_counterparty_revision_ck',
-      table.counterpartyResourceRevision,
-    ),
+    optionalTrimmed('ccc_counterparty_profiles_counterparty_revision_ck', table.counterpartyResourceRevision),
     optionalTrimmed('ccc_counterparty_profiles_role_ref_ck', table.customerRoleResourceId),
-    optionalTrimmed(
-      'ccc_counterparty_profiles_role_revision_ck',
-      table.customerRoleResourceRevision,
-    ),
+    optionalTrimmed('ccc_counterparty_profiles_role_revision_ck', table.customerRoleResourceRevision),
     ...scopedPolicies('ccc_counterparty_profiles_scope', table),
   ],
 );
@@ -274,8 +246,8 @@ export const customerProfileLifecycleHistory = commerceCustomerContextSchema.tab
     lifecycleHistoryId: uuid('lifecycle_history_id').defaultRandom().primaryKey(),
     ...scopeColumns(),
     customerProfileId: uuid('customer_profile_id').notNull(),
-    revision: integer('revision').notNull(),
     fromLifecycle: text('from_lifecycle'),
+    revision: integer('revision').notNull(),
     toLifecycle: text('to_lifecycle').notNull(),
     ...operationAttribution(),
   },
@@ -289,11 +261,7 @@ export const customerProfileLifecycleHistory = commerceCustomerContextSchema.tab
     ),
     foreignKey({
       columns: [table.tenantId, table.legalEntityId, table.customerProfileId],
-      foreignColumns: [
-        customerProfiles.tenantId,
-        customerProfiles.legalEntityId,
-        customerProfiles.customerProfileId,
-      ],
+      foreignColumns: [customerProfiles.tenantId, customerProfiles.legalEntityId, customerProfiles.customerProfileId],
       name: 'ccc_profile_history_profile_fk',
     }).onDelete('restrict'),
     positiveRevision('ccc_profile_history_revision_ck', table.revision),
@@ -301,10 +269,7 @@ export const customerProfileLifecycleHistory = commerceCustomerContextSchema.tab
       'ccc_profile_history_from_state_ck',
       sql`${table.fromLifecycle} is null or ${table.fromLifecycle} in ('ACTIVE', 'SUSPENDED', 'ARCHIVED')`,
     ),
-    check(
-      'ccc_profile_history_to_state_ck',
-      sql`${table.toLifecycle} in ('ACTIVE', 'SUSPENDED', 'ARCHIVED')`,
-    ),
+    check('ccc_profile_history_to_state_ck', sql`${table.toLifecycle} in ('ACTIVE', 'SUSPENDED', 'ARCHIVED')`),
     optionalTrimmed('ccc_profile_history_reason_ck', table.reason),
     ...scopedPolicies('ccc_profile_history_scope', table),
   ],
@@ -313,20 +278,18 @@ export const customerProfileLifecycleHistory = commerceCustomerContextSchema.tab
 export const retailPortalProfileBindings = commerceCustomerContextSchema.table.withRLS(
   'retail_portal_profile_bindings',
   {
-    retailPortalProfileBindingId: uuid('retail_portal_profile_binding_id')
-      .defaultRandom()
-      .primaryKey(),
+    retailPortalProfileBindingId: uuid('retail_portal_profile_binding_id').defaultRandom().primaryKey(),
     ...scopeColumns(),
-    retailCustomerProfileId: uuid('retail_customer_profile_id').notNull(),
-    principalId: uuid('principal_id').notNull(),
     authBindingId: uuid('auth_binding_id').notNull(),
-    enrollmentEvidenceRef: text('enrollment_evidence_ref').notNull(),
-    lifecycle: text('lifecycle').default('ACTIVE').notNull(),
     authorizationOperation: text('authorization_operation').default('grant').notNull(),
     authorizationState: text('authorization_state').default('ACTIVE').notNull(),
+    createdAt: createdAt(),
+    enrollmentEvidenceRef: text('enrollment_evidence_ref').notNull(),
+    lifecycle: text('lifecycle').default('ACTIVE').notNull(),
+    principalId: uuid('principal_id').notNull(),
+    retailCustomerProfileId: uuid('retail_customer_profile_id').notNull(),
     revision: integer('revision').default(1).notNull(),
     revokedAt: timestamp('revoked_at', { withTimezone: true }),
-    createdAt: createdAt(),
     updatedAt: updatedAt(),
     ...operationAttribution(),
   },
@@ -364,99 +327,87 @@ export const retailPortalProfileBindings = commerceCustomerContextSchema.table.w
 );
 
 /** One immutable, idempotent authorization intent per binding Permission transition. */
-export const retailPortalProfileBindingPermissionMutations =
-  commerceCustomerContextSchema.table.withRLS(
-    'retail_portal_profile_binding_permission_mutations',
-    {
-      retailPortalProfileBindingPermissionMutationId: uuid(
-        'retail_portal_profile_binding_permission_mutation_id',
-      )
-        .defaultRandom()
-        .primaryKey(),
-      ...scopeColumns(),
-      retailPortalProfileBindingId: uuid('retail_portal_profile_binding_id').notNull(),
-      retailCustomerProfileId: uuid('retail_customer_profile_id').notNull(),
-      principalId: uuid('principal_id').notNull(),
-      permissionCode: text('permission_code').notNull(),
-      operation: text('operation').notNull(),
-      state: text('state').notNull(),
-      revision: integer('revision').default(1).notNull(),
-      finalizedAt: timestamp('finalized_at', { withTimezone: true }),
-      ...operationAttribution(),
-    },
-    (table) => [
-      scopeIdentity(
-        'ccc_portal_binding_permission_mutations_scope_id_uk',
-        table,
-        table.retailPortalProfileBindingPermissionMutationId,
-      ),
-      unique('ccc_portal_binding_permission_mutations_idempotency_uk').on(
-        table.tenantId,
-        table.legalEntityId,
-        table.retailPortalProfileBindingId,
-        table.actionInvocationId,
-        table.operation,
-        table.permissionCode,
-      ),
-      foreignKey({
-        columns: [table.tenantId, table.legalEntityId, table.retailPortalProfileBindingId],
-        foreignColumns: [
-          retailPortalProfileBindings.tenantId,
-          retailPortalProfileBindings.legalEntityId,
-          retailPortalProfileBindings.retailPortalProfileBindingId,
-        ],
-        name: 'ccc_portal_binding_permission_mutations_binding_fk',
-      }).onDelete('restrict'),
-      foreignKey({
-        columns: [table.tenantId, table.legalEntityId, table.retailCustomerProfileId],
-        foreignColumns: [
-          retailCustomerProfiles.tenantId,
-          retailCustomerProfiles.legalEntityId,
-          retailCustomerProfiles.retailCustomerProfileId,
-        ],
-        name: 'ccc_portal_binding_permission_mutations_profile_fk',
-      }).onDelete('restrict'),
-      check(
-        'ccc_portal_binding_permission_mutations_operation_ck',
-        sql`${table.operation} in ('grant', 'revoke')`,
-      ),
-      check(
-        'ccc_portal_binding_permission_mutations_state_ck',
-        sql`${table.state} in ('PENDING_GRANT', 'PENDING_REVOKE', 'ACTIVE', 'REVOKED', 'RECONCILIATION_REQUIRED') and ((${table.operation} = 'grant' and ${table.state} in ('PENDING_GRANT', 'ACTIVE', 'RECONCILIATION_REQUIRED')) or (${table.operation} = 'revoke' and ${table.state} in ('PENDING_REVOKE', 'REVOKED', 'RECONCILIATION_REQUIRED')))`,
-      ),
-      positiveRevision('ccc_portal_binding_permission_mutations_revision_ck', table.revision),
-      check(
-        'ccc_portal_binding_permission_mutations_finalized_ck',
-        sql`(${table.state} in ('ACTIVE', 'REVOKED') and ${table.finalizedAt} is not null) or (${table.state} not in ('ACTIVE', 'REVOKED') and ${table.finalizedAt} is null)`,
-      ),
-      trimmed('ccc_portal_binding_permission_mutations_permission_ck', table.permissionCode),
-      optionalTrimmed('ccc_portal_binding_permission_mutations_reason_ck', table.reason),
-      ...scopedPolicies('ccc_portal_binding_permission_mutations_scope', table),
-    ],
-  );
+const retailPortalProfileBindingPermissionMutations = commerceCustomerContextSchema.table.withRLS(
+  'retail_portal_profile_binding_permission_mutations',
+  {
+    retailPortalProfileBindingPermissionMutationId: uuid('retail_portal_profile_binding_permission_mutation_id')
+      .defaultRandom()
+      .primaryKey(),
+    ...scopeColumns(),
+    finalizedAt: timestamp('finalized_at', { withTimezone: true }),
+    operation: text('operation').notNull(),
+    permissionCode: text('permission_code').notNull(),
+    principalId: uuid('principal_id').notNull(),
+    retailCustomerProfileId: uuid('retail_customer_profile_id').notNull(),
+    retailPortalProfileBindingId: uuid('retail_portal_profile_binding_id').notNull(),
+    revision: integer('revision').default(1).notNull(),
+    state: text('state').notNull(),
+    ...operationAttribution(),
+  },
+  (table) => [
+    scopeIdentity(
+      'ccc_portal_binding_permission_mutations_scope_id_uk',
+      table,
+      table.retailPortalProfileBindingPermissionMutationId,
+    ),
+    unique('ccc_portal_binding_permission_mutations_idempotency_uk').on(
+      table.tenantId,
+      table.legalEntityId,
+      table.retailPortalProfileBindingId,
+      table.actionInvocationId,
+      table.operation,
+      table.permissionCode,
+    ),
+    foreignKey({
+      columns: [table.tenantId, table.legalEntityId, table.retailPortalProfileBindingId],
+      foreignColumns: [
+        retailPortalProfileBindings.tenantId,
+        retailPortalProfileBindings.legalEntityId,
+        retailPortalProfileBindings.retailPortalProfileBindingId,
+      ],
+      name: 'ccc_portal_binding_permission_mutations_binding_fk',
+    }).onDelete('restrict'),
+    foreignKey({
+      columns: [table.tenantId, table.legalEntityId, table.retailCustomerProfileId],
+      foreignColumns: [
+        retailCustomerProfiles.tenantId,
+        retailCustomerProfiles.legalEntityId,
+        retailCustomerProfiles.retailCustomerProfileId,
+      ],
+      name: 'ccc_portal_binding_permission_mutations_profile_fk',
+    }).onDelete('restrict'),
+    check('ccc_portal_binding_permission_mutations_operation_ck', sql`${table.operation} in ('grant', 'revoke')`),
+    check(
+      'ccc_portal_binding_permission_mutations_state_ck',
+      sql`${table.state} in ('PENDING_GRANT', 'PENDING_REVOKE', 'ACTIVE', 'REVOKED', 'RECONCILIATION_REQUIRED') and ((${table.operation} = 'grant' and ${table.state} in ('PENDING_GRANT', 'ACTIVE', 'RECONCILIATION_REQUIRED')) or (${table.operation} = 'revoke' and ${table.state} in ('PENDING_REVOKE', 'REVOKED', 'RECONCILIATION_REQUIRED')))`,
+    ),
+    positiveRevision('ccc_portal_binding_permission_mutations_revision_ck', table.revision),
+    check(
+      'ccc_portal_binding_permission_mutations_finalized_ck',
+      sql`(${table.state} in ('ACTIVE', 'REVOKED') and ${table.finalizedAt} is not null) or (${table.state} not in ('ACTIVE', 'REVOKED') and ${table.finalizedAt} is null)`,
+    ),
+    trimmed('ccc_portal_binding_permission_mutations_permission_ck', table.permissionCode),
+    optionalTrimmed('ccc_portal_binding_permission_mutations_reason_ck', table.reason),
+    ...scopedPolicies('ccc_portal_binding_permission_mutations_scope', table),
+  ],
+);
 
 /** Immutable evidence for every enrollment, revocation, and recovery transition. */
 export const retailPortalProfileBindingHistory = commerceCustomerContextSchema.table.withRLS(
   'retail_portal_profile_binding_history',
   {
-    retailPortalProfileBindingHistoryId: uuid('retail_portal_profile_binding_history_id')
-      .defaultRandom()
-      .primaryKey(),
+    retailPortalProfileBindingHistoryId: uuid('retail_portal_profile_binding_history_id').defaultRandom().primaryKey(),
     ...scopeColumns(),
-    retailPortalProfileBindingId: uuid('retail_portal_profile_binding_id').notNull(),
-    revision: integer('revision').notNull(),
-    fromLifecycle: text('from_lifecycle'),
-    toLifecycle: text('to_lifecycle').notNull(),
     effectiveAt: timestamp('effective_at', { withTimezone: true }).notNull(),
     enrollmentEvidenceRef: text('enrollment_evidence_ref').notNull(),
+    fromLifecycle: text('from_lifecycle'),
+    retailPortalProfileBindingId: uuid('retail_portal_profile_binding_id').notNull(),
+    revision: integer('revision').notNull(),
+    toLifecycle: text('to_lifecycle').notNull(),
     ...operationAttribution(),
   },
   (table) => [
-    scopeIdentity(
-      'ccc_portal_binding_history_scope_id_uk',
-      table,
-      table.retailPortalProfileBindingHistoryId,
-    ),
+    scopeIdentity('ccc_portal_binding_history_scope_id_uk', table, table.retailPortalProfileBindingHistoryId),
     unique('ccc_portal_binding_history_revision_uk').on(
       table.tenantId,
       table.legalEntityId,
@@ -487,83 +438,53 @@ export const retailPortalProfileBindingHistory = commerceCustomerContextSchema.t
 export const profileReconciliationCases = commerceCustomerContextSchema.table.withRLS(
   'profile_reconciliation_cases',
   {
-    profileReconciliationCaseId: uuid('profile_reconciliation_case_id')
-      .defaultRandom()
-      .primaryKey(),
+    profileReconciliationCaseId: uuid('profile_reconciliation_case_id').defaultRandom().primaryKey(),
     ...scopeColumns(),
-    profileKind: text('profile_kind').notNull(),
-    sourceProfileId: uuid('source_profile_id').notNull(),
-    collidingProfileId: uuid('colliding_profile_id').notNull(),
-    canonicalPartyResourceId: text('canonical_party_resource_id').notNull(),
-    mergeResourceId: text('merge_resource_id').notNull(),
-    sourceCorrelationRef: text('source_correlation_ref').notNull(),
-    trigger: text('trigger').notNull(),
-    targetSubject: jsonb('target_subject').$type<Readonly<Record<string, unknown>>>().notNull(),
-    canonicalizationEvidence: jsonb('canonicalization_evidence')
-      .$type<Readonly<Record<string, unknown>>>()
-      .notNull(),
-    ownerOutcomes: jsonb('owner_outcomes')
-      .$type<readonly Readonly<Record<string, unknown>>[]>()
-      .default([])
-      .notNull(),
-    lastProcessedEventVersion: bigint('last_processed_event_version', { mode: 'bigint' })
-      .default(0n)
-      .notNull(),
-    lifecycle: text('lifecycle').default('OPEN').notNull(),
-    resolutionKind: text('resolution_kind'),
-    canonicalProfileId: uuid('canonical_profile_id'),
-    resultingState: text('resulting_state'),
-    revision: integer('revision').default(1).notNull(),
-    resolvedAt: timestamp('resolved_at', { withTimezone: true }),
     actionInvocationId: uuid('action_invocation_id'),
-    sourceDomainEventId: uuid('source_domain_event_id'),
-    sourceMessageId: uuid('source_message_id'),
     actorPrincipalId: uuid('actor_principal_id').notNull(),
+    canonicalizationEvidence: jsonb('canonicalization_evidence').$type<DatabaseJsonObject>().notNull(),
+    canonicalPartyResourceId: text('canonical_party_resource_id').notNull(),
+    canonicalProfileId: uuid('canonical_profile_id'),
+    collidingProfileId: uuid('colliding_profile_id').notNull(),
+    lastProcessedEventVersion: bigint('last_processed_event_version', { mode: 'bigint' }).default(0n).notNull(),
+    lifecycle: text('lifecycle').default('OPEN').notNull(),
+    mergeResourceId: text('merge_resource_id').notNull(),
+    ownerOutcomes: jsonb('owner_outcomes').$type<readonly DatabaseJsonObject[]>().default([]).notNull(),
+    profileKind: text('profile_kind').notNull(),
     reason: text('reason'),
     recordedAt: recordedAt(),
+    resolutionKind: text('resolution_kind'),
+    resolvedAt: timestamp('resolved_at', { withTimezone: true }),
+    resultingState: text('resulting_state'),
+    revision: integer('revision').default(1).notNull(),
+    sourceCorrelationRef: text('source_correlation_ref').notNull(),
+    sourceDomainEventId: uuid('source_domain_event_id'),
+    sourceMessageId: uuid('source_message_id'),
+    sourceProfileId: uuid('source_profile_id').notNull(),
+    targetSubject: jsonb('target_subject').$type<DatabaseJsonObject>().notNull(),
+    trigger: text('trigger').notNull(),
   },
   (table) => [
     scopeIdentity('ccc_reconciliation_scope_id_uk', table, table.profileReconciliationCaseId),
     uniqueIndex('ccc_reconciliation_open_pair_uk')
-      .on(
-        table.tenantId,
-        table.legalEntityId,
-        table.sourceProfileId,
-        table.collidingProfileId,
-        table.mergeResourceId,
-      )
+      .on(table.tenantId, table.legalEntityId, table.sourceProfileId, table.collidingProfileId, table.mergeResourceId)
       .where(sql`${table.lifecycle} in ('OPEN', 'BLOCKED', 'READY_TO_COMPLETE')`),
     foreignKey({
       columns: [table.tenantId, table.legalEntityId, table.sourceProfileId],
-      foreignColumns: [
-        customerProfiles.tenantId,
-        customerProfiles.legalEntityId,
-        customerProfiles.customerProfileId,
-      ],
+      foreignColumns: [customerProfiles.tenantId, customerProfiles.legalEntityId, customerProfiles.customerProfileId],
       name: 'ccc_reconciliation_source_profile_fk',
     }).onDelete('restrict'),
     foreignKey({
       columns: [table.tenantId, table.legalEntityId, table.collidingProfileId],
-      foreignColumns: [
-        customerProfiles.tenantId,
-        customerProfiles.legalEntityId,
-        customerProfiles.customerProfileId,
-      ],
+      foreignColumns: [customerProfiles.tenantId, customerProfiles.legalEntityId, customerProfiles.customerProfileId],
       name: 'ccc_reconciliation_collision_profile_fk',
     }).onDelete('restrict'),
     foreignKey({
       columns: [table.tenantId, table.legalEntityId, table.canonicalProfileId],
-      foreignColumns: [
-        customerProfiles.tenantId,
-        customerProfiles.legalEntityId,
-        customerProfiles.customerProfileId,
-      ],
+      foreignColumns: [customerProfiles.tenantId, customerProfiles.legalEntityId, customerProfiles.customerProfileId],
       name: 'ccc_reconciliation_canonical_profile_fk',
     }).onDelete('restrict'),
-    check(
-      'ccc_reconciliation_distinct_profiles_ck',
-      sql`${table.sourceProfileId} <> ${table.collidingProfileId}`,
-    ),
+    check('ccc_reconciliation_distinct_profiles_ck', sql`${table.sourceProfileId} <> ${table.collidingProfileId}`),
     check('ccc_reconciliation_kind_ck', sql`${table.profileKind} in ('RETAIL', 'COUNTERPARTY')`),
     check(
       'ccc_reconciliation_lifecycle_ck',
@@ -580,18 +501,12 @@ export const profileReconciliationCases = commerceCustomerContextSchema.table.wi
       'ccc_reconciliation_trigger_ck',
       sql`${table.trigger} in ('PARTY_ALIAS', 'COUNTERPARTY_ALIAS', 'CREATE_COLLISION', 'IMPORT_CORRELATION')`,
     ),
-    check(
-      'ccc_reconciliation_target_subject_ck',
-      sql`jsonb_typeof(${table.targetSubject}) = 'object'`,
-    ),
+    check('ccc_reconciliation_target_subject_ck', sql`jsonb_typeof(${table.targetSubject}) = 'object'`),
     check(
       'ccc_reconciliation_canonicalization_evidence_ck',
       sql`jsonb_typeof(${table.canonicalizationEvidence}) = 'object'`,
     ),
-    check(
-      'ccc_reconciliation_owner_outcomes_ck',
-      sql`jsonb_typeof(${table.ownerOutcomes}) = 'array'`,
-    ),
+    check('ccc_reconciliation_owner_outcomes_ck', sql`jsonb_typeof(${table.ownerOutcomes}) = 'array'`),
     check('ccc_reconciliation_event_version_ck', sql`${table.lastProcessedEventVersion} >= 0`),
     check(
       'ccc_reconciliation_causation_ck',
@@ -605,25 +520,19 @@ export const profileReconciliationCases = commerceCustomerContextSchema.table.wi
 
 /** Ordered membership preserves every conflicting profile; source/collision columns on the case
  * remain the compatibility pair used by the initial schema. */
-export const profileReconciliationCaseMembers = commerceCustomerContextSchema.table.withRLS(
+const profileReconciliationCaseMembers = commerceCustomerContextSchema.table.withRLS(
   'profile_reconciliation_case_members',
   {
-    profileReconciliationCaseMemberId: uuid('profile_reconciliation_case_member_id')
-      .defaultRandom()
-      .primaryKey(),
+    profileReconciliationCaseMemberId: uuid('profile_reconciliation_case_member_id').defaultRandom().primaryKey(),
     ...scopeColumns(),
-    profileReconciliationCaseId: uuid('profile_reconciliation_case_id').notNull(),
+    createdAt: createdAt(),
     customerProfileId: uuid('customer_profile_id').notNull(),
     memberPosition: integer('member_position').notNull(),
     observedLifecycle: text('observed_lifecycle').notNull(),
-    createdAt: createdAt(),
+    profileReconciliationCaseId: uuid('profile_reconciliation_case_id').notNull(),
   },
   (table) => [
-    scopeIdentity(
-      'ccc_reconciliation_members_scope_id_uk',
-      table,
-      table.profileReconciliationCaseMemberId,
-    ),
+    scopeIdentity('ccc_reconciliation_members_scope_id_uk', table, table.profileReconciliationCaseMemberId),
     unique('ccc_reconciliation_members_profile_uk').on(
       table.tenantId,
       table.legalEntityId,
@@ -647,11 +556,7 @@ export const profileReconciliationCaseMembers = commerceCustomerContextSchema.ta
     }).onDelete('restrict'),
     foreignKey({
       columns: [table.tenantId, table.legalEntityId, table.customerProfileId],
-      foreignColumns: [
-        customerProfiles.tenantId,
-        customerProfiles.legalEntityId,
-        customerProfiles.customerProfileId,
-      ],
+      foreignColumns: [customerProfiles.tenantId, customerProfiles.legalEntityId, customerProfiles.customerProfileId],
       name: 'ccc_reconciliation_members_profile_fk',
     }).onDelete('restrict'),
     check('ccc_reconciliation_members_position_ck', sql`${table.memberPosition} >= 0`),
@@ -664,37 +569,31 @@ export const profileReconciliationCaseMembers = commerceCustomerContextSchema.ta
 );
 
 /** Append-only, owner-derived proof that the exact Address Book state is safe to reconcile. */
-export const addressBookReconciliationReceipts = commerceCustomerContextSchema.table.withRLS(
+const addressBookReconciliationReceipts = commerceCustomerContextSchema.table.withRLS(
   'address_book_reconciliation_receipts',
   {
-    addressBookReconciliationReceiptId: uuid('address_book_reconciliation_receipt_id')
-      .defaultRandom()
-      .primaryKey(),
+    addressBookReconciliationReceiptId: uuid('address_book_reconciliation_receipt_id').defaultRandom().primaryKey(),
     ...scopeColumns(),
-    profileReconciliationCaseId: uuid('profile_reconciliation_case_id').notNull(),
-    survivorProfileId: uuid('survivor_profile_id').notNull(),
-    disposition: text('disposition').notNull(),
-    terminalStatus: text('terminal_status').notNull(),
-    memberProfileIds: uuid('member_profile_ids').array().notNull(),
-    caseRevisionAtReceipt: integer('case_revision_at_receipt').notNull(),
-    eventVersion: bigint('event_version', { mode: 'bigint' }).notNull(),
-    effectiveAt: timestamp('effective_at', { withTimezone: true }).notNull(),
-    policyVersion: text('policy_version').notNull(),
-    resultingState: text('resulting_state').notNull(),
-    beforeFactsSha256: text('before_facts_sha256').notNull(),
     afterFactsSha256: text('after_facts_sha256').notNull(),
-    postconditionSha256: text('postcondition_sha256').notNull(),
-    ownerDecisionRef: text('owner_decision_ref'),
-    evidenceRef: text('evidence_ref').notNull(),
+    beforeFactsSha256: text('before_facts_sha256').notNull(),
+    caseRevisionAtReceipt: integer('case_revision_at_receipt').notNull(),
     correlationRef: text('correlation_ref').notNull(),
+    disposition: text('disposition').notNull(),
+    effectiveAt: timestamp('effective_at', { withTimezone: true }).notNull(),
+    eventVersion: bigint('event_version', { mode: 'bigint' }).notNull(),
+    evidenceRef: text('evidence_ref').notNull(),
+    memberProfileIds: uuid('member_profile_ids').array().notNull(),
+    ownerDecisionRef: text('owner_decision_ref'),
+    policyVersion: text('policy_version').notNull(),
+    postconditionSha256: text('postcondition_sha256').notNull(),
+    profileReconciliationCaseId: uuid('profile_reconciliation_case_id').notNull(),
+    resultingState: text('resulting_state').notNull(),
+    survivorProfileId: uuid('survivor_profile_id').notNull(),
+    terminalStatus: text('terminal_status').notNull(),
     ...operationAttribution(),
   },
   (table) => [
-    scopeIdentity(
-      'ccc_address_reconciliation_receipts_scope_id_uk',
-      table,
-      table.addressBookReconciliationReceiptId,
-    ),
+    scopeIdentity('ccc_address_reconciliation_receipts_scope_id_uk', table, table.addressBookReconciliationReceiptId),
     unique('ccc_address_reconciliation_receipts_action_uk').on(
       table.tenantId,
       table.legalEntityId,
@@ -717,11 +616,7 @@ export const addressBookReconciliationReceipts = commerceCustomerContextSchema.t
     }).onDelete('restrict'),
     foreignKey({
       columns: [table.tenantId, table.legalEntityId, table.survivorProfileId],
-      foreignColumns: [
-        customerProfiles.tenantId,
-        customerProfiles.legalEntityId,
-        customerProfiles.customerProfileId,
-      ],
+      foreignColumns: [customerProfiles.tenantId, customerProfiles.legalEntityId, customerProfiles.customerProfileId],
       name: 'ccc_address_reconciliation_receipts_survivor_fk',
     }).onDelete('restrict'),
     check(
@@ -736,10 +631,7 @@ export const addressBookReconciliationReceipts = commerceCustomerContextSchema.t
       'ccc_address_reconciliation_receipts_members_ck',
       sql`cardinality(${table.memberProfileIds}) >= 2 and array_position(${table.memberProfileIds}, null) is null and ${table.survivorProfileId} = any(${table.memberProfileIds})`,
     ),
-    positiveRevision(
-      'ccc_address_reconciliation_receipts_revision_ck',
-      table.caseRevisionAtReceipt,
-    ),
+    positiveRevision('ccc_address_reconciliation_receipts_revision_ck', table.caseRevisionAtReceipt),
     check('ccc_address_reconciliation_receipts_event_ck', sql`${table.eventVersion} >= 0`),
     check(
       'ccc_address_reconciliation_receipts_hashes_ck',
@@ -762,7 +654,7 @@ export const addressBookReconciliationReceipts = commerceCustomerContextSchema.t
 );
 
 /** Current navigation alias only. Historical facts retain the original profile ResourceRef. */
-export const customerProfileAliases = commerceCustomerContextSchema.table.withRLS(
+const customerProfileAliases = commerceCustomerContextSchema.table.withRLS(
   'customer_profile_aliases',
   {
     customerProfileAliasId: uuid('customer_profile_alias_id').defaultRandom().primaryKey(),
@@ -774,27 +666,15 @@ export const customerProfileAliases = commerceCustomerContextSchema.table.withRL
   },
   (table) => [
     scopeIdentity('ccc_profile_aliases_scope_id_uk', table, table.customerProfileAliasId),
-    unique('ccc_profile_aliases_alias_uk').on(
-      table.tenantId,
-      table.legalEntityId,
-      table.aliasProfileId,
-    ),
+    unique('ccc_profile_aliases_alias_uk').on(table.tenantId, table.legalEntityId, table.aliasProfileId),
     foreignKey({
       columns: [table.tenantId, table.legalEntityId, table.aliasProfileId],
-      foreignColumns: [
-        customerProfiles.tenantId,
-        customerProfiles.legalEntityId,
-        customerProfiles.customerProfileId,
-      ],
+      foreignColumns: [customerProfiles.tenantId, customerProfiles.legalEntityId, customerProfiles.customerProfileId],
       name: 'ccc_profile_aliases_alias_fk',
     }).onDelete('restrict'),
     foreignKey({
       columns: [table.tenantId, table.legalEntityId, table.canonicalProfileId],
-      foreignColumns: [
-        customerProfiles.tenantId,
-        customerProfiles.legalEntityId,
-        customerProfiles.customerProfileId,
-      ],
+      foreignColumns: [customerProfiles.tenantId, customerProfiles.legalEntityId, customerProfiles.customerProfileId],
       name: 'ccc_profile_aliases_canonical_fk',
     }).onDelete('restrict'),
     foreignKey({
@@ -806,10 +686,7 @@ export const customerProfileAliases = commerceCustomerContextSchema.table.withRL
       ],
       name: 'ccc_profile_aliases_case_fk',
     }).onDelete('restrict'),
-    check(
-      'ccc_profile_aliases_distinct_ck',
-      sql`${table.aliasProfileId} <> ${table.canonicalProfileId}`,
-    ),
+    check('ccc_profile_aliases_distinct_ck', sql`${table.aliasProfileId} <> ${table.canonicalProfileId}`),
     trimmed('ccc_profile_aliases_reason_ck', table.reason),
     ...scopedPolicies('ccc_profile_aliases_scope', table),
   ],
@@ -819,28 +696,22 @@ export const customerProfileAliases = commerceCustomerContextSchema.table.withRL
 export const profileReconciliationOwnerOutcomes = commerceCustomerContextSchema.table.withRLS(
   'profile_reconciliation_owner_outcomes',
   {
-    profileReconciliationOwnerOutcomeId: uuid('profile_reconciliation_owner_outcome_id')
-      .defaultRandom()
-      .primaryKey(),
+    profileReconciliationOwnerOutcomeId: uuid('profile_reconciliation_owner_outcome_id').defaultRandom().primaryKey(),
     ...scopeColumns(),
-    profileReconciliationCaseId: uuid('profile_reconciliation_case_id').notNull(),
-    survivorProfileId: uuid('survivor_profile_id').notNull(),
-    resultingState: text('resulting_state').notNull(),
-    owner: text('owner').notNull(),
-    status: text('status').notNull(),
-    evidenceRef: text('evidence_ref'),
     caseRevision: integer('case_revision').notNull(),
-    eventVersion: bigint('event_version', { mode: 'bigint' }).notNull(),
     correlationRef: text('correlation_ref').notNull(),
+    eventVersion: bigint('event_version', { mode: 'bigint' }).notNull(),
+    evidenceRef: text('evidence_ref'),
     observedAt: timestamp('observed_at', { withTimezone: true }).notNull(),
+    owner: text('owner').notNull(),
+    profileReconciliationCaseId: uuid('profile_reconciliation_case_id').notNull(),
+    resultingState: text('resulting_state').notNull(),
+    status: text('status').notNull(),
+    survivorProfileId: uuid('survivor_profile_id').notNull(),
     ...operationAttribution(),
   },
   (table) => [
-    scopeIdentity(
-      'ccc_reconciliation_owner_outcomes_scope_id_uk',
-      table,
-      table.profileReconciliationOwnerOutcomeId,
-    ),
+    scopeIdentity('ccc_reconciliation_owner_outcomes_scope_id_uk', table, table.profileReconciliationOwnerOutcomeId),
     unique('ccc_reconciliation_owner_outcomes_revision_uk').on(
       table.tenantId,
       table.legalEntityId,
@@ -866,11 +737,7 @@ export const profileReconciliationOwnerOutcomes = commerceCustomerContextSchema.
     }).onDelete('restrict'),
     foreignKey({
       columns: [table.tenantId, table.legalEntityId, table.survivorProfileId],
-      foreignColumns: [
-        customerProfiles.tenantId,
-        customerProfiles.legalEntityId,
-        customerProfiles.customerProfileId,
-      ],
+      foreignColumns: [customerProfiles.tenantId, customerProfiles.legalEntityId, customerProfiles.customerProfileId],
       name: 'ccc_reconciliation_owner_outcomes_survivor_fk',
     }).onDelete('restrict'),
     check(
@@ -901,45 +768,31 @@ export const profileReconciliationOwnerOutcomes = commerceCustomerContextSchema.
 export const partyMergeProfileObservations = commerceCustomerContextSchema.table.withRLS(
   'party_merge_profile_observations',
   {
-    partyMergeProfileObservationId: uuid('party_merge_profile_observation_id')
-      .defaultRandom()
-      .primaryKey(),
+    partyMergeProfileObservationId: uuid('party_merge_profile_observation_id').defaultRandom().primaryKey(),
     ...scopeColumns(),
+    absorbedPartyResourceIds: text('absorbed_party_resource_ids').array().notNull(),
+    actorPrincipalId: uuid('actor_principal_id').notNull(),
+    canonicalizedProfileId: uuid('canonicalized_profile_id'),
+    eventVersion: bigint('event_version', { mode: 'bigint' }).notNull(),
     mergeResourceId: text('merge_resource_id').notNull(),
+    occurredAt: timestamp('occurred_at', { withTimezone: true }).notNull(),
+    outcome: text('outcome').notNull(),
+    policyVersion: text('policy_version').notNull(),
+    recordedAt: recordedAt(),
     sourceDomainEventId: uuid('source_domain_event_id').notNull(),
     sourceMessageId: uuid('source_message_id').notNull(),
-    eventVersion: bigint('event_version', { mode: 'bigint' }).notNull(),
-    occurredAt: timestamp('occurred_at', { withTimezone: true }).notNull(),
-    policyVersion: text('policy_version').notNull(),
     survivorPartyResourceId: text('survivor_party_resource_id').notNull(),
-    absorbedPartyResourceIds: text('absorbed_party_resource_ids').array().notNull(),
-    outcome: text('outcome').notNull(),
-    canonicalizedProfileId: uuid('canonicalized_profile_id'),
-    actorPrincipalId: uuid('actor_principal_id').notNull(),
-    recordedAt: recordedAt(),
   },
   (table) => [
-    scopeIdentity(
-      'ccc_party_merge_observations_scope_id_uk',
-      table,
-      table.partyMergeProfileObservationId,
-    ),
+    scopeIdentity('ccc_party_merge_observations_scope_id_uk', table, table.partyMergeProfileObservationId),
     unique('ccc_party_merge_observations_version_uk').on(
       table.tenantId,
       table.legalEntityId,
       table.mergeResourceId,
       table.eventVersion,
     ),
-    unique('ccc_party_merge_observations_event_uk').on(
-      table.tenantId,
-      table.legalEntityId,
-      table.sourceDomainEventId,
-    ),
-    unique('ccc_party_merge_observations_message_uk').on(
-      table.tenantId,
-      table.legalEntityId,
-      table.sourceMessageId,
-    ),
+    unique('ccc_party_merge_observations_event_uk').on(table.tenantId, table.legalEntityId, table.sourceDomainEventId),
+    unique('ccc_party_merge_observations_message_uk').on(table.tenantId, table.legalEntityId, table.sourceMessageId),
     foreignKey({
       columns: [table.tenantId, table.legalEntityId, table.canonicalizedProfileId],
       foreignColumns: [
@@ -966,7 +819,7 @@ export const partyMergeProfileObservations = commerceCustomerContextSchema.table
 );
 
 /** Purpose-minimized durable result of one Guest purchase attribution correlation. */
-export const guestRetailAttributions = commerceCustomerContextSchema.table.withRLS(
+const guestRetailAttributions = commerceCustomerContextSchema.table.withRLS(
   'guest_retail_attributions',
   {
     guestRetailAttributionId: uuid('guest_retail_attribution_id').defaultRandom().primaryKey(),
@@ -975,18 +828,14 @@ export const guestRetailAttributions = commerceCustomerContextSchema.table.withR
     guestEvidenceRef: text('guest_evidence_ref').notNull(),
     outcome: text('outcome').notNull(),
     partyResourceId: text('party_resource_id'),
-    retailCustomerProfileId: uuid('retail_customer_profile_id'),
     reconciliationRef: text('reconciliation_ref'),
     requestedAt: timestamp('requested_at', { withTimezone: true }).notNull(),
+    retailCustomerProfileId: uuid('retail_customer_profile_id'),
     ...operationAttribution(),
   },
   (table) => [
     scopeIdentity('ccc_guest_attributions_scope_id_uk', table, table.guestRetailAttributionId),
-    unique('ccc_guest_attributions_correlation_uk').on(
-      table.tenantId,
-      table.legalEntityId,
-      table.correlationRoot,
-    ),
+    unique('ccc_guest_attributions_correlation_uk').on(table.tenantId, table.legalEntityId, table.correlationRoot),
     foreignKey({
       columns: [table.tenantId, table.legalEntityId, table.retailCustomerProfileId],
       foreignColumns: [
@@ -1017,23 +866,20 @@ export const customerGroups = commerceCustomerContextSchema.table.withRLS(
   {
     customerGroupId: uuid('customer_group_id').defaultRandom().primaryKey(),
     ...scopeColumns(),
-    stableCode: text('stable_code').notNull(),
-    meaningKey: text('meaning_key').notNull(),
-    lifecycle: text('lifecycle').default('ACTIVE').notNull(),
-    currentRevision: integer('current_revision').default(1).notNull(),
-    createdAt: createdAt(),
-    updatedAt: updatedAt(),
     archivedAt: timestamp('archived_at', { withTimezone: true }),
+    createdAt: createdAt(),
+    currentRevision: integer('current_revision').default(1).notNull(),
+    lifecycle: text('lifecycle').default('ACTIVE').notNull(),
+    meaningKey: text('meaning_key').notNull(),
+    stableCode: text('stable_code').notNull(),
+    updatedAt: updatedAt(),
   },
   (table) => [
     scopeIdentity('ccc_groups_scope_id_uk', table, table.customerGroupId),
     unique('ccc_groups_code_uk').on(table.tenantId, table.legalEntityId, table.stableCode),
     trimmed('ccc_groups_code_ck', table.stableCode),
     check('ccc_groups_code_format_ck', sql`${table.stableCode} ~ '^[A-Z][A-Z0-9_]{1,63}$'`),
-    check(
-      'ccc_groups_meaning_key_ck',
-      sql`${table.meaningKey} ~ '^[a-z][a-z0-9]*(?:[.-][a-z0-9]+)*$'`,
-    ),
+    check('ccc_groups_meaning_key_ck', sql`${table.meaningKey} ~ '^[a-z][a-z0-9]*(?:[.-][a-z0-9]+)*$'`),
     check(
       'ccc_groups_lifecycle_ck',
       sql`${table.lifecycle} in ('ACTIVE', 'ARCHIVED') and ((${table.lifecycle} = 'ACTIVE' and ${table.archivedAt} is null) or (${table.lifecycle} = 'ARCHIVED' and ${table.archivedAt} is not null))`,
@@ -1068,11 +914,7 @@ export const customerGroupRevisions = commerceCustomerContextSchema.table.withRL
     ),
     foreignKey({
       columns: [table.tenantId, table.legalEntityId, table.customerGroupId],
-      foreignColumns: [
-        customerGroups.tenantId,
-        customerGroups.legalEntityId,
-        customerGroups.customerGroupId,
-      ],
+      foreignColumns: [customerGroups.tenantId, customerGroups.legalEntityId, customerGroups.customerGroupId],
       name: 'ccc_group_revisions_group_fk',
     }).onDelete('restrict'),
     positiveRevision('ccc_group_revisions_revision_ck', table.revision),
@@ -1084,10 +926,7 @@ export const customerGroupRevisions = commerceCustomerContextSchema.table.withRL
       'ccc_group_revisions_change_kind_ck',
       sql`${table.changeKind} in ('CREATED', 'COSMETIC_RENAME', 'TYPO_CORRECTION', 'DESCRIPTION_CLARIFICATION')`,
     ),
-    check(
-      'ccc_group_revisions_fingerprint_ck',
-      sql`${table.semanticFingerprint} ~ '^[0-9a-f]{64}$'`,
-    ),
+    check('ccc_group_revisions_fingerprint_ck', sql`${table.semanticFingerprint} ~ '^[0-9a-f]{64}$'`),
     optionalTrimmed('ccc_group_revisions_reason_ck', table.reason),
     ...scopedPolicies('ccc_group_revisions_scope', table),
   ],
@@ -1096,13 +935,11 @@ export const customerGroupRevisions = commerceCustomerContextSchema.table.withRL
 export const customerGroupLifecyclePeriods = commerceCustomerContextSchema.table.withRLS(
   'customer_group_lifecycle_periods',
   {
-    customerGroupLifecyclePeriodId: uuid('customer_group_lifecycle_period_id')
-      .defaultRandom()
-      .primaryKey(),
+    customerGroupLifecyclePeriodId: uuid('customer_group_lifecycle_period_id').defaultRandom().primaryKey(),
     ...scopeColumns(),
-    customerGroupId: uuid('customer_group_id').notNull(),
     activeFrom: timestamp('active_from', { withTimezone: true }).notNull(),
     archivedAt: timestamp('archived_at', { withTimezone: true }),
+    customerGroupId: uuid('customer_group_id').notNull(),
     revision: integer('revision').notNull(),
     ...operationAttribution(),
   },
@@ -1119,11 +956,7 @@ export const customerGroupLifecyclePeriods = commerceCustomerContextSchema.table
       .where(sql`${table.archivedAt} is null`),
     foreignKey({
       columns: [table.tenantId, table.legalEntityId, table.customerGroupId],
-      foreignColumns: [
-        customerGroups.tenantId,
-        customerGroups.legalEntityId,
-        customerGroups.customerGroupId,
-      ],
+      foreignColumns: [customerGroups.tenantId, customerGroups.legalEntityId, customerGroups.customerGroupId],
       name: 'ccc_group_lifecycle_group_fk',
     }).onDelete('restrict'),
     check(
@@ -1141,8 +974,8 @@ export const customerGroupMemberships = commerceCustomerContextSchema.table.with
   {
     customerGroupMembershipId: uuid('customer_group_membership_id').defaultRandom().primaryKey(),
     ...scopeColumns(),
-    customerProfileId: uuid('customer_profile_id').notNull(),
     customerGroupId: uuid('customer_group_id').notNull(),
+    customerProfileId: uuid('customer_profile_id').notNull(),
     effectiveFrom: effectiveFrom(),
     effectiveTo: effectiveTo(),
     lifecycle: text('lifecycle').default('ACTIVE').notNull(),
@@ -1160,20 +993,12 @@ export const customerGroupMemberships = commerceCustomerContextSchema.table.with
     ),
     foreignKey({
       columns: [table.tenantId, table.legalEntityId, table.customerProfileId],
-      foreignColumns: [
-        customerProfiles.tenantId,
-        customerProfiles.legalEntityId,
-        customerProfiles.customerProfileId,
-      ],
+      foreignColumns: [customerProfiles.tenantId, customerProfiles.legalEntityId, customerProfiles.customerProfileId],
       name: 'ccc_memberships_profile_fk',
     }).onDelete('restrict'),
     foreignKey({
       columns: [table.tenantId, table.legalEntityId, table.customerGroupId],
-      foreignColumns: [
-        customerGroups.tenantId,
-        customerGroups.legalEntityId,
-        customerGroups.customerGroupId,
-      ],
+      foreignColumns: [customerGroups.tenantId, customerGroups.legalEntityId, customerGroups.customerGroupId],
       name: 'ccc_memberships_group_fk',
     }).onDelete('restrict'),
     halfOpenPeriod('ccc_memberships_period_ck', table),
@@ -1190,21 +1015,19 @@ export const customerGroupMemberships = commerceCustomerContextSchema.table.with
 export const customerPriceGroupAssignments = commerceCustomerContextSchema.table.withRLS(
   'customer_price_group_assignments',
   {
-    customerPriceGroupAssignmentId: uuid('customer_price_group_assignment_id')
-      .defaultRandom()
-      .primaryKey(),
+    customerPriceGroupAssignmentId: uuid('customer_price_group_assignment_id').defaultRandom().primaryKey(),
     ...scopeColumns(),
-    customerProfileId: uuid('customer_profile_id').notNull(),
-    priceGroupModuleId: text('price_group_module_id').notNull(),
-    priceGroupResourceType: text('price_group_resource_type').notNull(),
-    priceGroupResourceId: text('price_group_resource_id').notNull(),
     catalogRevision: integer('catalog_revision').notNull(),
     compatibilityContractId: text('compatibility_contract_id').notNull(),
     compatibilityContractRevision: integer('compatibility_contract_revision').notNull(),
+    customerProfileId: uuid('customer_profile_id').notNull(),
     definitionRevision: integer('definition_revision').notNull(),
     effectiveFrom: effectiveFrom(),
     effectiveTo: effectiveTo(),
     lifecycle: text('lifecycle').default('ACTIVE').notNull(),
+    priceGroupModuleId: text('price_group_module_id').notNull(),
+    priceGroupResourceId: text('price_group_resource_id').notNull(),
+    priceGroupResourceType: text('price_group_resource_type').notNull(),
     revision: integer('revision').default(1).notNull(),
     ...operationAttribution(),
   },
@@ -1212,11 +1035,7 @@ export const customerPriceGroupAssignments = commerceCustomerContextSchema.table
     scopeIdentity('ccc_price_assignments_scope_id_uk', table, table.customerPriceGroupAssignmentId),
     foreignKey({
       columns: [table.tenantId, table.legalEntityId, table.customerProfileId],
-      foreignColumns: [
-        customerProfiles.tenantId,
-        customerProfiles.legalEntityId,
-        customerProfiles.customerProfileId,
-      ],
+      foreignColumns: [customerProfiles.tenantId, customerProfiles.legalEntityId, customerProfiles.customerProfileId],
       name: 'ccc_price_assignments_profile_fk',
     }).onDelete('restrict'),
     trimmed('ccc_price_assignments_group_ref_ck', table.priceGroupResourceId),
@@ -1224,10 +1043,7 @@ export const customerPriceGroupAssignments = commerceCustomerContextSchema.table
     trimmed('ccc_price_assignments_type_ref_ck', table.priceGroupResourceType),
     trimmed('ccc_price_assignments_compatibility_ck', table.compatibilityContractId),
     positiveRevision('ccc_price_assignments_catalog_revision_ck', table.catalogRevision),
-    positiveRevision(
-      'ccc_price_assignments_contract_revision_ck',
-      table.compatibilityContractRevision,
-    ),
+    positiveRevision('ccc_price_assignments_contract_revision_ck', table.compatibilityContractRevision),
     positiveRevision('ccc_price_assignments_definition_revision_ck', table.definitionRevision),
     halfOpenPeriod('ccc_price_assignments_period_ck', table),
     check(
@@ -1243,31 +1059,21 @@ export const customerPriceGroupAssignments = commerceCustomerContextSchema.table
 export const customerPaymentTermPreferences = commerceCustomerContextSchema.table.withRLS(
   'customer_payment_term_preferences',
   {
-    customerPaymentTermPreferenceId: uuid('customer_payment_term_preference_id')
-      .defaultRandom()
-      .primaryKey(),
+    customerPaymentTermPreferenceId: uuid('customer_payment_term_preference_id').defaultRandom().primaryKey(),
     ...scopeColumns(),
     customerProfileId: uuid('customer_profile_id').notNull(),
-    paymentTermResourceId: text('payment_term_resource_id').notNull(),
     effectiveFrom: effectiveFrom(),
     effectiveTo: effectiveTo(),
     lifecycle: text('lifecycle').default('ACTIVE').notNull(),
+    paymentTermResourceId: text('payment_term_resource_id').notNull(),
     revision: integer('revision').notNull(),
     ...operationAttribution(),
   },
   (table) => [
-    scopeIdentity(
-      'ccc_payment_preferences_scope_id_uk',
-      table,
-      table.customerPaymentTermPreferenceId,
-    ),
+    scopeIdentity('ccc_payment_preferences_scope_id_uk', table, table.customerPaymentTermPreferenceId),
     foreignKey({
       columns: [table.tenantId, table.legalEntityId, table.customerProfileId],
-      foreignColumns: [
-        customerProfiles.tenantId,
-        customerProfiles.legalEntityId,
-        customerProfiles.customerProfileId,
-      ],
+      foreignColumns: [customerProfiles.tenantId, customerProfiles.legalEntityId, customerProfiles.customerProfileId],
       name: 'ccc_payment_preferences_profile_fk',
     }).onDelete('restrict'),
     trimmed('ccc_payment_preferences_term_ref_ck', table.paymentTermResourceId),
@@ -1285,32 +1091,22 @@ export const customerPaymentTermPreferences = commerceCustomerContextSchema.tabl
 export const customerPaymentTermEntitlements = commerceCustomerContextSchema.table.withRLS(
   'customer_payment_term_entitlements',
   {
-    customerPaymentTermEntitlementId: uuid('customer_payment_term_entitlement_id')
-      .defaultRandom()
-      .primaryKey(),
+    customerPaymentTermEntitlementId: uuid('customer_payment_term_entitlement_id').defaultRandom().primaryKey(),
     ...scopeColumns(),
     customerProfileId: uuid('customer_profile_id').notNull(),
-    paymentTermResourceId: text('payment_term_resource_id').notNull(),
-    paymentTermSemanticRevision: text('payment_term_semantic_revision').notNull(),
     effectiveFrom: effectiveFrom(),
     effectiveTo: effectiveTo(),
     lifecycle: text('lifecycle').default('ACTIVE').notNull(),
+    paymentTermResourceId: text('payment_term_resource_id').notNull(),
+    paymentTermSemanticRevision: text('payment_term_semantic_revision').notNull(),
     revision: integer('revision').notNull(),
     ...operationAttribution(),
   },
   (table) => [
-    scopeIdentity(
-      'ccc_payment_entitlements_scope_id_uk',
-      table,
-      table.customerPaymentTermEntitlementId,
-    ),
+    scopeIdentity('ccc_payment_entitlements_scope_id_uk', table, table.customerPaymentTermEntitlementId),
     foreignKey({
       columns: [table.tenantId, table.legalEntityId, table.customerProfileId],
-      foreignColumns: [
-        customerProfiles.tenantId,
-        customerProfiles.legalEntityId,
-        customerProfiles.customerProfileId,
-      ],
+      foreignColumns: [customerProfiles.tenantId, customerProfiles.legalEntityId, customerProfiles.customerProfileId],
       name: 'ccc_payment_entitlements_profile_fk',
     }).onDelete('restrict'),
     trimmed('ccc_payment_entitlements_term_ref_ck', table.paymentTermResourceId),
@@ -1327,16 +1123,14 @@ export const customerPaymentTermEntitlements = commerceCustomerContextSchema.tab
 );
 
 /** Durable Customer-owned barrier used while Payment retires a canonical term and its aliases. */
-export const paymentTermRetirementReservations = commerceCustomerContextSchema.table.withRLS(
+const paymentTermRetirementReservations = commerceCustomerContextSchema.table.withRLS(
   'payment_term_retirement_reservations',
   {
-    paymentTermRetirementReservationId: uuid('payment_term_retirement_reservation_id')
-      .defaultRandom()
-      .primaryKey(),
+    paymentTermRetirementReservationId: uuid('payment_term_retirement_reservation_id').defaultRandom().primaryKey(),
     ...scopeColumns(),
-    paymentTermResourceIds: text('payment_term_resource_ids').array().notNull(),
     effectiveAt: timestamp('effective_at', { withTimezone: true }).notNull(),
     lifecycle: text('lifecycle').default('RESERVED').notNull(),
+    paymentTermResourceIds: text('payment_term_resource_ids').array().notNull(),
     ...operationAttribution(),
     createdAt: createdAt(),
     updatedAt: updatedAt(),
@@ -1365,51 +1159,44 @@ export const paymentTermRetirementReservations = commerceCustomerContextSchema.t
   ],
 );
 
-export const savedAddresses = commerceCustomerContextSchema.table.withRLS(
+const savedAddresses = commerceCustomerContextSchema.table.withRLS(
   'saved_addresses',
   {
     savedAddressId: uuid('saved_address_id').defaultRandom().primaryKey(),
     ...scopeColumns(),
-    customerProfileId: uuid('customer_profile_id').notNull(),
-    sourceKind: text('source_kind').notNull(),
-    label: text('label'),
-    purposes: jsonb('purposes').$type<readonly ('BILLING' | 'DELIVERY')[]>().notNull(),
-    partyResourceId: text('party_resource_id'),
-    partyContactPointResourceId: text('party_contact_point_resource_id'),
-    partyContactPointRevision: integer('party_contact_point_revision'),
-    recipientName: text('recipient_name'),
-    organizationName: text('organization_name'),
     addressLine1: text('address_line_1'),
     addressLine2: text('address_line_2'),
-    locality: text('locality'),
     administrativeArea: text('administrative_area'),
-    postalCode: text('postal_code'),
     countryCode: text('country_code'),
-    phoneNumber: text('phone_number'),
-    lifecycle: text('lifecycle').default('ACTIVE').notNull(),
-    revision: integer('revision').default(1).notNull(),
-    removedAt: timestamp('removed_at', { withTimezone: true }),
     createdAt: createdAt(),
-    updatedAt: updatedAt(),
+    customerProfileId: uuid('customer_profile_id').notNull(),
+    label: text('label'),
     lastActionInvocationId: uuid('last_action_invocation_id').notNull(),
     lastActorPrincipalId: uuid('last_actor_principal_id').notNull(),
     lastReason: text('last_reason'),
+    lifecycle: text('lifecycle').default('ACTIVE').notNull(),
+    locality: text('locality'),
+    organizationName: text('organization_name'),
+    partyContactPointResourceId: text('party_contact_point_resource_id'),
+    partyContactPointRevision: integer('party_contact_point_revision'),
+    partyResourceId: text('party_resource_id'),
+    phoneNumber: text('phone_number'),
+    postalCode: text('postal_code'),
+    purposes: jsonb('purposes').$type<readonly ('BILLING' | 'DELIVERY')[]>().notNull(),
+    recipientName: text('recipient_name'),
+    removedAt: timestamp('removed_at', { withTimezone: true }),
+    revision: integer('revision').default(1).notNull(),
+    sourceKind: text('source_kind').notNull(),
+    updatedAt: updatedAt(),
   },
   (table) => [
     scopeIdentity('ccc_saved_addresses_scope_id_uk', table, table.savedAddressId),
     foreignKey({
       columns: [table.tenantId, table.legalEntityId, table.customerProfileId],
-      foreignColumns: [
-        customerProfiles.tenantId,
-        customerProfiles.legalEntityId,
-        customerProfiles.customerProfileId,
-      ],
+      foreignColumns: [customerProfiles.tenantId, customerProfiles.legalEntityId, customerProfiles.customerProfileId],
       name: 'ccc_saved_addresses_profile_fk',
     }).onDelete('restrict'),
-    check(
-      'ccc_saved_addresses_source_kind_ck',
-      sql`${table.sourceKind} in ('PARTY_BACKED', 'COMMERCE_ONLY')`,
-    ),
+    check('ccc_saved_addresses_source_kind_ck', sql`${table.sourceKind} in ('PARTY_BACKED', 'COMMERCE_ONLY')`),
     check(
       'ccc_saved_addresses_source_shape_ck',
       sql`(${table.sourceKind} = 'PARTY_BACKED' and ${table.partyResourceId} is not null and ${table.partyContactPointResourceId} is not null and ${table.partyContactPointRevision} > 0 and ${table.addressLine1} is null and ${table.locality} is null and ${table.postalCode} is null and ${table.countryCode} is null) or (${table.sourceKind} = 'COMMERCE_ONLY' and ${table.partyResourceId} is null and ${table.partyContactPointResourceId} is null and ${table.partyContactPointRevision} is null and ${table.addressLine1} is not null and ${table.locality} is not null and ${table.postalCode} is not null and ${table.countryCode} is not null)`,
@@ -1418,10 +1205,7 @@ export const savedAddresses = commerceCustomerContextSchema.table.withRLS(
       'ccc_saved_addresses_purposes_ck',
       sql`jsonb_typeof(${table.purposes}) = 'array' and jsonb_array_length(${table.purposes}) between 1 and 2 and ${table.purposes} <@ '["BILLING", "DELIVERY"]'::jsonb`,
     ),
-    check(
-      'ccc_saved_addresses_country_ck',
-      sql`${table.countryCode} is null or ${table.countryCode} ~ '^[A-Z]{2}$'`,
-    ),
+    check('ccc_saved_addresses_country_ck', sql`${table.countryCode} is null or ${table.countryCode} ~ '^[A-Z]{2}$'`),
     check(
       'ccc_saved_addresses_lifecycle_ck',
       sql`${table.lifecycle} in ('ACTIVE', 'REMOVED') and ((${table.lifecycle} = 'ACTIVE' and ${table.removedAt} is null) or (${table.lifecycle} = 'REMOVED' and ${table.removedAt} is not null))`,
@@ -1443,38 +1227,30 @@ export const savedAddresses = commerceCustomerContextSchema.table.withRLS(
   ],
 );
 
-export const customerAddressDefaults = commerceCustomerContextSchema.table.withRLS(
+const customerAddressDefaults = commerceCustomerContextSchema.table.withRLS(
   'customer_address_defaults',
   {
     customerAddressDefaultId: uuid('customer_address_default_id').defaultRandom().primaryKey(),
     ...scopeColumns(),
     customerProfileId: uuid('customer_profile_id').notNull(),
     defaultKind: text('default_kind').notNull(),
-    savedAddressId: uuid('saved_address_id').notNull(),
     effectiveFrom: effectiveFrom(),
     effectiveTo: effectiveTo(),
     lifecycle: text('lifecycle').default('ACTIVE').notNull(),
     revision: integer('revision').notNull(),
+    savedAddressId: uuid('saved_address_id').notNull(),
     ...operationAttribution(),
   },
   (table) => [
     scopeIdentity('ccc_address_defaults_scope_id_uk', table, table.customerAddressDefaultId),
     foreignKey({
       columns: [table.tenantId, table.legalEntityId, table.customerProfileId],
-      foreignColumns: [
-        customerProfiles.tenantId,
-        customerProfiles.legalEntityId,
-        customerProfiles.customerProfileId,
-      ],
+      foreignColumns: [customerProfiles.tenantId, customerProfiles.legalEntityId, customerProfiles.customerProfileId],
       name: 'ccc_address_defaults_profile_fk',
     }).onDelete('restrict'),
     foreignKey({
       columns: [table.tenantId, table.legalEntityId, table.savedAddressId],
-      foreignColumns: [
-        savedAddresses.tenantId,
-        savedAddresses.legalEntityId,
-        savedAddresses.savedAddressId,
-      ],
+      foreignColumns: [savedAddresses.tenantId, savedAddresses.legalEntityId, savedAddresses.savedAddressId],
       name: 'ccc_address_defaults_address_fk',
     }).onDelete('restrict'),
     check('ccc_address_defaults_kind_ck', sql`${table.defaultKind} in ('BILLING', 'DELIVERY')`),
@@ -1489,20 +1265,18 @@ export const customerAddressDefaults = commerceCustomerContextSchema.table.withR
   ],
 );
 
-export const counterpartyCommerceAccessGrants = commerceCustomerContextSchema.table.withRLS(
+const counterpartyCommerceAccessGrants = commerceCustomerContextSchema.table.withRLS(
   'counterparty_commerce_access_grants',
   {
-    counterpartyCommerceAccessGrantId: uuid('counterparty_commerce_access_grant_id')
-      .defaultRandom()
-      .primaryKey(),
+    counterpartyCommerceAccessGrantId: uuid('counterparty_commerce_access_grant_id').defaultRandom().primaryKey(),
     ...scopeColumns(),
     counterpartyPurchasingProfileId: uuid('counterparty_purchasing_profile_id').notNull(),
-    principalId: uuid('principal_id').notNull(),
-    permissionCode: text('permission_code').notNull(),
-    storefrontResourceId: text('storefront_resource_id'),
     lifecycle: text('lifecycle').default('ACTIVE').notNull(),
+    permissionCode: text('permission_code').notNull(),
+    principalId: uuid('principal_id').notNull(),
     revision: integer('revision').default(1).notNull(),
     revokedAt: timestamp('revoked_at', { withTimezone: true }),
+    storefrontResourceId: text('storefront_resource_id'),
     ...operationAttribution(),
   },
   (table) => [
@@ -1516,9 +1290,7 @@ export const counterpartyCommerceAccessGrants = commerceCustomerContextSchema.ta
         table.permissionCode,
         sql`coalesce(${table.storefrontResourceId}, '')`,
       )
-      .where(
-        sql`${table.lifecycle} in ('PENDING_GRANT', 'ACTIVE', 'PENDING_REVOKE', 'RECONCILIATION_REQUIRED')`,
-      ),
+      .where(sql`${table.lifecycle} in ('PENDING_GRANT', 'ACTIVE', 'PENDING_REVOKE', 'RECONCILIATION_REQUIRED')`),
     foreignKey({
       columns: [table.tenantId, table.counterpartyPurchasingProfileId],
       foreignColumns: [
@@ -1539,45 +1311,32 @@ export const counterpartyCommerceAccessGrants = commerceCustomerContextSchema.ta
   ],
 );
 
-export const counterpartyAccessInvitations = commerceCustomerContextSchema.table.withRLS(
+const counterpartyAccessInvitations = commerceCustomerContextSchema.table.withRLS(
   'counterparty_access_invitations',
   {
-    counterpartyAccessInvitationId: uuid('counterparty_access_invitation_id')
-      .defaultRandom()
-      .primaryKey(),
+    counterpartyAccessInvitationId: uuid('counterparty_access_invitation_id').defaultRandom().primaryKey(),
     ...scopeColumns(),
+    claimedAt: timestamp('claimed_at', { withTimezone: true }),
+    claimedByPrincipalId: uuid('claimed_by_principal_id'),
+    claimOriginActionInvocationId: uuid('claim_origin_action_invocation_id'),
+    claimOriginPrincipalId: uuid('claim_origin_principal_id'),
+    claimOriginProofReference: text('claim_origin_proof_reference'),
+    claimProofReference: text('claim_proof_reference'),
     counterpartyPurchasingProfileId: uuid('counterparty_purchasing_profile_id').notNull(),
     deliveryMethod: text('delivery_method').notNull(),
     deliveryReference: text('delivery_reference').notNull(),
-    claimProofReference: text('claim_proof_reference'),
-    claimOriginPrincipalId: uuid('claim_origin_principal_id'),
-    claimOriginActionInvocationId: uuid('claim_origin_action_invocation_id'),
-    claimOriginProofReference: text('claim_origin_proof_reference'),
-    requestedPermissionCodes: jsonb('requested_permission_codes')
-      .$type<readonly string[]>()
-      .notNull(),
-    storefrontResourceId: text('storefront_resource_id'),
-    lifecycle: text('lifecycle').default('PENDING').notNull(),
-    revision: integer('revision').default(1).notNull(),
     expiresAt: timestamp('expires_at', { withTimezone: true }).notNull(),
-    claimedByPrincipalId: uuid('claimed_by_principal_id'),
-    claimedAt: timestamp('claimed_at', { withTimezone: true }),
+    lifecycle: text('lifecycle').default('PENDING').notNull(),
+    requestedPermissionCodes: jsonb('requested_permission_codes').$type<readonly string[]>().notNull(),
+    revision: integer('revision').default(1).notNull(),
     revokedAt: timestamp('revoked_at', { withTimezone: true }),
+    storefrontResourceId: text('storefront_resource_id'),
     ...operationAttribution(),
   },
   (table) => [
-    scopeIdentity(
-      'ccc_access_invitations_scope_id_uk',
-      table,
-      table.counterpartyAccessInvitationId,
-    ),
+    scopeIdentity('ccc_access_invitations_scope_id_uk', table, table.counterpartyAccessInvitationId),
     uniqueIndex('ccc_access_invitations_pending_delivery_uk')
-      .on(
-        table.tenantId,
-        table.legalEntityId,
-        table.counterpartyPurchasingProfileId,
-        table.deliveryReference,
-      )
+      .on(table.tenantId, table.legalEntityId, table.counterpartyPurchasingProfileId, table.deliveryReference)
       .where(sql`${table.lifecycle} = 'PENDING'`),
     foreignKey({
       columns: [table.tenantId, table.counterpartyPurchasingProfileId],
@@ -1593,10 +1352,7 @@ export const counterpartyAccessInvitations = commerceCustomerContextSchema.table
       sql`${table.deliveryMethod} in ('VERIFIED_CONTACT_POINT', 'APPROVED_RECIPIENT_DISCOVERY')`,
     ),
     optionalTrimmed('ccc_access_invitations_claim_proof_ck', table.claimProofReference),
-    optionalTrimmed(
-      'ccc_access_invitations_claim_origin_proof_ck',
-      table.claimOriginProofReference,
-    ),
+    optionalTrimmed('ccc_access_invitations_claim_origin_proof_ck', table.claimOriginProofReference),
     check(
       'ccc_access_invitations_claim_origin_ck',
       sql`(${table.claimOriginPrincipalId} is null and ${table.claimOriginActionInvocationId} is null and ${table.claimOriginProofReference} is null) or (${table.claimOriginPrincipalId} is not null and ${table.claimOriginActionInvocationId} is not null and ${table.claimOriginProofReference} is not null)`,
@@ -1625,50 +1381,38 @@ export const counterpartyAccessInvitations = commerceCustomerContextSchema.table
 );
 
 /** Secret-free invitation credential state. Raw proof material exists only at delivery/redeem. */
-export const counterpartyInvitationClaimProofs = commerceCustomerContextSchema.table.withRLS(
+const counterpartyInvitationClaimProofs = commerceCustomerContextSchema.table.withRLS(
   'counterparty_invitation_claim_proofs',
   {
-    counterpartyInvitationClaimProofId: uuid('counterparty_invitation_claim_proof_id')
-      .defaultRandom()
-      .primaryKey(),
+    counterpartyInvitationClaimProofId: uuid('counterparty_invitation_claim_proof_id').defaultRandom().primaryKey(),
     ...scopeColumns(),
-    invitationId: uuid('invitation_id').notNull(),
+    attestationReference: text('attestation_reference'),
+    claimantPrincipalId: uuid('claimant_principal_id'),
+    consumeActionInvocationId: uuid('consume_action_invocation_id'),
+    consumedAt: timestamp('consumed_at', { withTimezone: true }),
     counterpartyResourceId: text('counterparty_resource_id').notNull(),
-    storefrontResourceId: text('storefront_resource_id'),
-    proofReference: text('proof_reference').notNull(),
-    secretDigest: text('secret_digest').notNull(),
-    proofVersion: text('proof_version').default('commerce-invitation-proof.v1').notNull(),
-    lifecycle: text('lifecycle').default('ISSUED').notNull(),
-    deliveryState: text('delivery_state').default('PENDING').notNull(),
+    createdAt: createdAt(),
+    deliveryAttemptCount: smallint('delivery_attempt_count').default(0).notNull(),
     deliveryMethod: text('delivery_method').notNull(),
     deliveryReference: text('delivery_reference').notNull(),
-    deliveryAttemptCount: smallint('delivery_attempt_count').default(0).notNull(),
-    intendedPermissionCodes: jsonb('intended_permission_codes')
-      .$type<readonly string[]>()
-      .notNull(),
-    inviterPrincipalId: uuid('inviter_principal_id').notNull(),
-    claimantPrincipalId: uuid('claimant_principal_id'),
-    issueActionInvocationId: uuid('issue_action_invocation_id').notNull(),
-    consumeActionInvocationId: uuid('consume_action_invocation_id'),
-    attestationReference: text('attestation_reference'),
-    expiresAt: timestamp('expires_at', { withTimezone: true }).notNull(),
     deliveryStagedAt: timestamp('delivery_staged_at', { withTimezone: true }),
-    redeemedAt: timestamp('redeemed_at', { withTimezone: true }),
-    consumedAt: timestamp('consumed_at', { withTimezone: true }),
+    deliveryState: text('delivery_state').default('PENDING').notNull(),
+    expiresAt: timestamp('expires_at', { withTimezone: true }).notNull(),
+    intendedPermissionCodes: jsonb('intended_permission_codes').$type<readonly string[]>().notNull(),
     invalidatedAt: timestamp('invalidated_at', { withTimezone: true }),
-    createdAt: createdAt(),
+    invitationId: uuid('invitation_id').notNull(),
+    inviterPrincipalId: uuid('inviter_principal_id').notNull(),
+    issueActionInvocationId: uuid('issue_action_invocation_id').notNull(),
+    lifecycle: text('lifecycle').default('ISSUED').notNull(),
+    proofReference: text('proof_reference').notNull(),
+    proofVersion: text('proof_version').default('commerce-invitation-proof.v1').notNull(),
+    redeemedAt: timestamp('redeemed_at', { withTimezone: true }),
+    secretDigest: text('secret_digest').notNull(),
+    storefrontResourceId: text('storefront_resource_id'),
   },
   (table) => [
-    scopeIdentity(
-      'ccc_invitation_claim_proofs_scope_id_uk',
-      table,
-      table.counterpartyInvitationClaimProofId,
-    ),
-    unique('ccc_invitation_claim_proofs_reference_uk').on(
-      table.tenantId,
-      table.legalEntityId,
-      table.proofReference,
-    ),
+    scopeIdentity('ccc_invitation_claim_proofs_scope_id_uk', table, table.counterpartyInvitationClaimProofId),
+    unique('ccc_invitation_claim_proofs_reference_uk').on(table.tenantId, table.legalEntityId, table.proofReference),
     unique('ccc_invitation_claim_proofs_attestation_uk').on(
       table.tenantId,
       table.legalEntityId,
@@ -1696,10 +1440,7 @@ export const counterpartyInvitationClaimProofs = commerceCustomerContextSchema.t
     optionalTrimmed('ccc_invitation_claim_proofs_storefront_ck', table.storefrontResourceId),
     trimmed('ccc_invitation_claim_proofs_reference_ck', table.proofReference),
     check('ccc_invitation_claim_proofs_digest_ck', sql`${table.secretDigest} ~ '^[0-9a-f]{64}$'`),
-    check(
-      'ccc_invitation_claim_proofs_version_ck',
-      sql`${table.proofVersion} = 'commerce-invitation-proof.v1'`,
-    ),
+    check('ccc_invitation_claim_proofs_version_ck', sql`${table.proofVersion} = 'commerce-invitation-proof.v1'`),
     check(
       'ccc_invitation_claim_proofs_lifecycle_ck',
       sql`${table.lifecycle} in ('ISSUED', 'VERIFIED', 'CONSUMED', 'REVOKED', 'EXPIRED')`,
@@ -1736,27 +1477,21 @@ export const counterpartyInvitationClaimProofs = commerceCustomerContextSchema.t
 );
 
 /** Durable claimant-specific throttling for both secret redemption and claim consumption. */
-export const counterpartyInvitationClaimAttempts = commerceCustomerContextSchema.table.withRLS(
+const counterpartyInvitationClaimAttempts = commerceCustomerContextSchema.table.withRLS(
   'counterparty_invitation_claim_attempts',
   {
-    counterpartyInvitationClaimAttemptId: uuid('counterparty_invitation_claim_attempt_id')
-      .defaultRandom()
-      .primaryKey(),
+    counterpartyInvitationClaimAttemptId: uuid('counterparty_invitation_claim_attempt_id').defaultRandom().primaryKey(),
     ...scopeColumns(),
-    invitationId: uuid('invitation_id').notNull(),
-    claimantPrincipalId: uuid('claimant_principal_id').notNull(),
     attemptCount: smallint('attempt_count').default(0).notNull(),
-    windowStartedAt: timestamp('window_started_at', { withTimezone: true }).notNull(),
     blockedUntil: timestamp('blocked_until', { withTimezone: true }),
+    claimantPrincipalId: uuid('claimant_principal_id').notNull(),
+    invitationId: uuid('invitation_id').notNull(),
     lastAttemptAt: timestamp('last_attempt_at', { withTimezone: true }).notNull(),
     lastOutcome: text('last_outcome').notNull(),
+    windowStartedAt: timestamp('window_started_at', { withTimezone: true }).notNull(),
   },
   (table) => [
-    scopeIdentity(
-      'ccc_invitation_claim_attempts_scope_id_uk',
-      table,
-      table.counterpartyInvitationClaimAttemptId,
-    ),
+    scopeIdentity('ccc_invitation_claim_attempts_scope_id_uk', table, table.counterpartyInvitationClaimAttemptId),
     unique('ccc_invitation_claim_attempts_claimant_uk').on(
       table.tenantId,
       table.legalEntityId,
@@ -1785,17 +1520,17 @@ export const counterpartyInvitationClaimAttempts = commerceCustomerContextSchema
   ],
 );
 
-export const accessMutationJournal = commerceCustomerContextSchema.table.withRLS(
+const accessMutationJournal = commerceCustomerContextSchema.table.withRLS(
   'access_mutation_journal',
   {
     accessMutationId: uuid('access_mutation_id').defaultRandom().primaryKey(),
     ...scopeColumns(),
     counterpartyPurchasingProfileId: uuid('counterparty_purchasing_profile_id').notNull(),
-    subjectPrincipalId: uuid('subject_principal_id'),
     mutationKind: text('mutation_kind').notNull(),
     resourceId: uuid('resource_id').notNull(),
     revision: integer('revision').notNull(),
-    safeFacts: jsonb('safe_facts').$type<Readonly<Record<string, unknown>>>().notNull(),
+    safeFacts: jsonb('safe_facts').$type<DatabaseJsonObject>().notNull(),
+    subjectPrincipalId: uuid('subject_principal_id'),
     ...operationAttribution(),
   },
   (table) => [
@@ -1829,9 +1564,9 @@ export const accessMutationJournal = commerceCustomerContextSchema.table.withRLS
 );
 
 const purchaseLimitColumns = () => ({
-  policyKind: text('policy_kind').notNull(),
   amount: numeric('amount', { precision: 38, scale: 9 }),
   currencyCode: text('currency_code'),
+  policyKind: text('policy_kind').notNull(),
 });
 
 const purchaseLimitConstraint = (
@@ -1846,23 +1581,17 @@ const purchaseLimitConstraint = (
 export const counterpartyPurchaseLimitDefaults = commerceCustomerContextSchema.table.withRLS(
   'counterparty_purchase_limit_defaults',
   {
-    counterpartyPurchaseLimitDefaultId: uuid('counterparty_purchase_limit_default_id')
-      .defaultRandom()
-      .primaryKey(),
+    counterpartyPurchaseLimitDefaultId: uuid('counterparty_purchase_limit_default_id').defaultRandom().primaryKey(),
     ...scopeColumns(),
     counterpartyPurchasingProfileId: uuid('counterparty_purchasing_profile_id').notNull(),
     ...purchaseLimitColumns(),
-    revision: integer('revision').notNull(),
     isCurrent: boolean('is_current').default(true).notNull(),
+    revision: integer('revision').notNull(),
     supersededAt: timestamp('superseded_at', { withTimezone: true }),
     ...operationAttribution(),
   },
   (table) => [
-    scopeIdentity(
-      'ccc_limit_defaults_scope_id_uk',
-      table,
-      table.counterpartyPurchaseLimitDefaultId,
-    ),
+    scopeIdentity('ccc_limit_defaults_scope_id_uk', table, table.counterpartyPurchaseLimitDefaultId),
     unique('ccc_limit_defaults_profile_revision_uk').on(
       table.tenantId,
       table.legalEntityId,
@@ -1894,15 +1623,13 @@ export const counterpartyPurchaseLimitDefaults = commerceCustomerContextSchema.t
 export const principalPurchaseLimitOverrides = commerceCustomerContextSchema.table.withRLS(
   'principal_purchase_limit_overrides',
   {
-    principalPurchaseLimitOverrideId: uuid('principal_purchase_limit_override_id')
-      .defaultRandom()
-      .primaryKey(),
+    principalPurchaseLimitOverrideId: uuid('principal_purchase_limit_override_id').defaultRandom().primaryKey(),
     ...scopeColumns(),
     counterpartyPurchasingProfileId: uuid('counterparty_purchasing_profile_id').notNull(),
     principalId: uuid('principal_id').notNull(),
     ...purchaseLimitColumns(),
-    revision: integer('revision').notNull(),
     isCurrent: boolean('is_current').default(true).notNull(),
+    revision: integer('revision').notNull(),
     supersededAt: timestamp('superseded_at', { withTimezone: true }),
     ...operationAttribution(),
   },
@@ -1916,12 +1643,7 @@ export const principalPurchaseLimitOverrides = commerceCustomerContextSchema.tab
       table.revision,
     ),
     uniqueIndex('ccc_limit_overrides_current_uk')
-      .on(
-        table.tenantId,
-        table.legalEntityId,
-        table.counterpartyPurchasingProfileId,
-        table.principalId,
-      )
+      .on(table.tenantId, table.legalEntityId, table.counterpartyPurchasingProfileId, table.principalId)
       .where(sql`${table.isCurrent}`),
     foreignKey({
       columns: [table.tenantId, table.counterpartyPurchasingProfileId],
@@ -1948,25 +1670,21 @@ export const purchaseProposalRevisions = commerceCustomerContextSchema.table.wit
   {
     purchaseProposalRevisionId: uuid('purchase_proposal_revision_id').defaultRandom().primaryKey(),
     ...scopeColumns(),
-    proposalRevisionResourceId: text('proposal_revision_resource_id').notNull(),
-    revision: integer('revision').notNull(),
-    idempotencyKey: text('idempotency_key').notNull(),
-    proposalSequence: integer('proposal_sequence').notNull(),
-    buyerPrincipalId: uuid('buyer_principal_id').notNull(),
-    counterpartyResourceRef: text('counterparty_resource_ref').notNull(),
-    profileResourceRef: text('profile_resource_ref').notNull(),
-    storefrontId: text('storefront_id').notNull(),
-    proposalSnapshot: jsonb('proposal_snapshot')
-      .$type<Readonly<Record<string, unknown>>>()
-      .notNull(),
-    sourceRevisionVector: jsonb('source_revision_vector')
-      .$type<readonly Readonly<Record<string, unknown>>[]>()
-      .notNull(),
-    canonicalizationVersion: text('canonicalization_version').notNull(),
-    canonicalHash: text('canonical_hash').notNull(),
-    state: text('state').default('CURRENT').notNull(),
     approvalEvaluation: text('approval_evaluation').notNull(),
+    buyerPrincipalId: uuid('buyer_principal_id').notNull(),
+    canonicalHash: text('canonical_hash').notNull(),
+    canonicalizationVersion: text('canonicalization_version').notNull(),
+    counterpartyResourceRef: text('counterparty_resource_ref').notNull(),
     expiresAt: timestamp('expires_at', { withTimezone: true }).notNull(),
+    idempotencyKey: text('idempotency_key').notNull(),
+    profileResourceRef: text('profile_resource_ref').notNull(),
+    proposalRevisionResourceId: text('proposal_revision_resource_id').notNull(),
+    proposalSequence: integer('proposal_sequence').notNull(),
+    proposalSnapshot: jsonb('proposal_snapshot').$type<DatabaseJsonObject>().notNull(),
+    revision: integer('revision').notNull(),
+    sourceRevisionVector: jsonb('source_revision_vector').$type<readonly DatabaseJsonObject[]>().notNull(),
+    state: text('state').default('CURRENT').notNull(),
+    storefrontId: text('storefront_id').notNull(),
     ...operationAttribution(),
   },
   (table) => [
@@ -1983,11 +1701,7 @@ export const purchaseProposalRevisions = commerceCustomerContextSchema.table.wit
       table.proposalRevisionResourceId,
       table.canonicalHash,
     ),
-    unique('ccc_purchase_proposals_idempotency_uk').on(
-      table.tenantId,
-      table.legalEntityId,
-      table.idempotencyKey,
-    ),
+    unique('ccc_purchase_proposals_idempotency_uk').on(table.tenantId, table.legalEntityId, table.idempotencyKey),
     uniqueIndex('ccc_purchase_proposals_current_resource_uk')
       .on(table.tenantId, table.legalEntityId, table.proposalRevisionResourceId)
       .where(sql`${table.state} = 'CURRENT'`),
@@ -2002,19 +1716,13 @@ export const purchaseProposalRevisions = commerceCustomerContextSchema.table.wit
         sql`(${table.proposalSnapshot}->'sourceCart'->>'revision')`,
       )
       .where(sql`${table.state} = 'CURRENT'`),
-    check(
-      'ccc_purchase_proposals_revision_ck',
-      sql`${table.revision} > 0 and ${table.proposalSequence} > 0`,
-    ),
+    check('ccc_purchase_proposals_revision_ck', sql`${table.revision} > 0 and ${table.proposalSequence} > 0`),
     check(
       'ccc_purchase_proposals_snapshot_ck',
       sql`jsonb_typeof(${table.proposalSnapshot}) = 'object' and jsonb_typeof(${table.sourceRevisionVector}) = 'array'`,
     ),
     check('ccc_purchase_proposals_hash_ck', sql`${table.canonicalHash} ~ '^[a-f0-9]{64}$'`),
-    check(
-      'ccc_purchase_proposals_state_ck',
-      sql`${table.state} in ('CURRENT', 'SUPERSEDED', 'CONSUMED', 'CANCELLED')`,
-    ),
+    check('ccc_purchase_proposals_state_ck', sql`${table.state} in ('CURRENT', 'SUPERSEDED', 'CONSUMED', 'CANCELLED')`),
     check(
       'ccc_purchase_proposals_approval_ck',
       sql`${table.approvalEvaluation} in ('APPROVAL_REQUIRED', 'WITHIN_LIMIT')`,
@@ -2034,22 +1742,20 @@ export const approvalHierarchies = commerceCustomerContextSchema.table.withRLS(
   {
     approvalHierarchyId: uuid('approval_hierarchy_id').defaultRandom().primaryKey(),
     ...scopeColumns(),
-    hierarchyResourceId: text('hierarchy_resource_id').notNull(),
-    revision: integer('revision').notNull(),
-    idempotencyKey: text('idempotency_key').notNull(),
     counterpartyResourceRef: text('counterparty_resource_ref').notNull(),
-    storefrontId: text('storefront_id'),
-    minimumAmount: numeric('minimum_amount', { precision: 38, scale: 9 }).notNull(),
-    minimumCurrencyCode: text('minimum_currency_code').notNull(),
-    maximumAmount: numeric('maximum_amount', { precision: 38, scale: 9 }),
-    maximumCurrencyCode: text('maximum_currency_code'),
-    hierarchySnapshot: jsonb('hierarchy_snapshot')
-      .$type<Readonly<Record<string, unknown>>>()
-      .notNull(),
-    selfApprovalPolicy: text('self_approval_policy').notNull(),
     effectiveFrom: effectiveFrom(),
     effectiveTo: effectiveTo(),
+    hierarchyResourceId: text('hierarchy_resource_id').notNull(),
+    hierarchySnapshot: jsonb('hierarchy_snapshot').$type<DatabaseJsonObject>().notNull(),
+    idempotencyKey: text('idempotency_key').notNull(),
+    maximumAmount: numeric('maximum_amount', { precision: 38, scale: 9 }),
+    maximumCurrencyCode: text('maximum_currency_code'),
+    minimumAmount: numeric('minimum_amount', { precision: 38, scale: 9 }).notNull(),
+    minimumCurrencyCode: text('minimum_currency_code').notNull(),
     ownerPrincipalId: uuid('owner_principal_id').notNull(),
+    revision: integer('revision').notNull(),
+    selfApprovalPolicy: text('self_approval_policy').notNull(),
+    storefrontId: text('storefront_id'),
     ...operationAttribution(),
   },
   (table) => [
@@ -2060,20 +1766,10 @@ export const approvalHierarchies = commerceCustomerContextSchema.table.withRLS(
       table.hierarchyResourceId,
       table.revision,
     ),
-    unique('ccc_approval_hierarchies_idempotency_uk').on(
-      table.tenantId,
-      table.legalEntityId,
-      table.idempotencyKey,
-    ),
+    unique('ccc_approval_hierarchies_idempotency_uk').on(table.tenantId, table.legalEntityId, table.idempotencyKey),
     check('ccc_approval_hierarchies_revision_ck', sql`${table.revision} > 0`),
-    check(
-      'ccc_approval_hierarchies_snapshot_ck',
-      sql`jsonb_typeof(${table.hierarchySnapshot}) = 'object'`,
-    ),
-    check(
-      'ccc_approval_hierarchies_self_policy_ck',
-      sql`${table.selfApprovalPolicy} in ('DENY', 'ALLOW')`,
-    ),
+    check('ccc_approval_hierarchies_snapshot_ck', sql`jsonb_typeof(${table.hierarchySnapshot}) = 'object'`),
+    check('ccc_approval_hierarchies_self_policy_ck', sql`${table.selfApprovalPolicy} in ('DENY', 'ALLOW')`),
     check(
       'ccc_approval_hierarchies_currency_ck',
       sql`${table.minimumCurrencyCode} ~ '^[A-Z]{3}$' and (${table.maximumCurrencyCode} is null or ${table.maximumCurrencyCode} ~ '^[A-Z]{3}$')`,
@@ -2097,36 +1793,25 @@ export const approvalRoutes = commerceCustomerContextSchema.table.withRLS(
   {
     approvalRouteId: uuid('approval_route_id').defaultRandom().primaryKey(),
     ...scopeColumns(),
-    routeResourceId: text('route_resource_id').notNull(),
-    requestResourceId: text('request_resource_id').notNull(),
-    proposalRevisionResourceId: text('proposal_revision_resource_id').notNull(),
+    capturedAt: timestamp('captured_at', { withTimezone: true }).notNull(),
+    currentLevelOrder: integer('current_level_order').notNull(),
     hierarchyResourceId: text('hierarchy_resource_id').notNull(),
     hierarchyRevision: integer('hierarchy_revision').notNull(),
     idempotencyKey: text('idempotency_key').notNull(),
-    routeSnapshot: jsonb('route_snapshot').$type<Readonly<Record<string, unknown>>>().notNull(),
-    currentLevelOrder: integer('current_level_order').notNull(),
-    status: text('status').default('PENDING').notNull(),
-    capturedAt: timestamp('captured_at', { withTimezone: true }).notNull(),
+    proposalRevisionResourceId: text('proposal_revision_resource_id').notNull(),
+    requestResourceId: text('request_resource_id').notNull(),
     rerouteReason: text('reroute_reason'),
+    routeResourceId: text('route_resource_id').notNull(),
+    routeSnapshot: jsonb('route_snapshot').$type<DatabaseJsonObject>().notNull(),
+    status: text('status').default('PENDING').notNull(),
     ...operationAttribution(),
   },
   (table) => [
     scopeIdentity('ccc_approval_routes_scope_id_uk', table, table.approvalRouteId),
-    unique('ccc_approval_routes_resource_uk').on(
-      table.tenantId,
-      table.legalEntityId,
-      table.routeResourceId,
-    ),
-    unique('ccc_approval_routes_idempotency_uk').on(
-      table.tenantId,
-      table.legalEntityId,
-      table.idempotencyKey,
-    ),
+    unique('ccc_approval_routes_resource_uk').on(table.tenantId, table.legalEntityId, table.routeResourceId),
+    unique('ccc_approval_routes_idempotency_uk').on(table.tenantId, table.legalEntityId, table.idempotencyKey),
     check('ccc_approval_routes_snapshot_ck', sql`jsonb_typeof(${table.routeSnapshot}) = 'object'`),
-    check(
-      'ccc_approval_routes_level_ck',
-      sql`${table.hierarchyRevision} > 0 and ${table.currentLevelOrder} > 0`,
-    ),
+    check('ccc_approval_routes_level_ck', sql`${table.hierarchyRevision} > 0 and ${table.currentLevelOrder} > 0`),
     check(
       'ccc_approval_routes_status_ck',
       sql`${table.status} in ('PENDING', 'APPROVED', 'REROUTE_REQUIRED', 'SUPERSEDED')`,
@@ -2147,41 +1832,30 @@ export const purchaseApprovalRequests = commerceCustomerContextSchema.table.with
   {
     purchaseApprovalRequestId: uuid('purchase_approval_request_id').defaultRandom().primaryKey(),
     ...scopeColumns(),
-    requestResourceId: text('request_resource_id').notNull(),
-    proposalRevisionResourceId: text('proposal_revision_resource_id').notNull(),
-    routeResourceId: text('route_resource_id').notNull(),
-    requestRevision: integer('request_revision').default(1).notNull(),
-    requestSnapshot: jsonb('request_snapshot').$type<Readonly<Record<string, unknown>>>().notNull(),
-    status: text('status').default('PENDING').notNull(),
-    idempotencyKey: text('idempotency_key').notNull(),
-    submittedAt: timestamp('submitted_at', { withTimezone: true }).notNull(),
-    expiresAt: timestamp('expires_at', { withTimezone: true }).notNull(),
+    committedOrderRef: jsonb('committed_order_ref').$type<DatabaseJsonObject>(),
     consumedAt: timestamp('consumed_at', { withTimezone: true }),
-    committedOrderRef: jsonb('committed_order_ref').$type<Readonly<Record<string, unknown>>>(),
     consumptionCommitmentId: text('consumption_commitment_id'),
+    expiresAt: timestamp('expires_at', { withTimezone: true }).notNull(),
+    idempotencyKey: text('idempotency_key').notNull(),
     lastDecisionResourceId: text('last_decision_resource_id'),
+    proposalRevisionResourceId: text('proposal_revision_resource_id').notNull(),
+    requestResourceId: text('request_resource_id').notNull(),
+    requestRevision: integer('request_revision').default(1).notNull(),
+    requestSnapshot: jsonb('request_snapshot').$type<DatabaseJsonObject>().notNull(),
+    routeResourceId: text('route_resource_id').notNull(),
+    status: text('status').default('PENDING').notNull(),
+    submittedAt: timestamp('submitted_at', { withTimezone: true }).notNull(),
     ...operationAttribution(),
   },
   (table) => [
     scopeIdentity('ccc_approval_requests_scope_id_uk', table, table.purchaseApprovalRequestId),
-    unique('ccc_approval_requests_resource_uk').on(
-      table.tenantId,
-      table.legalEntityId,
-      table.requestResourceId,
-    ),
-    unique('ccc_approval_requests_idempotency_uk').on(
-      table.tenantId,
-      table.legalEntityId,
-      table.idempotencyKey,
-    ),
+    unique('ccc_approval_requests_resource_uk').on(table.tenantId, table.legalEntityId, table.requestResourceId),
+    unique('ccc_approval_requests_idempotency_uk').on(table.tenantId, table.legalEntityId, table.idempotencyKey),
     uniqueIndex('ccc_approval_requests_active_proposal_uk')
       .on(table.tenantId, table.legalEntityId, table.proposalRevisionResourceId)
       .where(sql`${table.status} in ('PENDING', 'APPROVED')`),
     check('ccc_approval_requests_revision_ck', sql`${table.requestRevision} > 0`),
-    check(
-      'ccc_approval_requests_snapshot_ck',
-      sql`jsonb_typeof(${table.requestSnapshot}) = 'object'`,
-    ),
+    check('ccc_approval_requests_snapshot_ck', sql`jsonb_typeof(${table.requestSnapshot}) = 'object'`),
     check(
       'ccc_approval_requests_status_ck',
       sql`${table.status} in ('PENDING', 'APPROVED', 'RETURNED', 'REJECTED', 'CANCELLED', 'EXPIRED', 'SUPERSEDED', 'CONSUMED')`,
@@ -2204,42 +1878,23 @@ export const approvalDecisions = commerceCustomerContextSchema.table.withRLS(
   {
     approvalDecisionId: uuid('approval_decision_id').defaultRandom().primaryKey(),
     ...scopeColumns(),
-    decisionResourceId: text('decision_resource_id').notNull(),
-    requestResourceId: text('request_resource_id').notNull(),
-    proposalRevisionResourceId: text('proposal_revision_resource_id').notNull(),
     decision: text('decision').notNull(),
-    levelOrder: integer('level_order').notNull(),
-    requestRevision: integer('request_revision').notNull(),
+    decisionResourceId: text('decision_resource_id').notNull(),
+    decisionSnapshot: jsonb('decision_snapshot').$type<DatabaseJsonObject>().notNull(),
     idempotencyKey: text('idempotency_key').notNull(),
-    decisionSnapshot: jsonb('decision_snapshot')
-      .$type<Readonly<Record<string, unknown>>>()
-      .notNull(),
+    levelOrder: integer('level_order').notNull(),
+    proposalRevisionResourceId: text('proposal_revision_resource_id').notNull(),
+    requestResourceId: text('request_resource_id').notNull(),
+    requestRevision: integer('request_revision').notNull(),
     ...operationAttribution(),
   },
   (table) => [
     scopeIdentity('ccc_approval_decisions_scope_id_uk', table, table.approvalDecisionId),
-    unique('ccc_approval_decisions_resource_uk').on(
-      table.tenantId,
-      table.legalEntityId,
-      table.decisionResourceId,
-    ),
-    unique('ccc_approval_decisions_idempotency_uk').on(
-      table.tenantId,
-      table.legalEntityId,
-      table.idempotencyKey,
-    ),
-    check(
-      'ccc_approval_decisions_kind_ck',
-      sql`${table.decision} in ('APPROVE', 'RETURN', 'REJECT')`,
-    ),
-    check(
-      'ccc_approval_decisions_level_ck',
-      sql`${table.levelOrder} > 0 and ${table.requestRevision} > 0`,
-    ),
-    check(
-      'ccc_approval_decisions_snapshot_ck',
-      sql`jsonb_typeof(${table.decisionSnapshot}) = 'object'`,
-    ),
+    unique('ccc_approval_decisions_resource_uk').on(table.tenantId, table.legalEntityId, table.decisionResourceId),
+    unique('ccc_approval_decisions_idempotency_uk').on(table.tenantId, table.legalEntityId, table.idempotencyKey),
+    check('ccc_approval_decisions_kind_ck', sql`${table.decision} in ('APPROVE', 'RETURN', 'REJECT')`),
+    check('ccc_approval_decisions_level_ck', sql`${table.levelOrder} > 0 and ${table.requestRevision} > 0`),
+    check('ccc_approval_decisions_snapshot_ck', sql`jsonb_typeof(${table.decisionSnapshot}) = 'object'`),
     optionalTrimmed('ccc_approval_decisions_reason_ck', table.reason),
     trimmed('ccc_approval_decisions_resource_ck', table.decisionResourceId),
     trimmed('ccc_approval_decisions_request_ck', table.requestResourceId),
@@ -2255,15 +1910,15 @@ export const approvalRevalidations = commerceCustomerContextSchema.table.withRLS
   {
     approvalRevalidationId: uuid('approval_revalidation_id').defaultRandom().primaryKey(),
     ...scopeColumns(),
-    revalidationResourceId: text('revalidation_resource_id').notNull(),
-    requestResourceId: text('request_resource_id').notNull(),
-    proposalRevisionResourceId: text('proposal_revision_resource_id').notNull(),
-    status: text('status').notNull(),
-    proposalHash: text('proposal_hash').notNull(),
     checkedAt: timestamp('checked_at', { withTimezone: true }).notNull(),
-    validUntil: timestamp('valid_until', { withTimezone: true }).notNull(),
-    evidence: jsonb('evidence').$type<Readonly<Record<string, unknown>>>().notNull(),
+    evidence: jsonb('evidence').$type<DatabaseJsonObject>().notNull(),
     idempotencyKey: text('idempotency_key').notNull(),
+    proposalHash: text('proposal_hash').notNull(),
+    proposalRevisionResourceId: text('proposal_revision_resource_id').notNull(),
+    requestResourceId: text('request_resource_id').notNull(),
+    revalidationResourceId: text('revalidation_resource_id').notNull(),
+    status: text('status').notNull(),
+    validUntil: timestamp('valid_until', { withTimezone: true }).notNull(),
     ...operationAttribution(),
   },
   (table) => [
@@ -2273,20 +1928,13 @@ export const approvalRevalidations = commerceCustomerContextSchema.table.withRLS
       table.legalEntityId,
       table.revalidationResourceId,
     ),
-    unique('ccc_approval_revalidations_idempotency_uk').on(
-      table.tenantId,
-      table.legalEntityId,
-      table.idempotencyKey,
-    ),
+    unique('ccc_approval_revalidations_idempotency_uk').on(table.tenantId, table.legalEntityId, table.idempotencyKey),
     check(
       'ccc_approval_revalidations_status_ck',
       sql`${table.status} in ('APPROVAL_VALID', 'ALREADY_CONSUMED', 'INVALID')`,
     ),
     check('ccc_approval_revalidations_hash_ck', sql`${table.proposalHash} ~ '^[a-f0-9]{64}$'`),
-    check(
-      'ccc_approval_revalidations_evidence_ck',
-      sql`jsonb_typeof(${table.evidence}) = 'object'`,
-    ),
+    check('ccc_approval_revalidations_evidence_ck', sql`jsonb_typeof(${table.evidence}) = 'object'`),
     check('ccc_approval_revalidations_period_ck', sql`${table.validUntil} > ${table.checkedAt}`),
     trimmed('ccc_approval_revalidations_resource_ck', table.revalidationResourceId),
     trimmed('ccc_approval_revalidations_request_ck', table.requestResourceId),
@@ -2296,9 +1944,13 @@ export const approvalRevalidations = commerceCustomerContextSchema.table.withRLS
   ],
 );
 
-export const commerceCustomerContextDatabaseSchema = {
+const commerceCustomerContextDatabaseSchema = {
   accessMutationJournal,
   addressBookReconciliationReceipts,
+  approvalDecisions,
+  approvalHierarchies,
+  approvalRevalidations,
+  approvalRoutes,
   counterpartyAccessInvitations,
   counterpartyCommerceAccessGrants,
   counterpartyInvitationClaimAttempts,
@@ -2306,13 +1958,12 @@ export const commerceCustomerContextDatabaseSchema = {
   counterpartyPurchaseLimitDefaults,
   counterpartyPurchasingProfiles,
   customerAddressDefaults,
-  customerGroupMemberships,
   customerGroupLifecyclePeriods,
+  customerGroupMemberships,
   customerGroupRevisions,
   customerGroups,
   customerPaymentTermEntitlements,
   customerPaymentTermPreferences,
-  paymentTermRetirementReservations,
   customerPriceGroupAssignments,
   customerProfileAliases,
   customerProfileLifecycleHistory,
@@ -2320,19 +1971,16 @@ export const commerceCustomerContextDatabaseSchema = {
   customerSettingRevisions,
   guestRetailAttributions,
   partyMergeProfileObservations,
+  paymentTermRetirementReservations,
   principalPurchaseLimitOverrides,
-  purchaseProposalRevisions,
-  approvalHierarchies,
-  approvalRoutes,
-  purchaseApprovalRequests,
-  approvalDecisions,
-  approvalRevalidations,
   profileReconciliationCaseMembers,
   profileReconciliationCases,
   profileReconciliationOwnerOutcomes,
+  purchaseApprovalRequests,
+  purchaseProposalRevisions,
   retailCustomerProfiles,
-  retailPortalProfileBindingPermissionMutations,
   retailPortalProfileBindingHistory,
+  retailPortalProfileBindingPermissionMutations,
   retailPortalProfileBindings,
   savedAddresses,
 } as const;
@@ -2379,20 +2027,4 @@ export const COMMERCE_CUSTOMER_CONTEXT_TABLES = [
 ] as const;
 
 /** Relational Queries v2 entry point for the owner-local database. */
-export const commerceCustomerContextRelations = defineRelations(
-  commerceCustomerContextDatabaseSchema,
-);
-
-export type CustomerProfileRecord = typeof customerProfiles.$inferSelect;
-export type NewCustomerProfileRecord = typeof customerProfiles.$inferInsert;
-export type CustomerGroupRecord = typeof customerGroups.$inferSelect;
-export type CustomerGroupMembershipRecord = typeof customerGroupMemberships.$inferSelect;
-export type CustomerPaymentTermEntitlementRecord =
-  typeof customerPaymentTermEntitlements.$inferSelect;
-export type SavedAddressRecord = typeof savedAddresses.$inferSelect;
-export type CounterpartyCommerceAccessGrantRecord =
-  typeof counterpartyCommerceAccessGrants.$inferSelect;
-export type CounterpartyPurchaseLimitDefaultRecord =
-  typeof counterpartyPurchaseLimitDefaults.$inferSelect;
-export type PrincipalPurchaseLimitOverrideRecord =
-  typeof principalPurchaseLimitOverrides.$inferSelect;
+export const commerceCustomerContextRelations = defineRelations(commerceCustomerContextDatabaseSchema);

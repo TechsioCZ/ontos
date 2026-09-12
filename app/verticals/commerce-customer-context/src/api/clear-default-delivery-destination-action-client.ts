@@ -69,11 +69,6 @@ export const executeClearDefaultDeliveryDestination = (
 ) =>
   operationGateway.invoke(
     (credential) =>
-      executeClearDefaultDeliveryDestinationWithAuthorization(
-        payload,
-        credential,
-        requestCorrelation,
-        options,
-      ),
+      executeClearDefaultDeliveryDestinationWithAuthorization(payload, credential, requestCorrelation, options),
     options.gateway,
   );

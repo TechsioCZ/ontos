@@ -109,17 +109,12 @@ it.effect('resolves NONE only when there is no current temporal assignment', () 
 it.effect('returns ASSIGNED with fresh compatibility evidence from the Pricing catalog', () =>
   Effect.gen(function* assignedResolution() {
     let catalogEffectiveAt = '';
-    const result = yield* resolveCustomerPriceGroupAt(
-      profile,
-      [assignment('current')],
-      '2026-03-01T00:00:00.000Z',
-      {
-        resolveCurrent: (_ref, _contract, effectiveAt) => {
-          catalogEffectiveAt = effectiveAt;
-          return Effect.succeed({ _tag: 'USABLE', compatibility, priceGroupRef });
-        },
+    const result = yield* resolveCustomerPriceGroupAt(profile, [assignment('current')], '2026-03-01T00:00:00.000Z', {
+      resolveCurrent: (_ref, _contract, effectiveAt) => {
+        catalogEffectiveAt = effectiveAt;
+        return Effect.succeed({ _tag: 'USABLE', compatibility, priceGroupRef });
       },
-    );
+    });
     expect(catalogEffectiveAt).toBe('2026-03-01T00:00:00.000Z');
     expect(result._tag).toBe('ASSIGNED');
     if (result._tag === 'ASSIGNED') {
@@ -129,42 +124,40 @@ it.effect('returns ASSIGNED with fresh compatibility evidence from the Pricing c
   }),
 );
 
-it.effect(
-  'threads one trusted Read instant and exact Counterparty association through inspection',
-  () =>
-    Effect.gen(function* timedCounterpartyInspection() {
-      const inspected: unknown[][] = [];
-      const profileValidation = {
-        inspect: (...input: unknown[]) => {
-          inspected.push(input);
-          return Effect.succeed({ _tag: 'NOT_FOUND' } as const);
-        },
-      };
-      const now = Effect.succeed('2026-03-01T00:00:00.000Z');
-      const request = {
-        authorizationSubject: { counterpartyRef, kind: 'COUNTERPARTY' as const },
-        profile: counterpartyProfile,
-      };
-      yield* Effect.exit(
-        readCustomerPriceGroupAssignments(request, tenantId, {
-          now,
-          profileValidation,
-          store: unreachableStore,
-        }),
-      );
-      yield* Effect.exit(
-        resolveCustomerPriceGroupFromServices(request, tenantId, {
-          catalog: catalog({ _tag: 'MISSING' }),
-          now,
-          profileValidation,
-          store: unreachableStore,
-        }),
-      );
-      expect(inspected).toEqual([
-        [counterpartyProfile, '2026-03-01T00:00:00.000Z', counterpartyRef],
-        [counterpartyProfile, '2026-03-01T00:00:00.000Z', counterpartyRef],
-      ]);
-    }),
+it.effect('threads one trusted Read instant and exact Counterparty association through inspection', () =>
+  Effect.gen(function* timedCounterpartyInspection() {
+    const inspected: unknown[][] = [];
+    const profileValidation = {
+      inspect: (...input: unknown[]) => {
+        inspected.push(input);
+        return Effect.succeed({ _tag: 'NOT_FOUND' } as const);
+      },
+    };
+    const now = Effect.succeed('2026-03-01T00:00:00.000Z');
+    const request = {
+      authorizationSubject: { counterpartyRef, kind: 'COUNTERPARTY' as const },
+      profile: counterpartyProfile,
+    };
+    yield* Effect.exit(
+      readCustomerPriceGroupAssignments(request, tenantId, {
+        now,
+        profileValidation,
+        store: unreachableStore,
+      }),
+    );
+    yield* Effect.exit(
+      resolveCustomerPriceGroupFromServices(request, tenantId, {
+        catalog: catalog({ _tag: 'MISSING' }),
+        now,
+        profileValidation,
+        store: unreachableStore,
+      }),
+    );
+    expect(inspected).toEqual([
+      [counterpartyProfile, '2026-03-01T00:00:00.000Z', counterpartyRef],
+      [counterpartyProfile, '2026-03-01T00:00:00.000Z', counterpartyRef],
+    ]);
+  }),
 );
 
 it.effect('resolves from the dedicated current-at lookup instead of capped history', () =>
@@ -273,10 +266,7 @@ it.effect('rejects invalid periods and declares tagged business-plus-resource Re
     expect(invalid._tag).toBe('Failure');
     expect(customerPriceGroupAssignmentReadRead.descriptor.permissionTarget).toBe('conditional');
     expect(customerPriceGroupResolutionRead.descriptor.permissionTarget).toBe('conditional');
-    expect(customerPriceGroupAssignmentReadPermission.branchTags).toEqual([
-      'COUNTERPARTY',
-      'RETAIL',
-    ]);
+    expect(customerPriceGroupAssignmentReadPermission.branchTags).toEqual(['COUNTERPARTY', 'RETAIL']);
     expect(customerPriceGroupResolutionPermission.branchTags).toEqual(['COUNTERPARTY', 'RETAIL']);
     expect(
       Schema.is(CustomerPriceGroupResolutionRequestSchema)({

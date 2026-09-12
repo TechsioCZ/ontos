@@ -191,24 +191,9 @@ const isMatchingGeneratedAction = (actionContent: string, vertical: OntosVertica
   );
 };
 
-const planOutboxScaffold = (
-  workspaceRoot: string,
-  config: OutboxScaffoldConfig,
-): Effect.Effect<
-  ScaffoldPlan<OutboxScaffoldResult>,
-  OutboxMessageScaffoldError | PlatformError.PlatformError | ScaffoldFailure,
-  FileSystem.FileSystem
-> =>
-  Effect.gen(function* planOutboxScaffoldEffect() {
+const readGeneratedActionEffect = (actionPath: string, vertical: OntosVerticalMetadata, action: string) =>
+  Effect.gen(function* readGeneratedAction() {
     const fileSystem = yield* FileSystem.FileSystem;
-    const action = yield* fromLegacySync(() => requireCanonicalSlug(config.action, 'action'));
-    const topic = yield* fromLegacySync(() => requireTopic(config.topic));
-    const vertical = yield* discoverOntosModuleEffect(workspaceRoot, config.vertical).pipe(
-      Effect.catchCause(recoverDiscoveryCause),
-    );
-    const actionPath = yield* fromLegacySync(() =>
-      resolveContainedPath(workspaceRoot, 'verticals', vertical.slug, 'src', 'actions', `${action}.action.ts`),
-    );
     const actionContent = yield* fileSystem
       .readFileString(actionPath)
       .pipe(
@@ -223,6 +208,133 @@ const planOutboxScaffold = (
         ),
       );
     }
+    return actionContent;
+  });
+
+const planMessageMutationsEffect = (
+  legacyMessagePath: string,
+  messagePath: string,
+  renderedMessage: string,
+  vertical: OntosVerticalMetadata,
+  action: string,
+  topic: string,
+  base: string,
+) =>
+  Effect.gen(function* planMessageMutations() {
+    const fileSystem = yield* FileSystem.FileSystem;
+    const legacyMessageExists = yield* fileSystem.exists(legacyMessagePath).pipe(Effect.mapError(failureFromCause));
+    const messagePathExists = yield* fileSystem.exists(messagePath).pipe(Effect.mapError(failureFromCause));
+    if (legacyMessageExists && messagePathExists) {
+      return yield* Effect.fail(planningFailure(`Outbox Message has both legacy and canonical wrappers for ${base}`));
+    }
+    if (legacyMessageExists) {
+      const legacyContent = yield* fileSystem.readFileString(legacyMessagePath).pipe(Effect.mapError(failureFromCause));
+      if (!isMatchingLegacyGeneratedMessage(legacyContent, vertical, action, topic)) {
+        return yield* Effect.fail(
+          planningFailure(`refusing to overwrite existing business file: ${legacyMessagePath}`),
+        );
+      }
+      return [
+        yield* createMutationEffect(messagePath, renderedMessage),
+        yield* deleteMutationEffect(legacyMessagePath),
+      ];
+    }
+    const mutation = yield* createOrUpdateOwnedGeneratedMutationEffect(messagePath, renderedMessage, (current) =>
+      isMatchingGeneratedMessage(current, vertical, action, topic),
+    );
+    return Option.isSome(mutation) ? [mutation.value] : [];
+  });
+
+const patchActionWithOutboxExportsEffect = (
+  actionContent: string,
+  base: string,
+  exportSource: string,
+  legacyExportSource: string,
+) =>
+  Effect.gen(function* patchActionWithOutboxExports() {
+    const exportEntries = [
+      `export { ${base}PayloadSchema } from '${exportSource}';`,
+      `export { ${base}ProducerModuleKey } from '${exportSource}';`,
+      `export { ${base}Topic } from '${exportSource}';`,
+      `export { create${base}Message } from '${exportSource}';`,
+      `export type { ${base}Payload } from '${exportSource}';`,
+    ];
+    const actionWithCanonicalExportSource = actionContent.replaceAll(legacyExportSource, exportSource);
+    const hasCanonicalExports = yield* fromLegacySync(() =>
+      exportEntries.every((entry) =>
+        generatedSlotContainsExactEntry(actionWithCanonicalExportSource, OUTBOX_SLOT_START, OUTBOX_SLOT_END, entry),
+      ),
+    );
+    const hasOutboxIdentifier = new RegExp(
+      `\\b(?:${base}(?:Payload|PayloadSchema|ProducerModuleKey|Topic)|create${base}Message)\\b`,
+      'u',
+    ).test(actionContent);
+    if (hasOutboxIdentifier && !hasCanonicalExports) {
+      return yield* Effect.fail(planningFailure(`Outbox identifier ${base} already exists`));
+    }
+    if (hasCanonicalExports) {
+      return actionWithCanonicalExportSource;
+    }
+    return yield* fromLegacySync(() =>
+      insertSortedSlot(
+        actionWithCanonicalExportSource,
+        OUTBOX_SLOT_START,
+        OUTBOX_SLOT_END,
+        exportEntries,
+        (candidate) =>
+          /^export (?:type )?\{ [A-Za-z0-9]+ \} from '\.\/[a-z0-9.-]+\.outbox-message\.ts';$/u.test(candidate),
+      ),
+    );
+  });
+
+const planPackageExportMutationEffect = (vertical: OntosVerticalMetadata, topicSlug: string) =>
+  Effect.gen(function* planPackageExportMutation() {
+    const packageDocument = yield* Schema.decodeUnknownEffect(Schema.fromJsonString(PackageExportsSchema), {
+      onExcessProperty: 'preserve',
+    })(vertical.packageContent).pipe(
+      Effect.mapError((cause) =>
+        planningFailure(`vertical ${vertical.slug} package exports must be a JSON object`, cause),
+      ),
+    );
+    const exportsValue = packageDocument.exports;
+    const contractExport = `./outbox/${topicSlug}`;
+    const contractExportTarget = `./shared/outbox/${topicSlug}.ts`;
+    if (exportsValue[contractExport] !== undefined && exportsValue[contractExport] !== contractExportTarget) {
+      return yield* Effect.fail(planningFailure(`Outbox contract export ${contractExport} already exists`));
+    }
+    const patchedExports = Object.fromEntries(
+      Object.entries({
+        ...exportsValue,
+        [contractExport]: contractExportTarget,
+      }).toSorted(([left], [right]) => left.localeCompare(right)),
+    );
+    return yield* fromLegacySync(() =>
+      updateMutation(
+        vertical.packagePath,
+        vertical.packageContent,
+        patchJsonObjectProperty(vertical.packageContent, [], 'exports', patchedExports),
+      ),
+    );
+  });
+
+const planOutboxScaffold = (
+  workspaceRoot: string,
+  config: OutboxScaffoldConfig,
+): Effect.Effect<
+  ScaffoldPlan<OutboxScaffoldResult>,
+  OutboxMessageScaffoldError | PlatformError.PlatformError | ScaffoldFailure,
+  FileSystem.FileSystem
+> =>
+  Effect.gen(function* planOutboxScaffoldEffect() {
+    const action = yield* fromLegacySync(() => requireCanonicalSlug(config.action, 'action'));
+    const topic = yield* fromLegacySync(() => requireTopic(config.topic));
+    const vertical = yield* discoverOntosModuleEffect(workspaceRoot, config.vertical).pipe(
+      Effect.catchCause(recoverDiscoveryCause),
+    );
+    const actionPath = yield* fromLegacySync(() =>
+      resolveContainedPath(workspaceRoot, 'verticals', vertical.slug, 'src', 'actions', `${action}.action.ts`),
+    );
+    const actionContent = yield* readGeneratedActionEffect(actionPath, vertical, action);
     const topicSlug = topicToSlug(topic);
     const base = `${toPascalCase(action)}${toPascalCase(topicSlug)}Outbox`;
     const messagePath = yield* fromLegacySync(() =>
@@ -254,90 +366,25 @@ const planOutboxScaffold = (
       (current) => isMatchingGeneratedContract(current, vertical, topic),
     );
     const renderedMessage = renderOutboxMessage(vertical, action, topic);
-    const legacyMessageExists = yield* fileSystem.exists(legacyMessagePath).pipe(Effect.mapError(failureFromCause));
-    const messagePathExists = yield* fileSystem.exists(messagePath).pipe(Effect.mapError(failureFromCause));
-    if (legacyMessageExists && messagePathExists) {
-      return yield* Effect.fail(planningFailure(`Outbox Message has both legacy and canonical wrappers for ${base}`));
-    }
-    const messageMutations = legacyMessageExists
-      ? yield* Effect.gen(function* migrateLegacyMessage() {
-          const legacyContent = yield* fileSystem
-            .readFileString(legacyMessagePath)
-            .pipe(Effect.mapError(failureFromCause));
-          if (!isMatchingLegacyGeneratedMessage(legacyContent, vertical, action, topic)) {
-            return yield* Effect.fail(
-              planningFailure(`refusing to overwrite existing business file: ${legacyMessagePath}`),
-            );
-          }
-          return [
-            yield* createMutationEffect(messagePath, renderedMessage),
-            yield* deleteMutationEffect(legacyMessagePath),
-          ];
-        })
-      : yield* createOrUpdateOwnedGeneratedMutationEffect(messagePath, renderedMessage, (current) =>
-          isMatchingGeneratedMessage(current, vertical, action, topic),
-        ).pipe(Effect.map((mutation) => (Option.isSome(mutation) ? [mutation.value] : [])));
+    const messageMutations = yield* planMessageMutationsEffect(
+      legacyMessagePath,
+      messagePath,
+      renderedMessage,
+      vertical,
+      action,
+      topic,
+      base,
+    );
     const exportSource = `./${action}-${topicSlug}.outbox-message.ts`;
     const legacyExportSource = `./${action}.${topicSlug}.outbox-message.ts`;
-    const exportEntries = [
-      `export { ${base}PayloadSchema } from '${exportSource}';`,
-      `export { ${base}ProducerModuleKey } from '${exportSource}';`,
-      `export { ${base}Topic } from '${exportSource}';`,
-      `export { create${base}Message } from '${exportSource}';`,
-      `export type { ${base}Payload } from '${exportSource}';`,
-    ];
-    const actionWithCanonicalExportSource = actionContent.replaceAll(legacyExportSource, exportSource);
-    const hasCanonicalExports = yield* fromLegacySync(() =>
-      exportEntries.every((entry) =>
-        generatedSlotContainsExactEntry(actionWithCanonicalExportSource, OUTBOX_SLOT_START, OUTBOX_SLOT_END, entry),
-      ),
+    const patchedAction = yield* patchActionWithOutboxExportsEffect(
+      actionContent,
+      base,
+      exportSource,
+      legacyExportSource,
     );
-    const hasOutboxIdentifier = new RegExp(
-      `\\b(?:${base}(?:Payload|PayloadSchema|ProducerModuleKey|Topic)|create${base}Message)\\b`,
-      'u',
-    ).test(actionContent);
-    if (hasOutboxIdentifier && !hasCanonicalExports) {
-      return yield* Effect.fail(planningFailure(`Outbox identifier ${base} already exists`));
-    }
-    const patchedAction = hasCanonicalExports
-      ? actionWithCanonicalExportSource
-      : yield* fromLegacySync(() =>
-          insertSortedSlot(
-            actionWithCanonicalExportSource,
-            OUTBOX_SLOT_START,
-            OUTBOX_SLOT_END,
-            exportEntries,
-            (candidate) =>
-              /^export (?:type )?\{ [A-Za-z0-9]+ \} from '\.\/[a-z0-9.-]+\.outbox-message\.ts';$/u.test(candidate),
-          ),
-        );
     const actionMutation = updateMutation(actionPath, actionContent, patchedAction);
-    const packageDocument = yield* Schema.decodeUnknownEffect(Schema.fromJsonString(PackageExportsSchema), {
-      onExcessProperty: 'preserve',
-    })(vertical.packageContent).pipe(
-      Effect.mapError((cause) =>
-        planningFailure(`vertical ${vertical.slug} package exports must be a JSON object`, cause),
-      ),
-    );
-    const exportsValue = packageDocument.exports;
-    const contractExport = `./outbox/${topicSlug}`;
-    const contractExportTarget = `./shared/outbox/${topicSlug}.ts`;
-    if (exportsValue[contractExport] !== undefined && exportsValue[contractExport] !== contractExportTarget) {
-      return yield* Effect.fail(planningFailure(`Outbox contract export ${contractExport} already exists`));
-    }
-    const patchedExports = Object.fromEntries(
-      Object.entries({
-        ...exportsValue,
-        [contractExport]: contractExportTarget,
-      }).toSorted(([left], [right]) => left.localeCompare(right)),
-    );
-    const packageMutation = yield* fromLegacySync(() =>
-      updateMutation(
-        vertical.packagePath,
-        vertical.packageContent,
-        patchJsonObjectProperty(vertical.packageContent, [], 'exports', patchedExports),
-      ),
-    );
+    const packageMutation = yield* planPackageExportMutationEffect(vertical, topicSlug);
     const mutations = [
       ...(Option.isSome(contractMutation) ? [contractMutation.value] : []),
       ...messageMutations,

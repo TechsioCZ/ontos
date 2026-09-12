@@ -32,9 +32,7 @@ import { SavedAddressRefSchema } from '../resources/saved-address.ts';
 
 const StableTextSchema = Schema.Trim.check(Schema.isMinLength(1), Schema.isMaxLength(300));
 const PositiveRevisionSchema = Schema.Int.check(Schema.isGreaterThanOrEqualTo(1));
-const PositiveQuantitySchema = Schema.String.check(
-  Schema.isPattern(/^(?:0*[1-9][0-9]*)(?:\.[0-9]+)?$/u),
-);
+const PositiveQuantitySchema = Schema.String.check(Schema.isPattern(/^(?:0*[1-9][0-9]*)(?:\.[0-9]+)?$/u));
 
 const OwnerResourceRefSchema = Schema.Struct({
   moduleId: ResolutionModuleIdSchema,
@@ -43,15 +41,15 @@ const OwnerResourceRefSchema = Schema.Struct({
   tenantId: ResolutionTenantIdSchema,
 });
 
-export const PickupDestinationRefSchema = Schema.Struct({
+const PickupDestinationRefSchema = Schema.Struct({
   moduleId: ResolutionModuleIdSchema,
   resourceId: ResolutionResourceIdSchema,
   resourceType: Schema.Literal('fulfillment.pickup-destination'),
   tenantId: ResolutionTenantIdSchema,
 });
-export type PickupDestinationRef = typeof PickupDestinationRefSchema.Type;
+type PickupDestinationRef = typeof PickupDestinationRefSchema.Type;
 
-export const PickupDestinationSnapshotSchema = Schema.Struct({
+const PickupDestinationSnapshotSchema = Schema.Struct({
   displayName: StableTextSchema,
   ownerRevision: StableTextSchema,
   pickupDestinationRef: PickupDestinationRefSchema,
@@ -60,25 +58,25 @@ export const PickupDestinationSnapshotSchema = Schema.Struct({
   validFrom: ProfileInstantSchema,
   validUntil: ProfileInstantSchema,
 });
-export type PickupDestinationSnapshot = typeof PickupDestinationSnapshotSchema.Type;
+type PickupDestinationSnapshot = typeof PickupDestinationSnapshotSchema.Type;
 
-export const DeliveryProductQuantitySchema = Schema.Struct({
+const DeliveryProductQuantitySchema = Schema.Struct({
   configurationRevision: StableTextSchema,
   productRef: OwnerResourceRefSchema,
   quantity: PositiveQuantitySchema,
   unitOfMeasure: StableTextSchema,
 });
 
-export const CurrentDeliveryProposalSchema = Schema.Struct({
+const CurrentDeliveryProposalSchema = Schema.Struct({
   carrierRef: Schema.optional(OwnerResourceRefSchema),
   deliveryChargeRevision: Schema.optional(StableTextSchema),
   deliveryMethodRef: Schema.optional(OwnerResourceRefSchema),
   productQuantities: Schema.Array(DeliveryProductQuantitySchema).check(Schema.isMinLength(1)),
   proposalRevision: PositiveRevisionSchema,
 });
-export type CurrentDeliveryProposal = typeof CurrentDeliveryProposalSchema.Type;
+type CurrentDeliveryProposal = typeof CurrentDeliveryProposalSchema.Type;
 
-export const DeliveryDestinationChoiceSchema = Schema.Union([
+const DeliveryDestinationChoiceSchema = Schema.Union([
   Schema.Struct({ kind: Schema.Literal('SAVED_ADDRESS'), savedAddressRef: SavedAddressRefSchema }),
   Schema.Struct({
     choiceEvidenceRef: StableTextSchema,
@@ -109,8 +107,7 @@ export const DeliveryDestinationResolutionRequestSchema = Schema.Struct({
 }).check(
   Schema.makeFilter(({ explicitChoice, purchasingContext, subject }) => {
     const { tenantId } = purchasingContext;
-    const subjectMatches =
-      subject.kind === 'GUEST' || subject.profile.profileRef.tenantId === tenantId;
+    const subjectMatches = subject.kind === 'GUEST' || subject.profile.profileRef.tenantId === tenantId;
     const choiceMatches =
       choiceTenantId(explicitChoice, tenantId) === tenantId &&
       (explicitChoice?.kind !== 'SAVED_ADDRESS' || subject.kind === 'PROFILE');
@@ -119,10 +116,9 @@ export const DeliveryDestinationResolutionRequestSchema = Schema.Struct({
       : 'The Delivery Destination subject and every nested reference must share one Tenant; Guests cannot select saved addresses';
   }),
 );
-export type DeliveryDestinationResolutionRequest =
-  typeof DeliveryDestinationResolutionRequestSchema.Type;
+export type DeliveryDestinationResolutionRequest = typeof DeliveryDestinationResolutionRequestSchema.Type;
 
-export const DeliveryPostalSourceSchema = Schema.Union([
+const DeliveryPostalSourceSchema = Schema.Union([
   ResolvedSavedAddressSourceSchema,
   Schema.Struct({ choiceEvidenceRef: StableTextSchema, kind: Schema.Literal('ONE_TIME') }),
   Schema.Struct({
@@ -131,7 +127,7 @@ export const DeliveryPostalSourceSchema = Schema.Union([
   }),
 ]);
 
-export const AcceptedDeliveryDestinationSchema = Schema.Union([
+const AcceptedDeliveryDestinationSchema = Schema.Union([
   Schema.Struct({
     kind: Schema.Literal('POSTAL'),
     postalAddress: PostalAddressSchema,
@@ -142,9 +138,48 @@ export const AcceptedDeliveryDestinationSchema = Schema.Union([
     pickup: PickupDestinationSnapshotSchema,
   }),
 ]);
-export type AcceptedDeliveryDestination = typeof AcceptedDeliveryDestinationSchema.Type;
+type AcceptedDeliveryDestination = typeof AcceptedDeliveryDestinationSchema.Type;
 
-export const DeliveryDestinationDecisionBundleSchema = Schema.Struct({
+const deliveryDestinationMatchesTenant = (destination: AcceptedDeliveryDestination, tenantId: string) => {
+  if (destination.kind === 'PICKUP') {
+    return destination.pickup.pickupDestinationRef.tenantId === tenantId;
+  }
+  if (destination.source.kind !== 'SAVED_ADDRESS') {
+    return true;
+  }
+  if (destination.source.savedAddressRef.tenantId !== tenantId) {
+    return false;
+  }
+  return (
+    destination.source.originKind === 'COMMERCE_ONLY' ||
+    (destination.source.storedContactPointRef.tenantId === tenantId &&
+      destination.source.storedPartyRef.tenantId === tenantId &&
+      destination.source.currentContactPointRef.tenantId === tenantId &&
+      destination.source.currentPartyRef.tenantId === tenantId)
+  );
+};
+
+const deliveryProposalMatchesTenant = (proposal: CurrentDeliveryProposal, tenantId: string) =>
+  proposal.productQuantities.every(({ productRef }) => productRef.tenantId === tenantId) &&
+  (proposal.carrierRef === undefined || proposal.carrierRef.tenantId === tenantId) &&
+  (proposal.deliveryMethodRef === undefined || proposal.deliveryMethodRef.tenantId === tenantId);
+
+const deliveryDestinationDecisionIsCoherent = (
+  destination: AcceptedDeliveryDestination,
+  proposal: CurrentDeliveryProposal,
+  purchasingContext: CurrentPurchaseResolutionContext,
+  subject: PurchaseResolutionSubject,
+) => {
+  const { tenantId } = purchasingContext;
+  return (
+    (subject.kind === 'GUEST' || subject.profile.profileRef.tenantId === tenantId) &&
+    purchasingContext.sellingLegalEntityRef.tenantId === tenantId &&
+    deliveryDestinationMatchesTenant(destination, tenantId) &&
+    deliveryProposalMatchesTenant(proposal, tenantId)
+  );
+};
+
+const DeliveryDestinationDecisionBundleSchema = Schema.Struct({
   acceptedHandoff: Schema.Literal('ORDER_ACCEPTANCE_DELIVERY_DESTINATION_V1'),
   deliveryEvidence: ResolutionDecisionEvidenceSchema,
   destination: AcceptedDeliveryDestinationSchema,
@@ -154,35 +189,14 @@ export const DeliveryDestinationDecisionBundleSchema = Schema.Struct({
   sourceRevisions: ResolutionSourceRevisionVectorSchema,
   subject: PurchaseResolutionSubjectSchema,
 }).check(
-  Schema.makeFilter(({ destination, proposal, purchasingContext, subject }) => {
-    const { tenantId } = purchasingContext;
-    const destinationMatches =
-      destination.kind === 'PICKUP'
-        ? destination.pickup.pickupDestinationRef.tenantId === tenantId
-        : destination.source.kind !== 'SAVED_ADDRESS' ||
-          (destination.source.savedAddressRef.tenantId === tenantId &&
-            (destination.source.originKind === 'COMMERCE_ONLY' ||
-              (destination.source.storedContactPointRef.tenantId === tenantId &&
-                destination.source.storedPartyRef.tenantId === tenantId &&
-                destination.source.currentContactPointRef.tenantId === tenantId &&
-                destination.source.currentPartyRef.tenantId === tenantId)));
-    const proposalMatches =
-      proposal.productQuantities.every(({ productRef }) => productRef.tenantId === tenantId) &&
-      (proposal.carrierRef === undefined || proposal.carrierRef.tenantId === tenantId) &&
-      (proposal.deliveryMethodRef === undefined ||
-        proposal.deliveryMethodRef.tenantId === tenantId);
-    const subjectMatches =
-      subject.kind === 'GUEST' || subject.profile.profileRef.tenantId === tenantId;
-    return subjectMatches &&
-      purchasingContext.sellingLegalEntityRef.tenantId === tenantId &&
-      destinationMatches &&
-      proposalMatches
+  Schema.makeFilter(({ destination, proposal, purchasingContext, subject }) =>
+    deliveryDestinationDecisionIsCoherent(destination, proposal, purchasingContext, subject)
       ? undefined
-      : 'Delivery Destination decision references must belong to the trusted purchase Tenant';
-  }),
+      : 'Delivery Destination decision references must belong to the trusted purchase Tenant',
+  ),
 );
 
-export const DeliveryNotRequiredDecisionBundleSchema = Schema.Struct({
+const DeliveryNotRequiredDecisionBundleSchema = Schema.Struct({
   acceptedHandoff: Schema.Literal('ORDER_ACCEPTANCE_NO_DELIVERY_V1'),
   fulfillmentEvidence: ResolutionDecisionEvidenceSchema,
   proposal: CurrentDeliveryProposalSchema,
@@ -195,13 +209,9 @@ export const DeliveryNotRequiredDecisionBundleSchema = Schema.Struct({
     const proposalMatches =
       proposal.productQuantities.every(({ productRef }) => productRef.tenantId === tenantId) &&
       (proposal.carrierRef === undefined || proposal.carrierRef.tenantId === tenantId) &&
-      (proposal.deliveryMethodRef === undefined ||
-        proposal.deliveryMethodRef.tenantId === tenantId);
-    const subjectMatches =
-      subject.kind === 'GUEST' || subject.profile.profileRef.tenantId === tenantId;
-    return subjectMatches &&
-      purchasingContext.sellingLegalEntityRef.tenantId === tenantId &&
-      proposalMatches
+      (proposal.deliveryMethodRef === undefined || proposal.deliveryMethodRef.tenantId === tenantId);
+    const subjectMatches = subject.kind === 'GUEST' || subject.profile.profileRef.tenantId === tenantId;
+    return subjectMatches && purchasingContext.sellingLegalEntityRef.tenantId === tenantId && proposalMatches
       ? undefined
       : 'No-delivery decision references must belong to the trusted purchase Tenant';
   }),
@@ -241,7 +251,7 @@ export interface DeliveryDestinationCurrentFacts {
   readonly subject: PurchaseResolutionSubject;
 }
 
-export type DeliveryAvailabilityDecision =
+type DeliveryAvailabilityDecision =
   | Readonly<{
       deliveryEvidence: ResolutionDecisionEvidence;
       fulfillmentEvidence: ResolutionDecisionEvidence;
@@ -256,7 +266,7 @@ export type DeliveryAvailabilityDecision =
       reason: string;
     }>;
 
-export interface DeliveryPolicyCandidate {
+interface DeliveryPolicyCandidate {
   readonly policyDecision: ResolutionDecisionEvidence;
   readonly postalAddress: PostalAddress;
 }
@@ -294,36 +304,35 @@ export interface DeliveryDestinationPorts {
 }
 
 const invalid = (
-  kind: Exclude<
-    DeliveryDestinationResolution['kind'],
-    'DELIVERY_DESTINATION_RESOLVED' | 'DELIVERY_NOT_REQUIRED'
-  >,
+  kind: Exclude<DeliveryDestinationResolution['kind'], 'DELIVERY_DESTINATION_RESOLVED' | 'DELIVERY_NOT_REQUIRED'>,
   reason: string,
 ): DeliveryDestinationResolution => ({ kind, reason });
 
 const savedPostalSource = (
   address: SavedAddress,
   resolved: ResolvedSavedPostalAddress,
-): typeof DeliveryPostalSourceSchema.Type =>
-  address.origin.kind === 'PARTY_BACKED' && resolved.kind === 'PARTY_BACKED'
-    ? {
-        currentContactPointRef: resolved.currentContactPointRef,
-        currentPartyRef: resolved.currentPartyRef,
-        currentSourceRevision: resolved.currentSourceRevision,
-        kind: 'SAVED_ADDRESS',
-        originKind: 'PARTY_BACKED',
-        savedAddressRef: address.savedAddressRef,
-        savedAddressRevision: address.revision,
-        storedContactPointRef: address.origin.contactPointRef,
-        storedPartyRef: address.origin.partyRef,
-        storedSourceRevision: address.origin.sourceRevision,
-      }
-    : {
-        kind: 'SAVED_ADDRESS',
-        originKind: 'COMMERCE_ONLY',
-        savedAddressRef: address.savedAddressRef,
-        savedAddressRevision: address.revision,
-      };
+): typeof DeliveryPostalSourceSchema.Type => {
+  if (address.origin.kind === 'PARTY_BACKED' && resolved.kind === 'PARTY_BACKED') {
+    return {
+      currentContactPointRef: resolved.currentContactPointRef,
+      currentPartyRef: resolved.currentPartyRef,
+      currentSourceRevision: resolved.currentSourceRevision,
+      kind: 'SAVED_ADDRESS',
+      originKind: 'PARTY_BACKED',
+      savedAddressRef: address.savedAddressRef,
+      savedAddressRevision: address.revision,
+      storedContactPointRef: address.origin.contactPointRef,
+      storedPartyRef: address.origin.partyRef,
+      storedSourceRevision: address.origin.sourceRevision,
+    };
+  }
+  return {
+    kind: 'SAVED_ADDRESS',
+    originKind: 'COMMERCE_ONLY',
+    savedAddressRef: address.savedAddressRef,
+    savedAddressRevision: address.revision,
+  };
+};
 
 const validateCurrentContext = (
   claim: PurchaseResolutionContextClaim,
@@ -385,22 +394,76 @@ type PostalCandidateResult =
     }>
   | Readonly<{ kind: 'FAILURE'; resolution: DeliveryDestinationResolution }>;
 
-const postalFailure = (
-  kind: Exclude<
-    DeliveryDestinationResolution['kind'],
-    'DELIVERY_DESTINATION_RESOLVED' | 'DELIVERY_NOT_REQUIRED'
-  >,
-  reason: string,
-): PostalCandidateResult => ({ kind: 'FAILURE', resolution: invalid(kind, reason) });
+type PostalCandidateFailure = Extract<PostalCandidateResult, { readonly kind: 'FAILURE' }>;
 
-const resolvePostalCandidate = Effect.fn('DestinationResolution.resolvePostalCandidate')(
-  function* resolvePostalCandidateEffect(
+const postalFailure = (
+  kind: Exclude<DeliveryDestinationResolution['kind'], 'DELIVERY_DESTINATION_RESOLVED' | 'DELIVERY_NOT_REQUIRED'>,
+  reason: string,
+): PostalCandidateFailure => ({ kind: 'FAILURE', resolution: invalid(kind, reason) });
+
+type PostalSavedAddressPlan = Readonly<{ kind: 'RESOLVE'; savedAddress: SavedAddress }> | PostalCandidateFailure;
+
+const planPostalSavedAddress = (savedAddress: SavedAddress, source: 'EXPLICIT' | 'DEFAULT'): PostalSavedAddressPlan =>
+  isAddressEligibleFor(savedAddress, 'DELIVERY')
+    ? { kind: 'RESOLVE', savedAddress }
+    : postalFailure(
+        source === 'EXPLICIT' ? 'EXPLICIT_CHOICE_INVALID' : 'DEFAULT_DESTINATION_INVALID',
+        source === 'EXPLICIT'
+          ? 'The explicit saved address is missing, inactive, or not delivery eligible.'
+          : 'The configured delivery default is inactive or ineligible.',
+      );
+
+const planExplicitPostalSavedAddress = (saved: AddressLookup<SavedAddress>): PostalSavedAddressPlan =>
+  saved.kind === 'FOUND'
+    ? planPostalSavedAddress(saved.value, 'EXPLICIT')
+    : postalFailure(
+        'EXPLICIT_CHOICE_INVALID',
+        'The explicit saved address is missing, inactive, or not delivery eligible.',
+      );
+
+const planDefaultPostalSavedAddress = (
+  saved: AddressDefaultLookup<SavedAddress>,
+): PostalSavedAddressPlan | undefined => {
+  if (saved.kind === 'INVALID') {
+    return postalFailure('DEFAULT_DESTINATION_INVALID', saved.reason);
+  }
+  return saved.kind === 'FOUND' ? planPostalSavedAddress(saved.value, 'DEFAULT') : undefined;
+};
+
+const resolvedPostalSavedAddressCandidate = (
+  savedAddress: SavedAddress,
+  resolved: AddressLookup<ResolvedSavedPostalAddress>,
+  source: 'EXPLICIT' | 'DEFAULT',
+): PostalCandidateResult => {
+  if (resolved.kind !== 'FOUND' || resolved.value.kind !== savedAddress.origin.kind) {
+    return postalFailure(
+      source === 'EXPLICIT' ? 'EXPLICIT_CHOICE_INVALID' : 'DEFAULT_DESTINATION_INVALID',
+      source === 'EXPLICIT'
+        ? 'The explicit Party-backed source is no longer Current.'
+        : 'The configured Party-backed default is no longer Current.',
+    );
+  }
+  return {
+    kind: 'CANDIDATE',
+    postalAddress: resolved.value.postalAddress,
+    postalSource: savedPostalSource(savedAddress, resolved.value),
+    source,
+  };
+};
+
+type ExplicitPostalCandidateResult = PostalCandidateResult | Readonly<{ kind: 'NO_EXPLICIT_CHOICE' }>;
+
+const resolveExplicitPostalCandidate = Effect.fn('DestinationResolution.resolveExplicitPostalCandidate')(
+  function* resolveExplicitPostalCandidateEffect(
     request: DeliveryDestinationResolutionRequest,
-    current: DeliveryDestinationCurrentFacts,
     ports: DeliveryDestinationPorts,
-  ): Effect.fn.Return<PostalCandidateResult, AddressBookUnavailable> {
-    if (request.explicitChoice?.kind === 'ONE_TIME') {
-      const { choiceEvidenceRef, postalAddress } = request.explicitChoice;
+  ): Effect.fn.Return<ExplicitPostalCandidateResult, AddressBookUnavailable> {
+    const choice = request.explicitChoice;
+    if (choice === undefined || choice.kind === 'PICKUP') {
+      return { kind: 'NO_EXPLICIT_CHOICE' };
+    }
+    if (choice.kind === 'ONE_TIME') {
+      const { choiceEvidenceRef, postalAddress } = choice;
       return {
         kind: 'CANDIDATE',
         postalAddress,
@@ -408,60 +471,44 @@ const resolvePostalCandidate = Effect.fn('DestinationResolution.resolvePostalCan
         source: 'EXPLICIT',
       };
     }
-    if (request.explicitChoice?.kind === 'SAVED_ADDRESS') {
-      if (request.subject.kind !== 'PROFILE') {
-        return postalFailure('EXPLICIT_CHOICE_INVALID', 'Guests cannot select a saved address.');
-      }
-      const saved = yield* ports.loadSavedAddress({
-        profile: request.subject.profile,
-        resourceId: request.explicitChoice.savedAddressRef.resourceId,
-      });
-      if (saved.kind !== 'FOUND' || !isAddressEligibleFor(saved.value, 'DELIVERY')) {
-        return postalFailure(
-          'EXPLICIT_CHOICE_INVALID',
-          'The explicit saved address is missing, inactive, or not delivery eligible.',
-        );
-      }
-      const resolved = yield* ports.resolvePostalAddress(saved.value);
-      return resolved.kind === 'FOUND' && resolved.value.kind === saved.value.origin.kind
-        ? {
-            kind: 'CANDIDATE',
-            postalAddress: resolved.value.postalAddress,
-            postalSource: savedPostalSource(saved.value, resolved.value),
-            source: 'EXPLICIT',
-          }
-        : postalFailure(
-            'EXPLICIT_CHOICE_INVALID',
-            'The explicit Party-backed source is no longer Current.',
-          );
+    if (request.subject.kind !== 'PROFILE') {
+      return postalFailure('EXPLICIT_CHOICE_INVALID', 'Guests cannot select a saved address.');
+    }
+    const saved = yield* ports.loadSavedAddress({
+      profile: request.subject.profile,
+      resourceId: choice.savedAddressRef.resourceId,
+    });
+    const plan = planExplicitPostalSavedAddress(saved);
+    if (plan.kind === 'FAILURE') {
+      return plan;
+    }
+    const resolved = yield* ports.resolvePostalAddress(plan.savedAddress);
+    return resolvedPostalSavedAddressCandidate(plan.savedAddress, resolved, 'EXPLICIT');
+  },
+);
+
+const resolvePostalCandidate = Effect.fn('DestinationResolution.resolvePostalCandidate')(
+  function* resolvePostalCandidateEffect(
+    request: DeliveryDestinationResolutionRequest,
+    current: DeliveryDestinationCurrentFacts,
+    ports: DeliveryDestinationPorts,
+  ): Effect.fn.Return<PostalCandidateResult, AddressBookUnavailable> {
+    const explicit = yield* resolveExplicitPostalCandidate(request, ports);
+    if (explicit.kind !== 'NO_EXPLICIT_CHOICE') {
+      return explicit;
     }
 
     const saved =
       request.subject.kind === 'PROFILE'
         ? yield* ports.loadDefaultDeliveryAddress(request.subject.profile)
         : ({ kind: 'NONE' } as const);
-    if (saved.kind === 'INVALID') {
-      return postalFailure('DEFAULT_DESTINATION_INVALID', saved.reason);
+    const plan = planDefaultPostalSavedAddress(saved);
+    if (plan?.kind === 'FAILURE') {
+      return plan;
     }
-    if (saved.kind === 'FOUND') {
-      if (!isAddressEligibleFor(saved.value, 'DELIVERY')) {
-        return postalFailure(
-          'DEFAULT_DESTINATION_INVALID',
-          'The configured delivery default is inactive or ineligible.',
-        );
-      }
-      const resolved = yield* ports.resolvePostalAddress(saved.value);
-      return resolved.kind === 'FOUND' && resolved.value.kind === saved.value.origin.kind
-        ? {
-            kind: 'CANDIDATE',
-            postalAddress: resolved.value.postalAddress,
-            postalSource: savedPostalSource(saved.value, resolved.value),
-            source: 'DEFAULT',
-          }
-        : postalFailure(
-            'DEFAULT_DESTINATION_INVALID',
-            'The configured Party-backed default is no longer Current.',
-          );
+    if (plan?.kind === 'RESOLVE') {
+      const resolved = yield* ports.resolvePostalAddress(plan.savedAddress);
+      return resolvedPostalSavedAddressCandidate(plan.savedAddress, resolved, 'DEFAULT');
     }
     const policy = yield* ports.constructPolicyDestination(current);
     return policy.kind === 'FOUND'
@@ -478,61 +525,56 @@ const resolvePostalCandidate = Effect.fn('DestinationResolution.resolvePostalCan
   },
 );
 
-export const resolveDeliveryDestination = Effect.fn(
-  'DestinationResolution.resolveDeliveryDestination',
-)(function* resolveDeliveryDestinationEffect(
-  request: DeliveryDestinationResolutionRequest,
-  scope: ResolutionTrustedScope,
-  ports: DeliveryDestinationPorts,
-) {
-  const current = yield* ports.loadCurrent(request, scope);
-  const invalidContext = validateCurrentContext(
-    request.purchasingContext,
-    request.subject,
-    current,
-    scope,
-  );
-  if (invalidContext !== undefined) {
-    return invalidContext;
-  }
-  if (!current.deliveryRequired) {
-    return {
-      decisionBundle: {
-        acceptedHandoff: 'ORDER_ACCEPTANCE_NO_DELIVERY_V1' as const,
-        fulfillmentEvidence: current.fulfillmentEvidence,
-        proposal: current.proposal,
-        purchasingContext: current.purchasingContext,
-        sourceRevisions: current.sourceRevisions,
-        subject: current.subject,
-      },
-      kind: 'DELIVERY_NOT_REQUIRED' as const,
-    };
-  }
-
-  if (request.explicitChoice?.kind === 'PICKUP') {
-    const pickup = yield* ports.resolvePickupDestination({
-      current,
-      pickupDestinationRef: request.explicitChoice.pickupDestinationRef,
-    });
-    if (pickup.kind !== 'FOUND') {
-      return invalid(
-        'PICKUP_DESTINATION_UNAVAILABLE_OR_EXPIRED',
-        'The selected pickup destination is unavailable or expired.',
-      );
+export const resolveDeliveryDestination = Effect.fn('DestinationResolution.resolveDeliveryDestination')(
+  function* resolveDeliveryDestinationEffect(
+    request: DeliveryDestinationResolutionRequest,
+    scope: ResolutionTrustedScope,
+    ports: DeliveryDestinationPorts,
+  ) {
+    const current = yield* ports.loadCurrent(request, scope);
+    const invalidContext = validateCurrentContext(request.purchasingContext, request.subject, current, scope);
+    if (invalidContext !== undefined) {
+      return invalidContext;
     }
-    const validation = yield* ports.validatePickupAvailability({ current, pickup: pickup.value });
-    return validation.kind === 'ACCEPTED'
-      ? accepted(current, { kind: 'PICKUP', pickup: pickup.value }, validation, 'EXPLICIT')
-      : invalid(validation.kind, validation.reason);
-  }
+    if (!current.deliveryRequired) {
+      return {
+        decisionBundle: {
+          acceptedHandoff: 'ORDER_ACCEPTANCE_NO_DELIVERY_V1' as const,
+          fulfillmentEvidence: current.fulfillmentEvidence,
+          proposal: current.proposal,
+          purchasingContext: current.purchasingContext,
+          sourceRevisions: current.sourceRevisions,
+          subject: current.subject,
+        },
+        kind: 'DELIVERY_NOT_REQUIRED' as const,
+      };
+    }
 
-  const candidate = yield* resolvePostalCandidate(request, current, ports);
-  if (candidate.kind === 'FAILURE') {
-    return candidate.resolution;
-  }
-  const { postalAddress, postalSource, source } = candidate;
-  const validation = yield* ports.validatePostalAvailability({ current, postalAddress });
-  return validation.kind === 'ACCEPTED'
-    ? accepted(current, { kind: 'POSTAL', postalAddress, source: postalSource }, validation, source)
-    : invalid(validation.kind, validation.reason);
-});
+    if (request.explicitChoice?.kind === 'PICKUP') {
+      const pickup = yield* ports.resolvePickupDestination({
+        current,
+        pickupDestinationRef: request.explicitChoice.pickupDestinationRef,
+      });
+      if (pickup.kind !== 'FOUND') {
+        return invalid(
+          'PICKUP_DESTINATION_UNAVAILABLE_OR_EXPIRED',
+          'The selected pickup destination is unavailable or expired.',
+        );
+      }
+      const validation = yield* ports.validatePickupAvailability({ current, pickup: pickup.value });
+      return validation.kind === 'ACCEPTED'
+        ? accepted(current, { kind: 'PICKUP', pickup: pickup.value }, validation, 'EXPLICIT')
+        : invalid(validation.kind, validation.reason);
+    }
+
+    const candidate = yield* resolvePostalCandidate(request, current, ports);
+    if (candidate.kind === 'FAILURE') {
+      return candidate.resolution;
+    }
+    const { postalAddress, postalSource, source } = candidate;
+    const validation = yield* ports.validatePostalAvailability({ current, postalAddress });
+    return validation.kind === 'ACCEPTED'
+      ? accepted(current, { kind: 'POSTAL', postalAddress, source: postalSource }, validation, source)
+      : invalid(validation.kind, validation.reason);
+  },
+);

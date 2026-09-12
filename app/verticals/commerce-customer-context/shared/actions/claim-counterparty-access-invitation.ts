@@ -21,8 +21,7 @@ export const ClaimCounterpartyAccessInvitationPayloadSchema = Schema.Struct({
   invitationRef: CounterpartyAccessInvitationRefSchema,
   scope: CounterpartyPermissionScopeSchema,
 });
-export type ClaimCounterpartyAccessInvitationPayload =
-  typeof ClaimCounterpartyAccessInvitationPayloadSchema.Type;
+export type ClaimCounterpartyAccessInvitationPayload = typeof ClaimCounterpartyAccessInvitationPayloadSchema.Type;
 
 export const ClaimCounterpartyAccessInvitationResultSchema = Schema.Union([
   Schema.Struct({
@@ -41,5 +40,3 @@ export const ClaimCounterpartyAccessInvitationResultSchema = Schema.Union([
     outcome: Schema.Literal('ALREADY_CLAIMED'),
   }),
 ]);
-export type ClaimCounterpartyAccessInvitationResult =
-  typeof ClaimCounterpartyAccessInvitationResultSchema.Type;

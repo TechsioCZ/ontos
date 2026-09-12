@@ -20,9 +20,7 @@ const ResourceIdSchema = Schema.toEncoded(
     Schema.brand('ProfileReconciliationCaseResourceId'),
   ),
 );
-const TenantIdSchema = Schema.toEncoded(
-  Schema.String.check(Schema.isUUID()).pipe(Schema.brand('TenantId')),
-);
+const TenantIdSchema = Schema.toEncoded(Schema.String.check(Schema.isUUID()).pipe(Schema.brand('TenantId')));
 
 export const ProfileReconciliationCaseRefSchema = Schema.Struct({
   moduleId: Schema.Literal('commerce.customer-context'),
@@ -45,60 +43,49 @@ export const ProfileReconciliationCaseSchema = Schema.Struct({
   state: ReconciliationCaseStateSchema,
   survivorProfile: Schema.optionalKey(CommerceCustomerProfileRefSchema),
   targetSubject: CommerceCustomerProfileSubjectSchema,
-  trigger: Schema.Literals([
-    'PARTY_ALIAS',
-    'COUNTERPARTY_ALIAS',
-    'CREATE_COLLISION',
-    'IMPORT_CORRELATION',
-  ]),
+  trigger: Schema.Literals(['PARTY_ALIAS', 'COUNTERPARTY_ALIAS', 'CREATE_COLLISION', 'IMPORT_CORRELATION']),
   updatedAt: ProfileInstantSchema,
 }).check(
-  Schema.makeFilter(
-    ({ caseRef, conflictingProfiles, resultingState, state, survivorProfile, targetSubject }) => {
-      const issues: Schema.FilterIssue[] = [];
-      if (
-        conflictingProfiles.some(
-          ({ kind, tenantId }) => kind !== targetSubject.kind || tenantId !== caseRef.tenantId,
-        )
-      ) {
-        issues.push({
-          issue: 'Every conflicting profile must match target kind and Tenant',
-          path: ['conflictingProfiles'],
-        });
-      }
-      const identities = conflictingProfiles.map(
-        ({ resourceId, resourceType }) => `${resourceType}:${resourceId}`,
-      );
-      if (new Set(identities).size !== identities.length) {
-        issues.push({
-          issue: 'Conflicting profiles must be distinct',
-          path: ['conflictingProfiles'],
-        });
-      }
-      if (
-        survivorProfile !== undefined &&
-        !identities.includes(`${survivorProfile.resourceType}:${survivorProfile.resourceId}`)
-      ) {
-        issues.push({
-          issue: 'Survivor must be one of the conflicting profiles',
-          path: ['survivorProfile'],
-        });
-      }
-      if (state === 'COMPLETED' && survivorProfile === undefined) {
-        issues.push({
-          issue: 'Completed reconciliation requires an explicit survivor',
-          path: ['survivorProfile'],
-        });
-      }
-      if (state === 'COMPLETED' && resultingState === undefined) {
-        issues.push({
-          issue: 'Completed reconciliation requires an explicit resulting profile state',
-          path: ['resultingState'],
-        });
-      }
-      return issues;
-    },
-  ),
+  Schema.makeFilter(({ caseRef, conflictingProfiles, resultingState, state, survivorProfile, targetSubject }) => {
+    const issues: Schema.FilterIssue[] = [];
+    if (
+      conflictingProfiles.some(({ kind, tenantId }) => kind !== targetSubject.kind || tenantId !== caseRef.tenantId)
+    ) {
+      issues.push({
+        issue: 'Every conflicting profile must match target kind and Tenant',
+        path: ['conflictingProfiles'],
+      });
+    }
+    const identities = conflictingProfiles.map(({ resourceId, resourceType }) => `${resourceType}:${resourceId}`);
+    if (new Set(identities).size !== identities.length) {
+      issues.push({
+        issue: 'Conflicting profiles must be distinct',
+        path: ['conflictingProfiles'],
+      });
+    }
+    if (
+      survivorProfile !== undefined &&
+      !identities.includes(`${survivorProfile.resourceType}:${survivorProfile.resourceId}`)
+    ) {
+      issues.push({
+        issue: 'Survivor must be one of the conflicting profiles',
+        path: ['survivorProfile'],
+      });
+    }
+    if (state === 'COMPLETED' && survivorProfile === undefined) {
+      issues.push({
+        issue: 'Completed reconciliation requires an explicit survivor',
+        path: ['survivorProfile'],
+      });
+    }
+    if (state === 'COMPLETED' && resultingState === undefined) {
+      issues.push({
+        issue: 'Completed reconciliation requires an explicit resulting profile state',
+        path: ['resultingState'],
+      });
+    }
+    return issues;
+  }),
 );
 export type ProfileReconciliationCase = typeof ProfileReconciliationCaseSchema.Type;
 

@@ -137,10 +137,7 @@ const reconciliationOpened = {
   },
   caseRef,
   detectedAt: effectiveAt,
-  profileRefs: [
-    taggedRetailProfileRef,
-    { ...taggedRetailProfileRef, resourceId: 'retail-profile-2' },
-  ],
+  profileRefs: [taggedRetailProfileRef, { ...taggedRetailProfileRef, resourceId: 'retail-profile-2' }],
   revision: 1,
   state: 'OPEN',
   targetSubject: { kind: 'RETAIL', partyRef, sellingLegalEntityRef },
@@ -184,21 +181,13 @@ it('uses exact safe schemas for every profile owner message', () => {
 
 it('builds eleven distinct owner messages without generic data envelopes', () => {
   const messages = [
-    createEnsureRetailCustomerProfileCommerceCustomerContextRetailCustomerProfileCreatedV1OutboxMessage(
-      retailCreated,
-    ),
+    createEnsureRetailCustomerProfileCommerceCustomerContextRetailCustomerProfileCreatedV1OutboxMessage(retailCreated),
     createCreateCounterpartyPurchasingProfileCommerceCustomerContextCounterpartyPurchasingProfileCreatedV1OutboxMessage(
       counterpartyCreated,
     ),
-    createSuspendCustomerProfileCommerceCustomerContextCustomerProfileSuspendedV1OutboxMessage(
-      suspended,
-    ),
-    createReactivateCustomerProfileCommerceCustomerContextCustomerProfileReactivatedV1OutboxMessage(
-      reactivated,
-    ),
-    createArchiveCustomerProfileCommerceCustomerContextCustomerProfileArchivedV1OutboxMessage(
-      archived,
-    ),
+    createSuspendCustomerProfileCommerceCustomerContextCustomerProfileSuspendedV1OutboxMessage(suspended),
+    createReactivateCustomerProfileCommerceCustomerContextCustomerProfileReactivatedV1OutboxMessage(reactivated),
+    createArchiveCustomerProfileCommerceCustomerContextCustomerProfileArchivedV1OutboxMessage(archived),
     createBindRetailPortalProfileCommerceCustomerContextRetailPortalProfileBindingActivatedV1OutboxMessage(
       bindingActivated,
     ),

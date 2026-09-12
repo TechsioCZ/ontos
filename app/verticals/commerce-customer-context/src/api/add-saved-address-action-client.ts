@@ -3,10 +3,7 @@
 // @ontos-action-http-slug add-saved-address
 import { makeGovernedEffectBffClient } from '@app/shared-contracts/client-runtime';
 import { Effect, Redacted, Schema } from 'effect';
-import {
-  AddSavedAddressActionApi,
-  AddSavedAddressPayloadSchema,
-} from '../../shared/apis/add-saved-address-action.ts';
+import { AddSavedAddressActionApi, AddSavedAddressPayloadSchema } from '../../shared/apis/add-saved-address-action.ts';
 import type { AddSavedAddressPayload } from '../../shared/actions/add-saved-address.ts';
 import { operationGateway } from './action-gateway.ts';
 
@@ -24,10 +21,7 @@ type AuthorizedInvocation = readonly [
   requestCorrelation: string,
   options: AddSavedAddressActionClientOptions,
 ];
-type OperationInvocation = readonly [
-  requestCorrelation: string,
-  options: AddSavedAddressActionClientOptions,
-];
+type OperationInvocation = readonly [requestCorrelation: string, options: AddSavedAddressActionClientOptions];
 
 interface MakeClientOptions {
   readonly credential: Redacted.Redacted;
@@ -68,7 +62,6 @@ export const executeAddSavedAddress = (
   ...[requestCorrelation, options]: OperationInvocation
 ) =>
   operationGateway.invoke(
-    (credential) =>
-      executeAddSavedAddressWithAuthorization(payload, credential, requestCorrelation, options),
+    (credential) => executeAddSavedAddressWithAuthorization(payload, credential, requestCorrelation, options),
     options.gateway,
   );

@@ -24,8 +24,7 @@ export const AssignCounterpartyPriceGroupPayloadSchema = Schema.Struct({
       : [{ issue: 'effectiveTo must be later than effectiveFrom', path: ['effectiveTo'] }],
   ),
 );
-export type AssignCounterpartyPriceGroupPayload =
-  typeof AssignCounterpartyPriceGroupPayloadSchema.Type;
+export type AssignCounterpartyPriceGroupPayload = typeof AssignCounterpartyPriceGroupPayloadSchema.Type;
 
 export const AssignCounterpartyPriceGroupResultSchema = Schema.Struct({
   assignment: CustomerPriceGroupAssignmentSchema,
@@ -33,5 +32,3 @@ export const AssignCounterpartyPriceGroupResultSchema = Schema.Struct({
   // oxlint-disable-next-line effect-native/no-nullable-schema-field -- null is the existing wire sentinel for no replaced assignment.
   replacedAssignmentRef: Schema.NullOr(CustomerPriceGroupAssignmentSchema.fields.assignmentRef),
 });
-export type AssignCounterpartyPriceGroupResult =
-  typeof AssignCounterpartyPriceGroupResultSchema.Type;

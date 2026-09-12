@@ -1,46 +1,54 @@
+import { withUltramodernBuildIdentity } from '@app/shared-contracts/ultramodern-build';
+
 declare const ULTRAMODERN_BUILD_MARKER: string;
 declare const ULTRAMODERN_SOURCE_REVISION: string;
 
+const generatedAppId = 'commerce-customer-context';
+const generatedDeployProfile = 'cloudflare-ssr-mf-effect-v1';
+const generatedDeliveryUnitKind = 'microvertical-delivery-unit';
+const generatedPackageName = '@app/commerce-customer-context';
+const generatedUnitId = 'app/commerce-customer-context';
+
 const ultramodernGeneratedBuildArtifact = {
   deliveryUnit: {
-    appId: 'commerce-customer-context',
+    appId: generatedAppId,
     build: '2b4d72d8d032dd53',
     buildMarker: '2b4d72d8d032dd53',
-    deployProfile: 'cloudflare-ssr-mf-effect-v1',
-    kind: 'microvertical-delivery-unit',
-    packageName: '@app/commerce-customer-context',
+    deployProfile: generatedDeployProfile,
+    kind: generatedDeliveryUnitKind,
+    packageName: generatedPackageName,
     schemaVersion: 1,
     sourceRevision: 'workspace',
-    unitId: 'app/commerce-customer-context',
+    unitId: generatedUnitId,
     version: '0.1.0',
   },
   kind: 'ultramodern-build-artifact',
   schemaVersion: 1,
   surfaces: {
     api: {
-      appId: 'commerce-customer-context',
+      appId: generatedAppId,
       build: '2b4d72d8d032dd53',
       buildMarker: '2b4d72d8d032dd53',
-      deployProfile: 'cloudflare-ssr-mf-effect-v1',
-      kind: 'microvertical-delivery-unit',
-      packageName: '@app/commerce-customer-context',
+      deployProfile: generatedDeployProfile,
+      kind: generatedDeliveryUnitKind,
+      packageName: generatedPackageName,
       schemaVersion: 1,
       sourceRevision: 'workspace',
       surface: 'api',
-      unitId: 'app/commerce-customer-context',
+      unitId: generatedUnitId,
       version: '0.1.0',
     },
     ui: {
-      appId: 'commerce-customer-context',
+      appId: generatedAppId,
       build: '2b4d72d8d032dd53',
       buildMarker: '2b4d72d8d032dd53',
-      deployProfile: 'cloudflare-ssr-mf-effect-v1',
-      kind: 'microvertical-delivery-unit',
-      packageName: '@app/commerce-customer-context',
+      deployProfile: generatedDeployProfile,
+      kind: generatedDeliveryUnitKind,
+      packageName: generatedPackageName,
       schemaVersion: 1,
       sourceRevision: 'workspace',
       surface: 'ui',
-      unitId: 'app/commerce-customer-context',
+      unitId: generatedUnitId,
       version: '0.1.0',
     },
   },
@@ -63,30 +71,10 @@ const readInjectedSourceRevision = (): string => {
 
 const ultramodernBuildMarker = readInjectedBuildMarker();
 const ultramodernSourceRevision = readInjectedSourceRevision();
-const ultramodernBuildArtifact = {
-  ...ultramodernGeneratedBuildArtifact,
-  deliveryUnit: {
-    ...ultramodernGeneratedBuildArtifact.deliveryUnit,
-    build: ultramodernBuildMarker,
-    buildMarker: ultramodernBuildMarker,
-    sourceRevision: ultramodernSourceRevision,
-  },
-  surfaces: {
-    api: {
-      ...ultramodernGeneratedBuildArtifact.surfaces.api,
-      build: ultramodernBuildMarker,
-      buildMarker: ultramodernBuildMarker,
-      sourceRevision: ultramodernSourceRevision,
-    },
-    ui: {
-      ...ultramodernGeneratedBuildArtifact.surfaces.ui,
-      build: ultramodernBuildMarker,
-      buildMarker: ultramodernBuildMarker,
-      sourceRevision: ultramodernSourceRevision,
-    },
-  },
-} as const;
+const ultramodernBuildArtifact = withUltramodernBuildIdentity(
+  ultramodernGeneratedBuildArtifact,
+  ultramodernBuildMarker,
+  ultramodernSourceRevision,
+);
 
-export const ultramodernDeliveryUnit = ultramodernBuildArtifact.deliveryUnit;
-export const ultramodernUiMarker = ultramodernBuildArtifact.surfaces.ui;
 export const ultramodernApiMarker = ultramodernBuildArtifact.surfaces.api;

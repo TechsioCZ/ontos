@@ -21,7 +21,7 @@ type RetailOrderHistoryDetailOperationInvocation = readonly [
 ];
 
 const retailOrderHistoryDetailClient = (
-  credential: Redacted.Redacted<string>,
+  credential: Redacted.Redacted,
   requestCorrelation: string,
   options: RetailOrderHistoryDetailClientOptions,
 ) =>
@@ -50,10 +50,5 @@ export const executeRetailOrderHistoryDetail = (
   ...[requestCorrelation, options = {}]: RetailOrderHistoryDetailOperationInvocation
 ) =>
   operationGateway.invoke((credential) =>
-    executeRetailOrderHistoryDetailWithAuthorization(
-      payload,
-      credential,
-      requestCorrelation,
-      options,
-    ),
+    executeRetailOrderHistoryDetailWithAuthorization(payload, credential, requestCorrelation, options),
   );

@@ -1,12 +1,9 @@
-import {
-  ActionPermissionCheckError,
-  ActionAuthorizationPreflightDatabaseService,
-} from '@app/core-runtime';
+import { ActionPermissionCheckError } from '@app/core-runtime';
 import { Effect, Schema } from 'effect';
 import { expect, it } from 'effect-rstest';
 
 import { ClaimCounterpartyAccessInvitationPayloadSchema } from '../../shared/actions/claim-counterparty-access-invitation.ts';
-import type { ContextAccessService } from '@app/core-runtime';
+import type { ContextAccessService, ActionAuthorizationPreflightDatabaseService } from '@app/core-runtime';
 import { makeInvitationClaimActionAuthorizationPreflight } from '../../src/persistence/invitation-claim-action-preflight.ts';
 
 const tenantId = '20000000-0000-4000-8000-000000000001';
@@ -71,8 +68,8 @@ const eligible = {
 };
 
 const noReadDatabase: ActionAuthorizationPreflightDatabaseService = {
-  transaction: <Value, Failure>(): Effect.Effect<Value, Failure> =>
-    Effect.succeed(undefined as Value),
+  // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- SAFETY: This success stub's generic transaction value is discarded by the preflight; no caller observes the placeholder.
+  transaction: <Value, Failure>(): Effect.Effect<Value, Failure> => Effect.succeed(undefined as Value),
 };
 
 const failedDatabase = new ActionPermissionCheckError({
@@ -82,14 +79,11 @@ const failedDatabase = new ActionPermissionCheckError({
 
 const unavailableDatabase: ActionAuthorizationPreflightDatabaseService = {
   transaction: <Value, Failure>(): Effect.Effect<Value, Failure | ActionPermissionCheckError> =>
+    // @ts-expect-error -- This deliberately invalid database double injects a permission-check failure to verify fail-closed preflight mapping.
     Effect.fail(failedDatabase),
 };
 
-const preflight = makeInvitationClaimActionAuthorizationPreflight(
-  noReadDatabase,
-  contextAccess,
-  eligible,
-);
+const preflight = makeInvitationClaimActionAuthorizationPreflight(noReadDatabase, contextAccess, eligible);
 
 it.effect('keeps unrelated Actions on the explicit executor path', () =>
   Effect.gen(function* unrelatedAction() {
@@ -146,11 +140,7 @@ it.effect('binds a permit to one invocation and consumes it once', () =>
 
 it.effect('fails closed on a partial owner/database failure', () =>
   Effect.gen(function* partialFailure() {
-    const unavailable = makeInvitationClaimActionAuthorizationPreflight(
-      unavailableDatabase,
-      contextAccess,
-      eligible,
-    );
+    const unavailable = makeInvitationClaimActionAuthorizationPreflight(unavailableDatabase, contextAccess, eligible);
     const failure = yield* Effect.flip(unavailable.prepare(input));
     expect(Schema.is(ActionPermissionCheckError)(failure)).toBe(true);
   }),

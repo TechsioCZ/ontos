@@ -1,12 +1,8 @@
-import {
-  COMMERCE_CUSTOMER_CONTEXT_SCHEMA_NAME,
-  COMMERCE_CUSTOMER_CONTEXT_TABLE_INVENTORY,
-} from './schema.ts';
+import { COMMERCE_CUSTOMER_CONTEXT_SCHEMA_NAME, COMMERCE_CUSTOMER_CONTEXT_TABLE_INVENTORY } from './schema.ts';
 
-export const expectedCommerceCustomerContextTableCatalog =
-  COMMERCE_CUSTOMER_CONTEXT_TABLE_INVENTORY.map(
-    (tableName) => `${COMMERCE_CUSTOMER_CONTEXT_SCHEMA_NAME}.${tableName}`,
-  );
+const expectedCommerceCustomerContextTableCatalog = COMMERCE_CUSTOMER_CONTEXT_TABLE_INVENTORY.map(
+  (tableName) => `${COMMERCE_CUSTOMER_CONTEXT_SCHEMA_NAME}.${tableName}`,
+);
 
 export interface TableCatalogDifference {
   readonly missing: readonly string[];

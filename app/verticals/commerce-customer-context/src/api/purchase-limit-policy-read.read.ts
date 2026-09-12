@@ -15,15 +15,12 @@ import type { PurchaseLimitPolicyReadRequest } from '../../shared/apis/purchase-
 import { PurchaseLimitPolicyServiceFactory } from '../../shared/domain/purchase-limit-policy.ts';
 import type { PurchaseLimitPolicyService } from '../../shared/domain/purchase-limit-policy.ts';
 
-const preserveFailureCause = <Failure extends object>(
-  failure: Failure,
-  cause: unknown,
-): Failure => {
+const preserveFailureCause = <Failure extends object>(failure: Failure, cause: unknown): Failure => {
   Object.defineProperty(failure, 'cause', { configurable: true, value: cause });
   return failure;
 };
 
-export const purchaseLimitPolicyReadEntrypoint = defineTenantModuleEntrypoint({
+const purchaseLimitPolicyReadEntrypoint = defineTenantModuleEntrypoint({
   access: 'read',
   authorization: { kind: 'context_permission', permission: 'counterparty.purchase_limit.manage' },
   entrypointKey: 'commerce.customer-context.api.purchase-limit-policy-read',

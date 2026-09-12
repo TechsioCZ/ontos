@@ -21,7 +21,7 @@ type PurchaseLimitPolicyReadOperationInvocation = readonly [
 ];
 
 const purchaseLimitPolicyReadClient = (
-  credential: Redacted.Redacted<string>,
+  credential: Redacted.Redacted,
   requestCorrelation: string,
   options: PurchaseLimitPolicyReadClientOptions,
 ) =>
@@ -40,9 +40,7 @@ export const executePurchaseLimitPolicyReadWithAuthorization = (
   ...[credential, requestCorrelation, options = {}]: PurchaseLimitPolicyReadAuthorizedInvocation
 ) =>
   purchaseLimitPolicyReadClient(Redacted.make(credential), requestCorrelation, options).pipe(
-    Effect.flatMap((client) =>
-      client.purchaseLimitPolicyRead.execute({ headers: {}, params: {}, payload, query: {} }),
-    ),
+    Effect.flatMap((client) => client.purchaseLimitPolicyRead.execute({ headers: {}, params: {}, payload, query: {} })),
   );
 
 export const executePurchaseLimitPolicyRead = (
@@ -50,10 +48,5 @@ export const executePurchaseLimitPolicyRead = (
   ...[requestCorrelation, options = {}]: PurchaseLimitPolicyReadOperationInvocation
 ) =>
   operationGateway.invoke((credential) =>
-    executePurchaseLimitPolicyReadWithAuthorization(
-      payload,
-      credential,
-      requestCorrelation,
-      options,
-    ),
+    executePurchaseLimitPolicyReadWithAuthorization(payload, credential, requestCorrelation, options),
   );

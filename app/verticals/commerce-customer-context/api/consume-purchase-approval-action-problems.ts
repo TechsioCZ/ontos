@@ -3,7 +3,7 @@
 // @ontos-action-http-slug consume-purchase-approval
 // oxlint-disable sonarjs/function-name -- Effect Match.tags requires owner-declared tag keys; remove-when: sonarjs accepts discriminant-map properties.
 import type { ActionCoreError } from '@app/core-runtime';
-import { Effect, HttpApiMiddleware } from '@modern-js/plugin-bff/effect-edge';
+import { Effect, HttpApiMiddleware } from '@modern-js/bff-effect/effect-edge';
 import { Match, Schema } from 'effect';
 import {
   ConsumePurchaseApprovalActionAlreadyCommittedProblemSchema,
@@ -21,187 +21,74 @@ import {
 } from '../shared/apis/consume-purchase-approval-action.ts';
 import type { ConsumePurchaseApprovalActionProblem } from '../shared/apis/consume-purchase-approval-action.ts';
 import { consumePurchaseApprovalAction } from '../src/actions/consume-purchase-approval.action.ts';
+/* oxlint-disable anti-slop-effect/no-service-constructor-imports -- These pure helpers construct problem values rather than Effect services. */
+import {
+  actionProblemStatus as problemStatus,
+  makeAuthenticationProblem,
+  makeConflictProblem,
+  makeForbiddenProblem,
+  makeIneligibleProblem,
+  makeInternalProblem,
+  makeInvalidProblem,
+  makeNotFoundProblem,
+  makePreconditionProblem,
+  makeUnavailableProblem,
+  purchasingApprovalRejectedProblemByCode,
+} from './action-problem-support.ts';
+/* oxlint-enable anti-slop-effect/no-service-constructor-imports */
+import type { PurchasingApprovalDomainProblemIdentity } from './action-problem-support.ts';
 
 type DomainError = typeof consumePurchaseApprovalAction.descriptor.domainErrorSchema.Type;
 type ProblemOf<Tag extends ConsumePurchaseApprovalActionProblem['_tag']> = Extract<
   ConsumePurchaseApprovalActionProblem,
   { readonly _tag: Tag }
 >;
-type DomainProblemIdentity =
-  | {
-      readonly code:
-        | 'COMMIT_CONFLICT'
-        | 'IDEMPOTENCY_CONFLICT'
-        | 'LEVEL_ALREADY_COMPLETED'
-        | 'STALE_PROPOSAL_REVISION';
-      readonly kind: 'conflict';
-    }
-  | { readonly code: 'BUYER_PERMISSION_DENIED' | 'PERMISSION_DENIED'; readonly kind: 'forbidden' }
-  | {
-      readonly code:
-        | 'HIERARCHY_AMBIGUOUS'
-        | 'HIERARCHY_RANGE_INVALID'
-        | 'NO_ELIGIBLE_ROUTE'
-        | 'NOT_ROUTE_ELIGIBLE'
-        | 'OWNER_CONFIRMATION_EXPIRED'
-        | 'POLICY_ROUTE_INVALID'
-        | 'PROFILE_INACTIVE'
-        | 'PROPOSAL_MATERIAL_CHANGE'
-        | 'PROPOSAL_NOT_CURRENT'
-        | 'REQUEST_EXPIRED'
-        | 'REQUEST_NOT_PENDING'
-        | 'REQUEST_SUPERSEDED'
-        | 'SELF_APPROVAL_DENIED';
-      readonly kind: 'ineligible';
-    }
-  | { readonly code: 'HIERARCHY_NOT_FOUND'; readonly kind: 'notFound' }
-  | {
-      readonly code:
-        | 'CURRENT_STATE_INDETERMINATE'
-        | 'DEPENDENCY_UNAVAILABLE'
-        | 'EVIDENCE_PERSISTENCE_FAILED';
-      readonly kind: 'unavailable';
-    };
-
-const problemStatus = {
-  authentication: 401,
-  conflict: 409,
-  forbidden: 403,
-  ineligible: 422,
-  internal: 500,
-  invalid: 400,
-  notFound: 404,
-  precondition: 428,
-  rateLimited: 429,
-  timeout: 504,
-  unavailable: 503,
-} as const;
-
-const purchasingApprovalRejectedProblemByCode = {
-  BUYER_PERMISSION_DENIED: { code: 'BUYER_PERMISSION_DENIED', kind: 'forbidden' },
-  COMMIT_CONFLICT: { code: 'COMMIT_CONFLICT', kind: 'conflict' },
-  CURRENT_STATE_INDETERMINATE: { code: 'CURRENT_STATE_INDETERMINATE', kind: 'unavailable' },
-  DEPENDENCY_UNAVAILABLE: { code: 'DEPENDENCY_UNAVAILABLE', kind: 'unavailable' },
-  EVIDENCE_PERSISTENCE_FAILED: { code: 'EVIDENCE_PERSISTENCE_FAILED', kind: 'unavailable' },
-  HIERARCHY_AMBIGUOUS: { code: 'HIERARCHY_AMBIGUOUS', kind: 'ineligible' },
-  HIERARCHY_NOT_FOUND: { code: 'HIERARCHY_NOT_FOUND', kind: 'notFound' },
-  HIERARCHY_RANGE_INVALID: { code: 'HIERARCHY_RANGE_INVALID', kind: 'ineligible' },
-  IDEMPOTENCY_CONFLICT: { code: 'IDEMPOTENCY_CONFLICT', kind: 'conflict' },
-  LEVEL_ALREADY_COMPLETED: { code: 'LEVEL_ALREADY_COMPLETED', kind: 'conflict' },
-  NO_ELIGIBLE_ROUTE: { code: 'NO_ELIGIBLE_ROUTE', kind: 'ineligible' },
-  NOT_ROUTE_ELIGIBLE: { code: 'NOT_ROUTE_ELIGIBLE', kind: 'ineligible' },
-  OWNER_CONFIRMATION_EXPIRED: { code: 'OWNER_CONFIRMATION_EXPIRED', kind: 'ineligible' },
-  PERMISSION_DENIED: { code: 'PERMISSION_DENIED', kind: 'forbidden' },
-  POLICY_ROUTE_INVALID: { code: 'POLICY_ROUTE_INVALID', kind: 'ineligible' },
-  PROFILE_INACTIVE: { code: 'PROFILE_INACTIVE', kind: 'ineligible' },
-  PROPOSAL_MATERIAL_CHANGE: { code: 'PROPOSAL_MATERIAL_CHANGE', kind: 'ineligible' },
-  PROPOSAL_NOT_CURRENT: { code: 'PROPOSAL_NOT_CURRENT', kind: 'ineligible' },
-  REQUEST_EXPIRED: { code: 'REQUEST_EXPIRED', kind: 'ineligible' },
-  REQUEST_NOT_PENDING: { code: 'REQUEST_NOT_PENDING', kind: 'ineligible' },
-  REQUEST_SUPERSEDED: { code: 'REQUEST_SUPERSEDED', kind: 'ineligible' },
-  SELF_APPROVAL_DENIED: { code: 'SELF_APPROVAL_DENIED', kind: 'ineligible' },
-  STALE_PROPOSAL_REVISION: { code: 'STALE_PROPOSAL_REVISION', kind: 'conflict' },
-} as const satisfies Record<
-  Extract<DomainError, { readonly _tag: 'PurchasingApprovalRejected' }>['code'],
-  DomainProblemIdentity
->;
-
 export const consumePurchaseApprovalActionProblem = {
-  authentication: (): ProblemOf<'ConsumePurchaseApprovalActionAuthenticationProblem'> =>
-    ConsumePurchaseApprovalActionAuthenticationProblemSchema.make({
-      detail: 'A valid audience-scoped Bearer assertion is required.',
-      status: problemStatus.authentication,
-      title: 'Authentication required',
-      type: 'https://ontos.dev/problems/operation-authentication-required',
-    }),
-  conflict: (
-    code: ProblemOf<'ConsumePurchaseApprovalActionConflictProblem'>['code'],
-  ): ProblemOf<'ConsumePurchaseApprovalActionConflictProblem'> =>
-    ConsumePurchaseApprovalActionConflictProblemSchema.make({
-      code,
-      detail: 'The Action conflicts with current state.',
-      status: problemStatus.conflict,
-      title: 'Action conflict',
-      type: 'https://ontos.dev/problems/action-conflict',
-    }),
-  forbidden: (
-    code: ProblemOf<'ConsumePurchaseApprovalActionForbiddenProblem'>['code'],
-  ): ProblemOf<'ConsumePurchaseApprovalActionForbiddenProblem'> =>
-    ConsumePurchaseApprovalActionForbiddenProblemSchema.make({
-      code,
-      detail: 'The principal is not permitted to perform this Action.',
-      status: problemStatus.forbidden,
-      title: 'Action forbidden',
-      type: 'https://ontos.dev/problems/action-forbidden',
-    }),
-  ineligible: (
-    code: ProblemOf<'ConsumePurchaseApprovalActionIneligibleProblem'>['code'],
-  ): ProblemOf<'ConsumePurchaseApprovalActionIneligibleProblem'> =>
-    ConsumePurchaseApprovalActionIneligibleProblemSchema.make({
-      code,
-      detail: 'The request is not eligible for this Action.',
-      status: problemStatus.ineligible,
-      title: 'Action ineligible',
-      type: 'https://ontos.dev/problems/action-ineligible',
-    }),
-  internal: (): ProblemOf<'ConsumePurchaseApprovalActionInternalProblem'> =>
-    ConsumePurchaseApprovalActionInternalProblemSchema.make({
-      detail: 'The Action could not be completed.',
-      status: problemStatus.internal,
-      title: 'Action failed',
-      type: 'https://ontos.dev/problems/action-failed',
-    }),
-  invalid: (): ProblemOf<'ConsumePurchaseApprovalActionInvalidProblem'> =>
-    ConsumePurchaseApprovalActionInvalidProblemSchema.make({
-      detail: 'The consume-purchase-approval Action request is invalid.',
-      status: problemStatus.invalid,
-      title: 'Invalid Action request',
-      type: 'https://ontos.dev/problems/action-invalid',
-    }),
-  notFound: (
-    code: ProblemOf<'ConsumePurchaseApprovalActionNotFoundProblem'>['code'],
-  ): ProblemOf<'ConsumePurchaseApprovalActionNotFoundProblem'> =>
-    ConsumePurchaseApprovalActionNotFoundProblemSchema.make({
-      code,
-      detail: 'The requested resource was not found.',
-      status: problemStatus.notFound,
-      title: 'Resource not found',
-      type: 'https://ontos.dev/problems/action-resource-not-found',
-    }),
-  precondition: (): ProblemOf<'ConsumePurchaseApprovalActionPreconditionProblem'> =>
-    ConsumePurchaseApprovalActionPreconditionProblemSchema.make({
-      detail: 'An Idempotency-Key header is required.',
-      status: problemStatus.precondition,
-      title: 'Idempotency key required',
-      type: 'https://ontos.dev/problems/idempotency-key-required',
-    }),
-  unavailable: (
-    code: ProblemOf<'ConsumePurchaseApprovalActionUnavailableProblem'>['code'],
-  ): ProblemOf<'ConsumePurchaseApprovalActionUnavailableProblem'> =>
-    ConsumePurchaseApprovalActionUnavailableProblemSchema.make({
-      code,
-      detail: 'The Action capability is temporarily unavailable.',
-      retryable: true,
-      status: problemStatus.unavailable,
-      title: 'Action unavailable',
-      type: 'https://ontos.dev/problems/action-unavailable',
-    }),
+  authentication: makeAuthenticationProblem<ProblemOf<'ConsumePurchaseApprovalActionAuthenticationProblem'>>((input) =>
+    ConsumePurchaseApprovalActionAuthenticationProblemSchema.make(input),
+  ),
+  conflict: makeConflictProblem<
+    ProblemOf<'ConsumePurchaseApprovalActionConflictProblem'>['code'],
+    ProblemOf<'ConsumePurchaseApprovalActionConflictProblem'>
+  >((input) => ConsumePurchaseApprovalActionConflictProblemSchema.make(input)),
+  forbidden: makeForbiddenProblem<
+    ProblemOf<'ConsumePurchaseApprovalActionForbiddenProblem'>['code'],
+    ProblemOf<'ConsumePurchaseApprovalActionForbiddenProblem'>
+  >((input) => ConsumePurchaseApprovalActionForbiddenProblemSchema.make(input)),
+  ineligible: makeIneligibleProblem<
+    ProblemOf<'ConsumePurchaseApprovalActionIneligibleProblem'>['code'],
+    ProblemOf<'ConsumePurchaseApprovalActionIneligibleProblem'>
+  >((input) => ConsumePurchaseApprovalActionIneligibleProblemSchema.make(input)),
+  internal: makeInternalProblem<ProblemOf<'ConsumePurchaseApprovalActionInternalProblem'>>((input) =>
+    ConsumePurchaseApprovalActionInternalProblemSchema.make(input),
+  ),
+  invalid: makeInvalidProblem<ProblemOf<'ConsumePurchaseApprovalActionInvalidProblem'>>(
+    (input) => ConsumePurchaseApprovalActionInvalidProblemSchema.make(input),
+    'consume-purchase-approval',
+  ),
+  notFound: makeNotFoundProblem<
+    ProblemOf<'ConsumePurchaseApprovalActionNotFoundProblem'>['code'],
+    ProblemOf<'ConsumePurchaseApprovalActionNotFoundProblem'>
+  >((input) => ConsumePurchaseApprovalActionNotFoundProblemSchema.make(input)),
+  precondition: makePreconditionProblem<ProblemOf<'ConsumePurchaseApprovalActionPreconditionProblem'>>((input) =>
+    ConsumePurchaseApprovalActionPreconditionProblemSchema.make(input),
+  ),
+  unavailable: makeUnavailableProblem<
+    ProblemOf<'ConsumePurchaseApprovalActionUnavailableProblem'>['code'],
+    ProblemOf<'ConsumePurchaseApprovalActionUnavailableProblem'>
+  >((input) => ConsumePurchaseApprovalActionUnavailableProblemSchema.make(input)),
 } as const;
 
-const mapDomainIdentity = (identity: DomainProblemIdentity): ConsumePurchaseApprovalActionProblem =>
+const mapDomainIdentity = (identity: PurchasingApprovalDomainProblemIdentity): ConsumePurchaseApprovalActionProblem =>
   Match.value(identity).pipe(
-    Match.when({ kind: 'conflict' as const }, (matched) =>
-      consumePurchaseApprovalActionProblem.conflict(matched.code),
-    ),
+    Match.when({ kind: 'conflict' as const }, (matched) => consumePurchaseApprovalActionProblem.conflict(matched.code)),
     Match.when({ kind: 'forbidden' as const }, (matched) =>
       consumePurchaseApprovalActionProblem.forbidden(matched.code),
     ),
     Match.when({ kind: 'ineligible' as const }, (matched) =>
       consumePurchaseApprovalActionProblem.ineligible(matched.code),
     ),
-    Match.when({ kind: 'notFound' as const }, (matched) =>
-      consumePurchaseApprovalActionProblem.notFound(matched.code),
-    ),
+    Match.when({ kind: 'notFound' as const }, (matched) => consumePurchaseApprovalActionProblem.notFound(matched.code)),
     Match.when({ kind: 'unavailable' as const }, (matched) =>
       consumePurchaseApprovalActionProblem.unavailable(matched.code),
     ),
@@ -211,8 +98,7 @@ const mapDomainIdentity = (identity: DomainProblemIdentity): ConsumePurchaseAppr
 const mapDomainProblem = (error: DomainError): ConsumePurchaseApprovalActionProblem =>
   Match.value(error).pipe(
     Match.tags({
-      PurchasingApprovalRejected: (failure) =>
-        mapDomainIdentity(purchasingApprovalRejectedProblemByCode[failure.code]),
+      PurchasingApprovalRejected: (failure) => mapDomainIdentity(purchasingApprovalRejectedProblemByCode[failure.code]),
     }),
     Match.exhaustive,
   );
@@ -244,38 +130,24 @@ const mapCoreProblem = (error: ActionCoreError): ConsumePurchaseApprovalActionPr
         }),
       ActionHandlerExecutionError: consumePurchaseApprovalActionProblem.internal,
       ActionIdempotencyKeyRequired: consumePurchaseApprovalActionProblem.precondition,
-      ActionInvocationNotFound: (failure) =>
-        consumePurchaseApprovalActionProblem.notFound(failure.code),
-      ActionInvocationPersistenceError: (failure) =>
-        consumePurchaseApprovalActionProblem.unavailable(failure.code),
-      ActionInvocationStateError: (failure) =>
-        consumePurchaseApprovalActionProblem.conflict(failure.code),
+      ActionInvocationNotFound: (failure) => consumePurchaseApprovalActionProblem.notFound(failure.code),
+      ActionInvocationPersistenceError: (failure) => consumePurchaseApprovalActionProblem.unavailable(failure.code),
+      ActionInvocationStateError: (failure) => consumePurchaseApprovalActionProblem.conflict(failure.code),
       ActionPayloadValidationError: consumePurchaseApprovalActionProblem.invalid,
-      ActionPermissionCheckError: (failure) =>
-        consumePurchaseApprovalActionProblem.unavailable(failure.code),
-      ActionPermissionDenied: (failure) =>
-        consumePurchaseApprovalActionProblem.forbidden(failure.code),
-      ActionPolicyDenied: (failure) =>
-        consumePurchaseApprovalActionProblem.ineligible(failure.code),
-      ActionPolicyEvaluationError: (failure) =>
-        consumePurchaseApprovalActionProblem.unavailable(failure.code),
-      ActionRequestHashConflict: (failure) =>
-        consumePurchaseApprovalActionProblem.conflict(failure.code),
+      ActionPermissionCheckError: (failure) => consumePurchaseApprovalActionProblem.unavailable(failure.code),
+      ActionPermissionDenied: (failure) => consumePurchaseApprovalActionProblem.forbidden(failure.code),
+      ActionPolicyDenied: (failure) => consumePurchaseApprovalActionProblem.ineligible(failure.code),
+      ActionPolicyEvaluationError: (failure) => consumePurchaseApprovalActionProblem.unavailable(failure.code),
+      ActionRequestHashConflict: (failure) => consumePurchaseApprovalActionProblem.conflict(failure.code),
       ActionResultValidationError: consumePurchaseApprovalActionProblem.internal,
-      ActionTransactionError: (failure) =>
-        consumePurchaseApprovalActionProblem.unavailable(failure.code),
+      ActionTransactionError: (failure) => consumePurchaseApprovalActionProblem.unavailable(failure.code),
       ActionTrustedContextValidationError: consumePurchaseApprovalActionProblem.authentication,
-      ModuleStateCheckUnavailableError: (failure) =>
-        consumePurchaseApprovalActionProblem.unavailable(failure.code),
-      ModuleStateDeniedError: (failure) =>
-        consumePurchaseApprovalActionProblem.forbidden(failure.code),
+      ModuleStateCheckUnavailableError: (failure) => consumePurchaseApprovalActionProblem.unavailable(failure.code),
+      ModuleStateDeniedError: (failure) => consumePurchaseApprovalActionProblem.forbidden(failure.code),
       OperationAuthenticationRequired: consumePurchaseApprovalActionProblem.authentication,
-      OperationContextDenied: (failure) =>
-        consumePurchaseApprovalActionProblem.forbidden(failure.code),
-      OperationContextInvalid: (failure) =>
-        consumePurchaseApprovalActionProblem.forbidden(failure.code),
-      OperationContextUnavailable: (failure) =>
-        consumePurchaseApprovalActionProblem.unavailable(failure.code),
+      OperationContextDenied: (failure) => consumePurchaseApprovalActionProblem.forbidden(failure.code),
+      OperationContextInvalid: (failure) => consumePurchaseApprovalActionProblem.forbidden(failure.code),
+      OperationContextUnavailable: (failure) => consumePurchaseApprovalActionProblem.unavailable(failure.code),
     }),
     Match.exhaustive,
   );
@@ -283,11 +155,9 @@ const mapCoreProblem = (error: ActionCoreError): ConsumePurchaseApprovalActionPr
 const isDomainError = Schema.is(consumePurchaseApprovalAction.descriptor.domainErrorSchema);
 export const mapConsumePurchaseApprovalActionProblem = (
   error: ActionCoreError | DomainError,
-): ConsumePurchaseApprovalActionProblem =>
-  isDomainError(error) ? mapDomainProblem(error) : mapCoreProblem(error);
+): ConsumePurchaseApprovalActionProblem => (isDomainError(error) ? mapDomainProblem(error) : mapCoreProblem(error));
 
-export const consumePurchaseApprovalActionSchemaErrorLive =
-  HttpApiMiddleware.layerSchemaErrorTransform(
-    ConsumePurchaseApprovalActionSchemaErrorMiddleware,
-    () => Effect.fail(consumePurchaseApprovalActionProblem.invalid()),
-  );
+export const consumePurchaseApprovalActionSchemaErrorLive = HttpApiMiddleware.layerSchemaErrorTransform(
+  ConsumePurchaseApprovalActionSchemaErrorMiddleware,
+  () => Effect.fail(consumePurchaseApprovalActionProblem.invalid()),
+);

@@ -12,17 +12,11 @@ import type {
 } from '../../shared/domain/identifier-contracts.ts';
 import { qualifiesForExclusiveClaim } from '../../shared/domain/identifier-contracts.ts';
 import type { PartyType } from '../../shared/domain/identity-contracts.ts';
-import {
-  PartyPersistenceUnavailable,
-  makePartyRef,
-} from '../../shared/domain/identity-contracts.ts';
+import { PartyPersistenceUnavailable, makePartyRef } from '../../shared/domain/identity-contracts.ts';
 import { parties, partyIdentifierClaims, partyOfficialIdentifiers } from '../db/schema.ts';
 import type { PartyTransaction } from '../db/types.ts';
 import { requireCanonicalPartyWriteTarget } from '../merge/party-alias-resolution.service.ts';
-import {
-  lockAndResolveClaims,
-  lockTenantIdentityWrites,
-} from './party-identifier-claim.service.ts';
+import { lockAndResolveClaims, lockTenantIdentityWrites } from './party-identifier-claim.service.ts';
 import { makePartyOfficialIdentifierRef } from './party-official-identifier-reference.ts';
 
 const unavailable = (cause?: unknown) => {

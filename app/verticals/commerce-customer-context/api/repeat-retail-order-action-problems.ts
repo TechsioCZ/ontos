@@ -3,7 +3,7 @@
 // @ontos-action-http-slug repeat-retail-order
 // oxlint-disable sonarjs/function-name -- Effect Match.tags requires owner-declared tag keys; remove-when: sonarjs accepts discriminant-map properties.
 import type { ActionCoreError } from '@app/core-runtime';
-import { Effect, HttpApiMiddleware } from '@modern-js/plugin-bff/effect-edge';
+import { Effect, HttpApiMiddleware } from '@modern-js/bff-effect/effect-edge';
 import { Match, Schema } from 'effect';
 import {
   RepeatRetailOrderActionAlreadyCommittedProblemSchema,
@@ -128,13 +128,10 @@ const mapDomainProblem = (error: DomainError): RepeatRetailOrderActionProblem =>
   Match.value(error).pipe(
     Match.tags({
       HistoryAccessDenied: () => repeatRetailOrderActionProblem.forbidden('history_access_denied'),
-      HistoryActionUnavailable: () =>
-        repeatRetailOrderActionProblem.unavailable('history_action_unavailable'),
-      HistoryRecordNotFound: () =>
-        repeatRetailOrderActionProblem.notFound('history_record_not_found'),
+      HistoryActionUnavailable: () => repeatRetailOrderActionProblem.unavailable('history_action_unavailable'),
+      HistoryRecordNotFound: () => repeatRetailOrderActionProblem.notFound('history_record_not_found'),
       RepeatOrderConflict: () => repeatRetailOrderActionProblem.conflict('repeat_order_conflict'),
-      RepeatOrderNoRepeatableLines: () =>
-        repeatRetailOrderActionProblem.ineligible('repeat_order_no_repeatable_lines'),
+      RepeatOrderNoRepeatableLines: () => repeatRetailOrderActionProblem.ineligible('repeat_order_no_repeatable_lines'),
     }),
     Match.exhaustive,
   );
@@ -167,29 +164,23 @@ const mapCoreProblem = (error: ActionCoreError): RepeatRetailOrderActionProblem 
       ActionHandlerExecutionError: repeatRetailOrderActionProblem.internal,
       ActionIdempotencyKeyRequired: repeatRetailOrderActionProblem.precondition,
       ActionInvocationNotFound: (failure) => repeatRetailOrderActionProblem.notFound(failure.code),
-      ActionInvocationPersistenceError: (failure) =>
-        repeatRetailOrderActionProblem.unavailable(failure.code),
-      ActionInvocationStateError: (failure) =>
-        repeatRetailOrderActionProblem.conflict(failure.code),
+      ActionInvocationPersistenceError: (failure) => repeatRetailOrderActionProblem.unavailable(failure.code),
+      ActionInvocationStateError: (failure) => repeatRetailOrderActionProblem.conflict(failure.code),
       ActionPayloadValidationError: repeatRetailOrderActionProblem.invalid,
-      ActionPermissionCheckError: (failure) =>
-        repeatRetailOrderActionProblem.unavailable(failure.code),
+      ActionPermissionCheckError: (failure) => repeatRetailOrderActionProblem.unavailable(failure.code),
       ActionPermissionDenied: (failure) => repeatRetailOrderActionProblem.forbidden(failure.code),
       ActionPolicyDenied: (failure) => repeatRetailOrderActionProblem.ineligible(failure.code),
-      ActionPolicyEvaluationError: (failure) =>
-        repeatRetailOrderActionProblem.unavailable(failure.code),
+      ActionPolicyEvaluationError: (failure) => repeatRetailOrderActionProblem.unavailable(failure.code),
       ActionRequestHashConflict: (failure) => repeatRetailOrderActionProblem.conflict(failure.code),
       ActionResultValidationError: repeatRetailOrderActionProblem.internal,
       ActionTransactionError: (failure) => repeatRetailOrderActionProblem.unavailable(failure.code),
       ActionTrustedContextValidationError: repeatRetailOrderActionProblem.authentication,
-      ModuleStateCheckUnavailableError: (failure) =>
-        repeatRetailOrderActionProblem.unavailable(failure.code),
+      ModuleStateCheckUnavailableError: (failure) => repeatRetailOrderActionProblem.unavailable(failure.code),
       ModuleStateDeniedError: (failure) => repeatRetailOrderActionProblem.forbidden(failure.code),
       OperationAuthenticationRequired: repeatRetailOrderActionProblem.authentication,
       OperationContextDenied: (failure) => repeatRetailOrderActionProblem.forbidden(failure.code),
       OperationContextInvalid: (failure) => repeatRetailOrderActionProblem.forbidden(failure.code),
-      OperationContextUnavailable: (failure) =>
-        repeatRetailOrderActionProblem.unavailable(failure.code),
+      OperationContextUnavailable: (failure) => repeatRetailOrderActionProblem.unavailable(failure.code),
     }),
     Match.exhaustive,
   );
@@ -197,8 +188,7 @@ const mapCoreProblem = (error: ActionCoreError): RepeatRetailOrderActionProblem 
 const isDomainError = Schema.is(repeatRetailOrderAction.descriptor.domainErrorSchema);
 export const mapRepeatRetailOrderActionProblem = (
   error: ActionCoreError | DomainError,
-): RepeatRetailOrderActionProblem =>
-  isDomainError(error) ? mapDomainProblem(error) : mapCoreProblem(error);
+): RepeatRetailOrderActionProblem => (isDomainError(error) ? mapDomainProblem(error) : mapCoreProblem(error));
 
 export const repeatRetailOrderActionSchemaErrorLive = HttpApiMiddleware.layerSchemaErrorTransform(
   RepeatRetailOrderActionSchemaErrorMiddleware,

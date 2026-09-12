@@ -11,13 +11,12 @@ import type { OutboxPayload } from '@app/commerce-customer-context/outbox/commer
 export {
   OutboxPayloadSchema as SetDefaultBillingAddressCommerceCustomerContextDefaultBillingAddressSetV1OutboxPayloadSchema,
   outboxProducerModuleKey as SetDefaultBillingAddressCommerceCustomerContextDefaultBillingAddressSetV1OutboxProducerModuleKey,
-  outboxTopic as SetDefaultBillingAddressCommerceCustomerContextDefaultBillingAddressSetV1OutboxTopic,
 } from '@app/commerce-customer-context/outbox/commerce-customer-context-default-billing-address-set-v1';
-export type { OutboxPayload as SetDefaultBillingAddressCommerceCustomerContextDefaultBillingAddressSetV1OutboxPayload } from '@app/commerce-customer-context/outbox/commerce-customer-context-default-billing-address-set-v1';
 
-export const createSetDefaultBillingAddressCommerceCustomerContextDefaultBillingAddressSetV1OutboxMessage =
-  (payload: OutboxPayload): OutboxMessage => ({
-    payloadJson: payload,
-    producerModuleKey: outboxProducerModuleKey,
-    topic: outboxTopic,
-  });
+export const createSetDefaultBillingAddressCommerceCustomerContextDefaultBillingAddressSetV1OutboxMessage = (
+  payload: OutboxPayload,
+): OutboxMessage => ({
+  payloadJson: payload,
+  producerModuleKey: outboxProducerModuleKey,
+  topic: outboxTopic,
+});

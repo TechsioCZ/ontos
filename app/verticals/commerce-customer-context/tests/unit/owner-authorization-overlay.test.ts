@@ -1,9 +1,5 @@
 /* eslint-disable anti-slop/no-chained-type-assertions, typescript/no-unsafe-type-assertion -- The test harness decodes fixture rows through each owner routine schema before exposing Core's private branded transaction capability; expires: 2027-03-31. */
-import type {
-  OwnerAuthorizationInput,
-  ScopedRoutineDefinition,
-  ScopedTransactionExecutor,
-} from '@app/core-runtime';
+import type { OwnerAuthorizationInput, ScopedRoutineDefinition, ScopedTransactionExecutor } from '@app/core-runtime';
 import { Deferred, Effect, Fiber, Schema } from 'effect';
 import { expect, it } from 'effect-rstest';
 
@@ -48,9 +44,7 @@ const ownerRow = (
     state,
     storefront_resource_id: storefrontResourceId,
   };
-  return state === 'PENDING_REVOKE'
-    ? { ...row, operation_outcome: 'PENDING_REVOKE' as const }
-    : row;
+  return state === 'PENDING_REVOKE' ? { ...row, operation_outcome: 'PENDING_REVOKE' as const } : row;
 };
 
 type RoutineHandler = (routineKey: string) => readonly object[];
@@ -92,10 +86,7 @@ const readerFactory: ProfileRetailPermissionReaderFactoryService = {
 };
 
 const input = (
-  target: Extract<
-    OwnerAuthorizationInput['targets'][number],
-    { readonly kind: 'business_permission' }
-  >,
+  target: Extract<OwnerAuthorizationInput['targets'][number], { readonly kind: 'business_permission' }>,
 ): OwnerAuthorizationInput => ({
   operation: 'action',
   operationKey: 'commerce.customer-context.grant-counterparty-commerce-access',
@@ -136,9 +127,7 @@ it.effect('denies a stale Core tuple when the owner row is pending revoke', () =
     const calls: string[] = [];
     const transaction = transactionWith((routineKey) => {
       calls.push(routineKey);
-      return routineKey === 'counterparty-access.lock-grant-authority'
-        ? [ownerRow('PENDING_REVOKE')]
-        : [];
+      return routineKey === 'counterparty-access.lock-grant-authority' ? [ownerRow('PENDING_REVOKE')] : [];
     });
     const overlay = makeCommerceCustomerContextOwnerAuthorizationOverlay(readerFactory);
     const decision = yield* overlay.authorize(transaction, input(counterpartyTarget()));
@@ -156,10 +145,7 @@ it.effect('uses a broad active owner row for a narrower storefront target', () =
         : [],
     );
     const overlay = makeCommerceCustomerContextOwnerAuthorizationOverlay(readerFactory);
-    const decision = yield* overlay.authorize(
-      transaction,
-      input(counterpartyTarget('storefront-one')),
-    );
+    const decision = yield* overlay.authorize(transaction, input(counterpartyTarget('storefront-one')));
 
     expect(decision).toBe('allowed');
   }),
@@ -168,9 +154,7 @@ it.effect('uses a broad active owner row for a narrower storefront target', () =
 it.effect('returns unavailable when owner reconciliation is required', () =>
   Effect.gen(function* ownerReconciliationRequired() {
     const transaction = transactionWith((routineKey) =>
-      routineKey === 'counterparty-access.lock-grant-authority'
-        ? [ownerRow('RECONCILIATION_REQUIRED')]
-        : [],
+      routineKey === 'counterparty-access.lock-grant-authority' ? [ownerRow('RECONCILIATION_REQUIRED')] : [],
     );
     const overlay = makeCommerceCustomerContextOwnerAuthorizationOverlay(readerFactory);
     const decision = yield* overlay.authorize(transaction, input(counterpartyTarget()));
@@ -195,9 +179,7 @@ it.effect('fences a grant reauthorization against a concurrent revoke', () =>
       });
     });
     const overlay = makeCommerceCustomerContextOwnerAuthorizationOverlay(readerFactory);
-    const decisionFiber = yield* Effect.forkScoped(
-      overlay.authorize(transaction, input(counterpartyTarget())),
-    );
+    const decisionFiber = yield* Effect.forkScoped(overlay.authorize(transaction, input(counterpartyTarget())));
     yield* Deferred.await(lockStarted);
     revokeCommitted = true;
     yield* Deferred.succeed(releaseFence, null);

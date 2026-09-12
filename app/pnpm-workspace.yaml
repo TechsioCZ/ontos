@@ -92,6 +92,7 @@ allowBuilds:
   workerd: true
 patchedDependencies:
   effect-rstest@0.1.0: patches/effect-rstest@0.1.0.patch
+  '@bleedingdev/modern-js-code-tools@3.9.0-ultramodern.9': patches/@bleedingdev__modern-js-code-tools@3.9.0-ultramodern.9.patch
   effect@4.0.0-rc.112: patches/effect-cli-metadata@4.0.0-rc.112.patch
   eslint-plugin-perfectionist@5.10.1: patches/eslint-plugin-perfectionist@5.10.1.patch
   '@vercel/nft@0.29.2': patches/@vercel__nft@0.29.2.patch

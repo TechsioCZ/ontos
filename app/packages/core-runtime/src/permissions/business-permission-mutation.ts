@@ -1,18 +1,19 @@
-import { deadlineInterceptor, v1 } from '@authzed/authzed-node';
-import { Cause, Context, Duration, Effect, Layer } from 'effect';
+import type { v1 } from '@authzed/authzed-node';
+import { Context, Effect, Layer } from 'effect';
 import type { Scope } from 'effect';
 import {
-  SPICEDB_CHECK_TIMEOUT_MS,
-  acquireSpiceDbClientResource,
-  spiceDbClientSecurity,
-} from './client.ts';
+  createPermissionRelationshipMutationClient,
+  // eslint-disable-next-line anti-slop-effect/no-service-constructor-imports -- Generic synchronous implementation factory; the contextual service is owned by this module.
+  makePermissionRelationshipMutation,
+  // eslint-disable-next-line anti-slop-effect/no-service-constructor-imports -- Generic scoped implementation factory consumed by this module's owning Layer.
+  makePermissionRelationshipMutationLive,
+} from './permission-relationship-mutation.ts';
+import type { PermissionRelationshipMutationPreparation } from './permission-relationship-mutation.ts';
+import { SPICEDB_CHECK_TIMEOUT_MS } from './client.ts';
 import { loadSpiceDbConfig } from './config.ts';
 import type { SpiceDbConfigValue } from './config.ts';
 import type { SpiceDbConfigError } from './config-error.ts';
-import {
-  toBusinessPermissionAccessObjectId,
-  toLegalEntityAccessObjectId,
-} from './context-access.ts';
+import { toBusinessPermissionAccessObjectId, toLegalEntityAccessObjectId } from './context-access.ts';
 import type { BusinessAccessTarget } from './context-access.ts';
 import type { BusinessPermissionCode } from './business-permission.ts';
 import { BusinessPermissionMutationUnavailable } from './business-permission-mutation-error.ts';
@@ -24,9 +25,7 @@ const unavailable = (cause?: unknown): BusinessPermissionMutationUnavailable => 
   const failure = new BusinessPermissionMutationUnavailable({
     reason: 'The business permission relationship mutation could not be completed safely',
   });
-  return cause === undefined
-    ? failure
-    : Object.defineProperty(failure, 'cause', { configurable: true, value: cause });
+  return cause === undefined ? failure : Object.defineProperty(failure, 'cause', { configurable: true, value: cause });
 };
 
 export interface BusinessPermissionRelationshipMutationInput {
@@ -47,9 +46,7 @@ export interface BusinessPermissionRelationshipMutationService {
 export class BusinessPermissionRelationshipMutation extends Context.Service<
   BusinessPermissionRelationshipMutation,
   BusinessPermissionRelationshipMutationService
->()(
-  '@app/core-runtime/permissions/business-permission-mutation/BusinessPermissionRelationshipMutation',
-) {}
+>()('@app/core-runtime/permissions/business-permission-mutation/BusinessPermissionRelationshipMutation') {}
 
 /** Private test seam. Actions and owner modules depend only on the typed mutation service. */
 export interface BusinessPermissionRelationshipMutationClient {
@@ -59,111 +56,48 @@ export interface BusinessPermissionRelationshipMutationClient {
   ) => Effect.Effect<v1.WriteRelationshipsResponse, BusinessPermissionMutationUnavailable>;
 }
 
-const mutationTimeout = Effect.timeoutOrElse({
-  duration: Duration.millis(SPICEDB_CHECK_TIMEOUT_MS),
-  orElse: () =>
-    Effect.fail(unavailable(new Cause.TimeoutError('SpiceDB relationship mutation timed out'))),
-});
-
 export const createBusinessPermissionRelationshipMutationClient = (
   configuration: SpiceDbConfigValue,
   timeoutMilliseconds = SPICEDB_CHECK_TIMEOUT_MS,
-): BusinessPermissionRelationshipMutationClient => {
-  const client = v1.NewClient(
-    configuration.preSharedKey,
-    configuration.endpoint,
-    spiceDbClientSecurity(configuration),
-    undefined,
-    { interceptors: [deadlineInterceptor(timeoutMilliseconds)] },
-  );
+): BusinessPermissionRelationshipMutationClient =>
+  createPermissionRelationshipMutationClient(configuration, timeoutMilliseconds, unavailable);
+
+const prepare = (
+  input: BusinessPermissionRelationshipMutationInput,
+): PermissionRelationshipMutationPreparation | undefined => {
+  const invalidScope =
+    input.principal.tenantId !== input.target.tenantId ||
+    input.principal.principalId.length === 0 ||
+    input.target.legalEntityId.length === 0 ||
+    (input.target.kind === 'counterparty_storefront' &&
+      (input.trustedStorefrontId === undefined || input.trustedStorefrontId !== input.target.storefrontId));
+  if (invalidScope) {
+    return undefined;
+  }
+  const resourceId = toBusinessPermissionAccessObjectId(input.permission, input.target);
+  const legalEntityId = toLegalEntityAccessObjectId(input.target.tenantId, input.target.legalEntityId);
+  if (resourceId === undefined || legalEntityId === undefined) {
+    return undefined;
+  }
   return {
-    close: () => client.close(),
-    writeRelationships: (request) =>
-      Effect.tryPromise({
-        catch: unavailable,
-        // oxlint-disable-next-line typescript/promise-function-async -- Effect owns this foreign SDK Promise boundary.
-        try: () => client.promises.writeRelationships(request),
-      }).pipe(mutationTimeout),
+    granteeId: input.principal.principalId,
+    resourceId,
+    scopeRelationship: {
+      relation: 'legal_entity',
+      subjectId: legalEntityId,
+      subjectType: 'legal_entity',
+    },
   };
 };
-
-const objectReference = (objectType: string, objectId: string) =>
-  v1.ObjectReference.create({ objectId, objectType });
-
-const relationship = (input: {
-  readonly relation: 'grantee' | 'legal_entity';
-  readonly resourceId: string;
-  readonly subjectId: string;
-  readonly subjectType: 'legal_entity' | 'principal';
-}) =>
-  v1.Relationship.create({
-    relation: input.relation,
-    resource: objectReference('business_permission', input.resourceId),
-    subject: v1.SubjectReference.create({
-      object: objectReference(input.subjectType, input.subjectId),
-    }),
-  });
-
-const invalidScope = (input: BusinessPermissionRelationshipMutationInput): boolean =>
-  input.principal.tenantId !== input.target.tenantId ||
-  input.principal.principalId.length === 0 ||
-  input.target.legalEntityId.length === 0 ||
-  (input.target.kind === 'counterparty_storefront' &&
-    (input.trustedStorefrontId === undefined ||
-      input.trustedStorefrontId !== input.target.storefrontId));
 
 export const makeBusinessPermissionRelationshipMutation = (
   client: Pick<BusinessPermissionRelationshipMutationClient, 'writeRelationships'>,
 ): BusinessPermissionRelationshipMutationService =>
-  Object.freeze({
-    mutate: Effect.fn('BusinessPermissionRelationshipMutation.mutate')(
-      function* mutateBusinessPermissionRelationship(
-        input: BusinessPermissionRelationshipMutationInput,
-      ) {
-        if (invalidScope(input)) {
-          return yield* unavailable();
-        }
-        const resourceId = toBusinessPermissionAccessObjectId(input.permission, input.target);
-        const legalEntityId = toLegalEntityAccessObjectId(
-          input.target.tenantId,
-          input.target.legalEntityId,
-        );
-        if (resourceId === undefined || legalEntityId === undefined) {
-          return yield* unavailable();
-        }
-        const operation =
-          input.operation === 'grant'
-            ? v1.RelationshipUpdate_Operation.TOUCH
-            : v1.RelationshipUpdate_Operation.DELETE;
-        const updates = [
-          ...(input.operation === 'grant'
-            ? [
-                v1.RelationshipUpdate.create({
-                  operation: v1.RelationshipUpdate_Operation.TOUCH,
-                  relationship: relationship({
-                    relation: 'legal_entity',
-                    resourceId,
-                    subjectId: legalEntityId,
-                    subjectType: 'legal_entity',
-                  }),
-                }),
-              ]
-            : []),
-          v1.RelationshipUpdate.create({
-            operation,
-            relationship: relationship({
-              relation: 'grantee',
-              resourceId,
-              subjectId: input.principal.principalId,
-              subjectType: 'principal',
-            }),
-          }),
-        ];
-        return yield* client
-          .writeRelationships(v1.WriteRelationshipsRequest.create({ updates }))
-          .pipe(Effect.asVoid);
-      },
-    ),
+  makePermissionRelationshipMutation(client, {
+    mutationName: 'BusinessPermissionRelationshipMutation.mutate',
+    prepare,
+    resourceType: 'business_permission',
+    unavailable,
   });
 
 const unavailableService = (cause?: unknown): BusinessPermissionRelationshipMutationService =>
@@ -174,23 +108,14 @@ export const makeBusinessPermissionRelationshipMutationLive = (
     configuration: SpiceDbConfigValue,
     timeoutMilliseconds: number,
   ) => BusinessPermissionRelationshipMutationClient = createBusinessPermissionRelationshipMutationClient,
-  loadConfiguration: () => Effect.Effect<
-    SpiceDbConfigValue,
-    SpiceDbConfigError
-  > = loadSpiceDbConfig,
+  loadConfiguration: () => Effect.Effect<SpiceDbConfigValue, SpiceDbConfigError> = loadSpiceDbConfig,
 ): Effect.Effect<BusinessPermissionRelationshipMutationService, never, Scope.Scope> =>
-  Effect.matchEffect(loadConfiguration(), {
-    onFailure: (cause) => Effect.succeed(unavailableService(cause)),
-    onSuccess: (configuration) =>
-      acquireSpiceDbClientResource(
-        () => clientFactory(configuration, SPICEDB_CHECK_TIMEOUT_MS),
-        unavailable,
-      ).pipe(
-        Effect.map(makeBusinessPermissionRelationshipMutation),
-        Effect.catchTag('BusinessPermissionMutationUnavailable', (cause) =>
-          Effect.succeed(unavailableService(cause)),
-        ),
-      ),
+  makePermissionRelationshipMutationLive({
+    clientFactory,
+    loadConfiguration,
+    makeService: makeBusinessPermissionRelationshipMutation,
+    unavailable,
+    unavailableService,
   });
 
 export const BusinessPermissionRelationshipMutationLive = Layer.effect(

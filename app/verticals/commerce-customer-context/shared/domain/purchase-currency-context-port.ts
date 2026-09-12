@@ -32,13 +32,12 @@ export class PurchaseCurrencyPurchasingContextPort extends Context.Service<
   '@app/commerce-customer-context/shared/domain/purchase-currency-context-port/PurchaseCurrencyPurchasingContextPort',
 ) {}
 
-export const unavailablePurchaseCurrencyPurchasingContextPort =
-  (): PurchaseCurrencyPurchasingContextPortService => ({
-    resolveCurrent: () =>
-      Effect.fail(
-        unavailablePurchaseCurrencyDependency(
-          'purchasing_context_unavailable',
-          'The Current Commerce Purchasing Context provider is not configured',
-        ),
+export const unavailablePurchaseCurrencyPurchasingContextPort = (): PurchaseCurrencyPurchasingContextPortService => ({
+  resolveCurrent: () =>
+    Effect.fail(
+      unavailablePurchaseCurrencyDependency(
+        'purchasing_context_unavailable',
+        'The Current Commerce Purchasing Context provider is not configured',
       ),
-  });
+    ),
+});

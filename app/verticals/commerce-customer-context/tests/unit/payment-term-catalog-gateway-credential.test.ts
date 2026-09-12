@@ -26,9 +26,7 @@ it.effect('fails closed when the server-owned issuance configuration is absent',
     expect(failure.reason).toContain('No server-owned Payment Term Catalog');
   }).pipe(
     Effect.provide(makePaymentTermCatalogGatewayCredentialLayer()),
-    Effect.provide(
-      ConfigProvider.layer(ConfigProvider.fromUnknown({}, { preserveEmptyStrings: true })),
-    ),
+    Effect.provide(ConfigProvider.layer(ConfigProvider.fromUnknown({}, { preserveEmptyStrings: true }))),
   ),
 );
 
@@ -70,16 +68,14 @@ it.effect('requests a fresh audience and Legal-Entity-bound assertion for every 
         readonly legalEntityId: string;
       };
     }[] = [];
-    const issuer = makePaymentTermCatalogGatewayCredentialIssuer(
-      configuration,
-      (payload, options) =>
-        Effect.sync(() => {
-          requests.push({ options, payload });
-          return {
-            expiresAt: 1_700_000_300 + requests.length,
-            token: `fresh-assertion-${requests.length}`,
-          };
-        }),
+    const issuer = makePaymentTermCatalogGatewayCredentialIssuer(configuration, (payload, options) =>
+      Effect.sync(() => {
+        requests.push({ options, payload });
+        return {
+          expiresAt: 1_700_000_300 + requests.length,
+          token: `fresh-assertion-${requests.length}`,
+        };
+      }),
     );
 
     const first = yield* issuer.issue({
@@ -98,10 +94,7 @@ it.effect('requests a fresh audience and Legal-Entity-bound assertion for every 
       { audience: 'payment-term-catalog', legalEntityId },
       { audience: 'payment-term-catalog', legalEntityId },
     ]);
-    expect(requests.map(({ options }) => options.requestCorrelation)).toEqual([
-      requestCorrelation,
-      requestCorrelation,
-    ]);
+    expect(requests.map(({ options }) => options.requestCorrelation)).toEqual([requestCorrelation, requestCorrelation]);
     expect(requests.every(({ options }) => options.apiKey === configuration.apiKey)).toBe(true);
     expect(Redacted.value(first)).toBe('Bearer fresh-assertion-1');
     expect(Redacted.value(second)).toBe('Bearer fresh-assertion-2');

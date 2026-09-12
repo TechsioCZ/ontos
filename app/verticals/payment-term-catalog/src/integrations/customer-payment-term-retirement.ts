@@ -5,8 +5,8 @@ import type {
 } from '@app/customer-payment-term-contracts/reserve-payment-term-retirement';
 import { Effect, Option, Redacted, Schema } from 'effect';
 
+import type { PaymentTermAffectedUseAssessmentUnavailable } from '../../shared/domain/payment-term-errors.ts';
 import {
-  PaymentTermAffectedUseAssessmentUnavailable,
   PaymentTermRetirementReservationRejected,
   PaymentTermRetirementReservationUnavailable,
 } from '../../shared/domain/payment-term-errors.ts';
@@ -14,10 +14,9 @@ import { CustomerContextGatewayCredentialService } from '../../shared/domain/cus
 import type { PaymentTermRef } from '../../shared/resources/payment-term.ts';
 import type { PaymentTermRetirementAuthority } from '../actions/retire-payment-term.action.ts';
 
-type ReservationFailure =
-  | PaymentTermRetirementReservationRejected
-  | PaymentTermRetirementReservationUnavailable;
+type ReservationFailure = PaymentTermRetirementReservationRejected | PaymentTermRetirementReservationUnavailable;
 const unavailableCode = 'payment_term_retirement_reservation_unavailable' as const;
+const unavailableCredentialIssuerReason = 'No server-owned Commerce Customer Context credential issuer is configured';
 
 type ReservationClientError =
   ReturnType<typeof executeReservePaymentTermRetirementWithAuthorization> extends Effect.Effect<
@@ -90,12 +89,10 @@ const operationPayload = (input: {
     paymentTermRef: input.paymentTermRef,
     reason: input.reason,
   } satisfies ReservePaymentTermRetirementPayload;
-  return input.reservationRef === undefined
-    ? payload
-    : { ...payload, reservationRef: input.reservationRef };
+  return input.reservationRef === undefined ? payload : { ...payload, reservationRef: input.reservationRef };
 };
 
-export const customerPaymentTermRetirementAuthority = (
+const customerPaymentTermRetirementAuthority = (
   requestCorrelation: string,
   execute: ReservationExecutor,
 ): PaymentTermRetirementAuthority => ({
@@ -124,21 +121,21 @@ const unavailableAuthority: PaymentTermRetirementAuthority = {
     Effect.fail(
       new PaymentTermRetirementReservationUnavailable({
         code: unavailableCode,
-        reason: 'No server-owned Commerce Customer Context credential issuer is configured',
+        reason: unavailableCredentialIssuerReason,
       }),
     ),
   releaseRetirement: () =>
     Effect.fail(
       new PaymentTermRetirementReservationUnavailable({
         code: unavailableCode,
-        reason: 'No server-owned Commerce Customer Context credential issuer is configured',
+        reason: unavailableCredentialIssuerReason,
       }),
     ),
   reserveRetirement: () =>
     Effect.fail(
       new PaymentTermRetirementReservationUnavailable({
         code: unavailableCode,
-        reason: 'No server-owned Commerce Customer Context credential issuer is configured',
+        reason: unavailableCredentialIssuerReason,
       }),
     ),
 };
@@ -155,18 +152,13 @@ export const customerPaymentTermRetirementAuthorityFromEnvironment = (
       const runner: ReservationExecutor =
         execute ??
         ((payload, correlation, idempotencyKey) =>
-          issuerOption.value
-            .issue({ audience: 'commerce-customer-context', requestCorrelation: correlation })
-            .pipe(
-              Effect.flatMap((credential) =>
-                executeReservePaymentTermRetirementWithAuthorization(
-                  payload,
-                  Redacted.value(credential),
-                  correlation,
-                  { idempotencyKey },
-                ),
-              ),
-            ));
+          issuerOption.value.issue({ audience: 'commerce-customer-context', requestCorrelation: correlation }).pipe(
+            Effect.flatMap((credential) =>
+              executeReservePaymentTermRetirementWithAuthorization(payload, Redacted.value(credential), correlation, {
+                idempotencyKey,
+              }),
+            ),
+          ));
       return customerPaymentTermRetirementAuthority(requestCorrelation, runner);
     }),
   );

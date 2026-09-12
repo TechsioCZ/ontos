@@ -16,11 +16,7 @@ export const PrincipalRefSchema = Schema.Struct({
 });
 export type PrincipalRef = typeof PrincipalRefSchema.Type;
 
-export const PrincipalEligibilityDecisionSchema = Schema.Literals([
-  'eligible',
-  'ineligible',
-  'unavailable',
-]);
+export const PrincipalEligibilityDecisionSchema = Schema.Literals(['eligible', 'ineligible', 'unavailable']);
 export type PrincipalEligibilityDecision = typeof PrincipalEligibilityDecisionSchema.Type;
 
 export interface PrincipalEligibilityResult {
@@ -33,10 +29,9 @@ export interface PrincipalEligibilityService {
   readonly resolve: (principal: PrincipalRef) => Effect.Effect<PrincipalEligibilityResult>;
 }
 
-export class PrincipalEligibility extends Context.Service<
-  PrincipalEligibility,
-  PrincipalEligibilityService
->()('@app/core-runtime/permissions/principal-ref/PrincipalEligibility') {}
+export class PrincipalEligibility extends Context.Service<PrincipalEligibility, PrincipalEligibilityService>()(
+  '@app/core-runtime/permissions/principal-ref/PrincipalEligibility',
+) {}
 
 export const unavailablePrincipalEligibility = (): PrincipalEligibilityService =>
   Object.freeze({

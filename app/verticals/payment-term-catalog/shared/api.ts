@@ -3,28 +3,27 @@ import {
   MicroVerticalBuildMarkerSchema,
   MicroVerticalReadinessSchema,
   createMicroVerticalOperationContext,
-} from '@app/shared-contracts';
-import type {
-  MicroVerticalBuildMarker,
-  MicroVerticalOperationContext,
-  MicroVerticalReadiness,
-} from '@app/shared-contracts';
-import {
-  HttpApi,
-  HttpApiEndpoint,
-  HttpApiGroup,
-  Schema,
-} from '@modern-js/plugin-bff/effect-client';
+} from '@modern-js/bff-effect/microvertical-api';
+import type { MicroVerticalOperationContext } from '@modern-js/bff-effect/microvertical-api';
+// oxlint-disable-next-line typescript/consistent-type-imports -- The framework baseline requires Schema in the exact value import.
+import { HttpApi, HttpApiEndpoint, HttpApiGroup, Schema } from '@modern-js/bff-effect/effect-client';
 
-export type PaymentTermCatalogMarker = MicroVerticalBuildMarker;
+// <generated-governed-http-api-imports>
+import { CorrectPaymentTermActionApi } from './apis/correct-payment-term-action.ts';
+import { CreatePaymentTermActionApi } from './apis/create-payment-term-action.ts';
+import { CurrentPaymentTermsApi } from './apis/current-payment-terms.ts';
+import { PaymentTermHistoryApi } from './apis/payment-term-history.ts';
+import { ReconcilePaymentTermReferenceActionApi } from './apis/reconcile-payment-term-reference-action.ts';
+import { RetirePaymentTermActionApi } from './apis/retire-payment-term-action.ts';
+// </generated-governed-http-api-imports>
 
-export type PaymentTermCatalogReadiness = MicroVerticalReadiness;
-
-export const paymentTermCatalogMarkerSchema: Schema.Codec<PaymentTermCatalogMarker> =
+export const paymentTermCatalogMarkerSchema: Schema.Codec<typeof MicroVerticalBuildMarkerSchema.Type> =
   MicroVerticalBuildMarkerSchema;
+export type PaymentTermCatalogMarker = typeof paymentTermCatalogMarkerSchema.Type;
 
-export const paymentTermCatalogReadinessSchema: Schema.Codec<PaymentTermCatalogReadiness> =
+export const paymentTermCatalogReadinessSchema: Schema.Codec<typeof MicroVerticalReadinessSchema.Type> =
   MicroVerticalReadinessSchema;
+export type PaymentTermCatalogReadiness = typeof paymentTermCatalogReadinessSchema.Type;
 
 export type OperationContext = MicroVerticalOperationContext;
 
@@ -35,15 +34,6 @@ export const paymentTermCatalogFoundationApi = HttpApi.make('PaymentTermCatalogA
     }),
   ),
 );
-
-// <generated-governed-http-api-imports>
-import { CorrectPaymentTermActionApi } from './apis/correct-payment-term-action.ts';
-import { CreatePaymentTermActionApi } from './apis/create-payment-term-action.ts';
-import { CurrentPaymentTermsApi } from './apis/current-payment-terms.ts';
-import { PaymentTermHistoryApi } from './apis/payment-term-history.ts';
-import { ReconcilePaymentTermReferenceActionApi } from './apis/reconcile-payment-term-reference-action.ts';
-import { RetirePaymentTermActionApi } from './apis/retire-payment-term-action.ts';
-// </generated-governed-http-api-imports>
 
 export * from './apis/current-payment-terms.ts';
 export * from './apis/payment-term-history.ts';

@@ -5,10 +5,8 @@ import {
   getActionBusinessPermissionTargetResolver,
   getActionHandler,
 } from '../../../../packages/core-runtime/src/actions/definition.ts';
-import {
-  ChangeRetailPaymentTermPreferencePayloadSchema,
-  changeRetailPaymentTermPreferenceAction,
-} from '../../src/actions/change-retail-payment-term-preference.action.ts';
+import { changeRetailPaymentTermPreferenceAction } from '../../src/actions/change-retail-payment-term-preference.action.ts';
+import { ChangeRetailPaymentTermPreferencePayloadSchema } from '../../shared/actions/change-retail-payment-term-preference.ts';
 import type { CustomerPaymentTermsState } from '../../shared/domain/payment-term-contracts.ts';
 
 const tenantId = '11111111-1111-4111-8111-111111111111';
@@ -91,9 +89,7 @@ it('accepts preference changes only and declares the exact retail profile permis
     }),
   ).toBe(false);
 
-  const resolvePermission = getActionBusinessPermissionTargetResolver(
-    changeRetailPaymentTermPreferenceAction,
-  );
+  const resolvePermission = getActionBusinessPermissionTargetResolver(changeRetailPaymentTermPreferenceAction);
   expect(
     resolvePermission?.(payload, {
       ...scope,

@@ -8,16 +8,10 @@ import {
 } from '@app/commerce-customer-context/outbox/commerce-customer-context-approval-route-rerouted-v1';
 import type { OutboxPayload } from '@app/commerce-customer-context/outbox/commerce-customer-context-approval-route-rerouted-v1';
 
-export {
-  OutboxPayloadSchema as ReroutePurchaseApprovalRequestCommerceCustomerContextApprovalRouteReroutedV1OutboxPayloadSchema,
-  outboxProducerModuleKey as ReroutePurchaseApprovalRequestCommerceCustomerContextApprovalRouteReroutedV1OutboxProducerModuleKey,
-  outboxTopic as ReroutePurchaseApprovalRequestCommerceCustomerContextApprovalRouteReroutedV1OutboxTopic,
-} from '@app/commerce-customer-context/outbox/commerce-customer-context-approval-route-rerouted-v1';
-export type { OutboxPayload as ReroutePurchaseApprovalRequestCommerceCustomerContextApprovalRouteReroutedV1OutboxPayload } from '@app/commerce-customer-context/outbox/commerce-customer-context-approval-route-rerouted-v1';
-
-export const createReroutePurchaseApprovalRequestCommerceCustomerContextApprovalRouteReroutedV1OutboxMessage =
-  (payload: OutboxPayload): OutboxMessage => ({
-    payloadJson: payload,
-    producerModuleKey: outboxProducerModuleKey,
-    topic: outboxTopic,
-  });
+export const createReroutePurchaseApprovalRequestCommerceCustomerContextApprovalRouteReroutedV1OutboxMessage = (
+  payload: OutboxPayload,
+): OutboxMessage => ({
+  payloadJson: payload,
+  producerModuleKey: outboxProducerModuleKey,
+  topic: outboxTopic,
+});

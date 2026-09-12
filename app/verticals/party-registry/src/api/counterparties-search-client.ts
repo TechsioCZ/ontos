@@ -23,7 +23,7 @@ type CounterpartiesSearchOperationInvocation = readonly [
 ];
 
 const counterpartiesClient = (
-  credential: Redacted.Redacted<string>,
+  credential: Redacted.Redacted,
   requestCorrelation: string,
   options: CounterpartiesSearchClientOptions,
 ) =>

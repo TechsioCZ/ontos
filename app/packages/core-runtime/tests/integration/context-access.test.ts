@@ -70,9 +70,7 @@ const contextAccessProgram = Effect.gen(function* contextAccessIntegration() {
   const legalObjectId = toLegalEntityAccessObjectId(tenantId, legalEntityId);
   const moduleObjectId = toModuleAccessObjectId(tenantId, legalEntityId, moduleId);
   const resourceObjectId = toResourceAccessObjectId(tenantId, legalEntityId, resource);
-  const businessPermission = yield* Schema.decodeUnknownEffect(BusinessPermissionCodeSchema)(
-    'counterparty.purchase.submit',
-  );
+  const businessPermission = yield* Schema.decodeEffect(BusinessPermissionCodeSchema)('counterparty.purchase.submit');
   const businessTarget = {
     permission: businessPermission,
     target: {
@@ -83,19 +81,12 @@ const contextAccessProgram = Effect.gen(function* contextAccessIntegration() {
       tenantId,
     },
   };
-  const businessPermissionObjectId = toBusinessPermissionAccessObjectId(
-    businessPermission,
-    businessTarget.target,
-  );
+  const businessPermissionObjectId = toBusinessPermissionAccessObjectId(businessPermission, businessTarget.target);
   const contextPermissionTarget = {
     moduleId: 'commerce.customer-context',
     permission: 'customer.group.history.read',
   } as const;
-  const contextPermissionObjectId = toContextPermissionAccessObjectId(
-    tenantId,
-    legalEntityId,
-    contextPermissionTarget,
-  );
+  const contextPermissionObjectId = toContextPermissionAccessObjectId(tenantId, legalEntityId, contextPermissionTarget);
   if (
     legalObjectId === undefined ||
     moduleObjectId === undefined ||
@@ -143,28 +134,10 @@ const contextAccessProgram = Effect.gen(function* contextAccessIntegration() {
     relationship('module_access', moduleObjectId, 'accessor', 'principal', principalId),
     relationship('resource', resourceObjectId, 'module', 'module_access', moduleObjectId),
     relationship('resource', resourceObjectId, 'reader', 'principal', principalId),
-    relationship(
-      'business_permission',
-      businessPermissionObjectId,
-      'legal_entity',
-      'legal_entity',
-      legalObjectId,
-    ),
-    relationship(
-      'business_permission',
-      businessPermissionObjectId,
-      'grantee',
-      'principal',
-      principalId,
-    ),
+    relationship('business_permission', businessPermissionObjectId, 'legal_entity', 'legal_entity', legalObjectId),
+    relationship('business_permission', businessPermissionObjectId, 'grantee', 'principal', principalId),
     relationship('context_permission', contextPermissionObjectId, 'tenant', 'tenant', tenantId),
-    relationship(
-      'context_permission',
-      contextPermissionObjectId,
-      'grantee',
-      'principal',
-      principalId,
-    ),
+    relationship('context_permission', contextPermissionObjectId, 'grantee', 'principal', principalId),
   ];
 
   yield* Effect.gen(function* exerciseContextAccess() {
@@ -240,9 +213,9 @@ const contextAccessProgram = Effect.gen(function* contextAccessIntegration() {
           tenantId: otherTenantId,
         }),
       ).toEqual([{ decision: 'denied', key: moduleId }]);
-      expect(
-        yield* access.resources({ legalEntityId, principalId, resources: [resource], tenantId }),
-      ).toEqual([{ decision: 'allowed', key: `${moduleId}:property.unit:${resource.resourceId}` }]);
+      expect(yield* access.resources({ legalEntityId, principalId, resources: [resource], tenantId })).toEqual([
+        { decision: 'allowed', key: `${moduleId}:property.unit:${resource.resourceId}` },
+      ]);
       const checkBusinessPermissions = requireBusinessPermissions(access);
       expect(
         yield* checkBusinessPermissions({
@@ -259,10 +232,7 @@ const contextAccessProgram = Effect.gen(function* contextAccessIntegration() {
         yield* checkContextPermissions({
           legalEntityId,
           principalId,
-          targets: [
-            contextPermissionTarget,
-            { ...contextPermissionTarget, permission: 'customer.group.read' },
-          ],
+          targets: [contextPermissionTarget, { ...contextPermissionTarget, permission: 'customer.group.read' }],
           tenantId,
         }),
       ).toEqual([

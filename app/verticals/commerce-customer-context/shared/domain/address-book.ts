@@ -107,29 +107,27 @@ export type SavedAddressDefaults = typeof SavedAddressDefaultsSchema.Type;
 export const isAddressEligibleFor = (address: SavedAddress, purpose: SavedAddressPurpose) =>
   address.lifecycle === 'ACTIVE' && address.purposes.includes(purpose);
 
-export const reconcileDefaults = (
-  defaults: SavedAddressDefaults,
+const reconcileDefault = (
+  current: SavedAddressDefaults['billing'],
   address: SavedAddress,
-): SavedAddressDefaults => {
-  const billing =
-    defaults.billing?.resourceId === address.savedAddressRef.resourceId &&
-    !isAddressEligibleFor(address, 'BILLING')
-      ? undefined
-      : defaults.billing;
-  const delivery =
-    defaults.delivery?.resourceId === address.savedAddressRef.resourceId &&
-    !isAddressEligibleFor(address, 'DELIVERY')
-      ? undefined
-      : defaults.delivery;
-  const common = { profile: defaults.profile, revision: defaults.revision + 1 };
-  if (billing !== undefined && delivery !== undefined) {
-    return { ...common, billing, delivery };
-  }
+  purpose: SavedAddressPurpose,
+): SavedAddressDefaults['billing'] =>
+  current?.resourceId === address.savedAddressRef.resourceId && !isAddressEligibleFor(address, purpose)
+    ? undefined
+    : current;
+
+export const reconcileDefaults = (defaults: SavedAddressDefaults, address: SavedAddress): SavedAddressDefaults => {
+  const billing = reconcileDefault(defaults.billing, address, 'BILLING');
+  const delivery = reconcileDefault(defaults.delivery, address, 'DELIVERY');
+  const reconciledDefaults = {};
   if (billing !== undefined) {
-    return { ...common, billing };
+    Object.assign(reconciledDefaults, { billing });
   }
   if (delivery !== undefined) {
-    return { ...common, delivery };
+    Object.assign(reconciledDefaults, { delivery });
   }
-  return common;
+  return Object.assign(reconciledDefaults, {
+    profile: defaults.profile,
+    revision: defaults.revision + 1,
+  });
 };

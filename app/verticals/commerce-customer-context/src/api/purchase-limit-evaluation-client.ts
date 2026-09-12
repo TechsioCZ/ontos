@@ -21,7 +21,7 @@ type PurchaseLimitEvaluationOperationInvocation = readonly [
 ];
 
 const purchaseLimitEvaluationClient = (
-  credential: Redacted.Redacted<string>,
+  credential: Redacted.Redacted,
   requestCorrelation: string,
   options: PurchaseLimitEvaluationClientOptions,
 ) =>
@@ -40,9 +40,7 @@ export const executePurchaseLimitEvaluationWithAuthorization = (
   ...[credential, requestCorrelation, options = {}]: PurchaseLimitEvaluationAuthorizedInvocation
 ) =>
   purchaseLimitEvaluationClient(Redacted.make(credential), requestCorrelation, options).pipe(
-    Effect.flatMap((client) =>
-      client.purchaseLimitEvaluation.execute({ headers: {}, params: {}, payload, query: {} }),
-    ),
+    Effect.flatMap((client) => client.purchaseLimitEvaluation.execute({ headers: {}, params: {}, payload, query: {} })),
   );
 
 export const executePurchaseLimitEvaluation = (
@@ -50,10 +48,5 @@ export const executePurchaseLimitEvaluation = (
   ...[requestCorrelation, options = {}]: PurchaseLimitEvaluationOperationInvocation
 ) =>
   operationGateway.invoke((credential) =>
-    executePurchaseLimitEvaluationWithAuthorization(
-      payload,
-      credential,
-      requestCorrelation,
-      options,
-    ),
+    executePurchaseLimitEvaluationWithAuthorization(payload, credential, requestCorrelation, options),
   );

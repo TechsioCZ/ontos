@@ -3,7 +3,7 @@
 // @ontos-action-http-slug create-approval-hierarchy
 // oxlint-disable sonarjs/function-name -- Effect Match.tags requires owner-declared tag keys; remove-when: sonarjs accepts discriminant-map properties.
 import type { ActionCoreError } from '@app/core-runtime';
-import { Effect, HttpApiMiddleware } from '@modern-js/plugin-bff/effect-edge';
+import { Effect, HttpApiMiddleware } from '@modern-js/bff-effect/effect-edge';
 import { Match, Schema } from 'effect';
 import {
   CreateApprovalHierarchyActionAlreadyCommittedProblemSchema,
@@ -21,187 +21,74 @@ import {
 } from '../shared/apis/create-approval-hierarchy-action.ts';
 import type { CreateApprovalHierarchyActionProblem } from '../shared/apis/create-approval-hierarchy-action.ts';
 import { createApprovalHierarchyAction } from '../src/actions/create-approval-hierarchy.action.ts';
+/* oxlint-disable anti-slop-effect/no-service-constructor-imports -- These pure helpers construct problem values rather than Effect services. */
+import {
+  actionProblemStatus as problemStatus,
+  makeAuthenticationProblem,
+  makeConflictProblem,
+  makeForbiddenProblem,
+  makeIneligibleProblem,
+  makeInternalProblem,
+  makeInvalidProblem,
+  makeNotFoundProblem,
+  makePreconditionProblem,
+  makeUnavailableProblem,
+  purchasingApprovalRejectedProblemByCode,
+} from './action-problem-support.ts';
+/* oxlint-enable anti-slop-effect/no-service-constructor-imports */
+import type { PurchasingApprovalDomainProblemIdentity } from './action-problem-support.ts';
 
 type DomainError = typeof createApprovalHierarchyAction.descriptor.domainErrorSchema.Type;
 type ProblemOf<Tag extends CreateApprovalHierarchyActionProblem['_tag']> = Extract<
   CreateApprovalHierarchyActionProblem,
   { readonly _tag: Tag }
 >;
-type DomainProblemIdentity =
-  | {
-      readonly code:
-        | 'COMMIT_CONFLICT'
-        | 'IDEMPOTENCY_CONFLICT'
-        | 'LEVEL_ALREADY_COMPLETED'
-        | 'STALE_PROPOSAL_REVISION';
-      readonly kind: 'conflict';
-    }
-  | { readonly code: 'BUYER_PERMISSION_DENIED' | 'PERMISSION_DENIED'; readonly kind: 'forbidden' }
-  | {
-      readonly code:
-        | 'HIERARCHY_AMBIGUOUS'
-        | 'HIERARCHY_RANGE_INVALID'
-        | 'NO_ELIGIBLE_ROUTE'
-        | 'NOT_ROUTE_ELIGIBLE'
-        | 'OWNER_CONFIRMATION_EXPIRED'
-        | 'POLICY_ROUTE_INVALID'
-        | 'PROFILE_INACTIVE'
-        | 'PROPOSAL_MATERIAL_CHANGE'
-        | 'PROPOSAL_NOT_CURRENT'
-        | 'REQUEST_EXPIRED'
-        | 'REQUEST_NOT_PENDING'
-        | 'REQUEST_SUPERSEDED'
-        | 'SELF_APPROVAL_DENIED';
-      readonly kind: 'ineligible';
-    }
-  | { readonly code: 'HIERARCHY_NOT_FOUND'; readonly kind: 'notFound' }
-  | {
-      readonly code:
-        | 'CURRENT_STATE_INDETERMINATE'
-        | 'DEPENDENCY_UNAVAILABLE'
-        | 'EVIDENCE_PERSISTENCE_FAILED';
-      readonly kind: 'unavailable';
-    };
-
-const problemStatus = {
-  authentication: 401,
-  conflict: 409,
-  forbidden: 403,
-  ineligible: 422,
-  internal: 500,
-  invalid: 400,
-  notFound: 404,
-  precondition: 428,
-  rateLimited: 429,
-  timeout: 504,
-  unavailable: 503,
-} as const;
-
-const purchasingApprovalRejectedProblemByCode = {
-  BUYER_PERMISSION_DENIED: { code: 'BUYER_PERMISSION_DENIED', kind: 'forbidden' },
-  COMMIT_CONFLICT: { code: 'COMMIT_CONFLICT', kind: 'conflict' },
-  CURRENT_STATE_INDETERMINATE: { code: 'CURRENT_STATE_INDETERMINATE', kind: 'unavailable' },
-  DEPENDENCY_UNAVAILABLE: { code: 'DEPENDENCY_UNAVAILABLE', kind: 'unavailable' },
-  EVIDENCE_PERSISTENCE_FAILED: { code: 'EVIDENCE_PERSISTENCE_FAILED', kind: 'unavailable' },
-  HIERARCHY_AMBIGUOUS: { code: 'HIERARCHY_AMBIGUOUS', kind: 'ineligible' },
-  HIERARCHY_NOT_FOUND: { code: 'HIERARCHY_NOT_FOUND', kind: 'notFound' },
-  HIERARCHY_RANGE_INVALID: { code: 'HIERARCHY_RANGE_INVALID', kind: 'ineligible' },
-  IDEMPOTENCY_CONFLICT: { code: 'IDEMPOTENCY_CONFLICT', kind: 'conflict' },
-  LEVEL_ALREADY_COMPLETED: { code: 'LEVEL_ALREADY_COMPLETED', kind: 'conflict' },
-  NO_ELIGIBLE_ROUTE: { code: 'NO_ELIGIBLE_ROUTE', kind: 'ineligible' },
-  NOT_ROUTE_ELIGIBLE: { code: 'NOT_ROUTE_ELIGIBLE', kind: 'ineligible' },
-  OWNER_CONFIRMATION_EXPIRED: { code: 'OWNER_CONFIRMATION_EXPIRED', kind: 'ineligible' },
-  PERMISSION_DENIED: { code: 'PERMISSION_DENIED', kind: 'forbidden' },
-  POLICY_ROUTE_INVALID: { code: 'POLICY_ROUTE_INVALID', kind: 'ineligible' },
-  PROFILE_INACTIVE: { code: 'PROFILE_INACTIVE', kind: 'ineligible' },
-  PROPOSAL_MATERIAL_CHANGE: { code: 'PROPOSAL_MATERIAL_CHANGE', kind: 'ineligible' },
-  PROPOSAL_NOT_CURRENT: { code: 'PROPOSAL_NOT_CURRENT', kind: 'ineligible' },
-  REQUEST_EXPIRED: { code: 'REQUEST_EXPIRED', kind: 'ineligible' },
-  REQUEST_NOT_PENDING: { code: 'REQUEST_NOT_PENDING', kind: 'ineligible' },
-  REQUEST_SUPERSEDED: { code: 'REQUEST_SUPERSEDED', kind: 'ineligible' },
-  SELF_APPROVAL_DENIED: { code: 'SELF_APPROVAL_DENIED', kind: 'ineligible' },
-  STALE_PROPOSAL_REVISION: { code: 'STALE_PROPOSAL_REVISION', kind: 'conflict' },
-} as const satisfies Record<
-  Extract<DomainError, { readonly _tag: 'PurchasingApprovalRejected' }>['code'],
-  DomainProblemIdentity
->;
-
 export const createApprovalHierarchyActionProblem = {
-  authentication: (): ProblemOf<'CreateApprovalHierarchyActionAuthenticationProblem'> =>
-    CreateApprovalHierarchyActionAuthenticationProblemSchema.make({
-      detail: 'A valid audience-scoped Bearer assertion is required.',
-      status: problemStatus.authentication,
-      title: 'Authentication required',
-      type: 'https://ontos.dev/problems/operation-authentication-required',
-    }),
-  conflict: (
-    code: ProblemOf<'CreateApprovalHierarchyActionConflictProblem'>['code'],
-  ): ProblemOf<'CreateApprovalHierarchyActionConflictProblem'> =>
-    CreateApprovalHierarchyActionConflictProblemSchema.make({
-      code,
-      detail: 'The Action conflicts with current state.',
-      status: problemStatus.conflict,
-      title: 'Action conflict',
-      type: 'https://ontos.dev/problems/action-conflict',
-    }),
-  forbidden: (
-    code: ProblemOf<'CreateApprovalHierarchyActionForbiddenProblem'>['code'],
-  ): ProblemOf<'CreateApprovalHierarchyActionForbiddenProblem'> =>
-    CreateApprovalHierarchyActionForbiddenProblemSchema.make({
-      code,
-      detail: 'The principal is not permitted to perform this Action.',
-      status: problemStatus.forbidden,
-      title: 'Action forbidden',
-      type: 'https://ontos.dev/problems/action-forbidden',
-    }),
-  ineligible: (
-    code: ProblemOf<'CreateApprovalHierarchyActionIneligibleProblem'>['code'],
-  ): ProblemOf<'CreateApprovalHierarchyActionIneligibleProblem'> =>
-    CreateApprovalHierarchyActionIneligibleProblemSchema.make({
-      code,
-      detail: 'The request is not eligible for this Action.',
-      status: problemStatus.ineligible,
-      title: 'Action ineligible',
-      type: 'https://ontos.dev/problems/action-ineligible',
-    }),
-  internal: (): ProblemOf<'CreateApprovalHierarchyActionInternalProblem'> =>
-    CreateApprovalHierarchyActionInternalProblemSchema.make({
-      detail: 'The Action could not be completed.',
-      status: problemStatus.internal,
-      title: 'Action failed',
-      type: 'https://ontos.dev/problems/action-failed',
-    }),
-  invalid: (): ProblemOf<'CreateApprovalHierarchyActionInvalidProblem'> =>
-    CreateApprovalHierarchyActionInvalidProblemSchema.make({
-      detail: 'The create-approval-hierarchy Action request is invalid.',
-      status: problemStatus.invalid,
-      title: 'Invalid Action request',
-      type: 'https://ontos.dev/problems/action-invalid',
-    }),
-  notFound: (
-    code: ProblemOf<'CreateApprovalHierarchyActionNotFoundProblem'>['code'],
-  ): ProblemOf<'CreateApprovalHierarchyActionNotFoundProblem'> =>
-    CreateApprovalHierarchyActionNotFoundProblemSchema.make({
-      code,
-      detail: 'The requested resource was not found.',
-      status: problemStatus.notFound,
-      title: 'Resource not found',
-      type: 'https://ontos.dev/problems/action-resource-not-found',
-    }),
-  precondition: (): ProblemOf<'CreateApprovalHierarchyActionPreconditionProblem'> =>
-    CreateApprovalHierarchyActionPreconditionProblemSchema.make({
-      detail: 'An Idempotency-Key header is required.',
-      status: problemStatus.precondition,
-      title: 'Idempotency key required',
-      type: 'https://ontos.dev/problems/idempotency-key-required',
-    }),
-  unavailable: (
-    code: ProblemOf<'CreateApprovalHierarchyActionUnavailableProblem'>['code'],
-  ): ProblemOf<'CreateApprovalHierarchyActionUnavailableProblem'> =>
-    CreateApprovalHierarchyActionUnavailableProblemSchema.make({
-      code,
-      detail: 'The Action capability is temporarily unavailable.',
-      retryable: true,
-      status: problemStatus.unavailable,
-      title: 'Action unavailable',
-      type: 'https://ontos.dev/problems/action-unavailable',
-    }),
+  authentication: makeAuthenticationProblem<ProblemOf<'CreateApprovalHierarchyActionAuthenticationProblem'>>((input) =>
+    CreateApprovalHierarchyActionAuthenticationProblemSchema.make(input),
+  ),
+  conflict: makeConflictProblem<
+    ProblemOf<'CreateApprovalHierarchyActionConflictProblem'>['code'],
+    ProblemOf<'CreateApprovalHierarchyActionConflictProblem'>
+  >((input) => CreateApprovalHierarchyActionConflictProblemSchema.make(input)),
+  forbidden: makeForbiddenProblem<
+    ProblemOf<'CreateApprovalHierarchyActionForbiddenProblem'>['code'],
+    ProblemOf<'CreateApprovalHierarchyActionForbiddenProblem'>
+  >((input) => CreateApprovalHierarchyActionForbiddenProblemSchema.make(input)),
+  ineligible: makeIneligibleProblem<
+    ProblemOf<'CreateApprovalHierarchyActionIneligibleProblem'>['code'],
+    ProblemOf<'CreateApprovalHierarchyActionIneligibleProblem'>
+  >((input) => CreateApprovalHierarchyActionIneligibleProblemSchema.make(input)),
+  internal: makeInternalProblem<ProblemOf<'CreateApprovalHierarchyActionInternalProblem'>>((input) =>
+    CreateApprovalHierarchyActionInternalProblemSchema.make(input),
+  ),
+  invalid: makeInvalidProblem<ProblemOf<'CreateApprovalHierarchyActionInvalidProblem'>>(
+    (input) => CreateApprovalHierarchyActionInvalidProblemSchema.make(input),
+    'create-approval-hierarchy',
+  ),
+  notFound: makeNotFoundProblem<
+    ProblemOf<'CreateApprovalHierarchyActionNotFoundProblem'>['code'],
+    ProblemOf<'CreateApprovalHierarchyActionNotFoundProblem'>
+  >((input) => CreateApprovalHierarchyActionNotFoundProblemSchema.make(input)),
+  precondition: makePreconditionProblem<ProblemOf<'CreateApprovalHierarchyActionPreconditionProblem'>>((input) =>
+    CreateApprovalHierarchyActionPreconditionProblemSchema.make(input),
+  ),
+  unavailable: makeUnavailableProblem<
+    ProblemOf<'CreateApprovalHierarchyActionUnavailableProblem'>['code'],
+    ProblemOf<'CreateApprovalHierarchyActionUnavailableProblem'>
+  >((input) => CreateApprovalHierarchyActionUnavailableProblemSchema.make(input)),
 } as const;
 
-const mapDomainIdentity = (identity: DomainProblemIdentity): CreateApprovalHierarchyActionProblem =>
+const mapDomainIdentity = (identity: PurchasingApprovalDomainProblemIdentity): CreateApprovalHierarchyActionProblem =>
   Match.value(identity).pipe(
-    Match.when({ kind: 'conflict' as const }, (matched) =>
-      createApprovalHierarchyActionProblem.conflict(matched.code),
-    ),
+    Match.when({ kind: 'conflict' as const }, (matched) => createApprovalHierarchyActionProblem.conflict(matched.code)),
     Match.when({ kind: 'forbidden' as const }, (matched) =>
       createApprovalHierarchyActionProblem.forbidden(matched.code),
     ),
     Match.when({ kind: 'ineligible' as const }, (matched) =>
       createApprovalHierarchyActionProblem.ineligible(matched.code),
     ),
-    Match.when({ kind: 'notFound' as const }, (matched) =>
-      createApprovalHierarchyActionProblem.notFound(matched.code),
-    ),
+    Match.when({ kind: 'notFound' as const }, (matched) => createApprovalHierarchyActionProblem.notFound(matched.code)),
     Match.when({ kind: 'unavailable' as const }, (matched) =>
       createApprovalHierarchyActionProblem.unavailable(matched.code),
     ),
@@ -211,8 +98,7 @@ const mapDomainIdentity = (identity: DomainProblemIdentity): CreateApprovalHiera
 const mapDomainProblem = (error: DomainError): CreateApprovalHierarchyActionProblem =>
   Match.value(error).pipe(
     Match.tags({
-      PurchasingApprovalRejected: (failure) =>
-        mapDomainIdentity(purchasingApprovalRejectedProblemByCode[failure.code]),
+      PurchasingApprovalRejected: (failure) => mapDomainIdentity(purchasingApprovalRejectedProblemByCode[failure.code]),
     }),
     Match.exhaustive,
   );
@@ -244,38 +130,24 @@ const mapCoreProblem = (error: ActionCoreError): CreateApprovalHierarchyActionPr
         }),
       ActionHandlerExecutionError: createApprovalHierarchyActionProblem.internal,
       ActionIdempotencyKeyRequired: createApprovalHierarchyActionProblem.precondition,
-      ActionInvocationNotFound: (failure) =>
-        createApprovalHierarchyActionProblem.notFound(failure.code),
-      ActionInvocationPersistenceError: (failure) =>
-        createApprovalHierarchyActionProblem.unavailable(failure.code),
-      ActionInvocationStateError: (failure) =>
-        createApprovalHierarchyActionProblem.conflict(failure.code),
+      ActionInvocationNotFound: (failure) => createApprovalHierarchyActionProblem.notFound(failure.code),
+      ActionInvocationPersistenceError: (failure) => createApprovalHierarchyActionProblem.unavailable(failure.code),
+      ActionInvocationStateError: (failure) => createApprovalHierarchyActionProblem.conflict(failure.code),
       ActionPayloadValidationError: createApprovalHierarchyActionProblem.invalid,
-      ActionPermissionCheckError: (failure) =>
-        createApprovalHierarchyActionProblem.unavailable(failure.code),
-      ActionPermissionDenied: (failure) =>
-        createApprovalHierarchyActionProblem.forbidden(failure.code),
-      ActionPolicyDenied: (failure) =>
-        createApprovalHierarchyActionProblem.ineligible(failure.code),
-      ActionPolicyEvaluationError: (failure) =>
-        createApprovalHierarchyActionProblem.unavailable(failure.code),
-      ActionRequestHashConflict: (failure) =>
-        createApprovalHierarchyActionProblem.conflict(failure.code),
+      ActionPermissionCheckError: (failure) => createApprovalHierarchyActionProblem.unavailable(failure.code),
+      ActionPermissionDenied: (failure) => createApprovalHierarchyActionProblem.forbidden(failure.code),
+      ActionPolicyDenied: (failure) => createApprovalHierarchyActionProblem.ineligible(failure.code),
+      ActionPolicyEvaluationError: (failure) => createApprovalHierarchyActionProblem.unavailable(failure.code),
+      ActionRequestHashConflict: (failure) => createApprovalHierarchyActionProblem.conflict(failure.code),
       ActionResultValidationError: createApprovalHierarchyActionProblem.internal,
-      ActionTransactionError: (failure) =>
-        createApprovalHierarchyActionProblem.unavailable(failure.code),
+      ActionTransactionError: (failure) => createApprovalHierarchyActionProblem.unavailable(failure.code),
       ActionTrustedContextValidationError: createApprovalHierarchyActionProblem.authentication,
-      ModuleStateCheckUnavailableError: (failure) =>
-        createApprovalHierarchyActionProblem.unavailable(failure.code),
-      ModuleStateDeniedError: (failure) =>
-        createApprovalHierarchyActionProblem.forbidden(failure.code),
+      ModuleStateCheckUnavailableError: (failure) => createApprovalHierarchyActionProblem.unavailable(failure.code),
+      ModuleStateDeniedError: (failure) => createApprovalHierarchyActionProblem.forbidden(failure.code),
       OperationAuthenticationRequired: createApprovalHierarchyActionProblem.authentication,
-      OperationContextDenied: (failure) =>
-        createApprovalHierarchyActionProblem.forbidden(failure.code),
-      OperationContextInvalid: (failure) =>
-        createApprovalHierarchyActionProblem.forbidden(failure.code),
-      OperationContextUnavailable: (failure) =>
-        createApprovalHierarchyActionProblem.unavailable(failure.code),
+      OperationContextDenied: (failure) => createApprovalHierarchyActionProblem.forbidden(failure.code),
+      OperationContextInvalid: (failure) => createApprovalHierarchyActionProblem.forbidden(failure.code),
+      OperationContextUnavailable: (failure) => createApprovalHierarchyActionProblem.unavailable(failure.code),
     }),
     Match.exhaustive,
   );
@@ -283,11 +155,9 @@ const mapCoreProblem = (error: ActionCoreError): CreateApprovalHierarchyActionPr
 const isDomainError = Schema.is(createApprovalHierarchyAction.descriptor.domainErrorSchema);
 export const mapCreateApprovalHierarchyActionProblem = (
   error: ActionCoreError | DomainError,
-): CreateApprovalHierarchyActionProblem =>
-  isDomainError(error) ? mapDomainProblem(error) : mapCoreProblem(error);
+): CreateApprovalHierarchyActionProblem => (isDomainError(error) ? mapDomainProblem(error) : mapCoreProblem(error));
 
-export const createApprovalHierarchyActionSchemaErrorLive =
-  HttpApiMiddleware.layerSchemaErrorTransform(
-    CreateApprovalHierarchyActionSchemaErrorMiddleware,
-    () => Effect.fail(createApprovalHierarchyActionProblem.invalid()),
-  );
+export const createApprovalHierarchyActionSchemaErrorLive = HttpApiMiddleware.layerSchemaErrorTransform(
+  CreateApprovalHierarchyActionSchemaErrorMiddleware,
+  () => Effect.fail(createApprovalHierarchyActionProblem.invalid()),
+);

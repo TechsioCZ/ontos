@@ -6,7 +6,7 @@ import {
   defineReadResourcePermission,
   defineTenantModuleEntrypoint,
 } from '@app/core-runtime';
-import { DateTime, Effect, Match, Option, Schema } from 'effect';
+import { DateTime, Effect, Match, Option, Predicate, Schema } from 'effect';
 import {
   CurrentPaymentTermsRequestSchema,
   CurrentPaymentTermsResponseSchema,
@@ -18,13 +18,15 @@ import type {
   PaymentTermCatalogPersistence,
   ResolveStoredPaymentTermOutcome,
 } from '../persistence/payment-term-catalog-persistence.ts';
-import { makePaymentTermCatalogPersistence } from '../persistence/payment-term-catalog-persistence.ts';
+import { paymentTermCatalogPersistenceForScope } from '../persistence/payment-term-catalog-persistence.ts';
 
-export const currentPaymentTermsEntrypoint = defineTenantModuleEntrypoint({
+const paymentTermCatalogModuleKey = 'payment.term-catalog';
+
+const currentPaymentTermsEntrypoint = defineTenantModuleEntrypoint({
   access: 'read',
   authorization: { kind: 'context_permission', permission: 'payment.term_catalog.read' },
   entrypointKey: 'payment.term-catalog.api.current-payment-terms',
-  moduleKey: 'payment.term-catalog',
+  moduleKey: paymentTermCatalogModuleKey,
   role: 'api',
 });
 
@@ -37,10 +39,7 @@ const unavailable = (cause: unknown) => {
   return error;
 };
 
-const broken = (
-  requestedPaymentTermRef: PaymentTermRef,
-  reason: string,
-): PaymentTermReferenceResolution => ({
+const broken = (requestedPaymentTermRef: PaymentTermRef, reason: string): PaymentTermReferenceResolution => ({
   kind: 'BROKEN',
   reason,
   requestedPaymentTermRef,
@@ -48,7 +47,7 @@ const broken = (
 const isPersistenceId = Schema.is(Schema.String.check(Schema.isUUID()));
 
 const toPaymentTermRef = (tenantId: string, resourceId: string): PaymentTermRef => ({
-  moduleId: 'payment.term-catalog',
+  moduleId: paymentTermCatalogModuleKey,
   resourceId,
   resourceType: 'payment.term-catalog.payment-term',
   tenantId,
@@ -59,11 +58,13 @@ const incompatible = (
   requestedPaymentTermRef: PaymentTermRef,
   definition: Extract<ResolveStoredPaymentTermOutcome, { _tag: 'resolved' }>['definition'],
 ): PaymentTermReferenceResolution => {
+  /* oxlint-disable anti-slop/no-known-value-widening -- This mutable evidence fragment intentionally preserves the optional fields of the public resolution contract. */
   const expectedEvidence: {
     expectedCompatibilityId?: string;
     expectedConsumerCompatibility?: 'customer-payment-terms.v1';
     expectedSemanticRevisionId?: string;
   } = {};
+  /* oxlint-enable anti-slop/no-known-value-widening */
   if (request.expectedCompatibilityId !== undefined) {
     expectedEvidence.expectedCompatibilityId = request.expectedCompatibilityId;
   }
@@ -90,19 +91,21 @@ const resolutionOutcome = (
   outcome: ResolveStoredPaymentTermOutcome,
 ): PaymentTermReferenceResolution => {
   const requestedPaymentTermRef = toPaymentTermRef(trustedTenantId, outcome.requestedPaymentTermId);
+  const brokenAlias = ({ reason }: { readonly reason: 'cycle' | 'depth_exceeded' }) =>
+    broken(
+      requestedPaymentTermRef,
+      reason === 'cycle'
+        ? 'Payment Term alias graph contains a cycle'
+        : 'Payment Term alias graph exceeds the supported reconciliation depth',
+    );
+  const notYetActive = ({ activeFrom }: { readonly activeFrom: string }) =>
+    broken(requestedPaymentTermRef, `Payment Term is not active before ${activeFrom}`);
   return Match.value(outcome).pipe(
     Match.tags({
-      broken_alias: ({ reason }) =>
-        broken(
-          requestedPaymentTermRef,
-          reason === 'cycle'
-            ? 'Payment Term alias graph contains a cycle'
-            : 'Payment Term alias graph exceeds the supported reconciliation depth',
-        ),
+      broken_alias: brokenAlias,
       incompatible: ({ definition }) => incompatible(request, requestedPaymentTermRef, definition),
       missing: () => ({ kind: 'MISSING' as const, requestedPaymentTermRef }),
-      not_yet_active: ({ activeFrom }) =>
-        broken(requestedPaymentTermRef, `Payment Term is not active before ${activeFrom}`),
+      not_yet_active: notYetActive,
       resolved: ({ definition }) => {
         const consumerMismatch =
           request.expectedConsumerCompatibility !== undefined &&
@@ -124,6 +127,85 @@ const resolutionOutcome = (
   );
 };
 
+type CurrentPaymentTermReferenceRequest = CurrentPaymentTermsRequest['references'][number];
+type ResolvedPaymentTermOutcome = Extract<ResolveStoredPaymentTermOutcome, { _tag: 'resolved' | 'retired' }>;
+type ResolvedPaymentTermDefinition = ResolvedPaymentTermOutcome['definition'];
+
+const historicalDefinition = (
+  services: PaymentTermCatalogPersistence,
+  paymentTermId: string,
+  expectedSemanticRevisionId: string,
+  // oxlint-disable-next-line effect-native/no-nullable-service-outcome -- This private history lookup intentionally preserves Array.find absence for the existing fail-closed resolution branch; changing it to Option would cascade through the outcome mapping.
+): Effect.Effect<ResolvedPaymentTermDefinition | undefined, ReadHandlerUnavailable> =>
+  services.getHistory(paymentTermId).pipe(
+    Effect.mapError(unavailable),
+    Effect.map((historyOption) =>
+      Option.isSome(historyOption)
+        ? historyOption.value.revisions.find(
+            ({ semanticRevisionId }) => semanticRevisionId === expectedSemanticRevisionId,
+          )
+        : undefined,
+    ),
+  );
+
+const isEquivalentToCanonical = (definition: ResolvedPaymentTermDefinition, canonical: ResolvedPaymentTermDefinition) =>
+  definition.semanticFingerprint === canonical.semanticFingerprint &&
+  definition.compatibilityId === canonical.compatibilityId;
+
+const supportsExpectedConsumer = (
+  definition: ResolvedPaymentTermDefinition,
+  expectedConsumerCompatibility: CurrentPaymentTermReferenceRequest['expectedConsumerCompatibility'],
+) => expectedConsumerCompatibility === undefined || definition.compatibleWith.includes(expectedConsumerCompatibility);
+
+const historicalResolution = (
+  request: CurrentPaymentTermReferenceRequest,
+  effectiveAt: string,
+  trustedTenantId: string,
+  outcome: ResolvedPaymentTermOutcome,
+  exactDefinition: ResolvedPaymentTermDefinition | undefined,
+): PaymentTermReferenceResolution => {
+  const requestedPaymentTermRef = toPaymentTermRef(trustedTenantId, outcome.requestedPaymentTermId);
+  if (
+    exactDefinition === undefined ||
+    !isEquivalentToCanonical(exactDefinition, outcome.definition) ||
+    !supportsExpectedConsumer(exactDefinition, request.expectedConsumerCompatibility)
+  ) {
+    return incompatible(request, requestedPaymentTermRef, outcome.definition);
+  }
+  if (request.paymentTermRef.resourceId === outcome.canonicalPaymentTermId) {
+    return resolutionOutcome(request, trustedTenantId, outcome);
+  }
+  if (Predicate.isTagged(outcome, 'retired')) {
+    return {
+      definition: {
+        ...exactDefinition,
+        lifecycle: outcome.definition.lifecycle,
+        retired: outcome.definition.retired,
+      },
+      kind: 'RETIRED',
+      requestedPaymentTermRef,
+    };
+  }
+  if (effectiveAt < exactDefinition.lifecycle.effectiveFrom) {
+    return broken(
+      requestedPaymentTermRef,
+      `Payment Term is not active before ${exactDefinition.lifecycle.effectiveFrom}`,
+    );
+  }
+  if (exactDefinition.lifecycle.effectiveTo !== null && exactDefinition.lifecycle.effectiveTo <= effectiveAt) {
+    return {
+      definition: exactDefinition,
+      kind: 'RETIRED',
+      requestedPaymentTermRef,
+    };
+  }
+  return {
+    definition: exactDefinition,
+    kind: 'USABLE',
+    requestedPaymentTermRef,
+  };
+};
+
 const preserveRequestedSemanticRevision = (
   request: CurrentPaymentTermsRequest['references'][number],
   effectiveAt: string,
@@ -131,125 +213,63 @@ const preserveRequestedSemanticRevision = (
   outcome: ResolveStoredPaymentTermOutcome,
   services: PaymentTermCatalogPersistence,
 ): Effect.Effect<PaymentTermReferenceResolution, ReadHandlerUnavailable> => {
+  const { expectedSemanticRevisionId } = request;
   if (
-    (outcome._tag !== 'resolved' && outcome._tag !== 'retired') ||
-    request.expectedSemanticRevisionId === undefined ||
-    outcome.definition.semanticRevisionId === request.expectedSemanticRevisionId
+    (!Predicate.isTagged(outcome, 'resolved') && !Predicate.isTagged(outcome, 'retired')) ||
+    expectedSemanticRevisionId === undefined ||
+    outcome.definition.semanticRevisionId === expectedSemanticRevisionId
   ) {
     return Effect.succeed(resolutionOutcome(request, trustedTenantId, outcome));
   }
 
-  const requestedPaymentTermRef = toPaymentTermRef(trustedTenantId, outcome.requestedPaymentTermId);
-  return services.getHistory(outcome.requestedPaymentTermId).pipe(
-    Effect.mapError(unavailable),
-    Effect.map((historyOption) => {
-      const exactDefinition = Option.isSome(historyOption)
-        ? historyOption.value.revisions.find(
-            ({ semanticRevisionId }) => semanticRevisionId === request.expectedSemanticRevisionId,
-          )
-        : undefined;
-      const isEquivalentToCanonical =
-        exactDefinition !== undefined &&
-        exactDefinition.semanticFingerprint === outcome.definition.semanticFingerprint &&
-        exactDefinition.compatibilityId === outcome.definition.compatibilityId;
-      const supportsExpectedConsumer =
-        exactDefinition !== undefined &&
-        (request.expectedConsumerCompatibility === undefined ||
-          exactDefinition.compatibleWith.includes(request.expectedConsumerCompatibility));
-      if (!isEquivalentToCanonical || !supportsExpectedConsumer) {
-        return incompatible(request, requestedPaymentTermRef, outcome.definition);
-      }
-      if (request.paymentTermRef.resourceId === outcome.canonicalPaymentTermId) {
-        return resolutionOutcome(request, trustedTenantId, outcome);
-      }
-      if (outcome._tag === 'retired') {
-        return {
-          definition: {
-            ...exactDefinition,
-            lifecycle: outcome.definition.lifecycle,
-            retired: outcome.definition.retired,
-          },
-          kind: 'RETIRED' as const,
-          requestedPaymentTermRef,
-        };
-      }
-      if (effectiveAt < exactDefinition.lifecycle.effectiveFrom) {
-        return broken(
-          requestedPaymentTermRef,
-          `Payment Term is not active before ${exactDefinition.lifecycle.effectiveFrom}`,
-        );
-      }
-      if (
-        exactDefinition.lifecycle.effectiveTo !== null &&
-        exactDefinition.lifecycle.effectiveTo <= effectiveAt
-      ) {
-        return {
-          definition: exactDefinition,
-          kind: 'RETIRED' as const,
-          requestedPaymentTermRef,
-        };
-      }
-      return {
-        definition: exactDefinition,
-        kind: 'USABLE' as const,
-        requestedPaymentTermRef,
-      };
-    }),
+  return historicalDefinition(services, outcome.requestedPaymentTermId, expectedSemanticRevisionId).pipe(
+    Effect.map((exactDefinition) =>
+      historicalResolution(request, effectiveAt, trustedTenantId, outcome, exactDefinition),
+    ),
   );
 };
 
-export const readCurrentPaymentTerms = Effect.fn('CurrentPaymentTermsRead.read')(
-  function* readCurrentPaymentTerms(
-    input: CurrentPaymentTermsRequest,
-    trustedTenantId: string,
-    services: PaymentTermCatalogPersistence,
-  ) {
-    const page = yield* services
-      .listCurrent(input.limit, DateTime.toDateUtc(DateTime.makeUnsafe(input.at)))
-      .pipe(Effect.mapError(unavailable));
-    const referenceOutcomes = yield* Effect.forEach(
-      input.references,
-      (request) => {
-        if (
-          request.paymentTermRef.tenantId !== trustedTenantId ||
-          !isPersistenceId(request.paymentTermRef.resourceId)
-        ) {
-          return Effect.succeed<PaymentTermReferenceResolution>({
-            kind: 'MISSING',
-            requestedPaymentTermRef: request.paymentTermRef,
-          });
-        }
-        return services
-          .resolveReference(
-            request.paymentTermRef.resourceId,
-            DateTime.toDateUtc(DateTime.makeUnsafe(input.at)),
-            request.expectedCompatibilityId,
-          )
-          .pipe(
-            Effect.mapError(unavailable),
-            Effect.flatMap((outcome) =>
-              preserveRequestedSemanticRevision(
-                request,
-                input.at,
-                trustedTenantId,
-                outcome,
-                services,
-              ),
-            ),
-          );
-      },
-      { concurrency: 1 },
-    );
-    const observedAt = DateTime.formatIso(yield* DateTime.now);
-    return {
-      current: page.definitions,
-      effectiveAt: input.at,
-      observedAt,
-      referenceOutcomes,
-      truncated: page.truncated,
-    };
-  },
-);
+export const readCurrentPaymentTerms = Effect.fn('CurrentPaymentTermsRead.read')(function* readCurrentPaymentTerms(
+  input: CurrentPaymentTermsRequest,
+  trustedTenantId: string,
+  services: PaymentTermCatalogPersistence,
+) {
+  const page = yield* services
+    .listCurrent(input.limit, DateTime.toDateUtc(DateTime.makeUnsafe(input.at)))
+    .pipe(Effect.mapError(unavailable));
+  const referenceOutcomes = yield* Effect.forEach(
+    input.references,
+    (request) => {
+      if (request.paymentTermRef.tenantId !== trustedTenantId || !isPersistenceId(request.paymentTermRef.resourceId)) {
+        return Effect.succeed<PaymentTermReferenceResolution>({
+          kind: 'MISSING',
+          requestedPaymentTermRef: request.paymentTermRef,
+        });
+      }
+      return services
+        .resolveReference(
+          request.paymentTermRef.resourceId,
+          DateTime.toDateUtc(DateTime.makeUnsafe(input.at)),
+          request.expectedCompatibilityId,
+        )
+        .pipe(
+          Effect.mapError(unavailable),
+          Effect.flatMap((outcome) =>
+            preserveRequestedSemanticRevision(request, input.at, trustedTenantId, outcome, services),
+          ),
+        );
+    },
+    { concurrency: 1 },
+  );
+  const observedAt = DateTime.formatIso(yield* DateTime.now);
+  return {
+    current: page.definitions,
+    effectiveAt: input.at,
+    observedAt,
+    referenceOutcomes,
+    truncated: page.truncated,
+  };
+});
 
 export const currentPaymentTermsRead = defineRead(
   {
@@ -261,20 +281,18 @@ export const currentPaymentTermsRead = defineRead(
     },
     inputSchema: CurrentPaymentTermsRequestSchema,
     legalEntityScope: 'required',
-    owningModuleKey: 'payment.term-catalog',
+    owningModuleKey: paymentTermCatalogModuleKey,
     permissionTarget: 'module',
     policies: [],
     readKey: 'payment.term-catalog.api.current-payment-terms',
-    resourcePermission: defineReadResourcePermission<CurrentPaymentTermsRequest>(
-      (_input, scope) => ({
-        permission: 'read',
-        resource: {
-          moduleId: 'payment.term-catalog',
-          resourceId: scope.legalEntityId ?? '',
-          resourceType: 'payment.term-catalog.payment-term-catalog-root',
-        },
-      }),
-    ),
+    resourcePermission: defineReadResourcePermission<CurrentPaymentTermsRequest>((_input, scope) => ({
+      permission: 'read',
+      resource: {
+        moduleId: paymentTermCatalogModuleKey,
+        resourceId: scope.legalEntityId ?? '',
+        resourceType: 'payment.term-catalog.payment-term-catalog-root',
+      },
+    })),
     resultSchema: CurrentPaymentTermsResponseSchema,
     schemaVersion: '1',
   },
@@ -287,6 +305,6 @@ export const currentPaymentTermsRead = defineRead(
         result,
       })),
     ),
-  (transaction, scope) => makePaymentTermCatalogPersistence(transaction, scope),
-  () => ({ kind: 'module', moduleId: 'payment.term-catalog' }),
+  (transaction, scope) => paymentTermCatalogPersistenceForScope(transaction, scope),
+  () => ({ kind: 'module', moduleId: paymentTermCatalogModuleKey }),
 );

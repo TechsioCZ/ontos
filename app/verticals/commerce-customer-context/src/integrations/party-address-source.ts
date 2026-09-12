@@ -8,24 +8,23 @@ import {
 } from '@app/party-registry/api/client';
 import { Effect, Schema } from 'effect';
 
-import type {
-  AddSavedAddressPayload,
-  UpdateSavedAddressPayload,
-} from '../../shared/domain/address-actions.ts';
+import type { AddSavedAddressPayload, UpdateSavedAddressPayload } from '../../shared/domain/address-actions.ts';
 import type { PostalAddress, SavedAddress } from '../../shared/domain/address-book.ts';
 import { AddressBookUnavailable } from '../../shared/domain/address-errors.ts';
 import type { AddressBookDomainErrorSchema } from '../../shared/domain/address-errors.ts';
 import { found, notFound } from '../../shared/domain/address-resolution.ts';
-import type {
-  AddressLookup,
-  ResolvedSavedPostalAddress,
-} from '../../shared/domain/address-resolution.ts';
+import type { AddressLookup, ResolvedSavedPostalAddress } from '../../shared/domain/address-resolution.ts';
 
 type PartyBackedAddressPayload = AddSavedAddressPayload | UpdateSavedAddressPayload;
+type PartyBackedAddressOrigin = Extract<
+  NonNullable<PartyBackedAddressPayload['origin']>,
+  { readonly kind: 'PARTY_BACKED' }
+>;
 type PartyContactPointDetailExecutor = typeof executePartyContactPointDetail;
 type PartyContactPointDetailResponse = Effect.Success<ReturnType<PartyContactPointDetailExecutor>>;
 type PartyContactPointDetailFailure = Effect.Error<ReturnType<PartyContactPointDetailExecutor>>;
 type AddressBookDomainError = typeof AddressBookDomainErrorSchema.Type;
+type SourceIdentity = Pick<PartyBackedAddressOrigin['partyRef'], 'resourceId' | 'tenantId'>;
 
 const unavailable = (cause: unknown): AddressBookUnavailable => {
   const failure = new AddressBookUnavailable({
@@ -79,6 +78,45 @@ const definitivePartyFailure = (cause: unknown): AddressBookDomainError | undefi
 const validatorFailure = (cause: unknown): AddressBookDomainError =>
   definitivePartyFailure(cause) ?? unavailable(cause);
 
+const hasSameSourceIdentity = (left: SourceIdentity, right: SourceIdentity): boolean =>
+  left.tenantId === right.tenantId && left.resourceId === right.resourceId;
+
+const sourceIdentityFailure = (
+  payload: PartyBackedAddressPayload,
+  origin: PartyBackedAddressOrigin,
+  contactPoint: PartyContactPointDetailResponse,
+): AddressBookDomainError | undefined => {
+  if (
+    !hasSameSourceIdentity(contactPoint.contactPointRef, origin.contactPointRef) ||
+    !hasSameSourceIdentity(contactPoint.partyRef, origin.partyRef)
+  ) {
+    return invalid('Party Registry returned a different postal Contact Point source');
+  }
+  const profileTenantId = payload.profile.profileRef.tenantId;
+  if (origin.partyRef.tenantId !== profileTenantId || origin.contactPointRef.tenantId !== profileTenantId) {
+    return invalid('The Party-backed address source belongs to another Tenant');
+  }
+  return undefined;
+};
+
+const isCurrentPostalContactPoint = (contactPoint: PartyContactPointDetailResponse): boolean =>
+  contactPoint.current &&
+  contactPoint.state === 'ACTIVE' &&
+  contactPoint.validTo === null &&
+  contactPoint.value.type === 'ADDRESS';
+
+const postalSourceFailure = (
+  origin: PartyBackedAddressOrigin,
+  contactPoint: PartyContactPointDetailResponse,
+): AddressBookDomainError | undefined => {
+  if (!isCurrentPostalContactPoint(contactPoint)) {
+    return invalid('The Party-backed address source is not a Current postal address');
+  }
+  return contactPoint.revision === origin.sourceRevision
+    ? undefined
+    : invalid('The Party-backed address source revision is stale');
+};
+
 const validateCurrentPostalSource = (
   payload: PartyBackedAddressPayload,
   contactPoint: PartyContactPointDetailResponse,
@@ -87,39 +125,12 @@ const validateCurrentPostalSource = (
   if (origin === undefined || origin.kind !== 'PARTY_BACKED') {
     return Effect.void;
   }
-  const exactContactPoint =
-    contactPoint.contactPointRef.tenantId === origin.contactPointRef.tenantId &&
-    contactPoint.contactPointRef.resourceId === origin.contactPointRef.resourceId;
-  const exactParty =
-    contactPoint.partyRef.tenantId === origin.partyRef.tenantId &&
-    contactPoint.partyRef.resourceId === origin.partyRef.resourceId;
-  if (!exactContactPoint || !exactParty) {
-    return Effect.fail(invalid('Party Registry returned a different postal Contact Point source'));
-  }
-  if (
-    origin.partyRef.tenantId !== payload.profile.profileRef.tenantId ||
-    origin.contactPointRef.tenantId !== payload.profile.profileRef.tenantId
-  ) {
-    return Effect.fail(invalid('The Party-backed address source belongs to another Tenant'));
-  }
-  if (
-    !contactPoint.current ||
-    contactPoint.state !== 'ACTIVE' ||
-    contactPoint.validTo !== null ||
-    contactPoint.value.type !== 'ADDRESS'
-  ) {
-    return Effect.fail(invalid('The Party-backed address source is not a Current postal address'));
-  }
-  return contactPoint.revision === origin.sourceRevision
-    ? Effect.void
-    : Effect.fail(invalid('The Party-backed address source revision is stale'));
+  const failure = sourceIdentityFailure(payload, origin, contactPoint) ?? postalSourceFailure(origin, contactPoint);
+  return failure === undefined ? Effect.void : Effect.fail(failure);
 };
 
 export const partyBackedAddressSourceValidator =
-  (
-    requestCorrelation: string,
-    execute: PartyContactPointDetailExecutor = executePartyContactPointDetail,
-  ) =>
+  (requestCorrelation: string, execute: PartyContactPointDetailExecutor = executePartyContactPointDetail) =>
   (payload: PartyBackedAddressPayload): Effect.Effect<void, AddressBookDomainError> => {
     const { origin } = payload;
     if (origin === undefined || origin.kind !== 'PARTY_BACKED') {
@@ -131,14 +142,11 @@ export const partyBackedAddressSourceValidator =
     );
   };
 
-const postalAddressFromContactPoint = (
-  contactPoint: PartyContactPointDetailResponse,
-): PostalAddress | undefined => {
+const postalAddressFromContactPoint = (contactPoint: PartyContactPointDetailResponse): PostalAddress | undefined => {
   if (contactPoint.value.type !== 'ADDRESS') {
     return undefined;
   }
-  const { addressLine1, addressLine2, city, countryCode, postalCode, region } =
-    contactPoint.value.address;
+  const { addressLine1, addressLine2, city, countryCode, postalCode, region } = contactPoint.value.address;
   if (addressLine1 === null || city === null || postalCode === null) {
     return undefined;
   }
@@ -157,14 +165,47 @@ const postalAddressFromContactPoint = (
   return region === null ? requiredAddress : { ...requiredAddress, region };
 };
 
+const hasResolvablePartyIdentity = (
+  origin: PartyBackedAddressOrigin,
+  contactPoint: PartyContactPointDetailResponse,
+): boolean =>
+  contactPoint.partyRef.tenantId === origin.partyRef.tenantId &&
+  contactPoint.storedPartyRef.tenantId === origin.partyRef.tenantId &&
+  (contactPoint.partyRef.resourceId === origin.partyRef.resourceId ||
+    contactPoint.storedPartyRef.resourceId === origin.partyRef.resourceId);
+
+const resolvePartyBackedPostalAddress = (
+  origin: PartyBackedAddressOrigin,
+  contactPoint: PartyContactPointDetailResponse,
+): AddressLookup<ResolvedSavedPostalAddress> => {
+  const postalAddress = postalAddressFromContactPoint(contactPoint);
+  if (
+    !hasSameSourceIdentity(contactPoint.contactPointRef, origin.contactPointRef) ||
+    !hasResolvablePartyIdentity(origin, contactPoint) ||
+    !isCurrentPostalContactPoint(contactPoint) ||
+    postalAddress === undefined
+  ) {
+    return notFound<ResolvedSavedPostalAddress>();
+  }
+  return found({
+    currentContactPointRef: contactPoint.contactPointRef,
+    currentPartyRef: contactPoint.partyRef,
+    currentSourceRevision: contactPoint.revision,
+    kind: 'PARTY_BACKED' as const,
+    postalAddress,
+  });
+};
+
+const resolverFailure = (
+  error: PartyContactPointDetailFailure,
+): Effect.Effect<AddressLookup<ResolvedSavedPostalAddress>, AddressBookUnavailable> =>
+  definitivePartyFailure(error) === undefined
+    ? Effect.fail(unavailable(error))
+    : Effect.succeed(notFound<ResolvedSavedPostalAddress>());
+
 export const partyBackedPostalAddressResolver =
-  (
-    requestCorrelation: string,
-    execute: PartyContactPointDetailExecutor = executePartyContactPointDetail,
-  ) =>
-  (
-    address: SavedAddress,
-  ): Effect.Effect<AddressLookup<ResolvedSavedPostalAddress>, AddressBookUnavailable> => {
+  (requestCorrelation: string, execute: PartyContactPointDetailExecutor = executePartyContactPointDetail) =>
+  (address: SavedAddress): Effect.Effect<AddressLookup<ResolvedSavedPostalAddress>, AddressBookUnavailable> => {
     if (address.origin.kind === 'COMMERCE_ONLY') {
       return Effect.succeed(
         found({
@@ -175,36 +216,8 @@ export const partyBackedPostalAddressResolver =
     }
     const { origin } = address;
     return execute({ contactPointRef: origin.contactPointRef }, requestCorrelation).pipe(
-      Effect.map((contactPoint) => {
-        const exactContactPoint =
-          contactPoint.contactPointRef.tenantId === origin.contactPointRef.tenantId &&
-          contactPoint.contactPointRef.resourceId === origin.contactPointRef.resourceId;
-        const exactPartyOrCanonicalAlias =
-          contactPoint.partyRef.tenantId === origin.partyRef.tenantId &&
-          contactPoint.storedPartyRef.tenantId === origin.partyRef.tenantId &&
-          (contactPoint.partyRef.resourceId === origin.partyRef.resourceId ||
-            contactPoint.storedPartyRef.resourceId === origin.partyRef.resourceId);
-        const postalAddress = postalAddressFromContactPoint(contactPoint);
-        return exactContactPoint &&
-          exactPartyOrCanonicalAlias &&
-          contactPoint.current &&
-          contactPoint.state === 'ACTIVE' &&
-          contactPoint.validTo === null &&
-          postalAddress !== undefined
-          ? found({
-              currentContactPointRef: contactPoint.contactPointRef,
-              currentPartyRef: contactPoint.partyRef,
-              currentSourceRevision: contactPoint.revision,
-              kind: 'PARTY_BACKED' as const,
-              postalAddress,
-            })
-          : notFound<ResolvedSavedPostalAddress>();
-      }),
-      // oxlint-disable-next-line promise/prefer-await-to-callbacks, promise/prefer-await-to-then -- Effect's typed catch combinator is not Promise chaining.
-      Effect.catch((error: PartyContactPointDetailFailure) =>
-        definitivePartyFailure(error) === undefined
-          ? Effect.fail(unavailable(error))
-          : Effect.succeed(notFound<ResolvedSavedPostalAddress>()),
-      ),
+      Effect.map((contactPoint) => resolvePartyBackedPostalAddress(origin, contactPoint)),
+      // oxlint-disable-next-line promise/prefer-await-to-then -- Effect's typed catch combinator is not Promise chaining.
+      Effect.catch(resolverFailure),
     );
   };

@@ -51,9 +51,8 @@ export type OutboxPayload = typeof OutboxPayloadSchema.Type;
 export type OutboxPayloadJson = typeof OutboxPayloadSchema.Encoded;
 
 /** One schema governs both the committed Domain Event and its linked public Outbox Message. */
-export const PartyMergedEventPayloadSchema = OutboxPayloadSchema;
-export type PartyMergedEventPayload = typeof PartyMergedEventPayloadSchema.Type;
-export type PartyMergedEventPayloadJson = typeof PartyMergedEventPayloadSchema.Encoded;
+export type PartyMergedEventPayload = typeof OutboxPayloadSchema.Type;
+export type PartyMergedEventPayloadJson = typeof OutboxPayloadSchema.Encoded;
 
 export const outboxTopic = 'party.registry.party-merged.v1' as const;
 export const outboxProducerModuleKey = 'party.registry' as const;

@@ -69,11 +69,6 @@ export const executeRemoveCounterpartyPriceGroup = (
 ) =>
   operationGateway.invoke(
     (credential) =>
-      executeRemoveCounterpartyPriceGroupWithAuthorization(
-        payload,
-        credential,
-        requestCorrelation,
-        options,
-      ),
+      executeRemoveCounterpartyPriceGroupWithAuthorization(payload, credential, requestCorrelation, options),
     options.gateway,
   );

@@ -2,11 +2,7 @@
 // @ontos-action-owner commerce.customer-context
 // @ontos-action-slug create-approval-hierarchy
 import type { ActionHandlerContext } from '@app/core-runtime';
-import {
-  defineAction,
-  defineActionBusinessPermission,
-  defineTenantModuleEntrypoint,
-} from '@app/core-runtime';
+import { defineAction, defineActionBusinessPermission, defineTenantModuleEntrypoint } from '@app/core-runtime';
 import { Effect, Schema } from 'effect';
 import {
   CreateApprovalHierarchyPayloadSchema,
@@ -28,17 +24,18 @@ import { purchasingApprovalPolicy } from '../policies/purchasing-approval.policy
 import { createCreateApprovalHierarchyCommerceCustomerContextApprovalHierarchyCreatedV1OutboxMessage as createOutboxMessage } from './create-approval-hierarchy-commerce-customer-context-approval-hierarchy-created-v1.outbox-message.ts';
 
 const MODULE_KEY = 'commerce.customer-context' as const;
+const ApprovalHierarchyOutcomeSchema = Schema.Literals(['CREATED', 'ALREADY_EXISTS']);
 const ApprovalHierarchyCreatedEventSchema = Schema.Struct({
-  outcome: Schema.Literals(['CREATED', 'ALREADY_EXISTS']),
+  completionRule: Schema.Literal('ONE_APPROVER'),
   hierarchyRef: Schema.String,
   hierarchyRevision: Schema.Finite,
-  completionRule: Schema.Literal('ONE_APPROVER'),
+  outcome: ApprovalHierarchyOutcomeSchema,
 });
-export const CreateApprovalHierarchyAuditEvidenceSchema = Schema.Struct({
-  outcome: Schema.Literals(['CREATED', 'ALREADY_EXISTS']),
+const CreateApprovalHierarchyAuditEvidenceSchema = Schema.Struct({
+  completionRule: Schema.Literal('ONE_APPROVER'),
   hierarchyRef: Schema.String,
   hierarchyRevision: Schema.Finite,
-  completionRule: Schema.Literal('ONE_APPROVER'),
+  outcome: ApprovalHierarchyOutcomeSchema,
 });
 type DomainEvents = Readonly<{
   'commerce.customer-context.approval-hierarchy-created.v1': typeof ApprovalHierarchyCreatedEventSchema;
@@ -47,70 +44,65 @@ interface CreateApprovalHierarchyServices {
   readonly workflow: PurchasingApprovalWorkflowService;
 }
 
-const handleCreateApprovalHierarchy = Effect.fn('CreateApprovalHierarchyAction.handle')(
-  function* handle(
-    payload: CreateApprovalHierarchyPayload,
-    context: ActionHandlerContext<DomainEvents, CreateApprovalHierarchyServices>,
+const handleCreateApprovalHierarchy = Effect.fn('CreateApprovalHierarchyAction.handle')(function* handle(
+  payload: CreateApprovalHierarchyPayload,
+  context: ActionHandlerContext<DomainEvents, CreateApprovalHierarchyServices>,
+) {
+  const { hierarchy } = payload;
+  if (
+    hierarchy.hierarchyRef.tenantId !== context.scope.tenantId ||
+    hierarchy.ownerPrincipal.tenantId !== context.scope.tenantId ||
+    hierarchy.ownerPrincipal.principalId !== context.scope.principalId ||
+    !trustedPurchasingContext(hierarchy.selector.counterpartyRef, hierarchy.selector.storefrontId, context.scope)
   ) {
-    const hierarchy = payload.hierarchy;
-    if (
-      hierarchy.hierarchyRef.tenantId !== context.scope.tenantId ||
-      hierarchy.ownerPrincipal.tenantId !== context.scope.tenantId ||
-      hierarchy.ownerPrincipal.principalId !== context.scope.principalId ||
-      !trustedPurchasingContext(
-        hierarchy.selector.counterpartyRef,
-        hierarchy.selector.storefrontId,
-        context.scope,
-      )
-    ) {
-      return yield* new CreateApprovalHierarchyRejected({
-        code: 'PERMISSION_DENIED',
-        reason: 'Hierarchy ownership and storefront scope must match trusted context',
-        retryable: false,
-      });
-    }
-    const workflow = context.services.workflow.forActionInvocation(context.actionInvocationId);
-    const result = yield* workflow.createHierarchy(payload);
-    const storefrontKey = result.hierarchy.selector.storefrontId ?? 'all-storefronts';
-    yield* Effect.all(
-      [
-        recordPurchasingApprovalResourceAccess(context, {
-          queryHash: `purchasing-approval-hierarchy:${result.hierarchy.hierarchyRef.resourceId}:${storefrontKey}`,
-          resourceRef: result.hierarchy.hierarchyRef,
-        }),
-        recordPurchasingApprovalResourceAccess(context, {
-          queryHash: `purchasing-approval-counterparty:${result.hierarchy.selector.counterpartyRef.resourceId}:${storefrontKey}`,
-          resourceRef: result.hierarchy.selector.counterpartyRef,
-        }),
-      ],
-      { concurrency: 1, discard: true },
-    );
-    yield* context.recordAuditEvidence({
-      outcome: result.outcome,
+    return yield* new CreateApprovalHierarchyRejected({
+      code: 'PERMISSION_DENIED',
+      reason: 'Hierarchy ownership and storefront scope must match trusted context',
+      retryable: false,
+    });
+  }
+  const workflow = context.services.workflow.forActionInvocation(context.actionInvocationId);
+  const result = yield* workflow.createHierarchy(payload);
+  const storefrontKey = result.hierarchy.selector.storefrontId ?? 'all-storefronts';
+  yield* Effect.all(
+    [
+      recordPurchasingApprovalResourceAccess(context, {
+        queryHash: `purchasing-approval-hierarchy:${result.hierarchy.hierarchyRef.resourceId}:${storefrontKey}`,
+        resourceRef: result.hierarchy.hierarchyRef,
+      }),
+      recordPurchasingApprovalResourceAccess(context, {
+        queryHash: `purchasing-approval-counterparty:${result.hierarchy.selector.counterpartyRef.resourceId}:${storefrontKey}`,
+        resourceRef: result.hierarchy.selector.counterpartyRef,
+      }),
+    ],
+    { concurrency: 1, discard: true },
+  );
+  const completionRule = result.hierarchy.levels[0]?.completionRule ?? 'ONE_APPROVER';
+  yield* context.recordAuditEvidence({
+    completionRule,
+    hierarchyRef: result.hierarchy.hierarchyRef.resourceId,
+    hierarchyRevision: result.hierarchy.revision,
+    outcome: result.outcome,
+  });
+  if (result.outcome === 'CREATED') {
+    const payloadJson = {
+      completionRule,
       hierarchyRef: result.hierarchy.hierarchyRef.resourceId,
       hierarchyRevision: result.hierarchy.revision,
-      completionRule: result.hierarchy.levels[0]!.completionRule,
+      outcome: result.outcome,
+    };
+    const event = yield* context.addDomainEvent({
+      eventType: 'commerce.customer-context.approval-hierarchy-created.v1',
+      payloadJson,
+      producerModuleKey: MODULE_KEY,
+      subjectModuleKey: MODULE_KEY,
+      subjectResourceId: result.hierarchy.hierarchyRef.resourceId,
+      subjectResourceType: result.hierarchy.hierarchyRef.resourceType,
     });
-    if (result.outcome === 'CREATED') {
-      const payloadJson = {
-        outcome: result.outcome,
-        hierarchyRef: result.hierarchy.hierarchyRef.resourceId,
-        hierarchyRevision: result.hierarchy.revision,
-        completionRule: result.hierarchy.levels[0]!.completionRule,
-      };
-      const event = yield* context.addDomainEvent({
-        eventType: 'commerce.customer-context.approval-hierarchy-created.v1',
-        payloadJson,
-        producerModuleKey: MODULE_KEY,
-        subjectModuleKey: MODULE_KEY,
-        subjectResourceId: result.hierarchy.hierarchyRef.resourceId,
-        subjectResourceType: result.hierarchy.hierarchyRef.resourceType,
-      });
-      yield* context.addOutboxMessage(event, createOutboxMessage({ data: payloadJson }));
-    }
-    return result satisfies CreateApprovalHierarchyResult;
-  },
-);
+    yield* context.addOutboxMessage(event, createOutboxMessage({ data: payloadJson }));
+  }
+  return result satisfies CreateApprovalHierarchyResult;
+});
 
 export const createApprovalHierarchyAction = defineAction(
   {
@@ -121,19 +113,17 @@ export const createApprovalHierarchyAction = defineAction(
     actionKey: 'commerce.customer-context.create-approval-hierarchy',
     auditEvidenceSchema: CreateApprovalHierarchyAuditEvidenceSchema,
     auditProfile: 'sensitive',
-    businessPermission: defineActionBusinessPermission(
-      (payload: CreateApprovalHierarchyPayload, scope) =>
-        purchasingApprovalPermissionTarget({
-          permission: 'counterparty.approval_hierarchy.manage',
-          counterpartyRef: payload.hierarchy.selector.counterpartyRef,
-          storefrontId: payload.hierarchy.selector.storefrontId,
-          scope,
-        }),
+    businessPermission: defineActionBusinessPermission((payload: CreateApprovalHierarchyPayload, scope) =>
+      purchasingApprovalPermissionTarget({
+        counterpartyRef: payload.hierarchy.selector.counterpartyRef,
+        permission: 'counterparty.approval_hierarchy.manage',
+        scope,
+        storefrontId: payload.hierarchy.selector.storefrontId,
+      }),
     ),
     domainErrorSchema: CreateApprovalHierarchyRejected,
     domainEvents: {
-      'commerce.customer-context.approval-hierarchy-created.v1':
-        ApprovalHierarchyCreatedEventSchema,
+      'commerce.customer-context.approval-hierarchy-created.v1': ApprovalHierarchyCreatedEventSchema,
     },
     entrypoint: defineTenantModuleEntrypoint({
       access: 'write',
@@ -152,15 +142,5 @@ export const createApprovalHierarchyAction = defineAction(
   },
   handleCreateApprovalHierarchy,
   (transaction, scope) =>
-    purchasingApprovalWorkflowForScope(transaction, scope).pipe(
-      Effect.map((workflow) => ({ workflow })),
-    ),
+    purchasingApprovalWorkflowForScope(transaction, scope).pipe(Effect.map((workflow) => ({ workflow }))),
 );
-
-// <generated-outbox-message-exports>
-export { createCreateApprovalHierarchyCommerceCustomerContextApprovalHierarchyCreatedV1OutboxMessage } from './create-approval-hierarchy-commerce-customer-context-approval-hierarchy-created-v1.outbox-message.ts';
-export { CreateApprovalHierarchyCommerceCustomerContextApprovalHierarchyCreatedV1OutboxPayloadSchema } from './create-approval-hierarchy-commerce-customer-context-approval-hierarchy-created-v1.outbox-message.ts';
-export { CreateApprovalHierarchyCommerceCustomerContextApprovalHierarchyCreatedV1OutboxProducerModuleKey } from './create-approval-hierarchy-commerce-customer-context-approval-hierarchy-created-v1.outbox-message.ts';
-export { CreateApprovalHierarchyCommerceCustomerContextApprovalHierarchyCreatedV1OutboxTopic } from './create-approval-hierarchy-commerce-customer-context-approval-hierarchy-created-v1.outbox-message.ts';
-export type { CreateApprovalHierarchyCommerceCustomerContextApprovalHierarchyCreatedV1OutboxPayload } from './create-approval-hierarchy-commerce-customer-context-approval-hierarchy-created-v1.outbox-message.ts';
-// </generated-outbox-message-exports>

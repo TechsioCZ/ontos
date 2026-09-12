@@ -3,7 +3,7 @@
 // @ontos-action-http-slug archive-customer-group
 // oxlint-disable sonarjs/function-name -- Effect Match.tags requires owner-declared tag keys; remove-when: sonarjs accepts discriminant-map properties.
 import type { ActionCoreError } from '@app/core-runtime';
-import { Effect, HttpApiMiddleware } from '@modern-js/plugin-bff/effect-edge';
+import { Effect, HttpApiMiddleware } from '@modern-js/bff-effect/effect-edge';
 import { Match, Schema } from 'effect';
 import {
   ArchiveCustomerGroupActionAlreadyCommittedProblemSchema,
@@ -129,14 +129,12 @@ const mapDomainProblem = (error: DomainError): ArchiveCustomerGroupActionProblem
     Match.tags({
       CustomerGroupLifecycleConflict: () =>
         archiveCustomerGroupActionProblem.conflict('customer_group_lifecycle_conflict'),
-      CustomerGroupNotFound: () =>
-        archiveCustomerGroupActionProblem.notFound('customer_group_not_found'),
+      CustomerGroupNotFound: () => archiveCustomerGroupActionProblem.notFound('customer_group_not_found'),
       CustomerGroupPersistenceUnavailable: () =>
         archiveCustomerGroupActionProblem.unavailable('customer_group_persistence_unavailable'),
       CustomerGroupRevisionConflict: () =>
         archiveCustomerGroupActionProblem.conflict('customer_group_revision_conflict'),
-      CustomerGroupScopeMismatch: () =>
-        archiveCustomerGroupActionProblem.forbidden('customer_group_scope_mismatch'),
+      CustomerGroupScopeMismatch: () => archiveCustomerGroupActionProblem.forbidden('customer_group_scope_mismatch'),
     }),
     Match.exhaustive,
   );
@@ -168,37 +166,24 @@ const mapCoreProblem = (error: ActionCoreError): ArchiveCustomerGroupActionProbl
         }),
       ActionHandlerExecutionError: archiveCustomerGroupActionProblem.internal,
       ActionIdempotencyKeyRequired: archiveCustomerGroupActionProblem.precondition,
-      ActionInvocationNotFound: (failure) =>
-        archiveCustomerGroupActionProblem.notFound(failure.code),
-      ActionInvocationPersistenceError: (failure) =>
-        archiveCustomerGroupActionProblem.unavailable(failure.code),
-      ActionInvocationStateError: (failure) =>
-        archiveCustomerGroupActionProblem.conflict(failure.code),
+      ActionInvocationNotFound: (failure) => archiveCustomerGroupActionProblem.notFound(failure.code),
+      ActionInvocationPersistenceError: (failure) => archiveCustomerGroupActionProblem.unavailable(failure.code),
+      ActionInvocationStateError: (failure) => archiveCustomerGroupActionProblem.conflict(failure.code),
       ActionPayloadValidationError: archiveCustomerGroupActionProblem.invalid,
-      ActionPermissionCheckError: (failure) =>
-        archiveCustomerGroupActionProblem.unavailable(failure.code),
-      ActionPermissionDenied: (failure) =>
-        archiveCustomerGroupActionProblem.forbidden(failure.code),
+      ActionPermissionCheckError: (failure) => archiveCustomerGroupActionProblem.unavailable(failure.code),
+      ActionPermissionDenied: (failure) => archiveCustomerGroupActionProblem.forbidden(failure.code),
       ActionPolicyDenied: (failure) => archiveCustomerGroupActionProblem.ineligible(failure.code),
-      ActionPolicyEvaluationError: (failure) =>
-        archiveCustomerGroupActionProblem.unavailable(failure.code),
-      ActionRequestHashConflict: (failure) =>
-        archiveCustomerGroupActionProblem.conflict(failure.code),
+      ActionPolicyEvaluationError: (failure) => archiveCustomerGroupActionProblem.unavailable(failure.code),
+      ActionRequestHashConflict: (failure) => archiveCustomerGroupActionProblem.conflict(failure.code),
       ActionResultValidationError: archiveCustomerGroupActionProblem.internal,
-      ActionTransactionError: (failure) =>
-        archiveCustomerGroupActionProblem.unavailable(failure.code),
+      ActionTransactionError: (failure) => archiveCustomerGroupActionProblem.unavailable(failure.code),
       ActionTrustedContextValidationError: archiveCustomerGroupActionProblem.authentication,
-      ModuleStateCheckUnavailableError: (failure) =>
-        archiveCustomerGroupActionProblem.unavailable(failure.code),
-      ModuleStateDeniedError: (failure) =>
-        archiveCustomerGroupActionProblem.forbidden(failure.code),
+      ModuleStateCheckUnavailableError: (failure) => archiveCustomerGroupActionProblem.unavailable(failure.code),
+      ModuleStateDeniedError: (failure) => archiveCustomerGroupActionProblem.forbidden(failure.code),
       OperationAuthenticationRequired: archiveCustomerGroupActionProblem.authentication,
-      OperationContextDenied: (failure) =>
-        archiveCustomerGroupActionProblem.forbidden(failure.code),
-      OperationContextInvalid: (failure) =>
-        archiveCustomerGroupActionProblem.forbidden(failure.code),
-      OperationContextUnavailable: (failure) =>
-        archiveCustomerGroupActionProblem.unavailable(failure.code),
+      OperationContextDenied: (failure) => archiveCustomerGroupActionProblem.forbidden(failure.code),
+      OperationContextInvalid: (failure) => archiveCustomerGroupActionProblem.forbidden(failure.code),
+      OperationContextUnavailable: (failure) => archiveCustomerGroupActionProblem.unavailable(failure.code),
     }),
     Match.exhaustive,
   );
@@ -206,10 +191,9 @@ const mapCoreProblem = (error: ActionCoreError): ArchiveCustomerGroupActionProbl
 const isDomainError = Schema.is(archiveCustomerGroupAction.descriptor.domainErrorSchema);
 export const mapArchiveCustomerGroupActionProblem = (
   error: ActionCoreError | DomainError,
-): ArchiveCustomerGroupActionProblem =>
-  isDomainError(error) ? mapDomainProblem(error) : mapCoreProblem(error);
+): ArchiveCustomerGroupActionProblem => (isDomainError(error) ? mapDomainProblem(error) : mapCoreProblem(error));
 
-export const archiveCustomerGroupActionSchemaErrorLive =
-  HttpApiMiddleware.layerSchemaErrorTransform(ArchiveCustomerGroupActionSchemaErrorMiddleware, () =>
-    Effect.fail(archiveCustomerGroupActionProblem.invalid()),
-  );
+export const archiveCustomerGroupActionSchemaErrorLive = HttpApiMiddleware.layerSchemaErrorTransform(
+  ArchiveCustomerGroupActionSchemaErrorMiddleware,
+  () => Effect.fail(archiveCustomerGroupActionProblem.invalid()),
+);

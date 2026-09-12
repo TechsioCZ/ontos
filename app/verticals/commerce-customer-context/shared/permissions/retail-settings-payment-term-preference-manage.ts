@@ -10,8 +10,7 @@ export const retailSettingsPaymentTermPreferenceManagePermission = defineBusines
   customerDelegable: false,
   internalGrantable: true,
   key: 'retail.settings.payment_term_preference.manage',
-  meaning:
-    'Select or clear a preference among Payment Terms already entitled to the bound profile.',
+  meaning: 'Select or clear a preference among Payment Terms already entitled to the bound profile.',
   owningCapability: 'commerce.customer-context.customer-payment-terms',
   protectedEntrypoints: ['commerce.customer-context.change-retail-payment-term-preference'],
   schemaVersion: '1',

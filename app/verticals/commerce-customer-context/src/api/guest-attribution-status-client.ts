@@ -21,7 +21,7 @@ type GuestAttributionStatusOperationInvocation = readonly [
 ];
 
 const guestAttributionStatusClient = (
-  credential: Redacted.Redacted<string>,
+  credential: Redacted.Redacted,
   requestCorrelation: string,
   options: GuestAttributionStatusClientOptions,
 ) =>
@@ -40,9 +40,7 @@ export const executeGuestAttributionStatusWithAuthorization = (
   ...[credential, requestCorrelation, options = {}]: GuestAttributionStatusAuthorizedInvocation
 ) =>
   guestAttributionStatusClient(Redacted.make(credential), requestCorrelation, options).pipe(
-    Effect.flatMap((client) =>
-      client.guestAttributionStatus.execute({ headers: {}, params: {}, payload, query: {} }),
-    ),
+    Effect.flatMap((client) => client.guestAttributionStatus.execute({ headers: {}, params: {}, payload, query: {} })),
   );
 
 export const executeGuestAttributionStatus = (
@@ -50,10 +48,5 @@ export const executeGuestAttributionStatus = (
   ...[requestCorrelation, options = {}]: GuestAttributionStatusOperationInvocation
 ) =>
   operationGateway.invoke((credential) =>
-    executeGuestAttributionStatusWithAuthorization(
-      payload,
-      credential,
-      requestCorrelation,
-      options,
-    ),
+    executeGuestAttributionStatusWithAuthorization(payload, credential, requestCorrelation, options),
   );

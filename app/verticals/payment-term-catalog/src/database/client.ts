@@ -42,44 +42,37 @@ export const acquirePaymentTermCatalogPool = <Resource extends PaymentTermCatalo
   );
 
 export type PaymentTermCatalogPoolFactory = (configuration: PoolConfig) => Pool;
-const defaultPoolFactory: PaymentTermCatalogPoolFactory = (configuration) =>
-  new Pool(configuration);
+const defaultPoolFactory: PaymentTermCatalogPoolFactory = (configuration) => new Pool(configuration);
 
 type ContextServiceContract<Service> =
   Service extends Context.Key<infer _Identifier, infer Contract> ? Contract : never;
 
-export const makePaymentTermCatalogDatabase = Effect.fn('PaymentTermCatalogDatabase.make')(
-  function* makeDatabase(
-    configuration: ContextServiceContract<typeof DatabaseConfig> & {
-      readonly poolDeadlines?: Partial<DatabasePoolDeadlines>;
-    },
-    poolFactory: PaymentTermCatalogPoolFactory = defaultPoolFactory,
-  ): Effect.fn.Return<
-    ContextServiceContract<typeof PaymentTermCatalogDatabase>,
-    PaymentTermCatalogDatabaseConnectionError,
-    Scope.Scope
-  > {
-    const poolConfiguration = yield* configureDatabasePool(
-      Redacted.make(configuration.connectionString),
-      configuration.poolDeadlines,
-    ).pipe(
-      Effect.mapError(
-        (error) => new PaymentTermCatalogDatabaseConnectionError({ reason: error.reason }),
-      ),
-    );
-    const pool = yield* acquirePaymentTermCatalogPool(() => poolFactory(poolConfiguration));
-    const reactivity = yield* Reactivity.make;
-    const client = yield* PgClient.fromPool({ acquire: Effect.succeed(pool) }).pipe(
-      Effect.provideService(Reactivity.Reactivity, reactivity),
-      Effect.mapError(connectionFailure),
-    );
-    return {
-      executor: yield* makeWithDefaults({ relations: paymentTermCatalogRelations }).pipe(
-        Effect.provideService(PgClient.PgClient, client),
-      ),
-    };
+export const makePaymentTermCatalogDatabase = Effect.fn('PaymentTermCatalogDatabase.make')(function* makeDatabase(
+  configuration: ContextServiceContract<typeof DatabaseConfig> & {
+    readonly poolDeadlines?: Partial<DatabasePoolDeadlines>;
   },
-);
+  poolFactory: PaymentTermCatalogPoolFactory = defaultPoolFactory,
+): Effect.fn.Return<
+  ContextServiceContract<typeof PaymentTermCatalogDatabase>,
+  PaymentTermCatalogDatabaseConnectionError,
+  Scope.Scope
+> {
+  const poolConfiguration = yield* configureDatabasePool(
+    Redacted.make(configuration.connectionString),
+    configuration.poolDeadlines,
+  ).pipe(Effect.mapError((error) => new PaymentTermCatalogDatabaseConnectionError({ reason: error.reason })));
+  const pool = yield* acquirePaymentTermCatalogPool(() => poolFactory(poolConfiguration));
+  const reactivity = yield* Reactivity.make;
+  const client = yield* PgClient.fromPool({ acquire: Effect.succeed(pool) }).pipe(
+    Effect.provideService(Reactivity.Reactivity, reactivity),
+    Effect.mapError(connectionFailure),
+  );
+  return {
+    executor: yield* makeWithDefaults({ relations: paymentTermCatalogRelations }).pipe(
+      Effect.provideService(PgClient.PgClient, client),
+    ),
+  };
+});
 
 export const PaymentTermCatalogDatabaseLive = Layer.effect(
   PaymentTermCatalogDatabase,

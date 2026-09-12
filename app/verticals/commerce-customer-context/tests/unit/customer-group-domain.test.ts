@@ -40,10 +40,7 @@ const profile: CommerceCustomerProfileSubject = {
   },
 };
 
-const createGroup = (
-  ref = groupRef,
-  recordedAt = '2026-01-01T00:00:00.000Z',
-): CommerceCustomerGroup =>
+const createGroup = (ref = groupRef, recordedAt = '2026-01-01T00:00:00.000Z'): CommerceCustomerGroup =>
   makeCustomerGroup({
     businessCode: ref === groupRef ? 'DEALERS' : 'STRATEGIC_CUSTOMERS',
     description: 'Staff-facing explanation of the approved segment.',
@@ -87,6 +84,24 @@ const isNewGroupRequired = (outcome: ReturnType<typeof reviseCustomerGroup>): bo
     Match.orElse(() => false),
   );
 
+const archivedGroupFixture = (): CommerceCustomerGroup => {
+  const archived = archiveCustomerGroup(createGroup(), [], {
+    effectiveAt: '2026-04-01T00:00:00.000Z',
+    expectedRevision: 1,
+    reason: 'Segment retired',
+    recordedAt: '2026-04-01T00:00:00.000Z',
+  });
+  const archivedGroup = Match.value(archived).pipe(
+    Match.tag('archived', ({ group }) => group),
+    Match.orElse(() => null),
+  );
+  expect(archivedGroup).not.toBeNull();
+  if (archivedGroup === null) {
+    throw new Error('fixture must archive');
+  }
+  return archivedGroup;
+};
+
 describe('Commerce Customer Group domain', () => {
   it('keeps identity and criteria stable while appending an auditable presentation revision', () => {
     const original = createGroup();
@@ -108,9 +123,7 @@ describe('Commerce Customer Group domain', () => {
     expect(updated?.group.groupRef).toEqual(groupRef);
     expect(updated?.group.currentDefinition.revision).toBe(2);
     expect(updated?.group.currentDefinition.changeKind).toBe('DESCRIPTION_CLARIFICATION');
-    expect(updated?.group.currentDefinition.membershipCriteria).toBe(
-      original.currentDefinition.membershipCriteria,
-    );
+    expect(updated?.group.currentDefinition.membershipCriteria).toBe(original.currentDefinition.membershipCriteria);
     expect(updated?.group.definitionHistory).toHaveLength(2);
     expect(updated?.group.definitionHistory[0]).toEqual(original.currentDefinition);
   });
@@ -194,16 +207,8 @@ describe('Commerce Customer Group domain', () => {
   it('allows concurrent memberships in different groups but rejects overlap for one pair', () => {
     const first = membership('40000000-0000-4000-8000-000000000001');
     const duplicate = membership('40000000-0000-4000-8000-000000000002');
-    const overlap = membership(
-      '40000000-0000-4000-8000-000000000003',
-      groupRef,
-      '2026-03-01T00:00:00.000Z',
-    );
-    const anotherGroup = membership(
-      '40000000-0000-4000-8000-000000000004',
-      otherGroupRef,
-      '2026-03-01T00:00:00.000Z',
-    );
+    const overlap = membership('40000000-0000-4000-8000-000000000003', groupRef, '2026-03-01T00:00:00.000Z');
+    const anotherGroup = membership('40000000-0000-4000-8000-000000000004', otherGroupRef, '2026-03-01T00:00:00.000Z');
 
     expect(
       Match.value(assignCustomerGroupMembership(createGroup(), 'ACTIVE', [first], duplicate)).pipe(
@@ -218,9 +223,7 @@ describe('Commerce Customer Group domain', () => {
       ),
     ).toBe(true);
     expect(
-      Match.value(
-        assignCustomerGroupMembership(createGroup(otherGroupRef), 'ACTIVE', [first], anotherGroup),
-      ).pipe(
+      Match.value(assignCustomerGroupMembership(createGroup(otherGroupRef), 'ACTIVE', [first], anotherGroup)).pipe(
         Match.tag('assigned', () => true),
         Match.orElse(() => false),
       ),
@@ -258,16 +261,8 @@ describe('Commerce Customer Group domain', () => {
   });
 
   it('archives atomically by ending effective memberships and cancelling future periods', () => {
-    const current = membership(
-      '40000000-0000-4000-8000-000000000001',
-      groupRef,
-      '2026-02-01T00:00:00.000Z',
-    );
-    const future = membership(
-      '40000000-0000-4000-8000-000000000002',
-      groupRef,
-      '2026-05-01T00:00:00.000Z',
-    );
+    const current = membership('40000000-0000-4000-8000-000000000001', groupRef, '2026-02-01T00:00:00.000Z');
+    const future = membership('40000000-0000-4000-8000-000000000002', groupRef, '2026-05-01T00:00:00.000Z');
     const result = archiveCustomerGroup(createGroup(), [current, future], {
       effectiveAt: '2026-04-01T00:00:00.000Z',
       expectedRevision: 1,
@@ -286,20 +281,7 @@ describe('Commerce Customer Group domain', () => {
   });
 
   it('reactivates the same identity without restoring memberships', () => {
-    const archived = archiveCustomerGroup(createGroup(), [], {
-      effectiveAt: '2026-04-01T00:00:00.000Z',
-      expectedRevision: 1,
-      reason: 'Segment retired',
-      recordedAt: '2026-04-01T00:00:00.000Z',
-    });
-    const archivedGroup = Match.value(archived).pipe(
-      Match.tag('archived', ({ group }) => group),
-      Match.orElse(() => null),
-    );
-    expect(archivedGroup).not.toBeNull();
-    if (archivedGroup === null) {
-      throw new Error('fixture must archive');
-    }
+    const archivedGroup = archivedGroupFixture();
     const result = reactivateCustomerGroup(archivedGroup, {
       effectiveAt: '2026-06-01T00:00:00.000Z',
       expectedRevision: 2,
@@ -316,20 +298,7 @@ describe('Commerce Customer Group domain', () => {
   });
 
   it('treats the same archive state as idempotent even with the original revision', () => {
-    const first = archiveCustomerGroup(createGroup(), [], {
-      effectiveAt: '2026-04-01T00:00:00.000Z',
-      expectedRevision: 1,
-      reason: 'Segment retired',
-      recordedAt: '2026-04-01T00:00:00.000Z',
-    });
-    const archivedGroup = Match.value(first).pipe(
-      Match.tag('archived', ({ group }) => group),
-      Match.orElse(() => null),
-    );
-    expect(archivedGroup).not.toBeNull();
-    if (archivedGroup === null) {
-      throw new Error('fixture must archive');
-    }
+    const archivedGroup = archivedGroupFixture();
     const replay = archiveCustomerGroup(archivedGroup, [], {
       effectiveAt: '2026-04-01T00:00:00.000Z',
       expectedRevision: 1,
@@ -345,11 +314,7 @@ describe('Commerce Customer Group domain', () => {
   });
 
   it('cancels never-effective future memberships without inventing effective history', () => {
-    const future = membership(
-      '40000000-0000-4000-8000-000000000001',
-      groupRef,
-      '2026-05-01T00:00:00.000Z',
-    );
+    const future = membership('40000000-0000-4000-8000-000000000001', groupRef, '2026-05-01T00:00:00.000Z');
     const result = removeCustomerGroupMembership(future, {
       effectiveAt: '2026-04-10T00:00:00.000Z',
       reason: 'Assignment withdrawn',
@@ -374,11 +339,7 @@ describe('Commerce Customer Group domain', () => {
   });
 
   it('treats an exact cancelled-period reassignment as replay instead of resurrecting it', () => {
-    const future = membership(
-      '40000000-0000-4000-8000-000000000001',
-      groupRef,
-      '2026-05-01T00:00:00.000Z',
-    );
+    const future = membership('40000000-0000-4000-8000-000000000001', groupRef, '2026-05-01T00:00:00.000Z');
     const removal = removeCustomerGroupMembership(future, {
       effectiveAt: '2026-04-10T00:00:00.000Z',
       reason: 'Assignment withdrawn',
@@ -402,11 +363,7 @@ describe('Commerce Customer Group domain', () => {
   });
 
   it('replays an exact archived cancellation before mutable group and profile lifecycle gates', () => {
-    const future = membership(
-      '40000000-0000-4000-8000-000000000001',
-      groupRef,
-      '2026-05-01T00:00:00.000Z',
-    );
+    const future = membership('40000000-0000-4000-8000-000000000001', groupRef, '2026-05-01T00:00:00.000Z');
     const archive = archiveCustomerGroup(createGroup(), [future], {
       effectiveAt: '2026-04-10T00:00:00.000Z',
       expectedRevision: 1,
@@ -421,12 +378,7 @@ describe('Commerce Customer Group domain', () => {
     if (archived === null) {
       throw new Error('fixture must archive');
     }
-    const replay = assignCustomerGroupMembership(
-      archived.group,
-      'SUSPENDED',
-      archived.memberships,
-      future,
-    );
+    const replay = assignCustomerGroupMembership(archived.group, 'SUSPENDED', archived.memberships, future);
     expect(
       Match.value(replay).pipe(
         Match.tag('already_assigned', ({ membership: value }) => value.state),
@@ -436,11 +388,7 @@ describe('Commerce Customer Group domain', () => {
   });
 
   it('allows a future assignment to become effective before its scheduled end', () => {
-    const future = membership(
-      '40000000-0000-4000-8000-000000000001',
-      groupRef,
-      '2026-05-01T00:00:00.000Z',
-    );
+    const future = membership('40000000-0000-4000-8000-000000000001', groupRef, '2026-05-01T00:00:00.000Z');
     const result = removeCustomerGroupMembership(future, {
       effectiveAt: '2026-06-01T00:00:00.000Z',
       reason: 'Membership scheduled to end',

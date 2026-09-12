@@ -47,6 +47,8 @@ export interface PriceGroupRoutineInvoker {
 }
 
 /* eslint-disable effect-native/no-nullable-schema-field -- PostgreSQL routine object rows intentionally preserve SQL NULL as a fail-closed transport sentinel. */
+const AssignmentLifecycleSchema = Schema.Literals(['ACTIVE', 'CANCELLED', 'ENDED']);
+
 const NullableAssignmentFields = {
   assignment_id: Schema.NullOr(Schema.String),
   catalog_revision: Schema.NullOr(Schema.Int),
@@ -55,7 +57,7 @@ const NullableAssignmentFields = {
   definition_revision: Schema.NullOr(Schema.Int),
   effective_from: Schema.NullOr(Schema.Union([Schema.Date, Schema.String])),
   effective_to: Schema.NullOr(Schema.Union([Schema.Date, Schema.String])),
-  lifecycle: Schema.NullOr(Schema.Literals(['ACTIVE', 'CANCELLED', 'ENDED'])),
+  lifecycle: Schema.NullOr(AssignmentLifecycleSchema),
   price_group_module_id: Schema.NullOr(Schema.String),
   price_group_resource_id: Schema.NullOr(Schema.String),
   price_group_resource_type: Schema.NullOr(Schema.String),
@@ -67,9 +69,7 @@ const NullableAssignmentFields = {
 const ProfileInspectionRowSchema = Schema.Struct({
   counterparty_resource_id: Schema.NullOr(Schema.String),
   outcome: Schema.Literals(['CURRENT', 'NOT_FOUND']),
-  profile_state: Schema.NullOr(
-    Schema.Literals(['ACTIVE', 'ARCHIVED', 'RECONCILIATION_REQUIRED', 'SUSPENDED']),
-  ),
+  profile_state: Schema.NullOr(Schema.Literals(['ACTIVE', 'ARCHIVED', 'RECONCILIATION_REQUIRED', 'SUSPENDED'])),
   revision: Schema.Int,
 });
 const AssignmentListRowSchema = Schema.Struct({
@@ -91,9 +91,7 @@ const AssignmentMutationRowSchema = Schema.Struct({
     'SCOPE_MISMATCH',
     'UNCHANGED',
   ]),
-  profile_state: Schema.NullOr(
-    Schema.Literals(['ARCHIVED', 'RECONCILIATION_REQUIRED', 'SUSPENDED']),
-  ),
+  profile_state: Schema.NullOr(Schema.Literals(['ARCHIVED', 'RECONCILIATION_REQUIRED', 'SUSPENDED'])),
   replaced_assignment_id: Schema.NullOr(Schema.String),
 });
 const RemovalMutationRowSchema = Schema.Struct({
@@ -256,9 +254,7 @@ const persistenceUnavailable = (reason: string) =>
   });
 
 const routinePersistenceUnavailable = (failure: ScopedRoutineInvocationError) =>
-  persistenceUnavailable(
-    `The scoped Price Group Assignment routine failed (${failure.routineKey})`,
-  );
+  persistenceUnavailable(`The scoped Price Group Assignment routine failed (${failure.routineKey})`);
 
 const profileUnavailable = (reason: string) =>
   new CustomerPriceGroupProfileUnavailable({
@@ -269,11 +265,9 @@ const profileUnavailable = (reason: string) =>
 const routineProfileUnavailable = (failure: ScopedRoutineInvocationError) =>
   profileUnavailable(`The scoped Customer Profile inspection failed (${failure.routineKey})`);
 
-const profileKind = (profile: CommerceCustomerProfileTarget): 'COUNTERPARTY' | 'RETAIL' =>
-  profile.kind;
+const profileKind = (profile: CommerceCustomerProfileTarget): 'COUNTERPARTY' | 'RETAIL' => profile.kind;
 
-const counterpartyId = (counterpartyRef?: CounterpartyRef): string | null =>
-  counterpartyRef?.resourceId ?? null;
+const counterpartyId = (counterpartyRef?: CounterpartyRef): string | null => counterpartyRef?.resourceId ?? null;
 
 const timestamp = (value: Date | string): string | null =>
   Option.match(DateTime.make(value), {
@@ -283,65 +277,72 @@ const timestamp = (value: Date | string): string | null =>
 
 type NullableAssignmentRow = Pick<AssignmentListRow, keyof typeof NullableAssignmentFields>;
 
+const CompleteAssignmentRowSchema = Schema.Struct({
+  assignment_id: Schema.String,
+  catalog_revision: Schema.Int,
+  compatibility_contract_id: Schema.String,
+  compatibility_contract_revision: Schema.Int,
+  definition_revision: Schema.Int,
+  effective_from: Schema.Union([Schema.Date, Schema.String]),
+  // oxlint-disable-next-line effect-native/no-nullable-schema-field -- PostgreSQL routine rows intentionally preserve SQL NULL for an absent open-ended assignment boundary.
+  effective_to: Schema.NullOr(Schema.Union([Schema.Date, Schema.String])),
+  lifecycle: AssignmentLifecycleSchema,
+  price_group_module_id: Schema.String,
+  price_group_resource_id: Schema.String,
+  price_group_resource_type: Schema.String,
+  reason: Schema.String,
+  recorded_at: Schema.Union([Schema.Date, Schema.String]),
+  revision: Schema.Int,
+});
+type CompleteAssignmentRow = typeof CompleteAssignmentRowSchema.Type;
+
+const decodeCompleteAssignmentRow = (row: NullableAssignmentRow): Option.Option<CompleteAssignmentRow> =>
+  Schema.decodeUnknownOption(CompleteAssignmentRowSchema)(row);
+
 const assignmentFromRow = (
   row: NullableAssignmentRow,
   profile: CommerceCustomerProfileTarget,
 ): Effect.Effect<CustomerPriceGroupAssignment, CustomerPriceGroupPersistenceUnavailable> => {
-  const effectiveFrom = row.effective_from === null ? null : timestamp(row.effective_from);
-  const effectiveTo = row.effective_to === null ? null : timestamp(row.effective_to);
-  const recordedAt = row.recorded_at === null ? null : timestamp(row.recorded_at);
-  if (
-    row.assignment_id === null ||
-    row.catalog_revision === null ||
-    row.compatibility_contract_id === null ||
-    row.compatibility_contract_revision === null ||
-    row.definition_revision === null ||
-    effectiveFrom === null ||
-    effectiveTo === undefined ||
-    row.lifecycle === null ||
-    row.price_group_module_id === null ||
-    row.price_group_resource_id === null ||
-    row.price_group_resource_type === null ||
-    row.reason === null ||
-    recordedAt === null ||
-    row.revision === null
-  ) {
-    return Effect.fail(
-      persistenceUnavailable('The Price Group Assignment routine returned an incomplete row'),
-    );
+  const completeRow = Option.getOrUndefined(decodeCompleteAssignmentRow(row));
+  if (completeRow === undefined) {
+    return Effect.fail(persistenceUnavailable('The Price Group Assignment routine returned an incomplete row'));
+  }
+  const effectiveFrom = timestamp(completeRow.effective_from);
+  const effectiveTo = completeRow.effective_to === null ? null : timestamp(completeRow.effective_to);
+  const recordedAt = timestamp(completeRow.recorded_at);
+  if (effectiveFrom === null || recordedAt === null) {
+    return Effect.fail(persistenceUnavailable('The Price Group Assignment routine returned an incomplete row'));
   }
   const assignment = {
     assignmentRef: {
       moduleId: CUSTOMER_CONTEXT_MODULE_ID,
-      resourceId: row.assignment_id,
+      resourceId: completeRow.assignment_id,
       resourceType: 'commerce.customer-context.customer-price-group-assignment',
       tenantId: profile.tenantId,
     },
     compatibility: {
-      catalogRevision: row.catalog_revision,
-      contractId: row.compatibility_contract_id,
-      contractRevision: row.compatibility_contract_revision,
-      definitionRevision: row.definition_revision,
+      catalogRevision: completeRow.catalog_revision,
+      contractId: completeRow.compatibility_contract_id,
+      contractRevision: completeRow.compatibility_contract_revision,
+      definitionRevision: completeRow.definition_revision,
     },
     effectiveFrom,
     effectiveTo,
     priceGroupRef: {
-      moduleId: row.price_group_module_id,
-      resourceId: row.price_group_resource_id,
-      resourceType: row.price_group_resource_type,
+      moduleId: completeRow.price_group_module_id,
+      resourceId: completeRow.price_group_resource_id,
+      resourceType: completeRow.price_group_resource_type,
       tenantId: profile.tenantId,
     },
     profile,
-    reason: row.reason,
+    reason: completeRow.reason,
     recordedAt,
-    revision: row.revision,
-    state: row.lifecycle === 'CANCELLED' ? ('CANCELLED' as const) : ('ACTIVE' as const),
+    revision: completeRow.revision,
+    state: completeRow.lifecycle === 'CANCELLED' ? ('CANCELLED' as const) : ('ACTIVE' as const),
   };
   return Schema.is(CustomerPriceGroupAssignmentSchema)(assignment)
     ? Effect.succeed(assignment)
-    : Effect.fail(
-        persistenceUnavailable('The Price Group Assignment routine returned an invalid row'),
-      );
+    : Effect.fail(persistenceUnavailable('The Price Group Assignment routine returned an invalid row'));
 };
 
 const checkScopedReference = (
@@ -349,12 +350,11 @@ const checkScopedReference = (
   profile: CommerceCustomerProfileTarget,
   counterpartyRef?: CounterpartyRef,
 ): Effect.Effect<void, CustomerPriceGroupPersistenceUnavailable> =>
-  profile.tenantId === scope.tenantId &&
-  (counterpartyRef === undefined || counterpartyRef.tenantId === scope.tenantId)
+  profile.tenantId === scope.tenantId && (counterpartyRef === undefined || counterpartyRef.tenantId === scope.tenantId)
     ? Effect.void
     : Effect.fail(persistenceUnavailable('The Price Group Assignment scope is inconsistent'));
 
-export const inspectCustomerPriceGroupProfile = (
+const inspectCustomerPriceGroupProfile = (
   transaction: PriceGroupRoutineInvoker,
   scope: OperationalScope & { readonly legalEntityId: string },
   profile: CommerceCustomerProfileTarget,
@@ -377,10 +377,7 @@ export const inspectCustomerPriceGroupProfile = (
     .pipe(
       Effect.mapError(routineProfileUnavailable),
       Effect.flatMap(
-        ([row]): Effect.Effect<
-          CustomerPriceGroupProfileValidation,
-          CustomerPriceGroupProfileUnavailable
-        > => {
+        ([row]): Effect.Effect<CustomerPriceGroupProfileValidation, CustomerPriceGroupProfileUnavailable> => {
           if (row === undefined) {
             return Effect.fail(profileUnavailable('The profile inspection returned no outcome'));
           }
@@ -440,15 +437,10 @@ const assign = (
       ]),
     ),
     Effect.mapError((failure) =>
-      Schema.is(CustomerPriceGroupPersistenceUnavailable)(failure)
-        ? failure
-        : routinePersistenceUnavailable(failure),
+      Schema.is(CustomerPriceGroupPersistenceUnavailable)(failure) ? failure : routinePersistenceUnavailable(failure),
     ),
     Effect.flatMap(
-      ([row]): Effect.Effect<
-        AssignCustomerPriceGroupStoreResult,
-        CustomerPriceGroupPersistenceUnavailable
-      > => {
+      ([row]): Effect.Effect<AssignCustomerPriceGroupStoreResult, CustomerPriceGroupPersistenceUnavailable> => {
         if (row === undefined) {
           return Effect.fail(persistenceUnavailable('The assignment routine returned no outcome'));
         }
@@ -471,9 +463,7 @@ const assign = (
           });
         }
         if (row.outcome !== 'ASSIGNED' && row.outcome !== 'UNCHANGED') {
-          return Effect.fail(
-            persistenceUnavailable('The assignment failed its atomic profile revision check'),
-          );
+          return Effect.fail(persistenceUnavailable('The assignment failed its atomic profile revision check'));
         }
         return assignmentFromRow(row, input.profile).pipe(
           Effect.map((assignment) => ({
@@ -486,8 +476,7 @@ const assign = (
                 : {
                     moduleId: CUSTOMER_CONTEXT_MODULE_ID,
                     resourceId: row.replaced_assignment_id,
-                    resourceType:
-                      'commerce.customer-context.customer-price-group-assignment' as const,
+                    resourceType: 'commerce.customer-context.customer-price-group-assignment' as const,
                     tenantId: scope.tenantId,
                   },
           })),
@@ -496,6 +485,22 @@ const assign = (
     ),
   );
 
+const assignmentLookupFromRows = (
+  rows: readonly AssignmentListRow[],
+  profile: CommerceCustomerProfileTarget,
+): Effect.Effect<CustomerPriceGroupAssignmentLookup, CustomerPriceGroupPersistenceUnavailable> => {
+  if (rows[0]?.outcome === 'PROFILE_NOT_FOUND') {
+    return Effect.succeed({ _tag: 'profile_not_found' } as const);
+  }
+  const assignmentRows = rows.filter(
+    (row): row is AssignmentListRow & { readonly assignment_id: string } =>
+      row.outcome === 'FOUND' && row.assignment_id !== null,
+  );
+  return Effect.forEach(assignmentRows, (row) => assignmentFromRow(row, profile), { concurrency: 1 }).pipe(
+    Effect.map((assignments) => ({ _tag: 'found' as const, assignments })),
+  );
+};
+
 const list = (
   transaction: PriceGroupRoutineInvoker,
   scope: OperationalScope & { readonly legalEntityId: string },
@@ -503,38 +508,12 @@ const list = (
 ): Effect.Effect<CustomerPriceGroupAssignmentLookup, CustomerPriceGroupPersistenceUnavailable> =>
   checkScopedReference(scope, profile).pipe(
     Effect.flatMap(() =>
-      transaction.invoke(readPriceGroupAssignmentsRoutine, [
-        profile.resourceId,
-        profileKind(profile),
-      ]),
+      transaction.invoke(readPriceGroupAssignmentsRoutine, [profile.resourceId, profileKind(profile)]),
     ),
     Effect.mapError((failure) =>
-      Schema.is(CustomerPriceGroupPersistenceUnavailable)(failure)
-        ? failure
-        : routinePersistenceUnavailable(failure),
+      Schema.is(CustomerPriceGroupPersistenceUnavailable)(failure) ? failure : routinePersistenceUnavailable(failure),
     ),
-    Effect.flatMap(
-      (
-        rows,
-      ): Effect.Effect<
-        CustomerPriceGroupAssignmentLookup,
-        CustomerPriceGroupPersistenceUnavailable
-      > => {
-        if (rows[0]?.outcome === 'PROFILE_NOT_FOUND') {
-          return Effect.succeed({ _tag: 'profile_not_found' } as const);
-        }
-        const assignmentRows = rows.filter(
-          (row): row is AssignmentListRow & { readonly assignment_id: string } =>
-            row.outcome === 'FOUND' && row.assignment_id !== null,
-        );
-        return Effect.all(
-          assignmentRows.map((row) => assignmentFromRow(row, profile)),
-          {
-            concurrency: 1,
-          },
-        ).pipe(Effect.map((assignments) => ({ _tag: 'found' as const, assignments })));
-      },
-    ),
+    Effect.flatMap((rows) => assignmentLookupFromRows(rows, profile)),
   );
 
 const resolve = (
@@ -545,37 +524,12 @@ const resolve = (
 ): Effect.Effect<CustomerPriceGroupAssignmentLookup, CustomerPriceGroupPersistenceUnavailable> =>
   checkScopedReference(scope, profile).pipe(
     Effect.flatMap(() =>
-      transaction.invoke(resolvePriceGroupAssignmentsRoutine, [
-        profile.resourceId,
-        profileKind(profile),
-        effectiveAt,
-      ]),
+      transaction.invoke(resolvePriceGroupAssignmentsRoutine, [profile.resourceId, profileKind(profile), effectiveAt]),
     ),
     Effect.mapError((failure) =>
-      Schema.is(CustomerPriceGroupPersistenceUnavailable)(failure)
-        ? failure
-        : routinePersistenceUnavailable(failure),
+      Schema.is(CustomerPriceGroupPersistenceUnavailable)(failure) ? failure : routinePersistenceUnavailable(failure),
     ),
-    Effect.flatMap(
-      (
-        rows,
-      ): Effect.Effect<
-        CustomerPriceGroupAssignmentLookup,
-        CustomerPriceGroupPersistenceUnavailable
-      > => {
-        if (rows[0]?.outcome === 'PROFILE_NOT_FOUND') {
-          return Effect.succeed({ _tag: 'profile_not_found' } as const);
-        }
-        const assignmentRows = rows.filter(
-          (row): row is AssignmentListRow & { readonly assignment_id: string } =>
-            row.outcome === 'FOUND' && row.assignment_id !== null,
-        );
-        return Effect.all(
-          assignmentRows.map((row) => assignmentFromRow(row, profile)),
-          { concurrency: 1 },
-        ).pipe(Effect.map((assignments) => ({ _tag: 'found' as const, assignments })));
-      },
-    ),
+    Effect.flatMap((rows) => assignmentLookupFromRows(rows, profile)),
   );
 
 const remove = (
@@ -604,15 +558,10 @@ const remove = (
       ]),
     ),
     Effect.mapError((failure) =>
-      Schema.is(CustomerPriceGroupPersistenceUnavailable)(failure)
-        ? failure
-        : routinePersistenceUnavailable(failure),
+      Schema.is(CustomerPriceGroupPersistenceUnavailable)(failure) ? failure : routinePersistenceUnavailable(failure),
     ),
     Effect.flatMap(
-      ([row]): Effect.Effect<
-        RemoveCustomerPriceGroupStoreResult,
-        CustomerPriceGroupPersistenceUnavailable
-      > => {
+      ([row]): Effect.Effect<RemoveCustomerPriceGroupStoreResult, CustomerPriceGroupPersistenceUnavailable> => {
         if (row === undefined) {
           return Effect.fail(persistenceUnavailable('The removal routine returned no outcome'));
         }
@@ -664,15 +613,13 @@ const migrate = (
   transaction: PriceGroupRoutineInvoker,
   scope: OperationalScope & { readonly legalEntityId: string },
   input: MigrateCustomerPriceGroupStoreInput,
-): Effect.Effect<
-  MigrateCustomerPriceGroupStoreResult,
-  CustomerPriceGroupPersistenceUnavailable
-> => {
+): Effect.Effect<MigrateCustomerPriceGroupStoreResult, CustomerPriceGroupPersistenceUnavailable> => {
   const targetByAssignmentId = new Map(
     input.targets.map((target) => [target.assignmentRef.resourceId, target] as const),
   );
-  return Effect.all(
-    input.targets.map((target) =>
+  return Effect.forEach(
+    input.targets,
+    (target) =>
       checkScopedReference(scope, target.profile, input.counterpartyRef).pipe(
         Effect.flatMap(() =>
           target.assignmentRef.tenantId === scope.tenantId
@@ -680,7 +627,6 @@ const migrate = (
             : Effect.fail(persistenceUnavailable('A migration target scope is inconsistent')),
         ),
       ),
-    ),
     { concurrency: 1, discard: true },
   ).pipe(
     Effect.flatMap(() =>
@@ -712,17 +658,10 @@ const migrate = (
       ]),
     ),
     Effect.mapError((failure) =>
-      Schema.is(CustomerPriceGroupPersistenceUnavailable)(failure)
-        ? failure
-        : routinePersistenceUnavailable(failure),
+      Schema.is(CustomerPriceGroupPersistenceUnavailable)(failure) ? failure : routinePersistenceUnavailable(failure),
     ),
     Effect.flatMap(
-      (
-        rows,
-      ): Effect.Effect<
-        MigrateCustomerPriceGroupStoreResult,
-        CustomerPriceGroupPersistenceUnavailable
-      > => {
+      (rows): Effect.Effect<MigrateCustomerPriceGroupStoreResult, CustomerPriceGroupPersistenceUnavailable> => {
         if (rows.length === 0) {
           return Effect.fail(persistenceUnavailable('The migration routine returned no outcome'));
         }
@@ -732,42 +671,30 @@ const migrate = (
         if (rows.some(({ outcome }) => outcome === 'CONFLICTS')) {
           const conflicts: CustomerPriceGroupMigrationConflictItem[] = [];
           for (const row of rows) {
-            if (
-              row.outcome !== 'CONFLICTS' ||
-              row.conflict_assignment_id === null ||
-              row.conflict_reason === null
-            ) {
-              return Effect.fail(
-                persistenceUnavailable('The migration routine returned an invalid conflict row'),
-              );
+            if (row.outcome !== 'CONFLICTS' || row.conflict_assignment_id === null || row.conflict_reason === null) {
+              return Effect.fail(persistenceUnavailable('The migration routine returned an invalid conflict row'));
             }
             const target = targetByAssignmentId.get(row.conflict_assignment_id);
             if (target === undefined) {
-              return Effect.fail(
-                persistenceUnavailable('The migration routine returned an unknown conflict target'),
-              );
+              return Effect.fail(persistenceUnavailable('The migration routine returned an unknown conflict target'));
             }
             conflicts.push({ assignmentRef: target.assignmentRef, reason: row.conflict_reason });
           }
           return Effect.succeed({ _tag: 'conflicts', conflicts });
         }
-        return Effect.all(
-          rows.map((row) => {
+        return Effect.forEach(
+          rows,
+          (row) => {
             if (row.assignment_id === null) {
-              return Effect.fail(
-                persistenceUnavailable('The migration routine returned an incomplete assignment'),
-              );
+              return Effect.fail(persistenceUnavailable('The migration routine returned an incomplete assignment'));
             }
             const source = input.targets.find(
-              ({ profile }) =>
-                profile.resourceId === row.profile_id && profile.kind === row.profile_kind,
+              ({ profile }) => profile.resourceId === row.profile_id && profile.kind === row.profile_kind,
             );
             return source === undefined
-              ? Effect.fail(
-                  persistenceUnavailable('The migration routine returned an unknown profile'),
-                )
+              ? Effect.fail(persistenceUnavailable('The migration routine returned an unknown profile'))
               : assignmentFromRow(row, source.profile);
-          }),
+          },
           { concurrency: 1 },
         ).pipe(
           Effect.map((assignments) => ({
@@ -797,13 +724,7 @@ export const customerPriceGroupProfileValidationForTransaction = (
   scope: OperationalScope & { readonly legalEntityId: string },
 ): CustomerPriceGroupProfileValidationPort => ({
   inspect: (profile, effectiveAt, expectedCounterpartyRef) =>
-    inspectCustomerPriceGroupProfile(
-      transaction,
-      scope,
-      profile,
-      effectiveAt,
-      expectedCounterpartyRef,
-    ),
+    inspectCustomerPriceGroupProfile(transaction, scope, profile, effectiveAt, expectedCounterpartyRef),
 });
 
 export const priceGroupRoutineAllowlist = Object.freeze([

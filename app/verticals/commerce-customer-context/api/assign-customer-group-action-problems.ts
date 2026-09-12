@@ -3,7 +3,7 @@
 // @ontos-action-http-slug assign-customer-group
 // oxlint-disable sonarjs/function-name -- Effect Match.tags requires owner-declared tag keys; remove-when: sonarjs accepts discriminant-map properties.
 import type { ActionCoreError } from '@app/core-runtime';
-import { Effect, HttpApiMiddleware } from '@modern-js/plugin-bff/effect-edge';
+import { Effect, HttpApiMiddleware } from '@modern-js/bff-effect/effect-edge';
 import { Match, Schema } from 'effect';
 import {
   AssignCustomerGroupActionAlreadyCommittedProblemSchema,
@@ -127,20 +127,16 @@ export const assignCustomerGroupActionProblem = {
 const mapDomainProblem = (error: DomainError): AssignCustomerGroupActionProblem =>
   Match.value(error).pipe(
     Match.tags({
-      CustomerGroupInactive: () =>
-        assignCustomerGroupActionProblem.ineligible('customer_group_inactive'),
+      CustomerGroupInactive: () => assignCustomerGroupActionProblem.ineligible('customer_group_inactive'),
       CustomerGroupMembershipOverlap: () =>
         assignCustomerGroupActionProblem.conflict('customer_group_membership_overlap'),
-      CustomerGroupNotFound: () =>
-        assignCustomerGroupActionProblem.notFound('customer_group_not_found'),
+      CustomerGroupNotFound: () => assignCustomerGroupActionProblem.notFound('customer_group_not_found'),
       CustomerGroupPersistenceUnavailable: () =>
         assignCustomerGroupActionProblem.unavailable('customer_group_persistence_unavailable'),
       CustomerGroupProfileIneligible: () =>
         assignCustomerGroupActionProblem.ineligible('customer_group_profile_ineligible'),
-      CustomerGroupProfileNotFound: () =>
-        assignCustomerGroupActionProblem.notFound('customer_group_profile_not_found'),
-      CustomerGroupScopeMismatch: () =>
-        assignCustomerGroupActionProblem.forbidden('customer_group_scope_mismatch'),
+      CustomerGroupProfileNotFound: () => assignCustomerGroupActionProblem.notFound('customer_group_profile_not_found'),
+      CustomerGroupScopeMismatch: () => assignCustomerGroupActionProblem.forbidden('customer_group_scope_mismatch'),
     }),
     Match.exhaustive,
   );
@@ -172,34 +168,24 @@ const mapCoreProblem = (error: ActionCoreError): AssignCustomerGroupActionProble
         }),
       ActionHandlerExecutionError: assignCustomerGroupActionProblem.internal,
       ActionIdempotencyKeyRequired: assignCustomerGroupActionProblem.precondition,
-      ActionInvocationNotFound: (failure) =>
-        assignCustomerGroupActionProblem.notFound(failure.code),
-      ActionInvocationPersistenceError: (failure) =>
-        assignCustomerGroupActionProblem.unavailable(failure.code),
-      ActionInvocationStateError: (failure) =>
-        assignCustomerGroupActionProblem.conflict(failure.code),
+      ActionInvocationNotFound: (failure) => assignCustomerGroupActionProblem.notFound(failure.code),
+      ActionInvocationPersistenceError: (failure) => assignCustomerGroupActionProblem.unavailable(failure.code),
+      ActionInvocationStateError: (failure) => assignCustomerGroupActionProblem.conflict(failure.code),
       ActionPayloadValidationError: assignCustomerGroupActionProblem.invalid,
-      ActionPermissionCheckError: (failure) =>
-        assignCustomerGroupActionProblem.unavailable(failure.code),
+      ActionPermissionCheckError: (failure) => assignCustomerGroupActionProblem.unavailable(failure.code),
       ActionPermissionDenied: (failure) => assignCustomerGroupActionProblem.forbidden(failure.code),
       ActionPolicyDenied: (failure) => assignCustomerGroupActionProblem.ineligible(failure.code),
-      ActionPolicyEvaluationError: (failure) =>
-        assignCustomerGroupActionProblem.unavailable(failure.code),
-      ActionRequestHashConflict: (failure) =>
-        assignCustomerGroupActionProblem.conflict(failure.code),
+      ActionPolicyEvaluationError: (failure) => assignCustomerGroupActionProblem.unavailable(failure.code),
+      ActionRequestHashConflict: (failure) => assignCustomerGroupActionProblem.conflict(failure.code),
       ActionResultValidationError: assignCustomerGroupActionProblem.internal,
-      ActionTransactionError: (failure) =>
-        assignCustomerGroupActionProblem.unavailable(failure.code),
+      ActionTransactionError: (failure) => assignCustomerGroupActionProblem.unavailable(failure.code),
       ActionTrustedContextValidationError: assignCustomerGroupActionProblem.authentication,
-      ModuleStateCheckUnavailableError: (failure) =>
-        assignCustomerGroupActionProblem.unavailable(failure.code),
+      ModuleStateCheckUnavailableError: (failure) => assignCustomerGroupActionProblem.unavailable(failure.code),
       ModuleStateDeniedError: (failure) => assignCustomerGroupActionProblem.forbidden(failure.code),
       OperationAuthenticationRequired: assignCustomerGroupActionProblem.authentication,
       OperationContextDenied: (failure) => assignCustomerGroupActionProblem.forbidden(failure.code),
-      OperationContextInvalid: (failure) =>
-        assignCustomerGroupActionProblem.forbidden(failure.code),
-      OperationContextUnavailable: (failure) =>
-        assignCustomerGroupActionProblem.unavailable(failure.code),
+      OperationContextInvalid: (failure) => assignCustomerGroupActionProblem.forbidden(failure.code),
+      OperationContextUnavailable: (failure) => assignCustomerGroupActionProblem.unavailable(failure.code),
     }),
     Match.exhaustive,
   );
@@ -207,8 +193,7 @@ const mapCoreProblem = (error: ActionCoreError): AssignCustomerGroupActionProble
 const isDomainError = Schema.is(assignCustomerGroupAction.descriptor.domainErrorSchema);
 export const mapAssignCustomerGroupActionProblem = (
   error: ActionCoreError | DomainError,
-): AssignCustomerGroupActionProblem =>
-  isDomainError(error) ? mapDomainProblem(error) : mapCoreProblem(error);
+): AssignCustomerGroupActionProblem => (isDomainError(error) ? mapDomainProblem(error) : mapCoreProblem(error));
 
 export const assignCustomerGroupActionSchemaErrorLive = HttpApiMiddleware.layerSchemaErrorTransform(
   AssignCustomerGroupActionSchemaErrorMiddleware,

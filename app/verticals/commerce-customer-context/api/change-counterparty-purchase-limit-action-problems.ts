@@ -3,7 +3,7 @@
 // @ontos-action-http-slug change-counterparty-purchase-limit
 // oxlint-disable sonarjs/function-name -- Effect Match.tags requires owner-declared tag keys; remove-when: sonarjs accepts discriminant-map properties.
 import type { ActionCoreError } from '@app/core-runtime';
-import { Effect, HttpApiMiddleware } from '@modern-js/plugin-bff/effect-edge';
+import { Effect, HttpApiMiddleware } from '@modern-js/bff-effect/effect-edge';
 import { Match, Schema } from 'effect';
 import {
   ChangeCounterpartyPurchaseLimitActionAlreadyCommittedProblemSchema,
@@ -128,15 +128,11 @@ const mapDomainProblem = (error: DomainError): ChangeCounterpartyPurchaseLimitAc
   Match.value(error).pipe(
     Match.tags({
       PurchaseLimitDependencyUnavailable: () =>
-        changeCounterpartyPurchaseLimitActionProblem.unavailable(
-          'purchase_limit_dependency_unavailable',
-        ),
+        changeCounterpartyPurchaseLimitActionProblem.unavailable('purchase_limit_dependency_unavailable'),
       PurchaseLimitPolicyConflict: () =>
         changeCounterpartyPurchaseLimitActionProblem.conflict('purchase_limit_policy_conflict'),
       PurchaseLimitSubjectScopeMismatch: () =>
-        changeCounterpartyPurchaseLimitActionProblem.forbidden(
-          'purchase_limit_subject_scope_mismatch',
-        ),
+        changeCounterpartyPurchaseLimitActionProblem.forbidden('purchase_limit_subject_scope_mismatch'),
     }),
     Match.exhaustive,
   );
@@ -168,39 +164,26 @@ const mapCoreProblem = (error: ActionCoreError): ChangeCounterpartyPurchaseLimit
         }),
       ActionHandlerExecutionError: changeCounterpartyPurchaseLimitActionProblem.internal,
       ActionIdempotencyKeyRequired: changeCounterpartyPurchaseLimitActionProblem.precondition,
-      ActionInvocationNotFound: (failure) =>
-        changeCounterpartyPurchaseLimitActionProblem.notFound(failure.code),
+      ActionInvocationNotFound: (failure) => changeCounterpartyPurchaseLimitActionProblem.notFound(failure.code),
       ActionInvocationPersistenceError: (failure) =>
         changeCounterpartyPurchaseLimitActionProblem.unavailable(failure.code),
-      ActionInvocationStateError: (failure) =>
-        changeCounterpartyPurchaseLimitActionProblem.conflict(failure.code),
+      ActionInvocationStateError: (failure) => changeCounterpartyPurchaseLimitActionProblem.conflict(failure.code),
       ActionPayloadValidationError: changeCounterpartyPurchaseLimitActionProblem.invalid,
-      ActionPermissionCheckError: (failure) =>
-        changeCounterpartyPurchaseLimitActionProblem.unavailable(failure.code),
-      ActionPermissionDenied: (failure) =>
-        changeCounterpartyPurchaseLimitActionProblem.forbidden(failure.code),
-      ActionPolicyDenied: (failure) =>
-        changeCounterpartyPurchaseLimitActionProblem.ineligible(failure.code),
-      ActionPolicyEvaluationError: (failure) =>
-        changeCounterpartyPurchaseLimitActionProblem.unavailable(failure.code),
-      ActionRequestHashConflict: (failure) =>
-        changeCounterpartyPurchaseLimitActionProblem.conflict(failure.code),
+      ActionPermissionCheckError: (failure) => changeCounterpartyPurchaseLimitActionProblem.unavailable(failure.code),
+      ActionPermissionDenied: (failure) => changeCounterpartyPurchaseLimitActionProblem.forbidden(failure.code),
+      ActionPolicyDenied: (failure) => changeCounterpartyPurchaseLimitActionProblem.ineligible(failure.code),
+      ActionPolicyEvaluationError: (failure) => changeCounterpartyPurchaseLimitActionProblem.unavailable(failure.code),
+      ActionRequestHashConflict: (failure) => changeCounterpartyPurchaseLimitActionProblem.conflict(failure.code),
       ActionResultValidationError: changeCounterpartyPurchaseLimitActionProblem.internal,
-      ActionTransactionError: (failure) =>
-        changeCounterpartyPurchaseLimitActionProblem.unavailable(failure.code),
-      ActionTrustedContextValidationError:
-        changeCounterpartyPurchaseLimitActionProblem.authentication,
+      ActionTransactionError: (failure) => changeCounterpartyPurchaseLimitActionProblem.unavailable(failure.code),
+      ActionTrustedContextValidationError: changeCounterpartyPurchaseLimitActionProblem.authentication,
       ModuleStateCheckUnavailableError: (failure) =>
         changeCounterpartyPurchaseLimitActionProblem.unavailable(failure.code),
-      ModuleStateDeniedError: (failure) =>
-        changeCounterpartyPurchaseLimitActionProblem.forbidden(failure.code),
+      ModuleStateDeniedError: (failure) => changeCounterpartyPurchaseLimitActionProblem.forbidden(failure.code),
       OperationAuthenticationRequired: changeCounterpartyPurchaseLimitActionProblem.authentication,
-      OperationContextDenied: (failure) =>
-        changeCounterpartyPurchaseLimitActionProblem.forbidden(failure.code),
-      OperationContextInvalid: (failure) =>
-        changeCounterpartyPurchaseLimitActionProblem.forbidden(failure.code),
-      OperationContextUnavailable: (failure) =>
-        changeCounterpartyPurchaseLimitActionProblem.unavailable(failure.code),
+      OperationContextDenied: (failure) => changeCounterpartyPurchaseLimitActionProblem.forbidden(failure.code),
+      OperationContextInvalid: (failure) => changeCounterpartyPurchaseLimitActionProblem.forbidden(failure.code),
+      OperationContextUnavailable: (failure) => changeCounterpartyPurchaseLimitActionProblem.unavailable(failure.code),
     }),
     Match.exhaustive,
   );
@@ -211,8 +194,7 @@ export const mapChangeCounterpartyPurchaseLimitActionProblem = (
 ): ChangeCounterpartyPurchaseLimitActionProblem =>
   isDomainError(error) ? mapDomainProblem(error) : mapCoreProblem(error);
 
-export const changeCounterpartyPurchaseLimitActionSchemaErrorLive =
-  HttpApiMiddleware.layerSchemaErrorTransform(
-    ChangeCounterpartyPurchaseLimitActionSchemaErrorMiddleware,
-    () => Effect.fail(changeCounterpartyPurchaseLimitActionProblem.invalid()),
-  );
+export const changeCounterpartyPurchaseLimitActionSchemaErrorLive = HttpApiMiddleware.layerSchemaErrorTransform(
+  ChangeCounterpartyPurchaseLimitActionSchemaErrorMiddleware,
+  () => Effect.fail(changeCounterpartyPurchaseLimitActionProblem.invalid()),
+);

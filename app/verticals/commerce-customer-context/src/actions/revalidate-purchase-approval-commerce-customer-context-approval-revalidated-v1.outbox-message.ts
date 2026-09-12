@@ -8,16 +8,10 @@ import {
 } from '@app/commerce-customer-context/outbox/commerce-customer-context-approval-revalidated-v1';
 import type { OutboxPayload } from '@app/commerce-customer-context/outbox/commerce-customer-context-approval-revalidated-v1';
 
-export {
-  OutboxPayloadSchema as RevalidatePurchaseApprovalCommerceCustomerContextApprovalRevalidatedV1OutboxPayloadSchema,
-  outboxProducerModuleKey as RevalidatePurchaseApprovalCommerceCustomerContextApprovalRevalidatedV1OutboxProducerModuleKey,
-  outboxTopic as RevalidatePurchaseApprovalCommerceCustomerContextApprovalRevalidatedV1OutboxTopic,
-} from '@app/commerce-customer-context/outbox/commerce-customer-context-approval-revalidated-v1';
-export type { OutboxPayload as RevalidatePurchaseApprovalCommerceCustomerContextApprovalRevalidatedV1OutboxPayload } from '@app/commerce-customer-context/outbox/commerce-customer-context-approval-revalidated-v1';
-
-export const createRevalidatePurchaseApprovalCommerceCustomerContextApprovalRevalidatedV1OutboxMessage =
-  (payload: OutboxPayload): OutboxMessage => ({
-    payloadJson: payload,
-    producerModuleKey: outboxProducerModuleKey,
-    topic: outboxTopic,
-  });
+export const createRevalidatePurchaseApprovalCommerceCustomerContextApprovalRevalidatedV1OutboxMessage = (
+  payload: OutboxPayload,
+): OutboxMessage => ({
+  payloadJson: payload,
+  producerModuleKey: outboxProducerModuleKey,
+  topic: outboxTopic,
+});

@@ -21,7 +21,7 @@ type RetailAccessDecisionOperationInvocation = readonly [
 ];
 
 const retailAccessDecisionClient = (
-  credential: Redacted.Redacted<string>,
+  credential: Redacted.Redacted,
   requestCorrelation: string,
   options: RetailAccessDecisionClientOptions,
 ) =>
@@ -40,9 +40,7 @@ export const executeRetailAccessDecisionWithAuthorization = (
   ...[credential, requestCorrelation, options = {}]: RetailAccessDecisionAuthorizedInvocation
 ) =>
   retailAccessDecisionClient(Redacted.make(credential), requestCorrelation, options).pipe(
-    Effect.flatMap((client) =>
-      client.retailAccessDecision.execute({ headers: {}, params: {}, payload, query: {} }),
-    ),
+    Effect.flatMap((client) => client.retailAccessDecision.execute({ headers: {}, params: {}, payload, query: {} })),
   );
 
 export const executeRetailAccessDecision = (

@@ -17,9 +17,7 @@ export const paymentTermCompatibilityId = (
   semantics: PaymentTermSemantics,
 ): typeof PaymentTermCompatibilityIdSchema.Type =>
   PaymentTermCompatibilityIdSchema.make(
-    semantics.kind === 'IMMEDIATE'
-      ? 'immediate.v1'
-      : 'net_days.invoice_issued_at.calendar_days_utc.v1',
+    semantics.kind === 'IMMEDIATE' ? 'immediate.v1' : 'net_days.invoice_issued_at.calendar_days_utc.v1',
   );
 
 export const paymentTermIsCurrentAt = (
@@ -34,8 +32,7 @@ const millisecondsPerDay = 86_400_000n;
 
 const addUtcCalendarDays = (instant: string, days: number): PaymentTermDueDateResult => {
   const dueMilliseconds =
-    BigInt(DateTime.toEpochMillis(DateTime.makeUnsafe(instant))) +
-    BigInt(days) * millisecondsPerDay;
+    BigInt(DateTime.toEpochMillis(DateTime.makeUnsafe(instant))) + BigInt(days) * millisecondsPerDay;
   if (dueMilliseconds > maximumJavascriptInstant || dueMilliseconds < -maximumJavascriptInstant) {
     return { kind: 'OUT_OF_RANGE', reason: 'DUE_DATE_OUTSIDE_SUPPORTED_INSTANT_RANGE' };
   }
@@ -58,7 +55,5 @@ export const calculatePaymentTermDueDate = (
   return addUtcCalendarDays(input.invoiceIssuedAt, semantics.days);
 };
 
-export const paymentTermSemanticsAreEquivalent = (
-  left: PaymentTermSemantics,
-  right: PaymentTermSemantics,
-): boolean => canonicalPaymentTermSemantics(left) === canonicalPaymentTermSemantics(right);
+export const paymentTermSemanticsAreEquivalent = (left: PaymentTermSemantics, right: PaymentTermSemantics): boolean =>
+  canonicalPaymentTermSemantics(left) === canonicalPaymentTermSemantics(right);

@@ -58,7 +58,7 @@ const transaction: ProfileScopedRoutineInvoker = {
           updatedAt: '2026-09-09T09:00:00.000Z',
         },
       },
-    ]) as never,
+    ]),
 };
 
 const gateWith = (eligibility: CounterpartyRoleEligibility) =>
@@ -90,24 +90,22 @@ it.effect('requires a current seller-matching CUSTOMER Role in addition to Activ
   ),
 );
 
-it.effect(
-  'denies a non-eligible Role instead of treating global profile uniqueness as role denial',
-  () =>
-    gateWith({ outcome: 'INELIGIBLE' }).pipe(
-      Effect.tap((result) =>
-        Effect.sync(() => {
-          expect(result.gate).toEqual({
-            canAcceptNewOrder: false,
-            outcome: 'COUNTERPARTY_ROLE_NOT_ELIGIBLE',
-          });
-          expect(result.provenance[1]).toMatchObject({
-            freshness: { sourceModuleId: 'party.registry', status: 'CURRENT' },
-            projection: 'PARTY_REGISTRY',
-          });
-          expect(result.provenance[1]).not.toHaveProperty('sourceResourceRef');
-        }),
-      ),
+it.effect('denies a non-eligible Role instead of treating global profile uniqueness as role denial', () =>
+  gateWith({ outcome: 'INELIGIBLE' }).pipe(
+    Effect.tap((result) =>
+      Effect.sync(() => {
+        expect(result.gate).toEqual({
+          canAcceptNewOrder: false,
+          outcome: 'COUNTERPARTY_ROLE_NOT_ELIGIBLE',
+        });
+        expect(result.provenance[1]).toMatchObject({
+          freshness: { sourceModuleId: 'party.registry', status: 'CURRENT' },
+          projection: 'PARTY_REGISTRY',
+        });
+        expect(result.provenance[1]).not.toHaveProperty('sourceResourceRef');
+      }),
     ),
+  ),
 );
 
 it.effect('fails closed when an eligible Role belongs to another seller', () =>

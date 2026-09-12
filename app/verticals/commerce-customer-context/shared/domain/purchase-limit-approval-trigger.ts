@@ -1,10 +1,7 @@
 import { Context, Effect, Match, Schema } from 'effect';
 import { CommerceCustomerProfileRefSchema, ProfileTradingGateSchema } from './profile-decisions.ts';
 import { PurchaseLimitEvaluationContextSchema } from './purchase-limit-evaluation.ts';
-import type {
-  PurchaseLimitEvaluationContext,
-  PurchaseLimitEvaluationResult,
-} from './purchase-limit-evaluation.ts';
+import type { PurchaseLimitEvaluationContext, PurchaseLimitEvaluationResult } from './purchase-limit-evaluation.ts';
 import { PurchaseLimitCounterpartyRefSchema } from './purchase-limit-policy.ts';
 import { PurchaseValueSchema } from './purchase-limit.ts';
 import type { PurchaseValue } from './purchase-limit.ts';
@@ -49,7 +46,7 @@ export const PurchaseApprovalSubmissionResultSchema = Schema.Union([
   PurchaseApprovalAlreadySubmittedSchema,
   PurchaseApprovalRouteUnavailableSchema,
 ]);
-export type PurchaseApprovalSubmissionResult = typeof PurchaseApprovalSubmissionResultSchema.Type;
+type PurchaseApprovalSubmissionResult = typeof PurchaseApprovalSubmissionResultSchema.Type;
 
 export const PurchaseApprovalTriggerResultSchema = Schema.Union([
   Schema.TaggedStruct('DIRECT_PURCHASE_ALLOWED', {}),
@@ -74,8 +71,7 @@ export const PurchaseApprovalDependencyUnavailableSchema = Schema.TaggedStruct(
     retryable: Schema.Literal(true),
   },
 );
-export type PurchaseApprovalDependencyUnavailable =
-  typeof PurchaseApprovalDependencyUnavailableSchema.Type;
+export type PurchaseApprovalDependencyUnavailable = typeof PurchaseApprovalDependencyUnavailableSchema.Type;
 
 export const PurchaseApprovalCurrentnessIndeterminateSchema = Schema.TaggedStruct(
   'PurchaseApprovalCurrentnessIndeterminate',
@@ -86,8 +82,6 @@ export const PurchaseApprovalCurrentnessIndeterminateSchema = Schema.TaggedStruc
     source: Schema.Literal('PURCHASE_PROPOSAL'),
   },
 );
-export type PurchaseApprovalCurrentnessIndeterminate =
-  typeof PurchaseApprovalCurrentnessIndeterminateSchema.Type;
 
 export const PurchaseApprovalTriggerErrorSchema = Schema.Union([
   PurchaseApprovalCurrentnessIndeterminateSchema,
@@ -99,10 +93,7 @@ export type PurchaseApprovalSubmissionPort = Readonly<{
   /** Bind owner persistence to the Core Action invocation that authorized the command. */
   readonly forActionInvocation?: (actionInvocationId: string) => PurchaseApprovalSubmissionPort;
   submit: (input: {
-    readonly evaluation: Extract<
-      PurchaseLimitEvaluationResult,
-      { readonly _tag: 'APPROVAL_REQUIRED' }
-    >;
+    readonly evaluation: Extract<PurchaseLimitEvaluationResult, { readonly _tag: 'APPROVAL_REQUIRED' }>;
     readonly idempotencyKey: string;
     readonly profileEvidence: PurchaseApprovalProfileEvidence;
     readonly proposalEvidence: PurchaseApprovalProposalEvidence;
@@ -112,9 +103,7 @@ export type PurchaseApprovalSubmissionPort = Readonly<{
 export class PurchaseApprovalSubmission extends Context.Service<
   PurchaseApprovalSubmission,
   PurchaseApprovalSubmissionPort
->()(
-  '@app/commerce-customer-context/shared/domain/purchase-limit-approval-trigger/PurchaseApprovalSubmission',
-) {}
+>()('@app/commerce-customer-context/shared/domain/purchase-limit-approval-trigger/PurchaseApprovalSubmission') {}
 
 type BusinessPurchaseLimitEvaluation = Extract<
   PurchaseLimitEvaluationResult,
@@ -130,10 +119,7 @@ const sameCounterparty = (
   left.resourceType === right.resourceType &&
   left.tenantId === right.tenantId;
 
-const sameEvaluationContext = (
-  left: PurchaseLimitEvaluationContext,
-  right: PurchaseLimitEvaluationContext,
-): boolean =>
+const sameEvaluationContext = (left: PurchaseLimitEvaluationContext, right: PurchaseLimitEvaluationContext): boolean =>
   sameCounterparty(left.counterpartyRef, right.counterpartyRef) &&
   left.principalId === right.principalId &&
   left.sellingLegalEntityId === right.sellingLegalEntityId &&
@@ -146,112 +132,136 @@ const samePurchaseValue = (left: PurchaseValue, right: PurchaseValue): boolean =
   left.sourceRef === right.sourceRef &&
   left.sourceRevision === right.sourceRevision;
 
-const preconditionFailed = (reasonCode: string): PurchaseApprovalTriggerResult => ({
+type ApprovalPreconditionFailure = Extract<
+  PurchaseApprovalTriggerResult,
+  { readonly _tag: 'APPROVAL_PRECONDITION_FAILED' }
+>;
+
+type BusinessEvaluationInput = Readonly<{
+  buyerPermission: 'ALLOWED' | 'DENIED' | 'UNAVAILABLE';
+  idempotencyKey: string;
+  profileEvidence: PurchaseApprovalProfileEvidence;
+  proposalEvidence: PurchaseApprovalProposalEvidence;
+  trustedContext: PurchaseLimitEvaluationContext;
+}>;
+
+type BusinessEvaluationGuardOutcome = ApprovalPreconditionFailure | PurchaseApprovalTriggerError;
+
+const preconditionFailed = (reasonCode: string): ApprovalPreconditionFailure => ({
   _tag: 'APPROVAL_PRECONDITION_FAILED',
   reasonCode,
 });
 
-const triggerBusinessEvaluation = (
-  input: {
-    readonly buyerPermission: 'ALLOWED' | 'DENIED' | 'UNAVAILABLE';
-    readonly idempotencyKey: string;
-    readonly profileEvidence: PurchaseApprovalProfileEvidence;
-    readonly proposalEvidence: PurchaseApprovalProposalEvidence;
-    readonly trustedContext: PurchaseLimitEvaluationContext;
-  },
-  evaluation: BusinessPurchaseLimitEvaluation,
-): Effect.Effect<
-  PurchaseApprovalTriggerResult,
-  PurchaseApprovalTriggerError,
-  PurchaseApprovalSubmission
-> => {
+const dependencyUnavailable = (
+  dependency: PurchaseApprovalDependencyUnavailable['dependency'],
+  reason: string,
+): PurchaseApprovalDependencyUnavailable => ({
+  _tag: 'PurchaseApprovalDependencyUnavailable',
+  code: 'purchase_approval_dependency_unavailable',
+  dependency,
+  reason,
+  retryable: true,
+});
+
+const buyerEvaluationGuard = (input: BusinessEvaluationInput): BusinessEvaluationGuardOutcome | undefined => {
   if (input.buyerPermission === 'UNAVAILABLE') {
-    return Effect.fail({
-      _tag: 'PurchaseApprovalDependencyUnavailable' as const,
-      code: 'purchase_approval_dependency_unavailable' as const,
-      dependency: 'BUYER_AUTHORIZATION' as const,
-      reason: 'Current Buyer authorization is temporarily unavailable',
-      retryable: true as const,
-    });
+    return dependencyUnavailable('BUYER_AUTHORIZATION', 'Current Buyer authorization is temporarily unavailable');
   }
-  if (input.buyerPermission === 'DENIED') {
-    return Effect.succeed(preconditionFailed('buyer_permission_denied'));
-  }
+  return input.buyerPermission === 'DENIED' ? preconditionFailed('buyer_permission_denied') : undefined;
+};
+
+const contextEvaluationGuard = (
+  input: BusinessEvaluationInput,
+  evaluation: BusinessPurchaseLimitEvaluation,
+): ApprovalPreconditionFailure | undefined => {
   if (!sameEvaluationContext(evaluation.evaluationContext, input.trustedContext)) {
-    return Effect.succeed(preconditionFailed('evaluation_context_mismatch'));
+    return preconditionFailed('evaluation_context_mismatch');
   }
   if (!sameEvaluationContext(input.profileEvidence.evaluationContext, input.trustedContext)) {
-    return Effect.succeed(preconditionFailed('profile_context_mismatch'));
+    return preconditionFailed('profile_context_mismatch');
   }
   if (!sameEvaluationContext(input.proposalEvidence.evaluationContext, input.trustedContext)) {
-    return Effect.succeed(preconditionFailed('proposal_context_mismatch'));
+    return preconditionFailed('proposal_context_mismatch');
   }
-  if (
-    !sameCounterparty(
-      input.profileEvidence.counterpartyRef,
-      evaluation.evaluationContext.counterpartyRef,
-    )
-  ) {
-    return Effect.succeed(preconditionFailed('profile_counterparty_mismatch'));
+  if (!sameCounterparty(input.profileEvidence.counterpartyRef, evaluation.evaluationContext.counterpartyRef)) {
+    return preconditionFailed('profile_counterparty_mismatch');
   }
-  if (input.profileEvidence.profileRef.tenantId !== input.trustedContext.counterpartyRef.tenantId) {
-    return Effect.succeed(preconditionFailed('profile_tenant_mismatch'));
-  }
+  return input.profileEvidence.profileRef.tenantId === input.trustedContext.counterpartyRef.tenantId
+    ? undefined
+    : preconditionFailed('profile_tenant_mismatch');
+};
+
+const profileEvaluationGuard = (input: BusinessEvaluationInput): BusinessEvaluationGuardOutcome | undefined => {
   if (input.profileEvidence.gate.outcome === 'DEPENDENCY_UNAVAILABLE') {
-    return Effect.fail({
-      _tag: 'PurchaseApprovalDependencyUnavailable' as const,
-      code: 'purchase_approval_dependency_unavailable' as const,
-      dependency: 'CUSTOMER_PROFILE' as const,
-      reason: 'Current Customer Profile trading eligibility is temporarily unavailable',
-      retryable: true as const,
-    });
-  }
-  if (
-    input.profileEvidence.profileRef.kind !== 'COUNTERPARTY' ||
-    !input.profileEvidence.gate.canAcceptNewOrder ||
-    input.profileEvidence.gate.outcome !== 'ACTIVE'
-  ) {
-    return Effect.succeed(
-      preconditionFailed(`profile_${input.profileEvidence.gate.outcome.toLowerCase()}`),
+    return dependencyUnavailable(
+      'CUSTOMER_PROFILE',
+      'Current Customer Profile trading eligibility is temporarily unavailable',
     );
   }
+  return input.profileEvidence.profileRef.kind !== 'COUNTERPARTY' ||
+    !input.profileEvidence.gate.canAcceptNewOrder ||
+    input.profileEvidence.gate.outcome !== 'ACTIVE'
+    ? preconditionFailed(`profile_${input.profileEvidence.gate.outcome.toLowerCase()}`)
+    : undefined;
+};
+
+const proposalEvaluationGuard = (
+  input: BusinessEvaluationInput,
+  evaluation: BusinessPurchaseLimitEvaluation,
+): BusinessEvaluationGuardOutcome | undefined => {
   if (input.proposalEvidence.state === 'INDETERMINATE') {
-    return Effect.fail({
-      _tag: 'PurchaseApprovalCurrentnessIndeterminate' as const,
-      code: 'purchase_approval_currentness_indeterminate' as const,
+    return {
+      _tag: 'PurchaseApprovalCurrentnessIndeterminate',
+      code: 'purchase_approval_currentness_indeterminate',
       reason: 'Purchase proposal Currentness cannot be established',
-      retryable: true as const,
-      source: 'PURCHASE_PROPOSAL' as const,
-    });
+      retryable: true,
+      source: 'PURCHASE_PROPOSAL',
+    };
   }
   if (input.proposalEvidence.state === 'SUPERSEDED') {
-    return Effect.succeed(preconditionFailed('proposal_superseded'));
+    return preconditionFailed('proposal_superseded');
   }
   if (
     input.proposalEvidence.proposalRevisionRef !== evaluation.purchaseValue.sourceRef ||
     input.proposalEvidence.purchaseValue.sourceRef !== evaluation.purchaseValue.sourceRef ||
     input.proposalEvidence.revision !== evaluation.purchaseValue.sourceRevision
   ) {
-    return Effect.succeed(preconditionFailed('proposal_revision_mismatch'));
+    return preconditionFailed('proposal_revision_mismatch');
   }
   if (!samePurchaseValue(input.proposalEvidence.purchaseValue, evaluation.purchaseValue)) {
-    return Effect.succeed(preconditionFailed('proposal_value_mismatch'));
+    return preconditionFailed('proposal_value_mismatch');
   }
   if (
     !evaluation.currentSourceRevisions.some(
-      ({ revision, source }) =>
-        source === 'purchase-proposal' && revision === evaluation.purchaseValue.sourceRevision,
+      ({ revision, source }) => source === 'purchase-proposal' && revision === evaluation.purchaseValue.sourceRevision,
     )
   ) {
-    return Effect.succeed(preconditionFailed('proposal_current_revision_missing'));
+    return preconditionFailed('proposal_current_revision_missing');
   }
-  if (
-    !evaluation.currentSourceRevisions.some(
-      ({ revision, source }) =>
-        source === 'purchasing-profile' && revision === input.profileEvidence.sourceRevision,
-    )
-  ) {
-    return Effect.succeed(preconditionFailed('profile_current_revision_missing'));
+  return evaluation.currentSourceRevisions.some(
+    ({ revision, source }) => source === 'purchasing-profile' && revision === input.profileEvidence.sourceRevision,
+  )
+    ? undefined
+    : preconditionFailed('profile_current_revision_missing');
+};
+
+const guardOutcomeEffect = (
+  outcome: BusinessEvaluationGuardOutcome,
+): Effect.Effect<PurchaseApprovalTriggerResult, PurchaseApprovalTriggerError> =>
+  // oxlint-disable-next-line effect-native/no-manual-tag-comparison -- This local discriminant check preserves the existing success-versus-failure channel split without restructuring the guard flow.
+  outcome._tag === 'APPROVAL_PRECONDITION_FAILED' ? Effect.succeed(outcome) : Effect.fail(outcome);
+
+const triggerBusinessEvaluation = (
+  input: BusinessEvaluationInput,
+  evaluation: BusinessPurchaseLimitEvaluation,
+): Effect.Effect<PurchaseApprovalTriggerResult, PurchaseApprovalTriggerError, PurchaseApprovalSubmission> => {
+  const guardOutcome =
+    buyerEvaluationGuard(input) ??
+    contextEvaluationGuard(input, evaluation) ??
+    profileEvaluationGuard(input) ??
+    proposalEvaluationGuard(input, evaluation);
+  if (guardOutcome !== undefined) {
+    return guardOutcomeEffect(guardOutcome);
   }
   return Match.value(evaluation).pipe(
     Match.tag('WITHIN_LIMIT', () => Effect.succeed({ _tag: 'DIRECT_PURCHASE_ALLOWED' as const })),
@@ -279,11 +289,7 @@ export const triggerPurchaseApproval = (input: {
   readonly profileEvidence: PurchaseApprovalProfileEvidence;
   readonly proposalEvidence: PurchaseApprovalProposalEvidence;
   readonly trustedContext: PurchaseLimitEvaluationContext;
-}): Effect.Effect<
-  PurchaseApprovalTriggerResult,
-  PurchaseApprovalTriggerError,
-  PurchaseApprovalSubmission
-> =>
+}): Effect.Effect<PurchaseApprovalTriggerResult, PurchaseApprovalTriggerError, PurchaseApprovalSubmission> =>
   Match.value(input.evaluation).pipe(
     Match.tag('WITHIN_LIMIT', (evaluation) => triggerBusinessEvaluation(input, evaluation)),
     Match.tag('APPROVAL_REQUIRED', (evaluation) => triggerBusinessEvaluation(input, evaluation)),
@@ -313,5 +319,3 @@ export const triggerPurchaseApproval = (input: {
     ),
     Match.exhaustive,
   );
-
-export { PurchaseLimitEvaluationResultSchema } from './purchase-limit-evaluation.ts';

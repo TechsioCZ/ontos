@@ -25,72 +25,69 @@ export interface CreateCounterpartyPurchasingProfileServices {
   readonly create: (
     payload: CreateCounterpartyPurchasingProfilePayload,
     context: ActionHandlerContext<DomainEvents, CreateCounterpartyPurchasingProfileServices>,
-  ) => Effect.Effect<
-    CreateCounterpartyPurchasingProfileResult,
-    CreateCounterpartyPurchasingProfileRejected
-  >;
+  ) => Effect.Effect<CreateCounterpartyPurchasingProfileResult, CreateCounterpartyPurchasingProfileRejected>;
 }
-const handleCreateCounterpartyPurchasingProfile = Effect.fn(
-  'CreateCounterpartyPurchasingProfileAction.handle',
-)(function* handleCreateCounterpartyPurchasingProfileEffect(
-  payload: CreateCounterpartyPurchasingProfilePayload,
-  context: ActionHandlerContext<DomainEvents, CreateCounterpartyPurchasingProfileServices>,
-) {
-  if (payload.subject.counterpartyRef.tenantId !== context.scope.tenantId) {
-    return yield* new CreateCounterpartyPurchasingProfileRejected({
-      code: 'SUBJECT_NOT_RESOLVED_OR_INVALID',
-      reason: 'The Counterparty reference must belong to the trusted Tenant',
-      retryable: false,
-    });
-  }
-  const result = yield* context.services.create(payload, context);
-  if (result.profileRef.tenantId !== context.scope.tenantId) {
-    return yield* new CreateCounterpartyPurchasingProfileRejected({
-      code: 'CURRENT_STATE_CONFLICT',
-      reason: 'The profile service returned a profile outside the trusted Tenant',
-      retryable: false,
-    });
-  }
-  if (result.outcome === 'PROFILE_CREATED' && result.state !== 'ACTIVE') {
-    return yield* new CreateCounterpartyPurchasingProfileRejected({
-      code: 'CURRENT_STATE_CONFLICT',
-      reason: 'A newly created Counterparty Purchasing Profile must be Active',
-      retryable: false,
-    });
-  }
-  yield* recordProfileResourceLookup(
-    context,
-    payload.subject.counterpartyRef,
-    `counterparty-profile-subject:${payload.subject.counterpartyRef.resourceId}:${result.revision}`,
-  );
-  yield* recordProfileResourceLookup(
-    context,
-    result.profileRef,
-    `counterparty-profile-current:${result.profileRef.resourceId}:${result.revision}`,
-  );
-  if (result.outcome === 'PROFILE_CREATED') {
-    const event = yield* context.addDomainEvent({
-      eventType: 'commerce.customer-context.counterparty-purchasing-profile-created.v1',
-      payloadJson: result,
-      producerModuleKey: MODULE_KEY,
-      subjectModuleKey: MODULE_KEY,
-      subjectResourceId: result.profileRef.resourceId,
-      subjectResourceType: result.profileRef.resourceType,
-    });
-    yield* context.addOutboxMessage(
-      event,
-      createProfileCreatedOutboxMessage({
-        effectiveAt: payload.effectiveAt,
-        profileRef: result.profileRef,
-        revision: result.revision,
-        state: 'ACTIVE',
-        subject: payload.subject,
-        trigger: payload.trigger,
-      }),
+const handleCreateCounterpartyPurchasingProfile = Effect.fn('CreateCounterpartyPurchasingProfileAction.handle')(
+  function* handleCreateCounterpartyPurchasingProfileEffect(
+    payload: CreateCounterpartyPurchasingProfilePayload,
+    context: ActionHandlerContext<DomainEvents, CreateCounterpartyPurchasingProfileServices>,
+  ) {
+    if (payload.subject.counterpartyRef.tenantId !== context.scope.tenantId) {
+      return yield* new CreateCounterpartyPurchasingProfileRejected({
+        code: 'SUBJECT_NOT_RESOLVED_OR_INVALID',
+        reason: 'The Counterparty reference must belong to the trusted Tenant',
+        retryable: false,
+      });
+    }
+    const result = yield* context.services.create(payload, context);
+    if (result.profileRef.tenantId !== context.scope.tenantId) {
+      return yield* new CreateCounterpartyPurchasingProfileRejected({
+        code: 'CURRENT_STATE_CONFLICT',
+        reason: 'The profile service returned a profile outside the trusted Tenant',
+        retryable: false,
+      });
+    }
+    if (result.outcome === 'PROFILE_CREATED' && result.state !== 'ACTIVE') {
+      return yield* new CreateCounterpartyPurchasingProfileRejected({
+        code: 'CURRENT_STATE_CONFLICT',
+        reason: 'A newly created Counterparty Purchasing Profile must be Active',
+        retryable: false,
+      });
+    }
+    yield* recordProfileResourceLookup(
+      context,
+      payload.subject.counterpartyRef,
+      `counterparty-profile-subject:${payload.subject.counterpartyRef.resourceId}:${result.revision}`,
     );
-  }
-  return result;
-});
+    yield* recordProfileResourceLookup(
+      context,
+      result.profileRef,
+      `counterparty-profile-current:${result.profileRef.resourceId}:${result.revision}`,
+    );
+    if (result.outcome === 'PROFILE_CREATED') {
+      const event = yield* context.addDomainEvent({
+        eventType: 'commerce.customer-context.counterparty-purchasing-profile-created.v1',
+        payloadJson: result,
+        producerModuleKey: MODULE_KEY,
+        subjectModuleKey: MODULE_KEY,
+        subjectResourceId: result.profileRef.resourceId,
+        subjectResourceType: result.profileRef.resourceType,
+      });
+      yield* context.addOutboxMessage(
+        event,
+        createProfileCreatedOutboxMessage({
+          effectiveAt: payload.effectiveAt,
+          profileRef: result.profileRef,
+          revision: result.revision,
+          state: 'ACTIVE',
+          subject: payload.subject,
+          trigger: payload.trigger,
+        }),
+      );
+    }
+    return result;
+  },
+);
 export const createCounterpartyPurchasingProfileAction = defineAction(
   {
     accessEvidencePolicy: {
@@ -122,23 +119,11 @@ export const createCounterpartyPurchasingProfileAction = defineAction(
   handleCreateCounterpartyPurchasingProfile,
   (transaction, scope) =>
     profileServicesForVerifiedScope(transaction, scope).pipe(
-      Effect.map(({ createCounterpartyPurchasingProfile }) => createCounterpartyPurchasingProfile),
+      Effect.map(
+        ({ createCounterpartyPurchasingProfile }): CreateCounterpartyPurchasingProfileServices =>
+          createCounterpartyPurchasingProfile,
+      ),
     ),
 );
 
-// <generated-outbox-message-exports>
-export { CreateCounterpartyPurchasingProfileCommerceCustomerContextCounterpartyPurchasingProfileCreatedV1OutboxPayloadSchema } from './create-counterparty-purchasing-profile.commerce-customer-context-counterparty-purchasing-profile-created-v1.outbox-message.ts';
-export { CreateCounterpartyPurchasingProfileCommerceCustomerContextCounterpartyPurchasingProfileCreatedV1OutboxProducerModuleKey } from './create-counterparty-purchasing-profile.commerce-customer-context-counterparty-purchasing-profile-created-v1.outbox-message.ts';
-export { CreateCounterpartyPurchasingProfileCommerceCustomerContextCounterpartyPurchasingProfileCreatedV1OutboxTopic } from './create-counterparty-purchasing-profile.commerce-customer-context-counterparty-purchasing-profile-created-v1.outbox-message.ts';
-export { createCreateCounterpartyPurchasingProfileCommerceCustomerContextCounterpartyPurchasingProfileCreatedV1OutboxMessage } from './create-counterparty-purchasing-profile.commerce-customer-context-counterparty-purchasing-profile-created-v1.outbox-message.ts';
-export type { CreateCounterpartyPurchasingProfileCommerceCustomerContextCounterpartyPurchasingProfileCreatedV1OutboxPayload } from './create-counterparty-purchasing-profile.commerce-customer-context-counterparty-purchasing-profile-created-v1.outbox-message.ts';
-export {
-  CreateCounterpartyPurchasingProfilePayloadSchema,
-  CreateCounterpartyPurchasingProfileRejected,
-  CreateCounterpartyPurchasingProfileResultSchema,
-} from '../../shared/actions/create-counterparty-purchasing-profile.ts';
-export type {
-  CreateCounterpartyPurchasingProfilePayload,
-  CreateCounterpartyPurchasingProfileResult,
-} from '../../shared/actions/create-counterparty-purchasing-profile.ts';
-// </generated-outbox-message-exports>
+export type { CreateCounterpartyPurchasingProfilePayload } from '../../shared/actions/create-counterparty-purchasing-profile.ts';

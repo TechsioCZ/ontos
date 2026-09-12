@@ -6,11 +6,7 @@ import {
   ReadRuntimeLive,
   TenantModuleStateServiceLive,
 } from '@app/core-runtime';
-import type {
-  ActionRuntime,
-  GatewayAssertionRedemptionService,
-  ReadRuntime,
-} from '@app/core-runtime';
+import type { ReadRuntime, GatewayAssertionRedemptionService, ActionRuntime } from '@app/core-runtime';
 import {
   ActionPermissionLive,
   ActionRepositoryLive,
@@ -19,8 +15,8 @@ import {
   OperationalScopeResolverLive,
 } from '@app/core-runtime/actions/runtime-wiring';
 import { assembleEffectBffRuntime } from '@app/shared-contracts/server/effect-bff-runtime';
-import { Effect, HttpApiBuilder, HttpRouter, Layer } from '@modern-js/plugin-bff/effect-edge';
-import type { EffectBffDefinition, EffectBffRuntime } from '@modern-js/plugin-bff/effect-edge';
+import { Effect, HttpApiBuilder, HttpRouter, Layer } from '@modern-js/bff-effect/effect-edge';
+import type { EffectBffDefinition, EffectBffRuntime } from '@modern-js/bff-effect/effect-edge';
 import { Layer as GovernedReadLayer, Logger, References, Schema, Tracer } from 'effect';
 // <generated-governed-http-handler-support-imports>
 import { ActionPrincipalVerifierLive as GovernedActionPrincipalVerifierLive } from './auth/action-principal.ts';
@@ -47,30 +43,25 @@ import { microVerticalOperationAttributes } from '@app/shared-contracts';
 import { paymentTermCatalogApi, paymentTermCatalogOperationContexts } from '../shared/api.ts';
 import { ultramodernApiMarker } from '../shared/ultramodern-build.ts';
 
-const paymentTermCatalogReadinessLayer = HttpApiBuilder.group(
-  paymentTermCatalogApi,
-  'foundation',
-  (handlers) =>
-    handlers.handle('readiness', () =>
-      Effect.succeed({
-        checks: {
-          api: 'ready' as const,
-          moduleFederation: 'ready' as const,
-          ssr: 'ready' as const,
-          translations: 'ready' as const,
-        },
-        marker: ultramodernApiMarker,
-        status: 'ready' as const,
-        versionSkew: 'none' as const,
-      }).pipe(
-        Effect.withSpan('ultramodern.api.paymentTermCatalog.readiness', {
-          attributes: microVerticalOperationAttributes(
-            paymentTermCatalogOperationContexts.readiness,
-          ),
-          kind: 'server',
-        }),
-      ),
+const paymentTermCatalogReadinessLayer = HttpApiBuilder.group(paymentTermCatalogApi, 'foundation', (handlers) =>
+  handlers.handle('readiness', () =>
+    Effect.succeed({
+      checks: {
+        api: 'ready' as const,
+        moduleFederation: 'ready' as const,
+        ssr: 'ready' as const,
+        translations: 'ready' as const,
+      },
+      marker: ultramodernApiMarker,
+      status: 'ready' as const,
+      versionSkew: 'none' as const,
+    }).pipe(
+      Effect.withSpan('ultramodern.api.paymentTermCatalog.readiness', {
+        attributes: microVerticalOperationAttributes(paymentTermCatalogOperationContexts.readiness),
+        kind: 'server',
+      }),
     ),
+  ),
 );
 
 declare const ULTRAMODERN_SHELL_ORIGIN: unknown;
@@ -85,21 +76,19 @@ const readShellOrigin = () => {
   }
 };
 
-const runtimeObservabilityLive = Layer.mergeAll(
+const runtimeObservabilityLayers = [
   Logger.layer([Logger.defaultLogger, Logger.tracerLogger]),
   Layer.succeed(Tracer.Tracer, Tracer.make({ span: (options) => new Tracer.NativeSpan(options) })),
   Layer.succeed(References.MinimumLogLevel, 'Info'),
-);
-const tenantModuleStateServiceLive = TenantModuleStateServiceLive.pipe(
-  Layer.provide(CorePersistenceLive),
-);
+] as const;
+const runtimeObservabilityLive = Layer.mergeAll(...runtimeObservabilityLayers);
+const tenantModuleStateServiceLive = TenantModuleStateServiceLive.pipe(Layer.provide(CorePersistenceLive));
 const moduleStateGateLive = ModuleStateGateLive.pipe(Layer.provide(tenantModuleStateServiceLive));
-const operationalScopeResolverLive = OperationalScopeResolverLive.pipe(
-  Layer.provide(Layer.mergeAll(CorePersistenceLive, ContextAccessLive)),
+const operationalScopeResolverLive = Layer.provide(
+  OperationalScopeResolverLive,
+  Layer.mergeAll(CorePersistenceLive, ContextAccessLive),
 );
-const moduleEntrypointGatewayLive = ModuleEntrypointGatewayLive.pipe(
-  Layer.provide(moduleStateGateLive),
-);
+const moduleEntrypointGatewayLive = ModuleEntrypointGatewayLive.pipe(Layer.provide(moduleStateGateLive));
 /** Deployment composition seam. Trusted Customer Context issuance remains a requirement. */
 const paymentTermCatalogActionRuntime = ActionRuntimeLive.pipe(
   Layer.provide(
@@ -120,12 +109,7 @@ const productionActionRuntimeLive = paymentTermCatalogActionRuntime.pipe(
 );
 const productionReadRuntimeLive = ReadRuntimeLive.pipe(
   Layer.provide(
-    Layer.mergeAll(
-      CorePersistenceLive,
-      ContextAccessLive,
-      moduleEntrypointGatewayLive,
-      operationalScopeResolverLive,
-    ),
+    Layer.mergeAll(CorePersistenceLive, ContextAccessLive, moduleEntrypointGatewayLive, operationalScopeResolverLive),
   ),
   Layer.provide(DatabaseConfigLive),
 );
@@ -138,8 +122,7 @@ type PaymentTermCatalogApiRuntimeArguments = readonly [
 
 export const makePaymentTermCatalogApiRuntime = (
   ...args: PaymentTermCatalogApiRuntimeArguments
-): EffectBffDefinition<typeof paymentTermCatalogApi> &
-  EffectBffRuntime<typeof paymentTermCatalogApi> => {
+): EffectBffDefinition<typeof paymentTermCatalogApi> & EffectBffRuntime<typeof paymentTermCatalogApi> => {
   const [governedReadRuntimeLive, governedActionRuntimeLive, gatewayAssertionRedemption] = args;
   const actionPrincipalVerifierLive = GovernedActionPrincipalVerifierLive.pipe(
     Layer.provide(governedActionRuntimeLive),
@@ -151,16 +134,11 @@ export const makePaymentTermCatalogApiRuntime = (
     createPaymentTermActionApiLive.pipe(GovernedReadLayer.provide(governedActionRuntimeLive)),
     currentPaymentTermsReadApiLive.pipe(GovernedReadLayer.provide(governedReadRuntimeLive)),
     paymentTermHistoryReadApiLive.pipe(GovernedReadLayer.provide(governedReadRuntimeLive)),
-    reconcilePaymentTermReferenceActionApiLive.pipe(
-      GovernedReadLayer.provide(governedActionRuntimeLive),
-    ),
+    reconcilePaymentTermReferenceActionApiLive.pipe(GovernedReadLayer.provide(governedActionRuntimeLive)),
     retirePaymentTermActionApiLive.pipe(GovernedReadLayer.provide(governedActionRuntimeLive)),
     // </generated-governed-http-handler-layers>
   ).pipe(Layer.provide(Layer.mergeAll(actionPrincipalVerifierLive, gatewayAssertionRedemption)));
-  const resolvedApiHandlersLive = apiHandlersLive.pipe(
-    Layer.provide(runtimeObservabilityLive),
-    Layer.orDie,
-  );
+  const resolvedApiHandlersLive = apiHandlersLive.pipe(Layer.provide(runtimeObservabilityLive), Layer.orDie);
   const transportLive = HttpRouter.cors({
     allowedHeaders: [...paymentTermCatalogCorsAllowedHeaders],
     allowedMethods: [...paymentTermCatalogCorsAllowedMethods],

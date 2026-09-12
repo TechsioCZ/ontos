@@ -2,25 +2,19 @@
 // @ontos-action-owner commerce.customer-context
 // @ontos-action-slug grant-counterparty-commerce-access
 import type { ActionHandlerContext } from '@app/core-runtime';
-import {
-  defineAction,
-  defineActionBusinessPermission,
-  defineTenantModuleEntrypoint,
-} from '@app/core-runtime';
+import { defineAction, defineActionBusinessPermission, defineTenantModuleEntrypoint } from '@app/core-runtime';
 import { Effect } from 'effect';
 import {
   GrantCounterpartyCommerceAccessPayloadSchema,
   GrantCounterpartyCommerceAccessResultSchema,
 } from '../../shared/actions/grant-counterparty-commerce-access.ts';
 import type { GrantCounterpartyCommerceAccessPayload } from '../../shared/actions/grant-counterparty-commerce-access.ts';
-import {
-  AccessAuditEvidenceSchema,
-  AccessDeniedAuditEvidenceSchema,
-} from '../../shared/domain/access-contract.ts';
+import { AccessAuditEvidenceSchema, AccessDeniedAuditEvidenceSchema } from '../../shared/domain/access-contract.ts';
 import { CounterpartyAccessDomainErrorSchema } from '../../shared/domain/access-port.ts';
 import type { CounterpartyAccessPortService } from '../../shared/domain/access-port.ts';
 import { counterpartyAccessServicesForTransaction } from '../access-services.ts';
 import {
+  accessAuthorizationMutationEventPayload,
   auditEvidence,
   accessManagementPermissionTarget,
   deniedAccessAuditEvidence,
@@ -81,28 +75,16 @@ const handle = Effect.fn('GrantCounterpartyCommerceAccess.handle')(function* han
     }),
   );
   if (result.outcome === 'RECONCILIATION_REQUIRED' && result.reconciliation.staged) {
-    const eventPayload = {
-      catalogVersion: result.grant.catalogVersion,
-      counterpartyRef: result.grant.counterpartyRef,
-      grantRef: result.grant.grantRef,
-      legalEntityId,
-      mutationId: result.reconciliation.mutationId,
-      operation: result.reconciliation.operation,
-      schemaVersion: '1' as const,
-    };
+    const eventPayload = accessAuthorizationMutationEventPayload(result.grant, result.reconciliation, legalEntityId);
     const event = yield* context.addDomainEvent({
-      eventType:
-        'commerce.customer-context.counterparty-access-grant-authorization-mutation-requested.v1',
+      eventType: 'commerce.customer-context.counterparty-access-grant-authorization-mutation-requested.v1',
       payloadJson: eventPayload,
       producerModuleKey: result.grant.grantRef.moduleId,
       subjectModuleKey: result.grant.grantRef.moduleId,
       subjectResourceId: result.grant.grantRef.resourceId,
       subjectResourceType: result.grant.grantRef.resourceType,
     });
-    yield* context.addOutboxMessage(
-      event,
-      createAuthorizationMutationRequestedOutboxMessage(eventPayload),
-    );
+    yield* context.addOutboxMessage(event, createAuthorizationMutationRequestedOutboxMessage(eventPayload));
   }
   return result;
 });
@@ -148,29 +130,5 @@ export const grantCounterpartyCommerceAccessAction = defineAction(
   },
   handle,
   (transaction, scope) =>
-    counterpartyAccessServicesForTransaction(transaction, scope).pipe(
-      Effect.map((port) => ({ grant: port.grant })),
-    ),
+    counterpartyAccessServicesForTransaction(transaction, scope).pipe(Effect.map((port) => ({ grant: port.grant }))),
 );
-
-export {
-  GrantCounterpartyCommerceAccessPayloadSchema,
-  GrantCounterpartyCommerceAccessResultSchema,
-} from '../../shared/actions/grant-counterparty-commerce-access.ts';
-export type {
-  GrantCounterpartyCommerceAccessPayload,
-  GrantCounterpartyCommerceAccessResult,
-} from '../../shared/actions/grant-counterparty-commerce-access.ts';
-
-// <generated-outbox-message-exports>
-export { createGrantCounterpartyCommerceAccessCommerceCustomerContextCounterpartyAccessGrantAuthorizationMutationRequestedV1OutboxMessage } from './grant-counterparty-commerce-access.commerce-customer-context-counterparty-access-grant-authorization-mutation-requested-v1.outbox-message.ts';
-export { createGrantCounterpartyCommerceAccessCommerceCustomerContextCounterpartyAccessGrantedV1OutboxMessage } from './grant-counterparty-commerce-access.commerce-customer-context-counterparty-access-granted-v1.outbox-message.ts';
-export { GrantCounterpartyCommerceAccessCommerceCustomerContextCounterpartyAccessGrantAuthorizationMutationRequestedV1OutboxPayloadSchema } from './grant-counterparty-commerce-access.commerce-customer-context-counterparty-access-grant-authorization-mutation-requested-v1.outbox-message.ts';
-export { GrantCounterpartyCommerceAccessCommerceCustomerContextCounterpartyAccessGrantAuthorizationMutationRequestedV1OutboxProducerModuleKey } from './grant-counterparty-commerce-access.commerce-customer-context-counterparty-access-grant-authorization-mutation-requested-v1.outbox-message.ts';
-export { GrantCounterpartyCommerceAccessCommerceCustomerContextCounterpartyAccessGrantAuthorizationMutationRequestedV1OutboxTopic } from './grant-counterparty-commerce-access.commerce-customer-context-counterparty-access-grant-authorization-mutation-requested-v1.outbox-message.ts';
-export { GrantCounterpartyCommerceAccessCommerceCustomerContextCounterpartyAccessGrantedV1OutboxPayloadSchema } from './grant-counterparty-commerce-access.commerce-customer-context-counterparty-access-granted-v1.outbox-message.ts';
-export { GrantCounterpartyCommerceAccessCommerceCustomerContextCounterpartyAccessGrantedV1OutboxProducerModuleKey } from './grant-counterparty-commerce-access.commerce-customer-context-counterparty-access-granted-v1.outbox-message.ts';
-export { GrantCounterpartyCommerceAccessCommerceCustomerContextCounterpartyAccessGrantedV1OutboxTopic } from './grant-counterparty-commerce-access.commerce-customer-context-counterparty-access-granted-v1.outbox-message.ts';
-export type { GrantCounterpartyCommerceAccessCommerceCustomerContextCounterpartyAccessGrantAuthorizationMutationRequestedV1OutboxPayload } from './grant-counterparty-commerce-access.commerce-customer-context-counterparty-access-grant-authorization-mutation-requested-v1.outbox-message.ts';
-export type { GrantCounterpartyCommerceAccessCommerceCustomerContextCounterpartyAccessGrantedV1OutboxPayload } from './grant-counterparty-commerce-access.commerce-customer-context-counterparty-access-granted-v1.outbox-message.ts';
-// </generated-outbox-message-exports>

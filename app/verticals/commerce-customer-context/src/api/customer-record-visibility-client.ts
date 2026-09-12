@@ -21,7 +21,7 @@ type CustomerRecordVisibilityOperationInvocation = readonly [
 ];
 
 const customerRecordVisibilityClient = (
-  credential: Redacted.Redacted<string>,
+  credential: Redacted.Redacted,
   requestCorrelation: string,
   options: CustomerRecordVisibilityClientOptions,
 ) =>
@@ -50,10 +50,5 @@ export const executeCustomerRecordVisibility = (
   ...[requestCorrelation, options = {}]: CustomerRecordVisibilityOperationInvocation
 ) =>
   operationGateway.invoke((credential) =>
-    executeCustomerRecordVisibilityWithAuthorization(
-      payload,
-      credential,
-      requestCorrelation,
-      options,
-    ),
+    executeCustomerRecordVisibilityWithAuthorization(payload, credential, requestCorrelation, options),
   );

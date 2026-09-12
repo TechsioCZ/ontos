@@ -18,9 +18,7 @@ export interface PurchaseCurrencyPolicyPortService {
 export class PurchaseCurrencyPolicyPort extends Context.Service<
   PurchaseCurrencyPolicyPort,
   PurchaseCurrencyPolicyPortService
->()(
-  '@app/commerce-customer-context/shared/domain/purchase-currency-policy-port/PurchaseCurrencyPolicyPort',
-) {}
+>()('@app/commerce-customer-context/shared/domain/purchase-currency-policy-port/PurchaseCurrencyPolicyPort') {}
 
 export const unavailablePurchaseCurrencyPolicyPort = (): PurchaseCurrencyPolicyPortService => ({
   resolveCurrent: () =>

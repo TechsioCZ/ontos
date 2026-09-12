@@ -1,4 +1,3 @@
-import { ReadHandlerNotFound, ReadHandlerUnavailable } from '@app/core-runtime';
 import type { OperationalScope, ReadServiceFactory } from '@app/core-runtime';
 import { Effect } from 'effect';
 import type { AddressBookProfile } from '../../shared/domain/address-book.ts';
@@ -13,15 +12,13 @@ import { partyBackedPostalAddressResolver } from '../integrations/party-address-
 type DeliveryDestinationReadServices = ReturnType<typeof deliveryDestinationPortsForTransaction>;
 type InvoiceRecipientReadServices = ReturnType<typeof invoiceRecipientPortsForTransaction>;
 
-export type AddressExternalResolutionPortsFactory = (
-  scope: OperationalScope,
-) => Partial<AddressExternalResolutionPorts>;
+type AddressExternalResolutionPortsFactory = (scope: OperationalScope) => Partial<AddressExternalResolutionPorts>;
 
 const partyAddressResolutionPorts: AddressExternalResolutionPortsFactory = (scope) => ({
   resolvePartyPostalAddress: partyBackedPostalAddressResolver(scope.correlationId),
 });
 
-export const makeDeliveryDestinationReadServiceFactory =
+const makeDeliveryDestinationReadServiceFactory =
   (
     externalForScope: AddressExternalResolutionPortsFactory = partyAddressResolutionPorts,
   ): ReadServiceFactory<DeliveryDestinationReadServices> =>
@@ -36,7 +33,7 @@ export const makeDeliveryDestinationReadServiceFactory =
 
 export const deliveryDestinationReadServiceFactory = makeDeliveryDestinationReadServiceFactory();
 
-export const makeInvoiceRecipientReadServiceFactory =
+const makeInvoiceRecipientReadServiceFactory =
   (
     externalForScope: AddressExternalResolutionPortsFactory = partyAddressResolutionPorts,
   ): ReadServiceFactory<InvoiceRecipientReadServices> =>
@@ -51,16 +48,7 @@ export const makeInvoiceRecipientReadServiceFactory =
 
 export const invoiceRecipientReadServiceFactory = makeInvoiceRecipientReadServiceFactory();
 
-export const unavailableRead = <A>(
-  reason = 'Address Book persistence is temporarily unavailable',
-): Effect.Effect<A, ReadHandlerUnavailable> =>
-  Effect.fail(new ReadHandlerUnavailable({ code: 'read_handler_unavailable', reason }));
-export const notFoundRead = (reason: string) =>
-  new ReadHandlerNotFound({ code: 'read_handler_not_found', reason });
-export const profileTarget = (
-  input: { readonly profile: AddressBookProfile },
-  scope: OperationalScope,
-) => {
+export const profileTarget = (input: { readonly profile: AddressBookProfile }, scope: OperationalScope) => {
   const legalEntityId = scope.legalEntityId ?? 'missing-required-legal-entity-scope';
   return {
     businessPermission:

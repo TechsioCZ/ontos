@@ -1,14 +1,6 @@
-import {
-  GatewayContextApi,
-  GatewayContextRequestSchema,
-  shellGatewayContextContract,
-} from './gateway-context.ts';
-import type {
-  GatewayContextClientError,
-  GatewayContextRequest,
-  GatewayContextResponse,
-} from './gateway-context.ts';
-import { makeEffectHttpApiClient } from '@modern-js/plugin-bff/effect-client';
+import { GatewayContextApi, GatewayContextRequestSchema, shellGatewayContextContract } from './gateway-context.ts';
+import type { GatewayContextClientError, GatewayContextRequest, GatewayContextResponse } from './gateway-context.ts';
+import { makeEffectHttpApiClient } from '@modern-js/bff-effect/effect-client';
 import { Context, Effect, Option, Redacted, Schema } from 'effect';
 import { HttpClient, HttpClientRequest } from 'effect/unstable/http';
 
@@ -23,11 +15,12 @@ interface ApiKeyGatewayContextTransportOptions {
   readonly requestCorrelation: string;
 }
 
-const ApiKeyGatewayContextTransport = Context.Reference<
-  Option.Option<ApiKeyGatewayContextTransportOptions>
->('@app/shared-contracts/gateway-context-api-key/ApiKeyGatewayContextTransport', {
-  defaultValue: Option.none,
-});
+const ApiKeyGatewayContextTransport = Context.Reference<Option.Option<ApiKeyGatewayContextTransportOptions>>(
+  '@app/shared-contracts/gateway-context-api-key/ApiKeyGatewayContextTransport',
+  {
+    defaultValue: Option.none,
+  },
+);
 
 const apiKeyGatewayContextClient = makeEffectHttpApiClient(GatewayContextApi, {
   transformClient: HttpClient.mapRequestEffect((request) =>
@@ -57,7 +50,7 @@ export const issueApiKeyGatewayContext = (
   payload: GatewayContextRequest,
   options: ApiKeyGatewayContextClientOptions,
 ): Effect.Effect<GatewayContextResponse, GatewayContextClientError> =>
-  Schema.decodeUnknownEffect(GatewayContextRequestSchema)(payload).pipe(
+  Schema.decodeEffect(GatewayContextRequestSchema)(payload).pipe(
     Effect.flatMap((decodedPayload) =>
       apiKeyGatewayContextClient.pipe(
         Effect.flatMap((client) =>

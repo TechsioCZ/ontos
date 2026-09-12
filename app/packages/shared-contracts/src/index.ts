@@ -1,5 +1,60 @@
 import { Schema } from 'effect';
 
+type UltramodernApiLocaleResource = string | { readonly [key: string]: UltramodernApiLocaleResource };
+
+const flattenUltramodernApiLocaleResource = (
+  resource: UltramodernApiLocaleResource,
+  prefix = '',
+): Record<string, string> => {
+  if (Schema.is(Schema.String)(resource)) {
+    return prefix.length > 0 ? { [prefix]: resource } : {};
+  }
+
+  return Object.fromEntries(
+    Object.entries(resource).flatMap(([key, value]) => {
+      const nextKey = prefix.length > 0 ? `${prefix}.${key}` : key;
+      return Schema.is(Schema.String)(value)
+        ? [[nextKey, value]]
+        : Object.entries(flattenUltramodernApiLocaleResource(value, nextKey));
+    }),
+  );
+};
+
+export const createUltramodernApiRuntimeConfig = <I18nInstance>({
+  csResource,
+  enResource,
+  i18nInstance,
+}: {
+  readonly csResource: UltramodernApiLocaleResource;
+  readonly enResource: UltramodernApiLocaleResource;
+  readonly i18nInstance: I18nInstance;
+}) => {
+  const resources = {
+    cs: { api: flattenUltramodernApiLocaleResource(csResource) },
+    en: { api: flattenUltramodernApiLocaleResource(enResource) },
+  } as const;
+
+  return {
+    i18n: {
+      i18nInstance,
+      initOptions: {
+        defaultNS: 'api',
+        fallbackLng: 'en',
+        interpolation: {
+          escapeValue: false,
+        },
+        ns: ['api', 'translation'],
+        resources,
+        supportedLngs: ['en', 'cs'],
+      },
+    },
+
+    router: {
+      framework: 'tanstack',
+    },
+  } as const;
+};
+
 export { makeProblemDetailsSchema, makeRetryableProblemDetailsSchema } from './problem-details.ts';
 export type { ProblemDetailsStatus } from './problem-details.ts';
 

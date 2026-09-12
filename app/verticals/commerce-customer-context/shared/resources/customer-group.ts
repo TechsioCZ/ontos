@@ -4,9 +4,7 @@
 import type { OntosResourceType } from '@app/core-runtime';
 import { Schema } from 'effect';
 
-const ResourceIdSchema = Schema.String.check(Schema.isUUID()).pipe(
-  Schema.brand('CustomerGroupResourceId'),
-);
+const ResourceIdSchema = Schema.String.check(Schema.isUUID()).pipe(Schema.brand('CustomerGroupResourceId'));
 const TenantIdSchema = Schema.String.check(Schema.isUUID()).pipe(Schema.brand('TenantId'));
 
 export const CustomerGroupRefSchema = Schema.Struct({
@@ -25,8 +23,7 @@ export const customerGroupResourceDescriptor = {
     searchable: false,
     timelineVisible: true,
   },
-  description:
-    'Stable Commerce-owned business segment identity with versioned explainable meaning.',
+  description: 'Stable Commerce-owned business segment identity with versioned explainable meaning.',
   key: 'commerce.customer-context.customer-group',
   label: 'Commerce Customer Group',
   owningModuleId: 'commerce.customer-context',

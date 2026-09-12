@@ -37,11 +37,7 @@ const customerPriceGroupResolutionClient = (
 
 export const executeCustomerPriceGroupResolutionWithAuthorization = (
   payload: CustomerPriceGroupResolutionRequest,
-  ...[
-    credential,
-    requestCorrelation,
-    options = {},
-  ]: CustomerPriceGroupResolutionAuthorizedInvocation
+  ...[credential, requestCorrelation, options = {}]: CustomerPriceGroupResolutionAuthorizedInvocation
 ) =>
   customerPriceGroupResolutionClient(Redacted.make(credential), requestCorrelation, options).pipe(
     Effect.flatMap((client) =>
@@ -54,10 +50,5 @@ export const executeCustomerPriceGroupResolution = (
   ...[requestCorrelation, options = {}]: CustomerPriceGroupResolutionOperationInvocation
 ) =>
   operationGateway.invoke((credential) =>
-    executeCustomerPriceGroupResolutionWithAuthorization(
-      payload,
-      credential,
-      requestCorrelation,
-      options,
-    ),
+    executeCustomerPriceGroupResolutionWithAuthorization(payload, credential, requestCorrelation, options),
   );

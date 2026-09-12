@@ -37,71 +37,124 @@ import { CounterpartyPurchasingProfileRefSchema } from '../../shared/resources/c
 import { createCreatePurchaseProposalRevisionCommerceCustomerContextPurchaseProposalRevisionCreatedV1OutboxMessage as createOutboxMessage } from './create-purchase-proposal-revision-commerce-customer-context-purchase-proposal-revision-created-v1.outbox-message.ts';
 
 const MODULE_KEY = 'commerce.customer-context' as const;
+const PurchaseProposalRevisionOutcomeSchema = Schema.Literals(['CREATED', 'ALREADY_EXISTS']);
 const PurchaseProposalRevisionCreatedEventSchema = Schema.Struct({
-  outcome: Schema.Literals(['CREATED', 'ALREADY_EXISTS']),
+  canonicalHash: Schema.String,
+  outcome: PurchaseProposalRevisionOutcomeSchema,
   proposalRevisionRef: Schema.String,
   revision: Schema.Finite,
-  canonicalHash: Schema.String,
   state: Schema.String,
 });
-export const CreatePurchaseProposalRevisionAuditEvidenceSchema = Schema.Struct({
-  outcome: Schema.Literals(['CREATED', 'ALREADY_EXISTS']),
-  proposalRevisionRef: Schema.String,
+const CreatePurchaseProposalRevisionAuditEvidenceSchema = Schema.Struct({
+  outcome: PurchaseProposalRevisionOutcomeSchema,
   proposalHash: Schema.String,
+  proposalRevisionRef: Schema.String,
   state: Schema.String,
 });
 type DomainEvents = Readonly<{
   'commerce.customer-context.purchase-proposal-revision-created.v1': typeof PurchaseProposalRevisionCreatedEventSchema;
 }>;
+type PurchaseProposal = CreatePurchaseProposalRevisionPayload['proposal'];
+type CurrentProposalEvidence = Effect.Success<
+  ReturnType<NonNullable<PurchaseApprovalTriggerEvidenceSource['loadCandidateCurrent']>>
+>;
+
+const rejectWithCause =
+  (
+    code: ConstructorParameters<typeof CreatePurchaseProposalRevisionRejected>[0]['code'],
+    reason: string,
+    retryable = false,
+  ) =>
+  (cause: unknown) => {
+    const rejection = new CreatePurchaseProposalRevisionRejected({ code, reason, retryable });
+    Object.defineProperty(rejection, 'cause', { configurable: true, value: cause });
+    return rejection;
+  };
+
 export interface CreatePurchaseProposalRevisionServices {
-  readonly workflow: PurchasingApprovalWorkflowService;
   /** Owner-composed Cart/catalog/pricing/tax/payment/destination/profile evidence. */
   readonly currentness: PurchaseApprovalTriggerEvidenceSource;
+  readonly workflow: PurchasingApprovalWorkflowService;
 }
 
-const handleCreatePurchaseProposalRevision = Effect.fn(
-  'CreatePurchaseProposalRevisionAction.handle',
-)(function* handle(
+const proposalMatchesTrustedScope = (
+  proposal: PurchaseProposal,
+  storefrontId: string,
+  context: ActionHandlerContext<DomainEvents, CreatePurchaseProposalRevisionServices>,
+): boolean =>
+  proposal.proposalRevisionRef.tenantId === context.scope.tenantId &&
+  proposal.context.tenantId === context.scope.tenantId &&
+  proposal.context.sellingLegalEntityId === context.scope.legalEntityId &&
+  proposal.identity.buyer.tenantId === context.scope.tenantId &&
+  proposal.identity.buyer.principalId === context.scope.principalId &&
+  trustedPurchasingContext(proposal.identity.counterpartyRef, storefrontId, context.scope);
+
+const proposalEvidenceIsCurrent = (ownerEvidence: CurrentProposalEvidence, proposal: PurchaseProposal): boolean =>
+  ownerEvidence.profileEvidence.profileRef.resourceId === proposal.identity.profileRef.resourceId &&
+  ownerEvidence.profileEvidence.counterpartyRef.resourceId === proposal.identity.counterpartyRef.resourceId &&
+  ownerEvidence.profileEvidence.gate.outcome === 'ACTIVE' &&
+  ownerEvidence.proposalEvidence.state === 'CURRENT' &&
+  ownerEvidence.proposalEvidence.proposalRevisionRef === proposal.proposalRevisionRef.resourceId &&
+  ownerEvidence.proposalEvidence.revision === String(proposal.revision) &&
+  ownerEvidence.proposalEvidence.purchaseValue.monetaryAmount.amount === proposal.purchaseValue.monetaryAmount.amount &&
+  ownerEvidence.proposalEvidence.purchaseValue.monetaryAmount.currency ===
+    proposal.purchaseValue.monetaryAmount.currency;
+
+const recordPurchaseProposalRevisionOutcome = Effect.fn('CreatePurchaseProposalRevisionAction.recordOutcome')(
+  function* recordOutcome(
+    result: CreatePurchaseProposalRevisionResult,
+    context: ActionHandlerContext<DomainEvents, CreatePurchaseProposalRevisionServices>,
+  ) {
+    yield* context.recordAuditEvidence({
+      outcome: result.outcome,
+      proposalHash: result.proposal.canonicalHash,
+      proposalRevisionRef: result.proposal.proposalRevisionRef.resourceId,
+      state: result.proposal.state,
+    });
+    if (result.outcome !== 'CREATED') {
+      return;
+    }
+    const eventPayload = {
+      canonicalHash: result.proposal.canonicalHash,
+      outcome: result.outcome,
+      proposalRevisionRef: result.proposal.proposalRevisionRef.resourceId,
+      revision: result.proposal.revision,
+      state: result.proposal.state,
+    };
+    const event = yield* context.addDomainEvent({
+      eventType: 'commerce.customer-context.purchase-proposal-revision-created.v1',
+      payloadJson: eventPayload,
+      producerModuleKey: MODULE_KEY,
+      subjectModuleKey: MODULE_KEY,
+      subjectResourceId: result.proposal.proposalRevisionRef.resourceId,
+      subjectResourceType: result.proposal.proposalRevisionRef.resourceType,
+    });
+    yield* context.addOutboxMessage(event, createOutboxMessage({ data: eventPayload }));
+  },
+);
+
+const handleCreatePurchaseProposalRevision = Effect.fn('CreatePurchaseProposalRevisionAction.handle')(function* handle(
   payload: CreatePurchaseProposalRevisionPayload,
   context: ActionHandlerContext<DomainEvents, CreatePurchaseProposalRevisionServices>,
 ) {
-  const proposal = payload.proposal;
+  const { proposal } = payload;
   const counterpartyRef = yield* Schema.decodeUnknownEffect(PurchaseLimitCounterpartyRefSchema)(
     proposal.identity.counterpartyRef,
   ).pipe(
     Effect.mapError(
-      () =>
-        new CreatePurchaseProposalRevisionRejected({
-          code: 'PERMISSION_DENIED',
-          reason: 'The proposal counterparty is not a canonical Counterparty resource',
-          retryable: false,
-        }),
+      rejectWithCause('PERMISSION_DENIED', 'The proposal counterparty is not a canonical Counterparty resource'),
     ),
   );
   const profileRefValue = yield* Schema.decodeUnknownEffect(CounterpartyPurchasingProfileRefSchema)(
     proposal.identity.profileRef,
   ).pipe(
     Effect.mapError(
-      () =>
-        new CreatePurchaseProposalRevisionRejected({
-          code: 'PERMISSION_DENIED',
-          reason: 'The proposal profile is not a canonical purchasing profile resource',
-          retryable: false,
-        }),
+      rejectWithCause('PERMISSION_DENIED', 'The proposal profile is not a canonical purchasing profile resource'),
     ),
   );
   const profileRef = { kind: 'COUNTERPARTY' as const, ...profileRefValue };
-  const storefrontId = yield* Schema.decodeUnknownEffect(PurchaseLimitStorefrontIdSchema)(
-    proposal.context.storefrontId,
-  ).pipe(
-    Effect.mapError(
-      () =>
-        new CreatePurchaseProposalRevisionRejected({
-          code: 'PERMISSION_DENIED',
-          reason: 'The proposal storefront is not a valid trusted storefront',
-          retryable: false,
-        }),
-    ),
+  const storefrontId = yield* Schema.decodeEffect(PurchaseLimitStorefrontIdSchema)(proposal.context.storefrontId).pipe(
+    Effect.mapError(rejectWithCause('PERMISSION_DENIED', 'The proposal storefront is not a valid trusted storefront')),
   );
   const trustedContext = yield* Schema.decodeUnknownEffect(PurchaseLimitEvaluationContextSchema)({
     counterpartyRef,
@@ -110,29 +163,20 @@ const handleCreatePurchaseProposalRevision = Effect.fn(
     storefrontId,
   }).pipe(
     Effect.mapError(
-      () =>
-        new CreatePurchaseProposalRevisionRejected({
-          code: 'PROPOSAL_NOT_CURRENT',
-          reason: 'The proposal context cannot be verified against the trusted operation scope',
-          retryable: false,
-        }),
+      rejectWithCause(
+        'PROPOSAL_NOT_CURRENT',
+        'The proposal context cannot be verified against the trusted operation scope',
+      ),
     ),
   );
-  if (
-    proposal.proposalRevisionRef.tenantId !== context.scope.tenantId ||
-    proposal.context.tenantId !== context.scope.tenantId ||
-    proposal.context.sellingLegalEntityId !== context.scope.legalEntityId ||
-    proposal.identity.buyer.tenantId !== context.scope.tenantId ||
-    proposal.identity.buyer.principalId !== context.scope.principalId ||
-    !trustedPurchasingContext(proposal.identity.counterpartyRef, storefrontId, context.scope)
-  ) {
+  if (!proposalMatchesTrustedScope(proposal, storefrontId, context)) {
     return yield* new CreatePurchaseProposalRevisionRejected({
       code: 'PERMISSION_DENIED',
       reason: 'Proposal scope and buyer evidence must match the trusted operation context',
       retryable: false,
     });
   }
-  const loadCandidateCurrent = context.services.currentness.loadCandidateCurrent;
+  const { loadCandidateCurrent } = context.services.currentness;
   if (loadCandidateCurrent === undefined) {
     return yield* new CreatePurchaseProposalRevisionRejected({
       code: 'CURRENT_STATE_INDETERMINATE',
@@ -152,30 +196,14 @@ const handleCreatePurchaseProposalRevision = Effect.fn(
     trustedContext,
   }).pipe(
     Effect.mapError(
-      () =>
-        new CreatePurchaseProposalRevisionRejected({
-          code: 'PROPOSAL_NOT_CURRENT',
-          reason:
-            'The owner-composed Cart, commercial, profile, and policy evidence is unavailable or stale',
-          retryable: true,
-        }),
+      rejectWithCause(
+        'PROPOSAL_NOT_CURRENT',
+        'The owner-composed Cart, commercial, profile, and policy evidence is unavailable or stale',
+        true,
+      ),
     ),
   );
-  if (
-    ownerEvidence.profileEvidence.profileRef.resourceId !==
-      proposal.identity.profileRef.resourceId ||
-    ownerEvidence.profileEvidence.counterpartyRef.resourceId !==
-      proposal.identity.counterpartyRef.resourceId ||
-    ownerEvidence.profileEvidence.gate.outcome !== 'ACTIVE' ||
-    ownerEvidence.proposalEvidence.state !== 'CURRENT' ||
-    ownerEvidence.proposalEvidence.proposalRevisionRef !==
-      proposal.proposalRevisionRef.resourceId ||
-    ownerEvidence.proposalEvidence.revision !== String(proposal.revision) ||
-    ownerEvidence.proposalEvidence.purchaseValue.monetaryAmount.amount !==
-      proposal.purchaseValue.monetaryAmount.amount ||
-    ownerEvidence.proposalEvidence.purchaseValue.monetaryAmount.currency !==
-      proposal.purchaseValue.monetaryAmount.currency
-  ) {
+  if (!proposalEvidenceIsCurrent(ownerEvidence, proposal)) {
     return yield* new CreatePurchaseProposalRevisionRejected({
       code: 'PROPOSAL_NOT_CURRENT',
       reason: 'The owner-composed Cart, commercial, profile, and policy evidence is not current',
@@ -210,40 +238,7 @@ const handleCreatePurchaseProposalRevision = Effect.fn(
     ],
     { concurrency: 1, discard: true },
   );
-  yield* context.recordAuditEvidence({
-    outcome: result.outcome,
-    proposalRevisionRef: result.proposal.proposalRevisionRef.resourceId,
-    proposalHash: result.proposal.canonicalHash,
-    state: result.proposal.state,
-  });
-  if (result.outcome === 'CREATED') {
-    const event = yield* context.addDomainEvent({
-      eventType: 'commerce.customer-context.purchase-proposal-revision-created.v1',
-      payloadJson: {
-        outcome: result.outcome,
-        proposalRevisionRef: result.proposal.proposalRevisionRef.resourceId,
-        revision: result.proposal.revision,
-        canonicalHash: result.proposal.canonicalHash,
-        state: result.proposal.state,
-      },
-      producerModuleKey: MODULE_KEY,
-      subjectModuleKey: MODULE_KEY,
-      subjectResourceId: result.proposal.proposalRevisionRef.resourceId,
-      subjectResourceType: result.proposal.proposalRevisionRef.resourceType,
-    });
-    yield* context.addOutboxMessage(
-      event,
-      createOutboxMessage({
-        data: {
-          outcome: result.outcome,
-          proposalRevisionRef: result.proposal.proposalRevisionRef.resourceId,
-          revision: result.proposal.revision,
-          canonicalHash: result.proposal.canonicalHash,
-          state: result.proposal.state,
-        },
-      }),
-    );
-  }
+  yield* recordPurchaseProposalRevisionOutcome(result, context);
   return result satisfies CreatePurchaseProposalRevisionResult;
 });
 
@@ -256,19 +251,17 @@ export const createPurchaseProposalRevisionAction = defineAction(
     actionKey: 'commerce.customer-context.create-purchase-proposal-revision',
     auditEvidenceSchema: CreatePurchaseProposalRevisionAuditEvidenceSchema,
     auditProfile: 'sensitive',
-    businessPermission: defineActionBusinessPermission(
-      (payload: CreatePurchaseProposalRevisionPayload, scope) =>
-        purchasingApprovalPermissionTarget({
-          permission: 'counterparty.purchase.submit',
-          counterpartyRef: payload.proposal.identity.counterpartyRef,
-          storefrontId: payload.proposal.context.storefrontId,
-          scope,
-        }),
+    businessPermission: defineActionBusinessPermission((payload: CreatePurchaseProposalRevisionPayload, scope) =>
+      purchasingApprovalPermissionTarget({
+        counterpartyRef: payload.proposal.identity.counterpartyRef,
+        permission: 'counterparty.purchase.submit',
+        scope,
+        storefrontId: payload.proposal.context.storefrontId,
+      }),
     ),
     domainErrorSchema: CreatePurchaseProposalRevisionRejected,
     domainEvents: {
-      'commerce.customer-context.purchase-proposal-revision-created.v1':
-        PurchaseProposalRevisionCreatedEventSchema,
+      'commerce.customer-context.purchase-proposal-revision-created.v1': PurchaseProposalRevisionCreatedEventSchema,
     },
     entrypoint: defineTenantModuleEntrypoint({
       access: 'write',
@@ -289,28 +282,24 @@ export const createPurchaseProposalRevisionAction = defineAction(
   (transaction, scope) =>
     Effect.all(
       {
-        workflow: purchasingApprovalWorkflowForScope(transaction, scope),
         currentness: PurchaseApprovalTriggerEvidenceSourceFactory.pipe(
           Effect.flatMap((factory) => factory.make(transaction, scope)),
         ),
+        workflow: purchasingApprovalWorkflowForScope(transaction, scope),
       },
       { concurrency: 2 },
     ).pipe(
-      Effect.map(({ workflow, currentness }) => ({ workflow, currentness })),
-      Effect.mapError(
-        () =>
-          new OperationContextUnavailable({
-            code: 'operation_context_unavailable',
-            reason: 'Current Purchase Proposal owner evidence is temporarily unavailable',
-          }),
-      ),
+      Effect.map(({ currentness, workflow }) => ({ currentness, workflow })),
+      Effect.mapError((cause) => {
+        const failure = new OperationContextUnavailable({
+          code: 'operation_context_unavailable',
+          reason: 'Current Purchase Proposal owner evidence is temporarily unavailable',
+        });
+        Object.defineProperty(failure, 'cause', { configurable: true, value: cause });
+        return failure;
+      }),
     ),
 );
 
 // <generated-outbox-message-exports>
-export { createCreatePurchaseProposalRevisionCommerceCustomerContextPurchaseProposalRevisionCreatedV1OutboxMessage } from './create-purchase-proposal-revision-commerce-customer-context-purchase-proposal-revision-created-v1.outbox-message.ts';
-export { CreatePurchaseProposalRevisionCommerceCustomerContextPurchaseProposalRevisionCreatedV1OutboxPayloadSchema } from './create-purchase-proposal-revision-commerce-customer-context-purchase-proposal-revision-created-v1.outbox-message.ts';
-export { CreatePurchaseProposalRevisionCommerceCustomerContextPurchaseProposalRevisionCreatedV1OutboxProducerModuleKey } from './create-purchase-proposal-revision-commerce-customer-context-purchase-proposal-revision-created-v1.outbox-message.ts';
-export { CreatePurchaseProposalRevisionCommerceCustomerContextPurchaseProposalRevisionCreatedV1OutboxTopic } from './create-purchase-proposal-revision-commerce-customer-context-purchase-proposal-revision-created-v1.outbox-message.ts';
-export type { CreatePurchaseProposalRevisionCommerceCustomerContextPurchaseProposalRevisionCreatedV1OutboxPayload } from './create-purchase-proposal-revision-commerce-customer-context-purchase-proposal-revision-created-v1.outbox-message.ts';
 // </generated-outbox-message-exports>

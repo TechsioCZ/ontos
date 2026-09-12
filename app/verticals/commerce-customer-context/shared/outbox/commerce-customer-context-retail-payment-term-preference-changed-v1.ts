@@ -2,10 +2,7 @@
 // @ontos-outbox-producer commerce.customer-context
 // @ontos-outbox-topic commerce.customer-context.retail-payment-term-preference-changed.v1
 import { Schema } from 'effect';
-import {
-  PaymentTermReferenceSchema,
-  PaymentTermsTimestampSchema,
-} from '../domain/payment-term-contracts.ts';
+import { PaymentTermReferenceSchema, PaymentTermsTimestampSchema } from '../domain/payment-term-contracts.ts';
 import { RetailCustomerProfileRefSchema } from '../resources/retail-customer-profile.ts';
 
 export const OutboxPayloadSchema = Schema.Struct({
@@ -17,6 +14,5 @@ export const OutboxPayloadSchema = Schema.Struct({
 });
 export type OutboxPayload = Schema.Schema.Type<typeof OutboxPayloadSchema>;
 
-export const outboxTopic =
-  'commerce.customer-context.retail-payment-term-preference-changed.v1' as const;
+export const outboxTopic = 'commerce.customer-context.retail-payment-term-preference-changed.v1' as const;
 export const outboxProducerModuleKey = 'commerce.customer-context' as const;

@@ -21,7 +21,7 @@ import {
 } from './customer-group-read-support.ts';
 import type { CustomerGroupReadServices } from './customer-group-read-support.ts';
 
-export const effectiveCustomerGroupMembershipsEntrypoint = defineTenantModuleEntrypoint({
+const effectiveCustomerGroupMembershipsEntrypoint = defineTenantModuleEntrypoint({
   access: 'historical_read',
   authorization: { kind: 'context_permission', permission: 'customer.group.history.read' },
   entrypointKey: 'commerce.customer-context.api.effective-customer-group-memberships',
@@ -29,25 +29,25 @@ export const effectiveCustomerGroupMembershipsEntrypoint = defineTenantModuleEnt
   role: 'api',
 });
 
-const handleEffectiveCustomerGroupMemberships = Effect.fn(
-  'EffectiveCustomerGroupMembershipsRead.handle',
-)(function* effectiveCustomerGroupMemberships(
-  input: EffectiveCustomerGroupMembershipsRequest,
-  context: ReadHandlerContext<CustomerGroupReadServices>,
-) {
-  yield* requireCustomerGroupTenant(context.scope.tenantId, input.profile.profileRef);
-  const legalEntityId = yield* requireCustomerGroupReadLegalEntityId(context.scope.legalEntityId);
-  const outcome = yield* context.services
-    .effectiveMemberships({
-      effectiveAt: input.asOf,
-      legalEntityId,
-      profile: input.profile,
-      tenantId: context.scope.tenantId,
-    })
-    .pipe(Effect.mapError(customerGroupReadUnavailable));
-  const result = yield* unwrapCustomerGroupLookup(outcome);
-  return { evidence: { resultCount: result.items.length }, result };
-});
+const handleEffectiveCustomerGroupMemberships = Effect.fn('EffectiveCustomerGroupMembershipsRead.handle')(
+  function* effectiveCustomerGroupMemberships(
+    input: EffectiveCustomerGroupMembershipsRequest,
+    context: ReadHandlerContext<CustomerGroupReadServices>,
+  ) {
+    yield* requireCustomerGroupTenant(context.scope.tenantId, input.profile.profileRef);
+    const legalEntityId = yield* requireCustomerGroupReadLegalEntityId(context.scope.legalEntityId);
+    const outcome = yield* context.services
+      .effectiveMemberships({
+        effectiveAt: input.asOf,
+        legalEntityId,
+        profile: input.profile,
+        tenantId: context.scope.tenantId,
+      })
+      .pipe(Effect.mapError(customerGroupReadUnavailable));
+    const result = yield* unwrapCustomerGroupLookup(outcome);
+    return { evidence: { resultCount: result.items.length }, result };
+  },
+);
 
 export const effectiveCustomerGroupMembershipsRead = defineRead(
   {

@@ -21,7 +21,7 @@ import {
 } from './customer-group-read-support.ts';
 import type { CustomerGroupReadServices } from './customer-group-read-support.ts';
 
-export const customerGroupMembersEntrypoint = defineTenantModuleEntrypoint({
+const customerGroupMembersEntrypoint = defineTenantModuleEntrypoint({
   access: 'read',
   authorization: { kind: 'context_permission', permission: 'customer.group.read' },
   entrypointKey: 'commerce.customer-context.api.customer-group-members',
@@ -29,29 +29,27 @@ export const customerGroupMembersEntrypoint = defineTenantModuleEntrypoint({
   role: 'api',
 });
 
-const handleCustomerGroupMembers = Effect.fn('CustomerGroupMembersRead.handle')(
-  function* customerGroupMembers(
-    input: CustomerGroupMembersRequest,
-    context: ReadHandlerContext<CustomerGroupReadServices>,
-  ) {
-    yield* requireCustomerGroupTenant(context.scope.tenantId, input.groupRef);
-    const legalEntityId = yield* requireCustomerGroupReadLegalEntityId(context.scope.legalEntityId);
-    const effectiveAt = DateTime.formatIso(yield* DateTime.now);
-    const outcome = yield* context.services
-      .members({
-        cursor: input.cursor ?? null,
-        effectiveAt,
-        groupRef: input.groupRef,
-        legalEntityId,
-        limit: input.limit ?? 50,
-        profileKind: input.profileKind ?? null,
-        tenantId: context.scope.tenantId,
-      })
-      .pipe(Effect.mapError(customerGroupReadUnavailable));
-    const result = yield* unwrapCustomerGroupLookup(outcome);
-    return { evidence: { resultCount: result.items.length }, result };
-  },
-);
+const handleCustomerGroupMembers = Effect.fn('CustomerGroupMembersRead.handle')(function* customerGroupMembers(
+  input: CustomerGroupMembersRequest,
+  context: ReadHandlerContext<CustomerGroupReadServices>,
+) {
+  yield* requireCustomerGroupTenant(context.scope.tenantId, input.groupRef);
+  const legalEntityId = yield* requireCustomerGroupReadLegalEntityId(context.scope.legalEntityId);
+  const effectiveAt = DateTime.formatIso(yield* DateTime.now);
+  const outcome = yield* context.services
+    .members({
+      cursor: input.cursor ?? null,
+      effectiveAt,
+      groupRef: input.groupRef,
+      legalEntityId,
+      limit: input.limit ?? 50,
+      profileKind: input.profileKind ?? null,
+      tenantId: context.scope.tenantId,
+    })
+    .pipe(Effect.mapError(customerGroupReadUnavailable));
+  const result = yield* unwrapCustomerGroupLookup(outcome);
+  return { evidence: { resultCount: result.items.length }, result };
+});
 
 export const customerGroupMembersRead = defineRead(
   {
@@ -73,6 +71,5 @@ export const customerGroupMembersRead = defineRead(
   handleCustomerGroupMembers,
   customerGroupReadServiceFactory,
   ({ groupRef }: CustomerGroupMembersRequest) => customerGroupResourceTarget(groupRef),
-  (result: CustomerGroupMembersResponse) =>
-    result.items.map(({ profile }) => customerProfileResourceTarget(profile)),
+  (result: CustomerGroupMembersResponse) => result.items.map(({ profile }) => customerProfileResourceTarget(profile)),
 );

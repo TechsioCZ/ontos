@@ -19,7 +19,7 @@ type PartyCorrectionAuthorizedInvocation = readonly [
 type PartyCorrectionOperationInvocation = readonly [requestCorrelation: string, options?: PartyCorrectionClientOptions];
 
 const partyCorrectionClient = (
-  credential: Redacted.Redacted<string>,
+  credential: Redacted.Redacted,
   requestCorrelation: string,
   options: PartyCorrectionClientOptions,
 ) =>

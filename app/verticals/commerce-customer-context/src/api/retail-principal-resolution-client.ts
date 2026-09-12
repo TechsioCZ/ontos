@@ -21,7 +21,7 @@ type RetailPrincipalResolutionOperationInvocation = readonly [
 ];
 
 const retailPrincipalResolutionClient = (
-  credential: Redacted.Redacted<string>,
+  credential: Redacted.Redacted,
   requestCorrelation: string,
   options: RetailPrincipalResolutionClientOptions,
 ) =>
@@ -50,10 +50,5 @@ export const executeRetailPrincipalResolution = (
   ...[requestCorrelation, options = {}]: RetailPrincipalResolutionOperationInvocation
 ) =>
   operationGateway.invoke((credential) =>
-    executeRetailPrincipalResolutionWithAuthorization(
-      payload,
-      credential,
-      requestCorrelation,
-      options,
-    ),
+    executeRetailPrincipalResolutionWithAuthorization(payload, credential, requestCorrelation, options),
   );

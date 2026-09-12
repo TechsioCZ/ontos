@@ -7,6 +7,10 @@ import { Effect, Schema } from 'effect';
 import {
   LegalEntityIdSchema,
   RetailPortalBindingActionRejected,
+  retailPortalBindingPayloadMatchesTrustedScope,
+  retailPortalBindingPermissionMutationPayloads,
+  retailPortalBindingResultMatches,
+  retailPortalBindingStagedPermissionMutations,
 } from '../../shared/actions/bind-retail-portal-profile.ts';
 import {
   RevokeRetailPortalProfileBindingPayloadSchema,
@@ -35,42 +39,64 @@ export interface RevokeRetailPortalProfileBindingServices {
     context: ActionHandlerContext<typeof domainEvents, RevokeRetailPortalProfileBindingServices>,
   ) => Effect.Effect<RevokeRetailPortalProfileBindingResult, RetailPortalBindingActionRejected>;
 }
+
+const bindingScopeConflict = () =>
+  new RetailPortalBindingActionRejected({
+    code: 'BINDING_CONFLICT',
+    reason: 'Profile, Principal, and Selling Legal Entity must match the trusted scope',
+    retryable: false,
+  });
+
+const validateRevokePayload = (
+  payload: RevokeRetailPortalProfileBindingPayload,
+  context: ActionHandlerContext<typeof domainEvents, RevokeRetailPortalProfileBindingServices>,
+) => {
+  if (payload.expectedRevision === null || payload.expectedState !== 'ACTIVE') {
+    return new RetailPortalBindingActionRejected({
+      code: 'CURRENT_STATE_CONFLICT',
+      reason: 'Binding revocation requires the exact expected Active state and revision',
+      retryable: false,
+    });
+  }
+  const { legalEntityId } = context.scope;
+  if (legalEntityId === undefined) {
+    return bindingScopeConflict();
+  }
+  const trustedScope = { legalEntityId, tenantId: context.scope.tenantId };
+  if (!retailPortalBindingPayloadMatchesTrustedScope(payload, trustedScope)) {
+    return bindingScopeConflict();
+  }
+  return legalEntityId;
+};
+
+const validateRevokeResult = (
+  result: RevokeRetailPortalProfileBindingResult,
+  payload: RevokeRetailPortalProfileBindingPayload,
+  context: ActionHandlerContext<typeof domainEvents, RevokeRetailPortalProfileBindingServices>,
+) =>
+  retailPortalBindingResultMatches(result, context.scope, payload.effectiveAt, 'BINDING_REVOKED', 'REVOKED')
+    ? undefined
+    : new RetailPortalBindingActionRejected({
+        code: 'CURRENT_STATE_CONFLICT',
+        reason: 'The binding service returned an inconsistent binding result',
+        retryable: false,
+      });
+
 const handle = Effect.fn('RevokeRetailPortalProfileBindingAction.handle')(
   function* handleRevokeRetailPortalProfileBindingEffect(
     payload: RevokeRetailPortalProfileBindingPayload,
     context: ActionHandlerContext<typeof domainEvents, RevokeRetailPortalProfileBindingServices>,
   ) {
-    if (payload.expectedRevision === null || payload.expectedState !== 'ACTIVE') {
-      return yield* new RetailPortalBindingActionRejected({
-        code: 'CURRENT_STATE_CONFLICT',
-        reason: 'Binding revocation requires the exact expected Active state and revision',
-        retryable: false,
-      });
+    const payloadValidation = validateRevokePayload(payload, context);
+    // oxlint-disable-next-line anti-slop/no-runtime-typeof -- This local validator returns either the trusted legal-entity string or a yieldable domain rejection; runtime classification preserves that fail-closed union.
+    if (typeof payloadValidation !== 'string') {
+      return yield* payloadValidation;
     }
-    if (
-      payload.profileRef.tenantId !== context.scope.tenantId ||
-      payload.principalRef.tenantId !== context.scope.tenantId ||
-      payload.sellingLegalEntityRef.tenantId !== context.scope.tenantId ||
-      payload.sellingLegalEntityRef.resourceId !== context.scope.legalEntityId
-    ) {
-      return yield* new RetailPortalBindingActionRejected({
-        code: 'BINDING_CONFLICT',
-        reason: 'Profile, Principal, and Selling Legal Entity must match the trusted scope',
-        retryable: false,
-      });
-    }
+    const legalEntityId = payloadValidation;
     const result = yield* context.services.revoke(payload, context);
-    if (
-      result.bindingRef.tenantId !== context.scope.tenantId ||
-      result.effectiveAt !== payload.effectiveAt ||
-      result.outcome !== 'BINDING_REVOKED' ||
-      result.state !== 'REVOKED'
-    ) {
-      return yield* new RetailPortalBindingActionRejected({
-        code: 'CURRENT_STATE_CONFLICT',
-        reason: 'The binding service returned an inconsistent binding result',
-        retryable: false,
-      });
+    const resultError = validateRevokeResult(result, payload, context);
+    if (resultError !== undefined) {
+      return yield* resultError;
     }
     yield* recordProfileResourceLookup(
       context,
@@ -82,13 +108,11 @@ const handle = Effect.fn('RevokeRetailPortalProfileBindingAction.handle')(
       result.bindingRef,
       `retail-binding-revoke:${result.bindingRef.resourceId}:${payload.expectedRevision}`,
     );
-    if (
-      (result.permissionMutations === undefined || result.permissionMutations.length === 0) &&
-      result.authorizationState === 'REVOKED'
-    ) {
+    const permissionMutations = retailPortalBindingStagedPermissionMutations(result.permissionMutations);
+    if (permissionMutations === undefined && result.authorizationState === 'REVOKED') {
       return result;
     }
-    if (result.permissionMutations === undefined || result.permissionMutations.length === 0) {
+    if (permissionMutations === undefined) {
       return yield* new RetailPortalBindingActionRejected({
         code: 'OUTCOME_INDETERMINATE',
         reason: 'The binding authorization intent set was not durably staged',
@@ -98,9 +122,7 @@ const handle = Effect.fn('RevokeRetailPortalProfileBindingAction.handle')(
     const eventPayloadBase = {
       bindingRef: result.bindingRef,
       catalogVersion: '1' as const,
-      legalEntityId: yield* Schema.decodeUnknownEffect(LegalEntityIdSchema)(
-        context.scope.legalEntityId,
-      ).pipe(Effect.orDie),
+      legalEntityId: yield* Schema.decodeEffect(LegalEntityIdSchema)(legalEntityId).pipe(Effect.orDie),
       mutationId: context.actionInvocationId,
       operation: 'revoke' as const,
       principalRef: payload.principalRef,
@@ -110,18 +132,10 @@ const handle = Effect.fn('RevokeRetailPortalProfileBindingAction.handle')(
       transition: 'revocation' as const,
     };
     const eventPayload: RevokeRetailPortalProfileBindingCommerceCustomerContextRetailPortalProfileBindingRevocationAuthorizationMutationRequestedV1OutboxPayload =
-      result.permissionMutations === undefined
-        ? eventPayloadBase
-        : {
-            ...eventPayloadBase,
-            permissionMutations: result.permissionMutations.map(
-              ({ mutationId, operation, permission }) => ({
-                mutationId,
-                operation,
-                permission,
-              }),
-            ),
-          };
+      {
+        ...eventPayloadBase,
+        permissionMutations: retailPortalBindingPermissionMutationPayloads(permissionMutations),
+      };
     const event = yield* context.addDomainEvent({
       eventType:
         'commerce.customer-context.retail-portal-profile-binding-revocation-authorization-mutation-requested.v1',
@@ -131,10 +145,7 @@ const handle = Effect.fn('RevokeRetailPortalProfileBindingAction.handle')(
       subjectResourceId: result.bindingRef.resourceId,
       subjectResourceType: result.bindingRef.resourceType,
     });
-    yield* context.addOutboxMessage(
-      event,
-      createAuthorizationMutationRequestedOutboxMessage(eventPayload),
-    );
+    yield* context.addOutboxMessage(event, createAuthorizationMutationRequestedOutboxMessage(eventPayload));
     return result;
   },
 );
@@ -166,28 +177,9 @@ export const revokeRetailPortalProfileBindingAction = defineAction(
   handle,
   (transaction, scope) =>
     profileServicesForVerifiedScope(transaction, scope).pipe(
-      Effect.map(({ revokeRetailPortalProfileBinding }) => revokeRetailPortalProfileBinding),
+      Effect.map(
+        ({ revokeRetailPortalProfileBinding }): RevokeRetailPortalProfileBindingServices =>
+          revokeRetailPortalProfileBinding,
+      ),
     ),
 );
-
-export {
-  RevokeRetailPortalProfileBindingPayloadSchema,
-  RevokeRetailPortalProfileBindingResultSchema,
-} from '../../shared/actions/revoke-retail-portal-profile-binding.ts';
-export type {
-  RevokeRetailPortalProfileBindingPayload,
-  RevokeRetailPortalProfileBindingResult,
-} from '../../shared/actions/revoke-retail-portal-profile-binding.ts';
-
-// <generated-outbox-message-exports>
-export { createRevokeRetailPortalProfileBindingCommerceCustomerContextRetailPortalProfileBindingRevocationAuthorizationMutationRequestedV1OutboxMessage } from './revoke-retail-portal-profile-binding-commerce-customer-context-retail-portal-profile-binding-revocation-authorization-mutation-requested-v1.outbox-message.ts';
-export { createRevokeRetailPortalProfileBindingCommerceCustomerContextRetailPortalProfileBindingRevokedV1OutboxMessage } from './revoke-retail-portal-profile-binding.commerce-customer-context-retail-portal-profile-binding-revoked-v1.outbox-message.ts';
-export { RevokeRetailPortalProfileBindingCommerceCustomerContextRetailPortalProfileBindingRevocationAuthorizationMutationRequestedV1OutboxPayloadSchema } from './revoke-retail-portal-profile-binding-commerce-customer-context-retail-portal-profile-binding-revocation-authorization-mutation-requested-v1.outbox-message.ts';
-export { RevokeRetailPortalProfileBindingCommerceCustomerContextRetailPortalProfileBindingRevocationAuthorizationMutationRequestedV1OutboxProducerModuleKey } from './revoke-retail-portal-profile-binding-commerce-customer-context-retail-portal-profile-binding-revocation-authorization-mutation-requested-v1.outbox-message.ts';
-export { RevokeRetailPortalProfileBindingCommerceCustomerContextRetailPortalProfileBindingRevocationAuthorizationMutationRequestedV1OutboxTopic } from './revoke-retail-portal-profile-binding-commerce-customer-context-retail-portal-profile-binding-revocation-authorization-mutation-requested-v1.outbox-message.ts';
-export { RevokeRetailPortalProfileBindingCommerceCustomerContextRetailPortalProfileBindingRevokedV1OutboxPayloadSchema } from './revoke-retail-portal-profile-binding.commerce-customer-context-retail-portal-profile-binding-revoked-v1.outbox-message.ts';
-export { RevokeRetailPortalProfileBindingCommerceCustomerContextRetailPortalProfileBindingRevokedV1OutboxProducerModuleKey } from './revoke-retail-portal-profile-binding.commerce-customer-context-retail-portal-profile-binding-revoked-v1.outbox-message.ts';
-export { RevokeRetailPortalProfileBindingCommerceCustomerContextRetailPortalProfileBindingRevokedV1OutboxTopic } from './revoke-retail-portal-profile-binding.commerce-customer-context-retail-portal-profile-binding-revoked-v1.outbox-message.ts';
-export type { RevokeRetailPortalProfileBindingCommerceCustomerContextRetailPortalProfileBindingRevocationAuthorizationMutationRequestedV1OutboxPayload } from './revoke-retail-portal-profile-binding-commerce-customer-context-retail-portal-profile-binding-revocation-authorization-mutation-requested-v1.outbox-message.ts';
-export type { RevokeRetailPortalProfileBindingCommerceCustomerContextRetailPortalProfileBindingRevokedV1OutboxPayload } from './revoke-retail-portal-profile-binding.commerce-customer-context-retail-portal-profile-binding-revoked-v1.outbox-message.ts';
-// </generated-outbox-message-exports>

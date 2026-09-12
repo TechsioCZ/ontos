@@ -21,7 +21,7 @@ type PurchaseCurrencyResolutionOperationInvocation = readonly [
 ];
 
 const purchaseCurrencyResolutionClient = (
-  credential: Redacted.Redacted<string>,
+  credential: Redacted.Redacted,
   requestCorrelation: string,
   options: PurchaseCurrencyResolutionClientOptions,
 ) =>
@@ -50,10 +50,5 @@ export const executePurchaseCurrencyResolution = (
   ...[requestCorrelation, options = {}]: PurchaseCurrencyResolutionOperationInvocation
 ) =>
   operationGateway.invoke((credential) =>
-    executePurchaseCurrencyResolutionWithAuthorization(
-      payload,
-      credential,
-      requestCorrelation,
-      options,
-    ),
+    executePurchaseCurrencyResolutionWithAuthorization(payload, credential, requestCorrelation, options),
   );

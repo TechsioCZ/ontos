@@ -2,6 +2,7 @@
 import { describe, expect, it } from 'effect-rstest';
 import { Effect, Schema } from 'effect';
 import { createActionCollector } from '../../../../packages/core-runtime/src/actions/collector.ts';
+import { getActionHandler } from '../../../../packages/core-runtime/src/actions/definition.ts';
 import {
   AssignCounterpartyPriceGroupPayloadSchema,
   assignCounterpartyPriceGroupAction,
@@ -11,18 +12,14 @@ import {
   assignCustomerPriceGroupAction,
   handleAssignCustomerPriceGroup,
 } from '../../src/actions/assign-customer-price-group.action.ts';
-import {
-  MigrateCustomerPriceGroupResultSchema,
-  handleMigrateCustomerPriceGroup,
-  migrateCustomerPriceGroupAction,
-} from '../../src/actions/migrate-customer-price-group.action.ts';
+import { migrateCustomerPriceGroupAction } from '../../src/actions/migrate-customer-price-group.action.ts';
+import { MigrateCustomerPriceGroupResultSchema } from '../../shared/actions/migrate-customer-price-group.ts';
 import {
   handleMigrateCounterpartyPriceGroup,
   migrateCounterpartyPriceGroupAction,
 } from '../../src/actions/migrate-counterparty-price-group.action.ts';
 import {
   RemoveCustomerPriceGroupPayloadSchema,
-  handleRemoveCustomerPriceGroup,
   removeCustomerPriceGroupAction,
 } from '../../src/actions/remove-customer-price-group.action.ts';
 import { removeCounterpartyPriceGroupAction } from '../../src/actions/remove-counterparty-price-group.action.ts';
@@ -166,13 +163,9 @@ describe('customer PriceGroup Actions', () => {
       profile,
     };
     expect(Schema.is(AssignedOutboxPayloadSchema)(assignmentPayload)).toBe(true);
+    expect(Schema.is(AssignedOutboxPayloadSchema)({ ...assignmentPayload, change: 'REMOVED' })).toBe(false);
     expect(
-      Schema.is(AssignedOutboxPayloadSchema)({ ...assignmentPayload, change: 'REMOVED' }),
-    ).toBe(false);
-    expect(
-      createAssignCustomerPriceGroupCommerceCustomerContextCustomerPriceGroupAssignedV1OutboxMessage(
-        assignmentPayload,
-      ),
+      createAssignCustomerPriceGroupCommerceCustomerContextCustomerPriceGroupAssignedV1OutboxMessage(assignmentPayload),
     ).toMatchObject({
       payloadJson: assignmentPayload,
       producerModuleKey: 'commerce.customer-context',
@@ -182,9 +175,8 @@ describe('customer PriceGroup Actions', () => {
     const removalPayload = { ...assignmentPayload, change: 'REMOVED' as const };
     expect(Schema.is(RemovedOutboxPayloadSchema)(removalPayload)).toBe(true);
     expect(
-      createRemoveCustomerPriceGroupCommerceCustomerContextCustomerPriceGroupRemovedV1OutboxMessage(
-        removalPayload,
-      ).topic,
+      createRemoveCustomerPriceGroupCommerceCustomerContextCustomerPriceGroupRemovedV1OutboxMessage(removalPayload)
+        .topic,
     ).toBe('commerce.customer-context.customer-price-group-removed.v1');
 
     const migrationPayload = {
@@ -197,9 +189,8 @@ describe('customer PriceGroup Actions', () => {
     };
     expect(Schema.is(MigratedOutboxPayloadSchema)(migrationPayload)).toBe(true);
     expect(
-      createMigrateCustomerPriceGroupCommerceCustomerContextCustomerPriceGroupMigratedV1OutboxMessage(
-        migrationPayload,
-      ).topic,
+      createMigrateCustomerPriceGroupCommerceCustomerContextCustomerPriceGroupMigratedV1OutboxMessage(migrationPayload)
+        .topic,
     ).toBe('commerce.customer-context.customer-price-group-migrated.v1');
   });
 
@@ -321,7 +312,7 @@ describe('customer PriceGroup Actions', () => {
         removeCustomerPriceGroupAction.descriptor.accessEvidencePolicy,
         removeCustomerPriceGroupAction.descriptor.auditEvidenceSchema,
       );
-      const removeFailure = yield* handleRemoveCustomerPriceGroup(
+      const removeFailure = yield* getActionHandler(removeCustomerPriceGroupAction)(
         {
           assignmentRef,
           effectiveAt: '2027-01-01T00:00:00.000Z',
@@ -347,7 +338,7 @@ describe('customer PriceGroup Actions', () => {
         migrateCustomerPriceGroupAction.descriptor.accessEvidencePolicy,
         migrateCustomerPriceGroupAction.descriptor.auditEvidenceSchema,
       );
-      const migrateFailure = yield* handleMigrateCustomerPriceGroup(
+      const migrateFailure = yield* getActionHandler(migrateCustomerPriceGroupAction)(
         {
           effectiveFrom: '2027-01-01T00:00:00.000Z',
           reason: 'Retroactive migration',
@@ -381,89 +372,87 @@ describe('customer PriceGroup Actions', () => {
     }),
   );
 
-  it.effect(
-    'threads one validated scheduled instant through profile, catalog, and persistence',
-    () =>
-      Effect.gen(function* threadsScheduledInstant() {
-        const effectiveFrom = '2027-02-01T00:00:00.000Z';
-        const recordedAt = '2027-01-01T00:00:00.000Z';
-        const observed: string[] = [];
-        const collector = collectorFor(assignCustomerPriceGroupAction);
-        yield* handleAssignCustomerPriceGroup(
-          {
-            effectiveFrom,
-            expectedProfileRevision: 2,
-            priceGroupRef,
-            profile,
-            reason: 'Scheduled assignment',
-          },
-          {
-            actionInvocationId: '44444444-4444-4444-8444-444444444444',
-            addDomainEvent: collector.addDomainEvent,
-            addOutboxMessage: collector.addOutboxMessage,
-            recordAuditEvidence: collector.recordAuditEvidence,
-            recordDataAccess: collector.recordDataAccess,
-            scope: temporalScope,
-            services: {
-              catalog: {
-                resolveCurrent: (_ref, _contract, effectiveAt) => {
-                  observed.push(`catalog:${effectiveAt}`);
-                  return Effect.succeed({
-                    _tag: 'USABLE',
-                    compatibility: {
-                      catalogRevision: 1,
-                      contractId: 'commerce.customer-price-group-assignment.v1',
-                      contractRevision: 1,
-                      definitionRevision: 1,
-                    },
-                    priceGroupRef,
-                  });
-                },
+  it.effect('threads one validated scheduled instant through profile, catalog, and persistence', () =>
+    Effect.gen(function* threadsScheduledInstant() {
+      const effectiveFrom = '2027-02-01T00:00:00.000Z';
+      const recordedAt = '2027-01-01T00:00:00.000Z';
+      const observed: string[] = [];
+      const collector = collectorFor(assignCustomerPriceGroupAction);
+      yield* handleAssignCustomerPriceGroup(
+        {
+          effectiveFrom,
+          expectedProfileRevision: 2,
+          priceGroupRef,
+          profile,
+          reason: 'Scheduled assignment',
+        },
+        {
+          actionInvocationId: '44444444-4444-4444-8444-444444444444',
+          addDomainEvent: collector.addDomainEvent,
+          addOutboxMessage: collector.addOutboxMessage,
+          recordAuditEvidence: collector.recordAuditEvidence,
+          recordDataAccess: collector.recordDataAccess,
+          scope: temporalScope,
+          services: {
+            catalog: {
+              resolveCurrent: (_ref, _contract, effectiveAt) => {
+                observed.push(`catalog:${effectiveAt}`);
+                return Effect.succeed({
+                  _tag: 'USABLE',
+                  compatibility: {
+                    catalogRevision: 1,
+                    contractId: 'commerce.customer-price-group-assignment.v1',
+                    contractRevision: 1,
+                    definitionRevision: 1,
+                  },
+                  priceGroupRef,
+                });
               },
-              now: Effect.succeed(recordedAt),
-              profileValidation: {
-                inspect: (_profile, effectiveAt) => {
-                  observed.push(`profile:${effectiveAt}`);
-                  return Effect.succeed({
-                    _tag: 'CURRENT',
-                    counterpartyRef: null,
-                    revision: 2,
+            },
+            now: Effect.succeed(recordedAt),
+            profileValidation: {
+              inspect: (_profile, effectiveAt) => {
+                observed.push(`profile:${effectiveAt}`);
+                return Effect.succeed({
+                  _tag: 'CURRENT',
+                  counterpartyRef: null,
+                  revision: 2,
+                  state: 'ACTIVE',
+                });
+              },
+            },
+            store: {
+              ...unreachableStore,
+              assign: (input) => {
+                observed.push(`store:${input.effectiveFrom}:${input.recordedAt}`);
+                return Effect.succeed({
+                  _tag: 'assigned',
+                  assignment: {
+                    assignmentRef,
+                    compatibility: input.compatibility,
+                    effectiveFrom: input.effectiveFrom,
+                    effectiveTo: input.effectiveTo,
+                    priceGroupRef: input.priceGroupRef,
+                    profile: input.profile,
+                    reason: input.reason,
+                    recordedAt: input.recordedAt,
+                    revision: 1,
                     state: 'ACTIVE',
-                  });
-                },
-              },
-              store: {
-                ...unreachableStore,
-                assign: (input) => {
-                  observed.push(`store:${input.effectiveFrom}:${input.recordedAt}`);
-                  return Effect.succeed({
-                    _tag: 'assigned',
-                    assignment: {
-                      assignmentRef,
-                      compatibility: input.compatibility,
-                      effectiveFrom: input.effectiveFrom,
-                      effectiveTo: input.effectiveTo,
-                      priceGroupRef: input.priceGroupRef,
-                      profile: input.profile,
-                      reason: input.reason,
-                      recordedAt: input.recordedAt,
-                      revision: 1,
-                      state: 'ACTIVE',
-                    },
-                    changed: true,
-                    replacedAssignmentRef: null,
-                  });
-                },
+                  },
+                  changed: true,
+                  replacedAssignmentRef: null,
+                });
               },
             },
           },
-        );
-        expect(observed).toEqual([
-          `profile:${effectiveFrom}`,
-          `catalog:${effectiveFrom}`,
-          `store:${effectiveFrom}:${recordedAt}`,
-        ]);
-      }),
+        },
+      );
+      expect(observed).toEqual([
+        `profile:${effectiveFrom}`,
+        `catalog:${effectiveFrom}`,
+        `store:${effectiveFrom}:${recordedAt}`,
+      ]);
+    }),
   );
 
   it.effect('records every Counterparty migration target as contributing Data Access', () =>

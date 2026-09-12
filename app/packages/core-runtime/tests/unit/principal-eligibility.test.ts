@@ -35,9 +35,7 @@ it.effect('classifies inactive, missing, and persistence failures without diagno
       persistenceWith([{ status: 'disabled', tenantId: principal.tenantId }]),
     ).resolve(principal);
     const missing = yield* makePrincipalEligibility(persistenceWith([])).resolve(principal);
-    const unavailable = yield* makePrincipalEligibility(persistenceWith('failure')).resolve(
-      principal,
-    );
+    const unavailable = yield* makePrincipalEligibility(persistenceWith('failure')).resolve(principal);
     expect(inactive.reason).toBe('inactive');
     expect(missing.reason).toBe('missing');
     expect(unavailable).toEqual({

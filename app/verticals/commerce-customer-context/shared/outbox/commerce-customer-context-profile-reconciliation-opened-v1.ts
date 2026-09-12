@@ -3,10 +3,7 @@
 // @ontos-outbox-topic commerce.customer-context.profile-reconciliation-opened.v1
 import { Schema } from 'effect';
 import { ProfileReconciliationCanonicalizationEvidenceSchema } from '../actions/open-profile-reconciliation.ts';
-import {
-  CommerceCustomerProfileSubjectSchema,
-  ProfileInstantSchema,
-} from '../domain/profile-contracts.ts';
+import { CommerceCustomerProfileSubjectSchema, ProfileInstantSchema } from '../domain/profile-contracts.ts';
 import { CommerceCustomerProfileRefSchema } from '../domain/profile-decisions.ts';
 import { ProfileReconciliationCaseRefSchema } from '../resources/profile-reconciliation-case.ts';
 
@@ -18,12 +15,7 @@ export const OutboxPayloadSchema = Schema.Struct({
   revision: Schema.Finite.check(Schema.isInt(), Schema.isGreaterThanOrEqualTo(1)),
   state: Schema.Literal('OPEN'),
   targetSubject: CommerceCustomerProfileSubjectSchema,
-  trigger: Schema.Literals([
-    'PARTY_ALIAS',
-    'COUNTERPARTY_ALIAS',
-    'CREATE_COLLISION',
-    'IMPORT_CORRELATION',
-  ]),
+  trigger: Schema.Literals(['PARTY_ALIAS', 'COUNTERPARTY_ALIAS', 'CREATE_COLLISION', 'IMPORT_CORRELATION']),
 });
 export type OutboxPayload = Schema.Schema.Type<typeof OutboxPayloadSchema>;
 

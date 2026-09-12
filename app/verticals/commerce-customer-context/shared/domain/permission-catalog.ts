@@ -1,6 +1,9 @@
 import { BusinessPermissionCodeSchema, defineBusinessPermissionCatalog } from '@app/core-runtime';
 import { Result, Schema } from 'effect';
 
+const COUNTERPARTY_APPROVAL_DECIDE_PERMISSION = 'counterparty.approval.decide' as const;
+const PURCHASING_APPROVAL_CAPABILITY = 'commerce.customer-context.purchasing-approval' as const;
+
 export const COUNTERPARTY_PERMISSION_CODES = [
   // oxlint-disable-next-line sonarjs/no-duplicate-string -- Exact #328 catalog key repeated in its descriptor and bundle; remove-when: catalog generation owns canonical bundle derivation.
   'counterparty.profile.read',
@@ -8,8 +11,7 @@ export const COUNTERPARTY_PERMISSION_CODES = [
   'counterparty.purchase.prepare',
   // oxlint-disable-next-line sonarjs/no-duplicate-string -- Exact #328 catalog key repeated in its descriptor and bundle; remove-when: catalog generation owns canonical bundle derivation.
   'counterparty.purchase.submit',
-  // oxlint-disable-next-line sonarjs/no-duplicate-string -- Exact #328 catalog key repeated in its descriptor and bundle; remove-when: catalog generation owns canonical bundle derivation.
-  'counterparty.approval.decide',
+  COUNTERPARTY_APPROVAL_DECIDE_PERMISSION,
   'counterparty.approval.request.manage',
   // oxlint-disable-next-line sonarjs/no-duplicate-string -- Exact #328 catalog key repeated in its descriptor and bundle; remove-when: catalog generation owns canonical bundle derivation.
   'counterparty.access.read',
@@ -31,7 +33,7 @@ export type CounterpartyPermissionCode = typeof CounterpartyPermissionCodeSchema
 
 export const COUNTERPARTY_AUTHORITY_GROUPS = {
   COUNTERPARTY_ACCESS_ADMINISTRATOR: ['counterparty.access.read', 'counterparty.access.manage'],
-  COUNTERPARTY_APPROVER: ['counterparty.approval.decide'],
+  COUNTERPARTY_APPROVER: [COUNTERPARTY_APPROVAL_DECIDE_PERMISSION],
   COUNTERPARTY_BUYER: [
     'counterparty.profile.read',
     'counterparty.purchase.prepare',
@@ -40,12 +42,12 @@ export const COUNTERPARTY_AUTHORITY_GROUPS = {
   ],
 } as const satisfies Record<string, readonly CounterpartyPermissionCode[]>;
 
-export const CounterpartyAuthorityGroupSchema = Schema.Literals([
+const CounterpartyAuthorityGroupSchema = Schema.Literals([
   'COUNTERPARTY_BUYER',
   'COUNTERPARTY_APPROVER',
   'COUNTERPARTY_ACCESS_ADMINISTRATOR',
 ]);
-export type CounterpartyAuthorityGroup = typeof CounterpartyAuthorityGroupSchema.Type;
+type CounterpartyAuthorityGroup = typeof CounterpartyAuthorityGroupSchema.Type;
 
 export interface CounterpartyPermissionDescriptor {
   readonly allowedScopes: readonly ('counterparty' | 'storefront')[];
@@ -60,11 +62,22 @@ export interface CounterpartyPermissionDescriptor {
   readonly reasonRequired: boolean;
 }
 
-const descriptor = (
-  value: CounterpartyPermissionDescriptor,
-): Readonly<CounterpartyPermissionDescriptor> => Object.freeze(value);
+const descriptor = (value: CounterpartyPermissionDescriptor): Readonly<CounterpartyPermissionDescriptor> =>
+  Object.freeze(value);
 
 export const COUNTERPARTY_PERMISSION_CATALOG = Object.freeze({
+  [COUNTERPARTY_APPROVAL_DECIDE_PERMISSION]: descriptor({
+    allowedScopes: ['counterparty', 'storefront'],
+    authorityGroups: ['COUNTERPARTY_APPROVER'],
+    customerDelegable: true,
+    evidenceSensitivity: 'critical',
+    internalGrantable: true,
+    meaning: 'Read an eligible request and perform its approve, return, or reject decision.',
+    owningCapability: PURCHASING_APPROVAL_CAPABILITY,
+    permission: COUNTERPARTY_APPROVAL_DECIDE_PERMISSION,
+    protectedEntrypoints: ['commerce.customer-context.decide-purchase-approval-request'],
+    reasonRequired: true,
+  }),
   'counterparty.access.manage': descriptor({
     allowedScopes: ['counterparty', 'storefront'],
     authorityGroups: ['COUNTERPARTY_ACCESS_ADMINISTRATOR'],
@@ -145,7 +158,7 @@ export const COUNTERPARTY_PERMISSION_CATALOG = Object.freeze({
     evidenceSensitivity: 'critical',
     internalGrantable: true,
     meaning: 'Manage Approval Hierarchy and routing policy in the authorized scope.',
-    owningCapability: 'commerce.customer-context.purchasing-approval',
+    owningCapability: PURCHASING_APPROVAL_CAPABILITY,
     permission: 'counterparty.approval_hierarchy.manage',
     protectedEntrypoints: ['commerce.customer-context.create-approval-hierarchy'],
     reasonRequired: true,
@@ -157,25 +170,13 @@ export const COUNTERPARTY_PERMISSION_CATALOG = Object.freeze({
     evidenceSensitivity: 'sensitive',
     internalGrantable: false,
     meaning: 'Manage the lifecycle and owner handoff of a submitted Approval Request.',
-    owningCapability: 'commerce.customer-context.purchasing-approval',
+    owningCapability: PURCHASING_APPROVAL_CAPABILITY,
     permission: 'counterparty.approval.request.manage',
     protectedEntrypoints: [
       'commerce.customer-context.consume-purchase-approval',
       'commerce.customer-context.reroute-purchase-approval-request',
       'commerce.customer-context.revalidate-purchase-approval',
     ],
-    reasonRequired: true,
-  }),
-  'counterparty.approval.decide': descriptor({
-    allowedScopes: ['counterparty', 'storefront'],
-    authorityGroups: ['COUNTERPARTY_APPROVER'],
-    customerDelegable: true,
-    evidenceSensitivity: 'critical',
-    internalGrantable: true,
-    meaning: 'Read an eligible request and perform its approve, return, or reject decision.',
-    owningCapability: 'commerce.customer-context.purchasing-approval',
-    permission: 'counterparty.approval.decide',
-    protectedEntrypoints: ['commerce.customer-context.decide-purchase-approval-request'],
     reasonRequired: true,
   }),
   'counterparty.history.read_all': descriptor({
@@ -312,17 +313,13 @@ export const permissionDescriptor = (
   permission: CounterpartyPermissionCode,
 ): Readonly<CounterpartyPermissionDescriptor> => COUNTERPARTY_PERMISSION_CATALOG[permission];
 
-export const expandCounterpartyAuthorityGroup = (
-  group: CounterpartyAuthorityGroup,
-): readonly CounterpartyPermissionCode[] => [...COUNTERPARTY_AUTHORITY_GROUPS[group]];
-
 export const permissionAllowsScope = (
   permission: CounterpartyPermissionCode,
   scope: 'counterparty' | 'storefront',
 ): boolean => permissionDescriptor(permission).allowedScopes.includes(scope);
 
 const businessPermissionCode = (permission: CounterpartyPermissionCode) =>
-  Result.getOrThrow(Schema.decodeUnknownResult(BusinessPermissionCodeSchema)(permission));
+  Result.getOrThrow(Schema.decodeResult(BusinessPermissionCodeSchema)(permission));
 
 /**
  * Core-compatible catalog boundary. This is the only adapter from Commerce's
@@ -342,10 +339,7 @@ export const COUNTERPARTY_BUSINESS_PERMISSION_CATALOG = defineBusinessPermission
       allowedScopeKinds: metadata.allowedScopes.map((scope) =>
         scope === 'counterparty' ? 'counterparty' : 'counterparty_storefront',
       ),
-      auditSensitivity:
-        metadata.evidenceSensitivity === 'standard'
-          ? ('standard' as const)
-          : ('sensitive' as const),
+      auditSensitivity: metadata.evidenceSensitivity === 'standard' ? ('standard' as const) : ('sensitive' as const),
       authorityGroups: [...metadata.authorityGroups],
       customerDelegable: metadata.customerDelegable,
       internalGrantable: metadata.internalGrantable,

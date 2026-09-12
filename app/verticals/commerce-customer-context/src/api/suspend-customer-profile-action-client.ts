@@ -24,10 +24,7 @@ type AuthorizedInvocation = readonly [
   requestCorrelation: string,
   options: SuspendCustomerProfileActionClientOptions,
 ];
-type OperationInvocation = readonly [
-  requestCorrelation: string,
-  options: SuspendCustomerProfileActionClientOptions,
-];
+type OperationInvocation = readonly [requestCorrelation: string, options: SuspendCustomerProfileActionClientOptions];
 
 interface MakeClientOptions {
   readonly credential: Redacted.Redacted;
@@ -68,12 +65,6 @@ export const executeSuspendCustomerProfile = (
   ...[requestCorrelation, options]: OperationInvocation
 ) =>
   operationGateway.invoke(
-    (credential) =>
-      executeSuspendCustomerProfileWithAuthorization(
-        payload,
-        credential,
-        requestCorrelation,
-        options,
-      ),
+    (credential) => executeSuspendCustomerProfileWithAuthorization(payload, credential, requestCorrelation, options),
     options.gateway,
   );

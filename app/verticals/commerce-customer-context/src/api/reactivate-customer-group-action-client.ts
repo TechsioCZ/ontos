@@ -24,10 +24,7 @@ type AuthorizedInvocation = readonly [
   requestCorrelation: string,
   options: ReactivateCustomerGroupActionClientOptions,
 ];
-type OperationInvocation = readonly [
-  requestCorrelation: string,
-  options: ReactivateCustomerGroupActionClientOptions,
-];
+type OperationInvocation = readonly [requestCorrelation: string, options: ReactivateCustomerGroupActionClientOptions];
 
 interface MakeClientOptions {
   readonly credential: Redacted.Redacted;
@@ -68,12 +65,6 @@ export const executeReactivateCustomerGroup = (
   ...[requestCorrelation, options]: OperationInvocation
 ) =>
   operationGateway.invoke(
-    (credential) =>
-      executeReactivateCustomerGroupWithAuthorization(
-        payload,
-        credential,
-        requestCorrelation,
-        options,
-      ),
+    (credential) => executeReactivateCustomerGroupWithAuthorization(payload, credential, requestCorrelation, options),
     options.gateway,
   );

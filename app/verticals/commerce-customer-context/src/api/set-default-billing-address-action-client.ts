@@ -24,10 +24,7 @@ type AuthorizedInvocation = readonly [
   requestCorrelation: string,
   options: SetDefaultBillingAddressActionClientOptions,
 ];
-type OperationInvocation = readonly [
-  requestCorrelation: string,
-  options: SetDefaultBillingAddressActionClientOptions,
-];
+type OperationInvocation = readonly [requestCorrelation: string, options: SetDefaultBillingAddressActionClientOptions];
 
 interface MakeClientOptions {
   readonly credential: Redacted.Redacted;
@@ -68,12 +65,6 @@ export const executeSetDefaultBillingAddress = (
   ...[requestCorrelation, options]: OperationInvocation
 ) =>
   operationGateway.invoke(
-    (credential) =>
-      executeSetDefaultBillingAddressWithAuthorization(
-        payload,
-        credential,
-        requestCorrelation,
-        options,
-      ),
+    (credential) => executeSetDefaultBillingAddressWithAuthorization(payload, credential, requestCorrelation, options),
     options.gateway,
   );

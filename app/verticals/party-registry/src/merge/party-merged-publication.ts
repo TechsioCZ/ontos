@@ -4,10 +4,7 @@ import type { ConsumerReconciliationContract } from './reference-preservation-pl
 import { MergeReadinessOwnerKeySchema } from '../../shared/domain/merge-readiness.ts';
 import type { PartyMerge } from '../../shared/resources/party-merge.ts';
 import type { OutboxPayloadJson } from '../../shared/outbox/party-registry-party-merged-v1.ts';
-import {
-  outboxProducerModuleKey,
-  outboxTopic,
-} from '../../shared/outbox/party-registry-party-merged-v1.ts';
+import { outboxProducerModuleKey, outboxTopic } from '../../shared/outbox/party-registry-party-merged-v1.ts';
 
 const PublicationBlockerSchema = Schema.Struct({
   code: Schema.Literals([
@@ -55,9 +52,7 @@ export const evaluatePartyMergedPublicationGate = (
   contracts: readonly ConsumerReconciliationContract[],
 ) => {
   const contractsByKey = new Map(contracts.map((contract) => [contract.consumerKey, contract]));
-  const blockers: PartyMergedPublicationBlocker[] = [
-    { code: 'PRODUCTION_MERGE_DISABLED', ownerKey: 'party.registry' },
-  ];
+  const blockers: PartyMergedPublicationBlocker[] = [{ code: 'PRODUCTION_MERGE_DISABLED', ownerKey: 'party.registry' }];
   for (const consumerKey of [...new Set(requiredConsumerKeys)].toSorted()) {
     const blocker = reconciliationBlocker(consumerKey, contractsByKey.get(consumerKey));
     if (blocker !== undefined) {
@@ -72,10 +67,7 @@ export const evaluatePartyMergedPublicationGate = (
 };
 
 /** Builds the exact future event payload from already-prepared merge evidence. */
-export const createPartyMergedPayload = (
-  merge: PartyMerge,
-  occurredAt: string,
-): OutboxPayloadJson => ({
+export const createPartyMergedPayload = (merge: PartyMerge, occurredAt: string): OutboxPayloadJson => ({
   absorbedPartyRefs: merge.absorbedPartyRefs,
   mergeId: merge.mergeRef.resourceId,
   occurredAt,

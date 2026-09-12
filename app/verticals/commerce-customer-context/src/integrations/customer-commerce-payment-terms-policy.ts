@@ -11,14 +11,11 @@ import {
 import type { PaymentTermsDependencyUnavailable } from '../../shared/domain/payment-term-errors.ts';
 import { PaymentTermsDependencyUnavailable as PaymentTermsDependencyUnavailableError } from '../../shared/domain/payment-term-errors.ts';
 
-export const CUSTOMER_COMMERCE_PAYMENT_TERMS_POLICY_CONFIG =
-  'CUSTOMER_COMMERCE_PAYMENT_TERMS_POLICY_CONFIG' as const;
+export const CUSTOMER_COMMERCE_PAYMENT_TERMS_POLICY_CONFIG = 'CUSTOMER_COMMERCE_PAYMENT_TERMS_POLICY_CONFIG' as const;
 
 const policyConfiguration = Config.string(CUSTOMER_COMMERCE_PAYMENT_TERMS_POLICY_CONFIG).pipe(
   Effect.flatMap(
-    Schema.decodeUnknownEffect(
-      Schema.fromJsonString(CustomerCommercePaymentTermsPolicyConfigurationSchema),
-    ),
+    Schema.decodeUnknownEffect(Schema.fromJsonString(CustomerCommercePaymentTermsPolicyConfigurationSchema)),
   ),
 );
 
@@ -32,7 +29,7 @@ const unavailable = (cause: unknown): PaymentTermsDependencyUnavailable => {
   return failure;
 };
 
-export type CustomerCommercePaymentTermsPolicyRequest = Readonly<{
+type CustomerCommercePaymentTermsPolicyRequest = Readonly<{
   at: string;
   purchasingContext: CustomerCommercePaymentTermsPolicyContext['purchasingContext'];
 }>;

@@ -328,30 +328,25 @@ it.effect('maps exact numeric storage canonically and preserves a material mutat
   }),
 );
 
-it.effect(
-  'maps a serialized CAS miss to the typed conflict and exposes only logical Current revision',
-  () =>
-    Effect.gen(function* conflict() {
-      const error = yield* Effect.flip(
-        changePrincipalPurchaseLimitOverride(
-          transactionReturning([mutationRow({ outcome: 'REVISION_CONFLICT' })]),
-          {
-            actionInvocationId,
-            actorPrincipalId,
-            change: { _tag: 'CLEAR' },
-            counterpartyRef,
-            expectedRevision: 1,
-            principalRef: { principalId: targetPrincipalId, tenantId },
-            reason: 'Remove individual override',
-          },
-        ),
-      );
-      if (!Schema.is(PurchaseLimitPolicyConflictSchema)(error)) {
-        throw new Error('Expected a Purchase Limit policy conflict');
-      }
-      expect(error.code).toBe('purchase_limit_policy_conflict');
-      expect(error.currentRevision).toBe(2);
-    }),
+it.effect('maps a serialized CAS miss to the typed conflict and exposes only logical Current revision', () =>
+  Effect.gen(function* conflict() {
+    const error = yield* Effect.flip(
+      changePrincipalPurchaseLimitOverride(transactionReturning([mutationRow({ outcome: 'REVISION_CONFLICT' })]), {
+        actionInvocationId,
+        actorPrincipalId,
+        change: { _tag: 'CLEAR' },
+        counterpartyRef,
+        expectedRevision: 1,
+        principalRef: { principalId: targetPrincipalId, tenantId },
+        reason: 'Remove individual override',
+      }),
+    );
+    if (!Schema.is(PurchaseLimitPolicyConflictSchema)(error)) {
+      throw new Error('Expected a Purchase Limit policy conflict');
+    }
+    expect(error.code).toBe('purchase_limit_policy_conflict');
+    expect(error.currentRevision).toBe(2);
+  }),
 );
 
 it.effect('maps Core routine failure to a sanitized typed dependency failure', () =>
@@ -499,9 +494,7 @@ it.effect('fails closed with a typed dependency outcome for cross-currency Launc
       throw new Error('Expected a typed Purchase Limit dependency failure');
     }
     expect(failure.dependency).toBe('commerce.customer-context.purchase-limit-cross-currency');
-    expect(failure.reason).toContain(
-      'Current purpose-specific comparable Purchase Value is unavailable',
-    );
+    expect(failure.reason).toContain('Current purpose-specific comparable Purchase Value is unavailable');
   }),
 );
 
@@ -724,8 +717,7 @@ it.effect('rejects approval evidence when the profile revision is not owner-curr
               contextRevision: evaluationContext.contextRevision,
               currentSourceRevisions: expectedSourceRevisions.filter(
                 ({ source: candidateSource }) =>
-                  candidateSource !== 'counterparty-policy' &&
-                  candidateSource !== 'principal-override',
+                  candidateSource !== 'counterparty-policy' && candidateSource !== 'principal-override',
               ),
               marketId: evaluationContext.purchasingContext.marketId,
               purchaseValue: proposalValue,
@@ -747,33 +739,29 @@ it.effect('rejects approval evidence when the profile revision is not owner-curr
 
 it.effect('rejects an external Currentness provider claiming owner-local revision sources', () =>
   Effect.gen(function* rejectRevisionCollision() {
-    const source = purchaseLimitEvaluationSourceForTransaction(
-      transactionReturning([]),
-      evaluationScope,
-      {
-        resolveCurrent: () =>
-          Effect.succeed(
-            Schema.decodeUnknownSync(PurchaseLimitEvaluationCurrentFactsSchema)({
-              channelId: evaluationContext.purchasingContext.channelId,
-              contextRevision: evaluationContext.contextRevision,
-              currentSourceRevisions: [
-                ...externalSourceRevisions,
-                {
-                  revision: 'counterparty-policy:forged',
-                  source: 'counterparty-policy',
-                },
-              ],
-              marketId: evaluationContext.purchasingContext.marketId,
-              purchaseValue: {
-                monetaryAmount: { amount: amount100, currency: 'CZK' },
-                roundingRuleRevision: 'pricing-rounding-4',
-                sourceRef: 'purchase-value-9',
-                sourceRevision: 'purchase-value-revision-9',
+    const source = purchaseLimitEvaluationSourceForTransaction(transactionReturning([]), evaluationScope, {
+      resolveCurrent: () =>
+        Effect.succeed(
+          Schema.decodeUnknownSync(PurchaseLimitEvaluationCurrentFactsSchema)({
+            channelId: evaluationContext.purchasingContext.channelId,
+            contextRevision: evaluationContext.contextRevision,
+            currentSourceRevisions: [
+              ...externalSourceRevisions,
+              {
+                revision: 'counterparty-policy:forged',
+                source: 'counterparty-policy',
               },
-            }),
-          ),
-      },
-    );
+            ],
+            marketId: evaluationContext.purchasingContext.marketId,
+            purchaseValue: {
+              monetaryAmount: { amount: amount100, currency: 'CZK' },
+              roundingRuleRevision: 'pricing-rounding-4',
+              sourceRef: 'purchase-value-9',
+              sourceRevision: 'purchase-value-revision-9',
+            },
+          }),
+        ),
+    });
     const query = Schema.decodeUnknownSync(PurchaseLimitEvaluationQuerySchema)({
       counterpartyRef,
       expectedSourceRevisions: [
@@ -795,9 +783,7 @@ it.effect('rejects an external Currentness provider claiming owner-local revisio
       },
       storefrontId: evaluationContext.purchasingContext.storefrontId,
     });
-    const failure = yield* Effect.flip(
-      source.loadCurrent({ principalId: targetPrincipalId, query }),
-    );
+    const failure = yield* Effect.flip(source.loadCurrent({ principalId: targetPrincipalId, query }));
     expect(Schema.is(PurchaseLimitDependencyUnavailableSchema)(failure)).toBe(true);
     expect(failure.reason).toContain('claimed owner-local sources');
   }),
@@ -809,16 +795,11 @@ it('hardens the migration around scope, races, tombstones, and exact EXECUTE-onl
     'utf-8',
   );
   const correctiveMigration = readFileSync(
-    new URL(
-      '../../drizzle/20260909123358_add_customer_group_revision_description/migration.sql',
-      import.meta.url,
-    ),
+    new URL('../../drizzle/20260909123358_add_customer_group_revision_description/migration.sql', import.meta.url),
     'utf-8',
   );
   expect(migration.match(/SECURITY DEFINER/gu)).toHaveLength(2);
-  expect(migration.match(/SET search_path = pg_catalog, commerce_customer_context/gu)).toHaveLength(
-    2,
-  );
+  expect(migration.match(/SET search_path = pg_catalog, commerce_customer_context/gu)).toHaveLength(2);
   expect(migration.match(/current_setting\('ontos\.tenant_id', true\)/gu)).toHaveLength(2);
   expect(migration.match(/current_setting\('ontos\.legal_entity_id', true\)/gu)).toHaveLength(2);
   expect(migration).toContain('FOR UPDATE;');
@@ -829,7 +810,5 @@ it('hardens the migration around scope, races, tombstones, and exact EXECUTE-onl
   expect(migration).toContain('p_expected_revision IS DISTINCT FROM v_logical_revision');
   expect(migration).toContain('REVOKE ALL ON FUNCTION');
   expect(migration.match(/GRANT EXECUTE ON FUNCTION/gu)).toHaveLength(2);
-  expect(migration).not.toMatch(
-    /GRANT\s+(?:SELECT|INSERT|UPDATE|DELETE|ALL)\s+ON\s+(?:TABLE|ALL TABLES)/u,
-  );
+  expect(migration).not.toMatch(/GRANT\s+(?:SELECT|INSERT|UPDATE|DELETE|ALL)\s+ON\s+(?:TABLE|ALL TABLES)/u);
 });

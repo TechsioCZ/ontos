@@ -61,29 +61,25 @@ const one = <Row>(rows: readonly Row[]): Row => {
   return row;
 };
 
+const acquireGroupPool = (connectionString: string, maximumConnections?: number) =>
+  Effect.acquireRelease(
+    Effect.sync(
+      () =>
+        new Pool(
+          maximumConnections === undefined ? { connectionString } : { connectionString, max: maximumConnections },
+        ),
+    ),
+    (pool) => Effect.promise(() => pool.end()).pipe(Effect.orDie),
+  );
+
 it.live('preserves Customer Group temporal, replay, and concurrency invariants in PostgreSQL', () =>
   Effect.scoped(
     Effect.gen(function* postgresAcceptance() {
       const connections = yield* loadDatabaseConnectionPair();
-      const adminPool = yield* Effect.acquireRelease(
-        Effect.sync(() => new Pool({ connectionString: connections.admin.connectionString })),
-        (pool) => Effect.promise(() => pool.end()).pipe(Effect.orDie),
-      );
-      const runtimePool = yield* Effect.acquireRelease(
-        Effect.sync(
-          () =>
-            new Pool({
-              connectionString: connections.runtime.connectionString,
-              max: 4,
-            }),
-        ),
-        (pool) => Effect.promise(() => pool.end()).pipe(Effect.orDie),
-      );
+      const adminPool = yield* acquireGroupPool(connections.admin.connectionString);
+      const runtimePool = yield* acquireGroupPool(connections.runtime.connectionString, 4);
       const admin = yield* makeTestDatabaseFromPool(adminPool, commerceCustomerContextRelations);
-      const runtime = yield* makeTestDatabaseFromPool(
-        runtimePool,
-        commerceCustomerContextRelations,
-      );
+      const runtime = yield* makeTestDatabaseFromPool(runtimePool, commerceCustomerContextRelations);
 
       const cleanup = () =>
         admin.transaction((transaction) =>
@@ -91,32 +87,22 @@ it.live('preserves Customer Group temporal, replay, and concurrency invariants i
             // Test cleanup is isolated to this admin transaction. Runtime remains unable to bypass
             // the append-only triggers, which stay enabled for every production connection.
             yield* transaction.execute(sql`set local session_replication_role = 'replica'`);
-            yield* transaction
-              .delete(customerGroupMemberships)
-              .where(eq(customerGroupMemberships.tenantId, tenantId));
-            yield* transaction
-              .delete(customerSettingRevisions)
-              .where(eq(customerSettingRevisions.tenantId, tenantId));
+            yield* transaction.delete(customerGroupMemberships).where(eq(customerGroupMemberships.tenantId, tenantId));
+            yield* transaction.delete(customerSettingRevisions).where(eq(customerSettingRevisions.tenantId, tenantId));
             yield* transaction
               .delete(customerGroupLifecyclePeriods)
               .where(eq(customerGroupLifecyclePeriods.tenantId, tenantId));
-            yield* transaction
-              .delete(customerGroupRevisions)
-              .where(eq(customerGroupRevisions.tenantId, tenantId));
+            yield* transaction.delete(customerGroupRevisions).where(eq(customerGroupRevisions.tenantId, tenantId));
             yield* transaction.delete(customerGroups).where(eq(customerGroups.tenantId, tenantId));
             yield* transaction
               .delete(customerProfileLifecycleHistory)
               .where(eq(customerProfileLifecycleHistory.tenantId, tenantId));
-            yield* transaction
-              .delete(customerProfiles)
-              .where(eq(customerProfiles.tenantId, tenantId));
+            yield* transaction.delete(customerProfiles).where(eq(customerProfiles.tenantId, tenantId));
           }),
         );
 
       const inScope = <Value, Failure>(
-        operation: (
-          transaction: CommerceCustomerContextTransaction,
-        ) => Effect.Effect<Value, Failure>,
+        operation: (transaction: CommerceCustomerContextTransaction) => Effect.Effect<Value, Failure>,
       ) =>
         runtime.transaction((transaction) =>
           Effect.gen(function* scopedOperation() {
@@ -242,12 +228,7 @@ it.live('preserves Customer Group temporal, replay, and concurrency invariants i
             .pipe(Effect.map(one)),
         );
 
-      const archive = (
-        groupId: string,
-        effectiveAt: Date,
-        recordedAt: Date,
-        invocationId: string,
-      ) =>
+      const archive = (groupId: string, effectiveAt: Date, recordedAt: Date, invocationId: string) =>
         inScope((transaction) =>
           transaction
             .execute<GroupOutcome>(
@@ -269,13 +250,7 @@ it.live('preserves Customer Group temporal, replay, and concurrency invariants i
 
       yield* Effect.addFinalizer(() => cleanup().pipe(Effect.orDie));
       yield* cleanup();
-      const profiles = [
-        profileTemporal,
-        profileCancelled,
-        profilePeriods,
-        profileConcurrent,
-        profileRace,
-      ] as const;
+      const profiles = [profileTemporal, profileCancelled, profilePeriods, profileConcurrent, profileRace] as const;
       yield* admin.insert(customerProfiles).values(
         profiles.map((customerProfileId) => ({
           customerProfileId,
@@ -334,18 +309,10 @@ it.live('preserves Customer Group temporal, replay, and concurrency invariants i
           'c7300000-0000-4000-8000-000000000003',
         )).outcome,
       ).toBe('REMOVED');
-      expect(
-        (yield* readEffective(profileTemporal, date('2026-01-31T23:59:59.999Z'))).items_json,
-      ).toHaveLength(1);
-      expect(
-        (yield* readEffective(profileTemporal, date('2026-02-01T00:00:00.000Z'))).items_json,
-      ).toHaveLength(0);
-      expect(
-        (yield* readHistoryAt(temporalGroupId, date('2026-01-31T23:59:59.999Z'))).items_json,
-      ).toHaveLength(1);
-      expect(
-        (yield* readHistoryAt(temporalGroupId, date('2026-02-01T00:00:00.000Z'))).items_json,
-      ).toHaveLength(0);
+      expect((yield* readEffective(profileTemporal, date('2026-01-31T23:59:59.999Z'))).items_json).toHaveLength(1);
+      expect((yield* readEffective(profileTemporal, date('2026-02-01T00:00:00.000Z'))).items_json).toHaveLength(0);
+      expect((yield* readHistoryAt(temporalGroupId, date('2026-01-31T23:59:59.999Z'))).items_json).toHaveLength(1);
+      expect((yield* readHistoryAt(temporalGroupId, date('2026-02-01T00:00:00.000Z'))).items_json).toHaveLength(0);
 
       yield* admin
         .update(customerProfiles)
@@ -363,12 +330,8 @@ it.live('preserves Customer Group temporal, replay, and concurrency invariants i
         tenantId,
         toLifecycle: 'SUSPENDED',
       });
-      expect(
-        (yield* readEffective(profileTemporal, date('2026-01-19T23:59:59.999Z'))).items_json,
-      ).toHaveLength(1);
-      expect(
-        (yield* readEffective(profileTemporal, date('2026-01-20T00:00:00.000Z'))).items_json,
-      ).toHaveLength(0);
+      expect((yield* readEffective(profileTemporal, date('2026-01-19T23:59:59.999Z'))).items_json).toHaveLength(1);
+      expect((yield* readEffective(profileTemporal, date('2026-01-20T00:00:00.000Z'))).items_json).toHaveLength(0);
 
       const cancelledGroup = yield* createGroup(
         'CANCELLED',
@@ -539,21 +502,11 @@ it.live('preserves Customer Group temporal, replay, and concurrency invariants i
       );
       expect(['ASSIGNED', 'GROUP_INACTIVE']).toContain(raceAssignment.outcome);
       expect(raceArchive.outcome).toBe('ARCHIVED');
-      expect(
-        (yield* readEffective(profileRace, date('2026-01-04T00:00:00.000Z'))).items_json,
-      ).toHaveLength(0);
+      expect((yield* readEffective(profileRace, date('2026-01-04T00:00:00.000Z'))).items_json).toHaveLength(0);
 
       const replayInvocation = 'c7800000-0000-4000-8000-000000000001';
-      const firstCreate = yield* createGroup(
-        'REPLAY',
-        date('2026-01-01T00:00:00.000Z'),
-        replayInvocation,
-      );
-      const replayCreate = yield* createGroup(
-        'REPLAY',
-        date('2026-01-01T00:00:00.000Z'),
-        replayInvocation,
-      );
+      const firstCreate = yield* createGroup('REPLAY', date('2026-01-01T00:00:00.000Z'), replayInvocation);
+      const replayCreate = yield* createGroup('REPLAY', date('2026-01-01T00:00:00.000Z'), replayInvocation);
       expect(firstCreate.outcome).toBe('CREATED');
       expect(replayCreate.outcome).toBe('REUSED');
       expect(replayCreate.changed).toBe(false);
@@ -561,12 +514,7 @@ it.live('preserves Customer Group temporal, replay, and concurrency invariants i
         yield* admin
           .select({ id: customerGroups.customerGroupId })
           .from(customerGroups)
-          .where(
-            and(
-              eq(customerGroups.tenantId, tenantId),
-              eq(customerGroups.stableCode, 'GROUP_REPLAY'),
-            ),
-          ),
+          .where(and(eq(customerGroups.tenantId, tenantId), eq(customerGroups.stableCode, 'GROUP_REPLAY'))),
       ).toHaveLength(1);
       expect(
         yield* admin

@@ -38,17 +38,9 @@ const paymentTermAffectedUseAssessmentClient = (
 
 export const executePaymentTermAffectedUseAssessmentWithAuthorization = (
   payload: PaymentTermAffectedUseAssessmentRequest,
-  ...[
-    credential,
-    requestCorrelation,
-    options = {},
-  ]: PaymentTermAffectedUseAssessmentAuthorizedInvocation
+  ...[credential, requestCorrelation, options = {}]: PaymentTermAffectedUseAssessmentAuthorizedInvocation
 ) =>
-  paymentTermAffectedUseAssessmentClient(
-    Redacted.make(credential),
-    requestCorrelation,
-    options,
-  ).pipe(
+  paymentTermAffectedUseAssessmentClient(Redacted.make(credential), requestCorrelation, options).pipe(
     Effect.flatMap((client) =>
       client.paymentTermAffectedUseAssessment.execute({
         headers: {},
@@ -64,10 +56,5 @@ export const executePaymentTermAffectedUseAssessment = (
   ...[requestCorrelation, options = {}]: PaymentTermAffectedUseAssessmentOperationInvocation
 ) =>
   operationGateway.invoke((credential) =>
-    executePaymentTermAffectedUseAssessmentWithAuthorization(
-      payload,
-      credential,
-      requestCorrelation,
-      options,
-    ),
+    executePaymentTermAffectedUseAssessmentWithAuthorization(payload, credential, requestCorrelation, options),
   );

@@ -1,10 +1,6 @@
 // @effect-diagnostics nodeBuiltinImport:off -- Checked-in migration SQL is the security contract under test; expires: 2027-03-31.
 import { ScopedRoutineInvocationError } from '@app/core-runtime';
-import type {
-  ContextAccessService,
-  ScopedRoutineDefinition,
-  ScopedRoutineParameter,
-} from '@app/core-runtime';
+import type { ContextAccessService, ScopedRoutineDefinition, ScopedRoutineParameter } from '@app/core-runtime';
 import { readFile, readdir } from 'node:fs/promises';
 import { Crypto, Effect, Option, Redacted, Schema } from 'effect';
 import { expect, it } from 'effect-rstest';
@@ -76,10 +72,12 @@ const decodeRoutineRows = <
 >(
   routine: ScopedRoutineDefinition<RowSchema, Parameters>,
   rows: readonly object[],
-): Effect.Effect<readonly RowSchema['Type'][], ScopedRoutineInvocationError> =>
-  Schema.decodeUnknownEffect(Schema.Array(Schema.toType(routine.resultSchema)))(rows).pipe(
+): Effect.Effect<readonly RowSchema['Type'][], ScopedRoutineInvocationError> => {
+  const resultRowsSchema = Schema.Array(Schema.toType(routine.resultSchema));
+  return Schema.decodeUnknownEffect(resultRowsSchema)(rows).pipe(
     Effect.mapError(() => routineFailure(routine.routineKey)),
   );
+};
 
 type RoutineHandler = (routineKey: string, values: readonly unknown[]) => readonly object[];
 
@@ -167,10 +165,7 @@ const expectUnavailable = (failure: CounterpartyAccessDomainError) => {
   }
 };
 
-const expectViolation = (
-  failure: CounterpartyAccessDomainError,
-  code: CounterpartyAccessContractViolation['code'],
-) => {
+const expectViolation = (failure: CounterpartyAccessDomainError, code: CounterpartyAccessContractViolation['code']) => {
   expect(Schema.is(CounterpartyAccessContractViolation)(failure)).toBe(true);
   if (Schema.is(CounterpartyAccessContractViolation)(failure)) {
     expect(failure.code).toBe(code);
@@ -178,9 +173,7 @@ const expectViolation = (
 };
 
 it('declares only the governed invitation-proof owner routines with exact scope parameters', () => {
-  expect(
-    invitationClaimProofRoutineAllowlist.map(({ name, routineKey }) => [name, routineKey]),
-  ).toEqual([
+  expect(invitationClaimProofRoutineAllowlist.map(({ name, routineKey }) => [name, routineKey])).toEqual([
     ['register_invitation_claim_proof', 'counterparty-invitation-proof.register'],
     ['stage_invitation_claim_proof_delivery', 'counterparty-invitation-proof.stage-delivery'],
     ['redeem_invitation_claim_secret', 'counterparty-invitation-proof.redeem'],
@@ -254,32 +247,30 @@ it.effect('issues and stages one proof without exposing its raw value to either 
   }),
 );
 
-it.effect(
-  'returns an issue replay without restaging delivery or replacing its safe reference',
-  () =>
-    Effect.gen(function* replayIssue() {
-      const calls: string[] = [];
-      const deliveries: Parameters<CounterpartyInvitationProofDeliveryService['stage']>[0][] = [];
-      const { proofLifecycle } = counterpartyInvitationClaimServicesForTransaction(
-        invokerWith((key) => {
-          calls.push(key);
-          return [{ operation_outcome: 'REPLAYED', proof_reference: 'existing-proof-reference' }];
-        }),
-        contextAccess(),
-        crypto,
-        successfulDelivery(deliveries),
-      );
+it.effect('returns an issue replay without restaging delivery or replacing its safe reference', () =>
+  Effect.gen(function* replayIssue() {
+    const calls: string[] = [];
+    const deliveries: Parameters<CounterpartyInvitationProofDeliveryService['stage']>[0][] = [];
+    const { proofLifecycle } = counterpartyInvitationClaimServicesForTransaction(
+      invokerWith((key) => {
+        calls.push(key);
+        return [{ operation_outcome: 'REPLAYED', proof_reference: 'existing-proof-reference' }];
+      }),
+      contextAccess(),
+      crypto,
+      successfulDelivery(deliveries),
+    );
 
-      const result = yield* proofLifecycle.issueAndStageDelivery(registrationInput);
+    const result = yield* proofLifecycle.issueAndStageDelivery(registrationInput);
 
-      expect(result).toEqual({
-        proofReference: 'existing-proof-reference',
-        proofVersion: 'commerce-invitation-proof.v1',
-        state: 'DELIVERY_STAGE_REPLAYED',
-      });
-      expect(calls).toEqual(['counterparty-invitation-proof.register']);
-      expect(deliveries).toEqual([]);
-    }),
+    expect(result).toEqual({
+      proofReference: 'existing-proof-reference',
+      proofVersion: 'commerce-invitation-proof.v1',
+      state: 'DELIVERY_STAGE_REPLAYED',
+    });
+    expect(calls).toEqual(['counterparty-invitation-proof.register']);
+    expect(deliveries).toEqual([]);
+  }),
 );
 
 it.effect('uses the explicit rotate operation before staging the replacement proof', () =>
@@ -438,9 +429,7 @@ it.effect('binds redemption claimant and owner scope only from authenticated con
 it.effect('rejects a cross-Tenant claimant before authority or persistence can run', () =>
   Effect.gen(function* crossTenantClaim() {
     const routineCalls: string[] = [];
-    const authorityCalls: Parameters<
-      NonNullable<ContextAccessService['businessPermissions']>
-    >[0][] = [];
+    const authorityCalls: Parameters<NonNullable<ContextAccessService['businessPermissions']>>[0][] = [];
     const { claimAuthority } = counterpartyInvitationClaimServicesForTransaction(
       invokerWith((key) => {
         routineCalls.push(key);
@@ -467,9 +456,7 @@ it.effect('rejects a cross-Tenant claimant before authority or persistence can r
 it.effect('rechecks current inviter authority and stops before consumption when it is denied', () =>
   Effect.gen(function* deniedInviter() {
     const routineCalls: string[] = [];
-    const authorityCalls: Parameters<
-      NonNullable<ContextAccessService['businessPermissions']>
-    >[0][] = [];
+    const authorityCalls: Parameters<NonNullable<ContextAccessService['businessPermissions']>>[0][] = [];
     const { claimAuthority } = counterpartyInvitationClaimServicesForTransaction(
       invokerWith((key) => {
         routineCalls.push(key);
@@ -508,9 +495,7 @@ it.effect('rechecks current inviter authority and stops before consumption when 
 
 it.effect('owner pending revoke denies invitation claim before Core authority can race', () =>
   Effect.gen(function* denyOwnerRevokeBeforeCoreCheck() {
-    const authorityCalls: Parameters<
-      NonNullable<ContextAccessService['businessPermissions']>
-    >[0][] = [];
+    const authorityCalls: Parameters<NonNullable<ContextAccessService['businessPermissions']>>[0][] = [];
     const { claimAuthority } = counterpartyInvitationClaimServicesForTransaction(
       invokerWith(() => []),
       contextAccess('allowed', authorityCalls),
@@ -528,9 +513,7 @@ it.effect('owner pending revoke denies invitation claim before Core authority ca
 
 it.effect('fails closed when invitation authority has no owner reader', () =>
   Effect.gen(function* missingOwnerReader() {
-    const authorityCalls: Parameters<
-      NonNullable<ContextAccessService['businessPermissions']>
-    >[0][] = [];
+    const authorityCalls: Parameters<NonNullable<ContextAccessService['businessPermissions']>>[0][] = [];
     const { claimAuthority } = counterpartyInvitationClaimServicesForTransaction(
       invokerWith(() => []),
       contextAccess('allowed', authorityCalls),
@@ -545,67 +528,63 @@ it.effect('fails closed when invitation authority has no owner reader', () =>
   }),
 );
 
-it.effect(
-  'preflights the exact claimant, invitation, counterparty, and proof without consuming it',
-  () =>
-    Effect.gen(function* preflightExactness() {
-      const routineCalls: { readonly key: string; readonly values: readonly unknown[] }[] = [];
-      const authorityCalls: Parameters<
-        NonNullable<ContextAccessService['businessPermissions']>
-      >[0][] = [];
-      const result = yield* verifyCounterpartyInvitationClaimAuthorityForOwnerScope(
-        {
-          contextAccess: contextAccess('allowed', authorityCalls),
-          currentOwnerAccess: allowedOwnerAccess,
-          transaction: invokerWith((key, values) => {
-            routineCalls.push({ key, values });
-            return [
-              {
-                counterparty_resource_id: counterpartyId,
-                intended_permission_codes: intendedPermissions,
-                inviter_principal_id: inviterId,
-                operation_outcome: 'VERIFIED',
-                storefront_resource_id: storefrontId,
-              },
-            ];
-          }),
-        },
-        {
-          claimant,
-          claimProofReference: proofReference,
-          counterpartyRef,
-          invitationRef,
-          legalEntityId,
-          scope: permissionScope,
-        },
-      );
-
-      expect(result).toBeUndefined();
-      expect(routineCalls).toEqual([
-        {
-          key: 'counterparty-invitation-proof.verify-claim-authority',
-          values: [invitationId, proofReference, counterpartyId, storefrontId, claimantId],
-        },
-      ]);
-      expect(authorityCalls).toEqual([
-        {
-          principal: inviter,
-          targets: [
+it.effect('preflights the exact claimant, invitation, counterparty, and proof without consuming it', () =>
+  Effect.gen(function* preflightExactness() {
+    const routineCalls: { readonly key: string; readonly values: readonly unknown[] }[] = [];
+    const authorityCalls: Parameters<NonNullable<ContextAccessService['businessPermissions']>>[0][] = [];
+    const result = yield* verifyCounterpartyInvitationClaimAuthorityForOwnerScope(
+      {
+        contextAccess: contextAccess('allowed', authorityCalls),
+        currentOwnerAccess: allowedOwnerAccess,
+        transaction: invokerWith((key, values) => {
+          routineCalls.push({ key, values });
+          return [
             {
-              permission: 'counterparty.access.manage',
-              target: {
-                counterpartyId,
-                kind: 'counterparty_storefront',
-                legalEntityId,
-                storefrontId,
-                tenantId,
-              },
+              counterparty_resource_id: counterpartyId,
+              intended_permission_codes: intendedPermissions,
+              inviter_principal_id: inviterId,
+              operation_outcome: 'VERIFIED',
+              storefront_resource_id: storefrontId,
             },
-          ],
-          trustedStorefrontId: storefrontId,
-        },
-      ]);
-    }),
+          ];
+        }),
+      },
+      {
+        claimant,
+        claimProofReference: proofReference,
+        counterpartyRef,
+        invitationRef,
+        legalEntityId,
+        scope: permissionScope,
+      },
+    );
+
+    expect(result).toBeUndefined();
+    expect(routineCalls).toEqual([
+      {
+        key: 'counterparty-invitation-proof.verify-claim-authority',
+        values: [invitationId, proofReference, counterpartyId, storefrontId, claimantId],
+      },
+    ]);
+    expect(authorityCalls).toEqual([
+      {
+        principal: inviter,
+        targets: [
+          {
+            permission: 'counterparty.access.manage',
+            target: {
+              counterpartyId,
+              kind: 'counterparty_storefront',
+              legalEntityId,
+              storefrontId,
+              tenantId,
+            },
+          },
+        ],
+        trustedStorefrontId: storefrontId,
+      },
+    ]);
+  }),
 );
 
 it.effect('preflight denies wrong claimant or Tenant before touching the owner routine', () =>
@@ -694,6 +673,7 @@ it.effect('preflight maps expired, revoked, consumed, and partial failures fail 
       );
       expectViolation(
         failure,
+        // oxlint-disable-next-line eslint/no-nested-ternary -- The three exhaustive fixture outcomes map directly to their expected violation codes.
         operationOutcome === 'EXPIRED'
           ? 'invitation_expired'
           : operationOutcome === 'CONSUMED'
@@ -794,105 +774,83 @@ it.effect('rejects reuse by a conflicting Action without releasing an attestatio
   }),
 );
 
-it.effect(
-  'hardens invitation proof SQL with exact scope, locking, rate limits, and no raw secret',
-  () =>
-    Effect.gen(function* migrationSecurity() {
-      const migrationRoot = new URL('../../drizzle/', import.meta.url);
-      const migrationFolders = yield* Effect.promise(() =>
-        readdir(migrationRoot, { withFileTypes: true }),
-      );
-      const migrationFolder = migrationFolders.find(
-        (entry) =>
-          entry.isDirectory() &&
-          entry.name.endsWith(
-            '_add-profile-observation-owner-outcome-and-invitation-proof-evidence',
-          ),
-      );
-      const migrationFolderName = migrationFolder?.name;
-      if (migrationFolderName === undefined) {
-        throw new Error('Invitation-proof evidence migration is missing');
-      }
-      const sql = yield* Effect.promise(() =>
-        readFile(new URL(`${migrationFolderName}/migration.sql`, migrationRoot), 'utf-8'),
-      );
-      const invitationSqlStart = sql.indexOf(
-        'CREATE FUNCTION "commerce_customer_context"."register_invitation_claim_proof"',
-      );
-      const invitationSqlEnd = sql.indexOf(
-        'CREATE FUNCTION "commerce_customer_context"."invalidate_invitation_claim_proofs"',
-        invitationSqlStart,
-      );
-      expect(invitationSqlStart).toBeGreaterThanOrEqual(0);
-      expect(invitationSqlEnd).toBeGreaterThan(invitationSqlStart);
-      if (invitationSqlStart === -1 || invitationSqlEnd <= invitationSqlStart) {
-        throw new Error('Invitation-proof routines or lifecycle hardening are missing');
-      }
-      const invitationSql = sql.slice(invitationSqlStart, invitationSqlEnd);
-      const stageSql = invitationSql.slice(
-        invitationSql.indexOf(
-          'CREATE FUNCTION "commerce_customer_context"."stage_invitation_claim_proof_delivery"',
-        ),
-        invitationSql.indexOf(
-          'CREATE FUNCTION "commerce_customer_context"."redeem_invitation_claim_secret"',
-        ),
-      );
-      const consumeSql = invitationSql.slice(
-        invitationSql.indexOf(
-          'CREATE FUNCTION "commerce_customer_context"."consume_invitation_claim_proof"',
-        ),
-      );
+it.effect('hardens invitation proof SQL with exact scope, locking, rate limits, and no raw secret', () =>
+  Effect.gen(function* migrationSecurity() {
+    const migrationRoot = new URL('../../drizzle/', import.meta.url);
+    const migrationFolders = yield* Effect.promise(() => readdir(migrationRoot, { withFileTypes: true }));
+    const migrationFolder = migrationFolders.find(
+      (entry) =>
+        entry.isDirectory() &&
+        entry.name.endsWith('_add-profile-observation-owner-outcome-and-invitation-proof-evidence'),
+    );
+    const migrationFolderName = migrationFolder?.name;
+    if (migrationFolderName === undefined) {
+      throw new Error('Invitation-proof evidence migration is missing');
+    }
+    const sql = yield* Effect.promise(() =>
+      readFile(new URL(`${migrationFolderName}/migration.sql`, migrationRoot), 'utf-8'),
+    );
+    const invitationSqlStart = sql.indexOf(
+      'CREATE FUNCTION "commerce_customer_context"."register_invitation_claim_proof"',
+    );
+    const invitationSqlEnd = sql.indexOf(
+      'CREATE FUNCTION "commerce_customer_context"."invalidate_invitation_claim_proofs"',
+      invitationSqlStart,
+    );
+    expect(invitationSqlStart).toBeGreaterThanOrEqual(0);
+    expect(invitationSqlEnd).toBeGreaterThan(invitationSqlStart);
+    if (invitationSqlStart === -1 || invitationSqlEnd <= invitationSqlStart) {
+      throw new Error('Invitation-proof routines or lifecycle hardening are missing');
+    }
+    const invitationSql = sql.slice(invitationSqlStart, invitationSqlEnd);
+    const stageSql = invitationSql.slice(
+      invitationSql.indexOf('CREATE FUNCTION "commerce_customer_context"."stage_invitation_claim_proof_delivery"'),
+      invitationSql.indexOf('CREATE FUNCTION "commerce_customer_context"."redeem_invitation_claim_secret"'),
+    );
+    const consumeSql = invitationSql.slice(
+      invitationSql.indexOf('CREATE FUNCTION "commerce_customer_context"."consume_invitation_claim_proof"'),
+    );
 
-      expect(invitationSql.match(/SECURITY DEFINER/gu) ?? []).toHaveLength(4);
-      expect(invitationSql.match(/GRANT EXECUTE ON FUNCTION/gu) ?? []).toHaveLength(4);
-      expect(invitationSql.match(/FOR UPDATE/gu)?.length).toBeGreaterThanOrEqual(6);
-      expect(invitationSql).toContain('SET search_path = pg_catalog, commerce_customer_context');
-      expect(sql).toContain('CREATE UNIQUE INDEX "ccc_invitation_claim_proofs_current_uk"');
-      expect(sql).toContain(
-        'ALTER TABLE "commerce_customer_context"."counterparty_invitation_claim_proofs" FORCE ROW LEVEL SECURITY;',
-      );
-      expect(sql).toContain(
-        'ALTER TABLE "commerce_customer_context"."counterparty_invitation_claim_attempts" FORCE ROW LEVEL SECURITY;',
-      );
-      expect(sql).toContain(
-        'REVOKE ALL ON TABLE "commerce_customer_context"."counterparty_invitation_claim_proofs" FROM PUBLIC, "ontos_runtime";',
-      );
-      expect(sql).toContain(
-        'REVOKE ALL ON TABLE "commerce_customer_context"."counterparty_invitation_claim_attempts" FROM PUBLIC, "ontos_runtime";',
-      );
-      expect(invitationSql).toContain('v_new_count >= 5');
-      expect(invitationSql).toContain("interval '15 minutes'");
-      expect(invitationSql).toContain(
-        "last_outcome = CASE WHEN v_outcome = 'EXPIRED' THEN 'INVALID' ELSE 'REDEEMED' END",
-      );
-      expect(invitationSql).toContain("p_operation = 'ROTATE'");
-      expect(invitationSql).toContain("SET lifecycle = 'REVOKED'");
-      expect(sql).toContain('CREATE TRIGGER "ccc_invitation_claim_proofs_lifecycle_trg"');
-      expect(sql).toContain("NEW.lifecycle IN ('REVOKED', 'EXPIRED', 'CLAIMED')");
-      expect(stageSql).toContain("v_invitation.lifecycle <> 'PENDING'");
-      expect(stageSql).toContain('v_invitation.expires_at <= statement_timestamp()');
-      expect(stageSql).toContain("v_proof.delivery_state = 'STAGED'");
-      expect(stageSql).toContain("'REPLAYED'::text");
-      expect(consumeSql).toContain('v_proof.consume_action_invocation_id = p_action_invocation_id');
-      expect(consumeSql).toContain(
-        'v_proof.storefront_resource_id IS DISTINCT FROM p_storefront_resource_id',
-      );
-      expect(consumeSql).toContain(
-        'v_proof.intended_permission_codes IS DISTINCT FROM to_jsonb(p_intended_permission_codes)',
-      );
-      expect(consumeSql).toContain(
-        'v_proof.inviter_principal_id IS DISTINCT FROM p_inviter_principal_id',
-      );
-      expect(consumeSql).toContain(
-        "SET last_attempt_at = statement_timestamp(), last_outcome = 'INVALID'",
-      );
-      expect(invitationSql).not.toMatch(
-        /\b(?:p_raw_proof|raw_proof|raw_secret|plaintext_proof)\b/iu,
-      );
-      expect(invitationSql).not.toContain(rawProofText);
-      expect(invitationSql).toContain('p_secret_digest text');
-      expect(invitationSql).not.toMatch(
-        /GRANT\s+(?:SELECT|INSERT|UPDATE|DELETE|ALL)\s+ON\s+TABLE/iu,
-      );
-    }),
+    expect(invitationSql.match(/SECURITY DEFINER/gu) ?? []).toHaveLength(4);
+    expect(invitationSql.match(/GRANT EXECUTE ON FUNCTION/gu) ?? []).toHaveLength(4);
+    expect(invitationSql.match(/FOR UPDATE/gu)?.length).toBeGreaterThanOrEqual(6);
+    expect(invitationSql).toContain('SET search_path = pg_catalog, commerce_customer_context');
+    expect(sql).toContain('CREATE UNIQUE INDEX "ccc_invitation_claim_proofs_current_uk"');
+    expect(sql).toContain(
+      'ALTER TABLE "commerce_customer_context"."counterparty_invitation_claim_proofs" FORCE ROW LEVEL SECURITY;',
+    );
+    expect(sql).toContain(
+      'ALTER TABLE "commerce_customer_context"."counterparty_invitation_claim_attempts" FORCE ROW LEVEL SECURITY;',
+    );
+    expect(sql).toContain(
+      'REVOKE ALL ON TABLE "commerce_customer_context"."counterparty_invitation_claim_proofs" FROM PUBLIC, "ontos_runtime";',
+    );
+    expect(sql).toContain(
+      'REVOKE ALL ON TABLE "commerce_customer_context"."counterparty_invitation_claim_attempts" FROM PUBLIC, "ontos_runtime";',
+    );
+    expect(invitationSql).toContain('v_new_count >= 5');
+    expect(invitationSql).toContain("interval '15 minutes'");
+    expect(invitationSql).toContain(
+      "last_outcome = CASE WHEN v_outcome = 'EXPIRED' THEN 'INVALID' ELSE 'REDEEMED' END",
+    );
+    expect(invitationSql).toContain("p_operation = 'ROTATE'");
+    expect(invitationSql).toContain("SET lifecycle = 'REVOKED'");
+    expect(sql).toContain('CREATE TRIGGER "ccc_invitation_claim_proofs_lifecycle_trg"');
+    expect(sql).toContain("NEW.lifecycle IN ('REVOKED', 'EXPIRED', 'CLAIMED')");
+    expect(stageSql).toContain("v_invitation.lifecycle <> 'PENDING'");
+    expect(stageSql).toContain('v_invitation.expires_at <= statement_timestamp()');
+    expect(stageSql).toContain("v_proof.delivery_state = 'STAGED'");
+    expect(stageSql).toContain("'REPLAYED'::text");
+    expect(consumeSql).toContain('v_proof.consume_action_invocation_id = p_action_invocation_id');
+    expect(consumeSql).toContain('v_proof.storefront_resource_id IS DISTINCT FROM p_storefront_resource_id');
+    expect(consumeSql).toContain(
+      'v_proof.intended_permission_codes IS DISTINCT FROM to_jsonb(p_intended_permission_codes)',
+    );
+    expect(consumeSql).toContain('v_proof.inviter_principal_id IS DISTINCT FROM p_inviter_principal_id');
+    expect(consumeSql).toContain("SET last_attempt_at = statement_timestamp(), last_outcome = 'INVALID'");
+    expect(invitationSql).not.toMatch(/\b(?:p_raw_proof|raw_proof|raw_secret|plaintext_proof)\b/iu);
+    expect(invitationSql).not.toContain(rawProofText);
+    expect(invitationSql).toContain('p_secret_digest text');
+    expect(invitationSql).not.toMatch(/GRANT\s+(?:SELECT|INSERT|UPDATE|DELETE|ALL)\s+ON\s+TABLE/iu);
+  }),
 );

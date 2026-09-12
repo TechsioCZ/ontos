@@ -9,7 +9,7 @@ import {
   isTrustedSystemPrincipalContext,
   isVerifiedGatewayPrincipalContext,
 } from '@app/core-runtime';
-import { Effect, Schema } from 'effect';
+import { DateTime, Effect, Schema } from 'effect';
 import {
   ConsumePurchaseApprovalPayloadSchema,
   ConsumePurchaseApprovalRejected,
@@ -20,9 +20,11 @@ import type {
   ConsumePurchaseApprovalResult,
 } from '../../shared/actions/consume-purchase-approval.ts';
 import type { PurchaseApprovalOrderCommitmentPort } from '../../shared/domain/purchase-approval-order-commitment-port.ts';
+import { CommitmentCorrelationIdSchema, DecisionBundleVersionSchema } from '../../shared/domain/purchasing-approval.ts';
 import { purchasingApprovalOrderCommitmentForScope } from '../persistence/purchasing-approval-persistence.ts';
 import { purchasingApprovalPolicy } from '../policies/purchasing-approval.policy.ts';
 import {
+  purchasingApprovalAuditInstantSchema,
   recordPurchasingApprovalResourceAccess,
   purchasingApprovalPermissionTarget,
   trustedPurchasingContext,
@@ -30,29 +32,30 @@ import {
 import { createConsumePurchaseApprovalCommerceCustomerContextPurchaseApprovalConsumedV1OutboxMessage as createOutboxMessage } from './consume-purchase-approval-commerce-customer-context-purchase-approval-consumed-v1.outbox-message.ts';
 
 const MODULE_KEY = 'commerce.customer-context' as const;
+const PurchaseApprovalConsumptionOutcomeSchema = Schema.Literals(['CONSUMED', 'ALREADY_CONSUMED']);
 const PurchaseApprovalConsumedEventSchema = Schema.Struct({
-  outcome: Schema.Literals(['CONSUMED', 'ALREADY_CONSUMED']),
-  requestRef: Schema.String,
-  proposalRevisionRef: Schema.String,
-  orderRef: Schema.String,
-  commitmentCorrelationId: Schema.String,
-  decisionBundleHash: Schema.String,
-  decisionBundleVersion: Schema.Literal('approval-decision-bundle.v1'),
-  committedAt: Schema.String,
+  commitmentCorrelationId: CommitmentCorrelationIdSchema,
+  committedAt: purchasingApprovalAuditInstantSchema,
   completionRule: Schema.Literal('ONE_APPROVER'),
+  decisionBundleHash: Schema.String,
+  decisionBundleVersion: DecisionBundleVersionSchema,
+  orderRef: Schema.String,
+  outcome: PurchaseApprovalConsumptionOutcomeSchema,
+  proposalRevisionRef: Schema.String,
+  requestRef: Schema.String,
 });
 
 /** Evidence names the exact Order commit target and the route rule used by the approval. */
-export const ConsumePurchaseApprovalAuditEvidenceSchema = Schema.Struct({
-  outcome: Schema.Literals(['CONSUMED', 'ALREADY_CONSUMED']),
-  requestRef: Schema.String,
-  proposalRevisionRef: Schema.String,
-  orderRef: Schema.String,
-  commitmentCorrelationId: Schema.String,
-  decisionBundleHash: Schema.String,
-  decisionBundleVersion: Schema.Literal('approval-decision-bundle.v1'),
-  committedAt: Schema.String,
+const ConsumePurchaseApprovalAuditEvidenceSchema = Schema.Struct({
+  commitmentCorrelationId: CommitmentCorrelationIdSchema,
+  committedAt: purchasingApprovalAuditInstantSchema,
   completionRule: Schema.Literal('ONE_APPROVER'),
+  decisionBundleHash: Schema.String,
+  decisionBundleVersion: DecisionBundleVersionSchema,
+  orderRef: Schema.String,
+  outcome: PurchaseApprovalConsumptionOutcomeSchema,
+  proposalRevisionRef: Schema.String,
+  requestRef: Schema.String,
 });
 
 type DomainEvents = Readonly<{
@@ -64,120 +67,128 @@ interface ConsumePurchaseApprovalServices {
   readonly commitment: PurchaseApprovalOrderCommitmentPort;
 }
 
-const handleConsumePurchaseApproval = Effect.fn('ConsumePurchaseApprovalAction.handle')(
-  function* handle(
+const recordConsumePurchaseApprovalOutcome = Effect.fn('ConsumePurchaseApprovalAction.recordOutcome')(
+  function* recordOutcome(
     payload: ConsumePurchaseApprovalPayload,
+    result: ConsumePurchaseApprovalResult,
+    committedAt: string,
+    completionRule: 'ONE_APPROVER',
     context: ActionHandlerContext<DomainEvents, ConsumePurchaseApprovalServices>,
   ) {
-    // Only a trusted Core system context or a redeemed gateway assertion may reach the Order-owner
-    // reconciliation seam. The provenance marker is important: checking authMethod alone would
-    // allow an arbitrary system/api-key-shaped object to claim commit authority. The HTTP boundary
-    // redeems the assertion for the commerce-customer-context audience before this handler runs;
-    // the public Order-owner port remains the only persistence capability exposed here.
-    const hasCommitAuthorization =
-      isTrustedSystemPrincipalContext(context.scope) ||
-      (context.scope.authMethod === 'api_key' && isVerifiedGatewayPrincipalContext(context.scope));
-    if (
-      !trustedPurchasingContext(payload.counterpartyRef, payload.storefrontId, context.scope) ||
-      payload.orderRef.moduleId !== 'commerce.order' ||
-      payload.orderRef.resourceType !== 'commerce.order.order' ||
-      payload.orderRef.tenantId !== context.scope.tenantId ||
-      !hasCommitAuthorization
-    ) {
-      return yield* new ConsumePurchaseApprovalRejected({
-        code: 'PERMISSION_DENIED',
-        reason: 'Only the Order owner or a trusted system job may consume an approval',
-        retryable: false,
-      });
-    }
-
-    const result = yield* context.services.commitment
-      .consume(payload, context.actionInvocationId)
-      .pipe(
-        Effect.catchTag('PurchaseApprovalOrderOwnerUnavailable', (failure) =>
-          Effect.fail(
-            new ConsumePurchaseApprovalRejected({
-              code: 'DEPENDENCY_UNAVAILABLE',
-              reason: failure.reason,
-              retryable: true,
-            }),
-          ),
-        ),
-      );
-    const completionRule = result.request.route.levels.find(
-      ({ order }) => order === result.request.route.currentLevelOrder,
-    )?.completionRule;
-    if (completionRule !== 'ONE_APPROVER') {
-      return yield* new ConsumePurchaseApprovalRejected({
-        code: 'POLICY_ROUTE_INVALID',
-        reason: 'The captured approval route does not carry the required ONE_APPROVER rule',
-        retryable: false,
-      });
-    }
-
-    const committedAt = payload.committedAt.toString();
-    const querySuffix = `${payload.storefrontId}:${payload.orderRef.resourceId}`;
-    yield* Effect.all(
-      [
-        recordPurchasingApprovalResourceAccess(context, {
-          queryHash: `purchasing-approval-consume-request:${querySuffix}`,
-          resourceRef: result.request.requestRef,
-        }),
-        recordPurchasingApprovalResourceAccess(context, {
-          queryHash: `purchasing-approval-consume-proposal:${querySuffix}`,
-          resourceRef: result.request.proposal.proposalRevisionRef,
-        }),
-        recordPurchasingApprovalResourceAccess(context, {
-          queryHash: `purchasing-approval-consume-route:${querySuffix}`,
-          resourceRef: result.request.route.routeRef,
-        }),
-        recordPurchasingApprovalResourceAccess(context, {
-          queryHash: `purchasing-approval-consume-hierarchy:${querySuffix}`,
-          resourceRef: result.request.route.hierarchyRef,
-        }),
-        recordPurchasingApprovalResourceAccess(context, {
-          queryHash: `purchasing-approval-consume-profile:${querySuffix}`,
-          resourceRef: result.request.proposal.identity.profileRef,
-        }),
-        recordPurchasingApprovalResourceAccess(context, {
-          queryHash: `purchasing-approval-consume-counterparty:${querySuffix}`,
-          resourceRef: payload.counterpartyRef,
-        }),
-        recordPurchasingApprovalResourceAccess(context, {
-          queryHash: `purchasing-approval-consume-order:${querySuffix}`,
-          resourceRef: payload.orderRef,
-        }),
-      ],
-      { concurrency: 1, discard: true },
-    );
-
     const evidence = {
-      outcome: result.outcome,
-      requestRef: result.request.requestRef.resourceId,
-      proposalRevisionRef: result.request.proposal.proposalRevisionRef.resourceId,
-      orderRef: payload.orderRef.resourceId,
       commitmentCorrelationId: payload.commitmentCorrelationId,
-      decisionBundleHash: payload.decisionBundleHash,
-      decisionBundleVersion: payload.decisionBundleVersion,
       committedAt,
       completionRule,
+      decisionBundleHash: payload.decisionBundleHash,
+      decisionBundleVersion: payload.decisionBundleVersion,
+      orderRef: payload.orderRef.resourceId,
+      outcome: result.outcome,
+      proposalRevisionRef: result.request.proposal.proposalRevisionRef.resourceId,
+      requestRef: result.request.requestRef.resourceId,
     };
     yield* context.recordAuditEvidence(evidence);
-
-    if (result.outcome === 'CONSUMED') {
-      const event = yield* context.addDomainEvent({
-        eventType: 'commerce.customer-context.purchase-approval-consumed.v1',
-        payloadJson: evidence,
-        producerModuleKey: MODULE_KEY,
-        subjectModuleKey: payload.orderRef.moduleId,
-        subjectResourceId: payload.orderRef.resourceId,
-        subjectResourceType: payload.orderRef.resourceType,
-      });
-      yield* context.addOutboxMessage(event, createOutboxMessage({ data: evidence }));
+    if (result.outcome !== 'CONSUMED') {
+      return;
     }
-    return result satisfies ConsumePurchaseApprovalResult;
+    const event = yield* context.addDomainEvent({
+      eventType: 'commerce.customer-context.purchase-approval-consumed.v1',
+      payloadJson: evidence,
+      producerModuleKey: MODULE_KEY,
+      subjectModuleKey: payload.orderRef.moduleId,
+      subjectResourceId: payload.orderRef.resourceId,
+      subjectResourceType: payload.orderRef.resourceType,
+    });
+    yield* context.addOutboxMessage(event, createOutboxMessage({ data: evidence }));
   },
 );
+
+const handleConsumePurchaseApproval = Effect.fn('ConsumePurchaseApprovalAction.handle')(function* handle(
+  payload: ConsumePurchaseApprovalPayload,
+  context: ActionHandlerContext<DomainEvents, ConsumePurchaseApprovalServices>,
+) {
+  // Only a trusted Core system context or a redeemed gateway assertion may reach the Order-owner
+  // reconciliation seam. The provenance marker is important: checking authMethod alone would
+  // allow an arbitrary system/api-key-shaped object to claim commit authority. The HTTP boundary
+  // redeems the assertion for the commerce-customer-context audience before this handler runs;
+  // the public Order-owner port remains the only persistence capability exposed here.
+  const hasCommitAuthorization =
+    isTrustedSystemPrincipalContext(context.scope) ||
+    (context.scope.authMethod === 'api_key' && isVerifiedGatewayPrincipalContext(context.scope));
+  if (
+    !trustedPurchasingContext(payload.counterpartyRef, payload.storefrontId, context.scope) ||
+    payload.orderRef.moduleId !== 'commerce.order' ||
+    payload.orderRef.resourceType !== 'commerce.order.order' ||
+    payload.orderRef.tenantId !== context.scope.tenantId ||
+    !hasCommitAuthorization
+  ) {
+    return yield* new ConsumePurchaseApprovalRejected({
+      code: 'PERMISSION_DENIED',
+      reason: 'Only the Order owner or a trusted system job may consume an approval',
+      retryable: false,
+    });
+  }
+
+  const result = yield* context.services.commitment.consume(payload, context.actionInvocationId).pipe(
+    Effect.catchTag('PurchaseApprovalOrderOwnerUnavailable', (failure) =>
+      Effect.fail(
+        new ConsumePurchaseApprovalRejected({
+          code: 'DEPENDENCY_UNAVAILABLE',
+          reason: failure.reason,
+          retryable: true,
+        }),
+      ),
+    ),
+  );
+  const completionRule = result.request.route.levels.find(
+    ({ order }) => order === result.request.route.currentLevelOrder,
+  )?.completionRule;
+  if (completionRule !== 'ONE_APPROVER') {
+    return yield* new ConsumePurchaseApprovalRejected({
+      code: 'POLICY_ROUTE_INVALID',
+      reason: 'The captured approval route does not carry the required ONE_APPROVER rule',
+      retryable: false,
+    });
+  }
+
+  const committedAt = DateTime.formatIso(payload.committedAt);
+  const querySuffix = `${payload.storefrontId}:${payload.orderRef.resourceId}`;
+  yield* Effect.all(
+    [
+      recordPurchasingApprovalResourceAccess(context, {
+        queryHash: `purchasing-approval-consume-request:${querySuffix}`,
+        resourceRef: result.request.requestRef,
+      }),
+      recordPurchasingApprovalResourceAccess(context, {
+        queryHash: `purchasing-approval-consume-proposal:${querySuffix}`,
+        resourceRef: result.request.proposal.proposalRevisionRef,
+      }),
+      recordPurchasingApprovalResourceAccess(context, {
+        queryHash: `purchasing-approval-consume-route:${querySuffix}`,
+        resourceRef: result.request.route.routeRef,
+      }),
+      recordPurchasingApprovalResourceAccess(context, {
+        queryHash: `purchasing-approval-consume-hierarchy:${querySuffix}`,
+        resourceRef: result.request.route.hierarchyRef,
+      }),
+      recordPurchasingApprovalResourceAccess(context, {
+        queryHash: `purchasing-approval-consume-profile:${querySuffix}`,
+        resourceRef: result.request.proposal.identity.profileRef,
+      }),
+      recordPurchasingApprovalResourceAccess(context, {
+        queryHash: `purchasing-approval-consume-counterparty:${querySuffix}`,
+        resourceRef: payload.counterpartyRef,
+      }),
+      recordPurchasingApprovalResourceAccess(context, {
+        queryHash: `purchasing-approval-consume-order:${querySuffix}`,
+        resourceRef: payload.orderRef,
+      }),
+    ],
+    { concurrency: 1, discard: true },
+  );
+
+  yield* recordConsumePurchaseApprovalOutcome(payload, result, committedAt, completionRule, context);
+  return result satisfies ConsumePurchaseApprovalResult;
+});
 
 export const consumePurchaseApprovalAction = defineAction(
   {
@@ -188,19 +199,17 @@ export const consumePurchaseApprovalAction = defineAction(
     actionKey: 'commerce.customer-context.consume-purchase-approval',
     auditEvidenceSchema: ConsumePurchaseApprovalAuditEvidenceSchema,
     auditProfile: 'sensitive',
-    businessPermission: defineActionBusinessPermission(
-      (payload: ConsumePurchaseApprovalPayload, scope) =>
-        purchasingApprovalPermissionTarget({
-          permission: 'counterparty.approval.request.manage',
-          counterpartyRef: payload.counterpartyRef,
-          storefrontId: payload.storefrontId,
-          scope,
-        }),
+    businessPermission: defineActionBusinessPermission((payload: ConsumePurchaseApprovalPayload, scope) =>
+      purchasingApprovalPermissionTarget({
+        counterpartyRef: payload.counterpartyRef,
+        permission: 'counterparty.approval.request.manage',
+        scope,
+        storefrontId: payload.storefrontId,
+      }),
     ),
     domainErrorSchema: ConsumePurchaseApprovalRejected,
     domainEvents: {
-      'commerce.customer-context.purchase-approval-consumed.v1':
-        PurchaseApprovalConsumedEventSchema,
+      'commerce.customer-context.purchase-approval-consumed.v1': PurchaseApprovalConsumedEventSchema,
     },
     entrypoint: defineTenantModuleEntrypoint({
       access: 'write',
@@ -219,15 +228,8 @@ export const consumePurchaseApprovalAction = defineAction(
   },
   handleConsumePurchaseApproval,
   (transaction, scope) =>
-    purchasingApprovalOrderCommitmentForScope(transaction, scope).pipe(
-      Effect.map((commitment) => ({ commitment })),
-    ),
+    purchasingApprovalOrderCommitmentForScope(transaction, scope).pipe(Effect.map((commitment) => ({ commitment }))),
 );
 
 // <generated-outbox-message-exports>
-export { createConsumePurchaseApprovalCommerceCustomerContextPurchaseApprovalConsumedV1OutboxMessage } from './consume-purchase-approval-commerce-customer-context-purchase-approval-consumed-v1.outbox-message.ts';
-export { ConsumePurchaseApprovalCommerceCustomerContextPurchaseApprovalConsumedV1OutboxPayloadSchema } from './consume-purchase-approval-commerce-customer-context-purchase-approval-consumed-v1.outbox-message.ts';
-export { ConsumePurchaseApprovalCommerceCustomerContextPurchaseApprovalConsumedV1OutboxProducerModuleKey } from './consume-purchase-approval-commerce-customer-context-purchase-approval-consumed-v1.outbox-message.ts';
-export { ConsumePurchaseApprovalCommerceCustomerContextPurchaseApprovalConsumedV1OutboxTopic } from './consume-purchase-approval-commerce-customer-context-purchase-approval-consumed-v1.outbox-message.ts';
-export type { ConsumePurchaseApprovalCommerceCustomerContextPurchaseApprovalConsumedV1OutboxPayload } from './consume-purchase-approval-commerce-customer-context-purchase-approval-consumed-v1.outbox-message.ts';
 // </generated-outbox-message-exports>

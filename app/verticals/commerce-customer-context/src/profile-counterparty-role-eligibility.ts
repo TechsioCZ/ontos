@@ -1,19 +1,11 @@
-import {
-  CounterpartyReadResponseSchema,
-  executeCounterpartyRead,
-} from '@app/party-registry/api/client';
+import { CounterpartyReadResponseSchema, executeCounterpartyRead } from '@app/party-registry/api/client';
 import { Context, DateTime, Effect, Layer, Option, Schema } from 'effect';
 
 import { ProfilePersistenceDependencyFailure } from './persistence/profile-persistence.ts';
-import type {
-  CounterpartyRoleEligibility,
-  ProfilePersistenceDependencies,
-} from './persistence/profile-persistence.ts';
+import type { CounterpartyRoleEligibility, ProfilePersistenceDependencies } from './persistence/profile-persistence.ts';
 
 type CounterpartyReadExecutor = typeof executeCounterpartyRead;
-type CounterpartyRoleEligibilityResolver = NonNullable<
-  ProfilePersistenceDependencies['resolveCounterpartyRole']
->;
+type CounterpartyRoleEligibilityResolver = NonNullable<ProfilePersistenceDependencies['resolveCounterpartyRole']>;
 
 export interface ProfileCounterpartyRoleEligibilityScope {
   readonly legalEntityId: string;
@@ -21,10 +13,7 @@ export interface ProfileCounterpartyRoleEligibilityScope {
   readonly tenantId: string;
 }
 
-const dependencyFailure = (
-  reason: string,
-  cause?: unknown,
-): ProfilePersistenceDependencyFailure => {
+const dependencyFailure = (reason: string, cause?: unknown): ProfilePersistenceDependencyFailure => {
   const failure = new ProfilePersistenceDependencyFailure({ reason });
   if (cause !== undefined) {
     Object.defineProperty(failure, 'cause', { configurable: true, value: cause });
@@ -37,41 +26,36 @@ const isCanonicalInstant = (value: string): boolean => {
   return Option.isSome(parsed) && DateTime.formatIso(parsed.value) === value;
 };
 
-export const classifyProfileCounterpartyRoleEligibility = (
-  response: Schema.Schema.Type<typeof CounterpartyReadResponseSchema>,
+type CounterpartyReadResponse = Schema.Schema.Type<typeof CounterpartyReadResponseSchema>;
+type CounterpartyRole = CounterpartyReadResponse['currentRoles'][number];
+
+const indeterminateEligibility = (): CounterpartyRoleEligibility => ({ outcome: 'INDETERMINATE' });
+const ineligibleEligibility = (): CounterpartyRoleEligibility => ({ outcome: 'INELIGIBLE' });
+
+const hasExactTenantEvidence = (
+  response: CounterpartyReadResponse,
   scope: ProfileCounterpartyRoleEligibilityScope,
   counterpartyResourceId: string,
+): boolean =>
+  response.counterpartyRef.tenantId === scope.tenantId &&
+  response.counterpartyRef.resourceId === counterpartyResourceId &&
+  response.party.canonicalPartyRef.tenantId === scope.tenantId &&
+  response.party.storedPartyRef.tenantId === scope.tenantId &&
+  response.currentRoles.every(({ rolePeriodRef }) => rolePeriodRef.tenantId === scope.tenantId);
+
+const isEligibleCustomerRole = (role: CounterpartyRole, now: string): boolean =>
+  role.roleType === 'CUSTOMER' &&
+  role.state === 'ACTIVE' &&
+  role.validFrom <= now &&
+  (role.validTo === null || role.validTo > now);
+
+const classifyEligibleRoles = (
+  eligibleRoles: readonly CounterpartyRole[],
+  managedLegalEntityId: string,
   now: string,
 ): CounterpartyRoleEligibility => {
-  const exactCounterparty =
-    response.counterpartyRef.tenantId === scope.tenantId &&
-    response.counterpartyRef.resourceId === counterpartyResourceId;
-  const exactManagedLegalEntity =
-    response.legalEntityRef.tenantId === scope.tenantId &&
-    response.legalEntityRef.resourceId === scope.legalEntityId;
-  const exactPartyTenant =
-    response.party.canonicalPartyRef.tenantId === scope.tenantId &&
-    response.party.storedPartyRef.tenantId === scope.tenantId;
-  const exactRoleTenants = response.currentRoles.every(
-    ({ rolePeriodRef }) => rolePeriodRef.tenantId === scope.tenantId,
-  );
-
-  if (!exactCounterparty || !exactPartyTenant || !exactRoleTenants) {
-    return { outcome: 'INDETERMINATE' };
-  }
-  if (!exactManagedLegalEntity || response.party.archived) {
-    return { outcome: 'INELIGIBLE' };
-  }
-
-  const eligibleRoles = response.currentRoles.filter(
-    (role) =>
-      role.roleType === 'CUSTOMER' &&
-      role.state === 'ACTIVE' &&
-      role.validFrom <= now &&
-      (role.validTo === null || role.validTo > now),
-  );
   if (eligibleRoles.length === 0) {
-    return { outcome: 'INELIGIBLE' };
+    return ineligibleEligibility();
   }
   const [eligibleRole] = eligibleRoles;
   if (
@@ -80,17 +64,40 @@ export const classifyProfileCounterpartyRoleEligibility = (
     !isCanonicalInstant(eligibleRole.recordedAt) ||
     eligibleRole.recordedAt > now
   ) {
-    return { outcome: 'INDETERMINATE' };
+    return indeterminateEligibility();
   }
 
   return {
-    managedLegalEntityId: response.legalEntityRef.resourceId,
+    managedLegalEntityId,
     outcome: 'ELIGIBLE',
     roleResourceId: eligibleRole.rolePeriodRef.resourceId,
     // Role periods are immutable owner facts. Party Registry currently publishes their canonical
     // recordedAt instant, rather than a synthetic numeric revision, as the evidence version.
     roleResourceRevision: eligibleRole.recordedAt,
   };
+};
+
+export const classifyProfileCounterpartyRoleEligibility = (
+  response: CounterpartyReadResponse,
+  scope: ProfileCounterpartyRoleEligibilityScope,
+  counterpartyResourceId: string,
+  now: string,
+): CounterpartyRoleEligibility => {
+  const exactManagedLegalEntity =
+    response.legalEntityRef.tenantId === scope.tenantId && response.legalEntityRef.resourceId === scope.legalEntityId;
+
+  if (!hasExactTenantEvidence(response, scope, counterpartyResourceId)) {
+    return indeterminateEligibility();
+  }
+  if (!exactManagedLegalEntity || response.party.archived) {
+    return ineligibleEligibility();
+  }
+
+  return classifyEligibleRoles(
+    response.currentRoles.filter((role) => isEligibleCustomerRole(role, now)),
+    response.legalEntityRef.resourceId,
+    now,
+  );
 };
 
 /**
@@ -119,20 +126,13 @@ export const makeProfileCounterpartyRoleEligibilityResolver =
       },
       scope.requestCorrelation,
     ).pipe(
-      Effect.mapError((cause) =>
-        dependencyFailure('Party Registry Counterparty eligibility is unavailable', cause),
-      ),
+      Effect.mapError((cause) => dependencyFailure('Party Registry Counterparty eligibility is unavailable', cause)),
       Effect.flatMap((response) =>
         DateTime.now.pipe(
           Effect.map(DateTime.formatIso),
           Effect.map((now) =>
             Schema.is(CounterpartyReadResponseSchema)(response) && isCanonicalInstant(now)
-              ? classifyProfileCounterpartyRoleEligibility(
-                  response,
-                  scope,
-                  counterpartyResourceId,
-                  now,
-                )
+              ? classifyProfileCounterpartyRoleEligibility(response, scope, counterpartyResourceId, now)
               : ({ outcome: 'INDETERMINATE' } as const),
           ),
         ),
@@ -141,9 +141,7 @@ export const makeProfileCounterpartyRoleEligibilityResolver =
   };
 
 export interface ProfileCounterpartyRoleEligibilityResolverFactoryService {
-  readonly make: (
-    scope: ProfileCounterpartyRoleEligibilityScope,
-  ) => CounterpartyRoleEligibilityResolver;
+  readonly make: (scope: ProfileCounterpartyRoleEligibilityScope) => CounterpartyRoleEligibilityResolver;
 }
 
 export class ProfileCounterpartyRoleEligibilityResolverFactory extends Context.Service<

@@ -6,18 +6,16 @@ import {
 } from '@app/commerce-customer-context/outbox/commerce-customer-context-customer-payment-term-removed-v1';
 import type { OutboxPayload } from '@app/commerce-customer-context/outbox/commerce-customer-context-customer-payment-term-removed-v1';
 
-export { OutboxPayloadSchema as RemoveCustomerPaymentTermCommerceCustomerContextCustomerPaymentTermRemovedV1OutboxPayloadSchema } from '@app/commerce-customer-context/outbox/commerce-customer-context-customer-payment-term-removed-v1';
-export type RemoveCustomerPaymentTermCommerceCustomerContextCustomerPaymentTermRemovedV1OutboxPayload =
-  OutboxPayload;
-export const RemoveCustomerPaymentTermCommerceCustomerContextCustomerPaymentTermRemovedV1OutboxProducerModuleKey =
+export type RemoveCustomerPaymentTermCommerceCustomerContextCustomerPaymentTermRemovedV1OutboxPayload = OutboxPayload;
+const RemoveCustomerPaymentTermCommerceCustomerContextCustomerPaymentTermRemovedV1OutboxProducerModuleKey =
   outboxProducerModuleKey;
-export const RemoveCustomerPaymentTermCommerceCustomerContextCustomerPaymentTermRemovedV1OutboxTopic =
-  outboxTopic;
+const RemoveCustomerPaymentTermCommerceCustomerContextCustomerPaymentTermRemovedV1OutboxTopic = outboxTopic;
 
-export const createRemoveCustomerPaymentTermCommerceCustomerContextCustomerPaymentTermRemovedV1OutboxMessage =
-  (payload: OutboxPayload): OutboxMessage => ({
-    payloadJson: payload,
-    producerModuleKey:
-      RemoveCustomerPaymentTermCommerceCustomerContextCustomerPaymentTermRemovedV1OutboxProducerModuleKey,
-    topic: RemoveCustomerPaymentTermCommerceCustomerContextCustomerPaymentTermRemovedV1OutboxTopic,
-  });
+export const createRemoveCustomerPaymentTermCommerceCustomerContextCustomerPaymentTermRemovedV1OutboxMessage = (
+  payload: OutboxPayload,
+): OutboxMessage => ({
+  payloadJson: payload,
+  producerModuleKey:
+    RemoveCustomerPaymentTermCommerceCustomerContextCustomerPaymentTermRemovedV1OutboxProducerModuleKey,
+  topic: RemoveCustomerPaymentTermCommerceCustomerContextCustomerPaymentTermRemovedV1OutboxTopic,
+});

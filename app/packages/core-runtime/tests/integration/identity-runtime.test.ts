@@ -71,18 +71,18 @@ const relationship = (
     }),
   });
 
+const acquireIdentityPool = (connectionString: string) =>
+  Effect.acquireRelease(
+    Effect.sync(() => new Pool({ connectionString })),
+    (pool) => Effect.promise(() => pool.end()).pipe(Effect.orDie),
+  );
+
 it.live('runs identity mutations and tenant-isolated administration through live Action and Read runtimes', () =>
   Effect.gen(function* identityRuntimeIntegration() {
     const connections = yield* loadDatabaseConnectionPair();
     const spiceDbConfiguration = yield* loadSpiceDbConfig();
-    const adminPool = yield* Effect.acquireRelease(
-      Effect.sync(() => new Pool({ connectionString: connections.admin.connectionString })),
-      (pool) => Effect.promise(() => pool.end()).pipe(Effect.orDie),
-    );
-    const runtimePool = yield* Effect.acquireRelease(
-      Effect.sync(() => new Pool({ connectionString: connections.runtime.connectionString })),
-      (pool) => Effect.promise(() => pool.end()).pipe(Effect.orDie),
-    );
+    const adminPool = yield* acquireIdentityPool(connections.admin.connectionString);
+    const runtimePool = yield* acquireIdentityPool(connections.runtime.connectionString);
     const admin = yield* makeTestDatabaseFromPool(adminPool, coreRelations);
     const runtimeDatabase = yield* makeTestDatabaseFromPool(runtimePool, coreRelations);
     const principalManagementRepository = principalManagementRepositoryFromTransaction(runtimeDatabase);

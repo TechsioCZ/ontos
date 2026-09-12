@@ -32,9 +32,7 @@ export interface RepeatCartPublicPort {
     readonly repeatIntentKey: string;
     readonly sourceOrderRef: HistoricalRecordRef;
     readonly storefrontId?: string;
-    readonly subject:
-      | RepeatCounterpartyOrderPayload['profileRef']
-      | RepeatRetailOrderPayload['profileRef'];
+    readonly subject: RepeatCounterpartyOrderPayload['profileRef'] | RepeatRetailOrderPayload['profileRef'];
   }) => Effect.Effect<RepeatCartCreationOutcome, HistoryActionUnavailable>;
 }
 

@@ -1,4 +1,3 @@
-import { expect, it } from 'effect-rstest';
 import {
   GatewayAssertionRedemptionUnavailableError,
   GatewayAssertionReplayError,
@@ -77,10 +76,7 @@ it.effect('preserves signed Storefront scope with non-copyable verified provenan
       currentTimeSeconds: Effect.succeed(currentTimeSeconds),
       environment: fixture.environment,
     } as const;
-    const signatureOnly = yield* verifier.verify(
-      Redacted.make(`Bearer ${fixture.token}`),
-      verificationOptions,
-    );
+    const signatureOnly = yield* verifier.verify(Redacted.make(`Bearer ${fixture.token}`), verificationOptions);
     expect(isVerifiedGatewayPrincipalContext(signatureOnly)).toBe(false);
 
     const verified = yield* verifier.verifyAndRedeem(Redacted.make(`Bearer ${fixture.token}`), {

@@ -104,16 +104,11 @@ export const reviseCustomerGroup = (
   if (group.currentState === 'ARCHIVED') {
     return { _tag: 'archived_correction_forbidden' };
   }
-  if (
-    input.name === group.currentDefinition.name &&
-    input.description === group.currentDefinition.description
-  ) {
+  if (input.name === group.currentDefinition.name && input.description === group.currentDefinition.description) {
     return { _tag: 'updated', changed: false, group };
   }
   const changeKind =
-    input.description === group.currentDefinition.description
-      ? 'COSMETIC_RENAME'
-      : 'DESCRIPTION_CLARIFICATION';
+    input.description === group.currentDefinition.description ? 'COSMETIC_RENAME' : 'DESCRIPTION_CLARIFICATION';
   const definition: CustomerGroupDefinitionRevision = {
     changeKind,
     description: input.description,
@@ -141,26 +136,20 @@ const sameRef = (
   right: Readonly<{ resourceId: string; tenantId: string }>,
 ): boolean => left.resourceId === right.resourceId && left.tenantId === right.tenantId;
 
-const sameProfile = (
-  left: CommerceCustomerProfileSubject,
-  right: CommerceCustomerProfileSubject,
-): boolean => left.profileKind === right.profileKind && sameRef(left.profileRef, right.profileRef);
+const sameProfile = (left: CommerceCustomerProfileSubject, right: CommerceCustomerProfileSubject): boolean =>
+  left.profileKind === right.profileKind && sameRef(left.profileRef, right.profileRef);
 
-export const customerGroupIsActiveAt = (group: CommerceCustomerGroup, instant: string): boolean =>
+const customerGroupIsActiveAt = (group: CommerceCustomerGroup, instant: string): boolean =>
   group.lifecycleHistory.some(
-    ({ activeFrom, archivedAt }) =>
-      activeFrom <= instant && (archivedAt === null || instant < archivedAt),
+    ({ activeFrom, archivedAt }) => activeFrom <= instant && (archivedAt === null || instant < archivedAt),
   );
 
-export const customerGroupMembershipIsEffectiveAt = (
-  membership: CommerceCustomerGroupMembership,
-  instant: string,
-): boolean =>
+const customerGroupMembershipIsEffectiveAt = (membership: CommerceCustomerGroupMembership, instant: string): boolean =>
   membership.state === 'VALID' &&
   membership.effectiveFrom <= instant &&
   (membership.effectiveTo === null || instant < membership.effectiveTo);
 
-export const customerGroupMembershipPeriodsOverlap = (
+const customerGroupMembershipPeriodsOverlap = (
   left: Pick<CommerceCustomerGroupMembership, 'effectiveFrom' | 'effectiveTo'>,
   right: Pick<CommerceCustomerGroupMembership, 'effectiveFrom' | 'effectiveTo'>,
 ): boolean =>
@@ -178,8 +167,7 @@ const AssignCustomerGroupMembershipOutcomeSchema = Schema.Union([
   }),
   Schema.TaggedStruct('overlap', { membership: CommerceCustomerGroupMembershipSchema }),
 ]);
-export type AssignCustomerGroupMembershipOutcome =
-  typeof AssignCustomerGroupMembershipOutcomeSchema.Type;
+export type AssignCustomerGroupMembershipOutcome = typeof AssignCustomerGroupMembershipOutcomeSchema.Type;
 
 export const assignCustomerGroupMembership = (
   group: CommerceCustomerGroup,
@@ -191,14 +179,10 @@ export const assignCustomerGroupMembership = (
     return { _tag: 'group_inactive' };
   }
   const samePair = existing.filter(
-    (candidate) =>
-      sameRef(candidate.groupRef, proposed.groupRef) &&
-      sameProfile(candidate.profile, proposed.profile),
+    (candidate) => sameRef(candidate.groupRef, proposed.groupRef) && sameProfile(candidate.profile, proposed.profile),
   );
   const exact = samePair.find(
-    (candidate) =>
-      candidate.effectiveFrom === proposed.effectiveFrom &&
-      candidate.effectiveTo === proposed.effectiveTo,
+    (candidate) => candidate.effectiveFrom === proposed.effectiveFrom && candidate.effectiveTo === proposed.effectiveTo,
   );
   if (exact !== undefined) {
     return { _tag: 'already_assigned', membership: exact };
@@ -210,12 +194,9 @@ export const assignCustomerGroupMembership = (
     return { _tag: 'profile_ineligible', profileState };
   }
   const overlap = samePair.find(
-    (candidate) =>
-      candidate.state === 'VALID' && customerGroupMembershipPeriodsOverlap(candidate, proposed),
+    (candidate) => candidate.state === 'VALID' && customerGroupMembershipPeriodsOverlap(candidate, proposed),
   );
-  return overlap === undefined
-    ? { _tag: 'assigned', membership: proposed }
-    : { _tag: 'overlap', membership: overlap };
+  return overlap === undefined ? { _tag: 'assigned', membership: proposed } : { _tag: 'overlap', membership: overlap };
 };
 
 export interface ArchiveCustomerGroupInput {
@@ -264,11 +245,7 @@ export const archiveCustomerGroup = (
     return { _tag: 'revision_conflict', actualRevision: group.revision };
   }
   const open = group.lifecycleHistory[openIndex];
-  if (
-    open === undefined ||
-    input.effectiveAt < open.activeFrom ||
-    input.effectiveAt > input.recordedAt
-  ) {
+  if (open === undefined || input.effectiveAt < open.activeFrom || input.effectiveAt > input.recordedAt) {
     return { _tag: 'lifecycle_conflict' };
   }
   let endedCount = 0;
@@ -340,45 +317,56 @@ const ReactivateCustomerGroupOutcomeSchema = Schema.Union([
 ]);
 export type ReactivateCustomerGroupOutcome = typeof ReactivateCustomerGroupOutcomeSchema.Type;
 
+const isIdempotentReactivation = (
+  group: CommerceCustomerGroup,
+  input: ArchiveCustomerGroupInput,
+  last: CommerceCustomerGroup['lifecycleHistory'][number] | undefined,
+): boolean => group.currentState === 'ACTIVE' && last?.activeFrom === input.effectiveAt;
+
+const hasReactivationLifecycleConflict = (
+  group: CommerceCustomerGroup,
+  input: ArchiveCustomerGroupInput,
+  last: CommerceCustomerGroup['lifecycleHistory'][number] | undefined,
+): boolean =>
+  group.currentState === 'ACTIVE' ||
+  last?.archivedAt === null ||
+  last?.archivedAt === undefined ||
+  input.effectiveAt <= last.archivedAt ||
+  input.effectiveAt > input.recordedAt;
+
+const reactivatedGroup = (group: CommerceCustomerGroup, input: ArchiveCustomerGroupInput): CommerceCustomerGroup => ({
+  ...group,
+  currentState: 'ACTIVE',
+  lifecycleHistory: [
+    ...group.lifecycleHistory,
+    {
+      activeFrom: input.effectiveAt,
+      archivedAt: null,
+      reason: input.reason,
+      recordedAt: input.recordedAt,
+    },
+  ],
+  revision: group.revision + 1,
+});
+
 export const reactivateCustomerGroup = (
   group: CommerceCustomerGroup,
   input: ArchiveCustomerGroupInput,
 ): ReactivateCustomerGroupOutcome => {
   const last = group.lifecycleHistory.at(-1);
-  if (group.currentState === 'ACTIVE' && last?.activeFrom === input.effectiveAt) {
+  if (isIdempotentReactivation(group, input, last)) {
     return { _tag: 'reactivated', changed: false, group };
   }
   if (group.revision !== input.expectedRevision) {
     return { _tag: 'revision_conflict', actualRevision: group.revision };
   }
-  if (group.currentState === 'ACTIVE') {
-    return { _tag: 'lifecycle_conflict' };
-  }
-  if (
-    last?.archivedAt === null ||
-    last?.archivedAt === undefined ||
-    input.effectiveAt <= last.archivedAt ||
-    input.effectiveAt > input.recordedAt
-  ) {
+  if (hasReactivationLifecycleConflict(group, input, last)) {
     return { _tag: 'lifecycle_conflict' };
   }
   return {
     _tag: 'reactivated',
     changed: true,
-    group: {
-      ...group,
-      currentState: 'ACTIVE',
-      lifecycleHistory: [
-        ...group.lifecycleHistory,
-        {
-          activeFrom: input.effectiveAt,
-          archivedAt: null,
-          reason: input.reason,
-          recordedAt: input.recordedAt,
-        },
-      ],
-      revision: group.revision + 1,
-    },
+    group: reactivatedGroup(group, input),
   };
 };
 
@@ -400,8 +388,7 @@ const RemoveCustomerGroupMembershipOutcomeSchema = Schema.Union([
     membership: CommerceCustomerGroupMembershipSchema,
   }),
 ]);
-export type RemoveCustomerGroupMembershipOutcome =
-  typeof RemoveCustomerGroupMembershipOutcomeSchema.Type;
+export type RemoveCustomerGroupMembershipOutcome = typeof RemoveCustomerGroupMembershipOutcomeSchema.Type;
 
 export const removeCustomerGroupMembership = (
   membership: CommerceCustomerGroupMembership,
@@ -455,14 +442,12 @@ export const effectiveCustomerGroupMemberships = (
         customerGroupIsActiveAt(group, effectiveAt)
       );
     })
-    .toSorted((left, right) =>
-      left.membershipRef.resourceId.localeCompare(right.membershipRef.resourceId),
-    );
+    .toSorted((left, right) => left.membershipRef.resourceId.localeCompare(right.membershipRef.resourceId));
 };
 
 export type CustomerGroupLookupOutcome<Value> = Option.Option<Value>;
 
-export interface CustomerGroupCommandContext {
+interface CustomerGroupCommandContext {
   readonly actionInvocationId: string;
   readonly legalEntityId: string;
   readonly principalId: string;
@@ -470,7 +455,7 @@ export interface CustomerGroupCommandContext {
   readonly tenantId: string;
 }
 
-export interface CreateCustomerGroupCommand extends CustomerGroupCommandContext {
+interface CreateCustomerGroupCommand extends CustomerGroupCommandContext {
   readonly businessCode: string;
   readonly description: string;
   readonly meaningKey: CustomerGroupMeaningKey;
@@ -486,17 +471,15 @@ const CreateCustomerGroupPersistenceOutcomeSchema = Schema.Union([
   Schema.TaggedStruct('business_code_conflict', {}),
   Schema.TaggedStruct('semantic_duplicate', {}),
 ]);
-export type CreateCustomerGroupPersistenceOutcome =
-  typeof CreateCustomerGroupPersistenceOutcomeSchema.Type;
+export type CreateCustomerGroupPersistenceOutcome = typeof CreateCustomerGroupPersistenceOutcomeSchema.Type;
 
-export interface UpdateCustomerGroupCommand
-  extends CustomerGroupCommandContext, Omit<ReviseCustomerGroupInput, 'recordedAt'> {
+interface UpdateCustomerGroupCommand extends CustomerGroupCommandContext, Omit<ReviseCustomerGroupInput, 'recordedAt'> {
   readonly groupRef: CustomerGroupRef;
 }
 
 export type UpdateCustomerGroupPersistenceOutcome = NotFound | ReviseCustomerGroupOutcome;
 
-export interface ArchiveCustomerGroupCommand
+interface ArchiveCustomerGroupCommand
   extends CustomerGroupCommandContext, Omit<ArchiveCustomerGroupInput, 'recordedAt'> {
   readonly groupRef: CustomerGroupRef;
 }
@@ -517,8 +500,7 @@ const AssignCustomerGroupPersistenceOutcomeSchema = Schema.Union([
   NotFoundSchema,
   Schema.TaggedStruct('profile_not_found', {}),
 ]);
-export type AssignCustomerGroupPersistenceOutcome =
-  typeof AssignCustomerGroupPersistenceOutcomeSchema.Type;
+export type AssignCustomerGroupPersistenceOutcome = typeof AssignCustomerGroupPersistenceOutcomeSchema.Type;
 
 export interface RemoveCustomerGroupCommand extends CustomerGroupCommandContext {
   readonly effectiveAt: CustomerGroupIsoTimestamp;
@@ -530,13 +512,13 @@ export interface RemoveCustomerGroupCommand extends CustomerGroupCommandContext 
 
 export type RemoveCustomerGroupPersistenceOutcome = RemoveCustomerGroupMembershipOutcome | NotFound;
 
-export interface CustomerGroupDetailQuery {
+interface CustomerGroupDetailQuery {
   readonly groupRef: CustomerGroupRef;
   readonly legalEntityId: string;
   readonly tenantId: string;
 }
 
-export interface CustomerGroupMembersQuery extends CustomerGroupDetailQuery {
+interface CustomerGroupMembersQuery extends CustomerGroupDetailQuery {
   readonly cursor: null | string;
   readonly effectiveAt: CustomerGroupIsoTimestamp;
   readonly limit: number;
@@ -550,7 +532,7 @@ export interface CustomerGroupMembersResult {
   readonly nextCursor: null | string;
 }
 
-export interface CustomerGroupHistoryQuery extends CustomerGroupDetailQuery {
+interface CustomerGroupHistoryQuery extends CustomerGroupDetailQuery {
   readonly asOf: null | CustomerGroupIsoTimestamp;
   readonly cursor: null | string;
   readonly limit: number;
@@ -563,7 +545,7 @@ export interface CustomerGroupHistoryResult {
   readonly nextCursor: null | string;
 }
 
-export interface EffectiveCustomerGroupMembershipsQuery {
+interface EffectiveCustomerGroupMembershipsQuery {
   readonly effectiveAt: CustomerGroupIsoTimestamp;
   readonly legalEntityId: string;
   readonly profile: CommerceCustomerProfileSubject;
@@ -579,28 +561,16 @@ export interface EffectiveCustomerGroupMembershipsResult {
 export interface CustomerGroupPersistence {
   readonly archive: (
     command: ArchiveCustomerGroupCommand,
-  ) => Effect.Effect<
-    ArchiveCustomerGroupPersistenceOutcome,
-    CustomerGroupPersistenceUnavailableError
-  >;
+  ) => Effect.Effect<ArchiveCustomerGroupPersistenceOutcome, CustomerGroupPersistenceUnavailableError>;
   readonly assign: (
     command: AssignCustomerGroupCommand,
-  ) => Effect.Effect<
-    AssignCustomerGroupPersistenceOutcome,
-    CustomerGroupPersistenceUnavailableError
-  >;
+  ) => Effect.Effect<AssignCustomerGroupPersistenceOutcome, CustomerGroupPersistenceUnavailableError>;
   readonly create: (
     command: CreateCustomerGroupCommand,
-  ) => Effect.Effect<
-    CreateCustomerGroupPersistenceOutcome,
-    CustomerGroupPersistenceUnavailableError
-  >;
+  ) => Effect.Effect<CreateCustomerGroupPersistenceOutcome, CustomerGroupPersistenceUnavailableError>;
   readonly detail: (
     query: CustomerGroupDetailQuery,
-  ) => Effect.Effect<
-    CustomerGroupLookupOutcome<CommerceCustomerGroup>,
-    CustomerGroupPersistenceUnavailableError
-  >;
+  ) => Effect.Effect<CustomerGroupLookupOutcome<CommerceCustomerGroup>, CustomerGroupPersistenceUnavailableError>;
   readonly effectiveMemberships: (
     query: EffectiveCustomerGroupMembershipsQuery,
   ) => Effect.Effect<
@@ -609,32 +579,17 @@ export interface CustomerGroupPersistence {
   >;
   readonly history: (
     query: CustomerGroupHistoryQuery,
-  ) => Effect.Effect<
-    CustomerGroupLookupOutcome<CustomerGroupHistoryResult>,
-    CustomerGroupPersistenceUnavailableError
-  >;
+  ) => Effect.Effect<CustomerGroupLookupOutcome<CustomerGroupHistoryResult>, CustomerGroupPersistenceUnavailableError>;
   readonly members: (
     query: CustomerGroupMembersQuery,
-  ) => Effect.Effect<
-    CustomerGroupLookupOutcome<CustomerGroupMembersResult>,
-    CustomerGroupPersistenceUnavailableError
-  >;
+  ) => Effect.Effect<CustomerGroupLookupOutcome<CustomerGroupMembersResult>, CustomerGroupPersistenceUnavailableError>;
   readonly reactivate: (
     command: ArchiveCustomerGroupCommand,
-  ) => Effect.Effect<
-    ReactivateCustomerGroupPersistenceOutcome,
-    CustomerGroupPersistenceUnavailableError
-  >;
+  ) => Effect.Effect<ReactivateCustomerGroupPersistenceOutcome, CustomerGroupPersistenceUnavailableError>;
   readonly remove: (
     command: RemoveCustomerGroupCommand,
-  ) => Effect.Effect<
-    RemoveCustomerGroupPersistenceOutcome,
-    CustomerGroupPersistenceUnavailableError
-  >;
+  ) => Effect.Effect<RemoveCustomerGroupPersistenceOutcome, CustomerGroupPersistenceUnavailableError>;
   readonly update: (
     command: UpdateCustomerGroupCommand,
-  ) => Effect.Effect<
-    UpdateCustomerGroupPersistenceOutcome,
-    CustomerGroupPersistenceUnavailableError
-  >;
+  ) => Effect.Effect<UpdateCustomerGroupPersistenceOutcome, CustomerGroupPersistenceUnavailableError>;
 }

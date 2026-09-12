@@ -1,7 +1,7 @@
 import { defineScopedRoutine } from '@app/core-runtime';
 import { Schema } from 'effect';
 
-export const PaymentTermRoutineRowSchema = Schema.Struct({ payload: Schema.Unknown });
+const PaymentTermRoutineRowSchema = Schema.Struct({ payload: Schema.Unknown });
 export type PaymentTermRoutineRow = typeof PaymentTermRoutineRowSchema.Type;
 
 const ownerModuleKey = 'payment.term-catalog';

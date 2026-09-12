@@ -3,7 +3,7 @@
 // @ontos-action-http-slug bootstrap-counterparty-access-administrator
 // oxlint-disable sonarjs/function-name -- Effect Match.tags requires owner-declared tag keys; remove-when: sonarjs accepts discriminant-map properties.
 import type { ActionCoreError } from '@app/core-runtime';
-import { Effect, HttpApiMiddleware } from '@modern-js/plugin-bff/effect-edge';
+import { Effect, HttpApiMiddleware } from '@modern-js/bff-effect/effect-edge';
 import { Match, Schema } from 'effect';
 import {
   BootstrapCounterpartyAccessAdministratorActionAlreadyCommittedProblemSchema,
@@ -22,175 +22,74 @@ import {
 } from '../shared/apis/bootstrap-counterparty-access-administrator-action.ts';
 import type { BootstrapCounterpartyAccessAdministratorActionProblem } from '../shared/apis/bootstrap-counterparty-access-administrator-action.ts';
 import { bootstrapCounterpartyAccessAdministratorAction } from '../src/actions/bootstrap-counterparty-access-administrator.action.ts';
+/* oxlint-disable anti-slop-effect/no-service-constructor-imports -- These pure helpers construct problem values rather than Effect services. */
+import {
+  actionProblemStatus as problemStatus,
+  counterpartyAccessContractViolationProblemByCode,
+  makeAuthenticationProblem,
+  makeConflictProblem,
+  makeForbiddenProblem,
+  makeIneligibleProblem,
+  makeInternalProblem,
+  makeInvalidProblem,
+  makeNotFoundProblem,
+  makePreconditionProblem,
+  makeRateLimitedProblem,
+  makeUnavailableProblem,
+} from './action-problem-support.ts';
+/* oxlint-enable anti-slop-effect/no-service-constructor-imports */
+import type { CounterpartyAccessDomainProblemIdentity } from './action-problem-support.ts';
 
-type DomainError =
-  typeof bootstrapCounterpartyAccessAdministratorAction.descriptor.domainErrorSchema.Type;
+type DomainError = typeof bootstrapCounterpartyAccessAdministratorAction.descriptor.domainErrorSchema.Type;
 type ProblemOf<Tag extends BootstrapCounterpartyAccessAdministratorActionProblem['_tag']> = Extract<
   BootstrapCounterpartyAccessAdministratorActionProblem,
   { readonly _tag: Tag }
 >;
-type DomainProblemIdentity =
-  | { readonly code: 'invitation_revision_conflict'; readonly kind: 'conflict' }
-  | {
-      readonly code: 'counterparty_scope_mismatch' | 'principal_scope_mismatch';
-      readonly kind: 'forbidden';
-    }
-  | {
-      readonly code:
-        | 'administrative_scope_exceeded'
-        | 'bootstrap_required'
-        | 'grantor_not_authorized'
-        | 'invitation_claim_proof_consumed'
-        | 'invitation_claim_proof_invalid'
-        | 'invitation_claimant_mismatch'
-        | 'invitation_expired'
-        | 'invitation_invalid'
-        | 'inviter_authority_denied'
-        | 'permission_not_delegable'
-        | 'permission_scope_not_allowed'
-        | 'principal_not_eligible'
-        | 'reason_required';
-      readonly kind: 'ineligible';
-    }
-  | { readonly code: 'invitation_rate_limited'; readonly kind: 'rateLimited' }
-  | { readonly code: 'counterparty_access_unavailable'; readonly kind: 'unavailable' };
-
-const problemStatus = {
-  authentication: 401,
-  conflict: 409,
-  forbidden: 403,
-  ineligible: 422,
-  internal: 500,
-  invalid: 400,
-  notFound: 404,
-  precondition: 428,
-  rateLimited: 429,
-  timeout: 504,
-  unavailable: 503,
-} as const;
-
-const counterpartyAccessContractViolationProblemByCode = {
-  administrative_scope_exceeded: { code: 'administrative_scope_exceeded', kind: 'ineligible' },
-  bootstrap_required: { code: 'bootstrap_required', kind: 'ineligible' },
-  counterparty_scope_mismatch: { code: 'counterparty_scope_mismatch', kind: 'forbidden' },
-  grantor_not_authorized: { code: 'grantor_not_authorized', kind: 'ineligible' },
-  invitation_claim_proof_consumed: { code: 'invitation_claim_proof_consumed', kind: 'ineligible' },
-  invitation_claim_proof_invalid: { code: 'invitation_claim_proof_invalid', kind: 'ineligible' },
-  invitation_claimant_mismatch: { code: 'invitation_claimant_mismatch', kind: 'ineligible' },
-  invitation_expired: { code: 'invitation_expired', kind: 'ineligible' },
-  invitation_invalid: { code: 'invitation_invalid', kind: 'ineligible' },
-  invitation_rate_limited: { code: 'invitation_rate_limited', kind: 'rateLimited' },
-  invitation_revision_conflict: { code: 'invitation_revision_conflict', kind: 'conflict' },
-  inviter_authority_denied: { code: 'inviter_authority_denied', kind: 'ineligible' },
-  permission_not_delegable: { code: 'permission_not_delegable', kind: 'ineligible' },
-  permission_scope_not_allowed: { code: 'permission_scope_not_allowed', kind: 'ineligible' },
-  principal_not_eligible: { code: 'principal_not_eligible', kind: 'ineligible' },
-  principal_scope_mismatch: { code: 'principal_scope_mismatch', kind: 'forbidden' },
-  reason_required: { code: 'reason_required', kind: 'ineligible' },
-} as const satisfies Record<
-  Extract<DomainError, { readonly _tag: 'CounterpartyAccessContractViolation' }>['code'],
-  DomainProblemIdentity
->;
-
 export const bootstrapCounterpartyAccessAdministratorActionProblem = {
-  authentication:
-    (): ProblemOf<'BootstrapCounterpartyAccessAdministratorActionAuthenticationProblem'> =>
-      BootstrapCounterpartyAccessAdministratorActionAuthenticationProblemSchema.make({
-        detail: 'A valid audience-scoped Bearer assertion is required.',
-        status: problemStatus.authentication,
-        title: 'Authentication required',
-        type: 'https://ontos.dev/problems/operation-authentication-required',
-      }),
-  conflict: (
-    code: ProblemOf<'BootstrapCounterpartyAccessAdministratorActionConflictProblem'>['code'],
-  ): ProblemOf<'BootstrapCounterpartyAccessAdministratorActionConflictProblem'> =>
-    BootstrapCounterpartyAccessAdministratorActionConflictProblemSchema.make({
-      code,
-      detail: 'The Action conflicts with current state.',
-      status: problemStatus.conflict,
-      title: 'Action conflict',
-      type: 'https://ontos.dev/problems/action-conflict',
-    }),
-  forbidden: (
-    code: ProblemOf<'BootstrapCounterpartyAccessAdministratorActionForbiddenProblem'>['code'],
-  ): ProblemOf<'BootstrapCounterpartyAccessAdministratorActionForbiddenProblem'> =>
-    BootstrapCounterpartyAccessAdministratorActionForbiddenProblemSchema.make({
-      code,
-      detail: 'The principal is not permitted to perform this Action.',
-      status: problemStatus.forbidden,
-      title: 'Action forbidden',
-      type: 'https://ontos.dev/problems/action-forbidden',
-    }),
-  ineligible: (
-    code: ProblemOf<'BootstrapCounterpartyAccessAdministratorActionIneligibleProblem'>['code'],
-  ): ProblemOf<'BootstrapCounterpartyAccessAdministratorActionIneligibleProblem'> =>
-    BootstrapCounterpartyAccessAdministratorActionIneligibleProblemSchema.make({
-      code,
-      detail: 'The request is not eligible for this Action.',
-      status: problemStatus.ineligible,
-      title: 'Action ineligible',
-      type: 'https://ontos.dev/problems/action-ineligible',
-    }),
-  internal: (): ProblemOf<'BootstrapCounterpartyAccessAdministratorActionInternalProblem'> =>
-    BootstrapCounterpartyAccessAdministratorActionInternalProblemSchema.make({
-      detail: 'The Action could not be completed.',
-      status: problemStatus.internal,
-      title: 'Action failed',
-      type: 'https://ontos.dev/problems/action-failed',
-    }),
-  invalid: (): ProblemOf<'BootstrapCounterpartyAccessAdministratorActionInvalidProblem'> =>
-    BootstrapCounterpartyAccessAdministratorActionInvalidProblemSchema.make({
-      detail: 'The bootstrap-counterparty-access-administrator Action request is invalid.',
-      status: problemStatus.invalid,
-      title: 'Invalid Action request',
-      type: 'https://ontos.dev/problems/action-invalid',
-    }),
-  notFound: (
-    code: ProblemOf<'BootstrapCounterpartyAccessAdministratorActionNotFoundProblem'>['code'],
-  ): ProblemOf<'BootstrapCounterpartyAccessAdministratorActionNotFoundProblem'> =>
-    BootstrapCounterpartyAccessAdministratorActionNotFoundProblemSchema.make({
-      code,
-      detail: 'The requested resource was not found.',
-      status: problemStatus.notFound,
-      title: 'Resource not found',
-      type: 'https://ontos.dev/problems/action-resource-not-found',
-    }),
-  precondition:
-    (): ProblemOf<'BootstrapCounterpartyAccessAdministratorActionPreconditionProblem'> =>
-      BootstrapCounterpartyAccessAdministratorActionPreconditionProblemSchema.make({
-        detail: 'An Idempotency-Key header is required.',
-        status: problemStatus.precondition,
-        title: 'Idempotency key required',
-        type: 'https://ontos.dev/problems/idempotency-key-required',
-      }),
-  rateLimited: (
-    code: Extract<
+  authentication: makeAuthenticationProblem<
+    ProblemOf<'BootstrapCounterpartyAccessAdministratorActionAuthenticationProblem'>
+  >((input) => BootstrapCounterpartyAccessAdministratorActionAuthenticationProblemSchema.make(input)),
+  conflict: makeConflictProblem<
+    ProblemOf<'BootstrapCounterpartyAccessAdministratorActionConflictProblem'>['code'],
+    ProblemOf<'BootstrapCounterpartyAccessAdministratorActionConflictProblem'>
+  >((input) => BootstrapCounterpartyAccessAdministratorActionConflictProblemSchema.make(input)),
+  forbidden: makeForbiddenProblem<
+    ProblemOf<'BootstrapCounterpartyAccessAdministratorActionForbiddenProblem'>['code'],
+    ProblemOf<'BootstrapCounterpartyAccessAdministratorActionForbiddenProblem'>
+  >((input) => BootstrapCounterpartyAccessAdministratorActionForbiddenProblemSchema.make(input)),
+  ineligible: makeIneligibleProblem<
+    ProblemOf<'BootstrapCounterpartyAccessAdministratorActionIneligibleProblem'>['code'],
+    ProblemOf<'BootstrapCounterpartyAccessAdministratorActionIneligibleProblem'>
+  >((input) => BootstrapCounterpartyAccessAdministratorActionIneligibleProblemSchema.make(input)),
+  internal: makeInternalProblem<ProblemOf<'BootstrapCounterpartyAccessAdministratorActionInternalProblem'>>((input) =>
+    BootstrapCounterpartyAccessAdministratorActionInternalProblemSchema.make(input),
+  ),
+  invalid: makeInvalidProblem<ProblemOf<'BootstrapCounterpartyAccessAdministratorActionInvalidProblem'>>(
+    (input) => BootstrapCounterpartyAccessAdministratorActionInvalidProblemSchema.make(input),
+    'bootstrap-counterparty-access-administrator',
+  ),
+  notFound: makeNotFoundProblem<
+    ProblemOf<'BootstrapCounterpartyAccessAdministratorActionNotFoundProblem'>['code'],
+    ProblemOf<'BootstrapCounterpartyAccessAdministratorActionNotFoundProblem'>
+  >((input) => BootstrapCounterpartyAccessAdministratorActionNotFoundProblemSchema.make(input)),
+  precondition: makePreconditionProblem<ProblemOf<'BootstrapCounterpartyAccessAdministratorActionPreconditionProblem'>>(
+    (input) => BootstrapCounterpartyAccessAdministratorActionPreconditionProblemSchema.make(input),
+  ),
+  rateLimited: makeRateLimitedProblem<
+    Extract<
       ProblemOf<'BootstrapCounterpartyAccessAdministratorActionRateLimitedProblem'>,
       { readonly code: string }
     >['code'],
-  ): ProblemOf<'BootstrapCounterpartyAccessAdministratorActionRateLimitedProblem'> =>
-    BootstrapCounterpartyAccessAdministratorActionRateLimitedProblemSchema.make({
-      code,
-      detail: 'The Action rate limit has been exceeded.',
-      status: problemStatus.rateLimited,
-      title: 'Action rate limited',
-      type: 'https://ontos.dev/problems/action-rate-limited',
-    }),
-  unavailable: (
-    code: ProblemOf<'BootstrapCounterpartyAccessAdministratorActionUnavailableProblem'>['code'],
-  ): ProblemOf<'BootstrapCounterpartyAccessAdministratorActionUnavailableProblem'> =>
-    BootstrapCounterpartyAccessAdministratorActionUnavailableProblemSchema.make({
-      code,
-      detail: 'The Action capability is temporarily unavailable.',
-      retryable: true,
-      status: problemStatus.unavailable,
-      title: 'Action unavailable',
-      type: 'https://ontos.dev/problems/action-unavailable',
-    }),
+    ProblemOf<'BootstrapCounterpartyAccessAdministratorActionRateLimitedProblem'>
+  >((input) => BootstrapCounterpartyAccessAdministratorActionRateLimitedProblemSchema.make(input)),
+  unavailable: makeUnavailableProblem<
+    ProblemOf<'BootstrapCounterpartyAccessAdministratorActionUnavailableProblem'>['code'],
+    ProblemOf<'BootstrapCounterpartyAccessAdministratorActionUnavailableProblem'>
+  >((input) => BootstrapCounterpartyAccessAdministratorActionUnavailableProblemSchema.make(input)),
 } as const;
 
 const mapDomainIdentity = (
-  identity: DomainProblemIdentity,
+  identity: CounterpartyAccessDomainProblemIdentity,
 ): BootstrapCounterpartyAccessAdministratorActionProblem =>
   Match.value(identity).pipe(
     Match.when({ kind: 'conflict' as const }, (matched) =>
@@ -211,24 +110,18 @@ const mapDomainIdentity = (
     Match.exhaustive,
   );
 
-const mapDomainProblem = (
-  error: DomainError,
-): BootstrapCounterpartyAccessAdministratorActionProblem =>
+const mapDomainProblem = (error: DomainError): BootstrapCounterpartyAccessAdministratorActionProblem =>
   Match.value(error).pipe(
     Match.tags({
       CounterpartyAccessContractViolation: (failure) =>
         mapDomainIdentity(counterpartyAccessContractViolationProblemByCode[failure.code]),
       CounterpartyAccessUnavailable: () =>
-        bootstrapCounterpartyAccessAdministratorActionProblem.unavailable(
-          'counterparty_access_unavailable',
-        ),
+        bootstrapCounterpartyAccessAdministratorActionProblem.unavailable('counterparty_access_unavailable'),
     }),
     Match.exhaustive,
   );
 
-const mapCoreProblem = (
-  error: ActionCoreError,
-): BootstrapCounterpartyAccessAdministratorActionProblem =>
+const mapCoreProblem = (error: ActionCoreError): BootstrapCounterpartyAccessAdministratorActionProblem =>
   Match.value(error).pipe(
     Match.tags({
       ActionAlreadyCommitted: (failure) =>
@@ -254,8 +147,7 @@ const mapCoreProblem = (
           type: 'https://ontos.dev/problems/action-commit-indeterminate',
         }),
       ActionHandlerExecutionError: bootstrapCounterpartyAccessAdministratorActionProblem.internal,
-      ActionIdempotencyKeyRequired:
-        bootstrapCounterpartyAccessAdministratorActionProblem.precondition,
+      ActionIdempotencyKeyRequired: bootstrapCounterpartyAccessAdministratorActionProblem.precondition,
       ActionInvocationNotFound: (failure) =>
         bootstrapCounterpartyAccessAdministratorActionProblem.notFound(failure.code),
       ActionInvocationPersistenceError: (failure) =>
@@ -267,8 +159,7 @@ const mapCoreProblem = (
         bootstrapCounterpartyAccessAdministratorActionProblem.unavailable(failure.code),
       ActionPermissionDenied: (failure) =>
         bootstrapCounterpartyAccessAdministratorActionProblem.forbidden(failure.code),
-      ActionPolicyDenied: (failure) =>
-        bootstrapCounterpartyAccessAdministratorActionProblem.ineligible(failure.code),
+      ActionPolicyDenied: (failure) => bootstrapCounterpartyAccessAdministratorActionProblem.ineligible(failure.code),
       ActionPolicyEvaluationError: (failure) =>
         bootstrapCounterpartyAccessAdministratorActionProblem.unavailable(failure.code),
       ActionRequestHashConflict: (failure) =>
@@ -276,14 +167,12 @@ const mapCoreProblem = (
       ActionResultValidationError: bootstrapCounterpartyAccessAdministratorActionProblem.internal,
       ActionTransactionError: (failure) =>
         bootstrapCounterpartyAccessAdministratorActionProblem.unavailable(failure.code),
-      ActionTrustedContextValidationError:
-        bootstrapCounterpartyAccessAdministratorActionProblem.authentication,
+      ActionTrustedContextValidationError: bootstrapCounterpartyAccessAdministratorActionProblem.authentication,
       ModuleStateCheckUnavailableError: (failure) =>
         bootstrapCounterpartyAccessAdministratorActionProblem.unavailable(failure.code),
       ModuleStateDeniedError: (failure) =>
         bootstrapCounterpartyAccessAdministratorActionProblem.forbidden(failure.code),
-      OperationAuthenticationRequired:
-        bootstrapCounterpartyAccessAdministratorActionProblem.authentication,
+      OperationAuthenticationRequired: bootstrapCounterpartyAccessAdministratorActionProblem.authentication,
       OperationContextDenied: (failure) =>
         bootstrapCounterpartyAccessAdministratorActionProblem.forbidden(failure.code),
       OperationContextInvalid: (failure) =>
@@ -294,16 +183,13 @@ const mapCoreProblem = (
     Match.exhaustive,
   );
 
-const isDomainError = Schema.is(
-  bootstrapCounterpartyAccessAdministratorAction.descriptor.domainErrorSchema,
-);
+const isDomainError = Schema.is(bootstrapCounterpartyAccessAdministratorAction.descriptor.domainErrorSchema);
 export const mapBootstrapCounterpartyAccessAdministratorActionProblem = (
   error: ActionCoreError | DomainError,
 ): BootstrapCounterpartyAccessAdministratorActionProblem =>
   isDomainError(error) ? mapDomainProblem(error) : mapCoreProblem(error);
 
 export const bootstrapCounterpartyAccessAdministratorActionSchemaErrorLive =
-  HttpApiMiddleware.layerSchemaErrorTransform(
-    BootstrapCounterpartyAccessAdministratorActionSchemaErrorMiddleware,
-    () => Effect.fail(bootstrapCounterpartyAccessAdministratorActionProblem.invalid()),
+  HttpApiMiddleware.layerSchemaErrorTransform(BootstrapCounterpartyAccessAdministratorActionSchemaErrorMiddleware, () =>
+    Effect.fail(bootstrapCounterpartyAccessAdministratorActionProblem.invalid()),
   );

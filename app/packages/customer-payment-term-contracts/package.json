@@ -16,10 +16,9 @@
     "typecheck": "node ../../scripts/ultramodern-typecheck.mts --project tsconfig.json"
   },
   "dependencies": {
-    "@app/core-runtime": "workspace:*",
     "@app/payment-term-catalog-contracts": "workspace:*",
     "@app/shared-contracts": "workspace:*",
-    "effect": "4.0.0-beta.107"
+    "effect": "4.0.0-rc.112"
   },
   "devDependencies": {
     "@rstest/core": "0.11.11",

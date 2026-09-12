@@ -1,11 +1,11 @@
-import { Effect, makeEffectHttpApiClient } from '@modern-js/plugin-bff/effect-client';
+import { Effect, makeEffectHttpApiClient } from '@modern-js/bff-effect/effect-client';
 import type {
   HttpClientError,
   HttpApi,
   HttpApiClient,
   HttpApiGroup,
   Schema,
-} from '@modern-js/plugin-bff/effect-client';
+} from '@modern-js/bff-effect/effect-client';
 
 import {
   commerceCustomerContextApiContract,
@@ -14,7 +14,7 @@ import {
 } from '../../shared/api.ts';
 import type { OperationContext, CommerceCustomerContextReadiness } from '../../shared/api.ts';
 
-export { Effect, runEffectRequest } from '@modern-js/plugin-bff/effect-client';
+export { Effect } from '@modern-js/bff-effect/effect-client';
 // <generated-action-http-client-exports>
 export * from './add-saved-address-action-client.ts';
 export * from './archive-customer-group-action-client.ts';
@@ -81,52 +81,55 @@ export type {
 } from '../../shared/api.ts';
 
 type CommerceCustomerContextApiGroups =
-  typeof commerceCustomerContextApi extends HttpApi.HttpApi<infer _ApiId, infer Groups>
-    ? Groups
-    : never;
+  typeof commerceCustomerContextApi extends HttpApi.HttpApi<infer _ApiId, infer Groups> ? Groups : never;
 
 export type CommerceCustomerContextClient = HttpApiClient.Client<
-  Extract<CommerceCustomerContextApiGroups, HttpApiGroup.Constraint>,
-  never,
-  never
+  Extract<CommerceCustomerContextApiGroups, HttpApiGroup.Constraint>
 >;
 
-export type CommerceCustomerContextClientError =
-  | HttpClientError.HttpClientError
-  | Schema.SchemaError;
+export type CommerceCustomerContextClientError = HttpClientError.HttpClientError | Schema.SchemaError;
 
-export type CommerceCustomerContextClientEffect<Success> = Effect.Effect<
-  Success,
-  CommerceCustomerContextClientError,
-  never
->;
+export type CommerceCustomerContextClientEffect<Success> = Effect.Effect<Success, CommerceCustomerContextClientError>;
 
 export interface CommerceCustomerContextClientOptions {
   baseUrl?: string | URL;
   locale?: string;
   operationContext?: OperationContext;
+  // eslint-disable-next-line effect-native/no-threaded-correlation-parameter -- This is the standard W3C request transport field accepted by the owner BFF, not ambient application correlation state. expires: 2027-03-31.
   traceparent?: string;
 }
 
 export const createCommerceCustomerContextClient = (
   options: CommerceCustomerContextClientOptions = {},
-): CommerceCustomerContextClientEffect<CommerceCustomerContextClient> =>
-  makeEffectHttpApiClient(commerceCustomerContextApi, {
+): CommerceCustomerContextClientEffect<CommerceCustomerContextClient> => {
+  /* oxlint-disable anti-slop/no-known-value-widening, effect-native/no-threaded-correlation-parameter -- This mutable request fragment intentionally preserves optional public wire metadata, including the caller-supplied W3C trace header. */
+  const requestContext: {
+    locale?: string;
+    operationContext?: OperationContext;
+    traceparent?: string;
+  } = {};
+  /* oxlint-enable anti-slop/no-known-value-widening, effect-native/no-threaded-correlation-parameter */
+  if (options.locale !== undefined) {
+    Object.assign(requestContext, { locale: options.locale });
+  }
+  if (options.operationContext !== undefined) {
+    Object.assign(requestContext, { operationContext: options.operationContext });
+  }
+  if (options.traceparent !== undefined) {
+    Object.assign(requestContext, { traceparent: options.traceparent });
+  }
+  // eslint-disable-next-line effect-native/no-per-operation-http-api-client -- The generated aggregate accepts per-call base URLs and request metadata; keeping these options on the short-lived Effect prevents cross-request state in this public factory. expires: 2027-03-31.
+  return makeEffectHttpApiClient(commerceCustomerContextApi, {
     baseUrl: options.baseUrl ?? commerceCustomerContextApiContract.apiPrefix,
-    requestContext: {
-      ...(options.locale === undefined ? {} : { locale: options.locale }),
-      ...(options.operationContext === undefined
-        ? {}
-        : { operationContext: options.operationContext }),
-      ...(options.traceparent === undefined ? {} : { traceparent: options.traceparent }),
-    },
+    requestContext,
   });
+};
 
 export const getCommerceCustomerContextReadiness = (
   options: CommerceCustomerContextClientOptions = {},
 ): CommerceCustomerContextClientEffect<CommerceCustomerContextReadiness> =>
+  // oxlint-disable-next-line effect-native/no-per-operation-http-api-client -- This generated public wrapper delegates caller-specific base URL and request metadata without introducing shared cross-request state.
   createCommerceCustomerContextClient({
     ...options,
-    operationContext:
-      options.operationContext ?? commerceCustomerContextOperationContexts.readiness,
+    operationContext: options.operationContext ?? commerceCustomerContextOperationContexts.readiness,
   }).pipe(Effect.flatMap((client) => client.foundation.readiness({})));

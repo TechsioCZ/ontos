@@ -1,9 +1,6 @@
 import { describe, expect, it } from 'effect-rstest';
 import { Effect, Exit, Schema } from 'effect';
-import {
-  canRevokeAdministratorGrant,
-  decideCounterpartyPermission,
-} from '../../shared/domain/access-contract.ts';
+import { canRevokeAdministratorGrant, decideCounterpartyPermission } from '../../shared/domain/access-contract.ts';
 import type { CounterpartyAccessGrant } from '../../shared/domain/access-contract.ts';
 import { unavailableCounterpartyAccessPort } from '../../shared/domain/access-port.ts';
 import {
@@ -63,9 +60,7 @@ const grant = (
   state,
 });
 
-const invitation = (
-  state: CounterpartyAccessInvitation['state'],
-): CounterpartyAccessInvitation => ({
+const invitation = (state: CounterpartyAccessInvitation['state']): CounterpartyAccessInvitation => ({
   catalogVersion: '1',
   claimProofVersion: 'commerce-invitation-proof.v1',
   counterpartyRef,
@@ -114,9 +109,7 @@ describe('Counterparty Permission catalog', () => {
       'counterparty.purchase_limit.manage',
       'counterparty.approval_hierarchy.manage',
     ]);
-    expect(new Set(Object.keys(COUNTERPARTY_PERMISSION_CATALOG))).toEqual(
-      new Set(COUNTERPARTY_PERMISSION_CODES),
-    );
+    expect(new Set(Object.keys(COUNTERPARTY_PERMISSION_CATALOG))).toEqual(new Set(COUNTERPARTY_PERMISSION_CODES));
     expect(COUNTERPARTY_AUTHORITY_GROUPS).toEqual({
       COUNTERPARTY_ACCESS_ADMINISTRATOR: ['counterparty.access.read', 'counterparty.access.manage'],
       COUNTERPARTY_APPROVER: ['counterparty.approval.decide'],
@@ -145,17 +138,12 @@ describe('Counterparty Permission catalog', () => {
       expect(COUNTERPARTY_PERMISSION_CATALOG[permission].customerDelegable).toBe(false);
       expect(COUNTERPARTY_PERMISSION_CATALOG[permission].reasonRequired).toBe(true);
     }
-    expect(() =>
-      Schema.decodeUnknownSync(CounterpartyPermissionCodeSchema)('counterparty.*'),
-    ).toThrow();
+    expect(() => Schema.decodeUnknownSync(CounterpartyPermissionCodeSchema)('counterparty.*')).toThrow();
   });
 });
 
 describe('Counterparty Commerce Access decisions', () => {
-  const decide = (
-    grants: readonly CounterpartyAccessGrant[],
-    scope: CounterpartyAccessGrant['scope'],
-  ) =>
+  const decide = (grants: readonly CounterpartyAccessGrant[], scope: CounterpartyAccessGrant['scope']) =>
     decideCounterpartyPermission(grants, {
       counterpartyRef,
       permission: 'counterparty.purchase.submit',
@@ -164,9 +152,7 @@ describe('Counterparty Commerce Access decisions', () => {
     });
 
   it('uses positive scope union and lets a broad active grant cover a storefront', () => {
-    expect(
-      decide([grant('broad', 'ACTIVE')], { kind: 'storefront', storefrontKey: 'b2b-eu' }),
-    ).toBe('ALLOWED');
+    expect(decide([grant('broad', 'ACTIVE')], { kind: 'storefront', storefrontKey: 'b2b-eu' })).toBe('ALLOWED');
     expect(
       decide([grant('exact', 'ACTIVE', { kind: 'storefront', storefrontKey: 'b2b-eu' })], {
         kind: 'storefront',
@@ -181,9 +167,7 @@ describe('Counterparty Commerce Access decisions', () => {
   });
 
   it('fails closed on reconciliation but lets another matching active grant authorize', () => {
-    expect(decide([grant('uncertain', 'RECONCILIATION_REQUIRED')], { kind: 'counterparty' })).toBe(
-      'UNAVAILABLE',
-    );
+    expect(decide([grant('uncertain', 'RECONCILIATION_REQUIRED')], { kind: 'counterparty' })).toBe('UNAVAILABLE');
     expect(
       decide([grant('uncertain', 'RECONCILIATION_REQUIRED'), grant('active', 'ACTIVE')], {
         kind: 'counterparty',
@@ -205,18 +189,8 @@ describe('Counterparty Commerce Access decisions', () => {
   });
 
   it('protects the last active access administrator grant', () => {
-    const first = grant(
-      'admin-1',
-      'ACTIVE',
-      { kind: 'counterparty' },
-      'counterparty.access.manage',
-    );
-    const second = grant(
-      'admin-2',
-      'ACTIVE',
-      { kind: 'counterparty' },
-      'counterparty.access.manage',
-    );
+    const first = grant('admin-1', 'ACTIVE', { kind: 'counterparty' }, 'counterparty.access.manage');
+    const second = grant('admin-2', 'ACTIVE', { kind: 'counterparty' }, 'counterparty.access.manage');
     expect(canRevokeAdministratorGrant([first], first.grantRef)).toBe(false);
     expect(canRevokeAdministratorGrant([first, second], first.grantRef)).toBe(true);
   });
@@ -240,12 +214,9 @@ describe('Counterparty Access Invitation lifecycle', () => {
   it('requires a non-empty unique permission set', () => {
     expect(invitationHasUniquePermissions([])).toBe(false);
     expect(invitationHasUniquePermissions(['counterparty.purchase.prepare'])).toBe(true);
-    expect(
-      invitationHasUniquePermissions([
-        'counterparty.purchase.prepare',
-        'counterparty.purchase.prepare',
-      ]),
-    ).toBe(false);
+    expect(invitationHasUniquePermissions(['counterparty.purchase.prepare', 'counterparty.purchase.prepare'])).toBe(
+      false,
+    );
   });
 
   it('allows only pending, unexpired invitations to resend or begin claim', () => {
@@ -316,16 +287,11 @@ describe('Counterparty Access Invitation lifecycle', () => {
       grantProgress: [activeProgress],
     };
     expect(Schema.is(CounterpartyAccessInvitationSchema)(claimed)).toBe(true);
-    expect(Schema.is(CounterpartyAccessInvitationSchema)({ ...claimed, grantProgress: [] })).toBe(
-      false,
-    );
+    expect(Schema.is(CounterpartyAccessInvitationSchema)({ ...claimed, grantProgress: [] })).toBe(false);
     expect(
       Schema.is(CounterpartyAccessInvitationSchema)({
         ...claimed,
-        grantProgress: [
-          activeProgress,
-          { ...activeProgress, grantRef: { ...progressGrantRef, resourceId: 'extra' } },
-        ],
+        grantProgress: [activeProgress, { ...activeProgress, grantRef: { ...progressGrantRef, resourceId: 'extra' } }],
       }),
     ).toBe(false);
     expect(

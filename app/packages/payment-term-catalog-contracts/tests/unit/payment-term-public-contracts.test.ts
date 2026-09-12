@@ -15,15 +15,9 @@ import {
   executeCurrentPaymentTerms as directExecuteCurrentPaymentTerms,
   executeCurrentPaymentTermsWithAuthorization as directExecuteCurrentPaymentTermsWithAuthorization,
 } from '../../src/api/current-payment-terms-client.ts';
-import {
-  PaymentTermDefinitionSchema,
-  PaymentTermInstantSchema,
-} from '../../src/domain/payment-term.ts';
+import { PaymentTermDefinitionSchema, PaymentTermInstantSchema } from '../../src/domain/payment-term.ts';
 import { PaymentTermReferenceResolutionSchema } from '../../src/domain/payment-term-reference.ts';
-import {
-  PaymentTermRefSchema,
-  paymentTermResourceDescriptor,
-} from '../../src/resources/payment-term.ts';
+import { PaymentTermRefSchema, paymentTermResourceDescriptor } from '../../src/resources/payment-term.ts';
 
 const tenantId = '11111111-1111-4111-8111-111111111111';
 const paymentTermRef = {
@@ -73,9 +67,7 @@ describe('canonical Payment Term package surface', () => {
     expect(PublicPaymentTermDefinitionSchema).toBe(PaymentTermDefinitionSchema);
     expect(PublicCurrentPaymentTermsRequestSchema).toBe(CurrentPaymentTermsRequestSchema);
     expect(executeCurrentPaymentTerms).toBe(directExecuteCurrentPaymentTerms);
-    expect(executeCurrentPaymentTermsWithAuthorization).toBe(
-      directExecuteCurrentPaymentTermsWithAuthorization,
-    );
+    expect(executeCurrentPaymentTermsWithAuthorization).toBe(directExecuteCurrentPaymentTermsWithAuthorization);
   });
 
   it('owns the exact stable ResourceRef identity and rejects boundary expansion', () => {
@@ -89,13 +81,9 @@ describe('canonical Payment Term package surface', () => {
       owningModuleId: 'payment.term-catalog',
     });
     expect(() => decode({ ...paymentTermRef, moduleId: 'commerce.customer-context' })).toThrow();
-    expect(() =>
-      decode({ ...paymentTermRef, resourceType: 'payment.term-catalog.other' }),
-    ).toThrow();
+    expect(() => decode({ ...paymentTermRef, resourceType: 'payment.term-catalog.other' })).toThrow();
     expect(() => decode({ ...paymentTermRef, tenantId: ` ${tenantId}` })).toThrow();
-    expect(() =>
-      decode({ ...paymentTermRef, privateCatalogId: 'must-not-cross-boundary' }),
-    ).toThrow();
+    expect(() => decode({ ...paymentTermRef, privateCatalogId: 'must-not-cross-boundary' })).toThrow();
   });
 });
 
@@ -163,13 +151,11 @@ describe('canonical current Payment Terms read contract', () => {
       truncated: false,
     };
 
-    expect(Schema.decodeUnknownSync(CurrentPaymentTermsResponseSchema)(response)).toMatchObject({
+    expect(Schema.decodeSync(CurrentPaymentTermsResponseSchema)(response)).toMatchObject({
       current: [{ code: 'NET_30' }],
       referenceOutcomes: [missingOutcome],
     });
-    expect(Schema.decodeUnknownSync(PaymentTermReferenceResolutionSchema)(missingOutcome)).toEqual(
-      missingOutcome,
-    );
+    expect(Schema.decodeSync(PaymentTermReferenceResolutionSchema)(missingOutcome)).toEqual(missingOutcome);
     expect(() =>
       Schema.decodeUnknownSync(PaymentTermReferenceResolutionSchema)({
         kind: 'AVAILABLE',

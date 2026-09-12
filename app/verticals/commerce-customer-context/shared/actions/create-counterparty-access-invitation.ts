@@ -20,12 +20,9 @@ export const CreateCounterpartyAccessInvitationPayloadSchema = Schema.Struct({
   reason: Schema.Trim.check(Schema.isMinLength(1), Schema.isMaxLength(500)),
   scope: CounterpartyPermissionScopeSchema,
 });
-export type CreateCounterpartyAccessInvitationPayload =
-  typeof CreateCounterpartyAccessInvitationPayloadSchema.Type;
+export type CreateCounterpartyAccessInvitationPayload = typeof CreateCounterpartyAccessInvitationPayloadSchema.Type;
 
 export const CreateCounterpartyAccessInvitationResultSchema = Schema.Struct({
   invitation: CounterpartyAccessInvitationSchema,
   outcome: Schema.Literals(['CREATED', 'ALREADY_PENDING']),
 });
-export type CreateCounterpartyAccessInvitationResult =
-  typeof CreateCounterpartyAccessInvitationResultSchema.Type;

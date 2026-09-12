@@ -110,6 +110,8 @@ interface PublicContractPackage {
   readonly packageName: string;
 }
 
+type PublicContractPackageManifest = typeof PublicContractPackageSchema.Type;
+
 const GovernedContributionKindSchema = Schema.Literals([
   MODULE_API_KIND,
   PUBLIC_COMPONENT_KIND,
@@ -258,6 +260,27 @@ export const ${value} = () => null;
 `;
 };
 
+const claimsPublicContractModuleApi = (
+  manifest: PublicContractPackageManifest,
+  vertical: OntosVerticalMetadata,
+  name: string,
+): boolean => {
+  const owner = manifest.ontosContractOwner;
+  return (
+    owner.appId === vertical.appId &&
+    owner.moduleId === vertical.moduleId &&
+    owner.packageName === vertical.packageName &&
+    owner.moduleApis.includes(name)
+  );
+};
+
+const hasGeneratedPublicContractPackageContract = (manifest: PublicContractPackageManifest, name: string): boolean =>
+  manifest.exports[`./${name}`] === `./src/apis/${name}.ts` &&
+  manifest.exports[`./${name}/client`] === `./src/api/${name}-client.ts` &&
+  manifest.dependencies['@app/core-runtime'] === WORKSPACE_DEPENDENCY &&
+  manifest.dependencies['@app/shared-contracts'] === WORKSPACE_DEPENDENCY &&
+  manifest.dependencies['effect'] !== undefined;
+
 const discoverPublicContractPackage = Effect.fn('GovernedContributionScaffold.discoverPublicContractPackage')(
   function* discoverPublicContractPackage(workspaceRoot: string, vertical: OntosVerticalMetadata, name: string) {
     const fileSystem = yield* FileSystem.FileSystem;
@@ -268,6 +291,7 @@ const discoverPublicContractPackage = Effect.fn('GovernedContributionScaffold.di
       .readDirectory(packagesDirectory)
       .pipe(Effect.mapError((cause) => scaffoldFailure('failed to inspect public contract packages', cause)));
     const matches: PublicContractPackage[] = [];
+    // oxlint-disable-next-line sonarjs/too-many-break-or-continue-in-loop -- Discovery intentionally skips missing manifests and packages that do not claim this contract before validating matching candidates.
     for (const entry of entries.toSorted()) {
       const packagePath = yield* tryScaffold('failed to resolve public contract package path', () =>
         resolveContainedPath(packagesDirectory, entry, 'package.json'),
@@ -283,42 +307,29 @@ const discoverPublicContractPackage = Effect.fn('GovernedContributionScaffold.di
       const manifest = Option.getOrUndefined(
         Schema.decodeUnknownOption(Schema.fromJsonString(PublicContractPackageSchema))(source),
       );
-      if (
-        manifest !== undefined &&
-        manifest.ontosContractOwner.appId === vertical.appId &&
-        manifest.ontosContractOwner.moduleId === vertical.moduleId &&
-        manifest.ontosContractOwner.packageName === vertical.packageName &&
-        manifest.ontosContractOwner.moduleApis.includes(name)
-      ) {
-        const contractExport = `./${name}`;
-        const clientExport = `./${name}/client`;
-        if (
-          manifest.exports[contractExport] !== `./src/apis/${name}.ts` ||
-          manifest.exports[clientExport] !== `./src/api/${name}-client.ts` ||
-          manifest.dependencies['@app/core-runtime'] !== WORKSPACE_DEPENDENCY ||
-          manifest.dependencies['@app/shared-contracts'] !== WORKSPACE_DEPENDENCY ||
-          manifest.dependencies['effect'] === undefined
-        ) {
-          return yield* scaffoldFailure(
-            `public contract package ${manifest.name} has invalid generated exports or dependencies for ${name}`,
-          );
-        }
-        const directory = yield* tryScaffold('failed to resolve public contract package directory', () =>
-          resolveContainedPath(packagesDirectory, entry),
-        );
-        matches.push({
-          clientPath: yield* tryScaffold('failed to resolve public contract client path', () =>
-            resolveContainedPath(directory, 'src', 'api', `${name}-client.ts`),
-          ),
-          clientSpecifier: `${manifest.name}/${name}/client`,
-          contractPath: yield* tryScaffold('failed to resolve public contract path', () =>
-            resolveContainedPath(directory, 'src', 'apis', `${name}.ts`),
-          ),
-          contractSpecifier: `${manifest.name}/${name}`,
-          directory,
-          packageName: manifest.name,
-        });
+      if (manifest === undefined || !claimsPublicContractModuleApi(manifest, vertical, name)) {
+        continue;
       }
+      if (!hasGeneratedPublicContractPackageContract(manifest, name)) {
+        return yield* scaffoldFailure(
+          `public contract package ${manifest.name} has invalid generated exports or dependencies for ${name}`,
+        );
+      }
+      const directory = yield* tryScaffold('failed to resolve public contract package directory', () =>
+        resolveContainedPath(packagesDirectory, entry),
+      );
+      matches.push({
+        clientPath: yield* tryScaffold('failed to resolve public contract client path', () =>
+          resolveContainedPath(directory, 'src', 'api', `${name}-client.ts`),
+        ),
+        clientSpecifier: `${manifest.name}/${name}/client`,
+        contractPath: yield* tryScaffold('failed to resolve public contract path', () =>
+          resolveContainedPath(directory, 'src', 'apis', `${name}.ts`),
+        ),
+        contractSpecifier: `${manifest.name}/${name}`,
+        directory,
+        packageName: manifest.name,
+      });
     }
     if (matches.length > 1) {
       return yield* scaffoldFailure(`multiple public contract packages claim ${vertical.moduleId}.api.${name}`);
@@ -456,7 +467,7 @@ const renderGovernedClientConstruction = (
   clientName: string,
   optionsType: string,
 ): string => `const ${clientName} = (
-  credential: Redacted.Redacted<string>,
+  credential: Redacted.Redacted,
   requestCorrelation: string,
   options: ${optionsType},
 ) =>
@@ -1387,6 +1398,90 @@ const planGovernedTransport = Effect.fn('GovernedContributionScaffold.transport'
   return { clientPath, mutations, serverPath };
 });
 
+const renderGovernedContributionArtifact = (
+  kind: GovernedContributionKind,
+  vertical: OntosVerticalMetadata,
+  name: string,
+  config: GovernedContributionScaffoldConfig,
+): string => {
+  if (kind === PUBLIC_COMPONENT_KIND) {
+    return renderPublicComponent(name);
+  }
+  if (kind === MODULE_API_KIND) {
+    return renderApiContract(name);
+  }
+  return renderProvider(kind, vertical, name, config);
+};
+
+const planGovernedArtifactMutations = Effect.fn('GovernedContributionScaffold.artifact')(
+  function* planGovernedArtifactMutations(
+    kind: GovernedContributionKind,
+    vertical: OntosVerticalMetadata,
+    name: string,
+    config: GovernedContributionScaffoldConfig,
+    artifactPath: string,
+    artifact: string,
+    publicContractPackage?: PublicContractPackage,
+  ) {
+    if (kind === PUBLIC_COMPONENT_KIND) {
+      return [yield* createMutationEffect(artifactPath, artifact)];
+    }
+    if (kind === MODULE_API_KIND && publicContractPackage !== undefined) {
+      const canonicalArtifactMutation = yield* createOrAcceptGeneratedMutationEffect(
+        publicContractPackage.contractPath,
+        artifact,
+        acceptsGovernedArtifact(kind, vertical, name, config),
+      );
+      const ownerArtifactMutation = yield* createOrAcceptGeneratedMutationEffect(
+        artifactPath,
+        renderPublicContractShim(publicContractPackage.contractSpecifier),
+        (current) => current === renderPublicContractShim(publicContractPackage.contractSpecifier),
+      );
+      const dependencyMutation = yield* tryScaffold('failed to ensure public contract package dependency', () =>
+        withExactDependencies(vertical, {
+          [publicContractPackage.packageName]: WORKSPACE_DEPENDENCY,
+        }),
+      );
+      return EffectArray.getSomes([
+        canonicalArtifactMutation,
+        ownerArtifactMutation,
+        Option.fromNullishOr(dependencyMutation),
+      ]);
+    }
+    const artifactMutation = yield* createOrAcceptGeneratedMutationEffect(
+      artifactPath,
+      artifact,
+      acceptsGovernedArtifact(kind, vertical, name, config),
+    );
+    return EffectArray.getSomes([artifactMutation]);
+  },
+);
+
+const patchGovernedManifestImport = Effect.fn('GovernedContributionScaffold.manifestImport')(
+  function* patchGovernedManifestImport(manifest: string, kind: GovernedContributionKind, name: string) {
+    const ownerImport = manifestImport(kind, name);
+    const ownerImportIdentity = manifestImportIdentity(kind, name);
+    if (
+      ownerImport === undefined ||
+      hasUniqueExactNamedImport(manifest, ownerImportIdentity.binding, ownerImportIdentity.specifier)
+    ) {
+      return manifest;
+    }
+    if (hasNamedImportBinding(manifest, ownerImportIdentity.binding)) {
+      return yield* scaffoldFailure(`generated owner import binding conflicts with ${ownerImportIdentity.binding}`);
+    }
+    return yield* tryScaffold('failed to patch module manifest imports', () =>
+      insertSortedSlotIdempotently(
+        manifest,
+        MODULE_MANIFEST_IMPORT_SLOT_START,
+        MODULE_MANIFEST_IMPORT_SLOT_END,
+        ownerImport,
+        isModuleManifestImport,
+      ),
+    );
+  },
+);
+
 export const planGovernedContributionScaffold = Effect.fn('GovernedContributionScaffold.plan')(
   function* planGovernedContributionScaffold(
     workspaceRoot: string,
@@ -1417,49 +1512,18 @@ export const planGovernedContributionScaffold = Effect.fn('GovernedContributionS
     const artifactPath = yield* tryScaffold('failed to resolve governed contribution path', () =>
       resolveContainedPath(vertical.directory, ...artifactSegments[kind]),
     );
-    const artifact = yield* tryScaffold('failed to render governed contribution', () => {
-      if (isComponent) {
-        return renderPublicComponent(name);
-      }
-      if (isApi) {
-        return renderApiContract(name);
-      }
-      return renderProvider(kind, vertical, name, config);
-    });
-    const mutations: Mutation[] = [];
-    if (isComponent) {
-      mutations.push(yield* createMutationEffect(artifactPath, artifact));
-    } else if (isApi && publicContractPackage !== undefined) {
-      const canonicalArtifactMutation = yield* createOrAcceptGeneratedMutationEffect(
-        publicContractPackage.contractPath,
-        artifact,
-        acceptsGovernedArtifact(kind, vertical, name, config),
-      );
-      const ownerArtifactMutation = yield* createOrAcceptGeneratedMutationEffect(
-        artifactPath,
-        renderPublicContractShim(publicContractPackage.contractSpecifier),
-        (current) => current === renderPublicContractShim(publicContractPackage.contractSpecifier),
-      );
-      const dependencyMutation = yield* tryScaffold('failed to ensure public contract package dependency', () =>
-        withExactDependencies(vertical, {
-          [publicContractPackage.packageName]: WORKSPACE_DEPENDENCY,
-        }),
-      );
-      mutations.push(
-        ...EffectArray.getSomes([
-          canonicalArtifactMutation,
-          ownerArtifactMutation,
-          Option.fromNullishOr(dependencyMutation),
-        ]),
-      );
-    } else {
-      const artifactMutation = yield* createOrAcceptGeneratedMutationEffect(
-        artifactPath,
-        artifact,
-        acceptsGovernedArtifact(kind, vertical, name, config),
-      );
-      mutations.push(...EffectArray.getSomes([artifactMutation]));
-    }
+    const artifact = yield* tryScaffold('failed to render governed contribution', () =>
+      renderGovernedContributionArtifact(kind, vertical, name, config),
+    );
+    const mutations = yield* planGovernedArtifactMutations(
+      kind,
+      vertical,
+      name,
+      config,
+      artifactPath,
+      artifact,
+      publicContractPackage,
+    );
     if (isApi) {
       const readPath = yield* tryScaffold('failed to resolve governed read path', () =>
         resolveContainedPath(vertical.directory, 'src', 'api', `${name}.read.ts`),
@@ -1479,26 +1543,7 @@ export const planGovernedContributionScaffold = Effect.fn('GovernedContributionS
     const transport = yield* planGovernedTransport(workspaceRoot, kind, vertical, name, publicContractPackage);
     const { clientPath, serverPath } = transport;
     mutations.push(...transport.mutations);
-    const ownerImport = manifestImport(kind, name);
-    const ownerImportIdentity = manifestImportIdentity(kind, name);
-    let manifest = vertical.manifestContent;
-    if (
-      ownerImport !== undefined &&
-      !hasUniqueExactNamedImport(manifest, ownerImportIdentity.binding, ownerImportIdentity.specifier)
-    ) {
-      if (hasNamedImportBinding(manifest, ownerImportIdentity.binding)) {
-        return yield* scaffoldFailure(`generated owner import binding conflicts with ${ownerImportIdentity.binding}`);
-      }
-      manifest = yield* tryScaffold('failed to patch module manifest imports', () =>
-        insertSortedSlotIdempotently(
-          manifest,
-          MODULE_MANIFEST_IMPORT_SLOT_START,
-          MODULE_MANIFEST_IMPORT_SLOT_END,
-          ownerImport,
-          isModuleManifestImport,
-        ),
-      );
-    }
+    let manifest = yield* patchGovernedManifestImport(vertical.manifestContent, kind, name);
     const slots = yield* tryScaffold('failed to plan governed contribution owner slots', () =>
       slotLine(kind, vertical, name, resource, config),
     );

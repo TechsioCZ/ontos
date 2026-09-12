@@ -3,7 +3,7 @@
 // @ontos-action-http-slug retire-payment-term
 // oxlint-disable sonarjs/function-name -- Effect Match.tags requires owner-declared tag keys; remove-when: sonarjs accepts discriminant-map properties.
 import type { ActionCoreError } from '@app/core-runtime';
-import { Effect, HttpApiMiddleware } from '@modern-js/plugin-bff/effect-edge';
+import { Effect, HttpApiMiddleware } from '@modern-js/bff-effect/effect-edge';
 import { Match, Schema } from 'effect';
 import {
   RetirePaymentTermActionAlreadyCommittedProblemSchema,
@@ -130,25 +130,19 @@ const mapDomainProblem = (error: DomainError): RetirePaymentTermActionProblem =>
       PaymentTermAffectedUseAssessmentRejected: () =>
         retirePaymentTermActionProblem.ineligible('payment_term_affected_use_assessment_rejected'),
       PaymentTermAffectedUseAssessmentUnavailable: () =>
-        retirePaymentTermActionProblem.unavailable(
-          'payment_term_affected_use_assessment_unavailable',
-        ),
+        retirePaymentTermActionProblem.unavailable('payment_term_affected_use_assessment_unavailable'),
       PaymentTermCatalogPersistenceConflict: () =>
         retirePaymentTermActionProblem.unavailable('payment_term_catalog_persistence_conflict'),
       PaymentTermCatalogPersistenceUnavailable: () =>
         retirePaymentTermActionProblem.unavailable('payment_term_catalog_persistence_unavailable'),
       PaymentTermInUse: () => retirePaymentTermActionProblem.conflict('payment_term_in_use'),
-      PaymentTermLifecycleConflict: () =>
-        retirePaymentTermActionProblem.conflict('payment_term_lifecycle_conflict'),
+      PaymentTermLifecycleConflict: () => retirePaymentTermActionProblem.conflict('payment_term_lifecycle_conflict'),
       PaymentTermNotFound: () => retirePaymentTermActionProblem.notFound('payment_term_not_found'),
       PaymentTermRetirementReservationRejected: () =>
         retirePaymentTermActionProblem.ineligible('payment_term_retirement_reservation_rejected'),
       PaymentTermRetirementReservationUnavailable: () =>
-        retirePaymentTermActionProblem.unavailable(
-          'payment_term_retirement_reservation_unavailable',
-        ),
-      PaymentTermRevisionConflict: () =>
-        retirePaymentTermActionProblem.conflict('payment_term_revision_conflict'),
+        retirePaymentTermActionProblem.unavailable('payment_term_retirement_reservation_unavailable'),
+      PaymentTermRevisionConflict: () => retirePaymentTermActionProblem.conflict('payment_term_revision_conflict'),
     }),
     Match.exhaustive,
   );
@@ -181,29 +175,23 @@ const mapCoreProblem = (error: ActionCoreError): RetirePaymentTermActionProblem 
       ActionHandlerExecutionError: retirePaymentTermActionProblem.internal,
       ActionIdempotencyKeyRequired: retirePaymentTermActionProblem.precondition,
       ActionInvocationNotFound: (failure) => retirePaymentTermActionProblem.notFound(failure.code),
-      ActionInvocationPersistenceError: (failure) =>
-        retirePaymentTermActionProblem.unavailable(failure.code),
-      ActionInvocationStateError: (failure) =>
-        retirePaymentTermActionProblem.conflict(failure.code),
+      ActionInvocationPersistenceError: (failure) => retirePaymentTermActionProblem.unavailable(failure.code),
+      ActionInvocationStateError: (failure) => retirePaymentTermActionProblem.conflict(failure.code),
       ActionPayloadValidationError: retirePaymentTermActionProblem.invalid,
-      ActionPermissionCheckError: (failure) =>
-        retirePaymentTermActionProblem.unavailable(failure.code),
+      ActionPermissionCheckError: (failure) => retirePaymentTermActionProblem.unavailable(failure.code),
       ActionPermissionDenied: (failure) => retirePaymentTermActionProblem.forbidden(failure.code),
       ActionPolicyDenied: (failure) => retirePaymentTermActionProblem.ineligible(failure.code),
-      ActionPolicyEvaluationError: (failure) =>
-        retirePaymentTermActionProblem.unavailable(failure.code),
+      ActionPolicyEvaluationError: (failure) => retirePaymentTermActionProblem.unavailable(failure.code),
       ActionRequestHashConflict: (failure) => retirePaymentTermActionProblem.conflict(failure.code),
       ActionResultValidationError: retirePaymentTermActionProblem.internal,
       ActionTransactionError: (failure) => retirePaymentTermActionProblem.unavailable(failure.code),
       ActionTrustedContextValidationError: retirePaymentTermActionProblem.authentication,
-      ModuleStateCheckUnavailableError: (failure) =>
-        retirePaymentTermActionProblem.unavailable(failure.code),
+      ModuleStateCheckUnavailableError: (failure) => retirePaymentTermActionProblem.unavailable(failure.code),
       ModuleStateDeniedError: (failure) => retirePaymentTermActionProblem.forbidden(failure.code),
       OperationAuthenticationRequired: retirePaymentTermActionProblem.authentication,
       OperationContextDenied: (failure) => retirePaymentTermActionProblem.forbidden(failure.code),
       OperationContextInvalid: (failure) => retirePaymentTermActionProblem.forbidden(failure.code),
-      OperationContextUnavailable: (failure) =>
-        retirePaymentTermActionProblem.unavailable(failure.code),
+      OperationContextUnavailable: (failure) => retirePaymentTermActionProblem.unavailable(failure.code),
     }),
     Match.exhaustive,
   );
@@ -211,8 +199,7 @@ const mapCoreProblem = (error: ActionCoreError): RetirePaymentTermActionProblem 
 const isDomainError = Schema.is(retirePaymentTermAction.descriptor.domainErrorSchema);
 export const mapRetirePaymentTermActionProblem = (
   error: ActionCoreError | DomainError,
-): RetirePaymentTermActionProblem =>
-  isDomainError(error) ? mapDomainProblem(error) : mapCoreProblem(error);
+): RetirePaymentTermActionProblem => (isDomainError(error) ? mapDomainProblem(error) : mapCoreProblem(error));
 
 export const retirePaymentTermActionSchemaErrorLive = HttpApiMiddleware.layerSchemaErrorTransform(
   RetirePaymentTermActionSchemaErrorMiddleware,

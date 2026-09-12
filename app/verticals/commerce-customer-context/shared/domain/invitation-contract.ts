@@ -18,7 +18,7 @@ const safeReference = boundedText.pipe(
 export const InvitationClaimProofReferenceSchema = safeReference;
 export type InvitationClaimProofReference = typeof InvitationClaimProofReferenceSchema.Type;
 
-export const CounterpartyAccessInvitationStateSchema = Schema.Literals([
+const CounterpartyAccessInvitationStateSchema = Schema.Literals([
   'PENDING',
   'CLAIMING',
   'CLAIMED',
@@ -48,8 +48,7 @@ export const VerifiedInvitationClaimAttestationSchema = Schema.Struct({
   state: Schema.Literal('VERIFIED_AND_CONSUMED'),
   verifiedAt: AccessInstantSchema,
 });
-export type VerifiedInvitationClaimAttestation =
-  typeof VerifiedInvitationClaimAttestationSchema.Type;
+export type VerifiedInvitationClaimAttestation = typeof VerifiedInvitationClaimAttestationSchema.Type;
 
 export const InvitationGrantProgressSchema = Schema.Union([
   Schema.Struct({
@@ -64,9 +63,8 @@ export const InvitationGrantProgressSchema = Schema.Union([
 ]);
 export type InvitationGrantProgress = typeof InvitationGrantProgressSchema.Type;
 
-const hasUniquePermissions = (
-  permissions: readonly (typeof CounterpartyPermissionCodeSchema.Type)[],
-): boolean => permissions.length > 0 && new Set(permissions).size === permissions.length;
+const hasUniquePermissions = (permissions: readonly (typeof CounterpartyPermissionCodeSchema.Type)[]): boolean =>
+  permissions.length > 0 && new Set(permissions).size === permissions.length;
 
 const progressHasExactCoverage = (
   intendedPermissions: readonly (typeof CounterpartyPermissionCodeSchema.Type)[],
@@ -84,16 +82,38 @@ const completionState = (
   intendedPermissions: readonly (typeof CounterpartyPermissionCodeSchema.Type)[],
   progress: readonly InvitationGrantProgress[],
 ): CounterpartyAccessInvitationState => {
-  if (
-    !hasUniquePermissions(intendedPermissions) ||
-    !progressHasExactCoverage(intendedPermissions, progress)
-  ) {
+  if (!hasUniquePermissions(intendedPermissions) || !progressHasExactCoverage(intendedPermissions, progress)) {
     return 'RECONCILIATION_REQUIRED';
   }
   if (progress.some(({ state }) => state === 'RECONCILIATION_REQUIRED')) {
     return 'RECONCILIATION_REQUIRED';
   }
   return progress.every(({ state }) => state === 'ACTIVE') ? 'CLAIMED' : 'CLAIMING';
+};
+
+const unclaimedInvitationIssue = (
+  invitation: CounterpartyAccessInvitation,
+  hasNoProgress: boolean,
+): string | undefined =>
+  hasNoProgress && invitation.claimant === undefined
+    ? undefined
+    : 'an unclaimed invitation cannot contain a claimant or grant progress';
+
+const revokedInvitationIssue = (hasNoProgress: boolean, hasExactProgress: boolean): string | undefined =>
+  hasNoProgress || hasExactProgress
+    ? undefined
+    : 'a revoked invitation must preserve no progress or exact intended Permission progress';
+
+const claimedInvitationIssue = (
+  invitation: CounterpartyAccessInvitation,
+  hasExactProgress: boolean,
+): string | undefined => {
+  if (invitation.claimant === undefined || !hasExactProgress) {
+    return 'a claimed or claiming invitation requires one exact progress item per intended Permission';
+  }
+  return completionState(invitation.intendedPermissions, invitation.grantProgress) === invitation.state
+    ? undefined
+    : 'invitation lifecycle state must match its exact grant completion state';
 };
 
 export const CounterpartyAccessInvitationSchema = Schema.Struct({
@@ -113,55 +133,37 @@ export const CounterpartyAccessInvitationSchema = Schema.Struct({
   revision: Schema.Int.check(Schema.isGreaterThanOrEqualTo(1)),
   scope: CounterpartyPermissionScopeSchema,
   state: CounterpartyAccessInvitationStateSchema,
-}).check(
-  Schema.makeFilter((invitation) => {
-    if (!hasUniquePermissions(invitation.intendedPermissions)) {
-      return 'an invitation must contain a non-empty unique intended Permission set';
-    }
-    const hasNoProgress = invitation.grantProgress.length === 0;
-    if (invitation.state === 'PENDING' || invitation.state === 'EXPIRED') {
-      return hasNoProgress && invitation.claimant === undefined
-        ? undefined
-        : 'an unclaimed invitation cannot contain a claimant or grant progress';
-    }
-    const hasExactProgress = progressHasExactCoverage(
-      invitation.intendedPermissions,
-      invitation.grantProgress,
-    );
-    if (invitation.state === 'REVOKED') {
-      return hasNoProgress || hasExactProgress
-        ? undefined
-        : 'a revoked invitation must preserve no progress or exact intended Permission progress';
-    }
-    if (invitation.claimant === undefined || !hasExactProgress) {
-      return 'a claimed or claiming invitation requires one exact progress item per intended Permission';
-    }
-    return completionState(invitation.intendedPermissions, invitation.grantProgress) ===
-      invitation.state
-      ? undefined
-      : 'invitation lifecycle state must match its exact grant completion state';
-  }),
-);
+}).check(Schema.makeFilter(invitationValidationIssue)); // oxlint-disable-line eslint/no-use-before-define -- The schema-derived validator type requires this intentionally hoisted declaration.
 export type CounterpartyAccessInvitation = typeof CounterpartyAccessInvitationSchema.Type;
+
+// oxlint-disable-next-line eslint/func-style -- This validator is intentionally hoisted for the schema declaration above.
+function invitationValidationIssue(invitation: CounterpartyAccessInvitation): string | undefined {
+  if (!hasUniquePermissions(invitation.intendedPermissions)) {
+    return 'an invitation must contain a non-empty unique intended Permission set';
+  }
+  const hasNoProgress = invitation.grantProgress.length === 0;
+  if (invitation.state === 'PENDING' || invitation.state === 'EXPIRED') {
+    return unclaimedInvitationIssue(invitation, hasNoProgress);
+  }
+  const hasExactProgress = progressHasExactCoverage(invitation.intendedPermissions, invitation.grantProgress);
+  if (invitation.state === 'REVOKED') {
+    return revokedInvitationIssue(hasNoProgress, hasExactProgress);
+  }
+  return claimedInvitationIssue(invitation, hasExactProgress);
+}
 
 export const invitationHasUniquePermissions = (
   permissions: readonly (typeof CounterpartyPermissionCodeSchema.Type)[],
 ): boolean => hasUniquePermissions(permissions);
 
-export const invitationCanBeResent = (
-  invitation: CounterpartyAccessInvitation,
-  now: string,
-): boolean => invitation.state === 'PENDING' && now < invitation.expiresAt;
+export const invitationCanBeResent = (invitation: CounterpartyAccessInvitation, now: string): boolean =>
+  invitation.state === 'PENDING' && now < invitation.expiresAt;
 
 export const invitationCanBeRevoked = (invitation: CounterpartyAccessInvitation): boolean =>
-  invitation.state === 'PENDING' ||
-  invitation.state === 'CLAIMING' ||
-  invitation.state === 'RECONCILIATION_REQUIRED';
+  invitation.state === 'PENDING' || invitation.state === 'CLAIMING' || invitation.state === 'RECONCILIATION_REQUIRED';
 
-export const invitationCanBeginClaim = (
-  invitation: CounterpartyAccessInvitation,
-  now: string,
-): boolean => invitation.state === 'PENDING' && now < invitation.expiresAt;
+export const invitationCanBeginClaim = (invitation: CounterpartyAccessInvitation, now: string): boolean =>
+  invitation.state === 'PENDING' && now < invitation.expiresAt;
 
 export const invitationCompletionState = (
   intendedPermissions: readonly (typeof CounterpartyPermissionCodeSchema.Type)[],
@@ -175,9 +177,7 @@ const invitationTransitions = Object.freeze({
   PENDING: Object.freeze(['CLAIMING', 'EXPIRED', 'REVOKED']),
   RECONCILIATION_REQUIRED: Object.freeze(['CLAIMING', 'CLAIMED', 'REVOKED']),
   REVOKED: Object.freeze([]),
-} satisfies Readonly<
-  Record<CounterpartyAccessInvitationState, readonly CounterpartyAccessInvitationState[]>
->);
+} satisfies Readonly<Record<CounterpartyAccessInvitationState, readonly CounterpartyAccessInvitationState[]>>);
 
 export const invitationCanTransition = (
   from: CounterpartyAccessInvitationState,

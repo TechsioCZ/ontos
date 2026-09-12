@@ -15,8 +15,7 @@ import {
 import { OutboxPayloadSchema as CompletionPayloadSchema } from '@app/commerce-customer-context/outbox/commerce-customer-context-counterparty-access-revoked-v1';
 import { handleAccessAuthorizationMutation } from './access-authorization-mutation-reconciliation.ts';
 
-const workerKey =
-  'commerce.customer-context.reconcile-counterparty-access-revoke-authorization-mutation' as const;
+const workerKey = 'commerce.customer-context.reconcile-counterparty-access-revoke-authorization-mutation' as const;
 const moduleKey = 'commerce.customer-context' as const;
 
 const completion = defineOutboxWorkerCompletion({
@@ -28,7 +27,7 @@ const completion = defineOutboxWorkerCompletion({
   workerKey,
 });
 
-export const handleReconcileCounterpartyAccessRevokeAuthorizationMutation = (
+const handleReconcileCounterpartyAccessRevokeAuthorizationMutation = (
   payload: OutboxPayload,
   context: OutboxWorkerHandlerContext,
 ) =>

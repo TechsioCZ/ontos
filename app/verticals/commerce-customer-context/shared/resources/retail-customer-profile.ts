@@ -15,9 +15,7 @@ const ResourceIdSchema = Schema.toEncoded(
     Schema.brand('RetailCustomerProfileResourceId'),
   ),
 );
-const TenantIdSchema = Schema.toEncoded(
-  Schema.String.check(Schema.isUUID()).pipe(Schema.brand('TenantId')),
-);
+const TenantIdSchema = Schema.toEncoded(Schema.String.check(Schema.isUUID()).pipe(Schema.brand('TenantId')));
 
 export const RetailCustomerProfileRefSchema = Schema.Struct({
   moduleId: Schema.Literal('commerce.customer-context'),

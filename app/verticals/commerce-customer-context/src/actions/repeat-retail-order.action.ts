@@ -31,7 +31,7 @@ const RepeatRetailOrderErrorSchema = Schema.Union([
   RepeatOrderNoRepeatableLines,
 ]);
 
-export const repeatRetailOrderPermissionTarget = (
+const repeatRetailOrderPermissionTarget = (
   payload: RepeatRetailOrderPayload,
   scope: OperationalScope,
 ): ActionBusinessPermissionTarget => ({
@@ -41,8 +41,7 @@ export const repeatRetailOrderPermissionTarget = (
     legalEntityId: scope.legalEntityId ?? '',
     profileId: payload.profileRef.resourceId,
     tenantId:
-      payload.profileRef.tenantId === scope.tenantId &&
-      payload.sourceOrderRef.tenantId === scope.tenantId
+      payload.profileRef.tenantId === scope.tenantId && payload.sourceOrderRef.tenantId === scope.tenantId
         ? scope.tenantId
         : '',
   },
@@ -72,9 +71,10 @@ export const repeatRetailOrderAction = defineAction(
     owningModuleKey: 'commerce.customer-context',
     payloadSchema: RepeatRetailOrderPayloadSchema,
     policies: [],
-    resourcePermission: defineActionResourcePermission<RepeatRetailOrderPayload>(
-      ({ sourceOrderRef }) => ({ permission: 'read', resource: sourceOrderRef }),
-    ),
+    resourcePermission: defineActionResourcePermission<RepeatRetailOrderPayload>(({ sourceOrderRef }) => ({
+      permission: 'read',
+      resource: sourceOrderRef,
+    })),
     resultSchema: RepeatRetailOrderResultSchema,
     schemaVersion: '1',
   },
@@ -82,14 +82,7 @@ export const repeatRetailOrderAction = defineAction(
   (transaction, scope) => loadHistoryActionServices(transaction, scope),
 );
 
-export {
-  RepeatRetailOrderPayloadSchema,
-  RepeatRetailOrderResultSchema,
-} from '../../shared/actions/repeat-retail-order.ts';
-export type {
-  RepeatRetailOrderPayload,
-  RepeatRetailOrderResult,
-} from '../../shared/actions/repeat-retail-order.ts';
+export type { RepeatRetailOrderPayload } from '../../shared/actions/repeat-retail-order.ts';
 
 // <generated-outbox-message-exports>
 // </generated-outbox-message-exports>

@@ -24,10 +24,7 @@ type AuthorizedInvocation = readonly [
   requestCorrelation: string,
   options: RepeatRetailOrderActionClientOptions,
 ];
-type OperationInvocation = readonly [
-  requestCorrelation: string,
-  options: RepeatRetailOrderActionClientOptions,
-];
+type OperationInvocation = readonly [requestCorrelation: string, options: RepeatRetailOrderActionClientOptions];
 
 interface MakeClientOptions {
   readonly credential: Redacted.Redacted;
@@ -68,7 +65,6 @@ export const executeRepeatRetailOrder = (
   ...[requestCorrelation, options]: OperationInvocation
 ) =>
   operationGateway.invoke(
-    (credential) =>
-      executeRepeatRetailOrderWithAuthorization(payload, credential, requestCorrelation, options),
+    (credential) => executeRepeatRetailOrderWithAuthorization(payload, credential, requestCorrelation, options),
     options.gateway,
   );

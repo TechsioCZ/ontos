@@ -2,10 +2,7 @@
 // @ontos-outbox-producer commerce.customer-context
 // @ontos-outbox-topic commerce.customer-context.customer-group-archived.v1
 import { Schema } from 'effect';
-import {
-  CustomerGroupIsoTimestampSchema,
-  CustomerGroupRevisionSchema,
-} from '../domain/group-contract.ts';
+import { CustomerGroupIsoTimestampSchema, CustomerGroupRevisionSchema } from '../domain/group-contract.ts';
 import { CustomerGroupRefSchema } from '../resources/customer-group.ts';
 
 export const OutboxPayloadSchema = Schema.Struct({

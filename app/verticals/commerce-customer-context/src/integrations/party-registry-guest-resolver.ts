@@ -1,7 +1,4 @@
-import {
-  GuestPartyResolutionResponseSchema,
-  executeGuestPartyResolution,
-} from '@app/party-registry/api/client';
+import { GuestPartyResolutionResponseSchema, executeGuestPartyResolution } from '@app/party-registry/api/client';
 import { Context, DateTime, Effect, Layer, Schema } from 'effect';
 
 import type { ProfilePersistenceDependencies } from '../persistence/profile-persistence.ts';
@@ -24,9 +21,7 @@ export interface PartyRegistryGuestResolverFactoryService {
 export class PartyRegistryGuestResolverFactory extends Context.Service<
   PartyRegistryGuestResolverFactory,
   PartyRegistryGuestResolverFactoryService
->()(
-  '@app/commerce-customer-context/integrations/party-registry-guest-resolver/PartyRegistryGuestResolverFactory',
-) {}
+>()('@app/commerce-customer-context/integrations/party-registry-guest-resolver/PartyRegistryGuestResolverFactory') {}
 
 const dependencyFailure = (reason: string, cause?: unknown) => {
   const failure = new ProfilePersistenceDependencyFailure({ reason });
@@ -57,30 +52,20 @@ const mapGuestPartyResolution = (
   scope: PartyRegistryGuestResolverFactoryInput,
 ): Effect.Effect<GuestPartyResolutionOutcome, ProfilePersistenceDependencyFailure> => {
   if (!Schema.is(GuestPartyResolutionResponseSchema)(response)) {
-    return Effect.fail(
-      dependencyFailure('The Party Registry returned an invalid guest-evidence outcome'),
-    );
+    return Effect.fail(dependencyFailure('The Party Registry returned an invalid guest-evidence outcome'));
   }
-  if (
-    response.outcome === 'EXISTING_PARTY_RESOLVED' ||
-    response.outcome === 'UNRESOLVED_PARTY_CREATED'
-  ) {
+  if (response.outcome === 'EXISTING_PARTY_RESOLVED' || response.outcome === 'UNRESOLVED_PARTY_CREATED') {
     return isTrustedPartyRef(response.partyRef, scope)
       ? Effect.succeed(response)
-      : Effect.fail(
-          dependencyFailure('The Party Registry returned a Party outside the trusted Tenant'),
-        );
+      : Effect.fail(dependencyFailure('The Party Registry returned a Party outside the trusted Tenant'));
   }
   if (response.outcome === 'AMBIGUOUS_MATCH') {
-    return response.caseRef.tenantId === scope.tenantId &&
-      response.caseRef.resourceId.trim().length > 0
+    return response.caseRef.tenantId === scope.tenantId && response.caseRef.resourceId.trim().length > 0
       ? Effect.succeed({
           caseRef: response.caseRef.resourceId,
           outcome: response.outcome,
         })
-      : Effect.fail(
-          dependencyFailure('The Party Registry returned a review case outside the trusted Tenant'),
-        );
+      : Effect.fail(dependencyFailure('The Party Registry returned a review case outside the trusted Tenant'));
   }
   return Effect.succeed(response);
 };

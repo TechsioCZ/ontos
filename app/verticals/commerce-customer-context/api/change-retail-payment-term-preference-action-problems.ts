@@ -3,7 +3,7 @@
 // @ontos-action-http-slug change-retail-payment-term-preference
 // oxlint-disable sonarjs/function-name -- Effect Match.tags requires owner-declared tag keys; remove-when: sonarjs accepts discriminant-map properties.
 import type { ActionCoreError } from '@app/core-runtime';
-import { Effect, HttpApiMiddleware } from '@modern-js/plugin-bff/effect-edge';
+import { Effect, HttpApiMiddleware } from '@modern-js/bff-effect/effect-edge';
 import { Match, Schema } from 'effect';
 import {
   ChangeRetailPaymentTermPreferenceActionAlreadyCommittedProblemSchema,
@@ -159,9 +159,7 @@ export const changeRetailPaymentTermPreferenceActionProblem = {
     }),
 } as const;
 
-const mapDomainIdentity = (
-  identity: DomainProblemIdentity,
-): ChangeRetailPaymentTermPreferenceActionProblem =>
+const mapDomainIdentity = (identity: DomainProblemIdentity): ChangeRetailPaymentTermPreferenceActionProblem =>
   Match.value(identity).pipe(
     Match.when({ kind: 'conflict' as const }, (matched) =>
       changeRetailPaymentTermPreferenceActionProblem.conflict(matched.code),
@@ -217,54 +215,39 @@ const mapCoreProblem = (error: ActionCoreError): ChangeRetailPaymentTermPreferen
         }),
       ActionHandlerExecutionError: changeRetailPaymentTermPreferenceActionProblem.internal,
       ActionIdempotencyKeyRequired: changeRetailPaymentTermPreferenceActionProblem.precondition,
-      ActionInvocationNotFound: (failure) =>
-        changeRetailPaymentTermPreferenceActionProblem.notFound(failure.code),
+      ActionInvocationNotFound: (failure) => changeRetailPaymentTermPreferenceActionProblem.notFound(failure.code),
       ActionInvocationPersistenceError: (failure) =>
         changeRetailPaymentTermPreferenceActionProblem.unavailable(failure.code),
-      ActionInvocationStateError: (failure) =>
-        changeRetailPaymentTermPreferenceActionProblem.conflict(failure.code),
+      ActionInvocationStateError: (failure) => changeRetailPaymentTermPreferenceActionProblem.conflict(failure.code),
       ActionPayloadValidationError: changeRetailPaymentTermPreferenceActionProblem.invalid,
-      ActionPermissionCheckError: (failure) =>
-        changeRetailPaymentTermPreferenceActionProblem.unavailable(failure.code),
-      ActionPermissionDenied: (failure) =>
-        changeRetailPaymentTermPreferenceActionProblem.forbidden(failure.code),
-      ActionPolicyDenied: (failure) =>
-        changeRetailPaymentTermPreferenceActionProblem.ineligible(failure.code),
+      ActionPermissionCheckError: (failure) => changeRetailPaymentTermPreferenceActionProblem.unavailable(failure.code),
+      ActionPermissionDenied: (failure) => changeRetailPaymentTermPreferenceActionProblem.forbidden(failure.code),
+      ActionPolicyDenied: (failure) => changeRetailPaymentTermPreferenceActionProblem.ineligible(failure.code),
       ActionPolicyEvaluationError: (failure) =>
         changeRetailPaymentTermPreferenceActionProblem.unavailable(failure.code),
-      ActionRequestHashConflict: (failure) =>
-        changeRetailPaymentTermPreferenceActionProblem.conflict(failure.code),
+      ActionRequestHashConflict: (failure) => changeRetailPaymentTermPreferenceActionProblem.conflict(failure.code),
       ActionResultValidationError: changeRetailPaymentTermPreferenceActionProblem.internal,
-      ActionTransactionError: (failure) =>
-        changeRetailPaymentTermPreferenceActionProblem.unavailable(failure.code),
-      ActionTrustedContextValidationError:
-        changeRetailPaymentTermPreferenceActionProblem.authentication,
+      ActionTransactionError: (failure) => changeRetailPaymentTermPreferenceActionProblem.unavailable(failure.code),
+      ActionTrustedContextValidationError: changeRetailPaymentTermPreferenceActionProblem.authentication,
       ModuleStateCheckUnavailableError: (failure) =>
         changeRetailPaymentTermPreferenceActionProblem.unavailable(failure.code),
-      ModuleStateDeniedError: (failure) =>
-        changeRetailPaymentTermPreferenceActionProblem.forbidden(failure.code),
-      OperationAuthenticationRequired:
-        changeRetailPaymentTermPreferenceActionProblem.authentication,
-      OperationContextDenied: (failure) =>
-        changeRetailPaymentTermPreferenceActionProblem.forbidden(failure.code),
-      OperationContextInvalid: (failure) =>
-        changeRetailPaymentTermPreferenceActionProblem.forbidden(failure.code),
+      ModuleStateDeniedError: (failure) => changeRetailPaymentTermPreferenceActionProblem.forbidden(failure.code),
+      OperationAuthenticationRequired: changeRetailPaymentTermPreferenceActionProblem.authentication,
+      OperationContextDenied: (failure) => changeRetailPaymentTermPreferenceActionProblem.forbidden(failure.code),
+      OperationContextInvalid: (failure) => changeRetailPaymentTermPreferenceActionProblem.forbidden(failure.code),
       OperationContextUnavailable: (failure) =>
         changeRetailPaymentTermPreferenceActionProblem.unavailable(failure.code),
     }),
     Match.exhaustive,
   );
 
-const isDomainError = Schema.is(
-  changeRetailPaymentTermPreferenceAction.descriptor.domainErrorSchema,
-);
+const isDomainError = Schema.is(changeRetailPaymentTermPreferenceAction.descriptor.domainErrorSchema);
 export const mapChangeRetailPaymentTermPreferenceActionProblem = (
   error: ActionCoreError | DomainError,
 ): ChangeRetailPaymentTermPreferenceActionProblem =>
   isDomainError(error) ? mapDomainProblem(error) : mapCoreProblem(error);
 
-export const changeRetailPaymentTermPreferenceActionSchemaErrorLive =
-  HttpApiMiddleware.layerSchemaErrorTransform(
-    ChangeRetailPaymentTermPreferenceActionSchemaErrorMiddleware,
-    () => Effect.fail(changeRetailPaymentTermPreferenceActionProblem.invalid()),
-  );
+export const changeRetailPaymentTermPreferenceActionSchemaErrorLive = HttpApiMiddleware.layerSchemaErrorTransform(
+  ChangeRetailPaymentTermPreferenceActionSchemaErrorMiddleware,
+  () => Effect.fail(changeRetailPaymentTermPreferenceActionProblem.invalid()),
+);

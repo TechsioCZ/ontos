@@ -3,7 +3,7 @@
 // @ontos-action-http-slug create-counterparty-access-invitation
 // oxlint-disable sonarjs/function-name -- Effect Match.tags requires owner-declared tag keys; remove-when: sonarjs accepts discriminant-map properties.
 import type { ActionCoreError } from '@app/core-runtime';
-import { Effect, HttpApiMiddleware } from '@modern-js/plugin-bff/effect-edge';
+import { Effect, HttpApiMiddleware } from '@modern-js/bff-effect/effect-edge';
 import { Match, Schema } from 'effect';
 import {
   CreateCounterpartyAccessInvitationActionAlreadyCommittedProblemSchema,
@@ -22,173 +22,71 @@ import {
 } from '../shared/apis/create-counterparty-access-invitation-action.ts';
 import type { CreateCounterpartyAccessInvitationActionProblem } from '../shared/apis/create-counterparty-access-invitation-action.ts';
 import { createCounterpartyAccessInvitationAction } from '../src/actions/create-counterparty-access-invitation.action.ts';
+/* oxlint-disable anti-slop-effect/no-service-constructor-imports -- These pure helpers construct problem values rather than Effect services. */
+import {
+  actionProblemStatus as problemStatus,
+  counterpartyAccessContractViolationProblemByCode,
+  makeAuthenticationProblem,
+  makeConflictProblem,
+  makeForbiddenProblem,
+  makeIneligibleProblem,
+  makeInternalProblem,
+  makeInvalidProblem,
+  makeNotFoundProblem,
+  makePreconditionProblem,
+  makeRateLimitedProblem,
+  makeUnavailableProblem,
+} from './action-problem-support.ts';
+/* oxlint-enable anti-slop-effect/no-service-constructor-imports */
+import type { CounterpartyAccessDomainProblemIdentity } from './action-problem-support.ts';
 
-type DomainError =
-  typeof createCounterpartyAccessInvitationAction.descriptor.domainErrorSchema.Type;
+type DomainError = typeof createCounterpartyAccessInvitationAction.descriptor.domainErrorSchema.Type;
 type ProblemOf<Tag extends CreateCounterpartyAccessInvitationActionProblem['_tag']> = Extract<
   CreateCounterpartyAccessInvitationActionProblem,
   { readonly _tag: Tag }
 >;
-type DomainProblemIdentity =
-  | { readonly code: 'invitation_revision_conflict'; readonly kind: 'conflict' }
-  | {
-      readonly code: 'counterparty_scope_mismatch' | 'principal_scope_mismatch';
-      readonly kind: 'forbidden';
-    }
-  | {
-      readonly code:
-        | 'administrative_scope_exceeded'
-        | 'bootstrap_required'
-        | 'grantor_not_authorized'
-        | 'invitation_claim_proof_consumed'
-        | 'invitation_claim_proof_invalid'
-        | 'invitation_claimant_mismatch'
-        | 'invitation_expired'
-        | 'invitation_invalid'
-        | 'inviter_authority_denied'
-        | 'permission_not_delegable'
-        | 'permission_scope_not_allowed'
-        | 'principal_not_eligible'
-        | 'reason_required';
-      readonly kind: 'ineligible';
-    }
-  | { readonly code: 'invitation_rate_limited'; readonly kind: 'rateLimited' }
-  | { readonly code: 'counterparty_access_unavailable'; readonly kind: 'unavailable' };
-
-const problemStatus = {
-  authentication: 401,
-  conflict: 409,
-  forbidden: 403,
-  ineligible: 422,
-  internal: 500,
-  invalid: 400,
-  notFound: 404,
-  precondition: 428,
-  rateLimited: 429,
-  timeout: 504,
-  unavailable: 503,
-} as const;
-
-const counterpartyAccessContractViolationProblemByCode = {
-  administrative_scope_exceeded: { code: 'administrative_scope_exceeded', kind: 'ineligible' },
-  bootstrap_required: { code: 'bootstrap_required', kind: 'ineligible' },
-  counterparty_scope_mismatch: { code: 'counterparty_scope_mismatch', kind: 'forbidden' },
-  grantor_not_authorized: { code: 'grantor_not_authorized', kind: 'ineligible' },
-  invitation_claim_proof_consumed: { code: 'invitation_claim_proof_consumed', kind: 'ineligible' },
-  invitation_claim_proof_invalid: { code: 'invitation_claim_proof_invalid', kind: 'ineligible' },
-  invitation_claimant_mismatch: { code: 'invitation_claimant_mismatch', kind: 'ineligible' },
-  invitation_expired: { code: 'invitation_expired', kind: 'ineligible' },
-  invitation_invalid: { code: 'invitation_invalid', kind: 'ineligible' },
-  invitation_rate_limited: { code: 'invitation_rate_limited', kind: 'rateLimited' },
-  invitation_revision_conflict: { code: 'invitation_revision_conflict', kind: 'conflict' },
-  inviter_authority_denied: { code: 'inviter_authority_denied', kind: 'ineligible' },
-  permission_not_delegable: { code: 'permission_not_delegable', kind: 'ineligible' },
-  permission_scope_not_allowed: { code: 'permission_scope_not_allowed', kind: 'ineligible' },
-  principal_not_eligible: { code: 'principal_not_eligible', kind: 'ineligible' },
-  principal_scope_mismatch: { code: 'principal_scope_mismatch', kind: 'forbidden' },
-  reason_required: { code: 'reason_required', kind: 'ineligible' },
-} as const satisfies Record<
-  Extract<DomainError, { readonly _tag: 'CounterpartyAccessContractViolation' }>['code'],
-  DomainProblemIdentity
->;
-
 export const createCounterpartyAccessInvitationActionProblem = {
-  authentication: (): ProblemOf<'CreateCounterpartyAccessInvitationActionAuthenticationProblem'> =>
-    CreateCounterpartyAccessInvitationActionAuthenticationProblemSchema.make({
-      detail: 'A valid audience-scoped Bearer assertion is required.',
-      status: problemStatus.authentication,
-      title: 'Authentication required',
-      type: 'https://ontos.dev/problems/operation-authentication-required',
-    }),
-  conflict: (
-    code: ProblemOf<'CreateCounterpartyAccessInvitationActionConflictProblem'>['code'],
-  ): ProblemOf<'CreateCounterpartyAccessInvitationActionConflictProblem'> =>
-    CreateCounterpartyAccessInvitationActionConflictProblemSchema.make({
-      code,
-      detail: 'The Action conflicts with current state.',
-      status: problemStatus.conflict,
-      title: 'Action conflict',
-      type: 'https://ontos.dev/problems/action-conflict',
-    }),
-  forbidden: (
-    code: ProblemOf<'CreateCounterpartyAccessInvitationActionForbiddenProblem'>['code'],
-  ): ProblemOf<'CreateCounterpartyAccessInvitationActionForbiddenProblem'> =>
-    CreateCounterpartyAccessInvitationActionForbiddenProblemSchema.make({
-      code,
-      detail: 'The principal is not permitted to perform this Action.',
-      status: problemStatus.forbidden,
-      title: 'Action forbidden',
-      type: 'https://ontos.dev/problems/action-forbidden',
-    }),
-  ineligible: (
-    code: ProblemOf<'CreateCounterpartyAccessInvitationActionIneligibleProblem'>['code'],
-  ): ProblemOf<'CreateCounterpartyAccessInvitationActionIneligibleProblem'> =>
-    CreateCounterpartyAccessInvitationActionIneligibleProblemSchema.make({
-      code,
-      detail: 'The request is not eligible for this Action.',
-      status: problemStatus.ineligible,
-      title: 'Action ineligible',
-      type: 'https://ontos.dev/problems/action-ineligible',
-    }),
-  internal: (): ProblemOf<'CreateCounterpartyAccessInvitationActionInternalProblem'> =>
-    CreateCounterpartyAccessInvitationActionInternalProblemSchema.make({
-      detail: 'The Action could not be completed.',
-      status: problemStatus.internal,
-      title: 'Action failed',
-      type: 'https://ontos.dev/problems/action-failed',
-    }),
-  invalid: (): ProblemOf<'CreateCounterpartyAccessInvitationActionInvalidProblem'> =>
-    CreateCounterpartyAccessInvitationActionInvalidProblemSchema.make({
-      detail: 'The create-counterparty-access-invitation Action request is invalid.',
-      status: problemStatus.invalid,
-      title: 'Invalid Action request',
-      type: 'https://ontos.dev/problems/action-invalid',
-    }),
-  notFound: (
-    code: ProblemOf<'CreateCounterpartyAccessInvitationActionNotFoundProblem'>['code'],
-  ): ProblemOf<'CreateCounterpartyAccessInvitationActionNotFoundProblem'> =>
-    CreateCounterpartyAccessInvitationActionNotFoundProblemSchema.make({
-      code,
-      detail: 'The requested resource was not found.',
-      status: problemStatus.notFound,
-      title: 'Resource not found',
-      type: 'https://ontos.dev/problems/action-resource-not-found',
-    }),
-  precondition: (): ProblemOf<'CreateCounterpartyAccessInvitationActionPreconditionProblem'> =>
-    CreateCounterpartyAccessInvitationActionPreconditionProblemSchema.make({
-      detail: 'An Idempotency-Key header is required.',
-      status: problemStatus.precondition,
-      title: 'Idempotency key required',
-      type: 'https://ontos.dev/problems/idempotency-key-required',
-    }),
-  rateLimited: (
-    code: Extract<
-      ProblemOf<'CreateCounterpartyAccessInvitationActionRateLimitedProblem'>,
-      { readonly code: string }
-    >['code'],
-  ): ProblemOf<'CreateCounterpartyAccessInvitationActionRateLimitedProblem'> =>
-    CreateCounterpartyAccessInvitationActionRateLimitedProblemSchema.make({
-      code,
-      detail: 'The Action rate limit has been exceeded.',
-      status: problemStatus.rateLimited,
-      title: 'Action rate limited',
-      type: 'https://ontos.dev/problems/action-rate-limited',
-    }),
-  unavailable: (
-    code: ProblemOf<'CreateCounterpartyAccessInvitationActionUnavailableProblem'>['code'],
-  ): ProblemOf<'CreateCounterpartyAccessInvitationActionUnavailableProblem'> =>
-    CreateCounterpartyAccessInvitationActionUnavailableProblemSchema.make({
-      code,
-      detail: 'The Action capability is temporarily unavailable.',
-      retryable: true,
-      status: problemStatus.unavailable,
-      title: 'Action unavailable',
-      type: 'https://ontos.dev/problems/action-unavailable',
-    }),
+  authentication: makeAuthenticationProblem<ProblemOf<'CreateCounterpartyAccessInvitationActionAuthenticationProblem'>>(
+    (input) => CreateCounterpartyAccessInvitationActionAuthenticationProblemSchema.make(input),
+  ),
+  conflict: makeConflictProblem<
+    ProblemOf<'CreateCounterpartyAccessInvitationActionConflictProblem'>['code'],
+    ProblemOf<'CreateCounterpartyAccessInvitationActionConflictProblem'>
+  >((input) => CreateCounterpartyAccessInvitationActionConflictProblemSchema.make(input)),
+  forbidden: makeForbiddenProblem<
+    ProblemOf<'CreateCounterpartyAccessInvitationActionForbiddenProblem'>['code'],
+    ProblemOf<'CreateCounterpartyAccessInvitationActionForbiddenProblem'>
+  >((input) => CreateCounterpartyAccessInvitationActionForbiddenProblemSchema.make(input)),
+  ineligible: makeIneligibleProblem<
+    ProblemOf<'CreateCounterpartyAccessInvitationActionIneligibleProblem'>['code'],
+    ProblemOf<'CreateCounterpartyAccessInvitationActionIneligibleProblem'>
+  >((input) => CreateCounterpartyAccessInvitationActionIneligibleProblemSchema.make(input)),
+  internal: makeInternalProblem<ProblemOf<'CreateCounterpartyAccessInvitationActionInternalProblem'>>((input) =>
+    CreateCounterpartyAccessInvitationActionInternalProblemSchema.make(input),
+  ),
+  invalid: makeInvalidProblem<ProblemOf<'CreateCounterpartyAccessInvitationActionInvalidProblem'>>(
+    (input) => CreateCounterpartyAccessInvitationActionInvalidProblemSchema.make(input),
+    'create-counterparty-access-invitation',
+  ),
+  notFound: makeNotFoundProblem<
+    ProblemOf<'CreateCounterpartyAccessInvitationActionNotFoundProblem'>['code'],
+    ProblemOf<'CreateCounterpartyAccessInvitationActionNotFoundProblem'>
+  >((input) => CreateCounterpartyAccessInvitationActionNotFoundProblemSchema.make(input)),
+  precondition: makePreconditionProblem<ProblemOf<'CreateCounterpartyAccessInvitationActionPreconditionProblem'>>(
+    (input) => CreateCounterpartyAccessInvitationActionPreconditionProblemSchema.make(input),
+  ),
+  rateLimited: makeRateLimitedProblem<
+    Extract<ProblemOf<'CreateCounterpartyAccessInvitationActionRateLimitedProblem'>, { readonly code: string }>['code'],
+    ProblemOf<'CreateCounterpartyAccessInvitationActionRateLimitedProblem'>
+  >((input) => CreateCounterpartyAccessInvitationActionRateLimitedProblemSchema.make(input)),
+  unavailable: makeUnavailableProblem<
+    ProblemOf<'CreateCounterpartyAccessInvitationActionUnavailableProblem'>['code'],
+    ProblemOf<'CreateCounterpartyAccessInvitationActionUnavailableProblem'>
+  >((input) => CreateCounterpartyAccessInvitationActionUnavailableProblemSchema.make(input)),
 } as const;
 
 const mapDomainIdentity = (
-  identity: DomainProblemIdentity,
+  identity: CounterpartyAccessDomainProblemIdentity,
 ): CreateCounterpartyAccessInvitationActionProblem =>
   Match.value(identity).pipe(
     Match.when({ kind: 'conflict' as const }, (matched) =>
@@ -215,9 +113,7 @@ const mapDomainProblem = (error: DomainError): CreateCounterpartyAccessInvitatio
       CounterpartyAccessContractViolation: (failure) =>
         mapDomainIdentity(counterpartyAccessContractViolationProblemByCode[failure.code]),
       CounterpartyAccessUnavailable: () =>
-        createCounterpartyAccessInvitationActionProblem.unavailable(
-          'counterparty_access_unavailable',
-        ),
+        createCounterpartyAccessInvitationActionProblem.unavailable('counterparty_access_unavailable'),
     }),
     Match.exhaustive,
   );
@@ -249,54 +145,40 @@ const mapCoreProblem = (error: ActionCoreError): CreateCounterpartyAccessInvitat
         }),
       ActionHandlerExecutionError: createCounterpartyAccessInvitationActionProblem.internal,
       ActionIdempotencyKeyRequired: createCounterpartyAccessInvitationActionProblem.precondition,
-      ActionInvocationNotFound: (failure) =>
-        createCounterpartyAccessInvitationActionProblem.notFound(failure.code),
+      ActionInvocationNotFound: (failure) => createCounterpartyAccessInvitationActionProblem.notFound(failure.code),
       ActionInvocationPersistenceError: (failure) =>
         createCounterpartyAccessInvitationActionProblem.unavailable(failure.code),
-      ActionInvocationStateError: (failure) =>
-        createCounterpartyAccessInvitationActionProblem.conflict(failure.code),
+      ActionInvocationStateError: (failure) => createCounterpartyAccessInvitationActionProblem.conflict(failure.code),
       ActionPayloadValidationError: createCounterpartyAccessInvitationActionProblem.invalid,
       ActionPermissionCheckError: (failure) =>
         createCounterpartyAccessInvitationActionProblem.unavailable(failure.code),
-      ActionPermissionDenied: (failure) =>
-        createCounterpartyAccessInvitationActionProblem.forbidden(failure.code),
-      ActionPolicyDenied: (failure) =>
-        createCounterpartyAccessInvitationActionProblem.ineligible(failure.code),
+      ActionPermissionDenied: (failure) => createCounterpartyAccessInvitationActionProblem.forbidden(failure.code),
+      ActionPolicyDenied: (failure) => createCounterpartyAccessInvitationActionProblem.ineligible(failure.code),
       ActionPolicyEvaluationError: (failure) =>
         createCounterpartyAccessInvitationActionProblem.unavailable(failure.code),
-      ActionRequestHashConflict: (failure) =>
-        createCounterpartyAccessInvitationActionProblem.conflict(failure.code),
+      ActionRequestHashConflict: (failure) => createCounterpartyAccessInvitationActionProblem.conflict(failure.code),
       ActionResultValidationError: createCounterpartyAccessInvitationActionProblem.internal,
-      ActionTransactionError: (failure) =>
-        createCounterpartyAccessInvitationActionProblem.unavailable(failure.code),
-      ActionTrustedContextValidationError:
-        createCounterpartyAccessInvitationActionProblem.authentication,
+      ActionTransactionError: (failure) => createCounterpartyAccessInvitationActionProblem.unavailable(failure.code),
+      ActionTrustedContextValidationError: createCounterpartyAccessInvitationActionProblem.authentication,
       ModuleStateCheckUnavailableError: (failure) =>
         createCounterpartyAccessInvitationActionProblem.unavailable(failure.code),
-      ModuleStateDeniedError: (failure) =>
-        createCounterpartyAccessInvitationActionProblem.forbidden(failure.code),
-      OperationAuthenticationRequired:
-        createCounterpartyAccessInvitationActionProblem.authentication,
-      OperationContextDenied: (failure) =>
-        createCounterpartyAccessInvitationActionProblem.forbidden(failure.code),
-      OperationContextInvalid: (failure) =>
-        createCounterpartyAccessInvitationActionProblem.forbidden(failure.code),
+      ModuleStateDeniedError: (failure) => createCounterpartyAccessInvitationActionProblem.forbidden(failure.code),
+      OperationAuthenticationRequired: createCounterpartyAccessInvitationActionProblem.authentication,
+      OperationContextDenied: (failure) => createCounterpartyAccessInvitationActionProblem.forbidden(failure.code),
+      OperationContextInvalid: (failure) => createCounterpartyAccessInvitationActionProblem.forbidden(failure.code),
       OperationContextUnavailable: (failure) =>
         createCounterpartyAccessInvitationActionProblem.unavailable(failure.code),
     }),
     Match.exhaustive,
   );
 
-const isDomainError = Schema.is(
-  createCounterpartyAccessInvitationAction.descriptor.domainErrorSchema,
-);
+const isDomainError = Schema.is(createCounterpartyAccessInvitationAction.descriptor.domainErrorSchema);
 export const mapCreateCounterpartyAccessInvitationActionProblem = (
   error: ActionCoreError | DomainError,
 ): CreateCounterpartyAccessInvitationActionProblem =>
   isDomainError(error) ? mapDomainProblem(error) : mapCoreProblem(error);
 
-export const createCounterpartyAccessInvitationActionSchemaErrorLive =
-  HttpApiMiddleware.layerSchemaErrorTransform(
-    CreateCounterpartyAccessInvitationActionSchemaErrorMiddleware,
-    () => Effect.fail(createCounterpartyAccessInvitationActionProblem.invalid()),
-  );
+export const createCounterpartyAccessInvitationActionSchemaErrorLive = HttpApiMiddleware.layerSchemaErrorTransform(
+  CreateCounterpartyAccessInvitationActionSchemaErrorMiddleware,
+  () => Effect.fail(createCounterpartyAccessInvitationActionProblem.invalid()),
+);

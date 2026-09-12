@@ -8,16 +8,10 @@ import {
 } from '@app/commerce-customer-context/outbox/commerce-customer-context-approval-hierarchy-created-v1';
 import type { OutboxPayload } from '@app/commerce-customer-context/outbox/commerce-customer-context-approval-hierarchy-created-v1';
 
-export {
-  OutboxPayloadSchema as CreateApprovalHierarchyCommerceCustomerContextApprovalHierarchyCreatedV1OutboxPayloadSchema,
-  outboxProducerModuleKey as CreateApprovalHierarchyCommerceCustomerContextApprovalHierarchyCreatedV1OutboxProducerModuleKey,
-  outboxTopic as CreateApprovalHierarchyCommerceCustomerContextApprovalHierarchyCreatedV1OutboxTopic,
-} from '@app/commerce-customer-context/outbox/commerce-customer-context-approval-hierarchy-created-v1';
-export type { OutboxPayload as CreateApprovalHierarchyCommerceCustomerContextApprovalHierarchyCreatedV1OutboxPayload } from '@app/commerce-customer-context/outbox/commerce-customer-context-approval-hierarchy-created-v1';
-
-export const createCreateApprovalHierarchyCommerceCustomerContextApprovalHierarchyCreatedV1OutboxMessage =
-  (payload: OutboxPayload): OutboxMessage => ({
-    payloadJson: payload,
-    producerModuleKey: outboxProducerModuleKey,
-    topic: outboxTopic,
-  });
+export const createCreateApprovalHierarchyCommerceCustomerContextApprovalHierarchyCreatedV1OutboxMessage = (
+  payload: OutboxPayload,
+): OutboxMessage => ({
+  payloadJson: payload,
+  producerModuleKey: outboxProducerModuleKey,
+  topic: outboxTopic,
+});

@@ -18,18 +18,12 @@ export const RevokeCounterpartyCommerceAccessPayloadSchema = Schema.Struct({
   recipient: PrincipalRefSchema,
   scope: CounterpartyPermissionScopeSchema,
 });
-export type RevokeCounterpartyCommerceAccessPayload =
-  typeof RevokeCounterpartyCommerceAccessPayloadSchema.Type;
+export type RevokeCounterpartyCommerceAccessPayload = typeof RevokeCounterpartyCommerceAccessPayloadSchema.Type;
 
 export const RevokeCounterpartyCommerceAccessResultSchema = Schema.Union([
   Schema.Struct({
     grant: CounterpartyAccessGrantSchema,
-    outcome: Schema.Literals([
-      'REVOKED',
-      'ALREADY_REVOKED',
-      'LAST_ADMIN_PROTECTED',
-      'SCOPE_MISMATCH',
-    ]),
+    outcome: Schema.Literals(['REVOKED', 'ALREADY_REVOKED', 'LAST_ADMIN_PROTECTED', 'SCOPE_MISMATCH']),
   }),
   Schema.Struct({
     grant: CounterpartyAccessGrantSchema,
@@ -37,5 +31,3 @@ export const RevokeCounterpartyCommerceAccessResultSchema = Schema.Union([
     reconciliation: AccessAuthorizationMutationEvidenceSchema,
   }),
 ]);
-export type RevokeCounterpartyCommerceAccessResult =
-  typeof RevokeCounterpartyCommerceAccessResultSchema.Type;

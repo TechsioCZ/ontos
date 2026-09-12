@@ -14,10 +14,7 @@ import {
   BootstrapCounterpartyAccessAdministratorResultSchema,
 } from '../../shared/actions/bootstrap-counterparty-access-administrator.ts';
 import type { BootstrapCounterpartyAccessAdministratorPayload } from '../../shared/actions/bootstrap-counterparty-access-administrator.ts';
-import {
-  AccessAuditEvidenceSchema,
-  AccessDeniedAuditEvidenceSchema,
-} from '../../shared/domain/access-contract.ts';
+import { AccessAuditEvidenceSchema, AccessDeniedAuditEvidenceSchema } from '../../shared/domain/access-contract.ts';
 import {
   CounterpartyAccessContractViolation,
   CounterpartyAccessDomainErrorSchema,
@@ -47,85 +44,80 @@ interface Services {
   readonly bootstrap: CounterpartyAccessPortService['bootstrapAdministrator'];
 }
 
-const handle = Effect.fn('BootstrapCounterpartyAccessAdministrator.handle')(
-  function* handleBootstrap(
-    payload: BootstrapCounterpartyAccessAdministratorPayload,
-    context: ActionHandlerContext<typeof domainEvents, Services>,
-  ) {
-    // Bootstrap is an operator/internal seam, not a normal explicit Action grant. Require the
-    // non-forgeable provenance marker produced by Core's system resolver or a redeemed,
-    // audience-bound internal gateway assertion. Checking authMethod (or explicit provisioning)
-    // alone would let a caller submit a system/api-key-shaped context and self-bootstrap.
-    const trustedBootstrapActor =
-      isTrustedSystemPrincipalContext(context.scope) ||
-      (context.scope.authMethod === 'api_key' && isVerifiedGatewayPrincipalContext(context.scope));
-    if (!trustedBootstrapActor) {
-      return yield* new CounterpartyAccessContractViolation({
-        code: 'bootstrap_required',
-        reason: 'Counterparty administrator bootstrap requires trusted internal actor provenance',
-      });
-    }
-    const actor = principalRefFromContext(context.scope);
-    const legalEntityId = yield* requireAccessLegalEntity(context.scope);
-    const scope = { kind: 'counterparty' as const };
-    yield* requireAccessScope({
-      counterpartyRef: payload.counterpartyRef,
-      permission: accessManagementPermission,
-      principalRefs: [actor, payload.recipient],
-      reason: payload.reason,
-      requireCustomerDelegable: false,
-      scope,
-      tenantId: context.scope.tenantId,
+const handle = Effect.fn('BootstrapCounterpartyAccessAdministrator.handle')(function* handleBootstrap(
+  payload: BootstrapCounterpartyAccessAdministratorPayload,
+  context: ActionHandlerContext<typeof domainEvents, Services>,
+) {
+  // Bootstrap is an operator/internal seam, not a normal explicit Action grant. Require the
+  // non-forgeable provenance marker produced by Core's system resolver or a redeemed,
+  // audience-bound internal gateway assertion. Checking authMethod (or explicit provisioning)
+  // alone would let a caller submit a system/api-key-shaped context and self-bootstrap.
+  const trustedBootstrapActor =
+    isTrustedSystemPrincipalContext(context.scope) ||
+    (context.scope.authMethod === 'api_key' && isVerifiedGatewayPrincipalContext(context.scope));
+  if (!trustedBootstrapActor) {
+    return yield* new CounterpartyAccessContractViolation({
+      code: 'bootstrap_required',
+      reason: 'Counterparty administrator bootstrap requires trusted internal actor provenance',
     });
-    const result = yield* context.services.bootstrap({
-      actionInvocationId: context.actionInvocationId,
+  }
+  const actor = principalRefFromContext(context.scope);
+  const legalEntityId = yield* requireAccessLegalEntity(context.scope);
+  const scope = { kind: 'counterparty' as const };
+  yield* requireAccessScope({
+    counterpartyRef: payload.counterpartyRef,
+    permission: accessManagementPermission,
+    principalRefs: [actor, payload.recipient],
+    reason: payload.reason,
+    requireCustomerDelegable: false,
+    scope,
+    tenantId: context.scope.tenantId,
+  });
+  const result = yield* context.services.bootstrap({
+    actionInvocationId: context.actionInvocationId,
+    actor,
+    counterpartyRef: payload.counterpartyRef,
+    legalEntityId,
+    permission: accessManagementPermission,
+    reason: payload.reason,
+    recipient: payload.recipient,
+    scope,
+  });
+  yield* recordAccessRead(context, payload.counterpartyRef, 'counterparty-access-bootstrap');
+  yield* context.recordAuditEvidence(
+    auditEvidence({
       actor,
       counterpartyRef: payload.counterpartyRef,
-      legalEntityId,
+      outcome: result.outcome,
       permission: accessManagementPermission,
       reason: payload.reason,
-      recipient: payload.recipient,
       scope,
+      target: payload.recipient,
+    }),
+  );
+  if (result.outcome === 'RECONCILIATION_REQUIRED' && result.reconciliation.staged) {
+    const eventPayload = {
+      catalogVersion: result.grant.catalogVersion,
+      counterpartyRef: result.grant.counterpartyRef,
+      grantRef: result.grant.grantRef,
+      legalEntityId,
+      mutationId: result.reconciliation.mutationId,
+      operation: result.reconciliation.operation,
+      schemaVersion: '1' as const,
+    };
+    const event = yield* context.addDomainEvent({
+      eventType:
+        'commerce.customer-context.counterparty-access-administrator-bootstrap-authorization-mutation-requested.v1',
+      payloadJson: eventPayload,
+      producerModuleKey: result.grant.grantRef.moduleId,
+      subjectModuleKey: result.grant.grantRef.moduleId,
+      subjectResourceId: result.grant.grantRef.resourceId,
+      subjectResourceType: result.grant.grantRef.resourceType,
     });
-    yield* recordAccessRead(context, payload.counterpartyRef, 'counterparty-access-bootstrap');
-    yield* context.recordAuditEvidence(
-      auditEvidence({
-        actor,
-        counterpartyRef: payload.counterpartyRef,
-        outcome: result.outcome,
-        permission: accessManagementPermission,
-        reason: payload.reason,
-        scope,
-        target: payload.recipient,
-      }),
-    );
-    if (result.outcome === 'RECONCILIATION_REQUIRED' && result.reconciliation.staged) {
-      const eventPayload = {
-        catalogVersion: result.grant.catalogVersion,
-        counterpartyRef: result.grant.counterpartyRef,
-        grantRef: result.grant.grantRef,
-        legalEntityId,
-        mutationId: result.reconciliation.mutationId,
-        operation: result.reconciliation.operation,
-        schemaVersion: '1' as const,
-      };
-      const event = yield* context.addDomainEvent({
-        eventType:
-          'commerce.customer-context.counterparty-access-administrator-bootstrap-authorization-mutation-requested.v1',
-        payloadJson: eventPayload,
-        producerModuleKey: result.grant.grantRef.moduleId,
-        subjectModuleKey: result.grant.grantRef.moduleId,
-        subjectResourceId: result.grant.grantRef.resourceId,
-        subjectResourceType: result.grant.grantRef.resourceType,
-      });
-      yield* context.addOutboxMessage(
-        event,
-        createAuthorizationMutationRequestedOutboxMessage(eventPayload),
-      );
-    }
-    return result;
-  },
-);
+    yield* context.addOutboxMessage(event, createAuthorizationMutationRequestedOutboxMessage(eventPayload));
+  }
+  return result;
+});
 
 export const bootstrapCounterpartyAccessAdministratorAction = defineAction(
   {
@@ -171,25 +163,3 @@ export const bootstrapCounterpartyAccessAdministratorAction = defineAction(
       Effect.map((port) => ({ bootstrap: port.bootstrapAdministrator })),
     ),
 );
-
-export {
-  BootstrapCounterpartyAccessAdministratorPayloadSchema,
-  BootstrapCounterpartyAccessAdministratorResultSchema,
-} from '../../shared/actions/bootstrap-counterparty-access-administrator.ts';
-export type {
-  BootstrapCounterpartyAccessAdministratorPayload,
-  BootstrapCounterpartyAccessAdministratorResult,
-} from '../../shared/actions/bootstrap-counterparty-access-administrator.ts';
-
-// <generated-outbox-message-exports>
-export { BootstrapCounterpartyAccessAdministratorCommerceCustomerContextCounterpartyAccessAdministratorBootstrapAuthorizationMutationRequestedV1OutboxPayloadSchema } from './bootstrap-counterparty-access-administrator.commerce-customer-context-counterparty-access-administrator-bootstrap-authorization-mutation-requested-v1.outbox-message.ts';
-export { BootstrapCounterpartyAccessAdministratorCommerceCustomerContextCounterpartyAccessAdministratorBootstrapAuthorizationMutationRequestedV1OutboxProducerModuleKey } from './bootstrap-counterparty-access-administrator.commerce-customer-context-counterparty-access-administrator-bootstrap-authorization-mutation-requested-v1.outbox-message.ts';
-export { BootstrapCounterpartyAccessAdministratorCommerceCustomerContextCounterpartyAccessAdministratorBootstrapAuthorizationMutationRequestedV1OutboxTopic } from './bootstrap-counterparty-access-administrator.commerce-customer-context-counterparty-access-administrator-bootstrap-authorization-mutation-requested-v1.outbox-message.ts';
-export { BootstrapCounterpartyAccessAdministratorCommerceCustomerContextCounterpartyAccessAdministratorBootstrappedV1OutboxPayloadSchema } from './bootstrap-counterparty-access-administrator.commerce-customer-context-counterparty-access-administrator-bootstrapped-v1.outbox-message.ts';
-export { BootstrapCounterpartyAccessAdministratorCommerceCustomerContextCounterpartyAccessAdministratorBootstrappedV1OutboxProducerModuleKey } from './bootstrap-counterparty-access-administrator.commerce-customer-context-counterparty-access-administrator-bootstrapped-v1.outbox-message.ts';
-export { BootstrapCounterpartyAccessAdministratorCommerceCustomerContextCounterpartyAccessAdministratorBootstrappedV1OutboxTopic } from './bootstrap-counterparty-access-administrator.commerce-customer-context-counterparty-access-administrator-bootstrapped-v1.outbox-message.ts';
-export { createBootstrapCounterpartyAccessAdministratorCommerceCustomerContextCounterpartyAccessAdministratorBootstrapAuthorizationMutationRequestedV1OutboxMessage } from './bootstrap-counterparty-access-administrator.commerce-customer-context-counterparty-access-administrator-bootstrap-authorization-mutation-requested-v1.outbox-message.ts';
-export { createBootstrapCounterpartyAccessAdministratorCommerceCustomerContextCounterpartyAccessAdministratorBootstrappedV1OutboxMessage } from './bootstrap-counterparty-access-administrator.commerce-customer-context-counterparty-access-administrator-bootstrapped-v1.outbox-message.ts';
-export type { BootstrapCounterpartyAccessAdministratorCommerceCustomerContextCounterpartyAccessAdministratorBootstrapAuthorizationMutationRequestedV1OutboxPayload } from './bootstrap-counterparty-access-administrator.commerce-customer-context-counterparty-access-administrator-bootstrap-authorization-mutation-requested-v1.outbox-message.ts';
-export type { BootstrapCounterpartyAccessAdministratorCommerceCustomerContextCounterpartyAccessAdministratorBootstrappedV1OutboxPayload } from './bootstrap-counterparty-access-administrator.commerce-customer-context-counterparty-access-administrator-bootstrapped-v1.outbox-message.ts';
-// </generated-outbox-message-exports>

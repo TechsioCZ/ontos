@@ -4,9 +4,7 @@
 import type { OntosResourceType } from '@app/core-runtime';
 import { Schema } from 'effect';
 
-// eslint-disable-next-line effect-native/no-unbranded-identifier-schema -- Generated ResourceRef wire shape; the resourceType literal supplies identity.
 const ResourceIdSchema = Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(300));
-// eslint-disable-next-line effect-native/no-unbranded-identifier-schema -- Generated ResourceRef wire shape preserves the canonical Tenant UUID encoding.
 const TenantIdSchema = Schema.String.check(Schema.isUUID());
 
 export const PartyOfficialIdentifierRefSchema = Schema.Struct({

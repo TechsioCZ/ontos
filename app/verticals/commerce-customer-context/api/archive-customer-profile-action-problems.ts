@@ -3,7 +3,7 @@
 // @ontos-action-http-slug archive-customer-profile
 // oxlint-disable sonarjs/function-name -- Effect Match.tags requires owner-declared tag keys; remove-when: sonarjs accepts discriminant-map properties.
 import type { ActionCoreError } from '@app/core-runtime';
-import { Effect, HttpApiMiddleware } from '@modern-js/plugin-bff/effect-edge';
+import { Effect, HttpApiMiddleware } from '@modern-js/bff-effect/effect-edge';
 import { Match, Schema } from 'effect';
 import {
   ArchiveCustomerProfileActionAlreadyCommittedProblemSchema,
@@ -21,147 +21,68 @@ import {
 } from '../shared/apis/archive-customer-profile-action.ts';
 import type { ArchiveCustomerProfileActionProblem } from '../shared/apis/archive-customer-profile-action.ts';
 import { archiveCustomerProfileAction } from '../src/actions/archive-customer-profile.action.ts';
+/* oxlint-disable anti-slop-effect/no-service-constructor-imports -- These pure helpers construct problem values rather than Effect services. */
+import {
+  actionProblemStatus as problemStatus,
+  makeAuthenticationProblem,
+  makeConflictProblem,
+  makeForbiddenProblem,
+  makeIneligibleProblem,
+  makeInternalProblem,
+  makeInvalidProblem,
+  makeNotFoundProblem,
+  makePreconditionProblem,
+  makeUnavailableProblem,
+} from './action-problem-support.ts';
+/* oxlint-enable anti-slop-effect/no-service-constructor-imports */
+import { profileLifecycleActionRejectedProblemByCode } from './profile-lifecycle-action-problem-identity.ts';
+import type { ProfileLifecycleDomainProblemIdentity } from './profile-lifecycle-action-problem-identity.ts';
 
 type DomainError = typeof archiveCustomerProfileAction.descriptor.domainErrorSchema.Type;
 type ProblemOf<Tag extends ArchiveCustomerProfileActionProblem['_tag']> = Extract<
   ArchiveCustomerProfileActionProblem,
   { readonly _tag: Tag }
 >;
-type DomainProblemIdentity =
-  | {
-      readonly code:
-        | 'CURRENT_STATE_CONFLICT'
-        | 'INVALID_LIFECYCLE_TRANSITION'
-        | 'PROFILE_RECONCILIATION_REQUIRED'
-        | 'REACTIVATION_RECONFIRMATION_REQUIRED';
-      readonly kind: 'conflict';
-    }
-  | { readonly code: 'PROFILE_NOT_FOUND'; readonly kind: 'notFound' }
-  | {
-      readonly code: 'OUTCOME_INDETERMINATE' | 'PERSISTENCE_UNAVAILABLE';
-      readonly kind: 'unavailable';
-    };
-
-const problemStatus = {
-  authentication: 401,
-  conflict: 409,
-  forbidden: 403,
-  ineligible: 422,
-  internal: 500,
-  invalid: 400,
-  notFound: 404,
-  precondition: 428,
-  rateLimited: 429,
-  timeout: 504,
-  unavailable: 503,
-} as const;
-
-const profileLifecycleActionRejectedProblemByCode = {
-  CURRENT_STATE_CONFLICT: { code: 'CURRENT_STATE_CONFLICT', kind: 'conflict' },
-  INVALID_LIFECYCLE_TRANSITION: { code: 'INVALID_LIFECYCLE_TRANSITION', kind: 'conflict' },
-  OUTCOME_INDETERMINATE: { code: 'OUTCOME_INDETERMINATE', kind: 'unavailable' },
-  PERSISTENCE_UNAVAILABLE: { code: 'PERSISTENCE_UNAVAILABLE', kind: 'unavailable' },
-  PROFILE_NOT_FOUND: { code: 'PROFILE_NOT_FOUND', kind: 'notFound' },
-  PROFILE_RECONCILIATION_REQUIRED: { code: 'PROFILE_RECONCILIATION_REQUIRED', kind: 'conflict' },
-  REACTIVATION_RECONFIRMATION_REQUIRED: {
-    code: 'REACTIVATION_RECONFIRMATION_REQUIRED',
-    kind: 'conflict',
-  },
-} as const satisfies Record<
-  Extract<DomainError, { readonly _tag: 'ProfileLifecycleActionRejected' }>['code'],
-  DomainProblemIdentity
->;
-
 export const archiveCustomerProfileActionProblem = {
-  authentication: (): ProblemOf<'ArchiveCustomerProfileActionAuthenticationProblem'> =>
-    ArchiveCustomerProfileActionAuthenticationProblemSchema.make({
-      detail: 'A valid audience-scoped Bearer assertion is required.',
-      status: problemStatus.authentication,
-      title: 'Authentication required',
-      type: 'https://ontos.dev/problems/operation-authentication-required',
-    }),
-  conflict: (
-    code: ProblemOf<'ArchiveCustomerProfileActionConflictProblem'>['code'],
-  ): ProblemOf<'ArchiveCustomerProfileActionConflictProblem'> =>
-    ArchiveCustomerProfileActionConflictProblemSchema.make({
-      code,
-      detail: 'The Action conflicts with current state.',
-      status: problemStatus.conflict,
-      title: 'Action conflict',
-      type: 'https://ontos.dev/problems/action-conflict',
-    }),
-  forbidden: (
-    code: ProblemOf<'ArchiveCustomerProfileActionForbiddenProblem'>['code'],
-  ): ProblemOf<'ArchiveCustomerProfileActionForbiddenProblem'> =>
-    ArchiveCustomerProfileActionForbiddenProblemSchema.make({
-      code,
-      detail: 'The principal is not permitted to perform this Action.',
-      status: problemStatus.forbidden,
-      title: 'Action forbidden',
-      type: 'https://ontos.dev/problems/action-forbidden',
-    }),
-  ineligible: (
-    code: ProblemOf<'ArchiveCustomerProfileActionIneligibleProblem'>['code'],
-  ): ProblemOf<'ArchiveCustomerProfileActionIneligibleProblem'> =>
-    ArchiveCustomerProfileActionIneligibleProblemSchema.make({
-      code,
-      detail: 'The request is not eligible for this Action.',
-      status: problemStatus.ineligible,
-      title: 'Action ineligible',
-      type: 'https://ontos.dev/problems/action-ineligible',
-    }),
-  internal: (): ProblemOf<'ArchiveCustomerProfileActionInternalProblem'> =>
-    ArchiveCustomerProfileActionInternalProblemSchema.make({
-      detail: 'The Action could not be completed.',
-      status: problemStatus.internal,
-      title: 'Action failed',
-      type: 'https://ontos.dev/problems/action-failed',
-    }),
-  invalid: (): ProblemOf<'ArchiveCustomerProfileActionInvalidProblem'> =>
-    ArchiveCustomerProfileActionInvalidProblemSchema.make({
-      detail: 'The archive-customer-profile Action request is invalid.',
-      status: problemStatus.invalid,
-      title: 'Invalid Action request',
-      type: 'https://ontos.dev/problems/action-invalid',
-    }),
-  notFound: (
-    code: ProblemOf<'ArchiveCustomerProfileActionNotFoundProblem'>['code'],
-  ): ProblemOf<'ArchiveCustomerProfileActionNotFoundProblem'> =>
-    ArchiveCustomerProfileActionNotFoundProblemSchema.make({
-      code,
-      detail: 'The requested resource was not found.',
-      status: problemStatus.notFound,
-      title: 'Resource not found',
-      type: 'https://ontos.dev/problems/action-resource-not-found',
-    }),
-  precondition: (): ProblemOf<'ArchiveCustomerProfileActionPreconditionProblem'> =>
-    ArchiveCustomerProfileActionPreconditionProblemSchema.make({
-      detail: 'An Idempotency-Key header is required.',
-      status: problemStatus.precondition,
-      title: 'Idempotency key required',
-      type: 'https://ontos.dev/problems/idempotency-key-required',
-    }),
-  unavailable: (
-    code: ProblemOf<'ArchiveCustomerProfileActionUnavailableProblem'>['code'],
-  ): ProblemOf<'ArchiveCustomerProfileActionUnavailableProblem'> =>
-    ArchiveCustomerProfileActionUnavailableProblemSchema.make({
-      code,
-      detail: 'The Action capability is temporarily unavailable.',
-      retryable: true,
-      status: problemStatus.unavailable,
-      title: 'Action unavailable',
-      type: 'https://ontos.dev/problems/action-unavailable',
-    }),
+  authentication: makeAuthenticationProblem<ProblemOf<'ArchiveCustomerProfileActionAuthenticationProblem'>>((input) =>
+    ArchiveCustomerProfileActionAuthenticationProblemSchema.make(input),
+  ),
+  conflict: makeConflictProblem<
+    ProblemOf<'ArchiveCustomerProfileActionConflictProblem'>['code'],
+    ProblemOf<'ArchiveCustomerProfileActionConflictProblem'>
+  >((input) => ArchiveCustomerProfileActionConflictProblemSchema.make(input)),
+  forbidden: makeForbiddenProblem<
+    ProblemOf<'ArchiveCustomerProfileActionForbiddenProblem'>['code'],
+    ProblemOf<'ArchiveCustomerProfileActionForbiddenProblem'>
+  >((input) => ArchiveCustomerProfileActionForbiddenProblemSchema.make(input)),
+  ineligible: makeIneligibleProblem<
+    ProblemOf<'ArchiveCustomerProfileActionIneligibleProblem'>['code'],
+    ProblemOf<'ArchiveCustomerProfileActionIneligibleProblem'>
+  >((input) => ArchiveCustomerProfileActionIneligibleProblemSchema.make(input)),
+  internal: makeInternalProblem<ProblemOf<'ArchiveCustomerProfileActionInternalProblem'>>((input) =>
+    ArchiveCustomerProfileActionInternalProblemSchema.make(input),
+  ),
+  invalid: makeInvalidProblem<ProblemOf<'ArchiveCustomerProfileActionInvalidProblem'>>(
+    (input) => ArchiveCustomerProfileActionInvalidProblemSchema.make(input),
+    'archive-customer-profile',
+  ),
+  notFound: makeNotFoundProblem<
+    ProblemOf<'ArchiveCustomerProfileActionNotFoundProblem'>['code'],
+    ProblemOf<'ArchiveCustomerProfileActionNotFoundProblem'>
+  >((input) => ArchiveCustomerProfileActionNotFoundProblemSchema.make(input)),
+  precondition: makePreconditionProblem<ProblemOf<'ArchiveCustomerProfileActionPreconditionProblem'>>((input) =>
+    ArchiveCustomerProfileActionPreconditionProblemSchema.make(input),
+  ),
+  unavailable: makeUnavailableProblem<
+    ProblemOf<'ArchiveCustomerProfileActionUnavailableProblem'>['code'],
+    ProblemOf<'ArchiveCustomerProfileActionUnavailableProblem'>
+  >((input) => ArchiveCustomerProfileActionUnavailableProblemSchema.make(input)),
 } as const;
 
-const mapDomainIdentity = (identity: DomainProblemIdentity): ArchiveCustomerProfileActionProblem =>
+const mapDomainIdentity = (identity: ProfileLifecycleDomainProblemIdentity): ArchiveCustomerProfileActionProblem =>
   Match.value(identity).pipe(
-    Match.when({ kind: 'conflict' as const }, (matched) =>
-      archiveCustomerProfileActionProblem.conflict(matched.code),
-    ),
-    Match.when({ kind: 'notFound' as const }, (matched) =>
-      archiveCustomerProfileActionProblem.notFound(matched.code),
-    ),
+    Match.when({ kind: 'conflict' as const }, (matched) => archiveCustomerProfileActionProblem.conflict(matched.code)),
+    Match.when({ kind: 'notFound' as const }, (matched) => archiveCustomerProfileActionProblem.notFound(matched.code)),
     Match.when({ kind: 'unavailable' as const }, (matched) =>
       archiveCustomerProfileActionProblem.unavailable(matched.code),
     ),
@@ -204,37 +125,24 @@ const mapCoreProblem = (error: ActionCoreError): ArchiveCustomerProfileActionPro
         }),
       ActionHandlerExecutionError: archiveCustomerProfileActionProblem.internal,
       ActionIdempotencyKeyRequired: archiveCustomerProfileActionProblem.precondition,
-      ActionInvocationNotFound: (failure) =>
-        archiveCustomerProfileActionProblem.notFound(failure.code),
-      ActionInvocationPersistenceError: (failure) =>
-        archiveCustomerProfileActionProblem.unavailable(failure.code),
-      ActionInvocationStateError: (failure) =>
-        archiveCustomerProfileActionProblem.conflict(failure.code),
+      ActionInvocationNotFound: (failure) => archiveCustomerProfileActionProblem.notFound(failure.code),
+      ActionInvocationPersistenceError: (failure) => archiveCustomerProfileActionProblem.unavailable(failure.code),
+      ActionInvocationStateError: (failure) => archiveCustomerProfileActionProblem.conflict(failure.code),
       ActionPayloadValidationError: archiveCustomerProfileActionProblem.invalid,
-      ActionPermissionCheckError: (failure) =>
-        archiveCustomerProfileActionProblem.unavailable(failure.code),
-      ActionPermissionDenied: (failure) =>
-        archiveCustomerProfileActionProblem.forbidden(failure.code),
+      ActionPermissionCheckError: (failure) => archiveCustomerProfileActionProblem.unavailable(failure.code),
+      ActionPermissionDenied: (failure) => archiveCustomerProfileActionProblem.forbidden(failure.code),
       ActionPolicyDenied: (failure) => archiveCustomerProfileActionProblem.ineligible(failure.code),
-      ActionPolicyEvaluationError: (failure) =>
-        archiveCustomerProfileActionProblem.unavailable(failure.code),
-      ActionRequestHashConflict: (failure) =>
-        archiveCustomerProfileActionProblem.conflict(failure.code),
+      ActionPolicyEvaluationError: (failure) => archiveCustomerProfileActionProblem.unavailable(failure.code),
+      ActionRequestHashConflict: (failure) => archiveCustomerProfileActionProblem.conflict(failure.code),
       ActionResultValidationError: archiveCustomerProfileActionProblem.internal,
-      ActionTransactionError: (failure) =>
-        archiveCustomerProfileActionProblem.unavailable(failure.code),
+      ActionTransactionError: (failure) => archiveCustomerProfileActionProblem.unavailable(failure.code),
       ActionTrustedContextValidationError: archiveCustomerProfileActionProblem.authentication,
-      ModuleStateCheckUnavailableError: (failure) =>
-        archiveCustomerProfileActionProblem.unavailable(failure.code),
-      ModuleStateDeniedError: (failure) =>
-        archiveCustomerProfileActionProblem.forbidden(failure.code),
+      ModuleStateCheckUnavailableError: (failure) => archiveCustomerProfileActionProblem.unavailable(failure.code),
+      ModuleStateDeniedError: (failure) => archiveCustomerProfileActionProblem.forbidden(failure.code),
       OperationAuthenticationRequired: archiveCustomerProfileActionProblem.authentication,
-      OperationContextDenied: (failure) =>
-        archiveCustomerProfileActionProblem.forbidden(failure.code),
-      OperationContextInvalid: (failure) =>
-        archiveCustomerProfileActionProblem.forbidden(failure.code),
-      OperationContextUnavailable: (failure) =>
-        archiveCustomerProfileActionProblem.unavailable(failure.code),
+      OperationContextDenied: (failure) => archiveCustomerProfileActionProblem.forbidden(failure.code),
+      OperationContextInvalid: (failure) => archiveCustomerProfileActionProblem.forbidden(failure.code),
+      OperationContextUnavailable: (failure) => archiveCustomerProfileActionProblem.unavailable(failure.code),
     }),
     Match.exhaustive,
   );
@@ -242,11 +150,9 @@ const mapCoreProblem = (error: ActionCoreError): ArchiveCustomerProfileActionPro
 const isDomainError = Schema.is(archiveCustomerProfileAction.descriptor.domainErrorSchema);
 export const mapArchiveCustomerProfileActionProblem = (
   error: ActionCoreError | DomainError,
-): ArchiveCustomerProfileActionProblem =>
-  isDomainError(error) ? mapDomainProblem(error) : mapCoreProblem(error);
+): ArchiveCustomerProfileActionProblem => (isDomainError(error) ? mapDomainProblem(error) : mapCoreProblem(error));
 
-export const archiveCustomerProfileActionSchemaErrorLive =
-  HttpApiMiddleware.layerSchemaErrorTransform(
-    ArchiveCustomerProfileActionSchemaErrorMiddleware,
-    () => Effect.fail(archiveCustomerProfileActionProblem.invalid()),
-  );
+export const archiveCustomerProfileActionSchemaErrorLive = HttpApiMiddleware.layerSchemaErrorTransform(
+  ArchiveCustomerProfileActionSchemaErrorMiddleware,
+  () => Effect.fail(archiveCustomerProfileActionProblem.invalid()),
+);

@@ -13,10 +13,7 @@ import {
 import { Effect, Schema } from 'effect';
 import { expect, it } from 'effect-rstest';
 
-import {
-  AddressBookUnavailable,
-  SavedAddressInvalidSchema,
-} from '../../shared/domain/address-errors.ts';
+import { AddressBookUnavailable, SavedAddressInvalidSchema } from '../../shared/domain/address-errors.ts';
 import {
   partyBackedAddressSourceValidator,
   partyBackedPostalAddressResolver,
@@ -146,9 +143,7 @@ it.effect('rejects a stale Party source revision before address persistence', ()
   Effect.gen(function* stalePartyAddress() {
     const execute = (): ReturnType<typeof executePartyContactPointDetail> =>
       Effect.succeed({ ...currentPostalContactPoint, revision: 8 });
-    const failure = yield* Effect.flip(
-      partyBackedAddressSourceValidator('address-correlation', execute)(payload),
-    );
+    const failure = yield* Effect.flip(partyBackedAddressSourceValidator('address-correlation', execute)(payload));
 
     expect(Schema.is(SavedAddressInvalidSchema)(failure)).toBe(true);
     expect(failure).toMatchObject({
@@ -201,9 +196,7 @@ it.effect('classifies definitive Party HTTP outcomes without making them retryab
         type: 'https://ontos.dev/problems/party-contact-point',
       });
       const execute = (): ReturnType<typeof executePartyContactPointDetail> => Effect.fail(problem);
-      const failure = yield* Effect.flip(
-        partyBackedAddressSourceValidator('address-correlation', execute)(payload),
-      );
+      const failure = yield* Effect.flip(partyBackedAddressSourceValidator('address-correlation', execute)(payload));
       expect(failure.code).toBe(expectedCode);
       expect(Schema.is(AddressBookUnavailable)(failure)).toBe(false);
     }
@@ -221,9 +214,7 @@ it.effect('preserves a retryable Party 503 as typed Address Book unavailability'
       type: 'https://ontos.dev/problems/party-contact-point-unavailable',
     });
     const execute = (): ReturnType<typeof executePartyContactPointDetail> => Effect.fail(problem);
-    const failure = yield* Effect.flip(
-      partyBackedAddressSourceValidator('address-correlation', execute)(payload),
-    );
+    const failure = yield* Effect.flip(partyBackedAddressSourceValidator('address-correlation', execute)(payload));
     expect(Schema.is(AddressBookUnavailable)(failure)).toBe(true);
     if (Schema.is(AddressBookUnavailable)(failure)) {
       expect(failure.retryable).toBe(true);
@@ -231,48 +222,31 @@ it.effect('preserves a retryable Party 503 as typed Address Book unavailability'
   }),
 );
 
-it.effect(
-  'classifies Party authentication and internal HTTP outcomes as dependency unavailability',
-  () =>
-    Effect.gen(function* transientPartyFailures() {
-      const problems = [
-        [
-          PartyContactPointDetailAuthenticationProblemSchema,
-          'PartyContactPointDetailAuthenticationProblem',
-          401,
-        ],
-        [
-          PartyContactPointDetailInternalProblemSchema,
-          'PartyContactPointDetailInternalProblem',
-          500,
-        ],
-      ] as const;
-      for (const [problemSchema, tag, status] of problems) {
-        const problem = Schema.decodeUnknownSync(problemSchema)({
-          _tag: tag,
-          detail: 'Party Registry dependency failure',
-          status,
-          title: 'Party Contact Point request failed',
-          type: 'https://ontos.dev/problems/party-contact-point',
-        });
-        const execute = (): ReturnType<typeof executePartyContactPointDetail> =>
-          Effect.fail(problem);
-        const failure = yield* Effect.flip(
-          partyBackedAddressSourceValidator('address-correlation', execute)(payload),
-        );
-        expect(Schema.is(AddressBookUnavailable)(failure)).toBe(true);
-      }
-    }),
+it.effect('classifies Party authentication and internal HTTP outcomes as dependency unavailability', () =>
+  Effect.gen(function* transientPartyFailures() {
+    const problems = [
+      [PartyContactPointDetailAuthenticationProblemSchema, 'PartyContactPointDetailAuthenticationProblem', 401],
+      [PartyContactPointDetailInternalProblemSchema, 'PartyContactPointDetailInternalProblem', 500],
+    ] as const;
+    for (const [problemSchema, tag, status] of problems) {
+      const problem = Schema.decodeUnknownSync(problemSchema)({
+        _tag: tag,
+        detail: 'Party Registry dependency failure',
+        status,
+        title: 'Party Contact Point request failed',
+        type: 'https://ontos.dev/problems/party-contact-point',
+      });
+      const execute = (): ReturnType<typeof executePartyContactPointDetail> => Effect.fail(problem);
+      const failure = yield* Effect.flip(partyBackedAddressSourceValidator('address-correlation', execute)(payload));
+      expect(Schema.is(AddressBookUnavailable)(failure)).toBe(true);
+    }
+  }),
 );
 
 it.effect('resolves the Current Party-backed postal snapshot through the public client', () =>
   Effect.gen(function* currentPartyPostalSnapshot() {
-    const execute = (): ReturnType<typeof executePartyContactPointDetail> =>
-      Effect.succeed(currentPostalContactPoint);
-    const resolved = yield* partyBackedPostalAddressResolver(
-      'address-correlation',
-      execute,
-    )(savedPartyAddress);
+    const execute = (): ReturnType<typeof executePartyContactPointDetail> => Effect.succeed(currentPostalContactPoint);
+    const resolved = yield* partyBackedPostalAddressResolver('address-correlation', execute)(savedPartyAddress);
 
     expect(resolved).toEqual({
       kind: 'FOUND',
@@ -305,10 +279,7 @@ it.effect('accepts a canonical Party alias and carries the corrected Current sou
         revision: 8,
         storedPartyRef: partyRef,
       });
-    const resolved = yield* partyBackedPostalAddressResolver(
-      'address-correlation',
-      execute,
-    )(savedPartyAddress);
+    const resolved = yield* partyBackedPostalAddressResolver('address-correlation', execute)(savedPartyAddress);
 
     expect(resolved).toMatchObject({
       kind: 'FOUND',
@@ -333,10 +304,7 @@ it.effect('rejects a different same-Tenant Contact Point returned by the depende
           resourceId: '20000000-0000-4000-8000-000000000099',
         },
       });
-    const resolved = yield* partyBackedPostalAddressResolver(
-      'address-correlation',
-      execute,
-    )(savedPartyAddress);
+    const resolved = yield* partyBackedPostalAddressResolver('address-correlation', execute)(savedPartyAddress);
 
     expect(resolved).toEqual({ kind: 'NOT_FOUND' });
   }),

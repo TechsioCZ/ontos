@@ -2,14 +2,8 @@
 import { defineRead, defineTenantModuleEntrypoint } from '@app/core-runtime';
 import type { ReadHandlerContext, ReadHandlerUnavailable } from '@app/core-runtime';
 import { Effect } from 'effect';
-import {
-  SavedAddressListRequestSchema,
-  SavedAddressListResponseSchema,
-} from '../../shared/apis/saved-address-list.ts';
-import type {
-  SavedAddressListRequest,
-  SavedAddressListResponse,
-} from '../../shared/apis/saved-address-list.ts';
+import { SavedAddressListRequestSchema, SavedAddressListResponseSchema } from '../../shared/apis/saved-address-list.ts';
+import type { SavedAddressListRequest, SavedAddressListResponse } from '../../shared/apis/saved-address-list.ts';
 import { profileTarget } from './address-read-support.ts';
 import { addressReadServicesForTransaction } from '../persistence/address-persistence.ts';
 
@@ -19,7 +13,7 @@ export interface SavedAddressListServices {
     tenantId: string,
   ) => Effect.Effect<SavedAddressListResponse, ReadHandlerUnavailable>;
 }
-export const savedAddressListEntrypoint = defineTenantModuleEntrypoint({
+const savedAddressListEntrypoint = defineTenantModuleEntrypoint({
   access: 'read',
   authorization: { kind: 'authenticated_principal' },
   entrypointKey: 'commerce.customer-context.api.saved-address-list',
@@ -46,9 +40,7 @@ export const savedAddressListRead = defineRead(
   (input, context: ReadHandlerContext<SavedAddressListServices>) =>
     context.services
       .list(input, context.scope.tenantId)
-      .pipe(
-        Effect.map((result) => ({ evidence: { resultCount: result.addresses.length }, result })),
-      ),
+      .pipe(Effect.map((result) => ({ evidence: { resultCount: result.addresses.length }, result }))),
   (transaction, scope) =>
     Effect.succeed<SavedAddressListServices>(addressReadServicesForTransaction(transaction, scope)),
   profileTarget,

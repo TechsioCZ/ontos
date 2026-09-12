@@ -22,7 +22,7 @@ type PartyContactPointsOperationInvocation = readonly [
 ];
 
 const partyContactPointsClient = (
-  credential: Redacted.Redacted<string>,
+  credential: Redacted.Redacted,
   requestCorrelation: string,
   options: PartyContactPointsClientOptions,
 ) =>

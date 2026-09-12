@@ -69,11 +69,6 @@ export const executeGrantCounterpartyCommerceAccess = (
 ) =>
   operationGateway.invoke(
     (credential) =>
-      executeGrantCounterpartyCommerceAccessWithAuthorization(
-        payload,
-        credential,
-        requestCorrelation,
-        options,
-      ),
+      executeGrantCounterpartyCommerceAccessWithAuthorization(payload, credential, requestCorrelation, options),
     options.gateway,
   );

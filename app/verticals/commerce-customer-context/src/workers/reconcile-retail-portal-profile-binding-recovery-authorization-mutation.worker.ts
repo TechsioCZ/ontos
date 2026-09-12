@@ -39,28 +39,27 @@ export const handleReconcileRetailPortalProfileBindingRecoveryAuthorizationMutat
     workerKey,
   });
 
-export const reconcileRetailPortalProfileBindingRecoveryAuthorizationMutationWorker =
-  defineOutboxWorker(
-    {
-      consumerModuleKey: moduleKey,
-      entrypoint: defineTenantModuleEntrypoint({
-        access: 'background',
-        authorization: { kind: 'owner_local_background' },
-        entrypointKey: workerKey,
-        moduleKey,
-        role: 'worker',
-      }),
-      leaseDurationMs: 30_000,
-      payloadSchema: OutboxPayloadSchema,
-      producerModuleKey: outboxProducerModuleKey,
-      retryPolicy: {
-        initialBackoffMs: 1000,
-        maxAttempts: 5,
-        maxBackoffMs: 60_000,
-        multiplier: 2,
-      },
-      topic: outboxTopic,
-      workerKey,
+export const reconcileRetailPortalProfileBindingRecoveryAuthorizationMutationWorker = defineOutboxWorker(
+  {
+    consumerModuleKey: moduleKey,
+    entrypoint: defineTenantModuleEntrypoint({
+      access: 'background',
+      authorization: { kind: 'owner_local_background' },
+      entrypointKey: workerKey,
+      moduleKey,
+      role: 'worker',
+    }),
+    leaseDurationMs: 30_000,
+    payloadSchema: OutboxPayloadSchema,
+    producerModuleKey: outboxProducerModuleKey,
+    retryPolicy: {
+      initialBackoffMs: 1000,
+      maxAttempts: 5,
+      maxBackoffMs: 60_000,
+      multiplier: 2,
     },
-    handleReconcileRetailPortalProfileBindingRecoveryAuthorizationMutation,
-  );
+    topic: outboxTopic,
+    workerKey,
+  },
+  handleReconcileRetailPortalProfileBindingRecoveryAuthorizationMutation,
+);

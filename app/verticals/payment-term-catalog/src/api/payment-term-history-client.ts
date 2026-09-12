@@ -21,7 +21,7 @@ type PaymentTermHistoryOperationInvocation = readonly [
 ];
 
 const paymentTermHistoryClient = (
-  credential: Redacted.Redacted<string>,
+  credential: Redacted.Redacted,
   requestCorrelation: string,
   options: PaymentTermHistoryClientOptions,
 ) =>
@@ -40,9 +40,7 @@ export const executePaymentTermHistoryWithAuthorization = (
   ...[credential, requestCorrelation, options = {}]: PaymentTermHistoryAuthorizedInvocation
 ) =>
   paymentTermHistoryClient(Redacted.make(credential), requestCorrelation, options).pipe(
-    Effect.flatMap((client) =>
-      client.paymentTermHistory.execute({ headers: {}, params: {}, payload, query: {} }),
-    ),
+    Effect.flatMap((client) => client.paymentTermHistory.execute({ headers: {}, params: {}, payload, query: {} })),
   );
 
 export const executePaymentTermHistory = (

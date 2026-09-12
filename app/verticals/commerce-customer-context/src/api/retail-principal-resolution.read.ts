@@ -5,11 +5,7 @@ import {
   defineRead,
   defineTenantModuleEntrypoint,
 } from '@app/core-runtime';
-import type {
-  OperationalScope,
-  ReadHandlerContext,
-  ResolvedReadPermissionTarget,
-} from '@app/core-runtime';
+import type { OperationalScope, ReadHandlerContext, ResolvedReadPermissionTarget } from '@app/core-runtime';
 import { Effect } from 'effect';
 import {
   RetailPrincipalResolutionRequestSchema,
@@ -26,10 +22,7 @@ export interface RetailPrincipalResolutionServices {
     input: RetailPrincipalResolutionRequest,
     principalId: string,
     tenantId: string,
-  ) => Effect.Effect<
-    RetailPrincipalResolutionResponse,
-    ReadHandlerNotFound | ReadHandlerUnavailable
-  >;
+  ) => Effect.Effect<RetailPrincipalResolutionResponse, ReadHandlerNotFound | ReadHandlerUnavailable>;
 }
 
 const notFound = () =>
@@ -44,10 +37,9 @@ const unavailable = () =>
     reason: 'Current Retail binding authorization state is temporarily unavailable',
   });
 
-export const retailPrincipalResolutionServicesUnavailable =
-  (): RetailPrincipalResolutionServices => ({
-    resolvePrincipal: () => Effect.fail(unavailable()),
-  });
+export const retailPrincipalResolutionServicesUnavailable = (): RetailPrincipalResolutionServices => ({
+  resolvePrincipal: () => Effect.fail(unavailable()),
+});
 
 export const resolveRetailPrincipalFromServices = (
   input: RetailPrincipalResolutionRequest,
@@ -75,7 +67,7 @@ export const retailPrincipalResolutionPermissionTarget = (
   kind: 'business_permission',
 });
 
-export const retailPrincipalResolutionEntrypoint = defineTenantModuleEntrypoint({
+const retailPrincipalResolutionEntrypoint = defineTenantModuleEntrypoint({
   access: 'read',
   authorization: { kind: 'context_permission', permission: 'module.access' },
   entrypointKey: 'commerce.customer-context.api.retail-principal-resolution',
@@ -101,15 +93,12 @@ export const retailPrincipalResolutionRead = defineRead(
     schemaVersion: '1',
   },
   (input, context: ReadHandlerContext<RetailPrincipalResolutionServices>) =>
-    resolveRetailPrincipalFromServices(
-      input,
-      context.scope.principalId,
-      context.scope.tenantId,
-      context.services,
-    ).pipe(Effect.map((result) => ({ evidence: { resultCount: 1 }, result }))),
+    resolveRetailPrincipalFromServices(input, context.scope.principalId, context.scope.tenantId, context.services).pipe(
+      Effect.map((result) => ({ evidence: { resultCount: 1 }, result })),
+    ),
   (transaction, scope) =>
     profileServicesForVerifiedScope(transaction, scope).pipe(
-      Effect.map(({ retailPrincipalResolution }) => retailPrincipalResolution),
+      Effect.map(({ retailPrincipalResolution }): RetailPrincipalResolutionServices => retailPrincipalResolution),
     ),
   retailPrincipalResolutionPermissionTarget,
 );

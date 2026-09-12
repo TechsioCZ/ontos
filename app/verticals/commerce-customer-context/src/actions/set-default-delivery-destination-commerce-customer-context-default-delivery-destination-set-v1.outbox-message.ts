@@ -11,13 +11,12 @@ import type { OutboxPayload } from '@app/commerce-customer-context/outbox/commer
 export {
   OutboxPayloadSchema as SetDefaultDeliveryDestinationCommerceCustomerContextDefaultDeliveryDestinationSetV1OutboxPayloadSchema,
   outboxProducerModuleKey as SetDefaultDeliveryDestinationCommerceCustomerContextDefaultDeliveryDestinationSetV1OutboxProducerModuleKey,
-  outboxTopic as SetDefaultDeliveryDestinationCommerceCustomerContextDefaultDeliveryDestinationSetV1OutboxTopic,
 } from '@app/commerce-customer-context/outbox/commerce-customer-context-default-delivery-destination-set-v1';
-export type { OutboxPayload as SetDefaultDeliveryDestinationCommerceCustomerContextDefaultDeliveryDestinationSetV1OutboxPayload } from '@app/commerce-customer-context/outbox/commerce-customer-context-default-delivery-destination-set-v1';
 
-export const createSetDefaultDeliveryDestinationCommerceCustomerContextDefaultDeliveryDestinationSetV1OutboxMessage =
-  (payload: OutboxPayload): OutboxMessage => ({
-    payloadJson: payload,
-    producerModuleKey: outboxProducerModuleKey,
-    topic: outboxTopic,
-  });
+export const createSetDefaultDeliveryDestinationCommerceCustomerContextDefaultDeliveryDestinationSetV1OutboxMessage = (
+  payload: OutboxPayload,
+): OutboxMessage => ({
+  payloadJson: payload,
+  producerModuleKey: outboxProducerModuleKey,
+  topic: outboxTopic,
+});

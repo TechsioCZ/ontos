@@ -16,8 +16,7 @@ export const GrantCounterpartyCommerceAccessPayloadSchema = Schema.Struct({
   recipient: PrincipalRefSchema,
   scope: CounterpartyPermissionScopeSchema,
 });
-export type GrantCounterpartyCommerceAccessPayload =
-  typeof GrantCounterpartyCommerceAccessPayloadSchema.Type;
+export type GrantCounterpartyCommerceAccessPayload = typeof GrantCounterpartyCommerceAccessPayloadSchema.Type;
 
 export const GrantCounterpartyCommerceAccessResultSchema = Schema.Union([
   Schema.Struct({
@@ -30,5 +29,3 @@ export const GrantCounterpartyCommerceAccessResultSchema = Schema.Union([
     reconciliation: AccessAuthorizationMutationEvidenceSchema,
   }),
 ]);
-export type GrantCounterpartyCommerceAccessResult =
-  typeof GrantCounterpartyCommerceAccessResultSchema.Type;

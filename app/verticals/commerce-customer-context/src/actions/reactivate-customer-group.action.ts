@@ -2,11 +2,7 @@
 // @ontos-action-owner commerce.customer-context
 // @ontos-action-slug reactivate-customer-group
 import type { ActionHandlerContext } from '@app/core-runtime';
-import {
-  defineAction,
-  defineActionResourcePermission,
-  defineTenantModuleEntrypoint,
-} from '@app/core-runtime';
+import { defineAction, defineActionResourcePermission, defineTenantModuleEntrypoint } from '@app/core-runtime';
 import { Effect, Match, Schema } from 'effect';
 import {
   ReactivateCustomerGroupPayloadSchema,
@@ -26,27 +22,15 @@ import {
   OutboxPayloadSchema as CustomerGroupReactivatedEventSchema,
   outboxProducerModuleKey as MODULE_KEY,
 } from '../../shared/outbox/commerce-customer-context-customer-group-reactivated-v1.ts';
-import {
-  customerGroupRecordedAt,
-  requireCustomerGroupLegalEntityId,
-  customerGroupScopeMatches,
-  customerGroupServiceFactory,
-  customerGroupWritePermission,
-} from './customer-group-action-support.ts';
+import { customerGroupServiceFactory, customerGroupWritePermission } from './customer-group-action-support.ts';
+import { executeCustomerGroupAction } from './customer-group-action-handler.ts';
 import { createReactivateCustomerGroupCommerceCustomerContextCustomerGroupReactivatedV1OutboxMessage as createCustomerGroupReactivatedOutboxMessage } from './reactivate-customer-group.commerce-customer-context-customer-group-reactivated-v1.outbox-message.ts';
 
 const domainEvents = {
   'commerce.customer-context.customer-group-reactivated.v1': CustomerGroupReactivatedEventSchema,
 } as const;
 
-export {
-  ReactivateCustomerGroupPayloadSchema,
-  ReactivateCustomerGroupResultSchema,
-} from '../../shared/actions/reactivate-customer-group.ts';
-export type {
-  ReactivateCustomerGroupPayload,
-  ReactivateCustomerGroupResult,
-} from '../../shared/actions/reactivate-customer-group.ts';
+export type { ReactivateCustomerGroupPayload } from '../../shared/actions/reactivate-customer-group.ts';
 
 const ReactivateCustomerGroupErrorSchema = Schema.Union([
   CustomerGroupLifecycleConflict,
@@ -57,97 +41,54 @@ const ReactivateCustomerGroupErrorSchema = Schema.Union([
 ]);
 
 const handleReactivateCustomerGroup = Effect.fn('ReactivateCustomerGroupAction.handle')(
-  function* reactivateCustomerGroup(
+  (
     payload: ReactivateCustomerGroupPayload,
     context: ActionHandlerContext<typeof domainEvents, CustomerGroupPersistence>,
-  ) {
-    if (!customerGroupScopeMatches(context.scope.tenantId, payload.groupRef)) {
-      return yield* new CustomerGroupScopeMismatch({
-        code: 'customer_group_scope_mismatch',
-        reason: 'The customer-group reference must belong to the trusted Tenant',
-      });
-    }
-    const recordedAt = yield* customerGroupRecordedAt;
-    const legalEntityId = yield* requireCustomerGroupLegalEntityId(context.scope.legalEntityId);
-    const result = yield* context.services.reactivate({
-      actionInvocationId: context.actionInvocationId,
-      effectiveAt: payload.effectiveAt,
-      expectedRevision: payload.expectedRevision,
-      groupRef: payload.groupRef,
-      legalEntityId,
-      principalId: context.scope.principalId,
-      reason: payload.reason,
-      recordedAt,
-      tenantId: context.scope.tenantId,
-    });
-    const resolved = yield* Match.value(result).pipe(
-      Match.tag('not_found', () =>
-        Effect.fail(
-          new CustomerGroupNotFound({
-            code: 'customer_group_not_found',
-            reason: 'The customer group does not exist',
-          }),
-        ),
-      ),
-      Match.tag('revision_conflict', ({ actualRevision }) =>
-        Effect.fail(
-          new CustomerGroupRevisionConflict({
-            actualRevision,
-            code: 'customer_group_revision_conflict',
-            reason: 'The customer group was changed by another operation',
-          }),
-        ),
-      ),
-      Match.tag('lifecycle_conflict', () =>
-        Effect.fail(
-          new CustomerGroupLifecycleConflict({
-            code: 'customer_group_lifecycle_conflict',
-            reason: 'The reactivation instant conflicts with the customer-group lifecycle',
-          }),
-        ),
-      ),
-      Match.tag('reactivated', ({ changed, group }) => Effect.succeed({ changed, group } as const)),
-      Match.exhaustive,
-    );
-    yield* context.recordAuditEvidence({
-      changed: resolved.changed,
-      effectiveAt: payload.effectiveAt,
-      groupRef: resolved.group.groupRef,
-      operation: 'REACTIVATE',
-      reason: payload.reason,
-      revision: resolved.group.revision,
-    });
-    yield* context.recordDataAccess({
-      accessKind: 'read',
-      queryHash: `customer-group-reactivate:${payload.groupRef.resourceId}:${payload.effectiveAt}`,
-      resultCount: 1,
-      servingModuleKey: MODULE_KEY,
-      targetModuleKey: MODULE_KEY,
-      targetResourceId: payload.groupRef.resourceId,
-      targetResourceType: payload.groupRef.resourceType,
-    });
-    if (resolved.changed) {
-      const eventPayload = {
-        effectiveAt: payload.effectiveAt,
+  ) =>
+    executeCustomerGroupAction(payload, context, {
+      auditEvidence: ({ payload: evidencePayload, resolved }) => ({
+        changed: resolved.changed,
+        effectiveAt: evidencePayload.effectiveAt,
         groupRef: resolved.group.groupRef,
-        recordedAt,
+        operation: 'REACTIVATE',
+        reason: evidencePayload.reason,
         revision: resolved.group.revision,
-      };
-      const event = yield* context.addDomainEvent({
+      }),
+      dataAccess: ({ payload: accessPayload }) => ({
+        accessKind: 'read',
+        queryHash: `customer-group-reactivate:${accessPayload.groupRef.resourceId}:${accessPayload.effectiveAt}`,
+        resultCount: 1,
+        servingModuleKey: MODULE_KEY,
+        targetModuleKey: MODULE_KEY,
+        targetResourceId: accessPayload.groupRef.resourceId,
+        targetResourceType: accessPayload.groupRef.resourceType,
+      }),
+      event: {
         eventType: 'commerce.customer-context.customer-group-reactivated.v1',
-        payloadJson: eventPayload,
-        producerModuleKey: MODULE_KEY,
-        subjectModuleKey: MODULE_KEY,
-        subjectResourceId: resolved.group.groupRef.resourceId,
-        subjectResourceType: resolved.group.groupRef.resourceType,
-      });
-      yield* context.addOutboxMessage(
-        event,
-        createCustomerGroupReactivatedOutboxMessage(eventPayload),
-      );
-    }
-    return resolved;
-  },
+        outboxMessage: createCustomerGroupReactivatedOutboxMessage,
+        payload: (eventPayload, resolved, recordedAt) => ({
+          effectiveAt: eventPayload.effectiveAt,
+          groupRef: resolved.group.groupRef,
+          recordedAt,
+          revision: resolved.group.revision,
+        }),
+      },
+      invoke: ({ command, context: actionContext, payload: actionPayload }) =>
+        actionContext.services.reactivate({ ...command, effectiveAt: actionPayload.effectiveAt }),
+      resolve: (result) =>
+        Match.value(result).pipe(
+          Match.tag('lifecycle_conflict', () =>
+            Effect.fail(
+              new CustomerGroupLifecycleConflict({
+                code: 'customer_group_lifecycle_conflict',
+                reason: 'The reactivation instant conflicts with the customer-group lifecycle',
+              }),
+            ),
+          ),
+          Match.tag('reactivated', ({ changed, group }) => Effect.succeed({ changed, group } as const)),
+          Match.exhaustive,
+        ),
+    }),
 );
 
 export const reactivateCustomerGroupAction = defineAction(
@@ -173,8 +114,8 @@ export const reactivateCustomerGroupAction = defineAction(
     owningModuleKey: 'commerce.customer-context',
     payloadSchema: ReactivateCustomerGroupPayloadSchema,
     policies: [],
-    resourcePermission: defineActionResourcePermission<ReactivateCustomerGroupPayload>(
-      ({ groupRef }) => customerGroupWritePermission(groupRef),
+    resourcePermission: defineActionResourcePermission<ReactivateCustomerGroupPayload>(({ groupRef }) =>
+      customerGroupWritePermission(groupRef),
     ),
     resultSchema: ReactivateCustomerGroupResultSchema,
     schemaVersion: '1',
@@ -184,9 +125,4 @@ export const reactivateCustomerGroupAction = defineAction(
 );
 
 // <generated-outbox-message-exports>
-export { createReactivateCustomerGroupCommerceCustomerContextCustomerGroupReactivatedV1OutboxMessage } from './reactivate-customer-group.commerce-customer-context-customer-group-reactivated-v1.outbox-message.ts';
-export { ReactivateCustomerGroupCommerceCustomerContextCustomerGroupReactivatedV1OutboxPayloadSchema } from './reactivate-customer-group.commerce-customer-context-customer-group-reactivated-v1.outbox-message.ts';
-export { ReactivateCustomerGroupCommerceCustomerContextCustomerGroupReactivatedV1OutboxProducerModuleKey } from './reactivate-customer-group.commerce-customer-context-customer-group-reactivated-v1.outbox-message.ts';
-export { ReactivateCustomerGroupCommerceCustomerContextCustomerGroupReactivatedV1OutboxTopic } from './reactivate-customer-group.commerce-customer-context-customer-group-reactivated-v1.outbox-message.ts';
-export type { ReactivateCustomerGroupCommerceCustomerContextCustomerGroupReactivatedV1OutboxPayload } from './reactivate-customer-group.commerce-customer-context-customer-group-reactivated-v1.outbox-message.ts';
 // </generated-outbox-message-exports>

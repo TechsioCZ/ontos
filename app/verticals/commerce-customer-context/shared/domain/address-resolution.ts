@@ -3,11 +3,7 @@ import { PartyContactPointRefSchema } from '@app/party-registry/resources/party-
 import { PartyOfficialIdentifierRefSchema } from '@app/party-registry/resources/party-official-identifier';
 import { PartyRefSchema } from '@app/party-registry/resources/party';
 import { Effect, Schema } from 'effect';
-import {
-  AddressBookProfileSchema,
-  PostalAddressSchema,
-  isAddressEligibleFor,
-} from './address-book.ts';
+import { AddressBookProfileSchema, PostalAddressSchema, isAddressEligibleFor } from './address-book.ts';
 import type { AddressBookProfile, PostalAddress, SavedAddress } from './address-book.ts';
 import type { AddressBookUnavailable } from './address-errors.ts';
 import { ProfileInstantSchema, SellingLegalEntityRefSchema } from './profile-contracts.ts';
@@ -19,27 +15,24 @@ export const ResolutionTenantIdSchema = Schema.String.check(Schema.isUUID()).pip
   Schema.brand('ResolutionTenantId'),
   Schema.decodeTo(Schema.String),
 );
-export const ResolutionCartIdSchema = StableTextSchema.pipe(
-  Schema.brand('ResolutionCartId'),
-  Schema.decodeTo(Schema.String),
-);
-export const ResolutionChannelIdSchema = StableTextSchema.pipe(
+const ResolutionCartIdSchema = StableTextSchema.pipe(Schema.brand('ResolutionCartId'), Schema.decodeTo(Schema.String));
+const ResolutionChannelIdSchema = StableTextSchema.pipe(
   Schema.brand('ResolutionChannelId'),
   Schema.decodeTo(Schema.String),
 );
-export const ResolutionMarketIdSchema = StableTextSchema.pipe(
+const ResolutionMarketIdSchema = StableTextSchema.pipe(
   Schema.brand('ResolutionMarketId'),
   Schema.decodeTo(Schema.String),
 );
-export const ResolutionLegalEntityIdSchema = StableTextSchema.pipe(
+const ResolutionLegalEntityIdSchema = StableTextSchema.pipe(
   Schema.brand('ResolutionLegalEntityId'),
   Schema.decodeTo(Schema.String),
 );
-export const ResolutionStorefrontIdSchema = StableTextSchema.pipe(
+const ResolutionStorefrontIdSchema = StableTextSchema.pipe(
   Schema.brand('ResolutionStorefrontId'),
   Schema.decodeTo(Schema.String),
 );
-export const ResolutionPrincipalIdSchema = StableTextSchema.pipe(
+const ResolutionPrincipalIdSchema = StableTextSchema.pipe(
   Schema.brand('ResolutionPrincipalId'),
   Schema.decodeTo(Schema.String),
 );
@@ -52,9 +45,7 @@ export const ResolutionResourceIdSchema = StableTextSchema.pipe(
   Schema.decodeTo(Schema.String),
 );
 
-export type AddressLookup<A> =
-  | Readonly<{ kind: 'FOUND'; value: A }>
-  | Readonly<{ kind: 'NOT_FOUND' }>;
+export type AddressLookup<A> = Readonly<{ kind: 'FOUND'; value: A }> | Readonly<{ kind: 'NOT_FOUND' }>;
 export const found = <A>(value: A): AddressLookup<A> => ({ kind: 'FOUND', value });
 export const notFound = <A>(): AddressLookup<A> => ({ kind: 'NOT_FOUND' });
 export type AddressDefaultLookup<A> =
@@ -62,13 +53,11 @@ export type AddressDefaultLookup<A> =
   | Readonly<{ kind: 'NONE' }>
   | Readonly<{ kind: 'INVALID'; reason: string }>;
 
-export const ResolutionSourceRevisionSchema = Schema.Struct({
+const ResolutionSourceRevisionSchema = Schema.Struct({
   revision: StableTextSchema,
   source: StableTextSchema,
 });
-export const ResolutionSourceRevisionVectorSchema = Schema.Array(
-  ResolutionSourceRevisionSchema,
-).check(
+export const ResolutionSourceRevisionVectorSchema = Schema.Array(ResolutionSourceRevisionSchema).check(
   Schema.isMinLength(1),
   Schema.isMaxLength(100),
   Schema.makeFilter((values) =>
@@ -91,7 +80,7 @@ export const PurchaseResolutionContextClaimSchema = Schema.Struct({
 });
 export type PurchaseResolutionContextClaim = typeof PurchaseResolutionContextClaimSchema.Type;
 
-export const ResolutionActorSchema = Schema.Union([
+const ResolutionActorSchema = Schema.Union([
   Schema.Struct({ kind: Schema.Literal('PRINCIPAL'), principalId: ResolutionPrincipalIdSchema }),
   Schema.Struct({
     guestEvidenceRef: StableTextSchema,
@@ -130,7 +119,7 @@ export const ResolutionDecisionEvidenceSchema = Schema.Struct({
 });
 export type ResolutionDecisionEvidence = typeof ResolutionDecisionEvidenceSchema.Type;
 
-export const InvoiceRecipientOfficialIdentifierSchema = Schema.Union([
+const InvoiceRecipientOfficialIdentifierSchema = Schema.Union([
   Schema.Struct({
     identifierType: StableTextSchema,
     normalizedValue: StableTextSchema,
@@ -152,13 +141,11 @@ export const InvoiceRecipientOfficialIdentifierSchema = Schema.Union([
 const InvoiceRecipientIdentityFields = {
   displayName: StableTextSchema,
   legalName: StableTextSchema,
-  officialIdentifiers: Schema.Array(InvoiceRecipientOfficialIdentifierSchema).check(
-    Schema.isMaxLength(50),
-  ),
+  officialIdentifiers: Schema.Array(InvoiceRecipientOfficialIdentifierSchema).check(Schema.isMaxLength(50)),
   sourceRevision: PositiveRevisionSchema,
 } as const;
 
-export const InvoiceRecipientIdentitySchema = Schema.Union([
+const InvoiceRecipientIdentitySchema = Schema.Union([
   Schema.Struct({
     ...InvoiceRecipientIdentityFields,
     kind: Schema.Literal('RETAIL_PARTY'),
@@ -176,9 +163,9 @@ export const InvoiceRecipientIdentitySchema = Schema.Union([
     kind: Schema.Literal('GUEST_SNAPSHOT'),
   }),
 ]);
-export type InvoiceRecipientIdentity = typeof InvoiceRecipientIdentitySchema.Type;
+type InvoiceRecipientIdentity = typeof InvoiceRecipientIdentitySchema.Type;
 
-export const InvoiceRecipientChoiceSchema = Schema.Union([
+const InvoiceRecipientChoiceSchema = Schema.Union([
   Schema.Struct({ kind: Schema.Literal('SAVED_ADDRESS'), savedAddressRef: SavedAddressRefSchema }),
   Schema.Struct({
     choiceEvidenceRef: StableTextSchema,
@@ -196,7 +183,7 @@ export const PurchaseResolutionSubjectSchema = Schema.Union([
   }),
 ]);
 export type PurchaseResolutionSubject = typeof PurchaseResolutionSubjectSchema.Type;
-export const InvoiceRecipientSubjectSchema = PurchaseResolutionSubjectSchema;
+const InvoiceRecipientSubjectSchema = PurchaseResolutionSubjectSchema;
 
 export const InvoiceRecipientResolutionRequestSchema = Schema.Struct({
   explicitChoice: Schema.optional(InvoiceRecipientChoiceSchema),
@@ -205,12 +192,10 @@ export const InvoiceRecipientResolutionRequestSchema = Schema.Struct({
 }).check(
   Schema.makeFilter(({ explicitChoice, purchasingContext, subject }) => {
     const profileTenantId = subject.kind === 'PROFILE' ? subject.profile.profileRef.tenantId : null;
-    const subjectMatches =
-      profileTenantId === null || purchasingContext.tenantId === profileTenantId;
+    const subjectMatches = profileTenantId === null || purchasingContext.tenantId === profileTenantId;
     const choiceMatches =
       explicitChoice?.kind !== 'SAVED_ADDRESS' ||
-      (subject.kind === 'PROFILE' &&
-        explicitChoice.savedAddressRef.tenantId === purchasingContext.tenantId);
+      (subject.kind === 'PROFILE' && explicitChoice.savedAddressRef.tenantId === purchasingContext.tenantId);
     return subjectMatches && choiceMatches
       ? undefined
       : 'The Invoice Recipient subject and every nested reference must share one Tenant; Guests cannot select saved addresses';
@@ -238,7 +223,7 @@ export const ResolvedSavedAddressSourceSchema = Schema.Union([
     savedAddressRevision: PositiveRevisionSchema,
   }),
 ]);
-export type ResolvedSavedAddressSource = typeof ResolvedSavedAddressSourceSchema.Type;
+type ResolvedSavedAddressSource = typeof ResolvedSavedAddressSourceSchema.Type;
 
 export type ResolvedSavedPostalAddress =
   | Readonly<{
@@ -250,7 +235,7 @@ export type ResolvedSavedPostalAddress =
     }>
   | Readonly<{ kind: 'COMMERCE_ONLY'; postalAddress: PostalAddress }>;
 
-export const InvoiceRecipientAddressSourceSchema = Schema.Union([
+const InvoiceRecipientAddressSourceSchema = Schema.Union([
   ResolvedSavedAddressSourceSchema,
   Schema.Struct({ choiceEvidenceRef: StableTextSchema, kind: Schema.Literal('ONE_TIME') }),
   Schema.Struct({
@@ -259,41 +244,78 @@ export const InvoiceRecipientAddressSourceSchema = Schema.Union([
   }),
 ]);
 
-export const AcceptedInvoiceRecipientSchema = Schema.Struct({
+interface AcceptedInvoiceRecipientFields {
+  readonly billingAddress: PostalAddress;
+  readonly countryCode: string;
+  readonly identity: InvoiceRecipientIdentity;
+  readonly source: typeof InvoiceRecipientAddressSourceSchema.Type;
+  readonly subject: PurchaseResolutionSubject;
+}
+
+const invoiceRecipientIdentityMatchesSubject = (
+  identity: InvoiceRecipientIdentity,
+  subject: PurchaseResolutionSubject,
+) => {
+  if (subject.kind === 'GUEST') {
+    return identity.kind === 'GUEST_SNAPSHOT' && identity.guestEvidenceRef === subject.guestEvidenceRef;
+  }
+  return (
+    identity.kind !== 'GUEST_SNAPSHOT' &&
+    identity.partyRef.tenantId === subject.profile.profileRef.tenantId &&
+    (identity.kind !== 'COUNTERPARTY_PARTY' ||
+      identity.counterpartyRef.tenantId === subject.profile.profileRef.tenantId)
+  );
+};
+
+const invoiceRecipientSourceMatchesSubject = (
+  source: typeof InvoiceRecipientAddressSourceSchema.Type,
+  subject: PurchaseResolutionSubject,
+) => {
+  if (source.kind !== 'SAVED_ADDRESS') {
+    return true;
+  }
+  if (subject.kind !== 'PROFILE' || source.savedAddressRef.tenantId !== subject.profile.profileRef.tenantId) {
+    return false;
+  }
+  if (source.originKind === 'COMMERCE_ONLY') {
+    return true;
+  }
+  const { tenantId } = subject.profile.profileRef;
+  return (
+    source.storedContactPointRef.tenantId === tenantId &&
+    source.storedPartyRef.tenantId === tenantId &&
+    source.currentContactPointRef.tenantId === tenantId &&
+    source.currentPartyRef.tenantId === tenantId
+  );
+};
+
+const acceptedInvoiceRecipientIsCoherent = ({
+  billingAddress,
+  countryCode,
+  identity,
+  source,
+  subject,
+}: AcceptedInvoiceRecipientFields) =>
+  billingAddress.countryCode === countryCode &&
+  invoiceRecipientIdentityMatchesSubject(identity, subject) &&
+  invoiceRecipientSourceMatchesSubject(source, subject);
+
+const AcceptedInvoiceRecipientSchema = Schema.Struct({
   billingAddress: PostalAddressSchema,
   countryCode: PostalAddressSchema.fields.countryCode,
   identity: InvoiceRecipientIdentitySchema,
   source: InvoiceRecipientAddressSourceSchema,
   subject: InvoiceRecipientSubjectSchema,
 }).check(
-  Schema.makeFilter(({ billingAddress, countryCode, identity, source, subject }) => {
-    const tenantId = subject.kind === 'PROFILE' ? subject.profile.profileRef.tenantId : undefined;
-    const identityMatches =
-      subject.kind === 'GUEST'
-        ? identity.kind === 'GUEST_SNAPSHOT' &&
-          identity.guestEvidenceRef === subject.guestEvidenceRef
-        : identity.kind !== 'GUEST_SNAPSHOT' &&
-          identity.partyRef.tenantId === tenantId &&
-          (identity.kind !== 'COUNTERPARTY_PARTY' ||
-            identity.counterpartyRef.tenantId === tenantId);
-    const sourceMatches =
-      source.kind === 'SAVED_ADDRESS'
-        ? subject.kind === 'PROFILE' &&
-          source.savedAddressRef.tenantId === tenantId &&
-          (source.originKind === 'COMMERCE_ONLY' ||
-            (source.storedContactPointRef.tenantId === tenantId &&
-              source.storedPartyRef.tenantId === tenantId &&
-              source.currentContactPointRef.tenantId === tenantId &&
-              source.currentPartyRef.tenantId === tenantId))
-        : true;
-    return billingAddress.countryCode === countryCode && identityMatches && sourceMatches
+  Schema.makeFilter((recipient) =>
+    acceptedInvoiceRecipientIsCoherent(recipient)
       ? undefined
-      : 'Accepted Invoice Recipient references and country must be coherent';
-  }),
+      : 'Accepted Invoice Recipient references and country must be coherent',
+  ),
 );
-export type AcceptedInvoiceRecipient = typeof AcceptedInvoiceRecipientSchema.Type;
+type AcceptedInvoiceRecipient = typeof AcceptedInvoiceRecipientSchema.Type;
 
-export const InvoiceRecipientDecisionBundleSchema = Schema.Struct({
+const InvoiceRecipientDecisionBundleSchema = Schema.Struct({
   acceptedHandoff: Schema.Literal('ORDER_ACCEPTANCE_INVOICE_RECIPIENT_V1'),
   billingEvidence: ResolutionDecisionEvidenceSchema,
   legalEvidence: ResolutionDecisionEvidenceSchema,
@@ -305,8 +327,7 @@ export const InvoiceRecipientDecisionBundleSchema = Schema.Struct({
   Schema.makeFilter(({ purchasingContext, recipient }) => {
     const { tenantId } = purchasingContext;
     const subjectMatches =
-      recipient.subject.kind === 'GUEST' ||
-      recipient.subject.profile.profileRef.tenantId === tenantId;
+      recipient.subject.kind === 'GUEST' || recipient.subject.profile.profileRef.tenantId === tenantId;
     const identityMatches =
       recipient.identity.kind === 'GUEST_SNAPSHOT' ||
       (recipient.identity.partyRef.tenantId === tenantId &&
@@ -314,12 +335,9 @@ export const InvoiceRecipientDecisionBundleSchema = Schema.Struct({
           recipient.identity.counterpartyRef.tenantId === tenantId) &&
         recipient.identity.officialIdentifiers.every(
           (identifier) =>
-            identifier.source !== 'PARTY_REGISTRY' ||
-            identifier.officialIdentifierRef.tenantId === tenantId,
+            identifier.source !== 'PARTY_REGISTRY' || identifier.officialIdentifierRef.tenantId === tenantId,
         ));
-    return purchasingContext.sellingLegalEntityRef.tenantId === tenantId &&
-      subjectMatches &&
-      identityMatches
+    return purchasingContext.sellingLegalEntityRef.tenantId === tenantId && subjectMatches && identityMatches
       ? undefined
       : 'Invoice Recipient decision references must belong to the trusted purchase Tenant';
   }),
@@ -354,7 +372,7 @@ export interface InvoiceRecipientCurrentFacts {
   readonly subject: PurchaseResolutionSubject;
 }
 
-export type InvoiceRecipientValidationDecision =
+type InvoiceRecipientValidationDecision =
   | Readonly<{
       billingEvidence: ResolutionDecisionEvidence;
       kind: 'ACCEPTED';
@@ -371,7 +389,7 @@ export type InvoiceRecipientValidationDecision =
       reason: string;
     }>;
 
-export interface InvoiceRecipientPolicyCandidate {
+interface InvoiceRecipientPolicyCandidate {
   readonly policyDecision: ResolutionDecisionEvidence;
   readonly postalAddress: PostalAddress;
 }
@@ -439,10 +457,7 @@ export const purchaseResolutionContextMatches = (
   claim.storefrontId === current.storefrontId &&
   claim.tenantId === current.tenantId;
 
-const savedAddressSource = (
-  address: SavedAddress,
-  resolved: ResolvedSavedPostalAddress,
-): ResolvedSavedAddressSource =>
+const savedAddressSource = (address: SavedAddress, resolved: ResolvedSavedPostalAddress): ResolvedSavedAddressSource =>
   address.origin.kind === 'PARTY_BACKED' && resolved.kind === 'PARTY_BACKED'
     ? {
         currentContactPointRef: resolved.currentContactPointRef,
@@ -530,103 +545,141 @@ type InvoiceAddressCandidateResult =
     }>
   | Readonly<{ kind: 'FAILURE'; resolution: InvoiceRecipientResolution }>;
 
+type InvoiceCandidateFailure = Extract<InvoiceAddressCandidateResult, { readonly kind: 'FAILURE' }>;
+
 const invoiceCandidateFailure = (
   kind: Exclude<InvoiceRecipientResolution['kind'], 'INVOICE_RECIPIENT_RESOLVED'>,
   reason: string,
-): InvoiceAddressCandidateResult => ({ kind: 'FAILURE', resolution: invalid(kind, reason) });
+): InvoiceCandidateFailure => ({ kind: 'FAILURE', resolution: invalid(kind, reason) });
 
-const resolveInvoiceAddressCandidate = Effect.fn(
-  'AddressResolution.resolveInvoiceAddressCandidate',
-)(function* resolveInvoiceAddressCandidateEffect(
-  request: InvoiceRecipientResolutionRequest,
-  current: InvoiceRecipientCurrentFacts,
-  ports: InvoiceRecipientPorts,
-): Effect.fn.Return<InvoiceAddressCandidateResult, AddressBookUnavailable> {
-  if (request.explicitChoice?.kind === 'ONE_TIME') {
-    return {
-      addressSource: {
-        choiceEvidenceRef: request.explicitChoice.choiceEvidenceRef,
-        kind: 'ONE_TIME',
-      },
-      kind: 'CANDIDATE',
-      postalAddress: request.explicitChoice.postalAddress,
-      source: 'EXPLICIT',
-    };
-  }
-  if (request.explicitChoice?.kind === 'SAVED_ADDRESS') {
-    if (request.subject.kind !== 'PROFILE') {
-      return invoiceCandidateFailure(
-        'EXPLICIT_CHOICE_INVALID',
-        'Guests cannot select a saved address.',
+type InvoiceSavedAddressPlan = Readonly<{ kind: 'RESOLVE'; savedAddress: SavedAddress }> | InvoiceCandidateFailure;
+
+const planInvoiceSavedAddress = (
+  savedAddress: SavedAddress,
+  source: 'EXPLICIT' | 'DEFAULT',
+): InvoiceSavedAddressPlan =>
+  isAddressEligibleFor(savedAddress, 'BILLING')
+    ? { kind: 'RESOLVE', savedAddress }
+    : invoiceCandidateFailure(
+        source === 'EXPLICIT' ? 'EXPLICIT_CHOICE_INVALID' : 'DEFAULT_BILLING_ADDRESS_INVALID',
+        source === 'EXPLICIT'
+          ? 'The explicit saved address is missing, inactive, or not billing eligible.'
+          : 'The configured billing default is inactive or ineligible.',
       );
-    }
-    const saved = yield* ports.loadSavedAddress({
-      profile: request.subject.profile,
-      resourceId: request.explicitChoice.savedAddressRef.resourceId,
-    });
-    if (saved.kind !== 'FOUND' || !isAddressEligibleFor(saved.value, 'BILLING')) {
-      return invoiceCandidateFailure(
+
+const planExplicitInvoiceSavedAddress = (saved: AddressLookup<SavedAddress>): InvoiceSavedAddressPlan =>
+  saved.kind === 'FOUND'
+    ? planInvoiceSavedAddress(saved.value, 'EXPLICIT')
+    : invoiceCandidateFailure(
         'EXPLICIT_CHOICE_INVALID',
         'The explicit saved address is missing, inactive, or not billing eligible.',
       );
-    }
-    const resolved = yield* ports.resolvePostalAddress(saved.value);
-    return resolved.kind === 'FOUND' && resolved.value.kind === saved.value.origin.kind
-      ? {
-          addressSource: savedAddressSource(saved.value, resolved.value),
-          kind: 'CANDIDATE',
-          postalAddress: resolved.value.postalAddress,
-          source: 'EXPLICIT',
-        }
-      : invoiceCandidateFailure(
-          'EXPLICIT_CHOICE_INVALID',
-          'The explicit Party-backed source is no longer Current.',
-        );
-  }
 
-  const saved =
-    request.subject.kind === 'PROFILE'
-      ? yield* ports.loadDefaultBillingAddress(request.subject.profile)
-      : ({ kind: 'NONE' } as const);
+const planDefaultInvoiceSavedAddress = (
+  saved: AddressDefaultLookup<SavedAddress>,
+): InvoiceSavedAddressPlan | undefined => {
   if (saved.kind === 'INVALID') {
     return invoiceCandidateFailure('DEFAULT_BILLING_ADDRESS_INVALID', saved.reason);
   }
-  if (saved.kind === 'FOUND') {
-    if (!isAddressEligibleFor(saved.value, 'BILLING')) {
-      return invoiceCandidateFailure(
-        'DEFAULT_BILLING_ADDRESS_INVALID',
-        'The configured billing default is inactive or ineligible.',
-      );
-    }
-    const resolved = yield* ports.resolvePostalAddress(saved.value);
-    return resolved.kind === 'FOUND' && resolved.value.kind === saved.value.origin.kind
-      ? {
-          addressSource: savedAddressSource(saved.value, resolved.value),
-          kind: 'CANDIDATE',
-          postalAddress: resolved.value.postalAddress,
-          source: 'DEFAULT',
-        }
-      : invoiceCandidateFailure(
-          'DEFAULT_BILLING_ADDRESS_INVALID',
-          'The configured Party-backed default is no longer Current.',
-        );
+  return saved.kind === 'FOUND' ? planInvoiceSavedAddress(saved.value, 'DEFAULT') : undefined;
+};
+
+const resolvedInvoiceSavedAddressCandidate = (
+  savedAddress: SavedAddress,
+  resolved: AddressLookup<ResolvedSavedPostalAddress>,
+  source: 'EXPLICIT' | 'DEFAULT',
+): InvoiceAddressCandidateResult => {
+  if (resolved.kind !== 'FOUND' || resolved.value.kind !== savedAddress.origin.kind) {
+    return invoiceCandidateFailure(
+      source === 'EXPLICIT' ? 'EXPLICIT_CHOICE_INVALID' : 'DEFAULT_BILLING_ADDRESS_INVALID',
+      source === 'EXPLICIT'
+        ? 'The explicit Party-backed source is no longer Current.'
+        : 'The configured Party-backed default is no longer Current.',
+    );
   }
-  const policy = yield* ports.constructPolicyRecipient(current);
-  return policy.kind === 'FOUND'
-    ? {
+  return {
+    addressSource: savedAddressSource(savedAddress, resolved.value),
+    kind: 'CANDIDATE',
+    postalAddress: resolved.value.postalAddress,
+    source,
+  };
+};
+
+type ExplicitInvoiceAddressCandidateResult = InvoiceAddressCandidateResult | Readonly<{ kind: 'NO_EXPLICIT_CHOICE' }>;
+
+const resolveExplicitInvoiceAddressCandidate = Effect.fn('AddressResolution.resolveExplicitInvoiceAddressCandidate')(
+  function* resolveExplicitInvoiceAddressCandidateEffect(
+    request: InvoiceRecipientResolutionRequest,
+    ports: InvoiceRecipientPorts,
+  ): Effect.fn.Return<ExplicitInvoiceAddressCandidateResult, AddressBookUnavailable> {
+    const choice = request.explicitChoice;
+    if (choice === undefined) {
+      return { kind: 'NO_EXPLICIT_CHOICE' };
+    }
+    if (choice.kind === 'ONE_TIME') {
+      return {
         addressSource: {
-          kind: 'POLICY',
-          policyDecision: policy.value.policyDecision,
+          choiceEvidenceRef: choice.choiceEvidenceRef,
+          kind: 'ONE_TIME',
         },
         kind: 'CANDIDATE',
-        postalAddress: policy.value.postalAddress,
-        source: 'POLICY',
-      }
-    : invoiceCandidateFailure(
-        'INVOICE_RECIPIENT_REQUIRED',
-        'No Invoice Recipient can be resolved.',
-      );
-});
+        postalAddress: choice.postalAddress,
+        source: 'EXPLICIT',
+      };
+    }
+    if (request.subject.kind !== 'PROFILE') {
+      return invoiceCandidateFailure('EXPLICIT_CHOICE_INVALID', 'Guests cannot select a saved address.');
+    }
+    const saved = yield* ports.loadSavedAddress({
+      profile: request.subject.profile,
+      resourceId: choice.savedAddressRef.resourceId,
+    });
+    const plan = planExplicitInvoiceSavedAddress(saved);
+    if (plan.kind === 'FAILURE') {
+      return plan;
+    }
+    const resolved = yield* ports.resolvePostalAddress(plan.savedAddress);
+    return resolvedInvoiceSavedAddressCandidate(plan.savedAddress, resolved, 'EXPLICIT');
+  },
+);
+
+const resolveInvoiceAddressCandidate = Effect.fn('AddressResolution.resolveInvoiceAddressCandidate')(
+  function* resolveInvoiceAddressCandidateEffect(
+    request: InvoiceRecipientResolutionRequest,
+    current: InvoiceRecipientCurrentFacts,
+    ports: InvoiceRecipientPorts,
+  ): Effect.fn.Return<InvoiceAddressCandidateResult, AddressBookUnavailable> {
+    const explicit = yield* resolveExplicitInvoiceAddressCandidate(request, ports);
+    if (explicit.kind !== 'NO_EXPLICIT_CHOICE') {
+      return explicit;
+    }
+
+    const saved =
+      request.subject.kind === 'PROFILE'
+        ? yield* ports.loadDefaultBillingAddress(request.subject.profile)
+        : ({ kind: 'NONE' } as const);
+    const plan = planDefaultInvoiceSavedAddress(saved);
+    if (plan?.kind === 'FAILURE') {
+      return plan;
+    }
+    if (plan?.kind === 'RESOLVE') {
+      const resolved = yield* ports.resolvePostalAddress(plan.savedAddress);
+      return resolvedInvoiceSavedAddressCandidate(plan.savedAddress, resolved, 'DEFAULT');
+    }
+    const policy = yield* ports.constructPolicyRecipient(current);
+    return policy.kind === 'FOUND'
+      ? {
+          addressSource: {
+            kind: 'POLICY',
+            policyDecision: policy.value.policyDecision,
+          },
+          kind: 'CANDIDATE',
+          postalAddress: policy.value.postalAddress,
+          source: 'POLICY',
+        }
+      : invoiceCandidateFailure('INVOICE_RECIPIENT_REQUIRED', 'No Invoice Recipient can be resolved.');
+  },
+);
 
 export const resolveInvoiceRecipient = Effect.fn('AddressResolution.resolveInvoiceRecipient')(
   function* resolveInvoiceRecipientEffect(
@@ -647,12 +700,7 @@ export const resolveInvoiceRecipient = Effect.fn('AddressResolution.resolveInvoi
         'The claimed purchase context does not match the Current trusted context.',
       );
     }
-    if (
-      !hasExactResolutionRevisions(
-        request.purchasingContext.expectedSourceRevisions,
-        current.sourceRevisions,
-      )
-    ) {
+    if (!hasExactResolutionRevisions(request.purchasingContext.expectedSourceRevisions, current.sourceRevisions)) {
       return invalid('STALE_SOURCE', 'One or more Invoice Recipient sources changed.');
     }
 

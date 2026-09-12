@@ -8,4 +8,3 @@ export const {
   makeRef: makePartyCorrectionRef,
   refSchema: PartyCorrectionRefSchema,
 } = timelineResource('party-correction', 'Party Correction');
-export type PartyCorrectionRef = typeof PartyCorrectionRefSchema.Type;

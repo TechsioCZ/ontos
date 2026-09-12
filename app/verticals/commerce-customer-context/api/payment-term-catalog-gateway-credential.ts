@@ -43,9 +43,7 @@ const unavailable = (cause: unknown): PaymentTermsDependencyUnavailable => {
   return failure;
 };
 
-const unavailableConfigurationIssuer = (
-  cause: unknown,
-): PaymentTermCatalogGatewayCredentialIssuer =>
+const unavailableConfigurationIssuer = (cause: unknown): PaymentTermCatalogGatewayCredentialIssuer =>
   Object.freeze({
     issue: () => {
       const failure = new PaymentTermsDependencyUnavailable({
@@ -105,5 +103,4 @@ export const makePaymentTermCatalogGatewayCredentialLayer = (
     ),
   );
 
-export const paymentTermCatalogGatewayCredentialLive =
-  makePaymentTermCatalogGatewayCredentialLayer();
+export const paymentTermCatalogGatewayCredentialLive = makePaymentTermCatalogGatewayCredentialLayer();

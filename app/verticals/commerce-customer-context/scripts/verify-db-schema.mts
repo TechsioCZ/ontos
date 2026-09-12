@@ -4,10 +4,7 @@ import { Effect, Schema } from 'effect';
 import { Client } from 'pg';
 
 import { compareCommerceCustomerContextCatalog } from '../src/database/catalog.ts';
-import {
-  COMMERCE_CUSTOMER_CONTEXT_SCHEMA_NAME,
-  COMMERCE_CUSTOMER_CONTEXT_TABLES,
-} from '../src/database/schema.ts';
+import { COMMERCE_CUSTOMER_CONTEXT_SCHEMA_NAME, COMMERCE_CUSTOMER_CONTEXT_TABLES } from '../src/database/schema.ts';
 
 class CommerceCustomerContextSchemaVerificationError extends Schema.TaggedError<CommerceCustomerContextSchemaVerificationError>()(
   'CommerceCustomerContextSchemaVerificationError',
@@ -200,9 +197,7 @@ const verify = Effect.gen(function* verifyCommerceCustomerContextSchema() {
             ),
         });
         const difference = compareCommerceCustomerContextCatalog(
-          catalog.rows.map(
-            ({ table_name }) => `${COMMERCE_CUSTOMER_CONTEXT_SCHEMA_NAME}.${table_name}`,
-          ),
+          catalog.rows.map(({ table_name }) => `${COMMERCE_CUSTOMER_CONTEXT_SCHEMA_NAME}.${table_name}`),
         );
         if (difference.missing.length > 0 || difference.unexpected.length > 0) {
           return yield* failure(
@@ -359,20 +354,12 @@ const verify = Effect.gen(function* verifyCommerceCustomerContextSchema() {
         if (unsafeInfrastructure) {
           const expectedRoutines = new Set<string>(EXPECTED_RUNTIME_ROUTINES);
           const actualRoutines = new Set(row.runtime_routines);
-          const missingRoutines = EXPECTED_RUNTIME_ROUTINES.filter(
-            (routine) => !actualRoutines.has(routine),
-          );
-          const unexpectedRoutines = row.runtime_routines.filter(
-            (routine) => !expectedRoutines.has(routine),
-          );
+          const missingRoutines = EXPECTED_RUNTIME_ROUTINES.filter((routine) => !actualRoutines.has(routine));
+          const unexpectedRoutines = row.runtime_routines.filter((routine) => !expectedRoutines.has(routine));
           const expectedTriggers = new Set<string>(EXPECTED_TRIGGER_NAMES);
           const actualTriggers = new Set(row.trigger_names);
-          const missingTriggers = EXPECTED_TRIGGER_NAMES.filter(
-            (trigger) => !actualTriggers.has(trigger),
-          );
-          const unexpectedTriggers = row.trigger_names.filter(
-            (trigger) => !expectedTriggers.has(trigger),
-          );
+          const missingTriggers = EXPECTED_TRIGGER_NAMES.filter((trigger) => !actualTriggers.has(trigger));
+          const unexpectedTriggers = row.trigger_names.filter((trigger) => !expectedTriggers.has(trigger));
           return yield* failure(
             `Commerce Customer Context database infrastructure is unsafe; ` +
               `forcedRls=${row.forced_rls_count}/${COMMERCE_CUSTOMER_CONTEXT_TABLES.length}, ` +

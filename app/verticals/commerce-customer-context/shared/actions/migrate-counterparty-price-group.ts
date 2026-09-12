@@ -23,22 +23,13 @@ export const MigrateCounterpartyPriceGroupPayloadSchema = Schema.Struct({
   reason: PriceGroupReasonSchema,
   sourcePriceGroupRef: PriceGroupRefSchema,
   targetPriceGroupRef: PriceGroupRefSchema,
-  targets: Schema.Array(MigrationTargetSchema).check(
-    Schema.isMinLength(1),
-    Schema.isMaxLength(100),
-  ),
+  targets: Schema.Array(MigrationTargetSchema).check(Schema.isMinLength(1), Schema.isMaxLength(100)),
 });
-export type MigrateCounterpartyPriceGroupPayload =
-  typeof MigrateCounterpartyPriceGroupPayloadSchema.Type;
+export type MigrateCounterpartyPriceGroupPayload = typeof MigrateCounterpartyPriceGroupPayloadSchema.Type;
 
 const MigrationConflictItemSchema = Schema.Struct({
   assignmentRef: CustomerPriceGroupAssignmentRefSchema,
-  reason: Schema.Literals([
-    'ASSIGNMENT_CHANGED',
-    'ASSIGNMENT_MISSING',
-    'OVERLAP',
-    'PROFILE_INELIGIBLE',
-  ]),
+  reason: Schema.Literals(['ASSIGNMENT_CHANGED', 'ASSIGNMENT_MISSING', 'OVERLAP', 'PROFILE_INELIGIBLE']),
 });
 export const MigrateCounterpartyPriceGroupResultSchema = Schema.Union([
   Schema.TaggedStruct('MIGRATED', {
@@ -46,11 +37,7 @@ export const MigrateCounterpartyPriceGroupResultSchema = Schema.Union([
     changed: Schema.Boolean,
   }),
   Schema.TaggedStruct('CONFLICTS', {
-    conflicts: Schema.Array(MigrationConflictItemSchema).check(
-      Schema.isMinLength(1),
-      Schema.isMaxLength(100),
-    ),
+    conflicts: Schema.Array(MigrationConflictItemSchema).check(Schema.isMinLength(1), Schema.isMaxLength(100)),
   }),
 ]);
-export type MigrateCounterpartyPriceGroupResult =
-  typeof MigrateCounterpartyPriceGroupResultSchema.Type;
+export type MigrateCounterpartyPriceGroupResult = typeof MigrateCounterpartyPriceGroupResultSchema.Type;

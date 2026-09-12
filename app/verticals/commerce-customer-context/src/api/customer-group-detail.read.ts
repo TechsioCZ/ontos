@@ -17,7 +17,7 @@ import {
 } from './customer-group-read-support.ts';
 import type { CustomerGroupReadServices } from './customer-group-read-support.ts';
 
-export const customerGroupDetailEntrypoint = defineTenantModuleEntrypoint({
+const customerGroupDetailEntrypoint = defineTenantModuleEntrypoint({
   access: 'read',
   authorization: { kind: 'context_permission', permission: 'customer.group.read' },
   entrypointKey: 'commerce.customer-context.api.customer-group-detail',
@@ -25,24 +25,22 @@ export const customerGroupDetailEntrypoint = defineTenantModuleEntrypoint({
   role: 'api',
 });
 
-const handleCustomerGroupDetail = Effect.fn('CustomerGroupDetailRead.handle')(
-  function* customerGroupDetail(
-    input: CustomerGroupDetailRequest,
-    context: ReadHandlerContext<CustomerGroupReadServices>,
-  ) {
-    yield* requireCustomerGroupTenant(context.scope.tenantId, input.groupRef);
-    const legalEntityId = yield* requireCustomerGroupReadLegalEntityId(context.scope.legalEntityId);
-    const outcome = yield* context.services
-      .detail({
-        groupRef: input.groupRef,
-        legalEntityId,
-        tenantId: context.scope.tenantId,
-      })
-      .pipe(Effect.mapError(customerGroupReadUnavailable));
-    const group = yield* unwrapCustomerGroupLookup(outcome);
-    return { evidence: { resultCount: 1 }, result: { group } };
-  },
-);
+const handleCustomerGroupDetail = Effect.fn('CustomerGroupDetailRead.handle')(function* customerGroupDetail(
+  input: CustomerGroupDetailRequest,
+  context: ReadHandlerContext<CustomerGroupReadServices>,
+) {
+  yield* requireCustomerGroupTenant(context.scope.tenantId, input.groupRef);
+  const legalEntityId = yield* requireCustomerGroupReadLegalEntityId(context.scope.legalEntityId);
+  const outcome = yield* context.services
+    .detail({
+      groupRef: input.groupRef,
+      legalEntityId,
+      tenantId: context.scope.tenantId,
+    })
+    .pipe(Effect.mapError(customerGroupReadUnavailable));
+  const group = yield* unwrapCustomerGroupLookup(outcome);
+  return { evidence: { resultCount: 1 }, result: { group } };
+});
 
 export const customerGroupDetailRead = defineRead(
   {

@@ -41,9 +41,7 @@ export const executeCurrentPaymentTermsWithAuthorization = (
   ...[credential, requestCorrelation, options = {}]: CurrentPaymentTermsAuthorizedInvocation
 ) =>
   currentPaymentTermsClient(Redacted.make(credential), requestCorrelation, options).pipe(
-    Effect.flatMap((client) =>
-      client.currentPaymentTerms.execute({ headers: {}, params: {}, payload, query: {} }),
-    ),
+    Effect.flatMap((client) => client.currentPaymentTerms.execute({ headers: {}, params: {}, payload, query: {} })),
   );
 
 export const executeCurrentPaymentTerms = (

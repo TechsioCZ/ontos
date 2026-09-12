@@ -3,7 +3,7 @@
 // @ontos-action-http-slug revoke-counterparty-commerce-access
 // oxlint-disable sonarjs/function-name -- Effect Match.tags requires owner-declared tag keys; remove-when: sonarjs accepts discriminant-map properties.
 import type { ActionCoreError } from '@app/core-runtime';
-import { Effect, HttpApiMiddleware } from '@modern-js/plugin-bff/effect-edge';
+import { Effect, HttpApiMiddleware } from '@modern-js/bff-effect/effect-edge';
 import { Match, Schema } from 'effect';
 import {
   RevokeCounterpartyCommerceAccessActionAlreadyCommittedProblemSchema,
@@ -22,172 +22,71 @@ import {
 } from '../shared/apis/revoke-counterparty-commerce-access-action.ts';
 import type { RevokeCounterpartyCommerceAccessActionProblem } from '../shared/apis/revoke-counterparty-commerce-access-action.ts';
 import { revokeCounterpartyCommerceAccessAction } from '../src/actions/revoke-counterparty-commerce-access.action.ts';
+/* oxlint-disable anti-slop-effect/no-service-constructor-imports -- These pure helpers construct problem values rather than Effect services. */
+import {
+  actionProblemStatus as problemStatus,
+  counterpartyAccessContractViolationProblemByCode,
+  makeAuthenticationProblem,
+  makeConflictProblem,
+  makeForbiddenProblem,
+  makeIneligibleProblem,
+  makeInternalProblem,
+  makeInvalidProblem,
+  makeNotFoundProblem,
+  makePreconditionProblem,
+  makeRateLimitedProblem,
+  makeUnavailableProblem,
+} from './action-problem-support.ts';
+/* oxlint-enable anti-slop-effect/no-service-constructor-imports */
+import type { CounterpartyAccessDomainProblemIdentity } from './action-problem-support.ts';
 
 type DomainError = typeof revokeCounterpartyCommerceAccessAction.descriptor.domainErrorSchema.Type;
 type ProblemOf<Tag extends RevokeCounterpartyCommerceAccessActionProblem['_tag']> = Extract<
   RevokeCounterpartyCommerceAccessActionProblem,
   { readonly _tag: Tag }
 >;
-type DomainProblemIdentity =
-  | { readonly code: 'invitation_revision_conflict'; readonly kind: 'conflict' }
-  | {
-      readonly code: 'counterparty_scope_mismatch' | 'principal_scope_mismatch';
-      readonly kind: 'forbidden';
-    }
-  | {
-      readonly code:
-        | 'administrative_scope_exceeded'
-        | 'bootstrap_required'
-        | 'grantor_not_authorized'
-        | 'invitation_claim_proof_consumed'
-        | 'invitation_claim_proof_invalid'
-        | 'invitation_claimant_mismatch'
-        | 'invitation_expired'
-        | 'invitation_invalid'
-        | 'inviter_authority_denied'
-        | 'permission_not_delegable'
-        | 'permission_scope_not_allowed'
-        | 'principal_not_eligible'
-        | 'reason_required';
-      readonly kind: 'ineligible';
-    }
-  | { readonly code: 'invitation_rate_limited'; readonly kind: 'rateLimited' }
-  | { readonly code: 'counterparty_access_unavailable'; readonly kind: 'unavailable' };
-
-const problemStatus = {
-  authentication: 401,
-  conflict: 409,
-  forbidden: 403,
-  ineligible: 422,
-  internal: 500,
-  invalid: 400,
-  notFound: 404,
-  precondition: 428,
-  rateLimited: 429,
-  timeout: 504,
-  unavailable: 503,
-} as const;
-
-const counterpartyAccessContractViolationProblemByCode = {
-  administrative_scope_exceeded: { code: 'administrative_scope_exceeded', kind: 'ineligible' },
-  bootstrap_required: { code: 'bootstrap_required', kind: 'ineligible' },
-  counterparty_scope_mismatch: { code: 'counterparty_scope_mismatch', kind: 'forbidden' },
-  grantor_not_authorized: { code: 'grantor_not_authorized', kind: 'ineligible' },
-  invitation_claim_proof_consumed: { code: 'invitation_claim_proof_consumed', kind: 'ineligible' },
-  invitation_claim_proof_invalid: { code: 'invitation_claim_proof_invalid', kind: 'ineligible' },
-  invitation_claimant_mismatch: { code: 'invitation_claimant_mismatch', kind: 'ineligible' },
-  invitation_expired: { code: 'invitation_expired', kind: 'ineligible' },
-  invitation_invalid: { code: 'invitation_invalid', kind: 'ineligible' },
-  invitation_rate_limited: { code: 'invitation_rate_limited', kind: 'rateLimited' },
-  invitation_revision_conflict: { code: 'invitation_revision_conflict', kind: 'conflict' },
-  inviter_authority_denied: { code: 'inviter_authority_denied', kind: 'ineligible' },
-  permission_not_delegable: { code: 'permission_not_delegable', kind: 'ineligible' },
-  permission_scope_not_allowed: { code: 'permission_scope_not_allowed', kind: 'ineligible' },
-  principal_not_eligible: { code: 'principal_not_eligible', kind: 'ineligible' },
-  principal_scope_mismatch: { code: 'principal_scope_mismatch', kind: 'forbidden' },
-  reason_required: { code: 'reason_required', kind: 'ineligible' },
-} as const satisfies Record<
-  Extract<DomainError, { readonly _tag: 'CounterpartyAccessContractViolation' }>['code'],
-  DomainProblemIdentity
->;
-
 export const revokeCounterpartyCommerceAccessActionProblem = {
-  authentication: (): ProblemOf<'RevokeCounterpartyCommerceAccessActionAuthenticationProblem'> =>
-    RevokeCounterpartyCommerceAccessActionAuthenticationProblemSchema.make({
-      detail: 'A valid audience-scoped Bearer assertion is required.',
-      status: problemStatus.authentication,
-      title: 'Authentication required',
-      type: 'https://ontos.dev/problems/operation-authentication-required',
-    }),
-  conflict: (
-    code: ProblemOf<'RevokeCounterpartyCommerceAccessActionConflictProblem'>['code'],
-  ): ProblemOf<'RevokeCounterpartyCommerceAccessActionConflictProblem'> =>
-    RevokeCounterpartyCommerceAccessActionConflictProblemSchema.make({
-      code,
-      detail: 'The Action conflicts with current state.',
-      status: problemStatus.conflict,
-      title: 'Action conflict',
-      type: 'https://ontos.dev/problems/action-conflict',
-    }),
-  forbidden: (
-    code: ProblemOf<'RevokeCounterpartyCommerceAccessActionForbiddenProblem'>['code'],
-  ): ProblemOf<'RevokeCounterpartyCommerceAccessActionForbiddenProblem'> =>
-    RevokeCounterpartyCommerceAccessActionForbiddenProblemSchema.make({
-      code,
-      detail: 'The principal is not permitted to perform this Action.',
-      status: problemStatus.forbidden,
-      title: 'Action forbidden',
-      type: 'https://ontos.dev/problems/action-forbidden',
-    }),
-  ineligible: (
-    code: ProblemOf<'RevokeCounterpartyCommerceAccessActionIneligibleProblem'>['code'],
-  ): ProblemOf<'RevokeCounterpartyCommerceAccessActionIneligibleProblem'> =>
-    RevokeCounterpartyCommerceAccessActionIneligibleProblemSchema.make({
-      code,
-      detail: 'The request is not eligible for this Action.',
-      status: problemStatus.ineligible,
-      title: 'Action ineligible',
-      type: 'https://ontos.dev/problems/action-ineligible',
-    }),
-  internal: (): ProblemOf<'RevokeCounterpartyCommerceAccessActionInternalProblem'> =>
-    RevokeCounterpartyCommerceAccessActionInternalProblemSchema.make({
-      detail: 'The Action could not be completed.',
-      status: problemStatus.internal,
-      title: 'Action failed',
-      type: 'https://ontos.dev/problems/action-failed',
-    }),
-  invalid: (): ProblemOf<'RevokeCounterpartyCommerceAccessActionInvalidProblem'> =>
-    RevokeCounterpartyCommerceAccessActionInvalidProblemSchema.make({
-      detail: 'The revoke-counterparty-commerce-access Action request is invalid.',
-      status: problemStatus.invalid,
-      title: 'Invalid Action request',
-      type: 'https://ontos.dev/problems/action-invalid',
-    }),
-  notFound: (
-    code: ProblemOf<'RevokeCounterpartyCommerceAccessActionNotFoundProblem'>['code'],
-  ): ProblemOf<'RevokeCounterpartyCommerceAccessActionNotFoundProblem'> =>
-    RevokeCounterpartyCommerceAccessActionNotFoundProblemSchema.make({
-      code,
-      detail: 'The requested resource was not found.',
-      status: problemStatus.notFound,
-      title: 'Resource not found',
-      type: 'https://ontos.dev/problems/action-resource-not-found',
-    }),
-  precondition: (): ProblemOf<'RevokeCounterpartyCommerceAccessActionPreconditionProblem'> =>
-    RevokeCounterpartyCommerceAccessActionPreconditionProblemSchema.make({
-      detail: 'An Idempotency-Key header is required.',
-      status: problemStatus.precondition,
-      title: 'Idempotency key required',
-      type: 'https://ontos.dev/problems/idempotency-key-required',
-    }),
-  rateLimited: (
-    code: Extract<
-      ProblemOf<'RevokeCounterpartyCommerceAccessActionRateLimitedProblem'>,
-      { readonly code: string }
-    >['code'],
-  ): ProblemOf<'RevokeCounterpartyCommerceAccessActionRateLimitedProblem'> =>
-    RevokeCounterpartyCommerceAccessActionRateLimitedProblemSchema.make({
-      code,
-      detail: 'The Action rate limit has been exceeded.',
-      status: problemStatus.rateLimited,
-      title: 'Action rate limited',
-      type: 'https://ontos.dev/problems/action-rate-limited',
-    }),
-  unavailable: (
-    code: ProblemOf<'RevokeCounterpartyCommerceAccessActionUnavailableProblem'>['code'],
-  ): ProblemOf<'RevokeCounterpartyCommerceAccessActionUnavailableProblem'> =>
-    RevokeCounterpartyCommerceAccessActionUnavailableProblemSchema.make({
-      code,
-      detail: 'The Action capability is temporarily unavailable.',
-      retryable: true,
-      status: problemStatus.unavailable,
-      title: 'Action unavailable',
-      type: 'https://ontos.dev/problems/action-unavailable',
-    }),
+  authentication: makeAuthenticationProblem<ProblemOf<'RevokeCounterpartyCommerceAccessActionAuthenticationProblem'>>(
+    (input) => RevokeCounterpartyCommerceAccessActionAuthenticationProblemSchema.make(input),
+  ),
+  conflict: makeConflictProblem<
+    ProblemOf<'RevokeCounterpartyCommerceAccessActionConflictProblem'>['code'],
+    ProblemOf<'RevokeCounterpartyCommerceAccessActionConflictProblem'>
+  >((input) => RevokeCounterpartyCommerceAccessActionConflictProblemSchema.make(input)),
+  forbidden: makeForbiddenProblem<
+    ProblemOf<'RevokeCounterpartyCommerceAccessActionForbiddenProblem'>['code'],
+    ProblemOf<'RevokeCounterpartyCommerceAccessActionForbiddenProblem'>
+  >((input) => RevokeCounterpartyCommerceAccessActionForbiddenProblemSchema.make(input)),
+  ineligible: makeIneligibleProblem<
+    ProblemOf<'RevokeCounterpartyCommerceAccessActionIneligibleProblem'>['code'],
+    ProblemOf<'RevokeCounterpartyCommerceAccessActionIneligibleProblem'>
+  >((input) => RevokeCounterpartyCommerceAccessActionIneligibleProblemSchema.make(input)),
+  internal: makeInternalProblem<ProblemOf<'RevokeCounterpartyCommerceAccessActionInternalProblem'>>((input) =>
+    RevokeCounterpartyCommerceAccessActionInternalProblemSchema.make(input),
+  ),
+  invalid: makeInvalidProblem<ProblemOf<'RevokeCounterpartyCommerceAccessActionInvalidProblem'>>(
+    (input) => RevokeCounterpartyCommerceAccessActionInvalidProblemSchema.make(input),
+    'revoke-counterparty-commerce-access',
+  ),
+  notFound: makeNotFoundProblem<
+    ProblemOf<'RevokeCounterpartyCommerceAccessActionNotFoundProblem'>['code'],
+    ProblemOf<'RevokeCounterpartyCommerceAccessActionNotFoundProblem'>
+  >((input) => RevokeCounterpartyCommerceAccessActionNotFoundProblemSchema.make(input)),
+  precondition: makePreconditionProblem<ProblemOf<'RevokeCounterpartyCommerceAccessActionPreconditionProblem'>>(
+    (input) => RevokeCounterpartyCommerceAccessActionPreconditionProblemSchema.make(input),
+  ),
+  rateLimited: makeRateLimitedProblem<
+    Extract<ProblemOf<'RevokeCounterpartyCommerceAccessActionRateLimitedProblem'>, { readonly code: string }>['code'],
+    ProblemOf<'RevokeCounterpartyCommerceAccessActionRateLimitedProblem'>
+  >((input) => RevokeCounterpartyCommerceAccessActionRateLimitedProblemSchema.make(input)),
+  unavailable: makeUnavailableProblem<
+    ProblemOf<'RevokeCounterpartyCommerceAccessActionUnavailableProblem'>['code'],
+    ProblemOf<'RevokeCounterpartyCommerceAccessActionUnavailableProblem'>
+  >((input) => RevokeCounterpartyCommerceAccessActionUnavailableProblemSchema.make(input)),
 } as const;
 
 const mapDomainIdentity = (
-  identity: DomainProblemIdentity,
+  identity: CounterpartyAccessDomainProblemIdentity,
 ): RevokeCounterpartyCommerceAccessActionProblem =>
   Match.value(identity).pipe(
     Match.when({ kind: 'conflict' as const }, (matched) =>
@@ -214,9 +113,7 @@ const mapDomainProblem = (error: DomainError): RevokeCounterpartyCommerceAccessA
       CounterpartyAccessContractViolation: (failure) =>
         mapDomainIdentity(counterpartyAccessContractViolationProblemByCode[failure.code]),
       CounterpartyAccessUnavailable: () =>
-        revokeCounterpartyCommerceAccessActionProblem.unavailable(
-          'counterparty_access_unavailable',
-        ),
+        revokeCounterpartyCommerceAccessActionProblem.unavailable('counterparty_access_unavailable'),
     }),
     Match.exhaustive,
   );
@@ -248,53 +145,37 @@ const mapCoreProblem = (error: ActionCoreError): RevokeCounterpartyCommerceAcces
         }),
       ActionHandlerExecutionError: revokeCounterpartyCommerceAccessActionProblem.internal,
       ActionIdempotencyKeyRequired: revokeCounterpartyCommerceAccessActionProblem.precondition,
-      ActionInvocationNotFound: (failure) =>
-        revokeCounterpartyCommerceAccessActionProblem.notFound(failure.code),
+      ActionInvocationNotFound: (failure) => revokeCounterpartyCommerceAccessActionProblem.notFound(failure.code),
       ActionInvocationPersistenceError: (failure) =>
         revokeCounterpartyCommerceAccessActionProblem.unavailable(failure.code),
-      ActionInvocationStateError: (failure) =>
-        revokeCounterpartyCommerceAccessActionProblem.conflict(failure.code),
+      ActionInvocationStateError: (failure) => revokeCounterpartyCommerceAccessActionProblem.conflict(failure.code),
       ActionPayloadValidationError: revokeCounterpartyCommerceAccessActionProblem.invalid,
-      ActionPermissionCheckError: (failure) =>
-        revokeCounterpartyCommerceAccessActionProblem.unavailable(failure.code),
-      ActionPermissionDenied: (failure) =>
-        revokeCounterpartyCommerceAccessActionProblem.forbidden(failure.code),
-      ActionPolicyDenied: (failure) =>
-        revokeCounterpartyCommerceAccessActionProblem.ineligible(failure.code),
-      ActionPolicyEvaluationError: (failure) =>
-        revokeCounterpartyCommerceAccessActionProblem.unavailable(failure.code),
-      ActionRequestHashConflict: (failure) =>
-        revokeCounterpartyCommerceAccessActionProblem.conflict(failure.code),
+      ActionPermissionCheckError: (failure) => revokeCounterpartyCommerceAccessActionProblem.unavailable(failure.code),
+      ActionPermissionDenied: (failure) => revokeCounterpartyCommerceAccessActionProblem.forbidden(failure.code),
+      ActionPolicyDenied: (failure) => revokeCounterpartyCommerceAccessActionProblem.ineligible(failure.code),
+      ActionPolicyEvaluationError: (failure) => revokeCounterpartyCommerceAccessActionProblem.unavailable(failure.code),
+      ActionRequestHashConflict: (failure) => revokeCounterpartyCommerceAccessActionProblem.conflict(failure.code),
       ActionResultValidationError: revokeCounterpartyCommerceAccessActionProblem.internal,
-      ActionTransactionError: (failure) =>
-        revokeCounterpartyCommerceAccessActionProblem.unavailable(failure.code),
-      ActionTrustedContextValidationError:
-        revokeCounterpartyCommerceAccessActionProblem.authentication,
+      ActionTransactionError: (failure) => revokeCounterpartyCommerceAccessActionProblem.unavailable(failure.code),
+      ActionTrustedContextValidationError: revokeCounterpartyCommerceAccessActionProblem.authentication,
       ModuleStateCheckUnavailableError: (failure) =>
         revokeCounterpartyCommerceAccessActionProblem.unavailable(failure.code),
-      ModuleStateDeniedError: (failure) =>
-        revokeCounterpartyCommerceAccessActionProblem.forbidden(failure.code),
+      ModuleStateDeniedError: (failure) => revokeCounterpartyCommerceAccessActionProblem.forbidden(failure.code),
       OperationAuthenticationRequired: revokeCounterpartyCommerceAccessActionProblem.authentication,
-      OperationContextDenied: (failure) =>
-        revokeCounterpartyCommerceAccessActionProblem.forbidden(failure.code),
-      OperationContextInvalid: (failure) =>
-        revokeCounterpartyCommerceAccessActionProblem.forbidden(failure.code),
-      OperationContextUnavailable: (failure) =>
-        revokeCounterpartyCommerceAccessActionProblem.unavailable(failure.code),
+      OperationContextDenied: (failure) => revokeCounterpartyCommerceAccessActionProblem.forbidden(failure.code),
+      OperationContextInvalid: (failure) => revokeCounterpartyCommerceAccessActionProblem.forbidden(failure.code),
+      OperationContextUnavailable: (failure) => revokeCounterpartyCommerceAccessActionProblem.unavailable(failure.code),
     }),
     Match.exhaustive,
   );
 
-const isDomainError = Schema.is(
-  revokeCounterpartyCommerceAccessAction.descriptor.domainErrorSchema,
-);
+const isDomainError = Schema.is(revokeCounterpartyCommerceAccessAction.descriptor.domainErrorSchema);
 export const mapRevokeCounterpartyCommerceAccessActionProblem = (
   error: ActionCoreError | DomainError,
 ): RevokeCounterpartyCommerceAccessActionProblem =>
   isDomainError(error) ? mapDomainProblem(error) : mapCoreProblem(error);
 
-export const revokeCounterpartyCommerceAccessActionSchemaErrorLive =
-  HttpApiMiddleware.layerSchemaErrorTransform(
-    RevokeCounterpartyCommerceAccessActionSchemaErrorMiddleware,
-    () => Effect.fail(revokeCounterpartyCommerceAccessActionProblem.invalid()),
-  );
+export const revokeCounterpartyCommerceAccessActionSchemaErrorLive = HttpApiMiddleware.layerSchemaErrorTransform(
+  RevokeCounterpartyCommerceAccessActionSchemaErrorMiddleware,
+  () => Effect.fail(revokeCounterpartyCommerceAccessActionProblem.invalid()),
+);

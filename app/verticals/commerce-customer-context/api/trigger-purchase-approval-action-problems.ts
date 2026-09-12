@@ -3,7 +3,7 @@
 // @ontos-action-http-slug trigger-purchase-approval
 // oxlint-disable sonarjs/function-name -- Effect Match.tags requires owner-declared tag keys; remove-when: sonarjs accepts discriminant-map properties.
 import type { ActionCoreError } from '@app/core-runtime';
-import { Effect, HttpApiMiddleware } from '@modern-js/plugin-bff/effect-edge';
+import { Effect, HttpApiMiddleware } from '@modern-js/bff-effect/effect-edge';
 import { Match, Schema } from 'effect';
 import {
   TriggerPurchaseApprovalActionAlreadyCommittedProblemSchema,
@@ -128,13 +128,9 @@ const mapDomainProblem = (error: DomainError): TriggerPurchaseApprovalActionProb
   Match.value(error).pipe(
     Match.tags({
       PurchaseApprovalCurrentnessIndeterminate: () =>
-        triggerPurchaseApprovalActionProblem.unavailable(
-          'purchase_approval_currentness_indeterminate',
-        ),
+        triggerPurchaseApprovalActionProblem.unavailable('purchase_approval_currentness_indeterminate'),
       PurchaseApprovalDependencyUnavailable: () =>
-        triggerPurchaseApprovalActionProblem.unavailable(
-          'purchase_approval_dependency_unavailable',
-        ),
+        triggerPurchaseApprovalActionProblem.unavailable('purchase_approval_dependency_unavailable'),
     }),
     Match.exhaustive,
   );
@@ -166,38 +162,24 @@ const mapCoreProblem = (error: ActionCoreError): TriggerPurchaseApprovalActionPr
         }),
       ActionHandlerExecutionError: triggerPurchaseApprovalActionProblem.internal,
       ActionIdempotencyKeyRequired: triggerPurchaseApprovalActionProblem.precondition,
-      ActionInvocationNotFound: (failure) =>
-        triggerPurchaseApprovalActionProblem.notFound(failure.code),
-      ActionInvocationPersistenceError: (failure) =>
-        triggerPurchaseApprovalActionProblem.unavailable(failure.code),
-      ActionInvocationStateError: (failure) =>
-        triggerPurchaseApprovalActionProblem.conflict(failure.code),
+      ActionInvocationNotFound: (failure) => triggerPurchaseApprovalActionProblem.notFound(failure.code),
+      ActionInvocationPersistenceError: (failure) => triggerPurchaseApprovalActionProblem.unavailable(failure.code),
+      ActionInvocationStateError: (failure) => triggerPurchaseApprovalActionProblem.conflict(failure.code),
       ActionPayloadValidationError: triggerPurchaseApprovalActionProblem.invalid,
-      ActionPermissionCheckError: (failure) =>
-        triggerPurchaseApprovalActionProblem.unavailable(failure.code),
-      ActionPermissionDenied: (failure) =>
-        triggerPurchaseApprovalActionProblem.forbidden(failure.code),
-      ActionPolicyDenied: (failure) =>
-        triggerPurchaseApprovalActionProblem.ineligible(failure.code),
-      ActionPolicyEvaluationError: (failure) =>
-        triggerPurchaseApprovalActionProblem.unavailable(failure.code),
-      ActionRequestHashConflict: (failure) =>
-        triggerPurchaseApprovalActionProblem.conflict(failure.code),
+      ActionPermissionCheckError: (failure) => triggerPurchaseApprovalActionProblem.unavailable(failure.code),
+      ActionPermissionDenied: (failure) => triggerPurchaseApprovalActionProblem.forbidden(failure.code),
+      ActionPolicyDenied: (failure) => triggerPurchaseApprovalActionProblem.ineligible(failure.code),
+      ActionPolicyEvaluationError: (failure) => triggerPurchaseApprovalActionProblem.unavailable(failure.code),
+      ActionRequestHashConflict: (failure) => triggerPurchaseApprovalActionProblem.conflict(failure.code),
       ActionResultValidationError: triggerPurchaseApprovalActionProblem.internal,
-      ActionTransactionError: (failure) =>
-        triggerPurchaseApprovalActionProblem.unavailable(failure.code),
+      ActionTransactionError: (failure) => triggerPurchaseApprovalActionProblem.unavailable(failure.code),
       ActionTrustedContextValidationError: triggerPurchaseApprovalActionProblem.authentication,
-      ModuleStateCheckUnavailableError: (failure) =>
-        triggerPurchaseApprovalActionProblem.unavailable(failure.code),
-      ModuleStateDeniedError: (failure) =>
-        triggerPurchaseApprovalActionProblem.forbidden(failure.code),
+      ModuleStateCheckUnavailableError: (failure) => triggerPurchaseApprovalActionProblem.unavailable(failure.code),
+      ModuleStateDeniedError: (failure) => triggerPurchaseApprovalActionProblem.forbidden(failure.code),
       OperationAuthenticationRequired: triggerPurchaseApprovalActionProblem.authentication,
-      OperationContextDenied: (failure) =>
-        triggerPurchaseApprovalActionProblem.forbidden(failure.code),
-      OperationContextInvalid: (failure) =>
-        triggerPurchaseApprovalActionProblem.forbidden(failure.code),
-      OperationContextUnavailable: (failure) =>
-        triggerPurchaseApprovalActionProblem.unavailable(failure.code),
+      OperationContextDenied: (failure) => triggerPurchaseApprovalActionProblem.forbidden(failure.code),
+      OperationContextInvalid: (failure) => triggerPurchaseApprovalActionProblem.forbidden(failure.code),
+      OperationContextUnavailable: (failure) => triggerPurchaseApprovalActionProblem.unavailable(failure.code),
     }),
     Match.exhaustive,
   );
@@ -205,11 +187,9 @@ const mapCoreProblem = (error: ActionCoreError): TriggerPurchaseApprovalActionPr
 const isDomainError = Schema.is(triggerPurchaseApprovalAction.descriptor.domainErrorSchema);
 export const mapTriggerPurchaseApprovalActionProblem = (
   error: ActionCoreError | DomainError,
-): TriggerPurchaseApprovalActionProblem =>
-  isDomainError(error) ? mapDomainProblem(error) : mapCoreProblem(error);
+): TriggerPurchaseApprovalActionProblem => (isDomainError(error) ? mapDomainProblem(error) : mapCoreProblem(error));
 
-export const triggerPurchaseApprovalActionSchemaErrorLive =
-  HttpApiMiddleware.layerSchemaErrorTransform(
-    TriggerPurchaseApprovalActionSchemaErrorMiddleware,
-    () => Effect.fail(triggerPurchaseApprovalActionProblem.invalid()),
-  );
+export const triggerPurchaseApprovalActionSchemaErrorLive = HttpApiMiddleware.layerSchemaErrorTransform(
+  TriggerPurchaseApprovalActionSchemaErrorMiddleware,
+  () => Effect.fail(triggerPurchaseApprovalActionProblem.invalid()),
+);

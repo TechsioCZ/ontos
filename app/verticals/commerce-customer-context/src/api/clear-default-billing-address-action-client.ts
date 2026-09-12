@@ -69,11 +69,6 @@ export const executeClearDefaultBillingAddress = (
 ) =>
   operationGateway.invoke(
     (credential) =>
-      executeClearDefaultBillingAddressWithAuthorization(
-        payload,
-        credential,
-        requestCorrelation,
-        options,
-      ),
+      executeClearDefaultBillingAddressWithAuthorization(payload, credential, requestCorrelation, options),
     options.gateway,
   );

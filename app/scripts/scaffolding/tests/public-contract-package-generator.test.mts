@@ -40,10 +40,7 @@ const customerGovernedContractFiles = [
   customerOwnerContractFile,
 ] as const;
 
-const readSourceTree = async (
-  relativeDirectory: string,
-  sources: Map<string, string>,
-): Promise<void> => {
+const readSourceTree = async (relativeDirectory: string, sources: Map<string, string>): Promise<void> => {
   const absoluteDirectory = path.join(appRoot, relativeDirectory);
   const entries = await readdir(absoluteDirectory, { withFileTypes: true });
   await Promise.all(
@@ -54,10 +51,7 @@ const readSourceTree = async (
       const relativePath = path.posix.join(relativeDirectory, entry.name);
       if (entry.isDirectory()) {
         await readSourceTree(relativePath, sources);
-      } else if (
-        entry.isFile() &&
-        (relativePath.endsWith('.json') || relativePath.endsWith('.ts'))
-      ) {
+      } else if (entry.isFile() && (relativePath.endsWith('.json') || relativePath.endsWith('.ts'))) {
         sources.set(relativePath, await readFile(path.join(appRoot, relativePath), 'utf-8'));
       }
     }),
@@ -81,14 +75,10 @@ const loadCustomerContractSources = (): Promise<Map<string, string>> => {
   ]).then(() => sources);
 };
 
-const focusOnCustomerAffectedUseSeam = (
-  sources: ReadonlyMap<string, string>,
-): ReadonlyMap<string, string> => {
+const focusOnCustomerAffectedUseSeam = (sources: ReadonlyMap<string, string>): ReadonlyMap<string, string> => {
   const focused = new Map(
     [...sources].filter(
-      ([file]) =>
-        !file.startsWith(`${customerVerticalPath}/shared/apis/`) ||
-        file === customerOwnerContractFile,
+      ([file]) => !file.startsWith(`${customerVerticalPath}/shared/apis/`) || file === customerOwnerContractFile,
     ),
   );
   for (const [file, start, end] of [
@@ -162,16 +152,8 @@ it.effect(
     );
     expect(plan.result).toEqual({
       artifactPath: path.join(appRoot, ownerContractFile),
-      clientPath: path.join(
-        appRoot,
-        paymentVerticalPath,
-        'src/api/current-payment-terms-client.ts',
-      ),
-      serverPath: path.join(
-        appRoot,
-        paymentVerticalPath,
-        'api/current-payment-terms-read-server.ts',
-      ),
+      clientPath: path.join(appRoot, paymentVerticalPath, 'src/api/current-payment-terms-client.ts'),
+      serverPath: path.join(appRoot, paymentVerticalPath, 'api/current-payment-terms-read-server.ts'),
     });
     expect(expectsCompletePaymentSeam(after)).toBe(true);
   }),
@@ -187,9 +169,8 @@ it.live(
       ...valid,
       [
         canonicalContractFile,
-        valid
-          .get(canonicalContractFile)
-          ?.replace('/reads/current-payment-terms', '/reads/not-current-payment-terms') ?? '',
+        valid.get(canonicalContractFile)?.replace('/reads/current-payment-terms', '/reads/not-current-payment-terms') ??
+          '',
       ],
     ]);
     expect(expectsCompletePaymentSeam(wrongEndpoint)).toBe(false);
@@ -198,19 +179,14 @@ it.live(
       ...valid,
       [
         canonicalClientFile,
-        valid
-          .get(canonicalClientFile)
-          ?.replace('/payment-term-catalog-api', '/customer-context-api') ?? '',
+        valid.get(canonicalClientFile)?.replace('/payment-term-catalog-api', '/customer-context-api') ?? '',
       ],
     ]);
     expect(expectsCompletePaymentSeam(wrongAudience)).toBe(false);
 
     const handwrittenOwnerFacade = new Map([
       ...valid,
-      [
-        ownerContractFile,
-        `${valid.get(ownerContractFile) ?? ''}\nexport const unsafeOwnerExtension = true;\n`,
-      ],
+      [ownerContractFile, `${valid.get(ownerContractFile) ?? ''}\nexport const unsafeOwnerExtension = true;\n`],
     ]);
     expect(expectsCompletePaymentSeam(handwrittenOwnerFacade)).toBe(false);
   }),
@@ -234,16 +210,8 @@ it.effect(
     );
     expect(plan.result).toEqual({
       artifactPath: path.join(appRoot, customerOwnerContractFile),
-      clientPath: path.join(
-        appRoot,
-        customerVerticalPath,
-        'src/api/payment-term-affected-use-assessment-client.ts',
-      ),
-      serverPath: path.join(
-        appRoot,
-        customerVerticalPath,
-        'api/payment-term-affected-use-assessment-read-server.ts',
-      ),
+      clientPath: path.join(appRoot, customerVerticalPath, 'src/api/payment-term-affected-use-assessment-client.ts'),
+      serverPath: path.join(appRoot, customerVerticalPath, 'api/payment-term-affected-use-assessment-read-server.ts'),
     });
     expect(
       hasCompleteGeneratedModuleApiSeam(
@@ -266,14 +234,8 @@ it.live(
 
     for (const invalidManifest of [
       manifest.replace('"appId": "payment-term-catalog"', '"appId": "commerce-customer-context"'),
-      manifest.replace(
-        '"moduleId": "payment.term-catalog"',
-        '"moduleId": "commerce.customer-context"',
-      ),
-      manifest.replace(
-        '"packageName": "@app/payment-term-catalog"',
-        '"packageName": "@app/commerce-customer-context"',
-      ),
+      manifest.replace('"moduleId": "payment.term-catalog"', '"moduleId": "commerce.customer-context"'),
+      manifest.replace('"packageName": "@app/payment-term-catalog"', '"packageName": "@app/commerce-customer-context"'),
       manifest.replace('"current-payment-terms"', '"unrelated-api"'),
     ]) {
       const sources = new Map([...valid, [packageManifestFile, invalidManifest]]);

@@ -21,29 +21,25 @@ import { PurchaseLimitFx } from './purchase-limit-fx-port.ts';
 import type { PurchaseLimitFxUnavailable } from './purchase-limit-fx-port.ts';
 
 const RevisionSchema = Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(300));
-const PurchaseLimitFxRateSourceIdSchema = Schema.String.check(
-  Schema.isMinLength(1),
-  Schema.isMaxLength(300),
-).pipe(Schema.brand('PurchaseLimitFxRateSourceId'));
+const PurchaseLimitFxRateSourceIdSchema = Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(300)).pipe(
+  Schema.brand('PurchaseLimitFxRateSourceId'),
+);
 export const PurchaseLimitUtcTimestampSchema = Schema.DateTimeUtcFromString;
 export const PurchaseLimitSellingLegalEntityIdSchema = Schema.String.check(
   Schema.isMinLength(1),
   Schema.isMaxLength(300),
 ).pipe(Schema.brand('PurchaseLimitSellingLegalEntityId'));
-export const PurchaseLimitStorefrontIdSchema = Schema.String.check(
-  Schema.isMinLength(1),
-  Schema.isMaxLength(300),
-).pipe(Schema.brand('PurchaseLimitStorefrontId'));
+export const PurchaseLimitStorefrontIdSchema = Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(300)).pipe(
+  Schema.brand('PurchaseLimitStorefrontId'),
+);
 
-export const PurchaseLimitSourceRevisionSchema = Schema.Struct({
+const PurchaseLimitSourceRevisionSchema = Schema.Struct({
   revision: RevisionSchema,
   source: Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(200)),
 });
 export type PurchaseLimitSourceRevision = typeof PurchaseLimitSourceRevisionSchema.Type;
 
-const PurchaseLimitSourceRevisionVectorBaseSchema = Schema.Array(
-  PurchaseLimitSourceRevisionSchema,
-).check(
+const PurchaseLimitSourceRevisionVectorBaseSchema = Schema.Array(PurchaseLimitSourceRevisionSchema).check(
   Schema.isMinLength(1),
   Schema.isMaxLength(100),
   Schema.makeFilter((values) =>
@@ -62,29 +58,25 @@ const requiredRevisionSources = (required: readonly string[]) =>
       : `source revision vector is missing mandated Currentness sources: ${missing.join(', ')}`;
   });
 
-export const PurchaseLimitExternalSourceRevisionVectorSchema =
-  PurchaseLimitSourceRevisionVectorBaseSchema.check(
-    requiredRevisionSources([
-      'customer-commerce-policy',
-      'purchase-proposal',
-      'purchasing-profile',
-      'storefront-context',
-    ]),
-  );
-export type PurchaseLimitExternalSourceRevisionVector =
-  typeof PurchaseLimitExternalSourceRevisionVectorSchema.Type;
+export const PurchaseLimitExternalSourceRevisionVectorSchema = PurchaseLimitSourceRevisionVectorBaseSchema.check(
+  requiredRevisionSources([
+    'customer-commerce-policy',
+    'purchase-proposal',
+    'purchasing-profile',
+    'storefront-context',
+  ]),
+);
 
-export const PurchaseLimitSourceRevisionVectorSchema =
-  PurchaseLimitSourceRevisionVectorBaseSchema.check(
-    requiredRevisionSources([
-      'counterparty-policy',
-      'customer-commerce-policy',
-      'principal-override',
-      'purchase-proposal',
-      'purchasing-profile',
-      'storefront-context',
-    ]),
-  );
+export const PurchaseLimitSourceRevisionVectorSchema = PurchaseLimitSourceRevisionVectorBaseSchema.check(
+  requiredRevisionSources([
+    'counterparty-policy',
+    'customer-commerce-policy',
+    'principal-override',
+    'purchase-proposal',
+    'purchasing-profile',
+    'storefront-context',
+  ]),
+);
 export type PurchaseLimitSourceRevisionVector = typeof PurchaseLimitSourceRevisionVectorSchema.Type;
 
 const PurchaseLimitComparableValueEvidenceFields = {
@@ -114,10 +106,7 @@ export const PurchaseLimitComparableValueSchema = Schema.Union([
     roundingMode: Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(100)),
     roundingRule: Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(100)),
     source: Schema.Literal('comparable-value'),
-    targetMinorUnits: Schema.Finite.check(
-      Schema.isInt(),
-      Schema.isBetween({ maximum: 18, minimum: 0 }),
-    ),
+    targetMinorUnits: Schema.Finite.check(Schema.isInt(), Schema.isBetween({ maximum: 18, minimum: 0 })),
     validFrom: PurchaseLimitUtcTimestampSchema,
     validTo: PurchaseLimitUtcTimestampSchema,
   }),
@@ -144,20 +133,17 @@ const EvaluationEvidenceFields = {
   purchaseValue: PurchaseValueSchema,
 };
 
-export const PurchaseLimitWithinLimitEvaluationSchema = Schema.TaggedStruct('WITHIN_LIMIT', {
+const PurchaseLimitWithinLimitEvaluationSchema = Schema.TaggedStruct('WITHIN_LIMIT', {
   ...EvaluationEvidenceFields,
   comparableValue: Schema.Union([PurchaseLimitComparableValueSchema, Schema.Null]),
   comparedValue: Schema.Union([MonetaryAmountSchema, Schema.Null]),
 });
 
-export const PurchaseLimitApprovalRequiredEvaluationSchema = Schema.TaggedStruct(
-  'APPROVAL_REQUIRED',
-  {
-    ...EvaluationEvidenceFields,
-    comparableValue: Schema.Union([PurchaseLimitComparableValueSchema, Schema.Null]),
-    comparedValue: MonetaryAmountSchema,
-  },
-);
+const PurchaseLimitApprovalRequiredEvaluationSchema = Schema.TaggedStruct('APPROVAL_REQUIRED', {
+  ...EvaluationEvidenceFields,
+  comparableValue: Schema.Union([PurchaseLimitComparableValueSchema, Schema.Null]),
+  comparedValue: MonetaryAmountSchema,
+});
 
 export const PurchaseLimitEvaluationResultSchema = Schema.Union([
   PurchaseLimitWithinLimitEvaluationSchema,
@@ -210,7 +196,7 @@ export const PurchaseLimitEvaluationQuerySchema = Schema.Struct({
   purchaseValue: PurchaseValueSchema,
   storefrontId: PurchaseLimitStorefrontIdSchema,
 });
-export type PurchaseLimitEvaluationQuery = typeof PurchaseLimitEvaluationQuerySchema.Type;
+type PurchaseLimitEvaluationQuery = typeof PurchaseLimitEvaluationQuerySchema.Type;
 
 const revisionMap = (vector: PurchaseLimitSourceRevisionVector) =>
   new Map(vector.map(({ revision, source }) => [source, revision]));
@@ -252,8 +238,7 @@ const evaluateMonetaryPolicy = (
       comparable === undefined ||
       comparable.purpose !== 'PURCHASE_LIMIT_COMPARISON' ||
       comparable.sourcePurchaseValueRevision !== input.purchaseValue.sourceRevision ||
-      revisionMap(input.currentSourceRevisions).get(comparable.source) !==
-        comparable.sourceRevision ||
+      revisionMap(input.currentSourceRevisions).get(comparable.source) !== comparable.sourceRevision ||
       comparable.monetaryAmount.currency !== limit.currency
     ) {
       return {
@@ -284,13 +269,8 @@ const evaluateMonetaryPolicy = (
 };
 
 /** Pure deterministic comparison over facts already acquired from authoritative owners. */
-export const evaluatePurchaseLimit = (
-  input: PurchaseLimitEvaluationInput,
-): PurchaseLimitEvaluationResult => {
-  const staleSources = findStalePurchaseLimitSources(
-    input.expectedSourceRevisions,
-    input.currentSourceRevisions,
-  );
+export const evaluatePurchaseLimit = (input: PurchaseLimitEvaluationInput): PurchaseLimitEvaluationResult => {
+  const staleSources = findStalePurchaseLimitSources(input.expectedSourceRevisions, input.currentSourceRevisions);
   if (staleSources.length > 0) {
     return {
       _tag: 'STALE_INPUT',
@@ -334,9 +314,7 @@ export const evaluatePurchaseLimit = (
           evaluationContext: evaluationContext(input),
           purchaseValue: input.purchaseValue,
         })),
-        Match.tag('MONETARY_LIMIT', ({ limit }) =>
-          evaluateMonetaryPolicy(input, effectivePolicy, limit),
-        ),
+        Match.tag('MONETARY_LIMIT', ({ limit }) => evaluateMonetaryPolicy(input, effectivePolicy, limit)),
         Match.exhaustive,
       ),
     ),
@@ -347,11 +325,7 @@ export const evaluatePurchaseLimit = (
 export const resolveComparablePurchaseValue = (input: {
   readonly effectivePolicy: typeof EffectivePurchaseLimitPolicySchema.Type;
   readonly purchaseValue: PurchaseValue;
-}): Effect.Effect<
-  Option.Option<PurchaseLimitComparableValue>,
-  PurchaseLimitFxUnavailable,
-  PurchaseLimitFx
-> =>
+}): Effect.Effect<Option.Option<PurchaseLimitComparableValue>, PurchaseLimitFxUnavailable, PurchaseLimitFx> =>
   Match.value(input.effectivePolicy.policy).pipe(
     Match.tag('UNLIMITED', () => Effect.succeed(Option.none<PurchaseLimitComparableValue>())),
     Match.tag('MONETARY_LIMIT', ({ limit }) =>
@@ -364,7 +338,7 @@ export const resolveComparablePurchaseValue = (input: {
                   purchaseValue: input.purchaseValue,
                   targetCurrency: limit.currency,
                 })
-                .pipe(Effect.map(Option.some)),
+                .pipe(Effect.asSome),
             ),
           ),
     ),
@@ -389,9 +363,6 @@ export interface PurchaseLimitEvaluationSourceFactoryContract {
 export class PurchaseLimitEvaluationSourceFactory extends Context.Service<
   PurchaseLimitEvaluationSourceFactory,
   PurchaseLimitEvaluationSourceFactoryContract
->()(
-  '@app/commerce-customer-context/shared/domain/purchase-limit-evaluation/PurchaseLimitEvaluationSourceFactory',
-) {}
+>()('@app/commerce-customer-context/shared/domain/purchase-limit-evaluation/PurchaseLimitEvaluationSourceFactory') {}
 
-export { PurchaseLimitFxUnavailableSchema } from './purchase-limit-fx-port.ts';
-export type { PurchaseLimitFxPort, PurchaseLimitFxUnavailable } from './purchase-limit-fx-port.ts';
+export type { PurchaseLimitFxUnavailable } from './purchase-limit-fx-port.ts';

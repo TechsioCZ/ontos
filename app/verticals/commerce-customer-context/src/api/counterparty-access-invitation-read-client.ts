@@ -21,7 +21,7 @@ type CounterpartyAccessInvitationReadOperationInvocation = readonly [
 ];
 
 const counterpartyAccessInvitationReadClient = (
-  credential: Redacted.Redacted<string>,
+  credential: Redacted.Redacted,
   requestCorrelation: string,
   options: CounterpartyAccessInvitationReadClientOptions,
 ) =>
@@ -37,17 +37,9 @@ const counterpartyAccessInvitationReadClient = (
 
 export const executeCounterpartyAccessInvitationReadWithAuthorization = (
   payload: CounterpartyAccessInvitationReadRequest,
-  ...[
-    credential,
-    requestCorrelation,
-    options = {},
-  ]: CounterpartyAccessInvitationReadAuthorizedInvocation
+  ...[credential, requestCorrelation, options = {}]: CounterpartyAccessInvitationReadAuthorizedInvocation
 ) =>
-  counterpartyAccessInvitationReadClient(
-    Redacted.make(credential),
-    requestCorrelation,
-    options,
-  ).pipe(
+  counterpartyAccessInvitationReadClient(Redacted.make(credential), requestCorrelation, options).pipe(
     Effect.flatMap((client) =>
       client.counterpartyAccessInvitationRead.execute({
         headers: {},
@@ -63,10 +55,5 @@ export const executeCounterpartyAccessInvitationRead = (
   ...[requestCorrelation, options = {}]: CounterpartyAccessInvitationReadOperationInvocation
 ) =>
   operationGateway.invoke((credential) =>
-    executeCounterpartyAccessInvitationReadWithAuthorization(
-      payload,
-      credential,
-      requestCorrelation,
-      options,
-    ),
+    executeCounterpartyAccessInvitationReadWithAuthorization(payload, credential, requestCorrelation, options),
   );

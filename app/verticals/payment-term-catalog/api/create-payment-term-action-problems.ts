@@ -3,7 +3,7 @@
 // @ontos-action-http-slug create-payment-term
 // oxlint-disable sonarjs/function-name -- Effect Match.tags requires owner-declared tag keys; remove-when: sonarjs accepts discriminant-map properties.
 import type { ActionCoreError } from '@app/core-runtime';
-import { Effect, HttpApiMiddleware } from '@modern-js/plugin-bff/effect-edge';
+import { Effect, HttpApiMiddleware } from '@modern-js/bff-effect/effect-edge';
 import { Match, Schema } from 'effect';
 import {
   CreatePaymentTermActionAlreadyCommittedProblemSchema,
@@ -131,10 +131,8 @@ const mapDomainProblem = (error: DomainError): CreatePaymentTermActionProblem =>
         createPaymentTermActionProblem.unavailable('payment_term_catalog_persistence_conflict'),
       PaymentTermCatalogPersistenceUnavailable: () =>
         createPaymentTermActionProblem.unavailable('payment_term_catalog_persistence_unavailable'),
-      PaymentTermCodeConflict: () =>
-        createPaymentTermActionProblem.conflict('payment_term_code_conflict'),
-      PaymentTermDuplicateSemantics: () =>
-        createPaymentTermActionProblem.conflict('payment_term_duplicate_semantics'),
+      PaymentTermCodeConflict: () => createPaymentTermActionProblem.conflict('payment_term_code_conflict'),
+      PaymentTermDuplicateSemantics: () => createPaymentTermActionProblem.conflict('payment_term_duplicate_semantics'),
     }),
     Match.exhaustive,
   );
@@ -167,29 +165,23 @@ const mapCoreProblem = (error: ActionCoreError): CreatePaymentTermActionProblem 
       ActionHandlerExecutionError: createPaymentTermActionProblem.internal,
       ActionIdempotencyKeyRequired: createPaymentTermActionProblem.precondition,
       ActionInvocationNotFound: (failure) => createPaymentTermActionProblem.notFound(failure.code),
-      ActionInvocationPersistenceError: (failure) =>
-        createPaymentTermActionProblem.unavailable(failure.code),
-      ActionInvocationStateError: (failure) =>
-        createPaymentTermActionProblem.conflict(failure.code),
+      ActionInvocationPersistenceError: (failure) => createPaymentTermActionProblem.unavailable(failure.code),
+      ActionInvocationStateError: (failure) => createPaymentTermActionProblem.conflict(failure.code),
       ActionPayloadValidationError: createPaymentTermActionProblem.invalid,
-      ActionPermissionCheckError: (failure) =>
-        createPaymentTermActionProblem.unavailable(failure.code),
+      ActionPermissionCheckError: (failure) => createPaymentTermActionProblem.unavailable(failure.code),
       ActionPermissionDenied: (failure) => createPaymentTermActionProblem.forbidden(failure.code),
       ActionPolicyDenied: (failure) => createPaymentTermActionProblem.ineligible(failure.code),
-      ActionPolicyEvaluationError: (failure) =>
-        createPaymentTermActionProblem.unavailable(failure.code),
+      ActionPolicyEvaluationError: (failure) => createPaymentTermActionProblem.unavailable(failure.code),
       ActionRequestHashConflict: (failure) => createPaymentTermActionProblem.conflict(failure.code),
       ActionResultValidationError: createPaymentTermActionProblem.internal,
       ActionTransactionError: (failure) => createPaymentTermActionProblem.unavailable(failure.code),
       ActionTrustedContextValidationError: createPaymentTermActionProblem.authentication,
-      ModuleStateCheckUnavailableError: (failure) =>
-        createPaymentTermActionProblem.unavailable(failure.code),
+      ModuleStateCheckUnavailableError: (failure) => createPaymentTermActionProblem.unavailable(failure.code),
       ModuleStateDeniedError: (failure) => createPaymentTermActionProblem.forbidden(failure.code),
       OperationAuthenticationRequired: createPaymentTermActionProblem.authentication,
       OperationContextDenied: (failure) => createPaymentTermActionProblem.forbidden(failure.code),
       OperationContextInvalid: (failure) => createPaymentTermActionProblem.forbidden(failure.code),
-      OperationContextUnavailable: (failure) =>
-        createPaymentTermActionProblem.unavailable(failure.code),
+      OperationContextUnavailable: (failure) => createPaymentTermActionProblem.unavailable(failure.code),
     }),
     Match.exhaustive,
   );
@@ -197,8 +189,7 @@ const mapCoreProblem = (error: ActionCoreError): CreatePaymentTermActionProblem 
 const isDomainError = Schema.is(createPaymentTermAction.descriptor.domainErrorSchema);
 export const mapCreatePaymentTermActionProblem = (
   error: ActionCoreError | DomainError,
-): CreatePaymentTermActionProblem =>
-  isDomainError(error) ? mapDomainProblem(error) : mapCoreProblem(error);
+): CreatePaymentTermActionProblem => (isDomainError(error) ? mapDomainProblem(error) : mapCoreProblem(error));
 
 export const createPaymentTermActionSchemaErrorLive = HttpApiMiddleware.layerSchemaErrorTransform(
   CreatePaymentTermActionSchemaErrorMiddleware,

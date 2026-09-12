@@ -16,10 +16,7 @@ import {
   RepeatOrderNoRepeatableLines,
 } from '../../shared/domain/history-action-errors.ts';
 import type { HistoryActionOwnerPorts } from '../../shared/domain/history-action-ports.ts';
-import type {
-  CustomerHistoryPorts,
-  HistoricalOrderCandidate,
-} from '../../shared/domain/history-ports.ts';
+import type { CustomerHistoryPorts, HistoricalOrderCandidate } from '../../shared/domain/history-ports.ts';
 import type { CustomerHistorySubject } from '../../shared/domain/record-visibility-contracts.ts';
 import { handleRepeatRetailOrder } from '../../src/actions/history-action-support.ts';
 
@@ -82,6 +79,22 @@ const makeOrder = (subject: CustomerHistorySubject): HistoricalOrderCandidate =>
   submittedByPrincipalId: principalId,
 });
 
+const recordTypeFieldAllowlist = {
+  detail: ['accepted-currency'],
+  download: [],
+  list: ['acceptedAt', 'displayLabel', 'freshness', 'occurredAt', 'orderRef', 'recordKind', 'recordRef'],
+} as const;
+const recordTypeFieldContracts = {
+  detail: { name: 'customer-order-history.detail', version: '1' },
+  download: null,
+  list: { name: 'customer-history.summary', version: '1' },
+} as const;
+const recordTypeFreshnessPolicy = {
+  detail: 'AUTHORITATIVE_CURRENT',
+  download: 'AUTHORITATIVE_CURRENT',
+  listMaxAgeMilliseconds: 86_400_000,
+} as const;
+
 const makePorts = (subject: CustomerHistorySubject): CustomerHistoryPorts => {
   const order = makeOrder(subject);
   return {
@@ -125,8 +138,7 @@ const makePorts = (subject: CustomerHistorySubject): CustomerHistoryPorts => {
     counterpartyProfiles: { current: () => Effect.succeed('CURRENT') },
     orders: {
       getCustomerFacingDetail: () => Effect.succeed({ outcome: 'NOT_FOUND' as const }),
-      getForHistoryDetailAuthorization: () =>
-        Effect.succeed({ outcome: 'FOUND' as const, value: order }),
+      getForHistoryDetailAuthorization: () => Effect.succeed({ outcome: 'FOUND' as const, value: order }),
       getForRepeat: () => Effect.succeed({ outcome: 'FOUND' as const, value: order }),
       listCounterparty: () => Effect.succeed([order]),
       listRetail: () => Effect.succeed([order]),
@@ -135,39 +147,15 @@ const makePorts = (subject: CustomerHistorySubject): CustomerHistoryPorts => {
       get: ({ ownerModuleId, resourceType }) =>
         Effect.succeed({
           additionalBusinessPolicies: ['commerce.order.customer-visibility.v1'],
-          callerPermissions: [
-            'retail.history.read',
-            'counterparty.history.read_own',
-            'counterparty.history.read_all',
-          ],
+          callerPermissions: ['retail.history.read', 'counterparty.history.read_own', 'counterparty.history.read_all'],
           canonicalOwnerModuleId: ownerModuleId,
           canonicalResourceType: resourceType,
           customerContextRelationship: 'RETAIL_OR_COUNTERPARTY' as const,
           defaultVisibilityState: 'CUSTOMER_HIDDEN' as const,
           exportPolicy: { outcome: 'NOT_SUPPORTED' as const },
-          fieldAllowlist: {
-            detail: ['accepted-currency'],
-            download: [],
-            list: [
-              'acceptedAt',
-              'displayLabel',
-              'freshness',
-              'occurredAt',
-              'orderRef',
-              'recordKind',
-              'recordRef',
-            ],
-          },
-          fieldContracts: {
-            detail: { name: 'customer-order-history.detail', version: '1' },
-            download: null,
-            list: { name: 'customer-history.summary', version: '1' },
-          },
-          freshnessPolicy: {
-            detail: 'AUTHORITATIVE_CURRENT' as const,
-            download: 'AUTHORITATIVE_CURRENT' as const,
-            listMaxAgeMilliseconds: 86_400_000,
-          },
+          fieldAllowlist: recordTypeFieldAllowlist,
+          fieldContracts: recordTypeFieldContracts,
+          freshnessPolicy: recordTypeFreshnessPolicy,
           migrationAndReconciliationPolicy: 'preserve exact historical customer references',
           partialFailurePolicy: 'OMIT_PROTECTED_CONTENT_AND_REPORT_TYPED_DEGRADATION' as const,
           retentionVisibilityRelationship: 'INDEPENDENT' as const,
@@ -202,11 +190,7 @@ const makePorts = (subject: CustomerHistorySubject): CustomerHistoryPorts => {
   };
 };
 
-const collectors = <
-  A extends typeof repeatRetailOrderAction | typeof repeatCounterpartyOrderAction,
->(
-  action: A,
-) =>
+const collectors = <A extends typeof repeatRetailOrderAction | typeof repeatCounterpartyOrderAction>(action: A) =>
   createActionCollector(
     action.descriptor.domainEvents,
     'commerce.customer-context',
@@ -225,14 +209,12 @@ it('declares exact pre-handler business and Order resource permissions', () => {
     sourceOrderRef: orderRef,
     storefrontId: 'storefront-1',
   };
+  expect(getActionBusinessPermissionTargetResolver(repeatRetailOrderAction)?.(retailPayload, scope)).toMatchObject({
+    permission: 'retail.repeat_order',
+    target: { kind: 'retail_profile' },
+  });
   expect(
-    getActionBusinessPermissionTargetResolver(repeatRetailOrderAction)?.(retailPayload, scope),
-  ).toMatchObject({ permission: 'retail.repeat_order', target: { kind: 'retail_profile' } });
-  expect(
-    getActionBusinessPermissionTargetResolver(repeatCounterpartyOrderAction)?.(
-      counterpartyPayload,
-      scope,
-    ),
+    getActionBusinessPermissionTargetResolver(repeatCounterpartyOrderAction)?.(counterpartyPayload, scope),
   ).toEqual({
     permission: 'counterparty.purchase.prepare',
     target: {
@@ -244,75 +226,73 @@ it('declares exact pre-handler business and Order resource permissions', () => {
     },
   });
   expect(
-    getActionBusinessPermissionTargetResolver(repeatCounterpartyOrderAction)?.(
-      counterpartyPayload,
-      { ...scope, trustedStorefrontId: 'gateway-storefront' },
-    ),
+    getActionBusinessPermissionTargetResolver(repeatCounterpartyOrderAction)?.(counterpartyPayload, {
+      ...scope,
+      trustedStorefrontId: 'gateway-storefront',
+    }),
   ).toMatchObject({ trustedStorefrontId: 'gateway-storefront' });
-  expect(
-    getActionResourcePermissionTargetResolver(repeatRetailOrderAction)?.(retailPayload, scope),
-  ).toEqual({ permission: 'read', resource: orderRef });
+  expect(getActionResourcePermissionTargetResolver(repeatRetailOrderAction)?.(retailPayload, scope)).toEqual({
+    permission: 'read',
+    resource: orderRef,
+  });
 });
 
-it.effect(
-  'creates a new Cart from only current repeatable intent and preserves line outcomes',
-  () =>
-    Effect.gen(function* repeatRetail() {
-      const payload: RepeatRetailOrderPayload = {
-        profileRef: retailProfileRef,
-        sourceOrderRef: orderRef,
-      };
-      const collector = collectors(repeatRetailOrderAction);
-      let ownerInput: unknown;
-      const owners: HistoryActionOwnerPorts = {
-        carts: {
-          createFromHistoricalIntent: (input) => {
-            ownerInput = input;
-            return Effect.succeed({ cartRef, lines: cartLines, outcome: 'CREATED' });
-          },
+it.effect('creates a new Cart from only current repeatable intent and preserves line outcomes', () =>
+  Effect.gen(function* repeatRetail() {
+    const payload: RepeatRetailOrderPayload = {
+      profileRef: retailProfileRef,
+      sourceOrderRef: orderRef,
+    };
+    const collector = collectors(repeatRetailOrderAction);
+    let ownerInput: unknown;
+    const owners: HistoryActionOwnerPorts = {
+      carts: {
+        createFromHistoricalIntent: (input) => {
+          ownerInput = input;
+          return Effect.succeed({ cartRef, lines: cartLines, outcome: 'CREATED' });
         },
-      };
-      const result = yield* handleRepeatRetailOrder(payload, {
-        actionInvocationId: 'repeat-invocation-1',
-        addDomainEvent: collector.addDomainEvent,
-        addOutboxMessage: collector.addOutboxMessage,
-        recordAuditEvidence: collector.recordAuditEvidence,
-        recordDataAccess: collector.recordDataAccess,
-        scope,
-        services: {
-          history: makePorts({ kind: 'RETAIL_PROFILE', profileRef: retailProfileRef }),
-          now: Effect.succeed(now),
-          owners,
-        },
-      });
+      },
+    };
+    const result = yield* handleRepeatRetailOrder(payload, {
+      actionInvocationId: 'repeat-invocation-1',
+      addDomainEvent: collector.addDomainEvent,
+      addOutboxMessage: collector.addOutboxMessage,
+      recordAuditEvidence: collector.recordAuditEvidence,
+      recordDataAccess: collector.recordDataAccess,
+      scope,
+      services: {
+        history: makePorts({ kind: 'RETAIL_PROFILE', profileRef: retailProfileRef }),
+        now: Effect.succeed(now),
+        owners,
+      },
+    });
 
-      expect(result.outcome).toBe('CART_CREATED');
-      expect(result.cartRef.resourceId).toBe('new-cart-1');
-      expect(result.lines).toEqual(cartLines);
-      expect(ownerInput).toEqual({
-        actionInvocationId: 'repeat-invocation-1',
-        lines: [
-          {
-            currentProductRef: 'product-1',
-            requestedQuantity: '2',
-            sourceLineRef: 'line-1',
-            status: 'REPEATABLE',
-          },
-          {
-            reason: 'PRODUCT_NOT_SELLABLE',
-            requestedQuantity: '3',
-            sourceLineRef: 'line-2',
-            status: 'SKIPPED',
-          },
-        ],
-        repeatIntentKey:
-          'repeat-order:11111111-1111-4111-8111-111111111111:order-1:retail-profile-1:retail',
-        sourceOrderRef: orderRef,
-        subject: retailProfileRef,
-      });
-      expect(ownerInput).not.toHaveProperty('price');
-      expect(collector.snapshot().domainEvents).toHaveLength(0);
-    }),
+    expect(result.outcome).toBe('CART_CREATED');
+    expect(result.cartRef.resourceId).toBe('new-cart-1');
+    expect(result.lines).toEqual(cartLines);
+    expect(ownerInput).toEqual({
+      actionInvocationId: 'repeat-invocation-1',
+      lines: [
+        {
+          currentProductRef: 'product-1',
+          requestedQuantity: '2',
+          sourceLineRef: 'line-1',
+          status: 'REPEATABLE',
+        },
+        {
+          reason: 'PRODUCT_NOT_SELLABLE',
+          requestedQuantity: '3',
+          sourceLineRef: 'line-2',
+          status: 'SKIPPED',
+        },
+      ],
+      repeatIntentKey: 'repeat-order:11111111-1111-4111-8111-111111111111:order-1:retail-profile-1:retail',
+      sourceOrderRef: orderRef,
+      subject: retailProfileRef,
+    });
+    expect(ownerInput).not.toHaveProperty('price');
+    expect(collector.snapshot().domainEvents).toHaveLength(0);
+  }),
 );
 
 it.effect('fails closed for cross-tenant and wrong-type Cart ResourceRefs', () =>
@@ -405,8 +385,7 @@ it.effect('returns typed repeat failures for conflict, empty intent, and owner o
         },
       },
       {
-        createFromHistoricalIntent: () =>
-          Effect.succeed({ cartRef, lines: cartLines, outcome: 'CREATED' }),
+        createFromHistoricalIntent: () => Effect.succeed({ cartRef, lines: cartLines, outcome: 'CREATED' }),
       },
     ).pipe(Effect.flip);
     expect(Schema.is(RepeatOrderNoRepeatableLines)(noLines)).toBe(true);
@@ -428,66 +407,59 @@ it.effect('returns typed repeat failures for conflict, empty intent, and owner o
   }),
 );
 
-it.effect(
-  'rejects untrusted Storefront and mismatched Counterparty profile before owner reads',
-  () =>
-    Effect.gen(function* counterpartyTrust() {
-      const payload: RepeatCounterpartyOrderPayload = {
-        counterpartyRef,
-        profileRef: counterpartyProfileRef,
-        sourceOrderRef: orderRef,
-        storefrontId: 'storefront-request',
-      };
-      const collector = createActionCollector(
-        repeatCounterpartyOrderAction.descriptor.domainEvents,
-        'commerce.customer-context',
-        repeatCounterpartyOrderAction.descriptor.accessEvidencePolicy,
-        repeatCounterpartyOrderAction.descriptor.auditEvidenceSchema,
-      );
-      let associationCalls = 0;
-      const ports = makePorts({
-        counterpartyRef,
-        kind: 'COUNTERPARTY',
-        profileRef: counterpartyProfileRef,
-      });
-      const guardedPorts: CustomerHistoryPorts = {
-        ...ports,
-        counterpartyProfiles: {
-          current: () => {
-            associationCalls += 1;
-            return Effect.succeed('ABSENT');
-          },
+it.effect('rejects untrusted Storefront and mismatched Counterparty profile before owner reads', () =>
+  Effect.gen(function* counterpartyTrust() {
+    const payload: RepeatCounterpartyOrderPayload = {
+      counterpartyRef,
+      profileRef: counterpartyProfileRef,
+      sourceOrderRef: orderRef,
+      storefrontId: 'storefront-request',
+    };
+    const collector = createActionCollector(
+      repeatCounterpartyOrderAction.descriptor.domainEvents,
+      'commerce.customer-context',
+      repeatCounterpartyOrderAction.descriptor.accessEvidencePolicy,
+      repeatCounterpartyOrderAction.descriptor.auditEvidenceSchema,
+    );
+    let associationCalls = 0;
+    const ports = makePorts({
+      counterpartyRef,
+      kind: 'COUNTERPARTY',
+      profileRef: counterpartyProfileRef,
+    });
+    const guardedPorts: CustomerHistoryPorts = {
+      ...ports,
+      counterpartyProfiles: {
+        current: () => {
+          associationCalls += 1;
+          return Effect.succeed('ABSENT');
         },
-      };
-      const run = (trustedStorefrontId?: string) =>
-        getActionHandler(repeatCounterpartyOrderAction)(payload, {
-          actionInvocationId: 'counterparty-trust-invocation',
-          addDomainEvent: collector.addDomainEvent,
-          addOutboxMessage: collector.addOutboxMessage,
-          recordAuditEvidence: collector.recordAuditEvidence,
-          recordDataAccess: collector.recordDataAccess,
-          scope: trustedStorefrontId === undefined ? scope : { ...scope, trustedStorefrontId },
-          services: {
-            history: guardedPorts,
-            now: Effect.succeed(now),
-            owners: {
-              carts: {
-                createFromHistoricalIntent: () =>
-                  Effect.succeed({ cartRef, lines: cartLines, outcome: 'CREATED' }),
-              },
+      },
+    };
+    const run = (trustedStorefrontId?: string) =>
+      getActionHandler(repeatCounterpartyOrderAction)(payload, {
+        actionInvocationId: 'counterparty-trust-invocation',
+        addDomainEvent: collector.addDomainEvent,
+        addOutboxMessage: collector.addOutboxMessage,
+        recordAuditEvidence: collector.recordAuditEvidence,
+        recordDataAccess: collector.recordDataAccess,
+        scope: trustedStorefrontId === undefined ? scope : { ...scope, trustedStorefrontId },
+        services: {
+          history: guardedPorts,
+          now: Effect.succeed(now),
+          owners: {
+            carts: {
+              createFromHistoricalIntent: () => Effect.succeed({ cartRef, lines: cartLines, outcome: 'CREATED' }),
             },
           },
-        });
+        },
+      });
 
-      expect(Schema.is(RepeatOrderConflict)(yield* run().pipe(Effect.flip))).toBe(true);
-      expect(Schema.is(RepeatOrderConflict)(yield* run('storefront-other').pipe(Effect.flip))).toBe(
-        true,
-      );
-      expect(associationCalls).toBe(0);
+    expect(Schema.is(RepeatOrderConflict)(yield* run().pipe(Effect.flip))).toBe(true);
+    expect(Schema.is(RepeatOrderConflict)(yield* run('storefront-other').pipe(Effect.flip))).toBe(true);
+    expect(associationCalls).toBe(0);
 
-      expect(
-        Schema.is(RepeatOrderConflict)(yield* run('storefront-request').pipe(Effect.flip)),
-      ).toBe(true);
-      expect(associationCalls).toBe(1);
-    }),
+    expect(Schema.is(RepeatOrderConflict)(yield* run('storefront-request').pipe(Effect.flip))).toBe(true);
+    expect(associationCalls).toBe(1);
+  }),
 );

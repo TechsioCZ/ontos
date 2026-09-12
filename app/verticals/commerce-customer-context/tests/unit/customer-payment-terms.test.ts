@@ -381,12 +381,8 @@ it('projects half-open current state and excludes cancelled schedules from effec
 
   const beforeEnd = projectCustomerPaymentTermsAt(state, '2026-05-31T23:59:59.999Z', false);
   expect(beforeEnd.currentEntitlements).toHaveLength(1);
-  expect(
-    projectCustomerPaymentTermsAt(state, '2026-06-01T00:00:00.000Z', false).currentEntitlements,
-  ).toHaveLength(0);
-  expect(
-    projectCustomerPaymentTermsAt(state, '2027-02-01T00:00:00.000Z', true).state.entitlements,
-  ).toHaveLength(1);
+  expect(projectCustomerPaymentTermsAt(state, '2026-06-01T00:00:00.000Z', false).currentEntitlements).toHaveLength(0);
+  expect(projectCustomerPaymentTermsAt(state, '2027-02-01T00:00:00.000Z', true).state.entitlements).toHaveLength(1);
 });
 
 it('implements explicit, preferred, fallback, invalid, broken, missing, and inconsistent outcomes', () => {
@@ -420,11 +416,7 @@ it('implements explicit, preferred, fallback, invalid, broken, missing, and inco
         {
           audience: 'PROFILE',
           effectiveFrom: '2026-01-01T00:00:00.000Z',
-          eligiblePaymentTermRefs: [
-            entitled.paymentTermRef,
-            fallback.paymentTermRef,
-            other.paymentTermRef,
-          ],
+          eligiblePaymentTermRefs: [entitled.paymentTermRef, fallback.paymentTermRef, other.paymentTermRef],
           explicitlyPermittedPaymentTermRefs: [],
           fallbackPaymentTermRefs: [fallback.paymentTermRef],
           policyRevision: 'policy-revision-1',

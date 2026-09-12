@@ -9,10 +9,7 @@ import {
 } from './address-book.ts';
 import { SavedAddressRefSchema } from '../resources/saved-address.ts';
 
-export const AddressActionReasonSchema = Schema.Trim.check(
-  Schema.isMinLength(1),
-  Schema.isMaxLength(500),
-);
+const AddressActionReasonSchema = Schema.Trim.check(Schema.isMinLength(1), Schema.isMaxLength(500));
 const AddressLabelSchema = Schema.Trim.check(Schema.isMinLength(1), Schema.isMaxLength(300));
 const AddressRevisionSchema = Schema.Int.check(Schema.isGreaterThanOrEqualTo(1));
 const AddressDefaultsRevisionSchema = Schema.Int.check(Schema.isGreaterThanOrEqualTo(0));
@@ -26,8 +23,7 @@ const SavedAddressSourceTransitionSchema = Schema.Struct({
   ),
 );
 
-const profileTenantId = (profile: typeof AddressBookProfileSchema.Type) =>
-  profile.profileRef.tenantId;
+const profileTenantId = (profile: typeof AddressBookProfileSchema.Type) => profile.profileRef.tenantId;
 
 const originMatchesTenant = (origin: typeof SavedAddressOriginSchema.Type, tenantId: string) =>
   origin.kind === 'COMMERCE_ONLY' ||
@@ -64,14 +60,10 @@ export const UpdateSavedAddressPayloadSchema = Schema.Struct({
 }).check(
   Schema.makeFilter(({ origin, profile, savedAddressRef, sourceTransition }) => {
     const tenantId = profileTenantId(profile);
-    if (
-      savedAddressRef.tenantId !== tenantId ||
-      (origin !== undefined && !originMatchesTenant(origin, tenantId))
-    ) {
+    if (savedAddressRef.tenantId !== tenantId || (origin !== undefined && !originMatchesTenant(origin, tenantId))) {
       return 'The address, source, and profile must belong to the same Tenant';
     }
-    return sourceTransition === undefined ||
-      (origin !== undefined && sourceTransition.toKind === origin.kind)
+    return sourceTransition === undefined || (origin !== undefined && sourceTransition.toKind === origin.kind)
       ? undefined
       : 'An explicit source transition must name the supplied address source as its target';
   }),

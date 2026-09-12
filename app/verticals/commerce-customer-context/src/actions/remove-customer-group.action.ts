@@ -2,11 +2,7 @@
 // @ontos-action-owner commerce.customer-context
 // @ontos-action-slug remove-customer-group
 import type { ActionHandlerContext } from '@app/core-runtime';
-import {
-  defineAction,
-  defineActionResourcePermission,
-  defineTenantModuleEntrypoint,
-} from '@app/core-runtime';
+import { defineAction, defineActionResourcePermission, defineTenantModuleEntrypoint } from '@app/core-runtime';
 import { Effect, Match, Schema } from 'effect';
 import {
   RemoveCustomerGroupPayloadSchema,
@@ -37,20 +33,9 @@ import { createRemoveCustomerGroupCommerceCustomerContextCustomerGroupMembership
 import { createRemoveCustomerGroupCommerceCustomerContextCustomerGroupMembershipEndedV1OutboxMessage as createCustomerGroupMembershipEndedOutboxMessage } from './remove-customer-group.commerce-customer-context-customer-group-membership-ended-v1.outbox-message.ts';
 
 const domainEvents = {
-  'commerce.customer-context.customer-group-membership-cancelled.v1':
-    CustomerGroupMembershipCancelledEventSchema,
-  'commerce.customer-context.customer-group-membership-ended.v1':
-    CustomerGroupMembershipEndedEventSchema,
+  'commerce.customer-context.customer-group-membership-cancelled.v1': CustomerGroupMembershipCancelledEventSchema,
+  'commerce.customer-context.customer-group-membership-ended.v1': CustomerGroupMembershipEndedEventSchema,
 } as const;
-
-export {
-  RemoveCustomerGroupPayloadSchema,
-  RemoveCustomerGroupResultSchema,
-} from '../../shared/actions/remove-customer-group.ts';
-export type {
-  RemoveCustomerGroupPayload,
-  RemoveCustomerGroupResult,
-} from '../../shared/actions/remove-customer-group.ts';
 
 const RemoveCustomerGroupErrorSchema = Schema.Union([
   CustomerGroupMembershipNotFound,
@@ -59,112 +44,106 @@ const RemoveCustomerGroupErrorSchema = Schema.Union([
   CustomerGroupScopeMismatch,
 ]);
 
-const handleRemoveCustomerGroup = Effect.fn('RemoveCustomerGroupAction.handle')(
-  function* removeCustomerGroup(
-    payload: RemoveCustomerGroupPayload,
-    context: ActionHandlerContext<typeof domainEvents, CustomerGroupPersistence>,
+const handleRemoveCustomerGroup = Effect.fn('RemoveCustomerGroupAction.handle')(function* removeCustomerGroup(
+  payload: RemoveCustomerGroupPayload,
+  context: ActionHandlerContext<typeof domainEvents, CustomerGroupPersistence>,
+) {
+  if (
+    !customerGroupScopeMatches(
+      context.scope.tenantId,
+      payload.groupRef,
+      payload.membershipRef,
+      payload.profile.profileRef,
+    )
   ) {
-    if (
-      !customerGroupScopeMatches(
-        context.scope.tenantId,
-        payload.groupRef,
-        payload.membershipRef,
-        payload.profile.profileRef,
-      )
-    ) {
-      return yield* new CustomerGroupScopeMismatch({
-        code: 'customer_group_scope_mismatch',
-        reason: 'The membership, group, and profile must belong to the trusted Tenant',
-      });
-    }
-    const recordedAt = yield* customerGroupRecordedAt;
-    const legalEntityId = yield* requireCustomerGroupLegalEntityId(context.scope.legalEntityId);
-    const result = yield* context.services.remove({
-      actionInvocationId: context.actionInvocationId,
-      effectiveAt: payload.effectiveAt,
-      groupRef: payload.groupRef,
-      legalEntityId,
-      membershipRef: payload.membershipRef,
-      principalId: context.scope.principalId,
-      profile: payload.profile,
-      reason: payload.reason,
-      recordedAt,
-      tenantId: context.scope.tenantId,
+    return yield* new CustomerGroupScopeMismatch({
+      code: 'customer_group_scope_mismatch',
+      reason: 'The membership, group, and profile must belong to the trusted Tenant',
     });
-    const resolved = yield* Match.value(result).pipe(
-      Match.tag('not_found', () =>
-        Effect.fail(
-          new CustomerGroupMembershipNotFound({
-            code: 'customer_group_membership_not_found',
-            reason: 'The exact customer-group membership period does not exist',
-          }),
-        ),
+  }
+  const recordedAt = yield* customerGroupRecordedAt;
+  const legalEntityId = yield* requireCustomerGroupLegalEntityId(context.scope.legalEntityId);
+  const result = yield* context.services.remove({
+    actionInvocationId: context.actionInvocationId,
+    effectiveAt: payload.effectiveAt,
+    groupRef: payload.groupRef,
+    legalEntityId,
+    membershipRef: payload.membershipRef,
+    principalId: context.scope.principalId,
+    profile: payload.profile,
+    reason: payload.reason,
+    recordedAt,
+    tenantId: context.scope.tenantId,
+  });
+  const resolved = yield* Match.value(result).pipe(
+    Match.tag('not_found', () =>
+      Effect.fail(
+        new CustomerGroupMembershipNotFound({
+          code: 'customer_group_membership_not_found',
+          reason: 'The exact customer-group membership period does not exist',
+        }),
       ),
-      Match.tag('removal_conflict', () =>
-        Effect.fail(
-          new CustomerGroupMembershipRemovalConflict({
-            code: 'customer_group_membership_removal_conflict',
-            reason: 'The membership was already removed at a different effective instant',
-          }),
-        ),
-      ),
-      Match.tag('already_ended', ({ membership }) =>
-        Effect.succeed({ changed: false, membership } as const),
-      ),
-      Match.tag('removed', ({ changed, membership }) =>
-        Effect.succeed({ changed, membership } as const),
-      ),
-      Match.exhaustive,
-    );
-    yield* context.recordAuditEvidence({
-      changed: resolved.changed,
-      effectiveAt: payload.effectiveAt,
-      groupRef: resolved.membership.groupRef,
-      membership: resolved.membership,
-      operation: 'REMOVE',
-      reason: payload.reason,
-      revision: resolved.membership.revision,
-    });
-    yield* context.recordDataAccess({
-      accessKind: 'read',
-      queryHash: `customer-group-membership-remove:${payload.membershipRef.resourceId}:${payload.effectiveAt}`,
-      resultCount: 1,
-      servingModuleKey: MODULE_KEY,
-      targetModuleKey: MODULE_KEY,
-      targetResourceId: payload.membershipRef.resourceId,
-      targetResourceType: payload.membershipRef.resourceType,
-    });
-    if (resolved.changed) {
-      const { removal } = resolved.membership;
-      if (removal === null || removal.kind === 'GROUP_ARCHIVED') {
-        return yield* new CustomerGroupMembershipRemovalConflict({
+    ),
+    Match.tag('removal_conflict', () =>
+      Effect.fail(
+        new CustomerGroupMembershipRemovalConflict({
           code: 'customer_group_membership_removal_conflict',
-          reason: 'The persisted membership does not contain a valid explicit removal',
-        });
-      }
-      const eventPayload = { membership: resolved.membership };
-      const eventType =
-        removal.kind === 'EXPLICIT_END'
-          ? 'commerce.customer-context.customer-group-membership-ended.v1'
-          : 'commerce.customer-context.customer-group-membership-cancelled.v1';
-      const event = yield* context.addDomainEvent({
-        eventType,
-        payloadJson: eventPayload,
-        producerModuleKey: MODULE_KEY,
-        subjectModuleKey: MODULE_KEY,
-        subjectResourceId: resolved.membership.membershipRef.resourceId,
-        subjectResourceType: resolved.membership.membershipRef.resourceType,
+          reason: 'The membership was already removed at a different effective instant',
+        }),
+      ),
+    ),
+    Match.tag('already_ended', ({ membership }) => Effect.succeed({ changed: false, membership } as const)),
+    Match.tag('removed', ({ changed, membership }) => Effect.succeed({ changed, membership } as const)),
+    Match.exhaustive,
+  );
+  yield* context.recordAuditEvidence({
+    changed: resolved.changed,
+    effectiveAt: payload.effectiveAt,
+    groupRef: resolved.membership.groupRef,
+    membership: resolved.membership,
+    operation: 'REMOVE',
+    reason: payload.reason,
+    revision: resolved.membership.revision,
+  });
+  yield* context.recordDataAccess({
+    accessKind: 'read',
+    queryHash: `customer-group-membership-remove:${payload.membershipRef.resourceId}:${payload.effectiveAt}`,
+    resultCount: 1,
+    servingModuleKey: MODULE_KEY,
+    targetModuleKey: MODULE_KEY,
+    targetResourceId: payload.membershipRef.resourceId,
+    targetResourceType: payload.membershipRef.resourceType,
+  });
+  if (resolved.changed) {
+    const { removal } = resolved.membership;
+    if (removal === null || removal.kind === 'GROUP_ARCHIVED') {
+      return yield* new CustomerGroupMembershipRemovalConflict({
+        code: 'customer_group_membership_removal_conflict',
+        reason: 'The persisted membership does not contain a valid explicit removal',
       });
-      yield* context.addOutboxMessage(
-        event,
-        removal.kind === 'EXPLICIT_END'
-          ? createCustomerGroupMembershipEndedOutboxMessage(eventPayload)
-          : createCustomerGroupMembershipCancelledOutboxMessage(eventPayload),
-      );
     }
-    return resolved;
-  },
-);
+    const eventPayload = { membership: resolved.membership };
+    const eventType =
+      removal.kind === 'EXPLICIT_END'
+        ? 'commerce.customer-context.customer-group-membership-ended.v1'
+        : 'commerce.customer-context.customer-group-membership-cancelled.v1';
+    const event = yield* context.addDomainEvent({
+      eventType,
+      payloadJson: eventPayload,
+      producerModuleKey: MODULE_KEY,
+      subjectModuleKey: MODULE_KEY,
+      subjectResourceId: resolved.membership.membershipRef.resourceId,
+      subjectResourceType: resolved.membership.membershipRef.resourceType,
+    });
+    yield* context.addOutboxMessage(
+      event,
+      removal.kind === 'EXPLICIT_END'
+        ? createCustomerGroupMembershipEndedOutboxMessage(eventPayload)
+        : createCustomerGroupMembershipCancelledOutboxMessage(eventPayload),
+    );
+  }
+  return resolved;
+});
 
 export const removeCustomerGroupAction = defineAction(
   {
@@ -189,8 +168,8 @@ export const removeCustomerGroupAction = defineAction(
     owningModuleKey: 'commerce.customer-context',
     payloadSchema: RemoveCustomerGroupPayloadSchema,
     policies: [],
-    resourcePermission: defineActionResourcePermission<RemoveCustomerGroupPayload>(
-      ({ membershipRef }) => customerGroupMembershipWritePermission(membershipRef),
+    resourcePermission: defineActionResourcePermission<RemoveCustomerGroupPayload>(({ membershipRef }) =>
+      customerGroupMembershipWritePermission(membershipRef),
     ),
     resultSchema: RemoveCustomerGroupResultSchema,
     schemaVersion: '1',
@@ -198,16 +177,3 @@ export const removeCustomerGroupAction = defineAction(
   handleRemoveCustomerGroup,
   customerGroupServiceFactory,
 );
-
-// <generated-outbox-message-exports>
-export { createRemoveCustomerGroupCommerceCustomerContextCustomerGroupMembershipCancelledV1OutboxMessage } from './remove-customer-group.commerce-customer-context-customer-group-membership-cancelled-v1.outbox-message.ts';
-export { createRemoveCustomerGroupCommerceCustomerContextCustomerGroupMembershipEndedV1OutboxMessage } from './remove-customer-group.commerce-customer-context-customer-group-membership-ended-v1.outbox-message.ts';
-export { RemoveCustomerGroupCommerceCustomerContextCustomerGroupMembershipCancelledV1OutboxPayloadSchema } from './remove-customer-group.commerce-customer-context-customer-group-membership-cancelled-v1.outbox-message.ts';
-export { RemoveCustomerGroupCommerceCustomerContextCustomerGroupMembershipCancelledV1OutboxProducerModuleKey } from './remove-customer-group.commerce-customer-context-customer-group-membership-cancelled-v1.outbox-message.ts';
-export { RemoveCustomerGroupCommerceCustomerContextCustomerGroupMembershipCancelledV1OutboxTopic } from './remove-customer-group.commerce-customer-context-customer-group-membership-cancelled-v1.outbox-message.ts';
-export { RemoveCustomerGroupCommerceCustomerContextCustomerGroupMembershipEndedV1OutboxPayloadSchema } from './remove-customer-group.commerce-customer-context-customer-group-membership-ended-v1.outbox-message.ts';
-export { RemoveCustomerGroupCommerceCustomerContextCustomerGroupMembershipEndedV1OutboxProducerModuleKey } from './remove-customer-group.commerce-customer-context-customer-group-membership-ended-v1.outbox-message.ts';
-export { RemoveCustomerGroupCommerceCustomerContextCustomerGroupMembershipEndedV1OutboxTopic } from './remove-customer-group.commerce-customer-context-customer-group-membership-ended-v1.outbox-message.ts';
-export type { RemoveCustomerGroupCommerceCustomerContextCustomerGroupMembershipCancelledV1OutboxPayload } from './remove-customer-group.commerce-customer-context-customer-group-membership-cancelled-v1.outbox-message.ts';
-export type { RemoveCustomerGroupCommerceCustomerContextCustomerGroupMembershipEndedV1OutboxPayload } from './remove-customer-group.commerce-customer-context-customer-group-membership-ended-v1.outbox-message.ts';
-// </generated-outbox-message-exports>

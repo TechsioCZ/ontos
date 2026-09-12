@@ -25,8 +25,7 @@ export const AUTHORIZATION_MUTATION_TRANSITIONS = Object.freeze({
 export const canTransitionAuthorizationMutation = (
   from: AuthorizationMutationState,
   to: AuthorizationMutationState,
-): boolean =>
-  from === to || AUTHORIZATION_MUTATION_TRANSITIONS[from].some((candidate) => candidate === to);
+): boolean => from === to || AUTHORIZATION_MUTATION_TRANSITIONS[from].some((candidate) => candidate === to);
 
 export interface AuthorizationMutationJournalEntry {
   readonly attemptCount: number;

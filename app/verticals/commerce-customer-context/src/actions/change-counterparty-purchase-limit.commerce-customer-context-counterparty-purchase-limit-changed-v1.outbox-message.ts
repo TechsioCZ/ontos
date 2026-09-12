@@ -6,19 +6,14 @@ import {
 } from '@app/commerce-customer-context/outbox/commerce-customer-context-counterparty-purchase-limit-changed-v1';
 import type { OutboxPayload } from '@app/commerce-customer-context/outbox/commerce-customer-context-counterparty-purchase-limit-changed-v1';
 
-export { OutboxPayloadSchema as ChangeCounterpartyPurchaseLimitCommerceCustomerContextCounterpartyPurchaseLimitChangedV1OutboxPayloadSchema } from '@app/commerce-customer-context/outbox/commerce-customer-context-counterparty-purchase-limit-changed-v1';
-export type ChangeCounterpartyPurchaseLimitCommerceCustomerContextCounterpartyPurchaseLimitChangedV1OutboxPayload =
-  OutboxPayload;
-export const ChangeCounterpartyPurchaseLimitCommerceCustomerContextCounterpartyPurchaseLimitChangedV1OutboxProducerModuleKey =
+const ChangeCounterpartyPurchaseLimitCommerceCustomerContextCounterpartyPurchaseLimitChangedV1OutboxProducerModuleKey =
   outboxProducerModuleKey;
-export const ChangeCounterpartyPurchaseLimitCommerceCustomerContextCounterpartyPurchaseLimitChangedV1OutboxTopic =
-  outboxTopic;
+const ChangeCounterpartyPurchaseLimitCommerceCustomerContextCounterpartyPurchaseLimitChangedV1OutboxTopic = outboxTopic;
 
 export const createChangeCounterpartyPurchaseLimitCommerceCustomerContextCounterpartyPurchaseLimitChangedV1OutboxMessage =
   (payload: OutboxPayload): OutboxMessage => ({
     payloadJson: payload,
     producerModuleKey:
       ChangeCounterpartyPurchaseLimitCommerceCustomerContextCounterpartyPurchaseLimitChangedV1OutboxProducerModuleKey,
-    topic:
-      ChangeCounterpartyPurchaseLimitCommerceCustomerContextCounterpartyPurchaseLimitChangedV1OutboxTopic,
+    topic: ChangeCounterpartyPurchaseLimitCommerceCustomerContextCounterpartyPurchaseLimitChangedV1OutboxTopic,
   });

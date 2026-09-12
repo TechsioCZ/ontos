@@ -255,10 +255,7 @@ export type {
   PrincipalEligibilityService,
   PrincipalRef,
 } from './permissions/principal-ref.ts';
-export {
-  PrincipalEligibilityLive,
-  principalEligibilityForTransaction,
-} from './permissions/principal-eligibility.ts';
+export { PrincipalEligibilityLive, principalEligibilityForTransaction } from './permissions/principal-eligibility.ts';
 export {
   AUTHORIZATION_MUTATION_STATES,
   AUTHORIZATION_MUTATION_TRANSITIONS,
@@ -785,16 +782,8 @@ export type {
   OutboxWorkerLegalEntityScopeFanoutService,
   OutboxWorkerLegalEntityScopeRecord,
 } from './outbox/legal-entity-scope-fanout.ts';
-export type {
-  RunOutboxWorkerProcessInput,
-  StartOutboxWorkerProcessInput,
-} from './outbox/process.ts';
-export {
-  OutboxRuntime,
-  OutboxRuntimeLive,
-  matchOutboxMessages,
-  runOutboxCycle,
-} from './outbox/runtime.ts';
+export type { RunOutboxWorkerProcessInput, StartOutboxWorkerProcessInput } from './outbox/process.ts';
+export { OutboxRuntime, OutboxRuntimeLive, matchOutboxMessages, runOutboxCycle } from './outbox/runtime.ts';
 export type {
   MatchOutboxMessagesInput,
   OutboxCycleError,

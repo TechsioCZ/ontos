@@ -4,12 +4,8 @@
 // @ontos-outbox-worker-producer party.registry
 // @ontos-outbox-worker-topic party.registry.party-merged.v1
 import type { OutboxWorkerHandlerContext, OutboxWorkerLegalEntityScope } from '@app/core-runtime';
-import {
-  defineOutboxWorker,
-  defineTenantModuleEntrypoint,
-  OutboxWorkerLegalEntityScopeError,
-  OutboxWorkerLegalEntityScopeFanout,
-} from '@app/core-runtime';
+import { defineOutboxWorker, defineTenantModuleEntrypoint } from '@app/core-runtime';
+import { OutboxWorkerLegalEntityScopeError, OutboxWorkerLegalEntityScopeFanout } from '@app/core-runtime/outbox/worker';
 import type { OutboxPayload } from '@app/party-registry/outbox/party-registry-party-merged-v1';
 import {
   OutboxPayloadSchema,
@@ -17,7 +13,7 @@ import {
   outboxTopic,
 } from '@app/party-registry/outbox/party-registry-party-merged-v1';
 import { PartyRefSchema } from '@app/party-registry/resources/party';
-import { Context, Effect, Layer, Schema } from 'effect';
+import { Context, Effect, Schema } from 'effect';
 import {
   ProfileBoundedKeySchema,
   ProfileInstantSchema,
@@ -30,9 +26,7 @@ import { RetailCustomerProfileRefSchema } from '../../shared/resources/retail-cu
 
 const workerKey = 'commerce.customer-context.reconcile-party-merge' as const;
 const PositiveEventVersionSchema = Schema.BigInt.check(Schema.isGreaterThanBigInt(0n));
-const WorkerTenantIdSchema = Schema.toEncoded(
-  Schema.String.check(Schema.isUUID()).pipe(Schema.brand('TenantId')),
-);
+const WorkerTenantIdSchema = Schema.toEncoded(Schema.String.check(Schema.isUUID()).pipe(Schema.brand('TenantId')));
 
 const exactOwnerOutcomeSet = (outcomes: readonly ReconciliationOwnerOutcome[]): boolean => {
   const actualOwners = outcomes.map(({ owner }) => owner);
@@ -47,29 +41,20 @@ const ObservedRetailCustomerProfileRefSchema = Schema.Struct({
   kind: Schema.Literal('RETAIL'),
   ...RetailCustomerProfileRefSchema.fields,
 });
-export type ObservedRetailCustomerProfileRef = typeof ObservedRetailCustomerProfileRefSchema.Type;
 
 export const PartyMergeReconciliationCaseObservationSchema = Schema.Struct({
   caseRef: ProfileReconciliationCaseRefSchema,
   change: Schema.Literals(['OPENED', 'UPDATED']),
-  conflictingProfiles: Schema.Array(ObservedRetailCustomerProfileRefSchema).check(
-    Schema.isMinLength(2),
-  ),
+  conflictingProfiles: Schema.Array(ObservedRetailCustomerProfileRefSchema).check(Schema.isMinLength(2)),
   legalEntityId: WorkerTenantIdSchema,
   ownerOutcomes: Schema.Array(ReconciliationOwnerOutcomeSchema),
 });
-export type PartyMergeReconciliationCaseObservation =
-  typeof PartyMergeReconciliationCaseObservationSchema.Type;
+type PartyMergeReconciliationCaseObservation = typeof PartyMergeReconciliationCaseObservationSchema.Type;
 
-export const ReconcilePartyMergeObservationResultSchema = Schema.Union([
+const ReconcilePartyMergeObservationResultSchema = Schema.Union([
   Schema.Struct({
     currentEventVersion: PositiveEventVersionSchema,
-    outcome: Schema.Literals([
-      'NO_CONFLICTING_PROFILES',
-      'DUPLICATE',
-      'OUT_OF_ORDER',
-      'COMPLETED_NO_CHANGE',
-    ]),
+    outcome: Schema.Literals(['NO_CONFLICTING_PROFILES', 'DUPLICATE', 'OUT_OF_ORDER', 'COMPLETED_NO_CHANGE']),
   }),
   Schema.Struct({
     cases: Schema.Array(PartyMergeReconciliationCaseObservationSchema).check(Schema.isMinLength(1)),
@@ -77,15 +62,14 @@ export const ReconcilePartyMergeObservationResultSchema = Schema.Union([
     outcome: Schema.Literal('RECONCILIATIONS_OBSERVED'),
   }),
 ]);
-export type ReconcilePartyMergeObservationResult =
-  typeof ReconcilePartyMergeObservationResultSchema.Type;
+export type ReconcilePartyMergeObservationResult = typeof ReconcilePartyMergeObservationResultSchema.Type;
 
 /**
  * Exact input to the owner-local durable observer. It carries only Party identity and Core delivery
  * evidence. The adapter discovers affected Retail profiles in its scoped store; it must never infer
  * a Commerce profile survivor from the Party Registry survivor.
  */
-export const ReconcilePartyMergeObservationSchema = Schema.Struct({
+const ReconcilePartyMergeObservationSchema = Schema.Struct({
   absorbedPartyRefs: Schema.Array(PartyRefSchema).check(Schema.isMinLength(1)),
   actorPrincipalId: WorkerTenantIdSchema,
   domainEventId: ProfileBoundedKeySchema,
@@ -169,9 +153,7 @@ export interface ReconcilePartyMergePersistenceService {
 export class ReconcilePartyMergePersistence extends Context.Service<
   ReconcilePartyMergePersistence,
   ReconcilePartyMergePersistenceService
->()(
-  '@app/commerce-customer-context/workers/reconcile-party-merge.worker/ReconcilePartyMergePersistence',
-) {}
+>()('@app/commerce-customer-context/workers/reconcile-party-merge.worker/ReconcilePartyMergePersistence') {}
 
 const persistenceUnavailable = () =>
   new ReconcilePartyMergeWorkerRejected({
@@ -184,11 +166,6 @@ const persistenceUnavailable = () =>
 export const reconcilePartyMergePersistenceUnavailable = Object.freeze({
   observe: () => Effect.fail(persistenceUnavailable()),
 }) satisfies ReconcilePartyMergePersistenceService;
-
-export const ReconcilePartyMergePersistenceUnavailableLive = Layer.succeed(
-  ReconcilePartyMergePersistence,
-  reconcilePartyMergePersistenceUnavailable,
-);
 
 const initialOwnerOutcomes = (): readonly ReconciliationOwnerOutcome[] =>
   RECONCILIATION_REQUIRED_OWNERS.map((owner) => ({ owner, status: 'PENDING' as const }));
@@ -204,20 +181,14 @@ const observedCaseIsSafe = (
   return (
     observed.caseRef.tenantId === tenantId &&
     observed.legalEntityId === legalEntityId &&
-    observed.conflictingProfiles.every(
-      ({ tenantId: profileTenantId }) => profileTenantId === tenantId,
-    ) &&
+    observed.conflictingProfiles.every(({ tenantId: profileTenantId }) => profileTenantId === tenantId) &&
     new Set(profileIdentities).size === profileIdentities.length &&
     exactOwnerOutcomeSet(observed.ownerOutcomes) &&
-    (observed.change !== 'OPENED' ||
-      observed.ownerOutcomes.every(({ status }) => status === 'PENDING'))
+    (observed.change !== 'OPENED' || observed.ownerOutcomes.every(({ status }) => status === 'PENDING'))
   );
 };
 
-const resultIsCurrent = (
-  result: ReconcilePartyMergeObservationResult,
-  eventVersion: bigint,
-): boolean => {
+const resultIsCurrent = (result: ReconcilePartyMergeObservationResult, eventVersion: bigint): boolean => {
   if (result.outcome === 'OUT_OF_ORDER') {
     return result.currentEventVersion > eventVersion;
   }
@@ -240,6 +211,48 @@ const stateConflict = (reason: string) =>
     reason,
     retryable: true,
   });
+
+type ReconcilePartyMergeInputValidation =
+  | { readonly outcome: 'ACCEPTED' }
+  | { readonly error: ReconcilePartyMergeWorkerError; readonly outcome: 'REJECTED' };
+
+const coreDeliveryEvidenceMatchesWorker = (context: OutboxWorkerHandlerContext): boolean =>
+  context.workerKey === workerKey &&
+  context.producerModuleKey === outboxProducerModuleKey &&
+  context.topic === outboxTopic &&
+  context.domainEventId.trim().length > 0 &&
+  context.messageId.trim().length > 0 &&
+  context.actorPrincipalId !== undefined &&
+  Schema.is(WorkerTenantIdSchema)(context.actorPrincipalId) &&
+  context.tenantSequenceNo > 0n;
+
+const partyMergeTenantsMatch = (payload: OutboxPayload, context: OutboxWorkerHandlerContext): boolean =>
+  context.tenantId === payload.tenantId &&
+  payload.survivorPartyRef.tenantId === payload.tenantId &&
+  payload.absorbedPartyRefs.every(({ tenantId }) => tenantId === payload.tenantId);
+
+const validateReconcilePartyMergeInput = (
+  payload: OutboxPayload,
+  context: OutboxWorkerHandlerContext,
+): ReconcilePartyMergeInputValidation => {
+  if (!coreDeliveryEvidenceMatchesWorker(context)) {
+    return {
+      error: invalidContext('Core delivery evidence does not match the generated Party merge worker'),
+      outcome: 'REJECTED',
+    };
+  }
+  if (!partyMergeTenantsMatch(payload, context)) {
+    return {
+      error: new ReconcilePartyMergeWorkerRejected({
+        code: 'CROSS_TENANT_EVENT',
+        reason: 'Party merge delivery and Party references must share one Tenant',
+        retryable: false,
+      }),
+      outcome: 'REJECTED',
+    };
+  }
+  return { outcome: 'ACCEPTED' };
+};
 
 const observePartyMergeInScope = Effect.fn('ReconcilePartyMergeWorker.observePartyMergeInScope')(
   function* observePartyMergeInScopeEffect(
@@ -270,19 +283,13 @@ const observePartyMergeInScope = Effect.fn('ReconcilePartyMergeWorker.observePar
       return yield* stateConflict('Persistence returned an invalid observation result');
     }
     if (!resultIsCurrent(result, context.tenantSequenceNo)) {
-      return yield* stateConflict(
-        'Persistence result does not preserve monotonic Party event ordering',
-      );
+      return yield* stateConflict('Persistence result does not preserve monotonic Party event ordering');
     }
     if (
       result.outcome === 'RECONCILIATIONS_OBSERVED' &&
-      !result.cases.every((observed) =>
-        observedCaseIsSafe(observed, payload.tenantId, scope.legalEntityId),
-      )
+      !result.cases.every((observed) => observedCaseIsSafe(observed, payload.tenantId, scope.legalEntityId))
     ) {
-      return yield* stateConflict(
-        'Persistence attempted an unsafe profile merge or incomplete reconciliation update',
-      );
+      return yield* stateConflict('Persistence attempted an unsafe profile merge or incomplete reconciliation update');
     }
     return yield* Effect.void;
   },
@@ -299,47 +306,26 @@ const mapScopeFailure = (
     : persistenceUnavailable();
 };
 
-export const handleReconcilePartyMerge = Effect.fn(
-  'ReconcilePartyMergeWorker.handleReconcilePartyMerge',
-)(function* handle(
-  payload: OutboxPayload,
-  context: OutboxWorkerHandlerContext,
-): Effect.fn.Return<
-  void,
-  ReconcilePartyMergeWorkerError,
-  ReconcilePartyMergePersistence | OutboxWorkerLegalEntityScopeFanout
-> {
-  if (
-    context.workerKey !== workerKey ||
-    context.producerModuleKey !== outboxProducerModuleKey ||
-    context.topic !== outboxTopic ||
-    context.domainEventId.trim().length === 0 ||
-    context.messageId.trim().length === 0 ||
-    context.actorPrincipalId === undefined ||
-    !Schema.is(WorkerTenantIdSchema)(context.actorPrincipalId) ||
-    context.tenantSequenceNo <= 0n
-  ) {
-    return yield* invalidContext(
-      'Core delivery evidence does not match the generated Party merge worker',
-    );
-  }
-  if (
-    context.tenantId !== payload.tenantId ||
-    payload.survivorPartyRef.tenantId !== payload.tenantId ||
-    payload.absorbedPartyRefs.some(({ tenantId }) => tenantId !== payload.tenantId)
-  ) {
-    return yield* new ReconcilePartyMergeWorkerRejected({
-      code: 'CROSS_TENANT_EVENT',
-      reason: 'Party merge delivery and Party references must share one Tenant',
-      retryable: false,
-    });
-  }
+export const handleReconcilePartyMerge = Effect.fn('ReconcilePartyMergeWorker.handleReconcilePartyMerge')(
+  function* handle(
+    payload: OutboxPayload,
+    context: OutboxWorkerHandlerContext,
+  ): Effect.fn.Return<
+    void,
+    ReconcilePartyMergeWorkerError,
+    ReconcilePartyMergePersistence | OutboxWorkerLegalEntityScopeFanout
+  > {
+    const validation = validateReconcilePartyMergeInput(payload, context);
+    if (validation.outcome === 'REJECTED') {
+      return yield* validation.error;
+    }
 
-  const fanout = yield* OutboxWorkerLegalEntityScopeFanout;
-  return yield* fanout
-    .forEachScope(context, (scope) => observePartyMergeInScope(scope, payload, context))
-    .pipe(Effect.mapError(mapScopeFailure));
-});
+    const fanout = yield* OutboxWorkerLegalEntityScopeFanout;
+    return yield* fanout
+      .forEachScope(context, (scope) => observePartyMergeInScope(scope, payload, context))
+      .pipe(Effect.mapError(mapScopeFailure));
+  },
+);
 
 export const reconcilePartyMergeWorker = defineOutboxWorker(
   {

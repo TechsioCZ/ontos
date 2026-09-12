@@ -233,11 +233,10 @@ export const planActionBoundaryScaffold = (
           'Preserve owner adaptations and export authenticateOperationPrincipal using makeMicroverticalHttpPrincipalAuthentication with the audience-bound verifier; provide ActionPrincipalVerifierLive at the owning API runtime before generating governed contributions.',
       },
     );
-    const clientMutation = yield* createOrAcceptOwnedMutation(
-      clientPath,
-      renderActionGatewayClient(vertical),
-      [`ACTION_GATEWAY_AUDIENCE = '${vertical.appId}'`, 'makeOperationGateway'],
-    );
+    const clientMutation = yield* createOrAcceptOwnedMutation(clientPath, renderActionGatewayClient(vertical), [
+      `ACTION_GATEWAY_AUDIENCE = '${vertical.appId}'`,
+      'makeOperationGateway',
+    ]);
     const redemptionMutation = yield* createOrAcceptOwnedMutation(
       redemptionPath,
       renderGatewayAssertionRedemptionAdapter(vertical),

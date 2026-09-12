@@ -11,6 +11,8 @@ import type {
   ActionAuthorizationPreflightDatabaseService,
   ActionAuthorizationPreflightInput,
   ActionAuthorizationPreflightService,
+  ActionAuthorizationPreflightTransaction,
+  ActionTransactionError,
 } from '@app/core-runtime';
 import { sql } from 'drizzle-orm';
 import type { EffectDrizzleQueryError } from 'drizzle-orm/effect-core';
@@ -20,10 +22,15 @@ import { ClaimCounterpartyAccessInvitationPayloadSchema } from '../../shared/act
 import { CounterpartyAccessContractViolation } from '../../shared/domain/access-error.ts';
 import { verifyCounterpartyInvitationClaimAuthorityForOwnerScope } from './invitation-claim-authority-persistence.ts';
 import { currentOwnerAccessForTransaction } from './access-persistence.ts';
-import type { ActionTransactionError } from '@app/core-runtime';
 import type { CounterpartyAccessDomainError } from '../../shared/domain/access-error.ts';
 
 const claimActionKey = 'commerce.customer-context.claim-counterparty-access-invitation';
+
+type InvitationClaimPreflightFailure =
+  | CounterpartyAccessDomainError
+  | ActionPermissionCheckError
+  | ActionTransactionError
+  | EffectDrizzleQueryError;
 
 const actionPermissionCheckUnavailable = (cause?: unknown) => {
   const error = new ActionPermissionCheckError({
@@ -39,7 +46,7 @@ const actionPermissionCheckUnavailable = (cause?: unknown) => {
       });
 };
 
-const isContractDenial = (failure: unknown): boolean =>
+const isContractDenial = (failure: InvitationClaimPreflightFailure): boolean =>
   Schema.is(CounterpartyAccessContractViolation)(failure);
 
 const payloadMatchesTrustedClaim = (
@@ -66,27 +73,24 @@ const payloadMatchesTrustedClaim = (
 const decodedClaimPayload = (
   input: ActionAuthorizationPreflightInput,
 ): typeof ClaimCounterpartyAccessInvitationPayloadSchema.Type | undefined => {
-  const decoded = Schema.decodeUnknownResult(ClaimCounterpartyAccessInvitationPayloadSchema)(
-    input.payload,
-  );
+  const decoded = Schema.decodeUnknownResult(ClaimCounterpartyAccessInvitationPayloadSchema)(input.payload);
   return Result.isSuccess(decoded) ? decoded.success : undefined;
 };
 
 const runInvitationClaimPreflight = Effect.fn('InvitationClaimActionPreflight.run')(
   function* runInvitationClaimPreflight(
+    // oxlint-disable-next-line effect-native/no-dependency-parameters -- The operation captures the already-yielded Core preflight database seam; expires: 2027-03-31.
     database: ActionAuthorizationPreflightDatabaseService,
     contextAccess: Pick<(typeof ContextAccess)['Service'], 'businessPermissions'>,
+    // oxlint-disable-next-line effect-native/no-dependency-parameters -- The operation captures the already-yielded eligibility service for this owner-local preflight; expires: 2027-03-31.
     eligibility: (typeof PrincipalEligibility)['Service'],
     input: ActionAuthorizationPreflightInput,
     payload: typeof ClaimCounterpartyAccessInvitationPayloadSchema.Type,
   ): Effect.fn.Return<
     void,
-    | CounterpartyAccessDomainError
-    | ActionPermissionCheckError
-    | ActionTransactionError
-    | EffectDrizzleQueryError
+    CounterpartyAccessDomainError | ActionPermissionCheckError | ActionTransactionError | EffectDrizzleQueryError
   > {
-    const legalEntityId = input.scope.legalEntityId;
+    const { legalEntityId } = input.scope;
     if (legalEntityId === undefined) {
       return yield* actionPermissionCheckUnavailable();
     }
@@ -101,8 +105,8 @@ const runInvitationClaimPreflight = Effect.fn('InvitationClaimActionPreflight.ru
       });
     }
 
-    return yield* database.transaction((transaction) =>
-      Effect.gen(function* verifyInScopedTransaction() {
+    const verifyInScopedTransaction = Effect.fn('InvitationClaimActionPreflight.verifyInScopedTransaction')(
+      function* verifyInScopedTransaction(transaction: ActionAuthorizationPreflightTransaction) {
         yield* transaction.execute(
           sql`select set_config('ontos.tenant_id', ${input.scope.tenantId}, true), set_config('ontos.legal_entity_id', ${input.scope.legalEntityId}, true)`,
           'objects',
@@ -129,14 +133,18 @@ const runInvitationClaimPreflight = Effect.fn('InvitationClaimActionPreflight.ru
             scope: payload.scope,
           },
         );
-      }),
+      },
     );
+    return yield* database.transaction(verifyInScopedTransaction);
   },
 );
 
+// oxlint-disable-next-line effect-native/no-wide-factory-signature -- This public factory preserves the direct unit-test seam while capturing three already-yielded Core services; expires: 2027-03-31.
 export const makeInvitationClaimActionAuthorizationPreflight = (
+  // oxlint-disable-next-line effect-native/no-dependency-parameters -- The factory captures the already-yielded Core preflight database seam; expires: 2027-03-31.
   database: ActionAuthorizationPreflightDatabaseService,
   contextAccess: Pick<(typeof ContextAccess)['Service'], 'businessPermissions'>,
+  // oxlint-disable-next-line effect-native/no-dependency-parameters -- The factory captures the already-yielded eligibility service for this owner-local preflight; expires: 2027-03-31.
   eligibility: (typeof PrincipalEligibility)['Service'],
 ): ActionAuthorizationPreflightService =>
   Object.freeze({
@@ -157,17 +165,11 @@ export const makeInvitationClaimActionAuthorizationPreflight = (
             principalId: input.principal.principalId,
           }),
         })),
-        Effect.catch(
-          (
-            failure:
-              | CounterpartyAccessDomainError
-              | ActionPermissionCheckError
-              | ActionTransactionError
-              | EffectDrizzleQueryError,
-          ) =>
-            isContractDenial(failure)
-              ? Effect.succeed({ outcome: 'denied' } as const)
-              : Effect.fail(actionPermissionCheckUnavailable(failure)),
+        // oxlint-disable-next-line promise/prefer-await-to-callbacks, promise/prefer-await-to-then -- Effect's typed catch combinator is not Promise chaining.
+        Effect.catch((error: InvitationClaimPreflightFailure) =>
+          isContractDenial(error)
+            ? Effect.succeed({ outcome: 'denied' } as const)
+            : Effect.fail(actionPermissionCheckUnavailable(error)),
         ),
       );
     },
@@ -176,11 +178,10 @@ export const makeInvitationClaimActionAuthorizationPreflight = (
 export const commerceCustomerContextInvitationClaimActionAuthorizationPreflightLive = Layer.effect(
   ActionAuthorizationPreflight,
   Effect.gen(function* makeInvitationClaimPreflightLive() {
-    const [database, contextAccess, eligibility] = yield* Effect.all([
-      ActionAuthorizationPreflightDatabase,
-      ContextAccess,
-      PrincipalEligibility,
-    ] as const);
+    const [database, contextAccess, eligibility] = yield* Effect.all(
+      [ActionAuthorizationPreflightDatabase, ContextAccess, PrincipalEligibility] as const,
+      { concurrency: 1 },
+    );
     return makeInvitationClaimActionAuthorizationPreflight(database, contextAccess, eligibility);
   }),
 );

@@ -3,12 +3,8 @@
 // @ontos-action-slug remove-counterparty-price-group
 /* eslint-disable effect-native/no-manual-tag-comparison, sonarjs/no-duplicate-string -- Generated Action shape narrows audited outcomes and repeats the canonical owner key; expires: 2027-03-01. */
 import type { ActionHandlerContext } from '@app/core-runtime';
-import {
-  defineAction,
-  defineActionBusinessPermission,
-  defineTenantModuleEntrypoint,
-} from '@app/core-runtime';
-import { Effect, Match, Schema } from 'effect';
+import { defineAction, defineActionBusinessPermission, defineTenantModuleEntrypoint } from '@app/core-runtime';
+import { Effect, Schema } from 'effect';
 import {
   CounterpartyPriceGroupRemovedEventSchema,
   isPriceGroupInstantBefore,
@@ -35,15 +31,7 @@ import type {
 } from '../../shared/domain/price-group-ports.ts';
 import { createRemoveCounterpartyPriceGroupCommerceCustomerContextCounterpartyPriceGroupRemovedV1OutboxMessage } from './remove-counterparty-price-group.commerce-customer-context-counterparty-price-group-removed-v1.outbox-message.ts';
 import { priceGroupActionServicesForTransaction } from './price-group-action-services.ts';
-
-export {
-  RemoveCounterpartyPriceGroupPayloadSchema,
-  RemoveCounterpartyPriceGroupResultSchema,
-} from '../../shared/actions/remove-counterparty-price-group.ts';
-export type {
-  RemoveCounterpartyPriceGroupPayload,
-  RemoveCounterpartyPriceGroupResult,
-} from '../../shared/actions/remove-counterparty-price-group.ts';
+import { interpretPriceGroupRemovalResult } from './price-group-removal-result.ts';
 
 const RemoveCounterpartyPriceGroupErrorSchema = Schema.Union([
   CustomerPriceGroupAssignmentNotFound,
@@ -76,7 +64,7 @@ const sameCounterparty = (
   left.resourceType === right.resourceType &&
   left.tenantId === right.tenantId;
 
-export const handleRemoveCounterpartyPriceGroup = Effect.fn(
+const handleRemoveCounterpartyPriceGroup = Effect.fn(
   'RemoveCounterpartyPriceGroupAction.handleRemoveCounterpartyPriceGroup',
 )(function* remove(
   payload: RemoveCounterpartyPriceGroupPayload,
@@ -112,10 +100,7 @@ export const handleRemoveCounterpartyPriceGroup = Effect.fn(
       reason: 'The Counterparty purchasing profile does not exist',
     });
   }
-  if (
-    validation.counterpartyRef === null ||
-    !sameCounterparty(validation.counterpartyRef, payload.counterpartyRef)
-  ) {
+  if (validation.counterpartyRef === null || !sameCounterparty(validation.counterpartyRef, payload.counterpartyRef)) {
     return yield* new CustomerPriceGroupProfileAssociationMismatch({
       code: 'customer_price_group_profile_association_mismatch',
       reason: 'The purchasing profile is not associated with the authorized Counterparty',
@@ -134,59 +119,10 @@ export const handleRemoveCounterpartyPriceGroup = Effect.fn(
     recordedAt,
     tenantId: context.scope.tenantId,
   });
-  const result = yield* Match.value(stored).pipe(
-    Match.tag('removed', (removed) => Effect.succeed(removed)),
-    Match.tag('assignment_not_found', () =>
-      Effect.fail(
-        new CustomerPriceGroupAssignmentNotFound({
-          code: 'customer_price_group_assignment_not_found',
-          reason: 'The exact PriceGroup assignment does not exist',
-        }),
-      ),
-    ),
-    Match.tag('profile_not_found', () =>
-      Effect.fail(
-        new CustomerPriceGroupProfileNotFound({
-          code: 'customer_price_group_profile_not_found',
-          reason: 'The Counterparty purchasing profile does not exist',
-        }),
-      ),
-    ),
-    Match.tag('profile_mismatch', () =>
-      Effect.fail(
-        new CustomerPriceGroupRemovalConflict({
-          code: 'customer_price_group_removal_conflict',
-          reason: 'The assignment does not belong to the supplied purchasing profile',
-        }),
-      ),
-    ),
-    Match.tag('removal_conflict', () =>
-      Effect.fail(
-        new CustomerPriceGroupRemovalConflict({
-          code: 'customer_price_group_removal_conflict',
-          reason: 'The requested effective removal conflicts with the assignment period',
-        }),
-      ),
-    ),
-    Match.tag('retroactive_schedule', () =>
-      Effect.fail(
-        new CustomerPriceGroupRetroactiveScheduleRejected({
-          code: 'customer_price_group_retroactive_schedule_rejected',
-          reason: 'The removal became retroactive before it could be persisted',
-        }),
-      ),
-    ),
-    Match.tag('revision_conflict', ({ currentRevision }) =>
-      Effect.fail(
-        new CustomerPriceGroupRevisionConflict({
-          code: 'customer_price_group_revision_conflict',
-          currentRevision,
-          reason: 'The assignment changed after it was read',
-        }),
-      ),
-    ),
-    Match.exhaustive,
-  );
+  const result = yield* interpretPriceGroupRemovalResult(stored, {
+    profileMismatch: 'The assignment does not belong to the supplied purchasing profile',
+    profileNotFound: 'The Counterparty purchasing profile does not exist',
+  });
   if (result.assignment.effectiveTo !== payload.effectiveAt) {
     return yield* new CustomerPriceGroupRemovalConflict({
       code: 'customer_price_group_removal_conflict',
@@ -240,21 +176,18 @@ export const removeCounterpartyPriceGroupAction = defineAction(
     },
     actionKey: 'commerce.customer-context.remove-counterparty-price-group',
     auditProfile: 'sensitive',
-    businessPermission: defineActionBusinessPermission<RemoveCounterpartyPriceGroupPayload>(
-      (payload, scope) => ({
-        permission: 'counterparty.settings.price_group.manage',
-        target: {
-          counterpartyId: payload.counterpartyRef.resourceId,
-          kind: 'counterparty',
-          legalEntityId: scope.legalEntityId ?? '',
-          tenantId: scope.tenantId,
-        },
-      }),
-    ),
+    businessPermission: defineActionBusinessPermission<RemoveCounterpartyPriceGroupPayload>((payload, scope) => ({
+      permission: 'counterparty.settings.price_group.manage',
+      target: {
+        counterpartyId: payload.counterpartyRef.resourceId,
+        kind: 'counterparty',
+        legalEntityId: scope.legalEntityId ?? '',
+        tenantId: scope.tenantId,
+      },
+    })),
     domainErrorSchema: RemoveCounterpartyPriceGroupErrorSchema,
     domainEvents: {
-      'commerce.customer-context.counterparty-price-group-removed.v1':
-        CounterpartyPriceGroupRemovedEventSchema,
+      'commerce.customer-context.counterparty-price-group-removed.v1': CounterpartyPriceGroupRemovedEventSchema,
     },
     entrypoint: defineTenantModuleEntrypoint({
       access: 'write',
@@ -277,11 +210,3 @@ export const removeCounterpartyPriceGroupAction = defineAction(
       Effect.map(({ now, profileValidation, store }) => ({ now, profileValidation, store })),
     ),
 );
-
-// <generated-outbox-message-exports>
-export { createRemoveCounterpartyPriceGroupCommerceCustomerContextCounterpartyPriceGroupRemovedV1OutboxMessage } from './remove-counterparty-price-group.commerce-customer-context-counterparty-price-group-removed-v1.outbox-message.ts';
-export { RemoveCounterpartyPriceGroupCommerceCustomerContextCounterpartyPriceGroupRemovedV1OutboxPayloadSchema } from './remove-counterparty-price-group.commerce-customer-context-counterparty-price-group-removed-v1.outbox-message.ts';
-export { RemoveCounterpartyPriceGroupCommerceCustomerContextCounterpartyPriceGroupRemovedV1OutboxProducerModuleKey } from './remove-counterparty-price-group.commerce-customer-context-counterparty-price-group-removed-v1.outbox-message.ts';
-export { RemoveCounterpartyPriceGroupCommerceCustomerContextCounterpartyPriceGroupRemovedV1OutboxTopic } from './remove-counterparty-price-group.commerce-customer-context-counterparty-price-group-removed-v1.outbox-message.ts';
-export type { RemoveCounterpartyPriceGroupCommerceCustomerContextCounterpartyPriceGroupRemovedV1OutboxPayload } from './remove-counterparty-price-group.commerce-customer-context-counterparty-price-group-removed-v1.outbox-message.ts';
-// </generated-outbox-message-exports>

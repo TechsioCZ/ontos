@@ -109,6 +109,22 @@ const unusedAccessDependencies = Layer.mergeAll(
 );
 const provideUnusedAccessPort = Effect.provide(unusedAccessDependencies);
 
+const expectSingleMutationRequest = (
+  material: {
+    readonly domainEvents: readonly unknown[];
+    readonly outboxMessages: readonly {
+      readonly domainEventIndex: number;
+      readonly message: { readonly topic: string };
+    }[];
+  },
+  topic: string,
+) => {
+  expect(material.domainEvents).toHaveLength(1);
+  expect(material.outboxMessages).toHaveLength(1);
+  expect(material.outboxMessages[0]?.domainEventIndex).toBe(0);
+  expect(material.outboxMessages[0]?.message.topic).toBe(topic);
+};
+
 const commonGrantPayload = {
   catalogVersion: '1',
   counterpartyRef,
@@ -180,14 +196,8 @@ const accessActions = [
 
 it('publishes exact, secret-safe access event contracts', () => {
   const eventContracts = [
-    [
-      CounterpartyAccessGrantedEventPayloadSchema,
-      { ...commonGrantPayload, grantedAt, grantedBy: actor },
-    ],
-    [
-      CounterpartyAccessRevokedEventPayloadSchema,
-      { ...commonGrantPayload, revokedAt: grantedAt, revokedBy: actor },
-    ],
+    [CounterpartyAccessGrantedEventPayloadSchema, { ...commonGrantPayload, grantedAt, grantedBy: actor }],
+    [CounterpartyAccessRevokedEventPayloadSchema, { ...commonGrantPayload, revokedAt: grantedAt, revokedBy: actor }],
     [
       CounterpartyAccessAdministratorBootstrappedEventPayloadSchema,
       {
@@ -219,10 +229,7 @@ it('publishes exact, secret-safe access event contracts', () => {
         resentBy: actor,
       },
     ],
-    [
-      CounterpartyAccessInvitationRevokedEventPayloadSchema,
-      { ...commonInvitationPayload, revokedBy: actor },
-    ],
+    [CounterpartyAccessInvitationRevokedEventPayloadSchema, { ...commonInvitationPayload, revokedBy: actor }],
     [
       CounterpartyAccessInvitationClaimedEventPayloadSchema,
       {
@@ -302,12 +309,7 @@ it('publishes exact, secret-safe access event contracts', () => {
   expect(eventContracts).toHaveLength(11);
   for (const [schema, payload] of eventContracts) {
     expect(Schema.is(schema)(payload)).toBe(true);
-    for (const forbiddenKey of [
-      'claimProofRef',
-      'claimProofReference',
-      'invitationSecret',
-      'invitationToken',
-    ]) {
+    for (const forbiddenKey of ['claimProofRef', 'claimProofReference', 'invitationSecret', 'invitationToken']) {
       expect(() =>
         Schema.decodeUnknownSync(schema, { onExcessProperty: 'error' })({
           ...payload,
@@ -329,9 +331,7 @@ it('publishes exact, secret-safe access event contracts', () => {
       'commerce.customer-context.counterparty-access-invitation-claim-authorization-mutation-requested.v1',
     ]),
   );
-  expect(
-    accessActions.every(({ descriptor }) => Object.keys(descriptor.domainEvents).length === 1),
-  ).toBe(true);
+  expect(accessActions.every(({ descriptor }) => Object.keys(descriptor.domainEvents).length === 1)).toBe(true);
 });
 
 it.effect('attaches a grant trigger only for a newly staged authorization mutation', () =>
@@ -369,10 +369,8 @@ it.effect('attaches a grant trigger only for a newly staged authorization mutati
     };
 
     const material = yield* run(true);
-    expect(material.domainEvents).toHaveLength(1);
-    expect(material.outboxMessages).toHaveLength(1);
-    expect(material.outboxMessages[0]?.domainEventIndex).toBe(0);
-    expect(material.outboxMessages[0]?.message.topic).toBe(
+    expectSingleMutationRequest(
+      material,
       'commerce.customer-context.counterparty-access-grant-authorization-mutation-requested.v1',
     );
     expect(material.outboxMessages[0]?.message.payloadJson).toEqual({
@@ -422,10 +420,8 @@ it.effect('attaches bootstrap trigger only for a newly staged authorization muta
     };
 
     const material = yield* run(true);
-    expect(material.domainEvents).toHaveLength(1);
-    expect(material.outboxMessages).toHaveLength(1);
-    expect(material.outboxMessages[0]?.domainEventIndex).toBe(0);
-    expect(material.outboxMessages[0]?.message.topic).toBe(
+    expectSingleMutationRequest(
+      material,
       'commerce.customer-context.counterparty-access-administrator-bootstrap-authorization-mutation-requested.v1',
     );
 
@@ -501,10 +497,8 @@ it.effect('attaches revoke trigger only for a newly staged authorization mutatio
     };
 
     const material = yield* run(true);
-    expect(material.domainEvents).toHaveLength(1);
-    expect(material.outboxMessages).toHaveLength(1);
-    expect(material.outboxMessages[0]?.domainEventIndex).toBe(0);
-    expect(material.outboxMessages[0]?.message.topic).toBe(
+    expectSingleMutationRequest(
+      material,
       'commerce.customer-context.counterparty-access-revoke-authorization-mutation-requested.v1',
     );
 
@@ -708,9 +702,7 @@ it.effect('attaches claim trigger only for a newly staged aggregate mutation', (
     expect(material.outboxMessages[0]?.message.topic).toBe(
       'commerce.customer-context.counterparty-access-invitation-claim-authorization-mutation-requested.v1',
     );
-    expect(material.outboxMessages[0]?.message.payloadJson).not.toHaveProperty(
-      'claimProofReference',
-    );
+    expect(material.outboxMessages[0]?.message.payloadJson).not.toHaveProperty('claimProofReference');
 
     const replay = yield* run(false);
     expect(replay.domainEvents).toHaveLength(0);
@@ -749,11 +741,7 @@ it.effect('defers durable proof rejection until after the Action transaction com
       ),
     );
 
-    expect(
-      Schema.is(claimCounterpartyAccessInvitationAction.descriptor.resultSchema)(
-        committedRejection,
-      ),
-    ).toBe(false);
+    expect(Schema.is(claimCounterpartyAccessInvitationAction.descriptor.resultSchema)(committedRejection)).toBe(false);
     const snapshot = collector.snapshot();
     expect(snapshot.auditEvidence).toBeDefined();
     expect(snapshot.dataAccessEvents).toHaveLength(1);

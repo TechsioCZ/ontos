@@ -10,9 +10,7 @@ export { SCOPED_ROUTINE_INVOCATION_ERROR_CODES } from './scoped-routine-error.ts
 export { ScopedRoutineInvocationError } from './scoped-routine-error.ts';
 export type { ScopedRoutineInvocationErrorCode } from './scoped-routine-error.ts';
 
-const scopedRoutineDeclaration: unique symbol = Symbol(
-  '@app/core-runtime/db/scoped-routine/declaration',
-);
+const scopedRoutineDeclaration: unique symbol = Symbol('@app/core-runtime/db/scoped-routine/declaration');
 
 class ScopedRoutinePrivateStorage {
   declare readonly [scopedRoutineDeclaration]?: true;
@@ -138,9 +136,7 @@ export interface ScopedRoutineScope {
   readonly tenantId: string;
 }
 
-export type ScopedRoutineSqlExecution = (
-  statement: SQL,
-) => Effect.Effect<readonly object[], EffectDrizzleQueryError>;
+export type ScopedRoutineSqlExecution = (statement: SQL) => Effect.Effect<readonly object[], EffectDrizzleQueryError>;
 
 const postgresIdentifier = /^[a-z][a-z0-9_]{0,62}$/u;
 const moduleKey = /^[a-z][a-z0-9]*(?:[.-][a-z0-9][a-z0-9-]*)*$/u;
@@ -170,13 +166,44 @@ const parameterTypeSql: Readonly<Record<ScopedRoutineParameterType, SQL>> = Obje
   'uuid[]': sql.raw('uuid[]'),
 });
 
-const ScopedRoutineDefinitionInvariantError = Schema.TaggedError<Error>()(
-  'ScopedRoutineDefinitionInvariantError',
-  { message: Schema.String },
-);
+const ScopedRoutineDefinitionInvariantError = Schema.TaggedError<Error>()('ScopedRoutineDefinitionInvariantError', {
+  message: Schema.String,
+});
 
 const failRoutineDefinition = (message: string): never => {
   throw new ScopedRoutineDefinitionInvariantError({ message });
+};
+
+type ScopedRoutineContextSource = Exclude<ScopedRoutineParameter['source'], 'input'>;
+
+const validateRoutineParameter = (parameter: ScopedRoutineParameter): ScopedRoutineContextSource | undefined => {
+  if (!parameterTypes.has(parameter.type)) {
+    return failRoutineDefinition('Scoped routine parameter type is not allowlisted');
+  }
+  if (parameter.source !== 'input' && parameter.type !== 'uuid') {
+    return failRoutineDefinition('Scoped routine context parameters must use the uuid type');
+  }
+  if (parameter.source === 'tenantId' || parameter.source === 'legalEntityId') {
+    return parameter.source;
+  }
+  if (parameter.source !== 'input') {
+    return failRoutineDefinition('Scoped routine parameter source is invalid');
+  }
+  return undefined;
+};
+
+const countRoutineContextParameters = (parameters: readonly ScopedRoutineParameter[]) => {
+  let tenantParameters = 0;
+  let legalEntityParameters = 0;
+  for (const parameter of parameters) {
+    const source = validateRoutineParameter(parameter);
+    if (source === 'tenantId') {
+      tenantParameters += 1;
+    } else if (source === 'legalEntityId') {
+      legalEntityParameters += 1;
+    }
+  }
+  return { legalEntityParameters, tenantParameters };
 };
 
 const assertRoutineDefinition = (definition: ScopedRoutineDefinitionInput): void => {
@@ -187,32 +214,12 @@ const assertRoutineDefinition = (definition: ScopedRoutineDefinitionInput): void
     return failRoutineDefinition('Scoped routine routineKey is invalid');
   }
   if (!postgresIdentifier.test(definition.schema) || !postgresIdentifier.test(definition.name)) {
-    return failRoutineDefinition(
-      'Scoped routine schema or name is not a safe PostgreSQL identifier',
-    );
+    return failRoutineDefinition('Scoped routine schema or name is not a safe PostgreSQL identifier');
   }
   if (definition.parameters.length === 0 || definition.parameters[0]?.source !== 'tenantId') {
-    return failRoutineDefinition(
-      'Scoped routines must receive the verified tenantId as their first argument',
-    );
+    return failRoutineDefinition('Scoped routines must receive the verified tenantId as their first argument');
   }
-  let tenantParameters = 0;
-  let legalEntityParameters = 0;
-  for (const parameter of definition.parameters) {
-    if (!parameterTypes.has(parameter.type)) {
-      return failRoutineDefinition('Scoped routine parameter type is not allowlisted');
-    }
-    if (parameter.source !== 'input' && parameter.type !== 'uuid') {
-      return failRoutineDefinition('Scoped routine context parameters must use the uuid type');
-    }
-    if (parameter.source === 'tenantId') {
-      tenantParameters += 1;
-    } else if (parameter.source === 'legalEntityId') {
-      legalEntityParameters += 1;
-    } else if (parameter.source !== 'input') {
-      return failRoutineDefinition('Scoped routine parameter source is invalid');
-    }
-  }
+  const { legalEntityParameters, tenantParameters } = countRoutineContextParameters(definition.parameters);
   if (tenantParameters !== 1 || legalEntityParameters > 1) {
     return failRoutineDefinition('Scoped routine context parameters must be unique');
   }
@@ -249,9 +256,7 @@ const invocationError = (
   const metadata = failure === undefined ? Option.none() : findPostgresFailure(failure);
   return new ScopedRoutineInvocationError({
     code,
-    constraint: metadata.pipe(
-      Option.flatMap(({ constraint }) => Option.fromUndefinedOr(constraint)),
-    ),
+    constraint: metadata.pipe(Option.flatMap(({ constraint }) => Option.fromUndefinedOr(constraint))),
     ownerModuleKey: routine.ownerModuleKey,
     postgresCode: metadata.pipe(Option.map(({ code: postgresCode }) => postgresCode)),
     reason,

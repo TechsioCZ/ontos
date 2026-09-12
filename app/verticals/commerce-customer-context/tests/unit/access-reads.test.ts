@@ -107,31 +107,38 @@ const testCrypto = Crypto.make({
   digest: () => Effect.succeed(new Uint8Array(32)),
   randomBytes: (size) => new Uint8Array(size),
 });
+const unusedBusinessPermissionMutationLayer = Layer.succeed(BusinessPermissionRelationshipMutation, {
+  mutate: () => Effect.void,
+});
+const unusedContextAccessLayer = Layer.succeed(ContextAccess, {
+  businessPermissions: () => Effect.succeed([]),
+  legalEntities: () => Effect.succeed([]),
+  modules: () => Effect.succeed([]),
+  resources: () => Effect.succeed([]),
+  tenants: () => Effect.succeed([]),
+});
+const unusedPrincipalEligibilityLayer = Layer.succeed(PrincipalEligibility, unavailablePrincipalEligibility());
+const unusedInvitationClaimAuthorityLayer = Layer.succeed(
+  CounterpartyInvitationClaimAuthority,
+  unavailableCounterpartyInvitationClaimAuthority('not used by the injected Read test service'),
+);
+const unusedInvitationProofDeliveryLayer = Layer.succeed(
+  CounterpartyInvitationProofDelivery,
+  unavailableCounterpartyInvitationProofDelivery('not used by the injected Read test service'),
+);
+const unusedInvitationProofLifecycleLayer = Layer.succeed(
+  CounterpartyInvitationProofLifecycle,
+  unavailableCounterpartyInvitationProofLifecycle('not used by the injected Read test service'),
+);
+const testCryptoLayer = Layer.succeed(Crypto.Crypto, testCrypto);
 const unusedAccessDependencies = Layer.mergeAll(
-  Layer.succeed(BusinessPermissionRelationshipMutation, {
-    mutate: () => Effect.void,
-  }),
-  Layer.succeed(ContextAccess, {
-    businessPermissions: () => Effect.succeed([]),
-    legalEntities: () => Effect.succeed([]),
-    modules: () => Effect.succeed([]),
-    resources: () => Effect.succeed([]),
-    tenants: () => Effect.succeed([]),
-  }),
-  Layer.succeed(PrincipalEligibility, unavailablePrincipalEligibility()),
-  Layer.succeed(
-    CounterpartyInvitationClaimAuthority,
-    unavailableCounterpartyInvitationClaimAuthority('not used by the injected Read test service'),
-  ),
-  Layer.succeed(
-    CounterpartyInvitationProofDelivery,
-    unavailableCounterpartyInvitationProofDelivery('not used by the injected Read test service'),
-  ),
-  Layer.succeed(
-    CounterpartyInvitationProofLifecycle,
-    unavailableCounterpartyInvitationProofLifecycle('not used by the injected Read test service'),
-  ),
-  Layer.succeed(Crypto.Crypto, testCrypto),
+  unusedBusinessPermissionMutationLayer,
+  unusedContextAccessLayer,
+  unusedPrincipalEligibilityLayer,
+  unusedInvitationClaimAuthorityLayer,
+  unusedInvitationProofDeliveryLayer,
+  unusedInvitationProofLifecycleLayer,
+  testCryptoLayer,
 );
 const provideUnusedAccessPort = Effect.provide(unusedAccessDependencies);
 
@@ -196,70 +203,61 @@ it.effect('rejects cross-tenant checks before consulting the access adapter', ()
   }).pipe(provideUnusedAccessPort),
 );
 
-it.effect(
-  'filters list results to the requested counterparty, recipient, and storefront scope',
-  () =>
-    Effect.gen(function* listIsolation() {
-      const storefrontGrant = {
+it.effect('filters list results to the requested counterparty, recipient, and storefront scope', () =>
+  Effect.gen(function* listIsolation() {
+    const storefrontGrant = {
+      ...grant,
+      grantRef: { ...grantRef, resourceId: 'grant-storefront' },
+      scope: storefrontScope,
+    };
+    const grants = [
+      grant,
+      storefrontGrant,
+      {
         ...grant,
-        grantRef: { ...grantRef, resourceId: 'grant-storefront' },
-        scope: storefrontScope,
-      };
-      const grants = [
-        grant,
-        storefrontGrant,
-        {
-          ...grant,
-          grantRef: { ...grantRef, resourceId: 'grant-other-storefront' },
-          scope: { kind: 'storefront' as const, storefrontKey: 'storefront-2' },
-        },
-        {
-          ...grant,
-          counterpartyRef: { ...counterpartyRef, resourceId: 'counterparty-2' },
-          grantRef: { ...grantRef, resourceId: 'grant-other-counterparty' },
-        },
-        {
-          ...grant,
-          grantRef: { ...grantRef, resourceId: 'grant-other-recipient' },
-          recipient: { ...recipient, principalId: '40000000-0000-4000-8000-000000000099' },
-        },
-      ] as const;
-      const result = yield* listCounterpartyCommerceAccessFromServices(
-        { counterpartyRef, recipient, scope: storefrontScope },
+        grantRef: { ...grantRef, resourceId: 'grant-other-storefront' },
+        scope: { kind: 'storefront' as const, storefrontKey: 'storefront-2' },
+      },
+      {
+        ...grant,
+        counterpartyRef: { ...counterpartyRef, resourceId: 'counterparty-2' },
+        grantRef: { ...grantRef, resourceId: 'grant-other-counterparty' },
+      },
+      {
+        ...grant,
+        grantRef: { ...grantRef, resourceId: 'grant-other-recipient' },
+        recipient: { ...recipient, principalId: '40000000-0000-4000-8000-000000000099' },
+      },
+    ] as const;
+    const result = yield* listCounterpartyCommerceAccessFromServices(
+      { counterpartyRef, recipient, scope: storefrontScope },
+      principalId,
+      legalEntityId,
+      tenantId,
+      { list: () => Effect.succeed(grants) },
+    );
+    expect(result.grants.map(({ grantRef: ref }) => ref.resourceId)).toEqual(['grant-1', 'grant-storefront']);
+
+    const failure = yield* Effect.flip(
+      listCounterpartyCommerceAccessFromServices(
+        { counterpartyRef, recipient: { ...recipient, tenantId: otherTenantId }, scope },
         principalId,
         legalEntityId,
         tenantId,
         { list: () => Effect.succeed(grants) },
-      );
-      expect(result.grants.map(({ grantRef: ref }) => ref.resourceId)).toEqual([
-        'grant-1',
-        'grant-storefront',
-      ]);
-
-      const failure = yield* Effect.flip(
-        listCounterpartyCommerceAccessFromServices(
-          { counterpartyRef, recipient: { ...recipient, tenantId: otherTenantId }, scope },
-          principalId,
-          legalEntityId,
-          tenantId,
-          { list: () => Effect.succeed(grants) },
-        ),
-      );
-      expect(Predicate.isTagged(failure, 'ReadHandlerNotFound')).toBe(true);
-    }),
+      ),
+    );
+    expect(Predicate.isTagged(failure, 'ReadHandlerNotFound')).toBe(true);
+  }),
 );
 
 it.effect('maps list adapter violations and unavailability to a closed unavailable result', () =>
   Effect.gen(function* listFailures() {
     for (const adapterFailure of [violationFailure(), unavailableFailure()]) {
       const failure = yield* Effect.flip(
-        listCounterpartyCommerceAccessFromServices(
-          { counterpartyRef, scope },
-          principalId,
-          legalEntityId,
-          tenantId,
-          { list: () => Effect.fail(adapterFailure) },
-        ),
+        listCounterpartyCommerceAccessFromServices({ counterpartyRef, scope }, principalId, legalEntityId, tenantId, {
+          list: () => Effect.fail(adapterFailure),
+        }),
       );
       expect(Predicate.isTagged(failure, 'ReadHandlerUnavailable')).toBe(true);
     }
@@ -294,13 +292,9 @@ it.effect('returns grant detail only when tenant, counterparty, grant, and scope
     ] as const;
     for (const input of leakingInputs) {
       const failure = yield* Effect.flip(
-        readCounterpartyCommerceAccessDetailFromServices(
-          input,
-          principalId,
-          legalEntityId,
-          tenantId,
-          { list: () => Effect.succeed([grant]) },
-        ),
+        readCounterpartyCommerceAccessDetailFromServices(input, principalId, legalEntityId, tenantId, {
+          list: () => Effect.succeed([grant]),
+        }),
       );
       expect(Predicate.isTagged(failure, 'ReadHandlerNotFound')).toBe(true);
     }
@@ -462,9 +456,7 @@ it.effect('fails closed when the invitation handler lacks Legal Entity context',
 );
 
 it('derives safe counterparty targets and only forwards gateway-verified Storefront identity', () => {
-  expect(
-    counterpartyAccessReadPermissionTarget({ counterpartyRef, scope }, operationalScope),
-  ).toEqual({
+  expect(counterpartyAccessReadPermissionTarget({ counterpartyRef, scope }, operationalScope)).toEqual({
     businessPermission: {
       permission: 'counterparty.access.read',
       target: {
@@ -494,10 +486,7 @@ it('derives safe counterparty targets and only forwards gateway-verified Storefr
     { counterpartyRef, scope: storefrontScope },
     { ...operationalScope, trustedStorefrontId: storefrontScope.storefrontKey },
   );
-  expect(trustedStorefrontTarget).toHaveProperty(
-    'trustedStorefrontId',
-    storefrontScope.storefrontKey,
-  );
+  expect(trustedStorefrontTarget).toHaveProperty('trustedStorefrontId', storefrontScope.storefrontKey);
 
   const mismatchedStorefrontTarget = counterpartyAccessReadPermissionTarget(
     { counterpartyRef, scope: storefrontScope },

@@ -36,35 +36,29 @@ const request = {
 
 describe('Customer-owned Payment Term affected-use public contract', () => {
   it('publishes one canonical schema and generated client surface', () => {
-    expect(PaymentTermAffectedUseAssessmentSchema).toBe(
-      CanonicalPaymentTermAffectedUseAssessmentSchema,
-    );
-    expect(PaymentTermAffectedUseDispositionSchema).toBe(
-      CanonicalPaymentTermAffectedUseDispositionSchema,
-    );
+    expect(PaymentTermAffectedUseAssessmentSchema).toBe(CanonicalPaymentTermAffectedUseAssessmentSchema);
+    expect(PaymentTermAffectedUseDispositionSchema).toBe(CanonicalPaymentTermAffectedUseDispositionSchema);
     expect(executePaymentTermAffectedUseAssessment).toBeTypeOf('function');
     expect(executePaymentTermAffectedUseAssessmentWithAuthorization).toBeTypeOf('function');
-    expect(
-      Schema.decodeUnknownSync(PaymentTermAffectedUseAssessmentRequestSchema)(request),
-    ).toEqual(request);
+    expect(Schema.decodeSync(PaymentTermAffectedUseAssessmentRequestSchema)(request)).toEqual(request);
   });
 
   it('preserves exact Payment references, millisecond timestamps, and response outcomes', () => {
     expect(
-      Schema.decodeUnknownSync(PaymentTermAffectedUseAssessmentResponseSchema)({
+      Schema.decodeSync(PaymentTermAffectedUseAssessmentResponseSchema)({
         assessment: request.claimedAssessment,
         disposition: request.claimedDisposition,
         kind: 'VERIFIED',
       }),
     ).toMatchObject({ kind: 'VERIFIED' });
     expect(() =>
-      Schema.decodeUnknownSync(PaymentTermAffectedUseAssessmentRequestSchema)({
+      Schema.decodeSync(PaymentTermAffectedUseAssessmentRequestSchema)({
         ...request,
         effectiveAt: '2026-09-10T10:00:00Z',
       }),
     ).toThrow();
     expect(() =>
-      Schema.decodeUnknownSync(PaymentTermAffectedUseAssessmentRequestSchema)({
+      Schema.decodeSync(PaymentTermAffectedUseAssessmentRequestSchema)({
         ...request,
         claimedAssessment: {
           ...request.claimedAssessment,
@@ -73,7 +67,7 @@ describe('Customer-owned Payment Term affected-use public contract', () => {
       }),
     ).toThrow();
     expect(() =>
-      Schema.decodeUnknownSync(PaymentTermAffectedUseAssessmentRequestSchema)({
+      Schema.decodeSync(PaymentTermAffectedUseAssessmentRequestSchema)({
         ...request,
         paymentTermRef: { ...paymentTermRef, tenantId: ` ${paymentTermRef.tenantId}` },
       }),

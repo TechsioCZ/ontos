@@ -3,7 +3,7 @@
 // @ontos-action-http-slug attribute-guest-retail-customer
 // oxlint-disable sonarjs/function-name -- Effect Match.tags requires owner-declared tag keys; remove-when: sonarjs accepts discriminant-map properties.
 import type { ActionCoreError } from '@app/core-runtime';
-import { Effect, HttpApiMiddleware } from '@modern-js/plugin-bff/effect-edge';
+import { Effect, HttpApiMiddleware } from '@modern-js/bff-effect/effect-edge';
 import { Match, Schema } from 'effect';
 import {
   AttributeGuestRetailCustomerActionAlreadyCommittedProblemSchema,
@@ -31,10 +31,7 @@ type DomainProblemIdentity =
   | { readonly code: 'CURRENT_STATE_CONFLICT'; readonly kind: 'conflict' }
   | { readonly code: 'PROFILE_RECONCILIATION_REQUIRED'; readonly kind: 'ineligible' }
   | {
-      readonly code:
-        | 'OUTCOME_INDETERMINATE'
-        | 'PARTY_REGISTRY_UNAVAILABLE'
-        | 'PERSISTENCE_UNAVAILABLE';
+      readonly code: 'OUTCOME_INDETERMINATE' | 'PARTY_REGISTRY_UNAVAILABLE' | 'PERSISTENCE_UNAVAILABLE';
       readonly kind: 'unavailable';
     };
 
@@ -145,9 +142,7 @@ export const attributeGuestRetailCustomerActionProblem = {
     }),
 } as const;
 
-const mapDomainIdentity = (
-  identity: DomainProblemIdentity,
-): AttributeGuestRetailCustomerActionProblem =>
+const mapDomainIdentity = (identity: DomainProblemIdentity): AttributeGuestRetailCustomerActionProblem =>
   Match.value(identity).pipe(
     Match.when({ kind: 'conflict' as const }, (matched) =>
       attributeGuestRetailCustomerActionProblem.conflict(matched.code),
@@ -197,38 +192,26 @@ const mapCoreProblem = (error: ActionCoreError): AttributeGuestRetailCustomerAct
         }),
       ActionHandlerExecutionError: attributeGuestRetailCustomerActionProblem.internal,
       ActionIdempotencyKeyRequired: attributeGuestRetailCustomerActionProblem.precondition,
-      ActionInvocationNotFound: (failure) =>
-        attributeGuestRetailCustomerActionProblem.notFound(failure.code),
+      ActionInvocationNotFound: (failure) => attributeGuestRetailCustomerActionProblem.notFound(failure.code),
       ActionInvocationPersistenceError: (failure) =>
         attributeGuestRetailCustomerActionProblem.unavailable(failure.code),
-      ActionInvocationStateError: (failure) =>
-        attributeGuestRetailCustomerActionProblem.conflict(failure.code),
+      ActionInvocationStateError: (failure) => attributeGuestRetailCustomerActionProblem.conflict(failure.code),
       ActionPayloadValidationError: attributeGuestRetailCustomerActionProblem.invalid,
-      ActionPermissionCheckError: (failure) =>
-        attributeGuestRetailCustomerActionProblem.unavailable(failure.code),
-      ActionPermissionDenied: (failure) =>
-        attributeGuestRetailCustomerActionProblem.forbidden(failure.code),
-      ActionPolicyDenied: (failure) =>
-        attributeGuestRetailCustomerActionProblem.ineligible(failure.code),
-      ActionPolicyEvaluationError: (failure) =>
-        attributeGuestRetailCustomerActionProblem.unavailable(failure.code),
-      ActionRequestHashConflict: (failure) =>
-        attributeGuestRetailCustomerActionProblem.conflict(failure.code),
+      ActionPermissionCheckError: (failure) => attributeGuestRetailCustomerActionProblem.unavailable(failure.code),
+      ActionPermissionDenied: (failure) => attributeGuestRetailCustomerActionProblem.forbidden(failure.code),
+      ActionPolicyDenied: (failure) => attributeGuestRetailCustomerActionProblem.ineligible(failure.code),
+      ActionPolicyEvaluationError: (failure) => attributeGuestRetailCustomerActionProblem.unavailable(failure.code),
+      ActionRequestHashConflict: (failure) => attributeGuestRetailCustomerActionProblem.conflict(failure.code),
       ActionResultValidationError: attributeGuestRetailCustomerActionProblem.internal,
-      ActionTransactionError: (failure) =>
-        attributeGuestRetailCustomerActionProblem.unavailable(failure.code),
+      ActionTransactionError: (failure) => attributeGuestRetailCustomerActionProblem.unavailable(failure.code),
       ActionTrustedContextValidationError: attributeGuestRetailCustomerActionProblem.authentication,
       ModuleStateCheckUnavailableError: (failure) =>
         attributeGuestRetailCustomerActionProblem.unavailable(failure.code),
-      ModuleStateDeniedError: (failure) =>
-        attributeGuestRetailCustomerActionProblem.forbidden(failure.code),
+      ModuleStateDeniedError: (failure) => attributeGuestRetailCustomerActionProblem.forbidden(failure.code),
       OperationAuthenticationRequired: attributeGuestRetailCustomerActionProblem.authentication,
-      OperationContextDenied: (failure) =>
-        attributeGuestRetailCustomerActionProblem.forbidden(failure.code),
-      OperationContextInvalid: (failure) =>
-        attributeGuestRetailCustomerActionProblem.forbidden(failure.code),
-      OperationContextUnavailable: (failure) =>
-        attributeGuestRetailCustomerActionProblem.unavailable(failure.code),
+      OperationContextDenied: (failure) => attributeGuestRetailCustomerActionProblem.forbidden(failure.code),
+      OperationContextInvalid: (failure) => attributeGuestRetailCustomerActionProblem.forbidden(failure.code),
+      OperationContextUnavailable: (failure) => attributeGuestRetailCustomerActionProblem.unavailable(failure.code),
     }),
     Match.exhaustive,
   );
@@ -239,8 +222,7 @@ export const mapAttributeGuestRetailCustomerActionProblem = (
 ): AttributeGuestRetailCustomerActionProblem =>
   isDomainError(error) ? mapDomainProblem(error) : mapCoreProblem(error);
 
-export const attributeGuestRetailCustomerActionSchemaErrorLive =
-  HttpApiMiddleware.layerSchemaErrorTransform(
-    AttributeGuestRetailCustomerActionSchemaErrorMiddleware,
-    () => Effect.fail(attributeGuestRetailCustomerActionProblem.invalid()),
-  );
+export const attributeGuestRetailCustomerActionSchemaErrorLive = HttpApiMiddleware.layerSchemaErrorTransform(
+  AttributeGuestRetailCustomerActionSchemaErrorMiddleware,
+  () => Effect.fail(attributeGuestRetailCustomerActionProblem.invalid()),
+);

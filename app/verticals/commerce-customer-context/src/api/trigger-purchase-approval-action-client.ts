@@ -24,10 +24,7 @@ type AuthorizedInvocation = readonly [
   requestCorrelation: string,
   options: TriggerPurchaseApprovalActionClientOptions,
 ];
-type OperationInvocation = readonly [
-  requestCorrelation: string,
-  options: TriggerPurchaseApprovalActionClientOptions,
-];
+type OperationInvocation = readonly [requestCorrelation: string, options: TriggerPurchaseApprovalActionClientOptions];
 
 interface MakeClientOptions {
   readonly credential: Redacted.Redacted;
@@ -68,12 +65,6 @@ export const executeTriggerPurchaseApproval = (
   ...[requestCorrelation, options]: OperationInvocation
 ) =>
   operationGateway.invoke(
-    (credential) =>
-      executeTriggerPurchaseApprovalWithAuthorization(
-        payload,
-        credential,
-        requestCorrelation,
-        options,
-      ),
+    (credential) => executeTriggerPurchaseApprovalWithAuthorization(payload, credential, requestCorrelation, options),
     options.gateway,
   );

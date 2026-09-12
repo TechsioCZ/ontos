@@ -3,7 +3,7 @@
 // @ontos-action-http-slug revoke-retail-portal-profile-binding
 // oxlint-disable sonarjs/function-name -- Effect Match.tags requires owner-declared tag keys; remove-when: sonarjs accepts discriminant-map properties.
 import type { ActionCoreError } from '@app/core-runtime';
-import { Effect, HttpApiMiddleware } from '@modern-js/plugin-bff/effect-edge';
+import { Effect, HttpApiMiddleware } from '@modern-js/bff-effect/effect-edge';
 import { Match, Schema } from 'effect';
 import {
   RevokeRetailPortalProfileBindingActionAlreadyCommittedProblemSchema,
@@ -21,144 +21,66 @@ import {
 } from '../shared/apis/revoke-retail-portal-profile-binding-action.ts';
 import type { RevokeRetailPortalProfileBindingActionProblem } from '../shared/apis/revoke-retail-portal-profile-binding-action.ts';
 import { revokeRetailPortalProfileBindingAction } from '../src/actions/revoke-retail-portal-profile-binding.action.ts';
+/* oxlint-disable anti-slop-effect/no-service-constructor-imports -- These pure helpers construct problem values rather than Effect services. */
+import {
+  actionProblemStatus as problemStatus,
+  makeAuthenticationProblem,
+  makeConflictProblem,
+  makeForbiddenProblem,
+  makeIneligibleProblem,
+  makeInternalProblem,
+  makeInvalidProblem,
+  makeNotFoundProblem,
+  makePreconditionProblem,
+  makeUnavailableProblem,
+} from './action-problem-support.ts';
+/* oxlint-enable anti-slop-effect/no-service-constructor-imports */
+import { retailPortalBindingActionRejectedProblemByCode } from './retail-portal-binding-action-problem-identity.ts';
+import type { RetailPortalBindingDomainProblemIdentity } from './retail-portal-binding-action-problem-identity.ts';
 
 type DomainError = typeof revokeRetailPortalProfileBindingAction.descriptor.domainErrorSchema.Type;
 type ProblemOf<Tag extends RevokeRetailPortalProfileBindingActionProblem['_tag']> = Extract<
   RevokeRetailPortalProfileBindingActionProblem,
   { readonly _tag: Tag }
 >;
-type DomainProblemIdentity =
-  | { readonly code: 'BINDING_CONFLICT' | 'CURRENT_STATE_CONFLICT'; readonly kind: 'conflict' }
-  | {
-      readonly code:
-        | 'BINDING_AMBIGUOUS'
-        | 'ENROLLMENT_EVIDENCE_INSUFFICIENT'
-        | 'PROFILE_NOT_ACTIVE';
-      readonly kind: 'ineligible';
-    }
-  | { readonly code: 'BINDING_NOT_FOUND' | 'PROFILE_NOT_FOUND'; readonly kind: 'notFound' }
-  | {
-      readonly code: 'DEPENDENCY_UNAVAILABLE' | 'OUTCOME_INDETERMINATE' | 'PERSISTENCE_UNAVAILABLE';
-      readonly kind: 'unavailable';
-    };
-
-const problemStatus = {
-  authentication: 401,
-  conflict: 409,
-  forbidden: 403,
-  ineligible: 422,
-  internal: 500,
-  invalid: 400,
-  notFound: 404,
-  precondition: 428,
-  rateLimited: 429,
-  timeout: 504,
-  unavailable: 503,
-} as const;
-
-const retailPortalBindingActionRejectedProblemByCode = {
-  BINDING_AMBIGUOUS: { code: 'BINDING_AMBIGUOUS', kind: 'ineligible' },
-  BINDING_CONFLICT: { code: 'BINDING_CONFLICT', kind: 'conflict' },
-  BINDING_NOT_FOUND: { code: 'BINDING_NOT_FOUND', kind: 'notFound' },
-  CURRENT_STATE_CONFLICT: { code: 'CURRENT_STATE_CONFLICT', kind: 'conflict' },
-  DEPENDENCY_UNAVAILABLE: { code: 'DEPENDENCY_UNAVAILABLE', kind: 'unavailable' },
-  ENROLLMENT_EVIDENCE_INSUFFICIENT: {
-    code: 'ENROLLMENT_EVIDENCE_INSUFFICIENT',
-    kind: 'ineligible',
-  },
-  OUTCOME_INDETERMINATE: { code: 'OUTCOME_INDETERMINATE', kind: 'unavailable' },
-  PERSISTENCE_UNAVAILABLE: { code: 'PERSISTENCE_UNAVAILABLE', kind: 'unavailable' },
-  PROFILE_NOT_ACTIVE: { code: 'PROFILE_NOT_ACTIVE', kind: 'ineligible' },
-  PROFILE_NOT_FOUND: { code: 'PROFILE_NOT_FOUND', kind: 'notFound' },
-} as const satisfies Record<
-  Extract<DomainError, { readonly _tag: 'RetailPortalBindingActionRejected' }>['code'],
-  DomainProblemIdentity
->;
-
 export const revokeRetailPortalProfileBindingActionProblem = {
-  authentication: (): ProblemOf<'RevokeRetailPortalProfileBindingActionAuthenticationProblem'> =>
-    RevokeRetailPortalProfileBindingActionAuthenticationProblemSchema.make({
-      detail: 'A valid audience-scoped Bearer assertion is required.',
-      status: problemStatus.authentication,
-      title: 'Authentication required',
-      type: 'https://ontos.dev/problems/operation-authentication-required',
-    }),
-  conflict: (
-    code: ProblemOf<'RevokeRetailPortalProfileBindingActionConflictProblem'>['code'],
-  ): ProblemOf<'RevokeRetailPortalProfileBindingActionConflictProblem'> =>
-    RevokeRetailPortalProfileBindingActionConflictProblemSchema.make({
-      code,
-      detail: 'The Action conflicts with current state.',
-      status: problemStatus.conflict,
-      title: 'Action conflict',
-      type: 'https://ontos.dev/problems/action-conflict',
-    }),
-  forbidden: (
-    code: ProblemOf<'RevokeRetailPortalProfileBindingActionForbiddenProblem'>['code'],
-  ): ProblemOf<'RevokeRetailPortalProfileBindingActionForbiddenProblem'> =>
-    RevokeRetailPortalProfileBindingActionForbiddenProblemSchema.make({
-      code,
-      detail: 'The principal is not permitted to perform this Action.',
-      status: problemStatus.forbidden,
-      title: 'Action forbidden',
-      type: 'https://ontos.dev/problems/action-forbidden',
-    }),
-  ineligible: (
-    code: ProblemOf<'RevokeRetailPortalProfileBindingActionIneligibleProblem'>['code'],
-  ): ProblemOf<'RevokeRetailPortalProfileBindingActionIneligibleProblem'> =>
-    RevokeRetailPortalProfileBindingActionIneligibleProblemSchema.make({
-      code,
-      detail: 'The request is not eligible for this Action.',
-      status: problemStatus.ineligible,
-      title: 'Action ineligible',
-      type: 'https://ontos.dev/problems/action-ineligible',
-    }),
-  internal: (): ProblemOf<'RevokeRetailPortalProfileBindingActionInternalProblem'> =>
-    RevokeRetailPortalProfileBindingActionInternalProblemSchema.make({
-      detail: 'The Action could not be completed.',
-      status: problemStatus.internal,
-      title: 'Action failed',
-      type: 'https://ontos.dev/problems/action-failed',
-    }),
-  invalid: (): ProblemOf<'RevokeRetailPortalProfileBindingActionInvalidProblem'> =>
-    RevokeRetailPortalProfileBindingActionInvalidProblemSchema.make({
-      detail: 'The revoke-retail-portal-profile-binding Action request is invalid.',
-      status: problemStatus.invalid,
-      title: 'Invalid Action request',
-      type: 'https://ontos.dev/problems/action-invalid',
-    }),
-  notFound: (
-    code: ProblemOf<'RevokeRetailPortalProfileBindingActionNotFoundProblem'>['code'],
-  ): ProblemOf<'RevokeRetailPortalProfileBindingActionNotFoundProblem'> =>
-    RevokeRetailPortalProfileBindingActionNotFoundProblemSchema.make({
-      code,
-      detail: 'The requested resource was not found.',
-      status: problemStatus.notFound,
-      title: 'Resource not found',
-      type: 'https://ontos.dev/problems/action-resource-not-found',
-    }),
-  precondition: (): ProblemOf<'RevokeRetailPortalProfileBindingActionPreconditionProblem'> =>
-    RevokeRetailPortalProfileBindingActionPreconditionProblemSchema.make({
-      detail: 'An Idempotency-Key header is required.',
-      status: problemStatus.precondition,
-      title: 'Idempotency key required',
-      type: 'https://ontos.dev/problems/idempotency-key-required',
-    }),
-  unavailable: (
-    code: ProblemOf<'RevokeRetailPortalProfileBindingActionUnavailableProblem'>['code'],
-  ): ProblemOf<'RevokeRetailPortalProfileBindingActionUnavailableProblem'> =>
-    RevokeRetailPortalProfileBindingActionUnavailableProblemSchema.make({
-      code,
-      detail: 'The Action capability is temporarily unavailable.',
-      retryable: true,
-      status: problemStatus.unavailable,
-      title: 'Action unavailable',
-      type: 'https://ontos.dev/problems/action-unavailable',
-    }),
+  authentication: makeAuthenticationProblem<ProblemOf<'RevokeRetailPortalProfileBindingActionAuthenticationProblem'>>(
+    (input) => RevokeRetailPortalProfileBindingActionAuthenticationProblemSchema.make(input),
+  ),
+  conflict: makeConflictProblem<
+    ProblemOf<'RevokeRetailPortalProfileBindingActionConflictProblem'>['code'],
+    ProblemOf<'RevokeRetailPortalProfileBindingActionConflictProblem'>
+  >((input) => RevokeRetailPortalProfileBindingActionConflictProblemSchema.make(input)),
+  forbidden: makeForbiddenProblem<
+    ProblemOf<'RevokeRetailPortalProfileBindingActionForbiddenProblem'>['code'],
+    ProblemOf<'RevokeRetailPortalProfileBindingActionForbiddenProblem'>
+  >((input) => RevokeRetailPortalProfileBindingActionForbiddenProblemSchema.make(input)),
+  ineligible: makeIneligibleProblem<
+    ProblemOf<'RevokeRetailPortalProfileBindingActionIneligibleProblem'>['code'],
+    ProblemOf<'RevokeRetailPortalProfileBindingActionIneligibleProblem'>
+  >((input) => RevokeRetailPortalProfileBindingActionIneligibleProblemSchema.make(input)),
+  internal: makeInternalProblem<ProblemOf<'RevokeRetailPortalProfileBindingActionInternalProblem'>>((input) =>
+    RevokeRetailPortalProfileBindingActionInternalProblemSchema.make(input),
+  ),
+  invalid: makeInvalidProblem<ProblemOf<'RevokeRetailPortalProfileBindingActionInvalidProblem'>>(
+    (input) => RevokeRetailPortalProfileBindingActionInvalidProblemSchema.make(input),
+    'revoke-retail-portal-profile-binding',
+  ),
+  notFound: makeNotFoundProblem<
+    ProblemOf<'RevokeRetailPortalProfileBindingActionNotFoundProblem'>['code'],
+    ProblemOf<'RevokeRetailPortalProfileBindingActionNotFoundProblem'>
+  >((input) => RevokeRetailPortalProfileBindingActionNotFoundProblemSchema.make(input)),
+  precondition: makePreconditionProblem<ProblemOf<'RevokeRetailPortalProfileBindingActionPreconditionProblem'>>(
+    (input) => RevokeRetailPortalProfileBindingActionPreconditionProblemSchema.make(input),
+  ),
+  unavailable: makeUnavailableProblem<
+    ProblemOf<'RevokeRetailPortalProfileBindingActionUnavailableProblem'>['code'],
+    ProblemOf<'RevokeRetailPortalProfileBindingActionUnavailableProblem'>
+  >((input) => RevokeRetailPortalProfileBindingActionUnavailableProblemSchema.make(input)),
 } as const;
 
 const mapDomainIdentity = (
-  identity: DomainProblemIdentity,
+  identity: RetailPortalBindingDomainProblemIdentity,
 ): RevokeRetailPortalProfileBindingActionProblem =>
   Match.value(identity).pipe(
     Match.when({ kind: 'conflict' as const }, (matched) =>
@@ -212,53 +134,37 @@ const mapCoreProblem = (error: ActionCoreError): RevokeRetailPortalProfileBindin
         }),
       ActionHandlerExecutionError: revokeRetailPortalProfileBindingActionProblem.internal,
       ActionIdempotencyKeyRequired: revokeRetailPortalProfileBindingActionProblem.precondition,
-      ActionInvocationNotFound: (failure) =>
-        revokeRetailPortalProfileBindingActionProblem.notFound(failure.code),
+      ActionInvocationNotFound: (failure) => revokeRetailPortalProfileBindingActionProblem.notFound(failure.code),
       ActionInvocationPersistenceError: (failure) =>
         revokeRetailPortalProfileBindingActionProblem.unavailable(failure.code),
-      ActionInvocationStateError: (failure) =>
-        revokeRetailPortalProfileBindingActionProblem.conflict(failure.code),
+      ActionInvocationStateError: (failure) => revokeRetailPortalProfileBindingActionProblem.conflict(failure.code),
       ActionPayloadValidationError: revokeRetailPortalProfileBindingActionProblem.invalid,
-      ActionPermissionCheckError: (failure) =>
-        revokeRetailPortalProfileBindingActionProblem.unavailable(failure.code),
-      ActionPermissionDenied: (failure) =>
-        revokeRetailPortalProfileBindingActionProblem.forbidden(failure.code),
-      ActionPolicyDenied: (failure) =>
-        revokeRetailPortalProfileBindingActionProblem.ineligible(failure.code),
-      ActionPolicyEvaluationError: (failure) =>
-        revokeRetailPortalProfileBindingActionProblem.unavailable(failure.code),
-      ActionRequestHashConflict: (failure) =>
-        revokeRetailPortalProfileBindingActionProblem.conflict(failure.code),
+      ActionPermissionCheckError: (failure) => revokeRetailPortalProfileBindingActionProblem.unavailable(failure.code),
+      ActionPermissionDenied: (failure) => revokeRetailPortalProfileBindingActionProblem.forbidden(failure.code),
+      ActionPolicyDenied: (failure) => revokeRetailPortalProfileBindingActionProblem.ineligible(failure.code),
+      ActionPolicyEvaluationError: (failure) => revokeRetailPortalProfileBindingActionProblem.unavailable(failure.code),
+      ActionRequestHashConflict: (failure) => revokeRetailPortalProfileBindingActionProblem.conflict(failure.code),
       ActionResultValidationError: revokeRetailPortalProfileBindingActionProblem.internal,
-      ActionTransactionError: (failure) =>
-        revokeRetailPortalProfileBindingActionProblem.unavailable(failure.code),
-      ActionTrustedContextValidationError:
-        revokeRetailPortalProfileBindingActionProblem.authentication,
+      ActionTransactionError: (failure) => revokeRetailPortalProfileBindingActionProblem.unavailable(failure.code),
+      ActionTrustedContextValidationError: revokeRetailPortalProfileBindingActionProblem.authentication,
       ModuleStateCheckUnavailableError: (failure) =>
         revokeRetailPortalProfileBindingActionProblem.unavailable(failure.code),
-      ModuleStateDeniedError: (failure) =>
-        revokeRetailPortalProfileBindingActionProblem.forbidden(failure.code),
+      ModuleStateDeniedError: (failure) => revokeRetailPortalProfileBindingActionProblem.forbidden(failure.code),
       OperationAuthenticationRequired: revokeRetailPortalProfileBindingActionProblem.authentication,
-      OperationContextDenied: (failure) =>
-        revokeRetailPortalProfileBindingActionProblem.forbidden(failure.code),
-      OperationContextInvalid: (failure) =>
-        revokeRetailPortalProfileBindingActionProblem.forbidden(failure.code),
-      OperationContextUnavailable: (failure) =>
-        revokeRetailPortalProfileBindingActionProblem.unavailable(failure.code),
+      OperationContextDenied: (failure) => revokeRetailPortalProfileBindingActionProblem.forbidden(failure.code),
+      OperationContextInvalid: (failure) => revokeRetailPortalProfileBindingActionProblem.forbidden(failure.code),
+      OperationContextUnavailable: (failure) => revokeRetailPortalProfileBindingActionProblem.unavailable(failure.code),
     }),
     Match.exhaustive,
   );
 
-const isDomainError = Schema.is(
-  revokeRetailPortalProfileBindingAction.descriptor.domainErrorSchema,
-);
+const isDomainError = Schema.is(revokeRetailPortalProfileBindingAction.descriptor.domainErrorSchema);
 export const mapRevokeRetailPortalProfileBindingActionProblem = (
   error: ActionCoreError | DomainError,
 ): RevokeRetailPortalProfileBindingActionProblem =>
   isDomainError(error) ? mapDomainProblem(error) : mapCoreProblem(error);
 
-export const revokeRetailPortalProfileBindingActionSchemaErrorLive =
-  HttpApiMiddleware.layerSchemaErrorTransform(
-    RevokeRetailPortalProfileBindingActionSchemaErrorMiddleware,
-    () => Effect.fail(revokeRetailPortalProfileBindingActionProblem.invalid()),
-  );
+export const revokeRetailPortalProfileBindingActionSchemaErrorLive = HttpApiMiddleware.layerSchemaErrorTransform(
+  RevokeRetailPortalProfileBindingActionSchemaErrorMiddleware,
+  () => Effect.fail(revokeRetailPortalProfileBindingActionProblem.invalid()),
+);

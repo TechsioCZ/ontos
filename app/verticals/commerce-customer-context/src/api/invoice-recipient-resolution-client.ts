@@ -21,7 +21,7 @@ type InvoiceRecipientResolutionOperationInvocation = readonly [
 ];
 
 const invoiceRecipientResolutionClient = (
-  credential: Redacted.Redacted<string>,
+  credential: Redacted.Redacted,
   requestCorrelation: string,
   options: InvoiceRecipientResolutionClientOptions,
 ) =>
@@ -50,10 +50,5 @@ export const executeInvoiceRecipientResolution = (
   ...[requestCorrelation, options = {}]: InvoiceRecipientResolutionOperationInvocation
 ) =>
   operationGateway.invoke((credential) =>
-    executeInvoiceRecipientResolutionWithAuthorization(
-      payload,
-      credential,
-      requestCorrelation,
-      options,
-    ),
+    executeInvoiceRecipientResolutionWithAuthorization(payload, credential, requestCorrelation, options),
   );

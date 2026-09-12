@@ -22,7 +22,7 @@ type GuestPartyResolutionOperationInvocation = readonly [
 ];
 
 const guestPartyResolutionClient = (
-  credential: Redacted.Redacted<string>,
+  credential: Redacted.Redacted,
   requestCorrelation: string,
   options: GuestPartyResolutionClientOptions,
 ) =>
@@ -41,9 +41,7 @@ export const executeGuestPartyResolutionWithAuthorization = (
   ...[credential, requestCorrelation, options = {}]: GuestPartyResolutionAuthorizedInvocation
 ) =>
   guestPartyResolutionClient(Redacted.make(credential), requestCorrelation, options).pipe(
-    Effect.flatMap((client) =>
-      client.guestPartyResolution.execute({ headers: {}, params: {}, payload, query: {} }),
-    ),
+    Effect.flatMap((client) => client.guestPartyResolution.execute({ headers: {}, params: {}, payload, query: {} })),
   );
 
 export const executeGuestPartyResolution = (

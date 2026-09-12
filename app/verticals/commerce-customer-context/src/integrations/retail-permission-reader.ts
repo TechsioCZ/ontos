@@ -4,11 +4,7 @@ import {
   PrincipalRefSchema,
   toBusinessPermissionAccessKey,
 } from '@app/core-runtime';
-import type {
-  BusinessPermissionAccessTarget,
-  BusinessPermissionCode,
-  ContextAccessService,
-} from '@app/core-runtime';
+import type { BusinessPermissionAccessTarget, BusinessPermissionCode, ContextAccessService } from '@app/core-runtime';
 import { Context, DateTime, Effect, Layer, Result, Schema } from 'effect';
 
 import { RETAIL_PORTAL_SELF_SERVICE_BASELINE } from '../../shared/domain/profile-contracts.ts';
@@ -24,14 +20,9 @@ export interface ProfileRetailPermissionReaderScope {
   readonly tenantId: string;
 }
 
-const dependencyFailure = (
-  reason: string,
-  cause?: unknown,
-): ProfilePersistenceDependencyFailure => {
+const dependencyFailure = (reason: string, cause?: unknown): ProfilePersistenceDependencyFailure => {
   const failure = new ProfilePersistenceDependencyFailure({ reason });
-  return cause === undefined
-    ? failure
-    : Object.defineProperty(failure, 'cause', { configurable: true, value: cause });
+  return cause === undefined ? failure : Object.defineProperty(failure, 'cause', { configurable: true, value: cause });
 };
 
 const retailPermissionTarget = (
@@ -65,22 +56,17 @@ const allowedRetailPermissions = (
 
 /* oxlint-disable effect-native/no-dependency-parameters -- The Layer captures the Core service before creating this scoped adapter. */
 const makeReader =
-  (
-    contextAccess: ContextAccessService,
-    scope: ProfileRetailPermissionReaderScope,
-  ): RetailPermissionReader =>
+  (contextAccess: ContextAccessService, scope: ProfileRetailPermissionReaderScope): RetailPermissionReader =>
   (input) => {
     if (
       input.legalEntityId !== scope.legalEntityId ||
       input.principalId !== scope.principalId ||
       input.tenantId !== scope.tenantId
     ) {
-      return Effect.fail(
-        dependencyFailure('Retail Portal Permission lookup crossed the verified scope'),
-      );
+      return Effect.fail(dependencyFailure('Retail Portal Permission lookup crossed the verified scope'));
     }
     const permissionResults = RETAIL_PORTAL_SELF_SERVICE_BASELINE.map((permission) =>
-      Schema.decodeUnknownResult(BusinessPermissionCodeSchema)(permission),
+      Schema.decodeResult(BusinessPermissionCodeSchema)(permission),
     );
     const permissions: BusinessPermissionCode[] = [];
     for (const result of permissionResults) {
@@ -94,17 +80,13 @@ const makeReader =
       }
       permissions.push(result.success);
     }
-    const targets = permissions.map((permission) =>
-      retailPermissionTarget(permission, scope, input.profileId),
-    );
-    const principalResult = Schema.decodeUnknownResult(PrincipalRefSchema)({
+    const targets = permissions.map((permission) => retailPermissionTarget(permission, scope, input.profileId));
+    const principalResult = Schema.decodeResult(PrincipalRefSchema)({
       principalId: scope.principalId,
       tenantId: scope.tenantId,
     });
     if (Result.isFailure(principalResult)) {
-      return Effect.fail(
-        dependencyFailure('The trusted principal identity is invalid', principalResult.failure),
-      );
+      return Effect.fail(dependencyFailure('The trusted principal identity is invalid', principalResult.failure));
     }
     if (contextAccess.businessPermissions === undefined) {
       return Effect.fail(dependencyFailure('Core business Permission checks are unavailable'));
@@ -118,21 +100,14 @@ const makeReader =
       .pipe(
         Effect.flatMap((results) => {
           const byKey = new Map(results.map((result) => [result.key, result]));
-          if (
-            results.length !== expectedKeys.length ||
-            expectedKeys.some((key) => !byKey.has(key))
-          ) {
-            return Effect.fail(
-              dependencyFailure('Core returned an incomplete Retail Portal Permission snapshot'),
-            );
+          if (results.length !== expectedKeys.length || expectedKeys.some((key) => !byKey.has(key))) {
+            return Effect.fail(dependencyFailure('Core returned an incomplete Retail Portal Permission snapshot'));
           }
           const unavailable = expectedKeys
             .map((key) => byKey.get(key))
             .find((result) => result?.decision === 'unavailable');
           if (unavailable !== undefined) {
-            return Effect.fail(
-              dependencyFailure('Core returned an indeterminate Retail Portal Permission snapshot'),
-            );
+            return Effect.fail(dependencyFailure('Core returned an indeterminate Retail Portal Permission snapshot'));
           }
           return DateTime.now.pipe(
             Effect.map((observedAt) => ({
@@ -152,9 +127,7 @@ export interface ProfileRetailPermissionReaderFactoryService {
 export class ProfileRetailPermissionReaderFactory extends Context.Service<
   ProfileRetailPermissionReaderFactory,
   ProfileRetailPermissionReaderFactoryService
->()(
-  '@app/commerce-customer-context/integrations/retail-permission-reader/ProfileRetailPermissionReaderFactory',
-) {}
+>()('@app/commerce-customer-context/integrations/retail-permission-reader/ProfileRetailPermissionReaderFactory') {}
 
 export const profileRetailPermissionReaderFactoryLive = Layer.effect(
   ProfileRetailPermissionReaderFactory,

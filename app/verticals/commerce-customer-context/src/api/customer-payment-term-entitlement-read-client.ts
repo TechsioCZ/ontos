@@ -37,17 +37,9 @@ const customerPaymentTermEntitlementReadClient = (
 
 export const executeCustomerPaymentTermEntitlementReadWithAuthorization = (
   payload: CustomerPaymentTermEntitlementReadRequest,
-  ...[
-    credential,
-    requestCorrelation,
-    options = {},
-  ]: CustomerPaymentTermEntitlementReadAuthorizedInvocation
+  ...[credential, requestCorrelation, options = {}]: CustomerPaymentTermEntitlementReadAuthorizedInvocation
 ) =>
-  customerPaymentTermEntitlementReadClient(
-    Redacted.make(credential),
-    requestCorrelation,
-    options,
-  ).pipe(
+  customerPaymentTermEntitlementReadClient(Redacted.make(credential), requestCorrelation, options).pipe(
     Effect.flatMap((client) =>
       client.customerPaymentTermEntitlementRead.execute({
         headers: {},
@@ -63,10 +55,5 @@ export const executeCustomerPaymentTermEntitlementRead = (
   ...[requestCorrelation, options = {}]: CustomerPaymentTermEntitlementReadOperationInvocation
 ) =>
   operationGateway.invoke((credential) =>
-    executeCustomerPaymentTermEntitlementReadWithAuthorization(
-      payload,
-      credential,
-      requestCorrelation,
-      options,
-    ),
+    executeCustomerPaymentTermEntitlementReadWithAuthorization(payload, credential, requestCorrelation, options),
   );

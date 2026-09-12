@@ -24,10 +24,7 @@ type AuthorizedInvocation = readonly [
   requestCorrelation: string,
   options: RemoveCustomerPaymentTermActionClientOptions,
 ];
-type OperationInvocation = readonly [
-  requestCorrelation: string,
-  options: RemoveCustomerPaymentTermActionClientOptions,
-];
+type OperationInvocation = readonly [requestCorrelation: string, options: RemoveCustomerPaymentTermActionClientOptions];
 
 interface MakeClientOptions {
   readonly credential: Redacted.Redacted;
@@ -68,12 +65,6 @@ export const executeRemoveCustomerPaymentTerm = (
   ...[requestCorrelation, options]: OperationInvocation
 ) =>
   operationGateway.invoke(
-    (credential) =>
-      executeRemoveCustomerPaymentTermWithAuthorization(
-        payload,
-        credential,
-        requestCorrelation,
-        options,
-      ),
+    (credential) => executeRemoveCustomerPaymentTermWithAuthorization(payload, credential, requestCorrelation, options),
     options.gateway,
   );

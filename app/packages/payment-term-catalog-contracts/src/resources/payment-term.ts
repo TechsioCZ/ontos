@@ -9,10 +9,7 @@ const ResourceIdSchema = checkedIdentifier.pipe(
   Schema.brand('PaymentTermResourceId'),
   Schema.decodeTo(checkedIdentifier),
 );
-const TenantIdSchema = checkedIdentifier.pipe(
-  Schema.brand('PaymentTermTenantId'),
-  Schema.decodeTo(checkedIdentifier),
-);
+const TenantIdSchema = checkedIdentifier.pipe(Schema.brand('PaymentTermTenantId'), Schema.decodeTo(checkedIdentifier));
 
 export const PaymentTermRefSchema = Schema.Struct({
   moduleId: Schema.Literal('payment.term-catalog'),

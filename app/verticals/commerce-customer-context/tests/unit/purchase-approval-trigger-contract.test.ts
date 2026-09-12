@@ -1,4 +1,4 @@
-// @effect-diagnostics nodeBuiltinImport:off -- This contract test reads checked-in production composition evidence.
+// @effect-diagnostics-next-line nodeBuiltinImport:off -- This contract test reads checked-in production composition evidence; expires: 2027-03-31.
 import { readFileSync } from 'node:fs';
 
 import type { OperationalScope } from '@app/core-runtime';
@@ -74,9 +74,7 @@ it('declares the governed idempotent Purchase submission contract', () => {
 });
 
 it('requires exact counterparty.purchase.submit authority bound to trusted Storefront scope', () => {
-  const resolvePermission = getActionBusinessPermissionTargetResolver(
-    triggerPurchaseApprovalAction,
-  );
+  const resolvePermission = getActionBusinessPermissionTargetResolver(triggerPurchaseApprovalAction);
   expect(resolvePermission?.(payload, scope)).toEqual({
     permission: 'counterparty.purchase.submit',
     target: {
@@ -129,10 +127,7 @@ it('accepts only counterparty-profile evidence in the public payload', () => {
 });
 
 it('composes the trigger currentness source from the live owner adapter', () => {
-  const productionComposition = readFileSync(
-    new URL('../../api/index.ts', import.meta.url),
-    'utf8',
-  );
+  const productionComposition = readFileSync(new URL('../../api/index.ts', import.meta.url), 'utf-8');
   expect(productionComposition).toContain('purchaseLimitEvaluationCurrentnessLive');
   expect(productionComposition).not.toContain('purchaseLimitEvaluationCurrentnessUnavailableLayer');
 });
@@ -144,9 +139,7 @@ it('keeps #317 submission outcomes narrower than the owner trigger result', () =
       approvalRequestRef: 'approval:1',
     }),
   ).toBe(true);
-  expect(
-    Schema.is(PurchaseApprovalSubmissionResultSchema)({ _tag: 'DIRECT_PURCHASE_ALLOWED' }),
-  ).toBe(false);
+  expect(Schema.is(PurchaseApprovalSubmissionResultSchema)({ _tag: 'DIRECT_PURCHASE_ALLOWED' })).toBe(false);
   expect(
     Schema.is(PurchaseApprovalSubmissionResultSchema)({
       _tag: 'APPROVAL_PRECONDITION_FAILED',

@@ -23,9 +23,7 @@ import { retailPortalProfileBindingReadRead } from '../../src/api/retail-portal-
 import { retailPrincipalResolutionRead } from '../../src/api/retail-principal-resolution.read.ts';
 
 it('attaches every stable Profile registration to scoped production persistence', () => {
-  expect(getActionServiceFactory(archiveCustomerProfileAction).toString()).toContain(
-    'profileServicesForVerifiedScope',
-  );
+  expect(getActionServiceFactory(archiveCustomerProfileAction).toString()).toContain('profileServicesForVerifiedScope');
   expect(getActionServiceFactory(attributeGuestRetailCustomerAction).toString()).toContain(
     'profileServicesForVerifiedScope',
   );
@@ -53,30 +51,16 @@ it('attaches every stable Profile registration to scoped production persistence'
   expect(getActionServiceFactory(revokeRetailPortalProfileBindingAction).toString()).toContain(
     'profileServicesForVerifiedScope',
   );
-  expect(getActionServiceFactory(suspendCustomerProfileAction).toString()).toContain(
-    'profileServicesForVerifiedScope',
-  );
-  expect(getReadServiceFactory(customerProfileReadRead).toString()).toContain(
-    'profileServicesForVerifiedScope',
-  );
-  expect(getReadServiceFactory(customerProfileTradingGateRead).toString()).toContain(
-    'profileServicesForVerifiedScope',
-  );
-  expect(getReadServiceFactory(guestAttributionStatusRead).toString()).toContain(
-    'profileServicesForVerifiedScope',
-  );
-  expect(getReadServiceFactory(profileReconciliationReadRead).toString()).toContain(
-    'profileServicesForVerifiedScope',
-  );
-  expect(getReadServiceFactory(retailAccessDecisionRead).toString()).toContain(
-    'profileServicesForVerifiedScope',
-  );
+  expect(getActionServiceFactory(suspendCustomerProfileAction).toString()).toContain('profileServicesForVerifiedScope');
+  expect(getReadServiceFactory(customerProfileReadRead).toString()).toContain('profileServicesForVerifiedScope');
+  expect(getReadServiceFactory(customerProfileTradingGateRead).toString()).toContain('profileServicesForVerifiedScope');
+  expect(getReadServiceFactory(guestAttributionStatusRead).toString()).toContain('profileServicesForVerifiedScope');
+  expect(getReadServiceFactory(profileReconciliationReadRead).toString()).toContain('profileServicesForVerifiedScope');
+  expect(getReadServiceFactory(retailAccessDecisionRead).toString()).toContain('profileServicesForVerifiedScope');
   expect(getReadServiceFactory(retailPortalProfileBindingReadRead).toString()).toContain(
     'profileServicesForVerifiedScope',
   );
-  expect(getReadServiceFactory(retailPrincipalResolutionRead).toString()).toContain(
-    'profileServicesForVerifiedScope',
-  );
+  expect(getReadServiceFactory(retailPrincipalResolutionRead).toString()).toContain('profileServicesForVerifiedScope');
   expect(getActionServiceFactory(resolveProfileReconciliationAction).toString()).toContain(
     'ProfileReconciliationOwnerVerifier',
   );

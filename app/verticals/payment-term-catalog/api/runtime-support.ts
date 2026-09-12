@@ -1,5 +1,3 @@
-export { microVerticalOperationAttributes as operationAttributes } from '@app/shared-contracts';
-
 const DEFAULT_SHELL_ORIGIN = 'http://localhost:3020';
 
 export const resolvePaymentTermCatalogShellOrigin = (value?: string): string =>
@@ -21,9 +19,7 @@ export const paymentTermCatalogCorsAllowedHeaders = [
 
 export const paymentTermCatalogCorsAllowedMethods = ['GET', 'HEAD', 'OPTIONS', 'POST'] as const;
 
-export const paymentTermCatalogCorsAllowedOrigins = (
-  configuredOrigin: string,
-): readonly string[] => {
+export const paymentTermCatalogCorsAllowedOrigins = (configuredOrigin: string): readonly string[] => {
   const origin = new URL(configuredOrigin);
   if (origin.hostname !== 'localhost' && origin.hostname !== '127.0.0.1') {
     return [origin.origin];

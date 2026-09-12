@@ -113,12 +113,7 @@ const scope = {
 } satisfies OperationalScope & { readonly legalEntityId: string };
 
 const row = (
-  outcome:
-    | 'APPLIED'
-    | 'PAYMENT_TERM_RETIREMENT_RESERVED'
-    | 'PRESENT'
-    | 'REVISION_CONFLICT'
-    | 'UNCHANGED',
+  outcome: 'APPLIED' | 'PAYMENT_TERM_RETIREMENT_RESERVED' | 'PRESENT' | 'REVISION_CONFLICT' | 'UNCHANGED',
   payload: CustomerPaymentTermsState | null,
   currentRevision: number | null,
 ) => ({ current_revision: currentRevision, outcome, payload });
@@ -131,11 +126,9 @@ const transactionReturning = (
     invoke: (routine) => {
       const response = responses[index] ?? [];
       index += 1;
-      return Effect.forEach(
-        response,
-        (item) => Schema.decodeUnknownEffect(routine.resultSchema)(item),
-        { concurrency: 1 },
-      ).pipe(Effect.orDie);
+      return Effect.forEach(response, (item) => Schema.decodeUnknownEffect(routine.resultSchema)(item), {
+        concurrency: 1,
+      }).pipe(Effect.orDie);
     },
   };
 };
@@ -224,8 +217,8 @@ it.effect('derives a PAYMENT_TERMS receipt from the owner routine, never caller 
       request,
     });
 
+    expect(Predicate.isTagged(result, 'VERIFIED')).toBe(true);
     expect(result).toMatchObject({
-      _tag: 'VERIFIED',
       correlationRef: 'payment-terms-owner:trusted-correlation',
       durableOutcome: {
         evidenceRef: 'payment-terms-owner:trusted-evidence',
@@ -256,8 +249,7 @@ it.effect('counts canonical and alias Payment Terms atomically in one owner snap
     const response = [
       {
         current_customer_entitlement_count: 1,
-        evidence_reference:
-          'commerce.customer-context:payment-term-entitlement-use-set:fingerprint:1:2:1',
+        evidence_reference: 'commerce.customer-context:payment-term-entitlement-use-set:fingerprint:1:2:1',
         observed_at: '2026-09-09T12:00:00.000Z',
         outcome: 'ASSESSED',
       },
@@ -265,11 +257,9 @@ it.effect('counts canonical and alias Payment Terms atomically in one owner snap
     const invoker: CustomerPaymentTermsScopedRoutineInvoker = {
       invoke: (routine, values) => {
         invocations.push(values);
-        return Effect.forEach(
-          response,
-          (item) => Schema.decodeUnknownEffect(routine.resultSchema)(item),
-          { concurrency: 1 },
-        ).pipe(Effect.orDie);
+        return Effect.forEach(response, (item) => Schema.decodeUnknownEffect(routine.resultSchema)(item), {
+          concurrency: 1,
+        }).pipe(Effect.orDie);
       },
     };
     const services = makePaymentTermAffectedUseAssessmentServices(persistenceContext(invoker));
@@ -279,8 +269,7 @@ it.effect('counts canonical and alias Payment Terms atomically in one owner snap
     });
     expect(result).toEqual({
       currentCustomerEntitlementCount: 1,
-      evidenceReference:
-        'commerce.customer-context:payment-term-entitlement-use-set:fingerprint:1:2:1',
+      evidenceReference: 'commerce.customer-context:payment-term-entitlement-use-set:fingerprint:1:2:1',
       observedAt: '2026-09-09T12:00:00.000Z',
     });
     expect(invocations).toEqual([
@@ -305,10 +294,7 @@ it.effect('persists a catalog-validated entitlement with Action attribution and 
       profileRef,
       revision: 2,
     };
-    const transaction = transactionReturning(
-      [row('PRESENT', state(), 1)],
-      [row('APPLIED', nextState, 2)],
-    );
+    const transaction = transactionReturning([row('PRESENT', state(), 1)], [row('APPLIED', nextState, 2)]);
     const services = makeChangeCustomerPaymentTermsServices(persistenceContext(transaction), {
       resolveDefinitions: () => Effect.succeed([currentDefinition()]),
     });
@@ -334,49 +320,47 @@ it.effect('persists a catalog-validated entitlement with Action attribution and 
   }),
 );
 
-it.effect(
-  'rejects a catalog definition that is retired before the requested effective instant',
-  () =>
-    Effect.gen(function* retiredDefinition() {
-      const services = makeChangeCustomerPaymentTermsServices(
-        persistenceContext(transactionReturning([row('PRESENT', state(), 1)])),
+it.effect('rejects a catalog definition that is retired before the requested effective instant', () =>
+  Effect.gen(function* retiredDefinition() {
+    const services = makeChangeCustomerPaymentTermsServices(
+      persistenceContext(transactionReturning([row('PRESENT', state(), 1)])),
+      {
+        resolveDefinitions: () =>
+          Effect.succeed([
+            {
+              ...currentDefinition(),
+              lifecycle: {
+                effectiveFrom: '2026-01-01T00:00:00.000Z',
+                effectiveTo: '2026-09-01T00:00:00.000Z',
+                state: 'RETIRED',
+              },
+              retired: provenance,
+            },
+          ]),
+      },
+    );
+    const failure = yield* Effect.flip(
+      services.change(
         {
-          resolveDefinitions: () =>
-            Effect.succeed([
-              {
-                ...currentDefinition(),
-                lifecycle: {
-                  effectiveFrom: '2026-01-01T00:00:00.000Z',
-                  effectiveTo: '2026-09-01T00:00:00.000Z',
-                  state: 'RETIRED',
-                },
-                retired: provenance,
-              },
-            ]),
+          changes: [
+            {
+              _tag: 'GRANT_ENTITLEMENT',
+              effectiveFrom: '2026-10-01T00:00:00.000Z',
+              entitlementRef,
+              paymentTermRef,
+              semanticRevisionId,
+            },
+          ],
+          counterpartyRef,
+          expectedRevision: 1,
+          profileRef,
+          reason: 'Approved terms',
         },
-      );
-      const failure = yield* Effect.flip(
-        services.change(
-          {
-            changes: [
-              {
-                _tag: 'GRANT_ENTITLEMENT',
-                effectiveFrom: '2026-10-01T00:00:00.000Z',
-                entitlementRef,
-                paymentTermRef,
-                semanticRevisionId,
-              },
-            ],
-            counterpartyRef,
-            expectedRevision: 1,
-            profileRef,
-            reason: 'Approved terms',
-          },
-          actionContextFor(services),
-        ),
-      );
-      expect(failure).toMatchObject({ code: 'PAYMENT_TERM_NOT_CURRENT' });
-    }),
+        actionContextFor(services),
+      ),
+    );
+    expect(failure).toMatchObject({ code: 'PAYMENT_TERM_NOT_CURRENT' });
+  }),
 );
 
 it.effect('fails closed when a new entitlement cannot be verified by the canonical catalog', () =>
@@ -414,9 +398,7 @@ it.effect('fails closed when a new entitlement cannot be verified by the canonic
 it.effect('maps the routine CAS result to the declared Action revision conflict', () =>
   Effect.gen(function* revisionConflict() {
     const services = makeChangeCustomerPaymentTermsServices(
-      persistenceContext(
-        transactionReturning([row('PRESENT', state(3), 3)], [row('REVISION_CONFLICT', null, 4)]),
-      ),
+      persistenceContext(transactionReturning([row('PRESENT', state(3), 3)], [row('REVISION_CONFLICT', null, 4)])),
       { resolveDefinitions: () => Effect.succeed([]) },
     );
     const failure = yield* Effect.flip(
@@ -447,10 +429,7 @@ it.effect('maps a retirement reservation barrier to the declared Action failure'
   Effect.gen(function* retirementReservationConflict() {
     const services = makeChangeCustomerPaymentTermsServices(
       persistenceContext(
-        transactionReturning(
-          [row('PRESENT', state(3), 3)],
-          [row('PAYMENT_TERM_RETIREMENT_RESERVED', null, 3)],
-        ),
+        transactionReturning([row('PRESENT', state(3), 3)], [row('PAYMENT_TERM_RETIREMENT_RESERVED', null, 3)]),
       ),
       { resolveDefinitions: () => Effect.succeed([]) },
     );
@@ -545,39 +524,24 @@ it.effect('grants runtime access only to the three audited routines', () =>
   Effect.gen(function* migrationSecurity() {
     const sql = yield* Effect.tryPromise(() =>
       readFile(
-        new URL(
-          '../../drizzle/20260909112241_payment-entitlement-routines/migration.sql',
-          import.meta.url,
-        ),
+        new URL('../../drizzle/20260909112241_payment-entitlement-routines/migration.sql', import.meta.url),
         'utf-8',
       ),
     );
     expect(sql.match(/SECURITY DEFINER/gu)?.length).toBeGreaterThanOrEqual(4);
     expect(sql).toContain('SET search_path = pg_catalog, commerce_customer_context');
-    expect(sql).toContain(
-      'REVOKE ALL ON FUNCTION "commerce_customer_context"."read_customer_payment_terms"',
-    );
+    expect(sql).toContain('REVOKE ALL ON FUNCTION "commerce_customer_context"."read_customer_payment_terms"');
     expect(sql.match(/GRANT EXECUTE ON FUNCTION/gu)?.length).toBe(3);
-    expect(sql).toContain(
-      'GRANT EXECUTE ON FUNCTION "commerce_customer_context"."read_customer_payment_terms"',
-    );
-    expect(sql).toContain(
-      'GRANT EXECUTE ON FUNCTION "commerce_customer_context"."persist_customer_payment_terms"',
-    );
+    expect(sql).toContain('GRANT EXECUTE ON FUNCTION "commerce_customer_context"."read_customer_payment_terms"');
+    expect(sql).toContain('GRANT EXECUTE ON FUNCTION "commerce_customer_context"."persist_customer_payment_terms"');
     expect(sql).toContain(
       'GRANT EXECUTE ON FUNCTION "commerce_customer_context"."assess_payment_term_entitlement_use"(uuid, uuid, uuid[], timestamptz) TO "ontos_runtime"',
     );
-    expect(sql).not.toContain(
-      '"assess_payment_term_entitlement_use"(uuid, uuid, text, timestamptz)',
-    );
+    expect(sql).not.toContain('"assess_payment_term_entitlement_use"(uuid, uuid, text, timestamptz)');
     expect(sql).toContain('cardinality(p_payment_term_resource_ids) NOT BETWEEN 1 AND 200');
-    expect(sql).toContain(
-      'entitlement.payment_term_resource_id = ANY(p_payment_term_resource_ids::text[])',
-    );
+    expect(sql).toContain('entitlement.payment_term_resource_id = ANY(p_payment_term_resource_ids::text[])');
     expect(sql).toContain('v_action_invocation_id IS NULL');
-    expect(sql).toContain(
-      'customer_payment_term_entitlements.effective_to IS DISTINCT FROM excluded.effective_to',
-    );
+    expect(sql).toContain('customer_payment_term_entitlements.effective_to IS DISTINCT FROM excluded.effective_to');
     expect(sql).not.toMatch(
       /GRANT EXECUTE ON FUNCTION[^;]+(?:assert_customer_payment_terms_scope|customer_payment_terms_state_json)/iu,
     );
@@ -585,59 +549,49 @@ it.effect('grants runtime access only to the three audited routines', () =>
   }),
 );
 
-it.effect(
-  'assesses every non-cancelled entitlement interval overlapping the retirement horizon',
-  () =>
-    Effect.gen(function* retirementHorizonAssessment() {
-      const sql = yield* Effect.tryPromise(() =>
-        readFile(
-          new URL(
-            '../../drizzle/20260909144801_assess-future-payment-term-uses/migration.sql',
-            import.meta.url,
-          ),
-          'utf-8',
-        ),
-      );
-      expect(sql).toContain("entitlement.lifecycle IN ('ACTIVE', 'ENDED')");
-      expect(sql).toContain('entitlement.effective_to IS NULL');
-      expect(sql).toContain('entitlement.effective_to > p_effective_at');
-      expect(sql).not.toContain('entitlement.effective_from <= p_effective_at');
-      expect(sql).not.toContain("profile.lifecycle = 'ACTIVE'");
-      expect(sql).not.toContain('INNER JOIN commerce_customer_context.customer_profiles');
-      expect(sql).toContain('payment-term-entitlement-use-horizon');
-      expect(sql).toContain(
-        'GRANT EXECUTE ON FUNCTION "commerce_customer_context"."assess_payment_term_entitlement_use"(uuid, uuid, uuid[], timestamptz) TO "ontos_runtime"',
-      );
-    }),
+it.effect('assesses every non-cancelled entitlement interval overlapping the retirement horizon', () =>
+  Effect.gen(function* retirementHorizonAssessment() {
+    const sql = yield* Effect.tryPromise(() =>
+      readFile(
+        new URL('../../drizzle/20260909144801_assess-future-payment-term-uses/migration.sql', import.meta.url),
+        'utf-8',
+      ),
+    );
+    expect(sql).toContain("entitlement.lifecycle IN ('ACTIVE', 'ENDED')");
+    expect(sql).toContain('entitlement.effective_to IS NULL');
+    expect(sql).toContain('entitlement.effective_to > p_effective_at');
+    expect(sql).not.toContain('entitlement.effective_from <= p_effective_at');
+    expect(sql).not.toContain("profile.lifecycle = 'ACTIVE'");
+    expect(sql).not.toContain('INNER JOIN commerce_customer_context.customer_profiles');
+    expect(sql).toContain('payment-term-entitlement-use-horizon');
+    expect(sql).toContain(
+      'GRANT EXECUTE ON FUNCTION "commerce_customer_context"."assess_payment_term_entitlement_use"(uuid, uuid, uuid[], timestamptz) TO "ontos_runtime"',
+    );
+  }),
 );
 
-it.effect(
-  'verifies local Payment Terms facts without transferring them during reconciliation',
-  () =>
-    Effect.gen(function* paymentTermsOwnerMigration() {
-      const sql = yield* Effect.tryPromise(() =>
-        readFile(
-          new URL(
-            '../../drizzle/20260909152000_payment-terms-reconciliation-owner/migration.sql',
-            import.meta.url,
-          ),
-          'utf-8',
-        ),
-      );
-      expect(sql).toContain(
-        'CREATE OR REPLACE FUNCTION "commerce_customer_context"."verify_payment_terms_reconciliation_owner"',
-      );
-      expect(sql).toContain('SECURITY DEFINER');
-      expect(sql).toContain('FOR UPDATE OF entitlement');
-      expect(sql).toContain('FOR UPDATE OF preference');
-      expect(sql).toContain('v_non_survivor_current_preferences > 0');
-      expect(sql).toContain('futureOverlapInventory');
-      expect(sql).toContain(
-        'REVOKE ALL ON FUNCTION "commerce_customer_context"."verify_payment_terms_reconciliation_owner"',
-      );
-      expect(sql).toContain(
-        'GRANT EXECUTE ON FUNCTION "commerce_customer_context"."verify_payment_terms_reconciliation_owner"',
-      );
-      expect(sql).not.toMatch(/GRANT\s+(?:SELECT|INSERT|UPDATE|DELETE)\s+ON/iu);
-    }),
+it.effect('verifies local Payment Terms facts without transferring them during reconciliation', () =>
+  Effect.gen(function* paymentTermsOwnerMigration() {
+    const sql = yield* Effect.tryPromise(() =>
+      readFile(
+        new URL('../../drizzle/20260909152000_payment-terms-reconciliation-owner/migration.sql', import.meta.url),
+        'utf-8',
+      ),
+    );
+    expect(sql).toContain(
+      'CREATE OR REPLACE FUNCTION "commerce_customer_context"."verify_payment_terms_reconciliation_owner"',
+    );
+    expect(sql).toContain('SECURITY DEFINER');
+    expect(sql).toContain('FOR UPDATE OF entitlement');
+    expect(sql).toContain('FOR UPDATE OF preference');
+    expect(sql).toContain('v_non_survivor_current_preferences > 0');
+    expect(sql).toContain('futureOverlapInventory');
+    expect(sql).toContain(
+      'REVOKE ALL ON FUNCTION "commerce_customer_context"."verify_payment_terms_reconciliation_owner"',
+    );
+    expect(sql).toContain(
+      'GRANT EXECUTE ON FUNCTION "commerce_customer_context"."verify_payment_terms_reconciliation_owner"',
+    );
+    expect(sql).not.toMatch(/GRANT\s+(?:SELECT|INSERT|UPDATE|DELETE)\s+ON/iu);
+  }),
 );

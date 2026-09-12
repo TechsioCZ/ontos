@@ -3,17 +3,14 @@
 // @ontos-action-slug assign-counterparty-price-group
 /* eslint-disable effect-native/no-manual-tag-comparison, sonarjs/no-duplicate-string -- Generated Action shape uses explicit public outcome narrowing and canonical owner keys; expires: 2027-03-01. */
 import type { ActionHandlerContext } from '@app/core-runtime';
-import {
-  defineAction,
-  defineActionBusinessPermission,
-  defineTenantModuleEntrypoint,
-} from '@app/core-runtime';
+import { defineAction, defineActionBusinessPermission, defineTenantModuleEntrypoint } from '@app/core-runtime';
 import { Effect, Schema } from 'effect';
 import {
   CounterpartyPriceGroupAssignedEventSchema,
   isPriceGroupInstantBefore,
   samePriceGroupRef,
 } from '../../shared/domain/price-group-contracts.ts';
+import type { PriceGroupCatalogOutcome } from '../../shared/domain/price-group-contracts.ts';
 import {
   AssignCounterpartyPriceGroupPayloadSchema,
   AssignCounterpartyPriceGroupResultSchema,
@@ -33,6 +30,7 @@ import {
   CustomerPriceGroupScopeMismatch,
 } from '../../shared/domain/price-group-errors.ts';
 import type {
+  AssignCustomerPriceGroupStoreResult,
   CustomerPriceGroupAssignmentStorePort,
   CustomerPriceGroupProfileValidationPort,
   PriceGroupCatalogPort,
@@ -41,14 +39,8 @@ import { CUSTOMER_PRICE_GROUP_COMPATIBILITY_CONTRACT } from '../../shared/domain
 import { createAssignCounterpartyPriceGroupCommerceCustomerContextCounterpartyPriceGroupAssignedV1OutboxMessage } from './assign-counterparty-price-group.commerce-customer-context-counterparty-price-group-assigned-v1.outbox-message.ts';
 import { priceGroupActionServicesForTransaction } from './price-group-action-services.ts';
 
-export {
-  AssignCounterpartyPriceGroupPayloadSchema,
-  AssignCounterpartyPriceGroupResultSchema,
-} from '../../shared/actions/assign-counterparty-price-group.ts';
-export type {
-  AssignCounterpartyPriceGroupPayload,
-  AssignCounterpartyPriceGroupResult,
-} from '../../shared/actions/assign-counterparty-price-group.ts';
+export { AssignCounterpartyPriceGroupPayloadSchema } from '../../shared/actions/assign-counterparty-price-group.ts';
+export type { AssignCounterpartyPriceGroupPayload } from '../../shared/actions/assign-counterparty-price-group.ts';
 
 const AssignCounterpartyPriceGroupErrorSchema = Schema.Union([
   CustomerPriceGroupCatalogRejected,
@@ -84,47 +76,41 @@ const sameCounterparty = (
   left.resourceType === right.resourceType &&
   left.tenantId === right.tenantId;
 
-export const handleAssignCounterpartyPriceGroup = Effect.fn(
-  'AssignCounterpartyPriceGroupAction.handleAssignCounterpartyPriceGroup',
-  // oxlint-disable-next-line complexity -- Generated handler validates temporal scope, exact Counterparty association, catalog compatibility, CAS outcomes, evidence, and event emission; expires: 2027-03-01.
-)(function* assign(
-  payload: AssignCounterpartyPriceGroupPayload,
-  context: ActionHandlerContext<DomainEvents, AssignCounterpartyPriceGroupServices>,
-) {
+type AssignCounterpartyPriceGroupContext = ActionHandlerContext<DomainEvents, AssignCounterpartyPriceGroupServices>;
+type UsablePriceGroupCatalogOutcome = Extract<PriceGroupCatalogOutcome, { readonly _tag: 'USABLE' }>;
+type AssignedCounterpartyPriceGroup = Extract<AssignCustomerPriceGroupStoreResult, { readonly _tag: 'assigned' }>;
+
+const validateAssignCounterpartyPriceGroupScope = (payload: AssignCounterpartyPriceGroupPayload, tenantId: string) => {
   if (
-    payload.counterpartyRef.tenantId !== context.scope.tenantId ||
-    payload.profile.tenantId !== context.scope.tenantId ||
-    payload.priceGroupRef.tenantId !== context.scope.tenantId
+    payload.counterpartyRef.tenantId !== tenantId ||
+    payload.profile.tenantId !== tenantId ||
+    payload.priceGroupRef.tenantId !== tenantId
   ) {
-    return yield* new CustomerPriceGroupScopeMismatch({
-      code: 'customer_price_group_scope_mismatch',
-      reason: 'The Counterparty, Profile, and PriceGroup must belong to the trusted Tenant',
-    });
+    return Effect.fail(
+      new CustomerPriceGroupScopeMismatch({
+        code: 'customer_price_group_scope_mismatch',
+        reason: 'The Counterparty, Profile, and PriceGroup must belong to the trusted Tenant',
+      }),
+    );
   }
+  return Effect.void;
+};
 
-  const recordedAt = yield* context.services.now;
-  if (isPriceGroupInstantBefore(payload.effectiveFrom, recordedAt)) {
-    return yield* new CustomerPriceGroupRetroactiveScheduleRejected({
-      code: 'customer_price_group_retroactive_schedule_rejected',
-      reason: 'Counterparty PriceGroup assignment must take effect now or in the future',
-    });
-  }
-
-  const validation = yield* context.services.profileValidation.inspect(
-    payload.profile,
-    payload.effectiveFrom,
-    payload.counterpartyRef,
-  );
+/* oxlint-disable typescript/consistent-return -- Effect failure branches return yielded domain errors while successful validation intentionally falls through with void. */
+const validateAssignCounterpartyPriceGroupProfile = Effect.fn(
+  'AssignCounterpartyPriceGroupAction.validateAssignCounterpartyPriceGroupProfile',
+)(function* validateAssignCounterpartyPriceGroupProfileEffect(
+  payload: AssignCounterpartyPriceGroupPayload,
+  profileValidation: CustomerPriceGroupProfileValidationPort,
+) {
+  const validation = yield* profileValidation.inspect(payload.profile, payload.effectiveFrom, payload.counterpartyRef);
   if (validation._tag === 'NOT_FOUND') {
     return yield* new CustomerPriceGroupProfileNotFound({
       code: 'customer_price_group_profile_not_found',
       reason: 'The Counterparty purchasing profile does not exist',
     });
   }
-  if (
-    validation.counterpartyRef === null ||
-    !sameCounterparty(validation.counterpartyRef, payload.counterpartyRef)
-  ) {
+  if (validation.counterpartyRef === null || !sameCounterparty(validation.counterpartyRef, payload.counterpartyRef)) {
     return yield* new CustomerPriceGroupProfileAssociationMismatch({
       code: 'customer_price_group_profile_association_mismatch',
       reason: 'The purchasing profile is not associated with the authorized Counterparty',
@@ -144,11 +130,20 @@ export const handleAssignCounterpartyPriceGroup = Effect.fn(
       reason: `A ${validation.state} profile cannot receive a PriceGroup assignment`,
     });
   }
+});
+/* oxlint-enable typescript/consistent-return */
 
-  const catalogOutcome = yield* context.services.catalog.resolveCurrent(
-    payload.priceGroupRef,
+const resolveAssignCounterpartyPriceGroupCatalog = Effect.fn(
+  'AssignCounterpartyPriceGroupAction.resolveAssignCounterpartyPriceGroupCatalog',
+)(function* resolveAssignCounterpartyPriceGroupCatalogEffect(
+  priceGroupRef: AssignCounterpartyPriceGroupPayload['priceGroupRef'],
+  effectiveFrom: AssignCounterpartyPriceGroupPayload['effectiveFrom'],
+  catalog: PriceGroupCatalogPort,
+) {
+  const catalogOutcome = yield* catalog.resolveCurrent(
+    priceGroupRef,
     CUSTOMER_PRICE_GROUP_COMPATIBILITY_CONTRACT,
-    payload.effectiveFrom,
+    effectiveFrom,
   );
   if (catalogOutcome._tag !== 'USABLE') {
     return yield* new CustomerPriceGroupCatalogRejected({
@@ -158,7 +153,7 @@ export const handleAssignCounterpartyPriceGroup = Effect.fn(
     });
   }
   if (
-    !samePriceGroupRef(catalogOutcome.priceGroupRef, payload.priceGroupRef) ||
+    !samePriceGroupRef(catalogOutcome.priceGroupRef, priceGroupRef) ||
     catalogOutcome.compatibility.contractId !== CUSTOMER_PRICE_GROUP_COMPATIBILITY_CONTRACT
   ) {
     return yield* new CustomerPriceGroupCatalogRejected({
@@ -167,66 +162,65 @@ export const handleAssignCounterpartyPriceGroup = Effect.fn(
       reasonCode: 'INCOMPATIBLE',
     });
   }
+  return catalogOutcome;
+});
 
-  const stored = yield* context.services.store.assign({
-    actionInvocationId: context.actionInvocationId,
-    compatibility: catalogOutcome.compatibility,
-    counterpartyRef: payload.counterpartyRef,
-    effectiveFrom: payload.effectiveFrom,
-    effectiveTo: payload.effectiveTo ?? null,
-    expectedProfileRevision: payload.expectedProfileRevision,
-    priceGroupRef: catalogOutcome.priceGroupRef,
-    principalId: context.scope.principalId,
-    profile: payload.profile,
-    reason: payload.reason,
-    recordedAt,
-    tenantId: context.scope.tenantId,
-  });
-  if (stored._tag === 'overlap') {
-    return yield* new CustomerPriceGroupOverlapConflict({
-      code: 'customer_price_group_overlap_conflict',
-      reason: 'The requested effective period overlaps another assignment',
-    });
-  }
-  if (stored._tag === 'profile_not_found') {
-    return yield* new CustomerPriceGroupProfileNotFound({
-      code: 'customer_price_group_profile_not_found',
-      reason: 'The Counterparty purchasing profile does not exist',
-    });
-  }
-  if (stored._tag === 'profile_revision_conflict') {
-    const latest = yield* context.services.profileValidation.inspect(
-      payload.profile,
-      payload.effectiveFrom,
-      payload.counterpartyRef,
-    );
-    if (latest._tag === 'NOT_FOUND') {
-      return yield* new CustomerPriceGroupProfileNotFound({
-        code: 'customer_price_group_profile_not_found',
-        reason: 'The Counterparty purchasing profile no longer exists',
+const mapAssignCounterpartyPriceGroupPersistenceResult = Effect.fn('mapAssignCounterpartyPriceGroupPersistenceResult')(
+  function* mapAssignCounterpartyPriceGroupPersistenceResultEffect(
+    stored: AssignCustomerPriceGroupStoreResult,
+    payload: AssignCounterpartyPriceGroupPayload,
+    profileValidation: CustomerPriceGroupProfileValidationPort,
+  ) {
+    if (stored._tag === 'overlap') {
+      return yield* new CustomerPriceGroupOverlapConflict({
+        code: 'customer_price_group_overlap_conflict',
+        reason: 'The requested effective period overlaps another assignment',
       });
     }
-    return yield* new CustomerPriceGroupRevisionConflict({
-      code: 'customer_price_group_revision_conflict',
-      currentRevision: latest.revision,
-      reason: 'The Counterparty purchasing profile changed during assignment',
-    });
-  }
-  if (stored._tag === 'profile_ineligible') {
-    return yield* new CustomerPriceGroupProfileIneligible({
-      code: 'customer_price_group_profile_ineligible',
-      profileState: stored.profileState,
-      reason: `A ${stored.profileState} profile cannot receive a PriceGroup assignment`,
-    });
-  }
-  if (stored._tag === 'retroactive_schedule') {
-    return yield* new CustomerPriceGroupRetroactiveScheduleRejected({
-      code: 'customer_price_group_retroactive_schedule_rejected',
-      reason: 'The assignment became retroactive before it could be persisted',
-    });
-  }
-  const result = stored;
+    if (stored._tag === 'profile_not_found') {
+      return yield* new CustomerPriceGroupProfileNotFound({
+        code: 'customer_price_group_profile_not_found',
+        reason: 'The Counterparty purchasing profile does not exist',
+      });
+    }
+    if (stored._tag === 'profile_revision_conflict') {
+      const latest = yield* profileValidation.inspect(payload.profile, payload.effectiveFrom, payload.counterpartyRef);
+      if (latest._tag === 'NOT_FOUND') {
+        return yield* new CustomerPriceGroupProfileNotFound({
+          code: 'customer_price_group_profile_not_found',
+          reason: 'The Counterparty purchasing profile no longer exists',
+        });
+      }
+      return yield* new CustomerPriceGroupRevisionConflict({
+        code: 'customer_price_group_revision_conflict',
+        currentRevision: latest.revision,
+        reason: 'The Counterparty purchasing profile changed during assignment',
+      });
+    }
+    if (stored._tag === 'profile_ineligible') {
+      return yield* new CustomerPriceGroupProfileIneligible({
+        code: 'customer_price_group_profile_ineligible',
+        profileState: stored.profileState,
+        reason: `A ${stored.profileState} profile cannot receive a PriceGroup assignment`,
+      });
+    }
+    if (stored._tag === 'retroactive_schedule') {
+      return yield* new CustomerPriceGroupRetroactiveScheduleRejected({
+        code: 'customer_price_group_retroactive_schedule_rejected',
+        reason: 'The assignment became retroactive before it could be persisted',
+      });
+    }
+    return stored;
+  },
+);
 
+const recordAssignCounterpartyPriceGroupDataAccess = Effect.fn(
+  'AssignCounterpartyPriceGroupAction.recordAssignCounterpartyPriceGroupDataAccess',
+)(function* recordAssignCounterpartyPriceGroupDataAccessEffect(
+  payload: AssignCounterpartyPriceGroupPayload,
+  catalogOutcome: UsablePriceGroupCatalogOutcome,
+  context: AssignCounterpartyPriceGroupContext,
+) {
   yield* context.recordDataAccess({
     accessKind: 'read',
     queryHash: `counterparty-price-group-assign:${payload.counterpartyRef.resourceId}:${payload.profile.resourceId}:${payload.effectiveFrom}`,
@@ -245,32 +239,88 @@ export const handleAssignCounterpartyPriceGroup = Effect.fn(
     targetResourceId: payload.priceGroupRef.resourceId,
     targetResourceType: payload.priceGroupRef.resourceType,
   });
+});
 
-  if (result.changed) {
-    const eventPayload = {
-      assignmentRef: result.assignment.assignmentRef,
-      assignmentRevision: result.assignment.revision,
-      change: 'ASSIGNED',
-      counterpartyRef: payload.counterpartyRef,
-      effectiveAt: result.assignment.effectiveFrom,
-      priceGroupRef: result.assignment.priceGroupRef,
-      profile: result.assignment.profile,
-    } as const;
-    const event = yield* context.addDomainEvent({
-      eventType: 'commerce.customer-context.counterparty-price-group-assigned.v1',
-      payloadJson: eventPayload,
-      producerModuleKey: 'commerce.customer-context',
-      subjectModuleKey: 'commerce.customer-context',
-      subjectResourceId: result.assignment.assignmentRef.resourceId,
-      subjectResourceType: result.assignment.assignmentRef.resourceType,
-    });
-    yield* context.addOutboxMessage(
-      event,
-      createAssignCounterpartyPriceGroupCommerceCustomerContextCounterpartyPriceGroupAssignedV1OutboxMessage(
-        eventPayload,
-      ),
-    );
+const emitAssignCounterpartyPriceGroupEvent = Effect.fn(
+  'AssignCounterpartyPriceGroupAction.emitAssignCounterpartyPriceGroupEvent',
+)(function* emitAssignCounterpartyPriceGroupEventEffect(
+  payload: AssignCounterpartyPriceGroupPayload,
+  result: AssignedCounterpartyPriceGroup,
+  context: AssignCounterpartyPriceGroupContext,
+) {
+  if (!result.changed) {
+    return;
   }
+  const eventPayload = {
+    assignmentRef: result.assignment.assignmentRef,
+    assignmentRevision: result.assignment.revision,
+    change: 'ASSIGNED',
+    counterpartyRef: payload.counterpartyRef,
+    effectiveAt: result.assignment.effectiveFrom,
+    priceGroupRef: result.assignment.priceGroupRef,
+    profile: result.assignment.profile,
+  } as const;
+  const event = yield* context.addDomainEvent({
+    eventType: 'commerce.customer-context.counterparty-price-group-assigned.v1',
+    payloadJson: eventPayload,
+    producerModuleKey: 'commerce.customer-context',
+    subjectModuleKey: 'commerce.customer-context',
+    subjectResourceId: result.assignment.assignmentRef.resourceId,
+    subjectResourceType: result.assignment.assignmentRef.resourceType,
+  });
+  yield* context.addOutboxMessage(
+    event,
+    createAssignCounterpartyPriceGroupCommerceCustomerContextCounterpartyPriceGroupAssignedV1OutboxMessage(
+      eventPayload,
+    ),
+  );
+});
+
+const handleAssignCounterpartyPriceGroup = Effect.fn(
+  'AssignCounterpartyPriceGroupAction.handleAssignCounterpartyPriceGroup',
+)(function* assign(
+  payload: AssignCounterpartyPriceGroupPayload,
+  context: ActionHandlerContext<DomainEvents, AssignCounterpartyPriceGroupServices>,
+) {
+  yield* validateAssignCounterpartyPriceGroupScope(payload, context.scope.tenantId);
+
+  const recordedAt = yield* context.services.now;
+  if (isPriceGroupInstantBefore(payload.effectiveFrom, recordedAt)) {
+    return yield* new CustomerPriceGroupRetroactiveScheduleRejected({
+      code: 'customer_price_group_retroactive_schedule_rejected',
+      reason: 'Counterparty PriceGroup assignment must take effect now or in the future',
+    });
+  }
+
+  yield* validateAssignCounterpartyPriceGroupProfile(payload, context.services.profileValidation);
+
+  const catalogOutcome = yield* resolveAssignCounterpartyPriceGroupCatalog(
+    payload.priceGroupRef,
+    payload.effectiveFrom,
+    context.services.catalog,
+  );
+
+  const stored = yield* context.services.store.assign({
+    actionInvocationId: context.actionInvocationId,
+    compatibility: catalogOutcome.compatibility,
+    counterpartyRef: payload.counterpartyRef,
+    effectiveFrom: payload.effectiveFrom,
+    effectiveTo: payload.effectiveTo ?? null,
+    expectedProfileRevision: payload.expectedProfileRevision,
+    priceGroupRef: catalogOutcome.priceGroupRef,
+    principalId: context.scope.principalId,
+    profile: payload.profile,
+    reason: payload.reason,
+    recordedAt,
+    tenantId: context.scope.tenantId,
+  });
+  const result = yield* mapAssignCounterpartyPriceGroupPersistenceResult(
+    stored,
+    payload,
+    context.services.profileValidation,
+  );
+  yield* recordAssignCounterpartyPriceGroupDataAccess(payload, catalogOutcome, context);
+  yield* emitAssignCounterpartyPriceGroupEvent(payload, result, context);
 
   return {
     assignment: result.assignment,
@@ -287,21 +337,18 @@ export const assignCounterpartyPriceGroupAction = defineAction(
     },
     actionKey: 'commerce.customer-context.assign-counterparty-price-group',
     auditProfile: 'sensitive',
-    businessPermission: defineActionBusinessPermission<AssignCounterpartyPriceGroupPayload>(
-      (payload, scope) => ({
-        permission: 'counterparty.settings.price_group.manage',
-        target: {
-          counterpartyId: payload.counterpartyRef.resourceId,
-          kind: 'counterparty',
-          legalEntityId: scope.legalEntityId ?? '',
-          tenantId: scope.tenantId,
-        },
-      }),
-    ),
+    businessPermission: defineActionBusinessPermission<AssignCounterpartyPriceGroupPayload>((payload, scope) => ({
+      permission: 'counterparty.settings.price_group.manage',
+      target: {
+        counterpartyId: payload.counterpartyRef.resourceId,
+        kind: 'counterparty',
+        legalEntityId: scope.legalEntityId ?? '',
+        tenantId: scope.tenantId,
+      },
+    })),
     domainErrorSchema: AssignCounterpartyPriceGroupErrorSchema,
     domainEvents: {
-      'commerce.customer-context.counterparty-price-group-assigned.v1':
-        CounterpartyPriceGroupAssignedEventSchema,
+      'commerce.customer-context.counterparty-price-group-assigned.v1': CounterpartyPriceGroupAssignedEventSchema,
     },
     entrypoint: defineTenantModuleEntrypoint({
       access: 'write',
@@ -321,11 +368,3 @@ export const assignCounterpartyPriceGroupAction = defineAction(
   handleAssignCounterpartyPriceGroup,
   priceGroupActionServicesForTransaction,
 );
-
-// <generated-outbox-message-exports>
-export { AssignCounterpartyPriceGroupCommerceCustomerContextCounterpartyPriceGroupAssignedV1OutboxPayloadSchema } from './assign-counterparty-price-group.commerce-customer-context-counterparty-price-group-assigned-v1.outbox-message.ts';
-export { AssignCounterpartyPriceGroupCommerceCustomerContextCounterpartyPriceGroupAssignedV1OutboxProducerModuleKey } from './assign-counterparty-price-group.commerce-customer-context-counterparty-price-group-assigned-v1.outbox-message.ts';
-export { AssignCounterpartyPriceGroupCommerceCustomerContextCounterpartyPriceGroupAssignedV1OutboxTopic } from './assign-counterparty-price-group.commerce-customer-context-counterparty-price-group-assigned-v1.outbox-message.ts';
-export { createAssignCounterpartyPriceGroupCommerceCustomerContextCounterpartyPriceGroupAssignedV1OutboxMessage } from './assign-counterparty-price-group.commerce-customer-context-counterparty-price-group-assigned-v1.outbox-message.ts';
-export type { AssignCounterpartyPriceGroupCommerceCustomerContextCounterpartyPriceGroupAssignedV1OutboxPayload } from './assign-counterparty-price-group.commerce-customer-context-counterparty-price-group-assigned-v1.outbox-message.ts';
-// </generated-outbox-message-exports>

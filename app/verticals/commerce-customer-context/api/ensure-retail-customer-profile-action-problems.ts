@@ -3,7 +3,7 @@
 // @ontos-action-http-slug ensure-retail-customer-profile
 // oxlint-disable sonarjs/function-name -- Effect Match.tags requires owner-declared tag keys; remove-when: sonarjs accepts discriminant-map properties.
 import type { ActionCoreError } from '@app/core-runtime';
-import { Effect, HttpApiMiddleware } from '@modern-js/plugin-bff/effect-edge';
+import { Effect, HttpApiMiddleware } from '@modern-js/bff-effect/effect-edge';
 import { Match, Schema } from 'effect';
 import {
   EnsureRetailCustomerProfileActionAlreadyCommittedProblemSchema,
@@ -150,9 +150,7 @@ export const ensureRetailCustomerProfileActionProblem = {
     }),
 } as const;
 
-const mapDomainIdentity = (
-  identity: DomainProblemIdentity,
-): EnsureRetailCustomerProfileActionProblem =>
+const mapDomainIdentity = (identity: DomainProblemIdentity): EnsureRetailCustomerProfileActionProblem =>
   Match.value(identity).pipe(
     Match.when({ kind: 'conflict' as const }, (matched) =>
       ensureRetailCustomerProfileActionProblem.conflict(matched.code),
@@ -202,38 +200,24 @@ const mapCoreProblem = (error: ActionCoreError): EnsureRetailCustomerProfileActi
         }),
       ActionHandlerExecutionError: ensureRetailCustomerProfileActionProblem.internal,
       ActionIdempotencyKeyRequired: ensureRetailCustomerProfileActionProblem.precondition,
-      ActionInvocationNotFound: (failure) =>
-        ensureRetailCustomerProfileActionProblem.notFound(failure.code),
-      ActionInvocationPersistenceError: (failure) =>
-        ensureRetailCustomerProfileActionProblem.unavailable(failure.code),
-      ActionInvocationStateError: (failure) =>
-        ensureRetailCustomerProfileActionProblem.conflict(failure.code),
+      ActionInvocationNotFound: (failure) => ensureRetailCustomerProfileActionProblem.notFound(failure.code),
+      ActionInvocationPersistenceError: (failure) => ensureRetailCustomerProfileActionProblem.unavailable(failure.code),
+      ActionInvocationStateError: (failure) => ensureRetailCustomerProfileActionProblem.conflict(failure.code),
       ActionPayloadValidationError: ensureRetailCustomerProfileActionProblem.invalid,
-      ActionPermissionCheckError: (failure) =>
-        ensureRetailCustomerProfileActionProblem.unavailable(failure.code),
-      ActionPermissionDenied: (failure) =>
-        ensureRetailCustomerProfileActionProblem.forbidden(failure.code),
-      ActionPolicyDenied: (failure) =>
-        ensureRetailCustomerProfileActionProblem.ineligible(failure.code),
-      ActionPolicyEvaluationError: (failure) =>
-        ensureRetailCustomerProfileActionProblem.unavailable(failure.code),
-      ActionRequestHashConflict: (failure) =>
-        ensureRetailCustomerProfileActionProblem.conflict(failure.code),
+      ActionPermissionCheckError: (failure) => ensureRetailCustomerProfileActionProblem.unavailable(failure.code),
+      ActionPermissionDenied: (failure) => ensureRetailCustomerProfileActionProblem.forbidden(failure.code),
+      ActionPolicyDenied: (failure) => ensureRetailCustomerProfileActionProblem.ineligible(failure.code),
+      ActionPolicyEvaluationError: (failure) => ensureRetailCustomerProfileActionProblem.unavailable(failure.code),
+      ActionRequestHashConflict: (failure) => ensureRetailCustomerProfileActionProblem.conflict(failure.code),
       ActionResultValidationError: ensureRetailCustomerProfileActionProblem.internal,
-      ActionTransactionError: (failure) =>
-        ensureRetailCustomerProfileActionProblem.unavailable(failure.code),
+      ActionTransactionError: (failure) => ensureRetailCustomerProfileActionProblem.unavailable(failure.code),
       ActionTrustedContextValidationError: ensureRetailCustomerProfileActionProblem.authentication,
-      ModuleStateCheckUnavailableError: (failure) =>
-        ensureRetailCustomerProfileActionProblem.unavailable(failure.code),
-      ModuleStateDeniedError: (failure) =>
-        ensureRetailCustomerProfileActionProblem.forbidden(failure.code),
+      ModuleStateCheckUnavailableError: (failure) => ensureRetailCustomerProfileActionProblem.unavailable(failure.code),
+      ModuleStateDeniedError: (failure) => ensureRetailCustomerProfileActionProblem.forbidden(failure.code),
       OperationAuthenticationRequired: ensureRetailCustomerProfileActionProblem.authentication,
-      OperationContextDenied: (failure) =>
-        ensureRetailCustomerProfileActionProblem.forbidden(failure.code),
-      OperationContextInvalid: (failure) =>
-        ensureRetailCustomerProfileActionProblem.forbidden(failure.code),
-      OperationContextUnavailable: (failure) =>
-        ensureRetailCustomerProfileActionProblem.unavailable(failure.code),
+      OperationContextDenied: (failure) => ensureRetailCustomerProfileActionProblem.forbidden(failure.code),
+      OperationContextInvalid: (failure) => ensureRetailCustomerProfileActionProblem.forbidden(failure.code),
+      OperationContextUnavailable: (failure) => ensureRetailCustomerProfileActionProblem.unavailable(failure.code),
     }),
     Match.exhaustive,
   );
@@ -241,11 +225,9 @@ const mapCoreProblem = (error: ActionCoreError): EnsureRetailCustomerProfileActi
 const isDomainError = Schema.is(ensureRetailCustomerProfileAction.descriptor.domainErrorSchema);
 export const mapEnsureRetailCustomerProfileActionProblem = (
   error: ActionCoreError | DomainError,
-): EnsureRetailCustomerProfileActionProblem =>
-  isDomainError(error) ? mapDomainProblem(error) : mapCoreProblem(error);
+): EnsureRetailCustomerProfileActionProblem => (isDomainError(error) ? mapDomainProblem(error) : mapCoreProblem(error));
 
-export const ensureRetailCustomerProfileActionSchemaErrorLive =
-  HttpApiMiddleware.layerSchemaErrorTransform(
-    EnsureRetailCustomerProfileActionSchemaErrorMiddleware,
-    () => Effect.fail(ensureRetailCustomerProfileActionProblem.invalid()),
-  );
+export const ensureRetailCustomerProfileActionSchemaErrorLive = HttpApiMiddleware.layerSchemaErrorTransform(
+  EnsureRetailCustomerProfileActionSchemaErrorMiddleware,
+  () => Effect.fail(ensureRetailCustomerProfileActionProblem.invalid()),
+);

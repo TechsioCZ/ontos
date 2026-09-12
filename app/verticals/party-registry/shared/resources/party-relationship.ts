@@ -12,7 +12,6 @@ export const PartyRelationshipRefSchema = Schema.Struct({
   resourceType: Schema.Literal('party.registry.party-relationship'),
   tenantId: PartyRegistryTenantIdJsonSchema,
 });
-export type PartyRelationshipRef = typeof PartyRelationshipRefSchema.Type;
 
 export const partyRelationshipResourceDescriptor = {
   capabilities: {

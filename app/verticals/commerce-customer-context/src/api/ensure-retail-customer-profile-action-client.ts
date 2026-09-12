@@ -69,11 +69,6 @@ export const executeEnsureRetailCustomerProfile = (
 ) =>
   operationGateway.invoke(
     (credential) =>
-      executeEnsureRetailCustomerProfileWithAuthorization(
-        payload,
-        credential,
-        requestCorrelation,
-        options,
-      ),
+      executeEnsureRetailCustomerProfileWithAuthorization(payload, credential, requestCorrelation, options),
     options.gateway,
   );

@@ -1,14 +1,9 @@
-import {
-  ConsumePurchaseApprovalInputSchema,
-  ConsumePurchaseApprovalResultSchema as DomainConsumePurchaseApprovalResultSchema,
-  PurchasingApprovalRejected,
+export {
+  ConsumePurchaseApprovalInputSchema as ConsumePurchaseApprovalPayloadSchema,
+  ConsumePurchaseApprovalResultSchema,
+  PurchasingApprovalRejected as ConsumePurchaseApprovalRejected,
 } from '../domain/purchasing-approval.ts';
-
-export const ConsumePurchaseApprovalPayloadSchema = ConsumePurchaseApprovalInputSchema;
-export type ConsumePurchaseApprovalPayload = typeof ConsumePurchaseApprovalPayloadSchema.Type;
-
-export const ConsumePurchaseApprovalResultSchema = DomainConsumePurchaseApprovalResultSchema;
-export type ConsumePurchaseApprovalResult = typeof ConsumePurchaseApprovalResultSchema.Type;
-
-export const ConsumePurchaseApprovalRejected = PurchasingApprovalRejected;
-export type ConsumePurchaseApprovalRejected = InstanceType<typeof PurchasingApprovalRejected>;
+export type {
+  ConsumePurchaseApprovalInput as ConsumePurchaseApprovalPayload,
+  ConsumePurchaseApprovalResult,
+} from '../domain/purchasing-approval.ts';

@@ -24,10 +24,7 @@ type AuthorizedInvocation = readonly [
   requestCorrelation: string,
   options: BindRetailPortalProfileActionClientOptions,
 ];
-type OperationInvocation = readonly [
-  requestCorrelation: string,
-  options: BindRetailPortalProfileActionClientOptions,
-];
+type OperationInvocation = readonly [requestCorrelation: string, options: BindRetailPortalProfileActionClientOptions];
 
 interface MakeClientOptions {
   readonly credential: Redacted.Redacted;
@@ -68,12 +65,6 @@ export const executeBindRetailPortalProfile = (
   ...[requestCorrelation, options]: OperationInvocation
 ) =>
   operationGateway.invoke(
-    (credential) =>
-      executeBindRetailPortalProfileWithAuthorization(
-        payload,
-        credential,
-        requestCorrelation,
-        options,
-      ),
+    (credential) => executeBindRetailPortalProfileWithAuthorization(payload, credential, requestCorrelation, options),
     options.gateway,
   );

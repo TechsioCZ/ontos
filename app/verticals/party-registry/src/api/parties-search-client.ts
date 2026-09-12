@@ -20,7 +20,7 @@ type PartiesSearchAuthorizedInvocation = readonly [
 type PartiesSearchOperationInvocation = readonly [requestCorrelation: string, options?: PartiesSearchClientOptions];
 
 const partiesClient = (
-  credential: Redacted.Redacted<string>,
+  credential: Redacted.Redacted,
   requestCorrelation: string,
   options: PartiesSearchClientOptions,
 ) =>

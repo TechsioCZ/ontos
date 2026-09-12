@@ -24,10 +24,7 @@ type AuthorizedInvocation = readonly [
   requestCorrelation: string,
   options: RemoveSavedAddressActionClientOptions,
 ];
-type OperationInvocation = readonly [
-  requestCorrelation: string,
-  options: RemoveSavedAddressActionClientOptions,
-];
+type OperationInvocation = readonly [requestCorrelation: string, options: RemoveSavedAddressActionClientOptions];
 
 interface MakeClientOptions {
   readonly credential: Redacted.Redacted;
@@ -68,7 +65,6 @@ export const executeRemoveSavedAddress = (
   ...[requestCorrelation, options]: OperationInvocation
 ) =>
   operationGateway.invoke(
-    (credential) =>
-      executeRemoveSavedAddressWithAuthorization(payload, credential, requestCorrelation, options),
+    (credential) => executeRemoveSavedAddressWithAuthorization(payload, credential, requestCorrelation, options),
     options.gateway,
   );

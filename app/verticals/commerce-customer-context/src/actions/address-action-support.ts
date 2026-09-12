@@ -1,14 +1,6 @@
 import type { OperationalScope } from '@app/core-runtime';
-import { Effect } from 'effect';
 import type { AddressBookProfile } from '../../shared/domain/address-book.ts';
-import { AddressBookUnavailable } from '../../shared/domain/address-errors.ts';
 
-export const unavailable = <A>(
-  dependency = 'commerce.customer-context.persistence',
-): Effect.Effect<A, AddressBookUnavailable> =>
-  Effect.fail(
-    new AddressBookUnavailable({ code: 'address_book_unavailable', dependency, retryable: true }),
-  );
 export const manageAddressPermissionTarget = (
   payload: { readonly profile: AddressBookProfile },
   scope: OperationalScope,

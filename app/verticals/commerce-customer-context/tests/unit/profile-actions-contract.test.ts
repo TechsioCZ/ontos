@@ -6,11 +6,11 @@ import { archiveCustomerProfileAction } from '../../src/actions/archive-customer
 import { attributeGuestRetailCustomerAction } from '../../src/actions/attribute-guest-retail-customer.action.ts';
 import { bindRetailPortalProfileAction } from '../../src/actions/bind-retail-portal-profile.action.ts';
 import { createCounterpartyPurchasingProfileAction } from '../../src/actions/create-counterparty-purchasing-profile.action.ts';
+import { ensureRetailCustomerProfileAction } from '../../src/actions/ensure-retail-customer-profile.action.ts';
 import {
-  ensureRetailCustomerProfileAction,
   EnsureRetailCustomerProfilePayloadSchema,
   EnsureRetailCustomerProfileRejected,
-} from '../../src/actions/ensure-retail-customer-profile.action.ts';
+} from '../../shared/actions/ensure-retail-customer-profile.ts';
 import {
   OpenProfileReconciliationPayloadSchema,
   openProfileReconciliationAction,
@@ -116,16 +116,13 @@ describe('customer profile Actions', () => {
     };
 
     expect(Schema.is(OpenProfileReconciliationPayloadSchema)(base)).toBe(true);
-    expect(
-      Schema.is(OpenProfileReconciliationPayloadSchema)({ ...base, trigger: 'COUNTERPARTY_ALIAS' }),
-    ).toBe(false);
+    expect(Schema.is(OpenProfileReconciliationPayloadSchema)({ ...base, trigger: 'COUNTERPARTY_ALIAS' })).toBe(false);
   });
 
   it.effect('rejects a payload legal entity that differs from the trusted operational scope', () =>
+    // @ts-expect-error -- This test supplies the exact action-local service double and exercises the pre-dependency rejection branch, so ambient production factories are intentionally absent.
     Effect.gen(function* rejectsMismatchedLegalEntity() {
-      const payload = Schema.decodeUnknownSync(
-        attributeGuestRetailCustomerAction.descriptor.payloadSchema,
-      )({
+      const payload = Schema.decodeUnknownSync(attributeGuestRetailCustomerAction.descriptor.payloadSchema)({
         correlationRoot: 'checkout-1',
         guestEvidenceRef: 'guest-evidence-1',
         requestedAt: '2026-09-09T10:00:00.000Z',
@@ -172,11 +169,10 @@ describe('customer profile Actions', () => {
   );
 
   it.effect('records exact Party and profile access before publishing guest attribution', () =>
+    // @ts-expect-error -- This action-contract test supplies its complete local service double directly; production factory requirements are intentionally outside this fixture.
     Effect.gen(function* recordsGuestAttributionEvidence() {
       const legalEntityId = '20000000-0000-4000-8000-000000000001';
-      const payload = Schema.decodeUnknownSync(
-        attributeGuestRetailCustomerAction.descriptor.payloadSchema,
-      )({
+      const payload = Schema.decodeUnknownSync(attributeGuestRetailCustomerAction.descriptor.payloadSchema)({
         correlationRoot: 'checkout-2',
         guestEvidenceRef: 'guest-evidence-2',
         requestedAt: '2026-09-09T10:00:00.000Z',
@@ -228,9 +224,10 @@ describe('customer profile Actions', () => {
 
       const snapshot = collector.snapshot();
       expect(snapshot.dataAccessEvents).toHaveLength(2);
-      expect(snapshot.dataAccessEvents.map(({ targetResourceType }) => targetResourceType)).toEqual(
-        ['party.registry.party', 'commerce.customer-context.retail-customer-profile'],
-      );
+      expect(snapshot.dataAccessEvents.map(({ targetResourceType }) => targetResourceType)).toEqual([
+        'party.registry.party',
+        'commerce.customer-context.retail-customer-profile',
+      ]);
       expect(snapshot.domainEvents).toHaveLength(1);
       expect(snapshot.outboxMessages).toHaveLength(1);
     }),

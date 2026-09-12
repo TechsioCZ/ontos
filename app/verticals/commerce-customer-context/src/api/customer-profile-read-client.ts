@@ -21,7 +21,7 @@ type CustomerProfileReadOperationInvocation = readonly [
 ];
 
 const customerProfileReadClient = (
-  credential: Redacted.Redacted<string>,
+  credential: Redacted.Redacted,
   requestCorrelation: string,
   options: CustomerProfileReadClientOptions,
 ) =>
@@ -40,9 +40,7 @@ export const executeCustomerProfileReadWithAuthorization = (
   ...[credential, requestCorrelation, options = {}]: CustomerProfileReadAuthorizedInvocation
 ) =>
   customerProfileReadClient(Redacted.make(credential), requestCorrelation, options).pipe(
-    Effect.flatMap((client) =>
-      client.customerProfileRead.execute({ headers: {}, params: {}, payload, query: {} }),
-    ),
+    Effect.flatMap((client) => client.customerProfileRead.execute({ headers: {}, params: {}, payload, query: {} })),
   );
 
 export const executeCustomerProfileRead = (

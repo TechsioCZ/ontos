@@ -1,9 +1,6 @@
 import { describe, expect, it } from 'effect-rstest';
 import { Schema } from 'effect';
-import {
-  NetDaysPaymentTermSemanticsSchema,
-  PaymentTermDefinitionSchema,
-} from '../../shared/domain/payment-term.ts';
+import { NetDaysPaymentTermSemanticsSchema, PaymentTermDefinitionSchema } from '../../shared/domain/payment-term.ts';
 import {
   calculatePaymentTermDueDate,
   canonicalPaymentTermSemantics,
@@ -105,9 +102,7 @@ describe('Payment Term semantics', () => {
   });
 
   it('derives compatibility from the kind contract while preserving exact semantics separately', () => {
-    expect(paymentTermCompatibilityId(net30)).toBe(
-      'net_days.invoice_issued_at.calendar_days_utc.v1',
-    );
+    expect(paymentTermCompatibilityId(net30)).toBe('net_days.invoice_issued_at.calendar_days_utc.v1');
     expect(canonicalPaymentTermSemantics(net30)).toContain('/30/');
     expect(paymentTermSemanticsAreEquivalent(net30, { ...net30, days: 14 })).toBe(false);
   });

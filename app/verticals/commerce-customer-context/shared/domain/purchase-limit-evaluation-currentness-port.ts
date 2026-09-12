@@ -1,10 +1,8 @@
 import { Context, Schema } from 'effect';
 import type { Effect } from 'effect';
+import type { ScopedTransactionExecutor } from '@app/core-runtime';
 
-import type {
-  PurchaseLimitCounterpartyRef,
-  PurchaseLimitDependencyUnavailable,
-} from './purchase-limit-policy.ts';
+import type { PurchaseLimitCounterpartyRef, PurchaseLimitDependencyUnavailable } from './purchase-limit-policy.ts';
 import { PurchaseLimitExternalSourceRevisionVectorSchema } from './purchase-limit-evaluation.ts';
 import type {
   PurchaseLimitSourceRevisionVector,
@@ -13,21 +11,14 @@ import type {
 import { PurchaseValueSchema } from './purchase-limit.ts';
 import type { PurchaseValue } from './purchase-limit.ts';
 
-const StableContextIdentifierSchema = Schema.String.check(
-  Schema.isMinLength(1),
-  Schema.isMaxLength(300),
-);
-const PurchaseLimitChannelIdSchema = StableContextIdentifierSchema.pipe(
-  Schema.brand('PurchaseLimitChannelId'),
-);
+const StableContextIdentifierSchema = Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(300));
+const PurchaseLimitChannelIdSchema = StableContextIdentifierSchema.pipe(Schema.brand('PurchaseLimitChannelId'));
 const PurchaseLimitContextRevisionSchema = StableContextIdentifierSchema.pipe(
   Schema.brand('PurchaseLimitContextRevision'),
 );
-const PurchaseLimitMarketIdSchema = StableContextIdentifierSchema.pipe(
-  Schema.brand('PurchaseLimitMarketId'),
-);
+const PurchaseLimitMarketIdSchema = StableContextIdentifierSchema.pipe(Schema.brand('PurchaseLimitMarketId'));
 
-export interface PurchaseLimitEvaluationTrustedScope {
+interface PurchaseLimitEvaluationTrustedScope {
   readonly legalEntityId: string;
   readonly principalId: string;
   readonly storefrontId: string;
@@ -41,8 +32,7 @@ export const PurchaseLimitEvaluationCurrentFactsSchema = Schema.Struct({
   marketId: PurchaseLimitMarketIdSchema,
   purchaseValue: PurchaseValueSchema,
 });
-export type PurchaseLimitEvaluationCurrentFacts =
-  typeof PurchaseLimitEvaluationCurrentFactsSchema.Type;
+export type PurchaseLimitEvaluationCurrentFacts = typeof PurchaseLimitEvaluationCurrentFactsSchema.Type;
 
 export interface PurchaseLimitEvaluationCurrentnessPortService {
   /**
@@ -52,21 +42,21 @@ export interface PurchaseLimitEvaluationCurrentnessPortService {
    * transaction as the evaluation and proposal mutation.
    */
   readonly forTransaction?: (
-    transaction: unknown,
+    transaction: ScopedTransactionExecutor,
     scope: PurchaseLimitEvaluationTrustedScope,
   ) => PurchaseLimitEvaluationCurrentnessPortService;
-  readonly resolveCurrent: (input: {
+  /**
+   * Candidate-only external facts for the first proposal revision. Implementations must not
+   * satisfy this by reading the proposal row that the create routine is about to insert.
+   */
+  readonly resolveCandidate?: (input: {
     readonly claimedPurchaseValue: PurchaseValue;
     readonly counterpartyRef: PurchaseLimitCounterpartyRef;
     readonly expectedSourceRevisions: PurchaseLimitSourceRevisionVector;
     readonly observedAt: typeof PurchaseLimitUtcTimestampSchema.Type;
     readonly scope: PurchaseLimitEvaluationTrustedScope;
   }) => Effect.Effect<PurchaseLimitEvaluationCurrentFacts, PurchaseLimitDependencyUnavailable>;
-  /**
-   * Candidate-only external facts for the first proposal revision. Implementations must not
-   * satisfy this by reading the proposal row that the create routine is about to insert.
-   */
-  readonly resolveCandidate?: (input: {
+  readonly resolveCurrent: (input: {
     readonly claimedPurchaseValue: PurchaseValue;
     readonly counterpartyRef: PurchaseLimitCounterpartyRef;
     readonly expectedSourceRevisions: PurchaseLimitSourceRevisionVector;

@@ -2,11 +2,7 @@
 // @ontos-action-owner commerce.customer-context
 // @ontos-action-slug decide-purchase-approval-request
 import type { ActionHandlerContext } from '@app/core-runtime';
-import {
-  defineAction,
-  defineActionBusinessPermission,
-  defineTenantModuleEntrypoint,
-} from '@app/core-runtime';
+import { defineAction, defineActionBusinessPermission, defineTenantModuleEntrypoint } from '@app/core-runtime';
 import { Effect, Schema } from 'effect';
 import {
   DecidePurchaseApprovalRequestPayloadSchema,
@@ -20,6 +16,7 @@ import type {
 import type { PurchasingApprovalWorkflowService } from '../persistence/purchasing-approval-persistence.ts';
 import { purchasingApprovalWorkflowForScope } from '../persistence/purchasing-approval-persistence.ts';
 import {
+  recordPurchasingApprovalRequestResources,
   recordPurchasingApprovalResourceAccess,
   purchasingApprovalPermissionTarget,
   trustedPurchasingContext,
@@ -28,22 +25,23 @@ import { purchasingApprovalPolicy } from '../policies/purchasing-approval.policy
 import { createDecidePurchaseApprovalRequestCommerceCustomerContextApprovalDecisionRecordedV1OutboxMessage as createOutboxMessage } from './decide-purchase-approval-request-commerce-customer-context-approval-decision-recorded-v1.outbox-message.ts';
 
 const MODULE_KEY = 'commerce.customer-context' as const;
+const ApprovalDecisionOutcomeSchema = Schema.Literals(['DECISION_RECORDED', 'ALREADY_RECORDED']);
 const ApprovalDecisionRecordedEventSchema = Schema.Struct({
-  outcome: Schema.Literals(['DECISION_RECORDED', 'ALREADY_RECORDED']),
-  requestRef: Schema.String,
-  decisionRef: Schema.String,
+  completionRule: Schema.Literal('ONE_APPROVER'),
   decision: Schema.String,
+  decisionRef: Schema.String,
+  outcome: ApprovalDecisionOutcomeSchema,
+  requestRef: Schema.String,
   status: Schema.String,
-  completionRule: Schema.Literal('ONE_APPROVER'),
 });
-export const DecidePurchaseApprovalRequestAuditEvidenceSchema = Schema.Struct({
-  outcome: Schema.Literals(['DECISION_RECORDED', 'ALREADY_RECORDED']),
-  requestRef: Schema.String,
-  decisionRef: Schema.String,
-  decision: Schema.String,
-  reason: Schema.Union([Schema.String, Schema.Null]),
-  levelOrder: Schema.Finite,
+const DecidePurchaseApprovalRequestAuditEvidenceSchema = Schema.Struct({
   completionRule: Schema.Literal('ONE_APPROVER'),
+  decision: Schema.String,
+  decisionRef: Schema.String,
+  levelOrder: Schema.Finite,
+  outcome: ApprovalDecisionOutcomeSchema,
+  reason: Schema.Union([Schema.String, Schema.Null]),
+  requestRef: Schema.String,
 });
 type DomainEvents = Readonly<{
   'commerce.customer-context.approval-decision-recorded.v1': typeof ApprovalDecisionRecordedEventSchema;
@@ -52,92 +50,74 @@ interface DecidePurchaseApprovalRequestServices {
   readonly workflow: PurchasingApprovalWorkflowService;
 }
 
-const handleDecidePurchaseApprovalRequest = Effect.fn('DecidePurchaseApprovalRequestAction.handle')(
-  function* handle(
-    payload: DecidePurchaseApprovalRequestPayload,
-    context: ActionHandlerContext<DomainEvents, DecidePurchaseApprovalRequestServices>,
-  ) {
-    if (!trustedPurchasingContext(payload.counterpartyRef, payload.storefrontId, context.scope)) {
-      return yield* new DecidePurchaseApprovalRequestRejected({
-        code: 'PERMISSION_DENIED',
-        reason: 'Decision scope must match trusted Counterparty Storefront context',
-        retryable: false,
-      });
-    }
-    const { actor: _untrustedActor, ...command } = payload;
-    const workflow = context.services.workflow.forActionInvocation(context.actionInvocationId);
-    const result = yield* workflow.decide({
-      ...command,
-      actor: { principalId: context.scope.principalId, tenantId: context.scope.tenantId },
+const handleDecidePurchaseApprovalRequest = Effect.fn('DecidePurchaseApprovalRequestAction.handle')(function* handle(
+  payload: DecidePurchaseApprovalRequestPayload,
+  context: ActionHandlerContext<DomainEvents, DecidePurchaseApprovalRequestServices>,
+) {
+  if (!trustedPurchasingContext(payload.counterpartyRef, payload.storefrontId, context.scope)) {
+    return yield* new DecidePurchaseApprovalRequestRejected({
+      code: 'PERMISSION_DENIED',
+      reason: 'Decision scope must match trusted Counterparty Storefront context',
+      retryable: false,
     });
-    yield* Effect.all(
-      [
-        recordPurchasingApprovalResourceAccess(context, {
-          queryHash: `purchasing-approval-request:${result.request.requestRef.resourceId}:${payload.storefrontId}`,
-          resourceRef: result.request.requestRef,
-        }),
-        recordPurchasingApprovalResourceAccess(context, {
-          queryHash: `purchasing-approval-proposal:${result.request.proposal.proposalRevisionRef.resourceId}:${payload.storefrontId}`,
-          resourceRef: result.request.proposal.proposalRevisionRef,
-        }),
-        recordPurchasingApprovalResourceAccess(context, {
-          queryHash: `purchasing-approval-route:${result.request.route.routeRef.resourceId}:${payload.storefrontId}`,
-          resourceRef: result.request.route.routeRef,
-        }),
-        recordPurchasingApprovalResourceAccess(context, {
-          queryHash: `purchasing-approval-hierarchy:${result.request.route.hierarchyRef.resourceId}:${payload.storefrontId}`,
-          resourceRef: result.request.route.hierarchyRef,
-        }),
-        recordPurchasingApprovalResourceAccess(context, {
-          queryHash: `purchasing-approval-decision:${result.decision.decisionRef.resourceId}:${payload.storefrontId}`,
-          resourceRef: result.decision.decisionRef,
-        }),
-        recordPurchasingApprovalResourceAccess(context, {
-          queryHash: `purchasing-approval-profile:${result.request.proposal.identity.profileRef.resourceId}:${payload.storefrontId}`,
-          resourceRef: result.request.proposal.identity.profileRef,
-        }),
-        recordPurchasingApprovalResourceAccess(context, {
-          queryHash: `purchasing-approval-counterparty:${payload.counterpartyRef.resourceId}:${payload.storefrontId}`,
-          resourceRef: payload.counterpartyRef,
-        }),
-      ],
-      { concurrency: 1, discard: true },
-    );
-    yield* context.recordAuditEvidence({
+  }
+  const { actor: _untrustedActor, ...command } = payload;
+  const workflow = context.services.workflow.forActionInvocation(context.actionInvocationId);
+  const result = yield* workflow.decide({
+    ...command,
+    actor: { principalId: context.scope.principalId, tenantId: context.scope.tenantId },
+  });
+  yield* Effect.all(
+    [
+      recordPurchasingApprovalRequestResources(context, result.request, payload.storefrontId),
+      recordPurchasingApprovalResourceAccess(context, {
+        queryHash: `purchasing-approval-decision:${result.decision.decisionRef.resourceId}:${payload.storefrontId}`,
+        resourceRef: result.decision.decisionRef,
+      }),
+      recordPurchasingApprovalResourceAccess(context, {
+        queryHash: `purchasing-approval-profile:${result.request.proposal.identity.profileRef.resourceId}:${payload.storefrontId}`,
+        resourceRef: result.request.proposal.identity.profileRef,
+      }),
+      recordPurchasingApprovalResourceAccess(context, {
+        queryHash: `purchasing-approval-counterparty:${payload.counterpartyRef.resourceId}:${payload.storefrontId}`,
+        resourceRef: payload.counterpartyRef,
+      }),
+    ],
+    { concurrency: 1, discard: true },
+  );
+  const completionRule =
+    result.request.route.levels.find(({ order }) => order === result.decision.levelOrder)?.completionRule ??
+    'ONE_APPROVER';
+  yield* context.recordAuditEvidence({
+    completionRule,
+    decision: result.decision.kind,
+    decisionRef: result.decision.decisionRef.resourceId,
+    levelOrder: result.decision.levelOrder,
+    outcome: result.outcome,
+    reason: result.decision.reason,
+    requestRef: result.request.requestRef.resourceId,
+  });
+  if (result.outcome === 'DECISION_RECORDED') {
+    const payloadJson = {
+      completionRule,
+      decision: result.decision.kind,
+      decisionRef: result.decision.decisionRef.resourceId,
       outcome: result.outcome,
       requestRef: result.request.requestRef.resourceId,
-      decisionRef: result.decision.decisionRef.resourceId,
-      decision: result.decision.kind,
-      reason: result.decision.reason,
-      levelOrder: result.decision.levelOrder,
-      completionRule: result.request.route.levels.find(
-        ({ order }) => order === result.decision.levelOrder,
-      )!.completionRule,
+      status: result.request.status,
+    };
+    const event = yield* context.addDomainEvent({
+      eventType: 'commerce.customer-context.approval-decision-recorded.v1',
+      payloadJson,
+      producerModuleKey: MODULE_KEY,
+      subjectModuleKey: MODULE_KEY,
+      subjectResourceId: result.decision.decisionRef.resourceId,
+      subjectResourceType: result.decision.decisionRef.resourceType,
     });
-    if (result.outcome === 'DECISION_RECORDED') {
-      const payloadJson = {
-        outcome: result.outcome,
-        requestRef: result.request.requestRef.resourceId,
-        decisionRef: result.decision.decisionRef.resourceId,
-        decision: result.decision.kind,
-        status: result.request.status,
-        completionRule: result.request.route.levels.find(
-          ({ order }) => order === result.decision.levelOrder,
-        )!.completionRule,
-      };
-      const event = yield* context.addDomainEvent({
-        eventType: 'commerce.customer-context.approval-decision-recorded.v1',
-        payloadJson,
-        producerModuleKey: MODULE_KEY,
-        subjectModuleKey: MODULE_KEY,
-        subjectResourceId: result.decision.decisionRef.resourceId,
-        subjectResourceType: result.decision.decisionRef.resourceType,
-      });
-      yield* context.addOutboxMessage(event, createOutboxMessage({ data: payloadJson }));
-    }
-    return result satisfies DecidePurchaseApprovalRequestResult;
-  },
-);
+    yield* context.addOutboxMessage(event, createOutboxMessage({ data: payloadJson }));
+  }
+  return result satisfies DecidePurchaseApprovalRequestResult;
+});
 
 export const decidePurchaseApprovalRequestAction = defineAction(
   {
@@ -148,19 +128,17 @@ export const decidePurchaseApprovalRequestAction = defineAction(
     actionKey: 'commerce.customer-context.decide-purchase-approval-request',
     auditEvidenceSchema: DecidePurchaseApprovalRequestAuditEvidenceSchema,
     auditProfile: 'sensitive',
-    businessPermission: defineActionBusinessPermission(
-      (payload: DecidePurchaseApprovalRequestPayload, scope) =>
-        purchasingApprovalPermissionTarget({
-          permission: 'counterparty.approval.decide',
-          counterpartyRef: payload.counterpartyRef,
-          storefrontId: payload.storefrontId,
-          scope,
-        }),
+    businessPermission: defineActionBusinessPermission((payload: DecidePurchaseApprovalRequestPayload, scope) =>
+      purchasingApprovalPermissionTarget({
+        counterpartyRef: payload.counterpartyRef,
+        permission: 'counterparty.approval.decide',
+        scope,
+        storefrontId: payload.storefrontId,
+      }),
     ),
     domainErrorSchema: DecidePurchaseApprovalRequestRejected,
     domainEvents: {
-      'commerce.customer-context.approval-decision-recorded.v1':
-        ApprovalDecisionRecordedEventSchema,
+      'commerce.customer-context.approval-decision-recorded.v1': ApprovalDecisionRecordedEventSchema,
     },
     entrypoint: defineTenantModuleEntrypoint({
       access: 'write',
@@ -179,15 +157,8 @@ export const decidePurchaseApprovalRequestAction = defineAction(
   },
   handleDecidePurchaseApprovalRequest,
   (transaction, scope) =>
-    purchasingApprovalWorkflowForScope(transaction, scope).pipe(
-      Effect.map((workflow) => ({ workflow })),
-    ),
+    purchasingApprovalWorkflowForScope(transaction, scope).pipe(Effect.map((workflow) => ({ workflow }))),
 );
 
 // <generated-outbox-message-exports>
-export { createDecidePurchaseApprovalRequestCommerceCustomerContextApprovalDecisionRecordedV1OutboxMessage } from './decide-purchase-approval-request-commerce-customer-context-approval-decision-recorded-v1.outbox-message.ts';
-export { DecidePurchaseApprovalRequestCommerceCustomerContextApprovalDecisionRecordedV1OutboxPayloadSchema } from './decide-purchase-approval-request-commerce-customer-context-approval-decision-recorded-v1.outbox-message.ts';
-export { DecidePurchaseApprovalRequestCommerceCustomerContextApprovalDecisionRecordedV1OutboxProducerModuleKey } from './decide-purchase-approval-request-commerce-customer-context-approval-decision-recorded-v1.outbox-message.ts';
-export { DecidePurchaseApprovalRequestCommerceCustomerContextApprovalDecisionRecordedV1OutboxTopic } from './decide-purchase-approval-request-commerce-customer-context-approval-decision-recorded-v1.outbox-message.ts';
-export type { DecidePurchaseApprovalRequestCommerceCustomerContextApprovalDecisionRecordedV1OutboxPayload } from './decide-purchase-approval-request-commerce-customer-context-approval-decision-recorded-v1.outbox-message.ts';
 // </generated-outbox-message-exports>

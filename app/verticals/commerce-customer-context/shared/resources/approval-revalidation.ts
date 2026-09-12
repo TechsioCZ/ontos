@@ -4,8 +4,14 @@
 import type { OntosResourceType } from '@app/core-runtime';
 import { Schema } from 'effect';
 
-const ResourceIdSchema = Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(300));
-const TenantIdSchema = Schema.String.check(Schema.isUUID());
+const ResourceIdSchema = Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(300)).pipe(
+  Schema.brand('ResourceId'),
+  Schema.decodeTo(Schema.String),
+);
+const TenantIdSchema = Schema.String.check(Schema.isUUID()).pipe(
+  Schema.brand('TenantId'),
+  Schema.decodeTo(Schema.String),
+);
 
 export const ApprovalRevalidationRefSchema = Schema.Struct({
   moduleId: Schema.Literal('commerce.customer-context'),

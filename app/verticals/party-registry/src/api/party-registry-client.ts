@@ -5,6 +5,26 @@ import type { HttpClientError, Schema } from '@modern-js/bff-effect/effect-clien
 import { partyRegistryOperationContexts } from '../../shared/api.ts';
 import type { PartyRegistryReadiness } from '../../shared/api.ts';
 
+import { executeAresLookup } from './ares-lookup-client.ts';
+import { loadCounterpartiesClient } from './counterparties-search-client.ts';
+import { executeCounterpartyRead } from './counterparty-read-client.ts';
+import { executeCounterpartyRoleHistory } from './counterparty-role-history-client.ts';
+import { executeDuplicateCandidateDetail } from './duplicate-candidate-detail-client.ts';
+import { executeGuestPartyResolution } from './guest-party-resolution-client.ts';
+import { loadPartiesClient } from './parties-search-client.ts';
+import { executePartyContactPointDetail } from './party-contact-point-detail-client.ts';
+import { executePartyContactPoints } from './party-contact-points-client.ts';
+import { executePartyCorrection } from './party-correction-client.ts';
+import { executePartyDetail } from './party-detail-client.ts';
+import { executePartyMatch } from './party-match-client.ts';
+import { executePartyMatchDecision } from './party-match-decision-client.ts';
+import { executePartyMergeReadiness } from './party-merge-readiness-client.ts';
+import { executePartyOfficialIdentifierDetail } from './party-official-identifier-detail-client.ts';
+import { executePartyOfficialIdentifierHistory } from './party-official-identifier-history-client.ts';
+import { createPartyRegistryHttpClient } from './party-registry-http-client.ts';
+import type { PartyRegistryHttpClientOptions } from './party-registry-http-client.ts';
+import { executePartyRelationshipDetail } from './party-relationship-detail-client.ts';
+
 // Public response and problem schemas travel with the generated client aggregate. Consumers must
 // use this published client subpath; the owner API barrel remains private to the deployment.
 export {
@@ -32,31 +52,12 @@ export {
 } from '../../shared/api.ts';
 export type { PartyDetailResponse } from '../../shared/api.ts';
 
-import { executeAresLookup } from './ares-lookup-client.ts';
-import { loadCounterpartiesClient } from './counterparties-search-client.ts';
-import { executeCounterpartyRead } from './counterparty-read-client.ts';
-import { executeCounterpartyRoleHistory } from './counterparty-role-history-client.ts';
-import { executeDuplicateCandidateDetail } from './duplicate-candidate-detail-client.ts';
-import { executeGuestPartyResolution } from './guest-party-resolution-client.ts';
-import { loadPartiesClient } from './parties-search-client.ts';
-import { executePartyContactPointDetail } from './party-contact-point-detail-client.ts';
-import { executePartyContactPoints } from './party-contact-points-client.ts';
-import { executePartyCorrection } from './party-correction-client.ts';
-import { executePartyDetail } from './party-detail-client.ts';
-import { executePartyMatch } from './party-match-client.ts';
-import { executePartyMatchDecision } from './party-match-decision-client.ts';
-import { executePartyMergeReadiness } from './party-merge-readiness-client.ts';
-import { executePartyOfficialIdentifierDetail } from './party-official-identifier-detail-client.ts';
-import { executePartyOfficialIdentifierHistory } from './party-official-identifier-history-client.ts';
-import { createPartyRegistryHttpClient } from './party-registry-http-client.ts';
-import type { PartyRegistryHttpClientOptions } from './party-registry-http-client.ts';
-import { executePartyRelationshipDetail } from './party-relationship-detail-client.ts';
-
 export * from './ares-lookup-client.ts';
 export * from './counterparties-search-client.ts';
 export * from './counterparty-read-client.ts';
 export * from './counterparty-role-history-client.ts';
 export * from './duplicate-candidate-detail-client.ts';
+export * from './engagement-profile-client.ts';
 export * from './guest-party-resolution-client.ts';
 export * from './organization-engagement-profile-client.ts';
 export * from './person-engagement-profile-client.ts';

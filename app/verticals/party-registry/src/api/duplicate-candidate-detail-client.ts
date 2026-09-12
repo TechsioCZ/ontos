@@ -22,7 +22,7 @@ type DuplicateCandidateDetailOperationInvocation = readonly [
 ];
 
 const duplicateCandidateDetailClient = (
-  credential: Redacted.Redacted<string>,
+  credential: Redacted.Redacted,
   requestCorrelation: string,
   options: DuplicateCandidateDetailClientOptions,
 ) =>

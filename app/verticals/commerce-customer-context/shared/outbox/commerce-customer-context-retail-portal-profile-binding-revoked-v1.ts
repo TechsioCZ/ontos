@@ -20,6 +20,5 @@ export const OutboxPayloadSchema = Schema.Struct({
 });
 export type OutboxPayload = Schema.Schema.Type<typeof OutboxPayloadSchema>;
 
-export const outboxTopic =
-  'commerce.customer-context.retail-portal-profile-binding-revoked.v1' as const;
+export const outboxTopic = 'commerce.customer-context.retail-portal-profile-binding-revoked.v1' as const;
 export const outboxProducerModuleKey = 'commerce.customer-context' as const;

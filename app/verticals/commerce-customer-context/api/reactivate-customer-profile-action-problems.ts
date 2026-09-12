@@ -3,7 +3,7 @@
 // @ontos-action-http-slug reactivate-customer-profile
 // oxlint-disable sonarjs/function-name -- Effect Match.tags requires owner-declared tag keys; remove-when: sonarjs accepts discriminant-map properties.
 import type { ActionCoreError } from '@app/core-runtime';
-import { Effect, HttpApiMiddleware } from '@modern-js/plugin-bff/effect-edge';
+import { Effect, HttpApiMiddleware } from '@modern-js/bff-effect/effect-edge';
 import { Match, Schema } from 'effect';
 import {
   ReactivateCustomerProfileActionAlreadyCommittedProblemSchema,
@@ -21,142 +21,65 @@ import {
 } from '../shared/apis/reactivate-customer-profile-action.ts';
 import type { ReactivateCustomerProfileActionProblem } from '../shared/apis/reactivate-customer-profile-action.ts';
 import { reactivateCustomerProfileAction } from '../src/actions/reactivate-customer-profile.action.ts';
+/* oxlint-disable anti-slop-effect/no-service-constructor-imports -- These pure helpers construct problem values rather than Effect services. */
+import {
+  actionProblemStatus as problemStatus,
+  makeAuthenticationProblem,
+  makeConflictProblem,
+  makeForbiddenProblem,
+  makeIneligibleProblem,
+  makeInternalProblem,
+  makeInvalidProblem,
+  makeNotFoundProblem,
+  makePreconditionProblem,
+  makeUnavailableProblem,
+} from './action-problem-support.ts';
+/* oxlint-enable anti-slop-effect/no-service-constructor-imports */
+import { profileLifecycleActionRejectedProblemByCode } from './profile-lifecycle-action-problem-identity.ts';
+import type { ProfileLifecycleDomainProblemIdentity } from './profile-lifecycle-action-problem-identity.ts';
 
 type DomainError = typeof reactivateCustomerProfileAction.descriptor.domainErrorSchema.Type;
 type ProblemOf<Tag extends ReactivateCustomerProfileActionProblem['_tag']> = Extract<
   ReactivateCustomerProfileActionProblem,
   { readonly _tag: Tag }
 >;
-type DomainProblemIdentity =
-  | {
-      readonly code:
-        | 'CURRENT_STATE_CONFLICT'
-        | 'INVALID_LIFECYCLE_TRANSITION'
-        | 'PROFILE_RECONCILIATION_REQUIRED'
-        | 'REACTIVATION_RECONFIRMATION_REQUIRED';
-      readonly kind: 'conflict';
-    }
-  | { readonly code: 'PROFILE_NOT_FOUND'; readonly kind: 'notFound' }
-  | {
-      readonly code: 'OUTCOME_INDETERMINATE' | 'PERSISTENCE_UNAVAILABLE';
-      readonly kind: 'unavailable';
-    };
-
-const problemStatus = {
-  authentication: 401,
-  conflict: 409,
-  forbidden: 403,
-  ineligible: 422,
-  internal: 500,
-  invalid: 400,
-  notFound: 404,
-  precondition: 428,
-  rateLimited: 429,
-  timeout: 504,
-  unavailable: 503,
-} as const;
-
-const profileLifecycleActionRejectedProblemByCode = {
-  CURRENT_STATE_CONFLICT: { code: 'CURRENT_STATE_CONFLICT', kind: 'conflict' },
-  INVALID_LIFECYCLE_TRANSITION: { code: 'INVALID_LIFECYCLE_TRANSITION', kind: 'conflict' },
-  OUTCOME_INDETERMINATE: { code: 'OUTCOME_INDETERMINATE', kind: 'unavailable' },
-  PERSISTENCE_UNAVAILABLE: { code: 'PERSISTENCE_UNAVAILABLE', kind: 'unavailable' },
-  PROFILE_NOT_FOUND: { code: 'PROFILE_NOT_FOUND', kind: 'notFound' },
-  PROFILE_RECONCILIATION_REQUIRED: { code: 'PROFILE_RECONCILIATION_REQUIRED', kind: 'conflict' },
-  REACTIVATION_RECONFIRMATION_REQUIRED: {
-    code: 'REACTIVATION_RECONFIRMATION_REQUIRED',
-    kind: 'conflict',
-  },
-} as const satisfies Record<
-  Extract<DomainError, { readonly _tag: 'ProfileLifecycleActionRejected' }>['code'],
-  DomainProblemIdentity
->;
-
 export const reactivateCustomerProfileActionProblem = {
-  authentication: (): ProblemOf<'ReactivateCustomerProfileActionAuthenticationProblem'> =>
-    ReactivateCustomerProfileActionAuthenticationProblemSchema.make({
-      detail: 'A valid audience-scoped Bearer assertion is required.',
-      status: problemStatus.authentication,
-      title: 'Authentication required',
-      type: 'https://ontos.dev/problems/operation-authentication-required',
-    }),
-  conflict: (
-    code: ProblemOf<'ReactivateCustomerProfileActionConflictProblem'>['code'],
-  ): ProblemOf<'ReactivateCustomerProfileActionConflictProblem'> =>
-    ReactivateCustomerProfileActionConflictProblemSchema.make({
-      code,
-      detail: 'The Action conflicts with current state.',
-      status: problemStatus.conflict,
-      title: 'Action conflict',
-      type: 'https://ontos.dev/problems/action-conflict',
-    }),
-  forbidden: (
-    code: ProblemOf<'ReactivateCustomerProfileActionForbiddenProblem'>['code'],
-  ): ProblemOf<'ReactivateCustomerProfileActionForbiddenProblem'> =>
-    ReactivateCustomerProfileActionForbiddenProblemSchema.make({
-      code,
-      detail: 'The principal is not permitted to perform this Action.',
-      status: problemStatus.forbidden,
-      title: 'Action forbidden',
-      type: 'https://ontos.dev/problems/action-forbidden',
-    }),
-  ineligible: (
-    code: ProblemOf<'ReactivateCustomerProfileActionIneligibleProblem'>['code'],
-  ): ProblemOf<'ReactivateCustomerProfileActionIneligibleProblem'> =>
-    ReactivateCustomerProfileActionIneligibleProblemSchema.make({
-      code,
-      detail: 'The request is not eligible for this Action.',
-      status: problemStatus.ineligible,
-      title: 'Action ineligible',
-      type: 'https://ontos.dev/problems/action-ineligible',
-    }),
-  internal: (): ProblemOf<'ReactivateCustomerProfileActionInternalProblem'> =>
-    ReactivateCustomerProfileActionInternalProblemSchema.make({
-      detail: 'The Action could not be completed.',
-      status: problemStatus.internal,
-      title: 'Action failed',
-      type: 'https://ontos.dev/problems/action-failed',
-    }),
-  invalid: (): ProblemOf<'ReactivateCustomerProfileActionInvalidProblem'> =>
-    ReactivateCustomerProfileActionInvalidProblemSchema.make({
-      detail: 'The reactivate-customer-profile Action request is invalid.',
-      status: problemStatus.invalid,
-      title: 'Invalid Action request',
-      type: 'https://ontos.dev/problems/action-invalid',
-    }),
-  notFound: (
-    code: ProblemOf<'ReactivateCustomerProfileActionNotFoundProblem'>['code'],
-  ): ProblemOf<'ReactivateCustomerProfileActionNotFoundProblem'> =>
-    ReactivateCustomerProfileActionNotFoundProblemSchema.make({
-      code,
-      detail: 'The requested resource was not found.',
-      status: problemStatus.notFound,
-      title: 'Resource not found',
-      type: 'https://ontos.dev/problems/action-resource-not-found',
-    }),
-  precondition: (): ProblemOf<'ReactivateCustomerProfileActionPreconditionProblem'> =>
-    ReactivateCustomerProfileActionPreconditionProblemSchema.make({
-      detail: 'An Idempotency-Key header is required.',
-      status: problemStatus.precondition,
-      title: 'Idempotency key required',
-      type: 'https://ontos.dev/problems/idempotency-key-required',
-    }),
-  unavailable: (
-    code: ProblemOf<'ReactivateCustomerProfileActionUnavailableProblem'>['code'],
-  ): ProblemOf<'ReactivateCustomerProfileActionUnavailableProblem'> =>
-    ReactivateCustomerProfileActionUnavailableProblemSchema.make({
-      code,
-      detail: 'The Action capability is temporarily unavailable.',
-      retryable: true,
-      status: problemStatus.unavailable,
-      title: 'Action unavailable',
-      type: 'https://ontos.dev/problems/action-unavailable',
-    }),
+  authentication: makeAuthenticationProblem<ProblemOf<'ReactivateCustomerProfileActionAuthenticationProblem'>>(
+    (input) => ReactivateCustomerProfileActionAuthenticationProblemSchema.make(input),
+  ),
+  conflict: makeConflictProblem<
+    ProblemOf<'ReactivateCustomerProfileActionConflictProblem'>['code'],
+    ProblemOf<'ReactivateCustomerProfileActionConflictProblem'>
+  >((input) => ReactivateCustomerProfileActionConflictProblemSchema.make(input)),
+  forbidden: makeForbiddenProblem<
+    ProblemOf<'ReactivateCustomerProfileActionForbiddenProblem'>['code'],
+    ProblemOf<'ReactivateCustomerProfileActionForbiddenProblem'>
+  >((input) => ReactivateCustomerProfileActionForbiddenProblemSchema.make(input)),
+  ineligible: makeIneligibleProblem<
+    ProblemOf<'ReactivateCustomerProfileActionIneligibleProblem'>['code'],
+    ProblemOf<'ReactivateCustomerProfileActionIneligibleProblem'>
+  >((input) => ReactivateCustomerProfileActionIneligibleProblemSchema.make(input)),
+  internal: makeInternalProblem<ProblemOf<'ReactivateCustomerProfileActionInternalProblem'>>((input) =>
+    ReactivateCustomerProfileActionInternalProblemSchema.make(input),
+  ),
+  invalid: makeInvalidProblem<ProblemOf<'ReactivateCustomerProfileActionInvalidProblem'>>(
+    (input) => ReactivateCustomerProfileActionInvalidProblemSchema.make(input),
+    'reactivate-customer-profile',
+  ),
+  notFound: makeNotFoundProblem<
+    ProblemOf<'ReactivateCustomerProfileActionNotFoundProblem'>['code'],
+    ProblemOf<'ReactivateCustomerProfileActionNotFoundProblem'>
+  >((input) => ReactivateCustomerProfileActionNotFoundProblemSchema.make(input)),
+  precondition: makePreconditionProblem<ProblemOf<'ReactivateCustomerProfileActionPreconditionProblem'>>((input) =>
+    ReactivateCustomerProfileActionPreconditionProblemSchema.make(input),
+  ),
+  unavailable: makeUnavailableProblem<
+    ProblemOf<'ReactivateCustomerProfileActionUnavailableProblem'>['code'],
+    ProblemOf<'ReactivateCustomerProfileActionUnavailableProblem'>
+  >((input) => ReactivateCustomerProfileActionUnavailableProblemSchema.make(input)),
 } as const;
 
-const mapDomainIdentity = (
-  identity: DomainProblemIdentity,
-): ReactivateCustomerProfileActionProblem =>
+const mapDomainIdentity = (identity: ProfileLifecycleDomainProblemIdentity): ReactivateCustomerProfileActionProblem =>
   Match.value(identity).pipe(
     Match.when({ kind: 'conflict' as const }, (matched) =>
       reactivateCustomerProfileActionProblem.conflict(matched.code),
@@ -206,38 +129,24 @@ const mapCoreProblem = (error: ActionCoreError): ReactivateCustomerProfileAction
         }),
       ActionHandlerExecutionError: reactivateCustomerProfileActionProblem.internal,
       ActionIdempotencyKeyRequired: reactivateCustomerProfileActionProblem.precondition,
-      ActionInvocationNotFound: (failure) =>
-        reactivateCustomerProfileActionProblem.notFound(failure.code),
-      ActionInvocationPersistenceError: (failure) =>
-        reactivateCustomerProfileActionProblem.unavailable(failure.code),
-      ActionInvocationStateError: (failure) =>
-        reactivateCustomerProfileActionProblem.conflict(failure.code),
+      ActionInvocationNotFound: (failure) => reactivateCustomerProfileActionProblem.notFound(failure.code),
+      ActionInvocationPersistenceError: (failure) => reactivateCustomerProfileActionProblem.unavailable(failure.code),
+      ActionInvocationStateError: (failure) => reactivateCustomerProfileActionProblem.conflict(failure.code),
       ActionPayloadValidationError: reactivateCustomerProfileActionProblem.invalid,
-      ActionPermissionCheckError: (failure) =>
-        reactivateCustomerProfileActionProblem.unavailable(failure.code),
-      ActionPermissionDenied: (failure) =>
-        reactivateCustomerProfileActionProblem.forbidden(failure.code),
-      ActionPolicyDenied: (failure) =>
-        reactivateCustomerProfileActionProblem.ineligible(failure.code),
-      ActionPolicyEvaluationError: (failure) =>
-        reactivateCustomerProfileActionProblem.unavailable(failure.code),
-      ActionRequestHashConflict: (failure) =>
-        reactivateCustomerProfileActionProblem.conflict(failure.code),
+      ActionPermissionCheckError: (failure) => reactivateCustomerProfileActionProblem.unavailable(failure.code),
+      ActionPermissionDenied: (failure) => reactivateCustomerProfileActionProblem.forbidden(failure.code),
+      ActionPolicyDenied: (failure) => reactivateCustomerProfileActionProblem.ineligible(failure.code),
+      ActionPolicyEvaluationError: (failure) => reactivateCustomerProfileActionProblem.unavailable(failure.code),
+      ActionRequestHashConflict: (failure) => reactivateCustomerProfileActionProblem.conflict(failure.code),
       ActionResultValidationError: reactivateCustomerProfileActionProblem.internal,
-      ActionTransactionError: (failure) =>
-        reactivateCustomerProfileActionProblem.unavailable(failure.code),
+      ActionTransactionError: (failure) => reactivateCustomerProfileActionProblem.unavailable(failure.code),
       ActionTrustedContextValidationError: reactivateCustomerProfileActionProblem.authentication,
-      ModuleStateCheckUnavailableError: (failure) =>
-        reactivateCustomerProfileActionProblem.unavailable(failure.code),
-      ModuleStateDeniedError: (failure) =>
-        reactivateCustomerProfileActionProblem.forbidden(failure.code),
+      ModuleStateCheckUnavailableError: (failure) => reactivateCustomerProfileActionProblem.unavailable(failure.code),
+      ModuleStateDeniedError: (failure) => reactivateCustomerProfileActionProblem.forbidden(failure.code),
       OperationAuthenticationRequired: reactivateCustomerProfileActionProblem.authentication,
-      OperationContextDenied: (failure) =>
-        reactivateCustomerProfileActionProblem.forbidden(failure.code),
-      OperationContextInvalid: (failure) =>
-        reactivateCustomerProfileActionProblem.forbidden(failure.code),
-      OperationContextUnavailable: (failure) =>
-        reactivateCustomerProfileActionProblem.unavailable(failure.code),
+      OperationContextDenied: (failure) => reactivateCustomerProfileActionProblem.forbidden(failure.code),
+      OperationContextInvalid: (failure) => reactivateCustomerProfileActionProblem.forbidden(failure.code),
+      OperationContextUnavailable: (failure) => reactivateCustomerProfileActionProblem.unavailable(failure.code),
     }),
     Match.exhaustive,
   );
@@ -245,11 +154,9 @@ const mapCoreProblem = (error: ActionCoreError): ReactivateCustomerProfileAction
 const isDomainError = Schema.is(reactivateCustomerProfileAction.descriptor.domainErrorSchema);
 export const mapReactivateCustomerProfileActionProblem = (
   error: ActionCoreError | DomainError,
-): ReactivateCustomerProfileActionProblem =>
-  isDomainError(error) ? mapDomainProblem(error) : mapCoreProblem(error);
+): ReactivateCustomerProfileActionProblem => (isDomainError(error) ? mapDomainProblem(error) : mapCoreProblem(error));
 
-export const reactivateCustomerProfileActionSchemaErrorLive =
-  HttpApiMiddleware.layerSchemaErrorTransform(
-    ReactivateCustomerProfileActionSchemaErrorMiddleware,
-    () => Effect.fail(reactivateCustomerProfileActionProblem.invalid()),
-  );
+export const reactivateCustomerProfileActionSchemaErrorLive = HttpApiMiddleware.layerSchemaErrorTransform(
+  ReactivateCustomerProfileActionSchemaErrorMiddleware,
+  () => Effect.fail(reactivateCustomerProfileActionProblem.invalid()),
+);

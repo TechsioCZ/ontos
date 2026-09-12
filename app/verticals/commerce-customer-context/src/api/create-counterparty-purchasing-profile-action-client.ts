@@ -69,11 +69,6 @@ export const executeCreateCounterpartyPurchasingProfile = (
 ) =>
   operationGateway.invoke(
     (credential) =>
-      executeCreateCounterpartyPurchasingProfileWithAuthorization(
-        payload,
-        credential,
-        requestCorrelation,
-        options,
-      ),
+      executeCreateCounterpartyPurchasingProfileWithAuthorization(payload, credential, requestCorrelation, options),
     options.gateway,
   );

@@ -29,8 +29,7 @@ export const customerPaymentTermEntitlementResourceDescriptor = {
     searchable: false,
     timelineVisible: true,
   },
-  description:
-    'Auditable, effective-dated entitlement of one customer profile to one Payment Term.',
+  description: 'Auditable, effective-dated entitlement of one customer profile to one Payment Term.',
   key: 'commerce.customer-context.customer-payment-term-entitlement',
   label: 'Customer Payment Term Entitlement',
   owningModuleId: 'commerce.customer-context',

@@ -3,7 +3,7 @@
 // @ontos-action-http-slug add-saved-address
 // oxlint-disable sonarjs/function-name -- Effect Match.tags requires owner-declared tag keys; remove-when: sonarjs accepts discriminant-map properties.
 import type { ActionCoreError } from '@app/core-runtime';
-import { Effect, HttpApiMiddleware } from '@modern-js/plugin-bff/effect-edge';
+import { Effect, HttpApiMiddleware } from '@modern-js/bff-effect/effect-edge';
 import { Match, Schema } from 'effect';
 import {
   AddSavedAddressActionAlreadyCommittedProblemSchema,
@@ -127,8 +127,7 @@ export const addSavedAddressActionProblem = {
 const mapDomainProblem = (error: DomainError): AddSavedAddressActionProblem =>
   Match.value(error).pipe(
     Match.tags({
-      AddressBookUnavailable: () =>
-        addSavedAddressActionProblem.unavailable('address_book_unavailable'),
+      AddressBookUnavailable: () => addSavedAddressActionProblem.unavailable('address_book_unavailable'),
       SavedAddressConflict: () => addSavedAddressActionProblem.conflict('saved_address_conflict'),
       SavedAddressInvalid: () => addSavedAddressActionProblem.ineligible('saved_address_invalid'),
       SavedAddressNotFound: () => addSavedAddressActionProblem.notFound('saved_address_not_found'),
@@ -168,36 +167,29 @@ const mapCoreProblem = (error: ActionCoreError): AddSavedAddressActionProblem =>
       ActionHandlerExecutionError: addSavedAddressActionProblem.internal,
       ActionIdempotencyKeyRequired: addSavedAddressActionProblem.precondition,
       ActionInvocationNotFound: (failure) => addSavedAddressActionProblem.notFound(failure.code),
-      ActionInvocationPersistenceError: (failure) =>
-        addSavedAddressActionProblem.unavailable(failure.code),
+      ActionInvocationPersistenceError: (failure) => addSavedAddressActionProblem.unavailable(failure.code),
       ActionInvocationStateError: (failure) => addSavedAddressActionProblem.conflict(failure.code),
       ActionPayloadValidationError: addSavedAddressActionProblem.invalid,
-      ActionPermissionCheckError: (failure) =>
-        addSavedAddressActionProblem.unavailable(failure.code),
+      ActionPermissionCheckError: (failure) => addSavedAddressActionProblem.unavailable(failure.code),
       ActionPermissionDenied: (failure) => addSavedAddressActionProblem.forbidden(failure.code),
       ActionPolicyDenied: (failure) => addSavedAddressActionProblem.ineligible(failure.code),
-      ActionPolicyEvaluationError: (failure) =>
-        addSavedAddressActionProblem.unavailable(failure.code),
+      ActionPolicyEvaluationError: (failure) => addSavedAddressActionProblem.unavailable(failure.code),
       ActionRequestHashConflict: (failure) => addSavedAddressActionProblem.conflict(failure.code),
       ActionResultValidationError: addSavedAddressActionProblem.internal,
       ActionTransactionError: (failure) => addSavedAddressActionProblem.unavailable(failure.code),
       ActionTrustedContextValidationError: addSavedAddressActionProblem.authentication,
-      ModuleStateCheckUnavailableError: (failure) =>
-        addSavedAddressActionProblem.unavailable(failure.code),
+      ModuleStateCheckUnavailableError: (failure) => addSavedAddressActionProblem.unavailable(failure.code),
       ModuleStateDeniedError: (failure) => addSavedAddressActionProblem.forbidden(failure.code),
       OperationAuthenticationRequired: addSavedAddressActionProblem.authentication,
       OperationContextDenied: (failure) => addSavedAddressActionProblem.forbidden(failure.code),
       OperationContextInvalid: (failure) => addSavedAddressActionProblem.forbidden(failure.code),
-      OperationContextUnavailable: (failure) =>
-        addSavedAddressActionProblem.unavailable(failure.code),
+      OperationContextUnavailable: (failure) => addSavedAddressActionProblem.unavailable(failure.code),
     }),
     Match.exhaustive,
   );
 
 const isDomainError = Schema.is(addSavedAddressAction.descriptor.domainErrorSchema);
-export const mapAddSavedAddressActionProblem = (
-  error: ActionCoreError | DomainError,
-): AddSavedAddressActionProblem =>
+export const mapAddSavedAddressActionProblem = (error: ActionCoreError | DomainError): AddSavedAddressActionProblem =>
   isDomainError(error) ? mapDomainProblem(error) : mapCoreProblem(error);
 
 export const addSavedAddressActionSchemaErrorLive = HttpApiMiddleware.layerSchemaErrorTransform(

@@ -2,14 +2,8 @@
 // @ontos-action-owner commerce.customer-context
 // @ontos-action-slug revalidate-purchase-approval
 import type { ActionHandlerContext } from '@app/core-runtime';
-import {
-  ContextAccess,
-  defineAction,
-  defineActionBusinessPermission,
-  defineTenantModuleEntrypoint,
-  OperationContextUnavailable,
-} from '@app/core-runtime';
-import { Effect, Schema } from 'effect';
+import { defineAction, defineActionBusinessPermission, defineTenantModuleEntrypoint } from '@app/core-runtime';
+import { DateTime, Effect, Schema } from 'effect';
 import {
   RevalidatePurchaseApprovalPayloadSchema,
   RevalidatePurchaseApprovalRejected,
@@ -20,12 +14,10 @@ import type {
   RevalidatePurchaseApprovalResult,
 } from '../../shared/actions/revalidate-purchase-approval.ts';
 import type { PurchasingApprovalWorkflowService } from '../persistence/purchasing-approval-persistence.ts';
-import { purchasingApprovalWorkflowForScope } from '../persistence/purchasing-approval-persistence.ts';
-import { PurchaseApprovalCurrentnessFactory } from '../../shared/domain/purchase-approval-currentness-port.ts';
-import { PurchaseLimitEvaluationCurrentnessPort } from '../../shared/domain/purchase-limit-evaluation-currentness-port.ts';
-import { PurchaseLimitEvaluationSourceFactory } from '../../shared/domain/purchase-limit-evaluation.ts';
 import type { PurchaseApprovalCurrentnessService } from '../../shared/domain/purchase-approval-currentness-port.ts';
 import {
+  purchasingApprovalAuditInstantSchema,
+  purchasingApprovalCurrentnessServicesForScope,
   recordPurchasingApprovalResourceAccess,
   purchasingApprovalPermissionTarget,
   trustedPurchasingContext,
@@ -34,121 +26,120 @@ import { purchasingApprovalPolicy } from '../policies/purchasing-approval.policy
 import { createRevalidatePurchaseApprovalCommerceCustomerContextApprovalRevalidatedV1OutboxMessage as createOutboxMessage } from './revalidate-purchase-approval-commerce-customer-context-approval-revalidated-v1.outbox-message.ts';
 
 const MODULE_KEY = 'commerce.customer-context' as const;
+const ApprovalRevalidatedOutcomeSchema = Schema.Literals(['APPROVAL_VALID', 'ALREADY_CONSUMED']);
 const ApprovalRevalidatedEventSchema = Schema.Struct({
-  outcome: Schema.Literals(['APPROVAL_VALID', 'ALREADY_CONSUMED']),
+  completionRule: Schema.Literal('ONE_APPROVER'),
+  outcome: ApprovalRevalidatedOutcomeSchema,
   requestRef: Schema.String,
   revalidationRef: Schema.String,
   status: Schema.String,
-  validUntil: Schema.String,
-  completionRule: Schema.Literal('ONE_APPROVER'),
+  validUntil: purchasingApprovalAuditInstantSchema,
 });
-export const RevalidatePurchaseApprovalAuditEvidenceSchema = Schema.Struct({
-  outcome: Schema.Literals(['APPROVAL_VALID', 'ALREADY_CONSUMED']),
+const RevalidatePurchaseApprovalAuditEvidenceSchema = Schema.Struct({
+  completionRule: Schema.Literal('ONE_APPROVER'),
+  outcome: ApprovalRevalidatedOutcomeSchema,
   requestRef: Schema.String,
   revalidationRef: Schema.String,
-  validUntil: Schema.String,
-  completionRule: Schema.Literal('ONE_APPROVER'),
+  validUntil: purchasingApprovalAuditInstantSchema,
 });
 type DomainEvents = Readonly<{
   'commerce.customer-context.approval-revalidated.v1': typeof ApprovalRevalidatedEventSchema;
 }>;
 interface RevalidatePurchaseApprovalServices {
-  readonly workflow: PurchasingApprovalWorkflowService;
   readonly currentness: PurchaseApprovalCurrentnessService;
+  readonly workflow: PurchasingApprovalWorkflowService;
 }
 
-const handleRevalidatePurchaseApproval = Effect.fn('RevalidatePurchaseApprovalAction.handle')(
-  function* handle(
-    payload: RevalidatePurchaseApprovalPayload,
-    context: ActionHandlerContext<DomainEvents, RevalidatePurchaseApprovalServices>,
-  ) {
-    if (!trustedPurchasingContext(payload.counterpartyRef, payload.storefrontId, context.scope)) {
-      return yield* new RevalidatePurchaseApprovalRejected({
-        code: 'PERMISSION_DENIED',
-        reason: 'Revalidation scope must match trusted Counterparty Storefront context',
-        retryable: false,
-      });
-    }
-    const trustedStorefrontId = context.scope.trustedStorefrontId;
-    const legalEntityId = context.scope.legalEntityId;
-    if (trustedStorefrontId === undefined || legalEntityId === undefined) {
-      return yield* new RevalidatePurchaseApprovalRejected({
-        code: 'PERMISSION_DENIED',
-        reason: 'Revalidation requires trusted Legal Entity and Storefront scope',
-        retryable: false,
-      });
-    }
-    const trustedPayload = yield* context.services.currentness.resolveRevalidation({
-      claimed: payload,
-      scope: {
-        legalEntityId,
-        principalId: context.scope.principalId,
-        storefrontId: trustedStorefrontId,
-        tenantId: context.scope.tenantId,
-      },
+const handleRevalidatePurchaseApproval = Effect.fn('RevalidatePurchaseApprovalAction.handle')(function* handle(
+  payload: RevalidatePurchaseApprovalPayload,
+  context: ActionHandlerContext<DomainEvents, RevalidatePurchaseApprovalServices>,
+) {
+  if (!trustedPurchasingContext(payload.counterpartyRef, payload.storefrontId, context.scope)) {
+    return yield* new RevalidatePurchaseApprovalRejected({
+      code: 'PERMISSION_DENIED',
+      reason: 'Revalidation scope must match trusted Counterparty Storefront context',
+      retryable: false,
     });
-    const workflow = context.services.workflow.forActionInvocation(context.actionInvocationId);
-    const result = yield* workflow.revalidate(trustedPayload);
-    yield* Effect.all(
-      [
-        recordPurchasingApprovalResourceAccess(context, {
-          queryHash: `purchasing-approval-request:${result.revalidation.requestRef.resourceId}:${payload.storefrontId}`,
-          resourceRef: result.revalidation.requestRef,
-        }),
-        recordPurchasingApprovalResourceAccess(context, {
-          queryHash: `purchasing-approval-proposal:${result.revalidation.proposalRevisionRef.resourceId}:${payload.storefrontId}`,
-          resourceRef: result.revalidation.proposalRevisionRef,
-        }),
-        recordPurchasingApprovalResourceAccess(context, {
-          queryHash: `purchasing-approval-route:${result.revalidation.approvedRoute.routeRef.resourceId}:${payload.storefrontId}`,
-          resourceRef: result.revalidation.approvedRoute.routeRef,
-        }),
-        recordPurchasingApprovalResourceAccess(context, {
-          queryHash: `purchasing-approval-hierarchy:${result.revalidation.approvedRoute.hierarchyRef.resourceId}:${payload.storefrontId}`,
-          resourceRef: result.revalidation.approvedRoute.hierarchyRef,
-        }),
-        recordPurchasingApprovalResourceAccess(context, {
-          queryHash: `purchasing-approval-revalidation:${result.revalidation.revalidationRef.resourceId}:${payload.storefrontId}`,
-          resourceRef: result.revalidation.revalidationRef,
-        }),
-        recordPurchasingApprovalResourceAccess(context, {
-          queryHash: `purchasing-approval-counterparty:${trustedPayload.counterpartyRef.resourceId}:${trustedPayload.storefrontId}`,
-          resourceRef: trustedPayload.counterpartyRef,
-        }),
-      ],
-      { concurrency: 1, discard: true },
-    );
-    yield* context.recordAuditEvidence({
-      outcome: result.outcome,
-      requestRef: result.revalidation.requestRef.resourceId,
-      revalidationRef: result.revalidation.revalidationRef.resourceId,
-      validUntil: result.revalidation.validUntil.toString(),
-      completionRule: result.revalidation.approvedRoute.levels.find(
-        ({ order }) => order === result.revalidation.approvedRoute.currentLevelOrder,
-      )!.completionRule,
+  }
+  const { trustedStorefrontId } = context.scope;
+  const { legalEntityId } = context.scope;
+  if (trustedStorefrontId === undefined || legalEntityId === undefined) {
+    return yield* new RevalidatePurchaseApprovalRejected({
+      code: 'PERMISSION_DENIED',
+      reason: 'Revalidation requires trusted Legal Entity and Storefront scope',
+      retryable: false,
     });
-    const payloadJson = {
-      outcome: result.outcome,
-      requestRef: result.revalidation.requestRef.resourceId,
-      revalidationRef: result.revalidation.revalidationRef.resourceId,
-      status: result.revalidation.status,
-      validUntil: result.revalidation.validUntil.toString(),
-      completionRule: result.revalidation.approvedRoute.levels.find(
-        ({ order }) => order === result.revalidation.approvedRoute.currentLevelOrder,
-      )!.completionRule,
-    };
-    const event = yield* context.addDomainEvent({
-      eventType: 'commerce.customer-context.approval-revalidated.v1',
-      payloadJson,
-      producerModuleKey: MODULE_KEY,
-      subjectModuleKey: MODULE_KEY,
-      subjectResourceId: result.revalidation.revalidationRef.resourceId,
-      subjectResourceType: result.revalidation.revalidationRef.resourceType,
-    });
-    yield* context.addOutboxMessage(event, createOutboxMessage({ data: payloadJson }));
-    return result satisfies RevalidatePurchaseApprovalResult;
-  },
-);
+  }
+  const trustedPayload = yield* context.services.currentness.resolveRevalidation({
+    claimed: payload,
+    scope: {
+      legalEntityId,
+      principalId: context.scope.principalId,
+      storefrontId: trustedStorefrontId,
+      tenantId: context.scope.tenantId,
+    },
+  });
+  const workflow = context.services.workflow.forActionInvocation(context.actionInvocationId);
+  const result = yield* workflow.revalidate(trustedPayload);
+  yield* Effect.all(
+    [
+      recordPurchasingApprovalResourceAccess(context, {
+        queryHash: `purchasing-approval-request:${result.revalidation.requestRef.resourceId}:${payload.storefrontId}`,
+        resourceRef: result.revalidation.requestRef,
+      }),
+      recordPurchasingApprovalResourceAccess(context, {
+        queryHash: `purchasing-approval-proposal:${result.revalidation.proposalRevisionRef.resourceId}:${payload.storefrontId}`,
+        resourceRef: result.revalidation.proposalRevisionRef,
+      }),
+      recordPurchasingApprovalResourceAccess(context, {
+        queryHash: `purchasing-approval-route:${result.revalidation.approvedRoute.routeRef.resourceId}:${payload.storefrontId}`,
+        resourceRef: result.revalidation.approvedRoute.routeRef,
+      }),
+      recordPurchasingApprovalResourceAccess(context, {
+        queryHash: `purchasing-approval-hierarchy:${result.revalidation.approvedRoute.hierarchyRef.resourceId}:${payload.storefrontId}`,
+        resourceRef: result.revalidation.approvedRoute.hierarchyRef,
+      }),
+      recordPurchasingApprovalResourceAccess(context, {
+        queryHash: `purchasing-approval-revalidation:${result.revalidation.revalidationRef.resourceId}:${payload.storefrontId}`,
+        resourceRef: result.revalidation.revalidationRef,
+      }),
+      recordPurchasingApprovalResourceAccess(context, {
+        queryHash: `purchasing-approval-counterparty:${trustedPayload.counterpartyRef.resourceId}:${trustedPayload.storefrontId}`,
+        resourceRef: trustedPayload.counterpartyRef,
+      }),
+    ],
+    { concurrency: 1, discard: true },
+  );
+  const completionRule =
+    result.revalidation.approvedRoute.levels.find(
+      ({ order }) => order === result.revalidation.approvedRoute.currentLevelOrder,
+    )?.completionRule ?? 'ONE_APPROVER';
+  yield* context.recordAuditEvidence({
+    completionRule,
+    outcome: result.outcome,
+    requestRef: result.revalidation.requestRef.resourceId,
+    revalidationRef: result.revalidation.revalidationRef.resourceId,
+    validUntil: DateTime.formatIso(result.revalidation.validUntil),
+  });
+  const payloadJson = {
+    completionRule,
+    outcome: result.outcome,
+    requestRef: result.revalidation.requestRef.resourceId,
+    revalidationRef: result.revalidation.revalidationRef.resourceId,
+    status: result.revalidation.status,
+    validUntil: DateTime.formatIso(result.revalidation.validUntil),
+  };
+  const event = yield* context.addDomainEvent({
+    eventType: 'commerce.customer-context.approval-revalidated.v1',
+    payloadJson,
+    producerModuleKey: MODULE_KEY,
+    subjectModuleKey: MODULE_KEY,
+    subjectResourceId: result.revalidation.revalidationRef.resourceId,
+    subjectResourceType: result.revalidation.revalidationRef.resourceType,
+  });
+  yield* context.addOutboxMessage(event, createOutboxMessage({ data: payloadJson }));
+  return result satisfies RevalidatePurchaseApprovalResult;
+});
 
 export const revalidatePurchaseApprovalAction = defineAction(
   {
@@ -159,14 +150,13 @@ export const revalidatePurchaseApprovalAction = defineAction(
     actionKey: 'commerce.customer-context.revalidate-purchase-approval',
     auditEvidenceSchema: RevalidatePurchaseApprovalAuditEvidenceSchema,
     auditProfile: 'sensitive',
-    businessPermission: defineActionBusinessPermission(
-      (payload: RevalidatePurchaseApprovalPayload, scope) =>
-        purchasingApprovalPermissionTarget({
-          permission: 'counterparty.approval.request.manage',
-          counterpartyRef: payload.counterpartyRef,
-          storefrontId: payload.storefrontId,
-          scope,
-        }),
+    businessPermission: defineActionBusinessPermission((payload: RevalidatePurchaseApprovalPayload, scope) =>
+      purchasingApprovalPermissionTarget({
+        counterpartyRef: payload.counterpartyRef,
+        permission: 'counterparty.approval.request.manage',
+        scope,
+        storefrontId: payload.storefrontId,
+      }),
     ),
     domainErrorSchema: RevalidatePurchaseApprovalRejected,
     domainEvents: {
@@ -188,72 +178,5 @@ export const revalidatePurchaseApprovalAction = defineAction(
     schemaVersion: '1',
   },
   handleRevalidatePurchaseApproval,
-  (transaction, scope) => {
-    const legalEntityId = scope.legalEntityId;
-    const trustedStorefrontId = scope.trustedStorefrontId;
-    return Effect.all(
-      {
-        workflow: purchasingApprovalWorkflowForScope(transaction, scope),
-        currentness: Effect.all({
-          contextAccess: ContextAccess,
-          currentnessFactory: PurchaseApprovalCurrentnessFactory,
-          purchaseLimitCurrentness: PurchaseLimitEvaluationCurrentnessPort,
-          evaluationSourceFactory: PurchaseLimitEvaluationSourceFactory,
-        }).pipe(
-          Effect.flatMap(
-            ({
-              contextAccess,
-              currentnessFactory,
-              purchaseLimitCurrentness,
-              evaluationSourceFactory,
-            }) =>
-              legalEntityId === undefined || trustedStorefrontId === undefined
-                ? Effect.void
-                : evaluationSourceFactory.make(transaction, scope).pipe(
-                    Effect.mapError(
-                      () =>
-                        new OperationContextUnavailable({
-                          code: 'operation_context_unavailable',
-                          reason: 'Current Purchase Proposal evaluation evidence is unavailable',
-                        }),
-                    ),
-                    Effect.map((evaluationSource) =>
-                      currentnessFactory.make(
-                        transaction,
-                        {
-                          ...scope,
-                          legalEntityId,
-                          trustedStorefrontId,
-                        },
-                        contextAccess,
-                        purchaseLimitCurrentness,
-                        evaluationSource,
-                      ),
-                    ),
-                  ),
-          ),
-        ),
-      },
-      { concurrency: 2 },
-    ).pipe(
-      Effect.flatMap(({ workflow, currentness }) =>
-        currentness === undefined
-          ? Effect.fail(
-              new OperationContextUnavailable({
-                code: 'operation_context_unavailable',
-                reason: 'Current Purchasing Approval evidence requires trusted owner scope',
-              }),
-            )
-          : Effect.succeed({ workflow, currentness }),
-      ),
-    );
-  },
+  purchasingApprovalCurrentnessServicesForScope,
 );
-
-// <generated-outbox-message-exports>
-export { createRevalidatePurchaseApprovalCommerceCustomerContextApprovalRevalidatedV1OutboxMessage } from './revalidate-purchase-approval-commerce-customer-context-approval-revalidated-v1.outbox-message.ts';
-export { RevalidatePurchaseApprovalCommerceCustomerContextApprovalRevalidatedV1OutboxPayloadSchema } from './revalidate-purchase-approval-commerce-customer-context-approval-revalidated-v1.outbox-message.ts';
-export { RevalidatePurchaseApprovalCommerceCustomerContextApprovalRevalidatedV1OutboxProducerModuleKey } from './revalidate-purchase-approval-commerce-customer-context-approval-revalidated-v1.outbox-message.ts';
-export { RevalidatePurchaseApprovalCommerceCustomerContextApprovalRevalidatedV1OutboxTopic } from './revalidate-purchase-approval-commerce-customer-context-approval-revalidated-v1.outbox-message.ts';
-export type { RevalidatePurchaseApprovalCommerceCustomerContextApprovalRevalidatedV1OutboxPayload } from './revalidate-purchase-approval-commerce-customer-context-approval-revalidated-v1.outbox-message.ts';
-// </generated-outbox-message-exports>

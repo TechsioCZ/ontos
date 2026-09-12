@@ -29,8 +29,7 @@ export const counterpartyAccessInvitationResourceDescriptor = {
     searchable: false,
     timelineVisible: true,
   },
-  description:
-    'Secret-safe, expiring and auditable onboarding intent that grants no authorization itself.',
+  description: 'Secret-safe, expiring and auditable onboarding intent that grants no authorization itself.',
   key: 'commerce.customer-context.counterparty-access-invitation',
   label: 'Counterparty Access Invitation',
   owningModuleId: 'commerce.customer-context',

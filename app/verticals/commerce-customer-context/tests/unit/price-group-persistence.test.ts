@@ -122,52 +122,41 @@ it('declares an immutable six-routine allowlist with Core-injected scope first',
   }
 });
 
-it.effect(
-  'maps profile reconciliation and exact Counterparty association from the atomic gate',
-  () =>
-    Effect.gen(function* profileGate() {
-      const calls: { readonly name: string; readonly values: readonly unknown[] }[] = [];
-      const validation = customerPriceGroupProfileValidationForTransaction(
-        transactionReturning(
-          [
-            {
-              counterparty_resource_id: counterpartyRef.resourceId,
-              outcome: 'CURRENT',
-              profile_state: 'RECONCILIATION_REQUIRED',
-              revision: 3,
-            },
-          ],
-          calls,
-        ),
-        scope,
-      );
-      const result = yield* validation.inspect(
-        counterpartyProfile,
-        '2026-09-09T10:00:00.000Z',
-        counterpartyRef,
-      );
-      const current = Match.value(result).pipe(
-        Match.tag('CURRENT', (value) => value),
-        Match.tag('NOT_FOUND', () => null),
-        Match.exhaustive,
-      );
-      expect(current).toMatchObject({
-        counterpartyRef,
-        revision: 3,
-        state: 'RECONCILIATION_REQUIRED',
-      });
-      expect(calls).toEqual([
-        {
-          name: 'inspect_price_group_profile',
-          values: [
-            profileId,
-            'COUNTERPARTY',
-            '2026-09-09T10:00:00.000Z',
-            counterpartyRef.resourceId,
-          ],
-        },
-      ]);
-    }),
+it.effect('maps profile reconciliation and exact Counterparty association from the atomic gate', () =>
+  Effect.gen(function* profileGate() {
+    const calls: { readonly name: string; readonly values: readonly unknown[] }[] = [];
+    const validation = customerPriceGroupProfileValidationForTransaction(
+      transactionReturning(
+        [
+          {
+            counterparty_resource_id: counterpartyRef.resourceId,
+            outcome: 'CURRENT',
+            profile_state: 'RECONCILIATION_REQUIRED',
+            revision: 3,
+          },
+        ],
+        calls,
+      ),
+      scope,
+    );
+    const result = yield* validation.inspect(counterpartyProfile, '2026-09-09T10:00:00.000Z', counterpartyRef);
+    const current = Match.value(result).pipe(
+      Match.tag('CURRENT', (value) => value),
+      Match.tag('NOT_FOUND', () => null),
+      Match.exhaustive,
+    );
+    expect(current).toMatchObject({
+      counterpartyRef,
+      revision: 3,
+      state: 'RECONCILIATION_REQUIRED',
+    });
+    expect(calls).toEqual([
+      {
+        name: 'inspect_price_group_profile',
+        values: [profileId, 'COUNTERPARTY', '2026-09-09T10:00:00.000Z', counterpartyRef.resourceId],
+      },
+    ]);
+  }),
 );
 
 it.effect('resolves only assignments effective at the trusted instant', () =>
@@ -471,13 +460,8 @@ it.effect('maps atomic retroactive schedule rejection for every mutation family'
 it.effect('fails closed before invoking a routine for a cross-tenant profile', () =>
   Effect.gen(function* crossTenant() {
     const calls: { readonly name: string; readonly values: readonly unknown[] }[] = [];
-    const store = customerPriceGroupAssignmentStoreForTransaction(
-      transactionReturning([], calls),
-      scope,
-    );
-    const error = yield* Effect.flip(
-      store.list({ ...profile, tenantId: '10000000-0000-4000-8000-000000000002' }),
-    );
+    const store = customerPriceGroupAssignmentStoreForTransaction(transactionReturning([], calls), scope);
+    const error = yield* Effect.flip(store.list({ ...profile, tenantId: '10000000-0000-4000-8000-000000000002' }));
     expect(Schema.is(CustomerPriceGroupPersistenceUnavailable)(error)).toBe(true);
     expect(calls).toEqual([]);
   }),
@@ -485,10 +469,7 @@ it.effect('fails closed before invoking a routine for a cross-tenant profile', (
 
 it('pins the clean-chain repair and exact SECURITY DEFINER privilege boundary', () => {
   const alignment = readFileSync(
-    new URL(
-      '../../drizzle/20260909104256_align_customer_context_domain_contracts/migration.sql',
-      import.meta.url,
-    ),
+    new URL('../../drizzle/20260909104256_align_customer_context_domain_contracts/migration.sql', import.meta.url),
     'utf-8',
   );
   const routines = readFileSync(
@@ -513,9 +494,7 @@ it('pins the clean-chain repair and exact SECURITY DEFINER privilege boundary', 
   expect(routines).toContain('AND v_assignment.effective_to = p_effective_at');
   expect(routines).toContain("assignment.lifecycle IN ('ACTIVE', 'ENDED')");
   expect(routines).toContain('assignment.effective_from <= p_effective_from');
-  expect(routines).toContain(
-    'assignment.effective_to IS NULL OR p_effective_from < assignment.effective_to',
-  );
+  expect(routines).toContain('assignment.effective_to IS NULL OR p_effective_from < assignment.effective_to');
   expect(routines).toContain(
     `"lifecycle" = 'CANCELLED' OR "effective_to" IS NULL OR "effective_to" > "effective_from"`,
   );
@@ -524,21 +503,13 @@ it('pins the clean-chain repair and exact SECURITY DEFINER privilege boundary', 
     'ORDER BY assignment.effective_from DESC, assignment.customer_price_group_assignment_id DESC',
   );
   expect(routines).toContain('LIMIT 200');
-  expect(routines).toContain(
-    'ORDER BY selected.effective_from, selected.customer_price_group_assignment_id',
-  );
-  expect(routines).toContain(
-    'resolve_price_group_assignments"(uuid, uuid, text, text, timestamptz)',
-  );
+  expect(routines).toContain('ORDER BY selected.effective_from, selected.customer_price_group_assignment_id');
+  expect(routines).toContain('resolve_price_group_assignments"(uuid, uuid, text, text, timestamptz)');
   expect(routines).toContain("assignment.lifecycle = 'ACTIVE'");
   expect(routines).toContain('assignment.effective_from <= p_effective_at');
-  expect(routines).toContain(
-    'assignment.effective_to IS NULL OR p_effective_at < assignment.effective_to',
-  );
+  expect(routines).toContain('assignment.effective_to IS NULL OR p_effective_at < assignment.effective_to');
   expect(routines).toContain('LIMIT 2');
-  expect(routines).toContain(
-    'inspect_price_group_profile"(uuid, uuid, text, text, timestamptz, text)',
-  );
+  expect(routines).toContain('inspect_price_group_profile"(uuid, uuid, text, text, timestamptz, text)');
   expect(routines).not.toMatch(/SET[^;]*action_invocation_id\s*=\s*p_action_invocation_id/su);
   expect(routines).not.toMatch(/GRANT\s+(?:SELECT|INSERT|UPDATE|DELETE)\s+ON/iu);
 });

@@ -10,10 +10,8 @@ import { PurchaseLimitPolicyReadRequestSchema } from '../../shared/apis/purchase
 import { OutboxPayloadSchema as CounterpartyPurchaseLimitChangedOutboxPayloadSchema } from '../../shared/outbox/commerce-customer-context-counterparty-purchase-limit-changed-v1.ts';
 import { OutboxPayloadSchema as PrincipalPurchaseLimitOverrideChangedOutboxPayloadSchema } from '../../shared/outbox/commerce-customer-context-principal-purchase-limit-override-changed-v1.ts';
 import { createChangeCounterpartyPurchaseLimitCommerceCustomerContextCounterpartyPurchaseLimitChangedV1OutboxMessage } from '../../src/actions/change-counterparty-purchase-limit.commerce-customer-context-counterparty-purchase-limit-changed-v1.outbox-message.ts';
-import {
-  ChangeCounterpartyPurchaseLimitPayloadSchema,
-  changeCounterpartyPurchaseLimitAction,
-} from '../../src/actions/change-counterparty-purchase-limit.action.ts';
+import { changeCounterpartyPurchaseLimitAction } from '../../src/actions/change-counterparty-purchase-limit.action.ts';
+import { ChangeCounterpartyPurchaseLimitPayloadSchema } from '../../shared/actions/change-counterparty-purchase-limit.ts';
 import { createChangePrincipalPurchaseLimitOverrideCommerceCustomerContextPrincipalPurchaseLimitOverrideChangedV1OutboxMessage } from '../../src/actions/change-principal-purchase-limit-override.commerce-customer-context-principal-purchase-limit-override-changed-v1.outbox-message.ts';
 import {
   ChangePrincipalPurchaseLimitOverridePayloadSchema,
@@ -55,19 +53,19 @@ it('limit mutations require exact counterparty Purchase Limit management permiss
     expectedRevision: null,
     reason: 'Signed purchasing authority update',
   });
-  const overridePayload = Schema.decodeUnknownSync(
-    ChangePrincipalPurchaseLimitOverridePayloadSchema,
-  )({
+  const overridePayload = Schema.decodeUnknownSync(ChangePrincipalPurchaseLimitOverridePayloadSchema)({
     ...defaultPayload,
     change: { _tag: 'SET', policy: { _tag: 'UNLIMITED' } },
     principalRef,
   });
-  const defaultTarget = getActionBusinessPermissionTargetResolver(
-    changeCounterpartyPurchaseLimitAction,
-  )?.(defaultPayload, scope);
-  const overrideTarget = getActionBusinessPermissionTargetResolver(
-    changePrincipalPurchaseLimitOverrideAction,
-  )?.(overridePayload, scope);
+  const defaultTarget = getActionBusinessPermissionTargetResolver(changeCounterpartyPurchaseLimitAction)?.(
+    defaultPayload,
+    scope,
+  );
+  const overrideTarget = getActionBusinessPermissionTargetResolver(changePrincipalPurchaseLimitOverrideAction)?.(
+    overridePayload,
+    scope,
+  );
 
   for (const target of [defaultTarget, overrideTarget]) {
     expect(target).toEqual({
@@ -173,9 +171,7 @@ it('wire contracts reject implicit unlimited, invalid amounts, and unscoped prin
     expectedRevision: null,
     reason: 'Policy update',
   };
-  expect(
-    Schema.is(ChangeCounterpartyPurchaseLimitPayloadSchema)({ ...base, change: { _tag: 'SET' } }),
-  ).toBe(false);
+  expect(Schema.is(ChangeCounterpartyPurchaseLimitPayloadSchema)({ ...base, change: { _tag: 'SET' } })).toBe(false);
   expect(
     Schema.is(ChangeCounterpartyPurchaseLimitPayloadSchema)({
       ...base,
@@ -215,19 +211,15 @@ it('publishes only exact safe Purchase Limit invalidation facts', () => {
     currentState: 'EXPLICIT_OVERRIDE_CURRENT',
     principalRef,
   } as const;
-  const decodedDefaultPayload = Schema.decodeUnknownSync(
-    CounterpartyPurchaseLimitChangedOutboxPayloadSchema,
-  )(defaultPayload);
-  const decodedOverridePayload = Schema.decodeUnknownSync(
-    PrincipalPurchaseLimitOverrideChangedOutboxPayloadSchema,
-  )(overridePayload);
-  expect(Schema.is(CounterpartyPurchaseLimitChangedOutboxPayloadSchema)(defaultPayload)).toBe(true);
-  expect(
-    Schema.is(CounterpartyPurchaseLimitChangedOutboxPayloadSchema)({ data: defaultPayload }),
-  ).toBe(false);
-  expect(Schema.is(PrincipalPurchaseLimitOverrideChangedOutboxPayloadSchema)(overridePayload)).toBe(
-    true,
+  const decodedDefaultPayload = Schema.decodeUnknownSync(CounterpartyPurchaseLimitChangedOutboxPayloadSchema)(
+    defaultPayload,
   );
+  const decodedOverridePayload = Schema.decodeUnknownSync(PrincipalPurchaseLimitOverrideChangedOutboxPayloadSchema)(
+    overridePayload,
+  );
+  expect(Schema.is(CounterpartyPurchaseLimitChangedOutboxPayloadSchema)(defaultPayload)).toBe(true);
+  expect(Schema.is(CounterpartyPurchaseLimitChangedOutboxPayloadSchema)({ data: defaultPayload })).toBe(false);
+  expect(Schema.is(PrincipalPurchaseLimitOverrideChangedOutboxPayloadSchema)(overridePayload)).toBe(true);
   const messages = [
     createChangeCounterpartyPurchaseLimitCommerceCustomerContextCounterpartyPurchaseLimitChangedV1OutboxMessage(
       decodedDefaultPayload,
@@ -251,9 +243,7 @@ it('forwards trusted invocation evidence and attaches each message only inside m
   const actionSources = [
     'change-counterparty-purchase-limit.action.ts',
     'change-principal-purchase-limit-override.action.ts',
-  ].map((file) =>
-    readFileSync(new URL(`../../src/actions/${file}`, import.meta.url), { encoding: 'utf-8' }),
-  );
+  ].map((file) => readFileSync(new URL(`../../src/actions/${file}`, import.meta.url), { encoding: 'utf-8' }));
   for (const source of actionSources) {
     expect(source).toContain("if (result.status === 'CHANGED') {");
     expect(source).toContain('actionInvocationId: context.actionInvocationId');

@@ -69,11 +69,6 @@ export const executeMigrateCounterpartyPriceGroup = (
 ) =>
   operationGateway.invoke(
     (credential) =>
-      executeMigrateCounterpartyPriceGroupWithAuthorization(
-        payload,
-        credential,
-        requestCorrelation,
-        options,
-      ),
+      executeMigrateCounterpartyPriceGroupWithAuthorization(payload, credential, requestCorrelation, options),
     options.gateway,
   );

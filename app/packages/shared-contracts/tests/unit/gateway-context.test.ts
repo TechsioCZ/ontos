@@ -221,12 +221,8 @@ it.effect('issues API-key gateway context through the server-only credential bou
     const fakeFetch: typeof fetch = (input, init) => {
       const request = new Request(input, init);
       requests.push(request);
-      expect(request.url).toBe(
-        'https://shell.example.test/shell-super-app-api/auth/api-key/gateway-context',
-      );
-      return Promise.resolve(
-        Response.json({ expiresAt: claims.exp, token: 'fresh-signed-assertion' }),
-      );
+      expect(request.url).toBe('https://shell.example.test/shell-super-app-api/auth/api-key/gateway-context');
+      return Promise.resolve(Response.json({ expiresAt: claims.exp, token: 'fresh-signed-assertion' }));
     };
 
     const response = yield* issueApiKeyGatewayContext(

@@ -1,9 +1,5 @@
 import { defineScopedRoutine } from '@app/core-runtime';
-import type {
-  OperationalScope,
-  ScopedRoutineInvocationError,
-  ScopedTransactionExecutor,
-} from '@app/core-runtime';
+import type { OperationalScope, ScopedRoutineInvocationError, ScopedTransactionExecutor } from '@app/core-runtime';
 import { DateTime, Effect, Layer, Match, Option, Schema } from 'effect';
 
 import { PurchaseApprovalTriggerEvidenceSourceFactory } from '../actions/trigger-purchase-approval.action.ts';
@@ -64,10 +60,7 @@ import type {
   PurchaseLimitEvaluationCurrentnessPortService,
 } from '../../shared/domain/purchase-limit-evaluation-currentness-port.ts';
 import { PurchaseLimitFxUnavailableSchema } from '../../shared/domain/purchase-limit-fx-port.ts';
-import type {
-  PurchaseLimitFxPort,
-  PurchaseLimitFxUnavailable,
-} from '../../shared/domain/purchase-limit-fx-port.ts';
+import type { PurchaseLimitFxPort, PurchaseLimitFxUnavailable } from '../../shared/domain/purchase-limit-fx-port.ts';
 import type { PurchaseValue } from '../../shared/domain/purchase-limit.ts';
 
 const MODULE_KEY = 'commerce.customer-context';
@@ -177,8 +170,7 @@ const subjectScopeMismatch = (reason: string) =>
     reason,
   });
 
-const timestamp = (value: Date | string): string =>
-  Schema.is(Schema.Date)(value) ? value.toISOString() : value;
+const timestamp = (value: Date | string): string => (Schema.is(Schema.Date)(value) ? value.toISOString() : value);
 
 /** PostgreSQL numeric preserves scale; the public exact-decimal value uses canonical text. */
 const canonicalDecimal = (value: string): string => {
@@ -200,17 +192,14 @@ const snapshotFromValues = (
     recordedAt: Date | string | null;
     revision: null | number;
   }>,
-): Effect.Effect<
-  Option.Option<PurchaseLimitPolicySnapshot>,
-  PurchaseLimitDependencyUnavailable
-> => {
+): Effect.Effect<Option.Option<PurchaseLimitPolicySnapshot>, PurchaseLimitDependencyUnavailable> => {
   if (
     values.policyId === null ||
     values.policyKind === null ||
     values.recordedAt === null ||
     values.revision === null
   ) {
-    return Effect.succeed(Option.none());
+    return Effect.succeedNone;
   }
   let policy: Readonly<
     | { readonly _tag: 'UNLIMITED' }
@@ -236,7 +225,7 @@ const snapshotFromValues = (
   if (policy === null) {
     return Effect.fail(dependencyUnavailable(POLICY_DEPENDENCY));
   }
-  return Schema.decodeUnknownEffect(PurchaseLimitPolicySnapshotSchema)({
+  return Schema.decodeEffect(PurchaseLimitPolicySnapshotSchema)({
     changedAt: timestamp(values.recordedAt),
     policy,
     policyRef: {
@@ -248,7 +237,7 @@ const snapshotFromValues = (
     revision: values.revision,
     subject,
   }).pipe(
-    Effect.map(Option.some),
+    Effect.asSome,
     Effect.mapError((parseFailure) => {
       const failure = dependencyUnavailable(POLICY_DEPENDENCY);
       Object.defineProperty(failure, 'cause', {
@@ -342,8 +331,7 @@ const policySourceRevision = (
 ): Effect.Effect<PurchaseLimitSourceRevisionVector[number], PurchaseLimitDependencyUnavailable> => {
   const matching = rows.filter((row) => Option.getOrNull(row.source) === source);
   if (matching.length === 0) {
-    const key =
-      source === 'COUNTERPARTY_DEFAULT' ? COUNTERPARTY_POLICY_SOURCE : PRINCIPAL_OVERRIDE_SOURCE;
+    const key = source === 'COUNTERPARTY_DEFAULT' ? COUNTERPARTY_POLICY_SOURCE : PRINCIPAL_OVERRIDE_SOURCE;
     return Effect.succeed({ revision: `${key}:absent`, source: key });
   }
   const [row] = matching;
@@ -353,8 +341,7 @@ const policySourceRevision = (
   }
   return Effect.succeed({
     revision,
-    source:
-      source === 'COUNTERPARTY_DEFAULT' ? COUNTERPARTY_POLICY_SOURCE : PRINCIPAL_OVERRIDE_SOURCE,
+    source: source === 'COUNTERPARTY_DEFAULT' ? COUNTERPARTY_POLICY_SOURCE : PRINCIPAL_OVERRIDE_SOURCE,
   });
 };
 
@@ -362,39 +349,24 @@ export const readCurrentPurchaseLimitPolicyState = (
   transaction: ScopedTransactionExecutor,
   input: ReadCurrentPurchaseLimitPolicyInput,
 ): Effect.Effect<CurrentPurchaseLimitPolicyState, PurchaseLimitDependencyUnavailable> => {
-  if (
-    input.counterpartyRef.tenantId !== input.tenantId ||
-    input.principalRef.tenantId !== input.tenantId
-  ) {
-    return Effect.fail(
-      dependencyUnavailable('commerce.customer-context.purchase-limit-subject-scope'),
-    );
+  if (input.counterpartyRef.tenantId !== input.tenantId || input.principalRef.tenantId !== input.tenantId) {
+    return Effect.fail(dependencyUnavailable('commerce.customer-context.purchase-limit-subject-scope'));
   }
   return transaction
-    .invoke(readPurchaseLimitPoliciesRoutine, [
-      input.counterpartyRef.resourceId,
-      input.principalRef.principalId,
-    ])
+    .invoke(readPurchaseLimitPoliciesRoutine, [input.counterpartyRef.resourceId, input.principalRef.principalId])
     .pipe(
       Effect.mapError((failure) => dependencyUnavailable(POLICY_DEPENDENCY, failure)),
       Effect.flatMap((rows) =>
         rows.some(({ outcome }) => outcome === 'PROFILE_NOT_FOUND')
-          ? Effect.fail(
-              dependencyUnavailable('commerce.customer-context.counterparty-purchasing-profile'),
-            )
+          ? Effect.fail(dependencyUnavailable('commerce.customer-context.counterparty-purchasing-profile'))
           : Effect.all(
               {
                 counterpartyRevision: policySourceRevision(rows, 'COUNTERPARTY_DEFAULT'),
                 overrideRevision: policySourceRevision(rows, 'PRINCIPAL_OVERRIDE'),
-                snapshots: Effect.all(
-                  rows.map((row) =>
-                    snapshotFromReadRow(
-                      input.tenantId,
-                      input.counterpartyRef,
-                      input.principalRef.principalId,
-                      row,
-                    ),
-                  ),
+                snapshots: Effect.forEach(
+                  rows,
+                  (row) =>
+                    snapshotFromReadRow(input.tenantId, input.counterpartyRef, input.principalRef.principalId, row),
                   { concurrency: 2 },
                 ),
               },
@@ -450,10 +422,7 @@ const mutationArguments = (input: ChangeCounterpartyPurchaseLimitInput) =>
     Match.tag('SET', ({ policy }) =>
       Match.value(policy).pipe(
         Match.tag('UNLIMITED', () => ['SET', 'UNLIMITED', null, null] as const),
-        Match.tag(
-          'MONETARY_LIMIT',
-          ({ limit }) => ['SET', 'MONETARY_LIMIT', limit.amount, limit.currency] as const,
-        ),
+        Match.tag('MONETARY_LIMIT', ({ limit }) => ['SET', 'MONETARY_LIMIT', limit.amount, limit.currency] as const),
         Match.exhaustive,
       ),
     ),
@@ -500,39 +469,32 @@ const changePurchaseLimitPolicy = (
     ])
     .pipe(
       Effect.mapError((failure) => dependencyUnavailable(POLICY_DEPENDENCY, failure)),
-      Effect.flatMap(
-        ([row]): Effect.Effect<
-          PurchaseLimitPolicyMutationResult,
-          PurchaseLimitPolicyPersistenceError
-        > => {
-          if (row === undefined) {
-            return Effect.fail(dependencyUnavailable(POLICY_DEPENDENCY));
-          }
-          if (row.outcome === 'PROFILE_NOT_FOUND') {
-            return Effect.fail(
-              subjectScopeMismatch(
-                'The Counterparty Purchasing Profile is not available in the verified scope',
-              ),
-            );
-          }
-          if (row.outcome === 'REVISION_CONFLICT') {
-            return Effect.fail(
-              PurchaseLimitPolicyConflictSchema.make({
-                code: 'purchase_limit_policy_conflict',
-                currentRevision: Option.getOrNull(row.current_revision),
-                reason: 'The Purchase Limit policy changed concurrently',
-              }),
-            );
-          }
-          return mutationSnapshots(input.counterpartyRef.tenantId, subject, row).pipe(
-            Effect.map(({ currentPolicy, previousPolicy }): PurchaseLimitPolicyMutationResult => ({
-              currentPolicy,
-              previousPolicy,
-              status: row.outcome === 'APPLIED' ? 'CHANGED' : 'UNCHANGED',
-            })),
+      Effect.flatMap(([row]): Effect.Effect<PurchaseLimitPolicyMutationResult, PurchaseLimitPolicyPersistenceError> => {
+        if (row === undefined) {
+          return Effect.fail(dependencyUnavailable(POLICY_DEPENDENCY));
+        }
+        if (row.outcome === 'PROFILE_NOT_FOUND') {
+          return Effect.fail(
+            subjectScopeMismatch('The Counterparty Purchasing Profile is not available in the verified scope'),
           );
-        },
-      ),
+        }
+        if (row.outcome === 'REVISION_CONFLICT') {
+          return Effect.fail(
+            PurchaseLimitPolicyConflictSchema.make({
+              code: 'purchase_limit_policy_conflict',
+              currentRevision: Option.getOrNull(row.current_revision),
+              reason: 'The Purchase Limit policy changed concurrently',
+            }),
+          );
+        }
+        return mutationSnapshots(input.counterpartyRef.tenantId, subject, row).pipe(
+          Effect.map(({ currentPolicy, previousPolicy }): PurchaseLimitPolicyMutationResult => ({
+            currentPolicy,
+            previousPolicy,
+            status: row.outcome === 'APPLIED' ? 'CHANGED' : 'UNCHANGED',
+          })),
+        );
+      }),
     );
 };
 
@@ -547,26 +509,19 @@ export const changePrincipalPurchaseLimitOverride = (
   input: ChangePrincipalPurchaseLimitOverrideInput,
 ): Effect.Effect<PurchaseLimitPolicyMutationResult, PurchaseLimitPolicyPersistenceError> => {
   if (input.principalRef.tenantId !== input.counterpartyRef.tenantId) {
-    return Effect.fail(
-      subjectScopeMismatch('The Principal and Counterparty must belong to the same Tenant'),
-    );
+    return Effect.fail(subjectScopeMismatch('The Principal and Counterparty must belong to the same Tenant'));
   }
   return changePurchaseLimitPolicy(transaction, input, input.principalRef.principalId);
 };
 
-export const purchaseLimitPolicyServiceForTransaction = (
+const purchaseLimitPolicyServiceForTransaction = (
   transaction: ScopedTransactionExecutor,
   scope: OperationalScope & { readonly legalEntityId: string },
 ): PurchaseLimitPolicyService => ({
   changeCounterpartyPolicy: (input) => {
-    if (
-      input.counterpartyRef.tenantId !== scope.tenantId ||
-      input.actorPrincipalId !== scope.principalId
-    ) {
+    if (input.counterpartyRef.tenantId !== scope.tenantId || input.actorPrincipalId !== scope.principalId) {
       return Effect.fail(
-        subjectScopeMismatch(
-          'The Counterparty and mutation Actor must match the verified operation scope',
-        ),
+        subjectScopeMismatch('The Counterparty and mutation Actor must match the verified operation scope'),
       );
     }
     return changeCounterpartyPurchaseLimit(transaction, input);
@@ -577,9 +532,7 @@ export const purchaseLimitPolicyServiceForTransaction = (
       input.principalRef.tenantId !== scope.tenantId ||
       input.actorPrincipalId !== scope.principalId
     ) {
-      return Effect.fail(
-        subjectScopeMismatch('The Principal and Counterparty must belong to the verified Tenant'),
-      );
+      return Effect.fail(subjectScopeMismatch('The Principal and Counterparty must belong to the verified Tenant'));
     }
     return changePrincipalPurchaseLimitOverride(transaction, input);
   },
@@ -594,9 +547,7 @@ export const purchaseLimitPolicyServiceForTransaction = (
 const policyFactory: PurchaseLimitPolicyServiceFactoryContract = {
   make: <Transaction>(transaction: Transaction, scope: OperationalScope) => {
     if (scope.legalEntityId === undefined) {
-      return Effect.fail(
-        dependencyUnavailable('commerce.customer-context.purchase-limit-operational-scope'),
-      );
+      return Effect.fail(dependencyUnavailable('commerce.customer-context.purchase-limit-operational-scope'));
     }
     // eslint-disable-next-line typescript/no-unsafe-type-assertion -- SAFETY: Core invokes owner factories only with its branded, scope-installed transaction; expires: 2027-03-31.
     const scopedTransaction = transaction as ScopedTransactionExecutor;
@@ -609,10 +560,7 @@ const policyFactory: PurchaseLimitPolicyServiceFactoryContract = {
   },
 };
 
-export const purchaseLimitPolicyServiceFactoryLayer = Layer.succeed(
-  PurchaseLimitPolicyServiceFactory,
-  policyFactory,
-);
+const purchaseLimitPolicyServiceFactoryLayer = Layer.succeed(PurchaseLimitPolicyServiceFactory, policyFactory);
 
 const fxUnavailable = (reason: string, cause?: unknown): PurchaseLimitFxUnavailable => {
   const failure = PurchaseLimitFxUnavailableSchema.make({
@@ -639,7 +587,7 @@ const purchaseLimitFxForLaunch = (decidedAt: string): PurchaseLimitFxPort => ({
       );
     }
 
-    return Schema.decodeUnknownEffect(PurchaseLimitComparableValueSchema)({
+    return Schema.decodeEffect(PurchaseLimitComparableValueSchema)({
       decidedAt,
       decisionRef: purchaseValue.sourceRef,
       monetaryAmount: purchaseValue.monetaryAmount,
@@ -648,11 +596,7 @@ const purchaseLimitFxForLaunch = (decidedAt: string): PurchaseLimitFxPort => ({
       source: 'purchase-value',
       sourcePurchaseValueRevision: purchaseValue.sourceRevision,
       sourceRevision: purchaseValue.sourceRevision,
-    }).pipe(
-      Effect.mapError((cause) =>
-        fxUnavailable('The same-currency Purchase Value evidence is invalid', cause),
-      ),
-    );
+    }).pipe(Effect.mapError((cause) => fxUnavailable('The same-currency Purchase Value evidence is invalid', cause)));
   },
 });
 
@@ -707,11 +651,8 @@ const approvalDependencyUnavailable = (
 
 const authoritativeExternalFacts = (
   candidate: PurchaseLimitEvaluationCurrentFacts,
-): Effect.Effect<
-  typeof PurchaseLimitEvaluationCurrentFactsSchema.Type,
-  PurchaseLimitDependencyUnavailable
-> =>
-  Schema.decodeUnknownEffect(PurchaseLimitEvaluationCurrentFactsSchema)(candidate).pipe(
+): Effect.Effect<typeof PurchaseLimitEvaluationCurrentFactsSchema.Type, PurchaseLimitDependencyUnavailable> =>
+  Schema.decodeEffect(PurchaseLimitEvaluationCurrentFactsSchema)(candidate).pipe(
     Effect.mapError((cause) =>
       dependencyUnavailableFromCause(
         EVALUATION_CURRENTNESS_DEPENDENCY,
@@ -737,7 +678,7 @@ const combinedSourceRevisions = (
   policy: PurchaseLimitSourceRevisionVector,
   comparable: Option.Option<typeof PurchaseLimitComparableValueSchema.Type>,
 ): Effect.Effect<PurchaseLimitSourceRevisionVector, PurchaseLimitDependencyUnavailable> =>
-  Schema.decodeUnknownEffect(PurchaseLimitSourceRevisionVectorSchema)([
+  Schema.decodeEffect(PurchaseLimitSourceRevisionVectorSchema)([
     ...external,
     ...policy,
     ...Option.match(comparable, {
@@ -762,9 +703,7 @@ const comparableForPolicy = (
   Match.value(policyState.result).pipe(
     Match.tag('EFFECTIVE_POLICY', ({ effectivePolicy }) =>
       Match.value(effectivePolicy.policy).pipe(
-        Match.tag('UNLIMITED', () =>
-          Effect.succeed(Option.none<typeof PurchaseLimitComparableValueSchema.Type>()),
-        ),
+        Match.tag('UNLIMITED', () => Effect.succeed(Option.none<typeof PurchaseLimitComparableValueSchema.Type>())),
         Match.tag('MONETARY_LIMIT', ({ limit }) =>
           limit.currency === purchaseValue.monetaryAmount.currency
             ? Effect.succeed(Option.none<typeof PurchaseLimitComparableValueSchema.Type>())
@@ -774,7 +713,7 @@ const comparableForPolicy = (
                   targetCurrency: limit.currency,
                 })
                 .pipe(
-                  Effect.map(Option.some),
+                  Effect.asSome,
                   Effect.mapError((cause) =>
                     dependencyUnavailableFromCause(
                       FX_DEPENDENCY,
@@ -787,9 +726,7 @@ const comparableForPolicy = (
         Match.exhaustive,
       ),
     ),
-    Match.orElse(() =>
-      Effect.succeed(Option.none<typeof PurchaseLimitComparableValueSchema.Type>()),
-    ),
+    Match.orElse(() => Effect.succeed(Option.none<typeof PurchaseLimitComparableValueSchema.Type>())),
   );
 
 export const purchaseLimitEvaluationSourceForTransaction = (
@@ -849,10 +786,8 @@ export const purchaseLimitEvaluationSourceForTransaction = (
               },
               tenantId: scope.tenantId,
             }),
-            Schema.decodeUnknownEffect(PurchaseLimitSellingLegalEntityIdSchema)(
-              scope.legalEntityId,
-            ),
-            Schema.decodeUnknownEffect(PurchaseLimitStorefrontIdSchema)(scope.trustedStorefrontId),
+            Schema.decodeEffect(PurchaseLimitSellingLegalEntityIdSchema)(scope.legalEntityId),
+            Schema.decodeEffect(PurchaseLimitStorefrontIdSchema)(scope.trustedStorefrontId),
           ],
           { concurrency: 4 },
         ).pipe(
@@ -869,8 +804,8 @@ export const purchaseLimitEvaluationSourceForTransaction = (
 
         if (
           facts.purchaseValue.sourceRef !== query.purchaseValue.sourceRef ||
-          facts.currentSourceRevisions.find(({ source }) => source === PURCHASE_PROPOSAL_SOURCE)
-            ?.revision !== facts.purchaseValue.sourceRevision
+          facts.currentSourceRevisions.find(({ source }) => source === PURCHASE_PROPOSAL_SOURCE)?.revision !==
+            facts.purchaseValue.sourceRevision
         ) {
           return yield* Effect.fail(
             dependencyUnavailableFromCause(
@@ -953,9 +888,208 @@ export const purchaseApprovalTriggerEvidenceSourceForTransaction = (
       storefrontId: scope.trustedStorefrontId,
       tenantId: scope.tenantId,
     }) ?? currentness;
+  type ApprovalEvidenceInput = Parameters<PurchaseApprovalTriggerEvidenceSource['loadCurrent']>[0];
+  type CurrentnessInput = Parameters<PurchaseLimitEvaluationCurrentnessPortService['resolveCurrent']>[0];
+  // oxlint-disable-next-line effect-native/no-literal-union-type-alias -- This factory-local branch label is compile-time-only and has no runtime boundary that would consume an owning Schema vocabulary.
+  type ApprovalEvidenceKind = 'candidate' | 'current';
+
+  const requestMatchesTrustedScope = (
+    payload: ApprovalEvidenceInput['payload'],
+    trustedContext: ApprovalEvidenceInput['trustedContext'],
+  ): boolean =>
+    payload.counterpartyRef.tenantId === scope.tenantId &&
+    payload.profileRef.tenantId === scope.tenantId &&
+    payload.storefrontId === scope.trustedStorefrontId &&
+    trustedContext.principalId === scope.principalId &&
+    trustedContext.sellingLegalEntityId === scope.legalEntityId &&
+    trustedContext.storefrontId === scope.trustedStorefrontId &&
+    sameCounterpartyRef(trustedContext.counterpartyRef, payload.counterpartyRef);
+
+  // oxlint-disable-next-line unicorn/consistent-function-scoping -- Keep this helper with its factory-local ApprovalEvidenceKind type and evidence branch semantics.
+  const evidenceMessage = (
+    evidenceKind: ApprovalEvidenceKind,
+    candidateMessage: string,
+    currentMessage: string,
+  ): string => (evidenceKind === 'candidate' ? candidateMessage : currentMessage);
+
+  const approvalSourceRevisions = (facts: PurchaseLimitEvaluationCurrentFacts) => ({
+    profile: facts.currentSourceRevisions.find(({ source }) => source === PURCHASING_PROFILE_SOURCE)?.revision,
+    proposal: facts.currentSourceRevisions.find(({ source }) => source === PURCHASE_PROPOSAL_SOURCE)?.revision,
+  });
+
+  const bindingFailure = (
+    evidenceKind: ApprovalEvidenceKind,
+    profileEvidenceIsBound: boolean,
+    proposalEvidenceIsBound: boolean,
+  ) => {
+    if (!profileEvidenceIsBound || (evidenceKind === 'candidate' && !proposalEvidenceIsBound)) {
+      return approvalDependencyUnavailable(
+        evidenceKind === 'candidate' ? 'PURCHASE_LIMIT_EVALUATION' : 'CUSTOMER_PROFILE',
+        evidenceMessage(
+          evidenceKind,
+          'Candidate owner facts are not bound to the requested proposal/profile revision',
+          'Current Customer Profile evidence is not bound to the requested Counterparty and owner revision',
+        ),
+      );
+    }
+    if (evidenceKind === 'current' && !proposalEvidenceIsBound) {
+      return approvalDependencyUnavailable(
+        'PURCHASE_LIMIT_EVALUATION',
+        'Current Purchase Proposal evidence is not bound to its immutable reference and revision',
+      );
+    }
+    // oxlint-disable-next-line unicorn/no-useless-undefined -- Explicit undefined preserves the optional dependency-failure contract.
+    return undefined;
+  };
+
+  const loadApprovalEvidence = Effect.fn('purchaseApprovalTriggerEvidenceSourceForTransaction.loadApprovalEvidence')(
+    function* loadApprovalEvidenceEffect(
+      payload: ApprovalEvidenceInput['payload'],
+      trustedContext: ApprovalEvidenceInput['trustedContext'],
+      resolveFacts: (
+        observedAt: CurrentnessInput['observedAt'],
+      ) => Effect.Effect<PurchaseLimitEvaluationCurrentFacts, PurchaseLimitDependencyUnavailable>,
+      evidenceKind: ApprovalEvidenceKind,
+    ) {
+      const evaluatedAt = yield* DateTime.now;
+      const profileServices = profilePersistenceServicesForTransaction(
+        transaction,
+        {
+          legalEntityId: scope.legalEntityId,
+          principalId: scope.principalId,
+          tenantId: scope.tenantId,
+        },
+        profileDependencies,
+      );
+      const [facts, profile, policyState] = yield* Effect.all(
+        [
+          resolveFacts(evaluatedAt).pipe(
+            Effect.flatMap(authoritativeExternalFacts),
+            Effect.mapError((cause) =>
+              approvalDependencyUnavailable(
+                'PURCHASE_LIMIT_EVALUATION',
+                evidenceMessage(
+                  evidenceKind,
+                  'Candidate Purchase Proposal evidence is temporarily unavailable',
+                  'Current Purchase Proposal evidence is temporarily unavailable',
+                ),
+                cause,
+              ),
+            ),
+          ),
+          profileServices.customerProfileTradingGate
+            .evaluateGate(
+              {
+                authorizationSubject: {
+                  counterpartyRef: trustedContext.counterpartyRef,
+                  kind: 'COUNTERPARTY',
+                },
+                profileRef: payload.profileRef,
+              },
+              scope.tenantId,
+            )
+            .pipe(
+              Effect.mapError((cause) =>
+                approvalDependencyUnavailable(
+                  'CUSTOMER_PROFILE',
+                  'Current Customer Profile trading evidence is temporarily unavailable',
+                  cause,
+                ),
+              ),
+            ),
+          readCurrentPurchaseLimitPolicyState(transaction, {
+            counterpartyRef: payload.counterpartyRef,
+            principalRef: {
+              principalId: scope.principalId,
+              tenantId: scope.tenantId,
+            },
+            tenantId: scope.tenantId,
+          }).pipe(
+            Effect.mapError((cause) =>
+              approvalDependencyUnavailable(
+                'PURCHASE_LIMIT_EVALUATION',
+                'Current Purchase Limit policy evidence is temporarily unavailable',
+                cause,
+              ),
+            ),
+          ),
+        ],
+        { concurrency: 3 },
+      );
+      const sourceRevisions = approvalSourceRevisions(facts);
+      const profileEvidenceIsBound =
+        profile.subject.kind === 'COUNTERPARTY' &&
+        sameCounterpartyRef(profile.subject.counterpartyRef, payload.counterpartyRef) &&
+        sameProfileRef(profile.profileRef, payload.profileRef) &&
+        sourceRevisions.profile === String(profile.revision);
+      const proposalEvidenceIsBound =
+        facts.purchaseValue.sourceRef === payload.proposalRevisionRef &&
+        sourceRevisions.proposal === facts.purchaseValue.sourceRevision;
+      const invalidBinding = bindingFailure(evidenceKind, profileEvidenceIsBound, proposalEvidenceIsBound);
+      if (invalidBinding !== undefined) {
+        return yield* Effect.fail(invalidBinding);
+      }
+      const currentSourceRevisions = yield* combinedSourceRevisions(
+        facts.currentSourceRevisions,
+        policyState.sourceRevisions,
+        Option.none(),
+      ).pipe(
+        Effect.mapError((cause) =>
+          approvalDependencyUnavailable(
+            'PURCHASE_LIMIT_EVALUATION',
+            evidenceMessage(
+              evidenceKind,
+              'Candidate Purchase Approval evidence contains invalid or colliding revisions',
+              'Current Purchase Approval evidence contains invalid or colliding revisions',
+            ),
+            cause,
+          ),
+        ),
+      );
+      const rawProfileEvaluatedAt: unknown = profile.evaluatedAt;
+      const [profileEvidence, proposalEvidence] = yield* Effect.all(
+        [
+          Schema.decodeUnknownEffect(PurchaseApprovalProfileEvidenceSchema)({
+            counterpartyRef: payload.counterpartyRef,
+            evaluatedAt: DateTime.isDateTime(rawProfileEvaluatedAt)
+              ? DateTime.formatIso(rawProfileEvaluatedAt)
+              : rawProfileEvaluatedAt,
+            evaluationContext: trustedContext,
+            gate: profile.gate,
+            profileRef: profile.profileRef,
+            revision: profile.revision,
+            sourceRevision: sourceRevisions.profile,
+          }).pipe(
+            Effect.mapError((cause) =>
+              approvalDependencyUnavailable('CUSTOMER_PROFILE', 'Current Customer Profile evidence is invalid', cause),
+            ),
+          ),
+          Schema.decodeEffect(PurchaseApprovalProposalEvidenceSchema)({
+            evaluatedAt: DateTime.formatIso(evaluatedAt),
+            evaluationContext: trustedContext,
+            proposalRevisionRef: facts.purchaseValue.sourceRef,
+            purchaseValue: facts.purchaseValue,
+            revision: facts.purchaseValue.sourceRevision,
+            state: 'CURRENT',
+          }).pipe(
+            Effect.mapError((cause) =>
+              approvalDependencyUnavailable(
+                'PURCHASE_LIMIT_EVALUATION',
+                'Current Purchase Proposal evidence is invalid',
+                cause,
+              ),
+            ),
+          ),
+        ],
+        { concurrency: 2 },
+      );
+      return { currentSourceRevisions, profileEvidence, proposalEvidence };
+    },
+  );
+
   return {
     loadCandidateCurrent: ({ payload, trustedContext }) => {
-      const resolveCandidate = currentnessForTransaction.resolveCandidate;
+      const { resolveCandidate } = currentnessForTransaction;
       if (resolveCandidate === undefined) {
         return Effect.fail(
           approvalDependencyUnavailable(
@@ -964,15 +1098,7 @@ export const purchaseApprovalTriggerEvidenceSourceForTransaction = (
           ),
         );
       }
-      if (
-        payload.counterpartyRef.tenantId !== scope.tenantId ||
-        payload.profileRef.tenantId !== scope.tenantId ||
-        payload.storefrontId !== scope.trustedStorefrontId ||
-        trustedContext.principalId !== scope.principalId ||
-        trustedContext.sellingLegalEntityId !== scope.legalEntityId ||
-        trustedContext.storefrontId !== scope.trustedStorefrontId ||
-        !sameCounterpartyRef(trustedContext.counterpartyRef, payload.counterpartyRef)
-      ) {
+      if (!requestMatchesTrustedScope(payload, trustedContext)) {
         return Effect.fail(
           approvalDependencyUnavailable(
             'CUSTOMER_PROFILE',
@@ -980,164 +1106,27 @@ export const purchaseApprovalTriggerEvidenceSourceForTransaction = (
           ),
         );
       }
-      return Effect.gen(function* loadCandidatePurchaseApprovalEvidence() {
-        const evaluatedAt = yield* DateTime.now;
-        const profileServices = profilePersistenceServicesForTransaction(
-          transaction,
-          {
-            legalEntityId: scope.legalEntityId,
-            principalId: scope.principalId,
-            tenantId: scope.tenantId,
-          },
-          profileDependencies,
-        );
-        const [facts, profile, policyState] = yield* Effect.all(
-          [
-            resolveCandidate({
-              claimedPurchaseValue: payload.purchaseValue,
-              counterpartyRef: payload.counterpartyRef,
-              expectedSourceRevisions: payload.expectedSourceRevisions,
-              observedAt: evaluatedAt,
-              scope: {
-                legalEntityId: scope.legalEntityId,
-                principalId: scope.principalId,
-                storefrontId: scope.trustedStorefrontId,
-                tenantId: scope.tenantId,
-              },
-            }).pipe(
-              Effect.flatMap(authoritativeExternalFacts),
-              Effect.mapError((cause) =>
-                approvalDependencyUnavailable(
-                  'PURCHASE_LIMIT_EVALUATION',
-                  'Candidate Purchase Proposal evidence is temporarily unavailable',
-                  cause,
-                ),
-              ),
-            ),
-            profileServices.customerProfileTradingGate
-              .evaluateGate(
-                {
-                  authorizationSubject: {
-                    counterpartyRef: trustedContext.counterpartyRef,
-                    kind: 'COUNTERPARTY',
-                  },
-                  profileRef: payload.profileRef,
-                },
-                scope.tenantId,
-              )
-              .pipe(
-                Effect.mapError((cause) =>
-                  approvalDependencyUnavailable(
-                    'CUSTOMER_PROFILE',
-                    'Current Customer Profile trading evidence is temporarily unavailable',
-                    cause,
-                  ),
-                ),
-              ),
-            readCurrentPurchaseLimitPolicyState(transaction, {
-              counterpartyRef: payload.counterpartyRef,
-              principalRef: { principalId: scope.principalId, tenantId: scope.tenantId },
+      return loadApprovalEvidence(
+        payload,
+        trustedContext,
+        (evaluatedAt) =>
+          resolveCandidate({
+            claimedPurchaseValue: payload.purchaseValue,
+            counterpartyRef: payload.counterpartyRef,
+            expectedSourceRevisions: payload.expectedSourceRevisions,
+            observedAt: evaluatedAt,
+            scope: {
+              legalEntityId: scope.legalEntityId,
+              principalId: scope.principalId,
+              storefrontId: scope.trustedStorefrontId,
               tenantId: scope.tenantId,
-            }).pipe(
-              Effect.mapError((cause) =>
-                approvalDependencyUnavailable(
-                  'PURCHASE_LIMIT_EVALUATION',
-                  'Current Purchase Limit policy evidence is temporarily unavailable',
-                  cause,
-                ),
-              ),
-            ),
-          ],
-          { concurrency: 3 },
-        );
-        const profileSourceRevision = facts.currentSourceRevisions.find(
-          ({ source }) => source === PURCHASING_PROFILE_SOURCE,
-        )?.revision;
-        const proposalSourceRevision = facts.currentSourceRevisions.find(
-          ({ source }) => source === PURCHASE_PROPOSAL_SOURCE,
-        )?.revision;
-        if (
-          profile.subject.kind !== 'COUNTERPARTY' ||
-          !sameCounterpartyRef(profile.subject.counterpartyRef, payload.counterpartyRef) ||
-          !sameProfileRef(profile.profileRef, payload.profileRef) ||
-          profileSourceRevision !== String(profile.revision) ||
-          facts.purchaseValue.sourceRef !== payload.proposalRevisionRef ||
-          proposalSourceRevision !== facts.purchaseValue.sourceRevision
-        ) {
-          return yield* Effect.fail(
-            approvalDependencyUnavailable(
-              'PURCHASE_LIMIT_EVALUATION',
-              'Candidate owner facts are not bound to the requested proposal/profile revision',
-            ),
-          );
-        }
-        const currentSourceRevisions = yield* combinedSourceRevisions(
-          facts.currentSourceRevisions,
-          policyState.sourceRevisions,
-          Option.none(),
-        ).pipe(
-          Effect.mapError((cause) =>
-            approvalDependencyUnavailable(
-              'PURCHASE_LIMIT_EVALUATION',
-              'Candidate Purchase Approval evidence contains invalid or colliding revisions',
-              cause,
-            ),
-          ),
-        );
-        const rawProfileEvaluatedAt: unknown = profile.evaluatedAt;
-        const [profileEvidence, proposalEvidence] = yield* Effect.all(
-          [
-            Schema.decodeUnknownEffect(PurchaseApprovalProfileEvidenceSchema)({
-              counterpartyRef: payload.counterpartyRef,
-              evaluatedAt: DateTime.isDateTime(rawProfileEvaluatedAt)
-                ? DateTime.formatIso(rawProfileEvaluatedAt)
-                : rawProfileEvaluatedAt,
-              evaluationContext: trustedContext,
-              gate: profile.gate,
-              profileRef: profile.profileRef,
-              revision: profile.revision,
-              sourceRevision: profileSourceRevision,
-            }).pipe(
-              Effect.mapError((cause) =>
-                approvalDependencyUnavailable(
-                  'CUSTOMER_PROFILE',
-                  'Current Customer Profile evidence is invalid',
-                  cause,
-                ),
-              ),
-            ),
-            Schema.decodeUnknownEffect(PurchaseApprovalProposalEvidenceSchema)({
-              evaluatedAt: DateTime.formatIso(evaluatedAt),
-              evaluationContext: trustedContext,
-              proposalRevisionRef: facts.purchaseValue.sourceRef,
-              purchaseValue: facts.purchaseValue,
-              revision: facts.purchaseValue.sourceRevision,
-              state: 'CURRENT',
-            }).pipe(
-              Effect.mapError((cause) =>
-                approvalDependencyUnavailable(
-                  'PURCHASE_LIMIT_EVALUATION',
-                  'Current Purchase Proposal evidence is invalid',
-                  cause,
-                ),
-              ),
-            ),
-          ],
-          { concurrency: 2 },
-        );
-        return { currentSourceRevisions, profileEvidence, proposalEvidence };
-      });
+            },
+          }),
+        'candidate',
+      );
     },
     loadCurrent: ({ payload, trustedContext }) => {
-      if (
-        payload.counterpartyRef.tenantId !== scope.tenantId ||
-        payload.profileRef.tenantId !== scope.tenantId ||
-        payload.storefrontId !== scope.trustedStorefrontId ||
-        trustedContext.principalId !== scope.principalId ||
-        trustedContext.sellingLegalEntityId !== scope.legalEntityId ||
-        trustedContext.storefrontId !== scope.trustedStorefrontId ||
-        !sameCounterpartyRef(trustedContext.counterpartyRef, payload.counterpartyRef)
-      ) {
+      if (!requestMatchesTrustedScope(payload, trustedContext)) {
         return Effect.fail(
           approvalDependencyUnavailable(
             'CUSTOMER_PROFILE',
@@ -1145,170 +1134,24 @@ export const purchaseApprovalTriggerEvidenceSourceForTransaction = (
           ),
         );
       }
-
-      return Effect.gen(function* loadCurrentPurchaseApprovalEvidence() {
-        const evaluatedAt = yield* DateTime.now;
-        const profileServices = profilePersistenceServicesForTransaction(
-          transaction,
-          {
-            legalEntityId: scope.legalEntityId,
-            principalId: scope.principalId,
-            tenantId: scope.tenantId,
-          },
-          profileDependencies,
-        );
-        const [facts, profile, policyState] = yield* Effect.all(
-          [
-            currentnessForTransaction
-              .resolveCurrent({
-                claimedPurchaseValue: payload.purchaseValue,
-                counterpartyRef: payload.counterpartyRef,
-                expectedSourceRevisions: payload.expectedSourceRevisions,
-                observedAt: evaluatedAt,
-                scope: {
-                  legalEntityId: scope.legalEntityId,
-                  principalId: scope.principalId,
-                  storefrontId: scope.trustedStorefrontId,
-                  tenantId: scope.tenantId,
-                },
-              })
-              .pipe(
-                Effect.flatMap(authoritativeExternalFacts),
-                Effect.mapError((cause) =>
-                  approvalDependencyUnavailable(
-                    'PURCHASE_LIMIT_EVALUATION',
-                    'Current Purchase Proposal evidence is temporarily unavailable',
-                    cause,
-                  ),
-                ),
-              ),
-            profileServices.customerProfileTradingGate
-              .evaluateGate(
-                {
-                  authorizationSubject: {
-                    counterpartyRef: trustedContext.counterpartyRef,
-                    kind: 'COUNTERPARTY',
-                  },
-                  profileRef: payload.profileRef,
-                },
-                scope.tenantId,
-              )
-              .pipe(
-                Effect.mapError((cause) =>
-                  approvalDependencyUnavailable(
-                    'CUSTOMER_PROFILE',
-                    'Current Customer Profile trading evidence is temporarily unavailable',
-                    cause,
-                  ),
-                ),
-              ),
-            readCurrentPurchaseLimitPolicyState(transaction, {
-              counterpartyRef: payload.counterpartyRef,
-              principalRef: {
-                principalId: scope.principalId,
-                tenantId: scope.tenantId,
-              },
+      return loadApprovalEvidence(
+        payload,
+        trustedContext,
+        (evaluatedAt) =>
+          currentnessForTransaction.resolveCurrent({
+            claimedPurchaseValue: payload.purchaseValue,
+            counterpartyRef: payload.counterpartyRef,
+            expectedSourceRevisions: payload.expectedSourceRevisions,
+            observedAt: evaluatedAt,
+            scope: {
+              legalEntityId: scope.legalEntityId,
+              principalId: scope.principalId,
+              storefrontId: scope.trustedStorefrontId,
               tenantId: scope.tenantId,
-            }).pipe(
-              Effect.mapError((cause) =>
-                approvalDependencyUnavailable(
-                  'PURCHASE_LIMIT_EVALUATION',
-                  'Current Purchase Limit policy evidence is temporarily unavailable',
-                  cause,
-                ),
-              ),
-            ),
-          ],
-          { concurrency: 3 },
-        );
-
-        const profileSourceRevision = facts.currentSourceRevisions.find(
-          ({ source }) => source === PURCHASING_PROFILE_SOURCE,
-        )?.revision;
-        const proposalSourceRevision = facts.currentSourceRevisions.find(
-          ({ source }) => source === PURCHASE_PROPOSAL_SOURCE,
-        )?.revision;
-        if (
-          profile.subject.kind !== 'COUNTERPARTY' ||
-          !sameCounterpartyRef(profile.subject.counterpartyRef, payload.counterpartyRef) ||
-          !sameProfileRef(profile.profileRef, payload.profileRef) ||
-          profileSourceRevision !== String(profile.revision)
-        ) {
-          return yield* Effect.fail(
-            approvalDependencyUnavailable(
-              'CUSTOMER_PROFILE',
-              'Current Customer Profile evidence is not bound to the requested Counterparty and owner revision',
-            ),
-          );
-        }
-        if (
-          facts.purchaseValue.sourceRef !== payload.proposalRevisionRef ||
-          proposalSourceRevision !== facts.purchaseValue.sourceRevision
-        ) {
-          return yield* Effect.fail(
-            approvalDependencyUnavailable(
-              'PURCHASE_LIMIT_EVALUATION',
-              'Current Purchase Proposal evidence is not bound to its immutable reference and revision',
-            ),
-          );
-        }
-
-        const currentSourceRevisions = yield* combinedSourceRevisions(
-          facts.currentSourceRevisions,
-          policyState.sourceRevisions,
-          Option.none(),
-        ).pipe(
-          Effect.mapError((cause) =>
-            approvalDependencyUnavailable(
-              'PURCHASE_LIMIT_EVALUATION',
-              'Current Purchase Approval evidence contains invalid or colliding revisions',
-              cause,
-            ),
-          ),
-        );
-        const rawProfileEvaluatedAt: unknown = profile.evaluatedAt;
-        const [profileEvidence, proposalEvidence] = yield* Effect.all(
-          [
-            Schema.decodeUnknownEffect(PurchaseApprovalProfileEvidenceSchema)({
-              counterpartyRef: payload.counterpartyRef,
-              evaluatedAt: DateTime.isDateTime(rawProfileEvaluatedAt)
-                ? DateTime.formatIso(rawProfileEvaluatedAt)
-                : rawProfileEvaluatedAt,
-              evaluationContext: trustedContext,
-              gate: profile.gate,
-              profileRef: profile.profileRef,
-              revision: profile.revision,
-              sourceRevision: profileSourceRevision,
-            }).pipe(
-              Effect.mapError((cause) =>
-                approvalDependencyUnavailable(
-                  'CUSTOMER_PROFILE',
-                  'Current Customer Profile evidence is invalid',
-                  cause,
-                ),
-              ),
-            ),
-            Schema.decodeUnknownEffect(PurchaseApprovalProposalEvidenceSchema)({
-              evaluatedAt: DateTime.formatIso(evaluatedAt),
-              evaluationContext: trustedContext,
-              proposalRevisionRef: facts.purchaseValue.sourceRef,
-              purchaseValue: facts.purchaseValue,
-              revision: facts.purchaseValue.sourceRevision,
-              state: 'CURRENT',
-            }).pipe(
-              Effect.mapError((cause) =>
-                approvalDependencyUnavailable(
-                  'PURCHASE_LIMIT_EVALUATION',
-                  'Current Purchase Proposal evidence is invalid',
-                  cause,
-                ),
-              ),
-            ),
-          ],
-          { concurrency: 2 },
-        );
-        return { currentSourceRevisions, profileEvidence, proposalEvidence };
-      });
+            },
+          }),
+        'current',
+      );
     },
   };
 };
@@ -1385,40 +1228,29 @@ const approvalEvidenceFactoryForCurrentness = (
  * external source vector as fresh evidence. A deployment can replace this layer with the real
  * owner adapter without changing Action or SQL boundaries.
  */
-const durablePurchaseLimitEvaluationCurrentness =
-  (): PurchaseLimitEvaluationCurrentnessPortService => ({
-    forTransaction: () => ({
-      resolveCurrent: () =>
-        Effect.fail(
-          dependencyUnavailable('commerce.customer-context.purchase-approval-currentness'),
-        ),
-      resolveCandidate: () =>
-        Effect.fail(
-          dependencyUnavailable(
-            'commerce.customer-context.purchase-approval-candidate-currentness',
-          ),
-        ),
-    }),
-    resolveCurrent: () =>
-      Effect.fail(dependencyUnavailable('commerce.customer-context.purchase-approval-currentness')),
+const durablePurchaseLimitEvaluationCurrentness = (): PurchaseLimitEvaluationCurrentnessPortService => ({
+  forTransaction: () => ({
     resolveCandidate: () =>
-      Effect.fail(
-        dependencyUnavailable('commerce.customer-context.purchase-approval-candidate-currentness'),
-      ),
-  });
+      Effect.fail(dependencyUnavailable('commerce.customer-context.purchase-approval-candidate-currentness')),
+    resolveCurrent: () => Effect.fail(dependencyUnavailable('commerce.customer-context.purchase-approval-currentness')),
+  }),
+  resolveCandidate: () =>
+    Effect.fail(dependencyUnavailable('commerce.customer-context.purchase-approval-candidate-currentness')),
+  resolveCurrent: () => Effect.fail(dependencyUnavailable('commerce.customer-context.purchase-approval-currentness')),
+});
 
-export const unavailablePurchaseLimitEvaluationCurrentness =
-  (): PurchaseLimitEvaluationCurrentnessPortService => ({
-    resolveCurrent: () =>
-      Effect.fail(
-        dependencyUnavailableFromCause(
-          EVALUATION_CURRENTNESS_DEPENDENCY,
-          'Current Purchase Proposal, profile, Storefront, and Customer Commerce Policy owners are not configured',
-        ),
+const unavailablePurchaseLimitEvaluationCurrentness = (): PurchaseLimitEvaluationCurrentnessPortService => ({
+  resolveCurrent: () =>
+    Effect.fail(
+      dependencyUnavailableFromCause(
+        EVALUATION_CURRENTNESS_DEPENDENCY,
+        'Current Purchase Proposal, profile, Storefront, and Customer Commerce Policy owners are not configured',
       ),
-  });
+    ),
+});
 
-export const purchaseLimitEvaluationCurrentnessUnavailableLayer = Layer.succeed(
+// eslint-disable-next-line no-unused-vars -- Retain the fail-closed Layer that keeps its private unavailable currentness factory structurally connected.
+const purchaseLimitEvaluationCurrentnessUnavailableLayer = Layer.succeed(
   PurchaseLimitEvaluationCurrentnessPort,
   unavailablePurchaseLimitEvaluationCurrentness(),
 );
@@ -1430,19 +1262,18 @@ export const purchaseLimitEvaluationCurrentnessLive = Layer.succeed(
 );
 
 /** Real owner composition over scoped persistence, explicit Currentness, and published FX. */
-export const purchaseLimitEvaluationSourceFactoryLayer = Layer.effect(
+const purchaseLimitEvaluationSourceFactoryLayer = Layer.effect(
   PurchaseLimitEvaluationSourceFactory,
-  Effect.map(PurchaseLimitEvaluationCurrentnessPort, (currentness) =>
-    evaluationSourceFactoryForCurrentness(currentness),
+  PurchaseLimitEvaluationCurrentnessPort.pipe(
+    Effect.map((currentness) => evaluationSourceFactoryForCurrentness(currentness)),
   ),
 );
 
-export const purchaseApprovalTriggerEvidenceSourceFactoryLayer = Layer.effect(
+const purchaseApprovalTriggerEvidenceSourceFactoryLayer = Layer.effect(
   PurchaseApprovalTriggerEvidenceSourceFactory,
-  Effect.all(
-    [PurchaseLimitEvaluationCurrentnessPort, ProfileCounterpartyRoleEligibilityResolverFactory],
-    { concurrency: 2 },
-  ).pipe(
+  Effect.all([PurchaseLimitEvaluationCurrentnessPort, ProfileCounterpartyRoleEligibilityResolverFactory], {
+    concurrency: 2,
+  }).pipe(
     Effect.map(([currentness, roleResolverFactory]) =>
       approvalEvidenceFactoryForCurrentness(currentness, roleResolverFactory),
     ),

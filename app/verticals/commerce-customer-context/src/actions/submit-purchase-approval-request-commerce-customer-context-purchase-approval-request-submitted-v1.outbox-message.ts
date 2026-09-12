@@ -8,13 +8,6 @@ import {
 } from '@app/commerce-customer-context/outbox/commerce-customer-context-purchase-approval-request-submitted-v1';
 import type { OutboxPayload } from '@app/commerce-customer-context/outbox/commerce-customer-context-purchase-approval-request-submitted-v1';
 
-export {
-  OutboxPayloadSchema as SubmitPurchaseApprovalRequestCommerceCustomerContextPurchaseApprovalRequestSubmittedV1OutboxPayloadSchema,
-  outboxProducerModuleKey as SubmitPurchaseApprovalRequestCommerceCustomerContextPurchaseApprovalRequestSubmittedV1OutboxProducerModuleKey,
-  outboxTopic as SubmitPurchaseApprovalRequestCommerceCustomerContextPurchaseApprovalRequestSubmittedV1OutboxTopic,
-} from '@app/commerce-customer-context/outbox/commerce-customer-context-purchase-approval-request-submitted-v1';
-export type { OutboxPayload as SubmitPurchaseApprovalRequestCommerceCustomerContextPurchaseApprovalRequestSubmittedV1OutboxPayload } from '@app/commerce-customer-context/outbox/commerce-customer-context-purchase-approval-request-submitted-v1';
-
 export const createSubmitPurchaseApprovalRequestCommerceCustomerContextPurchaseApprovalRequestSubmittedV1OutboxMessage =
   (payload: OutboxPayload): OutboxMessage => ({
     payloadJson: payload,

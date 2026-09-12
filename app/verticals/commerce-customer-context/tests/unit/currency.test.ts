@@ -355,9 +355,7 @@ it('declares finite Guest and Profile authorization branches for Launch resoluti
   };
   const plan = getReadConditionalPermissionPlan(purchaseCurrencyResolutionPermission);
   expect(purchaseCurrencyResolutionPermission.branchTags).toEqual(['GUEST', 'PROFILE']);
-  expect(purchaseCurrencyGuestPermissionTargets()).toEqual([
-    { kind: 'module', moduleId: 'commerce.customer-context' },
-  ]);
+  expect(purchaseCurrencyGuestPermissionTargets()).toEqual([{ kind: 'module', moduleId: 'commerce.customer-context' }]);
   expect(plan.branches.GUEST.requiredKinds).toEqual(['module']);
   expect(plan.branches.PROFILE.requiredKinds).toEqual(['business_permission', 'resource_read']);
   expect(
@@ -475,9 +473,7 @@ it.effect('propagates an unavailable Current owner as a typed dependency outcome
         resolveCurrent: () => Effect.succeed(AKROS_LAUNCH_PRICING_CURRENCY_SUPPORT),
       }),
     );
-    const failure = yield* services
-      .loadCurrent(baseResolution().request, '2026-09-09T10:00:01.000Z')
-      .pipe(Effect.flip);
+    const failure = yield* services.loadCurrent(baseResolution().request, '2026-09-09T10:00:01.000Z').pipe(Effect.flip);
     expect(Schema.is(PurchaseCurrencyDependencyUnavailable)(failure)).toBe(true);
     expect(failure.code).toBe('purchasing_context_unavailable');
   }),

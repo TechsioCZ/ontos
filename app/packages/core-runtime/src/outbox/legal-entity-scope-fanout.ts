@@ -10,10 +10,7 @@ import type { CoreDatabaseExecutor, CoreTransaction } from '../db/types.ts';
 import type { OutboxWorkerHandlerContext } from './definition.ts';
 import { isVerifiedOutboxWorkerHandlerContext } from './definition.ts';
 import { OutboxWorkerLegalEntityScopeError } from './legal-entity-scope-error.ts';
-import {
-  outboxWorkerCompletionPublisherFor,
-  persistOutboxWorkerCompletion,
-} from './completion-publication.ts';
+import { outboxWorkerCompletionPublisherFor, persistOutboxWorkerCompletion } from './completion-publication.ts';
 import type { OutboxWorkerCompletionPublisher } from './completion-publication.ts';
 
 export { OutboxWorkerLegalEntityScopeError } from './legal-entity-scope-error.ts';
@@ -36,25 +33,18 @@ export interface OutboxWorkerLegalEntityScopeRecord {
 export interface OutboxWorkerLegalEntityScopeBackend {
   readonly list: (
     context: OutboxWorkerHandlerContext,
-  ) => Effect.Effect<
-    readonly OutboxWorkerLegalEntityScopeRecord[],
-    OutboxWorkerLegalEntityScopeError
-  >;
+  ) => Effect.Effect<readonly OutboxWorkerLegalEntityScopeRecord[], OutboxWorkerLegalEntityScopeError>;
   readonly run: <OwnerError, OwnerRequirements>(
     context: OutboxWorkerHandlerContext,
     legalEntityId: string,
-    observe: (
-      scope: OutboxWorkerLegalEntityScope,
-    ) => Effect.Effect<void, OwnerError, OwnerRequirements>,
+    observe: (scope: OutboxWorkerLegalEntityScope) => Effect.Effect<void, OwnerError, OwnerRequirements>,
   ) => Effect.Effect<void, OwnerError | OutboxWorkerLegalEntityScopeError, OwnerRequirements>;
 }
 
 export interface OutboxWorkerLegalEntityScopeFanoutService {
   readonly forEachScope: <OwnerError, OwnerRequirements>(
     context: OutboxWorkerHandlerContext,
-    observe: (
-      scope: OutboxWorkerLegalEntityScope,
-    ) => Effect.Effect<void, OwnerError, OwnerRequirements>,
+    observe: (scope: OutboxWorkerLegalEntityScope) => Effect.Effect<void, OwnerError, OwnerRequirements>,
   ) => Effect.Effect<void, OwnerError | OutboxWorkerLegalEntityScopeError, OwnerRequirements>;
 }
 
@@ -114,9 +104,7 @@ const classifyScopeIds = (
     return Effect.fail(unavailable());
   }
   const legalEntityIds = records.map(({ legalEntityId }) => legalEntityId).toSorted();
-  return legalEntityIds.length === 0
-    ? Effect.fail(empty())
-    : Effect.succeed(Object.freeze(legalEntityIds));
+  return legalEntityIds.length === 0 ? Effect.fail(empty()) : Effect.succeed(Object.freeze(legalEntityIds));
 };
 
 export const makeOutboxWorkerLegalEntityScopeFanout = (
@@ -129,11 +117,10 @@ export const makeOutboxWorkerLegalEntityScopeFanout = (
     return backend.list(context).pipe(
       Effect.flatMap((records) => classifyScopeIds(records, context.tenantId)),
       Effect.flatMap((legalEntityIds) =>
-        Effect.forEach(
-          legalEntityIds,
-          (legalEntityId) => backend.run(context, legalEntityId, observe),
-          { concurrency: 1, discard: true },
-        ),
+        Effect.forEach(legalEntityIds, (legalEntityId) => backend.run(context, legalEntityId, observe), {
+          concurrency: 1,
+          discard: true,
+        }),
       ),
       Effect.withSpan('OutboxWorker.legalEntityScopeFanout'),
     );
@@ -145,9 +132,7 @@ interface ScopeSettingRow extends Record<string, unknown> {
   readonly tenant_id: string;
 }
 
-const inactiveInvokerError = (
-  routine: Parameters<ScopedRoutineInvoker['invoke']>[0],
-): ScopedRoutineInvocationError =>
+const inactiveInvokerError = (routine: Parameters<ScopedRoutineInvoker['invoke']>[0]): ScopedRoutineInvocationError =>
   new ScopedRoutineInvocationError({
     code: 'scoped_routine_scope_missing',
     constraint: Option.none(),
@@ -207,50 +192,43 @@ export const makePostgresOutboxWorkerLegalEntityScopeBackend = (database: {
   run: <OwnerError, OwnerRequirements>(
     context: OutboxWorkerHandlerContext,
     legalEntityId: string,
-    observe: (
-      scope: OutboxWorkerLegalEntityScope,
-    ) => Effect.Effect<void, OwnerError, OwnerRequirements>,
+    observe: (scope: OutboxWorkerLegalEntityScope) => Effect.Effect<void, OwnerError, OwnerRequirements>,
   ): Effect.Effect<void, OwnerError | OutboxWorkerLegalEntityScopeError, OwnerRequirements> => {
     const transaction = database.executor.transaction(
-      Effect.fn('OutboxWorkerLegalEntityScopeFanout.transaction')(
-        function* runLegalEntityScopeTransaction(scopedTransaction: CoreTransaction) {
-          const settings = yield* scopedTransaction
-            .execute<ScopeSettingRow>(
-              sql`
+      Effect.fn('OutboxWorkerLegalEntityScopeFanout.transaction')(function* runLegalEntityScopeTransaction(
+        scopedTransaction: CoreTransaction,
+      ) {
+        const settings = yield* scopedTransaction
+          .execute<ScopeSettingRow>(
+            sql`
                 select
                   set_config('ontos.tenant_id', ${context.tenantId}, true) as tenant_id,
                   set_config('ontos.legal_entity_id', ${legalEntityId}, true) as legal_entity_id
               `,
-              'objects',
-            )
-            .pipe(Effect.mapError(unavailable));
-          const [setting] = settings;
-          const [current] = yield* scopedTransaction
-            .select({
-              legalEntityId: legalEntities.legalEntityId,
-              status: legalEntities.status,
-            })
-            .from(legalEntities)
-            .where(
-              and(
-                eq(legalEntities.tenantId, context.tenantId),
-                eq(legalEntities.legalEntityId, legalEntityId),
-              ),
-            )
-            .limit(1)
-            .pipe(Effect.mapError(unavailable));
-          if (
-            setting?.tenant_id !== context.tenantId ||
-            setting.legal_entity_id !== legalEntityId ||
-            current?.legalEntityId !== legalEntityId ||
-            !legalEntityStatuses.some((status) => status === current.status)
-          ) {
-            return yield* unavailable();
-          }
-          const owned = ownerScope(scopedTransaction, context, context.tenantId, legalEntityId);
-          return yield* observe(owned.scope).pipe(Effect.ensuring(Effect.sync(owned.close)));
-        },
-      ),
+            'objects',
+          )
+          .pipe(Effect.mapError(unavailable));
+        const [setting] = settings;
+        const [current] = yield* scopedTransaction
+          .select({
+            legalEntityId: legalEntities.legalEntityId,
+            status: legalEntities.status,
+          })
+          .from(legalEntities)
+          .where(and(eq(legalEntities.tenantId, context.tenantId), eq(legalEntities.legalEntityId, legalEntityId)))
+          .limit(1)
+          .pipe(Effect.mapError(unavailable));
+        if (
+          setting?.tenant_id !== context.tenantId ||
+          setting.legal_entity_id !== legalEntityId ||
+          current?.legalEntityId !== legalEntityId ||
+          !legalEntityStatuses.some((status) => status === current.status)
+        ) {
+          return yield* unavailable();
+        }
+        const owned = ownerScope(scopedTransaction, context, context.tenantId, legalEntityId);
+        return yield* observe(owned.scope).pipe(Effect.ensuring(Effect.sync(owned.close)));
+      }),
     );
     return transaction.pipe(
       Effect.mapError((failure) => (Schema.is(SqlError)(failure) ? unavailable(failure) : failure)),
@@ -262,9 +240,7 @@ export const OutboxWorkerLegalEntityScopeFanoutLive = Layer.effect(
   OutboxWorkerLegalEntityScopeFanout,
   CoreDatabase.pipe(
     Effect.map((database) =>
-      makeOutboxWorkerLegalEntityScopeFanout(
-        makePostgresOutboxWorkerLegalEntityScopeBackend(database),
-      ),
+      makeOutboxWorkerLegalEntityScopeFanout(makePostgresOutboxWorkerLegalEntityScopeBackend(database)),
     ),
   ),
 );

@@ -21,7 +21,7 @@ type CounterpartyCommerceAccessListOperationInvocation = readonly [
 ];
 
 const counterpartyCommerceAccessListClient = (
-  credential: Redacted.Redacted<string>,
+  credential: Redacted.Redacted,
   requestCorrelation: string,
   options: CounterpartyCommerceAccessListClientOptions,
 ) =>
@@ -37,11 +37,7 @@ const counterpartyCommerceAccessListClient = (
 
 export const executeCounterpartyCommerceAccessListWithAuthorization = (
   payload: CounterpartyCommerceAccessListRequest,
-  ...[
-    credential,
-    requestCorrelation,
-    options = {},
-  ]: CounterpartyCommerceAccessListAuthorizedInvocation
+  ...[credential, requestCorrelation, options = {}]: CounterpartyCommerceAccessListAuthorizedInvocation
 ) =>
   counterpartyCommerceAccessListClient(Redacted.make(credential), requestCorrelation, options).pipe(
     Effect.flatMap((client) =>
@@ -59,10 +55,5 @@ export const executeCounterpartyCommerceAccessList = (
   ...[requestCorrelation, options = {}]: CounterpartyCommerceAccessListOperationInvocation
 ) =>
   operationGateway.invoke((credential) =>
-    executeCounterpartyCommerceAccessListWithAuthorization(
-      payload,
-      credential,
-      requestCorrelation,
-      options,
-    ),
+    executeCounterpartyCommerceAccessListWithAuthorization(payload, credential, requestCorrelation, options),
   );

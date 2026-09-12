@@ -2,10 +2,7 @@ import { Effect } from 'effect';
 import type { CounterpartyAccessInvitation } from '../../shared/domain/invitation-contract.ts';
 import { invitationHasUniquePermissions } from '../../shared/domain/invitation-contract.ts';
 import { CounterpartyAccessContractViolation } from '../../shared/domain/access-port.ts';
-import {
-  permissionAllowsScope,
-  permissionDescriptor,
-} from '../../shared/domain/permission-catalog.ts';
+import { permissionAllowsScope, permissionDescriptor } from '../../shared/domain/permission-catalog.ts';
 
 export const validateInvitationIntent = (
   invitation: Pick<CounterpartyAccessInvitation, 'intendedPermissions' | 'scope'>,

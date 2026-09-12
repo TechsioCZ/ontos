@@ -1,5 +1,4 @@
 import { fileURLToPath } from 'node:url';
-import { readFile } from 'node:fs/promises';
 
 import { NodeFileSystem } from '@effect/platform-node';
 import { Effect, FileSystem, Schema } from 'effect';

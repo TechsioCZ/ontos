@@ -3,7 +3,7 @@
 // @ontos-action-http-slug change-principal-purchase-limit-override
 // oxlint-disable sonarjs/function-name -- Effect Match.tags requires owner-declared tag keys; remove-when: sonarjs accepts discriminant-map properties.
 import type { ActionCoreError } from '@app/core-runtime';
-import { Effect, HttpApiMiddleware } from '@modern-js/plugin-bff/effect-edge';
+import { Effect, HttpApiMiddleware } from '@modern-js/bff-effect/effect-edge';
 import { Match, Schema } from 'effect';
 import {
   ChangePrincipalPurchaseLimitOverrideActionAlreadyCommittedProblemSchema,
@@ -22,8 +22,7 @@ import {
 import type { ChangePrincipalPurchaseLimitOverrideActionProblem } from '../shared/apis/change-principal-purchase-limit-override-action.ts';
 import { changePrincipalPurchaseLimitOverrideAction } from '../src/actions/change-principal-purchase-limit-override.action.ts';
 
-type DomainError =
-  typeof changePrincipalPurchaseLimitOverrideAction.descriptor.domainErrorSchema.Type;
+type DomainError = typeof changePrincipalPurchaseLimitOverrideAction.descriptor.domainErrorSchema.Type;
 type ProblemOf<Tag extends ChangePrincipalPurchaseLimitOverrideActionProblem['_tag']> = Extract<
   ChangePrincipalPurchaseLimitOverrideActionProblem,
   { readonly _tag: Tag }
@@ -44,14 +43,13 @@ const problemStatus = {
 } as const;
 
 export const changePrincipalPurchaseLimitOverrideActionProblem = {
-  authentication:
-    (): ProblemOf<'ChangePrincipalPurchaseLimitOverrideActionAuthenticationProblem'> =>
-      ChangePrincipalPurchaseLimitOverrideActionAuthenticationProblemSchema.make({
-        detail: 'A valid audience-scoped Bearer assertion is required.',
-        status: problemStatus.authentication,
-        title: 'Authentication required',
-        type: 'https://ontos.dev/problems/operation-authentication-required',
-      }),
+  authentication: (): ProblemOf<'ChangePrincipalPurchaseLimitOverrideActionAuthenticationProblem'> =>
+    ChangePrincipalPurchaseLimitOverrideActionAuthenticationProblemSchema.make({
+      detail: 'A valid audience-scoped Bearer assertion is required.',
+      status: problemStatus.authentication,
+      title: 'Authentication required',
+      type: 'https://ontos.dev/problems/operation-authentication-required',
+    }),
   conflict: (
     code: ProblemOf<'ChangePrincipalPurchaseLimitOverrideActionConflictProblem'>['code'],
   ): ProblemOf<'ChangePrincipalPurchaseLimitOverrideActionConflictProblem'> =>
@@ -130,28 +128,18 @@ const mapDomainProblem = (error: DomainError): ChangePrincipalPurchaseLimitOverr
   Match.value(error).pipe(
     Match.tags({
       PurchaseLimitDependencyUnavailable: () =>
-        changePrincipalPurchaseLimitOverrideActionProblem.unavailable(
-          'purchase_limit_dependency_unavailable',
-        ),
+        changePrincipalPurchaseLimitOverrideActionProblem.unavailable('purchase_limit_dependency_unavailable'),
       PurchaseLimitPolicyConflict: () =>
-        changePrincipalPurchaseLimitOverrideActionProblem.conflict(
-          'purchase_limit_policy_conflict',
-        ),
+        changePrincipalPurchaseLimitOverrideActionProblem.conflict('purchase_limit_policy_conflict'),
       PurchaseLimitPrincipalIneligible: () =>
-        changePrincipalPurchaseLimitOverrideActionProblem.ineligible(
-          'purchase_limit_principal_ineligible',
-        ),
+        changePrincipalPurchaseLimitOverrideActionProblem.ineligible('purchase_limit_principal_ineligible'),
       PurchaseLimitSubjectScopeMismatch: () =>
-        changePrincipalPurchaseLimitOverrideActionProblem.forbidden(
-          'purchase_limit_subject_scope_mismatch',
-        ),
+        changePrincipalPurchaseLimitOverrideActionProblem.forbidden('purchase_limit_subject_scope_mismatch'),
     }),
     Match.exhaustive,
   );
 
-const mapCoreProblem = (
-  error: ActionCoreError,
-): ChangePrincipalPurchaseLimitOverrideActionProblem =>
+const mapCoreProblem = (error: ActionCoreError): ChangePrincipalPurchaseLimitOverrideActionProblem =>
   Match.value(error).pipe(
     Match.tags({
       ActionAlreadyCommitted: (failure) =>
@@ -178,54 +166,40 @@ const mapCoreProblem = (
         }),
       ActionHandlerExecutionError: changePrincipalPurchaseLimitOverrideActionProblem.internal,
       ActionIdempotencyKeyRequired: changePrincipalPurchaseLimitOverrideActionProblem.precondition,
-      ActionInvocationNotFound: (failure) =>
-        changePrincipalPurchaseLimitOverrideActionProblem.notFound(failure.code),
+      ActionInvocationNotFound: (failure) => changePrincipalPurchaseLimitOverrideActionProblem.notFound(failure.code),
       ActionInvocationPersistenceError: (failure) =>
         changePrincipalPurchaseLimitOverrideActionProblem.unavailable(failure.code),
-      ActionInvocationStateError: (failure) =>
-        changePrincipalPurchaseLimitOverrideActionProblem.conflict(failure.code),
+      ActionInvocationStateError: (failure) => changePrincipalPurchaseLimitOverrideActionProblem.conflict(failure.code),
       ActionPayloadValidationError: changePrincipalPurchaseLimitOverrideActionProblem.invalid,
       ActionPermissionCheckError: (failure) =>
         changePrincipalPurchaseLimitOverrideActionProblem.unavailable(failure.code),
-      ActionPermissionDenied: (failure) =>
-        changePrincipalPurchaseLimitOverrideActionProblem.forbidden(failure.code),
-      ActionPolicyDenied: (failure) =>
-        changePrincipalPurchaseLimitOverrideActionProblem.ineligible(failure.code),
+      ActionPermissionDenied: (failure) => changePrincipalPurchaseLimitOverrideActionProblem.forbidden(failure.code),
+      ActionPolicyDenied: (failure) => changePrincipalPurchaseLimitOverrideActionProblem.ineligible(failure.code),
       ActionPolicyEvaluationError: (failure) =>
         changePrincipalPurchaseLimitOverrideActionProblem.unavailable(failure.code),
-      ActionRequestHashConflict: (failure) =>
-        changePrincipalPurchaseLimitOverrideActionProblem.conflict(failure.code),
+      ActionRequestHashConflict: (failure) => changePrincipalPurchaseLimitOverrideActionProblem.conflict(failure.code),
       ActionResultValidationError: changePrincipalPurchaseLimitOverrideActionProblem.internal,
-      ActionTransactionError: (failure) =>
-        changePrincipalPurchaseLimitOverrideActionProblem.unavailable(failure.code),
-      ActionTrustedContextValidationError:
-        changePrincipalPurchaseLimitOverrideActionProblem.authentication,
+      ActionTransactionError: (failure) => changePrincipalPurchaseLimitOverrideActionProblem.unavailable(failure.code),
+      ActionTrustedContextValidationError: changePrincipalPurchaseLimitOverrideActionProblem.authentication,
       ModuleStateCheckUnavailableError: (failure) =>
         changePrincipalPurchaseLimitOverrideActionProblem.unavailable(failure.code),
-      ModuleStateDeniedError: (failure) =>
-        changePrincipalPurchaseLimitOverrideActionProblem.forbidden(failure.code),
-      OperationAuthenticationRequired:
-        changePrincipalPurchaseLimitOverrideActionProblem.authentication,
-      OperationContextDenied: (failure) =>
-        changePrincipalPurchaseLimitOverrideActionProblem.forbidden(failure.code),
-      OperationContextInvalid: (failure) =>
-        changePrincipalPurchaseLimitOverrideActionProblem.forbidden(failure.code),
+      ModuleStateDeniedError: (failure) => changePrincipalPurchaseLimitOverrideActionProblem.forbidden(failure.code),
+      OperationAuthenticationRequired: changePrincipalPurchaseLimitOverrideActionProblem.authentication,
+      OperationContextDenied: (failure) => changePrincipalPurchaseLimitOverrideActionProblem.forbidden(failure.code),
+      OperationContextInvalid: (failure) => changePrincipalPurchaseLimitOverrideActionProblem.forbidden(failure.code),
       OperationContextUnavailable: (failure) =>
         changePrincipalPurchaseLimitOverrideActionProblem.unavailable(failure.code),
     }),
     Match.exhaustive,
   );
 
-const isDomainError = Schema.is(
-  changePrincipalPurchaseLimitOverrideAction.descriptor.domainErrorSchema,
-);
+const isDomainError = Schema.is(changePrincipalPurchaseLimitOverrideAction.descriptor.domainErrorSchema);
 export const mapChangePrincipalPurchaseLimitOverrideActionProblem = (
   error: ActionCoreError | DomainError,
 ): ChangePrincipalPurchaseLimitOverrideActionProblem =>
   isDomainError(error) ? mapDomainProblem(error) : mapCoreProblem(error);
 
-export const changePrincipalPurchaseLimitOverrideActionSchemaErrorLive =
-  HttpApiMiddleware.layerSchemaErrorTransform(
-    ChangePrincipalPurchaseLimitOverrideActionSchemaErrorMiddleware,
-    () => Effect.fail(changePrincipalPurchaseLimitOverrideActionProblem.invalid()),
-  );
+export const changePrincipalPurchaseLimitOverrideActionSchemaErrorLive = HttpApiMiddleware.layerSchemaErrorTransform(
+  ChangePrincipalPurchaseLimitOverrideActionSchemaErrorMiddleware,
+  () => Effect.fail(changePrincipalPurchaseLimitOverrideActionProblem.invalid()),
+);

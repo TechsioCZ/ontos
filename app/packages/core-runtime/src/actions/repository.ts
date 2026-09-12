@@ -255,7 +255,7 @@ export interface RejectPermissionDeniedInput {
   readonly transport: ActionTransportMetadata;
 }
 
-export type ActionInvocationStateExecutor = Pick<CoreDatabaseExecutor, 'select' | 'update'>;
+type ActionInvocationStateExecutor = Pick<CoreDatabaseExecutor, 'select' | 'update'>;
 
 export interface ActionRepositoryService {
   readonly createOrResolveInvocation: (
@@ -483,45 +483,41 @@ export const makeActionRepository = (): ActionRepositoryService => {
         ),
       );
 
-  const transitionInvocationToRunning: ActionRepositoryService['transitionInvocationToRunning'] =
-    Effect.fn('makeActionRepository.transitionInvocationToRunning')(
-      function* transitionInvocationToRunningEffect(
-        executor: ActionInvocationStateExecutor,
-        invocationId: string,
-      ) {
-        const failureReason = 'Unable to transition the Action invocation to running';
-        const transitioned = yield* executor
-          .update(actionInvocations)
-          .set({ status: 'running' })
-          .where(
-            and(
-              eq(actionInvocations.actionInvocationId, invocationId),
-              inArray(actionInvocations.status, ['received', 'running']),
-              isNull(actionInvocations.completedAt),
-            ),
-          )
-          .returning(invocationSelection)
-          .pipe(Effect.mapError((cause) => persistenceFailure(failureReason, cause)));
-        const [invocation] = transitioned;
-        if (invocation !== undefined) {
-          return invocation;
-        }
-        const current = yield* executor
-          .select(invocationSelection)
-          .from(actionInvocations)
-          .where(eq(actionInvocations.actionInvocationId, invocationId))
-          .limit(1)
-          .pipe(Effect.mapError((cause) => persistenceFailure(failureReason, cause)));
-        const [resolved] = current;
-        if (resolved === undefined) {
-          return yield* persistenceFailure(
-            failureReason,
-            new RepositoryInvariantError({ reason: 'The Action invocation no longer exists' }),
-          );
-        }
-        return resolved;
-      },
-    );
+  const transitionInvocationToRunning: ActionRepositoryService['transitionInvocationToRunning'] = Effect.fn(
+    'makeActionRepository.transitionInvocationToRunning',
+  )(function* transitionInvocationToRunningEffect(executor: ActionInvocationStateExecutor, invocationId: string) {
+    const failureReason = 'Unable to transition the Action invocation to running';
+    const transitioned = yield* executor
+      .update(actionInvocations)
+      .set({ status: 'running' })
+      .where(
+        and(
+          eq(actionInvocations.actionInvocationId, invocationId),
+          inArray(actionInvocations.status, ['received', 'running']),
+          isNull(actionInvocations.completedAt),
+        ),
+      )
+      .returning(invocationSelection)
+      .pipe(Effect.mapError((cause) => persistenceFailure(failureReason, cause)));
+    const [invocation] = transitioned;
+    if (invocation !== undefined) {
+      return invocation;
+    }
+    const current = yield* executor
+      .select(invocationSelection)
+      .from(actionInvocations)
+      .where(eq(actionInvocations.actionInvocationId, invocationId))
+      .limit(1)
+      .pipe(Effect.mapError((cause) => persistenceFailure(failureReason, cause)));
+    const [resolved] = current;
+    if (resolved === undefined) {
+      return yield* persistenceFailure(
+        failureReason,
+        new RepositoryInvariantError({ reason: 'The Action invocation no longer exists' }),
+      );
+    }
+    return resolved;
+  });
 
   const rejectPermissionDenied: ActionRepositoryService['rejectPermissionDenied'] = Effect.fn(
     'makeActionRepository.rejectPermissionDenied',
@@ -601,70 +597,23 @@ export const makeActionRepository = (): ActionRepositoryService => {
     'makeActionRepository.finalizePolicyDenial',
   )(function* finalizePolicyDenialEffect(executor: CoreDatabaseExecutor, input: FinalizeActionPolicyDenialInput) {
     const failureReason = 'Unable to persist the rejected Action invocation';
-    const transactionBody = Effect.fn('finalizePolicyDenial.transactionBody')(
-      function* finalizePolicyDenialTransaction(transaction: CoreTransaction) {
-        const rows = yield* transaction
-          .select(invocationSelection)
-          .from(actionInvocations)
-          .where(eq(actionInvocations.actionInvocationId, input.actionInvocationId))
-          .for('update')
-          .limit(1)
-          .pipe(Effect.mapError((cause) => persistenceFailure(failureReason, cause)));
-        const [invocation] = rows;
-        if (invocation === undefined) {
-          return yield* persistenceFailure(
-            failureReason,
-            new RepositoryInvariantError({
-              reason: 'The Action invocation no longer exists',
-            }),
-          );
-        }
-        if (invocation.status === 'rejected' && invocation.completedAt !== null) {
-          return yield* Effect.void;
-        }
-        if (invocation.status !== 'received' || invocation.completedAt !== null) {
-          return yield* persistenceFailure(
-            failureReason,
-            new RepositoryInvariantError({
-              reason: 'The Action invocation is no longer open for Policy rejection',
-            }),
-          );
-        }
-
-        const policyEvidence = withOptionalProperty(
-          { ...input.deniedAuditEvidence, actionKey: input.actionKey },
-          input.policy.owningModuleKey !== undefined,
-          'owningModuleKey',
-          input.policy.owningModuleKey,
-          { policyKey: input.policy.policyKey, policyScope: input.policy.scope },
-        );
-        yield* transaction
-          .insert(auditEvents)
-          .values(
-            ['action.policy_checked', 'action.rejected'].map((eventType) => ({
-              actionInvocationId: input.actionInvocationId,
-              auditProfile: input.auditProfile,
-              authBindingId: input.principal.authBindingId,
-              authContextRef: input.principal.authContextRef,
-              authMethod: input.principal.authMethod,
-              eventType,
-              evidenceJson: policyEvidence,
-              impersonatedByPrincipalId: input.principal.impersonatedByPrincipalId,
-              legalEntityId: input.principal.legalEntityId,
-              outcome: 'denied',
-              outcomeCode: input.reasonCode,
-              outcomeStage: 'policy',
-              principalId: input.principal.principalId,
-              targetModuleKey: input.transport.targetModuleKey,
-              targetResourceId: input.transport.targetResourceId,
-              targetResourceType: input.transport.targetResourceType,
-              tenantId: input.principal.tenantId,
-            })),
-          )
-          .pipe(Effect.mapError((cause) => persistenceFailure(failureReason, cause)));
-
-        yield* markInvocationRejected(transaction, input.actionInvocationId).pipe(
-          Effect.mapError((cause) => persistenceFailure(failureReason, cause)),
+    const transactionBody = Effect.fn('finalizePolicyDenial.transactionBody')(function* finalizePolicyDenialTransaction(
+      transaction: CoreTransaction,
+    ) {
+      const rows = yield* transaction
+        .select(invocationSelection)
+        .from(actionInvocations)
+        .where(eq(actionInvocations.actionInvocationId, input.actionInvocationId))
+        .for('update')
+        .limit(1)
+        .pipe(Effect.mapError((cause) => persistenceFailure(failureReason, cause)));
+      const [invocation] = rows;
+      if (invocation === undefined) {
+        return yield* persistenceFailure(
+          failureReason,
+          new RepositoryInvariantError({
+            reason: 'The Action invocation no longer exists',
+          }),
         );
       }
       if (invocation.status === 'rejected' && invocation.completedAt !== null) {
@@ -680,14 +629,11 @@ export const makeActionRepository = (): ActionRepositoryService => {
       }
 
       const policyEvidence = withOptionalProperty(
-        { actionKey: input.actionKey },
+        { ...input.deniedAuditEvidence, actionKey: input.actionKey },
         input.policy.owningModuleKey !== undefined,
         'owningModuleKey',
         input.policy.owningModuleKey,
-        {
-          policyKey: input.policy.policyKey,
-          policyScope: input.policy.scope,
-        },
+        { policyKey: input.policy.policyKey, policyScope: input.policy.scope },
       );
       yield* transaction
         .insert(auditEvents)

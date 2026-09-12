@@ -162,9 +162,7 @@ it.effect('fails closed on indeterminate or missing customer group history permi
 
 it.effect('keeps ordinary customer group reads on their independent read permission', () =>
   Effect.gen(function* allowOrdinaryCustomerGroupReadPermission() {
-    const harness = yield* makeHarness((permission) =>
-      permission === 'customer.group.read' ? 'allowed' : 'denied',
-    );
+    const harness = yield* makeHarness((permission) => (permission === 'customer.group.read' ? 'allowed' : 'denied'));
     const failure = yield* Effect.flip(
       harness.runtime.runRead({
         input: { groupRef },

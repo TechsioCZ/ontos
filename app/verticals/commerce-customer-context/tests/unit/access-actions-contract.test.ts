@@ -45,9 +45,7 @@ describe('Counterparty Commerce Access Actions', () => {
     ]) {
       expect(action.descriptor.businessPermission?.kind).toBe('business_permission');
     }
-    expect(bootstrapCounterpartyAccessAdministratorAction.descriptor.businessPermission).toBe(
-      undefined,
-    );
+    expect(bootstrapCounterpartyAccessAdministratorAction.descriptor.businessPermission).toBe(undefined);
     expect(claimCounterpartyAccessInvitationAction.descriptor.businessPermission).toBe(undefined);
   });
 
@@ -66,9 +64,7 @@ describe('Counterparty Commerce Access Actions', () => {
       reason: 'Onboard buyer',
       scope: { kind: 'counterparty' as const },
     };
-    expect(
-      Schema.decodeUnknownSync(CreateCounterpartyAccessInvitationPayloadSchema)(payload),
-    ).toEqual(payload);
+    expect(Schema.decodeUnknownSync(CreateCounterpartyAccessInvitationPayloadSchema)(payload)).toEqual(payload);
     expect(() =>
       Schema.decodeUnknownSync(CreateCounterpartyAccessInvitationPayloadSchema, {
         onExcessProperty: 'error',
@@ -108,10 +104,7 @@ describe('Counterparty Commerce Access Actions', () => {
     };
 
     expect(
-      accessManagementPermissionTarget(
-        { counterpartyRef, scope: storefrontScope },
-        operationalScope,
-      ),
+      accessManagementPermissionTarget({ counterpartyRef, scope: storefrontScope }, operationalScope),
     ).not.toHaveProperty('trustedStorefrontId');
     expect(
       accessManagementPermissionTarget(

@@ -8,4 +8,3 @@ export const {
   makeRef: makePartyMatchDecisionRef,
   refSchema: PartyMatchDecisionRefSchema,
 } = timelineResource('party-match-decision', 'Party Match Decision');
-export type PartyMatchDecisionRef = typeof PartyMatchDecisionRefSchema.Type;

@@ -9,6 +9,10 @@ import {
   purchasingApprovalRoutineAllowlist,
   purchasingApprovalWorkflowForScope,
 } from '../../src/persistence/purchasing-approval-persistence.ts';
+import {
+  ConsumePurchaseApprovalInputSchema,
+  SubmitPurchaseApprovalRequestInputSchema,
+} from '../../shared/domain/purchasing-approval.ts';
 import type { OperationalScope } from '@app/core-runtime';
 import type { PurchasingApprovalScopedRoutineInvoker } from '../../src/persistence/purchasing-approval-persistence.ts';
 
@@ -17,10 +21,7 @@ const persistenceSource = readFileSync(
   'utf-8',
 );
 const routineMigration = readFileSync(
-  new URL(
-    '../../drizzle/20260909160000_purchasing_approval_routines/migration.sql',
-    import.meta.url,
-  ),
+  new URL('../../drizzle/20260909160000_purchasing_approval_routines/migration.sql', import.meta.url),
   'utf-8',
 );
 
@@ -36,9 +37,7 @@ const routineNames = [
 ] as const;
 
 it('keeps the Purchasing Approval owner boundary exact and transaction-scoped', () => {
-  expect(
-    purchasingApprovalRoutineAllowlist.map(({ name, routineKey }) => [name, routineKey]),
-  ).toEqual(routineNames);
+  expect(purchasingApprovalRoutineAllowlist.map(({ name, routineKey }) => [name, routineKey])).toEqual(routineNames);
   for (const routine of purchasingApprovalRoutineAllowlist) {
     expect(Object.isFrozen(routine)).toBe(true);
     expect(routine.ownerModuleKey).toBe('commerce.customer-context');
@@ -56,9 +55,7 @@ it('keeps the Purchasing Approval owner boundary exact and transaction-scoped', 
 
 it('ships SECURITY DEFINER owner routines with forced RLS and no direct table grants', () => {
   for (const [name] of routineNames) {
-    expect(routineMigration).toContain(
-      `CREATE OR REPLACE FUNCTION "commerce_customer_context"."${name}"(`,
-    );
+    expect(routineMigration).toContain(`CREATE OR REPLACE FUNCTION "commerce_customer_context"."${name}"(`);
     expect(routineMigration).toContain(
       `REVOKE ALL ON FUNCTION "commerce_customer_context"."${name}"(uuid, uuid, jsonb) FROM PUBLIC, ontos_runtime;`,
     );
@@ -71,9 +68,7 @@ it('ships SECURITY DEFINER owner routines with forced RLS and no direct table gr
   // workflow allowlist above.
   expect(routineMigration.match(/SECURITY DEFINER/gu)).toHaveLength(routineNames.length + 1);
   expect(routineMigration.match(/SET row_security = on/gu)).toHaveLength(routineNames.length + 1);
-  expect(routineMigration).toContain(
-    'REVOKE ALL ON TABLE\n  "commerce_customer_context"."approval_decisions"',
-  );
+  expect(routineMigration).toContain('REVOKE ALL ON TABLE\n  "commerce_customer_context"."approval_decisions"');
   expect(routineMigration).toContain(
     'ALTER TABLE "commerce_customer_context"."approval_decisions" FORCE ROW LEVEL SECURITY;',
   );
@@ -87,16 +82,12 @@ it('retains durable CAS and idempotency guards in every mutating workflow', () =
   expect(routineMigration).toContain("USING ERRCODE = '40001'");
   expect(routineMigration).toContain("USING ERRCODE = '23505'");
   expect(routineMigration).toContain('idempotency_key = v_idempotency');
-  expect(routineMigration).toContain(
-    "request_revision = (p_payload->>'expectedRequestRevision')::integer",
-  );
+  expect(routineMigration).toContain("request_revision = (p_payload->>'expectedRequestRevision')::integer");
   expect(routineMigration).toContain('GET DIAGNOSTICS v_inserted = ROW_COUNT;');
   expect(routineMigration).toContain('v_existing_route approval_routes%ROWTYPE;');
   expect(routineMigration).toContain('ccc_approval_requests_active_proposal_uk');
   expect(routineMigration).toContain('committed_order_ref');
-  expect(routineMigration).toContain(
-    "v_request_row.request_snapshot->>'consumptionIdempotencyKey'",
-  );
+  expect(routineMigration).toContain("v_request_row.request_snapshot->>'consumptionIdempotencyKey'");
   expect(routineMigration).toContain("v_request_row.request_snapshot->>'consumedAt'");
   expect(routineMigration).toContain("v_request_row.request_snapshot->'consumptionEvidence'");
   expect(routineMigration).toContain('v_request_row.expires_at <= v_operation_at');
@@ -105,13 +96,11 @@ it('retains durable CAS and idempotency guards in every mutating workflow', () =
     "proposal_snapshot = proposal_snapshot || jsonb_build_object('state', 'SUPERSEDED')",
   );
   expect(routineMigration).toContain('LIMIT 1 FOR UPDATE');
-  expect(routineMigration).toContain(
-    'approval request identity conflicts with an existing submission',
-  );
+  expect(routineMigration).toContain('approval request identity conflicts with an existing submission');
 });
 
 it.effect('binds submit to the explicit immutable proposal revision', () =>
-  Effect.gen(function* () {
+  Effect.gen(function* bindSubmitToImmutableProposalRevision() {
     let invokedValues: readonly unknown[] | undefined;
     const invoker: PurchasingApprovalScopedRoutineInvoker = {
       invoke: (_routine, values) => {
@@ -129,26 +118,26 @@ it.effect('binds submit to the explicit immutable proposal revision', () =>
     const workflow = yield* purchasingApprovalWorkflowForScope(invoker, scope);
     const invocationId = '50000000-0000-4000-8000-000000000001';
     const exit = yield* Effect.exit(
-      workflow.forActionInvocation(invocationId).submitRequest({
-        counterpartyRef: {
-          moduleId: 'party.registry',
-          resourceId: 'counterparty-1',
-          resourceType: 'party.registry.counterparty',
-          tenantId: scope.tenantId,
-        },
-        idempotencyKey: 'submit-contract-1',
-        proposalRevision: 7,
-        proposalRevisionRef: {
-          moduleId: 'commerce.customer-context',
-          resourceId: 'proposal-1',
-          resourceType: 'commerce.customer-context.purchase-proposal-revision',
-          tenantId: scope.tenantId,
-        },
-        requestExpiresAt: Schema.decodeUnknownSync(Schema.DateTimeUtcFromString)(
-          '2026-09-09T13:00:00.000Z',
-        ),
-        storefrontId: 'storefront-1',
-      }),
+      workflow.forActionInvocation(invocationId).submitRequest(
+        Schema.decodeUnknownSync(SubmitPurchaseApprovalRequestInputSchema)({
+          counterpartyRef: {
+            moduleId: 'party.registry',
+            resourceId: 'counterparty-1',
+            resourceType: 'party.registry.counterparty',
+            tenantId: scope.tenantId,
+          },
+          idempotencyKey: 'submit-contract-1',
+          proposalRevision: 7,
+          proposalRevisionRef: {
+            moduleId: 'commerce.customer-context',
+            resourceId: 'proposal-1',
+            resourceType: 'commerce.customer-context.purchase-proposal-revision',
+            tenantId: scope.tenantId,
+          },
+          requestExpiresAt: '2026-09-09T13:00:00.000Z',
+          storefrontId: 'storefront-1',
+        }),
+      ),
     );
     expect(Exit.isFailure(exit)).toBe(true);
     expect(invokedValues?.[0]).toMatchObject({
@@ -159,7 +148,7 @@ it.effect('binds submit to the explicit immutable proposal revision', () =>
 );
 
 it.effect('keeps Order reconciliation bound to the exact approval commitment', () =>
-  Effect.gen(function* () {
+  Effect.gen(function* keepOrderReconciliationBoundToApprovalCommitment() {
     let invokedValues: readonly unknown[] | undefined;
     const invoker: PurchasingApprovalScopedRoutineInvoker = {
       invoke: (_routine, values) => {
@@ -177,40 +166,40 @@ it.effect('keeps Order reconciliation bound to the exact approval commitment', (
     const workflow = yield* purchasingApprovalWorkflowForScope(invoker, scope);
     const invocationId = '50000000-0000-4000-8000-000000000002';
     const exit = yield* Effect.exit(
-      workflow.forActionInvocation(invocationId).consume({
-        counterpartyRef: {
-          moduleId: 'party.registry',
-          resourceId: 'counterparty-1',
-          resourceType: 'party.registry.counterparty',
-          tenantId: scope.tenantId,
-        },
-        requestRef: {
-          moduleId: 'commerce.customer-context',
-          resourceId: 'request-1',
-          resourceType: 'commerce.customer-context.purchase-approval-request',
-          tenantId: scope.tenantId,
-        },
-        proposalRevisionRef: {
-          moduleId: 'commerce.customer-context',
-          resourceId: 'proposal-1',
-          resourceType: 'commerce.customer-context.purchase-proposal-revision',
-          tenantId: scope.tenantId,
-        },
-        decisionBundleHash: 'a'.repeat(64),
-        decisionBundleVersion: 'approval-decision-bundle.v1',
-        commitmentCorrelationId: 'order-attempt-1',
-        orderRef: {
-          moduleId: 'commerce.order',
-          resourceId: 'order-1',
-          resourceType: 'commerce.order.order',
-          tenantId: scope.tenantId,
-        },
-        idempotencyKey: 'order-attempt-1',
-        committedAt: Schema.decodeUnknownSync(Schema.DateTimeUtcFromString)(
-          '2026-09-09T13:00:00.000Z',
-        ),
-        storefrontId: 'storefront-1',
-      }),
+      workflow.forActionInvocation(invocationId).consume(
+        Schema.decodeUnknownSync(ConsumePurchaseApprovalInputSchema)({
+          commitmentCorrelationId: 'order-attempt-1',
+          committedAt: '2026-09-09T13:00:00.000Z',
+          counterpartyRef: {
+            moduleId: 'party.registry',
+            resourceId: 'counterparty-1',
+            resourceType: 'party.registry.counterparty',
+            tenantId: scope.tenantId,
+          },
+          decisionBundleHash: 'a'.repeat(64),
+          decisionBundleVersion: 'approval-decision-bundle.v1',
+          idempotencyKey: 'order-attempt-1',
+          orderRef: {
+            moduleId: 'commerce.order',
+            resourceId: 'order-1',
+            resourceType: 'commerce.order.order',
+            tenantId: scope.tenantId,
+          },
+          proposalRevisionRef: {
+            moduleId: 'commerce.customer-context',
+            resourceId: 'proposal-1',
+            resourceType: 'commerce.customer-context.purchase-proposal-revision',
+            tenantId: scope.tenantId,
+          },
+          requestRef: {
+            moduleId: 'commerce.customer-context',
+            resourceId: 'request-1',
+            resourceType: 'commerce.customer-context.purchase-approval-request',
+            tenantId: scope.tenantId,
+          },
+          storefrontId: 'storefront-1',
+        }),
+      ),
     );
     expect(Exit.isFailure(exit)).toBe(true);
     expect(invokedValues?.[0]).toMatchObject({
@@ -232,9 +221,7 @@ it('does not derive request identity from a missing revision on the proposal ref
 
 it('keeps proposal lineage, hierarchy provenance, and reroute history owner-derived', () => {
   expect(
-    routineMigration.match(
-      /CREATE UNIQUE INDEX IF NOT EXISTS "ccc_purchase_proposals_current_resource_uk"/gu,
-    ),
+    routineMigration.match(/CREATE UNIQUE INDEX IF NOT EXISTS "ccc_purchase_proposals_current_resource_uk"/gu),
   ).toHaveLength(1);
   expect(routineMigration).toContain(
     'CREATE UNIQUE INDEX IF NOT EXISTS "ccc_purchase_proposals_current_cart_revision_uk"',
@@ -242,26 +229,16 @@ it('keeps proposal lineage, hierarchy provenance, and reroute history owner-deri
   expect(routineMigration).toContain("proposal_snapshot->'sourceCart'->'cartRef'->>'resourceId'");
   expect(routineMigration).toContain("proposal_snapshot->'sourceCart'->>'revision'");
   expect(routineMigration).toContain("v_proposal->>'approvalEvaluation' <> 'APPROVAL_REQUIRED'");
-  expect(routineMigration).toContain(
-    "v_proposal->'sourceCart'->'cartRef'->>'resourceType' <> 'commerce.cart.cart'",
-  );
-  expect(routineMigration).toContain(
-    "v_proposal->'sourceCart'->'cartRef'->>'tenantId' <> p_tenant_id::text",
-  );
+  expect(routineMigration).toContain("v_proposal->'sourceCart'->'cartRef'->>'resourceType' <> 'commerce.cart.cart'");
+  expect(routineMigration).toContain("v_proposal->'sourceCart'->'cartRef'->>'tenantId' <> p_tenant_id::text");
   expect(routineMigration).toContain("source->>'source' = 'purchase-proposal'");
-  expect(routineMigration).toContain(
-    "source->>'revision' = proposal_snapshot->'purchaseValue'->>'sourceRevision'",
-  );
+  expect(routineMigration).toContain("source->>'revision' = proposal_snapshot->'purchaseValue'->>'sourceRevision'");
   expect(routineMigration).toContain("h.revision = (v_route->>'hierarchyRevision')::integer");
   expect(routineMigration).toContain("hierarchy_snapshot->>'state' = 'ACTIVE'");
   expect(routineMigration).toContain("principal->>'tenantId' IS DISTINCT FROM p_tenant_id::text");
   expect(routineMigration).toContain('v_operation_at timestamptz := now();');
-  expect(routineMigration).toContain(
-    "v_route_id := 'approval-route:' || v_request_id || ':reroute:'",
-  );
-  expect(routineMigration).toContain(
-    "v_route_id := 'approval-route:' || v_request_id || ':reroute-required:'",
-  );
+  expect(routineMigration).toContain("v_route_id := 'approval-route:' || v_request_id || ':reroute:'");
+  expect(routineMigration).toContain("v_route_id := 'approval-route:' || v_request_id || ':reroute-required:'");
   expect(routineMigration).toContain("status = 'SUPERSEDED'");
   expect(routineMigration).toContain("'outcome', 'REROUTE_REQUIRED'");
   expect(routineMigration).toContain("'status', 'REROUTE_REQUIRED'");
@@ -287,7 +264,7 @@ it.effect('maps durable idempotency and serialization SQLSTATEs to typed retry o
       principalId: '10000000-0000-4000-8000-000000000003',
       tenantId: '10000000-0000-4000-8000-000000000001',
     };
-    const baseInput = {
+    const baseInput = Schema.decodeUnknownSync(SubmitPurchaseApprovalRequestInputSchema)({
       counterpartyRef: {
         moduleId: 'party.registry',
         resourceId: 'counterparty-1',
@@ -302,11 +279,10 @@ it.effect('maps durable idempotency and serialization SQLSTATEs to typed retry o
         resourceType: 'commerce.customer-context.purchase-proposal-revision',
         tenantId: scope.tenantId,
       },
-      requestExpiresAt: Schema.decodeUnknownSync(Schema.DateTimeUtcFromString)(
-        '2026-09-09T13:00:00.000Z',
-      ),
+      requestExpiresAt: '2026-09-09T13:00:00.000Z',
       storefrontId: 'storefront-1',
-    };
+    });
+    // oxlint-disable-next-line unicorn/consistent-function-scoping -- Keep this failure factory isolated to the SQLSTATE mapping test.
     const failureFor = (postgresCode: string) =>
       new ScopedRoutineInvocationError({
         code: 'scoped_routine_invocation_failed',
@@ -322,14 +298,8 @@ it.effect('maps durable idempotency and serialization SQLSTATEs to typed retry o
     const serializationInvoker: PurchasingApprovalScopedRoutineInvoker = {
       invoke: () => Effect.fail(failureFor('40001')),
     };
-    const idempotencyWorkflow = yield* purchasingApprovalWorkflowForScope(
-      idempotencyInvoker,
-      scope,
-    );
-    const serializationWorkflow = yield* purchasingApprovalWorkflowForScope(
-      serializationInvoker,
-      scope,
-    );
+    const idempotencyWorkflow = yield* purchasingApprovalWorkflowForScope(idempotencyInvoker, scope);
+    const serializationWorkflow = yield* purchasingApprovalWorkflowForScope(serializationInvoker, scope);
     const idempotencyFailure = yield* Effect.flip(idempotencyWorkflow.submitRequest(baseInput));
     const serializationFailure = yield* Effect.flip(serializationWorkflow.submitRequest(baseInput));
     expect(idempotencyFailure).toMatchObject({
@@ -352,7 +322,7 @@ it.effect('maps stable owner constraints without inspecting sanitized SQL reason
       principalId: '10000000-0000-4000-8000-000000000003',
       tenantId: '10000000-0000-4000-8000-000000000001',
     };
-    const input = {
+    const input = Schema.decodeUnknownSync(SubmitPurchaseApprovalRequestInputSchema)({
       counterpartyRef: {
         moduleId: 'party.registry',
         resourceId: 'counterparty-1',
@@ -367,11 +337,9 @@ it.effect('maps stable owner constraints without inspecting sanitized SQL reason
         resourceType: 'commerce.customer-context.purchase-proposal-revision',
         tenantId: scope.tenantId,
       },
-      requestExpiresAt: Schema.decodeUnknownSync(Schema.DateTimeUtcFromString)(
-        '2026-09-09T13:00:00.000Z',
-      ),
+      requestExpiresAt: '2026-09-09T13:00:00.000Z',
       storefrontId: 'storefront-1',
-    };
+    });
     const cases = [
       ['pa_not_route_eligible', 'NOT_ROUTE_ELIGIBLE'],
       ['pa_self_approval', 'SELF_APPROVAL_DENIED'],

@@ -24,10 +24,7 @@ type AuthorizedInvocation = readonly [
   requestCorrelation: string,
   options: OpenProfileReconciliationActionClientOptions,
 ];
-type OperationInvocation = readonly [
-  requestCorrelation: string,
-  options: OpenProfileReconciliationActionClientOptions,
-];
+type OperationInvocation = readonly [requestCorrelation: string, options: OpenProfileReconciliationActionClientOptions];
 
 interface MakeClientOptions {
   readonly credential: Redacted.Redacted;
@@ -68,12 +65,6 @@ export const executeOpenProfileReconciliation = (
   ...[requestCorrelation, options]: OperationInvocation
 ) =>
   operationGateway.invoke(
-    (credential) =>
-      executeOpenProfileReconciliationWithAuthorization(
-        payload,
-        credential,
-        requestCorrelation,
-        options,
-      ),
+    (credential) => executeOpenProfileReconciliationWithAuthorization(payload, credential, requestCorrelation, options),
     options.gateway,
   );

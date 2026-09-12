@@ -13,8 +13,7 @@ export const AttributeGuestRetailCustomerPayloadSchema = Schema.Struct({
   requestedAt: ProfileInstantSchema,
   sellingLegalEntityRef: SellingLegalEntityRefSchema,
 });
-export type AttributeGuestRetailCustomerPayload =
-  typeof AttributeGuestRetailCustomerPayloadSchema.Type;
+export type AttributeGuestRetailCustomerPayload = typeof AttributeGuestRetailCustomerPayloadSchema.Type;
 
 export const AttributeGuestRetailCustomerResultSchema = Schema.Union([
   Schema.Struct({
@@ -30,8 +29,7 @@ export const AttributeGuestRetailCustomerResultSchema = Schema.Union([
   Schema.Struct({ outcome: Schema.Literal('PARTY_INVALID') }),
   Schema.Struct({ outcome: Schema.Literal('PROFILE_NOT_ACTIVE') }),
 ]);
-export type AttributeGuestRetailCustomerResult =
-  typeof AttributeGuestRetailCustomerResultSchema.Type;
+export type AttributeGuestRetailCustomerResult = typeof AttributeGuestRetailCustomerResultSchema.Type;
 
 export class AttributeGuestRetailCustomerRejected extends Schema.TaggedError<AttributeGuestRetailCustomerRejected>()(
   'AttributeGuestRetailCustomerRejected',

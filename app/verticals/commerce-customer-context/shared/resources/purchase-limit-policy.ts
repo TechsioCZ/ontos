@@ -7,9 +7,7 @@ import { Schema } from 'effect';
 const ResourceIdSchema = Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(300)).pipe(
   Schema.brand('PurchaseLimitPolicyResourceId'),
 );
-const TenantIdSchema = Schema.String.check(Schema.isUUID()).pipe(
-  Schema.brand('PurchaseLimitPolicyTenantId'),
-);
+const TenantIdSchema = Schema.String.check(Schema.isUUID()).pipe(Schema.brand('PurchaseLimitPolicyTenantId'));
 
 export const PurchaseLimitPolicyRefSchema = Schema.Struct({
   moduleId: Schema.Literal('commerce.customer-context'),

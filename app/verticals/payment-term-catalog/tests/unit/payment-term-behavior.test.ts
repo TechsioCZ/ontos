@@ -11,22 +11,13 @@ import {
   PaymentTermRevisionConflict,
 } from '../../shared/domain/payment-term-errors.ts';
 import type { PaymentTermRef } from '../../shared/resources/payment-term.ts';
-import {
-  createPaymentTermAction,
-  handleCreatePaymentTerm,
-} from '../../src/actions/create-payment-term.action.ts';
-import {
-  correctPaymentTermAction,
-  handleCorrectPaymentTerm,
-} from '../../src/actions/correct-payment-term.action.ts';
+import { createPaymentTermAction, handleCreatePaymentTerm } from '../../src/actions/create-payment-term.action.ts';
+import { correctPaymentTermAction, handleCorrectPaymentTerm } from '../../src/actions/correct-payment-term.action.ts';
 import {
   handleReconcilePaymentTermReference,
   reconcilePaymentTermReferenceAction,
 } from '../../src/actions/reconcile-payment-term-reference.action.ts';
-import {
-  handleRetirePaymentTerm,
-  retirePaymentTermAction,
-} from '../../src/actions/retire-payment-term.action.ts';
+import { handleRetirePaymentTerm, retirePaymentTermAction } from '../../src/actions/retire-payment-term.action.ts';
 import type { RetirePaymentTermServices } from '../../src/actions/retire-payment-term.action.ts';
 import { readCurrentPaymentTerms } from '../../src/api/current-payment-terms.read.ts';
 import { readPaymentTermHistory } from '../../src/api/payment-term-history.read.ts';
@@ -35,7 +26,6 @@ import {
   customerPaymentTermAffectedUseAuthority,
   customerPaymentTermAffectedUseAuthorityFromEnvironment,
 } from '../../src/integrations/customer-payment-term-affected-use.ts';
-import type { PaymentTermCatalogPersistence } from '../../src/persistence/payment-term-catalog-persistence.ts';
 
 const tenantId = '11111111-1111-4111-8111-111111111111';
 const paymentTermRef = (resourceId: string): PaymentTermRef => ({
@@ -53,8 +43,8 @@ const provenance = {
 } as const;
 const active: PaymentTermDefinition = {
   code: 'NET_30',
-  compatibleWith: ['customer-payment-terms.v1'],
   compatibilityId: 'net_days.invoice_issued_at.calendar_days_utc.v1',
+  compatibleWith: ['customer-payment-terms.v1'],
   created: provenance,
   definitionRevisionId: '55555555-5555-4555-8555-555555555555',
   description: 'Due thirty days after invoice issue.',
@@ -93,8 +83,7 @@ const services = (overrides: Partial<RetirePaymentTermServices>): RetirePaymentT
   correct: unused,
   create: unused,
   getCurrent: () => Effect.succeed(Option.some(active)),
-  getHistory: () =>
-    Effect.succeed(Option.some({ aliases: [], lifecycle: [], revisions: [active] })),
+  getHistory: () => Effect.succeed(Option.some({ aliases: [], lifecycle: [], revisions: [active] })),
   listCurrent: () => Effect.succeed({ definitions: [active], truncated: false }),
   reconcile: unused,
   resolveReference: unused,
@@ -348,6 +337,7 @@ it.effect('short-circuits invalid persistence identifiers before owner storage',
       },
       {
         actionInvocationId: provenance.actionInvocationId,
+        // @ts-expect-error -- This invalid-reference test reuses a no-op collector from a sibling action because reconciliation exits before any event can be recorded.
         addDomainEvent: emptyCollector.addDomainEvent,
         addOutboxMessage: emptyCollector.addOutboxMessage,
         recordAuditEvidence: emptyCollector.recordAuditEvidence,
@@ -428,6 +418,7 @@ it.effect('keeps correction and reconciliation replays silent', () =>
         recordDataAccess: reconcileCollector.recordDataAccess,
         scope,
         services: services({
+          // @ts-expect-error -- This replay-only persistence double returns the minimal already-reconciled row and intentionally omits branded decoding performed by the real owner routine.
           reconcile: () =>
             Effect.succeed({
               _tag: 'already_reconciled',
@@ -498,11 +489,7 @@ it.effect('inventories canonical and reconciled alias references before retireme
               }),
             ),
           retire: () => Effect.succeed({ _tag: 'retired', definition: retired }),
-          verifyRetirementGovernance: ({
-            claimedAssessment,
-            claimedDisposition,
-            equivalentPaymentTermRefs,
-          }) => {
+          verifyRetirementGovernance: ({ claimedAssessment, claimedDisposition, equivalentPaymentTermRefs }) => {
             assessedRefs = equivalentPaymentTermRefs;
             return Effect.succeed({
               assessment: claimedAssessment,
@@ -522,17 +509,14 @@ it.effect('adapts retirement governance to the Customer owner public assessment 
   Effect.gen(function* publicAffectedUseAuthority() {
     const aliasRef = paymentTermRef('aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa');
     let sentEquivalentRefs: readonly PaymentTermRef[] = [];
-    const authority = customerPaymentTermAffectedUseAuthority(
-      'retire-payment-term:correlation',
-      (request) => {
-        sentEquivalentRefs = request.equivalentPaymentTermRefs;
-        return Effect.succeed({
-          assessment: request.claimedAssessment,
-          disposition: request.claimedDisposition,
-          kind: 'VERIFIED' as const,
-        });
-      },
-    );
+    const authority = customerPaymentTermAffectedUseAuthority('retire-payment-term:correlation', (request) => {
+      sentEquivalentRefs = request.equivalentPaymentTermRefs;
+      return Effect.succeed({
+        assessment: request.claimedAssessment,
+        disposition: request.claimedDisposition,
+        kind: 'VERIFIED' as const,
+      });
+    });
     const result = yield* authority.verifyRetirementGovernance({
       claimedAssessment: retirementPayload.affectedUseAssessment,
       claimedDisposition: retirementPayload.affectedUseDisposition,
@@ -563,8 +547,10 @@ it.effect('maps affected-use rejection and transport failure to typed retirement
     )
       .verifyRetirementGovernance(governanceInput)
       .pipe(Effect.flip);
-    const unavailable = yield* customerPaymentTermAffectedUseAuthority('correlation', () =>
-      Effect.fail(new Error('transport unavailable')),
+    const unavailable = yield* customerPaymentTermAffectedUseAuthority(
+      'correlation',
+      // @ts-expect-error -- This failure-only transport double deliberately uses a generic Error to verify conversion into the typed unavailable outcome.
+      () => Effect.fail(new Error('transport unavailable')),
     )
       .verifyRetirementGovernance(governanceInput)
       .pipe(Effect.flip);
@@ -704,10 +690,7 @@ it.effect('explicit migration permits retirement in use and emits one audited ev
           migrationReference: 'commerce-migration:payment-term-7',
         },
       },
-      context(
-        services({ retire: () => Effect.succeed({ _tag: 'retired', definition: retired }) }),
-        counters,
-      ),
+      context(services({ retire: () => Effect.succeed({ _tag: 'retired', definition: retired }) }), counters),
     );
 
     expect(result.changed).toBe(true);
@@ -733,6 +716,7 @@ it.effect('current read separates effective and observed time and preserves inco
       },
       tenantId,
       services({
+        // @ts-expect-error -- This read fixture returns raw persistence identifiers; production owner decoding supplies the branded identifiers before this service boundary.
         resolveReference: (paymentTermId) =>
           Effect.succeed(
             paymentTermId === ref.resourceId
@@ -760,65 +744,64 @@ it.effect('current read separates effective and observed time and preserves inco
   }),
 );
 
-it.effect(
-  'preserves an equivalent reconciled alias semantic revision for existing references',
-  () =>
-    Effect.gen(function* preservesAliasRevision() {
-      const aliasRef = paymentTermRef('aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa');
-      const aliasSemanticRevisionId = '77777777-7777-4777-8777-777777777777';
-      const incompatibleSemanticRevisionId = '99999999-9999-4999-8999-999999999999';
-      const aliasDefinition: PaymentTermDefinition = {
-        ...active,
-        definitionRevisionId: '88888888-8888-4888-8888-888888888888',
-        paymentTermRef: aliasRef,
-        semanticRevisionId: aliasSemanticRevisionId,
-      };
-      const result = yield* readCurrentPaymentTerms(
-        {
-          at: '2026-09-09T10:00:00.000Z',
-          limit: 50,
-          references: [
-            { expectedSemanticRevisionId: aliasSemanticRevisionId, paymentTermRef: aliasRef },
-            {
-              expectedSemanticRevisionId: incompatibleSemanticRevisionId,
-              paymentTermRef: aliasRef,
-            },
-          ],
-        },
-        tenantId,
-        services({
-          getHistory: () =>
-            Effect.succeed(
-              Option.some({
-                aliases: [{ aliasRef, canonicalRef: ref, reconciled: provenance }],
-                lifecycle: [],
-                revisions: [
-                  aliasDefinition,
-                  {
-                    ...aliasDefinition,
-                    semanticFingerprint: 'b'.repeat(64),
-                    semanticRevisionId: incompatibleSemanticRevisionId,
-                  },
-                ],
-              }),
-            ),
-          resolveReference: () =>
-            Effect.succeed({
-              _tag: 'resolved' as const,
-              canonicalPaymentTermId: ref.resourceId,
-              definition: active,
-              requestedPaymentTermId: aliasRef.resourceId,
+it.effect('preserves an equivalent reconciled alias semantic revision for existing references', () =>
+  Effect.gen(function* preservesAliasRevision() {
+    const aliasRef = paymentTermRef('aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa');
+    const aliasSemanticRevisionId = '77777777-7777-4777-8777-777777777777';
+    const incompatibleSemanticRevisionId = '99999999-9999-4999-8999-999999999999';
+    const aliasDefinition: PaymentTermDefinition = {
+      ...active,
+      definitionRevisionId: '88888888-8888-4888-8888-888888888888',
+      paymentTermRef: aliasRef,
+      semanticRevisionId: aliasSemanticRevisionId,
+    };
+    const result = yield* readCurrentPaymentTerms(
+      {
+        at: '2026-09-09T10:00:00.000Z',
+        limit: 50,
+        references: [
+          { expectedSemanticRevisionId: aliasSemanticRevisionId, paymentTermRef: aliasRef },
+          {
+            expectedSemanticRevisionId: incompatibleSemanticRevisionId,
+            paymentTermRef: aliasRef,
+          },
+        ],
+      },
+      tenantId,
+      services({
+        getHistory: () =>
+          Effect.succeed(
+            Option.some({
+              aliases: [{ aliasRef, canonicalRef: ref, reconciled: provenance }],
+              lifecycle: [],
+              revisions: [
+                aliasDefinition,
+                {
+                  ...aliasDefinition,
+                  semanticFingerprint: 'b'.repeat(64),
+                  semanticRevisionId: incompatibleSemanticRevisionId,
+                },
+              ],
             }),
-        }),
-      );
+          ),
+        // @ts-expect-error -- This alias-resolution double uses fixture reference identifiers while the real persistence service returns schema-branded identifiers.
+        resolveReference: () =>
+          Effect.succeed({
+            _tag: 'resolved' as const,
+            canonicalPaymentTermId: ref.resourceId,
+            definition: active,
+            requestedPaymentTermId: aliasRef.resourceId,
+          }),
+      }),
+    );
 
-      expect(result.referenceOutcomes[0]).toEqual({
-        definition: aliasDefinition,
-        kind: 'USABLE',
-        requestedPaymentTermRef: aliasRef,
-      });
-      expect(result.referenceOutcomes[1]?.kind).toBe('INCOMPATIBLE');
-    }),
+    expect(result.referenceOutcomes[0]).toEqual({
+      definition: aliasDefinition,
+      kind: 'USABLE',
+      requestedPaymentTermRef: aliasRef,
+    });
+    expect(result.referenceOutcomes[1]?.kind).toBe('INCOMPATIBLE');
+  }),
 );
 
 it.effect('preserves exact alias semantics without bypassing canonical retirement', () =>
@@ -851,6 +834,7 @@ it.effect('preserves exact alias semantics without bypassing canonical retiremen
               revisions: [aliasDefinition],
             }),
           ),
+        // @ts-expect-error -- This retired-alias double uses fixture reference identifiers while the real persistence service returns schema-branded identifiers.
         resolveReference: () =>
           Effect.succeed({
             _tag: 'retired' as const,
@@ -914,6 +898,7 @@ it.effect('does not bypass canonical or exact alias activation', () =>
               revisions: [paymentTermId === earlyAliasRef.resourceId ? earlyAlias : lateAlias],
             }),
           ),
+        // @ts-expect-error -- This activation-boundary double uses fixture reference identifiers while the real persistence service returns schema-branded identifiers.
         resolveReference: (paymentTermId) =>
           Effect.succeed({
             _tag: 'not_yet_active' as const,
@@ -957,10 +942,7 @@ it.effect('history selects one exact definition revision and retains alias evide
             Option.some({
               aliases: [{ aliasRef, canonicalRef: ref, reconciled: provenance }],
               lifecycle: [],
-              revisions: [
-                active,
-                { ...active, definitionRevisionId: provenance.actionInvocationId },
-              ],
+              revisions: [active, { ...active, definitionRevisionId: provenance.actionInvocationId }],
             }),
           ),
       }),

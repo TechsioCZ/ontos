@@ -197,14 +197,11 @@ const guestDeliveryCurrent: DeliveryDestinationCurrentFacts = {
 
 const invoicePorts = (overrides: Partial<InvoiceRecipientPorts> = {}): InvoiceRecipientPorts => ({
   constructPolicyRecipient: () =>
-    Effect.succeed(
-      found({ policyDecision: evidence('CUSTOMER_COMMERCE_POLICY'), postalAddress: postal }),
-    ),
+    Effect.succeed(found({ policyDecision: evidence('CUSTOMER_COMMERCE_POLICY'), postalAddress: postal })),
   loadCurrent: () => Effect.succeed(invoiceCurrent),
   loadDefaultBillingAddress: () => Effect.succeed({ kind: 'NONE' }),
   loadSavedAddress: () => Effect.succeed(notFound()),
-  resolvePostalAddress: () =>
-    Effect.succeed(found({ kind: 'COMMERCE_ONLY', postalAddress: postal })),
+  resolvePostalAddress: () => Effect.succeed(found({ kind: 'COMMERCE_ONLY', postalAddress: postal })),
   validateRecipient: () =>
     Effect.succeed({
       billingEvidence: evidence('BILLING_DOCUMENTS'),
@@ -215,19 +212,14 @@ const invoicePorts = (overrides: Partial<InvoiceRecipientPorts> = {}): InvoiceRe
   ...overrides,
 });
 
-const deliveryPorts = (
-  overrides: Partial<DeliveryDestinationPorts> = {},
-): DeliveryDestinationPorts => ({
+const deliveryPorts = (overrides: Partial<DeliveryDestinationPorts> = {}): DeliveryDestinationPorts => ({
   constructPolicyDestination: () =>
-    Effect.succeed(
-      found({ policyDecision: evidence('CUSTOMER_COMMERCE_POLICY'), postalAddress: postal }),
-    ),
+    Effect.succeed(found({ policyDecision: evidence('CUSTOMER_COMMERCE_POLICY'), postalAddress: postal })),
   loadCurrent: () => Effect.succeed(deliveryCurrent),
   loadDefaultDeliveryAddress: () => Effect.succeed({ kind: 'NONE' }),
   loadSavedAddress: () => Effect.succeed(notFound()),
   resolvePickupDestination: () => Effect.succeed(notFound()),
-  resolvePostalAddress: () =>
-    Effect.succeed(found({ kind: 'COMMERCE_ONLY', postalAddress: postal })),
+  resolvePostalAddress: () => Effect.succeed(found({ kind: 'COMMERCE_ONLY', postalAddress: postal })),
   validatePickupAvailability: () =>
     Effect.succeed({
       deliveryEvidence: evidence('PICKUP_PROVIDER'),
@@ -244,9 +236,10 @@ const deliveryPorts = (
 });
 
 it('clears a default after permanent purpose loss and never auto-selects a replacement', () => {
-  expect(
-    reconcileDefaults({ billing: ref, profile, revision: 2 }, { ...saved, purposes: [] }),
-  ).toEqual({ profile, revision: 3 });
+  expect(reconcileDefaults({ billing: ref, profile, revision: 2 }, { ...saved, purposes: [] })).toEqual({
+    profile,
+    revision: 3,
+  });
 });
 
 it('keeps removed addresses out of every ordinary address-book response contract', () => {

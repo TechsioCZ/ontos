@@ -7,7 +7,7 @@ import {
 } from '../domain/payment-terms.ts';
 import { RetailCustomerProfileRefSchema } from '../resources/retail-customer-profile.ts';
 
-export const RetailPaymentTermPreferenceChangeSchema = Schema.Union([
+const RetailPaymentTermPreferenceChangeSchema = Schema.Union([
   SetCustomerPaymentTermPreferenceSchema,
   ClearCustomerPaymentTermPreferenceSchema,
 ]);
@@ -18,12 +18,10 @@ export const ChangeRetailPaymentTermPreferencePayloadSchema = Schema.Struct({
   expectedRevision: Schema.Finite.check(Schema.isInt(), Schema.isGreaterThanOrEqualTo(1)),
   profileRef: RetailCustomerProfileRefSchema,
 });
-export type ChangeRetailPaymentTermPreferencePayload =
-  typeof ChangeRetailPaymentTermPreferencePayloadSchema.Type;
+export type ChangeRetailPaymentTermPreferencePayload = typeof ChangeRetailPaymentTermPreferencePayloadSchema.Type;
 
 export const ChangeRetailPaymentTermPreferenceResultSchema = Schema.Struct({
   changed: Schema.Boolean,
   state: CustomerPaymentTermsStateSchema,
 });
-export type ChangeRetailPaymentTermPreferenceResult =
-  typeof ChangeRetailPaymentTermPreferenceResultSchema.Type;
+export type ChangeRetailPaymentTermPreferenceResult = typeof ChangeRetailPaymentTermPreferenceResultSchema.Type;

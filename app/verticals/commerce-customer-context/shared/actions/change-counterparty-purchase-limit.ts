@@ -13,9 +13,7 @@ export const ChangeCounterpartyPurchaseLimitPayloadSchema = Schema.Struct({
   expectedRevision: Schema.Union([PurchaseLimitRevisionSchema, Schema.Null]),
   reason: Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(1000)),
 });
-export type ChangeCounterpartyPurchaseLimitPayload =
-  typeof ChangeCounterpartyPurchaseLimitPayloadSchema.Type;
+export type ChangeCounterpartyPurchaseLimitPayload = typeof ChangeCounterpartyPurchaseLimitPayloadSchema.Type;
 
 export const ChangeCounterpartyPurchaseLimitResultSchema = PurchaseLimitPolicyMutationResultSchema;
-export type ChangeCounterpartyPurchaseLimitResult =
-  typeof ChangeCounterpartyPurchaseLimitResultSchema.Type;
+export type ChangeCounterpartyPurchaseLimitResult = typeof ChangeCounterpartyPurchaseLimitResultSchema.Type;

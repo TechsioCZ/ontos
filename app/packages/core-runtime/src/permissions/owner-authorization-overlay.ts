@@ -15,11 +15,7 @@ import type { BusinessPermissionCode } from './business-permission.ts';
  * must read through the supplied scoped transaction so a mutation cannot authorize against a
  * snapshot that is later changed before the handler commits.
  */
-export const OwnerAuthorizationDecisionSchema = Schema.Literals([
-  'allowed',
-  'denied',
-  'unavailable',
-]);
+export const OwnerAuthorizationDecisionSchema = Schema.Literals(['allowed', 'denied', 'unavailable']);
 export type OwnerAuthorizationDecision = typeof OwnerAuthorizationDecisionSchema.Type;
 
 export type OwnerAuthorizationTarget =

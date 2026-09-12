@@ -1,10 +1,6 @@
 import { Context, Effect } from 'effect';
 import type { Redacted } from 'effect';
-import type {
-  AccessInstant,
-  CounterpartyPermissionScope,
-  CounterpartyRef,
-} from './access-contract.ts';
+import type { AccessInstant, CounterpartyPermissionScope, CounterpartyRef } from './access-contract.ts';
 import { CounterpartyAccessUnavailable } from './counterparty-access-unavailable.ts';
 import type { InvitationClaimProofReference } from './invitation-contract.ts';
 import type { CounterpartyAccessInvitationRef } from '../resources/counterparty-access-invitation.ts';
@@ -42,17 +38,12 @@ export interface CounterpartyInvitationProofSecureQueue {
 export class CounterpartyInvitationProofDelivery extends Context.Service<
   CounterpartyInvitationProofDelivery,
   CounterpartyInvitationProofDeliveryService
->()(
-  '@app/commerce-customer-context/shared/domain/invitation-proof-delivery/CounterpartyInvitationProofDelivery',
-) {}
+>()('@app/commerce-customer-context/shared/domain/invitation-proof-delivery/CounterpartyInvitationProofDelivery') {}
 
 export const unavailableCounterpartyInvitationProofDelivery = (
   reason = 'Secure invitation proof delivery staging is unavailable',
 ): CounterpartyInvitationProofDeliveryService => ({
-  stage: () =>
-    Effect.fail(
-      new CounterpartyAccessUnavailable({ code: 'counterparty_access_unavailable', reason }),
-    ),
+  stage: () => Effect.fail(new CounterpartyAccessUnavailable({ code: 'counterparty_access_unavailable', reason })),
 });
 
 /**

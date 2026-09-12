@@ -23,9 +23,7 @@ export const makePrincipalEligibility = <PersistenceError>(
   persistence: PrincipalEligibilityPersistence<PersistenceError>,
 ): PrincipalEligibilityService =>
   Object.freeze({
-    resolve: Effect.fn('PrincipalEligibility.resolve')(function* resolvePrincipalEligibility(
-      principal: PrincipalRef,
-    ) {
+    resolve: Effect.fn('PrincipalEligibility.resolve')(function* resolvePrincipalEligibility(principal: PrincipalRef) {
       const rowsOption = yield* persistence.loadPrincipal(principal).pipe(Effect.option);
       if (Option.isNone(rowsOption)) {
         return { decision: 'unavailable', principal, reason: 'indeterminate' } as const;
@@ -55,12 +53,7 @@ export const principalEligibilityForTransaction = (
       transaction
         .select({ status: principals.status, tenantId: principals.tenantId })
         .from(principals)
-        .where(
-          and(
-            eq(principals.tenantId, principal.tenantId),
-            eq(principals.principalId, principal.principalId),
-          ),
-        )
+        .where(and(eq(principals.tenantId, principal.tenantId), eq(principals.principalId, principal.principalId)))
         .limit(2),
   });
 

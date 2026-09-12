@@ -423,11 +423,7 @@ const makeFixture = Effect.fn(function* mergedScenario1(
       },
     }),
   );
-  yield* write(
-    root,
-    `${INVENTORY_VERTICAL_PATH}/package.json`,
-    JSON.stringify({ name: '@app/inventory-stock' }),
-  );
+  yield* write(root, `${INVENTORY_VERTICAL_PATH}/package.json`, JSON.stringify({ name: '@app/inventory-stock' }));
   yield* write(
     root,
     'apps/shell-super-app/src/routes/home/route.meta.ts',

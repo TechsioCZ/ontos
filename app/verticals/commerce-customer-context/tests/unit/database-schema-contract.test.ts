@@ -77,9 +77,7 @@ it('owns an exact private Commerce Customer Context table catalog', () => {
     Order.String,
   );
   const expected = EffectArray.sort(
-    COMMERCE_CUSTOMER_CONTEXT_TABLE_INVENTORY.map(
-      (name) => `${COMMERCE_CUSTOMER_CONTEXT_SCHEMA_NAME}.${name}`,
-    ),
+    COMMERCE_CUSTOMER_CONTEXT_TABLE_INVENTORY.map((name) => `${COMMERCE_CUSTOMER_CONTEXT_SCHEMA_NAME}.${name}`),
     Order.String,
   );
 
@@ -93,16 +91,8 @@ it('requires tenant and Selling Legal Entity scope with complete forced-RLS poli
     const config = getTableConfig(table);
     expect(config.enableRLS, `${config.name} must enable RLS`).toBe(true);
     expect(config.columns.some(({ name, notNull }) => name === 'tenant_id' && notNull)).toBe(true);
-    expect(config.columns.some(({ name, notNull }) => name === 'legal_entity_id' && notNull)).toBe(
-      true,
-    );
-    expect(config.policies.map((policy) => policy.for)).toEqual([
-      'select',
-      'insert',
-      'update',
-      'delete',
-      'all',
-    ]);
+    expect(config.columns.some(({ name, notNull }) => name === 'legal_entity_id' && notNull)).toBe(true);
+    expect(config.policies.map((policy) => policy.for)).toEqual(['select', 'insert', 'update', 'delete', 'all']);
     for (const policy of config.policies.slice(0, 4)) {
       expect(policy.to).toBe('ontos_runtime');
     }
@@ -121,13 +111,9 @@ it('requires tenant and Selling Legal Entity scope with complete forced-RLS poli
 it('stores purchasing limits as exact decimals and keeps unlimited distinct from zero', () => {
   for (const table of [counterpartyPurchaseLimitDefaults, principalPurchaseLimitOverrides]) {
     const config = getTableConfig(table);
-    expect(config.columns.find(({ name }) => name === 'amount')?.getSQLType()).toBe(
-      'numeric(38, 9)',
-    );
+    expect(config.columns.find(({ name }) => name === 'amount')?.getSQLType()).toBe('numeric(38, 9)');
     expect(config.checks.some(({ name }) => name.endsWith('_value_ck'))).toBe(true);
-    expect(
-      config.indexes.some(({ config: index }) => (index.name ?? '').endsWith('_current_uk')),
-    ).toBe(true);
+    expect(config.indexes.some(({ config: index }) => (index.name ?? '').endsWith('_current_uk'))).toBe(true);
   }
 });
 
@@ -152,16 +138,12 @@ it('models independently revised, half-open temporal customer facts', () => {
 it('persists each required mutable Customer Group description on its immutable revision', () => {
   const config = getTableConfig(customerGroupRevisions);
   expect(config.columns.some(({ name, notNull }) => name === 'description' && notNull)).toBe(true);
-  expect(config.checks.some(({ name }) => name === 'ccc_group_revisions_description_ck')).toBe(
-    true,
-  );
+  expect(config.checks.some(({ name }) => name === 'ccc_group_revisions_description_ck')).toBe(true);
 });
 
 it('keeps the Counterparty profile business key global within its tenant', () => {
   const config = getTableConfig(counterpartyPurchasingProfiles);
-  const businessKey = config.uniqueConstraints.find(
-    ({ name }) => name === 'ccc_counterparty_profiles_business_key_uk',
-  );
+  const businessKey = config.uniqueConstraints.find(({ name }) => name === 'ccc_counterparty_profiles_business_key_uk');
   const businessKeyColumns = businessKey?.columns.map(({ name }) => name);
 
   expect(businessKeyColumns).toEqual(['tenant_id', 'counterparty_resource_id']);
@@ -185,16 +167,15 @@ it('keeps only one current retail binding per exact profile-principal pair', () 
   expect(currentIndexes).toHaveLength(1);
   expect(currentIndexes[0]?.config.name).toBe('ccc_portal_bindings_current_profile_principal_uk');
   expect(currentIndexes[0]?.config.unique).toBe(true);
-  expect(
-    currentIndexes[0]?.config.columns.flatMap((column) => ('name' in column ? [column.name] : [])),
-  ).toEqual(['tenant_id', 'legal_entity_id', 'retail_customer_profile_id', 'principal_id']);
+  expect(currentIndexes[0]?.config.columns.flatMap((column) => ('name' in column ? [column.name] : []))).toEqual([
+    'tenant_id',
+    'legal_entity_id',
+    'retail_customer_profile_id',
+    'principal_id',
+  ]);
   expect(currentIndexes[0]?.config.where).toBeDefined();
-  expect(config.indexes.map(({ config: index }) => index.name)).not.toContain(
-    'ccc_portal_bindings_current_profile_uk',
-  );
-  expect(config.indexes.map(({ config: index }) => index.name)).not.toContain(
-    'ccc_portal_bindings_current_auth_uk',
-  );
+  expect(config.indexes.map(({ config: index }) => index.name)).not.toContain('ccc_portal_bindings_current_profile_uk');
+  expect(config.indexes.map(({ config: index }) => index.name)).not.toContain('ccc_portal_bindings_current_auth_uk');
 
   expect(migrationSql()).toContain(
     'CREATE UNIQUE INDEX "ccc_portal_bindings_current_profile_principal_uk" ON "commerce_customer_context"."retail_portal_profile_bindings" ("tenant_id","legal_entity_id","retail_customer_profile_id","principal_id") WHERE "lifecycle" = \'ACTIVE\';',
@@ -228,23 +209,16 @@ it('keeps portal binding transitions as uniquely revised history and a bigint ev
   }
 
   const reconciliation = getTableConfig(profileReconciliationCases);
-  expect(
-    reconciliation.columns
-      .find(({ name }) => name === 'last_processed_event_version')
-      ?.getSQLType(),
-  ).toBe('bigint');
+  expect(reconciliation.columns.find(({ name }) => name === 'last_processed_event_version')?.getSQLType()).toBe(
+    'bigint',
+  );
 });
 
 it('checks in the final profile observation and owner-outcome hardening', () => {
   const folders = readdirSync(migrationRoot);
-  expect(folders.filter((folder) => folder.startsWith('20260909134514_'))).toEqual([
-    profileCompletionMigrationFolder,
-  ]);
+  expect(folders.filter((folder) => folder.startsWith('20260909134514_'))).toEqual([profileCompletionMigrationFolder]);
   expect(() =>
-    readFileSync(
-      new URL(`${profileCompletionMigrationFolder}/snapshot.json`, migrationRoot),
-      'utf-8',
-    ),
+    readFileSync(new URL(`${profileCompletionMigrationFolder}/snapshot.json`, migrationRoot), 'utf-8'),
   ).not.toThrow();
 
   const completionSql = migrationFile(profileCompletionMigrationFolder);
@@ -254,9 +228,7 @@ it('checks in the final profile observation and owner-outcome hardening', () => 
     'party_merge_profile_observations',
     'profile_reconciliation_owner_outcomes',
   ]) {
-    expect(completionSql).toContain(
-      `ALTER TABLE "commerce_customer_context"."${table}" FORCE ROW LEVEL SECURITY;`,
-    );
+    expect(completionSql).toContain(`ALTER TABLE "commerce_customer_context"."${table}" FORCE ROW LEVEL SECURITY;`);
     expect(completionSql).toContain(
       `REVOKE ALL ON TABLE "commerce_customer_context"."${table}" FROM PUBLIC, "ontos_runtime";`,
     );
@@ -304,9 +276,7 @@ it('exposes exactly the scoped profile owner routines', () => {
   const resolveSignature =
     '"resolve_profile_reconciliation"(uuid,uuid,uuid,uuid,integer,bigint,jsonb,text,timestamptz,text,uuid,uuid)';
   for (const signature of [ownerOutcomeSignature, resolveSignature]) {
-    expect(profileSql).toContain(
-      `REVOKE ALL ON FUNCTION "commerce_customer_context".${signature} FROM PUBLIC;`,
-    );
+    expect(profileSql).toContain(`REVOKE ALL ON FUNCTION "commerce_customer_context".${signature} FROM PUBLIC;`);
     expect(profileSql).toContain(
       `GRANT EXECUTE ON FUNCTION "commerce_customer_context".${signature} TO "ontos_runtime";`,
     );
@@ -372,20 +342,13 @@ it('checks in the non-generated database security and temporal assertions', () =
   expect(sql).toContain('CREATE EXTENSION IF NOT EXISTS btree_gist');
   expect(sql).toContain('FORCE ROW LEVEL SECURITY');
   expect(sql).toContain('REVOKE ALL ON ALL TABLES IN SCHEMA "commerce_customer_context"');
-  expect(sql).toContain(
-    'ontos_runtime must not hold raw Commerce Customer Context table privileges',
-  );
+  expect(sql).toContain('ontos_runtime must not hold raw Commerce Customer Context table privileges');
   expect(sql).toContain('coalesce("storefront_resource_id", \'\')');
-  expect(sql).toContain(
-    "\"delivery_method\" in ('VERIFIED_CONTACT_POINT', 'APPROVED_RECIPIENT_DISCOVERY')",
-  );
+  expect(sql).toContain("\"delivery_method\" in ('VERIFIED_CONTACT_POINT', 'APPROVED_RECIPIENT_DISCOVERY')");
   expect(sql.match(/SECURITY DEFINER/gu)?.length ?? 0).toBeGreaterThanOrEqual(2);
-  expect(sql).toContain(
-    'counterparty_profile.counterparty_resource_id = p_counterparty_resource_id',
-  );
+  expect(sql).toContain('counterparty_profile.counterparty_resource_id = p_counterparty_resource_id');
   expect(
-    sql.match(/counterparty_profile\.counterparty_resource_id = p_counterparty_resource_id/gu)
-      ?.length ?? 0,
+    sql.match(/counterparty_profile\.counterparty_resource_id = p_counterparty_resource_id/gu)?.length ?? 0,
   ).toBeGreaterThanOrEqual(2);
   expect(sql).toContain("v_profile_kind = 'RETAIL' AND p_counterparty_resource_id IS NOT NULL");
   expect(sql).toContain(

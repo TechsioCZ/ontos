@@ -2,14 +2,8 @@ import { defineScopedRoutine } from '@app/core-runtime';
 import { Context, Effect, Layer, Schema } from 'effect';
 
 import type { ProfileLifecyclePayload } from '../../shared/actions/suspend-customer-profile.ts';
-import {
-  ProfileReconfirmationPolicy,
-  ReactivationProfileFactsSchema,
-} from './profile-reconfirmation-policy.ts';
-import type {
-  ReactivationProfileFacts,
-  ReconfirmationEvaluator,
-} from './profile-reconfirmation-policy.ts';
+import { ProfileReconfirmationPolicy, ReactivationProfileFactsSchema } from './profile-reconfirmation-policy.ts';
+import type { ReactivationProfileFacts, ReconfirmationEvaluator } from './profile-reconfirmation-policy.ts';
 import type {
   CounterpartyRoleEligibility,
   ProfilePersistenceDependencies,
@@ -20,15 +14,10 @@ import { ProfilePersistenceDependencyFailure } from '../persistence/profile-pers
 
 export {
   ProfileReconfirmationPolicy,
-  noHighRiskProfileReconfirmationPolicy,
   profileReconfirmationPolicyUnavailable,
   profileReconfirmationPolicyUnavailableLive,
 } from './profile-reconfirmation-policy.ts';
-export type {
-  ProfileReconfirmationPolicyService,
-  ReconfirmationEvaluator,
-  ReactivationProfileFacts,
-} from './profile-reconfirmation-policy.ts';
+export type { ReconfirmationEvaluator } from './profile-reconfirmation-policy.ts';
 
 const ReactivationProfileRowSchema = Schema.Struct({
   outcome: Schema.String,
@@ -50,16 +39,9 @@ const readReactivationProfileRoutine = defineScopedRoutine({
   schema: 'commerce_customer_context',
 });
 
-type ResolveCounterpartyRole = NonNullable<
-  ProfilePersistenceDependencies['resolveCounterpartyRole']
->;
-type ReactivationEligibilityEvaluator = NonNullable<
-  ProfilePersistenceDependencies['evaluateReactivation']
->;
-const dependencyFailure = (
-  reason: string,
-  cause?: unknown,
-): ProfilePersistenceDependencyFailure => {
+type ResolveCounterpartyRole = NonNullable<ProfilePersistenceDependencies['resolveCounterpartyRole']>;
+type ReactivationEligibilityEvaluator = NonNullable<ProfilePersistenceDependencies['evaluateReactivation']>;
+const dependencyFailure = (reason: string, cause?: unknown): ProfilePersistenceDependencyFailure => {
   const failure = new ProfilePersistenceDependencyFailure({ reason });
   if (cause !== undefined) {
     Object.defineProperty(failure, 'cause', { configurable: true, value: cause });
@@ -77,14 +59,9 @@ const readExactProfileFacts = (
   }
 
   return transaction
-    .invoke(readReactivationProfileRoutine, [
-      payload.profileRef.resourceId,
-      payload.profileRef.kind,
-    ])
+    .invoke(readReactivationProfileRoutine, [payload.profileRef.resourceId, payload.profileRef.kind])
     .pipe(
-      Effect.mapError((cause) =>
-        dependencyFailure('The current Customer Profile subject is unavailable', cause),
-      ),
+      Effect.mapError((cause) => dependencyFailure('The current Customer Profile subject is unavailable', cause)),
       Effect.flatMap(([row]) => {
         const facts = row?.payload;
         if (
@@ -96,9 +73,7 @@ const readExactProfileFacts = (
           facts.profileKind !== payload.profileRef.kind ||
           facts.subject.kind !== payload.profileRef.kind
         ) {
-          return Effect.fail(
-            dependencyFailure('The current Customer Profile subject could not be resolved exactly'),
-          );
+          return Effect.fail(dependencyFailure('The current Customer Profile subject could not be resolved exactly'));
         }
         return Effect.succeed(facts);
       }),
@@ -113,14 +88,10 @@ const counterpartyDependenciesSatisfied = (
     return Effect.succeed(false);
   }
   if (eligibility.outcome !== 'ELIGIBLE') {
-    return Effect.fail(
-      dependencyFailure('Current Counterparty customer-role eligibility is indeterminate'),
-    );
+    return Effect.fail(dependencyFailure('Current Counterparty customer-role eligibility is indeterminate'));
   }
   if (eligibility.managedLegalEntityId !== scope.legalEntityId) {
-    return Effect.fail(
-      dependencyFailure('The Counterparty customer role belongs to another managed Legal Entity'),
-    );
+    return Effect.fail(dependencyFailure('The Counterparty customer role belongs to another managed Legal Entity'));
   }
   return Effect.succeed(true);
 };
@@ -152,14 +123,9 @@ export const makeProfileReactivationEligibilityEvaluator = (
                 })
                 .pipe(
                   Effect.mapError((cause) =>
-                    dependencyFailure(
-                      'Current Counterparty customer-role eligibility is unavailable',
-                      cause,
-                    ),
+                    dependencyFailure('Current Counterparty customer-role eligibility is unavailable', cause),
                   ),
-                  Effect.flatMap((eligibility) =>
-                    counterpartyDependenciesSatisfied(eligibility, scope),
-                  ),
+                  Effect.flatMap((eligibility) => counterpartyDependenciesSatisfied(eligibility, scope)),
                 );
         const reconfirmationSatisfied = options.evaluateReconfirmation(facts);
 
@@ -175,9 +141,7 @@ export interface ProfileReactivationEligibilityEvaluatorFactoryInput {
 }
 
 export interface ProfileReactivationEligibilityEvaluatorFactoryService {
-  readonly make: (
-    input: ProfileReactivationEligibilityEvaluatorFactoryInput,
-  ) => ReactivationEligibilityEvaluator;
+  readonly make: (input: ProfileReactivationEligibilityEvaluatorFactoryInput) => ReactivationEligibilityEvaluator;
 }
 
 /**

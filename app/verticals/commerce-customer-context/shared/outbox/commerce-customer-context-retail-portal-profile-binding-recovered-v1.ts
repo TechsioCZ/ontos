@@ -2,24 +2,10 @@
 // @ontos-outbox-producer commerce.customer-context
 // @ontos-outbox-topic commerce.customer-context.retail-portal-profile-binding-recovered.v1
 import { Schema } from 'effect';
-import { ProfileInstantSchema, SellingLegalEntityRefSchema } from '../domain/profile-contracts.ts';
-import { RetailCustomerProfileRefSchema } from '../resources/retail-customer-profile.ts';
-import {
-  RetailPortalPrincipalRefSchema,
-  RetailPortalProfileBindingRefSchema,
-} from '../resources/retail-portal-profile-binding.ts';
+import { OutboxPayloadSchema as ActivatedOutboxPayloadSchema } from './commerce-customer-context-retail-portal-profile-binding-activated-v1.ts';
 
-export const OutboxPayloadSchema = Schema.Struct({
-  bindingRef: RetailPortalProfileBindingRefSchema,
-  effectiveAt: ProfileInstantSchema,
-  principalRef: RetailPortalPrincipalRefSchema,
-  profileRef: RetailCustomerProfileRefSchema,
-  revision: Schema.Finite.check(Schema.isInt(), Schema.isGreaterThanOrEqualTo(1)),
-  sellingLegalEntityRef: SellingLegalEntityRefSchema,
-  state: Schema.Literal('ACTIVE'),
-});
+export const OutboxPayloadSchema = Schema.Struct(ActivatedOutboxPayloadSchema.fields);
 export type OutboxPayload = Schema.Schema.Type<typeof OutboxPayloadSchema>;
 
-export const outboxTopic =
-  'commerce.customer-context.retail-portal-profile-binding-recovered.v1' as const;
+export const outboxTopic = 'commerce.customer-context.retail-portal-profile-binding-recovered.v1' as const;
 export const outboxProducerModuleKey = 'commerce.customer-context' as const;

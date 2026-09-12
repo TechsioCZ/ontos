@@ -69,11 +69,6 @@ export const executeRevokeCounterpartyCommerceAccess = (
 ) =>
   operationGateway.invoke(
     (credential) =>
-      executeRevokeCounterpartyCommerceAccessWithAuthorization(
-        payload,
-        credential,
-        requestCorrelation,
-        options,
-      ),
+      executeRevokeCounterpartyCommerceAccessWithAuthorization(payload, credential, requestCorrelation, options),
     options.gateway,
   );

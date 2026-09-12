@@ -2,29 +2,19 @@
 // @ontos-action-owner commerce.customer-context
 // @ontos-action-slug claim-counterparty-access-invitation
 import type { ActionHandlerContext } from '@app/core-runtime';
-import {
-  commitActionThenReject,
-  defineAction,
-  defineTenantModuleEntrypoint,
-} from '@app/core-runtime';
+import { commitActionThenReject, defineAction, defineTenantModuleEntrypoint } from '@app/core-runtime';
 import { Effect, Match } from 'effect';
 import {
   ClaimCounterpartyAccessInvitationPayloadSchema,
   ClaimCounterpartyAccessInvitationResultSchema,
 } from '../../shared/actions/claim-counterparty-access-invitation.ts';
 import type { ClaimCounterpartyAccessInvitationPayload } from '../../shared/actions/claim-counterparty-access-invitation.ts';
-import {
-  AccessAuditEvidenceSchema,
-  AccessDeniedAuditEvidenceSchema,
-} from '../../shared/domain/access-contract.ts';
+import { AccessAuditEvidenceSchema, AccessDeniedAuditEvidenceSchema } from '../../shared/domain/access-contract.ts';
 import {
   CounterpartyAccessContractViolation,
   CounterpartyAccessDomainErrorSchema,
 } from '../../shared/domain/access-port.ts';
-import type {
-  CounterpartyAccessPortService,
-  InvitationClaimRejection,
-} from '../../shared/domain/access-port.ts';
+import type { CounterpartyAccessPortService, InvitationClaimRejection } from '../../shared/domain/access-port.ts';
 import { counterpartyAccessServicesForTransaction } from '../access-services.ts';
 import {
   auditEvidence,
@@ -118,11 +108,7 @@ const handle = Effect.fn('ClaimCounterpartyAccessInvitation.handle')(function* h
     scope: payload.scope,
   });
   const { invitation } = result;
-  yield* recordAccessRead(
-    context,
-    invitation.counterpartyRef,
-    'counterparty-access-invitation-claim',
-  );
+  yield* recordAccessRead(context, invitation.counterpartyRef, 'counterparty-access-invitation-claim');
   yield* context.recordAuditEvidence(
     auditEvidence({
       actor,
@@ -160,18 +146,14 @@ const handle = Effect.fn('ClaimCounterpartyAccessInvitation.handle')(function* h
       scope: invitation.scope,
     };
     const event = yield* context.addDomainEvent({
-      eventType:
-        'commerce.customer-context.counterparty-access-invitation-claim-authorization-mutation-requested.v1',
+      eventType: 'commerce.customer-context.counterparty-access-invitation-claim-authorization-mutation-requested.v1',
       payloadJson: eventPayload,
       producerModuleKey: invitation.invitationRef.moduleId,
       subjectModuleKey: invitation.invitationRef.moduleId,
       subjectResourceId: invitation.invitationRef.resourceId,
       subjectResourceType: invitation.invitationRef.resourceType,
     });
-    yield* context.addOutboxMessage(
-      event,
-      createAuthorizationMutationRequestedOutboxMessage(eventPayload),
-    );
+    yield* context.addOutboxMessage(event, createAuthorizationMutationRequestedOutboxMessage(eventPayload));
   }
   return result;
 });
@@ -220,25 +202,3 @@ export const claimCounterpartyAccessInvitationAction = defineAction(
       Effect.map((port) => ({ claim: port.claimInvitation })),
     ),
 );
-
-export {
-  ClaimCounterpartyAccessInvitationPayloadSchema,
-  ClaimCounterpartyAccessInvitationResultSchema,
-} from '../../shared/actions/claim-counterparty-access-invitation.ts';
-export type {
-  ClaimCounterpartyAccessInvitationPayload,
-  ClaimCounterpartyAccessInvitationResult,
-} from '../../shared/actions/claim-counterparty-access-invitation.ts';
-
-// <generated-outbox-message-exports>
-export { ClaimCounterpartyAccessInvitationCommerceCustomerContextCounterpartyAccessInvitationClaimAuthorizationMutationRequestedV1OutboxPayloadSchema } from './claim-counterparty-access-invitation.commerce-customer-context-counterparty-access-invitation-claim-authorization-mutation-requested-v1.outbox-message.ts';
-export { ClaimCounterpartyAccessInvitationCommerceCustomerContextCounterpartyAccessInvitationClaimAuthorizationMutationRequestedV1OutboxProducerModuleKey } from './claim-counterparty-access-invitation.commerce-customer-context-counterparty-access-invitation-claim-authorization-mutation-requested-v1.outbox-message.ts';
-export { ClaimCounterpartyAccessInvitationCommerceCustomerContextCounterpartyAccessInvitationClaimAuthorizationMutationRequestedV1OutboxTopic } from './claim-counterparty-access-invitation.commerce-customer-context-counterparty-access-invitation-claim-authorization-mutation-requested-v1.outbox-message.ts';
-export { ClaimCounterpartyAccessInvitationCommerceCustomerContextCounterpartyAccessInvitationClaimedV1OutboxPayloadSchema } from './claim-counterparty-access-invitation.commerce-customer-context-counterparty-access-invitation-claimed-v1.outbox-message.ts';
-export { ClaimCounterpartyAccessInvitationCommerceCustomerContextCounterpartyAccessInvitationClaimedV1OutboxProducerModuleKey } from './claim-counterparty-access-invitation.commerce-customer-context-counterparty-access-invitation-claimed-v1.outbox-message.ts';
-export { ClaimCounterpartyAccessInvitationCommerceCustomerContextCounterpartyAccessInvitationClaimedV1OutboxTopic } from './claim-counterparty-access-invitation.commerce-customer-context-counterparty-access-invitation-claimed-v1.outbox-message.ts';
-export { createClaimCounterpartyAccessInvitationCommerceCustomerContextCounterpartyAccessInvitationClaimAuthorizationMutationRequestedV1OutboxMessage } from './claim-counterparty-access-invitation.commerce-customer-context-counterparty-access-invitation-claim-authorization-mutation-requested-v1.outbox-message.ts';
-export { createClaimCounterpartyAccessInvitationCommerceCustomerContextCounterpartyAccessInvitationClaimedV1OutboxMessage } from './claim-counterparty-access-invitation.commerce-customer-context-counterparty-access-invitation-claimed-v1.outbox-message.ts';
-export type { ClaimCounterpartyAccessInvitationCommerceCustomerContextCounterpartyAccessInvitationClaimAuthorizationMutationRequestedV1OutboxPayload } from './claim-counterparty-access-invitation.commerce-customer-context-counterparty-access-invitation-claim-authorization-mutation-requested-v1.outbox-message.ts';
-export type { ClaimCounterpartyAccessInvitationCommerceCustomerContextCounterpartyAccessInvitationClaimedV1OutboxPayload } from './claim-counterparty-access-invitation.commerce-customer-context-counterparty-access-invitation-claimed-v1.outbox-message.ts';
-// </generated-outbox-message-exports>

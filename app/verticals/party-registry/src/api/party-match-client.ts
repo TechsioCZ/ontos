@@ -19,7 +19,7 @@ type PartyMatchAuthorizedInvocation = readonly [
 type PartyMatchOperationInvocation = readonly [requestCorrelation: string, options?: PartyMatchClientOptions];
 
 const partyMatchClient = (
-  credential: Redacted.Redacted<string>,
+  credential: Redacted.Redacted,
   requestCorrelation: string,
   options: PartyMatchClientOptions,
 ) =>

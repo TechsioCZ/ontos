@@ -69,11 +69,6 @@ export const executeResolveProfileReconciliation = (
 ) =>
   operationGateway.invoke(
     (credential) =>
-      executeResolveProfileReconciliationWithAuthorization(
-        payload,
-        credential,
-        requestCorrelation,
-        options,
-      ),
+      executeResolveProfileReconciliationWithAuthorization(payload, credential, requestCorrelation, options),
     options.gateway,
   );

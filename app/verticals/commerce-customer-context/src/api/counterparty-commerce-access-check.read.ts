@@ -40,10 +40,7 @@ export const checkCounterpartyCommerceAccessFromServices = (
   principalId: string,
   tenantId: string,
   services: CounterpartyCommerceAccessCheckServices,
-): Effect.Effect<
-  CounterpartyCommerceAccessCheckResponse,
-  ReadHandlerNotFound | ReadHandlerUnavailable
-> => {
+): Effect.Effect<CounterpartyCommerceAccessCheckResponse, ReadHandlerNotFound | ReadHandlerUnavailable> => {
   if (input.counterpartyRef.tenantId !== tenantId) {
     return Effect.fail(notFound());
   }
@@ -63,7 +60,7 @@ export const checkCounterpartyCommerceAccessFromServices = (
     );
 };
 
-export const counterpartyCommerceAccessCheckEntrypoint = defineTenantModuleEntrypoint({
+const counterpartyCommerceAccessCheckEntrypoint = defineTenantModuleEntrypoint({
   access: 'read',
   authorization: { kind: 'context_permission', permission: 'counterparty.access.read' },
   entrypointKey: 'commerce.customer-context.api.counterparty-commerce-access-check',
@@ -96,8 +93,6 @@ export const counterpartyCommerceAccessCheckRead = defineRead(
       context.services,
     ).pipe(Effect.map((result) => ({ evidence: { resultCount: 1 }, result }))),
   (transaction, scope) =>
-    counterpartyAccessServicesForTransaction(transaction, scope).pipe(
-      Effect.map((port) => ({ check: port.check })),
-    ),
+    counterpartyAccessServicesForTransaction(transaction, scope).pipe(Effect.map((port) => ({ check: port.check }))),
   counterpartyAccessReadPermissionTarget,
 );

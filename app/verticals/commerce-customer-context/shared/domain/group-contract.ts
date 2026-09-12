@@ -4,19 +4,9 @@ import { CustomerGroupMembershipRefSchema } from '../resources/customer-group-me
 import { CustomerGroupRefSchema } from '../resources/customer-group.ts';
 import { RetailCustomerProfileRefSchema } from '../resources/retail-customer-profile.ts';
 
-export const CustomerGroupUuidSchema = Schema.String.check(Schema.isUUID());
-export const CustomerGroupRevisionSchema = Schema.Finite.check(
-  Schema.isInt(),
-  Schema.isGreaterThanOrEqualTo(1),
-);
-export const CustomerGroupTextSchema = Schema.Trim.check(
-  Schema.isMinLength(1),
-  Schema.isMaxLength(500),
-);
-export const CustomerGroupDefinitionTextSchema = Schema.Trim.check(
-  Schema.isMinLength(1),
-  Schema.isMaxLength(4000),
-);
+export const CustomerGroupRevisionSchema = Schema.Finite.check(Schema.isInt(), Schema.isGreaterThanOrEqualTo(1));
+export const CustomerGroupTextSchema = Schema.Trim.check(Schema.isMinLength(1), Schema.isMaxLength(500));
+export const CustomerGroupDefinitionTextSchema = Schema.Trim.check(Schema.isMinLength(1), Schema.isMaxLength(4000));
 export const CustomerGroupBusinessCodeSchema = Schema.Trim.check(
   Schema.isMinLength(2),
   Schema.isMaxLength(64),
@@ -29,14 +19,13 @@ export const CustomerGroupMeaningKeySchema = Schema.Trim.check(
 ).pipe(Schema.brand('CustomerGroupMeaningKey'));
 export type CustomerGroupMeaningKey = typeof CustomerGroupMeaningKeySchema.Type;
 
-const CustomerGroupInstantSchema = Schema.String.check(
-  Schema.makeFilter((value) => {
-    const parsed = DateTime.make(value);
-    return Option.isSome(parsed) && DateTime.formatIso(parsed.value) === value
-      ? undefined
-      : 'timestamp must be one canonical UTC instant with millisecond precision';
-  }),
-).pipe(
+const customerGroupCanonicalInstant = Schema.makeFilter((value: string) => {
+  const parsed = DateTime.make(value);
+  return Option.isSome(parsed) && DateTime.formatIso(parsed.value) === value
+    ? undefined
+    : 'timestamp must be one canonical UTC instant with millisecond precision';
+});
+const CustomerGroupInstantSchema = Schema.String.check(customerGroupCanonicalInstant).pipe(
   Schema.decodeTo(Schema.toType(Schema.DateTimeUtc), {
     decode: SchemaGetter.transform(DateTime.makeUnsafe),
     encode: SchemaGetter.transform(DateTime.formatIso),
@@ -59,12 +48,11 @@ export const CommerceCustomerProfileSubjectSchema = Schema.Union([
 ]);
 export type CommerceCustomerProfileSubject = typeof CommerceCustomerProfileSubjectSchema.Type;
 
-export const CustomerGroupDefinitionChangeKindSchema = Schema.Literals([
+const CustomerGroupDefinitionChangeKindSchema = Schema.Literals([
   'CREATED',
   'COSMETIC_RENAME',
   'DESCRIPTION_CLARIFICATION',
 ]);
-export type CustomerGroupDefinitionChangeKind = typeof CustomerGroupDefinitionChangeKindSchema.Type;
 
 export const CustomerGroupDefinitionRevisionSchema = Schema.Struct({
   changeKind: CustomerGroupDefinitionChangeKindSchema,
@@ -78,13 +66,12 @@ export const CustomerGroupDefinitionRevisionSchema = Schema.Struct({
 });
 export type CustomerGroupDefinitionRevision = typeof CustomerGroupDefinitionRevisionSchema.Type;
 
-export const CustomerGroupLifecyclePeriodSchema = Schema.Struct({
+const CustomerGroupLifecyclePeriodSchema = Schema.Struct({
   activeFrom: CustomerGroupIsoTimestampSchema,
   archivedAt: Schema.toEncoded(Schema.OptionFromNullOr(CustomerGroupInstantSchema)),
   reason: CustomerGroupTextSchema,
   recordedAt: CustomerGroupIsoTimestampSchema,
 });
-export type CustomerGroupLifecyclePeriod = typeof CustomerGroupLifecyclePeriodSchema.Type;
 
 export const CommerceCustomerGroupSchema = Schema.Struct({
   businessCode: CustomerGroupBusinessCodeSchema,
@@ -98,13 +85,12 @@ export const CommerceCustomerGroupSchema = Schema.Struct({
 });
 export type CommerceCustomerGroup = typeof CommerceCustomerGroupSchema.Type;
 
-export const CustomerGroupMembershipRemovalSchema = Schema.Struct({
+const CustomerGroupMembershipRemovalSchema = Schema.Struct({
   effectiveAt: CustomerGroupIsoTimestampSchema,
   kind: Schema.Literals(['EXPLICIT_END', 'EXPLICIT_CANCEL', 'GROUP_ARCHIVED']),
   reason: CustomerGroupTextSchema,
   recordedAt: CustomerGroupIsoTimestampSchema,
 });
-export type CustomerGroupMembershipRemoval = typeof CustomerGroupMembershipRemovalSchema.Type;
 
 export const CommerceCustomerGroupMembershipSchema = Schema.Struct({
   assignedAt: CustomerGroupIsoTimestampSchema,
@@ -140,9 +126,7 @@ export const CustomerGroupPageLimitSchema = Schema.Finite.check(
 );
 
 export const CustomerGroupActionAuditEvidenceSchema = Schema.Struct({
-  affectedMembershipCount: Schema.optionalKey(
-    Schema.Finite.check(Schema.isInt(), Schema.isGreaterThanOrEqualTo(0)),
-  ),
+  affectedMembershipCount: Schema.optionalKey(Schema.Finite.check(Schema.isInt(), Schema.isGreaterThanOrEqualTo(0))),
   afterDefinitionRevision: Schema.optionalKey(CustomerGroupRevisionSchema),
   beforeDefinitionRevision: Schema.optionalKey(CustomerGroupRevisionSchema),
   changed: Schema.Boolean,
@@ -155,8 +139,8 @@ export const CustomerGroupActionAuditEvidenceSchema = Schema.Struct({
   revision: CustomerGroupRevisionSchema,
 });
 
-export const CustomerGroupPageSchema = Schema.Struct({
+// oxlint-disable-next-line eslint/no-unused-vars -- Reserved private schema retained as part of the customer-group contract structure.
+const CustomerGroupPageSchema = Schema.Struct({
   items: Schema.Array(CommerceCustomerGroupMembershipSchema),
   nextCursor: Schema.toEncoded(Schema.OptionFromNullOr(Schema.String)),
 });
-export type CustomerGroupPage = typeof CustomerGroupPageSchema.Type;

@@ -1,9 +1,6 @@
 import { expect, it } from 'effect-rstest';
 import { Effect, Predicate } from 'effect';
-import {
-  acquirePaymentTermCatalogPool,
-  makePaymentTermCatalogDatabase,
-} from '../../src/database/client.ts';
+import { acquirePaymentTermCatalogPool, makePaymentTermCatalogDatabase } from '../../src/database/client.ts';
 
 it.effect('finalizes the catalog pool when its Effect scope closes', () =>
   Effect.gen(function* finalizeCatalogPool() {
@@ -39,8 +36,6 @@ it.effect('keeps catalog pool acquisition failures in the typed channel', () =>
       ),
     );
     expect(Predicate.isTagged(error, 'PaymentTermCatalogDatabaseConnectionError')).toBe(true);
-    expect(error.reason).toBe(
-      'Unable to initialize the Payment Term Catalog PostgreSQL connection pool',
-    );
+    expect(error.reason).toBe('Unable to initialize the Payment Term Catalog PostgreSQL connection pool');
   }),
 );

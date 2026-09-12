@@ -17,12 +17,8 @@ import type {
 } from '../permissions/context-access.ts';
 
 const actionRegistration: unique symbol = Symbol('@app/core-runtime/actions/registration');
-const actionResourcePermissionDeclaration: unique symbol = Symbol(
-  '@app/core-runtime/actions/resource-permission',
-);
-const actionBusinessPermissionDeclaration: unique symbol = Symbol(
-  '@app/core-runtime/actions/business-permission',
-);
+const actionResourcePermissionDeclaration: unique symbol = Symbol('@app/core-runtime/actions/resource-permission');
+const actionBusinessPermissionDeclaration: unique symbol = Symbol('@app/core-runtime/actions/business-permission');
 
 class ActionPrivateStorage<Value> {
   declare readonly [actionRegistration]?: true;
@@ -73,9 +69,7 @@ export type ActionDeniedAuditEvidenceJsonValue =
   | string
   | readonly ActionDeniedAuditEvidenceJsonValue[]
   | { readonly [key: string]: ActionDeniedAuditEvidenceJsonValue };
-export type ActionDeniedAuditEvidenceValue = Readonly<
-  Record<string, ActionDeniedAuditEvidenceJsonValue>
->;
+export type ActionDeniedAuditEvidenceValue = Readonly<Record<string, ActionDeniedAuditEvidenceJsonValue>>;
 export type ActionDeniedAuditEvidenceResolver<Payload> = (
   payload: Payload,
   scope: OperationalScope,
@@ -106,10 +100,9 @@ export type ActionBusinessPermissionDeclaration<Payload> = ActionPrivateStorage<
   readonly kind: 'business_permission';
 };
 
-const ActionDefinitionInvariantError = Schema.TaggedError<Error>()(
-  'ActionDefinitionInvariantError',
-  { message: Schema.String },
-);
+const ActionDefinitionInvariantError = Schema.TaggedError<Error>()('ActionDefinitionInvariantError', {
+  message: Schema.String,
+});
 
 const failActionDefinition = (message: string): never => {
   throw new ActionDefinitionInvariantError({ message });
@@ -578,10 +571,7 @@ export const getActionBusinessPermissionTargetResolver = <
     ? undefined
     : ActionPrivateStorage.getValue(registration.descriptor.businessPermission);
 
-const preserveFailureCause = <Failure extends object>(
-  failure: Failure,
-  cause: unknown,
-): Failure => {
+const preserveFailureCause = <Failure extends object>(failure: Failure, cause: unknown): Failure => {
   Object.defineProperty(failure, 'cause', {
     configurable: false,
     enumerable: false,

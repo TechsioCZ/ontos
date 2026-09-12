@@ -1,10 +1,5 @@
 import { Context, Effect } from 'effect';
-import type {
-  AccessInstant,
-  CounterpartyPermissionScope,
-  CounterpartyRef,
-  PrincipalRef,
-} from './access-contract.ts';
+import type { AccessInstant, CounterpartyPermissionScope, CounterpartyRef, PrincipalRef } from './access-contract.ts';
 import type { CounterpartyAccessDomainError } from './access-error.ts';
 import { CounterpartyAccessUnavailable } from './counterparty-access-unavailable.ts';
 import type { InvitationClaimProofReference } from './invitation-contract.ts';
@@ -24,7 +19,7 @@ export interface CounterpartyInvitationProofRegistrationInput {
   readonly scope: CounterpartyPermissionScope;
 }
 
-export type CounterpartyInvitationProofRegistration = Readonly<{
+type CounterpartyInvitationProofRegistration = Readonly<{
   readonly proofReference: InvitationClaimProofReference;
   readonly proofVersion: 'commerce-invitation-proof.v1';
   readonly state: 'DELIVERY_STAGED' | 'DELIVERY_STAGE_REPLAYED';
@@ -42,17 +37,13 @@ export interface CounterpartyInvitationProofLifecycleService {
 export class CounterpartyInvitationProofLifecycle extends Context.Service<
   CounterpartyInvitationProofLifecycle,
   CounterpartyInvitationProofLifecycleService
->()(
-  '@app/commerce-customer-context/shared/domain/invitation-proof-lifecycle/CounterpartyInvitationProofLifecycle',
-) {}
+>()('@app/commerce-customer-context/shared/domain/invitation-proof-lifecycle/CounterpartyInvitationProofLifecycle') {}
 
 export const unavailableCounterpartyInvitationProofLifecycle = (
   reason = 'Invitation proof issuance or delivery is unavailable',
 ): CounterpartyInvitationProofLifecycleService => {
   const unavailable = () =>
-    Effect.fail(
-      new CounterpartyAccessUnavailable({ code: 'counterparty_access_unavailable', reason }),
-    );
+    Effect.fail(new CounterpartyAccessUnavailable({ code: 'counterparty_access_unavailable', reason }));
   return Object.freeze({
     issueAndStageDelivery: unavailable,
     rotateAndStageDelivery: unavailable,
