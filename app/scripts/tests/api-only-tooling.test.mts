@@ -3787,7 +3787,7 @@ describe('consumer migration preserves native tooling and governed safety', () =
   it.live(
     'authenticated cohort and scoped release-age policy remain pinned',
     Effect.fn(function* consumerScenario() {
-      const releaseVersion = '3.9.0-ultramodern.8';
+      const releaseVersion = '3.9.0-ultramodern.9';
       const cohort = Schema.decodeUnknownSync(
         Schema.fromJsonString(
           Schema.Struct({

@@ -1,614 +1,471 @@
-diff --git a/column-builder.d.cts b/column-builder.d.cts
-index 37a2bfb..6735afa 100644
---- a/column-builder.d.cts
-+++ b/column-builder.d.cts
-@@ -1,11 +1,12 @@
- import { entityKind } from "./entity.cjs";
- import type { Column } from "./column.cjs";
--import type { GelColumn, GelExtraConfigColumn } from "./gel-core/index.cjs";
--import type { MySqlColumn } from "./mysql-core/index.cjs";
--import type { ExtraConfigColumn, PgColumn, PgSequenceOptions } from "./pg-core/index.cjs";
--import type { SingleStoreColumn } from "./singlestore-core/index.cjs";
-+import type { GelColumn, GelExtraConfigColumn } from "./gel-core/columns/common.cjs";
-+import type { MySqlColumn } from "./mysql-core/columns/common.cjs";
-+import type { ExtraConfigColumn, PgColumn } from "./pg-core/columns/common.cjs";
-+import type { PgSequenceOptions } from "./pg-core/sequence.cjs";
-+import type { SingleStoreColumn } from "./singlestore-core/columns/common.cjs";
- import type { SQL } from "./sql/sql.cjs";
--import type { SQLiteColumn } from "./sqlite-core/index.cjs";
-+import type { SQLiteColumn } from "./sqlite-core/columns/common.cjs";
- import type { Assume, Simplify } from "./utils.cjs";
- export type ColumnDataType = 'string' | 'number' | 'boolean' | 'array' | 'json' | 'date' | 'bigint' | 'custom' | 'buffer' | 'dateDuration' | 'duration' | 'relDuration' | 'localTime' | 'localDate' | 'localDateTime';
- export type Dialect = 'pg' | 'mysql' | 'sqlite' | 'singlestore' | 'common' | 'gel';
+diff --git a/arktype/column.d.ts b/arktype/column.d.ts
+index 6ee3575..65adb61 100644
+--- a/arktype/column.d.ts
++++ b/arktype/column.d.ts
+@@ -3,6 +3,7 @@ import * as arktype from "arktype";
+ import { Type } from "arktype";
+ import * as arktype_internal_variants_object_ts0 from "arktype/internal/variants/object.ts";
+ import * as arktype_internal_variants_string_ts0 from "arktype/internal/variants/string.ts";
++type Buffer<T extends ArrayBufferLike = ArrayBufferLike> = Uint8Array<T>;
+ 
+ //#region src/arktype/column.d.ts
+ declare const literalSchema: arktype.BaseType<string | number | boolean | null, {}>;
+diff --git a/better-sqlite3/driver.d.ts b/better-sqlite3/driver.d.ts
+index 02ff3ee..de2ccc0 100644
+--- a/better-sqlite3/driver.d.ts
++++ b/better-sqlite3/driver.d.ts
+@@ -4,6 +4,7 @@ import { SQLiteAsyncDatabase } from "../sqlite-core/async/db.js";
+ import { Database, Options } from "better-sqlite3";
+ import { AnyRelations, EmptyRelations } from "../relations.js";
+ import { DrizzleSQLiteConfig } from "../sqlite-core/utils.js";
++type Buffer<T extends ArrayBufferLike = ArrayBufferLike> = Uint8Array<T>;
+ 
+ //#region src/better-sqlite3/driver.d.ts
+ type DrizzleBetterSQLite3DatabaseConfig = ({
+diff --git a/cockroach-core/policies.d.ts b/cockroach-core/policies.d.ts
+index 3d00007..d2f3f2a 100644
+--- a/cockroach-core/policies.d.ts
++++ b/cockroach-core/policies.d.ts
+@@ -12,7 +12,7 @@ interface CockroachPolicyConfig {
+   using?: SQL;
+   withCheck?: SQL;
+ }
+-declare class CockroachPolicy implements CockroachPolicyConfig {
++declare class CockroachPolicy {
+   readonly name: string;
+   static readonly [entityKind]: string;
+   readonly as: CockroachPolicyConfig['as'];
+diff --git a/cockroach-core/roles.d.ts b/cockroach-core/roles.d.ts
+index d797efa..1dbb593 100644
+--- a/cockroach-core/roles.d.ts
++++ b/cockroach-core/roles.d.ts
+@@ -5,7 +5,7 @@ interface CockroachRoleConfig {
+   createDb?: boolean;
+   createRole?: boolean;
+ }
+-declare class CockroachRole implements CockroachRoleConfig {
++declare class CockroachRole {
+   readonly name: string;
+   static readonly [entityKind]: string;
+   constructor(name: string, config?: CockroachRoleConfig);
 diff --git a/column-builder.d.ts b/column-builder.d.ts
-index 07dfef9..3e1411f 100644
+index ef98a22..6f6703b 100644
 --- a/column-builder.d.ts
 +++ b/column-builder.d.ts
-@@ -1,11 +1,12 @@
- import { entityKind } from "./entity.js";
- import type { Column } from "./column.js";
--import type { GelColumn, GelExtraConfigColumn } from "./gel-core/index.js";
--import type { MySqlColumn } from "./mysql-core/index.js";
--import type { ExtraConfigColumn, PgColumn, PgSequenceOptions } from "./pg-core/index.js";
--import type { SingleStoreColumn } from "./singlestore-core/index.js";
-+import type { GelColumn, GelExtraConfigColumn } from "./gel-core/columns/common.js";
-+import type { MySqlColumn } from "./mysql-core/columns/common.js";
-+import type { ExtraConfigColumn, PgColumn } from "./pg-core/columns/common.js";
-+import type { PgSequenceOptions } from "./pg-core/sequence.js";
-+import type { SingleStoreColumn } from "./singlestore-core/columns/common.js";
- import type { SQL } from "./sql/sql.js";
--import type { SQLiteColumn } from "./sqlite-core/index.js";
-+import type { SQLiteColumn } from "./sqlite-core/columns/common.js";
- import type { Assume, Simplify } from "./utils.js";
- export type ColumnDataType = 'string' | 'number' | 'boolean' | 'array' | 'json' | 'date' | 'bigint' | 'custom' | 'buffer' | 'dateDuration' | 'duration' | 'relDuration' | 'localTime' | 'localDate' | 'localDateTime';
- export type Dialect = 'pg' | 'mysql' | 'sqlite' | 'singlestore' | 'common' | 'gel';
-diff --git a/gel-core/policies.d.cts b/gel-core/policies.d.cts
-index 794daf4..1fdb59b 100644
---- a/gel-core/policies.d.cts
-+++ b/gel-core/policies.d.cts
-@@ -10,14 +10,14 @@ export interface GelPolicyConfig {
-     using?: SQL;
-     withCheck?: SQL;
+@@ -143,11 +143,12 @@ type IsIdentity<T, TType extends 'always' | 'byDefault'> = T & {
+     identity: TType;
+   };
+ };
+-interface ColumnBuilderBase<out T extends ColumnBuilderBaseConfig<ColumnType> = ColumnBuilderBaseConfig<ColumnType>> {
++interface ColumnBuilderBase<T extends ColumnBuilderBaseConfig<ColumnType> = ColumnBuilderBaseConfig<ColumnType>> {
+   _: T;
  }
--export declare class GelPolicy implements GelPolicyConfig {
-+export declare class GelPolicy {
-     readonly name: string;
-     static readonly [entityKind]: string;
--    readonly as: GelPolicyConfig['as'];
--    readonly for: GelPolicyConfig['for'];
--    readonly to: GelPolicyConfig['to'];
--    readonly using: GelPolicyConfig['using'];
--    readonly withCheck: GelPolicyConfig['withCheck'];
-+    readonly as: GelPolicyConfig['as'] | undefined;
-+    readonly for: GelPolicyConfig['for'] | undefined;
-+    readonly to: GelPolicyConfig['to'] | undefined;
-+    readonly using: GelPolicyConfig['using'] | undefined;
-+    readonly withCheck: GelPolicyConfig['withCheck'] | undefined;
-     constructor(name: string, config?: GelPolicyConfig);
-     link(table: GelTable): this;
+-declare abstract class ColumnBuilder<out T extends ColumnBuilderBaseConfig<ColumnType>, TRuntimeConfig extends object = object, TExtraConfig extends ColumnBuilderExtraConfig = ColumnBuilderExtraConfig> implements ColumnBuilderBase<T> {
++declare abstract class ColumnBuilder<T extends ColumnBuilderBaseConfig<ColumnType>, TRuntimeConfig extends object = object, TExtraConfig extends ColumnBuilderExtraConfig = ColumnBuilderExtraConfig> implements ColumnBuilderBase<T> {
+   static readonly [entityKind]: string;
++  protected config: ColumnBuilderRuntimeConfig<T['data']> & TRuntimeConfig;
+   _: T;
+   constructor(name: string, dataType: ColumnType, columnType: string);
+   /**
+diff --git a/column.d.ts b/column.d.ts
+index 1ca227f..1c9f1bf 100644
+--- a/column.d.ts
++++ b/column.d.ts
+@@ -21,10 +21,10 @@ interface ColumnBaseConfig<TDataType extends ColumnType> {
+   generated: unknown;
+   identity: undefined | 'always' | 'byDefault';
  }
-diff --git a/gel-core/policies.d.ts b/gel-core/policies.d.ts
-index 7687c59..43a16b2 100644
---- a/gel-core/policies.d.ts
-+++ b/gel-core/policies.d.ts
-@@ -10,14 +10,14 @@ export interface GelPolicyConfig {
-     using?: SQL;
-     withCheck?: SQL;
+-interface Column<out T extends ColumnBaseConfig<ColumnType> = ColumnBaseConfig<ColumnType>, out TRuntimeConfig extends object = object> extends DriverValueMapper<T['data'], T['driverParam']>, SQLWrapper {
++interface Column<T extends ColumnBaseConfig<ColumnType> = ColumnBaseConfig<ColumnType>, TRuntimeConfig extends object = object> extends DriverValueMapper<T['data'], T['driverParam']>, SQLWrapper {
+   as(alias: string): this;
  }
--export declare class GelPolicy implements GelPolicyConfig {
-+export declare class GelPolicy {
-     readonly name: string;
-     static readonly [entityKind]: string;
--    readonly as: GelPolicyConfig['as'];
--    readonly for: GelPolicyConfig['for'];
--    readonly to: GelPolicyConfig['to'];
--    readonly using: GelPolicyConfig['using'];
--    readonly withCheck: GelPolicyConfig['withCheck'];
-+    readonly as: GelPolicyConfig['as'] | undefined;
-+    readonly for: GelPolicyConfig['for'] | undefined;
-+    readonly to: GelPolicyConfig['to'] | undefined;
-+    readonly using: GelPolicyConfig['using'] | undefined;
-+    readonly withCheck: GelPolicyConfig['withCheck'] | undefined;
-     constructor(name: string, config?: GelPolicyConfig);
-     link(table: GelTable): this;
+-declare abstract class Column<out T extends ColumnBaseConfig<ColumnType> = ColumnBaseConfig<ColumnType>, out TRuntimeConfig extends object = object> implements DriverValueMapper<T['data'], T['driverParam']>, SQLWrapper {
++declare abstract class Column<T extends ColumnBaseConfig<ColumnType> = ColumnBaseConfig<ColumnType>, TRuntimeConfig extends object = object> implements DriverValueMapper<T['data'], T['driverParam']>, SQLWrapper {
+   static readonly [entityKind]: string;
+   readonly _: T;
+   readonly name: string;
+diff --git a/effect-schema/column.d.ts b/effect-schema/column.d.ts
+index 11aa6de..f6a1750 100644
+--- a/effect-schema/column.d.ts
++++ b/effect-schema/column.d.ts
+@@ -1,6 +1,7 @@
+ import { Column } from "../column.js";
+ import { Schema, Top } from "effect/Schema";
+ import { Schema as Schema$1 } from "effect";
++type Buffer<T extends ArrayBufferLike = ArrayBufferLike> = Uint8Array<T>;
+ 
+ //#region src/effect-schema/column.d.ts
+ declare const literalSchema: Schema$1.Union<readonly [Schema$1.String, Schema$1.Number, Schema$1.Boolean, Schema$1.Null]>;
+diff --git a/mssql-core/columns/binary.d.ts b/mssql-core/columns/binary.d.ts
+index 926d12b..f0e8ad4 100644
+--- a/mssql-core/columns/binary.d.ts
++++ b/mssql-core/columns/binary.d.ts
+@@ -1,6 +1,7 @@
+ import { MsSqlColumn, MsSqlColumnBuilder } from "./common.js";
+ import { entityKind } from "../../entity.js";
+ import { ColumnBaseConfig } from "../../column.js";
++type Buffer<T extends ArrayBufferLike = ArrayBufferLike> = Uint8Array<T>;
+ 
+ //#region src/mssql-core/columns/binary.d.ts
+ declare class MsSqlBinaryBuilder extends MsSqlColumnBuilder<{
+diff --git a/mssql-core/columns/varbinary.d.ts b/mssql-core/columns/varbinary.d.ts
+index 86cf734..89777a0 100644
+--- a/mssql-core/columns/varbinary.d.ts
++++ b/mssql-core/columns/varbinary.d.ts
+@@ -1,6 +1,7 @@
+ import { MsSqlColumn, MsSqlColumnBuilder } from "./common.js";
+ import { entityKind } from "../../entity.js";
+ import { ColumnBaseConfig } from "../../column.js";
++type Buffer<T extends ArrayBufferLike = ArrayBufferLike> = Uint8Array<T>;
+ 
+ //#region src/mssql-core/columns/varbinary.d.ts
+ declare class MsSqlVarBinaryBuilder extends MsSqlColumnBuilder<{
+diff --git a/mysql-core/codecs.d.ts b/mysql-core/codecs.d.ts
+index 82688dc..c3214ef 100644
+--- a/mysql-core/codecs.d.ts
++++ b/mysql-core/codecs.d.ts
+@@ -1,6 +1,7 @@
+ import { PartialWithUndefined } from "../utils.js";
+ import { CastCodec, Codecs } from "../codecs.js";
+ import * as __sql_sql_ts0 from "../sql/sql.js";
++type Buffer<T extends ArrayBufferLike = ArrayBufferLike> = Uint8Array<T>;
+ 
+ //#region src/mysql-core/codecs.d.ts
+ type MySqlType = 'tinyint' | 'smallint' | 'mediumint' | 'int' | 'bigint' | 'bigint:number' | 'bigint:string' | 'serial' | 'decimal' | 'decimal:number' | 'decimal:bigint' | 'float' | 'double' | 'real' | 'bit' | 'boolean' | 'char' | 'varchar' | 'tinytext' | 'text' | 'mediumtext' | 'longtext' | 'enum' | 'set' | 'binary' | 'varbinary' | 'tinyblob' | 'tinyblob:buffer' | 'blob' | 'blob:buffer' | 'mediumblob' | 'mediumblob:buffer' | 'longblob' | 'longblob:buffer' | 'date' | 'date:string' | 'datetime' | 'datetime:string' | 'time' | 'timestamp' | 'timestamp:string' | 'year' | 'json' | 'geometry' | 'point' | 'linestring' | 'polygon' | 'multipoint' | 'multilinestring' | 'multipolygon' | 'geometrycollection';
+diff --git a/mysql-core/columns/blob.d.ts b/mysql-core/columns/blob.d.ts
+index b351f03..5e5354a 100644
+--- a/mysql-core/columns/blob.d.ts
++++ b/mysql-core/columns/blob.d.ts
+@@ -2,6 +2,7 @@ import { MySqlColumn, MySqlColumnBuilder } from "./common.js";
+ import { entityKind } from "../../entity.js";
+ import { Equal } from "../../utils.js";
+ import { ColumnBaseConfig } from "../../column.js";
++type Buffer<T extends ArrayBufferLike = ArrayBufferLike> = Uint8Array<T>;
+ 
+ //#region src/mysql-core/columns/blob.d.ts
+ type MySqlBlobColumnType = 'tinyblob' | 'blob' | 'mediumblob' | 'longblob';
+diff --git a/pg-core/codecs.d.ts b/pg-core/codecs.d.ts
+index 4cade44..836270e 100644
+--- a/pg-core/codecs.d.ts
++++ b/pg-core/codecs.d.ts
+@@ -3,6 +3,7 @@ import { PartialWithUndefined } from "../utils.js";
+ import { CastArrayCodec, CastCodec, Codecs, NormalizeArrayCodec, NormalizeCodec } from "../codecs.js";
+ import * as __sql_sql_ts0 from "../sql/sql.js";
+ import { SQLChunk } from "../sql/sql.js";
++type Buffer<T extends ArrayBufferLike = ArrayBufferLike> = Uint8Array<T>;
+ 
+ //#region src/pg-core/codecs.d.ts
+ type PostGISType = 'geometry(point)' | 'geometry(pointz)' | 'geometry(pointm)' | 'geometry(pointzm)' | 'geometry(linestring)' | 'geometry(linestringz)' | 'geometry(linestringm)' | 'geometry(linestringzm)' | 'geometry(polygon)' | 'geometry(polygonz)' | 'geometry(polygonm)' | 'geometry(polygonzm)' | 'geometry(multipoint)' | 'geometry(multipointz)' | 'geometry(multipointm)' | 'geometry(multipointzm)' | 'geometry(multilinestring)' | 'geometry(multilinestringz)' | 'geometry(multilinestringm)' | 'geometry(multilinestringzm)' | 'geometry(multipolygon)' | 'geometry(multipolygonz)' | 'geometry(multipolygonm)' | 'geometry(multipolygonzm)' | 'geometry(geometrycollection)' | 'geometry(geometrycollectionz)' | 'geometry(geometrycollectionm)' | 'geometry(geometrycollectionzm)' | 'geometry(circularstring)' | 'geometry(circularstringz)' | 'geometry(circularstringm)' | 'geometry(circularstringzm)' | 'geometry(compoundcurve)' | 'geometry(compoundcurvez)' | 'geometry(compoundcurvem)' | 'geometry(compoundcurvezm)' | 'geometry(curvepolygon)' | 'geometry(curvepolygonz)' | 'geometry(curvepolygonm)' | 'geometry(curvepolygonzm)' | 'geometry(multicurve)' | 'geometry(multicurvez)' | 'geometry(multicurvem)' | 'geometry(multicurvezm)' | 'geometry(multisurface)' | 'geometry(multisurfacez)' | 'geometry(multisurfacem)' | 'geometry(multisurfacezm)' | 'geometry(polyhedralsurface)' | 'geometry(polyhedralsurfacez)' | 'geometry(polyhedralsurfacem)' | 'geometry(polyhedralsurfacezm)' | 'geometry(tin)' | 'geometry(tinz)' | 'geometry(tinm)' | 'geometry(tinzm)' | 'geometry(triangle)' | 'geometry(trianglez)' | 'geometry(trianglem)' | 'geometry(trianglezm)' | 'geography(point)' | 'geography(linestring)' | 'geography(polygon)' | 'geography(multipoint)' | 'geography(multilinestring)' | 'geography(multipolygon)' | 'geography(geometrycollection)' | 'box2d' | 'box3d' | 'raster';
+diff --git a/pg-core/columns/bytea.d.ts b/pg-core/columns/bytea.d.ts
+index bb1dd83..00e56e0 100644
+--- a/pg-core/columns/bytea.d.ts
++++ b/pg-core/columns/bytea.d.ts
+@@ -1,5 +1,6 @@
+ import { PgColumn, PgColumnBuilder } from "./common.js";
+ import { entityKind } from "../../entity.js";
++type Buffer<T extends ArrayBufferLike = ArrayBufferLike> = Uint8Array<T>;
+ 
+ //#region src/pg-core/columns/bytea.d.ts
+ declare class PgByteaBuilder extends PgColumnBuilder<{
+diff --git a/pg-core/columns/common.d.ts b/pg-core/columns/common.d.ts
+index 440bc5c..6ed0933 100644
+--- a/pg-core/columns/common.d.ts
++++ b/pg-core/columns/common.d.ts
+@@ -44,7 +44,7 @@ interface PgColumnBuilderRuntimeConfig<TData> {
+   generatedIdentity: GeneratedIdentityConfig | undefined;
+   dimensions?: PgArrayDimension;
  }
-diff --git a/gel-core/query-builders/query.d.cts b/gel-core/query-builders/query.d.cts
-index 466729b..7aea860 100644
---- a/gel-core/query-builders/query.d.cts
-+++ b/gel-core/query-builders/query.d.cts
-@@ -2,7 +2,7 @@ import { entityKind } from "../../entity.cjs";
- import { QueryPromise } from "../../query-promise.cjs";
- import { type BuildQueryResult, type DBQueryConfig, type TableRelationalConfig, type TablesRelationalConfig } from "../../relations.cjs";
- import type { RunnableQuery } from "../../runnable-query.cjs";
--import type { Query, SQLWrapper } from "../../sql/sql.cjs";
-+import type { Query, SQL, SQLWrapper } from "../../sql/sql.cjs";
- import type { KnownKeysOnly } from "../../utils.cjs";
- import type { GelDialect } from "../dialect.cjs";
- import type { GelPreparedQuery, GelSession, PreparedQueryConfig } from "../session.cjs";
-@@ -41,6 +41,7 @@ export declare class GelRelationalQuery<TResult> extends QueryPromise<TResult> i
-     }>;
-     private _getQuery;
-     private _toSQL;
-+    getSQL(): SQL;
-     toSQL(): Query;
-     execute(): Promise<TResult>;
+-interface PgColumnBaseConfig<out TDataType extends ColumnType = ColumnType> {
++interface PgColumnBaseConfig<TDataType extends ColumnType = ColumnType> {
+   name: string;
+   dataType: TDataType;
+   tableName: string;
+@@ -111,7 +111,7 @@ type GetBaseData<T> = T extends {
+ } ? U : T extends {
+   data: infer D;
+ } ? D : unknown;
+-type ResolvePgColumnConfig<out T extends PgColumnBuilderConfig, out TTableName extends string, out TData = (T['dimensions'] extends 1 | 2 | 3 | 4 | 5 ? WrapArray<GetBaseData<T>, T['dimensions']> : GetBaseData<T>)> = {
++type ResolvePgColumnConfig<T extends PgColumnBuilderConfig, TTableName extends string, TData = (T['dimensions'] extends 1 | 2 | 3 | 4 | 5 ? WrapArray<GetBaseData<T>, T['dimensions']> : GetBaseData<T>)> = {
+   name: string;
+   tableName: TTableName;
+   dataType: T['dataType'];
+@@ -132,8 +132,8 @@ interface AnyPgColumnBuilder {
+   readonly _: PgColumnBuilderConfig;
  }
-diff --git a/gel-core/query-builders/query.d.ts b/gel-core/query-builders/query.d.ts
-index 48db533..7b966f8 100644
---- a/gel-core/query-builders/query.d.ts
-+++ b/gel-core/query-builders/query.d.ts
-@@ -2,7 +2,7 @@ import { entityKind } from "../../entity.js";
- import { QueryPromise } from "../../query-promise.js";
- import { type BuildQueryResult, type DBQueryConfig, type TableRelationalConfig, type TablesRelationalConfig } from "../../relations.js";
- import type { RunnableQuery } from "../../runnable-query.js";
--import type { Query, SQLWrapper } from "../../sql/sql.js";
-+import type { Query, SQL, SQLWrapper } from "../../sql/sql.js";
- import type { KnownKeysOnly } from "../../utils.js";
- import type { GelDialect } from "../dialect.js";
- import type { GelPreparedQuery, GelSession, PreparedQueryConfig } from "../session.js";
-@@ -41,6 +41,7 @@ export declare class GelRelationalQuery<TResult> extends QueryPromise<TResult> i
-     }>;
-     private _getQuery;
-     private _toSQL;
-+    getSQL(): SQL;
-     toSQL(): Query;
-     execute(): Promise<TResult>;
+ type PgBuildColumn<TTableName extends string, TBuilder extends AnyPgColumnBuilder, TBuiltConfig extends PgColumnBaseConfig<ColumnType> = ResolvePgColumnConfig<TBuilder['_'], TTableName>> = PgColumn<ColumnType, TBuiltConfig, {}>;
+-type PgBuildColumns<out TTableName extends string, out TConfigMap extends Record<string, AnyPgColumnBuilder>> = { [Key in keyof TConfigMap]: PgBuildColumn<TTableName, TConfigMap[Key]> } & {};
+-type PgBuildExtraConfigColumns<out TConfigMap extends Record<string, AnyPgColumnBuilder>> = { [Key in keyof TConfigMap]: ExtraConfigColumn } & {};
++type PgBuildColumns<TTableName extends string, TConfigMap extends Record<string, AnyPgColumnBuilder>> = { [Key in keyof TConfigMap]: PgBuildColumn<TTableName, TConfigMap[Key]> } & {};
++type PgBuildExtraConfigColumns<TConfigMap extends Record<string, AnyPgColumnBuilder>> = { [Key in keyof TConfigMap]: ExtraConfigColumn } & {};
+ type PgColumns = Record<string, PgColumn>;
+ interface ReferenceConfig {
+   ref: () => PgColumn;
+@@ -143,7 +143,7 @@ interface ReferenceConfig {
+     onDelete?: UpdateDeleteAction;
+   };
  }
-diff --git a/gel-core/roles.d.cts b/gel-core/roles.d.cts
-index cd5e0d5..87bc1ec 100644
---- a/gel-core/roles.d.cts
-+++ b/gel-core/roles.d.cts
-@@ -4,9 +4,12 @@ export interface GelRoleConfig {
-     createRole?: boolean;
-     inherit?: boolean;
+-declare abstract class PgColumnBuilder<out T extends PgColumnBuilderConfig = PgColumnBuilderConfig, out TRuntimeConfig extends object = object> {
++declare abstract class PgColumnBuilder<T extends PgColumnBuilderConfig = PgColumnBuilderConfig, TRuntimeConfig extends object = object> {
+   static readonly [entityKind]: string;
+   readonly _: T;
+   private foreignKeyConfigs;
+@@ -256,7 +256,7 @@ declare abstract class PgColumnBuilder<out T extends PgColumnBuilderConfig = PgC
+   }): this;
+   generatedAlwaysAs(as: SQL | (() => SQL)): SetHasGenerated<this>;
  }
--export declare class GelRole implements GelRoleConfig {
-+export declare class GelRole {
-     readonly name: string;
-     static readonly [entityKind]: string;
-+    readonly createDb: boolean | undefined;
-+    readonly createRole: boolean | undefined;
-+    readonly inherit: boolean | undefined;
-     constructor(name: string, config?: GelRoleConfig);
-     existing(): this;
- }
-diff --git a/gel-core/roles.d.ts b/gel-core/roles.d.ts
-index fcb1dd2..70461d0 100644
---- a/gel-core/roles.d.ts
-+++ b/gel-core/roles.d.ts
-@@ -4,9 +4,12 @@ export interface GelRoleConfig {
-     createRole?: boolean;
-     inherit?: boolean;
- }
--export declare class GelRole implements GelRoleConfig {
-+export declare class GelRole {
-     readonly name: string;
-     static readonly [entityKind]: string;
-+    readonly createDb: boolean | undefined;
-+    readonly createRole: boolean | undefined;
-+    readonly inherit: boolean | undefined;
-     constructor(name: string, config?: GelRoleConfig);
-     existing(): this;
- }
-diff --git a/mysql-core/query-builders/delete.d.cts b/mysql-core/query-builders/delete.d.cts
-index 20e968b..a5a1538 100644
---- a/mysql-core/query-builders/delete.d.cts
-+++ b/mysql-core/query-builders/delete.d.cts
-@@ -40,6 +40,7 @@ export declare class MySqlDeleteBase<TTable extends MySqlTable, TQueryResult ext
-     static readonly [entityKind]: string;
-     private config;
-     constructor(table: TTable, session: MySqlSession, dialect: MySqlDialect, withList?: Subquery[]);
-+    getSQL(): SQL;
-     /**
-      * Adds a `where` clause to the query.
-      *
-diff --git a/mysql-core/query-builders/delete.d.ts b/mysql-core/query-builders/delete.d.ts
-index 9149eb1..ade0397 100644
---- a/mysql-core/query-builders/delete.d.ts
-+++ b/mysql-core/query-builders/delete.d.ts
-@@ -40,6 +40,7 @@ export declare class MySqlDeleteBase<TTable extends MySqlTable, TQueryResult ext
-     static readonly [entityKind]: string;
-     private config;
-     constructor(table: TTable, session: MySqlSession, dialect: MySqlDialect, withList?: Subquery[]);
-+    getSQL(): SQL;
-     /**
-      * Adds a `where` clause to the query.
-      *
-diff --git a/mysql-core/query-builders/select.d.cts b/mysql-core/query-builders/select.d.cts
-index f04f97c..b250603 100644
---- a/mysql-core/query-builders/select.d.cts
-+++ b/mysql-core/query-builders/select.d.cts
-@@ -610,6 +610,7 @@ export interface MySqlSelectBase<TTableName extends string | undefined, TSelecti
- }
- export declare class MySqlSelectBase<TTableName extends string | undefined, TSelection, TSelectMode extends SelectMode, TPreparedQueryHKT extends PreparedQueryHKTBase, TNullabilityMap extends Record<string, JoinNullability> = TTableName extends string ? Record<TTableName, 'not-null'> : {}, TDynamic extends boolean = false, TExcludedMethods extends string = never, TResult = SelectResult<TSelection, TSelectMode, TNullabilityMap>[], TSelectedFields = BuildSubquerySelection<TSelection, TNullabilityMap>> extends MySqlSelectQueryBuilderBase<MySqlSelectHKT, TTableName, TSelection, TSelectMode, TPreparedQueryHKT, TNullabilityMap, TDynamic, TExcludedMethods, TResult, TSelectedFields> {
-     static readonly [entityKind]: string;
-+    getSQL(): SQL;
-     prepare(): MySqlSelectPrepare<this>;
-     execute: ReturnType<this["prepare"]>["execute"];
-     private createIterator;
-diff --git a/mysql-core/query-builders/select.d.ts b/mysql-core/query-builders/select.d.ts
-index d435ba4..4ebb99d 100644
---- a/mysql-core/query-builders/select.d.ts
-+++ b/mysql-core/query-builders/select.d.ts
-@@ -610,6 +610,7 @@ export interface MySqlSelectBase<TTableName extends string | undefined, TSelecti
- }
- export declare class MySqlSelectBase<TTableName extends string | undefined, TSelection, TSelectMode extends SelectMode, TPreparedQueryHKT extends PreparedQueryHKTBase, TNullabilityMap extends Record<string, JoinNullability> = TTableName extends string ? Record<TTableName, 'not-null'> : {}, TDynamic extends boolean = false, TExcludedMethods extends string = never, TResult = SelectResult<TSelection, TSelectMode, TNullabilityMap>[], TSelectedFields = BuildSubquerySelection<TSelection, TNullabilityMap>> extends MySqlSelectQueryBuilderBase<MySqlSelectHKT, TTableName, TSelection, TSelectMode, TPreparedQueryHKT, TNullabilityMap, TDynamic, TExcludedMethods, TResult, TSelectedFields> {
-     static readonly [entityKind]: string;
-+    getSQL(): SQL;
-     prepare(): MySqlSelectPrepare<this>;
-     execute: ReturnType<this["prepare"]>["execute"];
-     private createIterator;
-diff --git a/mysql-core/query-builders/select.types.d.cts b/mysql-core/query-builders/select.types.d.cts
-index 8d996e7..c2c5c7f 100644
---- a/mysql-core/query-builders/select.types.d.cts
-+++ b/mysql-core/query-builders/select.types.d.cts
-@@ -101,7 +101,7 @@ export interface MySqlSelectQueryBuilderHKT extends MySqlSelectHKTBase {
- export interface MySqlSelectHKT extends MySqlSelectHKTBase {
-     _type: MySqlSelectBase<this['tableName'], Assume<this['selection'], ColumnsSelection>, this['selectMode'], Assume<this['preparedQueryHKT'], PreparedQueryHKTBase>, Assume<this['nullabilityMap'], Record<string, JoinNullability>>, this['dynamic'], this['excludedMethods'], Assume<this['result'], any[]>, Assume<this['selectedFields'], ColumnsSelection>>;
- }
--export type MySqlSetOperatorExcludedMethods = 'where' | 'having' | 'groupBy' | 'session' | 'leftJoin' | 'rightJoin' | 'innerJoin' | 'for';
-+export type MySqlSetOperatorExcludedMethods = 'where' | 'having' | 'groupBy' | 'leftJoin' | 'rightJoin' | 'innerJoin' | 'for';
- export type MySqlSelectWithout<T extends AnyMySqlSelectQueryBuilder, TDynamic extends boolean, K extends keyof T & string, TResetExcluded extends boolean = false> = TDynamic extends true ? T : Omit<MySqlSelectKind<T['_']['hkt'], T['_']['tableName'], T['_']['selection'], T['_']['selectMode'], T['_']['preparedQueryHKT'], T['_']['nullabilityMap'], TDynamic, TResetExcluded extends true ? K : T['_']['excludedMethods'] | K, T['_']['result'], T['_']['selectedFields']>, TResetExcluded extends true ? K : T['_']['excludedMethods'] | K>;
- export type MySqlSelectPrepare<T extends AnyMySqlSelect> = PreparedQueryKind<T['_']['preparedQueryHKT'], MySqlPreparedQueryConfig & {
-     execute: T['_']['result'];
-diff --git a/mysql-core/query-builders/select.types.d.ts b/mysql-core/query-builders/select.types.d.ts
-index 5b2e701..0e7c8c1 100644
---- a/mysql-core/query-builders/select.types.d.ts
-+++ b/mysql-core/query-builders/select.types.d.ts
-@@ -101,7 +101,7 @@ export interface MySqlSelectQueryBuilderHKT extends MySqlSelectHKTBase {
- export interface MySqlSelectHKT extends MySqlSelectHKTBase {
-     _type: MySqlSelectBase<this['tableName'], Assume<this['selection'], ColumnsSelection>, this['selectMode'], Assume<this['preparedQueryHKT'], PreparedQueryHKTBase>, Assume<this['nullabilityMap'], Record<string, JoinNullability>>, this['dynamic'], this['excludedMethods'], Assume<this['result'], any[]>, Assume<this['selectedFields'], ColumnsSelection>>;
- }
--export type MySqlSetOperatorExcludedMethods = 'where' | 'having' | 'groupBy' | 'session' | 'leftJoin' | 'rightJoin' | 'innerJoin' | 'for';
-+export type MySqlSetOperatorExcludedMethods = 'where' | 'having' | 'groupBy' | 'leftJoin' | 'rightJoin' | 'innerJoin' | 'for';
- export type MySqlSelectWithout<T extends AnyMySqlSelectQueryBuilder, TDynamic extends boolean, K extends keyof T & string, TResetExcluded extends boolean = false> = TDynamic extends true ? T : Omit<MySqlSelectKind<T['_']['hkt'], T['_']['tableName'], T['_']['selection'], T['_']['selectMode'], T['_']['preparedQueryHKT'], T['_']['nullabilityMap'], TDynamic, TResetExcluded extends true ? K : T['_']['excludedMethods'] | K, T['_']['result'], T['_']['selectedFields']>, TResetExcluded extends true ? K : T['_']['excludedMethods'] | K>;
- export type MySqlSelectPrepare<T extends AnyMySqlSelect> = PreparedQueryKind<T['_']['preparedQueryHKT'], MySqlPreparedQueryConfig & {
-     execute: T['_']['result'];
-diff --git a/pg-core/policies.d.cts b/pg-core/policies.d.cts
-index fe8b4ee..edb3d63 100644
---- a/pg-core/policies.d.cts
-+++ b/pg-core/policies.d.cts
-@@ -10,14 +10,14 @@ export interface PgPolicyConfig {
-     using?: SQL;
-     withCheck?: SQL;
- }
--export declare class PgPolicy implements PgPolicyConfig {
-+export declare class PgPolicy {
-     readonly name: string;
-     static readonly [entityKind]: string;
--    readonly as: PgPolicyConfig['as'];
--    readonly for: PgPolicyConfig['for'];
--    readonly to: PgPolicyConfig['to'];
--    readonly using: PgPolicyConfig['using'];
--    readonly withCheck: PgPolicyConfig['withCheck'];
-+    readonly as: PgPolicyConfig['as'] | undefined;
-+    readonly for: PgPolicyConfig['for'] | undefined;
-+    readonly to: PgPolicyConfig['to'] | undefined;
-+    readonly using: PgPolicyConfig['using'] | undefined;
-+    readonly withCheck: PgPolicyConfig['withCheck'] | undefined;
-     constructor(name: string, config?: PgPolicyConfig);
-     link(table: PgTable): this;
- }
+-declare abstract class PgColumn<out TColumnType extends ColumnType = any, out T extends PgColumnBaseConfig<TColumnType> = PgColumnBaseConfig<TColumnType>, out TRuntimeConfig extends object = {}> extends Column<T, TRuntimeConfig> {
++declare abstract class PgColumn<TColumnType extends ColumnType = any, T extends PgColumnBaseConfig<TColumnType> = PgColumnBaseConfig<TColumnType>, TRuntimeConfig extends object = {}> extends Column<T, TRuntimeConfig> {
+   static readonly [entityKind]: string;
+   readonly dimensions: PgArrayDimension;
+   constructor(table: PgTable, config: PgColumnBuilderRuntimeConfig<T['data']> & TRuntimeConfig);
+@@ -266,7 +266,7 @@ type IndexedExtraConfigType = {
+   nulls?: 'first' | 'last';
+   opClass?: string;
+ };
+-declare class ExtraConfigColumn<out T extends PgColumnBaseConfig<ColumnType> = PgColumnBaseConfig<ColumnType>> extends PgColumn<ColumnType, T, IndexedExtraConfigType> {
++declare class ExtraConfigColumn<T extends PgColumnBaseConfig<ColumnType> = PgColumnBaseConfig<ColumnType>> extends PgColumn<ColumnType, T, IndexedExtraConfigType> {
+   static readonly [entityKind]: string;
+   /** @itnernal */
+   readonly codec: undefined;
+diff --git a/pg-core/columns/date.common.d.ts b/pg-core/columns/date.common.d.ts
+index ac7d730..058a76b 100644
+--- a/pg-core/columns/date.common.d.ts
++++ b/pg-core/columns/date.common.d.ts
+@@ -2,7 +2,7 @@ import { PgColumnBuilder, PgColumnBuilderConfig, SetHasDefault } from "./common.
+ import { entityKind } from "../../entity.js";
+ 
+ //#region src/pg-core/columns/date.common.d.ts
+-declare abstract class PgDateColumnBuilder<out T extends PgColumnBuilderConfig = PgColumnBuilderConfig, out TRuntimeConfig extends object = object> extends PgColumnBuilder<T, TRuntimeConfig> {
++declare abstract class PgDateColumnBuilder<T extends PgColumnBuilderConfig = PgColumnBuilderConfig, TRuntimeConfig extends object = object> extends PgColumnBuilder<T, TRuntimeConfig> {
+   static readonly [entityKind]: string;
+   /**
+    * Adds a `default now()` clause to the column definition.
+diff --git a/pg-core/columns/int.common.d.ts b/pg-core/columns/int.common.d.ts
+index 1f84a02..a43b929 100644
+--- a/pg-core/columns/int.common.d.ts
++++ b/pg-core/columns/int.common.d.ts
+@@ -3,7 +3,7 @@ import { HasIdentity, PgColumnBuilder, PgColumnBuilderConfig } from "./common.js
+ import { entityKind } from "../../entity.js";
+ 
+ //#region src/pg-core/columns/int.common.d.ts
+-declare abstract class PgIntColumnBuilder<out T extends PgColumnBuilderConfig = PgColumnBuilderConfig, out TRuntimeConfig extends object = object> extends PgColumnBuilder<T, TRuntimeConfig> {
++declare abstract class PgIntColumnBuilder<T extends PgColumnBuilderConfig = PgColumnBuilderConfig, TRuntimeConfig extends object = object> extends PgColumnBuilder<T, TRuntimeConfig> {
+   static readonly [entityKind]: string;
+   /**
+    * Adds an `ALWAYS AS IDENTITY` clause to the column definition.
 diff --git a/pg-core/policies.d.ts b/pg-core/policies.d.ts
-index 9f4339c..e2f346f 100644
+index 8dddf4c..8cf30d5 100644
 --- a/pg-core/policies.d.ts
 +++ b/pg-core/policies.d.ts
-@@ -10,14 +10,14 @@ export interface PgPolicyConfig {
-     using?: SQL;
-     withCheck?: SQL;
+@@ -12,7 +12,7 @@ interface PgPolicyConfig {
+   using?: SQL;
+   withCheck?: SQL;
  }
--export declare class PgPolicy implements PgPolicyConfig {
-+export declare class PgPolicy {
-     readonly name: string;
-     static readonly [entityKind]: string;
--    readonly as: PgPolicyConfig['as'];
--    readonly for: PgPolicyConfig['for'];
--    readonly to: PgPolicyConfig['to'];
--    readonly using: PgPolicyConfig['using'];
--    readonly withCheck: PgPolicyConfig['withCheck'];
-+    readonly as: PgPolicyConfig['as'] | undefined;
-+    readonly for: PgPolicyConfig['for'] | undefined;
-+    readonly to: PgPolicyConfig['to'] | undefined;
-+    readonly using: PgPolicyConfig['using'] | undefined;
-+    readonly withCheck: PgPolicyConfig['withCheck'] | undefined;
-     constructor(name: string, config?: PgPolicyConfig);
-     link(table: PgTable): this;
- }
-diff --git a/pg-core/query-builders/query.d.cts b/pg-core/query-builders/query.d.cts
-index 566e120..143036c 100644
---- a/pg-core/query-builders/query.d.cts
-+++ b/pg-core/query-builders/query.d.cts
-@@ -2,7 +2,7 @@ import { entityKind } from "../../entity.cjs";
- import { QueryPromise } from "../../query-promise.cjs";
- import { type BuildQueryResult, type DBQueryConfig, type TableRelationalConfig, type TablesRelationalConfig } from "../../relations.cjs";
- import type { RunnableQuery } from "../../runnable-query.cjs";
--import type { Query, SQLWrapper } from "../../sql/sql.cjs";
-+import type { Query, SQL, SQLWrapper } from "../../sql/sql.cjs";
- import type { KnownKeysOnly } from "../../utils.cjs";
- import type { PgDialect } from "../dialect.cjs";
- import type { PgPreparedQuery, PgSession, PreparedQueryConfig } from "../session.cjs";
-@@ -41,6 +41,7 @@ export declare class PgRelationalQuery<TResult> extends QueryPromise<TResult> im
-     }>;
-     private _getQuery;
-     private _toSQL;
-+    getSQL(): SQL;
-     toSQL(): Query;
-     private authToken?;
-     execute(): Promise<TResult>;
-diff --git a/pg-core/query-builders/query.d.ts b/pg-core/query-builders/query.d.ts
-index 94e995b..93120b1 100644
---- a/pg-core/query-builders/query.d.ts
-+++ b/pg-core/query-builders/query.d.ts
-@@ -2,7 +2,7 @@ import { entityKind } from "../../entity.js";
- import { QueryPromise } from "../../query-promise.js";
- import { type BuildQueryResult, type DBQueryConfig, type TableRelationalConfig, type TablesRelationalConfig } from "../../relations.js";
- import type { RunnableQuery } from "../../runnable-query.js";
--import type { Query, SQLWrapper } from "../../sql/sql.js";
-+import type { Query, SQL, SQLWrapper } from "../../sql/sql.js";
- import type { KnownKeysOnly } from "../../utils.js";
- import type { PgDialect } from "../dialect.js";
- import type { PgPreparedQuery, PgSession, PreparedQueryConfig } from "../session.js";
-@@ -41,6 +41,7 @@ export declare class PgRelationalQuery<TResult> extends QueryPromise<TResult> im
-     }>;
-     private _getQuery;
-     private _toSQL;
-+    getSQL(): SQL;
-     toSQL(): Query;
-     private authToken?;
-     execute(): Promise<TResult>;
-diff --git a/pg-core/roles.d.cts b/pg-core/roles.d.cts
-index 65e7369..96c050a 100644
---- a/pg-core/roles.d.cts
-+++ b/pg-core/roles.d.cts
-@@ -4,9 +4,12 @@ export interface PgRoleConfig {
-     createRole?: boolean;
-     inherit?: boolean;
- }
--export declare class PgRole implements PgRoleConfig {
-+export declare class PgRole {
-     readonly name: string;
-     static readonly [entityKind]: string;
-+    readonly createDb: boolean | undefined;
-+    readonly createRole: boolean | undefined;
-+    readonly inherit: boolean | undefined;
-     constructor(name: string, config?: PgRoleConfig);
-     existing(): this;
- }
+-declare class PgPolicy implements PgPolicyConfig {
++declare class PgPolicy {
+   readonly name: string;
+   static readonly [entityKind]: string;
+   readonly as: PgPolicyConfig['as'];
 diff --git a/pg-core/roles.d.ts b/pg-core/roles.d.ts
-index 443d397..9b6d9bc 100644
+index 24534db..2fa36a4 100644
 --- a/pg-core/roles.d.ts
 +++ b/pg-core/roles.d.ts
-@@ -4,9 +4,12 @@ export interface PgRoleConfig {
-     createRole?: boolean;
-     inherit?: boolean;
+@@ -6,7 +6,7 @@ interface PgRoleConfig {
+   createRole?: boolean;
+   inherit?: boolean;
  }
--export declare class PgRole implements PgRoleConfig {
-+export declare class PgRole {
-     readonly name: string;
-     static readonly [entityKind]: string;
-+    readonly createDb: boolean | undefined;
-+    readonly createRole: boolean | undefined;
-+    readonly inherit: boolean | undefined;
-     constructor(name: string, config?: PgRoleConfig);
-     existing(): this;
+-declare class PgRole implements PgRoleConfig {
++declare class PgRole {
+   readonly name: string;
+   static readonly [entityKind]: string;
+   constructor(name: string, config?: PgRoleConfig);
+diff --git a/pg-core/table.d.ts b/pg-core/table.d.ts
+index adccbf6..f9b6ebf 100644
+--- a/pg-core/table.d.ts
++++ b/pg-core/table.d.ts
+@@ -14,7 +14,7 @@ import { Casing } from "../casing.js";
+ type PgTableExtraConfigValue = AnyIndexBuilder | CheckBuilder | ForeignKeyBuilder | PrimaryKeyBuilder | UniqueConstraintBuilder | PgPolicy;
+ type PgTableExtraConfig = Record<string, PgTableExtraConfigValue>;
+ type TableConfig = TableConfig$1<PgColumns>;
+-declare class PgTable<out T extends TableConfig = TableConfig> extends Table<T> {
++declare class PgTable<T extends TableConfig = TableConfig> extends Table<T> {
+   static readonly [entityKind]: string;
  }
-diff --git a/singlestore-core/columns/common.d.cts b/singlestore-core/columns/common.d.cts
-index 0dbc570..c05d310 100644
---- a/singlestore-core/columns/common.d.cts
-+++ b/singlestore-core/columns/common.d.cts
-@@ -1,9 +1,10 @@
--import type { ColumnBuilderBase, ColumnBuilderBaseConfig, ColumnBuilderExtraConfig, ColumnBuilderRuntimeConfig, ColumnDataType, HasDefault, IsAutoincrement } from "../../column-builder.cjs";
-+import type { ColumnBuilderBase, ColumnBuilderBaseConfig, ColumnBuilderExtraConfig, ColumnBuilderRuntimeConfig, ColumnDataType, HasDefault, HasGenerated, IsAutoincrement } from "../../column-builder.cjs";
- import { ColumnBuilder } from "../../column-builder.cjs";
- import type { ColumnBaseConfig } from "../../column.cjs";
- import { Column } from "../../column.cjs";
- import { entityKind } from "../../entity.cjs";
- import type { SingleStoreTable } from "../table.cjs";
-+import type { SQL } from "../../sql/sql.cjs";
- import type { Update } from "../../utils.cjs";
- export interface SingleStoreColumnBuilderBase<T extends ColumnBuilderBaseConfig<ColumnDataType, string> = ColumnBuilderBaseConfig<ColumnDataType, string>, TTypeConfig extends object = object> extends ColumnBuilderBase<T, TTypeConfig & {
-     dialect: 'singlestore';
-@@ -19,6 +20,7 @@ export declare abstract class SingleStoreColumnBuilder<T extends ColumnBuilderBa
- }, TExtraConfig> implements SingleStoreColumnBuilderBase<T, TTypeConfig> {
-     static readonly [entityKind]: string;
-     unique(name?: string): this;
-+    generatedAlwaysAs(as: SQL | T['data'] | (() => SQL), config?: SingleStoreGeneratedColumnConfig): HasGenerated<this, { type: 'always' }>;
- }
- export declare abstract class SingleStoreColumn<T extends ColumnBaseConfig<ColumnDataType, string> = ColumnBaseConfig<ColumnDataType, string>, TRuntimeConfig extends object = {}, TTypeConfig extends object = {}> extends Column<T, TRuntimeConfig, TTypeConfig & {
-     dialect: 'singlestore';
-diff --git a/singlestore-core/columns/common.d.ts b/singlestore-core/columns/common.d.ts
-index 7d53fe4..4c10c3b 100644
---- a/singlestore-core/columns/common.d.ts
-+++ b/singlestore-core/columns/common.d.ts
-@@ -1,9 +1,10 @@
--import type { ColumnBuilderBase, ColumnBuilderBaseConfig, ColumnBuilderExtraConfig, ColumnBuilderRuntimeConfig, ColumnDataType, HasDefault, IsAutoincrement } from "../../column-builder.js";
-+import type { ColumnBuilderBase, ColumnBuilderBaseConfig, ColumnBuilderExtraConfig, ColumnBuilderRuntimeConfig, ColumnDataType, HasDefault, HasGenerated, IsAutoincrement } from "../../column-builder.js";
- import { ColumnBuilder } from "../../column-builder.js";
- import type { ColumnBaseConfig } from "../../column.js";
- import { Column } from "../../column.js";
+ type AnyPgTable<TPartial extends Partial<TableConfig> = {}> = PgTable<UpdateTableConfig<TableConfig, TPartial>>;
+diff --git a/singlestore-core/columns/binary.d.ts b/singlestore-core/columns/binary.d.ts
+index dd01a90..0c882c5 100644
+--- a/singlestore-core/columns/binary.d.ts
++++ b/singlestore-core/columns/binary.d.ts
+@@ -1,6 +1,7 @@
+ import { SingleStoreColumn, SingleStoreColumnBuilder } from "./common.js";
  import { entityKind } from "../../entity.js";
- import type { SingleStoreTable } from "../table.js";
-+import type { SQL } from "../../sql/sql.js";
- import type { Update } from "../../utils.js";
- export interface SingleStoreColumnBuilderBase<T extends ColumnBuilderBaseConfig<ColumnDataType, string> = ColumnBuilderBaseConfig<ColumnDataType, string>, TTypeConfig extends object = object> extends ColumnBuilderBase<T, TTypeConfig & {
-     dialect: 'singlestore';
-@@ -19,6 +20,7 @@ export declare abstract class SingleStoreColumnBuilder<T extends ColumnBuilderBa
- }, TExtraConfig> implements SingleStoreColumnBuilderBase<T, TTypeConfig> {
-     static readonly [entityKind]: string;
-     unique(name?: string): this;
-+    generatedAlwaysAs(as: SQL | T['data'] | (() => SQL), config?: SingleStoreGeneratedColumnConfig): HasGenerated<this, { type: 'always' }>;
- }
- export declare abstract class SingleStoreColumn<T extends ColumnBaseConfig<ColumnDataType, string> = ColumnBaseConfig<ColumnDataType, string>, TRuntimeConfig extends object = {}, TTypeConfig extends object = {}> extends Column<T, TRuntimeConfig, TTypeConfig & {
-     dialect: 'singlestore';
-diff --git a/singlestore-core/columns/enum.d.cts b/singlestore-core/columns/enum.d.cts
-index ecd9745..806159f 100644
---- a/singlestore-core/columns/enum.d.cts
-+++ b/singlestore-core/columns/enum.d.cts
-@@ -16,7 +16,7 @@ export type SingleStoreEnumColumnBuilderInitial<TName extends string, TEnum exte
- export declare class SingleStoreEnumColumnBuilder<T extends ColumnBuilderBaseConfig<'string', 'SingleStoreEnumColumn'>> extends SingleStoreColumnBuilder<T, {
-     enumValues: T['enumValues'];
- }> {
--    generatedAlwaysAs(as: SQL<unknown> | (() => SQL) | T['data'], config?: Partial<GeneratedColumnConfig<unknown>>): HasGenerated<this, {}>;
-+    generatedAlwaysAs(as: SQL<unknown> | (() => SQL) | T['data'], config?: Partial<GeneratedColumnConfig<unknown>>): HasGenerated<this, { type: 'always' }>;
-     static readonly [entityKind]: string;
-     constructor(name: T['name'], values: T['enumValues']);
- }
-diff --git a/singlestore-core/columns/enum.d.ts b/singlestore-core/columns/enum.d.ts
-index a44d79d..796db2f 100644
---- a/singlestore-core/columns/enum.d.ts
-+++ b/singlestore-core/columns/enum.d.ts
-@@ -16,7 +16,7 @@ export type SingleStoreEnumColumnBuilderInitial<TName extends string, TEnum exte
- export declare class SingleStoreEnumColumnBuilder<T extends ColumnBuilderBaseConfig<'string', 'SingleStoreEnumColumn'>> extends SingleStoreColumnBuilder<T, {
-     enumValues: T['enumValues'];
- }> {
--    generatedAlwaysAs(as: SQL<unknown> | (() => SQL) | T['data'], config?: Partial<GeneratedColumnConfig<unknown>>): HasGenerated<this, {}>;
-+    generatedAlwaysAs(as: SQL<unknown> | (() => SQL) | T['data'], config?: Partial<GeneratedColumnConfig<unknown>>): HasGenerated<this, { type: 'always' }>;
-     static readonly [entityKind]: string;
-     constructor(name: T['name'], values: T['enumValues']);
- }
-diff --git a/singlestore-core/query-builders/delete.d.cts b/singlestore-core/query-builders/delete.d.cts
-index 1bc7543..a35ebe9 100644
---- a/singlestore-core/query-builders/delete.d.cts
-+++ b/singlestore-core/query-builders/delete.d.cts
-@@ -40,6 +40,7 @@ export declare class SingleStoreDeleteBase<TTable extends SingleStoreTable, TQue
-     static readonly [entityKind]: string;
-     private config;
-     constructor(table: TTable, session: SingleStoreSession, dialect: SingleStoreDialect, withList?: Subquery[]);
-+    getSQL(): SQL;
-     /**
-      * Adds a `where` clause to the query.
-      *
-diff --git a/singlestore-core/query-builders/delete.d.ts b/singlestore-core/query-builders/delete.d.ts
-index 64c862c..74c691a 100644
---- a/singlestore-core/query-builders/delete.d.ts
-+++ b/singlestore-core/query-builders/delete.d.ts
-@@ -40,6 +40,7 @@ export declare class SingleStoreDeleteBase<TTable extends SingleStoreTable, TQue
-     static readonly [entityKind]: string;
-     private config;
-     constructor(table: TTable, session: SingleStoreSession, dialect: SingleStoreDialect, withList?: Subquery[]);
-+    getSQL(): SQL;
-     /**
-      * Adds a `where` clause to the query.
-      *
-diff --git a/singlestore-core/query-builders/select.d.cts b/singlestore-core/query-builders/select.d.cts
-index 30fcadc..e5efcde 100644
---- a/singlestore-core/query-builders/select.d.cts
-+++ b/singlestore-core/query-builders/select.d.cts
-@@ -519,6 +519,7 @@ export interface SingleStoreSelectBase<TTableName extends string | undefined, TS
- }
- export declare class SingleStoreSelectBase<TTableName extends string | undefined, TSelection, TSelectMode extends SelectMode, TPreparedQueryHKT extends PreparedQueryHKTBase, TNullabilityMap extends Record<string, JoinNullability> = TTableName extends string ? Record<TTableName, 'not-null'> : {}, TDynamic extends boolean = false, TExcludedMethods extends string = never, TResult = SelectResult<TSelection, TSelectMode, TNullabilityMap>[], TSelectedFields = BuildSubquerySelection<TSelection, TNullabilityMap>> extends SingleStoreSelectQueryBuilderBase<SingleStoreSelectHKT, TTableName, TSelection, TSelectMode, TPreparedQueryHKT, TNullabilityMap, TDynamic, TExcludedMethods, TResult, TSelectedFields> {
-     static readonly [entityKind]: string;
-+    getSQL(): SQL;
-     prepare(): SingleStoreSelectPrepare<this>;
-     $withCache(config?: {
-         config?: CacheConfig;
-diff --git a/singlestore-core/query-builders/select.d.ts b/singlestore-core/query-builders/select.d.ts
-index a015f4b..9f2ea3e 100644
---- a/singlestore-core/query-builders/select.d.ts
-+++ b/singlestore-core/query-builders/select.d.ts
-@@ -519,6 +519,7 @@ export interface SingleStoreSelectBase<TTableName extends string | undefined, TS
- }
- export declare class SingleStoreSelectBase<TTableName extends string | undefined, TSelection, TSelectMode extends SelectMode, TPreparedQueryHKT extends PreparedQueryHKTBase, TNullabilityMap extends Record<string, JoinNullability> = TTableName extends string ? Record<TTableName, 'not-null'> : {}, TDynamic extends boolean = false, TExcludedMethods extends string = never, TResult = SelectResult<TSelection, TSelectMode, TNullabilityMap>[], TSelectedFields = BuildSubquerySelection<TSelection, TNullabilityMap>> extends SingleStoreSelectQueryBuilderBase<SingleStoreSelectHKT, TTableName, TSelection, TSelectMode, TPreparedQueryHKT, TNullabilityMap, TDynamic, TExcludedMethods, TResult, TSelectedFields> {
-     static readonly [entityKind]: string;
-+    getSQL(): SQL;
-     prepare(): SingleStoreSelectPrepare<this>;
-     $withCache(config?: {
-         config?: CacheConfig;
-diff --git a/singlestore-core/query-builders/select.types.d.cts b/singlestore-core/query-builders/select.types.d.cts
-index 12a5208..7b3bf5c 100644
---- a/singlestore-core/query-builders/select.types.d.cts
-+++ b/singlestore-core/query-builders/select.types.d.cts
-@@ -93,7 +93,7 @@ export interface SingleStoreSelectQueryBuilderHKT extends SingleStoreSelectHKTBa
- export interface SingleStoreSelectHKT extends SingleStoreSelectHKTBase {
-     _type: SingleStoreSelectBase<this['tableName'], Assume<this['selection'], ColumnsSelection>, this['selectMode'], Assume<this['preparedQueryHKT'], PreparedQueryHKTBase>, Assume<this['nullabilityMap'], Record<string, JoinNullability>>, this['dynamic'], this['excludedMethods'], Assume<this['result'], any[]>, Assume<this['selectedFields'], ColumnsSelection>>;
- }
--export type SingleStoreSetOperatorExcludedMethods = 'where' | 'having' | 'groupBy' | 'session' | 'leftJoin' | 'rightJoin' | 'innerJoin' | 'fullJoin' | 'for';
-+export type SingleStoreSetOperatorExcludedMethods = 'where' | 'having' | 'groupBy' | 'leftJoin' | 'rightJoin' | 'innerJoin' | 'fullJoin' | 'for';
- export type SingleStoreSelectWithout<T extends AnySingleStoreSelectQueryBuilder, TDynamic extends boolean, K extends keyof T & string, TResetExcluded extends boolean = false> = TDynamic extends true ? T : Omit<SingleStoreSelectKind<T['_']['hkt'], T['_']['tableName'], T['_']['selection'], T['_']['selectMode'], T['_']['preparedQueryHKT'], T['_']['nullabilityMap'], TDynamic, TResetExcluded extends true ? K : T['_']['excludedMethods'] | K, T['_']['result'], T['_']['selectedFields']>, TResetExcluded extends true ? K : T['_']['excludedMethods'] | K>;
- export type SingleStoreSelectPrepare<T extends AnySingleStoreSelect> = PreparedQueryKind<T['_']['preparedQueryHKT'], SingleStorePreparedQueryConfig & {
-     execute: T['_']['result'];
-diff --git a/singlestore-core/query-builders/select.types.d.ts b/singlestore-core/query-builders/select.types.d.ts
-index 761fa02..7572634 100644
---- a/singlestore-core/query-builders/select.types.d.ts
-+++ b/singlestore-core/query-builders/select.types.d.ts
-@@ -93,7 +93,7 @@ export interface SingleStoreSelectQueryBuilderHKT extends SingleStoreSelectHKTBa
- export interface SingleStoreSelectHKT extends SingleStoreSelectHKTBase {
-     _type: SingleStoreSelectBase<this['tableName'], Assume<this['selection'], ColumnsSelection>, this['selectMode'], Assume<this['preparedQueryHKT'], PreparedQueryHKTBase>, Assume<this['nullabilityMap'], Record<string, JoinNullability>>, this['dynamic'], this['excludedMethods'], Assume<this['result'], any[]>, Assume<this['selectedFields'], ColumnsSelection>>;
- }
--export type SingleStoreSetOperatorExcludedMethods = 'where' | 'having' | 'groupBy' | 'session' | 'leftJoin' | 'rightJoin' | 'innerJoin' | 'fullJoin' | 'for';
-+export type SingleStoreSetOperatorExcludedMethods = 'where' | 'having' | 'groupBy' | 'leftJoin' | 'rightJoin' | 'innerJoin' | 'fullJoin' | 'for';
- export type SingleStoreSelectWithout<T extends AnySingleStoreSelectQueryBuilder, TDynamic extends boolean, K extends keyof T & string, TResetExcluded extends boolean = false> = TDynamic extends true ? T : Omit<SingleStoreSelectKind<T['_']['hkt'], T['_']['tableName'], T['_']['selection'], T['_']['selectMode'], T['_']['preparedQueryHKT'], T['_']['nullabilityMap'], TDynamic, TResetExcluded extends true ? K : T['_']['excludedMethods'] | K, T['_']['result'], T['_']['selectedFields']>, TResetExcluded extends true ? K : T['_']['excludedMethods'] | K>;
- export type SingleStoreSelectPrepare<T extends AnySingleStoreSelect> = PreparedQueryKind<T['_']['preparedQueryHKT'], SingleStorePreparedQueryConfig & {
-     execute: T['_']['result'];
-diff --git a/sqlite-core/query-builders/query.d.cts b/sqlite-core/query-builders/query.d.cts
-index 03c8c8f..b78a6ec 100644
---- a/sqlite-core/query-builders/query.d.cts
-+++ b/sqlite-core/query-builders/query.d.cts
-@@ -2,7 +2,7 @@ import { entityKind } from "../../entity.cjs";
- import { QueryPromise } from "../../query-promise.cjs";
- import { type BuildQueryResult, type DBQueryConfig, type TableRelationalConfig, type TablesRelationalConfig } from "../../relations.cjs";
- import type { RunnableQuery } from "../../runnable-query.cjs";
--import type { Query, SQLWrapper } from "../../sql/sql.cjs";
-+import type { Query, SQL, SQLWrapper } from "../../sql/sql.cjs";
- import type { KnownKeysOnly } from "../../utils.cjs";
- import type { SQLiteDialect } from "../dialect.cjs";
- import type { PreparedQueryConfig, SQLitePreparedQuery, SQLiteSession } from "../session.cjs";
-@@ -46,6 +46,7 @@ export declare class SQLiteRelationalQuery<TType extends 'sync' | 'async', TResu
-         execute: TResult;
-     }>;
-     private _toSQL;
-+    getSQL(): SQL;
-     toSQL(): Query;
-     execute(): Promise<TResult>;
- }
-diff --git a/sqlite-core/query-builders/query.d.ts b/sqlite-core/query-builders/query.d.ts
-index 06ea6c0..af16e96 100644
---- a/sqlite-core/query-builders/query.d.ts
-+++ b/sqlite-core/query-builders/query.d.ts
-@@ -2,7 +2,7 @@ import { entityKind } from "../../entity.js";
- import { QueryPromise } from "../../query-promise.js";
- import { type BuildQueryResult, type DBQueryConfig, type TableRelationalConfig, type TablesRelationalConfig } from "../../relations.js";
- import type { RunnableQuery } from "../../runnable-query.js";
--import type { Query, SQLWrapper } from "../../sql/sql.js";
-+import type { Query, SQL, SQLWrapper } from "../../sql/sql.js";
- import type { KnownKeysOnly } from "../../utils.js";
- import type { SQLiteDialect } from "../dialect.js";
- import type { PreparedQueryConfig, SQLitePreparedQuery, SQLiteSession } from "../session.js";
-@@ -46,6 +46,7 @@ export declare class SQLiteRelationalQuery<TType extends 'sync' | 'async', TResu
-         execute: TResult;
-     }>;
-     private _toSQL;
-+    getSQL(): SQL;
-     toSQL(): Query;
-     execute(): Promise<TResult>;
- }
-diff --git a/sqlite-core/query-builders/select.d.cts b/sqlite-core/query-builders/select.d.cts
-index 4155c9a..62745e7 100644
---- a/sqlite-core/query-builders/select.d.cts
-+++ b/sqlite-core/query-builders/select.d.cts
-@@ -456,6 +456,7 @@ export declare class SQLiteSelectBase<TTableName extends string | undefined, TRe
-         tag?: string;
-         autoInvalidate?: boolean;
-     } | false): this;
-+    getSQL(): SQL;
-     prepare(): SQLiteSelectPrepare<this>;
-     run: ReturnType<this['prepare']>['run'];
-     all: ReturnType<this['prepare']>['all'];
-diff --git a/sqlite-core/query-builders/select.d.ts b/sqlite-core/query-builders/select.d.ts
-index 44561db..25930f1 100644
---- a/sqlite-core/query-builders/select.d.ts
-+++ b/sqlite-core/query-builders/select.d.ts
-@@ -456,6 +456,7 @@ export declare class SQLiteSelectBase<TTableName extends string | undefined, TRe
-         tag?: string;
-         autoInvalidate?: boolean;
-     } | false): this;
-+    getSQL(): SQL;
-     prepare(): SQLiteSelectPrepare<this>;
-     run: ReturnType<this['prepare']>['run'];
-     all: ReturnType<this['prepare']>['all'];
-diff --git a/sqlite-core/query-builders/select.types.d.cts b/sqlite-core/query-builders/select.types.d.cts
-index faf89ea..01cf08d 100644
---- a/sqlite-core/query-builders/select.types.d.cts
-+++ b/sqlite-core/query-builders/select.types.d.cts
-@@ -80,7 +80,7 @@ export interface SQLiteSelectQueryBuilderHKT extends SQLiteSelectHKTBase {
- export interface SQLiteSelectHKT extends SQLiteSelectHKTBase {
-     _type: SQLiteSelectBase<this['tableName'], this['resultType'], this['runResult'], Assume<this['selection'], ColumnsSelection>, this['selectMode'], Assume<this['nullabilityMap'], Record<string, JoinNullability>>, this['dynamic'], this['excludedMethods'], Assume<this['result'], any[]>, Assume<this['selectedFields'], ColumnsSelection>>;
- }
--export type SQLiteSetOperatorExcludedMethods = 'config' | 'leftJoin' | 'rightJoin' | 'innerJoin' | 'fullJoin' | 'where' | 'having' | 'groupBy';
-+export type SQLiteSetOperatorExcludedMethods = 'leftJoin' | 'rightJoin' | 'innerJoin' | 'fullJoin' | 'where' | 'having' | 'groupBy';
- export type CreateSQLiteSelectFromBuilderMode<TBuilderMode extends 'db' | 'qb', TTableName extends string | undefined, TResultType extends 'sync' | 'async', TRunResult, TSelection extends ColumnsSelection, TSelectMode extends SelectMode> = TBuilderMode extends 'db' ? SQLiteSelectBase<TTableName, TResultType, TRunResult, TSelection, TSelectMode> : SQLiteSelectQueryBuilderBase<SQLiteSelectQueryBuilderHKT, TTableName, TResultType, TRunResult, TSelection, TSelectMode>;
- export type SQLiteSelectWithout<T extends AnySQLiteSelectQueryBuilder, TDynamic extends boolean, K extends keyof T & string, TResetExcluded extends boolean = false> = TDynamic extends true ? T : Omit<SQLiteSelectKind<T['_']['hkt'], T['_']['tableName'], T['_']['resultType'], T['_']['runResult'], T['_']['selection'], T['_']['selectMode'], T['_']['nullabilityMap'], TDynamic, TResetExcluded extends true ? K : T['_']['excludedMethods'] | K, T['_']['result'], T['_']['selectedFields']>, TResetExcluded extends true ? K : T['_']['excludedMethods'] | K>;
- export type SQLiteSelectExecute<T extends AnySQLiteSelect> = T['_']['result'];
+ import { ColumnBaseConfig } from "../../column.js";
++type Buffer<T extends ArrayBufferLike = ArrayBufferLike> = Uint8Array<T>;
+ 
+ //#region src/singlestore-core/columns/binary.d.ts
+ declare class SingleStoreBinaryBuilder extends SingleStoreColumnBuilder<{
+diff --git a/singlestore-core/columns/varbinary.d.ts b/singlestore-core/columns/varbinary.d.ts
+index 7850009..89f380f 100644
+--- a/singlestore-core/columns/varbinary.d.ts
++++ b/singlestore-core/columns/varbinary.d.ts
+@@ -1,6 +1,7 @@
+ import { SingleStoreColumn, SingleStoreColumnBuilder } from "./common.js";
+ import { entityKind } from "../../entity.js";
+ import { ColumnBaseConfig } from "../../column.js";
++type Buffer<T extends ArrayBufferLike = ArrayBufferLike> = Uint8Array<T>;
+ 
+ //#region src/singlestore-core/columns/varbinary.d.ts
+ declare class SingleStoreVarBinaryBuilder extends SingleStoreColumnBuilder<{
+diff --git a/singlestore-core/columns/vector.d.ts b/singlestore-core/columns/vector.d.ts
+index d129b98..c72325e 100644
+--- a/singlestore-core/columns/vector.d.ts
++++ b/singlestore-core/columns/vector.d.ts
+@@ -2,6 +2,7 @@ import { SingleStoreColumn, SingleStoreColumnBuilder } from "./common.js";
+ import { entityKind } from "../../entity.js";
+ import { Equal } from "../../utils.js";
+ import { ColumnBaseConfig } from "../../column.js";
++type Buffer<T extends ArrayBufferLike = ArrayBufferLike> = Uint8Array<T>;
+ 
+ //#region src/singlestore-core/columns/vector.d.ts
+ declare class SingleStoreVectorBuilder extends SingleStoreColumnBuilder<{
+diff --git a/sqlite-core/columns/blob.d.ts b/sqlite-core/columns/blob.d.ts
+index aaf8ade..c76d313 100644
+--- a/sqlite-core/columns/blob.d.ts
++++ b/sqlite-core/columns/blob.d.ts
+@@ -2,6 +2,7 @@ import { SQLiteColumn, SQLiteColumnBuilder } from "./common.js";
+ import { entityKind } from "../../entity.js";
+ import { Equal } from "../../utils.js";
+ import { ColumnBaseConfig } from "../../column.js";
++type Buffer<T extends ArrayBufferLike = ArrayBufferLike> = Uint8Array<T>;
+ 
+ //#region src/sqlite-core/columns/blob.d.ts
+ type BlobMode = 'buffer' | 'json' | 'bigint';
+diff --git a/sqlite-core/columns/custom.d.ts b/sqlite-core/columns/custom.d.ts
+index c9b5ae9..344bd59 100644
+--- a/sqlite-core/columns/custom.d.ts
++++ b/sqlite-core/columns/custom.d.ts
+@@ -5,6 +5,7 @@ import { ColumnBaseConfig } from "../../column.js";
+ import { SQL, SQLGenerator } from "../../sql/sql.js";
+ import { ColumnBuilderBaseConfig } from "../../column-builder.js";
+ import { AnySQLiteTable } from "../table.js";
++type Buffer<T extends ArrayBufferLike = ArrayBufferLike> = Uint8Array<T>;
+ 
+ //#region src/sqlite-core/columns/custom.d.ts
+ type ConvertCustomConfig<T extends Partial<CustomTypeValues>> = {
 diff --git a/sqlite-core/query-builders/select.types.d.ts b/sqlite-core/query-builders/select.types.d.ts
-index b0030b7..158db3d 100644
+index d427f70..e74334b 100644
 --- a/sqlite-core/query-builders/select.types.d.ts
 +++ b/sqlite-core/query-builders/select.types.d.ts
-@@ -80,7 +80,7 @@ export interface SQLiteSelectQueryBuilderHKT extends SQLiteSelectHKTBase {
- export interface SQLiteSelectHKT extends SQLiteSelectHKTBase {
-     _type: SQLiteSelectBase<this['tableName'], this['resultType'], this['runResult'], Assume<this['selection'], ColumnsSelection>, this['selectMode'], Assume<this['nullabilityMap'], Record<string, JoinNullability>>, this['dynamic'], this['excludedMethods'], Assume<this['result'], any[]>, Assume<this['selectedFields'], ColumnsSelection>>;
+@@ -77,7 +77,7 @@ type SQLiteSelectKind<T extends SQLiteSelectHKTBase, TTableName extends string |
+ interface SQLiteSelectQueryBuilderHKT extends SQLiteSelectHKTBase {
+   _type: SQLiteSelectBase<SQLiteSelectQueryBuilderHKT, this['tableName'], this['runResult'], Assume<this['selection'], ColumnsSelection>, this['selectMode'], Assume<this['nullabilityMap'], Record<string, JoinNullability>>, this['dynamic'], this['excludedMethods'], Assume<this['result'], any[]>, Assume<this['selectedFields'], ColumnsSelection>>;
  }
--export type SQLiteSetOperatorExcludedMethods = 'config' | 'leftJoin' | 'rightJoin' | 'innerJoin' | 'fullJoin' | 'where' | 'having' | 'groupBy';
-+export type SQLiteSetOperatorExcludedMethods = 'leftJoin' | 'rightJoin' | 'innerJoin' | 'fullJoin' | 'where' | 'having' | 'groupBy';
- export type CreateSQLiteSelectFromBuilderMode<TBuilderMode extends 'db' | 'qb', TTableName extends string | undefined, TResultType extends 'sync' | 'async', TRunResult, TSelection extends ColumnsSelection, TSelectMode extends SelectMode> = TBuilderMode extends 'db' ? SQLiteSelectBase<TTableName, TResultType, TRunResult, TSelection, TSelectMode> : SQLiteSelectQueryBuilderBase<SQLiteSelectQueryBuilderHKT, TTableName, TResultType, TRunResult, TSelection, TSelectMode>;
- export type SQLiteSelectWithout<T extends AnySQLiteSelectQueryBuilder, TDynamic extends boolean, K extends keyof T & string, TResetExcluded extends boolean = false> = TDynamic extends true ? T : Omit<SQLiteSelectKind<T['_']['hkt'], T['_']['tableName'], T['_']['resultType'], T['_']['runResult'], T['_']['selection'], T['_']['selectMode'], T['_']['nullabilityMap'], TDynamic, TResetExcluded extends true ? K : T['_']['excludedMethods'] | K, T['_']['result'], T['_']['selectedFields']>, TResetExcluded extends true ? K : T['_']['excludedMethods'] | K>;
- export type SQLiteSelectExecute<T extends AnySQLiteSelect> = T['_']['result'];
+-type SQLiteSetOperatorExcludedMethods = 'config' | 'leftJoin' | 'rightJoin' | 'innerJoin' | 'fullJoin' | 'where' | 'having' | 'groupBy';
++type SQLiteSetOperatorExcludedMethods = 'leftJoin' | 'rightJoin' | 'innerJoin' | 'fullJoin' | 'where' | 'having' | 'groupBy';
+ type CreateSQLiteSelectFromBuilderMode<TBuilderMode extends 'db' | 'qb', THKT extends SQLiteSelectHKTBase, TTableName extends string | undefined, TRunResult, TSelection extends ColumnsSelection, TSelectMode extends SelectMode> = TBuilderMode extends 'db' ? SQLiteSelectKind<THKT, TTableName, TRunResult, TSelection, TSelectMode, TTableName extends string ? Record<TTableName, 'not-null'> : {}, false, never> : SQLiteSelectBase<SQLiteSelectQueryBuilderHKT, TTableName, TRunResult, TSelection, TSelectMode>;
+ type SQLiteSelectWithout<T extends AnySQLiteSelectQueryBuilder, TDynamic extends boolean, K extends keyof T & string, TResetExcluded extends boolean = false> = TDynamic extends true ? T : Omit<SQLiteSelectKind<T['_']['hkt'], T['_']['tableName'], T['_']['runResult'], T['_']['selection'], T['_']['selectMode'], T['_']['nullabilityMap'], TDynamic, TResetExcluded extends true ? K : T['_']['excludedMethods'] | K, T['_']['result'], T['_']['selectedFields']>, TResetExcluded extends true ? K : T['_']['excludedMethods'] | K>;
+ type SQLiteSelectExecute<T extends AnySQLiteSelect> = T['_']['result'];
+diff --git a/table.d.ts b/table.d.ts
+index 8249814..cf1bacc 100644
+--- a/table.d.ts
++++ b/table.d.ts
+@@ -19,7 +19,7 @@ interface TableTypeConfig<T extends TableConfig> {
+   readonly columns: T['columns'];
+   readonly dialect: T['dialect'];
+ }
+-declare class Table<out T extends TableConfig = TableConfig> {
++declare class Table<T extends TableConfig = TableConfig> {
+   static readonly [entityKind]: string;
+   readonly _: TableTypeConfig<T>;
+   constructor(name: string, schema: string | undefined, baseName: string);
+diff --git a/typebox-legacy/column.types.d.ts b/typebox-legacy/column.types.d.ts
+index 7d0414c..c0ce84c 100644
+--- a/typebox-legacy/column.types.d.ts
++++ b/typebox-legacy/column.types.d.ts
+@@ -4,6 +4,7 @@ import { Assume } from "../utils.js";
+ import { Column } from "../column.js";
+ import { ColumnTypeData, ExtractColumnTypeData } from "../column-builder.js";
+ import * as t from "@sinclair/typebox";
++type Buffer<T extends ArrayBufferLike = ArrayBufferLike> = Uint8Array<T>;
+ 
+ //#region src/typebox-legacy/column.types.d.ts
+ interface GenericSchema<T> extends t.TSchema {
+diff --git a/typebox/column.d.ts b/typebox/column.d.ts
+index 966a89a..76c575d 100644
+--- a/typebox/column.d.ts
++++ b/typebox/column.d.ts
+@@ -1,6 +1,7 @@
+ import { JsonSchema } from "./column.types.js";
+ import { Column } from "../column.js";
+ import Type, { TSchema } from "typebox";
++type Buffer<T extends ArrayBufferLike = ArrayBufferLike> = Uint8Array<T>;
+ 
+ //#region src/typebox/column.d.ts
+ declare class TBuffer extends Type.Base<Buffer> {
+diff --git a/valibot/column.d.ts b/valibot/column.d.ts
+index f7c9d94..00d10aa 100644
+--- a/valibot/column.d.ts
++++ b/valibot/column.d.ts
+@@ -1,6 +1,7 @@
+ import { Json } from "../utils.js";
+ import { Column } from "../column.js";
+ import * as v from "valibot";
++type Buffer<T extends ArrayBufferLike = ArrayBufferLike> = Uint8Array<T>;
+ 
+ //#region src/valibot/column.d.ts
+ declare const literalSchema: v.UnionSchema<[v.StringSchema<undefined>, v.NumberSchema<undefined>, v.BooleanSchema<undefined>, v.NullSchema<undefined>], undefined>;
+diff --git a/valibot/column.types.d.ts b/valibot/column.types.d.ts
+index cab6045..6583423 100644
+--- a/valibot/column.types.d.ts
++++ b/valibot/column.types.d.ts
+@@ -4,6 +4,7 @@ import { Assume } from "../utils.js";
+ import { Column } from "../column.js";
+ import { ColumnDataConstraint, ColumnDataType, ColumnTypeData, ExtractColumnTypeData } from "../column-builder.js";
+ import * as v from "valibot";
++type Buffer<T extends ArrayBufferLike = ArrayBufferLike> = Uint8Array<T>;
+ 
+ //#region src/valibot/column.types.d.ts
+ type ExtractAdditionalProperties<TColumn extends Column> = {
+diff --git a/zod/column.d.ts b/zod/column.d.ts
+index a8b8182..beae528 100644
+--- a/zod/column.d.ts
++++ b/zod/column.d.ts
+@@ -2,6 +2,7 @@ import { Json } from "../utils.js";
+ import { FactoryOptions } from "./schema.types.js";
+ import { Column } from "../column.js";
+ import { z } from "zod/v4";
++type Buffer<T extends ArrayBufferLike = ArrayBufferLike> = Uint8Array<T>;
+ 
+ //#region src/zod/column.d.ts
+ declare const literalSchema: z.ZodUnion<readonly [z.ZodString, z.ZodNumber, z.ZodBoolean, z.ZodNull]>;
+diff --git a/zod/column.types.d.ts b/zod/column.types.d.ts
+index b542477..dd71e63 100644
+--- a/zod/column.types.d.ts
++++ b/zod/column.types.d.ts
+@@ -5,6 +5,7 @@ import { Assume } from "../utils.js";
+ import { Column } from "../column.js";
+ import { ColumnTypeData, ExtractColumnTypeData } from "../column-builder.js";
+ import { z } from "zod/v4";
++type Buffer<T extends ArrayBufferLike = ArrayBufferLike> = Uint8Array<T>;
+ 
+ //#region src/zod/column.types.d.ts
+ type GetArrayDepth<T, Depth extends number = 0> = Depth extends 5 ? 5 : T extends readonly (infer U)[] ? GetArrayDepth<U, [1, 2, 3, 4, 5][Depth]> : Depth;
+diff --git a/pg-core/query-builders/refresh-materialized-view.d.ts b/pg-core/query-builders/refresh-materialized-view.d.ts
+--- a/pg-core/query-builders/refresh-materialized-view.d.ts
++++ b/pg-core/query-builders/refresh-materialized-view.d.ts
+@@ -1,5 +1,5 @@
+ import { entityKind } from "../../entity.js";
+-import { Query, SQLWrapper } from "../../sql/sql.js";
++import { Query, SQL, SQLWrapper } from "../../sql/sql.js";
+ import { PgDialect } from "../dialect.js";
+ import { PgMaterializedView } from "../view.js";
+ import { PgQueryResultHKT, PgQueryResultKind, PgSession } from "../session.js";
+@@ -21,6 +21,7 @@ declare class PgRefreshMaterializedView<TQueryResult extends PgQueryResultHKT> i
+   };
+   constructor(view: PgMaterializedView, session: PgSession, dialect: PgDialect);
+   concurrently(): this;
+   withNoData(): this;
++  getSQL(): SQL;
+   toSQL(): Query;
+ }
+ //#endregion
