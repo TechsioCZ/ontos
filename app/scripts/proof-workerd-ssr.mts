@@ -681,11 +681,9 @@ const createWorkerConfiguration = (
         apiBackend,
         appId: app.id,
         envelopeDigest: app.envelope?.envelopeDigest ?? null,
-        envelopePath:
-          app.envelopePath === null ? null : normalizePath(path.relative(workspaceRoot, app.envelopePath)),
+        envelopePath: app.envelopePath === null ? null : normalizePath(path.relative(workspaceRoot, app.envelopePath)),
         identity: app.identity ?? null,
-        identityPath:
-          app.identityPath === null ? null : normalizePath(path.relative(workspaceRoot, app.identityPath)),
+        identityPath: app.identityPath === null ? null : normalizePath(path.relative(workspaceRoot, app.identityPath)),
         main: mainLogicalPath,
         modules: boundModules,
         modulesRoot: normalizePath(path.relative(workspaceRoot, app.outputRoot)),
