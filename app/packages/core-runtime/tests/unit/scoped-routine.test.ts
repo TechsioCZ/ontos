@@ -45,6 +45,19 @@ const saveProfile = defineScopedRoutine({
   routineKey: 'profile.save',
   schema: 'commerce_customer_context',
 });
+const saveProfileMembers = defineScopedRoutine({
+  name: 'save_profile_members',
+  ownerModuleKey: 'commerce.customer-context',
+  parameters: [
+    { source: 'tenantId', type: 'uuid' },
+    { source: 'input', type: 'uuid[]' },
+    { source: 'input', type: 'text[]' },
+    { source: 'input', type: 'jsonb[]' },
+  ],
+  resultSchema: SavedRowSchema,
+  routineKey: 'profile.save-members',
+  schema: 'commerce_customer_context',
+});
 
 it.effect('injects verified scope values and parameterizes every caller-supplied value', () =>
   Effect.gen(function* scopedRoutineInvocation() {
@@ -67,6 +80,35 @@ it.effect('injects verified scope values and parameterizes every caller-supplied
     );
     expect(query.params).toEqual([tenantId, legalEntityId, payload, { source: 'test' }]);
     expect(query.sql).not.toContain(payload);
+  }),
+);
+
+it.effect('encodes array parameters as PostgreSQL array literals while keeping them parameterized', () =>
+  Effect.gen(function* arrayParameterInvocation() {
+    let statement: SQL | undefined;
+    const memberIds = ['44444444-4444-4444-8444-444444444444', '55555555-5555-4555-8555-555555555555'];
+    const labels = ['primary,member', 'quoted "member"', String.raw`escaped\member`, 'NULL'];
+    const evidence = [{ label: 'primary,member' }, { label: 'quoted "member"' }];
+    const executor = scopedRoutineInvokerFromTransaction((candidate) => {
+      statement = candidate;
+      return Effect.succeed([{ saved_id: 'saved-1' }]);
+    }, scope);
+
+    yield* executor.invoke(saveProfileMembers, [memberIds, labels, evidence]);
+    expect(statement).toBeDefined();
+    if (statement === undefined) {
+      return;
+    }
+    const query = new PgDialect().sqlToQuery(statement);
+    expect(query.sql).toBe(
+      'select * from "commerce_customer_context"."save_profile_members"($1::uuid, $2::uuid[], $3::text[], $4::jsonb[])',
+    );
+    expect(query.params).toEqual([
+      tenantId,
+      '{"44444444-4444-4444-8444-444444444444","55555555-5555-4555-8555-555555555555"}',
+      String.raw`{"primary,member","quoted \"member\"","escaped\\member","NULL"}`,
+      String.raw`{"{\"label\":\"primary,member\"}","{\"label\":\"quoted \\\"member\\\"\"}"}`,
+    ]);
   }),
 );
 

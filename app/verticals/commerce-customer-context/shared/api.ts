@@ -54,6 +54,7 @@ import { DecidePurchaseApprovalRequestActionApi } from './apis/decide-purchase-a
 import { DeliveryDestinationResolutionApi } from './apis/delivery-destination-resolution.ts';
 import { EffectiveCustomerGroupMembershipsApi } from './apis/effective-customer-group-memberships.ts';
 import { EnsureRetailCustomerProfileActionApi } from './apis/ensure-retail-customer-profile-action.ts';
+import { ExecutePrivacyMeasureActionApi } from './apis/execute-privacy-measure-action.ts';
 import { GrantCounterpartyCommerceAccessActionApi } from './apis/grant-counterparty-commerce-access-action.ts';
 import { GuestAttributionStatusApi } from './apis/guest-attribution-status.ts';
 import { GuestPaymentTermsResolutionApi } from './apis/guest-payment-terms-resolution.ts';
@@ -63,6 +64,7 @@ import { MigrateCustomerPriceGroupActionApi } from './apis/migrate-customer-pric
 import { OpenProfileReconciliationActionApi } from './apis/open-profile-reconciliation-action.ts';
 import { PaymentTermAffectedUseAssessmentApi } from './apis/payment-term-affected-use-assessment.ts';
 import { PaymentTermsResolutionApi } from './apis/payment-terms-resolution.ts';
+import { PrivacyMeasureExecutionApi } from './apis/privacy-measure-execution.ts';
 import { ProfileReconciliationReadApi } from './apis/profile-reconciliation-read.ts';
 import { PurchaseCurrencyResolutionApi } from './apis/purchase-currency-resolution.ts';
 import { PurchaseLimitEvaluationApi } from './apis/purchase-limit-evaluation.ts';
@@ -170,6 +172,7 @@ export const commerceCustomerContextApi = HttpApi.make('CommerceCustomerContextA
   .addHttpApi(DeliveryDestinationResolutionApi)
   .addHttpApi(EffectiveCustomerGroupMembershipsApi)
   .addHttpApi(EnsureRetailCustomerProfileActionApi)
+  .addHttpApi(ExecutePrivacyMeasureActionApi)
   .addHttpApi(GrantCounterpartyCommerceAccessActionApi)
   .addHttpApi(GuestAttributionStatusApi)
   .addHttpApi(GuestPaymentTermsResolutionApi)
@@ -179,6 +182,7 @@ export const commerceCustomerContextApi = HttpApi.make('CommerceCustomerContextA
   .addHttpApi(OpenProfileReconciliationActionApi)
   .addHttpApi(PaymentTermAffectedUseAssessmentApi)
   .addHttpApi(PaymentTermsResolutionApi)
+  .addHttpApi(PrivacyMeasureExecutionApi)
   .addHttpApi(ProfileReconciliationReadApi)
   .addHttpApi(PurchaseCurrencyResolutionApi)
   .addHttpApi(PurchaseLimitEvaluationApi)

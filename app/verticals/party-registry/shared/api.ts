@@ -14,6 +14,7 @@ import { CounterpartiesSearchApi } from './apis/counterparties-search.ts';
 import { CounterpartyReadApi } from './apis/counterparty-read.ts';
 import { CounterpartyRoleHistoryApi } from './apis/counterparty-role-history.ts';
 import { DuplicateCandidateDetailApi } from './apis/duplicate-candidate-detail.ts';
+import { ExecutePrivacyMeasureActionApi } from './apis/execute-privacy-measure-action.ts';
 import { GuestPartyResolutionApi } from './apis/guest-party-resolution.ts';
 import { OrganizationEngagementProfileApi } from './apis/organization-engagement-profile.ts';
 import { PartiesSearchApi } from './apis/parties-search.ts';
@@ -21,13 +22,14 @@ import { PartyContactPointDetailApi } from './apis/party-contact-point-detail.ts
 import { PartyContactPointsApi } from './apis/party-contact-points.ts';
 import { PartyCorrectionApi } from './apis/party-correction.ts';
 import { PartyDetailApi } from './apis/party-detail.ts';
-import { PartyMatchDecisionApi } from './apis/party-match-decision.ts';
 import { PartyMatchApi } from './apis/party-match.ts';
+import { PartyMatchDecisionApi } from './apis/party-match-decision.ts';
 import { PartyMergeReadinessApi } from './apis/party-merge-readiness.ts';
 import { PartyOfficialIdentifierDetailApi } from './apis/party-official-identifier-detail.ts';
 import { PartyOfficialIdentifierHistoryApi } from './apis/party-official-identifier-history.ts';
 import { PartyRelationshipDetailApi } from './apis/party-relationship-detail.ts';
 import { PersonEngagementProfileApi } from './apis/person-engagement-profile.ts';
+import { PrivacyMeasureExecutionApi } from './apis/privacy-measure-execution.ts';
 // </generated-governed-http-api-imports>
 import { partyRegistryCommandRecoveryApi, partyRegistryCommandsApi } from './command-api.ts';
 import { organizationEngagementMutationApi, personEngagementMutationApi } from './engagement-profile-api.ts';
@@ -52,6 +54,8 @@ export * from './apis/party-merge-readiness.ts';
 export * from './apis/party-official-identifier-detail.ts';
 export * from './apis/party-official-identifier-history.ts';
 export * from './apis/party-relationship-detail.ts';
+export * from './apis/execute-privacy-measure-action.ts';
+export * from './apis/privacy-measure-execution.ts';
 
 const AppIdSchema = Schema.String.pipe(Schema.brand('AppId'));
 const UnitIdSchema = Schema.String.pipe(Schema.brand('UnitId'));
@@ -101,6 +105,7 @@ export const partyRegistryApi = HttpApi.make('PartyRegistryApi')
   .addHttpApi(CounterpartyReadApi)
   .addHttpApi(CounterpartyRoleHistoryApi)
   .addHttpApi(DuplicateCandidateDetailApi)
+  .addHttpApi(ExecutePrivacyMeasureActionApi)
   .addHttpApi(GuestPartyResolutionApi)
   .addHttpApi(OrganizationEngagementProfileApi)
   .addHttpApi(PartiesSearchApi)
@@ -115,6 +120,7 @@ export const partyRegistryApi = HttpApi.make('PartyRegistryApi')
   .addHttpApi(PartyOfficialIdentifierHistoryApi)
   .addHttpApi(PartyRelationshipDetailApi)
   .addHttpApi(PersonEngagementProfileApi)
+  .addHttpApi(PrivacyMeasureExecutionApi)
   // </generated-governed-http-api-additions>
   .pipe(identity);
 

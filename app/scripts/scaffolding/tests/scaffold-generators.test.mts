@@ -1241,7 +1241,7 @@ it.live(
         const owner = path.join(appRoot, 'verticals/party-registry');
         const ownerFiles = yield* Effect.promise(() => readdir(path.join(owner, 'api')));
         const serverNames = ownerFiles.filter((name) => /-(?:read|search)-server\.ts$/u.test(name));
-        expect(serverNames.length).toBe(19);
+        expect(serverNames.length).toBe(20);
         yield* Effect.all(
           serverNames.map(
             Effect.fn(function* compareLiveTransport(serverName) {

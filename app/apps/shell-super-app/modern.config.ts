@@ -235,6 +235,11 @@ export default defineConfig(
               service:
                 getOptionalBuildConfig('VERTICAL_PAYMENT_TERM_CATALOG_WORKER_NAME') ?? 'app-payment-term-catalog',
             },
+            {
+              binding: getOptionalBuildConfig('VERTICAL_PRIVACY_WORKER_BINDING') ?? 'VERTICAL_PRIVACY_WORKER',
+              prefix: '/privacy-api',
+              service: getOptionalBuildConfig('VERTICAL_PRIVACY_WORKER_NAME') ?? 'app-privacy',
+            },
           ],
           ssr: true,
         },

@@ -11,6 +11,7 @@ const EXPECTED_APPLICATION_SCHEMAS = [
   'core',
   'party',
   'payment_term_catalog',
+  'privacy',
 ] as const;
 const EXPECTED_MIGRATION_JOURNALS = [
   '__drizzle_migrations_auth',
@@ -19,6 +20,7 @@ const EXPECTED_MIGRATION_JOURNALS = [
   '__drizzle_migrations_core',
   '__drizzle_migrations_party',
   '__drizzle_migrations_payment_term_catalog',
+  '__drizzle_migrations_privacy',
 ] as const;
 
 class ApplicationDatabaseVerificationError extends Schema.TaggedError<ApplicationDatabaseVerificationError>()(
@@ -96,6 +98,7 @@ const ownerVerifierPaths = [
   '../verticals/party-registry/scripts/verify-engagement-db-schema.mts',
   '../verticals/payment-term-catalog/scripts/verify-db-schema.mts',
   '../verticals/commerce-customer-context/scripts/verify-db-schema.mts',
+  '../verticals/privacy/scripts/verify-db-schema.mts',
 ] as const;
 
 const main = Effect.gen(function* verifyApplicationDatabase() {

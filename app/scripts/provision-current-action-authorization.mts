@@ -20,6 +20,7 @@ import { Command } from 'effect/unstable/cli';
 
 import { coreActionCatalog } from '../packages/core-runtime/src/index.ts';
 import {
+  ACTION_AUTHORIZATION_DENIED_PRINCIPAL_ID,
   ActionAuthorizationProvisioningError,
   provisionActionAuthorization,
 } from '../packages/core-runtime/src/install/action-authorization-provisioning.ts';
@@ -289,6 +290,20 @@ const acquireProvisioningClient = (configuration: SpiceDbConfigValue) =>
     (client) => Effect.sync(() => client.close()),
   );
 
+export const buildExplicitActionAssertions = (
+  actions: readonly ActionAuthorizationProvisioningAction[],
+  contexts: readonly ActionAuthorizationContext[],
+) =>
+  actions
+    .filter(({ provisioning }) => provisioning === 'explicit')
+    .map(({ actionKey }) => ({
+      actionKey,
+      assertions: [
+        ...contexts.map(({ principalId }) => ({ expected: 'allowed' as const, principalId })),
+        { expected: 'denied' as const, principalId: ACTION_AUTHORIZATION_DENIED_PRINCIPAL_ID },
+      ],
+    }));
+
 const runCurrentActionAuthorizationProvisioningWithServices = (
   workspaceRoot: string,
   commandArguments: readonly string[] = [],
@@ -317,6 +332,7 @@ const runCurrentActionAuthorizationProvisioningWithServices = (
     const result = yield* provisionActionAuthorization(client, {
       actions,
       contexts: target.contexts,
+      explicitActionAssertions: buildExplicitActionAssertions(actions, target.contexts),
     });
     return { ...result, environment: target.environment };
   }).pipe(Effect.scoped);

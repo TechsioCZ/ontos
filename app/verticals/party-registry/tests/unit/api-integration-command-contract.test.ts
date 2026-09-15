@@ -26,7 +26,7 @@ it.layer(NodeFileSystem.layer)('api-integration-command-contract', (suite) => {
       const actions = files
         .filter((file) => file.endsWith('.action.ts'))
         .map((file) => file.replace('.action.ts', ''))
-        .filter((slug) => !slug.includes('engagement'));
+        .filter((slug) => !slug.includes('engagement') && slug !== 'execute-privacy-measure');
       const endpoints = Object.values(partyRegistryCommandsApi.groups.partyCommands.endpoints);
       expect(endpoints.length).toBe(actions.length);
       expect(endpoints.map((endpoint) => endpoint.path).toSorted()).toEqual(

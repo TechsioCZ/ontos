@@ -41,6 +41,20 @@ export const makeTestDatabaseFromPool = <Relations extends AnyRelations>(pool: P
     return yield* makeWithDefaults({ relations }).pipe(Effect.provideService(PgClient.PgClient, client));
   });
 
+export const acquireTestPool = (connectionString: string, max = 4) =>
+  Effect.acquireRelease(
+    Effect.sync(() => new Pool({ connectionString, max })),
+    // oxlint-disable-next-line typescript/promise-function-async -- Effect owns this foreign pg SDK Promise boundary.
+    (pool) => Effect.promise(() => pool.end()).pipe(Effect.orDie),
+  );
+
+export const privacyMeasureDeferredCases = [
+  { dispositionDecision: null, kind: 'RECTIFY', right: 'RECTIFICATION' },
+  { dispositionDecision: 'ANONYMIZE', kind: 'ANONYMIZE', right: 'ERASURE' },
+  { dispositionDecision: 'DELETE', kind: 'DELETE', right: 'ERASURE' },
+  { dispositionDecision: null, kind: 'EXPORT', right: 'ACCESS' },
+] as const;
+
 /** Fresh pools per execution; the caller's scope releases them after test cleanup. */
 export const testDatabasePools = Effect.gen(function* acquireTestDatabasePools() {
   const connections = yield* loadDatabaseConnectionPair();

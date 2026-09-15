@@ -3,6 +3,7 @@ export { defineTenantModuleEntrypoint } from '../modules/module-entrypoint.ts';
 export { tenantLegalEntityRlsPolicies, tenantRlsPolicies } from '../db/scoped-transaction.ts';
 export { DatabaseConfigLive } from '../db/config.ts';
 export { CorePersistenceLive } from '../runtime-infrastructure.ts';
+export { PrincipalRefSchema } from '../permissions/principal-ref.ts';
 export { CoreSearchIngestion, CoreSearchIngestionLive } from '../search/ingestion.ts';
 export { CoreSearchProjectionStoreLive } from '../search/persistence.ts';
 export {

@@ -29,12 +29,22 @@ import { createCustomerGroupAction } from './src/actions/create-customer-group.a
 import { createPurchaseProposalRevisionAction } from './src/actions/create-purchase-proposal-revision.action.ts';
 import { decidePurchaseApprovalRequestAction } from './src/actions/decide-purchase-approval-request.action.ts';
 import { ensureRetailCustomerProfileAction } from './src/actions/ensure-retail-customer-profile.action.ts';
+import { executePrivacyMeasureAction } from './src/actions/execute-privacy-measure.action.ts';
+import { executePrivacyMeasureWorker } from './src/workers/execute-privacy-measure.worker.ts';
 import { grantCounterpartyCommerceAccessAction } from './src/actions/grant-counterparty-commerce-access.action.ts';
 import { migrateCounterpartyPriceGroupAction } from './src/actions/migrate-counterparty-price-group.action.ts';
 import { migrateCustomerPriceGroupAction } from './src/actions/migrate-customer-price-group.action.ts';
 import { openProfileReconciliationAction } from './src/actions/open-profile-reconciliation.action.ts';
 import { reactivateCustomerGroupAction } from './src/actions/reactivate-customer-group.action.ts';
 import { reactivateCustomerProfileAction } from './src/actions/reactivate-customer-profile.action.ts';
+import { reconcileCounterpartyAccessAdministratorBootstrapAuthorizationMutationWorker } from './src/workers/reconcile-counterparty-access-administrator-bootstrap-authorization-mutation.worker.ts';
+import { reconcileCounterpartyAccessGrantAuthorizationMutationWorker } from './src/workers/reconcile-counterparty-access-grant-authorization-mutation.worker.ts';
+import { reconcileCounterpartyAccessInvitationClaimAuthorizationMutationWorker } from './src/workers/reconcile-counterparty-access-invitation-claim-authorization-mutation.worker.ts';
+import { reconcileCounterpartyAccessRevokeAuthorizationMutationWorker } from './src/workers/reconcile-counterparty-access-revoke-authorization-mutation.worker.ts';
+import { reconcilePartyMergeWorker } from './src/workers/reconcile-party-merge.worker.ts';
+import { reconcileRetailPortalProfileBindingActivationAuthorizationMutationWorker } from './src/workers/reconcile-retail-portal-profile-binding-activation-authorization-mutation.worker.ts';
+import { reconcileRetailPortalProfileBindingRecoveryAuthorizationMutationWorker } from './src/workers/reconcile-retail-portal-profile-binding-recovery-authorization-mutation.worker.ts';
+import { reconcileRetailPortalProfileBindingRevocationAuthorizationMutationWorker } from './src/workers/reconcile-retail-portal-profile-binding-revocation-authorization-mutation.worker.ts';
 import { recoverRetailPortalProfileBindingAction } from './src/actions/recover-retail-portal-profile-binding.action.ts';
 import { removeCounterpartyPriceGroupAction } from './src/actions/remove-counterparty-price-group.action.ts';
 import { removeCustomerGroupAction } from './src/actions/remove-customer-group.action.ts';
@@ -58,14 +68,6 @@ import { suspendCustomerProfileAction } from './src/actions/suspend-customer-pro
 import { triggerPurchaseApprovalAction } from './src/actions/trigger-purchase-approval.action.ts';
 import { updateCustomerGroupAction } from './src/actions/update-customer-group.action.ts';
 import { updateSavedAddressAction } from './src/actions/update-saved-address.action.ts';
-import { reconcileCounterpartyAccessAdministratorBootstrapAuthorizationMutationWorker } from './src/workers/reconcile-counterparty-access-administrator-bootstrap-authorization-mutation.worker.ts';
-import { reconcileCounterpartyAccessGrantAuthorizationMutationWorker } from './src/workers/reconcile-counterparty-access-grant-authorization-mutation.worker.ts';
-import { reconcileCounterpartyAccessInvitationClaimAuthorizationMutationWorker } from './src/workers/reconcile-counterparty-access-invitation-claim-authorization-mutation.worker.ts';
-import { reconcileCounterpartyAccessRevokeAuthorizationMutationWorker } from './src/workers/reconcile-counterparty-access-revoke-authorization-mutation.worker.ts';
-import { reconcilePartyMergeWorker } from './src/workers/reconcile-party-merge.worker.ts';
-import { reconcileRetailPortalProfileBindingActivationAuthorizationMutationWorker } from './src/workers/reconcile-retail-portal-profile-binding-activation-authorization-mutation.worker.ts';
-import { reconcileRetailPortalProfileBindingRecoveryAuthorizationMutationWorker } from './src/workers/reconcile-retail-portal-profile-binding-recovery-authorization-mutation.worker.ts';
-import { reconcileRetailPortalProfileBindingRevocationAuthorizationMutationWorker } from './src/workers/reconcile-retail-portal-profile-binding-revocation-authorization-mutation.worker.ts';
 // </generated-module-registration-imports>
 /* jscpd:ignore-end */
 
@@ -97,6 +99,7 @@ export const commerceCustomerContextRegistration = defineVerticalRuntimeRegistra
     createPurchaseProposalRevisionAction,
     decidePurchaseApprovalRequestAction,
     ensureRetailCustomerProfileAction,
+    executePrivacyMeasureAction,
     grantCounterpartyCommerceAccessAction,
     migrateCounterpartyPriceGroupAction,
     migrateCustomerPriceGroupAction,
@@ -160,6 +163,7 @@ export const commerceCustomerContextRegistration = defineVerticalRuntimeRegistra
       'invoice-recipient-resolution': () => import('./src/api/invoice-recipient-resolution-client.ts'),
       'payment-term-affected-use-assessment': () => import('./src/api/payment-term-affected-use-assessment-client.ts'),
       'payment-terms-resolution': () => import('./src/api/payment-terms-resolution-client.ts'),
+      'privacy-measure-execution': () => import('./src/api/privacy-measure-execution-client.ts'),
       'profile-reconciliation-read': () => import('./src/api/profile-reconciliation-read-client.ts'),
       'purchase-currency-resolution': () => import('./src/api/purchase-currency-resolution-client.ts'),
       'purchase-limit-evaluation': () => import('./src/api/purchase-limit-evaluation-client.ts'),
@@ -195,6 +199,7 @@ export const commerceCustomerContextRegistration = defineVerticalRuntimeRegistra
   manifest: commerceCustomerContextManifest,
   outboxWorkers: [
     // <generated-module-registration-workers>
+    executePrivacyMeasureWorker,
     reconcileCounterpartyAccessAdministratorBootstrapAuthorizationMutationWorker,
     reconcileCounterpartyAccessGrantAuthorizationMutationWorker,
     reconcileCounterpartyAccessInvitationClaimAuthorizationMutationWorker,

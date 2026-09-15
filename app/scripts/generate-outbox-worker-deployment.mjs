@@ -89,7 +89,11 @@ const generateOutboxWorkerDeploymentEffect = (root, source) =>
         .replace(`ULTRAMODERN_ZEROPS_SERVICE: ${vertical.id}`, `ULTRAMODERN_ZEROPS_SERVICE: ${delivery.id}`)
         .replace(
           `        PORT: '${port}'`,
-          `        PORT: '${port}'\n        OUTBOX_WORKER_HEALTH_PORT: '${port}'\n        DATABASE_URL: \${${ownerServiceHostname}_DATABASE_URL}`,
+          `        PORT: '${port}'\n        OUTBOX_WORKER_HEALTH_PORT: '${port}'${
+            ownerSection.includes('        DATABASE_URL:')
+              ? ''
+              : `\n        DATABASE_URL: \${${ownerServiceHostname}_DATABASE_URL}`
+          }`,
         );
       services.push(service);
     }
