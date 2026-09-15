@@ -34,7 +34,7 @@ const handleEnqueueRetentionEvaluation = Effect.fn('EnqueueRetentionEvaluationAc
       scope.tenantId,
       scope.legalEntityId,
       context.actionInvocationId,
-      payload.work,
+      payload.request,
     );
     const eventPayload = { work: result };
     const event = yield* context.addDomainEvent({

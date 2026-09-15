@@ -10,26 +10,29 @@ import {
   RecordConsentDecisionResultSchema,
 } from '../../shared/actions/record-consent-decision.ts';
 import type { RecordConsentDecisionPayload } from '../../shared/actions/record-consent-decision.ts';
-import { validateConsentDecision } from '../../shared/domain/privacy-consent-decision.ts';
-import { OutboxPayloadSchema } from '../../shared/outbox/privacy-consent-decision-recorded.ts';
 import { privacyOperationRepositoryForScope } from '../persistence/privacy-operation-postgres-repository.ts';
 import type { PrivacyOperationRepositoryService } from '../persistence/privacy-operation-repository.ts';
+import { processingPurposeRepositoryForScope } from '../persistence/processing-purpose-postgres-repository.ts';
+import type { ProcessingPurposeRepositoryService } from '../persistence/processing-purpose-repository.ts';
 import { createRecordConsentDecisionPrivacyConsentDecisionRecordedOutboxMessage as createOutboxMessage } from './record-consent-decision-privacy-consent-decision-recorded.outbox-message.ts';
 import {
   PrivacyActionAuditEvidenceSchema,
   PrivacyActionErrorSchema,
   PrivacyActionRejected,
-  completePrivacyAction,
+  completeConsentDecisionAction,
+  loadAndValidateConsentPurpose,
+  privacyConsentDecisionDomainEvents,
   requirePrivacyActionScope,
 } from './privacy-operation-action-support.ts';
 
-const domainEvents = { 'privacy.consent.decision.recorded': OutboxPayloadSchema } as const;
 const MODULE_KEY = 'privacy.core' as const;
+type Services = Pick<PrivacyOperationRepositoryService, 'recordConsentDecision'> &
+  Pick<ProcessingPurposeRepositoryService, 'get'>;
 
-const handleRecordConsentDecision = Effect.fn('RecordConsentDecisionAction.handle')(
+export const handleRecordConsentDecision = Effect.fn('RecordConsentDecisionAction.handle')(
   function* handleRecordConsentDecision(
     payload: RecordConsentDecisionPayload,
-    context: ActionHandlerContext<typeof domainEvents, PrivacyOperationRepositoryService>,
+    context: ActionHandlerContext<typeof privacyConsentDecisionDomainEvents, Services>,
   ) {
     const scope = yield* requirePrivacyActionScope(context.scope);
     const recordedAt = DateTime.formatIso(yield* DateTime.now);
@@ -43,10 +46,7 @@ const handleRecordConsentDecision = Effect.fn('RecordConsentDecisionAction.handl
       },
       recordedAt,
     };
-    const reason = validateConsentDecision(decision);
-    if (reason !== undefined) {
-      return yield* new PrivacyActionRejected({ code: 'privacy_action_rejected', reason });
-    }
+    yield* loadAndValidateConsentPurpose(decision, scope, context.services.get);
     if (decision.scope.privacySubjectRef.tenantId !== scope.tenantId) {
       return yield* new PrivacyActionRejected({
         code: 'privacy_action_rejected',
@@ -59,17 +59,7 @@ const handleRecordConsentDecision = Effect.fn('RecordConsentDecisionAction.handl
       context.actionInvocationId,
       decision,
     );
-    const eventPayload = { decision: result };
-    const event = yield* context.addDomainEvent({
-      eventType: 'privacy.consent.decision.recorded',
-      payloadJson: eventPayload,
-      producerModuleKey: MODULE_KEY,
-      subjectModuleKey: MODULE_KEY,
-      subjectResourceId: result.scope.privacySubjectRef.resourceId,
-      subjectResourceType: result.scope.privacySubjectRef.resourceType,
-    });
-    yield* context.addOutboxMessage(event, createOutboxMessage(eventPayload));
-    return yield* completePrivacyAction(context, 'record-consent-decision', result.decisionId, result);
+    return yield* completeConsentDecisionAction(context, 'record-consent-decision', result, createOutboxMessage);
   },
 );
 
@@ -83,7 +73,7 @@ export const recordConsentDecisionAction = defineAction(
     auditEvidenceSchema: PrivacyActionAuditEvidenceSchema,
     auditProfile: 'standard',
     domainErrorSchema: PrivacyActionErrorSchema,
-    domainEvents,
+    domainEvents: privacyConsentDecisionDomainEvents,
     entrypoint: defineTenantModuleEntrypoint({
       access: 'write',
       authorization: { kind: 'action_execution', provisioning: 'explicit' },
@@ -100,7 +90,13 @@ export const recordConsentDecisionAction = defineAction(
     schemaVersion: '1',
   },
   handleRecordConsentDecision,
-  privacyOperationRepositoryForScope,
+  Effect.fn('RecordConsentDecisionAction.services')(function* makeRecordConsentDecisionServices(transaction, scope) {
+    const [operations, purposes] = yield* Effect.all(
+      [privacyOperationRepositoryForScope(transaction, scope), processingPurposeRepositoryForScope(transaction, scope)],
+      { concurrency: 2 },
+    );
+    return { get: purposes.get, recordConsentDecision: operations.recordConsentDecision };
+  }),
 );
 
 // <generated-outbox-message-exports>

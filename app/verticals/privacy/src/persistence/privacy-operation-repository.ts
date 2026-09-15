@@ -2,9 +2,13 @@
 import type { Effect, Option } from 'effect';
 import { Schema } from 'effect';
 
-import type { AntiResurrectionProtection } from '../../shared/domain/anti-resurrection.ts';
+import type {
+  AntiResurrectionEnforcementReceipt,
+  AntiResurrectionProtection,
+} from '../../shared/domain/anti-resurrection.ts';
 import type {
   DsrDeliveryAccess,
+  DsrDeliveryAccessAuthorityResult,
   DsrDeliveryEvidence,
   TemporaryDsrExport,
 } from '../../shared/domain/dsr-delivery-access.ts';
@@ -12,20 +16,32 @@ import type { ExternalObligation } from '../../shared/domain/external-obligation
 import type { OwnerContribution } from '../../shared/domain/owner-contribution.ts';
 import type {
   PrivacyApplicabilityDecision,
+  PrivacyApplicabilityEligibilityAuthorityResult,
   PrivacyApplicabilityPolicy,
 } from '../../shared/domain/privacy-applicability.ts';
 import type { ConsentCurrentResolution, ConsentDecision } from '../../shared/domain/privacy-consent-decision.ts';
 import type {
   DsrCase,
+  DsrCaseLifecycleMutation,
   DsrDeadline,
+  DsrOwnerInventoryAuthorityResult,
+  DsrDeadlinePolicy,
+  DsrOwnerTaskAuthorityResult,
   DsrOwnerTask,
   DsrResolverAssignment,
   DsrResponse,
+  DsrResponseRequest,
   DsrSubstantiveDecision,
+  DsrSubstantiveDecisionAuthorityResult,
   DsrVerification,
 } from '../../shared/domain/privacy-dsr.ts';
 import type { PrivacyLegalBasisAssignment } from '../../shared/domain/privacy-legal-basis.ts';
-import type { OwnerExecutionOutcome, PrivacyMeasureHandoff } from '../../shared/domain/privacy-measure-handoff.ts';
+import type {
+  OwnerExecutionAuthorityResult,
+  OwnerExecutionOutcome,
+  OwnerExecutionOutcomeRequest,
+  PrivacyMeasureHandoff,
+} from '../../shared/domain/privacy-measure-handoff.ts';
 import type {
   CreatePrivacyNoticeVersionInput,
   PrivacyNoticeVersion,
@@ -37,15 +53,23 @@ import type {
   PrivacyEligibilityPolicyRevision,
   PrivacyProcessingIntervention,
   ResolvePrivacyEligibilityInputsInput,
+  ProcessingInterventionAuthorityResult,
 } from '../../shared/domain/privacy-processing-eligibility.ts';
 import type { PrivacyResponsibilityAssignmentSchema } from '../../shared/domain/privacy-responsibility-assignment.ts';
 import type {
   PrivacyDispositionDecision,
+  PrivacyDispositionDecisionAuthorityResult,
   PrivacyLegalHold,
+  RetentionProtectionRequest,
+  RetentionEvaluation,
+  RetentionEvaluationRequest,
   RetentionEvaluationWork,
   RetentionException,
 } from '../../shared/domain/privacy-retention-disposition.ts';
-import type { PrivacyRetentionRuleVersion } from '../../shared/domain/privacy-retention-rule.ts';
+import type {
+  PrivacyRetentionRuleVersion,
+  RetentionRuleAuthorityResolution,
+} from '../../shared/domain/privacy-retention-rule.ts';
 import type { PrivacySubjectRecord, Representation } from '../../shared/domain/privacy-subject.ts';
 
 type PrivacyResponsibilityAssignment = typeof PrivacyResponsibilityAssignmentSchema.Type;
@@ -63,13 +87,13 @@ export class PrivacyOperationPersistenceError extends Schema.TaggedError<Privacy
   },
 ) {}
 
-interface PrivacyEligibilityRecord {
+export interface PrivacyEligibilityRecord {
   readonly evidence: PrivacyEligibilityEvidence;
   readonly evidenceId: string;
   readonly outcome: PrivacyEligibilityOutcome;
 }
 
-interface ResolvedPrivacyEligibilityInputs {
+export interface ResolvedPrivacyEligibilityInputs {
   readonly authoritativeReferences: readonly PrivacyEligibilityAuthoritativeReference[];
   readonly input: ResolvePrivacyEligibilityInputsInput;
   readonly policyRevisions: readonly PrivacyEligibilityPolicyRevision[];
@@ -133,18 +157,23 @@ export interface PrivacyOperationRepositoryService {
     tenantId: string,
     legalEntityId: string,
     actionInvocationId: string,
-    work: RetentionEvaluationWork,
+    request: RetentionEvaluationRequest,
   ) => Effect.Effect<RetentionEvaluationWork, PrivacyOperationPersistenceError>;
   readonly getDsrCase: (
     tenantId: string,
     legalEntityId: string,
     caseRef: string,
   ) => Effect.Effect<Option.Option<DsrCase>, PrivacyOperationPersistenceError>;
+  readonly getPrivacyMeasureHandoff: (
+    tenantId: string,
+    legalEntityId: string,
+    measureId: string,
+  ) => Effect.Effect<Option.Option<PrivacyMeasureHandoff>, PrivacyOperationPersistenceError>;
   readonly issueDeliveryAccess: (
     tenantId: string,
     legalEntityId: string,
     actionInvocationId: string,
-    access: DsrDeliveryAccess,
+    access: DsrDeliveryAccessAuthorityResult,
   ) => Effect.Effect<DsrDeliveryAccess, PrivacyOperationPersistenceError>;
   readonly listApplicabilityDecisions: (
     tenantId: string,
@@ -201,7 +230,9 @@ export interface PrivacyOperationRepositoryService {
     tenantId: string,
     legalEntityId: string,
     actionInvocationId: string,
-    protection: AntiResurrectionProtection,
+    request: OwnerExecutionOutcomeRequest,
+    authority: OwnerExecutionAuthorityResult,
+    enforcementReceipt: AntiResurrectionEnforcementReceipt,
   ) => Effect.Effect<AntiResurrectionProtection, PrivacyOperationPersistenceError>;
   readonly recordApplicability: (
     tenantId: string,
@@ -226,7 +257,7 @@ export interface PrivacyOperationRepositoryService {
     tenantId: string,
     legalEntityId: string,
     actionInvocationId: string,
-    decision: PrivacyDispositionDecision,
+    authority: PrivacyDispositionDecisionAuthorityResult,
   ) => Effect.Effect<PrivacyDispositionDecision, PrivacyOperationPersistenceError>;
   readonly recordDsrDeadline: (
     tenantId: string,
@@ -244,13 +275,14 @@ export interface PrivacyOperationRepositoryService {
     tenantId: string,
     legalEntityId: string,
     actionInvocationId: string,
-    response: DsrResponse,
+    response: DsrResponseRequest,
+    ownerInventory: DsrOwnerInventoryAuthorityResult | undefined,
   ) => Effect.Effect<DsrResponse, PrivacyOperationPersistenceError>;
   readonly recordDsrSubstantiveDecision: (
     tenantId: string,
     legalEntityId: string,
     actionInvocationId: string,
-    decision: DsrSubstantiveDecision,
+    authority: DsrSubstantiveDecisionAuthorityResult,
   ) => Effect.Effect<DsrSubstantiveDecision, PrivacyOperationPersistenceError>;
   readonly recordDsrVerification: (
     tenantId: string,
@@ -286,13 +318,14 @@ export interface PrivacyOperationRepositoryService {
     tenantId: string,
     legalEntityId: string,
     actionInvocationId: string,
-    outcome: OwnerExecutionOutcome,
+    request: OwnerExecutionOutcomeRequest,
+    authority: OwnerExecutionAuthorityResult,
   ) => Effect.Effect<OwnerExecutionOutcome, PrivacyOperationPersistenceError>;
   readonly recordProcessingIntervention: (
     tenantId: string,
     legalEntityId: string,
     actionInvocationId: string,
-    intervention: PrivacyProcessingIntervention,
+    intervention: ProcessingInterventionAuthorityResult,
   ) => Effect.Effect<PrivacyProcessingIntervention, PrivacyOperationPersistenceError>;
   readonly recordRepresentation: (
     tenantId: string,
@@ -307,31 +340,60 @@ export interface PrivacyOperationRepositoryService {
     actionInvocationId: string,
     exception: RetentionException,
   ) => Effect.Effect<RetentionException, PrivacyOperationPersistenceError>;
+  /** Resolves the versioned Controller deadline policy; callers cannot provide policy authority. */
+  readonly resolveDsrDeadlinePolicy: (
+    tenantId: string,
+    legalEntityId: string,
+    controllerRef: string,
+    receivedAt: string,
+  ) => Effect.Effect<DsrDeadlinePolicy, PrivacyOperationPersistenceError>;
   readonly resolveEligibilityInputs: (
     tenantId: string,
     legalEntityId: string,
     intendedScope: ResolvePrivacyEligibilityInputsInput['intendedScope'],
-    applicabilityScope: ResolvePrivacyEligibilityInputsInput['applicabilityScope'],
     asOf: string,
+    authority: PrivacyApplicabilityEligibilityAuthorityResult,
   ) => Effect.Effect<ResolvedPrivacyEligibilityInputs, PrivacyOperationPersistenceError>;
+  /** Resolves a legal hold from a trusted governance authority; caller fields are never persisted as governance. */
+  readonly resolveLegalHoldGovernance: (
+    tenantId: string,
+    legalEntityId: string,
+    actorPrincipalRef: string,
+    request: RetentionProtectionRequest,
+  ) => Effect.Effect<PrivacyLegalHold, PrivacyOperationPersistenceError>;
+  /** Resolves one current, authoritative, determinate evaluation before a decision is recorded. */
+  readonly resolveRetentionEvaluation: (
+    tenantId: string,
+    legalEntityId: string,
+    evaluationRef: string,
+    asOf: string,
+  ) => Effect.Effect<RetentionEvaluation, PrivacyOperationPersistenceError>;
+  /** Resolves a retention exception from a trusted governance authority; caller fields are never persisted as governance. */
+  readonly resolveRetentionExceptionGovernance: (
+    tenantId: string,
+    legalEntityId: string,
+    actorPrincipalRef: string,
+    request: RetentionProtectionRequest,
+  ) => Effect.Effect<RetentionException, PrivacyOperationPersistenceError>;
   readonly updateDsrCase: (
     tenantId: string,
     legalEntityId: string,
     actionInvocationId: string,
-    caseRecord: DsrCase,
+    mutation: DsrCaseLifecycleMutation,
     expectedUpdatedAt: string | null,
+    ownerInventory: DsrOwnerInventoryAuthorityResult | undefined,
   ) => Effect.Effect<DsrCase, PrivacyOperationPersistenceError>;
   readonly upsertDsrOwnerTask: (
     tenantId: string,
     legalEntityId: string,
     actionInvocationId: string,
-    task: DsrOwnerTask,
+    authority: DsrOwnerTaskAuthorityResult,
   ) => Effect.Effect<DsrOwnerTask, PrivacyOperationPersistenceError>;
   readonly upsertRetentionRule: (
     tenantId: string,
     legalEntityId: string,
     actionInvocationId: string,
-    rule: PrivacyRetentionRuleVersion,
+    resolution: RetentionRuleAuthorityResolution,
   ) => Effect.Effect<PrivacyRetentionRuleVersion, PrivacyOperationPersistenceError>;
   readonly upsertTemporaryDsrExport: (
     tenantId: string,

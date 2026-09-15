@@ -3,41 +3,94 @@
 // @ontos-action-slug upsert-retention-rule
 import type { ActionHandlerContext } from '@app/core-runtime';
 import { defineAction, defineTenantModuleEntrypoint } from '@app/core-runtime';
-import { Effect } from 'effect';
+import { DateTime, Effect } from 'effect';
 
 import {
   UpsertRetentionRulePayloadSchema,
   UpsertRetentionRuleResultSchema,
 } from '../../shared/actions/upsert-retention-rule.ts';
 import type { UpsertRetentionRulePayload } from '../../shared/actions/upsert-retention-rule.ts';
+import {
+  validatePrivacyRetentionRuleVersion,
+  validateRetentionRuleAuthorityResolution,
+} from '../../shared/domain/privacy-retention-rule.ts';
 import { privacyOperationRepositoryForScope } from '../persistence/privacy-operation-postgres-repository.ts';
 import type { PrivacyOperationRepositoryService } from '../persistence/privacy-operation-repository.ts';
 import {
   PrivacyActionAuditEvidenceSchema,
   PrivacyActionErrorSchema,
-  completePrivacyAction,
+  PrivacyActionRejected,
   privacyActionDomainEvents,
   requirePrivacyActionScope,
 } from './privacy-operation-action-support.ts';
+import {
+  RetentionRuleGovernanceAuthority,
+  validateRetroactiveRetentionGovernanceApproval,
+} from './retention-rule-governance-authority.ts';
 
-const handleUpsertRetentionRule = Effect.fn('UpsertRetentionRuleAction.handle')(function* handleUpsertRetentionRule(
-  payload: UpsertRetentionRulePayload,
-  context: ActionHandlerContext<typeof privacyActionDomainEvents, PrivacyOperationRepositoryService>,
-) {
-  const scope = yield* requirePrivacyActionScope(context.scope);
-  const result = yield* context.services.upsertRetentionRule(
-    scope.tenantId,
-    scope.legalEntityId,
-    context.actionInvocationId,
-    payload.rule,
-  );
-  return yield* completePrivacyAction(
-    context,
-    'upsert-retention-rule',
-    `${result.ruleRef}:${result.ruleVersion}`,
-    result,
-  );
-});
+export type UpsertRetentionRuleServices = Pick<PrivacyOperationRepositoryService, 'upsertRetentionRule'> & {
+  readonly governanceAuthority: typeof RetentionRuleGovernanceAuthority.Service;
+};
+
+export const handleUpsertRetentionRule = Effect.fn('UpsertRetentionRuleAction.handle')(
+  function* handleUpsertRetentionRule(
+    payload: UpsertRetentionRulePayload,
+    context: ActionHandlerContext<typeof privacyActionDomainEvents, UpsertRetentionRuleServices>,
+  ) {
+    const scope = yield* requirePrivacyActionScope(context.scope);
+    const asOf = DateTime.formatIso(yield* DateTime.now);
+    const resolution = yield* context.services.governanceAuthority.resolveRule({
+      actionInvocationId: context.actionInvocationId,
+      asOf,
+      legalEntityId: scope.legalEntityId,
+      principalId: context.scope.principalId,
+      request: payload.request,
+      tenantId: scope.tenantId,
+    });
+    const authorityError = validateRetentionRuleAuthorityResolution(
+      payload.request,
+      resolution,
+      scope.tenantId,
+      scope.legalEntityId,
+      asOf,
+    );
+    if (authorityError !== undefined) {
+      return yield* new PrivacyActionRejected({ code: 'privacy_action_rejected', reason: authorityError });
+    }
+    const validation = validatePrivacyRetentionRuleVersion(resolution.rule);
+    if (!validation.valid) {
+      return yield* new PrivacyActionRejected({
+        code: 'privacy_action_rejected',
+        reason: validation.reasons.join('; '),
+      });
+    }
+    if (resolution.rule.applicability === 'EXPLICIT_RETROACTIVE') {
+      const governanceContext = {
+        actionInvocationId: context.actionInvocationId,
+        legalEntityId: scope.legalEntityId,
+        principalId: context.scope.principalId,
+        rule: resolution.rule,
+        tenantId: scope.tenantId,
+      };
+      const approval = yield* context.services.governanceAuthority.resolveRetroactiveApproval(governanceContext);
+      const governanceError = validateRetroactiveRetentionGovernanceApproval(governanceContext, approval);
+      if (governanceError !== undefined) {
+        return yield* new PrivacyActionRejected({ code: 'privacy_action_rejected', reason: governanceError });
+      }
+    }
+    const result = yield* context.services.upsertRetentionRule(
+      scope.tenantId,
+      scope.legalEntityId,
+      context.actionInvocationId,
+      resolution,
+    );
+    yield* context.recordAuditEvidence({
+      operationKind: 'upsert-retention-rule',
+      recordId: `${result.ruleRef}:${result.ruleVersion}`,
+    });
+    return result;
+  },
+);
 
 export const upsertRetentionRuleAction = defineAction(
   {
@@ -66,7 +119,14 @@ export const upsertRetentionRuleAction = defineAction(
     schemaVersion: '1',
   },
   handleUpsertRetentionRule,
-  privacyOperationRepositoryForScope,
+  Effect.fn('UpsertRetentionRuleAction.services')(function* makeUpsertRetentionRuleServices(transaction, scope) {
+    const repository = yield* privacyOperationRepositoryForScope(transaction, scope);
+    const governanceAuthority = yield* RetentionRuleGovernanceAuthority;
+    return {
+      governanceAuthority,
+      upsertRetentionRule: repository.upsertRetentionRule,
+    } satisfies UpsertRetentionRuleServices;
+  }),
 );
 
 // <generated-outbox-message-exports>

@@ -103,16 +103,37 @@ describe('Consent Decisions', () => {
     const historicalPurposeVersion = {
       effectiveFrom: '2025-01-01T00:00:00Z',
       effectiveTo: null,
+      materialChangeAssessment: null,
       meaning: scope.purposeMeaning,
       recordedAt: '2025-01-01T00:00:00Z',
+      requiredConsentDimensions: ['COMMUNICATION_CHANNEL'] as const,
       versionId: scope.purposeVersionRef,
       versionNumber: 1,
     };
     const granted = decision('GRANTED', 'decision:historical-purpose', '2026-02-01T00:00:00Z');
-    expect(validateConsentDecision(granted, historicalPurposeVersion)).toBeUndefined();
+    expect(validateConsentDecision(granted, historicalPurposeVersion)).toContain('COMMUNICATION_CHANNEL');
     expect(
       validateConsentDecision(
-        { ...granted, scope: { ...granted.scope, purposeMeaning: 'Caller-supplied different meaning' } },
+        {
+          ...granted,
+          scope: {
+            ...granted.scope,
+            materialDimensions: [{ kind: 'COMMUNICATION_CHANNEL', value: 'EMAIL' }],
+          },
+        },
+        historicalPurposeVersion,
+      ),
+    ).toBeUndefined();
+    expect(
+      validateConsentDecision(
+        {
+          ...granted,
+          scope: {
+            ...granted.scope,
+            materialDimensions: [{ kind: 'COMMUNICATION_CHANNEL', value: 'EMAIL' }],
+            purposeMeaning: 'Caller-supplied different meaning',
+          },
+        },
         historicalPurposeVersion,
       ),
     ).toContain('Purpose meaning');

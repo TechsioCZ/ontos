@@ -2,14 +2,34 @@
 import { Schema } from 'effect';
 
 import type { ConsentDecision } from './privacy-consent-decision.ts';
-import type { PrivacyApplicabilityDecision, PrivacyApplicabilityScope } from './privacy-applicability.ts';
-import { PrivacyIsoTimestampSchema } from './privacy-subject.ts';
+import {
+  PrivacyApplicabilityAuthoritySchema,
+  PrivacyApplicabilityEligibilityAuthorityResultSchema,
+  PrivacyApplicabilityScopeSchema,
+  privacyApplicabilityAuthorityMatchesExactUse,
+} from './privacy-applicability.ts';
+import type {
+  PrivacyApplicabilityDecision,
+  PrivacyApplicabilityEligibilityAuthorityResult,
+  PrivacyApplicabilityScope,
+} from './privacy-applicability.ts';
+import {
+  arePrivacyInstantsEqual,
+  isPrivacyInstantAfter,
+  isPrivacyInstantAtOrBefore,
+  PrivacyIsoTimestampSchema,
+} from './privacy-subject.ts';
 import { ProcessingScopeRefSchema } from './privacy-responsibility-assignment.ts';
+import { PrivacySubjectRefSchema } from '../resources/privacy-subject.ts';
 
 const Ref = Schema.Trim.check(Schema.isMinLength(1), Schema.isMaxLength(300));
 const RefList = Schema.Array(Ref).check(Schema.isMaxLength(64));
+const InterventionKinds = Schema.Literals(['OBJECTION', 'RESTRICTION']);
 export const PrivacyInterventionStatusSchema = Schema.Literals(['ACTIVE', 'RESOLVED', 'ABSENT']);
 const PrivacyEligibilityDecisionOutcomeSchema = Schema.Literals(['ALLOWED', 'NOT_ALLOWED', 'INDETERMINATE']);
+
+const privacyApplicabilityAuthorityEquivalent = Schema.toEquivalence(PrivacyApplicabilityAuthoritySchema);
+const privacyApplicabilityScopeEquivalent = Schema.toEquivalence(PrivacyApplicabilityScopeSchema);
 
 /** The complete business identity of the use being checked. Ambient request context is never added. */
 export const IntendedProcessingScopeSchema = Schema.Struct({
@@ -20,6 +40,7 @@ export const IntendedProcessingScopeSchema = Schema.Struct({
   purposeRef: Ref,
   purposeVersionId: Ref,
   recipientRefs: RefList,
+  subjectRef: PrivacySubjectRefSchema,
 });
 export type IntendedProcessingScope = typeof IntendedProcessingScopeSchema.Type;
 
@@ -70,11 +91,30 @@ export type PrivacyRestrictionInput = typeof PrivacyRestrictionInputSchema.Type;
 export const PrivacyProcessingInterventionSchema = Schema.Struct({
   currentness: PrivacyInputCurrentnessSchema,
   interventionRef: Ref,
-  kind: Schema.Literals(['OBJECTION', 'RESTRICTION']),
+  kind: InterventionKinds,
   scope: IntendedProcessingScopeSchema,
   status: PrivacyInterventionStatusSchema,
 });
 export type PrivacyProcessingIntervention = typeof PrivacyProcessingInterventionSchema.Type;
+
+export const ProcessingInterventionAuthorityRequestSchema = Schema.Struct({
+  interventionRef: Ref,
+  kind: InterventionKinds,
+  scope: IntendedProcessingScopeSchema,
+});
+export type ProcessingInterventionAuthorityRequest = typeof ProcessingInterventionAuthorityRequestSchema.Type;
+
+export const ProcessingInterventionAuthorityResultSchema = Schema.Struct({
+  actionInvocationId: Ref,
+  asOf: PrivacyIsoTimestampSchema,
+  authorityRef: Ref,
+  evidenceRefs: Schema.Array(Ref).check(Schema.isMinLength(1), Schema.isMaxLength(32)),
+  intervention: PrivacyProcessingInterventionSchema,
+  legalEntityId: Ref,
+  receiptRef: Ref,
+  tenantId: Ref,
+});
+export type ProcessingInterventionAuthorityResult = typeof ProcessingInterventionAuthorityResultSchema.Type;
 
 type PrivacyScopedFact = Pick<PrivacyLegalBasisInput, 'currentness' | 'scope'>;
 type PrivacyScopedStatusFact = Pick<PrivacyObjectionInput, 'currentness' | 'scope' | 'status'>;
@@ -89,9 +129,161 @@ export interface ResolvePrivacyEligibilityInputsInput {
   readonly consentCurrentness: PrivacyInputCurrentness | null;
   readonly intendedScope: IntendedProcessingScope;
   readonly legalBasis: PrivacyLegalBasisInput | null;
+  readonly legalEntityId: string;
   readonly objection: PrivacyObjectionInput | null;
   readonly restriction: PrivacyRestrictionInput | null;
+  readonly tenantId: string;
 }
+
+const exactStringSet = (left: readonly string[], right: readonly string[]): boolean => {
+  const leftSet = new Set(left);
+  const rightSet = new Set(right);
+  return (
+    leftSet.size === left.length &&
+    rightSet.size === right.length &&
+    leftSet.size === rightSet.size &&
+    left.every((value) => rightSet.has(value))
+  );
+};
+
+const factValues = (scope: PrivacyApplicabilityScope, dimension: string): readonly string[] =>
+  (() => {
+    const values: string[] = [];
+    for (const fact of scope.facts) {
+      if (fact.dimension === dimension) {
+        values.push(fact.value);
+      }
+    }
+    return values;
+  })();
+
+const exactIntendedApplicabilityFacts = (scope: IntendedProcessingScope): ReadonlyMap<string, readonly string[]> =>
+  new Map([
+    ['CATEGORY', scope.dataCategoryRefs],
+    ['CONTROLLER_SCOPE', [scope.controllerRef]],
+    ['PRIVACY_SUBJECT', [scope.subjectRef.resourceId]],
+    ['PROCESSING_PURPOSE', [scope.purposeRef]],
+    ['PROCESSING_PURPOSE_VERSION', [scope.purposeVersionId]],
+    ['RECIPIENT', scope.recipientRefs],
+  ]);
+
+const applicabilityScopeMatchesExactIntendedUse = (
+  applicabilityScope: PrivacyApplicabilityScope,
+  intendedScope: IntendedProcessingScope,
+): boolean =>
+  applicabilityScope.operation === intendedScope.operation &&
+  applicabilityScope.processingScopeRef.scopeId === intendedScope.processingScopeRef.scopeId &&
+  applicabilityScope.processingScopeRef.scopeType === intendedScope.processingScopeRef.scopeType &&
+  [...exactIntendedApplicabilityFacts(intendedScope)].every(([dimension, expected]) =>
+    exactStringSet(factValues(applicabilityScope, dimension), expected),
+  );
+
+const authorityEvidenceExactlyMatches = (
+  decision: PrivacyApplicabilityDecision,
+  authorityResult: PrivacyApplicabilityEligibilityAuthorityResult,
+): boolean =>
+  decision.authorityEvidenceRefs !== undefined &&
+  exactStringSet(decision.authorityEvidenceRefs, authorityResult.evidenceRefs);
+
+const validateApplicabilityAuthorityCurrentness = (input: {
+  readonly asOf: string;
+  readonly authorityResult: PrivacyApplicabilityEligibilityAuthorityResult;
+}): string | undefined => {
+  const { asOf, authorityResult } = input;
+  if (!Schema.is(PrivacyApplicabilityEligibilityAuthorityResultSchema)(authorityResult)) {
+    return 'Applicability eligibility authority returned an invalid currentness receipt';
+  }
+  if (authorityResult.status !== 'CURRENT') {
+    return `Applicability eligibility authority is ${authorityResult.status.toLowerCase()}`;
+  }
+  if (!arePrivacyInstantsEqual(authorityResult.asOf, asOf)) {
+    return 'Applicability eligibility authority does not match the exact as-of instant';
+  }
+  if (!isPrivacyInstantAtOrBefore(authorityResult.decisionEvaluatedAt, asOf)) {
+    return 'Applicability eligibility authority returned a future decision';
+  }
+  if (authorityResult.validUntil === undefined) {
+    return arePrivacyInstantsEqual(authorityResult.decisionEvaluatedAt, asOf)
+      ? undefined
+      : 'Historical Applicability Decisions require an authority validUntil';
+  }
+  return isPrivacyInstantAfter(authorityResult.validUntil, asOf)
+    ? undefined
+    : 'Applicability eligibility authority receipt is expired at the exact as-of instant';
+};
+
+const validateApplicabilityAuthorityIdentity = (input: {
+  readonly authorityResult: PrivacyApplicabilityEligibilityAuthorityResult;
+  readonly intendedScope: IntendedProcessingScope;
+  readonly legalEntityId: string;
+  readonly tenantId: string;
+}): string | undefined => {
+  const { authorityResult, intendedScope, legalEntityId, tenantId } = input;
+  return privacyApplicabilityAuthorityMatchesExactUse(authorityResult.authority, {
+    controllerRef: intendedScope.controllerRef,
+    legalEntityId,
+    purposeRef: intendedScope.purposeRef,
+    purposeVersionId: intendedScope.purposeVersionId,
+    tenantId,
+  }) && intendedScope.subjectRef.tenantId === tenantId
+    ? undefined
+    : 'Applicability eligibility authority does not match the exact Tenant, Legal Entity, Controller, or Purpose';
+};
+
+const validatePersistedApplicabilityDecision = (input: {
+  readonly authorityResult: PrivacyApplicabilityEligibilityAuthorityResult;
+  readonly decision: PrivacyApplicabilityDecision;
+  readonly decisionRef: string;
+  readonly intendedScope: IntendedProcessingScope;
+}): string | undefined => {
+  const { authorityResult, decision, decisionRef, intendedScope } = input;
+  if (!applicabilityScopeMatchesExactIntendedUse(authorityResult.scope, intendedScope)) {
+    return 'Applicability eligibility authority facts do not match the exact intended use';
+  }
+  if (decisionRef !== authorityResult.decisionRef) {
+    return 'Persisted Applicability Decision is not the decision confirmed by authority';
+  }
+  if (decision.outcome !== authorityResult.decisionOutcome) {
+    return 'Persisted Applicability Decision outcome is not confirmed by authority';
+  }
+  if (!arePrivacyInstantsEqual(decision.evaluatedAt, authorityResult.decisionEvaluatedAt)) {
+    return 'Persisted Applicability Decision time is not confirmed by authority';
+  }
+  if (!privacyApplicabilityScopeEquivalent(decision.evaluatedScope, authorityResult.scope)) {
+    return 'Persisted Applicability Decision scope is not confirmed by authority';
+  }
+  if (
+    decision.authority === undefined ||
+    !privacyApplicabilityAuthorityEquivalent(decision.authority, authorityResult.authority)
+  ) {
+    return 'Persisted Applicability Decision authority is not confirmed by authority';
+  }
+  return authorityEvidenceExactlyMatches(decision, authorityResult) &&
+    decision.authorityReceiptRef === authorityResult.receiptRef
+    ? undefined
+    : 'Persisted Applicability Decision receipt is not confirmed by authority';
+};
+
+/**
+ * Confirms that an eligibility authority re-resolved the exact current use
+ * before a stored Applicability Decision can participate in ALLOWED.
+ */
+export const validatePrivacyApplicabilityEligibilityAuthorityResult = (input: {
+  readonly asOf: string;
+  readonly authorityResult: PrivacyApplicabilityEligibilityAuthorityResult;
+  readonly decision: PrivacyApplicabilityDecision;
+  readonly decisionRef: string;
+  readonly intendedScope: IntendedProcessingScope;
+  readonly legalEntityId: string;
+  readonly tenantId: string;
+}): string | undefined => {
+  const { asOf, authorityResult, decision, decisionRef, intendedScope, legalEntityId, tenantId } = input;
+  return (
+    validateApplicabilityAuthorityCurrentness({ asOf, authorityResult }) ??
+    validateApplicabilityAuthorityIdentity({ authorityResult, intendedScope, legalEntityId, tenantId }) ??
+    validatePersistedApplicabilityDecision({ authorityResult, decision, decisionRef, intendedScope })
+  );
+};
 
 export interface PrivacyEligibilityInputResolutions {
   readonly applicability: PrivacyInputResolution;
@@ -257,6 +449,10 @@ const scopeKey = (scope: IntendedProcessingScope): string =>
     scope.controllerRef,
     stableKey(scope.dataCategoryRefs.toSorted()),
     scope.operation,
+    scope.subjectRef.moduleId,
+    scope.subjectRef.resourceId,
+    scope.subjectRef.resourceType,
+    scope.subjectRef.tenantId,
     scope.processingScopeRef.scopeId,
     scope.processingScopeRef.scopeType,
     scope.purposeRef,
@@ -391,10 +587,10 @@ const currentness = (value: PrivacyInputCurrentness | null, asOf: string): Priva
   if (!value.authoritative) {
     return { currentness: value, reason: 'source_not_authoritative', state: 'UNAVAILABLE' };
   }
-  if (value.observedAt > asOf) {
+  if (!isPrivacyInstantAtOrBefore(value.observedAt, asOf)) {
     return { currentness: value, reason: 'observed_after_evaluation_time', state: 'CONFLICT' };
   }
-  if (value.validUntil !== undefined && asOf >= value.validUntil) {
+  if (value.validUntil !== undefined && !isPrivacyInstantAfter(value.validUntil, asOf)) {
     return { currentness: value, reason: 'input_expired', state: 'STALE' };
   }
   return { currentness: value, reason: 'authoritative_current_input', state: 'CURRENT' };
@@ -417,9 +613,23 @@ const resolveApplicabilityInput = (input: ResolvePrivacyEligibilityInputsInput):
     input.applicabilityScope.processingScopeRef.scopeType === input.intendedScope.processingScopeRef.scopeType;
   const exactScopeMatch =
     applicabilityScopeKey(input.applicability.evaluatedScope) === applicabilityScopeKey(input.applicabilityScope);
-  return applicabilityTargetsIntendedScope && exactScopeMatch
-    ? resolution
-    : scopeMismatch('applicability_scope_mismatch', input.asOf);
+  if (!applicabilityTargetsIntendedScope || !exactScopeMatch) {
+    return scopeMismatch('applicability_scope_mismatch', input.asOf);
+  }
+  const { authority } = input.applicability;
+  if (
+    authority === undefined ||
+    !privacyApplicabilityAuthorityMatchesExactUse(authority, {
+      controllerRef: input.intendedScope.controllerRef,
+      legalEntityId: input.legalEntityId,
+      purposeRef: input.intendedScope.purposeRef,
+      purposeVersionId: input.intendedScope.purposeVersionId,
+      tenantId: input.tenantId,
+    })
+  ) {
+    return scopeMismatch('applicability_authority_mismatch', input.asOf);
+  }
+  return resolution;
 };
 
 const resolveScopedInput = (

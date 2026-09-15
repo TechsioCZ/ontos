@@ -884,9 +884,6 @@ importers:
       '@app/gateway-principal-verifier':
         specifier: workspace:*
         version: link:../../packages/gateway-principal-verifier
-      '@app/party-registry':
-        specifier: workspace:*
-        version: link:../party-registry
       '@app/shared-contracts':
         specifier: workspace:*
         version: link:../../packages/shared-contracts

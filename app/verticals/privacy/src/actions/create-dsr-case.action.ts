@@ -3,39 +3,83 @@
 // @ontos-action-slug create-dsr-case
 import type { ActionHandlerContext } from '@app/core-runtime';
 import { defineAction, defineTenantModuleEntrypoint } from '@app/core-runtime';
-import { Effect } from 'effect';
+import { Context, Effect, Layer } from 'effect';
 
 import { CreateDsrCasePayloadSchema, CreateDsrCaseResultSchema } from '../../shared/actions/create-dsr-case.ts';
 import type { CreateDsrCasePayload } from '../../shared/actions/create-dsr-case.ts';
+import { materializeDsrCaseFromReceipt } from '../../shared/domain/privacy-dsr.ts';
+import type { DsrIntakeReceipt } from '../../shared/domain/privacy-dsr.ts';
 import { privacyOperationRepositoryForScope } from '../persistence/privacy-operation-postgres-repository.ts';
+import { PrivacyOperationPersistenceError } from '../persistence/privacy-operation-repository.ts';
 import type { PrivacyOperationRepositoryService } from '../persistence/privacy-operation-repository.ts';
 import {
   PrivacyActionAuditEvidenceSchema,
   PrivacyActionErrorSchema,
   PrivacyActionRejected,
-  completePrivacyAction,
   privacyActionDomainEvents,
   requirePrivacyActionScope,
 } from './privacy-operation-action-support.ts';
 
-const handleCreateDsrCase = Effect.fn('CreateDsrCaseAction.handle')(function* handleCreateDsrCase(
+interface DsrIntakeReceiptAuthorityContext {
+  readonly actionInvocationId: string;
+  readonly legalEntityId: string;
+  readonly principalId: string;
+  readonly tenantId: string;
+}
+
+export interface DsrIntakeReceiptAuthorityService {
+  readonly resolve: (
+    request: CreateDsrCasePayload['request'],
+    context: DsrIntakeReceiptAuthorityContext,
+  ) => Effect.Effect<DsrIntakeReceipt, PrivacyActionRejected | PrivacyOperationPersistenceError>;
+}
+
+export class DsrIntakeReceiptAuthority extends Context.Service<
+  DsrIntakeReceiptAuthority,
+  DsrIntakeReceiptAuthorityService
+>()('@app/privacy/actions/create-dsr-case.action/DsrIntakeReceiptAuthority') {}
+
+export const dsrIntakeReceiptAuthorityUnavailable = Object.freeze({
+  resolve: () =>
+    Effect.fail(
+      new PrivacyOperationPersistenceError({
+        code: 'privacy_operation_persistence_unavailable',
+        reason: 'DSR intake receipt authority is not configured',
+      }),
+    ),
+}) satisfies DsrIntakeReceiptAuthorityService;
+
+export const DsrIntakeReceiptAuthorityUnavailableLive = Layer.succeed(
+  DsrIntakeReceiptAuthority,
+  dsrIntakeReceiptAuthorityUnavailable,
+);
+
+export interface CreateDsrCaseServices extends Pick<PrivacyOperationRepositoryService, 'createDsrCase'> {
+  readonly authority: DsrIntakeReceiptAuthorityService;
+}
+
+export const handleCreateDsrCase = Effect.fn('CreateDsrCaseAction.handle')(function* handleCreateDsrCase(
   payload: CreateDsrCasePayload,
-  context: ActionHandlerContext<typeof privacyActionDomainEvents, PrivacyOperationRepositoryService>,
+  context: ActionHandlerContext<typeof privacyActionDomainEvents, CreateDsrCaseServices>,
 ) {
   const scope = yield* requirePrivacyActionScope(context.scope);
-  if (payload.caseRecord.controllerObligations.some(({ caseRef }) => caseRef !== payload.caseRecord.caseRef)) {
-    return yield* new PrivacyActionRejected({
-      code: 'privacy_action_rejected',
-      reason: 'Every Controller Obligation must belong to the DSR Case',
-    });
-  }
+  const receipt = yield* context.services.authority.resolve(payload.request, {
+    actionInvocationId: context.actionInvocationId,
+    legalEntityId: scope.legalEntityId,
+    principalId: context.scope.principalId,
+    tenantId: scope.tenantId,
+  });
+  const caseRecord = yield* materializeDsrCaseFromReceipt(payload.request, receipt).pipe(
+    Effect.mapError(({ reason }) => new PrivacyActionRejected({ code: 'privacy_action_rejected', reason })),
+  );
   const result = yield* context.services.createDsrCase(
     scope.tenantId,
     scope.legalEntityId,
     context.actionInvocationId,
-    payload.caseRecord,
+    caseRecord,
   );
-  return yield* completePrivacyAction(context, 'create-dsr-case', result.caseRef, result);
+  yield* context.recordAuditEvidence({ operationKind: 'create-dsr-case', recordId: result.caseRef });
+  return result;
 });
 
 export const createDsrCaseAction = defineAction(
@@ -65,7 +109,14 @@ export const createDsrCaseAction = defineAction(
     schemaVersion: '1',
   },
   handleCreateDsrCase,
-  privacyOperationRepositoryForScope,
+  (transaction, scope) =>
+    Effect.all(
+      {
+        authority: DsrIntakeReceiptAuthority,
+        repository: privacyOperationRepositoryForScope(transaction, scope),
+      },
+      { concurrency: 2 },
+    ).pipe(Effect.map(({ authority, repository }) => ({ authority, createDsrCase: repository.createDsrCase }))),
 );
 
 // <generated-outbox-message-exports>

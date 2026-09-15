@@ -11,6 +11,8 @@ import {
 import type { RecordProcessingInterventionPayload } from '../../shared/actions/record-processing-intervention.ts';
 import { privacyOperationRepositoryForScope } from '../persistence/privacy-operation-postgres-repository.ts';
 import type { PrivacyOperationRepositoryService } from '../persistence/privacy-operation-repository.ts';
+import { ProcessingInterventionAuthority } from './processing-intervention-authority.ts';
+import type { ProcessingInterventionAuthorityService } from './processing-intervention-authority.ts';
 import {
   PrivacyActionAuditEvidenceSchema,
   PrivacyActionErrorSchema,
@@ -21,23 +23,27 @@ import {
 
 const handleRecordProcessingIntervention = Effect.fn('RecordProcessingInterventionAction.handle')(function* handle(
   payload: RecordProcessingInterventionPayload,
-  context: ActionHandlerContext<typeof privacyActionDomainEvents, PrivacyOperationRepositoryService>,
+  context: ActionHandlerContext<
+    typeof privacyActionDomainEvents,
+    Pick<PrivacyOperationRepositoryService, 'recordProcessingIntervention'> & {
+      readonly authority: ProcessingInterventionAuthorityService;
+    }
+  >,
 ) {
   const scope = yield* requirePrivacyActionScope(context.scope);
-  const intervention = {
-    ...payload.intervention,
-    currentness: {
-      ...payload.intervention.currentness,
-      authoritative: true,
-      observedAt: DateTime.formatIso(yield* DateTime.now),
-      sourceRef: 'privacy.core.processing-interventions',
-    },
-  };
+  const asOf = DateTime.formatIso(yield* DateTime.now);
+  const authority = yield* context.services.authority.resolve(payload.request, {
+    actionInvocationId: context.actionInvocationId,
+    asOf,
+    legalEntityId: scope.legalEntityId,
+    principalId: context.scope.principalId,
+    tenantId: scope.tenantId,
+  });
   const result = yield* context.services.recordProcessingIntervention(
     scope.tenantId,
     scope.legalEntityId,
     context.actionInvocationId,
-    intervention,
+    authority,
   );
   return yield* completePrivacyAction(context, 'record-processing-intervention', result.interventionRef, result);
 });
@@ -68,7 +74,19 @@ export const recordProcessingInterventionAction = defineAction(
     schemaVersion: '1',
   },
   handleRecordProcessingIntervention,
-  privacyOperationRepositoryForScope,
+  (transaction, scope) =>
+    Effect.all(
+      {
+        authority: ProcessingInterventionAuthority,
+        repository: privacyOperationRepositoryForScope(transaction, scope),
+      },
+      { concurrency: 2 },
+    ).pipe(
+      Effect.map(({ authority, repository }) => ({
+        authority,
+        recordProcessingIntervention: repository.recordProcessingIntervention,
+      })),
+    ),
 );
 // <generated-outbox-message-exports>
 // </generated-outbox-message-exports>

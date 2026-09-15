@@ -84,6 +84,34 @@ describe('Privacy Measure owner handoff', () => {
     }),
   );
 
+  it.effect('rejects SUCCEEDED with remaining work and PARTIAL without remaining work', () =>
+    Effect.gen(function* rejectsStatusPartitionMismatch() {
+      const dispatch = yield* createPrivacyMeasureDispatch(handoff, '2026-09-14T10:00:01Z');
+      const request = prepareOwnerActionRequest(dispatch, 'accounts.delete');
+      const incompleteSuccess = {
+        ...outcome('SUCCEEDED'),
+        includedResourceRefs: ['account-1'],
+        remainingResourceRefs: ['account-2'],
+      } as const;
+      const completePartial = {
+        ...outcome('PARTIAL'),
+        includedResourceRefs: ['account-1', 'account-2'],
+        remainingResourceRefs: [],
+      } as const;
+
+      expect(
+        Schema.is(PrivacyMeasureInvariantError)(
+          yield* Effect.flip(recordOwnerExecutionOutcome(dispatch, request, incompleteSuccess, '2026-09-14T10:03:00Z')),
+        ),
+      ).toBe(true);
+      expect(
+        Schema.is(PrivacyMeasureInvariantError)(
+          yield* Effect.flip(recordOwnerExecutionOutcome(dispatch, request, completePartial, '2026-09-14T10:03:00Z')),
+        ),
+      ).toBe(true);
+    }),
+  );
+
   it.effect('requires reconciliation before indeterminate work can continue', () =>
     Effect.gen(function* requiresReconciliation() {
       const dispatch = yield* createPrivacyMeasureDispatch(handoff, '2026-09-14T10:00:01Z');

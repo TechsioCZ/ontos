@@ -13,15 +13,20 @@ export type DeliveryAccessState = typeof DeliveryAccessStateSchema.Type;
 /** A capability for one approved output and one verified recipient scope only. */
 export const DsrDeliveryAccessSchema = Schema.Struct({
   accessId: Ref,
+  authorityRef: Schema.optionalKey(Ref),
+  caseRef: Ref,
   channel: Text,
+  controllerRef: Ref,
   deliveryOutputRef: Ref,
   deliveryOutputRevision: Revision,
   deliveryScopeRefs: Schema.Array(Ref).check(Schema.isMinLength(1), Schema.isMaxLength(256)),
   effectiveFrom: Timestamp,
+  evidenceRefs: Schema.optionalKey(Schema.Array(Ref).check(Schema.isMinLength(1), Schema.isMaxLength(32))),
   expiresAt: Timestamp,
   idempotencyKey: Ref,
   issuedAt: Timestamp,
   policyRef: Ref,
+  receiptRef: Schema.optionalKey(Ref),
   recipientRef: Ref,
   representationRef: Ref,
   revocationReason: Schema.NullOr(Text),
@@ -29,6 +34,20 @@ export const DsrDeliveryAccessSchema = Schema.Struct({
   supersedesAccessRef: Schema.NullOr(Ref),
 });
 export type DsrDeliveryAccess = typeof DsrDeliveryAccessSchema.Type;
+
+export const DsrDeliveryAccessAuthorityResultSchema = Schema.Struct({
+  access: DsrDeliveryAccessSchema,
+  actionInvocationId: Ref,
+  authorityRef: Ref,
+  caseRef: Ref,
+  controllerRef: Ref,
+  evidenceRefs: Schema.Array(Ref).check(Schema.isMinLength(1), Schema.isMaxLength(32)),
+  issuedAt: Timestamp,
+  legalEntityId: Ref,
+  receiptRef: Ref,
+  tenantId: Ref,
+});
+export type DsrDeliveryAccessAuthorityResult = typeof DsrDeliveryAccessAuthorityResultSchema.Type;
 
 export const DeliveryEvidenceOutcomeSchema = Schema.Literals([
   'SUCCESSFUL_DELIVERY',
@@ -40,6 +59,8 @@ export type DeliveryEvidenceOutcome = typeof DeliveryEvidenceOutcomeSchema.Type;
 
 export const DsrDeliveryEvidenceSchema = Schema.Struct({
   accessId: Ref,
+  /** Legacy evidence may omit the Case; new writes require an exact open Case. */
+  caseRef: Schema.optionalKey(Ref),
   channel: Text,
   deliveryOutputRef: Ref,
   deliveryOutputRevision: Revision,
@@ -84,7 +105,9 @@ export const getDeliveryAccessState = (access: DsrDeliveryAccess, at: string): D
 
 export interface DeliveryAccessRequest {
   readonly accessId: string;
+  readonly caseRef: string;
   readonly channel: string;
+  readonly controllerRef: string;
   readonly deliveryOutputRef: string;
   readonly deliveryOutputRevision: number;
   readonly deliveryScopeRefs: readonly string[];
@@ -130,9 +153,13 @@ export const issueDeliveryAccess = (
 export const canUseDeliveryAccess = (input: {
   readonly access: DsrDeliveryAccess;
   readonly at: string;
+  readonly caseRef: string;
+  readonly channel: string;
+  readonly controllerRef: string;
   readonly deliveryOutputRef: string;
   readonly deliveryOutputRevision: number;
   readonly deliveryScopeRefs: readonly string[];
+  readonly policyRef: string;
   readonly recipientRef: string;
   readonly representationRef: string;
 }): boolean => {
@@ -140,6 +167,10 @@ export const canUseDeliveryAccess = (input: {
     return false;
   }
   if (
+    input.access.caseRef !== input.caseRef ||
+    input.access.controllerRef !== input.controllerRef ||
+    input.access.channel !== input.channel ||
+    input.access.policyRef !== input.policyRef ||
     input.access.deliveryOutputRef !== input.deliveryOutputRef ||
     input.access.deliveryOutputRevision !== input.deliveryOutputRevision
   ) {

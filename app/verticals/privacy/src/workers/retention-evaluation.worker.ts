@@ -20,8 +20,16 @@ import {
   outboxTopic,
 } from '@app/privacy/outbox/privacy-retention-evaluation-requested';
 import type { OutboxPayload } from '@app/privacy/outbox/privacy-retention-evaluation-requested';
-import { RetentionEvaluationWorkSchema } from '../../shared/domain/privacy-retention-disposition.ts';
-import type { RetentionEvaluationWork } from '../../shared/domain/privacy-retention-disposition.ts';
+import {
+  ProcessedRetentionEvaluationWorkSchema,
+  RetentionEvaluationSchema,
+  validateRetentionEvaluationAgainstWork,
+} from '../../shared/domain/privacy-retention-disposition.ts';
+import type {
+  ProcessedRetentionEvaluationWork,
+  RetentionEvaluation,
+  RetentionEvaluationWork,
+} from '../../shared/domain/privacy-retention-disposition.ts';
 import { processRetentionEvaluationInScope } from '../persistence/retention-evaluation-worker-persistence.ts';
 import type { RetentionEvaluationRoutineRow } from '../persistence/retention-evaluation-worker-persistence.ts';
 
@@ -92,41 +100,135 @@ const exactRefs = (left: readonly string[], right: readonly string[]): boolean =
 
 const timestampText = (value: Date | string): string => (Schema.is(Schema.Date)(value) ? value.toISOString() : value);
 
-const routineWorkMatchesPayload = (
-  row: RetentionEvaluationRoutineRow,
-  work: RetentionEvaluationWork,
-): Effect.Effect<void, RetentionEvaluationWorkerError> =>
-  Schema.decodeUnknownEffect(RetentionEvaluationWorkSchema)(row.work_record).pipe(
-    Effect.mapError((cause) =>
-      rejectWithCause('RETENTION_STATE_AMBIGUOUS', 'The retention routine returned a non-canonical work record', cause),
-    ),
-    // fallow-ignore-next-line complexity -- Durable routine evidence must exactly match every queued retention-work field before acknowledgement.
-    Effect.flatMap((record) => {
-      const evaluatedAt = row.evaluated_at === null ? undefined : timestampText(row.evaluated_at);
-      const recordEvaluatedAt = Option.getOrUndefined(record.evaluatedAt);
-      const exactIdentity =
-        row.work_ref === work.workRef &&
-        record.workRef === work.workRef &&
-        record.idempotencyRef === work.idempotencyRef &&
-        record.ruleRef === work.ruleRef &&
-        record.ruleVersion === work.ruleVersion &&
-        record.dueAt === work.dueAt &&
-        record.source === work.source &&
-        exactRefs(record.contentScopeRefs, work.contentScopeRefs) &&
-        record.status === row.status &&
-        recordEvaluatedAt === evaluatedAt;
-      const completionIsProven = row.status !== 'COMPLETED' || row.owner_outcome_ref !== null;
-      return exactIdentity && completionIsProven
-        ? Effect.void
-        : Effect.fail(
-            reject(
-              'RETENTION_STATE_AMBIGUOUS',
-              'The retention routine result does not match the exact queued work or owner outcome',
-              true,
-            ),
-          );
-    }),
+const exactWorkIdentity = (record: RetentionEvaluationWork, work: RetentionEvaluationWork): boolean => {
+  const scalarFields = [
+    [record.workRef, work.workRef],
+    [record.idempotencyRef, work.idempotencyRef],
+    [record.businessStartAt, work.businessStartAt],
+    [record.businessStartRef, work.businessStartRef],
+    [record.controllerRef, work.controllerRef],
+    [record.dispositionOutcome, work.dispositionOutcome],
+    [record.policyRef, work.policyRef],
+    [record.policyVersion, work.policyVersion],
+    [record.provenanceRef, work.provenanceRef],
+    [record.ruleAuthorityRef, work.ruleAuthorityRef],
+    [record.ruleRef, work.ruleRef],
+    [record.ruleVersion, work.ruleVersion],
+    [record.ruleVersionId, work.ruleVersionId],
+    [record.dueAt, work.dueAt],
+    [record.source, work.source],
+  ] as const;
+  return (
+    scalarFields.every(([left, right]) => left === right) &&
+    exactRefs(record.evidenceRefs, work.evidenceRefs) &&
+    exactRefs(record.contentScopeRefs, work.contentScopeRefs)
   );
+};
+
+const decodeRoutineWork = (row: RetentionEvaluationRoutineRow) =>
+  Schema.decodeUnknownEffect(ProcessedRetentionEvaluationWorkSchema)(row.work_record).pipe(
+    Effect.mapError((cause) =>
+      rejectWithCause(
+        'RETENTION_STATE_AMBIGUOUS',
+        'The retention routine returned incomplete authoritative evaluation evidence',
+        cause,
+      ),
+    ),
+  );
+
+const decodeRoutineEvaluation = (
+  record: ProcessedRetentionEvaluationWork,
+  evaluatedAt: string,
+  status: NonNullable<RetentionEvaluationRoutineRow['status']>,
+) =>
+  Schema.decodeUnknownEffect(RetentionEvaluationSchema)({
+    blockerRefs: record.workerEvaluation.blockerRefs,
+    contentScopeRefs: record.contentScopeRefs,
+    controllerRef: record.workerEvaluation.controllerRef,
+    evaluatedAt,
+    evaluationRef: record.workerEvaluation.evaluationRef,
+    evidenceRefs: record.workerEvaluation.evidenceRefs,
+    outcome: record.workerEvaluation.outcome,
+    policyRef: record.workerEvaluation.policyRef,
+    policyVersion: record.workerEvaluation.policyVersion,
+    provenanceRef: record.workerEvaluation.provenanceRef,
+    ruleRef: record.ruleRef,
+    ruleVersion: record.ruleVersion,
+    ruleVersionId: record.ruleVersionId,
+    status,
+  }).pipe(
+    Effect.mapError((cause) =>
+      rejectWithCause(
+        'RETENTION_STATE_AMBIGUOUS',
+        'The retention routine returned incomplete authoritative evaluation evidence',
+        cause,
+      ),
+    ),
+  );
+
+const routinePayloadIdentityMatches = (
+  row: RetentionEvaluationRoutineRow,
+  record: RetentionEvaluationWork,
+  work: RetentionEvaluationWork,
+  evaluatedAt: string | undefined,
+): boolean =>
+  row.work_ref === work.workRef &&
+  exactWorkIdentity(record, work) &&
+  record.status === row.status &&
+  Option.getOrUndefined(record.evaluatedAt) === evaluatedAt;
+
+const routineEvidenceMatches = (
+  validation: ReturnType<typeof validateRetentionEvaluationAgainstWork>,
+  evaluation: RetentionEvaluation,
+  record: ProcessedRetentionEvaluationWork,
+  row: RetentionEvaluationRoutineRow,
+  evaluatedAt: string,
+  messageId: string,
+): boolean => {
+  const { workerEvaluation } = record;
+  const completionIsProven =
+    row.status !== 'COMPLETED' ||
+    (row.owner_outcome_ref !== null && Option.getOrNull(workerEvaluation.ownerOutcomeRef) === row.owner_outcome_ref);
+  return (
+    validation.valid &&
+    exactRefs(evaluation.blockerRefs, row.blocker_refs) &&
+    workerEvaluation.evaluatedAt === evaluatedAt &&
+    workerEvaluation.messageId === messageId &&
+    completionIsProven
+  );
+};
+
+const routineWorkMatchesPayload = Effect.fn('RetentionEvaluationWorker.routineWorkMatchesPayload')(
+  function* routineWorkMatchesPayloadEffect(
+    row: RetentionEvaluationRoutineRow,
+    work: RetentionEvaluationWork,
+    messageId: string,
+  ) {
+    const record = yield* decodeRoutineWork(row);
+    const evaluatedAt = row.evaluated_at === null ? undefined : timestampText(row.evaluated_at);
+    if (
+      !routinePayloadIdentityMatches(row, record, work, evaluatedAt) ||
+      evaluatedAt === undefined ||
+      row.status === null
+    ) {
+      return yield* reject(
+        'RETENTION_STATE_AMBIGUOUS',
+        'The retention routine result does not match the exact queued work identity',
+        true,
+      );
+    }
+    const evaluation = yield* decodeRoutineEvaluation(record, evaluatedAt, row.status);
+    const validation = validateRetentionEvaluationAgainstWork(evaluation, work);
+    if (!routineEvidenceMatches(validation, evaluation, record, row, evaluatedAt, messageId)) {
+      return yield* reject(
+        'RETENTION_STATE_AMBIGUOUS',
+        'The retention routine evaluation does not match trusted work or owner outcome',
+        true,
+      );
+    }
+    return yield* Effect.void;
+  },
+);
 
 const mapScopeFailure = (
   failure: RetentionEvaluationWorkerError | OutboxWorkerLegalEntityScopeError,
@@ -204,7 +306,7 @@ const observeRetentionWorkInScope = Effect.fn('RetentionEvaluationWorker.observe
       );
       return yield* Effect.void;
     }
-    yield* routineWorkMatchesPayload(row, payload.work);
+    yield* routineWorkMatchesPayload(row, payload.work, context.messageId);
     return yield* Effect.void;
   },
 );

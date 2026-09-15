@@ -17,6 +17,7 @@ const coverage = Schema.decodeUnknownSync(PersonalDataCoverageSchema)({
     tenantId,
   },
   ownerCapability: 'accounts',
+  ownerModuleId: 'accounts.core',
   recordContentScope: 'account-record',
   systemOfRecordRef: {
     moduleId: 'accounts.core',

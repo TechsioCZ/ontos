@@ -1,7 +1,7 @@
 /* eslint-disable effect-native/no-string-timestamp-schema, effect-native/no-unbranded-identifier-schema -- Privacy cross-owner wire contracts preserve explicit JSON null, canonical UTC string encodings, and owner-issued opaque references; generated API and Resource boundaries validate provenance without a misleading shared brand. expires: 2027-03-31. */
 import { Schema } from 'effect';
 
-import type { PrivacyOwnerResourceRef } from './processing-coverage.ts';
+import type { PrivacyOwnerResourceRef } from './privacy-owner-resource-ref.ts';
 
 export interface PrivacyOwnerApplicationComposition {
   readonly modules: readonly { readonly moduleId: string }[];

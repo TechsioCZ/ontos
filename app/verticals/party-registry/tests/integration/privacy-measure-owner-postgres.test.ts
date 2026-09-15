@@ -3,9 +3,11 @@ import type { PrivacyMeasureHandoff } from '@app/privacy/domain/privacy-measure-
 import { eq, sql } from 'drizzle-orm';
 import { DateTime, Effect } from 'effect';
 import { expect, it } from 'effect-rstest';
-import { Pool } from 'pg';
-
-import { makeTestDatabaseFromPool } from '../../../../packages/core-runtime/tests/support/database.ts';
+import {
+  acquireTestPool,
+  makeTestDatabaseFromPool,
+  privacyMeasureDeferredCases,
+} from '../../../../packages/core-runtime/tests/support/database.ts';
 import { counterparties, parties, partyRelations, privacyMeasureExecutions } from '../../src/db/schema.ts';
 import { privacyMeasureExecutionService } from '../../src/services/privacy-measure-execution.service.ts';
 import { hasPostgreSqlCode } from '../support/database-boundary.ts';
@@ -18,26 +20,20 @@ const counterpartyId = 'e5000000-0000-4000-8000-000000000005';
 const firstInvocationId = 'e6000000-0000-4000-8000-000000000006';
 const replayInvocationId = 'e6000000-0000-4000-8000-000000000007';
 
-const pool = (connectionString: string) =>
-  Effect.acquireRelease(
-    Effect.sync(() => new Pool({ connectionString, max: 4 })),
-    (clientPool) => Effect.promise(() => clientPool.end()).pipe(Effect.orDie),
-  );
-
 const handoff: PrivacyMeasureHandoff = {
   contentScopeRefs: ['party.registry.counterparty.lifecycle'],
   controllerObligationRef: 'obligation:party-owner-postgres',
-  dispositionDecision: null,
-  expectedEvidenceRefs: ['party.registry.counterparty.archived'],
+  dispositionDecision: 'RESTRICT',
+  expectedEvidenceRefs: ['party.registry.counterparty.restricted'],
   idempotencyKey: 'party-owner-postgres:1',
   kind: 'RESTRICT',
   measureId: 'measure:party-owner-postgres',
   owningCapability: 'party.registry',
   preconditionRefs: ['decision:party-owner-postgres'],
   requestedAt: '2026-09-14T10:00:00.000Z',
-  requestedResult: 'ARCHIVED',
+  requestedResult: 'RESTRICTED',
   resourceRefs: [`party.registry|party.registry.counterparty|${legalEntityId}|${counterpartyId}`],
-  right: 'RESTRICTION',
+  right: null,
   sourceDecisionRef: 'decision:party-owner-postgres',
   sourceDecisionRevision: 1,
   subjectRef: 'subject:party-owner-postgres',
@@ -45,12 +41,12 @@ const handoff: PrivacyMeasureHandoff = {
   tenantId,
 };
 
-it.live('archives an exact Party resource atomically with an immutable replayable owner receipt', () =>
+it.live('records unsupported Party measures without changing canonical lifecycle state', () =>
   Effect.scoped(
     Effect.gen(function* partyPrivacyMeasurePostgresAcceptance() {
       const connections = yield* loadDatabaseConnectionPair();
-      const adminPool = yield* pool(connections.admin.connectionString);
-      const runtimePool = yield* pool(connections.runtime.connectionString);
+      const adminPool = yield* acquireTestPool(connections.admin.connectionString);
+      const runtimePool = yield* acquireTestPool(connections.runtime.connectionString);
       const admin = yield* makeTestDatabaseFromPool(adminPool, partyRelations);
       const runtime = yield* makeTestDatabaseFromPool(runtimePool, partyRelations);
       const scope = {
@@ -106,19 +102,69 @@ it.live('archives an exact Party resource atomically with an immutable replayabl
 
       const first = yield* execute(firstInvocationId);
       const replay = yield* execute(replayInvocationId);
-      expect(first.status).toBe('SUCCEEDED');
+      expect(first.status).toBe('BUSINESS_REJECTED');
+      expect(first.includedResourceRefs).toEqual([]);
+      expect(first.remainingResourceRefs).toEqual(handoff.resourceRefs);
       expect(replay).toEqual(first);
       const [counterparty] = yield* admin
         .select({ archivedAt: counterparties.archivedAt })
         .from(counterparties)
         .where(eq(counterparties.counterpartyId, counterpartyId));
-      expect(counterparty?.archivedAt).toBeInstanceOf(Date);
+      expect(counterparty?.archivedAt).toBeNull();
       expect(
         yield* admin
           .select({ outcomeId: privacyMeasureExecutions.outcomeId })
           .from(privacyMeasureExecutions)
           .where(eq(privacyMeasureExecutions.tenantId, tenantId)),
       ).toEqual([{ outcomeId: first.outcomeId }]);
+
+      const processingRestriction = yield* execute('e6000000-0000-4000-8000-000000000008', {
+        ...handoff,
+        dispositionDecision: null,
+        expectedEvidenceRefs: ['party.registry.counterparty.processing-restricted'],
+        idempotencyKey: 'party-owner-postgres:processing-restriction',
+        measureId: 'measure:party-owner-postgres:processing-restriction',
+        requestedResult: 'ARCHIVED',
+        right: 'RESTRICTION',
+      });
+      expect(processingRestriction.status).toBe('BUSINESS_REJECTED');
+      expect(processingRestriction.includedResourceRefs).toEqual([]);
+      expect(processingRestriction.remainingResourceRefs).toEqual(handoff.resourceRefs);
+
+      for (const [index, measure] of privacyMeasureDeferredCases.entries()) {
+        const later = yield* execute(`e6100000-0000-4000-8000-${String(index + 1).padStart(12, '0')}`, {
+          ...handoff,
+          ...measure,
+          idempotencyKey: `party-owner-postgres:${measure.kind.toLowerCase()}`,
+          measureId: `measure:party-owner-postgres:${measure.kind.toLowerCase()}`,
+          requestedResult: `${measure.kind.toLowerCase()} deferred`,
+        });
+        expect(later.status).toBe('BUSINESS_REJECTED');
+        expect(later.includedResourceRefs).toEqual([]);
+        expect(later.remainingResourceRefs).toEqual(handoff.resourceRefs);
+      }
+
+      expect(
+        (yield* admin
+          .select({ archivedAt: counterparties.archivedAt })
+          .from(counterparties)
+          .where(eq(counterparties.counterpartyId, counterpartyId)))[0]?.archivedAt,
+      ).toBeNull();
+
+      yield* admin
+        .update(counterparties)
+        .set({ archivedAt: DateTime.toDateUtc(DateTime.makeUnsafe('2026-09-14T11:00:00.000Z')) })
+        .where(eq(counterparties.counterpartyId, counterpartyId));
+      yield* admin
+        .update(counterparties)
+        .set({ archivedAt: null })
+        .where(eq(counterparties.counterpartyId, counterpartyId));
+      expect(
+        (yield* admin
+          .select({ archivedAt: counterparties.archivedAt })
+          .from(counterparties)
+          .where(eq(counterparties.counterpartyId, counterpartyId)))[0]?.archivedAt,
+      ).toBeNull();
 
       const immutableFailure = yield* Effect.flip(
         admin

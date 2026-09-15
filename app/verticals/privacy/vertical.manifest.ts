@@ -10,6 +10,7 @@ import { ApplicabilityDecisionsApi } from './shared/apis/applicability-decisions
 import { assignDsrResolverAction } from './src/actions/assign-dsr-resolver.action.ts';
 import { assignLegalBasisAction } from './src/actions/assign-legal-basis.action.ts';
 import { assignPrivacyResponsibilityAction } from './src/actions/assign-privacy-responsibility.action.ts';
+import { consentSelfServiceAction } from './src/actions/consent-self-service.action.ts';
 import { createDsrCaseAction } from './src/actions/create-dsr-case.action.ts';
 import { createNoticeVersionAction } from './src/actions/create-notice-version.action.ts';
 import { createPrivacySubjectAction } from './src/actions/create-privacy-subject.action.ts';
@@ -89,6 +90,7 @@ export const privacyManifest: OntosModuleManifestInput = defineOntosModuleManife
       assignDsrResolverAction,
       assignLegalBasisAction,
       assignPrivacyResponsibilityAction,
+      consentSelfServiceAction,
       createDsrCaseAction,
       createNoticeVersionAction,
       createPrivacySubjectAction,

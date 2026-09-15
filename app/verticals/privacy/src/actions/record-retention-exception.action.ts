@@ -10,6 +10,7 @@ import {
   RecordRetentionExceptionResultSchema,
 } from '../../shared/actions/record-retention-exception.ts';
 import type { RecordRetentionExceptionPayload } from '../../shared/actions/record-retention-exception.ts';
+import { validateRetentionProtection } from '../../shared/domain/privacy-retention-disposition.ts';
 import { privacyOperationRepositoryForScope } from '../persistence/privacy-operation-postgres-repository.ts';
 import type { PrivacyOperationRepositoryService } from '../persistence/privacy-operation-repository.ts';
 import {
@@ -27,17 +28,24 @@ const handleRecordRetentionException = Effect.fn('RecordRetentionExceptionAction
     context: ActionHandlerContext<typeof privacyActionDomainEvents, PrivacyOperationRepositoryService>,
   ) {
     const scope = yield* requirePrivacyActionScope(context.scope);
-    if (payload.exception.effectiveTo <= payload.exception.effectiveFrom) {
+    const exception = yield* context.services.resolveRetentionExceptionGovernance(
+      scope.tenantId,
+      scope.legalEntityId,
+      context.scope.principalId,
+      payload.exception,
+    );
+    const validation = validateRetentionProtection(exception);
+    if (!validation.valid) {
       return yield* new PrivacyActionRejected({
         code: 'privacy_action_rejected',
-        reason: 'Retention Exception effective period is invalid',
+        reason: validation.errors.join('; '),
       });
     }
     const result = yield* context.services.recordRetentionException(
       scope.tenantId,
       scope.legalEntityId,
       context.actionInvocationId,
-      payload.exception,
+      exception,
     );
     return yield* completePrivacyAction(context, 'record-retention-exception', result.exceptionRef, result);
   },

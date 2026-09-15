@@ -3,34 +3,101 @@
 // @ontos-action-slug record-dsr-verification
 import type { ActionHandlerContext } from '@app/core-runtime';
 import { defineAction, defineTenantModuleEntrypoint } from '@app/core-runtime';
-import { Effect } from 'effect';
+import { Context, Effect, Layer } from 'effect';
 import {
   RecordDsrVerificationPayloadSchema,
   RecordDsrVerificationResultSchema,
 } from '../../shared/actions/record-dsr-verification.ts';
 import type { RecordDsrVerificationPayload } from '../../shared/actions/record-dsr-verification.ts';
+import type { DsrVerification } from '../../shared/domain/privacy-dsr.ts';
 import { privacyOperationRepositoryForScope } from '../persistence/privacy-operation-postgres-repository.ts';
+import { PrivacyOperationPersistenceError } from '../persistence/privacy-operation-repository.ts';
 import type { PrivacyOperationRepositoryService } from '../persistence/privacy-operation-repository.ts';
 import {
   PrivacyActionAuditEvidenceSchema,
   PrivacyActionErrorSchema,
-  completePrivacyAction,
+  PrivacyActionRejected,
   privacyActionDomainEvents,
   requirePrivacyActionScope,
 } from './privacy-operation-action-support.ts';
 
-const handleRecordDsrVerification = Effect.fn('RecordDsrVerificationAction.handle')(function* handle(
+interface DsrVerificationAuthorityContext {
+  readonly actionInvocationId: string;
+  readonly legalEntityId: string;
+  readonly principalId: string;
+  readonly tenantId: string;
+}
+
+export interface DsrVerificationAuthorityService {
+  readonly verify: (
+    request: RecordDsrVerificationPayload,
+    context: DsrVerificationAuthorityContext,
+  ) => Effect.Effect<DsrVerification, PrivacyActionRejected | PrivacyOperationPersistenceError>;
+}
+
+export class DsrVerificationAuthority extends Context.Service<
+  DsrVerificationAuthority,
+  DsrVerificationAuthorityService
+>()('@app/privacy/actions/record-dsr-verification.action/DsrVerificationAuthority') {}
+
+export const dsrVerificationAuthorityUnavailable = Object.freeze({
+  verify: () =>
+    Effect.fail(
+      new PrivacyOperationPersistenceError({
+        code: 'privacy_operation_persistence_unavailable',
+        reason: 'DSR verification authority is not configured',
+      }),
+    ),
+}) satisfies DsrVerificationAuthorityService;
+
+export const DsrVerificationAuthorityUnavailableLive = Layer.succeed(
+  DsrVerificationAuthority,
+  dsrVerificationAuthorityUnavailable,
+);
+
+export interface RecordDsrVerificationServices extends Pick<
+  PrivacyOperationRepositoryService,
+  'recordDsrVerification'
+> {
+  readonly authority: DsrVerificationAuthorityService;
+}
+
+const sameEvidenceRefs = (left: readonly string[], right: readonly string[]): boolean => {
+  const rightRefs = new Set(right);
+  return left.length === right.length && left.every((reference) => rightRefs.has(reference));
+};
+
+export const handleRecordDsrVerification = Effect.fn('RecordDsrVerificationAction.handle')(function* handle(
   payload: RecordDsrVerificationPayload,
-  context: ActionHandlerContext<typeof privacyActionDomainEvents, PrivacyOperationRepositoryService>,
+  context: ActionHandlerContext<typeof privacyActionDomainEvents, RecordDsrVerificationServices>,
 ) {
   const scope = yield* requirePrivacyActionScope(context.scope);
+  const verification = yield* context.services.authority.verify(payload, {
+    actionInvocationId: context.actionInvocationId,
+    legalEntityId: scope.legalEntityId,
+    principalId: context.scope.principalId,
+    tenantId: scope.tenantId,
+  });
+  if (
+    verification.caseRef !== payload.caseRef ||
+    !sameEvidenceRefs(verification.evidenceRefs, payload.evidenceRefs) ||
+    verification.scope !== payload.scope ||
+    verification.subjectRef !== payload.subjectRef ||
+    verification.verificationRef !== payload.verificationRef
+  ) {
+    return yield* new PrivacyActionRejected({
+      code: 'privacy_action_rejected',
+      reason: 'DSR verification authority returned a verdict for a different operation scope or evidence set',
+    });
+  }
   const result = yield* context.services.recordDsrVerification(
     scope.tenantId,
     scope.legalEntityId,
     context.actionInvocationId,
-    payload.verification,
+    verification,
   );
-  return yield* completePrivacyAction(context, 'record-dsr-verification', result.verificationRef, result);
+  yield* context.recordAuditEvidence({ operationKind: 'record-dsr-verification', recordId: result.verificationRef });
+  return result;
 });
 export const recordDsrVerificationAction = defineAction(
   {
@@ -56,7 +123,19 @@ export const recordDsrVerificationAction = defineAction(
     schemaVersion: '1',
   },
   handleRecordDsrVerification,
-  privacyOperationRepositoryForScope,
+  (transaction, scope) =>
+    Effect.all(
+      {
+        authority: DsrVerificationAuthority,
+        repository: privacyOperationRepositoryForScope(transaction, scope),
+      },
+      { concurrency: 2 },
+    ).pipe(
+      Effect.map(({ authority, repository }) => ({
+        authority,
+        recordDsrVerification: repository.recordDsrVerification,
+      })),
+    ),
 );
 // <generated-outbox-message-exports>
 // </generated-outbox-message-exports>

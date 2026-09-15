@@ -12,20 +12,33 @@ import { ExternalObligationSchema } from '../domain/external-obligations.ts';
 import {
   PrivacyApplicabilityDecisionSchema,
   PrivacyApplicabilityPolicySchema,
-  PrivacyApplicabilityScopeSchema,
+  PrivacyApplicabilityScopeIntentSchema,
 } from '../domain/privacy-applicability.ts';
 import { ConsentDecisionSchema } from '../domain/privacy-consent-decision.ts';
 import {
   DsrCaseSchema,
+  DsrCaseLifecycleMutationSchema,
+  DsrCaseRequestSchema,
   DsrDeadlineSchema,
+  DsrOwnerTaskRequestSchema,
   DsrOwnerTaskSchema,
   DsrResolverAssignmentSchema,
+  DsrResponseRequestSchema,
   DsrResponseSchema,
+  DsrSubstantiveDecisionRequestSchema,
   DsrSubstantiveDecisionSchema,
   DsrVerificationSchema,
+  DsrVerificationScopeSchema,
 } from '../domain/privacy-dsr.ts';
-import { PrivacyLegalBasisAssignmentSchema } from '../domain/privacy-legal-basis.ts';
-import { OwnerExecutionOutcomeSchema, PrivacyMeasureHandoffSchema } from '../domain/privacy-measure-handoff.ts';
+import {
+  PrivacyLegalBasisAssignmentInputSchema,
+  PrivacyLegalBasisAssignmentSchema,
+} from '../domain/privacy-legal-basis.ts';
+import {
+  OwnerExecutionOutcomeRequestSchema,
+  OwnerExecutionOutcomeSchema,
+  PrivacyMeasureHandoffSchema,
+} from '../domain/privacy-measure-handoff.ts';
 import { OwnerContributionSchema } from '../domain/owner-contribution.ts';
 import { CreatePrivacyNoticeVersionInputSchema, PrivacyNoticeVersionSchema } from '../domain/privacy-notice-version.ts';
 import {
@@ -37,14 +50,20 @@ import {
 import { PrivacyResponsibilityAssignmentSchema } from '../domain/privacy-responsibility-assignment.ts';
 import {
   PrivacyDispositionDecisionSchema,
+  PrivacyDispositionDecisionRequestSchema,
   PrivacyLegalHoldSchema,
+  RetentionEvaluationRequestSchema,
   RetentionEvaluationWorkSchema,
+  RetentionProtectionRequestSchema,
   RetentionExceptionSchema,
 } from '../domain/privacy-retention-disposition.ts';
-import { PrivacyRetentionRuleVersionSchema } from '../domain/privacy-retention-rule.ts';
 import {
-  PrivacyIsoTimestampSchema,
+  PrivacyRetentionRuleUpsertRequestSchema,
+  PrivacyRetentionRuleVersionSchema,
+} from '../domain/privacy-retention-rule.ts';
+import {
   RepresentationSchema,
+  PrivacyIsoTimestampSchema,
   PrivacySubjectRecordSchema,
   PrivacySubjectSchema,
 } from '../domain/privacy-subject.ts';
@@ -72,7 +91,7 @@ export const RecordPrivacyApplicabilityPayloadSchema = Schema.Struct({
   decisionId: Ref,
   proposedActivity: Schema.Boolean,
   responsibilityAssignmentRefs: Schema.Array(PrivacyResponsibilityAssignmentRefSchema).check(Schema.isMaxLength(32)),
-  scope: PrivacyApplicabilityScopeSchema,
+  scope: PrivacyApplicabilityScopeIntentSchema,
 });
 export type RecordPrivacyApplicabilityPayload = typeof RecordPrivacyApplicabilityPayloadSchema.Type;
 export const RecordPrivacyApplicabilityResultSchema = PrivacyApplicabilityDecisionSchema;
@@ -89,7 +108,11 @@ export type RecordApplicabilityPolicyPayload = typeof RecordApplicabilityPolicyP
 export const RecordApplicabilityPolicyResultSchema = PrivacyApplicabilityPolicySchema;
 
 export const RecordProcessingInterventionPayloadSchema = Schema.Struct({
-  intervention: PrivacyProcessingInterventionSchema,
+  request: Schema.Struct({
+    interventionRef: Ref,
+    kind: Schema.Literals(['OBJECTION', 'RESTRICTION']),
+    scope: IntendedProcessingScopeSchema,
+  }),
 });
 export type RecordProcessingInterventionPayload = typeof RecordProcessingInterventionPayloadSchema.Type;
 export const RecordProcessingInterventionResultSchema = PrivacyProcessingInterventionSchema;
@@ -101,7 +124,7 @@ export const AddProcessingPurposeVersionPayloadSchema = Schema.Struct({
 export type AddProcessingPurposeVersionPayload = typeof AddProcessingPurposeVersionPayloadSchema.Type;
 export const AddProcessingPurposeVersionResultSchema = ProcessingPurposeSchema;
 
-export const AssignLegalBasisPayloadSchema = Schema.Struct({ assignment: PrivacyLegalBasisAssignmentSchema });
+export const AssignLegalBasisPayloadSchema = Schema.Struct({ assignment: PrivacyLegalBasisAssignmentInputSchema });
 export type AssignLegalBasisPayload = typeof AssignLegalBasisPayloadSchema.Type;
 export const AssignLegalBasisResultSchema = PrivacyLegalBasisAssignmentSchema;
 
@@ -117,7 +140,6 @@ export type RecordConsentDecisionPayload = typeof RecordConsentDecisionPayloadSc
 export const RecordConsentDecisionResultSchema = ConsentDecisionSchema;
 
 export const EvaluateProcessingEligibilityPayloadSchema = Schema.Struct({
-  applicabilityScope: PrivacyApplicabilityScopeSchema,
   evidenceId: Ref,
   intendedScope: IntendedProcessingScopeSchema,
 });
@@ -128,34 +150,45 @@ export const EvaluateProcessingEligibilityResultSchema = Schema.Struct({
   outcome: PrivacyEligibilityOutcomeSchema,
 });
 
-export const UpsertRetentionRulePayloadSchema = Schema.Struct({ rule: PrivacyRetentionRuleVersionSchema });
+export const UpsertRetentionRulePayloadSchema = Schema.Struct({ request: PrivacyRetentionRuleUpsertRequestSchema });
 export type UpsertRetentionRulePayload = typeof UpsertRetentionRulePayloadSchema.Type;
 export const UpsertRetentionRuleResultSchema = PrivacyRetentionRuleVersionSchema;
 
-export const RecordRetentionExceptionPayloadSchema = Schema.Struct({ exception: RetentionExceptionSchema });
+export const RecordRetentionExceptionPayloadSchema = Schema.Struct({
+  exception: RetentionProtectionRequestSchema,
+});
 export type RecordRetentionExceptionPayload = typeof RecordRetentionExceptionPayloadSchema.Type;
 export const RecordRetentionExceptionResultSchema = RetentionExceptionSchema;
 
-export const RecordLegalHoldPayloadSchema = Schema.Struct({ hold: PrivacyLegalHoldSchema });
+export const RecordLegalHoldPayloadSchema = Schema.Struct({ hold: RetentionProtectionRequestSchema });
 export type RecordLegalHoldPayload = typeof RecordLegalHoldPayloadSchema.Type;
 export const RecordLegalHoldResultSchema = PrivacyLegalHoldSchema;
 
-export const RecordDispositionDecisionPayloadSchema = Schema.Struct({ decision: PrivacyDispositionDecisionSchema });
+export const RecordDispositionDecisionPayloadSchema = Schema.Struct({
+  request: PrivacyDispositionDecisionRequestSchema,
+});
 export type RecordDispositionDecisionPayload = typeof RecordDispositionDecisionPayloadSchema.Type;
 export const RecordDispositionDecisionResultSchema = PrivacyDispositionDecisionSchema;
 
-export const CreateDsrCasePayloadSchema = Schema.Struct({ caseRecord: DsrCaseSchema });
+export const CreateDsrCasePayloadSchema = Schema.Struct({ request: DsrCaseRequestSchema });
 export type CreateDsrCasePayload = typeof CreateDsrCasePayloadSchema.Type;
 export const CreateDsrCaseResultSchema = DsrCaseSchema;
 
 export const UpdateDsrCasePayloadSchema = Schema.Struct({
-  caseRecord: DsrCaseSchema,
   expectedUpdatedAt: Schema.NullOr(PrivacyIsoTimestampSchema),
+  mutation: DsrCaseLifecycleMutationSchema,
 });
 export type UpdateDsrCasePayload = typeof UpdateDsrCasePayloadSchema.Type;
 export const UpdateDsrCaseResultSchema = DsrCaseSchema;
 
-export const RecordDsrVerificationPayloadSchema = Schema.Struct({ verification: DsrVerificationSchema });
+export const RecordDsrVerificationPayloadSchema = Schema.Struct({
+  caseRef: Ref,
+  evidenceRefs: Schema.Array(Ref).check(Schema.isMinLength(1), Schema.isMaxLength(128)),
+  scope: DsrVerificationScopeSchema,
+  subjectRef: Ref,
+  verification: Schema.optional(Schema.Never),
+  verificationRef: Ref,
+});
 export type RecordDsrVerificationPayload = typeof RecordDsrVerificationPayloadSchema.Type;
 export const RecordDsrVerificationResultSchema = DsrVerificationSchema;
 
@@ -163,21 +196,25 @@ export const AssignDsrResolverPayloadSchema = Schema.Struct({ assignment: DsrRes
 export type AssignDsrResolverPayload = typeof AssignDsrResolverPayloadSchema.Type;
 export const AssignDsrResolverResultSchema = DsrResolverAssignmentSchema;
 
-export const RecordDsrDeadlinePayloadSchema = Schema.Struct({ deadline: DsrDeadlineSchema });
+export const RecordDsrDeadlinePayloadSchema = Schema.Struct({
+  caseRef: Ref,
+  controllerRef: Ref,
+  deadline: Schema.optional(Schema.Never),
+});
 export type RecordDsrDeadlinePayload = typeof RecordDsrDeadlinePayloadSchema.Type;
 export const RecordDsrDeadlineResultSchema = DsrDeadlineSchema;
 
 export const RecordDsrSubstantiveDecisionPayloadSchema = Schema.Struct({
-  decision: DsrSubstantiveDecisionSchema,
+  request: DsrSubstantiveDecisionRequestSchema,
 });
 export type RecordDsrSubstantiveDecisionPayload = typeof RecordDsrSubstantiveDecisionPayloadSchema.Type;
 export const RecordDsrSubstantiveDecisionResultSchema = DsrSubstantiveDecisionSchema;
 
-export const UpsertDsrOwnerTaskPayloadSchema = Schema.Struct({ task: DsrOwnerTaskSchema });
+export const UpsertDsrOwnerTaskPayloadSchema = Schema.Struct({ request: DsrOwnerTaskRequestSchema });
 export type UpsertDsrOwnerTaskPayload = typeof UpsertDsrOwnerTaskPayloadSchema.Type;
 export const UpsertDsrOwnerTaskResultSchema = DsrOwnerTaskSchema;
 
-export const RecordDsrResponsePayloadSchema = Schema.Struct({ response: DsrResponseSchema });
+export const RecordDsrResponsePayloadSchema = Schema.Struct({ response: DsrResponseRequestSchema });
 export type RecordDsrResponsePayload = typeof RecordDsrResponsePayloadSchema.Type;
 export const RecordDsrResponseResultSchema = DsrResponseSchema;
 
@@ -189,15 +226,19 @@ export const DispatchPrivacyMeasurePayloadSchema = Schema.Struct({ handoff: Priv
 export type DispatchPrivacyMeasurePayload = typeof DispatchPrivacyMeasurePayloadSchema.Type;
 export const DispatchPrivacyMeasureResultSchema = PrivacyMeasureHandoffSchema;
 
-export const RecordOwnerExecutionOutcomePayloadSchema = Schema.Struct({ outcome: OwnerExecutionOutcomeSchema });
+export const RecordOwnerExecutionOutcomePayloadSchema = Schema.Struct({ request: OwnerExecutionOutcomeRequestSchema });
 export type RecordOwnerExecutionOutcomePayload = typeof RecordOwnerExecutionOutcomePayloadSchema.Type;
 export const RecordOwnerExecutionOutcomeResultSchema = OwnerExecutionOutcomeSchema;
 
-export const IssueDsrDeliveryAccessPayloadSchema = Schema.Struct({ access: DsrDeliveryAccessSchema });
+export const IssueDsrDeliveryAccessPayloadSchema = Schema.Struct({ requestRef: Ref });
 export type IssueDsrDeliveryAccessPayload = typeof IssueDsrDeliveryAccessPayloadSchema.Type;
 export const IssueDsrDeliveryAccessResultSchema = DsrDeliveryAccessSchema;
 
-export const RecordDsrDeliveryEvidencePayloadSchema = Schema.Struct({ evidence: DsrDeliveryEvidenceSchema });
+export const RecordDsrDeliveryEvidencePayloadSchema = Schema.Struct({
+  accessId: Ref,
+  deliveryClaimRef: Ref,
+  evidence: Schema.optional(Schema.Never),
+});
 export type RecordDsrDeliveryEvidencePayload = typeof RecordDsrDeliveryEvidencePayloadSchema.Type;
 export const RecordDsrDeliveryEvidenceResultSchema = DsrDeliveryEvidenceSchema;
 
@@ -210,14 +251,11 @@ export type RecordExternalObligationPayload = typeof RecordExternalObligationPay
 export const RecordExternalObligationResultSchema = ExternalObligationSchema;
 
 export const RecordAntiResurrectionProtectionPayloadSchema = Schema.Struct({
-  handoff: PrivacyMeasureHandoffSchema,
-  outcome: OwnerExecutionOutcomeSchema,
-  protectedAt: PrivacyIsoTimestampSchema,
-  protectionId: Ref,
+  request: OwnerExecutionOutcomeRequestSchema,
 });
 export type RecordAntiResurrectionProtectionPayload = typeof RecordAntiResurrectionProtectionPayloadSchema.Type;
 export const RecordAntiResurrectionProtectionResultSchema = AntiResurrectionProtectionSchema;
 
-export const EnqueueRetentionEvaluationPayloadSchema = Schema.Struct({ work: RetentionEvaluationWorkSchema });
+export const EnqueueRetentionEvaluationPayloadSchema = Schema.Struct({ request: RetentionEvaluationRequestSchema });
 export type EnqueueRetentionEvaluationPayload = typeof EnqueueRetentionEvaluationPayloadSchema.Type;
 export const EnqueueRetentionEvaluationResultSchema = RetentionEvaluationWorkSchema;

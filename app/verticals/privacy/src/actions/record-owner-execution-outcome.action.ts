@@ -10,29 +10,41 @@ import {
   RecordOwnerExecutionOutcomeResultSchema,
 } from '../../shared/actions/record-owner-execution-outcome.ts';
 import type { RecordOwnerExecutionOutcomePayload } from '../../shared/actions/record-owner-execution-outcome.ts';
+import { OwnerExecutionAuthority } from './privacy-owner-execution-authority.ts';
+import type { OwnerExecutionAuthorityService } from './privacy-owner-execution-authority.ts';
 import { privacyOperationRepositoryForScope } from '../persistence/privacy-operation-postgres-repository.ts';
 import type { PrivacyOperationRepositoryService } from '../persistence/privacy-operation-repository.ts';
 import {
   PrivacyActionAuditEvidenceSchema,
   PrivacyActionErrorSchema,
-  completePrivacyAction,
   privacyActionDomainEvents,
   requirePrivacyActionScope,
+  resolveOwnerExecutionAuthority,
 } from './privacy-operation-action-support.ts';
 
-const handleRecordOwnerExecutionOutcome = Effect.fn('RecordOwnerExecutionOutcomeAction.handle')(
+export interface RecordOwnerExecutionOutcomeServices extends Pick<
+  PrivacyOperationRepositoryService,
+  'getPrivacyMeasureHandoff' | 'recordOwnerOutcome'
+> {
+  readonly authority: OwnerExecutionAuthorityService;
+}
+
+export const handleRecordOwnerExecutionOutcome = Effect.fn('RecordOwnerExecutionOutcomeAction.handle')(
   function* handleRecordOwnerExecutionOutcome(
     payload: RecordOwnerExecutionOutcomePayload,
-    context: ActionHandlerContext<typeof privacyActionDomainEvents, PrivacyOperationRepositoryService>,
+    context: ActionHandlerContext<typeof privacyActionDomainEvents, RecordOwnerExecutionOutcomeServices>,
   ) {
     const scope = yield* requirePrivacyActionScope(context.scope);
+    const { authority } = yield* resolveOwnerExecutionAuthority(payload.request, scope, context);
     const result = yield* context.services.recordOwnerOutcome(
       scope.tenantId,
       scope.legalEntityId,
       context.actionInvocationId,
-      payload.outcome,
+      payload.request,
+      authority,
     );
-    return yield* completePrivacyAction(context, 'record-owner-execution-outcome', result.outcomeId, result);
+    yield* context.recordAuditEvidence({ operationKind: 'record-owner-execution-outcome', recordId: result.outcomeId });
+    return result;
   },
 );
 
@@ -63,7 +75,20 @@ export const recordOwnerExecutionOutcomeAction = defineAction(
     schemaVersion: '1',
   },
   handleRecordOwnerExecutionOutcome,
-  privacyOperationRepositoryForScope,
+  (transaction, scope) =>
+    Effect.all(
+      {
+        authority: OwnerExecutionAuthority,
+        repository: privacyOperationRepositoryForScope(transaction, scope),
+      },
+      { concurrency: 2 },
+    ).pipe(
+      Effect.map(({ authority, repository }) => ({
+        authority,
+        getPrivacyMeasureHandoff: repository.getPrivacyMeasureHandoff,
+        recordOwnerOutcome: repository.recordOwnerOutcome,
+      })),
+    ),
 );
 
 // <generated-outbox-message-exports>

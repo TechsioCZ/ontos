@@ -9,7 +9,11 @@ import {
   evaluatePrivacyEligibilityForConsumer,
   privacyEligibilityAllowsConsumerOperation,
 } from '../../shared/domain/privacy-eligibility-consumer-contract.ts';
-import type { PrivacyEligibilityConsumerRequest } from '../../shared/domain/privacy-eligibility-consumer-contract.ts';
+import type {
+  PrivacyEligibilityConsumerRequest,
+  ResolveTrustedPrivacyEligibilityInput,
+} from '../../shared/domain/privacy-eligibility-consumer-contract.ts';
+import { PrivacyApplicabilityDecisionSchema } from '../../shared/domain/privacy-applicability.ts';
 import type { IntendedProcessingScope } from '../../shared/domain/privacy-processing-eligibility.ts';
 
 const scope: IntendedProcessingScope = {
@@ -18,8 +22,14 @@ const scope: IntendedProcessingScope = {
   operation: 'send-email',
   processingScopeRef: { scopeId: 'scope:one', scopeType: 'privacy.processing-scope' },
   purposeRef: 'purpose:transactional',
-  purposeVersionId: 'purpose-version:one',
+  purposeVersionId: '00000000-0000-4000-8000-000000000012',
   recipientRefs: ['recipient:mail'],
+  subjectRef: {
+    moduleId: 'privacy.core',
+    resourceId: 'subject:one',
+    resourceType: 'privacy.core.privacy-subject',
+    tenantId: '00000000-0000-4000-8000-000000000011',
+  },
 };
 const currentness = {
   authoritative: true,
@@ -45,20 +55,45 @@ const request: PrivacyEligibilityConsumerRequest = {
   subjectRef: 'subject:one',
   trustedAsOf: '2026-01-02T00:00:00Z',
 };
-const trusted = {
+const tenantId = '00000000-0000-4000-8000-000000000011';
+const legalEntityId = '00000000-0000-4000-8000-000000000013';
+const applicability = Schema.decodeUnknownSync(PrivacyApplicabilityDecisionSchema)({
+  authority: {
+    controllerRef: {
+      moduleId: 'privacy.core',
+      resourceId: scope.controllerRef,
+      resourceType: 'privacy.core.controller',
+      tenantId,
+    },
+    legalEntityId,
+    purposeRef: {
+      moduleId: 'privacy.core',
+      resourceId: scope.purposeRef,
+      resourceType: 'privacy.core.processing-purpose',
+      tenantId,
+    },
+    purposeVersionRef: {
+      moduleId: 'privacy.core',
+      resourceId: scope.purposeVersionId,
+      resourceType: 'privacy.core.processing-purpose-version',
+      tenantId,
+    },
+    tenantId,
+  },
+  evaluatedAt: '2026-01-01T00:00:00Z',
+  evaluatedScope: applicabilityScope,
+  evidenceRefs: ['evidence:applicability'],
+  outcome: 'APPLICABLE',
+  policyIdentities: [],
+  proposedActivity: true,
+  reasonCodes: ['explicit_policy_match'],
+  responsibilityAssignmentRefs: [],
+});
+const trusted: ResolveTrustedPrivacyEligibilityInput = {
   requestedScope: scope,
   subjectRef: 'subject:one',
   trustedInputs: {
-    applicability: {
-      evaluatedAt: '2026-01-01T00:00:00Z',
-      evaluatedScope: applicabilityScope,
-      evidenceRefs: ['evidence:applicability'],
-      outcome: 'APPLICABLE' as const,
-      policyIdentities: [],
-      proposedActivity: true,
-      reasonCodes: ['explicit_policy_match'],
-      responsibilityAssignmentRefs: [],
-    },
+    applicability,
     applicabilityCurrentness: currentness,
     applicabilityScope,
     asOf: request.trustedAsOf,
@@ -66,8 +101,10 @@ const trusted = {
     consentCurrentness: null,
     intendedScope: scope,
     legalBasis: { basisRef: 'legal-basis:contract', basisVersion: 'v1', currentness, scope },
+    legalEntityId,
     objection: { currentness, objectionRef: 'objection:none', scope, status: 'ABSENT' as const },
     restriction: { currentness, restrictionRef: 'restriction:none', scope, status: 'ABSENT' as const },
+    tenantId,
   },
 };
 const principal = Schema.decodeUnknownSync(TrustedPrincipalContextSchema)({

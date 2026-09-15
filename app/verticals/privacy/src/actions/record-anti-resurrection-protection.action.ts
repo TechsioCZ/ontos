@@ -10,41 +10,57 @@ import {
   RecordAntiResurrectionProtectionResultSchema,
 } from '../../shared/actions/record-anti-resurrection-protection.ts';
 import type { RecordAntiResurrectionProtectionPayload } from '../../shared/actions/record-anti-resurrection-protection.ts';
-import { createAntiResurrectionProtection } from '../../shared/domain/anti-resurrection.ts';
-
+import { OwnerExecutionAuthority } from './privacy-owner-execution-authority.ts';
+import type { OwnerExecutionAuthorityService } from './privacy-owner-execution-authority.ts';
+import { AntiResurrectionEnforcementAuthority } from './privacy-anti-resurrection-enforcement-authority.ts';
+import type { AntiResurrectionEnforcementAuthorityService } from './privacy-anti-resurrection-enforcement-authority.ts';
 import { privacyOperationRepositoryForScope } from '../persistence/privacy-operation-postgres-repository.ts';
 import type { PrivacyOperationRepositoryService } from '../persistence/privacy-operation-repository.ts';
 import {
   PrivacyActionAuditEvidenceSchema,
   PrivacyActionErrorSchema,
-  PrivacyActionRejected,
-  completePrivacyAction,
   privacyActionDomainEvents,
   requirePrivacyActionScope,
+  resolveOwnerExecutionAuthority,
 } from './privacy-operation-action-support.ts';
 
-const handleRecordAntiResurrectionProtection = Effect.fn('RecordAntiResurrectionProtectionAction.handle')(
+export interface RecordAntiResurrectionProtectionServices extends Pick<
+  PrivacyOperationRepositoryService,
+  'getPrivacyMeasureHandoff' | 'recordAntiResurrectionProtection'
+> {
+  readonly authority: OwnerExecutionAuthorityService;
+  readonly enforcementAuthority: AntiResurrectionEnforcementAuthorityService;
+}
+
+export const handleRecordAntiResurrectionProtection = Effect.fn('RecordAntiResurrectionProtectionAction.handle')(
   function* handleRecordAntiResurrectionProtection(
     payload: RecordAntiResurrectionProtectionPayload,
-    context: ActionHandlerContext<typeof privacyActionDomainEvents, PrivacyOperationRepositoryService>,
+    context: ActionHandlerContext<typeof privacyActionDomainEvents, RecordAntiResurrectionProtectionServices>,
   ) {
     const scope = yield* requirePrivacyActionScope(context.scope);
-    if (payload.handoff.tenantId !== scope.tenantId) {
-      return yield* new PrivacyActionRejected({
-        code: 'privacy_action_rejected',
-        reason: 'Anti-Resurrection Protection must belong to the trusted Tenant',
-      });
-    }
-    const protection = yield* createAntiResurrectionProtection(payload).pipe(
-      Effect.mapError(({ reason }) => new PrivacyActionRejected({ code: 'privacy_action_rejected', reason })),
-    );
+    const { authority, handoff } = yield* resolveOwnerExecutionAuthority(payload.request, scope, context);
+    const enforcementReceipt = yield* context.services.enforcementAuthority.resolve({
+      actionInvocationId: context.actionInvocationId,
+      authority,
+      handoff,
+      legalEntityId: scope.legalEntityId,
+      principalId: context.scope.principalId,
+      request: payload.request,
+      tenantId: scope.tenantId,
+    });
     const result = yield* context.services.recordAntiResurrectionProtection(
       scope.tenantId,
       scope.legalEntityId,
       context.actionInvocationId,
-      protection,
+      payload.request,
+      authority,
+      enforcementReceipt,
     );
-    return yield* completePrivacyAction(context, 'record-anti-resurrection-protection', result.protectionId, result);
+    yield* context.recordAuditEvidence({
+      operationKind: 'record-anti-resurrection-protection',
+      recordId: result.protectionId,
+    });
+    return result;
   },
 );
 
@@ -75,7 +91,22 @@ export const recordAntiResurrectionProtectionAction = defineAction(
     schemaVersion: '1',
   },
   handleRecordAntiResurrectionProtection,
-  privacyOperationRepositoryForScope,
+  (transaction, scope) =>
+    Effect.all(
+      {
+        authority: OwnerExecutionAuthority,
+        enforcementAuthority: AntiResurrectionEnforcementAuthority,
+        repository: privacyOperationRepositoryForScope(transaction, scope),
+      },
+      { concurrency: 2 },
+    ).pipe(
+      Effect.map(({ authority, enforcementAuthority, repository }) => ({
+        authority,
+        enforcementAuthority,
+        getPrivacyMeasureHandoff: repository.getPrivacyMeasureHandoff,
+        recordAntiResurrectionProtection: repository.recordAntiResurrectionProtection,
+      })),
+    ),
 );
 
 // <generated-outbox-message-exports>

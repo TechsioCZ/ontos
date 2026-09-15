@@ -30,6 +30,7 @@ import { applicabilityDecisionsReadApiLive } from './applicability-decisions-rea
 import { assignDsrResolverActionApiLive } from './assign-dsr-resolver-action-server.ts';
 import { assignLegalBasisActionApiLive } from './assign-legal-basis-action-server.ts';
 import { assignPrivacyResponsibilityActionApiLive } from './assign-privacy-responsibility-action-server.ts';
+import { consentSelfServiceActionApiLive } from './consent-self-service-action-server.ts';
 import { createDsrCaseActionApiLive } from './create-dsr-case-action-server.ts';
 import { createNoticeVersionActionApiLive } from './create-notice-version-action-server.ts';
 import { createPrivacySubjectActionApiLive } from './create-privacy-subject-action-server.ts';
@@ -77,6 +78,23 @@ import { upsertTemporaryDsrExportActionApiLive } from './upsert-temporary-dsr-ex
 
 import { privacyApi, privacyOperationContexts } from '../shared/api.ts';
 import type { OperationContext } from '../shared/api.ts';
+import { ConsentSelfServiceAuthorityUnavailableLive } from '../src/actions/consent-self-service.action.ts';
+import { PrivacyApplicabilityBusinessFactAuthorityUnavailableLive } from '../src/actions/privacy-applicability-business-fact-authority-service.ts';
+import { DsrIntakeReceiptAuthorityUnavailableLive } from '../src/actions/create-dsr-case.action.ts';
+import { DsrOwnerTaskAuthorityUnavailableLive } from '../src/actions/privacy-dsr-owner-task-authority.ts';
+import { DsrOwnerInventoryAuthorityUnavailableLive } from '../src/actions/privacy-dsr-owner-inventory-authority.ts';
+import { DsrSubstantiveDecisionAuthorityUnavailableLive } from '../src/actions/privacy-dsr-substantive-decision-authority.ts';
+import { ProcessingActivityCoverageAuthorityUnavailableLive } from '../src/actions/processing-activity-coverage-authority.ts';
+import { RetentionRuleGovernanceAuthorityUnavailableLive } from '../src/actions/retention-rule-governance-authority.ts';
+import { OwnerExecutionAuthorityUnavailableLive } from '../src/actions/privacy-owner-execution-authority.ts';
+import { AntiResurrectionEnforcementAuthorityUnavailableLive } from '../src/actions/privacy-anti-resurrection-enforcement-authority.ts';
+import { RetentionDispositionAuthorityUnavailableLive } from '../src/actions/privacy-retention-disposition-authority.ts';
+import { DsrDeadlineAuthorityUnavailableLive } from '../src/actions/record-dsr-deadline.action.ts';
+import { DsrDeliveryAuthorityUnavailableLive } from '../src/actions/record-dsr-delivery-evidence.action.ts';
+import { DsrVerificationAuthorityUnavailableLive } from '../src/actions/record-dsr-verification.action.ts';
+import { NoticeChannelDeliveryAuthorityUnavailableLive } from '../src/actions/record-notice-provision.action.ts';
+import { DsrDeliveryAccessAuthorityUnavailableLive } from '../src/actions/dsr-delivery-access-authority.ts';
+import { ProcessingInterventionAuthorityUnavailableLive } from '../src/actions/processing-intervention-authority.ts';
 import { ultramodernApiMarker } from '../shared/ultramodern-build.ts';
 
 const operationAttributes = (operationContext: OperationContext) => {
@@ -126,11 +144,31 @@ const operationalScopeResolverLive = Layer.provide(
   Layer.mergeAll(CorePersistenceLive, ContextAccessLive),
 );
 const moduleEntrypointGatewayLive = ModuleEntrypointGatewayLive.pipe(Layer.provide(moduleStateGateLive));
+const privacyActionAuthorityUnavailableLive = Layer.mergeAll(
+  ConsentSelfServiceAuthorityUnavailableLive,
+  PrivacyApplicabilityBusinessFactAuthorityUnavailableLive,
+  DsrDeadlineAuthorityUnavailableLive,
+  DsrDeliveryAuthorityUnavailableLive,
+  DsrDeliveryAccessAuthorityUnavailableLive,
+  DsrIntakeReceiptAuthorityUnavailableLive,
+  DsrOwnerInventoryAuthorityUnavailableLive,
+  DsrOwnerTaskAuthorityUnavailableLive,
+  DsrSubstantiveDecisionAuthorityUnavailableLive,
+  OwnerExecutionAuthorityUnavailableLive,
+  AntiResurrectionEnforcementAuthorityUnavailableLive,
+  RetentionDispositionAuthorityUnavailableLive,
+  ProcessingActivityCoverageAuthorityUnavailableLive,
+  RetentionRuleGovernanceAuthorityUnavailableLive,
+  DsrVerificationAuthorityUnavailableLive,
+  NoticeChannelDeliveryAuthorityUnavailableLive,
+  ProcessingInterventionAuthorityUnavailableLive,
+);
 const productionReadRuntimeLive = ReadRuntimeLive.pipe(
   Layer.provide(
     Layer.mergeAll(CorePersistenceLive, ContextAccessLive, moduleEntrypointGatewayLive, operationalScopeResolverLive),
   ),
   Layer.provide(DatabaseConfigLive),
+  Layer.provideMerge(PrivacyApplicabilityBusinessFactAuthorityUnavailableLive),
 );
 const productionActionRuntimeLive = ActionRuntimeLive.pipe(
   Layer.provide(
@@ -145,6 +183,7 @@ const productionActionRuntimeLive = ActionRuntimeLive.pipe(
     ),
   ),
   Layer.provide(DatabaseConfigLive),
+  Layer.provideMerge(privacyActionAuthorityUnavailableLive),
 );
 
 type PrivacyApiRuntimeArguments = readonly [
@@ -168,6 +207,7 @@ export const makePrivacyApiRuntime = (
     assignDsrResolverActionApiLive.pipe(GovernedReadLayer.provide(governedActionRuntimeLive)),
     assignLegalBasisActionApiLive.pipe(GovernedReadLayer.provide(governedActionRuntimeLive)),
     assignPrivacyResponsibilityActionApiLive.pipe(GovernedReadLayer.provide(governedActionRuntimeLive)),
+    consentSelfServiceActionApiLive.pipe(GovernedReadLayer.provide(governedActionRuntimeLive)),
     createDsrCaseActionApiLive.pipe(GovernedReadLayer.provide(governedActionRuntimeLive)),
     createNoticeVersionActionApiLive.pipe(GovernedReadLayer.provide(governedActionRuntimeLive)),
     createPrivacySubjectActionApiLive.pipe(GovernedReadLayer.provide(governedActionRuntimeLive)),

@@ -68,7 +68,6 @@
   "dependencies": {
     "@app/core-runtime": "workspace:*",
     "@app/gateway-principal-verifier": "workspace:*",
-    "@app/party-registry": "workspace:*",
     "@app/shared-contracts": "workspace:*",
     "@app/shared-design-tokens": "workspace:*",
     "@effect/opentelemetry": "4.0.0-rc.112",

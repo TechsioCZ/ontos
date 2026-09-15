@@ -8,6 +8,14 @@ const Ref = Schema.Trim.check(Schema.isMinLength(1), Schema.isMaxLength(300));
 const Meaning = Schema.Trim.check(Schema.isMinLength(1), Schema.isMaxLength(2000));
 
 /** A dimension is included only when its value changes the business choice. */
+export const ConsentMaterialDimensionKindSchema = Schema.Literals([
+  'COMMUNICATION_CHANNEL',
+  'SITE',
+  'TECHNOLOGY_CATEGORY',
+  'TECHNOLOGY_PROVIDER_SET',
+  'JURISDICTION',
+]);
+
 export const ConsentMaterialDimensionSchema = Schema.Union([
   Schema.Struct({
     kind: Schema.Literal('COMMUNICATION_CHANNEL'),
@@ -19,7 +27,7 @@ export const ConsentMaterialDimensionSchema = Schema.Union([
   Schema.Struct({ kind: Schema.Literal('JURISDICTION'), value: Ref }),
 ]);
 export type ConsentMaterialDimension = typeof ConsentMaterialDimensionSchema.Type;
-export type ConsentMaterialDimensionKind = ConsentMaterialDimension['kind'];
+export type ConsentMaterialDimensionKind = typeof ConsentMaterialDimensionKindSchema.Type;
 
 /**
  * The stable business scope of one consent. Capture channel, UI, and transport

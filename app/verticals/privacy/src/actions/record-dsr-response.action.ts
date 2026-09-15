@@ -3,34 +3,60 @@
 // @ontos-action-slug record-dsr-response
 import type { ActionHandlerContext } from '@app/core-runtime';
 import { defineAction, defineTenantModuleEntrypoint } from '@app/core-runtime';
-import { Effect } from 'effect';
+import { DateTime, Effect } from 'effect';
 import {
   RecordDsrResponsePayloadSchema,
   RecordDsrResponseResultSchema,
 } from '../../shared/actions/record-dsr-response.ts';
 import type { RecordDsrResponsePayload } from '../../shared/actions/record-dsr-response.ts';
+import { validateDsrOwnerInventoryAuthorityScope } from '../../shared/domain/privacy-dsr.ts';
+import { DsrOwnerInventoryAuthority } from './privacy-dsr-owner-inventory-authority.ts';
+import type { DsrOwnerInventoryAuthorityService } from './privacy-dsr-owner-inventory-authority.ts';
 import { privacyOperationRepositoryForScope } from '../persistence/privacy-operation-postgres-repository.ts';
 import type { PrivacyOperationRepositoryService } from '../persistence/privacy-operation-repository.ts';
 import {
   PrivacyActionAuditEvidenceSchema,
   PrivacyActionErrorSchema,
-  completePrivacyAction,
+  PrivacyActionRejected,
   privacyActionDomainEvents,
   requirePrivacyActionScope,
 } from './privacy-operation-action-support.ts';
 
+export interface RecordDsrResponseServices extends Pick<PrivacyOperationRepositoryService, 'recordDsrResponse'> {
+  readonly authority: DsrOwnerInventoryAuthorityService;
+}
+
 const handleRecordDsrResponse = Effect.fn('RecordDsrResponseAction.handle')(function* handle(
   payload: RecordDsrResponsePayload,
-  context: ActionHandlerContext<typeof privacyActionDomainEvents, PrivacyOperationRepositoryService>,
+  context: ActionHandlerContext<typeof privacyActionDomainEvents, RecordDsrResponseServices>,
 ) {
   const scope = yield* requirePrivacyActionScope(context.scope);
+  const trustedAsOf = DateTime.formatIso(yield* DateTime.now);
+  const ownerInventory = yield* context.services.authority.resolve(payload.response.caseRef, {
+    actionInvocationId: context.actionInvocationId,
+    legalEntityId: scope.legalEntityId,
+    principalId: context.scope.principalId,
+    tenantId: scope.tenantId,
+  });
+  const inventoryError = validateDsrOwnerInventoryAuthorityScope(
+    ownerInventory,
+    payload.response.caseRef,
+    scope.tenantId,
+    scope.legalEntityId,
+    trustedAsOf,
+  );
+  if (inventoryError !== undefined) {
+    return yield* new PrivacyActionRejected({ code: 'privacy_action_rejected', reason: inventoryError });
+  }
   const result = yield* context.services.recordDsrResponse(
     scope.tenantId,
     scope.legalEntityId,
     context.actionInvocationId,
     payload.response,
+    ownerInventory,
   );
-  return yield* completePrivacyAction(context, 'record-dsr-response', result.responseRef, result);
+  yield* context.recordAuditEvidence({ operationKind: 'record-dsr-response', recordId: result.responseRef });
+  return result;
 });
 export const recordDsrResponseAction = defineAction(
   {
@@ -56,7 +82,14 @@ export const recordDsrResponseAction = defineAction(
     schemaVersion: '1',
   },
   handleRecordDsrResponse,
-  privacyOperationRepositoryForScope,
+  (transaction, scope) =>
+    Effect.all(
+      {
+        authority: DsrOwnerInventoryAuthority,
+        repository: privacyOperationRepositoryForScope(transaction, scope),
+      },
+      { concurrency: 2 },
+    ).pipe(Effect.map(({ authority, repository }) => ({ authority, recordDsrResponse: repository.recordDsrResponse }))),
 );
 // <generated-outbox-message-exports>
 // </generated-outbox-message-exports>

@@ -1,62 +1,124 @@
 import type { OperationalScope, ReadServiceFactory } from '@app/core-runtime';
 import { isPostgresUniqueViolation, OperationContextUnavailable } from '@app/core-runtime';
-import { and, asc, desc, eq } from 'drizzle-orm';
+import { and, asc, desc, eq, sql } from 'drizzle-orm';
 import { DateTime, Effect, Option, Result, Schema } from 'effect';
 import { randomUUID } from 'node:crypto';
 
-import { AntiResurrectionProtectionSchema } from '../../shared/domain/anti-resurrection.ts';
+import {
+  AntiResurrectionProtectionSchema,
+  createAntiResurrectionProtection,
+} from '../../shared/domain/anti-resurrection.ts';
 import {
   DsrDeliveryAccessSchema,
   DsrDeliveryEvidenceSchema,
   TemporaryDsrExportSchema,
   isSuccessfulDelivery,
 } from '../../shared/domain/dsr-delivery-access.ts';
-import type { DsrDeliveryAccess, DsrDeliveryEvidence } from '../../shared/domain/dsr-delivery-access.ts';
+import type {
+  DsrDeliveryAccess,
+  DsrDeliveryAccessAuthorityResult,
+  DsrDeliveryEvidence,
+} from '../../shared/domain/dsr-delivery-access.ts';
 import { ExternalObligationSchema } from '../../shared/domain/external-obligations.ts';
 import { OwnerContributionSchema } from '../../shared/domain/owner-contribution.ts';
 import {
   PrivacyApplicabilityDecisionSchema,
+  PrivacyApplicabilityEligibilityAuthorityResultSchema,
   PrivacyApplicabilityPolicySchema,
+  privacyApplicabilityDecisionsAreEquivalent,
+  resolveCurrentPrivacyApplicabilityForProcessingScope,
 } from '../../shared/domain/privacy-applicability.ts';
 import { ConsentDecisionSchema } from '../../shared/domain/privacy-consent-decision.ts';
 import type { ConsentCurrentResolution, ConsentDecision } from '../../shared/domain/privacy-consent-decision.ts';
+import type { ConsentMaterialDimension } from '../../shared/domain/privacy-consent-scope.ts';
 import {
   DsrCaseSchema,
   DsrDeadlineSchema,
   DsrOwnerTaskSchema,
+  applyDsrCaseLifecycleMutation,
+  canCloseDsrCase,
+  canFinalizeDsrResponse,
+  hasValidDsrOwnerTaskAuthorityProvenance,
+  isDsrDeliveryEvidenceNewerThanResponse,
+  materializeDsrResponse,
+  materializeDsrOwnerTaskAuthorityProvenance,
+  resolveCurrentDsrResolver,
+  sameDsrExactScopeRefs,
+  sameDsrReferenceSet,
+  validateDsrCaseLifecycleTransition,
+  validateDsrOwnerInventoryAuthorityScope,
+  validateDsrOwnerTaskAuthorityResult,
+  validateDsrSubstantiveDecisionAuthorityResult,
+  validateDsrResponseCoverage,
   DsrResolverAssignmentSchema,
   DsrResponseSchema,
   DsrSubstantiveDecisionSchema,
   DsrVerificationSchema,
-  canCloseDsrCase,
-  canFinalizeDsrResponse,
 } from '../../shared/domain/privacy-dsr.ts';
 import { PrivacyLegalBasisAssignmentSchema } from '../../shared/domain/privacy-legal-basis.ts';
 import {
   OwnerExecutionOutcomeSchema,
   PrivacyMeasureHandoffSchema,
+  validateOwnerExecutionAuthorityResult,
 } from '../../shared/domain/privacy-measure-handoff.ts';
+import type {
+  OwnerExecutionAuthorityResult,
+  OwnerExecutionOutcomeRequest,
+} from '../../shared/domain/privacy-measure-handoff.ts';
+import type {
+  DsrCase,
+  DsrCaseLifecycleMutation,
+  DsrOwnerInventoryAuthorityResult,
+  DsrOwnerTask,
+  DsrOwnerTaskAuthorityResult,
+  DsrOwnerTaskRequest,
+  DsrResponse,
+  DsrSubstantiveDecision,
+} from '../../shared/domain/privacy-dsr.ts';
 import { PrivacyNoticeVersionSchema } from '../../shared/domain/privacy-notice-version.ts';
 import type { PrivacyNoticeVersion } from '../../shared/domain/privacy-notice-version.ts';
 import { PrivacyNoticeProvisionSchema, isProofOfProvision } from '../../shared/domain/privacy-notice-provision.ts';
+import type { PrivacyNoticeProvision } from '../../shared/domain/privacy-notice-provision.ts';
 import {
   IntendedProcessingScopeSchema,
   PrivacyEligibilityEvidenceSchema,
   PrivacyProcessingInterventionSchema,
+  validatePrivacyApplicabilityEligibilityAuthorityResult,
 } from '../../shared/domain/privacy-processing-eligibility.ts';
 import type {
   PrivacyInputCurrentness,
   PrivacyProcessingIntervention,
+  ProcessingInterventionAuthorityResult,
 } from '../../shared/domain/privacy-processing-eligibility.ts';
+import type { ProcessedRetentionEvaluationWork } from '../../shared/domain/privacy-retention-disposition.ts';
 import { PrivacyResponsibilityAssignmentSchema } from '../../shared/domain/privacy-responsibility-assignment.ts';
 import {
+  ProcessedRetentionEvaluationWorkSchema,
   PrivacyDispositionDecisionSchema,
   PrivacyLegalHoldSchema,
+  RetentionEvaluationSchema,
   RetentionEvaluationWorkSchema,
   RetentionExceptionSchema,
+  isTimedRetentionProtectionActive,
+  prepareRetentionEvaluationWork,
+  validateDispositionDecisionAuthorityResult,
+  validateRetentionEvaluationAgainstWork,
 } from '../../shared/domain/privacy-retention-disposition.ts';
-import { PrivacyRetentionRuleVersionSchema } from '../../shared/domain/privacy-retention-rule.ts';
-import { PrivacySubjectRecordSchema, RepresentationSchema } from '../../shared/domain/privacy-subject.ts';
+import {
+  AuthoritativePrivacyRetentionRuleVersionSchema,
+  PrivacyRetentionRuleVersionSchema,
+  validatePrivacyRetentionRuleVersion,
+} from '../../shared/domain/privacy-retention-rule.ts';
+import type { AuthoritativePrivacyRetentionRuleVersion } from '../../shared/domain/privacy-retention-rule.ts';
+import {
+  arePrivacyInstantsEqual,
+  isPrivacyInstantAfter,
+  isPrivacyInstantAtOrBefore,
+  PrivacySubjectRecordSchema,
+  RepresentationSchema,
+} from '../../shared/domain/privacy-subject.ts';
+import { PrivacySubjectRefSchema } from '../../shared/resources/privacy-subject.ts';
+import { ProcessingPurposeRefSchema } from '../../shared/resources/processing-purpose.ts';
 import {
   antiResurrectionProtections,
   applicabilityDecisions,
@@ -96,6 +158,9 @@ import { PrivacyOperationPersistenceError } from './privacy-operation-repository
 import type { PrivacyOperationRepositoryService } from './privacy-operation-repository.ts';
 
 type ScopedTransaction = Parameters<ReadServiceFactory<Readonly<Record<string, never>>>>[0];
+const DSR_RESOLVER_ASSIGNMENT_LABEL = 'DSR Resolver Assignment';
+const DSR_CASE_INCOMPLETE_MESSAGE = 'DSR Case cannot be responded or closed before every obligation is complete';
+const PRIVACY_MODULE_ID = 'privacy.core' as const;
 
 const failure = (
   code: PrivacyOperationPersistenceError['code'],
@@ -118,6 +183,148 @@ const persistenceFailure = (reason: string, cause?: unknown): PrivacyOperationPe
   );
 };
 
+const date = (value: string): Date => DateTime.toDateUtc(DateTime.makeUnsafe(value));
+
+const privacySubjectRefEquivalent = Schema.toEquivalence(PrivacySubjectRefSchema);
+const processingPurposeRefEquivalent = Schema.toEquivalence(ProcessingPurposeRefSchema);
+
+const noticeFactMatches = (
+  notice: PrivacyNoticeVersion,
+  dimension: PrivacyNoticeVersion['applicableScope']['facts'][number]['dimension'],
+  value: string,
+): boolean => {
+  const values: string[] = [];
+  for (const fact of notice.applicableScope.facts) {
+    if (fact.dimension === dimension) {
+      values.push(fact.value);
+    }
+  }
+  return values.length === 1 && values[0] === value;
+};
+
+const noticeDimensionByConsentKind = {
+  COMMUNICATION_CHANNEL: 'CHANNEL',
+  JURISDICTION: 'JURISDICTION',
+  SITE: 'SITE',
+  TECHNOLOGY_CATEGORY: 'CATEGORY',
+  TECHNOLOGY_PROVIDER_SET: null,
+} as const;
+
+const materialDimensionMatchesNotice = (
+  dimension: ConsentMaterialDimension,
+  provision: PrivacyNoticeProvision,
+  notice: PrivacyNoticeVersion,
+): boolean => {
+  const noticeDimension = noticeDimensionByConsentKind[dimension.kind];
+  if (noticeDimension === null) {
+    // Notice applicability has no provider-set dimension, so this cannot be proven exactly yet.
+    return false;
+  }
+  const channelMatches = dimension.kind !== 'COMMUNICATION_CHANNEL' || provision.channel === dimension.value;
+  return channelMatches && noticeFactMatches(notice, noticeDimension, dimension.value);
+};
+
+const noticeEvidenceMatchesConsent = (
+  provision: PrivacyNoticeProvision,
+  notice: PrivacyNoticeVersion,
+  decision: ConsentDecision,
+): boolean => {
+  const { channelProof: proof } = provision;
+  const { scope } = decision;
+  if (proof === null || proof === undefined) {
+    return false;
+  }
+  const provisionMatches = [
+    isProofOfProvision(provision.outcome) && provision.privacySubjectRef === scope.privacySubjectRef.resourceId,
+    provision.controllerRef === scope.controllerRef,
+    provision.processingPurposeRef === scope.processingPurposeRef.resourceId,
+    provision.processingScopeRef === scope.scopeRef,
+    provision.noticeVersionRef === notice.versionId,
+    provision.providedLanguage === notice.language,
+  ].every(Boolean);
+  const noticeMatches = [
+    notice.applicableScope.processingScopeRef.scopeId === scope.scopeRef,
+    noticeFactMatches(notice, 'PRIVACY_SUBJECT', scope.privacySubjectRef.resourceId) &&
+      noticeFactMatches(notice, 'CONTROLLER_SCOPE', scope.controllerRef),
+    noticeFactMatches(notice, 'PROCESSING_PURPOSE', scope.processingPurposeRef.resourceId),
+    noticeFactMatches(notice, 'PROCESSING_PURPOSE_VERSION', scope.purposeVersionRef),
+  ].every(Boolean);
+  const proofMatches = [
+    proof.privacySubjectRef === provision.privacySubjectRef && proof.controllerRef === provision.controllerRef,
+    proof.processingPurposeRef === provision.processingPurposeRef,
+    proof.processingScopeRef === provision.processingScopeRef,
+    proof.noticeVersionRef === provision.noticeVersionRef,
+    proof.providedLanguage === provision.providedLanguage,
+    proof.businessInteractionRef === provision.businessInteractionRef,
+    proof.proofKind !== 'INTERACTIVE_ACKNOWLEDGEMENT' || provision.businessInteractionRef !== null,
+  ].every(Boolean);
+  return (
+    provisionMatches &&
+    noticeMatches &&
+    proofMatches &&
+    scope.materialDimensions.every((dimension) => materialDimensionMatchesNotice(dimension, provision, notice))
+  );
+};
+
+const noticeEvidenceRefMatchesConsent = (
+  evidenceRef: string,
+  provisions: readonly PrivacyNoticeProvision[],
+  notices: readonly PrivacyNoticeVersion[],
+  decision: ConsentDecision,
+): boolean => {
+  const matchingProvisions = provisions.filter(
+    (provision) => provision.provisionId === evidenceRef || provision.evidenceRef === evidenceRef,
+  );
+  if (matchingProvisions.length !== 1) {
+    return false;
+  }
+  const [provision] = matchingProvisions;
+  if (provision === undefined) {
+    return false;
+  }
+  const matchingNotices = notices.filter(({ versionId }) => versionId === provision.noticeVersionRef);
+  const [notice] = matchingNotices;
+  return matchingNotices.length === 1 && notice !== undefined
+    ? noticeEvidenceMatchesConsent(provision, notice, decision)
+    : false;
+};
+
+const retentionRuleMatchesWork = (
+  rule: AuthoritativePrivacyRetentionRuleVersion,
+  row: Readonly<{
+    readonly effectiveFrom: Date;
+    readonly effectiveTo: Date | null;
+    readonly ruleRef: string;
+    readonly ruleVersion: number;
+  }>,
+  work: ProcessedRetentionEvaluationWork,
+): boolean => {
+  const effectiveTo = Option.getOrUndefined(rule.effectiveTo);
+  const evidenceRefsMatch =
+    rule.evidenceRefs.length === work.evidenceRefs.length &&
+    rule.evidenceRefs.toSorted().every((ref, index) => ref === work.evidenceRefs.toSorted()[index]);
+  return (
+    [
+      rule.ruleRef === work.ruleRef,
+      rule.ruleVersion === work.ruleVersion,
+      rule.ruleVersionId === work.ruleVersionId,
+      rule.contentScopeRef === work.contentScopeRefs[0],
+      rule.controllerRef === work.controllerRef,
+      rule.dispositionOutcome === work.dispositionOutcome,
+      rule.policyRef === work.policyRef,
+      rule.policyVersion === work.policyVersion,
+      rule.provenanceRef === work.provenanceRef,
+      rule.businessStartAt === work.businessStartAt,
+      evidenceRefsMatch,
+    ].every(Boolean) &&
+    rule.ruleRef === row.ruleRef &&
+    rule.ruleVersion === row.ruleVersion &&
+    date(rule.effectiveFrom).getTime() === row.effectiveFrom.getTime() &&
+    (effectiveTo === undefined ? null : date(effectiveTo).getTime()) ===
+      (row.effectiveTo === null ? null : row.effectiveTo.getTime())
+  );
+};
+
 const conflict = (reason: string): PrivacyOperationPersistenceError => failure('privacy_operation_conflict', reason);
 const notFound = (reason: string): PrivacyOperationPersistenceError => failure('privacy_operation_not_found', reason);
 const scopeMismatch = (reason: string): PrivacyOperationPersistenceError =>
@@ -129,7 +336,6 @@ const scopeUnavailable = () =>
     reason: 'Privacy operations require a trusted Legal Entity scope',
   });
 
-const date = (value: string): Date => DateTime.toDateUtc(DateTime.makeUnsafe(value));
 const iso = (value: Date): string => DateTime.formatIso(DateTime.fromDateUnsafe(value));
 const optionalDate = (value: Option.Option<string>): Date | null =>
   Option.match(value, { onNone: () => null, onSome: date });
@@ -167,6 +373,19 @@ const dsrTaskEquivalent = Schema.toEquivalence(DsrOwnerTaskSchema);
 const deliveryEvidenceEquivalent = Schema.toEquivalence(DsrDeliveryEvidenceSchema);
 const temporaryExportEquivalent = Schema.toEquivalence(TemporaryDsrExportSchema);
 const intendedScopeEquivalent = Schema.toEquivalence(IntendedProcessingScopeSchema);
+const DSR_DELIVERY_EVIDENCE_LABEL = 'DSR Delivery Evidence';
+
+const latestRecordsByRef = <
+  Row extends { readonly record: StoredPrivacyRecord; readonly recordedAt: Date; readonly ref: string },
+>(
+  rows: readonly Row[],
+): ReadonlyMap<string, StoredPrivacyRecord> => {
+  const latest = new Map<string, StoredPrivacyRecord>();
+  for (const row of rows.toSorted((left, right) => left.recordedAt.getTime() - right.recordedAt.getTime())) {
+    latest.set(row.ref, row.record);
+  }
+  return latest;
+};
 
 const authoritativeCurrentness = (
   observedAt: string,
@@ -211,6 +430,86 @@ const resolveCurrentConsent = (history: readonly ConsentDecision[]): ConsentCurr
   }
   return { decision: first, outcome: 'CURRENT' };
 };
+
+const dsrOwnerTaskIdentityMatches = (left: DsrOwnerTask, right: DsrOwnerTask): boolean =>
+  left.idempotencyKey === right.idempotencyKey &&
+  left.caseRef === right.caseRef &&
+  left.controllerRef === right.controllerRef &&
+  left.taskRef === right.taskRef &&
+  sameDsrExactScopeRefs(left.exactScopeRefs, right.exactScopeRefs) &&
+  left.ownerModuleId === right.ownerModuleId &&
+  left.right === right.right;
+
+const materializeDsrDeliveryAccess = (authorityResult: DsrDeliveryAccessAuthorityResult): DsrDeliveryAccess => ({
+  ...authorityResult.access,
+  authorityRef: authorityResult.authorityRef,
+  evidenceRefs: [...authorityResult.evidenceRefs],
+  receiptRef: authorityResult.receiptRef,
+});
+
+const dsrDeliveryAccessAuthorityMatches = (
+  authorityResult: DsrDeliveryAccessAuthorityResult,
+  access: DsrDeliveryAccess,
+  actionInvocationId: string,
+  tenantId: string,
+  legalEntityId: string,
+): boolean =>
+  [
+    authorityResult.actionInvocationId === actionInvocationId,
+    authorityResult.tenantId === tenantId,
+    authorityResult.legalEntityId === legalEntityId,
+    authorityResult.issuedAt === access.issuedAt,
+    authorityResult.caseRef === access.caseRef,
+    authorityResult.controllerRef === access.controllerRef,
+    authorityResult.authorityRef.length > 0,
+    authorityResult.receiptRef.length > 0,
+    authorityResult.evidenceRefs.length > 0,
+  ].every(Boolean);
+
+const processingInterventionAuthorityMatches = (
+  authorityResult: ProcessingInterventionAuthorityResult,
+  actionInvocationId: string,
+  tenantId: string,
+  legalEntityId: string,
+): boolean =>
+  [
+    authorityResult.actionInvocationId === actionInvocationId,
+    authorityResult.tenantId === tenantId,
+    authorityResult.legalEntityId === legalEntityId,
+    authorityResult.authorityRef.length > 0,
+    authorityResult.intervention.scope.subjectRef.tenantId === tenantId,
+    authorityResult.intervention.scope.subjectRef.resourceId.length > 0,
+    authorityResult.intervention.currentness.authoritative,
+  ].every(Boolean);
+
+const dsrFinalResponseIsCurrent = (input: {
+  readonly caseRecord: DsrCase;
+  readonly decisions: readonly DsrSubstantiveDecision[];
+  readonly deliveryEvidence: DsrDeliveryEvidence;
+  readonly laterDecisions: readonly { readonly decidedAt: Date }[];
+  readonly laterEvidence: readonly DsrDeliveryEvidence[];
+  readonly laterTasks: readonly { readonly updatedAt: Date }[];
+  readonly ownerInventory: DsrOwnerInventoryAuthorityResult;
+  readonly response: DsrResponse;
+  readonly tasks: readonly DsrOwnerTask[];
+}): boolean =>
+  [
+    !input.laterDecisions.some(({ decidedAt }) =>
+      isPrivacyInstantAfter(DateTime.formatIso(DateTime.fromDateUnsafe(decidedAt)), input.response.createdAt),
+    ),
+    !input.laterTasks.some(({ updatedAt }) =>
+      isPrivacyInstantAfter(DateTime.formatIso(DateTime.fromDateUnsafe(updatedAt)), input.response.createdAt),
+    ),
+    !input.laterEvidence.some((candidate) => isDsrDeliveryEvidenceNewerThanResponse(input.response, candidate)),
+  ].every(Boolean) &&
+  canFinalizeDsrResponse({
+    caseRecord: input.caseRecord,
+    decisions: input.decisions,
+    deliveryEvidence: input.deliveryEvidence,
+    ownerInventory: input.ownerInventory,
+    response: input.response,
+    tasks: input.tasks,
+  });
 
 const makeRepository = (
   transaction: ScopedTransaction,
@@ -422,6 +721,28 @@ const makeRepository = (
     return row === undefined ? Option.none() : Option.some(yield* decode(DsrCaseSchema, row.record, 'DSR Case'));
   });
 
+  const getPrivacyMeasureHandoff: PrivacyOperationRepositoryService['getPrivacyMeasureHandoff'] = Effect.fn(
+    'PrivacyOperationPostgresRepository.getPrivacyMeasureHandoff',
+  )(function* getPrivacyMeasureHandoffEffect(tenantId, legalEntityId, measureId) {
+    yield* assertScope(tenantId, legalEntityId);
+    const rows = yield* transaction
+      .select({ record: privacyMeasureDispatches.handoffRecord })
+      .from(privacyMeasureDispatches)
+      .where(
+        and(
+          eq(privacyMeasureDispatches.tenantId, tenantId),
+          eq(privacyMeasureDispatches.legalEntityId, legalEntityId),
+          eq(privacyMeasureDispatches.measureId, measureId),
+        ),
+      )
+      .limit(1)
+      .pipe(Effect.mapError((cause) => persistenceFailure('Privacy Measure Handoff could not be loaded', cause)));
+    const row = rows.at(0);
+    return row === undefined
+      ? Option.none()
+      : Option.some(yield* decode(PrivacyMeasureHandoffSchema, row.record, 'Privacy Measure Handoff'));
+  });
+
   const listDsrWorkflow: PrivacyOperationRepositoryService['listDsrWorkflow'] = Effect.fn(
     'PrivacyOperationPostgresRepository.listDsrWorkflow',
   )(function* listDsrWorkflowEffect(tenantId, legalEntityId, caseRef) {
@@ -491,6 +812,15 @@ const makeRepository = (
       ],
       { concurrency: 1 },
     ).pipe(Effect.mapError((cause) => persistenceFailure('DSR workflow records could not be listed', cause)));
+    const responses = yield* decodeAll(
+      DsrResponseSchema,
+      responseRows.map(({ record }) => record),
+      'DSR Response',
+    );
+    const trustedNow = DateTime.formatIso(yield* DateTime.now);
+    if (responses.some(({ createdAt }) => !isPrivacyInstantAtOrBefore(createdAt, trustedNow))) {
+      return yield* persistenceFailure('Stored DSR Response contains a future createdAt timestamp');
+    }
     return {
       deadlines: yield* decodeAll(
         DsrDeadlineSchema,
@@ -505,13 +835,9 @@ const makeRepository = (
       resolverAssignments: yield* decodeAll(
         DsrResolverAssignmentSchema,
         resolverRows.map(({ record }) => record),
-        'DSR Resolver Assignment',
+        DSR_RESOLVER_ASSIGNMENT_LABEL,
       ),
-      responses: yield* decodeAll(
-        DsrResponseSchema,
-        responseRows.map(({ record }) => record),
-        'DSR Response',
-      ),
+      responses,
       tasks: yield* decodeAll(
         DsrOwnerTaskSchema,
         taskRows.map(({ record }) => record),
@@ -525,23 +851,823 @@ const makeRepository = (
     };
   });
 
-  const requireDsrCase = Effect.fn('PrivacyOperationPostgresRepository.requireDsrCase')(function* requireDsrCaseEffect(
+  /** Locks the stored Case row so CLOSED cannot race a workflow fact write. */
+  const requireDsrCaseForUpdate = Effect.fn('PrivacyOperationPostgresRepository.requireDsrCaseForUpdate')(
+    function* requireDsrCaseForUpdateEffect(tenantId: string, legalEntityId: string, caseRef: string) {
+      yield* assertScope(tenantId, legalEntityId);
+      const rows = yield* transaction
+        .select({ record: dsrCases.caseRecord })
+        .from(dsrCases)
+        .where(
+          and(
+            eq(dsrCases.tenantId, tenantId),
+            eq(dsrCases.legalEntityId, legalEntityId),
+            eq(dsrCases.caseRef, caseRef),
+          ),
+        )
+        .for('update')
+        .limit(1)
+        .pipe(Effect.mapError((cause) => persistenceFailure('DSR Case could not be locked', cause)));
+      const row = rows.at(0);
+      return row === undefined
+        ? yield* notFound('DSR Case was not found')
+        : yield* decode(DsrCaseSchema, row.record, 'DSR Case');
+    },
+  );
+
+  const requireOpenDsrCase = Effect.fn('PrivacyOperationPostgresRepository.requireOpenDsrCase')(
+    function* requireOpenDsrCaseEffect(tenantId: string, legalEntityId: string, caseRef: string) {
+      const caseRecord = yield* requireDsrCaseForUpdate(tenantId, legalEntityId, caseRef);
+      return caseRecord.status === 'CLOSED'
+        ? yield* conflict('CLOSED DSR Cases are terminal and reject workflow writes')
+        : caseRecord;
+    },
+  );
+
+  const requireDsrDeliveryEvidenceCase = Effect.fn('PrivacyOperationPostgresRepository.requireDsrDeliveryEvidenceCase')(
+    function* requireDsrDeliveryEvidenceCaseEffect(
+      tenantId: string,
+      legalEntityId: string,
+      evidence: DsrDeliveryEvidence,
+    ) {
+      if (evidence.caseRef === undefined) {
+        return yield* conflict('DSR Delivery Evidence requires an exact Case reference');
+      }
+      return yield* requireOpenDsrCase(tenantId, legalEntityId, evidence.caseRef);
+    },
+  );
+
+  const loadDsrDeliveryAccess = Effect.fn('PrivacyOperationPostgresRepository.loadDsrDeliveryAccess')(
+    function* loadDsrDeliveryAccessEffect(tenantId: string, legalEntityId: string, accessId: string) {
+      const accessRows = yield* transaction
+        .select({ record: dsrDeliveryAccess.accessRecord })
+        .from(dsrDeliveryAccess)
+        .where(
+          and(
+            eq(dsrDeliveryAccess.tenantId, tenantId),
+            eq(dsrDeliveryAccess.legalEntityId, legalEntityId),
+            eq(dsrDeliveryAccess.accessId, accessId),
+          ),
+        )
+        .limit(1)
+        .pipe(Effect.mapError((cause) => persistenceFailure('DSR Delivery Access could not be loaded', cause)));
+      const accessRow = accessRows.at(0);
+      return accessRow === undefined
+        ? yield* notFound('DSR Delivery Evidence Access was not found')
+        : yield* decode(DsrDeliveryAccessSchema, accessRow.record, 'DSR Delivery Access');
+    },
+  );
+
+  const validateDsrDeliveryEvidenceAccess = Effect.fn(
+    'PrivacyOperationPostgresRepository.validateDsrDeliveryEvidenceAccess',
+  )(function* validateDsrDeliveryEvidenceAccessEffect(
+    caseRecord: DsrCase,
+    access: DsrDeliveryAccess,
+    evidence: DsrDeliveryEvidence,
+  ) {
+    if (access.caseRef !== caseRecord.caseRef) {
+      return yield* conflict('DSR Delivery Evidence does not match the exact Case bound to its access');
+    }
+    const accessScopeRefs = new Set(access.deliveryScopeRefs);
+    const matchesIssuedAccess = [
+      access.deliveryOutputRef === evidence.deliveryOutputRef,
+      access.deliveryOutputRevision === evidence.deliveryOutputRevision,
+      access.channel === evidence.channel,
+      access.recipientRef === evidence.recipientRef,
+      access.representationRef === evidence.representationRef,
+      evidence.deliveryScopeRefs.every((scopeRef) => accessScopeRefs.has(scopeRef)),
+    ].every(Boolean);
+    if (!matchesIssuedAccess) {
+      return yield* conflict('DSR Delivery Evidence does not match the issued scoped access');
+    }
+    return yield* Effect.void;
+  });
+
+  const loadDsrDeliveryEvidenceReplay = Effect.fn('PrivacyOperationPostgresRepository.loadDsrDeliveryEvidenceReplay')(
+    function* loadDsrDeliveryEvidenceReplayEffect(tenantId: string, legalEntityId: string, actionInvocationId: string) {
+      const replayRows = yield* transaction
+        .select({ record: dsrDeliveryEvidence.evidenceRecord })
+        .from(dsrDeliveryEvidence)
+        .where(
+          and(
+            eq(dsrDeliveryEvidence.tenantId, tenantId),
+            eq(dsrDeliveryEvidence.legalEntityId, legalEntityId),
+            eq(dsrDeliveryEvidence.actionInvocationId, actionInvocationId),
+          ),
+        )
+        .limit(1)
+        .pipe(
+          Effect.mapError((cause) => persistenceFailure('DSR Delivery Evidence replay could not be resolved', cause)),
+        );
+      const replay = replayRows.at(0);
+      return replay === undefined
+        ? undefined
+        : yield* decode(DsrDeliveryEvidenceSchema, replay.record, DSR_DELIVERY_EVIDENCE_LABEL);
+    },
+  );
+
+  const requireConsentPurpose = Effect.fn('PrivacyOperationPostgresRepository.requireConsentPurpose')(
+    function* requireConsentPurposeEffect(tenantId: string, legalEntityId: string, decision: ConsentDecision) {
+      const rows = yield* transaction
+        .select({
+          meaning: purposeVersions.meaning,
+          processingPurposeId: processingPurposes.processingPurposeId,
+          tenantId: processingPurposes.tenantId,
+        })
+        .from(purposeVersions)
+        .innerJoin(
+          processingPurposes,
+          and(
+            eq(processingPurposes.tenantId, purposeVersions.tenantId),
+            eq(processingPurposes.legalEntityId, purposeVersions.legalEntityId),
+            eq(processingPurposes.processingPurposeId, purposeVersions.processingPurposeId),
+          ),
+        )
+        .where(
+          and(
+            eq(purposeVersions.tenantId, tenantId),
+            eq(purposeVersions.legalEntityId, legalEntityId),
+            eq(purposeVersions.purposeVersionId, decision.scope.purposeVersionRef),
+            eq(processingPurposes.processingPurposeId, decision.scope.processingPurposeRef.resourceId),
+          ),
+        )
+        .limit(1)
+        .pipe(Effect.mapError((cause) => persistenceFailure('Consent Purpose Version could not be resolved', cause)));
+      const row = rows.at(0);
+      const authoritativePurposeRef =
+        row === undefined
+          ? undefined
+          : {
+              moduleId: PRIVACY_MODULE_ID,
+              resourceId: row.processingPurposeId,
+              resourceType: 'privacy.core.processing-purpose' as const,
+              tenantId: row.tenantId,
+            };
+      if (
+        row?.meaning !== decision.scope.purposeMeaning ||
+        authoritativePurposeRef === undefined ||
+        !processingPurposeRefEquivalent(authoritativePurposeRef, decision.scope.processingPurposeRef)
+      ) {
+        return yield* notFound('Consent scope does not match a retained Purpose Version');
+      }
+      return yield* Effect.void;
+    },
+  );
+
+  const requireConsentSubject = Effect.fn('PrivacyOperationPostgresRepository.requireConsentSubject')(
+    function* requireConsentSubjectEffect(tenantId: string, legalEntityId: string, decision: ConsentDecision) {
+      const rows = yield* transaction
+        .select({ privacySubjectId: privacySubjects.privacySubjectId, tenantId: privacySubjects.tenantId })
+        .from(privacySubjects)
+        .where(
+          and(
+            eq(privacySubjects.tenantId, tenantId),
+            eq(privacySubjects.legalEntityId, legalEntityId),
+            eq(privacySubjects.privacySubjectId, decision.scope.privacySubjectRef.resourceId),
+          ),
+        )
+        .limit(1)
+        .pipe(Effect.mapError((cause) => persistenceFailure('Consent Privacy Subject could not be resolved', cause)));
+      const row = rows.at(0);
+      const authoritativeSubjectRef =
+        row === undefined
+          ? undefined
+          : {
+              moduleId: PRIVACY_MODULE_ID,
+              resourceId: row.privacySubjectId,
+              resourceType: 'privacy.core.privacy-subject' as const,
+              tenantId: row.tenantId,
+            };
+      if (
+        authoritativeSubjectRef === undefined ||
+        !privacySubjectRefEquivalent(authoritativeSubjectRef, decision.scope.privacySubjectRef)
+      ) {
+        return yield* notFound('Consent scope does not match an authoritative Privacy Subject identity');
+      }
+      return yield* Effect.void;
+    },
+  );
+
+  const consentNoticeEvidenceIsValid = Effect.fn('PrivacyOperationPostgresRepository.consentNoticeEvidenceIsValid')(
+    function* consentNoticeEvidenceIsValidEffect(tenantId: string, legalEntityId: string, decision: ConsentDecision) {
+      const provisionRows = yield* transaction
+        .select({ record: noticeProvisions.provisionRecord })
+        .from(noticeProvisions)
+        .where(and(eq(noticeProvisions.tenantId, tenantId), eq(noticeProvisions.legalEntityId, legalEntityId)))
+        .pipe(Effect.mapError((cause) => persistenceFailure('Notice provision evidence could not be resolved', cause)));
+      const provisions = yield* decodeAll(
+        PrivacyNoticeProvisionSchema,
+        provisionRows.map(({ record }) => record),
+        'Notice Provision',
+      );
+      // oxlint-disable-next-line effect-native/no-sequential-independent-yields -- Concurrent statements are not safe on one scoped transaction client.
+      const noticeRows = yield* transaction
+        .select({ record: noticeVersions.noticeRecord })
+        .from(noticeVersions)
+        .where(and(eq(noticeVersions.tenantId, tenantId), eq(noticeVersions.legalEntityId, legalEntityId)))
+        .pipe(Effect.mapError((cause) => persistenceFailure('Notice Version evidence could not be resolved', cause)));
+      const notices = yield* decodeAll(
+        PrivacyNoticeVersionSchema,
+        noticeRows.map(({ record }) => record),
+        'Notice Version',
+      );
+      return decision.noticeEvidenceRefs.every((evidenceRef) =>
+        noticeEvidenceRefMatchesConsent(evidenceRef, provisions, notices, decision),
+      );
+    },
+  );
+
+  const resolveRetentionRuleForEvaluation = Effect.fn(
+    'PrivacyOperationPostgresRepository.resolveRetentionRuleForEvaluation',
+  )(function* resolveRetentionRuleForEvaluationEffect(
     tenantId: string,
     legalEntityId: string,
-    caseRef: string,
+    ruleRef: string,
+    ruleVersion: number,
   ) {
-    const current = yield* getDsrCase(tenantId, legalEntityId, caseRef);
-    if (Option.isNone(current)) {
-      return yield* notFound('DSR Case was not found');
+    const rows = yield* transaction
+      .select({
+        contentScopeRef: retentionRules.contentScopeRef,
+        effectiveFrom: retentionRules.effectiveFrom,
+        effectiveTo: retentionRules.effectiveTo,
+        record: retentionRules.ruleRecord,
+        ruleRef: retentionRules.ruleRef,
+        ruleVersion: retentionRules.ruleVersion,
+      })
+      .from(retentionRules)
+      .where(
+        and(
+          eq(retentionRules.tenantId, tenantId),
+          eq(retentionRules.legalEntityId, legalEntityId),
+          eq(retentionRules.ruleRef, ruleRef),
+          eq(retentionRules.ruleVersion, ruleVersion),
+        ),
+      )
+      .limit(1)
+      .pipe(Effect.mapError((cause) => persistenceFailure('Retention Rule could not be resolved', cause)));
+    const row = rows.at(0);
+    if (row === undefined) {
+      return yield* notFound('The requested authoritative Retention Rule Version was not found');
     }
-    return current.value;
+    const rule = yield* Schema.decodeUnknownEffect(AuthoritativePrivacyRetentionRuleVersionSchema)(row.record).pipe(
+      Effect.mapError((cause) =>
+        failure(
+          'privacy_operation_conflict',
+          'Retention Evaluation requires a complete authoritative Retention Rule Version',
+          cause,
+        ),
+      ),
+    );
+    const effectiveTo = Option.getOrUndefined(rule.effectiveTo);
+    if (
+      rule.ruleRef !== row.ruleRef ||
+      rule.ruleVersion !== row.ruleVersion ||
+      rule.contentScopeRef !== row.contentScopeRef ||
+      date(rule.effectiveFrom).getTime() !== row.effectiveFrom.getTime() ||
+      (effectiveTo === undefined ? null : date(effectiveTo).getTime()) !==
+        (row.effectiveTo === null ? null : row.effectiveTo.getTime())
+    ) {
+      return yield* conflict('Stored Retention Rule identity is inconsistent');
+    }
+    return rule;
+  });
+
+  const loadRetentionEvaluationWork = Effect.fn('PrivacyOperationPostgresRepository.loadRetentionEvaluationWork')(
+    function* loadRetentionEvaluationWorkEffect(tenantId: string, legalEntityId: string, evaluationRef: string) {
+      const rows = yield* transaction
+        .select({
+          evaluatedAt: retentionEvaluationWork.evaluatedAt,
+          record: retentionEvaluationWork.workRecord,
+          ruleRef: retentionEvaluationWork.ruleRef,
+          ruleVersion: retentionEvaluationWork.ruleVersion,
+          status: retentionEvaluationWork.status,
+          workRef: retentionEvaluationWork.workRef,
+        })
+        .from(retentionEvaluationWork)
+        .where(
+          and(
+            eq(retentionEvaluationWork.tenantId, tenantId),
+            eq(retentionEvaluationWork.legalEntityId, legalEntityId),
+            eq(retentionEvaluationWork.workRef, evaluationRef),
+          ),
+        )
+        .limit(1)
+        .pipe(Effect.mapError((cause) => persistenceFailure('Retention Evaluation could not be resolved', cause)));
+      const row = rows.at(0);
+      if (row === undefined) {
+        return yield* notFound('The requested Retention Evaluation was not found');
+      }
+      if (!['READY', 'BLOCKED', 'COMPLETED'].includes(row.status) || row.evaluatedAt === null) {
+        return yield* conflict('Disposition Decision requires a determinate completed Retention Evaluation');
+      }
+      const work = yield* decode(ProcessedRetentionEvaluationWorkSchema, row.record, 'Retention Evaluation Work');
+      const evaluatedAt = iso(row.evaluatedAt);
+      const workEvaluatedAt = Option.match(work.evaluatedAt, {
+        onNone: () => null,
+        onSome: (value) => value,
+      });
+      if (
+        work.workRef !== row.workRef ||
+        work.ruleRef !== row.ruleRef ||
+        work.ruleVersion !== row.ruleVersion ||
+        work.status !== row.status ||
+        workEvaluatedAt !== evaluatedAt
+      ) {
+        return yield* conflict('Retention Evaluation persisted identity or state is inconsistent');
+      }
+      if (work.workerEvaluation.evaluatedAt !== evaluatedAt) {
+        return yield* conflict('Retention Evaluation worker time does not match persisted evaluation time');
+      }
+      return { evaluatedAt, row, work };
+    },
+  );
+
+  const loadCurrentRetentionRule = Effect.fn('PrivacyOperationPostgresRepository.loadCurrentRetentionRule')(
+    function* loadCurrentRetentionRuleEffect(
+      tenantId: string,
+      legalEntityId: string,
+      work: ProcessedRetentionEvaluationWork,
+      asOf: string,
+    ) {
+      const rows = yield* transaction
+        .select({
+          effectiveFrom: retentionRules.effectiveFrom,
+          effectiveTo: retentionRules.effectiveTo,
+          record: retentionRules.ruleRecord,
+          ruleRef: retentionRules.ruleRef,
+          ruleVersion: retentionRules.ruleVersion,
+        })
+        .from(retentionRules)
+        .where(
+          and(
+            eq(retentionRules.tenantId, tenantId),
+            eq(retentionRules.legalEntityId, legalEntityId),
+            eq(retentionRules.ruleRef, work.ruleRef),
+            eq(retentionRules.ruleVersion, work.ruleVersion),
+            // The decision gate is evaluated against the current trusted instant, not the caller's timestamps.
+            sql`${retentionRules.effectiveFrom} <= ${date(asOf)}`,
+            sql`${retentionRules.effectiveTo} is null or ${date(asOf)} < ${retentionRules.effectiveTo}`,
+          ),
+        )
+        .limit(1)
+        .pipe(Effect.mapError((cause) => persistenceFailure('Current Retention Rule could not be resolved', cause)));
+      const row = rows.at(0);
+      if (row === undefined) {
+        return yield* conflict('Disposition Decision requires a current authoritative Retention Rule');
+      }
+      const rule = yield* decode(AuthoritativePrivacyRetentionRuleVersionSchema, row.record, 'Current Retention Rule');
+      if (!retentionRuleMatchesWork(rule, row, work)) {
+        return yield* conflict('Current Retention Rule does not match the stored evaluation');
+      }
+      return rule;
+    },
+  );
+
+  const ensureNoActiveRetentionProtections = Effect.fn(
+    'PrivacyOperationPostgresRepository.ensureNoActiveRetentionProtections',
+  )(function* ensureNoActiveRetentionProtectionsEffect(
+    tenantId: string,
+    legalEntityId: string,
+    work: ProcessedRetentionEvaluationWork,
+    asOf: string,
+  ) {
+    const [protectionRows, holdRows] = yield* Effect.all(
+      [
+        transaction
+          .select({
+            record: retentionExceptions.exceptionRecord,
+            recordedAt: retentionExceptions.recordedAt,
+            ref: retentionExceptions.exceptionRef,
+          })
+          .from(retentionExceptions)
+          .where(
+            and(
+              eq(retentionExceptions.tenantId, tenantId),
+              eq(retentionExceptions.legalEntityId, legalEntityId),
+              sql`${retentionExceptions.recordedAt} <= ${date(asOf)}`,
+            ),
+          )
+          .pipe(Effect.mapError((cause) => persistenceFailure('Retention Exceptions could not be resolved', cause))),
+        transaction
+          .select({ record: legalHolds.holdRecord, recordedAt: legalHolds.recordedAt, ref: legalHolds.holdRef })
+          .from(legalHolds)
+          .where(
+            and(
+              eq(legalHolds.tenantId, tenantId),
+              eq(legalHolds.legalEntityId, legalEntityId),
+              sql`${legalHolds.recordedAt} <= ${date(asOf)}`,
+            ),
+          )
+          .pipe(Effect.mapError((cause) => persistenceFailure('Legal Holds could not be resolved', cause))),
+      ],
+      { concurrency: 1 },
+    );
+    const [protections, holds] = yield* Effect.all(
+      [
+        decodeAll(RetentionExceptionSchema, [...latestRecordsByRef(protectionRows).values()], 'Retention Exception'),
+        decodeAll(PrivacyLegalHoldSchema, [...latestRecordsByRef(holdRows).values()], 'Legal Hold'),
+      ],
+      { concurrency: 1 },
+    );
+    const currentScope = new Set(work.contentScopeRefs);
+    if (
+      [...protections, ...holds].some(
+        (protection) =>
+          isTimedRetentionProtectionActive(protection, asOf) &&
+          protection.contentScopeRefs.some((scopeRef) => currentScope.has(scopeRef)),
+      )
+    ) {
+      return yield* conflict('Disposition Decision requires no current Retention Exception or Legal Hold');
+    }
+    return yield* Effect.void;
+  });
+
+  const resolveRetentionEvaluation: PrivacyOperationRepositoryService['resolveRetentionEvaluation'] = Effect.fn(
+    'PrivacyOperationPostgresRepository.resolveRetentionEvaluation',
+  )(function* resolveRetentionEvaluationEffect(tenantId, legalEntityId, evaluationRef, asOf) {
+    yield* assertScope(tenantId, legalEntityId);
+    const { evaluatedAt, row, work } = yield* loadRetentionEvaluationWork(tenantId, legalEntityId, evaluationRef);
+    yield* loadCurrentRetentionRule(tenantId, legalEntityId, work, asOf);
+    yield* ensureNoActiveRetentionProtections(tenantId, legalEntityId, work, asOf);
+    const evaluationRecord = {
+      blockerRefs: work.workerEvaluation.blockerRefs,
+      contentScopeRefs: work.contentScopeRefs,
+      controllerRef: work.workerEvaluation.controllerRef,
+      evaluatedAt,
+      evaluationRef: work.workerEvaluation.evaluationRef,
+      evidenceRefs: work.workerEvaluation.evidenceRefs,
+      outcome: work.workerEvaluation.outcome,
+      policyRef: work.workerEvaluation.policyRef,
+      policyVersion: work.workerEvaluation.policyVersion,
+      provenanceRef: work.workerEvaluation.provenanceRef,
+      ruleRef: work.ruleRef,
+      ruleVersion: work.ruleVersion,
+      ruleVersionId: work.ruleVersionId,
+      status: row.status,
+    };
+    const evaluation = yield* decode(RetentionEvaluationSchema, evaluationRecord, 'Retention Evaluation');
+    const validation = validateRetentionEvaluationAgainstWork(evaluation, work);
+    return validation.valid ? evaluation : yield* conflict(validation.errors.join('; '));
+  });
+
+  const resolveValidatedOwnerExecutionHandoff = Effect.fn(
+    'PrivacyOperationPostgresRepository.resolveValidatedOwnerExecutionHandoff',
+  )(function* resolveValidatedOwnerExecutionHandoffEffect(
+    tenantId: string,
+    legalEntityId: string,
+    request: OwnerExecutionOutcomeRequest,
+    authority: OwnerExecutionAuthorityResult,
+  ) {
+    yield* assertScope(tenantId, legalEntityId);
+    const handoff = yield* getPrivacyMeasureHandoff(tenantId, legalEntityId, request.measureId).pipe(
+      Effect.flatMap(
+        Option.match({
+          onNone: () => notFound('Privacy Measure dispatch was not found'),
+          onSome: (value) => Effect.succeed(value),
+        }),
+      ),
+    );
+    const authorityError = validateOwnerExecutionAuthorityResult(handoff, request, authority);
+    if (authorityError !== undefined) {
+      return yield* conflict(authorityError);
+    }
+    return handoff;
+  });
+
+  const materializeAndValidateDsrOwnerTask = (
+    tenantId: string,
+    legalEntityId: string,
+    authority: DsrOwnerTaskAuthorityResult,
+  ): Effect.Effect<
+    { readonly request: DsrOwnerTaskRequest; readonly task: DsrOwnerTask },
+    PrivacyOperationPersistenceError
+  > => {
+    const task: DsrOwnerTask = {
+      ...authority.task,
+      authorityProvenance: materializeDsrOwnerTaskAuthorityProvenance(authority),
+    };
+    if (!hasValidDsrOwnerTaskAuthorityProvenance(task)) {
+      return Effect.fail(conflict('DSR Owner Task authority provenance is incomplete or inconsistent'));
+    }
+    const request: DsrOwnerTaskRequest = {
+      caseRef: task.caseRef,
+      controllerRef: task.controllerRef,
+      exactScopeRefs: task.exactScopeRefs,
+      idempotencyKey: task.idempotencyKey,
+      ownerModuleId: task.ownerModuleId,
+      right: task.right,
+      taskRef: task.taskRef,
+    };
+    const authorityError = validateDsrOwnerTaskAuthorityResult(request, authority, tenantId, legalEntityId);
+    return authorityError === undefined ? Effect.succeed({ request, task }) : Effect.fail(conflict(authorityError));
+  };
+
+  const requireDsrOwnerTaskObligation = Effect.fn('PrivacyOperationPostgresRepository.requireDsrOwnerTaskObligation')(
+    function* requireDsrOwnerTaskObligationEffect(tenantId: string, legalEntityId: string, task: DsrOwnerTask) {
+      const caseRecord = yield* requireOpenDsrCase(tenantId, legalEntityId, task.caseRef);
+      if (
+        !caseRecord.controllerObligations.some(
+          (obligation) =>
+            obligation.controllerRef === task.controllerRef &&
+            obligation.requestedRights.includes(task.right) &&
+            sameDsrExactScopeRefs(obligation.exactScopeRefs, task.exactScopeRefs),
+        )
+      ) {
+        return yield* conflict('DSR Owner Task does not match a requested Controller-and-right obligation');
+      }
+      return caseRecord;
+    },
+  );
+
+  const loadDsrOwnerTaskReplay = Effect.fn('PrivacyOperationPostgresRepository.loadDsrOwnerTaskReplay')(
+    function* loadDsrOwnerTaskReplayEffect(tenantId: string, legalEntityId: string, actionInvocationId: string) {
+      const rows = yield* transaction
+        .select({ record: dsrOwnerTasks.taskRecord })
+        .from(dsrOwnerTasks)
+        .where(
+          and(
+            eq(dsrOwnerTasks.tenantId, tenantId),
+            eq(dsrOwnerTasks.legalEntityId, legalEntityId),
+            eq(dsrOwnerTasks.actionInvocationId, actionInvocationId),
+          ),
+        )
+        .limit(1)
+        .pipe(Effect.mapError((cause) => persistenceFailure('DSR Owner Task replay could not be resolved', cause)));
+      return rows.at(0);
+    },
+  );
+
+  const loadCurrentDsrOwnerTask = Effect.fn('PrivacyOperationPostgresRepository.loadCurrentDsrOwnerTask')(
+    function* loadCurrentDsrOwnerTaskEffect(tenantId: string, legalEntityId: string, taskRef: string) {
+      const rows = yield* transaction
+        .select({ record: dsrOwnerTasks.taskRecord })
+        .from(dsrOwnerTasks)
+        .where(
+          and(
+            eq(dsrOwnerTasks.tenantId, tenantId),
+            eq(dsrOwnerTasks.legalEntityId, legalEntityId),
+            eq(dsrOwnerTasks.taskId, taskRef),
+          ),
+        )
+        .limit(1)
+        .pipe(Effect.mapError((cause) => persistenceFailure('DSR Owner Task could not be loaded', cause)));
+      return rows.at(0);
+    },
+  );
+
+  const insertDsrOwnerTask = Effect.fn('PrivacyOperationPostgresRepository.insertDsrOwnerTask')(
+    function* insertDsrOwnerTaskEffect(
+      tenantId: string,
+      legalEntityId: string,
+      actionInvocationId: string,
+      task: DsrOwnerTask,
+    ) {
+      const persistedTask = { ...task, updatedAt: DateTime.formatIso(yield* DateTime.now) };
+      yield* transaction
+        .insert(dsrOwnerTasks)
+        .values({
+          actionInvocationId,
+          caseRef: task.caseRef,
+          idempotencyKey: task.idempotencyKey,
+          legalEntityId,
+          owningCapability: task.ownerModuleId,
+          status: task.status,
+          taskId: task.taskRef,
+          taskRecord: encode(DsrOwnerTaskSchema, persistedTask),
+          tenantId,
+        })
+        .pipe(Effect.mapError((cause) => persistenceFailure('DSR Owner Task could not be recorded', cause)));
+      return persistedTask;
+    },
+  );
+
+  const updateDsrOwnerTask = Effect.fn('PrivacyOperationPostgresRepository.updateDsrOwnerTask')(
+    function* updateDsrOwnerTaskEffect(
+      tenantId: string,
+      legalEntityId: string,
+      actionInvocationId: string,
+      currentRow: { readonly record: unknown },
+      task: DsrOwnerTask,
+    ) {
+      const current = yield* decode(DsrOwnerTaskSchema, currentRow.record, DSR_OWNER_TASK_LABEL);
+      if (!dsrOwnerTaskIdentityMatches(current, task)) {
+        return yield* conflict('DSR Owner Task immutable identity changed');
+      }
+      const persistedTask = {
+        ...task,
+        exactScopeRefs: current.exactScopeRefs,
+        updatedAt: DateTime.formatIso(yield* DateTime.now),
+      };
+      yield* transaction
+        .update(dsrOwnerTasks)
+        .set({
+          actionInvocationId,
+          status: persistedTask.status,
+          taskRecord: encode(DsrOwnerTaskSchema, persistedTask),
+          updatedAt: date(persistedTask.updatedAt),
+        })
+        .where(
+          and(
+            eq(dsrOwnerTasks.tenantId, tenantId),
+            eq(dsrOwnerTasks.legalEntityId, legalEntityId),
+            eq(dsrOwnerTasks.taskId, task.taskRef),
+          ),
+        )
+        .pipe(Effect.mapError((cause) => persistenceFailure('DSR Owner Task could not be updated', cause)));
+      return persistedTask;
+    },
+  );
+
+  const ensureDsrCaseClosure = Effect.fn('PrivacyOperationPostgresRepository.ensureDsrCaseClosure')(
+    function* ensureDsrCaseClosureEffect(
+      tenantId: string,
+      legalEntityId: string,
+      caseRecord: DsrCase,
+      ownerInventory: DsrOwnerInventoryAuthorityResult | undefined,
+    ) {
+      if (ownerInventory === undefined) {
+        return yield* conflict('DSR Case closure requires an authoritative Owner Inventory');
+      }
+      const inventoryError = validateDsrOwnerInventoryAuthorityScope(
+        ownerInventory,
+        caseRecord.caseRef,
+        tenantId,
+        legalEntityId,
+        DateTime.formatIso(yield* DateTime.now),
+      );
+      if (inventoryError !== undefined) {
+        return yield* conflict(inventoryError);
+      }
+      const workflow = yield* listDsrWorkflow(tenantId, legalEntityId, caseRecord.caseRef);
+      const finalResponse = workflow.responses.find(({ final }) => final);
+      if (finalResponse === undefined || Option.isNone(finalResponse.deliveryEvidenceRef)) {
+        return yield* conflict(DSR_CASE_INCOMPLETE_MESSAGE);
+      }
+      const evidenceRows = yield* transaction
+        .select({ record: dsrDeliveryEvidence.evidenceRecord })
+        .from(dsrDeliveryEvidence)
+        .where(
+          and(
+            eq(dsrDeliveryEvidence.tenantId, tenantId),
+            eq(dsrDeliveryEvidence.legalEntityId, legalEntityId),
+            eq(dsrDeliveryEvidence.evidenceId, finalResponse.deliveryEvidenceRef.value),
+          ),
+        )
+        .limit(1)
+        .pipe(Effect.mapError((cause) => persistenceFailure('Final DSR Response evidence could not be loaded', cause)));
+      const evidenceRow = evidenceRows.at(0);
+      if (evidenceRow === undefined) {
+        return yield* conflict(DSR_CASE_INCOMPLETE_MESSAGE);
+      }
+      const [evidence, laterEvidence, laterDecisions, laterTasks] = yield* Effect.all(
+        [
+          decode(DsrDeliveryEvidenceSchema, evidenceRow.record, DSR_DELIVERY_EVIDENCE_LABEL),
+          transaction
+            .select({ record: dsrDeliveryEvidence.evidenceRecord })
+            .from(dsrDeliveryEvidence)
+            .where(
+              and(eq(dsrDeliveryEvidence.tenantId, tenantId), eq(dsrDeliveryEvidence.legalEntityId, legalEntityId)),
+            )
+            .pipe(
+              Effect.mapError((cause) =>
+                persistenceFailure('Final DSR Response currentness could not be checked', cause),
+              ),
+              Effect.flatMap((rows) =>
+                decodeAll(
+                  DsrDeliveryEvidenceSchema,
+                  rows.map(({ record }) => record),
+                  DSR_DELIVERY_EVIDENCE_LABEL,
+                ),
+              ),
+            ),
+          transaction
+            .select({ decidedAt: dsrSubstantiveDecisions.decidedAt })
+            .from(dsrSubstantiveDecisions)
+            .where(
+              and(
+                eq(dsrSubstantiveDecisions.tenantId, tenantId),
+                eq(dsrSubstantiveDecisions.legalEntityId, legalEntityId),
+                eq(dsrSubstantiveDecisions.caseRef, caseRecord.caseRef),
+              ),
+            )
+            .pipe(
+              Effect.mapError((cause) =>
+                persistenceFailure('Final DSR Response decisions could not be checked', cause),
+              ),
+            ),
+          transaction
+            .select({ updatedAt: dsrOwnerTasks.updatedAt })
+            .from(dsrOwnerTasks)
+            .where(
+              and(
+                eq(dsrOwnerTasks.tenantId, tenantId),
+                eq(dsrOwnerTasks.legalEntityId, legalEntityId),
+                eq(dsrOwnerTasks.caseRef, caseRecord.caseRef),
+              ),
+            )
+            .pipe(
+              Effect.mapError((cause) =>
+                persistenceFailure('Final DSR Response owner tasks could not be checked', cause),
+              ),
+            ),
+        ],
+        { concurrency: 1 },
+      );
+      const finalResponseCurrent = dsrFinalResponseIsCurrent({
+        caseRecord,
+        decisions: workflow.decisions,
+        deliveryEvidence: evidence,
+        laterDecisions,
+        laterEvidence,
+        laterTasks,
+        ownerInventory,
+        response: finalResponse,
+        tasks: workflow.tasks,
+      });
+      if (!finalResponseCurrent || !canCloseDsrCase(caseRecord, workflow.decisions, workflow.tasks, ownerInventory)) {
+        return yield* conflict(DSR_CASE_INCOMPLETE_MESSAGE);
+      }
+      return yield* Effect.void;
+    },
+  );
+
+  const validateDsrCaseUpdate = Effect.fn('PrivacyOperationPostgresRepository.validateDsrCaseUpdate')(
+    function* validateDsrCaseUpdateEffect(
+      tenantId: string,
+      legalEntityId: string,
+      mutation: DsrCaseLifecycleMutation,
+      ownerInventory: DsrOwnerInventoryAuthorityResult | undefined,
+    ) {
+      const existing = yield* requireDsrCaseForUpdate(tenantId, legalEntityId, mutation.caseRef);
+      const lifecycleError = validateDsrCaseLifecycleTransition(existing.status, mutation.status);
+      if (lifecycleError !== undefined) {
+        return yield* conflict(lifecycleError);
+      }
+      const caseRecord = applyDsrCaseLifecycleMutation(existing, mutation);
+      if (caseRecord.status === 'RESPONDED' || caseRecord.status === 'CLOSED') {
+        yield* ensureDsrCaseClosure(tenantId, legalEntityId, caseRecord, ownerInventory);
+      }
+      return caseRecord;
+    },
+  );
+
+  const reconcileExistingDsrDeliveryAccess = Effect.fn(
+    'PrivacyOperationPostgresRepository.reconcileExistingDsrDeliveryAccess',
+  )(function* reconcileExistingDsrDeliveryAccessEffect(
+    tenantId: string,
+    legalEntityId: string,
+    access: DsrDeliveryAccess,
+    existing: readonly { readonly accessId: string; readonly record: StoredPrivacyRecord }[],
+  ) {
+    const decoded = yield* Effect.forEach(
+      existing,
+      (row) =>
+        decode(DsrDeliveryAccessSchema, row.record, 'DSR Delivery Access').pipe(
+          Effect.map((current) => ({ current, row })),
+        ),
+      { concurrency: 1 },
+    );
+    const replay = decoded.find(({ current }) => current.idempotencyKey === access.idempotencyKey);
+    if (replay !== undefined) {
+      return Schema.toEquivalence(DsrDeliveryAccessSchema)(replay.current, access)
+        ? Option.some(replay.current)
+        : yield* conflict('DSR Delivery Access idempotency conflict');
+    }
+    yield* Effect.forEach(
+      decoded.filter(({ current }) => current.revokedAt === null),
+      ({ current, row }) => {
+        const revokedAt = access.issuedAt;
+        const revoked: DsrDeliveryAccess = {
+          ...current,
+          revocationReason: `superseded-by:${access.accessId}`,
+          revokedAt,
+        };
+        return transaction
+          .update(dsrDeliveryAccess)
+          .set({
+            accessRecord: encode(DsrDeliveryAccessSchema, revoked),
+            revokedAt: date(revokedAt),
+            updatedAt: date(revokedAt),
+          })
+          .where(
+            and(
+              eq(dsrDeliveryAccess.tenantId, tenantId),
+              eq(dsrDeliveryAccess.legalEntityId, legalEntityId),
+              eq(dsrDeliveryAccess.accessId, row.accessId),
+            ),
+          )
+          .pipe(Effect.mapError((cause) => persistenceFailure('Prior delivery access could not be revoked', cause)));
+      },
+      { concurrency: 1 },
+    );
+    return Option.none();
   });
 
   return {
     assignDsrResolver: Effect.fn('PrivacyOperationPostgresRepository.assignDsrResolver')(
       function* assignDsrResolverEffect(tenantId, legalEntityId, actionInvocationId, assignment) {
         yield* assertScope(tenantId, legalEntityId);
-        const caseRecord = yield* requireDsrCase(tenantId, legalEntityId, assignment.caseRef);
+        const caseRecord = yield* requireOpenDsrCase(tenantId, legalEntityId, assignment.caseRef);
         if (!caseRecord.controllerObligations.some(({ controllerRef }) => controllerRef === assignment.controllerRef)) {
           return yield* conflict('DSR Resolver Assignment does not match a Controller obligation on the Case');
         }
@@ -559,10 +1685,47 @@ const makeRepository = (
           .pipe(Effect.mapError((cause) => persistenceFailure('DSR Resolver replay could not be resolved', cause)));
         const replay = replayRows.at(0);
         if (replay !== undefined) {
-          const retained = yield* decode(DsrResolverAssignmentSchema, replay.record, 'DSR Resolver Assignment');
+          const retained = yield* decode(DsrResolverAssignmentSchema, replay.record, DSR_RESOLVER_ASSIGNMENT_LABEL);
           return dsrResolverEquivalent(retained, assignment)
             ? retained
             : yield* conflict('DSR Resolver Action invocation was replayed with a different assignment');
+        }
+        const historyRows = yield* transaction
+          .select({ record: dsrResolverAssignments.assignmentRecord })
+          .from(dsrResolverAssignments)
+          .where(
+            and(
+              eq(dsrResolverAssignments.tenantId, tenantId),
+              eq(dsrResolverAssignments.legalEntityId, legalEntityId),
+              eq(dsrResolverAssignments.caseRef, assignment.caseRef),
+              eq(dsrResolverAssignments.controllerRef, assignment.controllerRef),
+            ),
+          )
+          .pipe(Effect.mapError((cause) => persistenceFailure('DSR Resolver history could not be resolved', cause)));
+        const history = yield* decodeAll(
+          DsrResolverAssignmentSchema,
+          historyRows.map(({ record }) => record),
+          DSR_RESOLVER_ASSIGNMENT_LABEL,
+        );
+        const current = resolveCurrentDsrResolver(
+          history,
+          assignment.caseRef,
+          assignment.controllerRef,
+          assignment.assignedAt,
+        );
+        if (current.status === 'CONFLICT') {
+          return yield* conflict('DSR Resolver history has multiple or invalid current assignments');
+        }
+        if (current.status === 'CURRENT') {
+          if (
+            Option.isNone(assignment.supersedesAssignmentRef) ||
+            assignment.supersedesAssignmentRef.value !== current.assignment.assignmentRef ||
+            isPrivacyInstantAtOrBefore(assignment.assignedAt, current.assignment.assignedAt)
+          ) {
+            return yield* conflict('A new DSR Resolver Assignment must explicitly supersede the current assignment');
+          }
+        } else if (Option.isSome(assignment.supersedesAssignmentRef)) {
+          return yield* conflict('DSR Resolver Assignment supersedes a missing current assignment');
         }
         yield* transaction
           .insert(dsrResolverAssignments)
@@ -583,6 +1746,24 @@ const makeRepository = (
     assignLegalBasis: Effect.fn('PrivacyOperationPostgresRepository.assignLegalBasis')(
       function* assignLegalBasisEffect(tenantId, legalEntityId, actionInvocationId, assignment) {
         yield* assertScope(tenantId, legalEntityId);
+        const applicabilityHistory = yield* listApplicabilityDecisions(tenantId, legalEntityId);
+        const authoritativeApplicability = resolveCurrentPrivacyApplicabilityForProcessingScope(
+          applicabilityHistory,
+          assignment.scope.operation,
+          assignment.scope.processingScopeRef,
+          assignment.effectiveFrom,
+        );
+        if (
+          authoritativeApplicability.outcome !== 'CURRENT' ||
+          !privacyApplicabilityDecisionsAreEquivalent(
+            authoritativeApplicability.decision,
+            assignment.applicabilityDecision,
+          )
+        ) {
+          return yield* conflict(
+            'Legal Basis Assignment must retain the exact authoritative current applicability decision',
+          );
+        }
         yield* transaction
           .insert(legalBasisAssignments)
           .values({
@@ -687,7 +1868,7 @@ const makeRepository = (
           evidenceArtifactRef: input.evidenceArtifactRef,
           language: input.language,
           noticeRef: {
-            moduleId: 'privacy.core',
+            moduleId: PRIVACY_MODULE_ID,
             resourceId: noticeId,
             resourceType: 'privacy.core.privacy-notice-version',
             tenantId,
@@ -790,8 +1971,19 @@ const makeRepository = (
       },
     ),
     enqueueRetentionEvaluation: Effect.fn('PrivacyOperationPostgresRepository.enqueueRetentionEvaluation')(
-      function* enqueueRetentionEffect(tenantId, legalEntityId, _actionInvocationId, work) {
+      function* enqueueRetentionEffect(tenantId, legalEntityId, _actionInvocationId, request) {
         yield* assertScope(tenantId, legalEntityId);
+        const rule = yield* resolveRetentionRuleForEvaluation(
+          tenantId,
+          legalEntityId,
+          request.ruleRef,
+          request.ruleVersion,
+        );
+        const preparation = prepareRetentionEvaluationWork(rule, request);
+        if (!preparation.valid) {
+          return yield* conflict(preparation.reasons.join('; '));
+        }
+        const { work } = preparation;
         const existing = yield* transaction
           .select({ record: retentionEvaluationWork.workRecord })
           .from(retentionEvaluationWork)
@@ -830,9 +2022,15 @@ const makeRepository = (
       },
     ),
     getDsrCase,
+    getPrivacyMeasureHandoff,
     issueDeliveryAccess: Effect.fn('PrivacyOperationPostgresRepository.issueDeliveryAccess')(
-      function* issueDeliveryAccessEffect(tenantId, legalEntityId, actionInvocationId, access) {
+      function* issueDeliveryAccessEffect(tenantId, legalEntityId, actionInvocationId, authorityResult) {
         yield* assertScope(tenantId, legalEntityId);
+        const access = materializeDsrDeliveryAccess(authorityResult);
+        if (!dsrDeliveryAccessAuthorityMatches(authorityResult, access, actionInvocationId, tenantId, legalEntityId)) {
+          return yield* conflict('DSR Delivery Access authority provenance is incomplete or mismatched');
+        }
+        yield* requireOpenDsrCase(tenantId, legalEntityId, access.caseRef);
         const existing = yield* transaction
           .select({
             accessId: dsrDeliveryAccess.accessId,
@@ -847,39 +2045,9 @@ const makeRepository = (
             ),
           )
           .pipe(Effect.mapError((cause) => persistenceFailure('DSR Delivery Access could not be loaded', cause)));
-        // oxlint-disable-next-line effect-native/no-imperative-loop-in-effect-gen -- Reissue must revoke prior grants serially and return early on an exact idempotent replay; expires: 2027-03-31.
-        for (const row of existing) {
-          const current = yield* decode(DsrDeliveryAccessSchema, row.record, 'DSR Delivery Access');
-          if (current.idempotencyKey === access.idempotencyKey) {
-            return Schema.toEquivalence(DsrDeliveryAccessSchema)(current, access)
-              ? current
-              : yield* conflict('DSR Delivery Access idempotency conflict');
-          }
-          if (current.revokedAt === null) {
-            const revokedAt = access.issuedAt;
-            const revoked: DsrDeliveryAccess = {
-              ...current,
-              revocationReason: `superseded-by:${access.accessId}`,
-              revokedAt,
-            };
-            yield* transaction
-              .update(dsrDeliveryAccess)
-              .set({
-                accessRecord: encode(DsrDeliveryAccessSchema, revoked),
-                revokedAt: date(revokedAt),
-                updatedAt: date(revokedAt),
-              })
-              .where(
-                and(
-                  eq(dsrDeliveryAccess.tenantId, tenantId),
-                  eq(dsrDeliveryAccess.legalEntityId, legalEntityId),
-                  eq(dsrDeliveryAccess.accessId, row.accessId),
-                ),
-              )
-              .pipe(
-                Effect.mapError((cause) => persistenceFailure('Prior delivery access could not be revoked', cause)),
-              );
-          }
+        const replay = yield* reconcileExistingDsrDeliveryAccess(tenantId, legalEntityId, access, existing);
+        if (Option.isSome(replay)) {
+          return replay.value;
         }
         yield* transaction
           .insert(dsrDeliveryAccess)
@@ -935,8 +2103,22 @@ const makeRepository = (
       },
     ),
     recordAntiResurrectionProtection: Effect.fn('PrivacyOperationPostgresRepository.recordAntiResurrectionProtection')(
-      function* recordProtectionEffect(tenantId, legalEntityId, _actionInvocationId, protection) {
-        yield* assertScope(tenantId, legalEntityId);
+      function* recordProtectionEffect(
+        tenantId,
+        legalEntityId,
+        _actionInvocationId,
+        request,
+        authority,
+        enforcementReceipt,
+      ) {
+        const handoff = yield* resolveValidatedOwnerExecutionHandoff(tenantId, legalEntityId, request, authority);
+        const protection = yield* createAntiResurrectionProtection({
+          authority,
+          enforcementReceipt,
+          handoff,
+          protectedAt: DateTime.formatIso(yield* DateTime.now),
+          protectionId: randomUUID(),
+        }).pipe(Effect.mapError(({ reason }) => conflict(reason)));
         yield* transaction
           .insert(antiResurrectionProtections)
           .values({
@@ -957,6 +2139,16 @@ const makeRepository = (
     recordApplicability: Effect.fn('PrivacyOperationPostgresRepository.recordApplicability')(
       function* recordApplicabilityEffect(tenantId, legalEntityId, actionInvocationId, decisionId, decision) {
         yield* assertScope(tenantId, legalEntityId);
+        const { authority } = decision;
+        if (
+          authority === undefined ||
+          authority.tenantId !== tenantId ||
+          authority.controllerRef.tenantId !== tenantId ||
+          authority.purposeRef.tenantId !== tenantId ||
+          authority.purposeVersionRef.tenantId !== tenantId
+        ) {
+          return yield* conflict('Applicability Decision requires trusted tenant-bound typed authority references');
+        }
         yield* transaction
           .insert(applicabilityDecisions)
           .values({
@@ -1037,54 +2229,12 @@ const makeRepository = (
             ? previous
             : yield* conflict('Consent Action invocation was replayed with a different decision');
         }
-        const purposeRows = yield* transaction
-          .select({ meaning: purposeVersions.meaning })
-          .from(purposeVersions)
-          .innerJoin(
-            processingPurposes,
-            and(
-              eq(processingPurposes.tenantId, purposeVersions.tenantId),
-              eq(processingPurposes.legalEntityId, purposeVersions.legalEntityId),
-              eq(processingPurposes.processingPurposeId, purposeVersions.processingPurposeId),
-            ),
-          )
-          .where(
-            and(
-              eq(purposeVersions.tenantId, tenantId),
-              eq(purposeVersions.legalEntityId, legalEntityId),
-              eq(purposeVersions.purposeVersionId, decision.scope.purposeVersionRef),
-              eq(processingPurposes.processingPurposeId, decision.scope.processingPurposeRef.resourceId),
-            ),
-          )
-          .limit(1)
-          .pipe(Effect.mapError((cause) => persistenceFailure('Consent Purpose Version could not be resolved', cause)));
-        if (purposeRows.at(0)?.meaning !== decision.scope.purposeMeaning) {
-          return yield* notFound('Consent scope does not match a retained Purpose Version');
-        }
-        const provisionRows = yield* transaction
-          .select({ record: noticeProvisions.provisionRecord })
-          .from(noticeProvisions)
-          .where(and(eq(noticeProvisions.tenantId, tenantId), eq(noticeProvisions.legalEntityId, legalEntityId)))
-          .pipe(
-            Effect.mapError((cause) => persistenceFailure('Notice provision evidence could not be resolved', cause)),
-          );
-        const provisions = yield* decodeAll(
-          PrivacyNoticeProvisionSchema,
-          provisionRows.map(({ record }) => record),
-          'Notice Provision',
-        );
-        const validNoticeEvidence = decision.noticeEvidenceRefs.every((evidenceRef) =>
-          provisions.some(
-            (provision) =>
-              (provision.provisionId === evidenceRef || provision.evidenceRef === evidenceRef) &&
-              isProofOfProvision(provision.outcome) &&
-              provision.privacySubjectRef === decision.scope.privacySubjectRef.resourceId &&
-              provision.processingPurposeRef === decision.scope.processingPurposeRef.resourceId,
-          ),
-        );
+        yield* requireConsentPurpose(tenantId, legalEntityId, decision);
+        yield* requireConsentSubject(tenantId, legalEntityId, decision);
+        const validNoticeEvidence = yield* consentNoticeEvidenceIsValid(tenantId, legalEntityId, decision);
         if (!validNoticeEvidence) {
           return yield* notFound(
-            'Consent Decision notice evidence is not authoritative for the exact subject and purpose',
+            'Consent Decision notice evidence is not authoritative for the exact subject, controller, purpose version, scope, dimensions, language, and interaction',
           );
         }
         yield* transaction
@@ -1106,8 +2256,28 @@ const makeRepository = (
       },
     ),
     recordDispositionDecision: Effect.fn('PrivacyOperationPostgresRepository.recordDispositionDecision')(
-      function* recordDispositionEffect(tenantId, legalEntityId, _actionInvocationId, decision) {
+      function* recordDispositionEffect(tenantId, legalEntityId, _actionInvocationId, authority) {
         yield* assertScope(tenantId, legalEntityId);
+        const gateAsOf = DateTime.formatIso(yield* DateTime.now);
+        const { decision } = authority;
+        const evaluation = yield* resolveRetentionEvaluation(tenantId, legalEntityId, decision.evaluationRef, gateAsOf);
+        const authorityError = validateDispositionDecisionAuthorityResult(
+          {
+            decisionRef: decision.decisionRef,
+            evaluationRef: decision.evaluationRef,
+          },
+          authority,
+          evaluation,
+          decision.actorPrincipalRef,
+          tenantId,
+          legalEntityId,
+          authority.asOf,
+        );
+        if (authorityError !== undefined || authority.asOf > gateAsOf) {
+          return yield* conflict(
+            authorityError ?? 'Retention Disposition governance is from the future and cannot be persisted',
+          );
+        }
         yield* transaction
           .insert(dispositionDecisions)
           .values({
@@ -1127,11 +2297,11 @@ const makeRepository = (
     recordDsrDeadline: Effect.fn('PrivacyOperationPostgresRepository.recordDsrDeadline')(
       function* recordDsrDeadlineEffect(tenantId, legalEntityId, actionInvocationId, deadline) {
         yield* assertScope(tenantId, legalEntityId);
-        const caseRecord = yield* requireDsrCase(tenantId, legalEntityId, deadline.caseRef);
+        const caseRecord = yield* requireOpenDsrCase(tenantId, legalEntityId, deadline.caseRef);
         const obligation = caseRecord.controllerObligations.find(
           ({ controllerRef }) => controllerRef === deadline.controllerRef,
         );
-        if (obligation === undefined || obligation.receivedAt !== deadline.receivedAt) {
+        if (obligation === undefined || !arePrivacyInstantsEqual(obligation.receivedAt, deadline.receivedAt)) {
           return yield* conflict('DSR Deadline must preserve the matching Controller obligation receipt time');
         }
         const replayRows = yield* transaction
@@ -1171,53 +2341,13 @@ const makeRepository = (
     recordDsrDeliveryEvidence: Effect.fn('PrivacyOperationPostgresRepository.recordDsrDeliveryEvidence')(
       function* recordDsrDeliveryEvidenceEffect(tenantId, legalEntityId, actionInvocationId, evidence) {
         yield* assertScope(tenantId, legalEntityId);
-        const accessRows = yield* transaction
-          .select({ record: dsrDeliveryAccess.accessRecord })
-          .from(dsrDeliveryAccess)
-          .where(
-            and(
-              eq(dsrDeliveryAccess.tenantId, tenantId),
-              eq(dsrDeliveryAccess.legalEntityId, legalEntityId),
-              eq(dsrDeliveryAccess.accessId, evidence.accessId),
-            ),
-          )
-          .limit(1)
-          .pipe(Effect.mapError((cause) => persistenceFailure('DSR Delivery Access could not be loaded', cause)));
-        const accessRow = accessRows.at(0);
-        if (accessRow === undefined) {
-          return yield* notFound('DSR Delivery Evidence Access was not found');
-        }
-        const access = yield* decode(DsrDeliveryAccessSchema, accessRow.record, 'DSR Delivery Access');
-        const accessScopeRefs = new Set(access.deliveryScopeRefs);
-        if (
-          access.deliveryOutputRef !== evidence.deliveryOutputRef ||
-          access.deliveryOutputRevision !== evidence.deliveryOutputRevision ||
-          access.channel !== evidence.channel ||
-          access.recipientRef !== evidence.recipientRef ||
-          access.representationRef !== evidence.representationRef ||
-          !evidence.deliveryScopeRefs.every((scopeRef) => accessScopeRefs.has(scopeRef))
-        ) {
-          return yield* conflict('DSR Delivery Evidence does not match the issued scoped access');
-        }
-        const replayRows = yield* transaction
-          .select({ record: dsrDeliveryEvidence.evidenceRecord })
-          .from(dsrDeliveryEvidence)
-          .where(
-            and(
-              eq(dsrDeliveryEvidence.tenantId, tenantId),
-              eq(dsrDeliveryEvidence.legalEntityId, legalEntityId),
-              eq(dsrDeliveryEvidence.actionInvocationId, actionInvocationId),
-            ),
-          )
-          .limit(1)
-          .pipe(
-            Effect.mapError((cause) => persistenceFailure('DSR Delivery Evidence replay could not be resolved', cause)),
-          );
-        const replay = replayRows.at(0);
+        const caseRecord = yield* requireDsrDeliveryEvidenceCase(tenantId, legalEntityId, evidence);
+        const access = yield* loadDsrDeliveryAccess(tenantId, legalEntityId, evidence.accessId);
+        yield* validateDsrDeliveryEvidenceAccess(caseRecord, access, evidence);
+        const replay = yield* loadDsrDeliveryEvidenceReplay(tenantId, legalEntityId, actionInvocationId);
         if (replay !== undefined) {
-          const retained = yield* decode(DsrDeliveryEvidenceSchema, replay.record, 'DSR Delivery Evidence');
-          return deliveryEvidenceEquivalent(retained, evidence)
-            ? retained
+          return deliveryEvidenceEquivalent(replay, evidence)
+            ? replay
             : yield* conflict('DSR Delivery Evidence Action invocation was replayed with different input');
         }
         yield* transaction
@@ -1240,16 +2370,83 @@ const makeRepository = (
     ),
     recordDsrResponse: Effect.fn('PrivacyOperationPostgresRepository.recordDsrResponse')(
       // fallow-ignore-next-line complexity -- A DSR response is accepted only after every workflow, decision, owner-task, and replay invariant is checked atomically.
-      function* recordDsrResponseEffect(tenantId, legalEntityId, actionInvocationId, response) {
+      function* recordDsrResponseEffect(tenantId, legalEntityId, actionInvocationId, responseRequest, ownerInventory) {
         yield* assertScope(tenantId, legalEntityId);
-        const caseRecord = yield* requireDsrCase(tenantId, legalEntityId, response.caseRef);
+        const response = materializeDsrResponse(responseRequest, DateTime.formatIso(yield* DateTime.now));
+        const caseRecord = yield* requireOpenDsrCase(tenantId, legalEntityId, response.caseRef);
         const workflow = yield* listDsrWorkflow(tenantId, legalEntityId, response.caseRef);
-        const decisionRefs = new Set(workflow.decisions.map(({ decisionRef }) => decisionRef));
-        if (!response.decisionRefs.every((decisionRef) => decisionRefs.has(decisionRef))) {
-          return yield* conflict('DSR Response references a decision outside the Case workflow');
+        if (response.final) {
+          const [laterDecisionRows, laterTaskRows, laterEvidenceRows] = yield* Effect.all(
+            [
+              transaction
+                .select({ decidedAt: dsrSubstantiveDecisions.decidedAt })
+                .from(dsrSubstantiveDecisions)
+                .where(
+                  and(
+                    eq(dsrSubstantiveDecisions.tenantId, tenantId),
+                    eq(dsrSubstantiveDecisions.legalEntityId, legalEntityId),
+                    eq(dsrSubstantiveDecisions.caseRef, response.caseRef),
+                  ),
+                ),
+              transaction
+                .select({ updatedAt: dsrOwnerTasks.updatedAt })
+                .from(dsrOwnerTasks)
+                .where(
+                  and(
+                    eq(dsrOwnerTasks.tenantId, tenantId),
+                    eq(dsrOwnerTasks.legalEntityId, legalEntityId),
+                    eq(dsrOwnerTasks.caseRef, response.caseRef),
+                  ),
+                ),
+              transaction
+                .select({ record: dsrDeliveryEvidence.evidenceRecord })
+                .from(dsrDeliveryEvidence)
+                .where(
+                  and(eq(dsrDeliveryEvidence.tenantId, tenantId), eq(dsrDeliveryEvidence.legalEntityId, legalEntityId)),
+                ),
+            ],
+            { concurrency: 1 },
+          ).pipe(
+            Effect.mapError((cause) =>
+              persistenceFailure('DSR final response currentness could not be resolved', cause),
+            ),
+          );
+          const laterEvidence = yield* decodeAll(
+            DsrDeliveryEvidenceSchema,
+            laterEvidenceRows.map(({ record }) => record),
+            DSR_DELIVERY_EVIDENCE_LABEL,
+          );
+          if (
+            laterDecisionRows.some(({ decidedAt }) =>
+              isPrivacyInstantAfter(DateTime.formatIso(DateTime.fromDateUnsafe(decidedAt)), response.createdAt),
+            ) ||
+            laterTaskRows.some(({ updatedAt }) =>
+              isPrivacyInstantAfter(DateTime.formatIso(DateTime.fromDateUnsafe(updatedAt)), response.createdAt),
+            ) ||
+            laterEvidence.some((evidence) => isDsrDeliveryEvidenceNewerThanResponse(response, evidence))
+          ) {
+            return yield* conflict(
+              'DSR final response is stale after a later trusted decision, owner task, or delivery evidence',
+            );
+          }
         }
         if (response.final && Option.isNone(response.deliveryEvidenceRef)) {
           return yield* conflict('A final DSR Response requires delivery evidence');
+        }
+        if (ownerInventory === undefined) {
+          return yield* conflict('Every DSR Response requires an authoritative Owner Inventory');
+        }
+        {
+          const inventoryError = validateDsrOwnerInventoryAuthorityScope(
+            ownerInventory,
+            response.caseRef,
+            tenantId,
+            legalEntityId,
+            response.createdAt,
+          );
+          if (inventoryError !== undefined) {
+            return yield* conflict(inventoryError);
+          }
         }
         let deliveryEvidence: DsrDeliveryEvidence | undefined;
         if (Option.isSome(response.deliveryEvidenceRef)) {
@@ -1269,15 +2466,31 @@ const makeRepository = (
           if (evidenceRow === undefined) {
             return yield* notFound('DSR Response delivery evidence was not found');
           }
-          const evidence = yield* decode(DsrDeliveryEvidenceSchema, evidenceRow.record, 'DSR Delivery Evidence');
+          const evidence = yield* decode(DsrDeliveryEvidenceSchema, evidenceRow.record, DSR_DELIVERY_EVIDENCE_LABEL);
           deliveryEvidence = evidence;
-          const deliveredScopeRefs = new Set(evidence.deliveryScopeRefs);
-          if (
-            !isSuccessfulDelivery(evidence) ||
-            !response.scopeRefs.every((scopeRef) => deliveredScopeRefs.has(scopeRef))
-          ) {
+          if (!isSuccessfulDelivery(evidence) || !sameDsrReferenceSet(response.scopeRefs, evidence.deliveryScopeRefs)) {
             return yield* conflict('DSR Response requires successful delivery evidence for every response scope');
           }
+        }
+        const responseCoverageError =
+          deliveryEvidence === undefined
+            ? validateDsrResponseCoverage({
+                caseRecord,
+                decisions: workflow.decisions,
+                ownerInventory,
+                response,
+                tasks: workflow.tasks,
+              })
+            : validateDsrResponseCoverage({
+                caseRecord,
+                decisions: workflow.decisions,
+                deliveryEvidence,
+                ownerInventory,
+                response,
+                tasks: workflow.tasks,
+              });
+        if (responseCoverageError !== undefined) {
+          return yield* conflict(responseCoverageError);
         }
         if (
           response.final &&
@@ -1286,6 +2499,7 @@ const makeRepository = (
               caseRecord,
               decisions: workflow.decisions,
               deliveryEvidence,
+              ownerInventory,
               response,
               tasks: workflow.tasks,
             }))
@@ -1330,12 +2544,34 @@ const makeRepository = (
       },
     ),
     recordDsrSubstantiveDecision: Effect.fn('PrivacyOperationPostgresRepository.recordDsrSubstantiveDecision')(
-      function* recordDsrSubstantiveDecisionEffect(tenantId, legalEntityId, actionInvocationId, decision) {
+      function* recordDsrSubstantiveDecisionEffect(tenantId, legalEntityId, actionInvocationId, authority) {
         yield* assertScope(tenantId, legalEntityId);
-        const caseRecord = yield* requireDsrCase(tenantId, legalEntityId, decision.caseRef);
+        const gateAsOf = DateTime.formatIso(yield* DateTime.now);
+        const { decision } = authority;
+        const authorityError = validateDsrSubstantiveDecisionAuthorityResult(
+          {
+            caseRef: decision.caseRef,
+            controllerRef: decision.controllerRef,
+            decisionRef: decision.decisionRef,
+            exactScopeRefs: decision.exactScopeRefs,
+            right: decision.right,
+          },
+          authority,
+          tenantId,
+          legalEntityId,
+          authority.asOf,
+        );
+        if (authorityError !== undefined || !isPrivacyInstantAtOrBefore(authority.asOf, gateAsOf)) {
+          return yield* conflict(
+            authorityError ?? 'DSR substantive decision authority is from the future and cannot be persisted',
+          );
+        }
+        const caseRecord = yield* requireOpenDsrCase(tenantId, legalEntityId, decision.caseRef);
         const matches = caseRecord.controllerObligations.some(
           (obligation) =>
-            obligation.controllerRef === decision.controllerRef && obligation.requestedRights.includes(decision.right),
+            obligation.controllerRef === decision.controllerRef &&
+            obligation.requestedRights.includes(decision.right) &&
+            sameDsrExactScopeRefs(decision.exactScopeRefs, obligation.exactScopeRefs),
         );
         if (!matches) {
           return yield* conflict('DSR Decision does not match a requested Controller-and-right obligation');
@@ -1380,7 +2616,7 @@ const makeRepository = (
     recordDsrVerification: Effect.fn('PrivacyOperationPostgresRepository.recordDsrVerification')(
       function* recordDsrVerificationEffect(tenantId, legalEntityId, actionInvocationId, verification) {
         yield* assertScope(tenantId, legalEntityId);
-        yield* requireDsrCase(tenantId, legalEntityId, verification.caseRef);
+        yield* requireOpenDsrCase(tenantId, legalEntityId, verification.caseRef);
         const replayRows = yield* transaction
           .select({ record: dsrVerifications.verificationRecord })
           .from(dsrVerifications)
@@ -1596,34 +2832,9 @@ const makeRepository = (
       },
     ),
     recordOwnerOutcome: Effect.fn('PrivacyOperationPostgresRepository.recordOwnerOutcome')(
-      function* recordOwnerOutcomeEffect(tenantId, legalEntityId, _actionInvocationId, outcome) {
-        yield* assertScope(tenantId, legalEntityId);
-        const dispatch = yield* transaction
-          .select({ record: privacyMeasureDispatches.handoffRecord })
-          .from(privacyMeasureDispatches)
-          .where(
-            and(
-              eq(privacyMeasureDispatches.tenantId, tenantId),
-              eq(privacyMeasureDispatches.legalEntityId, legalEntityId),
-              eq(privacyMeasureDispatches.measureId, outcome.measureId),
-            ),
-          )
-          .limit(1)
-          .pipe(Effect.mapError((cause) => persistenceFailure('Privacy Measure could not be loaded', cause)));
-        const dispatchRow = dispatch.at(0);
-        if (dispatchRow === undefined) {
-          return yield* notFound('Privacy Measure dispatch was not found');
-        }
-        const handoff = yield* decode(PrivacyMeasureHandoffSchema, dispatchRow.record, 'Privacy Measure Handoff');
-        if (
-          handoff.idempotencyKey !== outcome.idempotencyKey ||
-          handoff.owningCapability !== outcome.owningCapability ||
-          handoff.sourceDecisionRef !== outcome.sourceDecisionRef ||
-          handoff.sourceDecisionRevision !== outcome.sourceDecisionRevision ||
-          handoff.taskId !== outcome.taskId
-        ) {
-          return yield* conflict('Owner outcome does not match the dispatched Privacy Measure');
-        }
+      function* recordOwnerOutcomeEffect(tenantId, legalEntityId, _actionInvocationId, request, authority) {
+        yield* resolveValidatedOwnerExecutionHandoff(tenantId, legalEntityId, request, authority);
+        const { outcome } = authority;
         yield* transaction
           .insert(ownerExecutionOutcomes)
           .values({
@@ -1652,10 +2863,19 @@ const makeRepository = (
       },
     ),
     recordProcessingIntervention: Effect.fn('PrivacyOperationPostgresRepository.recordProcessingIntervention')(
-      function* recordProcessingInterventionEffect(tenantId, legalEntityId, actionInvocationId, intervention) {
+      function* recordProcessingInterventionEffect(
+        tenantId,
+        legalEntityId,
+        actionInvocationId,
+        authorityResult: ProcessingInterventionAuthorityResult,
+      ) {
         yield* assertScope(tenantId, legalEntityId);
-        if (!intervention.currentness.authoritative) {
+        const { intervention } = authorityResult;
+        if (!processingInterventionAuthorityMatches(authorityResult, actionInvocationId, tenantId, legalEntityId)) {
           return yield* conflict('Processing Intervention must come from an authoritative source');
+        }
+        if (authorityResult.asOf < intervention.currentness.observedAt || authorityResult.receiptRef.length === 0) {
+          return yield* conflict('Processing Intervention authority receipt does not match its materialized state');
         }
         const replayRows = yield* transaction
           .select({ record: processingInterventions.interventionRecord })
@@ -1784,13 +3004,44 @@ const makeRepository = (
         return exception;
       },
     ),
+    resolveDsrDeadlinePolicy: Effect.fn('PrivacyOperationPostgresRepository.resolveDsrDeadlinePolicy')(
+      function* resolveDsrDeadlinePolicyEffect(tenantId, legalEntityId, _controllerRef, _receivedAt) {
+        yield* assertScope(tenantId, legalEntityId);
+        // No versioned Controller-policy catalog exists in this deployment yet. A
+        // process-wide default would turn an unproven legal deadline into a fact, so
+        // production remains explicitly fail-closed until the authoritative catalog
+        // is available behind this repository port.
+        return yield* failure(
+          'privacy_operation_persistence_unavailable',
+          'No authoritative versioned DSR deadline policy is configured',
+        );
+      },
+    ),
     resolveEligibilityInputs: Effect.fn('PrivacyOperationPostgresRepository.resolveEligibilityInputs')(
       // fallow-ignore-next-line complexity -- Eligibility resolution atomically reconciles all independently versioned evidence streams before returning a decision input.
-      function* resolveEligibilityInputsEffect(tenantId, legalEntityId, intendedScope, applicabilityScope, asOf) {
+      function* resolveEligibilityInputsEffect(tenantId, legalEntityId, intendedScope, asOf, authority) {
         yield* assertScope(tenantId, legalEntityId);
-        const [applicabilityHistory, basisHistory, consentResolution, interventionRows] = yield* Effect.all(
+        const authorityResult = yield* decode(
+          PrivacyApplicabilityEligibilityAuthorityResultSchema,
+          authority,
+          'Applicability Eligibility Authority',
+        );
+        const [applicabilityRows, basisHistory, consentResolution, interventionRows] = yield* Effect.all(
           [
-            listApplicabilityDecisions(tenantId, legalEntityId),
+            transaction
+              .select({ decisionId: applicabilityDecisions.decisionId, record: applicabilityDecisions.decisionRecord })
+              .from(applicabilityDecisions)
+              .where(
+                and(
+                  eq(applicabilityDecisions.tenantId, tenantId),
+                  eq(applicabilityDecisions.legalEntityId, legalEntityId),
+                  eq(applicabilityDecisions.decisionId, authorityResult.decisionRef),
+                ),
+              )
+              .limit(1)
+              .pipe(
+                Effect.mapError((cause) => persistenceFailure('Applicability Decision could not be resolved', cause)),
+              ),
             listLegalBasisAssignments(tenantId, legalEntityId),
             makeRepository(transaction, trustedScope).readCurrentConsent(
               tenantId,
@@ -1819,32 +3070,41 @@ const makeRepository = (
           interventionRows.map(({ record }) => record),
           'Processing Intervention',
         );
-
-        const matchingApplicability = applicabilityHistory
-          .filter(
-            (decision) =>
-              decision.evaluatedAt <= asOf &&
-              decision.evaluatedScope.operation === applicabilityScope.operation &&
-              decision.evaluatedScope.processingScopeRef.scopeId === applicabilityScope.processingScopeRef.scopeId &&
-              decision.evaluatedScope.processingScopeRef.scopeType === applicabilityScope.processingScopeRef.scopeType,
-          )
-          .toSorted((left, right) => right.evaluatedAt.localeCompare(left.evaluatedAt));
-        const applicability = matchingApplicability.at(0) ?? null;
-        const applicabilityConflict =
-          applicability !== null &&
-          matchingApplicability.filter(({ evaluatedAt }) => evaluatedAt === applicability.evaluatedAt).length > 1;
-        let applicabilityCurrentness: PrivacyInputCurrentness | null = null;
-        if (applicability !== null) {
-          applicabilityCurrentness = applicabilityConflict
-            ? unavailableCurrentness(asOf, 'conflict', 'privacy.core.applicability-decisions')
-            : authoritativeCurrentness(
-                applicability.evaluatedAt,
-                applicability.policyIdentities
-                  .map(({ policyKey, policyVersion }) => `${policyKey}:${policyVersion}`)
-                  .join(','),
-                'privacy.core.applicability-decisions',
-              );
+        const applicabilityRow = applicabilityRows.at(0);
+        if (applicabilityRow === undefined) {
+          return yield* notFound('Applicability Decision confirmed by authority was not found');
         }
+        const persistedApplicability = yield* decode(
+          PrivacyApplicabilityDecisionSchema,
+          applicabilityRow.record,
+          'Applicability Decision',
+        );
+        const applicabilityAuthorityError = validatePrivacyApplicabilityEligibilityAuthorityResult({
+          asOf,
+          authorityResult,
+          decision: persistedApplicability,
+          decisionRef: applicabilityRow.decisionId,
+          intendedScope,
+          legalEntityId,
+          tenantId,
+        });
+        if (applicabilityAuthorityError !== undefined) {
+          return yield* conflict(applicabilityAuthorityError);
+        }
+        const applicability = authorityResult.decisionOutcome === 'APPLICABLE' ? persistedApplicability : null;
+        const applicabilityCurrentness =
+          authorityResult.decisionOutcome === 'APPLICABLE'
+            ? authoritativeCurrentness(
+                authorityResult.decisionEvaluatedAt,
+                authorityResult.decisionRef,
+                'privacy.core.applicability-authority',
+                authorityResult.validUntil,
+              )
+            : unavailableCurrentness(
+                asOf,
+                `authority_decision_${authorityResult.decisionOutcome.toLowerCase()}`,
+                authorityResult.receiptRef,
+              );
 
         const matchingBasis = basisHistory.filter(
           (assignment) =>
@@ -1895,6 +3155,18 @@ const makeRepository = (
             )
             .toSorted((left, right) => right.currentness.observedAt.localeCompare(left.currentness.observedAt));
           const current = matching.at(0);
+          const sameTime = matching.filter(
+            ({ currentness }) => currentness.observedAt === current?.currentness.observedAt,
+          );
+          if (sameTime.length > 1 || (current !== undefined && !current.currentness.authoritative)) {
+            return {
+              currentness: unavailableCurrentness(asOf, 'conflict', 'privacy.core.processing-interventions'),
+              interventionRef: `privacy-${kind.toLowerCase()}:unresolved:${intendedScope.processingScopeRef.scopeId}`,
+              kind,
+              scope: intendedScope,
+              status: 'ACTIVE' as const,
+            };
+          }
           if (current !== undefined) {
             return current;
           }
@@ -1968,14 +3240,16 @@ const makeRepository = (
           input: {
             applicability,
             applicabilityCurrentness,
-            applicabilityScope,
+            applicabilityScope: authorityResult.scope,
             asOf,
             consent,
             consentCurrentness,
             intendedScope,
             legalBasis,
+            legalEntityId,
             objection,
             restriction,
+            tenantId,
           },
           policyRevisions:
             applicability?.policyIdentities.map(({ policyKey, policyVersion }) => ({
@@ -1985,28 +3259,42 @@ const makeRepository = (
         };
       },
     ),
-    updateDsrCase: Effect.fn('PrivacyOperationPostgresRepository.updateDsrCase')(
-      function* updateDsrCaseEffect(tenantId, legalEntityId, _actionInvocationId, caseRecord, expectedUpdatedAt) {
+    resolveLegalHoldGovernance: Effect.fn('PrivacyOperationPostgresRepository.resolveLegalHoldGovernance')(
+      function* resolveLegalHoldGovernanceEffect(tenantId, legalEntityId, _actorPrincipalRef, _request) {
         yield* assertScope(tenantId, legalEntityId);
-        const existing = yield* requireDsrCase(tenantId, legalEntityId, caseRecord.caseRef);
-        if (
-          existing.originalReceivedAt !== caseRecord.originalReceivedAt ||
-          existing.createdAt !== caseRecord.createdAt
-        ) {
-          return yield* conflict('DSR Case intake timestamps are immutable');
-        }
-        if (['RESPONDED', 'CLOSED'].includes(caseRecord.status)) {
-          const workflow = yield* listDsrWorkflow(tenantId, legalEntityId, caseRecord.caseRef);
-          const finalResponse = workflow.responses.some(({ final }) => final);
-          if (!finalResponse || !canCloseDsrCase(caseRecord, workflow.decisions, workflow.tasks)) {
-            return yield* conflict('DSR Case cannot be responded or closed before every obligation is complete');
-          }
-        }
+        return yield* failure(
+          'privacy_operation_persistence_unavailable',
+          'Legal Hold governance authority is not configured for this deployment',
+        );
+      },
+    ),
+    resolveRetentionEvaluation,
+    resolveRetentionExceptionGovernance: Effect.fn(
+      'PrivacyOperationPostgresRepository.resolveRetentionExceptionGovernance',
+    )(function* resolveRetentionExceptionGovernanceEffect(tenantId, legalEntityId, _actorPrincipalRef, _request) {
+      yield* assertScope(tenantId, legalEntityId);
+      return yield* failure(
+        'privacy_operation_persistence_unavailable',
+        'Retention Exception governance authority is not configured for this deployment',
+      );
+    }),
+    updateDsrCase: Effect.fn('PrivacyOperationPostgresRepository.updateDsrCase')(
+      function* updateDsrCaseEffect(
+        tenantId,
+        legalEntityId,
+        _actionInvocationId,
+        mutation,
+        expectedUpdatedAt,
+        ownerInventory,
+      ) {
+        yield* assertScope(tenantId, legalEntityId);
+        const caseRecord = yield* validateDsrCaseUpdate(tenantId, legalEntityId, mutation, ownerInventory);
         const now = DateTime.toDateUtc(yield* DateTime.now);
         const predicate = and(
           eq(dsrCases.tenantId, tenantId),
           eq(dsrCases.legalEntityId, legalEntityId),
           eq(dsrCases.caseRef, caseRecord.caseRef),
+          ...(caseRecord.status === 'CLOSED' ? [] : [sql`${dsrCases.caseStatus} <> 'CLOSED'`]),
           ...(expectedUpdatedAt === null ? [] : [eq(dsrCases.updatedAt, date(expectedUpdatedAt))]),
         );
         const changed = yield* transaction
@@ -2029,98 +3317,38 @@ const makeRepository = (
       },
     ),
     upsertDsrOwnerTask: Effect.fn('PrivacyOperationPostgresRepository.upsertDsrOwnerTask')(
-      function* upsertDsrOwnerTaskEffect(tenantId, legalEntityId, actionInvocationId, task) {
+      function* upsertDsrOwnerTaskEffect(tenantId, legalEntityId, actionInvocationId, authority) {
         yield* assertScope(tenantId, legalEntityId);
-        const caseRecord = yield* requireDsrCase(tenantId, legalEntityId, task.caseRef);
-        if (
-          !caseRecord.controllerObligations.some(
-            (obligation) =>
-              obligation.controllerRef === task.controllerRef && obligation.requestedRights.includes(task.right),
-          )
-        ) {
-          return yield* conflict('DSR Owner Task does not match a requested Controller-and-right obligation');
-        }
-        const replayRows = yield* transaction
-          .select({ record: dsrOwnerTasks.taskRecord })
-          .from(dsrOwnerTasks)
-          .where(
-            and(
-              eq(dsrOwnerTasks.tenantId, tenantId),
-              eq(dsrOwnerTasks.legalEntityId, legalEntityId),
-              eq(dsrOwnerTasks.actionInvocationId, actionInvocationId),
-            ),
-          )
-          .limit(1)
-          .pipe(Effect.mapError((cause) => persistenceFailure('DSR Owner Task replay could not be resolved', cause)));
-        const replay = replayRows.at(0);
+        const { request, task } = yield* materializeAndValidateDsrOwnerTask(tenantId, legalEntityId, authority);
+        yield* requireDsrOwnerTaskObligation(tenantId, legalEntityId, task);
+        const replay = yield* loadDsrOwnerTaskReplay(tenantId, legalEntityId, actionInvocationId);
         if (replay !== undefined) {
           const retained = yield* decode(DsrOwnerTaskSchema, replay.record, DSR_OWNER_TASK_LABEL);
           return dsrTaskEquivalent(retained, task)
             ? retained
             : yield* conflict('DSR Owner Task Action invocation was replayed with different input');
         }
-        const currentRows = yield* transaction
-          .select({ record: dsrOwnerTasks.taskRecord })
-          .from(dsrOwnerTasks)
-          .where(
-            and(
-              eq(dsrOwnerTasks.tenantId, tenantId),
-              eq(dsrOwnerTasks.legalEntityId, legalEntityId),
-              eq(dsrOwnerTasks.taskId, task.taskRef),
-            ),
-          )
-          .limit(1)
-          .pipe(Effect.mapError((cause) => persistenceFailure('DSR Owner Task could not be loaded', cause)));
-        const currentRow = currentRows.at(0);
+        const currentRow = yield* loadCurrentDsrOwnerTask(tenantId, legalEntityId, request.taskRef);
         if (currentRow === undefined) {
-          yield* transaction
-            .insert(dsrOwnerTasks)
-            .values({
-              actionInvocationId,
-              caseRef: task.caseRef,
-              idempotencyKey: task.idempotencyKey,
-              legalEntityId,
-              owningCapability: task.ownerModuleId,
-              status: task.status,
-              taskId: task.taskRef,
-              taskRecord: encode(DsrOwnerTaskSchema, task),
-              tenantId,
-            })
-            .pipe(Effect.mapError((cause) => persistenceFailure('DSR Owner Task could not be recorded', cause)));
-          return task;
+          return yield* insertDsrOwnerTask(tenantId, legalEntityId, actionInvocationId, task);
         }
-        const current = yield* decode(DsrOwnerTaskSchema, currentRow.record, DSR_OWNER_TASK_LABEL);
-        if (
-          current.idempotencyKey !== task.idempotencyKey ||
-          current.caseRef !== task.caseRef ||
-          current.controllerRef !== task.controllerRef ||
-          current.ownerModuleId !== task.ownerModuleId ||
-          current.right !== task.right
-        ) {
-          return yield* conflict('DSR Owner Task immutable identity changed');
-        }
-        yield* transaction
-          .update(dsrOwnerTasks)
-          .set({
-            actionInvocationId,
-            status: task.status,
-            taskRecord: encode(DsrOwnerTaskSchema, task),
-            updatedAt: DateTime.toDateUtc(yield* DateTime.now),
-          })
-          .where(
-            and(
-              eq(dsrOwnerTasks.tenantId, tenantId),
-              eq(dsrOwnerTasks.legalEntityId, legalEntityId),
-              eq(dsrOwnerTasks.taskId, task.taskRef),
-            ),
-          )
-          .pipe(Effect.mapError((cause) => persistenceFailure('DSR Owner Task could not be updated', cause)));
-        return task;
+        return yield* updateDsrOwnerTask(tenantId, legalEntityId, actionInvocationId, currentRow, task);
       },
     ),
     upsertRetentionRule: Effect.fn('PrivacyOperationPostgresRepository.upsertRetentionRule')(
-      function* upsertRetentionRuleEffect(tenantId, legalEntityId, actionInvocationId, rule) {
+      function* upsertRetentionRuleEffect(tenantId, legalEntityId, actionInvocationId, resolution) {
         yield* assertScope(tenantId, legalEntityId);
+        const { rule } = resolution;
+        const gateAsOf = DateTime.formatIso(yield* DateTime.now);
+        if (
+          resolution.status !== 'CURRENT' ||
+          resolution.tenantId !== tenantId ||
+          resolution.legalEntityId !== legalEntityId ||
+          resolution.asOf > gateAsOf ||
+          !validatePrivacyRetentionRuleVersion(rule).valid
+        ) {
+          return yield* conflict('Retention Rule persistence requires an exact current trusted governance result');
+        }
         const rows = yield* transaction
           .select({ ruleVersion: retentionRules.ruleVersion })
           .from(retentionRules)

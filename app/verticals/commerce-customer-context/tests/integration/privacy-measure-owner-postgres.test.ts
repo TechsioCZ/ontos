@@ -7,9 +7,11 @@ import type { PrivacyMeasureHandoff } from '@app/privacy/domain/privacy-measure-
 import { eq, sql } from 'drizzle-orm';
 import { DateTime, Effect, Option } from 'effect';
 import { expect, it } from 'effect-rstest';
-import { Pool } from 'pg';
-
-import { makeTestDatabaseFromPool } from '../../../../packages/core-runtime/tests/support/database.ts';
+import {
+  acquireTestPool,
+  makeTestDatabaseFromPool,
+  privacyMeasureDeferredCases,
+} from '../../../../packages/core-runtime/tests/support/database.ts';
 import {
   commerceCustomerContextRelations,
   customerProfileLifecycleHistory,
@@ -25,28 +27,22 @@ const profileId = 'f4000000-0000-4000-8000-000000000004';
 const firstInvocationId = 'f5000000-0000-4000-8000-000000000005';
 const replayInvocationId = 'f5000000-0000-4000-8000-000000000006';
 
-const pool = (connectionString: string) =>
-  Effect.acquireRelease(
-    Effect.sync(() => new Pool({ connectionString, max: 4 })),
-    (clientPool) => Effect.promise(() => clientPool.end()).pipe(Effect.orDie),
-  );
-
 const handoff: PrivacyMeasureHandoff = {
   contentScopeRefs: ['commerce.customer-context.customer-profile.lifecycle'],
   controllerObligationRef: 'obligation:commerce-owner-postgres',
-  dispositionDecision: null,
-  expectedEvidenceRefs: ['commerce.customer-context.customer-profile.suspended'],
+  dispositionDecision: 'RESTRICT',
+  expectedEvidenceRefs: ['commerce.customer-context.customer-profile.restricted'],
   idempotencyKey: 'commerce-owner-postgres:1',
   kind: 'RESTRICT',
   measureId: 'measure:commerce-owner-postgres',
   owningCapability: 'commerce.customer-context',
   preconditionRefs: ['decision:commerce-owner-postgres'],
   requestedAt: '2026-09-14T10:00:00.000Z',
-  requestedResult: 'SUSPENDED',
+  requestedResult: 'RESTRICTED',
   resourceRefs: [
     `commerce.customer-context|commerce.customer-context.retail-customer-profile|${legalEntityId}|${profileId}`,
   ],
-  right: 'OBJECTION',
+  right: null,
   sourceDecisionRef: 'decision:commerce-owner-postgres',
   sourceDecisionRevision: 1,
   subjectRef: 'subject:commerce-owner-postgres',
@@ -54,12 +50,12 @@ const handoff: PrivacyMeasureHandoff = {
   tenantId,
 };
 
-it.live('suspends an exact Customer Profile atomically with an immutable replayable owner receipt', () =>
+it.live('records unsupported Commerce measures without changing canonical lifecycle state', () =>
   Effect.scoped(
     Effect.gen(function* commercePrivacyMeasurePostgresAcceptance() {
       const connections = yield* loadDatabaseConnectionPair();
-      const adminPool = yield* pool(connections.admin.connectionString);
-      const runtimePool = yield* pool(connections.runtime.connectionString);
+      const adminPool = yield* acquireTestPool(connections.admin.connectionString);
+      const runtimePool = yield* acquireTestPool(connections.runtime.connectionString);
       const admin = yield* makeTestDatabaseFromPool(adminPool, commerceCustomerContextRelations);
       const runtime = yield* makeTestDatabaseFromPool(runtimePool, commerceCustomerContextRelations);
       const scope = {
@@ -96,6 +92,39 @@ it.live('suspends an exact Customer Profile atomically with an immutable replaya
             return yield* service.execute(input, actionInvocationId);
           }),
         );
+      const transitionLifecycle = (
+        targetState: 'ACTIVE' | 'SUSPENDED',
+        actionInvocationId: string,
+        expectedRevision: number,
+        expectedState: 'ACTIVE' | 'SUSPENDED',
+        effectiveAt: string,
+      ) =>
+        runtime.transaction((transaction) =>
+          Effect.gen(function* transitionInScope() {
+            yield* transaction.execute(
+              sql`select set_config('ontos.tenant_id', ${tenantId}, true), set_config('ontos.legal_entity_id', ${legalEntityId}, true)`,
+              'objects',
+            );
+            yield* transaction.execute(
+              sql`select * from commerce_customer_context.transition_profile(
+                ${tenantId}::uuid,
+                ${legalEntityId}::uuid,
+                ${profileId}::uuid,
+                'RETAIL',
+                ${expectedState},
+                ${expectedRevision},
+                ${targetState},
+                ${effectiveAt}::timestamptz,
+                ${`Owner-approved ${targetState.toLowerCase()} transition`},
+                true,
+                true,
+                ${actionInvocationId}::uuid,
+                ${principalId}::uuid
+              )`,
+              'objects',
+            );
+          }),
+        );
 
       yield* cleanup();
       yield* Effect.addFinalizer(() => cleanup().pipe(Effect.orDie));
@@ -119,13 +148,15 @@ it.live('suspends an exact Customer Profile atomically with an immutable replaya
 
       const first = yield* execute(firstInvocationId);
       const replay = yield* execute(replayInvocationId);
-      expect(first.status).toBe('SUCCEEDED');
+      expect(first.status).toBe('BUSINESS_REJECTED');
+      expect(first.includedResourceRefs).toEqual([]);
+      expect(first.remainingResourceRefs).toEqual(handoff.resourceRefs);
       expect(replay).toEqual(first);
       const [profile] = yield* admin
         .select({ lifecycle: customerProfiles.lifecycle, revision: customerProfiles.revision })
         .from(customerProfiles)
         .where(eq(customerProfiles.customerProfileId, profileId));
-      expect(profile).toEqual({ lifecycle: 'SUSPENDED', revision: 2 });
+      expect(profile).toEqual({ lifecycle: 'ACTIVE', revision: 1 });
       expect(
         yield* admin
           .select({ outcomeId: privacyMeasureExecutions.outcomeId })
@@ -137,7 +168,54 @@ it.live('suspends an exact Customer Profile atomically with an immutable replaya
           .select({ toLifecycle: customerProfileLifecycleHistory.toLifecycle })
           .from(customerProfileLifecycleHistory)
           .where(eq(customerProfileLifecycleHistory.tenantId, tenantId)),
-      ).toEqual([{ toLifecycle: 'ACTIVE' }, { toLifecycle: 'SUSPENDED' }]);
+      ).toEqual([{ toLifecycle: 'ACTIVE' }]);
+
+      const processingRestriction = yield* execute('e6000000-0000-4000-8000-000000000008', {
+        ...handoff,
+        dispositionDecision: null,
+        expectedEvidenceRefs: ['commerce.customer-context.customer-profile.processing-restricted'],
+        idempotencyKey: 'commerce-owner-postgres:processing-restriction',
+        measureId: 'measure:commerce-owner-postgres:processing-restriction',
+        requestedResult: 'SUSPENDED',
+        right: 'RESTRICTION',
+      });
+      expect(processingRestriction.status).toBe('BUSINESS_REJECTED');
+      expect(processingRestriction.includedResourceRefs).toEqual([]);
+      expect(processingRestriction.remainingResourceRefs).toEqual(handoff.resourceRefs);
+
+      for (const [index, measure] of privacyMeasureDeferredCases.entries()) {
+        const later = yield* execute(`f5100000-0000-4000-8000-${String(index + 1).padStart(12, '0')}`, {
+          ...handoff,
+          ...measure,
+          idempotencyKey: `commerce-owner-postgres:${measure.kind.toLowerCase()}`,
+          measureId: `measure:commerce-owner-postgres:${measure.kind.toLowerCase()}`,
+          requestedResult: `${measure.kind.toLowerCase()} deferred`,
+        });
+        expect(later.status).toBe('BUSINESS_REJECTED');
+        expect(later.includedResourceRefs).toEqual([]);
+        expect(later.remainingResourceRefs).toEqual(handoff.resourceRefs);
+      }
+
+      yield* transitionLifecycle(
+        'SUSPENDED',
+        'f5200000-0000-4000-8000-000000000001',
+        1,
+        'ACTIVE',
+        '2026-09-15T11:00:00.000Z',
+      );
+      yield* transitionLifecycle(
+        'ACTIVE',
+        'f5200000-0000-4000-8000-000000000002',
+        2,
+        'SUSPENDED',
+        '2026-09-15T12:00:00.000Z',
+      );
+      expect(
+        yield* admin
+          .select({ lifecycle: customerProfiles.lifecycle, revision: customerProfiles.revision })
+          .from(customerProfiles)
+          .where(eq(customerProfiles.customerProfileId, profileId)),
+      ).toEqual([{ lifecycle: 'ACTIVE', revision: 3 }]);
 
       const immutableFailure = yield* Effect.flip(
         admin

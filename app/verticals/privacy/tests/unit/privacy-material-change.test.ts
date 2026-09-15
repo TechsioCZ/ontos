@@ -9,6 +9,7 @@ const snapshot = {
   consentScopeKey: 'subject:1|controller:1|purpose:security:v1',
   controllerRef: 'controller:1',
   dataCategoryRefs: ['email'],
+  meaning: 'Protect accounts',
   processingScopeRef: 'scope:account-security',
   purposeRef: 'purpose:security',
   purposeVersionRef: 'purpose:security:v1',

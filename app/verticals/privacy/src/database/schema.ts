@@ -115,6 +115,9 @@ export const purposeVersions = privacySchema.table.withRLS(
     processingPurposeId: uuid('processing_purpose_id').notNull(),
     versionNumber: integer('version_number').notNull(),
     meaning: text('meaning').notNull(),
+    requiredConsentDimensions: jsonb('required_consent_dimensions').$type<readonly string[]>().default([]).notNull(),
+    materialChangeAssessment: jsonb('material_change_assessment'),
+    materialScope: jsonb('material_scope'),
     effectiveFrom: timestamp('effective_from', { withTimezone: true }).notNull(),
     effectiveTo: timestamp('effective_to', { withTimezone: true }),
     actionInvocationId: uuid('action_invocation_id').notNull(),
@@ -554,6 +557,40 @@ export const retentionExceptions = privacySchema.table.withRLS(
       table.recordedAt,
     ),
     check('privacy_retention_exceptions_period_ck', sql`${table.effectiveTo} > ${table.effectiveFrom}`),
+    check(
+      'privacy_retention_exceptions_governance_ck',
+      sql`jsonb_typeof(${table.exceptionRecord}) = 'object'
+        and ${table.exceptionRecord}->>'exceptionRef' = ${table.exceptionRef}
+        and ${table.exceptionRecord}->>'authorityKind' = 'EXCEPTION_AUTHORITY'
+        and char_length(coalesce(btrim(${table.exceptionRecord}->>'authorityRef'), '')) between 1 and 300
+        and char_length(coalesce(btrim(${table.exceptionRecord}->>'controllerRef'), '')) between 1 and 300
+        and char_length(coalesce(btrim(${table.exceptionRecord}->>'policyRef'), '')) between 1 and 300
+        and coalesce(${table.exceptionRecord}->>'policyVersion', '') ~ '^[1-9][0-9]*$'
+        and char_length(coalesce(btrim(${table.exceptionRecord}->>'provenanceRef'), '')) between 1 and 300
+        and char_length(coalesce(btrim(${table.exceptionRecord}->>'reasonTypeRef'), '')) between 1 and 300
+        and coalesce(${table.exceptionRecord}->>'reasonTypeVersion', '') ~ '^[1-9][0-9]*$'
+        and char_length(coalesce(btrim(${table.exceptionRecord}->>'reviewRef'), '')) between 1 and 300
+        and jsonb_typeof(${table.exceptionRecord}->'evidenceRefs') = 'array'
+        and jsonb_array_length(${table.exceptionRecord}->'evidenceRefs') > 0
+        and jsonb_typeof(${table.exceptionRecord}->'releaseEvidenceRefs') = 'array'
+        and ((${table.exceptionRecord}->>'releasedAt' is null and ${table.releasedAt} is null)
+          or (${table.exceptionRecord}->>'releasedAt' ~ '^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}(?:\\.[0-9]+)?Z$'
+            and ${table.releasedAt} is not null
+            and (${table.exceptionRecord}->>'releasedAt')::timestamptz = ${table.releasedAt}))
+        and ((${table.exceptionRecord}->>'releasedAt' is null
+          and ${table.exceptionRecord}->>'releaseRef' is null
+          and ${table.exceptionRecord}->>'releaseReasonRef' is null
+          and ${table.exceptionRecord}->>'releasedByPrincipalRef' is null
+          and jsonb_array_length(${table.exceptionRecord}->'releaseEvidenceRefs') = 0)
+          or (${table.exceptionRecord}->>'releasedAt' is not null
+            and char_length(coalesce(btrim(${table.exceptionRecord}->>'releaseConditionRef'), '')) between 1 and 300
+            and char_length(coalesce(btrim(${table.exceptionRecord}->>'releaseRef'), '')) between 1 and 300
+            and char_length(coalesce(btrim(${table.exceptionRecord}->>'releaseReasonRef'), '')) between 1 and 300
+            and char_length(coalesce(btrim(${table.exceptionRecord}->>'releasedByPrincipalRef'), '')) between 1 and 300
+            and jsonb_array_length(${table.exceptionRecord}->'releaseEvidenceRefs') > 0))
+        and ((${table.exceptionRecord}->>'reviewedAt' is not null)
+          or coalesce(jsonb_array_length(${table.exceptionRecord}->'reviewEvidenceRefs'), 0) = 0)`,
+    ),
     ...tenantLegalEntityRlsPolicies('privacy_retention_exceptions_scope', table.tenantId, table.legalEntityId),
   ],
 );
@@ -576,6 +613,40 @@ export const legalHolds = privacySchema.table.withRLS(
     unique('privacy_legal_holds_invocation_uk').on(table.tenantId, table.legalEntityId, table.actionInvocationId),
     index('privacy_legal_holds_history_idx').on(table.tenantId, table.legalEntityId, table.holdRef, table.recordedAt),
     check('privacy_legal_holds_period_ck', sql`${table.effectiveTo} > ${table.effectiveFrom}`),
+    check(
+      'privacy_legal_holds_governance_ck',
+      sql`jsonb_typeof(${table.holdRecord}) = 'object'
+        and ${table.holdRecord}->>'holdRef' = ${table.holdRef}
+        and ${table.holdRecord}->>'authorityKind' = 'LEGAL_HOLD_AUTHORITY'
+        and char_length(coalesce(btrim(${table.holdRecord}->>'authorityRef'), '')) between 1 and 300
+        and char_length(coalesce(btrim(${table.holdRecord}->>'controllerRef'), '')) between 1 and 300
+        and char_length(coalesce(btrim(${table.holdRecord}->>'policyRef'), '')) between 1 and 300
+        and coalesce(${table.holdRecord}->>'policyVersion', '') ~ '^[1-9][0-9]*$'
+        and char_length(coalesce(btrim(${table.holdRecord}->>'provenanceRef'), '')) between 1 and 300
+        and char_length(coalesce(btrim(${table.holdRecord}->>'reasonTypeRef'), '')) between 1 and 300
+        and coalesce(${table.holdRecord}->>'reasonTypeVersion', '') ~ '^[1-9][0-9]*$'
+        and char_length(coalesce(btrim(${table.holdRecord}->>'reviewRef'), '')) between 1 and 300
+        and jsonb_typeof(${table.holdRecord}->'evidenceRefs') = 'array'
+        and jsonb_array_length(${table.holdRecord}->'evidenceRefs') > 0
+        and jsonb_typeof(${table.holdRecord}->'releaseEvidenceRefs') = 'array'
+        and ((${table.holdRecord}->>'releasedAt' is null and ${table.releasedAt} is null)
+          or (${table.holdRecord}->>'releasedAt' ~ '^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}(?:\\.[0-9]+)?Z$'
+            and ${table.releasedAt} is not null
+            and (${table.holdRecord}->>'releasedAt')::timestamptz = ${table.releasedAt}))
+        and ((${table.holdRecord}->>'releasedAt' is null
+          and ${table.holdRecord}->>'releaseRef' is null
+          and ${table.holdRecord}->>'releaseReasonRef' is null
+          and ${table.holdRecord}->>'releasedByPrincipalRef' is null
+          and jsonb_array_length(${table.holdRecord}->'releaseEvidenceRefs') = 0)
+          or (${table.holdRecord}->>'releasedAt' is not null
+            and char_length(coalesce(btrim(${table.holdRecord}->>'releaseConditionRef'), '')) between 1 and 300
+            and char_length(coalesce(btrim(${table.holdRecord}->>'releaseRef'), '')) between 1 and 300
+            and char_length(coalesce(btrim(${table.holdRecord}->>'releaseReasonRef'), '')) between 1 and 300
+            and char_length(coalesce(btrim(${table.holdRecord}->>'releasedByPrincipalRef'), '')) between 1 and 300
+            and jsonb_array_length(${table.holdRecord}->'releaseEvidenceRefs') > 0))
+        and ((${table.holdRecord}->>'reviewedAt' is not null)
+          or coalesce(jsonb_array_length(${table.holdRecord}->'reviewEvidenceRefs'), 0) = 0)`,
+    ),
     ...tenantLegalEntityRlsPolicies('privacy_legal_holds_scope', table.tenantId, table.legalEntityId),
   ],
 );
@@ -608,7 +679,7 @@ export const dispositionDecisions = privacySchema.table.withRLS(
     check('privacy_disposition_decisions_rule_version_ck', sql`${table.ruleVersion} > 0`),
     check(
       'privacy_disposition_decisions_outcome_ck',
-      sql`${table.outcome} in ('RETAIN', 'RESTRICT', 'ANONYMIZE', 'DELETE', 'INDETERMINATE')`,
+      sql`${table.outcome} in ('RETAIN', 'RESTRICT', 'ANONYMIZE', 'DELETE')`,
     ),
     ...tenantLegalEntityRlsPolicies('privacy_disposition_decisions_scope', table.tenantId, table.legalEntityId),
   ],
@@ -874,7 +945,7 @@ export const antiResurrectionProtections = privacySchema.table.withRLS(
       table.measure,
       table.protectedAt,
     ),
-    check('privacy_anti_resurrection_measure_ck', sql`${table.measure} in ('DELETE', 'ANONYMIZE')`),
+    check('privacy_anti_resurrection_measure_ck', sql`${table.measure} in ('RESTRICT', 'DELETE', 'ANONYMIZE')`),
     ...tenantLegalEntityRlsPolicies('privacy_anti_resurrection_scope', table.tenantId, table.legalEntityId),
   ],
 );

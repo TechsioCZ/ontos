@@ -3,7 +3,7 @@
 // @ontos-action-slug record-privacy-applicability
 import type { ActionHandlerContext } from '@app/core-runtime';
 import { defineAction, defineTenantModuleEntrypoint } from '@app/core-runtime';
-import { DateTime, Effect } from 'effect';
+import { DateTime, Effect, Option, Schema } from 'effect';
 
 import {
   RecordPrivacyApplicabilityPayloadSchema,
@@ -11,22 +11,149 @@ import {
 } from '../../shared/actions/record-privacy-applicability.ts';
 import type { RecordPrivacyApplicabilityPayload } from '../../shared/actions/record-privacy-applicability.ts';
 import { resolvePrivacyApplicability } from '../../shared/domain/privacy-applicability.ts';
+import { PrivacyApplicabilityBusinessFactAuthority } from './privacy-applicability-business-fact-authority-service.ts';
+import type { TrustedPrivacyApplicabilityBusinessFactAuthorityResult } from './privacy-applicability-business-fact-authority.ts';
+import type { PrivacyApplicabilityBusinessFactAuthorityService } from './privacy-applicability-business-fact-authority-service.ts';
+import type { PrivacyResponsibilityAssignmentSchema } from '../../shared/domain/privacy-responsibility-assignment.ts';
+import type { ProcessingPurpose } from '../../shared/domain/processing-purpose.ts';
+import { PrivacyResponsibilityAssignmentRefSchema } from '../../shared/resources/privacy-responsibility-assignment.ts';
+import { ProcessingPurposeRefSchema } from '../../shared/resources/processing-purpose.ts';
 import { privacyOperationRepositoryForScope } from '../persistence/privacy-operation-postgres-repository.ts';
 import type { PrivacyOperationRepositoryService } from '../persistence/privacy-operation-repository.ts';
+import { processingPurposeRepositoryForScope } from '../persistence/processing-purpose-postgres-repository.ts';
+import type { ProcessingPurposeRepositoryService } from '../persistence/processing-purpose-repository.ts';
+import { PrivacyOperationPersistenceError } from '../persistence/privacy-operation-repository.ts';
 import {
   PrivacyActionAuditEvidenceSchema,
   PrivacyActionErrorSchema,
-  completePrivacyAction,
+  PrivacyActionRejected,
   privacyActionDomainEvents,
   requirePrivacyActionScope,
 } from './privacy-operation-action-support.ts';
 
-const handleRecordPrivacyApplicability = Effect.fn('RecordPrivacyApplicabilityAction.handle')(
+const samePurposeRef = Schema.toEquivalence(ProcessingPurposeRefSchema);
+const sameResponsibilityRef = Schema.toEquivalence(PrivacyResponsibilityAssignmentRefSchema);
+type Services = Pick<
+  PrivacyOperationRepositoryService,
+  'listApplicabilityPolicies' | 'listResponsibilities' | 'recordApplicability'
+> & {
+  readonly authority: PrivacyApplicabilityBusinessFactAuthorityService;
+  readonly getPurpose: (
+    ...args: Parameters<ProcessingPurposeRepositoryService['get']>
+  ) => Effect.Effect<Option.Option<ProcessingPurpose>, PrivacyOperationPersistenceError>;
+};
+type ApplicabilityScope = RecordPrivacyApplicabilityPayload['scope'];
+type ResponsibilityAssignment = typeof PrivacyResponsibilityAssignmentSchema.Type;
+
+const sameOwnerRef = (
+  left: Readonly<{ moduleId: string; resourceId: string; resourceType: string; tenantId: string }>,
+  right: Readonly<{ moduleId: string; resourceId: string; resourceType: string; tenantId: string }>,
+): boolean =>
+  left.moduleId === right.moduleId &&
+  left.resourceId === right.resourceId &&
+  left.resourceType === right.resourceType &&
+  left.tenantId === right.tenantId;
+
+const authorityMatchesTrustedScope = (
+  authority: TrustedPrivacyApplicabilityBusinessFactAuthorityResult['authority'],
+  scope: Readonly<{ legalEntityId: string; tenantId: string }>,
+): boolean =>
+  [
+    authority.tenantId === scope.tenantId,
+    authority.legalEntityId === scope.legalEntityId,
+    authority.controllerRef.tenantId === scope.tenantId,
+    authority.purposeRef.tenantId === scope.tenantId,
+    authority.purposeVersionRef.tenantId === scope.tenantId,
+  ].every(Boolean);
+
+const purposeMatchesAuthority = (
+  purpose: Option.Option<ProcessingPurpose>,
+  authority: TrustedPrivacyApplicabilityBusinessFactAuthorityResult['authority'],
+): boolean =>
+  Option.isSome(purpose) &&
+  samePurposeRef(purpose.value.purposeRef, authority.purposeRef) &&
+  purpose.value.versions.some(({ versionId }) => versionId === authority.purposeVersionRef.resourceId);
+
+const assignmentIsCurrentController = (
+  assignment: ResponsibilityAssignment,
+  scope: ApplicabilityScope,
+  authority: TrustedPrivacyApplicabilityBusinessFactAuthorityResult['authority'],
+  evaluatedAt: string,
+): boolean =>
+  [
+    assignment.role === 'CONTROLLER',
+    assignment.scopeRef.scopeId === scope.processingScopeRef.scopeId,
+    assignment.scopeRef.scopeType === scope.processingScopeRef.scopeType,
+    assignment.effectiveFrom <= evaluatedAt,
+    Option.isNone(assignment.effectiveTo) || evaluatedAt < assignment.effectiveTo.value,
+    sameOwnerRef(assignment.holder.holder, authority.controllerRef),
+  ].every(Boolean);
+
+export const handleRecordPrivacyApplicability = Effect.fn('RecordPrivacyApplicabilityAction.handle')(
   function* handleRecordPrivacyApplicability(
     payload: RecordPrivacyApplicabilityPayload,
-    context: ActionHandlerContext<typeof privacyActionDomainEvents, PrivacyOperationRepositoryService>,
+    context: ActionHandlerContext<typeof privacyActionDomainEvents, Services>,
   ) {
     const scope = yield* requirePrivacyActionScope(context.scope);
+    const authorityService = context.services.authority;
+    const evaluatedAt = DateTime.formatIso(yield* DateTime.now);
+    const authorityResult = yield* authorityService
+      .resolve({
+        asOf: evaluatedAt,
+        legalEntityId: scope.legalEntityId,
+        scope: payload.scope,
+        tenantId: scope.tenantId,
+      })
+      .pipe(
+        Effect.mapError(
+          (error) => new PrivacyActionRejected({ code: 'privacy_action_rejected', reason: error.reason }),
+        ),
+      );
+    const { authority } = authorityResult;
+    if (
+      authorityResult.status !== 'CURRENT' ||
+      authorityResult.asOf !== evaluatedAt ||
+      authorityResult.scope.operation !== payload.scope.operation ||
+      authorityResult.scope.processingScopeRef.scopeId !== payload.scope.processingScopeRef.scopeId ||
+      authorityResult.scope.processingScopeRef.scopeType !== payload.scope.processingScopeRef.scopeType
+    ) {
+      return yield* new PrivacyActionRejected({
+        code: 'privacy_action_rejected',
+        reason: 'Applicability business facts must be current and exactly correlated to this request',
+      });
+    }
+    if (!authorityMatchesTrustedScope(authority, scope)) {
+      return yield* new PrivacyActionRejected({
+        code: 'privacy_action_rejected',
+        reason: 'Applicability authority must belong to the trusted Tenant and Legal Entity',
+      });
+    }
+    const purpose = yield* context.services.getPurpose(
+      scope.tenantId,
+      scope.legalEntityId,
+      authority.purposeRef.resourceId,
+    );
+    if (!purposeMatchesAuthority(purpose, authority)) {
+      return yield* new PrivacyActionRejected({
+        code: 'privacy_action_rejected',
+        reason: 'Applicability authority requires an exact stored Processing Purpose and Purpose Version',
+      });
+    }
+    const responsibilities = yield* context.services.listResponsibilities(scope.tenantId, scope.legalEntityId);
+    const referenced = responsibilities.filter((assignment) =>
+      payload.responsibilityAssignmentRefs.some((reference) =>
+        sameResponsibilityRef(reference, assignment.assignmentRef),
+      ),
+    );
+    const controllerIsAuthoritative = referenced.some((assignment) =>
+      assignmentIsCurrentController(assignment, payload.scope, authority, evaluatedAt),
+    );
+    if (referenced.length !== payload.responsibilityAssignmentRefs.length || !controllerIsAuthoritative) {
+      return yield* new PrivacyActionRejected({
+        code: 'privacy_action_rejected',
+        reason: 'Applicability authority requires exact current stored Responsibility Assignments and Controller',
+      });
+    }
     const policies = yield* context.services.listApplicabilityPolicies(scope.tenantId, scope.legalEntityId);
     const result = yield* context.services.recordApplicability(
       scope.tenantId,
@@ -34,14 +161,21 @@ const handleRecordPrivacyApplicability = Effect.fn('RecordPrivacyApplicabilityAc
       context.actionInvocationId,
       payload.decisionId,
       resolvePrivacyApplicability({
-        evaluatedAt: DateTime.formatIso(yield* DateTime.now),
+        authority,
+        authorityEvidenceRefs: authorityResult.evidenceRefs,
+        authorityReceiptRef: authorityResult.receiptRef,
+        evaluatedAt,
         policies,
         proposedActivity: payload.proposedActivity,
         responsibilityAssignmentRefs: payload.responsibilityAssignmentRefs,
-        scope: payload.scope,
+        scope: authorityResult.scope,
       }),
     );
-    return yield* completePrivacyAction(context, 'record-privacy-applicability', payload.decisionId, result);
+    yield* context.recordAuditEvidence({
+      operationKind: 'record-privacy-applicability',
+      recordId: payload.decisionId,
+    });
+    return result;
   },
 );
 
@@ -72,7 +206,33 @@ export const recordPrivacyApplicabilityAction = defineAction(
     schemaVersion: '1',
   },
   handleRecordPrivacyApplicability,
-  privacyOperationRepositoryForScope,
+  Effect.fn('RecordPrivacyApplicabilityAction.services')(function* makeServices(transaction, scope) {
+    const authority = yield* PrivacyApplicabilityBusinessFactAuthority;
+    const { operations, purposes } = yield* Effect.all(
+      {
+        operations: privacyOperationRepositoryForScope(transaction, scope),
+        purposes: processingPurposeRepositoryForScope(transaction, scope),
+      },
+      { concurrency: 2 },
+    );
+    return {
+      authority,
+      getPurpose: (...args) =>
+        purposes.get(...args).pipe(
+          Effect.mapError((cause) => {
+            const error = new PrivacyOperationPersistenceError({
+              code: 'privacy_operation_persistence_unavailable',
+              reason: 'Processing Purpose authority is temporarily unavailable',
+            });
+            Object.defineProperty(error, 'cause', { configurable: true, value: cause });
+            return error;
+          }),
+        ),
+      listApplicabilityPolicies: operations.listApplicabilityPolicies,
+      listResponsibilities: operations.listResponsibilities,
+      recordApplicability: operations.recordApplicability,
+    };
+  }),
 );
 
 // <generated-outbox-message-exports>

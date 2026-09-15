@@ -2,9 +2,10 @@
 // @ontos-action-owner privacy.core
 // @ontos-action-slug record-notice-provision
 /* eslint-disable effect-native/no-unbranded-identifier-schema -- Audit evidence preserves the owner-issued opaque Notice Provision identifier from the validated domain result. expires: 2027-03-31. */
+// oxlint-disable-next-line eslint/max-classes-per-file -- Generated action co-locates its typed error and authority tag; remove-when: Codesmith supports authority-port companion files.
 import type { ActionHandlerContext } from '@app/core-runtime';
 import { defineAction, defineTenantModuleEntrypoint } from '@app/core-runtime';
-import { DateTime, Effect, Schema } from 'effect';
+import { Context, DateTime, Effect, Layer, Schema } from 'effect';
 
 import {
   RecordNoticeProvisionPayloadSchema,
@@ -12,17 +13,52 @@ import {
 } from '../../shared/actions/record-notice-provision.ts';
 import type { RecordNoticeProvisionPayload } from '../../shared/actions/record-notice-provision.ts';
 import { materializePrivacyNoticeProvision } from '../../shared/domain/privacy-notice-provision.ts';
+import type { PrivacyNoticeAuthorityFact } from '../../shared/domain/privacy-notice-provision.ts';
 import { noticeProvisionRepositoryForScope } from '../persistence/notice-provision-postgres-repository.ts';
 import { NoticeProvisionPersistenceError } from '../persistence/notice-provision-repository.ts';
 import type { NoticeProvisionRepositoryService } from '../persistence/notice-provision-repository.ts';
 
-class RecordNoticeProvisionError extends Schema.TaggedError<RecordNoticeProvisionError>()(
+export class RecordNoticeProvisionError extends Schema.TaggedError<RecordNoticeProvisionError>()(
   'RecordNoticeProvisionError',
   {
     code: Schema.Literals(['privacy_notice_provision_invalid', 'privacy_notice_provision_scope_required']),
     reason: Schema.String,
   },
 ) {}
+
+interface NoticeChannelDeliveryAuthorityContext {
+  readonly actionInvocationId: string;
+  readonly legalEntityId: string;
+  readonly principalId: string;
+  readonly tenantId: string;
+}
+
+export interface NoticeChannelDeliveryAuthorityService {
+  readonly resolve: (
+    request: RecordNoticeProvisionPayload,
+    context: NoticeChannelDeliveryAuthorityContext,
+  ) => Effect.Effect<PrivacyNoticeAuthorityFact, NoticeProvisionPersistenceError | RecordNoticeProvisionError>;
+}
+
+export class NoticeChannelDeliveryAuthority extends Context.Service<
+  NoticeChannelDeliveryAuthority,
+  NoticeChannelDeliveryAuthorityService
+>()('@app/privacy/actions/record-notice-provision.action/NoticeChannelDeliveryAuthority') {}
+
+export const noticeChannelDeliveryAuthorityUnavailable = Object.freeze({
+  resolve: () =>
+    Effect.fail(
+      new NoticeProvisionPersistenceError({
+        code: 'privacy_notice_provision_persistence_unavailable',
+        reason: 'Notice channel delivery authority is not configured',
+      }),
+    ),
+}) satisfies NoticeChannelDeliveryAuthorityService;
+
+export const NoticeChannelDeliveryAuthorityUnavailableLive = Layer.succeed(
+  NoticeChannelDeliveryAuthority,
+  noticeChannelDeliveryAuthorityUnavailable,
+);
 
 const domainEvents = {} as const;
 const ErrorSchema = Schema.Union([RecordNoticeProvisionError, NoticeProvisionPersistenceError]);
@@ -33,12 +69,34 @@ const AuditEvidenceSchema = Schema.Struct({
   provisionId: Schema.String,
 });
 const MODULE_KEY = 'privacy.core' as const;
-type Services = Pick<NoticeProvisionRepositoryService, 'record'>;
+export interface RecordNoticeProvisionServices extends Pick<NoticeProvisionRepositoryService, 'record'> {
+  readonly authority: NoticeChannelDeliveryAuthorityService;
+}
+
+const noticeAuthorityMatchesPayload = (
+  fact: PrivacyNoticeAuthorityFact,
+  payload: RecordNoticeProvisionPayload,
+): boolean => {
+  const { provision } = fact;
+  return [
+    fact.claimRef === payload.claimRef,
+    provision.actionRef === payload.actionRef,
+    provision.anonymousContextRef === payload.anonymousContextRef,
+    provision.businessInteractionRef === payload.businessInteractionRef,
+    provision.channel === payload.channel,
+    provision.controllerRef === payload.controllerRef,
+    provision.noticeVersionRef === payload.noticeVersionRef,
+    provision.privacySubjectRef === payload.privacySubjectRef,
+    provision.processingPurposeRef === payload.processingPurposeRef,
+    provision.processingScopeRef === payload.processingScopeRef,
+    provision.providedLanguage === payload.providedLanguage,
+  ].every(Boolean);
+};
 
 export const handleRecordNoticeProvision = Effect.fn('RecordNoticeProvisionAction.handle')(
   function* recordNoticeProvision(
     payload: RecordNoticeProvisionPayload,
-    context: ActionHandlerContext<typeof domainEvents, Services>,
+    context: ActionHandlerContext<typeof domainEvents, RecordNoticeProvisionServices>,
   ) {
     const { legalEntityId } = context.scope;
     if (legalEntityId === undefined) {
@@ -47,9 +105,21 @@ export const handleRecordNoticeProvision = Effect.fn('RecordNoticeProvisionActio
         reason: 'Record Notice Provision requires a trusted Legal Entity scope',
       });
     }
-    const { channelProof, ...draft } = payload;
-    const provision = yield* materializePrivacyNoticeProvision(draft, {
-      authoritativeProof: channelProof ?? null,
+    const authoritativeFact = yield* context.services.authority.resolve(payload, {
+      actionInvocationId: context.actionInvocationId,
+      legalEntityId,
+      principalId: context.scope.principalId,
+      tenantId: context.scope.tenantId,
+    });
+    const authoritative = authoritativeFact.provision;
+    if (!noticeAuthorityMatchesPayload(authoritativeFact, payload)) {
+      return yield* new RecordNoticeProvisionError({
+        code: 'privacy_notice_provision_invalid',
+        reason: 'Notice channel delivery authority returned evidence for a different claim or exact notice scope',
+      });
+    }
+    const provision = yield* materializePrivacyNoticeProvision(authoritative, {
+      authoritativeProof: authoritative.channelProof ?? null,
       recordedAt: DateTime.formatIso(yield* DateTime.now),
     }).pipe(
       Effect.mapError(
@@ -100,7 +170,13 @@ export const recordNoticeProvisionAction = defineAction(
   },
   handleRecordNoticeProvision,
   (transaction, scope) =>
-    noticeProvisionRepositoryForScope(transaction, scope).pipe(Effect.map(({ record }) => ({ record }))),
+    Effect.all(
+      {
+        authority: NoticeChannelDeliveryAuthority,
+        repository: noticeProvisionRepositoryForScope(transaction, scope),
+      },
+      { concurrency: 2 },
+    ).pipe(Effect.map(({ authority, repository }) => ({ authority, record: repository.record }))),
 );
 
 // <generated-outbox-message-exports>

@@ -15,6 +15,7 @@ import { ApplicabilityDecisionsApi } from './apis/applicability-decisions.ts';
 import { AssignDsrResolverActionApi } from './apis/assign-dsr-resolver-action.ts';
 import { AssignLegalBasisActionApi } from './apis/assign-legal-basis-action.ts';
 import { AssignPrivacyResponsibilityActionApi } from './apis/assign-privacy-responsibility-action.ts';
+import { ConsentSelfServiceActionApi } from './apis/consent-self-service-action.ts';
 import { CreateDsrCaseActionApi } from './apis/create-dsr-case-action.ts';
 import { CreateNoticeVersionActionApi } from './apis/create-notice-version-action.ts';
 import { CreatePrivacySubjectActionApi } from './apis/create-privacy-subject-action.ts';
@@ -97,6 +98,7 @@ export const privacyApi = HttpApi.make('PrivacyApi')
   .addHttpApi(AssignDsrResolverActionApi)
   .addHttpApi(AssignLegalBasisActionApi)
   .addHttpApi(AssignPrivacyResponsibilityActionApi)
+  .addHttpApi(ConsentSelfServiceActionApi)
   .addHttpApi(CreateDsrCaseActionApi)
   .addHttpApi(CreateNoticeVersionActionApi)
   .addHttpApi(CreatePrivacySubjectActionApi)

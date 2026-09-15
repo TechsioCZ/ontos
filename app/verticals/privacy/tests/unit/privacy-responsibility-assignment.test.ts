@@ -15,6 +15,19 @@ const assignmentRef = {
   resourceType: 'privacy.core.privacy-responsibility-assignment' as const,
   tenantId,
 };
+const completeAssignment = {
+  actor: principal,
+  assignmentRef,
+  effectiveFrom: '2026-09-14T10:00:00Z',
+  effectiveTo: null,
+  provenance: {
+    decisionEvidenceRefs: ['evidence:arrangement-1'],
+    reason: 'Controller arrangement approved for this scope',
+    recordedAt: '2026-09-14T10:00:00Z',
+  },
+  role: 'CONTROLLER' as const,
+  scopeRef: { scopeId: 'scope-1', scopeType: 'privacy.processing-scope' as const },
+};
 
 describe('privacy responsibility assignments', () => {
   it('keeps legal entity and party identity references distinctly typed', () => {
@@ -88,6 +101,64 @@ describe('privacy responsibility assignments', () => {
         holder: { holder: principal, holderKind: 'PRINCIPAL' },
         role: 'PROCESSOR',
         scopeRef: { scopeId: 'scope-1', scopeType: 'privacy.processing-scope' },
+      }),
+    ).toThrow();
+  });
+
+  it('rejects Principal as a legal role holder even when assignment provenance is complete', () => {
+    expect(() =>
+      Schema.decodeUnknownSync(ResponsibilityRoleHolderSchema)({ holder: principal, holderKind: 'PRINCIPAL' }),
+    ).toThrow();
+  });
+
+  it('rejects a Legal Entity holder from another tenant', () => {
+    expect(() =>
+      Schema.decodeUnknownSync(PrivacyResponsibilityAssignmentSchema)({
+        ...completeAssignment,
+        holder: {
+          holder: {
+            moduleId: 'core.identity',
+            resourceId: 'legal-entity-other-tenant',
+            resourceType: 'core.identity.legal-entity',
+            tenantId: '10000000-0000-4000-8000-000000000099',
+          },
+          holderKind: 'LEGAL_ENTITY',
+        },
+      }),
+    ).toThrow();
+  });
+
+  it('rejects a Party holder from another tenant', () => {
+    expect(() =>
+      Schema.decodeUnknownSync(PrivacyResponsibilityAssignmentSchema)({
+        ...completeAssignment,
+        holder: {
+          holder: {
+            moduleId: 'party.registry',
+            resourceId: 'party-other-tenant',
+            resourceType: 'party.registry.party',
+            tenantId: '10000000-0000-4000-8000-000000000099',
+          },
+          holderKind: 'PARTY',
+        },
+      }),
+    ).toThrow();
+  });
+
+  it('rejects an Action actor from another tenant', () => {
+    expect(() =>
+      Schema.decodeUnknownSync(PrivacyResponsibilityAssignmentSchema)({
+        ...completeAssignment,
+        actor: { ...principal, tenantId: '10000000-0000-4000-8000-000000000099' },
+        holder: {
+          holder: {
+            moduleId: 'core.identity',
+            resourceId: 'legal-entity-1',
+            resourceType: 'core.identity.legal-entity',
+            tenantId,
+          },
+          holderKind: 'LEGAL_ENTITY',
+        },
       }),
     ).toThrow();
   });

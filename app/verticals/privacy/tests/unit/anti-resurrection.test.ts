@@ -2,11 +2,14 @@ import { Effect, Schema } from 'effect';
 import { describe, expect, it } from 'effect-rstest';
 
 import {
+  AntiResurrectionProtectionSchema,
   AntiResurrectionProtectionError,
   assessAntiResurrection,
   createAntiResurrectionProtection,
 } from '../../shared/domain/anti-resurrection.ts';
+import type { AntiResurrectionEnforcementReceipt } from '../../shared/domain/anti-resurrection.ts';
 import type {
+  OwnerExecutionAuthorityResult,
   OwnerExecutionOutcome,
   PrivacyMeasureHandoff,
   PrivacyMeasureKind,
@@ -51,10 +54,60 @@ const successfulOutcome = (kind: Extract<PrivacyMeasureKind, 'DELETE' | 'ANONYMI
   taskId: 'task-1',
 });
 
+const restrictionHandoff: PrivacyMeasureHandoff = {
+  ...destructiveHandoff('DELETE'),
+  dispositionDecision: 'RESTRICT',
+  idempotencyKey: 'measure-1:RESTRICT',
+  kind: 'RESTRICT',
+  requestedResult: 'RESTRICTED',
+  right: null,
+};
+
+const restrictionOutcome: OwnerExecutionOutcome = {
+  ...successfulOutcome('DELETE'),
+  idempotencyKey: 'measure-1:RESTRICT',
+  outcomeId: 'outcome-RESTRICT',
+};
+
+const ownerAuthority = (
+  handoff: PrivacyMeasureHandoff,
+  outcome: OwnerExecutionOutcome,
+): OwnerExecutionAuthorityResult => ({
+  authorityRef: `authority-${outcome.outcomeId}`,
+  contentScopeRefs: handoff.contentScopeRefs,
+  evidenceRefs: outcome.evidenceRefs,
+  outcome,
+  receiptRef: outcome.outcomeId,
+  resourceRefs: handoff.resourceRefs,
+  subjectRef: handoff.subjectRef,
+  tenantId: handoff.tenantId,
+});
+
+const enforcementReceipt = (handoff: PrivacyMeasureHandoff): AntiResurrectionEnforcementReceipt => {
+  const measure = handoff.kind;
+  if (measure !== 'DELETE' && measure !== 'ANONYMIZE' && measure !== 'RESTRICT') {
+    throw new Error(`Unsupported anti-resurrection measure: ${measure}`);
+  }
+  return {
+    authorityRef: `enforcement-authority-${handoff.taskId}`,
+    contentScopeRefs: handoff.contentScopeRefs,
+    evidenceRefs: ['gate-import', 'gate-replay', 'gate-projection', 'gate-backup'],
+    measure,
+    operations: ['IMPORT', 'REPLAY', 'PROJECTION_REBUILD', 'BACKUP_RECOVERY'],
+    ownerModuleId: handoff.owningCapability,
+    receiptRef: `enforcement-receipt-${handoff.taskId}`,
+    resourceRefs: handoff.resourceRefs,
+    subjectRef: handoff.subjectRef,
+    taskId: handoff.taskId,
+    tenantId: handoff.tenantId,
+  };
+};
+
 const createProtection = (kind: Extract<PrivacyMeasureKind, 'DELETE' | 'ANONYMIZE'> = 'DELETE') =>
   createAntiResurrectionProtection({
+    authority: ownerAuthority(destructiveHandoff(kind), successfulOutcome(kind)),
+    enforcementReceipt: enforcementReceipt(destructiveHandoff(kind)),
     handoff: destructiveHandoff(kind),
-    outcome: successfulOutcome(kind),
     protectedAt: '2026-09-14T10:02:00Z',
     protectionId: `protection-${kind}`,
   });
@@ -95,18 +148,41 @@ describe('Privacy anti-resurrection protection', () => {
     }),
   );
 
+  it.effect('creates a protection for an exact owner-enforced Disposition RESTRICT', () =>
+    Effect.gen(function* createsRestrictionProtection() {
+      const protection = yield* createAntiResurrectionProtection({
+        authority: ownerAuthority(restrictionHandoff, restrictionOutcome),
+        enforcementReceipt: enforcementReceipt(restrictionHandoff),
+        handoff: restrictionHandoff,
+        protectedAt: '2026-09-14T10:02:00Z',
+        protectionId: 'protection-RESTRICT',
+      });
+      expect(protection.measure).toBe('RESTRICT');
+      expect(assessAntiResurrection([protection], attempt('REPLAY')).decision).toBe('BLOCK');
+      expect(
+        assessAntiResurrection(
+          [protection],
+          { ...attempt('IMPORT'), sourceInputIsNew: true, sourceInputRef: 'new-source-event' },
+          newSourceEvidence,
+        ).decision,
+      ).toBe('BLOCK');
+    }),
+  );
+
   it.effect('rejects non-successful and out-of-scope destructive outcomes through the typed error channel', () =>
     Effect.gen(function* rejectsInvalidDestructiveOutcomes() {
       const handoff = destructiveHandoff('DELETE');
       const partial = createAntiResurrectionProtection({
+        authority: ownerAuthority(handoff, { ...successfulOutcome('DELETE'), status: 'PARTIAL' }),
+        enforcementReceipt: enforcementReceipt(handoff),
         handoff,
-        outcome: { ...successfulOutcome('DELETE'), status: 'PARTIAL' },
         protectedAt: '2026-09-14T10:02:00Z',
         protectionId: 'protection-partial',
       });
       const wrongScope = createAntiResurrectionProtection({
+        authority: ownerAuthority(handoff, { ...successfulOutcome('DELETE'), includedResourceRefs: ['account-2'] }),
+        enforcementReceipt: enforcementReceipt(handoff),
         handoff,
-        outcome: { ...successfulOutcome('DELETE'), includedResourceRefs: ['account-2'] },
         protectedAt: '2026-09-14T10:02:00Z',
         protectionId: 'protection-wrong-scope',
       });
@@ -120,10 +196,29 @@ describe('Privacy anti-resurrection protection', () => {
       const protection = yield* createProtection();
       for (const operation of ['IMPORT', 'REPLAY', 'PROJECTION_REBUILD', 'BACKUP_RECOVERY'] as const) {
         expect(assessAntiResurrection([protection], attempt(operation))).toMatchObject({
+          blockedResourceRefs: ['account-1'],
           decision: 'BLOCK',
           matchedProtectionIds: ['protection-DELETE'],
+          unaffectedResourceRefs: [],
         });
       }
+    }),
+  );
+
+  it.effect('returns a partial assessment for a batch containing protected A and unaffected B', () =>
+    Effect.gen(function* assessesBatchByExactResource() {
+      const protection = yield* createProtection();
+      expect(
+        assessAntiResurrection([protection], {
+          ...attempt('REPLAY'),
+          resourceRefs: ['account-1', 'account-2'],
+        }),
+      ).toMatchObject({
+        blockedResourceRefs: ['account-1'],
+        decision: 'PARTIAL',
+        matchedProtectionIds: ['protection-DELETE'],
+        unaffectedResourceRefs: ['account-2'],
+      });
     }),
   );
 
@@ -166,4 +261,23 @@ describe('Privacy anti-resurrection protection', () => {
       ).toBe('ALLOW');
     }),
   );
+
+  it('does not accept a protection without a complete owner-local enforcement receipt', () => {
+    expect(() =>
+      Schema.decodeUnknownSync(AntiResurrectionProtectionSchema)({
+        contentScopeRefs: ['email'],
+        evidenceRefs: ['outcome-DELETE'],
+        measure: 'DELETE',
+        outcomeStatus: 'SUCCEEDED',
+        ownerExecutionOutcomeRef: 'outcome-DELETE',
+        protectedAt: '2026-09-14T10:02:00Z',
+        protectionId: 'protection-missing-receipt',
+        resourceRefs: ['account-1'],
+        sourceDecisionRef: 'decision-1',
+        sourceDecisionRevision: 2,
+        subjectRef: 'subject-1',
+        tenantId: 'tenant-1',
+      }),
+    ).toThrow();
+  });
 });

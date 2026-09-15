@@ -9,6 +9,7 @@ import { readFileSync } from 'node:fs';
 
 import { makeRetentionEvaluationWork } from '../../shared/domain/privacy-retention-disposition.ts';
 import type { RetentionEvaluationWork } from '../../shared/domain/privacy-retention-disposition.ts';
+import { AuthoritativePrivacyRetentionRuleVersionSchema } from '../../shared/domain/privacy-retention-rule.ts';
 import type { RetentionEvaluationRoutineRow } from '../../src/persistence/retention-evaluation-worker-persistence.ts';
 import { handleRetentionEvaluation, retentionEvaluationWorker } from '../../src/workers/retention-evaluation.worker.ts';
 
@@ -17,13 +18,30 @@ const legalEntityId = '20000000-0000-4000-8000-000000000002';
 const otherLegalEntityId = '30000000-0000-4000-8000-000000000003';
 const messageId = '40000000-0000-4000-8000-000000000004';
 const evaluatedAt = '2026-09-14T12:00:00.000Z';
-const dueAt = '2026-09-13T12:00:00.000Z';
 
-const work = makeRetentionEvaluationWork({
-  contentScopeRefs: ['customer.contact.email'],
-  dueAt: Schema.decodeUnknownSync(Schema.String)(dueAt),
+const rule = Schema.decodeUnknownSync(AuthoritativePrivacyRetentionRuleVersionSchema)({
+  applicability: 'PROSPECTIVE_ONLY',
+  authorityRef: 'authority:privacy-retention',
+  businessStartAt: '2026-08-14T12:00:00Z',
+  businessStartRef: 'business-event:record-created',
+  contentScopeRef: 'customer.contact.email',
+  controllerRef: 'controller:techsio',
+  dispositionOutcome: 'DELETE',
+  effectiveFrom: '2026-01-01T00:00:00.000Z',
+  effectiveTo: null,
+  evidenceRefs: ['evidence:retention-rule:2'],
+  policyRef: 'policy:privacy-retention',
+  policyVersion: 3,
+  provenanceRef: 'provenance:retention-rule:2',
+  retentionWindow: { durationDays: 30, kind: 'DURATION' },
+  retroactiveApprovalRef: null,
   ruleRef: 'retention:customer-contact-email',
   ruleVersion: 2,
+  ruleVersionId: 'rule-version:customer-contact-email:2',
+});
+
+const work = makeRetentionEvaluationWork({
+  rule,
   source: 'PERIODIC',
 });
 const payload: OutboxPayload = { work };
@@ -61,9 +79,17 @@ const row = (
     evaluatedAt,
     status,
     workerEvaluation: {
+      blockerRefs: status === 'BLOCKED' ? ['legal-hold:hold:customer-email'] : [],
+      controllerRef: work.controllerRef,
       evaluatedAt,
+      evaluationRef: work.workRef,
+      evidenceRefs: work.evidenceRefs,
       messageId,
+      outcome: work.dispositionOutcome,
       ownerOutcomeRef: options.ownerOutcomeRef ?? null,
+      policyRef: work.policyRef,
+      policyVersion: work.policyVersion,
+      provenanceRef: work.provenanceRef,
     },
   },
   work_ref: work.workRef,
@@ -184,6 +210,46 @@ it.effect('commits an indeterminate routine result before returning a typed retr
     expect(failure.retryable).toBe(true);
   });
 });
+
+it.effect('rejects legacy completed work without authoritative governance evidence', () =>
+  Effect.gen(function* rejectLegacyEvaluation() {
+    yield* TestClock.setTime(Date.parse(evaluatedAt));
+    const legacy = row('READY');
+    const failure = yield* Effect.flip(
+      runWorker({
+        [legalEntityId]: {
+          ...legacy,
+          work_record: {
+            ...work,
+            evaluatedAt,
+            status: 'READY',
+            workerEvaluation: { evaluatedAt, messageId, ownerOutcomeRef: null },
+          },
+        },
+      }),
+    );
+    expect(failure.code).toBe('RETENTION_STATE_AMBIGUOUS');
+    expect(failure.retryable).toBe(true);
+  }),
+);
+
+it.effect('rejects routine work whose authoritative business start differs from queued work', () =>
+  Effect.gen(function* rejectChangedBusinessStart() {
+    yield* TestClock.setTime(Date.parse(evaluatedAt));
+    const changed = row('READY');
+    const changedRecord = required(changed.work_record ?? undefined, 'Expected authoritative routine work record');
+    const failure = yield* Effect.flip(
+      runWorker({
+        [legalEntityId]: {
+          ...changed,
+          work_record: { ...changedRecord, businessStartAt: '2026-08-13T12:00:00.000Z' },
+        },
+      }),
+    );
+    expect(failure.code).toBe('RETENTION_STATE_AMBIGUOUS');
+    expect(failure.retryable).toBe(true);
+  }),
+);
 
 it.effect('fails retryably when the exact work is absent from every verified Legal Entity', () =>
   Effect.gen(function* rejectMissingWork() {

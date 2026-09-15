@@ -13,39 +13,17 @@ import type { ProfileScopedRoutineInvoker } from '../persistence/profile-persist
 import { fingerprintPrivacyMeasureHandoff, parseOwnerResourceRef } from '../privacy-measure-handoff.ts';
 
 const OWNER = 'commerce.customer-context';
-const RETAIL_TYPE = 'commerce.customer-context.retail-customer-profile';
-const COUNTERPARTY_TYPE = 'commerce.customer-context.counterparty-purchasing-profile';
-const CONTENT_SCOPE = 'commerce.customer-context.customer-profile.lifecycle';
 const scopeParameters = [
   { source: 'tenantId', type: 'uuid' },
   { source: 'legalEntityId', type: 'uuid' },
 ] as const;
 
-const ApplyRowSchema = Schema.Struct({
-  reason: Schema.String,
-  status: Schema.Literals(['SUCCEEDED', 'BUSINESS_REJECTED', 'INDETERMINATE']),
-});
 const ReceiptRowSchema = Schema.Struct({
   action_invocation_id: Schema.String,
   handoff_fingerprint: Schema.String,
   outcome: OwnerExecutionOutcomeSchema,
 });
 
-const applyRestrictionRoutine = defineScopedRoutine({
-  name: 'apply_privacy_measure_profile_restriction',
-  ownerModuleKey: OWNER,
-  parameters: [
-    ...scopeParameters,
-    { source: 'input', type: 'uuid[]' },
-    { source: 'input', type: 'text[]' },
-    { source: 'input', type: 'timestamptz' },
-    { source: 'input', type: 'uuid' },
-    { source: 'input', type: 'uuid' },
-  ],
-  resultSchema: ApplyRowSchema,
-  routineKey: 'privacy-measure.apply-profile-restriction',
-  schema: 'commerce_customer_context',
-});
 const loadReceiptRoutine = defineScopedRoutine({
   name: 'read_privacy_measure_execution',
   ownerModuleKey: OWNER,
@@ -108,49 +86,30 @@ const unavailable = (cause: ScopedRoutineInvocationError) =>
     true,
     cause,
   );
-const exactRestrictionIsSupported = (handoff: PrivacyMeasureHandoff): boolean =>
-  handoff.kind === 'RESTRICT' &&
-  handoff.requestedResult === 'SUSPENDED' &&
-  handoff.dispositionDecision === null &&
-  (handoff.right === 'RESTRICTION' || handoff.right === 'OBJECTION') &&
-  handoff.contentScopeRefs.length === 1 &&
-  handoff.contentScopeRefs[0] === CONTENT_SCOPE;
-const profileKind = (resourceType: string): 'COUNTERPARTY' | 'RETAIL' | undefined => {
-  if (resourceType === RETAIL_TYPE) {
-    return 'RETAIL';
-  }
-  if (resourceType === COUNTERPARTY_TYPE) {
-    return 'COUNTERPARTY';
-  }
-  return undefined;
-};
-
 interface MakeOutcomeInput {
   readonly handoff: PrivacyMeasureHandoff;
   readonly now: Date;
   readonly reason: string;
-  readonly status: OwnerExecutionOutcome['status'];
 }
 
-const makeOutcome = ({ handoff, now, reason, status }: MakeOutcomeInput): OwnerExecutionOutcome => {
+const makeOutcome = ({ handoff, now, reason }: MakeOutcomeInput): OwnerExecutionOutcome => {
   const outcomeId = randomUUID();
   const instant = DateTime.formatIso(DateTime.makeUnsafe(now));
-  const succeeded = status === 'SUCCEEDED';
   return {
     attempt: 1,
     evidenceRefs: [`commerce.customer-context.privacy-measure-execution:${outcomeId}`],
     idempotencyKey: handoff.idempotencyKey,
-    includedResourceRefs: succeeded ? [...handoff.resourceRefs] : [],
+    includedResourceRefs: [],
     measureId: handoff.measureId,
     occurredAt: instant,
     outcomeId,
     owningCapability: OWNER,
     reason,
     recordedAt: instant,
-    remainingResourceRefs: succeeded ? [] : [...handoff.resourceRefs],
+    remainingResourceRefs: [...handoff.resourceRefs],
     sourceDecisionRef: handoff.sourceDecisionRef,
     sourceDecisionRevision: handoff.sourceDecisionRevision,
-    status,
+    status: 'BUSINESS_REJECTED',
     taskId: handoff.taskId,
   };
 };
@@ -185,7 +144,7 @@ export const privacyMeasureExecutionService = (
     );
 
   const execute: PrivacyMeasureExecutionService['execute'] = Effect.fn('CommercePrivacyMeasureExecution.execute')(
-    // fallow-ignore-next-line complexity -- Owner execution must reconcile durable replay, exact scope, supported resource kinds, mutation outcome, and receipt persistence atomically.
+    // fallow-ignore-next-line complexity -- Owner execution must reconcile durable replay, exact scope, fail-closed outcome, and receipt persistence atomically.
     function* executePrivacyMeasure(handoff, actionInvocationId) {
       const fingerprint = fingerprintPrivacyMeasureHandoff(handoff);
       const prior = yield* load(handoff.idempotencyKey);
@@ -211,39 +170,13 @@ export const privacyMeasureExecutionService = (
           false,
         );
       }
-      const parsedRefs = refs.filter((ref) => ref !== undefined);
-      const kinds = parsedRefs.map((ref) => profileKind(ref.resourceType));
       const now = yield* DateTime.nowAsDate;
-      let outcome: OwnerExecutionOutcome;
-      if (
-        !exactRestrictionIsSupported(handoff) ||
-        kinds.some((kind) => kind === undefined) ||
-        new Set(parsedRefs.map((ref) => ref.resourceId)).size !== parsedRefs.length
-      ) {
-        outcome = makeOutcome({
-          handoff,
-          now,
-          reason:
-            'Commerce Customer Context supports only exact unique Customer Profile lifecycle restriction to SUSPENDED',
-          status: 'BUSINESS_REJECTED',
-        });
-      } else {
-        const [applied] = yield* transaction
-          .invoke(applyRestrictionRoutine, [
-            parsedRefs.map((ref) => ref.resourceId),
-            kinds.filter((kind) => kind !== undefined),
-            now,
-            actionInvocationId,
-            scope.principalId,
-          ])
-          .pipe(Effect.mapError(unavailable));
-        outcome = makeOutcome({
-          handoff,
-          now,
-          reason: applied?.reason ?? 'The scoped Customer Profile result could not be authoritatively determined',
-          status: applied?.status ?? 'INDETERMINATE',
-        });
-      }
+      const outcome = makeOutcome({
+        handoff,
+        now,
+        reason:
+          'Commerce Customer Context has no approved owner semantic contract for this Privacy Measure; canonical owner data was not changed',
+      });
       const [receipt] = yield* transaction
         .invoke(recordReceiptRoutine, [
           outcome.outcomeId,

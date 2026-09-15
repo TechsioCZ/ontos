@@ -15,6 +15,12 @@ const scope = {
   purposeRef: 'purpose:account-alerts',
   purposeVersionId: 'purpose-version:1',
   recipientRefs: ['recipient:mail-provider'],
+  subjectRef: {
+    moduleId: 'privacy.core' as const,
+    resourceId: 'subject:acme',
+    resourceType: 'privacy.core.privacy-subject' as const,
+    tenantId: '00000000-0000-4000-8000-000000000001',
+  },
 };
 
 const base = {

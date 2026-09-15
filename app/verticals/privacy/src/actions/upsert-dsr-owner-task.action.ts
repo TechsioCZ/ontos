@@ -9,28 +9,51 @@ import {
   UpsertDsrOwnerTaskResultSchema,
 } from '../../shared/actions/upsert-dsr-owner-task.ts';
 import type { UpsertDsrOwnerTaskPayload } from '../../shared/actions/upsert-dsr-owner-task.ts';
+import { validateDsrOwnerTaskAuthorityResult } from '../../shared/domain/privacy-dsr.ts';
+import { DsrOwnerTaskAuthority } from './privacy-dsr-owner-task-authority.ts';
+import type { DsrOwnerTaskAuthorityService } from './privacy-dsr-owner-task-authority.ts';
 import { privacyOperationRepositoryForScope } from '../persistence/privacy-operation-postgres-repository.ts';
 import type { PrivacyOperationRepositoryService } from '../persistence/privacy-operation-repository.ts';
 import {
   PrivacyActionAuditEvidenceSchema,
   PrivacyActionErrorSchema,
-  completePrivacyAction,
+  PrivacyActionRejected,
   privacyActionDomainEvents,
   requirePrivacyActionScope,
 } from './privacy-operation-action-support.ts';
 
-const handleUpsertDsrOwnerTask = Effect.fn('UpsertDsrOwnerTaskAction.handle')(function* handle(
+export interface UpsertDsrOwnerTaskServices extends Pick<PrivacyOperationRepositoryService, 'upsertDsrOwnerTask'> {
+  readonly authority: DsrOwnerTaskAuthorityService;
+}
+
+export const handleUpsertDsrOwnerTask = Effect.fn('UpsertDsrOwnerTaskAction.handle')(function* handle(
   payload: UpsertDsrOwnerTaskPayload,
-  context: ActionHandlerContext<typeof privacyActionDomainEvents, PrivacyOperationRepositoryService>,
+  context: ActionHandlerContext<typeof privacyActionDomainEvents, UpsertDsrOwnerTaskServices>,
 ) {
   const scope = yield* requirePrivacyActionScope(context.scope);
+  const authority = yield* context.services.authority.resolve(payload.request, {
+    actionInvocationId: context.actionInvocationId,
+    legalEntityId: scope.legalEntityId,
+    principalId: context.scope.principalId,
+    tenantId: scope.tenantId,
+  });
+  const authorityError = validateDsrOwnerTaskAuthorityResult(
+    payload.request,
+    authority,
+    scope.tenantId,
+    scope.legalEntityId,
+  );
+  if (authorityError !== undefined) {
+    return yield* new PrivacyActionRejected({ code: 'privacy_action_rejected', reason: authorityError });
+  }
   const result = yield* context.services.upsertDsrOwnerTask(
     scope.tenantId,
     scope.legalEntityId,
     context.actionInvocationId,
-    payload.task,
+    authority,
   );
-  return yield* completePrivacyAction(context, 'upsert-dsr-owner-task', result.taskRef, result);
+  yield* context.recordAuditEvidence({ operationKind: 'upsert-dsr-owner-task', recordId: result.taskRef });
+  return result;
 });
 export const upsertDsrOwnerTaskAction = defineAction(
   {
@@ -56,7 +79,19 @@ export const upsertDsrOwnerTaskAction = defineAction(
     schemaVersion: '1',
   },
   handleUpsertDsrOwnerTask,
-  privacyOperationRepositoryForScope,
+  (transaction, scope) =>
+    Effect.all(
+      {
+        authority: DsrOwnerTaskAuthority,
+        repository: privacyOperationRepositoryForScope(transaction, scope),
+      },
+      { concurrency: 2 },
+    ).pipe(
+      Effect.map(({ authority, repository }) => ({
+        authority,
+        upsertDsrOwnerTask: repository.upsertDsrOwnerTask,
+      })),
+    ),
 );
 // <generated-outbox-message-exports>
 // </generated-outbox-message-exports>

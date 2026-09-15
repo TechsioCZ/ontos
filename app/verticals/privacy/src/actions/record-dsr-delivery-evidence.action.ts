@@ -3,35 +3,98 @@
 // @ontos-action-slug record-dsr-delivery-evidence
 import type { ActionHandlerContext } from '@app/core-runtime';
 import { defineAction, defineTenantModuleEntrypoint } from '@app/core-runtime';
-import { DateTime, Effect } from 'effect';
+import { Context, DateTime, Effect, Layer } from 'effect';
 import {
   RecordDsrDeliveryEvidencePayloadSchema,
   RecordDsrDeliveryEvidenceResultSchema,
 } from '../../shared/actions/record-dsr-delivery-evidence.ts';
 import type { RecordDsrDeliveryEvidencePayload } from '../../shared/actions/record-dsr-delivery-evidence.ts';
+import type { DsrDeliveryEvidence } from '../../shared/domain/dsr-delivery-access.ts';
 import { privacyOperationRepositoryForScope } from '../persistence/privacy-operation-postgres-repository.ts';
+import { PrivacyOperationPersistenceError } from '../persistence/privacy-operation-repository.ts';
 import type { PrivacyOperationRepositoryService } from '../persistence/privacy-operation-repository.ts';
 import {
   PrivacyActionAuditEvidenceSchema,
   PrivacyActionErrorSchema,
-  completePrivacyAction,
+  PrivacyActionRejected,
   privacyActionDomainEvents,
   requirePrivacyActionScope,
 } from './privacy-operation-action-support.ts';
 
-const handleRecordDsrDeliveryEvidence = Effect.fn('RecordDsrDeliveryEvidenceAction.handle')(function* handle(
+interface DsrDeliveryAuthorityContext {
+  readonly actionInvocationId: string;
+  readonly legalEntityId: string;
+  readonly principalId: string;
+  readonly tenantId: string;
+}
+
+export type DsrDeliveryAuthorityEvidence = Omit<DsrDeliveryEvidence, 'recordedAt'>;
+
+export interface DsrDeliveryAuthorityService {
+  readonly resolve: (
+    request: RecordDsrDeliveryEvidencePayload,
+    context: DsrDeliveryAuthorityContext,
+  ) => Effect.Effect<DsrDeliveryAuthorityEvidence, PrivacyActionRejected | PrivacyOperationPersistenceError>;
+}
+
+export class DsrDeliveryAuthority extends Context.Service<DsrDeliveryAuthority, DsrDeliveryAuthorityService>()(
+  '@app/privacy/actions/record-dsr-delivery-evidence.action/DsrDeliveryAuthority',
+) {}
+
+export const dsrDeliveryAuthorityUnavailable = Object.freeze({
+  resolve: () =>
+    Effect.fail(
+      new PrivacyOperationPersistenceError({
+        code: 'privacy_operation_persistence_unavailable',
+        reason: 'DSR delivery authority is not configured',
+      }),
+    ),
+}) satisfies DsrDeliveryAuthorityService;
+
+export const DsrDeliveryAuthorityUnavailableLive = Layer.succeed(DsrDeliveryAuthority, dsrDeliveryAuthorityUnavailable);
+
+export interface RecordDsrDeliveryEvidenceServices extends Pick<
+  PrivacyOperationRepositoryService,
+  'recordDsrDeliveryEvidence'
+> {
+  readonly authority: DsrDeliveryAuthorityService;
+}
+
+export const handleRecordDsrDeliveryEvidence = Effect.fn('RecordDsrDeliveryEvidenceAction.handle')(function* handle(
   payload: RecordDsrDeliveryEvidencePayload,
-  context: ActionHandlerContext<typeof privacyActionDomainEvents, PrivacyOperationRepositoryService>,
+  context: ActionHandlerContext<typeof privacyActionDomainEvents, RecordDsrDeliveryEvidenceServices>,
 ) {
   const scope = yield* requirePrivacyActionScope(context.scope);
-  const evidence = { ...payload.evidence, recordedAt: DateTime.formatIso(yield* DateTime.now) };
+  const authoritativeEvidence = yield* context.services.authority.resolve(payload, {
+    actionInvocationId: context.actionInvocationId,
+    legalEntityId: scope.legalEntityId,
+    principalId: context.scope.principalId,
+    tenantId: scope.tenantId,
+  });
+  if (authoritativeEvidence.caseRef === undefined) {
+    return yield* new PrivacyActionRejected({
+      code: 'privacy_action_rejected',
+      reason: 'DSR Delivery Evidence requires an exact Case reference',
+    });
+  }
+  if (
+    authoritativeEvidence.accessId !== payload.accessId ||
+    authoritativeEvidence.providerReference !== payload.deliveryClaimRef
+  ) {
+    return yield* new PrivacyActionRejected({
+      code: 'privacy_action_rejected',
+      reason: 'DSR delivery authority returned evidence for a different access or delivery claim',
+    });
+  }
+  const evidence = { ...authoritativeEvidence, recordedAt: DateTime.formatIso(yield* DateTime.now) };
   const result = yield* context.services.recordDsrDeliveryEvidence(
     scope.tenantId,
     scope.legalEntityId,
     context.actionInvocationId,
     evidence,
   );
-  return yield* completePrivacyAction(context, 'record-dsr-delivery-evidence', result.evidenceId, result);
+  yield* context.recordAuditEvidence({ operationKind: 'record-dsr-delivery-evidence', recordId: result.evidenceId });
+  return result;
 });
 export const recordDsrDeliveryEvidenceAction = defineAction(
   {
@@ -60,7 +123,19 @@ export const recordDsrDeliveryEvidenceAction = defineAction(
     schemaVersion: '1',
   },
   handleRecordDsrDeliveryEvidence,
-  privacyOperationRepositoryForScope,
+  (transaction, scope) =>
+    Effect.all(
+      {
+        authority: DsrDeliveryAuthority,
+        repository: privacyOperationRepositoryForScope(transaction, scope),
+      },
+      { concurrency: 2 },
+    ).pipe(
+      Effect.map(({ authority, repository }) => ({
+        authority,
+        recordDsrDeliveryEvidence: repository.recordDsrDeliveryEvidence,
+      })),
+    ),
 );
 // <generated-outbox-message-exports>
 // </generated-outbox-message-exports>

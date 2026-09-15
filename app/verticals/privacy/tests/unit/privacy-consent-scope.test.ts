@@ -10,6 +10,7 @@ import type { ConsentScope } from '../../shared/domain/privacy-consent-scope.ts'
 const purposeVersion = {
   effectiveFrom: '2026-01-01T00:00:00Z',
   effectiveTo: null,
+  materialChangeAssessment: null,
   meaning: 'Send account security alerts',
   recordedAt: '2026-01-01T00:00:00Z',
   versionId: '11111111-1111-4111-8111-111111111111',

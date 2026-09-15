@@ -10,12 +10,18 @@ import {
   createPrivacyEligibilityEvidence,
   evaluatePrivacyEligibility,
 } from '../../shared/domain/privacy-processing-eligibility.ts';
+import { PrivacyApplicabilityBusinessFactAuthority } from '../actions/privacy-applicability-business-fact-authority-service.ts';
+import type { PrivacyApplicabilityBusinessFactAuthorityService } from '../actions/privacy-applicability-business-fact-authority-service.ts';
 import { privacyOperationRepositoryForScope } from '../persistence/privacy-operation-postgres-repository.ts';
 import type { PrivacyOperationRepositoryService } from '../persistence/privacy-operation-repository.ts';
 
 const MODULE_KEY = 'privacy.core' as const;
 
 const unavailable = (reason: string) => new ReadHandlerUnavailable({ code: 'read_handler_unavailable', reason });
+
+type ProcessingEligibilityServices = Pick<PrivacyOperationRepositoryService, 'resolveEligibilityInputs'> & {
+  readonly authority: PrivacyApplicabilityBusinessFactAuthorityService;
+};
 
 const processingEligibilityEntrypoint = defineTenantModuleEntrypoint({
   access: 'read',
@@ -42,19 +48,25 @@ export const processingEligibilityRead = defineRead(
     resultSchema: ProcessingEligibilityResponseSchema,
     schemaVersion: '1',
   },
-  (input, context: ReadHandlerContext<PrivacyOperationRepositoryService>) => {
+  (input, context: ReadHandlerContext<ProcessingEligibilityServices>) => {
     const { legalEntityId, tenantId } = context.scope;
     if (legalEntityId === undefined) {
       return Effect.fail(unavailable('Processing Eligibility requires a trusted Legal Entity scope'));
     }
     return Effect.gen(function* readAuthoritativeEligibility() {
       const asOf = DateTime.formatIso(yield* DateTime.now);
+      const authority = yield* context.services.authority.resolveEligibility({
+        asOf,
+        intendedScope: input.intendedScope,
+        legalEntityId,
+        tenantId,
+      });
       const resolved = yield* context.services.resolveEligibilityInputs(
         tenantId,
         legalEntityId,
         input.intendedScope,
-        input.applicabilityScope,
         asOf,
+        authority,
       );
       const outcome = evaluatePrivacyEligibility(resolved.input);
       const evidence = createPrivacyEligibilityEvidence({
@@ -65,6 +77,18 @@ export const processingEligibilityRead = defineRead(
       return { evidence: { resultCount: 1 }, result: { evidence, outcome } };
     }).pipe(Effect.mapError((cause) => unavailable(`Authoritative eligibility inputs unavailable: ${String(cause)}`)));
   },
-  (transaction, scope) => privacyOperationRepositoryForScope(transaction, scope),
+  (transaction, scope) =>
+    Effect.all(
+      {
+        authority: PrivacyApplicabilityBusinessFactAuthority,
+        repository: privacyOperationRepositoryForScope(transaction, scope),
+      },
+      { concurrency: 2 },
+    ).pipe(
+      Effect.map(({ authority, repository }) => ({
+        authority,
+        resolveEligibilityInputs: repository.resolveEligibilityInputs,
+      })),
+    ),
   () => ({ kind: 'module', moduleId: MODULE_KEY }),
 );

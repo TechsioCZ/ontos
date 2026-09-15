@@ -1,8 +1,8 @@
 import { Schema } from 'effect';
 
-import { PartyRefSchema } from '@app/party-registry/resources/party';
-import type { PartyRef } from '@app/party-registry/resources/party';
 import { IdentityReconciliationRefSchema } from '../resources/identity-reconciliation.ts';
+import { PrivacyPartyRefSchema } from './party-reference.ts';
+import type { PrivacyPartyRef } from './party-reference.ts';
 import { PrivacyIsoTimestampSchema } from './privacy-subject.ts';
 
 const BoundedText = Schema.Trim.check(Schema.isMinLength(1), Schema.isMaxLength(500));
@@ -16,12 +16,12 @@ const PrivacyIdentityChangeKindSchema = Schema.Literals([
 
 /** Owner evidence for a Party identity change. It is a resolution input, never a new identity key. */
 export const PrivacyIdentityChangeSchema = Schema.Struct({
-  canonicalPartyRef: PartyRefSchema,
+  canonicalPartyRef: PrivacyPartyRefSchema,
   changedAt: PrivacyIsoTimestampSchema,
   evidenceRefs: Schema.Array(BoundedText).check(Schema.isMinLength(1), Schema.isMaxLength(32)),
   kind: PrivacyIdentityChangeKindSchema,
   sourceEventRef: BoundedText,
-  sourcePartyRef: PartyRefSchema,
+  sourcePartyRef: PrivacyPartyRefSchema,
 }).check(
   Schema.makeFilter(({ canonicalPartyRef, sourcePartyRef }) =>
     sourcePartyRef.tenantId === canonicalPartyRef.tenantId
@@ -43,7 +43,7 @@ const PrivacyAffectedFactKindSchema = Schema.Literals([
 export const PrivacyAffectedFactSchema = Schema.Struct({
   factKind: PrivacyAffectedFactKindSchema,
   factRef: BoundedText,
-  originalPartyRef: PartyRefSchema,
+  originalPartyRef: PrivacyPartyRefSchema,
   provenanceRefs: Schema.Array(BoundedText).check(Schema.isMinLength(1), Schema.isMaxLength(32)),
   sourceDecisionRevision: BoundedText,
 });
@@ -73,8 +73,8 @@ export const classifyPrivacyIdentityChange = (
 
 /** Canonical addressability may follow Party Registry, while historical facts retain their source reference. */
 export interface PrivacyAddressabilityResolution {
-  readonly canonicalPartyRef: PartyRef;
-  readonly originalPartyRef: PartyRef;
+  readonly canonicalPartyRef: PrivacyPartyRef;
+  readonly originalPartyRef: PrivacyPartyRef;
 }
 
 export const resolvePrivacyAddressability = (

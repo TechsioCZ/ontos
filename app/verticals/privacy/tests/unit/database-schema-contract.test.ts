@@ -163,6 +163,48 @@ it('matches the typed Action repository row contracts', () => {
   }
 });
 
+it('keeps durable disposition decisions determinate and retention worker evidence authoritative', () => {
+  const migrations = migrationSql();
+  const followupMigration = readFileSync(
+    new URL('../../drizzle/20260915071434_unusual_colleen_wing/migration.sql', import.meta.url),
+    'utf-8',
+  );
+  const retentionAuditMigration = readFileSync(
+    new URL('../../drizzle/20260915083027_confused_blazing_skull/migration.sql', import.meta.url),
+    'utf-8',
+  );
+  expect(migrations).toContain(`CHECK ("outcome" in ('RETAIN', 'RESTRICT', 'ANONYMIZE', 'DELETE'))`);
+  expect(followupMigration).toContain("'evaluationRef', v_work.work_ref");
+  expect(followupMigration).toContain("'policyRef', v_policy_ref");
+  expect(followupMigration).toContain("'policyVersion', v_policy_version");
+  expect(followupMigration).toContain("'controllerRef', v_controller_ref");
+  expect(followupMigration).toContain("'evidenceRefs', to_jsonb(v_evidence_refs)");
+  expect(followupMigration).toContain("'provenanceRef', v_provenance_ref");
+  expect(followupMigration).toContain("'blockerRefs', to_jsonb(v_blocker_refs)");
+  expect(followupMigration).toContain('AUTHORITATIVE_EVALUATION_INCOMPLETE');
+  expect(followupMigration).not.toContain(
+    `privacy_disposition_decisions_outcome_ck" CHECK ("outcome" in ('RETAIN', 'RESTRICT', 'ANONYMIZE', 'DELETE', 'INDETERMINATE'))`,
+  );
+  expect(retentionAuditMigration).toContain('v_authoritative_due_at := v_business_start_at + make_interval');
+  expect(retentionAuditMigration).toContain("v_reason := 'AUTHORITATIVE_DUE_AT_MISMATCH'");
+  expect(retentionAuditMigration).toContain(
+    "decision.outcome IS DISTINCT FROM v_current_rule.rule_record->>'dispositionOutcome'",
+  );
+  expect(retentionAuditMigration).toContain(`("hold_record"->>'releasedAt')::timestamptz = "released_at"`);
+  expect(retentionAuditMigration).toContain(`("exception_record"->>'releasedAt')::timestamptz = "released_at"`);
+  expect(retentionAuditMigration).not.toContain('required_consent_dimensions');
+});
+
+it('keeps anti-resurrection measure support aligned with the domain contract', () => {
+  const migration = readFileSync(
+    new URL('../../drizzle/20260915123636_mature_triton/migration.sql', import.meta.url),
+    'utf-8',
+  );
+
+  expect(migration).toContain('DROP CONSTRAINT "privacy_anti_resurrection_measure_ck"');
+  expect(migration).toContain(`CHECK ("measure" in ('RESTRICT', 'DELETE', 'ANONYMIZE'))`);
+});
+
 it('declares exact owner-local uniqueness and idempotency keys', () => {
   const expectedKeys = new Map([
     [
@@ -346,12 +388,12 @@ it('uses safe checks for versions, periods, decisions, outcomes, and current wor
       'legal_basis_assignments',
       ['privacy_legal_basis_assignments_decision_ck', 'privacy_legal_basis_assignments_period_ck'],
     ],
-    ['legal_holds', ['privacy_legal_holds_period_ck']],
+    ['legal_holds', ['privacy_legal_holds_governance_ck', 'privacy_legal_holds_period_ck']],
     [
       'responsibility_assignments',
       ['privacy_responsibility_assignments_period_ck', 'privacy_responsibility_assignments_role_ck'],
     ],
-    ['retention_exceptions', ['privacy_retention_exceptions_period_ck']],
+    ['retention_exceptions', ['privacy_retention_exceptions_governance_ck', 'privacy_retention_exceptions_period_ck']],
     ['retention_rules', ['privacy_retention_rules_period_ck', 'privacy_retention_rules_version_ck']],
   ]);
 

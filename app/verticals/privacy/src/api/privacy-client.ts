@@ -18,6 +18,7 @@ export * from './add-processing-purpose-version-action-client.ts';
 export * from './assign-dsr-resolver-action-client.ts';
 export * from './assign-legal-basis-action-client.ts';
 export * from './assign-privacy-responsibility-action-client.ts';
+export * from './consent-self-service-action-client.ts';
 export * from './create-dsr-case-action-client.ts';
 export * from './create-notice-version-action-client.ts';
 export * from './create-privacy-subject-action-client.ts';

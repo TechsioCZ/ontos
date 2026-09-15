@@ -3,39 +3,122 @@
 // @ontos-action-slug record-dsr-deadline
 import type { ActionHandlerContext } from '@app/core-runtime';
 import { defineAction, defineTenantModuleEntrypoint } from '@app/core-runtime';
-import { Effect } from 'effect';
+import { Context, Effect, Layer, Option, Schema } from 'effect';
 import {
   RecordDsrDeadlinePayloadSchema,
   RecordDsrDeadlineResultSchema,
 } from '../../shared/actions/record-dsr-deadline.ts';
 import type { RecordDsrDeadlinePayload } from '../../shared/actions/record-dsr-deadline.ts';
+import { calculateDsrDeadline, DsrDeadlinePolicySchema } from '../../shared/domain/privacy-dsr.ts';
+import { PrivacyIsoTimestampSchema } from '../../shared/domain/privacy-subject.ts';
 import { privacyOperationRepositoryForScope } from '../persistence/privacy-operation-postgres-repository.ts';
+import { PrivacyOperationPersistenceError } from '../persistence/privacy-operation-repository.ts';
 import type { PrivacyOperationRepositoryService } from '../persistence/privacy-operation-repository.ts';
 import {
   PrivacyActionAuditEvidenceSchema,
   PrivacyActionErrorSchema,
-  completePrivacyAction,
+  PrivacyActionRejected,
   privacyActionDomainEvents,
   requirePrivacyActionScope,
 } from './privacy-operation-action-support.ts';
 
-const handleRecordDsrDeadline = Effect.fn('RecordDsrDeadlineAction.handle')(function* handle(
+const DsrDeadlineAuthorityEvidenceSchema = Schema.Struct({
+  caseRef: Schema.String,
+  controllerRef: Schema.String,
+  obligationRef: Schema.String,
+  policy: DsrDeadlinePolicySchema,
+  receiptBasisRef: Schema.String,
+  receivedAt: PrivacyIsoTimestampSchema,
+});
+type DsrDeadlineAuthorityEvidence = typeof DsrDeadlineAuthorityEvidenceSchema.Type;
+
+export interface DsrDeadlineAuthorityService {
+  readonly resolve: (
+    evidence: Omit<DsrDeadlineAuthorityEvidence, 'policy'>,
+  ) => Effect.Effect<DsrDeadlineAuthorityEvidence, PrivacyActionRejected | PrivacyOperationPersistenceError>;
+}
+
+export class DsrDeadlineAuthority extends Context.Service<DsrDeadlineAuthority, DsrDeadlineAuthorityService>()(
+  '@app/privacy/actions/record-dsr-deadline.action/DsrDeadlineAuthority',
+) {}
+
+export const dsrDeadlineAuthorityUnavailable = Object.freeze({
+  resolve: () =>
+    Effect.fail(
+      new PrivacyOperationPersistenceError({
+        code: 'privacy_operation_persistence_unavailable',
+        reason: 'Authoritative versioned DSR deadline policy is not configured',
+      }),
+    ),
+}) satisfies DsrDeadlineAuthorityService;
+
+export const DsrDeadlineAuthorityUnavailableLive = Layer.succeed(DsrDeadlineAuthority, dsrDeadlineAuthorityUnavailable);
+
+export interface RecordDsrDeadlineServices extends Pick<
+  PrivacyOperationRepositoryService,
+  'getDsrCase' | 'recordDsrDeadline'
+> {
+  readonly authority: DsrDeadlineAuthorityService;
+}
+
+export const handleRecordDsrDeadline = Effect.fn('RecordDsrDeadlineAction.handle')(function* handle(
   payload: RecordDsrDeadlinePayload,
-  context: ActionHandlerContext<typeof privacyActionDomainEvents, PrivacyOperationRepositoryService>,
+  context: ActionHandlerContext<typeof privacyActionDomainEvents, RecordDsrDeadlineServices>,
 ) {
   const scope = yield* requirePrivacyActionScope(context.scope);
+  const caseResult = yield* context.services.getDsrCase(scope.tenantId, scope.legalEntityId, payload.caseRef);
+  if (Option.isNone(caseResult)) {
+    return yield* new PrivacyActionRejected({
+      code: 'privacy_action_rejected',
+      reason: 'DSR Deadline requires an existing Case',
+    });
+  }
+  const obligation = caseResult.value.controllerObligations.find(
+    ({ controllerRef }) => controllerRef === payload.controllerRef,
+  );
+  if (obligation === undefined) {
+    return yield* new PrivacyActionRejected({
+      code: 'privacy_action_rejected',
+      reason: 'DSR Deadline requires an authoritative matching Controller obligation',
+    });
+  }
+  const authoritative = yield* context.services.authority.resolve({
+    caseRef: payload.caseRef,
+    controllerRef: payload.controllerRef,
+    obligationRef: obligation.obligationRef,
+    receiptBasisRef: obligation.receiptBasisRef,
+    receivedAt: obligation.receivedAt,
+  });
+  if (
+    authoritative.caseRef !== payload.caseRef ||
+    authoritative.controllerRef !== payload.controllerRef ||
+    authoritative.obligationRef !== obligation.obligationRef ||
+    authoritative.receiptBasisRef !== obligation.receiptBasisRef ||
+    authoritative.receivedAt !== obligation.receivedAt
+  ) {
+    return yield* new PrivacyActionRejected({
+      code: 'privacy_action_rejected',
+      reason: 'DSR deadline authority returned policy for a different Controller obligation or receipt fact',
+    });
+  }
+  const deadline = calculateDsrDeadline({
+    caseRef: payload.caseRef,
+    controllerRef: payload.controllerRef,
+    originalReceivedAt: authoritative.receivedAt,
+    policy: authoritative.policy,
+    receiptBasisRef: authoritative.receiptBasisRef,
+  });
   const result = yield* context.services.recordDsrDeadline(
     scope.tenantId,
     scope.legalEntityId,
     context.actionInvocationId,
-    payload.deadline,
+    deadline,
   );
-  return yield* completePrivacyAction(
-    context,
-    'record-dsr-deadline',
-    `${result.caseRef}:${result.controllerRef}:${result.deadlineAt}`,
-    result,
-  );
+  yield* context.recordAuditEvidence({
+    operationKind: 'record-dsr-deadline',
+    recordId: `${result.caseRef}:${result.controllerRef}:${result.deadlineAt}`,
+  });
+  return result;
 });
 export const recordDsrDeadlineAction = defineAction(
   {
@@ -61,7 +144,20 @@ export const recordDsrDeadlineAction = defineAction(
     schemaVersion: '1',
   },
   handleRecordDsrDeadline,
-  privacyOperationRepositoryForScope,
+  (transaction, scope) =>
+    Effect.all(
+      {
+        authority: DsrDeadlineAuthority,
+        repository: privacyOperationRepositoryForScope(transaction, scope),
+      },
+      { concurrency: 2 },
+    ).pipe(
+      Effect.map(({ authority, repository }) => ({
+        authority,
+        getDsrCase: repository.getDsrCase,
+        recordDsrDeadline: repository.recordDsrDeadline,
+      })),
+    ),
 );
 // <generated-outbox-message-exports>
 // </generated-outbox-message-exports>

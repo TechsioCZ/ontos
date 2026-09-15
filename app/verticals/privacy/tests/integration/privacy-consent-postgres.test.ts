@@ -1,16 +1,18 @@
 import type { ScopedTransactionExecutor } from '@app/core-runtime';
 import { loadDatabaseConnectionPair } from '@app/core-runtime';
 import { and, eq, sql } from 'drizzle-orm';
-import { Effect, Exit, Option } from 'effect';
+import { Effect, Exit, Option, Schema } from 'effect';
 import { expect, it } from 'effect-rstest';
 import { Pool } from 'pg';
 
 import { makeTestDatabaseFromPool } from '../../../../packages/core-runtime/tests/support/database.ts';
 import { installOperationalScope } from '../../../../packages/core-runtime/src/db/scoped-transaction.ts';
 import type { ConsentDecision } from '../../shared/domain/privacy-consent-decision.ts';
+import { PrivacyPartyRefSchema } from '../../shared/domain/party-reference.ts';
 import {
   consentDecisions,
   noticeProvisions,
+  noticeVersions,
   privacyRelations,
   privacySubjects,
   processingPurposes,
@@ -25,7 +27,6 @@ const otherTenantId = 'd7000000-0000-4000-8000-000000000009';
 const legalEntityId = 'd7000000-0000-4000-8000-000000000002';
 const principalId = 'd7000000-0000-4000-8000-000000000003';
 const subjectId = 'd7100000-0000-4000-8000-000000000001';
-const noticeProvisionId = 'notice-proof:privacy-db-test';
 
 const pool = (connectionString: string) =>
   Effect.acquireRelease(
@@ -56,6 +57,7 @@ it.live('proves consent replay, ordering, conflicts, tenant isolation, and immut
             yield* transaction.execute(sql`set local session_replication_role = 'replica'`);
             yield* transaction.delete(consentDecisions).where(eq(consentDecisions.tenantId, tenantId));
             yield* transaction.delete(noticeProvisions).where(eq(noticeProvisions.tenantId, tenantId));
+            yield* transaction.delete(noticeVersions).where(eq(noticeVersions.tenantId, tenantId));
             yield* transaction.delete(purposeVersions).where(eq(purposeVersions.tenantId, tenantId));
             yield* transaction.delete(processingPurposes).where(eq(processingPurposes.tenantId, tenantId));
             yield* transaction.delete(privacySubjects).where(eq(privacySubjects.tenantId, tenantId));
@@ -90,18 +92,19 @@ it.live('proves consent replay, ordering, conflicts, tenant isolation, and immut
               effectiveFrom: '2026-01-01T00:00:00Z',
               governanceOwnerId: principalId,
               meaning: 'Exercise Privacy consent persistence invariants',
+              requiredConsentDimensions: ['SITE'],
             },
           );
           yield* operations.createSubject(tenantId, legalEntityId, 'd7200000-0000-4000-8000-000000000002', {
             createdAt: '2026-01-01T00:00:00Z',
             subject: {
               kind: 'DATA_SUBJECT',
-              partyRef: {
+              partyRef: Schema.decodeUnknownSync(PrivacyPartyRefSchema)({
                 moduleId: 'party.registry',
                 resourceId: 'privacy-db-party',
                 resourceType: 'party.registry.party',
                 tenantId,
-              },
+              }),
             },
             subjectRef: {
               moduleId: 'privacy.core',
@@ -111,32 +114,75 @@ it.live('proves consent replay, ordering, conflicts, tenant isolation, and immut
             },
             updatedAt: '2026-01-01T00:00:00Z',
           });
-          yield* provisions.record(tenantId, legalEntityId, 'd7200000-0000-4000-8000-000000000003', {
-            actionRef: 'privacy-db-action',
-            anonymousContextRef: null,
-            businessInteractionRef: 'privacy-db-interaction',
-            channel: 'web',
-            channelProof: {
-              authorityRef: 'privacy-db-channel-authority',
-              channel: 'web',
-              evidenceRef: 'privacy-db-proof',
-              observedAt: '2026-01-01T00:00:01Z',
-              proofKind: 'INTERACTIVE_ACKNOWLEDGEMENT',
-            },
-            controllerRef: 'controller:privacy-db',
-            evidenceRef: 'privacy-db-proof',
-            failureReason: null,
-            noticeVersionRef: 'notice-version:privacy-db',
-            outcome: 'PROVEN_PROVISION',
-            privacySubjectRef: subjectId,
-            processingPurposeRef: purpose.purposeRef.resourceId,
-            processingScopeRef: 'scope:privacy-db',
-            providedLanguage: 'en',
-            provisionedAt: '2026-01-01T00:00:01Z',
-            provisionId: noticeProvisionId,
-            recordedAt: '2026-01-01T00:00:02Z',
-            supersedesProvisionRef: null,
-          });
+          const purposeVersion = Option.getOrThrow(Option.fromUndefinedOr(purpose.versions.at(0)));
+          yield* Effect.forEach(
+            ['scope:privacy-db:conflict', 'scope:privacy-db:ordered'],
+            (processingScopeRef, index) =>
+              // oxlint-disable-next-line sonarjs/no-nested-functions -- The scoped integration fixture must create versioned notice evidence inside its transaction lifecycle.
+              Effect.gen(function* createNoticeEvidence() {
+                const notice = yield* operations.createNoticeVersion(
+                  tenantId,
+                  legalEntityId,
+                  `d7400000-0000-4000-8000-00000000000${index + 1}`,
+                  `d7500000-0000-4000-8000-00000000000${index + 1}`,
+                  {
+                    applicableScope: {
+                      facts: [
+                        { dimension: 'PRIVACY_SUBJECT', value: subjectId },
+                        { dimension: 'CONTROLLER_SCOPE', value: 'controller:privacy-db' },
+                        { dimension: 'PROCESSING_PURPOSE', value: purpose.purposeRef.resourceId },
+                        { dimension: 'PROCESSING_PURPOSE_VERSION', value: purposeVersion.versionId },
+                        { dimension: 'SITE', value: 'site:privacy-db' },
+                      ],
+                      operation: 'CONSENT_DECISION',
+                      processingScopeRef: { scopeId: processingScopeRef, scopeType: 'privacy.processing-scope' },
+                    },
+                    contentIdentity: `privacy-db-notice:${index}`,
+                    effectiveFrom: '2026-01-01T00:00:00Z',
+                    evidenceArtifactRef: null,
+                    language: 'en',
+                    wording: 'Privacy consent notice',
+                  },
+                );
+                const provisionId = `notice-proof:${processingScopeRef}`;
+                const evidenceRef = `privacy-db-proof:${processingScopeRef}`;
+                yield* provisions.record(tenantId, legalEntityId, `d7600000-0000-4000-8000-00000000000${index + 1}`, {
+                  actionRef: 'privacy-db-action',
+                  anonymousContextRef: null,
+                  businessInteractionRef: `privacy-db-interaction:${index}`,
+                  channel: 'web',
+                  channelProof: {
+                    anonymousContextRef: null,
+                    authorityRef: 'privacy-db-channel-authority',
+                    businessInteractionRef: `privacy-db-interaction:${index}`,
+                    channel: 'web',
+                    controllerRef: 'controller:privacy-db',
+                    evidenceRef,
+                    noticeVersionRef: notice.versionId,
+                    observedAt: '2026-01-01T00:00:01Z',
+                    privacySubjectRef: subjectId,
+                    processingPurposeRef: purpose.purposeRef.resourceId,
+                    processingScopeRef,
+                    proofKind: 'INTERACTIVE_ACKNOWLEDGEMENT',
+                    providedLanguage: 'en',
+                  },
+                  controllerRef: 'controller:privacy-db',
+                  evidenceRef,
+                  failureReason: null,
+                  noticeVersionRef: notice.versionId,
+                  outcome: 'PROVEN_PROVISION',
+                  privacySubjectRef: subjectId,
+                  processingPurposeRef: purpose.purposeRef.resourceId,
+                  processingScopeRef,
+                  providedLanguage: 'en',
+                  provisionedAt: '2026-01-01T00:00:01Z',
+                  provisionId,
+                  recordedAt: '2026-01-01T00:00:02Z',
+                  supersedesProvisionRef: null,
+                });
+              }),
+            { concurrency: 1 },
+          );
           return purpose;
         }),
       );
@@ -161,12 +207,12 @@ it.live('proves consent replay, ordering, conflicts, tenant isolation, and immut
         effectiveAt,
         flowEvidenceRefs: [],
         idempotencyKey,
-        noticeEvidenceRefs: [noticeProvisionId],
+        noticeEvidenceRefs: [`notice-proof:${scopeRef}`],
         provenanceRefs: ['privacy-db-provenance'],
         recordedAt,
         scope: {
           controllerRef: 'controller:privacy-db',
-          materialDimensions: [],
+          materialDimensions: [{ kind: 'SITE', value: 'site:privacy-db' }],
           privacySubjectRef: {
             moduleId: 'privacy.core',
             resourceId: subjectId,
@@ -196,6 +242,66 @@ it.live('proves consent replay, ordering, conflicts, tenant isolation, and immut
         );
 
       const conflictScope = 'scope:privacy-db:conflict';
+      const evidenceDecision = decision(
+        'decision:evidence-negative',
+        'GRANTED',
+        '2026-01-15T00:00:00Z',
+        '2026-01-15T00:00:01Z',
+        conflictScope,
+        'key:evidence-negative',
+      );
+      expect(
+        Exit.isFailure(
+          yield* Effect.exit(
+            write('d7300000-0000-4000-8000-000000000011', {
+              ...evidenceDecision,
+              scope: { ...evidenceDecision.scope, controllerRef: 'controller:mismatched' },
+            }),
+          ),
+        ),
+      ).toBe(true);
+      expect(
+        Exit.isFailure(
+          yield* Effect.exit(
+            write('d7300000-0000-4000-8000-000000000012', {
+              ...evidenceDecision,
+              decisionId: 'decision:evidence-scope-negative',
+              idempotencyKey: 'key:evidence-scope-negative',
+              scope: { ...evidenceDecision.scope, scopeRef: 'scope:mismatched' },
+            }),
+          ),
+        ),
+      ).toBe(true);
+      expect(
+        Exit.isFailure(
+          yield* Effect.exit(
+            write('d7300000-0000-4000-8000-000000000013', {
+              ...evidenceDecision,
+              decisionId: 'decision:evidence-version-negative',
+              idempotencyKey: 'key:evidence-version-negative',
+              scope: {
+                ...evidenceDecision.scope,
+                purposeVersionRef: 'd7700000-0000-4000-8000-000000000001',
+              },
+            }),
+          ),
+        ),
+      ).toBe(true);
+      expect(
+        Exit.isFailure(
+          yield* Effect.exit(
+            write('d7300000-0000-4000-8000-000000000014', {
+              ...evidenceDecision,
+              decisionId: 'decision:evidence-dimension-negative',
+              idempotencyKey: 'key:evidence-dimension-negative',
+              scope: {
+                ...evidenceDecision.scope,
+                materialDimensions: [{ kind: 'SITE', value: 'site:mismatched' }],
+              },
+            }),
+          ),
+        ),
+      ).toBe(true);
       yield* Effect.all(
         [
           write(

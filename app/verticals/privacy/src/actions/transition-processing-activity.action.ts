@@ -4,7 +4,7 @@
 /* eslint-disable effect-native/no-string-timestamp-schema, effect-native/no-unbranded-identifier-schema -- Audit evidence reuses the canonical UTC wire timestamp and owner-issued opaque identifier from the validated Action payload. expires: 2027-03-31. */
 import type { ActionHandlerContext } from '@app/core-runtime';
 import { defineAction, defineTenantModuleEntrypoint } from '@app/core-runtime';
-import { Effect, Schema } from 'effect';
+import { Effect, Option, Schema } from 'effect';
 
 import {
   TransitionProcessingActivityPayloadSchema,
@@ -12,9 +12,11 @@ import {
 } from '../../shared/actions/transition-processing-activity.ts';
 import type { TransitionProcessingActivityPayload } from '../../shared/actions/transition-processing-activity.ts';
 import { OutboxPayloadSchema } from '../../shared/outbox/privacy-processing-activity-lifecycle-transitioned.ts';
+import { ProcessingActivityCoverageAuthority } from './processing-activity-coverage-authority.ts';
+import type { ProcessingActivityCoverageAuthorityService } from './processing-activity-coverage-authority.ts';
 import { ProcessingActivityRegistryError } from '../domain/processing-activity-registry.ts';
-import type { ProcessingActivityRepositoryService } from '../persistence/processing-activity-repository.ts';
 import { processingActivityRepositoryForScope } from '../persistence/processing-activity-postgres-repository.ts';
+import type { ProcessingActivityRepositoryService } from '../persistence/processing-activity-repository.ts';
 import { createTransitionProcessingActivityPrivacyProcessingActivityLifecycleTransitionedOutboxMessage as createOutboxMessage } from './transition-processing-activity-privacy-processing-activity-lifecycle-transitioned.outbox-message.ts';
 
 class TransitionProcessingActivityScopeRequired extends Schema.TaggedError<TransitionProcessingActivityScopeRequired>()(
@@ -33,9 +35,11 @@ const AuditEvidenceSchema = Schema.Struct({
 });
 const domainEvents = { 'privacy.processing-activity.lifecycle-transitioned': OutboxPayloadSchema } as const;
 const MODULE_KEY = 'privacy.core' as const;
-type Services = Pick<ProcessingActivityRepositoryService, 'transition'>;
+export interface Services extends Pick<ProcessingActivityRepositoryService, 'get' | 'transition'> {
+  readonly authority: ProcessingActivityCoverageAuthorityService;
+}
 
-const handleTransitionProcessingActivity = Effect.fn('TransitionProcessingActivityAction.handle')(
+export const handleTransitionProcessingActivity = Effect.fn('TransitionProcessingActivityAction.handle')(
   function* transitionProcessingActivity(
     payload: TransitionProcessingActivityPayload,
     context: ActionHandlerContext<typeof domainEvents, Services>,
@@ -53,6 +57,23 @@ const handleTransitionProcessingActivity = Effect.fn('TransitionProcessingActivi
         reason: 'Processing Activity reference does not match the trusted tenant',
       });
     }
+    const current = yield* context.services.get(context.scope.tenantId, legalEntityId, payload.activityRef.resourceId);
+    if (Option.isNone(current)) {
+      return yield* new ProcessingActivityRegistryError({
+        code: 'privacy_processing_activity_not_found',
+        reason: 'Processing Activity was not found',
+      });
+    }
+    const authoritativeCoverage =
+      payload.to === 'EFFECTIVE'
+        ? yield* context.services.authority.resolve({
+            actionInvocationId: context.actionInvocationId,
+            activityRef: current.value.activityRef,
+            legalEntityId,
+            principalId: context.scope.principalId,
+            tenantId: context.scope.tenantId,
+          })
+        : undefined;
     const activity = yield* context.services.transition(
       context.scope.tenantId,
       legalEntityId,
@@ -62,6 +83,7 @@ const handleTransitionProcessingActivity = Effect.fn('TransitionProcessingActivi
       payload.to,
       payload.decisionEvidenceRefs,
       payload.effectiveAt,
+      authoritativeCoverage,
     );
     yield* context.recordAuditEvidence({
       activityId: activity.activityRef.resourceId,
@@ -117,7 +139,19 @@ export const transitionProcessingActivityAction = defineAction(
   },
   handleTransitionProcessingActivity,
   (transaction, scope) =>
-    processingActivityRepositoryForScope(transaction, scope).pipe(Effect.map(({ transition }) => ({ transition }))),
+    Effect.all(
+      {
+        authority: ProcessingActivityCoverageAuthority,
+        repository: processingActivityRepositoryForScope(transaction, scope),
+      },
+      { concurrency: 2 },
+    ).pipe(
+      Effect.map(({ authority, repository }) => ({
+        authority,
+        get: repository.get,
+        transition: repository.transition,
+      })),
+    ),
 );
 
 // <generated-outbox-message-exports>

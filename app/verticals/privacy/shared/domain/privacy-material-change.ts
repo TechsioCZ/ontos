@@ -7,6 +7,7 @@ const Ref = Schema.Trim.check(Schema.isMinLength(1), Schema.isMaxLength(300));
 const Dimension = Schema.Literals([
   'CONTROLLER',
   'PROCESSING_PURPOSE',
+  'PURPOSE_MEANING',
   'PURPOSE_VERSION',
   'PERSONAL_DATA_CATEGORY',
   'RECIPIENT',
@@ -23,6 +24,7 @@ export const PrivacyChangeSnapshotSchema = Schema.Struct({
   consentScopeKey: Schema.NullOr(Ref),
   controllerRef: Ref,
   dataCategoryRefs: Schema.Array(Ref),
+  meaning: Ref,
   processingScopeRef: Ref,
   purposeRef: Ref,
   purposeVersionRef: Ref,
@@ -56,11 +58,13 @@ export const PrivacyMaterialChangeAssessmentSchema = Schema.Struct({
   changedAt: PrivacyIsoTimestampSchema,
   changedDimensions: Schema.Array(Dimension),
   changeRef: Ref,
+  current: PrivacyChangeSnapshotSchema,
   historicalConsentDecisionsPreserved: Schema.Literal(true),
   historicalNoticeProvisionPreserved: Schema.Literal(true),
   materiality: PrivacyMaterialitySchema,
   newConsentDecisionRequired: Schema.Boolean,
   outcome: PrivacyRenoticeOutcomeSchema,
+  previous: PrivacyChangeSnapshotSchema,
 });
 export type PrivacyMaterialChangeAssessment = typeof PrivacyMaterialChangeAssessmentSchema.Type;
 
@@ -95,6 +99,9 @@ export const changedPrivacyMaterialDimensions = (
   }
   if (previous.purposeRef !== current.purposeRef) {
     changed.push('PROCESSING_PURPOSE');
+  }
+  if (previous.meaning !== current.meaning) {
+    changed.push('PURPOSE_MEANING');
   }
   if (previous.purposeVersionRef !== current.purposeVersionRef) {
     changed.push('PURPOSE_VERSION');
@@ -131,10 +138,12 @@ export const assessMaterialPrivacyChange = (input: MaterialPrivacyChangeInput): 
     changedAt: input.changedAt,
     changedDimensions,
     changeRef: input.changeRef,
+    current: input.current,
     historicalConsentDecisionsPreserved: true,
     historicalNoticeProvisionPreserved: true,
     materiality: material ? 'MATERIAL' : 'EDITORIAL',
     newConsentDecisionRequired,
     outcome,
+    previous: input.previous,
   };
 };

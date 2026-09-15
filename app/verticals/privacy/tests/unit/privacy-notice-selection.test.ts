@@ -2,6 +2,7 @@ import { describe, expect, it } from 'effect-rstest';
 import { Schema } from 'effect';
 
 import {
+  PrivacyApplicabilityAuthoritySchema,
   PrivacyApplicabilityPolicySchema,
   resolvePrivacyApplicability,
 } from '../../shared/domain/privacy-applicability.ts';
@@ -20,14 +21,44 @@ const policy = Schema.decodeUnknownSync(PrivacyApplicabilityPolicySchema)({
   composition: { precedence: 1, strategy: 'EXPLICIT_PRECEDENCE' },
   effectiveFrom: '2025-01-01T00:00:00Z',
   effectiveTo: null,
-  jurisdictionProfile: 'EU_EEA_GDPR_BASELINE',
+  factPredicates: [
+    { dimension: 'CONTROLLER_SCOPE', operator: 'EQUALS', values: ['controller-1'] },
+    { dimension: 'PROCESSING_PURPOSE', operator: 'EQUALS', values: ['account-service'] },
+  ],
+  jurisdictionProfile: {
+    profileKey: 'privacy.profile.eu-eea-gdpr-baseline',
+    profileVersion: '1',
+  },
   mandatoryDimensions: ['CONTROLLER_SCOPE', 'PROCESSING_PURPOSE'],
   policyKey: 'privacy.applicability.account',
   policyVersion: '1',
   scopeKey: 'privacy.processing-scope:scope-1:account-creation',
   sourceEvidenceRefs: ['evidence-1'],
 });
+const authority = Schema.decodeUnknownSync(PrivacyApplicabilityAuthoritySchema)({
+  controllerRef: {
+    moduleId: 'privacy.core',
+    resourceId: 'controller-1',
+    resourceType: 'privacy.core.controller',
+    tenantId: '00000000-0000-4000-8000-000000000001',
+  },
+  legalEntityId: '00000000-0000-4000-8000-000000000002',
+  purposeRef: {
+    moduleId: 'privacy.core',
+    resourceId: 'account-service',
+    resourceType: 'privacy.core.processing-purpose',
+    tenantId: '00000000-0000-4000-8000-000000000001',
+  },
+  purposeVersionRef: {
+    moduleId: 'privacy.core',
+    resourceId: '00000000-0000-4000-8000-000000000003',
+    resourceType: 'privacy.core.processing-purpose-version',
+    tenantId: '00000000-0000-4000-8000-000000000001',
+  },
+  tenantId: '00000000-0000-4000-8000-000000000001',
+});
 const decision = resolvePrivacyApplicability({
+  authority,
   evaluatedAt: '2026-01-01T00:00:00Z',
   policies: [policy],
   proposedActivity: true,

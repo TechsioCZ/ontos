@@ -7,6 +7,7 @@ import { Effect } from 'effect';
 
 import { RecordLegalHoldPayloadSchema, RecordLegalHoldResultSchema } from '../../shared/actions/record-legal-hold.ts';
 import type { RecordLegalHoldPayload } from '../../shared/actions/record-legal-hold.ts';
+import { validateRetentionProtection } from '../../shared/domain/privacy-retention-disposition.ts';
 import { privacyOperationRepositoryForScope } from '../persistence/privacy-operation-postgres-repository.ts';
 import type { PrivacyOperationRepositoryService } from '../persistence/privacy-operation-repository.ts';
 import {
@@ -23,17 +24,24 @@ const handleRecordLegalHold = Effect.fn('RecordLegalHoldAction.handle')(function
   context: ActionHandlerContext<typeof privacyActionDomainEvents, PrivacyOperationRepositoryService>,
 ) {
   const scope = yield* requirePrivacyActionScope(context.scope);
-  if (payload.hold.effectiveTo <= payload.hold.effectiveFrom) {
+  const hold = yield* context.services.resolveLegalHoldGovernance(
+    scope.tenantId,
+    scope.legalEntityId,
+    context.scope.principalId,
+    payload.hold,
+  );
+  const validation = validateRetentionProtection(hold);
+  if (!validation.valid) {
     return yield* new PrivacyActionRejected({
       code: 'privacy_action_rejected',
-      reason: 'Legal Hold effective period is invalid',
+      reason: validation.errors.join('; '),
     });
   }
   const result = yield* context.services.recordLegalHold(
     scope.tenantId,
     scope.legalEntityId,
     context.actionInvocationId,
-    payload.hold,
+    hold,
   );
   return yield* completePrivacyAction(context, 'record-legal-hold', result.holdRef, result);
 });

@@ -3,7 +3,7 @@
 // @ontos-action-slug issue-dsr-delivery-access
 import type { ActionHandlerContext } from '@app/core-runtime';
 import { defineAction, defineTenantModuleEntrypoint } from '@app/core-runtime';
-import { Effect } from 'effect';
+import { DateTime, Effect } from 'effect';
 
 import {
   IssueDsrDeliveryAccessPayloadSchema,
@@ -12,10 +12,11 @@ import {
 import type { IssueDsrDeliveryAccessPayload } from '../../shared/actions/issue-dsr-delivery-access.ts';
 import { privacyOperationRepositoryForScope } from '../persistence/privacy-operation-postgres-repository.ts';
 import type { PrivacyOperationRepositoryService } from '../persistence/privacy-operation-repository.ts';
+import { DsrDeliveryAccessAuthority } from './dsr-delivery-access-authority.ts';
+import type { DsrDeliveryAccessAuthorityService } from './dsr-delivery-access-authority.ts';
 import {
   PrivacyActionAuditEvidenceSchema,
   PrivacyActionErrorSchema,
-  PrivacyActionRejected,
   completePrivacyAction,
   privacyActionDomainEvents,
   requirePrivacyActionScope,
@@ -24,20 +25,27 @@ import {
 const handleIssueDsrDeliveryAccess = Effect.fn('IssueDsrDeliveryAccessAction.handle')(
   function* handleIssueDsrDeliveryAccess(
     payload: IssueDsrDeliveryAccessPayload,
-    context: ActionHandlerContext<typeof privacyActionDomainEvents, PrivacyOperationRepositoryService>,
+    context: ActionHandlerContext<
+      typeof privacyActionDomainEvents,
+      Pick<PrivacyOperationRepositoryService, 'issueDeliveryAccess'> & {
+        readonly authority: DsrDeliveryAccessAuthorityService;
+      }
+    >,
   ) {
     const scope = yield* requirePrivacyActionScope(context.scope);
-    if (payload.access.expiresAt <= payload.access.effectiveFrom) {
-      return yield* new PrivacyActionRejected({
-        code: 'privacy_action_rejected',
-        reason: 'DSR Delivery Access expiry must follow its effective time',
-      });
-    }
+    const asOf = DateTime.formatIso(yield* DateTime.now);
+    const authority = yield* context.services.authority.resolve(payload.requestRef, {
+      actionInvocationId: context.actionInvocationId,
+      asOf,
+      legalEntityId: scope.legalEntityId,
+      principalId: context.scope.principalId,
+      tenantId: scope.tenantId,
+    });
     const result = yield* context.services.issueDeliveryAccess(
       scope.tenantId,
       scope.legalEntityId,
       context.actionInvocationId,
-      payload.access,
+      authority,
     );
     return yield* completePrivacyAction(context, 'issue-dsr-delivery-access', result.accessId, result);
   },
@@ -70,7 +78,19 @@ export const issueDsrDeliveryAccessAction = defineAction(
     schemaVersion: '1',
   },
   handleIssueDsrDeliveryAccess,
-  privacyOperationRepositoryForScope,
+  (transaction, scope) =>
+    Effect.all(
+      {
+        authority: DsrDeliveryAccessAuthority,
+        repository: privacyOperationRepositoryForScope(transaction, scope),
+      },
+      { concurrency: 2 },
+    ).pipe(
+      Effect.map(({ authority, repository }) => ({
+        authority,
+        issueDeliveryAccess: repository.issueDeliveryAccess,
+      })),
+    ),
 );
 
 // <generated-outbox-message-exports>

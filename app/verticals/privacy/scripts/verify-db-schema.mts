@@ -118,8 +118,17 @@ interface ForeignKeyRow {
   readonly constraint_name: string;
 }
 
+interface ConstraintRow {
+  readonly constraint_definition: string;
+  readonly constraint_name: string;
+}
+
 interface JournalRow {
   readonly journal_name: string;
+}
+
+interface RoutineRow {
+  readonly function_definition: string;
 }
 
 interface PolicyRow {
@@ -321,6 +330,66 @@ const verify = Effect.gen(function* verifyPrivacyDatabase() {
             `Privacy foreign-key mismatch; expected=${EXPECTED_FOREIGN_KEYS.length} [${EXPECTED_FOREIGN_KEYS.join(',')}], ` +
               `actual=${actualForeignKeys.length} [${actualForeignKeys.join(',')}]`,
           );
+        }
+
+        const dispositionConstraints = yield* Effect.tryPromise({
+          catch: (cause) => failure('Unable to inspect the Privacy disposition outcome constraint', cause),
+          // oxlint-disable-next-line typescript/promise-function-async -- Effect.tryPromise owns the PostgreSQL Promise boundary.
+          try: () =>
+            connected.query<ConstraintRow>(
+              `select constraint_record.conname as constraint_name,
+                      pg_catalog.pg_get_constraintdef(constraint_record.oid) as constraint_definition
+                 from pg_catalog.pg_constraint as constraint_record
+                 join pg_catalog.pg_class as relation on relation.oid = constraint_record.conrelid
+                 join pg_catalog.pg_namespace as namespace on namespace.oid = relation.relnamespace
+                where namespace.nspname = $1
+                  and relation.relname = 'disposition_decisions'
+                  and constraint_record.conname = 'privacy_disposition_decisions_outcome_ck'`,
+              [PRIVACY_SCHEMA_NAME],
+            ),
+        });
+        const dispositionConstraint = dispositionConstraints.rows.at(0);
+        if (
+          dispositionConstraint === undefined ||
+          !['RETAIN', 'RESTRICT', 'ANONYMIZE', 'DELETE'].every((outcome) =>
+            dispositionConstraint.constraint_definition.includes(outcome),
+          ) ||
+          dispositionConstraint.constraint_definition.includes('INDETERMINATE')
+        ) {
+          yield* failure('Privacy disposition decisions must persist determinate outcomes only');
+        }
+
+        const retentionRoutines = yield* Effect.tryPromise({
+          catch: (cause) => failure('Unable to inspect the Privacy retention evaluation routine', cause),
+          // oxlint-disable-next-line typescript/promise-function-async -- Effect.tryPromise owns the PostgreSQL Promise boundary.
+          try: () =>
+            connected.query<RoutineRow>(
+              `select pg_catalog.pg_get_functiondef(function_record.oid) as function_definition
+                 from pg_catalog.pg_proc as function_record
+                 join pg_catalog.pg_namespace as namespace on namespace.oid = function_record.pronamespace
+                where namespace.nspname = $1
+                  and function_record.proname = 'process_retention_evaluation_work'
+                  and function_record.pronargs = 5`,
+              [PRIVACY_SCHEMA_NAME],
+            ),
+        });
+        const retentionRoutine = retentionRoutines.rows.at(0)?.function_definition;
+        const requiredEvaluationFields = [
+          'evaluationRef',
+          'outcome',
+          'policyRef',
+          'policyVersion',
+          'controllerRef',
+          'evidenceRefs',
+          'provenanceRef',
+          'blockerRefs',
+        ];
+        if (
+          retentionRoutine === undefined ||
+          requiredEvaluationFields.some((field) => !retentionRoutine.includes(`'${field}'`)) ||
+          !retentionRoutine.includes('AUTHORITATIVE_EVALUATION_INCOMPLETE')
+        ) {
+          yield* failure('Privacy retention evaluation routine does not persist authoritative worker evidence');
         }
 
         const journals = yield* Effect.tryPromise({

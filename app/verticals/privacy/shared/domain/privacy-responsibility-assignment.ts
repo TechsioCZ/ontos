@@ -1,10 +1,10 @@
 /* eslint-disable effect-native/no-unbranded-identifier-schema -- Privacy cross-owner wire contracts preserve explicit JSON null, canonical UTC string encodings, and owner-issued opaque references; generated API and Resource boundaries validate provenance without a misleading shared brand. expires: 2027-03-31. */
 import { PrincipalRefSchema } from '@app/core-runtime';
-import { PartyRefSchema } from '@app/party-registry/resources/party';
 import { Schema } from 'effect';
 
-import { PrivacyIsoTimestampSchema } from './privacy-subject.ts';
 import { PrivacyResponsibilityAssignmentRefSchema } from '../resources/privacy-responsibility-assignment.ts';
+import { PrivacyPartyRefSchema } from './party-reference.ts';
+import { PrivacyIsoTimestampSchema } from './privacy-subject.ts';
 
 const BoundedTextSchema = Schema.Trim.check(Schema.isMinLength(1), Schema.isMaxLength(500));
 const BoundedIdSchema = Schema.Trim.check(Schema.isMinLength(1), Schema.isMaxLength(300));
@@ -27,8 +27,8 @@ const ResponsibilityRoleSchema = Schema.Literals(['CONTROLLER', 'PROCESSOR', 'RE
 
 export const ResponsibilityRoleHolderSchema = Schema.Union([
   Schema.Struct({ holder: LegalEntityRefSchema, holderKind: Schema.Literal('LEGAL_ENTITY') }),
-  Schema.Struct({ holder: PartyRefSchema, holderKind: Schema.Literal('PARTY') }),
-  Schema.Struct({ holder: PrincipalRefSchema, holderKind: Schema.Literal('PRINCIPAL') }),
+  // Principal is the Action actor/provenance, never the legal role holder.
+  Schema.Struct({ holder: PrivacyPartyRefSchema, holderKind: Schema.Literal('PARTY') }),
 ]);
 
 const ResponsibilityAssignmentProvenanceSchema = Schema.Struct({
@@ -47,4 +47,13 @@ export const PrivacyResponsibilityAssignmentSchema = Schema.Struct({
   scopeRef: ProcessingScopeRefSchema,
   /** The protected Action actor, when this assignment was created or changed. */
   actor: PrincipalRefSchema,
-});
+}).check(
+  Schema.makeFilter((assignment) => {
+    if (assignment.holder.holder.tenantId !== assignment.assignmentRef.tenantId) {
+      return 'Privacy Responsibility Assignment holder and assignment must share a tenant';
+    }
+    return assignment.actor.tenantId === assignment.assignmentRef.tenantId
+      ? undefined
+      : 'Privacy Responsibility Assignment actor and assignment must share a tenant';
+  }),
+);

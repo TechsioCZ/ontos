@@ -1,24 +1,40 @@
+import { Schema } from 'effect';
 import { describe, expect, it } from 'effect-rstest';
 
 import {
   createPrivacyEligibilityEvidence,
-  evaluatePrivacyEligibility,
-  resolvePrivacyEligibilityInputs,
+  evaluatePrivacyEligibility as evaluatePrivacyEligibilityWithoutTrustedScope,
+  resolvePrivacyEligibilityInputs as resolvePrivacyEligibilityInputsWithoutTrustedScope,
   assessPrivacyEligibilityBoundary,
   privacyEligibilityDecisionRevision,
   reconcilePrivacyEligibilityHandoff,
+  validatePrivacyApplicabilityEligibilityAuthorityResult,
 } from '../../shared/domain/privacy-processing-eligibility.ts';
+import {
+  PrivacyApplicabilityAuthoritySchema,
+  PrivacyApplicabilityDecisionSchema,
+  PrivacyApplicabilityEligibilityAuthorityResultSchema,
+} from '../../shared/domain/privacy-applicability.ts';
 import type { ConsentDecision } from '../../shared/domain/privacy-consent-decision.ts';
 import type { IntendedProcessingScope } from '../../shared/domain/privacy-processing-eligibility.ts';
 
+const tenantId = '00000000-0000-4000-8000-000000000001';
+const legalEntityId = '00000000-0000-4000-8000-000000000009';
+const purposeVersionId = '00000000-0000-4000-8000-000000000010';
 const scope: IntendedProcessingScope = {
   controllerRef: 'controller:one',
   dataCategoryRefs: ['category:email'],
   operation: 'send-email',
   processingScopeRef: { scopeId: 'scope:one', scopeType: 'privacy.processing-scope' },
   purposeRef: 'purpose:marketing',
-  purposeVersionId: 'purpose-version:one',
+  purposeVersionId,
   recipientRefs: ['recipient:mail'],
+  subjectRef: {
+    moduleId: 'privacy.core',
+    resourceId: 'subject:one',
+    resourceType: 'privacy.core.privacy-subject',
+    tenantId,
+  },
 };
 const currentness = {
   authoritative: true,
@@ -36,7 +52,29 @@ const applicabilityScope = {
   operation: scope.operation,
   processingScopeRef: scope.processingScopeRef,
 };
-const applicability = {
+const applicability = Schema.decodeUnknownSync(PrivacyApplicabilityDecisionSchema)({
+  authority: {
+    controllerRef: {
+      moduleId: 'privacy.core',
+      resourceId: scope.controllerRef,
+      resourceType: 'privacy.core.controller',
+      tenantId,
+    },
+    legalEntityId,
+    purposeRef: {
+      moduleId: 'privacy.core',
+      resourceId: scope.purposeRef,
+      resourceType: 'privacy.core.processing-purpose',
+      tenantId,
+    },
+    purposeVersionRef: {
+      moduleId: 'privacy.core',
+      resourceId: scope.purposeVersionId,
+      resourceType: 'privacy.core.processing-purpose-version',
+      tenantId,
+    },
+    tenantId,
+  },
   evaluatedAt: '2026-01-01T00:00:00Z',
   evaluatedScope: applicabilityScope,
   evidenceRefs: ['evidence:one'],
@@ -45,7 +83,71 @@ const applicability = {
   proposedActivity: true,
   reasonCodes: ['explicit_policy_match'],
   responsibilityAssignmentRefs: [],
+});
+const applicabilityAuthority = Schema.decodeUnknownSync(PrivacyApplicabilityAuthoritySchema)({
+  controllerRef: {
+    moduleId: 'privacy.core',
+    resourceId: scope.controllerRef,
+    resourceType: 'privacy.core.controller',
+    tenantId,
+  },
+  legalEntityId,
+  purposeRef: {
+    moduleId: 'privacy.core',
+    resourceId: scope.purposeRef,
+    resourceType: 'privacy.core.processing-purpose',
+    tenantId,
+  },
+  purposeVersionRef: {
+    moduleId: 'privacy.core',
+    resourceId: scope.purposeVersionId,
+    resourceType: 'privacy.core.processing-purpose-version',
+    tenantId,
+  },
+  tenantId,
+});
+const eligibilityAuthorityScope = {
+  facts: [
+    { dimension: 'CONTROLLER_SCOPE' as const, value: scope.controllerRef },
+    ...scope.dataCategoryRefs.map((value) => ({ dimension: 'CATEGORY' as const, value })),
+    { dimension: 'PRIVACY_SUBJECT' as const, value: scope.subjectRef.resourceId },
+    ...scope.recipientRefs.map((value) => ({ dimension: 'RECIPIENT' as const, value })),
+    { dimension: 'PROCESSING_PURPOSE' as const, value: scope.purposeRef },
+    { dimension: 'PROCESSING_PURPOSE_VERSION' as const, value: scope.purposeVersionId },
+  ],
+  operation: scope.operation,
+  processingScopeRef: scope.processingScopeRef,
 };
+const persistedEligibilityApplicability = Schema.decodeUnknownSync(PrivacyApplicabilityDecisionSchema)({
+  ...applicability,
+  authority: applicabilityAuthority,
+  authorityEvidenceRefs: ['authority-evidence:one'],
+  authorityReceiptRef: 'authority-receipt:one',
+  evaluatedScope: eligibilityAuthorityScope,
+});
+const eligibilityAuthorityResult = Schema.decodeUnknownSync(PrivacyApplicabilityEligibilityAuthorityResultSchema)({
+  asOf: '2026-01-02T00:00:00Z',
+  authority: applicabilityAuthority,
+  decisionEvaluatedAt: '2026-01-01T00:00:00Z',
+  decisionOutcome: 'APPLICABLE',
+  decisionRef: 'decision:applicability:one',
+  evidenceRefs: ['authority-evidence:one'],
+  receiptRef: 'authority-receipt:one',
+  scope: eligibilityAuthorityScope,
+  status: 'CURRENT',
+  validUntil: '2026-01-03T00:00:00Z',
+});
+type EligibilityInput = Parameters<typeof evaluatePrivacyEligibilityWithoutTrustedScope>[0];
+type EligibilityInputWithoutTrustedScope = Omit<EligibilityInput, 'legalEntityId' | 'tenantId'>;
+const withTrustedScope = (input: EligibilityInputWithoutTrustedScope): EligibilityInput => ({
+  ...input,
+  legalEntityId,
+  tenantId,
+});
+const evaluatePrivacyEligibility = (input: EligibilityInputWithoutTrustedScope) =>
+  evaluatePrivacyEligibilityWithoutTrustedScope(withTrustedScope(input));
+const resolvePrivacyEligibilityInputs = (input: EligibilityInputWithoutTrustedScope) =>
+  resolvePrivacyEligibilityInputsWithoutTrustedScope(withTrustedScope(input));
 const noObjection = { currentness, objectionRef: 'objection:none', scope, status: 'ABSENT' as const };
 const noRestriction = { currentness, restrictionRef: 'restriction:none', scope, status: 'ABSENT' as const };
 const consentDecision = (decision: ConsentDecision['decision']): ConsentDecision => ({
@@ -87,6 +189,46 @@ const consentDecision = (decision: ConsentDecision['decision']): ConsentDecision
 });
 
 describe('privacy processing eligibility input resolution', () => {
+  it('rejects changed trusted facts even when an older APPLICABLE decision exists', () => {
+    const changedFactsAuthority = {
+      ...eligibilityAuthorityResult,
+      scope: {
+        ...eligibilityAuthorityResult.scope,
+        facts: eligibilityAuthorityResult.scope.facts.map((fact) =>
+          fact.dimension === 'CATEGORY' ? { ...fact, value: 'category:changed' } : fact,
+        ),
+      },
+    };
+
+    expect(
+      validatePrivacyApplicabilityEligibilityAuthorityResult({
+        asOf: eligibilityAuthorityResult.asOf,
+        authorityResult: changedFactsAuthority,
+        decision: persistedEligibilityApplicability,
+        decisionRef: eligibilityAuthorityResult.decisionRef,
+        intendedScope: scope,
+        legalEntityId,
+        tenantId,
+      }),
+    ).toContain('exact intended use');
+  });
+
+  it('rejects historical replay when authority supplies no validUntil', () => {
+    const { validUntil: _validUntil, ...historicalAuthority } = eligibilityAuthorityResult;
+
+    expect(
+      validatePrivacyApplicabilityEligibilityAuthorityResult({
+        asOf: eligibilityAuthorityResult.asOf,
+        authorityResult: historicalAuthority,
+        decision: persistedEligibilityApplicability,
+        decisionRef: eligibilityAuthorityResult.decisionRef,
+        intendedScope: scope,
+        legalEntityId,
+        tenantId,
+      }),
+    ).toContain('validUntil');
+  });
+
   it('compares the complete applicability scope instead of filling missing facts from the intended scope', () => {
     const input = {
       applicability: {
@@ -131,6 +273,54 @@ describe('privacy processing eligibility input resolution', () => {
     expect(result.applicability.state).toBe('CURRENT');
     expect(result.legalBasis.state).toBe('CURRENT');
     expect(result.consent.state).toBe('ABSENT');
+  });
+
+  it('fails closed for applicability authority from another exact use', () => {
+    const baseAuthority = applicability.authority;
+    expect(baseAuthority).toBeDefined();
+    if (baseAuthority === undefined) {
+      return;
+    }
+    const foreignAuthorities = [
+      { ...baseAuthority, controllerRef: { ...baseAuthority.controllerRef, resourceId: 'controller:other' } },
+      {
+        ...baseAuthority,
+        purposeRef: { ...baseAuthority.purposeRef, resourceId: 'purpose:other' },
+      },
+      {
+        ...baseAuthority,
+        purposeVersionRef: {
+          ...baseAuthority.purposeVersionRef,
+          resourceId: '00000000-0000-4000-8000-000000000011',
+        },
+      },
+      { ...baseAuthority, tenantId: '00000000-0000-4000-8000-000000000012' },
+      { ...baseAuthority, legalEntityId: '00000000-0000-4000-8000-000000000013' },
+    ];
+
+    for (const authority of foreignAuthorities) {
+      const foreignApplicability = Schema.decodeUnknownSync(PrivacyApplicabilityDecisionSchema)({
+        ...applicability,
+        authority,
+      });
+      const result = evaluatePrivacyEligibility({
+        applicability: foreignApplicability,
+        applicabilityCurrentness: currentness,
+        applicabilityScope,
+        asOf: '2026-01-02T00:00:00Z',
+        consent: null,
+        consentCurrentness: null,
+        intendedScope: scope,
+        legalBasis: { basisRef: 'legal-basis:contract', basisVersion: 'v1', currentness, scope },
+        objection: noObjection,
+        restriction: noRestriction,
+      });
+      expect(result.outcome).toBe('INDETERMINATE');
+      expect(result.inputResolutions.applicability).toMatchObject({
+        reason: 'applicability_authority_mismatch',
+        state: 'STALE',
+      });
+    }
   });
 
   it('fails closed on mismatched scope, stale observation, and non-authoritative source', () => {

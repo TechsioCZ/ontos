@@ -3,6 +3,7 @@ import { Effect, Schema } from 'effect';
 
 import { PrincipalAttributionSchema, PrivacyIsoTimestampSchema } from './privacy-subject.ts';
 import { ConsentScopeSchema, validateConsentScope } from './privacy-consent-scope.ts';
+import type { ConsentMaterialDimensionKind } from './privacy-consent-scope.ts';
 import type { PurposeVersion } from './processing-purpose.ts';
 
 const Ref = Schema.Trim.check(Schema.isMinLength(1), Schema.isMaxLength(300));
@@ -35,6 +36,7 @@ export type ConsentDecision = typeof ConsentDecisionSchema.Type;
 export const validateConsentDecision = (
   input: ConsentDecision,
   purposeVersion?: PurposeVersion,
+  requiredDimensions?: readonly ConsentMaterialDimensionKind[],
 ): string | undefined => {
   if (input.recordedAt < input.effectiveAt) {
     return 'Recorded time cannot precede effective time';
@@ -53,7 +55,11 @@ export const validateConsentDecision = (
   const scope =
     purposeVersion === undefined
       ? validateConsentScope({ scope: input.scope })
-      : validateConsentScope({ purposeVersion, scope: input.scope });
+      : validateConsentScope({
+          purposeVersion,
+          requiredDimensions: requiredDimensions ?? purposeVersion.requiredConsentDimensions ?? [],
+          scope: input.scope,
+        });
   if (!scope.valid) {
     return scope.errors[0];
   }

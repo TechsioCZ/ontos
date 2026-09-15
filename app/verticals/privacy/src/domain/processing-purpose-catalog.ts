@@ -1,14 +1,19 @@
 import { randomUUID } from 'node:crypto';
-import { DateTime, Effect, Option } from 'effect';
+import { DateTime, Effect, Option, Schema } from 'effect';
 
 import type {
   CreatePurposeVersionInput,
   ProcessingPurpose,
   PurposeVersion,
 } from '../../shared/domain/processing-purpose.ts';
-import { PurposeNotFound, PurposeVersionConflict } from '../../shared/domain/processing-purpose.ts';
+import {
+  CreatePurposeVersionInputSchema,
+  PurposeNotFound,
+  PurposeVersionConflict,
+} from '../../shared/domain/processing-purpose.ts';
 import type { ProcessingPurposeRef } from '../../shared/resources/processing-purpose.ts';
 import type { ProcessingPurposeRepositoryService } from '../persistence/processing-purpose-repository.ts';
+import { deriveMaterialVersionEvidence } from './processing-purpose-materiality.ts';
 
 const ref = (tenantId: string, purposeId: string): ProcessingPurposeRef => ({
   moduleId: 'privacy.core',
@@ -18,6 +23,35 @@ const ref = (tenantId: string, purposeId: string): ProcessingPurposeRef => ({
 });
 const processingPurposeScopedKey = (tenantId: string, legalEntityId: string, purposeId: string): string =>
   `${tenantId}:${legalEntityId}:${purposeId}`;
+
+const versionInputEquivalent = Schema.toEquivalence(CreatePurposeVersionInputSchema);
+
+const replayVersionMatches = (
+  replay: Readonly<{ input: CreatePurposeVersionInput; purposeId: string }>,
+  purposeId: string,
+  input: CreatePurposeVersionInput,
+): boolean => replay.purposeId === purposeId && versionInputEquivalent(replay.input, input);
+
+const validateVersionAppend = (
+  materiality: ReturnType<typeof deriveMaterialVersionEvidence>,
+  input: CreatePurposeVersionInput,
+  previous: PurposeVersion | undefined,
+):
+  | {
+      readonly materiality: Exclude<
+        ReturnType<typeof deriveMaterialVersionEvidence>,
+        { readonly conflictReason: string }
+      >;
+      readonly valid: true;
+    }
+  | { readonly reason: string; readonly valid: false } => {
+  if ('conflictReason' in materiality) {
+    return { reason: materiality.conflictReason, valid: false };
+  }
+  return previous !== undefined && input.effectiveFrom <= previous.effectiveFrom
+    ? { reason: 'Purpose Version effective time must follow the latest retained version', valid: false }
+    : { materiality, valid: true };
+};
 
 export const makeInMemoryProcessingPurposeRepository = (): ProcessingPurposeRepositoryService => {
   const purposes = new Map<string, ProcessingPurpose>();
@@ -36,11 +70,7 @@ export const makeInMemoryProcessingPurposeRepository = (): ProcessingPurposeRepo
         const invocationKey = processingPurposeScopedKey(tenantId, legalEntityId, _actionInvocationId);
         const replay = versionInvocations.get(invocationKey);
         if (replay !== undefined) {
-          if (
-            replay.purposeId !== purposeId ||
-            replay.input.effectiveFrom !== input.effectiveFrom ||
-            replay.input.meaning !== input.meaning
-          ) {
+          if (!replayVersionMatches(replay, purposeId, input)) {
             return yield* new PurposeVersionConflict({
               code: 'privacy_purpose_version_conflict',
               reason: 'Purpose Version Action invocation was replayed with different input',
@@ -48,23 +78,36 @@ export const makeInMemoryProcessingPurposeRepository = (): ProcessingPurposeRepo
           }
           return current;
         }
-        const recordedAt = DateTime.formatIso(yield* DateTime.now);
+        const versionId = randomUUID();
+        const materiality = deriveMaterialVersionEvidence(current, input, versionId);
         const previous = current.versions.at(-1);
-        if (previous !== undefined && input.effectiveFrom <= previous.effectiveFrom) {
+        const validation = validateVersionAppend(materiality, input, previous);
+        if (!validation.valid) {
           return yield* new PurposeVersionConflict({
             code: 'privacy_purpose_version_conflict',
-            reason: 'Purpose Version effective time must follow the latest retained version',
+            reason: validation.reason,
           });
         }
+        const recordedAt = DateTime.formatIso(yield* DateTime.now);
         const version: PurposeVersion = {
           effectiveFrom: input.effectiveFrom,
           effectiveTo: null,
+          materialChangeAssessment: validation.materiality,
+          materialScope: input.materialScope,
           meaning: input.meaning,
           recordedAt,
-          versionId: randomUUID(),
+          requiredConsentDimensions: [...(input.requiredConsentDimensions ?? [])],
+          versionId,
           versionNumber: (previous?.versionNumber ?? 0) + 1,
         };
-        const updated: ProcessingPurpose = { ...current, versions: [...current.versions, version] };
+        const updated: ProcessingPurpose = {
+          ...current,
+          versions: [
+            ...current.versions.slice(0, -1),
+            ...(previous === undefined ? [] : [{ ...previous, effectiveTo: input.effectiveFrom }]),
+            version,
+          ],
+        };
         purposes.set(key, updated);
         versionInvocations.set(invocationKey, { input, purposeId });
         return updated;
@@ -86,8 +129,11 @@ export const makeInMemoryProcessingPurposeRepository = (): ProcessingPurposeRepo
             {
               effectiveFrom: input.effectiveFrom,
               effectiveTo: null,
+              materialChangeAssessment: null,
+              materialScope: input.materialScope ?? null,
               meaning: input.meaning,
               recordedAt: createdAt,
+              requiredConsentDimensions: [...(input.requiredConsentDimensions ?? [])],
               versionId: randomUUID(),
               versionNumber: 1,
             },

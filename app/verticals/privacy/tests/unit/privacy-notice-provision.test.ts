@@ -15,11 +15,19 @@ import type {
 } from '../../shared/domain/privacy-notice-provision.ts';
 
 const proof: PrivacyNoticeChannelProof = {
+  anonymousContextRef: null,
   authorityRef: 'channel-owner:web',
+  businessInteractionRef: 'checkout:1',
   channel: 'web',
+  controllerRef: 'controller:1',
   evidenceRef: 'evidence:provision:1',
+  noticeVersionRef: 'privacy-notice-version:1',
   observedAt: '2026-01-01T10:00:00Z',
+  privacySubjectRef: 'subject:1',
+  processingPurposeRef: 'purpose:account',
+  processingScopeRef: 'scope:account',
   proofKind: 'INTERACTIVE_ACKNOWLEDGEMENT',
+  providedLanguage: 'en-US',
 };
 
 const draft: PrivacyNoticeProvisionDraft = {
@@ -97,11 +105,16 @@ describe('Privacy Notice Provision', () => {
   );
 
   it('does not promote publication, rendering, or attempts to provision proof', () => {
-    expect(isProofOfProvision('DISPLAY_ONLY')).toBe(false);
-    expect(isProofOfProvision('FAILED_PROVISION')).toBe(false);
-    expect(isProofOfProvision('INDETERMINATE_PROVISION')).toBe(false);
+    expect(isProofOfProvision('DISPLAYED_WITHOUT_ACKNOWLEDGEMENT')).toBe(false);
+    expect(isProofOfProvision('PROVISION_FAILED')).toBe(false);
+    expect(isProofOfProvision('PROVISION_INDETERMINATE')).toBe(false);
     expect(
-      validatePrivacyNoticeProvision({ ...base, channelProof: null, evidenceRef: null, outcome: 'DISPLAY_ONLY' }),
+      validatePrivacyNoticeProvision({
+        ...base,
+        channelProof: null,
+        evidenceRef: null,
+        outcome: 'DISPLAYED_WITHOUT_ACKNOWLEDGEMENT',
+      }),
     ).toBeUndefined();
     expect(
       validatePrivacyNoticeProvision({
@@ -109,7 +122,7 @@ describe('Privacy Notice Provision', () => {
         channelProof: null,
         evidenceRef: null,
         failureReason: 'transport-failed',
-        outcome: 'FAILED_PROVISION',
+        outcome: 'PROVISION_FAILED',
       }),
     ).toBeUndefined();
     expect(
@@ -118,18 +131,31 @@ describe('Privacy Notice Provision', () => {
         channelProof: null,
         evidenceRef: null,
         failureReason: 'provider-timeout',
-        outcome: 'INDETERMINATE_PROVISION',
+        outcome: 'PROVISION_INDETERMINATE',
       }),
     ).toBeUndefined();
   });
 
-  it('rejects impossible timestamps and evidence on display-only facts', () => {
+  it('rejects impossible timestamps and incomplete authoritative non-proof facts', () => {
     expect(validatePrivacyNoticeProvision({ ...base, recordedAt: '2026-01-01T09:59:59Z' }, trusted)).toContain(
       'precede',
     );
-    expect(validatePrivacyNoticeProvision({ ...base, channelProof: null, outcome: 'DISPLAY_ONLY' })).toContain(
-      'Display-only',
-    );
+    expect(
+      validatePrivacyNoticeProvision({
+        ...base,
+        channelProof: null,
+        failureReason: 'unexpected',
+        outcome: 'DISPLAYED_WITHOUT_ACKNOWLEDGEMENT',
+      }),
+    ).toContain('cannot carry a failure reason');
+    expect(
+      validatePrivacyNoticeProvision({
+        ...base,
+        channelProof: null,
+        failureReason: null,
+        outcome: 'PROVISION_FAILED',
+      }),
+    ).toContain('requires an authoritative reason');
     expect(validatePrivacyNoticeProvision(base, { ...trusted, recordedAt: '2026-01-01T10:00:02Z' })).toContain(
       'trusted recording context',
     );

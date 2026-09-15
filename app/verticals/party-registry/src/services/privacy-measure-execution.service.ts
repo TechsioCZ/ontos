@@ -3,17 +3,15 @@ import { randomUUID } from 'node:crypto';
 import { OperationContextUnavailable } from '@app/core-runtime';
 import type { OperationalScope } from '@app/core-runtime';
 import type { OwnerExecutionOutcome, PrivacyMeasureHandoff } from '@app/privacy/domain/privacy-measure-handoff';
-import { and, eq, inArray } from 'drizzle-orm';
+import { and, eq } from 'drizzle-orm';
 import { DateTime, Effect, Option } from 'effect';
 
 import { ExecutePrivacyMeasureRejected } from '../../shared/actions/execute-privacy-measure.ts';
-import { counterparties, privacyMeasureExecutions } from '../db/schema.ts';
+import { privacyMeasureExecutions } from '../db/schema.ts';
 import type { PartyTransaction } from '../db/types.ts';
 import { fingerprintPrivacyMeasureHandoff, parseOwnerResourceRef } from '../privacy-measure-handoff.ts';
 
 const OWNER = 'party.registry';
-const RESOURCE_TYPE = 'party.registry.counterparty';
-const CONTENT_SCOPE = 'party.registry.counterparty.lifecycle';
 
 export interface PrivacyMeasureExecutionReceipt {
   readonly actionInvocationId: string;
@@ -48,54 +46,36 @@ const persistenceUnavailable = (cause: unknown) =>
     cause,
   );
 
-const exactRestrictionIsSupported = (handoff: PrivacyMeasureHandoff): boolean =>
-  handoff.kind === 'RESTRICT' &&
-  handoff.requestedResult === 'ARCHIVED' &&
-  handoff.dispositionDecision === null &&
-  (handoff.right === 'RESTRICTION' || handoff.right === 'OBJECTION') &&
-  handoff.contentScopeRefs.length === 1 &&
-  handoff.contentScopeRefs[0] === CONTENT_SCOPE;
-
 interface MakeOutcomeInput {
   readonly handoff: PrivacyMeasureHandoff;
-  readonly includedResourceRefs: readonly string[];
   readonly now: Date;
   readonly reason: string;
-  readonly remainingResourceRefs: readonly string[];
-  readonly status: OwnerExecutionOutcome['status'];
 }
 
-const makeOutcome = ({
-  handoff,
-  includedResourceRefs,
-  now,
-  reason,
-  remainingResourceRefs,
-  status,
-}: MakeOutcomeInput): OwnerExecutionOutcome => {
+const makeOutcome = ({ handoff, now, reason }: MakeOutcomeInput): OwnerExecutionOutcome => {
   const outcomeId = randomUUID();
   const instant = DateTime.formatIso(DateTime.makeUnsafe(now));
   return {
     attempt: 1,
     evidenceRefs: [`party.registry.privacy-measure-execution:${outcomeId}`],
     idempotencyKey: handoff.idempotencyKey,
-    includedResourceRefs: [...includedResourceRefs],
+    includedResourceRefs: [],
     measureId: handoff.measureId,
     occurredAt: instant,
     outcomeId,
     owningCapability: OWNER,
     reason,
     recordedAt: instant,
-    remainingResourceRefs: [...remainingResourceRefs],
+    remainingResourceRefs: [...handoff.resourceRefs],
     sourceDecisionRef: handoff.sourceDecisionRef,
     sourceDecisionRevision: handoff.sourceDecisionRevision,
-    status,
+    status: 'BUSINESS_REJECTED',
     taskId: handoff.taskId,
   };
 };
 
 export const privacyMeasureExecutionService = (
-  transaction: Pick<PartyTransaction, 'insert' | 'select' | 'update'>,
+  transaction: Pick<PartyTransaction, 'insert' | 'select'>,
   scope: OperationalScope,
 ): Effect.Effect<PrivacyMeasureExecutionService, OperationContextUnavailable> => {
   if (scope.legalEntityId === undefined) {
@@ -156,62 +136,13 @@ export const privacyMeasureExecutionService = (
         );
       }
 
-      const parsedRefs = refs.filter((ref) => ref !== undefined);
       const now = yield* DateTime.nowAsDate;
-      let outcome: OwnerExecutionOutcome;
-      if (!exactRestrictionIsSupported(handoff) || parsedRefs.some((ref) => ref.resourceType !== RESOURCE_TYPE)) {
-        outcome = makeOutcome({
-          handoff,
-          includedResourceRefs: [],
-          now,
-          reason: 'Party Registry supports only exact Counterparty lifecycle restriction to ARCHIVED',
-          remainingResourceRefs: handoff.resourceRefs,
-          status: 'BUSINESS_REJECTED',
-        });
-      } else {
-        const resourceIds = parsedRefs.map((ref) => ref.resourceId);
-        const existing = yield* transaction
-          .select({ counterpartyId: counterparties.counterpartyId })
-          .from(counterparties)
-          .where(
-            and(
-              eq(counterparties.tenantId, scope.tenantId),
-              eq(counterparties.legalEntityId, legalEntityId),
-              inArray(counterparties.counterpartyId, resourceIds),
-            ),
-          )
-          .pipe(Effect.mapError(persistenceUnavailable));
-        if (new Set(existing.map(({ counterpartyId }) => counterpartyId)).size === new Set(resourceIds).size) {
-          yield* transaction
-            .update(counterparties)
-            .set({ archivedAt: now, updatedAt: now })
-            .where(
-              and(
-                eq(counterparties.tenantId, scope.tenantId),
-                eq(counterparties.legalEntityId, legalEntityId),
-                inArray(counterparties.counterpartyId, resourceIds),
-              ),
-            )
-            .pipe(Effect.mapError(persistenceUnavailable));
-          outcome = makeOutcome({
-            handoff,
-            includedResourceRefs: handoff.resourceRefs,
-            now,
-            reason: 'Every scoped Counterparty is archived and unavailable for active commercial use',
-            remainingResourceRefs: [],
-            status: 'SUCCEEDED',
-          });
-        } else {
-          outcome = makeOutcome({
-            handoff,
-            includedResourceRefs: [],
-            now,
-            reason: 'At least one scoped Counterparty could not be authoritatively resolved',
-            remainingResourceRefs: handoff.resourceRefs,
-            status: 'INDETERMINATE',
-          });
-        }
-      }
+      const outcome = makeOutcome({
+        handoff,
+        now,
+        reason:
+          'Party Registry has no approved owner semantic contract for this Privacy Measure; canonical owner data was not changed',
+      });
 
       yield* transaction
         .insert(privacyMeasureExecutions)

@@ -10,7 +10,9 @@ import type { DsrDeliveryAccess } from '../../shared/domain/dsr-delivery-access.
 
 const base: DsrDeliveryAccess = {
   accessId: 'access-1',
+  caseRef: 'case-1',
   channel: 'SECURE_PORTAL',
+  controllerRef: 'controller-1',
   deliveryOutputRef: 'output-1',
   deliveryOutputRevision: 1,
   deliveryScopeRefs: ['scope-1'],
@@ -35,9 +37,13 @@ describe('DSR delivery access', () => {
       canUseDeliveryAccess({
         access: base,
         at: '2026-09-14T10:30:00Z',
+        caseRef: 'case-1',
+        channel: 'SECURE_PORTAL',
+        controllerRef: 'controller-1',
         deliveryOutputRef: 'output-1',
         deliveryOutputRevision: 1,
         deliveryScopeRefs: ['scope-1'],
+        policyRef: 'policy-1',
         recipientRef: 'recipient-1',
         representationRef: 'representation-1',
       }),
@@ -46,9 +52,13 @@ describe('DSR delivery access', () => {
       canUseDeliveryAccess({
         access: { ...base, revokedAt: '2026-09-14T10:15:00Z' },
         at: '2026-09-14T10:30:00Z',
+        caseRef: 'case-1',
+        channel: 'SECURE_PORTAL',
+        controllerRef: 'controller-1',
         deliveryOutputRef: 'output-1',
         deliveryOutputRevision: 1,
         deliveryScopeRefs: ['scope-1'],
+        policyRef: 'policy-1',
         recipientRef: 'recipient-1',
         representationRef: 'representation-1',
       }),
@@ -60,6 +70,8 @@ describe('DSR delivery access', () => {
       {
         ...base,
         accessId: 'access-2',
+        caseRef: base.caseRef,
+        controllerRef: base.controllerRef,
         idempotencyKey: 'request-2',
         issuedAt: '2026-09-14T10:05:00Z',
         supersedesAccessRef: 'access-1',
@@ -71,9 +83,13 @@ describe('DSR delivery access', () => {
       canUseDeliveryAccess({
         access: { ...base, revokedAt: '2026-09-14T10:05:00Z' },
         at: '2026-09-14T10:30:00Z',
+        caseRef: 'case-1',
+        channel: 'SECURE_PORTAL',
+        controllerRef: 'controller-1',
         deliveryOutputRef: 'output-1',
         deliveryOutputRevision: 1,
         deliveryScopeRefs: ['scope-1'],
+        policyRef: 'policy-1',
         recipientRef: 'recipient-1',
         representationRef: 'representation-1',
       }),
@@ -99,5 +115,33 @@ describe('DSR delivery access', () => {
         representationRef: 'representation-1',
       }),
     ).toBe(false);
+  });
+
+  it('rejects forged case, controller, channel, policy, time, scope, recipient, and representation', () => {
+    const valid = {
+      access: base,
+      at: '2026-09-14T10:30:00Z',
+      caseRef: 'case-1',
+      channel: 'SECURE_PORTAL',
+      controllerRef: 'controller-1',
+      deliveryOutputRef: 'output-1',
+      deliveryOutputRevision: 1,
+      deliveryScopeRefs: ['scope-1'],
+      policyRef: 'policy-1',
+      recipientRef: 'recipient-1',
+      representationRef: 'representation-1',
+    } as const;
+    for (const forged of [
+      { caseRef: 'case-other' },
+      { controllerRef: 'controller-other' },
+      { channel: 'EMAIL' },
+      { policyRef: 'policy-other' },
+      { at: '2026-09-14T11:00:00Z' },
+      { deliveryScopeRefs: ['scope-other'] },
+      { recipientRef: 'recipient-other' },
+      { representationRef: 'representation-other' },
+    ]) {
+      expect(canUseDeliveryAccess({ ...valid, ...forged })).toBe(false);
+    }
   });
 });

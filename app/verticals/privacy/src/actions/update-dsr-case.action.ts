@@ -7,29 +7,58 @@ import { Effect } from 'effect';
 
 import { UpdateDsrCasePayloadSchema, UpdateDsrCaseResultSchema } from '../../shared/actions/update-dsr-case.ts';
 import type { UpdateDsrCasePayload } from '../../shared/actions/update-dsr-case.ts';
+import { validateDsrOwnerInventoryAuthorityScope } from '../../shared/domain/privacy-dsr.ts';
+import { DsrOwnerInventoryAuthority } from './privacy-dsr-owner-inventory-authority.ts';
+import type { DsrOwnerInventoryAuthorityService } from './privacy-dsr-owner-inventory-authority.ts';
 import { privacyOperationRepositoryForScope } from '../persistence/privacy-operation-postgres-repository.ts';
 import type { PrivacyOperationRepositoryService } from '../persistence/privacy-operation-repository.ts';
 import {
   PrivacyActionAuditEvidenceSchema,
   PrivacyActionErrorSchema,
-  completePrivacyAction,
+  PrivacyActionRejected,
   privacyActionDomainEvents,
   requirePrivacyActionScope,
 } from './privacy-operation-action-support.ts';
 
+export interface UpdateDsrCaseServices extends Pick<PrivacyOperationRepositoryService, 'updateDsrCase'> {
+  readonly authority: DsrOwnerInventoryAuthorityService;
+}
+
 const handleUpdateDsrCase = Effect.fn('UpdateDsrCaseAction.handle')(function* handleUpdateDsrCase(
   payload: UpdateDsrCasePayload,
-  context: ActionHandlerContext<typeof privacyActionDomainEvents, PrivacyOperationRepositoryService>,
+  context: ActionHandlerContext<typeof privacyActionDomainEvents, UpdateDsrCaseServices>,
 ) {
   const scope = yield* requirePrivacyActionScope(context.scope);
+  const ownerInventory =
+    payload.mutation.status === 'RESPONDED' || payload.mutation.status === 'CLOSED'
+      ? yield* context.services.authority.resolve(payload.mutation.caseRef, {
+          actionInvocationId: context.actionInvocationId,
+          legalEntityId: scope.legalEntityId,
+          principalId: context.scope.principalId,
+          tenantId: scope.tenantId,
+        })
+      : undefined;
+  if (ownerInventory !== undefined) {
+    const inventoryError = validateDsrOwnerInventoryAuthorityScope(
+      ownerInventory,
+      payload.mutation.caseRef,
+      scope.tenantId,
+      scope.legalEntityId,
+    );
+    if (inventoryError !== undefined) {
+      return yield* new PrivacyActionRejected({ code: 'privacy_action_rejected', reason: inventoryError });
+    }
+  }
   const result = yield* context.services.updateDsrCase(
     scope.tenantId,
     scope.legalEntityId,
     context.actionInvocationId,
-    payload.caseRecord,
+    payload.mutation,
     payload.expectedUpdatedAt,
+    ownerInventory,
   );
-  return yield* completePrivacyAction(context, 'update-dsr-case', result.caseRef, result);
+  yield* context.recordAuditEvidence({ operationKind: 'update-dsr-case', recordId: result.caseRef });
+  return result;
 });
 
 export const updateDsrCaseAction = defineAction(
@@ -59,7 +88,14 @@ export const updateDsrCaseAction = defineAction(
     schemaVersion: '1',
   },
   handleUpdateDsrCase,
-  privacyOperationRepositoryForScope,
+  (transaction, scope) =>
+    Effect.all(
+      {
+        authority: DsrOwnerInventoryAuthority,
+        repository: privacyOperationRepositoryForScope(transaction, scope),
+      },
+      { concurrency: 2 },
+    ).pipe(Effect.map(({ authority, repository }) => ({ authority, updateDsrCase: repository.updateDsrCase }))),
 );
 
 // <generated-outbox-message-exports>

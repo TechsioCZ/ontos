@@ -10,6 +10,7 @@ import {
   AssignLegalBasisResultSchema,
 } from '../../shared/actions/assign-legal-basis.ts';
 import type { AssignLegalBasisPayload } from '../../shared/actions/assign-legal-basis.ts';
+import { resolveCurrentPrivacyApplicabilityForProcessingScope } from '../../shared/domain/privacy-applicability.ts';
 import { validatePrivacyLegalBasisAssignment } from '../../shared/domain/privacy-legal-basis.ts';
 
 import { privacyOperationRepositoryForScope } from '../persistence/privacy-operation-postgres-repository.ts';
@@ -18,21 +19,42 @@ import {
   PrivacyActionAuditEvidenceSchema,
   PrivacyActionErrorSchema,
   PrivacyActionRejected,
-  completePrivacyAction,
   privacyActionDomainEvents,
   requirePrivacyActionScope,
 } from './privacy-operation-action-support.ts';
 
-const handleAssignLegalBasis = Effect.fn('AssignLegalBasisAction.handle')(function* handleAssignLegalBasis(
+type Services = Pick<PrivacyOperationRepositoryService, 'assignLegalBasis' | 'listApplicabilityDecisions'>;
+
+export const handleAssignLegalBasis = Effect.fn('AssignLegalBasisAction.handle')(function* handleAssignLegalBasis(
   payload: AssignLegalBasisPayload,
-  context: ActionHandlerContext<typeof privacyActionDomainEvents, PrivacyOperationRepositoryService>,
+  context: ActionHandlerContext<typeof privacyActionDomainEvents, Services>,
 ) {
   const scope = yield* requirePrivacyActionScope(context.scope);
-  const validation = validatePrivacyLegalBasisAssignment(payload.assignment);
+  const applicabilityDecisions = yield* context.services.listApplicabilityDecisions(
+    scope.tenantId,
+    scope.legalEntityId,
+  );
+  const applicability = resolveCurrentPrivacyApplicabilityForProcessingScope(
+    applicabilityDecisions,
+    payload.assignment.scope.operation,
+    payload.assignment.scope.processingScopeRef,
+    payload.assignment.effectiveFrom,
+  );
+  if (applicability.outcome !== 'CURRENT') {
+    return yield* new PrivacyActionRejected({
+      code: 'privacy_action_rejected',
+      reason:
+        applicability.outcome === 'CONFLICT'
+          ? 'Legal Basis Assignment requires one unambiguous current applicability decision'
+          : 'Legal Basis Assignment requires an authoritative applicable Privacy Applicability Decision',
+    });
+  }
+  const assignment = { ...payload.assignment, applicabilityDecision: applicability.decision };
+  const validation = validatePrivacyLegalBasisAssignment(assignment);
   if (!validation.valid) {
     return yield* new PrivacyActionRejected({ code: 'privacy_action_rejected', reason: validation.errors.join('; ') });
   }
-  if (payload.assignment.assignmentRef.tenantId !== scope.tenantId) {
+  if (assignment.assignmentRef.tenantId !== scope.tenantId || assignment.scope.purposeRef.tenantId !== scope.tenantId) {
     return yield* new PrivacyActionRejected({
       code: 'privacy_action_rejected',
       reason: 'Legal Basis Assignment must belong to the trusted Tenant',
@@ -42,9 +64,13 @@ const handleAssignLegalBasis = Effect.fn('AssignLegalBasisAction.handle')(functi
     scope.tenantId,
     scope.legalEntityId,
     context.actionInvocationId,
-    payload.assignment,
+    assignment,
   );
-  return yield* completePrivacyAction(context, 'assign-legal-basis', result.assignmentRef.resourceId, result);
+  yield* context.recordAuditEvidence({
+    operationKind: 'assign-legal-basis',
+    recordId: result.assignmentRef.resourceId,
+  });
+  return result;
 });
 
 export const assignLegalBasisAction = defineAction(
@@ -74,7 +100,13 @@ export const assignLegalBasisAction = defineAction(
     schemaVersion: '1',
   },
   handleAssignLegalBasis,
-  privacyOperationRepositoryForScope,
+  (transaction, scope) =>
+    privacyOperationRepositoryForScope(transaction, scope).pipe(
+      Effect.map(({ assignLegalBasis, listApplicabilityDecisions }) => ({
+        assignLegalBasis,
+        listApplicabilityDecisions,
+      })),
+    ),
 );
 
 // <generated-outbox-message-exports>

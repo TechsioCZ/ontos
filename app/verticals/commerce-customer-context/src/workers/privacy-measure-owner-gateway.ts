@@ -75,7 +75,8 @@ const workerFailure = (cause: unknown, operation: string) => {
   Object.defineProperty(failure, 'cause', { configurable: true, value: cause });
   return failure;
 };
-const reportIdempotencyKey = (outcome: OwnerExecutionOutcome) => `owner-outcome:${outcome.outcomeId}`.slice(0, 200);
+const reportIdempotencyKey = (outcome: OwnerExecutionOutcome) =>
+  `owner-outcome:${outcome.measureId}:${outcome.attempt}`.slice(0, 200);
 const isAlreadyRecorded = Schema.is(AlreadyRecordedFailureSchema);
 
 const makeGateway = (configured: {
@@ -118,10 +119,15 @@ const makeGateway = (configured: {
     report: (outcome, legalEntityId, correlation) =>
       credential('privacy', legalEntityId, correlation).pipe(
         Effect.flatMap((authorization) =>
-          executeRecordOwnerExecutionOutcomeWithAuthorization({ outcome }, authorization, correlation, {
-            baseUrl: configured.privacyBaseUrl,
-            idempotencyKey: reportIdempotencyKey(outcome),
-          }),
+          executeRecordOwnerExecutionOutcomeWithAuthorization(
+            { request: { attempt: outcome.attempt, measureId: outcome.measureId, taskId: outcome.taskId } },
+            authorization,
+            correlation,
+            {
+              baseUrl: configured.privacyBaseUrl,
+              idempotencyKey: reportIdempotencyKey(outcome),
+            },
+          ),
         ),
         Effect.asVoid,
         Effect.catchIf(isAlreadyRecorded, () => Effect.void),

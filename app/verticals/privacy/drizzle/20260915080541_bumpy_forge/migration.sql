@@ -1,0 +1,1 @@
+ALTER TABLE "privacy"."purpose_versions" ADD COLUMN "material_change_assessment" jsonb;

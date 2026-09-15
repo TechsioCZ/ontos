@@ -14,31 +14,58 @@ import {
   createPrivacyEligibilityEvidence,
   evaluatePrivacyEligibility,
 } from '../../shared/domain/privacy-processing-eligibility.ts';
+import { PrivacyApplicabilityBusinessFactAuthority } from './privacy-applicability-business-fact-authority-service.ts';
+import type { PrivacyApplicabilityBusinessFactAuthorityService } from './privacy-applicability-business-fact-authority-service.ts';
 import { privacyOperationRepositoryForScope } from '../persistence/privacy-operation-postgres-repository.ts';
-import type { PrivacyOperationRepositoryService } from '../persistence/privacy-operation-repository.ts';
+import type {
+  PrivacyEligibilityRecord,
+  PrivacyOperationRepositoryService,
+  ResolvedPrivacyEligibilityInputs,
+} from '../persistence/privacy-operation-repository.ts';
 import {
   PrivacyActionAuditEvidenceSchema,
   PrivacyActionErrorSchema,
+  PrivacyActionRejected,
   completePrivacyAction,
   privacyActionDomainEvents,
   requirePrivacyActionScope,
 } from './privacy-operation-action-support.ts';
 
+type EvaluateProcessingEligibilityServices = Pick<
+  PrivacyOperationRepositoryService,
+  'recordEligibility' | 'resolveEligibilityInputs'
+> & {
+  readonly authority: PrivacyApplicabilityBusinessFactAuthorityService;
+};
+
 const handleEvaluateProcessingEligibility = Effect.fn('EvaluateProcessingEligibilityAction.handle')(
   function* handleEvaluateProcessingEligibility(
     payload: EvaluateProcessingEligibilityPayload,
-    context: ActionHandlerContext<typeof privacyActionDomainEvents, PrivacyOperationRepositoryService>,
+    context: ActionHandlerContext<typeof privacyActionDomainEvents, EvaluateProcessingEligibilityServices>,
   ) {
     const scope = yield* requirePrivacyActionScope(context.scope);
-    const resolved = yield* context.services.resolveEligibilityInputs(
+    const asOf = DateTime.formatIso(yield* DateTime.now);
+    const authority = yield* context.services.authority
+      .resolveEligibility({
+        asOf,
+        intendedScope: payload.intendedScope,
+        legalEntityId: scope.legalEntityId,
+        tenantId: scope.tenantId,
+      })
+      .pipe(
+        Effect.mapError(
+          (error) => new PrivacyActionRejected({ code: 'privacy_action_rejected', reason: error.reason }),
+        ),
+      );
+    const resolved: ResolvedPrivacyEligibilityInputs = yield* context.services.resolveEligibilityInputs(
       scope.tenantId,
       scope.legalEntityId,
       payload.intendedScope,
-      payload.applicabilityScope,
-      DateTime.formatIso(yield* DateTime.now),
+      asOf,
+      authority,
     );
     const outcome = evaluatePrivacyEligibility(resolved.input);
-    const record = {
+    const record: PrivacyEligibilityRecord = {
       evidence: createPrivacyEligibilityEvidence({
         authoritativeReferences: resolved.authoritativeReferences,
         outcome,
@@ -84,7 +111,15 @@ export const evaluateProcessingEligibilityAction = defineAction(
     schemaVersion: '1',
   },
   handleEvaluateProcessingEligibility,
-  privacyOperationRepositoryForScope,
+  Effect.fn('EvaluateProcessingEligibilityAction.services')(function* makeServices(transaction, scope) {
+    const authority = yield* PrivacyApplicabilityBusinessFactAuthority;
+    const repository = yield* privacyOperationRepositoryForScope(transaction, scope);
+    return {
+      authority,
+      recordEligibility: repository.recordEligibility,
+      resolveEligibilityInputs: repository.resolveEligibilityInputs,
+    };
+  }),
 );
 
 // <generated-outbox-message-exports>

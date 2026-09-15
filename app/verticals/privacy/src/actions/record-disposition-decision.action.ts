@@ -3,36 +3,86 @@
 // @ontos-action-slug record-disposition-decision
 import type { ActionHandlerContext } from '@app/core-runtime';
 import { defineAction, defineTenantModuleEntrypoint } from '@app/core-runtime';
-import { Effect } from 'effect';
+import { DateTime, Effect } from 'effect';
 
 import {
   RecordDispositionDecisionPayloadSchema,
   RecordDispositionDecisionResultSchema,
 } from '../../shared/actions/record-disposition-decision.ts';
 import type { RecordDispositionDecisionPayload } from '../../shared/actions/record-disposition-decision.ts';
+import { validateDispositionDecisionAuthorityResult } from '../../shared/domain/privacy-retention-disposition.ts';
 import { privacyOperationRepositoryForScope } from '../persistence/privacy-operation-postgres-repository.ts';
 import type { PrivacyOperationRepositoryService } from '../persistence/privacy-operation-repository.ts';
+import { RetentionDispositionAuthority } from './privacy-retention-disposition-authority.ts';
+import type { RetentionDispositionAuthorityService } from './privacy-retention-disposition-authority.ts';
 import {
   PrivacyActionAuditEvidenceSchema,
   PrivacyActionErrorSchema,
-  completePrivacyAction,
+  PrivacyActionRejected,
   privacyActionDomainEvents,
   requirePrivacyActionScope,
 } from './privacy-operation-action-support.ts';
 
+export type RecordDispositionDecisionServices = Pick<
+  PrivacyOperationRepositoryService,
+  'recordDispositionDecision' | 'resolveRetentionEvaluation'
+> & { readonly authority: RetentionDispositionAuthorityService };
+
+export type RecordDispositionDecisionContext = Pick<
+  ActionHandlerContext<typeof privacyActionDomainEvents, RecordDispositionDecisionServices>,
+  'actionInvocationId' | 'scope' | 'services'
+>;
+
+export const recordDispositionDecisionFromAuthoritativeEvaluation = Effect.fn(
+  'RecordDispositionDecisionAction.recordAuthoritative',
+)(function* recordDispositionDecisionFromAuthoritativeEvaluation(
+  payload: RecordDispositionDecisionPayload,
+  context: RecordDispositionDecisionContext,
+) {
+  const scope = yield* requirePrivacyActionScope(context.scope);
+  const asOf = DateTime.formatIso(yield* DateTime.now);
+  const evaluation = yield* context.services.resolveRetentionEvaluation(
+    scope.tenantId,
+    scope.legalEntityId,
+    payload.request.evaluationRef,
+    asOf,
+  );
+  const authority = yield* context.services.authority.resolve(payload.request, {
+    actionInvocationId: context.actionInvocationId,
+    asOf,
+    evaluation,
+    legalEntityId: scope.legalEntityId,
+    principalId: context.scope.principalId,
+    tenantId: scope.tenantId,
+  });
+  const authorityError = validateDispositionDecisionAuthorityResult(
+    payload.request,
+    authority,
+    evaluation,
+    context.scope.principalId,
+    scope.tenantId,
+    scope.legalEntityId,
+    asOf,
+  );
+  if (authorityError !== undefined) {
+    return yield* new PrivacyActionRejected({ code: 'privacy_action_rejected', reason: authorityError });
+  }
+  return yield* context.services.recordDispositionDecision(
+    scope.tenantId,
+    scope.legalEntityId,
+    context.actionInvocationId,
+    authority,
+  );
+});
+
 const handleRecordDispositionDecision = Effect.fn('RecordDispositionDecisionAction.handle')(
   function* handleRecordDispositionDecision(
     payload: RecordDispositionDecisionPayload,
-    context: ActionHandlerContext<typeof privacyActionDomainEvents, PrivacyOperationRepositoryService>,
+    context: ActionHandlerContext<typeof privacyActionDomainEvents, RecordDispositionDecisionServices>,
   ) {
-    const scope = yield* requirePrivacyActionScope(context.scope);
-    const result = yield* context.services.recordDispositionDecision(
-      scope.tenantId,
-      scope.legalEntityId,
-      context.actionInvocationId,
-      payload.decision,
-    );
-    return yield* completePrivacyAction(context, 'record-disposition-decision', result.decisionRef, result);
+    const result = yield* recordDispositionDecisionFromAuthoritativeEvaluation(payload, context);
+    yield* context.recordAuditEvidence({ operationKind: 'record-disposition-decision', recordId: result.decisionRef });
+    return result;
   },
 );
 
@@ -63,7 +113,20 @@ export const recordDispositionDecisionAction = defineAction(
     schemaVersion: '1',
   },
   handleRecordDispositionDecision,
-  privacyOperationRepositoryForScope,
+  (transaction, scope) =>
+    Effect.all(
+      {
+        authority: RetentionDispositionAuthority,
+        repository: privacyOperationRepositoryForScope(transaction, scope),
+      },
+      { concurrency: 2 },
+    ).pipe(
+      Effect.map(({ authority, repository }) => ({
+        authority,
+        recordDispositionDecision: repository.recordDispositionDecision,
+        resolveRetentionEvaluation: repository.resolveRetentionEvaluation,
+      })),
+    ),
 );
 
 // <generated-outbox-message-exports>

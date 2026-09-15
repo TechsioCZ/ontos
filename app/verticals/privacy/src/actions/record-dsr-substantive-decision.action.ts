@@ -3,35 +3,69 @@
 // @ontos-action-slug record-dsr-substantive-decision
 import type { ActionHandlerContext } from '@app/core-runtime';
 import { defineAction, defineTenantModuleEntrypoint } from '@app/core-runtime';
-import { Effect } from 'effect';
+import { DateTime, Effect } from 'effect';
 import {
   RecordDsrSubstantiveDecisionPayloadSchema,
   RecordDsrSubstantiveDecisionResultSchema,
 } from '../../shared/actions/record-dsr-substantive-decision.ts';
 import type { RecordDsrSubstantiveDecisionPayload } from '../../shared/actions/record-dsr-substantive-decision.ts';
+import { validateDsrSubstantiveDecisionAuthorityResult } from '../../shared/domain/privacy-dsr.ts';
 import { privacyOperationRepositoryForScope } from '../persistence/privacy-operation-postgres-repository.ts';
 import type { PrivacyOperationRepositoryService } from '../persistence/privacy-operation-repository.ts';
+import { DsrSubstantiveDecisionAuthority } from './privacy-dsr-substantive-decision-authority.ts';
+import type { DsrSubstantiveDecisionAuthorityService } from './privacy-dsr-substantive-decision-authority.ts';
 import {
   PrivacyActionAuditEvidenceSchema,
   PrivacyActionErrorSchema,
-  completePrivacyAction,
+  PrivacyActionRejected,
   privacyActionDomainEvents,
   requirePrivacyActionScope,
 } from './privacy-operation-action-support.ts';
 
-const handleRecordDsrSubstantiveDecision = Effect.fn('RecordDsrSubstantiveDecisionAction.handle')(function* handle(
-  payload: RecordDsrSubstantiveDecisionPayload,
-  context: ActionHandlerContext<typeof privacyActionDomainEvents, PrivacyOperationRepositoryService>,
-) {
-  const scope = yield* requirePrivacyActionScope(context.scope);
-  const result = yield* context.services.recordDsrSubstantiveDecision(
-    scope.tenantId,
-    scope.legalEntityId,
-    context.actionInvocationId,
-    payload.decision,
-  );
-  return yield* completePrivacyAction(context, 'record-dsr-substantive-decision', result.decisionRef, result);
-});
+export interface RecordDsrSubstantiveDecisionServices extends Pick<
+  PrivacyOperationRepositoryService,
+  'recordDsrSubstantiveDecision'
+> {
+  readonly authority: DsrSubstantiveDecisionAuthorityService;
+}
+
+export const handleRecordDsrSubstantiveDecision = Effect.fn('RecordDsrSubstantiveDecisionAction.handle')(
+  function* handle(
+    payload: RecordDsrSubstantiveDecisionPayload,
+    context: ActionHandlerContext<typeof privacyActionDomainEvents, RecordDsrSubstantiveDecisionServices>,
+  ) {
+    const scope = yield* requirePrivacyActionScope(context.scope);
+    const asOf = DateTime.formatIso(yield* DateTime.now);
+    const authority = yield* context.services.authority.resolve(payload.request, {
+      actionInvocationId: context.actionInvocationId,
+      asOf,
+      legalEntityId: scope.legalEntityId,
+      principalId: context.scope.principalId,
+      tenantId: scope.tenantId,
+    });
+    const authorityError = validateDsrSubstantiveDecisionAuthorityResult(
+      payload.request,
+      authority,
+      scope.tenantId,
+      scope.legalEntityId,
+      asOf,
+    );
+    if (authorityError !== undefined) {
+      return yield* new PrivacyActionRejected({ code: 'privacy_action_rejected', reason: authorityError });
+    }
+    const result = yield* context.services.recordDsrSubstantiveDecision(
+      scope.tenantId,
+      scope.legalEntityId,
+      context.actionInvocationId,
+      authority,
+    );
+    yield* context.recordAuditEvidence({
+      operationKind: 'record-dsr-substantive-decision',
+      recordId: result.decisionRef,
+    });
+    return result;
+  },
+);
 export const recordDsrSubstantiveDecisionAction = defineAction(
   {
     accessEvidencePolicy: {
@@ -59,7 +93,19 @@ export const recordDsrSubstantiveDecisionAction = defineAction(
     schemaVersion: '1',
   },
   handleRecordDsrSubstantiveDecision,
-  privacyOperationRepositoryForScope,
+  (transaction, scope) =>
+    Effect.all(
+      {
+        authority: DsrSubstantiveDecisionAuthority,
+        repository: privacyOperationRepositoryForScope(transaction, scope),
+      },
+      { concurrency: 2 },
+    ).pipe(
+      Effect.map(({ authority, repository }) => ({
+        authority,
+        recordDsrSubstantiveDecision: repository.recordDsrSubstantiveDecision,
+      })),
+    ),
 );
 // <generated-outbox-message-exports>
 // </generated-outbox-message-exports>

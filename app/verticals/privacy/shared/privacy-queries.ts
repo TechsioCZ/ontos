@@ -5,7 +5,6 @@ import { OwnerContributionSchema } from './domain/owner-contribution.ts';
 import {
   PrivacyApplicabilityDecisionSchema,
   PrivacyApplicabilityPolicySchema,
-  PrivacyApplicabilityScopeSchema,
 } from './domain/privacy-applicability.ts';
 import { ConsentDecisionSchema } from './domain/privacy-consent-decision.ts';
 import {
@@ -110,7 +109,6 @@ export const CurrentConsentResponseSchema = Schema.Struct({
 });
 
 export const ProcessingEligibilityRequestSchema = Schema.Struct({
-  applicabilityScope: PrivacyApplicabilityScopeSchema,
   intendedScope: IntendedProcessingScopeSchema,
 });
 export const ProcessingEligibilityResponseSchema = Schema.Struct({

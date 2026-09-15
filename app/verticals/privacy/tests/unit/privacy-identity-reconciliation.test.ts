@@ -8,14 +8,16 @@ import {
   classifyPrivacyIdentityChange,
   resolvePrivacyAddressability,
 } from '../../shared/domain/privacy-identity-reconciliation.ts';
+import { PrivacyPartyRefSchema } from '../../shared/domain/party-reference.ts';
 
 const tenantId = '10000000-0000-4000-8000-000000000001';
-const party = (resourceId: string) => ({
-  moduleId: 'party.registry' as const,
-  resourceId,
-  resourceType: 'party.registry.party' as const,
-  tenantId,
-});
+const party = (resourceId: string) =>
+  Schema.decodeUnknownSync(PrivacyPartyRefSchema)({
+    moduleId: 'party.registry' as const,
+    resourceId,
+    resourceType: 'party.registry.party' as const,
+    tenantId,
+  });
 const change = {
   canonicalPartyRef: party('survivor'),
   changedAt: '2026-09-14T10:00:00Z',
