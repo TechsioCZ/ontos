@@ -12,6 +12,7 @@ import type { CoreTransaction } from './types.ts';
 
 const scopedTransaction: unique symbol = Symbol('@app/core-runtime/db/scoped-transaction');
 type ScopedRoutineRawRow = Record<string, never>;
+type OperationalScopeRawTransaction = Pick<CoreTransaction, 'delete' | 'execute' | 'insert' | 'select' | 'update'>;
 
 /** Private owner-factory capability. It is never supplied to an Action or read handler. */
 export interface ScopedTransactionExecutor extends ScopedRoutineInvoker {
@@ -57,7 +58,7 @@ const operationContextUnavailable = (cause?: unknown) => {
 };
 
 const operationalScopeTransactionFromCoreTransaction = (
-  transaction: CoreTransaction,
+  transaction: OperationalScopeRawTransaction,
 ): OperationalScopeTransactionService => ({
   delete: transaction.delete.bind(transaction),
   insert: transaction.insert.bind(transaction),
@@ -115,7 +116,7 @@ export const installOperationalScopeFromTransactionService = Effect.fn('installO
 );
 
 export const installOperationalScope = (
-  transaction: CoreTransaction,
+  transaction: OperationalScopeRawTransaction,
   scope: OperationalScope,
 ): Effect.Effect<ScopedTransactionExecutor, OperationContextUnavailable> =>
   installOperationalScopeFromTransactionService(scope).pipe(

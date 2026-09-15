@@ -225,7 +225,7 @@ const collectDomainErrors = (ast: SchemaAstLike): readonly DomainErrorIdentity[]
 interface DecodedActionRegistration {
   readonly action: UnknownRecord;
   readonly descriptor: UnknownRecord;
-  readonly domainErrorSchema: UnknownRecord;
+  readonly domainErrorAst: UnknownRecord;
 }
 
 // oxlint-disable-next-line anti-slop/no-unknown-parameters -- Dynamic import namespaces are untrusted here and are decoded field-by-field before the scaffold accepts the registration.
@@ -234,15 +234,17 @@ const decodeActionRegistration = (module: unknown, value: string): Option.Option
     const moduleRecord = yield* decodeRecord(module);
     const action = yield* decodeRecord(moduleRecord[value]);
     const descriptor = yield* decodeRecord(action['descriptor']);
-    const domainErrorSchema = yield* decodeRecord(descriptor['domainErrorSchema']);
-    return { action, descriptor, domainErrorSchema };
+    const { domainErrorSchema } = descriptor;
+    const domainErrorAstCandidate = Predicate.hasProperty(domainErrorSchema, 'ast') ? domainErrorSchema.ast : undefined;
+    const domainErrorAst = yield* decodeRecord(domainErrorAstCandidate);
+    return { action, descriptor, domainErrorAst };
   });
 
 const isValidActionRegistration = (registration: DecodedActionRegistration): boolean =>
   isString(registration.descriptor['actionKey']) &&
   isString(registration.descriptor['owningModuleKey']) &&
   (registration.descriptor['idempotency'] === 'required' || registration.descriptor['idempotency'] === 'optional') &&
-  Schema.is(UnknownRecordSchema)(registration.domainErrorSchema['ast']);
+  Schema.is(UnknownRecordSchema)(registration.domainErrorAst);
 
 // oxlint-disable-next-line effect-native/no-async-script-program -- Dynamic module import is the script driver boundary and is immediately wrapped by loadAction's typed Effect.tryPromise channel.
 const inspectAction = async (actionPath: string, value: string): Promise<ActionModuleLike> => {
@@ -262,8 +264,7 @@ const loadAction = (
 ): Effect.Effect<ActionModuleLike, ReturnType<typeof scaffoldFailure>> =>
   Effect.tryPromise({
     catch: (cause) => scaffoldFailure(`failed to inspect existing Action ${actionPath}`, cause),
-    // oxlint-disable-next-line typescript/promise-function-async -- Effect.tryPromise intentionally accepts a lazy Promise-returning thunk and owns its rejection mapping.
-    try: () => inspectAction(actionPath, value),
+    try: async () => await inspectAction(actionPath, value),
   });
 
 const literalList = (values: readonly string[]): string => {
@@ -316,10 +317,9 @@ import {
   ${type}ResultSchema,
 } from '../actions/${action}.ts';
 
-export { ${type}PayloadSchema, ${type}ResultSchema } from '../actions/${action}.ts';
-export type { ${type}Payload, ${type}Result } from '../actions/${action}.ts';
+export { ${type}PayloadSchema } from '../actions/${action}.ts';
 
-export const ${type}ActionHeadersSchema = Schema.Struct({
+const ${type}ActionHeadersSchema = Schema.Struct({
   'idempotency-key': Schema.optionalKey(
     Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(200)),
   ),
@@ -489,6 +489,7 @@ export const renderActionHttpProblems = (
   return `${HEADER}
 // @ontos-action-http-owner ${vertical.moduleId}
 // @ontos-action-http-slug ${action}
+/* jscpd:ignore-start -- Generated Action problem adapters intentionally share the Core problem mapping protocol while preserving owner-specific domain errors. */
 // oxlint-disable sonarjs/function-name -- Effect Match.tags requires owner-declared tag keys; remove-when: sonarjs accepts discriminant-map properties.
 import type { ActionCoreError } from '@app/core-runtime';
 import { Effect, HttpApiMiddleware } from '@modern-js/bff-effect/effect-edge';
@@ -596,6 +597,7 @@ export const ${toCamelCase(action)}ActionSchemaErrorLive = HttpApiMiddleware.lay
   ${type}ActionSchemaErrorMiddleware,
   () => Effect.fail(${toCamelCase(action)}ActionProblem.invalid()),
 );
+/* jscpd:ignore-end */
 `;
 };
 

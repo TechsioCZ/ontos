@@ -90,6 +90,7 @@ import { decidePurchaseApprovalRequestActionApiLive } from './decide-purchase-ap
 import { deliveryDestinationResolutionReadApiLive } from './delivery-destination-resolution-read-server.ts';
 import { effectiveCustomerGroupMembershipsReadApiLive } from './effective-customer-group-memberships-read-server.ts';
 import { ensureRetailCustomerProfileActionApiLive } from './ensure-retail-customer-profile-action-server.ts';
+import { executePrivacyMeasureActionApiLive } from './execute-privacy-measure-action-server.ts';
 import { grantCounterpartyCommerceAccessActionApiLive } from './grant-counterparty-commerce-access-action-server.ts';
 import { guestAttributionStatusReadApiLive } from './guest-attribution-status-read-server.ts';
 import { guestPaymentTermsResolutionReadApiLive } from './guest-payment-terms-resolution-read-server.ts';
@@ -99,6 +100,7 @@ import { migrateCustomerPriceGroupActionApiLive } from './migrate-customer-price
 import { openProfileReconciliationActionApiLive } from './open-profile-reconciliation-action-server.ts';
 import { paymentTermAffectedUseAssessmentReadApiLive } from './payment-term-affected-use-assessment-read-server.ts';
 import { paymentTermsResolutionReadApiLive } from './payment-terms-resolution-read-server.ts';
+import { privacyMeasureExecutionReadApiLive } from './privacy-measure-execution-read-server.ts';
 import { profileReconciliationReadReadApiLive } from './profile-reconciliation-read-read-server.ts';
 import { purchaseCurrencyResolutionReadApiLive } from './purchase-currency-resolution-read-server.ts';
 import { purchaseLimitEvaluationReadApiLive } from './purchase-limit-evaluation-read-server.ts';
@@ -317,6 +319,7 @@ export const makeCommerceCustomerContextApiRuntime = (
     deliveryDestinationResolutionReadApiLive.pipe(GovernedReadLayer.provide(governedReadRuntimeLive)),
     effectiveCustomerGroupMembershipsReadApiLive.pipe(GovernedReadLayer.provide(governedReadRuntimeLive)),
     ensureRetailCustomerProfileActionApiLive.pipe(GovernedReadLayer.provide(governedActionRuntimeLive)),
+    executePrivacyMeasureActionApiLive.pipe(GovernedReadLayer.provide(governedActionRuntimeLive)),
     grantCounterpartyCommerceAccessActionApiLive.pipe(GovernedReadLayer.provide(governedActionRuntimeLive)),
     guestAttributionStatusReadApiLive.pipe(GovernedReadLayer.provide(governedReadRuntimeLive)),
     guestPaymentTermsResolutionReadApiLive.pipe(GovernedReadLayer.provide(governedReadRuntimeLive)),
@@ -326,6 +329,7 @@ export const makeCommerceCustomerContextApiRuntime = (
     openProfileReconciliationActionApiLive.pipe(GovernedReadLayer.provide(governedActionRuntimeLive)),
     paymentTermAffectedUseAssessmentReadApiLive.pipe(GovernedReadLayer.provide(governedReadRuntimeLive)),
     paymentTermsResolutionReadApiLive.pipe(GovernedReadLayer.provide(governedReadRuntimeLive)),
+    privacyMeasureExecutionReadApiLive.pipe(GovernedReadLayer.provide(governedReadRuntimeLive)),
     profileReconciliationReadReadApiLive.pipe(GovernedReadLayer.provide(governedReadRuntimeLive)),
     purchaseCurrencyResolutionReadApiLive.pipe(GovernedReadLayer.provide(governedReadRuntimeLive)),
     purchaseLimitEvaluationReadApiLive.pipe(GovernedReadLayer.provide(governedReadRuntimeLive)),

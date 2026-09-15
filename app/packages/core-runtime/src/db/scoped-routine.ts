@@ -1,7 +1,7 @@
 import { sql } from 'drizzle-orm';
 import type { SQL } from 'drizzle-orm';
 import type { EffectDrizzleQueryError } from 'drizzle-orm/effect-core';
-import { Effect, Option, Schema } from 'effect';
+import { DateTime, Effect, Option, Result, Schema } from 'effect';
 import { findPostgresFailure } from '../database/postgres-failure.ts';
 import { ScopedRoutineInvocationError } from './scoped-routine-error.ts';
 import type { ScopedRoutineInvocationErrorCode } from './scoped-routine-error.ts';
@@ -73,6 +73,7 @@ type ScalarValueByType = Readonly<{
   timestamptz: Date | string;
   uuid: string;
 }>;
+type ScopedRoutineResolvedValue = Schema.Schema.Type<typeof Schema.Unknown>;
 
 type ScopedRoutineParameterValue<Type extends ScopedRoutineParameterType> =
   Type extends `${infer Element extends keyof ScalarValueByType}[]`
@@ -274,6 +275,35 @@ const invalidDeclarationError = (): ScopedRoutineInvocationError =>
     routineKey: 'unknown',
   });
 
+const encodeJson = Schema.encodeResult(Schema.fromJsonString(Schema.Unknown));
+const decodeArray = Schema.decodeUnknownOption(Schema.Array(Schema.Unknown));
+const decodeTextArrayElement = Schema.decodeUnknownOption(
+  Schema.Union([Schema.String, Schema.Finite, Schema.Boolean, Schema.BigInt]),
+);
+
+const postgresArrayElement = (type: ScopedRoutineParameterType, value: ScopedRoutineResolvedValue): string => {
+  let text: string;
+  if (type === 'jsonb[]') {
+    text = Result.getOrThrow(encodeJson(value));
+  } else if (Schema.is(Schema.Date)(value)) {
+    text = DateTime.formatIso(DateTime.makeUnsafe(value));
+  } else {
+    text = String(Option.getOrThrow(decodeTextArrayElement(value)));
+  }
+  const escaped = text.replaceAll('\\', String.raw`\\`).replaceAll('"', String.raw`\"`);
+  return `"${escaped}"`;
+};
+
+const encodePostgresArray = (
+  type: ScopedRoutineParameterType,
+  value: ScopedRoutineResolvedValue,
+): ScopedRoutineResolvedValue => {
+  const elements = decodeArray(value);
+  return type.endsWith('[]') && Option.isSome(elements)
+    ? `{${elements.value.map((element) => postgresArrayElement(type, element)).join(',')}}`
+    : value;
+};
+
 const AnyScopedRoutineDefinitionSchema = Schema.instanceOf(ScopedRoutinePrivateStorage).check(
   Schema.makeFilter((declaration) =>
     declaration[scopedRoutineDeclaration] === true && Object.isFrozen(declaration)
@@ -289,7 +319,7 @@ const resolveInvocationValues = <
   routine: ScopedRoutineDefinition<RowSchema, Parameters>,
   inputValues: ScopedRoutineInputValues<Parameters>,
   scope: ScopedRoutineScope,
-): Effect.Effect<readonly unknown[], ScopedRoutineInvocationError> => {
+): Effect.Effect<readonly ScopedRoutineResolvedValue[], ScopedRoutineInvocationError> => {
   const expectedInputCount = routine.parameters.filter(({ source }) => source === 'input').length;
   if (inputValues.length !== expectedInputCount) {
     return Effect.fail(
@@ -300,7 +330,7 @@ const resolveInvocationValues = <
       ),
     );
   }
-  const values: unknown[] = [];
+  const values: ScopedRoutineResolvedValue[] = [];
   let inputIndex = 0;
   for (const parameter of routine.parameters) {
     if (parameter.source === 'tenantId') {
@@ -324,9 +354,10 @@ const resolveInvocationValues = <
   return Effect.succeed(Object.freeze(values));
 };
 
-const invocationStatement = (routine: ScopedRoutineDefinition, values: readonly unknown[]): SQL => {
+const invocationStatement = (routine: ScopedRoutineDefinition, values: readonly ScopedRoutineResolvedValue[]): SQL => {
   const parameters = routine.parameters.map(
-    (parameter, index) => sql`${values[index]}::${parameterTypeSql[parameter.type]}`,
+    (parameter, index) =>
+      sql`${encodePostgresArray(parameter.type, values[index])}::${parameterTypeSql[parameter.type]}`,
   );
   const separator = sql.raw(', ');
   return sql`select * from ${sql.identifier(routine.schema)}.${sql.identifier(routine.name)}(${sql.join(parameters, separator)})`;

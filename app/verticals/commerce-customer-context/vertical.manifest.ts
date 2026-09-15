@@ -75,6 +75,7 @@ import { decidePurchaseApprovalRequestAction } from './src/actions/decide-purcha
 import { DeliveryDestinationResolutionApi } from './shared/apis/delivery-destination-resolution.ts';
 import { EffectiveCustomerGroupMembershipsApi } from './shared/apis/effective-customer-group-memberships.ts';
 import { ensureRetailCustomerProfileAction } from './src/actions/ensure-retail-customer-profile.action.ts';
+import { executePrivacyMeasureAction } from './src/actions/execute-privacy-measure.action.ts';
 import { grantCounterpartyCommerceAccessAction } from './src/actions/grant-counterparty-commerce-access.action.ts';
 import { GuestAttributionStatusApi } from './shared/apis/guest-attribution-status.ts';
 import { GuestPaymentTermsResolutionApi } from './shared/apis/guest-payment-terms-resolution.ts';
@@ -84,6 +85,7 @@ import { migrateCustomerPriceGroupAction } from './src/actions/migrate-customer-
 import { openProfileReconciliationAction } from './src/actions/open-profile-reconciliation.action.ts';
 import { PaymentTermAffectedUseAssessmentApi } from './shared/apis/payment-term-affected-use-assessment.ts';
 import { PaymentTermsResolutionApi } from './shared/apis/payment-terms-resolution.ts';
+import { PrivacyMeasureExecutionApi } from './shared/apis/privacy-measure-execution.ts';
 import { profileReconciliationCaseResourceDescriptor } from './shared/resources/profile-reconciliation-case.ts';
 import { ProfileReconciliationReadApi } from './shared/apis/profile-reconciliation-read.ts';
 import { purchaseApprovalRequestResourceDescriptor } from './shared/resources/purchase-approval-request.ts';
@@ -182,6 +184,7 @@ export const commerceCustomerContextManifest: OntosModuleManifestInput = defineO
       createPurchaseProposalRevisionAction,
       decidePurchaseApprovalRequestAction,
       ensureRetailCustomerProfileAction,
+      executePrivacyMeasureAction,
       grantCounterpartyCommerceAccessAction,
       migrateCounterpartyPriceGroupAction,
       migrateCustomerPriceGroupAction,
@@ -241,6 +244,7 @@ export const commerceCustomerContextManifest: OntosModuleManifestInput = defineO
       'invoice-recipient-resolution': InvoiceRecipientResolutionApi,
       'payment-term-affected-use-assessment': PaymentTermAffectedUseAssessmentApi,
       'payment-terms-resolution': PaymentTermsResolutionApi,
+      'privacy-measure-execution': PrivacyMeasureExecutionApi,
       'profile-reconciliation-read': ProfileReconciliationReadApi,
       'purchase-currency-resolution': PurchaseCurrencyResolutionApi,
       'purchase-limit-evaluation': PurchaseLimitEvaluationApi,
