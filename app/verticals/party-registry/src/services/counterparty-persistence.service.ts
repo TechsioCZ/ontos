@@ -16,7 +16,11 @@ import {
   legalEntityRef,
 } from '../../shared/domain/counterparty-contract.ts';
 import { CounterpartyPersistenceUnavailable } from '../../shared/domain/counterparty-errors.ts';
-import { roleEndEvidenceIsSufficient, rolePeriodStorageStateAt } from '../../shared/domain/counterparty-role-period.ts';
+import {
+  roleEndEvidenceIsSufficient,
+  rolePeriodsOverlap,
+  rolePeriodStorageStateAt,
+} from '../../shared/domain/counterparty-role-period.ts';
 import type { CounterpartyRolePeriodRef } from '../../shared/resources/counterparty-role-period.ts';
 import type { CounterpartyRef } from '../../shared/resources/counterparty.ts';
 import { CounterpartyRefSchema } from '../../shared/resources/counterparty.ts';
@@ -120,6 +124,30 @@ export interface AddCounterpartyRoleInput extends AcceptedActionEvidence {
   readonly validFrom: string;
   readonly validTo: null | string;
 }
+
+export interface CustomerOnboardInput extends AcceptedActionEvidence {
+  readonly counterpartyProvenance: CounterpartyProvenance;
+  readonly customerEvidence: CounterpartyProvenance;
+  readonly legalEntityId: string;
+  readonly partyId: string;
+  readonly tenantId: string;
+  readonly validFrom: string;
+  readonly validTo: null | string;
+}
+
+export const CustomerOnboardFoundSchema = Schema.TaggedStruct('onboarded', {
+  counterpartyCreated: Schema.Boolean,
+  counterpartyRef: CounterpartyRefSchema,
+  legalEntityRef: LegalEntityRefSchema,
+  partyRef: PartyRefSchema,
+  role: CounterpartyRolePeriodSchema,
+  rolePeriodCreated: Schema.Boolean,
+});
+
+export type CustomerOnboardResult =
+  | Exclude<CreateCounterpartyResult, { readonly _tag: 'found' }>
+  | Exclude<AddCounterpartyRoleResult, { readonly _tag: 'found' }>
+  | Schema.Schema.Type<typeof CustomerOnboardFoundSchema>;
 
 export interface EndCounterpartyRoleInput extends AcceptedActionEvidence {
   readonly counterpartyId: string;
@@ -590,6 +618,157 @@ export const addCounterpartyRoleRecord = Effect.fn('CounterpartyPersistenceServi
     return { _tag: 'found', value: roleDto(row) } as const;
   },
 );
+
+/**
+ * Compose Counterparty and CUSTOMER writes under the Action runtime's one transaction. The
+ * Counterparty row is locked before inspecting periods, so concurrent onboarding requests cannot
+ * both decide that the same period is new.
+ */
+export const onboardCounterpartyCustomerRecord = Effect.fn(
+  'CounterpartyPersistenceService.onboardCounterpartyCustomerRecord',
+)(function* onboardCounterpartyCustomer(
+  transaction: CounterpartyTransaction,
+  input: CustomerOnboardInput,
+): Effect.fn.Return<CustomerOnboardResult, CounterpartyPersistenceUnavailable> {
+  const contextResult = yield* createCounterpartyRecord(transaction, {
+    actionInvocationId: input.actionInvocationId,
+    legalEntityId: input.legalEntityId,
+    partyId: input.partyId,
+    policyVersion: input.policyVersion,
+    principalId: input.principalId,
+    provenance: input.counterpartyProvenance,
+    tenantId: input.tenantId,
+  });
+  const contextFailure = yield* Match.value(contextResult).pipe(
+    Match.tag('party_alias', (value) => Effect.succeed(Option.some<CustomerOnboardResult>(value))),
+    Match.tag('party_archived', (value) => Effect.succeed(Option.some<CustomerOnboardResult>(value))),
+    Match.tag('party_not_found', (value) => Effect.succeed(Option.some<CustomerOnboardResult>(value))),
+    Match.tag('found', () => Effect.succeed(Option.none<CustomerOnboardResult>())),
+    Match.exhaustive,
+  );
+  if (Option.isSome(contextFailure)) {
+    return contextFailure.value;
+  }
+  const context = yield* Match.value(contextResult).pipe(
+    Match.tag('found', (value) => Effect.succeed(value)),
+    Match.tag('party_alias', () => Effect.die('unreachable Counterparty Create result')),
+    Match.tag('party_archived', () => Effect.die('unreachable Counterparty Create result')),
+    Match.tag('party_not_found', () => Effect.die('unreachable Counterparty Create result')),
+    Match.exhaustive,
+  );
+
+  const counterparty = yield* findCounterpartyRow(
+    transaction,
+    input.tenantId,
+    input.legalEntityId,
+    context.counterpartyRef.resourceId,
+    true,
+  );
+  if (Option.isNone(counterparty)) {
+    return {
+      _tag: 'counterparty_not_found',
+      counterpartyId: context.counterpartyRef.resourceId,
+    } as const;
+  }
+  const resolvedParty = yield* resolveCanonicalParty(transaction, input.tenantId, counterparty.value.partyId);
+  if (Option.isNone(resolvedParty)) {
+    return yield* unavailable();
+  }
+  if (resolvedParty.value.archivedAt !== null) {
+    return { _tag: 'party_archived', partyId: resolvedParty.value.partyId } as const;
+  }
+
+  const validFrom = instantAsDate(input.validFrom);
+  const validTo = input.validTo === null ? null : instantAsDate(input.validTo);
+  const existingRoles = yield* transaction
+    .select()
+    .from(counterpartyRolePeriods)
+    .where(
+      and(
+        eq(counterpartyRolePeriods.tenantId, input.tenantId),
+        eq(counterpartyRolePeriods.legalEntityId, input.legalEntityId),
+        eq(counterpartyRolePeriods.counterpartyId, context.counterpartyRef.resourceId),
+        eq(counterpartyRolePeriods.roleType, 'CUSTOMER'),
+        inArray(counterpartyRolePeriods.state, ['ACTIVE', 'ENDED']),
+      ),
+    )
+    .orderBy(asc(counterpartyRolePeriods.validFrom), asc(counterpartyRolePeriods.rolePeriodId))
+    .pipe(Effect.mapError(unavailable));
+  const overlapping = existingRoles.find((row) =>
+    rolePeriodsOverlap(
+      { validFrom: input.validFrom, validTo: input.validTo },
+      { validFrom: row.validFrom.toISOString(), validTo: row.validTo?.toISOString() ?? null },
+    ),
+  );
+  if (overlapping !== undefined) {
+    const exactEquivalent =
+      overlapping.validFrom.toISOString() === input.validFrom &&
+      (overlapping.validTo?.toISOString() ?? null) === input.validTo;
+    if (!exactEquivalent) {
+      return { _tag: 'overlap', roleType: 'CUSTOMER' } as const;
+    }
+    return {
+      _tag: 'onboarded',
+      counterpartyCreated: context.created,
+      counterpartyRef: context.counterpartyRef,
+      rolePeriodCreated: false,
+      legalEntityRef: context.legalEntityRef,
+      partyRef: context.partyRef,
+      role: roleDto(overlapping),
+    } as const;
+  }
+
+  const recordedAt = yield* DateTime.nowAsDate;
+  const lifecycle = rolePeriodStorageStateAt(
+    { validFrom: input.validFrom, validTo: input.validTo },
+    recordedAt.toISOString(),
+  );
+  const [row] = yield* transaction
+    .insert(counterpartyRolePeriods)
+    .values({
+      acceptedByActionInvocationId: input.actionInvocationId,
+      acceptedByPrincipalId: input.principalId,
+      addEvidenceRefs: [input.customerEvidence.evidenceReference],
+      addReason: input.customerEvidence.reason ?? input.customerEvidence.method,
+      counterpartyId: context.counterpartyRef.resourceId,
+      ...roleEndEvidence(
+        {
+          actionInvocationId: input.actionInvocationId,
+          policyVersion: input.policyVersion,
+          principalId: input.principalId,
+          provenance: input.customerEvidence,
+        },
+        recordedAt,
+        validTo !== null,
+      ),
+      isCurrent: lifecycle.isCurrent,
+      legalEntityId: input.legalEntityId,
+      policyVersion: input.policyVersion,
+      provenanceMethod: input.customerEvidence.method,
+      provenanceSource: input.customerEvidence.source,
+      roleType: 'CUSTOMER',
+      state: lifecycle.state,
+      tenantId: input.tenantId,
+      validFrom,
+      validTo,
+    })
+    .returning()
+    .pipe(Effect.mapError(unavailable));
+  if (row === undefined) {
+    return yield* unavailable();
+  }
+  yield* syncCounterpartyReadModel(transaction, counterparty.value);
+  yield* syncRoleReadModel(transaction, row);
+  return {
+    _tag: 'onboarded',
+    counterpartyCreated: context.created,
+    counterpartyRef: context.counterpartyRef,
+    rolePeriodCreated: true,
+    legalEntityRef: context.legalEntityRef,
+    partyRef: context.partyRef,
+    role: roleDto(row),
+  } as const;
+});
 
 const repeatsRecordedRoleEnd = (current: RolePeriodRow, input: EndCounterpartyRoleInput, validTo: Date): boolean =>
   current.validTo !== null &&

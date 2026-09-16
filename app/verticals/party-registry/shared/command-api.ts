@@ -14,6 +14,10 @@ import {
   ConfirmDuplicatePartiesResultSchema,
 } from './actions/confirm-duplicate-parties.ts';
 import { CorrectPartyFactPayloadSchema, CorrectPartyFactResultSchema } from './actions/correct-party-fact.ts';
+import {
+  CounterpartyCustomerOnboardPayloadSchema,
+  CounterpartyCustomerOnboardResultSchema,
+} from './actions/counterparty-customer-onboard.ts';
 import { CounterpartyCreatePayloadSchema, CounterpartyCreateResultSchema } from './actions/counterparty-create.ts';
 import { CounterpartyRoleAddPayloadSchema, CounterpartyRoleAddResultSchema } from './actions/counterparty-role-add.ts';
 import { CounterpartyRoleEndPayloadSchema, CounterpartyRoleEndResultSchema } from './actions/counterparty-role-end.ts';
@@ -52,7 +56,7 @@ import {
   UpdatePartyOfficialIdentifierResultSchema,
 } from './actions/update-party-official-identifier.ts';
 import { UpdatePartyPayloadSchema, UpdatePartyResultSchema } from './actions/update-party.ts';
-import { ActionInvocationIdSchema } from './domain/correction-contracts.ts';
+import { ActionInvocationIdSchema, PartyCorrectionConflictRelationshipLimit } from './domain/correction-contracts.ts';
 import {
   CreatePartyRelationshipPayloadSchema,
   CreatePartyRelationshipResultSchema,
@@ -66,6 +70,7 @@ import {
   ChangePartyRelationshipResultSchema as UpdatePartyRelationshipResultSchema,
 } from './domain/relationship-contract.ts';
 import { PartyRefSchema } from './resources/party.ts';
+import { PartyRelationshipRefSchema } from './resources/party-relationship.ts';
 
 export { AddContactPointPayloadSchema, AddContactPointResultSchema } from './actions/add-contact-point.ts';
 export type AddContactPointPayload = typeof AddContactPointPayloadSchema.Type;
@@ -83,6 +88,11 @@ export {
 export type ConfirmDuplicatePartiesPayload = typeof ConfirmDuplicatePartiesPayloadSchema.Type;
 export { CorrectPartyFactPayloadSchema, CorrectPartyFactResultSchema } from './actions/correct-party-fact.ts';
 export type CorrectPartyFactPayload = typeof CorrectPartyFactPayloadSchema.Type;
+export {
+  CounterpartyCustomerOnboardPayloadSchema,
+  CounterpartyCustomerOnboardResultSchema,
+} from './actions/counterparty-customer-onboard.ts';
+export type CounterpartyCustomerOnboardPayload = typeof CounterpartyCustomerOnboardPayloadSchema.Type;
 export { CounterpartyCreatePayloadSchema, CounterpartyCreateResultSchema } from './actions/counterparty-create.ts';
 export type CounterpartyCreatePayload = typeof CounterpartyCreatePayloadSchema.Type;
 export { CounterpartyRoleAddPayloadSchema, CounterpartyRoleAddResultSchema } from './actions/counterparty-role-add.ts';
@@ -205,6 +215,9 @@ export const PartyCommandConflictProblemSchema = makeProblemDetailsSchema('Party
     'party_relationship_revision_conflict',
     'party_relationship_correction_required',
   ]),
+  conflictingRelationshipRefs: Schema.optionalKey(
+    Schema.Array(PartyRelationshipRefSchema).check(Schema.isMaxLength(PartyCorrectionConflictRelationshipLimit)),
+  ),
 });
 
 export const PartyCommandUnprocessableProblemSchema = makeProblemDetailsSchema(
@@ -358,6 +371,14 @@ export const partyRegistryCommandsApi = HttpApi.make('PartyRegistryCommandsApi')
         headers: PartyCommandHeadersSchema,
         payload: CounterpartyCreatePayloadSchema,
         success: CounterpartyCreateResultSchema,
+      }),
+    )
+    .add(
+      HttpApiEndpoint.post('counterpartyCustomerOnboard', '/party-registry/actions/counterparty-customer-onboard', {
+        error: commandErrors,
+        headers: PartyCommandHeadersSchema,
+        payload: CounterpartyCustomerOnboardPayloadSchema,
+        success: CounterpartyCustomerOnboardResultSchema,
       }),
     )
     .add(

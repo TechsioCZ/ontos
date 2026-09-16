@@ -49,10 +49,11 @@ import { attachPersonEngagementAction } from './src/actions/attach-person-engage
 import { confirmDuplicatePartiesAction } from './src/actions/confirm-duplicate-parties.action.ts';
 import { correctPartyFactAction } from './src/actions/correct-party-fact.action.ts';
 import { counterpartyCreateAction } from './src/actions/counterparty-create.action.ts';
+import { counterpartyCustomerOnboardAction } from './src/actions/counterparty-customer-onboard.action.ts';
 import { counterpartyRoleAddAction } from './src/actions/counterparty-role-add.action.ts';
 import { counterpartyRoleEndAction } from './src/actions/counterparty-role-end.action.ts';
-import { createPartyRelationshipAction } from './src/actions/create-party-relationship.action.ts';
 import { createPartyAction } from './src/actions/create-party.action.ts';
+import { createPartyRelationshipAction } from './src/actions/create-party-relationship.action.ts';
 import { dismissDuplicateCandidateAction } from './src/actions/dismiss-duplicate-candidate.action.ts';
 import { endContactPointAction } from './src/actions/end-contact-point.action.ts';
 import { endPartyOfficialIdentifierAction } from './src/actions/end-party-official-identifier.action.ts';
@@ -67,9 +68,9 @@ import { unarchiveOrganizationEngagementAction } from './src/actions/unarchive-o
 import { unarchivePartyAction } from './src/actions/unarchive-party.action.ts';
 import { unarchivePersonEngagementAction } from './src/actions/unarchive-person-engagement.action.ts';
 import { updateContactPointAction } from './src/actions/update-contact-point.action.ts';
+import { updatePartyAction } from './src/actions/update-party.action.ts';
 import { updatePartyOfficialIdentifierAction } from './src/actions/update-party-official-identifier.action.ts';
 import { updatePartyRelationshipAction } from './src/actions/update-party-relationship.action.ts';
-import { updatePartyAction } from './src/actions/update-party.action.ts';
 import ContactsPage from './src/routes/[lang]/contacts/page.tsx';
 // </generated-module-manifest-imports>
 
@@ -111,6 +112,7 @@ export const partyRegistryManifest = defineOntosModuleManifest({
       confirmDuplicatePartiesAction,
       correctPartyFactAction,
       counterpartyCreateAction,
+      counterpartyCustomerOnboardAction,
       counterpartyRoleAddAction,
       counterpartyRoleEndAction,
       createPartyAction,

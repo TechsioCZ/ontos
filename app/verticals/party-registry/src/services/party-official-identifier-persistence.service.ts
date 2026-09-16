@@ -10,9 +10,17 @@ import type {
   NormalizedOfficialIdentifier,
   OfficialIdentifierAssertion,
 } from '../../shared/domain/identifier-contracts.ts';
-import { qualifiesForExclusiveClaim } from '../../shared/domain/identifier-contracts.ts';
+import {
+  IdentifierVerificationSchema,
+  OfficialIdentifierAssertionStateSchema,
+  qualifiesForExclusiveClaim,
+} from '../../shared/domain/identifier-contracts.ts';
 import type { PartyType } from '../../shared/domain/identity-contracts.ts';
-import { PartyPersistenceUnavailable, makePartyRef } from '../../shared/domain/identity-contracts.ts';
+import {
+  IsoTimestampSchema,
+  PartyPersistenceUnavailable,
+  makePartyRef,
+} from '../../shared/domain/identity-contracts.ts';
 import { parties, partyIdentifierClaims, partyOfficialIdentifiers } from '../db/schema.ts';
 import type { PartyTransaction } from '../db/types.ts';
 import { requireCanonicalPartyWriteTarget } from '../merge/party-alias-resolution.service.ts';
@@ -238,6 +246,143 @@ export const addOfficialIdentifierRecord = Effect.fn(
       .pipe(Effect.mapError(unavailable));
   }
   return record;
+});
+
+const MatchingOfficialIdentifierMetadataSnapshotSchema = Schema.Struct({
+  state: OfficialIdentifierAssertionStateSchema,
+  validTo: Schema.toEncoded(Schema.OptionFromNullOr(IsoTimestampSchema)),
+  verification: IdentifierVerificationSchema,
+  verifiedAt: Schema.toEncoded(Schema.OptionFromNullOr(IsoTimestampSchema)),
+  verifiedByPrincipalId: Schema.toEncoded(Schema.OptionFromNullOr(Schema.String)),
+});
+export type MatchingOfficialIdentifierMetadataSnapshot = typeof MatchingOfficialIdentifierMetadataSnapshotSchema.Type;
+
+export interface MatchingOfficialIdentifierUpdate {
+  readonly officialIdentifierId: string;
+  readonly evidenceRefs?: readonly string[];
+  readonly before: MatchingOfficialIdentifierMetadataSnapshot;
+  readonly after: MatchingOfficialIdentifierMetadataSnapshot;
+}
+
+const matchingIdentifierMetadata = (
+  row: typeof partyOfficialIdentifiers.$inferSelect,
+): MatchingOfficialIdentifierMetadataSnapshot => ({
+  // SAFETY: the owner database CHECK constrains assertion state to this contract.
+  state: row.state as MatchingOfficialIdentifierMetadataSnapshot['state'],
+  validTo: row.validTo?.toISOString() ?? null,
+  // SAFETY: the owner database CHECK constrains verification to this contract.
+  verification: row.verificationState as IdentifierVerification,
+  verifiedAt: row.verifiedAt?.toISOString() ?? null,
+  verifiedByPrincipalId: row.verifiedByPrincipalId,
+});
+
+/**
+ * Accept a matching Candidate identifier against one canonical Party.
+ *
+ * Add is intentionally idempotent, but matching acceptance has one additional legal transition:
+ * a current same-Party UNVERIFIED assertion may become VERIFIED and acquire its exclusive claim.
+ * The caller holds deterministic tenant and claim-key locks before invoking this operation; this
+ * function locks and rechecks the current assertion so the result is safe on every path.
+ */
+export const acceptMatchingOfficialIdentifierRecord = Effect.fn(
+  'PartyOfficialIdentifierPersistenceService.acceptMatchingOfficialIdentifierRecord',
+)(function* acceptMatchingIdentifier(
+  transaction: Pick<PartyTransaction, 'select' | 'insert' | 'update'>,
+  tenantId: string,
+  partyId: string,
+  identifier: NormalizedOfficialIdentifier,
+  input: {
+    readonly actionInvocationId: string;
+    readonly externalEvidence?: AresAppliedEvidence | undefined;
+    readonly matchRuleVersion: string;
+    readonly partyType: 'ORGANIZATION' | 'PERSON' | 'UNRESOLVED';
+    readonly principalId: string;
+    readonly provenanceMethod: string;
+    readonly provenanceSource: string;
+    readonly validFrom: string | DateTime.Utc;
+  },
+) {
+  const [existing] = yield* transaction
+    .select()
+    .from(partyOfficialIdentifiers)
+    .where(
+      and(
+        eq(partyOfficialIdentifiers.tenantId, tenantId),
+        eq(partyOfficialIdentifiers.partyId, partyId),
+        eq(partyOfficialIdentifiers.identifierTypeKey, identifier.identifierType),
+        eq(partyOfficialIdentifiers.namespace, identifier.namespace),
+        eq(partyOfficialIdentifiers.normalizedValue, identifier.normalizedValue),
+        eq(partyOfficialIdentifiers.state, 'ACTIVE'),
+        eq(partyOfficialIdentifiers.isCurrent, true),
+      ),
+    )
+    .limit(1)
+    .for('update')
+    .pipe(Effect.mapError(unavailable));
+
+  if (existing === undefined) {
+    const record = yield* addOfficialIdentifierRecord(transaction, tenantId, partyId, identifier, input);
+    return { _tag: 'added', record } as const;
+  }
+
+  // Matching never silently downgrades an accepted assertion. Only the explicit weak -> verified
+  // upgrade is a transition owned by this invocation; identical or rejected evidence is reused.
+  if (existing.verificationState !== 'UNVERIFIED' || identifier.verification !== 'VERIFIED') {
+    return { _tag: 'reused', record: existing } as const;
+  }
+  const candidate: NormalizedOfficialIdentifier = { ...identifier, verification: 'VERIFIED' };
+  const { claimEligible, claimOwner, conflict } = yield* resolveVerificationClaim(
+    transaction,
+    tenantId,
+    candidate,
+    existing,
+    input.partyType,
+    input.matchRuleVersion,
+  );
+  if (conflict) {
+    return { _tag: 'claim_conflict' } as const;
+  }
+  const now = yield* DateTime.nowAsDate;
+  const [updated] = yield* transaction
+    .update(partyOfficialIdentifiers)
+    .set({
+      verificationState: 'VERIFIED',
+      verifiedAt: now,
+      verifiedByPrincipalId: input.principalId,
+    })
+    .where(
+      and(
+        eq(partyOfficialIdentifiers.tenantId, tenantId),
+        eq(partyOfficialIdentifiers.officialIdentifierId, existing.officialIdentifierId),
+      ),
+    )
+    .returning()
+    .pipe(Effect.mapError(unavailable));
+  if (updated === undefined) {
+    return yield* unavailable();
+  }
+  if (claimEligible && claimOwner === undefined) {
+    yield* transaction
+      .insert(partyIdentifierClaims)
+      .values({
+        identifierTypeKey: candidate.identifierType,
+        namespace: candidate.namespace,
+        normalizedValue: candidate.normalizedValue,
+        officialIdentifierId: existing.officialIdentifierId,
+        partyId: existing.partyId,
+        tenantId,
+      })
+      .pipe(Effect.mapError(unavailable));
+  }
+  return {
+    _tag: 'updated',
+    record: updated,
+    update: {
+      officialIdentifierId: updated.officialIdentifierId,
+      before: matchingIdentifierMetadata(existing),
+      after: matchingIdentifierMetadata(updated),
+    },
+  } as const;
 });
 
 export const endOfficialIdentifierRecord = Effect.fn(

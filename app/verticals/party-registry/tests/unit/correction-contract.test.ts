@@ -5,17 +5,21 @@ import { expect, it } from 'effect-rstest';
 import {
   PartyCorrectionCommandSchema,
   PartyCorrectionDetailSchema,
+  PartyCorrectionConflict,
   SupersedeRelationshipCorrectionCommandSchema,
   classifyCorrectionRoute,
 } from '../../shared/domain/correction-contracts.ts';
+import { PartyCommandConflictProblemSchema } from '../../shared/command-api.ts';
 import { confirmDuplicatePartiesAction } from '../../src/actions/confirm-duplicate-parties.action.ts';
 import { correctPartyFactAction } from '../../src/actions/correct-party-fact.action.ts';
 import { partyCorrectionPermissionTarget } from '../../src/api/party-correction.read.ts';
+import { mapPartyActionProblem } from '../../api/party-command-problems.ts';
 import {
   correctPartyFactRecord,
   encodeStoredCorrectionReason,
   findPartyCorrection,
 } from '../../src/services/party-correction.service.ts';
+import { partyRelationshipRef } from '../../shared/domain/relationship-contract.ts';
 
 const decode = Schema.decodeUnknownSync;
 const evidence = {
@@ -104,6 +108,24 @@ it('correction follow-up is typed and duplicate confirmation remains readiness-o
   expect(correctPartyFactAction.descriptor.auditProfile).toBe('sensitive');
   expect(correctPartyFactAction.descriptor.tenantPermission?.(relationshipCommand)).toBe('manage_party_relationships');
 });
+
+it('public correction conflicts preserve bounded relationship prerequisites in the 409 contract', () => {
+  const refs = [partyRelationshipRef(tenantId, '91000000-0000-4000-8000-000000000001')];
+  const problem = mapPartyActionProblem(
+    new PartyCorrectionConflict({
+      code: 'party_correction_conflict',
+      conflictingRelationshipRefs: refs,
+      reason: 'The corrected Party Type conflicts with active Party Relationships',
+    }),
+  );
+  expect(Schema.is(PartyCommandConflictProblemSchema)(problem)).toBe(true);
+  if (!Schema.is(PartyCommandConflictProblemSchema)(problem)) {
+    expect.unreachable('Expected a PartyCommandConflictProblem');
+  }
+  expect(problem.code).toBe('party_correction_conflict');
+  expect(problem.conflictingRelationshipRefs).toEqual(refs);
+  expect(Schema.is(PartyCommandConflictProblemSchema)(problem)).toBe(true);
+});
 it('relationship correction is closed, revisioned, interval checked, and has no caller authority hints', () => {
   const strictDecode = Schema.decodeUnknownSync(PartyCorrectionCommandSchema, {
     onExcessProperty: 'error',
@@ -176,6 +198,7 @@ const transactionHarness = (
         for: () => Effect.succeed(rows),
         from: () => value,
         limit: () => value,
+        orderBy: () => value,
         returning: () => Effect.succeed(rows),
         set: (set: Readonly<Record<string, unknown>>) => {
           updateSets.push(set);
@@ -545,5 +568,220 @@ it.effect('type Correction cannot treat a reviewer decision or source label as s
     expect(error.reason).toBe('subject_evidence_required');
     expect(h.insertValues.length).toBe(0);
     expect(h.updateSets.length).toBe(0);
+  }),
+);
+
+it.effect(
+  'Party Type correction rejects active current and future CONTACT_PERSON_OF dependencies with sorted refs',
+  () =>
+    Effect.forEach(
+      [
+        {
+          name: 'PERSON to ORGANIZATION current from endpoint',
+          partyId,
+          original: 'PERSON',
+          replacement: 'ORGANIZATION',
+          relationshipId: '91000000-0000-4000-8000-000000000002',
+          validFrom: null,
+          validTo: null,
+        },
+        {
+          name: 'PERSON to ORGANIZATION future from endpoint',
+          partyId,
+          original: 'PERSON',
+          replacement: 'ORGANIZATION',
+          relationshipId: '91000000-0000-4000-8000-000000000001',
+          validFrom: DateTime.toDateUtc(DateTime.makeUnsafe('2030-01-01T00:00:00.000Z')),
+          validTo: DateTime.toDateUtc(DateTime.makeUnsafe('2030-02-01T00:00:00.000Z')),
+        },
+        {
+          name: 'ORGANIZATION to PERSON current to endpoint',
+          partyId: organizationId,
+          original: 'ORGANIZATION',
+          replacement: 'PERSON',
+          relationshipId: '91000000-0000-4000-8000-000000000004',
+          validFrom: null,
+          validTo: null,
+        },
+        {
+          name: 'ORGANIZATION to PERSON future to endpoint',
+          partyId: organizationId,
+          original: 'ORGANIZATION',
+          replacement: 'PERSON',
+          relationshipId: '91000000-0000-4000-8000-000000000003',
+          validFrom: DateTime.toDateUtc(DateTime.makeUnsafe('2030-01-01T00:00:00.000Z')),
+          validTo: DateTime.toDateUtc(DateTime.makeUnsafe('2030-02-01T00:00:00.000Z')),
+        },
+      ],
+      (scenario) =>
+        Effect.gen(function* typeRelationshipScenario() {
+          const targetAssertion = {
+            assertionId,
+            factKind: 'PARTY_TYPE',
+            isCurrent: true,
+            normalizedValue: scenario.original,
+            partyId: scenario.partyId,
+            state: 'ACTIVE',
+          };
+          const relationship = relationshipRow({
+            fromPartyId: partyId,
+            relationshipId: scenario.relationshipId,
+            toPartyId: organizationId,
+            validFrom: scenario.validFrom,
+            validTo: scenario.validTo,
+          });
+          const h = transactionHarness([
+            [],
+            [{ partyId: scenario.partyId }],
+            [],
+            [{ partyId: scenario.partyId }],
+            [targetAssertion],
+            [],
+            [],
+            [],
+            [relationship],
+          ]);
+          const command = yield* Schema.decodeUnknownEffect(PartyCorrectionCommandSchema)({
+            ...evidence,
+            factKind: 'PARTY_TYPE',
+            partyId: scenario.partyId,
+            replacementValue: scenario.replacement,
+            subjectEvidence: [
+              {
+                basis: 'REVIEWED_DOCUMENT',
+                evidenceRef: 'record/type-correction',
+                kind: 'ACTOR_ATTESTATION',
+                observedSubject: scenario.replacement,
+                statement: 'Reviewed one external subject',
+                subjectKey: 'one-subject',
+              },
+            ],
+            targetAssertionId: assertionId,
+          });
+          const outcome = yield* Effect.flip(
+            correctPartyFactRecord(h.transaction, tenantId, command, {
+              actionInvocationId,
+              principalId,
+            }),
+          );
+          expect(Predicate.isTagged(outcome, 'PartyCorrectionConflict')).toBe(true);
+          if (!Schema.is(PartyCorrectionConflict)(outcome)) {
+            expect.unreachable('Expected a PartyCorrectionConflict');
+          }
+          expect(outcome.conflictingRelationshipRefs?.map((ref) => ref.resourceId)).toEqual([scenario.relationshipId]);
+          expect(outcome.reason).toBe('The corrected Party Type conflicts with active Party Relationships');
+          expect(h.updateSets.length).toBe(0);
+          expect(h.insertValues.length).toBe(0);
+        }),
+      { concurrency: 1 },
+    ),
+);
+
+it.effect(
+  'Party Type correction without dependent relationships preserves the existing successful correction flow',
+  () =>
+    Effect.gen(function* unaffectedTypeRelationshipScenario() {
+      const targetAssertion = {
+        assertionId,
+        factKind: 'PARTY_TYPE',
+        isCurrent: true,
+        normalizedValue: 'PERSON',
+        partyId,
+        state: 'ACTIVE',
+      };
+      const replacement = { assertionId: replacementId };
+      const h = transactionHarness(
+        [[], [{ partyId }], [], [{ partyId }], [targetAssertion], [], [], [], []],
+        [[replacement], [{ correctionId }]],
+        [[targetAssertion], [{ partyId }]],
+      );
+      const command = yield* Schema.decodeEffect(PartyCorrectionCommandSchema)({
+        ...evidence,
+        factKind: 'PARTY_TYPE',
+        partyId,
+        replacementValue: 'ORGANIZATION',
+        subjectEvidence: [
+          {
+            basis: 'REVIEWED_DOCUMENT',
+            evidenceRef: 'record/type-correction-control',
+            kind: 'ACTOR_ATTESTATION',
+            observedSubject: 'ORGANIZATION',
+            statement: 'Reviewed one external subject',
+            subjectKey: 'one-subject',
+          },
+        ],
+        targetAssertionId: assertionId,
+      });
+      const result = yield* correctPartyFactRecord(h.transaction, tenantId, command, {
+        actionInvocationId,
+        principalId,
+      });
+      expect(result.factKind).toBe('PARTY_TYPE');
+      expect(h.updateSets.length).toBe(2);
+      expect(h.insertValues.length).toBe(2);
+    }),
+);
+
+it.effect('Party Type correction does not let compatible relationships hide a later conflicting dependency', () =>
+  Effect.gen(function* boundedRelationshipConflictScenario() {
+    const targetAssertion = {
+      assertionId,
+      factKind: 'PARTY_TYPE',
+      isCurrent: true,
+      normalizedValue: 'PERSON',
+      partyId,
+      state: 'ACTIVE',
+    };
+    const compatibleRows = Array.from({ length: 33 }, (_, index) =>
+      relationshipRow({
+        fromPartyId: organizationId,
+        relationshipId: `92000000-0000-4000-8000-${index.toString(16).padStart(12, '0')}`,
+        toPartyId: partyId,
+      }),
+    );
+    const conflictingRow = relationshipRow({
+      relationshipId: '93000000-0000-4000-8000-000000000001',
+    });
+    const h = transactionHarness([
+      [],
+      [{ partyId }],
+      [],
+      [{ partyId }],
+      [targetAssertion],
+      [],
+      [],
+      [],
+      [...compatibleRows, conflictingRow],
+    ]);
+    const command = yield* Schema.decodeEffect(PartyCorrectionCommandSchema)({
+      ...evidence,
+      factKind: 'PARTY_TYPE',
+      partyId,
+      replacementValue: 'ORGANIZATION',
+      subjectEvidence: [
+        {
+          basis: 'REVIEWED_DOCUMENT',
+          evidenceRef: 'record/type-correction-bounded',
+          kind: 'ACTOR_ATTESTATION',
+          observedSubject: 'ORGANIZATION',
+          statement: 'Reviewed one external subject',
+          subjectKey: 'one-subject',
+        },
+      ],
+      targetAssertionId: assertionId,
+    });
+    const error = yield* Effect.flip(
+      correctPartyFactRecord(h.transaction, tenantId, command, {
+        actionInvocationId,
+        principalId,
+      }),
+    );
+    expect(Predicate.isTagged(error, 'PartyCorrectionConflict')).toBe(true);
+    if (!Schema.is(PartyCorrectionConflict)(error)) {
+      expect.unreachable('Expected a PartyCorrectionConflict');
+    }
+    expect(error.conflictingRelationshipRefs?.map((ref) => ref.resourceId)).toEqual([conflictingRow.relationshipId]);
+    expect(h.updateSets.length).toBe(0);
+    expect(h.insertValues.length).toBe(0);
   }),
 );

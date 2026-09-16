@@ -7,6 +7,7 @@ import { HttpClient, HttpClientRequest } from 'effect/unstable/http';
 import {
   AddContactPointPayloadSchema,
   AddPartyOfficialIdentifierPayloadSchema,
+  CounterpartyCustomerOnboardPayloadSchema,
   CreatePartyPayloadSchema,
   UpdatePartyPayloadSchema,
   partyRegistryCommandsApi,
@@ -19,6 +20,7 @@ import type {
   ConfirmDuplicatePartiesPayload,
   CorrectPartyFactPayload,
   CounterpartyCreatePayload,
+  CounterpartyCustomerOnboardPayload,
   CounterpartyRoleAddPayload,
   CounterpartyRoleEndPayload,
   CreatePartyRelationshipPayload,
@@ -244,6 +246,18 @@ export const { authorized: counterpartyCreateWithAuthorization, execute: counter
       payload,
     }),
 );
+
+export const { authorized: counterpartyCustomerOnboardWithAuthorization, execute: counterpartyCustomerOnboard } =
+  defineCommand((client, payload: CounterpartyCustomerOnboardPayload, headers) =>
+    Schema.encodeUnknownEffect(CounterpartyCustomerOnboardPayloadSchema)(payload).pipe(
+      Effect.flatMap((endpointPayload) =>
+        client.partyCommands.counterpartyCustomerOnboard({
+          headers,
+          payload: endpointPayload,
+        }),
+      ),
+    ),
+  );
 
 export const { authorized: counterpartyRoleAddWithAuthorization, execute: counterpartyRoleAdd } = defineCommand(
   (client, payload: CounterpartyRoleAddPayload, headers) =>

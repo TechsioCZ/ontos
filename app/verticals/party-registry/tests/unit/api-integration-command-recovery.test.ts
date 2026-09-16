@@ -83,7 +83,7 @@ it('recovery rejects an invalid invocation handle', () => {
 
 it.effect('recovery is separate from the unchanged set of explicit mutation endpoints', () =>
   Effect.gen(function* decodeContract3() {
-    expect(Object.keys(partyRegistryCommandsApi.groups.partyCommands.endpoints).length).toBe(24);
+    expect(Object.keys(partyRegistryCommandsApi.groups.partyCommands.endpoints).length).toBe(25);
     const endpoint = partyRegistryCommandRecoveryApi.groups.partyCommandRecovery.endpoints.resolve;
     expect(endpoint.path).toBe('/party-registry/action-commits/resolve');
     for (const state of ['OPEN', 'COMMITTED']) {

@@ -21,6 +21,7 @@ import type { PartyCommandProblem } from '../shared/command-api.ts';
 import { ActionInvocationIdSchema } from '../shared/domain/correction-contracts.ts';
 import { failAuthenticatedProblem } from './fail-authenticated-problem.ts';
 import type { partyCommandRegistrations } from './party-command-registrations.ts';
+import type { PartyRelationshipRefSchema } from '../shared/resources/party-relationship.ts';
 
 export type PartyActionError =
   | ActionCoreError
@@ -68,14 +69,21 @@ export const partyCommandProblem = {
       title: 'Party Registry resource not found',
       type: 'https://ontos.dev/problems/party-command-not-found',
     }),
-  conflict: (code: ProblemOf<'PartyCommandConflictProblem'>['code']): ProblemOf<'PartyCommandConflictProblem'> =>
-    PartyCommandConflictProblemSchema.make({
+  conflict: (
+    code: ProblemOf<'PartyCommandConflictProblem'>['code'],
+    conflictingRelationshipRefs?: readonly (typeof PartyRelationshipRefSchema.Type)[],
+  ): ProblemOf<'PartyCommandConflictProblem'> => {
+    const base = {
       code,
       detail: 'The command conflicts with the current state. Review the resource before trying again.',
       status: problemStatus.conflict,
       title: 'Party Registry command conflict',
       type: 'https://ontos.dev/problems/party-command-conflict',
-    }),
+    } as const;
+    return conflictingRelationshipRefs === undefined
+      ? PartyCommandConflictProblemSchema.make(base)
+      : PartyCommandConflictProblemSchema.make({ ...base, conflictingRelationshipRefs });
+  },
   ineligible: (
     code: ProblemOf<'PartyCommandUnprocessableProblem'>['code'],
   ): ProblemOf<'PartyCommandUnprocessableProblem'> =>
@@ -201,7 +209,8 @@ export const mapPartyActionProblem = (error: PartyActionError): PartyCommandProb
       PartyContactPointPartyNotFound: partyCommandProblem.notFound,
       PartyContactPointPersistenceUnavailable: partyCommandProblem.unavailable,
       PartyContactPointRevisionConflict: (failure) => partyCommandProblem.conflict(failure.code),
-      PartyCorrectionConflict: (failure) => partyCommandProblem.conflict(failure.code),
+      PartyCorrectionConflict: (failure) =>
+        partyCommandProblem.conflict(failure.code, failure.conflictingRelationshipRefs),
       PartyEvidenceInsufficient: (failure) => partyCommandProblem.ineligible(failure.code),
       PartyLifecycleConflict: (failure) => partyCommandProblem.conflict(failure.code),
       PartyNotFound: partyCommandProblem.notFound,
