@@ -40,4 +40,3 @@ export const CounterpartyCustomerOnboardResultSchema = Schema.Struct({
   validFrom: CounterpartyIsoTimestampSchema,
   validTo: Schema.toEncoded(Schema.OptionFromNullOr(CounterpartyIsoTimestampSchema)),
 });
-export type CounterpartyCustomerOnboardResult = typeof CounterpartyCustomerOnboardResultSchema.Type;

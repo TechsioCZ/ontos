@@ -164,25 +164,27 @@ const resolveVerificationClaim = Effect.fn('PartyOfficialIdentifierPersistenceSe
   },
 );
 
-export const addOfficialIdentifierRecord = Effect.fn(
-  'PartyOfficialIdentifierPersistenceService.addOfficialIdentifierRecord',
-)(function* addIdentifier(
-  transaction: Pick<PartyTransaction, 'insert' | 'select'>,
+interface MatchingIdentifierAcceptanceInput {
+  readonly actionInvocationId: string;
+  readonly externalEvidence?: AresAppliedEvidence | undefined;
+  readonly matchRuleVersion: string;
+  readonly partyType: 'ORGANIZATION' | 'PERSON' | 'UNRESOLVED';
+  readonly principalId: string;
+  readonly provenanceMethod: string;
+  readonly provenanceSource: string;
+  readonly validFrom: string | DateTime.Utc;
+}
+
+const findCurrentMatchingIdentifier = Effect.fn(
+  'PartyOfficialIdentifierPersistenceService.findCurrentMatchingIdentifier',
+)(function* findCurrentIdentifier(
+  transaction: Pick<PartyTransaction, 'select'>,
   tenantId: string,
   partyId: string,
   identifier: NormalizedOfficialIdentifier,
-  input: {
-    readonly actionInvocationId: string;
-    readonly externalEvidence?: AresAppliedEvidence | undefined;
-    readonly matchRuleVersion: string;
-    readonly partyType: 'ORGANIZATION' | 'PERSON' | 'UNRESOLVED';
-    readonly principalId: string;
-    readonly provenanceMethod: string;
-    readonly provenanceSource: string;
-    readonly validFrom: string | DateTime.Utc;
-  },
+  lockForUpdate: boolean,
 ) {
-  const [existing] = yield* transaction
+  const query = transaction
     .select()
     .from(partyOfficialIdentifiers)
     .where(
@@ -196,8 +198,21 @@ export const addOfficialIdentifierRecord = Effect.fn(
         eq(partyOfficialIdentifiers.isCurrent, true),
       ),
     )
-    .limit(1)
-    .pipe(Effect.mapError(unavailable));
+    .limit(1);
+  const [existing] = yield* (lockForUpdate ? query.for('update') : query).pipe(Effect.mapError(unavailable));
+  return existing;
+});
+
+export const addOfficialIdentifierRecord = Effect.fn(
+  'PartyOfficialIdentifierPersistenceService.addOfficialIdentifierRecord',
+)(function* addIdentifier(
+  transaction: Pick<PartyTransaction, 'insert' | 'select'>,
+  tenantId: string,
+  partyId: string,
+  identifier: NormalizedOfficialIdentifier,
+  input: MatchingIdentifierAcceptanceInput,
+) {
+  const existing = yield* findCurrentMatchingIdentifier(transaction, tenantId, partyId, identifier, false);
   if (existing !== undefined) {
     return existing;
   }
@@ -291,34 +306,9 @@ export const acceptMatchingOfficialIdentifierRecord = Effect.fn(
   tenantId: string,
   partyId: string,
   identifier: NormalizedOfficialIdentifier,
-  input: {
-    readonly actionInvocationId: string;
-    readonly externalEvidence?: AresAppliedEvidence | undefined;
-    readonly matchRuleVersion: string;
-    readonly partyType: 'ORGANIZATION' | 'PERSON' | 'UNRESOLVED';
-    readonly principalId: string;
-    readonly provenanceMethod: string;
-    readonly provenanceSource: string;
-    readonly validFrom: string | DateTime.Utc;
-  },
+  input: MatchingIdentifierAcceptanceInput,
 ) {
-  const [existing] = yield* transaction
-    .select()
-    .from(partyOfficialIdentifiers)
-    .where(
-      and(
-        eq(partyOfficialIdentifiers.tenantId, tenantId),
-        eq(partyOfficialIdentifiers.partyId, partyId),
-        eq(partyOfficialIdentifiers.identifierTypeKey, identifier.identifierType),
-        eq(partyOfficialIdentifiers.namespace, identifier.namespace),
-        eq(partyOfficialIdentifiers.normalizedValue, identifier.normalizedValue),
-        eq(partyOfficialIdentifiers.state, 'ACTIVE'),
-        eq(partyOfficialIdentifiers.isCurrent, true),
-      ),
-    )
-    .limit(1)
-    .for('update')
-    .pipe(Effect.mapError(unavailable));
+  const existing = yield* findCurrentMatchingIdentifier(transaction, tenantId, partyId, identifier, true);
 
   if (existing === undefined) {
     const record = yield* addOfficialIdentifierRecord(transaction, tenantId, partyId, identifier, input);

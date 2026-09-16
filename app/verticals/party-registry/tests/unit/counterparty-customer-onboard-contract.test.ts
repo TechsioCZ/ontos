@@ -44,9 +44,9 @@ it.effect('declares required legal-entity permission and composed onboarding res
     expect(counterpartyCustomerOnboardAction.descriptor.legalEntityScope).toBe('required');
     expect(counterpartyCustomerOnboardAction.descriptor.legalEntityPermission).toBe('manage_counterparty');
     expect(counterpartyCustomerOnboardAction.descriptor.idempotency).toBe('required');
-    const decoded = yield* Schema.decodeUnknownEffect(CounterpartyCustomerOnboardPayloadSchema)(payload);
+    const decoded = yield* Schema.decodeEffect(CounterpartyCustomerOnboardPayloadSchema)(payload);
     expect(decoded.customerEvidence.method).toBe('BINDING_ORDER');
-    const result = yield* Schema.decodeUnknownEffect(CounterpartyCustomerOnboardResultSchema)({
+    const result = yield* Schema.decodeEffect(CounterpartyCustomerOnboardResultSchema)({
       counterpartyCreated: true,
       counterpartyRef: {
         moduleId: 'party.registry',
@@ -76,7 +76,7 @@ it.effect('declares required legal-entity permission and composed onboarding res
 it.effect('rejects a role period whose end precedes its start', () =>
   Effect.gen(function* invalidPeriod() {
     const result = yield* Effect.result(
-      Schema.decodeUnknownEffect(CounterpartyCustomerOnboardPayloadSchema)({
+      Schema.decodeEffect(CounterpartyCustomerOnboardPayloadSchema)({
         ...payload,
         validFrom: '2026-12-01T00:00:00.000Z',
         validTo: '2026-09-01T00:00:00.000Z',

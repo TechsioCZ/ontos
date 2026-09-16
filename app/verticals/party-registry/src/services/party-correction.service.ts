@@ -31,7 +31,7 @@ import {
   OfficialIdentifierInputSchema,
   normalizeOfficialIdentifier,
 } from '../../shared/domain/identifier-contracts.ts';
-import type { PartyPersistenceUnavailableError } from '../../shared/domain/identity-contracts.ts';
+import type { PartyPersistenceUnavailableError, PartyType } from '../../shared/domain/identity-contracts.ts';
 import {
   PartyPersistenceUnavailable,
   PartyTypeSchema,
@@ -161,6 +161,54 @@ const requireActiveCurrentAssertion = <Row extends { readonly isCurrent: boolean
       )
     : Effect.succeed(target);
 
+const incompatibleRelationshipEndpoint = (partyId: string, nextType: PartyType) => {
+  if (nextType === 'PERSON') {
+    return eq(partyRelationships.toPartyId, partyId);
+  }
+  if (nextType === 'ORGANIZATION') {
+    return eq(partyRelationships.fromPartyId, partyId);
+  }
+  return or(eq(partyRelationships.fromPartyId, partyId), eq(partyRelationships.toPartyId, partyId));
+};
+
+const findConflictingPartyTypeRelationships = Effect.fn('PartyCorrectionService.findConflictingPartyTypeRelationships')(
+  function* findConflictingRelationships(
+    transaction: CorrectionTransaction,
+    tenantId: string,
+    partyId: string,
+    nextType: PartyType,
+    now: Date,
+  ) {
+    const relationships = yield* transaction
+      .select()
+      .from(partyRelationships)
+      .where(
+        and(
+          eq(partyRelationships.tenantId, tenantId),
+          eq(partyRelationships.relationshipType, 'CONTACT_PERSON_OF'),
+          eq(partyRelationships.assertionState, 'ACTIVE'),
+          incompatibleRelationshipEndpoint(partyId, nextType),
+          or(isNull(partyRelationships.validTo), gt(partyRelationships.validTo, now)),
+        ),
+      )
+      .orderBy(asc(partyRelationships.relationshipId))
+      .for('update')
+      .pipe(Effect.mapError(unavailable));
+    return (
+      relationships
+        // Keep this check as defense in depth for typed test doubles and future catalog entries.
+        .filter(
+          (relationship) =>
+            (relationship.fromPartyId === partyId && nextType !== 'PERSON') ||
+            (relationship.toPartyId === partyId && nextType !== 'ORGANIZATION'),
+        )
+        .toSorted((left, right) => left.relationshipId.localeCompare(right.relationshipId))
+        .slice(0, PartyCorrectionConflictRelationshipLimit)
+        .map((relationship) => partyRelationshipRef(tenantId, relationship.relationshipId))
+    );
+  },
+);
+
 const validatePartyTypeCorrection = Effect.fn('PartyCorrectionService.validatePartyTypeCorrection')(
   function* validatePartyType(
     transaction: CorrectionTransaction,
@@ -217,41 +265,13 @@ const validatePartyTypeCorrection = Effect.fn('PartyCorrectionService.validatePa
     // A validTo at or before now is no longer current and cannot become current in the future.
     // Keep the incompatibility predicate in the canonical query. Bounding after loading a
     // mixed endpoint result could hide a conflicting row behind more than 32 valid rows.
-    let invalidEndpoint = or(
-      eq(partyRelationships.fromPartyId, command.partyId),
-      eq(partyRelationships.toPartyId, command.partyId),
+    const conflictingRelationshipRefs = yield* findConflictingPartyTypeRelationships(
+      transaction,
+      tenantId,
+      command.partyId,
+      nextType,
+      now,
     );
-    if (nextType === 'PERSON') {
-      invalidEndpoint = eq(partyRelationships.toPartyId, command.partyId);
-    } else if (nextType === 'ORGANIZATION') {
-      invalidEndpoint = eq(partyRelationships.fromPartyId, command.partyId);
-    }
-    const dependentRelationships = yield* transaction
-      .select()
-      .from(partyRelationships)
-      .where(
-        and(
-          eq(partyRelationships.tenantId, tenantId),
-          eq(partyRelationships.relationshipType, 'CONTACT_PERSON_OF'),
-          eq(partyRelationships.assertionState, 'ACTIVE'),
-          invalidEndpoint,
-          or(isNull(partyRelationships.validTo), gt(partyRelationships.validTo, now)),
-        ),
-      )
-      .orderBy(asc(partyRelationships.relationshipId))
-      .for('update')
-      .pipe(Effect.mapError(unavailable));
-    const conflictingRelationshipRefs = dependentRelationships
-      // Keep the application-side check as defense in depth for alternate typed test doubles
-      // and future catalog entries; the SQL predicate above is what makes the bound safe.
-      .filter(
-        (relationship) =>
-          (relationship.fromPartyId === command.partyId && nextType !== 'PERSON') ||
-          (relationship.toPartyId === command.partyId && nextType !== 'ORGANIZATION'),
-      )
-      .toSorted((left, right) => left.relationshipId.localeCompare(right.relationshipId))
-      .slice(0, PartyCorrectionConflictRelationshipLimit)
-      .map((relationship) => partyRelationshipRef(tenantId, relationship.relationshipId));
     if (conflictingRelationshipRefs.length > 0) {
       return yield* new PartyCorrectionConflict({
         code: 'party_correction_conflict',

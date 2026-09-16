@@ -135,7 +135,7 @@ export interface CustomerOnboardInput extends AcceptedActionEvidence {
   readonly validTo: null | string;
 }
 
-export const CustomerOnboardFoundSchema = Schema.TaggedStruct('onboarded', {
+const CustomerOnboardFoundSchema = Schema.TaggedStruct('onboarded', {
   counterpartyCreated: Schema.Boolean,
   counterpartyRef: CounterpartyRefSchema,
   legalEntityRef: LegalEntityRefSchema,
@@ -619,65 +619,14 @@ export const addCounterpartyRoleRecord = Effect.fn('CounterpartyPersistenceServi
   },
 );
 
-/**
- * Compose Counterparty and CUSTOMER writes under the Action runtime's one transaction. The
- * Counterparty row is locked before inspecting periods, so concurrent onboarding requests cannot
- * both decide that the same period is new.
- */
-export const onboardCounterpartyCustomerRecord = Effect.fn(
-  'CounterpartyPersistenceService.onboardCounterpartyCustomerRecord',
-)(function* onboardCounterpartyCustomer(
+type CustomerOnboardContext = Extract<CreateCounterpartyResult, { readonly _tag: 'found' }>;
+
+const onboardCustomerRole = Effect.fn('CounterpartyPersistenceService.onboardCustomerRole')(function* onboardRole(
   transaction: CounterpartyTransaction,
   input: CustomerOnboardInput,
-): Effect.fn.Return<CustomerOnboardResult, CounterpartyPersistenceUnavailable> {
-  const contextResult = yield* createCounterpartyRecord(transaction, {
-    actionInvocationId: input.actionInvocationId,
-    legalEntityId: input.legalEntityId,
-    partyId: input.partyId,
-    policyVersion: input.policyVersion,
-    principalId: input.principalId,
-    provenance: input.counterpartyProvenance,
-    tenantId: input.tenantId,
-  });
-  const contextFailure = yield* Match.value(contextResult).pipe(
-    Match.tag('party_alias', (value) => Effect.succeed(Option.some<CustomerOnboardResult>(value))),
-    Match.tag('party_archived', (value) => Effect.succeed(Option.some<CustomerOnboardResult>(value))),
-    Match.tag('party_not_found', (value) => Effect.succeed(Option.some<CustomerOnboardResult>(value))),
-    Match.tag('found', () => Effect.succeed(Option.none<CustomerOnboardResult>())),
-    Match.exhaustive,
-  );
-  if (Option.isSome(contextFailure)) {
-    return contextFailure.value;
-  }
-  const context = yield* Match.value(contextResult).pipe(
-    Match.tag('found', (value) => Effect.succeed(value)),
-    Match.tag('party_alias', () => Effect.die('unreachable Counterparty Create result')),
-    Match.tag('party_archived', () => Effect.die('unreachable Counterparty Create result')),
-    Match.tag('party_not_found', () => Effect.die('unreachable Counterparty Create result')),
-    Match.exhaustive,
-  );
-
-  const counterparty = yield* findCounterpartyRow(
-    transaction,
-    input.tenantId,
-    input.legalEntityId,
-    context.counterpartyRef.resourceId,
-    true,
-  );
-  if (Option.isNone(counterparty)) {
-    return {
-      _tag: 'counterparty_not_found',
-      counterpartyId: context.counterpartyRef.resourceId,
-    } as const;
-  }
-  const resolvedParty = yield* resolveCanonicalParty(transaction, input.tenantId, counterparty.value.partyId);
-  if (Option.isNone(resolvedParty)) {
-    return yield* unavailable();
-  }
-  if (resolvedParty.value.archivedAt !== null) {
-    return { _tag: 'party_archived', partyId: resolvedParty.value.partyId } as const;
-  }
-
+  context: CustomerOnboardContext,
+  counterparty: CounterpartyRow,
+) {
   const validFrom = instantAsDate(input.validFrom);
   const validTo = input.validTo === null ? null : instantAsDate(input.validTo);
   const existingRoles = yield* transaction
@@ -704,20 +653,18 @@ export const onboardCounterpartyCustomerRecord = Effect.fn(
     const exactEquivalent =
       overlapping.validFrom.toISOString() === input.validFrom &&
       (overlapping.validTo?.toISOString() ?? null) === input.validTo;
-    if (!exactEquivalent) {
-      return { _tag: 'overlap', roleType: 'CUSTOMER' } as const;
-    }
-    return {
-      _tag: 'onboarded',
-      counterpartyCreated: context.created,
-      counterpartyRef: context.counterpartyRef,
-      rolePeriodCreated: false,
-      legalEntityRef: context.legalEntityRef,
-      partyRef: context.partyRef,
-      role: roleDto(overlapping),
-    } as const;
+    return exactEquivalent
+      ? ({
+          _tag: 'onboarded',
+          counterpartyCreated: context.created,
+          counterpartyRef: context.counterpartyRef,
+          rolePeriodCreated: false,
+          legalEntityRef: context.legalEntityRef,
+          partyRef: context.partyRef,
+          role: roleDto(overlapping),
+        } as const)
+      : ({ _tag: 'overlap', roleType: 'CUSTOMER' } as const);
   }
-
   const recordedAt = yield* DateTime.nowAsDate;
   const lifecycle = rolePeriodStorageStateAt(
     { validFrom: input.validFrom, validTo: input.validTo },
@@ -757,7 +704,7 @@ export const onboardCounterpartyCustomerRecord = Effect.fn(
   if (row === undefined) {
     return yield* unavailable();
   }
-  yield* syncCounterpartyReadModel(transaction, counterparty.value);
+  yield* syncCounterpartyReadModel(transaction, counterparty);
   yield* syncRoleReadModel(transaction, row);
   return {
     _tag: 'onboarded',
@@ -768,6 +715,65 @@ export const onboardCounterpartyCustomerRecord = Effect.fn(
     partyRef: context.partyRef,
     role: roleDto(row),
   } as const;
+});
+
+const onboardFoundCounterparty = Effect.fn('CounterpartyPersistenceService.onboardFoundCounterparty')(
+  function* onboardFound(
+    transaction: CounterpartyTransaction,
+    input: CustomerOnboardInput,
+    context: CustomerOnboardContext,
+  ) {
+    const counterparty = yield* findCounterpartyRow(
+      transaction,
+      input.tenantId,
+      input.legalEntityId,
+      context.counterpartyRef.resourceId,
+      true,
+    );
+    if (Option.isNone(counterparty)) {
+      return {
+        _tag: 'counterparty_not_found',
+        counterpartyId: context.counterpartyRef.resourceId,
+      } as const;
+    }
+    const resolvedParty = yield* resolveCanonicalParty(transaction, input.tenantId, counterparty.value.partyId);
+    if (Option.isNone(resolvedParty)) {
+      return yield* unavailable();
+    }
+    if (resolvedParty.value.archivedAt !== null) {
+      return { _tag: 'party_archived', partyId: resolvedParty.value.partyId } as const;
+    }
+    return yield* onboardCustomerRole(transaction, input, context, counterparty.value);
+  },
+);
+
+/**
+ * Compose Counterparty and CUSTOMER writes under the Action runtime's one transaction. The
+ * Counterparty row is locked before inspecting periods, so concurrent onboarding requests cannot
+ * both decide that the same period is new.
+ */
+export const onboardCounterpartyCustomerRecord = Effect.fn(
+  'CounterpartyPersistenceService.onboardCounterpartyCustomerRecord',
+)(function* onboardCounterpartyCustomer(
+  transaction: CounterpartyTransaction,
+  input: CustomerOnboardInput,
+): Effect.fn.Return<CustomerOnboardResult, CounterpartyPersistenceUnavailable> {
+  const contextResult = yield* createCounterpartyRecord(transaction, {
+    actionInvocationId: input.actionInvocationId,
+    legalEntityId: input.legalEntityId,
+    partyId: input.partyId,
+    policyVersion: input.policyVersion,
+    principalId: input.principalId,
+    provenance: input.counterpartyProvenance,
+    tenantId: input.tenantId,
+  });
+  return yield* Match.value(contextResult).pipe(
+    Match.tag('found', (context) => onboardFoundCounterparty(transaction, input, context)),
+    Match.tag('party_alias', (failure) => Effect.succeed(failure)),
+    Match.tag('party_archived', (failure) => Effect.succeed(failure)),
+    Match.tag('party_not_found', (failure) => Effect.succeed(failure)),
+    Match.exhaustive,
+  );
 });
 
 const repeatsRecordedRoleEnd = (current: RolePeriodRow, input: EndCounterpartyRoleInput, validTo: Date): boolean =>

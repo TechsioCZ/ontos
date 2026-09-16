@@ -8,13 +8,6 @@ import {
 } from '@app/party-registry/outbox/party-registry-counterparty-role-added-v1';
 import type { OutboxPayload } from '@app/party-registry/outbox/party-registry-counterparty-role-added-v1';
 
-export {
-  OutboxPayloadSchema as CounterpartyCustomerOnboardPartyRegistryCounterpartyRoleAddedV1OutboxPayloadSchema,
-  outboxProducerModuleKey as CounterpartyCustomerOnboardPartyRegistryCounterpartyRoleAddedV1OutboxProducerModuleKey,
-  outboxTopic as CounterpartyCustomerOnboardPartyRegistryCounterpartyRoleAddedV1OutboxTopic,
-} from '@app/party-registry/outbox/party-registry-counterparty-role-added-v1';
-export type { OutboxPayload as CounterpartyCustomerOnboardPartyRegistryCounterpartyRoleAddedV1OutboxPayload } from '@app/party-registry/outbox/party-registry-counterparty-role-added-v1';
-
 export const createCounterpartyCustomerOnboardPartyRegistryCounterpartyRoleAddedV1OutboxMessage = (
   payload: OutboxPayload,
 ): OutboxMessage => ({

@@ -32,10 +32,6 @@ import type { CustomerOnboardResult as PersistenceResult } from '../services/cou
 import { createCounterpartyCustomerOnboardPartyRegistryCounterpartyCreatedV1OutboxMessage } from './counterparty-customer-onboard-party-registry-counterparty-created-v1.outbox-message.ts';
 import { createCounterpartyCustomerOnboardPartyRegistryCounterpartyRoleAddedV1OutboxMessage } from './counterparty-customer-onboard-party-registry-counterparty-role-added-v1.outbox-message.ts';
 
-export {
-  CounterpartyCustomerOnboardPayloadSchema,
-  CounterpartyCustomerOnboardResultSchema,
-} from '../../shared/actions/counterparty-customer-onboard.ts';
 export type { CounterpartyCustomerOnboardPayload } from '../../shared/actions/counterparty-customer-onboard.ts';
 
 const CounterpartyCustomerOnboardError = Schema.Union([
@@ -267,14 +263,4 @@ export const counterpartyCustomerOnboardAction = defineAction(
 );
 
 // <generated-outbox-message-exports>
-export { CounterpartyCustomerOnboardPartyRegistryCounterpartyCreatedV1OutboxPayloadSchema } from './counterparty-customer-onboard-party-registry-counterparty-created-v1.outbox-message.ts';
-export { CounterpartyCustomerOnboardPartyRegistryCounterpartyCreatedV1OutboxProducerModuleKey } from './counterparty-customer-onboard-party-registry-counterparty-created-v1.outbox-message.ts';
-export { CounterpartyCustomerOnboardPartyRegistryCounterpartyCreatedV1OutboxTopic } from './counterparty-customer-onboard-party-registry-counterparty-created-v1.outbox-message.ts';
-export { CounterpartyCustomerOnboardPartyRegistryCounterpartyRoleAddedV1OutboxPayloadSchema } from './counterparty-customer-onboard-party-registry-counterparty-role-added-v1.outbox-message.ts';
-export { CounterpartyCustomerOnboardPartyRegistryCounterpartyRoleAddedV1OutboxProducerModuleKey } from './counterparty-customer-onboard-party-registry-counterparty-role-added-v1.outbox-message.ts';
-export { CounterpartyCustomerOnboardPartyRegistryCounterpartyRoleAddedV1OutboxTopic } from './counterparty-customer-onboard-party-registry-counterparty-role-added-v1.outbox-message.ts';
-export { createCounterpartyCustomerOnboardPartyRegistryCounterpartyCreatedV1OutboxMessage } from './counterparty-customer-onboard-party-registry-counterparty-created-v1.outbox-message.ts';
-export { createCounterpartyCustomerOnboardPartyRegistryCounterpartyRoleAddedV1OutboxMessage } from './counterparty-customer-onboard-party-registry-counterparty-role-added-v1.outbox-message.ts';
-export type { CounterpartyCustomerOnboardPartyRegistryCounterpartyCreatedV1OutboxPayload } from './counterparty-customer-onboard-party-registry-counterparty-created-v1.outbox-message.ts';
-export type { CounterpartyCustomerOnboardPartyRegistryCounterpartyRoleAddedV1OutboxPayload } from './counterparty-customer-onboard-party-registry-counterparty-role-added-v1.outbox-message.ts';
 // </generated-outbox-message-exports>

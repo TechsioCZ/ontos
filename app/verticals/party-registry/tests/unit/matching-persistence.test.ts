@@ -671,12 +671,18 @@ it.layer(
       if (!('outcome' in result)) {
         throw new Error('reviewed matching did not return its committed result');
       }
-      expect(result.outcome).toBe('MATCH_EXISTING');
-      expect(subject.updates.some(({ values }) => values['verificationState'] === 'VERIFIED')).toBe(true);
-      expect(collector.snapshot().domainEvents.map((event) => event.eventType)).toEqual([
-        'party.registry.official-identifier-updated.v1',
-      ]);
-      expect(collector.snapshot().outboxMessages).toHaveLength(1);
+      const snapshot = collector.snapshot();
+      expect({
+        eventTypes: snapshot.domainEvents.map((event) => event.eventType),
+        identifierUpgraded: subject.updates.some(({ values }) => values['verificationState'] === 'VERIFIED'),
+        outboxCount: snapshot.outboxMessages.length,
+        outcome: result.outcome,
+      }).toEqual({
+        eventTypes: ['party.registry.official-identifier-updated.v1'],
+        identifierUpgraded: true,
+        outboxCount: 1,
+        outcome: 'MATCH_EXISTING',
+      });
     }),
   );
 

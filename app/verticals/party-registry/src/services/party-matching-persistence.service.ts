@@ -339,6 +339,52 @@ interface CreateOrReuseCaseInput {
   readonly priorCase?: typeof duplicateCandidateCases.$inferSelect;
 }
 
+const resolvedCaseTargetIsReusable = Effect.fn('PartyMatchingPersistenceService.resolvedCaseTargetIsReusable')(
+  function* targetIsReusable(
+    transaction: Pick<PartyTransaction, 'select'>,
+    input: {
+      readonly candidate: PartyCandidate;
+      readonly claims: readonly ResolvedClaim[];
+      readonly evaluationFingerprint: string;
+      readonly partyIds: readonly string[];
+      readonly tenantId: string;
+    },
+    candidateCase: typeof duplicateCandidateCases.$inferSelect,
+  ) {
+    const { selectedPartyId } = candidateCase;
+    if (
+      selectedPartyId === null ||
+      candidateCase.evaluationFingerprint !== input.evaluationFingerprint ||
+      !input.partyIds.includes(selectedPartyId)
+    ) {
+      return false;
+    }
+    const canonicalSelectedPartyId = yield* canonicalPartyId(transaction, input.tenantId, selectedPartyId);
+    if (canonicalSelectedPartyId !== selectedPartyId) {
+      return false;
+    }
+    const selectedParty = yield* findLockedPartyRecord(transaction, input.tenantId, selectedPartyId);
+    if (
+      Schema.is(PartyNotFoundSchema)(selectedParty) ||
+      Option.isSome(selectedParty.value.archivedAt) ||
+      hasIncompatiblePartyType(selectedParty.value.partyType, input.candidate)
+    ) {
+      return false;
+    }
+    const foreignClaims = yield* Effect.forEach(
+      input.claims,
+      (claim) =>
+        claim.partyId === undefined
+          ? Effect.succeed(false)
+          : canonicalPartyId(transaction, input.tenantId, claim.partyId).pipe(
+              Effect.map((ownerId) => ownerId !== selectedPartyId),
+            ),
+      { concurrency: 1 },
+    );
+    return !foreignClaims.some(Boolean);
+  },
+);
+
 /**
  * Reuse a resolved MATCH_EXISTING case only when the exact evaluation still describes the
  * current Candidate and its selected canonical Party remains safe to use. A resolved case is
@@ -377,37 +423,7 @@ const findReusableResolvedMatchCase = Effect.fn('PartyMatchingPersistenceService
     // oxlint-disable-next-line effect-native/no-imperative-loop-in-effect-gen
     for (const candidateCase of cases) {
       latestResolvedCase ??= candidateCase;
-      const { selectedPartyId } = candidateCase;
-      if (
-        selectedPartyId === null ||
-        candidateCase.evaluationFingerprint !== evaluationFingerprint ||
-        !input.partyIds.includes(selectedPartyId)
-      ) {
-        continue;
-      }
-      const canonicalSelectedPartyId = yield* canonicalPartyId(transaction, input.tenantId, selectedPartyId);
-      if (canonicalSelectedPartyId !== selectedPartyId) {
-        continue;
-      }
-      const selectedParty = yield* findLockedPartyRecord(transaction, input.tenantId, selectedPartyId);
-      if (
-        Schema.is(PartyNotFoundSchema)(selectedParty) ||
-        Option.isSome(selectedParty.value.archivedAt) ||
-        hasIncompatiblePartyType(selectedParty.value.partyType, input.candidate)
-      ) {
-        continue;
-      }
-      const foreignClaim = yield* Effect.forEach(
-        input.claims,
-        (claim) =>
-          claim.partyId === undefined
-            ? Effect.succeed(false)
-            : canonicalPartyId(transaction, input.tenantId, claim.partyId).pipe(
-                Effect.map((ownerId) => ownerId !== selectedPartyId),
-              ),
-        { concurrency: 1 },
-      ).pipe(Effect.map((conflicts) => conflicts.some(Boolean)));
-      if (!foreignClaim) {
+      if (yield* resolvedCaseTargetIsReusable(transaction, { ...input, evaluationFingerprint }, candidateCase)) {
         return { reusable: candidateCase, prior: latestResolvedCase } as const;
       }
     }
@@ -434,6 +450,34 @@ const snapshotCandidate = (candidate: PartyCandidate): PartyCandidateSnapshot =>
   validFrom: encodedCandidateInstant(candidate.validFrom),
 });
 
+const findPriorCandidateCase = Effect.fn('PartyMatchingPersistenceService.findPriorCandidateCase')(
+  function* findPriorCase(
+    transaction: Pick<PartyTransaction, 'select'>,
+    input: CreateOrReuseCaseInput,
+    fingerprint: string,
+  ) {
+    if (input.priorCase !== undefined) {
+      return input.priorCase;
+    }
+    const [prior] = yield* transaction
+      .select()
+      .from(duplicateCandidateCases)
+      .where(
+        and(
+          eq(duplicateCandidateCases.tenantId, input.tenantId),
+          input.priorCandidateCaseId === undefined
+            ? eq(duplicateCandidateCases.candidateFingerprint, fingerprint)
+            : eq(duplicateCandidateCases.candidateCaseId, input.priorCandidateCaseId),
+          eq(duplicateCandidateCases.matchRuleVersion, MATCH_RULE_VERSION),
+        ),
+      )
+      .orderBy(desc(duplicateCandidateCases.createdAt))
+      .limit(1)
+      .pipe(Effect.mapError(unavailable));
+    return prior;
+  },
+);
+
 const createOrReuseCase = Effect.fn('PartyMatchingPersistenceService.createOrReuseCase')(function* createCase(
   transaction: Pick<PartyTransaction, 'select' | 'insert'>,
   input: CreateOrReuseCaseInput,
@@ -459,24 +503,7 @@ const createOrReuseCase = Effect.fn('PartyMatchingPersistenceService.createOrReu
       return existing;
     }
   }
-  const [prior] =
-    input.priorCase === undefined
-      ? yield* transaction
-          .select()
-          .from(duplicateCandidateCases)
-          .where(
-            and(
-              eq(duplicateCandidateCases.tenantId, tenantId),
-              priorCandidateCaseId === undefined
-                ? eq(duplicateCandidateCases.candidateFingerprint, fingerprint)
-                : eq(duplicateCandidateCases.candidateCaseId, priorCandidateCaseId),
-              eq(duplicateCandidateCases.matchRuleVersion, MATCH_RULE_VERSION),
-            ),
-          )
-          .orderBy(desc(duplicateCandidateCases.createdAt))
-          .limit(1)
-          .pipe(Effect.mapError(unavailable))
-      : [input.priorCase];
+  const prior = yield* findPriorCandidateCase(transaction, input, fingerprint);
   if (priorCandidateCaseId !== undefined && prior === undefined) {
     return yield* new PartyEvidenceInsufficient({
       code: 'party_evidence_insufficient',
@@ -674,6 +701,73 @@ const acceptMatchingIdentifiers = (
     { concurrency: 1, discard: true },
   );
 
+const recordAmbiguousDecisionForCase = Effect.fn('PartyMatchingPersistenceService.recordAmbiguousDecisionForCase')(
+  function* recordAmbiguousDecision(
+    transaction: Parameters<CreateOrMatchPartyOperation>[0],
+    input: Parameters<CreateOrMatchPartyOperation>[1],
+    partyIds: readonly string[],
+    claims: readonly ResolvedClaim[],
+    candidateCaseId: string,
+  ) {
+    const decision = yield* persistDecision(transaction, {
+      actionInvocationId: input.actionInvocationId,
+      candidate: input.candidate,
+      candidateCaseId,
+      candidateFingerprint: candidateFingerprint(input.candidate),
+      claims,
+      operation: input.operation ?? 'CREATE',
+      outcome: 'AMBIGUOUS',
+      partyIds,
+      tenantId: input.tenantId,
+    });
+    return {
+      caseRef: makeDuplicateCandidateCaseRef(input.tenantId, candidateCaseId),
+      decisionRef: makePartyMatchDecisionRef(input.tenantId, decision.matchDecisionId),
+      outcome: 'AMBIGUOUS',
+    } as const;
+  },
+);
+
+const recordResolvedMatchDecision = Effect.fn('PartyMatchingPersistenceService.recordResolvedMatchDecision')(
+  function* recordResolvedDecision(
+    transaction: Parameters<CreateOrMatchPartyOperation>[0],
+    input: Parameters<CreateOrMatchPartyOperation>[1],
+    partyIds: readonly string[],
+    claims: readonly ResolvedClaim[],
+    candidateCaseId: string,
+    selectedPartyId: string,
+  ) {
+    const decision = yield* persistDecision(transaction, {
+      actionInvocationId: input.actionInvocationId,
+      candidate: input.candidate,
+      candidateCaseId,
+      candidateFingerprint: candidateFingerprint(input.candidate),
+      claims,
+      operation: input.operation ?? 'CREATE',
+      outcome: 'MATCHED',
+      partyId: selectedPartyId,
+      partyIds,
+      tenantId: input.tenantId,
+    });
+    return {
+      decisionRef: makePartyMatchDecisionRef(input.tenantId, decision.matchDecisionId),
+      outcome: 'MATCHED_EXISTING',
+      partyRef: makePartyRef(input.tenantId, selectedPartyId),
+    } as const;
+  },
+);
+
+const buildSuccessorCaseInput = (
+  input: CreateOrReuseCaseInput,
+  prior: typeof duplicateCandidateCases.$inferSelect | undefined,
+): CreateOrReuseCaseInput => {
+  const base: CreateOrReuseCaseInput = {
+    ...input,
+    skipOpenLookup: true,
+  };
+  return prior === undefined ? base : { ...base, priorCase: prior, priorCandidateCaseId: prior.candidateCaseId };
+};
+
 const recordAmbiguousCreate = Effect.fn('PartyMatchingPersistenceService.recordAmbiguousCreate')(
   function* recordAmbiguity(
     transaction: Parameters<CreateOrMatchPartyOperation>[0],
@@ -687,23 +781,15 @@ const recordAmbiguousCreate = Effect.fn('PartyMatchingPersistenceService.recordA
     const openCase = yield* findOpenDuplicateCandidateCase(transaction, input.tenantId, evaluationFingerprint).pipe(
       Effect.mapError(unavailable),
     );
-    if (openCase[0] !== undefined) {
-      const decision = yield* persistDecision(transaction, {
-        actionInvocationId: input.actionInvocationId,
-        candidate: input.candidate,
-        candidateCaseId: openCase[0].candidateCaseId,
-        candidateFingerprint: candidateFingerprint(input.candidate),
-        claims,
-        operation: input.operation ?? 'CREATE',
-        outcome: 'AMBIGUOUS',
+    const [existingOpenCase] = openCase;
+    if (existingOpenCase !== undefined) {
+      return yield* recordAmbiguousDecisionForCase(
+        transaction,
+        input,
         partyIds,
-        tenantId: input.tenantId,
-      });
-      return {
-        caseRef: makeDuplicateCandidateCaseRef(input.tenantId, openCase[0].candidateCaseId),
-        decisionRef: makePartyMatchDecisionRef(input.tenantId, decision.matchDecisionId),
-        outcome: 'AMBIGUOUS',
-      } as const;
+        claims,
+        existingOpenCase.candidateCaseId,
+      );
     }
     const resolvedCaseLookup = yield* findReusableResolvedMatchCase(transaction, {
       candidate: input.candidate,
@@ -714,55 +800,28 @@ const recordAmbiguousCreate = Effect.fn('PartyMatchingPersistenceService.recordA
     });
     const reusableCase = resolvedCaseLookup.reusable;
     if (reusableCase?.selectedPartyId !== null && reusableCase?.selectedPartyId !== undefined) {
-      const decision = yield* persistDecision(transaction, {
-        actionInvocationId: input.actionInvocationId,
-        candidate: input.candidate,
-        candidateCaseId: reusableCase.candidateCaseId,
-        candidateFingerprint: candidateFingerprint(input.candidate),
-        claims,
-        operation: input.operation ?? 'CREATE',
-        outcome: 'MATCHED',
-        partyId: reusableCase.selectedPartyId,
+      return yield* recordResolvedMatchDecision(
+        transaction,
+        input,
         partyIds,
-        tenantId: input.tenantId,
-      });
-      return {
-        decisionRef: makePartyMatchDecisionRef(input.tenantId, decision.matchDecisionId),
-        outcome: 'MATCHED_EXISTING',
-        partyRef: makePartyRef(input.tenantId, reusableCase.selectedPartyId),
-      } as const;
+        claims,
+        reusableCase.candidateCaseId,
+        reusableCase.selectedPartyId,
+      );
     }
-    let successorCaseInput: CreateOrReuseCaseInput = {
-      candidate: input.candidate,
-      evidenceExplanation,
-      partyIds,
-      skipOpenLookup: true,
-      tenantId: input.tenantId,
-    };
-    if (resolvedCaseLookup.prior !== undefined) {
-      successorCaseInput = {
-        ...successorCaseInput,
-        priorCase: resolvedCaseLookup.prior,
-        priorCandidateCaseId: resolvedCaseLookup.prior.candidateCaseId,
-      };
-    }
-    const candidateCase = yield* createOrReuseCase(transaction, successorCaseInput);
-    const decision = yield* persistDecision(transaction, {
-      actionInvocationId: input.actionInvocationId,
-      candidate: input.candidate,
-      candidateCaseId: candidateCase.candidateCaseId,
-      candidateFingerprint: candidateFingerprint(input.candidate),
-      ...claimFields,
-      operation: input.operation ?? 'CREATE',
-      outcome: 'AMBIGUOUS',
-      partyIds,
-      tenantId: input.tenantId,
-    });
-    return {
-      caseRef: makeDuplicateCandidateCaseRef(input.tenantId, candidateCase.candidateCaseId),
-      decisionRef: makePartyMatchDecisionRef(input.tenantId, decision.matchDecisionId),
-      outcome: 'AMBIGUOUS',
-    } as const;
+    const candidateCase = yield* createOrReuseCase(
+      transaction,
+      buildSuccessorCaseInput(
+        {
+          candidate: input.candidate,
+          evidenceExplanation,
+          partyIds,
+          tenantId: input.tenantId,
+        },
+        resolvedCaseLookup.prior,
+      ),
+    );
+    return yield* recordAmbiguousDecisionForCase(transaction, input, partyIds, claims, candidateCase.candidateCaseId);
   },
 );
 
@@ -978,16 +1037,69 @@ const evaluateMatchOutcome = Effect.fn('PartyMatchingPersistenceService.evaluate
   },
 );
 
+interface MatchPartyInput {
+  readonly actionInvocationId: string;
+  readonly candidate: PartyCandidate;
+  readonly priorCandidateCaseId?: string;
+  readonly priorCaseTenantId?: string;
+  readonly tenantId: string;
+}
+
+const resolveAmbiguousMatchCase = Effect.fn('PartyMatchingPersistenceService.resolveAmbiguousMatchCase')(
+  function* resolveCase(
+    transaction: Pick<PartyTransaction, 'select' | 'insert'>,
+    input: MatchPartyInput,
+    claims: readonly ResolvedClaim[],
+    partyIds: readonly string[],
+    createCaseInput: CreateOrReuseCaseInput,
+  ) {
+    const openCases = yield* findOpenDuplicateCandidateCase(
+      transaction,
+      input.tenantId,
+      caseEvaluationFingerprint(input.candidate, partyIds, createCaseInput.evidenceExplanation ?? []),
+    ).pipe(Effect.mapError(unavailable));
+    const [openCase] = openCases;
+    if (openCase !== undefined) {
+      return { candidateCase: openCase, decisionOutcome: 'AMBIGUOUS' } as const;
+    }
+    const resolvedCaseLookup = yield* findReusableResolvedMatchCase(transaction, {
+      candidate: input.candidate,
+      claims,
+      evidenceExplanation: createCaseInput.evidenceExplanation ?? [],
+      partyIds,
+      tenantId: input.tenantId,
+    });
+    const reusableCase = resolvedCaseLookup.reusable;
+    if (reusableCase?.resolutionOutcome === 'MATCH_EXISTING' && reusableCase.selectedPartyId !== null) {
+      return { candidateCase: reusableCase, decisionOutcome: 'MATCHED' } as const;
+    }
+    const candidateCase = yield* createOrReuseCase(
+      transaction,
+      buildSuccessorCaseInput(createCaseInput, resolvedCaseLookup.prior),
+    );
+    return { candidateCase, decisionOutcome: 'AMBIGUOUS' } as const;
+  },
+);
+
+const matchDecisionReferences = (
+  candidateCase: Effect.Success<ReturnType<typeof createOrReuseCase>> | undefined,
+  decisionOutcome: ReturnType<typeof initialMatchOutcome>,
+  solePartyId: string | undefined,
+): DecisionReferenceFields => {
+  const references: DecisionReferenceFields = {};
+  if (candidateCase !== undefined) {
+    references.candidateCaseId = candidateCase.candidateCaseId;
+  }
+  if (decisionOutcome === 'MATCHED' && solePartyId !== undefined) {
+    references.partyId = candidateCase?.selectedPartyId ?? solePartyId;
+  }
+  return references;
+};
+
 /** Records an identity decision without creating or changing a canonical Party. */
 export const matchParty = Effect.fn('PartyMatchingPersistenceService.matchParty')(function* recordMatchDecision(
   transaction: Pick<PartyTransaction, 'select' | 'insert'>,
-  input: {
-    readonly actionInvocationId: string;
-    readonly candidate: PartyCandidate;
-    readonly priorCandidateCaseId?: string;
-    readonly priorCaseTenantId?: string;
-    readonly tenantId: string;
-  },
+  input: MatchPartyInput,
 ) {
   yield* lockTenantIdentityWrites(transaction, input.tenantId);
   yield* requirePriorReviewCase(transaction, input);
@@ -1021,49 +1133,13 @@ export const matchParty = Effect.fn('PartyMatchingPersistenceService.matchParty'
   if (input.priorCandidateCaseId !== undefined) {
     createCaseInput.priorCandidateCaseId = input.priorCandidateCaseId;
   }
-  // SAFETY: the accumulator starts empty and is assigned only createOrReuseCase result values.
-  let candidateCase = undefined as Effect.Success<ReturnType<typeof createOrReuseCase>> | undefined;
-  let decisionOutcome = outcome;
-  if (outcome === 'AMBIGUOUS') {
-    const openCase = yield* findOpenDuplicateCandidateCase(
-      transaction,
-      input.tenantId,
-      caseEvaluationFingerprint(input.candidate, partyIds, createCaseInput.evidenceExplanation ?? []),
-    ).pipe(Effect.mapError(unavailable));
-    [candidateCase] = openCase;
-    let resolvedCasePrior: typeof duplicateCandidateCases.$inferSelect | undefined;
-    if (candidateCase === undefined) {
-      const resolvedCaseLookup = yield* findReusableResolvedMatchCase(transaction, {
-        candidate: input.candidate,
-        claims,
-        evidenceExplanation: createCaseInput.evidenceExplanation ?? [],
-        partyIds,
-        tenantId: input.tenantId,
-      });
-      candidateCase = resolvedCaseLookup.reusable;
-      resolvedCasePrior = resolvedCaseLookup.prior;
-    }
-    if (candidateCase?.resolutionOutcome === 'MATCH_EXISTING' && candidateCase.selectedPartyId !== null) {
-      decisionOutcome = 'MATCHED';
-    } else if (candidateCase === undefined) {
-      let successorCaseInput: CreateOrReuseCaseInput = { ...createCaseInput, skipOpenLookup: true };
-      if (resolvedCasePrior !== undefined) {
-        successorCaseInput = {
-          ...successorCaseInput,
-          priorCase: resolvedCasePrior,
-          priorCandidateCaseId: resolvedCasePrior.candidateCaseId,
-        };
-      }
-      candidateCase = yield* createOrReuseCase(transaction, successorCaseInput);
-    }
-  }
-  const decisionReferences: DecisionReferenceFields = {};
-  if (candidateCase !== undefined) {
-    decisionReferences.candidateCaseId = candidateCase.candidateCaseId;
-  }
-  if (decisionOutcome === 'MATCHED' && solePartyId !== undefined) {
-    decisionReferences.partyId = candidateCase?.selectedPartyId ?? solePartyId;
-  }
+  const caseResolution =
+    outcome === 'AMBIGUOUS'
+      ? yield* resolveAmbiguousMatchCase(transaction, input, claims, partyIds, createCaseInput)
+      : undefined;
+  const candidateCase = caseResolution?.candidateCase;
+  const decisionOutcome = caseResolution?.decisionOutcome ?? outcome;
+  const decisionReferences = matchDecisionReferences(candidateCase, decisionOutcome, solePartyId);
   const decision = yield* persistDecision(transaction, {
     actionInvocationId: input.actionInvocationId,
     candidate: input.candidate,

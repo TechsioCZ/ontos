@@ -8,13 +8,6 @@ import {
 } from '@app/party-registry/outbox/party-registry-counterparty-created-v1';
 import type { OutboxPayload } from '@app/party-registry/outbox/party-registry-counterparty-created-v1';
 
-export {
-  OutboxPayloadSchema as CounterpartyCustomerOnboardPartyRegistryCounterpartyCreatedV1OutboxPayloadSchema,
-  outboxProducerModuleKey as CounterpartyCustomerOnboardPartyRegistryCounterpartyCreatedV1OutboxProducerModuleKey,
-  outboxTopic as CounterpartyCustomerOnboardPartyRegistryCounterpartyCreatedV1OutboxTopic,
-} from '@app/party-registry/outbox/party-registry-counterparty-created-v1';
-export type { OutboxPayload as CounterpartyCustomerOnboardPartyRegistryCounterpartyCreatedV1OutboxPayload } from '@app/party-registry/outbox/party-registry-counterparty-created-v1';
-
 export const createCounterpartyCustomerOnboardPartyRegistryCounterpartyCreatedV1OutboxMessage = (
   payload: OutboxPayload,
 ): OutboxMessage => ({
