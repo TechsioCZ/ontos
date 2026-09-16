@@ -154,7 +154,7 @@ const positiveReports = [
 ] as const;
 for (const [name, source] of positiveReports) {
   it.effect(
-    `${name} real-positive analyzer report rejects through the normalized gate`,
+    `${name} real-positive analyzer report follows the explicit gate policy`,
     Effect.fn(function* mergedScenario3() {
       const normalized = yield* validateReport(name, source);
       const summary = clean();
@@ -169,6 +169,10 @@ for (const [name, source] of positiveReports) {
           modeledUsages: 0,
           nativeFindingCounts: result.coverage.findingCounts,
         });
+      } else {
+        const advisories = yield* validate(summary);
+        expect(advisories.map((entry) => entry.name)).toContain(name);
+        return;
       }
       yield* Effect.matchCause(validate(summary), {
         onFailure: (cause) =>

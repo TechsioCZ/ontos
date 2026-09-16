@@ -23,7 +23,23 @@ The separate **Quality Audit** workflow runs the full audit, enforces calibrated
 
 ## Enforced guardrails
 
-`quality:audit` remains report-only. `quality:audit:gate` reads the resulting `summary.json` and fails for any calibrated Knip finding, JSCPD token clone pair, Fallow strict clone group, or normalized control-flow health finding. Fallow semantic similarity and UI-only weighted cognitive findings remain advisory. The gate consumes the runner's normalization; it does not recompute analyzer findings or treat native Knip modeled usages as debt.
+`quality:audit` remains report-only. `quality:audit:gate` reads the resulting `summary.json` and applies the explicit OntOS-owned `qualityAuditDisposition` map in `scripts/quality-audit-gate.mts`:
+
+| Result                                                             | Disposition |
+| ------------------------------------------------------------------ | ----------- |
+| Calibrated Knip findings                                           | Blocking    |
+| Fallow file discovery and integrity of every report                | Blocking    |
+| JSCPD token clones and Fallow strict clones                        | Advisory    |
+| Fallow normalized control-flow complexity                          | Advisory    |
+| Fallow semantic similarity and UI-only weighted cognitive findings | Advisory    |
+
+The gate prints positive clone/complexity/similarity counts as advisories and exits successfully
+when blocking checks pass. It does not hide, zero, or exclude these findings. The report's existing
+`advisory` field distinguishes analyzer categories, not gate severity; the explicit disposition map
+owns blocking behavior. The gate consumes the runner's normalization and does not recompute findings
+or treat native Knip modeled usages as debt. No upstream Effect TSGo diagnostic, Ultracite preset,
+custom Oxlint rule, or `denyWarnings` setting is changed by this policy. In particular,
+`preferSucceedSomeOrNone` and `preferTypedSchemaDecoder` belong to upstream Effect TSGo, not OntOS.
 
 The gate requires all six unique expected analyzer results, reported statuses, empty error diagnostics, valid nonnegative integer counts, nonempty analysis coverage, and consistent normalized totals. Missing, duplicate, unknown, malformed, failed, or partial `--tool` summaries cannot pass. The preceding full audit establishes freshness; no timestamp, hash receipt, or accepted-debt baseline is involved. For a custom audit output, pass `quality:audit:gate --summary <output>/summary.json`.
 
@@ -65,6 +81,20 @@ primaryViolation = cyclomatic > 10 || controlFlowCognitive > 15
 The normalized `fallow-health/complexity.json` retains each function's path, line, name, raw weighted cognitive value, both React weights, projected control-flow cognitive value, and threshold classification. The report separates native weighted findings, control-flow findings, and UI-only advisories. A branch-free component whose props and hooks alone cross the native threshold is a UI advisory; a neighboring branch-heavy function remains a primary finding. Missing contribution evidence or arithmetic inconsistent with the native metrics is an analysis failure. This projection changes the metric interpretation without raising thresholds or excluding UI files.
 
 ## Review and maintenance
+
+Advisory is not an instruction to refactor. Review substantial new findings at their source
+locations against the base revision using the same analyzer/config versions. This gate does not
+compute a merge-base delta; if comparable evidence is unavailable, report that limitation instead
+of calling an absolute count a regression. Never offset one new finding against an unrelated
+removed finding, add overlapping analyzer counts, or force a global zero. Record the owner and
+reason for significant intentional duplication or complexity in the PR; track material deferred
+work in an issue. Existing hard architectural and behavioral contracts still apply.
+
+Confirmed first-party model defects need a valid reproducer and a nearby invalid regression
+control. Repair the detector rather than reshape valid application code. Temporary exceptions
+must identify their exact scope, evidence, owner, tracking issue, and removal condition. Do not
+create broad exclusions for scripts, tests, or generated source. Upstream rules are not eligible
+for local severity changes under this calibration.
 
 Rollout measurements, calibration evidence, and follow-up scope belong to [PR #492](https://github.com/TechsioCZ/ontos/pull/492).
 

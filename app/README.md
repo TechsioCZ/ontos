@@ -160,7 +160,26 @@ Readiness accepts a fixed environment name and loads source-controlled contexts 
 
 ## Validation
 
-For nonblocking unused-code, duplication, and complexity reports, see [Quality audits](docs/quality-audit.md). Run `mise exec -- pnpm quality:audit` from this directory.
+For quality reports and their explicit blocking/advisory policy, see [Quality audits](docs/quality-audit.md). Run `mise exec -- pnpm quality:audit` from this directory. Knip findings and report-integrity failures block; duplication, complexity, and semantic similarity findings are advisory. Upstream Effect TSGo, Ultracite, and custom Oxlint enforcement are unchanged.
+
+Use the explicit local feedback scopes instead of repeatedly running the aggregate gate while editing:
+
+```sh
+mise exec -- pnpm check:local --scope quality
+mise exec -- pnpm check:local --scope scripts
+mise exec -- pnpm check:local --scope lint-rules
+mise exec -- pnpm check:local --scope unit
+mise exec -- pnpm check:local --dry-run
+```
+
+Scopes run existing package scripts; they do not infer impacted packages or replace the full gate.
+No scope means `full`, which runs `pnpm check`; an unknown scope fails rather than silently skipping
+validation. Use existing package-filtered tests for more focused application feedback. CI coverage
+is unchanged. `--dry-run` prints the selected commands without running them and is not validation.
+
+Installation bootstraps agent skills but does not format source. Format deliberately with
+`mise exec -- pnpm exec oxfmt <edited-files>` or `mise exec -- pnpm format`; CI and the full gate
+use `format:check`. Do not disable lifecycle scripts globally as a substitute for this separation.
 
 Run focused tests first. Before completion, run the required task commands and the repository gate:
 
