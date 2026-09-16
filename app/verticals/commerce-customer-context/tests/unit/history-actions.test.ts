@@ -18,6 +18,7 @@ import {
 import type { HistoryActionOwnerPorts } from '../../shared/domain/history-action-ports.ts';
 import type { CustomerHistoryPorts, HistoricalOrderCandidate } from '../../shared/domain/history-ports.ts';
 import type { CustomerHistorySubject } from '../../shared/domain/record-visibility-contracts.ts';
+import type { RepeatOrderCartLineResult } from '../../shared/domain/history-action-contracts.ts';
 import { handleRepeatRetailOrder } from '../../src/actions/history-action-support.ts';
 
 const tenantId = '11111111-1111-4111-8111-111111111111';
@@ -54,6 +55,25 @@ const cartRef = {
   resourceType: 'commerce.cart.cart',
   tenantId,
 };
+const catalogRef = (resourceType: string, resourceId: string) => ({
+  moduleId: 'commerce.catalog',
+  resourceId,
+  resourceType,
+  tenantId,
+});
+const historicalLine = (productId: string, value: string, sourceLineRef: string) => ({
+  catalogSelection: {
+    configuration: { kind: 'NONE' as const },
+    productRef: catalogRef('commerce.catalog.product', productId),
+    variantKind: 'ATOMIC' as const,
+    variantRef: catalogRef('commerce.catalog.variant', `${productId}-variant`),
+  },
+  requestedQuantity: {
+    unitRef: catalogRef('commerce.catalog.unit', 'piece'),
+    value,
+  },
+  sourceLineRef,
+});
 const cartLines = [
   { cartLineRef: 'new-cart-1:line-1', outcome: 'ADDED' as const, sourceLineRef: 'line-1' },
   { outcome: 'SKIPPED' as const, reason: 'PRODUCT_NOT_SELLABLE', sourceLineRef: 'line-2' },
@@ -70,10 +90,7 @@ const makeOrder = (subject: CustomerHistorySubject): HistoricalOrderCandidate =>
   acceptedAt: '2026-09-01T08:30:00.000Z',
   displayLabel: 'Order 1',
   freshness: { observedAt: now, sourceRevision: 'order-r1', status: 'CURRENT' },
-  lines: [
-    { productRef: 'product-1', requestedQuantity: '2', sourceLineRef: 'line-1' },
-    { productRef: 'product-2', requestedQuantity: '3', sourceLineRef: 'line-2' },
-  ],
+  lines: [historicalLine('product-1', '2', 'line-1'), historicalLine('product-2', '3', 'line-2')],
   orderRef,
   subject,
   submittedByPrincipalId: principalId,
@@ -120,9 +137,9 @@ const makePorts = (subject: CustomerHistorySubject): CustomerHistoryPorts => {
     cart: {
       prepareLine: (_subject, line) =>
         Effect.succeed(
-          line.productRef === 'product-1'
+          line.catalogSelection.productRef.resourceId === 'product-1'
             ? {
-                currentProductRef: line.productRef,
+                catalogSelection: line.catalogSelection,
                 requestedQuantity: line.requestedQuantity,
                 sourceLineRef: line.sourceLineRef,
                 status: 'REPEATABLE' as const,
@@ -249,7 +266,14 @@ it.effect('creates a new Cart from only current repeatable intent and preserves 
       carts: {
         createFromHistoricalIntent: (input) => {
           ownerInput = input;
-          return Effect.succeed({ cartRef, lines: cartLines, outcome: 'CREATED' });
+          return Effect.succeed({
+            cartRef,
+            lines: cartLines,
+            outcome: 'CREATED',
+            repeatPurchaseIntentId: input.repeatPurchaseIntentId,
+            sourceOrderRef: input.sourceOrderRef,
+            subject: input.subject,
+          });
         },
       },
     };
@@ -274,24 +298,208 @@ it.effect('creates a new Cart from only current repeatable intent and preserves 
       actionInvocationId: 'repeat-invocation-1',
       lines: [
         {
-          currentProductRef: 'product-1',
-          requestedQuantity: '2',
+          catalogSelection: historicalLine('product-1', '2', 'line-1').catalogSelection,
+          requestedQuantity: historicalLine('product-1', '2', 'line-1').requestedQuantity,
           sourceLineRef: 'line-1',
           status: 'REPEATABLE',
         },
         {
           reason: 'PRODUCT_NOT_SELLABLE',
-          requestedQuantity: '3',
+          requestedQuantity: historicalLine('product-2', '3', 'line-2').requestedQuantity,
           sourceLineRef: 'line-2',
           status: 'SKIPPED',
         },
       ],
-      repeatIntentKey: 'repeat-order:11111111-1111-4111-8111-111111111111:order-1:retail-profile-1:retail',
+      repeatPurchaseIntentId: 'repeat-invocation-1',
       sourceOrderRef: orderRef,
-      subject: retailProfileRef,
+      subject: { kind: 'RETAIL_PROFILE', profileRef: retailProfileRef },
     });
     expect(ownerInput).not.toHaveProperty('price');
     expect(collector.snapshot().domainEvents).toHaveLength(0);
+  }),
+);
+
+it.effect('reuses one repeat-purchase intent for retries and separates a later deliberate purchase', () =>
+  Effect.gen(function* repeatIntentIdentity() {
+    const payload: RepeatRetailOrderPayload = {
+      profileRef: retailProfileRef,
+      sourceOrderRef: orderRef,
+    };
+    const observedIntentIds: string[] = [];
+    const run = (actionInvocationId: string) => {
+      const collector = collectors(repeatRetailOrderAction);
+      return handleRepeatRetailOrder(payload, {
+        actionInvocationId,
+        addDomainEvent: collector.addDomainEvent,
+        addOutboxMessage: collector.addOutboxMessage,
+        recordAuditEvidence: collector.recordAuditEvidence,
+        recordDataAccess: collector.recordDataAccess,
+        scope,
+        services: {
+          history: makePorts({ kind: 'RETAIL_PROFILE', profileRef: retailProfileRef }),
+          now: Effect.succeed(now),
+          owners: {
+            carts: {
+              createFromHistoricalIntent: (input) => {
+                observedIntentIds.push(input.repeatPurchaseIntentId);
+                return Effect.succeed({
+                  cartRef,
+                  lines: cartLines,
+                  outcome: 'CREATED',
+                  repeatPurchaseIntentId: input.repeatPurchaseIntentId,
+                  sourceOrderRef: input.sourceOrderRef,
+                  subject: input.subject,
+                });
+              },
+            },
+          },
+        },
+      });
+    };
+
+    yield* run('repeat-intent-a');
+    yield* run('repeat-intent-a');
+    yield* run('repeat-intent-b');
+
+    expect(observedIntentIds).toEqual(['repeat-intent-a', 'repeat-intent-a', 'repeat-intent-b']);
+  }),
+);
+
+it.effect('rejects a Cart result bound to another repeat-purchase intent', () =>
+  Effect.gen(function* misboundIntent() {
+    const collector = collectors(repeatRetailOrderAction);
+    const failure = yield* handleRepeatRetailOrder(
+      { profileRef: retailProfileRef, sourceOrderRef: orderRef },
+      {
+        actionInvocationId: 'expected-repeat-intent',
+        addDomainEvent: collector.addDomainEvent,
+        addOutboxMessage: collector.addOutboxMessage,
+        recordAuditEvidence: collector.recordAuditEvidence,
+        recordDataAccess: collector.recordDataAccess,
+        scope,
+        services: {
+          history: makePorts({ kind: 'RETAIL_PROFILE', profileRef: retailProfileRef }),
+          now: Effect.succeed(now),
+          owners: {
+            carts: {
+              createFromHistoricalIntent: () =>
+                Effect.succeed({
+                  cartRef,
+                  lines: cartLines,
+                  outcome: 'ALREADY_CREATED',
+                  repeatPurchaseIntentId: 'another-repeat-intent',
+                  sourceOrderRef: orderRef,
+                  subject: { kind: 'RETAIL_PROFILE', profileRef: retailProfileRef },
+                }),
+            },
+          },
+        },
+      },
+    ).pipe(Effect.flip);
+
+    expect(Schema.is(HistoryActionUnavailable)(failure)).toBe(true);
+  }),
+);
+
+it.effect('rejects a Cart result bound to another source Order or purchasing subject', () =>
+  Effect.gen(function* misboundSource() {
+    const run = (binding: 'ORDER' | 'SUBJECT') => {
+      const collector = collectors(repeatRetailOrderAction);
+      return handleRepeatRetailOrder(
+        { profileRef: retailProfileRef, sourceOrderRef: orderRef },
+        {
+          actionInvocationId: 'source-binding-intent',
+          addDomainEvent: collector.addDomainEvent,
+          addOutboxMessage: collector.addOutboxMessage,
+          recordAuditEvidence: collector.recordAuditEvidence,
+          recordDataAccess: collector.recordDataAccess,
+          scope,
+          services: {
+            history: makePorts({ kind: 'RETAIL_PROFILE', profileRef: retailProfileRef }),
+            now: Effect.succeed(now),
+            owners: {
+              carts: {
+                createFromHistoricalIntent: (input) =>
+                  Effect.succeed({
+                    cartRef,
+                    lines: cartLines,
+                    outcome: 'CREATED',
+                    repeatPurchaseIntentId: input.repeatPurchaseIntentId,
+                    sourceOrderRef:
+                      binding === 'ORDER'
+                        ? { ...input.sourceOrderRef, resourceId: 'another-order' }
+                        : input.sourceOrderRef,
+                    subject:
+                      binding === 'SUBJECT'
+                        ? {
+                            kind: 'RETAIL_PROFILE',
+                            profileRef: { ...retailProfileRef, resourceId: 'another-retail-profile' },
+                          }
+                        : input.subject,
+                  }),
+              },
+            },
+          },
+        },
+      );
+    };
+
+    expect(Schema.is(HistoryActionUnavailable)(yield* run('ORDER').pipe(Effect.flip))).toBe(true);
+    expect(Schema.is(HistoryActionUnavailable)(yield* run('SUBJECT').pipe(Effect.flip))).toBe(true);
+  }),
+);
+
+it.effect('rejects Cart outcomes that add a non-repeatable line or hide a changed selection', () =>
+  Effect.gen(function* invalidCartLineOutcome() {
+    const payload: RepeatRetailOrderPayload = {
+      profileRef: retailProfileRef,
+      sourceOrderRef: orderRef,
+    };
+    const run = (lines: readonly RepeatOrderCartLineResult[]) => {
+      const collector = collectors(repeatRetailOrderAction);
+      return handleRepeatRetailOrder(payload, {
+        actionInvocationId: 'line-outcome-intent',
+        addDomainEvent: collector.addDomainEvent,
+        addOutboxMessage: collector.addOutboxMessage,
+        recordAuditEvidence: collector.recordAuditEvidence,
+        recordDataAccess: collector.recordDataAccess,
+        scope,
+        services: {
+          history: makePorts({ kind: 'RETAIL_PROFILE', profileRef: retailProfileRef }),
+          now: Effect.succeed(now),
+          owners: {
+            carts: {
+              createFromHistoricalIntent: (input) =>
+                Effect.succeed({
+                  cartRef,
+                  lines,
+                  outcome: 'CREATED',
+                  repeatPurchaseIntentId: input.repeatPurchaseIntentId,
+                  sourceOrderRef: input.sourceOrderRef,
+                  subject: input.subject,
+                }),
+            },
+          },
+        },
+      });
+    };
+
+    const addedSkippedLine = yield* run([
+      cartLines[0],
+      { cartLineRef: 'new-cart-1:line-2', outcome: 'ADDED', sourceLineRef: 'line-2' },
+    ]).pipe(Effect.flip);
+    const changedLine = yield* run([
+      {
+        cartLineRef: 'new-cart-1:line-1',
+        changeReason: 'selection substituted',
+        outcome: 'CHANGED',
+        sourceLineRef: 'line-1',
+      },
+      cartLines[1],
+    ]).pipe(Effect.flip);
+
+    expect(Schema.is(HistoryActionUnavailable)(addedSkippedLine)).toBe(true);
+    expect(Schema.is(HistoryActionUnavailable)(changedLine)).toBe(true);
   }),
 );
 
@@ -330,8 +538,15 @@ it.effect('fails closed for cross-tenant and wrong-type Cart ResourceRefs', () =
           now: Effect.succeed(now),
           owners: {
             carts: {
-              createFromHistoricalIntent: () =>
-                Effect.succeed({ cartRef: returnedCartRef, lines: cartLines, outcome: 'CREATED' }),
+              createFromHistoricalIntent: (input) =>
+                Effect.succeed({
+                  cartRef: returnedCartRef,
+                  lines: cartLines,
+                  outcome: 'CREATED',
+                  repeatPurchaseIntentId: input.repeatPurchaseIntentId,
+                  sourceOrderRef: input.sourceOrderRef,
+                  subject: input.subject,
+                }),
             },
           },
         },
@@ -385,7 +600,15 @@ it.effect('returns typed repeat failures for conflict, empty intent, and owner o
         },
       },
       {
-        createFromHistoricalIntent: () => Effect.succeed({ cartRef, lines: cartLines, outcome: 'CREATED' }),
+        createFromHistoricalIntent: (input) =>
+          Effect.succeed({
+            cartRef,
+            lines: cartLines,
+            outcome: 'CREATED',
+            repeatPurchaseIntentId: input.repeatPurchaseIntentId,
+            sourceOrderRef: input.sourceOrderRef,
+            subject: input.subject,
+          }),
       },
     ).pipe(Effect.flip);
     expect(Schema.is(RepeatOrderNoRepeatableLines)(noLines)).toBe(true);
@@ -449,7 +672,15 @@ it.effect('rejects untrusted Storefront and mismatched Counterparty profile befo
           now: Effect.succeed(now),
           owners: {
             carts: {
-              createFromHistoricalIntent: () => Effect.succeed({ cartRef, lines: cartLines, outcome: 'CREATED' }),
+              createFromHistoricalIntent: (input) =>
+                Effect.succeed({
+                  cartRef,
+                  lines: cartLines,
+                  outcome: 'CREATED',
+                  repeatPurchaseIntentId: input.repeatPurchaseIntentId,
+                  sourceOrderRef: input.sourceOrderRef,
+                  subject: input.subject,
+                }),
             },
           },
         },

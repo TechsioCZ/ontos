@@ -28,6 +28,7 @@
     "zerops:materialize": "node ./scripts/materialize-zerops-runtime.mjs",
     "contract:check": "node ./scripts/validate-ultramodern-workspace.mts",
     "typecheck": "node ./scripts/ultramodern-typecheck.mts --build tsconfig.json",
+    "check:local": "node ./scripts/check-local.mts",
     "check": "pnpm typecheck:lint-rules && pnpm test:lint-rules && pnpm action:test:unit && pnpm database-access:check && pnpm module-entrypoints:check && pnpm check:module-contracts && pnpm quality:check && pnpm format:check && pnpm lint && pnpm typecheck && pnpm skills:check && pnpm i18n:boundaries && pnpm api:check && pnpm api:check:ontos && pnpm contract:check && pnpm performance:readiness",
     "format": "oxfmt .",
     "format:check": "oxfmt --check .",
@@ -40,7 +41,7 @@
     "api:check": "modern-api-check",
     "api:check:files": "modern-api-check-files",
     "i18n:boundaries": "node ./scripts/check-ultramodern-i18n-boundaries.mts",
-    "postinstall": "node ./scripts/bootstrap-agent-skills.mts --postinstall && oxfmt .",
+    "postinstall": "node ./scripts/bootstrap-agent-skills.mts --postinstall",
     "sandbox:new": "sh ./scripts/locki-feature.sh",
     "env:local:ensure": "node ./scripts/ensure-local-environment.mts",
     "db:generate": "pnpm --filter @app/core-runtime db:generate && pnpm --filter @app/shell-super-app db:generate && pnpm --filter @app/party-registry db:generate && pnpm --filter @app/payment-term-catalog db:generate && pnpm --filter @app/commerce-customer-context db:generate && pnpm --filter @app/privacy db:generate",
@@ -149,7 +150,7 @@
     "node": ">=26",
     "pnpm": ">=11"
   },
-  "packageManager": "pnpm@11.25.0",
+  "packageManager": "pnpm@12.4.2",
   "modernjs": {
     "preset": "presetUltramodern",
     "workspace": "ultramodern-superapp",

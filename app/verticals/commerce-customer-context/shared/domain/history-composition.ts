@@ -1,4 +1,5 @@
 import { DateTime, Effect, Schema } from 'effect';
+import { HistoricalCatalogSelectionSchema, HistoricalPurchaseQuantitySchema } from './history-contracts.ts';
 import type {
   BusinessPolicyState,
   CounterpartyOrderHistoryInput,
@@ -1135,15 +1136,21 @@ const authorizeRepeat = Effect.fn('HistoryComposition.authorizeRepeat')(function
   } satisfies RepeatAuthorization;
 });
 
+const sameCatalogSelection = Schema.toEquivalence(HistoricalCatalogSelectionSchema);
+const samePurchaseQuantity = Schema.toEquivalence(HistoricalPurchaseQuantitySchema);
+
 const repeatOrderLineResult = (
   line: Parameters<CustomerHistoryPorts['cart']['prepareLine']>[1],
   prepared: RepeatOrderLineResult,
 ) => {
-  if (prepared.sourceLineRef !== line.sourceLineRef || prepared.requestedQuantity !== line.requestedQuantity) {
+  if (
+    prepared.sourceLineRef !== line.sourceLineRef ||
+    !samePurchaseQuantity(prepared.requestedQuantity, line.requestedQuantity)
+  ) {
     return Effect.fail(unavailable('commerce.cart'));
   }
   return Effect.succeed<RepeatOrderLineResult>(
-    prepared.status === 'REPEATABLE' && prepared.currentProductRef !== line.productRef
+    prepared.status === 'REPEATABLE' && !sameCatalogSelection(prepared.catalogSelection, line.catalogSelection)
       ? {
           reason: 'CURRENT_SELECTION_REQUIRED',
           requestedQuantity: line.requestedQuantity,

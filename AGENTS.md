@@ -6,6 +6,8 @@
   documentation or agent discovery.
 - Repository-root `.github/workflows/` may be changed when required for GitHub to discover and run
   the application's CI or deployment workflows.
+- Closed GitHub issues are read-only. Do not edit, reopen, relabel, reassign, comment on, or otherwise
+  modify closed issues.
 - For documentation authority and reading routes, follow [`docs/README.md`](docs/README.md). Do not
   treat completed specifications or historical evidence as current guidance unless the task asks
   for provenance.

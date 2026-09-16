@@ -71,7 +71,7 @@ const validate = Effect.fn(function* mergedScenario1(summary: ReturnType<typeof 
 it.effect(
   'complete clean summary succeeds; semantic and UI-only findings remain advisory',
   Effect.fn(function* mergedScenario2() {
-    yield* validate(clean());
+    expect(yield* validate(clean())).toEqual([]);
     const summary = clean();
     const semantic = summary.results.find(({ name }) => name === FALLOW_SIMILARITY);
     const health = summary.results.find(({ name }) => name === FALLOW_HEALTH);
@@ -82,7 +82,12 @@ it.effect(
     semantic.findings = 19;
     health.coverage.uiOnlyFindings = 2;
     health.coverage.weightedFindings = 2;
-    yield* validate(summary);
+    const advisories = yield* validate(summary);
+    expect(advisories.map(({ name }) => name)).toEqual([FALLOW_SIMILARITY, FALLOW_HEALTH]);
+    expect(advisories.find(({ name }) => name === FALLOW_HEALTH)).toMatchObject({
+      coverage: { controlFlowFindings: 0, uiOnlyFindings: 2, weightedFindings: 2 },
+      findings: 0,
+    });
   }),
 );
 
@@ -154,7 +159,7 @@ const positiveReports = [
 ] as const;
 for (const [name, source] of positiveReports) {
   it.effect(
-    `${name} real-positive analyzer report rejects through the normalized gate`,
+    `${name} real-positive analyzer report follows the explicit gate policy`,
     Effect.fn(function* mergedScenario3() {
       const normalized = yield* validateReport(name, source);
       const summary = clean();
@@ -169,6 +174,10 @@ for (const [name, source] of positiveReports) {
           modeledUsages: 0,
           nativeFindingCounts: result.coverage.findingCounts,
         });
+      } else {
+        const advisories = yield* validate(summary);
+        expect(advisories.map((entry) => entry.name)).toContain(name);
+        return;
       }
       yield* Effect.matchCause(validate(summary), {
         onFailure: (cause) =>

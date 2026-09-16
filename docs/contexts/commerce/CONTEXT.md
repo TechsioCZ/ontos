@@ -39,10 +39,17 @@ non-negative.
 acting as seller/invoice issuer for one Commerce Purchasing Context. It is explicit and is not
 inferred from Tenant, Storefront hostname, or the Counterparty's Party.
 
-**Commerce Market** — Declarative commercial/legal market context used by Assortment, Pricing, Tax,
-currency, Payment Terms, delivery, and Customer Commerce Policy. It may correspond to a country or
-region but is not a Tenant, Environment, Deployment Topology, Storefront, or fact owner. One
-Storefront may serve several markets and one market may be served by several Storefronts.
+**Commerce Market** — Stable declarative commercial/legal selling context for exactly one Selling
+Legal Entity inside a Tenant. It may correspond to a country or region but is not a Tenant,
+Environment, Deployment Topology, Storefront, currency, or fact owner; one Storefront may serve
+several Markets and one Market may be served by several Storefronts. A different Selling Legal
+Entity requires a different Commerce Market identity rather than reusing the same Market label.
+
+**Commerce Market Resolution** — Current decision establishing one exact eligible Selling Legal
+Entity + Commerce Market + Channel tuple for purchase-ready use. It validates explicit/default
+selection against Market lifecycle and Storefront associations without inferring authority from
+hostname, locale, IP, shipping address, currency, or technical ordering. When eligibility is a set
+claim, the result uses the shared OntOS Owner-Verifiable Set Completeness Evidence contract.
 
 **Purchasing Subject** — Commercial subject whose Commerce profile and settings apply to one
 purchase: either a Retail Customer in relation to a Selling Legal Entity, or one Counterparty. The
@@ -104,10 +111,42 @@ shapes. It is not a Medusa runtime, canonical contract, commerce foundation, or 
 **Commerce Operations** — Purpose-built staff application for permissioned Commerce workflows and
 Assisted Support over public module contracts. It is not Shell/Core or a fact owner.
 
-**Commerce Portal Account** — Commerce-owned account in a BetterAuth realm separate from staff
-authentication. It links through owner-local bindings to Tenant-scoped Principals and
-Party/Counterparty ResourceRefs without becoming shared Party identity or granting profile or
-purchasing authority by itself.
+**Commerce Portal Account** — Commerce-governed authentication account represented by one stable
+Commerce Portal Account Subject in the dedicated Commerce Authentication Namespace. It is not
+Tenant-scoped; each Tenant uses a separate Principal Auth Binding to map the same account subject to
+one Tenant-scoped Principal. The authentication provider owns credentials, Authentication
+Identifiers and sessions; the account is not Party identity, Principal, profile access, or purchasing
+authority.
+_Avoid_: email/telephone as account identity, Tenant as part of the account identity, provider
+technology name without realm/namespace qualification, Portal Account used as Purchasing Subject.
+
+**Commerce Portal Account Subject** — Exact external authentication subject representing one
+Commerce Portal Account: `(Authentication Namespace, subjectType=user, providerSubjectId)`.
+`providerSubjectId` is the provider's stable opaque user-subject identifier; `subjectType=user` is an
+explicit Commerce Launch invariant, not an omitted identity dimension. The subject is cross-Tenant;
+Tenant belongs to the separate Core Principal Auth Binding key, not to account-subject identity. It
+is not an Authentication Identifier, Session, Principal, Party, profile, or Permission.
+_Avoid_: `(Tenant, providerSubjectId)` as account identity, email/telephone as subject, provider
+technology name as namespace, provider-local ID without namespace/subject type.
+
+**Authentication Identifier** — Provider-owned login or recovery identifier for a Commerce Portal
+Account, such as email, telephone, or provider login handle. It is not a Party Registry Contact Point
+merely because the literal value is equal, and proving control of it does not prove Party/profile or
+Counterparty authority.
+
+**Commerce Portal Session** — Provider-owned session proving authentication of one exact Commerce
+Portal Account Subject. It is not a Tenant selection, Principal Auth Binding, Retail Portal Profile
+Binding, Counterparty access, or Permission.
+
+**Commerce Portal Enrollment Attempt** — Commerce-owned durable correlation and recovery anchor for
+one exact portal enrollment intent across separately owned account, Core identity, Party/profile, and
+access transitions. Once known, it correlates the exact Commerce Portal Account Subject without
+becoming owner of that subject or pretending downstream facts share one business transaction.
+
+**Account Recovery** — Authentication flow restoring access to the same exact Commerce Portal
+Account Subject under approved recovery evidence. It does not silently reactivate a Principal Auth
+Binding, Retail Portal Profile Binding or Permission Grant, Counterparty Permission, or Guest Order
+visibility.
 
 ## Customers, profiles, and channels
 
@@ -152,14 +191,22 @@ to one canonical business key. It preserves original ResourceRefs, blocks ambigu
 each conflicting fact to its owner, and never silently unions Permissions, claims Guest Orders, or
 rewrites historical Resources.
 
-**Retail Portal Profile Binding** — Explicit Commerce-owned relation connecting one Retail Portal
-Principal to one Commerce Retail Customer Profile for declared persistent portal capabilities.
-Registration, matching Contact Points, Party correction/merge, account ownership, or knowledge of
-the profile alone do not create the binding or grant visibility to pre-existing Guest Orders.
+**Retail Portal Profile Binding** — Explicit Commerce-owned relation connecting one Tenant-scoped
+Principal to one Commerce Retail Customer Profile. It identifies the profile relation only;
+registration, Authentication Identifier/Contact Point equality, Party correction/merge, account
+ownership, or knowledge of the profile do not create or move it or grant Permission.
 
-**Retail Portal Principal** — Principal with a valid Retail Portal Profile Binding and the concrete
-Permissions required for a Retail Customer's address book, history, aftercare, favorites, or
-notifications. It is optional for Guest Checkout.
+**Retail Portal Permission Catalog** — Versioned contract defining stable atomic Retail Portal
+Permission meanings and reviewed authority-group membership. It does not itself grant a Permission;
+individual Current grants are separately owned through the Retail Portal Profile Binding capability.
+
+**Retail Portal Permission Grant** — Explicit Commerce-owned Current grant of one atomic Retail
+Portal Permission through one Retail Portal Profile Binding. Binding existence or authority-group
+membership alone is not a grant, and Account Recovery does not silently recreate a revoked grant.
+
+**Retail Portal Principal** — Principal with a Current Retail Portal Profile Binding and every exact
+Retail Portal Permission Grant required for the operation. It is optional for Guest Checkout and
+remains distinct from the Commerce Portal Account used to authenticate it.
 
 ## Segmentation and customer commercial settings
 
@@ -174,9 +221,17 @@ and one Commerce Customer Group. Multiple concurrent memberships are allowed. Me
 within the profile and has no implicit Commerce Market, Storefront, Price Group, Permission,
 benefit, or priority; each consuming capability owns its own interpretation and conflict resolution.
 
-**Price Group** — Pricing-owned reusable pricing classification. Pricing owns its definition,
-revision, lifecycle, applicability, and interpretation; Commerce Customer Profiles may only
-reference it.
+**Price Group** — Pricing-owned reusable classification used as an explicit Pricing input. It is not
+a price list, price amount, discount, Commerce Customer Group, Permission, or customer assignment;
+Pricing owns its stable meaning, lifecycle, compatibility and interpretation while customer profiles
+may only reference it through Customer Price Group Assignment.
+
+**Price Group Compatibility Evidence** — Pricing-owner evidence that one exact Price Group
+definition is usable under one required compatibility contract at a trusted operation time. It may
+identify definition, contract and catalog/evaluation revisions, but that revision tuple is evidence,
+not another Price Group identity and not a requirement that all revision numbers be equal.
+_Avoid_: Price Group Compatibility Identity, revision tuple as classification identity, catalog
+revision equality as definition of compatibility.
 
 **Customer Price Group Assignment** — Commerce-owned time-bounded reference from one Commerce
 Customer Profile to one Price Group. At most one assignment may be Current for a profile. Commerce
@@ -185,7 +240,9 @@ Market and Storefront are separate Pricing inputs, not alternate assignment scop
 **Customer Price Group Resolution** — Current typed decision returning one usable assigned Price
 Group, legitimate absence of a customer Price Group, or explicit broken/inconsistent configuration.
 Missing assignment may proceed to Pricing's own fallback; a dangling, incompatible, or unusable
-explicit assignment must not be silently treated as absence.
+explicit assignment must not be silently treated as absence. `ASSIGNED`, `NONE`, and
+`INCONSISTENT` cardinality claims require owner-verifiable completeness of the relevant Current
+assignment set; individual returned assignments alone do not prove that set complete.
 
 **Customer Currency Preference** — Optional `0..1` long-lived preferred purchase currency on one
 Commerce Customer Profile. It is a preference, not transaction currency, Price, or FX rule.
@@ -318,8 +375,8 @@ immediate for new operations and does not erase historical attribution or unrela
 
 **Counterparty Access Invitation** — Time-limited, one-time, revocable invitation to complete
 Commerce Portal Account/Principal enrollment and then invoke explicit Counterparty Access Grants.
-The invitation is not a Permission or Current access. Email domain, Party Relationship, account
-existence, or invitation delivery alone never grant authority.
+The invitation is not a Permission or Current access. Delivery endpoint, email domain, Party
+Relationship, account existence, or invitation delivery alone never grant authority.
 
 ## Catalog language and exact selection
 
@@ -486,8 +543,9 @@ Product Configuration choices; stricter commercial multiples belong to Commerce 
 its unit step and target divisibility. A meaningful off-step divisible amount may be automatically
 rounded under the explicit unit rule, retaining and reporting requested and resulting values.
 A nonsensical fractional indivisible item is rejected, not legalized by rounding. A changed amount
-must belong to the explicitly presented candidate before Pricing, approval and final acceptance;
-normalization never silently modifies an already approved or committing candidate.
+must belong to the explicitly presented prospective purchase representation before Pricing, approval
+and final acceptance; normalization never silently modifies an already approved or committing
+purchase representation.
 
 **Package Definition** — Catalog Resource describing a required homogeneous packaging level for
 exactly one Variant. Its content and conversions are versioned. A higher level may refer to a
@@ -627,8 +685,8 @@ inferred from Principal identity, group membership or a missing rule.
 **Commerce Quantity Resolution** — Current policy-owned result for exact Catalog Selection and
 Quantity in a trusted Commerce Purchasing Context, retaining rule/assignment revisions and Catalog
 basis. It distinguishes permitted quantity, known violated commercial conditions and explicit
-missing/conflicting/unverifiable inputs. It neither changes the requested candidate silently nor
-creates Permission, Price, Availability or an Order.
+missing/conflicting/unverifiable inputs. It never silently changes the requested Quantity or creates
+Permission, Price, Availability or an Order.
 
 ## Purchasing limits and approval
 
@@ -718,7 +776,9 @@ and Current acceptance inputs. A material change to Purchasing Subject, Buyer, C
 Quantity, proposed price/discount/fee/tax, currency, Payment Term, Invoice Recipient, Delivery
 Destination, Purchase Value or applicable approval policy supersedes approval and requires a new
 revision and route. Owner-attested non-material source changes may retain approval, not fabricate
-unchanged evidence hashes. Final Availability, reservation, Payment and acceptance checks still run.
+unchanged evidence hashes. When produced for one exact Order Commitment Attempt, the revalidation is
+an attempt-bound proof in that Attempt's Order Commitment Proof Set rather than part of the Bundle
+hash that identified the Attempt.
 
 ## Order acceptance and recovery
 
@@ -733,32 +793,42 @@ authorized for one exact Order Commitment Attempt under the resolved Payment Ter
 from capture, settlement, refund, and Order. It has explicit provider correlation, idempotency,
 Current status, and validity; secrets or payment instruments never enter Commerce business payloads.
 
-**Order Acceptance Decision Bundle** — Immutable, versioned, canonical-hashable representation of
-one exact purchase candidate and its owner-issued Current decisions. It includes trusted scope,
-Purchasing Subject/Actor, Cart revision, exact Catalog Selections and Quantities, Monetary Amounts,
-Pricing/Tax/currency, Payment Term, Invoice Recipient, Delivery Destination, Purchase Value/limit
-result, Assortment/Availability evidence, approval evidence when required and exact source
-revisions/validity. Product Configuration is retained as a value, not a fabricated Configuration
-ResourceRef. Changed evidence produces a distinct representation even when owners prove unchanged
-business meaning. The bundle is prospective and owns none of the source facts.
+**Order Acceptance Decision Bundle** — Immutable, versioned, canonical-hashable **pre-attempt**
+representation of one exact prospective purchase and the owner-issued decisions/evidence that define
+that purchase meaning. It includes trusted scope, Purchasing Subject/Actor, Cart revision, exact
+Catalog Selections and Quantities, Monetary Amounts, Pricing/Tax/currency, Payment Term, Invoice
+Recipient, Delivery Destination, Purchase Value/limit result, Assortment and other prospective source
+evidence. It excludes any proof whose meaning requires an Order Commitment Attempt. Changed
+Bundle-contained evidence produces a distinct Bundle even when an owner proves unchanged business
+meaning. The Bundle owns none of the source facts.
+_Avoid_: attempt-bound Confirmation inside the Bundle hash, Bundle mutated after Attempt creation,
+generic `Decision Bundle` when this exact cross-owner purchase representation is intended.
 
-**Order Commitment Attempt** — Durable idempotency and recovery anchor for attempting to turn one
-exact Order Acceptance Decision Bundle into at most one Order. It tracks preparation correlations,
-commit proof, compensation/reconciliation state, and conflicts. A different bundle cannot reuse the
-same idempotency identity.
+**Order Commitment Attempt** — Durable idempotency and recovery anchor bound permanently to one exact
+Order Acceptance Decision Bundle hash/version and used to attempt at most one Order. It tracks
+preparation correlations, Current attempt-bound proof state, commit proof, compensation/reconciliation
+state and conflicts. A different Bundle cannot reuse the same Attempt identity.
+
+**Order Commitment Proof Set** — Exact set of owner-issued validations/confirmations used to prove one
+Order Commitment Attempt + its exact Bundle through the commitment boundary. It may include Approval
+Revalidation, Assortment Commitment Confirmation, Reservation Confirmation, Payment Authorization or
+analogous attempt-bound proofs. Legitimate renewal may replace an expired proof for the same
+unchanged Attempt + Bundle under the owning contract; that renewal does not change the Bundle hash.
+_Avoid_: Proof Set as prospective purchase identity, proofs from different Attempts unioned together,
+proof renewal used to smuggle changed Bundle meaning into the same Attempt.
 
 **Order Commitment Gate** — Final consistency boundary that resolves one Order Commitment Attempt,
-rechecks Current profile/Permissions/Business Policies, validates one exact Decision Bundle and any
-approved proposal revision, verifies required Reservation Confirmations and Payment Authorization,
+rechecks Current profile/Permissions/Business Policies, validates its exact Order Acceptance Decision
+Bundle, establishes the exact Order Commitment Proof Set, validates any approved proposal revision,
 and commits exactly one Order. It coordinates public contracts and never opens a shared cross-module
 business transaction or silently modifies customer choices. Owner validity through commitment must
 be established rather than inferred from an earlier read or an undelivered change event.
 
 **Order Commitment Reconciliation** — Owner-governed recovery that first proves whether Order commit
-occurred, then converges provisional reservation/Payment effects and downstream work without
-duplicating Orders or provider operations. Definite pre-commit failure may trigger idempotent
-release/void; a proven committed Order is never erased as false rollback. Indeterminate outcomes and
-post-commit debt remain explicit and retryable.
+occurred, then converges the exact Attempt's proof/preparation state and provisional
+reservation/Payment effects without duplicating Orders or provider operations. Definite pre-commit
+failure may trigger idempotent release/void; a proven committed Order is never erased as false
+rollback. A renewed attempt-bound proof never mutates the Attempt's Bundle identity.
 
 ## History, archive, and repeat purchase
 
@@ -804,14 +874,32 @@ Set Composition, Product Relationship, product identifiers, descriptive facts, m
 reference semantics and Current Catalog Selection validation. It provides Catalog Selection Evidence
 but owns no Price, Assortment, Inventory, Availability, Permission, approval, Payment or Accepted Order.
 
-**Assortment** — Domain determining eligibility of an exact Product/Catalog Selection for visibility
-or purchase in a Channel, Commerce Market, Storefront, Retail Customer context or Counterparty
-context. A Product-level browsing result is not proof that every Variant or Package Option may be
-purchased. Catalog existence or publication does not imply eligibility.
+**Assortment** — Commerce Business Policy domain determining typed `VISIBILITY` or `PURCHASE`
+eligibility under the canonical contract in `../assortment/CONTEXT.md`. `VISIBILITY` is Product-level.
+The unit of one independent `PURCHASE` evaluation is an `Assortment Purchase Constituent`: exactly
+one exact Catalog Selection in the trusted Commerce Purchasing Context for a Guest Purchase Context
+or Purchasing Subject. Non-Set purchase has one constituent; Set purchase composes the top-level Set
+constituent with every required exact non-set component constituent from the pinned Set Composition
+Revision. `Assortment Purchase Constituent` is distinct from `Assortment Candidate`, which is a
+Binding+Revision resolver participant inside one constituent. Guest is not a Purchasing Subject. An
+Assortment result never creates Permission, Price, Availability, publication, or Order acceptance,
+and Product-level `VISIBILITY` is not proof that any Variant or Package Option is `PURCHASE` eligible.
 
-**Pricing** — Domain determining prices, discounts, fees, tax inputs, quantity tiers, quotations,
-and Price Group definitions for an explicit Commerce Purchasing Context and exact Catalog Selection
-and Quantity. Set/Package prices are not silently derived from component sums or loose-piece prices.
+**Pricing** — Domain determining the commercial price of one exact purchase candidate in an explicit
+Commerce Purchasing Context. One Pricing Decision evaluates `1..N Pricing Lines`; each Pricing Line
+binds one exact Catalog Selection, resulting Quantity and Unit. Pricing owns prices, Pricing-owned
+discounts and fees, quantity tiers, quotations and Price Group interpretation. Set/Package prices are
+not silently derived from component sums or loose-piece prices.
+
+**Pricing Decision** — Pricing-owned Current commercial decision for one exact purchase candidate
+with `1..N Pricing Lines` in one explicit currency, trusted Commerce Purchasing Context and trusted
+operation time. A candidate with one Pricing Line uses the same authoritative model as a multi-line
+candidate; there is no second line-only Pricing Decision semantics.
+
+**Pricing Line** — Per-selection Pricing part of one exact purchase candidate. It binds one exact
+Catalog Selection, resulting Quantity and Unit for Pricing evaluation. Catalog owns the Catalog
+Selection meaning; Pricing Line does not create another Catalog identity and does not by itself
+define Cart/Order line lifecycle or split/merge equivalence.
 
 **Inventory** — Domain owning stock and reservations when the Customer Configuration owns those
 lifecycles. Inventory maps exact Catalog selections to explicitly owned stock requirements without
@@ -848,10 +936,21 @@ Documents, and Claim lifecycles without replacing their ownership.
 **Claim** — Governed request concerning durable Order lines, with its own evidence, communication,
 deadlines, state, and resolution history.
 
-**Customer Commerce Policy** — Declarative Customer Configuration of shared Channel, purchasing,
-quantity, Commerce Market, currency, Payment Terms, approval, delivery and legal Business Policy.
-A typed field may declare Catalog Policy Scope; the bounded Commerce Quantity Rule family also owns
-explicit Customer Quantity Rule Assignments. Other profiles, customer settings and domain facts keep
-their respective owners. Defaults, constraints, scope precedence and absence are explicit, never
-arbitrary executable logic. Different executable semantics require a shared module change or an
-explicitly catalogued implementation.
+**Customer Commerce Policy** — Declarative typed Business Policy family configured by one Customer
+Configuration for shared Channel, Selling Legal Entity, Commerce Market, Storefront, purchasing,
+quantity, currency, Payment Term, approval, delivery, visibility and legal defaults/constraints. It
+is part of Customer Configuration rather than a synonym for the whole configuration; replaceable
+defaults and independently applicable non-relaxable constraints have explicit composition, scope,
+absence and conflict semantics. The bounded Commerce Quantity Rule family also owns explicit Customer
+Quantity Rule Assignments; profiles, customer settings and other domain facts retain their owners.
+
+**Customer Commerce Policy Field** — One closed, versioned typed semantic contract inside the
+Customer Commerce Policy family. It declares one field/purpose's meaning, allowed scope/selectors,
+composition, legitimate absence, conflict, Currentness/materiality, owner and consumer boundaries; it
+is not a generic mutable policy record or customer-defined executable rule language.
+
+**Customer Commerce Policy Resolution** — Current typed result for one declared policy field/purpose,
+retaining the chosen replacement/default, every applicable non-relaxable constraint, relevant rule
+or assignment revisions, trusted context and owner-issued validity evidence. When another Current
+policy fact could change winner, absence, conflict or applicable constraints, the resolution uses
+Owner-Verifiable Set Completeness Evidence; a winning rule alone is not proof of complete state.

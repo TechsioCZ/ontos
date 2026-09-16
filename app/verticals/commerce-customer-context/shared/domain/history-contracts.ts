@@ -15,6 +15,16 @@ export const HistoryOwnerModuleIdSchema = Schema.toEncoded(
 );
 const HistoryPrincipalIdSchema = Schema.toEncoded(NonEmptyTextSchema.pipe(Schema.brand('HistoryPrincipalId')));
 const QuantitySchema = Schema.String.check(Schema.isPattern(/^(?:0|[1-9]\d*)(?:\.\d+)?$/u), Schema.isMaxLength(80));
+const ProductConfigurationValueSchema: Schema.Codec<Schema.Json> = Schema.suspend(() =>
+  Schema.Union([
+    Schema.Null,
+    Schema.Boolean,
+    Schema.Finite,
+    Schema.String,
+    Schema.Array(ProductConfigurationValueSchema),
+    Schema.Record(Schema.String, ProductConfigurationValueSchema),
+  ]),
+);
 
 const CurrentGateStateSchema = Schema.Literals(['CURRENT', 'ABSENT', 'INDETERMINATE']);
 export type CurrentGateState = typeof CurrentGateStateSchema.Type;
@@ -142,24 +152,67 @@ export const CustomerArchiveResultSchema = Schema.Struct({
   subject: CustomerHistorySubjectSchema,
 });
 
+const CatalogRevisionReferenceSchema = Schema.Struct({
+  revision: NonEmptyTextSchema,
+  sourceRef: HistoricalRecordRefSchema,
+});
+
+const HistoricalProductConfigurationSchema = Schema.Union([
+  Schema.Struct({ kind: Schema.Literal('NONE') }),
+  Schema.Struct({
+    definitionRevision: CatalogRevisionReferenceSchema,
+    kind: Schema.Literal('CONFIGURED'),
+    value: Schema.Record(Schema.String, ProductConfigurationValueSchema),
+  }),
+]);
+
+const HistoricalCatalogSelectionFields = {
+  configuration: HistoricalProductConfigurationSchema,
+  packageOption: Schema.optionalKey(
+    Schema.Struct({
+      contentRevision: CatalogRevisionReferenceSchema,
+      packageOptionRef: HistoricalRecordRefSchema,
+    }),
+  ),
+  productRef: HistoricalRecordRefSchema,
+  variantRef: HistoricalRecordRefSchema,
+};
+
+export const HistoricalCatalogSelectionSchema = Schema.Union([
+  Schema.Struct({
+    ...HistoricalCatalogSelectionFields,
+    variantKind: Schema.Literal('ATOMIC'),
+  }),
+  Schema.Struct({
+    ...HistoricalCatalogSelectionFields,
+    setCompositionRevision: CatalogRevisionReferenceSchema,
+    variantKind: Schema.Literal('SET'),
+  }),
+]);
+
+export const HistoricalPurchaseQuantitySchema = Schema.Struct({
+  packageContentBasis: Schema.optionalKey(CatalogRevisionReferenceSchema),
+  unitRef: HistoricalRecordRefSchema,
+  value: QuantitySchema,
+});
+
 const HistoricalOrderLineIntentSchema = Schema.Struct({
-  configurationRef: Schema.optionalKey(NonEmptyTextSchema),
-  productRef: NonEmptyTextSchema,
-  requestedQuantity: QuantitySchema,
+  catalogSelection: HistoricalCatalogSelectionSchema,
+  requestedQuantity: HistoricalPurchaseQuantitySchema,
   sourceLineRef: NonEmptyTextSchema,
 });
 export type HistoricalOrderLineIntent = typeof HistoricalOrderLineIntentSchema.Type;
 
 const RepeatOrderLineResultSchema = Schema.Union([
   Schema.Struct({
-    currentProductRef: NonEmptyTextSchema,
-    requestedQuantity: QuantitySchema,
+    catalogSelection: HistoricalCatalogSelectionSchema,
+    requestedQuantity: HistoricalPurchaseQuantitySchema,
     sourceLineRef: NonEmptyTextSchema,
     status: Schema.Literal('REPEATABLE'),
   }),
   Schema.Struct({
     reason: Schema.Literals(['CONFIGURATION_CHANGED', 'QUANTITY_RULE_CONFLICT', 'CURRENT_SELECTION_REQUIRED']),
-    requestedQuantity: QuantitySchema,
+    requestedQuantity: HistoricalPurchaseQuantitySchema,
     sourceLineRef: NonEmptyTextSchema,
     status: Schema.Literal('REQUIRES_EXPLICIT_CHANGE'),
   }),
@@ -170,7 +223,7 @@ const RepeatOrderLineResultSchema = Schema.Union([
       'PRODUCT_NOT_FOUND',
       'PRODUCT_NOT_SELLABLE',
     ]),
-    requestedQuantity: QuantitySchema,
+    requestedQuantity: HistoricalPurchaseQuantitySchema,
     sourceLineRef: NonEmptyTextSchema,
     status: Schema.Literal('SKIPPED'),
   }),

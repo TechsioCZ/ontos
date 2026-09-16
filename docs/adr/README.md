@@ -25,6 +25,7 @@ relevant to the task. An accepted ADR remains current unless a later ADR explici
 | [0018](0018-party-registry-operational-boundaries.md)      | Party Registry operational boundaries                     | Accepted                          |
 | [0019](0019-explicit-action-authorization.md)              | Explicit fail-closed Action authorization                 | Accepted                          |
 | [0020](0020-governed-application-composition.md)           | Governed runtime Application Composition                  | Accepted                          |
+| [0021](0021-attempt-bound-proofs-outside-order-acceptance-bundle.md) | Attempt-bound proofs stay outside the Order Acceptance Bundle | Accepted                       |
 
 ## Status meanings
 

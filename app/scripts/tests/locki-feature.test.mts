@@ -15,7 +15,7 @@ it.live('pins pnpm to the npm mise backend for cross-platform sandbox installati
   Effect.gen(function* testEffect1() {
     const miseConfiguration = yield* Effect.tryPromise(() => readFile(path.join(workspaceRoot, '.mise.toml'), 'utf-8'));
     expect(miseConfiguration).toMatch(/\[tool_alias\][\s\S]*pnpm = "npm:pnpm"/u);
-    expect(miseConfiguration).toMatch(/\[tools\][\s\S]*pnpm = "11\.25\.0"/u);
+    expect(miseConfiguration).toMatch(/\[tools\][\s\S]*pnpm = \{ version = "12\.4\.2", allow_builds = \["pnpm"\] \}/u);
   }),
 );
 

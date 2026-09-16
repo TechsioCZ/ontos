@@ -20,6 +20,10 @@ import {
   CustomerRecordTypeOnboardingSchema,
   evaluateCustomerRecordVisibility,
 } from '../../shared/domain/record-visibility-contracts.ts';
+import {
+  HistoricalCatalogSelectionSchema,
+  RepeatOrderPreparationResultSchema,
+} from '../../shared/domain/history-contracts.ts';
 import type {
   CustomerHistorySubject,
   CustomerRecordVisibilityFact,
@@ -59,6 +63,32 @@ const orderRef = (resourceId: string) => ({
   tenantId,
 });
 
+const catalogRef = (resourceType: string, resourceId: string) => ({
+  moduleId: 'commerce.catalog',
+  resourceId,
+  resourceType,
+  tenantId,
+});
+
+const catalogRevision = (resourceType: string, resourceId: string, revision: string) => ({
+  revision,
+  sourceRef: catalogRef(resourceType, resourceId),
+});
+
+const historicalLine = (productId: string, value: string, sourceLineRef: string) => ({
+  catalogSelection: {
+    configuration: { kind: 'NONE' as const },
+    productRef: catalogRef('commerce.catalog.product', productId),
+    variantKind: 'ATOMIC' as const,
+    variantRef: catalogRef('commerce.catalog.variant', `${productId}-variant`),
+  },
+  requestedQuantity: {
+    unitRef: catalogRef('commerce.catalog.unit', 'piece'),
+    value,
+  },
+  sourceLineRef,
+});
+
 const visibleFact = (
   resourceId: string,
   subject: CustomerHistorySubject = retailSubject,
@@ -94,14 +124,7 @@ const historicalOrder = (
     sourceRevision: `revision-${resourceId}`,
     status: 'CURRENT',
   },
-  lines: [
-    {
-      configurationRef: 'configuration-1',
-      productRef: 'product-1',
-      requestedQuantity: '2',
-      sourceLineRef: `${resourceId}:line-1`,
-    },
-  ],
+  lines: [historicalLine('product-1', '2', `${resourceId}:line-1`)],
   orderRef: orderRef(resourceId),
   subject,
   submittedByPrincipalId,
@@ -146,7 +169,7 @@ const makePorts = (orders: readonly HistoricalOrderCandidate[]): CustomerHistory
   cart: {
     prepareLine: (_subject, line) =>
       Effect.succeed({
-        currentProductRef: line.productRef,
+        catalogSelection: line.catalogSelection,
         requestedQuantity: line.requestedQuantity,
         sourceLineRef: line.sourceLineRef,
         status: 'REPEATABLE' as const,
@@ -213,6 +236,51 @@ const makePorts = (orders: readonly HistoricalOrderCandidate[]): CustomerHistory
         outcome: 'FOUND',
       }),
   },
+});
+
+it('rejects legacy Repeat line payloads that omit exact selection and Unit evidence', () => {
+  expect(() =>
+    Schema.decodeUnknownSync(RepeatOrderPreparationResultSchema)({
+      lines: [
+        {
+          currentProductRef: 'product-1',
+          requestedQuantity: '2',
+          sourceLineRef: 'line-1',
+          status: 'REPEATABLE',
+        },
+      ],
+      outcome: 'PREPARED',
+      sourceOrderRef: orderRef('order-legacy'),
+    }),
+  ).toThrow();
+});
+
+it('requires explicit configuration state and a composition revision for every Set Variant', () => {
+  const base = {
+    productRef: catalogRef('commerce.catalog.product', 'set-product'),
+    variantRef: catalogRef('commerce.catalog.variant', 'set-variant'),
+  };
+  expect(() =>
+    Schema.decodeUnknownSync(HistoricalCatalogSelectionSchema)({
+      ...base,
+      variantKind: 'ATOMIC',
+    }),
+  ).toThrow();
+  expect(() =>
+    Schema.decodeUnknownSync(HistoricalCatalogSelectionSchema)({
+      ...base,
+      configuration: { kind: 'NONE' },
+      variantKind: 'SET',
+    }),
+  ).toThrow();
+  expect(() =>
+    Schema.decodeUnknownSync(HistoricalCatalogSelectionSchema)({
+      ...base,
+      configuration: { kind: 'CONFIGURED', value: { finish: 'red' } },
+      setCompositionRevision: catalogRevision('commerce.catalog.variant', 'set-variant', 'set-r1'),
+      variantKind: 'SET',
+    }),
+  ).toThrow();
 });
 
 it('fails closed when visibility is missing, hidden, restricted, or indeterminate', () => {
@@ -1072,21 +1140,14 @@ it.effect('keeps repeat lines independent without creating a Cart or changing qu
     const baseSource = historicalOrder('order-1', principalId);
     const source: HistoricalOrderCandidate = {
       ...baseSource,
-      lines: [
-        ...baseSource.lines,
-        {
-          productRef: 'discontinued-product',
-          requestedQuantity: '4',
-          sourceLineRef: 'order-1:line-2',
-        },
-      ],
+      lines: [...baseSource.lines, historicalLine('discontinued-product', '4', 'order-1:line-2')],
     };
     const basePorts = makePorts([source]);
     const ports: CustomerHistoryPorts = {
       ...basePorts,
       cart: {
         prepareLine: (_subject, line) =>
-          line.productRef === 'discontinued-product'
+          line.catalogSelection.productRef.resourceId === 'discontinued-product'
             ? Effect.succeed({
                 reason: 'PRODUCT_NOT_SELLABLE' as const,
                 requestedQuantity: line.requestedQuantity,
@@ -1094,7 +1155,7 @@ it.effect('keeps repeat lines independent without creating a Cart or changing qu
                 status: 'SKIPPED' as const,
               })
             : Effect.succeed({
-                currentProductRef: line.productRef,
+                catalogSelection: line.catalogSelection,
                 requestedQuantity: line.requestedQuantity,
                 sourceLineRef: line.sourceLineRef,
                 status: 'REPEATABLE' as const,
@@ -1112,19 +1173,127 @@ it.effect('keeps repeat lines independent without creating a Cart or changing qu
     expect(result.outcome).toBe('PREPARED');
     expect(result.lines).toEqual([
       {
-        currentProductRef: 'product-1',
-        requestedQuantity: '2',
+        catalogSelection: historicalLine('product-1', '2', 'order-1:line-1').catalogSelection,
+        requestedQuantity: historicalLine('product-1', '2', 'order-1:line-1').requestedQuantity,
         sourceLineRef: 'order-1:line-1',
         status: 'REPEATABLE',
       },
       {
         reason: 'PRODUCT_NOT_SELLABLE',
-        requestedQuantity: '4',
+        requestedQuantity: historicalLine('discontinued-product', '4', 'order-1:line-2').requestedQuantity,
         sourceLineRef: 'order-1:line-2',
         status: 'SKIPPED',
       },
     ]);
     expect('cartRef' in result).toBe(false);
+  }),
+);
+
+it.effect('preserves exact Variant, configuration, Unit, Package, and Set evidence for a repeatable line', () =>
+  Effect.gen(function* exactSelectionEvidence() {
+    const source = historicalOrder('order-exact-selection', principalId);
+    const exactLine = {
+      catalogSelection: {
+        configuration: {
+          definitionRevision: catalogRevision(
+            'commerce.catalog.product-configuration-definition',
+            'configuration-1',
+            'configuration-r3',
+          ),
+          kind: 'CONFIGURED' as const,
+          value: { finish: 'red', measuredLength: { unit: 'millimeter', value: '125.5' } },
+        },
+        packageOption: {
+          contentRevision: catalogRevision('commerce.catalog.package-definition', 'package-option-1', 'pack-10-r4'),
+          packageOptionRef: catalogRef('commerce.catalog.package-option', 'package-option-1'),
+        },
+        productRef: catalogRef('commerce.catalog.product', 'product-1'),
+        setCompositionRevision: catalogRevision('commerce.catalog.variant', 'variant-set-1', 'set-composition-r7'),
+        variantKind: 'SET' as const,
+        variantRef: catalogRef('commerce.catalog.variant', 'variant-set-1'),
+      },
+      requestedQuantity: {
+        packageContentBasis: catalogRevision('commerce.catalog.package-definition', 'package-option-1', 'pack-10-r4'),
+        unitRef: catalogRef('commerce.catalog.unit', 'package'),
+        value: '2',
+      },
+      sourceLineRef: 'order-exact-selection:line-1',
+    };
+    const order = { ...source, lines: [exactLine] } satisfies HistoricalOrderCandidate;
+    const basePorts = makePorts([order]);
+    const result = yield* prepareRepeatOrder(
+      {
+        ...basePorts,
+        cart: {
+          prepareLine: (_subject, line) =>
+            Effect.succeed({
+              catalogSelection: line.catalogSelection,
+              requestedQuantity: line.requestedQuantity,
+              sourceLineRef: line.sourceLineRef,
+              status: 'REPEATABLE',
+            }),
+        },
+      },
+      { now, orderRef: order.orderRef, principalId, subject: retailSubject },
+    );
+
+    expect(result).toMatchObject({ lines: [{ status: 'REPEATABLE' }], outcome: 'PREPARED' });
+    expect(result.lines[0]).toMatchObject(exactLine);
+  }),
+);
+
+it.effect('requires an explicit change when Package contents or Variant identity differs', () =>
+  Effect.gen(function* changedSelectionMeaning() {
+    const source = historicalOrder('order-selection-drift', principalId);
+    const exactLine = {
+      ...historicalLine('product-1', '1', 'order-selection-drift:line-1'),
+      catalogSelection: {
+        ...historicalLine('product-1', '1', 'order-selection-drift:line-1').catalogSelection,
+        packageOption: {
+          contentRevision: catalogRevision('commerce.catalog.package-definition', 'package-option-1', 'pack-10-r1'),
+          packageOptionRef: catalogRef('commerce.catalog.package-option', 'package-option-1'),
+        },
+      },
+    };
+    const order = { ...source, lines: [exactLine] } satisfies HistoricalOrderCandidate;
+    const basePorts = makePorts([order]);
+    const prepareWith = (catalogSelection: typeof exactLine.catalogSelection) =>
+      prepareRepeatOrder(
+        {
+          ...basePorts,
+          cart: {
+            prepareLine: (_subject, line) =>
+              Effect.succeed({
+                catalogSelection,
+                requestedQuantity: line.requestedQuantity,
+                sourceLineRef: line.sourceLineRef,
+                status: 'REPEATABLE',
+              }),
+          },
+        },
+        { now, orderRef: order.orderRef, principalId, subject: retailSubject },
+      );
+
+    const changedPackage = yield* prepareWith({
+      ...exactLine.catalogSelection,
+      packageOption: {
+        ...exactLine.catalogSelection.packageOption,
+        contentRevision: catalogRevision('commerce.catalog.package-definition', 'package-option-1', 'pack-8-r2'),
+      },
+    });
+    const changedVariant = yield* prepareWith({
+      ...exactLine.catalogSelection,
+      variantRef: catalogRef('commerce.catalog.variant', 'same-description-different-variant'),
+    });
+
+    expect(changedPackage).toMatchObject({
+      lines: [{ reason: 'CURRENT_SELECTION_REQUIRED', status: 'REQUIRES_EXPLICIT_CHANGE' }],
+      outcome: 'NO_REPEATABLE_LINES',
+    });
+    expect(changedVariant).toMatchObject({
+      lines: [{ reason: 'CURRENT_SELECTION_REQUIRED', status: 'REQUIRES_EXPLICIT_CHANGE' }],
+      outcome: 'NO_REPEATABLE_LINES',
+    });
   }),
 );
 
@@ -1171,7 +1340,10 @@ it.effect('requires canonical product identity before a line is repeatable', () 
         cart: {
           prepareLine: (_subject, line) =>
             Effect.succeed({
-              currentProductRef: 'different-current-product',
+              catalogSelection: {
+                ...line.catalogSelection,
+                productRef: catalogRef('commerce.catalog.product', 'different-current-product'),
+              },
               requestedQuantity: line.requestedQuantity,
               sourceLineRef: line.sourceLineRef,
               status: 'REPEATABLE',

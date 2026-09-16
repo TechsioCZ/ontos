@@ -21,6 +21,7 @@ import { prepareRepeatOrder } from '../../shared/domain/history-composition.ts';
 import type { RepeatOrderPreparationResult } from '../../shared/domain/history-contracts.ts';
 import type { CustomerHistoryPorts } from '../../shared/domain/history-ports.ts';
 import { CustomerHistoryPortsService, unavailableCustomerHistoryPorts } from '../../shared/domain/history-ports.ts';
+import type { CustomerHistorySubject, HistoricalRecordRef } from '../../shared/domain/record-visibility-contracts.ts';
 import { customerHistoryPortsForOperation } from '../history-production-services.ts';
 import type { ProfileScopedRoutineInvoker } from '../persistence/profile-persistence.ts';
 
@@ -35,7 +36,6 @@ export interface HistoryActionServices {
   readonly owners: HistoryActionOwnerPorts;
 }
 
-type RepeatOrderSubject = RepeatCounterpartyOrderPayload['profileRef'] | RepeatRetailOrderPayload['profileRef'];
 type RepeatCartCreation = Effect.Success<ReturnType<HistoryActionOwnerPorts['carts']['createFromHistoricalIntent']>>;
 type CreatedRepeatCart = Exclude<RepeatCartCreation, { readonly outcome: 'CONFLICT' }>;
 
@@ -108,36 +108,46 @@ const hasRepeatableLines = (prepared: RepeatOrderPreparationResult): boolean =>
 const repeatCartCreationInput = (
   prepared: RepeatOrderPreparationResult,
   storefrontId: string | undefined,
-  subject: RepeatOrderSubject,
+  subject: CustomerHistorySubject,
   actionInvocationId: string,
 ) => {
   const input = {
     actionInvocationId,
     lines: prepared.lines,
-    repeatIntentKey: [
-      'repeat-order',
-      prepared.sourceOrderRef.tenantId,
-      prepared.sourceOrderRef.resourceId,
-      subject.resourceId,
-      storefrontId ?? 'retail',
-    ].join(':'),
+    repeatPurchaseIntentId: actionInvocationId,
     sourceOrderRef: prepared.sourceOrderRef,
     subject,
   };
   return storefrontId === undefined ? input : { ...input, storefrontId };
 };
 
+const sameRecordRef = (left: HistoricalRecordRef, right: HistoricalRecordRef): boolean =>
+  left.moduleId === right.moduleId &&
+  left.resourceId === right.resourceId &&
+  left.resourceType === right.resourceType &&
+  left.tenantId === right.tenantId;
+
+const sameHistorySubject = (left: CustomerHistorySubject, right: CustomerHistorySubject): boolean =>
+  left.kind === right.kind &&
+  sameRecordRef(left.profileRef, right.profileRef) &&
+  (left.kind !== 'COUNTERPARTY' ||
+    (right.kind === 'COUNTERPARTY' && sameRecordRef(left.counterpartyRef, right.counterpartyRef)));
+
 const hasTrustedRepeatCartRef = (
   created: CreatedRepeatCart,
   prepared: RepeatOrderPreparationResult,
-  subject: RepeatOrderSubject,
+  subject: CustomerHistorySubject,
   tenantId: string,
+  repeatPurchaseIntentId: string,
 ): boolean =>
   created.cartRef.tenantId === tenantId &&
   created.cartRef.tenantId === prepared.sourceOrderRef.tenantId &&
-  created.cartRef.tenantId === subject.tenantId &&
+  created.cartRef.tenantId === subject.profileRef.tenantId &&
   created.cartRef.moduleId === cartModuleKey &&
-  created.cartRef.resourceType === cartResourceType;
+  created.cartRef.resourceType === cartResourceType &&
+  created.repeatPurchaseIntentId === repeatPurchaseIntentId &&
+  sameRecordRef(created.sourceOrderRef, prepared.sourceOrderRef) &&
+  sameHistorySubject(created.subject, subject);
 
 const hasCompleteRepeatCartLines = (created: CreatedRepeatCart, prepared: RepeatOrderPreparationResult): boolean => {
   const expectedLineRefs = prepared.lines.map((line) => line.sourceLineRef).toSorted();
@@ -145,14 +155,21 @@ const hasCompleteRepeatCartLines = (created: CreatedRepeatCart, prepared: Repeat
   return (
     actualLineRefs.length === expectedLineRefs.length &&
     actualLineRefs.every((lineRef, index) => lineRef === expectedLineRefs[index]) &&
-    new Set(actualLineRefs).size === actualLineRefs.length
+    new Set(actualLineRefs).size === actualLineRefs.length &&
+    prepared.lines.every((line) => {
+      const cartLine = created.lines.find((candidate) => candidate.sourceLineRef === line.sourceLineRef);
+      if (cartLine === undefined || cartLine.outcome === 'CHANGED') {
+        return false;
+      }
+      return line.status === 'REPEATABLE' || cartLine.outcome === 'SKIPPED';
+    })
   );
 };
 
 const createRepeatCart = Effect.fn('HistoryActions.createRepeatCart')(function* create(
   prepared: RepeatOrderPreparationResult,
   storefrontId: string | undefined,
-  subject: RepeatOrderSubject,
+  subject: CustomerHistorySubject,
   context: ActionHandlerContext<NoDomainEvents, HistoryActionServices>,
 ) {
   if (!hasRepeatableLines(prepared)) {
@@ -170,7 +187,7 @@ const createRepeatCart = Effect.fn('HistoryActions.createRepeatCart')(function* 
       reason: 'The idempotency key is already bound to different repeat intent',
     });
   }
-  if (!hasTrustedRepeatCartRef(created, prepared, subject, context.scope.tenantId)) {
+  if (!hasTrustedRepeatCartRef(created, prepared, subject, context.scope.tenantId, context.actionInvocationId)) {
     return yield* new HistoryActionUnavailable({
       code: 'history_action_unavailable',
       ownerModuleId: cartModuleKey,
@@ -199,7 +216,12 @@ export const handleRepeatRetailOrder = Effect.fn('HistoryActions.handleRepeatRet
     principalId: context.scope.principalId,
     subject: { kind: 'RETAIL_PROFILE', profileRef: payload.profileRef },
   }).pipe(Effect.catchTag('HistoryOwnerUnavailable', (error) => Effect.fail(ownerUnavailable(error))));
-  const result = yield* createRepeatCart(prepared, undefined, payload.profileRef, context);
+  const result = yield* createRepeatCart(
+    prepared,
+    undefined,
+    { kind: 'RETAIL_PROFILE', profileRef: payload.profileRef },
+    context,
+  );
   yield* recordRepeatEvidence(context, { actionKind: 'REPEAT_RETAIL_ORDER', result });
   return result;
 });
@@ -247,7 +269,12 @@ export const handleRepeatCounterpartyOrder = Effect.fn('HistoryActions.handleRep
         profileRef: payload.profileRef,
       },
     }).pipe(Effect.catchTag('HistoryOwnerUnavailable', (error) => Effect.fail(ownerUnavailable(error))));
-    const result = yield* createRepeatCart(prepared, payload.storefrontId, payload.profileRef, context);
+    const result = yield* createRepeatCart(
+      prepared,
+      payload.storefrontId,
+      { counterpartyRef: payload.counterpartyRef, kind: 'COUNTERPARTY', profileRef: payload.profileRef },
+      context,
+    );
     yield* recordRepeatEvidence(context, { actionKind: 'REPEAT_COUNTERPARTY_ORDER', result });
     return result;
   },
