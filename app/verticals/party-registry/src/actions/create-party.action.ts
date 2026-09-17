@@ -124,8 +124,7 @@ export const createPartyAction = defineAction(
   (transaction, scope) =>
     Effect.succeed({
       createOrMatch: (candidate: PartyCandidate, actionInvocationId: string) =>
-        // SAFETY: defineAction supplies the owner-local transaction accepted by Party persistence.
-        createOrMatchParty(transaction as Parameters<typeof createOrMatchParty>[0], {
+        createOrMatchParty(transaction, {
           actionInvocationId,
           candidate,
           principalId: scope.principalId,

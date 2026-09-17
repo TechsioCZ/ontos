@@ -50,29 +50,44 @@ const lookupResultSchema = <Value>(value: Schema.Schema<Value>) =>
 
 export type LookupResult<Value> = Schema.Schema.Type<ReturnType<typeof lookupResultSchema<Value>>>;
 
+const CreateCounterpartyPartyAliasSchema = Schema.TaggedStruct('party_alias', {
+  aliasPartyRef: PartyRefSchema,
+  canonicalPartyRef: PartyRefSchema,
+});
+const CounterpartyPartyArchivedSchema = Schema.TaggedStruct('party_archived', {
+  partyId: CounterpartyUuidSchema,
+});
+const CounterpartyPartyNotFoundSchema = Schema.TaggedStruct('party_not_found', {
+  partyId: CounterpartyUuidSchema,
+});
+const CreateCounterpartyFoundSchema = Schema.TaggedStruct('found', {
+  counterpartyRef: CounterpartyRefSchema,
+  created: Schema.Boolean,
+  legalEntityRef: LegalEntityRefSchema,
+  partyRef: PartyRefSchema,
+});
 const CreateCounterpartyResultSchema = Schema.Union([
-  Schema.TaggedStruct('party_alias', {
-    aliasPartyRef: PartyRefSchema,
-    canonicalPartyRef: PartyRefSchema,
-  }),
-  Schema.TaggedStruct('party_archived', { partyId: CounterpartyUuidSchema }),
-  Schema.TaggedStruct('party_not_found', { partyId: CounterpartyUuidSchema }),
-  Schema.TaggedStruct('found', {
-    counterpartyRef: CounterpartyRefSchema,
-    created: Schema.Boolean,
-    legalEntityRef: LegalEntityRefSchema,
-    partyRef: PartyRefSchema,
-  }),
+  CreateCounterpartyPartyAliasSchema,
+  CounterpartyPartyArchivedSchema,
+  CounterpartyPartyNotFoundSchema,
+  CreateCounterpartyFoundSchema,
 ]);
 export type CreateCounterpartyResult = typeof CreateCounterpartyResultSchema.Type;
 
+const CounterpartyNotFoundSchema = Schema.TaggedStruct('counterparty_not_found', {
+  counterpartyId: CounterpartyUuidSchema,
+});
+const CounterpartyRoleOverlapSchema = Schema.TaggedStruct('overlap', {
+  roleType: CounterpartyRoleTypeSchema,
+});
+const CounterpartyRoleFoundSchema = Schema.TaggedStruct('found', {
+  value: CounterpartyRolePeriodSchema,
+});
 const AddCounterpartyRoleResultSchema = Schema.Union([
-  Schema.TaggedStruct('counterparty_not_found', {
-    counterpartyId: CounterpartyUuidSchema,
-  }),
-  Schema.TaggedStruct('overlap', { roleType: CounterpartyRoleTypeSchema }),
-  Schema.TaggedStruct('party_archived', { partyId: CounterpartyUuidSchema }),
-  Schema.TaggedStruct('found', { value: CounterpartyRolePeriodSchema }),
+  CounterpartyNotFoundSchema,
+  CounterpartyRoleOverlapSchema,
+  CounterpartyPartyArchivedSchema,
+  CounterpartyRoleFoundSchema,
 ]);
 export type AddCounterpartyRoleResult = typeof AddCounterpartyRoleResultSchema.Type;
 
@@ -135,7 +150,7 @@ export interface CustomerOnboardInput extends AcceptedActionEvidence {
   readonly validTo: null | string;
 }
 
-const CustomerOnboardFoundSchema = Schema.TaggedStruct('onboarded', {
+export const CustomerOnboardFoundSchema = Schema.TaggedStruct('onboarded', {
   counterpartyCreated: Schema.Boolean,
   counterpartyRef: CounterpartyRefSchema,
   legalEntityRef: LegalEntityRefSchema,
@@ -654,16 +669,15 @@ const onboardCustomerRole = Effect.fn('CounterpartyPersistenceService.onboardCus
       overlapping.validFrom.toISOString() === input.validFrom &&
       (overlapping.validTo?.toISOString() ?? null) === input.validTo;
     return exactEquivalent
-      ? ({
-          _tag: 'onboarded',
+      ? CustomerOnboardFoundSchema.make({
           counterpartyCreated: context.created,
           counterpartyRef: context.counterpartyRef,
           rolePeriodCreated: false,
           legalEntityRef: context.legalEntityRef,
           partyRef: context.partyRef,
           role: roleDto(overlapping),
-        } as const)
-      : ({ _tag: 'overlap', roleType: 'CUSTOMER' } as const);
+        })
+      : CounterpartyRoleOverlapSchema.make({ roleType: 'CUSTOMER' });
   }
   const recordedAt = yield* DateTime.nowAsDate;
   const lifecycle = rolePeriodStorageStateAt(
@@ -706,15 +720,14 @@ const onboardCustomerRole = Effect.fn('CounterpartyPersistenceService.onboardCus
   }
   yield* syncCounterpartyReadModel(transaction, counterparty);
   yield* syncRoleReadModel(transaction, row);
-  return {
-    _tag: 'onboarded',
+  return CustomerOnboardFoundSchema.make({
     counterpartyCreated: context.created,
     counterpartyRef: context.counterpartyRef,
     rolePeriodCreated: true,
     legalEntityRef: context.legalEntityRef,
     partyRef: context.partyRef,
     role: roleDto(row),
-  } as const;
+  });
 });
 
 const onboardFoundCounterparty = Effect.fn('CounterpartyPersistenceService.onboardFoundCounterparty')(
@@ -731,17 +744,16 @@ const onboardFoundCounterparty = Effect.fn('CounterpartyPersistenceService.onboa
       true,
     );
     if (Option.isNone(counterparty)) {
-      return {
-        _tag: 'counterparty_not_found',
+      return CounterpartyNotFoundSchema.make({
         counterpartyId: context.counterpartyRef.resourceId,
-      } as const;
+      });
     }
     const resolvedParty = yield* resolveCanonicalParty(transaction, input.tenantId, counterparty.value.partyId);
     if (Option.isNone(resolvedParty)) {
       return yield* unavailable();
     }
     if (resolvedParty.value.archivedAt !== null) {
-      return { _tag: 'party_archived', partyId: resolvedParty.value.partyId } as const;
+      return CounterpartyPartyArchivedSchema.make({ partyId: resolvedParty.value.partyId });
     }
     return yield* onboardCustomerRole(transaction, input, context, counterparty.value);
   },

@@ -4,6 +4,7 @@ import { expect, it } from 'effect-rstest';
 
 import type { CounterpartyCustomerOnboardPayload } from '../../shared/actions/counterparty-customer-onboard.ts';
 import { counterpartyCustomerOnboardAction } from '../../src/actions/counterparty-customer-onboard.action.ts';
+import { CustomerOnboardFoundSchema } from '../../src/services/counterparty-persistence.service.ts';
 
 const tenantId = '81000000-0000-4000-8000-000000000001';
 const legalEntityId = '82000000-0000-4000-8000-000000000001';
@@ -73,14 +74,14 @@ const role = {
   validFrom: payload.validFrom,
   validTo: null,
 };
-const persistenceResult = (flags: { readonly counterpartyCreated: boolean; readonly rolePeriodCreated: boolean }) => ({
-  _tag: 'onboarded' as const,
-  ...flags,
-  counterpartyRef,
-  legalEntityRef,
-  partyRef,
-  role,
-});
+const persistenceResult = (flags: { readonly counterpartyCreated: boolean; readonly rolePeriodCreated: boolean }) =>
+  CustomerOnboardFoundSchema.make({
+    ...flags,
+    counterpartyRef,
+    legalEntityRef,
+    partyRef,
+    role,
+  });
 const request = (idempotencyKey: string) => ({
   payload,
   principal,

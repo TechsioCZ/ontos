@@ -53,7 +53,10 @@ import {
   acceptMatchingOfficialIdentifierRecord,
   addOfficialIdentifierRecord,
 } from './party-official-identifier-persistence.service.ts';
-import type { MatchingOfficialIdentifierUpdate } from './party-official-identifier-persistence.service.ts';
+import type {
+  MatchingOfficialIdentifierAcceptance,
+  MatchingOfficialIdentifierUpdate,
+} from './party-official-identifier-persistence.service.ts';
 // eslint-disable-next-line anti-slop-effect/no-service-constructor-imports -- Pure owner-private ResourceRef value constructor.
 import { makePartyOfficialIdentifierRef } from './party-official-identifier-reference.ts';
 
@@ -418,16 +421,20 @@ const findReusableResolvedMatchCase = Effect.fn('PartyMatchingPersistenceService
       .pipe(Effect.mapError(unavailable));
     // The ordered database candidates must be checked sequentially because each check acquires
     // canonical Party locks and the first reusable case is authoritative.
-    // oxlint-disable-next-line effect-native/no-imperative-loop-in-effect-gen
-    let latestResolvedCase: (typeof cases)[number] | undefined;
-    // oxlint-disable-next-line effect-native/no-imperative-loop-in-effect-gen
-    for (const candidateCase of cases) {
-      latestResolvedCase ??= candidateCase;
-      if (yield* resolvedCaseTargetIsReusable(transaction, { ...input, evaluationFingerprint }, candidateCase)) {
-        return { reusable: candidateCase, prior: latestResolvedCase } as const;
-      }
+    interface ReusableCaseState {
+      readonly prior: (typeof cases)[number] | undefined;
+      readonly reusable: (typeof cases)[number] | undefined;
     }
-    return { reusable: undefined, prior: latestResolvedCase } as const;
+    return yield* Effect.reduce(
+      cases,
+      (): ReusableCaseState => ({ prior: cases[0], reusable: undefined }),
+      (state, candidateCase) =>
+        state.reusable === undefined
+          ? resolvedCaseTargetIsReusable(transaction, { ...input, evaluationFingerprint }, candidateCase).pipe(
+              Effect.map((reusable) => (reusable ? { ...state, reusable: candidateCase } : state)),
+            )
+          : Effect.succeed(state),
+    );
   },
 );
 
@@ -628,9 +635,9 @@ type CreateOrMatchPartyOperation = (
 >;
 
 type MatchingIdentifierAcceptance = Effect.Success<ReturnType<typeof acceptMatchingOfficialIdentifierRecord>>;
-type AcceptedMatchingIdentifier = Extract<
+type AcceptedMatchingIdentifier = Exclude<
   MatchingIdentifierAcceptance,
-  { readonly _tag: 'added' | 'updated' | 'reused' }
+  ReturnType<typeof MatchingOfficialIdentifierAcceptance.claim_conflict>
 >;
 const requireAcceptedMatchingIdentifier = (
   result: MatchingIdentifierAcceptance,
