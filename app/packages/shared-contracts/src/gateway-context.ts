@@ -12,7 +12,6 @@ import type { HttpClientError } from '@modern-js/bff-effect/effect-client';
 import { Context } from 'effect';
 import { HttpClient, HttpClientRequest } from 'effect/unstable/http';
 
-/* oxlint-disable-next-line anti-slop-effect/no-service-constructor-imports -- These pure helpers construct contract schemas, not Effect services. */
 import { makeProblemDetailsSchema, makeRetryableProblemDetailsSchema } from './problem-details.ts';
 
 export const GATEWAY_ASSERTION_VERSION = 1 as const;
