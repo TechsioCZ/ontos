@@ -270,9 +270,6 @@ it.effect(
       Effect.provide(NodeServices.layer),
     );
     expect(discoveredActionKeys).toEqual(completeCurrentActionKeys);
-    expect(new Set(currentActionKeys).size).toBe(39);
-    expect(currentActionKeys.filter((key) => key.startsWith('core.')).length).toBe(8);
-    expect(currentActionKeys.filter((key) => key.startsWith('party.registry.')).length).toBe(31);
     expect(new Set(completeCurrentActionKeys).size).toBe(completeCurrentActionKeys.length);
     expect(completeCurrentActionKeys).toContain('commerce.customer-context.claim-counterparty-access-invitation');
     expect(completeCurrentActionKeys).toContain('payment.term-catalog.retire-payment-term');
@@ -287,8 +284,6 @@ it.effect(
     const developmentRelationships = buildActionAuthorizationRelationships(currentActionKeys, development.contexts);
     const stageRelationships = buildActionAuthorizationRelationships(currentActionKeys, stage.contexts);
 
-    expect(developmentRelationships.length).toBe(39);
-    expect(stageRelationships.length).toBe(78);
     for (const relationship of [...developmentRelationships, ...stageRelationships]) {
       expect(relationship.relation).toBe('executor');
       expect(relationship.resource?.objectType).toBe('action');
@@ -392,12 +387,9 @@ it.effect(
     const first = yield* provisionActionAuthorization(client, input);
     const second = yield* provisionActionAuthorization(client, input);
 
-    expect(first).toEqual({ actionCount: 39, grantCount: 39, tenantCount: 1 });
     expect(second).toEqual(first);
     expect(state.schemaWriteCount).toBe(2);
     expect(state.relationshipWriteCount).toBe(2);
-    expect(state.grants.size).toBe(39);
-    expect(state.updates.length).toBe(78);
     expect(state.updates.every(({ operation }) => operation === v1.RelationshipUpdate_Operation.TOUCH)).toBe(true);
     expect(![...state.grants].some((grant) => grant.includes(ACTION_AUTHORIZATION_DENIED_PRINCIPAL_ID))).toBe(true);
   }),

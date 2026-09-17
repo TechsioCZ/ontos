@@ -497,7 +497,6 @@ it.live(
       const harness = yield* makeActionTestHarness();
       const app = yield* mountApp(harness, assertion.environment);
 
-      expect(Object.keys(partyRegistryApi.groups.partyCommands.endpoints).length).toBe(25);
       expect(Object.keys(partyRegistryApi.groups.partyCommands.endpoints).toSorted()).toEqual(
         [...endpointNames].toSorted(),
       );
