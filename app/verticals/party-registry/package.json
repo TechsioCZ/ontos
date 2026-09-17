@@ -100,7 +100,7 @@
     "typescript": "7.0.2",
     "wrangler": "4.116.0",
     "zephyr-rspack-plugin": "1.2.4",
-    "effect-rstest": "https://pkg.pr.new/ScriptedAlchemy/effect-rstest@79abbf684c7b150ee5f32694129a7caf969903bc",
+    "effect-rstest": "https://pkg.pr.new/ScriptedAlchemy/effect-rstest@f29b3f495d45a11037334620bf5f693414fb5578",
     "cross-env": "10.1.0",
     "@modern-js/app-tools-extensions": "npm:@bleedingdev/modern-js-app-tools-extensions@3.9.0-ultramodern.11",
     "@modern-js/plugin-bff-build-extensions": "npm:@bleedingdev/modern-js-plugin-bff-build-extensions@3.9.0-ultramodern.11",
