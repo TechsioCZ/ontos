@@ -19,6 +19,7 @@ import {
   uuid,
 } from 'drizzle-orm/pg-core';
 import type { AnyPgColumn } from 'drizzle-orm/pg-core';
+import type { OwnerExecutionOutcome, PrivacyMeasureHandoff } from '@app/privacy/domain/privacy-measure-handoff';
 
 /**
  * Private persistence schema for Commerce Customer Context. Cross-module code must use the
@@ -69,6 +70,7 @@ export const COMMERCE_CUSTOMER_CONTEXT_TABLE_INVENTORY = [
   'profile_reconciliation_case_members',
   'profile_reconciliation_cases',
   'profile_reconciliation_owner_outcomes',
+  'privacy_measure_executions',
   'retail_customer_profiles',
   'retail_portal_profile_binding_permission_mutations',
   'retail_portal_profile_binding_history',
@@ -1944,6 +1946,47 @@ export const approvalRevalidations = commerceCustomerContextSchema.table.withRLS
   ],
 );
 
+/** Immutable owner receipt committed atomically with the exact Privacy Measure effect. */
+export const privacyMeasureExecutions = commerceCustomerContextSchema.table.withRLS(
+  'privacy_measure_executions',
+  {
+    outcomeId: uuid('outcome_id').primaryKey(),
+    ...scopeColumns(),
+    actionInvocationId: uuid('action_invocation_id').notNull(),
+    actorPrincipalId: uuid('actor_principal_id').notNull(),
+    handoff: jsonb('handoff').$type<PrivacyMeasureHandoff>().notNull(),
+    handoffFingerprint: text('handoff_fingerprint').notNull(),
+    idempotencyKey: text('idempotency_key').notNull(),
+    measureId: text('measure_id').notNull(),
+    occurredAt: timestamp('occurred_at', { withTimezone: true }).notNull(),
+    outcome: jsonb('outcome').$type<OwnerExecutionOutcome>().notNull(),
+    owningCapability: text('owning_capability').notNull(),
+    recordedAt: recordedAt(),
+    sourceDecisionRef: text('source_decision_ref').notNull(),
+    sourceDecisionRevision: integer('source_decision_revision').notNull(),
+    taskId: text('task_id').notNull(),
+  },
+  (table) => [
+    scopeIdentity('ccc_privacy_measure_executions_scope_outcome_uk', table, table.outcomeId),
+    unique('ccc_privacy_measure_executions_idempotency_uk').on(
+      table.tenantId,
+      table.legalEntityId,
+      table.idempotencyKey,
+    ),
+    unique('ccc_privacy_measure_executions_measure_owner_uk').on(
+      table.tenantId,
+      table.legalEntityId,
+      table.measureId,
+      table.owningCapability,
+    ),
+    positiveRevision('ccc_privacy_measure_executions_revision_ck', table.sourceDecisionRevision),
+    check('ccc_privacy_measure_executions_handoff_ck', sql`jsonb_typeof(${table.handoff}) = 'object'`),
+    check('ccc_privacy_measure_executions_outcome_ck', sql`jsonb_typeof(${table.outcome}) = 'object'`),
+    check('ccc_privacy_measure_executions_fingerprint_ck', sql`${table.handoffFingerprint} ~ '^[a-f0-9]{64}$'`),
+    ...scopedPolicies('ccc_privacy_measure_executions_scope', table),
+  ],
+);
+
 const commerceCustomerContextDatabaseSchema = {
   accessMutationJournal,
   addressBookReconciliationReceipts,
@@ -1973,6 +2016,7 @@ const commerceCustomerContextDatabaseSchema = {
   partyMergeProfileObservations,
   paymentTermRetirementReservations,
   principalPurchaseLimitOverrides,
+  privacyMeasureExecutions,
   profileReconciliationCaseMembers,
   profileReconciliationCases,
   profileReconciliationOwnerOutcomes,
@@ -2019,6 +2063,7 @@ export const COMMERCE_CUSTOMER_CONTEXT_TABLES = [
   profileReconciliationCaseMembers,
   profileReconciliationCases,
   profileReconciliationOwnerOutcomes,
+  privacyMeasureExecutions,
   retailCustomerProfiles,
   retailPortalProfileBindingPermissionMutations,
   retailPortalProfileBindingHistory,

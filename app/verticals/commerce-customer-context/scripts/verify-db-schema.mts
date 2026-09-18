@@ -34,6 +34,7 @@ interface VerificationRow {
 
 const EXPECTED_RUNTIME_ROUTINES = [
   'add_saved_address',
+  'apply_privacy_measure_profile_restriction',
   'archive_customer_group',
   'assess_payment_term_entitlement_use',
   'assign_customer_group_membership',
@@ -80,6 +81,7 @@ const EXPECTED_RUNTIME_ROUTINES = [
   'read_effective_customer_group_memberships',
   'read_guest_attribution',
   'read_price_group_assignments',
+  'read_privacy_measure_execution',
   'read_profile_reconciliation',
   'read_profile_trading_gate',
   'read_purchase_limit_policies',
@@ -90,6 +92,7 @@ const EXPECTED_RUNTIME_ROUTINES = [
   'reconcile_profile_reconciliation_owner',
   'record_address_book_reconciliation_receipt',
   'record_guest_attribution',
+  'record_privacy_measure_execution',
   'record_profile_reconciliation_owner_outcome',
   'redeem_invitation_claim_secret',
   'register_invitation_claim_proof',
@@ -116,6 +119,7 @@ const EXPECTED_RUNTIME_ROUTINES = [
 ] as const;
 
 const PROFILE_RUNTIME_ROUTINES = [
+  'apply_privacy_measure_profile_restriction',
   'ensure_counterparty_profile',
   'ensure_retail_profile',
   'finalize_reconciled_access_invitation',
@@ -128,6 +132,7 @@ const PROFILE_RUNTIME_ROUTINES = [
   'read_access_invitation_claim_reconciliation',
   'read_customer_profile',
   'read_guest_attribution',
+  'read_privacy_measure_execution',
   'read_profile_reconciliation',
   'read_profile_trading_gate',
   'read_retail_portal_binding',
@@ -136,6 +141,7 @@ const PROFILE_RUNTIME_ROUTINES = [
   'reconcile_profile_reconciliation_owner',
   'record_address_book_reconciliation_receipt',
   'record_guest_attribution',
+  'record_privacy_measure_execution',
   'record_profile_reconciliation_owner_outcome',
   'reserve_payment_term_retirement',
   'resolve_profile_reconciliation',
@@ -156,6 +162,7 @@ const EXPECTED_TRIGGER_NAMES = [
   'ccc_invitation_claim_proofs_lifecycle_trg',
   'ccc_party_merge_observations_append_only_trg',
   'ccc_portal_binding_history_append_only',
+  'ccc_privacy_measure_executions_immutable',
   'ccc_profile_aliases_append_only',
   'ccc_profile_history_append_only',
   'ccc_reconciliation_members_append_only',

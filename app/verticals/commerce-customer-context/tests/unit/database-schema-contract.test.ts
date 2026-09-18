@@ -28,6 +28,7 @@ import {
   purchaseApprovalRequests,
   approvalDecisions,
   approvalRevalidations,
+  privacyMeasureExecutions,
 } from '../../src/database/schema.ts';
 
 const migrationRoot = new URL('../../drizzle/', import.meta.url);
@@ -82,8 +83,39 @@ it('owns an exact private Commerce Customer Context table catalog', () => {
   );
 
   expect(COMMERCE_CUSTOMER_CONTEXT_SCHEMA_NAME).toBe('commerce_customer_context');
-  expect(COMMERCE_CUSTOMER_CONTEXT_TABLES).toHaveLength(38);
+  expect(COMMERCE_CUSTOMER_CONTEXT_TABLES).toHaveLength(39);
   expect(actual).toEqual(expected);
+});
+
+it('keeps Privacy Measure effects in an immutable exact-scope owner receipt', () => {
+  const config = getTableConfig(privacyMeasureExecutions);
+  expect(config.columns.map(({ name }) => name)).toEqual(
+    expect.arrayContaining([
+      'tenant_id',
+      'legal_entity_id',
+      'measure_id',
+      'idempotency_key',
+      'source_decision_ref',
+      'source_decision_revision',
+      'handoff_fingerprint',
+      'handoff',
+      'outcome',
+      'action_invocation_id',
+    ]),
+  );
+  expect(config.uniqueConstraints.map(({ name }) => name)).toEqual(
+    expect.arrayContaining([
+      'ccc_privacy_measure_executions_idempotency_uk',
+      'ccc_privacy_measure_executions_measure_owner_uk',
+    ]),
+  );
+  const sql = migrationSql();
+  expect(sql).toContain(
+    'ALTER TABLE "commerce_customer_context"."privacy_measure_executions" FORCE ROW LEVEL SECURITY',
+  );
+  expect(sql).toContain('CREATE TRIGGER "ccc_privacy_measure_executions_immutable"');
+  expect(sql).toContain('apply_privacy_measure_profile_restriction');
+  expect(sql).toContain('record_privacy_measure_execution');
 });
 
 it('requires tenant and Selling Legal Entity scope with complete forced-RLS policy shape', () => {

@@ -311,10 +311,9 @@ import {
   ${type}ResultSchema,
 } from '../actions/${action}.ts';
 
-export { ${type}PayloadSchema, ${type}ResultSchema } from '../actions/${action}.ts';
-export type { ${type}Payload, ${type}Result } from '../actions/${action}.ts';
+export { ${type}PayloadSchema } from '../actions/${action}.ts';
 
-export const ${type}ActionHeadersSchema = Schema.Struct({
+const ${type}ActionHeadersSchema = Schema.Struct({
   'idempotency-key': Schema.optionalKey(
     Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(200)),
   ),
@@ -484,6 +483,7 @@ export const renderActionHttpProblems = (
   return `${HEADER}
 // @ontos-action-http-owner ${vertical.moduleId}
 // @ontos-action-http-slug ${action}
+/* jscpd:ignore-start -- Generated Action problem adapters intentionally share the Core problem mapping protocol while preserving owner-specific domain errors. */
 // oxlint-disable sonarjs/function-name -- Effect Match.tags requires owner-declared tag keys; remove-when: sonarjs accepts discriminant-map properties.
 import type { ActionCoreError } from '@app/core-runtime';
 import { Effect, HttpApiMiddleware } from '@modern-js/bff-effect/effect-edge';
@@ -591,6 +591,7 @@ export const ${toCamelCase(action)}ActionSchemaErrorLive = HttpApiMiddleware.lay
   ${type}ActionSchemaErrorMiddleware,
   () => Effect.fail(${toCamelCase(action)}ActionProblem.invalid()),
 );
+/* jscpd:ignore-end */
 `;
 };
 

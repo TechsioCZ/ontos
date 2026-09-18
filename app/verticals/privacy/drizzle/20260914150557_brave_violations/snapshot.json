@@ -1,0 +1,3688 @@
+{
+  "version": "8",
+  "dialect": "postgres",
+  "id": "1a57ecac-77fc-4efb-b277-5fe8665a5321",
+  "prevIds": [
+    "84d1d163-9f06-40aa-a050-a9976b40d6a9"
+  ],
+  "ddl": [
+    {
+      "name": "privacy",
+      "entityType": "schemas"
+    },
+    {
+      "isRlsEnabled": true,
+      "name": "anti_resurrection_protections",
+      "entityType": "tables",
+      "schema": "privacy"
+    },
+    {
+      "isRlsEnabled": true,
+      "name": "consent_decisions",
+      "entityType": "tables",
+      "schema": "privacy"
+    },
+    {
+      "isRlsEnabled": true,
+      "name": "disposition_decisions",
+      "entityType": "tables",
+      "schema": "privacy"
+    },
+    {
+      "isRlsEnabled": true,
+      "name": "dsr_cases",
+      "entityType": "tables",
+      "schema": "privacy"
+    },
+    {
+      "isRlsEnabled": true,
+      "name": "dsr_owner_tasks",
+      "entityType": "tables",
+      "schema": "privacy"
+    },
+    {
+      "isRlsEnabled": true,
+      "name": "notice_provisions",
+      "entityType": "tables",
+      "schema": "privacy"
+    },
+    {
+      "isRlsEnabled": true,
+      "name": "notice_versions",
+      "entityType": "tables",
+      "schema": "privacy"
+    },
+    {
+      "isRlsEnabled": true,
+      "name": "owner_execution_outcomes",
+      "entityType": "tables",
+      "schema": "privacy"
+    },
+    {
+      "isRlsEnabled": true,
+      "name": "privacy_measure_dispatches",
+      "entityType": "tables",
+      "schema": "privacy"
+    },
+    {
+      "isRlsEnabled": true,
+      "name": "privacy_subjects",
+      "entityType": "tables",
+      "schema": "privacy"
+    },
+    {
+      "isRlsEnabled": true,
+      "name": "processing_activities",
+      "entityType": "tables",
+      "schema": "privacy"
+    },
+    {
+      "isRlsEnabled": true,
+      "name": "processing_activity_lifecycle_events",
+      "entityType": "tables",
+      "schema": "privacy"
+    },
+    {
+      "isRlsEnabled": true,
+      "name": "processing_purposes",
+      "entityType": "tables",
+      "schema": "privacy"
+    },
+    {
+      "isRlsEnabled": true,
+      "name": "purpose_versions",
+      "entityType": "tables",
+      "schema": "privacy"
+    },
+    {
+      "isRlsEnabled": true,
+      "name": "retention_evaluation_work",
+      "entityType": "tables",
+      "schema": "privacy"
+    },
+    {
+      "type": "text",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "protection_id",
+      "entityType": "columns",
+      "schema": "privacy",
+      "table": "anti_resurrection_protections"
+    },
+    {
+      "type": "uuid",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "tenant_id",
+      "entityType": "columns",
+      "schema": "privacy",
+      "table": "anti_resurrection_protections"
+    },
+    {
+      "type": "uuid",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "legal_entity_id",
+      "entityType": "columns",
+      "schema": "privacy",
+      "table": "anti_resurrection_protections"
+    },
+    {
+      "type": "text",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "subject_ref",
+      "entityType": "columns",
+      "schema": "privacy",
+      "table": "anti_resurrection_protections"
+    },
+    {
+      "type": "text",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "measure",
+      "entityType": "columns",
+      "schema": "privacy",
+      "table": "anti_resurrection_protections"
+    },
+    {
+      "type": "jsonb",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "protection_record",
+      "entityType": "columns",
+      "schema": "privacy",
+      "table": "anti_resurrection_protections"
+    },
+    {
+      "type": "timestamp with time zone",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "protected_at",
+      "entityType": "columns",
+      "schema": "privacy",
+      "table": "anti_resurrection_protections"
+    },
+    {
+      "type": "boolean",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": "true",
+      "generated": null,
+      "identity": null,
+      "name": "active",
+      "entityType": "columns",
+      "schema": "privacy",
+      "table": "anti_resurrection_protections"
+    },
+    {
+      "type": "text",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "decision_id",
+      "entityType": "columns",
+      "schema": "privacy",
+      "table": "consent_decisions"
+    },
+    {
+      "type": "uuid",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "tenant_id",
+      "entityType": "columns",
+      "schema": "privacy",
+      "table": "consent_decisions"
+    },
+    {
+      "type": "uuid",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "legal_entity_id",
+      "entityType": "columns",
+      "schema": "privacy",
+      "table": "consent_decisions"
+    },
+    {
+      "type": "text",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "scope_ref",
+      "entityType": "columns",
+      "schema": "privacy",
+      "table": "consent_decisions"
+    },
+    {
+      "type": "text",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "decision",
+      "entityType": "columns",
+      "schema": "privacy",
+      "table": "consent_decisions"
+    },
+    {
+      "type": "timestamp with time zone",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "effective_at",
+      "entityType": "columns",
+      "schema": "privacy",
+      "table": "consent_decisions"
+    },
+    {
+      "type": "jsonb",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "decision_record",
+      "entityType": "columns",
+      "schema": "privacy",
+      "table": "consent_decisions"
+    },
+    {
+      "type": "text",
+      "typeSchema": null,
+      "notNull": false,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "idempotency_key",
+      "entityType": "columns",
+      "schema": "privacy",
+      "table": "consent_decisions"
+    },
+    {
+      "type": "uuid",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "action_invocation_id",
+      "entityType": "columns",
+      "schema": "privacy",
+      "table": "consent_decisions"
+    },
+    {
+      "type": "timestamp with time zone",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": "now()",
+      "generated": null,
+      "identity": null,
+      "name": "recorded_at",
+      "entityType": "columns",
+      "schema": "privacy",
+      "table": "consent_decisions"
+    },
+    {
+      "type": "text",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "decision_ref",
+      "entityType": "columns",
+      "schema": "privacy",
+      "table": "disposition_decisions"
+    },
+    {
+      "type": "uuid",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "tenant_id",
+      "entityType": "columns",
+      "schema": "privacy",
+      "table": "disposition_decisions"
+    },
+    {
+      "type": "uuid",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "legal_entity_id",
+      "entityType": "columns",
+      "schema": "privacy",
+      "table": "disposition_decisions"
+    },
+    {
+      "type": "text",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "outcome",
+      "entityType": "columns",
+      "schema": "privacy",
+      "table": "disposition_decisions"
+    },
+    {
+      "type": "jsonb",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "decision_record",
+      "entityType": "columns",
+      "schema": "privacy",
+      "table": "disposition_decisions"
+    },
+    {
+      "type": "timestamp with time zone",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "decided_at",
+      "entityType": "columns",
+      "schema": "privacy",
+      "table": "disposition_decisions"
+    },
+    {
+      "type": "timestamp with time zone",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": "now()",
+      "generated": null,
+      "identity": null,
+      "name": "recorded_at",
+      "entityType": "columns",
+      "schema": "privacy",
+      "table": "disposition_decisions"
+    },
+    {
+      "type": "text",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "case_ref",
+      "entityType": "columns",
+      "schema": "privacy",
+      "table": "dsr_cases"
+    },
+    {
+      "type": "uuid",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "tenant_id",
+      "entityType": "columns",
+      "schema": "privacy",
+      "table": "dsr_cases"
+    },
+    {
+      "type": "uuid",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "legal_entity_id",
+      "entityType": "columns",
+      "schema": "privacy",
+      "table": "dsr_cases"
+    },
+    {
+      "type": "text",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "case_status",
+      "entityType": "columns",
+      "schema": "privacy",
+      "table": "dsr_cases"
+    },
+    {
+      "type": "jsonb",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "case_record",
+      "entityType": "columns",
+      "schema": "privacy",
+      "table": "dsr_cases"
+    },
+    {
+      "type": "timestamp with time zone",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "original_received_at",
+      "entityType": "columns",
+      "schema": "privacy",
+      "table": "dsr_cases"
+    },
+    {
+      "type": "timestamp with time zone",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": "now()",
+      "generated": null,
+      "identity": null,
+      "name": "updated_at",
+      "entityType": "columns",
+      "schema": "privacy",
+      "table": "dsr_cases"
+    },
+    {
+      "type": "text",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "task_id",
+      "entityType": "columns",
+      "schema": "privacy",
+      "table": "dsr_owner_tasks"
+    },
+    {
+      "type": "uuid",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "tenant_id",
+      "entityType": "columns",
+      "schema": "privacy",
+      "table": "dsr_owner_tasks"
+    },
+    {
+      "type": "uuid",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "legal_entity_id",
+      "entityType": "columns",
+      "schema": "privacy",
+      "table": "dsr_owner_tasks"
+    },
+    {
+      "type": "text",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "case_ref",
+      "entityType": "columns",
+      "schema": "privacy",
+      "table": "dsr_owner_tasks"
+    },
+    {
+      "type": "text",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "owning_capability",
+      "entityType": "columns",
+      "schema": "privacy",
+      "table": "dsr_owner_tasks"
+    },
+    {
+      "type": "text",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "status",
+      "entityType": "columns",
+      "schema": "privacy",
+      "table": "dsr_owner_tasks"
+    },
+    {
+      "type": "text",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "idempotency_key",
+      "entityType": "columns",
+      "schema": "privacy",
+      "table": "dsr_owner_tasks"
+    },
+    {
+      "type": "jsonb",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "task_record",
+      "entityType": "columns",
+      "schema": "privacy",
+      "table": "dsr_owner_tasks"
+    },
+    {
+      "type": "timestamp with time zone",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": "now()",
+      "generated": null,
+      "identity": null,
+      "name": "updated_at",
+      "entityType": "columns",
+      "schema": "privacy",
+      "table": "dsr_owner_tasks"
+    },
+    {
+      "type": "text",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "provision_id",
+      "entityType": "columns",
+      "schema": "privacy",
+      "table": "notice_provisions"
+    },
+    {
+      "type": "uuid",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "tenant_id",
+      "entityType": "columns",
+      "schema": "privacy",
+      "table": "notice_provisions"
+    },
+    {
+      "type": "uuid",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "legal_entity_id",
+      "entityType": "columns",
+      "schema": "privacy",
+      "table": "notice_provisions"
+    },
+    {
+      "type": "text",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "notice_version_ref",
+      "entityType": "columns",
+      "schema": "privacy",
+      "table": "notice_provisions"
+    },
+    {
+      "type": "text",
+      "typeSchema": null,
+      "notNull": false,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "privacy_subject_ref",
+      "entityType": "columns",
+      "schema": "privacy",
+      "table": "notice_provisions"
+    },
+    {
+      "type": "text",
+      "typeSchema": null,
+      "notNull": false,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "anonymous_context_ref",
+      "entityType": "columns",
+      "schema": "privacy",
+      "table": "notice_provisions"
+    },
+    {
+      "type": "text",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "outcome",
+      "entityType": "columns",
+      "schema": "privacy",
+      "table": "notice_provisions"
+    },
+    {
+      "type": "jsonb",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "provision_record",
+      "entityType": "columns",
+      "schema": "privacy",
+      "table": "notice_provisions"
+    },
+    {
+      "type": "uuid",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "action_invocation_id",
+      "entityType": "columns",
+      "schema": "privacy",
+      "table": "notice_provisions"
+    },
+    {
+      "type": "timestamp with time zone",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": "now()",
+      "generated": null,
+      "identity": null,
+      "name": "recorded_at",
+      "entityType": "columns",
+      "schema": "privacy",
+      "table": "notice_provisions"
+    },
+    {
+      "type": "uuid",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": "gen_random_uuid()",
+      "generated": null,
+      "identity": null,
+      "name": "notice_version_id",
+      "entityType": "columns",
+      "schema": "privacy",
+      "table": "notice_versions"
+    },
+    {
+      "type": "uuid",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "tenant_id",
+      "entityType": "columns",
+      "schema": "privacy",
+      "table": "notice_versions"
+    },
+    {
+      "type": "uuid",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "legal_entity_id",
+      "entityType": "columns",
+      "schema": "privacy",
+      "table": "notice_versions"
+    },
+    {
+      "type": "uuid",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "notice_id",
+      "entityType": "columns",
+      "schema": "privacy",
+      "table": "notice_versions"
+    },
+    {
+      "type": "integer",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "version_number",
+      "entityType": "columns",
+      "schema": "privacy",
+      "table": "notice_versions"
+    },
+    {
+      "type": "text",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "language",
+      "entityType": "columns",
+      "schema": "privacy",
+      "table": "notice_versions"
+    },
+    {
+      "type": "text",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "content_identity",
+      "entityType": "columns",
+      "schema": "privacy",
+      "table": "notice_versions"
+    },
+    {
+      "type": "jsonb",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "notice_record",
+      "entityType": "columns",
+      "schema": "privacy",
+      "table": "notice_versions"
+    },
+    {
+      "type": "timestamp with time zone",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "effective_from",
+      "entityType": "columns",
+      "schema": "privacy",
+      "table": "notice_versions"
+    },
+    {
+      "type": "timestamp with time zone",
+      "typeSchema": null,
+      "notNull": false,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "effective_to",
+      "entityType": "columns",
+      "schema": "privacy",
+      "table": "notice_versions"
+    },
+    {
+      "type": "timestamp with time zone",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": "now()",
+      "generated": null,
+      "identity": null,
+      "name": "recorded_at",
+      "entityType": "columns",
+      "schema": "privacy",
+      "table": "notice_versions"
+    },
+    {
+      "type": "text",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "outcome_id",
+      "entityType": "columns",
+      "schema": "privacy",
+      "table": "owner_execution_outcomes"
+    },
+    {
+      "type": "uuid",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "tenant_id",
+      "entityType": "columns",
+      "schema": "privacy",
+      "table": "owner_execution_outcomes"
+    },
+    {
+      "type": "uuid",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "legal_entity_id",
+      "entityType": "columns",
+      "schema": "privacy",
+      "table": "owner_execution_outcomes"
+    },
+    {
+      "type": "text",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "measure_id",
+      "entityType": "columns",
+      "schema": "privacy",
+      "table": "owner_execution_outcomes"
+    },
+    {
+      "type": "integer",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "attempt",
+      "entityType": "columns",
+      "schema": "privacy",
+      "table": "owner_execution_outcomes"
+    },
+    {
+      "type": "text",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "status",
+      "entityType": "columns",
+      "schema": "privacy",
+      "table": "owner_execution_outcomes"
+    },
+    {
+      "type": "jsonb",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "outcome_record",
+      "entityType": "columns",
+      "schema": "privacy",
+      "table": "owner_execution_outcomes"
+    },
+    {
+      "type": "timestamp with time zone",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": "now()",
+      "generated": null,
+      "identity": null,
+      "name": "recorded_at",
+      "entityType": "columns",
+      "schema": "privacy",
+      "table": "owner_execution_outcomes"
+    },
+    {
+      "type": "text",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "measure_id",
+      "entityType": "columns",
+      "schema": "privacy",
+      "table": "privacy_measure_dispatches"
+    },
+    {
+      "type": "uuid",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "tenant_id",
+      "entityType": "columns",
+      "schema": "privacy",
+      "table": "privacy_measure_dispatches"
+    },
+    {
+      "type": "uuid",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "legal_entity_id",
+      "entityType": "columns",
+      "schema": "privacy",
+      "table": "privacy_measure_dispatches"
+    },
+    {
+      "type": "text",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "idempotency_key",
+      "entityType": "columns",
+      "schema": "privacy",
+      "table": "privacy_measure_dispatches"
+    },
+    {
+      "type": "text",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "status",
+      "entityType": "columns",
+      "schema": "privacy",
+      "table": "privacy_measure_dispatches"
+    },
+    {
+      "type": "jsonb",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "handoff_record",
+      "entityType": "columns",
+      "schema": "privacy",
+      "table": "privacy_measure_dispatches"
+    },
+    {
+      "type": "timestamp with time zone",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": "now()",
+      "generated": null,
+      "identity": null,
+      "name": "recorded_at",
+      "entityType": "columns",
+      "schema": "privacy",
+      "table": "privacy_measure_dispatches"
+    },
+    {
+      "type": "timestamp with time zone",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": "now()",
+      "generated": null,
+      "identity": null,
+      "name": "updated_at",
+      "entityType": "columns",
+      "schema": "privacy",
+      "table": "privacy_measure_dispatches"
+    },
+    {
+      "type": "uuid",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": "gen_random_uuid()",
+      "generated": null,
+      "identity": null,
+      "name": "privacy_subject_id",
+      "entityType": "columns",
+      "schema": "privacy",
+      "table": "privacy_subjects"
+    },
+    {
+      "type": "uuid",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "tenant_id",
+      "entityType": "columns",
+      "schema": "privacy",
+      "table": "privacy_subjects"
+    },
+    {
+      "type": "uuid",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "legal_entity_id",
+      "entityType": "columns",
+      "schema": "privacy",
+      "table": "privacy_subjects"
+    },
+    {
+      "type": "text",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "subject_kind",
+      "entityType": "columns",
+      "schema": "privacy",
+      "table": "privacy_subjects"
+    },
+    {
+      "type": "jsonb",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "subject_record",
+      "entityType": "columns",
+      "schema": "privacy",
+      "table": "privacy_subjects"
+    },
+    {
+      "type": "timestamp with time zone",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": "now()",
+      "generated": null,
+      "identity": null,
+      "name": "recorded_at",
+      "entityType": "columns",
+      "schema": "privacy",
+      "table": "privacy_subjects"
+    },
+    {
+      "type": "timestamp with time zone",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": "now()",
+      "generated": null,
+      "identity": null,
+      "name": "updated_at",
+      "entityType": "columns",
+      "schema": "privacy",
+      "table": "privacy_subjects"
+    },
+    {
+      "type": "text",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "processing_activity_id",
+      "entityType": "columns",
+      "schema": "privacy",
+      "table": "processing_activities"
+    },
+    {
+      "type": "uuid",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "tenant_id",
+      "entityType": "columns",
+      "schema": "privacy",
+      "table": "processing_activities"
+    },
+    {
+      "type": "uuid",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "legal_entity_id",
+      "entityType": "columns",
+      "schema": "privacy",
+      "table": "processing_activities"
+    },
+    {
+      "type": "text",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": "'PROPOSED'",
+      "generated": null,
+      "identity": null,
+      "name": "current_lifecycle",
+      "entityType": "columns",
+      "schema": "privacy",
+      "table": "processing_activities"
+    },
+    {
+      "type": "jsonb",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "activity_record",
+      "entityType": "columns",
+      "schema": "privacy",
+      "table": "processing_activities"
+    },
+    {
+      "type": "timestamp with time zone",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": "now()",
+      "generated": null,
+      "identity": null,
+      "name": "recorded_at",
+      "entityType": "columns",
+      "schema": "privacy",
+      "table": "processing_activities"
+    },
+    {
+      "type": "timestamp with time zone",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": "now()",
+      "generated": null,
+      "identity": null,
+      "name": "updated_at",
+      "entityType": "columns",
+      "schema": "privacy",
+      "table": "processing_activities"
+    },
+    {
+      "type": "uuid",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": "gen_random_uuid()",
+      "generated": null,
+      "identity": null,
+      "name": "lifecycle_event_id",
+      "entityType": "columns",
+      "schema": "privacy",
+      "table": "processing_activity_lifecycle_events"
+    },
+    {
+      "type": "uuid",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "tenant_id",
+      "entityType": "columns",
+      "schema": "privacy",
+      "table": "processing_activity_lifecycle_events"
+    },
+    {
+      "type": "uuid",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "legal_entity_id",
+      "entityType": "columns",
+      "schema": "privacy",
+      "table": "processing_activity_lifecycle_events"
+    },
+    {
+      "type": "text",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "processing_activity_id",
+      "entityType": "columns",
+      "schema": "privacy",
+      "table": "processing_activity_lifecycle_events"
+    },
+    {
+      "type": "text",
+      "typeSchema": null,
+      "notNull": false,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "from_lifecycle",
+      "entityType": "columns",
+      "schema": "privacy",
+      "table": "processing_activity_lifecycle_events"
+    },
+    {
+      "type": "text",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "to_lifecycle",
+      "entityType": "columns",
+      "schema": "privacy",
+      "table": "processing_activity_lifecycle_events"
+    },
+    {
+      "type": "timestamp with time zone",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "effective_at",
+      "entityType": "columns",
+      "schema": "privacy",
+      "table": "processing_activity_lifecycle_events"
+    },
+    {
+      "type": "jsonb",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "event_record",
+      "entityType": "columns",
+      "schema": "privacy",
+      "table": "processing_activity_lifecycle_events"
+    },
+    {
+      "type": "uuid",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "action_invocation_id",
+      "entityType": "columns",
+      "schema": "privacy",
+      "table": "processing_activity_lifecycle_events"
+    },
+    {
+      "type": "timestamp with time zone",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": "now()",
+      "generated": null,
+      "identity": null,
+      "name": "recorded_at",
+      "entityType": "columns",
+      "schema": "privacy",
+      "table": "processing_activity_lifecycle_events"
+    },
+    {
+      "type": "uuid",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": "gen_random_uuid()",
+      "generated": null,
+      "identity": null,
+      "name": "processing_purpose_id",
+      "entityType": "columns",
+      "schema": "privacy",
+      "table": "processing_purposes"
+    },
+    {
+      "type": "uuid",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "tenant_id",
+      "entityType": "columns",
+      "schema": "privacy",
+      "table": "processing_purposes"
+    },
+    {
+      "type": "uuid",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "legal_entity_id",
+      "entityType": "columns",
+      "schema": "privacy",
+      "table": "processing_purposes"
+    },
+    {
+      "type": "text",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "business_code",
+      "entityType": "columns",
+      "schema": "privacy",
+      "table": "processing_purposes"
+    },
+    {
+      "type": "uuid",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "governance_owner_id",
+      "entityType": "columns",
+      "schema": "privacy",
+      "table": "processing_purposes"
+    },
+    {
+      "type": "text",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": "'ACTIVE'",
+      "generated": null,
+      "identity": null,
+      "name": "lifecycle",
+      "entityType": "columns",
+      "schema": "privacy",
+      "table": "processing_purposes"
+    },
+    {
+      "type": "timestamp with time zone",
+      "typeSchema": null,
+      "notNull": false,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "retired_at",
+      "entityType": "columns",
+      "schema": "privacy",
+      "table": "processing_purposes"
+    },
+    {
+      "type": "timestamp with time zone",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": "now()",
+      "generated": null,
+      "identity": null,
+      "name": "recorded_at",
+      "entityType": "columns",
+      "schema": "privacy",
+      "table": "processing_purposes"
+    },
+    {
+      "type": "timestamp with time zone",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": "now()",
+      "generated": null,
+      "identity": null,
+      "name": "updated_at",
+      "entityType": "columns",
+      "schema": "privacy",
+      "table": "processing_purposes"
+    },
+    {
+      "type": "uuid",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": "gen_random_uuid()",
+      "generated": null,
+      "identity": null,
+      "name": "purpose_version_id",
+      "entityType": "columns",
+      "schema": "privacy",
+      "table": "purpose_versions"
+    },
+    {
+      "type": "uuid",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "tenant_id",
+      "entityType": "columns",
+      "schema": "privacy",
+      "table": "purpose_versions"
+    },
+    {
+      "type": "uuid",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "legal_entity_id",
+      "entityType": "columns",
+      "schema": "privacy",
+      "table": "purpose_versions"
+    },
+    {
+      "type": "uuid",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "processing_purpose_id",
+      "entityType": "columns",
+      "schema": "privacy",
+      "table": "purpose_versions"
+    },
+    {
+      "type": "integer",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "version_number",
+      "entityType": "columns",
+      "schema": "privacy",
+      "table": "purpose_versions"
+    },
+    {
+      "type": "text",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "meaning",
+      "entityType": "columns",
+      "schema": "privacy",
+      "table": "purpose_versions"
+    },
+    {
+      "type": "timestamp with time zone",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "effective_from",
+      "entityType": "columns",
+      "schema": "privacy",
+      "table": "purpose_versions"
+    },
+    {
+      "type": "timestamp with time zone",
+      "typeSchema": null,
+      "notNull": false,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "effective_to",
+      "entityType": "columns",
+      "schema": "privacy",
+      "table": "purpose_versions"
+    },
+    {
+      "type": "uuid",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "action_invocation_id",
+      "entityType": "columns",
+      "schema": "privacy",
+      "table": "purpose_versions"
+    },
+    {
+      "type": "timestamp with time zone",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": "now()",
+      "generated": null,
+      "identity": null,
+      "name": "recorded_at",
+      "entityType": "columns",
+      "schema": "privacy",
+      "table": "purpose_versions"
+    },
+    {
+      "type": "text",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "work_ref",
+      "entityType": "columns",
+      "schema": "privacy",
+      "table": "retention_evaluation_work"
+    },
+    {
+      "type": "uuid",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "tenant_id",
+      "entityType": "columns",
+      "schema": "privacy",
+      "table": "retention_evaluation_work"
+    },
+    {
+      "type": "uuid",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "legal_entity_id",
+      "entityType": "columns",
+      "schema": "privacy",
+      "table": "retention_evaluation_work"
+    },
+    {
+      "type": "text",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "idempotency_ref",
+      "entityType": "columns",
+      "schema": "privacy",
+      "table": "retention_evaluation_work"
+    },
+    {
+      "type": "timestamp with time zone",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "due_at",
+      "entityType": "columns",
+      "schema": "privacy",
+      "table": "retention_evaluation_work"
+    },
+    {
+      "type": "text",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": "'PENDING'",
+      "generated": null,
+      "identity": null,
+      "name": "status",
+      "entityType": "columns",
+      "schema": "privacy",
+      "table": "retention_evaluation_work"
+    },
+    {
+      "type": "jsonb",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "work_record",
+      "entityType": "columns",
+      "schema": "privacy",
+      "table": "retention_evaluation_work"
+    },
+    {
+      "type": "timestamp with time zone",
+      "typeSchema": null,
+      "notNull": false,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "evaluated_at",
+      "entityType": "columns",
+      "schema": "privacy",
+      "table": "retention_evaluation_work"
+    },
+    {
+      "type": "timestamp with time zone",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": "now()",
+      "generated": null,
+      "identity": null,
+      "name": "recorded_at",
+      "entityType": "columns",
+      "schema": "privacy",
+      "table": "retention_evaluation_work"
+    },
+    {
+      "nameExplicit": true,
+      "columns": [
+        {
+          "value": "tenant_id",
+          "isExpression": false,
+          "asc": true,
+          "nullsFirst": false,
+          "opclass": null
+        },
+        {
+          "value": "legal_entity_id",
+          "isExpression": false,
+          "asc": true,
+          "nullsFirst": false,
+          "opclass": null
+        },
+        {
+          "value": "subject_ref",
+          "isExpression": false,
+          "asc": true,
+          "nullsFirst": false,
+          "opclass": null
+        },
+        {
+          "value": "active",
+          "isExpression": false,
+          "asc": true,
+          "nullsFirst": false,
+          "opclass": null
+        }
+      ],
+      "isUnique": false,
+      "where": null,
+      "with": "",
+      "method": "btree",
+      "concurrently": false,
+      "name": "privacy_anti_resurrection_subject_idx",
+      "entityType": "indexes",
+      "schema": "privacy",
+      "table": "anti_resurrection_protections"
+    },
+    {
+      "nameExplicit": true,
+      "columns": [
+        {
+          "value": "tenant_id",
+          "isExpression": false,
+          "asc": true,
+          "nullsFirst": false,
+          "opclass": null
+        },
+        {
+          "value": "legal_entity_id",
+          "isExpression": false,
+          "asc": true,
+          "nullsFirst": false,
+          "opclass": null
+        },
+        {
+          "value": "scope_ref",
+          "isExpression": false,
+          "asc": true,
+          "nullsFirst": false,
+          "opclass": null
+        },
+        {
+          "value": "effective_at",
+          "isExpression": false,
+          "asc": true,
+          "nullsFirst": false,
+          "opclass": null
+        },
+        {
+          "value": "recorded_at",
+          "isExpression": false,
+          "asc": true,
+          "nullsFirst": false,
+          "opclass": null
+        }
+      ],
+      "isUnique": false,
+      "where": null,
+      "with": "",
+      "method": "btree",
+      "concurrently": false,
+      "name": "privacy_consent_decisions_current_idx",
+      "entityType": "indexes",
+      "schema": "privacy",
+      "table": "consent_decisions"
+    },
+    {
+      "nameExplicit": true,
+      "columns": [
+        {
+          "value": "tenant_id",
+          "isExpression": false,
+          "asc": true,
+          "nullsFirst": false,
+          "opclass": null
+        },
+        {
+          "value": "legal_entity_id",
+          "isExpression": false,
+          "asc": true,
+          "nullsFirst": false,
+          "opclass": null
+        },
+        {
+          "value": "outcome",
+          "isExpression": false,
+          "asc": true,
+          "nullsFirst": false,
+          "opclass": null
+        }
+      ],
+      "isUnique": false,
+      "where": null,
+      "with": "",
+      "method": "btree",
+      "concurrently": false,
+      "name": "privacy_disposition_decisions_outcome_idx",
+      "entityType": "indexes",
+      "schema": "privacy",
+      "table": "disposition_decisions"
+    },
+    {
+      "nameExplicit": true,
+      "columns": [
+        {
+          "value": "tenant_id",
+          "isExpression": false,
+          "asc": true,
+          "nullsFirst": false,
+          "opclass": null
+        },
+        {
+          "value": "legal_entity_id",
+          "isExpression": false,
+          "asc": true,
+          "nullsFirst": false,
+          "opclass": null
+        },
+        {
+          "value": "case_status",
+          "isExpression": false,
+          "asc": true,
+          "nullsFirst": false,
+          "opclass": null
+        }
+      ],
+      "isUnique": false,
+      "where": null,
+      "with": "",
+      "method": "btree",
+      "concurrently": false,
+      "name": "privacy_dsr_cases_status_idx",
+      "entityType": "indexes",
+      "schema": "privacy",
+      "table": "dsr_cases"
+    },
+    {
+      "nameExplicit": true,
+      "columns": [
+        {
+          "value": "tenant_id",
+          "isExpression": false,
+          "asc": true,
+          "nullsFirst": false,
+          "opclass": null
+        },
+        {
+          "value": "legal_entity_id",
+          "isExpression": false,
+          "asc": true,
+          "nullsFirst": false,
+          "opclass": null
+        },
+        {
+          "value": "case_ref",
+          "isExpression": false,
+          "asc": true,
+          "nullsFirst": false,
+          "opclass": null
+        },
+        {
+          "value": "status",
+          "isExpression": false,
+          "asc": true,
+          "nullsFirst": false,
+          "opclass": null
+        }
+      ],
+      "isUnique": false,
+      "where": null,
+      "with": "",
+      "method": "btree",
+      "concurrently": false,
+      "name": "privacy_dsr_owner_tasks_case_idx",
+      "entityType": "indexes",
+      "schema": "privacy",
+      "table": "dsr_owner_tasks"
+    },
+    {
+      "nameExplicit": true,
+      "columns": [
+        {
+          "value": "tenant_id",
+          "isExpression": false,
+          "asc": true,
+          "nullsFirst": false,
+          "opclass": null
+        },
+        {
+          "value": "legal_entity_id",
+          "isExpression": false,
+          "asc": true,
+          "nullsFirst": false,
+          "opclass": null
+        },
+        {
+          "value": "privacy_subject_ref",
+          "isExpression": false,
+          "asc": true,
+          "nullsFirst": false,
+          "opclass": null
+        }
+      ],
+      "isUnique": false,
+      "where": null,
+      "with": "",
+      "method": "btree",
+      "concurrently": false,
+      "name": "privacy_notice_provisions_subject_idx",
+      "entityType": "indexes",
+      "schema": "privacy",
+      "table": "notice_provisions"
+    },
+    {
+      "nameExplicit": true,
+      "columns": [
+        {
+          "value": "tenant_id",
+          "isExpression": false,
+          "asc": true,
+          "nullsFirst": false,
+          "opclass": null
+        },
+        {
+          "value": "legal_entity_id",
+          "isExpression": false,
+          "asc": true,
+          "nullsFirst": false,
+          "opclass": null
+        },
+        {
+          "value": "language",
+          "isExpression": false,
+          "asc": true,
+          "nullsFirst": false,
+          "opclass": null
+        }
+      ],
+      "isUnique": false,
+      "where": null,
+      "with": "",
+      "method": "btree",
+      "concurrently": false,
+      "name": "privacy_notice_versions_selection_idx",
+      "entityType": "indexes",
+      "schema": "privacy",
+      "table": "notice_versions"
+    },
+    {
+      "nameExplicit": true,
+      "columns": [
+        {
+          "value": "tenant_id",
+          "isExpression": false,
+          "asc": true,
+          "nullsFirst": false,
+          "opclass": null
+        },
+        {
+          "value": "legal_entity_id",
+          "isExpression": false,
+          "asc": true,
+          "nullsFirst": false,
+          "opclass": null
+        },
+        {
+          "value": "subject_kind",
+          "isExpression": false,
+          "asc": true,
+          "nullsFirst": false,
+          "opclass": null
+        }
+      ],
+      "isUnique": false,
+      "where": null,
+      "with": "",
+      "method": "btree",
+      "concurrently": false,
+      "name": "privacy_subjects_scope_kind_idx",
+      "entityType": "indexes",
+      "schema": "privacy",
+      "table": "privacy_subjects"
+    },
+    {
+      "nameExplicit": true,
+      "columns": [
+        {
+          "value": "tenant_id",
+          "isExpression": false,
+          "asc": true,
+          "nullsFirst": false,
+          "opclass": null
+        },
+        {
+          "value": "legal_entity_id",
+          "isExpression": false,
+          "asc": true,
+          "nullsFirst": false,
+          "opclass": null
+        },
+        {
+          "value": "current_lifecycle",
+          "isExpression": false,
+          "asc": true,
+          "nullsFirst": false,
+          "opclass": null
+        }
+      ],
+      "isUnique": false,
+      "where": null,
+      "with": "",
+      "method": "btree",
+      "concurrently": false,
+      "name": "privacy_processing_activities_lifecycle_idx",
+      "entityType": "indexes",
+      "schema": "privacy",
+      "table": "processing_activities"
+    },
+    {
+      "nameExplicit": true,
+      "columns": [
+        {
+          "value": "tenant_id",
+          "isExpression": false,
+          "asc": true,
+          "nullsFirst": false,
+          "opclass": null
+        },
+        {
+          "value": "legal_entity_id",
+          "isExpression": false,
+          "asc": true,
+          "nullsFirst": false,
+          "opclass": null
+        },
+        {
+          "value": "processing_activity_id",
+          "isExpression": false,
+          "asc": true,
+          "nullsFirst": false,
+          "opclass": null
+        },
+        {
+          "value": "recorded_at",
+          "isExpression": false,
+          "asc": true,
+          "nullsFirst": false,
+          "opclass": null
+        }
+      ],
+      "isUnique": false,
+      "where": null,
+      "with": "",
+      "method": "btree",
+      "concurrently": false,
+      "name": "privacy_activity_lifecycle_history_idx",
+      "entityType": "indexes",
+      "schema": "privacy",
+      "table": "processing_activity_lifecycle_events"
+    },
+    {
+      "nameExplicit": true,
+      "columns": [
+        {
+          "value": "tenant_id",
+          "isExpression": false,
+          "asc": true,
+          "nullsFirst": false,
+          "opclass": null
+        },
+        {
+          "value": "legal_entity_id",
+          "isExpression": false,
+          "asc": true,
+          "nullsFirst": false,
+          "opclass": null
+        },
+        {
+          "value": "processing_purpose_id",
+          "isExpression": false,
+          "asc": true,
+          "nullsFirst": false,
+          "opclass": null
+        },
+        {
+          "value": "version_number",
+          "isExpression": false,
+          "asc": true,
+          "nullsFirst": false,
+          "opclass": null
+        }
+      ],
+      "isUnique": false,
+      "where": null,
+      "with": "",
+      "method": "btree",
+      "concurrently": false,
+      "name": "privacy_purpose_versions_history_idx",
+      "entityType": "indexes",
+      "schema": "privacy",
+      "table": "purpose_versions"
+    },
+    {
+      "nameExplicit": true,
+      "columns": [
+        {
+          "value": "tenant_id",
+          "isExpression": false,
+          "asc": true,
+          "nullsFirst": false,
+          "opclass": null
+        },
+        {
+          "value": "legal_entity_id",
+          "isExpression": false,
+          "asc": true,
+          "nullsFirst": false,
+          "opclass": null
+        },
+        {
+          "value": "status",
+          "isExpression": false,
+          "asc": true,
+          "nullsFirst": false,
+          "opclass": null
+        },
+        {
+          "value": "due_at",
+          "isExpression": false,
+          "asc": true,
+          "nullsFirst": false,
+          "opclass": null
+        }
+      ],
+      "isUnique": false,
+      "where": null,
+      "with": "",
+      "method": "btree",
+      "concurrently": false,
+      "name": "privacy_retention_work_due_idx",
+      "entityType": "indexes",
+      "schema": "privacy",
+      "table": "retention_evaluation_work"
+    },
+    {
+      "nameExplicit": true,
+      "columns": [
+        "tenant_id",
+        "legal_entity_id",
+        "case_ref"
+      ],
+      "schemaTo": "privacy",
+      "tableTo": "dsr_cases",
+      "columnsTo": [
+        "tenant_id",
+        "legal_entity_id",
+        "case_ref"
+      ],
+      "onUpdate": "NO ACTION",
+      "onDelete": "NO ACTION",
+      "name": "privacy_dsr_owner_tasks_case_fk",
+      "entityType": "fks",
+      "schema": "privacy",
+      "table": "dsr_owner_tasks"
+    },
+    {
+      "nameExplicit": true,
+      "columns": [
+        "tenant_id",
+        "legal_entity_id",
+        "measure_id"
+      ],
+      "schemaTo": "privacy",
+      "tableTo": "privacy_measure_dispatches",
+      "columnsTo": [
+        "tenant_id",
+        "legal_entity_id",
+        "measure_id"
+      ],
+      "onUpdate": "NO ACTION",
+      "onDelete": "NO ACTION",
+      "name": "privacy_owner_outcomes_measure_fk",
+      "entityType": "fks",
+      "schema": "privacy",
+      "table": "owner_execution_outcomes"
+    },
+    {
+      "nameExplicit": true,
+      "columns": [
+        "tenant_id",
+        "legal_entity_id",
+        "processing_activity_id"
+      ],
+      "schemaTo": "privacy",
+      "tableTo": "processing_activities",
+      "columnsTo": [
+        "tenant_id",
+        "legal_entity_id",
+        "processing_activity_id"
+      ],
+      "onUpdate": "NO ACTION",
+      "onDelete": "NO ACTION",
+      "name": "privacy_activity_lifecycle_activity_fk",
+      "entityType": "fks",
+      "schema": "privacy",
+      "table": "processing_activity_lifecycle_events"
+    },
+    {
+      "nameExplicit": true,
+      "columns": [
+        "tenant_id",
+        "legal_entity_id",
+        "processing_purpose_id"
+      ],
+      "schemaTo": "privacy",
+      "tableTo": "processing_purposes",
+      "columnsTo": [
+        "tenant_id",
+        "legal_entity_id",
+        "processing_purpose_id"
+      ],
+      "onUpdate": "NO ACTION",
+      "onDelete": "NO ACTION",
+      "name": "privacy_purpose_versions_purpose_fk",
+      "entityType": "fks",
+      "schema": "privacy",
+      "table": "purpose_versions"
+    },
+    {
+      "columns": [
+        "protection_id"
+      ],
+      "nameExplicit": false,
+      "name": "anti_resurrection_protections_pkey",
+      "schema": "privacy",
+      "table": "anti_resurrection_protections",
+      "entityType": "pks"
+    },
+    {
+      "columns": [
+        "decision_id"
+      ],
+      "nameExplicit": false,
+      "name": "consent_decisions_pkey",
+      "schema": "privacy",
+      "table": "consent_decisions",
+      "entityType": "pks"
+    },
+    {
+      "columns": [
+        "decision_ref"
+      ],
+      "nameExplicit": false,
+      "name": "disposition_decisions_pkey",
+      "schema": "privacy",
+      "table": "disposition_decisions",
+      "entityType": "pks"
+    },
+    {
+      "columns": [
+        "case_ref"
+      ],
+      "nameExplicit": false,
+      "name": "dsr_cases_pkey",
+      "schema": "privacy",
+      "table": "dsr_cases",
+      "entityType": "pks"
+    },
+    {
+      "columns": [
+        "task_id"
+      ],
+      "nameExplicit": false,
+      "name": "dsr_owner_tasks_pkey",
+      "schema": "privacy",
+      "table": "dsr_owner_tasks",
+      "entityType": "pks"
+    },
+    {
+      "columns": [
+        "provision_id"
+      ],
+      "nameExplicit": false,
+      "name": "notice_provisions_pkey",
+      "schema": "privacy",
+      "table": "notice_provisions",
+      "entityType": "pks"
+    },
+    {
+      "columns": [
+        "notice_version_id"
+      ],
+      "nameExplicit": false,
+      "name": "notice_versions_pkey",
+      "schema": "privacy",
+      "table": "notice_versions",
+      "entityType": "pks"
+    },
+    {
+      "columns": [
+        "outcome_id"
+      ],
+      "nameExplicit": false,
+      "name": "owner_execution_outcomes_pkey",
+      "schema": "privacy",
+      "table": "owner_execution_outcomes",
+      "entityType": "pks"
+    },
+    {
+      "columns": [
+        "measure_id"
+      ],
+      "nameExplicit": false,
+      "name": "privacy_measure_dispatches_pkey",
+      "schema": "privacy",
+      "table": "privacy_measure_dispatches",
+      "entityType": "pks"
+    },
+    {
+      "columns": [
+        "privacy_subject_id"
+      ],
+      "nameExplicit": false,
+      "name": "privacy_subjects_pkey",
+      "schema": "privacy",
+      "table": "privacy_subjects",
+      "entityType": "pks"
+    },
+    {
+      "columns": [
+        "processing_activity_id"
+      ],
+      "nameExplicit": false,
+      "name": "processing_activities_pkey",
+      "schema": "privacy",
+      "table": "processing_activities",
+      "entityType": "pks"
+    },
+    {
+      "columns": [
+        "lifecycle_event_id"
+      ],
+      "nameExplicit": false,
+      "name": "processing_activity_lifecycle_events_pkey",
+      "schema": "privacy",
+      "table": "processing_activity_lifecycle_events",
+      "entityType": "pks"
+    },
+    {
+      "columns": [
+        "processing_purpose_id"
+      ],
+      "nameExplicit": false,
+      "name": "processing_purposes_pkey",
+      "schema": "privacy",
+      "table": "processing_purposes",
+      "entityType": "pks"
+    },
+    {
+      "columns": [
+        "purpose_version_id"
+      ],
+      "nameExplicit": false,
+      "name": "purpose_versions_pkey",
+      "schema": "privacy",
+      "table": "purpose_versions",
+      "entityType": "pks"
+    },
+    {
+      "columns": [
+        "work_ref"
+      ],
+      "nameExplicit": false,
+      "name": "retention_evaluation_work_pkey",
+      "schema": "privacy",
+      "table": "retention_evaluation_work",
+      "entityType": "pks"
+    },
+    {
+      "nameExplicit": true,
+      "columns": [
+        "tenant_id",
+        "legal_entity_id",
+        "protection_id"
+      ],
+      "nullsNotDistinct": false,
+      "name": "privacy_anti_resurrection_scope_id_uk",
+      "entityType": "uniques",
+      "schema": "privacy",
+      "table": "anti_resurrection_protections"
+    },
+    {
+      "nameExplicit": true,
+      "columns": [
+        "tenant_id",
+        "legal_entity_id",
+        "decision_id"
+      ],
+      "nullsNotDistinct": false,
+      "name": "privacy_consent_decisions_scope_id_uk",
+      "entityType": "uniques",
+      "schema": "privacy",
+      "table": "consent_decisions"
+    },
+    {
+      "nameExplicit": true,
+      "columns": [
+        "tenant_id",
+        "legal_entity_id",
+        "action_invocation_id"
+      ],
+      "nullsNotDistinct": false,
+      "name": "privacy_consent_decisions_invocation_uk",
+      "entityType": "uniques",
+      "schema": "privacy",
+      "table": "consent_decisions"
+    },
+    {
+      "nameExplicit": true,
+      "columns": [
+        "tenant_id",
+        "legal_entity_id",
+        "idempotency_key"
+      ],
+      "nullsNotDistinct": false,
+      "name": "privacy_consent_decisions_idempotency_uk",
+      "entityType": "uniques",
+      "schema": "privacy",
+      "table": "consent_decisions"
+    },
+    {
+      "nameExplicit": true,
+      "columns": [
+        "tenant_id",
+        "legal_entity_id",
+        "decision_ref"
+      ],
+      "nullsNotDistinct": false,
+      "name": "privacy_disposition_decisions_scope_id_uk",
+      "entityType": "uniques",
+      "schema": "privacy",
+      "table": "disposition_decisions"
+    },
+    {
+      "nameExplicit": true,
+      "columns": [
+        "tenant_id",
+        "legal_entity_id",
+        "case_ref"
+      ],
+      "nullsNotDistinct": false,
+      "name": "privacy_dsr_cases_scope_id_uk",
+      "entityType": "uniques",
+      "schema": "privacy",
+      "table": "dsr_cases"
+    },
+    {
+      "nameExplicit": true,
+      "columns": [
+        "tenant_id",
+        "legal_entity_id",
+        "task_id"
+      ],
+      "nullsNotDistinct": false,
+      "name": "privacy_dsr_owner_tasks_scope_id_uk",
+      "entityType": "uniques",
+      "schema": "privacy",
+      "table": "dsr_owner_tasks"
+    },
+    {
+      "nameExplicit": true,
+      "columns": [
+        "tenant_id",
+        "legal_entity_id",
+        "idempotency_key"
+      ],
+      "nullsNotDistinct": false,
+      "name": "privacy_dsr_owner_tasks_idempotency_uk",
+      "entityType": "uniques",
+      "schema": "privacy",
+      "table": "dsr_owner_tasks"
+    },
+    {
+      "nameExplicit": true,
+      "columns": [
+        "tenant_id",
+        "legal_entity_id",
+        "provision_id"
+      ],
+      "nullsNotDistinct": false,
+      "name": "privacy_notice_provisions_scope_id_uk",
+      "entityType": "uniques",
+      "schema": "privacy",
+      "table": "notice_provisions"
+    },
+    {
+      "nameExplicit": true,
+      "columns": [
+        "tenant_id",
+        "legal_entity_id",
+        "action_invocation_id"
+      ],
+      "nullsNotDistinct": false,
+      "name": "privacy_notice_provisions_invocation_uk",
+      "entityType": "uniques",
+      "schema": "privacy",
+      "table": "notice_provisions"
+    },
+    {
+      "nameExplicit": true,
+      "columns": [
+        "tenant_id",
+        "legal_entity_id",
+        "notice_version_id"
+      ],
+      "nullsNotDistinct": false,
+      "name": "privacy_notice_versions_scope_id_uk",
+      "entityType": "uniques",
+      "schema": "privacy",
+      "table": "notice_versions"
+    },
+    {
+      "nameExplicit": true,
+      "columns": [
+        "tenant_id",
+        "legal_entity_id",
+        "notice_id",
+        "version_number"
+      ],
+      "nullsNotDistinct": false,
+      "name": "privacy_notice_versions_number_uk",
+      "entityType": "uniques",
+      "schema": "privacy",
+      "table": "notice_versions"
+    },
+    {
+      "nameExplicit": true,
+      "columns": [
+        "tenant_id",
+        "legal_entity_id",
+        "outcome_id"
+      ],
+      "nullsNotDistinct": false,
+      "name": "privacy_owner_outcomes_scope_id_uk",
+      "entityType": "uniques",
+      "schema": "privacy",
+      "table": "owner_execution_outcomes"
+    },
+    {
+      "nameExplicit": true,
+      "columns": [
+        "tenant_id",
+        "legal_entity_id",
+        "measure_id",
+        "attempt"
+      ],
+      "nullsNotDistinct": false,
+      "name": "privacy_owner_outcomes_attempt_uk",
+      "entityType": "uniques",
+      "schema": "privacy",
+      "table": "owner_execution_outcomes"
+    },
+    {
+      "nameExplicit": true,
+      "columns": [
+        "tenant_id",
+        "legal_entity_id",
+        "measure_id"
+      ],
+      "nullsNotDistinct": false,
+      "name": "privacy_measure_dispatches_scope_id_uk",
+      "entityType": "uniques",
+      "schema": "privacy",
+      "table": "privacy_measure_dispatches"
+    },
+    {
+      "nameExplicit": true,
+      "columns": [
+        "tenant_id",
+        "legal_entity_id",
+        "idempotency_key"
+      ],
+      "nullsNotDistinct": false,
+      "name": "privacy_measure_dispatches_idempotency_uk",
+      "entityType": "uniques",
+      "schema": "privacy",
+      "table": "privacy_measure_dispatches"
+    },
+    {
+      "nameExplicit": true,
+      "columns": [
+        "tenant_id",
+        "legal_entity_id",
+        "privacy_subject_id"
+      ],
+      "nullsNotDistinct": false,
+      "name": "privacy_subjects_scope_id_uk",
+      "entityType": "uniques",
+      "schema": "privacy",
+      "table": "privacy_subjects"
+    },
+    {
+      "nameExplicit": true,
+      "columns": [
+        "tenant_id",
+        "legal_entity_id",
+        "processing_activity_id"
+      ],
+      "nullsNotDistinct": false,
+      "name": "privacy_processing_activities_scope_id_uk",
+      "entityType": "uniques",
+      "schema": "privacy",
+      "table": "processing_activities"
+    },
+    {
+      "nameExplicit": true,
+      "columns": [
+        "tenant_id",
+        "legal_entity_id",
+        "lifecycle_event_id"
+      ],
+      "nullsNotDistinct": false,
+      "name": "privacy_activity_lifecycle_scope_id_uk",
+      "entityType": "uniques",
+      "schema": "privacy",
+      "table": "processing_activity_lifecycle_events"
+    },
+    {
+      "nameExplicit": true,
+      "columns": [
+        "tenant_id",
+        "legal_entity_id",
+        "action_invocation_id"
+      ],
+      "nullsNotDistinct": false,
+      "name": "privacy_activity_lifecycle_invocation_uk",
+      "entityType": "uniques",
+      "schema": "privacy",
+      "table": "processing_activity_lifecycle_events"
+    },
+    {
+      "nameExplicit": true,
+      "columns": [
+        "tenant_id",
+        "legal_entity_id",
+        "processing_purpose_id"
+      ],
+      "nullsNotDistinct": false,
+      "name": "privacy_processing_purposes_scope_id_uk",
+      "entityType": "uniques",
+      "schema": "privacy",
+      "table": "processing_purposes"
+    },
+    {
+      "nameExplicit": true,
+      "columns": [
+        "tenant_id",
+        "legal_entity_id",
+        "business_code"
+      ],
+      "nullsNotDistinct": false,
+      "name": "privacy_processing_purposes_scope_code_uk",
+      "entityType": "uniques",
+      "schema": "privacy",
+      "table": "processing_purposes"
+    },
+    {
+      "nameExplicit": true,
+      "columns": [
+        "tenant_id",
+        "legal_entity_id",
+        "purpose_version_id"
+      ],
+      "nullsNotDistinct": false,
+      "name": "privacy_purpose_versions_scope_id_uk",
+      "entityType": "uniques",
+      "schema": "privacy",
+      "table": "purpose_versions"
+    },
+    {
+      "nameExplicit": true,
+      "columns": [
+        "tenant_id",
+        "legal_entity_id",
+        "processing_purpose_id",
+        "version_number"
+      ],
+      "nullsNotDistinct": false,
+      "name": "privacy_purpose_versions_number_uk",
+      "entityType": "uniques",
+      "schema": "privacy",
+      "table": "purpose_versions"
+    },
+    {
+      "nameExplicit": true,
+      "columns": [
+        "tenant_id",
+        "legal_entity_id",
+        "action_invocation_id"
+      ],
+      "nullsNotDistinct": false,
+      "name": "privacy_purpose_versions_invocation_uk",
+      "entityType": "uniques",
+      "schema": "privacy",
+      "table": "purpose_versions"
+    },
+    {
+      "nameExplicit": true,
+      "columns": [
+        "tenant_id",
+        "legal_entity_id",
+        "work_ref"
+      ],
+      "nullsNotDistinct": false,
+      "name": "privacy_retention_work_scope_id_uk",
+      "entityType": "uniques",
+      "schema": "privacy",
+      "table": "retention_evaluation_work"
+    },
+    {
+      "nameExplicit": true,
+      "columns": [
+        "tenant_id",
+        "legal_entity_id",
+        "idempotency_ref"
+      ],
+      "nullsNotDistinct": false,
+      "name": "privacy_retention_work_idempotency_uk",
+      "entityType": "uniques",
+      "schema": "privacy",
+      "table": "retention_evaluation_work"
+    },
+    {
+      "value": "\"decision\" in ('GRANTED', 'REFUSED', 'WITHDRAWN')",
+      "name": "privacy_consent_decisions_kind_ck",
+      "entityType": "checks",
+      "schema": "privacy",
+      "table": "consent_decisions"
+    },
+    {
+      "value": "(\"privacy_subject_ref\" is null) <> (\"anonymous_context_ref\" is null)",
+      "name": "privacy_notice_provisions_subject_ck",
+      "entityType": "checks",
+      "schema": "privacy",
+      "table": "notice_provisions"
+    },
+    {
+      "value": "\"subject_kind\" in ('DATA_SUBJECT', 'ANONYMOUS')",
+      "name": "privacy_subjects_kind_ck",
+      "entityType": "checks",
+      "schema": "privacy",
+      "table": "privacy_subjects"
+    },
+    {
+      "value": "\"current_lifecycle\" in ('PROPOSED', 'EFFECTIVE', 'SUSPENDED', 'ENDED')",
+      "name": "privacy_processing_activities_lifecycle_ck",
+      "entityType": "checks",
+      "schema": "privacy",
+      "table": "processing_activities"
+    },
+    {
+      "value": "\"business_code\" ~ '^[A-Z][A-Z0-9_]{0,63}$'",
+      "name": "privacy_processing_purposes_code_ck",
+      "entityType": "checks",
+      "schema": "privacy",
+      "table": "processing_purposes"
+    },
+    {
+      "value": "\"lifecycle\" in ('ACTIVE', 'RETIRED')",
+      "name": "privacy_processing_purposes_lifecycle_ck",
+      "entityType": "checks",
+      "schema": "privacy",
+      "table": "processing_purposes"
+    },
+    {
+      "value": "\"version_number\" > 0",
+      "name": "privacy_purpose_versions_number_ck",
+      "entityType": "checks",
+      "schema": "privacy",
+      "table": "purpose_versions"
+    },
+    {
+      "value": "\"effective_to\" is null or \"effective_to\" > \"effective_from\"",
+      "name": "privacy_purpose_versions_period_ck",
+      "entityType": "checks",
+      "schema": "privacy",
+      "table": "purpose_versions"
+    },
+    {
+      "as": "PERMISSIVE",
+      "for": "SELECT",
+      "roles": [
+        "ontos_runtime"
+      ],
+      "using": "\"privacy\".\"anti_resurrection_protections\".\"tenant_id\" = nullif(current_setting('ontos.tenant_id', true), '')::uuid and \"privacy\".\"anti_resurrection_protections\".\"legal_entity_id\" = nullif(current_setting('ontos.legal_entity_id', true), '')::uuid",
+      "withCheck": null,
+      "name": "privacy_anti_resurrection_scope_select",
+      "entityType": "policies",
+      "schema": "privacy",
+      "table": "anti_resurrection_protections"
+    },
+    {
+      "as": "PERMISSIVE",
+      "for": "INSERT",
+      "roles": [
+        "ontos_runtime"
+      ],
+      "using": null,
+      "withCheck": "\"privacy\".\"anti_resurrection_protections\".\"tenant_id\" = nullif(current_setting('ontos.tenant_id', true), '')::uuid and \"privacy\".\"anti_resurrection_protections\".\"legal_entity_id\" = nullif(current_setting('ontos.legal_entity_id', true), '')::uuid",
+      "name": "privacy_anti_resurrection_scope_insert",
+      "entityType": "policies",
+      "schema": "privacy",
+      "table": "anti_resurrection_protections"
+    },
+    {
+      "as": "PERMISSIVE",
+      "for": "UPDATE",
+      "roles": [
+        "ontos_runtime"
+      ],
+      "using": "\"privacy\".\"anti_resurrection_protections\".\"tenant_id\" = nullif(current_setting('ontos.tenant_id', true), '')::uuid and \"privacy\".\"anti_resurrection_protections\".\"legal_entity_id\" = nullif(current_setting('ontos.legal_entity_id', true), '')::uuid",
+      "withCheck": "\"privacy\".\"anti_resurrection_protections\".\"tenant_id\" = nullif(current_setting('ontos.tenant_id', true), '')::uuid and \"privacy\".\"anti_resurrection_protections\".\"legal_entity_id\" = nullif(current_setting('ontos.legal_entity_id', true), '')::uuid",
+      "name": "privacy_anti_resurrection_scope_update",
+      "entityType": "policies",
+      "schema": "privacy",
+      "table": "anti_resurrection_protections"
+    },
+    {
+      "as": "PERMISSIVE",
+      "for": "DELETE",
+      "roles": [
+        "ontos_runtime"
+      ],
+      "using": "\"privacy\".\"anti_resurrection_protections\".\"tenant_id\" = nullif(current_setting('ontos.tenant_id', true), '')::uuid and \"privacy\".\"anti_resurrection_protections\".\"legal_entity_id\" = nullif(current_setting('ontos.legal_entity_id', true), '')::uuid",
+      "withCheck": null,
+      "name": "privacy_anti_resurrection_scope_delete",
+      "entityType": "policies",
+      "schema": "privacy",
+      "table": "anti_resurrection_protections"
+    },
+    {
+      "as": "PERMISSIVE",
+      "for": "SELECT",
+      "roles": [
+        "ontos_runtime"
+      ],
+      "using": "\"privacy\".\"consent_decisions\".\"tenant_id\" = nullif(current_setting('ontos.tenant_id', true), '')::uuid and \"privacy\".\"consent_decisions\".\"legal_entity_id\" = nullif(current_setting('ontos.legal_entity_id', true), '')::uuid",
+      "withCheck": null,
+      "name": "privacy_consent_decisions_scope_select",
+      "entityType": "policies",
+      "schema": "privacy",
+      "table": "consent_decisions"
+    },
+    {
+      "as": "PERMISSIVE",
+      "for": "INSERT",
+      "roles": [
+        "ontos_runtime"
+      ],
+      "using": null,
+      "withCheck": "\"privacy\".\"consent_decisions\".\"tenant_id\" = nullif(current_setting('ontos.tenant_id', true), '')::uuid and \"privacy\".\"consent_decisions\".\"legal_entity_id\" = nullif(current_setting('ontos.legal_entity_id', true), '')::uuid",
+      "name": "privacy_consent_decisions_scope_insert",
+      "entityType": "policies",
+      "schema": "privacy",
+      "table": "consent_decisions"
+    },
+    {
+      "as": "PERMISSIVE",
+      "for": "UPDATE",
+      "roles": [
+        "ontos_runtime"
+      ],
+      "using": "\"privacy\".\"consent_decisions\".\"tenant_id\" = nullif(current_setting('ontos.tenant_id', true), '')::uuid and \"privacy\".\"consent_decisions\".\"legal_entity_id\" = nullif(current_setting('ontos.legal_entity_id', true), '')::uuid",
+      "withCheck": "\"privacy\".\"consent_decisions\".\"tenant_id\" = nullif(current_setting('ontos.tenant_id', true), '')::uuid and \"privacy\".\"consent_decisions\".\"legal_entity_id\" = nullif(current_setting('ontos.legal_entity_id', true), '')::uuid",
+      "name": "privacy_consent_decisions_scope_update",
+      "entityType": "policies",
+      "schema": "privacy",
+      "table": "consent_decisions"
+    },
+    {
+      "as": "PERMISSIVE",
+      "for": "DELETE",
+      "roles": [
+        "ontos_runtime"
+      ],
+      "using": "\"privacy\".\"consent_decisions\".\"tenant_id\" = nullif(current_setting('ontos.tenant_id', true), '')::uuid and \"privacy\".\"consent_decisions\".\"legal_entity_id\" = nullif(current_setting('ontos.legal_entity_id', true), '')::uuid",
+      "withCheck": null,
+      "name": "privacy_consent_decisions_scope_delete",
+      "entityType": "policies",
+      "schema": "privacy",
+      "table": "consent_decisions"
+    },
+    {
+      "as": "PERMISSIVE",
+      "for": "SELECT",
+      "roles": [
+        "ontos_runtime"
+      ],
+      "using": "\"privacy\".\"disposition_decisions\".\"tenant_id\" = nullif(current_setting('ontos.tenant_id', true), '')::uuid and \"privacy\".\"disposition_decisions\".\"legal_entity_id\" = nullif(current_setting('ontos.legal_entity_id', true), '')::uuid",
+      "withCheck": null,
+      "name": "privacy_disposition_decisions_scope_select",
+      "entityType": "policies",
+      "schema": "privacy",
+      "table": "disposition_decisions"
+    },
+    {
+      "as": "PERMISSIVE",
+      "for": "INSERT",
+      "roles": [
+        "ontos_runtime"
+      ],
+      "using": null,
+      "withCheck": "\"privacy\".\"disposition_decisions\".\"tenant_id\" = nullif(current_setting('ontos.tenant_id', true), '')::uuid and \"privacy\".\"disposition_decisions\".\"legal_entity_id\" = nullif(current_setting('ontos.legal_entity_id', true), '')::uuid",
+      "name": "privacy_disposition_decisions_scope_insert",
+      "entityType": "policies",
+      "schema": "privacy",
+      "table": "disposition_decisions"
+    },
+    {
+      "as": "PERMISSIVE",
+      "for": "UPDATE",
+      "roles": [
+        "ontos_runtime"
+      ],
+      "using": "\"privacy\".\"disposition_decisions\".\"tenant_id\" = nullif(current_setting('ontos.tenant_id', true), '')::uuid and \"privacy\".\"disposition_decisions\".\"legal_entity_id\" = nullif(current_setting('ontos.legal_entity_id', true), '')::uuid",
+      "withCheck": "\"privacy\".\"disposition_decisions\".\"tenant_id\" = nullif(current_setting('ontos.tenant_id', true), '')::uuid and \"privacy\".\"disposition_decisions\".\"legal_entity_id\" = nullif(current_setting('ontos.legal_entity_id', true), '')::uuid",
+      "name": "privacy_disposition_decisions_scope_update",
+      "entityType": "policies",
+      "schema": "privacy",
+      "table": "disposition_decisions"
+    },
+    {
+      "as": "PERMISSIVE",
+      "for": "DELETE",
+      "roles": [
+        "ontos_runtime"
+      ],
+      "using": "\"privacy\".\"disposition_decisions\".\"tenant_id\" = nullif(current_setting('ontos.tenant_id', true), '')::uuid and \"privacy\".\"disposition_decisions\".\"legal_entity_id\" = nullif(current_setting('ontos.legal_entity_id', true), '')::uuid",
+      "withCheck": null,
+      "name": "privacy_disposition_decisions_scope_delete",
+      "entityType": "policies",
+      "schema": "privacy",
+      "table": "disposition_decisions"
+    },
+    {
+      "as": "PERMISSIVE",
+      "for": "SELECT",
+      "roles": [
+        "ontos_runtime"
+      ],
+      "using": "\"privacy\".\"dsr_cases\".\"tenant_id\" = nullif(current_setting('ontos.tenant_id', true), '')::uuid and \"privacy\".\"dsr_cases\".\"legal_entity_id\" = nullif(current_setting('ontos.legal_entity_id', true), '')::uuid",
+      "withCheck": null,
+      "name": "privacy_dsr_cases_scope_select",
+      "entityType": "policies",
+      "schema": "privacy",
+      "table": "dsr_cases"
+    },
+    {
+      "as": "PERMISSIVE",
+      "for": "INSERT",
+      "roles": [
+        "ontos_runtime"
+      ],
+      "using": null,
+      "withCheck": "\"privacy\".\"dsr_cases\".\"tenant_id\" = nullif(current_setting('ontos.tenant_id', true), '')::uuid and \"privacy\".\"dsr_cases\".\"legal_entity_id\" = nullif(current_setting('ontos.legal_entity_id', true), '')::uuid",
+      "name": "privacy_dsr_cases_scope_insert",
+      "entityType": "policies",
+      "schema": "privacy",
+      "table": "dsr_cases"
+    },
+    {
+      "as": "PERMISSIVE",
+      "for": "UPDATE",
+      "roles": [
+        "ontos_runtime"
+      ],
+      "using": "\"privacy\".\"dsr_cases\".\"tenant_id\" = nullif(current_setting('ontos.tenant_id', true), '')::uuid and \"privacy\".\"dsr_cases\".\"legal_entity_id\" = nullif(current_setting('ontos.legal_entity_id', true), '')::uuid",
+      "withCheck": "\"privacy\".\"dsr_cases\".\"tenant_id\" = nullif(current_setting('ontos.tenant_id', true), '')::uuid and \"privacy\".\"dsr_cases\".\"legal_entity_id\" = nullif(current_setting('ontos.legal_entity_id', true), '')::uuid",
+      "name": "privacy_dsr_cases_scope_update",
+      "entityType": "policies",
+      "schema": "privacy",
+      "table": "dsr_cases"
+    },
+    {
+      "as": "PERMISSIVE",
+      "for": "DELETE",
+      "roles": [
+        "ontos_runtime"
+      ],
+      "using": "\"privacy\".\"dsr_cases\".\"tenant_id\" = nullif(current_setting('ontos.tenant_id', true), '')::uuid and \"privacy\".\"dsr_cases\".\"legal_entity_id\" = nullif(current_setting('ontos.legal_entity_id', true), '')::uuid",
+      "withCheck": null,
+      "name": "privacy_dsr_cases_scope_delete",
+      "entityType": "policies",
+      "schema": "privacy",
+      "table": "dsr_cases"
+    },
+    {
+      "as": "PERMISSIVE",
+      "for": "SELECT",
+      "roles": [
+        "ontos_runtime"
+      ],
+      "using": "\"privacy\".\"dsr_owner_tasks\".\"tenant_id\" = nullif(current_setting('ontos.tenant_id', true), '')::uuid and \"privacy\".\"dsr_owner_tasks\".\"legal_entity_id\" = nullif(current_setting('ontos.legal_entity_id', true), '')::uuid",
+      "withCheck": null,
+      "name": "privacy_dsr_owner_tasks_scope_select",
+      "entityType": "policies",
+      "schema": "privacy",
+      "table": "dsr_owner_tasks"
+    },
+    {
+      "as": "PERMISSIVE",
+      "for": "INSERT",
+      "roles": [
+        "ontos_runtime"
+      ],
+      "using": null,
+      "withCheck": "\"privacy\".\"dsr_owner_tasks\".\"tenant_id\" = nullif(current_setting('ontos.tenant_id', true), '')::uuid and \"privacy\".\"dsr_owner_tasks\".\"legal_entity_id\" = nullif(current_setting('ontos.legal_entity_id', true), '')::uuid",
+      "name": "privacy_dsr_owner_tasks_scope_insert",
+      "entityType": "policies",
+      "schema": "privacy",
+      "table": "dsr_owner_tasks"
+    },
+    {
+      "as": "PERMISSIVE",
+      "for": "UPDATE",
+      "roles": [
+        "ontos_runtime"
+      ],
+      "using": "\"privacy\".\"dsr_owner_tasks\".\"tenant_id\" = nullif(current_setting('ontos.tenant_id', true), '')::uuid and \"privacy\".\"dsr_owner_tasks\".\"legal_entity_id\" = nullif(current_setting('ontos.legal_entity_id', true), '')::uuid",
+      "withCheck": "\"privacy\".\"dsr_owner_tasks\".\"tenant_id\" = nullif(current_setting('ontos.tenant_id', true), '')::uuid and \"privacy\".\"dsr_owner_tasks\".\"legal_entity_id\" = nullif(current_setting('ontos.legal_entity_id', true), '')::uuid",
+      "name": "privacy_dsr_owner_tasks_scope_update",
+      "entityType": "policies",
+      "schema": "privacy",
+      "table": "dsr_owner_tasks"
+    },
+    {
+      "as": "PERMISSIVE",
+      "for": "DELETE",
+      "roles": [
+        "ontos_runtime"
+      ],
+      "using": "\"privacy\".\"dsr_owner_tasks\".\"tenant_id\" = nullif(current_setting('ontos.tenant_id', true), '')::uuid and \"privacy\".\"dsr_owner_tasks\".\"legal_entity_id\" = nullif(current_setting('ontos.legal_entity_id', true), '')::uuid",
+      "withCheck": null,
+      "name": "privacy_dsr_owner_tasks_scope_delete",
+      "entityType": "policies",
+      "schema": "privacy",
+      "table": "dsr_owner_tasks"
+    },
+    {
+      "as": "PERMISSIVE",
+      "for": "SELECT",
+      "roles": [
+        "ontos_runtime"
+      ],
+      "using": "\"privacy\".\"notice_provisions\".\"tenant_id\" = nullif(current_setting('ontos.tenant_id', true), '')::uuid and \"privacy\".\"notice_provisions\".\"legal_entity_id\" = nullif(current_setting('ontos.legal_entity_id', true), '')::uuid",
+      "withCheck": null,
+      "name": "privacy_notice_provisions_scope_select",
+      "entityType": "policies",
+      "schema": "privacy",
+      "table": "notice_provisions"
+    },
+    {
+      "as": "PERMISSIVE",
+      "for": "INSERT",
+      "roles": [
+        "ontos_runtime"
+      ],
+      "using": null,
+      "withCheck": "\"privacy\".\"notice_provisions\".\"tenant_id\" = nullif(current_setting('ontos.tenant_id', true), '')::uuid and \"privacy\".\"notice_provisions\".\"legal_entity_id\" = nullif(current_setting('ontos.legal_entity_id', true), '')::uuid",
+      "name": "privacy_notice_provisions_scope_insert",
+      "entityType": "policies",
+      "schema": "privacy",
+      "table": "notice_provisions"
+    },
+    {
+      "as": "PERMISSIVE",
+      "for": "UPDATE",
+      "roles": [
+        "ontos_runtime"
+      ],
+      "using": "\"privacy\".\"notice_provisions\".\"tenant_id\" = nullif(current_setting('ontos.tenant_id', true), '')::uuid and \"privacy\".\"notice_provisions\".\"legal_entity_id\" = nullif(current_setting('ontos.legal_entity_id', true), '')::uuid",
+      "withCheck": "\"privacy\".\"notice_provisions\".\"tenant_id\" = nullif(current_setting('ontos.tenant_id', true), '')::uuid and \"privacy\".\"notice_provisions\".\"legal_entity_id\" = nullif(current_setting('ontos.legal_entity_id', true), '')::uuid",
+      "name": "privacy_notice_provisions_scope_update",
+      "entityType": "policies",
+      "schema": "privacy",
+      "table": "notice_provisions"
+    },
+    {
+      "as": "PERMISSIVE",
+      "for": "DELETE",
+      "roles": [
+        "ontos_runtime"
+      ],
+      "using": "\"privacy\".\"notice_provisions\".\"tenant_id\" = nullif(current_setting('ontos.tenant_id', true), '')::uuid and \"privacy\".\"notice_provisions\".\"legal_entity_id\" = nullif(current_setting('ontos.legal_entity_id', true), '')::uuid",
+      "withCheck": null,
+      "name": "privacy_notice_provisions_scope_delete",
+      "entityType": "policies",
+      "schema": "privacy",
+      "table": "notice_provisions"
+    },
+    {
+      "as": "PERMISSIVE",
+      "for": "SELECT",
+      "roles": [
+        "ontos_runtime"
+      ],
+      "using": "\"privacy\".\"notice_versions\".\"tenant_id\" = nullif(current_setting('ontos.tenant_id', true), '')::uuid and \"privacy\".\"notice_versions\".\"legal_entity_id\" = nullif(current_setting('ontos.legal_entity_id', true), '')::uuid",
+      "withCheck": null,
+      "name": "privacy_notice_versions_scope_select",
+      "entityType": "policies",
+      "schema": "privacy",
+      "table": "notice_versions"
+    },
+    {
+      "as": "PERMISSIVE",
+      "for": "INSERT",
+      "roles": [
+        "ontos_runtime"
+      ],
+      "using": null,
+      "withCheck": "\"privacy\".\"notice_versions\".\"tenant_id\" = nullif(current_setting('ontos.tenant_id', true), '')::uuid and \"privacy\".\"notice_versions\".\"legal_entity_id\" = nullif(current_setting('ontos.legal_entity_id', true), '')::uuid",
+      "name": "privacy_notice_versions_scope_insert",
+      "entityType": "policies",
+      "schema": "privacy",
+      "table": "notice_versions"
+    },
+    {
+      "as": "PERMISSIVE",
+      "for": "UPDATE",
+      "roles": [
+        "ontos_runtime"
+      ],
+      "using": "\"privacy\".\"notice_versions\".\"tenant_id\" = nullif(current_setting('ontos.tenant_id', true), '')::uuid and \"privacy\".\"notice_versions\".\"legal_entity_id\" = nullif(current_setting('ontos.legal_entity_id', true), '')::uuid",
+      "withCheck": "\"privacy\".\"notice_versions\".\"tenant_id\" = nullif(current_setting('ontos.tenant_id', true), '')::uuid and \"privacy\".\"notice_versions\".\"legal_entity_id\" = nullif(current_setting('ontos.legal_entity_id', true), '')::uuid",
+      "name": "privacy_notice_versions_scope_update",
+      "entityType": "policies",
+      "schema": "privacy",
+      "table": "notice_versions"
+    },
+    {
+      "as": "PERMISSIVE",
+      "for": "DELETE",
+      "roles": [
+        "ontos_runtime"
+      ],
+      "using": "\"privacy\".\"notice_versions\".\"tenant_id\" = nullif(current_setting('ontos.tenant_id', true), '')::uuid and \"privacy\".\"notice_versions\".\"legal_entity_id\" = nullif(current_setting('ontos.legal_entity_id', true), '')::uuid",
+      "withCheck": null,
+      "name": "privacy_notice_versions_scope_delete",
+      "entityType": "policies",
+      "schema": "privacy",
+      "table": "notice_versions"
+    },
+    {
+      "as": "PERMISSIVE",
+      "for": "SELECT",
+      "roles": [
+        "ontos_runtime"
+      ],
+      "using": "\"privacy\".\"owner_execution_outcomes\".\"tenant_id\" = nullif(current_setting('ontos.tenant_id', true), '')::uuid and \"privacy\".\"owner_execution_outcomes\".\"legal_entity_id\" = nullif(current_setting('ontos.legal_entity_id', true), '')::uuid",
+      "withCheck": null,
+      "name": "privacy_owner_outcomes_scope_select",
+      "entityType": "policies",
+      "schema": "privacy",
+      "table": "owner_execution_outcomes"
+    },
+    {
+      "as": "PERMISSIVE",
+      "for": "INSERT",
+      "roles": [
+        "ontos_runtime"
+      ],
+      "using": null,
+      "withCheck": "\"privacy\".\"owner_execution_outcomes\".\"tenant_id\" = nullif(current_setting('ontos.tenant_id', true), '')::uuid and \"privacy\".\"owner_execution_outcomes\".\"legal_entity_id\" = nullif(current_setting('ontos.legal_entity_id', true), '')::uuid",
+      "name": "privacy_owner_outcomes_scope_insert",
+      "entityType": "policies",
+      "schema": "privacy",
+      "table": "owner_execution_outcomes"
+    },
+    {
+      "as": "PERMISSIVE",
+      "for": "UPDATE",
+      "roles": [
+        "ontos_runtime"
+      ],
+      "using": "\"privacy\".\"owner_execution_outcomes\".\"tenant_id\" = nullif(current_setting('ontos.tenant_id', true), '')::uuid and \"privacy\".\"owner_execution_outcomes\".\"legal_entity_id\" = nullif(current_setting('ontos.legal_entity_id', true), '')::uuid",
+      "withCheck": "\"privacy\".\"owner_execution_outcomes\".\"tenant_id\" = nullif(current_setting('ontos.tenant_id', true), '')::uuid and \"privacy\".\"owner_execution_outcomes\".\"legal_entity_id\" = nullif(current_setting('ontos.legal_entity_id', true), '')::uuid",
+      "name": "privacy_owner_outcomes_scope_update",
+      "entityType": "policies",
+      "schema": "privacy",
+      "table": "owner_execution_outcomes"
+    },
+    {
+      "as": "PERMISSIVE",
+      "for": "DELETE",
+      "roles": [
+        "ontos_runtime"
+      ],
+      "using": "\"privacy\".\"owner_execution_outcomes\".\"tenant_id\" = nullif(current_setting('ontos.tenant_id', true), '')::uuid and \"privacy\".\"owner_execution_outcomes\".\"legal_entity_id\" = nullif(current_setting('ontos.legal_entity_id', true), '')::uuid",
+      "withCheck": null,
+      "name": "privacy_owner_outcomes_scope_delete",
+      "entityType": "policies",
+      "schema": "privacy",
+      "table": "owner_execution_outcomes"
+    },
+    {
+      "as": "PERMISSIVE",
+      "for": "SELECT",
+      "roles": [
+        "ontos_runtime"
+      ],
+      "using": "\"privacy\".\"privacy_measure_dispatches\".\"tenant_id\" = nullif(current_setting('ontos.tenant_id', true), '')::uuid and \"privacy\".\"privacy_measure_dispatches\".\"legal_entity_id\" = nullif(current_setting('ontos.legal_entity_id', true), '')::uuid",
+      "withCheck": null,
+      "name": "privacy_measure_dispatches_scope_select",
+      "entityType": "policies",
+      "schema": "privacy",
+      "table": "privacy_measure_dispatches"
+    },
+    {
+      "as": "PERMISSIVE",
+      "for": "INSERT",
+      "roles": [
+        "ontos_runtime"
+      ],
+      "using": null,
+      "withCheck": "\"privacy\".\"privacy_measure_dispatches\".\"tenant_id\" = nullif(current_setting('ontos.tenant_id', true), '')::uuid and \"privacy\".\"privacy_measure_dispatches\".\"legal_entity_id\" = nullif(current_setting('ontos.legal_entity_id', true), '')::uuid",
+      "name": "privacy_measure_dispatches_scope_insert",
+      "entityType": "policies",
+      "schema": "privacy",
+      "table": "privacy_measure_dispatches"
+    },
+    {
+      "as": "PERMISSIVE",
+      "for": "UPDATE",
+      "roles": [
+        "ontos_runtime"
+      ],
+      "using": "\"privacy\".\"privacy_measure_dispatches\".\"tenant_id\" = nullif(current_setting('ontos.tenant_id', true), '')::uuid and \"privacy\".\"privacy_measure_dispatches\".\"legal_entity_id\" = nullif(current_setting('ontos.legal_entity_id', true), '')::uuid",
+      "withCheck": "\"privacy\".\"privacy_measure_dispatches\".\"tenant_id\" = nullif(current_setting('ontos.tenant_id', true), '')::uuid and \"privacy\".\"privacy_measure_dispatches\".\"legal_entity_id\" = nullif(current_setting('ontos.legal_entity_id', true), '')::uuid",
+      "name": "privacy_measure_dispatches_scope_update",
+      "entityType": "policies",
+      "schema": "privacy",
+      "table": "privacy_measure_dispatches"
+    },
+    {
+      "as": "PERMISSIVE",
+      "for": "DELETE",
+      "roles": [
+        "ontos_runtime"
+      ],
+      "using": "\"privacy\".\"privacy_measure_dispatches\".\"tenant_id\" = nullif(current_setting('ontos.tenant_id', true), '')::uuid and \"privacy\".\"privacy_measure_dispatches\".\"legal_entity_id\" = nullif(current_setting('ontos.legal_entity_id', true), '')::uuid",
+      "withCheck": null,
+      "name": "privacy_measure_dispatches_scope_delete",
+      "entityType": "policies",
+      "schema": "privacy",
+      "table": "privacy_measure_dispatches"
+    },
+    {
+      "as": "PERMISSIVE",
+      "for": "SELECT",
+      "roles": [
+        "ontos_runtime"
+      ],
+      "using": "\"privacy\".\"privacy_subjects\".\"tenant_id\" = nullif(current_setting('ontos.tenant_id', true), '')::uuid and \"privacy\".\"privacy_subjects\".\"legal_entity_id\" = nullif(current_setting('ontos.legal_entity_id', true), '')::uuid",
+      "withCheck": null,
+      "name": "privacy_subjects_scope_select",
+      "entityType": "policies",
+      "schema": "privacy",
+      "table": "privacy_subjects"
+    },
+    {
+      "as": "PERMISSIVE",
+      "for": "INSERT",
+      "roles": [
+        "ontos_runtime"
+      ],
+      "using": null,
+      "withCheck": "\"privacy\".\"privacy_subjects\".\"tenant_id\" = nullif(current_setting('ontos.tenant_id', true), '')::uuid and \"privacy\".\"privacy_subjects\".\"legal_entity_id\" = nullif(current_setting('ontos.legal_entity_id', true), '')::uuid",
+      "name": "privacy_subjects_scope_insert",
+      "entityType": "policies",
+      "schema": "privacy",
+      "table": "privacy_subjects"
+    },
+    {
+      "as": "PERMISSIVE",
+      "for": "UPDATE",
+      "roles": [
+        "ontos_runtime"
+      ],
+      "using": "\"privacy\".\"privacy_subjects\".\"tenant_id\" = nullif(current_setting('ontos.tenant_id', true), '')::uuid and \"privacy\".\"privacy_subjects\".\"legal_entity_id\" = nullif(current_setting('ontos.legal_entity_id', true), '')::uuid",
+      "withCheck": "\"privacy\".\"privacy_subjects\".\"tenant_id\" = nullif(current_setting('ontos.tenant_id', true), '')::uuid and \"privacy\".\"privacy_subjects\".\"legal_entity_id\" = nullif(current_setting('ontos.legal_entity_id', true), '')::uuid",
+      "name": "privacy_subjects_scope_update",
+      "entityType": "policies",
+      "schema": "privacy",
+      "table": "privacy_subjects"
+    },
+    {
+      "as": "PERMISSIVE",
+      "for": "DELETE",
+      "roles": [
+        "ontos_runtime"
+      ],
+      "using": "\"privacy\".\"privacy_subjects\".\"tenant_id\" = nullif(current_setting('ontos.tenant_id', true), '')::uuid and \"privacy\".\"privacy_subjects\".\"legal_entity_id\" = nullif(current_setting('ontos.legal_entity_id', true), '')::uuid",
+      "withCheck": null,
+      "name": "privacy_subjects_scope_delete",
+      "entityType": "policies",
+      "schema": "privacy",
+      "table": "privacy_subjects"
+    },
+    {
+      "as": "PERMISSIVE",
+      "for": "SELECT",
+      "roles": [
+        "ontos_runtime"
+      ],
+      "using": "\"privacy\".\"processing_activities\".\"tenant_id\" = nullif(current_setting('ontos.tenant_id', true), '')::uuid and \"privacy\".\"processing_activities\".\"legal_entity_id\" = nullif(current_setting('ontos.legal_entity_id', true), '')::uuid",
+      "withCheck": null,
+      "name": "privacy_processing_activities_scope_select",
+      "entityType": "policies",
+      "schema": "privacy",
+      "table": "processing_activities"
+    },
+    {
+      "as": "PERMISSIVE",
+      "for": "INSERT",
+      "roles": [
+        "ontos_runtime"
+      ],
+      "using": null,
+      "withCheck": "\"privacy\".\"processing_activities\".\"tenant_id\" = nullif(current_setting('ontos.tenant_id', true), '')::uuid and \"privacy\".\"processing_activities\".\"legal_entity_id\" = nullif(current_setting('ontos.legal_entity_id', true), '')::uuid",
+      "name": "privacy_processing_activities_scope_insert",
+      "entityType": "policies",
+      "schema": "privacy",
+      "table": "processing_activities"
+    },
+    {
+      "as": "PERMISSIVE",
+      "for": "UPDATE",
+      "roles": [
+        "ontos_runtime"
+      ],
+      "using": "\"privacy\".\"processing_activities\".\"tenant_id\" = nullif(current_setting('ontos.tenant_id', true), '')::uuid and \"privacy\".\"processing_activities\".\"legal_entity_id\" = nullif(current_setting('ontos.legal_entity_id', true), '')::uuid",
+      "withCheck": "\"privacy\".\"processing_activities\".\"tenant_id\" = nullif(current_setting('ontos.tenant_id', true), '')::uuid and \"privacy\".\"processing_activities\".\"legal_entity_id\" = nullif(current_setting('ontos.legal_entity_id', true), '')::uuid",
+      "name": "privacy_processing_activities_scope_update",
+      "entityType": "policies",
+      "schema": "privacy",
+      "table": "processing_activities"
+    },
+    {
+      "as": "PERMISSIVE",
+      "for": "DELETE",
+      "roles": [
+        "ontos_runtime"
+      ],
+      "using": "\"privacy\".\"processing_activities\".\"tenant_id\" = nullif(current_setting('ontos.tenant_id', true), '')::uuid and \"privacy\".\"processing_activities\".\"legal_entity_id\" = nullif(current_setting('ontos.legal_entity_id', true), '')::uuid",
+      "withCheck": null,
+      "name": "privacy_processing_activities_scope_delete",
+      "entityType": "policies",
+      "schema": "privacy",
+      "table": "processing_activities"
+    },
+    {
+      "as": "PERMISSIVE",
+      "for": "SELECT",
+      "roles": [
+        "ontos_runtime"
+      ],
+      "using": "\"privacy\".\"processing_activity_lifecycle_events\".\"tenant_id\" = nullif(current_setting('ontos.tenant_id', true), '')::uuid and \"privacy\".\"processing_activity_lifecycle_events\".\"legal_entity_id\" = nullif(current_setting('ontos.legal_entity_id', true), '')::uuid",
+      "withCheck": null,
+      "name": "privacy_activity_lifecycle_scope_select",
+      "entityType": "policies",
+      "schema": "privacy",
+      "table": "processing_activity_lifecycle_events"
+    },
+    {
+      "as": "PERMISSIVE",
+      "for": "INSERT",
+      "roles": [
+        "ontos_runtime"
+      ],
+      "using": null,
+      "withCheck": "\"privacy\".\"processing_activity_lifecycle_events\".\"tenant_id\" = nullif(current_setting('ontos.tenant_id', true), '')::uuid and \"privacy\".\"processing_activity_lifecycle_events\".\"legal_entity_id\" = nullif(current_setting('ontos.legal_entity_id', true), '')::uuid",
+      "name": "privacy_activity_lifecycle_scope_insert",
+      "entityType": "policies",
+      "schema": "privacy",
+      "table": "processing_activity_lifecycle_events"
+    },
+    {
+      "as": "PERMISSIVE",
+      "for": "UPDATE",
+      "roles": [
+        "ontos_runtime"
+      ],
+      "using": "\"privacy\".\"processing_activity_lifecycle_events\".\"tenant_id\" = nullif(current_setting('ontos.tenant_id', true), '')::uuid and \"privacy\".\"processing_activity_lifecycle_events\".\"legal_entity_id\" = nullif(current_setting('ontos.legal_entity_id', true), '')::uuid",
+      "withCheck": "\"privacy\".\"processing_activity_lifecycle_events\".\"tenant_id\" = nullif(current_setting('ontos.tenant_id', true), '')::uuid and \"privacy\".\"processing_activity_lifecycle_events\".\"legal_entity_id\" = nullif(current_setting('ontos.legal_entity_id', true), '')::uuid",
+      "name": "privacy_activity_lifecycle_scope_update",
+      "entityType": "policies",
+      "schema": "privacy",
+      "table": "processing_activity_lifecycle_events"
+    },
+    {
+      "as": "PERMISSIVE",
+      "for": "DELETE",
+      "roles": [
+        "ontos_runtime"
+      ],
+      "using": "\"privacy\".\"processing_activity_lifecycle_events\".\"tenant_id\" = nullif(current_setting('ontos.tenant_id', true), '')::uuid and \"privacy\".\"processing_activity_lifecycle_events\".\"legal_entity_id\" = nullif(current_setting('ontos.legal_entity_id', true), '')::uuid",
+      "withCheck": null,
+      "name": "privacy_activity_lifecycle_scope_delete",
+      "entityType": "policies",
+      "schema": "privacy",
+      "table": "processing_activity_lifecycle_events"
+    },
+    {
+      "as": "PERMISSIVE",
+      "for": "SELECT",
+      "roles": [
+        "ontos_runtime"
+      ],
+      "using": "\"privacy\".\"processing_purposes\".\"tenant_id\" = nullif(current_setting('ontos.tenant_id', true), '')::uuid and \"privacy\".\"processing_purposes\".\"legal_entity_id\" = nullif(current_setting('ontos.legal_entity_id', true), '')::uuid",
+      "withCheck": null,
+      "name": "privacy_processing_purposes_scope_select",
+      "entityType": "policies",
+      "schema": "privacy",
+      "table": "processing_purposes"
+    },
+    {
+      "as": "PERMISSIVE",
+      "for": "INSERT",
+      "roles": [
+        "ontos_runtime"
+      ],
+      "using": null,
+      "withCheck": "\"privacy\".\"processing_purposes\".\"tenant_id\" = nullif(current_setting('ontos.tenant_id', true), '')::uuid and \"privacy\".\"processing_purposes\".\"legal_entity_id\" = nullif(current_setting('ontos.legal_entity_id', true), '')::uuid",
+      "name": "privacy_processing_purposes_scope_insert",
+      "entityType": "policies",
+      "schema": "privacy",
+      "table": "processing_purposes"
+    },
+    {
+      "as": "PERMISSIVE",
+      "for": "UPDATE",
+      "roles": [
+        "ontos_runtime"
+      ],
+      "using": "\"privacy\".\"processing_purposes\".\"tenant_id\" = nullif(current_setting('ontos.tenant_id', true), '')::uuid and \"privacy\".\"processing_purposes\".\"legal_entity_id\" = nullif(current_setting('ontos.legal_entity_id', true), '')::uuid",
+      "withCheck": "\"privacy\".\"processing_purposes\".\"tenant_id\" = nullif(current_setting('ontos.tenant_id', true), '')::uuid and \"privacy\".\"processing_purposes\".\"legal_entity_id\" = nullif(current_setting('ontos.legal_entity_id', true), '')::uuid",
+      "name": "privacy_processing_purposes_scope_update",
+      "entityType": "policies",
+      "schema": "privacy",
+      "table": "processing_purposes"
+    },
+    {
+      "as": "PERMISSIVE",
+      "for": "DELETE",
+      "roles": [
+        "ontos_runtime"
+      ],
+      "using": "\"privacy\".\"processing_purposes\".\"tenant_id\" = nullif(current_setting('ontos.tenant_id', true), '')::uuid and \"privacy\".\"processing_purposes\".\"legal_entity_id\" = nullif(current_setting('ontos.legal_entity_id', true), '')::uuid",
+      "withCheck": null,
+      "name": "privacy_processing_purposes_scope_delete",
+      "entityType": "policies",
+      "schema": "privacy",
+      "table": "processing_purposes"
+    },
+    {
+      "as": "PERMISSIVE",
+      "for": "SELECT",
+      "roles": [
+        "ontos_runtime"
+      ],
+      "using": "\"privacy\".\"purpose_versions\".\"tenant_id\" = nullif(current_setting('ontos.tenant_id', true), '')::uuid and \"privacy\".\"purpose_versions\".\"legal_entity_id\" = nullif(current_setting('ontos.legal_entity_id', true), '')::uuid",
+      "withCheck": null,
+      "name": "privacy_purpose_versions_scope_select",
+      "entityType": "policies",
+      "schema": "privacy",
+      "table": "purpose_versions"
+    },
+    {
+      "as": "PERMISSIVE",
+      "for": "INSERT",
+      "roles": [
+        "ontos_runtime"
+      ],
+      "using": null,
+      "withCheck": "\"privacy\".\"purpose_versions\".\"tenant_id\" = nullif(current_setting('ontos.tenant_id', true), '')::uuid and \"privacy\".\"purpose_versions\".\"legal_entity_id\" = nullif(current_setting('ontos.legal_entity_id', true), '')::uuid",
+      "name": "privacy_purpose_versions_scope_insert",
+      "entityType": "policies",
+      "schema": "privacy",
+      "table": "purpose_versions"
+    },
+    {
+      "as": "PERMISSIVE",
+      "for": "UPDATE",
+      "roles": [
+        "ontos_runtime"
+      ],
+      "using": "\"privacy\".\"purpose_versions\".\"tenant_id\" = nullif(current_setting('ontos.tenant_id', true), '')::uuid and \"privacy\".\"purpose_versions\".\"legal_entity_id\" = nullif(current_setting('ontos.legal_entity_id', true), '')::uuid",
+      "withCheck": "\"privacy\".\"purpose_versions\".\"tenant_id\" = nullif(current_setting('ontos.tenant_id', true), '')::uuid and \"privacy\".\"purpose_versions\".\"legal_entity_id\" = nullif(current_setting('ontos.legal_entity_id', true), '')::uuid",
+      "name": "privacy_purpose_versions_scope_update",
+      "entityType": "policies",
+      "schema": "privacy",
+      "table": "purpose_versions"
+    },
+    {
+      "as": "PERMISSIVE",
+      "for": "DELETE",
+      "roles": [
+        "ontos_runtime"
+      ],
+      "using": "\"privacy\".\"purpose_versions\".\"tenant_id\" = nullif(current_setting('ontos.tenant_id', true), '')::uuid and \"privacy\".\"purpose_versions\".\"legal_entity_id\" = nullif(current_setting('ontos.legal_entity_id', true), '')::uuid",
+      "withCheck": null,
+      "name": "privacy_purpose_versions_scope_delete",
+      "entityType": "policies",
+      "schema": "privacy",
+      "table": "purpose_versions"
+    },
+    {
+      "as": "PERMISSIVE",
+      "for": "SELECT",
+      "roles": [
+        "ontos_runtime"
+      ],
+      "using": "\"privacy\".\"retention_evaluation_work\".\"tenant_id\" = nullif(current_setting('ontos.tenant_id', true), '')::uuid and \"privacy\".\"retention_evaluation_work\".\"legal_entity_id\" = nullif(current_setting('ontos.legal_entity_id', true), '')::uuid",
+      "withCheck": null,
+      "name": "privacy_retention_work_scope_select",
+      "entityType": "policies",
+      "schema": "privacy",
+      "table": "retention_evaluation_work"
+    },
+    {
+      "as": "PERMISSIVE",
+      "for": "INSERT",
+      "roles": [
+        "ontos_runtime"
+      ],
+      "using": null,
+      "withCheck": "\"privacy\".\"retention_evaluation_work\".\"tenant_id\" = nullif(current_setting('ontos.tenant_id', true), '')::uuid and \"privacy\".\"retention_evaluation_work\".\"legal_entity_id\" = nullif(current_setting('ontos.legal_entity_id', true), '')::uuid",
+      "name": "privacy_retention_work_scope_insert",
+      "entityType": "policies",
+      "schema": "privacy",
+      "table": "retention_evaluation_work"
+    },
+    {
+      "as": "PERMISSIVE",
+      "for": "UPDATE",
+      "roles": [
+        "ontos_runtime"
+      ],
+      "using": "\"privacy\".\"retention_evaluation_work\".\"tenant_id\" = nullif(current_setting('ontos.tenant_id', true), '')::uuid and \"privacy\".\"retention_evaluation_work\".\"legal_entity_id\" = nullif(current_setting('ontos.legal_entity_id', true), '')::uuid",
+      "withCheck": "\"privacy\".\"retention_evaluation_work\".\"tenant_id\" = nullif(current_setting('ontos.tenant_id', true), '')::uuid and \"privacy\".\"retention_evaluation_work\".\"legal_entity_id\" = nullif(current_setting('ontos.legal_entity_id', true), '')::uuid",
+      "name": "privacy_retention_work_scope_update",
+      "entityType": "policies",
+      "schema": "privacy",
+      "table": "retention_evaluation_work"
+    },
+    {
+      "as": "PERMISSIVE",
+      "for": "DELETE",
+      "roles": [
+        "ontos_runtime"
+      ],
+      "using": "\"privacy\".\"retention_evaluation_work\".\"tenant_id\" = nullif(current_setting('ontos.tenant_id', true), '')::uuid and \"privacy\".\"retention_evaluation_work\".\"legal_entity_id\" = nullif(current_setting('ontos.legal_entity_id', true), '')::uuid",
+      "withCheck": null,
+      "name": "privacy_retention_work_scope_delete",
+      "entityType": "policies",
+      "schema": "privacy",
+      "table": "retention_evaluation_work"
+    }
+  ],
+  "renames": []
+}

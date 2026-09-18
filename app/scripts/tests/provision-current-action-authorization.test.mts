@@ -23,6 +23,7 @@ import { toSpiceDbActionObjectId } from '../../packages/core-runtime/src/permiss
 import type { deriveOntosModuleDeploymentContract as DeriveModuleContract } from '../generate-ontos-module-contract.mts';
 import { LOCAL_DEVELOPMENT_CONTEXT } from '../initialize-local-development.mts';
 import {
+  buildExplicitActionAssertions,
   formatActionAuthorizationProvisioningFailure,
   runCurrentActionAuthorizationProvisioning,
   selectActionAuthorizationProvisioningTarget,
@@ -101,6 +102,7 @@ const addedVerticalActionKeys = [
   'commerce.customer-context.create-purchase-proposal-revision',
   'commerce.customer-context.decide-purchase-approval-request',
   'commerce.customer-context.ensure-retail-customer-profile',
+  'commerce.customer-context.execute-privacy-measure',
   'commerce.customer-context.grant-counterparty-commerce-access',
   'commerce.customer-context.migrate-counterparty-price-group',
   'commerce.customer-context.migrate-customer-price-group',
@@ -134,6 +136,44 @@ const addedVerticalActionKeys = [
   'payment.term-catalog.create-payment-term',
   'payment.term-catalog.reconcile-payment-term-reference',
   'payment.term-catalog.retire-payment-term',
+  'party.registry.execute-privacy-measure',
+  'privacy.core.add-processing-purpose-version',
+  'privacy.core.assign-dsr-resolver',
+  'privacy.core.assign-legal-basis',
+  'privacy.core.assign-privacy-responsibility',
+  'privacy.core.consent-self-service',
+  'privacy.core.create-dsr-case',
+  'privacy.core.create-notice-version',
+  'privacy.core.create-privacy-subject',
+  'privacy.core.create-processing-activity',
+  'privacy.core.create-processing-purpose',
+  'privacy.core.dispatch-privacy-measure',
+  'privacy.core.enqueue-retention-evaluation',
+  'privacy.core.evaluate-processing-eligibility',
+  'privacy.core.issue-dsr-delivery-access',
+  'privacy.core.record-anti-resurrection-protection',
+  'privacy.core.record-applicability-policy',
+  'privacy.core.record-consent-decision',
+  'privacy.core.record-disposition-decision',
+  'privacy.core.record-dsr-deadline',
+  'privacy.core.record-dsr-delivery-evidence',
+  'privacy.core.record-dsr-response',
+  'privacy.core.record-dsr-substantive-decision',
+  'privacy.core.record-dsr-verification',
+  'privacy.core.record-external-obligation',
+  'privacy.core.record-legal-hold',
+  'privacy.core.record-notice-provision',
+  'privacy.core.record-owner-contribution',
+  'privacy.core.record-owner-execution-outcome',
+  'privacy.core.record-privacy-applicability',
+  'privacy.core.record-privacy-representation',
+  'privacy.core.record-processing-intervention',
+  'privacy.core.record-retention-exception',
+  'privacy.core.transition-processing-activity',
+  'privacy.core.update-dsr-case',
+  'privacy.core.upsert-dsr-owner-task',
+  'privacy.core.upsert-retention-rule',
+  'privacy.core.upsert-temporary-dsr-export',
 ] as const;
 
 // oxlint-disable-next-line unicorn/no-array-sort -- The spread creates a private aggregate before sorting it.
@@ -275,6 +315,7 @@ it.effect(
     expect(new Set(completeCurrentActionKeys).size).toBe(completeCurrentActionKeys.length);
     expect(completeCurrentActionKeys).toContain('commerce.customer-context.claim-counterparty-access-invitation');
     expect(completeCurrentActionKeys).toContain('payment.term-catalog.retire-payment-term');
+    expect(completeCurrentActionKeys).toContain('privacy.core.record-consent-decision');
   }),
 );
 
@@ -399,6 +440,30 @@ it.effect(
     expect(state.updates.length).toBe(76);
     expect(state.updates.every(({ operation }) => operation === v1.RelationshipUpdate_Operation.TOUCH)).toBe(true);
     expect(![...state.grants].some((grant) => grant.includes(ACTION_AUTHORIZATION_DENIED_PRINCIPAL_ID))).toBe(true);
+  }),
+);
+
+it.effect(
+  'derives recorded allowed and denied assertions for every explicit Action',
+  Effect.fn(function* testEffect9ExplicitAssertions() {
+    const target = yield* selectActionAuthorizationProvisioningTarget(developmentConfiguration);
+    expect(
+      buildExplicitActionAssertions(
+        [
+          { actionKey: 'core.identity.default', provisioning: 'tenant_membership_default' },
+          { actionKey: restrictedAction, provisioning: 'explicit' },
+        ],
+        target.contexts,
+      ),
+    ).toEqual([
+      {
+        actionKey: restrictedAction,
+        assertions: [
+          { expected: 'allowed', principalId: target.contexts[0]?.principalId },
+          { expected: 'denied', principalId: ACTION_AUTHORIZATION_DENIED_PRINCIPAL_ID },
+        ],
+      },
+    ]);
   }),
 );
 

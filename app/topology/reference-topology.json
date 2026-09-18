@@ -7,28 +7,16 @@
     "id": "shell-super-app",
     "kind": "shell",
     "package": "@app/shell-super-app",
-    "verticalRefs": [
-      "party-registry"
-    ],
+    "verticalRefs": ["party-registry", "privacy"],
     "authentication": {
       "kind": "shell-core-capability",
-      "owners": [
-        "shell-super-app",
-        "core-runtime"
-      ],
+      "owners": ["shell-super-app", "core-runtime"],
       "databaseSchema": "auth",
       "api": {
         "runtimeFramework": "effect",
         "strictEffectApproach": true,
         "prefix": "/shell-super-app-api",
-        "operations": [
-          "signIn",
-          "currentSession",
-          "signOut",
-          "availableTenants",
-          "switchTenant",
-          "issueGatewayContext"
-        ]
+        "operations": ["signIn", "currentSession", "signOut", "availableTenants", "switchTenant", "issueGatewayContext"]
       }
     },
     "moduleFederation": {
@@ -39,6 +27,11 @@
           "id": "party-registry",
           "name": "verticalPartyRegistry",
           "manifestUrl": "http://localhost:4102/mf-manifest.json"
+        },
+        {
+          "id": "privacy",
+          "name": "verticalPrivacy",
+          "manifestUrl": "http://localhost:4104/mf-manifest.json"
         }
       ],
       "ssr": true,
@@ -49,10 +42,7 @@
       "workerName": "app-shell-super-app",
       "publicUrlEnv": "ULTRAMODERN_PUBLIC_URL_SHELL_SUPER_APP",
       "compatibilityDate": "2026-06-02",
-      "compatibilityFlags": [
-        "nodejs_compat",
-        "global_fetch_strictly_public"
-      ],
+      "compatibilityFlags": ["nodejs_compat", "global_fetch_strictly_public"],
       "assetsBinding": "ASSETS",
       "routes": {
         "ssr": "/en",
@@ -69,64 +59,18 @@
         "contentSecurityPolicy": {
           "mode": "report-only",
           "directives": {
-            "base-uri": [
-              "'self'"
-            ],
-            "connect-src": [
-              "'self'",
-              "https:",
-              "http:",
-              "wss:",
-              "ws:"
-            ],
-            "default-src": [
-              "'self'"
-            ],
-            "font-src": [
-              "'self'",
-              "data:",
-              "https:",
-              "http:"
-            ],
-            "form-action": [
-              "'self'"
-            ],
-            "frame-ancestors": [
-              "'self'"
-            ],
-            "img-src": [
-              "'self'",
-              "data:",
-              "blob:",
-              "https:",
-              "http:"
-            ],
-            "manifest-src": [
-              "'self'",
-              "https:",
-              "http:"
-            ],
-            "object-src": [
-              "'none'"
-            ],
-            "script-src": [
-              "'self'",
-              "'unsafe-inline'",
-              "'unsafe-eval'",
-              "https:",
-              "http:",
-              "blob:"
-            ],
-            "style-src": [
-              "'self'",
-              "'unsafe-inline'",
-              "https:",
-              "http:"
-            ],
-            "worker-src": [
-              "'self'",
-              "blob:"
-            ]
+            "base-uri": ["'self'"],
+            "connect-src": ["'self'", "https:", "http:", "wss:", "ws:"],
+            "default-src": ["'self'"],
+            "font-src": ["'self'", "data:", "https:", "http:"],
+            "form-action": ["'self'"],
+            "frame-ancestors": ["'self'"],
+            "img-src": ["'self'", "data:", "blob:", "https:", "http:"],
+            "manifest-src": ["'self'", "https:", "http:"],
+            "object-src": ["'none'"],
+            "script-src": ["'self'", "'unsafe-inline'", "'unsafe-eval'", "https:", "http:", "blob:"],
+            "style-src": ["'self'", "'unsafe-inline'", "https:", "http:"],
+            "worker-src": ["'self'", "blob:"]
           },
           "reason": "Report-only by default so Cloudflare Module Federation SSR can prove remote script, style, and connect compatibility before enforcement."
         },
@@ -208,9 +152,7 @@
         "role": "remote",
         "name": "verticalPartyRegistry",
         "manifestUrl": "http://localhost:4102/mf-manifest.json",
-        "exposes": [
-          "./PageContacts"
-        ],
+        "exposes": ["./PageContacts"],
         "ssr": true,
         "sharedContractVersion": "mf-ssr-contract-v1"
       },
@@ -341,11 +283,7 @@
         },
         "serverEntry": "verticals/party-registry/api/index.ts",
         "basePath": "/party-registry-api/party-registry",
-        "consumedBy": [
-          "shell-super-app",
-          "commerce-customer-context",
-          "party-registry"
-        ],
+        "consumedBy": ["shell-super-app", "commerce-customer-context", "party-registry"],
         "readiness": {
           "endpoint": "/party-registry/readiness",
           "marker": {
@@ -353,12 +291,7 @@
             "api": "ultramodernApiMarker",
             "skew": "none"
           },
-          "checks": [
-            "moduleFederation",
-            "ssr",
-            "translations",
-            "api"
-          ]
+          "checks": ["moduleFederation", "ssr", "translations", "api"]
         },
         "requestContext": {
           "propagatedHeaders": [
@@ -378,10 +311,7 @@
         "workerName": "app-party-registry",
         "publicUrlEnv": "ULTRAMODERN_PUBLIC_URL_PARTY_REGISTRY",
         "compatibilityDate": "2026-06-02",
-        "compatibilityFlags": [
-          "nodejs_compat",
-          "global_fetch_strictly_public"
-        ],
+        "compatibilityFlags": ["nodejs_compat", "global_fetch_strictly_public"],
         "assetsBinding": "ASSETS",
         "routes": {
           "mfManifest": "/mf-manifest.json",
@@ -397,64 +327,18 @@
           "contentSecurityPolicy": {
             "mode": "report-only",
             "directives": {
-              "base-uri": [
-                "'self'"
-              ],
-              "connect-src": [
-                "'self'",
-                "https:",
-                "http:",
-                "wss:",
-                "ws:"
-              ],
-              "default-src": [
-                "'self'"
-              ],
-              "font-src": [
-                "'self'",
-                "data:",
-                "https:",
-                "http:"
-              ],
-              "form-action": [
-                "'self'"
-              ],
-              "frame-ancestors": [
-                "'self'"
-              ],
-              "img-src": [
-                "'self'",
-                "data:",
-                "blob:",
-                "https:",
-                "http:"
-              ],
-              "manifest-src": [
-                "'self'",
-                "https:",
-                "http:"
-              ],
-              "object-src": [
-                "'none'"
-              ],
-              "script-src": [
-                "'self'",
-                "'unsafe-inline'",
-                "'unsafe-eval'",
-                "https:",
-                "http:",
-                "blob:"
-              ],
-              "style-src": [
-                "'self'",
-                "'unsafe-inline'",
-                "https:",
-                "http:"
-              ],
-              "worker-src": [
-                "'self'",
-                "blob:"
-              ]
+              "base-uri": ["'self'"],
+              "connect-src": ["'self'", "https:", "http:", "wss:", "ws:"],
+              "default-src": ["'self'"],
+              "font-src": ["'self'", "data:", "https:", "http:"],
+              "form-action": ["'self'"],
+              "frame-ancestors": ["'self'"],
+              "img-src": ["'self'", "data:", "blob:", "https:", "http:"],
+              "manifest-src": ["'self'", "https:", "http:"],
+              "object-src": ["'none'"],
+              "script-src": ["'self'", "'unsafe-inline'", "'unsafe-eval'", "https:", "http:", "blob:"],
+              "style-src": ["'self'", "'unsafe-inline'", "https:", "http:"],
+              "worker-src": ["'self'", "blob:"]
             },
             "reason": "Report-only by default so Cloudflare Module Federation SSR can prove remote script, style, and connect compatibility before enforcement."
           },
@@ -521,9 +405,7 @@
         "adrRef": "docs/super-app-rfc-adr/verticals.md#party-registry",
         "blastRadius": {
           "tier": "tier-2-vertical",
-          "references": [
-            "docs/super-app-rfc-adr/blast-radius.md#party-registry"
-          ]
+          "references": ["docs/super-app-rfc-adr/blast-radius.md#party-registry"]
         }
       }
     },
@@ -569,7 +451,7 @@
           "invariant": "web-and-api-same-build",
           "identityRoot": "deliveryUnit",
           "packageName": "@app/commerce-customer-context",
-        "api": {
+          "api": {
             "readiness": "/commerce-customer-context-api/commerce-customer-context/readiness",
             "buildMarker": "verticals/commerce-customer-context/shared/ultramodern-build.ts",
             "publicUrlEnv": "ULTRAMODERN_PUBLIC_URL_COMMERCE_CUSTOMER_CONTEXT"
@@ -580,13 +462,13 @@
             "kind": "cloudflare-worker-snapshot",
             "workerName": "app-commerce-customer-context",
             "publicUrlEnv": "ULTRAMODERN_PUBLIC_URL_COMMERCE_CUSTOMER_CONTEXT",
-        "api": {
-          "workerEntry": ".output/server/index.mjs",
-          "workerManifest": ".output/server/modern-worker-manifest.json",
-          "effectBffBundle": ".output/worker/__modern_bff_effect.js"
-        },
-        "zephyr": {
-          "runtime": "api-worker",
+            "api": {
+              "workerEntry": ".output/server/index.mjs",
+              "workerManifest": ".output/server/modern-worker-manifest.json",
+              "effectBffBundle": ".output/worker/__modern_bff_effect.js"
+            },
+            "zephyr": {
+              "runtime": "api-worker",
               "integration": "managed-cloudflare",
               "snapshotIdEnv": "ZEPHYR_COMMERCE_CUSTOMER_CONTEXT_SNAPSHOT_ID",
               "versionIdEnv": "ZEPHYR_COMMERCE_CUSTOMER_CONTEXT_VERSION_ID",
@@ -610,7 +492,7 @@
             "containerEntry": "http://localhost:4101/backendRemoteEntry.cjs",
             "remoteType": "commonjs-module",
             "expose": "./effect-api",
-            "runtimePackage": "@modern-js/plugin-bff/effect",
+            "runtimePackage": "@modern-js/plugin-bff-extensions/backend-federation-manifest/node",
             "expected": {
               "unitId": "app/commerce-customer-context",
               "buildMarker": "2b4d72d8d032dd53"
@@ -620,8 +502,8 @@
         "compatibility": {
           "contractVersion": "microvertical-server-effect-v1",
           "packageName": "@app/commerce-customer-context",
-          "effectVersion": "4.0.0-beta.107",
-          "moduleFederationVersion": "2.8.2"
+          "effectVersion": "4.0.0-rc.112",
+          "moduleFederationVersion": "2.9.0"
         },
         "cache": {
           "cloudflareSnapshot": "immutable",
@@ -661,10 +543,7 @@
         },
         "serverEntry": "verticals/commerce-customer-context/api/index.ts",
         "basePath": "/commerce-customer-context-api/commerce-customer-context",
-        "consumedBy": [
-          "shell-super-app",
-          "commerce-customer-context"
-        ],
+        "consumedBy": ["shell-super-app", "commerce-customer-context"],
         "readiness": {
           "endpoint": "/commerce-customer-context/readiness",
           "marker": {
@@ -672,12 +551,7 @@
             "api": "ultramodernApiMarker",
             "skew": "none"
           },
-          "checks": [
-            "moduleFederation",
-            "ssr",
-            "translations",
-            "api"
-          ]
+          "checks": ["moduleFederation", "ssr", "translations", "api"]
         },
         "requestContext": {
           "propagatedHeaders": [
@@ -720,10 +594,7 @@
         "workerName": "app-commerce-customer-context",
         "publicUrlEnv": "ULTRAMODERN_PUBLIC_URL_COMMERCE_CUSTOMER_CONTEXT",
         "compatibilityDate": "2026-06-02",
-        "compatibilityFlags": [
-          "nodejs_compat",
-          "global_fetch_strictly_public"
-        ],
+        "compatibilityFlags": ["nodejs_compat", "global_fetch_strictly_public"],
         "assetsBinding": "ASSETS",
         "routes": {
           "ssr": "/en",
@@ -741,64 +612,18 @@
           "contentSecurityPolicy": {
             "mode": "report-only",
             "directives": {
-              "base-uri": [
-                "'self'"
-              ],
-              "connect-src": [
-                "'self'",
-                "https:",
-                "http:",
-                "wss:",
-                "ws:"
-              ],
-              "default-src": [
-                "'self'"
-              ],
-              "font-src": [
-                "'self'",
-                "data:",
-                "https:",
-                "http:"
-              ],
-              "form-action": [
-                "'self'"
-              ],
-              "frame-ancestors": [
-                "'self'"
-              ],
-              "img-src": [
-                "'self'",
-                "data:",
-                "blob:",
-                "https:",
-                "http:"
-              ],
-              "manifest-src": [
-                "'self'",
-                "https:",
-                "http:"
-              ],
-              "object-src": [
-                "'none'"
-              ],
-              "script-src": [
-                "'self'",
-                "'unsafe-inline'",
-                "'unsafe-eval'",
-                "https:",
-                "http:",
-                "blob:"
-              ],
-              "style-src": [
-                "'self'",
-                "'unsafe-inline'",
-                "https:",
-                "http:"
-              ],
-              "worker-src": [
-                "'self'",
-                "blob:"
-              ]
+              "base-uri": ["'self'"],
+              "connect-src": ["'self'", "https:", "http:", "wss:", "ws:"],
+              "default-src": ["'self'"],
+              "font-src": ["'self'", "data:", "https:", "http:"],
+              "form-action": ["'self'"],
+              "frame-ancestors": ["'self'"],
+              "img-src": ["'self'", "data:", "blob:", "https:", "http:"],
+              "manifest-src": ["'self'", "https:", "http:"],
+              "object-src": ["'none'"],
+              "script-src": ["'self'", "'unsafe-inline'", "'unsafe-eval'", "https:", "http:", "blob:"],
+              "style-src": ["'self'", "'unsafe-inline'", "https:", "http:"],
+              "worker-src": ["'self'", "blob:"]
             },
             "reason": "Report-only by default so Cloudflare Module Federation SSR can prove remote script, style, and connect compatibility before enforcement."
           },
@@ -865,9 +690,7 @@
         "adrRef": "docs/super-app-rfc-adr/verticals.md#commerce-customer-context",
         "blastRadius": {
           "tier": "tier-2-vertical",
-          "references": [
-            "docs/super-app-rfc-adr/blast-radius.md#commerce-customer-context"
-          ]
+          "references": ["docs/super-app-rfc-adr/blast-radius.md#commerce-customer-context"]
         }
       }
     },
@@ -913,7 +736,7 @@
           "invariant": "web-and-api-same-build",
           "identityRoot": "deliveryUnit",
           "packageName": "@app/payment-term-catalog",
-        "api": {
+          "api": {
             "readiness": "/payment-term-catalog-api/payment-term-catalog/readiness",
             "buildMarker": "verticals/payment-term-catalog/shared/ultramodern-build.ts",
             "publicUrlEnv": "ULTRAMODERN_PUBLIC_URL_PAYMENT_TERM_CATALOG"
@@ -924,13 +747,13 @@
             "kind": "cloudflare-worker-snapshot",
             "workerName": "app-payment-term-catalog",
             "publicUrlEnv": "ULTRAMODERN_PUBLIC_URL_PAYMENT_TERM_CATALOG",
-        "api": {
-          "workerEntry": ".output/server/index.mjs",
-          "workerManifest": ".output/server/modern-worker-manifest.json",
-          "effectBffBundle": ".output/worker/__modern_bff_effect.js"
-        },
-        "zephyr": {
-          "runtime": "api-worker",
+            "api": {
+              "workerEntry": ".output/server/index.mjs",
+              "workerManifest": ".output/server/modern-worker-manifest.json",
+              "effectBffBundle": ".output/worker/__modern_bff_effect.js"
+            },
+            "zephyr": {
+              "runtime": "api-worker",
               "integration": "managed-cloudflare",
               "snapshotIdEnv": "ZEPHYR_PAYMENT_TERM_CATALOG_SNAPSHOT_ID",
               "versionIdEnv": "ZEPHYR_PAYMENT_TERM_CATALOG_VERSION_ID",
@@ -954,7 +777,7 @@
             "containerEntry": "http://localhost:4103/backendRemoteEntry.cjs",
             "remoteType": "commonjs-module",
             "expose": "./effect-api",
-            "runtimePackage": "@modern-js/plugin-bff/effect",
+            "runtimePackage": "@modern-js/plugin-bff-extensions/backend-federation-manifest/node",
             "expected": {
               "unitId": "app/payment-term-catalog",
               "buildMarker": "3812f892cf5544cf"
@@ -964,8 +787,8 @@
         "compatibility": {
           "contractVersion": "microvertical-server-effect-v1",
           "packageName": "@app/payment-term-catalog",
-          "effectVersion": "4.0.0-beta.107",
-          "moduleFederationVersion": "2.8.2"
+          "effectVersion": "4.0.0-rc.112",
+          "moduleFederationVersion": "2.9.0"
         },
         "cache": {
           "cloudflareSnapshot": "immutable",
@@ -1005,10 +828,7 @@
         },
         "serverEntry": "verticals/payment-term-catalog/api/index.ts",
         "basePath": "/payment-term-catalog-api/payment-term-catalog",
-        "consumedBy": [
-          "shell-super-app",
-          "payment-term-catalog"
-        ],
+        "consumedBy": ["shell-super-app", "payment-term-catalog"],
         "readiness": {
           "endpoint": "/payment-term-catalog/readiness",
           "marker": {
@@ -1016,12 +836,7 @@
             "api": "ultramodernApiMarker",
             "skew": "none"
           },
-          "checks": [
-            "moduleFederation",
-            "ssr",
-            "translations",
-            "api"
-          ]
+          "checks": ["moduleFederation", "ssr", "translations", "api"]
         },
         "requestContext": {
           "propagatedHeaders": [
@@ -1064,10 +879,7 @@
         "workerName": "app-payment-term-catalog",
         "publicUrlEnv": "ULTRAMODERN_PUBLIC_URL_PAYMENT_TERM_CATALOG",
         "compatibilityDate": "2026-06-02",
-        "compatibilityFlags": [
-          "nodejs_compat",
-          "global_fetch_strictly_public"
-        ],
+        "compatibilityFlags": ["nodejs_compat", "global_fetch_strictly_public"],
         "assetsBinding": "ASSETS",
         "routes": {
           "ssr": "/en",
@@ -1085,64 +897,18 @@
           "contentSecurityPolicy": {
             "mode": "report-only",
             "directives": {
-              "base-uri": [
-                "'self'"
-              ],
-              "connect-src": [
-                "'self'",
-                "https:",
-                "http:",
-                "wss:",
-                "ws:"
-              ],
-              "default-src": [
-                "'self'"
-              ],
-              "font-src": [
-                "'self'",
-                "data:",
-                "https:",
-                "http:"
-              ],
-              "form-action": [
-                "'self'"
-              ],
-              "frame-ancestors": [
-                "'self'"
-              ],
-              "img-src": [
-                "'self'",
-                "data:",
-                "blob:",
-                "https:",
-                "http:"
-              ],
-              "manifest-src": [
-                "'self'",
-                "https:",
-                "http:"
-              ],
-              "object-src": [
-                "'none'"
-              ],
-              "script-src": [
-                "'self'",
-                "'unsafe-inline'",
-                "'unsafe-eval'",
-                "https:",
-                "http:",
-                "blob:"
-              ],
-              "style-src": [
-                "'self'",
-                "'unsafe-inline'",
-                "https:",
-                "http:"
-              ],
-              "worker-src": [
-                "'self'",
-                "blob:"
-              ]
+              "base-uri": ["'self'"],
+              "connect-src": ["'self'", "https:", "http:", "wss:", "ws:"],
+              "default-src": ["'self'"],
+              "font-src": ["'self'", "data:", "https:", "http:"],
+              "form-action": ["'self'"],
+              "frame-ancestors": ["'self'"],
+              "img-src": ["'self'", "data:", "blob:", "https:", "http:"],
+              "manifest-src": ["'self'", "https:", "http:"],
+              "object-src": ["'none'"],
+              "script-src": ["'self'", "'unsafe-inline'", "'unsafe-eval'", "https:", "http:", "blob:"],
+              "style-src": ["'self'", "'unsafe-inline'", "https:", "http:"],
+              "worker-src": ["'self'", "blob:"]
             },
             "reason": "Report-only by default so Cloudflare Module Federation SSR can prove remote script, style, and connect compatibility before enforcement."
           },
@@ -1209,9 +975,299 @@
         "adrRef": "docs/super-app-rfc-adr/verticals.md#payment-term-catalog",
         "blastRadius": {
           "tier": "tier-2-vertical",
-          "references": [
-            "docs/super-app-rfc-adr/blast-radius.md#payment-term-catalog"
-          ]
+          "references": ["docs/super-app-rfc-adr/blast-radius.md#payment-term-catalog"]
+        }
+      }
+    },
+    {
+      "id": "privacy",
+      "kind": "vertical",
+      "domain": "privacy",
+      "package": "@app/privacy",
+      "path": "verticals/privacy",
+      "moduleFederation": {
+        "role": "remote",
+        "name": "verticalPrivacy",
+        "manifestUrl": "http://localhost:4104/mf-manifest.json",
+        "exposes": ["./Route", "./Widget"],
+        "ssr": true,
+        "sharedContractVersion": "mf-ssr-contract-v1"
+      },
+      "backendFederation": {
+        "role": "microvertical-server",
+        "name": "verticalPrivacyBackend",
+        "runtimeFramework": "effect",
+        "strictEffectApproach": true,
+        "deliveryUnit": {
+          "schemaVersion": 1,
+          "kind": "microvertical-delivery-unit",
+          "unitId": "app/privacy",
+          "packageName": "@app/privacy",
+          "version": "0.1.0",
+          "buildMarker": "00f31ee28a035d1a",
+          "sourceRevision": "workspace"
+        },
+        "exposes": {
+          "./effect-api": {
+            "contract": "verticals/privacy/shared/api.ts",
+            "runtime": "verticals/privacy/api/index.ts",
+            "client": "verticals/privacy/src/api/privacy-client.ts",
+            "openapi": "/privacy-api/openapi.json",
+            "readiness": "/privacy-api/privacy/readiness"
+          }
+        },
+        "versionBoundary": {
+          "invariant": "web-and-api-same-build",
+          "identityRoot": "deliveryUnit",
+          "packageName": "@app/privacy",
+          "ui": {
+            "manifestEnv": "VERTICAL_PRIVACY_MF_MANIFEST",
+            "manifestUrl": "http://localhost:4104/mf-manifest.json",
+            "buildMarker": "verticals/privacy/src/routes/ultramodern-route-metadata.ts"
+          },
+          "api": {
+            "readiness": "/privacy-api/privacy/readiness",
+            "buildMarker": "verticals/privacy/shared/ultramodern-build.ts",
+            "publicUrlEnv": "ULTRAMODERN_PUBLIC_URL_PRIVACY"
+          }
+        },
+        "executionSurfaces": {
+          "cloudflare": {
+            "kind": "cloudflare-worker-snapshot",
+            "workerName": "app-privacy",
+            "publicUrlEnv": "ULTRAMODERN_PUBLIC_URL_PRIVACY",
+            "ssr": {
+              "workerEntry": ".output/server/index.mjs",
+              "workerManifest": ".output/server/modern-worker-manifest.json",
+              "effectBffBundle": ".output/worker/__modern_bff_effect.js",
+              "routeManifest": ".output/server/route.json",
+              "ssrBundle": ".output/worker/index.js",
+              "assetsBinding": "ASSETS"
+            },
+            "zephyr": {
+              "runtime": "ssr-worker",
+              "integration": "managed-cloudflare",
+              "snapshotIdEnv": "ZEPHYR_PRIVACY_SNAPSHOT_ID",
+              "versionIdEnv": "ZEPHYR_PRIVACY_VERSION_ID",
+              "applicationUidEnv": "ZEPHYR_PRIVACY_APPLICATION_UID"
+            },
+            "workerDispatch": {
+              "preferred": "service-binding",
+              "serviceBinding": "VERTICAL_PRIVACY_WORKER",
+              "serviceBindingEnv": "VERTICAL_PRIVACY_WORKER_BINDING",
+              "dispatchNamespaceEnv": "VERTICAL_PRIVACY_DISPATCH_NAMESPACE",
+              "dispatchWorkerNameEnv": "VERTICAL_PRIVACY_WORKER_NAME",
+              "requestInterface": "fetch"
+            }
+          },
+          "node": {
+            "kind": "node-mf-runtime",
+            "adapterVersion": "backend-mf-effect-v1",
+            "remoteName": "verticalPrivacyBackend",
+            "manifestEnv": "VERTICAL_PRIVACY_BACKEND_MF_MANIFEST",
+            "manifestUrl": "http://localhost:4104/backend-mf-manifest.json",
+            "containerEntry": "http://localhost:4104/backendRemoteEntry.cjs",
+            "remoteType": "commonjs-module",
+            "expose": "./effect-api",
+            "runtimePackage": "@modern-js/plugin-bff-extensions/backend-federation-manifest/node",
+            "expected": {
+              "unitId": "app/privacy",
+              "buildMarker": "00f31ee28a035d1a"
+            }
+          }
+        },
+        "compatibility": {
+          "contractVersion": "microvertical-server-effect-v1",
+          "packageName": "@app/privacy",
+          "effectVersion": "4.0.0-rc.112",
+          "moduleFederationVersion": "2.9.0"
+        },
+        "cache": {
+          "cloudflareSnapshot": "immutable",
+          "nodeManifest": "no-store",
+          "nodeVersionedContainer": "immutable",
+          "nodeUnpinnedContainer": "revalidate"
+        },
+        "fallback": {
+          "timeoutMs": 1500,
+          "failureEvent": "modernjs:microvertical-server-fallback",
+          "strategy": "typed-effect-error"
+        }
+      },
+      "deliveryUnit": {
+        "schemaVersion": 1,
+        "kind": "microvertical-delivery-unit",
+        "unitId": "app/privacy",
+        "packageName": "@app/privacy",
+        "version": "0.1.0",
+        "buildMarker": "00f31ee28a035d1a",
+        "sourceRevision": "workspace"
+      },
+      "api": {
+        "runtime": "effect",
+        "bff": {
+          "prefix": "/privacy-api",
+          "openapi": "/openapi.json",
+          "strictEffectApproach": true
+        },
+        "contract": {
+          "export": "./api",
+          "path": "verticals/privacy/shared/api.ts"
+        },
+        "client": {
+          "export": "./api/client",
+          "path": "verticals/privacy/src/api/privacy-client.ts"
+        },
+        "serverEntry": "verticals/privacy/api/index.ts",
+        "basePath": "/privacy-api/privacy",
+        "consumedBy": ["shell-super-app", "privacy"],
+        "readiness": {
+          "endpoint": "/privacy/readiness",
+          "marker": {
+            "ui": "ultramodernUiMarker",
+            "api": "ultramodernApiMarker",
+            "skew": "none"
+          },
+          "checks": ["moduleFederation", "ssr", "translations", "api"]
+        },
+        "requestContext": {
+          "propagatedHeaders": [
+            "accept-language",
+            "authorization",
+            "traceparent",
+            "x-correlation-id",
+            "x-tenant-id",
+            "x-ultramodern-env",
+            "x-vertical-version-id"
+          ],
+          "source": "shell-to-vertical-api-client"
+        },
+        "domainOperations": {
+          "workspaceFeed": {
+            "client": "listPrivacy",
+            "method": "GET",
+            "path": "/privacy",
+            "resource": "workspace-items",
+            "owner": "privacy"
+          },
+          "workspaceDetail": {
+            "client": "getPrivacy",
+            "method": "GET",
+            "path": "/privacy/:id",
+            "resource": "workspace-item",
+            "owner": "privacy"
+          },
+          "workspaceCreate": {
+            "client": "createPrivacy",
+            "method": "POST",
+            "path": "/privacy",
+            "resource": "privacy",
+            "owner": "privacy"
+          }
+        }
+      },
+      "cloudflare": {
+        "target": "cloudflare",
+        "workerName": "app-privacy",
+        "publicUrlEnv": "ULTRAMODERN_PUBLIC_URL_PRIVACY",
+        "compatibilityDate": "2026-06-02",
+        "compatibilityFlags": ["nodejs_compat", "global_fetch_strictly_public"],
+        "assetsBinding": "ASSETS",
+        "routes": {
+          "ssr": "/en",
+          "mfManifest": "/mf-manifest.json",
+          "locale": "/locales/en/privacy.json",
+          "apiReadiness": "/privacy-api/privacy/readiness"
+        },
+        "security": {
+          "enabled": true,
+          "headers": {
+            "referrerPolicy": "strict-origin-when-cross-origin",
+            "contentTypeOptions": "nosniff",
+            "permissionsPolicy": "camera=(), geolocation=(), microphone=(), payment=(), usb=()"
+          },
+          "contentSecurityPolicy": {
+            "mode": "report-only",
+            "directives": {
+              "base-uri": ["'self'"],
+              "connect-src": ["'self'", "https:", "http:", "wss:", "ws:"],
+              "default-src": ["'self'"],
+              "font-src": ["'self'", "data:", "https:", "http:"],
+              "form-action": ["'self'"],
+              "frame-ancestors": ["'self'"],
+              "img-src": ["'self'", "data:", "blob:", "https:", "http:"],
+              "manifest-src": ["'self'", "https:", "http:"],
+              "object-src": ["'none'"],
+              "script-src": ["'self'", "'unsafe-inline'", "'unsafe-eval'", "https:", "http:", "blob:"],
+              "style-src": ["'self'", "'unsafe-inline'", "https:", "http:"],
+              "worker-src": ["'self'", "blob:"]
+            },
+            "reason": "Report-only by default so Cloudflare Module Federation SSR can prove remote script, style, and connect compatibility before enforcement."
+          },
+          "noindex": {
+            "workersDev": true,
+            "localhost": true,
+            "previewHostnames": []
+          }
+        },
+        "qualityGates": {
+          "publicRoutes": {
+            "requireSitemapWhenPresent": true,
+            "requireRobotsSitemapConsistency": true,
+            "requireWebManifestWhenPresent": true
+          },
+          "statusCodes": {
+            "notFoundRoute": "/__ultramodern-smoke-missing/nope",
+            "unknownRouteStatus": 404
+          },
+          "indexing": {
+            "previewNoindex": true,
+            "productionPublicRoutesIndexable": true
+          },
+          "assets": {
+            "cssPreloadRequired": true,
+            "cssResponseRequired": true,
+            "cacheControlRequiredForCss": true,
+            "sourcemapsPubliclyReferenced": false
+          },
+          "budgets": {
+            "ssrHtmlMaxBytes": 250000,
+            "mfManifestMaxBytes": 500000,
+            "localeJsonMaxBytes": 100000,
+            "sitemapXmlMaxBytes": 500000,
+            "cssAssetMaxBytes": 750000
+          },
+          "csp": {
+            "finalMode": "report-only-dogfood",
+            "decision": "Report-only remains the generated final mode until public smoke proof records MF SSR script/style/connect compatibility for the deployed surface."
+          }
+        },
+        "evidence": {
+          "proofScript": "scripts/proof-cloudflare-version.mts",
+          "reportDefault": ".codex/reports/cloudflare-version-proof/public-url-proof.json"
+        },
+        "jsonSmokeChecks": [
+          {
+            "id": "privacy-readiness-smoke",
+            "route": "/privacy-api/privacy/readiness",
+            "expect": {
+              "status": "ready",
+              "checks.api": "ready",
+              "checks.moduleFederation": "ready",
+              "checks.ssr": "ready"
+            }
+          }
+        ]
+      },
+      "ownership": {
+        "team": "super-app-platform",
+        "slack": "#super-app-platform",
+        "pagerDuty": "pd-super-app-platform",
+        "runbookRef": "runbooks/verticals/privacy.md",
+        "adrRef": "docs/super-app-rfc-adr/verticals.md#privacy",
+        "blastRadius": {
+          "tier": "tier-2-vertical",
+          "references": ["docs/super-app-rfc-adr/blast-radius.md#privacy"]
         }
       }
     }
@@ -1256,11 +1312,6 @@
   ],
   "validation": {
     "script": "scripts/validate-ultramodern-workspace.mts",
-    "commands": [
-      "pnpm i18n:boundaries",
-      "pnpm api:check",
-      "pnpm module-entrypoints:check",
-      "pnpm contract:check"
-    ]
+    "commands": ["pnpm i18n:boundaries", "pnpm api:check", "pnpm module-entrypoints:check", "pnpm contract:check"]
   }
 }

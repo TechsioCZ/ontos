@@ -69,7 +69,7 @@ const bootstrapRuntimeRole = (
     );
     yield* query(client, `grant connect on database ${quoteIdentifier(database)} to ontos_runtime`);
     yield* Effect.forEach(
-      ['core', 'auth', 'contacts', 'party'],
+      ['core', 'auth', 'contacts', 'party', 'privacy'],
       (schema) =>
         Effect.gen(function* grantSchemaPrivilegesEffect() {
           const schemaExists = yield* query<{ exists: boolean }>(
@@ -96,6 +96,59 @@ const bootstrapRuntimeRole = (
         }),
       { concurrency: 1, discard: true },
     );
+    const immutablePrivacyLedgers = [
+      'anti_resurrection_protections',
+      'applicability_decisions',
+      'applicability_policies',
+      'consent_decisions',
+      'disposition_decisions',
+      'dsr_deadlines',
+      'dsr_delivery_evidence',
+      'dsr_resolver_assignments',
+      'dsr_responses',
+      'dsr_substantive_decisions',
+      'dsr_verifications',
+      'eligibility_evidence',
+      'legal_basis_assignments',
+      'legal_holds',
+      'notice_provisions',
+      'notice_versions',
+      'owner_contributions',
+      'owner_execution_outcomes',
+      'privacy_representations',
+      'processing_activity_lifecycle_events',
+      'processing_interventions',
+      'purpose_versions',
+      'responsibility_assignments',
+      'retention_exceptions',
+      'retention_rules',
+    ] as const;
+    const privacySchemaExists = yield* query<{ exists: boolean }>(
+      client,
+      'select exists(select 1 from pg_catalog.pg_namespace where nspname = $1) as exists',
+      ['privacy'],
+    );
+    if (privacySchemaExists.rows[0]?.exists) {
+      const existingImmutablePrivacyLedgers = yield* query<{ table_name: string }>(
+        client,
+        `select relation.relname as table_name
+           from pg_catalog.pg_class as relation
+           join pg_catalog.pg_namespace as namespace on namespace.oid = relation.relnamespace
+          where namespace.nspname = $1
+            and relation.relkind in ('r', 'p')
+            and relation.relname = any($2::text[])
+          order by relation.relname`,
+        ['privacy', [...immutablePrivacyLedgers]],
+      );
+      if (existingImmutablePrivacyLedgers.rows.length > 0) {
+        yield* query(
+          client,
+          `revoke update, delete on table ${existingImmutablePrivacyLedgers.rows
+            .map(({ table_name }) => `${quoteIdentifier('privacy')}.${quoteIdentifier(table_name)}`)
+            .join(', ')} from ontos_runtime`,
+        );
+      }
+    }
     const role = yield* query<{ rolbypassrls: boolean; rolsuper: boolean }>(
       client,
       'select rolsuper, rolbypassrls from pg_catalog.pg_roles where rolname = $1',

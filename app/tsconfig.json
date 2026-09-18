@@ -20,6 +20,9 @@
       "path": "packages/shared-design-tokens"
     },
     {
+      "path": "packages/email-delivery"
+    },
+    {
       "path": "apps/shell-super-app"
     },
     {
@@ -32,7 +35,7 @@
       "path": "verticals/payment-term-catalog"
     },
     {
-      "path": "packages/email-delivery"
+      "path": "verticals/privacy"
     }
   ]
 }
