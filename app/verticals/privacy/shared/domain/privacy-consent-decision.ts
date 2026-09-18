@@ -63,8 +63,11 @@ export const validateConsentDecision = (
   if (!scope.valid) {
     return scope.errors[0];
   }
-  if (input.actorEvidence !== null && input.actorEvidence.actor.tenantId !== input.scope.privacySubjectRef.tenantId) {
-    return 'Decision actor and consent scope must share a tenant';
+  if (input.actorEvidence !== null) {
+    const { actor } = input.actorEvidence;
+    if (actor.tenantId !== input.scope.privacySubjectRef.tenantId) {
+      return 'Decision actor and consent scope must share a tenant';
+    }
   }
   return undefined;
 };

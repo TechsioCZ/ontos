@@ -1144,8 +1144,8 @@ importers:
         specifier: ^2.0.3
         version: 2.0.3(@rsbuild/core@2.2.3(@module-federation/runtime-tools@2.9.0)(core-js@3.50.0))(@rspack/core@2.2.3(@module-federation/runtime-tools@2.9.0)(@swc/helpers@0.5.23))(webpack@5.110.3(@swc/core@1.16.2(@swc/helpers@0.5.23))(clean-css@5.3.3)(cssnano@9.0.3(postcss@8.5.28))(csso@5.0.5)(esbuild@0.28.1)(html-minifier-terser@7.2.0)(lightningcss@1.33.0)(postcss@8.5.28)(sharp@0.35.2)(svgo@4.1.0))
       '@rstest/core':
-        specifier: 0.11.11
-        version: 0.11.11(@module-federation/runtime-tools@2.9.0)(core-js@3.50.0)(happy-dom@20.8.3)
+        specifier: 0.11.12
+        version: 0.11.12(@module-federation/runtime-tools@2.9.0)(core-js@3.50.0)(happy-dom@20.8.3)
       '@types/node':
         specifier: ^26.4.1
         version: 26.5.1
@@ -1168,8 +1168,8 @@ importers:
         specifier: 1.0.0-rc.5-ab785fc
         version: 1.0.0-rc.5-ab785fc
       effect-rstest:
-        specifier: https://pkg.pr.new/ScriptedAlchemy/effect-rstest@79abbf684c7b150ee5f32694129a7caf969903bc
-        version: https://pkg.pr.new/ScriptedAlchemy/effect-rstest@79abbf684c7b150ee5f32694129a7caf969903bc(patch_hash=aa7e505a2b575757ce3951715189b3cd30d90b7a57c17669f9f89340e751f138)(@rstest/core@0.11.11(@module-federation/runtime-tools@2.9.0)(core-js@3.50.0)(happy-dom@20.8.3))(effect@4.0.0-rc.112(patch_hash=b7489e5109ec4daf5d6c7ac30956ed95c312f4077cbc973b8c82f0f340108ada))
+        specifier: 0.1.4
+        version: 0.1.4(patch_hash=400646897be54f02f39200a151f0f4a48428fc12dccbd7d91a7391b55247152a)(@rstest/core@0.11.12(@module-federation/runtime-tools@2.9.0)(core-js@3.50.0)(happy-dom@20.8.3))(effect@4.0.0-rc.112(patch_hash=b7489e5109ec4daf5d6c7ac30956ed95c312f4077cbc973b8c82f0f340108ada))
       tailwindcss:
         specifier: ^4.3.3
         version: 4.3.3
