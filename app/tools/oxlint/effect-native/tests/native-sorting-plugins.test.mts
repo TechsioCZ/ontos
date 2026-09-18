@@ -1,4 +1,4 @@
-import { writeFileSync } from 'node:fs';
+import { readFileSync, writeFileSync } from 'node:fs';
 import { createRequire } from 'node:module';
 import path from 'node:path';
 
@@ -8,6 +8,7 @@ import { appRoot, runOxlint } from './oxlint.mts';
 import { withTemporaryWorkspace } from './temporary-workspace.mts';
 
 const applicationRequire = createRequire(path.join(appRoot, 'package.json'));
+const applicationManifest = readFileSync(path.join(appRoot, 'package.json'), 'utf-8');
 const plugin = applicationRequire.resolve('eslint-plugin-perfectionist');
 const cases = [
   {
@@ -44,8 +45,11 @@ const cases = [
   },
 ];
 
-it('native sorting integration does not resolve the ESLint runner', () => {
-  expect(() => applicationRequire.resolve('eslint')).toThrow(/Cannot find module 'eslint'/u);
+it('native sorting integration does not declare the ESLint runner', () => {
+  const hasDirectEslintDependency = /^[ ]{2}"(?:dependencies|devDependencies)"\s*:\s*\{[^{}]*"eslint"\s*:/msu.test(
+    applicationManifest,
+  );
+  expect(hasDirectEslintDependency).toBe(false);
 });
 
 for (const fixture of cases) {

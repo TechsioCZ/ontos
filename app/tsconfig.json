@@ -20,6 +20,9 @@
       "path": "packages/shared-design-tokens"
     },
     {
+      "path": "packages/email-delivery"
+    },
+    {
       "path": "apps/shell-super-app"
     },
     {

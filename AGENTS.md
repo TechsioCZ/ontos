@@ -8,6 +8,8 @@
   the application's CI or deployment workflows.
 - Closed GitHub issues are read-only. Do not edit, reopen, relabel, reassign, comment on, or otherwise
   modify closed issues.
+- The `new-engine` repository is legacy. Use it only as optional historical or contextual reference;
+  do not treat its code, architecture, or documentation as current guidance or a source of truth.
 - For documentation authority and reading routes, follow [`docs/README.md`](docs/README.md). Do not
   treat completed specifications or historical evidence as current guidance unless the task asks
   for provenance.

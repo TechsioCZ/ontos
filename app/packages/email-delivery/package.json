@@ -1,0 +1,23 @@
+{
+  "name": "@app/email-delivery",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Provider-neutral transactional email delivery ports and the Resend adapter.",
+  "type": "module",
+  "exports": {
+    "./server": "./src/server.ts",
+    "./resend": "./src/resend.ts"
+  },
+  "scripts": {
+    "test:unit": "rstest --project unit",
+    "typecheck": "node ../../scripts/ultramodern-typecheck.mts --project tsconfig.json"
+  },
+  "dependencies": {
+    "effect": "4.0.0-rc.112"
+  },
+  "devDependencies": {
+    "@rstest/core": "0.11.12",
+    "@types/node": "^26.4.1",
+    "effect-rstest": "0.1.4"
+  }
+}

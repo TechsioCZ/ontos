@@ -1,5 +1,5 @@
 import { Effect, Equal, Hash, Schema } from 'effect';
-import { addEqualityTesters, expect, it } from 'effect-rstest';
+import { addEqualityTesters, describe, expect, it } from 'effect-rstest';
 import { FastCheck } from 'effect/testing';
 
 class SemanticValue implements Equal.Equal {
@@ -22,6 +22,7 @@ addEqualityTesters();
 it('the installed package honors Effect equality without replacing native assertions', () => {
   expect(new SemanticValue('same', 'left')).toEqual(new SemanticValue('same', 'right'));
   expect(new SemanticValue('left', 'same')).not.toEqual(new SemanticValue('next', 'same'));
+  expect(new SemanticValue('same', 'left')).toEqual(expect.objectContaining({ representation: 'left' }));
   expect({ value: 1 }).toEqual({ value: 1 });
   expect({ value: 1 }).toEqual(expect.objectContaining({ value: 1 }));
 });
@@ -51,3 +52,26 @@ const value = new Proxy(
 
 it.effect('discards success values at the runner boundary', () => Effect.succeed(value));
 it.live('discards live success values at the runner boundary', () => Effect.succeed(value));
+
+describe.sequential('timed-out Effect resource cleanup', () => {
+  let finalized = false;
+
+  it.live.fails(
+    'interrupts the test and awaits its asynchronous finalizer',
+    () =>
+      Effect.acquireRelease(Effect.void, () =>
+        Effect.sleep('30 millis').pipe(
+          Effect.andThen(
+            Effect.sync(() => {
+              finalized = true;
+            }),
+          ),
+        ),
+      ).pipe(Effect.andThen(Effect.never)),
+    10,
+  );
+
+  it('finishes cleanup before the next test starts', () => {
+    expect(finalized).toBe(true);
+  });
+});
