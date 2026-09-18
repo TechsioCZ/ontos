@@ -30,6 +30,9 @@
     },
     {
       "path": "verticals/payment-term-catalog"
+    },
+    {
+      "path": "packages/email-delivery"
     }
   ]
 }

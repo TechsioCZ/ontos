@@ -782,11 +782,14 @@ hash that identified the Attempt.
 
 ## Order acceptance and recovery
 
-**Reservation Confirmation** — Inventory/Availability-owner-issued proof that specified Catalog
-Selections and quantities, or their explicitly mapped stock requirements, are provisionally reserved
-for one exact Order Commitment Attempt until an explicit expiry/lease boundary. It has owner-scoped
-idempotency and correlation. Mapping to stock does not reinterpret package or Set contents. It is not
-an Order or permanent Availability guarantee; an expired/unverifiable confirmation is not Current.
+**Reservation Confirmation** — Attempt-bound proof issued by the actual Reservation Authority,
+through Inventory's public boundary, that one exact authority-homogeneous Inventory Reservation for
+exact Stock Item(s), Quantities/Units and Allocations is provisionally guaranteed for one exact Order
+Commitment Attempt until its explicit validity boundary. One Attempt may therefore carry multiple
+Inventory Reservation Confirmations from different actual Reservation Authorities. Availability does not become the issuer merely by consuming the
+evidence. It has owner-scoped idempotency and correlation. Inventory preserves exact Catalog Selection
+and Quantity/Unit meaning; it does not decompose Package/Set contents or convert Units. It is not an
+Order or permanent Availability guarantee; an expired/unverifiable confirmation is not Current.
 
 **Payment Authorization** — Payment-owned proof that the required Payment method/amount/currency is
 authorized for one exact Order Commitment Attempt under the resolved Payment Term. It is distinct
@@ -811,8 +814,9 @@ state and conflicts. A different Bundle cannot reuse the same Attempt identity.
 
 **Order Commitment Proof Set** — Exact set of owner-issued validations/confirmations used to prove one
 Order Commitment Attempt + its exact Bundle through the commitment boundary. It may include Approval
-Revalidation, Assortment Commitment Confirmation, Reservation Confirmation, Payment Authorization or
-analogous attempt-bound proofs. Legitimate renewal may replace an expired proof for the same
+Revalidation, Assortment Commitment Confirmation, every Reservation Confirmation and Commitment
+Protection required for the Attempt's complete Inventory Reservation Coverage, Payment Authorization
+or analogous attempt-bound proofs. Legitimate renewal may replace an expired proof for the same
 unchanged Attempt + Bundle under the owning contract; that renewal does not change the Bundle hash.
 _Avoid_: Proof Set as prospective purchase identity, proofs from different Attempts unioned together,
 proof renewal used to smuggle changed Bundle meaning into the same Attempt.
@@ -906,10 +910,7 @@ Pricing does not create, merge or split Pricing Lines as a calculation side effe
 aggregation group or bounded quantity/calculation portion is not another Pricing Line. Pricing Line
 does not by itself define Cart/Order line lifecycle.
 
-**Inventory** — Domain owning stock and reservations when the Customer Configuration owns those
-lifecycles. Inventory maps exact Catalog selections to explicitly owned stock requirements without
-redefining product identity or package/composition semantics. Separate Catalog selection identity
-neither requires separate stock nor permits double reservation of a Set and its components.
+**Inventory** — Domain owning the one-to-one binding from each exact Catalog Selection to one Stock Item, plus stock facts, Stock Requirements/Allocations, and Inventory-recognized stock obligations within declared authority boundaries. Inventory preserves exact Quantity/Unit meaning; Package/Set contents are not decomposed for stock, and the actual Reservation Authority may be Inventory, an External Business System, or absent.
 
 **Availability** — Current promise that an exact Catalog Selection and Quantity can be sold and
 delivered in a Commerce Purchasing Context. It may derive from Inventory or an External Business

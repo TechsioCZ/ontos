@@ -91,6 +91,7 @@ allowBuilds:
   sharp: true
   workerd: true
 patchedDependencies:
+  effect-rstest@0.1.4: patches/effect-rstest@0.1.4.patch
   '@bleedingdev/modern-js-app-tools-extensions@3.9.0-ultramodern.11': patches/@bleedingdev__modern-js-app-tools-extensions@3.9.0-ultramodern.11.patch
   '@bleedingdev/modern-js-code-tools@3.9.0-ultramodern.11': patches/@bleedingdev__modern-js-code-tools@3.9.0-ultramodern.11.patch
   effect@4.0.0-rc.112: patches/effect-cli-metadata@4.0.0-rc.112.patch

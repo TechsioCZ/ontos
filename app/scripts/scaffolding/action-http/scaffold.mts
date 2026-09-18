@@ -1,5 +1,5 @@
 import { createCodesmithGenerator } from '../generator-adapter.mts';
-import { Effect, FileSystem, Option, Predicate, Schema } from 'effect';
+import { Effect, FileSystem, Option, Predicate, Schema, SchemaAST } from 'effect';
 import {
   GOVERNED_HTTP_API_ADDITION_SLOT_END,
   GOVERNED_HTTP_API_ADDITION_SLOT_START,
@@ -60,32 +60,36 @@ interface DomainErrorIdentity {
 
 interface SchemaAstPropertyLike {
   readonly name?: unknown;
-  readonly type?: SchemaAstLike & { readonly literal?: unknown };
+  readonly type?: (SchemaAstLike & { readonly literal?: unknown }) | undefined;
 }
 
 interface SchemaAstLike {
-  readonly _tag?: string;
-  readonly annotations?: AnnotationMap;
-  readonly encoding?: readonly { readonly to?: SchemaAstLike }[];
+  readonly _tag?: string | undefined;
+  readonly annotations?: AnnotationMap | undefined;
+  readonly encoding?: readonly { readonly to?: SchemaAstLike | undefined }[] | undefined;
   readonly literal?: unknown;
-  readonly propertySignatures?: readonly SchemaAstPropertyLike[];
-  readonly typeParameters?: readonly SchemaAstLike[];
-  readonly types?: readonly SchemaAstLike[];
-}
-
-interface ActionModuleLike {
-  readonly descriptor: {
-    readonly actionKey: string;
-    readonly domainErrorSchema: { readonly ast: SchemaAstLike };
-    readonly idempotency: 'optional' | 'required';
-    readonly owningModuleKey: string;
-  };
+  readonly propertySignatures?: readonly SchemaAstPropertyLike[] | undefined;
+  readonly typeParameters?: readonly SchemaAstLike[] | undefined;
+  readonly types?: readonly SchemaAstLike[] | undefined;
 }
 
 const UnknownRecordSchema = Schema.Record(Schema.String, Schema.Unknown);
-type UnknownRecord = typeof UnknownRecordSchema.Type;
 const decodeRecord = Schema.decodeUnknownOption(UnknownRecordSchema);
 const isString = Schema.is(Schema.String);
+const DomainErrorSchema = Schema.declare<Schema.Top>(Schema.isSchema);
+const ActionKeySchema = Schema.String.pipe(Schema.brand('ActionKey'));
+const OwningModuleKeySchema = Schema.String.pipe(Schema.brand('OwningModuleKey'));
+const ActionDescriptorSchema = Schema.Struct({
+  actionKey: ActionKeySchema,
+  domainErrorSchema: DomainErrorSchema,
+  idempotency: Schema.Literals(['optional', 'required']),
+  owningModuleKey: OwningModuleKeySchema,
+});
+type ActionDescriptor = typeof ActionDescriptorSchema.Type;
+interface ActionModuleLike {
+  readonly descriptor: ActionDescriptor;
+}
+const decodeDescriptor = Schema.decodeUnknownOption(ActionDescriptorSchema);
 const decodeSentinels = Schema.decodeUnknownOption(
   Schema.Array(Schema.Struct({ key: Schema.String, literal: Schema.String })),
 );
@@ -223,9 +227,7 @@ const collectDomainErrors = (ast: SchemaAstLike): readonly DomainErrorIdentity[]
 };
 
 interface DecodedActionRegistration {
-  readonly action: UnknownRecord;
-  readonly descriptor: UnknownRecord;
-  readonly domainErrorSchema: UnknownRecord;
+  readonly descriptor: ActionDescriptor;
 }
 
 // oxlint-disable-next-line anti-slop/no-unknown-parameters -- Dynamic import namespaces are untrusted here and are decoded field-by-field before the scaffold accepts the registration.
@@ -233,38 +235,31 @@ const decodeActionRegistration = (module: unknown, value: string): Option.Option
   Option.gen(function* decodeActionRegistrationOption() {
     const moduleRecord = yield* decodeRecord(module);
     const action = yield* decodeRecord(moduleRecord[value]);
-    const descriptor = yield* decodeRecord(action['descriptor']);
-    const domainErrorSchema = yield* decodeRecord(descriptor['domainErrorSchema']);
-    return { action, descriptor, domainErrorSchema };
+    const descriptor = yield* decodeDescriptor(action['descriptor']);
+    return { descriptor };
   });
 
 const isValidActionRegistration = (registration: DecodedActionRegistration): boolean =>
-  isString(registration.descriptor['actionKey']) &&
-  isString(registration.descriptor['owningModuleKey']) &&
-  (registration.descriptor['idempotency'] === 'required' || registration.descriptor['idempotency'] === 'optional') &&
-  Schema.is(UnknownRecordSchema)(registration.domainErrorSchema['ast']);
+  SchemaAST.isAST(registration.descriptor.domainErrorSchema.ast);
 
-// oxlint-disable-next-line effect-native/no-async-script-program -- Dynamic module import is the script driver boundary and is immediately wrapped by loadAction's typed Effect.tryPromise channel.
-const inspectAction = async (actionPath: string, value: string): Promise<ActionModuleLike> => {
-  const actionUrl = new URL(`file://${actionPath}`).href;
-  const registration = Option.getOrUndefined(decodeActionRegistration(await import(`${actionUrl}?action-http`), value));
-  if (registration === undefined || !isValidActionRegistration(registration)) {
-    return raiseScaffoldFailure(`Action export ${value} is not a valid registration`);
-  }
-  // SAFETY: the descriptor shape and all fields consumed by the generator were checked above.
-  // oxlint-disable-next-line anti-slop/no-chained-type-assertions, typescript/no-unsafe-type-assertion -- Validated dynamic Action module shape; expires: 2027-03-31.
-  return registration.action as unknown as ActionModuleLike;
-};
-
-const loadAction = (
+export const inspectAction = Effect.fn('ActionHttpScaffold.inspectAction')(function* inspectActionEffect(
   actionPath: string,
   value: string,
-): Effect.Effect<ActionModuleLike, ReturnType<typeof scaffoldFailure>> =>
-  Effect.tryPromise({
+) {
+  const actionUrl = new URL(`file://${actionPath}`).href;
+  const module = yield* Effect.tryPromise<unknown, ReturnType<typeof scaffoldFailure>>({
     catch: (cause) => scaffoldFailure(`failed to inspect existing Action ${actionPath}`, cause),
     // oxlint-disable-next-line typescript/promise-function-async -- Effect.tryPromise intentionally accepts a lazy Promise-returning thunk and owns its rejection mapping.
-    try: () => inspectAction(actionPath, value),
+    try: () => import(`${actionUrl}?action-http`),
   });
+  const registration = Option.getOrUndefined(decodeActionRegistration(module, value));
+  if (registration === undefined || !isValidActionRegistration(registration)) {
+    return yield* scaffoldFailure(`Action export ${value} is not a valid registration`);
+  }
+  return { descriptor: registration.descriptor };
+});
+
+const loadAction = inspectAction;
 
 const literalList = (values: readonly string[]): string => {
   const literals = values.map((value) => `'${value}'`).join(', ');

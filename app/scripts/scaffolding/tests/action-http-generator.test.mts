@@ -1,11 +1,12 @@
 import { NodeServices } from '@effect/platform-node';
-import { Cause, Effect, Exit, Option } from 'effect';
+import { Cause, Effect, Exit, Option, Predicate, Schema, SchemaAST } from 'effect';
 import { expect, it } from 'effect-rstest';
-import { mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { mkdtemp, rm, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 
 import {
+  inspectAction,
   renderActionHttpClient,
   renderActionHttpContract,
   renderActionHttpProblems,
@@ -28,6 +29,7 @@ const vertical = {
   slug: 'pricing-policy',
   topologyEntry: {},
 } satisfies OntosVerticalMetadata;
+const appRoot = path.resolve(import.meta.dirname, '../../..');
 
 it('renders one exact typed Action endpoint and exhaustive domain mapping', () => {
   const action = 'change-rate';
@@ -100,6 +102,75 @@ it('renders required idempotency and governed assertion acquisition in the Actio
   expect(client).toContain("headers: { 'idempotency-key': options.idempotencyKey }");
   expect(client).toContain("defaultApiPrefix: '/pricing-policy-api'");
 });
+
+it.live(
+  'accepts Action registrations with real Effect domain error Schemas',
+  Effect.fn(function* acceptsRealDomainErrorSchema() {
+    const root = yield* Effect.promise(() => mkdtemp(path.join(tmpdir(), 'ontos-action-http-schema-')));
+    yield* Effect.addFinalizer(() => Effect.promise(() => rm(root, { force: true, recursive: true })));
+    yield* Effect.promise(() => symlink(path.join(appRoot, 'node_modules'), path.join(root, 'node_modules'), 'dir'));
+    const actionPath = path.join(root, 'valid-action.ts');
+    yield* Effect.promise(() =>
+      writeFile(
+        actionPath,
+        `import { Schema } from 'effect';
+
+export class FixtureConflict extends Schema.TaggedError<FixtureConflict>()('FixtureConflict', {
+  code: Schema.Literal('fixture_conflict'),
+  reason: Schema.String,
+}) {}
+
+export class FixtureUnavailable extends Schema.TaggedError<FixtureUnavailable>()('FixtureUnavailable', {
+  code: Schema.Literal('fixture_unavailable'),
+  reason: Schema.String,
+}) {}
+
+export const validAction = {
+  descriptor: {
+    actionKey: 'fixture.valid-action',
+    domainErrorSchema: Schema.Union([FixtureConflict, FixtureUnavailable]),
+    idempotency: 'required',
+    owningModuleKey: 'fixture',
+  },
+};
+`,
+        'utf-8',
+      ),
+    );
+    const inspected = yield* inspectAction(actionPath, 'validAction');
+    expect(inspected.descriptor.actionKey).toBe('fixture.valid-action');
+    expect(Predicate.isFunction(inspected.descriptor.domainErrorSchema)).toBe(true);
+    expect(Schema.isSchema(inspected.descriptor.domainErrorSchema)).toBe(true);
+    expect(SchemaAST.isAST(inspected.descriptor.domainErrorSchema.ast)).toBe(true);
+  }),
+);
+
+it.live(
+  'rejects Action registrations whose domain error value only imitates a Schema',
+  Effect.fn(function* rejectsImitatedDomainErrorSchema() {
+    const root = yield* Effect.promise(() => mkdtemp(path.join(tmpdir(), 'ontos-action-http-invalid-schema-')));
+    yield* Effect.addFinalizer(() => Effect.promise(() => rm(root, { force: true, recursive: true })));
+    const actionPath = path.join(root, 'invalid-action.ts');
+    yield* Effect.promise(() =>
+      writeFile(
+        actionPath,
+        `export const invalidAction = {
+  descriptor: {
+    actionKey: 'fixture.invalid-action',
+    domainErrorSchema: { ast: {} },
+    idempotency: 'required',
+    owningModuleKey: 'fixture',
+  },
+};
+`,
+        'utf-8',
+      ),
+    );
+
+    const inspected = yield* Effect.exit(inspectAction(actionPath, 'invalidAction'));
+    expect(Exit.isFailure(inspected)).toBe(true);
+  }),
+);
 
 it.live(
   'updates only exactly owned generated artifacts and remains idempotent',
