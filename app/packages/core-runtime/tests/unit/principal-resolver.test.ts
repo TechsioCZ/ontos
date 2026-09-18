@@ -196,6 +196,12 @@ it.effect('fails closed for empty, inactive, and duplicate eligible resolver sta
     ).toBe(true);
     expect(
       Predicate.isTagged(
+        yield* Effect.flip(classifyAvailableTenants([{ ...activeRecord, bindingStatus: 'pending' }])),
+        'PrincipalBindingInactiveError',
+      ),
+    ).toBe(true);
+    expect(
+      Predicate.isTagged(
         yield* Effect.flip(
           classifyAvailableTenants([
             {
@@ -232,17 +238,20 @@ it.effect('fails closed for empty, inactive, and duplicate eligible resolver sta
 it.effect('types database failures as resolver unavailability', () =>
   Effect.gen(function* sanitizesResolverDatabaseFailure() {
     const error = yield* Effect.flip(
-      makePrincipalResolver({
-        executor: yield* makeTestDatabase(() =>
-          Effect.fail(
-            new SqlError({
-              reason: new ConnectionError({
-                cause: new Error('secret database error'),
+      makePrincipalResolver(
+        {
+          executor: yield* makeTestDatabase(() =>
+            Effect.fail(
+              new SqlError({
+                reason: new ConnectionError({
+                  cause: new Error('secret database error'),
+                }),
               }),
-            }),
+            ),
           ),
-        ),
-      }).listAvailableTenants('subject'),
+        },
+        { authenticationNamespaceId: 'test.staff.better-auth.v1' },
+      ).listAvailableTenants('subject'),
     );
     if (!Predicate.isTagged(error, 'PrincipalResolverUnavailableError')) {
       expect.unreachable('Expected resolver unavailability');

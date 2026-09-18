@@ -5,6 +5,7 @@ import { admin } from 'better-auth/plugins/admin';
 import { and, eq } from 'drizzle-orm';
 import { Config, DateTime, Effect, Option, Redacted } from 'effect';
 
+import { STAFF_AUTHENTICATION_NAMESPACE_ID } from './authentication-namespace.ts';
 import { AuthDatabase } from './db/client.ts';
 import { account, session, user } from './db/schema.ts';
 import type { AuthDatabaseExecutor } from './db/types.ts';
@@ -206,10 +207,10 @@ export const bootstrapStageDemo = Effect.fn('StageDemoBootstrap.bootstrap')(func
     [ensureAuthUser(configuration, techsioAccount), ensureAuthUser(configuration, siamparkAccount)],
     { concurrency: 1 },
   );
-  const [techsioContext, siamparkContext] = yield* reconcileStageContextBootstraps([
-    techsioAuthUser.userId,
-    siamparkAuthUser.userId,
-  ]).pipe(
+  const [techsioContext, siamparkContext] = yield* reconcileStageContextBootstraps(
+    [techsioAuthUser.userId, siamparkAuthUser.userId],
+    { authenticationNamespaceId: STAFF_AUTHENTICATION_NAMESPACE_ID },
+  ).pipe(
     Effect.mapError(
       (error) =>
         new StageDemoBootstrapError({

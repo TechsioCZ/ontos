@@ -11,6 +11,7 @@ import { and, eq, or } from 'drizzle-orm';
 import { Config, ConfigProvider, Console, Effect, FileSystem, Layer, Path, Redacted, Schema } from 'effect';
 import { isSqlError } from 'effect/unstable/sql/SqlError';
 
+import { STAFF_AUTHENTICATION_NAMESPACE_ID } from '../apps/shell-super-app/api/auth/authentication-namespace.ts';
 import { AuthConfig } from '../apps/shell-super-app/api/auth/config.ts';
 import { AuthDatabase, AuthDatabaseLive } from '../apps/shell-super-app/api/auth/db/client.ts';
 import { account, user } from '../apps/shell-super-app/api/auth/db/schema.ts';
@@ -553,11 +554,17 @@ export const reconcileCoreContext = (
           yield* transaction.insert(principals).values(expectedPrincipal);
         }
 
-        const bindingCandidates = yield* selectBootstrapAuthBindings(transaction, context, authUserId);
+        const bindingCandidates = yield* selectBootstrapAuthBindings(
+          transaction,
+          context,
+          authUserId,
+          STAFF_AUTHENTICATION_NAMESPACE_ID,
+        );
         if (bindingCandidates.length > 1) {
           return yield* failure('local_conflict', 'The local authentication binding conflicts');
         }
         const expectedBinding = {
+          authenticationNamespaceId: STAFF_AUTHENTICATION_NAMESPACE_ID,
           principalAuthBindingId: context.authBindingId,
           principalId: context.principalId,
           provider: 'better_auth',

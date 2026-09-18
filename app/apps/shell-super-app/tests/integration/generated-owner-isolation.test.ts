@@ -34,6 +34,14 @@ import { SqlError, UnknownError } from 'effect/unstable/sql/SqlError';
 import { exportJWK, generateKeyPair } from 'jose';
 import { Pool } from 'pg';
 
+import {
+  AuthenticationNamespaceIdSchema,
+  AuthenticationNamespaceRegistrationSchema,
+} from '../../../../packages/core-runtime/src/auth/external-identity-contracts.ts';
+import {
+  AuthenticationNamespaceRegistry,
+  makeAuthenticationNamespaceRegistry,
+} from '../../../../packages/core-runtime/src/auth/external-identity/verifier.ts';
 import { makeActionRepository } from '../../../../packages/core-runtime/src/actions/repository.ts';
 import { makeActionRuntime } from '../../../../packages/core-runtime/src/actions/runtime.ts';
 import { loadDatabaseConnectionPair } from '../../../../packages/core-runtime/src/db/config.ts';
@@ -458,6 +466,25 @@ const capturedLoggerLayer = (entries: string[]) =>
   ]);
 const ignoreOperationFailure = <Value, Failure>(operation: () => Effect.Effect<Value, Failure>): Effect.Effect<void> =>
   operation().pipe(Effect.ignore);
+const staffAuthenticationNamespaceId = Schema.decodeSync(AuthenticationNamespaceIdSchema)('test.staff.better-auth.v1');
+const authenticationNamespaceRegistry = makeAuthenticationNamespaceRegistry([
+  Schema.decodeSync(AuthenticationNamespaceRegistrationSchema)({
+    allowedAudiences: [GENERATED_OWNER.appId],
+    authenticationNamespaceId: staffAuthenticationNamespaceId,
+    provider: 'better_auth',
+    requiresOperationAdmission: false,
+    reservationPrincipalKind: 'human',
+    subjectTypes: ['user'],
+    trustedAttesterPrincipalIds: [],
+  }),
+]);
+/** The generated owner resolves scope through the real Core resolver, which needs the registry. */
+const withNamespaceRegistry = (resolver: OperationalScopeResolverService): OperationalScopeResolverService => ({
+  resolve: (input) =>
+    resolver
+      .resolve(input)
+      .pipe(Effect.provideService(AuthenticationNamespaceRegistry, authenticationNamespaceRegistry)),
+});
 const principal = (
   tenantId: string,
   legalEntityId: string,
@@ -466,6 +493,7 @@ const principal = (
 ): TrustedPrincipalContext => ({
   authBindingId,
   authContextRef: `better-auth-session:${authBindingId}`,
+  authenticationNamespaceId: staffAuthenticationNamespaceId,
   authMethod: 'session',
   legalEntityId,
   principalId,
@@ -567,7 +595,9 @@ it.live(
     const moduleStates = makeTenantModuleStateService(runtimeDatabase);
     const moduleStateGate = makeModuleStateGate(moduleStates);
     const moduleGateway = makeModuleEntrypointGateway(moduleStateGate);
-    const scopeResolver = makeOperationalScopeResolver(makeOperationalScopeRepository(runtimeDatabase), contextAccess);
+    const scopeResolver = withNamespaceRegistry(
+      makeOperationalScopeResolver(makeOperationalScopeRepository(runtimeDatabase), contextAccess),
+    );
     const readRuntime = makeReadRuntime(runtimeDatabase, moduleGateway, scopeResolver, contextAccess);
     const keyPair = yield* Effect.tryPromise(() => generateKeyPair('EdDSA', { crv: 'Ed25519', extractable: true }));
     const privateJwk = yield* Effect.tryPromise(() => exportJWK(keyPair.privateKey));
@@ -634,11 +664,17 @@ it.live(
           withOptionalProperty(
             withOptionalProperty(
               withOptionalProperty(
-                {
-                  authMethod: context.authMethod,
-                  principalId: context.principalId,
-                  tenantId: context.tenantId,
-                },
+                withOptionalProperty(
+                  {
+                    authMethod: context.authMethod,
+                    principalId: context.principalId,
+                    tenantId: context.tenantId,
+                  },
+                  context.authenticationNamespaceId !== undefined,
+                  'authenticationNamespaceId',
+                  context.authenticationNamespaceId,
+                  {},
+                ),
                 context.authBindingId !== undefined,
                 'authBindingId',
                 context.authBindingId,
@@ -805,7 +841,7 @@ it.live(
     );
     yield* Effect.tryPromise(() =>
       admin.query(
-        `insert into core.principal_auth_bindings (principal_auth_binding_id, tenant_id, principal_id, provider, subject_type, provider_subject_id, status) values ($1, $3, $5, 'better_auth', 'user', $7, 'active'), ($2, $4, $6, 'better_auth', 'user', $8, 'active')`,
+        `insert into core.principal_auth_bindings (principal_auth_binding_id, tenant_id, principal_id, authentication_namespace_id, provider, subject_type, provider_subject_id, status) values ($1, $3, $5, '${staffAuthenticationNamespaceId}', 'better_auth', 'user', $7, 'active'), ($2, $4, $6, '${staffAuthenticationNamespaceId}', 'better_auth', 'user', $8, 'active')`,
         [bindingA, bindingB, tenantA, tenantB, principalA, principalB, `user-${principalA}`, `user-${principalB}`],
       ),
     );
@@ -1154,9 +1190,8 @@ it.live(
       },
     ]);
     const unavailableContextAccess = makeContextAccessDouble('unavailable');
-    const unavailableResolver: OperationalScopeResolverService = makeOperationalScopeResolver(
-      makeOperationalScopeRepository(runtimeDatabase),
-      unavailableContextAccess,
+    const unavailableResolver: OperationalScopeResolverService = withNamespaceRegistry(
+      makeOperationalScopeResolver(makeOperationalScopeRepository(runtimeDatabase), unavailableContextAccess),
     );
     const unavailableRuntime = makeReadRuntime(
       runtimeDatabase,

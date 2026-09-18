@@ -6,6 +6,14 @@ import { expect, it } from 'effect-rstest';
 import type { PoolClient, QueryResult, QueryResultRow } from 'pg';
 import { Pool } from 'pg';
 
+import {
+  AuthenticationNamespaceIdSchema,
+  AuthenticationNamespaceRegistrationSchema,
+} from '../../src/auth/external-identity-contracts.ts';
+import {
+  AuthenticationNamespaceRegistry,
+  makeAuthenticationNamespaceRegistry,
+} from '../../src/auth/external-identity/verifier.ts';
 import { loadDatabaseConnectionPair } from '../../src/db/config.ts';
 import {
   actionInvocations,
@@ -69,6 +77,18 @@ const toReadResult = (rows: readonly { readonly value: string }[]) => ({
 });
 const allowContextAccess = (keys: readonly string[]) =>
   Effect.succeed(keys.map((key) => ({ decision: 'allowed' as const, key })));
+const staffAuthenticationNamespaceId = Schema.decodeSync(AuthenticationNamespaceIdSchema)('test.staff.better-auth.v1');
+const authenticationNamespaceRegistry = makeAuthenticationNamespaceRegistry([
+  Schema.decodeSync(AuthenticationNamespaceRegistrationSchema)({
+    allowedAudiences: ['core-runtime-test'],
+    authenticationNamespaceId: staffAuthenticationNamespaceId,
+    provider: 'better_auth',
+    requiresOperationAdmission: false,
+    reservationPrincipalKind: 'human',
+    subjectTypes: ['user'],
+    trustedAttesterPrincipalIds: [],
+  }),
+]);
 
 it('declares the composite same-tenant parent keys used by isolation foreign keys', () => {
   const names = new Set(
@@ -340,19 +360,22 @@ it.live('an unscoped owner repository remains isolated inside a governed read tr
         makeOperationalScopeResolver(makeOperationalScopeRepository({ executor: runtimeDatabase }), contextAccess),
         contextAccess,
       );
-      return runtime.runRead({
-        input: {},
-        principal: {
-          authBindingId: scope.authBindingId,
-          authContextRef: `better-auth-session:${scope.correlationId}`,
-          authMethod: scope.authMethod,
-          legalEntityId: scope.legalEntityId,
-          principalId: scope.principalId,
-          tenantId: scope.tenantId,
-        },
-        registration,
-        transport: { correlationId: scope.correlationId },
-      });
+      return runtime
+        .runRead({
+          input: {},
+          principal: {
+            authBindingId: scope.authBindingId,
+            authContextRef: `better-auth-session:${scope.correlationId}`,
+            authenticationNamespaceId: staffAuthenticationNamespaceId,
+            authMethod: scope.authMethod,
+            legalEntityId: scope.legalEntityId,
+            principalId: scope.principalId,
+            tenantId: scope.tenantId,
+          },
+          registration,
+          transport: { correlationId: scope.correlationId },
+        })
+        .pipe(Effect.provideService(AuthenticationNamespaceRegistry, authenticationNamespaceRegistry));
     };
 
     const exercise = Effect.gen(function* exerciseGovernedReadIsolation() {
@@ -394,7 +417,7 @@ it.live('an unscoped owner repository remains isolated inside a governed read tr
       );
       yield* queryEffect(
         admin,
-        `insert into core.principal_auth_bindings (principal_auth_binding_id, tenant_id, principal_id, provider, subject_type, provider_subject_id, status) values ($1, $3, $5, 'better_auth', 'user', $7, 'active'), ($2, $4, $6, 'better_auth', 'user', $8, 'active')`,
+        `insert into core.principal_auth_bindings (principal_auth_binding_id, tenant_id, principal_id, authentication_namespace_id, provider, subject_type, provider_subject_id, status) values ($1, $3, $5, '${staffAuthenticationNamespaceId}', 'better_auth', 'user', $7, 'active'), ($2, $4, $6, '${staffAuthenticationNamespaceId}', 'better_auth', 'user', $8, 'active')`,
         [bindingA, bindingB, tenantA, tenantB, principalA, principalB, `user-${principalA}`, `user-${principalB}`],
       );
       yield* queryEffect(

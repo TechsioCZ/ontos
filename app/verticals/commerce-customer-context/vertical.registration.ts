@@ -19,6 +19,7 @@ import { changeCustomerPaymentTermsAction } from './src/actions/change-customer-
 import { changePrincipalPurchaseLimitOverrideAction } from './src/actions/change-principal-purchase-limit-override.action.ts';
 import { changeRetailPaymentTermPreferenceAction } from './src/actions/change-retail-payment-term-preference.action.ts';
 import { claimCounterpartyAccessInvitationAction } from './src/actions/claim-counterparty-access-invitation.action.ts';
+import { claimPortalEnrollmentTransitionAction } from './src/actions/claim-portal-enrollment-transition.action.ts';
 import { clearDefaultBillingAddressAction } from './src/actions/clear-default-billing-address.action.ts';
 import { clearDefaultDeliveryDestinationAction } from './src/actions/clear-default-delivery-destination.action.ts';
 import { consumePurchaseApprovalAction } from './src/actions/consume-purchase-approval.action.ts';
@@ -35,6 +36,15 @@ import { migrateCustomerPriceGroupAction } from './src/actions/migrate-customer-
 import { openProfileReconciliationAction } from './src/actions/open-profile-reconciliation.action.ts';
 import { reactivateCustomerGroupAction } from './src/actions/reactivate-customer-group.action.ts';
 import { reactivateCustomerProfileAction } from './src/actions/reactivate-customer-profile.action.ts';
+import { reconcileCounterpartyAccessAdministratorBootstrapAuthorizationMutationWorker } from './src/workers/reconcile-counterparty-access-administrator-bootstrap-authorization-mutation.worker.ts';
+import { reconcileCounterpartyAccessGrantAuthorizationMutationWorker } from './src/workers/reconcile-counterparty-access-grant-authorization-mutation.worker.ts';
+import { reconcileCounterpartyAccessInvitationClaimAuthorizationMutationWorker } from './src/workers/reconcile-counterparty-access-invitation-claim-authorization-mutation.worker.ts';
+import { reconcileCounterpartyAccessRevokeAuthorizationMutationWorker } from './src/workers/reconcile-counterparty-access-revoke-authorization-mutation.worker.ts';
+import { reconcilePartyMergeWorker } from './src/workers/reconcile-party-merge.worker.ts';
+import { reconcileRetailPortalProfileBindingActivationAuthorizationMutationWorker } from './src/workers/reconcile-retail-portal-profile-binding-activation-authorization-mutation.worker.ts';
+import { reconcileRetailPortalProfileBindingRecoveryAuthorizationMutationWorker } from './src/workers/reconcile-retail-portal-profile-binding-recovery-authorization-mutation.worker.ts';
+import { reconcileRetailPortalProfileBindingRevocationAuthorizationMutationWorker } from './src/workers/reconcile-retail-portal-profile-binding-revocation-authorization-mutation.worker.ts';
+import { recordPortalEnrollmentOutcomeAction } from './src/actions/record-portal-enrollment-outcome.action.ts';
 import { recoverRetailPortalProfileBindingAction } from './src/actions/recover-retail-portal-profile-binding.action.ts';
 import { removeCounterpartyPriceGroupAction } from './src/actions/remove-counterparty-price-group.action.ts';
 import { removeCustomerGroupAction } from './src/actions/remove-customer-group.action.ts';
@@ -53,19 +63,13 @@ import { revokeCounterpartyCommerceAccessAction } from './src/actions/revoke-cou
 import { revokeRetailPortalProfileBindingAction } from './src/actions/revoke-retail-portal-profile-binding.action.ts';
 import { setDefaultBillingAddressAction } from './src/actions/set-default-billing-address.action.ts';
 import { setDefaultDeliveryDestinationAction } from './src/actions/set-default-delivery-destination.action.ts';
+import { startPortalEnrollmentAction } from './src/actions/start-portal-enrollment.action.ts';
 import { submitPurchaseApprovalRequestAction } from './src/actions/submit-purchase-approval-request.action.ts';
 import { suspendCustomerProfileAction } from './src/actions/suspend-customer-profile.action.ts';
+import { terminatePortalEnrollmentAction } from './src/actions/terminate-portal-enrollment.action.ts';
 import { triggerPurchaseApprovalAction } from './src/actions/trigger-purchase-approval.action.ts';
 import { updateCustomerGroupAction } from './src/actions/update-customer-group.action.ts';
 import { updateSavedAddressAction } from './src/actions/update-saved-address.action.ts';
-import { reconcileCounterpartyAccessAdministratorBootstrapAuthorizationMutationWorker } from './src/workers/reconcile-counterparty-access-administrator-bootstrap-authorization-mutation.worker.ts';
-import { reconcileCounterpartyAccessGrantAuthorizationMutationWorker } from './src/workers/reconcile-counterparty-access-grant-authorization-mutation.worker.ts';
-import { reconcileCounterpartyAccessInvitationClaimAuthorizationMutationWorker } from './src/workers/reconcile-counterparty-access-invitation-claim-authorization-mutation.worker.ts';
-import { reconcileCounterpartyAccessRevokeAuthorizationMutationWorker } from './src/workers/reconcile-counterparty-access-revoke-authorization-mutation.worker.ts';
-import { reconcilePartyMergeWorker } from './src/workers/reconcile-party-merge.worker.ts';
-import { reconcileRetailPortalProfileBindingActivationAuthorizationMutationWorker } from './src/workers/reconcile-retail-portal-profile-binding-activation-authorization-mutation.worker.ts';
-import { reconcileRetailPortalProfileBindingRecoveryAuthorizationMutationWorker } from './src/workers/reconcile-retail-portal-profile-binding-recovery-authorization-mutation.worker.ts';
-import { reconcileRetailPortalProfileBindingRevocationAuthorizationMutationWorker } from './src/workers/reconcile-retail-portal-profile-binding-revocation-authorization-mutation.worker.ts';
 // </generated-module-registration-imports>
 /* jscpd:ignore-end */
 
@@ -87,6 +91,7 @@ export const commerceCustomerContextRegistration = defineVerticalRuntimeRegistra
     changePrincipalPurchaseLimitOverrideAction,
     changeRetailPaymentTermPreferenceAction,
     claimCounterpartyAccessInvitationAction,
+    claimPortalEnrollmentTransitionAction,
     clearDefaultBillingAddressAction,
     clearDefaultDeliveryDestinationAction,
     consumePurchaseApprovalAction,
@@ -103,6 +108,7 @@ export const commerceCustomerContextRegistration = defineVerticalRuntimeRegistra
     openProfileReconciliationAction,
     reactivateCustomerGroupAction,
     reactivateCustomerProfileAction,
+    recordPortalEnrollmentOutcomeAction,
     recoverRetailPortalProfileBindingAction,
     removeCounterpartyPriceGroupAction,
     removeCustomerGroupAction,
@@ -121,8 +127,10 @@ export const commerceCustomerContextRegistration = defineVerticalRuntimeRegistra
     revokeRetailPortalProfileBindingAction,
     setDefaultBillingAddressAction,
     setDefaultDeliveryDestinationAction,
+    startPortalEnrollmentAction,
     submitPurchaseApprovalRequestAction,
     suspendCustomerProfileAction,
+    terminatePortalEnrollmentAction,
     triggerPurchaseApprovalAction,
     updateCustomerGroupAction,
     updateSavedAddressAction,

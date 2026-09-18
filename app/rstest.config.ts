@@ -16,9 +16,14 @@ export default defineConfig({
   projects: [
     {
       ...shared,
-      exclude: ['scripts/scaffolding/**'],
+      exclude: ['scripts/scaffolding/**', 'scripts/integration/**'],
       include: ['scripts/**/*.test.mts'],
       name: 'scripts',
+    },
+    {
+      ...shared,
+      include: ['scripts/integration/**/*.test.mts'],
+      name: 'integration',
     },
     {
       ...shared,

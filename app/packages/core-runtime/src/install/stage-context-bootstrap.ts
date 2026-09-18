@@ -83,6 +83,11 @@ export interface StageContextBootstrapResult {
 export type StageContextBootstrapProviderUserIds = readonly [string, string];
 export type StageContextBootstrapResults = readonly [StageContextBootstrapResult, StageContextBootstrapResult];
 
+export interface StageContextBootstrapOptions {
+  /** A validated deployment registration value supplied by Shell composition. */
+  readonly authenticationNamespaceId: string;
+}
+
 export class StageContextBootstrapError extends Schema.TaggedError<StageContextBootstrapError>()(
   'StageContextBootstrapError',
   {
@@ -189,6 +194,7 @@ const reconcilePostgresTransaction = Effect.fn('StageContextBootstrap.reconcileP
     transaction: CoreTransaction,
     context: StageContext,
     authUserId: string,
+    authenticationNamespaceId: string,
   ): Effect.fn.Return<void, StageContextBootstrapError> {
     const tenantCandidates = yield* transaction
       .select({
@@ -245,13 +251,17 @@ const reconcilePostgresTransaction = Effect.fn('StageContextBootstrap.reconcileP
       yield* transaction.insert(principals).values(expectedPrincipal).pipe(Effect.mapError(bootstrapFailureFromCause));
     }
 
-    const bindingCandidates = yield* selectBootstrapAuthBindings(transaction, context, authUserId).pipe(
-      Effect.mapError(bootstrapFailureFromCause),
-    );
+    const bindingCandidates = yield* selectBootstrapAuthBindings(
+      transaction,
+      context,
+      authUserId,
+      authenticationNamespaceId,
+    ).pipe(Effect.mapError(bootstrapFailureFromCause));
     if (bindingCandidates.length > 1) {
       return yield* failure('The stage authentication binding conflicts');
     }
     const expectedBinding = {
+      authenticationNamespaceId,
       principalAuthBindingId: context.authBindingId,
       principalId: context.principalId,
       provider: 'better_auth',
@@ -307,9 +317,10 @@ const reconcilePostgresContext = Effect.fn('StageContextBootstrap.reconcilePostg
     database: CoreDatabaseExecutor,
     context: StageContext,
     authUserId: string,
+    authenticationNamespaceId: string,
   ): Effect.fn.Return<void, StageContextBootstrapError> {
     const transactionBody = (transaction: CoreTransaction) =>
-      reconcilePostgresTransaction(transaction, context, authUserId);
+      reconcilePostgresTransaction(transaction, context, authUserId, authenticationNamespaceId);
     yield* database.transaction(transactionBody).pipe(
       Effect.catchDefect((defect) => (isSqlError(defect) ? Effect.fail(defect) : Effect.die(defect))),
       Effect.catchTag('SqlError', (sqlFailure) => Effect.fail(bootstrapFailureFromCause(sqlFailure))),
@@ -401,6 +412,7 @@ const touchRelationships = Effect.fn('StageContextBootstrap.touchRelationships')
 export const reconcileStageContextBootstraps = Effect.fn('StageContextBootstrap.reconcileStageContextBootstraps')(
   function* reconcileFixedStageContexts(
     providerUserIds: StageContextBootstrapProviderUserIds,
+    options: StageContextBootstrapOptions,
   ): Effect.fn.Return<StageContextBootstrapResults, StageContextBootstrapError> {
     const [techsioProviderUserId, siamparkProviderUserId] = providerUserIds;
     if (techsioProviderUserId.trim().length === 0 || siamparkProviderUserId.trim().length === 0) {
@@ -428,7 +440,7 @@ export const reconcileStageContextBootstraps = Effect.fn('StageContextBootstrap.
         yield* Effect.forEach(
           contexts,
           ({ context, providerUserId }) =>
-            reconcilePostgresContext(executor, context, providerUserId).pipe(
+            reconcilePostgresContext(executor, context, providerUserId, options.authenticationNamespaceId).pipe(
               Effect.andThen(touchRelationships(configuration, context)),
             ),
           { concurrency: 1, discard: true },

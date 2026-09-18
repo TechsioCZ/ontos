@@ -5,6 +5,7 @@ import { Cause, Effect, Option, Schema } from 'effect';
 import { expect, it } from 'effect-rstest';
 import { SqlError, UniqueViolation } from 'effect/unstable/sql/SqlError';
 
+import { TrustedPrincipalContextSchema } from '../../src/actions/principal-context.ts';
 import type { OperationalScope } from '../../src/operations/context.ts';
 import {
   defineScopedRoutine,
@@ -15,15 +16,22 @@ import type { ScopedRoutineDefinitionInput } from '../../src/db/scoped-routine.t
 
 const tenantId = '11111111-1111-4111-8111-111111111111';
 const legalEntityId = '22222222-2222-4222-8222-222222222222';
-const scope = Object.freeze({
-  authContextRef: 'better-auth-session:test',
-  authMethod: 'session',
+const scope: OperationalScope = Object.freeze({
+  ...Schema.decodeSync(TrustedPrincipalContextSchema)({
+    authBindingId: '44444444-4444-4444-8444-444444444444',
+    authContextRef: 'better-auth-session:test',
+    authMethod: 'session',
+    legalEntityId,
+    principalId: '33333333-3333-4333-8333-333333333333',
+    tenantId,
+  }),
   correlationId: 'correlation-1',
-  legalEntityId,
-  principalId: '33333333-3333-4333-8333-333333333333',
-  tenantId,
-}) satisfies OperationalScope;
+});
+if (scope.authBindingId === undefined || scope.authContextRef === undefined) {
+  throw new Error('Scoped routine fixture requires a session binding and context reference');
+}
 const tenantOnlyScope = Object.freeze({
+  authBindingId: scope.authBindingId,
   authContextRef: scope.authContextRef,
   authMethod: scope.authMethod,
   correlationId: scope.correlationId,

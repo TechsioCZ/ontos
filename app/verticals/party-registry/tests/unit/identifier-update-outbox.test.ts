@@ -3,13 +3,18 @@ import { expect, it } from 'effect-rstest';
 
 import { createActionCollector } from '../../../../packages/core-runtime/src/actions/collector.ts';
 import { getActionHandler } from '../../../../packages/core-runtime/src/actions/definition.ts';
+import {
+  PrincipalIdSchema,
+  TenantIdSchema,
+} from '../../../../packages/core-runtime/src/auth/external-identity-contracts.ts';
 import { UpdatePartyOfficialIdentifierResultSchema } from '../../shared/actions/update-party-official-identifier.ts';
 import type { UpdatePartyOfficialIdentifierPayload } from '../../shared/actions/update-party-official-identifier.ts';
 import { OfficialIdentifierClaimConflict } from '../../shared/domain/identifier-contracts.ts';
 import { OutboxPayloadSchema } from '../../shared/outbox/party-registry-official-identifier-updated-v1.ts';
 import { updatePartyOfficialIdentifierAction } from '../../src/actions/update-party-official-identifier.action.ts';
 
-const tenantId = '10000000-0000-4000-8000-000000000001';
+const tenantId = Schema.decodeSync(TenantIdSchema)('10000000-0000-4000-8000-000000000001');
+const principalId = Schema.decodeSync(PrincipalIdSchema)('40000000-0000-4000-8000-000000000001');
 const partyRef = {
   moduleId: 'party.registry',
   resourceId: '20000000-0000-4000-8000-000000000001',
@@ -90,7 +95,7 @@ for (const change of changes) {
           scope: {
             authMethod: 'system',
             correlationId: 'identifier-outbox-test',
-            principalId: '40000000-0000-4000-8000-000000000001',
+            principalId,
             tenantId,
           },
           services: {
@@ -154,7 +159,7 @@ it.effect('rejected identifier updates publish neither Domain Event nor outbox m
         scope: {
           authMethod: 'system',
           correlationId: 'identifier-outbox-test',
-          principalId: '40000000-0000-4000-8000-000000000001',
+          principalId,
           tenantId,
         },
         services: { update: () => Effect.fail(failure) },

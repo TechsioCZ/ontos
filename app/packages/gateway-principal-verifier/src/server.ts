@@ -2,11 +2,13 @@ import { trustVerifiedGatewayPrincipalContext } from '@app/core-runtime/auth/sys
 import type { GatewayAssertionRedemption } from '@app/core-runtime/auth/gateway-assertion-redemption';
 import { TrustedPrincipalContextSchema } from '@app/core-runtime/actions/principal-context';
 import type { TrustedPrincipalContext } from '@app/core-runtime/actions/principal-context';
+import { AuthenticationNamespaceIdSchema } from '@app/core-runtime/auth/external-identity-contracts';
 import {
   GATEWAY_ASSERTION_CLOCK_SKEW_SECONDS,
   GATEWAY_ASSERTION_VERSION,
+  EXTERNAL_GATEWAY_ASSERTION_VERSION,
   GatewayAudienceSchema,
-  decodeGatewayContextClaims,
+  decodeSupportedGatewayContextClaims,
   decodeGatewayContextProtectedHeader,
 } from '@app/shared-contracts';
 import {
@@ -77,6 +79,23 @@ export interface GatewayPrincipalVerificationEnvironment {
   readonly ONTOS_GATEWAY_PUBLIC_JWKS?: string;
 }
 
+/**
+ * A deployment-owned mapping for the namespace-less staff gateway assertion.
+ *
+ * The issuer is checked against the configured gateway issuer before the
+ * mapping is retained.  It is deliberately supplied to the verifier layer,
+ * rather than to a per-request verification call, so request data cannot
+ * choose an authentication namespace.
+ */
+export interface LegacyGatewayNamespaceMapping {
+  readonly authenticationNamespaceId: string;
+  readonly issuer: string;
+}
+
+export interface GatewayPrincipalVerifierConfigurationInput {
+  readonly legacyNamespaceMapping?: LegacyGatewayNamespaceMapping;
+}
+
 const configurationError = (): ActionPrincipalConfigurationError =>
   ActionPrincipalConfigurationErrorSchema.make({
     reason: 'Action identity verification is misconfigured',
@@ -120,6 +139,25 @@ const VerificationEnvironmentSchema = Schema.Struct({
   ONTOS_GATEWAY_PUBLIC_JWKS: Schema.fromJsonString(PublicVerificationKeysSchema),
 });
 
+const LegacyGatewayNamespaceMappingSchema = Schema.Struct({
+  authenticationNamespaceId: AuthenticationNamespaceIdSchema,
+  issuer: Schema.String.check(
+    Schema.isPattern(/^https?:\/\//u),
+    Schema.makeFilter((value) => (URL.canParse(value) ? undefined : 'An absolute HTTP issuer is required')),
+  ),
+});
+
+const decodeLegacyGatewayNamespaceMapping = (
+  mapping: LegacyGatewayNamespaceMapping | undefined,
+): Effect.Effect<Option.Option<LegacyGatewayNamespaceMapping>, ActionPrincipalConfigurationError> =>
+  mapping === undefined
+    ? Effect.succeed(Option.none<LegacyGatewayNamespaceMapping>())
+    : Schema.decodeEffect(LegacyGatewayNamespaceMappingSchema)(mapping).pipe(
+        Effect.map((decoded) => Option.some<LegacyGatewayNamespaceMapping>(decoded)),
+        // oxlint-disable-next-line effect-native/no-failure-discarding-error-callback -- Configuration input diagnostics are deliberately sanitized at the trust boundary; remove-when: the rule supports security-boundary sanitizers.
+        Effect.mapError(() => configurationError()),
+      );
+
 const gatewayVerificationEnvironment = Config.all({
   ONTOS_GATEWAY_ISSUER: Config.string('ONTOS_GATEWAY_ISSUER'),
   ONTOS_GATEWAY_PUBLIC_JWKS: Config.string('ONTOS_GATEWAY_PUBLIC_JWKS'),
@@ -129,6 +167,7 @@ const VERIFY_ASSERTION_TIMEOUT = Duration.seconds(2);
 interface VerificationConfiguration {
   readonly issuer: string;
   readonly keySet: LocalJWKSet;
+  readonly legacyNamespaceMapping?: LegacyGatewayNamespaceMapping;
 }
 
 interface GatewayPrincipalVerifierService {
@@ -142,36 +181,54 @@ export class GatewayPrincipalVerifierConfiguration extends Context.Service<
 
 const loadGatewayPrincipalVerificationConfiguration = (
   provider?: ConfigProvider.ConfigProvider,
+  input: GatewayPrincipalVerifierConfigurationInput = {},
 ): Effect.Effect<VerificationConfiguration, ActionPrincipalConfigurationError> => {
   const configuration =
     provider === undefined ? gatewayVerificationEnvironment : gatewayVerificationEnvironment.parse(provider);
+  const legacyNamespaceMapping = decodeLegacyGatewayNamespaceMapping(input.legacyNamespaceMapping);
   return configuration.pipe(
     Effect.flatMap(Schema.decodeUnknownEffect(VerificationEnvironmentSchema)),
-    Effect.flatMap(({ ONTOS_GATEWAY_ISSUER: issuer, ONTOS_GATEWAY_PUBLIC_JWKS: jwks }) => {
-      const keys = jwks.keys.map(({ alg, crv, kid, kty, use, x }) => ({
-        alg,
-        crv,
-        kid,
-        kty,
-        use,
-        x,
-      }));
-      return Effect.tryPromise({
-        // oxlint-disable-next-line effect-native/no-failure-discarding-error-callback -- Configuration failures are deliberately sanitized at the trust boundary; remove-when: the rule supports security-boundary sanitizers.
-        catch: () => configurationError(),
-        // oxlint-disable-next-line typescript/promise-function-async -- Effect.tryPromise owns the Promise boundary; remove-when: the lint rule recognizes Effect.tryPromise callbacks.
-        try: () => Promise.all(keys.map((key) => importJWK(key, 'EdDSA'))),
-      }).pipe(
-        Effect.timeoutOrElse({
-          duration: VERIFY_ASSERTION_TIMEOUT,
-          orElse: () => Effect.fail(configurationError()),
+    Effect.flatMap(({ ONTOS_GATEWAY_ISSUER: issuer, ONTOS_GATEWAY_PUBLIC_JWKS: jwks }) =>
+      legacyNamespaceMapping.pipe(
+        Effect.flatMap((mappingOption) => {
+          if (Option.isSome(mappingOption) && mappingOption.value.issuer !== issuer) {
+            return Effect.fail(configurationError());
+          }
+          const mapping = Option.getOrUndefined(mappingOption);
+          const keys = jwks.keys.map(({ alg, crv, kid, kty, use, x }) => ({
+            alg,
+            crv,
+            kid,
+            kty,
+            use,
+            x,
+          }));
+          return Effect.tryPromise({
+            // oxlint-disable-next-line effect-native/no-failure-discarding-error-callback -- Configuration failures are deliberately sanitized at the trust boundary; remove-when: the rule supports security-boundary sanitizers.
+            catch: () => configurationError(),
+            // oxlint-disable-next-line typescript/promise-function-async -- Effect owns this cached configuration Promise boundary.
+            try: () =>
+              Promise.all(
+                keys.map(
+                  // oxlint-disable-next-line sonarjs/no-nested-functions, typescript/promise-function-async -- Effect owns this cached configuration Promise boundary; key imports complete before request verification.
+                  (key) => importJWK(key, 'EdDSA'),
+                ),
+              ),
+          }).pipe(
+            Effect.timeoutOrElse({
+              duration: VERIFY_ASSERTION_TIMEOUT,
+              orElse: () => Effect.fail(configurationError()),
+            }),
+            Effect.map((): VerificationConfiguration => {
+              if (mapping === undefined) {
+                return { issuer, keySet: createLocalJWKSet({ keys }) };
+              }
+              return { issuer, keySet: createLocalJWKSet({ keys }), legacyNamespaceMapping: mapping };
+            }),
+          );
         }),
-        Effect.map((): VerificationConfiguration => ({
-          issuer,
-          keySet: createLocalJWKSet({ keys }),
-        })),
-      );
-    }),
+      ),
+    ),
     // oxlint-disable-next-line effect-native/no-failure-discarding-error-callback -- Configuration failures are deliberately sanitized at the trust boundary; remove-when: the rule supports security-boundary sanitizers.
     Effect.mapError(() => configurationError()),
   );
@@ -179,10 +236,11 @@ const loadGatewayPrincipalVerificationConfiguration = (
 
 export const makeGatewayPrincipalVerifierLayer = (
   provider?: ConfigProvider.ConfigProvider,
+  input: GatewayPrincipalVerifierConfigurationInput = {},
 ): Layer.Layer<GatewayPrincipalVerifierConfiguration> =>
   Layer.effect(
     GatewayPrincipalVerifierConfiguration,
-    Effect.cached(loadGatewayPrincipalVerificationConfiguration(provider)).pipe(
+    Effect.cached(loadGatewayPrincipalVerificationConfiguration(provider, input)).pipe(
       Effect.map((configuration): GatewayPrincipalVerifierService => ({
         configuration,
       })),
@@ -293,24 +351,53 @@ const verifyAuthenticatedToken = Effect.fn('GatewayPrincipalVerifier.verifyAuthe
         orElse: () => Effect.fail(unavailableError()),
       }),
     );
-    const claims = yield* decodeGatewayContextClaims(verified.payload).pipe(
+    const claims = yield* decodeSupportedGatewayContextClaims(verified.payload).pipe(
       // oxlint-disable-next-line effect-native/no-failure-discarding-error-callback -- Claim diagnostics are deliberately sanitized at the trust boundary; remove-when: the rule supports security-boundary sanitizers.
       Effect.mapError(() => invalidError()),
     );
-    if (claims.ver !== GATEWAY_ASSERTION_VERSION || claims.iat > now + GATEWAY_ASSERTION_CLOCK_SKEW_SECONDS) {
+    if (claims.iat > now + GATEWAY_ASSERTION_CLOCK_SKEW_SECONDS) {
       return yield* Effect.fail(invalidError());
     }
-    const principal = yield* Schema.decodeEffect(TrustedPrincipalContextSchema, {
-      onExcessProperty: 'error',
-    })(claims.principal).pipe(
-      // oxlint-disable-next-line effect-native/no-failure-discarding-error-callback -- Principal decode diagnostics are deliberately sanitized at the trust boundary; remove-when: the rule supports security-boundary sanitizers.
-      Effect.mapError(() => invalidError()),
-    );
+    let principalFromClaims: TrustedPrincipalContext;
+    if (claims.ver === GATEWAY_ASSERTION_VERSION) {
+      // Mapping occurs only after jwtVerify and claim decoding.  The mapping
+      // is deployment configuration bound to the verified issuer; it never
+      // comes from the request, JWT principal, or persisted binding.
+      const { legacyNamespaceMapping } = configuration;
+      if (
+        legacyNamespaceMapping !== undefined &&
+        (legacyNamespaceMapping.issuer !== configuration.issuer || legacyNamespaceMapping.issuer !== claims.iss)
+      ) {
+        return yield* Effect.fail(invalidError());
+      }
+      principalFromClaims =
+        legacyNamespaceMapping === undefined
+          ? claims.principal
+          : yield* Schema.decodeEffect(TrustedPrincipalContextSchema, {
+              onExcessProperty: 'error',
+            })({
+              ...claims.principal,
+              authenticationNamespaceId: legacyNamespaceMapping.authenticationNamespaceId,
+            }).pipe(
+              // oxlint-disable-next-line effect-native/no-failure-discarding-error-callback -- Mapping diagnostics are deliberately sanitized at the trust boundary; remove-when: the rule supports security-boundary sanitizers.
+              Effect.mapError(() => invalidError()),
+            );
+    } else if (claims.ver === EXTERNAL_GATEWAY_ASSERTION_VERSION) {
+      // Namespace registration and provider admission happen in Core.  The
+      // gateway only authenticates the signed context and preserves the
+      // namespace supplied by the issuer, including future namespaces.
+      if (claims.principal.authenticationNamespaceId === undefined) {
+        return yield* Effect.fail(invalidError());
+      }
+      principalFromClaims = claims.principal;
+    } else {
+      return yield* Effect.fail(invalidError());
+    }
     return {
       expiresAtEpochSeconds: claims.exp,
       issuer: claims.iss,
       jti: claims.jti,
-      principal,
+      principal: principalFromClaims,
     };
   },
 );

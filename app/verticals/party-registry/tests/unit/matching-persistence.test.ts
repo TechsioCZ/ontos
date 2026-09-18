@@ -6,6 +6,10 @@ import { TestClock } from 'effect/testing';
 
 import { createActionCollector } from '../../../../packages/core-runtime/src/actions/collector.ts';
 import { getActionHandler } from '../../../../packages/core-runtime/src/actions/definition.ts';
+import {
+  PrincipalIdSchema,
+  TenantIdSchema,
+} from '../../../../packages/core-runtime/src/auth/external-identity-contracts.ts';
 import type { PartyCandidate } from '../../shared/domain/identity-contracts.ts';
 import { makePartyRef, partySubjectKeyFromString } from '../../shared/domain/identity-contracts.ts';
 import { PartyAliasWriteRejected } from '../../shared/domain/merge-alias-resolution.ts';
@@ -31,14 +35,14 @@ import {
   resolveDuplicateCandidateMatch,
 } from '../../src/services/party-matching-persistence.service.ts';
 
-const tenantId = '10000000-0000-4000-8000-000000000001';
+const tenantId = Schema.decodeSync(TenantIdSchema)('10000000-0000-4000-8000-000000000001');
 const partyA = '20000000-0000-4000-8000-000000000001';
 const partyB = '20000000-0000-4000-8000-000000000002';
 const partyC = '20000000-0000-4000-8000-000000000003';
 const candidateCaseId = '30000000-0000-4000-8000-000000000001';
 const decisionId = '40000000-0000-4000-8000-000000000001';
 const actionInvocationId = '50000000-0000-4000-8000-000000000001';
-const principalId = '60000000-0000-4000-8000-000000000001';
+const principalId = Schema.decodeSync(PrincipalIdSchema)('60000000-0000-4000-8000-000000000001');
 const officialIdentifierId = '70000000-0000-4000-8000-000000000001';
 const instant = '2020-01-01T00:00:00.000Z';
 const candidate = (overrides: Partial<PartyCandidate> = {}): PartyCandidate => ({

@@ -96,9 +96,26 @@ import type {
 } from '../shared/api.ts';
 import { ApiKeyService, ApiKeyServiceLive } from './auth/api-key-service.ts';
 import type { ApiKeyProviderError } from './auth/api-key-service.ts';
+import { STAFF_AUTHENTICATION_NAMESPACE_ID } from './auth/authentication-namespace.ts';
+import { StaffAuthenticationNamespaceRegistryLive } from './auth/authentication-namespace-registry.ts';
 import { AuthConfigLive } from './auth/config.ts';
+import {
+  CommerceExternalIdentityContextAccessLive,
+  CommerceExternalIdentityDeploymentLive,
+} from './auth/commerce-external-identity-deployment.ts';
 import type { AuthenticationRuntimeError, SwitchTenantRuntimeError } from './auth/errors.ts';
-import { GatewayIssuer, GatewayIssuerLive, issueGatewayContextAssertion } from './auth/gateway-issuer.ts';
+import {
+  GatewayIssuer,
+  GatewayIssuerLive,
+  ShellCryptoLive,
+  issueGatewayContextAssertion,
+} from './auth/gateway-issuer.ts';
+import {
+  externalIdentityGroupLive,
+  externalIdentityWorkloadAuthorizationLive,
+} from './auth/external-identity/index.ts';
+import { ExternalIdentityNotInstalledLive } from './auth/external-identity-runtime.ts';
+import type { ExternalIdentityDeploymentLayer } from './auth/external-identity-runtime.ts';
 import type { GatewayIssuerError } from './auth/gateway-issuer.ts';
 import { IdentityLifecycle, IdentityLifecycleLive } from './auth/identity-lifecycle.ts';
 import type { IdentityLifecycleError } from './auth/identity-lifecycle.ts';
@@ -1596,6 +1613,7 @@ const gatewayContextGroupLive = HttpApiBuilder.group(ShellAuthenticationApi, 'ga
           {
             authBindingId: identity.authBindingId,
             authContextRef: `better-auth-api-key:${verified.providerKeyId}`,
+            authenticationNamespaceId: STAFF_AUTHENTICATION_NAMESPACE_ID,
             authMethod: 'api_key' as const,
             principalId: identity.principalId,
             tenantId: identity.tenantId,
@@ -1621,21 +1639,24 @@ const gatewayContextGroupLive = HttpApiBuilder.group(ShellAuthenticationApi, 'ga
 );
 
 const corePersistenceLive = CorePersistenceLive.pipe(Layer.provide(DatabaseConfigLive));
+const defaultContextAccessLive = Layer.mergeAll(ContextAccessLive, StaffAuthenticationNamespaceRegistryLive);
 const authPersistenceLive = AuthPersistenceLive.pipe(Layer.provide(AuthConfigLive));
-const principalResolverLive = PrincipalResolverLive.pipe(Layer.provide(corePersistenceLive));
+const principalResolverLive = PrincipalResolverLive({
+  authenticationNamespaceId: STAFF_AUTHENTICATION_NAMESPACE_ID,
+}).pipe(Layer.provide(corePersistenceLive));
 const legalEntityContextLive = LegalEntityContextLive.pipe(Layer.provide(corePersistenceLive));
 const tenantModuleStateServiceLive = TenantModuleStateServiceLive.pipe(Layer.provide(corePersistenceLive));
 const authenticationDependenciesLive = Layer.mergeAll(
   authPersistenceLive,
-  ContextAccessLive,
+  defaultContextAccessLive,
   legalEntityContextLive,
   principalResolverLive,
 );
 const authenticationServiceLive = AuthenticationServiceLive.pipe(Layer.provide(authenticationDependenciesLive));
 const apiKeyServiceLive = ApiKeyServiceLive.pipe(Layer.provide(authPersistenceLive));
-const supportRecoveryPrincipalLive = SupportRecoveryPrincipalContextResolverLive.pipe(
-  Layer.provide(corePersistenceLive),
-);
+const supportRecoveryPrincipalLive = SupportRecoveryPrincipalContextResolverLive({
+  authenticationNamespaceId: STAFF_AUTHENTICATION_NAMESPACE_ID,
+}).pipe(Layer.provide(corePersistenceLive));
 
 const runtimeObservabilityLive = Layer.mergeAll(
   Logger.layer([Logger.defaultLogger, Logger.tracerLogger]),
@@ -1655,9 +1676,10 @@ type ShellAuthenticationApiRuntimeArguments = readonly [
   moduleStateLayer?: ShellModuleStateLayer,
   loadInstalledModuleCatalog?: Effect.Effect<InstalledModuleCatalog, InstalledModuleCatalogError>,
   enableInstalledOutboxMatcher?: boolean,
-  contextAccessLayer?: Layer.Layer<ContextAccess>,
+  contextAccessLayer?: Layer.Layer<ContextAccess, Layer.Error<typeof defaultContextAccessLive>>,
   resourceGateways?: ShellResourceGateways,
   scopedModuleStateFactory?: ShellScopedModuleStateFactory,
+  externalIdentityDeploymentLayer?: ExternalIdentityDeploymentLayer,
 ];
 
 export const makeShellAuthenticationApiRuntime = (
@@ -1669,9 +1691,10 @@ export const makeShellAuthenticationApiRuntime = (
     moduleStateLayer = tenantModuleStateServiceLive,
     loadInstalledModuleCatalog,
     enableInstalledOutboxMatcher = false,
-    contextAccessLayer = ContextAccessLive,
+    contextAccessLayer = defaultContextAccessLive,
     resourceGateways = unavailableResourceGateways,
     scopedModuleStateFactory = defaultScopedModuleStateFactory,
+    externalIdentityDeploymentLayer = ExternalIdentityNotInstalledLive,
   ] = args;
   const moduleCatalogLayer =
     loadInstalledModuleCatalog === undefined
@@ -1790,6 +1813,9 @@ export const makeShellAuthenticationApiRuntime = (
     shellGovernedReadsLayer,
     readRuntimeLayer,
     runtimeObservabilityLive,
+    ShellCryptoLive,
+    externalIdentityWorkloadAuthorizationLive,
+    externalIdentityDeploymentLayer,
   );
   const apiHandlersLive = Layer.mergeAll(
     authenticationGroupLive,
@@ -1799,6 +1825,7 @@ export const makeShellAuthenticationApiRuntime = (
     compositionGroupLive,
     resourcesGroupLive,
     gatewayContextGroupLive,
+    externalIdentityGroupLive,
   ).pipe(Layer.provide(outboxMatcherLayer), Layer.provide(handlerDependenciesLive), Layer.orDie);
 
   return assembleEffectBffRuntime({
@@ -1813,6 +1840,10 @@ const apiRuntime = makeShellAuthenticationApiRuntime(
   tenantModuleStateServiceLive,
   undefined,
   true,
+  CommerceExternalIdentityContextAccessLive,
+  unavailableResourceGateways,
+  defaultScopedModuleStateFactory,
+  CommerceExternalIdentityDeploymentLive,
 );
 
 export default apiRuntime;

@@ -138,15 +138,40 @@ const actionErrors = [
   ClearDefaultDeliveryDestinationActionInternalProblemSchema,
 ] as const;
 
+/**
+ * The endpoint chain stays a `const`. The MicroVertical API boundary checker walks a root API's
+ * operands through const bindings only, so a class declaration hides the composed endpoints from
+ * it. The exported group is annotated with a named type alias so its type still has a name: the
+ * vertical's `shared/api.ts` merges every group type into one `HttpApi` and declaration emit
+ * serializes that union verbatim, so an anonymous group type pushes the composed contract past
+ * the compiler's serialization limit (TS7056).
+ *
+ * Exported only so the named contract type can reference it; the merged vertical HttpApi prints
+ * this group by name (declaration-emit size).
+ *
+ * @public
+ */
+export const clearDefaultDeliveryDestinationActionGroupDefinition = HttpApiGroup.make(
+  'clearDefaultDeliveryDestinationAction',
+)
+  .add(
+    HttpApiEndpoint.post('execute', '/commerce-customer-context/actions/clear-default-delivery-destination', {
+      error: actionErrors,
+      headers: ClearDefaultDeliveryDestinationActionHeadersSchema,
+      payload: Schema.toEncoded(ClearDefaultDeliveryDestinationPayloadSchema),
+      success: ClearDefaultDeliveryDestinationResultSchema,
+    }),
+  )
+  .middleware(ClearDefaultDeliveryDestinationActionSchemaErrorMiddleware);
+
+export type ClearDefaultDeliveryDestinationActionGroupContract = HttpApiGroup.HttpApiGroup<
+  'clearDefaultDeliveryDestinationAction',
+  HttpApiGroup.Endpoints<typeof clearDefaultDeliveryDestinationActionGroupDefinition>
+>;
+
+const ClearDefaultDeliveryDestinationActionGroup: ClearDefaultDeliveryDestinationActionGroupContract =
+  clearDefaultDeliveryDestinationActionGroupDefinition;
+
 export const ClearDefaultDeliveryDestinationActionApi = HttpApi.make('ClearDefaultDeliveryDestinationActionApi').add(
-  HttpApiGroup.make('clearDefaultDeliveryDestinationAction')
-    .add(
-      HttpApiEndpoint.post('execute', '/commerce-customer-context/actions/clear-default-delivery-destination', {
-        error: actionErrors,
-        headers: ClearDefaultDeliveryDestinationActionHeadersSchema,
-        payload: Schema.toEncoded(ClearDefaultDeliveryDestinationPayloadSchema),
-        success: ClearDefaultDeliveryDestinationResultSchema,
-      }),
-    )
-    .middleware(ClearDefaultDeliveryDestinationActionSchemaErrorMiddleware),
+  ClearDefaultDeliveryDestinationActionGroup,
 );

@@ -355,6 +355,10 @@ const actionTestHarness = Effect.fn('ActionTestHarness.make')(function* actionTe
               }),
             )
           : Effect.succeed({
+              // Fixture principals carry no authenticationNamespaceId, so the persisted
+              // binding must claim none either, matching how the live repository always
+              // reports the column explicitly instead of leaving it unset.
+              bindingAuthenticationNamespaceId: principal.authenticationNamespaceId ?? null,
               bindingPrincipalId: principal.principalId,
               bindingRevokedAt: null,
               bindingStatus: 'active',

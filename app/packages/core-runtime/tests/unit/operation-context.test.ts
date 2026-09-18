@@ -1,6 +1,7 @@
 import { DateTime, Effect, Exit, Schema } from 'effect';
 import { expect, it } from 'effect-rstest';
 
+import { TrustedPrincipalContextSchema } from '../../src/actions/principal-context.ts';
 import { supportRecoveryPrincipalContextResolverFromRepository } from '../../src/auth/support-recovery-principal-context.ts';
 import {
   decodeTrustedPrincipalContext,
@@ -21,15 +22,16 @@ import {
   OperationContextUnavailable,
 } from '../../src/operations/errors.ts';
 
-const principal = {
+const principal = Schema.decodeSync(TrustedPrincipalContextSchema)({
   authBindingId: '00000000-0000-4000-8000-000000000004',
-  authContextRef: 'better-auth-session:test-session',
-  authMethod: 'session' as const,
+  authContextRef: 'opaque-session-reference',
+  authMethod: 'session',
   legalEntityId: '00000000-0000-4000-8000-000000000002',
   principalId: '00000000-0000-4000-8000-000000000003',
   tenantId: '00000000-0000-4000-8000-000000000001',
-};
+});
 const active = {
+  bindingAuthenticationNamespaceId: null,
   bindingPrincipalId: principal.principalId,
   bindingRevokedAt: null,
   bindingStatus: 'active',
@@ -210,7 +212,7 @@ it.effect('permits only a resolver-branded support-stop recovery through inactiv
           tenantId: principal.tenantId,
         }).pipe(Effect.asSome),
     }).resolveStoppedImpersonation({
-      originalAuthBindingId: principal.authBindingId,
+      originalAuthBindingId: principal.authBindingId ?? '00000000-0000-0000-0000-000000000004',
       originalPrincipalId: principal.principalId,
       originalSessionId: 'expired-original-session',
       tenantId: principal.tenantId,

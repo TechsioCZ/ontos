@@ -22,6 +22,7 @@ import {
   toModuleAccessObjectId,
 } from '../../../../packages/core-runtime/src/permissions/context-access.ts';
 import { makeTestDatabaseFromPool } from '../../../../packages/core-runtime/tests/support/database.ts';
+import { STAFF_AUTHENTICATION_NAMESPACE_ID } from '../../api/auth/authentication-namespace.ts';
 import { loadAuthConfig } from '../../api/auth/config.ts';
 import { acquirePoolResource, makeAuthDatabase } from '../../api/auth/db/client.ts';
 import { account, session, user } from '../../api/auth/db/schema.ts';
@@ -272,6 +273,7 @@ export const createAuthenticationFixture = Effect.fn('createAuthenticationFixtur
     ]);
     yield* coreDatabase.insert(principalAuthBindings).values([
       {
+        authenticationNamespaceId: STAFF_AUTHENTICATION_NAMESPACE_ID,
         createdAt: new Date('2026-01-01T00:00:00.000Z'),
         principalId: e2eTenants.first.principalId,
         provider: 'better_auth',
@@ -281,6 +283,7 @@ export const createAuthenticationFixture = Effect.fn('createAuthenticationFixtur
         tenantId: e2eTenants.first.tenantId,
       },
       {
+        authenticationNamespaceId: STAFF_AUTHENTICATION_NAMESPACE_ID,
         createdAt: new Date('2026-02-01T00:00:00.000Z'),
         principalId: e2eTenants.second.principalId,
         provider: 'better_auth',

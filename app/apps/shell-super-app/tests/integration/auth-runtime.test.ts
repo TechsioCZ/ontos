@@ -36,6 +36,11 @@ import {
 } from '../../../../packages/core-runtime/src/db/schema.ts';
 import { makeTestDatabaseFromPool } from '../../../../packages/core-runtime/tests/support/database.ts';
 import { purgeFixtureRows } from '../../../../packages/core-runtime/tests/support/fixture-cleanup.ts';
+import { AuthenticationNamespaceRegistrationSchema } from '../../../../packages/core-runtime/src/auth/external-identity-contracts.ts';
+import {
+  AuthenticationNamespaceRegistry,
+  makeAuthenticationNamespaceRegistry,
+} from '../../../../packages/core-runtime/src/auth/external-identity/verifier.ts';
 import { renderActionPrincipalServer } from '../../../../scripts/scaffolding/microvertical-action-boundary/scaffold.mts';
 import { AuthConfig, loadAuthConfig } from '../../api/auth/config.ts';
 import { AuthDatabase, makeAuthDatabase } from '../../api/auth/db/client.ts';
@@ -55,6 +60,18 @@ const principalId = '40000000-0000-4000-8000-000000000001';
 const appRoot = path.resolve(import.meta.dirname, '..', '..', '..', '..');
 const fixtureLegalEntityId = '35000000-0000-4000-8000-000000000001';
 const fixtureAuthBindingId = '45000000-0000-4000-8000-000000000001';
+const staffAuthenticationNamespaceId = 'test.staff.better-auth.v1';
+const authenticationNamespaceRegistry = makeAuthenticationNamespaceRegistry([
+  Schema.decodeUnknownSync(AuthenticationNamespaceRegistrationSchema)({
+    allowedAudiences: ['billing', 'inventory-stock', 'testing1'],
+    authenticationNamespaceId: staffAuthenticationNamespaceId,
+    provider: 'better-auth',
+    requiresOperationAdmission: false,
+    reservationPrincipalKind: 'human',
+    subjectTypes: ['user', 'api_key'],
+    trustedAttesterPrincipalIds: [],
+  }),
+]);
 const PrincipalIdSchema = Schema.String.pipe(Schema.brand('PrincipalId'));
 const IdentityResponseSchema = Schema.Struct({
   identity: Schema.Struct({
@@ -97,7 +114,10 @@ const legalEntitySelectionOptions = {
         : Effect.die('missing fixture legal entity'),
   },
 } as const;
-const contextAccessLayer = Layer.succeed(ContextAccess, legalEntitySelectionOptions.contextAccess);
+const contextAccessLayer = Layer.mergeAll(
+  Layer.succeed(AuthenticationNamespaceRegistry, authenticationNamespaceRegistry),
+  Layer.succeed(ContextAccess, legalEntitySelectionOptions.contextAccess),
+);
 const authenticationContextLayer = Layer.mergeAll(
   contextAccessLayer,
   Layer.succeed(LegalEntityContext, legalEntitySelectionOptions.legalEntityContext),
@@ -264,7 +284,10 @@ it.live(
     const coreDatabase = yield* makeTestDatabaseFromPool(corePool, coreRelations);
     const authPersistence = yield* makeAuthDatabase(configuration);
     const authDatabase = authPersistence.executor;
-    const resolver = makePrincipalResolver({ executor: coreDatabase });
+    const resolver = makePrincipalResolver(
+      { executor: coreDatabase },
+      { authenticationNamespaceId: staffAuthenticationNamespaceId },
+    );
     const authentication = yield* makeAuthenticationService({
       allowFixtureSignUp: true,
     }).pipe(
@@ -356,6 +379,7 @@ it.live(
       tenantId,
     });
     yield* coreDatabase.insert(principalAuthBindings).values({
+      authenticationNamespaceId: staffAuthenticationNamespaceId,
       principalAuthBindingId: fixtureAuthBindingId,
       principalId,
       provider: 'better_auth',
@@ -571,11 +595,14 @@ it.live(
       moduleStateLayer,
       Effect.succeed(installedPageCatalog()),
       false,
-      Layer.succeed(ContextAccess, {
-        ...legalEntitySelectionOptions.contextAccess,
-        modules: ({ moduleIds }: { readonly moduleIds: readonly string[] }) =>
-          Effect.succeed(moduleIds.map((key) => ({ decision: 'denied' as const, key }))),
-      }),
+      Layer.mergeAll(
+        Layer.succeed(AuthenticationNamespaceRegistry, authenticationNamespaceRegistry),
+        Layer.succeed(ContextAccess, {
+          ...legalEntitySelectionOptions.contextAccess,
+          modules: ({ moduleIds }: { readonly moduleIds: readonly string[] }) =>
+            Effect.succeed(moduleIds.map((key) => ({ decision: 'denied' as const, key }))),
+        }),
+      ),
     ).createHandler();
     handlers.push(deniedPageRuntime);
     const deniedPageResponse = yield* Effect.tryPromise(() => deniedPageRuntime.handler(exactPageRequest()));
@@ -620,30 +647,33 @@ it.live(
       moduleStateLayer,
       Effect.succeed(installedCatalog(['testing1'])),
       false,
-      Layer.succeed(ContextAccess, {
-        ...legalEntitySelectionOptions.contextAccess,
-        tenants: ({
-          permission,
-          tenantIds,
-        }: {
-          readonly permission:
-            | 'access'
-            | 'impersonate'
-            | 'manage_identity'
-            | 'manage_party_identity'
-            | 'manage_party_relationships'
-            | 'merge_party_identity'
-            | 'read_party_identity'
-            | 'review_party_identity';
-          readonly tenantIds: readonly string[];
-        }) =>
-          Effect.succeed(
-            tenantIds.map((key) => ({
-              decision: permission === 'manage_identity' ? ('denied' as const) : ('allowed' as const),
-              key,
-            })),
-          ),
-      }),
+      Layer.mergeAll(
+        Layer.succeed(AuthenticationNamespaceRegistry, authenticationNamespaceRegistry),
+        Layer.succeed(ContextAccess, {
+          ...legalEntitySelectionOptions.contextAccess,
+          tenants: ({
+            permission,
+            tenantIds,
+          }: {
+            readonly permission:
+              | 'access'
+              | 'impersonate'
+              | 'manage_identity'
+              | 'manage_party_identity'
+              | 'manage_party_relationships'
+              | 'merge_party_identity'
+              | 'read_party_identity'
+              | 'review_party_identity';
+            readonly tenantIds: readonly string[];
+          }) =>
+            Effect.succeed(
+              tenantIds.map((key) => ({
+                decision: permission === 'manage_identity' ? ('denied' as const) : ('allowed' as const),
+                key,
+              })),
+            ),
+        }),
+      ),
     ).createHandler();
     handlers.push(deniedIdentityAdministrationRuntime);
     const deniedIdentityAdministrationResponse = yield* Effect.tryPromise(() =>
@@ -751,14 +781,15 @@ it.live(
                   legalEntityId: fixtureLegalEntityId,
                   legalName: 'Fixture legal entity',
                 },
-                principal: {
+                principal: Schema.decodeUnknownSync(TrustedPrincipalContextSchema)({
                   authBindingId: '45000000-0000-4000-8000-000000000001',
                   authContextRef: 'better-auth-session:45000000-0000-4000-8000-000000000001',
-                  authMethod: 'session' as const,
+                  authenticationNamespaceId: staffAuthenticationNamespaceId,
+                  authMethod: 'session',
                   legalEntityId: fixtureLegalEntityId,
                   principalId: current.identity.principalId,
                   tenantId: current.identity.tenantId,
-                },
+                }),
                 setCookieHeaders: ['refreshed-session=value; Path=/; HttpOnly'],
                 state: 'authenticated' as const,
               }),
@@ -1136,7 +1167,10 @@ it.live(
         },
       },
     } as const;
-    const multiContextAccessLayer = Layer.succeed(ContextAccess, multiLegalEntitySelectionOptions.contextAccess);
+    const multiContextAccessLayer = Layer.mergeAll(
+      Layer.succeed(AuthenticationNamespaceRegistry, authenticationNamespaceRegistry),
+      Layer.succeed(ContextAccess, multiLegalEntitySelectionOptions.contextAccess),
+    );
     const multiAuthenticationContextLayer = Layer.mergeAll(
       multiContextAccessLayer,
       Layer.succeed(LegalEntityContext, multiLegalEntitySelectionOptions.legalEntityContext),
@@ -1160,7 +1194,10 @@ it.live(
     const authPersistence = yield* makeAuthDatabase(configuration);
     const authDatabase = authPersistence.executor;
     const adminAuthDatabase = yield* makeTestDatabaseFromPool(adminPool, authRelations);
-    const resolver = makePrincipalResolver({ executor: coreDatabase });
+    const resolver = makePrincipalResolver(
+      { executor: coreDatabase },
+      { authenticationNamespaceId: staffAuthenticationNamespaceId },
+    );
     const authentication = yield* makeAuthenticationService({
       allowFixtureSignUp: true,
     }).pipe(
@@ -1265,6 +1302,7 @@ it.live(
     ]);
     yield* coreDatabase.insert(principalAuthBindings).values([
       {
+        authenticationNamespaceId: staffAuthenticationNamespaceId,
         createdAt: new Date('2026-01-01T00:00:00.000Z'),
         principalAuthBindingId: firstAuthBindingId,
         principalId: firstPrincipalId,
@@ -1275,6 +1313,7 @@ it.live(
         tenantId: firstTenantId,
       },
       {
+        authenticationNamespaceId: staffAuthenticationNamespaceId,
         createdAt: new Date('2026-02-01T00:00:00.000Z'),
         principalAuthBindingId: secondAuthBindingId,
         principalId: secondPrincipalId,

@@ -7,6 +7,7 @@ import { Effect, Redacted, Schema } from 'effect';
 import { expect, it } from 'effect-rstest';
 import { SignJWT, exportJWK, generateKeyPair } from 'jose';
 import type { JWK, LocalJWKSet } from 'jose';
+import { EXTERNAL_GATEWAY_ASSERTION_VERSION, GATEWAY_ASSERTION_VERSION } from '@app/shared-contracts';
 
 import {
   ActionPrincipalConfigurationErrorSchema,
@@ -21,13 +22,44 @@ const currentTimeSeconds = 1_700_000_001;
 const issuer = 'https://shell.ontos.test';
 const principal = {
   authBindingId: '30000000-0000-4000-8000-000000000001',
-  authContextRef: 'better-auth-session:shared-verifier-test',
+  authContextRef: 'gateway-session-ref',
   authMethod: 'session' as const,
   principalId: '40000000-0000-4000-8000-000000000001',
   tenantId: '50000000-0000-4000-8000-000000000001',
 };
 
-const makeFixture = (audience: string, version = 1, fixturePrincipal = principal) =>
+const thirdPartyPrincipal = {
+  authBindingId: principal.authBindingId,
+  authContextRef: 'third-party-session-ref',
+  authenticationNamespaceId: 'third-party.identity.v1',
+  authMethod: 'session' as const,
+  principalId: principal.principalId,
+  tenantId: principal.tenantId,
+};
+
+const anotherNamespacePrincipal = {
+  ...principal,
+  authenticationNamespaceId: 'another.identity.v1',
+};
+
+interface FixturePrincipal {
+  readonly authBindingId?: string;
+  readonly authContextRef?: string;
+  readonly authenticationNamespaceId?: string;
+  readonly authMethod?: 'api_key' | 'session' | 'support_impersonation' | 'system';
+  readonly legalEntityId?: string;
+  readonly permissions?: readonly string[];
+  readonly principalId: string;
+  readonly providerSubjectId?: string;
+  readonly tenantId?: string;
+  readonly trustedStorefrontId?: string;
+}
+
+const makeFixture = (
+  audience: string,
+  version: number = GATEWAY_ASSERTION_VERSION,
+  fixturePrincipal: FixturePrincipal = principal,
+) =>
   Effect.gen(function* createFixture() {
     const { privateKey, publicKey } = yield* Effect.promise(() => generateKeyPair('Ed25519'));
     const publicJwk = {
@@ -96,6 +128,79 @@ const isUnavailableError = Schema.is(ActionPrincipalUnavailableErrorSchema);
 const failingKeySet = Object.assign(() => Promise.reject(new Error('fixture verifier details must be discarded')), {
   jwks: () => ({ keys: [] }),
 }) satisfies LocalJWKSet;
+
+it.effect('accepts a signed v1 assertion without requiring namespace configuration', () =>
+  Effect.gen(function* verifyLegacyStaffCompatibility() {
+    const fixture = yield* makeFixture('party-registry');
+    const verifier = bindGatewayPrincipalVerifier('party-registry');
+    const verified = yield* verifier.verify(Redacted.make(`Bearer ${fixture.token}`), {
+      currentTimeSeconds: Effect.succeed(currentTimeSeconds),
+      environment: fixture.environment,
+    });
+
+    expect(verified).toEqual(principal);
+  }),
+);
+
+it.effect('accepts v2 principals from arbitrary namespaces for Core registry admission', () =>
+  Effect.gen(function* verifyUnboundedV2Namespaces() {
+    const fixtures = yield* Effect.all([
+      makeFixture('party-registry', EXTERNAL_GATEWAY_ASSERTION_VERSION, anotherNamespacePrincipal),
+      makeFixture('external-operation', EXTERNAL_GATEWAY_ASSERTION_VERSION, thirdPartyPrincipal),
+    ]);
+    const expected = [anotherNamespacePrincipal, thirdPartyPrincipal];
+
+    for (const [index, fixture] of fixtures.entries()) {
+      const verified = yield* bindGatewayPrincipalVerifier(
+        index === 0 ? 'party-registry' : 'external-operation',
+      ).verify(Redacted.make(`Bearer ${fixture.token}`), {
+        currentTimeSeconds: Effect.succeed(currentTimeSeconds),
+        environment: fixture.environment,
+      });
+      expect(verified).toEqual(expected[index]);
+    }
+  }),
+);
+
+it.effect('rejects v2 claims with a missing namespace while preserving unknown values for Core', () =>
+  Effect.gen(function* rejectMissingV2Namespace() {
+    const verifier = bindGatewayPrincipalVerifier('party-registry');
+    const missingNamespace = yield* makeFixture('party-registry', EXTERNAL_GATEWAY_ASSERTION_VERSION, principal);
+    const failure = yield* Effect.flip(
+      verifier.verify(Redacted.make(`Bearer ${missingNamespace.token}`), {
+        currentTimeSeconds: Effect.succeed(currentTimeSeconds),
+        environment: missingNamespace.environment,
+      }),
+    );
+    expect(isInvalidError(failure)).toBe(true);
+  }),
+);
+
+it.effect('rejects provider identity and permission fields from signed claims', () =>
+  Effect.gen(function* rejectUntrustedClaimFields() {
+    const fixtures = yield* Effect.all([
+      makeFixture('party-registry', EXTERNAL_GATEWAY_ASSERTION_VERSION, {
+        ...anotherNamespacePrincipal,
+        providerSubjectId: 'provider-user-1',
+      }),
+      makeFixture('party-registry', EXTERNAL_GATEWAY_ASSERTION_VERSION, {
+        ...anotherNamespacePrincipal,
+        permissions: ['admin'],
+      }),
+    ]);
+    const verifier = bindGatewayPrincipalVerifier('party-registry');
+
+    for (const fixture of fixtures) {
+      const failure = yield* Effect.flip(
+        verifier.verify(Redacted.make(`Bearer ${fixture.token}`), {
+          currentTimeSeconds: Effect.succeed(currentTimeSeconds),
+          environment: fixture.environment,
+        }),
+      );
+      expect(isInvalidError(failure)).toBe(true);
+    }
+  }),
+);
 
 it.effect('an audience-bound verifier accepts only its exact topology app ID', () =>
   Effect.gen(function* verifyAudienceBinding() {
@@ -225,7 +330,7 @@ it.effect('redemption failures remain sanitized and distinguish replay from unav
 
 it.effect('unsupported assertion versions and unexpected verifier failures fail closed', () =>
   Effect.gen(function* rejectUnsupportedAndUnexpectedFailures() {
-    const unsupportedVersion = yield* makeFixture('party-registry', 2);
+    const unsupportedVersion = yield* makeFixture('party-registry', 3);
     const verifier = bindGatewayPrincipalVerifier('party-registry');
     const versionFailure = yield* Effect.flip(
       verifier.verify(Redacted.make(`Bearer ${unsupportedVersion.token}`), {
@@ -243,7 +348,10 @@ it.effect('unsupported assertion versions and unexpected verifier failures fail 
         })
         .pipe(
           Effect.provideService(GatewayPrincipalVerifierConfiguration, {
-            configuration: Effect.succeed({ issuer, keySet: failingKeySet }),
+            configuration: Effect.succeed({
+              issuer,
+              keySet: failingKeySet,
+            }),
           }),
         ),
     );

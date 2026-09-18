@@ -50,6 +50,7 @@ it('publishes authentication, identity lifecycle, and gateway operations', () =>
   const legalEntityEndpoints = Object.keys(ShellAuthenticationApi.groups.legalEntities.endpoints).toSorted();
   const tenantEndpoints = Object.keys(ShellAuthenticationApi.groups.tenants.endpoints).toSorted();
   const resourceEndpoints = Object.keys(ShellAuthenticationApi.groups.resources.endpoints).toSorted();
+  const externalIdentityEndpoints = Object.keys(ShellAuthenticationApi.groups.externalIdentity.endpoints).toSorted();
 
   expect(authenticationEndpoints).toEqual(['currentSession', 'signIn', 'signOut']);
   expect(gatewayEndpoints).toEqual(['issueGatewayContext', 'issueApiKeyGatewayContext']);
@@ -70,6 +71,14 @@ it('publishes authentication, identity lifecycle, and gateway operations', () =>
   expect(legalEntityEndpoints).toEqual(['availableLegalEntities', 'switchLegalEntity']);
   expect(tenantEndpoints).toEqual(['availableTenants', 'switchTenant']);
   expect(resourceEndpoints).toEqual(['attachMedia', 'resourceDetail', 'search']);
+  expect(externalIdentityEndpoints).toEqual([
+    'activatePrincipalBinding',
+    'changePrincipalBindingStatus',
+    'issueExternalGatewayContext',
+    'readPrincipalBinding',
+    'reservePrincipalBinding',
+    'resolveExternalSubject',
+  ]);
   expect(
     Object.fromEntries(
       Object.values(ShellAuthenticationApi.groups).flatMap((group) =>
@@ -77,18 +86,24 @@ it('publishes authentication, identity lifecycle, and gateway operations', () =>
       ),
     ),
   ).toEqual({
+    activatePrincipalBinding: '/auth/identity/external/bindings/activate',
     attachMedia: '/shell/resource/media-attachment',
     availableLegalEntities: '/auth/legal-entities',
     availableTenants: '/auth/tenants',
+    changePrincipalBindingStatus: '/auth/identity/external/binding/status',
     changePrincipalStatus: '/auth/identity/principal-status',
     createNonHumanPrincipal: '/auth/identity/principals',
     currentSession: '/auth/session',
     issueApiKeyGatewayContext: '/auth/api-key/gateway-context',
+    issueExternalGatewayContext: '/auth/identity/external/gateway-context',
     issueGatewayContext: '/auth/gateway-context',
     issueManagedApiKey: '/auth/identity/api-keys/managed',
     issueSelfApiKey: '/auth/identity/api-keys/self',
     listManagedApiKeys: '/auth/identity/api-keys/managed/list',
     listSelfApiKeys: '/auth/identity/api-keys/self/list',
+    readPrincipalBinding: '/auth/identity/external/bindings/read',
+    reservePrincipalBinding: '/auth/identity/external/bindings/reserve',
+    resolveExternalSubject: '/auth/identity/external/resolve',
     resolveModuleTarget: '/shell/module-target',
     resourceDetail: '/shell/resource',
     rotateManagedApiKey: '/auth/identity/api-keys/managed/rotate',

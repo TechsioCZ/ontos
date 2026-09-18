@@ -1,4 +1,4 @@
-import { tenantLegalEntityRlsPolicies } from '@app/core-runtime';
+import { tenantLegalEntityRlsPolicies, tenantRlsPolicies } from '@app/core-runtime';
 import { defineRelations, sql } from 'drizzle-orm';
 import {
   boolean,
@@ -38,6 +38,8 @@ type DatabaseJsonObject = Readonly<Record<string, DatabaseJsonValue>>;
 export const COMMERCE_CUSTOMER_CONTEXT_TABLE_INVENTORY = [
   'access_mutation_journal',
   'address_book_reconciliation_receipts',
+  'portal_enrollment_attempts',
+  'portal_enrollment_owner_operations',
   'counterparty_access_invitations',
   'counterparty_commerce_access_grants',
   'counterparty_invitation_claim_attempts',
@@ -117,16 +119,203 @@ const scopedPolicies = (prefix: string, table: Readonly<Record<'tenantId' | 'leg
   ] as const;
 };
 
+/**
+ * Enrollment is created before a Selling Legal Entity is known.  Keep its owner records
+ * Tenant-scoped, and make the tenant-only boundary just as strict as the existing
+ * tenant/Legal Entity tables.  The owner routine policy is required because all owner
+ * routines run with FORCE ROW LEVEL SECURITY and the runtime has no raw table grants.
+ */
+const tenantScopedPolicies = (prefix: string, table: Readonly<Record<'tenantId', AnyPgColumn>>) => {
+  const predicate = sql`${table.tenantId} = nullif(current_setting('ontos.tenant_id', true), '')::uuid`;
+  return [
+    ...tenantRlsPolicies(prefix, table.tenantId),
+    pgPolicy(`${prefix}_owner_routine`, {
+      for: 'all',
+      to: 'public',
+      using: predicate,
+      withCheck: predicate,
+    }),
+  ] as const;
+};
+
 const trimmed = (name: string, column: AnyPgColumn) =>
   check(name, sql`${column} = btrim(${column}) and length(${column}) > 0`);
 
 const optionalTrimmed = (name: string, column: AnyPgColumn) =>
   check(name, sql`${column} is null or (${column} = btrim(${column}) and length(${column}) > 0)`);
 
+const optionalTrimmedBounded = (name: string, column: AnyPgColumn, maximum: number) =>
+  check(name, sql`${column} is null or (${column} = btrim(${column}) and length(${column}) between 1 and ${maximum})`);
+
+const optionalDigest = (name: string, column: AnyPgColumn) =>
+  check(name, sql`${column} is null or ${column} ~ '^[0-9a-f]{64}$'`);
+
 const positiveRevision = (name: string, revision: AnyPgColumn) => check(name, sql`${revision} > 0`);
 
 const halfOpenPeriod = (name: string, table: Readonly<Record<'effectiveFrom' | 'effectiveTo', AnyPgColumn>>) =>
   check(name, sql`${table.effectiveTo} is null or ${table.effectiveTo} > ${table.effectiveFrom}`);
+
+/** Durable Tenant-scoped correlation for one exact Commerce Portal onboarding intent. */
+export const portalEnrollmentAttempts = commerceCustomerContextSchema.table.withRLS(
+  'portal_enrollment_attempts',
+  {
+    authenticationNamespaceId: text('authentication_namespace_id'),
+    createdAt: createdAt(),
+    createdByPrincipalId: uuid('created_by_principal_id').notNull(),
+    intentDigest: text('intent_digest').notNull(),
+    intentKey: text('intent_key').notNull(),
+    invitationId: uuid('invitation_id'),
+    journey: text('journey').notNull(),
+    lastFailureCode: text('last_failure_code'),
+    lastFailureReason: text('last_failure_reason'),
+    lastOwnerInvocationId: uuid('last_owner_invocation_id'),
+    leaseExpiresAt: timestamp('lease_expires_at', { withTimezone: true }),
+    leaseOwner: text('lease_owner'),
+    leaseToken: uuid('lease_token'),
+    portalEnrollmentAttemptId: uuid('portal_enrollment_attempt_id').defaultRandom().primaryKey(),
+    providerSubjectId: text('provider_subject_id'),
+    revision: integer('revision').default(1).notNull(),
+    state: text('state').default('IN_PROGRESS').notNull(),
+    subjectType: text('subject_type'),
+    targetLegalEntityId: uuid('target_legal_entity_id'),
+    targetResourceId: text('target_resource_id'),
+    tenantId: uuid('tenant_id').notNull(),
+    terminatedAt: timestamp('terminated_at', { withTimezone: true }),
+    updatedAt: updatedAt(),
+  },
+  (table) => [
+    unique('ccc_portal_enrollment_attempts_scope_id_uk').on(table.tenantId, table.portalEnrollmentAttemptId),
+    unique('ccc_portal_enrollment_attempts_intent_uk').on(table.tenantId, table.intentKey),
+    check(
+      'ccc_portal_enrollment_attempts_journey_ck',
+      sql`${table.journey} in ('RETAIL_SELF_ENROLLMENT', 'COUNTERPARTY_INVITATION', 'EXISTING_ACCOUNT')`,
+    ),
+    check(
+      'ccc_portal_enrollment_attempts_intent_key_ck',
+      sql`${table.intentKey} = btrim(${table.intentKey}) and length(${table.intentKey}) between 1 and 300`,
+    ),
+    check('ccc_portal_enrollment_attempts_digest_ck', sql`${table.intentDigest} ~ '^[0-9a-f]{64}$'`),
+    check(
+      'ccc_portal_enrollment_attempts_state_ck',
+      sql`${table.state} in ('IN_PROGRESS', 'VERIFICATION_REQUIRED', 'COMPLETE', 'RECONCILIATION_REQUIRED', 'TERMINATED')`,
+    ),
+    positiveRevision('ccc_portal_enrollment_attempts_revision_ck', table.revision),
+    check(
+      'ccc_portal_enrollment_attempts_subject_ck',
+      sql`(${table.authenticationNamespaceId} is null and ${table.subjectType} is null and ${table.providerSubjectId} is null) or (${table.authenticationNamespaceId} is not null and ${table.subjectType} = 'user' and ${table.providerSubjectId} is not null)`,
+    ),
+    check(
+      'ccc_portal_enrollment_attempts_lease_ck',
+      sql`(${table.leaseOwner} is null and ${table.leaseToken} is null and ${table.leaseExpiresAt} is null) or (${table.leaseOwner} is not null and ${table.leaseToken} is not null and ${table.leaseExpiresAt} is not null)`,
+    ),
+    check(
+      'ccc_portal_enrollment_attempts_termination_ck',
+      sql`(${table.state} = 'TERMINATED' and ${table.terminatedAt} is not null) or (${table.state} <> 'TERMINATED' and ${table.terminatedAt} is null)`,
+    ),
+    check(
+      'ccc_portal_enrollment_attempts_namespace_ck',
+      sql`${table.authenticationNamespaceId} is null or (${table.authenticationNamespaceId} = btrim(${table.authenticationNamespaceId}) and length(${table.authenticationNamespaceId}) between 1 and 200)`,
+    ),
+    check(
+      'ccc_portal_enrollment_attempts_provider_subject_ck',
+      sql`${table.providerSubjectId} is null or length(${table.providerSubjectId}) between 1 and 500`,
+    ),
+    optionalTrimmedBounded('ccc_portal_enrollment_attempts_target_resource_ck', table.targetResourceId, 300),
+    optionalTrimmedBounded('ccc_portal_enrollment_attempts_failure_code_ck', table.lastFailureCode, 300),
+    optionalTrimmedBounded('ccc_portal_enrollment_attempts_failure_reason_ck', table.lastFailureReason, 500),
+    optionalTrimmedBounded('ccc_portal_enrollment_attempts_lease_owner_ck', table.leaseOwner, 300),
+    ...tenantScopedPolicies('ccc_portal_enrollment_attempts_scope', table),
+  ],
+);
+
+/**
+ * One immutable owner transition identity with safe result metadata.  This is a journal of
+ * correlations and outcomes, never a payload cache: provider credentials and unrestricted
+ * owner responses are intentionally not represented by this table.
+ */
+export const portalEnrollmentOwnerOperations = commerceCustomerContextSchema.table.withRLS(
+  'portal_enrollment_owner_operations',
+  {
+    actorPrincipalId: uuid('actor_principal_id').notNull(),
+    completedAt: timestamp('completed_at', { withTimezone: true }),
+    createdAt: createdAt(),
+    failureCode: text('failure_code'),
+    failureReason: text('failure_reason'),
+    leaseExpiresAt: timestamp('lease_expires_at', { withTimezone: true }),
+    leaseOwner: text('lease_owner'),
+    leaseToken: uuid('lease_token'),
+    outcomeCode: text('outcome_code'),
+    ownerInvocationId: uuid('owner_invocation_id').notNull(),
+    ownerModuleKey: text('owner_module_key').notNull(),
+    portalEnrollmentAttemptId: uuid('portal_enrollment_attempt_id').notNull(),
+    portalEnrollmentOwnerOperationId: uuid('portal_enrollment_owner_operation_id').defaultRandom().primaryKey(),
+    reconciliationRef: uuid('reconciliation_ref'),
+    requestDigest: text('request_digest').notNull(),
+    required: boolean('required').default(true).notNull(),
+    resultDigest: text('result_digest'),
+    resultReference: text('result_reference'),
+    revision: integer('revision').default(1).notNull(),
+    status: text('status').default('IN_PROGRESS').notNull(),
+    tenantId: uuid('tenant_id').notNull(),
+    transitionKey: text('transition_key').notNull(),
+    updatedAt: updatedAt(),
+  },
+  (table) => [
+    unique('ccc_portal_enrollment_owner_operations_scope_id_uk').on(
+      table.tenantId,
+      table.portalEnrollmentOwnerOperationId,
+    ),
+    unique('ccc_portal_enrollment_owner_operations_transition_uk').on(
+      table.tenantId,
+      table.portalEnrollmentAttemptId,
+      table.ownerModuleKey,
+      table.transitionKey,
+    ),
+    unique('ccc_portal_enrollment_owner_operations_invocation_uk').on(
+      table.tenantId,
+      table.portalEnrollmentAttemptId,
+      table.ownerInvocationId,
+    ),
+    foreignKey({
+      columns: [table.tenantId, table.portalEnrollmentAttemptId],
+      foreignColumns: [portalEnrollmentAttempts.tenantId, portalEnrollmentAttempts.portalEnrollmentAttemptId],
+      name: 'ccc_portal_enrollment_owner_operations_attempt_fk',
+    }).onDelete('restrict'),
+    check(
+      'ccc_portal_enrollment_owner_operations_module_ck',
+      sql`${table.ownerModuleKey} = btrim(${table.ownerModuleKey}) and length(${table.ownerModuleKey}) between 1 and 200`,
+    ),
+    check(
+      'ccc_portal_enrollment_owner_operations_transition_ck',
+      sql`${table.transitionKey} = btrim(${table.transitionKey}) and length(${table.transitionKey}) between 1 and 300`,
+    ),
+    check('ccc_portal_enrollment_owner_operations_digest_ck', sql`${table.requestDigest} ~ '^[0-9a-f]{64}$'`),
+    check(
+      'ccc_portal_enrollment_owner_operations_status_ck',
+      sql`${table.status} in ('IN_PROGRESS', 'SUCCEEDED', 'FAILED', 'INDETERMINATE', 'RECONCILIATION_REQUIRED')`,
+    ),
+    positiveRevision('ccc_portal_enrollment_owner_operations_revision_ck', table.revision),
+    check(
+      'ccc_portal_enrollment_owner_operations_lease_ck',
+      sql`(${table.leaseOwner} is null and ${table.leaseToken} is null and ${table.leaseExpiresAt} is null) or (${table.leaseOwner} is not null and ${table.leaseToken} is not null and ${table.leaseExpiresAt} is not null)`,
+    ),
+    check(
+      'ccc_portal_enrollment_owner_operations_completed_ck',
+      sql`(${table.status} in ('SUCCEEDED', 'FAILED', 'INDETERMINATE', 'RECONCILIATION_REQUIRED') and ${table.completedAt} is not null) or (${table.status} = 'IN_PROGRESS' and ${table.completedAt} is null)`,
+    ),
+    optionalTrimmedBounded('ccc_portal_enrollment_owner_operations_result_ref_ck', table.resultReference, 300),
+    check(
+      'ccc_portal_enrollment_owner_operations_reconciliation_ref_ck',
+      sql`${table.reconciliationRef} is null or ${table.reconciliationRef} <> ${table.ownerInvocationId}`,
+    ),
+    optionalDigest('ccc_portal_enrollment_owner_operations_result_digest_ck', table.resultDigest),
+    optionalTrimmedBounded('ccc_portal_enrollment_owner_operations_outcome_ck', table.outcomeCode, 300),
+    optionalTrimmedBounded('ccc_portal_enrollment_owner_operations_failure_code_ck', table.failureCode, 300),
+    optionalTrimmedBounded('ccc_portal_enrollment_owner_operations_failure_reason_ck', table.failureReason, 500),
+    optionalTrimmedBounded('ccc_portal_enrollment_owner_operations_lease_owner_ck', table.leaseOwner, 300),
+    ...tenantScopedPolicies('ccc_portal_enrollment_owner_operations_scope', table),
+  ],
+);
 
 /** Internal identity/lifecycle row shared by the two concrete profile resources. */
 export const customerProfiles = commerceCustomerContextSchema.table.withRLS(
@@ -1972,6 +2161,8 @@ const commerceCustomerContextDatabaseSchema = {
   guestRetailAttributions,
   partyMergeProfileObservations,
   paymentTermRetirementReservations,
+  portalEnrollmentAttempts,
+  portalEnrollmentOwnerOperations,
   principalPurchaseLimitOverrides,
   profileReconciliationCaseMembers,
   profileReconciliationCases,
@@ -1988,6 +2179,8 @@ const commerceCustomerContextDatabaseSchema = {
 export const COMMERCE_CUSTOMER_CONTEXT_TABLES = [
   accessMutationJournal,
   addressBookReconciliationReceipts,
+  portalEnrollmentAttempts,
+  portalEnrollmentOwnerOperations,
   counterpartyAccessInvitations,
   counterpartyCommerceAccessGrants,
   counterpartyInvitationClaimAttempts,

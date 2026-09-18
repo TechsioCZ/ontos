@@ -8,6 +8,7 @@ import {
   getActionHandler,
 } from '../../src/actions/definition.ts';
 import { commitActionThenReject } from '../../src/actions/context.ts';
+import { TrustedPrincipalContextSchema } from '../../src/actions/principal-context.ts';
 import {
   ActionInvocationPersistenceError,
   ActionPermissionCheckError,
@@ -54,14 +55,20 @@ import { toBusinessPermissionAccessKey } from '../../src/permissions/context-acc
 import { testOperationalScopeResolver } from '../fixtures/operational-scope.ts';
 import { makeTestDatabase } from '../support/database.ts';
 
-const principal = {
+const principal = Schema.decodeSync(TrustedPrincipalContextSchema)({
   authBindingId: '00000000-0000-4000-8000-000000000004',
   authContextRef: 'better-auth-session:test-session',
+  authenticationNamespaceId: 'core-identity',
   authMethod: 'session',
   legalEntityId: '00000000-0000-4000-8000-000000000002',
   principalId: '00000000-0000-4000-8000-000000000003',
   tenantId: '00000000-0000-4000-8000-000000000001',
-} as const;
+});
+if (principal.authBindingId === undefined || principal.legalEntityId === undefined) {
+  throw new Error('Action runtime fixture requires a session binding and legal entity');
+}
+const principalAuthBindingId = principal.authBindingId;
+const principalLegalEntityId = principal.legalEntityId;
 
 const transport = (idempotencyKey = 'intent-1') => ({
   correlationId: `correlation-${idempotencyKey}`,
@@ -239,7 +246,7 @@ const makeHarness = Effect.fn(function* makeHarness(options: HarnessOptions = {}
   };
 
   let installedTenantId: string = principal.tenantId;
-  let installedLegalEntityId: string = principal.legalEntityId;
+  let installedLegalEntityId: string = principalLegalEntityId;
   const commitTransaction = () =>
     Effect.gen(function* commitTransactionEffect() {
       const defaultCommitCodes = {
@@ -298,7 +305,7 @@ const makeHarness = Effect.fn(function* makeHarness(options: HarnessOptions = {}
       ];
     }
     if (text.startsWith('select')) {
-      return [{ authBindingId: principal.authBindingId }];
+      return [{ authBindingId: principalAuthBindingId }];
     }
     return [];
   });
@@ -794,6 +801,7 @@ it.effect(
     const recoveryPrincipal = yield* supportRecoveryPrincipalContextResolverFromRepository({
       load: () =>
         Effect.succeedSome({
+          authenticationNamespaceId: 'core-identity',
           bindingPrincipalId: principal.principalId,
           bindingTenantId: principal.tenantId,
           principalKind: 'human' as const,
@@ -801,7 +809,7 @@ it.effect(
           tenantId: principal.tenantId,
         }),
     }).resolveStoppedImpersonation({
-      originalAuthBindingId: principal.authBindingId,
+      originalAuthBindingId: principalAuthBindingId,
       originalPrincipalId: principal.principalId,
       originalSessionId: 'expired-original-session',
       tenantId: principal.tenantId,
@@ -1337,7 +1345,7 @@ it.effect(
     expect(denied.counts().transactionCount).toBe(0);
     expect(denied.legalEntityChecks).toEqual([
       {
-        legalEntityIds: [principal.legalEntityId],
+        legalEntityIds: [principalLegalEntityId],
         permission: 'manage_counterparty',
         principalId: principal.principalId,
         tenantId: principal.tenantId,
@@ -1432,7 +1440,7 @@ it.effect(
         resourcePermission: defineActionResourcePermission<{
           readonly counterpartyId: CounterpartyId;
         }>(({ counterpartyId }, scope) => {
-          expect(scope.legalEntityId).toBe(principal.legalEntityId);
+          expect(scope.legalEntityId).toBe(principalLegalEntityId);
           return {
             permission: 'write',
             resource: {
@@ -1473,7 +1481,7 @@ it.effect(
     expect(denied.counts().transactionCount).toBe(0);
     expect(denied.resourceChecks).toEqual([
       {
-        legalEntityId: principal.legalEntityId,
+        legalEntityId: principalLegalEntityId,
         permission: 'write',
         principalId: principal.principalId,
         resources: [
@@ -1738,7 +1746,7 @@ it.effect(
             target: {
               counterpartyId: 'counterparty-1',
               kind: 'counterparty_storefront',
-              legalEntityId: principal.legalEntityId,
+              legalEntityId: principalLegalEntityId,
               storefrontId: 'storefront-a',
               tenantId: principal.tenantId,
             },

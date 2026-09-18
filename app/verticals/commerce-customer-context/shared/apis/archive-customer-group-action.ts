@@ -133,15 +133,38 @@ const actionErrors = [
   ArchiveCustomerGroupActionInternalProblemSchema,
 ] as const;
 
+/**
+ * The endpoint chain stays a `const`. The MicroVertical API boundary checker walks a root API's
+ * operands through const bindings only, so a class declaration hides the composed endpoints from
+ * it. The exported group is annotated with a named type alias so its type still has a name: the
+ * vertical's `shared/api.ts` merges every group type into one `HttpApi` and declaration emit
+ * serializes that union verbatim, so an anonymous group type pushes the composed contract past
+ * the compiler's serialization limit (TS7056).
+ *
+ * Exported only so the named contract type can reference it; the merged vertical HttpApi prints
+ * this group by name (declaration-emit size).
+ *
+ * @public
+ */
+export const archiveCustomerGroupActionGroupDefinition = HttpApiGroup.make('archiveCustomerGroupAction')
+  .add(
+    HttpApiEndpoint.post('execute', '/commerce-customer-context/actions/archive-customer-group', {
+      error: actionErrors,
+      headers: ArchiveCustomerGroupActionHeadersSchema,
+      payload: Schema.toEncoded(ArchiveCustomerGroupPayloadSchema),
+      success: ArchiveCustomerGroupResultSchema,
+    }),
+  )
+  .middleware(ArchiveCustomerGroupActionSchemaErrorMiddleware);
+
+export type ArchiveCustomerGroupActionGroupContract = HttpApiGroup.HttpApiGroup<
+  'archiveCustomerGroupAction',
+  HttpApiGroup.Endpoints<typeof archiveCustomerGroupActionGroupDefinition>
+>;
+
+const ArchiveCustomerGroupActionGroup: ArchiveCustomerGroupActionGroupContract =
+  archiveCustomerGroupActionGroupDefinition;
+
 export const ArchiveCustomerGroupActionApi = HttpApi.make('ArchiveCustomerGroupActionApi').add(
-  HttpApiGroup.make('archiveCustomerGroupAction')
-    .add(
-      HttpApiEndpoint.post('execute', '/commerce-customer-context/actions/archive-customer-group', {
-        error: actionErrors,
-        headers: ArchiveCustomerGroupActionHeadersSchema,
-        payload: Schema.toEncoded(ArchiveCustomerGroupPayloadSchema),
-        success: ArchiveCustomerGroupResultSchema,
-      }),
-    )
-    .middleware(ArchiveCustomerGroupActionSchemaErrorMiddleware),
+  ArchiveCustomerGroupActionGroup,
 );

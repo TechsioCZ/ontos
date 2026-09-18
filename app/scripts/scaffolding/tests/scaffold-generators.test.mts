@@ -404,16 +404,21 @@ const scaffoldFlag = {
   accessFiltering: '--access-filtering',
   authorization: '--authorization',
   legalEntityScope: '--legal-entity-scope',
+  module: '--module',
   operation: '--operation',
   producer: '--producer',
   provider: '--provider',
   requestFilters: '--request-filters',
   resource: '--resource',
+  scope: '--scope',
   vertical: '--vertical',
 } as const;
 const fixtureName = {
   action: 'create-order',
   actionModule: 'core.modules',
+  coreIdentityAction: 'change-user-binding-status',
+  coreIdentityModule: 'core.identity',
+  coreIdentityTopic: 'core.identity.user-binding-status-changed.v1',
   customerEditPage: 'customer-edit',
   inventoryItems: 'inventory-items',
   ordersCreated: 'orders.created',
@@ -426,6 +431,8 @@ const fixtureName = {
   stockLevels: 'stock-levels',
 } as const;
 const rootPackageFile = 'package.json';
+const coreRuntimePackageFile = 'packages/core-runtime/package.json';
+const coreRuntimePackageEntryExport = './src/index.ts';
 const coreRuntimeIndexFile = 'packages/core-runtime/src/index.ts';
 const coreActionCatalogFile = 'packages/core-runtime/src/modules/actions/catalog.ts';
 const shellSentinelFile = 'apps/shell-super-app/src/sentinel.ts';
@@ -895,6 +902,9 @@ it.live(
     );
     expect(getHelpText(scaffoldCommand.externalHttpAdapter)).toMatch(
       /--vertical contacts --provider ares --operation subject/u,
+    );
+    expect(getHelpText(scaffoldCommand.outboxMessage)).toMatch(
+      /scaffold:outbox-message -- --scope core --module <core\.module>/u,
     );
     expect(getHelpText(scaffoldCommand.searchProviderAccess)).toMatch(/--tenant-permission read_party_identity/u);
   }),
@@ -2255,7 +2265,7 @@ it.live(
 it('recognizes only exact schema-only Outbox package subpaths as cross-vertical contracts', () => {
   const producerPackage = {
     exports: {
-      '.': './src/index.ts',
+      '.': coreRuntimePackageEntryExport,
       './outbox/orders-created': generatedOutboxContractPath,
       './workers': './src/workers/index.ts',
     },
@@ -2277,7 +2287,7 @@ it('recognizes only exact schema-only Outbox package subpaths as cross-vertical 
   ).toThrow(/not a published schema-only Outbox contract subpath/u);
   expect(() =>
     assertPublishedOutboxDependencyUsage({
-      dependencyPackageJson: { exports: { '.': './src/index.ts' } },
+      dependencyPackageJson: { exports: { '.': coreRuntimePackageEntryExport } },
       dependencyPackageName: inventoryPackageName,
       moduleSpecifiers: [inventoryPackageName],
     }),
@@ -3765,6 +3775,150 @@ export const outboxProducerModuleKey = 'inventory.stock' as const;
           scaffoldCommand.outboxMessage,
           [scaffoldFlag.vertical, inventorySlug, '--action', fixtureName.action, '--topic', 'events.foo1-bar'],
           /Outbox identifier CreateOrderEventsFoo1BarOutbox already exists/u,
+        );
+      }),
+    );
+  }),
+);
+
+it.live(
+  'generates Core-owned Outbox Messages from system-scoped Actions and reruns atomically',
+  Effect.fn(function* scenario67a() {
+    yield* withFixture(
+      Effect.fn(function* scenario67b(fixture) {
+        yield* run(fixture, 'action', [
+          scaffoldFlag.scope,
+          'core',
+          scaffoldFlag.module,
+          fixtureName.coreIdentityModule,
+          '--action',
+          fixtureName.coreIdentityAction,
+        ]);
+        yield* write(
+          fixture.root,
+          coreRuntimePackageFile,
+          json({
+            dependencies: {},
+            exports: { '.': coreRuntimePackageEntryExport },
+            modernjs: {},
+            name: '@app/core-runtime',
+            private: true,
+            scripts: {},
+          }),
+        );
+        const coreOutboxArguments = [
+          scaffoldFlag.scope,
+          'core',
+          scaffoldFlag.module,
+          fixtureName.coreIdentityModule,
+          '--action',
+          fixtureName.coreIdentityAction,
+          '--topic',
+          fixtureName.coreIdentityTopic,
+        ];
+        yield* run(fixture, scaffoldCommand.outboxMessage, coreOutboxArguments);
+
+        const actionPath = 'packages/core-runtime/src/modules/actions/change-user-binding-status.action.ts';
+        const messagePath =
+          'packages/core-runtime/src/modules/actions/change-user-binding-status-core-identity-user-binding-status-changed-v1.outbox-message.ts';
+        const contractPath = 'packages/core-runtime/src/outbox/core-identity-user-binding-status-changed-v1.ts';
+        const beforeRerun = yield* snapshotTree(fixture.root);
+        yield* run(fixture, scaffoldCommand.outboxMessage, coreOutboxArguments);
+        expect(yield* snapshotTree(fixture.root)).toEqual(beforeRerun);
+
+        const action = yield* readFixtureFile(fixture.root, actionPath);
+        expect(action).toMatch(/entrypoint: defineSystemModuleEntrypoint\(\{/u);
+        expect(action).toMatch(/<generated-outbox-message-exports>/u);
+        expect(action).toMatch(
+          /export \{ ChangeUserBindingStatusCoreIdentityUserBindingStatusChangedV1OutboxPayloadSchema \} from '\.\/change-user-binding-status-core-identity-user-binding-status-changed-v1\.outbox-message\.ts';/u,
+        );
+        const message = yield* readFixtureFile(fixture.root, messagePath);
+        expect(message).toMatch(/@ontos-outbox-action core\.identity\.change-user-binding-status/u);
+        expect(message).toMatch(/import type \{ OutboxMessage \} from '\.\.\/\.\.\/actions\/events\.ts';/u);
+        expect(message).toMatch(/\.\.\/outbox\/core-identity-user-binding-status-changed-v1\.ts/u);
+        expect(message).toMatch(/createChangeUserBindingStatusCoreIdentityUserBindingStatusChangedV1OutboxMessage/u);
+        const contract = yield* readFixtureFile(fixture.root, contractPath);
+        expect(contract).toMatch(/@ontos-outbox-producer core\.identity/u);
+        expect(contract).toMatch(/outboxTopic = 'core\.identity\.user-binding-status-changed\.v1'/u);
+        expect(contract).toMatch(/outboxProducerModuleKey = 'core\.identity'/u);
+        const coreRuntimePackage = yield* decodeFixturePackage(
+          yield* readFixtureFile(fixture.root, coreRuntimePackageFile),
+        );
+        expect(coreRuntimePackage.exports['./outbox/core-identity-user-binding-status-changed-v1']).toBe(
+          './src/outbox/core-identity-user-binding-status-changed-v1.ts',
+        );
+      }),
+    );
+
+    yield* withFixture(
+      Effect.fn(function* scenario67c(fixture) {
+        yield* run(fixture, 'action', [
+          scaffoldFlag.scope,
+          'core',
+          scaffoldFlag.module,
+          fixtureName.coreIdentityModule,
+          '--action',
+          fixtureName.coreIdentityAction,
+        ]);
+        yield* write(
+          fixture.root,
+          coreRuntimePackageFile,
+          json({
+            dependencies: {},
+            exports: { '.': coreRuntimePackageEntryExport },
+            modernjs: {},
+            name: '@app/core-runtime',
+            private: true,
+            scripts: {},
+          }),
+        );
+        yield* write(
+          fixture.root,
+          'packages/core-runtime/src/outbox/core-identity-user-binding-status-changed-v1.ts',
+          'export const handwritten = true;\n',
+        );
+        yield* assertScaffoldRefused(
+          fixture,
+          scaffoldCommand.outboxMessage,
+          [
+            scaffoldFlag.scope,
+            'core',
+            scaffoldFlag.module,
+            fixtureName.coreIdentityModule,
+            '--action',
+            fixtureName.coreIdentityAction,
+            '--topic',
+            fixtureName.coreIdentityTopic,
+          ],
+          /refusing to overwrite existing business file/u,
+        );
+      }),
+    );
+
+    yield* withFixture(
+      Effect.fn(function* scenario67d(fixture) {
+        yield* run(fixture, 'action', [
+          scaffoldFlag.scope,
+          'core',
+          scaffoldFlag.module,
+          fixtureName.actionModule,
+          '--action',
+          fixtureName.action,
+        ]);
+        yield* assertScaffoldRefused(
+          fixture,
+          scaffoldCommand.outboxMessage,
+          [
+            scaffoldFlag.scope,
+            'core',
+            scaffoldFlag.module,
+            fixtureName.coreIdentityModule,
+            '--action',
+            fixtureName.action,
+            '--topic',
+            fixtureName.coreIdentityTopic,
+          ],
+          /matching generated Core Action with its governed write entrypoint/u,
         );
       }),
     );

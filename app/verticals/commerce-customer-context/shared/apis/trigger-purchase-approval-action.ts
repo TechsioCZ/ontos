@@ -126,15 +126,38 @@ const actionErrors = [
   TriggerPurchaseApprovalActionInternalProblemSchema,
 ] as const;
 
+/**
+ * The endpoint chain stays a `const`. The MicroVertical API boundary checker walks a root API's
+ * operands through const bindings only, so a class declaration hides the composed endpoints from
+ * it. The exported group is annotated with a named type alias so its type still has a name: the
+ * vertical's `shared/api.ts` merges every group type into one `HttpApi` and declaration emit
+ * serializes that union verbatim, so an anonymous group type pushes the composed contract past
+ * the compiler's serialization limit (TS7056).
+ *
+ * Exported only so the named contract type can reference it; the merged vertical HttpApi prints
+ * this group by name (declaration-emit size).
+ *
+ * @public
+ */
+export const triggerPurchaseApprovalActionGroupDefinition = HttpApiGroup.make('triggerPurchaseApprovalAction')
+  .add(
+    HttpApiEndpoint.post('execute', '/commerce-customer-context/actions/trigger-purchase-approval', {
+      error: actionErrors,
+      headers: TriggerPurchaseApprovalActionHeadersSchema,
+      payload: Schema.toEncoded(TriggerPurchaseApprovalPayloadSchema),
+      success: TriggerPurchaseApprovalResultSchema,
+    }),
+  )
+  .middleware(TriggerPurchaseApprovalActionSchemaErrorMiddleware);
+
+export type TriggerPurchaseApprovalActionGroupContract = HttpApiGroup.HttpApiGroup<
+  'triggerPurchaseApprovalAction',
+  HttpApiGroup.Endpoints<typeof triggerPurchaseApprovalActionGroupDefinition>
+>;
+
+const TriggerPurchaseApprovalActionGroup: TriggerPurchaseApprovalActionGroupContract =
+  triggerPurchaseApprovalActionGroupDefinition;
+
 export const TriggerPurchaseApprovalActionApi = HttpApi.make('TriggerPurchaseApprovalActionApi').add(
-  HttpApiGroup.make('triggerPurchaseApprovalAction')
-    .add(
-      HttpApiEndpoint.post('execute', '/commerce-customer-context/actions/trigger-purchase-approval', {
-        error: actionErrors,
-        headers: TriggerPurchaseApprovalActionHeadersSchema,
-        payload: Schema.toEncoded(TriggerPurchaseApprovalPayloadSchema),
-        success: TriggerPurchaseApprovalResultSchema,
-      }),
-    )
-    .middleware(TriggerPurchaseApprovalActionSchemaErrorMiddleware),
+  TriggerPurchaseApprovalActionGroup,
 );

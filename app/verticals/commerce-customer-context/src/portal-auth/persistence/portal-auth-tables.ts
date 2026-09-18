@@ -1,0 +1,213 @@
+import { defineRelations, sql } from 'drizzle-orm';
+import { bigint, boolean, index, integer, pgSchema, smallint, text, timestamp, uniqueIndex } from 'drizzle-orm/pg-core';
+
+/** The Commerce portal owns this schema and migration history independently of Core and Staff. */
+export const COMMERCE_PORTAL_AUTH_SCHEMA_NAME = 'commerce_auth';
+export const COMMERCE_PORTAL_AUTH_TABLE_INVENTORY = [
+  'user',
+  'session',
+  'account',
+  'verification',
+  'rateLimit',
+  'twoFactor',
+  'stepUpChallenge',
+  'stepUpChallengeAttempt',
+] as const;
+
+export const commercePortalAuthSchema = pgSchema(COMMERCE_PORTAL_AUTH_SCHEMA_NAME);
+
+export const user = commercePortalAuthSchema.table('user', {
+  // Provider controls own status; browser assertions never establish these values.
+  banExpires: timestamp('ban_expires', { withTimezone: true }),
+  banned: boolean('banned').default(false),
+  banReason: text('ban_reason'),
+  createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
+  email: text('email').notNull().unique(),
+  emailVerified: boolean('email_verified').default(false).notNull(),
+  id: text('id').primaryKey(),
+  image: text('image'),
+  name: text('name').notNull(),
+  twoFactorEnabled: boolean('two_factor_enabled').default(false),
+  updatedAt: timestamp('updated_at', { withTimezone: true }).defaultNow().notNull(),
+});
+
+export const session = commercePortalAuthSchema.table(
+  'session',
+  {
+    createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
+    expiresAt: timestamp('expires_at', { withTimezone: true }).notNull(),
+    id: text('id').primaryKey(),
+    ipAddress: text('ip_address'),
+    // This private token is never returned in a session reference.
+    token: text('token').notNull().unique(),
+    updatedAt: timestamp('updated_at', { withTimezone: true }).notNull(),
+    userAgent: text('user_agent'),
+    userId: text('user_id')
+      .notNull()
+      .references(() => user.id, { onDelete: 'cascade' }),
+  },
+  (table) => [index('commerce_auth_session_user_id_idx').on(table.userId)],
+);
+
+export const account = commercePortalAuthSchema.table(
+  'account',
+  {
+    accessToken: text('access_token'),
+    accessTokenExpiresAt: timestamp('access_token_expires_at', { withTimezone: true }),
+    accountId: text('account_id').notNull(),
+    createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
+    id: text('id').primaryKey(),
+    idToken: text('id_token'),
+    issuer: text('issuer').notNull(),
+    password: text('password'),
+    providerId: text('provider_id').notNull(),
+    refreshToken: text('refresh_token'),
+    refreshTokenExpiresAt: timestamp('refresh_token_expires_at', { withTimezone: true }),
+    scope: text('scope'),
+    updatedAt: timestamp('updated_at', { withTimezone: true }).notNull(),
+    userId: text('user_id')
+      .notNull()
+      .references(() => user.id, { onDelete: 'cascade' }),
+  },
+  (table) => [
+    uniqueIndex('commerce_auth_account_issuer_account_id_uk').on(table.issuer, table.accountId),
+    index('commerce_auth_account_user_id_idx').on(table.userId),
+  ],
+);
+
+export const verification = commercePortalAuthSchema.table(
+  'verification',
+  {
+    createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
+    expiresAt: timestamp('expires_at', { withTimezone: true }).notNull(),
+    id: text('id').primaryKey(),
+    identifier: text('identifier').notNull(),
+    updatedAt: timestamp('updated_at', { withTimezone: true }).defaultNow().notNull(),
+    value: text('value').notNull(),
+  },
+  (table) => [index('commerce_auth_verification_identifier_idx').on(table.identifier)],
+);
+
+/** Better Auth stores rate-limit timestamps as epoch milliseconds. bigint avoids 2038 overflow. */
+export const rateLimit = commercePortalAuthSchema.table('rate_limit', {
+  count: bigint('count', { mode: 'number' }).notNull(),
+  // Better Auth supplies an identifier for every adapter model, including rate-limit rows.
+  id: text('id')
+    .notNull()
+    .unique()
+    .default(sql`gen_random_uuid()::text`),
+  key: text('key').primaryKey(),
+  lastRequest: bigint('last_request', { mode: 'number' }).notNull(),
+});
+
+/** Better Auth's two-factor plugin owns these fields and their optional/default semantics. */
+export const twoFactor = commercePortalAuthSchema.table(
+  'two_factor',
+  {
+    backupCodes: text('backup_codes').notNull(),
+    failedVerificationCount: integer('failed_verification_count').default(0),
+    id: text('id').primaryKey(),
+    lockedUntil: timestamp('locked_until', { withTimezone: true }),
+    secret: text('secret').notNull(),
+    userId: text('user_id')
+      .notNull()
+      .references(() => user.id, { onDelete: 'cascade' }),
+    verified: boolean('verified').default(true),
+  },
+  (table) => [
+    index('commerce_auth_two_factor_secret_idx').on(table.secret),
+    index('commerce_auth_two_factor_user_id_idx').on(table.userId),
+  ],
+);
+
+/** Step-up challenges store only a digest of the public challenge identifier. */
+export const stepUpChallenge = commercePortalAuthSchema.table(
+  'step_up_challenge',
+  {
+    attemptsRemaining: smallint('attempts_remaining').notNull(),
+    challengeIdHash: text('challenge_id_hash').primaryKey(),
+    consumedAt: timestamp('consumed_at', { withTimezone: true }),
+    createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
+    expiresAt: timestamp('expires_at', { withTimezone: true }).notNull(),
+    providerSubjectId: text('provider_subject_id').notNull(),
+    sessionId: text('session_id').notNull(),
+    updatedAt: timestamp('updated_at', { withTimezone: true }).defaultNow().notNull(),
+  },
+  (table) => [index('commerce_auth_step_up_challenge_expires_at_idx').on(table.expiresAt)],
+);
+
+/** A reservation makes each attempt one-use and lets outages refund exactly one budget slot. */
+export const stepUpChallengeAttempt = commercePortalAuthSchema.table(
+  'step_up_challenge_attempt',
+  {
+    challengeIdHash: text('challenge_id_hash')
+      .notNull()
+      .references(() => stepUpChallenge.challengeIdHash, { onDelete: 'cascade' }),
+    providerSubjectId: text('provider_subject_id').notNull(),
+    reservationId: text('reservation_id').primaryKey(),
+    reservedAt: timestamp('reserved_at', { withTimezone: true }).defaultNow().notNull(),
+    sessionId: text('session_id').notNull(),
+  },
+  (table) => [index('commerce_auth_step_up_attempt_challenge_id_hash_idx').on(table.challengeIdHash)],
+);
+
+export const commercePortalAuthDatabaseSchema = {
+  account,
+  rateLimit,
+  session,
+  stepUpChallenge,
+  stepUpChallengeAttempt,
+  twoFactor,
+  user,
+  verification,
+} as const;
+
+export const commercePortalAuthRelations = defineRelations(commercePortalAuthDatabaseSchema, (r) => ({
+  account: {
+    user: r.one.user({
+      from: r.account.userId,
+      optional: false,
+      to: r.user.id,
+    }),
+  },
+  session: {
+    user: r.one.user({
+      from: r.session.userId,
+      optional: false,
+      to: r.user.id,
+    }),
+  },
+  stepUpChallenge: {
+    attempts: r.many.stepUpChallengeAttempt(),
+  },
+  stepUpChallengeAttempt: {
+    challenge: r.one.stepUpChallenge({
+      from: r.stepUpChallengeAttempt.challengeIdHash,
+      optional: false,
+      to: r.stepUpChallenge.challengeIdHash,
+    }),
+  },
+  twoFactor: {
+    user: r.one.user({
+      from: r.twoFactor.userId,
+      optional: false,
+      to: r.user.id,
+    }),
+  },
+  user: {
+    accounts: r.many.account(),
+    sessions: r.many.session(),
+  },
+}));
+
+/** Drizzle tables used by the Better Auth adapter; no Core or customer tables belong here. */
+export const COMMERCE_PORTAL_AUTH_TABLES = [
+  user,
+  session,
+  account,
+  verification,
+  rateLimit,
+  twoFactor,
+  stepUpChallenge,
+  stepUpChallengeAttempt,
+] as const;

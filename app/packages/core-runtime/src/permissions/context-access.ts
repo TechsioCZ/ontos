@@ -30,6 +30,8 @@ export const TENANT_PERMISSION_KEYS = [
   'review_party_identity',
 ] as const;
 export type TenantPermissionKey = (typeof TENANT_PERMISSION_KEYS)[number];
+export const IDENTITY_NAMESPACE_PERMISSION_KEYS = ['provision'] as const;
+type IdentityNamespacePermissionKey = (typeof IDENTITY_NAMESPACE_PERMISSION_KEYS)[number];
 export const LEGAL_ENTITY_PERMISSION_KEYS = ['access', 'manage_counterparty', 'read_counterparty'] as const;
 export type LegalEntityPermissionKey = (typeof LEGAL_ENTITY_PERMISSION_KEYS)[number];
 
@@ -90,6 +92,17 @@ export interface ContextAccessService {
     readonly legalEntityId?: string;
     readonly principalId: string;
     readonly targets: readonly ContextPermissionAccessTarget[];
+    readonly tenantId: string;
+  }) => Effect.Effect<readonly ContextAccessResult[]>;
+  /**
+   * Checks the explicit provisioning capability for exact Tenant/namespace pairs.
+   * Optional for compatibility with older adapters; identity Actions must treat
+   * an absent implementation as unavailable.
+   */
+  readonly identityNamespaces?: (input: {
+    readonly authenticationNamespaceIds: readonly string[];
+    readonly permission?: IdentityNamespacePermissionKey;
+    readonly principalId: string;
     readonly tenantId: string;
   }) => Effect.Effect<readonly ContextAccessResult[]>;
   readonly legalEntities: (input: {
@@ -199,6 +212,11 @@ export const toContextPermissionAccessObjectId = (
     target.moduleId,
     target.permission,
   ]);
+
+export const toIdentityNamespaceAccessObjectId = (
+  tenantId: string,
+  authenticationNamespaceId: string,
+): string | undefined => encodeObjectId([tenantId, authenticationNamespaceId]);
 
 const unavailable = (keys: readonly string[]): readonly ContextAccessResult[] =>
   keys.map((key) => ({ decision: 'unavailable' as const, key }));
@@ -383,6 +401,16 @@ export const makeContextAccess = (client: SpiceDbPermissionClient): ContextAcces
         })),
         principalId,
       ),
+    identityNamespaces: ({ authenticationNamespaceIds, permission = 'provision', principalId, tenantId }) =>
+      checkBatch(
+        authenticationNamespaceIds.map((authenticationNamespaceId) => ({
+          key: authenticationNamespaceId,
+          permission,
+          resourceId: toIdentityNamespaceAccessObjectId(tenantId, authenticationNamespaceId) ?? '',
+          resourceType: 'identity_namespace',
+        })),
+        principalId,
+      ),
     legalEntities: ({ legalEntityIds, permission = 'access', principalId, tenantId }) =>
       checkBatch(
         legalEntityIds.map((legalEntityId) => ({
@@ -431,6 +459,7 @@ const unavailableContextAccess = (): ContextAccessService => {
   const service: ContextAccessService = {
     businessPermissions: ({ targets }) => Effect.succeed(unavailable(targets.map(toBusinessPermissionAccessKey))),
     contextPermissions: ({ targets }) => Effect.succeed(unavailable(targets.map(toContextPermissionAccessKey))),
+    identityNamespaces: ({ authenticationNamespaceIds }) => Effect.succeed(unavailable(authenticationNamespaceIds)),
     legalEntities: ({ legalEntityIds }) => Effect.succeed(unavailable(legalEntityIds)),
     modules: ({ moduleIds }) => Effect.succeed(unavailable(moduleIds)),
     resources: ({ resources }) =>

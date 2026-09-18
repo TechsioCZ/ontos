@@ -5,6 +5,10 @@ import { DateTime, Effect, Option, Schema, Predicate } from 'effect';
 import { expect, it } from 'effect-rstest';
 import { TestClock } from 'effect/testing';
 
+import {
+  PrincipalIdSchema,
+  TenantIdSchema,
+} from '../../../../packages/core-runtime/src/auth/external-identity-contracts.ts';
 import { AresAppliedEvidenceSchema } from '../../shared/domain/ares-application.ts';
 import { PartyAliasWriteRejected } from '../../shared/domain/merge-alias-resolution.ts';
 import { makePartyAliasResolutionService } from '../../src/merge/party-alias-resolution.service.ts';
@@ -15,11 +19,11 @@ import {
   updateContactPointRecord as updateRecord,
 } from '../../src/services/party-contact-point-persistence.service.ts';
 
-const tenantId = '10000000-0000-4000-8000-000000000001';
+const tenantId = Schema.decodeSync(TenantIdSchema)('10000000-0000-4000-8000-000000000001');
 const partyId = '20000000-0000-4000-8000-000000000001';
 const contactPointId = '30000000-0000-4000-8000-000000000001';
 const actionInvocationId = '40000000-0000-4000-8000-000000000001';
-const principalId = '50000000-0000-4000-8000-000000000001';
+const principalId = Schema.decodeSync(PrincipalIdSchema)('50000000-0000-4000-8000-000000000001');
 const instantAsDate = (instant: string): Date => DateTime.toDateUtc(DateTime.makeUnsafe(instant));
 const directAliases = makePartyAliasResolutionService({
   findAlias: () => Effect.succeedNone,

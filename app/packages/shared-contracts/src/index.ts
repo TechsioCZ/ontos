@@ -1,9 +1,12 @@
 import { Schema } from 'effect';
 
+export { ExternalIdentityApi, ExternalIdentityApiGroup, externalIdentityProblems } from './external-identity.ts';
+
 export { makeProblemDetailsSchema, makeRetryableProblemDetailsSchema } from './problem-details.ts';
 export type { ProblemDetailsStatus } from './problem-details.ts';
 
 export {
+  EXTERNAL_GATEWAY_ASSERTION_VERSION,
   GATEWAY_ASSERTION_CLOCK_SKEW_SECONDS,
   GATEWAY_ASSERTION_TTL_SECONDS,
   GATEWAY_ASSERTION_VERSION,
@@ -13,6 +16,8 @@ export {
   GatewayContextApi,
   GatewayContextApiGroup,
   GatewayContextClaimsSchema,
+  GatewayContextV2ClaimsSchema,
+  SupportedGatewayContextClaimsSchema,
   GatewayContextProtectedHeaderSchema,
   GatewayContextRequestSchema,
   GatewayContextResponseSchema,
@@ -20,6 +25,7 @@ export {
   GatewayTrustedPrincipalContextSchema,
   GatewayUnavailableProblemSchema,
   decodeGatewayContextClaims,
+  decodeSupportedGatewayContextClaims,
   decodeGatewayContextProtectedHeader,
   issueGatewayContext,
   shellGatewayContextContract,
@@ -31,6 +37,8 @@ export type {
   GatewayContextClientError,
   GatewayContextClientOptions,
   GatewayContextClaims,
+  GatewayContextV2Claims,
+  SupportedGatewayContextClaims,
   GatewayContextProblem,
   GatewayContextProtectedHeader,
   GatewayContextRequest,

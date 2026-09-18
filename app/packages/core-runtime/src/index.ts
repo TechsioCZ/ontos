@@ -60,6 +60,7 @@ export type {
   ApiKeyBindingAdministration,
   AvailableTenant,
   PrincipalResolutionRecord,
+  PrincipalResolverConfiguration,
   PrincipalResolverService,
   ProviderSubject,
   ResolvedPrincipalIdentity,
@@ -80,6 +81,7 @@ export {
 } from './auth/support-recovery-principal-context.ts';
 export type {
   SupportRecoveryPrincipalContextError,
+  SupportRecoveryPrincipalContextResolverConfiguration,
   SupportRecoveryPrincipalContextResolverService,
 } from './auth/support-recovery-principal-context.ts';
 export type { SystemPrincipalContextError, SystemWorkloadRegistration } from './auth/system-principal-context.ts';
@@ -721,13 +723,26 @@ export { coreActionCatalog } from './modules/actions/catalog.ts';
 export type { CoreActionDescriptor } from './modules/actions/catalog.ts';
 export { ONTOS_SPICEDB_SCHEMA } from './permissions/schema.ts';
 
+export { readPrincipalBinding } from './auth/external-identity/read.ts';
+export {
+  ExternalIdentityAdmission,
+  resolveExternalSubject,
+  resolveExternalSubjectFromTransaction,
+} from './auth/external-identity/resolve.ts';
+export type { ResolveExternalSubjectInput, ResolveExternalSubjectResult } from './auth/external-identity/resolve.ts';
+export type { ExternalIdentityAdmissionContext } from './auth/external-identity/repository.ts';
+export { externalIdentitySubjectForBinding } from './auth/external-identity/repository.ts';
+
 // <generated-core-action-exports>
+export { activatePrincipalBindingAction } from './modules/actions/activate-principal-binding.action.ts';
 export { bindManagedApiKeyAction } from './modules/actions/bind-managed-api-key.action.ts';
 export { bindSelfApiKeyAction } from './modules/actions/bind-self-api-key.action.ts';
+export { changePrincipalBindingStatusAction } from './modules/actions/change-principal-binding-status.action.ts';
 export { changePrincipalStatusAction } from './modules/actions/change-principal-status.action.ts';
 export { changeTenantModuleStateAction } from './modules/actions/change-tenant-module-state.action.ts';
 export { createNonHumanPrincipalAction } from './modules/actions/create-non-human-principal.action.ts';
 export { recordSupportImpersonationAction } from './modules/actions/record-support-impersonation.action.ts';
+export { reservePrincipalBindingAction } from './modules/actions/reserve-principal-binding.action.ts';
 export { setManagedApiKeyBindingStatusAction } from './modules/actions/set-managed-api-key-binding-status.action.ts';
 export { setSelfApiKeyBindingStatusAction } from './modules/actions/set-self-api-key-binding-status.action.ts';
 // </generated-core-action-exports>

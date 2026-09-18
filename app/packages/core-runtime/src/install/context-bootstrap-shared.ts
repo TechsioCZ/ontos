@@ -55,9 +55,11 @@ export const selectBootstrapAuthBindings = (
   transaction: CoreTransaction,
   context: BootstrapIdentity,
   authUserId: string,
+  authenticationNamespaceId: string,
 ) =>
   transaction
     .select({
+      authenticationNamespaceId: principalAuthBindings.authenticationNamespaceId,
       principalAuthBindingId: principalAuthBindings.principalAuthBindingId,
       principalId: principalAuthBindings.principalId,
       provider: principalAuthBindings.provider,
@@ -68,13 +70,16 @@ export const selectBootstrapAuthBindings = (
     })
     .from(principalAuthBindings)
     .where(
-      or(
-        eq(principalAuthBindings.principalAuthBindingId, context.authBindingId),
-        and(
-          eq(principalAuthBindings.tenantId, context.tenantId),
-          eq(principalAuthBindings.provider, 'better_auth'),
-          eq(principalAuthBindings.subjectType, 'user'),
-          eq(principalAuthBindings.providerSubjectId, authUserId),
+      and(
+        eq(principalAuthBindings.authenticationNamespaceId, authenticationNamespaceId),
+        or(
+          eq(principalAuthBindings.principalAuthBindingId, context.authBindingId),
+          and(
+            eq(principalAuthBindings.tenantId, context.tenantId),
+            eq(principalAuthBindings.provider, 'better_auth'),
+            eq(principalAuthBindings.subjectType, 'user'),
+            eq(principalAuthBindings.providerSubjectId, authUserId),
+          ),
         ),
       ),
     )

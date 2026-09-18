@@ -7,6 +7,11 @@ import { ActionCommitIndeterminate, ActionTransactionError } from '../actions/er
 import type { ActionRepositoryService } from '../actions/repository.ts';
 import { makeActionRepository } from '../actions/repository.ts';
 import { ActionRuntime, makeActionRuntime } from '../actions/runtime.ts';
+import { AuthenticationNamespaceIdSchema } from '../auth/external-identity-contracts.ts';
+import {
+  AuthenticationNamespaceRegistry,
+  makeAuthenticationNamespaceRegistry,
+} from '../auth/external-identity/verifier.ts';
 import { CoreDatabase, makeCoreDatabase } from '../db/client.ts';
 import { parseDatabaseConfig } from '../db/config.ts';
 import {
@@ -55,6 +60,7 @@ const relationship = (
 const ActionKeySchema = Schema.String.pipe(Schema.brand('ActionKey'));
 const LiveOperationFixtureConfigurationSchema = Schema.Struct({
   actionKeys: Schema.optional(Schema.Array(ActionKeySchema)),
+  authenticationNamespaceId: AuthenticationNamespaceIdSchema,
   runtimeConnectionString: Schema.Redacted(Schema.String),
 });
 
@@ -110,6 +116,7 @@ const makeFixtureId = Effect.fn('LiveOperations.makeFixtureId')(function* makeFi
 
 const makeFixtureActor = Effect.fn('LiveOperations.makeFixtureActor')(function* makeFixtureActorEffect(
   tenantId: string,
+  authenticationNamespaceId: string,
 ) {
   const [authBindingId, principalId] = yield* Effect.all([makeFixtureId(), makeFixtureId()], {
     concurrency: 2,
@@ -117,6 +124,7 @@ const makeFixtureActor = Effect.fn('LiveOperations.makeFixtureActor')(function* 
   return {
     authBindingId,
     authContextRef: `better-auth-session:${authBindingId}`,
+    authenticationNamespaceId,
     authMethod: 'session' as const,
     principalId,
     tenantId,
@@ -134,8 +142,13 @@ const fixturePrincipalValues = (actors: readonly FixtureActor[], tenantId: strin
     tenantId,
   }));
 
-const fixtureAuthBindingValues = (actors: readonly FixtureActor[], tenantId: string) =>
+const fixtureAuthBindingValues = (
+  actors: readonly FixtureActor[],
+  tenantId: string,
+  authenticationNamespaceId: string,
+) =>
   actors.map((principal) => ({
+    authenticationNamespaceId,
     principalAuthBindingId: principal.authBindingId,
     principalId: principal.principalId,
     provider: 'better_auth' as const,
@@ -179,6 +192,7 @@ const setupLiveOperationFixture = Effect.fn('LiveOperations.setupLiveOperationFi
   function* setupLiveOperationFixtureEffect(input: {
     readonly actionKeys: readonly string[];
     readonly actors: readonly FixtureActor[];
+    readonly authenticationNamespaceId: string;
     readonly executor: FixtureExecutor;
     readonly legalEntityId: string;
     readonly legalEntityOnly: FixtureActor;
@@ -221,7 +235,7 @@ const setupLiveOperationFixture = Effect.fn('LiveOperations.setupLiveOperationFi
       .pipe(Effect.mapError((cause) => fixtureFailure('Unable to create the live fixture principals', cause)));
     yield* input.executor
       .insert(principalAuthBindings)
-      .values(fixtureAuthBindingValues(input.actors, input.tenantId))
+      .values(fixtureAuthBindingValues(input.actors, input.tenantId, input.authenticationNamespaceId))
       .pipe(Effect.mapError((cause) => fixtureFailure('Unable to bind the live fixture principals', cause)));
     const entityObject = toLegalEntityAccessObjectId(input.tenantId, input.legalEntityId);
     const moduleObject = toModuleAccessObjectId(input.tenantId, input.legalEntityId, 'party.registry');
@@ -375,7 +389,11 @@ const makeLiveOperationFixtureEffect = Effect.fn('LiveOperations.makeLiveOperati
       concurrency: 2,
     });
     const [manager, legalEntityActor, denied] = yield* Effect.all(
-      [makeFixtureActor(tenantId), makeFixtureActor(tenantId), makeFixtureActor(tenantId)],
+      [
+        makeFixtureActor(tenantId, configuration.authenticationNamespaceId),
+        makeFixtureActor(tenantId, configuration.authenticationNamespaceId),
+        makeFixtureActor(tenantId, configuration.authenticationNamespaceId),
+      ],
       { concurrency: 3 },
     );
     const legalEntityOnly = { ...legalEntityActor, legalEntityId };
@@ -387,6 +405,7 @@ const makeLiveOperationFixtureEffect = Effect.fn('LiveOperations.makeLiveOperati
     yield* setupLiveOperationFixture({
       actionKeys: configuration.actionKeys ?? [],
       actors,
+      authenticationNamespaceId: configuration.authenticationNamespaceId,
       executor,
       legalEntityId,
       legalEntityOnly,
@@ -404,6 +423,17 @@ const makeLiveOperationFixtureEffect = Effect.fn('LiveOperations.makeLiveOperati
       executor,
     } satisfies (typeof CoreDatabase)['Service'];
     const readDatabase = { executor } satisfies (typeof CoreDatabase)['Service'];
+    const authenticationNamespaceRegistry = makeAuthenticationNamespaceRegistry([
+      {
+        allowedAudiences: ['party-registry'],
+        authenticationNamespaceId: configuration.authenticationNamespaceId,
+        provider: 'live-fixture',
+        requiresOperationAdmission: false,
+        reservationPrincipalKind: 'human',
+        subjectTypes: ['user'],
+        trustedAttesterPrincipalIds: [],
+      },
+    ]);
     const layer = Layer.effectContext(
       Effect.gen(function* makeLiveOperationRuntimeContext() {
         const [contextAccess, actionPermission] = yield* Effect.all(
@@ -471,6 +501,7 @@ const makeLiveOperationFixtureEffect = Effect.fn('LiveOperations.makeLiveOperati
         );
         return Context.empty().pipe(
           Context.add(ActionRuntime, actionRuntime),
+          Context.add(AuthenticationNamespaceRegistry, authenticationNamespaceRegistry),
           Context.add(CoreDatabase, readDatabase),
           Context.add(ReadRuntime, readRuntime),
         );

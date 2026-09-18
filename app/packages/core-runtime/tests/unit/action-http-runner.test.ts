@@ -2,18 +2,19 @@ import { Effect, Redacted, Schema } from 'effect';
 import { expect, it } from 'effect-rstest';
 
 import { defineAction } from '../../src/actions/definition.ts';
+import { TrustedPrincipalContextSchema } from '../../src/actions/principal-context.ts';
 import { ActionRuntime } from '../../src/actions/runtime.ts';
 import type { ActionRuntimeService } from '../../src/actions/runtime.ts';
 import { runGovernedActionHttp } from '../../src/http/http-instrumentation-seam.ts';
 import { defineSystemModuleEntrypoint } from '../../src/modules/module-entrypoint.ts';
 
-const principal = {
+const principal = Schema.decodeSync(TrustedPrincipalContextSchema)({
   authBindingId: '10000000-0000-4000-8000-000000000001',
   authContextRef: 'runner-test',
   authMethod: 'session',
   principalId: '20000000-0000-4000-8000-000000000001',
   tenantId: '30000000-0000-4000-8000-000000000001',
-} as const;
+});
 
 const registration = defineAction(
   {
@@ -176,5 +177,39 @@ it.effect('synchronous endpoint callback defects are sanitized before the Action
     }
 
     expect(runtimeCalls).toBe(0);
+  }),
+);
+
+it.effect('takes the admission audience only from receiver configuration', () =>
+  Effect.gen(function* receiverAudience() {
+    const audiences: (string | undefined)[] = [];
+    const runtime: ActionRuntimeService = {
+      resolveActionCommit: () => Effect.die('Not exercised'),
+      runAction: (input) => {
+        audiences.push(input.audience);
+        return Effect.die('Stop after observing the trusted boundary');
+      },
+    };
+    const requestHeaders = {
+      audience: 'untrusted-request-audience',
+      authorization: authorization(),
+      'x-correlation-id': 'receiver-audience-test',
+    };
+    for (const receivingAudience of [{}, { audience: 'test.receiver.api' }]) {
+      yield* Effect.exit(
+        runGovernedActionHttp({
+          ...receivingAudience,
+          endpointHeaders: { idempotencyKey: 'test-invocation', traceId: 'test-trace' },
+          internalProblem: () => internalProblem,
+          invalidCorrelationProblem: () => invalidProblem,
+          mapError: () => internalProblem,
+          payload: {},
+          principal: { authenticate: () => Effect.succeed(principal) },
+          registration,
+          requestHeaders,
+        }),
+      ).pipe(Effect.provideService(ActionRuntime, runtime));
+    }
+    expect(audiences).toEqual([undefined, 'test.receiver.api']);
   }),
 );

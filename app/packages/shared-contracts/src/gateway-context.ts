@@ -15,6 +15,7 @@ import { HttpClient, HttpClientRequest } from 'effect/unstable/http';
 import { makeProblemDetailsSchema, makeRetryableProblemDetailsSchema } from './problem-details.ts';
 
 export const GATEWAY_ASSERTION_VERSION = 1 as const;
+export const EXTERNAL_GATEWAY_ASSERTION_VERSION = 2 as const;
 export const GATEWAY_ASSERTION_TTL_SECONDS = 300 as const;
 export const GATEWAY_ASSERTION_CLOCK_SKEW_SECONDS = 30 as const;
 
@@ -67,9 +68,45 @@ export const GatewayContextClaimsSchema = Schema.Struct({
         path: ['sub'],
       });
     }
+    if (claims.principal.authenticationNamespaceId !== undefined) {
+      issues.push({ issue: 'version 1 cannot carry external identity evidence', path: ['principal'] });
+    }
     return issues;
   }),
 );
+
+/** Version 2 retains the signing and lifetime contract; admission remains a receiving-runtime duty. */
+export const GatewayContextV2ClaimsSchema = Schema.Struct({
+  aud: GatewayAudienceSchema,
+  exp: epochSeconds,
+  iat: epochSeconds,
+  iss: nonEmptyString,
+  jti: uuid,
+  principal: GatewayTrustedPrincipalContextSchema,
+  sub: uuid,
+  ver: Schema.Literal(EXTERNAL_GATEWAY_ASSERTION_VERSION),
+}).check(
+  Schema.makeFilter((claims) => [
+    ...(claims.exp - claims.iat === GATEWAY_ASSERTION_TTL_SECONDS
+      ? []
+      : [{ issue: 'exp must be exactly 300 seconds after iat', path: ['exp'] }]),
+    ...(claims.sub === claims.principal.principalId
+      ? []
+      : [{ issue: 'sub must equal principal.principalId', path: ['sub'] }]),
+    ...(claims.principal.authenticationNamespaceId === undefined
+      ? [{ issue: 'version 2 requires an explicit authentication namespace', path: ['principal'] }]
+      : []),
+  ]),
+);
+export type GatewayContextV2Claims = typeof GatewayContextV2ClaimsSchema.Type;
+export const SupportedGatewayContextClaimsSchema = Schema.Union([
+  GatewayContextClaimsSchema,
+  GatewayContextV2ClaimsSchema,
+]);
+export type SupportedGatewayContextClaims = typeof SupportedGatewayContextClaimsSchema.Type;
+export const decodeSupportedGatewayContextClaims = Schema.decodeUnknownEffect(SupportedGatewayContextClaimsSchema, {
+  onExcessProperty: 'error',
+});
 
 export type GatewayContextClaims = Schema.Schema.Type<typeof GatewayContextClaimsSchema>;
 

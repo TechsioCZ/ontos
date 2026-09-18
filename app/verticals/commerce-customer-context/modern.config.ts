@@ -1,4 +1,4 @@
-/* oxlint-disable sonarjs/no-duplicate-string -- Modern.js BFF routing requires the deployment prefix in the shared build, locale exclusion and runtime sections; remove-when: the config API accepts one shared prefix value. */
+import { COMMERCE_CUSTOMER_CONTEXT_API_PREFIX } from './shared/deployment-paths.ts';
 import { defineConfig } from '@modern-js/app-tools';
 import type { AppToolsUserConfig } from '@modern-js/app-tools';
 import { presetUltramodern, ultramodernAppTools } from '@modern-js/ultramodern-app-tools';
@@ -31,7 +31,7 @@ export default defineConfig(
     {
       ...createModernConfig({
         appId,
-        bffPrefix: '/commerce-customer-context-api',
+        bffPrefix: COMMERCE_CUSTOMER_CONTEXT_API_PREFIX,
         build,
         chunkLoadingGlobal: '__ULTRAMODERN_VERTICAL_COMMERCE_CUSTOMER_CONTEXT_LOADED_CHUNKS__',
         cloudflareWorkerName,
@@ -51,7 +51,7 @@ export default defineConfig(
                 '/@mf-types',
                 '/assets',
                 '/bundles',
-                '/commerce-customer-context-api',
+                COMMERCE_CUSTOMER_CONTEXT_API_PREFIX,
                 '/locales',
                 '/mf-manifest.json',
                 '/mf-stats.json',
@@ -78,7 +78,7 @@ export default defineConfig(
           openapi: { path: '/openapi.json' },
           strictEffectApproach: true,
         },
-        prefix: '/commerce-customer-context-api',
+        prefix: COMMERCE_CUSTOMER_CONTEXT_API_PREFIX,
         runtimeFramework: 'effect',
       },
     } satisfies AppToolsUserConfig,

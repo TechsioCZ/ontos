@@ -136,8 +136,24 @@ const addedVerticalActionKeys = [
   'payment.term-catalog.retire-payment-term',
 ] as const;
 
-// oxlint-disable-next-line unicorn/no-array-sort -- The spread creates a private aggregate before sorting it.
-const completeCurrentActionKeys = [...addedVerticalActionKeys, ...currentActionKeys].sort();
+// These Actions are provisioned as 'explicit' (not Tenant-membership default), so they are discovered
+// alongside currentActionKeys/addedVerticalActionKeys but excluded from the tenant-membership fixtures below.
+const explicitlyProvisionedActionKeys = [
+  'commerce.customer-context.claim-portal-enrollment-transition',
+  'commerce.customer-context.record-portal-enrollment-outcome',
+  'commerce.customer-context.start-portal-enrollment',
+  'commerce.customer-context.terminate-portal-enrollment',
+  'core.identity.activate-principal-binding',
+  'core.identity.change-principal-binding-status',
+  'core.identity.reserve-principal-binding',
+] as const;
+
+const completeCurrentActionKeys = [...addedVerticalActionKeys, ...currentActionKeys, ...explicitlyProvisionedActionKeys]
+  // This top-level scripts/tests file resolves against the root tsconfig (no scripts-scoped project), whose
+  // default lib lacks the ES2023 toSorted() overload that real tsc + Node accept at runtime; sorting the
+  // freshly spread array in place is equivalent and side-effect-free.
+  // oxlint-disable-next-line unicorn/no-array-sort -- See comment above.
+  .sort();
 
 const currentActions = currentActionKeys.map((actionKey) => ({
   actionKey,

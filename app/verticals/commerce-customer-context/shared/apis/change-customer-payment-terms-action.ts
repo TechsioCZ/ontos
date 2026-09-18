@@ -153,15 +153,38 @@ const actionErrors = [
   ChangeCustomerPaymentTermsActionInternalProblemSchema,
 ] as const;
 
+/**
+ * The endpoint chain stays a `const`. The MicroVertical API boundary checker walks a root API's
+ * operands through const bindings only, so a class declaration hides the composed endpoints from
+ * it. The exported group is annotated with a named type alias so its type still has a name: the
+ * vertical's `shared/api.ts` merges every group type into one `HttpApi` and declaration emit
+ * serializes that union verbatim, so an anonymous group type pushes the composed contract past
+ * the compiler's serialization limit (TS7056).
+ *
+ * Exported only so the named contract type can reference it; the merged vertical HttpApi prints
+ * this group by name (declaration-emit size).
+ *
+ * @public
+ */
+export const changeCustomerPaymentTermsActionGroupDefinition = HttpApiGroup.make('changeCustomerPaymentTermsAction')
+  .add(
+    HttpApiEndpoint.post('execute', '/commerce-customer-context/actions/change-customer-payment-terms', {
+      error: actionErrors,
+      headers: ChangeCustomerPaymentTermsActionHeadersSchema,
+      payload: Schema.toEncoded(ChangeCustomerPaymentTermsPayloadSchema),
+      success: ChangeCustomerPaymentTermsResultSchema,
+    }),
+  )
+  .middleware(ChangeCustomerPaymentTermsActionSchemaErrorMiddleware);
+
+export type ChangeCustomerPaymentTermsActionGroupContract = HttpApiGroup.HttpApiGroup<
+  'changeCustomerPaymentTermsAction',
+  HttpApiGroup.Endpoints<typeof changeCustomerPaymentTermsActionGroupDefinition>
+>;
+
+const ChangeCustomerPaymentTermsActionGroup: ChangeCustomerPaymentTermsActionGroupContract =
+  changeCustomerPaymentTermsActionGroupDefinition;
+
 export const ChangeCustomerPaymentTermsActionApi = HttpApi.make('ChangeCustomerPaymentTermsActionApi').add(
-  HttpApiGroup.make('changeCustomerPaymentTermsAction')
-    .add(
-      HttpApiEndpoint.post('execute', '/commerce-customer-context/actions/change-customer-payment-terms', {
-        error: actionErrors,
-        headers: ChangeCustomerPaymentTermsActionHeadersSchema,
-        payload: Schema.toEncoded(ChangeCustomerPaymentTermsPayloadSchema),
-        success: ChangeCustomerPaymentTermsResultSchema,
-      }),
-    )
-    .middleware(ChangeCustomerPaymentTermsActionSchemaErrorMiddleware),
+  ChangeCustomerPaymentTermsActionGroup,
 );

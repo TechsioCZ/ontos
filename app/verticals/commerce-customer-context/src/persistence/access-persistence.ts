@@ -20,6 +20,7 @@ import type {
   ScopedRoutineInvocationError,
   ScopedRoutineParameter,
 } from '@app/core-runtime';
+import { TenantIdSchema } from '@app/core-runtime/auth/external-identity-contracts';
 import { Crypto, DateTime, Effect, Result, Schema } from 'effect';
 
 import type {
@@ -1836,31 +1837,35 @@ const claimInviterAuthorityDecision = (
     // Reconciliation must not repair or preserve owner-governed access from Core-only state.
     return Effect.succeed('unavailable' as const);
   }
-  return ownerAccessReader(scope.routineInvoker, {
-    legalEntityId: scope.legalEntityId,
-    tenantId: scope.tenantId,
-  })({
-    counterpartyRef: {
-      moduleId: counterpartyModuleKey,
-      resourceId: root.counterparty_resource_id,
-      resourceType: counterpartyResourceType,
-      tenantId: scope.tenantId,
-    },
-    legalEntityId: scope.legalEntityId,
-    permission: accessManagementPermission,
-    principal: { principalId: root.invited_by, tenantId: scope.tenantId },
-    scope: permissionScope,
-  }).pipe(
-    Effect.flatMap((decision) => {
-      if (decision === 'DENIED') {
-        return Effect.succeed('denied' as const);
-      }
-      if (decision === 'UNAVAILABLE') {
-        return Effect.succeed('unavailable' as const);
-      }
-      return verifyCoreAuthority();
-    }),
-  );
+  return Effect.gen(function* claimInviterAuthorityDecisionEffect() {
+    const tenantId = yield* Schema.decodeEffect(TenantIdSchema)(scope.tenantId).pipe(
+      Effect.mapError((cause) =>
+        workerRejected('RECONCILIATION_UNAVAILABLE', 'The worker Tenant scope is malformed', cause),
+      ),
+    );
+    const decision = yield* ownerAccessReader(scope.routineInvoker, {
+      legalEntityId: scope.legalEntityId,
+      tenantId,
+    })({
+      counterpartyRef: {
+        moduleId: counterpartyModuleKey,
+        resourceId: root.counterparty_resource_id,
+        resourceType: counterpartyResourceType,
+        tenantId: scope.tenantId,
+      },
+      legalEntityId: scope.legalEntityId,
+      permission: accessManagementPermission,
+      principal: { principalId: root.invited_by, tenantId: scope.tenantId },
+      scope: permissionScope,
+    });
+    if (decision === 'DENIED') {
+      return 'denied' as const;
+    }
+    if (decision === 'UNAVAILABLE') {
+      return 'unavailable' as const;
+    }
+    return yield* verifyCoreAuthority();
+  });
 };
 
 const invitationClaimAttestation = (

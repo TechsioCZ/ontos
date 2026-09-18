@@ -4,9 +4,11 @@ import { expect, it } from 'effect-rstest';
 import { ConnectionError, SqlError } from 'effect/unstable/sql/SqlError';
 
 import { defineGlobalPolicy, denyPolicy } from '../../src/actions/policy.ts';
+import { TrustedPrincipalContextSchema } from '../../src/actions/principal-context.ts';
 import { trustVerifiedGatewayPrincipalContext } from '../../src/auth/system-principal-context-provenance.ts';
 import { defineSystemModuleEntrypoint, defineTenantModuleEntrypoint } from '../../src/modules/module-entrypoint.ts';
 import { OperationContextUnavailable } from '../../src/operations/errors.ts';
+import type { OperationalScope } from '../../src/operations/context.ts';
 import { BusinessPermissionCodeSchema } from '../../src/permissions/business-permission.ts';
 import { toBusinessPermissionAccessKey } from '../../src/permissions/context-access.ts';
 import type { BusinessPermissionAccessTarget } from '../../src/permissions/context-access.ts';
@@ -30,13 +32,15 @@ import { makeReadRuntime, READ_RUNTIME_STAGES } from '../../src/reads/runtime.ts
 import { makeTestDatabase } from '../support/database.ts';
 import { openModuleEntrypointGateway } from '../support/open-module-entrypoint-gateway.ts';
 
-const scope = Object.freeze({
-  authBindingId: '00000000-0000-4000-8000-000000000005',
-  authContextRef: 'better-auth-session:read-runtime',
-  authMethod: 'session' as const,
+const scope: OperationalScope = Object.freeze({
+  ...Schema.decodeSync(TrustedPrincipalContextSchema)({
+    authBindingId: '00000000-0000-4000-8000-000000000005',
+    authContextRef: 'better-auth-session:read-runtime',
+    authMethod: 'session',
+    principalId: '00000000-0000-4000-8000-000000000003',
+    tenantId: '00000000-0000-4000-8000-000000000001',
+  }),
   correlationId: 'correlation-1',
-  principalId: '00000000-0000-4000-8000-000000000003',
-  tenantId: '00000000-0000-4000-8000-000000000001',
 });
 const EvidenceRowSchema = Schema.Struct({
   queryHash: Schema.optionalKey(Schema.String),

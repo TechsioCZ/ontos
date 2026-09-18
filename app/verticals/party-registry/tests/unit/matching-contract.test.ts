@@ -1,8 +1,12 @@
-import { Effect } from 'effect';
+import { Effect, Schema } from 'effect';
 import { expect, it } from 'effect-rstest';
 
 import { createActionCollector } from '../../../../packages/core-runtime/src/actions/collector.ts';
 import { getActionHandler } from '../../../../packages/core-runtime/src/actions/definition.ts';
+import {
+  PrincipalIdSchema,
+  TenantIdSchema,
+} from '../../../../packages/core-runtime/src/auth/external-identity-contracts.ts';
 import { makePartyRef } from '../../shared/domain/identity-contracts.ts';
 import { evaluateExactClaims, sortClaimKeys } from '../../shared/domain/matching-contracts.ts';
 import { makeDuplicateCandidateCaseRef } from '../../shared/resources/duplicate-candidate-case.ts';
@@ -13,7 +17,8 @@ import { resolveDuplicateCandidateCreateAction } from '../../src/actions/resolve
 import { resolveDuplicateCandidateMatchAction } from '../../src/actions/resolve-duplicate-candidate-match.action.ts';
 import { tenantClaimLockKeys } from '../../src/services/party-identifier-claim.service.ts';
 
-const evidenceTenantId = '10000000-0000-4000-8000-000000000001';
+const evidenceTenantId = Schema.decodeSync(TenantIdSchema)('10000000-0000-4000-8000-000000000001');
+const evidencePrincipalId = Schema.decodeSync(PrincipalIdSchema)('30000000-0000-4000-8000-000000000001');
 const evidencePayload = {
   caseRef: makeDuplicateCandidateCaseRef(evidenceTenantId, '20000000-0000-4000-8000-000000000001'),
   expectedRevision: 1,
@@ -22,7 +27,7 @@ const evidencePayload = {
 const evidenceScope = {
   authMethod: 'system' as const,
   correlationId: 'review-evidence',
-  principalId: '30000000-0000-4000-8000-000000000001',
+  principalId: evidencePrincipalId,
   tenantId: evidenceTenantId,
 };
 

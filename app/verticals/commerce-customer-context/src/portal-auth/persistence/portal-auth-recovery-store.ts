@@ -1,0 +1,382 @@
+import { and, eq, inArray, like, lt, sql } from 'drizzle-orm';
+import { Crypto, DateTime, Effect, Layer, Option, Redacted, Schema } from 'effect';
+
+import { CommercePortalAuthProviderSubjectIdSchema } from '../../../api/portal-auth/provider/recovery/contracts.ts';
+import type { CommercePortalAuthEmailVerificationTokenRegistration } from '../../../api/portal-auth/provider/recovery/contracts.ts';
+import type { CommercePortalAuthRecoveryRateLimitRule } from '../../../api/portal-auth/rate-limit-service.ts';
+import { CommercePortalAuthRecoveryUnavailable } from '../../../api/portal-auth/provider/recovery/unavailable.ts';
+import { CommercePortalAuthRecoveryStoreService } from '../../../api/portal-auth/provider/recovery/store-service.ts';
+import type { CommercePortalAuthRecoveryStore } from '../../../api/portal-auth/provider/recovery/store-service.ts';
+import { COMMERCE_PORTAL_AUTH_POLICY } from '../../../api/portal-auth/provider/config.ts';
+import { CommercePortalAuthDatabase } from './portal-auth-database.ts';
+import type { CommercePortalAuthDatabaseExecutor } from './portal-auth-database-types.ts';
+import { rateLimit, user, verification } from './portal-auth-tables.ts';
+
+const EMAIL_VERIFICATION_IDENTIFIER_PREFIX = 'commerce-email-verification:';
+const EMAIL_VERIFICATION_RESERVATION_IDENTIFIER_PREFIX = 'commerce-email-verification-pending:';
+const verificationLedgerEmail = Schema.String.check(Schema.isTrimmed(), Schema.isMinLength(3), Schema.isMaxLength(320));
+const VerificationLedgerRecordSchema = Schema.Struct({
+  email: verificationLedgerEmail,
+  providerSubjectId: CommercePortalAuthProviderSubjectIdSchema,
+}).annotate({ parseOptions: { onExcessProperty: 'error' } });
+type VerificationLedgerRecord = typeof VerificationLedgerRecordSchema.Type;
+
+const withCause = <TError extends object>(error: TError, cause: unknown): TError =>
+  Object.defineProperty(error, 'cause', { configurable: true, value: cause });
+
+const unavailable = (operation: string, cause: unknown): CommercePortalAuthRecoveryUnavailable =>
+  withCause(
+    new CommercePortalAuthRecoveryUnavailable({
+      operation,
+      reason: `Commerce portal authentication ${operation} could not complete`,
+    }),
+    cause,
+  );
+
+const bytesToHex = (bytes: Uint8Array): string =>
+  Array.from(bytes, (byte) => byte.toString(16).padStart(2, '0')).join('');
+
+const normalizeEmail = (email: string): string => email.toLowerCase();
+
+const encodeVerificationLedgerRecord = (input: {
+  readonly email: string;
+  readonly providerSubjectId: string;
+}): string => {
+  const email = normalizeEmail(input.email);
+  return `${input.providerSubjectId.length}:${input.providerSubjectId}${email.length}:${email}`;
+};
+
+const readLengthPrefix = (
+  value: string,
+  start: number,
+): Option.Option<{ readonly length: number; readonly valueStart: number }> => {
+  const separator = value.indexOf(':', start);
+  if (separator === -1) {
+    return Option.none();
+  }
+  const length = Number(value.slice(start, separator));
+  if (!Number.isSafeInteger(length) || length < 0) {
+    return Option.none();
+  }
+  return Option.some({ length, valueStart: separator + 1 });
+};
+
+const decodeVerificationLedgerRecord = (value: string): Option.Option<VerificationLedgerRecord> => {
+  const subjectPrefix = readLengthPrefix(value, 0);
+  if (Option.isNone(subjectPrefix)) {
+    return Option.none();
+  }
+  const subjectEnd = subjectPrefix.value.valueStart + subjectPrefix.value.length;
+  if (subjectEnd > value.length) {
+    return Option.none();
+  }
+  const emailPrefix = readLengthPrefix(value, subjectEnd);
+  if (Option.isNone(emailPrefix)) {
+    return Option.none();
+  }
+  const emailEnd = emailPrefix.value.valueStart + emailPrefix.value.length;
+  if (emailEnd !== value.length) {
+    return Option.none();
+  }
+  const decoded = Schema.decodeOption(VerificationLedgerRecordSchema)({
+    email: value.slice(emailPrefix.value.valueStart, emailEnd),
+    providerSubjectId: value.slice(subjectPrefix.value.valueStart, subjectEnd),
+  });
+  return Option.isSome(decoded) && decoded.value.email === normalizeEmail(decoded.value.email)
+    ? decoded
+    : Option.none();
+};
+
+const emailVerificationIdentifier = (digest: string): string => `${EMAIL_VERIFICATION_IDENTIFIER_PREFIX}${digest}`;
+
+const emailVerificationReservationIdentifier = (digest: string): string =>
+  `${EMAIL_VERIFICATION_RESERVATION_IDENTIFIER_PREFIX}${digest}`;
+
+const digestText = (crypto: Crypto.Crypto, value: string) =>
+  crypto.digest('SHA-256', new TextEncoder().encode(value)).pipe(Effect.map(bytesToHex));
+
+const digestToken = (crypto: Crypto.Crypto, token: Redacted.Redacted) =>
+  crypto.digest('SHA-256', new TextEncoder().encode(Redacted.value(token))).pipe(Effect.map(bytesToHex));
+
+const epochMillis = (value: Date): number => {
+  const date = DateTime.make(value);
+  return Option.isSome(date) ? DateTime.toEpochMillis(date.value) : Number.NaN;
+};
+
+const MILLISECONDS_PER_SECOND = 1000;
+const RATE_LIMIT_SWEEP_OPERATION = 'recovery-rate-limit-sweep';
+/** A row older than the longest configured rule is spent for every rule, so the sweep is safe. */
+const RATE_LIMIT_RETENTION_MILLISECONDS =
+  Math.max(...Object.values(COMMERCE_PORTAL_AUTH_POLICY.rateLimit).map(({ windowSeconds }) => windowSeconds)) *
+  MILLISECONDS_PER_SECOND;
+
+/**
+ * The verification table is already provider-owned Better Auth state. The recovery ledger stores
+ * only a token digest and the immutable provider user id plus normalized issued email; atomic
+ * consume and email verification happen in one database transaction, so a deleted/recreated user
+ * or changed email can never inherit the token.
+ */
+export const makeCommercePortalAuthRecoveryStore = Effect.fn('CommercePortalAuthRecoveryStore.make')(
+  function* makeCommercePortalAuthRecoveryStoreEffect(
+    database: CommercePortalAuthDatabaseExecutor,
+  ): Effect.fn.Return<CommercePortalAuthRecoveryStore, never, Crypto.Crypto> {
+    const crypto = yield* Crypto.Crypto;
+
+    const registerEmailVerificationToken = Effect.fn('CommercePortalAuthRecoveryStore.registerEmailVerificationToken')(
+      function* registerEmailVerificationTokenEffect(
+        input: CommercePortalAuthEmailVerificationTokenRegistration & { readonly expiresAt: Date },
+      ): Effect.fn.Return<boolean, CommercePortalAuthRecoveryUnavailable> {
+        const now = yield* DateTime.nowAsDate;
+        const digest = yield* digestToken(crypto, input.token).pipe(
+          Effect.mapError((cause) => unavailable('verification-token-hash', cause)),
+        );
+        const verificationId = yield* crypto.randomUUIDv4.pipe(
+          Effect.mapError((cause) => unavailable('verification-token-id', cause)),
+        );
+        const identifier = emailVerificationIdentifier(digest);
+        const reservationDigest = yield* digestText(crypto, normalizeEmail(input.email)).pipe(
+          Effect.mapError((cause) => unavailable('verification-reservation-hash', cause)),
+        );
+        const reservationIdentifier = emailVerificationReservationIdentifier(reservationDigest);
+        return yield* database
+          .transaction(
+            Effect.fn('CommercePortalAuthRecoveryStore.registerEmailVerificationToken.transaction')(
+              function* registerTransaction(transaction) {
+                const reservations = yield* transaction
+                  .select({ expiresAt: verification.expiresAt, providerSubjectId: verification.value })
+                  .from(verification)
+                  .where(eq(verification.identifier, reservationIdentifier))
+                  .limit(1)
+                  .for('update');
+                const [reservation] = reservations;
+                if (reservation !== undefined) {
+                  const reservationExpiry = epochMillis(reservation.expiresAt);
+                  const nowMillis = epochMillis(now);
+                  if (
+                    !Number.isFinite(reservationExpiry) ||
+                    !Number.isFinite(nowMillis) ||
+                    reservationExpiry <= nowMillis ||
+                    reservation.providerSubjectId !== input.providerSubjectId
+                  ) {
+                    if (reservationExpiry <= nowMillis || !Number.isFinite(reservationExpiry)) {
+                      yield* transaction.delete(verification).where(eq(verification.identifier, reservationIdentifier));
+                    }
+                    return false;
+                  }
+                  yield* transaction.delete(verification).where(eq(verification.identifier, reservationIdentifier));
+                }
+                // Better Auth invokes this callback inside its sign-up transaction. The exact committed
+                // subject/email binding is therefore validated by consume's atomic user update.
+                const existingTokens = yield* transaction
+                  .select({ id: verification.id, value: verification.value })
+                  .from(verification)
+                  .where(like(verification.identifier, `${EMAIL_VERIFICATION_IDENTIFIER_PREFIX}%`));
+                const existingTokenIds = existingTokens.flatMap((existingToken) => {
+                  const existingRecord = decodeVerificationLedgerRecord(existingToken.value);
+                  return Option.isSome(existingRecord) &&
+                    existingRecord.value.providerSubjectId === input.providerSubjectId
+                    ? [existingToken.id]
+                    : [];
+                });
+                if (existingTokenIds.length > 0) {
+                  yield* transaction.delete(verification).where(inArray(verification.id, existingTokenIds));
+                }
+                yield* transaction.insert(verification).values({
+                  createdAt: now,
+                  expiresAt: input.expiresAt,
+                  id: verificationId,
+                  identifier,
+                  updatedAt: now,
+                  value: encodeVerificationLedgerRecord(input),
+                });
+                return true;
+              },
+            ),
+          )
+          .pipe(Effect.mapError((cause) => unavailable('verification-token-register', cause)));
+      },
+    );
+
+    const reserveEmailVerificationSubject = Effect.fn(
+      'CommercePortalAuthRecoveryStore.reserveEmailVerificationSubject',
+    )(function* reserveEmailVerificationSubjectEffect(input: {
+      readonly email: string;
+      readonly providerSubjectId: string;
+    }): Effect.fn.Return<boolean, CommercePortalAuthRecoveryUnavailable> {
+      const now = yield* DateTime.nowAsDate;
+      const emailDigest = yield* digestText(crypto, normalizeEmail(input.email)).pipe(
+        Effect.mapError((cause) => unavailable('verification-reservation-hash', cause)),
+      );
+      const identifier = emailVerificationReservationIdentifier(emailDigest);
+      const reservationId = yield* crypto.randomUUIDv4.pipe(
+        Effect.mapError((cause) => unavailable('verification-reservation-id', cause)),
+      );
+      const expiresAt = DateTime.toDate(
+        DateTime.add(DateTime.makeUnsafe(now), {
+          seconds: COMMERCE_PORTAL_AUTH_POLICY.emailVerification.expiresInSeconds,
+        }),
+      );
+      return yield* database
+        .transaction(
+          Effect.fn('CommercePortalAuthRecoveryStore.reserveEmailVerificationSubject.transaction')(
+            function* reserveTransaction(transaction) {
+              yield* transaction.delete(verification).where(eq(verification.identifier, identifier));
+              const subjects = yield* transaction
+                .select({ id: user.id })
+                .from(user)
+                .where(
+                  and(
+                    eq(user.id, input.providerSubjectId),
+                    eq(user.email, normalizeEmail(input.email)),
+                    eq(user.emailVerified, false),
+                  ),
+                )
+                .limit(1)
+                .for('update');
+              if (subjects.length === 0) {
+                return false;
+              }
+              yield* transaction.insert(verification).values({
+                createdAt: now,
+                expiresAt,
+                id: reservationId,
+                identifier,
+                updatedAt: now,
+                value: input.providerSubjectId,
+              });
+              return true;
+            },
+          ),
+        )
+        .pipe(Effect.mapError((cause) => unavailable('verification-reservation', cause)));
+    });
+
+    const consumeEmailVerification = Effect.fn('CommercePortalAuthRecoveryStore.consumeEmailVerification')(
+      function* consumeEmailVerificationEffect(input: {
+        readonly now: Date;
+        readonly token: Redacted.Redacted;
+      }): Effect.fn.Return<Option.Option<string>, CommercePortalAuthRecoveryUnavailable> {
+        const digest = yield* digestToken(crypto, input.token).pipe(
+          Effect.mapError((cause) => unavailable('verification-token-hash', cause)),
+        );
+        const identifier = emailVerificationIdentifier(digest);
+        return yield* database
+          .transaction(
+            Effect.fn('CommercePortalAuthRecoveryStore.consumeEmailVerification.transaction')(
+              function* consumeTransaction(transaction) {
+                const rows = yield* transaction
+                  .delete(verification)
+                  .where(eq(verification.identifier, identifier))
+                  .returning({ expiresAt: verification.expiresAt, value: verification.value });
+                // A provider token is deterministic in the realm secret and the address, so a
+                // re-registered address can leave two ledger rows under one identifier bound to two
+                // different subjects. `DELETE … RETURNING` has no defined order, so admitting the
+                // first row would verify an arbitrary one of them. Both rows are spent here and
+                // neither is admitted: an ambiguous binding is refused, never guessed.
+                if (rows.length > 1) {
+                  return Option.none<string>();
+                }
+                const [row] = rows;
+                if (
+                  row === undefined ||
+                  !Number.isFinite(epochMillis(row.expiresAt)) ||
+                  epochMillis(row.expiresAt) <= epochMillis(input.now)
+                ) {
+                  return Option.none<string>();
+                }
+
+                const record = decodeVerificationLedgerRecord(row.value);
+                if (Option.isNone(record)) {
+                  return Option.none<string>();
+                }
+
+                const updated = yield* transaction
+                  .update(user)
+                  .set({ emailVerified: true, updatedAt: input.now })
+                  .where(
+                    and(
+                      eq(user.id, record.value.providerSubjectId),
+                      eq(user.email, record.value.email),
+                      eq(user.emailVerified, false),
+                    ),
+                  )
+                  .returning({ id: user.id });
+                return updated.length === 1 ? Option.some(record.value.providerSubjectId) : Option.none<string>();
+              },
+            ),
+          )
+          .pipe(Effect.mapError((cause) => unavailable('verification-token-consume', cause)));
+      },
+    );
+
+    /**
+     * Housekeeping only: a row untouched for longer than the longest configured window can never
+     * deny a request again. A sweep that fails must not deny the request that already paid for its
+     * budget, so its cause is reported and the caller continues.
+     */
+    const sweepSpentRateLimitBudgets = (nowMillis: number) =>
+      database
+        .delete(rateLimit)
+        .where(lt(rateLimit.lastRequest, nowMillis - RATE_LIMIT_RETENTION_MILLISECONDS))
+        .pipe(
+          Effect.annotateLogs({ operation: RATE_LIMIT_SWEEP_OPERATION }),
+          Effect.ignore({ log: true, message: 'Commerce portal recovery rate-limit sweep failed' }),
+        );
+
+    /**
+     * One guarded upsert decides the whole step, so concurrent requests — in this process or in
+     * another replica — cannot all pass the same stale read. `DO UPDATE … WHERE` is the guard: a
+     * spent window matches no row, writes nothing and returns nothing, which is the denial. The
+     * decision reproduces the semantics Better Auth's database rate-limit storage applied to these
+     * same rows: a window older than the rule restarts at one, an unspent window counts up, and a
+     * spent window neither counts nor extends itself.
+     */
+    const consumeRateLimitBudget = Effect.fn('CommercePortalAuthRecoveryStore.consumeRateLimitBudget')(
+      function* consumeRateLimitBudgetEffect(input: {
+        readonly key: string;
+        readonly rule: CommercePortalAuthRecoveryRateLimitRule;
+      }): Effect.fn.Return<boolean, CommercePortalAuthRecoveryUnavailable> {
+        const nowMillis = DateTime.toEpochMillis(yield* DateTime.now);
+        const windowStartMillis = nowMillis - input.rule.windowSeconds * MILLISECONDS_PER_SECOND;
+        const granted = yield* database
+          .insert(rateLimit)
+          .values({ count: 1, key: input.key, lastRequest: nowMillis })
+          .onConflictDoUpdate({
+            set: {
+              count: sql`case when ${rateLimit.lastRequest} <= ${windowStartMillis} then 1 else ${rateLimit.count} + 1 end`,
+              lastRequest: nowMillis,
+            },
+            setWhere: sql`${rateLimit.lastRequest} <= ${windowStartMillis} or ${rateLimit.count} < ${input.rule.max}`,
+            target: rateLimit.key,
+          })
+          .returning({ count: rateLimit.count })
+          .pipe(Effect.mapError((cause) => unavailable('recovery-rate-limit', cause)));
+        const [spent] = granted;
+        if (spent === undefined) {
+          return false;
+        }
+        if (spent.count === 1) {
+          // Only an opened or rolled-over window pays for the sweep, the cadence Better Auth used.
+          yield* sweepSpentRateLimitBudgets(nowMillis);
+        }
+        return true;
+      },
+    );
+
+    return {
+      consumeEmailVerification,
+      consumeRateLimitBudget,
+      registerEmailVerificationToken,
+      reserveEmailVerificationSubject,
+    };
+  },
+);
+
+/** The provider database stays a visible requirement; the composition root supplies it once. */
+export const CommercePortalAuthRecoveryStoreLive = Layer.effect(
+  CommercePortalAuthRecoveryStoreService,
+  Effect.gen(function* makeRecoveryStoreLive() {
+    const database = yield* CommercePortalAuthDatabase;
+    return yield* makeCommercePortalAuthRecoveryStore(database.executor);
+  }),
+);

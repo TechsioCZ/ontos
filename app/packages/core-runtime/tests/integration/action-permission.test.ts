@@ -2,7 +2,7 @@ import { randomUUID } from 'node:crypto';
 
 import { v1 } from '@authzed/authzed-node';
 import { and, eq } from 'drizzle-orm';
-import { Context, Effect, Layer, Exit, Schema, Predicate } from 'effect';
+import { Context, Effect, Layer, Exit, Option, Schema, Predicate } from 'effect';
 import { expect, it } from 'effect-rstest';
 import { SqlError, UnknownError } from 'effect/unstable/sql/SqlError';
 
@@ -11,6 +11,14 @@ import { defineAction } from '../../src/actions/definition.ts';
 import { makeActionRepository } from '../../src/actions/repository.ts';
 import { makeActionRuntime } from '../../src/actions/runtime.ts';
 import { loadDatabaseConfig } from '../../src/db/config.ts';
+import {
+  AuthenticationNamespaceIdSchema,
+  AuthenticationNamespaceRegistrationSchema,
+} from '../../src/auth/external-identity-contracts.ts';
+import {
+  AuthenticationNamespaceRegistry,
+  makeAuthenticationNamespaceRegistry,
+} from '../../src/auth/external-identity/verifier.ts';
 import {
   actionInvocations,
   auditEvents,
@@ -24,6 +32,8 @@ import {
   tenants,
 } from '../../src/db/schema.ts';
 import type { ScopedTransactionExecutor } from '../../src/db/scoped-transaction.ts';
+import type { OperationalScopeResolverService } from '../../src/operations/context.ts';
+import { OperationAuthenticationRequired, OperationContextUnavailable } from '../../src/operations/errors.ts';
 import { defineSystemModuleEntrypoint } from '../../src/modules/module-entrypoint.ts';
 import type { SpiceDbConfigValue } from '../../src/permissions/config.ts';
 import { loadSpiceDbConfig } from '../../src/permissions/config.ts';
@@ -34,7 +44,7 @@ import {
   makeActionPermissionService,
   toSpiceDbActionObjectId,
 } from '../../src/permissions/service.ts';
-import { testOperationalScopeResolver } from '../fixtures/operational-scope.ts';
+import { testOperationalScopeResolver as baseTestOperationalScopeResolver } from '../fixtures/operational-scope.ts';
 import { openActionRuntimeOptions } from '../support/action-runtime-options.ts';
 import { makeFaultInjectableCoreDatabase, TestQueryHook } from '../support/database-faults.ts';
 import { TestWriteError } from '../support/permission-write-error.ts';
@@ -44,6 +54,44 @@ class PermissionAdmin extends Context.Service<PermissionAdmin, ReturnType<typeof
 ) {}
 
 const suiteId = randomUUID();
+const staffAuthenticationNamespaceId = Schema.decodeSync(AuthenticationNamespaceIdSchema)('test.staff.better-auth.v1');
+const authenticationNamespaceRegistry = makeAuthenticationNamespaceRegistry([
+  Schema.decodeSync(AuthenticationNamespaceRegistrationSchema)({
+    allowedAudiences: ['core-runtime-test'],
+    authenticationNamespaceId: staffAuthenticationNamespaceId,
+    provider: 'test-provider',
+    requiresOperationAdmission: false,
+    reservationPrincipalKind: 'human',
+    subjectTypes: ['user'],
+    trustedAttesterPrincipalIds: [],
+  }),
+]);
+const testOperationalScopeResolver: OperationalScopeResolverService = {
+  resolve: (input) =>
+    Effect.gen(function* registeredTestOperationalScope() {
+      const namespaceId = input.principal.authenticationNamespaceId;
+      if (namespaceId !== undefined) {
+        const registration = yield* authenticationNamespaceRegistry
+          .lookup(AuthenticationNamespaceIdSchema.make(namespaceId))
+          .pipe(
+            Effect.mapError(
+              () =>
+                new OperationContextUnavailable({
+                  code: 'operation_context_unavailable',
+                  reason: 'The test authentication namespace registry is unavailable',
+                }),
+            ),
+          );
+        if (Option.isNone(registration)) {
+          return yield* new OperationAuthenticationRequired({
+            code: 'operation_authentication_required',
+            reason: 'The test authentication namespace is not registered',
+          });
+        }
+      }
+      return yield* baseTestOperationalScopeResolver.resolve(input);
+    }),
+};
 const tenantId = randomUUID();
 const legalEntityId = randomUUID();
 const principalId = randomUUID();
@@ -68,6 +116,7 @@ const actionKeys = {
 const principal = {
   authBindingId: principalAuthBindingId,
   authContextRef: `better-auth-session:${suiteId}:principal`,
+  authenticationNamespaceId: staffAuthenticationNamespaceId,
   authMethod: 'session',
   legalEntityId,
   principalId,
@@ -77,6 +126,7 @@ const principal = {
 const nonMemberPrincipal = {
   authBindingId: nonMemberAuthBindingId,
   authContextRef: `better-auth-session:${suiteId}:non-member`,
+  authenticationNamespaceId: staffAuthenticationNamespaceId,
   authMethod: 'session',
   principalId: nonMemberPrincipalId,
   tenantId,
@@ -85,6 +135,7 @@ const nonMemberPrincipal = {
 const otherTenantPrincipal = {
   authBindingId: otherTenantAuthBindingId,
   authContextRef: `better-auth-session:${suiteId}:other-tenant`,
+  authenticationNamespaceId: staffAuthenticationNamespaceId,
   authMethod: 'session',
   principalId: otherTenantPrincipalId,
   tenantId: otherTenantId,
@@ -284,6 +335,7 @@ const PermissionFixture = Layer.effect(
           ]);
           yield* database.executor.insert(principalAuthBindings).values([
             {
+              authenticationNamespaceId: staffAuthenticationNamespaceId,
               principalAuthBindingId,
               principalId,
               provider: 'better_auth',
@@ -293,6 +345,7 @@ const PermissionFixture = Layer.effect(
               tenantId,
             },
             {
+              authenticationNamespaceId: staffAuthenticationNamespaceId,
               principalAuthBindingId: nonMemberAuthBindingId,
               principalId: nonMemberPrincipalId,
               provider: 'better_auth',
@@ -302,6 +355,7 @@ const PermissionFixture = Layer.effect(
               tenantId,
             },
             {
+              authenticationNamespaceId: staffAuthenticationNamespaceId,
               principalAuthBindingId: otherTenantAuthBindingId,
               principalId: otherTenantPrincipalId,
               provider: 'better_auth',
@@ -762,7 +816,12 @@ const testProgram6 = () =>
     }),
   );
 
-it.layer(PermissionFixture, { excludeTestServices: true })('Action permissions', (suite) => {
+it.layer(
+  Layer.merge(PermissionFixture, Layer.succeed(AuthenticationNamespaceRegistry, authenticationNamespaceRegistry)),
+  {
+    excludeTestServices: true,
+  },
+)('Action permissions', (suite) => {
   suite.effect('allows direct Principal and Tenant-membership executor grants', testProgram1);
 
   suite.effect('persists one normalized terminal denial and no business or collected evidence', testProgram2);

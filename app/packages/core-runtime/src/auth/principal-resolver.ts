@@ -34,6 +34,9 @@ export interface ApiKeyBindingAdministration {
   readonly status: 'active' | 'disabled' | 'revoked';
 }
 
+const ApiKeyBindingStatusSchema = Schema.Literals(['active', 'disabled', 'revoked']);
+const isApiKeyBindingStatus = Schema.is(ApiKeyBindingStatusSchema);
+
 const ProviderSubjectIdSchema = Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(500)).pipe(
   Schema.brand('ProviderSubjectId'),
 );
@@ -224,6 +227,8 @@ export const classifyApiKeyPrincipal = Effect.fn('PrincipalResolver.classifyApiK
 );
 
 export interface PrincipalResolverService {
+  /** The staff namespace is supplied by trusted deployment composition. */
+  readonly authenticationNamespaceId: string;
   readonly listAvailableTenants: (
     betterAuthUserId: string,
   ) => Effect.Effect<readonly AvailableTenant[], PrincipalResolutionError>;
@@ -269,9 +274,18 @@ export class PrincipalResolver extends Context.Service<PrincipalResolver, Princi
   '@app/core-runtime/auth/principal-resolver/PrincipalResolver',
 ) {}
 
-export const makePrincipalResolver = (database: {
-  readonly executor: CoreDatabaseExecutor;
-}): PrincipalResolverService => {
+export interface PrincipalResolverConfiguration {
+  /** A validated deployment registration value; request data never supplies this value. */
+  readonly authenticationNamespaceId: string;
+}
+
+export const makePrincipalResolver = (
+  database: {
+    readonly executor: CoreDatabaseExecutor;
+  },
+  configuration: PrincipalResolverConfiguration,
+): PrincipalResolverService => {
+  const { authenticationNamespaceId } = configuration;
   const recordRepository: PrincipalResolutionRecordRepository = {
     load: (subject, tenantId) =>
       database.executor
@@ -300,6 +314,7 @@ export const makePrincipalResolver = (database: {
         .where(
           and(
             eq(principalAuthBindings.provider, subject.provider),
+            eq(principalAuthBindings.authenticationNamespaceId, authenticationNamespaceId),
             eq(principalAuthBindings.subjectType, subject.subjectType),
             eq(principalAuthBindings.providerSubjectId, subject.providerSubjectId),
             ...(tenantId === undefined ? [] : [eq(principalAuthBindings.tenantId, tenantId)]),
@@ -325,6 +340,7 @@ export const makePrincipalResolver = (database: {
           eq(principalAuthBindings.principalAuthBindingId, input.authBindingId),
           eq(principalAuthBindings.tenantId, input.tenantId),
           eq(principalAuthBindings.principalId, input.principalId),
+          eq(principalAuthBindings.authenticationNamespaceId, authenticationNamespaceId),
           eq(principalAuthBindings.subjectType, 'api_key'),
         ),
       )
@@ -335,16 +351,28 @@ export const makePrincipalResolver = (database: {
       );
 
   return {
+    authenticationNamespaceId,
     listAvailableTenants: (betterAuthUserId) => listAvailableTenantsFromRepository(recordRepository, betterAuthUserId),
     loadApiKeyBindingForAdministration: (input) =>
       loadApiKeyBindingSubject(input).pipe(
-        Effect.flatMap((record): Effect.Effect<ApiKeyBindingAdministration, PrincipalBindingMissingError> =>
-          record === undefined
-            ? Effect.fail(new PrincipalBindingMissingError())
-            : Effect.succeed({
+        Effect.flatMap(
+          (
+            record,
+          ): Effect.Effect<
+            ApiKeyBindingAdministration,
+            PrincipalBindingInactiveError | PrincipalBindingMissingError
+          > => {
+            if (record === undefined) {
+              return Effect.fail(new PrincipalBindingMissingError());
+            }
+            if (isApiKeyBindingStatus(record.status)) {
+              return Effect.succeed({
                 providerSubjectId: record.providerSubjectId,
                 status: record.status,
-              }),
+              });
+            }
+            return Effect.fail(new PrincipalBindingInactiveError());
+          },
         ),
       ),
     resolveApiKeyBindingSubject: (input) =>
@@ -354,7 +382,7 @@ export const makePrincipalResolver = (database: {
             if (record === undefined) {
               return Effect.fail(new PrincipalBindingMissingError());
             }
-            if (record.status === 'revoked' || record.revokedAt !== null) {
+            if (record.status !== 'active' || record.revokedAt !== null) {
               return Effect.fail(new PrincipalBindingInactiveError());
             }
             return Effect.succeed(record.providerSubjectId);
@@ -386,6 +414,7 @@ export const makePrincipalResolver = (database: {
           and(
             eq(principalAuthBindings.tenantId, input.tenantId),
             eq(principalAuthBindings.principalId, input.principalId),
+            eq(principalAuthBindings.authenticationNamespaceId, authenticationNamespaceId),
             eq(principalAuthBindings.provider, 'better_auth'),
             eq(principalAuthBindings.subjectType, 'user'),
             eq(principals.kind, 'human'),
@@ -477,7 +506,10 @@ export const makePrincipalResolver = (database: {
   };
 };
 
-export const PrincipalResolverLive = Layer.effect(
-  PrincipalResolver,
-  CoreDatabase.pipe(Effect.map(makePrincipalResolver)),
-);
+const principalResolverLive = (configuration: PrincipalResolverConfiguration) =>
+  Layer.effect(
+    PrincipalResolver,
+    CoreDatabase.pipe(Effect.map((database) => makePrincipalResolver(database, configuration))),
+  );
+
+export { principalResolverLive as PrincipalResolverLive };

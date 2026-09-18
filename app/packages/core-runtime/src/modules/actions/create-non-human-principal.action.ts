@@ -69,8 +69,8 @@ export const createNonHumanPrincipalAction = defineAction(
     tenantPermission: () => 'manage_identity',
   },
   handle,
-  (transaction) => {
-    const repository = principalManagementRepositoryFromTransaction(transaction);
+  (transaction, scope) => {
+    const repository = principalManagementRepositoryFromTransaction(transaction, scope.authenticationNamespaceId);
     return Effect.succeed({ create: repository.createNonHumanPrincipal });
   },
 );

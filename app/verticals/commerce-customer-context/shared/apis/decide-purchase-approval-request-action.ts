@@ -155,15 +155,40 @@ const actionErrors = [
   DecidePurchaseApprovalRequestActionInternalProblemSchema,
 ] as const;
 
+/**
+ * The endpoint chain stays a `const`. The MicroVertical API boundary checker walks a root API's
+ * operands through const bindings only, so a class declaration hides the composed endpoints from
+ * it. The exported group is annotated with a named type alias so its type still has a name: the
+ * vertical's `shared/api.ts` merges every group type into one `HttpApi` and declaration emit
+ * serializes that union verbatim, so an anonymous group type pushes the composed contract past
+ * the compiler's serialization limit (TS7056).
+ *
+ * Exported only so the named contract type can reference it; the merged vertical HttpApi prints
+ * this group by name (declaration-emit size).
+ *
+ * @public
+ */
+export const decidePurchaseApprovalRequestActionGroupDefinition = HttpApiGroup.make(
+  'decidePurchaseApprovalRequestAction',
+)
+  .add(
+    HttpApiEndpoint.post('execute', '/commerce-customer-context/actions/decide-purchase-approval-request', {
+      error: actionErrors,
+      headers: DecidePurchaseApprovalRequestActionHeadersSchema,
+      payload: Schema.toEncoded(DecidePurchaseApprovalRequestPayloadSchema),
+      success: DecidePurchaseApprovalRequestResultSchema,
+    }),
+  )
+  .middleware(DecidePurchaseApprovalRequestActionSchemaErrorMiddleware);
+
+export type DecidePurchaseApprovalRequestActionGroupContract = HttpApiGroup.HttpApiGroup<
+  'decidePurchaseApprovalRequestAction',
+  HttpApiGroup.Endpoints<typeof decidePurchaseApprovalRequestActionGroupDefinition>
+>;
+
+const DecidePurchaseApprovalRequestActionGroup: DecidePurchaseApprovalRequestActionGroupContract =
+  decidePurchaseApprovalRequestActionGroupDefinition;
+
 export const DecidePurchaseApprovalRequestActionApi = HttpApi.make('DecidePurchaseApprovalRequestActionApi').add(
-  HttpApiGroup.make('decidePurchaseApprovalRequestAction')
-    .add(
-      HttpApiEndpoint.post('execute', '/commerce-customer-context/actions/decide-purchase-approval-request', {
-        error: actionErrors,
-        headers: DecidePurchaseApprovalRequestActionHeadersSchema,
-        payload: Schema.toEncoded(DecidePurchaseApprovalRequestPayloadSchema),
-        success: DecidePurchaseApprovalRequestResultSchema,
-      }),
-    )
-    .middleware(DecidePurchaseApprovalRequestActionSchemaErrorMiddleware),
+  DecidePurchaseApprovalRequestActionGroup,
 );

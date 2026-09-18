@@ -4,6 +4,11 @@ import { expect, it } from 'effect-rstest';
 
 import { createActionCollector } from '../../../../packages/core-runtime/src/actions/collector.ts';
 import { getActionHandler } from '../../../../packages/core-runtime/src/actions/definition.ts';
+import {
+  PrincipalIdSchema,
+  TenantIdSchema,
+} from '../../../../packages/core-runtime/src/auth/external-identity-contracts.ts';
+import { trustResolvedSystemPrincipalContext } from '../../../../packages/core-runtime/src/auth/system-principal-context-provenance.ts';
 import type { ActionEvidenceSnapshot } from '../../../../packages/core-runtime/src/actions/events.ts';
 import { PartySchema, makePartyRef } from '../../shared/domain/identity-contracts.ts';
 import { makeDuplicateCandidateCaseRef } from '../../shared/resources/duplicate-candidate-case.ts';
@@ -12,15 +17,22 @@ import { archivePartyAction } from '../../src/actions/archive-party.action.ts';
 import { unarchivePartyAction } from '../../src/actions/unarchive-party.action.ts';
 import { updatePartyAction } from '../../src/actions/update-party.action.ts';
 
-const tenantId = '11111111-1111-4111-8111-111111111111';
+const tenantId = Schema.decodeSync(TenantIdSchema)('11111111-1111-4111-8111-111111111111');
 const partyId = '22222222-2222-4222-8222-222222222222';
 const actionInvocationId = '33333333-3333-4333-8333-333333333333';
+const principalId = Schema.decodeSync(PrincipalIdSchema)('44444444-4444-4444-8444-444444444444');
 const scope = {
   authMethod: 'system' as const,
   correlationId: 'identity-invariant-evidence-test',
-  principalId: '44444444-4444-4444-8444-444444444444',
+  principalId,
   tenantId,
 };
+const harnessPrincipal = trustResolvedSystemPrincipalContext({
+  authContextRef: 'job:party-registry:run:unarchive-review-test',
+  authMethod: 'system' as const,
+  principalId,
+  tenantId,
+});
 const party = Schema.decodeSync(PartySchema)({
   archivedAt: null,
   createdAt: '2026-01-01T00:00:00.000Z',
@@ -156,13 +168,7 @@ it.effect('Unarchive review outcome commits once and replays without an unarchiv
         partyRef: party.partyRef,
         reason: 'Active again',
       },
-      principal: {
-        authBindingId: '60000000-0000-4000-8000-000000000001',
-        authContextRef: 'better-auth-session:unarchive-review-test',
-        authMethod: 'session' as const,
-        principalId: scope.principalId,
-        tenantId,
-      },
+      principal: harnessPrincipal,
       registration: unarchivePartyAction,
       transport: {
         correlationId: 'unarchive-review',

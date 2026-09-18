@@ -135,15 +135,38 @@ const actionErrors = [
   ReactivateCustomerProfileActionInternalProblemSchema,
 ] as const;
 
+/**
+ * The endpoint chain stays a `const`. The MicroVertical API boundary checker walks a root API's
+ * operands through const bindings only, so a class declaration hides the composed endpoints from
+ * it. The exported group is annotated with a named type alias so its type still has a name: the
+ * vertical's `shared/api.ts` merges every group type into one `HttpApi` and declaration emit
+ * serializes that union verbatim, so an anonymous group type pushes the composed contract past
+ * the compiler's serialization limit (TS7056).
+ *
+ * Exported only so the named contract type can reference it; the merged vertical HttpApi prints
+ * this group by name (declaration-emit size).
+ *
+ * @public
+ */
+export const reactivateCustomerProfileActionGroupDefinition = HttpApiGroup.make('reactivateCustomerProfileAction')
+  .add(
+    HttpApiEndpoint.post('execute', '/commerce-customer-context/actions/reactivate-customer-profile', {
+      error: actionErrors,
+      headers: ReactivateCustomerProfileActionHeadersSchema,
+      payload: Schema.toEncoded(ReactivateCustomerProfilePayloadSchema),
+      success: ReactivateCustomerProfileResultSchema,
+    }),
+  )
+  .middleware(ReactivateCustomerProfileActionSchemaErrorMiddleware);
+
+export type ReactivateCustomerProfileActionGroupContract = HttpApiGroup.HttpApiGroup<
+  'reactivateCustomerProfileAction',
+  HttpApiGroup.Endpoints<typeof reactivateCustomerProfileActionGroupDefinition>
+>;
+
+const ReactivateCustomerProfileActionGroup: ReactivateCustomerProfileActionGroupContract =
+  reactivateCustomerProfileActionGroupDefinition;
+
 export const ReactivateCustomerProfileActionApi = HttpApi.make('ReactivateCustomerProfileActionApi').add(
-  HttpApiGroup.make('reactivateCustomerProfileAction')
-    .add(
-      HttpApiEndpoint.post('execute', '/commerce-customer-context/actions/reactivate-customer-profile', {
-        error: actionErrors,
-        headers: ReactivateCustomerProfileActionHeadersSchema,
-        payload: Schema.toEncoded(ReactivateCustomerProfilePayloadSchema),
-        success: ReactivateCustomerProfileResultSchema,
-      }),
-    )
-    .middleware(ReactivateCustomerProfileActionSchemaErrorMiddleware),
+  ReactivateCustomerProfileActionGroup,
 );

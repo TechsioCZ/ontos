@@ -1,6 +1,7 @@
-import { Effect, Predicate } from 'effect';
+import { Effect, Predicate, Schema } from 'effect';
 import { expect, it } from 'effect-rstest';
 
+import { TrustedPrincipalContextSchema } from '../../src/actions/principal-context.ts';
 import { defineGlobalPolicy, defineMicroverticalPolicy, denyPolicy, isActionPolicy } from '../../src/actions/policy.ts';
 import type { ActionPolicyEvaluatorInput } from '../../src/actions/policy.ts';
 
@@ -11,11 +12,13 @@ const input = {
     schemaVersion: '1',
   },
   payload: { quantity: 2 },
-  principal: {
+  principal: Schema.decodeSync(TrustedPrincipalContextSchema)({
+    authBindingId: '00000000-0000-4000-8000-000000000004',
+    authContextRef: 'better-auth-session:action-policy',
     authMethod: 'session',
     principalId: '00000000-0000-4000-8000-000000000002',
     tenantId: '00000000-0000-4000-8000-000000000001',
-  },
+  }),
   target: {
     targetModuleKey: 'inventory.stock',
     targetResourceId: 'sku-1',

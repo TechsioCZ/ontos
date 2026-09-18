@@ -155,6 +155,16 @@ jobs:
 
       - name: Apply and verify Core, Auth, and Contacts migrations, plus Party Registry
         working-directory: app
+        # The Commerce portal authentication realm is optional and owns its own Drizzle
+        # configuration, migration journal and runtime role. Naming its database pair here is what
+        # opts this workspace in, so `db:migrate` applies the `commerce_auth` migrations, grants the
+        # provider runtime role and verifies the realm — the schema the portal-auth provider
+        # integration tests read. Development-only values, exactly as the primary database above.
+        # The pair stays scoped to this step: a realm is opted into completely or not at all, and no
+        # later step should see a half-named one.
+        env:
+          COMMERCE_PORTAL_AUTH_DATABASE_ADMIN_URL: postgresql://ontos_ci_admin:ontos_ci_admin@localhost:5433/ontos_ci
+          COMMERCE_PORTAL_AUTH_DATABASE_URL: postgresql://ontos_runtime:ontos_runtime@localhost:5433/ontos_ci
         run: |
           mise exec -- pnpm db:migrate
           mise exec -- pnpm db:verify

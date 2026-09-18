@@ -582,26 +582,44 @@ Options:
       }),
   }),
   'outbox-message': defineCommand({
-    flags: ['action', 'topic', 'vertical'],
+    flags: ['action', 'module', 'scope', 'topic', 'vertical'],
     generator: outboxMessageGenerator,
-    help: `Usage: pnpm scaffold:outbox-message -- --vertical <vertical> --action <action> --topic <topic>
+    help: `Usage:
+  pnpm scaffold:outbox-message -- --vertical <vertical> --action <action> --topic <topic>
+  pnpm scaffold:outbox-message -- --scope core --module <core.module> --action <action> --topic <topic>
 
-Generate one typed Outbox Message factory owned by a generated Action.
+Generate one typed Outbox Message factory and schema owned by a generated Action.
+MicroVertical messages are owned by a tenant-scoped Action; Core messages are owned by a system-scoped Action.
 
 Required flags:
-  --vertical <vertical>  Existing generated vertical folder (lower-kebab-case)
   --action <action>      Existing generated Action name (lower-kebab-case)
   --topic <topic>        Stable lowercase dot-separated topic
+  --vertical <vertical>  Existing generated vertical folder (lower-kebab-case); exclusive with Core ownership
+  --scope core           Required only for Core ownership; forbidden with --vertical
+  --module <core.module> Stable core.* module key; required only with --scope core
 
 Options:
   --help                 Show this help without writing
 `,
-    requiredFlags: ['action', 'topic', 'vertical'],
+    requiredFlags: ['action', 'topic'],
     toConfig: (flags) =>
-      Effect.succeed({
-        action: flags.action ?? '',
-        topic: flags.topic ?? '',
-        vertical: flags.vertical ?? '',
+      Effect.gen(function* outboxMessageConfigEffect() {
+        const action = flags.action ?? '';
+        const topic = flags.topic ?? '';
+        const { module, scope, vertical } = flags;
+        if (vertical !== undefined) {
+          if (scope !== undefined || module !== undefined) {
+            return yield* failScaffolding('--vertical is mutually exclusive with --scope and --module');
+          }
+          return { action, topic, vertical };
+        }
+        if (scope !== 'core') {
+          return yield* failScaffolding('--scope core is required when --vertical is not supplied');
+        }
+        if (module === undefined) {
+          return yield* failScaffolding('--module is required for Core Outbox Message ownership');
+        }
+        return { action, module, scope, topic };
       }),
   }),
   'outbox-worker': defineCommand({

@@ -2,6 +2,12 @@ import { and, eq } from 'drizzle-orm';
 import { Context, Duration, Effect, Layer, Option, Schema } from 'effect';
 
 import type { TrustedPrincipalContext } from '../actions/principal-context.ts';
+import {
+  AuthBindingIdSchema,
+  AuthenticationNamespaceIdSchema,
+  PrincipalIdSchema,
+  TenantIdSchema,
+} from './external-identity-contracts.ts';
 import { CoreDatabase } from '../db/client.ts';
 import { principalAuthBindings, principals, tenants } from '../db/schema.ts';
 import type { CoreDatabaseExecutor } from '../db/types.ts';
@@ -28,7 +34,17 @@ export interface SupportRecoveryPrincipalContextResolverService {
   }) => Effect.Effect<TrustedPrincipalContext, SupportRecoveryPrincipalContextError>;
 }
 
+export interface SupportRecoveryPrincipalContextResolverConfiguration {
+  /** A validated deployment registration value; recovery input never supplies this value. */
+  readonly authenticationNamespaceId: string;
+}
+
+interface SupportRecoveryPrincipalContextResolverOptions {
+  readonly authenticationNamespaceId?: string;
+}
+
 interface SupportRecoveryPrincipalContextRecord {
+  readonly authenticationNamespaceId?: string;
   readonly bindingPrincipalId: string;
   readonly bindingTenantId: string;
   readonly principalKind: (typeof principals.$inferSelect)['kind'];
@@ -76,12 +92,16 @@ const unavailable = (cause?: unknown): SupportRecoveryPrincipalContextUnavailabl
 
 const DATABASE_OPERATION_TIMEOUT = Duration.seconds(30);
 
-const supportRecoveryPrincipalContextRepositoryFromDatabase = (database: {
-  readonly executor: Pick<CoreDatabaseExecutor, 'select'>;
-}): SupportRecoveryPrincipalContextEffectRecordReader => ({
+const supportRecoveryPrincipalContextRepositoryFromDatabase = (
+  database: {
+    readonly executor: Pick<CoreDatabaseExecutor, 'select'>;
+  },
+  configuration: SupportRecoveryPrincipalContextResolverConfiguration,
+): SupportRecoveryPrincipalContextEffectRecordReader => ({
   load: (input: SupportRecoveryPrincipalContextRepositoryInput) =>
     database.executor
       .select({
+        authenticationNamespaceId: principalAuthBindings.authenticationNamespaceId,
         bindingPrincipalId: principalAuthBindings.principalId,
         bindingTenantId: principalAuthBindings.tenantId,
         principalKind: principals.kind,
@@ -102,6 +122,7 @@ const supportRecoveryPrincipalContextRepositoryFromDatabase = (database: {
           eq(principalAuthBindings.principalAuthBindingId, input.originalAuthBindingId),
           eq(principalAuthBindings.tenantId, input.tenantId),
           eq(principalAuthBindings.principalId, input.originalPrincipalId),
+          eq(principalAuthBindings.authenticationNamespaceId, configuration.authenticationNamespaceId),
           eq(principalAuthBindings.provider, 'better_auth'),
           eq(principalAuthBindings.subjectType, 'user'),
         ),
@@ -129,6 +150,7 @@ const isInvalidRecoveryInput = (
 
 const supportRecoveryPrincipalContextResolverFromEffectRecordReader = (
   repository: SupportRecoveryPrincipalContextEffectRecordReader,
+  options: SupportRecoveryPrincipalContextResolverOptions = {},
 ): SupportRecoveryPrincipalContextResolverService => ({
   resolveStoppedImpersonation: Effect.fn('SupportRecoveryPrincipalContext.resolveStoppedImpersonation')(
     function* resolveStoppedImpersonation(
@@ -164,30 +186,41 @@ const supportRecoveryPrincipalContextResolverFromEffectRecordReader = (
           reason: 'The support recovery identity is not a historical tenant-local user binding',
         });
       }
-      return trustSupportRecoveryPrincipalContext(
-        Object.freeze({
-          authBindingId: input.originalAuthBindingId,
-          authContextRef: `better-auth-session:${input.originalSessionId}`,
-          authMethod: 'session' as const,
-          principalId: input.originalPrincipalId,
-          tenantId: input.tenantId,
-        }),
-        recordSupportImpersonationAction,
-      );
+      const authenticationNamespaceId = options.authenticationNamespaceId ?? record.authenticationNamespaceId;
+      const baseContext = Object.freeze({
+        authBindingId: AuthBindingIdSchema.make(input.originalAuthBindingId),
+        authContextRef: `better-auth-session:${input.originalSessionId}`,
+        authMethod: 'session' as const,
+        principalId: PrincipalIdSchema.make(input.originalPrincipalId),
+        tenantId: TenantIdSchema.make(input.tenantId),
+      });
+      const trustedContext =
+        authenticationNamespaceId === undefined
+          ? baseContext
+          : Object.freeze({
+              ...baseContext,
+              authenticationNamespaceId: AuthenticationNamespaceIdSchema.make(authenticationNamespaceId),
+            });
+      return trustSupportRecoveryPrincipalContext(trustedContext, recordSupportImpersonationAction);
     },
   ),
 });
 
 export const supportRecoveryPrincipalContextResolverFromRepository = (
   repository: SupportRecoveryPrincipalContextRecordReader<SupportRecoveryPrincipalContextRepositoryLoadResult>,
+  options: SupportRecoveryPrincipalContextResolverOptions = {},
 ): SupportRecoveryPrincipalContextResolverService =>
-  supportRecoveryPrincipalContextResolverFromEffectRecordReader(repository);
+  supportRecoveryPrincipalContextResolverFromEffectRecordReader(repository, options);
 
-export const makeSupportRecoveryPrincipalContextResolver = (database: {
-  readonly executor: Pick<CoreDatabaseExecutor, 'select'>;
-}): SupportRecoveryPrincipalContextResolverService =>
+export const makeSupportRecoveryPrincipalContextResolver = (
+  database: {
+    readonly executor: Pick<CoreDatabaseExecutor, 'select'>;
+  },
+  configuration: SupportRecoveryPrincipalContextResolverConfiguration,
+): SupportRecoveryPrincipalContextResolverService =>
   supportRecoveryPrincipalContextResolverFromEffectRecordReader(
-    supportRecoveryPrincipalContextRepositoryFromDatabase(database),
+    supportRecoveryPrincipalContextRepositoryFromDatabase(database, configuration),
+    configuration,
   );
 
 export class SupportRecoveryPrincipalContextResolver extends Context.Service<
@@ -195,7 +228,12 @@ export class SupportRecoveryPrincipalContextResolver extends Context.Service<
   SupportRecoveryPrincipalContextResolverService
 >()('@app/core-runtime/auth/support-recovery-principal-context/SupportRecoveryPrincipalContextResolver') {}
 
-export const SupportRecoveryPrincipalContextResolverLive = Layer.effect(
-  SupportRecoveryPrincipalContextResolver,
-  CoreDatabase.pipe(Effect.map(makeSupportRecoveryPrincipalContextResolver)),
-);
+const supportRecoveryPrincipalContextResolverLive = (
+  configuration: SupportRecoveryPrincipalContextResolverConfiguration,
+) =>
+  Layer.effect(
+    SupportRecoveryPrincipalContextResolver,
+    CoreDatabase.pipe(Effect.map((database) => makeSupportRecoveryPrincipalContextResolver(database, configuration))),
+  );
+
+export { supportRecoveryPrincipalContextResolverLive as SupportRecoveryPrincipalContextResolverLive };

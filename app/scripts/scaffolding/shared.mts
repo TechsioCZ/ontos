@@ -4,7 +4,7 @@ import { Effect, FileSystem, Option, Path, Predicate, Result, Schema } from 'eff
 import { format } from 'oxfmt';
 import oxfmtConfig from '../../oxfmt.config.ts';
 
-import { ONTOS_MODULE_CONTRACT_SCHEMA_VERSION } from '../../packages/core-runtime/src/index.ts';
+import { ONTOS_MODULE_CONTRACT_SCHEMA_VERSION } from '../../packages/core-runtime/src/modules/manifest-constants.ts';
 import { scaffoldingRuntime } from '../scaffolding-runtime.mts';
 
 /* eslint-disable unicorn/prefer-number-coercion -- The schema version is parsed as a base-10 integer by contract. expires: 2026-12-31. */
@@ -153,11 +153,23 @@ export interface ExternalHttpAdapterScaffoldConfig {
   readonly vertical: string;
 }
 
-export interface OutboxScaffoldConfig {
+interface VerticalOutboxScaffoldConfig {
   readonly action: string;
+  readonly module?: never;
+  readonly scope?: never;
   readonly topic: string;
   readonly vertical: string;
 }
+
+interface CoreOutboxScaffoldConfig {
+  readonly action: string;
+  readonly module: string;
+  readonly scope: 'core';
+  readonly topic: string;
+  readonly vertical?: never;
+}
+
+export type OutboxScaffoldConfig = CoreOutboxScaffoldConfig | VerticalOutboxScaffoldConfig;
 
 export interface OutboxWorkerScaffoldConfig {
   readonly authorization: 'owner_local_background';

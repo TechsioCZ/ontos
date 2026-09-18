@@ -1,6 +1,7 @@
 import { createHash } from 'node:crypto';
 
 import {
+  EXTERNAL_GATEWAY_ASSERTION_VERSION,
   GATEWAY_ASSERTION_TTL_SECONDS,
   GATEWAY_ASSERTION_VERSION,
   GatewayTrustedPrincipalContextSchema,
@@ -131,6 +132,8 @@ const gatewayCrypto = Crypto.make({
   randomBytes: (size) => globalThis.crypto.getRandomValues(new Uint8Array(size)),
 });
 
+export const ShellCryptoLive = Layer.succeed(Crypto.Crypto, gatewayCrypto);
+
 const gatewayIssuerLiveOptions: GatewayIssuerLayerOptions = {
   currentTimeSeconds: Clock.currentTimeMillis.pipe(Effect.map((milliseconds) => Math.floor(milliseconds / 1000))),
   generateJti: gatewayCrypto.randomUUIDv4.pipe(Effect.mapError((failureCause) => unavailable('signing', failureCause))),
@@ -216,7 +219,10 @@ const makeGatewayIssuer = Effect.fn('GatewayIssuer.make')(function* gatewayIssue
     };
     const signer = new SignJWT({
       principal,
-      ver: GATEWAY_ASSERTION_VERSION,
+      ver:
+        principal.authenticationNamespaceId === undefined
+          ? GATEWAY_ASSERTION_VERSION
+          : EXTERNAL_GATEWAY_ASSERTION_VERSION,
     })
       .setProtectedHeader({
         alg: 'EdDSA',

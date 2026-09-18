@@ -7,6 +7,10 @@ import {
 import type { MicroVerticalOperationContext } from '@modern-js/bff-effect/microvertical-api';
 // oxlint-disable-next-line typescript/consistent-type-imports -- The framework baseline requires Schema in the exact value import.
 import { HttpApi, HttpApiEndpoint, HttpApiGroup, Schema } from '@modern-js/bff-effect/effect-client';
+import { CommercePortalAuthMfaApi } from './portal-auth/mfa-api.ts';
+import { CommercePortalAuthRecoveryApi } from './portal-auth/recovery-api.ts';
+import { CommercePortalAuthSessionApi } from './portal-auth/session-api.ts';
+import { CommercePortalAuthStepUpApi } from './portal-auth/step-up-api.ts';
 
 // <generated-governed-http-api-imports>
 import { AddSavedAddressActionApi } from './apis/add-saved-address-action.ts';
@@ -23,6 +27,7 @@ import { ChangeCustomerPaymentTermsActionApi } from './apis/change-customer-paym
 import { ChangePrincipalPurchaseLimitOverrideActionApi } from './apis/change-principal-purchase-limit-override-action.ts';
 import { ChangeRetailPaymentTermPreferenceActionApi } from './apis/change-retail-payment-term-preference-action.ts';
 import { ClaimCounterpartyAccessInvitationActionApi } from './apis/claim-counterparty-access-invitation-action.ts';
+import { ClaimPortalEnrollmentTransitionActionApi } from './apis/claim-portal-enrollment-transition-action.ts';
 import { ClearDefaultBillingAddressActionApi } from './apis/clear-default-billing-address-action.ts';
 import { ClearDefaultDeliveryDestinationActionApi } from './apis/clear-default-delivery-destination-action.ts';
 import { ConsumePurchaseApprovalActionApi } from './apis/consume-purchase-approval-action.ts';
@@ -69,6 +74,7 @@ import { PurchaseLimitEvaluationApi } from './apis/purchase-limit-evaluation.ts'
 import { PurchaseLimitPolicyReadApi } from './apis/purchase-limit-policy-read.ts';
 import { ReactivateCustomerGroupActionApi } from './apis/reactivate-customer-group-action.ts';
 import { ReactivateCustomerProfileActionApi } from './apis/reactivate-customer-profile-action.ts';
+import { RecordPortalEnrollmentOutcomeActionApi } from './apis/record-portal-enrollment-outcome-action.ts';
 import { RecoverRetailPortalProfileBindingActionApi } from './apis/recover-retail-portal-profile-binding-action.ts';
 import { RemoveCounterpartyPriceGroupActionApi } from './apis/remove-counterparty-price-group-action.ts';
 import { RemoveCustomerGroupActionApi } from './apis/remove-customer-group-action.ts';
@@ -96,8 +102,10 @@ import { SavedAddressDetailApi } from './apis/saved-address-detail.ts';
 import { SavedAddressListApi } from './apis/saved-address-list.ts';
 import { SetDefaultBillingAddressActionApi } from './apis/set-default-billing-address-action.ts';
 import { SetDefaultDeliveryDestinationActionApi } from './apis/set-default-delivery-destination-action.ts';
+import { StartPortalEnrollmentActionApi } from './apis/start-portal-enrollment-action.ts';
 import { SubmitPurchaseApprovalRequestActionApi } from './apis/submit-purchase-approval-request-action.ts';
 import { SuspendCustomerProfileActionApi } from './apis/suspend-customer-profile-action.ts';
+import { TerminatePortalEnrollmentActionApi } from './apis/terminate-portal-enrollment-action.ts';
 import { TriggerPurchaseApprovalActionApi } from './apis/trigger-purchase-approval-action.ts';
 import { UpdateCustomerGroupActionApi } from './apis/update-customer-group-action.ts';
 import { UpdateSavedAddressActionApi } from './apis/update-saved-address-action.ts';
@@ -124,6 +132,10 @@ export * from './apis/payment-term-affected-use-assessment.ts';
 
 export const commerceCustomerContextApi = HttpApi.make('CommerceCustomerContextApi')
   .addHttpApi(commerceCustomerContextFoundationApi)
+  .addHttpApi(CommercePortalAuthSessionApi)
+  .addHttpApi(CommercePortalAuthMfaApi)
+  .addHttpApi(CommercePortalAuthRecoveryApi)
+  .addHttpApi(CommercePortalAuthStepUpApi)
   // <generated-governed-http-api-additions>
   .addHttpApi(AddSavedAddressActionApi)
   .addHttpApi(ArchiveCustomerGroupActionApi)
@@ -139,6 +151,7 @@ export const commerceCustomerContextApi = HttpApi.make('CommerceCustomerContextA
   .addHttpApi(ChangePrincipalPurchaseLimitOverrideActionApi)
   .addHttpApi(ChangeRetailPaymentTermPreferenceActionApi)
   .addHttpApi(ClaimCounterpartyAccessInvitationActionApi)
+  .addHttpApi(ClaimPortalEnrollmentTransitionActionApi)
   .addHttpApi(ClearDefaultBillingAddressActionApi)
   .addHttpApi(ClearDefaultDeliveryDestinationActionApi)
   .addHttpApi(ConsumePurchaseApprovalActionApi)
@@ -185,6 +198,7 @@ export const commerceCustomerContextApi = HttpApi.make('CommerceCustomerContextA
   .addHttpApi(PurchaseLimitPolicyReadApi)
   .addHttpApi(ReactivateCustomerGroupActionApi)
   .addHttpApi(ReactivateCustomerProfileActionApi)
+  .addHttpApi(RecordPortalEnrollmentOutcomeActionApi)
   .addHttpApi(RecoverRetailPortalProfileBindingActionApi)
   .addHttpApi(RemoveCounterpartyPriceGroupActionApi)
   .addHttpApi(RemoveCustomerGroupActionApi)
@@ -212,8 +226,10 @@ export const commerceCustomerContextApi = HttpApi.make('CommerceCustomerContextA
   .addHttpApi(SavedAddressListApi)
   .addHttpApi(SetDefaultBillingAddressActionApi)
   .addHttpApi(SetDefaultDeliveryDestinationActionApi)
+  .addHttpApi(StartPortalEnrollmentActionApi)
   .addHttpApi(SubmitPurchaseApprovalRequestActionApi)
   .addHttpApi(SuspendCustomerProfileActionApi)
+  .addHttpApi(TerminatePortalEnrollmentActionApi)
   .addHttpApi(TriggerPurchaseApprovalActionApi)
   .addHttpApi(UpdateCustomerGroupActionApi)
   .addHttpApi(UpdateSavedAddressActionApi)

@@ -135,15 +135,36 @@ const actionErrors = [
   RemoveSavedAddressActionInternalProblemSchema,
 ] as const;
 
-export const RemoveSavedAddressActionApi = HttpApi.make('RemoveSavedAddressActionApi').add(
-  HttpApiGroup.make('removeSavedAddressAction')
-    .add(
-      HttpApiEndpoint.post('execute', '/commerce-customer-context/actions/remove-saved-address', {
-        error: actionErrors,
-        headers: RemoveSavedAddressActionHeadersSchema,
-        payload: Schema.toEncoded(RemoveSavedAddressPayloadSchema),
-        success: RemoveSavedAddressResultSchema,
-      }),
-    )
-    .middleware(RemoveSavedAddressActionSchemaErrorMiddleware),
-);
+/**
+ * The endpoint chain stays a `const`. The MicroVertical API boundary checker walks a root API's
+ * operands through const bindings only, so a class declaration hides the composed endpoints from
+ * it. The exported group is annotated with a named type alias so its type still has a name: the
+ * vertical's `shared/api.ts` merges every group type into one `HttpApi` and declaration emit
+ * serializes that union verbatim, so an anonymous group type pushes the composed contract past
+ * the compiler's serialization limit (TS7056).
+ *
+ * Exported only so the named contract type can reference it; the merged vertical HttpApi prints
+ * this group by name (declaration-emit size).
+ *
+ * @public
+ */
+export const removeSavedAddressActionGroupDefinition = HttpApiGroup.make('removeSavedAddressAction')
+  .add(
+    HttpApiEndpoint.post('execute', '/commerce-customer-context/actions/remove-saved-address', {
+      error: actionErrors,
+      headers: RemoveSavedAddressActionHeadersSchema,
+      payload: Schema.toEncoded(RemoveSavedAddressPayloadSchema),
+      success: RemoveSavedAddressResultSchema,
+    }),
+  )
+  .middleware(RemoveSavedAddressActionSchemaErrorMiddleware);
+
+export type RemoveSavedAddressActionGroupContract = HttpApiGroup.HttpApiGroup<
+  'removeSavedAddressAction',
+  HttpApiGroup.Endpoints<typeof removeSavedAddressActionGroupDefinition>
+>;
+
+const RemoveSavedAddressActionGroup: RemoveSavedAddressActionGroupContract = removeSavedAddressActionGroupDefinition;
+
+export const RemoveSavedAddressActionApi =
+  HttpApi.make('RemoveSavedAddressActionApi').add(RemoveSavedAddressActionGroup);

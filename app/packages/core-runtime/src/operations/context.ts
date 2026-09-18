@@ -1,8 +1,17 @@
+import { randomUUID } from 'node:crypto';
+
 import { and, eq } from 'drizzle-orm';
 import { alias } from 'drizzle-orm/pg-core';
-import { Context, Effect, Layer } from 'effect';
+import { Context, Effect, Layer, Option } from 'effect';
 
 import type { TrustedPrincipalContext } from '../actions/principal-context.ts';
+import {
+  AuthBindingIdSchema,
+  AuthenticationNamespaceIdSchema,
+  PrincipalIdSchema,
+  TenantIdSchema,
+} from '../auth/external-identity-contracts.ts';
+import { assertAuthenticationAdmission, AuthenticationNamespaceRegistry } from '../auth/external-identity/verifier.ts';
 import {
   isTrustedSupportRecoveryPrincipalContext,
   isTrustedSystemPrincipalContext,
@@ -22,6 +31,8 @@ import {
 } from './errors.ts';
 import type { OperationalScopeRepository, PersistedScopeRecord } from './repository-context.ts';
 import { OperationalScopeRepositoryContext } from './repository-context.ts';
+import { ExternalOperationAuthentication } from './external-authentication.ts';
+import type { ExternalOperationAuthenticationRequest } from './external-authentication.ts';
 
 export type { OperationalScopeRepository } from './repository-context.ts';
 
@@ -37,6 +48,8 @@ export const LEGAL_ENTITY_SCOPES = ['required', 'optional', 'forbidden'] as cons
 export type LegalEntityScope = (typeof LEGAL_ENTITY_SCOPES)[number];
 
 export interface OperationalScopeRequest {
+  /** Receiver audience used to bind an external admission to this call. */
+  readonly audience?: string;
   readonly correlationId: string;
   readonly traceId?: string;
 }
@@ -82,9 +95,12 @@ export const makeOperationalScopeRepository = (database: {
       const impersonators = alias(principals, 'impersonators');
       return database.executor
         .select({
+          bindingAuthenticationNamespaceId: principalAuthBindings.authenticationNamespaceId,
           bindingPrincipalId: principalAuthBindings.principalId,
+          bindingRevision: principalAuthBindings.bindingRevision,
           bindingRevokedAt: principalAuthBindings.revokedAt,
           bindingStatus: principalAuthBindings.status,
+          bindingSubjectType: principalAuthBindings.subjectType,
           bindingTenantId: principalAuthBindings.tenantId,
           impersonatorStatus: impersonators.status,
           impersonatorTenantId: impersonators.tenantId,
@@ -133,9 +149,12 @@ export const makeOperationalScopeRepository = (database: {
       Effect.map(
         ([record]) =>
           record ?? {
+            bindingAuthenticationNamespaceId: null,
             bindingPrincipalId: null,
+            bindingRevision: null,
             bindingRevokedAt: null,
             bindingStatus: null,
+            bindingSubjectType: null,
             bindingTenantId: null,
             impersonatorStatus: null,
             impersonatorTenantId: null,
@@ -191,10 +210,28 @@ const hasInvalidPersistedBinding = (
   principal: TrustedPrincipalContext,
   persisted: PersistedScopeRecord,
   supportRecovery: boolean,
-): boolean =>
-  persisted.bindingTenantId !== principal.tenantId ||
-  persisted.bindingPrincipalId !== principal.principalId ||
-  (!supportRecovery && (persisted.bindingStatus !== 'active' || persisted.bindingRevokedAt !== null));
+): boolean => {
+  const namespaceMismatch =
+    principal.authenticationNamespaceId === undefined
+      ? persisted.bindingAuthenticationNamespaceId !== null
+      : persisted.bindingAuthenticationNamespaceId !== principal.authenticationNamespaceId;
+  return (
+    persisted.bindingTenantId !== principal.tenantId ||
+    persisted.bindingPrincipalId !== principal.principalId ||
+    namespaceMismatch ||
+    (!supportRecovery && (persisted.bindingStatus !== 'active' || persisted.bindingRevokedAt !== null))
+  );
+};
+
+const subjectTypeForPrincipal = (principal: TrustedPrincipalContext): 'user' | 'api_key' | undefined => {
+  if (principal.authMethod === 'api_key') {
+    return 'api_key';
+  }
+  if (principal.authMethod === 'session' || principal.authMethod === 'support_impersonation') {
+    return 'user';
+  }
+  return undefined;
+};
 
 const validatePersistedPrincipal = (
   principal: TrustedPrincipalContext,
@@ -215,6 +252,18 @@ const validatePersistedPrincipal = (
     return new OperationAuthenticationRequired({
       code: 'operation_authentication_required',
       reason: 'The authenticated principal binding is no longer valid',
+    });
+  }
+  const expectedSubjectType = subjectTypeForPrincipal(principal);
+  if (
+    expectedSubjectType !== undefined &&
+    persisted.bindingSubjectType !== null &&
+    persisted.bindingSubjectType !== undefined &&
+    persisted.bindingSubjectType !== expectedSubjectType
+  ) {
+    return new OperationAuthenticationRequired({
+      code: 'operation_authentication_required',
+      reason: 'The authenticated principal subject type is not valid',
     });
   }
   return undefined;
@@ -308,6 +357,98 @@ export const makeOperationalScopeResolver = (
   repository: Pick<OperationalScopeRepository, 'load'>,
   contextAccess: LegalEntityScopeAccess,
 ): OperationalScopeResolverService => {
+  const prepareExternalAdmission = Effect.fn('OperationalScopeResolver.prepareExternalAdmission')(
+    function* prepareExternalAdmissionEffect(input: ResolveOperationalScopeInput) {
+      const { principal } = input;
+      const namespaceId = principal.authenticationNamespaceId;
+      if (namespaceId === undefined) {
+        return Option.none();
+      }
+      // Core's principal-context id fields are plain strings on the decoded side
+      // (decodedStringBrand); brand at the seam before crossing into the external-identity contract.
+      const authenticationNamespaceId = AuthenticationNamespaceIdSchema.make(namespaceId);
+      const { authBindingId: plainAuthBindingId, authContextRef } = principal;
+      if (plainAuthBindingId === undefined) {
+        return yield* new OperationAuthenticationRequired({
+          code: 'operation_authentication_required',
+          reason: 'The authenticated principal binding is unavailable',
+        });
+      }
+      const authBindingId = AuthBindingIdSchema.make(plainAuthBindingId);
+      if (authContextRef === undefined) {
+        return yield* new OperationAuthenticationRequired({
+          code: 'operation_authentication_required',
+          reason: 'The authenticated principal context reference is unavailable',
+        });
+      }
+
+      const registryOption = yield* Effect.serviceOption(AuthenticationNamespaceRegistry);
+      if (Option.isNone(registryOption)) {
+        return yield* operationContextUnavailable();
+      }
+      const registrationOption = yield* registryOption.value
+        .lookup(authenticationNamespaceId)
+        .pipe(Effect.mapError(operationContextUnavailable));
+      if (Option.isNone(registrationOption)) {
+        return yield* new OperationAuthenticationRequired({
+          code: 'operation_authentication_required',
+          reason: 'The authentication namespace is not registered',
+        });
+      }
+      const registration = registrationOption.value;
+      if (input.audience !== undefined && !registration.allowedAudiences.includes(input.audience)) {
+        return yield* new OperationAuthenticationRequired({
+          code: 'operation_authentication_required',
+          reason: 'The receiving audience is not registered for this namespace',
+        });
+      }
+      const subjectType = subjectTypeForPrincipal(principal);
+      if (subjectType === undefined || !registration.subjectTypes.includes(subjectType)) {
+        return yield* new OperationAuthenticationRequired({
+          code: 'operation_authentication_required',
+          reason: 'The authentication subject type is not registered for this namespace',
+        });
+      }
+      if (!registration.requiresOperationAdmission) {
+        return Option.none();
+      }
+      if (input.audience === undefined || input.audience.length === 0) {
+        return yield* new OperationAuthenticationRequired({
+          code: 'operation_authentication_required',
+          reason: 'The receiving audience is required for external admission',
+        });
+      }
+      const authenticationOption = yield* Effect.serviceOption(ExternalOperationAuthentication);
+      if (Option.isNone(authenticationOption)) {
+        return yield* operationContextUnavailable();
+      }
+      const operationRef = yield* Effect.sync(randomUUID).pipe(Effect.mapError(operationContextUnavailable));
+      const nonce = yield* Effect.sync(randomUUID).pipe(Effect.mapError(operationContextUnavailable));
+      const request: ExternalOperationAuthenticationRequest = {
+        audience: input.audience,
+        authBindingId,
+        authContextRef,
+        authenticationNamespaceId,
+        nonce,
+        operationRef,
+        principal,
+        principalId: PrincipalIdSchema.make(principal.principalId),
+        subjectType,
+        tenantId: TenantIdSchema.make(principal.tenantId),
+      };
+      const admission = yield* authenticationOption.value.verify(request);
+      return Option.some({
+        admission,
+        audience: input.audience,
+        authBindingId,
+        authContextRef,
+        authenticationNamespaceId,
+        nonce,
+        operationRef,
+      });
+    },
+  );
+
   const resolveOperationalScope = Effect.fn('OperationalScopeResolver.resolve')(function* resolveOperationalScopeEffect(
     input: ResolveOperationalScopeInput,
   ) {
@@ -317,11 +458,40 @@ export const makeOperationalScopeResolver = (
       return yield* requestFailure;
     }
 
+    const externalAdmission = yield* prepareExternalAdmission(input);
+
+    // P must complete before C so provider HTTP never shares the Core load's transaction.
+    // oxlint-disable-next-line effect-native/no-sequential-independent-yields -- Admission ordering is the security contract.
     const persisted = yield* repository.load(principal);
     const supportRecovery = isTrustedSupportRecoveryPrincipalContext(principal);
     const persistedFailure = validatePersistedPrincipal(principal, persisted, supportRecovery);
     if (persistedFailure !== undefined) {
       return yield* persistedFailure;
+    }
+
+    if (Option.isSome(externalAdmission)) {
+      if (persisted.bindingRevision === null || persisted.bindingRevision === undefined) {
+        return yield* operationContextUnavailable();
+      }
+      yield* assertAuthenticationAdmission(externalAdmission.value.admission, {
+        audience: externalAdmission.value.audience,
+        authBindingId: externalAdmission.value.authBindingId,
+        authContextRef: externalAdmission.value.authContextRef,
+        authenticationNamespaceId: externalAdmission.value.authenticationNamespaceId,
+        bindingRevision: persisted.bindingRevision,
+        nonce: externalAdmission.value.nonce,
+        operationRef: externalAdmission.value.operationRef,
+        principalId: PrincipalIdSchema.make(principal.principalId),
+        tenantId: TenantIdSchema.make(principal.tenantId),
+      }).pipe(
+        Effect.mapError((cause) => {
+          const failure = new OperationAuthenticationRequired({
+            code: 'operation_authentication_required',
+            reason: 'The authentication admission does not match current Core identity',
+          });
+          return Object.defineProperty(failure, 'cause', { configurable: true, value: cause });
+        }),
+      );
     }
 
     yield* validateSupportImpersonation(contextAccess, principal, persisted);

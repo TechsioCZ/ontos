@@ -10,6 +10,7 @@ import { FetchHttpClient, HttpClient, HttpClientResponse } from 'effect/unstable
 import { SignJWT, exportJWK, generateKeyPair } from 'jose';
 import { Pool } from 'pg';
 
+import { EXTERNAL_GATEWAY_ASSERTION_VERSION } from '@app/shared-contracts';
 import { makeTestDatabaseFromPool } from '../../../../packages/core-runtime/tests/support/database.ts';
 import { aresLookupReadApiLive } from '../../api/ares-lookup-read-server.ts';
 import { ActionPrincipalVerifierLive } from '../../api/auth/action-principal.ts';
@@ -63,6 +64,7 @@ const subjectEvidence = [
     statement: 'Reviewed a concrete external organization in its document',
   },
 ];
+const testAuthenticationNamespaceId = 'test.party.better-auth.v1';
 const rawSubject = {
   datumAktualizace: '2026-09-01',
   datumVzniku: '2020-01-01',
@@ -98,6 +100,7 @@ it.live(
             resolveDuplicateCandidateCreateAction,
             updatePartyAction,
           ].map(({ descriptor }) => descriptor.actionKey),
+          authenticationNamespaceId: testAuthenticationNamespaceId,
           runtimeConnectionString: Redacted.make(connections.runtime.connectionString),
         }).pipe(Effect.orDie),
         (resource) => resource.close().pipe(Effect.orDie),
@@ -118,7 +121,7 @@ it.live(
       });
       const sign = (principal: typeof fixture.manager) =>
         Effect.promise(() =>
-          new SignJWT({ principal, ver: 1 })
+          new SignJWT({ principal, ver: EXTERNAL_GATEWAY_ASSERTION_VERSION })
             .setProtectedHeader({ alg: 'EdDSA', kid, typ: 'JWT' })
             .setIssuer(issuer)
             .setAudience('party-registry')

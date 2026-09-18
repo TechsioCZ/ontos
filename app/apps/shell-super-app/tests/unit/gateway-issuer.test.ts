@@ -1,8 +1,20 @@
-import { Effect, Exit, Fiber, Predicate } from 'effect';
+import { ConfigProvider, Effect, Exit, Fiber, Predicate, Redacted, Schema } from 'effect';
 import { expect, rs, it } from 'effect-rstest';
 import { TestClock } from 'effect/testing';
 import { decodeJwt, decodeProtectedHeader, exportJWK, generateKeyPair, jwtVerify } from 'jose';
+import {
+  EXTERNAL_GATEWAY_ASSERTION_VERSION,
+  GatewayContextClaimsSchema,
+  GatewayContextV2ClaimsSchema,
+} from '@app/shared-contracts';
 
+import type { GatewayAssertionRedemption } from '../../../../packages/core-runtime/src/auth/gateway-assertion-redemption.ts';
+import {
+  ActionPrincipalInvalidErrorSchema,
+  ActionPrincipalScopeErrorSchema,
+  bindGatewayPrincipalVerifier,
+  makeGatewayPrincipalVerifierLayer,
+} from '../../../../packages/gateway-principal-verifier/src/server.ts';
 import { parseGatewayIssuerConfig } from '../../api/auth/gateway-issuer-config.ts';
 import type { GatewayIssuerConfigValue } from '../../api/auth/gateway-issuer-config.ts';
 import { GatewayIssuer, issueGatewayContextAssertion, makeGatewayIssuerLayer } from '../../api/auth/gateway-issuer.ts';
@@ -25,6 +37,10 @@ const principal = {
   legalEntityId: '30000000-0000-4000-8000-000000000001',
   principalId: '40000000-0000-4000-8000-000000000001',
   tenantId: '50000000-0000-4000-8000-000000000001',
+};
+const namespacedPrincipal = {
+  ...principal,
+  authenticationNamespaceId: 'test.staff.better-auth.v1',
 };
 
 const makeConfiguration = (): Effect.Effect<{
@@ -127,6 +143,8 @@ it.effect('memoises configuration within the refresh window and issues signed as
       sub: principal.principalId,
       ver: 1,
     });
+    const legacyClaims = Schema.decodeUnknownSync(GatewayContextClaimsSchema)(claims);
+    expect(legacyClaims.principal.authenticationNamespaceId).toBeUndefined();
     expect(verified.payload['principal']).toEqual(principal);
     expect(JSON.stringify(claims)).not.toMatch(
       /email|displayName|credential|cookie|sessionToken|actionKey|permission|policy|businessPayload/u,
@@ -182,6 +200,146 @@ it.effect('shares cached configuration across concurrent valid issuances', () =>
       ),
       { concurrency: 'unbounded' },
     );
+  }),
+);
+
+it.effect('issues and verifies v2 assertions for namespaced principals', () =>
+  Effect.gen(function* testProgramNamespacedPrincipal() {
+    const { configuration, publicKey } = yield* makeConfiguration();
+    const layer = makeGatewayIssuerLayer(dependencies(configuration));
+    const [legacyResult, result] = yield* Effect.all([
+      issueGatewayContextAssertion({
+        audience: 'property-registry',
+        principal,
+      }),
+      issueGatewayContextAssertion({
+        audience: 'property-registry',
+        principal: namespacedPrincipal,
+      }),
+    ]).pipe(Effect.provide(layer));
+    const verified = yield* Effect.promise(() =>
+      jwtVerify(result.token, publicKey, {
+        algorithms: ['EdDSA'],
+        audience: 'property-registry',
+        currentDate: new Date(1_700_000_001_000),
+        issuer,
+      }),
+    );
+    const claims = Schema.decodeUnknownSync(GatewayContextV2ClaimsSchema)(verified.payload);
+
+    expect(claims.ver).toBe(EXTERNAL_GATEWAY_ASSERTION_VERSION);
+    expect(claims.principal).toEqual(namespacedPrincipal);
+    expect(claims.sub).toBe(namespacedPrincipal.principalId);
+
+    const receiverEnvironment = {
+      ONTOS_GATEWAY_ISSUER: issuer,
+      ONTOS_GATEWAY_PUBLIC_JWKS: JSON.stringify({
+        keys: [
+          {
+            alg: configuration.privateJwk.alg,
+            crv: configuration.privateJwk.crv,
+            kid: configuration.privateJwk.kid,
+            kty: configuration.privateJwk.kty,
+            use: configuration.privateJwk.use,
+            x: configuration.privateJwk.x,
+          },
+        ],
+      }),
+    } as const;
+    const receiver = bindGatewayPrincipalVerifier('property-registry');
+    const receiverLayer = makeGatewayPrincipalVerifierLayer(ConfigProvider.fromUnknown(receiverEnvironment));
+    const mappedLegacy = yield* receiver
+      .verify(Redacted.make(`Bearer ${legacyResult.token}`), {
+        currentTimeSeconds: Effect.succeed(1_700_000_001),
+      })
+      .pipe(
+        Effect.provide(
+          makeGatewayPrincipalVerifierLayer(ConfigProvider.fromUnknown(receiverEnvironment), {
+            legacyNamespaceMapping: {
+              authenticationNamespaceId: namespacedPrincipal.authenticationNamespaceId,
+              issuer,
+            },
+          }),
+        ),
+      );
+    expect(mappedLegacy).toEqual({
+      ...principal,
+      authenticationNamespaceId: namespacedPrincipal.authenticationNamespaceId,
+    });
+    expect(mappedLegacy.tenantId).toBe(principal.tenantId);
+
+    const verifiedByReceiver = yield* receiver
+      .verify(Redacted.make(`Bearer ${result.token}`), {
+        currentTimeSeconds: Effect.succeed(1_700_000_001),
+      })
+      .pipe(Effect.provide(receiverLayer));
+    expect(verifiedByReceiver).toEqual(namespacedPrincipal);
+    expect(verifiedByReceiver.tenantId).toBe(namespacedPrincipal.tenantId);
+
+    const wrongAudienceFailure = yield* Effect.flip(
+      bindGatewayPrincipalVerifier('billing')
+        .verify(Redacted.make(`Bearer ${result.token}`), {
+          currentTimeSeconds: Effect.succeed(1_700_000_001),
+        })
+        .pipe(Effect.provide(receiverLayer)),
+    );
+    expect(Schema.is(ActionPrincipalScopeErrorSchema)(wrongAudienceFailure)).toBe(true);
+
+    const wrongIssuerFailure = yield* Effect.flip(
+      receiver
+        .verify(Redacted.make(`Bearer ${result.token}`), {
+          currentTimeSeconds: Effect.succeed(1_700_000_001),
+        })
+        .pipe(
+          Effect.provide(
+            makeGatewayPrincipalVerifierLayer(
+              ConfigProvider.fromUnknown({
+                ...receiverEnvironment,
+                ONTOS_GATEWAY_ISSUER: 'https://other-shell.example.test',
+              }),
+            ),
+          ),
+        ),
+    );
+    expect(Schema.is(ActionPrincipalScopeErrorSchema)(wrongIssuerFailure)).toBe(true);
+
+    const tokenParts = result.token.split('.');
+    const signature = tokenParts[2] ?? '';
+    const tamperedToken = [
+      tokenParts[0],
+      tokenParts[1],
+      `${signature.startsWith('A') ? 'B' : 'A'}${signature.slice(1)}`,
+    ].join('.');
+    const tamperedFailure = yield* Effect.flip(
+      receiver
+        .verify(Redacted.make(`Bearer ${tamperedToken}`), {
+          currentTimeSeconds: Effect.succeed(1_700_000_001),
+        })
+        .pipe(Effect.provide(receiverLayer)),
+    );
+    expect(Schema.is(ActionPrincipalInvalidErrorSchema)(tamperedFailure)).toBe(true);
+
+    const redemptionInputs: Parameters<GatewayAssertionRedemption['consume']>[0][] = [];
+    const redemption: GatewayAssertionRedemption = {
+      consume: (input) =>
+        Effect.sync(() => {
+          redemptionInputs.push(input);
+        }),
+    };
+    const redeemed = yield* receiver
+      .verifyAndRedeem(Redacted.make(`Bearer ${result.token}`), {
+        currentTimeSeconds: Effect.succeed(1_700_000_001),
+        redemption,
+      })
+      .pipe(Effect.provide(receiverLayer));
+    expect(redeemed).toEqual(namespacedPrincipal);
+    expect(redemptionInputs).toHaveLength(1);
+    expect(redemptionInputs[0]).toEqual({
+      audience: 'property-registry',
+      expiresAtEpochSeconds: 1_700_000_300,
+      issuer,
+      jti: '60000000-0000-4000-8000-000000000001',
+    });
   }),
 );
 

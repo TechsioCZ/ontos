@@ -831,6 +831,8 @@ const readRuntimeFromDependencies = <
       readonly _tag: string;
     }>,
   >(input: {
+    /** Trusted receiving deployment audience for per-operation admission. */
+    readonly audience?: string;
     readonly input: unknown;
     readonly principal: unknown;
     readonly registration: ReadRegistration<
@@ -893,14 +895,20 @@ const readRuntimeFromDependencies = <
     stage('input_decoded');
     const scope = yield* scopeResolver.resolve(
       withOptionalProperty(
-        {
-          correlationId: transport.correlationId,
-          legalEntityScope: input.registration.descriptor.legalEntityScope,
-          principal,
-        },
-        transport.traceId !== undefined,
-        'traceId',
-        transport.traceId,
+        withOptionalProperty(
+          {
+            correlationId: transport.correlationId,
+            legalEntityScope: input.registration.descriptor.legalEntityScope,
+            principal,
+          },
+          transport.traceId !== undefined,
+          'traceId',
+          transport.traceId,
+          {},
+        ),
+        input.audience !== undefined,
+        'audience',
+        input.audience,
         {},
       ),
     );

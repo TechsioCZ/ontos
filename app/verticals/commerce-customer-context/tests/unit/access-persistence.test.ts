@@ -1,5 +1,11 @@
-import type { OutboxWorkerLegalEntityScope } from '@app/core-runtime';
+import type { OperationalScope, OutboxWorkerLegalEntityScope } from '@app/core-runtime';
 import { ScopedRoutineInvocationError } from '@app/core-runtime';
+import {
+  AuthBindingIdSchema,
+  PrincipalIdSchema,
+  TenantIdSchema,
+} from '@app/core-runtime/auth/external-identity-contracts';
+import { TrustedPrincipalContextSchema } from '@app/core-runtime/actions/principal-context';
 import { readFile } from 'node:fs/promises';
 import { Effect, Option, Schema } from 'effect';
 import { expect, it } from 'effect-rstest';
@@ -21,9 +27,9 @@ import type {
   CounterpartyAccessPersistenceContext,
 } from '../../src/persistence/access-persistence.ts';
 
-const tenantId = '20000000-0000-4000-8000-000000000001';
+const tenantId = Schema.decodeSync(TenantIdSchema)('20000000-0000-4000-8000-000000000001');
 const legalEntityId = '30000000-0000-4000-8000-000000000001';
-const actorId = '40000000-0000-4000-8000-000000000001';
+const actorId = Schema.decodeSync(PrincipalIdSchema)('40000000-0000-4000-8000-000000000001');
 const recipientId = '50000000-0000-4000-8000-000000000001';
 const invitationId = '60000000-0000-4000-8000-000000000001';
 const grantId = '70000000-0000-4000-8000-000000000001';
@@ -32,23 +38,34 @@ const mutationId = '81000000-0000-4000-8000-000000000001';
 const claimMutationId = '82000000-0000-4000-8000-000000000001';
 const compensationMutationId = '83000000-0000-4000-8000-000000000001';
 const counterpartyId = 'counterparty-one';
+const ResourceIdSchema = Schema.String.pipe(Schema.brand('ResourceId'));
 
-const counterpartyRef = {
+const counterpartyRef = Schema.decodeUnknownSync(
+  Schema.Struct({
+    moduleId: Schema.Literal('party.registry'),
+    resourceId: ResourceIdSchema,
+    resourceType: Schema.Literal('party.registry.counterparty'),
+    tenantId: TenantIdSchema,
+  }),
+)({
   moduleId: 'party.registry',
   resourceId: counterpartyId,
   resourceType: 'party.registry.counterparty',
   tenantId,
-} as const;
+});
 const actor = { principalId: actorId, tenantId } as const;
 const recipient = { principalId: recipientId, tenantId } as const;
 const scope = Object.freeze({
-  authContextRef: 'better-auth-session:test',
-  authMethod: 'session',
+  ...Schema.decodeUnknownSync(TrustedPrincipalContextSchema)({
+    authBindingId: Schema.decodeSync(AuthBindingIdSchema)('41000000-0000-4000-8000-000000000001'),
+    authContextRef: 'better-auth-session:test',
+    authMethod: 'session',
+    principalId: actorId,
+    tenantId,
+  }),
   correlationId: 'correlation-one',
   legalEntityId,
-  principalId: actorId,
-  tenantId,
-} as const);
+}) satisfies OperationalScope & { readonly legalEntityId: string };
 
 // oxlint-disable-next-line effect-native/no-literal-union-type-alias -- This test-only row-fixture vocabulary mirrors private persistence output and has no runtime parsing boundary.
 type GrantState = 'ACTIVE' | 'PENDING_GRANT' | 'PENDING_REVOKE' | 'RECONCILIATION_REQUIRED' | 'REVOKED';
@@ -751,6 +768,34 @@ it.effect('worker claim authority includes owner-local pending revoke state', ()
     expect(result).toEqual({ outcome: 'COMPENSATED' });
     expect(coreChecks).toBe(0);
     expect(routineKeys).toContain('counterparty-access.lock-grant-authority');
+  }),
+);
+
+it.effect('rejects a malformed worker Tenant before invoking owner access routines', () =>
+  Effect.gen(function* rejectMalformedWorkerTenant() {
+    const routineKeys: string[] = [];
+    const transaction = invokerWith((routineKey) => {
+      routineKeys.push(routineKey);
+      return routineKey === 'counterparty-access.read-invitation-claim-reconciliation'
+        ? [claimReconciliationRow('RECONCILIATION_REQUIRED')]
+        : [grantRow('PENDING_REVOKE', 'PENDING_REVOKE')];
+    });
+    const service = accessAuthorizationMutationReconciliationForWorker(
+      {
+        businessPermissions: () =>
+          Effect.succeed([{ decision: 'allowed' as const, key: 'counterparty.access.manage' as const }]),
+      },
+      { mutate: () => Effect.die('must not mutate malformed worker scope') },
+      lockingCurrentOwnerAccessForTransaction,
+    );
+    const failure = yield* Effect.flip(
+      service.reconcile({ ...workerScope(transaction), tenantId: 'not-a-tenant' }, claimReconciliationRequest),
+    );
+
+    expect(failure.code).toBe('RECONCILIATION_UNAVAILABLE');
+    expect(failure.reason).toBe('The worker Tenant scope is malformed');
+    expect(Object.getOwnPropertyDescriptor(failure, 'cause')?.value).toBeDefined();
+    expect(routineKeys).toEqual(['counterparty-access.read-invitation-claim-reconciliation']);
   }),
 );
 

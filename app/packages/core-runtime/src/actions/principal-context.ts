@@ -4,18 +4,23 @@ import { decodedStringBrand, nonEmptyString } from './string-schemas.ts';
 
 const uuid = Schema.String.check(Schema.isUUID());
 const AuthBindingIdSchema = decodedStringBrand(uuid, 'AuthBindingId');
+const AuthenticationNamespaceIdSchema = decodedStringBrand(
+  Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(200), Schema.isTrimmed()),
+  'AuthenticationNamespaceId',
+);
 const ImpersonatedByPrincipalIdSchema = decodedStringBrand(uuid, 'ImpersonatedByPrincipalId');
 const LegalEntityIdSchema = decodedStringBrand(uuid, 'LegalEntityId');
 const PrincipalIdSchema = decodedStringBrand(uuid, 'PrincipalId');
+const TenantIdSchema = decodedStringBrand(uuid, 'TenantId');
 const TrustedStorefrontIdSchema = decodedStringBrand(
   Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(300)),
   'TrustedStorefrontId',
 );
-const TenantIdSchema = decodedStringBrand(uuid, 'TenantId');
 
 const TrustedPrincipalContextFieldsSchema = Schema.Struct({
   authBindingId: Schema.optionalKey(AuthBindingIdSchema),
-  authContextRef: Schema.optionalKey(nonEmptyString),
+  authContextRef: Schema.optionalKey(nonEmptyString.check(Schema.isMaxLength(500))),
+  authenticationNamespaceId: Schema.optionalKey(AuthenticationNamespaceIdSchema),
   authMethod: Schema.Literals(['session', 'api_key', 'system', 'support_impersonation']),
   impersonatedByPrincipalId: Schema.optionalKey(ImpersonatedByPrincipalIdSchema),
   legalEntityId: Schema.optionalKey(LegalEntityIdSchema),
@@ -31,21 +36,21 @@ const issue = (message: string): readonly Schema.FilterIssue[] => [{ issue: mess
 
 const validateApiKeyContext: PrincipalContextValidator = (context) =>
   context.authBindingId === undefined ||
-  context.authContextRef?.startsWith('better-auth-api-key:') !== true ||
+  context.authContextRef === undefined ||
   context.impersonatedByPrincipalId !== undefined
     ? issue('api_key context requires a binding and safe key reference')
     : [];
 
 const validateSessionContext: PrincipalContextValidator = (context) =>
   context.authBindingId === undefined ||
-  context.authContextRef?.startsWith('better-auth-session:') !== true ||
+  context.authContextRef === undefined ||
   context.impersonatedByPrincipalId !== undefined
     ? issue('session context requires a binding and safe session reference')
     : [];
 
 const validateSupportImpersonationContext: PrincipalContextValidator = (context) =>
   context.authBindingId === undefined ||
-  context.authContextRef?.startsWith('better-auth-session:') !== true ||
+  context.authContextRef === undefined ||
   context.impersonatedByPrincipalId === undefined ||
   context.impersonatedByPrincipalId === context.principalId
     ? issue('support impersonation requires distinct effective and original principals')
@@ -53,6 +58,7 @@ const validateSupportImpersonationContext: PrincipalContextValidator = (context)
 
 const validateSystemContext: PrincipalContextValidator = (context) =>
   context.authBindingId !== undefined ||
+  context.authenticationNamespaceId !== undefined ||
   context.impersonatedByPrincipalId !== undefined ||
   context.legalEntityId !== undefined ||
   context.trustedStorefrontId !== undefined ||

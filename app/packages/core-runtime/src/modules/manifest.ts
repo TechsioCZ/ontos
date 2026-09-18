@@ -1,3 +1,4 @@
+import { ONTOS_MODULE_CONTRACT_SCHEMA_VERSION } from './manifest-constants.ts';
 import { Predicate, Result, Schema } from 'effect';
 import { HttpApi } from 'effect/unstable/httpapi';
 
@@ -10,7 +11,7 @@ import { ModuleEntrypointSchema } from './module-entrypoint.ts';
 import { OntosShellContributionsSchema, validateShellContributions } from './shell-contribution.ts';
 import type { OntosShellContributions } from './shell-contribution.ts';
 
-export const ONTOS_MODULE_CONTRACT_SCHEMA_VERSION = '2' as const;
+export { ONTOS_MODULE_CONTRACT_SCHEMA_VERSION } from './manifest-constants.ts';
 export const ONTOS_MODULE_CONTRACT_PATH = '/.well-known/ontos-module-manifest.json' as const;
 export const ONTOS_MODULE_CONTRACT_MAX_BYTES = 1024 * 1024;
 export const ONTOS_MODULE_CONTRACT_TIMEOUT_MS = 5000;

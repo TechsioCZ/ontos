@@ -138,15 +138,38 @@ const actionErrors = [
   OpenProfileReconciliationActionInternalProblemSchema,
 ] as const;
 
+/**
+ * The endpoint chain stays a `const`. The MicroVertical API boundary checker walks a root API's
+ * operands through const bindings only, so a class declaration hides the composed endpoints from
+ * it. The exported group is annotated with a named type alias so its type still has a name: the
+ * vertical's `shared/api.ts` merges every group type into one `HttpApi` and declaration emit
+ * serializes that union verbatim, so an anonymous group type pushes the composed contract past
+ * the compiler's serialization limit (TS7056).
+ *
+ * Exported only so the named contract type can reference it; the merged vertical HttpApi prints
+ * this group by name (declaration-emit size).
+ *
+ * @public
+ */
+export const openProfileReconciliationActionGroupDefinition = HttpApiGroup.make('openProfileReconciliationAction')
+  .add(
+    HttpApiEndpoint.post('execute', '/commerce-customer-context/actions/open-profile-reconciliation', {
+      error: actionErrors,
+      headers: OpenProfileReconciliationActionHeadersSchema,
+      payload: Schema.toEncoded(OpenProfileReconciliationPayloadSchema),
+      success: OpenProfileReconciliationResultSchema,
+    }),
+  )
+  .middleware(OpenProfileReconciliationActionSchemaErrorMiddleware);
+
+export type OpenProfileReconciliationActionGroupContract = HttpApiGroup.HttpApiGroup<
+  'openProfileReconciliationAction',
+  HttpApiGroup.Endpoints<typeof openProfileReconciliationActionGroupDefinition>
+>;
+
+const OpenProfileReconciliationActionGroup: OpenProfileReconciliationActionGroupContract =
+  openProfileReconciliationActionGroupDefinition;
+
 export const OpenProfileReconciliationActionApi = HttpApi.make('OpenProfileReconciliationActionApi').add(
-  HttpApiGroup.make('openProfileReconciliationAction')
-    .add(
-      HttpApiEndpoint.post('execute', '/commerce-customer-context/actions/open-profile-reconciliation', {
-        error: actionErrors,
-        headers: OpenProfileReconciliationActionHeadersSchema,
-        payload: Schema.toEncoded(OpenProfileReconciliationPayloadSchema),
-        success: OpenProfileReconciliationResultSchema,
-      }),
-    )
-    .middleware(OpenProfileReconciliationActionSchemaErrorMiddleware),
+  OpenProfileReconciliationActionGroup,
 );

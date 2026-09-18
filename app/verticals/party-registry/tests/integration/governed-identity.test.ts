@@ -11,10 +11,11 @@ import {
 } from '@app/core-runtime';
 import { makeLiveOperationFixture } from '@app/core-runtime/testing/actions';
 import { and, eq } from 'drizzle-orm';
-import { Effect, Exit, Layer, Redacted, Predicate } from 'effect';
+import { Effect, Exit, Layer, Redacted, Predicate, Schema } from 'effect';
 import { assert, expect, it } from 'effect-rstest';
 import { Pool } from 'pg';
 
+import { TrustedPrincipalContextSchema } from '../../../../packages/core-runtime/src/actions/principal-context.ts';
 import { makeTestDatabaseFromPool } from '../../../../packages/core-runtime/tests/support/database.ts';
 import type { PartyCandidateSchema } from '../../shared/domain/identity-contracts.ts';
 import { committedCreateResult } from '../../shared/domain/matching-contracts.ts';
@@ -44,6 +45,7 @@ import {
 import { partiesRead, PartySearchProjectionGatewayLive } from '../../src/search/parties.provider.ts';
 
 type EncodedPartyCandidate = typeof PartyCandidateSchema.Encoded;
+const testAuthenticationNamespaceId = 'test.party.better-auth.v1';
 const candidate = (ico: string, extra: Partial<EncodedPartyCandidate> = {}): EncodedPartyCandidate => ({
   partyType: 'ORGANIZATION',
   officialIdentifiers: [{ identifierType: 'ICO', value: ico, verification: 'VERIFIED' }],
@@ -79,6 +81,9 @@ const readPartyDetail = (partyRef: PartyRef, principal: TrustedPrincipalContext)
     ),
   );
 const endPool = (pool: Pool) => Effect.promise(() => pool.end());
+type EncodedFixturePrincipal = typeof TrustedPrincipalContextSchema.Encoded;
+const decodeFixturePrincipal = (principal: EncodedFixturePrincipal): TrustedPrincipalContext =>
+  Schema.decodeSync(TrustedPrincipalContextSchema)(principal);
 
 it.live(
   'governed Party identity uses real PostgreSQL and SpiceDB for atomic claims, recovery and temporal authorization',
@@ -101,6 +106,7 @@ it.live(
         const fixture = yield* Effect.acquireRelease(
           makeLiveOperationFixture({
             actionKeys,
+            authenticationNamespaceId: testAuthenticationNamespaceId,
             runtimeConnectionString: Redacted.make(connections.runtime.connectionString),
           }).pipe(Effect.orDie),
           (resource) => resource.close().pipe(Effect.orDie),
@@ -108,6 +114,7 @@ it.live(
         const other = yield* Effect.acquireRelease(
           makeLiveOperationFixture({
             actionKeys,
+            authenticationNamespaceId: testAuthenticationNamespaceId,
             runtimeConnectionString: Redacted.make(connections.runtime.connectionString),
           }).pipe(Effect.orDie),
           (resource) => resource.close().pipe(Effect.orDie),
@@ -119,13 +126,20 @@ it.live(
         const admin = yield* makeTestDatabaseFromPool(adminPool, partyRelations);
         const fixtureContext = yield* Layer.build(fixture.layer);
         const otherContext = yield* Layer.build(other.layer);
-        const managerReadPrincipal = { ...fixture.manager, legalEntityId: fixture.legalEntityId };
+        const managerPrincipal = decodeFixturePrincipal(fixture.manager);
+        const deniedPrincipal = decodeFixturePrincipal(fixture.denied);
+        const legalEntityOnlyPrincipal = decodeFixturePrincipal(fixture.legalEntityOnly);
+        const managerReadPrincipal = decodeFixturePrincipal({
+          ...fixture.manager,
+          legalEntityId: fixture.legalEntityId,
+        });
+        const otherManagerPrincipal = decodeFixturePrincipal(other.manager);
         const run = <A, E>(effect: Effect.Effect<A, E, Layer.Success<typeof fixture.layer>>) =>
           effect.pipe(Effect.provideContext(fixtureContext));
         const create = (
           value: EncodedPartyCandidate,
           idempotencyKey = randomUUID(),
-          principal: TrustedPrincipalContext = fixture.manager,
+          principal: TrustedPrincipalContext = managerPrincipal,
         ) =>
           runAction({
             registration: createPartyAction,
@@ -239,7 +253,7 @@ it.live(
                 yield* run(
                   resolveActionCommit({
                     invocationId: invocation.actionInvocationId,
-                    principal: fixture.manager,
+                    principal: managerPrincipal,
                   }).pipe(Effect.flip),
                 ),
                 'ActionAlreadyCommitted',
@@ -279,7 +293,7 @@ it.live(
             expect(after.core.outbox).toEqual(before.core.outbox);
             assert.isOk(
               Predicate.isTagged(
-                yield* run(readPartyDetail(partyRef, fixture.denied).pipe(Effect.flip)),
+                yield* run(readPartyDetail(partyRef, deniedPrincipal).pipe(Effect.flip)),
                 'ReadPermissionDenied',
               ),
             );
@@ -310,7 +324,9 @@ it.live(
         expect(rolledBack.core.events).toEqual(beforeDenied.core.events);
         expect(rolledBack.core.outbox).toEqual(beforeDenied.core.outbox);
 
-        const independent = yield* create(exact, randomUUID(), other.manager).pipe(Effect.provideContext(otherContext));
+        const independent = yield* create(exact, randomUUID(), otherManagerPrincipal).pipe(
+          Effect.provideContext(otherContext),
+        );
         assert.isOk(independent.outcome === 'CREATED');
 
         expect(independent.partyRef.resourceId).not.toBe(partyRef.resourceId);
@@ -323,14 +339,14 @@ it.live(
 
         assert.isOk(
           Predicate.isTagged(
-            yield* run(create(candidate('00006947'), randomUUID(), fixture.legalEntityOnly).pipe(Effect.flip)),
+            yield* run(create(candidate('00006947'), randomUUID(), legalEntityOnlyPrincipal).pipe(Effect.flip)),
             'ActionPermissionDenied',
           ),
         );
 
         assert.isOk(
           Predicate.isTagged(
-            yield* run(readPartyDetail(partyRef, fixture.legalEntityOnly).pipe(Effect.flip)),
+            yield* run(readPartyDetail(partyRef, legalEntityOnlyPrincipal).pipe(Effect.flip)),
             'ReadPermissionDenied',
           ),
         );
@@ -345,7 +361,7 @@ it.live(
             runtime.runRead({
               registration: partiesRead,
               input: { query: 'Live' },
-              principal: fixture.legalEntityOnly,
+              principal: legalEntityOnlyPrincipal,
               transport: { correlationId: randomUUID() },
             }),
           ),
@@ -382,7 +398,7 @@ it.live(
           runAction({
             registration: counterpartyCreateAction,
             payload: { partyRef, provenance },
-            principal: fixture.legalEntityOnly,
+            principal: legalEntityOnlyPrincipal,
             transport: transport(),
           });
         const counterparties = yield* Effect.all([run(counterparty()), run(counterparty())], {
@@ -400,7 +416,7 @@ it.live(
                 runtime.runRead({
                   registration: counterpartyReadRead,
                   input: { counterpartyRef },
-                  principal: fixture.legalEntityOnly,
+                  principal: legalEntityOnlyPrincipal,
                   transport: { correlationId: randomUUID() },
                 }),
               ),
@@ -410,7 +426,7 @@ it.live(
         const forbiddenCounterpartyRead = yield* Effect.exit(readCounterparty());
         assert.isOk(Exit.isFailure(forbiddenCounterpartyRead));
 
-        yield* fixture.grantResourceAccess(counterpartyRef, fixture.legalEntityOnly.principalId);
+        yield* fixture.grantResourceAccess(counterpartyRef, legalEntityOnlyPrincipal.principalId);
         const projection = yield* readCounterparty();
         expect(Object.keys(projection.party).toSorted()).toEqual([
           'archived',
@@ -423,11 +439,11 @@ it.live(
           runAction({
             registration: counterpartyCreateAction,
             payload: { partyRef, provenance },
-            principal: fixture.manager,
+            principal: managerPrincipal,
             transport: transport(),
           }).pipe(Effect.flip),
         );
-        yield* fixture.grantResourceAccess(counterpartyRef, fixture.legalEntityOnly.principalId, 'writer');
+        yield* fixture.grantResourceAccess(counterpartyRef, legalEntityOnlyPrincipal.principalId, 'writer');
         const role = (roleType: 'CUSTOMER' | 'SUPPLIER') =>
           run(
             runAction({
@@ -438,7 +454,7 @@ it.live(
                 provenance,
                 validFrom: '2020-01-01T00:00:00.000Z',
               },
-              principal: fixture.legalEntityOnly,
+              principal: legalEntityOnlyPrincipal,
               transport: transport(),
             }),
           );
@@ -456,7 +472,7 @@ it.live(
               },
               validTo: '2021-01-01T00:00:00.000Z',
             },
-            principal: fixture.legalEntityOnly,
+            principal: legalEntityOnlyPrincipal,
             transport: transport(),
           }),
         );
@@ -492,7 +508,7 @@ it.live(
               expectedRevision: 1,
               reason: 'Reviewed concrete external person',
             },
-            principal: fixture.manager,
+            principal: managerPrincipal,
             transport: transport(),
           }),
         );
@@ -509,21 +525,21 @@ it.live(
               validTo: null,
               provenance: { method: 'DIRECT_INTERACTION', source: 'live' },
             },
-            principal: fixture.manager,
+            principal: managerPrincipal,
             transport: transport(),
           }),
         );
         // Domain relationships never provision access to Party records.
         assert.isOk(
           Predicate.isTagged(
-            yield* run(readPartyDetail(reviewedPerson.partyRef, fixture.legalEntityOnly).pipe(Effect.flip)),
+            yield* run(readPartyDetail(reviewedPerson.partyRef, legalEntityOnlyPrincipal).pipe(Effect.flip)),
             'ReadPermissionDenied',
           ),
         );
 
         assert.isOk(
           Predicate.isTagged(
-            yield* run(readPartyDetail(partyRef, fixture.legalEntityOnly).pipe(Effect.flip)),
+            yield* run(readPartyDetail(partyRef, legalEntityOnlyPrincipal).pipe(Effect.flip)),
             'ReadPermissionDenied',
           ),
         );
@@ -538,7 +554,7 @@ it.live(
               validFrom: '2089-01-01T00:00:00.000Z',
               provenance: { method: 'DOCUMENT', source: 'live' },
             },
-            principal: fixture.manager,
+            principal: managerPrincipal,
             transport: transport(),
           }),
         );
@@ -553,7 +569,7 @@ it.live(
               reason: 'Contact ended',
               provenance: { method: 'DOCUMENT', source: 'live' },
             },
-            principal: fixture.manager,
+            principal: managerPrincipal,
             transport: transport(),
           }),
         );
@@ -572,7 +588,7 @@ it.live(
               expectedRevision: 1,
               reason: 'Historical collision fixture',
             },
-            principal: fixture.manager,
+            principal: managerPrincipal,
             transport: transport(),
           }),
         );
@@ -601,7 +617,7 @@ it.live(
               expectedRevision: legacyArchived.revision,
               reason: 'Recheck historical claims',
             },
-            principal: fixture.manager,
+            principal: managerPrincipal,
             transport: transport(),
           }),
         );
@@ -616,7 +632,7 @@ it.live(
               expectedRevision: current.party.revision,
               reason: 'Archive acceptance',
             },
-            principal: fixture.manager,
+            principal: managerPrincipal,
             transport: transport(),
           }),
         );
@@ -634,7 +650,7 @@ it.live(
               expectedRevision: archived.revision,
               reason: 'Unarchive acceptance',
             },
-            principal: fixture.manager,
+            principal: managerPrincipal,
             transport: transport(),
           }),
         );

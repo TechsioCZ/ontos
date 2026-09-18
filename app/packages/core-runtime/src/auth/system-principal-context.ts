@@ -1,6 +1,7 @@
 import { and, eq } from 'drizzle-orm';
 import { Duration, Effect, Option, Schema } from 'effect';
 
+import { TrustedPrincipalContextSchema } from '../actions/principal-context.ts';
 import type { TrustedPrincipalContext } from '../actions/principal-context.ts';
 import { principals, tenants } from '../db/schema.ts';
 import type { CoreDatabaseExecutor } from '../db/types.ts';
@@ -157,14 +158,23 @@ export const systemPrincipalContextResolverFromRepository = <Result extends Syst
           reason: 'The configured system principal is not active and eligible in this tenant',
         });
       }
-      return trustResolvedSystemPrincipalContext(
-        Object.freeze({
-          authContextRef: `job:${input.registration.jobKey}:run:${input.runReference}`,
-          authMethod: 'system' as const,
-          principalId: input.principalId,
-          tenantId: input.tenantId,
-        }),
+      const context = yield* Schema.decodeEffect(TrustedPrincipalContextSchema)({
+        authContextRef: `job:${input.registration.jobKey}:run:${input.runReference}`,
+        authMethod: 'system',
+        principalId: input.principalId,
+        tenantId: input.tenantId,
+      }).pipe(
+        Effect.mapError((cause) =>
+          attachCause(
+            new SystemPrincipalContextInvalidError({
+              code: 'system_principal_context_invalid',
+              reason: 'The trusted system workload registration is invalid',
+            }),
+            cause,
+          ),
+        ),
       );
+      return trustResolvedSystemPrincipalContext(Object.freeze(context));
     },
   ),
 });

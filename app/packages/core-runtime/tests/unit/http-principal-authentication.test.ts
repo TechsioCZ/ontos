@@ -14,14 +14,15 @@ import {
   OperationPrincipalVerificationErrorSchema,
   makeMicroverticalHttpPrincipalAuthentication,
 } from '../../src/http/principal-authentication.ts';
+import { TrustedPrincipalContextSchema } from '../../src/actions/principal-context.ts';
 
-const principal = {
+const principal = Schema.decodeSync(TrustedPrincipalContextSchema)({
   authBindingId: 'a1000000-0000-4000-8000-000000000001',
   authContextRef: 'better-auth-session:http-adapter-test',
-  authMethod: 'session' as const,
+  authMethod: 'session',
   principalId: 'a2000000-0000-4000-8000-000000000001',
   tenantId: 'a3000000-0000-4000-8000-000000000001',
-};
+});
 
 const verificationFailure = (_tag: (typeof OperationPrincipalVerificationErrorSchema.Type)['_tag']) =>
   Schema.decodeEffect(OperationPrincipalVerificationErrorSchema)({

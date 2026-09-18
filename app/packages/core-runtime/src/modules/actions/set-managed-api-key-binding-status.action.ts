@@ -52,6 +52,7 @@ const handle = Effect.fn('SetManagedApiKeyBindingStatusAction.handle')(
       ...payload,
       managed: true,
       tenantId: context.scope.tenantId,
+      transitionRef: context.actionInvocationId,
     });
     yield* context.recordDataAccess({
       accessKind: 'read',
@@ -95,8 +96,8 @@ export const setManagedApiKeyBindingStatusAction = defineAction(
     tenantPermission: () => 'manage_identity',
   },
   handle,
-  (transaction) => {
-    const repository = principalManagementRepositoryFromTransaction(transaction);
+  (transaction, scope) => {
+    const repository = principalManagementRepositoryFromTransaction(transaction, scope.authenticationNamespaceId);
     return Effect.succeed({ setStatus: repository.setApiKeyBindingStatus });
   },
 );

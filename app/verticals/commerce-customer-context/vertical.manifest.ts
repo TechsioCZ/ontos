@@ -22,6 +22,7 @@ import { changeCustomerPaymentTermsAction } from './src/actions/change-customer-
 import { changePrincipalPurchaseLimitOverrideAction } from './src/actions/change-principal-purchase-limit-override.action.ts';
 import { changeRetailPaymentTermPreferenceAction } from './src/actions/change-retail-payment-term-preference.action.ts';
 import { claimCounterpartyAccessInvitationAction } from './src/actions/claim-counterparty-access-invitation.action.ts';
+import { claimPortalEnrollmentTransitionAction } from './src/actions/claim-portal-enrollment-transition.action.ts';
 import { clearDefaultBillingAddressAction } from './src/actions/clear-default-billing-address.action.ts';
 import { clearDefaultDeliveryDestinationAction } from './src/actions/clear-default-delivery-destination.action.ts';
 import { consumePurchaseApprovalAction } from './src/actions/consume-purchase-approval.action.ts';
@@ -94,6 +95,7 @@ import { purchaseLimitPolicyResourceDescriptor } from './shared/resources/purcha
 import { purchaseProposalRevisionResourceDescriptor } from './shared/resources/purchase-proposal-revision.ts';
 import { reactivateCustomerGroupAction } from './src/actions/reactivate-customer-group.action.ts';
 import { reactivateCustomerProfileAction } from './src/actions/reactivate-customer-profile.action.ts';
+import { recordPortalEnrollmentOutcomeAction } from './src/actions/record-portal-enrollment-outcome.action.ts';
 import { recoverRetailPortalProfileBindingAction } from './src/actions/recover-retail-portal-profile-binding.action.ts';
 import { removeCounterpartyPriceGroupAction } from './src/actions/remove-counterparty-price-group.action.ts';
 import { removeCustomerGroupAction } from './src/actions/remove-customer-group.action.ts';
@@ -134,8 +136,10 @@ import { SavedAddressListApi } from './shared/apis/saved-address-list.ts';
 import { savedAddressResourceDescriptor } from './shared/resources/saved-address.ts';
 import { setDefaultBillingAddressAction } from './src/actions/set-default-billing-address.action.ts';
 import { setDefaultDeliveryDestinationAction } from './src/actions/set-default-delivery-destination.action.ts';
+import { startPortalEnrollmentAction } from './src/actions/start-portal-enrollment.action.ts';
 import { submitPurchaseApprovalRequestAction } from './src/actions/submit-purchase-approval-request.action.ts';
 import { suspendCustomerProfileAction } from './src/actions/suspend-customer-profile.action.ts';
+import { terminatePortalEnrollmentAction } from './src/actions/terminate-portal-enrollment.action.ts';
 import { triggerPurchaseApprovalAction } from './src/actions/trigger-purchase-approval.action.ts';
 import { updateCustomerGroupAction } from './src/actions/update-customer-group.action.ts';
 import { updateSavedAddressAction } from './src/actions/update-saved-address.action.ts';
@@ -172,6 +176,7 @@ export const commerceCustomerContextManifest: OntosModuleManifestInput = defineO
       changePrincipalPurchaseLimitOverrideAction,
       changeRetailPaymentTermPreferenceAction,
       claimCounterpartyAccessInvitationAction,
+      claimPortalEnrollmentTransitionAction,
       clearDefaultBillingAddressAction,
       clearDefaultDeliveryDestinationAction,
       consumePurchaseApprovalAction,
@@ -188,6 +193,7 @@ export const commerceCustomerContextManifest: OntosModuleManifestInput = defineO
       openProfileReconciliationAction,
       reactivateCustomerGroupAction,
       reactivateCustomerProfileAction,
+      recordPortalEnrollmentOutcomeAction,
       recoverRetailPortalProfileBindingAction,
       removeCounterpartyPriceGroupAction,
       removeCustomerGroupAction,
@@ -206,8 +212,10 @@ export const commerceCustomerContextManifest: OntosModuleManifestInput = defineO
       revokeRetailPortalProfileBindingAction,
       setDefaultBillingAddressAction,
       setDefaultDeliveryDestinationAction,
+      startPortalEnrollmentAction,
       submitPurchaseApprovalRequestAction,
       suspendCustomerProfileAction,
+      terminatePortalEnrollmentAction,
       triggerPurchaseApprovalAction,
       updateCustomerGroupAction,
       updateSavedAddressAction,

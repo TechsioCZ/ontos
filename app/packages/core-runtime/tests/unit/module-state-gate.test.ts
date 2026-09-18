@@ -1,7 +1,8 @@
-import { Effect, Tracer, Predicate } from 'effect';
+import { Effect, Predicate, Schema, Tracer } from 'effect';
 import { expect, it } from 'effect-rstest';
 
 import type { TrustedPrincipalContext } from '../../src/actions/context.ts';
+import { TrustedPrincipalContextSchema } from '../../src/actions/principal-context.ts';
 import { makeModuleEntrypointGateway } from '../../src/modules/module-entrypoint-gateway.ts';
 import {
   MODULE_ENTRYPOINT_ACCESSES,
@@ -24,14 +25,14 @@ import type {
   TenantModuleStateServiceContract,
 } from '../../src/modules/tenant-module-state-service.ts';
 
-const trustedContext = (tenantId = '20000000-0000-4000-8000-000000000001') =>
-  ({
+const trustedContext = (tenantId = '20000000-0000-4000-8000-000000000001'): TrustedPrincipalContext =>
+  Schema.decodeSync(TrustedPrincipalContextSchema)({
     authBindingId: '30000000-0000-4000-8000-000000000001',
     authContextRef: 'better-auth-session:module-state-gate-test',
     authMethod: 'session',
     principalId: '10000000-0000-4000-8000-000000000001',
     tenantId,
-  }) satisfies TrustedPrincipalContext;
+  });
 
 const makeRecordingTracer = (spans: Tracer.Span[]): Tracer.Tracer =>
   Tracer.make({

@@ -1,5 +1,5 @@
-import { and, eq, isNull } from 'drizzle-orm';
-import { Context, DateTime, Effect, Option } from 'effect';
+import { and, eq, isNull, sql } from 'drizzle-orm';
+import { Context, DateTime, Effect, Option, Schema } from 'effect';
 
 import type { BindingStatus, PrincipalKind, PrincipalStatus } from '../db/schema.ts';
 import { principalAuthBindings, principals } from '../db/schema.ts';
@@ -35,12 +35,16 @@ type PrincipalRecord = Readonly<{
   readonly kind: PrincipalKind;
   readonly status: PrincipalStatus;
 }>;
+const ApiKeyBindingStatusSchema = Schema.Literals(['active', 'disabled', 'revoked']);
+type ApiKeyBindingStatus = typeof ApiKeyBindingStatusSchema.Type;
 type ApiKeyBindingRecord = Readonly<{
   readonly bindingStatus: BindingStatus;
   readonly principalKind: PrincipalKind;
   readonly principalStatus: PrincipalStatus;
 }>;
 type SupportBindingRecord = Readonly<{ readonly authBindingId: string }>;
+
+const isApiKeyBindingStatus = Schema.is(ApiKeyBindingStatusSchema);
 
 export interface PrincipalManagementPersistence {
   readonly createPrincipal: (
@@ -87,7 +91,7 @@ export interface PrincipalManagementRepositoryService {
   readonly setApiKeyBindingStatus: (
     input: SetApiKeyBindingStatusInput,
   ) => Effect.Effect<
-    { readonly previousStatus: BindingStatus; readonly status: BindingStatus },
+    { readonly previousStatus: ApiKeyBindingStatus; readonly status: ApiKeyBindingStatus },
     PrincipalManagementError
   >;
   readonly validateSupportImpersonation: (
@@ -102,6 +106,7 @@ export class PrincipalManagementRepository extends Context.Service<
 
 const principalManagementPersistenceFromTransaction = (
   transaction: Pick<ScopedTransactionExecutor, 'insert' | 'select' | 'update'>,
+  authenticationNamespaceId?: string,
 ): PrincipalManagementPersistence => ({
   createPrincipal: (input) =>
     transaction
@@ -118,52 +123,74 @@ const principalManagementPersistenceFromTransaction = (
         Effect.map(([created]) => Option.fromNullishOr(created)),
       ),
   insertApiKeyBinding: (input) =>
-    transaction
-      .insert(principalAuthBindings)
-      .values({
-        principalId: input.principalId,
-        provider: 'better_auth',
-        providerSubjectId: input.providerSubjectId,
-        status: 'active',
-        subjectType: 'api_key',
-        tenantId: input.tenantId,
-      })
-      .onConflictDoNothing()
-      .returning({
-        authBindingId: principalAuthBindings.principalAuthBindingId,
-      })
-      .pipe(
-        Effect.mapError(persistenceFailure),
-        Effect.map(([created]) => Option.fromNullishOr(created)),
-      ),
+    authenticationNamespaceId === undefined
+      ? Effect.fail(persistenceFailure())
+      : (() => {
+          const values =
+            input.createdByInvocationId === undefined
+              ? {
+                  authenticationNamespaceId,
+                  principalId: input.principalId,
+                  provider: 'better_auth' as const,
+                  providerSubjectId: input.providerSubjectId,
+                  status: 'active' as const,
+                  subjectType: 'api_key' as const,
+                  tenantId: input.tenantId,
+                }
+              : {
+                  authenticationNamespaceId,
+                  createdByInvocationId: input.createdByInvocationId,
+                  principalId: input.principalId,
+                  provider: 'better_auth' as const,
+                  providerSubjectId: input.providerSubjectId,
+                  status: 'active' as const,
+                  subjectType: 'api_key' as const,
+                  tenantId: input.tenantId,
+                };
+          return transaction
+            .insert(principalAuthBindings)
+            .values(values)
+            .onConflictDoNothing()
+            .returning({
+              authBindingId: principalAuthBindings.principalAuthBindingId,
+            })
+            .pipe(
+              Effect.mapError(persistenceFailure),
+              Effect.map(([created]) => Option.fromNullishOr(created)),
+            );
+        })(),
   loadApiKeyBinding: (input) =>
-    transaction
-      .select({
-        bindingStatus: principalAuthBindings.status,
-        principalKind: principals.kind,
-        principalStatus: principals.status,
-      })
-      .from(principalAuthBindings)
-      .innerJoin(
-        principals,
-        and(
-          eq(principals.tenantId, principalAuthBindings.tenantId),
-          eq(principals.principalId, principalAuthBindings.principalId),
-        ),
-      )
-      .where(
-        and(
-          eq(principalAuthBindings.tenantId, input.tenantId),
-          eq(principalAuthBindings.principalAuthBindingId, input.authBindingId),
-          eq(principalAuthBindings.principalId, input.principalId),
-          eq(principalAuthBindings.subjectType, 'api_key'),
-        ),
-      )
-      .limit(1)
-      .pipe(
-        Effect.mapError(persistenceFailure),
-        Effect.map(([record]) => Option.fromNullishOr(record)),
-      ),
+    authenticationNamespaceId === undefined
+      ? Effect.fail(persistenceFailure())
+      : transaction
+          .select({
+            bindingStatus: principalAuthBindings.status,
+            principalKind: principals.kind,
+            principalStatus: principals.status,
+          })
+          .from(principalAuthBindings)
+          .innerJoin(
+            principals,
+            and(
+              eq(principals.tenantId, principalAuthBindings.tenantId),
+              eq(principals.principalId, principalAuthBindings.principalId),
+            ),
+          )
+          .where(
+            and(
+              eq(principalAuthBindings.tenantId, input.tenantId),
+              eq(principalAuthBindings.principalAuthBindingId, input.authBindingId),
+              eq(principalAuthBindings.principalId, input.principalId),
+              eq(principalAuthBindings.authenticationNamespaceId, authenticationNamespaceId),
+              eq(principalAuthBindings.provider, 'better_auth'),
+              eq(principalAuthBindings.subjectType, 'api_key'),
+            ),
+          )
+          .limit(1)
+          .pipe(
+            Effect.mapError(persistenceFailure),
+            Effect.map(([record]) => Option.fromNullishOr(record)),
+          ),
   loadPrincipal: (tenantId, principalId) =>
     transaction
       .select({ kind: principals.kind, status: principals.status })
@@ -175,48 +202,64 @@ const principalManagementPersistenceFromTransaction = (
         Effect.map(([record]) => Option.fromNullishOr(record)),
       ),
   loadSupportBindings: (input) =>
-    transaction
-      .select({ authBindingId: principalAuthBindings.principalAuthBindingId })
-      .from(principalAuthBindings)
-      .innerJoin(
-        principals,
-        and(
-          eq(principals.tenantId, principalAuthBindings.tenantId),
-          eq(principals.principalId, principalAuthBindings.principalId),
-        ),
-      )
+    authenticationNamespaceId === undefined
+      ? Effect.fail(persistenceFailure())
+      : transaction
+          .select({ authBindingId: principalAuthBindings.principalAuthBindingId })
+          .from(principalAuthBindings)
+          .innerJoin(
+            principals,
+            and(
+              eq(principals.tenantId, principalAuthBindings.tenantId),
+              eq(principals.principalId, principalAuthBindings.principalId),
+            ),
+          )
+          .where(
+            and(
+              eq(principalAuthBindings.tenantId, input.tenantId),
+              eq(principalAuthBindings.principalId, input.principalId),
+              eq(principalAuthBindings.authenticationNamespaceId, authenticationNamespaceId),
+              eq(principalAuthBindings.provider, 'better_auth'),
+              eq(principalAuthBindings.subjectType, 'user'),
+              eq(principals.kind, 'human'),
+              ...(input.activeOnly
+                ? [
+                    eq(principalAuthBindings.status, 'active'),
+                    isNull(principalAuthBindings.revokedAt),
+                    eq(principals.status, 'active'),
+                  ]
+                : []),
+              ...(input.authBindingId === undefined
+                ? []
+                : [eq(principalAuthBindings.principalAuthBindingId, input.authBindingId)]),
+            ),
+          )
+          .limit(2)
+          .pipe(Effect.mapError(persistenceFailure)),
+  updateApiKeyBindingStatus: (input) => {
+    if (authenticationNamespaceId === undefined) {
+      return Effect.fail(persistenceFailure());
+    }
+    const updatedAt = DateTime.toDateUtc(DateTime.nowUnsafe());
+    const values = {
+      bindingRevision: sql`${principalAuthBindings.bindingRevision} + 1`,
+      revokedAt: input.newStatus === 'revoked' ? updatedAt : null,
+      status: input.newStatus,
+      updatedAt,
+    };
+    const valuesWithTransition =
+      input.transitionRef === undefined ? values : { ...values, lastTransitionRef: input.transitionRef };
+    return transaction
+      .update(principalAuthBindings)
+      .set(valuesWithTransition)
       .where(
         and(
           eq(principalAuthBindings.tenantId, input.tenantId),
-          eq(principalAuthBindings.principalId, input.principalId),
-          eq(principalAuthBindings.subjectType, 'user'),
-          eq(principals.kind, 'human'),
-          ...(input.activeOnly
-            ? [
-                eq(principalAuthBindings.status, 'active'),
-                isNull(principalAuthBindings.revokedAt),
-                eq(principals.status, 'active'),
-              ]
-            : []),
-          ...(input.authBindingId === undefined
-            ? []
-            : [eq(principalAuthBindings.principalAuthBindingId, input.authBindingId)]),
-        ),
-      )
-      .limit(2)
-      .pipe(Effect.mapError(persistenceFailure)),
-  updateApiKeyBindingStatus: (input) => {
-    const updatedAt = DateTime.toDateUtc(DateTime.nowUnsafe());
-    return transaction
-      .update(principalAuthBindings)
-      .set({
-        revokedAt: input.newStatus === 'revoked' ? updatedAt : null,
-        status: input.newStatus,
-        updatedAt,
-      })
-      .where(
-        and(
           eq(principalAuthBindings.principalAuthBindingId, input.authBindingId),
+          eq(principalAuthBindings.principalId, input.principalId),
+          eq(principalAuthBindings.authenticationNamespaceId, authenticationNamespaceId),
+          eq(principalAuthBindings.provider, 'better_auth'),
+          eq(principalAuthBindings.subjectType, 'api_key'),
           eq(principalAuthBindings.status, input.expectedStatus),
         ),
       )
@@ -311,6 +354,8 @@ const changePrincipalStatusFor = (persistence: PrincipalManagementPersistence) =
   });
 
 export interface BindApiKeyInput {
+  /** The Action invocation that created this binding, when available. */
+  readonly createdByInvocationId?: string;
   readonly managed: boolean;
   readonly principalId: string;
   readonly providerSubjectId: string;
@@ -342,6 +387,8 @@ export interface SetApiKeyBindingStatusInput {
   readonly principalId: string;
   readonly reason?: string;
   readonly tenantId: string;
+  /** The Action transition reference for this actual lifecycle write. */
+  readonly transitionRef?: string;
 }
 
 export interface ValidateSupportImpersonationInput {
@@ -396,6 +443,9 @@ const setApiKeyBindingStatusFor = (persistence: PrincipalManagementPersistence) 
     if (!isEligibleBindingTarget(input.managed, binding.value.principalStatus, binding.value.principalKind)) {
       return yield* invalid('The API key binding target is not eligible');
     }
+    if (!isApiKeyBindingStatus(input.expectedStatus) || !isApiKeyBindingStatus(input.newStatus)) {
+      return yield* invalid('The API key binding status is not supported');
+    }
     if (binding.value.bindingStatus !== input.expectedStatus) {
       return yield* conflict('The binding status changed concurrently');
     }
@@ -408,6 +458,9 @@ const setApiKeyBindingStatusFor = (persistence: PrincipalManagementPersistence) 
     const updated = yield* persistence.updateApiKeyBindingStatus(input);
     if (Option.isNone(updated)) {
       return yield* conflict('The binding status changed concurrently');
+    }
+    if (!isApiKeyBindingStatus(updated.value.status)) {
+      return yield* invalid('The API key binding status is not supported');
     }
     return {
       previousStatus: input.expectedStatus,
@@ -428,8 +481,11 @@ export const principalManagementRepositoryFromPersistence = (
 
 export const principalManagementRepositoryFromTransaction = (
   transaction: Pick<ScopedTransactionExecutor, 'insert' | 'select' | 'update'>,
+  authenticationNamespaceId?: string,
 ): PrincipalManagementRepositoryService =>
-  principalManagementRepositoryFromPersistence(principalManagementPersistenceFromTransaction(transaction));
+  principalManagementRepositoryFromPersistence(
+    principalManagementPersistenceFromTransaction(transaction, authenticationNamespaceId),
+  );
 
 export const createNonHumanPrincipal = (input: CreateNonHumanPrincipalInput) =>
   PrincipalManagementRepository.pipe(Effect.flatMap((repository) => repository.createNonHumanPrincipal(input)));

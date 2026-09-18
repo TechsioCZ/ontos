@@ -82,16 +82,18 @@ it('owns an exact private Commerce Customer Context table catalog', () => {
   );
 
   expect(COMMERCE_CUSTOMER_CONTEXT_SCHEMA_NAME).toBe('commerce_customer_context');
-  expect(COMMERCE_CUSTOMER_CONTEXT_TABLES).toHaveLength(38);
+  expect(COMMERCE_CUSTOMER_CONTEXT_TABLES).toHaveLength(40);
   expect(actual).toEqual(expected);
 });
 
 it('requires tenant and Selling Legal Entity scope with complete forced-RLS policy shape', () => {
+  const tenantOnlyTables = new Set(['portal_enrollment_attempts', 'portal_enrollment_owner_operations']);
   for (const table of COMMERCE_CUSTOMER_CONTEXT_TABLES) {
     const config = getTableConfig(table);
+    const tenantOnly = tenantOnlyTables.has(config.name);
     expect(config.enableRLS, `${config.name} must enable RLS`).toBe(true);
     expect(config.columns.some(({ name, notNull }) => name === 'tenant_id' && notNull)).toBe(true);
-    expect(config.columns.some(({ name, notNull }) => name === 'legal_entity_id' && notNull)).toBe(true);
+    expect(config.columns.some(({ name, notNull }) => name === 'legal_entity_id' && notNull)).toBe(!tenantOnly);
     expect(config.policies.map((policy) => policy.for)).toEqual(['select', 'insert', 'update', 'delete', 'all']);
     for (const policy of config.policies.slice(0, 4)) {
       expect(policy.to).toBe('ontos_runtime');
@@ -101,9 +103,14 @@ it('requires tenant and Selling Legal Entity scope with complete forced-RLS poli
       [...config.uniqueConstraints, ...config.indexes].some((candidate) => {
         const columns = 'columns' in candidate ? candidate.columns : candidate.config.columns;
         const names = new Set(columns.flatMap((column) => ('name' in column ? [column.name] : [])));
-        return names.has('tenant_id') && names.has('legal_entity_id');
+        return tenantOnly
+          ? names.has('tenant_id') &&
+              (names.has('portal_enrollment_attempt_id') || names.has('portal_enrollment_owner_operation_id'))
+          : names.has('tenant_id') && names.has('legal_entity_id');
       }),
-      `${config.name} needs a tenant/legal-entity-qualified identity`,
+      tenantOnly
+        ? `${config.name} needs a tenant-qualified identity`
+        : `${config.name} needs a tenant/legal-entity-qualified identity`,
     ).toBe(true);
   }
 });

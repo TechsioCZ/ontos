@@ -1,4 +1,6 @@
 import {
+  ActionRuntime,
+  ActionAuthorizationPreflight,
   ActionRuntimeLive,
   ActionAuthorizationPreflightDatabaseLive,
   ContextAccessLive,
@@ -7,7 +9,7 @@ import {
   ReadRuntimeLive,
   TenantModuleStateServiceLive,
 } from '@app/core-runtime';
-import type { ActionRuntime, GatewayAssertionRedemptionService, ReadRuntime } from '@app/core-runtime';
+import type { ActionRuntimeService, GatewayAssertionRedemptionService, ReadRuntime } from '@app/core-runtime';
 import {
   ActionPermissionLive,
   ActionRepositoryLive,
@@ -18,7 +20,44 @@ import {
 import { assembleEffectBffRuntime } from '@app/shared-contracts/server/effect-bff-runtime';
 import { Effect, HttpApiBuilder, HttpRouter, Layer } from '@modern-js/bff-effect/effect-edge';
 import type { EffectBffDefinition, EffectBffRuntime } from '@modern-js/bff-effect/effect-edge';
-import { Layer as GovernedReadLayer, Logger, References, Schema, Tracer } from 'effect';
+import { Context, Layer as GovernedReadLayer, Logger, Option, References, Schema, Tracer } from 'effect';
+import { CommercePortalAuthDatabaseLive } from '../src/portal-auth/persistence/portal-auth-database.ts';
+import { CommercePortalAuthLive } from './portal-auth/provider/auth.ts';
+import { CommercePortalAuthConfigLive, optionalCommercePortalAuthConfig } from './portal-auth/provider/config.ts';
+import { commercePortalAuthRealmUnavailableLive } from './portal-auth/realm-unavailable.ts';
+import type { CommercePortalAuthHandlerServices } from './portal-auth/realm-unavailable.ts';
+import { CommercePortalAuthEmailDeliveryLive } from './portal-auth/provider/recovery/email-delivery.ts';
+import { CommercePortalAuthRecoveryStoreLive } from '../src/portal-auth/persistence/portal-auth-recovery-store.ts';
+import { CommercePortalAuthTransactionalEmailLive } from './portal-auth/provider/transactional-email.ts';
+import { portalAuthMfaApiLive } from './portal-auth/provider/mfa/http.ts';
+import { CommercePortalAuthMfaProviderLive } from './portal-auth/provider/mfa/better-auth-provider.ts';
+import { CommercePortalAuthMfaServiceLive } from './portal-auth/provider/mfa/service.ts';
+import { CommercePortalAuthMfaStepUpCodeVerifierLive } from './portal-auth/provider/mfa/step-up-verifier.ts';
+import { portalAuthRecoveryApiLive } from './portal-auth/provider/recovery/http.ts';
+import {
+  CommercePortalAuthRecoveryProviderLive,
+  CommercePortalAuthRecoveryRateLimitLive,
+} from './portal-auth/provider/recovery/provider-service.ts';
+import { CommercePortalAuthRecoveryServiceLive } from './portal-auth/provider/recovery/service.ts';
+import { CommercePortalAuthSessionReaderLive } from '../src/portal-auth/persistence/portal-auth-session-reader.ts';
+import { portalAuthStepUpApiLive } from './portal-auth/provider/step-up/http.ts';
+import { CommercePortalAuthStepUpHttpProviderUnavailableLive } from './portal-auth/provider/step-up/http-provider-unavailable.ts';
+import { CommercePortalAuthStepUpLive } from './portal-auth/provider/step-up/step-up.ts';
+import { CommercePortalAuthStepUpChallengeStoreLive } from '../src/portal-auth/persistence/portal-auth-step-up-store.ts';
+import { CommercePortalAuthSessionLifecycleLive } from './portal-auth/session/lifecycle.ts';
+import { CommercePortalAuthSessionProviderLive } from './portal-auth/session/provider.ts';
+import { CommercePortalAuthSessionStoreLive } from '../src/portal-auth/persistence/portal-auth-session-store.ts';
+import { CommercePortalAuthServiceLive, portalAuthSessionApiLive } from './portal-auth/session/http.ts';
+import { commercePortalAuthPlatformCryptoLive } from './portal-auth/deployment.ts';
+import { ResendEmailDeliveryConfigLive, ResendEmailDeliveryLive } from '@app/email-delivery/resend';
+import { FetchHttpClient } from 'effect/unstable/http';
+import {
+  CommerceEnrollmentOwnerTransitionPreparation,
+  CommerceEnrollmentPreparedOwnerCapability,
+  CommerceEnrollmentPreparedOwnerExecutionService,
+  commerceEnrollmentPreparedOwnerExecutionLive,
+  composeActionAuthorizationPreflights,
+} from '../src/enrollment/orchestration/prepared-owner-authority.ts';
 // <generated-governed-http-handler-support-imports>
 import { ActionPrincipalVerifierLive as GovernedActionPrincipalVerifierLive } from './auth/action-principal.ts';
 import { GatewayAssertionRedemptionLive as GovernedGatewayAssertionRedemptionLive } from './auth/gateway-assertion-redemption.ts';
@@ -59,6 +98,7 @@ import { changeCustomerPaymentTermsActionApiLive } from './change-customer-payme
 import { changePrincipalPurchaseLimitOverrideActionApiLive } from './change-principal-purchase-limit-override-action-server.ts';
 import { changeRetailPaymentTermPreferenceActionApiLive } from './change-retail-payment-term-preference-action-server.ts';
 import { claimCounterpartyAccessInvitationActionApiLive } from './claim-counterparty-access-invitation-action-server.ts';
+import { claimPortalEnrollmentTransitionActionApiLive } from './claim-portal-enrollment-transition-action-server.ts';
 import { clearDefaultBillingAddressActionApiLive } from './clear-default-billing-address-action-server.ts';
 import { clearDefaultDeliveryDestinationActionApiLive } from './clear-default-delivery-destination-action-server.ts';
 import { consumePurchaseApprovalActionApiLive } from './consume-purchase-approval-action-server.ts';
@@ -105,6 +145,7 @@ import { purchaseLimitEvaluationReadApiLive } from './purchase-limit-evaluation-
 import { purchaseLimitPolicyReadReadApiLive } from './purchase-limit-policy-read-read-server.ts';
 import { reactivateCustomerGroupActionApiLive } from './reactivate-customer-group-action-server.ts';
 import { reactivateCustomerProfileActionApiLive } from './reactivate-customer-profile-action-server.ts';
+import { recordPortalEnrollmentOutcomeActionApiLive } from './record-portal-enrollment-outcome-action-server.ts';
 import { recoverRetailPortalProfileBindingActionApiLive } from './recover-retail-portal-profile-binding-action-server.ts';
 import { removeCounterpartyPriceGroupActionApiLive } from './remove-counterparty-price-group-action-server.ts';
 import { removeCustomerGroupActionApiLive } from './remove-customer-group-action-server.ts';
@@ -132,8 +173,10 @@ import { savedAddressDetailReadApiLive } from './saved-address-detail-read-serve
 import { savedAddressListReadApiLive } from './saved-address-list-read-server.ts';
 import { setDefaultBillingAddressActionApiLive } from './set-default-billing-address-action-server.ts';
 import { setDefaultDeliveryDestinationActionApiLive } from './set-default-delivery-destination-action-server.ts';
+import { startPortalEnrollmentActionApiLive } from './start-portal-enrollment-action-server.ts';
 import { submitPurchaseApprovalRequestActionApiLive } from './submit-purchase-approval-request-action-server.ts';
 import { suspendCustomerProfileActionApiLive } from './suspend-customer-profile-action-server.ts';
+import { terminatePortalEnrollmentActionApiLive } from './terminate-portal-enrollment-action-server.ts';
 import { triggerPurchaseApprovalActionApiLive } from './trigger-purchase-approval-action-server.ts';
 import { updateCustomerGroupActionApiLive } from './update-customer-group-action-server.ts';
 import { updateSavedAddressActionApiLive } from './update-saved-address-action-server.ts';
@@ -142,6 +185,63 @@ import { updateSavedAddressActionApiLive } from './update-saved-address-action-s
 import { microVerticalOperationAttributes } from '@app/shared-contracts';
 import { commerceCustomerContextApi, commerceCustomerContextOperationContexts } from '../shared/api.ts';
 import { ultramodernApiMarker } from '../shared/ultramodern-build.ts';
+
+const commercePortalAuthRecoveryStoreLive = CommercePortalAuthRecoveryStoreLive.pipe(
+  Layer.provideMerge(CommercePortalAuthDatabaseLive),
+);
+const commercePortalAuthEmailDeliveryLive = CommercePortalAuthEmailDeliveryLive.pipe(
+  Layer.provide(CommercePortalAuthTransactionalEmailLive),
+  Layer.provideMerge(commercePortalAuthRecoveryStoreLive),
+);
+
+/** Installed only by portal-enabled composition; delivery and platform crypto remain explicit inputs. */
+export const commercePortalAuthProviderLive = CommercePortalAuthLive.pipe(
+  Layer.provideMerge(commercePortalAuthEmailDeliveryLive),
+);
+
+/**
+ * Everything the four portal-auth HttpApi groups read, composed once. `api/index.ts` is the
+ * sanctioned composition root for this vertical: every provider layer is imported from the module
+ * that declares it, and `portal-auth/deployment.ts` contributes only the host platform crypto. The
+ * tiers below are ordered bottom-up so every layer sees the services the tier beneath it published
+ * — `Layer.mergeAll` builds its operands in parallel and would not satisfy a dependency declared
+ * beside it.
+ */
+const commercePortalAuthEmailTransportLive = ResendEmailDeliveryLive.pipe(Layer.provide(FetchHttpClient.layer));
+const commercePortalAuthProviderRealmLive = commercePortalAuthProviderLive.pipe(
+  Layer.provideMerge(commercePortalAuthPlatformCryptoLive),
+  Layer.provideMerge(commercePortalAuthEmailTransportLive),
+);
+const commercePortalAuthRealmPortsLive = Layer.mergeAll(
+  CommercePortalAuthServiceLive,
+  CommercePortalAuthSessionProviderLive,
+  CommercePortalAuthSessionStoreLive,
+  CommercePortalAuthSessionReaderLive,
+  CommercePortalAuthStepUpChallengeStoreLive,
+  CommercePortalAuthMfaProviderLive,
+  CommercePortalAuthMfaStepUpCodeVerifierLive,
+  CommercePortalAuthRecoveryProviderLive,
+  CommercePortalAuthRecoveryRateLimitLive,
+  CommercePortalAuthStepUpHttpProviderUnavailableLive,
+).pipe(Layer.provideMerge(commercePortalAuthProviderRealmLive));
+const commercePortalAuthLifecycleLive = CommercePortalAuthSessionLifecycleLive.pipe(
+  Layer.provideMerge(commercePortalAuthRealmPortsLive),
+);
+/**
+ * The installed realm, with the two operator configurations it is built from left as visible
+ * requirements: the Better Auth realm values and the transactional email transport credentials. A
+ * host that opted in supplies both; the fail-closed realm in `portal-auth/realm-unavailable.ts` is
+ * what a host that opted out gets instead.
+ */
+export const commercePortalAuthRealmLive = Layer.mergeAll(
+  CommercePortalAuthMfaServiceLive,
+  CommercePortalAuthRecoveryServiceLive,
+  CommercePortalAuthStepUpLive,
+).pipe(Layer.provideMerge(commercePortalAuthLifecycleLive));
+
+const portalAuthConfiguredRuntimeLive = commercePortalAuthRealmLive.pipe(
+  Layer.provideMerge(Layer.mergeAll(CommercePortalAuthConfigLive, ResendEmailDeliveryConfigLive)),
+);
 
 const commerceCustomerContextReadinessLayer = HttpApiBuilder.group(
   commerceCustomerContextApi,
@@ -178,6 +278,24 @@ const readShellOrigin = () => {
     return resolveCommerceCustomerContextShellOrigin();
   }
 };
+
+/**
+ * The Commerce portal realm is opt-in. A deployment that supplied no `COMMERCE_PORTAL_AUTH_*`
+ * value — the Node and workerd artifact proofs among them — gets the fail-closed realm instead of
+ * the provider graph, so readiness and every business route still serve while the four portal
+ * groups answer the owner's retryable 503. A deployment that opted in gets the real layers and any
+ * error in them stays an error: opting in means configuring the realm completely.
+ */
+const selectPortalAuthRuntimeLive = (
+  configured: boolean,
+): Layer.Layer<CommercePortalAuthHandlerServices, Layer.Error<typeof portalAuthConfiguredRuntimeLive>> =>
+  configured ? portalAuthConfiguredRuntimeLive : commercePortalAuthRealmUnavailableLive([readShellOrigin()]);
+
+const deploymentPortalAuthRuntimeLive = Layer.unwrap(
+  optionalCommercePortalAuthConfig.pipe(
+    Effect.map((configuration) => selectPortalAuthRuntimeLive(Option.isSome(configuration))),
+  ),
+);
 
 const runtimeObservabilityLive = Layer.mergeAll(
   Logger.layer([Logger.defaultLogger, Logger.tracerLogger]),
@@ -216,22 +334,86 @@ const readRuntimeCoreLive = ReadRuntimeLive.pipe(
 const actionAuthorizationPreflightDatabaseWithCoreLive = ActionAuthorizationPreflightDatabaseLive.pipe(
   Layer.provideMerge(CorePersistenceLive),
 );
+
+/** Each Action owns its prepared evidence and runtime factory; persistence stays deployment-scoped. */
+export const commerceEnrollmentActionRuntimeLive: Layer.Layer<
+  ActionRuntime,
+  never,
+  | ActionRuntime
+  | ActionAuthorizationPreflight
+  | CommerceEnrollmentOwnerTransitionPreparation
+  | Layer.Services<typeof ActionRuntimeLive>
+> = Layer.effect(
+  ActionRuntime,
+  Effect.gen(function* commerceEnrollmentActionRuntime() {
+    const existingRuntime = yield* ActionRuntime;
+    const existingPreflight = yield* ActionAuthorizationPreflight;
+    const preparation = yield* CommerceEnrollmentOwnerTransitionPreparation;
+    const dependencies = yield* Effect.context<Layer.Services<typeof ActionRuntimeLive>>();
+    const runAction: ActionRuntimeService['runAction'] = (input) =>
+      Effect.scoped(
+        Effect.gen(function* runEnrollmentAwareAction() {
+          const scope = yield* Effect.scope;
+          const executionContext = yield* Layer.buildWithScope(
+            Layer.fresh(commerceEnrollmentPreparedOwnerExecutionLive),
+            scope,
+          ).pipe(Effect.provideService(CommerceEnrollmentOwnerTransitionPreparation, preparation));
+          const execution = Context.get(executionContext, CommerceEnrollmentPreparedOwnerExecutionService);
+          yield* Effect.addFinalizer(() => Effect.sync(execution.clear));
+          const preflight = composeActionAuthorizationPreflights([execution.preflight, existingPreflight]);
+          const runtimeContext = yield* Layer.buildWithScope(Layer.fresh(ActionRuntimeLive), scope).pipe(
+            Effect.provideContext(Context.add(dependencies, ActionAuthorizationPreflight, preflight)),
+          );
+          return yield* Context.get(runtimeContext, ActionRuntime)
+            .runAction(input)
+            .pipe(Effect.provideService(CommerceEnrollmentPreparedOwnerCapability, execution.capability));
+        }),
+      );
+    return { resolveActionCommit: existingRuntime.resolveActionCommit, runAction };
+  }),
+);
+
+const actionRuntimeDependenciesLive = Layer.mergeAll(
+  actionAuthorizationPreflightDatabaseWithCoreLive,
+  ActionRepositoryLive,
+  ActionPermissionLive,
+  ContextAccessLive,
+  moduleStateGateLive,
+  moduleEntrypointGatewayLive,
+  operationalScopeResolverLive,
+);
 const actionRuntimeCoreLive = ActionRuntimeLive.pipe(
   Layer.provideMerge(commerceCustomerContextInvitationClaimActionAuthorizationPreflightLive),
+  Layer.provide(actionRuntimeDependenciesLive),
+);
+/**
+ * The enrollment wrapper rebuilds `ActionRuntimeLive` per invocation with a composed preflight, so
+ * it needs the very services that runtime is built from as well as the base runtime it wraps.
+ */
+const actionRuntimeServicesLive = commerceCustomerContextInvitationClaimActionAuthorizationPreflightLive.pipe(
+  Layer.provideMerge(actionRuntimeDependenciesLive),
+);
+/**
+ * Fail-closed until a Commerce owner preparation port is installed: no governed Action may proceed
+ * on a claimed owner payload without owner evidence. Composing the wrapper here — rather than
+ * leaving it exported and unused — is what puts `CommerceEnrollmentPreparedOwnerCapability` in the
+ * context of the two mounted prepared-owner enrollment Actions.
+ */
+const commerceEnrollmentOwnerTransitionPreparationUnavailableLive = Layer.succeed(
+  CommerceEnrollmentOwnerTransitionPreparation,
+  { prepare: () => Effect.succeed({ outcome: 'unavailable' as const }) },
+);
+const enrollmentAwareActionRuntimeLive = commerceEnrollmentActionRuntimeLive.pipe(
   Layer.provide(
     Layer.mergeAll(
-      actionAuthorizationPreflightDatabaseWithCoreLive,
-      ActionRepositoryLive,
-      ActionPermissionLive,
-      ContextAccessLive,
-      moduleStateGateLive,
-      moduleEntrypointGatewayLive,
-      operationalScopeResolverLive,
+      actionRuntimeCoreLive,
+      actionRuntimeServicesLive,
+      commerceEnrollmentOwnerTransitionPreparationUnavailableLive,
     ),
   ),
 );
 /** Deployment composition seam. External owner ports remain visible requirements here. */
-const commerceCustomerContextActionRuntime = actionRuntimeCoreLive.pipe(
+const commerceCustomerContextActionRuntime = enrollmentAwareActionRuntimeLive.pipe(
   Layer.provideMerge(productionOwnerRuntimeServicesLive),
   Layer.provideMerge(productionOwnerAuthorizationOverlayLive),
   Layer.provideMerge(productionPurchaseLimitCurrentnessLive),
@@ -257,6 +439,16 @@ type CommerceCustomerContextApiRuntimeArguments = readonly [
   readRuntime: Layer.Layer<ReadRuntime, Layer.Error<typeof productionReadRuntimeLive>>,
   actionRuntime: Layer.Layer<ActionRuntime, Layer.Error<typeof productionActionRuntimeLive>>,
   gatewayAssertionRedemption: Layer.Layer<GatewayAssertionRedemptionService>,
+  /**
+   * The optional Commerce portal realm: the installed provider graph for a host that opted in, or
+   * the fail-closed realm for one that did not. It is a parameter rather than a fixed import so the
+   * choice stays a deployment decision and each side of it is provable without a process-global
+   * environment.
+   */
+  portalAuthRuntime: Layer.Layer<
+    CommercePortalAuthHandlerServices,
+    Layer.Error<typeof deploymentPortalAuthRuntimeLive>
+  >,
 ];
 
 export type CommerceCustomerContextApiRuntime = EffectBffDefinition<typeof commerceCustomerContextApi> &
@@ -265,12 +457,16 @@ export type CommerceCustomerContextApiRuntime = EffectBffDefinition<typeof comme
 export const makeCommerceCustomerContextApiRuntime = (
   ...args: CommerceCustomerContextApiRuntimeArguments
 ): CommerceCustomerContextApiRuntime => {
-  const [governedReadRuntimeLive, governedActionRuntimeLive, gatewayAssertionRedemption] = args;
+  const [governedReadRuntimeLive, governedActionRuntimeLive, gatewayAssertionRedemption, portalAuthRuntimeLive] = args;
   const actionPrincipalVerifierLive = GovernedActionPrincipalVerifierLive.pipe(
     Layer.provide(governedActionRuntimeLive),
   );
   const apiHandlersLive = Layer.mergeAll(
     commerceCustomerContextReadinessLayer,
+    portalAuthSessionApiLive.pipe(GovernedReadLayer.provide(portalAuthRuntimeLive)),
+    portalAuthMfaApiLive.pipe(GovernedReadLayer.provide(portalAuthRuntimeLive)),
+    portalAuthRecoveryApiLive.pipe(GovernedReadLayer.provide(portalAuthRuntimeLive)),
+    portalAuthStepUpApiLive.pipe(GovernedReadLayer.provide(portalAuthRuntimeLive)),
     // <generated-governed-http-handler-layers>
     addSavedAddressActionApiLive.pipe(GovernedReadLayer.provide(governedActionRuntimeLive)),
     archiveCustomerGroupActionApiLive.pipe(GovernedReadLayer.provide(governedActionRuntimeLive)),
@@ -286,6 +482,7 @@ export const makeCommerceCustomerContextApiRuntime = (
     changePrincipalPurchaseLimitOverrideActionApiLive.pipe(GovernedReadLayer.provide(governedActionRuntimeLive)),
     changeRetailPaymentTermPreferenceActionApiLive.pipe(GovernedReadLayer.provide(governedActionRuntimeLive)),
     claimCounterpartyAccessInvitationActionApiLive.pipe(GovernedReadLayer.provide(governedActionRuntimeLive)),
+    claimPortalEnrollmentTransitionActionApiLive.pipe(GovernedReadLayer.provide(governedActionRuntimeLive)),
     clearDefaultBillingAddressActionApiLive.pipe(GovernedReadLayer.provide(governedActionRuntimeLive)),
     clearDefaultDeliveryDestinationActionApiLive.pipe(GovernedReadLayer.provide(governedActionRuntimeLive)),
     consumePurchaseApprovalActionApiLive.pipe(GovernedReadLayer.provide(governedActionRuntimeLive)),
@@ -332,6 +529,7 @@ export const makeCommerceCustomerContextApiRuntime = (
     purchaseLimitPolicyReadReadApiLive.pipe(GovernedReadLayer.provide(governedReadRuntimeLive)),
     reactivateCustomerGroupActionApiLive.pipe(GovernedReadLayer.provide(governedActionRuntimeLive)),
     reactivateCustomerProfileActionApiLive.pipe(GovernedReadLayer.provide(governedActionRuntimeLive)),
+    recordPortalEnrollmentOutcomeActionApiLive.pipe(GovernedReadLayer.provide(governedActionRuntimeLive)),
     recoverRetailPortalProfileBindingActionApiLive.pipe(GovernedReadLayer.provide(governedActionRuntimeLive)),
     removeCounterpartyPriceGroupActionApiLive.pipe(GovernedReadLayer.provide(governedActionRuntimeLive)),
     removeCustomerGroupActionApiLive.pipe(GovernedReadLayer.provide(governedActionRuntimeLive)),
@@ -359,8 +557,10 @@ export const makeCommerceCustomerContextApiRuntime = (
     savedAddressListReadApiLive.pipe(GovernedReadLayer.provide(governedReadRuntimeLive)),
     setDefaultBillingAddressActionApiLive.pipe(GovernedReadLayer.provide(governedActionRuntimeLive)),
     setDefaultDeliveryDestinationActionApiLive.pipe(GovernedReadLayer.provide(governedActionRuntimeLive)),
+    startPortalEnrollmentActionApiLive.pipe(GovernedReadLayer.provide(governedActionRuntimeLive)),
     submitPurchaseApprovalRequestActionApiLive.pipe(GovernedReadLayer.provide(governedActionRuntimeLive)),
     suspendCustomerProfileActionApiLive.pipe(GovernedReadLayer.provide(governedActionRuntimeLive)),
+    terminatePortalEnrollmentActionApiLive.pipe(GovernedReadLayer.provide(governedActionRuntimeLive)),
     triggerPurchaseApprovalActionApiLive.pipe(GovernedReadLayer.provide(governedActionRuntimeLive)),
     updateCustomerGroupActionApiLive.pipe(GovernedReadLayer.provide(governedActionRuntimeLive)),
     updateSavedAddressActionApiLive.pipe(GovernedReadLayer.provide(governedActionRuntimeLive)),
@@ -385,8 +585,14 @@ const apiRuntime = makeCommerceCustomerContextApiRuntime(
   productionReadRuntimeLive,
   productionActionRuntimeLive,
   GovernedGatewayAssertionRedemptionLive,
+  deploymentPortalAuthRuntimeLive,
 );
 
 export default apiRuntime;
 
-export { commerceCustomerContextActionRuntime, commerceCustomerContextReadRuntime };
+export {
+  commerceCustomerContextActionRuntime,
+  commerceCustomerContextReadRuntime,
+  productionActionRuntimeLive,
+  productionReadRuntimeLive,
+};

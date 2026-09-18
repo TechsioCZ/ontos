@@ -106,6 +106,15 @@ export default defineConfig({
     {
       include: ['tests/integration/**/*.test.ts'],
       name: 'integration',
+      // The API module reads the authoritative topology and allowlist from build-time defines.
+      // Integration tests assemble that same module, so they need the same deployment inputs.
+      source: {
+        define: {
+          ULTRAMODERN_GATEWAY_AUDIENCE_TOPOLOGY: encodedReferenceTopology,
+          ULTRAMODERN_MODULE_DEPLOYMENT_ALLOWLIST: encodedModuleDeploymentAllowlist,
+          ULTRAMODERN_SITE_URL: encodedSiteUrl,
+        },
+      },
       testEnvironment: 'node',
       testTimeout: 30_000,
       tools: { rspack: { externals: [externalizeCoreRuntime] }, swc },

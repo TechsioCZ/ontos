@@ -13,6 +13,14 @@ import type { ActionPolicy } from '../../src/actions/policy.ts';
 import { defineGlobalPolicy, defineMicroverticalPolicy, denyPolicy } from '../../src/actions/policy.ts';
 import { makeActionRepository } from '../../src/actions/repository.ts';
 import { makeActionRuntime } from '../../src/actions/runtime.ts';
+import {
+  AuthenticationNamespaceIdSchema,
+  AuthenticationNamespaceRegistrationSchema,
+} from '../../src/auth/external-identity-contracts.ts';
+import {
+  AuthenticationNamespaceRegistry,
+  makeAuthenticationNamespaceRegistry,
+} from '../../src/auth/external-identity/verifier.ts';
 import { loadDatabaseConfig } from '../../src/db/config.ts';
 import {
   actionInvocations,
@@ -40,9 +48,11 @@ import {
   makeTenantModuleStateService,
 } from '../../src/modules/tenant-module-state-service.ts';
 import { makeModuleContractFixture } from '../../src/testing/module-contract.ts';
-import { testOperationalScopeResolver } from '../fixtures/operational-scope.ts';
+import { testOperationalScopeResolver as baseTestOperationalScopeResolver } from '../fixtures/operational-scope.ts';
 import { openActionRuntimeOptions } from '../support/action-runtime-options.ts';
 import { makeFaultInjectableCoreDatabase, TestQueryHook } from '../support/database-faults.ts';
+import type { OperationalScopeResolverService } from '../../src/operations/context.ts';
+import { OperationAuthenticationRequired, OperationContextUnavailable } from '../../src/operations/errors.ts';
 
 const TestPersistenceErrorContract = Schema.TaggedStruct('TestPersistenceError', {
   reason: Schema.String,
@@ -68,6 +78,44 @@ const ActionPolicyDeniedFailureSchema = Schema.TaggedStruct('ActionPolicyDenied'
 const decodeActionPolicyDeniedFailure = Schema.decodeUnknownOption(ActionPolicyDeniedFailureSchema);
 
 const tenantId = randomUUID();
+const staffAuthenticationNamespaceId = Schema.decodeSync(AuthenticationNamespaceIdSchema)('test.staff.better-auth.v1');
+const authenticationNamespaceRegistry = makeAuthenticationNamespaceRegistry([
+  Schema.decodeSync(AuthenticationNamespaceRegistrationSchema)({
+    allowedAudiences: ['core-runtime-test'],
+    authenticationNamespaceId: staffAuthenticationNamespaceId,
+    provider: 'test-provider',
+    requiresOperationAdmission: false,
+    reservationPrincipalKind: 'human',
+    subjectTypes: ['user'],
+    trustedAttesterPrincipalIds: [],
+  }),
+]);
+const testOperationalScopeResolver: OperationalScopeResolverService = {
+  resolve: (input) =>
+    Effect.gen(function* registeredTestOperationalScope() {
+      const namespaceId = input.principal.authenticationNamespaceId;
+      if (namespaceId !== undefined) {
+        const registration = yield* authenticationNamespaceRegistry
+          .lookup(AuthenticationNamespaceIdSchema.make(namespaceId))
+          .pipe(
+            Effect.mapError(
+              () =>
+                new OperationContextUnavailable({
+                  code: 'operation_context_unavailable',
+                  reason: 'The test authentication namespace registry is unavailable',
+                }),
+            ),
+          );
+        if (Option.isNone(registration)) {
+          return yield* new OperationAuthenticationRequired({
+            code: 'operation_authentication_required',
+            reason: 'The test authentication namespace is not registered',
+          });
+        }
+      }
+      return yield* baseTestOperationalScopeResolver.resolve(input);
+    }),
+};
 const legalEntityId = randomUUID();
 const principalId = randomUUID();
 const authBindingId = randomUUID();
@@ -75,6 +123,7 @@ const authBindingId = randomUUID();
 const principal = {
   authBindingId,
   authContextRef: `better-auth-session:${authBindingId}`,
+  authenticationNamespaceId: staffAuthenticationNamespaceId,
   authMethod: 'session',
   legalEntityId,
   principalId,
@@ -246,6 +295,7 @@ const prepare = (() =>
         tenantId,
       });
       yield* database.executor.insert(principalAuthBindings).values({
+        authenticationNamespaceId: staffAuthenticationNamespaceId,
         principalAuthBindingId: authBindingId,
         principalId,
         provider: 'better_auth',
@@ -1718,9 +1768,15 @@ const testProgram13 = () =>
     }),
   );
 
-it.layer(Layer.effectDiscard(Effect.acquireRelease(prepare, () => cleanup.pipe(Effect.orDie))), {
-  excludeTestServices: true,
-})('Action runtime', (suite) => {
+it.layer(
+  Layer.merge(
+    Layer.effectDiscard(Effect.acquireRelease(prepare, () => cleanup.pipe(Effect.orDie))),
+    Layer.succeed(AuthenticationNamespaceRegistry, authenticationNamespaceRegistry),
+  ),
+  {
+    excludeTestServices: true,
+  },
+)('Action runtime', (suite) => {
   suite.effect('rechecks business module state under the tenant lock and retries after Core recovery', testProgram1);
 
   suite.effect('atomically commits business state, all success evidence, and the succeeded marker', testProgram2);

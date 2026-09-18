@@ -19,6 +19,14 @@ definition tenant {
   permission impersonate = support & access
 }
 
+// Namespace-qualified identity provisioning is granted to an exact Tenant and
+// authentication namespace. It does not imply administrative lifecycle access.
+definition identity_namespace {
+  relation tenant: tenant
+  relation provisioner: principal
+  permission provision = provisioner & tenant->access
+}
+
 definition legal_entity {
   relation tenant: tenant
   relation member: principal

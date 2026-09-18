@@ -7,12 +7,19 @@
     ".": "./src/index.ts",
     "./actions/principal-context": "./src/actions/principal-context.ts",
     "./actions/runtime-wiring": "./src/actions/runtime-wiring.ts",
+    "./auth/external-identity-admission": "./src/auth/external-identity/verifier.ts",
+    "./auth/external-identity-contracts": "./src/auth/external-identity-contracts.ts",
     "./auth/gateway-assertion-redemption": "./src/auth/gateway-assertion-redemption.ts",
     "./auth/system-principal-context-provenance": "./src/auth/system-principal-context-provenance.ts",
     "./http/action-runner": "./src/http/http-instrumentation-seam.ts",
     "./http/governed-read": "./src/http/governed-read.ts",
     "./http/principal-authentication": "./src/http/principal-authentication.ts",
     "./install/stage-context-bootstrap": "./src/install/stage-context-bootstrap.ts",
+    "./operations/context": "./src/operations/context.ts",
+    "./operations/external-authentication": "./src/operations/external-authentication.ts",
+    "./outbox/core-identity-principal-binding-activated-v1": "./src/outbox/core-identity-principal-binding-activated-v1.ts",
+    "./outbox/core-identity-principal-binding-reserved-v1": "./src/outbox/core-identity-principal-binding-reserved-v1.ts",
+    "./outbox/core-identity-principal-binding-status-changed-v1": "./src/outbox/core-identity-principal-binding-status-changed-v1.ts",
     "./outbox/worker": "./src/outbox/worker-entrypoint.ts",
     "./testing/actions": "./src/testing/actions.ts",
     "./workspace-environment": "./src/environment/workspace-environment.ts"
@@ -34,16 +41,17 @@
   "dependencies": {
     "@authzed/authzed-node": "1.6.1",
     "@effect/platform-node": "4.0.0-rc.112",
+    "@effect/sql-pg": "4.0.0-rc.112",
     "drizzle-orm": "1.0.0-rc.5-ab785fc",
     "effect": "4.0.0-rc.112",
-    "pg": "8.22.0",
-    "@effect/sql-pg": "4.0.0-rc.112"
+    "pg": "8.22.0"
   },
   "devDependencies": {
+    "@rstest/core": "0.11.12",
     "@types/node": "^26.4.1",
     "@types/pg": "8.20.0",
     "drizzle-kit": "1.0.0-rc.5-ab785fc",
     "effect-rstest": "0.1.4",
-    "@rstest/core": "0.11.12"
+    "yaml": "2.9.1"
   }
 }

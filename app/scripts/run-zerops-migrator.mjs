@@ -5,7 +5,9 @@ import { createServer } from 'node:http';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-import { Cause, Config, Effect, Exit } from 'effect';
+import { Cause, Config, Effect, Exit, Option } from 'effect';
+
+import { loadOptionalCommercePortalAuthDatabaseConfig } from '../verticals/commerce-customer-context/scripts/portal-auth-database-config.mts';
 
 const appDirectory = fileURLToPath(new URL('../', import.meta.url));
 const { spawn } = process.getBuiltinModule('node:child_process');
@@ -145,6 +147,8 @@ const serveReadiness = Effect.fn('serveReadiness')(
 
 const main = Effect.scoped(
   Effect.gen(function* migratorEffect() {
+    // Validate the optional owner's complete configuration before any migration writes.
+    const portalAuthDatabase = yield* loadOptionalCommercePortalAuthDatabaseConfig();
     yield* runAppScript('scripts/postgres/bootstrap-spicedb-database.mts');
     yield* runAppScript('scripts/postgres/bootstrap-runtime-role.mts');
     yield* migrate('packages/core-runtime', 'drizzle.config.ts');
@@ -155,6 +159,11 @@ const main = Effect.scoped(
     yield* migrate('verticals/payment-term-catalog', 'drizzle.config.ts');
     yield* migrate('verticals/commerce-customer-context', 'drizzle.config.ts');
     yield* runAppScript('scripts/postgres/bootstrap-runtime-role.mts');
+    if (Option.isSome(portalAuthDatabase)) {
+      yield* migrate('verticals/commerce-customer-context', 'drizzle.portal-auth.config.ts');
+      yield* runAppScript('verticals/commerce-customer-context/scripts/bootstrap-portal-auth-runtime-role.mts');
+      yield* runAppScript('verticals/commerce-customer-context/scripts/verify-portal-auth-db-schema.mts');
+    }
     yield* runAppScript('scripts/verify-application-db-schema.mts');
     yield* serveReadiness(yield* migratorPort);
   }).pipe(Effect.tapCause((cause) => Effect.logError(Cause.pretty(cause)))),

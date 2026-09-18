@@ -67,7 +67,7 @@ export type PrincipalStatus = (typeof PRINCIPAL_STATUSES)[number];
 export const BINDING_SUBJECT_TYPES = ['user', 'api_key'] as const;
 export type BindingSubjectType = (typeof BINDING_SUBJECT_TYPES)[number];
 
-export const BINDING_STATUSES = ['active', 'disabled', 'revoked'] as const;
+export const BINDING_STATUSES = ['pending', 'active', 'disabled', 'revoked'] as const;
 export type BindingStatus = (typeof BINDING_STATUSES)[number];
 
 export const coreSchema = pgSchema(CORE_SCHEMA_NAME);
@@ -154,19 +154,27 @@ export const principalAuthBindings = coreSchema.table(
     principalAuthBindingId: uuid('principal_auth_binding_id').defaultRandom().primaryKey(),
     tenantId: tenantId(),
     principalId: principalId(),
+    authenticationNamespaceId: text('authentication_namespace_id').notNull(),
     provider: text('provider').notNull(),
     subjectType: text('subject_type').$type<BindingSubjectType>().notNull(),
     providerSubjectId: text('provider_subject_id').notNull(),
     status: text('status').$type<BindingStatus>().notNull(),
+    bindingRevision: integer('binding_revision').default(1).notNull(),
+    // Nullable for legacy/bootstrap rows whose original writer was not an
+    // Action invocation. Governed writes set this to their trusted invocation.
+    createdByInvocationId: uuid('created_by_invocation_id'),
+    // Nullable for legacy/bootstrap rows. Governed transitions set the stable
+    // transition reference and same-state no-ops leave it unchanged.
+    lastTransitionRef: uuid('last_transition_ref'),
     createdAt: createdAt(),
     updatedAt: updatedAt(),
     revokedAt: timestamp('revoked_at', { withTimezone: true }),
   },
   (table) => [
     uniqueIndex('core_auth_bindings_tenant_id_uk').on(table.tenantId, table.principalAuthBindingId),
-    uniqueIndex('core_auth_bindings_subject_uk').on(
+    uniqueIndex('core_auth_bindings_namespace_subject_uk').on(
       table.tenantId,
-      table.provider,
+      table.authenticationNamespaceId,
       table.subjectType,
       table.providerSubjectId,
     ),
@@ -179,12 +187,18 @@ export const principalAuthBindings = coreSchema.table(
       foreignColumns: [principals.tenantId, principals.principalId],
       name: 'core_auth_bindings_tenant_principal_fk',
     }).onDelete('restrict'),
-    check('core_auth_bindings_provider_ck', sql`${table.provider} in ('better_auth')`),
+    check('core_auth_bindings_provider_ck', sql`length(${table.provider}) between 1 and 500`),
+    check(
+      'core_auth_bindings_namespace_ck',
+      sql`length(btrim(${table.authenticationNamespaceId})) between 1 and 200 and ${table.authenticationNamespaceId} = btrim(${table.authenticationNamespaceId})`,
+    ),
     check('core_auth_bindings_subject_type_ck', sql`${table.subjectType} in ('user', 'api_key')`),
-    check('core_auth_bindings_status_ck', sql`${table.status} in ('active', 'revoked', 'disabled')`),
+    check('core_auth_bindings_subject_id_ck', sql`length(${table.providerSubjectId}) between 1 and 500`),
+    check('core_auth_bindings_status_ck', sql`${table.status} in ('pending', 'active', 'revoked', 'disabled')`),
+    check('core_auth_bindings_revision_ck', sql`${table.bindingRevision} >= 1`),
     check(
       'core_auth_bindings_lifecycle_ck',
-      sql`(${table.status} = 'revoked' and ${table.revokedAt} is not null) or (${table.status} in ('active', 'disabled') and ${table.revokedAt} is null)`,
+      sql`(${table.status} = 'revoked' and ${table.revokedAt} is not null) or (${table.status} in ('pending', 'active', 'disabled') and ${table.revokedAt} is null)`,
     ),
   ],
 );

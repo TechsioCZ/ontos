@@ -5,6 +5,7 @@ import type { ActionTransportMetadata } from '../actions/context.ts';
 import type { ActionRegistration } from '../actions/definition.ts';
 import type { ActionCoreError } from '../actions/errors.ts';
 import type { DomainEventContractMap } from '../actions/events.ts';
+import type { OperationalScopeRequest } from '../operations/context.ts';
 import type { TrustedPrincipalContext } from '../actions/principal-context.ts';
 import { ActionRuntime } from '../actions/runtime.ts';
 
@@ -38,6 +39,8 @@ export interface GovernedActionHttpRunnerInput<
   PrincipalProblem,
   PrincipalRequirements,
 > {
+  /** Trusted receiver configuration, never a request header or payload field. */
+  readonly audience?: string;
   readonly endpointHeaders: ActionHttpEndpointHeaders;
   readonly internalProblem: () => InternalProblem;
   readonly invalidCorrelationProblem: () => InvalidProblem;
@@ -158,6 +161,10 @@ export const runGovernedActionHttp = <
       Effect.orDie,
     );
     const runtime = yield* ActionRuntime;
+    let receivingAudience: Pick<OperationalScopeRequest, 'audience'> = {};
+    if (input.audience !== undefined) {
+      receivingAudience = { audience: input.audience };
+    }
     let transport: ActionTransportMetadata;
     if (input.endpointHeaders.idempotencyKey === undefined) {
       transport =
@@ -179,6 +186,7 @@ export const runGovernedActionHttp = <
     }
     return yield* runtime
       .runAction({
+        ...receivingAudience,
         payload: encodedPayload,
         principal,
         registration: input.registration,

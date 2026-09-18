@@ -10,6 +10,7 @@ import {
   isDatabaseUnavailableFailure,
   PrincipalResolver,
   PrincipalResolverUnavailableError,
+  TrustedPrincipalContextSchema,
 } from '@app/core-runtime';
 import { apiKey } from '@better-auth/api-key';
 import { APIError, betterAuth } from 'better-auth';
@@ -253,6 +254,30 @@ const mapResolverError = (
   Schema.is(PrincipalResolverUnavailableError)(error)
     ? new AuthenticationUnavailableError()
     : new OntosIdentityForbiddenError();
+
+type TrustedPrincipalContextInput = Readonly<{
+  readonly authBindingId: string;
+  readonly authContextRef: string;
+  readonly authenticationNamespaceId: string;
+  readonly authMethod: 'session' | 'support_impersonation';
+  readonly impersonatedByPrincipalId?: string;
+  readonly principalId: string;
+  readonly tenantId: string;
+}>;
+
+const mapPrincipalContextDecodeError = (cause: unknown): OntosIdentityForbiddenFailure => {
+  const failure = new OntosIdentityForbiddenError();
+  Object.defineProperty(failure, 'cause', {
+    configurable: true,
+    value: cause,
+  });
+  return failure;
+};
+
+const decodeTrustedPrincipalContext = (
+  input: TrustedPrincipalContextInput,
+): Effect.Effect<TrustedPrincipalContext, OntosIdentityForbiddenFailure> =>
+  Schema.decodeEffect(TrustedPrincipalContextSchema)(input).pipe(Effect.mapError(mapPrincipalContextDecodeError));
 
 const mapTenantSwitchResolverError = (
   error: PrincipalResolutionError,
@@ -528,17 +553,22 @@ const assembleAuthenticationService = (
     AuthenticationUnavailableFailure | OntosIdentityForbiddenFailure
   > =>
     resolver.resolveBetterAuthUserForTenant(user.id, tenantId).pipe(
-      Effect.map((principal) => ({
-        identity: toSafeIdentity(user.email, principal),
-        principal: {
+      Effect.mapError(mapResolverError),
+      Effect.flatMap((principal) =>
+        decodeTrustedPrincipalContext({
           authBindingId: principal.authBindingId,
           authContextRef: `better-auth-session:${sessionId}`,
-          authMethod: 'session' as const,
+          authenticationNamespaceId: resolver.authenticationNamespaceId,
+          authMethod: 'session',
           principalId: principal.principalId,
           tenantId: principal.tenantId,
-        },
-      })),
-      Effect.mapError(mapResolverError),
+        }).pipe(
+          Effect.map((trustedPrincipal) => ({
+            identity: toSafeIdentity(user.email, principal),
+            principal: trustedPrincipal,
+          })),
+        ),
+      ),
     );
 
   const resolveDefaultIdentity = (
@@ -555,17 +585,22 @@ const assembleAuthenticationService = (
     AuthenticationUnavailableFailure | OntosIdentityForbiddenFailure
   > =>
     resolver.resolveDefaultBetterAuthUser(user.id).pipe(
-      Effect.map((principal) => ({
-        identity: toSafeIdentity(user.email, principal),
-        principal: {
+      Effect.mapError(mapResolverError),
+      Effect.flatMap((principal) =>
+        decodeTrustedPrincipalContext({
           authBindingId: principal.authBindingId,
           authContextRef: `better-auth-session:${sessionId}`,
-          authMethod: 'session' as const,
+          authenticationNamespaceId: resolver.authenticationNamespaceId,
+          authMethod: 'session',
           principalId: principal.principalId,
           tenantId: principal.tenantId,
-        },
-      })),
-      Effect.mapError(mapResolverError),
+        }).pipe(
+          Effect.map((trustedPrincipal) => ({
+            identity: toSafeIdentity(user.email, principal),
+            principal: trustedPrincipal,
+          })),
+        ),
+      ),
     );
 
   const resolveImpersonatedIdentity: ResolveImpersonatedIdentity = Effect.fn(
@@ -613,16 +648,18 @@ const assembleAuthenticationService = (
     if (decision?.decision !== 'allowed') {
       return yield* new AuthenticationUnavailableError();
     }
+    const principal = yield* decodeTrustedPrincipalContext({
+      authBindingId: target.authBindingId,
+      authContextRef: `better-auth-session:${sessionId}`,
+      authenticationNamespaceId: resolver.authenticationNamespaceId,
+      authMethod: 'support_impersonation',
+      impersonatedByPrincipalId: original.principalId,
+      principalId: target.principalId,
+      tenantId: target.tenantId,
+    });
     return {
       identity: { ...toSafeIdentity(user.email, target), impersonating: true },
-      principal: {
-        authBindingId: target.authBindingId,
-        authContextRef: `better-auth-session:${sessionId}`,
-        authMethod: 'support_impersonation',
-        impersonatedByPrincipalId: original.principalId,
-        principalId: target.principalId,
-        tenantId: target.tenantId,
-      },
+      principal,
     };
   });
 
