@@ -107,7 +107,9 @@ export const invokePartyRegistryHttpClient = <Success, Failure, Requirements>(
     ...effectBffClientOptions(context),
   }).pipe(Effect.flatMap(operation));
 
-export const createPartyRegistryHttpClient = (options: PartyRegistryHttpClientOptions = {}) =>
+export const createPartyRegistryHttpClient = (
+  options: PartyRegistryHttpClientOptions = {},
+): Effect.Effect<PartyRegistryHttpClient, Schema.SchemaError, never> =>
   makeEffectBffClient({
     api: partyRegistryApi,
     defaultApiPrefix: partyRegistryApiContract.apiPrefix,

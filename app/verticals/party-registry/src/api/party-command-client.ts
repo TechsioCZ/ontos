@@ -152,6 +152,7 @@ const invoke = <Success, Failure>(
   operation: (gatewayAssertion: string) => Effect.Effect<Success, Failure>,
 ) =>
   Effect.promise(() => import('./action-gateway.ts')).pipe(
+    Effect.orDie,
     Effect.flatMap(({ operationGateway }) => operationGateway.invoke(operation, options.gateway)),
   );
 

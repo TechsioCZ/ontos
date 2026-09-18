@@ -208,10 +208,10 @@ export interface AresApplyOptions {
 const loadDefaultReads = () =>
   Effect.all(
     {
-      ares: Effect.promise(() => import('./ares-lookup-client.ts')),
-      contactPoints: Effect.promise(() => import('./party-contact-points-client.ts')),
-      identifiers: Effect.promise(() => import('./party-official-identifier-history-client.ts')),
-      party: Effect.promise(() => import('./party-detail-client.ts')),
+      ares: Effect.promise(() => import('./ares-lookup-client.ts')).pipe(Effect.orDie),
+      contactPoints: Effect.promise(() => import('./party-contact-points-client.ts')).pipe(Effect.orDie),
+      identifiers: Effect.promise(() => import('./party-official-identifier-history-client.ts')).pipe(Effect.orDie),
+      party: Effect.promise(() => import('./party-detail-client.ts')).pipe(Effect.orDie),
     },
     { concurrency: 4 },
   ).pipe(
@@ -870,6 +870,7 @@ export const applyAresObservation = (
   AresApplySelectionInvalid | AresApplyReadError | GatewayContextClientError
 > =>
   Effect.promise(() => import('./party-command-client.ts')).pipe(
+    Effect.orDie,
     Effect.flatMap((commands) =>
       applyAresObservationWithActions(
         request,
