@@ -3,7 +3,7 @@ import { randomUUID } from 'node:crypto';
 /* eslint-disable effect-native/no-native-timers -- Real PostgreSQL lock ordering requires wall-clock overlap across connections. expires: 2026-12-31. */
 
 import { and, eq, inArray, sql } from 'drizzle-orm';
-import { DateTime, Effect, Fiber, Result, Schema } from 'effect';
+import { DateTime, Deferred, Effect, Fiber, Result, Schema } from 'effect';
 import { expect, it } from 'effect-rstest';
 
 import { makeTestDatabaseFromPool } from '../../../../packages/core-runtime/tests/support/database.ts';
@@ -40,7 +40,7 @@ const makeCorrectionCommand = (partyId: string, targetAssertionId: string) =>
     evidenceRefs: ['integration:type-relationship'],
     evidenceSource: 'MANUAL_REVIEW',
     factKind: 'PARTY_TYPE',
-    partyId: personId,
+    partyId,
     policyVersion: 'party-correction.v1',
     provenance: { method: 'MANUAL_REVIEW', source: 'integration:type-relationship' },
     reasonCode: 'WRONG_PARTY_TYPE',
@@ -141,6 +141,8 @@ it.live('Party Type correction and relationship creation serialize in either ord
     yield* seed(admin);
     const correctionCommand = makeCorrectionCommand(personId, assertionId);
     const relationshipPayload = makeRelationshipPayload(personId, organizationId);
+    const correctionFirstLocked = yield* Deferred.make<null>();
+    const releaseCorrectionFirst = yield* Deferred.make<null>();
     const correctionFirst = yield* runScoped((transaction) =>
       Effect.gen(function* correctionFirstTransaction() {
         // Hold the corrected Party row before the service starts, forcing Create to wait
@@ -150,18 +152,22 @@ it.live('Party Type correction and relationship creation serialize in either ord
           .from(parties)
           .where(and(eq(parties.tenantId, tenantId), eq(parties.partyId, personId)))
           .for('update');
-        yield* Effect.sleep('100 millis');
+        yield* Deferred.succeed(correctionFirstLocked, null);
+        yield* Deferred.await(releaseCorrectionFirst);
         return yield* correctPartyFactRecord(transaction, tenantId, correctionCommand, {
           actionInvocationId: correctionInvocationId,
           principalId,
         });
       }),
     ).pipe(Effect.result, Effect.forkChild);
-    yield* Effect.sleep('20 millis');
-    const relationAfterCorrection = yield* runScoped((transaction) =>
+    yield* Deferred.await(correctionFirstLocked);
+    const relationAfterCorrectionFiber = yield* runScoped((transaction) =>
       createPartyRelationshipRecord(transaction, tenantId, principalId, relationshipInvocationId, relationshipPayload),
-    ).pipe(Effect.result);
+    ).pipe(Effect.result, Effect.forkChild);
+    yield* Effect.sleep('20 millis');
+    yield* Deferred.succeed(releaseCorrectionFirst, null);
     const correctionFirstResult = yield* Fiber.join(correctionFirst);
+    const relationAfterCorrection = yield* Fiber.join(relationAfterCorrectionFiber);
     expect(Result.isSuccess(correctionFirstResult)).toBe(true);
     expect(Result.isFailure(relationAfterCorrection)).toBe(true);
 
@@ -175,6 +181,8 @@ it.live('Party Type correction and relationship creation serialize in either ord
 
     const secondCorrectionCommand = makeCorrectionCommand(secondPersonId, secondAssertionId);
     const secondRelationshipPayload = makeRelationshipPayload(secondPersonId, secondOrganizationId);
+    const relationshipCreated = yield* Deferred.make<null>();
+    const releaseRelationshipFirst = yield* Deferred.make<null>();
     const relationshipFirst = yield* runScoped((transaction) =>
       Effect.gen(function* relationshipFirstTransaction() {
         const created = yield* createPartyRelationshipRecord(
@@ -184,18 +192,22 @@ it.live('Party Type correction and relationship creation serialize in either ord
           secondRelationshipInvocationId,
           secondRelationshipPayload,
         );
-        yield* Effect.sleep('100 millis');
+        yield* Deferred.succeed(relationshipCreated, null);
+        yield* Deferred.await(releaseRelationshipFirst);
         return created;
       }),
     ).pipe(Effect.result, Effect.forkChild);
-    yield* Effect.sleep('20 millis');
-    const correctionAfterRelationship = yield* runScoped((transaction) =>
+    yield* Deferred.await(relationshipCreated);
+    const correctionAfterRelationshipFiber = yield* runScoped((transaction) =>
       correctPartyFactRecord(transaction, tenantId, secondCorrectionCommand, {
         actionInvocationId: secondCorrectionInvocationId,
         principalId,
       }),
-    ).pipe(Effect.result);
+    ).pipe(Effect.result, Effect.forkChild);
+    yield* Effect.sleep('20 millis');
+    yield* Deferred.succeed(releaseRelationshipFirst, null);
     const relationshipFirstResult = yield* Fiber.join(relationshipFirst);
+    const correctionAfterRelationship = yield* Fiber.join(correctionAfterRelationshipFiber);
     expect(Result.isSuccess(relationshipFirstResult)).toBe(true);
     expect(Result.isFailure(correctionAfterRelationship)).toBe(true);
     if (Result.isFailure(correctionAfterRelationship)) {
