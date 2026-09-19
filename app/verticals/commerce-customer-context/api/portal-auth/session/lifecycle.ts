@@ -84,6 +84,7 @@ export interface CommercePortalAuthSessionClock {
 
 const systemClock: CommercePortalAuthSessionClock = Object.freeze({ now: () => DateTime.toDate(DateTime.nowUnsafe()) });
 const SESSION_RECONCILE_OPERATION = 'session-reconcile';
+const SESSION_REFRESHED_EVENT_TYPE: CommercePortalAuthAuditEventType = 'commerce.portal-auth.session-refreshed.v1';
 
 const withCause = <TError extends object>(error: TError, cause: unknown): TError =>
   Object.defineProperty(error, 'cause', { configurable: true, value: cause });
@@ -423,11 +424,17 @@ export const makeCommercePortalAuthSessionLifecycle = (
     const sessionId = yield* parseSessionId(request);
     const recordOption = yield* store.findById(sessionId);
     if (Option.isNone(recordOption)) {
-      return { audited: false, outcome: { existed: false, outcome: 'SESSION_REVOKED', sessionRef: request.sessionRef } };
+      return {
+        audited: false,
+        outcome: { existed: false, outcome: 'SESSION_REVOKED', sessionRef: request.sessionRef },
+      };
     }
     const record = recordOption.value;
     if (!expectedSubjectMatches(record, request.expectedProviderSubjectId)) {
-      return { audited: false, outcome: { existed: false, outcome: 'SESSION_REVOKED', sessionRef: request.sessionRef } };
+      return {
+        audited: false,
+        outcome: { existed: false, outcome: 'SESSION_REVOKED', sessionRef: request.sessionRef },
+      };
     }
     const now = clock.now();
     const nowMillis = epochMillis(now);
@@ -447,7 +454,7 @@ export const makeCommercePortalAuthSessionLifecycle = (
 
     const touched = yield* store.touchWithAudit({
       audit: {
-        eventType: 'commerce.portal-auth.session-refreshed.v1',
+        eventType: SESSION_REFRESHED_EVENT_TYPE,
         occurredAt: now,
         operation: 'refresh',
         outcome: 'success',
@@ -474,11 +481,17 @@ export const makeCommercePortalAuthSessionLifecycle = (
     // a missing/denied row is a revoke/disable/expiry result. There is no blind update retry.
     const latestOption = yield* store.findById(sessionId);
     if (Option.isNone(latestOption)) {
-      return { audited: false, outcome: { existed: false, outcome: 'SESSION_REVOKED', sessionRef: request.sessionRef } };
+      return {
+        audited: false,
+        outcome: { existed: false, outcome: 'SESSION_REVOKED', sessionRef: request.sessionRef },
+      };
     }
     const latest = latestOption.value;
     if (!expectedSubjectMatches(latest, request.expectedProviderSubjectId)) {
-      return { audited: false, outcome: { existed: false, outcome: 'SESSION_REVOKED', sessionRef: request.sessionRef } };
+      return {
+        audited: false,
+        outcome: { existed: false, outcome: 'SESSION_REVOKED', sessionRef: request.sessionRef },
+      };
     }
     if (activeBan(latest, nowMillis)) {
       return { audited: false, outcome: { outcome: 'ACCOUNT_DISABLED', providerSubjectId: latest.providerSubjectId } };
@@ -508,7 +521,7 @@ export const makeCommercePortalAuthSessionLifecycle = (
     const result = yield* refreshSession(input);
     if (!result.audited) {
       yield* emitAudit({
-        eventType: 'commerce.portal-auth.session-refreshed.v1',
+        eventType: SESSION_REFRESHED_EVENT_TYPE,
         occurredAt: clock.now(),
         operation: 'refresh',
         outcome: commercePortalAuthSessionOutcomeClass(result.outcome.outcome),
@@ -519,7 +532,7 @@ export const makeCommercePortalAuthSessionLifecycle = (
     return result.outcome;
   });
 
-/**
+  /**
    * Account-wide revocation: sign-out everywhere, and the session clear-down a completed password
    * reset performs. The evidence row commits with the deletions or not at all.
    */
@@ -584,6 +597,12 @@ export const makeCommercePortalAuthSessionLifecycle = (
     readonly handoff?: CommercePortalAuthSessionCookieHandoff;
   }
 
+  type MutableRotateInput = {
+    -readonly [Key in keyof Parameters<CommercePortalAuthSessionStore['rotateWithAudit']>[0]]: Parameters<
+      CommercePortalAuthSessionStore['rotateWithAudit']
+    >[0][Key];
+  };
+
   const rotateIdentifierResult = Effect.fn('CommercePortalAuthSessionLifecycle.rotateIdentifierResult')(
     function* rotateIdentifierResult(
       input: Schema.Codec.Encoded<typeof CommercePortalAuthSessionRotationInputSchema>,
@@ -613,9 +632,9 @@ export const makeCommercePortalAuthSessionLifecycle = (
       if (!isLive(record, nowMillis)) {
         return {};
       }
-const rotateInput = {
+      const rotateInput: MutableRotateInput = {
         audit: {
-          eventType: 'commerce.portal-auth.session-refreshed.v1',
+          eventType: SESSION_REFRESHED_EVENT_TYPE,
           occurredAt: now,
           operation: 'rotate-identifier',
           outcome: 'success',
@@ -625,17 +644,19 @@ const rotateInput = {
         expiresAt: safeExpiry(record, now),
         now,
         sessionId,
-        ...(request.expectedProviderSubjectId === undefined
-          ? {}
-          : { expectedProviderSubjectId: request.expectedProviderSubjectId }),
-        /**
-         * A completed step-up is a fresh authentication, and it is the only rotation reason that
-         * is. Stamping the replacement row is what lets the owner's freshness gates see it: the
-         * rotation preserves `createdAt` so the absolute lifetime survives, which by itself would
-         * keep an old session permanently stale no matter how the customer re-proved themselves.
-         */
-        ...(request.reason === 'step-up' ? { authenticatedAt: now } : {}),
-      } satisfies Parameters<CommercePortalAuthSessionStore['rotateWithAudit']>[0];
+      };
+      if (request.expectedProviderSubjectId !== undefined) {
+        rotateInput.expectedProviderSubjectId = request.expectedProviderSubjectId;
+      }
+      /**
+       * A completed step-up is a fresh authentication, and it is the only rotation reason that
+       * is. Stamping the replacement row is what lets the owner's freshness gates see it: the
+       * rotation preserves `createdAt` so the absolute lifetime survives, which by itself would
+       * keep an old session permanently stale no matter how the customer re-proved themselves.
+       */
+      if (request.reason === 'step-up') {
+        rotateInput.authenticatedAt = now;
+      }
       const replacementOption = yield* store.rotateWithAudit(rotateInput);
       if (Option.isNone(replacementOption)) {
         return yield* new CommercePortalAuthSessionRefreshConflict({

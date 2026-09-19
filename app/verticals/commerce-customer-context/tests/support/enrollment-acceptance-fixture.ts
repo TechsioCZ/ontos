@@ -24,8 +24,8 @@ import type { CommerceEnrollmentOwnerTransactionRun } from '../../src/enrollment
 import type { CommerceEnrollmentOwnerAttemptStore } from '../../src/enrollment/orchestration/owner-transition-driver.ts';
 
 /**
- * PostgreSQL fixture for the #338 acceptance matrix. Only the owner effect is scripted; the
- * driver, Attempt service, SECURITY DEFINER routines and tenant policies all run for real.
+ * PostgreSQL fixture where only the owner effect is scripted; the driver, Attempt service,
+ * SECURITY DEFINER routines and tenant policies all run for real.
  */
 
 /** The Drizzle/Effect executor the fixture drives both the runtime and the admin role through. */

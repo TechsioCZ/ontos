@@ -48,16 +48,10 @@ import type {
 } from '../support/enrollment-acceptance-owner-script.ts';
 
 /**
- * Backend acceptance matrix for issue #338, on real PostgreSQL.
- *
- * These are acceptance scenarios, not unit scenarios: the Retail self-enrollment journey runs
- * through the production owner-transition driver, the production generic owner store, the real
- * Attempt service and the real SECURITY DEFINER routines, one committed transaction per owner
- * phase. Only the owner effect on the far side of the dispatch seam is scripted, because an
- * acceptance scenario is defined by what each owner answered.
- *
- * Every scenario is named with its T-number from the issue's acceptance matrix, or with the
- * required domain scenario it covers.
+ * Retail self-enrollment journey acceptance, on real PostgreSQL: the production owner-transition
+ * driver, owner store, Attempt service and SECURITY DEFINER routines all run for real, one
+ * committed transaction per owner phase. Only the owner's answer on the far side of the dispatch
+ * seam is scripted.
  */
 
 const PARTY_RESOURCE_ID = 'retail-acceptance-party';
@@ -214,9 +208,9 @@ const operationSummary = (
   rows: readonly { readonly outcome_code: string | null; readonly status: string; readonly transition_key: string }[],
 ) => rows.map((row) => [row.transition_key, row.status, row.outcome_code] as const);
 
-it.live('T07: a lost response replays the same durable owner pair instead of preparing a second one', () =>
+it.live('a lost response replays the same durable owner pair instead of preparing a second one', () =>
   Effect.scoped(
-    Effect.gen(function* t07LostResponse() {
+    Effect.gen(function* lostResponse() {
       const identities = makeScenarioIdentities();
       const { fixture, input } = yield* scenario(identities);
 
@@ -232,14 +226,9 @@ it.live('T07: a lost response replays the same durable owner pair instead of pre
 
       const settled = yield* readEnrollmentAcceptanceOperations(fixture, input.portalEnrollmentAttemptId);
 
-      // The caller never saw the response and retries the identical intent. Starting the Attempt
-      // again returns the existing one rather than preparing a second pair for the same intent.
       const replayedStart = yield* startEnrollmentAcceptanceAttempt(fixture, identities.startInput);
       expect(replayedStart.portalEnrollmentAttemptId).toBe(input.portalEnrollmentAttemptId);
 
-      // Re-running the journey against that settled Attempt performs no owner effect at all: the
-      // durable journal answers, and it answers with a typed terminal refusal rather than by
-      // preparing anything a second time.
       const attemptAfterFirst = yield* readEnrollmentAcceptanceAttempt(fixture, input.portalEnrollmentAttemptId);
       const second = journeyRun(
         fixture,
@@ -253,8 +242,6 @@ it.live('T07: a lost response replays the same durable owner pair instead of pre
       expect(second.owner.log.dispatched).toStrictEqual([]);
       expect(second.owner.log.reconciled).toStrictEqual([]);
 
-      // One durable owner operation per declared transition, unchanged by the retry: the same
-      // Principal/binding pair the first run named is the only pair that exists.
       const operations = yield* readEnrollmentAcceptanceOperations(fixture, input.portalEnrollmentAttemptId);
       expect(operations).toStrictEqual(settled);
       expect(operationSummary(operations)).toStrictEqual([
@@ -267,13 +254,12 @@ it.live('T07: a lost response replays the same durable owner pair instead of pre
   ),
 );
 
-it.live('T08: a committed creation whose activation times out is INDETERMINATE, then reconciles once', () =>
+it.live('a committed creation whose activation times out is INDETERMINATE, then reconciles once', () =>
   Effect.scoped(
-    Effect.gen(function* t08IndeterminateThenReconcile() {
+    Effect.gen(function* indeterminateThenReconcile() {
       const identities = makeScenarioIdentities();
       const { fixture, input } = yield* scenario(identities);
 
-      // The Party Registry owner committed and then stopped answering.
       const timingOut = journeyRun(
         fixture,
         identities,
@@ -281,22 +267,19 @@ it.live('T08: a committed creation whose activation times out is INDETERMINATE, 
         withAnswer(PARTY_CANDIDATE_SUBMISSION_TRANSITION_KEY, { kind: 'TIMED_OUT' }),
       );
       const stalled = yield* Effect.flip(timingOut.result);
-      // An owner that did not answer is never a denial: the journey halts on a typed, retryable
-      // non-terminal answer and dispatches nothing further.
+      // A missing answer is never treated as a denial: halt is typed retryable, not terminal.
       expect(stalled.retryable).toBe(true);
       expect(stalled.code).not.toBe('attempt_terminal');
       expect(timingOut.owner.log.dispatched).toStrictEqual([
         PORTAL_ACCOUNT_CREATION_TRANSITION_KEY,
         PARTY_CANDIDATE_SUBMISSION_TRANSITION_KEY,
       ]);
-      // Nothing was dispatched twice while the outcome was unknown.
       expect(
         timingOut.owner.log.dispatched.filter((key) => key === PARTY_CANDIDATE_SUBMISSION_TRANSITION_KEY),
       ).toHaveLength(1);
       const stalledAttempt = yield* readEnrollmentAcceptanceAttempt(fixture, input.portalEnrollmentAttemptId);
       expect(stalledAttempt.state).not.toBe('COMPLETE');
 
-      // The worker is gone; its leases lapse and a recovery worker resumes the same Attempt.
       yield* expireEnrollmentAcceptanceLeases(fixture, input.portalEnrollmentAttemptId);
       const afterLapse = yield* readEnrollmentAcceptanceAttempt(fixture, input.portalEnrollmentAttemptId);
       const recovery = journeyRun(
@@ -316,7 +299,6 @@ it.live('T08: a committed creation whose activation times out is INDETERMINATE, 
       const recovered = yield* recovery.result;
 
       expect(recovered.outcome).toBe('COMPLETED');
-      // The recovered transition was resolved by an authoritative owner read, not by a re-dispatch.
       expect(recovery.owner.log.dispatched).not.toContain(PARTY_CANDIDATE_SUBMISSION_TRANSITION_KEY);
       expect(recovery.owner.log.reconciled).toStrictEqual([PARTY_CANDIDATE_SUBMISSION_TRANSITION_KEY]);
       expect(recovery.owner.log.dispatched).toStrictEqual([
@@ -329,7 +311,6 @@ it.live('T08: a committed creation whose activation times out is INDETERMINATE, 
       const party = operations.find((row) => row.transition_key === PARTY_CANDIDATE_SUBMISSION_TRANSITION_KEY);
       expect(party?.status).toBe('SUCCEEDED');
       expect(party?.result_reference).toBe(PARTY_RESOURCE_ID);
-      // The reconciliation is evidenced, so a later audit can name the owner read that resolved it.
       expect(party?.reconciliation_ref).not.toBeNull();
     }),
   ),
@@ -368,7 +349,6 @@ it.live('2-of-3 committed transitions then a timeout: the retry converges withou
       );
       const converged = yield* retry.result;
       expect(converged.outcome).toBe('COMPLETED');
-      // Nothing was dispatched twice: the three committed transitions replayed from the journal.
       expect(retry.owner.log.dispatched).toStrictEqual([]);
 
       const operations = yield* readEnrollmentAcceptanceOperations(fixture, input.portalEnrollmentAttemptId);
@@ -401,7 +381,6 @@ it.live('equal-email Party candidates halt into reconciliation instead of choosi
         expect(result.halt.reason).toBe('RECONCILIATION_REQUIRED');
         expect(result.halt.transitionKey).toBe(PARTY_CANDIDATE_SUBMISSION_TRANSITION_KEY);
       }
-      // The halt stops the plan: no Retail Customer Profile and no binding were ever dispatched.
       expect(run.owner.log.dispatched).toStrictEqual([
         PORTAL_ACCOUNT_CREATION_TRANSITION_KEY,
         PARTY_CANDIDATE_SUBMISSION_TRANSITION_KEY,
@@ -440,7 +419,6 @@ it.live('a Party created before a failing profile ensure keeps its committed par
         expect(result.halt.reason).toBe('OWNER_REJECTED');
         expect(result.halt.transitionKey).toBe(ENSURE_RETAIL_CUSTOMER_PROFILE_TRANSITION_KEY);
       }
-      // The Party the owner did create is retained with its exact reference; nothing is unwound.
       const operations = yield* readEnrollmentAcceptanceOperations(fixture, input.portalEnrollmentAttemptId);
       const party = operations.find((row) => row.transition_key === PARTY_CANDIDATE_SUBMISSION_TRANSITION_KEY);
       expect(party?.status).toBe('SUCCEEDED');
@@ -476,8 +454,6 @@ it.live('a retail binding that commits without its grant baseline halts as RECON
         expect(result.halt.reason).toBe('RECONCILIATION_REQUIRED');
         expect(result.halt.transitionKey).toBe(BIND_RETAIL_PORTAL_PROFILE_TRANSITION_KEY);
       }
-      // The three committed transitions before it are retained, grants included: a partial
-      // authorization baseline is a reconciliation subject, never a reason to unwind an identity.
       const operations = yield* readEnrollmentAcceptanceOperations(fixture, input.portalEnrollmentAttemptId);
       expect(operationSummary(operations)).toStrictEqual([
         [PORTAL_ACCOUNT_CREATION_TRANSITION_KEY, 'SUCCEEDED', PORTAL_ACCOUNT_CREATED_OUTCOME_CODE],
@@ -518,9 +494,9 @@ it.live('authority revoked mid-flight is a typed halt, never a completed journey
   ),
 );
 
-it.live('T24: a support Actor may not resume another Actor’s owner operation under that Actor’s identity', () =>
+it.live('a support Actor may not resume another Actor’s owner operation under that Actor’s identity', () =>
   Effect.scoped(
-    Effect.gen(function* t24SupportResume() {
+    Effect.gen(function* supportResume() {
       const identities = makeScenarioIdentities();
       const { fixture, input } = yield* scenario(identities);
 
@@ -534,9 +510,8 @@ it.live('T24: a support Actor may not resume another Actor’s owner operation u
       yield* expireEnrollmentAcceptanceLeases(fixture, input.portalEnrollmentAttemptId);
       const afterLapse = yield* readEnrollmentAcceptanceAttempt(fixture, input.portalEnrollmentAttemptId);
 
-      // Support resumes the Attempt under its own Actor identity. The durable owner operation is
-      // immutable and was recorded for the customer's Actor, so the resumption is refused rather
-      // than silently attributed to the customer: support resumes, it never impersonates.
+      // The durable owner operation is immutable and recorded for the customer's Actor, so resuming
+      // it under a different Actor's identity is refused rather than silently reattributed.
       const supportActorPrincipalId = principalId(randomUUID());
       const support = journeyRun(
         fixture,
@@ -554,10 +529,8 @@ it.live('T24: a support Actor may not resume another Actor’s owner operation u
       );
       const refusal = yield* Effect.flip(support.result);
       expect(refusal.code).toBe('attempt_invalid');
-      // The owner was never asked anything on the support Actor's behalf.
       expect(support.owner.log.reconciled).toStrictEqual([]);
 
-      // The customer's own Actor still converges the same operation, with its attribution intact.
       const recovery = journeyRun(
         fixture,
         identities,
@@ -586,9 +559,6 @@ it.live('derives COMPLETE from the declared required transitions rather than fro
       const run = journeyRun(fixture, identities, input, happyAnswers);
       expect((yield* run.result).outcome).toBe('COMPLETED');
 
-      // Every declared required transition of the journey succeeded exactly once, so the durable
-      // Attempt must project as COMPLETE. No owner supplied that state: it is derived from the
-      // journey's own declaration.
       const attempt = yield* readEnrollmentAcceptanceAttempt(fixture, input.portalEnrollmentAttemptId);
       expect(attempt.state).toBe('COMPLETE');
     }),

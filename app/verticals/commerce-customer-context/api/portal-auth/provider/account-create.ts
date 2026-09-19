@@ -1,14 +1,16 @@
 import { isAPIError } from 'better-auth/api';
 import type { Auth } from 'better-auth';
-import { Context, Duration, Effect, Option, Redacted, Schema } from 'effect';
+import { Duration, Effect, Layer, Option, Redacted, Schema } from 'effect';
 
 import {
   COMMERCE_AUTHENTICATION_NAMESPACE_ID,
   ExternalUserSubjectSchema,
 } from '../../../shared/portal-auth-contracts.ts';
 import { CommerceEnrollmentProofService } from '../enrollment-proof-port.ts';
+import { CommercePortalAuthInstance } from './auth.ts';
 import { COMMERCE_PORTAL_AUTH_POLICY } from './config.ts';
 import type { CommercePortalAuthAccountCreationGateway } from './account-creation-gateway-service.ts';
+import { CommercePortalAuthAccountCreationService } from './account-creation-service.ts';
 import { CommercePortalAuthAccountCreationInvalidRequest } from './account-creation-invalid-request.ts';
 import { CommercePortalAuthAccountCreationRejected } from './account-creation-rejected.ts';
 import { CommercePortalAuthAccountCreationUnavailable } from './account-creation-unavailable.ts';
@@ -21,6 +23,7 @@ export { CommercePortalAuthAccountCreationRejected } from './account-creation-re
 export { CommercePortalAuthAccountCreationUnavailable } from './account-creation-unavailable.ts';
 export { CommercePortalAuthAccountCreationGatewayService } from './account-creation-gateway-service.ts';
 export { CommercePortalAuthAccountCreationProviderService } from './account-creation-provider-service.ts';
+export { CommercePortalAuthAccountCreationService } from './account-creation-service.ts';
 export { CommercePortalAuthAccountLookupService } from './account-lookup-service.ts';
 export type { CommercePortalAuthAccountLookup } from './account-lookup-service.ts';
 export type { CommercePortalAuthAccountCreationGateway } from './account-creation-gateway-service.ts';
@@ -293,17 +296,6 @@ export type CommercePortalAuthAccountCreationFailure =
   | CommercePortalAuthAccountCreationRejected
   | CommercePortalAuthAccountCreationUnavailable;
 
-export class CommercePortalAuthAccountCreationService extends Context.Service<
-  CommercePortalAuthAccountCreationService,
-  {
-    readonly createAccount: (
-      input: CommercePortalAccountCreateInputBoundary,
-    ) => Effect.Effect<CommercePortalAccountCreateResult, CommercePortalAuthAccountCreationFailure>;
-  }
->()(
-  '@app/commerce-customer-context/api/portal-auth/provider/account-create/CommercePortalAuthAccountCreationService',
-) {}
-
 /**
  * Account creation is a two-party operation: the owner-local Attempt service authorizes the exact
  * invocation first, then the provider performs one Better Auth effect. No public sign-up seam is
@@ -360,4 +352,60 @@ export const makeCommercePortalAuthAccountCreationService = Effect.fn('CommerceP
     });
     return { createAccount };
   },
+);
+
+/**
+ * Better Auth's Promise API is kept behind this narrow provider-owned Effect bridge. The throwable
+ * is classified once here, at its source, so the request-side code of a Better Auth `APIError`
+ * survives the crossing while the raw throwable stays on the non-schema `cause` property; anything
+ * that is not a provider API error is already marked unavailable and can never become a rejection.
+ */
+const signUpEmailForRealm =
+  (
+    auth: Pick<Auth, 'api'>,
+  ): ((
+    input: Parameters<Auth['api']['signUpEmail']>[0],
+  ) => Effect.Effect<
+    Option.Option<CommercePortalAuthAccountCreateResponse>,
+    CommercePortalAuthAccountCreationProviderFailure
+  >) =>
+  (input) =>
+    Effect.tryPromise({
+      catch: providerCallFailure,
+      try: auth.api.signUpEmail.bind(auth.api, input),
+    }).pipe(
+      Effect.timeoutOrElse({
+        duration: Duration.millis(COMMERCE_PORTAL_AUTH_POLICY.accountCreation.providerCallTimeoutMilliseconds),
+        orElse: () => Effect.fail(providerCallFailure({ reason: 'PROVIDER_TIMEOUT' })),
+      }),
+      Effect.map(Option.fromNullishOr),
+    );
+
+const makeCommercePortalAuthAccountCreationProvider = (
+  auth: Pick<Auth, 'api'>,
+): CommercePortalAuthAccountCreationProvider => ({ api: { signUpEmail: signUpEmailForRealm(auth) } });
+
+/** The constructed realm stays a visible requirement; the composition root supplies it once. */
+export const CommercePortalAuthAccountCreationProviderLive = Layer.effect(
+  CommercePortalAuthAccountCreationProviderService,
+  Effect.gen(function* makeCommercePortalAuthAccountCreationProviderLive() {
+    const auth = yield* CommercePortalAuthInstance;
+    return makeCommercePortalAuthAccountCreationProvider(auth);
+  }),
+);
+
+/** The provider-local duplicate guard reads the realm's own account directory, never Core. */
+export const CommercePortalAuthAccountCreationGatewayLive = Layer.effect(
+  CommercePortalAuthAccountCreationGatewayService,
+  makeCommercePortalAuthAccountCreationGateway(),
+);
+
+/**
+ * The private two-party capability. Its owner half — the Attempt-scoped enrollment proof — and its
+ * provider half stay separate visible requirements, so a composition that installs one without the
+ * other cannot be built at all.
+ */
+export const CommercePortalAuthAccountCreationServiceLive = Layer.effect(
+  CommercePortalAuthAccountCreationService,
+  makeCommercePortalAuthAccountCreationService(),
 );

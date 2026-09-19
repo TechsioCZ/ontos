@@ -756,12 +756,14 @@ it.effect('keeps the Better Auth table inventory in the isolated commerce_auth s
       'stepUpChallenge',
       'stepUpChallengeAttempt',
       'recoveryReconciliation',
+      'recoveryResetLedger',
       'portalAuthAuditEvent',
     ]);
     expect(Object.keys(commercePortalAuthDatabaseSchema)).toStrictEqual([
       'account',
       'rateLimit',
       'recoveryReconciliation',
+      'recoveryResetLedger',
       'session',
       'stepUpChallenge',
       'stepUpChallengeAttempt',

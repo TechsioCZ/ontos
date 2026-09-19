@@ -1,4 +1,4 @@
-import { Effect } from 'effect';
+import { Effect, Layer } from 'effect';
 import { expect, it } from 'effect-rstest';
 
 import {
@@ -28,6 +28,7 @@ const unconfiguredRuntime = Effect.acquireRelease(
       productionActionRuntimeLive,
       GatewayAssertionRedemptionLive,
       commercePortalAuthRealmUnavailableLive([ORIGIN]),
+      Layer.empty,
     ).createHandler(),
   ),
   (runtime) => Effect.promise(async () => await runtime.dispose()),

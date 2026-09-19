@@ -2,6 +2,8 @@ import { getSession as betterAuthGetSession, signOut as betterAuthSignOut } from
 import { Effect, Layer, Redacted } from 'effect';
 
 import type { CommercePortalAuthOptions } from './provider/auth.ts';
+import { CommercePortalAuthAccountCreationService } from './provider/account-creation-service.ts';
+import { CommercePortalAuthAccountCreationUnavailable } from './provider/account-creation-unavailable.ts';
 import { CommercePortalAuthConfig } from './provider/config-service.ts';
 import type { CommercePortalAuthConfigValue } from './provider/config.ts';
 import { COMMERCE_PORTAL_AUTH_POLICY } from './provider/config.ts';
@@ -138,8 +140,20 @@ const unavailableProviderApi: CommercePortalAuthService['Service']['api'] = {
   }),
 };
 
-/** Exactly the tags the four portal-auth groups read, with no provider, database or transport. */
+/**
+ * The private account-creation capability, fail-closed. The enrollment start route still creates
+ * the durable Attempt and durably claims its `provider.account.create` transition under ordinary
+ * governance, then answers the retryable 503 at the exact seam this deployment is missing rather
+ * than silently accepting a credential it has nowhere to place. No caller can reach a provider
+ * effect through this leaf.
+ */
+const unavailableAccountCreation: CommercePortalAuthAccountCreationService['Service'] = {
+  createAccount: () => Effect.fail(new CommercePortalAuthAccountCreationUnavailable({ reason: UNAVAILABLE_REASON })),
+};
+
+/** Exactly the tags the five portal-auth groups read, with no provider, database or transport. */
 export type CommercePortalAuthHandlerServices =
+  | CommercePortalAuthAccountCreationService
   | CommercePortalAuthConfig
   | CommercePortalAuthMfaService
   | CommercePortalAuthRecoveryRateLimitService
@@ -153,6 +167,7 @@ export const commercePortalAuthRealmUnavailableLive = (
   trustedOrigins: readonly string[],
 ): Layer.Layer<CommercePortalAuthHandlerServices> =>
   Layer.mergeAll(
+    Layer.succeed(CommercePortalAuthAccountCreationService, unavailableAccountCreation),
     Layer.succeed(CommercePortalAuthConfig, unavailableConfiguration(trustedOrigins)),
     Layer.succeed(CommercePortalAuthMfaService, unavailableMfaService),
     Layer.succeed(CommercePortalAuthRecoveryRateLimitService, {

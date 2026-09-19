@@ -1,4 +1,4 @@
-import { Effect, Cause } from 'effect';
+import { Cause } from 'effect';
 import { expect, it } from 'effect-rstest';
 import { Client } from 'pg';
 

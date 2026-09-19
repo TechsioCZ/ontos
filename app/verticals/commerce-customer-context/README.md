@@ -38,8 +38,21 @@ rotates them independently.
 | `COMMERCE_CORE_IDENTITY_BASE_URL` | yes                    | `http`/`https` base URL of the Core identity API. It carries no credential material: a URL with userinfo, a query or a fragment is rejected.                        |
 | `COMMERCE_CORE_IDENTITY_API_KEY`  | yes                    | The trusted, server-owned API key, at least 16 characters. It is `Redacted` from the moment it is read and never reaches a log, a span attribute or a problem body. |
 
-With neither value named, every Core identity owner transition stays the fail-closed unavailable
-port rather than reaching an unconfigured endpoint.
+With neither value named, enrollment commit convergence stays the fail-closed capability and refuses
+retryably rather than reaching an unconfigured endpoint. The endpoint and the credential are
+deployment inputs: the installed transport replaces both on every call, so a caller supplies only
+the correlation it is dispatching under and can neither redirect the client nor present a
+credential of its own.
+
+## Authentication namespace registration
+
+The vertical registers its own authentication namespace, `ontos.commerce.portal.better-auth.v1`,
+for its own action-boundary audience `commerce-customer-context`
+(`api/portal-auth/authentication-namespace-registry.ts`). It needs no configuration, but it is a
+required deployment input of every governed route here: Core revalidates the namespace a presented
+session binding names before any authorization runs, and with no registry reachable every
+namespace-carrying gateway assertion is answered `503 operation_context_unavailable`. A deployment
+that supplies its own registry alongside the gateway assertion redemption store overrides this one.
 
 ## Portal enrollment routes
 

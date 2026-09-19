@@ -302,9 +302,7 @@ const cleanupFixture = (fixture: ProviderFixture) =>
       // evidence row in the same transaction as the change, so the row is fixture state too.
       const subjects = yield* transaction.select({ id: user.id }).from(user).where(eq(user.email, fixture.email));
       for (const subject of subjects) {
-        yield* transaction
-          .delete(portalAuthAuditEvent)
-          .where(eq(portalAuthAuditEvent.providerSubjectId, subject.id));
+        yield* transaction.delete(portalAuthAuditEvent).where(eq(portalAuthAuditEvent.providerSubjectId, subject.id));
       }
       yield* transaction.delete(user).where(eq(user.email, fixture.email));
       yield* transaction.delete(verification).where(eq(verification.identifier, fixture.email));

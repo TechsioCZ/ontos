@@ -483,10 +483,6 @@ const CompiledReaderSchema = Schema.Struct({
   allowedOrigins: Schema.Array(Schema.String),
 });
 
-const PackageJsonSchema = Schema.Struct({
-  scripts: Schema.Record(Schema.String, Schema.String),
-});
-
 const TopologySchema = Schema.Struct({
   verticals: Schema.Array(
     Schema.Struct({
@@ -505,11 +501,6 @@ const TopologySchema = Schema.Struct({
       moduleFederation: Schema.Struct({ exposes: Schema.Array(Schema.String) }),
     }),
   ),
-});
-
-const OverlaySchema = Schema.Struct({
-  apis: Schema.Record(Schema.String, Schema.String),
-  ports: Schema.Record(Schema.String, Schema.Number),
 });
 
 const CloudflareReportSchema = Schema.Struct({

@@ -1,7 +1,7 @@
 import { DateTime, Effect, Option, Schema } from 'effect';
 import { expect, it } from 'effect-rstest';
 
-import type { AttemptClaimResult, AttemptRecordResult } from '../../src/enrollment/attempts/attempt-persistence.ts';
+import type { AttemptClaimedResult, AttemptRecordResult } from '../../src/enrollment/attempts/attempt-persistence.ts';
 import {
   CommerceEnrollmentAttemptConflict,
   CommerceEnrollmentAttemptIndeterminate,
@@ -248,10 +248,10 @@ const makeHarness = (
 
   const claimResult = (
     transition: CommerceEnrollmentOwnerTransition,
-    outcome: AttemptClaimResult['outcome'],
+    outcome: AttemptClaimedResult['outcome'],
     status: EnrollmentOwnerOperationSnapshot['status'],
     replayed: StepScript | null,
-  ): AttemptClaimResult => ({
+  ): AttemptClaimedResult => ({
     attempt: attemptSnapshot(revision + 1),
     operation: operationSnapshot(transition, status, replayed),
     outcome,

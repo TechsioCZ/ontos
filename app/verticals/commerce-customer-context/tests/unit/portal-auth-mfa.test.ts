@@ -40,6 +40,7 @@ import {
 import type {
   CommercePortalAuthMfaFreshnessReader,
   CommercePortalAuthMfaSessionReadApi,
+  CommercePortalAuthMfaSessionSnapshot,
 } from '../../api/portal-auth/provider/mfa/http.ts';
 import { CommercePortalAuthMfaService } from '../../api/portal-auth/provider/mfa/service.ts';
 import { CommercePortalAuthRecoveryRateLimitService } from '../../api/portal-auth/rate-limit-service.ts';
@@ -487,7 +488,10 @@ const makeMfaHttpFixture = (): MfaHttpFixture => {
   return { budget, freshnessReader, service, state };
 };
 
-const makeMfaHttpApp = (fixture: MfaHttpFixture, reader: CommercePortalAuthMfaFreshnessReader = fixture.freshnessReader) =>
+const makeMfaHttpApp = (
+  fixture: MfaHttpFixture,
+  reader: CommercePortalAuthMfaFreshnessReader = fixture.freshnessReader,
+) =>
   Effect.gen(function* makeMfaHttpAppEffect() {
     const apiLayer = HttpApiBuilder.layer(CommercePortalAuthMfaApi).pipe(
       Layer.provide(portalAuthMfaStandaloneApiLive),
@@ -716,10 +720,12 @@ const freshnessSessionStore = (initial: readonly CommercePortalAuthSessionRecord
 /** The provider half of the gate: a cookie resolves to exactly one session identity. */
 const freshnessProviderApi = (currentSessionId: { value: string }): CommercePortalAuthMfaSessionReadApi => ({
   getSession: () =>
-    Promise.resolve({
-      headers: new Headers(),
-      response: { session: { id: currentSessionId.value }, user: { id: FRESHNESS_SUBJECT } },
-    }),
+    Effect.sync((): Option.Option<CommercePortalAuthMfaSessionSnapshot> =>
+      Option.some({
+        session: { id: currentSessionId.value },
+        user: { id: FRESHNESS_SUBJECT },
+      }),
+    ),
 });
 
 const unusedFreshnessSignIn: CommercePortalAuthSessionProvider = {

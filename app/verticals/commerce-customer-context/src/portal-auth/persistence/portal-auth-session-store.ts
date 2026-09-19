@@ -39,7 +39,9 @@ const unavailable = (operation: string, cause: unknown): CommercePortalAuthSessi
  * the one transaction back either way — but the operation name keeps them apart in a log.
  */
 const mutationFailure = (operation: string, cause: unknown): CommercePortalAuthSessionUnavailable =>
-  Schema.is(CommercePortalAuthAuditUnavailable)(cause) ? unavailable(`${operation}-audit`, cause) : unavailable(operation, cause);
+  Schema.is(CommercePortalAuthAuditUnavailable)(cause)
+    ? unavailable(`${operation}-audit`, cause)
+    : unavailable(operation, cause);
 
 /** The handle the executor hands a transaction body; it writes the same tables the executor does. */
 type CommercePortalAuthDatabaseTransaction = Parameters<
@@ -342,28 +344,28 @@ export const makeCommercePortalAuthSessionStore = (
     ): Effect.fn.Return<number, CommercePortalAuthSessionUnavailable> {
       return yield* database
         .transaction(
-          Effect.fn('CommercePortalAuthSessionStore.revokeAll.transaction')(function* revokeAllTransaction(
-            transaction,
-          ) {
-            const locked = yield* transaction
-              .update(user)
-              .set({ updatedAt: sql`${user.updatedAt}` })
-              .where(eq(user.id, input.providerSubjectId))
-              .returning({ id: user.id });
-            if (locked.length === 0) {
-              return 0;
-            }
+          Effect.fn('CommercePortalAuthSessionStore.revokeAll.transaction')(
+            function* revokeAllTransaction(transaction) {
+              const locked = yield* transaction
+                .update(user)
+                .set({ updatedAt: sql`${user.updatedAt}` })
+                .where(eq(user.id, input.providerSubjectId))
+                .returning({ id: user.id });
+              if (locked.length === 0) {
+                return 0;
+              }
 
-            const deleted = yield* transaction
-              .delete(session)
-              .where(eq(session.userId, input.providerSubjectId))
-              .returning({ id: session.id });
-            if (deleted.length === 0) {
-              return 0;
-            }
-            yield* writeAuditRow(transaction, input.audit);
-            return deleted.length;
-          }),
+              const deleted = yield* transaction
+                .delete(session)
+                .where(eq(session.userId, input.providerSubjectId))
+                .returning({ id: session.id });
+              if (deleted.length === 0) {
+                return 0;
+              }
+              yield* writeAuditRow(transaction, input.audit);
+              return deleted.length;
+            },
+          ),
         )
         .pipe(Effect.mapError((cause) => mutationFailure('session-revoke-all', cause)));
     },

@@ -571,6 +571,7 @@ it.effect('returns reconciliation-required and never spends the reset token when
     accountExists: () => Effect.succeed(true),
     findAccountSubjectForEmail: () => Effect.succeed(Option.some(REPLACEMENT_SUBJECT)),
     peekPasswordResetLedger: () => Effect.succeed(Option.some({ email: EMAIL, providerSubjectId: ORIGINAL_SUBJECT })),
+    recordRecoveryReconciliation: () => Effect.void,
   };
   return runWithRecovery(provider, store, (service) =>
     service.resetPassword({ newPassword: Redacted.make('P'.repeat(24)), token: Redacted.make('reset-token') }).pipe(
@@ -609,6 +610,7 @@ it.effect(
       findAccountSubjectForEmail: () => Effect.succeed(Option.some(REPLACEMENT_SUBJECT)),
       peekEmailVerificationLedger: () =>
         Effect.succeed(Option.some({ email: EMAIL, providerSubjectId: ORIGINAL_SUBJECT })),
+      recordRecoveryReconciliation: () => Effect.void,
     };
     return runWithRecovery(successfulProvider(), store, (service) =>
       service.verifyEmail({ token: VERIFICATION_TOKEN }).pipe(

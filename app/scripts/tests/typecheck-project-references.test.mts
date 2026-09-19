@@ -142,7 +142,7 @@ it.live(
     );
     const sourceFile = path.join(fixture, 'referenced/index.ts');
     writeFileSync(sourceFile, 'export const referenceGateFixture: number = 1;\n');
-    const [, , ...args] = packageJson.scripts.typecheck.split(' ');
+    const args = packageJson.scripts.typecheck.split(' ').slice(2);
     const initial = yield* runTypecheck(fixture, args);
     expect(initial.status, initial.stdout + initial.stderr).toBe(0);
     expect(

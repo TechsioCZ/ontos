@@ -226,7 +226,7 @@ it.effect('fails closed (T20) when a historical commit read finds the current re
 );
 
 it.effect(
-  'reports the caller\'s invocationId (not the retained binding\'s originalInvocationId) when a non-current binding converges onto a different attempt',
+  "reports the caller's invocationId (not the retained binding's originalInvocationId) when a non-current binding converges onto a different attempt",
   () =>
     Effect.gen(function* nonCurrentConvergenceReportsCallerInvocation() {
       const runtime = {

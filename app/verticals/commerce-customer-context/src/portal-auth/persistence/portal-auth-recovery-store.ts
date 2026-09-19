@@ -1,4 +1,4 @@
-import { and, desc, eq, inArray, like, lt, sql } from 'drizzle-orm';
+import { and, desc, eq, gt, inArray, like, lt, sql } from 'drizzle-orm';
 import { Crypto, DateTime, Effect, Layer, Option, Redacted, Schema } from 'effect';
 
 import {
@@ -20,11 +20,15 @@ import type {
 import { COMMERCE_PORTAL_AUTH_POLICY } from '../../../api/portal-auth/provider/config.ts';
 import { CommercePortalAuthDatabase } from './portal-auth-database.ts';
 import type { CommercePortalAuthDatabaseExecutor } from './portal-auth-database-types.ts';
-import { rateLimit, recoveryReconciliation, user, verification } from './portal-auth-tables.ts';
+import { rateLimit, recoveryReconciliation, recoveryResetLedger, user, verification } from './portal-auth-tables.ts';
 
 const EMAIL_VERIFICATION_IDENTIFIER_PREFIX = 'commerce-email-verification:';
 const EMAIL_VERIFICATION_RESERVATION_IDENTIFIER_PREFIX = 'commerce-email-verification-pending:';
-const RESET_IDENTIFIER_PREFIX = 'commerce-password-reset:';
+const RESET_LEDGER_STATE_PENDING = 'pending';
+const RESET_LEDGER_STATE_EXPIRED = 'expired';
+const RESET_LEDGER_SWEEP_OPERATION = 'recovery-reset-ledger-sweep';
+/** A sweep touches at most this many stale rows per call: bounded work, never a table scan. */
+const RESET_LEDGER_SWEEP_BATCH_SIZE = 100;
 const DEFAULT_RECONCILIATION_ENTRY_LIMIT = 50;
 const MAX_RECONCILIATION_ENTRY_LIMIT = 200;
 const verificationLedgerEmail = Schema.String.check(Schema.isTrimmed(), Schema.isMinLength(3), Schema.isMaxLength(320));
@@ -104,8 +108,6 @@ const emailVerificationIdentifier = (digest: string): string => `${EMAIL_VERIFIC
 
 const emailVerificationReservationIdentifier = (digest: string): string =>
   `${EMAIL_VERIFICATION_RESERVATION_IDENTIFIER_PREFIX}${digest}`;
-
-const passwordResetIdentifier = (digest: string): string => `${RESET_IDENTIFIER_PREFIX}${digest}`;
 
 const digestText = (crypto: Crypto.Crypto, value: string) =>
   crypto.digest('SHA-256', new TextEncoder().encode(value)).pipe(Effect.map(bytesToHex));
@@ -379,9 +381,40 @@ export const makeCommercePortalAuthRecoveryStore = Effect.fn('CommercePortalAuth
     );
 
     /**
+     * Bounded housekeeping: a pending row whose expiry has already passed can never satisfy a peek
+     * again (`peekPasswordResetLedger` itself also filters on `expiresAt`, so an unswept row is
+     * already excluded from lookups — this only makes the exclusion durable). At most
+     * `RESET_LEDGER_SWEEP_BATCH_SIZE` rows are touched per call, so this never becomes a table scan.
+     * A sweep that fails must not deny the request that triggered it, so its cause is reported and
+     * the caller continues.
+     */
+    const sweepExpiredResetLedgerRows = (now: Date) =>
+      Effect.gen(function* sweepExpiredResetLedgerRowsEffect() {
+        const stale = database
+          .select({ identifierDigest: recoveryResetLedger.identifierDigest })
+          .from(recoveryResetLedger)
+          .where(and(eq(recoveryResetLedger.state, RESET_LEDGER_STATE_PENDING), lt(recoveryResetLedger.expiresAt, now)))
+          .limit(RESET_LEDGER_SWEEP_BATCH_SIZE);
+        yield* database
+          .update(recoveryResetLedger)
+          .set({ email: null, providerSubjectId: null, state: RESET_LEDGER_STATE_EXPIRED, updatedAt: now })
+          .where(inArray(recoveryResetLedger.identifierDigest, stale));
+      }).pipe(
+        Effect.annotateLogs({ operation: RESET_LEDGER_SWEEP_OPERATION }),
+        Effect.ignore({ log: true, message: 'Commerce portal recovery reset-ledger sweep failed' }),
+      );
+
+    /**
      * Records the issuance-time email/subject binding for a password-reset token, before delivery.
      * This ledger is read-only evidence for reconciliation detection: it is never consumed, and its
      * presence or absence never changes whether Better Auth's own reset flow succeeds.
+     *
+     * Keyed by `identifierDigest` (the normalized email's digest), so a repeated request for the
+     * same identifier within the window always upserts the *same* row instead of inserting a second
+     * pending row: no duplicate pending rows are possible, and the store-level behavior — a fresh
+     * token digest and expiry replacing the prior ones — is identical whether this is the first
+     * request or a retry, so the caller cannot distinguish "no account" from "already requested".
+     * An identifier whose prior row had already expired is revived back to `pending` in place.
      */
     const registerPasswordResetToken = Effect.fn('CommercePortalAuthRecoveryStore.registerPasswordResetToken')(
       function* registerPasswordResetTokenEffect(input: {
@@ -391,24 +424,44 @@ export const makeCommercePortalAuthRecoveryStore = Effect.fn('CommercePortalAuth
         readonly token: Redacted.Redacted;
       }): Effect.fn.Return<boolean, CommercePortalAuthRecoveryUnavailable> {
         const now = yield* DateTime.nowAsDate;
-        const digest = yield* digestToken(crypto, input.token).pipe(
-          Effect.mapError((cause) => unavailable('password-reset-token-hash', cause)),
+        const email = normalizeEmail(input.email);
+        // Independent digests over unrelated inputs (the email vs. the token): safe and worth
+        // running concurrently, bounded to the two of them.
+        const [identifierDigest, tokenDigest] = yield* Effect.all(
+          [
+            digestText(crypto, email).pipe(
+              Effect.mapError((cause) => unavailable('password-reset-identifier-hash', cause)),
+            ),
+            digestToken(crypto, input.token).pipe(
+              Effect.mapError((cause) => unavailable('password-reset-token-hash', cause)),
+            ),
+          ],
+          { concurrency: 2 },
         );
-        const verificationId = yield* crypto.randomUUIDv4.pipe(
-          Effect.mapError((cause) => unavailable('password-reset-token-id', cause)),
-        );
-        const identifier = passwordResetIdentifier(digest);
+        yield* sweepExpiredResetLedgerRows(now);
         return yield* database
-          .insert(verification)
+          .insert(recoveryResetLedger)
           .values({
             createdAt: now,
+            email,
             expiresAt: input.expiresAt,
-            id: verificationId,
-            identifier,
+            identifierDigest,
+            providerSubjectId: input.providerSubjectId,
+            state: RESET_LEDGER_STATE_PENDING,
+            tokenDigest,
             updatedAt: now,
-            value: encodeVerificationLedgerRecord(input),
           })
-          .onConflictDoNothing({ target: verification.id })
+          .onConflictDoUpdate({
+            set: {
+              email,
+              expiresAt: input.expiresAt,
+              providerSubjectId: input.providerSubjectId,
+              state: RESET_LEDGER_STATE_PENDING,
+              tokenDigest,
+              updatedAt: now,
+            },
+            target: recoveryResetLedger.identifierDigest,
+          })
           .pipe(
             Effect.as(true),
             Effect.mapError((cause) => unavailable('password-reset-token-register', cause)),
@@ -483,9 +536,43 @@ export const makeCommercePortalAuthRecoveryStore = Effect.fn('CommercePortalAuth
     const peekEmailVerificationLedger = (input: { readonly token: Redacted.Redacted }) =>
       peekLedgerByIdentifierPrefix(EMAIL_VERIFICATION_IDENTIFIER_PREFIX, input.token);
 
-    /** Non-destructive: reads the password-reset ledger's issuance-time binding for a token. */
-    const peekPasswordResetLedger = (input: { readonly token: Redacted.Redacted }) =>
-      peekLedgerByIdentifierPrefix(RESET_IDENTIFIER_PREFIX, input.token);
+    /**
+     * Non-destructive: reads the password-reset ledger's issuance-time binding for a token.
+     * Excludes any row that is not `pending` or whose expiry has already passed — a terminal
+     * (expired) row's `providerSubjectId`/`email` were already cleared by the sweep, but this filter
+     * is what actually keeps the row out of lookups even for the instant between expiry and the next
+     * sweep: an expired row is never returned here regardless of whether it has been swept yet.
+     */
+    const peekPasswordResetLedger = Effect.fn('CommercePortalAuthRecoveryStore.peekPasswordResetLedger')(
+      function* peekPasswordResetLedgerEffect(input: {
+        readonly token: Redacted.Redacted;
+      }): Effect.fn.Return<
+        Option.Option<CommercePortalAuthRecoveryLedgerBinding>,
+        CommercePortalAuthRecoveryUnavailable
+      > {
+        const now = yield* DateTime.nowAsDate;
+        const tokenDigest = yield* digestToken(crypto, input.token).pipe(
+          Effect.mapError((cause) => unavailable('password-reset-ledger-peek-hash', cause)),
+        );
+        const rows = yield* database
+          .select({ email: recoveryResetLedger.email, providerSubjectId: recoveryResetLedger.providerSubjectId })
+          .from(recoveryResetLedger)
+          .where(
+            and(
+              eq(recoveryResetLedger.tokenDigest, tokenDigest),
+              eq(recoveryResetLedger.state, RESET_LEDGER_STATE_PENDING),
+              gt(recoveryResetLedger.expiresAt, now),
+            ),
+          )
+          .limit(1)
+          .pipe(Effect.mapError((cause) => unavailable('password-reset-ledger-peek', cause)));
+        const [row] = rows;
+        if (row === undefined || row.email === null || row.providerSubjectId === null) {
+          return Option.none();
+        }
+        return Option.some({ email: row.email, providerSubjectId: row.providerSubjectId });
+      },
+    );
 
     const findAccountSubjectForEmail = Effect.fn('CommercePortalAuthRecoveryStore.findAccountSubjectForEmail')(
       function* findAccountSubjectForEmailEffect(input: {

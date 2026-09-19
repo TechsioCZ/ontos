@@ -29,9 +29,6 @@ import { Context, Effect, Layer, Option, Redacted, Schema } from 'effect';
 import { HttpClient, HttpClientRequest } from 'effect/unstable/http';
 import { makeEffectHttpApiClient } from '@modern-js/bff-effect/effect-client';
 
-/** The Shell-owned prefix used by the neutral external-identity HTTP surface. */
-export const defaultExternalIdentityApiBaseUrl = '/shell-super-app-api';
-
 const ExternalIdentityRequestCorrelationSchema = Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(200));
 
 type ExternalIdentityApiGroups =
@@ -211,12 +208,3 @@ export interface ExternalIdentityClientPort {
 export class ExternalIdentityClient extends Context.Service<ExternalIdentityClient, ExternalIdentityClientPort>()(
   '@app/shared-contracts/external-identity-client/ExternalIdentityClient',
 ) {}
-
-export const externalIdentityClientLive = Layer.succeed(ExternalIdentityClient, {
-  activatePrincipalBinding,
-  changePrincipalBindingStatus,
-  issueExternalGatewayContext,
-  readPrincipalBinding,
-  reservePrincipalBinding,
-  resolveExternalSubject,
-});

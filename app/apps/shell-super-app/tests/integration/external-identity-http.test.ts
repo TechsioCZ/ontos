@@ -320,6 +320,11 @@ const resolveRequest = () =>
     method: 'POST',
   });
 
+const acquireServer = (fixture: ReturnType<typeof makeServer>) =>
+  Effect.acquireRelease(Effect.succeed(fixture.server), (runtimeServer) =>
+    Effect.promise(() => runtimeServer.dispose()),
+  );
+
 const gatewayRequest = () =>
   new Request('https://fixture.ontos.test/auth/identity/external/gateway-context', {
     body: JSON.stringify({
@@ -341,9 +346,7 @@ it.live('runs binding-id HTTP reads and provider-independent revoke through the 
   Effect.gen(function* externalIdentityHttpScenario() {
     const readPayloads: Schema.Schema.Type<typeof ReadPrincipalBindingPayloadSchema>[] = [];
     const fixture = makeServer([actionSuccess(revokedResult)], readPayloads);
-    const server = yield* Effect.acquireRelease(Effect.succeed(fixture.server), (runtimeServer) =>
-      Effect.promise(() => runtimeServer.dispose()),
-    );
+    const server = yield* acquireServer(fixture);
 
     const readResponse = yield* Effect.promise(() => server.handler(readRequest(), emptyRequestContext));
     const readBody = yield* Effect.promise(() => readResponse.json());
@@ -374,9 +377,7 @@ it.live('projects resolve and gateway subjects before the Core read decoder', ()
     const readPayloads: Schema.Schema.Type<typeof ReadPrincipalBindingPayloadSchema>[] = [];
     const resolvedSubjects: Schema.Schema.Type<typeof ExternalAuthenticationSubjectSchema>[] = [];
     const fixture = makeServer([], readPayloads, resolvedSubjects);
-    const server = yield* Effect.acquireRelease(Effect.succeed(fixture.server), (runtimeServer) =>
-      Effect.promise(() => runtimeServer.dispose()),
-    );
+    const server = yield* acquireServer(fixture);
 
     const resolveResponse = yield* Effect.promise(() => server.handler(resolveRequest(), emptyRequestContext));
     const resolveBody = yield* Effect.promise(() => resolveResponse.json());
@@ -424,9 +425,7 @@ it.live('rejects browser/session credentials and malformed input before a Core a
   Effect.gen(function* externalIdentityBoundaryScenario() {
     const readPayloads: Schema.Schema.Type<typeof ReadPrincipalBindingPayloadSchema>[] = [];
     const fixture = makeServer([actionSuccess(revokedResult)], readPayloads);
-    const server = yield* Effect.acquireRelease(Effect.succeed(fixture.server), (runtimeServer) =>
-      Effect.promise(() => runtimeServer.dispose()),
-    );
+    const server = yield* acquireServer(fixture);
 
     const browserResponse = yield* Effect.promise(() =>
       server.handler(
@@ -481,9 +480,7 @@ it.live('returns a typed unavailable result and permits retry after an indetermi
       ],
       readPayloads,
     );
-    const server = yield* Effect.acquireRelease(Effect.succeed(fixture.server), (runtimeServer) =>
-      Effect.promise(() => runtimeServer.dispose()),
-    );
+    const server = yield* acquireServer(fixture);
 
     const first = yield* Effect.promise(() => server.handler(statusRequest(), emptyRequestContext));
     const firstBody = yield* Effect.promise(() => first.json());
@@ -500,35 +497,31 @@ it.live('returns a typed unavailable result and permits retry after an indetermi
   }),
 );
 
-it.live(
-  'T24: attributes the governed action invocation to the api_key workload Principal, never the customer subject',
-  () =>
-    Effect.gen(function* externalIdentityWorkloadAttributionScenario() {
-      const readPayloads: Schema.Schema.Type<typeof ReadPrincipalBindingPayloadSchema>[] = [];
-      const fixture = makeServer([actionSuccess(revokedResult)], readPayloads);
-      const server = yield* Effect.acquireRelease(Effect.succeed(fixture.server), (runtimeServer) =>
-        Effect.promise(() => runtimeServer.dispose()),
-      );
+it.live('attributes the governed action invocation to the api_key workload Principal, never the customer subject', () =>
+  Effect.gen(function* externalIdentityWorkloadAttributionScenario() {
+    const readPayloads: Schema.Schema.Type<typeof ReadPrincipalBindingPayloadSchema>[] = [];
+    const fixture = makeServer([actionSuccess(revokedResult)], readPayloads);
+    const server = yield* acquireServer(fixture);
 
-      const statusResponse = yield* Effect.promise(() => server.handler(statusRequest(), emptyRequestContext));
-      expect(statusResponse.status).toBe(200);
-      expect(fixture.actionRuntime.principals).toHaveLength(1);
-      const [recordedPrincipal] = fixture.actionRuntime.principals;
-      expect(recordedPrincipal).toEqual({
-        authBindingId: workloadBindingId,
-        authContextRef: 'better-auth-api-key:better-auth-workload-key',
-        authenticationNamespaceId: staffNamespace,
-        authMethod: 'api_key',
-        principalId: workloadPrincipalId,
-        tenantId,
-      });
-      // Never the customer subject the statusRequest binding targets.
-      expect(recordedPrincipal).not.toMatchObject({ principalId: customerPrincipalId });
-      expect(recordedPrincipal).not.toMatchObject({ authenticationNamespaceId: customerNamespace });
-      // No impersonation key present: this is the workload's own identity, not a delegated/impersonated one.
-      expect(
-        Predicate.hasProperty(recordedPrincipal, 'impersonatedByPrincipalId') &&
-          recordedPrincipal['impersonatedByPrincipalId'] !== undefined,
-      ).toBe(false);
-    }),
+    const statusResponse = yield* Effect.promise(() => server.handler(statusRequest(), emptyRequestContext));
+    expect(statusResponse.status).toBe(200);
+    expect(fixture.actionRuntime.principals).toHaveLength(1);
+    const [recordedPrincipal] = fixture.actionRuntime.principals;
+    expect(recordedPrincipal).toEqual({
+      authBindingId: workloadBindingId,
+      authContextRef: 'better-auth-api-key:better-auth-workload-key',
+      authenticationNamespaceId: staffNamespace,
+      authMethod: 'api_key',
+      principalId: workloadPrincipalId,
+      tenantId,
+    });
+    // Never the customer subject the statusRequest binding targets.
+    expect(recordedPrincipal).not.toMatchObject({ principalId: customerPrincipalId });
+    expect(recordedPrincipal).not.toMatchObject({ authenticationNamespaceId: customerNamespace });
+    // No impersonation key present: this is the workload's own identity, not a delegated/impersonated one.
+    expect(
+      Predicate.hasProperty(recordedPrincipal, 'impersonatedByPrincipalId') &&
+        recordedPrincipal['impersonatedByPrincipalId'] !== undefined,
+    ).toBe(false);
+  }),
 );
