@@ -458,18 +458,16 @@ it.effect('rejects a claim whose requested Permission scope no longer matches th
   }),
 );
 
-it.effect(
-  'rejects a claim whose invited Permission is no longer delegable under the Current catalog',
-  () =>
-    Effect.gen(function* refusesCatalogRevisionChanged() {
-      const failure = yield* Effect.flip(
-        preflight(staticReads(invitation({ intendedPermissions: ['counterparty.address_book.manage'] }))),
-      );
-      expect(failure).toBeInstanceOf(CounterpartyInvitationClaimRejected);
-      expect(Schema.is(CounterpartyInvitationClaimRejected)(failure) ? failure.code : undefined).toBe(
-        'invitation_catalog_revision_changed',
-      );
-    }),
+it.effect('rejects a claim whose invited Permission is no longer delegable under the Current catalog', () =>
+  Effect.gen(function* refusesCatalogRevisionChanged() {
+    const failure = yield* Effect.flip(
+      preflight(staticReads(invitation({ intendedPermissions: ['counterparty.address_book.manage'] }))),
+    );
+    expect(failure).toBeInstanceOf(CounterpartyInvitationClaimRejected);
+    expect(Schema.is(CounterpartyInvitationClaimRejected)(failure) ? failure.code : undefined).toBe(
+      'invitation_catalog_revision_changed',
+    );
+  }),
 );
 
 it.effect('reports exactly the invitation own intended Permissions and nothing inherited', () =>

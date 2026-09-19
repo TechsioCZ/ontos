@@ -416,7 +416,7 @@ export const changeBindingStatus = (
     }),
   );
 
-export interface IdentityBindingRow {
+interface IdentityBindingRow {
   readonly bindingRevision: number;
   readonly principalId: string;
   readonly status: string;

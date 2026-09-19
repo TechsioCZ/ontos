@@ -59,9 +59,9 @@ it.live('governs the Payment Term Catalog schema through forced RLS and routine-
       const schema = PAYMENT_TERM_CATALOG_SCHEMA_NAME;
 
       const tables = yield* admin.execute<{
-        readonly name: string;
         readonly enabled: boolean;
         readonly forced: boolean;
+        readonly name: string;
       }>(
         sql`select relname as name, relrowsecurity as enabled, relforcerowsecurity as forced
             from pg_class
@@ -95,9 +95,9 @@ it.live('governs the Payment Term Catalog schema through forced RLS and routine-
       expect(sequenceGrants).toEqual([]);
 
       const routines = yield* admin.execute<{
-        readonly name: string;
         readonly definer: boolean;
         readonly executable: boolean;
+        readonly name: string;
         readonly returnsTrigger: boolean;
         readonly searchPath: string | null;
       }>(

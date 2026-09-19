@@ -33,9 +33,13 @@ import type {
 import {
   CommercePortalAuthMfaFreshnessReaderService,
   commercePortalAuthMfaFreshnessReaderFromApi,
+  commercePortalAuthMfaSessionReadApiFromBetterAuth,
   portalAuthMfaStandaloneApiLive,
 } from '../../api/portal-auth/provider/mfa/http.ts';
-import type { CommercePortalAuthMfaFreshnessLifecycle } from '../../api/portal-auth/provider/mfa/http.ts';
+import type {
+  CommercePortalAuthMfaFreshnessLifecycle,
+  CommercePortalAuthMfaSessionSnapshot,
+} from '../../api/portal-auth/provider/mfa/http.ts';
 import {
   encodeCommerceSessionReference,
   parseCommerceSessionReference,
@@ -408,15 +412,15 @@ it.effect('verifies the exact Better Auth subject and session before invoking MF
     });
     expect(signUp.status).toBe(200);
     const headers = browserHeadersFrom(signUp);
-    const session = yield* Effect.promise(() =>
+    const established = yield* Effect.promise(() =>
       auth.api.getSession({
         headers,
         query: { disableCookieCache: true, disableRefresh: true },
         returnHeaders: true,
       }),
     );
-    expect(session.response).not.toBeNull();
-    if (session.response === null) {
+    expect(established.response).not.toBeNull();
+    if (established.response === null) {
       return;
     }
     const verifier = makeCommercePortalAuthMfaStepUpCodeVerifier(auth.api);
@@ -424,7 +428,7 @@ it.effect('verifies the exact Better Auth subject and session before invoking MF
       verifier.verify({
         code: '123456',
         headers,
-        providerSubjectId: session.response.user.id,
+        providerSubjectId: established.response.user.id,
         sessionId: 'another-session',
       }),
     );
@@ -545,7 +549,10 @@ const makeMfaTransport = (
           Layer.provide(
             Layer.succeed(
               CommercePortalAuthMfaFreshnessReaderService,
-              commercePortalAuthMfaFreshnessReaderFromApi(auth.api, unusedFreshnessLifecycle),
+              commercePortalAuthMfaFreshnessReaderFromApi(
+                commercePortalAuthMfaSessionReadApiFromBetterAuth(auth.api),
+                unusedFreshnessLifecycle,
+              ),
             ),
           ),
           Layer.provide(Layer.succeed(CommercePortalAuthMfaService, service)),
@@ -836,7 +843,10 @@ const makeFreshnessFixture = Effect.fn('CommercePortalAuthMfaFreshnessIntegratio
       enableTwoFactor: () =>
         Effect.sync(() => {
           enableCalls += 1;
-          return { body: { backupCodes: ['backup-1'], method: 'totp' as const, totpURI: 'otpauth://totp/test' }, setCookieHeaders: [] };
+          return {
+            body: { backupCodes: ['backup-1'], method: 'totp' as const, totpURI: 'otpauth://totp/test' },
+            setCookieHeaders: [],
+          };
         }),
       generateBackupCodes: () => Effect.die('unused in the MFA freshness fixture'),
       getTOTPURI: () => Effect.die('unused in the MFA freshness fixture'),
@@ -856,10 +866,12 @@ const makeFreshnessFixture = Effect.fn('CommercePortalAuthMfaFreshnessIntegratio
                 commercePortalAuthMfaFreshnessReaderFromApi(
                   {
                     getSession: () =>
-                      Promise.resolve({
-                        headers: new Headers(),
-                        response: { session: { id: currentSessionId.value }, user: { id: providerSubjectId } },
-                      }),
+                      Effect.sync((): Option.Option<CommercePortalAuthMfaSessionSnapshot> =>
+                        Option.some({
+                          session: { id: currentSessionId.value },
+                          user: { id: providerSubjectId },
+                        }),
+                      ),
                   },
                   lifecycle,
                 ),

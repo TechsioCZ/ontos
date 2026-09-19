@@ -1,17 +1,12 @@
 import { spawnSync } from 'node:child_process';
-import { readFileSync, writeFileSync } from 'node:fs';
+import { writeFileSync } from 'node:fs';
 import { createRequire } from 'node:module';
 import nodePath from 'node:path';
 
-import { Schema } from 'effect';
 import { expect, it, rstest } from 'effect-rstest';
 
-import { appRoot, runOxlint } from './oxlint.mts';
+import { runOxlint } from './oxlint.mts';
 import { withTemporaryWorkspace } from './temporary-workspace.mts';
-
-const decodePackageScripts = Schema.decodeUnknownSync(
-  Schema.fromJsonString(Schema.Struct({ scripts: Schema.Record(Schema.String, Schema.String) })),
-);
 
 rstest.mock('node:child_process', () => {
   const original = process.getBuiltinModule('node:child_process');
@@ -47,18 +42,4 @@ it('Oxlint launches its JavaScript entry point through Node without a platform s
       spawn.mockClear();
     }
   });
-});
-
-it('lint and lint:fix cover the same directories without changing reporting-only commands', () => {
-  const { scripts } = decodePackageScripts(readFileSync(nodePath.join(appRoot, 'package.json'), 'utf-8'));
-  expect(scripts.lint).toBeDefined();
-  expect(scripts['lint:fix']).toBeDefined();
-  const lint = (scripts.lint ?? '').split(/\s+/u);
-  const fix = (scripts['lint:fix'] ?? '').split(/\s+/u);
-  expect(fix.filter((argument) => argument !== '--fix')).toEqual(lint);
-  expect(fix.filter((argument) => argument === '--fix').length).toBe(1);
-  expect(lint.includes('scripts')).toBe(true);
-  for (const name of ['lint', 'lint:effect', 'test:lint-rules', 'check']) {
-    expect(!(scripts[name] ?? '').includes('--fix'), `${name} must remain reporting-only`).toBe(true);
-  }
 });

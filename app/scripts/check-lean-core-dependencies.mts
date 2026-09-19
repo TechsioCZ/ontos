@@ -19,15 +19,11 @@ import { parseSync, Visitor } from 'oxc-parser';
 import type { ImportExpression } from 'oxc-parser';
 
 /**
- * Executable audit for the lean-Core architecture decision (issue #337 /
- * M06): Core (`packages/core-runtime`) must stay provider-neutral and must
- * never depend on Commerce, Storefront or Better Auth vocabulary — as a
- * declared package.json dependency or as a source-level import anywhere
- * under `src/**`. Independently, the non-Commerce apps and verticals must
- * never take a *mandatory runtime* import of Commerce's private
- * implementation (`verticals/commerce-customer-context/{src,api}/**`); they
- * may only depend on its published `shared/` contracts, plus a small,
- * explicitly documented set of composition seams that already exist.
+ * Lean-Core gate: `packages/core-runtime` must never depend on Commerce,
+ * Storefront or Better Auth (package.json or source import). Non-Commerce
+ * apps/verticals must never take a mandatory runtime import of Commerce's
+ * private implementation, only its published `shared/` contracts or a
+ * documented composition seam.
  */
 
 export interface LeanCoreDependencyViolation {
@@ -73,8 +69,6 @@ interface ImportOccurrence {
   readonly specifier: string;
 }
 
-const OccurrenceIndexOrder = Order.mapInput(Order.Number, (occurrence: ImportOccurrence) => occurrence.index);
-
 type ProgramStatement = ReturnType<typeof parseSync>['program']['body'][number];
 
 const occurrenceForStatement = (statement: ProgramStatement): ImportOccurrence | undefined => {
@@ -102,15 +96,7 @@ const occurrenceForStatement = (statement: ProgramStatement): ImportOccurrence |
   return undefined;
 };
 
-/**
- * Syntax-aware import/export/dynamic-import collection via oxc-parser. This
- * covers every specifier-bearing form: `import ... from`, `export ... from`,
- * `export * from`, side-effect imports (`import '...'`, no bindings), and
- * dynamic `import('...')` with a string-literal source — including forms
- * spread across multiple lines, which a line-oriented regex cannot see.
- * `import type` / `export type` statements are still classified as
- * type-only so callers can keep allowing them.
- */
+/** All specifier-bearing import/export forms, including multi-line and dynamic `import(...)`. */
 const importsIn = (file: string, source: string): readonly ImportOccurrence[] => {
   const parsed = parseSync(file, source, {
     astType: 'ts',
@@ -131,10 +117,13 @@ const importsIn = (file: string, source: string): readonly ImportOccurrence[] =>
     }
   };
   new Visitor({ ImportExpression: recordDynamicImportExpression }).visit(parsed.program);
-  return EffectArray.sort([...occurrences, ...dynamicOccurrences], OccurrenceIndexOrder);
+  return EffectArray.sort(
+    [...occurrences, ...dynamicOccurrences],
+    Order.mapInput(Order.Number, (occurrence: ImportOccurrence) => occurrence.index),
+  );
 };
 
-// --- Core external-dependency positive pin -------------------------------
+// --- Core: package.json + source imports must stay provider-neutral ------
 
 const coreSourceRoot = 'packages/core-runtime/src';
 const corePackageJsonRelative = 'packages/core-runtime/package.json';
@@ -231,38 +220,14 @@ const checkCorePackageJson = (
     }
   });
 
-// --- Non-Commerce -> Commerce private-implementation boundary -------------
+// --- Non-Commerce apps/verticals must not import Commerce private impl ---
 
 const commerceVerticalRoot = 'verticals/commerce-customer-context';
 const nonCommerceOwnerParents = ['apps', 'verticals'];
 const commercePackageSpecifierPrefix = '@app/commerce-customer-context';
 const commercePrivateImplementation = /(?:^|\/)verticals\/commerce-customer-context\/(?:src|api)\//u;
 
-/**
- * Every directory under `apps/` and `verticals/` owns its own unit and is
- * subject to the private-implementation boundary — except Commerce's own
- * vertical, which is the thing being bounded. Deriving this from the
- * workspace layout (instead of a hard-coded list) means a newly added
- * app/vertical is covered automatically; the composition-seam allowlist
- * below stays explicit data since those exceptions must be reviewed one at
- * a time.
- */
-const ownerRootUnderParent = (
-  fileSystem: FileSystem.FileSystem,
-  path: Path.Path,
-  parentPath: string,
-  parent: string,
-  entry: string,
-): Effect.Effect<Option.Option<string>, PlatformError> =>
-  Effect.gen(function* ownerRootUnderParentProgram() {
-    const relative = `${parent}/${entry}`;
-    if (relative === commerceVerticalRoot) {
-      return Option.none();
-    }
-    const info = yield* fileSystem.stat(path.join(parentPath, entry));
-    return info.type === 'Directory' ? Option.some(relative) : Option.none();
-  });
-
+/** Every directory under `apps/` and `verticals/` owns a unit, except Commerce's own (the thing being bounded). */
 const ownerRootsUnderParent = (
   fileSystem: FileSystem.FileSystem,
   path: Path.Path,
@@ -277,7 +242,16 @@ const ownerRootsUnderParent = (
     }
     const entries = yield* fileSystem.readDirectory(parentPath);
     const ownerRoots = yield* Effect.all(
-      entries.map((entry) => ownerRootUnderParent(fileSystem, path, parentPath, parent, entry)),
+      entries.map((entry) =>
+        Effect.gen(function* ownerRootUnderParentProgram() {
+          const relative = `${parent}/${entry}`;
+          if (relative === commerceVerticalRoot) {
+            return Option.none();
+          }
+          const info = yield* fileSystem.stat(path.join(parentPath, entry));
+          return info.type === 'Directory' ? Option.some(relative) : Option.none();
+        }),
+      ),
       { concurrency: 32 },
     );
     return EffectArray.getSomes(ownerRoots);
@@ -326,13 +300,7 @@ const readCommerceExportsMap = (
     );
   });
 
-/**
- * Composition seams the lean-Core decision has already accepted: a specific
- * (specifier, importer) pair that resolves into Commerce's private `src/**`
- * even though it is not published under `shared/**`. Each entry documents
- * why it is safe so a new seam cannot slip in silently — any pair not
- * listed here is a violation.
- */
+/** Explicitly accepted (specifier, importer) pairs into Commerce's private src; any other pair is a violation. */
 interface AllowedCompositionSeam {
   readonly importer: string;
   readonly reason: string;
@@ -400,23 +368,15 @@ const recordNonCommerceImportViolations = (
   }
 };
 
-const compareViolations = (left: LeanCoreDependencyViolation, right: LeanCoreDependencyViolation): -1 | 0 | 1 => {
-  const fileOrder = left.file.localeCompare(right.file);
-  if (fileOrder !== 0) {
-    return fileOrder < 0 ? -1 : 1;
-  }
-  const lineOrder = left.line - right.line;
-  if (lineOrder !== 0) {
-    return lineOrder < 0 ? -1 : 1;
-  }
-  const reasonOrder = left.reason.localeCompare(right.reason);
-  if (reasonOrder !== 0) {
-    return reasonOrder < 0 ? -1 : 1;
-  }
-  return 0;
-};
+const byField = <K extends keyof LeanCoreDependencyViolation>(
+  key: K,
+  order: Order.Order<LeanCoreDependencyViolation[K]>,
+) => Order.mapInput(order, (violation: LeanCoreDependencyViolation) => violation[key]);
 
-const ViolationOrder = Order.make(compareViolations);
+const ViolationOrder = Order.combine(
+  byField('file', Order.String),
+  Order.combine(byField('line', Order.Number), byField('reason', Order.String)),
+);
 
 export const checkLeanCoreDependencies = (
   root: string,

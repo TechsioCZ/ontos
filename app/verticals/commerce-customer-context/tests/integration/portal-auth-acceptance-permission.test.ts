@@ -2,15 +2,13 @@ import { randomUUID } from 'node:crypto';
 
 import { v1 } from '@authzed/authzed-node';
 import { eq, sql } from 'drizzle-orm';
-import { Effect, Layer, Option, Schema } from 'effect';
+import { Effect, Layer, Schema } from 'effect';
 import { expect, it } from 'effect-rstest';
 
 import {
   GatewayAssertionRedemptionService,
   GatewayAssertionReplayError,
 } from '../../../../packages/core-runtime/src/auth/gateway-assertion-redemption.ts';
-import { AuthenticationNamespaceRegistrationSchema } from '../../../../packages/core-runtime/src/auth/external-identity-contracts.ts';
-import { AuthenticationNamespaceRegistry } from '../../../../packages/core-runtime/src/auth/external-identity/verifier.ts';
 import { makeCoreDatabase } from '../../../../packages/core-runtime/src/db/client.ts';
 import { loadDatabaseConnectionPair } from '../../../../packages/core-runtime/src/db/config.ts';
 import {
@@ -32,6 +30,7 @@ import {
   productionReadRuntimeLive,
 } from '../../api/index.ts';
 import { commercePortalAuthRealmUnavailableLive } from '../../api/portal-auth/realm-unavailable.ts';
+import { COMMERCE_AUTHENTICATION_NAMESPACE_ID } from '../../shared/portal-auth-contracts.ts';
 import { SavedAddressListForbiddenProblemSchema } from '../../shared/apis/saved-address-list.ts';
 import {
   issueAcceptanceGatewayAssertion,
@@ -52,7 +51,8 @@ import type { AcceptanceGatewayIssuer } from '../support/enrollment-acceptance-i
 const ORIGIN = 'http://localhost:3020';
 const AUDIENCE = 'commerce-customer-context';
 const ISSUER = 'http://gateway.permission-acceptance.test';
-const NAMESPACE_ID = 'commerce.acceptance.permission.portal';
+/** The namespace the deployed composition registers, so the production registry is what answers. */
+const NAMESPACE_ID = COMMERCE_AUTHENTICATION_NAMESPACE_ID;
 const KEY_ID = 'permission-acceptance';
 
 interface SeededSubject {
@@ -228,51 +228,24 @@ const singleUseRedemptionLive = Layer.sync(GatewayAssertionRedemptionService, ()
   };
 });
 
-/**
- * The Commerce portal's own authentication namespace. Core revalidates a presented binding against
- * its registration before any authorization runs, so the registry is a required deployment input of
- * every governed Commerce route served to a portal session.
- */
-const portalNamespaceRegistryLive = Layer.effect(
-  AuthenticationNamespaceRegistry,
-  Effect.gen(function* portalNamespaceRegistry() {
-    const registration = yield* Schema.decodeEffect(AuthenticationNamespaceRegistrationSchema)({
-      allowedAudiences: [AUDIENCE],
-      authenticationNamespaceId: NAMESPACE_ID,
-      provider: 'commerce-acceptance-provider',
-      requiresOperationAdmission: false,
-      reservationPrincipalKind: 'human',
-      subjectTypes: ['user'],
-      trustedAttesterPrincipalIds: [],
-    });
-    return {
-      lookup: (authenticationNamespaceId) =>
-        Effect.succeed(
-          authenticationNamespaceId === registration.authenticationNamespaceId
-            ? Option.some(registration)
-            : Option.none(),
-        ),
-    };
-  }),
-).pipe(Layer.orDie);
-
 const configuredRuntime = (gateway: AcceptanceGatewayIssuer) =>
   Effect.acquireRelease(
     Effect.sync(() =>
       makeCommerceCustomerContextApiRuntime(
-        // The verification material reaches the deployed verifier through the runtime layers the
-        // composition root builds it from, so no ambient environment is touched.
-        productionReadRuntimeLive.pipe(Layer.provideMerge(gateway.verificationLive)),
-        productionActionRuntimeLive.pipe(Layer.provideMerge(gateway.verificationLive)),
-        Layer.merge(singleUseRedemptionLive, portalNamespaceRegistryLive),
+        productionReadRuntimeLive,
+        productionActionRuntimeLive,
+        singleUseRedemptionLive,
         commercePortalAuthRealmUnavailableLive([ORIGIN]),
+        // The verification material is a composition input of the deployed verifier, so no ambient
+        // environment is touched.
+        gateway.verificationLive,
       ).createHandler(),
     ),
     (runtime) => Effect.promise(async () => await runtime.dispose()),
   );
 
 it.live(
-  '#340: a profile selection without the exact business Permission is 403 and writes nothing',
+  'a profile selection without the exact business Permission is 403 and writes nothing',
   () =>
     Effect.scoped(
       Effect.gen(function* profileSelectionWithoutPermission() {

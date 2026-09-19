@@ -14,6 +14,7 @@ import { COMMERCE_PORTAL_AUTH_AUDIT_SCHEMA_VERSION } from '../../src/portal-auth
 import { commercePortalAuthSignInAuditEvent } from '../../src/portal-auth/audit/audit-mapping.ts';
 import { commercePortalAuthSubjectDigest } from '../../src/portal-auth/audit/audit-service.ts';
 import type { CommercePortalAuthAuditRecorder } from '../../src/portal-auth/audit/audit-service.ts';
+import type { CommercePortalAuthAuditEvent } from '../../src/portal-auth/audit/audit-contracts.ts';
 import { makeCommercePortalAuthAuditRecorder } from '../../src/portal-auth/audit/audit-store.ts';
 import { parseCommercePortalAuthConfig } from '../../api/portal-auth/provider/config.ts';
 
@@ -172,14 +173,22 @@ interface SessionAuditFixture {
  */
 const REFUSED_BY_POSTGRES = 'audit-write-refused\u0000';
 
-const revocationEvent = (fixture: Pick<SessionAuditFixture, 'providerSubjectId'>, subjectDigest?: string) => ({
-  eventType: 'commerce.portal-auth.session-revoked.v1' as const,
-  occurredAt: new Date(),
-  operation: 'revoke',
-  outcome: 'success' as const,
-  providerSubjectId: fixture.providerSubjectId,
-  ...(subjectDigest === undefined ? {} : { subjectDigest }),
-});
+/** A deterministic fixture instant: these audit rows only need a stable, orderable timestamp. */
+const REVOCATION_EVENT_OCCURRED_AT = DateTime.toDate(DateTime.makeUnsafe(1_700_000_000_000));
+
+const revocationEvent = (
+  fixture: Pick<SessionAuditFixture, 'providerSubjectId'>,
+  subjectDigest?: string,
+): CommercePortalAuthAuditEvent => {
+  const event: CommercePortalAuthAuditEvent = {
+    eventType: 'commerce.portal-auth.session-revoked.v1',
+    occurredAt: REVOCATION_EVENT_OCCURRED_AT,
+    operation: 'revoke',
+    outcome: 'success',
+    providerSubjectId: fixture.providerSubjectId,
+  };
+  return subjectDigest === undefined ? event : { ...event, subjectDigest };
+};
 
 const makeSessionAuditFixture = Effect.fn('CommercePortalAuthAuditIntegration.makeSessionFixture')(
   function* makeSessionAuditFixtureEffect(): Effect.fn.Return<SessionAuditFixture, unknown, Scope.Scope> {
@@ -231,11 +240,7 @@ const makeSessionAuditFixture = Effect.fn('CommercePortalAuthAuditIntegration.ma
       providerSubjectId,
       sessionId,
       sessionRows: () =>
-        database.executor
-          .select({ id: session.id })
-          .from(session)
-          .where(eq(session.id, sessionId))
-          .pipe(Effect.orDie),
+        database.executor.select({ id: session.id }).from(session).where(eq(session.id, sessionId)).pipe(Effect.orDie),
       store: makeCommercePortalAuthSessionStore(database.executor),
     };
   },

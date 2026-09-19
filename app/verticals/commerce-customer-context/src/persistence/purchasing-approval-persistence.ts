@@ -4,7 +4,7 @@
  * cache: process restarts, multiple replicas, and concurrent requests all observe the same durable
  * CAS/idempotency state under tenant/legal-entity RLS.
  */
-import { Context, Effect, Option, Schema } from 'effect';
+import { Effect, Option, Schema } from 'effect';
 import {
   CoreSearchResourceRefSchema,
   DatabaseTransactionFailure,
@@ -29,12 +29,6 @@ import {
   CreatePurchaseProposalRevisionResultSchema,
   DecidePurchaseApprovalRequestInputSchema,
   DecidePurchaseApprovalRequestResultSchema,
-  PurchaseApprovalRequestSchema,
-  PurchaseProposalRevisionSchema,
-  ApprovalDecisionSchema,
-  ApprovalHierarchySchema,
-  ApprovalRevalidationSchema,
-  ApprovalRouteSchema,
   RevalidatePurchaseApprovalInputSchema,
   RevalidatePurchaseApprovalResultSchema,
   ReroutePurchaseApprovalRequestInputSchema,
@@ -478,17 +472,6 @@ export interface PurchasingApprovalWorkflowService extends PurchaseApprovalSubmi
   ) => Effect.Effect<Schema.Schema.Type<typeof SubmitPurchaseApprovalRequestResultSchema>, PurchasingApprovalRejected>;
 }
 
-export interface PurchasingApprovalWorkflowFactoryContract {
-  readonly make: (
-    transaction: PurchasingApprovalScopedRoutineInvoker,
-    scope: OperationalScope,
-  ) => Effect.Effect<PurchasingApprovalWorkflowService>;
-}
-export class PurchasingApprovalWorkflowFactory extends Context.Service<
-  PurchasingApprovalWorkflowFactory,
-  PurchasingApprovalWorkflowFactoryContract
->()('@app/commerce-customer-context/persistence/purchasing-approval-persistence/PurchasingApprovalWorkflowFactory') {}
-
 const dependencyUnavailable = (reason: string) => ({
   _tag: 'PurchaseApprovalDependencyUnavailable' as const,
   code: 'purchase_approval_dependency_unavailable' as const,
@@ -742,11 +725,6 @@ export const purchasingApprovalWorkflowForScope = (
   transaction: PurchasingApprovalScopedRoutineInvoker,
   scope: OperationalScope,
 ): Effect.Effect<PurchasingApprovalWorkflowService> => Effect.succeed(makeWorkflow(transaction, scope));
-export const purchasingApprovalWorkflowLive = {
-  make: (transaction: PurchasingApprovalScopedRoutineInvoker, scope: OperationalScope) =>
-    Effect.succeed(makeWorkflow(transaction, scope)),
-} satisfies PurchasingApprovalWorkflowFactoryContract;
-
 /**
  * Public Order-owner adapter. It closes the scoped routine capability and the
  * Core invocation id together; callers cannot obtain the routine invoker or
@@ -760,22 +738,7 @@ export const purchasingApprovalOrderCommitmentForScope = (
     consume: (input, actionInvocationId) => makeWorkflow(transaction, scope, actionInvocationId).consume(input),
   });
 
-/** Compatibility seam for callers outside an Action factory. It is intentionally fail-closed. */
-export const purchasingApprovalSubmissionLive: PurchaseApprovalSubmissionPort = {
-  submit: () => Effect.fail(dependencyUnavailable('A scoped Purchasing Approval transaction is required')),
-};
 export const purchasingApprovalSubmissionForScope = (
   transaction: PurchasingApprovalScopedRoutineInvoker,
   scope: OperationalScope,
 ): Effect.Effect<PurchaseApprovalSubmissionPort> => Effect.succeed(makeWorkflow(transaction, scope));
-
-export const purchasingApprovalWorkflowSchemas = {
-  consumeInput: ConsumePurchaseApprovalInputSchema,
-  consumeResult: ConsumePurchaseApprovalResultSchema,
-  decision: ApprovalDecisionSchema,
-  hierarchy: ApprovalHierarchySchema,
-  proposal: PurchaseProposalRevisionSchema,
-  request: PurchaseApprovalRequestSchema,
-  revalidation: ApprovalRevalidationSchema,
-  route: ApprovalRouteSchema,
-};

@@ -25,7 +25,7 @@ import {
 
 const invocation = (value: string) => Schema.decodeSync(EnrollmentActionInvocationIdSchema)(value);
 
-it.live('T10: a second subject can never be reserved onto an existing Principal', () =>
+it.live('a second subject can never be reserved onto an existing Principal', () =>
   Effect.scoped(
     Effect.gen(function* twoSubjectsNeverShareAPrincipal() {
       const fixture = yield* makeEnrollmentAcceptanceIdentityFixture();
@@ -63,7 +63,7 @@ it.live('T10: a second subject can never be reserved onto an existing Principal'
   ),
 );
 
-it.live('T11: a pending, disabled or revoked binding presented at admission is a typed denial', () =>
+it.live('a pending, disabled or revoked binding presented at admission is a typed denial', () =>
   Effect.scoped(
     Effect.gen(function* nonCurrentBindingsAreDeniedAtAdmission() {
       const fixture = yield* makeEnrollmentAcceptanceIdentityFixture();
@@ -100,7 +100,7 @@ it.live('T11: a pending, disabled or revoked binding presented at admission is a
   ),
 );
 
-it.live('T20: the historical commit stays readable while current resolution of a revoked binding denies', () =>
+it.live('the historical commit stays readable while current resolution of a revoked binding denies', () =>
   Effect.scoped(
     Effect.gen(function* historicalCommitOutlivesRevocation() {
       const fixture = yield* makeEnrollmentAcceptanceIdentityFixture();
@@ -154,7 +154,7 @@ it.live('T20: the historical commit stays readable while current resolution of a
   ),
 );
 
-it.live('T23: identifier reuse at the enrollment layer never resurrects or transfers a Principal', () =>
+it.live('identifier reuse at the enrollment layer never resurrects or transfers a Principal', () =>
   Effect.scoped(
     Effect.gen(function* identifierReuseAtTheEnrollmentLayer() {
       const fixture = yield* makeEnrollmentAcceptanceIdentityFixture();

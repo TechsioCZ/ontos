@@ -184,14 +184,24 @@ const prepareMfaCall = Effect.fn('CommercePortalAuthMfaHttp.prepare')(function* 
   return call;
 });
 
+/** The decoded Better Auth session identity this gate needs: nothing beyond the two ids. */
+export interface CommercePortalAuthMfaSessionSnapshot {
+  readonly session: { readonly id: string };
+  readonly user: { readonly id: string };
+}
+
 /**
  * Better Auth session lookup, scoped to only the read this gate needs. The argument shape is taken
- * from the provider's own route so the call stays exact, while the result is left opaque and
- * decoded below — which also lets an owner test substitute a fixture without reproducing Better
- * Auth's route descriptor.
+ * from the provider's own route so the call stays exact. The result is already decoded to a named
+ * type — Promise-to-Effect conversion and Schema decoding of Better Auth's raw envelope both live
+ * in `commercePortalAuthMfaSessionReadApiFromBetterAuth`, the one driver edge that constructs this
+ * port from the real provider — which also lets an owner test substitute a fixture without
+ * reproducing Better Auth's route descriptor.
  */
 export interface CommercePortalAuthMfaSessionReadApi {
-  readonly getSession: (input: Parameters<Auth['api']['getSession']>[0]) => Promise<unknown>;
+  readonly getSession: (
+    input: Parameters<Auth['api']['getSession']>[0],
+  ) => Effect.Effect<Option.Option<CommercePortalAuthMfaSessionSnapshot>, CommercePortalAuthMfaSessionReadFailure>;
 }
 
 export interface CommercePortalAuthMfaCurrentSession {
@@ -241,10 +251,41 @@ const SessionEnvelopeSchema = Schema.Struct({
  * line below annotates `reason` alone, so the underlying network fault or parse issue never rides
  * along in a log or reaches the caller.
  */
-interface CommercePortalAuthMfaSessionReadFailure {
+export interface CommercePortalAuthMfaSessionReadFailure {
   readonly cause?: unknown;
   readonly reason: 'evidence-rejected' | 'malformed' | 'provider-error' | 'timeout';
 }
+
+/**
+ * The Better Auth driver edge: the one place this gate converts Better Auth's Promise-shaped
+ * `getSession` into the typed Effect port above, decoding its raw envelope with a Schema. Every
+ * other caller — including owner tests — supplies an already-Effect-shaped
+ * `CommercePortalAuthMfaSessionReadApi` directly, with no Promise conversion of its own.
+ */
+export const commercePortalAuthMfaSessionReadApiFromBetterAuth = (
+  auth: Pick<Auth['api'], 'getSession'>,
+): CommercePortalAuthMfaSessionReadApi => ({
+  getSession: (input) =>
+    Effect.tryPromise({
+      catch: (cause): CommercePortalAuthMfaSessionReadFailure => ({ cause, reason: 'provider-error' }),
+      try: auth.getSession.bind(auth, input),
+    }).pipe(
+      Effect.timeoutOrElse({
+        duration: Duration.millis(COMMERCE_PORTAL_AUTH_POLICY.session.providerCallTimeoutMilliseconds),
+        orElse: () => Effect.fail<CommercePortalAuthMfaSessionReadFailure>({ reason: 'timeout' }),
+      }),
+      Effect.flatMap((result) =>
+        Schema.decodeUnknownEffect(SessionEnvelopeSchema)(result).pipe(
+          Effect.mapError((cause): CommercePortalAuthMfaSessionReadFailure => ({ cause, reason: 'malformed' })),
+        ),
+      ),
+      Effect.map((envelope) =>
+        envelope.response === null
+          ? Option.none<CommercePortalAuthMfaSessionSnapshot>()
+          : Option.some(envelope.response),
+      ),
+    ),
+});
 
 /**
  * Any failure to read or decode the session — timeout, provider fault, malformed response, a
@@ -263,32 +304,20 @@ const readCommercePortalAuthMfaCurrentSession = (
   headers: Headers,
 ): Effect.Effect<Option.Option<CommercePortalAuthMfaCurrentSession>> =>
   Effect.gen(function* readCommercePortalAuthMfaCurrentSessionEffect() {
-    const result = yield* Effect.tryPromise({
-      catch: (cause): CommercePortalAuthMfaSessionReadFailure => ({ cause, reason: 'provider-error' }),
-      try: api.getSession.bind(api, {
-        asResponse: false,
-        headers,
-        query: { disableCookieCache: true, disableRefresh: true },
-        returnHeaders: true,
-      }),
-    }).pipe(
-      Effect.timeoutOrElse({
-        duration: Duration.millis(COMMERCE_PORTAL_AUTH_POLICY.session.providerCallTimeoutMilliseconds),
-        orElse: () => Effect.fail<CommercePortalAuthMfaSessionReadFailure>({ reason: 'timeout' }),
-      }),
-    );
-    const envelope = yield* Schema.decodeUnknownEffect(SessionEnvelopeSchema)(result).pipe(
-      Effect.mapError((cause): CommercePortalAuthMfaSessionReadFailure => ({ cause, reason: 'malformed' })),
-    );
-    const current = envelope.response;
-    if (current === null) {
+    const current = yield* api.getSession({
+      asResponse: false,
+      headers,
+      query: { disableCookieCache: true, disableRefresh: true },
+      returnHeaders: true,
+    });
+    if (Option.isNone(current)) {
       return Option.none<CommercePortalAuthMfaCurrentSession>();
     }
-    const sessionRef = yield* encodeCommerceSessionReference(current.session.id).pipe(
+    const sessionRef = yield* encodeCommerceSessionReference(current.value.session.id).pipe(
       Effect.mapError((cause): CommercePortalAuthMfaSessionReadFailure => ({ cause, reason: 'malformed' })),
     );
     const evidence = yield* lifecycle
-      .evidenceForSession({ expectedProviderSubjectId: current.user.id, sessionRef })
+      .evidenceForSession({ expectedProviderSubjectId: current.value.user.id, sessionRef })
       .pipe(
         Effect.mapError((cause): CommercePortalAuthMfaSessionReadFailure => ({ cause, reason: 'evidence-rejected' })),
       );
@@ -335,7 +364,10 @@ const commercePortalAuthMfaFreshnessReaderLive = Layer.effect(
   Effect.gen(function* makeCommercePortalAuthMfaFreshnessReaderLive() {
     const provider = yield* CommercePortalAuthService;
     const lifecycle = yield* CommercePortalAuthSessionLifecycle;
-    return commercePortalAuthMfaFreshnessReaderFromApi(provider.api, lifecycle);
+    return commercePortalAuthMfaFreshnessReaderFromApi(
+      commercePortalAuthMfaSessionReadApiFromBetterAuth(provider.api),
+      lifecycle,
+    );
   }),
 );
 

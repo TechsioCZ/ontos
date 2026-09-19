@@ -181,12 +181,12 @@ it.effect('rejects an absent key before invoking the provider verifier', () =>
 );
 
 it.effect(
-  'T24: rejects a customer session principal from a workload-authorized grant with ExternalIdentityWorkloadForbiddenError',
+  'rejects a customer session principal from a workload-authorized grant with ExternalIdentityWorkloadForbiddenError',
   () =>
     Effect.gen(function* sessionPrincipalForbiddenScenario() {
       const fixture = makeAuthorization();
-      // Same principalId/namespace/tenant as the configured workload grant, but authMethod is 'session'
-      // (the shape a customer's browser session principal would carry) rather than 'api_key'.
+      // Same principalId/namespace/tenant as the configured workload grant, but authMethod is
+      // 'session' rather than 'api_key' — the shape a customer's browser session would carry.
       const sessionPrincipal = yield* Schema.decodeEffect(TrustedPrincipalContextSchema)({
         authBindingId: workloadBindingId,
         authContextRef: 'session:fixture-customer-session',
@@ -212,11 +212,10 @@ it.effect(
       expect(
         Option.isSome(failure) && Predicate.isTagged(failure.value, 'ExternalIdentityWorkloadForbiddenError'),
       ).toBe(true);
-      // The HTTP layer maps this tag to a 403 forbiddenProblem (see mapWorkloadError in api/auth/external-identity/index.ts).
     }),
 );
 
-it.effect('T24: a valid workload principal is never granted an operation outside its exact configured grant', () =>
+it.effect('a valid workload principal is never granted an operation outside its exact configured grant', () =>
   Effect.gen(function* workloadPrincipalNeverUnionedScenario() {
     const fixture = makeAuthorization();
     const workloadPrincipal = yield* Schema.decodeEffect(TrustedPrincipalContextSchema)({
@@ -239,8 +238,8 @@ it.effect('T24: a valid workload principal is never granted an operation outside
     );
     expect(granted).toEqual(workloadPrincipal);
 
-    // A capability never configured as a grant for this workload (e.g. a session-only 'status' operation)
-    // must not be unioned in just because the principal was already authorized for something else.
+    // An ungranted capability (a session-only 'status' operation) must not be unioned in just
+    // because the principal was already authorized for something else.
     const ungrantedExit = yield* Effect.exit(
       fixture.authorize(
         ExternalIdentityWorkloadAuthorization.pipe(

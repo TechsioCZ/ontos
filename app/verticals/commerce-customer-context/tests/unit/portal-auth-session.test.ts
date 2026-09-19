@@ -4,7 +4,6 @@ import { expect, it } from 'effect-rstest';
 import { COMMERCE_AUTHENTICATION_NAMESPACE_ID } from '../../shared/portal-auth-contracts.ts';
 import { COMMERCE_PORTAL_AUTH_POLICY } from '../../api/portal-auth/provider/config.ts';
 import type { CommercePortalAuthAuditEvent } from '../../src/portal-auth/audit/audit-contracts.ts';
-import type { CommercePortalAuthAuditRecorder } from '../../src/portal-auth/audit/audit-service.ts';
 import type {
   CommercePortalAuthProviderSignInResult,
   CommercePortalAuthSessionRecord,
@@ -203,15 +202,12 @@ const memoryStore = (
 };
 
 /** Collects what the lenient recorder was handed, so the two audit paths stay distinguishable. */
-const recordingRecorder = (): {
-  readonly recorder: CommercePortalAuthAuditRecorder;
-  readonly recorded: CommercePortalAuthAuditEvent[];
-} => {
+const recordingRecorder = () => {
   const recorded: CommercePortalAuthAuditEvent[] = [];
   return {
     recorded,
     recorder: {
-      record: (event) =>
+      record: (event: CommercePortalAuthAuditEvent) =>
         Effect.sync(() => {
           recorded.push(event);
         }),

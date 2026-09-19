@@ -96,7 +96,17 @@ export const makeCommercePortalAuthRecoveryReconciliation = Effect.fn('CommerceP
     > {
       const peek =
         input.operation === VERIFY_OPERATION ? store.peekEmailVerificationLedger : store.peekPasswordResetLedger;
-      if (peek === undefined || store.accountExists === undefined || store.findAccountSubjectForEmail === undefined) {
+      const record = store.recordRecoveryReconciliation;
+      // Recording is mandatory for every outcome that finds a conflict: a store that cannot record
+      // must never be asked to detect in the first place, so a conflict can never be found and then
+      // silently dropped. Gating on `record` here, before any lookup runs, is what makes this
+      // structural rather than an optional branch at the end.
+      if (
+        peek === undefined ||
+        store.accountExists === undefined ||
+        store.findAccountSubjectForEmail === undefined ||
+        record === undefined
+      ) {
         return Option.none();
       }
 
@@ -125,15 +135,15 @@ export const makeCommercePortalAuthRecoveryReconciliation = Effect.fn('CommerceP
         return Option.none();
       }
 
-      if (store.recordRecoveryReconciliation !== undefined) {
-        yield* store.recordRecoveryReconciliation({
-          conflictClass: conflictClass.value,
-          currentProviderSubjectId: ledgerSubjectAccountExists ? currentAccountSubjectId : Option.none(),
-          email: binding.value.email,
-          operation: input.operation,
-          providerSubjectId: binding.value.providerSubjectId,
-        });
-      }
+      // Every conflict this function returns has already been recorded: there is exactly one exit
+      // that reports `Some`, and this call is unconditional on the path to it.
+      yield* record({
+        conflictClass: conflictClass.value,
+        currentProviderSubjectId: ledgerSubjectAccountExists ? currentAccountSubjectId : Option.none(),
+        email: binding.value.email,
+        operation: input.operation,
+        providerSubjectId: binding.value.providerSubjectId,
+      });
 
       return Option.some({
         conflictClass: conflictClass.value,

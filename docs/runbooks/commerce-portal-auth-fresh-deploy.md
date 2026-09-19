@@ -27,6 +27,33 @@ all are `COMMERCE_PORTAL_AUTH_URL`, `COMMERCE_PORTAL_AUTH_DATABASE_URL` and
 `api/index.ts` and `config.ts`). Naming **none** of them is a supported opt-out. Naming **some but
 not all** is treated as a misconfiguration, not a partial opt-in, and fails config parsing.
 
+## Core identity transport and the authentication namespace
+
+Two further deployment inputs sit beside the realm. Neither is an admission key of the realm itself:
+the realm can be live without them, and they are rotated independently.
+
+| Variable | Required | Notes |
+| --- | --- | --- |
+| `COMMERCE_CORE_IDENTITY_BASE_URL` | no | `http`/`https` base URL of the Core identity API (no userinfo/query/hash). Read in `api/portal-auth/provider/core-identity-client-config.ts`. |
+| `COMMERCE_CORE_IDENTITY_API_KEY` | no | Server-owned service credential, ≥16 characters, `Redacted` from the moment it is read. |
+
+Naming neither is a supported opt-out: enrollment commit convergence stays the fail-closed
+`commerceEnrollmentCommitResolutionUnavailableLive` and refuses retryably instead of reporting an
+uncertain enrollment write as settled. Naming only one is a misconfiguration; it is logged and the
+same fail-closed capability is installed, so the Action runtime every governed business route is
+served from is never taken down by it. The deployment owns the endpoint and the credential: the
+installed transport replaces both on every call, so no caller can point the client at another host.
+
+The vertical also registers its own authentication namespace,
+`ontos.commerce.portal.better-auth.v1`, through `CommercePortalAuthenticationNamespaceRegistryLive`
+(`api/portal-auth/authentication-namespace-registry.ts`). This needs no environment variable, but it
+is load-bearing: Core revalidates the namespace a presented session binding names before any
+authorization runs, and with no registry reachable every namespace-carrying (version 2) gateway
+assertion is answered `503 operation_context_unavailable`. The only registered audience is this
+vertical's own action-boundary audience, `commerce-customer-context`, so an assertion minted for
+another receiver is refused rather than accepted because the namespace matched. Admission-time
+re-verification remains Shell's; this runtime installs no external operation authentication port.
+
 ## Migration order
 
 Authoritative source: `app/scripts/run-zerops-migrator.mjs` (`main`), the script the real

@@ -27,10 +27,10 @@ import type { AuthenticationService } from '../../../../apps/shell-super-app/api
 import { makePrincipalResolverDouble } from '../../../../apps/shell-super-app/tests/support/identity-service-doubles.ts';
 
 /**
- * Backend acceptance for issue #340 "two realms, two audiences, no shared admission". Both
- * realms are the production Better Auth deployments on their own migrated PostgreSQL schemas.
- * Lives in this vertical's owned tests, not in the Shell app: module-contracts keeps `apps/*`
- * generic, and only an owner root may import another realm's private construction source.
+ * Two realms, two audiences, no shared admission. Both realms are the production Better Auth
+ * deployments on their own migrated PostgreSQL schemas. Lives in this vertical's owned tests, not
+ * in the Shell app: module-contracts keeps `apps/*` generic, and only an owner root may import
+ * another realm's private construction source.
  */
 
 const SHELL_ORIGIN = 'http://localhost:3020';
@@ -87,6 +87,7 @@ const portalRuntime = Effect.acquireRelease(
           Layer.mergeAll(Layer.succeed(CommercePortalAuthConfig, configuration), emailDeliveryConfiguration),
         ),
       ),
+      Layer.empty,
     ).createHandler();
   }),
   (runtime) => Effect.promise(async () => await runtime.dispose()),
@@ -137,9 +138,8 @@ const makePortalSession = Effect.fnUntraced(function* makePortalSession(
       yield* database.executor.delete(portalUser).where(eq(portalUser.id, enrolled.id));
     }).pipe(Effect.orDie),
   );
-  // The realm refuses an unverified sign-in, and this scenario is about what a *valid* customer
-  // session may reach — so the fixture completes verification directly rather than replaying the
-  // whole recovery transport, which `portal-auth-recovery.test.ts` already proves.
+  // The realm refuses an unverified sign-in; this fixture completes verification directly rather
+  // than replaying the recovery transport, which `portal-auth-recovery.test.ts` already proves.
   yield* database.executor.update(portalUser).set({ emailVerified: true }).where(eq(portalUser.id, enrolled.id));
   const signIn = yield* Effect.promise(
     async () =>
@@ -166,9 +166,8 @@ interface StaffSession {
 }
 
 /**
- * A real staff session in the Shell realm. The principal resolution seam is a double because this
- * scenario is about the session artifact, not about who the staff member is: what crosses the
- * realm boundary is the cookie, and the cookie is issued by the real Shell Better Auth instance.
+ * A real staff session in the Shell realm. The principal resolution seam is a double: what
+ * crosses the realm boundary is the cookie, issued by the real Shell Better Auth instance.
  */
 const makeStaffSession = Effect.fnUntraced(function* makeStaffSession(
   authentication: typeof AuthenticationService.Service,

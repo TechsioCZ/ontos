@@ -296,3 +296,24 @@ export const CommerceEnrollmentCommitResolutionServiceLive = Layer.effect(
     return makeCommerceEnrollmentCommitResolutionService(runtime, client);
   }),
 );
+
+/**
+ * Convergence is only meaningful against the Core identity transport that holds the retained pair,
+ * so a deployment that named no transport refuses retryably instead of reporting an uncertain write
+ * as settled. The refusal is retryable because the missing input is a deployment configuration, not
+ * a decision about the invocation.
+ */
+export const commerceEnrollmentCommitResolutionUnavailableLive = Layer.succeed(
+  CommerceEnrollmentCommitResolutionService,
+  {
+    resolve: (input) =>
+      Effect.fail(
+        new CommerceEnrollmentCommitResolutionUnavailable({
+          code: 'commit_resolution_transport_unavailable',
+          invocationId: input.originalInvocationId,
+          reason: 'The Commerce Core identity transport is not installed in this deployment',
+          retryable: true,
+        }),
+      ),
+  },
+);

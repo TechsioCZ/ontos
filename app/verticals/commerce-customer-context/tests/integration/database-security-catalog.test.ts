@@ -183,9 +183,9 @@ it.live('governs the Commerce Customer Context schema through forced RLS and rou
       const schema = COMMERCE_CUSTOMER_CONTEXT_SCHEMA_NAME;
 
       const tables = yield* admin.execute<{
-        readonly name: string;
-        readonly forced: boolean;
         readonly enabled: boolean;
+        readonly forced: boolean;
+        readonly name: string;
       }>(
         sql`select relname as name, relrowsecurity as enabled, relforcerowsecurity as forced
             from pg_class
@@ -214,9 +214,9 @@ it.live('governs the Commerce Customer Context schema through forced RLS and rou
       expect(sequenceGrants).toEqual([]);
 
       const routines = yield* admin.execute<{
-        readonly name: string;
         readonly definer: boolean;
         readonly executable: boolean;
+        readonly name: string;
         readonly returnsTrigger: boolean;
         readonly searchPath: string | null;
       }>(
@@ -269,7 +269,7 @@ it.live('governs the Commerce Customer Context schema through forced RLS and rou
         expect(exclusionNames.has(constraint), constraint).toBe(true);
       }
 
-      const businessKey = yield* admin.execute<{ readonly name: string; readonly columns: string }>(
+      const businessKey = yield* admin.execute<{ readonly columns: string; readonly name: string }>(
         sql`select conname as name,
                    (select string_agg(attname, ',' order by position)
                     from unnest(conkey) with ordinality as key(attnum, position)

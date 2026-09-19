@@ -20,9 +20,8 @@ import { makeCommercePortalAuthDatabase } from '../../src/portal-auth/persistenc
 import { session, user } from '../../src/portal-auth/persistence/portal-auth-tables.ts';
 
 /**
- * Backend acceptance for issue #340 "the portal realm never answers a question it was not asked".
- * Runs against the real composition root on the migrated `commerce_auth` schema; nothing here is
- * a double.
+ * The portal realm never answers a question it was not asked: runs against the real composition
+ * root on the migrated `commerce_auth` schema; nothing here is a double.
  */
 
 const ORIGIN = 'http://localhost:3020';
@@ -62,6 +61,7 @@ const configuredRuntime = Effect.acquireRelease(
           Layer.mergeAll(Layer.succeed(CommercePortalAuthConfig, configuration), emailDeliveryConfiguration),
         ),
       ),
+      Layer.empty,
     ).createHandler();
   }),
   (runtime) => Effect.promise(async () => await runtime.dispose()),
