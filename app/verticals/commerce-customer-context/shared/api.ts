@@ -7,6 +7,7 @@ import {
 import type { MicroVerticalOperationContext } from '@modern-js/bff-effect/microvertical-api';
 // oxlint-disable-next-line typescript/consistent-type-imports -- The framework baseline requires Schema in the exact value import.
 import { HttpApi, HttpApiEndpoint, HttpApiGroup, Schema } from '@modern-js/bff-effect/effect-client';
+import { CommercePortalAuthEnrollmentApi } from './portal-auth/enrollment-api.ts';
 import { CommercePortalAuthMfaApi } from './portal-auth/mfa-api.ts';
 import { CommercePortalAuthRecoveryApi } from './portal-auth/recovery-api.ts';
 import { CommercePortalAuthSessionApi } from './portal-auth/session-api.ts';
@@ -136,6 +137,7 @@ export const commerceCustomerContextApi = HttpApi.make('CommerceCustomerContextA
   .addHttpApi(CommercePortalAuthMfaApi)
   .addHttpApi(CommercePortalAuthRecoveryApi)
   .addHttpApi(CommercePortalAuthStepUpApi)
+  .addHttpApi(CommercePortalAuthEnrollmentApi)
   // <generated-governed-http-api-additions>
   .addHttpApi(AddSavedAddressActionApi)
   .addHttpApi(ArchiveCustomerGroupActionApi)

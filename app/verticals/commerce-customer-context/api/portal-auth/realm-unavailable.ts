@@ -2,6 +2,8 @@ import { getSession as betterAuthGetSession, signOut as betterAuthSignOut } from
 import { Effect, Layer, Redacted } from 'effect';
 
 import type { CommercePortalAuthOptions } from './provider/auth.ts';
+import { CommercePortalAuthAccountCreationService } from './provider/account-create.ts';
+import { CommercePortalAuthAccountCreationUnavailable } from './provider/account-creation-unavailable.ts';
 import { CommercePortalAuthConfig } from './provider/config-service.ts';
 import type { CommercePortalAuthConfigValue } from './provider/config.ts';
 import { COMMERCE_PORTAL_AUTH_POLICY } from './provider/config.ts';
@@ -50,7 +52,18 @@ const budgetUnavailable = (operation: string): CommercePortalAuthRecoveryProvide
   new CommercePortalAuthRecoveryProviderFailure({ operation });
 
 const mfaUnavailable = (operation: string) =>
-  Effect.fail(commercePortalAuthMfaProviderUnavailable(operation, { reason: UNAVAILABLE_REASON }));
+  commercePortalAuthMfaProviderUnavailable(operation, { reason: UNAVAILABLE_REASON });
+
+/**
+ * Every method of an uninstalled capability answers the same typed refusal, so a stub method is
+ * only the operation it reports. The operation names are the published vocabulary of the refusal —
+ * they reach the caller's problem body — so each Tag names its own rather than deriving them.
+ */
+const unavailableService =
+  <Failure>(refuse: (operation: string) => Failure) =>
+  (operation: string) =>
+  (): Effect.Effect<never, Failure> =>
+    Effect.fail(refuse(operation));
 
 /**
  * The realm descriptor an uninstalled deployment answers with. It holds no secret material and no
@@ -72,39 +85,47 @@ const unavailableConfiguration = (trustedOrigins: readonly string[]): CommercePo
     versionedSecrets: Object.freeze([]),
   });
 
+const sessionRefusal = unavailableService(sessionUnavailable);
 const unavailableSessionLifecycle: CommercePortalAuthSessionLifecycle['Service'] = {
-  disableAccount: () => Effect.fail(sessionUnavailable('disable-account')),
-  evidenceForSession: () => Effect.fail(sessionUnavailable('evidence-for-session')),
-  refresh: () => Effect.fail(sessionUnavailable('refresh')),
-  revoke: () => Effect.fail(sessionUnavailable('revoke')),
-  revokeAll: () => Effect.fail(sessionUnavailable('revoke-all')),
-  rotateIdentifierForCookie: () => Effect.fail(sessionUnavailable('rotate-identifier')),
-  signIn: () => Effect.fail(sessionUnavailable('sign-in')),
-  signOut: () => Effect.fail(sessionUnavailable('sign-out')),
+  disableAccount: sessionRefusal('disable-account'),
+  evidenceForSession: sessionRefusal('evidence-for-session'),
+  refresh: sessionRefusal('refresh'),
+  revoke: sessionRefusal('revoke'),
+  revokeAll: sessionRefusal('revoke-all'),
+  rotateIdentifierForCookie: sessionRefusal('rotate-identifier'),
+  signIn: sessionRefusal('sign-in'),
+  signOut: sessionRefusal('sign-out'),
 };
 
+const mfaRefusal = unavailableService(mfaUnavailable);
 const unavailableMfaService: CommercePortalAuthMfaService['Service'] = {
-  disableTwoFactor: () => mfaUnavailable('disable-two-factor'),
-  enableTwoFactor: () => mfaUnavailable('enable-two-factor'),
-  generateBackupCodes: () => mfaUnavailable('generate-backup-codes'),
-  getTOTPURI: () => mfaUnavailable('get-totp-uri'),
-  sendTwoFactorOTP: () => mfaUnavailable('send-two-factor-otp'),
-  verifyBackupCode: () => mfaUnavailable('verify-backup-code'),
-  verifyTOTP: () => mfaUnavailable('verify-totp'),
-  verifyTwoFactorOTP: () => mfaUnavailable('verify-two-factor-otp'),
+  disableTwoFactor: mfaRefusal('disable-two-factor'),
+  enableTwoFactor: mfaRefusal('enable-two-factor'),
+  generateBackupCodes: mfaRefusal('generate-backup-codes'),
+  getTOTPURI: mfaRefusal('get-totp-uri'),
+  sendTwoFactorOTP: mfaRefusal('send-two-factor-otp'),
+  verifyBackupCode: mfaRefusal('verify-backup-code'),
+  verifyTOTP: mfaRefusal('verify-totp'),
+  verifyTwoFactorOTP: mfaRefusal('verify-two-factor-otp'),
 };
 
+const recoveryRefusal = unavailableService(recoveryUnavailable);
 const unavailableRecoveryService: CommercePortalAuthRecoveryService['Service'] = {
-  registerEmailVerificationToken: () => Effect.fail(recoveryUnavailable('register-email-verification-token')),
-  requestEmailVerification: () => Effect.fail(recoveryUnavailable('request-email-verification')),
-  requestPasswordReset: () => Effect.fail(recoveryUnavailable('request-password-reset')),
-  resetPassword: () => Effect.fail(recoveryUnavailable('reset-password')),
-  verifyEmail: () => Effect.fail(recoveryUnavailable('verify-email')),
+  registerEmailVerificationToken: recoveryRefusal('register-email-verification-token'),
+  requestEmailVerification: recoveryRefusal('request-email-verification'),
+  requestPasswordReset: recoveryRefusal('request-password-reset'),
+  resetPassword: recoveryRefusal('reset-password'),
+  verifyEmail: recoveryRefusal('verify-email'),
 };
 
+const stepUpRefusal = unavailableService(stepUpUnavailable);
 const unavailableStepUpService: CommercePortalAuthStepUpService['Service'] = {
-  issue: () => Effect.fail(stepUpUnavailable('issue')),
-  verify: () => Effect.fail(stepUpUnavailable('verify')),
+  issue: stepUpRefusal('issue'),
+  verify: stepUpRefusal('verify'),
+};
+
+const unavailableRecoveryRateLimit: CommercePortalAuthRecoveryRateLimitService['Service'] = {
+  consume: unavailableService(budgetUnavailable)('consume'),
 };
 
 /**
@@ -138,8 +159,22 @@ const unavailableProviderApi: CommercePortalAuthService['Service']['api'] = {
   }),
 };
 
-/** Exactly the tags the four portal-auth groups read, with no provider, database or transport. */
+/**
+ * The private account-creation capability, fail-closed. The enrollment start route still creates
+ * the durable Attempt and durably claims its `provider.account.create` transition under ordinary
+ * governance, then answers the retryable 503 at the exact seam this deployment is missing rather
+ * than silently accepting a credential it has nowhere to place. No caller can reach a provider
+ * effect through this leaf.
+ */
+const unavailableAccountCreation: CommercePortalAuthAccountCreationService['Service'] = {
+  createAccount: unavailableService(
+    () => new CommercePortalAuthAccountCreationUnavailable({ reason: UNAVAILABLE_REASON }),
+  )('create-account'),
+};
+
+/** Exactly the tags the five portal-auth groups read, with no provider, database or transport. */
 export type CommercePortalAuthHandlerServices =
+  | CommercePortalAuthAccountCreationService
   | CommercePortalAuthConfig
   | CommercePortalAuthMfaService
   | CommercePortalAuthRecoveryRateLimitService
@@ -153,11 +188,10 @@ export const commercePortalAuthRealmUnavailableLive = (
   trustedOrigins: readonly string[],
 ): Layer.Layer<CommercePortalAuthHandlerServices> =>
   Layer.mergeAll(
+    Layer.succeed(CommercePortalAuthAccountCreationService, unavailableAccountCreation),
     Layer.succeed(CommercePortalAuthConfig, unavailableConfiguration(trustedOrigins)),
     Layer.succeed(CommercePortalAuthMfaService, unavailableMfaService),
-    Layer.succeed(CommercePortalAuthRecoveryRateLimitService, {
-      consume: () => Effect.fail(budgetUnavailable('consume')),
-    }),
+    Layer.succeed(CommercePortalAuthRecoveryRateLimitService, unavailableRecoveryRateLimit),
     Layer.succeed(CommercePortalAuthRecoveryService, unavailableRecoveryService),
     Layer.succeed(CommercePortalAuthService, { api: unavailableProviderApi }),
     Layer.succeed(CommercePortalAuthSessionLifecycle, unavailableSessionLifecycle),

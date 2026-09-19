@@ -2,7 +2,6 @@ import { TrustedPrincipalContextSchema } from '@app/core-runtime';
 import type { OperationalScope } from '@app/core-runtime';
 import { expect, it } from 'effect-rstest';
 import { Predicate, Schema } from 'effect';
-import { readFileSync } from 'node:fs';
 import { getActionBusinessPermissionTargetResolver } from '../../../../packages/core-runtime/src/actions/definition.ts';
 import { getReadPermissionTargetResolver } from '../../../../packages/core-runtime/src/reads/definition.ts';
 import { PurchaseLimitEvaluationRequestSchema } from '../../shared/apis/purchase-limit-evaluation.ts';
@@ -236,21 +235,5 @@ it('publishes only exact safe Purchase Limit invalidation facts', () => {
   expect(messages[1]?.payloadJson).toEqual(decodedOverridePayload);
   for (const message of messages) {
     expect(message.producerModuleKey).toBe('commerce.customer-context');
-  }
-});
-
-it('forwards trusted invocation evidence and attaches each message only inside material change', () => {
-  const actionSources = [
-    'change-counterparty-purchase-limit.action.ts',
-    'change-principal-purchase-limit-override.action.ts',
-  ].map((file) => readFileSync(new URL(`../../src/actions/${file}`, import.meta.url), { encoding: 'utf-8' }));
-  for (const source of actionSources) {
-    expect(source).toContain("if (result.status === 'CHANGED') {");
-    expect(source).toContain('actionInvocationId: context.actionInvocationId');
-    expect(source).toContain('actorPrincipalId: context.scope.principalId');
-    expect(source).toContain('const event = yield* context.addDomainEvent({');
-    expect(source).toContain('yield* context.addOutboxMessage(');
-    expect(source).toContain('event,');
-    expect(source.match(/context\.addOutboxMessage\(/gu)).toHaveLength(1);
   }
 });

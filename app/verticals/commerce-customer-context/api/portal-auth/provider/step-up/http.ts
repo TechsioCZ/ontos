@@ -7,6 +7,7 @@ import {
   COMMERCE_AUTHENTICATION_NAMESPACE_ID,
   CommerceSessionReferenceSchema,
 } from '../../../../shared/portal-auth-contracts.ts';
+import { withCause } from '../../problems-support.ts';
 import { forwardSetCookieHeaders, noStoreHeaders, requestHeaders, requireTrustedOrigin } from '../../http-transport.ts';
 import { CommercePortalAuthRecoveryRateLimitService } from '../../rate-limit-service.ts';
 import type { CommercePortalAuthRecoveryRateLimitRule } from '../../rate-limit-service.ts';
@@ -70,9 +71,6 @@ const CurrentSessionSchema = Schema.Struct({
 
 const COOKIE_HANDOFF_OPERATION = 'cookie-handoff';
 const httpBridgeTimeout = Duration.millis(COMMERCE_PORTAL_AUTH_POLICY.session.providerCallTimeoutMilliseconds);
-
-const withCause = <ErrorValue extends object>(error: ErrorValue, cause: unknown): ErrorValue =>
-  Object.defineProperty(error, 'cause', { configurable: true, value: cause });
 
 const unavailable = (operation: string, cause: unknown): CommercePortalAuthStepUpUnavailable =>
   withCause(

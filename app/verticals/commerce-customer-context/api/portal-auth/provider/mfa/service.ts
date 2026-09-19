@@ -1,4 +1,8 @@
-import { Context, Effect, Layer, Schema } from 'effect';
+import { Context, DateTime, Effect, Result, Schema } from 'effect';
+
+import { auditedLayer, recordCommercePortalAuthAudit } from '../../../../src/portal-auth/audit/audit.ts';
+import { withCause } from '../../problems-support.ts';
+import type { CommercePortalAuthAuditRecorder } from '../../../../src/portal-auth/audit/audit.ts';
 
 import {
   CommercePortalAuthMfaBackupCodesResultSchema,
@@ -86,9 +90,6 @@ export class CommercePortalAuthMfaService extends Context.Service<
   CommercePortalAuthMfaServiceApi
 >()('@app/commerce-customer-context/api/portal-auth/provider/mfa/service/CommercePortalAuthMfaService') {}
 
-const withCause = <ErrorValue extends object>(error: ErrorValue, cause: unknown): ErrorValue =>
-  Object.defineProperty(error, 'cause', { configurable: true, value: cause });
-
 interface CommercePortalAuthMfaMalformedResponseCause {
   readonly kind: 'malformed-response';
 }
@@ -135,8 +136,33 @@ const callProvider = <SchemaValue extends Schema.Constraint>(
     ),
   );
 
+/**
+ * A second-factor verification is an authentication decision in its own right, so each verify call
+ * leaves one row naming the method that was attempted and whether it succeeded. The code, the OTP,
+ * the backup code and the TOTP seed are never part of the event.
+ */
+const auditedVerification = Effect.fn('CommercePortalAuthMfaService.auditedVerification')(
+  function* auditedVerificationEffect<ResultValue>(
+    recorder: CommercePortalAuthAuditRecorder,
+    method: string,
+    call: Effect.Effect<CommercePortalAuthMfaResponse<ResultValue>, CommercePortalAuthMfaProviderFailure>,
+  ): Effect.fn.Return<CommercePortalAuthMfaResponse<ResultValue>, CommercePortalAuthMfaProviderFailure> {
+    const outcome = yield* Effect.result(call);
+    yield* recordCommercePortalAuthAudit(recorder, {
+      eventType: 'commerce.portal-auth.mfa-verified.v1',
+      occurredAt: yield* DateTime.nowAsDate,
+      operation: method,
+      outcome: Result.isSuccess(outcome) ? 'success' : 'authentication_failed',
+    });
+    if (Result.isFailure(outcome)) {
+      return yield* outcome.failure;
+    }
+    return outcome.success;
+  },
+);
+
 export const makeCommercePortalAuthMfaService = Effect.fn('CommercePortalAuthMfaService.make')(
-  function* makeCommercePortalAuthMfaServiceEffect() {
+  function* makeCommercePortalAuthMfaServiceEffect(audit: CommercePortalAuthAuditRecorder) {
     const provider = yield* CommercePortalAuthMfaProviderService;
     const enableTwoFactor = (input: CommercePortalAuthMfaEnableProviderRequest) =>
       callProvider('enableTwoFactor', provider.enableTwoFactor(input), CommercePortalAuthMfaEnableResultSchema);
@@ -148,17 +174,33 @@ export const makeCommercePortalAuthMfaService = Effect.fn('CommercePortalAuthMfa
       callProvider('sendTwoFactorOTP', provider.sendTwoFactorOTP(input), CommercePortalAuthMfaStatusResultSchema);
 
     const verifyTOTP = (input: CommercePortalAuthMfaVerifyTotpProviderRequest) =>
-      callProvider('verifyTOTP', provider.verifyTOTP(input), CommercePortalAuthMfaVerificationResultSchema);
+      auditedVerification(
+        audit,
+        'verify-totp',
+        callProvider('verifyTOTP', provider.verifyTOTP(input), CommercePortalAuthMfaVerificationResultSchema),
+      );
 
     const verifyTwoFactorOTP = (input: CommercePortalAuthMfaVerifyOtpProviderRequest) =>
-      callProvider(
-        'verifyTwoFactorOTP',
-        provider.verifyTwoFactorOTP(input),
-        CommercePortalAuthMfaVerificationResultSchema,
+      auditedVerification(
+        audit,
+        'verify-otp',
+        callProvider(
+          'verifyTwoFactorOTP',
+          provider.verifyTwoFactorOTP(input),
+          CommercePortalAuthMfaVerificationResultSchema,
+        ),
       );
 
     const verifyBackupCode = (input: CommercePortalAuthMfaVerifyBackupCodeProviderRequest) =>
-      callProvider('verifyBackupCode', provider.verifyBackupCode(input), CommercePortalAuthMfaVerificationResultSchema);
+      auditedVerification(
+        audit,
+        'verify-backup-code',
+        callProvider(
+          'verifyBackupCode',
+          provider.verifyBackupCode(input),
+          CommercePortalAuthMfaVerificationResultSchema,
+        ),
+      );
 
     const getTOTPURI = (input: CommercePortalAuthMfaPasswordProviderRequest) =>
       callProvider('getTOTPURI', provider.getTOTPURI(input), CommercePortalAuthMfaTotpUriResultSchema);
@@ -184,7 +226,7 @@ export const makeCommercePortalAuthMfaService = Effect.fn('CommercePortalAuthMfa
 );
 
 /** The MFA provider port stays a visible requirement; the composition root supplies it once. */
-export const CommercePortalAuthMfaServiceLive = Layer.effect(
+export const CommercePortalAuthMfaServiceLive = auditedLayer(
   CommercePortalAuthMfaService,
-  makeCommercePortalAuthMfaService(),
+  makeCommercePortalAuthMfaService,
 );

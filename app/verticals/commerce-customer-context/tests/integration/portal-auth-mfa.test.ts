@@ -1,11 +1,13 @@
-import { createHmac } from 'node:crypto';
+import { createHmac, randomUUID } from 'node:crypto';
 
 import { betterAuth } from 'better-auth/minimal';
 import { memoryAdapter } from 'better-auth/adapters/memory';
 import { splitSetCookieHeader, applySetCookies, parseCookies } from 'better-auth/cookies';
 import type { Auth } from 'better-auth';
-import { HttpApi, HttpApiBuilder, HttpRouter, HttpServer } from '@modern-js/bff-effect/effect-edge';
-import { Context, Effect, Layer, Option, Redacted, Result, Schema } from 'effect';
+import { HttpApiBuilder, HttpRouter, HttpServer } from '@modern-js/bff-effect/effect-edge';
+import { eq } from 'drizzle-orm';
+import { Config, Context, DateTime, Effect, Layer, Option, Redacted, Result, Schema } from 'effect';
+import type { Scope } from 'effect';
 import { expect, it } from 'effect-rstest';
 
 import type { OTPOptions } from 'better-auth/plugins/two-factor';
@@ -24,17 +26,40 @@ import {
   makeCommercePortalAuthMfaService,
   narrowCommercePortalAuthMfaTrustDevice,
 } from '../../api/portal-auth/provider/mfa/index.ts';
-import type { CommercePortalAuthMfaProviderFailure } from '../../api/portal-auth/provider/mfa/index.ts';
-import { portalAuthMfaApiLive } from '../../api/portal-auth/provider/mfa/http.ts';
+import type {
+  CommercePortalAuthMfaProviderFailure,
+  CommercePortalAuthMfaServiceApi,
+} from '../../api/portal-auth/provider/mfa/index.ts';
+import {
+  CommercePortalAuthMfaFreshnessReaderService,
+  commercePortalAuthMfaFreshnessReaderFromApi,
+  commercePortalAuthMfaSessionReadApiFromBetterAuth,
+  portalAuthMfaStandaloneApiLive,
+} from '../../api/portal-auth/provider/mfa/http.ts';
+import type {
+  CommercePortalAuthMfaFreshnessLifecycle,
+  CommercePortalAuthMfaSessionSnapshot,
+} from '../../api/portal-auth/provider/mfa/http.ts';
+import {
+  encodeCommerceSessionReference,
+  parseCommerceSessionReference,
+} from '../../api/portal-auth/provider/session-reference.ts';
+import { makeCommercePortalAuthSessionLifecycle } from '../../api/portal-auth/session/lifecycle.ts';
+import { makeCommercePortalAuthDatabase } from '../../src/portal-auth/persistence/portal-auth-database.ts';
+import type { CommercePortalAuthDatabase } from '../../src/portal-auth/persistence/portal-auth-database.ts';
+import { makeCommercePortalAuthSessionStore } from '../../src/portal-auth/persistence/portal-auth-session-store.ts';
+import { session, user } from '../../src/portal-auth/persistence/portal-auth-tables.ts';
+import { portalAuthAuditEvent } from '../../src/portal-auth/audit/audit-tables.ts';
 import { UNRESOLVED_PORTAL_AUTH_CLIENT_KEY } from '../../api/portal-auth/http-transport.ts';
 import { CommercePortalAuthRecoveryRateLimitService } from '../../api/portal-auth/rate-limit-service.ts';
 import type { CommercePortalAuthRecoveryRateLimit } from '../../api/portal-auth/rate-limit-service.ts';
 import { CommercePortalAuthMfaService } from '../../api/portal-auth/provider/mfa/service.ts';
 import { CommercePortalAuthStepUpCodeRejected } from '../../api/portal-auth/provider/step-up/index.ts';
 import { CommercePortalAuthConfig } from '../../api/portal-auth/provider/config-service.ts';
-import { COMMERCE_PORTAL_AUTH_POLICY } from '../../api/portal-auth/provider/config.ts';
+import { COMMERCE_PORTAL_AUTH_POLICY, parseCommercePortalAuthConfig } from '../../api/portal-auth/provider/config.ts';
 import type { CommercePortalAuthConfigValue } from '../../api/portal-auth/provider/config.ts';
 import { CommercePortalAuthMfaApi } from '../../shared/portal-auth/mfa-api.ts';
+import { unauditedCommercePortalAuthRecorder } from '../../src/portal-auth/audit/audit.ts';
 
 const ORIGIN = 'https://commerce.example.test';
 const BASE_PATH = '/api/portal-auth';
@@ -208,7 +233,7 @@ it.effect('adapts inferred Better Auth endpoints through the typed Effect owner 
     });
     expect(signUp.status).toBe(200);
     const provider = makeCommercePortalAuthMfaProvider(auth.api);
-    const service = yield* makeCommercePortalAuthMfaService().pipe(
+    const service = yield* makeCommercePortalAuthMfaService(unauditedCommercePortalAuthRecorder).pipe(
       Effect.provideService(CommercePortalAuthMfaProviderService, provider),
     );
     const setup = yield* service.enableTwoFactor({
@@ -262,7 +287,7 @@ it.effect('serves the reviewed MFA HTTP routes through the typed owner service',
     const challengeHeaders = requestHeaders();
     applySetCookies(challengeHeaders, splitSetCookieHeader(signIn.headers.get('set-cookie') ?? ''));
     const provider = makeCommercePortalAuthMfaProvider(auth.api);
-    const service = yield* makeCommercePortalAuthMfaService().pipe(
+    const service = yield* makeCommercePortalAuthMfaService(unauditedCommercePortalAuthRecorder).pipe(
       Effect.provideService(CommercePortalAuthMfaProviderService, provider),
     );
     const send = yield* service.sendTwoFactorOTP({ body: { trustDevice: false }, headers: challengeHeaders });
@@ -284,7 +309,7 @@ it.effect('classifies a real Better Auth credential rejection without reporting 
     });
     expect(signUp.status).toBe(200);
     const provider = makeCommercePortalAuthMfaProvider(auth.api);
-    const service = yield* makeCommercePortalAuthMfaService().pipe(
+    const service = yield* makeCommercePortalAuthMfaService(unauditedCommercePortalAuthRecorder).pipe(
       Effect.provideService(CommercePortalAuthMfaProviderService, provider),
     );
     const result = yield* Effect.result(
@@ -334,7 +359,7 @@ it.effect('forwards a Better Auth challenge-expiry cookie on a typed throttle fa
     const challengeHeaders = requestHeaders();
     applySetCookies(challengeHeaders, splitSetCookieHeader(signIn.headers.get('set-cookie') ?? ''));
     const provider = makeCommercePortalAuthMfaProvider(auth.api);
-    const service = yield* makeCommercePortalAuthMfaService().pipe(
+    const service = yield* makeCommercePortalAuthMfaService(unauditedCommercePortalAuthRecorder).pipe(
       Effect.provideService(CommercePortalAuthMfaProviderService, provider),
     );
     let firstFailure: CommercePortalAuthMfaProviderFailure | undefined;
@@ -388,15 +413,15 @@ it.effect('verifies the exact Better Auth subject and session before invoking MF
     });
     expect(signUp.status).toBe(200);
     const headers = browserHeadersFrom(signUp);
-    const session = yield* Effect.promise(() =>
+    const established = yield* Effect.promise(() =>
       auth.api.getSession({
         headers,
         query: { disableCookieCache: true, disableRefresh: true },
         returnHeaders: true,
       }),
     );
-    expect(session.response).not.toBeNull();
-    if (session.response === null) {
+    expect(established.response).not.toBeNull();
+    if (established.response === null) {
       return;
     }
     const verifier = makeCommercePortalAuthMfaStepUpCodeVerifier(auth.api);
@@ -404,7 +429,7 @@ it.effect('verifies the exact Better Auth subject and session before invoking MF
       verifier.verify({
         code: '123456',
         headers,
-        providerSubjectId: session.response.user.id,
+        providerSubjectId: established.response.user.id,
         sessionId: 'another-session',
       }),
     );
@@ -415,12 +440,6 @@ it.effect('verifies the exact Better Auth subject and session before invoking MF
   }),
 );
 
-/**
- * The published MFA group, driven as HTTP. `portalAuthMfaApiLive` is declared against the
- * vertical's composed `commerceCustomerContextApi`, so the transport under test is mounted on an
- * API with the same identifier — the group handlers the deployment serves, not a second copy.
- */
-const mfaTransportApi = HttpApi.make('CommerceCustomerContextApi').addHttpApi(CommercePortalAuthMfaApi);
 const mfaRequestContext = Context.makeUnsafe<unknown>(new Map());
 
 const MFA_HTTP_CONFIG: CommercePortalAuthConfigValue = {
@@ -509,15 +528,34 @@ const makeChallengeCookie = (auth: SkipVerificationAuth, email: string) =>
     return cookie;
   });
 
+/**
+ * This topology drives the challenge routes only; none of them reads the freshness gate, so the
+ * owner lifecycle half of the reader is never called here. The PostgreSQL fixture further down is
+ * where the gate itself is proven, against the real session store.
+ */
+const unusedFreshnessLifecycle: CommercePortalAuthMfaFreshnessLifecycle = {
+  evidenceForSession: () => Effect.die('the challenge routes never read the freshness gate'),
+};
+
 const makeMfaTransport = (
+  auth: Pick<Auth, 'api'>,
   service: Effect.Success<ReturnType<typeof makeCommercePortalAuthMfaService>>,
   budget: CommercePortalAuthRecoveryRateLimit = makeRecordingMfaBudget().budget,
 ) =>
   Effect.acquireRelease(
     Effect.sync(() =>
       HttpRouter.toWebHandler(
-        HttpApiBuilder.layer(mfaTransportApi).pipe(
-          Layer.provide(portalAuthMfaApiLive),
+        HttpApiBuilder.layer(CommercePortalAuthMfaApi).pipe(
+          Layer.provide(portalAuthMfaStandaloneApiLive),
+          Layer.provide(
+            Layer.succeed(
+              CommercePortalAuthMfaFreshnessReaderService,
+              commercePortalAuthMfaFreshnessReaderFromApi(
+                commercePortalAuthMfaSessionReadApiFromBetterAuth(auth.api),
+                unusedFreshnessLifecycle,
+              ),
+            ),
+          ),
           Layer.provide(Layer.succeed(CommercePortalAuthMfaService, service)),
           Layer.provide(Layer.succeed(CommercePortalAuthConfig, MFA_HTTP_CONFIG)),
           Layer.provide(Layer.succeed(CommercePortalAuthRecoveryRateLimitService, budget)),
@@ -562,11 +600,11 @@ it.effect('drives the published MFA group over HTTP and forwards provider cookie
         .join('; ');
       expect(challengeCookie).toContain('two_factor=');
 
-      const service = yield* makeCommercePortalAuthMfaService().pipe(
+      const service = yield* makeCommercePortalAuthMfaService(unauditedCommercePortalAuthRecorder).pipe(
         Effect.provideService(CommercePortalAuthMfaProviderService, makeCommercePortalAuthMfaProvider(auth.api)),
       );
       const recorded = makeRecordingMfaBudget();
-      const app = yield* makeMfaTransport(service, recorded.budget);
+      const app = yield* makeMfaTransport(auth, service, recorded.budget);
       const send = (route: string, body: Schema.Json, origin?: string) =>
         Effect.promise(() =>
           app.handler(
@@ -631,11 +669,11 @@ it.effect('refuses an MFA request that names no challenge without spending any b
   Effect.scoped(
     Effect.gen(function* mfaUnattributableRequest() {
       const { auth } = makeSkipVerificationFixture();
-      const service = yield* makeCommercePortalAuthMfaService().pipe(
+      const service = yield* makeCommercePortalAuthMfaService(unauditedCommercePortalAuthRecorder).pipe(
         Effect.provideService(CommercePortalAuthMfaProviderService, makeCommercePortalAuthMfaProvider(auth.api)),
       );
       const recorded = makeRecordingMfaBudget();
-      const app = yield* makeMfaTransport(service, recorded.budget);
+      const app = yield* makeMfaTransport(auth, service, recorded.budget);
       const response = yield* Effect.promise(() =>
         app.handler(
           new Request(`${ORIGIN}${BASE_PATH}/two-factor/send-otp`, {
@@ -662,11 +700,11 @@ it.effect('bounds MFA routes on the owner budget and keeps every refusal problem
     Effect.gen(function* mfaBudgetAndContentTypeAssertions() {
       const { auth } = makeSkipVerificationFixture();
       const challengeCookie = yield* makeChallengeCookie(auth, 'mfa-budget-owner@example.test');
-      const service = yield* makeCommercePortalAuthMfaService().pipe(
+      const service = yield* makeCommercePortalAuthMfaService(unauditedCommercePortalAuthRecorder).pipe(
         Effect.provideService(CommercePortalAuthMfaProviderService, makeCommercePortalAuthMfaProvider(auth.api)),
       );
       const recorded = makeRecordingMfaBudget();
-      const app = yield* makeMfaTransport(service, recorded.budget);
+      const app = yield* makeMfaTransport(auth, service, recorded.budget);
       const send = (contentType: string, cookie: string = challengeCookie) =>
         Effect.promise(() =>
           app.handler(
@@ -715,6 +753,217 @@ it.effect('bounds MFA routes on the owner budget and keeps every refusal problem
       const bystander = yield* send('application/json', bystanderCookie);
       expect(bystander.status).not.toBe(429);
       expect(recorded.keys()).toStrictEqual([mfaBudgetKey(challengeCookie), mfaBudgetKey(bystanderCookie)]);
+    }),
+  ),
+);
+
+/**
+ * The freshness gate against real PostgreSQL rows, driven through the published MFA HttpApi group.
+ * Better Auth resolves the cookie to a session identity; the owner's lifecycle answers when that
+ * session was last authenticated, from the `authenticated_at` column its own store writes. The
+ * rotation a completed step-up performs preserves `created_at` on purpose — that is what carries
+ * the absolute session lifetime — so the row's age can never stand in for "recently authenticated".
+ */
+const PORTAL_AUTH_DATABASE_URL = Config.redacted('COMMERCE_PORTAL_AUTH_DATABASE_URL').pipe(
+  Config.orElse(() => Config.redacted('DATABASE_URL')),
+);
+const FRESHNESS_COOKIE_NAME = `__Secure-${COMMERCE_PORTAL_AUTH_POLICY.cookie.namePrefix}.session_token`;
+const FRESHNESS_STALE_AGE_MILLIS = (COMMERCE_PORTAL_AUTH_POLICY.session.freshAgeSeconds + 600) * 1000;
+
+interface FreshnessFixture {
+  readonly currentSessionId: { value: string };
+  readonly database: (typeof CommercePortalAuthDatabase)['Service'];
+  readonly enable: () => Effect.Effect<Response>;
+  readonly enableCallCount: () => number;
+  readonly lifecycle: ReturnType<typeof makeCommercePortalAuthSessionLifecycle>;
+  readonly providerSubjectId: string;
+}
+
+const makeFreshnessFixture = Effect.fn('CommercePortalAuthMfaFreshnessIntegration.makeFixture')(
+  function* makeFreshnessFixtureEffect(): Effect.fn.Return<FreshnessFixture, unknown, Scope.Scope> {
+    const connectionString = yield* PORTAL_AUTH_DATABASE_URL;
+    const configuration = yield* parseCommercePortalAuthConfig({
+      COMMERCE_PORTAL_AUTH_DATABASE_URL: Redacted.value(connectionString),
+      COMMERCE_PORTAL_AUTH_SECRET: SECRET,
+      COMMERCE_PORTAL_AUTH_URL: ORIGIN,
+    });
+    const database = yield* makeCommercePortalAuthDatabase(configuration);
+    const providerSubjectId = `mfa-freshness-${randomUUID()}`;
+    const now = yield* DateTime.nowAsDate;
+    const staleAt = new Date(now.getTime() - FRESHNESS_STALE_AGE_MILLIS);
+    yield* Effect.addFinalizer(() =>
+      database.executor
+        .transaction((transaction) =>
+          Effect.gen(function* cleanupFreshnessFixture() {
+            yield* transaction
+              .delete(portalAuthAuditEvent)
+              .where(eq(portalAuthAuditEvent.providerSubjectId, providerSubjectId));
+            yield* transaction.delete(user).where(eq(user.id, providerSubjectId));
+          }),
+        )
+        .pipe(Effect.orDie),
+    );
+    yield* database.executor.insert(user).values({
+      createdAt: staleAt,
+      email: `${providerSubjectId}@example.test`,
+      emailVerified: true,
+      id: providerSubjectId,
+      name: 'MFA freshness fixture',
+      updatedAt: staleAt,
+    });
+    yield* database.executor.insert(session).values([
+      {
+        // Never re-authenticated: the reader must fall back to `created_at` for this row.
+        authenticatedAt: null,
+        createdAt: staleAt,
+        expiresAt: new Date(now.getTime() + 3_600_000),
+        id: `${providerSubjectId}-stepped-up`,
+        token: `${providerSubjectId}-token-stepped-up`,
+        updatedAt: staleAt,
+        userId: providerSubjectId,
+      },
+      {
+        authenticatedAt: null,
+        createdAt: staleAt,
+        expiresAt: new Date(now.getTime() + 3_600_000),
+        id: `${providerSubjectId}-other`,
+        token: `${providerSubjectId}-token-other`,
+        updatedAt: staleAt,
+        userId: providerSubjectId,
+      },
+    ]);
+
+    const store = makeCommercePortalAuthSessionStore(database.executor);
+    const lifecycle = makeCommercePortalAuthSessionLifecycle(
+      store,
+      {
+        signInEmail: () => Effect.die('unused in the MFA freshness fixture'),
+      },
+      unauditedCommercePortalAuthRecorder,
+    );
+    const currentSessionId = { value: `${providerSubjectId}-stepped-up` };
+    let enableCalls = 0;
+    const mfaService: CommercePortalAuthMfaServiceApi = {
+      disableTwoFactor: () => Effect.die('unused in the MFA freshness fixture'),
+      enableTwoFactor: () =>
+        Effect.sync(() => {
+          enableCalls += 1;
+          return {
+            body: { backupCodes: ['backup-1'], method: 'totp' as const, totpURI: 'otpauth://totp/test' },
+            setCookieHeaders: [],
+          };
+        }),
+      generateBackupCodes: () => Effect.die('unused in the MFA freshness fixture'),
+      getTOTPURI: () => Effect.die('unused in the MFA freshness fixture'),
+      sendTwoFactorOTP: () => Effect.die('unused in the MFA freshness fixture'),
+      verifyBackupCode: () => Effect.die('unused in the MFA freshness fixture'),
+      verifyTOTP: () => Effect.die('unused in the MFA freshness fixture'),
+      verifyTwoFactorOTP: () => Effect.die('unused in the MFA freshness fixture'),
+    };
+    const app = yield* Effect.acquireRelease(
+      Effect.sync(() =>
+        HttpRouter.toWebHandler(
+          HttpApiBuilder.layer(CommercePortalAuthMfaApi).pipe(
+            Layer.provide(portalAuthMfaStandaloneApiLive),
+            Layer.provide(
+              Layer.succeed(
+                CommercePortalAuthMfaFreshnessReaderService,
+                commercePortalAuthMfaFreshnessReaderFromApi(
+                  {
+                    getSession: () =>
+                      Effect.sync((): Option.Option<CommercePortalAuthMfaSessionSnapshot> =>
+                        Option.some({
+                          session: { id: currentSessionId.value },
+                          user: { id: providerSubjectId },
+                        }),
+                      ),
+                  },
+                  lifecycle,
+                ),
+              ),
+            ),
+            Layer.provide(Layer.succeed(CommercePortalAuthMfaService, mfaService)),
+            Layer.provide(Layer.succeed(CommercePortalAuthConfig, MFA_HTTP_CONFIG)),
+            Layer.provide(
+              Layer.succeed(CommercePortalAuthRecoveryRateLimitService, { consume: () => Effect.succeed(true) }),
+            ),
+            Layer.provide(HttpServer.layerServices),
+          ),
+          { disableLogger: true },
+        ),
+      ),
+      (handler) => Effect.promise(handler.dispose.bind(handler)).pipe(Effect.orDie),
+    );
+
+    return {
+      currentSessionId,
+      database,
+      enable: () =>
+        Effect.promise(() =>
+          app.handler(
+            new Request(`${ORIGIN}${BASE_PATH}/two-factor/enable`, {
+              body: JSON.stringify({ password: PASSWORD }),
+              headers: {
+                'content-type': 'application/json',
+                cookie: `${FRESHNESS_COOKIE_NAME}=${currentSessionId.value}`,
+                origin: ORIGIN,
+              },
+              method: 'POST',
+            }),
+            mfaRequestContext,
+          ),
+        ),
+      enableCallCount: () => enableCalls,
+      lifecycle,
+      providerSubjectId,
+    };
+  },
+);
+
+it.live('gates MFA enrollment on the persisted authentication stamp, not on the session row age', () =>
+  Effect.scoped(
+    Effect.gen(function* mfaFreshnessOverPostgres() {
+      const fixture = yield* makeFreshnessFixture();
+
+      const beforeStepUp = yield* fixture.enable();
+      expect(beforeStepUp.status).toBe(401);
+      expect(yield* Effect.promise(() => beforeStepUp.json())).toMatchObject({
+        code: 'mfa_authentication_not_fresh',
+      });
+      expect(fixture.enableCallCount()).toBe(0);
+
+      const steppedUp = yield* fixture.lifecycle.rotateIdentifierForCookie({
+        expectedProviderSubjectId: fixture.providerSubjectId,
+        reason: 'step-up',
+        sessionRef: yield* encodeCommerceSessionReference(`${fixture.providerSubjectId}-stepped-up`),
+      });
+      // The replacement row kept the original creation instant, so only the stamp can explain the
+      // admission below.
+      expect(steppedUp.session.createdAt.getTime()).toBeLessThan(steppedUp.session.authenticatedAt.getTime());
+
+      const rotatedSessionId = yield* parseCommerceSessionReference(steppedUp.session.sessionRef);
+      fixture.currentSessionId.value = rotatedSessionId;
+      const afterStepUp = yield* fixture.enable();
+      expect(afterStepUp.status).toBe(200);
+      expect(fixture.enableCallCount()).toBe(1);
+
+      // The stamp lives on the row the step-up rotated. The customer's other session never saw it.
+      fixture.currentSessionId.value = `${fixture.providerSubjectId}-other`;
+      const otherSession = yield* fixture.enable();
+      expect(otherSession.status).toBe(401);
+      expect(yield* Effect.promise(() => otherSession.json())).toMatchObject({
+        code: 'mfa_authentication_not_fresh',
+      });
+      expect(fixture.enableCallCount()).toBe(1);
+
+      // The rotation is a state change, so it left its evidence in the same transaction.
+      const auditRows = yield* fixture.database.executor
+        .select({ eventType: portalAuthAuditEvent.eventType, operation: portalAuthAuditEvent.operation })
+        .from(portalAuthAuditEvent)
+        .where(eq(portalAuthAuditEvent.providerSubjectId, fixture.providerSubjectId));
+      expect(auditRows).toStrictEqual([
+        { eventType: 'commerce.portal-auth.session-refreshed.v1', operation: 'rotate-identifier' },
+      ]);
     }),
   ),
 );

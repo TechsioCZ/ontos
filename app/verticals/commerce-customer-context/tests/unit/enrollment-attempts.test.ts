@@ -3,6 +3,7 @@ import { DateTime, Effect, Schema } from 'effect';
 import { expect, it } from 'effect-rstest';
 
 import { commerceEnrollmentAttemptServiceForPersistence } from '../../src/enrollment/attempts/attempt-service.ts';
+import type { CommerceEnrollmentAttemptCompletionAuthority } from '../../src/enrollment/attempts/attempt-service.ts';
 import type {
   AttemptClaimResult,
   AttemptCreateResult,
@@ -18,6 +19,7 @@ import type { CommerceEnrollmentAttemptError } from '../../src/enrollment/attemp
 import type {
   ClaimEnrollmentTransitionInput,
   CommercePortalAccountSubject,
+  DerivedEnrollmentAttemptState,
   EnrollmentAttemptSnapshot,
   EnrollmentOwnerOperationSnapshot,
   ReconcileEnrollmentRequest,
@@ -39,6 +41,7 @@ import {
   EnrollmentProviderSubjectIdSchema,
   EnrollmentTenantIdSchema,
   EnrollmentTransitionKeySchema,
+  RecordEnrollmentOutcomeInputSchema,
 } from '../../shared/enrollment-contracts.ts';
 
 const tenantId = Schema.decodeSync(EnrollmentTenantIdSchema)('10000000-0000-4000-8000-000000000001');
@@ -154,6 +157,7 @@ const makePersistence = (
     create: (_input: StartEnrollmentAttemptInput) => Effect.succeed(createResult),
     read: () => Effect.succeed(currentAttempt),
     readOperation: () => Effect.succeed(currentOperation),
+    readOperations: () => Effect.succeed([currentOperation]),
     reconcile: (_input) => Effect.succeed(recordResult),
     record: (_input: RecordEnrollmentOutcomeInput) => Effect.succeed(recordResult),
     terminate: (_input: TerminateEnrollmentAttemptInput) => Effect.succeed(terminateResult),
@@ -164,6 +168,14 @@ const makePersistence = (
 const reconciliationAuthority = {
   resolve: () => Effect.succeed(reconciliationResolution),
 };
+
+/**
+ * The Attempt store never decides completion itself: it asks the installed authority.  These tests
+ * therefore stand in for that authority and assert what the store does with the answer.
+ */
+const completionAuthority = (
+  derivedState: DerivedEnrollmentAttemptState = 'IN_PROGRESS',
+): CommerceEnrollmentAttemptCompletionAuthority => ({ derive: () => Effect.succeed(derivedState) });
 
 const errorCode = (effect: Effect.Effect<unknown, CommerceEnrollmentAttemptError>) =>
   effect.pipe(Effect.match({ onFailure: (error) => error.code, onSuccess: () => 'unexpected' }));
@@ -191,6 +203,7 @@ it.effect('requires the owner reconciliation authority before persisting a resol
           return Effect.succeed(reconciliationResolution);
         },
       },
+      completionAuthority(),
     );
     const result = yield* service.reconcileOutcome(reconciliationRequest);
     expect(result.outcome).toBe('RECORDED');
@@ -219,6 +232,7 @@ it.effect('derives a previously unknown subject only from the trusted owner reso
       {
         resolve: () => Effect.succeed({ ...reconciliationResolution, accountSubject: subject }),
       },
+      completionAuthority(),
     );
     const result = yield* service.reconcileOutcome(reconciliationRequest);
     expect(result.outcome).toBe('RECORDED');
@@ -243,6 +257,7 @@ it.effect('rejects a requested subject that is outside the trusted reconciliatio
           return Effect.succeed(reconciliationResolution);
         },
       },
+      completionAuthority(),
     );
     const untrustedRequest = {
       ...reconciliationRequest,
@@ -274,6 +289,7 @@ it.effect('rejects a trusted resolution that conflicts with the immutable Attemp
       {
         resolve: () => Effect.succeed({ ...reconciliationResolution, accountSubject: conflictingSubject }),
       },
+      completionAuthority(),
     );
     const code = yield* errorCode(service.reconcileOutcome(reconciliationRequest));
     expect(code).toBe('attempt_conflict');
@@ -301,6 +317,7 @@ it.effect('does not persist when the trusted owner reconciliation fails', () =>
             }),
           ),
       },
+      completionAuthority(),
     );
     const code = yield* errorCode(service.reconcileOutcome(reconciliationRequest));
     expect(code).toBe('attempt_conflict');
@@ -320,6 +337,7 @@ it.effect('rejects transition claims after a terminal Attempt before invoking th
         read: () => Effect.succeed(attempt({ revision: 4, state: 'TERMINATED', terminatedAt: at })),
       }),
       reconciliationAuthority,
+      completionAuthority(),
     );
     const code = yield* errorCode(service.claimTransition(claimInput));
     expect(code).toBe('attempt_terminal');
@@ -339,6 +357,7 @@ it.effect('rejects a provider subject that differs from the immutable Attempt su
         read: () => Effect.succeed(attempt({ accountSubject: subject })),
       }),
       reconciliationAuthority,
+      completionAuthority(),
     );
     const code = yield* errorCode(
       service.claimTransition({
@@ -354,20 +373,93 @@ it.effect('rejects a provider subject that differs from the immutable Attempt su
   }),
 );
 
-it.effect('does not allow a failed owner outcome to claim COMPLETE', () =>
-  Effect.gen(function* rejectFalseCompletion() {
+it('does not allow an owner outcome to claim COMPLETE', () => {
+  // COMPLETE is not in the owner outcome vocabulary at all: a request that names it is not a
+  // request this boundary can even express, so no owner outcome can be journalled from one.
+  expect(Schema.is(RecordEnrollmentOutcomeInputSchema)({ ...recordInput, nextState: 'COMPLETE' })).toBe(false);
+  expect(Schema.is(RecordEnrollmentOutcomeInputSchema)({ ...recordInput, nextState: 'RECONCILIATION_REQUIRED' })).toBe(
+    true,
+  );
+});
+
+it.effect('journals the derived Attempt state rather than anything the owner supplied', () =>
+  Effect.gen(function* persistDerivedState() {
+    let persistedState: DerivedEnrollmentAttemptState | undefined;
+    let observedSignal: string | undefined;
+    let observedStatus: string | undefined;
+    const service = commerceEnrollmentAttemptServiceForPersistence(
+      makePersistence({
+        record: (_input, derivedState) => {
+          persistedState = derivedState;
+          return Effect.succeed({ attempt: attempt(), operation, outcome: 'RECORDED' as const });
+        },
+      }),
+      reconciliationAuthority,
+      {
+        derive: (_attempt, outcome) => {
+          observedSignal = outcome.signal;
+          observedStatus = outcome.status;
+          return Effect.succeed('COMPLETE' as const);
+        },
+      },
+    );
+    const result = yield* service.recordOutcome({
+      ...recordInput,
+      nextState: 'VERIFICATION_REQUIRED',
+      status: 'SUCCEEDED',
+    });
+    expect(result.outcome).toBe('RECORDED');
+    // The owner's own signal reaches the derivation as evidence, never the durable routine as a state.
+    expect(observedSignal).toBe('VERIFICATION_REQUIRED');
+    expect(observedStatus).toBe('SUCCEEDED');
+    expect(persistedState).toBe('COMPLETE');
+  }),
+);
+
+it.effect('journals the derived Attempt state for a governed reconciliation too', () =>
+  Effect.gen(function* persistDerivedReconciliationState() {
+    let persistedState: DerivedEnrollmentAttemptState | undefined;
+    const service = commerceEnrollmentAttemptServiceForPersistence(
+      makePersistence({
+        reconcile: (_input, derivedState) => {
+          persistedState = derivedState;
+          return Effect.succeed({ attempt: attempt(), operation, outcome: 'RECORDED' as const });
+        },
+      }),
+      reconciliationAuthority,
+      completionAuthority('RECONCILIATION_REQUIRED'),
+    );
+    const result = yield* service.reconcileOutcome(reconciliationRequest);
+    expect(result.outcome).toBe('RECORDED');
+    expect(persistedState).toBe('RECONCILIATION_REQUIRED');
+  }),
+);
+
+it.effect('does not journal an outcome when completion cannot be derived', () =>
+  Effect.gen(function* rejectUndecidableCompletion() {
     let recordCalls = 0;
     const service = commerceEnrollmentAttemptServiceForPersistence(
       makePersistence({
         record: () => {
           recordCalls += 1;
-          return Effect.succeed({ attempt: attempt(), operation, outcome: 'RECORDED' });
+          return Effect.succeed({ attempt: attempt(), operation, outcome: 'RECORDED' as const });
         },
       }),
       reconciliationAuthority,
+      {
+        derive: () =>
+          Effect.fail(
+            new CommerceEnrollmentAttemptConflict({
+              attemptId,
+              code: 'attempt_conflict',
+              reason: 'The Attempt journey does not declare the transition this outcome belongs to',
+              retryable: false,
+            }),
+          ),
+      },
     );
-    const code = yield* errorCode(service.recordOutcome({ ...recordInput, nextState: 'COMPLETE' }));
-    expect(code).toBe('attempt_invalid');
+    const code = yield* errorCode(service.recordOutcome(recordInput));
+    expect(code).toBe('attempt_conflict');
     expect(recordCalls).toBe(0);
   }),
 );
@@ -388,6 +480,7 @@ it.effect('surfaces indeterminate owner outcomes so callers cannot retry blindly
           ),
       }),
       reconciliationAuthority,
+      completionAuthority(),
     );
     const code = yield* errorCode(service.claimTransition(claimInput));
     expect(code).toBe('attempt_indeterminate');
@@ -409,6 +502,7 @@ it.effect('propagates a durable outcome conflict without fabricating a successfu
           ),
       }),
       reconciliationAuthority,
+      completionAuthority(),
     );
     const code = yield* errorCode(service.recordOutcome(recordInput));
     expect(code).toBe('attempt_conflict');

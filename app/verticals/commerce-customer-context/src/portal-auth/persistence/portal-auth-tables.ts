@@ -1,6 +1,8 @@
 import { defineRelations, sql } from 'drizzle-orm';
 import { bigint, boolean, index, integer, pgSchema, smallint, text, timestamp, uniqueIndex } from 'drizzle-orm/pg-core';
 
+import { portalAuthAuditEvent } from '../audit/audit-tables.ts';
+
 /** The Commerce portal owns this schema and migration history independently of Core and Staff. */
 export const COMMERCE_PORTAL_AUTH_SCHEMA_NAME = 'commerce_auth';
 export const COMMERCE_PORTAL_AUTH_TABLE_INVENTORY = [
@@ -12,8 +14,17 @@ export const COMMERCE_PORTAL_AUTH_TABLE_INVENTORY = [
   'twoFactor',
   'stepUpChallenge',
   'stepUpChallengeAttempt',
+  'recoveryReconciliation',
+  'recoveryResetLedger',
+  'portalAuthAuditEvent',
 ] as const;
 
+/**
+ * `drizzle.portal-auth.config.ts` names this module as its schema input, and Drizzle Kit reads a
+ * schema through the module's own exports. The schema handle and every table below therefore stay
+ * exported even where nothing else imports them: unexporting one hides it from migration
+ * generation, and the next generated migration drops the live table.
+ */
 export const commercePortalAuthSchema = pgSchema(COMMERCE_PORTAL_AUTH_SCHEMA_NAME);
 
 export const user = commercePortalAuthSchema.table('user', {
@@ -34,6 +45,15 @@ export const user = commercePortalAuthSchema.table('user', {
 export const session = commercePortalAuthSchema.table(
   'session',
   {
+    /**
+     * The last primary or step-up authentication on this session. Better Auth owns the insert at
+     * sign-in and knows nothing of this column, so a row it wrote answers NULL and every reader
+     * falls back to `created_at` — which for such a row *is* the authentication time. The owner's
+     * identifier rotation deliberately carries `created_at` forward so the absolute session
+     * lifetime survives a rotation, so a completed step-up stamps this column instead: without it
+     * a session older than the freshness window could never become fresh again.
+     */
+    authenticatedAt: timestamp('authenticated_at', { withTimezone: true }),
     createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
     expiresAt: timestamp('expires_at', { withTimezone: true }).notNull(),
     id: text('id').primaryKey(),
@@ -151,9 +171,74 @@ export const stepUpChallengeAttempt = commercePortalAuthSchema.table(
   (table) => [index('commerce_auth_step_up_attempt_challenge_id_hash_idx').on(table.challengeIdHash)],
 );
 
+/**
+ * A support-visible, append-mostly audit of detected recovery evidence conflicts. Recording a row
+ * here is the only effect detection ever has: it never updates `user`, `session` or `account`, and
+ * it never grants access. `providerSubjectId` is unconstrained text (no FK to `user.id`), matching
+ * `stepUpChallenge.providerSubjectId` — the whole point of this table is that the subject may no
+ * longer name any account row at all (`TOKEN_SUBJECT_STALE`).
+ */
+export const recoveryReconciliation = commercePortalAuthSchema.table(
+  'recovery_reconciliation',
+  {
+    conflictClass: text('conflict_class').notNull(),
+    createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
+    // The account that currently owns the identifier, when one does; null names no current owner.
+    currentProviderSubjectId: text('current_provider_subject_id'),
+    email: text('email').notNull(),
+    id: text('id').primaryKey(),
+    operation: text('operation').notNull(),
+    providerSubjectId: text('provider_subject_id').notNull(),
+  },
+  (table) => [
+    index('commerce_auth_recovery_reconciliation_email_idx').on(table.email),
+    uniqueIndex('commerce_auth_recovery_reconciliation_dedupe_uk').on(
+      table.operation,
+      table.providerSubjectId,
+      table.email,
+      table.conflictClass,
+    ),
+  ],
+);
+
+/**
+ * A dedicated, Commerce-owned issuance-time evidence ledger for password-reset requests — separate
+ * from Better Auth's shared `verification` table so this vertical can own a unique index on the
+ * identifier without any risk to Better Auth's own token rows. `identifierDigest` (the normalized
+ * email's digest) is the primary key: a repeated request for the same identifier always upserts the
+ * same row (deterministic idempotency, no duplicate pending rows, and a response indistinguishable
+ * from the first request), and an expired row is revived back to `pending` in place rather than
+ * ever growing a second row for the identifier. `tokenDigest` is a separate unique column so a peek
+ * by token can look up the current row without knowing the identifier.
+ *
+ * A row's `state` is `pending` until it is swept for expiry (see `sweepExpiredResetLedgerRows` in
+ * `portal-auth-recovery-store.ts`), at which point it becomes `expired` and `providerSubjectId` and
+ * `email` are cleared: a terminal row retains only what reconciliation needs to know it *existed*
+ * for the identifier, never the account subject or email it named.
+ */
+export const recoveryResetLedger = commercePortalAuthSchema.table(
+  'recovery_reset_ledger',
+  {
+    createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
+    email: text('email'),
+    expiresAt: timestamp('expires_at', { withTimezone: true }).notNull(),
+    identifierDigest: text('identifier_digest').primaryKey(),
+    providerSubjectId: text('provider_subject_id'),
+    state: text('state').notNull().default('pending'),
+    tokenDigest: text('token_digest').notNull(),
+    updatedAt: timestamp('updated_at', { withTimezone: true }).defaultNow().notNull(),
+  },
+  (table) => [
+    uniqueIndex('commerce_auth_recovery_reset_ledger_token_digest_uk').on(table.tokenDigest),
+    index('commerce_auth_recovery_reset_ledger_state_expires_at_idx').on(table.state, table.expiresAt),
+  ],
+);
+
 export const commercePortalAuthDatabaseSchema = {
   account,
   rateLimit,
+  recoveryReconciliation,
+  recoveryResetLedger,
   session,
   stepUpChallenge,
   stepUpChallengeAttempt,
@@ -210,4 +295,7 @@ export const COMMERCE_PORTAL_AUTH_TABLES = [
   twoFactor,
   stepUpChallenge,
   stepUpChallengeAttempt,
+  recoveryReconciliation,
+  recoveryResetLedger,
+  portalAuthAuditEvent,
 ] as const;

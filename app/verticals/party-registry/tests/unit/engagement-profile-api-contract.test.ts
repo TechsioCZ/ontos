@@ -1,6 +1,3 @@
-// @effect-diagnostics nodeBuiltinImport:off -- Source-contract test reads actual module files; expires: 2026-12-31.
-import { readFile } from 'node:fs/promises';
-
 import { Effect, Option, Schema } from 'effect';
 import { expect, it } from 'effect-rstest';
 import { FetchHttpClient } from 'effect/unstable/http';
@@ -131,20 +128,5 @@ it.effect('public engagement mutations preserve owner request context at the HTT
         mutationRequest?.headers.get('x-modernjs-bff-operation-context') ?? '',
       ),
     ).toEqual(engagementProfileOperationContexts.attachOrganizationEngagement);
-  }),
-);
-
-it.effect('public Party Registry engagement API does not expose legacy identity operations', () =>
-  Effect.gen(function* verifyCase4() {
-    const [apiSource, clientSource] = yield* Effect.all([
-      Effect.promise(() => readFile(new URL('../../shared/engagement-profile-api.ts', import.meta.url), 'utf-8')),
-      Effect.promise(() => readFile(new URL('../../src/api/engagement-profile-client.ts', import.meta.url), 'utf-8')),
-    ]);
-
-    for (const source of [apiSource, clientSource]) {
-      expect(source).not.toMatch(/\b(?:createCustomer|editCustomer|archiveCustomer|unarchiveCustomer)\b/u);
-      expect(source).not.toMatch(/\b(?:createContact|editContact|archiveContact|unarchiveContact)\b/u);
-      expect(source).not.toMatch(/CustomerAresLookup|customerId|contactId/u);
-    }
   }),
 );

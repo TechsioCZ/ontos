@@ -2,6 +2,7 @@ import type { Auth } from 'better-auth';
 import { isAPIError } from 'better-auth/api';
 import { Duration, Effect, Context, Layer, Schema } from 'effect';
 
+import { withCause } from '../../problems-support.ts';
 import { CommercePortalAuthInstance } from '../auth.ts';
 import { COMMERCE_PORTAL_AUTH_POLICY } from '../config.ts';
 import { CommercePortalAuthRecoveryProviderFailure } from './provider-failure.ts';
@@ -40,9 +41,6 @@ const providerTimeout = Duration.millis(COMMERCE_PORTAL_AUTH_POLICY.accountCreat
 
 const ProviderCodeSchema = Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(64));
 const ProviderStatusSchema = Schema.Finite.check(Schema.isInt());
-
-const withCause = <ErrorValue extends object>(error: ErrorValue, cause: unknown): ErrorValue =>
-  Object.defineProperty(error, 'cause', { configurable: true, value: cause });
 
 /** Better Auth diagnostics are classified here so no provider body survives past this bridge. */
 const providerFailure = (operation: string, cause: unknown): CommercePortalAuthRecoveryProviderFailure => {

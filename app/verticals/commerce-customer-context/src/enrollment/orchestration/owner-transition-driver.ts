@@ -1,6 +1,5 @@
 import type {
   ActivatePrincipalBindingRequest,
-  ChangePrincipalBindingStatusRequest,
   ExternalIdentityClientError,
   ExternalIdentityClientOptions,
   ExternalIdentityClientPort,
@@ -39,7 +38,8 @@ import {
   ReconcileEnrollmentResolutionSchema,
   RecordEnrollmentOutcomeInputSchema,
 } from '../../../shared/enrollment-contracts.ts';
-import type { AttemptClaimResult, AttemptRecordResult } from '../attempts/attempt-persistence.ts';
+import type { AttemptClaimedResult, AttemptRecordResult } from '../attempts/attempt-persistence.ts';
+import { claimedOrIndeterminate } from '../attempts/attempt-persistence.ts';
 import type { CommerceEnrollmentAttemptService } from '../attempts/attempt-service.ts';
 import {
   CommerceEnrollmentAttemptConflict,
@@ -101,9 +101,8 @@ const ownerEffectOutcomeFields = {
   accountSubject: Schema.optionalKey(CommercePortalAccountSubjectSchema),
   failureCode: Schema.optionalKey(EnrollmentKeySchema),
   failureReason: Schema.optionalKey(EnrollmentBoundedTextSchema),
-  nextState: Schema.optionalKey(
-    Schema.Literals(['IN_PROGRESS', 'VERIFICATION_REQUIRED', 'COMPLETE', 'RECONCILIATION_REQUIRED']),
-  ),
+  /** An owner speaks only about its own transition; COMPLETE is derived, never signalled. */
+  nextState: Schema.optionalKey(Schema.Literals(['IN_PROGRESS', 'VERIFICATION_REQUIRED', 'RECONCILIATION_REQUIRED'])),
   outcomeCode: Schema.optionalKey(EnrollmentKeySchema),
   resultDigest: Schema.optionalKey(EnrollmentDigestSchema),
   resultReference: Schema.optionalKey(EnrollmentResourceIdSchema),
@@ -113,7 +112,7 @@ interface CommerceEnrollmentOwnerEffectOutcomeFields {
   readonly accountSubject?: CommercePortalAccountSubject;
   readonly failureCode?: EnrollmentKey;
   readonly failureReason?: typeof EnrollmentBoundedTextSchema.Type;
-  readonly nextState?: 'IN_PROGRESS' | 'VERIFICATION_REQUIRED' | 'COMPLETE' | 'RECONCILIATION_REQUIRED';
+  readonly nextState?: 'IN_PROGRESS' | 'VERIFICATION_REQUIRED' | 'RECONCILIATION_REQUIRED';
   readonly outcomeCode?: EnrollmentKey;
   readonly resultDigest?: typeof EnrollmentDigestSchema.Type;
   readonly resultReference?: EnrollmentResourceId;
@@ -222,15 +221,15 @@ export interface CommerceEnrollmentOwnerTransitionDriver {
 
 type CommerceEnrollmentOwnerTransitionExecutionResult =
   | {
-      readonly claim: AttemptClaimResult;
+      readonly claim: AttemptClaimedResult;
       readonly outcome: 'REPLAYED';
     }
   | {
-      readonly claim: AttemptClaimResult;
+      readonly claim: AttemptClaimedResult;
       readonly outcome: 'LEASE_HELD';
     }
   | {
-      readonly claim: AttemptClaimResult;
+      readonly claim: AttemptClaimedResult;
       readonly outcome: 'RECORDED';
       readonly ownerOutcome: CommerceEnrollmentOwnerEffectOutcome;
       readonly recorded: AttemptRecordResult;
@@ -357,7 +356,7 @@ const toClaimInput = (
 
 const toRecordInput = (
   input: CommerceEnrollmentOwnerTransition,
-  claim: AttemptClaimResult,
+  claim: AttemptClaimedResult,
   outcome: CommerceEnrollmentOwnerEffectOutcome,
   workerId: EnrollmentKey,
 ): Effect.Effect<RecordEnrollmentOutcomeInput, CommerceEnrollmentAttemptError> => {
@@ -410,7 +409,7 @@ const ownerOutcome = (
 
 const rejectedOutcome = (
   input: CommerceEnrollmentOwnerTransition,
-  error: CommerceEnrollmentOwnerEffectRejected,
+  error: InstanceType<typeof CommerceEnrollmentOwnerEffectRejected>,
 ): Effect.Effect<CommerceEnrollmentOwnerEffectOutcome, CommerceEnrollmentAttemptError> =>
   Schema.decodeEffect(EnrollmentKeySchema)('owner_rejected').pipe(
     Effect.flatMap((failureCode) =>
@@ -429,7 +428,9 @@ const rejectedOutcome = (
 
 const mapOwnerFailure = (
   input: CommerceEnrollmentOwnerTransition,
-  error: CommerceEnrollmentOwnerEffectUnavailable | CommerceEnrollmentOwnerEffectIndeterminate,
+  error:
+    | InstanceType<typeof CommerceEnrollmentOwnerEffectUnavailable>
+    | InstanceType<typeof CommerceEnrollmentOwnerEffectIndeterminate>,
 ): CommerceEnrollmentAttemptError => indeterminate(input, error.reason, error);
 
 const readOperationIdentity = (input: CommerceEnrollmentOwnerTransition): ReadEnrollmentOwnerOperationInput => ({
@@ -461,7 +462,7 @@ const leaseIsActive = (lease: EnrollmentOwnerOperationSnapshot['lease']): Effect
 const claimIsDispatchable = Effect.fn('CommerceEnrollmentOwnerTransitionDriver.claimIsDispatchable')(
   function* claimIsDispatchableEffect(
     input: CommerceEnrollmentOwnerTransition,
-    claim: AttemptClaimResult,
+    claim: AttemptClaimedResult,
     workerId: EnrollmentKey,
   ): Effect.fn.Return<boolean> {
     if (
@@ -512,7 +513,9 @@ export const makeCommerceEnrollmentOwnerTransitionDriver = (
       Effect.mapError((cause) => driverInvalidConfiguration('The owner worker identity is invalid', cause)),
     );
     const claimInput = yield* toClaimInput(input, workerId, leaseDurationMs, required);
-    const claim = yield* options.attempt.claimTransition(claimInput);
+    const claim = yield* options.attempt
+      .claimTransition(claimInput)
+      .pipe(Effect.flatMap(claimedOrIndeterminate(input)));
     if (claim.operation.status === 'SUCCEEDED') {
       return { claim, outcome: 'REPLAYED' };
     }
@@ -573,8 +576,9 @@ export const makeCommerceEnrollmentOwnerTransitionDriver = (
       return yield* invalid('The reconciliation request does not match the immutable owner operation');
     }
 
-    // A timed-out worker may leave the SQL row IN_PROGRESS until the next claim fences it.  Use a
-    // durable claim only to perform that fence, then refresh both rows before owner HTTP.
+    // A timed-out worker leaves the SQL row IN_PROGRESS until the next claim fences it. Claim only
+    // to perform that fence, then refresh both rows before any owner read.
+    let fenced = false;
     if (operation.status === 'IN_PROGRESS') {
       if (yield* leaseIsActive(operation.lease)) {
         return yield* new CommerceEnrollmentAttemptUnavailable({
@@ -593,17 +597,22 @@ export const makeCommerceEnrollmentOwnerTransitionDriver = (
         leaseDurationMs,
         required,
       );
-      yield* options.attempt
-        .claimTransition(fenceInput)
-        .pipe(Effect.catchTag('CommerceEnrollmentAttemptIndeterminate', () => Effect.void));
-      attempt = yield* options.attempt.read(readAttemptIdentity(requested));
-      operation = yield* options.attempt.readOwnerOperation(readOperationIdentity(requested));
+      yield* options.attempt.claimTransition(fenceInput);
+      // Two independent owner-authoritative reads of the rows the fence just moved.
+      ({ attempt, operation } = yield* Effect.all(
+        {
+          attempt: options.attempt.read(readAttemptIdentity(requested)),
+          operation: options.attempt.readOwnerOperation(readOperationIdentity(requested)),
+        },
+        { concurrency: 2 },
+      ));
       if (operation.status === 'SUCCEEDED') {
         return { attempt, operation, outcome: 'REPLAYED' };
       }
       if (operation.status !== 'INDETERMINATE' && operation.status !== 'RECONCILIATION_REQUIRED') {
         return yield* indeterminate(requested, 'The expired owner transition was not durably fenced');
       }
+      fenced = true;
     }
 
     if (operation.status === 'SUCCEEDED') {
@@ -615,7 +624,9 @@ export const makeCommerceEnrollmentOwnerTransitionDriver = (
     if (operation.status !== 'INDETERMINATE' && operation.status !== 'RECONCILIATION_REQUIRED') {
       return yield* indeterminate(requested, 'The owner transition is not ready for reconciliation');
     }
-    if (attempt.revision !== requested.expectedRevision) {
+    // Outside the fence path the caller's revision must still be Current; the fence above moved it
+    // itself and re-read both rows, so its own move is not a concurrent change.
+    if (!fenced && attempt.revision !== requested.expectedRevision) {
       return yield* conflict(requested, 'The durable owner fence changed the Attempt revision; refresh before retry');
     }
 
@@ -656,10 +667,15 @@ export const makeCommerceEnrollmentOwnerTransitionDriver = (
   return Object.freeze({ execute, reconcile });
 };
 
+/**
+ * Enrollment establishes a Tenant-scoped Principal Auth Binding; it never administers one. The
+ * disable/revoke status transition stays with its own owner Action, so this adapter deliberately
+ * exposes only the two establishing operations and cannot reach
+ * `changePrincipalBindingStatus` even when composition asks for it.
+ */
 type CommerceEnrollmentCoreIdentityDispatchRequest =
   | { readonly operation: 'reserve'; readonly payload: ReservePrincipalBindingRequest }
-  | { readonly operation: 'activate'; readonly payload: ActivatePrincipalBindingRequest }
-  | { readonly operation: 'status'; readonly payload: ChangePrincipalBindingStatusRequest };
+  | { readonly operation: 'activate'; readonly payload: ActivatePrincipalBindingRequest };
 
 type CommerceEnrollmentCoreIdentityReconciliationRequest =
   | { readonly operation: 'read'; readonly payload: ReadPrincipalBindingRequest }
@@ -698,7 +714,7 @@ export interface CommerceEnrollmentCoreIdentityOwnerEffectOptions {
   ) => CommerceEnrollmentCoreIdentityReconciliationRequest;
 }
 
-const coreUnavailable = (cause?: unknown): CommerceEnrollmentOwnerEffectUnavailable => {
+const coreUnavailable = (cause?: unknown): InstanceType<typeof CommerceEnrollmentOwnerEffectUnavailable> => {
   const error = new CommerceEnrollmentOwnerEffectUnavailable({
     code: 'core_identity_unavailable',
     reason: 'The Core external identity service is unavailable',
@@ -706,7 +722,11 @@ const coreUnavailable = (cause?: unknown): CommerceEnrollmentOwnerEffectUnavaila
   return cause === undefined ? error : preserveCause(error, cause);
 };
 
-const coreRejected = (code: string, reason: string, cause?: unknown): CommerceEnrollmentOwnerEffectRejected => {
+const coreRejected = (
+  code: string,
+  reason: string,
+  cause?: unknown,
+): InstanceType<typeof CommerceEnrollmentOwnerEffectRejected> => {
   const error = new CommerceEnrollmentOwnerEffectRejected({
     code: code.slice(0, 200),
     reason: reason.slice(0, 500),
@@ -729,10 +749,12 @@ const mapExternalIdentityError = (cause: ExternalIdentityClientError): CommerceE
 
 const decodeResourceId = (
   value: string,
-): Effect.Effect<EnrollmentResourceId, CommerceEnrollmentOwnerEffectUnavailable> =>
+): Effect.Effect<EnrollmentResourceId, InstanceType<typeof CommerceEnrollmentOwnerEffectUnavailable>> =>
   Schema.decodeEffect(EnrollmentResourceIdSchema)(value).pipe(Effect.mapError((cause) => coreUnavailable(cause)));
 
-const decodeCoreKey = (value: string): Effect.Effect<EnrollmentKey, CommerceEnrollmentOwnerEffectUnavailable> =>
+const decodeCoreKey = (
+  value: string,
+): Effect.Effect<EnrollmentKey, InstanceType<typeof CommerceEnrollmentOwnerEffectUnavailable>> =>
   Schema.decodeEffect(EnrollmentKeySchema)(value).pipe(Effect.mapError((cause) => coreUnavailable(cause)));
 
 /**
@@ -774,33 +796,17 @@ export const makeCommerceEnrollmentCoreIdentityOwnerEffect = (
         resultReference,
       });
     }
-    if (request.operation === 'activate') {
-      const result = yield* options.client
-        .activatePrincipalBinding(request.payload, mutationOptions)
-        .pipe(Effect.mapError(mapExternalIdentityError));
-      const { outcomeCode, resultReference } = yield* Effect.all(
-        {
-          outcomeCode: decodeCoreKey('core_binding_activated'),
-          resultReference: decodeResourceId(result.authBindingId),
-        },
-        { concurrency: 2 },
-      );
-      return ownerOutcome('SUCCEEDED', { outcomeCode, resultReference });
-    }
     const result = yield* options.client
-      .changePrincipalBindingStatus(request.payload, mutationOptions)
+      .activatePrincipalBinding(request.payload, mutationOptions)
       .pipe(Effect.mapError(mapExternalIdentityError));
     const { outcomeCode, resultReference } = yield* Effect.all(
       {
-        outcomeCode: decodeCoreKey(`core_binding_${request.payload.change.requestedStatus}`),
+        outcomeCode: decodeCoreKey('core_binding_activated'),
         resultReference: decodeResourceId(result.authBindingId),
       },
       { concurrency: 2 },
     );
-    return ownerOutcome('SUCCEEDED', {
-      outcomeCode,
-      resultReference,
-    });
+    return ownerOutcome('SUCCEEDED', { outcomeCode, resultReference });
   });
 
   const reconcile = Effect.fn('CommerceEnrollmentCoreIdentityOwnerEffect.reconcile')(function* reconcileCoreIdentity(

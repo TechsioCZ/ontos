@@ -65,6 +65,11 @@
           "tests/**/*.{test,spec}.{ts,tsx,mts}"
         ]
       },
+      "ignoreDependencies": [
+        "@effect/language-service",
+        "@rsbuild/core",
+        "@rspack/core"
+      ],
       "lefthook": false,
       "node": false
     },

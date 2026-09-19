@@ -55,8 +55,13 @@ export const CommerceEnrollmentProviderOwnerReconciliationObservationSchema = Sc
     providerSubjectId: EnrollmentProviderSubjectIdSchema,
   }),
 ]).annotate({ parseOptions: { onExcessProperty: 'error' } });
-type CommerceEnrollmentProviderOwnerReconciliationObservation =
+export type CommerceEnrollmentProviderOwnerReconciliationObservation =
   typeof CommerceEnrollmentProviderOwnerReconciliationObservationSchema.Type;
+
+/** Performs an exact invocation lookup after an unknown provider response. */
+export type CommerceEnrollmentProviderOwnerReconciliationLookup = (
+  input: CommerceEnrollmentOwnerReconciliationInput,
+) => Effect.Effect<CommerceEnrollmentProviderOwnerReconciliationObservation, CommerceEnrollmentOwnerEffectError>;
 
 export interface CommerceEnrollmentPortalAuthOwnerEffectOptions {
   readonly accountCreation: CommercePortalAuthAccountCreationService['Service'];
@@ -65,15 +70,17 @@ export interface CommerceEnrollmentPortalAuthOwnerEffectOptions {
     input: CommerceEnrollmentOwnerTransition,
   ) => Effect.Effect<CommercePortalAccountCreateInputBoundary, CommerceEnrollmentOwnerEffectError>;
   /** Performs an exact invocation/digest lookup after an unknown provider response. */
-  readonly reconcileAccount: (
-    input: CommerceEnrollmentOwnerReconciliationInput,
-  ) => Effect.Effect<CommerceEnrollmentProviderOwnerReconciliationObservation, CommerceEnrollmentOwnerEffectError>;
+  readonly reconcileAccount: CommerceEnrollmentProviderOwnerReconciliationLookup;
 }
 
 const withCause = <ErrorType extends object>(error: ErrorType, cause: unknown): ErrorType =>
   Object.defineProperty(error, 'cause', { configurable: false, enumerable: false, value: cause });
 
-const unavailable = (code: string, reason: string, cause?: unknown): CommerceEnrollmentOwnerEffectUnavailable => {
+const unavailable = (
+  code: string,
+  reason: string,
+  cause?: unknown,
+): InstanceType<typeof CommerceEnrollmentOwnerEffectUnavailable> => {
   const error = new CommerceEnrollmentOwnerEffectUnavailable({
     code: code.slice(0, 200),
     reason: reason.slice(0, 500),
@@ -81,7 +88,11 @@ const unavailable = (code: string, reason: string, cause?: unknown): CommerceEnr
   return cause === undefined ? error : withCause(error, cause);
 };
 
-const indeterminate = (code: string, reason: string, cause?: unknown): CommerceEnrollmentOwnerEffectIndeterminate => {
+const indeterminate = (
+  code: string,
+  reason: string,
+  cause?: unknown,
+): InstanceType<typeof CommerceEnrollmentOwnerEffectIndeterminate> => {
   const error = new CommerceEnrollmentOwnerEffectIndeterminate({
     code: code.slice(0, 200),
     reason: reason.slice(0, 500),
@@ -89,7 +100,11 @@ const indeterminate = (code: string, reason: string, cause?: unknown): CommerceE
   return cause === undefined ? error : withCause(error, cause);
 };
 
-const rejected = (code: string, reason: string, cause?: unknown): CommerceEnrollmentOwnerEffectRejected => {
+const rejected = (
+  code: string,
+  reason: string,
+  cause?: unknown,
+): InstanceType<typeof CommerceEnrollmentOwnerEffectRejected> => {
   const error = new CommerceEnrollmentOwnerEffectRejected({
     code: code.slice(0, 200),
     reason: reason.slice(0, 500),
@@ -112,7 +127,9 @@ const mapAccountCreationFailure = (
   return indeterminate('provider_account_unknown_failure', 'The provider account result was not classifiable', cause);
 };
 
-const decodeKey = (value: string): Effect.Effect<EnrollmentKey, CommerceEnrollmentOwnerEffectUnavailable> =>
+const decodeKey = (
+  value: string,
+): Effect.Effect<EnrollmentKey, InstanceType<typeof CommerceEnrollmentOwnerEffectUnavailable>> =>
   Schema.decodeEffect(EnrollmentKeySchema)(value).pipe(
     Effect.mapError((cause) =>
       unavailable('provider_account_invalid_result', 'The provider returned an invalid outcome key', cause),
@@ -121,7 +138,7 @@ const decodeKey = (value: string): Effect.Effect<EnrollmentKey, CommerceEnrollme
 
 const decodeResourceId = (
   value: string,
-): Effect.Effect<EnrollmentResourceId, CommerceEnrollmentOwnerEffectUnavailable> =>
+): Effect.Effect<EnrollmentResourceId, InstanceType<typeof CommerceEnrollmentOwnerEffectUnavailable>> =>
   Schema.decodeEffect(EnrollmentResourceIdSchema)(value).pipe(
     Effect.mapError((cause) =>
       unavailable('provider_account_invalid_result', 'The provider returned an invalid result reference', cause),
@@ -130,7 +147,7 @@ const decodeResourceId = (
 
 const decodeEvidenceReference = (
   value: string,
-): Effect.Effect<EnrollmentEvidenceReference, CommerceEnrollmentOwnerEffectUnavailable> =>
+): Effect.Effect<EnrollmentEvidenceReference, InstanceType<typeof CommerceEnrollmentOwnerEffectUnavailable>> =>
   Schema.decodeEffect(EnrollmentEvidenceReferenceSchema)(value).pipe(
     Effect.mapError((cause) =>
       unavailable('provider_account_invalid_result', 'The provider returned invalid owner evidence', cause),
@@ -139,7 +156,7 @@ const decodeEvidenceReference = (
 
 const decodeProviderSubject = (
   value: string,
-): Effect.Effect<CommercePortalAccountSubject, CommerceEnrollmentOwnerEffectUnavailable> =>
+): Effect.Effect<CommercePortalAccountSubject, InstanceType<typeof CommerceEnrollmentOwnerEffectUnavailable>> =>
   Schema.decodeEffect(CommercePortalAccountSubjectSchema)({
     authenticationNamespaceId: COMMERCE_AUTHENTICATION_NAMESPACE_ID,
     providerSubjectId: value,
@@ -150,7 +167,9 @@ const decodeProviderSubject = (
     ),
   );
 
-const decodeRevision = (value: number): Effect.Effect<number, CommerceEnrollmentOwnerEffectUnavailable> =>
+const decodeRevision = (
+  value: number,
+): Effect.Effect<number, InstanceType<typeof CommerceEnrollmentOwnerEffectUnavailable>> =>
   Schema.decodeEffect(Schema.Finite.check(Schema.isInt(), Schema.isGreaterThanOrEqualTo(1)))(value).pipe(
     Effect.mapError((cause) =>
       unavailable('provider_account_invalid_result', 'The provider returned an invalid Attempt revision', cause),
@@ -160,7 +179,10 @@ const decodeRevision = (value: number): Effect.Effect<number, CommerceEnrollment
 const validateAccountInput = (
   transition: CommerceEnrollmentOwnerTransition,
   input: CommercePortalAccountCreateInputBoundary,
-): Effect.Effect<CommercePortalAccountCreateInputBoundary, CommerceEnrollmentOwnerEffectRejected> =>
+): Effect.Effect<
+  CommercePortalAccountCreateInputBoundary,
+  InstanceType<typeof CommerceEnrollmentOwnerEffectRejected>
+> =>
   Schema.decodeEffect(CommercePortalAccountCreateInputSchema)(input).pipe(
     Effect.mapError((cause) =>
       rejected('provider_account_invalid_request', 'The owner account request is invalid', cause),
@@ -266,6 +288,34 @@ const reconcileOutcome = Effect.fn('CommerceEnrollmentPortalAuthOwnerEffect.reco
 );
 
 /**
+ * The reconciliation half of the Portal Auth owner adapter. An owner preparation that only has to
+ * resolve an already dispatched, indeterminate transition needs no credential carrier and no
+ * account-creation port: building it separately keeps the private sign-up capability out of the
+ * governed Action preparation path entirely.
+ */
+export const commerceEnrollmentPortalAuthOwnerReconciliationForLookup = (
+  reconcileAccount: CommerceEnrollmentProviderOwnerReconciliationLookup,
+): Pick<CommerceEnrollmentOwnerEffect, 'reconcile'> => ({
+  reconcile: Effect.fn('CommerceEnrollmentPortalAuthOwnerEffect.reconcile')(function* reconcileAccountEffect(
+    input: CommerceEnrollmentOwnerReconciliationInput,
+  ): Effect.fn.Return<ReconcileEnrollmentResolution, CommerceEnrollmentOwnerEffectError> {
+    const observation = yield* reconcileAccount(input);
+    const decodedObservation = yield* Schema.decodeEffect(
+      CommerceEnrollmentProviderOwnerReconciliationObservationSchema,
+    )(observation).pipe(
+      Effect.mapError((cause) =>
+        indeterminate(
+          'provider_account_invalid_reconciliation',
+          'The provider reconciliation result is invalid',
+          cause,
+        ),
+      ),
+    );
+    return yield* reconcileOutcome(input, decodedObservation);
+  }),
+});
+
+/**
  * Private Portal Auth owner adapter. Account creation is invoked once after the durable driver
  * claim; all provider failures remain typed, and an unknown response is recovered only through
  * the exact lookup callback supplied by Portal Auth composition.
@@ -285,23 +335,7 @@ export const makeCommerceEnrollmentPortalAuthOwnerEffect = (
     return yield* dispatchOutcome(input, result);
   });
 
-  const reconcile = Effect.fn('CommerceEnrollmentPortalAuthOwnerEffect.reconcile')(function* reconcileAccount(
-    input: CommerceEnrollmentOwnerReconciliationInput,
-  ): Effect.fn.Return<ReconcileEnrollmentResolution, CommerceEnrollmentOwnerEffectError> {
-    const observation = yield* options.reconcileAccount(input);
-    const decodedObservation = yield* Schema.decodeEffect(
-      CommerceEnrollmentProviderOwnerReconciliationObservationSchema,
-    )(observation).pipe(
-      Effect.mapError((cause) =>
-        indeterminate(
-          'provider_account_invalid_reconciliation',
-          'The provider reconciliation result is invalid',
-          cause,
-        ),
-      ),
-    );
-    return yield* reconcileOutcome(input, decodedObservation);
-  });
+  const { reconcile } = commerceEnrollmentPortalAuthOwnerReconciliationForLookup(options.reconcileAccount);
 
   return Object.freeze({ dispatch, reconcile });
 };

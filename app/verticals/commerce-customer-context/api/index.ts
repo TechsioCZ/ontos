@@ -22,8 +22,17 @@ import { Effect, HttpApiBuilder, HttpRouter, Layer } from '@modern-js/bff-effect
 import type { EffectBffDefinition, EffectBffRuntime } from '@modern-js/bff-effect/effect-edge';
 import { Context, Layer as GovernedReadLayer, Logger, Option, References, Schema, Tracer } from 'effect';
 import { CommercePortalAuthDatabaseLive } from '../src/portal-auth/persistence/portal-auth-database.ts';
+import { CommercePortalAuthAuditLive } from '../src/portal-auth/audit/audit.ts';
+import { CommercePortalAuthAccountLookupLive } from '../src/portal-auth/persistence/portal-auth-account-lookup.ts';
+import { CommerceEnrollmentOwnerTransactionRunnerLive } from '../src/enrollment/orchestration/owner-transaction-runner.ts';
+import { commerceEnrollmentOwnerTransitionPreparationLive } from '../src/enrollment/orchestration/owner-transition-composition.ts';
+import { CommerceEnrollmentPreparationSubjectResolverLive } from '../src/enrollment/orchestration/preparation-subject.ts';
 import { CommercePortalAuthLive } from './portal-auth/provider/auth.ts';
-import { CommercePortalAuthConfigLive, optionalCommercePortalAuthConfig } from './portal-auth/provider/config.ts';
+import {
+  CommercePortalAuthConfigLive,
+  optionalCommercePortalAuthConfig,
+  portalAuthRealmConfigured,
+} from './portal-auth/provider/config.ts';
 import { commercePortalAuthRealmUnavailableLive } from './portal-auth/realm-unavailable.ts';
 import type { CommercePortalAuthHandlerServices } from './portal-auth/realm-unavailable.ts';
 import { CommercePortalAuthEmailDeliveryLive } from './portal-auth/provider/recovery/email-delivery.ts';
@@ -33,6 +42,25 @@ import { portalAuthMfaApiLive } from './portal-auth/provider/mfa/http.ts';
 import { CommercePortalAuthMfaProviderLive } from './portal-auth/provider/mfa/better-auth-provider.ts';
 import { CommercePortalAuthMfaServiceLive } from './portal-auth/provider/mfa/service.ts';
 import { CommercePortalAuthMfaStepUpCodeVerifierLive } from './portal-auth/provider/mfa/step-up-verifier.ts';
+import { portalAuthEnrollmentApiLive } from './portal-auth/enrollment/http.ts';
+import {
+  CommercePortalAuthAccountCreationGatewayLive,
+  CommercePortalAuthAccountCreationProviderLive,
+  CommercePortalAuthAccountCreationServiceLive,
+} from './portal-auth/provider/account-create.ts';
+import { CommerceEnrollmentProofServiceLive } from '../src/enrollment/attempts/enrollment-proof-service.ts';
+import {
+  CommerceEnrollmentCommitResolutionServiceLive,
+  commerceEnrollmentCommitResolutionUnavailableLive,
+} from '../src/enrollment/commit-resolution/commit-resolution-service.ts';
+import { CommercePortalAuthenticationNamespaceRegistryLive } from './portal-auth/authentication-namespace-registry.ts';
+import { CommerceCoreIdentityClientLive } from './portal-auth/provider/core-identity-client.ts';
+import {
+  CommerceCoreIdentityClientConfigLive,
+  coreIdentityTransportConfigured,
+  optionalCommerceCoreIdentityClientConfig,
+} from './portal-auth/provider/core-identity-client-config.ts';
+import { CommercePortalAuthRecoveryReconciliationServiceLive } from './portal-auth/provider/recovery/reconciliation.ts';
 import { portalAuthRecoveryApiLive } from './portal-auth/provider/recovery/http.ts';
 import {
   CommercePortalAuthRecoveryProviderLive,
@@ -213,6 +241,7 @@ const commercePortalAuthProviderRealmLive = commercePortalAuthProviderLive.pipe(
   Layer.provideMerge(commercePortalAuthEmailTransportLive),
 );
 const commercePortalAuthRealmPortsLive = Layer.mergeAll(
+  CommercePortalAuthAuditLive,
   CommercePortalAuthServiceLive,
   CommercePortalAuthSessionProviderLive,
   CommercePortalAuthSessionStoreLive,
@@ -222,25 +251,67 @@ const commercePortalAuthRealmPortsLive = Layer.mergeAll(
   CommercePortalAuthMfaStepUpCodeVerifierLive,
   CommercePortalAuthRecoveryProviderLive,
   CommercePortalAuthRecoveryRateLimitLive,
+  // The recovery service reads this authority, so it is published one tier beneath it, beside the
+  // owner store it is built from rather than alongside its own consumer.
+  CommercePortalAuthRecoveryReconciliationServiceLive,
   CommercePortalAuthStepUpHttpProviderUnavailableLive,
 ).pipe(Layer.provideMerge(commercePortalAuthProviderRealmLive));
 const commercePortalAuthLifecycleLive = CommercePortalAuthSessionLifecycleLive.pipe(
   Layer.provideMerge(commercePortalAuthRealmPortsLive),
 );
-/**
- * The installed realm, with the two operator configurations it is built from left as visible
- * requirements: the Better Auth realm values and the transactional email transport credentials. A
- * host that opted in supplies both; the fail-closed realm in `portal-auth/realm-unavailable.ts` is
- * what a host that opted out gets instead.
- */
-export const commercePortalAuthRealmLive = Layer.mergeAll(
+const commercePortalAuthRealmServicesLive = Layer.mergeAll(
   CommercePortalAuthMfaServiceLive,
   CommercePortalAuthRecoveryServiceLive,
   CommercePortalAuthStepUpLive,
 ).pipe(Layer.provideMerge(commercePortalAuthLifecycleLive));
 
-const portalAuthConfiguredRuntimeLive = commercePortalAuthRealmLive.pipe(
-  Layer.provideMerge(Layer.mergeAll(CommercePortalAuthConfigLive, ResendEmailDeliveryConfigLive)),
+const actionAuthorizationPreflightDatabaseWithCoreLive = ActionAuthorizationPreflightDatabaseLive.pipe(
+  Layer.provideMerge(CorePersistenceLive),
+);
+/**
+ * The vertical's own governed transaction seam. The Enrollment Attempt journal is Commerce business
+ * state, never provider state, so it is never opened on the portal-auth provider pool.
+ */
+const commerceEnrollmentOwnerTransactionRunnerProductionLive = CommerceEnrollmentOwnerTransactionRunnerLive.pipe(
+  Layer.provide(actionAuthorizationPreflightDatabaseWithCoreLive),
+);
+const commercePortalAuthAccountLookupRealmLive = CommercePortalAuthAccountLookupLive.pipe(
+  Layer.provide(CommercePortalAuthDatabaseLive),
+);
+/**
+ * The private provider account-creation capability the enrollment start route dispatches through.
+ * It is a two-party operation and both parties are separate visible requirements here: the owner
+ * half is the Attempt-scoped enrollment proof, which authorizes the exact `provider.account.create`
+ * invocation the Attempt already claimed, and the provider half is the realm's own Better Auth
+ * instance and account directory. A composition that installs one without the other cannot build.
+ */
+const commercePortalAuthAccountCreationLive = CommercePortalAuthAccountCreationServiceLive.pipe(
+  Layer.provide(
+    Layer.mergeAll(
+      CommercePortalAuthAccountCreationGatewayLive.pipe(
+        Layer.provide(
+          Layer.mergeAll(CommercePortalAuthAccountCreationProviderLive, commercePortalAuthAccountLookupRealmLive),
+        ),
+      ),
+      CommerceEnrollmentProofServiceLive.pipe(
+        Layer.provide(commerceEnrollmentOwnerTransactionRunnerProductionLive),
+        Layer.provide(DatabaseConfigLive),
+      ),
+    ),
+  ),
+);
+
+/**
+ * The installed realm, with the two operator configurations it is built from left as visible
+ * requirements: the Better Auth realm values and the transactional email transport credentials. A
+ * host that opted in supplies both; the fail-closed realm in `portal-auth/realm-unavailable.ts` is
+ * what a host that opted out gets instead.
+ *
+ * Account creation is composed on top of the session-facing services rather than merged beside
+ * them because it is built from the very Better Auth instance those services publish.
+ */
+export const commercePortalAuthRealmLive = commercePortalAuthAccountCreationLive.pipe(
+  Layer.provideMerge(commercePortalAuthRealmServicesLive),
 );
 
 const commerceCustomerContextReadinessLayer = HttpApiBuilder.group(
@@ -279,24 +350,6 @@ const readShellOrigin = () => {
   }
 };
 
-/**
- * The Commerce portal realm is opt-in. A deployment that supplied no `COMMERCE_PORTAL_AUTH_*`
- * value — the Node and workerd artifact proofs among them — gets the fail-closed realm instead of
- * the provider graph, so readiness and every business route still serve while the four portal
- * groups answer the owner's retryable 503. A deployment that opted in gets the real layers and any
- * error in them stays an error: opting in means configuring the realm completely.
- */
-const selectPortalAuthRuntimeLive = (
-  configured: boolean,
-): Layer.Layer<CommercePortalAuthHandlerServices, Layer.Error<typeof portalAuthConfiguredRuntimeLive>> =>
-  configured ? portalAuthConfiguredRuntimeLive : commercePortalAuthRealmUnavailableLive([readShellOrigin()]);
-
-const deploymentPortalAuthRuntimeLive = Layer.unwrap(
-  optionalCommercePortalAuthConfig.pipe(
-    Effect.map((configuration) => selectPortalAuthRuntimeLive(Option.isSome(configuration))),
-  ),
-);
-
 const runtimeObservabilityLive = Layer.mergeAll(
   Logger.layer([Logger.defaultLogger, Logger.tracerLogger]),
   Layer.succeed(Tracer.Tracer, Tracer.make({ span: (options) => new Tracer.NativeSpan(options) })),
@@ -331,12 +384,9 @@ const readRuntimeCoreLive = ReadRuntimeLive.pipe(
     Layer.mergeAll(CorePersistenceLive, ContextAccessLive, moduleEntrypointGatewayLive, operationalScopeResolverLive),
   ),
 );
-const actionAuthorizationPreflightDatabaseWithCoreLive = ActionAuthorizationPreflightDatabaseLive.pipe(
-  Layer.provideMerge(CorePersistenceLive),
-);
 
 /** Each Action owns its prepared evidence and runtime factory; persistence stays deployment-scoped. */
-export const commerceEnrollmentActionRuntimeLive: Layer.Layer<
+const commerceEnrollmentActionRuntimeLive: Layer.Layer<
   ActionRuntime,
   never,
   | ActionRuntime
@@ -403,13 +453,106 @@ const commerceEnrollmentOwnerTransitionPreparationUnavailableLive = Layer.succee
   CommerceEnrollmentOwnerTransitionPreparation,
   { prepare: () => Effect.succeed({ outcome: 'unavailable' as const }) },
 );
-const enrollmentAwareActionRuntimeLive = commerceEnrollmentActionRuntimeLive.pipe(
+/** The realm a host that opted in gets, with both operator configurations supplied. */
+const portalAuthConfiguredRuntimeLive = commercePortalAuthRealmLive.pipe(
+  Layer.provideMerge(Layer.mergeAll(CommercePortalAuthConfigLive, ResendEmailDeliveryConfigLive)),
+);
+
+/**
+ * The Commerce portal realm is opt-in. A deployment that supplied no `COMMERCE_PORTAL_AUTH_*`
+ * value — the Node and workerd artifact proofs among them — gets the fail-closed realm instead of
+ * the provider graph, so readiness and every business route still serve while the five portal
+ * groups answer the owner's retryable 503. A deployment that opted in gets the real layers and any
+ * error in them stays an error: opting in means configuring the realm completely.
+ */
+const selectPortalAuthRuntimeLive = (
+  configured: boolean,
+): Layer.Layer<CommercePortalAuthHandlerServices, Layer.Error<typeof portalAuthConfiguredRuntimeLive>> =>
+  configured ? portalAuthConfiguredRuntimeLive : commercePortalAuthRealmUnavailableLive([readShellOrigin()]);
+
+const deploymentPortalAuthRuntimeLive = Layer.unwrap(
+  optionalCommercePortalAuthConfig.pipe(
+    Effect.map((configuration) => selectPortalAuthRuntimeLive(Option.isSome(configuration))),
+  ),
+);
+/**
+ * The Core identity transport and the configuration it is built from, published together: the
+ * enrollment subject resolver reads the configuration to derive its own per-Attempt correlation,
+ * and the client is the only thing that may present the service credential.
+ */
+const commerceCoreIdentityRealmLive = CommerceCoreIdentityClientLive.pipe(
+  Layer.provideMerge(CommerceCoreIdentityClientConfigLive),
+);
+const commerceEnrollmentPreparationSubjectRealmLive = CommerceEnrollmentPreparationSubjectResolverLive.pipe(
+  Layer.provide(Layer.mergeAll(commerceEnrollmentOwnerTransactionRunnerProductionLive, commerceCoreIdentityRealmLive)),
+);
+const commerceEnrollmentOwnerTransitionPreparationRealmLive = commerceEnrollmentOwnerTransitionPreparationLive.pipe(
   Layer.provide(
     Layer.mergeAll(
-      actionRuntimeCoreLive,
-      actionRuntimeServicesLive,
-      commerceEnrollmentOwnerTransitionPreparationUnavailableLive,
+      commerceEnrollmentOwnerTransactionRunnerProductionLive,
+      commercePortalAuthAccountLookupRealmLive.pipe(Layer.provide(CommercePortalAuthConfigLive)),
+      commerceEnrollmentPreparationSubjectRealmLive,
     ),
+  ),
+);
+/**
+ * The enrollment owner authority needs both halves of the realm: the portal provider that owns the
+ * account-creation transition, and the Core identity transport that establishes the Principal Auth
+ * Binding every later Retail transition is bound to. A deployment missing either one keeps the
+ * fail-closed leaf, so no governed Action can proceed on a claimed owner payload without owner
+ * evidence — and a Retail transition can never be vouched for against a Principal this deployment
+ * has no way to establish.
+ */
+const selectEnrollmentOwnerPreparationLive = (
+  configured: boolean,
+): Layer.Layer<
+  CommerceEnrollmentOwnerTransitionPreparation,
+  Layer.Error<typeof commerceEnrollmentOwnerTransitionPreparationRealmLive>,
+  Layer.Services<typeof commerceEnrollmentOwnerTransitionPreparationRealmLive>
+> =>
+  configured
+    ? commerceEnrollmentOwnerTransitionPreparationRealmLive
+    : commerceEnrollmentOwnerTransitionPreparationUnavailableLive;
+const deploymentEnrollmentOwnerPreparationLive = Layer.unwrap(
+  Effect.all(
+    {
+      // Two independent deployment configuration reads; neither reaches a shared resource.
+      coreIdentity: coreIdentityTransportConfigured,
+      realm: portalAuthRealmConfigured,
+    },
+    { concurrency: 2 },
+  ).pipe(Effect.map(({ coreIdentity, realm }) => selectEnrollmentOwnerPreparationLive(realm && coreIdentity))),
+);
+/**
+ * Convergence for an uncertain Commerce enrollment write is an exact read of the original
+ * invocation: the Action runtime answers whether it committed, and the Core identity transport
+ * answers whether the retained Principal Auth Binding for that subject is the one this invocation
+ * produced. The transport is optional in exactly the way the portal realm is — a deployment that
+ * named neither `COMMERCE_CORE_IDENTITY_*` value never opted in and keeps the retryable refusal,
+ * and one that named only a part of it is a misconfiguration that must not take the Action runtime
+ * down, so it is read here the same way the realm is.
+ */
+const commerceEnrollmentCommitResolutionRealmLive = CommerceEnrollmentCommitResolutionServiceLive.pipe(
+  Layer.provide(commerceCoreIdentityRealmLive),
+);
+const deploymentEnrollmentCommitResolutionLive = Layer.unwrap(
+  optionalCommerceCoreIdentityClientConfig.pipe(
+    Effect.map((configuration) =>
+      Option.isSome(configuration)
+        ? commerceEnrollmentCommitResolutionRealmLive
+        : commerceEnrollmentCommitResolutionUnavailableLive,
+    ),
+    Effect.catchTag('CommerceCoreIdentityClientConfigError', (failure) =>
+      Effect.annotateLogs(
+        Effect.logWarning('Commerce Core identity transport is unreadable; enrollment convergence fails closed'),
+        { reason: failure.reason },
+      ).pipe(Effect.as(commerceEnrollmentCommitResolutionUnavailableLive)),
+    ),
+  ),
+);
+const enrollmentAwareActionRuntimeLive = commerceEnrollmentActionRuntimeLive.pipe(
+  Layer.provide(
+    Layer.mergeAll(actionRuntimeCoreLive, actionRuntimeServicesLive, deploymentEnrollmentOwnerPreparationLive),
   ),
 );
 /** Deployment composition seam. External owner ports remain visible requirements here. */
@@ -449,6 +592,13 @@ type CommerceCustomerContextApiRuntimeArguments = readonly [
     CommercePortalAuthHandlerServices,
     Layer.Error<typeof deploymentPortalAuthRuntimeLive>
   >,
+  /**
+   * The verification material the audience-bound gateway principal verifier reads. It is the
+   * deployment's own configuration rather than an ambient environment read, so a caller that
+   * assembles this runtime supplies the issuer and keys the Bearer assertions it will accept are
+   * verified against. An empty layer leaves the process configuration in place.
+   */
+  gatewayPrincipalVerification: Layer.Layer<never>,
 ];
 
 export type CommerceCustomerContextApiRuntime = EffectBffDefinition<typeof commerceCustomerContextApi> &
@@ -457,7 +607,13 @@ export type CommerceCustomerContextApiRuntime = EffectBffDefinition<typeof comme
 export const makeCommerceCustomerContextApiRuntime = (
   ...args: CommerceCustomerContextApiRuntimeArguments
 ): CommerceCustomerContextApiRuntime => {
-  const [governedReadRuntimeLive, governedActionRuntimeLive, gatewayAssertionRedemption, portalAuthRuntimeLive] = args;
+  const [
+    governedReadRuntimeLive,
+    governedActionRuntimeLive,
+    gatewayAssertionRedemption,
+    portalAuthRuntimeLive,
+    gatewayVerification,
+  ] = args;
   const actionPrincipalVerifierLive = GovernedActionPrincipalVerifierLive.pipe(
     Layer.provide(governedActionRuntimeLive),
   );
@@ -467,6 +623,25 @@ export const makeCommerceCustomerContextApiRuntime = (
     portalAuthMfaApiLive.pipe(GovernedReadLayer.provide(portalAuthRuntimeLive)),
     portalAuthRecoveryApiLive.pipe(GovernedReadLayer.provide(portalAuthRuntimeLive)),
     portalAuthStepUpApiLive.pipe(GovernedReadLayer.provide(portalAuthRuntimeLive)),
+    /**
+     * Enrollment is the one portal group that is also a governed Action caller: it reads the realm
+     * (trusted origins, the budget and the provider account-creation capability) and runs the
+     * `start-portal-enrollment` and `claim-portal-enrollment-transition` Actions through the same
+     * enrollment-aware Action runtime every other governed route uses. A deployment without the
+     * realm gets the fail-closed realm here exactly as the other four groups do.
+     */
+    portalAuthEnrollmentApiLive.pipe(
+      GovernedReadLayer.provide(portalAuthRuntimeLive),
+      // The enrollment convergence capability is installed beside the Action runtime it reads: an
+      // uncertain enrollment write is converged from the original invocation, never re-dispatched.
+      GovernedReadLayer.provide(
+        deploymentEnrollmentCommitResolutionLive.pipe(GovernedReadLayer.provide(governedActionRuntimeLive)),
+      ),
+      GovernedReadLayer.provide(governedActionRuntimeLive),
+      GovernedReadLayer.provide(
+        commerceEnrollmentOwnerTransactionRunnerProductionLive.pipe(GovernedReadLayer.provide(DatabaseConfigLive)),
+      ),
+    ),
     // <generated-governed-http-handler-layers>
     addSavedAddressActionApiLive.pipe(GovernedReadLayer.provide(governedActionRuntimeLive)),
     archiveCustomerGroupActionApiLive.pipe(GovernedReadLayer.provide(governedActionRuntimeLive)),
@@ -565,7 +740,24 @@ export const makeCommerceCustomerContextApiRuntime = (
     updateCustomerGroupActionApiLive.pipe(GovernedReadLayer.provide(governedActionRuntimeLive)),
     updateSavedAddressActionApiLive.pipe(GovernedReadLayer.provide(governedActionRuntimeLive)),
     // </generated-governed-http-handler-layers>
-  ).pipe(Layer.provide(Layer.mergeAll(actionPrincipalVerifierLive, gatewayAssertionRedemption)));
+  ).pipe(
+    // Core revalidates a presented session binding's authentication namespace before any
+    // authorization runs and answers `operation_context_unavailable` when no registry is reachable,
+    // so every namespace-carrying gateway assertion this vertical is handed needs the registration
+    // here. A deployment that supplies its own registry alongside the redemption store overrides
+    // this one, which is why the owned registration is merged first.
+    // The gateway verification material is a configuration reference rather than a service, so it
+    // is supplied as part of the context the handler tree is built in: the audience-bound verifier
+    // and the admission path both read it there rather than from the process environment.
+    Layer.provide(
+      Layer.mergeAll(
+        CommercePortalAuthenticationNamespaceRegistryLive,
+        actionPrincipalVerifierLive,
+        gatewayAssertionRedemption,
+        gatewayVerification,
+      ),
+    ),
+  );
   const resolvedApiHandlersLive = apiHandlersLive.pipe(Layer.provide(runtimeObservabilityLive), Layer.orDie);
   const transportLive = HttpRouter.cors({
     allowedHeaders: [...commerceCustomerContextCorsAllowedHeaders],
@@ -586,6 +778,7 @@ const apiRuntime = makeCommerceCustomerContextApiRuntime(
   productionActionRuntimeLive,
   GovernedGatewayAssertionRedemptionLive,
   deploymentPortalAuthRuntimeLive,
+  Layer.empty,
 );
 
 export default apiRuntime;

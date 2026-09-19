@@ -1,12 +1,14 @@
 import { isAPIError } from 'better-auth/api';
 import type { Auth } from 'better-auth';
-import { Context, Duration, Effect, Option, Redacted, Schema } from 'effect';
+import { Context, Duration, Effect, Layer, Option, Redacted, Schema } from 'effect';
 
 import {
   COMMERCE_AUTHENTICATION_NAMESPACE_ID,
   ExternalUserSubjectSchema,
 } from '../../../shared/portal-auth-contracts.ts';
+import { withCause } from '../problems-support.ts';
 import { CommerceEnrollmentProofService } from '../enrollment-proof-port.ts';
+import { CommercePortalAuthInstance } from './auth.ts';
 import { COMMERCE_PORTAL_AUTH_POLICY } from './config.ts';
 import type { CommercePortalAuthAccountCreationGateway } from './account-creation-gateway-service.ts';
 import { CommercePortalAuthAccountCreationInvalidRequest } from './account-creation-invalid-request.ts';
@@ -87,9 +89,6 @@ const CommercePortalAuthAccountCreationProviderFailureValue = Schema.TaggedError
 type CommercePortalAuthAccountCreationProviderFailure = InstanceType<
   typeof CommercePortalAuthAccountCreationProviderFailureValue
 >;
-
-const withCause = <ErrorType extends object>(error: ErrorType, cause: unknown): ErrorType =>
-  Object.defineProperty(error, 'cause', { configurable: true, value: cause });
 
 /**
  * Reads the stable request-side provider code from a Better Auth API error. Anything else — a
@@ -264,7 +263,7 @@ export const makeCommercePortalAuthAccountCreationGateway = Effect.fn('CommerceP
         ),
       );
       const { providerSubjectId } = providerSubject;
-      const persisted = yield* accountLookup.existsByProviderSubjectAndEmail({
+      const persisted = yield* accountLookup.existsByProviderSubject({
         email: input.email,
         providerSubjectId,
       });
@@ -293,6 +292,11 @@ export type CommercePortalAuthAccountCreationFailure =
   | CommercePortalAuthAccountCreationRejected
   | CommercePortalAuthAccountCreationUnavailable;
 
+/**
+ * The private provider account-creation capability the enrollment start route dispatches through.
+ * A deployment that installed no realm names the same capability through the fail-closed leaf in
+ * `../realm-unavailable.ts`, which supplies its own refusing implementation for this tag.
+ */
 export class CommercePortalAuthAccountCreationService extends Context.Service<
   CommercePortalAuthAccountCreationService,
   {
@@ -360,4 +364,60 @@ export const makeCommercePortalAuthAccountCreationService = Effect.fn('CommerceP
     });
     return { createAccount };
   },
+);
+
+/**
+ * Better Auth's Promise API is kept behind this narrow provider-owned Effect bridge. The throwable
+ * is classified once here, at its source, so the request-side code of a Better Auth `APIError`
+ * survives the crossing while the raw throwable stays on the non-schema `cause` property; anything
+ * that is not a provider API error is already marked unavailable and can never become a rejection.
+ */
+const signUpEmailForRealm =
+  (
+    auth: Pick<Auth, 'api'>,
+  ): ((
+    input: Parameters<Auth['api']['signUpEmail']>[0],
+  ) => Effect.Effect<
+    Option.Option<CommercePortalAuthAccountCreateResponse>,
+    CommercePortalAuthAccountCreationProviderFailure
+  >) =>
+  (input) =>
+    Effect.tryPromise({
+      catch: providerCallFailure,
+      try: auth.api.signUpEmail.bind(auth.api, input),
+    }).pipe(
+      Effect.timeoutOrElse({
+        duration: Duration.millis(COMMERCE_PORTAL_AUTH_POLICY.accountCreation.providerCallTimeoutMilliseconds),
+        orElse: () => Effect.fail(providerCallFailure({ reason: 'PROVIDER_TIMEOUT' })),
+      }),
+      Effect.map(Option.fromNullishOr),
+    );
+
+const makeCommercePortalAuthAccountCreationProvider = (
+  auth: Pick<Auth, 'api'>,
+): CommercePortalAuthAccountCreationProvider => ({ api: { signUpEmail: signUpEmailForRealm(auth) } });
+
+/** The constructed realm stays a visible requirement; the composition root supplies it once. */
+export const CommercePortalAuthAccountCreationProviderLive = Layer.effect(
+  CommercePortalAuthAccountCreationProviderService,
+  Effect.gen(function* makeCommercePortalAuthAccountCreationProviderLive() {
+    const auth = yield* CommercePortalAuthInstance;
+    return makeCommercePortalAuthAccountCreationProvider(auth);
+  }),
+);
+
+/** The provider-local duplicate guard reads the realm's own account directory, never Core. */
+export const CommercePortalAuthAccountCreationGatewayLive = Layer.effect(
+  CommercePortalAuthAccountCreationGatewayService,
+  makeCommercePortalAuthAccountCreationGateway(),
+);
+
+/**
+ * The private two-party capability. Its owner half — the Attempt-scoped enrollment proof — and its
+ * provider half stay separate visible requirements, so a composition that installs one without the
+ * other cannot be built at all.
+ */
+export const CommercePortalAuthAccountCreationServiceLive = Layer.effect(
+  CommercePortalAuthAccountCreationService,
+  makeCommercePortalAuthAccountCreationService(),
 );

@@ -1,9 +1,17 @@
-import { DateTime, Effect, Layer, Match, Option, Schema } from 'effect';
+import { DateTime, Effect, Match, Option, Schema } from 'effect';
 
 import {
   COMMERCE_AUTHENTICATION_NAMESPACE_ID,
   ExternalUserSubjectSchema,
 } from '../../../shared/portal-auth-contracts.ts';
+import { withCause } from '../problems-support.ts';
+import { commercePortalAuthSessionOutcomeClass } from '../../../src/portal-auth/audit/audit-mapping.ts';
+import { auditedLayer, commercePortalAuthAuditEmitter } from '../../../src/portal-auth/audit/audit.ts';
+import type { CommercePortalAuthAuditRecorder } from '../../../src/portal-auth/audit/audit.ts';
+import type {
+  CommercePortalAuthAuditEvent,
+  CommercePortalAuthAuditEventType,
+} from '../../../src/portal-auth/audit/audit-contracts.ts';
 import { COMMERCE_PORTAL_AUTH_POLICY } from '../provider/config.ts';
 import { encodeCommerceSessionReference, parseCommerceSessionReference } from '../provider/session-reference.ts';
 import type { CommercePortalAuthSessionReferenceError } from '../provider/session-reference.ts';
@@ -73,9 +81,7 @@ export interface CommercePortalAuthSessionClock {
 
 const systemClock: CommercePortalAuthSessionClock = Object.freeze({ now: () => DateTime.toDate(DateTime.nowUnsafe()) });
 const SESSION_RECONCILE_OPERATION = 'session-reconcile';
-
-const withCause = <TError extends object>(error: TError, cause: unknown): TError =>
-  Object.defineProperty(error, 'cause', { configurable: true, value: cause });
+const SESSION_REFRESHED_EVENT_TYPE: CommercePortalAuthAuditEventType = 'commerce.portal-auth.session-refreshed.v1';
 
 const invalidRequest = (cause?: unknown): CommercePortalAuthSessionInvalidRequest =>
   cause === undefined
@@ -185,7 +191,13 @@ const makeSnapshot = Effect.fn('CommercePortalAuthSessionLifecycle.makeSnapshot'
     );
     const sessionRef = yield* encodeCommerceSessionReference(record.id);
     const snapshot: CommercePortalAuthSessionSnapshot = {
-      authenticatedAt: record.createdAt,
+      /**
+       * The persisted fresh-authentication stamp, or `createdAt` for a row that has never been
+       * re-authenticated — for such a row the two are the same instant. Reading `createdAt` alone
+       * would be wrong after an identifier rotation, which preserves it on purpose so the absolute
+       * session lifetime survives: a completed step-up would then never look recent.
+       */
+      authenticatedAt: record.authenticatedAt ?? record.createdAt,
       authenticationNamespaceId: COMMERCE_AUTHENTICATION_NAMESPACE_ID,
       createdAt: record.createdAt,
       expiresAt: record.expiresAt,
@@ -214,10 +226,12 @@ export const makeCommercePortalAuthSessionLifecycle = (
   ...dependencies: readonly [
     store: CommercePortalAuthSessionStore,
     provider: CommercePortalAuthSessionProvider,
+    audit: CommercePortalAuthAuditRecorder,
     clock?: CommercePortalAuthSessionClock,
   ]
 ): CommercePortalAuthSessionLifecycleService => {
-  const [store, provider, clock = systemClock] = dependencies;
+  const [store, provider, audit, clock = systemClock] = dependencies;
+  const emitAudit = commercePortalAuthAuditEmitter(audit);
   const admitProviderSession = Effect.fn('CommercePortalAuthSessionLifecycle.admitProviderSession')(
     function* admitProviderSession(
       token: string,
@@ -322,8 +336,17 @@ export const makeCommercePortalAuthSessionLifecycle = (
     };
   });
 
-  const revoke = Effect.fn('CommercePortalAuthSessionLifecycle.revoke')(function* revoke(
+  /**
+   * One revocation, one row. The row is written inside the store's own revoke transaction, so a
+   * refused audit insert rolls the deletion back and this call fails instead of leaving a session
+   * revoked with no evidence. The two branches that change nothing — a session owned by another
+   * subject, and a session that was already gone — are decisions rather than state changes, so
+   * their identical row is recorded through the lenient recorder.
+   */
+  const revokeSession = Effect.fn('CommercePortalAuthSessionLifecycle.revokeSession')(function* revokeSession(
     input: Schema.Codec.Encoded<typeof CommercePortalAuthSessionReferenceInputSchema>,
+    eventType: CommercePortalAuthAuditEventType,
+    operation: string,
   ): Effect.fn.Return<
     Extract<CommercePortalAuthSessionOutcome, { readonly outcome: 'SESSION_REVOKED' }>,
     CommercePortalAuthSessionFailure
@@ -332,16 +355,38 @@ export const makeCommercePortalAuthSessionLifecycle = (
       Effect.mapError((cause) => invalidRequest(cause)),
     );
     const sessionId = yield* parseSessionId(request);
+    const auditEvent: CommercePortalAuthAuditEvent = {
+      eventType,
+      occurredAt: clock.now(),
+      operation,
+      outcome: 'success',
+      providerSubjectId: request.expectedProviderSubjectId,
+      sessionRef: request.sessionRef,
+    };
     const recordOption = yield* store.findById(sessionId);
     if (Option.isSome(recordOption) && !expectedSubjectMatches(recordOption.value, request.expectedProviderSubjectId)) {
+      yield* emitAudit(auditEvent);
       return { existed: false, outcome: 'SESSION_REVOKED', sessionRef: request.sessionRef };
     }
-    const revokeInput =
+    const existed = yield* store.revokeWithAudit(
       request.expectedProviderSubjectId === undefined
-        ? { sessionId }
-        : { providerSubjectId: request.expectedProviderSubjectId, sessionId };
-    const existed = yield* store.revoke(revokeInput);
+        ? { audit: auditEvent, sessionId }
+        : { audit: auditEvent, providerSubjectId: request.expectedProviderSubjectId, sessionId },
+    );
+    if (!existed) {
+      yield* emitAudit(auditEvent);
+    }
     return { existed, outcome: 'SESSION_REVOKED', sessionRef: request.sessionRef };
+  });
+
+  /** Owner-initiated revocation. Sign-out is the customer's own act and is audited separately. */
+  const revoke = Effect.fn('CommercePortalAuthSessionLifecycle.revoke')(function* revoke(
+    input: Schema.Codec.Encoded<typeof CommercePortalAuthSessionReferenceInputSchema>,
+  ): Effect.fn.Return<
+    Extract<CommercePortalAuthSessionOutcome, { readonly outcome: 'SESSION_REVOKED' }>,
+    CommercePortalAuthSessionFailure
+  > {
+    return yield* revokeSession(input, 'commerce.portal-auth.session-revoked.v1', 'revoke');
   });
 
   const signOut = Effect.fn('CommercePortalAuthSessionLifecycle.signOut')(function* signOut(
@@ -350,38 +395,65 @@ export const makeCommercePortalAuthSessionLifecycle = (
     Extract<CommercePortalAuthSessionOutcome, { readonly outcome: 'SESSION_REVOKED' }>,
     CommercePortalAuthSessionFailure
   > {
-    return yield* revoke(input);
+    return yield* revokeSession(input, 'commerce.portal-auth.session-signed-out.v1', 'sign-out');
   });
 
-  const refresh = Effect.fn('CommercePortalAuthSessionLifecycle.refresh')(function* refresh(
+  /**
+   * `audited` is true only when the renewal committed its own row inside the store transaction.
+   * Every other answer here is a decision that changed nothing, and `refresh` records those through
+   * the lenient recorder — so a refresh leaves exactly one row either way.
+   */
+  interface RefreshExecution {
+    readonly audited: boolean;
+    readonly outcome: CommercePortalAuthSessionOutcome;
+  }
+
+  const refreshSession = Effect.fn('CommercePortalAuthSessionLifecycle.refreshSession')(function* refreshSession(
     input: Schema.Codec.Encoded<typeof CommercePortalAuthSessionReferenceInputSchema>,
-  ): Effect.fn.Return<CommercePortalAuthSessionOutcome, CommercePortalAuthSessionFailure> {
+  ): Effect.fn.Return<RefreshExecution, CommercePortalAuthSessionFailure> {
     const request = yield* Schema.decodeEffect(CommercePortalAuthSessionReferenceInputSchema)(input).pipe(
       Effect.mapError((cause) => invalidRequest(cause)),
     );
     const sessionId = yield* parseSessionId(request);
     const recordOption = yield* store.findById(sessionId);
     if (Option.isNone(recordOption)) {
-      return { existed: false, outcome: 'SESSION_REVOKED', sessionRef: request.sessionRef };
+      return {
+        audited: false,
+        outcome: { existed: false, outcome: 'SESSION_REVOKED', sessionRef: request.sessionRef },
+      };
     }
     const record = recordOption.value;
     if (!expectedSubjectMatches(record, request.expectedProviderSubjectId)) {
-      return { existed: false, outcome: 'SESSION_REVOKED', sessionRef: request.sessionRef };
+      return {
+        audited: false,
+        outcome: { existed: false, outcome: 'SESSION_REVOKED', sessionRef: request.sessionRef },
+      };
     }
     const now = clock.now();
     const nowMillis = epochMillis(now);
     if (activeBan(record, nowMillis)) {
-      return { outcome: 'ACCOUNT_DISABLED', providerSubjectId: record.providerSubjectId };
+      return { audited: false, outcome: { outcome: 'ACCOUNT_DISABLED', providerSubjectId: record.providerSubjectId } };
     }
     if (!isLive(record, nowMillis)) {
       return {
-        expiredAt: record.expiresAt,
-        outcome: 'SESSION_EXPIRED',
-        sessionRef: request.sessionRef,
+        audited: false,
+        outcome: {
+          expiredAt: record.expiresAt,
+          outcome: 'SESSION_EXPIRED',
+          sessionRef: request.sessionRef,
+        },
       };
     }
 
-    const touched = yield* store.touch({
+    const touched = yield* store.touchWithAudit({
+      audit: {
+        eventType: SESSION_REFRESHED_EVENT_TYPE,
+        occurredAt: now,
+        operation: 'refresh',
+        outcome: 'success',
+        providerSubjectId: record.providerSubjectId,
+        sessionRef: request.sessionRef,
+      },
       expectedUpdatedAt: record.updatedAt,
       expiresAt: safeExpiry(record, now),
       now,
@@ -389,9 +461,12 @@ export const makeCommercePortalAuthSessionLifecycle = (
     });
     if (Option.isSome(touched)) {
       return {
-        identifierRotated: false,
-        outcome: 'SESSION_REFRESHED',
-        session: yield* makeSnapshot(touched.value),
+        audited: true,
+        outcome: {
+          identifierRotated: false,
+          outcome: 'SESSION_REFRESHED',
+          session: yield* makeSnapshot(touched.value),
+        },
       };
     }
 
@@ -399,32 +474,82 @@ export const makeCommercePortalAuthSessionLifecycle = (
     // a missing/denied row is a revoke/disable/expiry result. There is no blind update retry.
     const latestOption = yield* store.findById(sessionId);
     if (Option.isNone(latestOption)) {
-      return { existed: false, outcome: 'SESSION_REVOKED', sessionRef: request.sessionRef };
+      return {
+        audited: false,
+        outcome: { existed: false, outcome: 'SESSION_REVOKED', sessionRef: request.sessionRef },
+      };
     }
     const latest = latestOption.value;
     if (!expectedSubjectMatches(latest, request.expectedProviderSubjectId)) {
-      return { existed: false, outcome: 'SESSION_REVOKED', sessionRef: request.sessionRef };
+      return {
+        audited: false,
+        outcome: { existed: false, outcome: 'SESSION_REVOKED', sessionRef: request.sessionRef },
+      };
     }
     if (activeBan(latest, nowMillis)) {
-      return { outcome: 'ACCOUNT_DISABLED', providerSubjectId: latest.providerSubjectId };
+      return { audited: false, outcome: { outcome: 'ACCOUNT_DISABLED', providerSubjectId: latest.providerSubjectId } };
     }
     if (!isLive(latest, nowMillis)) {
-      return { expiredAt: latest.expiresAt, outcome: 'SESSION_EXPIRED', sessionRef: request.sessionRef };
+      return {
+        audited: false,
+        outcome: { expiredAt: latest.expiresAt, outcome: 'SESSION_EXPIRED', sessionRef: request.sessionRef },
+      };
     }
+    // A concurrent refresh already renewed this row and committed its own evidence; this answer
+    // observes that result rather than producing it, so it is recorded as a decision.
     return {
-      identifierRotated: false,
-      outcome: 'SESSION_REFRESHED',
-      session: yield* makeSnapshot(latest),
+      audited: false,
+      outcome: {
+        identifierRotated: false,
+        outcome: 'SESSION_REFRESHED',
+        session: yield* makeSnapshot(latest),
+      },
     };
   });
 
+  /** Every refresh answer is evidence: a renewal, a disabled account, an expiry and a revocation. */
+  const refresh = Effect.fn('CommercePortalAuthSessionLifecycle.refresh')(function* refresh(
+    input: Schema.Codec.Encoded<typeof CommercePortalAuthSessionReferenceInputSchema>,
+  ): Effect.fn.Return<CommercePortalAuthSessionOutcome, CommercePortalAuthSessionFailure> {
+    const result = yield* refreshSession(input);
+    if (!result.audited) {
+      yield* emitAudit({
+        eventType: SESSION_REFRESHED_EVENT_TYPE,
+        occurredAt: clock.now(),
+        operation: 'refresh',
+        outcome: commercePortalAuthSessionOutcomeClass(result.outcome.outcome),
+        providerSubjectId: result.outcome.outcome === 'ACCOUNT_DISABLED' ? result.outcome.providerSubjectId : undefined,
+        sessionRef: input.sessionRef,
+      });
+    }
+    return result.outcome;
+  });
+
+  /**
+   * Account-wide revocation: sign-out everywhere, and the session clear-down a completed password
+   * reset performs. The evidence row commits with the deletions or not at all.
+   */
   const revokeAll = Effect.fn('CommercePortalAuthSessionLifecycle.revokeAll')(function* revokeAll(
     input: Schema.Codec.Encoded<typeof CommercePortalAuthAccountSubjectInputSchema>,
   ): Effect.fn.Return<number, CommercePortalAuthSessionFailure> {
     const request = yield* Schema.decodeEffect(CommercePortalAuthAccountSubjectInputSchema)(input).pipe(
       Effect.mapError((cause) => invalidRequest(cause)),
     );
-    return yield* store.revokeAll(request.providerSubjectId);
+    const auditEvent: CommercePortalAuthAuditEvent = {
+      eventType: 'commerce.portal-auth.session-revoked.v1',
+      occurredAt: clock.now(),
+      operation: 'revoke-all',
+      outcome: 'success',
+      providerSubjectId: request.providerSubjectId,
+    };
+    const revoked = yield* store.revokeAllWithAudit({
+      audit: auditEvent,
+      providerSubjectId: request.providerSubjectId,
+    });
+    if (revoked === 0) {
+      yield* emitAudit(auditEvent);
+    }
+    return revoked;
   });
 
   const disableAccount = Effect.fn('CommercePortalAuthSessionLifecycle.disableAccount')(function* disableAccount(
@@ -436,7 +561,26 @@ export const makeCommercePortalAuthSessionLifecycle = (
     const request = yield* Schema.decodeEffect(CommercePortalAuthAccountSubjectInputSchema)(input).pipe(
       Effect.mapError((cause) => invalidRequest(cause)),
     );
-    const changed = yield* store.disableAccount(request.providerSubjectId);
+    const changed = yield* store.disableAccountWithAudit({
+      audit: {
+        eventType: 'commerce.portal-auth.account-disabled.v1',
+        occurredAt: clock.now(),
+        operation: 'disable-account',
+        outcome: 'account_disabled',
+        providerSubjectId: request.providerSubjectId,
+      },
+      providerSubjectId: request.providerSubjectId,
+    });
+    if (!changed) {
+      // Nothing was disabled, so there is no transaction to join: the refusal is a decision.
+      yield* emitAudit({
+        eventType: 'commerce.portal-auth.account-disabled.v1',
+        occurredAt: clock.now(),
+        operation: 'disable-account',
+        outcome: 'authentication_failed',
+        providerSubjectId: request.providerSubjectId,
+      });
+    }
     return changed
       ? { outcome: 'ACCOUNT_DISABLED', providerSubjectId: request.providerSubjectId }
       : { outcome: 'AUTHENTICATION_FAILED' };
@@ -445,6 +589,12 @@ export const makeCommercePortalAuthSessionLifecycle = (
   interface RotationExecution {
     readonly handoff?: CommercePortalAuthSessionCookieHandoff;
   }
+
+  type MutableRotateInput = {
+    -readonly [Key in keyof Parameters<CommercePortalAuthSessionStore['rotateWithAudit']>[0]]: Parameters<
+      CommercePortalAuthSessionStore['rotateWithAudit']
+    >[0][Key];
+  };
 
   const rotateIdentifierResult = Effect.fn('CommercePortalAuthSessionLifecycle.rotateIdentifierResult')(
     function* rotateIdentifierResult(
@@ -475,16 +625,32 @@ export const makeCommercePortalAuthSessionLifecycle = (
       if (!isLive(record, nowMillis)) {
         return {};
       }
-      const rotateInput =
-        request.expectedProviderSubjectId === undefined
-          ? { expiresAt: safeExpiry(record, now), now, sessionId }
-          : {
-              expectedProviderSubjectId: request.expectedProviderSubjectId,
-              expiresAt: safeExpiry(record, now),
-              now,
-              sessionId,
-            };
-      const replacementOption = yield* store.rotate(rotateInput);
+      const rotateInput: MutableRotateInput = {
+        audit: {
+          eventType: SESSION_REFRESHED_EVENT_TYPE,
+          occurredAt: now,
+          operation: 'rotate-identifier',
+          outcome: 'success',
+          providerSubjectId: record.providerSubjectId,
+          sessionRef: request.sessionRef,
+        },
+        expiresAt: safeExpiry(record, now),
+        now,
+        sessionId,
+      };
+      if (request.expectedProviderSubjectId !== undefined) {
+        rotateInput.expectedProviderSubjectId = request.expectedProviderSubjectId;
+      }
+      /**
+       * A completed step-up is a fresh authentication, and it is the only rotation reason that
+       * is. Stamping the replacement row is what lets the owner's freshness gates see it: the
+       * rotation preserves `createdAt` so the absolute lifetime survives, which by itself would
+       * keep an old session permanently stale no matter how the customer re-proved themselves.
+       */
+      if (request.reason === 'step-up') {
+        rotateInput.authenticatedAt = now;
+      }
+      const replacementOption = yield* store.rotateWithAudit(rotateInput);
       if (Option.isNone(replacementOption)) {
         return yield* new CommercePortalAuthSessionRefreshConflict({
           reason: 'Commerce portal session disappeared during identifier rotation',
@@ -573,11 +739,17 @@ export const makeCommercePortalAuthSessionLifecycle = (
 };
 
 /** The store and provider ports stay visible requirements for the composition root. */
-export const CommercePortalAuthSessionLifecycleLive = Layer.effect(
+export const CommercePortalAuthSessionLifecycleLive = auditedLayer(
   CommercePortalAuthSessionLifecycle,
-  Effect.gen(function* makeLifecycleLive() {
+  Effect.fn('CommercePortalAuthSessionLifecycle.live')(function* makeLifecycleLive(
+    audit: CommercePortalAuthAuditRecorder,
+  ): Effect.fn.Return<
+    CommercePortalAuthSessionLifecycleService,
+    never,
+    CommercePortalAuthSessionProviderService | CommercePortalAuthSessionStoreService
+  > {
     const store = yield* CommercePortalAuthSessionStoreService;
     const provider = yield* CommercePortalAuthSessionProviderService;
-    return makeCommercePortalAuthSessionLifecycle(store, provider);
+    return makeCommercePortalAuthSessionLifecycle(store, provider, audit);
   }),
 );

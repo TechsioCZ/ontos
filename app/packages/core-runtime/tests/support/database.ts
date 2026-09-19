@@ -1,7 +1,8 @@
 import { PgClient } from '@effect/sql-pg';
 import type { AnyRelations } from 'drizzle-orm';
 import { makeWithDefaults } from 'drizzle-orm/effect-postgres';
-import { Effect } from 'effect';
+import { Effect, Layer } from 'effect';
+import type { Context } from 'effect';
 import { Reactivity } from 'effect/unstable/reactivity';
 import type { SqlError } from 'effect/unstable/sql/SqlError';
 import { Pool } from 'pg';
@@ -40,6 +41,20 @@ export const makeTestDatabaseFromPool = <Relations extends AnyRelations>(pool: P
     }).pipe(Effect.provideService(Reactivity.Reactivity, reactivity));
     return yield* makeWithDefaults({ relations }).pipe(Effect.provideService(PgClient.PgClient, client));
   });
+
+export type TestDatabaseFromPool<Relations extends AnyRelations> = Effect.Success<
+  ReturnType<typeof makeTestDatabaseFromPool<Relations>>
+>;
+
+/**
+ * Layer-shaped `makeTestDatabaseFromPool`, for non-test-file consumers (e.g. shared fixtures)
+ * that must depend on the contextual service rather than importing the constructor directly.
+ */
+export const layerTestDatabaseFromPool = <Relations extends AnyRelations, Self>(
+  key: Context.Key<Self, TestDatabaseFromPool<Relations>>,
+  pool: Pool,
+  relations: Relations,
+) => Layer.effect(key, makeTestDatabaseFromPool(pool, relations));
 
 /** Fresh pools per execution; the caller's scope releases them after test cleanup. */
 export const testDatabasePools = Effect.gen(function* acquireTestDatabasePools() {

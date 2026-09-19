@@ -1,11 +1,12 @@
-import type { OperationalScope } from '@app/core-runtime';
-import { DateTime, Effect, Schema } from 'effect';
+import { DateTime, Effect, Layer, Schema } from 'effect';
 
 import {
   CommerceEnrollmentProofRejected,
+  CommerceEnrollmentProofService,
   CommerceEnrollmentProofUnavailable,
 } from '../../../api/portal-auth/enrollment-proof-port.ts';
-import type { CommerceEnrollmentProofService } from '../../../api/portal-auth/enrollment-proof-port.ts';
+import { CommerceEnrollmentOwnerTransactionRunner } from '../orchestration/owner-transition-production.ts';
+import type { CommerceEnrollmentOwnerTransactionRun } from '../orchestration/owner-transition-production.ts';
 import {
   EnrollmentProofSchema,
   VerifyEnrollmentProofInputSchema,
@@ -13,7 +14,7 @@ import {
 } from '../../../shared/enrollment-contracts.ts';
 import type { CommercePortalAccountSubject } from '../../../shared/enrollment-contracts.ts';
 import type { ExternalUserSubject } from '../../../shared/portal-auth-contracts.ts';
-import type { EnrollmentAttemptScopedRoutineInvoker } from './attempt-persistence.ts';
+import type { CommerceEnrollmentOwnerScope, EnrollmentAttemptScopedRoutineInvoker } from './attempt-persistence.ts';
 import { commerceEnrollmentAttemptPersistenceForTransaction } from './attempt-persistence.ts';
 import { CommerceEnrollmentAttemptUnavailable } from './errors.ts';
 import type { CommerceEnrollmentAttemptError } from './errors.ts';
@@ -49,7 +50,7 @@ const subjectMatches = (
  */
 export const commerceEnrollmentProofServiceForTransaction = (
   transaction: EnrollmentAttemptScopedRoutineInvoker,
-  scope: OperationalScope,
+  scope: CommerceEnrollmentOwnerScope,
 ): CommerceEnrollmentProofService['Service'] => {
   const persistence = commerceEnrollmentAttemptPersistenceForTransaction(transaction, scope);
   return {
@@ -102,3 +103,63 @@ export const commerceEnrollmentProofServiceForTransaction = (
     }),
   };
 };
+
+type CommerceEnrollmentProofFailure =
+  | InstanceType<typeof CommerceEnrollmentProofRejected>
+  | InstanceType<typeof CommerceEnrollmentProofUnavailable>;
+
+type ProofOutcome<Value> =
+  | { readonly failure: CommerceEnrollmentProofFailure; readonly kind: 'refused' }
+  | { readonly kind: 'answered'; readonly value: Value };
+
+/**
+ * One proof read, one committed transaction, scoped to the Tenant its own input names. The proof
+ * refusal is carried out of the transaction as a value: the runner's callback may only fail with an
+ * Attempt error, and collapsing a refusal into one would turn a definitive denial into a retryable
+ * transaction failure.
+ */
+const runProof = <Value>(
+  run: CommerceEnrollmentOwnerTransactionRun,
+  tenantId: string,
+  operation: (
+    service: CommerceEnrollmentProofService['Service'],
+  ) => Effect.Effect<Value, CommerceEnrollmentProofFailure>,
+): Effect.Effect<Value, CommerceEnrollmentProofFailure> => {
+  const scope: CommerceEnrollmentOwnerScope = { tenantId };
+  return run(scope, (transaction) =>
+    operation(commerceEnrollmentProofServiceForTransaction(transaction, scope)).pipe(
+      Effect.match({
+        onFailure: (failure): ProofOutcome<Value> => ({ failure, kind: 'refused' }),
+        onSuccess: (value): ProofOutcome<Value> => ({ kind: 'answered', value }),
+      }),
+    ),
+  ).pipe(
+    Effect.mapError(mapAttemptErrorToProof),
+    Effect.flatMap((outcome) =>
+      outcome.kind === 'refused' ? Effect.fail(outcome.failure) : Effect.succeed(outcome.value),
+    ),
+  );
+};
+
+/**
+ * The deployed proof capability. Both methods are Tenant-scoped inside PostgreSQL by the durable
+ * routines themselves and authorize the exact (Attempt, owner invocation) pair there, so the scope
+ * installed per call selects the rows the caller already named rather than standing in for that
+ * authorization.
+ */
+const commerceEnrollmentProofServiceForRun = (
+  run: CommerceEnrollmentOwnerTransactionRun,
+): CommerceEnrollmentProofService['Service'] =>
+  Object.freeze({
+    authorizeAccountCreation: (input) =>
+      runProof(run, input.tenantId, (service) => service.authorizeAccountCreation(input)),
+    verify: (input) => runProof(run, input.tenantId, (service) => service.verify(input)),
+  });
+
+export const CommerceEnrollmentProofServiceLive = Layer.effect(
+  CommerceEnrollmentProofService,
+  Effect.gen(function* makeCommerceEnrollmentProofServiceLive() {
+    const runner = yield* CommerceEnrollmentOwnerTransactionRunner;
+    return commerceEnrollmentProofServiceForRun(runner.run);
+  }),
+);

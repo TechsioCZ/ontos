@@ -48,6 +48,7 @@ import type {
 } from '../../api/portal-auth/session/contracts.ts';
 import { CommercePortalAuthSessionLifecycle } from '../../api/portal-auth/session/lifecycle-service.ts';
 import type { CommercePortalAuthSessionLifecycleService } from '../../api/portal-auth/session/lifecycle-service.ts';
+import { unauditedCommercePortalAuthRecorder } from '../../src/portal-auth/audit/audit.ts';
 
 const TEST_NOW_MILLIS = 1_800_000_000_000;
 const PROVIDER_SUBJECT_ID = 'commerce-user-1';
@@ -326,7 +327,7 @@ const runWithFixture = <A, E>(
   const fixture = makeFixture();
   return Effect.gen(function* runStepUpTest() {
     yield* TestClock.setTime(TEST_NOW_MILLIS);
-    const service = yield* makeCommercePortalAuthStepUp();
+    const service = yield* makeCommercePortalAuthStepUp(unauditedCommercePortalAuthRecorder);
     return yield* execute(service, fixture);
   }).pipe(
     Effect.provideService(CommercePortalAuthStepUpChallengeStoreService, fixture.challengeStore),

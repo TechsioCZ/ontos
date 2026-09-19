@@ -23,6 +23,7 @@ import { randomUUID } from 'node:crypto';
 import { makeCommercePortalAuthDatabase } from '../../src/portal-auth/persistence/portal-auth-database.ts';
 import type { CommercePortalAuthDatabase } from '../../src/portal-auth/persistence/portal-auth-database.ts';
 import { rateLimit, session, user, verification } from '../../src/portal-auth/persistence/portal-auth-tables.ts';
+import { portalAuthAuditEvent } from '../../src/portal-auth/audit/audit-tables.ts';
 import { makeCommercePortalAuth } from '../../api/portal-auth/provider/auth.ts';
 import { CommercePortalAuthConfig } from '../../api/portal-auth/provider/config-service.ts';
 import { CommercePortalAuthRecoveryRateLimitService } from '../../api/portal-auth/rate-limit-service.ts';
@@ -35,6 +36,7 @@ import {
 } from '../../api/portal-auth/session/lifecycle.ts';
 import { makeCommercePortalAuthSessionStore } from '../../src/portal-auth/persistence/portal-auth-session-store.ts';
 import { CommercePortalAuthSessionApi } from '../../shared/portal-auth/session-api.ts';
+import { unauditedCommercePortalAuthRecorder } from '../../src/portal-auth/audit/audit.ts';
 
 const ORIGIN = 'http://localhost:3020';
 const requestContext = Context.makeUnsafe<unknown>(new Map());
@@ -297,6 +299,12 @@ const awaitWaitingLocks = (database: ProviderDatabase, expectedCount: number): E
 const cleanupFixture = (fixture: ProviderFixture) =>
   fixture.database.executor.transaction((transaction) =>
     Effect.gen(function* cleanupProviderFixture() {
+      // Every audited mutation this fixture drives — refresh, sign-out, rotation — commits its
+      // evidence row in the same transaction as the change, so the row is fixture state too.
+      const subjects = yield* transaction.select({ id: user.id }).from(user).where(eq(user.email, fixture.email));
+      for (const subject of subjects) {
+        yield* transaction.delete(portalAuthAuditEvent).where(eq(portalAuthAuditEvent.providerSubjectId, subject.id));
+      }
       yield* transaction.delete(user).where(eq(user.email, fixture.email));
       yield* transaction.delete(verification).where(eq(verification.identifier, fixture.email));
       yield* transaction.delete(rateLimit).where(like(rateLimit.key, `%${fixture.ipPrefix}%`));
@@ -376,7 +384,11 @@ const makeProviderFixture = Effect.fn('CommercePortalAuthProviderIntegration.mak
       }),
   });
   const store = makeCommercePortalAuthSessionStore(database.executor);
-  const lifecycle = makeCommercePortalAuthSessionLifecycle(store, makeCommercePortalAuthSessionProvider(auth));
+  const lifecycle = makeCommercePortalAuthSessionLifecycle(
+    store,
+    makeCommercePortalAuthSessionProvider(auth),
+    unauditedCommercePortalAuthRecorder,
+  );
   const app = yield* Effect.acquireRelease(
     Effect.sync(() =>
       HttpRouter.toWebHandler(

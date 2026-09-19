@@ -12,6 +12,7 @@ import {
   CommercePortalAuthMfaUnavailableProblemSchema,
 } from '../../../../shared/portal-auth/mfa-api.ts';
 import type { CommercePortalAuthMfaProblem } from '../../../../shared/portal-auth/mfa-api.ts';
+import { withCause } from '../../problems-support.ts';
 import { CommercePortalAuthMfaChallengeExpired } from './challenge-expired.ts';
 import type { CommercePortalAuthMfaProviderFailure } from './contracts.ts';
 import { CommercePortalAuthMfaProviderRejected } from './provider-rejected.ts';
@@ -33,12 +34,49 @@ export const commercePortalAuthMfaInvalidProblem = CommercePortalAuthMfaInvalidP
   type: 'https://ontos.dev/problems/commerce-portal-auth-mfa-invalid',
 });
 
+interface CommercePortalAuthMfaInvalidBodyCause {
+  readonly kind: 'invalid-request-body';
+}
+
+/**
+ * The owner's re-validation schemas cover `password`, so the raw `Schema.decodeUnknownEffect`
+ * failure can carry the submitted password inside its parse issue — it is never kept, only a
+ * non-sensitive marker is.
+ */
+const invalidRequestBodyCause = <ParseFailure>(_cause: ParseFailure): CommercePortalAuthMfaInvalidBodyCause => ({
+  kind: 'invalid-request-body',
+});
+
+/**
+ * Used wherever the owner's tighter re-validation schema (`contracts.ts`) rejects an
+ * already-schema-decoded payload — `enable`, `disable`, `regenerate-backup-codes` and `totp-uri` all
+ * re-decode a `password` field this way. Never attach the raw parse failure directly: it can quote
+ * the submitted password back in its issue message. The singleton problem is copied first, so
+ * concurrent requests never race over one shared instance's `cause`.
+ */
+export const commercePortalAuthMfaInvalidRequestProblem = (cause: unknown) =>
+  withCause({ ...commercePortalAuthMfaInvalidProblem }, invalidRequestBodyCause(cause));
+
 export const commercePortalAuthMfaTrustDeviceProblem = CommercePortalAuthMfaInvalidProblemSchema.make({
   code: 'trust_device_not_allowed',
   detail: 'Trusted-device cookies are not permitted.',
   status: problemStatus.invalid,
   title: 'Trusted device not allowed',
   type: 'https://ontos.dev/problems/commerce-portal-auth-mfa-trust-device-not-allowed',
+});
+
+/**
+ * Answered by the owner-enforced fresh-authentication gate ahead of `enable`, `confirm-enable`,
+ * `disable`, `regenerate-backup-codes` and `totp-uri`: the current session is absent, unreadable, or
+ * older than `COMMERCE_PORTAL_AUTH_POLICY.session.freshAgeSeconds`. Better Auth's own two-factor
+ * plugin endpoints never consult `freshAge`, so this is the only place that window is enforced.
+ */
+export const commercePortalAuthMfaNotFreshProblem = CommercePortalAuthMfaAuthenticationProblemSchema.make({
+  code: 'mfa_authentication_not_fresh',
+  detail: 'This action requires a recently authenticated session.',
+  status: problemStatus.authentication,
+  title: 'MFA authentication not fresh',
+  type: 'https://ontos.dev/problems/commerce-portal-auth-mfa-authentication-not-fresh',
 });
 
 export const commercePortalAuthMfaChallengeExpiredProblem = CommercePortalAuthMfaAuthenticationProblemSchema.make({

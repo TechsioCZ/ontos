@@ -1,10 +1,8 @@
-import { createHmac } from 'node:crypto';
-
 import { APIError } from 'better-auth';
 import { isAPIError } from 'better-auth/api';
 import { getCookies } from 'better-auth/cookies';
 import { HttpApiBuilder, HttpApiMiddleware, Layer } from '@modern-js/bff-effect/effect-edge';
-import { Context, DateTime, Duration, Effect, Option, Redacted, Result, Schema } from 'effect';
+import { Context, DateTime, Duration, Effect, Option, Result, Schema } from 'effect';
 import type { HttpServerRequest } from 'effect/unstable/http';
 import { empty as emptyCookies, expireCookieUnsafe, toSetCookieHeaders } from 'effect/unstable/http/Cookies';
 
@@ -28,6 +26,13 @@ import {
   requireTrustedOrigin,
   resolveClientKey,
 } from '../http-transport.ts';
+import { commercePortalAuthSignInAuditEvent } from '../../../src/portal-auth/audit/audit-mapping.ts';
+import {
+  CommercePortalAuthAudit,
+  commercePortalAuthSubjectDigest,
+  emitCommercePortalAuthAudit,
+  unauditedCommercePortalAuthRecorder,
+} from '../../../src/portal-auth/audit/audit.ts';
 import { CommercePortalAuthRecoveryRateLimitService } from '../rate-limit-service.ts';
 import type { CommercePortalAuthRecoveryRateLimitRule } from '../rate-limit-service.ts';
 import { CommercePortalAuthInstance } from '../provider/auth.ts';
@@ -395,9 +400,6 @@ const signInRateLimit: CommercePortalAuthRecoveryRateLimitRule = {
  * under the deployment secret, so the durable `rate_limit` rows stay a set of opaque digests rather
  * than a readable list of the portal's customers.
  */
-const signInSubjectKey = (email: string, secret: Redacted.Redacted): string =>
-  createHmac('sha256', Redacted.value(secret)).update(email.trim().toLowerCase()).digest('base64url');
-
 /**
  * Better Auth declares `rateLimit.customRules['/sign-in/email']` but enforces it only inside
  * `router()`'s `onRequest`, which is reachable exclusively through `auth.handler` — a handler this
@@ -420,8 +422,8 @@ const consumeSignInBudget = Effect.fn('CommercePortalAuthSessionHttp.signInRateL
     const budget = yield* CommercePortalAuthRecoveryRateLimitService;
     const configuration = yield* CommercePortalAuthConfig;
     const client = resolveClientKey(request, configuration.trustedProxies);
-    const subject = signInSubjectKey(email, configuration.secret);
-    const allowed = yield* budget.consume(`${client}|${subject}|${SIGN_IN_RATE_LIMIT_ROUTE}`, signInRateLimit).pipe(
+    const subject = commercePortalAuthSubjectDigest(email, configuration.secret);
+    return yield* budget.consume(`${client}|${subject}|${SIGN_IN_RATE_LIMIT_ROUTE}`, signInRateLimit).pipe(
       Effect.catchTag('CommercePortalAuthRecoveryProviderFailure', (failure) =>
         Effect.annotateLogs(Effect.logError('Commerce portal sign-in budget could not be spent', failure), {
           operation: failure.operation,
@@ -429,9 +431,17 @@ const consumeSignInBudget = Effect.fn('CommercePortalAuthSessionHttp.signInRateL
         }).pipe(Effect.andThen(Effect.fail(unavailableProblem()))),
       ),
     );
-    return allowed ? yield* Effect.void : yield* Effect.fail(rateLimitedProblem());
   },
 );
+
+/** The opaque reference an admitted sign-in published, so an audit row can name the session. */
+const signInAuditSessionRef = (outcome: CommercePortalAuthSessionSignInOutcome): string | undefined =>
+  outcome.outcome === 'SESSION_CREATED' || outcome.outcome === 'SESSION_REFRESHED'
+    ? outcome.session.sessionRef
+    : undefined;
+
+const signInAuditProviderSubjectId = (outcome: CommercePortalAuthSessionSignInOutcome): string | undefined =>
+  outcome.outcome === 'ACCOUNT_DISABLED' ? outcome.providerSubjectId : undefined;
 
 const signIn = Effect.fn('CommercePortalAuthSessionHttp.signIn')(function* signInEffect(
   payload: Schema.Codec.Encoded<typeof CommercePortalAuthSignInInputSchema>,
@@ -444,9 +454,32 @@ const signIn = Effect.fn('CommercePortalAuthSessionHttp.signIn')(function* signI
   // that page exhaust the visitor's own sign-in budget and collect a 403 only afterwards; the
   // sibling step-up transport orders it the same way.
   yield* requireTrustedOrigin(request.headers, untrustedOriginProblem);
-  yield* consumeSignInBudget(request, payload.email);
+  const configuration = yield* CommercePortalAuthConfig;
+  const subjectDigest = commercePortalAuthSubjectDigest(payload.email, configuration.secret);
+  const allowed = yield* consumeSignInBudget(request, payload.email);
+  if (!allowed) {
+    yield* emitCommercePortalAuthAudit(
+      commercePortalAuthSignInAuditEvent({
+        occurredAt: yield* DateTime.nowAsDate,
+        outcome: 'RATE_LIMITED',
+        subjectDigest,
+      }),
+    );
+    return yield* Effect.fail(rateLimitedProblem());
+  }
   const lifecycle = yield* CommercePortalAuthSessionLifecycle;
   const result = yield* lifecycle.signIn(payload).pipe(Effect.mapError(signInFailureProblem));
+  const providerSubjectId = signInAuditProviderSubjectId(result.outcome);
+  const sessionRef = signInAuditSessionRef(result.outcome);
+  yield* emitCommercePortalAuthAudit(
+    commercePortalAuthSignInAuditEvent({
+      occurredAt: yield* DateTime.nowAsDate,
+      outcome: result.outcome.outcome,
+      providerSubjectId,
+      sessionRef,
+      subjectDigest,
+    }),
+  );
   // The provider cookies belong to an admitted sign-in only. A rejected admission (disabled,
   // unverified or session-capped) has already revoked the durable session, so the response hook is
   // registered after the outcome is known to be a success and never on a rejection.
@@ -546,7 +579,11 @@ export const portalAuthSessionStandaloneApiLive = HttpApiBuilder.group(
       .handle('signOut', ({ request }) => signOut(request))
       .handle('refresh', ({ request }) => refresh(request))
       .handle('getSession', ({ request }) => getSession(request)),
-).pipe(Layer.provide(portalAuthSessionSchemaErrorLive));
+).pipe(
+  Layer.provide(portalAuthSessionSchemaErrorLive),
+  // The isolated topology has no durable audit store; decisions still complete, they are just unrecorded.
+  Layer.provide(Layer.succeed(CommercePortalAuthAudit, unauditedCommercePortalAuthRecorder)),
+);
 
 /** The constructed realm stays a visible requirement; the composition root supplies it once. */
 export const CommercePortalAuthServiceLive = Layer.effect(

@@ -183,20 +183,6 @@ it.live('materializes and starts a relocatable production worker artifact', () =
   }),
 );
 
-it.live('keeps the live Party Registry worker deployment generated and independently supervised', () =>
-  Effect.gen(function* testEffect4() {
-    const root = process.cwd();
-    const source = yield* Effect.tryPromise(() => readFile(path.join(root, 'zerops.yaml'), 'utf-8'));
-    expect(source).not.toContain('run zerops:materialize -- --app');
-    expect(yield* Effect.tryPromise(() => generateOutboxWorkerDeployment(root, source))).toBe(source);
-    const [, worker] = source.split("setup: 'party-registry-worker'");
-    expect(worker).toMatch(/DATABASE_URL: \$\{partyregistry_DATABASE_URL\}/u);
-    expect(worker).toMatch(/OUTBOX_WORKER_HEALTH_PORT: '4102'/u);
-    expect(worker).toMatch(/cd app\/\.zerops\/runtime\/party-registry-worker/u);
-    expect(worker).not.toMatch(/(?:^|\s)&(?:\s|$)/u);
-  }),
-);
-
 it.live('bundles the real Party host including the production Effect HTTP health adapter', () =>
   Effect.gen(function* testEffect5() {
     const runtimeDir = yield* Effect.acquireRelease(

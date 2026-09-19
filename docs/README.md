@@ -34,6 +34,8 @@ decision.
   its routing table.
 - A scoped change: the specification explicitly named by its GitHub issue or task. Do not browse
   completed specifications for background.
+- An operational procedure for a deployed capability (rotation, fresh deployment, rollback): the
+  matching runbook under [`docs/runbooks/`](runbooks/).
 
 Delivery dates, sequencing, open alternatives, and prioritization belong in GitHub issues.
 

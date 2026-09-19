@@ -2,7 +2,10 @@ import { Schema } from 'effect';
 import type { Effect } from 'effect';
 
 import type {
+  CommercePortalAuthMfaBackupCodesResult,
+  CommercePortalAuthMfaEnableResult,
   CommercePortalAuthMfaStatusResult,
+  CommercePortalAuthMfaTotpUriResult,
   CommercePortalAuthMfaVerificationResult,
 } from '../../../../shared/portal-auth/mfa-api.ts';
 import { COMMERCE_PORTAL_AUTH_POLICY } from '../config.ts';
@@ -16,34 +19,47 @@ import type { CommercePortalAuthMfaRateLimited } from './rate-limited.ts';
  * service and the Better Auth adapter cannot drift apart.
  */
 export {
+  CommercePortalAuthMfaBackupCodesResultSchema,
+  CommercePortalAuthMfaEnableResultSchema,
   CommercePortalAuthMfaStatusResultSchema,
+  CommercePortalAuthMfaTotpUriResultSchema,
   CommercePortalAuthMfaVerificationResultSchema,
   CommercePortalAuthMfaVerifyBackupCodeBodySchema,
   CommercePortalAuthMfaVerifyTotpBodySchema,
 } from '../../../../shared/portal-auth/mfa-api.ts';
 export type {
+  CommercePortalAuthMfaBackupCodesResult,
+  CommercePortalAuthMfaEnableResult,
   CommercePortalAuthMfaStatusResult,
+  CommercePortalAuthMfaTotpUriResult,
   CommercePortalAuthMfaVerificationResult,
 } from '../../../../shared/portal-auth/mfa-api.ts';
 
+/**
+ * Policy-bound password re-validation. The published `enable`/`disable`/`regenerate-backup-codes`/
+ * `totp-uri` payloads (`shared/portal-auth/mfa-api.ts`) bound `password` only loosely at the public
+ * boundary — like `session-api.ts`'s sign-in password, it crosses the wire as a plain string. The
+ * HTTP transport re-decodes the already-parsed payload through these schemas before any Better Auth
+ * call, so a caller-supplied value outside policy bounds surfaces as the owner's `invalid_request`
+ * problem rather than a raw provider rejection.
+ */
 const PasswordSchema = Schema.String.check(
   Schema.isMinLength(COMMERCE_PORTAL_AUTH_POLICY.password.minLength),
   Schema.isMaxLength(COMMERCE_PORTAL_AUTH_POLICY.password.maxLength),
 );
 const MethodSchema = Schema.Literals(['otp', 'totp']);
 
-/** Administrative MFA bodies stay owner-private; only the four verification routes are published. */
-const CommercePortalAuthMfaEnableBodySchema = Schema.Struct({
+export const CommercePortalAuthMfaEnableBodySchema = Schema.Struct({
   issuer: Schema.optionalKey(Schema.String),
   method: Schema.optionalKey(MethodSchema),
   password: PasswordSchema,
 }).annotate({ parseOptions: { onExcessProperty: 'error' } });
 
-const CommercePortalAuthMfaDisableBodySchema = Schema.Struct({
+export const CommercePortalAuthMfaDisableBodySchema = Schema.Struct({
   password: PasswordSchema,
 }).annotate({ parseOptions: { onExcessProperty: 'error' } });
 
-const CommercePortalAuthMfaPasswordBodySchema = Schema.Struct({
+export const CommercePortalAuthMfaPasswordBodySchema = Schema.Struct({
   password: PasswordSchema,
 }).annotate({ parseOptions: { onExcessProperty: 'error' } });
 
@@ -98,28 +114,6 @@ export type CommercePortalAuthMfaVerifyBackupCodeProviderRequest = CommercePorta
 }>;
 export type CommercePortalAuthMfaPasswordProviderRequest =
   CommercePortalAuthMfaProviderRequest<CommercePortalAuthMfaPasswordBody>;
-
-export const CommercePortalAuthMfaEnableResultSchema = Schema.Union([
-  Schema.Struct({ method: Schema.Literal('otp') }),
-  Schema.Struct({
-    backupCodes: Schema.Array(Schema.String),
-    method: Schema.Literal('totp'),
-    totpURI: Schema.String,
-  }),
-]).annotate({ parseOptions: { onExcessProperty: 'error' } });
-
-export const CommercePortalAuthMfaBackupCodesResultSchema = Schema.Struct({
-  backupCodes: Schema.Array(Schema.String),
-  status: Schema.Boolean,
-}).annotate({ parseOptions: { onExcessProperty: 'error' } });
-
-export const CommercePortalAuthMfaTotpUriResultSchema = Schema.Struct({
-  totpURI: Schema.String,
-}).annotate({ parseOptions: { onExcessProperty: 'error' } });
-
-export type CommercePortalAuthMfaEnableResult = typeof CommercePortalAuthMfaEnableResultSchema.Type;
-export type CommercePortalAuthMfaBackupCodesResult = typeof CommercePortalAuthMfaBackupCodesResultSchema.Type;
-export type CommercePortalAuthMfaTotpUriResult = typeof CommercePortalAuthMfaTotpUriResultSchema.Type;
 
 export interface CommercePortalAuthMfaProvider {
   readonly disableTwoFactor: (

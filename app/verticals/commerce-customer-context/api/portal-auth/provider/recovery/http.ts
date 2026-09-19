@@ -1,10 +1,8 @@
-import { createHmac } from 'node:crypto';
-
 import { HttpApiBuilder, Layer } from '@modern-js/bff-effect/effect-edge';
 import { Duration, Effect, Redacted, Schema } from 'effect';
 import type { HttpServerRequest } from 'effect/unstable/http';
 
-import { noStoreHeaders, requireTrustedOrigin, resolveClientKey } from '../../http-transport.ts';
+import { hashSubjectKey, noStoreHeaders, requireTrustedOrigin, resolveClientKey } from '../../http-transport.ts';
 import { commerceCustomerContextApi } from '../../../../shared/api.ts';
 import type {
   CommercePortalAuthPasswordResetPendingResultSchema,
@@ -67,14 +65,6 @@ const verifyEmailRateLimit: CommercePortalAuthRecoveryRouteRateLimit = {
 };
 
 /**
- * The recovery subject is part of the budget key, never the counter store's contents: it is keyed
- * under the deployment secret, so the durable `rate_limit` rows stay a set of opaque digests rather
- * than a readable list of the portal's customers and their live recovery tokens.
- */
-const recoverySubjectKey = (subject: string, secret: Redacted.Redacted): string =>
-  createHmac('sha256', Redacted.value(secret)).update(subject).digest('base64url');
-
-/**
  * Better Auth enforces the deployment's recovery limits inside its router (`auth.handler`); the
  * typed `auth.api` surface this group reaches through the owner service never runs them, so the
  * owner re-applies the same rules against its own durable counter store. That store is the realm's,
@@ -112,7 +102,7 @@ const consumeRecoveryBudget = Effect.fn('CommercePortalAuthRecoveryHttp.rateLimi
     const budget = yield* CommercePortalAuthRecoveryRateLimitService;
     const configuration = yield* CommercePortalAuthConfig;
     const client = resolveClientKey(request, configuration.trustedProxies);
-    const scope = recoverySubjectKey(subject, configuration.secret);
+    const scope = hashSubjectKey(subject, configuration.secret);
     const allowed = yield* budget.consume(`${client}|${scope}|${limit.route}`, limit).pipe(
       // The transport problem carries no provider detail, so the classified failure is reported
       // here rather than discarded at the seam that still knows which store step refused.

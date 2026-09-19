@@ -251,6 +251,7 @@ it.effect('claim authorizes the exact prepared binding before durable transition
             request = input;
             return claimResult;
           }),
+        read: () => Effect.succeed(makeAttempt()),
       },
       preparedOwner: preparedOwner((value) => {
         binding = value;
@@ -274,6 +275,28 @@ it.effect('claim authorizes the exact prepared binding before durable transition
     expect(request?.actorPrincipalId).toBe(actorPrincipalId);
     expect(request?.tenantId).toBe(tenantId);
     expect(request?.expectedRevision).toBe(claimPayload.expectedRevision);
+    // `required` is read from the Attempt's journey declaration, never asserted by the caller.
+    expect(request?.required).toBe(true);
+  }),
+);
+
+it.effect('claim refuses a transition the Attempt journey does not declare', () =>
+  // @ts-expect-error -- This direct-handler test supplies a request-scoped owner capability double.
+  Effect.gen(function* refusesUndeclaredTransition() {
+    const services: CommerceEnrollmentPreparedAttemptActionServices = {
+      attempt: { ...unusedAttemptService(), read: () => Effect.succeed(makeAttempt()) },
+      preparedOwner: preparedOwner(() => {}),
+      reconcilePrepared: () => Effect.die('unused reconcilePrepared'),
+    };
+    const undeclared = Schema.decodeSync(ClaimPortalEnrollmentTransitionPayloadSchema)({
+      ...claimPayload,
+      transitionKey: 'provider.account.delete',
+    });
+    const collector = collectorFor(claimPortalEnrollmentTransitionAction);
+    const failure = yield* Effect.flip(
+      getActionHandler(claimPortalEnrollmentTransitionAction)(undeclared, handlerContext(collector, services)),
+    );
+    expect(failure.code).toBe('attempt_invalid');
   }),
 );
 

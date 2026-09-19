@@ -2,7 +2,7 @@
 // @ontos-action-owner commerce.customer-context
 // @ontos-action-slug claim-portal-enrollment-transition
 import type { ActionHandlerContext } from '@app/core-runtime';
-import { defineAction, defineTenantModuleEntrypoint } from '@app/core-runtime';
+import { commitActionThenReject, defineAction, defineTenantModuleEntrypoint } from '@app/core-runtime';
 import { Effect, Schema } from 'effect';
 
 import {
@@ -17,8 +17,11 @@ import {
   EnrollmentPrincipalIdSchema,
   EnrollmentTenantIdSchema,
 } from '../../shared/enrollment-contracts.ts';
+import { claimedOrIndeterminate } from '../enrollment/attempts/attempt-persistence.ts';
 import { CommerceEnrollmentAttemptRejected } from '../enrollment/attempts/errors.ts';
+import { journeyTransitionFor } from '../enrollment/journeys/journey-contracts.ts';
 import { CommerceEnrollmentAttemptActionErrorSchema } from '../enrollment/orchestration/action-errors.ts';
+import { enrollmentJourneyDefinitionForAttempt } from '../enrollment/orchestration/completion.ts';
 import type { CommerceEnrollmentPreparedAttemptActionServices } from '../enrollment/orchestration/action-services.ts';
 import { commerceEnrollmentPreparedAttemptActionServicesForTransaction } from '../enrollment/orchestration/action-services.ts';
 import { CLAIM_PORTAL_ENROLLMENT_TRANSITION_ACTION_KEY } from '../enrollment/orchestration/prepared-owner-authority.ts';
@@ -71,6 +74,23 @@ const handleClaimPortalEnrollmentTransition = Effect.fn('ClaimPortalEnrollmentTr
       tenantId,
       transitionKey: payload.transitionKey,
     });
+    // `required` gates the Attempt's derived completion, so it is read from the journey the
+    // Attempt's own immutable intent selects rather than asserted by the caller. A transition the
+    // journey never declares has no place in that derivation and is refused here.
+    const attempt = yield* context.services.attempt.read({
+      portalEnrollmentAttemptId: payload.portalEnrollmentAttemptId,
+      tenantId,
+    });
+    const definition = yield* enrollmentJourneyDefinitionForAttempt(attempt);
+    const declared = journeyTransitionFor(definition, payload.ownerModuleKey, payload.transitionKey);
+    if (declared === undefined) {
+      return yield* new CommerceEnrollmentAttemptRejected({
+        attemptId: payload.portalEnrollmentAttemptId,
+        code: 'attempt_invalid',
+        reason: "The owner transition is not declared by this Enrollment Attempt's journey",
+        retryable: false,
+      });
+    }
     const request = yield* Schema.decodeEffect(ClaimEnrollmentTransitionInputSchema)({
       actorPrincipalId,
       expectedRevision: payload.expectedRevision,
@@ -79,12 +99,19 @@ const handleClaimPortalEnrollmentTransition = Effect.fn('ClaimPortalEnrollmentTr
       ownerModuleKey: payload.ownerModuleKey,
       portalEnrollmentAttemptId: payload.portalEnrollmentAttemptId,
       requestDigest: payload.requestDigest,
-      required: true,
+      required: declared.required,
       tenantId,
       transitionKey: payload.transitionKey,
       workerId,
     }).pipe(Effect.mapError((cause) => invalid(cause)));
-    return yield* context.services.attempt.claimTransition(request);
+    return yield* context.services.attempt.claimTransition(request).pipe(
+      Effect.flatMap(claimedOrIndeterminate(payload)),
+      // The routine fenced an expired owner transition in this very transaction; the rejection
+      // must commit it rather than roll it back.
+      Effect.catchTag('CommerceEnrollmentAttemptIndeterminate', (fenced) =>
+        Effect.succeed(commitActionThenReject(fenced)),
+      ),
+    );
   },
 );
 

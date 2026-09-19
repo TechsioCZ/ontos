@@ -1,3 +1,5 @@
+import { createHash } from 'node:crypto';
+
 import {
   ActionInvocationIdSchema,
   PrincipalIdSchema,
@@ -24,6 +26,13 @@ export const EnrollmentPrincipalIdSchema = PrincipalIdSchema;
 export const EnrollmentTenantIdSchema = TenantIdSchema;
 export const EnrollmentLeaseTokenSchema = uuid.pipe(Schema.brand('EnrollmentLeaseToken'));
 export const EnrollmentDigestSchema = Schema.String.check(Schema.isPattern(/^[0-9a-f]{64}$/u));
+
+/**
+ * The single digest primitive every Enrollment identity is derived from: one lowercase SHA-256 of
+ * an already canonical encoding.  Callers own the canonicalization; nothing here inspects it, so
+ * two encodings that differ only in key order must be made identical before they reach this.
+ */
+export const enrollmentDigest = (canonical: string): string => createHash('sha256').update(canonical).digest('hex');
 export const EnrollmentBoundedTextSchema = Schema.String.check(
   Schema.isTrimmed(),
   Schema.isMinLength(1),
@@ -80,13 +89,30 @@ export const EnrollmentAttemptStateSchema = Schema.Literals([
 ]);
 export type EnrollmentAttemptState = typeof EnrollmentAttemptStateSchema.Type;
 
-/** Termination is a separate owner Action, so an owner outcome cannot request it as a projection. */
-const EnrollmentAttemptNextStateSchema = Schema.Literals([
+/**
+ * What an owner may say about its own transition, and nothing more.  COMPLETE is absent by
+ * construction: completion is a property of the journey's required transitions, so it is derived
+ * from the durable owner journal and can never be asserted by the owner recording one outcome.
+ * TERMINATED is absent too, because termination is a separate owner Action.
+ */
+const EnrollmentOwnerOutcomeSignalSchema = Schema.Literals([
+  'IN_PROGRESS',
+  'VERIFICATION_REQUIRED',
+  'RECONCILIATION_REQUIRED',
+]);
+export type EnrollmentOwnerOutcomeSignal = typeof EnrollmentOwnerOutcomeSignalSchema.Type;
+
+/**
+ * The Attempt states a recorded owner outcome may derive.  TERMINATED is reached only by the
+ * termination Action, so it is never a derivation result.
+ */
+const DerivedEnrollmentAttemptStateSchema = Schema.Literals([
   'IN_PROGRESS',
   'VERIFICATION_REQUIRED',
   'COMPLETE',
   'RECONCILIATION_REQUIRED',
 ]);
+export type DerivedEnrollmentAttemptState = typeof DerivedEnrollmentAttemptStateSchema.Type;
 
 export const EnrollmentOwnerOperationStatusSchema = Schema.Literals([
   'IN_PROGRESS',
@@ -204,7 +230,8 @@ export const RecordEnrollmentOutcomeInputSchema = Schema.Struct({
   failureCode: Schema.optionalKey(EnrollmentKeySchema),
   failureReason: Schema.optionalKey(EnrollmentBoundedTextSchema),
   leaseToken: EnrollmentLeaseTokenSchema,
-  nextState: Schema.optionalKey(EnrollmentAttemptNextStateSchema),
+  /** The owner's own signal about this transition; it never names the Attempt's next state. */
+  nextState: Schema.optionalKey(EnrollmentOwnerOutcomeSignalSchema),
   outcomeCode: Schema.optionalKey(EnrollmentKeySchema),
   ownerInvocationId: EnrollmentActionInvocationIdSchema,
   ownerModuleKey: EnrollmentModuleKeySchema,
@@ -230,7 +257,8 @@ export const ReconcileEnrollmentOutcomeInputSchema = Schema.Struct({
   expectedRevision: Schema.Number.check(Schema.isInt(), Schema.isGreaterThanOrEqualTo(1)),
   failureCode: Schema.optionalKey(EnrollmentKeySchema),
   failureReason: Schema.optionalKey(EnrollmentBoundedTextSchema),
-  nextState: Schema.optionalKey(EnrollmentAttemptNextStateSchema),
+  /** The owner's own signal about this transition; it never names the Attempt's next state. */
+  nextState: Schema.optionalKey(EnrollmentOwnerOutcomeSignalSchema),
   outcomeCode: Schema.optionalKey(EnrollmentKeySchema),
   ownerInvocationId: EnrollmentActionInvocationIdSchema,
   ownerModuleKey: EnrollmentModuleKeySchema,
@@ -262,7 +290,8 @@ export const ReconcileEnrollmentResolutionSchema = Schema.Struct({
   actorPrincipalId: EnrollmentPrincipalIdSchema,
   failureCode: Schema.optionalKey(EnrollmentKeySchema),
   failureReason: Schema.optionalKey(EnrollmentBoundedTextSchema),
-  nextState: Schema.optionalKey(EnrollmentAttemptNextStateSchema),
+  /** The owner's own signal about this transition; it never names the Attempt's next state. */
+  nextState: Schema.optionalKey(EnrollmentOwnerOutcomeSignalSchema),
   outcomeCode: Schema.optionalKey(EnrollmentKeySchema),
   reconciliationRef: EnrollmentEvidenceReferenceSchema,
   resultDigest: Schema.optionalKey(EnrollmentDigestSchema),

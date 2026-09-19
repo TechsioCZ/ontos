@@ -89,6 +89,19 @@ export const CommerceEnrollmentAttemptIndeterminate = Schema.TaggedError<
   typeof CommerceEnrollmentAttemptIndeterminateSchema.Type
 >()('CommerceEnrollmentAttemptIndeterminate', indeterminateFields);
 
+/**
+ * One authority for narrowing an arbitrary transaction failure to the closed Attempt vocabulary.
+ * A failure that is not in this union came from the database or transaction machinery, never from
+ * an Attempt routine, and must never be reported as a definitive Attempt outcome.
+ */
+export const CommerceEnrollmentAttemptErrorSchema = Schema.Union([
+  CommerceEnrollmentAttemptRejected,
+  CommerceEnrollmentAttemptUnavailable,
+  CommerceEnrollmentAttemptNotFound,
+  CommerceEnrollmentAttemptConflict,
+  CommerceEnrollmentAttemptIndeterminate,
+]);
+
 export type CommerceEnrollmentAttemptError =
   | InstanceType<typeof CommerceEnrollmentAttemptRejected>
   | InstanceType<typeof CommerceEnrollmentAttemptUnavailable>

@@ -9,7 +9,13 @@ import { createHash, createHmac, randomBytes, randomUUID } from 'node:crypto';
 
 import { makeCommercePortalAuthDatabase } from '../../src/portal-auth/persistence/portal-auth-database.ts';
 import type { CommercePortalAuthDatabase } from '../../src/portal-auth/persistence/portal-auth-database.ts';
-import { rateLimit, session, user, verification } from '../../src/portal-auth/persistence/portal-auth-tables.ts';
+import {
+  rateLimit,
+  recoveryReconciliation,
+  session,
+  user,
+  verification,
+} from '../../src/portal-auth/persistence/portal-auth-tables.ts';
 import { makeCommercePortalAuth } from '../../api/portal-auth/provider/auth.ts';
 import { UNRESOLVED_PORTAL_AUTH_CLIENT_KEY } from '../../api/portal-auth/http-transport.ts';
 import { CommercePortalAuthConfig } from '../../api/portal-auth/provider/config-service.ts';
@@ -18,9 +24,11 @@ import { makeCommercePortalAuthRecoveryProvider } from '../../api/portal-auth/pr
 import {
   CommercePortalAuthRecoveryProviderService,
   CommercePortalAuthRecoveryRateLimitService,
+  CommercePortalAuthRecoveryReconciliationService,
   CommercePortalAuthRecoveryService as CommercePortalAuthRecoveryServiceTag,
   CommercePortalAuthRecoveryStoreService,
   makeCommercePortalAuthEmailDelivery,
+  makeCommercePortalAuthRecoveryReconciliation,
   makeCommercePortalAuthRecoveryRateLimit,
   makeCommercePortalAuthRecoveryService,
   portalAuthRecoveryApiLive,
@@ -35,6 +43,7 @@ import {
   COMMERCE_PORTAL_AUTH_INTERNAL_BASE_PATH,
   COMMERCE_PORTAL_AUTH_PUBLIC_BASE_PATH,
 } from '../../shared/deployment-paths.ts';
+import { unauditedCommercePortalAuthRecorder } from '../../src/portal-auth/audit/audit.ts';
 
 const ORIGIN = 'https://portal.example.test';
 const EMAIL = 'recovery-integration@example.test';
@@ -192,9 +201,15 @@ const makeRecoveryFixture = Effect.fn('CommercePortalAuthRecoveryIntegration.mak
     return yield* Effect.fail(new Error('Recovery fixture user was not persisted'));
   }
   const provider = makeCommercePortalAuthRecoveryProvider(auth);
-  const recovery = yield* makeCommercePortalAuthRecoveryService().pipe(
+  const recovery = yield* makeCommercePortalAuthRecoveryService(unauditedCommercePortalAuthRecorder).pipe(
     Effect.provideService(CommercePortalAuthRecoveryProviderService, provider),
     Effect.provideService(CommercePortalAuthRecoveryStoreService, store),
+    Effect.provideServiceEffect(
+      CommercePortalAuthRecoveryReconciliationService,
+      makeCommercePortalAuthRecoveryReconciliation().pipe(
+        Effect.provideService(CommercePortalAuthRecoveryStoreService, store),
+      ),
+    ),
   );
   const fixture = {
     auth,
@@ -417,68 +432,173 @@ it.live('proves PostgreSQL password recovery revokes the original user sessions'
   ),
 );
 
-it.live('rejects PostgreSQL verification after the same subject changes email', () =>
-  Effect.scoped(
-    Effect.gen(function* postgresVerificationEmailChange() {
-      const fixture = yield* makeRecoveryFixture('email-change');
-      yield* registerFixtureVerificationToken(fixture);
-      const replacementEmail = `changed-${randomUUID()}@example.test`;
-      yield* fixture.database.executor.update(user).set({ email: replacementEmail }).where(eq(user.id, fixture.userId));
+it.live(
+  'answers reconciliation-required for PostgreSQL verification after the same subject changes email, leaving it unverified',
+  () =>
+    Effect.scoped(
+      Effect.gen(function* postgresVerificationEmailChange() {
+        const fixture = yield* makeRecoveryFixture('email-change');
+        yield* registerFixtureVerificationToken(fixture);
+        const replacementEmail = `changed-${randomUUID()}@example.test`;
+        yield* fixture.database.executor
+          .update(user)
+          .set({ email: replacementEmail })
+          .where(eq(user.id, fixture.userId));
 
-      const result = yield* Effect.result(fixture.recovery.verifyEmail({ token: fixture.verificationToken }));
-      expect(Result.isFailure(result)).toBe(true);
-      const users = yield* fixture.database.executor
-        .select({ email: user.email, emailVerified: user.emailVerified })
-        .from(user)
-        .where(eq(user.id, fixture.userId))
-        .limit(1);
-      expect(users.at(0)?.email).toBe(replacementEmail);
-      expect(users.at(0)?.emailVerified).toBe(false);
-    }),
-  ),
+        // The reconciliation hook runs before the ledger token is consumed: the account's address
+        // no longer matches what the token was issued for, so this is now a surfaced,
+        // support-visible outcome rather than a silent INVALID_TOKEN rejection.
+        const outcome = yield* fixture.recovery.verifyEmail({ token: fixture.verificationToken });
+        expect(outcome).toStrictEqual({
+          conflictClass: 'VERIFICATION_LEDGER_SUBJECT_MISMATCH',
+          outcome: 'ACCOUNT_RECOVERY_RECONCILIATION_REQUIRED',
+        });
+        const users = yield* fixture.database.executor
+          .select({ email: user.email, emailVerified: user.emailVerified })
+          .from(user)
+          .where(eq(user.id, fixture.userId))
+          .limit(1);
+        expect(users.at(0)?.email).toBe(replacementEmail);
+        expect(users.at(0)?.emailVerified).toBe(false);
+      }),
+    ),
 );
 
-it.live('rejects PostgreSQL verification after the original subject is recreated', () =>
-  Effect.scoped(
-    Effect.gen(function* postgresVerificationSubjectReuse() {
-      const fixture = yield* makeRecoveryFixture('subject-reuse');
-      yield* registerFixtureVerificationToken(fixture);
-      yield* fixture.database.executor.delete(user).where(eq(user.id, fixture.userId));
-      yield* Effect.tryPromise({
-        catch: (cause) => cause,
-        try: () =>
-          fixture.auth.api.signUpEmail({
-            body: {
-              email: fixture.email,
-              name: 'Replacement recovery fixture',
-              password: fixture.password,
-            },
-            headers: { origin: ORIGIN, 'x-forwarded-for': fixture.ip },
-          }),
-      });
-      const replacementUsers = yield* fixture.database.executor
-        .select({ emailVerified: user.emailVerified, id: user.id })
-        .from(user)
-        .where(eq(user.email, fixture.email))
-        .limit(1);
-      const replacement = yield* Effect.head(Effect.succeed(replacementUsers)).pipe(
-        Effect.mapError(() => new Error('Recovery replacement user was not persisted')),
-      );
-      expect(replacement.id).not.toBe(fixture.userId);
+it.live(
+  'answers reconciliation-required for PostgreSQL verification after the original subject is recreated, leaving the replacement unverified',
+  () =>
+    Effect.scoped(
+      Effect.gen(function* postgresVerificationSubjectReuse() {
+        const fixture = yield* makeRecoveryFixture('subject-reuse');
+        yield* registerFixtureVerificationToken(fixture);
+        yield* fixture.database.executor.delete(user).where(eq(user.id, fixture.userId));
+        yield* Effect.tryPromise({
+          catch: (cause) => cause,
+          try: () =>
+            fixture.auth.api.signUpEmail({
+              body: {
+                email: fixture.email,
+                name: 'Replacement recovery fixture',
+                password: fixture.password,
+              },
+              headers: { origin: ORIGIN, 'x-forwarded-for': fixture.ip },
+            }),
+        });
+        const replacementUsers = yield* fixture.database.executor
+          .select({ emailVerified: user.emailVerified, id: user.id })
+          .from(user)
+          .where(eq(user.email, fixture.email))
+          .limit(1);
+        const replacement = yield* Effect.head(Effect.succeed(replacementUsers)).pipe(
+          Effect.mapError(() => new Error('Recovery replacement user was not persisted')),
+        );
+        expect(replacement.id).not.toBe(fixture.userId);
 
-      const result = yield* Effect.result(fixture.recovery.verifyEmail({ token: fixture.verificationToken }));
-      expect(Result.isFailure(result)).toBe(true);
-      const replacementAfter = yield* fixture.database.executor
-        .select({ emailVerified: user.emailVerified, id: user.id })
-        .from(user)
-        .where(eq(user.id, replacement.id))
-        .limit(1);
-      const replacementState = yield* Effect.head(Effect.succeed(replacementAfter)).pipe(
-        Effect.mapError(() => new Error('Recovery replacement user disappeared during verification')),
-      );
-      expect(replacementState.emailVerified).toBe(false);
-    }),
-  ),
+        // The original subject no longer names any account: TOKEN_SUBJECT_STALE takes priority and
+        // the hook stops the token before it could verify the unrelated replacement account.
+        const outcome = yield* fixture.recovery.verifyEmail({ token: fixture.verificationToken });
+        expect(outcome).toStrictEqual({
+          conflictClass: 'TOKEN_SUBJECT_STALE',
+          outcome: 'ACCOUNT_RECOVERY_RECONCILIATION_REQUIRED',
+        });
+        const replacementAfter = yield* fixture.database.executor
+          .select({ emailVerified: user.emailVerified, id: user.id })
+          .from(user)
+          .where(eq(user.id, replacement.id))
+          .limit(1);
+        const replacementState = yield* Effect.head(Effect.succeed(replacementAfter)).pipe(
+          Effect.mapError(() => new Error('Recovery replacement user disappeared during verification')),
+        );
+        expect(replacementState.emailVerified).toBe(false);
+      }),
+    ),
+);
+
+it.live(
+  'answers reconciliation-required for a PostgreSQL password reset after the identifier is rebound, leaving the account and password untouched and recording exactly one row',
+  () =>
+    Effect.scoped(
+      Effect.gen(function* postgresResetPasswordIdentifierRebound() {
+        const fixture = yield* makeRecoveryFixture('reset-rebind');
+        // Sign-in below must succeed on its own merits: the deployment requires a verified email
+        // before sign-in, so the account is verified up front rather than left in the fixture's
+        // default unverified state.
+        yield* registerFixtureVerificationToken(fixture);
+        yield* fixture.recovery.verifyEmail({ token: fixture.verificationToken });
+        const requested = yield* fixture.provider.requestPasswordReset({ body: { email: fixture.email } });
+        expect(requested.status).toBe(true);
+        const resetToken = yield* Effect.head(Effect.succeed(fixture.resetTokens)).pipe(
+          Effect.mapError(() => new Error('Recovery fixture did not receive a password reset token')),
+        );
+
+        const usersBefore = yield* fixture.database.executor
+          .select({ email: user.email, id: user.id })
+          .from(user)
+          .where(eq(user.id, fixture.userId))
+          .limit(1);
+
+        // Re-bind the identifier: the original account keeps existing under a different address,
+        // and a second account now owns the email the reset token was issued for.
+        const supersededEmail = `${fixture.email}.superseded`;
+        const rebindingUserId = `recon-reset-rebind-${randomUUID()}`;
+        yield* fixture.database.executor
+          .update(user)
+          .set({ email: supersededEmail })
+          .where(eq(user.id, fixture.userId));
+        yield* fixture.database.executor
+          .insert(user)
+          .values({ email: fixture.email, id: rebindingUserId, name: 'Rebound owner' });
+        yield* Effect.addFinalizer(() =>
+          Effect.gen(function* cleanupRebind() {
+            yield* fixture.database.executor.delete(user).where(eq(user.id, rebindingUserId));
+            yield* fixture.database.executor
+              .delete(recoveryReconciliation)
+              .where(eq(recoveryReconciliation.email, fixture.email));
+          }).pipe(Effect.orDie),
+        );
+
+        // The reconciliation hook runs before the provider's reset ever spends the token: a
+        // rebound identifier is terminal, so the original account's password must never change.
+        const outcome = yield* fixture.recovery.resetPassword({
+          newPassword: Redacted.make(REPLACEMENT_PASSWORD),
+          token: Redacted.make(resetToken),
+        });
+        expect(outcome).toStrictEqual({
+          conflictClass: 'IDENTIFIER_REBOUND',
+          outcome: 'ACCOUNT_RECOVERY_RECONCILIATION_REQUIRED',
+        });
+
+        // The account is untouched: no reset ran, so the address changed above is the only change.
+        const usersAfter = yield* fixture.database.executor
+          .select({ email: user.email, id: user.id })
+          .from(user)
+          .where(eq(user.id, fixture.userId))
+          .limit(1);
+        expect(usersAfter).toStrictEqual(usersBefore.map((row) => ({ ...row, email: supersededEmail })));
+        const signIn = yield* Effect.result(
+          Effect.tryPromise({
+            catch: (cause) => cause,
+            try: () =>
+              fixture.auth.api.signInEmail({
+                body: { email: supersededEmail, password: fixture.password },
+                headers: { origin: ORIGIN, 'x-forwarded-for': fixture.ip },
+              }),
+          }),
+        );
+        expect(Result.isSuccess(signIn)).toBe(true);
+
+        // Exactly one durable reconciliation row, for a support operator to act on.
+        const reconciliationRows = yield* fixture.database.executor
+          .select()
+          .from(recoveryReconciliation)
+          .where(eq(recoveryReconciliation.email, fixture.email));
+        expect(reconciliationRows).toHaveLength(1);
+        expect(reconciliationRows[0]?.conflictClass).toBe('IDENTIFIER_REBOUND');
+        expect(reconciliationRows[0]?.operation).toBe('reset-password');
+        expect(reconciliationRows[0]?.providerSubjectId).toBe(fixture.userId);
+        expect(reconciliationRows[0]?.currentProviderSubjectId).toBe(rebindingUserId);
+      }),
+    ),
 );
 
 it.live('spends one PostgreSQL recovery budget across two independent HttpApi runtimes', () =>

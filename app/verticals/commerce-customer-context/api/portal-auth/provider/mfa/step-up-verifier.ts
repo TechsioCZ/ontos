@@ -2,6 +2,7 @@ import { isAPIError } from 'better-auth/api';
 import type { Auth } from 'better-auth';
 import { Duration, Effect, Layer, Option, Schema } from 'effect';
 
+import { withCause } from '../../problems-support.ts';
 import { CommercePortalAuthInstance } from '../auth.ts';
 import { COMMERCE_PORTAL_AUTH_POLICY } from '../config.ts';
 import { CommercePortalAuthStepUpCodeRejected } from '../step-up/code-rejected.ts';
@@ -80,9 +81,6 @@ const safeProviderCause = (cause: unknown): CommercePortalAuthMfaProviderCause =
         statusCode: cause.statusCode,
       }
     : { kind: 'unknown' };
-
-const withCause = <ErrorValue extends object>(error: ErrorValue, cause: unknown): ErrorValue =>
-  Object.defineProperty(error, 'cause', { configurable: true, value: cause });
 
 const unavailable = (operation: string, cause: unknown): CommercePortalAuthStepUpUnavailable =>
   withCause(

@@ -32,8 +32,18 @@ import {
 } from '../../shared/enrollment-contracts.ts';
 import { commerceEnrollmentProofServiceForTransaction } from '../../src/enrollment/attempts/enrollment-proof-service.ts';
 import { commerceEnrollmentAttemptPersistenceForTransaction } from '../../src/enrollment/attempts/attempt-persistence.ts';
+import { commerceEnrollmentAttemptServiceForPersistence } from '../../src/enrollment/attempts/attempt-service.ts';
+import type {
+  CommerceEnrollmentAttemptReconciliationAuthority,
+  CommerceEnrollmentAttemptService,
+} from '../../src/enrollment/attempts/attempt-service.ts';
+import { CommerceEnrollmentAttemptRejected } from '../../src/enrollment/attempts/errors.ts';
+import { commerceEnrollmentCompletionAuthorityForPersistence } from '../../src/enrollment/orchestration/completion.ts';
+import { retailSelfEnrollmentJourneyDefinition } from '../../src/enrollment/journeys/retail-self-enrollment-contracts.ts';
+import type { JourneyTransitionSpec } from '../../src/enrollment/journeys/journey-contracts.ts';
 import type {
   AttemptClaimResult,
+  AttemptClaimedResult,
   CommerceEnrollmentAttemptError,
   CommerceEnrollmentAttemptPersistence,
 } from '../../src/enrollment/attempts/index.ts';
@@ -102,13 +112,14 @@ const claimInput = (
   ownerInvocationId: string,
   transition: string,
   worker: string,
+  owner: string = ownerModuleKey,
 ): ClaimEnrollmentTransitionInput => ({
   accountSubject: subject,
   actorPrincipalId: principalId,
   expectedRevision,
   leaseDurationMs: 1000,
   ownerInvocationId: actionInvocationId(ownerInvocationId),
-  ownerModuleKey,
+  ownerModuleKey: Schema.decodeSync(EnrollmentModuleKeySchema)(owner),
   portalEnrollmentAttemptId,
   requestDigest,
   required: true,
@@ -117,8 +128,43 @@ const claimInput = (
   workerId: enrollmentKey(worker),
 });
 
+/** One claim for a declared journey transition, against the Attempt's own current revision. */
+const journeyClaim = (
+  current: EnrollmentAttemptSnapshot,
+  transition: JourneyTransitionSpec,
+  ownerInvocationId: string,
+): ClaimEnrollmentTransitionInput => ({
+  ...claimInput(
+    current.portalEnrollmentAttemptId,
+    current.revision,
+    ownerInvocationId,
+    transition.transitionKey,
+    `worker-${transition.transitionKey}`,
+    transition.ownerModuleKey,
+  ),
+  leaseDurationMs: 30_000,
+});
+
+/** Recovery is exercised directly against the routine façade here, never through the service. */
+const unusedReconciliationAuthority: CommerceEnrollmentAttemptReconciliationAuthority = {
+  resolve: () =>
+    Effect.fail(
+      new CommerceEnrollmentAttemptRejected({
+        code: 'attempt_unavailable',
+        reason: 'This acceptance drives reconciliation through the durable routine façade',
+        retryable: true,
+      }),
+    ),
+};
+
 const attemptCode = <Value>(effect: Effect.Effect<Value, CommerceEnrollmentAttemptError>) =>
   effect.pipe(Effect.match({ onFailure: (error) => error.code, onSuccess: () => 'unexpected' }));
+
+/** Every scenario below claims a live transition; a fenced claim would be a different scenario. */
+const requireClaimed = (result: AttemptClaimResult): Effect.Effect<AttemptClaimedResult, Error> =>
+  result.outcome === 'INDETERMINATE'
+    ? Effect.fail(new Error('The durable claim fenced an expired owner transition instead of claiming one'))
+    : Effect.succeed(result);
 
 type ClaimRaceResult = { readonly code: string; readonly kind: 'failure' } | { readonly kind: 'success' };
 
@@ -166,6 +212,7 @@ it.live('proves durable Attempt CAS, expiry fencing, governed recovery, and RLS 
         operation: (
           persistence: CommerceEnrollmentAttemptPersistence,
           proof: ReturnType<typeof commerceEnrollmentProofServiceForTransaction>,
+          service: CommerceEnrollmentAttemptService,
         ) => Effect.Effect<Value, Error>,
       ) =>
         runtime.transaction((transaction) =>
@@ -174,7 +221,14 @@ it.live('proves durable Attempt CAS, expiry fencing, governed recovery, and RLS 
             const invoker = scopedRoutineInvokerFromTransaction(makeTransactionExecutor(transaction), scope);
             const persistence = commerceEnrollmentAttemptPersistenceForTransaction(invoker, scope);
             const proof = commerceEnrollmentProofServiceForTransaction(invoker, scope);
-            return yield* operation(persistence, proof);
+            // The deployed Attempt service, including the derived-completion authority: every
+            // recorded outcome concludes the Attempt's state from this journey's declaration.
+            const service = commerceEnrollmentAttemptServiceForPersistence(
+              persistence,
+              unusedReconciliationAuthority,
+              commerceEnrollmentCompletionAuthorityForPersistence(persistence),
+            );
+            return yield* operation(persistence, proof, service);
           }),
         );
 
@@ -192,15 +246,17 @@ it.live('proves durable Attempt CAS, expiry fencing, governed recovery, and RLS 
       expect(replayedCreate.attempt.portalEnrollmentAttemptId).toBe(created.attempt.portalEnrollmentAttemptId);
 
       const firstClaim = yield* inScope((persistence) =>
-        persistence.claim(
-          claimInput(
-            created.attempt.portalEnrollmentAttemptId,
-            created.attempt.revision,
-            'd6100000-0000-4000-8000-000000000003',
-            'provider.account.create',
-            'worker-a',
-          ),
-        ),
+        persistence
+          .claim(
+            claimInput(
+              created.attempt.portalEnrollmentAttemptId,
+              created.attempt.revision,
+              'd6100000-0000-4000-8000-000000000003',
+              'provider.account.create',
+              'worker-a',
+            ),
+          )
+          .pipe(Effect.flatMap(requireClaimed)),
       );
       yield* admin.transaction((transaction) =>
         Effect.gen(function* extendFixtureLease() {
@@ -261,20 +317,20 @@ it.live('proves durable Attempt CAS, expiry fencing, governed recovery, and RLS 
           );
         }),
       );
-      const expiredCode = yield* inScope((persistence) =>
-        attemptCode(
-          persistence.claim(
-            claimInput(
-              created.attempt.portalEnrollmentAttemptId,
-              firstClaim.attempt.revision,
-              'd6100000-0000-4000-8000-000000000004',
-              'provider.account.verify',
-              'worker-b',
-            ),
+      // The fence is reported as a claim outcome, never as a failure: a failure would roll the
+      // very transaction back that wrote it, and the durable assertions below would be unreachable.
+      const expiredClaim = yield* inScope((persistence) =>
+        persistence.claim(
+          claimInput(
+            created.attempt.portalEnrollmentAttemptId,
+            firstClaim.attempt.revision,
+            'd6100000-0000-4000-8000-000000000004',
+            'provider.account.verify',
+            'worker-b',
           ),
         ),
       );
-      expect(expiredCode).toBe('attempt_indeterminate');
+      expect(expiredClaim.outcome).toBe('INDETERMINATE');
       const expiredState = yield* admin.transaction((transaction) =>
         transaction
           .execute<AttemptState>(
@@ -325,21 +381,24 @@ it.live('proves durable Attempt CAS, expiry fencing, governed recovery, and RLS 
         persistence.read({ portalEnrollmentAttemptId: created.attempt.portalEnrollmentAttemptId, tenantId }).pipe(
           Effect.flatMap((current) =>
             attemptCode(
-              persistence.record({
-                accountSubject: subject,
-                actorPrincipalId: principalId,
-                expectedRevision: current.revision,
-                failureCode: enrollmentKey('provider_unknown'),
-                failureReason: 'A stale worker must not resolve an indeterminate provider effect',
-                leaseToken: leaseToken('d6100000-0000-4000-8000-000000000005'),
-                ownerInvocationId: firstClaim.operation.ownerInvocationId,
-                ownerModuleKey,
-                portalEnrollmentAttemptId: created.attempt.portalEnrollmentAttemptId,
-                status: 'FAILED',
-                tenantId,
-                transitionKey: firstClaim.operation.transitionKey,
-                workerId: enrollmentKey('worker-stale'),
-              }),
+              persistence.record(
+                {
+                  accountSubject: subject,
+                  actorPrincipalId: principalId,
+                  expectedRevision: current.revision,
+                  failureCode: enrollmentKey('provider_unknown'),
+                  failureReason: 'A stale worker must not resolve an indeterminate provider effect',
+                  leaseToken: leaseToken('d6100000-0000-4000-8000-000000000005'),
+                  ownerInvocationId: firstClaim.operation.ownerInvocationId,
+                  ownerModuleKey,
+                  portalEnrollmentAttemptId: created.attempt.portalEnrollmentAttemptId,
+                  status: 'FAILED',
+                  tenantId,
+                  transitionKey: firstClaim.operation.transitionKey,
+                  workerId: enrollmentKey('worker-stale'),
+                },
+                'IN_PROGRESS',
+              ),
             ),
           ),
         ),
@@ -352,22 +411,25 @@ it.live('proves durable Attempt CAS, expiry fencing, governed recovery, and RLS 
       const reconciled = yield* inScope((persistence) =>
         persistence.read({ portalEnrollmentAttemptId: created.attempt.portalEnrollmentAttemptId, tenantId }).pipe(
           Effect.flatMap((current) =>
-            persistence.reconcile({
-              accountSubject: subject,
-              actorPrincipalId: principalId,
-              expectedRevision: current.revision,
-              failureCode: enrollmentKey('provider_failed'),
-              failureReason: 'The authoritative owner lookup found no provider account',
-              nextState: 'IN_PROGRESS',
-              outcomeCode: enrollmentKey('provider_reconciled'),
-              ownerInvocationId: firstClaim.operation.ownerInvocationId,
-              ownerModuleKey,
-              portalEnrollmentAttemptId: created.attempt.portalEnrollmentAttemptId,
-              reconciliationRef,
-              status: 'FAILED',
-              tenantId,
-              transitionKey: firstClaim.operation.transitionKey,
-            }),
+            persistence.reconcile(
+              {
+                accountSubject: subject,
+                actorPrincipalId: principalId,
+                expectedRevision: current.revision,
+                failureCode: enrollmentKey('provider_failed'),
+                failureReason: 'The authoritative owner lookup found no provider account',
+                nextState: 'IN_PROGRESS',
+                outcomeCode: enrollmentKey('provider_reconciled'),
+                ownerInvocationId: firstClaim.operation.ownerInvocationId,
+                ownerModuleKey,
+                portalEnrollmentAttemptId: created.attempt.portalEnrollmentAttemptId,
+                reconciliationRef,
+                status: 'FAILED',
+                tenantId,
+                transitionKey: firstClaim.operation.transitionKey,
+              },
+              'IN_PROGRESS',
+            ),
           ),
         ),
       );
@@ -376,15 +438,17 @@ it.live('proves durable Attempt CAS, expiry fencing, governed recovery, and RLS 
       expect(reconciled.operation.reconciliationRef).toBe(reconciliationRef);
 
       const retriedClaim = yield* inScope((persistence) =>
-        persistence.claim(
-          claimInput(
-            created.attempt.portalEnrollmentAttemptId,
-            reconciled.attempt.revision,
-            firstClaim.operation.ownerInvocationId,
-            'provider.account.create',
-            'worker-recovery',
-          ),
-        ),
+        persistence
+          .claim(
+            claimInput(
+              created.attempt.portalEnrollmentAttemptId,
+              reconciled.attempt.revision,
+              firstClaim.operation.ownerInvocationId,
+              'provider.account.create',
+              'worker-recovery',
+            ),
+          )
+          .pipe(Effect.flatMap(requireClaimed)),
       );
       expect(retriedClaim.outcome).toBe('CLAIMED');
       const retryLease = retriedClaim.operation.lease;
@@ -404,13 +468,15 @@ it.live('proves durable Attempt CAS, expiry fencing, governed recovery, and RLS 
       expect(proof.policyVersion).toBe('commerce-enrollment-proof.v1');
       expect(proof.enrollmentAttemptId).toBe(created.attempt.portalEnrollmentAttemptId);
 
-      const recorded = yield* inScope((persistence) =>
-        persistence.record({
+      // Provider account creation is only the journey's first required transition.  Recording it
+      // through the deployed service proves the Attempt cannot present itself as COMPLETE while
+      // the rest of the declared journey has not happened, whatever the owner would like to say.
+      const recorded = yield* inScope((_persistence, _proofService, service) =>
+        service.recordOutcome({
           accountSubject: subject,
           actorPrincipalId: principalId,
           expectedRevision: retriedClaim.attempt.revision,
           leaseToken: retryLease.leaseToken,
-          nextState: 'COMPLETE',
           outcomeCode: enrollmentKey('provider_created'),
           ownerInvocationId: retriedClaim.operation.ownerInvocationId,
           ownerModuleKey,
@@ -423,7 +489,48 @@ it.live('proves durable Attempt CAS, expiry fencing, governed recovery, and RLS 
           workerId: retryLease.workerId,
         }),
       );
-      expect(recorded.attempt.state).toBe('COMPLETE');
+      expect(recorded.attempt.state).toBe('IN_PROGRESS');
+
+      const remainingTransitions = retailSelfEnrollmentJourneyDefinition.requiredTransitions.filter(
+        (transition) => transition.transitionKey !== retriedClaim.operation.transitionKey,
+      );
+      expect(remainingTransitions.length).toBeGreaterThan(0);
+      let journeyState = recorded.attempt.state;
+      for (const [index, transition] of remainingTransitions.entries()) {
+        const ownerInvocation = `d6100000-0000-4000-8000-0000000000${(0x21 + index).toString(16)}`;
+        const claimed = yield* inScope((_persistence, _proofService, service) =>
+          service.read({ portalEnrollmentAttemptId: created.attempt.portalEnrollmentAttemptId, tenantId }).pipe(
+            Effect.flatMap((current) => service.claimTransition(journeyClaim(current, transition, ownerInvocation))),
+            Effect.flatMap(requireClaimed),
+          ),
+        );
+        const { lease } = claimed.operation;
+        if (lease === undefined) {
+          throw new Error('Expected a lease on the claimed journey transition');
+        }
+        const step = yield* inScope((_persistence, _proofService, service) =>
+          service.recordOutcome({
+            accountSubject: subject,
+            actorPrincipalId: principalId,
+            expectedRevision: claimed.attempt.revision,
+            leaseToken: lease.leaseToken,
+            outcomeCode: enrollmentKey('journey_step_recorded'),
+            ownerInvocationId: claimed.operation.ownerInvocationId,
+            ownerModuleKey: claimed.operation.ownerModuleKey,
+            portalEnrollmentAttemptId: created.attempt.portalEnrollmentAttemptId,
+            resultDigest,
+            status: 'SUCCEEDED',
+            tenantId,
+            transitionKey: claimed.operation.transitionKey,
+            workerId: lease.workerId,
+          }),
+        );
+        journeyState = step.attempt.state;
+        expect(journeyState).toBe(index === remainingTransitions.length - 1 ? 'COMPLETE' : 'IN_PROGRESS');
+      }
+      // Only the outcome that proves the journey's last required transition derives COMPLETE.
+      expect(journeyState).toBe('COMPLETE');
+
       const terminalProof = yield* inScope((_persistence, proofService) =>
         proofService
           .verify({

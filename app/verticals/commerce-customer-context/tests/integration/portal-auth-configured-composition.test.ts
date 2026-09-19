@@ -54,6 +54,7 @@ const configuredRuntime = Effect.acquireRelease(
           Layer.mergeAll(Layer.succeed(CommercePortalAuthConfig, configuration), emailDeliveryConfiguration),
         ),
       ),
+      Layer.empty,
     ).createHandler();
   }),
   (runtime) => Effect.promise(async () => await runtime.dispose()),
