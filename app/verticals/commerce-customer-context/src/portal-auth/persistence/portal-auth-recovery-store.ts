@@ -1,19 +1,32 @@
-import { and, eq, inArray, like, lt, sql } from 'drizzle-orm';
+import { and, desc, eq, inArray, like, lt, sql } from 'drizzle-orm';
 import { Crypto, DateTime, Effect, Layer, Option, Redacted, Schema } from 'effect';
 
-import { CommercePortalAuthProviderSubjectIdSchema } from '../../../api/portal-auth/provider/recovery/contracts.ts';
-import type { CommercePortalAuthEmailVerificationTokenRegistration } from '../../../api/portal-auth/provider/recovery/contracts.ts';
+import {
+  CommercePortalAuthProviderSubjectIdSchema,
+  CommercePortalAuthRecoveryReconciliationConflictClassSchema,
+} from '../../../api/portal-auth/provider/recovery/contracts.ts';
+import type {
+  CommercePortalAuthEmailVerificationTokenRegistration,
+  CommercePortalAuthRecoveryReconciliationConflictClass,
+} from '../../../api/portal-auth/provider/recovery/contracts.ts';
 import type { CommercePortalAuthRecoveryRateLimitRule } from '../../../api/portal-auth/rate-limit-service.ts';
 import { CommercePortalAuthRecoveryUnavailable } from '../../../api/portal-auth/provider/recovery/unavailable.ts';
 import { CommercePortalAuthRecoveryStoreService } from '../../../api/portal-auth/provider/recovery/store-service.ts';
-import type { CommercePortalAuthRecoveryStore } from '../../../api/portal-auth/provider/recovery/store-service.ts';
+import type {
+  CommercePortalAuthRecoveryLedgerBinding,
+  CommercePortalAuthRecoveryReconciliationEntry,
+  CommercePortalAuthRecoveryStore,
+} from '../../../api/portal-auth/provider/recovery/store-service.ts';
 import { COMMERCE_PORTAL_AUTH_POLICY } from '../../../api/portal-auth/provider/config.ts';
 import { CommercePortalAuthDatabase } from './portal-auth-database.ts';
 import type { CommercePortalAuthDatabaseExecutor } from './portal-auth-database-types.ts';
-import { rateLimit, user, verification } from './portal-auth-tables.ts';
+import { rateLimit, recoveryReconciliation, user, verification } from './portal-auth-tables.ts';
 
 const EMAIL_VERIFICATION_IDENTIFIER_PREFIX = 'commerce-email-verification:';
 const EMAIL_VERIFICATION_RESERVATION_IDENTIFIER_PREFIX = 'commerce-email-verification-pending:';
+const RESET_IDENTIFIER_PREFIX = 'commerce-password-reset:';
+const DEFAULT_RECONCILIATION_ENTRY_LIMIT = 50;
+const MAX_RECONCILIATION_ENTRY_LIMIT = 200;
 const verificationLedgerEmail = Schema.String.check(Schema.isTrimmed(), Schema.isMinLength(3), Schema.isMaxLength(320));
 const VerificationLedgerRecordSchema = Schema.Struct({
   email: verificationLedgerEmail,
@@ -91,6 +104,8 @@ const emailVerificationIdentifier = (digest: string): string => `${EMAIL_VERIFIC
 
 const emailVerificationReservationIdentifier = (digest: string): string =>
   `${EMAIL_VERIFICATION_RESERVATION_IDENTIFIER_PREFIX}${digest}`;
+
+const passwordResetIdentifier = (digest: string): string => `${RESET_IDENTIFIER_PREFIX}${digest}`;
 
 const digestText = (crypto: Crypto.Crypto, value: string) =>
   crypto.digest('SHA-256', new TextEncoder().encode(value)).pipe(Effect.map(bytesToHex));
@@ -363,10 +378,202 @@ export const makeCommercePortalAuthRecoveryStore = Effect.fn('CommercePortalAuth
       },
     );
 
+    /**
+     * Records the issuance-time email/subject binding for a password-reset token, before delivery.
+     * This ledger is read-only evidence for reconciliation detection: it is never consumed, and its
+     * presence or absence never changes whether Better Auth's own reset flow succeeds.
+     */
+    const registerPasswordResetToken = Effect.fn('CommercePortalAuthRecoveryStore.registerPasswordResetToken')(
+      function* registerPasswordResetTokenEffect(input: {
+        readonly email: string;
+        readonly expiresAt: Date;
+        readonly providerSubjectId: string;
+        readonly token: Redacted.Redacted;
+      }): Effect.fn.Return<boolean, CommercePortalAuthRecoveryUnavailable> {
+        const now = yield* DateTime.nowAsDate;
+        const digest = yield* digestToken(crypto, input.token).pipe(
+          Effect.mapError((cause) => unavailable('password-reset-token-hash', cause)),
+        );
+        const verificationId = yield* crypto.randomUUIDv4.pipe(
+          Effect.mapError((cause) => unavailable('password-reset-token-id', cause)),
+        );
+        const identifier = passwordResetIdentifier(digest);
+        return yield* database
+          .insert(verification)
+          .values({
+            createdAt: now,
+            expiresAt: input.expiresAt,
+            id: verificationId,
+            identifier,
+            updatedAt: now,
+            value: encodeVerificationLedgerRecord(input),
+          })
+          .onConflictDoNothing({ target: verification.id })
+          .pipe(
+            Effect.as(true),
+            Effect.mapError((cause) => unavailable('password-reset-token-register', cause)),
+          );
+      },
+    );
+
+    const peekLedgerByIdentifierPrefix = Effect.fn('CommercePortalAuthRecoveryStore.peekLedgerByIdentifierPrefix')(
+      function* peekLedgerByIdentifierPrefixEffect(
+        prefix: string,
+        token: Redacted.Redacted,
+      ): Effect.fn.Return<
+        Option.Option<CommercePortalAuthRecoveryLedgerBinding>,
+        CommercePortalAuthRecoveryUnavailable
+      > {
+        const digest = yield* digestToken(crypto, token).pipe(
+          Effect.mapError((cause) => unavailable('recovery-ledger-peek-hash', cause)),
+        );
+        const identifier = `${prefix}${digest}`;
+        const rows = yield* database
+          .select({ value: verification.value })
+          .from(verification)
+          .where(eq(verification.identifier, identifier))
+          .pipe(Effect.mapError((cause) => unavailable('recovery-ledger-peek', cause)));
+        // An ambiguous binding (more than one row under this identifier) is unresolved evidence, not
+        // a binding: detection reports nothing rather than guessing which row applies.
+        if (rows.length !== 1) {
+          return Option.none();
+        }
+        const [row] = rows;
+        return row === undefined ? Option.none() : decodeVerificationLedgerRecord(row.value);
+      },
+    );
+
+    /** Non-destructive: reads the email-verification ledger's issuance-time binding for a token. */
+    const peekEmailVerificationLedger = (input: { readonly token: Redacted.Redacted }) =>
+      peekLedgerByIdentifierPrefix(EMAIL_VERIFICATION_IDENTIFIER_PREFIX, input.token);
+
+    /** Non-destructive: reads the password-reset ledger's issuance-time binding for a token. */
+    const peekPasswordResetLedger = (input: { readonly token: Redacted.Redacted }) =>
+      peekLedgerByIdentifierPrefix(RESET_IDENTIFIER_PREFIX, input.token);
+
+    const findAccountSubjectForEmail = Effect.fn('CommercePortalAuthRecoveryStore.findAccountSubjectForEmail')(
+      function* findAccountSubjectForEmailEffect(input: {
+        readonly email: string;
+      }): Effect.fn.Return<Option.Option<string>, CommercePortalAuthRecoveryUnavailable> {
+        const rows = yield* database
+          .select({ id: user.id })
+          .from(user)
+          .where(eq(user.email, normalizeEmail(input.email)))
+          .limit(1)
+          .pipe(Effect.mapError((cause) => unavailable('recovery-account-lookup', cause)));
+        const [row] = rows;
+        return row === undefined ? Option.none() : Option.some(row.id);
+      },
+    );
+
+    const accountExists = Effect.fn('CommercePortalAuthRecoveryStore.accountExists')(
+      function* accountExistsEffect(input: {
+        readonly providerSubjectId: string;
+      }): Effect.fn.Return<boolean, CommercePortalAuthRecoveryUnavailable> {
+        const rows = yield* database
+          .select({ id: user.id })
+          .from(user)
+          .where(eq(user.id, input.providerSubjectId))
+          .limit(1)
+          .pipe(Effect.mapError((cause) => unavailable('recovery-account-exists', cause)));
+        return rows.length === 1;
+      },
+    );
+
+    /**
+     * Writing this row is the only effect detection ever has: it never updates `user`, `session` or
+     * `account`. A duplicate detection of the same conflict dedupes onto the same row (the unique
+     * index over operation/subject/email/conflictClass) rather than growing without bound.
+     */
+    const recordRecoveryReconciliation = Effect.fn('CommercePortalAuthRecoveryStore.recordRecoveryReconciliation')(
+      function* recordRecoveryReconciliationEffect(input: {
+        readonly conflictClass: CommercePortalAuthRecoveryReconciliationConflictClass;
+        readonly currentProviderSubjectId: Option.Option<string>;
+        readonly email: string;
+        readonly operation: string;
+        readonly providerSubjectId: string;
+      }): Effect.fn.Return<void, CommercePortalAuthRecoveryUnavailable> {
+        const now = yield* DateTime.nowAsDate;
+        const id = yield* crypto.randomUUIDv4.pipe(
+          Effect.mapError((cause) => unavailable('recovery-reconciliation-id', cause)),
+        );
+        yield* database
+          .insert(recoveryReconciliation)
+          .values({
+            conflictClass: input.conflictClass,
+            createdAt: now,
+            currentProviderSubjectId: Option.getOrNull(input.currentProviderSubjectId),
+            email: normalizeEmail(input.email),
+            id,
+            operation: input.operation,
+            providerSubjectId: input.providerSubjectId,
+          })
+          // Target the dedupe unique index, not the primary key: `id` is a fresh UUID on every
+          // call and never conflicts, so targeting it would let a repeated detection raise an
+          // unhandled unique-violation on `commerce_auth_recovery_reconciliation_dedupe_uk`
+          // instead of silently no-op'ing.
+          .onConflictDoNothing({
+            target: [
+              recoveryReconciliation.operation,
+              recoveryReconciliation.providerSubjectId,
+              recoveryReconciliation.email,
+              recoveryReconciliation.conflictClass,
+            ],
+          })
+          .pipe(Effect.mapError((cause) => unavailable('recovery-reconciliation-record', cause)));
+      },
+    );
+
+    const getRecoveryReconciliationEntries = Effect.fn(
+      'CommercePortalAuthRecoveryStore.getRecoveryReconciliationEntries',
+    )(function* getRecoveryReconciliationEntriesEffect(input: {
+      readonly limit?: number;
+    }): Effect.fn.Return<
+      readonly CommercePortalAuthRecoveryReconciliationEntry[],
+      CommercePortalAuthRecoveryUnavailable
+    > {
+      const limit = Math.min(
+        Math.max(1, input.limit ?? DEFAULT_RECONCILIATION_ENTRY_LIMIT),
+        MAX_RECONCILIATION_ENTRY_LIMIT,
+      );
+      const rows = yield* database
+        .select()
+        .from(recoveryReconciliation)
+        .orderBy(desc(recoveryReconciliation.createdAt))
+        .limit(limit)
+        .pipe(Effect.mapError((cause) => unavailable('recovery-reconciliation-list', cause)));
+      const entries: CommercePortalAuthRecoveryReconciliationEntry[] = [];
+      for (const row of rows) {
+        const conflictClass = Schema.decodeUnknownOption(CommercePortalAuthRecoveryReconciliationConflictClassSchema)(
+          row.conflictClass,
+        );
+        if (Option.isNone(conflictClass)) {
+          continue;
+        }
+        entries.push({
+          conflictClass: conflictClass.value,
+          createdAt: row.createdAt,
+          currentProviderSubjectId: Option.fromNullOr(row.currentProviderSubjectId),
+          email: row.email,
+          id: row.id,
+          operation: row.operation,
+          providerSubjectId: row.providerSubjectId,
+        });
+      }
+      return entries;
+    });
+
     return {
+      accountExists,
       consumeEmailVerification,
       consumeRateLimitBudget,
+      findAccountSubjectForEmail,
+      getRecoveryReconciliationEntries,
+      peekEmailVerificationLedger,
+      peekPasswordResetLedger,
+      recordRecoveryReconciliation,
       registerEmailVerificationToken,
+      registerPasswordResetToken,
       reserveEmailVerificationSubject,
     };
   },

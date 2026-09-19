@@ -1,4 +1,4 @@
-import type { OperationalScope, ScopedTransactionExecutor, TrustedPrincipalContext } from '@app/core-runtime';
+import type { OperationalScope, TrustedPrincipalContext } from '@app/core-runtime';
 import { Effect, Schema } from 'effect';
 import { expect, it } from 'effect-rstest';
 
@@ -22,13 +22,17 @@ import {
   EnrollmentTenantIdSchema,
   EnrollmentTransitionKeySchema,
 } from '../../shared/enrollment-contracts.ts';
+import type {
+  CommerceEnrollmentOwnerScope,
+  EnrollmentAttemptScopedRoutineInvoker,
+} from '../../src/enrollment/attempts/attempt-persistence.ts';
 import { CommerceEnrollmentAttemptUnavailable } from '../../src/enrollment/attempts/errors.ts';
 import type { CommerceEnrollmentAttemptError } from '../../src/enrollment/attempts/errors.ts';
 import { RECORD_PORTAL_ENROLLMENT_OUTCOME_ACTION_KEY } from '../../src/enrollment/orchestration/prepared-owner-authority.ts';
 import {
   CommerceEnrollmentOwnerTransactionRunner,
   makeCommerceEnrollmentOwnerAttemptStoreForProduction,
-  makeCommerceEnrollmentOwnerTransitionPreparationAuthorityForPorts,
+  commerceEnrollmentOwnerTransitionPreparationAuthorityForPorts,
 } from '../../src/enrollment/orchestration/owner-transition-production.ts';
 import type { CommerceEnrollmentOwnerTransactionRunnerService } from '../../src/enrollment/orchestration/owner-transition-production.ts';
 
@@ -124,8 +128,10 @@ it.effect('opens a fresh transaction runner call for every production Attempt ph
     let transactions = 0;
     const runner: CommerceEnrollmentOwnerTransactionRunnerService = {
       run: <Value>(
-        _scope: OperationalScope,
-        operation: (transaction: ScopedTransactionExecutor) => Effect.Effect<Value, CommerceEnrollmentAttemptError>,
+        _scope: CommerceEnrollmentOwnerScope,
+        operation: (
+          transaction: EnrollmentAttemptScopedRoutineInvoker,
+        ) => Effect.Effect<Value, CommerceEnrollmentAttemptError>,
       ): Effect.Effect<Value, CommerceEnrollmentAttemptError> => {
         void operation;
         transactions += 1;
@@ -158,7 +164,7 @@ it.effect('routes preparation through the matching owner port and fails closed w
       transitionKey,
     } as const;
     let calls = 0;
-    const authority = makeCommerceEnrollmentOwnerTransitionPreparationAuthorityForPorts([
+    const authority = commerceEnrollmentOwnerTransitionPreparationAuthorityForPorts([
       {
         ownerModuleKey,
         prepare: (input) =>
@@ -174,7 +180,7 @@ it.effect('routes preparation through the matching owner port and fails closed w
     expect(prepared.outcome).toBe('prepared');
     expect(calls).toBe(1);
 
-    const missing = makeCommerceEnrollmentOwnerTransitionPreparationAuthorityForPorts([]);
+    const missing = commerceEnrollmentOwnerTransitionPreparationAuthorityForPorts([]);
     const unavailableResult = yield* missing.prepare(binding);
     expect(unavailableResult.outcome).toBe('unavailable');
   }),

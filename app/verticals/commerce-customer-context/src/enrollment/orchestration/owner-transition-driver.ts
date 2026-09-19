@@ -1,6 +1,5 @@
 import type {
   ActivatePrincipalBindingRequest,
-  ChangePrincipalBindingStatusRequest,
   ExternalIdentityClientError,
   ExternalIdentityClientOptions,
   ExternalIdentityClientPort,
@@ -656,10 +655,15 @@ export const makeCommerceEnrollmentOwnerTransitionDriver = (
   return Object.freeze({ execute, reconcile });
 };
 
+/**
+ * Enrollment establishes a Tenant-scoped Principal Auth Binding; it never administers one. The
+ * disable/revoke status transition stays with its own owner Action, so this adapter deliberately
+ * exposes only the two establishing operations and cannot reach
+ * `changePrincipalBindingStatus` even when composition asks for it.
+ */
 type CommerceEnrollmentCoreIdentityDispatchRequest =
   | { readonly operation: 'reserve'; readonly payload: ReservePrincipalBindingRequest }
-  | { readonly operation: 'activate'; readonly payload: ActivatePrincipalBindingRequest }
-  | { readonly operation: 'status'; readonly payload: ChangePrincipalBindingStatusRequest };
+  | { readonly operation: 'activate'; readonly payload: ActivatePrincipalBindingRequest };
 
 type CommerceEnrollmentCoreIdentityReconciliationRequest =
   | { readonly operation: 'read'; readonly payload: ReadPrincipalBindingRequest }
@@ -774,33 +778,17 @@ export const makeCommerceEnrollmentCoreIdentityOwnerEffect = (
         resultReference,
       });
     }
-    if (request.operation === 'activate') {
-      const result = yield* options.client
-        .activatePrincipalBinding(request.payload, mutationOptions)
-        .pipe(Effect.mapError(mapExternalIdentityError));
-      const { outcomeCode, resultReference } = yield* Effect.all(
-        {
-          outcomeCode: decodeCoreKey('core_binding_activated'),
-          resultReference: decodeResourceId(result.authBindingId),
-        },
-        { concurrency: 2 },
-      );
-      return ownerOutcome('SUCCEEDED', { outcomeCode, resultReference });
-    }
     const result = yield* options.client
-      .changePrincipalBindingStatus(request.payload, mutationOptions)
+      .activatePrincipalBinding(request.payload, mutationOptions)
       .pipe(Effect.mapError(mapExternalIdentityError));
     const { outcomeCode, resultReference } = yield* Effect.all(
       {
-        outcomeCode: decodeCoreKey(`core_binding_${request.payload.change.requestedStatus}`),
+        outcomeCode: decodeCoreKey('core_binding_activated'),
         resultReference: decodeResourceId(result.authBindingId),
       },
       { concurrency: 2 },
     );
-    return ownerOutcome('SUCCEEDED', {
-      outcomeCode,
-      resultReference,
-    });
+    return ownerOutcome('SUCCEEDED', { outcomeCode, resultReference });
   });
 
   const reconcile = Effect.fn('CommerceEnrollmentCoreIdentityOwnerEffect.reconcile')(function* reconcileCoreIdentity(

@@ -1,6 +1,5 @@
 import { defineScopedRoutine } from '@app/core-runtime';
 import type {
-  OperationalScope,
   ScopedRoutineDefinition,
   ScopedRoutineInputValues,
   ScopedRoutineInvocationError,
@@ -309,6 +308,16 @@ const AuthorizeAccountCreationInputSchema = Schema.Struct({
   portalEnrollmentAttemptId: EnrollmentAttemptIdSchema,
   tenantId: EnrollmentTenantIdSchema,
 });
+
+/**
+ * The only operation context the SECURITY DEFINER Attempt routines verify. Every Attempt phase is
+ * authorized inside PostgreSQL from the Tenant (and, where present, the Legal Entity) installed as
+ * transaction-local settings; no Actor identity is trusted from the calling process.
+ */
+export interface CommerceEnrollmentOwnerScope {
+  readonly legalEntityId?: string;
+  readonly tenantId: string;
+}
 
 export interface EnrollmentAttemptScopedRoutineInvoker {
   readonly invoke: <
@@ -709,7 +718,7 @@ const mapOperation = (
 const mapRoutineError = (cause: unknown): CommerceEnrollmentAttemptError => unavailable(cause);
 
 const ensureTenant = (
-  scope: OperationalScope,
+  scope: CommerceEnrollmentOwnerScope,
   tenantId: string,
 ): Effect.Effect<void, CommerceEnrollmentAttemptError> =>
   scope.tenantId === tenantId
@@ -1010,7 +1019,7 @@ const authorizeRowsForInput =
 
 export const commerceEnrollmentAttemptPersistenceForTransaction = (
   transaction: EnrollmentAttemptScopedRoutineInvoker,
-  scope: OperationalScope,
+  scope: CommerceEnrollmentOwnerScope,
 ): CommerceEnrollmentAttemptPersistence => {
   const invokeAttempt = <Parameters extends readonly ScopedRoutineParameter[]>(
     routine: ScopedRoutineDefinition<typeof AttemptRoutineRowSchema, Parameters>,

@@ -18,6 +18,7 @@ import {
   PrincipalIdSchema,
   TenantIdSchema,
 } from '../../src/auth/external-identity-contracts.ts';
+import type { AuthBindingStatusSchema } from '../../src/auth/external-identity-contracts.ts';
 import { externalIdentityFailure } from '../../src/auth/external-identity/errors.ts';
 import type { ExternalIdentityFailure } from '../../src/auth/external-identity/errors.ts';
 import type {
@@ -31,7 +32,10 @@ import {
   makeTrustedAuthenticationAdmissionService,
   makeTrustedExternalSubjectAdmissionService,
 } from '../../src/auth/external-identity/verifier.ts';
-import type { TrustedAdmissionObservationService } from '../../src/auth/external-identity/verifier.ts';
+import type {
+  AuthenticationNamespaceRegistryService,
+  TrustedAdmissionObservationService,
+} from '../../src/auth/external-identity/verifier.ts';
 import { externalIdentityRepositoryFromTransaction } from '../../src/auth/external-identity/repository.ts';
 import { loadDatabaseConfig } from '../../src/db/config.ts';
 import { installOperationalScope } from '../../src/db/scoped-transaction.ts';
@@ -104,6 +108,30 @@ const makeScope = (tenantId: string): OperationalScope => {
 };
 
 type ActionDatabase = Parameters<typeof makeActionRuntime>[0];
+
+type BindingStatusTransitionTarget = Exclude<Schema.Schema.Type<typeof AuthBindingStatusSchema>, 'pending'>;
+
+type TestCoreDatabase = Effect.Success<ReturnType<typeof makeTestDatabaseFromPool<typeof coreRelations>>>;
+
+const makeRunPrepare =
+  (
+    database: TestCoreDatabase,
+    scope: OperationalScope,
+    subject: Schema.Schema.Type<typeof ExternalAuthenticationSubjectSchema>,
+    tenantId: Schema.Schema.Type<typeof TenantIdSchema>,
+  ) =>
+  (invocationId: string) =>
+    database.transaction((transaction) =>
+      installOperationalScope(transaction, scope).pipe(
+        Effect.flatMap((scopedTransaction) =>
+          externalIdentityRepositoryFromTransaction(scopedTransaction, { registry }).prepare({
+            invocationId,
+            subject,
+            tenantId,
+          }),
+        ),
+      ),
+    );
 
 const allowedContextResults = (keys: readonly string[]) =>
   Effect.succeed(keys.map((key) => ({ decision: 'allowed' as const, key })));
@@ -282,18 +310,7 @@ it.live('converges concurrent neutral reservations and protects the complete bin
       tenantId,
     });
 
-    const runPrepare = (invocationId: string) =>
-      database.transaction((transaction) =>
-        installOperationalScope(transaction, scope).pipe(
-          Effect.flatMap((scopedTransaction) =>
-            externalIdentityRepositoryFromTransaction(scopedTransaction, { registry }).prepare({
-              invocationId,
-              subject,
-              tenantId,
-            }),
-          ),
-        ),
-      );
+    const runPrepare = makeRunPrepare(database, scope, subject, tenantId);
     const [preparedA, preparedB] = yield* Effect.all([runPrepare(randomUUID()), runPrepare(randomUUID())], {
       concurrency: 2,
     });
@@ -392,7 +409,7 @@ it.live('converges concurrent neutral reservations and protects the complete bin
 
     const runStatus = (
       expectedRevision: number,
-      requestedStatus: 'active' | 'disabled' | 'revoked',
+      requestedStatus: BindingStatusTransitionTarget,
       invocationId: string,
       options?: Readonly<{
         readonly admission?: ExternalIdentityAdmissionContext;
@@ -701,4 +718,302 @@ it.live('runs the generated reservation through ActionRuntime with atomic eviden
       ).toHaveLength(0);
     }),
   ),
+);
+
+it.live(
+  'T13: rejects every changeStatus transition out of revoked and leaves the reservation frozen at revocation',
+  () =>
+    Effect.gen(function* revokedStatusTransitionIntegration() {
+      const { admin: adminPool, runtimePool } = yield* testDatabasePools;
+      const admin = yield* makeTestDatabaseFromPool(adminPool, coreRelations);
+      const database = yield* makeTestDatabaseFromPool(runtimePool, coreRelations);
+      const tenantId = yield* Schema.decodeEffect(TenantIdSchema)(randomUUID());
+      const subject = makeSubject();
+      const scope = makeScope(tenantId);
+      const cleanup = Effect.gen(function* cleanupRevokedStatusFixtures() {
+        yield* admin.delete(principalAuthBindings).where(eq(principalAuthBindings.tenantId, tenantId));
+        yield* admin.delete(principals).where(eq(principals.tenantId, tenantId));
+        yield* admin.delete(tenants).where(eq(tenants.tenantId, tenantId));
+      });
+      yield* Effect.acquireRelease(cleanup, () => cleanup.pipe(Effect.orDie));
+      yield* admin.insert(tenants).values({
+        defaultLocale: 'en',
+        name: 'External identity revoked status integration',
+        slug: `external-identity-revoked-status-${tenantId}`,
+        status: 'active',
+        tenantId,
+      });
+
+      const runPrepare = makeRunPrepare(database, scope, subject, tenantId);
+      const runActivate = (authBindingId: string, expectedRevision: number, invocationId: string) =>
+        database.transaction((transaction) =>
+          installOperationalScope(transaction, scope).pipe(
+            Effect.flatMap((scopedTransaction) =>
+              externalIdentityRepositoryFromTransaction(scopedTransaction, { registry }).activate({
+                authBindingId,
+                expectedRevision,
+                invocationId,
+                tenantId,
+              }),
+            ),
+          ),
+        );
+      const runStatus = (
+        authBindingId: string,
+        expectedRevision: number,
+        requestedStatus: BindingStatusTransitionTarget,
+        invocationId: string,
+        options?: Readonly<{
+          readonly admission?: ExternalIdentityAdmissionContext;
+          readonly reconciliationRef?: string;
+        }>,
+      ) =>
+        database.transaction((transaction) =>
+          installOperationalScope(transaction, scope).pipe(
+            Effect.flatMap((scopedTransaction) => {
+              const baseStatusInput = {
+                authBindingId,
+                expectedRevision,
+                invocationId,
+                reason: `revoked-status-integration ${requestedStatus}`,
+                requestedStatus,
+                tenantId,
+              } satisfies Omit<ChangeExternalIdentityStatusInput, 'admission'>;
+              const statusInput =
+                options?.reconciliationRef === undefined
+                  ? baseStatusInput
+                  : { ...baseStatusInput, reconciliationRef: options.reconciliationRef };
+              const admittedStatusInput =
+                options?.admission === undefined ? statusInput : { ...statusInput, admission: options.admission };
+              return externalIdentityRepositoryFromTransaction(scopedTransaction, { registry }).changeStatus(
+                admittedStatusInput,
+              );
+            }),
+          ),
+        );
+
+      // Drive the same fixture shape as the lifecycle test: pending(1) -> active(2) -> disabled(3) -> active(4) -> revoked(5).
+      const reserved = yield* runPrepare(randomUUID());
+      const activated = yield* runActivate(reserved.authBindingId, 1, randomUUID());
+      const disabled = yield* runStatus(reserved.authBindingId, activated.bindingRevision, 'disabled', randomUUID());
+      expect(disabled.bindingRevision).toBe(3);
+      const reactivationAdmission = yield* makeSubjectAdmission(subject, tenantId);
+      const reactivated = yield* runStatus(reserved.authBindingId, disabled.bindingRevision, 'active', randomUUID(), {
+        admission: reactivationAdmission,
+        reconciliationRef: 'T13-reconciliation',
+      });
+      expect(reactivated.bindingRevision).toBe(4);
+      const revoked = yield* runStatus(reserved.authBindingId, reactivated.bindingRevision, 'revoked', randomUUID());
+      expect(revoked.bindingRevision).toBe(5);
+      expect(revoked.bindingStatus).toBe('revoked');
+
+      const revokedToActive = yield* runStatus(
+        reserved.authBindingId,
+        revoked.bindingRevision,
+        'active',
+        randomUUID(),
+      ).pipe(Effect.flip);
+      expect(Predicate.isTagged(revokedToActive, 'ExternalIdentityFailure')).toBe(true);
+      if (Predicate.isTagged(revokedToActive, 'ExternalIdentityFailure')) {
+        expect(revokedToActive.code).toBe('identity_conflict');
+      }
+
+      const revokedToDisabled = yield* runStatus(
+        reserved.authBindingId,
+        revoked.bindingRevision,
+        'disabled',
+        randomUUID(),
+      ).pipe(Effect.flip);
+      expect(Predicate.isTagged(revokedToDisabled, 'ExternalIdentityFailure')).toBe(true);
+      if (Predicate.isTagged(revokedToDisabled, 'ExternalIdentityFailure')) {
+        expect(revokedToDisabled.code).toBe('identity_conflict');
+      }
+
+      const frozenRow = yield* admin
+        .select({
+          revision: principalAuthBindings.bindingRevision,
+          revokedAt: principalAuthBindings.revokedAt,
+          status: principalAuthBindings.status,
+        })
+        .from(principalAuthBindings)
+        .where(
+          and(
+            eq(principalAuthBindings.tenantId, tenantId),
+            eq(principalAuthBindings.principalAuthBindingId, reserved.authBindingId),
+          ),
+        );
+      expect(frozenRow[0]?.status).toBe('revoked');
+      expect(frozenRow[0]?.revision).toBe(revoked.bindingRevision);
+      expect(frozenRow[0]?.revokedAt).not.toBeNull();
+
+      const freshReservation = yield* runPrepare(randomUUID());
+      expect(freshReservation.outcome).toBe('EXISTING');
+      expect(freshReservation.bindingStatus).toBe('revoked');
+      expect(freshReservation.authBindingId).toBe(reserved.authBindingId);
+      expect(freshReservation.principalId).toBe(reserved.principalId);
+    }),
+);
+
+it.live(
+  'T23: identifier reuse never transfers a binding across a new subject, a revoked subject, or a different namespace',
+  () =>
+    Effect.gen(function* identifierReuseIntegration() {
+      const { admin: adminPool, runtimePool } = yield* testDatabasePools;
+      const admin = yield* makeTestDatabaseFromPool(adminPool, coreRelations);
+      const database = yield* makeTestDatabaseFromPool(runtimePool, coreRelations);
+      const tenantId = yield* Schema.decodeEffect(TenantIdSchema)(randomUUID());
+      const sharedEmail = `reuse-${randomUUID()}@example.test`;
+      const otherNamespaceId = yield* Schema.decodeEffect(
+        AuthenticationNamespaceRegistrationSchema.fields.authenticationNamespaceId,
+      )('test.integration.provider.other');
+      const otherRegistration = yield* Schema.decodeEffect(AuthenticationNamespaceRegistrationSchema)({
+        allowedAudiences: [audience, 'test.integration.reserve'],
+        authenticationNamespaceId: otherNamespaceId,
+        provider: 'test-provider-other',
+        requiresOperationAdmission: false,
+        reservationPrincipalKind: 'human',
+        subjectTypes: ['user'],
+        trustedAttesterPrincipalIds: [attesterPrincipalId],
+      });
+      const reuseRegistry = makeAuthenticationNamespaceRegistry([registration, otherRegistration]);
+      const scope = makeScope(tenantId);
+      const cleanup = Effect.gen(function* cleanupIdentifierReuseFixtures() {
+        yield* admin.delete(principalAuthBindings).where(eq(principalAuthBindings.tenantId, tenantId));
+        yield* admin.delete(principals).where(eq(principals.tenantId, tenantId));
+        yield* admin.delete(tenants).where(eq(tenants.tenantId, tenantId));
+      });
+      yield* Effect.acquireRelease(cleanup, () => cleanup.pipe(Effect.orDie));
+      yield* admin.insert(tenants).values({
+        defaultLocale: 'en',
+        name: 'External identity identifier reuse integration',
+        slug: `external-identity-identifier-reuse-${tenantId}`,
+        status: 'active',
+        tenantId,
+      });
+
+      const runPrepareIn = (
+        activeRegistry: AuthenticationNamespaceRegistryService,
+        subject: Schema.Schema.Type<typeof ExternalAuthenticationSubjectSchema>,
+        invocationId: string,
+        displayName: string,
+      ) =>
+        database.transaction((transaction) =>
+          installOperationalScope(transaction, scope).pipe(
+            Effect.flatMap((scopedTransaction) =>
+              externalIdentityRepositoryFromTransaction(scopedTransaction, { registry: activeRegistry }).prepare({
+                displayName,
+                invocationId,
+                subject,
+                tenantId,
+              }),
+            ),
+          ),
+        );
+      const runActivateIn = (
+        activeRegistry: AuthenticationNamespaceRegistryService,
+        authBindingId: string,
+        expectedRevision: number,
+        invocationId: string,
+      ) =>
+        database.transaction((transaction) =>
+          installOperationalScope(transaction, scope).pipe(
+            Effect.flatMap((scopedTransaction) =>
+              externalIdentityRepositoryFromTransaction(scopedTransaction, { registry: activeRegistry }).activate({
+                authBindingId,
+                expectedRevision,
+                invocationId,
+                tenantId,
+              }),
+            ),
+          ),
+        );
+      const runStatusIn = (
+        activeRegistry: AuthenticationNamespaceRegistryService,
+        authBindingId: string,
+        expectedRevision: number,
+        requestedStatus: BindingStatusTransitionTarget,
+        invocationId: string,
+      ) =>
+        database.transaction((transaction) =>
+          installOperationalScope(transaction, scope).pipe(
+            Effect.flatMap((scopedTransaction) =>
+              externalIdentityRepositoryFromTransaction(scopedTransaction, { registry: activeRegistry }).changeStatus({
+                authBindingId,
+                expectedRevision,
+                invocationId,
+                reason: `identifier-reuse-integration ${requestedStatus}`,
+                requestedStatus,
+                tenantId,
+              }),
+            ),
+          ),
+        );
+
+      // 1. First subject in the primary namespace, carrying the shared email as its display name marker.
+      const firstSubject = makeSubject();
+      const firstReserved = yield* runPrepareIn(registry, firstSubject, randomUUID(), sharedEmail);
+      expect(firstReserved.outcome).toBe('RESERVED');
+
+      // 2. A brand new providerSubjectId in the same namespace/tenant, same email: a NEW binding + NEW Principal.
+      const secondSubject = makeSubject();
+      const secondReserved = yield* runPrepareIn(registry, secondSubject, randomUUID(), sharedEmail);
+      expect(secondReserved.outcome).toBe('RESERVED');
+      expect(secondReserved.authBindingId).not.toBe(firstReserved.authBindingId);
+      expect(secondReserved.principalId).not.toBe(firstReserved.principalId);
+
+      // 3. Revoke the second subject's binding, then reuse the identical providerSubjectId: EXISTING/revoked, never resurrected.
+      const secondActivated = yield* runActivateIn(registry, secondReserved.authBindingId, 1, randomUUID());
+      const secondRevoked = yield* runStatusIn(
+        registry,
+        secondReserved.authBindingId,
+        secondActivated.bindingRevision,
+        'revoked',
+        randomUUID(),
+      );
+      expect(secondRevoked.bindingStatus).toBe('revoked');
+      const secondReusedReservation = yield* runPrepareIn(registry, secondSubject, randomUUID(), sharedEmail);
+      expect(secondReusedReservation.outcome).toBe('EXISTING');
+      expect(secondReusedReservation.bindingStatus).toBe('revoked');
+      expect(secondReusedReservation.authBindingId).toBe(secondReserved.authBindingId);
+      expect(secondReusedReservation.principalId).toBe(secondReserved.principalId);
+
+      // 4. The same providerSubjectId as the FIRST subject, but in a different namespace, resolves to its own pair.
+      const otherNamespaceSubject = yield* Schema.decodeEffect(ExternalAuthenticationSubjectSchema)({
+        authenticationNamespaceId: otherNamespaceId,
+        providerSubjectId: firstSubject.providerSubjectId,
+        subjectType: 'user',
+      });
+      const otherNamespaceReserved = yield* runPrepareIn(
+        reuseRegistry,
+        otherNamespaceSubject,
+        randomUUID(),
+        sharedEmail,
+      );
+      expect(otherNamespaceReserved.outcome).toBe('RESERVED');
+      expect(otherNamespaceReserved.authBindingId).not.toBe(firstReserved.authBindingId);
+      expect(otherNamespaceReserved.principalId).not.toBe(firstReserved.principalId);
+
+      const otherNamespaceReconfirmed = yield* runPrepareIn(
+        reuseRegistry,
+        otherNamespaceSubject,
+        randomUUID(),
+        sharedEmail,
+      );
+      expect(otherNamespaceReconfirmed.outcome).toBe('EXISTING');
+      expect(otherNamespaceReconfirmed.authBindingId).toBe(otherNamespaceReserved.authBindingId);
+      expect(otherNamespaceReconfirmed.principalId).toBe(otherNamespaceReserved.principalId);
+
+      const finalRows = yield* admin
+        .select({
+          authBindingId: principalAuthBindings.principalAuthBindingId,
+          namespace: principalAuthBindings.authenticationNamespaceId,
+          principalId: principalAuthBindings.principalId,
+          providerSubjectId: principalAuthBindings.providerSubjectId,
+        })
+        .from(principalAuthBindings)
+        .where(eq(principalAuthBindings.tenantId, tenantId));
+      expect(finalRows).toHaveLength(3);
+      const distinctPrincipalIds = new Set(finalRows.map((row) => row.principalId));
+      expect(distinctPrincipalIds.size).toBe(3);
+    }),
 );

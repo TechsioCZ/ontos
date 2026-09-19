@@ -22,7 +22,7 @@ import type {
   TrustedAuthenticationAdmissionServiceContract,
 } from '@app/core-runtime/auth/external-identity-admission';
 import { HttpApiBuilder, HttpRouter, HttpServer } from '@modern-js/bff-effect/effect-edge';
-import { Clock, Context, Crypto, DateTime, Effect, Layer, Schema } from 'effect';
+import { Clock, Context, Crypto, DateTime, Effect, Layer, Predicate, Schema } from 'effect';
 import { expect, it } from 'effect-rstest';
 
 import { GatewayIssuer } from '../../api/auth/gateway-issuer.ts';
@@ -498,4 +498,37 @@ it.live('returns a typed unavailable result and permits retry after an indetermi
     expect({ body: secondBody, status: second.status }).toEqual({ body: revokedResult, status: 200 });
     expect(fixture.actionRuntime.invocationCount()).toBe(2);
   }),
+);
+
+it.live(
+  'T24: attributes the governed action invocation to the api_key workload Principal, never the customer subject',
+  () =>
+    Effect.gen(function* externalIdentityWorkloadAttributionScenario() {
+      const readPayloads: Schema.Schema.Type<typeof ReadPrincipalBindingPayloadSchema>[] = [];
+      const fixture = makeServer([actionSuccess(revokedResult)], readPayloads);
+      const server = yield* Effect.acquireRelease(Effect.succeed(fixture.server), (runtimeServer) =>
+        Effect.promise(() => runtimeServer.dispose()),
+      );
+
+      const statusResponse = yield* Effect.promise(() => server.handler(statusRequest(), emptyRequestContext));
+      expect(statusResponse.status).toBe(200);
+      expect(fixture.actionRuntime.principals).toHaveLength(1);
+      const [recordedPrincipal] = fixture.actionRuntime.principals;
+      expect(recordedPrincipal).toEqual({
+        authBindingId: workloadBindingId,
+        authContextRef: 'better-auth-api-key:better-auth-workload-key',
+        authenticationNamespaceId: staffNamespace,
+        authMethod: 'api_key',
+        principalId: workloadPrincipalId,
+        tenantId,
+      });
+      // Never the customer subject the statusRequest binding targets.
+      expect(recordedPrincipal).not.toMatchObject({ principalId: customerPrincipalId });
+      expect(recordedPrincipal).not.toMatchObject({ authenticationNamespaceId: customerNamespace });
+      // No impersonation key present: this is the workload's own identity, not a delegated/impersonated one.
+      expect(
+        Predicate.hasProperty(recordedPrincipal, 'impersonatedByPrincipalId') &&
+          recordedPrincipal['impersonatedByPrincipalId'] !== undefined,
+      ).toBe(false);
+    }),
 );

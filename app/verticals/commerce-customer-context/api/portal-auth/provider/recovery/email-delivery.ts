@@ -9,6 +9,7 @@ import { CommercePortalAuthRecoveryStoreService } from './store-service.ts';
 import { CommercePortalAuthRecoveryUnavailable } from './unavailable.ts';
 
 type VerificationEmailData = Parameters<CommercePortalAuthEmailDelivery['sendVerificationEmail']>[0];
+type ResetPasswordEmailData = Parameters<CommercePortalAuthEmailDelivery['sendResetPassword']>[0];
 
 const verificationEmailDataSchema = Schema.Struct({
   email: Schema.String.check(Schema.isTrimmed(), Schema.isMinLength(3), Schema.isMaxLength(320)),
@@ -84,9 +85,47 @@ export const makeCommercePortalAuthEmailDelivery = Effect.fn('CommercePortalAuth
       );
     }, runEmailDeliveryEffect);
 
+    /**
+     * Records the issuance-time email/subject binding before delivery, exactly as verification
+     * does, so reconciliation detection can later compare it against the provider's current state.
+     * The store method is optional: a store that does not implement it (a hand-written test double,
+     * for example) is skipped rather than failing delivery — this ledger is evidence for detection,
+     * never a gate the normal reset flow depends on.
+     */
+    const sendResetPassword = Effect.fnUntraced(function* sendResetPasswordEffect(
+      data: ResetPasswordEmailData,
+    ): Effect.fn.Return<void, unknown> {
+      const metadata = yield* Schema.decodeEffect(verificationEmailDataSchema)({
+        email: data.user.email,
+        providerSubjectId: data.user.id,
+        token: data.token,
+      }).pipe(Effect.mapError((cause) => unavailable('reset-password-email-validation', cause)));
+      if (store.registerPasswordResetToken !== undefined) {
+        const now = yield* DateTime.nowAsDate;
+        const registered = yield* store.registerPasswordResetToken({
+          email: normalizeEmail(metadata.email),
+          expiresAt: expirationFrom(now),
+          providerSubjectId: metadata.providerSubjectId,
+          token: Redacted.make(metadata.token),
+        });
+        if (!registered) {
+          return yield* unavailable('reset-password-email-registration', 'RESET_BINDING_REJECTED');
+        }
+      }
+      return yield* Effect.tryPromise({
+        catch: (cause) => unavailable('reset-password-email-delivery', cause),
+        try: raw.sendResetPassword.bind(raw, data),
+      }).pipe(
+        Effect.timeoutOrElse({
+          duration: Duration.millis(COMMERCE_PORTAL_AUTH_POLICY.accountCreation.providerCallTimeoutMilliseconds),
+          orElse: () => Effect.fail(unavailable('reset-password-email-delivery-timeout', 'PROVIDER_TIMEOUT')),
+        }),
+      );
+    }, runEmailDeliveryEffect);
+
     return {
       sendOTP: raw.sendOTP,
-      sendResetPassword: raw.sendResetPassword,
+      sendResetPassword,
       sendVerificationEmail,
     };
   },

@@ -20,6 +20,14 @@ export interface CommercePortalAuthAccountLookup {
   readonly existsByEmail: (input: {
     readonly email: string;
   }) => Effect.Effect<boolean, CommercePortalAuthAccountCreationUnavailable>;
+  /**
+   * Confirms that the provider still holds the exact stable subject Commerce already observed.
+   * Owner reconciliation uses this after an unknown provider outcome; it deliberately takes no
+   * email, so account continuity can never be inferred from a login identifier.
+   */
+  readonly existsByProviderSubject: (input: {
+    readonly providerSubjectId: string;
+  }) => Effect.Effect<boolean, CommercePortalAuthAccountCreationUnavailable>;
   readonly existsByProviderSubjectAndEmail: (input: {
     readonly email: string;
     readonly providerSubjectId: string;

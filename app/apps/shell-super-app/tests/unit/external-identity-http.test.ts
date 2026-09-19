@@ -8,7 +8,7 @@ import {
 } from '../../api/auth/external-identity/index.ts';
 import type { ExternalIdentityHttpConfiguration } from '../../api/auth/external-identity/index.ts';
 import type { ExternalIdentityWorkloadAuthorizationError } from '../../api/auth/external-identity/workload-authorization.ts';
-import { Effect, Exit, Layer, Redacted, Schema } from 'effect';
+import { Cause, Effect, Exit, Layer, Option, Predicate, Redacted, Schema } from 'effect';
 import { expect, it } from 'effect-rstest';
 
 import { makeApiKeyServiceDouble, makePrincipalResolverDouble } from '../support/identity-service-doubles.ts';
@@ -177,5 +177,87 @@ it.effect('rejects an absent key before invoking the provider verifier', () =>
     );
     expect(Exit.isFailure(exit)).toBe(true);
     expect(fixture.verificationCalls()).toBe(0);
+  }),
+);
+
+it.effect(
+  'T24: rejects a customer session principal from a workload-authorized grant with ExternalIdentityWorkloadForbiddenError',
+  () =>
+    Effect.gen(function* sessionPrincipalForbiddenScenario() {
+      const fixture = makeAuthorization();
+      // Same principalId/namespace/tenant as the configured workload grant, but authMethod is 'session'
+      // (the shape a customer's browser session principal would carry) rather than 'api_key'.
+      const sessionPrincipal = yield* Schema.decodeEffect(TrustedPrincipalContextSchema)({
+        authBindingId: workloadBindingId,
+        authContextRef: 'session:fixture-customer-session',
+        authenticationNamespaceId: staffNamespace,
+        authMethod: 'session',
+        principalId: workloadPrincipalId,
+        tenantId,
+      });
+      const exit = yield* Effect.exit(
+        fixture.authorize(
+          ExternalIdentityWorkloadAuthorization.pipe(
+            Effect.flatMap((authorization) =>
+              authorization.authorizePrincipal(sessionPrincipal, {
+                operation: 'read',
+                targetAuthenticationNamespaceId: customerNamespace,
+              }),
+            ),
+          ),
+        ),
+      );
+      expect(Exit.isFailure(exit)).toBe(true);
+      const failure = Exit.isFailure(exit) ? Cause.findErrorOption(exit.cause) : Option.none();
+      expect(
+        Option.isSome(failure) && Predicate.isTagged(failure.value, 'ExternalIdentityWorkloadForbiddenError'),
+      ).toBe(true);
+      // The HTTP layer maps this tag to a 403 forbiddenProblem (see mapWorkloadError in api/auth/external-identity/index.ts).
+    }),
+);
+
+it.effect('T24: a valid workload principal is never granted an operation outside its exact configured grant', () =>
+  Effect.gen(function* workloadPrincipalNeverUnionedScenario() {
+    const fixture = makeAuthorization();
+    const workloadPrincipal = yield* Schema.decodeEffect(TrustedPrincipalContextSchema)({
+      authBindingId: workloadBindingId,
+      authContextRef: 'better-auth-api-key:better-auth-workload-key',
+      authenticationNamespaceId: staffNamespace,
+      authMethod: 'api_key',
+      principalId: workloadPrincipalId,
+      tenantId,
+    });
+    const granted = yield* fixture.authorize(
+      ExternalIdentityWorkloadAuthorization.pipe(
+        Effect.flatMap((authorization) =>
+          authorization.authorizePrincipal(workloadPrincipal, {
+            operation: 'read',
+            targetAuthenticationNamespaceId: customerNamespace,
+          }),
+        ),
+      ),
+    );
+    expect(granted).toEqual(workloadPrincipal);
+
+    // A capability never configured as a grant for this workload (e.g. a session-only 'status' operation)
+    // must not be unioned in just because the principal was already authorized for something else.
+    const ungrantedExit = yield* Effect.exit(
+      fixture.authorize(
+        ExternalIdentityWorkloadAuthorization.pipe(
+          Effect.flatMap((authorization) =>
+            authorization.authorizePrincipal(workloadPrincipal, {
+              operation: 'status',
+              targetAuthenticationNamespaceId: customerNamespace,
+            }),
+          ),
+        ),
+      ),
+    );
+    expect(Exit.isFailure(ungrantedExit)).toBe(true);
+    const ungrantedFailure = Exit.isFailure(ungrantedExit) ? Cause.findErrorOption(ungrantedExit.cause) : Option.none();
+    expect(
+      Option.isSome(ungrantedFailure) &&
+        Predicate.isTagged(ungrantedFailure.value, 'ExternalIdentityWorkloadForbiddenError'),
+    ).toBe(true);
   }),
 );

@@ -4,7 +4,7 @@ import { betterAuth } from 'better-auth/minimal';
 import { memoryAdapter } from 'better-auth/adapters/memory';
 import { splitSetCookieHeader, applySetCookies, parseCookies } from 'better-auth/cookies';
 import type { Auth } from 'better-auth';
-import { HttpApi, HttpApiBuilder, HttpRouter, HttpServer } from '@modern-js/bff-effect/effect-edge';
+import { HttpApiBuilder, HttpRouter, HttpServer } from '@modern-js/bff-effect/effect-edge';
 import { Context, Effect, Layer, Option, Redacted, Result, Schema } from 'effect';
 import { expect, it } from 'effect-rstest';
 
@@ -25,7 +25,11 @@ import {
   narrowCommercePortalAuthMfaTrustDevice,
 } from '../../api/portal-auth/provider/mfa/index.ts';
 import type { CommercePortalAuthMfaProviderFailure } from '../../api/portal-auth/provider/mfa/index.ts';
-import { portalAuthMfaApiLive } from '../../api/portal-auth/provider/mfa/http.ts';
+import {
+  CommercePortalAuthMfaFreshnessReaderService,
+  commercePortalAuthMfaFreshnessReaderFromApi,
+  portalAuthMfaStandaloneApiLive,
+} from '../../api/portal-auth/provider/mfa/http.ts';
 import { UNRESOLVED_PORTAL_AUTH_CLIENT_KEY } from '../../api/portal-auth/http-transport.ts';
 import { CommercePortalAuthRecoveryRateLimitService } from '../../api/portal-auth/rate-limit-service.ts';
 import type { CommercePortalAuthRecoveryRateLimit } from '../../api/portal-auth/rate-limit-service.ts';
@@ -415,12 +419,6 @@ it.effect('verifies the exact Better Auth subject and session before invoking MF
   }),
 );
 
-/**
- * The published MFA group, driven as HTTP. `portalAuthMfaApiLive` is declared against the
- * vertical's composed `commerceCustomerContextApi`, so the transport under test is mounted on an
- * API with the same identifier — the group handlers the deployment serves, not a second copy.
- */
-const mfaTransportApi = HttpApi.make('CommerceCustomerContextApi').addHttpApi(CommercePortalAuthMfaApi);
 const mfaRequestContext = Context.makeUnsafe<unknown>(new Map());
 
 const MFA_HTTP_CONFIG: CommercePortalAuthConfigValue = {
@@ -510,14 +508,21 @@ const makeChallengeCookie = (auth: SkipVerificationAuth, email: string) =>
   });
 
 const makeMfaTransport = (
+  auth: Pick<Auth, 'api'>,
   service: Effect.Success<ReturnType<typeof makeCommercePortalAuthMfaService>>,
   budget: CommercePortalAuthRecoveryRateLimit = makeRecordingMfaBudget().budget,
 ) =>
   Effect.acquireRelease(
     Effect.sync(() =>
       HttpRouter.toWebHandler(
-        HttpApiBuilder.layer(mfaTransportApi).pipe(
-          Layer.provide(portalAuthMfaApiLive),
+        HttpApiBuilder.layer(CommercePortalAuthMfaApi).pipe(
+          Layer.provide(portalAuthMfaStandaloneApiLive),
+          Layer.provide(
+            Layer.succeed(
+              CommercePortalAuthMfaFreshnessReaderService,
+              commercePortalAuthMfaFreshnessReaderFromApi(auth.api),
+            ),
+          ),
           Layer.provide(Layer.succeed(CommercePortalAuthMfaService, service)),
           Layer.provide(Layer.succeed(CommercePortalAuthConfig, MFA_HTTP_CONFIG)),
           Layer.provide(Layer.succeed(CommercePortalAuthRecoveryRateLimitService, budget)),
@@ -566,7 +571,7 @@ it.effect('drives the published MFA group over HTTP and forwards provider cookie
         Effect.provideService(CommercePortalAuthMfaProviderService, makeCommercePortalAuthMfaProvider(auth.api)),
       );
       const recorded = makeRecordingMfaBudget();
-      const app = yield* makeMfaTransport(service, recorded.budget);
+      const app = yield* makeMfaTransport(auth, service, recorded.budget);
       const send = (route: string, body: Schema.Json, origin?: string) =>
         Effect.promise(() =>
           app.handler(
@@ -635,7 +640,7 @@ it.effect('refuses an MFA request that names no challenge without spending any b
         Effect.provideService(CommercePortalAuthMfaProviderService, makeCommercePortalAuthMfaProvider(auth.api)),
       );
       const recorded = makeRecordingMfaBudget();
-      const app = yield* makeMfaTransport(service, recorded.budget);
+      const app = yield* makeMfaTransport(auth, service, recorded.budget);
       const response = yield* Effect.promise(() =>
         app.handler(
           new Request(`${ORIGIN}${BASE_PATH}/two-factor/send-otp`, {
@@ -666,7 +671,7 @@ it.effect('bounds MFA routes on the owner budget and keeps every refusal problem
         Effect.provideService(CommercePortalAuthMfaProviderService, makeCommercePortalAuthMfaProvider(auth.api)),
       );
       const recorded = makeRecordingMfaBudget();
-      const app = yield* makeMfaTransport(service, recorded.budget);
+      const app = yield* makeMfaTransport(auth, service, recorded.budget);
       const send = (contentType: string, cookie: string = challengeCookie) =>
         Effect.promise(() =>
           app.handler(

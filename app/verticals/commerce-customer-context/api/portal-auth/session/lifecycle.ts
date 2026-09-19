@@ -4,6 +4,13 @@ import {
   COMMERCE_AUTHENTICATION_NAMESPACE_ID,
   ExternalUserSubjectSchema,
 } from '../../../shared/portal-auth-contracts.ts';
+import { commercePortalAuthSessionOutcomeClass } from '../../../src/portal-auth/audit/audit-mapping.ts';
+import {
+  CommercePortalAuthAudit,
+  recordCommercePortalAuthAudit,
+  unauditedCommercePortalAuthRecorder,
+} from '../../../src/portal-auth/audit/audit-service.ts';
+import type { CommercePortalAuthAuditRecorder } from '../../../src/portal-auth/audit/audit-service.ts';
 import { COMMERCE_PORTAL_AUTH_POLICY } from '../provider/config.ts';
 import { encodeCommerceSessionReference, parseCommerceSessionReference } from '../provider/session-reference.ts';
 import type { CommercePortalAuthSessionReferenceError } from '../provider/session-reference.ts';
@@ -215,9 +222,12 @@ export const makeCommercePortalAuthSessionLifecycle = (
     store: CommercePortalAuthSessionStore,
     provider: CommercePortalAuthSessionProvider,
     clock?: CommercePortalAuthSessionClock,
+    audit?: CommercePortalAuthAuditRecorder,
   ]
 ): CommercePortalAuthSessionLifecycleService => {
-  const [store, provider, clock = systemClock] = dependencies;
+  const [store, provider, clock = systemClock, audit = unauditedCommercePortalAuthRecorder] = dependencies;
+  const emitAudit = (event: Parameters<CommercePortalAuthAuditRecorder['record']>[0]): Effect.Effect<void> =>
+    recordCommercePortalAuthAudit(audit, event);
   const admitProviderSession = Effect.fn('CommercePortalAuthSessionLifecycle.admitProviderSession')(
     function* admitProviderSession(
       token: string,
@@ -322,7 +332,7 @@ export const makeCommercePortalAuthSessionLifecycle = (
     };
   });
 
-  const revoke = Effect.fn('CommercePortalAuthSessionLifecycle.revoke')(function* revoke(
+  const revokeSession = Effect.fn('CommercePortalAuthSessionLifecycle.revokeSession')(function* revokeSession(
     input: Schema.Codec.Encoded<typeof CommercePortalAuthSessionReferenceInputSchema>,
   ): Effect.fn.Return<
     Extract<CommercePortalAuthSessionOutcome, { readonly outcome: 'SESSION_REVOKED' }>,
@@ -344,16 +354,44 @@ export const makeCommercePortalAuthSessionLifecycle = (
     return { existed, outcome: 'SESSION_REVOKED', sessionRef: request.sessionRef };
   });
 
+  /** Owner-initiated revocation. Sign-out is the customer's own act and is audited separately. */
+  const revoke = Effect.fn('CommercePortalAuthSessionLifecycle.revoke')(function* revoke(
+    input: Schema.Codec.Encoded<typeof CommercePortalAuthSessionReferenceInputSchema>,
+  ): Effect.fn.Return<
+    Extract<CommercePortalAuthSessionOutcome, { readonly outcome: 'SESSION_REVOKED' }>,
+    CommercePortalAuthSessionFailure
+  > {
+    const result = yield* revokeSession(input);
+    yield* emitAudit({
+      eventType: 'commerce.portal-auth.session-revoked.v1',
+      occurredAt: clock.now(),
+      operation: 'revoke',
+      outcome: 'success',
+      providerSubjectId: input.expectedProviderSubjectId,
+      sessionRef: result.sessionRef,
+    });
+    return result;
+  });
+
   const signOut = Effect.fn('CommercePortalAuthSessionLifecycle.signOut')(function* signOut(
     input: Schema.Codec.Encoded<typeof CommercePortalAuthSessionReferenceInputSchema>,
   ): Effect.fn.Return<
     Extract<CommercePortalAuthSessionOutcome, { readonly outcome: 'SESSION_REVOKED' }>,
     CommercePortalAuthSessionFailure
   > {
-    return yield* revoke(input);
+    const result = yield* revokeSession(input);
+    yield* emitAudit({
+      eventType: 'commerce.portal-auth.session-signed-out.v1',
+      occurredAt: clock.now(),
+      operation: 'sign-out',
+      outcome: 'success',
+      providerSubjectId: input.expectedProviderSubjectId,
+      sessionRef: result.sessionRef,
+    });
+    return result;
   });
 
-  const refresh = Effect.fn('CommercePortalAuthSessionLifecycle.refresh')(function* refresh(
+  const refreshSession = Effect.fn('CommercePortalAuthSessionLifecycle.refreshSession')(function* refreshSession(
     input: Schema.Codec.Encoded<typeof CommercePortalAuthSessionReferenceInputSchema>,
   ): Effect.fn.Return<CommercePortalAuthSessionOutcome, CommercePortalAuthSessionFailure> {
     const request = yield* Schema.decodeEffect(CommercePortalAuthSessionReferenceInputSchema)(input).pipe(
@@ -418,6 +456,22 @@ export const makeCommercePortalAuthSessionLifecycle = (
     };
   });
 
+  /** Every refresh answer is evidence: a renewal, a disabled account, an expiry and a revocation. */
+  const refresh = Effect.fn('CommercePortalAuthSessionLifecycle.refresh')(function* refresh(
+    input: Schema.Codec.Encoded<typeof CommercePortalAuthSessionReferenceInputSchema>,
+  ): Effect.fn.Return<CommercePortalAuthSessionOutcome, CommercePortalAuthSessionFailure> {
+    const result = yield* refreshSession(input);
+    yield* emitAudit({
+      eventType: 'commerce.portal-auth.session-refreshed.v1',
+      occurredAt: clock.now(),
+      operation: 'refresh',
+      outcome: commercePortalAuthSessionOutcomeClass(result.outcome),
+      providerSubjectId: result.outcome === 'ACCOUNT_DISABLED' ? result.providerSubjectId : undefined,
+      sessionRef: input.sessionRef,
+    });
+    return result;
+  });
+
   const revokeAll = Effect.fn('CommercePortalAuthSessionLifecycle.revokeAll')(function* revokeAll(
     input: Schema.Codec.Encoded<typeof CommercePortalAuthAccountSubjectInputSchema>,
   ): Effect.fn.Return<number, CommercePortalAuthSessionFailure> {
@@ -437,6 +491,13 @@ export const makeCommercePortalAuthSessionLifecycle = (
       Effect.mapError((cause) => invalidRequest(cause)),
     );
     const changed = yield* store.disableAccount(request.providerSubjectId);
+    yield* emitAudit({
+      eventType: 'commerce.portal-auth.account-disabled.v1',
+      occurredAt: clock.now(),
+      operation: 'disable-account',
+      outcome: changed ? 'account_disabled' : 'authentication_failed',
+      providerSubjectId: request.providerSubjectId,
+    });
     return changed
       ? { outcome: 'ACCOUNT_DISABLED', providerSubjectId: request.providerSubjectId }
       : { outcome: 'AUTHENTICATION_FAILED' };
@@ -578,6 +639,7 @@ export const CommercePortalAuthSessionLifecycleLive = Layer.effect(
   Effect.gen(function* makeLifecycleLive() {
     const store = yield* CommercePortalAuthSessionStoreService;
     const provider = yield* CommercePortalAuthSessionProviderService;
-    return makeCommercePortalAuthSessionLifecycle(store, provider);
+    const audit = yield* CommercePortalAuthAudit;
+    return makeCommercePortalAuthSessionLifecycle(store, provider, undefined, audit);
   }),
 );

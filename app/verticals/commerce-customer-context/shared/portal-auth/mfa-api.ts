@@ -10,6 +10,18 @@ import { HttpApiMiddleware } from 'effect/unstable/httpapi';
 const TrustDeviceSchema = Schema.optionalKey(Schema.Boolean);
 const VerificationCodeSchema = Schema.String.check(Schema.isTrimmed(), Schema.isMinLength(1), Schema.isMaxLength(32));
 const BackupCodeSchema = Schema.String.check(Schema.isTrimmed(), Schema.isMinLength(1), Schema.isMaxLength(128));
+/**
+ * The public boundary bounds `password` loosely only (never Redacted at rest here: it crosses the
+ * wire as a plain string exactly like `session-api.ts`'s sign-in password). The owner's stricter,
+ * policy-bound schema in `provider/mfa/contracts.ts` re-decodes it inside the handler before any
+ * Better Auth call, so a caller-supplied length outside policy still surfaces as `invalid_request`
+ * rather than a provider-level rejection.
+ */
+const MfaPasswordFieldSchema = Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(4096));
+const MfaIssuerFieldSchema = Schema.optionalKey(
+  Schema.String.check(Schema.isTrimmed(), Schema.isMinLength(1), Schema.isMaxLength(256)),
+);
+const MfaMethodFieldSchema = Schema.optionalKey(Schema.Literals(['otp', 'totp']));
 
 /** Request payloads are closed at the public boundary; excess fields are a decoding failure. */
 const CommercePortalAuthMfaSendOtpBodySchema = Schema.Struct({
@@ -39,10 +51,43 @@ export const CommercePortalAuthMfaVerifyBackupCodeBodySchema = Schema.Struct({
   trustDevice: TrustDeviceSchema,
 }).annotate({ parseOptions: { onExcessProperty: 'error' } });
 
+/**
+ * Administrative bodies. `enable`/`disable`/`regenerate-backup-codes`/`totp-uri` all reverify the
+ * caller's password; `confirm-enable` carries only the first TOTP code, matching Better Auth's own
+ * `verifyTOTP` payload for its non-sign-in (activation) branch.
+ *
+ * Module-private: only this file's own `HttpApiEndpoint` payloads reference these directly. Every
+ * other consumer (`provider/mfa/http.ts`, `provider/mfa/contracts.ts`) imports the exported
+ * `CommercePortalAuthMfa*Body` *types* below instead, which `typeof ...Schema.Type` can still derive
+ * from an unexported const in the same module.
+ */
+const CommercePortalAuthMfaEnableBodySchema = Schema.Struct({
+  issuer: MfaIssuerFieldSchema,
+  method: MfaMethodFieldSchema,
+  password: MfaPasswordFieldSchema,
+}).annotate({ parseOptions: { onExcessProperty: 'error' } });
+
+const CommercePortalAuthMfaConfirmEnableBodySchema = Schema.Struct({
+  code: VerificationCodeSchema,
+}).annotate({ parseOptions: { onExcessProperty: 'error' } });
+
+const CommercePortalAuthMfaDisableBodySchema = Schema.Struct({
+  password: MfaPasswordFieldSchema,
+}).annotate({ parseOptions: { onExcessProperty: 'error' } });
+
+/** Shared by `regenerate-backup-codes` and `totp-uri`: both reverify the password alone. */
+const CommercePortalAuthMfaPasswordBodySchema = Schema.Struct({
+  password: MfaPasswordFieldSchema,
+}).annotate({ parseOptions: { onExcessProperty: 'error' } });
+
 export type CommercePortalAuthMfaSendOtpBody = typeof CommercePortalAuthMfaSendOtpBodySchema.Type;
 export type CommercePortalAuthMfaVerifyTotpBody = typeof CommercePortalAuthMfaVerifyTotpBodySchema.Type;
 export type CommercePortalAuthMfaVerifyOtpBody = typeof CommercePortalAuthMfaVerifyOtpBodySchema.Type;
 export type CommercePortalAuthMfaVerifyBackupCodeBody = typeof CommercePortalAuthMfaVerifyBackupCodeBodySchema.Type;
+export type CommercePortalAuthMfaEnableBody = typeof CommercePortalAuthMfaEnableBodySchema.Type;
+export type CommercePortalAuthMfaConfirmEnableBody = typeof CommercePortalAuthMfaConfirmEnableBodySchema.Type;
+export type CommercePortalAuthMfaDisableBody = typeof CommercePortalAuthMfaDisableBodySchema.Type;
+export type CommercePortalAuthMfaPasswordBody = typeof CommercePortalAuthMfaPasswordBodySchema.Type;
 
 export const CommercePortalAuthMfaStatusResultSchema = Schema.Struct({
   status: Schema.Boolean,
@@ -56,6 +101,33 @@ export const CommercePortalAuthMfaVerificationResultSchema = Schema.Struct({
 export type CommercePortalAuthMfaStatusResult = typeof CommercePortalAuthMfaStatusResultSchema.Type;
 export type CommercePortalAuthMfaVerificationResult = typeof CommercePortalAuthMfaVerificationResultSchema.Type;
 
+/**
+ * Enrollment results. TOTP enrollment returns the backup codes and the `otpauth://` URI once, at
+ * activation; neither value is ever logged (see `provider/mfa/http.ts`) or repeated by any other
+ * response on this surface.
+ */
+export const CommercePortalAuthMfaEnableResultSchema = Schema.Union([
+  Schema.Struct({ method: Schema.Literal('otp') }),
+  Schema.Struct({
+    backupCodes: Schema.Array(Schema.String),
+    method: Schema.Literal('totp'),
+    totpURI: Schema.String,
+  }),
+]).annotate({ parseOptions: { onExcessProperty: 'error' } });
+
+export const CommercePortalAuthMfaBackupCodesResultSchema = Schema.Struct({
+  backupCodes: Schema.Array(Schema.String),
+  status: Schema.Boolean,
+}).annotate({ parseOptions: { onExcessProperty: 'error' } });
+
+export const CommercePortalAuthMfaTotpUriResultSchema = Schema.Struct({
+  totpURI: Schema.String,
+}).annotate({ parseOptions: { onExcessProperty: 'error' } });
+
+export type CommercePortalAuthMfaEnableResult = typeof CommercePortalAuthMfaEnableResultSchema.Type;
+export type CommercePortalAuthMfaBackupCodesResult = typeof CommercePortalAuthMfaBackupCodesResultSchema.Type;
+export type CommercePortalAuthMfaTotpUriResult = typeof CommercePortalAuthMfaTotpUriResultSchema.Type;
+
 export const CommercePortalAuthMfaInvalidProblemSchema = makeProblemDetailsSchema(
   'CommercePortalAuthMfaInvalidProblem',
   400,
@@ -67,7 +139,7 @@ export const CommercePortalAuthMfaAuthenticationProblemSchema = makeProblemDetai
   'CommercePortalAuthMfaAuthenticationProblem',
   401,
   {
-    code: Schema.Literals(['mfa_challenge_expired', 'mfa_rejected']),
+    code: Schema.Literals(['mfa_authentication_not_fresh', 'mfa_challenge_expired', 'mfa_rejected']),
   },
 );
 export const CommercePortalAuthMfaForbiddenProblemSchema = makeProblemDetailsSchema(
@@ -151,6 +223,41 @@ const commercePortalAuthMfaGroupDefinition = HttpApiGroup.make('portalAuthMfa')
       error: mfaErrors,
       payload: CommercePortalAuthMfaVerifyBackupCodeBodySchema,
       success: CommercePortalAuthMfaVerificationResultSchema,
+    }),
+  )
+  .add(
+    HttpApiEndpoint.post('enable', '/api/portal-auth/two-factor/enable', {
+      error: mfaErrors,
+      payload: CommercePortalAuthMfaEnableBodySchema,
+      success: CommercePortalAuthMfaEnableResultSchema,
+    }),
+  )
+  .add(
+    HttpApiEndpoint.post('confirmEnable', '/api/portal-auth/two-factor/confirm-enable', {
+      error: mfaErrors,
+      payload: CommercePortalAuthMfaConfirmEnableBodySchema,
+      success: CommercePortalAuthMfaVerificationResultSchema,
+    }),
+  )
+  .add(
+    HttpApiEndpoint.post('disable', '/api/portal-auth/two-factor/disable', {
+      error: mfaErrors,
+      payload: CommercePortalAuthMfaDisableBodySchema,
+      success: CommercePortalAuthMfaStatusResultSchema,
+    }),
+  )
+  .add(
+    HttpApiEndpoint.post('regenerateBackupCodes', '/api/portal-auth/two-factor/regenerate-backup-codes', {
+      error: mfaErrors,
+      payload: CommercePortalAuthMfaPasswordBodySchema,
+      success: CommercePortalAuthMfaBackupCodesResultSchema,
+    }),
+  )
+  .add(
+    HttpApiEndpoint.post('totpUri', '/api/portal-auth/two-factor/totp-uri', {
+      error: mfaErrors,
+      payload: CommercePortalAuthMfaPasswordBodySchema,
+      success: CommercePortalAuthMfaTotpUriResultSchema,
     }),
   )
   .middleware(CommercePortalAuthMfaSchemaErrorMiddleware);

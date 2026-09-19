@@ -1,6 +1,8 @@
 import { defineRelations, sql } from 'drizzle-orm';
 import { bigint, boolean, index, integer, pgSchema, smallint, text, timestamp, uniqueIndex } from 'drizzle-orm/pg-core';
 
+import { portalAuthAuditEvent } from '../audit/audit-tables.ts';
+
 /** The Commerce portal owns this schema and migration history independently of Core and Staff. */
 export const COMMERCE_PORTAL_AUTH_SCHEMA_NAME = 'commerce_auth';
 export const COMMERCE_PORTAL_AUTH_TABLE_INVENTORY = [
@@ -12,6 +14,8 @@ export const COMMERCE_PORTAL_AUTH_TABLE_INVENTORY = [
   'twoFactor',
   'stepUpChallenge',
   'stepUpChallengeAttempt',
+  'recoveryReconciliation',
+  'portalAuthAuditEvent',
 ] as const;
 
 export const commercePortalAuthSchema = pgSchema(COMMERCE_PORTAL_AUTH_SCHEMA_NAME);
@@ -151,9 +155,40 @@ export const stepUpChallengeAttempt = commercePortalAuthSchema.table(
   (table) => [index('commerce_auth_step_up_attempt_challenge_id_hash_idx').on(table.challengeIdHash)],
 );
 
+/**
+ * A support-visible, append-mostly audit of detected recovery evidence conflicts. Recording a row
+ * here is the only effect detection ever has: it never updates `user`, `session` or `account`, and
+ * it never grants access. `providerSubjectId` is unconstrained text (no FK to `user.id`), matching
+ * `stepUpChallenge.providerSubjectId` — the whole point of this table is that the subject may no
+ * longer name any account row at all (`TOKEN_SUBJECT_STALE`).
+ */
+export const recoveryReconciliation = commercePortalAuthSchema.table(
+  'recovery_reconciliation',
+  {
+    conflictClass: text('conflict_class').notNull(),
+    createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
+    // The account that currently owns the identifier, when one does; null names no current owner.
+    currentProviderSubjectId: text('current_provider_subject_id'),
+    email: text('email').notNull(),
+    id: text('id').primaryKey(),
+    operation: text('operation').notNull(),
+    providerSubjectId: text('provider_subject_id').notNull(),
+  },
+  (table) => [
+    index('commerce_auth_recovery_reconciliation_email_idx').on(table.email),
+    uniqueIndex('commerce_auth_recovery_reconciliation_dedupe_uk').on(
+      table.operation,
+      table.providerSubjectId,
+      table.email,
+      table.conflictClass,
+    ),
+  ],
+);
+
 export const commercePortalAuthDatabaseSchema = {
   account,
   rateLimit,
+  recoveryReconciliation,
   session,
   stepUpChallenge,
   stepUpChallengeAttempt,
@@ -210,4 +245,6 @@ export const COMMERCE_PORTAL_AUTH_TABLES = [
   twoFactor,
   stepUpChallenge,
   stepUpChallengeAttempt,
+  recoveryReconciliation,
+  portalAuthAuditEvent,
 ] as const;

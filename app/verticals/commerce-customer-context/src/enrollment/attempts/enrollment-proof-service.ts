@@ -1,4 +1,3 @@
-import type { OperationalScope } from '@app/core-runtime';
 import { DateTime, Effect, Schema } from 'effect';
 
 import {
@@ -13,7 +12,7 @@ import {
 } from '../../../shared/enrollment-contracts.ts';
 import type { CommercePortalAccountSubject } from '../../../shared/enrollment-contracts.ts';
 import type { ExternalUserSubject } from '../../../shared/portal-auth-contracts.ts';
-import type { EnrollmentAttemptScopedRoutineInvoker } from './attempt-persistence.ts';
+import type { CommerceEnrollmentOwnerScope, EnrollmentAttemptScopedRoutineInvoker } from './attempt-persistence.ts';
 import { commerceEnrollmentAttemptPersistenceForTransaction } from './attempt-persistence.ts';
 import { CommerceEnrollmentAttemptUnavailable } from './errors.ts';
 import type { CommerceEnrollmentAttemptError } from './errors.ts';
@@ -49,7 +48,7 @@ const subjectMatches = (
  */
 export const commerceEnrollmentProofServiceForTransaction = (
   transaction: EnrollmentAttemptScopedRoutineInvoker,
-  scope: OperationalScope,
+  scope: CommerceEnrollmentOwnerScope,
 ): CommerceEnrollmentProofService['Service'] => {
   const persistence = commerceEnrollmentAttemptPersistenceForTransaction(transaction, scope);
   return {
