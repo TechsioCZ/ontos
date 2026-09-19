@@ -36,6 +36,7 @@ import {
 } from '../../api/portal-auth/session/lifecycle.ts';
 import { makeCommercePortalAuthSessionStore } from '../../src/portal-auth/persistence/portal-auth-session-store.ts';
 import { CommercePortalAuthSessionApi } from '../../shared/portal-auth/session-api.ts';
+import { unauditedCommercePortalAuthRecorder } from '../../src/portal-auth/audit/audit.ts';
 
 const ORIGIN = 'http://localhost:3020';
 const requestContext = Context.makeUnsafe<unknown>(new Map());
@@ -383,7 +384,11 @@ const makeProviderFixture = Effect.fn('CommercePortalAuthProviderIntegration.mak
       }),
   });
   const store = makeCommercePortalAuthSessionStore(database.executor);
-  const lifecycle = makeCommercePortalAuthSessionLifecycle(store, makeCommercePortalAuthSessionProvider(auth));
+  const lifecycle = makeCommercePortalAuthSessionLifecycle(
+    store,
+    makeCommercePortalAuthSessionProvider(auth),
+    unauditedCommercePortalAuthRecorder,
+  );
   const app = yield* Effect.acquireRelease(
     Effect.sync(() =>
       HttpRouter.toWebHandler(

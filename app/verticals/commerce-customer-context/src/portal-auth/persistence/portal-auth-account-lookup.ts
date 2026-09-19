@@ -39,13 +39,15 @@ const makeCommercePortalAuthAccountLookup = (
 
   return {
     existsByEmail: ({ email }) => existsWhere(eq(user.email, email)),
-    existsByProviderSubject: ({ providerSubjectId }) => existsWhere(eq(user.id, providerSubjectId)),
-    existsByProviderSubjectAndEmail: ({ email, providerSubjectId }) =>
-      existsWhere(and(eq(user.id, providerSubjectId), eq(user.email, email))),
+    existsByProviderSubject: ({ email, providerSubjectId }) =>
+      existsWhere(
+        email === undefined
+          ? eq(user.id, providerSubjectId)
+          : and(eq(user.id, providerSubjectId), eq(user.email, email)),
+      ),
   };
 };
 
-/** Compose the provider's native account directory through the owner-local Context service. */
 export const CommercePortalAuthAccountLookupLive = Layer.effect(
   CommercePortalAuthAccountLookupService,
   Effect.gen(function* makeCommercePortalAuthAccountLookupLayer() {

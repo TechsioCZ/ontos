@@ -1,6 +1,7 @@
-import { CommercePortalAuthRawEmailDeliveryService } from '../raw-email-delivery-service.ts';
 import { DateTime, Duration, Effect, Layer, Redacted, Schema } from 'effect';
 
+import { withCause } from '../../problems-support.ts';
+import { CommercePortalAuthRawEmailDeliveryService } from '../raw-email-delivery-service.ts';
 import type { CommercePortalAuthEmailDelivery } from '../auth.ts';
 import { COMMERCE_PORTAL_AUTH_POLICY } from '../config.ts';
 import { CommercePortalAuthEmailDeliveryService } from '../email-delivery-service.ts';
@@ -16,9 +17,6 @@ const verificationEmailDataSchema = Schema.Struct({
   providerSubjectId: CommercePortalAuthProviderSubjectIdSchema,
   token: Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(2048)),
 }).annotate({ parseOptions: { onExcessProperty: 'error' } });
-
-const withCause = <TError extends object>(error: TError, cause: unknown): TError =>
-  Object.defineProperty(error, 'cause', { configurable: true, value: cause });
 
 const unavailable = (operation: string, cause: unknown): CommercePortalAuthRecoveryUnavailable =>
   withCause(

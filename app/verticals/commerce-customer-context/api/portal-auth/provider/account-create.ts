@@ -1,16 +1,16 @@
 import { isAPIError } from 'better-auth/api';
 import type { Auth } from 'better-auth';
-import { Duration, Effect, Layer, Option, Redacted, Schema } from 'effect';
+import { Context, Duration, Effect, Layer, Option, Redacted, Schema } from 'effect';
 
 import {
   COMMERCE_AUTHENTICATION_NAMESPACE_ID,
   ExternalUserSubjectSchema,
 } from '../../../shared/portal-auth-contracts.ts';
+import { withCause } from '../problems-support.ts';
 import { CommerceEnrollmentProofService } from '../enrollment-proof-port.ts';
 import { CommercePortalAuthInstance } from './auth.ts';
 import { COMMERCE_PORTAL_AUTH_POLICY } from './config.ts';
 import type { CommercePortalAuthAccountCreationGateway } from './account-creation-gateway-service.ts';
-import { CommercePortalAuthAccountCreationService } from './account-creation-service.ts';
 import { CommercePortalAuthAccountCreationInvalidRequest } from './account-creation-invalid-request.ts';
 import { CommercePortalAuthAccountCreationRejected } from './account-creation-rejected.ts';
 import { CommercePortalAuthAccountCreationUnavailable } from './account-creation-unavailable.ts';
@@ -23,7 +23,6 @@ export { CommercePortalAuthAccountCreationRejected } from './account-creation-re
 export { CommercePortalAuthAccountCreationUnavailable } from './account-creation-unavailable.ts';
 export { CommercePortalAuthAccountCreationGatewayService } from './account-creation-gateway-service.ts';
 export { CommercePortalAuthAccountCreationProviderService } from './account-creation-provider-service.ts';
-export { CommercePortalAuthAccountCreationService } from './account-creation-service.ts';
 export { CommercePortalAuthAccountLookupService } from './account-lookup-service.ts';
 export type { CommercePortalAuthAccountLookup } from './account-lookup-service.ts';
 export type { CommercePortalAuthAccountCreationGateway } from './account-creation-gateway-service.ts';
@@ -90,9 +89,6 @@ const CommercePortalAuthAccountCreationProviderFailureValue = Schema.TaggedError
 type CommercePortalAuthAccountCreationProviderFailure = InstanceType<
   typeof CommercePortalAuthAccountCreationProviderFailureValue
 >;
-
-const withCause = <ErrorType extends object>(error: ErrorType, cause: unknown): ErrorType =>
-  Object.defineProperty(error, 'cause', { configurable: true, value: cause });
 
 /**
  * Reads the stable request-side provider code from a Better Auth API error. Anything else — a
@@ -267,7 +263,7 @@ export const makeCommercePortalAuthAccountCreationGateway = Effect.fn('CommerceP
         ),
       );
       const { providerSubjectId } = providerSubject;
-      const persisted = yield* accountLookup.existsByProviderSubjectAndEmail({
+      const persisted = yield* accountLookup.existsByProviderSubject({
         email: input.email,
         providerSubjectId,
       });
@@ -295,6 +291,22 @@ export type CommercePortalAuthAccountCreationFailure =
   | CommercePortalAuthAccountCreationInvalidRequest
   | CommercePortalAuthAccountCreationRejected
   | CommercePortalAuthAccountCreationUnavailable;
+
+/**
+ * The private provider account-creation capability the enrollment start route dispatches through.
+ * A deployment that installed no realm names the same capability through the fail-closed leaf in
+ * `../realm-unavailable.ts`, which supplies its own refusing implementation for this tag.
+ */
+export class CommercePortalAuthAccountCreationService extends Context.Service<
+  CommercePortalAuthAccountCreationService,
+  {
+    readonly createAccount: (
+      input: CommercePortalAccountCreateInputBoundary,
+    ) => Effect.Effect<CommercePortalAccountCreateResult, CommercePortalAuthAccountCreationFailure>;
+  }
+>()(
+  '@app/commerce-customer-context/api/portal-auth/provider/account-create/CommercePortalAuthAccountCreationService',
+) {}
 
 /**
  * Account creation is a two-party operation: the owner-local Attempt service authorizes the exact

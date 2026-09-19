@@ -1,13 +1,10 @@
 import { createHash, randomBytes } from 'node:crypto';
 
-import { DateTime, Effect, Layer, Option, Result, Schema } from 'effect';
+import { DateTime, Effect, Option, Result, Schema } from 'effect';
 
-import {
-  CommercePortalAuthAudit,
-  recordCommercePortalAuthAudit,
-  unauditedCommercePortalAuthRecorder,
-} from '../../../../src/portal-auth/audit/audit-service.ts';
-import type { CommercePortalAuthAuditRecorder } from '../../../../src/portal-auth/audit/audit-service.ts';
+import { auditedLayer, commercePortalAuthAuditEmitter } from '../../../../src/portal-auth/audit/audit.ts';
+import { withCause } from '../../problems-support.ts';
+import type { CommercePortalAuthAuditRecorder } from '../../../../src/portal-auth/audit/audit.ts';
 import { COMMERCE_PORTAL_AUTH_POLICY } from '../config.ts';
 import { parseCommerceSessionReference } from '../session-reference.ts';
 import type { CommercePortalAuthAuthoritativeSession } from '../verification.ts';
@@ -32,9 +29,6 @@ import type { CommercePortalAuthStepUp, CommercePortalAuthStepUpFailure } from '
 
 const STEP_UP_EXPIRED_EVENT = 'commerce.portal-auth.step-up-expired.v1' as const;
 const STEP_UP_VERIFIED_EVENT = 'commerce.portal-auth.step-up-verified.v1' as const;
-
-const withCause = <ErrorValue extends object>(error: ErrorValue, cause: unknown): ErrorValue =>
-  Object.defineProperty(error, 'cause', { configurable: true, value: cause });
 
 const invalidRequest = (cause?: unknown): CommercePortalAuthStepUpInvalidRequest =>
   cause === undefined
@@ -157,7 +151,7 @@ const sessionRecord = Effect.fn('CommercePortalAuthStepUp.sessionRecord')(functi
 
 export const makeCommercePortalAuthStepUp = Effect.fn('CommercePortalAuthStepUp.make')(
   function* makeCommercePortalAuthStepUpEffect(
-    audit: CommercePortalAuthAuditRecorder = unauditedCommercePortalAuthRecorder,
+    audit: CommercePortalAuthAuditRecorder,
   ): Effect.fn.Return<
     CommercePortalAuthStepUp,
     never,
@@ -170,8 +164,7 @@ export const makeCommercePortalAuthStepUp = Effect.fn('CommercePortalAuthStepUp.
     const codeVerifier = yield* CommercePortalAuthStepUpCodeVerifierService;
     const lifecycle = yield* CommercePortalAuthSessionLifecycle;
     const sessionReader = yield* CommercePortalAuthSessionReaderService;
-    const emitAudit = (event: Parameters<CommercePortalAuthAuditRecorder['record']>[0]) =>
-      recordCommercePortalAuthAudit(audit, event);
+    const emitAudit = commercePortalAuthAuditEmitter(audit);
 
     const issue = Effect.fn('CommercePortalAuthStepUp.issue')(function* issueEffect(
       input: Schema.Codec.Encoded<typeof CommercePortalAuthStepUpIssueInputSchema>,
@@ -357,10 +350,4 @@ export const makeCommercePortalAuthStepUp = Effect.fn('CommercePortalAuthStepUp.
 );
 
 /** Challenge store, code verifier, lifecycle and session reader stay visible requirements. */
-export const CommercePortalAuthStepUpLive = Layer.effect(
-  CommercePortalAuthStepUpService,
-  Effect.gen(function* makeCommercePortalAuthStepUpLive() {
-    const audit = yield* CommercePortalAuthAudit;
-    return yield* makeCommercePortalAuthStepUp(audit);
-  }),
-);
+export const CommercePortalAuthStepUpLive = auditedLayer(CommercePortalAuthStepUpService, makeCommercePortalAuthStepUp);

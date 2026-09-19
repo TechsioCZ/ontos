@@ -43,6 +43,7 @@ import {
   COMMERCE_PORTAL_AUTH_INTERNAL_BASE_PATH,
   COMMERCE_PORTAL_AUTH_PUBLIC_BASE_PATH,
 } from '../../shared/deployment-paths.ts';
+import { unauditedCommercePortalAuthRecorder } from '../../src/portal-auth/audit/audit.ts';
 
 const ORIGIN = 'https://portal.example.test';
 const EMAIL = 'recovery-integration@example.test';
@@ -200,7 +201,7 @@ const makeRecoveryFixture = Effect.fn('CommercePortalAuthRecoveryIntegration.mak
     return yield* Effect.fail(new Error('Recovery fixture user was not persisted'));
   }
   const provider = makeCommercePortalAuthRecoveryProvider(auth);
-  const recovery = yield* makeCommercePortalAuthRecoveryService().pipe(
+  const recovery = yield* makeCommercePortalAuthRecoveryService(unauditedCommercePortalAuthRecorder).pipe(
     Effect.provideService(CommercePortalAuthRecoveryProviderService, provider),
     Effect.provideService(CommercePortalAuthRecoveryStoreService, store),
     Effect.provideServiceEffect(

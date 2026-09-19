@@ -1,6 +1,7 @@
 import { isAPIError } from 'better-auth/api';
 import { Duration, Effect, Layer, Redacted, Schema } from 'effect';
 
+import { withCause } from '../problems-support.ts';
 import { providerSetCookieHeaders } from '../http-transport.ts';
 import { CommercePortalAuthInstance } from '../provider/auth.ts';
 import type { CommercePortalAuth } from '../provider/auth.ts';
@@ -41,9 +42,6 @@ const RATE_LIMIT_CODES = new Set(['ACCOUNT_TEMPORARILY_LOCKED', 'RATE_LIMITED', 
  * the device cap, not a throttle, so it keeps the outcome whose remedy is ending another session.
  */
 const SESSION_LIMIT_CODES = new Set(['CONCURRENT_DEVICE_LIMIT']);
-
-const withCause = <TError extends object>(error: TError, cause: unknown): TError =>
-  Object.defineProperty(error, 'cause', { configurable: true, value: cause });
 
 const providerUnavailable = (cause: unknown): CommercePortalAuthProviderUnavailable =>
   withCause(

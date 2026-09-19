@@ -162,23 +162,23 @@ const requiredUniqueIndexes = [
 /** Superseded by the profile-principal pair; a reappearance would silently re-broaden binding uniqueness. */
 const retiredUniqueIndexes = ['ccc_portal_bindings_current_auth_uk', 'ccc_portal_bindings_current_profile_uk'] as const;
 
-const acquireCatalogPool = (connectionString: string) =>
-  Effect.acquireRelease(
-    Effect.sync(() => new Pool({ connectionString, max: 1 })),
-    (pool) => Effect.promise(() => pool.end()).pipe(Effect.orDie),
-  );
-
 const names = (rows: readonly { readonly name: string }[]): readonly string[] =>
   EffectArray.sort(
     rows.map(({ name }) => name),
     Order.String,
   );
 
+const acquirePool = (connectionString: string, max = 1) =>
+  Effect.acquireRelease(
+    Effect.sync(() => new Pool({ connectionString, max })),
+    (pool) => Effect.promise(() => pool.end()).pipe(Effect.orDie),
+  );
+
 it.live('governs the Commerce Customer Context schema through forced RLS and routine-only runtime access', () =>
   Effect.scoped(
     Effect.gen(function* databaseSecurityCatalog() {
       const connections = yield* loadDatabaseConnectionPair();
-      const adminPool = yield* acquireCatalogPool(connections.admin.connectionString);
+      const adminPool = yield* acquirePool(connections.admin.connectionString);
       const admin = yield* makeTestDatabaseFromPool(adminPool, commerceCustomerContextRelations);
       const schema = COMMERCE_CUSTOMER_CONTEXT_SCHEMA_NAME;
 

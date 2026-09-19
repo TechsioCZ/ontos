@@ -1,16 +1,13 @@
-import { DateTime, Effect, Layer, Match, Option, Schema } from 'effect';
+import { DateTime, Effect, Match, Option, Schema } from 'effect';
 
 import {
   COMMERCE_AUTHENTICATION_NAMESPACE_ID,
   ExternalUserSubjectSchema,
 } from '../../../shared/portal-auth-contracts.ts';
+import { withCause } from '../problems-support.ts';
 import { commercePortalAuthSessionOutcomeClass } from '../../../src/portal-auth/audit/audit-mapping.ts';
-import {
-  CommercePortalAuthAudit,
-  recordCommercePortalAuthAudit,
-  unauditedCommercePortalAuthRecorder,
-} from '../../../src/portal-auth/audit/audit-service.ts';
-import type { CommercePortalAuthAuditRecorder } from '../../../src/portal-auth/audit/audit-service.ts';
+import { auditedLayer, commercePortalAuthAuditEmitter } from '../../../src/portal-auth/audit/audit.ts';
+import type { CommercePortalAuthAuditRecorder } from '../../../src/portal-auth/audit/audit.ts';
 import type {
   CommercePortalAuthAuditEvent,
   CommercePortalAuthAuditEventType,
@@ -85,9 +82,6 @@ export interface CommercePortalAuthSessionClock {
 const systemClock: CommercePortalAuthSessionClock = Object.freeze({ now: () => DateTime.toDate(DateTime.nowUnsafe()) });
 const SESSION_RECONCILE_OPERATION = 'session-reconcile';
 const SESSION_REFRESHED_EVENT_TYPE: CommercePortalAuthAuditEventType = 'commerce.portal-auth.session-refreshed.v1';
-
-const withCause = <TError extends object>(error: TError, cause: unknown): TError =>
-  Object.defineProperty(error, 'cause', { configurable: true, value: cause });
 
 const invalidRequest = (cause?: unknown): CommercePortalAuthSessionInvalidRequest =>
   cause === undefined
@@ -232,13 +226,12 @@ export const makeCommercePortalAuthSessionLifecycle = (
   ...dependencies: readonly [
     store: CommercePortalAuthSessionStore,
     provider: CommercePortalAuthSessionProvider,
+    audit: CommercePortalAuthAuditRecorder,
     clock?: CommercePortalAuthSessionClock,
-    audit?: CommercePortalAuthAuditRecorder,
   ]
 ): CommercePortalAuthSessionLifecycleService => {
-  const [store, provider, clock = systemClock, audit = unauditedCommercePortalAuthRecorder] = dependencies;
-  const emitAudit = (event: Parameters<CommercePortalAuthAuditRecorder['record']>[0]): Effect.Effect<void> =>
-    recordCommercePortalAuthAudit(audit, event);
+  const [store, provider, audit, clock = systemClock] = dependencies;
+  const emitAudit = commercePortalAuthAuditEmitter(audit);
   const admitProviderSession = Effect.fn('CommercePortalAuthSessionLifecycle.admitProviderSession')(
     function* admitProviderSession(
       token: string,
@@ -746,12 +739,17 @@ export const makeCommercePortalAuthSessionLifecycle = (
 };
 
 /** The store and provider ports stay visible requirements for the composition root. */
-export const CommercePortalAuthSessionLifecycleLive = Layer.effect(
+export const CommercePortalAuthSessionLifecycleLive = auditedLayer(
   CommercePortalAuthSessionLifecycle,
-  Effect.gen(function* makeLifecycleLive() {
+  Effect.fn('CommercePortalAuthSessionLifecycle.live')(function* makeLifecycleLive(
+    audit: CommercePortalAuthAuditRecorder,
+  ): Effect.fn.Return<
+    CommercePortalAuthSessionLifecycleService,
+    never,
+    CommercePortalAuthSessionProviderService | CommercePortalAuthSessionStoreService
+  > {
     const store = yield* CommercePortalAuthSessionStoreService;
     const provider = yield* CommercePortalAuthSessionProviderService;
-    const audit = yield* CommercePortalAuthAudit;
-    return makeCommercePortalAuthSessionLifecycle(store, provider, undefined, audit);
+    return makeCommercePortalAuthSessionLifecycle(store, provider, audit);
   }),
 );

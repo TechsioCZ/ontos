@@ -66,8 +66,6 @@ const accountLookupNeverRead: CommercePortalAuthAccountLookup = {
     Effect.fail(new CommercePortalAuthAccountCreationUnavailable({ reason: 'not part of this preparation' })),
   existsByProviderSubject: () =>
     Effect.fail(new CommercePortalAuthAccountCreationUnavailable({ reason: 'not part of this preparation' })),
-  existsByProviderSubjectAndEmail: () =>
-    Effect.fail(new CommercePortalAuthAccountCreationUnavailable({ reason: 'not part of this preparation' })),
 };
 
 const portFor = (attemptFailure: CommerceEnrollmentAttemptError) =>

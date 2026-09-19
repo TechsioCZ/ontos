@@ -1,11 +1,9 @@
-import { createHash } from 'node:crypto';
-
 import { PartyRefSchema } from '@app/party-registry/resources/party';
 import type { PartyRef } from '@app/party-registry/resources/party';
 import { Schema } from 'effect';
 
 import { SellingLegalEntityRefSchema } from '../../../shared/domain/profile-contracts.ts';
-import { EnrollmentDigestSchema } from '../../../shared/enrollment-contracts.ts';
+import { EnrollmentDigestSchema, enrollmentDigest } from '../../../shared/enrollment-contracts.ts';
 import { RetailPortalPrincipalRefSchema } from '../../../shared/resources/retail-portal-profile-binding.ts';
 import {
   PORTAL_ACCOUNT_CREATION_TRANSITION_KEY,
@@ -150,8 +148,6 @@ export interface RetailSelfEnrollmentDigestInput {
 const canonical = (parts: readonly string[]): string =>
   parts.map((part) => `${String(part.length)}:${part}`).join('\u001F');
 
-const sha256Hex = (value: string): string => createHash('sha256').update(value).digest('hex');
-
 const digestParts = (input: RetailSelfEnrollmentDigestInput): readonly string[] => {
   const { intent } = input;
   const head = [
@@ -195,14 +191,14 @@ const digestParts = (input: RetailSelfEnrollmentDigestInput): readonly string[] 
  * instead of creating a second Party, profile, binding or Permission grant.
  */
 export const retailSelfEnrollmentRequestDigest = (input: RetailSelfEnrollmentDigestInput): string =>
-  sha256Hex(canonical(digestParts(input)));
+  enrollmentDigest(canonical(digestParts(input)));
 
 /**
  * Digest of the canonical facts of a Party candidate, so the candidate payload itself never has
  * to travel inside a Commerce digest input.
  */
 export const retailPartyCandidateDigest = (candidateFacts: readonly string[]): string =>
-  sha256Hex(canonical(candidateFacts));
+  enrollmentDigest(canonical(candidateFacts));
 
 const UUID_VARIANT_NIBBLES = ['8', '9', 'a', 'b'] as const;
 
@@ -213,7 +209,7 @@ const UUID_VARIANT_NIBBLES = ['8', '9', 'a', 'b'] as const;
  * credential and no provider payload.
  */
 export const retailSelfEnrollmentEvidenceReference = (parts: readonly string[]): string => {
-  const raw = sha256Hex(canonical(parts)).slice(0, 32);
+  const raw = enrollmentDigest(canonical(parts)).slice(0, 32);
   const variantIndex = Number.parseInt(raw.slice(16, 17), 16) % UUID_VARIANT_NIBBLES.length;
   return [
     raw.slice(0, 8),

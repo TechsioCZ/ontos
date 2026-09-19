@@ -3,16 +3,15 @@ import { Effect, Schema } from 'effect';
 import type {
   DerivedEnrollmentAttemptState,
   EnrollmentAttemptSnapshot,
+  EnrollmentOwnerOperationSnapshot,
   EnrollmentOwnerOutcomeSignal,
-  ReadEnrollmentOwnerOperationInput,
 } from '../../../shared/enrollment-contracts.ts';
-import { ReadEnrollmentOwnerOperationInputSchema } from '../../../shared/enrollment-contracts.ts';
 import type {
   CommerceEnrollmentAttemptCompletionAuthority,
   CommerceEnrollmentAttemptPendingOutcome,
 } from '../attempts/attempt-service.ts';
 import type { CommerceEnrollmentAttemptPersistence } from '../attempts/attempt-persistence.ts';
-import { CommerceEnrollmentAttemptNotFound, CommerceEnrollmentAttemptRejected } from '../attempts/errors.ts';
+import { CommerceEnrollmentAttemptRejected } from '../attempts/errors.ts';
 import type { CommerceEnrollmentAttemptError } from '../attempts/errors.ts';
 import { counterpartyInvitationJourneyDefinition } from '../journeys/counterparty-invitation.ts';
 import { EXISTING_ACCOUNT_CORE_IDENTITY_TRANSITIONS, existingAccountStepPlan } from '../journeys/existing-account.ts';
@@ -21,9 +20,6 @@ import { JourneyDefinitionSchema, journeyTransitionIdentity } from '../journeys/
 import { retailSelfEnrollmentJourneyDefinition } from '../journeys/retail-self-enrollment-contracts.ts';
 
 /**
- * Derived completion (issue #338 "Acceptance → an Attempt reaches COMPLETE only when its journey's
- * required transitions are proven").
- *
  * The Attempt's overall state is a *conclusion* about the durable owner journal, never a field an
  * owner hands in with its own outcome.  This module holds the whole conclusion: which transitions
  * a journey requires, what counts as proof for one of them, and what the Attempt's state therefore
@@ -58,8 +54,11 @@ export interface EnrollmentCompletionInput {
   readonly signal?: EnrollmentOwnerOutcomeSignal;
 }
 
-const sameTransition = (proof: EnrollmentTransitionProof, transition: JourneyTransitionSpec): boolean =>
-  proof.ownerModuleKey === transition.ownerModuleKey && proof.transitionKey === transition.transitionKey;
+const sameTransition = (
+  journalled: Pick<EnrollmentTransitionProof, 'ownerModuleKey' | 'transitionKey'>,
+  transition: JourneyTransitionSpec,
+): boolean =>
+  journalled.ownerModuleKey === transition.ownerModuleKey && journalled.transitionKey === transition.transitionKey;
 
 /** A required transition is proven only by a durable, final, required SUCCEEDED owner outcome. */
 const isProven = (proofs: readonly EnrollmentTransitionProof[], transition: JourneyTransitionSpec): boolean =>
@@ -173,40 +172,27 @@ export const enrollmentJourneyDefinitionForAttempt = (
   return existingAccountTarget(target).pipe(Effect.flatMap(existingAccountDefinition));
 };
 
-const readInputFor = (
-  attempt: EnrollmentAttemptSnapshot,
-  transition: JourneyTransitionSpec,
-): Effect.Effect<ReadEnrollmentOwnerOperationInput, CommerceEnrollmentAttemptError> =>
-  Schema.decodeEffect(ReadEnrollmentOwnerOperationInputSchema)({
-    ownerModuleKey: transition.ownerModuleKey,
-    portalEnrollmentAttemptId: attempt.portalEnrollmentAttemptId,
-    tenantId: attempt.tenantId,
-    transitionKey: transition.transitionKey,
-  }).pipe(Effect.mapError((cause) => invalid('A declared journey transition identity is invalid', cause)));
-
-const isNotFound = Schema.is(CommerceEnrollmentAttemptNotFound);
-
 /**
- * Journal proof for one declared transition, as a list so that absence is data rather than a hole.
- * A transition that was never claimed has no journal row at all, which is proof of absence rather
- * than a failure: it simply is not proven yet.
+ * Journal proof for the transitions this journey requires.  A required transition that was never
+ * claimed has no journal row at all, which is proof of absence rather than a failure: it simply is
+ * not proven yet.  An optional transition's row is dropped here, so an owner effect the journey
+ * never made a condition of completion cannot hold the Attempt open.
  */
-const proofFor = (
-  persistence: CommerceEnrollmentAttemptPersistence,
-  attempt: EnrollmentAttemptSnapshot,
-  transition: JourneyTransitionSpec,
-): Effect.Effect<readonly EnrollmentTransitionProof[], CommerceEnrollmentAttemptError> =>
-  readInputFor(attempt, transition).pipe(
-    Effect.flatMap((input) => persistence.readOperation(input)),
-    Effect.map((operation): readonly EnrollmentTransitionProof[] => [
-      {
-        ownerModuleKey: operation.ownerModuleKey,
-        required: operation.required,
-        status: operation.status,
-        transitionKey: operation.transitionKey,
-      },
-    ]),
-    Effect.catchIf(isNotFound, () => Effect.succeed([])),
+const requiredProofs = (
+  definition: JourneyDefinition,
+  operations: readonly EnrollmentOwnerOperationSnapshot[],
+): readonly EnrollmentTransitionProof[] =>
+  operations.flatMap((operation) =>
+    definition.requiredTransitions.some((transition) => sameTransition(operation, transition))
+      ? [
+          {
+            ownerModuleKey: operation.ownerModuleKey,
+            required: operation.required,
+            status: operation.status,
+            transitionKey: operation.transitionKey,
+          },
+        ]
+      : [],
   );
 
 /** The pending outcome is authoritative for its own transition: it has not been journalled yet. */
@@ -236,12 +222,12 @@ const deriveForDefinition = (
   outcome: CommerceEnrollmentAttemptPendingOutcome,
   definition: JourneyDefinition,
 ): Effect.Effect<DerivedEnrollmentAttemptState, CommerceEnrollmentAttemptError> =>
-  Effect.forEach(definition.requiredTransitions, (transition) => proofFor(persistence, attempt, transition), {
-    concurrency: 1,
-  }).pipe(
-    Effect.map((journalled) => completionInputFor(definition, outcome, journalled.flat())),
-    Effect.map(deriveEnrollmentAttemptState),
-  );
+  persistence
+    .readOperations({ portalEnrollmentAttemptId: attempt.portalEnrollmentAttemptId, tenantId: attempt.tenantId })
+    .pipe(
+      Effect.map((operations) => completionInputFor(definition, outcome, requiredProofs(definition, operations))),
+      Effect.map(deriveEnrollmentAttemptState),
+    );
 
 /**
  * Bind the completion rule to one Attempt transaction.  The reads run through the same durable

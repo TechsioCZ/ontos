@@ -16,6 +16,7 @@ import {
   CommercePortalAuthSessionInvalidRequest,
   CommercePortalAuthSessionUnavailable,
 } from '../../api/portal-auth/session/errors.ts';
+import { unauditedCommercePortalAuthRecorder } from '../../src/portal-auth/audit/audit.ts';
 
 const now = new Date('2026-01-01T00:00:00.000Z');
 const userId = 'commerce-user-1';
@@ -239,6 +240,7 @@ it.effect('creates safe session evidence and never returns the provider token', 
   const service = makeCommercePortalAuthSessionLifecycle(
     memoryStore([record('session-a', tokenA)]),
     providerFor(tokenA),
+    unauditedCommercePortalAuthRecorder,
     { now: () => now },
   );
   return service.signIn({ email: 'buyer@example.test', password: Redacted.make('P'.repeat(24)) }).pipe(
@@ -269,6 +271,7 @@ it.effect('passes a pending second factor through without admitting a session', 
       outcome: 'MFA_REQUIRED',
       setCookieHeaders: [signInCookie],
     }),
+    unauditedCommercePortalAuthRecorder,
     { now: () => now },
   );
   return service.signIn({ email: 'buyer@example.test', password: Redacted.make('P'.repeat(24)) }).pipe(
@@ -292,6 +295,7 @@ it.effect('reports a provider rejection without any provider cookie', () =>
   makeCommercePortalAuthSessionLifecycle(
     memoryStore([record('session-a', tokenA)]),
     providerFor(tokenA, { outcome: 'AUTHENTICATION_FAILED' }),
+    unauditedCommercePortalAuthRecorder,
     { now: () => now },
   )
     .signIn({ email: 'buyer@example.test', password: Redacted.make('P'.repeat(24)) })
@@ -308,18 +312,28 @@ it.effect('reports a provider rejection without any provider cookie', () =>
 it.effect('withholds the provider cookie when admission rejects a session the provider already minted', () =>
   Effect.gen(function* rejectedAdmissionCookies() {
     const banned = memoryStore([record('session-a', tokenA, { banned: true })]);
-    const disabled = yield* makeCommercePortalAuthSessionLifecycle(banned, providerFor(tokenA), {
-      now: () => now,
-    }).signIn({ email: 'buyer@example.test', password: Redacted.make('P'.repeat(24)) });
+    const disabled = yield* makeCommercePortalAuthSessionLifecycle(
+      banned,
+      providerFor(tokenA),
+      unauditedCommercePortalAuthRecorder,
+      {
+        now: () => now,
+      },
+    ).signIn({ email: 'buyer@example.test', password: Redacted.make('P'.repeat(24)) });
     expect(disabled.outcome.outcome).toBe('ACCOUNT_DISABLED');
     // Admission revoked the durable session, so the browser must not keep the provider's cookie.
     expect(disabled.setCookieHeaders).toEqual([]);
     expect(yield* banned.findByToken(tokenA)).toStrictEqual(Option.none());
 
     const unverified = memoryStore([record('session-b', tokenB, { emailVerified: false })]);
-    const pending = yield* makeCommercePortalAuthSessionLifecycle(unverified, providerFor(tokenB), {
-      now: () => now,
-    }).signIn({ email: 'buyer@example.test', password: Redacted.make('P'.repeat(24)) });
+    const pending = yield* makeCommercePortalAuthSessionLifecycle(
+      unverified,
+      providerFor(tokenB),
+      unauditedCommercePortalAuthRecorder,
+      {
+        now: () => now,
+      },
+    ).signIn({ email: 'buyer@example.test', password: Redacted.make('P'.repeat(24)) });
     expect(pending.outcome.outcome).toBe('VERIFICATION_REQUIRED');
     expect(pending.setCookieHeaders).toEqual([]);
 
@@ -327,6 +341,7 @@ it.effect('withholds the provider cookie when admission rejects a session the pr
     const admitted = yield* makeCommercePortalAuthSessionLifecycle(
       memoryStore([record('session-c', tokenA)]),
       providerFor(tokenA),
+      unauditedCommercePortalAuthRecorder,
       { now: () => now },
     ).signIn({ email: 'buyer@example.test', password: Redacted.make('P'.repeat(24)) });
     expect(admitted.outcome.outcome).toBe('SESSION_CREATED');
@@ -339,6 +354,7 @@ it.effect('refreshes inactivity only inside the absolute lifetime and rejects ex
   const service = makeCommercePortalAuthSessionLifecycle(
     memoryStore([record('session-a', tokenA)]),
     providerFor(tokenA),
+    unauditedCommercePortalAuthRecorder,
     { now: () => clockNow },
   );
   return service.refresh({ expectedProviderSubjectId: userId, sessionRef: ref('session-a') }).pipe(
@@ -357,6 +373,7 @@ it.effect('rotates identifiers at a privilege boundary and revokes only the sele
   const service = makeCommercePortalAuthSessionLifecycle(
     memoryStore([record('session-a', tokenA), record('session-b', tokenB)]),
     providerFor(tokenA),
+    unauditedCommercePortalAuthRecorder,
     { now: () => now },
   );
   return Effect.gen(function* lifecycleAssertions() {
@@ -378,7 +395,12 @@ it.effect('rotates identifiers at a privilege boundary and revokes only the sele
 
 it.effect('contains account disable to the Commerce provider realm', () => {
   const store = memoryStore([record('session-a', tokenA), record('session-b', tokenB)]);
-  const service = makeCommercePortalAuthSessionLifecycle(store, providerFor(tokenA), { now: () => now });
+  const service = makeCommercePortalAuthSessionLifecycle(
+    store,
+    providerFor(tokenA),
+    unauditedCommercePortalAuthRecorder,
+    { now: () => now },
+  );
   return service.disableAccount({ providerSubjectId: userId }).pipe(
     Effect.flatMap((disabled) =>
       Effect.gen(function* disabledAssertions() {
@@ -394,9 +416,14 @@ it.effect('contains account disable to the Commerce provider realm', () => {
 
 it.effect('does not blind retry a concurrent refresh after the compare-and-set loses', () => {
   const initial = record('session-a', tokenA);
-  const service = makeCommercePortalAuthSessionLifecycle(memoryStore([initial]), providerFor(tokenA), {
-    now: () => now,
-  });
+  const service = makeCommercePortalAuthSessionLifecycle(
+    memoryStore([initial]),
+    providerFor(tokenA),
+    unauditedCommercePortalAuthRecorder,
+    {
+      now: () => now,
+    },
+  );
   return Effect.all([
     service.refresh({ expectedProviderSubjectId: userId, sessionRef: ref('session-a') }),
     service.refresh({ expectedProviderSubjectId: userId, sessionRef: ref('session-a') }),
@@ -415,7 +442,7 @@ it.effect('never commits a state change whose audit row was refused', () =>
     const audit = makeMemoryStoreAudit();
     const store = memoryStore([record('session-a', tokenA), record('session-b', tokenB)], audit);
     const { recorded, recorder } = recordingRecorder();
-    const service = makeCommercePortalAuthSessionLifecycle(store, providerFor(tokenA), { now: () => now }, recorder);
+    const service = makeCommercePortalAuthSessionLifecycle(store, providerFor(tokenA), recorder, { now: () => now });
 
     audit.rejectAudit = true;
     const revoked = yield* Effect.result(
@@ -466,7 +493,7 @@ it.effect('keeps decision-only evidence on the lenient recorder, which an outage
     const audit = makeMemoryStoreAudit();
     const store = memoryStore([record('session-a', tokenA)], audit);
     const { recorded, recorder } = recordingRecorder();
-    const service = makeCommercePortalAuthSessionLifecycle(store, providerFor(tokenA), { now: () => now }, recorder);
+    const service = makeCommercePortalAuthSessionLifecycle(store, providerFor(tokenA), recorder, { now: () => now });
 
     // Nothing to revoke: no transaction to join, so the decision goes to the lenient recorder.
     audit.rejectAudit = true;
@@ -495,7 +522,12 @@ it.effect('keeps decision-only evidence on the lenient recorder, which an outage
 it.effect('moves the fresh-authentication stamp only when the rotation re-authenticated the customer', () =>
   Effect.gen(function* rotationFreshness() {
     const store = memoryStore([record('session-a', tokenA), record('session-b', tokenB)]);
-    const service = makeCommercePortalAuthSessionLifecycle(store, providerFor(tokenA), { now: () => now });
+    const service = makeCommercePortalAuthSessionLifecycle(
+      store,
+      providerFor(tokenA),
+      unauditedCommercePortalAuthRecorder,
+      { now: () => now },
+    );
 
     const steppedUp = yield* service.rotateIdentifierForCookie({
       expectedProviderSubjectId: userId,
@@ -526,6 +558,7 @@ it.effect('rejects malformed or cross-subject safe references before provider st
   const service = makeCommercePortalAuthSessionLifecycle(
     memoryStore([record('session-a', tokenA)]),
     providerFor(tokenA),
+    unauditedCommercePortalAuthRecorder,
     {
       now: () => now,
     },

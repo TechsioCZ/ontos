@@ -154,21 +154,28 @@ const unavailablePreparation: CommerceEnrollmentOwnerTransitionPreparationResult
   outcome: 'unavailable' as const,
 });
 
+const preparationRegistryKey = (
+  binding: Pick<CommerceEnrollmentPreparedOwnerBinding, 'ownerModuleKey' | 'transitionKey'>,
+): string => `${binding.ownerModuleKey}/${binding.transitionKey}`;
+
 /**
  * Route preparation to an explicitly installed owner port. A missing port fails closed so an
  * Action cannot proceed on a claimed payload without owner evidence. Owner ports must bind the
  * complete input they receive (Actor, Tenant, Attempt, Action/owner invocation, module,
  * transition, revision and digest where present) and return only compact evidence.
+ *
+ * The earliest port declared for a transition owns it: a pair an owner-authoritative port already
+ * installs is never shadowed by a later, journey-derived one.
  */
 export const commerceEnrollmentOwnerTransitionPreparationAuthorityForPorts = (
   ports: readonly CommerceEnrollmentOwnerPreparationPort[],
-): CommerceEnrollmentOwnerTransitionPreparation['Service'] =>
-  Object.freeze({
+): CommerceEnrollmentOwnerTransitionPreparation['Service'] => {
+  // `Map` keeps the last entry written for a key, so the reversal is what makes the first win.
+  const registry = new Map(ports.map((port) => [preparationRegistryKey(port), port] as const).toReversed());
+  return Object.freeze({
     prepare: (input: CommerceEnrollmentPreparedOwnerBinding) => {
-      const port = ports.find(
-        (candidate) =>
-          candidate.ownerModuleKey === input.ownerModuleKey && candidate.transitionKey === input.transitionKey,
-      );
+      const port = registry.get(preparationRegistryKey(input));
       return port === undefined ? Effect.succeed(unavailablePreparation) : port.prepare(input);
     },
   });
+};

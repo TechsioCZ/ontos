@@ -39,6 +39,7 @@ import {
   RecordEnrollmentOutcomeInputSchema,
 } from '../../../shared/enrollment-contracts.ts';
 import type { AttemptClaimedResult, AttemptRecordResult } from '../attempts/attempt-persistence.ts';
+import { claimedOrIndeterminate } from '../attempts/attempt-persistence.ts';
 import type { CommerceEnrollmentAttemptService } from '../attempts/attempt-service.ts';
 import {
   CommerceEnrollmentAttemptConflict,
@@ -408,7 +409,7 @@ const ownerOutcome = (
 
 const rejectedOutcome = (
   input: CommerceEnrollmentOwnerTransition,
-  error: CommerceEnrollmentOwnerEffectRejected,
+  error: InstanceType<typeof CommerceEnrollmentOwnerEffectRejected>,
 ): Effect.Effect<CommerceEnrollmentOwnerEffectOutcome, CommerceEnrollmentAttemptError> =>
   Schema.decodeEffect(EnrollmentKeySchema)('owner_rejected').pipe(
     Effect.flatMap((failureCode) =>
@@ -427,7 +428,9 @@ const rejectedOutcome = (
 
 const mapOwnerFailure = (
   input: CommerceEnrollmentOwnerTransition,
-  error: CommerceEnrollmentOwnerEffectUnavailable | CommerceEnrollmentOwnerEffectIndeterminate,
+  error:
+    | InstanceType<typeof CommerceEnrollmentOwnerEffectUnavailable>
+    | InstanceType<typeof CommerceEnrollmentOwnerEffectIndeterminate>,
 ): CommerceEnrollmentAttemptError => indeterminate(input, error.reason, error);
 
 const readOperationIdentity = (input: CommerceEnrollmentOwnerTransition): ReadEnrollmentOwnerOperationInput => ({
@@ -510,13 +513,9 @@ export const makeCommerceEnrollmentOwnerTransitionDriver = (
       Effect.mapError((cause) => driverInvalidConfiguration('The owner worker identity is invalid', cause)),
     );
     const claimInput = yield* toClaimInput(input, workerId, leaseDurationMs, required);
-    const claim = yield* options.attempt.claimTransition(claimInput);
-    if (claim.outcome === 'INDETERMINATE') {
-      return yield* indeterminate(
-        input,
-        'The prior owner transition outcome is indeterminate and must be resolved first',
-      );
-    }
+    const claim = yield* options.attempt
+      .claimTransition(claimInput)
+      .pipe(Effect.flatMap(claimedOrIndeterminate(input)));
     if (claim.operation.status === 'SUCCEEDED') {
       return { claim, outcome: 'REPLAYED' };
     }
@@ -599,8 +598,14 @@ export const makeCommerceEnrollmentOwnerTransitionDriver = (
         required,
       );
       yield* options.attempt.claimTransition(fenceInput);
-      attempt = yield* options.attempt.read(readAttemptIdentity(requested));
-      operation = yield* options.attempt.readOwnerOperation(readOperationIdentity(requested));
+      // Two independent owner-authoritative reads of the rows the fence just moved.
+      ({ attempt, operation } = yield* Effect.all(
+        {
+          attempt: options.attempt.read(readAttemptIdentity(requested)),
+          operation: options.attempt.readOwnerOperation(readOperationIdentity(requested)),
+        },
+        { concurrency: 2 },
+      ));
       if (operation.status === 'SUCCEEDED') {
         return { attempt, operation, outcome: 'REPLAYED' };
       }
@@ -709,7 +714,7 @@ export interface CommerceEnrollmentCoreIdentityOwnerEffectOptions {
   ) => CommerceEnrollmentCoreIdentityReconciliationRequest;
 }
 
-const coreUnavailable = (cause?: unknown): CommerceEnrollmentOwnerEffectUnavailable => {
+const coreUnavailable = (cause?: unknown): InstanceType<typeof CommerceEnrollmentOwnerEffectUnavailable> => {
   const error = new CommerceEnrollmentOwnerEffectUnavailable({
     code: 'core_identity_unavailable',
     reason: 'The Core external identity service is unavailable',
@@ -717,7 +722,11 @@ const coreUnavailable = (cause?: unknown): CommerceEnrollmentOwnerEffectUnavaila
   return cause === undefined ? error : preserveCause(error, cause);
 };
 
-const coreRejected = (code: string, reason: string, cause?: unknown): CommerceEnrollmentOwnerEffectRejected => {
+const coreRejected = (
+  code: string,
+  reason: string,
+  cause?: unknown,
+): InstanceType<typeof CommerceEnrollmentOwnerEffectRejected> => {
   const error = new CommerceEnrollmentOwnerEffectRejected({
     code: code.slice(0, 200),
     reason: reason.slice(0, 500),
@@ -740,10 +749,12 @@ const mapExternalIdentityError = (cause: ExternalIdentityClientError): CommerceE
 
 const decodeResourceId = (
   value: string,
-): Effect.Effect<EnrollmentResourceId, CommerceEnrollmentOwnerEffectUnavailable> =>
+): Effect.Effect<EnrollmentResourceId, InstanceType<typeof CommerceEnrollmentOwnerEffectUnavailable>> =>
   Schema.decodeEffect(EnrollmentResourceIdSchema)(value).pipe(Effect.mapError((cause) => coreUnavailable(cause)));
 
-const decodeCoreKey = (value: string): Effect.Effect<EnrollmentKey, CommerceEnrollmentOwnerEffectUnavailable> =>
+const decodeCoreKey = (
+  value: string,
+): Effect.Effect<EnrollmentKey, InstanceType<typeof CommerceEnrollmentOwnerEffectUnavailable>> =>
   Schema.decodeEffect(EnrollmentKeySchema)(value).pipe(Effect.mapError((cause) => coreUnavailable(cause)));
 
 /**

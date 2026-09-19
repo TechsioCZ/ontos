@@ -109,7 +109,8 @@ export const providerObservationFor = Effect.fn('CommerceEnrollmentPortalAuthOwn
     accountLookup: CommercePortalAuthAccountLookup,
   ): Effect.fn.Return<
     CommerceEnrollmentProviderOwnerReconciliationObservation,
-    CommerceEnrollmentOwnerEffectIndeterminate | CommerceEnrollmentOwnerEffectUnavailable
+    | InstanceType<typeof CommerceEnrollmentOwnerEffectIndeterminate>
+    | InstanceType<typeof CommerceEnrollmentOwnerEffectUnavailable>
   > {
     const evidenceRef = yield* evidenceReferenceOf(attempt).pipe(
       Effect.mapError(
@@ -325,26 +326,13 @@ const prepareRetailStep = (
     Effect.match({ onFailure: preparationFailure, onSuccess: (result) => result }),
   );
 
-/**
- * A Retail port is installed only for a declared step no already-installed port owns. The portal
- * account-creation step is declared by the Retail journey *and* owned by the portal-auth port
- * above, and that port is the owner-authoritative one — it reads the durable claim and reconciles
- * an indeterminate provider effect — so it must keep that pair rather than be shadowed by a
- * journey-derived digest check.
- */
-const retailPreparationPortsBesides = Effect.fn('CommerceEnrollmentRetailPreparation.ports')(
-  function* retailPreparationPortsBesidesEffect(
-    installed: readonly CommerceEnrollmentOwnerPreparationPort[],
+/** One journey-derived port per declared Retail self-enrollment step. */
+const retailPreparationPorts = Effect.fn('CommerceEnrollmentRetailPreparation.ports')(
+  function* retailPreparationPortsEffect(
     resolveSubject: CommerceEnrollmentPreparationSubjectResolve,
   ): Effect.fn.Return<readonly CommerceEnrollmentOwnerPreparationPort[]> {
-    const steps = retailSelfEnrollmentStepPlan().filter(
-      (step) =>
-        !installed.some(
-          (port) => port.ownerModuleKey === step.ownerModuleKey && port.transitionKey === step.transitionKey,
-        ),
-    );
     return yield* Effect.forEach(
-      steps,
+      retailSelfEnrollmentStepPlan(),
       (step) =>
         Effect.all(
           {
@@ -367,16 +355,26 @@ const retailPreparationPortsBesides = Effect.fn('CommerceEnrollmentRetailPrepara
 
 /**
  * The deployed preparation authority: the Commerce portal owner port for the provider
- * account-creation transition, plus one port per remaining declared Retail self-enrollment
- * transition. Every other owner module or transition key still fails closed through the router.
+ * account-creation transition, plus one port per declared Retail self-enrollment transition. Every
+ * other owner module or transition key still fails closed through the router.
+ *
+ * The portal account-creation pair is declared by the Retail journey too. Listing the portal-auth
+ * port first is what keeps it: it is the owner-authoritative one — it reads the durable claim and
+ * reconciles an indeterminate provider effect — and the registry never lets a later,
+ * journey-derived digest check shadow an earlier port.
  */
 export const commerceEnrollmentOwnerTransitionPreparationLive = Layer.effect(
   CommerceEnrollmentOwnerTransitionPreparation,
   Effect.gen(function* makePreparationAuthority() {
     const resolver = yield* CommerceEnrollmentPreparationSubjectResolver;
-    const portalAuthPort = yield* makeCommerceEnrollmentPortalAuthOwnerPreparationPort();
-    const installed = [portalAuthPort];
-    const retailPorts = yield* retailPreparationPortsBesides(installed, resolver.resolve);
-    return commerceEnrollmentOwnerTransitionPreparationAuthorityForPorts([...installed, ...retailPorts]);
+    const { portalAuthPort, retailPorts } = yield* Effect.all(
+      {
+        portalAuthPort: makeCommerceEnrollmentPortalAuthOwnerPreparationPort(),
+        retailPorts: retailPreparationPorts(resolver.resolve),
+        // Two independent port constructions; neither reads the other's result.
+      },
+      { concurrency: 2 },
+    );
+    return commerceEnrollmentOwnerTransitionPreparationAuthorityForPorts([portalAuthPort, ...retailPorts]);
   }),
 );

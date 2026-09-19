@@ -1,4 +1,3 @@
-import { createHash } from 'node:crypto';
 import { Effect, Result, Schema } from 'effect';
 
 import {
@@ -12,6 +11,7 @@ import {
   EnrollmentJourneySchema,
   EnrollmentModuleKeySchema,
   EnrollmentTransitionKeySchema,
+  enrollmentDigest,
 } from '../../../shared/enrollment-contracts.ts';
 import { CounterpartyAccessInvitationRefSchema } from '../../../shared/resources/counterparty-access-invitation.ts';
 import { CommerceEnrollmentOwnerTransitionSchema } from '../orchestration/owner-transition-driver.ts';
@@ -147,9 +147,7 @@ export const makeCounterpartyInvitationRequestDigest = (
   intent: CounterpartyInvitationTransitionIntent,
 ): Effect.Effect<typeof EnrollmentDigestSchema.Type, CounterpartyInvitationTransitionRejected> =>
   Schema.encodeEffect(canonicalIntentJsonSchema)(intent).pipe(
-    Effect.flatMap((canonical) =>
-      Schema.decodeEffect(EnrollmentDigestSchema)(createHash('sha256').update(canonical).digest('hex')),
-    ),
+    Effect.flatMap((canonical) => Schema.decodeEffect(EnrollmentDigestSchema)(enrollmentDigest(canonical))),
     Effect.mapError((cause) =>
       rejectTransition(
         'counterparty_invitation_transition_invalid',

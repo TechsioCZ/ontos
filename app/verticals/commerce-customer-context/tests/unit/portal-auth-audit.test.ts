@@ -12,12 +12,9 @@ import {
   commercePortalAuthSignInEventType,
 } from '../../src/portal-auth/audit/audit-mapping.ts';
 import type { CommercePortalAuthSessionOutcomeName } from '../../src/portal-auth/audit/audit-mapping.ts';
-import {
-  commercePortalAuthSubjectDigest,
-  recordCommercePortalAuthAudit,
-} from '../../src/portal-auth/audit/audit-service.ts';
-import type { CommercePortalAuthAuditRecorder } from '../../src/portal-auth/audit/audit-service.ts';
+import { commercePortalAuthSubjectDigest, recordCommercePortalAuthAudit } from '../../src/portal-auth/audit/audit.ts';
 import { CommercePortalAuthAuditUnavailable } from '../../src/portal-auth/audit/audit-unavailable.ts';
+import type { CommercePortalAuthAuditRecorder } from '../../src/portal-auth/audit/audit.ts';
 
 const occurredAt = new Date('2026-01-01T00:00:00.000Z');
 const SECRET = Redacted.make('s'.repeat(64));

@@ -1,11 +1,8 @@
-import { Context, DateTime, Effect, Layer, Option, Redacted, Schema } from 'effect';
+import { Context, DateTime, Effect, Option, Redacted, Schema } from 'effect';
 
-import {
-  CommercePortalAuthAudit,
-  recordCommercePortalAuthAudit,
-  unauditedCommercePortalAuthRecorder,
-} from '../../../../src/portal-auth/audit/audit-service.ts';
-import type { CommercePortalAuthAuditRecorder } from '../../../../src/portal-auth/audit/audit-service.ts';
+import { auditedLayer, commercePortalAuthAuditEmitter } from '../../../../src/portal-auth/audit/audit.ts';
+import { withCause } from '../../problems-support.ts';
+import type { CommercePortalAuthAuditRecorder } from '../../../../src/portal-auth/audit/audit.ts';
 import { COMMERCE_PORTAL_AUTH_POLICY } from '../config.ts';
 import {
   CommercePortalAuthEmailVerificationRequestSchema,
@@ -53,9 +50,6 @@ const REQUEST_REJECTION_CODES = new Set([
   'USER_NOT_FOUND',
 ]);
 const RESET_REJECTION_CODES = new Set(['INVALID_TOKEN', 'PASSWORD_TOO_LONG', 'PASSWORD_TOO_SHORT', 'USER_NOT_FOUND']);
-
-const withCause = <TError extends object>(error: TError, cause: unknown): TError =>
-  Object.defineProperty(error, 'cause', { configurable: true, value: cause });
 
 const mapProviderFailure = (
   failure: CommercePortalAuthRecoveryProviderFailure,
@@ -149,7 +143,7 @@ export class CommercePortalAuthRecoveryService extends Context.Service<
  */
 export const makeCommercePortalAuthRecoveryService = Effect.fn('CommercePortalAuthRecovery.make')(
   function* makeCommercePortalAuthRecoveryServiceEffect(
-    audit: CommercePortalAuthAuditRecorder = unauditedCommercePortalAuthRecorder,
+    audit: CommercePortalAuthAuditRecorder,
   ): Effect.fn.Return<
     CommercePortalAuthRecoveryService['Service'],
     never,
@@ -160,8 +154,7 @@ export const makeCommercePortalAuthRecoveryService = Effect.fn('CommercePortalAu
     const provider = yield* CommercePortalAuthRecoveryProviderService;
     const store = yield* CommercePortalAuthRecoveryStoreService;
     const reconciliation = yield* CommercePortalAuthRecoveryReconciliationService;
-    const emitAudit = (event: Parameters<CommercePortalAuthAuditRecorder['record']>[0]) =>
-      recordCommercePortalAuthAudit(audit, event);
+    const emitAudit = commercePortalAuthAuditEmitter(audit);
 
     const requestPasswordReset = Effect.fn('CommercePortalAuthRecovery.requestPasswordReset')(
       function* requestPasswordResetEffect(
@@ -354,10 +347,7 @@ export const makeCommercePortalAuthRecoveryService = Effect.fn('CommercePortalAu
  * one tier beneath this layer, beside the owner store it is built from, precisely so this service
  * can read it here rather than each owning its own private copy.
  */
-export const CommercePortalAuthRecoveryServiceLive = Layer.effect(
+export const CommercePortalAuthRecoveryServiceLive = auditedLayer(
   CommercePortalAuthRecoveryService,
-  Effect.gen(function* makeCommercePortalAuthRecoveryServiceLive() {
-    const audit = yield* CommercePortalAuthAudit;
-    return yield* makeCommercePortalAuthRecoveryService(audit);
-  }),
+  makeCommercePortalAuthRecoveryService,
 );

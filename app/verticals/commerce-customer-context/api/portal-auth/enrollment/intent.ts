@@ -1,4 +1,4 @@
-import { createHash, randomUUID } from 'node:crypto';
+import { randomUUID } from 'node:crypto';
 import { Effect, Schema } from 'effect';
 
 import {
@@ -7,6 +7,7 @@ import {
   EnrollmentKeySchema,
   EnrollmentModuleKeySchema,
   EnrollmentTransitionKeySchema,
+  enrollmentDigest,
 } from '../../../shared/enrollment-contracts.ts';
 import type { StartPortalEnrollmentPayload } from '../../../shared/actions/start-portal-enrollment.ts';
 import {
@@ -27,7 +28,7 @@ import type { CommercePortalAuthEnrollmentStartInput } from './contracts.ts';
 
 const ENROLLMENT_INTENT_KEY_PREFIX = 'commerce.customer-context.portal-enrollment';
 
-const digestOf = (parts: readonly string[]): string => createHash('sha256').update(parts.join('\u0000')).digest('hex');
+const digestOf = (parts: readonly string[]): string => enrollmentDigest(parts.join('\u0000'));
 
 /**
  * The durable intent the `start-portal-enrollment` Action records. `intentKey` names the journey

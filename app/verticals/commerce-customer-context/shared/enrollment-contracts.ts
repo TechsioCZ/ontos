@@ -1,3 +1,5 @@
+import { createHash } from 'node:crypto';
+
 import {
   ActionInvocationIdSchema,
   PrincipalIdSchema,
@@ -24,6 +26,13 @@ export const EnrollmentPrincipalIdSchema = PrincipalIdSchema;
 export const EnrollmentTenantIdSchema = TenantIdSchema;
 export const EnrollmentLeaseTokenSchema = uuid.pipe(Schema.brand('EnrollmentLeaseToken'));
 export const EnrollmentDigestSchema = Schema.String.check(Schema.isPattern(/^[0-9a-f]{64}$/u));
+
+/**
+ * The single digest primitive every Enrollment identity is derived from: one lowercase SHA-256 of
+ * an already canonical encoding.  Callers own the canonicalization; nothing here inspects it, so
+ * two encodings that differ only in key order must be made identical before they reach this.
+ */
+export const enrollmentDigest = (canonical: string): string => createHash('sha256').update(canonical).digest('hex');
 export const EnrollmentBoundedTextSchema = Schema.String.check(
   Schema.isTrimmed(),
   Schema.isMinLength(1),

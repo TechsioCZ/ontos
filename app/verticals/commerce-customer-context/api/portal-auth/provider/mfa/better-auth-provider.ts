@@ -22,6 +22,7 @@ import {
   CommercePortalAuthMfaStatusResultSchema,
   CommercePortalAuthMfaTotpUriResultSchema,
 } from './contracts.ts';
+import { withCause } from '../../problems-support.ts';
 import { CommercePortalAuthInstance } from '../auth.ts';
 import { CommercePortalAuthMfaChallengeExpired } from './challenge-expired.ts';
 import { CommercePortalAuthMfaProviderService } from './provider-service.ts';
@@ -53,9 +54,6 @@ const RATE_LIMIT_CODES = new Set([
   'TOO_MANY_ATTEMPTS_REQUEST_NEW_CODE',
   'TOO_MANY_REQUESTS',
 ]);
-
-const withCause = <ErrorValue extends object>(error: ErrorValue, cause: unknown): ErrorValue =>
-  Object.defineProperty(error, 'cause', { configurable: true, value: cause });
 
 interface CommercePortalAuthMfaProviderCause {
   readonly code?: string | undefined;

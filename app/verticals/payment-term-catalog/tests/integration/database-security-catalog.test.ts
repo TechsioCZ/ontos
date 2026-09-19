@@ -44,9 +44,9 @@ const requiredIndexes = [
 /** Replaced by a non-unique semantics index; reintroducing it would reject legitimate corrections. */
 const retiredIndexes = ['payment_term_catalog_revisions_semantics_uk'] as const;
 
-const acquireCatalogPool = (connectionString: string) =>
+const acquirePool = (connectionString: string, max = 1) =>
   Effect.acquireRelease(
-    Effect.sync(() => new Pool({ connectionString, max: 1 })),
+    Effect.sync(() => new Pool({ connectionString, max })),
     (pool) => Effect.promise(() => pool.end()).pipe(Effect.orDie),
   );
 
@@ -54,7 +54,7 @@ it.live('governs the Payment Term Catalog schema through forced RLS and routine-
   Effect.scoped(
     Effect.gen(function* databaseSecurityCatalog() {
       const connections = yield* loadDatabaseConnectionPair();
-      const adminPool = yield* acquireCatalogPool(connections.admin.connectionString);
+      const adminPool = yield* acquirePool(connections.admin.connectionString);
       const admin = yield* makeTestDatabaseFromPool(adminPool, paymentTermCatalogRelations);
       const schema = PAYMENT_TERM_CATALOG_SCHEMA_NAME;
 

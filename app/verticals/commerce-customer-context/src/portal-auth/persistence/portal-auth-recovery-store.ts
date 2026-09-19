@@ -9,6 +9,7 @@ import type {
   CommercePortalAuthEmailVerificationTokenRegistration,
   CommercePortalAuthRecoveryReconciliationConflictClass,
 } from '../../../api/portal-auth/provider/recovery/contracts.ts';
+import { withCause } from '../../../api/portal-auth/problems-support.ts';
 import type { CommercePortalAuthRecoveryRateLimitRule } from '../../../api/portal-auth/rate-limit-service.ts';
 import { CommercePortalAuthRecoveryUnavailable } from '../../../api/portal-auth/provider/recovery/unavailable.ts';
 import { CommercePortalAuthRecoveryStoreService } from '../../../api/portal-auth/provider/recovery/store-service.ts';
@@ -37,9 +38,6 @@ const VerificationLedgerRecordSchema = Schema.Struct({
   providerSubjectId: CommercePortalAuthProviderSubjectIdSchema,
 }).annotate({ parseOptions: { onExcessProperty: 'error' } });
 type VerificationLedgerRecord = typeof VerificationLedgerRecordSchema.Type;
-
-const withCause = <TError extends object>(error: TError, cause: unknown): TError =>
-  Object.defineProperty(error, 'cause', { configurable: true, value: cause });
 
 const unavailable = (operation: string, cause: unknown): CommercePortalAuthRecoveryUnavailable =>
   withCause(

@@ -8,6 +8,7 @@ import {
   CommercePortalAuthSessionRefreshConflict,
   CommercePortalAuthSessionUnavailable,
 } from '../../../api/portal-auth/session/errors.ts';
+import { withCause } from '../../../api/portal-auth/problems-support.ts';
 import type { CommercePortalAuthSessionRecord } from '../../../api/portal-auth/session/contracts.ts';
 import { CommercePortalAuthSessionStoreService } from '../../../api/portal-auth/session/store-service.ts';
 import type {
@@ -21,9 +22,6 @@ import { CommercePortalAuthAuditUnavailable, commercePortalAuthAuditUnavailable 
 import { CommercePortalAuthDatabase } from './portal-auth-database.ts';
 import type { CommercePortalAuthDatabaseExecutor } from './portal-auth-database-types.ts';
 import { session, user } from './portal-auth-tables.ts';
-
-const withCause = <TError extends object>(error: TError, cause: unknown): TError =>
-  Object.defineProperty(error, 'cause', { configurable: true, value: cause });
 
 const unavailable = (operation: string, cause: unknown): CommercePortalAuthSessionUnavailable =>
   withCause(

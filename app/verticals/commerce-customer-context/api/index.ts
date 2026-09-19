@@ -22,13 +22,17 @@ import { Effect, HttpApiBuilder, HttpRouter, Layer } from '@modern-js/bff-effect
 import type { EffectBffDefinition, EffectBffRuntime } from '@modern-js/bff-effect/effect-edge';
 import { Context, Layer as GovernedReadLayer, Logger, Option, References, Schema, Tracer } from 'effect';
 import { CommercePortalAuthDatabaseLive } from '../src/portal-auth/persistence/portal-auth-database.ts';
-import { CommercePortalAuthAuditLive } from '../src/portal-auth/audit/audit-store.ts';
+import { CommercePortalAuthAuditLive } from '../src/portal-auth/audit/audit.ts';
 import { CommercePortalAuthAccountLookupLive } from '../src/portal-auth/persistence/portal-auth-account-lookup.ts';
 import { CommerceEnrollmentOwnerTransactionRunnerLive } from '../src/enrollment/orchestration/owner-transaction-runner.ts';
 import { commerceEnrollmentOwnerTransitionPreparationLive } from '../src/enrollment/orchestration/owner-transition-composition.ts';
 import { CommerceEnrollmentPreparationSubjectResolverLive } from '../src/enrollment/orchestration/preparation-subject.ts';
 import { CommercePortalAuthLive } from './portal-auth/provider/auth.ts';
-import { CommercePortalAuthConfigLive, optionalCommercePortalAuthConfig } from './portal-auth/provider/config.ts';
+import {
+  CommercePortalAuthConfigLive,
+  optionalCommercePortalAuthConfig,
+  portalAuthRealmConfigured,
+} from './portal-auth/provider/config.ts';
 import { commercePortalAuthRealmUnavailableLive } from './portal-auth/realm-unavailable.ts';
 import type { CommercePortalAuthHandlerServices } from './portal-auth/realm-unavailable.ts';
 import { CommercePortalAuthEmailDeliveryLive } from './portal-auth/provider/recovery/email-delivery.ts';
@@ -53,6 +57,7 @@ import { CommercePortalAuthenticationNamespaceRegistryLive } from './portal-auth
 import { CommerceCoreIdentityClientLive } from './portal-auth/provider/core-identity-client.ts';
 import {
   CommerceCoreIdentityClientConfigLive,
+  coreIdentityTransportConfigured,
   optionalCommerceCoreIdentityClientConfig,
 } from './portal-auth/provider/core-identity-client-config.ts';
 import { CommercePortalAuthRecoveryReconciliationServiceLive } from './portal-auth/provider/recovery/reconciliation.ts';
@@ -508,33 +513,6 @@ const selectEnrollmentOwnerPreparationLive = (
   configured
     ? commerceEnrollmentOwnerTransitionPreparationRealmLive
     : commerceEnrollmentOwnerTransitionPreparationUnavailableLive;
-/**
- * A realm configuration that names some `COMMERCE_PORTAL_AUTH_*` value but not all of them is a
- * misconfiguration, and `optionalCommercePortalAuthConfig` reports it as one. The four portal
- * groups answer for that on their own — `selectPortalAuthRuntimeLive` keeps the error — but this
- * read sits inside the Action runtime every governed business route is served from, so an
- * unreadable realm must not take those routes down with it. The fail-closed leaf is the honest
- * answer here: no governed Action may proceed on a claimed owner payload without owner evidence,
- * which is exactly what a deployment whose portal realm cannot be read should get.
- */
-const coreIdentityTransportConfigured = optionalCommerceCoreIdentityClientConfig.pipe(
-  Effect.map(Option.isSome),
-  Effect.catchTag('CommerceCoreIdentityClientConfigError', (failure) =>
-    Effect.annotateLogs(
-      Effect.logWarning('Commerce Core identity transport is unreadable; enrollment owner evidence fails closed'),
-      { reason: failure.reason },
-    ).pipe(Effect.as(false)),
-  ),
-);
-const portalAuthRealmConfigured = optionalCommercePortalAuthConfig.pipe(
-  Effect.map(Option.isSome),
-  Effect.catchTag('CommercePortalAuthConfigError', (failure) =>
-    Effect.annotateLogs(
-      Effect.logWarning('Commerce portal realm configuration is unreadable; enrollment owner evidence fails closed'),
-      { reason: failure.reason },
-    ).pipe(Effect.as(false)),
-  ),
-);
 const deploymentEnrollmentOwnerPreparationLive = Layer.unwrap(
   Effect.all(
     {

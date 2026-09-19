@@ -31,7 +31,7 @@ const unavailable = (
   code: string,
   reason: string,
   cause?: unknown,
-): CommerceEnrollmentCommitResolutionUnavailable => {
+): InstanceType<typeof CommerceEnrollmentCommitResolutionUnavailable> => {
   const error = new CommerceEnrollmentCommitResolutionUnavailable({
     code: code.slice(0, 200),
     invocationId,
@@ -46,7 +46,7 @@ const rejected = (
   code: string,
   reason: string,
   retryable: boolean,
-): CommerceEnrollmentCommitResolutionRejected =>
+): InstanceType<typeof CommerceEnrollmentCommitResolutionRejected> =>
   new CommerceEnrollmentCommitResolutionRejected({
     code: code.slice(0, 200),
     invocationId,
@@ -57,7 +57,7 @@ const rejected = (
 const revoked = (
   invocationId: EnrollmentCommitResolutionInput['originalInvocationId'],
   bindingStatus: NonCurrentBindingStatus,
-): CommerceEnrollmentCommitResolutionRevoked =>
+): InstanceType<typeof CommerceEnrollmentCommitResolutionRevoked> =>
   new CommerceEnrollmentCommitResolutionRevoked({
     bindingStatus,
     code: 'commit_resolution_binding_revoked',
