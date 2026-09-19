@@ -84,10 +84,7 @@ export type CommercePortalAuthMfaSendOtpBody = typeof CommercePortalAuthMfaSendO
 export type CommercePortalAuthMfaVerifyTotpBody = typeof CommercePortalAuthMfaVerifyTotpBodySchema.Type;
 export type CommercePortalAuthMfaVerifyOtpBody = typeof CommercePortalAuthMfaVerifyOtpBodySchema.Type;
 export type CommercePortalAuthMfaVerifyBackupCodeBody = typeof CommercePortalAuthMfaVerifyBackupCodeBodySchema.Type;
-export type CommercePortalAuthMfaEnableBody = typeof CommercePortalAuthMfaEnableBodySchema.Type;
 export type CommercePortalAuthMfaConfirmEnableBody = typeof CommercePortalAuthMfaConfirmEnableBodySchema.Type;
-export type CommercePortalAuthMfaDisableBody = typeof CommercePortalAuthMfaDisableBodySchema.Type;
-export type CommercePortalAuthMfaPasswordBody = typeof CommercePortalAuthMfaPasswordBodySchema.Type;
 
 export const CommercePortalAuthMfaStatusResultSchema = Schema.Struct({
   status: Schema.Boolean,

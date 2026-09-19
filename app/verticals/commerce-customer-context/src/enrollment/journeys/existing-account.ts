@@ -26,9 +26,10 @@ import {
   PORTAL_ACCOUNT_CREATION_TRANSITION_KEY,
   PORTAL_AUTH_OWNER_MODULE_KEY,
 } from '../orchestration/prepared-owner-authority.ts';
+import { withCause } from '../attempts/errors.ts';
 import { CommerceEnrollmentOwnerTransitionSchema } from '../orchestration/owner-transition-driver.ts';
 import type { CommerceEnrollmentOwnerTransition } from '../orchestration/owner-transition-driver.ts';
-import { JourneyDefinitionSchema, journeyTransitions } from './journey-contracts.ts';
+import { JourneyDefinitionSchema } from './journey-contracts.ts';
 import type { JourneyDefinition, JourneyTransitionSpec } from './journey-contracts.ts';
 
 /**
@@ -117,9 +118,6 @@ export class ExistingAccountEnrollmentRejected extends Schema.TaggedError<Existi
   },
 ) {}
 
-const preserveCause = <Value extends object>(error: Value, cause: unknown): Value =>
-  Object.defineProperty(error, 'cause', { configurable: false, enumerable: false, value: cause });
-
 /**
  * Build a closed-vocabulary rejection, preserving the original failure as a non-enumerable
  * `cause` instead of discarding it, matching `counterparty-invitation.ts`'s `rejectTransition`.
@@ -130,7 +128,7 @@ const rejectExistingAccount = (
   cause?: unknown,
 ): ExistingAccountEnrollmentRejected => {
   const error = new ExistingAccountEnrollmentRejected({ code, reason: reason.slice(0, 500), retryable: false });
-  return cause === undefined ? error : preserveCause(error, cause);
+  return cause === undefined ? error : withCause(error, cause);
 };
 
 const isAccountCreationTransition = (transition: JourneyTransitionSpec): boolean =>
@@ -151,7 +149,7 @@ const isAccountCreationTransition = (transition: JourneyTransitionSpec): boolean
  * `invitationId` — and calls this factory to obtain the definition to gate that Attempt's
  * completion.
  */
-export const makeExistingAccountJourneyDefinition = (
+export const existingAccountJourneyDefinitionFor = (
   targetDefinition: JourneyDefinition,
 ): Effect.Effect<JourneyDefinition, ExistingAccountEnrollmentRejected> => {
   if (targetDefinition.kind === 'EXISTING_ACCOUNT') {
@@ -182,12 +180,6 @@ export const makeExistingAccountJourneyDefinition = (
     ),
   );
 };
-
-/** Every step of the composed journey, required first, exactly as the target declared them. */
-export const existingAccountStepPlan = (
-  targetDefinition: JourneyDefinition,
-): Effect.Effect<readonly JourneyTransitionSpec[], ExistingAccountEnrollmentRejected> =>
-  makeExistingAccountJourneyDefinition(targetDefinition).pipe(Effect.map(journeyTransitions));
 
 /**
  * The exact already-authenticated subject and the second Tenant it is enrolling into. No provider
@@ -248,7 +240,7 @@ const canonicalIntentJsonSchema = Schema.fromJsonString(ExistingAccountEnrollmen
  * Tenant always produce the same digest for the same transition, so a retry converges on the
  * exact same durable owner operation instead of reserving or activating a second binding.
  */
-export const makeExistingAccountRequestDigest = (
+export const existingAccountRequestDigest = (
   intent: ExistingAccountEnrollmentTransitionIntent,
 ): Effect.Effect<typeof EnrollmentDigestSchema.Type, ExistingAccountEnrollmentRejected> =>
   Schema.encodeEffect(canonicalIntentJsonSchema)(intent).pipe(
@@ -303,7 +295,7 @@ export const makeExistingAccountTransition = Effect.fn('ExistingAccountJourney.m
     if (tenantIssue !== undefined) {
       return yield* rejectExistingAccount('existing_account_tenant_mismatch', tenantIssue);
     }
-    const requestDigest = yield* makeExistingAccountRequestDigest({
+    const requestDigest = yield* existingAccountRequestDigest({
       journey: 'EXISTING_ACCOUNT',
       ownerModuleKey: step.ownerModuleKey,
       portalEnrollmentAttemptId: input.identity.portalEnrollmentAttemptId,
@@ -329,43 +321,24 @@ export const makeExistingAccountTransition = Effect.fn('ExistingAccountJourney.m
 
 type EnrollmentResourceId = typeof EnrollmentResourceIdSchema.Type;
 
-const toCoreAuthenticationNamespaceId = (
-  value: CommercePortalAccountSubject['authenticationNamespaceId'],
-): Effect.Effect<typeof AuthenticationNamespaceIdSchema.Type, ExistingAccountEnrollmentRejected> =>
-  Schema.decodeEffect(AuthenticationNamespaceIdSchema)(value).pipe(
-    Effect.mapError((cause) =>
-      rejectExistingAccount(
-        'existing_account_transition_invalid',
-        'The current session authentication namespace could not be represented for Core identity',
-        cause,
-      ),
-    ),
+/** Decode one value into its Core identity contract, reporting a bad value as a typed rejection. */
+const decodeOrReject = <Value>(
+  schema: Schema.ConstraintDecoder<Value>,
+  // oxlint-disable-next-line anti-slop/no-unknown-parameters -- This is the Core identity wire boundary; the value is decoded before any request is built.
+  value: unknown,
+  reason: string,
+): Effect.Effect<Value, ExistingAccountEnrollmentRejected> =>
+  Schema.decodeUnknownEffect(schema)(value).pipe(
+    Effect.mapError((cause) => rejectExistingAccount('existing_account_transition_invalid', reason, cause)),
   );
 
 const toCoreAuthBindingId = (
   value: EnrollmentResourceId,
 ): Effect.Effect<typeof AuthBindingIdSchema.Type, ExistingAccountEnrollmentRejected> =>
-  Schema.decodeEffect(AuthBindingIdSchema)(String(value)).pipe(
-    Effect.mapError((cause) =>
-      rejectExistingAccount(
-        'existing_account_transition_invalid',
-        'The reserved Principal Auth Binding reference is not a valid Core binding identifier',
-        cause,
-      ),
-    ),
-  );
-
-const toCoreBindingRevision = (
-  value: number,
-): Effect.Effect<typeof BindingRevisionSchema.Type, ExistingAccountEnrollmentRejected> =>
-  Schema.decodeEffect(BindingRevisionSchema)(value).pipe(
-    Effect.mapError((cause) =>
-      rejectExistingAccount(
-        'existing_account_transition_invalid',
-        'The expected Principal Auth Binding revision is invalid',
-        cause,
-      ),
-    ),
+  decodeOrReject(
+    AuthBindingIdSchema,
+    String(value),
+    'The reserved Principal Auth Binding reference is not a valid Core binding identifier',
   );
 
 export interface ExistingAccountCoreIdentityReserveRequestInput {
@@ -378,10 +351,14 @@ export interface ExistingAccountCoreIdentityReserveRequestInput {
  * opaque `authenticationRef` evidence; this function never accepts or forwards a token, session
  * cookie or credential.
  */
-export const makeExistingAccountCoreIdentityReserveRequest = (
+export const existingAccountCoreIdentityReserveRequest = (
   input: ExistingAccountCoreIdentityReserveRequestInput,
 ): Effect.Effect<ReservePrincipalBindingRequest, ExistingAccountEnrollmentRejected> =>
-  toCoreAuthenticationNamespaceId(input.accountSubject.authenticationNamespaceId).pipe(
+  decodeOrReject(
+    AuthenticationNamespaceIdSchema,
+    input.accountSubject.authenticationNamespaceId,
+    'The current session authentication namespace could not be represented for Core identity',
+  ).pipe(
     Effect.map((authenticationNamespaceId) => ({
       authenticationRef: input.authenticationRef,
       reservation: {
@@ -403,13 +380,17 @@ export interface ExistingAccountCoreIdentityActivateRequestInput {
  * Build the neutral Core activate payload from the reserved binding. Activate only ever follows a
  * successfully recorded reserve outcome for the exact same Attempt; it never invents a binding ID.
  */
-export const makeExistingAccountCoreIdentityActivateRequest = (
+export const existingAccountCoreIdentityActivateRequest = (
   input: ExistingAccountCoreIdentityActivateRequestInput,
 ): Effect.Effect<ActivatePrincipalBindingRequest, ExistingAccountEnrollmentRejected> =>
   Effect.all(
     {
       authBindingId: toCoreAuthBindingId(input.authBindingId),
-      expectedRevision: toCoreBindingRevision(input.expectedRevision),
+      expectedRevision: decodeOrReject(
+        BindingRevisionSchema,
+        input.expectedRevision,
+        'The expected Principal Auth Binding revision is invalid',
+      ),
     },
     { concurrency: 2 },
   ).pipe(
@@ -420,7 +401,7 @@ export const makeExistingAccountCoreIdentityActivateRequest = (
   );
 
 /** Build the exact-binding Core read used to reconcile an indeterminate reserve/activate result. */
-export const makeExistingAccountCoreIdentityReadByBindingRequest = (
+export const existingAccountCoreIdentityReadByBindingRequest = (
   authBindingId: EnrollmentResourceId,
 ): Effect.Effect<ReadPrincipalBindingRequest, ExistingAccountEnrollmentRejected> =>
   toCoreAuthBindingId(authBindingId).pipe(

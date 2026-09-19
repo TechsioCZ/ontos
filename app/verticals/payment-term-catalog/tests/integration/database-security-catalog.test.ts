@@ -4,6 +4,7 @@ import { Array as EffectArray, Effect, Order } from 'effect';
 import { expect, it } from 'effect-rstest';
 import { Pool } from 'pg';
 
+import { acquirePoolResource } from '../../../../packages/core-runtime/src/db/client.ts';
 import { makeTestDatabaseFromPool } from '../../../../packages/core-runtime/tests/support/database.ts';
 import {
   PAYMENT_TERM_CATALOG_SCHEMA_NAME,
@@ -44,17 +45,13 @@ const requiredIndexes = [
 /** Replaced by a non-unique semantics index; reintroducing it would reject legitimate corrections. */
 const retiredIndexes = ['payment_term_catalog_revisions_semantics_uk'] as const;
 
-const acquirePool = (connectionString: string, max = 1) =>
-  Effect.acquireRelease(
-    Effect.sync(() => new Pool({ connectionString, max })),
-    (pool) => Effect.promise(() => pool.end()).pipe(Effect.orDie),
-  );
-
 it.live('governs the Payment Term Catalog schema through forced RLS and routine-only runtime access', () =>
   Effect.scoped(
     Effect.gen(function* databaseSecurityCatalog() {
       const connections = yield* loadDatabaseConnectionPair();
-      const adminPool = yield* acquirePool(connections.admin.connectionString);
+      const adminPool = yield* acquirePoolResource(
+        () => new Pool({ connectionString: connections.admin.connectionString, max: 1 }),
+      );
       const admin = yield* makeTestDatabaseFromPool(adminPool, paymentTermCatalogRelations);
       const schema = PAYMENT_TERM_CATALOG_SCHEMA_NAME;
 

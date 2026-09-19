@@ -9,7 +9,7 @@ import type {
   ExternalIdentityClientOptions,
   ExternalIdentityClientPort,
 } from '@app/shared-contracts/server/external-identity-client';
-import { Context, Effect, Layer, Option, Schema } from 'effect';
+import { Context, Effect, Layer, Option, Result, Schema } from 'effect';
 
 import {
   CommerceCoreIdentityClientConfig,
@@ -23,7 +23,7 @@ import {
 } from '../../../shared/enrollment-contracts.ts';
 import type { EnrollmentAttemptSnapshot, ReadEnrollmentAttemptInput } from '../../../shared/enrollment-contracts.ts';
 import { RetailPortalPrincipalRefSchema } from '../../../shared/resources/retail-portal-profile-binding.ts';
-import { CommerceEnrollmentAttemptRejected, CommerceEnrollmentAttemptUnavailable } from '../attempts/errors.ts';
+import { attemptRejected, attemptUnavailable } from '../attempts/errors.ts';
 import type { CommerceEnrollmentAttemptError } from '../attempts/errors.ts';
 import {
   PARTY_CANDIDATE_SUBMISSION_TRANSITION_KEY,
@@ -93,36 +93,17 @@ export class CommerceEnrollmentPreparationSubjectResolver extends Context.Servic
   '@app/commerce-customer-context/enrollment/orchestration/preparation-subject/CommerceEnrollmentPreparationSubjectResolver',
 ) {}
 
-const preserveCause = <Value extends object>(error: Value, cause: unknown): Value =>
-  Object.defineProperty(error, 'cause', { configurable: false, enumerable: false, value: cause });
-
 const unavailable = (
   attempt: EnrollmentAttemptSnapshot,
   reason: string,
   cause?: unknown,
-): CommerceEnrollmentAttemptError => {
-  const error = new CommerceEnrollmentAttemptUnavailable({
-    attemptId: attempt.portalEnrollmentAttemptId,
-    code: 'attempt_unavailable',
-    reason: reason.slice(0, 500),
-    retryable: true,
-  });
-  return cause === undefined ? error : preserveCause(error, cause);
-};
+): CommerceEnrollmentAttemptError => attemptUnavailable(reason, attempt.portalEnrollmentAttemptId, cause);
 
 const rejected = (
   attempt: EnrollmentAttemptSnapshot,
   reason: string,
   cause?: unknown,
-): CommerceEnrollmentAttemptError => {
-  const error = new CommerceEnrollmentAttemptRejected({
-    attemptId: attempt.portalEnrollmentAttemptId,
-    code: 'attempt_invalid',
-    reason: reason.slice(0, 500),
-    retryable: false,
-  });
-  return cause === undefined ? error : preserveCause(error, cause);
-};
+): CommerceEnrollmentAttemptError => attemptRejected(reason, attempt.portalEnrollmentAttemptId, cause);
 
 /**
  * A Core transport failure is retryable unless Core itself refused the request. A 4xx that is not a
@@ -165,14 +146,13 @@ const sellingLegalEntityRefFor = (
   );
 };
 
-const partyTransitionIdentity = Effect.all(
-  {
-    ownerModuleKey: Schema.decodeEffect(EnrollmentModuleKeySchema)(PARTY_REGISTRY_OWNER_MODULE_KEY),
-    transitionKey: Schema.decodeEffect(EnrollmentTransitionKeySchema)(PARTY_CANDIDATE_SUBMISSION_TRANSITION_KEY),
-    // Two independent in-memory decodes of journey-owned constants.
-  },
-  { concurrency: 2 },
-).pipe(Effect.orDie);
+/** Journey-owned literals, decoded once at load rather than on every subject resolution. */
+const PARTY_TRANSITION_IDENTITY = {
+  ownerModuleKey: Result.getOrThrow(Schema.decodeResult(EnrollmentModuleKeySchema)(PARTY_REGISTRY_OWNER_MODULE_KEY)),
+  transitionKey: Result.getOrThrow(
+    Schema.decodeResult(EnrollmentTransitionKeySchema)(PARTY_CANDIDATE_SUBMISSION_TRANSITION_KEY),
+  ),
+} as const;
 
 /**
  * The Party the durable owner journal already names. An absent or unsuccessful transition is
@@ -183,13 +163,12 @@ const partyRefFor = Effect.fn('CommerceEnrollmentPreparationSubjectResolver.part
   store: CommerceEnrollmentOwnerAttemptStore,
   attempt: EnrollmentAttemptSnapshot,
 ): Effect.fn.Return<RetailSelfEnrollmentPreparationSubject['partyRef'], CommerceEnrollmentAttemptError> {
-  const identity = yield* partyTransitionIdentity;
   const operation = yield* store
     .readOwnerOperation({
-      ownerModuleKey: identity.ownerModuleKey,
+      ownerModuleKey: PARTY_TRANSITION_IDENTITY.ownerModuleKey,
       portalEnrollmentAttemptId: attempt.portalEnrollmentAttemptId,
       tenantId: attempt.tenantId,
-      transitionKey: identity.transitionKey,
+      transitionKey: PARTY_TRANSITION_IDENTITY.transitionKey,
     })
     .pipe(
       Effect.asSome,
@@ -303,12 +282,7 @@ const reserveBinding = Effect.fn('CommerceEnrollmentPreparationSubjectResolver.r
           coreFailure(call.attempt, 'The Core Principal Auth Binding for this Attempt could not be reserved'),
         ),
       );
-    return yield* principalFromBinding(call, {
-      authBindingId: result.authBindingId,
-      bindingRevision: result.bindingRevision,
-      bindingStatus: result.bindingStatus,
-      principalId: result.principalId,
-    });
+    return yield* principalFromBinding(call, result);
   },
 );
 
@@ -342,12 +316,7 @@ const principalIdFor = Effect.fn('CommerceEnrollmentPreparationSubjectResolver.p
       );
     return read.outcome === 'NOT_FOUND'
       ? yield* reserveBinding(call, accountSubject)
-      : yield* principalFromBinding(call, {
-          authBindingId: read.authBindingId,
-          bindingRevision: read.bindingRevision,
-          bindingStatus: read.bindingStatus,
-          principalId: read.principalId,
-        });
+      : yield* principalFromBinding(call, read);
   },
 );
 
@@ -403,7 +372,6 @@ const resolveSubject = Effect.fn('CommerceEnrollmentPreparationSubjectResolver.r
   };
   const { partyRef, principalRef } = yield* Effect.all(
     {
-      // One durable owner read and one Core identity read; neither depends on the other.
       partyRef: partyRefFor(store, attempt),
       principalRef: principalRefFor(call),
     },
@@ -419,19 +387,12 @@ const resolveSubject = Effect.fn('CommerceEnrollmentPreparationSubjectResolver.r
 });
 
 /**
- * Build a resolver over the exact seams it reads. The Attempt store is a per-Tenant seam rather
- * than an ambient service because each resolution opens its own Attempt transaction, exactly as the
+ * Resolve over the exact seams the caller holds. The Attempt store is a per-Tenant seam rather than
+ * an ambient service because each resolution opens its own Attempt transaction, exactly as the
  * installed owner preparation port does: no owner read happens inside a governed Action
  * transaction.
  */
-export const commerceEnrollmentPreparationSubjectResolverForPorts = (
-  store: CommerceEnrollmentOwnerAttemptStore,
-  client: ExternalIdentityClientPort,
-  clientOptions: (attempt: EnrollmentAttemptSnapshot) => ExternalIdentityClientOptions,
-): CommerceEnrollmentPreparationSubjectResolverService =>
-  Object.freeze({
-    resolve: (input: ReadEnrollmentAttemptInput) => resolveSubject(store, client, clientOptions, input),
-  });
+export const commerceEnrollmentPreparationSubjectForPorts = resolveSubject;
 
 export const CommerceEnrollmentPreparationSubjectResolverLive = Layer.effect(
   CommerceEnrollmentPreparationSubjectResolver,
@@ -447,11 +408,12 @@ export const CommerceEnrollmentPreparationSubjectResolverLive = Layer.effect(
       );
     return {
       resolve: (input: ReadEnrollmentAttemptInput) =>
-        commerceEnrollmentPreparationSubjectResolverForPorts(
+        commerceEnrollmentPreparationSubjectForPorts(
           commerceEnrollmentOwnerAttemptStoreForRun({ tenantId: input.tenantId }, runner.run),
           client,
           clientOptions,
-        ).resolve(input),
+          input,
+        ),
     };
   }),
 );

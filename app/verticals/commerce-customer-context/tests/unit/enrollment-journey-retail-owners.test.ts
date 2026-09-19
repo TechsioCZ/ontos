@@ -29,13 +29,15 @@ import {
   RETAIL_PORTAL_PROFILE_BOUND_OUTCOME_CODE,
   retailPartyCandidateDigest,
   retailSelfEnrollmentRequestDigest,
+  retailSelfEnrollmentStepPlan,
 } from '../../src/enrollment/journeys/retail-self-enrollment-contracts.ts';
+import type { JourneyTransitionSpec } from '../../src/enrollment/journeys/journey-contracts.ts';
 import { retailPartyCandidateOwnerEffect } from '../../src/enrollment/journeys/retail-self-enrollment-party-owner.ts';
 import type {
   RetailPartyCandidateOwnerExecutors,
   RetailPartyCandidateOwnerInput,
 } from '../../src/enrollment/journeys/retail-self-enrollment-party-owner.ts';
-import { retailSelfEnrollmentPreparationPorts } from '../../src/enrollment/journeys/retail-self-enrollment-preparation.ts';
+import { retailSelfEnrollmentPrepareStep } from '../../src/enrollment/journeys/retail-self-enrollment-preparation.ts';
 import {
   CommerceActionCommitResolutionFailed,
   retailCustomerProfileActionExecutor,
@@ -477,45 +479,54 @@ const ensureDigest = retailSelfEnrollmentRequestDigest({
   transitionKey: ENSURE_RETAIL_CUSTOMER_PROFILE_TRANSITION_KEY,
 });
 
+const stepFor = (transitionKey: string): JourneyTransitionSpec => {
+  const step = retailSelfEnrollmentStepPlan().find((declared) => declared.transitionKey === transitionKey);
+  if (step === undefined) {
+    throw new Error(`The Retail self-enrollment plan declares no ${transitionKey} step`);
+  }
+  return step;
+};
+
 it.effect('prepares only the exact declared transition with the journey-derived digest', () =>
   Effect.gen(function* preparation() {
-    const ports = yield* retailSelfEnrollmentPreparationPorts(preparationSubject);
-    expect(ports).toHaveLength(4);
-    const ensurePort = ports.find((port) => port.transitionKey === ENSURE_RETAIL_CUSTOMER_PROFILE_TRANSITION_KEY);
-    expect(ensurePort).toBeDefined();
-    if (ensurePort === undefined) {
-      return;
-    }
-    const prepared = yield* ensurePort.prepare(
+    expect(retailSelfEnrollmentStepPlan()).toHaveLength(4);
+    const ensureStep = stepFor(ENSURE_RETAIL_CUSTOMER_PROFILE_TRANSITION_KEY);
+    const prepared = yield* retailSelfEnrollmentPrepareStep(
+      preparationSubject,
+      ensureStep,
       preparedBinding(ENSURE_RETAIL_CUSTOMER_PROFILE_TRANSITION_KEY, ensureDigest),
     );
     expect(prepared.outcome).toBe('prepared');
 
-    const forged = yield* ensurePort.prepare(
+    const forged = yield* retailSelfEnrollmentPrepareStep(
+      preparationSubject,
+      ensureStep,
       preparedBinding(ENSURE_RETAIL_CUSTOMER_PROFILE_TRANSITION_KEY, 'f'.repeat(64)),
     );
     expect(forged.outcome).toBe('denied');
 
-    const foreignTransition = yield* ensurePort.prepare(preparedBinding(BIND_RETAIL_PORTAL_PROFILE_TRANSITION_KEY));
+    const foreignTransition = yield* retailSelfEnrollmentPrepareStep(
+      preparationSubject,
+      ensureStep,
+      preparedBinding(BIND_RETAIL_PORTAL_PROFILE_TRANSITION_KEY),
+    );
     expect(foreignTransition.outcome).toBe('denied');
   }),
 );
 
 it.effect('vouches for nothing that depends on a Party the journey has not resolved yet', () =>
   Effect.gen(function* withoutParty() {
-    const ports = yield* retailSelfEnrollmentPreparationPorts({
-      partyCandidateDigest: preparationSubject.partyCandidateDigest,
-      partyRef: Option.none(),
-      portalEnrollmentAttemptId: attemptId,
-      principalRef,
-      sellingLegalEntityRef,
-    });
-    const bindPort = ports.find((port) => port.transitionKey === BIND_RETAIL_PORTAL_PROFILE_TRANSITION_KEY);
-    expect(bindPort).toBeDefined();
-    if (bindPort === undefined) {
-      return;
-    }
-    const result = yield* bindPort.prepare(preparedBinding(BIND_RETAIL_PORTAL_PROFILE_TRANSITION_KEY));
+    const result = yield* retailSelfEnrollmentPrepareStep(
+      {
+        partyCandidateDigest: preparationSubject.partyCandidateDigest,
+        partyRef: Option.none(),
+        portalEnrollmentAttemptId: attemptId,
+        principalRef,
+        sellingLegalEntityRef,
+      },
+      stepFor(BIND_RETAIL_PORTAL_PROFILE_TRANSITION_KEY),
+      preparedBinding(BIND_RETAIL_PORTAL_PROFILE_TRANSITION_KEY),
+    );
     expect(result.outcome).toBe('not_applicable');
   }),
 );

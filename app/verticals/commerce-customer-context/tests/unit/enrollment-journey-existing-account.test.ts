@@ -14,12 +14,11 @@ import {
   ExistingAccountEnrollmentRejected,
   ExistingAccountEnrollmentSubjectSchema,
   RESERVE_PRINCIPAL_BINDING_TRANSITION_KEY,
-  existingAccountStepPlan,
-  makeExistingAccountCoreIdentityActivateRequest,
-  makeExistingAccountCoreIdentityReadByBindingRequest,
-  makeExistingAccountCoreIdentityReserveRequest,
-  makeExistingAccountJourneyDefinition,
-  makeExistingAccountRequestDigest,
+  existingAccountCoreIdentityActivateRequest,
+  existingAccountCoreIdentityReadByBindingRequest,
+  existingAccountCoreIdentityReserveRequest,
+  existingAccountJourneyDefinitionFor,
+  existingAccountRequestDigest,
   makeExistingAccountTransition,
   validateExistingAccountEnrollmentSubject,
 } from '../../src/enrollment/journeys/existing-account.ts';
@@ -33,7 +32,7 @@ import { PORTAL_ACCOUNT_CREATION_TRANSITION_KEY } from '../../src/enrollment/orc
 import type { CommerceEnrollmentCoreIdentityOwnerEffectOptions } from '../../src/enrollment/orchestration/owner-transition-driver.ts';
 import {
   CommerceEnrollmentOwnerTransitionSchema,
-  makeCommerceEnrollmentCoreIdentityOwnerEffect,
+  commerceEnrollmentCoreIdentityOwnerEffectFor,
 } from '../../src/enrollment/orchestration/owner-transition-driver.ts';
 import { CommerceEnrollmentOwnerEffectRejected } from '../../src/enrollment/orchestration/owner-transition-errors.ts';
 import {
@@ -49,7 +48,7 @@ import { COMMERCE_AUTHENTICATION_NAMESPACE_ID } from '../../shared/portal-auth-c
 /**
  * Unit coverage for issue #338's Existing-account enrollment journey. Every test uses doubles: no
  * database, no HTTP transport, no Core service. The revoked-target-binding scenario reuses
- * `makeCommerceEnrollmentCoreIdentityOwnerEffect` exactly as `enrollment-owner-transition-driver.test.ts`
+ * `commerceEnrollmentCoreIdentityOwnerEffectFor` exactly as `enrollment-owner-transition-driver.test.ts`
  * does — proving this module wires the Core adapter correctly, not re-deriving the rejection itself.
  */
 
@@ -143,7 +142,7 @@ it.effect(
   'composes the Existing-account journey from a target definition, dropping the target account-creation step',
   () =>
     Effect.gen(function* composesJourney() {
-      const definition = yield* makeExistingAccountJourneyDefinition(retailSelfEnrollmentJourneyDefinition);
+      const definition = yield* existingAccountJourneyDefinitionFor(retailSelfEnrollmentJourneyDefinition);
       expect(definition.kind).toBe('EXISTING_ACCOUNT');
       const keys = definition.requiredTransitions.map((step) => `${step.ownerModuleKey}\u0000${step.transitionKey}`);
       expect(keys[0]).toBe(`${CORE_IDENTITY_OWNER_MODULE_KEY}\u0000${RESERVE_PRINCIPAL_BINDING_TRANSITION_KEY}`);
@@ -161,20 +160,20 @@ it.effect(
 it.effect('rejects composing Existing-account against itself as a target', () =>
   Effect.gen(function* rejectsSelfTarget() {
     const definition = yield* Effect.gen(function* selfComposition() {
-      const composed = yield* makeExistingAccountJourneyDefinition(retailSelfEnrollmentJourneyDefinition);
-      return yield* makeExistingAccountJourneyDefinition(composed);
+      const composed = yield* existingAccountJourneyDefinitionFor(retailSelfEnrollmentJourneyDefinition);
+      return yield* existingAccountJourneyDefinitionFor(composed);
     }).pipe(Effect.flip);
     expect(definition).toBeInstanceOf(ExistingAccountEnrollmentRejected);
     expect(definition.code).toBe('existing_account_target_journey_invalid');
   }),
 );
 
-it.effect('the composed step plan orders the two Core identity steps before the delegated target steps', () =>
+it.effect('the composed definition orders the two Core identity steps before the delegated target steps', () =>
   Effect.gen(function* stepPlanOrdered() {
-    const steps = yield* existingAccountStepPlan(retailSelfEnrollmentJourneyDefinition);
-    expect(steps[0]?.transitionKey).toBe(RESERVE_PRINCIPAL_BINDING_TRANSITION_KEY);
-    expect(steps[1]?.transitionKey).toBe(ACTIVATE_PRINCIPAL_BINDING_TRANSITION_KEY);
-    expect(steps.every((step) => step.required)).toBe(true);
+    const { requiredTransitions } = yield* existingAccountJourneyDefinitionFor(retailSelfEnrollmentJourneyDefinition);
+    expect(requiredTransitions[0]?.transitionKey).toBe(RESERVE_PRINCIPAL_BINDING_TRANSITION_KEY);
+    expect(requiredTransitions[1]?.transitionKey).toBe(ACTIVATE_PRINCIPAL_BINDING_TRANSITION_KEY);
+    expect(requiredTransitions.every((step) => step.required)).toBe(true);
   }),
 );
 
@@ -270,8 +269,8 @@ it.effect('produces the same digest for an equivalent retry, so replay converges
       subject: { accountSubject, targetTenantId: tenantId },
       transitionKey: RESERVE_PRINCIPAL_BINDING_TRANSITION_KEY,
     };
-    const first = yield* makeExistingAccountRequestDigest(intent);
-    const second = yield* makeExistingAccountRequestDigest(intent);
+    const first = yield* existingAccountRequestDigest(intent);
+    const second = yield* existingAccountRequestDigest(intent);
     expect(second).toBe(first);
   }),
 );
@@ -288,7 +287,7 @@ it.effect('replaying the exact same transition build produces an identical reque
 
 it.effect('builds the Core reserve request from the exact current subject', () =>
   Effect.gen(function* buildsReserveRequest() {
-    const request = yield* makeExistingAccountCoreIdentityReserveRequest({
+    const request = yield* existingAccountCoreIdentityReserveRequest({
       accountSubject,
       authenticationRef: 'existing-account-authentication-ref',
     });
@@ -300,7 +299,7 @@ it.effect('builds the Core reserve request from the exact current subject', () =
 it.effect('builds the Core activate request from the reserved binding reference', () =>
   Effect.gen(function* buildsActivateRequest() {
     const authBindingId = Schema.decodeSync(EnrollmentResourceIdSchema)('80000000-0000-4000-8000-000000000009');
-    const request = yield* makeExistingAccountCoreIdentityActivateRequest({
+    const request = yield* existingAccountCoreIdentityActivateRequest({
       authBindingId,
       authenticationRef: 'existing-account-authentication-ref',
       expectedRevision: 1,
@@ -338,7 +337,7 @@ it.effect('dispatches reserve then activate through the Core identity owner effe
       resolveExternalSubject: () => Effect.die('unused'),
     };
 
-    const reserveRequest = yield* makeExistingAccountCoreIdentityReserveRequest({
+    const reserveRequest = yield* existingAccountCoreIdentityReserveRequest({
       accountSubject,
       authenticationRef: 'existing-account-second-tenant',
     });
@@ -352,14 +351,14 @@ it.effect('dispatches reserve then activate through the Core identity owner effe
     };
     const reserveTransition = yield* makeExistingAccountTransition(reserveStep, transitionInput());
     const reserveOutcome =
-      yield* makeCommerceEnrollmentCoreIdentityOwnerEffect(reserveOptions).dispatch(reserveTransition);
+      yield* commerceEnrollmentCoreIdentityOwnerEffectFor(reserveOptions).dispatch(reserveTransition);
     expect(reserveOutcome.status).toBe('SUCCEEDED');
     expect(reserveOutcome.resultReference).toBe('80000000-0000-4000-8000-000000000010');
     if (reserveOutcome.resultReference === undefined) {
       throw new Error('the reserve dispatch must report a result reference');
     }
     const authBindingId = reserveOutcome.resultReference;
-    const activateRequest = yield* makeExistingAccountCoreIdentityActivateRequest({
+    const activateRequest = yield* existingAccountCoreIdentityActivateRequest({
       authBindingId,
       authenticationRef: 'existing-account-second-tenant',
       expectedRevision: 1,
@@ -374,7 +373,7 @@ it.effect('dispatches reserve then activate through the Core identity owner effe
     };
     const activateTransition = yield* makeExistingAccountTransition(activateStep, transitionInput());
     const activateOutcome =
-      yield* makeCommerceEnrollmentCoreIdentityOwnerEffect(activateOptions).dispatch(activateTransition);
+      yield* commerceEnrollmentCoreIdentityOwnerEffectFor(activateOptions).dispatch(activateTransition);
     expect(activateOutcome.status).toBe('SUCCEEDED');
     expect(activateOutcome.resultReference).toBe('80000000-0000-4000-8000-000000000010');
   }),
@@ -400,7 +399,7 @@ it.effect('rejects a second-Tenant reserve when Core reports the existing target
       reservePrincipalBinding: () => Effect.succeed(existing),
       resolveExternalSubject: () => Effect.die('unused'),
     };
-    const reserveRequest = yield* makeExistingAccountCoreIdentityReserveRequest({
+    const reserveRequest = yield* existingAccountCoreIdentityReserveRequest({
       accountSubject,
       authenticationRef: 'existing-account-revoked-target',
     });
@@ -413,7 +412,7 @@ it.effect('rejects a second-Tenant reserve when Core reports the existing target
       },
     };
     const reserveTransition = yield* makeExistingAccountTransition(reserveStep, transitionInput());
-    const error = yield* makeCommerceEnrollmentCoreIdentityOwnerEffect(options)
+    const error = yield* commerceEnrollmentCoreIdentityOwnerEffectFor(options)
       .dispatch(reserveTransition)
       .pipe(Effect.flip);
     expect(error).toBeInstanceOf(CommerceEnrollmentOwnerEffectRejected);
@@ -426,8 +425,7 @@ it.effect('rejects a second-Tenant reserve when Core reports the existing target
 it.effect('builds the exact-binding Core read used to reconcile an indeterminate reserve/activate result', () =>
   Effect.gen(function* buildsReadRequest() {
     const authBindingId = Schema.decodeSync(EnrollmentResourceIdSchema)('80000000-0000-4000-8000-000000000012');
-    const request: ReadPrincipalBindingRequest =
-      yield* makeExistingAccountCoreIdentityReadByBindingRequest(authBindingId);
+    const request: ReadPrincipalBindingRequest = yield* existingAccountCoreIdentityReadByBindingRequest(authBindingId);
     expect(request).toStrictEqual({ authBindingId: '80000000-0000-4000-8000-000000000012', lookup: 'binding' });
   }),
 );

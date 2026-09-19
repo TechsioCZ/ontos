@@ -20,7 +20,7 @@ import {
   ReconcileEnrollmentResolutionSchema,
 } from '../../../shared/enrollment-contracts.ts';
 import type { ReconcileEnrollmentResolution } from '../../../shared/enrollment-contracts.ts';
-import { CommerceEnrollmentAttemptRejected, CommerceEnrollmentAttemptUnavailable } from '../attempts/errors.ts';
+import { attemptRejected, attemptUnavailable, withCause } from '../attempts/errors.ts';
 import type { CommerceEnrollmentAttemptError } from '../attempts/errors.ts';
 
 export const CLAIM_PORTAL_ENROLLMENT_TRANSITION_ACTION_KEY =
@@ -68,6 +68,17 @@ const OwnerPreparationResultSchema = Schema.Union([
 ]);
 
 export type CommerceEnrollmentOwnerTransitionPreparationResult = typeof OwnerPreparationResultSchema.Type;
+
+/** The three non-prepared preparation answers, shared so every port returns the same values. */
+export const ownerPreparationDenied: CommerceEnrollmentOwnerTransitionPreparationResult = Object.freeze({
+  outcome: 'denied' as const,
+});
+export const ownerPreparationNotApplicable: CommerceEnrollmentOwnerTransitionPreparationResult = Object.freeze({
+  outcome: 'not_applicable' as const,
+});
+export const ownerPreparationUnavailable: CommerceEnrollmentOwnerTransitionPreparationResult = Object.freeze({
+  outcome: 'unavailable' as const,
+});
 
 /**
  * Owner HTTP/authority adapters implement this seam.  Adapters map transport failures to
@@ -128,44 +139,12 @@ interface PreparedOwnerStore {
   ) => void;
 }
 
-const boundedReason = (reason: string): string => reason.slice(0, 500);
-
-const rejected = (
-  reason: string,
-  attemptId?: typeof EnrollmentAttemptIdSchema.Type,
-): CommerceEnrollmentAttemptError => {
-  const common = {
-    code: 'attempt_invalid' as const,
-    reason: boundedReason(reason),
-    retryable: false as const,
-  };
-  return attemptId === undefined
-    ? new CommerceEnrollmentAttemptRejected(common)
-    : new CommerceEnrollmentAttemptRejected({ ...common, attemptId });
-};
-
-const unavailable = (
-  reason: string,
-  attemptId?: typeof EnrollmentAttemptIdSchema.Type,
-): CommerceEnrollmentAttemptError => {
-  const common = {
-    code: 'attempt_unavailable' as const,
-    reason: boundedReason(reason),
-    retryable: true as const,
-  };
-  return attemptId === undefined
-    ? new CommerceEnrollmentAttemptUnavailable(common)
-    : new CommerceEnrollmentAttemptUnavailable({ ...common, attemptId });
-};
-
 const permissionUnavailable = (cause?: unknown): ActionPermissionCheckError => {
   const error = new ActionPermissionCheckError({
     code: 'action_permission_check_failed',
     reason: 'Commerce Enrollment owner authorization could not be established safely',
   });
-  return cause === undefined
-    ? error
-    : Object.defineProperty(error, 'cause', { configurable: false, enumerable: false, value: cause });
+  return cause === undefined ? error : withCause(error, cause);
 };
 
 const makePreparedOwnerStore = (): PreparedOwnerStore => {
@@ -204,18 +183,12 @@ const makePreparedOwnerCapability = (
   const service: CommerceEnrollmentPreparedOwnerCapability['Service'] = Object.freeze({
     take: (binding): Effect.Effect<CommerceEnrollmentPreparedOwnerEvidence, CommerceEnrollmentAttemptError> =>
       Schema.decodeEffect(PreparedOwnerBindingSchema)(binding).pipe(
-        Effect.mapError((cause) =>
-          Object.defineProperty(rejected('The owner authorization binding is invalid'), 'cause', {
-            configurable: false,
-            enumerable: false,
-            value: cause,
-          }),
-        ),
+        Effect.mapError((cause) => attemptRejected('The owner authorization binding is invalid', undefined, cause)),
         Effect.flatMap((decodedBinding) => {
           const entry = store.entries.get(decodedBinding.actionInvocationId);
           if (entry === undefined) {
             return Effect.fail(
-              unavailable(
+              attemptUnavailable(
                 'The owner authorization evidence was not prepared for this Action invocation',
                 decodedBinding.portalEnrollmentAttemptId,
               ),
@@ -223,7 +196,7 @@ const makePreparedOwnerCapability = (
           }
           if (!capabilityBindingMatches(entry.binding, decodedBinding)) {
             return Effect.fail(
-              rejected(
+              attemptRejected(
                 'The owner authorization binding does not match the current Action invocation',
                 decodedBinding.portalEnrollmentAttemptId,
               ),
@@ -264,7 +237,6 @@ const decodedPreflightIdentity = (
     {
       actorPrincipalId: Schema.decodeEffect(EnrollmentPrincipalIdSchema)(input.principal.principalId),
       tenantId: Schema.decodeEffect(EnrollmentTenantIdSchema)(input.scope.tenantId),
-      // Two independent in-memory decodes; neither reaches a shared downstream resource.
     },
     { concurrency: 2 },
   ).pipe(Effect.mapError((cause) => permissionUnavailable(cause)));

@@ -4,15 +4,19 @@ import { Effect, Option, Schema } from 'effect';
 import { expect, it } from 'effect-rstest';
 
 import {
+  ClaimEnrollmentTransitionInputSchema,
+  CommercePortalAccountSubjectSchema,
   EnrollmentActionInvocationIdSchema,
+  EnrollmentAttemptIdSchema,
   EnrollmentDigestSchema,
   EnrollmentKeySchema,
   EnrollmentPrincipalIdSchema,
   EnrollmentTenantIdSchema,
+  RecordEnrollmentOutcomeInputSchema,
 } from '../../shared/enrollment-contracts.ts';
 import type { StartEnrollmentAttemptInput } from '../../shared/enrollment-contracts.ts';
-import { journeyTransitionIdentity } from '../../src/enrollment/journeys/journey-contracts.ts';
-import type { JourneyTransitionSpec } from '../../src/enrollment/journeys/journey-contracts.ts';
+import { COMMERCE_AUTHENTICATION_NAMESPACE_ID } from '../../shared/portal-auth-contracts.ts';
+import type { RetailSelfEnrollmentPreparationSubject } from '../../src/enrollment/journeys/retail-self-enrollment-preparation.ts';
 import {
   BIND_RETAIL_PORTAL_PROFILE_TRANSITION_KEY,
   ENSURE_RETAIL_CUSTOMER_PROFILE_TRANSITION_KEY,
@@ -23,14 +27,8 @@ import {
   RETAIL_PORTAL_GRANTS_INCOMPLETE_OUTCOME_CODE,
   RETAIL_PORTAL_PROFILE_BOUND_OUTCOME_CODE,
   retailPartyCandidateDigest,
-  retailSelfEnrollmentStepPlan,
+  retailPartyRefFor,
 } from '../../src/enrollment/journeys/retail-self-enrollment-contracts.ts';
-import {
-  RetailSelfEnrollmentOwners,
-  runRetailSelfEnrollment,
-} from '../../src/enrollment/journeys/retail-self-enrollment.ts';
-import type { RetailSelfEnrollmentPlanInput } from '../../src/enrollment/journeys/retail-self-enrollment.ts';
-import { makeCommerceEnrollmentOwnerTransitionDriver } from '../../src/enrollment/orchestration/owner-transition-driver.ts';
 import { PORTAL_ACCOUNT_CREATION_TRANSITION_KEY } from '../../src/enrollment/orchestration/prepared-owner-authority.ts';
 import {
   expireEnrollmentAcceptanceLeases,
@@ -40,80 +38,76 @@ import {
   startEnrollmentAcceptanceAttempt,
 } from '../support/enrollment-acceptance-fixture.ts';
 import type { EnrollmentAcceptanceFixture } from '../support/enrollment-acceptance-fixture.ts';
-import { makeEnrollmentAcceptanceScriptedOwner } from '../support/enrollment-acceptance-owner-script.ts';
-import type {
-  EnrollmentAcceptanceOwnerAnswer,
-  EnrollmentAcceptanceOwnerResolution,
-  EnrollmentAcceptanceScriptedOwner,
-} from '../support/enrollment-acceptance-owner-script.ts';
+import type { EnrollmentAcceptanceOwnerAnswer } from '../support/enrollment-acceptance-owner-script.ts';
+import {
+  enrollmentOperationSummary,
+  makeEnrollmentContinuationHarness,
+} from '../support/enrollment-continuation-harness.ts';
+import type { EnrollmentContinuationScript } from '../support/enrollment-continuation-harness.ts';
 
 /**
- * Retail self-enrollment journey acceptance, on real PostgreSQL: the production owner-transition
- * driver, owner store, Attempt service and SECURITY DEFINER routines all run for real, one
- * committed transaction per owner phase. Only the owner's answer on the far side of the dispatch
- * seam is scripted.
+ * Retail self-enrollment through the server-side continuation, on real PostgreSQL.
+ *
+ * The continuation, the production owner-transition driver, the owner store, the Attempt service
+ * and the SECURITY DEFINER routines all run for real, one committed transaction per owner phase.
+ * Only the owner's answer on the far side of the dispatch seam is scripted: Party Registry and Core
+ * identity are HTTP owners that are not reachable from this sandbox, so their clients are exactly
+ * where the script sits.
+ *
+ * The portal account-creation transition is reconcile-only for a continuation — its dispatch
+ * belongs to the enrollment start route, which is the only caller that ever holds the credential —
+ * so every scenario seeds that transition's durable outcome the way the start route commits it.
  */
 
 const PARTY_RESOURCE_ID = 'retail-acceptance-party';
 const PROFILE_RESOURCE_ID = 'retail-acceptance-profile';
 const BINDING_RESOURCE_ID = 'retail-acceptance-binding';
-const CORE_BINDING_RESOURCE_ID = 'retail-acceptance-core-binding';
-const PORTAL_ACCOUNT_CREATED_OUTCOME_CODE = 'core_binding_activated';
+const PORTAL_ACCOUNT_CREATED_OUTCOME_CODE = 'provider_account_created';
 
-const stepPlan = retailSelfEnrollmentStepPlan();
 const principalId = (value: string) => Schema.decodeSync(EnrollmentPrincipalIdSchema)(value);
 const tenant = (value: string) => Schema.decodeSync(EnrollmentTenantIdSchema)(value);
-const invocation = (value: string) => Schema.decodeSync(EnrollmentActionInvocationIdSchema)(value);
 const enrollmentKey = (value: string) => Schema.decodeSync(EnrollmentKeySchema)(value);
 const digest = (value: string) => Schema.decodeSync(EnrollmentDigestSchema)(value);
 
-/**
- * One scenario's fixture identities. Owner invocation ids are minted once per scenario and reused
- * across every retry of that scenario: a retry that changes them would be a different intent, and
- * the durable journal would be right to treat it as a second owner effect.
- */
 interface ScenarioIdentities {
   readonly actorPrincipalId: typeof EnrollmentPrincipalIdSchema.Type;
-  readonly ownerInvocationIds: ReadonlyMap<string, typeof EnrollmentActionInvocationIdSchema.Type>;
-  /** Everything of the plan that is known before the Attempt routine mints an Attempt id. */
-  readonly planBase: Omit<RetailSelfEnrollmentPlanInput, 'expectedRevision' | 'portalEnrollmentAttemptId'>;
   readonly startInput: StartEnrollmentAttemptInput;
+  readonly subject: RetailSelfEnrollmentPreparationSubject;
   readonly tenantId: typeof EnrollmentTenantIdSchema.Type;
 }
 
 const makeScenarioIdentities = (): ScenarioIdentities => {
   const tenantId = tenant(randomUUID());
   const actorPrincipalId = principalId(randomUUID());
-  const ownerInvocationIds = new Map(
-    stepPlan.map((step) => [journeyTransitionIdentity(step), invocation(randomUUID())] as const),
-  );
-  const startInput: StartEnrollmentAttemptInput = {
-    actionInvocationId: invocation(randomUUID()),
+  return {
     actorPrincipalId,
-    intentDigest: digest('a'.repeat(64)),
-    intentKey: enrollmentKey('retail-acceptance-intent'),
-    journey: 'RETAIL_SELF_ENROLLMENT',
-    tenantId,
-  };
-  const planBase: ScenarioIdentities['planBase'] = {
-    actorPrincipalId,
-    partyCandidateDigest: retailPartyCandidateDigest(['PERSON', 'Jana Nova', 'jana@example.test']),
-    principalRef: {
-      moduleId: 'core.identity',
-      resourceId: randomUUID(),
-      resourceType: 'core.identity.principal',
+    startInput: {
+      actionInvocationId: Schema.decodeSync(EnrollmentActionInvocationIdSchema)(randomUUID()),
+      actorPrincipalId,
+      intentDigest: digest('a'.repeat(64)),
+      intentKey: enrollmentKey('retail-acceptance-intent'),
+      journey: 'RETAIL_SELF_ENROLLMENT',
       tenantId,
     },
-    requestCorrelation: 'enrollment-acceptance-journeys',
-    sellingLegalEntityRef: {
-      moduleId: 'core.identity',
-      resourceId: randomUUID(),
-      resourceType: 'core.identity.legal-entity',
-      tenantId,
+    subject: {
+      partyCandidateDigest: retailPartyCandidateDigest(['PERSON', 'retail-acceptance']),
+      partyRef: Option.none(),
+      portalEnrollmentAttemptId: Schema.decodeSync(EnrollmentAttemptIdSchema)(randomUUID()),
+      principalRef: {
+        moduleId: 'core.identity',
+        resourceId: randomUUID(),
+        resourceType: 'core.identity.principal',
+        tenantId,
+      },
+      sellingLegalEntityRef: {
+        moduleId: 'core.identity',
+        resourceId: randomUUID(),
+        resourceType: 'core.identity.legal-entity',
+        tenantId,
+      },
     },
     tenantId,
   };
-  return { actorPrincipalId, ownerInvocationIds, planBase, startInput, tenantId };
 };
 
 const succeeded = (outcomeCode: string, resultReference: string): EnrollmentAcceptanceOwnerAnswer => ({
@@ -122,7 +116,7 @@ const succeeded = (outcomeCode: string, resultReference: string): EnrollmentAcce
   resultReference,
 });
 
-/** The four owner answers of a journey that runs clean end to end. */
+/** The three continuation-dispatched owner answers of a journey that runs clean end to end. */
 const happyAnswers: Readonly<Record<string, EnrollmentAcceptanceOwnerAnswer>> = Object.freeze({
   [BIND_RETAIL_PORTAL_PROFILE_TRANSITION_KEY]: succeeded(RETAIL_PORTAL_PROFILE_BOUND_OUTCOME_CODE, BINDING_RESOURCE_ID),
   [ENSURE_RETAIL_CUSTOMER_PROFILE_TRANSITION_KEY]: succeeded(
@@ -130,7 +124,6 @@ const happyAnswers: Readonly<Record<string, EnrollmentAcceptanceOwnerAnswer>> = 
     PROFILE_RESOURCE_ID,
   ),
   [PARTY_CANDIDATE_SUBMISSION_TRANSITION_KEY]: succeeded(PARTY_CANDIDATE_CREATED_OUTCOME_CODE, PARTY_RESOURCE_ID),
-  [PORTAL_ACCOUNT_CREATION_TRANSITION_KEY]: succeeded(PORTAL_ACCOUNT_CREATED_OUTCOME_CODE, CORE_BINDING_RESOURCE_ID),
 });
 
 const withAnswer = (transitionKey: string, answer: EnrollmentAcceptanceOwnerAnswer) => ({
@@ -138,113 +131,113 @@ const withAnswer = (transitionKey: string, answer: EnrollmentAcceptanceOwnerAnsw
   [transitionKey]: answer,
 });
 
-interface JourneyRun {
-  readonly owner: EnrollmentAcceptanceScriptedOwner;
-  readonly result: Effect.Effect<
-    Effect.Success<ReturnType<typeof runRetailSelfEnrollment>>,
-    Effect.Error<ReturnType<typeof runRetailSelfEnrollment>>
-  >;
-}
+const accountSubject = Schema.decodeSync(CommercePortalAccountSubjectSchema)({
+  authenticationNamespaceId: COMMERCE_AUTHENTICATION_NAMESPACE_ID,
+  providerSubjectId: 'retail-acceptance-subject',
+  subjectType: 'user',
+});
 
 /**
- * Assemble one journey run against the durable fixture. The driver, the store and the Attempt
- * routines are production code; the owner answers are the scenario.
+ * Commit the portal account-creation transition exactly as the start route does: one durable claim
+ * under its own owner invocation, then one recorded outcome carrying the account subject. Every
+ * scenario starts from here, because a continuation may never dispatch that transition itself.
  */
-const journeyRun = (
+const seedPortalAccountTransition = Effect.fnUntraced(function* seedPortalAccountTransition(
   fixture: EnrollmentAcceptanceFixture,
   identities: ScenarioIdentities,
-  input: RetailSelfEnrollmentPlanInput,
-  answers: Readonly<Record<string, EnrollmentAcceptanceOwnerAnswer>>,
-  resolutions?: Readonly<Record<string, EnrollmentAcceptanceOwnerResolution>>,
-): JourneyRun => {
-  const owner = makeEnrollmentAcceptanceScriptedOwner(
-    resolutions === undefined
-      ? { actorPrincipalId: identities.actorPrincipalId, answers }
-      : { actorPrincipalId: identities.actorPrincipalId, answers, resolutions },
-  );
-  const driverFor = (step: JourneyTransitionSpec) =>
-    Option.some(
-      makeCommerceEnrollmentOwnerTransitionDriver({
-        attempt: fixture.ownerStore,
-        leaseDurationMs: 30_000,
-        owner: owner.effect,
-        required: step.required,
-      }),
-    );
-  const result = runRetailSelfEnrollment(input).pipe(
-    Effect.provideService(RetailSelfEnrollmentOwners, {
-      driverFor,
-      ownerInvocationIdFor: (step) =>
-        Option.fromNullishOr(identities.ownerInvocationIds.get(journeyTransitionIdentity(step))),
-      readAttempt: fixture.ownerStore.read,
+  portalEnrollmentAttemptId: string,
+  expectedRevision: number,
+) {
+  const ownerInvocationId = randomUUID();
+  const claimed = yield* fixture.ownerStore.claimTransition(
+    Schema.decodeUnknownSync(ClaimEnrollmentTransitionInputSchema)({
+      actorPrincipalId: identities.actorPrincipalId,
+      expectedRevision,
+      leaseDurationMs: 30_000,
+      ownerInvocationId,
+      ownerModuleKey: 'commerce.portal-auth',
+      portalEnrollmentAttemptId,
+      requestDigest: digest('b'.repeat(64)),
+      required: true,
+      tenantId: identities.tenantId,
+      transitionKey: PORTAL_ACCOUNT_CREATION_TRANSITION_KEY,
+      workerId: 'commerce.portal-auth.enrollment-start',
     }),
   );
-  return { owner, result };
-};
-
-/**
- * Create the durable Attempt and return the plan input that names it. Nothing derives an Attempt
- * id: the routine mints it, exactly as the start-enrollment Action does.
- */
-const startedPlanInput = Effect.fnUntraced(function* startedPlanInput(
-  fixture: EnrollmentAcceptanceFixture,
-  identities: ScenarioIdentities,
-): Effect.fn.Return<RetailSelfEnrollmentPlanInput, Effect.Error<ReturnType<typeof startEnrollmentAcceptanceAttempt>>> {
-  const attempt = yield* startEnrollmentAcceptanceAttempt(fixture, identities.startInput);
-  return {
-    ...identities.planBase,
-    expectedRevision: attempt.revision,
-    portalEnrollmentAttemptId: attempt.portalEnrollmentAttemptId,
-  };
+  if (claimed.outcome !== 'CLAIMED' || claimed.operation.lease === undefined) {
+    return yield* Effect.die('The fixture could not claim the portal account-creation transition');
+  }
+  yield* fixture.ownerStore.recordOutcome(
+    Schema.decodeUnknownSync(RecordEnrollmentOutcomeInputSchema)({
+      accountSubject,
+      actorPrincipalId: identities.actorPrincipalId,
+      expectedRevision: claimed.attempt.revision,
+      leaseToken: claimed.operation.lease.leaseToken,
+      outcomeCode: PORTAL_ACCOUNT_CREATED_OUTCOME_CODE,
+      ownerInvocationId,
+      ownerModuleKey: 'commerce.portal-auth',
+      portalEnrollmentAttemptId,
+      resultReference: 'retail-acceptance-portal-account',
+      status: 'SUCCEEDED',
+      tenantId: identities.tenantId,
+      transitionKey: PORTAL_ACCOUNT_CREATION_TRANSITION_KEY,
+      workerId: 'commerce.portal-auth.enrollment-start',
+    }),
+  );
+  return yield* Effect.void;
 });
 
 const scenario = Effect.fnUntraced(function* scenario(identities: ScenarioIdentities) {
   const fixture = yield* makeEnrollmentAcceptanceFixture({ tenantId: identities.tenantId });
-  const input = yield* startedPlanInput(fixture, identities);
-  return { fixture, input };
+  const attempt = yield* startEnrollmentAcceptanceAttempt(fixture, identities.startInput);
+  yield* seedPortalAccountTransition(fixture, identities, attempt.portalEnrollmentAttemptId, attempt.revision);
+  return { fixture, portalEnrollmentAttemptId: attempt.portalEnrollmentAttemptId };
 });
 
-const operationSummary = (
-  rows: readonly { readonly outcome_code: string | null; readonly status: string; readonly transition_key: string }[],
-) => rows.map((row) => [row.transition_key, row.status, row.outcome_code] as const);
+const harnessFor = (
+  fixture: EnrollmentAcceptanceFixture,
+  identities: ScenarioIdentities,
+  answers: EnrollmentContinuationScript['answers'],
+  overrides?: Partial<Pick<EnrollmentContinuationScript, 'resolutions' | 'subject' | 'unregistered'>>,
+) =>
+  makeEnrollmentContinuationHarness(fixture.run, {
+    actorPrincipalId: identities.actorPrincipalId,
+    answers,
+    subject: identities.subject,
+    ...overrides,
+  });
 
-it.live('a lost response replays the same durable owner pair instead of preparing a second one', () =>
+/** The subject the continuation sees once the Party transition has durably resolved a Party. */
+const subjectWithParty = (identities: ScenarioIdentities): RetailSelfEnrollmentPreparationSubject => ({
+  ...identities.subject,
+  partyRef: Option.some(retailPartyRefFor(identities.tenantId, PARTY_RESOURCE_ID)),
+});
+
+it.live('advances a started Attempt to derived COMPLETE through every declared transition', () =>
   Effect.scoped(
-    Effect.gen(function* lostResponse() {
+    Effect.gen(function* advancesToComplete() {
       const identities = makeScenarioIdentities();
-      const { fixture, input } = yield* scenario(identities);
+      const { fixture, portalEnrollmentAttemptId } = yield* scenario(identities);
+      const harness = yield* harnessFor(fixture, identities, happyAnswers, { subject: subjectWithParty(identities) });
 
-      const first = journeyRun(fixture, identities, input, happyAnswers);
-      const firstResult = yield* first.result;
-      expect(firstResult.outcome).toBe('COMPLETED');
-      expect(first.owner.log.dispatched).toStrictEqual([
-        PORTAL_ACCOUNT_CREATION_TRANSITION_KEY,
+      const result = yield* harness.continuation.advance({
+        portalEnrollmentAttemptId,
+        tenantId: identities.tenantId,
+      });
+
+      expect(result.outcome).toBe('COMPLETE');
+      expect(harness.owner.log.dispatched).toStrictEqual([
         PARTY_CANDIDATE_SUBMISSION_TRANSITION_KEY,
         ENSURE_RETAIL_CUSTOMER_PROFILE_TRANSITION_KEY,
         BIND_RETAIL_PORTAL_PROFILE_TRANSITION_KEY,
       ]);
-
-      const settled = yield* readEnrollmentAcceptanceOperations(fixture, input.portalEnrollmentAttemptId);
-
-      const replayedStart = yield* startEnrollmentAcceptanceAttempt(fixture, identities.startInput);
-      expect(replayedStart.portalEnrollmentAttemptId).toBe(input.portalEnrollmentAttemptId);
-
-      const attemptAfterFirst = yield* readEnrollmentAcceptanceAttempt(fixture, input.portalEnrollmentAttemptId);
-      const second = journeyRun(
-        fixture,
-        identities,
-        { ...input, expectedRevision: attemptAfterFirst.revision },
-        happyAnswers,
-      );
-      const refusal = yield* Effect.flip(second.result);
-      expect(refusal.code).toBe('attempt_terminal');
-      expect(refusal.retryable).toBe(false);
-      expect(second.owner.log.dispatched).toStrictEqual([]);
-      expect(second.owner.log.reconciled).toStrictEqual([]);
-
-      const operations = yield* readEnrollmentAcceptanceOperations(fixture, input.portalEnrollmentAttemptId);
-      expect(operations).toStrictEqual(settled);
-      expect(operationSummary(operations)).toStrictEqual([
+      // Removing the derived-completion gate leaves this Attempt IN_PROGRESS with four SUCCEEDED
+      // owner rows, and this assertion fails.
+      const attempt = yield* readEnrollmentAcceptanceAttempt(fixture, portalEnrollmentAttemptId);
+      expect(attempt.state).toBe('COMPLETE');
+      expect(
+        enrollmentOperationSummary(yield* readEnrollmentAcceptanceOperations(fixture, portalEnrollmentAttemptId)),
+      ).toStrictEqual([
         [PORTAL_ACCOUNT_CREATION_TRANSITION_KEY, 'SUCCEEDED', PORTAL_ACCOUNT_CREATED_OUTCOME_CODE],
         [PARTY_CANDIDATE_SUBMISSION_TRANSITION_KEY, 'SUCCEEDED', PARTY_CANDIDATE_CREATED_OUTCOME_CODE],
         [ENSURE_RETAIL_CUSTOMER_PROFILE_TRANSITION_KEY, 'SUCCEEDED', RETAIL_CUSTOMER_PROFILE_ENSURED_OUTCOME_CODE],
@@ -254,106 +247,125 @@ it.live('a lost response replays the same durable owner pair instead of preparin
   ),
 );
 
-it.live('a committed creation whose activation times out is INDETERMINATE, then reconciles once', () =>
+it.live('a crash after the Party step re-runs onto the same Party without duplicating an effect', () =>
   Effect.scoped(
-    Effect.gen(function* indeterminateThenReconcile() {
+    Effect.gen(function* crashThenRerun() {
       const identities = makeScenarioIdentities();
-      const { fixture, input } = yield* scenario(identities);
+      const { fixture, portalEnrollmentAttemptId } = yield* scenario(identities);
 
-      const timingOut = journeyRun(
+      // The profile owner never answers, so the continuation stops right after the Party step.
+      const crashed = yield* harnessFor(
         fixture,
         identities,
-        input,
-        withAnswer(PARTY_CANDIDATE_SUBMISSION_TRANSITION_KEY, { kind: 'TIMED_OUT' }),
+        withAnswer(ENSURE_RETAIL_CUSTOMER_PROFILE_TRANSITION_KEY, { kind: 'TIMED_OUT' }),
+        { subject: subjectWithParty(identities) },
       );
-      const stalled = yield* Effect.flip(timingOut.result);
-      // A missing answer is never treated as a denial: halt is typed retryable, not terminal.
-      expect(stalled.retryable).toBe(true);
-      expect(stalled.code).not.toBe('attempt_terminal');
-      expect(timingOut.owner.log.dispatched).toStrictEqual([
-        PORTAL_ACCOUNT_CREATION_TRANSITION_KEY,
-        PARTY_CANDIDATE_SUBMISSION_TRANSITION_KEY,
-      ]);
-      expect(
-        timingOut.owner.log.dispatched.filter((key) => key === PARTY_CANDIDATE_SUBMISSION_TRANSITION_KEY),
-      ).toHaveLength(1);
-      const stalledAttempt = yield* readEnrollmentAcceptanceAttempt(fixture, input.portalEnrollmentAttemptId);
-      expect(stalledAttempt.state).not.toBe('COMPLETE');
+      const halted = yield* crashed.continuation.advance({
+        portalEnrollmentAttemptId,
+        tenantId: identities.tenantId,
+      });
+      expect(halted.outcome).toBe('HALTED');
+      const afterCrash = yield* readEnrollmentAcceptanceOperations(fixture, portalEnrollmentAttemptId);
+      const partyAfterCrash = afterCrash.find(
+        (row) => row.transition_key === PARTY_CANDIDATE_SUBMISSION_TRANSITION_KEY,
+      );
+      expect(partyAfterCrash?.result_reference).toBe(PARTY_RESOURCE_ID);
 
-      yield* expireEnrollmentAcceptanceLeases(fixture, input.portalEnrollmentAttemptId);
-      const afterLapse = yield* readEnrollmentAcceptanceAttempt(fixture, input.portalEnrollmentAttemptId);
-      const recovery = journeyRun(
+      // The lease of the abandoned profile transition lapses, exactly as a killed worker's would.
+      yield* expireEnrollmentAcceptanceLeases(fixture, portalEnrollmentAttemptId);
+      const rerun = yield* harnessFor(
         fixture,
         identities,
-        { ...input, expectedRevision: afterLapse.revision },
-        withAnswer(PARTY_CANDIDATE_SUBMISSION_TRANSITION_KEY, { kind: 'TIMED_OUT' }),
+        withAnswer(ENSURE_RETAIL_CUSTOMER_PROFILE_TRANSITION_KEY, { kind: 'TIMED_OUT' }),
         {
-          [PARTY_CANDIDATE_SUBMISSION_TRANSITION_KEY]: {
-            outcomeCode: PARTY_CANDIDATE_CREATED_OUTCOME_CODE,
-            reconciliationRef: randomUUID(),
-            resultReference: PARTY_RESOURCE_ID,
-            status: 'SUCCEEDED',
+          resolutions: {
+            [ENSURE_RETAIL_CUSTOMER_PROFILE_TRANSITION_KEY]: {
+              outcomeCode: RETAIL_CUSTOMER_PROFILE_ENSURED_OUTCOME_CODE,
+              reconciliationRef: randomUUID(),
+              resultReference: PROFILE_RESOURCE_ID,
+              status: 'SUCCEEDED',
+            },
           },
+          subject: subjectWithParty(identities),
         },
       );
-      const recovered = yield* recovery.result;
+      yield* rerun.continuation.advance({ portalEnrollmentAttemptId, tenantId: identities.tenantId });
 
-      expect(recovered.outcome).toBe('COMPLETED');
-      expect(recovery.owner.log.dispatched).not.toContain(PARTY_CANDIDATE_SUBMISSION_TRANSITION_KEY);
-      expect(recovery.owner.log.reconciled).toStrictEqual([PARTY_CANDIDATE_SUBMISSION_TRANSITION_KEY]);
-      expect(recovery.owner.log.dispatched).toStrictEqual([
-        ENSURE_RETAIL_CUSTOMER_PROFILE_TRANSITION_KEY,
-        BIND_RETAIL_PORTAL_PROFILE_TRANSITION_KEY,
-      ]);
-
-      const operations = yield* readEnrollmentAcceptanceOperations(fixture, input.portalEnrollmentAttemptId);
+      // The Party transition is never dispatched a second time: its durable SUCCEEDED row is proof.
+      expect(rerun.owner.log.dispatched).not.toContain(PARTY_CANDIDATE_SUBMISSION_TRANSITION_KEY);
+      expect(rerun.owner.log.reconciled).toStrictEqual([ENSURE_RETAIL_CUSTOMER_PROFILE_TRANSITION_KEY]);
+      const operations = yield* readEnrollmentAcceptanceOperations(fixture, portalEnrollmentAttemptId);
+      // One row per transition, and the Party still names the very same resource. Removing the
+      // derived owner-invocation identity mints a fresh one on the re-run, the claim no longer
+      // replays, and this length assertion fails with a duplicated Party row.
       expect(operations).toHaveLength(4);
       const party = operations.find((row) => row.transition_key === PARTY_CANDIDATE_SUBMISSION_TRANSITION_KEY);
-      expect(party?.status).toBe('SUCCEEDED');
       expect(party?.result_reference).toBe(PARTY_RESOURCE_ID);
-      expect(party?.reconciliation_ref).not.toBeNull();
+      expect(party?.status).toBe('SUCCEEDED');
+      const profile = operations.find((row) => row.transition_key === ENSURE_RETAIL_CUSTOMER_PROFILE_TRANSITION_KEY);
+      expect(profile?.status).toBe('SUCCEEDED');
+      expect(profile?.reconciliation_ref).not.toBeNull();
     }),
   ),
 );
 
-it.live('2-of-3 committed transitions then a timeout: the retry converges without duplicating an effect', () =>
+it.live('an owner answer that never arrives is reconciled once, never dispatched twice', () =>
   Effect.scoped(
-    Effect.gen(function* partialThenConverge() {
+    Effect.gen(function* indeterminateThenReconcile() {
       const identities = makeScenarioIdentities();
-      const { fixture, input } = yield* scenario(identities);
+      const { fixture, portalEnrollmentAttemptId } = yield* scenario(identities);
 
-      const stalling = journeyRun(
+      const timingOut = yield* harnessFor(
         fixture,
         identities,
-        input,
-        withAnswer(BIND_RETAIL_PORTAL_PROFILE_TRANSITION_KEY, { kind: 'TIMED_OUT' }),
+        withAnswer(PARTY_CANDIDATE_SUBMISSION_TRANSITION_KEY, { kind: 'TIMED_OUT' }),
       );
-      yield* Effect.flip(stalling.result);
-      expect(stalling.owner.log.dispatched).toHaveLength(4);
+      const stalled = yield* timingOut.continuation.advance({
+        portalEnrollmentAttemptId,
+        tenantId: identities.tenantId,
+      });
+      expect(stalled.outcome).toBe('HALTED');
+      if (stalled.outcome === 'HALTED') {
+        expect(stalled.halt.reason).toBe('RECONCILIATION_REQUIRED');
+      }
+      expect(
+        timingOut.owner.log.dispatched.filter((key) => key === PARTY_CANDIDATE_SUBMISSION_TRANSITION_KEY),
+      ).toHaveLength(1);
+      const stalledAttempt = yield* readEnrollmentAcceptanceAttempt(fixture, portalEnrollmentAttemptId);
+      expect(stalledAttempt.state).not.toBe('COMPLETE');
 
-      yield* expireEnrollmentAcceptanceLeases(fixture, input.portalEnrollmentAttemptId);
-      const afterLapse = yield* readEnrollmentAcceptanceAttempt(fixture, input.portalEnrollmentAttemptId);
-      const retry = journeyRun(
+      yield* expireEnrollmentAcceptanceLeases(fixture, portalEnrollmentAttemptId);
+      const recovery = yield* harnessFor(
         fixture,
         identities,
-        { ...input, expectedRevision: afterLapse.revision },
-        withAnswer(BIND_RETAIL_PORTAL_PROFILE_TRANSITION_KEY, { kind: 'TIMED_OUT' }),
+        withAnswer(PARTY_CANDIDATE_SUBMISSION_TRANSITION_KEY, { kind: 'TIMED_OUT' }),
         {
-          [BIND_RETAIL_PORTAL_PROFILE_TRANSITION_KEY]: {
-            outcomeCode: RETAIL_PORTAL_PROFILE_BOUND_OUTCOME_CODE,
-            reconciliationRef: randomUUID(),
-            resultReference: BINDING_RESOURCE_ID,
-            status: 'SUCCEEDED',
+          resolutions: {
+            [PARTY_CANDIDATE_SUBMISSION_TRANSITION_KEY]: {
+              outcomeCode: PARTY_CANDIDATE_CREATED_OUTCOME_CODE,
+              reconciliationRef: randomUUID(),
+              resultReference: PARTY_RESOURCE_ID,
+              status: 'SUCCEEDED',
+            },
           },
+          subject: subjectWithParty(identities),
         },
       );
-      const converged = yield* retry.result;
-      expect(converged.outcome).toBe('COMPLETED');
-      expect(retry.owner.log.dispatched).toStrictEqual([]);
+      const recovered = yield* recovery.continuation.advance({
+        portalEnrollmentAttemptId,
+        tenantId: identities.tenantId,
+      });
 
-      const operations = yield* readEnrollmentAcceptanceOperations(fixture, input.portalEnrollmentAttemptId);
+      expect(recovered.outcome).toBe('COMPLETE');
+      // The recovered run reads the owner rather than dispatching again; dropping the INDETERMINATE
+      // branch in `runTransition` re-dispatches and this assertion fails.
+      expect(recovery.owner.log.dispatched).not.toContain(PARTY_CANDIDATE_SUBMISSION_TRANSITION_KEY);
+      expect(recovery.owner.log.reconciled).toStrictEqual([PARTY_CANDIDATE_SUBMISSION_TRANSITION_KEY]);
+      const operations = yield* readEnrollmentAcceptanceOperations(fixture, portalEnrollmentAttemptId);
       expect(operations).toHaveLength(4);
-      expect(operations.every((row) => row.status === 'SUCCEEDED')).toBe(true);
+      const party = operations.find((row) => row.transition_key === PARTY_CANDIDATE_SUBMISSION_TRANSITION_KEY);
+      expect(party?.result_reference).toBe(PARTY_RESOURCE_ID);
+      expect(party?.reconciliation_ref).not.toBeNull();
     }),
   ),
 );
@@ -362,35 +374,38 @@ it.live('equal-email Party candidates halt into reconciliation instead of choosi
   Effect.scoped(
     Effect.gen(function* ambiguousPartyCandidate() {
       const identities = makeScenarioIdentities();
-      const { fixture, input } = yield* scenario(identities);
+      const { fixture, portalEnrollmentAttemptId } = yield* scenario(identities);
 
-      const run = journeyRun(
+      const harness = yield* harnessFor(
         fixture,
         identities,
-        input,
         withAnswer(PARTY_CANDIDATE_SUBMISSION_TRANSITION_KEY, {
           failureCode: 'owner_reconciliation_required',
           kind: 'FAILED',
           outcomeCode: PARTY_CANDIDATE_AMBIGUOUS_OUTCOME_CODE,
         }),
       );
-      const result = yield* run.result;
+      const result = yield* harness.continuation.advance({
+        portalEnrollmentAttemptId,
+        tenantId: identities.tenantId,
+      });
 
       expect(result.outcome).toBe('HALTED');
       if (result.outcome === 'HALTED') {
         expect(result.halt.reason).toBe('RECONCILIATION_REQUIRED');
-        expect(result.halt.transitionKey).toBe(PARTY_CANDIDATE_SUBMISSION_TRANSITION_KEY);
+        expect(result.halt.transition.pipe(Option.map((transition) => transition.transitionKey))).toStrictEqual(
+          Option.some(PARTY_CANDIDATE_SUBMISSION_TRANSITION_KEY),
+        );
       }
-      expect(run.owner.log.dispatched).toStrictEqual([
-        PORTAL_ACCOUNT_CREATION_TRANSITION_KEY,
-        PARTY_CANDIDATE_SUBMISSION_TRANSITION_KEY,
-      ]);
-      const operations = yield* readEnrollmentAcceptanceOperations(fixture, input.portalEnrollmentAttemptId);
-      expect(operationSummary(operations)).toStrictEqual([
+      // The journey stops at the ambiguous Party: no profile and no binding are ever dispatched.
+      expect(harness.owner.log.dispatched).toStrictEqual([PARTY_CANDIDATE_SUBMISSION_TRANSITION_KEY]);
+      expect(
+        enrollmentOperationSummary(yield* readEnrollmentAcceptanceOperations(fixture, portalEnrollmentAttemptId)),
+      ).toStrictEqual([
         [PORTAL_ACCOUNT_CREATION_TRANSITION_KEY, 'SUCCEEDED', PORTAL_ACCOUNT_CREATED_OUTCOME_CODE],
         [PARTY_CANDIDATE_SUBMISSION_TRANSITION_KEY, 'FAILED', PARTY_CANDIDATE_AMBIGUOUS_OUTCOME_CODE],
       ]);
-      const attempt = yield* readEnrollmentAcceptanceAttempt(fixture, input.portalEnrollmentAttemptId);
+      const attempt = yield* readEnrollmentAcceptanceAttempt(fixture, portalEnrollmentAttemptId);
       expect(attempt.state).not.toBe('COMPLETE');
     }),
   ),
@@ -400,26 +415,28 @@ it.live('a Party created before a failing profile ensure keeps its committed par
   Effect.scoped(
     Effect.gen(function* partialStateRetained() {
       const identities = makeScenarioIdentities();
-      const { fixture, input } = yield* scenario(identities);
+      const { fixture, portalEnrollmentAttemptId } = yield* scenario(identities);
 
-      const run = journeyRun(
+      const harness = yield* harnessFor(
         fixture,
         identities,
-        input,
         withAnswer(ENSURE_RETAIL_CUSTOMER_PROFILE_TRANSITION_KEY, {
           code: 'retail_profile_precondition_failed',
           kind: 'REJECTED',
           reason: 'The Retail Customer Profile owner refused the ensure request',
         }),
+        { subject: subjectWithParty(identities) },
       );
-      const result = yield* run.result;
+      const result = yield* harness.continuation.advance({
+        portalEnrollmentAttemptId,
+        tenantId: identities.tenantId,
+      });
 
       expect(result.outcome).toBe('HALTED');
       if (result.outcome === 'HALTED') {
         expect(result.halt.reason).toBe('OWNER_REJECTED');
-        expect(result.halt.transitionKey).toBe(ENSURE_RETAIL_CUSTOMER_PROFILE_TRANSITION_KEY);
       }
-      const operations = yield* readEnrollmentAcceptanceOperations(fixture, input.portalEnrollmentAttemptId);
+      const operations = yield* readEnrollmentAcceptanceOperations(fixture, portalEnrollmentAttemptId);
       const party = operations.find((row) => row.transition_key === PARTY_CANDIDATE_SUBMISSION_TRANSITION_KEY);
       expect(party?.status).toBe('SUCCEEDED');
       expect(party?.result_reference).toBe(PARTY_RESOURCE_ID);
@@ -435,32 +452,40 @@ it.live('a retail binding that commits without its grant baseline halts as RECON
   Effect.scoped(
     Effect.gen(function* incompleteGrants() {
       const identities = makeScenarioIdentities();
-      const { fixture, input } = yield* scenario(identities);
+      const { fixture, portalEnrollmentAttemptId } = yield* scenario(identities);
 
-      const run = journeyRun(
+      const harness = yield* harnessFor(
         fixture,
         identities,
-        input,
         withAnswer(BIND_RETAIL_PORTAL_PROFILE_TRANSITION_KEY, {
           failureCode: 'owner_reconciliation_required',
           kind: 'FAILED',
           outcomeCode: RETAIL_PORTAL_GRANTS_INCOMPLETE_OUTCOME_CODE,
         }),
+        { subject: subjectWithParty(identities) },
       );
-      const result = yield* run.result;
+      const result = yield* harness.continuation.advance({
+        portalEnrollmentAttemptId,
+        tenantId: identities.tenantId,
+      });
 
       expect(result.outcome).toBe('HALTED');
       if (result.outcome === 'HALTED') {
         expect(result.halt.reason).toBe('RECONCILIATION_REQUIRED');
-        expect(result.halt.transitionKey).toBe(BIND_RETAIL_PORTAL_PROFILE_TRANSITION_KEY);
+        expect(result.halt.transition.pipe(Option.map((transition) => transition.transitionKey))).toStrictEqual(
+          Option.some(BIND_RETAIL_PORTAL_PROFILE_TRANSITION_KEY),
+        );
       }
-      const operations = yield* readEnrollmentAcceptanceOperations(fixture, input.portalEnrollmentAttemptId);
-      expect(operationSummary(operations)).toStrictEqual([
+      expect(
+        enrollmentOperationSummary(yield* readEnrollmentAcceptanceOperations(fixture, portalEnrollmentAttemptId)),
+      ).toStrictEqual([
         [PORTAL_ACCOUNT_CREATION_TRANSITION_KEY, 'SUCCEEDED', PORTAL_ACCOUNT_CREATED_OUTCOME_CODE],
         [PARTY_CANDIDATE_SUBMISSION_TRANSITION_KEY, 'SUCCEEDED', PARTY_CANDIDATE_CREATED_OUTCOME_CODE],
         [ENSURE_RETAIL_CUSTOMER_PROFILE_TRANSITION_KEY, 'SUCCEEDED', RETAIL_CUSTOMER_PROFILE_ENSURED_OUTCOME_CODE],
         [BIND_RETAIL_PORTAL_PROFILE_TRANSITION_KEY, 'FAILED', RETAIL_PORTAL_GRANTS_INCOMPLETE_OUTCOME_CODE],
       ]);
+      const attempt = yield* readEnrollmentAcceptanceAttempt(fixture, portalEnrollmentAttemptId);
+      expect(attempt.state).not.toBe('COMPLETE');
     }),
   ),
 );
@@ -469,98 +494,90 @@ it.live('authority revoked mid-flight is a typed halt, never a completed journey
   Effect.scoped(
     Effect.gen(function* authorityRevokedMidFlight() {
       const identities = makeScenarioIdentities();
-      const { fixture, input } = yield* scenario(identities);
+      const { fixture, portalEnrollmentAttemptId } = yield* scenario(identities);
 
-      const run = journeyRun(
+      const harness = yield* harnessFor(
         fixture,
         identities,
-        input,
         withAnswer(BIND_RETAIL_PORTAL_PROFILE_TRANSITION_KEY, {
           code: 'principal_binding_revoked',
           kind: 'REJECTED',
           reason: 'The Principal Auth Binding was revoked while the journey was in flight',
         }),
+        { subject: subjectWithParty(identities) },
       );
-      const result = yield* run.result;
+      const result = yield* harness.continuation.advance({
+        portalEnrollmentAttemptId,
+        tenantId: identities.tenantId,
+      });
 
       expect(result.outcome).toBe('HALTED');
       if (result.outcome === 'HALTED') {
         expect(result.halt.reason).toBe('OWNER_REJECTED');
-        expect(Option.getOrUndefined(result.halt.outcomeCode)).toBe('principal_binding_revoked');
       }
-      const attempt = yield* readEnrollmentAcceptanceAttempt(fixture, input.portalEnrollmentAttemptId);
+      const operations = yield* readEnrollmentAcceptanceOperations(fixture, portalEnrollmentAttemptId);
+      const binding = operations.find((row) => row.transition_key === BIND_RETAIL_PORTAL_PROFILE_TRANSITION_KEY);
+      expect(binding?.outcome_code).toBe('principal_binding_revoked');
+      const attempt = yield* readEnrollmentAcceptanceAttempt(fixture, portalEnrollmentAttemptId);
       expect(attempt.state).not.toBe('COMPLETE');
     }),
   ),
 );
 
-it.live('a support Actor may not resume another Actor’s owner operation under that Actor’s identity', () =>
+it.live('a transition no owner effect is registered for halts with the Attempt untouched', () =>
   Effect.scoped(
-    Effect.gen(function* supportResume() {
+    Effect.gen(function* unregisteredTransition() {
       const identities = makeScenarioIdentities();
-      const { fixture, input } = yield* scenario(identities);
+      const { fixture, portalEnrollmentAttemptId } = yield* scenario(identities);
+      const before = yield* readEnrollmentAcceptanceAttempt(fixture, portalEnrollmentAttemptId);
 
-      const stalling = journeyRun(
-        fixture,
-        identities,
-        input,
-        withAnswer(PARTY_CANDIDATE_SUBMISSION_TRANSITION_KEY, { kind: 'TIMED_OUT' }),
-      );
-      yield* Effect.flip(stalling.result);
-      yield* expireEnrollmentAcceptanceLeases(fixture, input.portalEnrollmentAttemptId);
-      const afterLapse = yield* readEnrollmentAcceptanceAttempt(fixture, input.portalEnrollmentAttemptId);
+      const harness = yield* harnessFor(fixture, identities, happyAnswers, {
+        unregistered: [PARTY_CANDIDATE_SUBMISSION_TRANSITION_KEY],
+      });
+      const result = yield* harness.continuation.advance({
+        portalEnrollmentAttemptId,
+        tenantId: identities.tenantId,
+      });
 
-      // The durable owner operation is immutable and recorded for the customer's Actor, so resuming
-      // it under a different Actor's identity is refused rather than silently reattributed.
-      const supportActorPrincipalId = principalId(randomUUID());
-      const support = journeyRun(
-        fixture,
-        { ...identities, actorPrincipalId: supportActorPrincipalId },
-        { ...input, actorPrincipalId: supportActorPrincipalId, expectedRevision: afterLapse.revision },
-        withAnswer(PARTY_CANDIDATE_SUBMISSION_TRANSITION_KEY, { kind: 'TIMED_OUT' }),
-        {
-          [PARTY_CANDIDATE_SUBMISSION_TRANSITION_KEY]: {
-            outcomeCode: PARTY_CANDIDATE_CREATED_OUTCOME_CODE,
-            reconciliationRef: randomUUID(),
-            resultReference: PARTY_RESOURCE_ID,
-            status: 'SUCCEEDED',
-          },
-        },
-      );
-      const refusal = yield* Effect.flip(support.result);
-      expect(refusal.code).toBe('attempt_invalid');
-      expect(support.owner.log.reconciled).toStrictEqual([]);
-
-      const recovery = journeyRun(
-        fixture,
-        identities,
-        { ...input, expectedRevision: afterLapse.revision },
-        withAnswer(PARTY_CANDIDATE_SUBMISSION_TRANSITION_KEY, { kind: 'TIMED_OUT' }),
-        {
-          [PARTY_CANDIDATE_SUBMISSION_TRANSITION_KEY]: {
-            outcomeCode: PARTY_CANDIDATE_CREATED_OUTCOME_CODE,
-            reconciliationRef: randomUUID(),
-            resultReference: PARTY_RESOURCE_ID,
-            status: 'SUCCEEDED',
-          },
-        },
-      );
-      expect((yield* recovery.result).outcome).toBe('COMPLETED');
+      expect(result.outcome).toBe('HALTED');
+      if (result.outcome === 'HALTED') {
+        expect(result.halt.reason).toBe('NO_OWNER_EFFECT');
+        expect(result.halt.transition.pipe(Option.map((transition) => transition.transitionKey))).toStrictEqual(
+          Option.some(PARTY_CANDIDATE_SUBMISSION_TRANSITION_KEY),
+        );
+      }
+      // Nothing is claimed, nothing is dispatched, and the Attempt's revision does not move.
+      // Turning the registry miss into a wildcard would move the revision and fail this.
+      expect(harness.owner.log.dispatched).toStrictEqual([]);
+      const after = yield* readEnrollmentAcceptanceAttempt(fixture, portalEnrollmentAttemptId);
+      expect(after.revision).toBe(before.revision);
+      expect(yield* readEnrollmentAcceptanceOperations(fixture, portalEnrollmentAttemptId)).toHaveLength(1);
     }),
   ),
 );
 
-it.live('derives COMPLETE from the declared required transitions rather than from an owner claim', () =>
+it.live('a second advance of a COMPLETE Attempt dispatches nothing at all', () =>
   Effect.scoped(
-    Effect.gen(function* derivedCompletion() {
+    Effect.gen(function* idempotentReRun() {
       const identities = makeScenarioIdentities();
-      const { fixture, input } = yield* scenario(identities);
+      const { fixture, portalEnrollmentAttemptId } = yield* scenario(identities);
+      const first = yield* harnessFor(fixture, identities, happyAnswers, { subject: subjectWithParty(identities) });
+      expect(
+        (yield* first.continuation.advance({ portalEnrollmentAttemptId, tenantId: identities.tenantId })).outcome,
+      ).toBe('COMPLETE');
+      const settled = yield* readEnrollmentAcceptanceOperations(fixture, portalEnrollmentAttemptId);
 
-      const run = journeyRun(fixture, identities, input, happyAnswers);
-      expect((yield* run.result).outcome).toBe('COMPLETED');
+      const second = yield* harnessFor(fixture, identities, happyAnswers, { subject: subjectWithParty(identities) });
+      const replay = yield* second.continuation.advance({
+        portalEnrollmentAttemptId,
+        tenantId: identities.tenantId,
+      });
 
-      const attempt = yield* readEnrollmentAcceptanceAttempt(fixture, input.portalEnrollmentAttemptId);
-      expect(attempt.state).toBe('COMPLETE');
+      expect(replay.outcome).toBe('COMPLETE');
+      expect(second.owner.log.dispatched).toStrictEqual([]);
+      expect(second.owner.log.reconciled).toStrictEqual([]);
+      // Byte-identical journal: a re-run of a settled Attempt must change nothing.
+      expect(yield* readEnrollmentAcceptanceOperations(fixture, portalEnrollmentAttemptId)).toStrictEqual(settled);
     }),
   ),
 );

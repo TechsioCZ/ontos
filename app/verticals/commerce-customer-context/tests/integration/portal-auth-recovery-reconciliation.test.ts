@@ -112,14 +112,12 @@ const makeReconciliationFixture = Effect.fn('CommercePortalAuthRecoveryReconcili
       Effect.provideService(Crypto.Crypto, recoveryCrypto),
     );
     const token = Redacted.make(`recon-${caseName}-token-${randomUUID()}`);
-    const registered = yield* (
-      store.registerPasswordResetToken?.({
-        email: originalEmail,
-        expiresAt: DateTime.toDate(DateTime.add(DateTime.makeUnsafe(now), { seconds: 3600 })),
-        providerSubjectId: originalUserId,
-        token,
-      }) ?? Effect.fail(new Error('registerPasswordResetToken is not implemented'))
-    );
+    const registered = yield* store.registerPasswordResetToken({
+      email: originalEmail,
+      expiresAt: DateTime.toDate(DateTime.add(DateTime.makeUnsafe(now), { seconds: 3600 })),
+      providerSubjectId: originalUserId,
+      token,
+    });
     if (!registered) {
       return yield* Effect.fail(new Error('Reconciliation fixture could not register the password-reset ledger'));
     }
@@ -287,9 +285,6 @@ it.live(
 
         const registerToken = store.registerPasswordResetToken;
         const peekLedger = store.peekPasswordResetLedger;
-        if (registerToken === undefined || peekLedger === undefined) {
-          return yield* Effect.fail(new Error('Reset-ledger idempotency fixture requires the optional store methods'));
-        }
 
         // Two requests for the same identifier within the window: the first opens the pending row,
         // the second must reuse it deterministically rather than inserting a second pending row.
@@ -339,9 +334,6 @@ it.live(
 
         const registerToken = store.registerPasswordResetToken;
         const peekLedger = store.peekPasswordResetLedger;
-        if (registerToken === undefined || peekLedger === undefined) {
-          return yield* Effect.fail(new Error('Reset-ledger expiry fixture requires the optional store methods'));
-        }
 
         const registered = yield* registerToken({ email, expiresAt: alreadyExpired, providerSubjectId, token });
         expect(registered).toBe(true);

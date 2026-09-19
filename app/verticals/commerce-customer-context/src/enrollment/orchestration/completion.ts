@@ -11,10 +11,13 @@ import type {
   CommerceEnrollmentAttemptPendingOutcome,
 } from '../attempts/attempt-service.ts';
 import type { CommerceEnrollmentAttemptPersistence } from '../attempts/attempt-persistence.ts';
-import { CommerceEnrollmentAttemptRejected } from '../attempts/errors.ts';
+import { attemptRejected } from '../attempts/errors.ts';
 import type { CommerceEnrollmentAttemptError } from '../attempts/errors.ts';
 import { counterpartyInvitationJourneyDefinition } from '../journeys/counterparty-invitation.ts';
-import { EXISTING_ACCOUNT_CORE_IDENTITY_TRANSITIONS, existingAccountStepPlan } from '../journeys/existing-account.ts';
+import {
+  EXISTING_ACCOUNT_CORE_IDENTITY_TRANSITIONS,
+  existingAccountJourneyDefinitionFor,
+} from '../journeys/existing-account.ts';
 import type { JourneyDefinition, JourneyTransitionSpec } from '../journeys/journey-contracts.ts';
 import { JourneyDefinitionSchema, journeyTransitionIdentity } from '../journeys/journey-contracts.ts';
 import { retailSelfEnrollmentJourneyDefinition } from '../journeys/retail-self-enrollment-contracts.ts';
@@ -95,13 +98,6 @@ export const deriveEnrollmentAttemptState = ({
   return signal === 'VERIFICATION_REQUIRED' ? 'VERIFICATION_REQUIRED' : 'IN_PROGRESS';
 };
 
-const invalid = (reason: string, cause: unknown): CommerceEnrollmentAttemptError =>
-  Object.defineProperty(
-    new CommerceEnrollmentAttemptRejected({ code: 'attempt_invalid', reason: reason.slice(0, 500), retryable: false }),
-    'cause',
-    { enumerable: false, value: cause },
-  );
-
 const existingAccountCoreIdentity = new Set(EXISTING_ACCOUNT_CORE_IDENTITY_TRANSITIONS.map(journeyTransitionIdentity));
 
 /**
@@ -122,29 +118,26 @@ const existingAccountTarget = (
     requiredTransitions: target.requiredTransitions.filter(undeclared),
   }).pipe(
     Effect.mapError((cause) =>
-      invalid('The target journey declares no step an Existing-account Attempt could continue as', cause),
+      attemptRejected(
+        'The target journey declares no step an Existing-account Attempt could continue as',
+        undefined,
+        cause,
+      ),
     ),
   );
 };
 
-/**
- * Existing-account's own composed step plan, read back as the definition that gates completion.
- * The plan already carries each step's `required` flag, so re-shaping it into a declaration is a
- * lossless view of what the journey module composed rather than a second copy of its rule.
- */
+/** Existing-account's own composed definition is what gates completion for this Attempt. */
 const existingAccountDefinition = (
   target: JourneyDefinition,
 ): Effect.Effect<JourneyDefinition, CommerceEnrollmentAttemptError> =>
-  existingAccountStepPlan(target).pipe(
-    Effect.flatMap((plan) =>
-      Schema.decodeEffect(JourneyDefinitionSchema)({
-        kind: 'EXISTING_ACCOUNT',
-        optionalTransitions: plan.filter((transition) => !transition.required),
-        requiredTransitions: plan.filter((transition) => transition.required),
-      }),
-    ),
+  existingAccountJourneyDefinitionFor(target).pipe(
     Effect.mapError((cause) =>
-      invalid('The Existing-account Attempt does not compose a journey definition that can gate completion', cause),
+      attemptRejected(
+        'The Existing-account Attempt does not compose a journey definition that can gate completion',
+        undefined,
+        cause,
+      ),
     ),
   );
 

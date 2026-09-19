@@ -9,7 +9,7 @@ import {
 } from '../../../../shared/portal-auth-contracts.ts';
 import { withCause } from '../../problems-support.ts';
 import { forwardSetCookieHeaders, noStoreHeaders, requestHeaders, requireTrustedOrigin } from '../../http-transport.ts';
-import { CommercePortalAuthRecoveryRateLimitService } from '../../rate-limit-service.ts';
+import { consumeRateLimitBudget } from '../../rate-limit-service.ts';
 import type { CommercePortalAuthRecoveryRateLimitRule } from '../../rate-limit-service.ts';
 import { COMMERCE_PORTAL_AUTH_POLICY } from '../config.ts';
 import { encodeCommerceSessionReference } from '../session-reference.ts';
@@ -165,15 +165,10 @@ const consumeStepUpBudget = Effect.fn('CommercePortalAuthStepUpHttp.rateLimit')(
   route: string,
   identity: CurrentIdentity,
 ) {
-  const budget = yield* CommercePortalAuthRecoveryRateLimitService;
-  const allowed = yield* budget.consume(`${identity.sessionRef}|${route}`, stepUpRateLimit).pipe(
-    Effect.catchTag('CommercePortalAuthRecoveryProviderFailure', (failure) =>
-      Effect.annotateLogs(Effect.logError('Commerce portal step-up budget could not be spent', failure), {
-        operation: failure.operation,
-        route,
-      }).pipe(Effect.andThen(Effect.fail(commercePortalAuthStepUpUnavailableProblem))),
-    ),
-  );
+  const allowed = yield* consumeRateLimitBudget(`${identity.sessionRef}|${route}`, stepUpRateLimit, {
+    route,
+    unavailable: () => commercePortalAuthStepUpUnavailableProblem,
+  });
   return allowed ? yield* Effect.void : yield* Effect.fail(commercePortalAuthStepUpRejectedProblem);
 });
 

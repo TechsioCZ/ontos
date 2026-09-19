@@ -14,6 +14,7 @@ import {
   enrollmentDigest,
 } from '../../../shared/enrollment-contracts.ts';
 import { CounterpartyAccessInvitationRefSchema } from '../../../shared/resources/counterparty-access-invitation.ts';
+import { withCause } from '../attempts/errors.ts';
 import { CommerceEnrollmentOwnerTransitionSchema } from '../orchestration/owner-transition-driver.ts';
 import type { CommerceEnrollmentOwnerTransition } from '../orchestration/owner-transition-driver.ts';
 import {
@@ -126,16 +127,13 @@ export class CounterpartyInvitationTransitionRejected extends Schema.TaggedError
   },
 ) {}
 
-const preserveCause = <Value extends object>(error: Value, cause: unknown): Value =>
-  Object.defineProperty(error, 'cause', { configurable: false, enumerable: false, value: cause });
-
 const rejectTransition = (
   code: typeof CounterpartyInvitationTransitionRejected.Type.code,
   reason: string,
   cause?: unknown,
 ): CounterpartyInvitationTransitionRejected => {
   const error = new CounterpartyInvitationTransitionRejected({ code, reason: reason.slice(0, 500), retryable: false });
-  return cause === undefined ? error : preserveCause(error, cause);
+  return cause === undefined ? error : withCause(error, cause);
 };
 
 /**

@@ -73,7 +73,7 @@ const missingAnswer = (transition: CommerceEnrollmentOwnerTransition) =>
     reason: `The acceptance script has no answer for ${transition.transitionKey}`,
   });
 
-export const makeEnrollmentAcceptanceScriptedOwner = (
+export const enrollmentAcceptanceScriptedOwner = (
   script: EnrollmentAcceptanceOwnerScript,
 ): EnrollmentAcceptanceScriptedOwner => {
   const dispatched: string[] = [];

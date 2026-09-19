@@ -8,6 +8,7 @@ import { Effect, Exit, Schema } from 'effect';
 import { expect, it } from 'effect-rstest';
 import { Pool } from 'pg';
 
+import { acquirePoolResource } from '../../../../packages/core-runtime/src/db/client.ts';
 import { makeTestDatabaseFromPool } from '../../../../packages/core-runtime/tests/support/database.ts';
 import type { CommerceCustomerContextTransaction } from '../../src/database/types.ts';
 import type {
@@ -186,13 +187,11 @@ it.live('proves durable Attempt CAS, expiry fencing, governed recovery, and RLS 
   Effect.scoped(
     Effect.gen(function* postgresAcceptance() {
       const connections = yield* loadDatabaseConnectionPair();
-      const adminPool = yield* Effect.acquireRelease(
-        Effect.sync(() => new Pool({ connectionString: connections.admin.connectionString })),
-        (pool) => Effect.promise(() => pool.end()).pipe(Effect.orDie),
+      const adminPool = yield* acquirePoolResource(
+        () => new Pool({ connectionString: connections.admin.connectionString }),
       );
-      const runtimePool = yield* Effect.acquireRelease(
-        Effect.sync(() => new Pool({ connectionString: connections.runtime.connectionString, max: 4 })),
-        (pool) => Effect.promise(() => pool.end()).pipe(Effect.orDie),
+      const runtimePool = yield* acquirePoolResource(
+        () => new Pool({ connectionString: connections.runtime.connectionString, max: 4 }),
       );
       const admin = yield* makeTestDatabaseFromPool(adminPool, commerceCustomerContextRelations);
       const runtime = yield* makeTestDatabaseFromPool(runtimePool, commerceCustomerContextRelations);

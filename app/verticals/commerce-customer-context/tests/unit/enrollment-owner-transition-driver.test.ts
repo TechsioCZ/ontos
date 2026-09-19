@@ -13,8 +13,8 @@ import {
   CommerceEnrollmentOwnerEffectOutcomeSchema,
   CommerceEnrollmentOwnerTransitionSchema,
   commerceEnrollmentOwnerAttemptStoreForFreshService,
-  makeCommerceEnrollmentCoreIdentityOwnerEffect,
-  makeCommerceEnrollmentOwnerTransitionDriver,
+  commerceEnrollmentCoreIdentityOwnerEffectFor,
+  commerceEnrollmentOwnerTransitionDriverFor,
 } from '../../src/enrollment/orchestration/owner-transition-driver.ts';
 import type {
   CommerceEnrollmentCoreIdentityOwnerEffectOptions,
@@ -186,7 +186,7 @@ it.effect('dispatches only from a claimed immutable active lease and records the
           return recordResult;
         }),
     });
-    const driver = makeCommerceEnrollmentOwnerTransitionDriver({
+    const driver = commerceEnrollmentOwnerTransitionDriverFor({
       attempt: store,
       owner: successfulOwner(() => {
         dispatches += 1;
@@ -311,7 +311,7 @@ it.effect('refuses dispatch when claim identity or lease is missing, expired, or
       reconcile: () => Effect.succeed({ actorPrincipalId, reconciliationRef, status: 'SUCCEEDED' as const }),
     };
     for (const claim of cases) {
-      const driver = makeCommerceEnrollmentOwnerTransitionDriver({
+      const driver = commerceEnrollmentOwnerTransitionDriverFor({
         attempt: makeAttemptStore(claim),
         owner,
         workerId: () => workerId,
@@ -342,7 +342,7 @@ it.effect('does not record an unavailable or indeterminate owner effect', () =>
           }),
         ),
     };
-    const driver = makeCommerceEnrollmentOwnerTransitionDriver({
+    const driver = commerceEnrollmentOwnerTransitionDriverFor({
       attempt: makeAttemptStore(claimResult(), {
         recordOutcome: () =>
           Effect.sync(() => {
@@ -372,7 +372,7 @@ it.effect('turns a typed owner rejection into one durable FAILED outcome', () =>
         ),
       reconcile: () => Effect.succeed({ actorPrincipalId, reconciliationRef, status: 'SUCCEEDED' as const }),
     };
-    const driver = makeCommerceEnrollmentOwnerTransitionDriver({
+    const driver = commerceEnrollmentOwnerTransitionDriverFor({
       attempt: makeAttemptStore(claimResult(), {
         recordOutcome: (input) =>
           Effect.sync(() => {
@@ -423,7 +423,7 @@ it.effect('does not classify a current Core binding without exact owner evidence
       },
       makeReconciliationRequest: () => ({ operation: 'read', payload: { authBindingId, lookup: 'binding' } }),
     };
-    const effect = makeCommerceEnrollmentCoreIdentityOwnerEffect(options).reconcile({
+    const effect = commerceEnrollmentCoreIdentityOwnerEffectFor(options).reconcile({
       ...transition,
       observedRevision: 2,
       ownerOperationRevision: 1,
@@ -475,7 +475,7 @@ it.effect('requires original invocation provenance before invoking Core read int
       },
       makeReconciliationRequest: () => ({ operation: 'read', payload: { authBindingId, lookup: 'binding' } }),
     };
-    const resolution = yield* makeCommerceEnrollmentCoreIdentityOwnerEffect(options).reconcile({
+    const resolution = yield* commerceEnrollmentCoreIdentityOwnerEffectFor(options).reconcile({
       ...transition,
       observedRevision: 2,
       ownerOperationRevision: 1,
@@ -527,7 +527,7 @@ it.effect('rejects a Core reservation that returns a non-current existing bindin
         throw new Error('The dispatch-only test must not reconcile');
       },
     };
-    const error = yield* makeCommerceEnrollmentCoreIdentityOwnerEffect(options).dispatch(transition).pipe(Effect.flip);
+    const error = yield* commerceEnrollmentCoreIdentityOwnerEffectFor(options).dispatch(transition).pipe(Effect.flip);
     expect(error).toBeInstanceOf(CommerceEnrollmentOwnerEffectRejected);
     expect(Schema.is(CommerceEnrollmentOwnerEffectRejected)(error) ? error.code : undefined).toBe(
       'core_binding_not_current',

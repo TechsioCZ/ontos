@@ -8,9 +8,6 @@ import { commerceCustomerContextApi } from '../../../../shared/api.ts';
 import { CommercePortalAuthMfaApi } from '../../../../shared/portal-auth/mfa-api.ts';
 import type {
   CommercePortalAuthMfaConfirmEnableBody,
-  CommercePortalAuthMfaDisableBody,
-  CommercePortalAuthMfaEnableBody,
-  CommercePortalAuthMfaPasswordBody,
   CommercePortalAuthMfaSendOtpBody,
   CommercePortalAuthMfaVerifyBackupCodeBody,
   CommercePortalAuthMfaVerifyOtpBody,
@@ -24,7 +21,7 @@ import {
   requireTrustedOrigin,
   resolveClientKey,
 } from '../../http-transport.ts';
-import { CommercePortalAuthRecoveryRateLimitService } from '../../rate-limit-service.ts';
+import { consumeRateLimitBudget } from '../../rate-limit-service.ts';
 import type { CommercePortalAuthRecoveryRateLimitRule } from '../../rate-limit-service.ts';
 import { CommercePortalAuthService } from '../../session/http.ts';
 import { CommercePortalAuthSessionLifecycle } from '../../session/lifecycle-service.ts';
@@ -56,8 +53,6 @@ import { narrowCommercePortalAuthMfaTrustDevice } from './trust-device.ts';
 interface CommercePortalAuthMfaCall {
   readonly headers: Headers;
   readonly service: CommercePortalAuthMfaServiceApi;
-  /** Already narrowed for the provider: an accepted request can only ask for `false`. */
-  readonly trustDevice: { readonly trustDevice?: false };
 }
 
 const MFA_RATE_LIMIT_ROUTE = '/two-factor';
@@ -128,21 +123,16 @@ const mfaSubjectKey = (
 const consumeMfaBudget = Effect.fn('CommercePortalAuthMfaHttp.rateLimit')(function* consumeMfaBudgetEffect(
   request: HttpServerRequest.HttpServerRequest,
 ) {
-  const budget = yield* CommercePortalAuthRecoveryRateLimitService;
   const configuration = yield* CommercePortalAuthConfig;
   const subject = mfaSubjectKey(request, configuration);
   if (Option.isNone(subject)) {
     return yield* Effect.fail(commercePortalAuthMfaChallengeExpiredProblem);
   }
   const client = resolveClientKey(request, configuration.trustedProxies);
-  const allowed = yield* budget.consume(`${client}|${subject.value}|${MFA_RATE_LIMIT_ROUTE}`, mfaRateLimit).pipe(
-    Effect.catchTag('CommercePortalAuthRecoveryProviderFailure', (failure) =>
-      Effect.annotateLogs(Effect.logError('Commerce portal MFA budget could not be spent', failure), {
-        operation: failure.operation,
-        route: MFA_RATE_LIMIT_ROUTE,
-      }).pipe(Effect.andThen(Effect.fail(commercePortalAuthMfaUnavailableProblem))),
-    ),
-  );
+  const allowed = yield* consumeRateLimitBudget(`${client}|${subject.value}|${MFA_RATE_LIMIT_ROUTE}`, mfaRateLimit, {
+    route: MFA_RATE_LIMIT_ROUTE,
+    unavailable: () => commercePortalAuthMfaUnavailableProblem,
+  });
   return allowed
     ? yield* Effect.void
     : yield* Effect.fail(commercePortalAuthMfaRateLimitedProblem(MFA_RATE_LIMITED_CODE));
@@ -168,15 +158,13 @@ const prepareMfaCall = Effect.fn('CommercePortalAuthMfaHttp.prepare')(function* 
   yield* noStoreHeaders;
   yield* requireTrustedOrigin(request.headers, () => commercePortalAuthMfaUntrustedOriginProblem);
   yield* consumeMfaBudget(request);
-  const trustDevice = narrowCommercePortalAuthMfaTrustDevice(payload);
-  if (Option.isNone(trustDevice)) {
+  if (Option.isNone(narrowCommercePortalAuthMfaTrustDevice(payload))) {
     return yield* Effect.fail(commercePortalAuthMfaTrustDeviceProblem);
   }
   const service = yield* CommercePortalAuthMfaService;
   const call: CommercePortalAuthMfaCall = {
     headers: requestHeaders(request.headers),
     service,
-    trustDevice: trustDevice.value,
   };
   return call;
 });
@@ -248,7 +236,7 @@ const SessionEnvelopeSchema = Schema.Struct({
  * line below annotates `reason` alone, so the underlying network fault or parse issue never rides
  * along in a log or reaches the caller.
  */
-export interface CommercePortalAuthMfaSessionReadFailure {
+interface CommercePortalAuthMfaSessionReadFailure {
   readonly cause?: unknown;
   readonly reason: 'evidence-rejected' | 'malformed' | 'provider-error' | 'timeout';
 }
@@ -284,51 +272,6 @@ export const commercePortalAuthMfaSessionReadApiFromBetterAuth = (
     ),
 });
 
-/**
- * Any failure to read or decode the session — timeout, provider fault, malformed response, a
- * session the owner's lifecycle refuses evidence for — is treated the same as no session at all:
- * freshness cannot be confirmed, so the gate denies rather than risking a stale or forged session
- * being accepted. Only a diagnostic reason is logged, never session or user identifiers.
- *
- * Better Auth resolves the cookie to a session identity; the owner's lifecycle answers when that
- * session was last authenticated. The provider has no column for it — the stamp lives on the
- * owner's own session row (`../../../../src/portal-auth/persistence/portal-auth-tables.ts`) — so
- * the two halves are read here rather than inferred from the provider's `createdAt`.
- */
-const readCommercePortalAuthMfaCurrentSession = (
-  api: CommercePortalAuthMfaSessionReadApi,
-  lifecycle: CommercePortalAuthMfaFreshnessLifecycle,
-  headers: Headers,
-): Effect.Effect<Option.Option<CommercePortalAuthMfaCurrentSession>> =>
-  Effect.gen(function* readCommercePortalAuthMfaCurrentSessionEffect() {
-    const current = yield* api.getSession({
-      asResponse: false,
-      headers,
-      query: { disableCookieCache: true, disableRefresh: true },
-      returnHeaders: true,
-    });
-    if (Option.isNone(current)) {
-      return Option.none<CommercePortalAuthMfaCurrentSession>();
-    }
-    const sessionRef = yield* encodeCommerceSessionReference(current.value.session.id).pipe(
-      Effect.mapError((cause): CommercePortalAuthMfaSessionReadFailure => ({ cause, reason: 'malformed' })),
-    );
-    const evidence = yield* lifecycle
-      .evidenceForSession({ expectedProviderSubjectId: current.value.user.id, sessionRef })
-      .pipe(
-        Effect.mapError((cause): CommercePortalAuthMfaSessionReadFailure => ({ cause, reason: 'evidence-rejected' })),
-      );
-    return Option.some({ authenticatedAtMillis: evidence.authenticatedAt.getTime() });
-  }).pipe(
-    Effect.matchEffect({
-      onFailure: (failure: CommercePortalAuthMfaSessionReadFailure) =>
-        Effect.annotateLogs(Effect.logWarning('Commerce portal MFA session freshness read failed'), {
-          reason: failure.reason,
-        }).pipe(Effect.as(Option.none())),
-      onSuccess: (current: Option.Option<CommercePortalAuthMfaCurrentSession>) => Effect.succeed(current),
-    }),
-  );
-
 /** Exactly the lifecycle read this gate makes; nothing here may change session state. */
 export type CommercePortalAuthMfaFreshnessLifecycle = Pick<
   CommercePortalAuthSessionLifecycle['Service'],
@@ -338,13 +281,50 @@ export type CommercePortalAuthMfaFreshnessLifecycle = Pick<
 /**
  * Exported so a caller already holding a Better Auth `api` and the owner's lifecycle — an
  * integration test driving a fixture realm over the real store, for instance — can build the same
- * reader without going through the service tags.
+ * reader without going through the service tags. Better Auth resolves the cookie to a session
+ * identity; the owner's lifecycle answers when that session was last authenticated. The provider
+ * has no column for it — the stamp lives on the owner's own session row
+ * (`../../../../src/portal-auth/persistence/portal-auth-tables.ts`) — so the two halves are read
+ * here rather than inferred from the provider's `createdAt`.
+ *
+ * Any failure to read or decode the session — timeout, provider fault, malformed response, a
+ * session the owner's lifecycle refuses evidence for — is treated the same as no session at all:
+ * freshness cannot be confirmed, so the gate denies rather than risking a stale or forged session
+ * being accepted. Only a diagnostic reason is logged, never session or user identifiers.
  */
 export const commercePortalAuthMfaFreshnessReaderFromApi = (
   api: CommercePortalAuthMfaSessionReadApi,
   lifecycle: CommercePortalAuthMfaFreshnessLifecycle,
 ): CommercePortalAuthMfaFreshnessReader => ({
-  readCurrentSession: (headers: Headers) => readCommercePortalAuthMfaCurrentSession(api, lifecycle, headers),
+  readCurrentSession: (headers: Headers) =>
+    Effect.gen(function* readCurrentSessionEffect() {
+      const current = yield* api.getSession({
+        asResponse: false,
+        headers,
+        query: { disableCookieCache: true, disableRefresh: true },
+        returnHeaders: true,
+      });
+      if (Option.isNone(current)) {
+        return Option.none<CommercePortalAuthMfaCurrentSession>();
+      }
+      const sessionRef = yield* encodeCommerceSessionReference(current.value.session.id).pipe(
+        Effect.mapError((cause): CommercePortalAuthMfaSessionReadFailure => ({ cause, reason: 'malformed' })),
+      );
+      const evidence = yield* lifecycle
+        .evidenceForSession({ expectedProviderSubjectId: current.value.user.id, sessionRef })
+        .pipe(
+          Effect.mapError((cause): CommercePortalAuthMfaSessionReadFailure => ({ cause, reason: 'evidence-rejected' })),
+        );
+      return Option.some({ authenticatedAtMillis: evidence.authenticatedAt.getTime() });
+    }).pipe(
+      Effect.matchEffect({
+        onFailure: (failure: CommercePortalAuthMfaSessionReadFailure) =>
+          Effect.annotateLogs(Effect.logWarning('Commerce portal MFA session freshness read failed'), {
+            reason: failure.reason,
+          }).pipe(Effect.as(Option.none())),
+        onSuccess: (current: Option.Option<CommercePortalAuthMfaCurrentSession>) => Effect.succeed(current),
+      }),
+    ),
 });
 
 /**
@@ -440,7 +420,9 @@ const sendOtp = Effect.fn('CommercePortalAuthMfaHttp.sendOtp')(function* sendOtp
   request: HttpServerRequest.HttpServerRequest,
 ) {
   const call = yield* prepareMfaCall(request, payload);
-  return yield* forwardMfaOutcome(call.service.sendTwoFactorOTP({ body: call.trustDevice, headers: call.headers }));
+  return yield* forwardMfaOutcome(
+    call.service.sendTwoFactorOTP({ body: { trustDevice: false }, headers: call.headers }),
+  );
 });
 
 const verifyTotp = Effect.fn('CommercePortalAuthMfaHttp.verifyTotp')(function* verifyTotpEffect(
@@ -449,7 +431,7 @@ const verifyTotp = Effect.fn('CommercePortalAuthMfaHttp.verifyTotp')(function* v
 ) {
   const call = yield* prepareMfaCall(request, payload);
   return yield* forwardMfaOutcome(
-    call.service.verifyTOTP({ body: { code: payload.code, ...call.trustDevice }, headers: call.headers }),
+    call.service.verifyTOTP({ body: { code: payload.code, trustDevice: false }, headers: call.headers }),
   );
 });
 
@@ -459,7 +441,7 @@ const verifyOtp = Effect.fn('CommercePortalAuthMfaHttp.verifyOtp')(function* ver
 ) {
   const call = yield* prepareMfaCall(request, payload);
   return yield* forwardMfaOutcome(
-    call.service.verifyTwoFactorOTP({ body: { code: payload.code, ...call.trustDevice }, headers: call.headers }),
+    call.service.verifyTwoFactorOTP({ body: { code: payload.code, trustDevice: false }, headers: call.headers }),
   );
 });
 
@@ -470,22 +452,41 @@ const verifyBackupCode = Effect.fn('CommercePortalAuthMfaHttp.verifyBackupCode')
   const call = yield* prepareMfaCall(request, payload);
   return yield* forwardMfaOutcome(
     call.service.verifyBackupCode({
-      body: { code: payload.code, ...call.trustDevice },
+      body: { code: payload.code, trustDevice: false },
       headers: call.headers,
     }),
   );
 });
 
-const enable = Effect.fn('CommercePortalAuthMfaHttp.enable')(function* enableEffect(
-  payload: CommercePortalAuthMfaEnableBody,
-  request: HttpServerRequest.HttpServerRequest,
-) {
-  const call = yield* prepareMfaAdminCall(request);
-  const body = yield* Schema.decodeEffect(CommercePortalAuthMfaOwnerEnableBodySchema)(payload).pipe(
-    Effect.mapError((cause) => commercePortalAuthMfaInvalidRequestProblem(cause)),
-  );
-  return yield* forwardMfaOutcome(call.service.enableTwoFactor({ body, headers: call.headers }));
-});
+/**
+ * Every administrative route shares the same shape: gate, decode the payload into the provider's
+ * body, and forward the outcome. `toBody` carries the one difference between routes — most decode
+ * through a `Schema`, `confirmEnable` needs none.
+ */
+const adminCall = <Payload, Body, ResponseBody, E, R>(
+  name: string,
+  toBody: (payload: Payload) => Effect.Effect<Body, E, R>,
+  invoke: (
+    call: { headers: Headers; service: CommercePortalAuthMfaServiceApi },
+    body: Body,
+  ) => Effect.Effect<CommercePortalAuthMfaResponse<ResponseBody>, CommercePortalAuthMfaProviderFailure>,
+) =>
+  Effect.fn(name)(function* adminCallEffect(payload: Payload, request: HttpServerRequest.HttpServerRequest) {
+    const call = yield* prepareMfaAdminCall(request);
+    // Body decoding runs only once the admin gate above has resolved `call`: an unauthenticated or
+    // stale-session caller must never learn whether their request body would otherwise decode.
+    const body = yield* Effect.succeed(call).pipe(
+      Effect.andThen(() => toBody(payload)),
+      Effect.mapError(commercePortalAuthMfaInvalidRequestProblem),
+    );
+    return yield* forwardMfaOutcome(invoke(call, body));
+  });
+
+const enable = adminCall(
+  'CommercePortalAuthMfaHttp.enable',
+  Schema.decodeEffect(CommercePortalAuthMfaOwnerEnableBodySchema),
+  (call, body) => call.service.enableTwoFactor({ body, headers: call.headers }),
+);
 
 /**
  * Better Auth's own `verifyTOTP` endpoint is dual-purpose: with no established session it verifies
@@ -493,51 +494,32 @@ const enable = Effect.fn('CommercePortalAuthMfaHttp.enable')(function* enableEff
  * and marking it verified. `confirm-enable` reuses the exact same provider call as `verifyTotp`;
  * only the route, the freshness gate and the budget differ.
  */
-const confirmEnable = Effect.fn('CommercePortalAuthMfaHttp.confirmEnable')(function* confirmEnableEffect(
-  payload: CommercePortalAuthMfaConfirmEnableBody,
-  request: HttpServerRequest.HttpServerRequest,
-) {
-  const call = yield* prepareMfaAdminCall(request);
-  return yield* forwardMfaOutcome(
-    call.service.verifyTOTP({ body: { code: payload.code, trustDevice: false }, headers: call.headers }),
-  );
-});
-
-const disable = Effect.fn('CommercePortalAuthMfaHttp.disable')(function* disableEffect(
-  payload: CommercePortalAuthMfaDisableBody,
-  request: HttpServerRequest.HttpServerRequest,
-) {
-  const call = yield* prepareMfaAdminCall(request);
-  const body = yield* Schema.decodeEffect(CommercePortalAuthMfaOwnerDisableBodySchema)(payload).pipe(
-    Effect.mapError((cause) => commercePortalAuthMfaInvalidRequestProblem(cause)),
-  );
-  return yield* forwardMfaOutcome(call.service.disableTwoFactor({ body, headers: call.headers }));
-});
-
-const regenerateBackupCodes = Effect.fn('CommercePortalAuthMfaHttp.regenerateBackupCodes')(
-  function* regenerateBackupCodesEffect(
-    payload: CommercePortalAuthMfaPasswordBody,
-    request: HttpServerRequest.HttpServerRequest,
-  ) {
-    const call = yield* prepareMfaAdminCall(request);
-    const body = yield* Schema.decodeEffect(CommercePortalAuthMfaOwnerPasswordBodySchema)(payload).pipe(
-      Effect.mapError((cause) => commercePortalAuthMfaInvalidRequestProblem(cause)),
-    );
-    return yield* forwardMfaOutcome(call.service.generateBackupCodes({ body, headers: call.headers }));
-  },
+const confirmEnable = adminCall(
+  'CommercePortalAuthMfaHttp.confirmEnable',
+  (payload: CommercePortalAuthMfaConfirmEnableBody) =>
+    Effect.succeed({ code: payload.code, trustDevice: false as const }),
+  (call, body) => call.service.verifyTOTP({ body, headers: call.headers }),
 );
 
-const totpUri = Effect.fn('CommercePortalAuthMfaHttp.totpUri')(function* totpUriEffect(
-  payload: CommercePortalAuthMfaPasswordBody,
-  request: HttpServerRequest.HttpServerRequest,
-) {
-  const call = yield* prepareMfaAdminCall(request);
-  const body = yield* Schema.decodeEffect(CommercePortalAuthMfaOwnerPasswordBodySchema)(payload).pipe(
-    Effect.mapError((cause) => commercePortalAuthMfaInvalidRequestProblem(cause)),
-  );
-  return yield* forwardMfaOutcome(call.service.getTOTPURI({ body, headers: call.headers }));
-});
+const disable = adminCall(
+  'CommercePortalAuthMfaHttp.disable',
+  Schema.decodeEffect(CommercePortalAuthMfaOwnerDisableBodySchema),
+  (call, body) => call.service.disableTwoFactor({ body, headers: call.headers }),
+);
 
+const regenerateBackupCodes = adminCall(
+  'CommercePortalAuthMfaHttp.regenerateBackupCodes',
+  Schema.decodeEffect(CommercePortalAuthMfaOwnerPasswordBodySchema),
+  (call, body) => call.service.generateBackupCodes({ body, headers: call.headers }),
+);
+
+const totpUri = adminCall(
+  'CommercePortalAuthMfaHttp.totpUri',
+  Schema.decodeEffect(CommercePortalAuthMfaOwnerPasswordBodySchema),
+  (call, body) => call.service.getTOTPURI({ body, headers: call.headers }),
+);
+
+/** Shared by both mounts below: every published MFA route, wired to its handler. */
 /** Root provides the MFA service and the portal configuration this group reads. */
 export const portalAuthMfaApiLive = HttpApiBuilder.group(commerceCustomerContextApi, 'portalAuthMfa', (handlers) =>
   handlers

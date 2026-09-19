@@ -86,9 +86,6 @@ export const makeCommercePortalAuthEmailDelivery = Effect.fn('CommercePortalAuth
     /**
      * Records the issuance-time email/subject binding before delivery, exactly as verification
      * does, so reconciliation detection can later compare it against the provider's current state.
-     * The store method is optional: a store that does not implement it (a hand-written test double,
-     * for example) is skipped rather than failing delivery — this ledger is evidence for detection,
-     * never a gate the normal reset flow depends on.
      */
     const sendResetPassword = Effect.fnUntraced(function* sendResetPasswordEffect(
       data: ResetPasswordEmailData,
@@ -98,17 +95,15 @@ export const makeCommercePortalAuthEmailDelivery = Effect.fn('CommercePortalAuth
         providerSubjectId: data.user.id,
         token: data.token,
       }).pipe(Effect.mapError((cause) => unavailable('reset-password-email-validation', cause)));
-      if (store.registerPasswordResetToken !== undefined) {
-        const now = yield* DateTime.nowAsDate;
-        const registered = yield* store.registerPasswordResetToken({
-          email: normalizeEmail(metadata.email),
-          expiresAt: expirationFrom(now),
-          providerSubjectId: metadata.providerSubjectId,
-          token: Redacted.make(metadata.token),
-        });
-        if (!registered) {
-          return yield* unavailable('reset-password-email-registration', 'RESET_BINDING_REJECTED');
-        }
+      const now = yield* DateTime.nowAsDate;
+      const registered = yield* store.registerPasswordResetToken({
+        email: normalizeEmail(metadata.email),
+        expiresAt: expirationFrom(now),
+        providerSubjectId: metadata.providerSubjectId,
+        token: Redacted.make(metadata.token),
+      });
+      if (!registered) {
+        return yield* unavailable('reset-password-email-registration', 'RESET_BINDING_REJECTED');
       }
       return yield* Effect.tryPromise({
         catch: (cause) => unavailable('reset-password-email-delivery', cause),

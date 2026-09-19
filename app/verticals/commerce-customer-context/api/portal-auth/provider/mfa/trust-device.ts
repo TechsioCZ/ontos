@@ -7,7 +7,4 @@ import { Option } from 'effect';
  */
 export const narrowCommercePortalAuthMfaTrustDevice = (payload: {
   readonly trustDevice?: boolean;
-}): Option.Option<{ readonly trustDevice?: false }> =>
-  payload.trustDevice === true
-    ? Option.none()
-    : Option.some(payload.trustDevice === undefined ? {} : { trustDevice: false });
+}): Option.Option<void> => (payload.trustDevice === true ? Option.none() : Option.void);

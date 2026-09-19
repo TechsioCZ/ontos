@@ -13,18 +13,22 @@ import type {
   EnrollmentEvidenceReferenceSchema,
   ReconcileEnrollmentResolution,
 } from '../../../shared/enrollment-contracts.ts';
+import {
+  decodeOwnerField,
+  ownerIndeterminate,
+  ownerRejected,
+  ownerUnavailable,
+} from '../orchestration/owner-effect-codec.ts';
 import type {
   CommerceEnrollmentOwnerEffect,
   CommerceEnrollmentOwnerEffectOutcome,
   CommerceEnrollmentOwnerReconciliationInput,
   CommerceEnrollmentOwnerTransition,
 } from '../orchestration/owner-transition-driver.ts';
-import {
-  CommerceEnrollmentOwnerEffectIndeterminate,
-  CommerceEnrollmentOwnerEffectRejected,
+import type {
+  CommerceEnrollmentOwnerEffectError,
   CommerceEnrollmentOwnerEffectUnavailable,
 } from '../orchestration/owner-transition-errors.ts';
-import type { CommerceEnrollmentOwnerEffectError } from '../orchestration/owner-transition-errors.ts';
 import type { CounterpartyInvitationClaimDispatchResult } from './counterparty-invitation-claim-gateway.ts';
 import { CounterpartyInvitationClaimGateway } from './counterparty-invitation-claim-gateway.ts';
 
@@ -46,44 +50,9 @@ import { CounterpartyInvitationClaimGateway } from './counterparty-invitation-cl
 type EnrollmentKey = typeof EnrollmentKeySchema.Type;
 type EnrollmentResourceId = typeof EnrollmentResourceIdSchema.Type;
 
-const withCause = <ErrorType extends object>(error: ErrorType, cause: unknown): ErrorType =>
-  Object.defineProperty(error, 'cause', { configurable: false, enumerable: false, value: cause });
-
-const unavailable = (
-  code: string,
-  reason: string,
-  cause?: unknown,
-): InstanceType<typeof CommerceEnrollmentOwnerEffectUnavailable> => {
-  const error = new CommerceEnrollmentOwnerEffectUnavailable({
-    code: code.slice(0, 200),
-    reason: reason.slice(0, 500),
-  });
-  return cause === undefined ? error : withCause(error, cause);
-};
-
-const indeterminate = (
-  code: string,
-  reason: string,
-  cause?: unknown,
-): InstanceType<typeof CommerceEnrollmentOwnerEffectIndeterminate> => {
-  const error = new CommerceEnrollmentOwnerEffectIndeterminate({
-    code: code.slice(0, 200),
-    reason: reason.slice(0, 500),
-  });
-  return cause === undefined ? error : withCause(error, cause);
-};
-
-const rejected = (
-  code: string,
-  reason: string,
-  cause?: unknown,
-): InstanceType<typeof CommerceEnrollmentOwnerEffectRejected> => {
-  const error = new CommerceEnrollmentOwnerEffectRejected({
-    code: code.slice(0, 200),
-    reason: reason.slice(0, 500),
-  });
-  return cause === undefined ? error : withCause(error, cause);
-};
+const unavailable = ownerUnavailable;
+const indeterminate = ownerIndeterminate;
+const rejected = ownerRejected;
 
 /**
  * A rate-limited claim is deliberately not a durable failure.  The driver never records an
@@ -95,22 +64,21 @@ const mapClaimFailure = (cause: CounterpartyAccessDomainError): CommerceEnrollme
     ? unavailable('invitation_claim_unavailable', cause.reason, cause)
     : rejected(`invitation_claim_${cause.code}`, cause.reason, cause);
 
+const INVALID_RESULT_CODE = 'invitation_claim_invalid_result';
+
 const decodeKey = (
   value: string,
 ): Effect.Effect<EnrollmentKey, InstanceType<typeof CommerceEnrollmentOwnerEffectUnavailable>> =>
-  Schema.decodeEffect(EnrollmentKeySchema)(value).pipe(
-    Effect.mapError((cause) =>
-      unavailable('invitation_claim_invalid_result', 'The claim owner returned an invalid outcome key', cause),
-    ),
-  );
+  decodeOwnerField(EnrollmentKeySchema, value, INVALID_RESULT_CODE, 'The claim owner returned an invalid outcome key');
 
 const decodeResourceId = (
   value: string,
 ): Effect.Effect<EnrollmentResourceId, InstanceType<typeof CommerceEnrollmentOwnerEffectUnavailable>> =>
-  Schema.decodeEffect(EnrollmentResourceIdSchema)(value).pipe(
-    Effect.mapError((cause) =>
-      unavailable('invitation_claim_invalid_result', 'The claim owner returned an invalid result reference', cause),
-    ),
+  decodeOwnerField(
+    EnrollmentResourceIdSchema,
+    value,
+    INVALID_RESULT_CODE,
+    'The claim owner returned an invalid result reference',
   );
 
 /**

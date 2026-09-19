@@ -13,6 +13,7 @@ import {
 import { GatewayAssertionRedemptionLive } from '../../api/auth/gateway-assertion-redemption.ts';
 import { CommercePortalAuthConfig } from '../../api/portal-auth/provider/config-service.ts';
 import { parseCommercePortalAuthConfig } from '../../api/portal-auth/provider/config.ts';
+import { jsonBody } from '../support/response.ts';
 
 /**
  * The other half of the optional realm: a host that opted in must get the installed provider, not
@@ -59,8 +60,6 @@ const configuredRuntime = Effect.acquireRelease(
   }),
   (runtime) => Effect.promise(async () => await runtime.dispose()),
 );
-
-const jsonBody = (response: Response) => Effect.promise(async () => await response.clone().json());
 
 it.effect('mounts the live portal-auth sign-in route when the realm is configured', () =>
   Effect.scoped(

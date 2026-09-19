@@ -10,6 +10,7 @@ import type {
   ReadPrincipalBindingResult,
 } from '@app/shared-contracts/server/external-identity-client';
 
+import { withCause } from '../attempts/errors.ts';
 import {
   CommerceEnrollmentCommitResolutionRejected,
   CommerceEnrollmentCommitResolutionRevoked,
@@ -23,9 +24,6 @@ import type {
   EnrollmentRetainedCorePair,
 } from './commit-resolution-contracts.ts';
 
-const preserveCause = <Value extends object>(error: Value, cause: unknown): Value =>
-  Object.defineProperty(error, 'cause', { configurable: false, enumerable: false, value: cause });
-
 const unavailable = (
   invocationId: EnrollmentCommitResolutionInput['originalInvocationId'],
   code: string,
@@ -38,7 +36,7 @@ const unavailable = (
     reason: reason.slice(0, 500),
     retryable: true,
   });
-  return cause === undefined ? error : preserveCause(error, cause);
+  return cause === undefined ? error : withCause(error, cause);
 };
 
 const rejected = (
@@ -53,6 +51,12 @@ const rejected = (
     reason: reason.slice(0, 500),
     retryable,
   });
+
+/** A Core-runtime tag that can only ever mean a definitive refusal of the original invocation. */
+const rejectWith =
+  (invocationId: EnrollmentCommitResolutionInput['originalInvocationId'], code: string, reason: string) =>
+  (): Effect.Effect<never, CommerceEnrollmentCommitResolutionError> =>
+    Effect.fail(rejected(invocationId, code, reason, false));
 
 const revoked = (
   invocationId: EnrollmentCommitResolutionInput['originalInvocationId'],
@@ -76,12 +80,10 @@ const open = (
 const committed = (
   invocationId: EnrollmentCommitResolutionInput['originalInvocationId'],
   retainedBinding?: EnrollmentRetainedCorePair,
-): EnrollmentCommitResolutionOutcome => {
-  if (retainedBinding === undefined) {
-    return { _tag: 'EnrollmentCommitResolutionCommitted', invocationId };
-  }
-  return { _tag: 'EnrollmentCommitResolutionCommitted', invocationId, retainedBinding };
-};
+): EnrollmentCommitResolutionOutcome =>
+  retainedBinding === undefined
+    ? { _tag: 'EnrollmentCommitResolutionCommitted', invocationId }
+    : { _tag: 'EnrollmentCommitResolutionCommitted', invocationId, retainedBinding };
 
 const converged = (
   invocationId: EnrollmentCommitResolutionInput['originalInvocationId'],
@@ -97,12 +99,10 @@ const converged = (
 const partialFailure = (
   invocationId: EnrollmentCommitResolutionInput['originalInvocationId'],
   retainedBinding?: EnrollmentRetainedCorePair,
-): EnrollmentCommitResolutionOutcome => {
-  if (retainedBinding === undefined) {
-    return { _tag: 'EnrollmentCommitResolutionPartialFailure', invocationId };
-  }
-  return { _tag: 'EnrollmentCommitResolutionPartialFailure', invocationId, retainedBinding };
-};
+): EnrollmentCommitResolutionOutcome =>
+  retainedBinding === undefined
+    ? { _tag: 'EnrollmentCommitResolutionPartialFailure', invocationId }
+    : { _tag: 'EnrollmentCommitResolutionPartialFailure', invocationId, retainedBinding };
 
 type BindingStatus = typeof AuthBindingStatusSchema.Type;
 
@@ -218,63 +218,47 @@ export const makeCommerceEnrollmentCommitResolutionService = (
   const resolve = Effect.fn('CommerceEnrollmentCommitResolutionService.resolve')(function* resolveEffect(
     input: EnrollmentCommitResolutionInput,
   ): Effect.fn.Return<EnrollmentCommitResolutionOutcome, CommerceEnrollmentCommitResolutionError> {
+    const { identityRead, originalInvocationId } = input;
     const onAlreadyCommitted = () =>
-      input.identityRead === undefined
-        ? Effect.succeed(committed(input.originalInvocationId))
-        : interpretIdentityRead(input.originalInvocationId, 'committed', input.identityRead);
+      identityRead === undefined
+        ? Effect.succeed(committed(originalInvocationId))
+        : interpretIdentityRead(originalInvocationId, 'committed', identityRead);
     const onCommitIndeterminate = (failure: ActionCommitIndeterminate) =>
       Effect.fail(
         unavailable(
-          input.originalInvocationId,
+          originalInvocationId,
           'commit_resolution_indeterminate',
           'The Action runtime could not determine whether the original invocation committed',
           failure,
         ),
       );
-    const onInvocationNotFound = () =>
-      Effect.fail(
-        rejected(
-          input.originalInvocationId,
+    const onInvocationStateError = () =>
+      identityRead === undefined
+        ? Effect.succeed(partialFailure(originalInvocationId))
+        : interpretIdentityRead(originalInvocationId, 'failed', identityRead);
+    return yield* runtime.resolveActionCommit({ invocationId: originalInvocationId, principal: input.principal }).pipe(
+      Effect.map(() => open(originalInvocationId)),
+      Effect.catchTags({
+        ActionAlreadyCommitted: onAlreadyCommitted,
+        ActionCommitIndeterminate: onCommitIndeterminate,
+        ActionInvocationNotFound: rejectWith(
+          originalInvocationId,
           'commit_resolution_invocation_not_found',
           'The original invocation is unknown to the Action runtime',
-          false,
         ),
-      );
-    const onInvocationStateError = () =>
-      input.identityRead === undefined
-        ? Effect.succeed(partialFailure(input.originalInvocationId))
-        : interpretIdentityRead(input.originalInvocationId, 'failed', input.identityRead);
-    const onPayloadValidationError = () =>
-      Effect.fail(
-        rejected(
-          input.originalInvocationId,
+        ActionInvocationStateError: onInvocationStateError,
+        ActionPayloadValidationError: rejectWith(
+          originalInvocationId,
           'commit_resolution_payload_invalid',
           'The original invocation payload failed validation',
-          false,
         ),
-      );
-    const onTrustedContextValidationError = () =>
-      Effect.fail(
-        rejected(
-          input.originalInvocationId,
+        ActionTrustedContextValidationError: rejectWith(
+          originalInvocationId,
           'commit_resolution_context_invalid',
           'The trusted context supplied for resolution failed validation',
-          false,
         ),
-      );
-    return yield* runtime
-      .resolveActionCommit({ invocationId: input.originalInvocationId, principal: input.principal })
-      .pipe(
-        Effect.map(() => open(input.originalInvocationId)),
-        Effect.catchTags({
-          ActionAlreadyCommitted: onAlreadyCommitted,
-          ActionCommitIndeterminate: onCommitIndeterminate,
-          ActionInvocationNotFound: onInvocationNotFound,
-          ActionInvocationStateError: onInvocationStateError,
-          ActionPayloadValidationError: onPayloadValidationError,
-          ActionTrustedContextValidationError: onTrustedContextValidationError,
-        }),
-      );
+      }),
+    );
   });
 
   return Object.freeze({ resolve });

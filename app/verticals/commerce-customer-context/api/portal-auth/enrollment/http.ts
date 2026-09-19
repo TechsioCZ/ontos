@@ -1,19 +1,22 @@
 import { createHmac } from 'node:crypto';
 
 import { HttpApiBuilder, Layer } from '@modern-js/bff-effect/effect-edge';
-import { Effect, Redacted, Schema } from 'effect';
+import { Cause, Effect, Redacted, Schema } from 'effect';
 import type { HttpServerRequest } from 'effect/unstable/http';
+
+import type { ActionRegistration, DomainEventContractMap } from '@app/core-runtime';
 
 import { authenticateOperationPrincipal } from '../../auth/action-principal.ts';
 import { bindActionHttpRunner } from '../../action-http-runner.ts';
 import { commerceCustomerContextApi } from '../../../shared/api.ts';
 import { claimPortalEnrollmentTransitionAction } from '../../../src/actions/claim-portal-enrollment-transition.action.ts';
 import { startPortalEnrollmentAction } from '../../../src/actions/start-portal-enrollment.action.ts';
+import { CommerceEnrollmentContinuation } from '../../../src/enrollment/continuation/enrollment-continuation.ts';
 import {
   CommerceEnrollmentOwnerTransactionRunner,
   commerceEnrollmentOwnerAttemptStoreForRun,
 } from '../../../src/enrollment/orchestration/owner-transition-production.ts';
-import { EnrollmentPrincipalIdSchema, EnrollmentTenantIdSchema } from '../../../shared/enrollment-contracts.ts';
+import { EnrollmentTenantIdSchema, ReadEnrollmentAttemptInputSchema } from '../../../shared/enrollment-contracts.ts';
 import { CommerceEnrollmentAttemptUnavailable } from '../../../src/enrollment/attempts/errors.ts';
 import type { EnrollmentAttemptIdSchema } from '../../../shared/enrollment-contracts.ts';
 import { noStoreHeaders, requireTrustedOrigin, resolveClientKey } from '../http-transport.ts';
@@ -21,7 +24,7 @@ import { CommercePortalAuthAccountCreationService } from '../provider/account-cr
 import { CommercePortalAuthAccountCreationUnavailable } from '../provider/account-creation-unavailable.ts';
 import { CommercePortalAuthConfig } from '../provider/config-service.ts';
 import { COMMERCE_PORTAL_AUTH_POLICY } from '../provider/config.ts';
-import { CommercePortalAuthRecoveryRateLimitService } from '../rate-limit-service.ts';
+import { consumeRateLimitBudget } from '../rate-limit-service.ts';
 import type { CommercePortalAuthRecoveryRateLimitRule } from '../rate-limit-service.ts';
 import {
   CommercePortalAuthEnrollmentStartInputSchema,
@@ -89,22 +92,17 @@ const enrollmentSubjectKey = (subject: string, secret: Redacted.Redacted): strin
  */
 const consumeEnrollmentBudget = Effect.fn('CommercePortalAuthEnrollmentHttp.rateLimit')(
   function* consumeEnrollmentBudgetEffect(request: HttpServerRequest.HttpServerRequest, email: string) {
-    const budget = yield* CommercePortalAuthRecoveryRateLimitService;
     const configuration = yield* CommercePortalAuthConfig;
     const client = resolveClientKey(request, configuration.trustedProxies);
     const scope = enrollmentSubjectKey(email, configuration.secret);
-    const allowed = yield* budget
-      .consume(`${client}|${scope}|${ENROLLMENT_START_ROUTE}`, enrollmentStartRateLimit)
-      .pipe(
-        // The transport problem carries no provider detail, so the classified failure is reported
-        // here rather than discarded at the seam that still knows which store step refused.
-        Effect.catchTag('CommercePortalAuthRecoveryProviderFailure', (failure) =>
-          Effect.annotateLogs(Effect.logError('Commerce portal enrollment budget could not be spent', failure), {
-            operation: failure.operation,
-            route: ENROLLMENT_START_ROUTE,
-          }).pipe(Effect.andThen(Effect.fail(commercePortalAuthEnrollmentUnavailableProblem(failure)))),
-        ),
-      );
+    const allowed = yield* consumeRateLimitBudget(
+      `${client}|${scope}|${ENROLLMENT_START_ROUTE}`,
+      enrollmentStartRateLimit,
+      {
+        route: ENROLLMENT_START_ROUTE,
+        unavailable: (failure) => commercePortalAuthEnrollmentUnavailableProblem(failure),
+      },
+    );
     if (!allowed) {
       return yield* Effect.fail(commercePortalAuthEnrollmentRateLimitedProblem);
     }
@@ -143,6 +141,41 @@ const actionEndpointHeaders = (request: HttpServerRequest.HttpServerRequest, ide
 });
 
 /**
+ * Hand the rest of the journey to the continuation and answer the caller immediately.
+ *
+ * The fork is detached on purpose: the journey's remaining owner effects must not run inside this
+ * request's scope, because cancelling the HTTP request would then cancel a claimed owner transition
+ * mid-flight. Nothing is lost by detaching — every phase is durable, the claim leases are the only
+ * thing that grants ownership, and a lapsed lease is re-claimed by the next `advance`. The
+ * continuation bounds its own concurrency, so a burst of enrollments queues rather than floods the
+ * owners. A failure here is an operator fact about a still-advanceable Attempt, never a failed
+ * start: the account and the Attempt are already committed.
+ */
+const triggerEnrollmentContinuation = (
+  continuation: typeof CommerceEnrollmentContinuation.Service,
+  attempt: { readonly portalEnrollmentAttemptId: string; readonly tenantId: string },
+) =>
+  Schema.decodeEffect(ReadEnrollmentAttemptInputSchema)(attempt).pipe(
+    Effect.flatMap((identity) => continuation.advance(identity)),
+    Effect.matchCauseEffect({
+      onFailure: (cause) =>
+        Effect.annotateLogs(Effect.logWarning('The Commerce enrollment continuation did not advance this Attempt'), {
+          cause: Cause.pretty(cause),
+          portalEnrollmentAttemptId: attempt.portalEnrollmentAttemptId,
+        }),
+      onSuccess: (result) =>
+        result.outcome === 'COMPLETE'
+          ? Effect.void
+          : Effect.annotateLogs(Effect.logInfo('The Commerce enrollment journey halted before completion'), {
+              portalEnrollmentAttemptId: attempt.portalEnrollmentAttemptId,
+              reason: result.halt.reason,
+            }),
+    }),
+    Effect.forkDetach,
+    Effect.asVoid,
+  );
+
+/**
  * Start one enrollment. The Attempt is created by the governed `start-portal-enrollment` Action,
  * so its Tenant, Actor and invocation identity come from the governed context rather than from
  * this body, and a repeated equivalent request converges on the Attempt that already exists.
@@ -160,43 +193,60 @@ const startEnrollment = Effect.fn('CommercePortalAuthEnrollmentHttp.start')(func
   const email = input.email.trim().toLowerCase();
   yield* consumeEnrollmentBudget(request, email);
 
+  const runEnrollmentAction = <
+    PayloadSchema extends Schema.ConstraintDecoder<unknown> & Schema.ConstraintEncoder<unknown>,
+    ResultSchema extends Schema.ConstraintDecoder<unknown>,
+    DomainErrorSchema extends Schema.ConstraintDecoder<{ readonly _tag: string }>,
+    DomainEvents extends DomainEventContractMap,
+    Owner extends string,
+    Services,
+    HandlerRequirements,
+  >(
+    registration: ActionRegistration<
+      PayloadSchema,
+      ResultSchema,
+      DomainErrorSchema,
+      DomainEvents,
+      Owner,
+      Services,
+      HandlerRequirements
+    >,
+    actionPayload: PayloadSchema['Type'],
+  ) =>
+    runActionHttp({
+      endpointHeaders: actionEndpointHeaders(request, idempotencyKey),
+      internalProblem: () => commercePortalAuthEnrollmentUnavailableProblem(),
+      invalidCorrelationProblem: () => commercePortalAuthEnrollmentInvalidProblem(),
+      mapError: actionProblem,
+      payload: actionPayload,
+      registration,
+      requestHeaders: actionRequestHeaders(request),
+    });
+
+  const continuation = yield* CommerceEnrollmentContinuation;
   const intent = yield* commercePortalAuthEnrollmentIntent(input).pipe(
     Effect.mapError(commercePortalAuthEnrollmentInvalidProblem),
   );
-  const started = yield* runActionHttp({
-    endpointHeaders: actionEndpointHeaders(request, idempotencyKey),
-    internalProblem: () => commercePortalAuthEnrollmentUnavailableProblem(),
-    invalidCorrelationProblem: () => commercePortalAuthEnrollmentInvalidProblem(),
-    mapError: actionProblem,
-    payload: intent,
-    registration: startPortalEnrollmentAction,
-    requestHeaders: actionRequestHeaders(request),
-  });
+  const started = yield* runEnrollmentAction(startPortalEnrollmentAction, intent);
 
   const claim = yield* commercePortalAuthEnrollmentAccountCreationClaim(
     input,
     started.attempt.portalEnrollmentAttemptId,
   ).pipe(Effect.mapError(commercePortalAuthEnrollmentUnavailableProblem));
-  const claimed = yield* runActionHttp({
-    endpointHeaders: actionEndpointHeaders(request, idempotencyKey),
-    internalProblem: () => commercePortalAuthEnrollmentUnavailableProblem(),
-    invalidCorrelationProblem: () => commercePortalAuthEnrollmentInvalidProblem(),
-    mapError: actionProblem,
-    payload: {
-      expectedRevision: started.attempt.revision,
-      ownerInvocationId: claim.ownerInvocationId,
-      ownerModuleKey: claim.ownerModuleKey,
-      portalEnrollmentAttemptId: started.attempt.portalEnrollmentAttemptId,
-      requestDigest: claim.requestDigest,
-      transitionKey: claim.transitionKey,
-    },
-    registration: claimPortalEnrollmentTransitionAction,
-    requestHeaders: actionRequestHeaders(request),
+  const claimed = yield* runEnrollmentAction(claimPortalEnrollmentTransitionAction, {
+    expectedRevision: started.attempt.revision,
+    ownerInvocationId: claim.ownerInvocationId,
+    ownerModuleKey: claim.ownerModuleKey,
+    portalEnrollmentAttemptId: started.attempt.portalEnrollmentAttemptId,
+    requestDigest: claim.requestDigest,
+    transitionKey: claim.transitionKey,
   });
 
   // A replayed or already-claimed transition has its provider effect recorded already; dispatching
-  // a second one would create a second account for the same Attempt.
+  // a second one would create a second account for the same Attempt. The journey still has to be
+  // advanced, so the continuation is triggered on this path too.
   if (claimed.outcome !== 'CLAIMED') {
+    yield* triggerEnrollmentContinuation(continuation, claimed.attempt);
     return { attempt: commercePortalAuthEnrollmentAttemptProjection(claimed.attempt), outcome: started.outcome };
   }
 
@@ -220,6 +270,7 @@ const startEnrollment = Effect.fn('CommercePortalAuthEnrollmentHttp.start')(func
       ),
     );
 
+  yield* triggerEnrollmentContinuation(continuation, claimed.attempt);
   return { attempt: commercePortalAuthEnrollmentAttemptProjection(claimed.attempt), outcome: started.outcome };
 });
 
@@ -237,16 +288,11 @@ const readEnrollment = Effect.fn('CommercePortalAuthEnrollmentHttp.read')(functi
     authentication: () => commercePortalAuthEnrollmentAuthenticationProblem,
     unavailable: () => commercePortalAuthEnrollmentUnavailableProblem(),
   });
-  // Both ids are decoded for the same reason the Actions decode them: a Tenant or Actor this
-  // vertical's Attempt vocabulary cannot name must never reach a durable owner read.
-  const { tenantId } = yield* Effect.all(
-    {
-      actorPrincipalId: Schema.decodeEffect(EnrollmentPrincipalIdSchema)(principal.principalId),
-      tenantId: Schema.decodeEffect(EnrollmentTenantIdSchema)(principal.tenantId),
-      // Two independent in-memory decodes; neither reaches a shared downstream resource.
-    },
-    { concurrency: 2 },
-  ).pipe(Effect.mapError(commercePortalAuthEnrollmentInvalidProblem));
+  // Decoded for the same reason the Actions decode it: a Tenant this vertical's Attempt
+  // vocabulary cannot name must never reach a durable owner read.
+  const tenantId = yield* Schema.decodeEffect(EnrollmentTenantIdSchema)(principal.tenantId).pipe(
+    Effect.mapError(commercePortalAuthEnrollmentInvalidProblem),
+  );
   const runner = yield* CommerceEnrollmentOwnerTransactionRunner;
   const store = commerceEnrollmentOwnerAttemptStoreForRun({ tenantId }, runner.run);
   const attempt = yield* store

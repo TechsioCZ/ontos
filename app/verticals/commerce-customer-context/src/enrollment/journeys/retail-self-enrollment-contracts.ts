@@ -9,7 +9,6 @@ import {
   PORTAL_ACCOUNT_CREATION_TRANSITION_KEY,
   PORTAL_AUTH_OWNER_MODULE_KEY,
 } from '../orchestration/prepared-owner-authority.ts';
-import { defineJourneyDefinition } from './journey-contracts.ts';
 import type { JourneyDefinition, JourneyTransitionSpec } from './journey-contracts.ts';
 
 /**
@@ -55,16 +54,6 @@ export const RETAIL_PORTAL_GRANTS_INCOMPLETE_OUTCOME_CODE = 'retail_portal_grant
 /** Failure code recorded with every halt that waits on a decision rather than on a retry. */
 export const OWNER_RECONCILIATION_REQUIRED_FAILURE_CODE = 'owner_reconciliation_required';
 
-/** Outcome codes that mean "no business effect is missing, but a human decision is". */
-const RECONCILIATION_OUTCOME_CODES = new Set<string>([
-  PARTY_CANDIDATE_AMBIGUOUS_OUTCOME_CODE,
-  RETAIL_PORTAL_GRANTS_INCOMPLETE_OUTCOME_CODE,
-]);
-
-/** True when a recorded owner failure is a reconciliation halt rather than a rejected journey. */
-export const isRetailSelfEnrollmentReconciliationOutcome = (outcomeCode: string | undefined): boolean =>
-  outcomeCode !== undefined && RECONCILIATION_OUTCOME_CODES.has(outcomeCode);
-
 const RETAIL_SELF_ENROLLMENT_REQUIRED_TRANSITIONS: readonly JourneyTransitionSpec[] = [
   {
     ownerModuleKey: PORTAL_AUTH_OWNER_MODULE_KEY,
@@ -93,11 +82,11 @@ const RETAIL_SELF_ENROLLMENT_REQUIRED_TRANSITIONS: readonly JourneyTransitionSpe
  * without the Customer Profile, or a Principal Auth Binding without the portal binding, is an
  * incomplete journey and must never project as COMPLETE.
  */
-export const retailSelfEnrollmentJourneyDefinition: JourneyDefinition = defineJourneyDefinition({
+export const retailSelfEnrollmentJourneyDefinition: JourneyDefinition = {
   kind: 'RETAIL_SELF_ENROLLMENT',
   optionalTransitions: [],
   requiredTransitions: RETAIL_SELF_ENROLLMENT_REQUIRED_TRANSITIONS,
-});
+};
 
 /** The ordered dispatch plan.  Each step consumes the previous step's durable owner outcome. */
 export const retailSelfEnrollmentStepPlan = (): readonly JourneyTransitionSpec[] =>

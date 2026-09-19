@@ -16,6 +16,7 @@ import type {
 import { commerceEnrollmentCompletionAuthorityForPersistence } from './completion.ts';
 import type { CommerceEnrollmentOwnerAttemptStore } from './owner-transition-driver.ts';
 import { commerceEnrollmentOwnerAttemptStoreForFreshService } from './owner-transition-driver.ts';
+import { ownerPreparationUnavailable } from './prepared-owner-authority.ts';
 import type {
   CommerceEnrollmentOwnerTransitionPreparation,
   CommerceEnrollmentOwnerTransitionPreparationResult,
@@ -150,10 +151,6 @@ export interface CommerceEnrollmentOwnerPreparationPort {
   readonly transitionKey: CommerceEnrollmentPreparedOwnerBinding['transitionKey'];
 }
 
-const unavailablePreparation: CommerceEnrollmentOwnerTransitionPreparationResult = Object.freeze({
-  outcome: 'unavailable' as const,
-});
-
 const preparationRegistryKey = (
   binding: Pick<CommerceEnrollmentPreparedOwnerBinding, 'ownerModuleKey' | 'transitionKey'>,
 ): string => `${binding.ownerModuleKey}/${binding.transitionKey}`;
@@ -175,7 +172,7 @@ export const commerceEnrollmentOwnerTransitionPreparationAuthorityForPorts = (
   return Object.freeze({
     prepare: (input: CommerceEnrollmentPreparedOwnerBinding) => {
       const port = registry.get(preparationRegistryKey(input));
-      return port === undefined ? Effect.succeed(unavailablePreparation) : port.prepare(input);
+      return port === undefined ? Effect.succeed(ownerPreparationUnavailable) : port.prepare(input);
     },
   });
 };

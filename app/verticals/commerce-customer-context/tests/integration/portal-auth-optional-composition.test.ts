@@ -8,6 +8,7 @@ import {
 } from '../../api/index.ts';
 import { GatewayAssertionRedemptionLive } from '../../api/auth/gateway-assertion-redemption.ts';
 import { commercePortalAuthRealmUnavailableLive } from '../../api/portal-auth/realm-unavailable.ts';
+import { jsonBody } from '../support/response.ts';
 
 /**
  * The Commerce portal realm is optional. The Node and workerd artifact proofs build this vertical
@@ -38,8 +39,6 @@ type CommerceApiHandler = Effect.Success<typeof unconfiguredRuntime>;
 
 const send = (runtime: CommerceApiHandler, request: Request) =>
   Effect.promise(async () => await runtime.handler(request));
-
-const jsonBody = (response: Response) => Effect.promise(async () => await response.clone().json());
 
 it.effect('serves readiness and business routes with no Commerce portal realm installed', () =>
   Effect.scoped(

@@ -1,10 +1,7 @@
-import { and, desc, eq, gt, inArray, like, lt, sql } from 'drizzle-orm';
+import { and, eq, gt, inArray, like, lt, sql } from 'drizzle-orm';
 import { Crypto, DateTime, Effect, Layer, Option, Redacted, Schema } from 'effect';
 
-import {
-  CommercePortalAuthProviderSubjectIdSchema,
-  CommercePortalAuthRecoveryReconciliationConflictClassSchema,
-} from '../../../api/portal-auth/provider/recovery/contracts.ts';
+import { CommercePortalAuthProviderSubjectIdSchema } from '../../../api/portal-auth/provider/recovery/contracts.ts';
 import type {
   CommercePortalAuthEmailVerificationTokenRegistration,
   CommercePortalAuthRecoveryReconciliationConflictClass,
@@ -15,7 +12,6 @@ import { CommercePortalAuthRecoveryUnavailable } from '../../../api/portal-auth/
 import { CommercePortalAuthRecoveryStoreService } from '../../../api/portal-auth/provider/recovery/store-service.ts';
 import type {
   CommercePortalAuthRecoveryLedgerBinding,
-  CommercePortalAuthRecoveryReconciliationEntry,
   CommercePortalAuthRecoveryStore,
 } from '../../../api/portal-auth/provider/recovery/store-service.ts';
 import { COMMERCE_PORTAL_AUTH_POLICY } from '../../../api/portal-auth/provider/config.ts';
@@ -30,8 +26,6 @@ const RESET_LEDGER_STATE_EXPIRED = 'expired';
 const RESET_LEDGER_SWEEP_OPERATION = 'recovery-reset-ledger-sweep';
 /** A sweep touches at most this many stale rows per call: bounded work, never a table scan. */
 const RESET_LEDGER_SWEEP_BATCH_SIZE = 100;
-const DEFAULT_RECONCILIATION_ENTRY_LIMIT = 50;
-const MAX_RECONCILIATION_ENTRY_LIMIT = 200;
 const verificationLedgerEmail = Schema.String.check(Schema.isTrimmed(), Schema.isMinLength(3), Schema.isMaxLength(320));
 const VerificationLedgerRecordSchema = Schema.Struct({
   email: verificationLedgerEmail,
@@ -645,51 +639,11 @@ export const makeCommercePortalAuthRecoveryStore = Effect.fn('CommercePortalAuth
       },
     );
 
-    const getRecoveryReconciliationEntries = Effect.fn(
-      'CommercePortalAuthRecoveryStore.getRecoveryReconciliationEntries',
-    )(function* getRecoveryReconciliationEntriesEffect(input: {
-      readonly limit?: number;
-    }): Effect.fn.Return<
-      readonly CommercePortalAuthRecoveryReconciliationEntry[],
-      CommercePortalAuthRecoveryUnavailable
-    > {
-      const limit = Math.min(
-        Math.max(1, input.limit ?? DEFAULT_RECONCILIATION_ENTRY_LIMIT),
-        MAX_RECONCILIATION_ENTRY_LIMIT,
-      );
-      const rows = yield* database
-        .select()
-        .from(recoveryReconciliation)
-        .orderBy(desc(recoveryReconciliation.createdAt))
-        .limit(limit)
-        .pipe(Effect.mapError((cause) => unavailable('recovery-reconciliation-list', cause)));
-      const entries: CommercePortalAuthRecoveryReconciliationEntry[] = [];
-      for (const row of rows) {
-        const conflictClass = Schema.decodeUnknownOption(CommercePortalAuthRecoveryReconciliationConflictClassSchema)(
-          row.conflictClass,
-        );
-        if (Option.isNone(conflictClass)) {
-          continue;
-        }
-        entries.push({
-          conflictClass: conflictClass.value,
-          createdAt: row.createdAt,
-          currentProviderSubjectId: Option.fromNullOr(row.currentProviderSubjectId),
-          email: row.email,
-          id: row.id,
-          operation: row.operation,
-          providerSubjectId: row.providerSubjectId,
-        });
-      }
-      return entries;
-    });
-
     return {
       accountExists,
       consumeEmailVerification,
       consumeRateLimitBudget,
       findAccountSubjectForEmail,
-      getRecoveryReconciliationEntries,
       peekEmailVerificationLedger,
       peekPasswordResetLedger,
       recordRecoveryReconciliation,

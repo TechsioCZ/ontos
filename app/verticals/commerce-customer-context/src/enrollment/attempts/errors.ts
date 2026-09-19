@@ -108,3 +108,40 @@ export type CommerceEnrollmentAttemptError =
   | InstanceType<typeof CommerceEnrollmentAttemptNotFound>
   | InstanceType<typeof CommerceEnrollmentAttemptConflict>
   | InstanceType<typeof CommerceEnrollmentAttemptIndeterminate>;
+
+/**
+ * The original failure is kept as a non-enumerable `cause`, so it reaches a log without widening
+ * the closed error vocabulary or leaking into an encoded boundary payload.
+ */
+export const withCause = <Value extends object>(value: Value, cause: unknown): Value =>
+  Object.defineProperty(value, 'cause', { configurable: false, enumerable: false, value: cause });
+
+type EnrollmentAttemptId = typeof EnrollmentAttemptIdSchema.Type;
+
+/** A definitive Attempt refusal: the request can never succeed as written. */
+export const attemptRejected = (
+  reason: string,
+  attemptId?: EnrollmentAttemptId,
+  cause?: unknown,
+): CommerceEnrollmentAttemptError => {
+  const fields = { code: 'attempt_invalid', reason: reason.slice(0, 500), retryable: false } as const;
+  const error =
+    attemptId === undefined
+      ? new CommerceEnrollmentAttemptRejected(fields)
+      : new CommerceEnrollmentAttemptRejected({ ...fields, attemptId });
+  return cause === undefined ? error : withCause(error, cause);
+};
+
+/** A retryable Attempt refusal: the durable routines remain the only authority on what happened. */
+export const attemptUnavailable = (
+  reason: string,
+  attemptId?: EnrollmentAttemptId,
+  cause?: unknown,
+): CommerceEnrollmentAttemptError => {
+  const fields = { code: 'attempt_unavailable', reason: reason.slice(0, 500), retryable: true } as const;
+  const error =
+    attemptId === undefined
+      ? new CommerceEnrollmentAttemptUnavailable(fields)
+      : new CommerceEnrollmentAttemptUnavailable({ ...fields, attemptId });
+  return cause === undefined ? error : withCause(error, cause);
+};

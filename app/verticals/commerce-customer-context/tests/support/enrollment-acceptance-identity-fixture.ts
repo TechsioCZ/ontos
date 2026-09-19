@@ -22,7 +22,7 @@ import type {
 import { AuthenticationNamespaceRegistry } from '../../../../packages/core-runtime/src/auth/external-identity/verifier.ts';
 import type { AuthenticationNamespaceRegistryService } from '../../../../packages/core-runtime/src/auth/external-identity/verifier.ts';
 import { trustResolvedSystemPrincipalContext } from '../../../../packages/core-runtime/src/auth/system-principal-context-provenance.ts';
-import { CoreDatabase } from '../../../../packages/core-runtime/src/db/client.ts';
+import { acquirePoolResource, CoreDatabase } from '../../../../packages/core-runtime/src/db/client.ts';
 import { loadDatabaseConnectionPair } from '../../../../packages/core-runtime/src/db/config.ts';
 import {
   actionInvocations,
@@ -115,13 +115,7 @@ class AcceptanceCoreDatabase extends Context.Service<
 >()('@app/commerce-customer-context/tests/support/AcceptanceCoreDatabase') {}
 
 const acceptanceDatabase = Effect.fnUntraced(function* acceptanceDatabase(connectionString: string) {
-  const pool = yield* Effect.acquireRelease(
-    Effect.sync(() => new Pool({ connectionString, max: 3 })),
-    (acquired) =>
-      Effect.promise(async () => {
-        await acquired.end();
-      }).pipe(Effect.orDie),
-  );
+  const pool = yield* acquirePoolResource(() => new Pool({ connectionString, max: 3 }));
   const executor = yield* AcceptanceCoreDatabase.pipe(
     Effect.provide(layerTestDatabaseFromPool(AcceptanceCoreDatabase, pool, coreRelations)),
     Effect.orDie,

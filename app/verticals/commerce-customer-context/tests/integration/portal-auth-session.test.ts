@@ -21,6 +21,7 @@ import type { CommercePortalAuthSessionLifecycleService } from '../../api/portal
 import { CommercePortalAuthRecoveryRateLimitService } from '../../api/portal-auth/rate-limit-service.ts';
 import type { CommercePortalAuthRecoveryRateLimit } from '../../api/portal-auth/rate-limit-service.ts';
 import { CommercePortalAuthSessionApi } from '../../shared/portal-auth/session-api.ts';
+import { jsonBody } from '../support/response.ts';
 
 const trustedOrigin = 'https://portal.example.test';
 const signInCookie = 'commerce-portal.session_token=redacted; Path=/; HttpOnly; Secure; SameSite=Lax';
@@ -145,8 +146,6 @@ const postWithCookie = (app: SessionApp) => (route: string, body: string, cookie
       requestContext,
     ),
   );
-
-const jsonBody = (response: Response) => Effect.promise(response.clone().json.bind(response.clone()));
 
 it('publishes only the explicitly reviewed provider routes', () => {
   expect(COMMERCE_PORTAL_AUTH_SESSION_PUBLIC_ROUTE_ALLOWLIST).toEqual([

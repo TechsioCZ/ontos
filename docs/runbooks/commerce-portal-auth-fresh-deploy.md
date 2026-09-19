@@ -126,6 +126,25 @@ expect `"status":"ready"`. Then confirm the portal-auth realm itself came up (no
 by exercising one of its routes — a `503` here after you configured all three admission keys means
 something in that configuration did not parse; a `503` before configuring them is expected.
 
+## Enrollment journeys after start
+
+`POST /api/portal-auth/enrollment/start` commits the Enrollment Attempt and the one provider account
+its claim authorizes, then hands the rest of the journey to the server-side enrollment continuation
+as a detached fork. The continuation is installed only when a deployment named **both** the portal
+realm and the Core identity transport — the same pair the owner preparation authority needs. With
+either half missing, start still serves and the Attempt simply stops where it is: the fail-closed
+continuation refuses to advance rather than dispatching an owner effect the deployment cannot place.
+
+Operationally that means an Attempt that never reaches `COMPLETE` is a normal, resumable state, not
+a lost one. The continuation is safe to re-run: every owner invocation identity it claims under is
+derived from the Attempt, so a repeat run replays the durable owner operation instead of creating a
+second Party, profile or binding, and an owner whose answer was lost is settled by one authoritative
+read. A halt is logged at `info` with the Attempt id and a halt reason (`NO_OWNER_EFFECT`,
+`RECONCILIATION_REQUIRED`, `OWNER_REJECTED`, `IN_FLIGHT`); a failure to advance is logged at `warn`
+with the same Attempt id. Attempts left in `RECONCILIATION_REQUIRED` are the ones that need a human
+decision — an ambiguous Party candidate, or a Retail Portal binding that committed without its
+complete reviewed Permission baseline.
+
 ## Verification commands
 
 Run from `app/verticals/commerce-customer-context` (or `pnpm --filter @app/commerce-customer-context <script>` from `app/`):

@@ -18,12 +18,12 @@ const TOKEN = Redacted.make('reconciliation-token');
 
 /**
  * Everything the reconciliation service needs, wired to explicit fixture state. The four
- * always-required store methods are stubbed with `Effect.dieDefect` — `detect` never calls them, so
+ * always-required store methods are stubbed with `Effect.die` — `detect` never calls them, so
  * a test that invokes one has a bug and should fail loudly rather than silently return a placeholder.
  */
 interface ReconciliationStoreFixture {
   readonly recordedConflicts: () => readonly Parameters<
-    NonNullable<CommercePortalAuthRecoveryStore['recordRecoveryReconciliation']>
+    CommercePortalAuthRecoveryStore['recordRecoveryReconciliation']
   >[0][];
   readonly store: CommercePortalAuthRecoveryStore;
 }
@@ -34,36 +34,14 @@ const makeReconciliationStore = (input: {
   readonly accountExists: boolean;
   readonly currentAccountSubjectId: Option.Option<string>;
   readonly ledgerBinding: Option.Option<CommercePortalAuthRecoveryLedgerBinding>;
-  readonly omitOptionalMethods?: boolean;
-  readonly omitRecordingOnly?: boolean;
 }): ReconciliationStoreFixture => {
-  const recorded: Parameters<NonNullable<CommercePortalAuthRecoveryStore['recordRecoveryReconciliation']>>[0][] = [];
-  const base: CommercePortalAuthRecoveryStore = {
-    consumeEmailVerification: unusedRequiredMethod,
-    consumeRateLimitBudget: unusedRequiredMethod,
-    registerEmailVerificationToken: unusedRequiredMethod,
-    reserveEmailVerificationSubject: unusedRequiredMethod,
-  };
-  if (input.omitOptionalMethods === true) {
-    return { recordedConflicts: () => recorded, store: base };
-  }
-  if (input.omitRecordingOnly === true) {
-    return {
-      recordedConflicts: () => recorded,
-      store: {
-        ...base,
-        accountExists: () => Effect.succeed(input.accountExists),
-        findAccountSubjectForEmail: () => Effect.succeed(input.currentAccountSubjectId),
-        peekEmailVerificationLedger: () => Effect.succeed(input.ledgerBinding),
-        peekPasswordResetLedger: () => Effect.succeed(input.ledgerBinding),
-      },
-    };
-  }
+  const recorded: Parameters<CommercePortalAuthRecoveryStore['recordRecoveryReconciliation']>[0][] = [];
   return {
     recordedConflicts: () => recorded,
     store: {
-      ...base,
       accountExists: () => Effect.succeed(input.accountExists),
+      consumeEmailVerification: unusedRequiredMethod,
+      consumeRateLimitBudget: unusedRequiredMethod,
       findAccountSubjectForEmail: () => Effect.succeed(input.currentAccountSubjectId),
       peekEmailVerificationLedger: () => Effect.succeed(input.ledgerBinding),
       peekPasswordResetLedger: () => Effect.succeed(input.ledgerBinding),
@@ -71,6 +49,9 @@ const makeReconciliationStore = (input: {
         Effect.sync(() => {
           recorded.push(conflict);
         }),
+      registerEmailVerificationToken: unusedRequiredMethod,
+      registerPasswordResetToken: unusedRequiredMethod,
+      reserveEmailVerificationSubject: unusedRequiredMethod,
     },
   };
 };
@@ -238,40 +219,6 @@ it.effect('detect returns None and records nothing when there is no ledger recor
     expect(Option.isNone(outcome)).toBe(true);
     expect(fixture.recordedConflicts()).toHaveLength(0);
   }),
-);
-
-it.effect('detect degrades to None when the store does not implement the optional evidence methods', () =>
-  Effect.gen(function* test() {
-    const fixture = makeReconciliationStore({
-      accountExists: true,
-      currentAccountSubjectId: Option.some(CURRENT_SUBJECT),
-      ledgerBinding: Option.some({ email: EMAIL, providerSubjectId: LEDGER_SUBJECT }),
-      omitOptionalMethods: true,
-    });
-    const outcome = yield* runDetect(fixture.store, 'verify-email');
-    expect(Option.isNone(outcome)).toBe(true);
-    expect(fixture.recordedConflicts()).toHaveLength(0);
-  }),
-);
-
-it.effect(
-  'detect degrades to None and records nothing when the store can detect a conflict but cannot record one',
-  () =>
-    Effect.gen(function* test() {
-      // A conflict exists in the evidence (an account rebinding), but the store implements only
-      // the detection methods, not recordRecoveryReconciliation. Recording must be mandatory for
-      // every outcome, so detection itself must degrade rather than ever finding a conflict it
-      // cannot durably record.
-      const fixture = makeReconciliationStore({
-        accountExists: true,
-        currentAccountSubjectId: Option.some(CURRENT_SUBJECT),
-        ledgerBinding: Option.some({ email: EMAIL, providerSubjectId: LEDGER_SUBJECT }),
-        omitRecordingOnly: true,
-      });
-      const outcome = yield* runDetect(fixture.store, 'reset-password');
-      expect(Option.isNone(outcome)).toBe(true);
-      expect(fixture.recordedConflicts()).toHaveLength(0);
-    }),
 );
 
 it.effect('detect never restores access: a conflicting result carries no subject, email, or token', () =>

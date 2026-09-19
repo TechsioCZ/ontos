@@ -18,7 +18,7 @@ import {
   EnrollmentTenantIdSchema,
 } from '../../shared/enrollment-contracts.ts';
 import { claimedOrIndeterminate } from '../enrollment/attempts/attempt-persistence.ts';
-import { CommerceEnrollmentAttemptRejected } from '../enrollment/attempts/errors.ts';
+import { CommerceEnrollmentAttemptRejected, attemptRejected } from '../enrollment/attempts/errors.ts';
 import { journeyTransitionFor } from '../enrollment/journeys/journey-contracts.ts';
 import { CommerceEnrollmentAttemptActionErrorSchema } from '../enrollment/orchestration/action-errors.ts';
 import { enrollmentJourneyDefinitionForAttempt } from '../enrollment/orchestration/completion.ts';
@@ -30,16 +30,8 @@ const domainEvents = {} as const;
 const moduleKey = 'commerce.customer-context' as const;
 const leaseDurationMs = 30_000;
 
-const invalid = (cause?: unknown) => {
-  const error = new CommerceEnrollmentAttemptRejected({
-    code: 'attempt_invalid',
-    reason: 'The derived Commerce owner transition identity is invalid',
-    retryable: false,
-  });
-  return cause === undefined
-    ? error
-    : Object.defineProperty(error, 'cause', { configurable: false, enumerable: false, value: cause });
-};
+const invalid = (cause?: unknown) =>
+  attemptRejected('The derived Commerce owner transition identity is invalid', undefined, cause);
 
 const handleClaimPortalEnrollmentTransition = Effect.fn('ClaimPortalEnrollmentTransitionAction.handle')(
   function* handleClaimPortalEnrollmentTransition(
@@ -58,7 +50,6 @@ const handleClaimPortalEnrollmentTransition = Effect.fn('ClaimPortalEnrollmentTr
       {
         actorPrincipalId: Schema.decodeEffect(EnrollmentPrincipalIdSchema)(context.scope.principalId),
         tenantId: Schema.decodeEffect(EnrollmentTenantIdSchema)(context.scope.tenantId),
-        // Two independent in-memory decodes; neither reaches a shared downstream resource.
       },
       { concurrency: 2 },
     ).pipe(Effect.mapError((cause) => invalid(cause)));

@@ -3,6 +3,7 @@ import { eq, sql } from 'drizzle-orm';
 import { Context, Effect, Schema } from 'effect';
 import { Pool } from 'pg';
 
+import { acquirePoolResource } from '../../../../packages/core-runtime/src/db/client.ts';
 import { layerTestDatabaseFromPool } from '../../../../packages/core-runtime/tests/support/database.ts';
 import type { TestDatabaseFromPool } from '../../../../packages/core-runtime/tests/support/database.ts';
 import type { CommerceCustomerContextTransaction } from '../../src/database/types.ts';
@@ -85,13 +86,11 @@ export const makeEnrollmentAcceptanceFixture = Effect.fnUntraced(function* makeE
   scope: CommerceEnrollmentOwnerScope,
 ) {
   const connections = yield* loadDatabaseConnectionPair();
-  const adminPool = yield* Effect.acquireRelease(
-    Effect.sync(() => new Pool({ connectionString: connections.admin.connectionString })),
-    (pool) => Effect.promise(async () => await pool.end()).pipe(Effect.orDie),
+  const adminPool = yield* acquirePoolResource(
+    () => new Pool({ connectionString: connections.admin.connectionString }),
   );
-  const runtimePool = yield* Effect.acquireRelease(
-    Effect.sync(() => new Pool({ connectionString: connections.runtime.connectionString, max: 4 })),
-    (pool) => Effect.promise(async () => await pool.end()).pipe(Effect.orDie),
+  const runtimePool = yield* acquirePoolResource(
+    () => new Pool({ connectionString: connections.runtime.connectionString, max: 4 }),
   );
   const admin = yield* AcceptanceDatabase.pipe(
     Effect.provide(layerTestDatabaseFromPool(AcceptanceDatabase, adminPool, commerceCustomerContextRelations)),

@@ -1,4 +1,4 @@
-import { Effect, Layer, Schema } from 'effect';
+import { Effect, Layer, Result, Schema } from 'effect';
 
 import { CommercePortalAuthAccountLookupService } from '../../../api/portal-auth/provider/account-lookup-service.ts';
 import type { CommercePortalAuthAccountLookup } from '../../../api/portal-auth/provider/account-lookup-service.ts';
@@ -10,7 +10,7 @@ import {
 } from '../../../shared/enrollment-contracts.ts';
 import type { EnrollmentAttemptSnapshot } from '../../../shared/enrollment-contracts.ts';
 import type { CommerceEnrollmentOwnerScope } from '../attempts/attempt-persistence.ts';
-import { CommerceEnrollmentAttemptUnavailable } from '../attempts/errors.ts';
+import { attemptUnavailable } from '../attempts/errors.ts';
 import type { CommerceEnrollmentAttemptError } from '../attempts/errors.ts';
 import {
   CommerceEnrollmentOwnerTransactionRunner,
@@ -24,8 +24,9 @@ import type {
   CommerceEnrollmentOwnerReconciliationInput,
   CommerceEnrollmentOwnerTransition,
 } from './owner-transition-driver.ts';
-import { retailSelfEnrollmentPreparationPorts } from '../journeys/retail-self-enrollment-preparation.ts';
+import { retailSelfEnrollmentPrepareStep } from '../journeys/retail-self-enrollment-preparation.ts';
 import { retailSelfEnrollmentStepPlan } from '../journeys/retail-self-enrollment-contracts.ts';
+import type { JourneyTransitionSpec } from '../journeys/journey-contracts.ts';
 import { CommerceEnrollmentPreparationSubjectResolver } from './preparation-subject.ts';
 import type { CommerceEnrollmentPreparationSubjectResolve } from './preparation-subject.ts';
 import { commerceEnrollmentPortalAuthOwnerReconciliationForLookup } from './provider-owner-effect.ts';
@@ -40,22 +41,45 @@ import {
   CommerceEnrollmentOwnerTransitionPreparation,
   PORTAL_ACCOUNT_CREATION_TRANSITION_KEY,
   PORTAL_AUTH_OWNER_MODULE_KEY,
+  ownerPreparationDenied as denied,
+  ownerPreparationUnavailable as unavailable,
 } from './prepared-owner-authority.ts';
 import type {
   CommerceEnrollmentOwnerTransitionPreparationResult,
   CommerceEnrollmentPreparedOwnerBinding,
 } from './prepared-owner-authority.ts';
 
-const denied: CommerceEnrollmentOwnerTransitionPreparationResult = Object.freeze({ outcome: 'denied' as const });
-const unavailable: CommerceEnrollmentOwnerTransitionPreparationResult = Object.freeze({
-  outcome: 'unavailable' as const,
-});
-
 /**
  * An owner-authoritative read is unavailable rather than denied whenever the failure is retryable;
  * every other Attempt failure is a definitive owner denial, so a claimed payload can never reach a
  * governed handler on an ambiguous owner answer.
  */
+/**
+ * Module and transition keys are module-owned literals, so they are decoded once at load: a
+ * malformed constant is a build-time fact about this module, never a per-request effect.
+ */
+const decodeModuleKey = (value: string): CommerceEnrollmentPreparedOwnerBinding['ownerModuleKey'] =>
+  Result.getOrThrow(Schema.decodeResult(EnrollmentModuleKeySchema)(value));
+const decodeTransitionKey = (value: string): CommerceEnrollmentPreparedOwnerBinding['transitionKey'] =>
+  Result.getOrThrow(Schema.decodeResult(EnrollmentTransitionKeySchema)(value));
+
+const PORTAL_ACCOUNT_TRANSITION_IDENTITY = {
+  ownerModuleKey: decodeModuleKey(PORTAL_AUTH_OWNER_MODULE_KEY),
+  transitionKey: decodeTransitionKey(PORTAL_ACCOUNT_CREATION_TRANSITION_KEY),
+} as const;
+
+interface RetailPreparationStep {
+  readonly ownerModuleKey: CommerceEnrollmentPreparedOwnerBinding['ownerModuleKey'];
+  readonly step: JourneyTransitionSpec;
+  readonly transitionKey: CommerceEnrollmentPreparedOwnerBinding['transitionKey'];
+}
+
+const RETAIL_PREPARATION_STEPS: readonly RetailPreparationStep[] = retailSelfEnrollmentStepPlan().map((step) => ({
+  ownerModuleKey: decodeModuleKey(step.ownerModuleKey),
+  step,
+  transitionKey: decodeTransitionKey(step.transitionKey),
+}));
+
 const preparationFailure = (
   error: CommerceEnrollmentAttemptError,
 ): CommerceEnrollmentOwnerTransitionPreparationResult => (error.retryable ? unavailable : denied);
@@ -68,30 +92,14 @@ const ownerScopeFor = (binding: CommerceEnrollmentPreparedOwnerBinding): Commerc
   tenantId: binding.tenantId,
 });
 
-const attemptUnavailable = <Cause>(
-  attemptId: EnrollmentAttemptSnapshot['portalEnrollmentAttemptId'],
-  reason: string,
-  cause: Cause,
-): CommerceEnrollmentAttemptError =>
-  Object.defineProperty(
-    new CommerceEnrollmentAttemptUnavailable({
-      attemptId,
-      code: 'attempt_unavailable',
-      reason,
-      retryable: true,
-    }),
-    'cause',
-    { configurable: false, enumerable: false, value: cause },
-  );
-
 const evidenceReferenceOf = (
   attempt: EnrollmentAttemptSnapshot,
 ): Effect.Effect<typeof EnrollmentEvidenceReferenceSchema.Type, CommerceEnrollmentAttemptError> =>
   Schema.decodeEffect(EnrollmentEvidenceReferenceSchema)(String(attempt.portalEnrollmentAttemptId)).pipe(
     Effect.mapError((cause) =>
       attemptUnavailable(
-        attempt.portalEnrollmentAttemptId,
         'The durable Enrollment Attempt identity is not a usable owner evidence reference',
+        attempt.portalEnrollmentAttemptId,
         cause,
       ),
     ),
@@ -169,8 +177,8 @@ const ownerTransitionFor = (
   }).pipe(
     Effect.mapError((cause) =>
       attemptUnavailable(
-        binding.portalEnrollmentAttemptId,
         'The owner transition identity could not be rebuilt from the durable operation',
+        binding.portalEnrollmentAttemptId,
         cause,
       ),
     ),
@@ -204,7 +212,6 @@ const prepareRecord = Effect.fn('CommerceEnrollmentPortalAuthOwnerPreparation.pr
   ): Effect.fn.Return<CommerceEnrollmentOwnerTransitionPreparationResult, CommerceEnrollmentAttemptError> {
     const { attempt, operation } = yield* Effect.all(
       {
-        // Two independent owner-authoritative reads of the same durable Attempt journal.
         attempt: store.read({
           portalEnrollmentAttemptId: binding.portalEnrollmentAttemptId,
           tenantId: binding.tenantId,
@@ -283,75 +290,34 @@ export const makeCommerceEnrollmentPortalAuthOwnerPreparationPort = Effect.fn(
         : prepareRecord(store, accountLookup, input);
     return prepared.pipe(Effect.match({ onFailure: preparationFailure, onSuccess: (result) => result }));
   };
-  const { ownerModuleKey, transitionKey } = yield* Effect.all(
-    {
-      ownerModuleKey: Schema.decodeEffect(EnrollmentModuleKeySchema)(PORTAL_AUTH_OWNER_MODULE_KEY),
-      transitionKey: Schema.decodeEffect(EnrollmentTransitionKeySchema)(PORTAL_ACCOUNT_CREATION_TRANSITION_KEY),
-      // Two independent in-memory decodes of module-owned constants.
-    },
-    { concurrency: 2 },
-  ).pipe(Effect.orDie);
-  return { ownerModuleKey, prepare, transitionKey };
+  return { ...PORTAL_ACCOUNT_TRANSITION_IDENTITY, prepare };
 });
 
 /**
  * The Retail self-enrollment ports, bound to the durable Attempt rather than to a subject a caller
- * supplied. Each prepare resolves the journey subject for the exact Attempt named in the binding
- * and then hands the binding to the journey's own port, so the digest a port vouches for is always
- * derived from Attempt state that survived a crash.
+ * supplied. Each port captures the exact step it was built for and resolves the journey subject
+ * for the Attempt named in the binding, so the digest a port vouches for is always derived from
+ * Attempt state that survived a crash.
  */
 const prepareRetailStep = (
   resolveSubject: CommerceEnrollmentPreparationSubjectResolve,
+  step: JourneyTransitionSpec,
   binding: CommerceEnrollmentPreparedOwnerBinding,
 ): Effect.Effect<CommerceEnrollmentOwnerTransitionPreparationResult> =>
   resolveSubject({ portalEnrollmentAttemptId: binding.portalEnrollmentAttemptId, tenantId: binding.tenantId }).pipe(
-    Effect.flatMap((subject) =>
-      retailSelfEnrollmentPreparationPorts(subject).pipe(
-        Effect.mapError((cause) =>
-          attemptUnavailable(
-            binding.portalEnrollmentAttemptId,
-            'The Retail self-enrollment preparation ports could not be built',
-            cause,
-          ),
-        ),
-      ),
-    ),
-    Effect.flatMap((ports) => {
-      const port = ports.find(
-        (candidate) =>
-          candidate.ownerModuleKey === binding.ownerModuleKey && candidate.transitionKey === binding.transitionKey,
-      );
-      return port === undefined ? Effect.succeed(unavailable) : port.prepare(binding);
-    }),
+    Effect.flatMap((subject) => retailSelfEnrollmentPrepareStep(subject, step, binding)),
     Effect.match({ onFailure: preparationFailure, onSuccess: (result) => result }),
   );
 
 /** One journey-derived port per declared Retail self-enrollment step. */
-const retailPreparationPorts = Effect.fn('CommerceEnrollmentRetailPreparation.ports')(
-  function* retailPreparationPortsEffect(
-    resolveSubject: CommerceEnrollmentPreparationSubjectResolve,
-  ): Effect.fn.Return<readonly CommerceEnrollmentOwnerPreparationPort[]> {
-    return yield* Effect.forEach(
-      retailSelfEnrollmentStepPlan(),
-      (step) =>
-        Effect.all(
-          {
-            ownerModuleKey: Schema.decodeEffect(EnrollmentModuleKeySchema)(step.ownerModuleKey),
-            transitionKey: Schema.decodeEffect(EnrollmentTransitionKeySchema)(step.transitionKey),
-            // Two independent in-memory decodes of journey-owned constants.
-          },
-          { concurrency: 2 },
-        ).pipe(
-          Effect.map(({ ownerModuleKey, transitionKey }): CommerceEnrollmentOwnerPreparationPort => ({
-            ownerModuleKey,
-            prepare: (binding) => prepareRetailStep(resolveSubject, binding),
-            transitionKey,
-          })),
-        ),
-      { concurrency: 4 },
-    ).pipe(Effect.orDie);
-  },
-);
+const retailPreparationPorts = (
+  resolveSubject: CommerceEnrollmentPreparationSubjectResolve,
+): readonly CommerceEnrollmentOwnerPreparationPort[] =>
+  RETAIL_PREPARATION_STEPS.map(({ ownerModuleKey, step, transitionKey }) => ({
+    ownerModuleKey,
+    prepare: (binding: CommerceEnrollmentPreparedOwnerBinding) => prepareRetailStep(resolveSubject, step, binding),
+    transitionKey,
+  }));
 
 /**
  * The deployed preparation authority: the Commerce portal owner port for the provider
@@ -367,14 +333,10 @@ export const commerceEnrollmentOwnerTransitionPreparationLive = Layer.effect(
   CommerceEnrollmentOwnerTransitionPreparation,
   Effect.gen(function* makePreparationAuthority() {
     const resolver = yield* CommerceEnrollmentPreparationSubjectResolver;
-    const { portalAuthPort, retailPorts } = yield* Effect.all(
-      {
-        portalAuthPort: makeCommerceEnrollmentPortalAuthOwnerPreparationPort(),
-        retailPorts: retailPreparationPorts(resolver.resolve),
-        // Two independent port constructions; neither reads the other's result.
-      },
-      { concurrency: 2 },
-    );
-    return commerceEnrollmentOwnerTransitionPreparationAuthorityForPorts([portalAuthPort, ...retailPorts]);
+    const portalAuthPort = yield* makeCommerceEnrollmentPortalAuthOwnerPreparationPort();
+    return commerceEnrollmentOwnerTransitionPreparationAuthorityForPorts([
+      portalAuthPort,
+      ...retailPreparationPorts(resolver.resolve),
+    ]);
   }),
 );

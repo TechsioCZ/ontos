@@ -26,7 +26,7 @@ import {
   CommerceEnrollmentAttemptUnavailable,
 } from '../../src/enrollment/attempts/errors.ts';
 import type { CommerceEnrollmentOwnerAttemptStore } from '../../src/enrollment/orchestration/owner-transition-driver.ts';
-import { commerceEnrollmentPreparationSubjectResolverForPorts } from '../../src/enrollment/orchestration/preparation-subject.ts';
+import { commerceEnrollmentPreparationSubjectForPorts } from '../../src/enrollment/orchestration/preparation-subject.ts';
 import {
   PARTY_CANDIDATE_SUBMISSION_TRANSITION_KEY,
   PARTY_REGISTRY_OWNER_MODULE_KEY,
@@ -213,7 +213,7 @@ const resolveFor = (
   operation: ReturnType<typeof partyOperationFor> | undefined,
   client: ExternalIdentityClientPort,
 ) =>
-  commerceEnrollmentPreparationSubjectResolverForPorts(storeFor(attempt, operation), client, clientOptions).resolve({
+  commerceEnrollmentPreparationSubjectForPorts(storeFor(attempt, operation), client, clientOptions, {
     portalEnrollmentAttemptId: attempt.portalEnrollmentAttemptId,
     tenantId: attempt.tenantId,
   });

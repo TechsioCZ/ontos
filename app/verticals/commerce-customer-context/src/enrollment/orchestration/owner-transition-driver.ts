@@ -46,6 +46,7 @@ import {
   CommerceEnrollmentAttemptIndeterminate,
   CommerceEnrollmentAttemptRejected,
   CommerceEnrollmentAttemptUnavailable,
+  withCause,
 } from '../attempts/errors.ts';
 import type { CommerceEnrollmentAttemptError } from '../attempts/errors.ts';
 import {
@@ -252,16 +253,13 @@ type CommerceEnrollmentOwnerTransitionReconciliationResult =
       readonly outcome: 'REPLAYED';
     };
 
-const preserveCause = <Value extends object>(error: Value, cause: unknown): Value =>
-  Object.defineProperty(error, 'cause', { configurable: false, enumerable: false, value: cause });
-
 const invalid = (reason: string, cause?: unknown): CommerceEnrollmentAttemptRejectedError => {
   const error = new CommerceEnrollmentAttemptRejected({
     code: 'attempt_invalid',
     reason: reason.slice(0, 500),
     retryable: false,
   });
-  return cause === undefined ? error : preserveCause(error, cause);
+  return cause === undefined ? error : withCause(error, cause);
 };
 
 const indeterminate = (
@@ -276,7 +274,7 @@ const indeterminate = (
     reason: reason.slice(0, 500),
     retryable: true,
   });
-  return cause === undefined ? error : preserveCause(error, cause);
+  return cause === undefined ? error : withCause(error, cause);
 };
 
 const conflict = (
@@ -497,8 +495,7 @@ const driverInvalidConfiguration = (reason: string, cause: unknown): CommerceEnr
  * effect, and record/reconcile are separate CAS phases. Unknown owner results never trigger a
  * second dispatch.
  */
-// oxlint-disable-next-line effect-native/no-wide-factory-signature -- The driver options are immutable local phase ports; a Layer would hide per-owner composition. remove-when: driver composition moves to the application runtime.
-export const makeCommerceEnrollmentOwnerTransitionDriver = (
+export const commerceEnrollmentOwnerTransitionDriverFor = (
   options: CommerceEnrollmentOwnerTransitionDriverOptions,
 ): CommerceEnrollmentOwnerTransitionDriver => {
   const leaseDurationMs = options.leaseDurationMs ?? DEFAULT_LEASE_DURATION_MS;
@@ -598,7 +595,6 @@ export const makeCommerceEnrollmentOwnerTransitionDriver = (
         required,
       );
       yield* options.attempt.claimTransition(fenceInput);
-      // Two independent owner-authoritative reads of the rows the fence just moved.
       ({ attempt, operation } = yield* Effect.all(
         {
           attempt: options.attempt.read(readAttemptIdentity(requested)),
@@ -719,7 +715,7 @@ const coreUnavailable = (cause?: unknown): InstanceType<typeof CommerceEnrollmen
     code: 'core_identity_unavailable',
     reason: 'The Core external identity service is unavailable',
   });
-  return cause === undefined ? error : preserveCause(error, cause);
+  return cause === undefined ? error : withCause(error, cause);
 };
 
 const coreRejected = (
@@ -731,7 +727,7 @@ const coreRejected = (
     code: code.slice(0, 200),
     reason: reason.slice(0, 500),
   });
-  return cause === undefined ? error : preserveCause(error, cause);
+  return cause === undefined ? error : withCause(error, cause);
 };
 
 const ExternalIdentityStatusCarrierSchema = Schema.Struct({ status: Schema.Finite });
@@ -762,8 +758,7 @@ const decodeCoreKey = (
  * or calls a private registration; reserve/activate/status use the x-api-key client port and
  * reconciliation uses exact binding read or external-subject resolve selected by composition.
  */
-// oxlint-disable-next-line effect-native/no-wide-factory-signature -- The Core owner adapter receives the published client port and immutable request builders from application composition. remove-when: owner adapters become Context services.
-export const makeCommerceEnrollmentCoreIdentityOwnerEffect = (
+export const commerceEnrollmentCoreIdentityOwnerEffectFor = (
   options: CommerceEnrollmentCoreIdentityOwnerEffectOptions,
 ): CommerceEnrollmentOwnerEffect => {
   const idempotencyKey = options.idempotencyKey ?? ((input) => input.ownerInvocationId);

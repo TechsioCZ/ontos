@@ -73,3 +73,16 @@ Both routes run the trusted-origin gate and a subject-keyed budget before any ow
 no route that advances, completes or terminates an Attempt from the outside: every later transition
 travels through the governed enrollment Actions, and `COMPLETE` is derived from durable owner
 outcomes rather than asserted by a caller.
+
+Once start has committed, the journey is carried the rest of the way by the server-side enrollment
+continuation (`src/enrollment/continuation/`), which the start route triggers as a detached,
+concurrency-bounded fork. It reads the durable Attempt, asks the journey definition which required
+transition the owner journal has not proven, looks that transition's owner effect up in the
+owner-effect registry (`src/enrollment/orchestration/owner-effect-registry.ts`) and runs it through
+the generic owner-transition driver — one committed transaction per phase, every owner effect
+outside all of them. The continuation is idempotent: every owner invocation identity it claims under
+is derived from the Attempt, so a re-run after a crash replays the durable operation instead of
+repeating the external effect, and an owner whose answer was lost is settled by one authoritative
+read rather than a second dispatch. The `provider.account.create` transition is reconcile-only
+there — its credential-carrying dispatch belongs to the start route alone — and a transition this
+deployment registers no owner effect for halts the journey with the Attempt untouched.

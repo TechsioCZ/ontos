@@ -20,6 +20,10 @@ import { COMMERCE_PORTAL_AUTH_POLICY } from '../provider/config.ts';
 
 const PROBLEM_TYPE_PREFIX = 'https://ontos.dev/problems/commerce-portal-auth-enrollment-';
 
+const problemStatus = {
+  unavailable: 503,
+} as const;
+
 /** The failing value is retained as a non-enumerable `cause`; it never reaches the encoded body. */
 const withCause = <Problem extends object>(problem: Problem, cause: unknown): Problem =>
   cause === undefined ? problem : Object.defineProperty(problem, 'cause', { configurable: true, value: cause });
@@ -89,7 +93,7 @@ export const commercePortalAuthEnrollmentUnavailableProblem = (cause?: unknown) 
       code: 'enrollment_unavailable',
       detail: 'Commerce portal enrollment is temporarily unavailable.',
       retryable: true,
-      status: 503,
+      status: problemStatus.unavailable,
       title: 'Enrollment unavailable',
       type: `${PROBLEM_TYPE_PREFIX}unavailable`,
     }),

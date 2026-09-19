@@ -88,6 +88,7 @@ const makeMemoryRecoveryStore = (
   };
 
   const store: CommercePortalAuthRecoveryStore = {
+    accountExists: (input) => Effect.succeed(input.providerSubjectId === currentSubject),
     consumeEmailVerification: (input) =>
       Effect.sync(() => {
         if (
@@ -121,6 +122,13 @@ const makeMemoryRecoveryStore = (
         spentBudgets.set(input.key, counted + 1);
         return true;
       }),
+    findAccountSubjectForEmail: (input) =>
+      Effect.succeed(
+        input.email.toLowerCase() === currentEmail.toLowerCase() ? Option.some(currentSubject) : Option.none(),
+      ),
+    peekEmailVerificationLedger: () => Effect.succeed(Option.none()),
+    peekPasswordResetLedger: () => Effect.succeed(Option.none()),
+    recordRecoveryReconciliation: () => Effect.void,
     registerEmailVerificationToken: (
       input: CommercePortalAuthEmailVerificationTokenRegistration & { readonly expiresAt: Date },
     ) =>
@@ -139,6 +147,7 @@ const makeMemoryRecoveryStore = (
         tokenEmail = input.email.toLowerCase();
         return true;
       }),
+    registerPasswordResetToken: () => Effect.succeed(true),
     reserveEmailVerificationSubject: (input) =>
       Effect.sync(() => {
         if (
@@ -193,9 +202,9 @@ const resetPasswordEmailData = {
 /**
  * The reconciliation collaborator is wired for real here (store-backed, not a stub) so every test
  * — including the hook-wiring tests below — exercises the same composition production uses. Most
- * fixture stores in this file implement only the four base methods, so `detect()` degrades to no
- * conflict for them, exactly as it did before reconciliation existed; the hook-wiring tests below
- * add the optional evidence methods to prove detection actually runs and is honored.
+ * fixture stores in this file report no ledger binding, so `detect()` finds nothing to reconcile
+ * for them, exactly as it did before reconciliation existed; the hook-wiring tests below override
+ * the evidence methods to prove detection actually runs and is honored.
  */
 const runWithRecovery = <Value>(
   provider: CommercePortalAuthRecoveryProvider,
@@ -418,9 +427,6 @@ it.effect(
           Effect.flatMap(() =>
             Effect.tryPromise({
               catch: (cause) => cause,
-              // The fixture store does not implement the optional reset-password ledger method,
-              // so this exercises the documented degrade-gracefully path: delivery proceeds
-              // straight through to the raw callback without registering anything.
               try: () => delivery.sendResetPassword(resetPasswordEmailData),
             }),
           ),

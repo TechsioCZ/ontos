@@ -7,23 +7,24 @@ import { EnsureRetailCustomerProfilePayloadSchema } from '../../../shared/action
 import type { EnsureRetailCustomerProfileResult } from '../../../shared/actions/ensure-retail-customer-profile.ts';
 import { RETAIL_PORTAL_SELF_SERVICE_BASELINE } from '../../../shared/domain/profile-contracts.ts';
 import type { SellingLegalEntityRefSchema } from '../../../shared/domain/profile-contracts.ts';
-import { ReconcileEnrollmentResolutionSchema } from '../../../shared/enrollment-contracts.ts';
 import type { ReconcileEnrollmentResolution } from '../../../shared/enrollment-contracts.ts';
 import type { RetailCustomerProfileRefSchema } from '../../../shared/resources/retail-customer-profile.ts';
 import type { RetailPortalPrincipalRefSchema } from '../../../shared/resources/retail-portal-profile-binding.ts';
 import { executeBindRetailPortalProfile } from '../../api/bind-retail-portal-profile-action-client.ts';
 import { executeEnsureRetailCustomerProfile } from '../../api/ensure-retail-customer-profile-action-client.ts';
-import { CommerceEnrollmentOwnerEffectOutcomeSchema } from '../orchestration/owner-transition-driver.ts';
+import {
+  decodeOwnerOutcome,
+  decodeOwnerResolution,
+  ownerRejected,
+  ownerUnavailable,
+} from '../orchestration/owner-effect-codec.ts';
+import type { OwnerOutcomeDraft, OwnerResolutionDraft } from '../orchestration/owner-effect-codec.ts';
 import type {
   CommerceEnrollmentOwnerEffect,
   CommerceEnrollmentOwnerEffectOutcome,
   CommerceEnrollmentOwnerReconciliationInput,
   CommerceEnrollmentOwnerTransition,
 } from '../orchestration/owner-transition-driver.ts';
-import {
-  CommerceEnrollmentOwnerEffectRejected,
-  CommerceEnrollmentOwnerEffectUnavailable,
-} from '../orchestration/owner-transition-errors.ts';
 import type { CommerceEnrollmentOwnerEffectError } from '../orchestration/owner-transition-errors.ts';
 import {
   OWNER_RECONCILIATION_REQUIRED_FAILURE_CODE,
@@ -117,43 +118,15 @@ type CommerceOwnerVerdict =
   | { readonly kind: 'RECONCILE'; readonly outcomeCode: string; readonly reason: string }
   | { readonly kind: 'REJECTED'; readonly outcomeCode: string; readonly reason: string };
 
-const unavailable = (
-  reason: string,
-  cause?: unknown,
-): InstanceType<typeof CommerceEnrollmentOwnerEffectUnavailable> => {
-  const error = new CommerceEnrollmentOwnerEffectUnavailable({ code: 'commerce_profile_unavailable', reason });
-  return cause === undefined
-    ? error
-    : Object.defineProperty(error, 'cause', { configurable: false, enumerable: false, value: cause });
-};
+const COMMERCE_PROFILE_UNAVAILABLE_CODE = 'commerce_profile_unavailable';
 
-const commitOpen = (): InstanceType<typeof CommerceEnrollmentOwnerEffectRejected> =>
-  new CommerceEnrollmentOwnerEffectRejected({
-    code: 'commerce_profile_commit_open',
-    reason: 'The Commerce Action invocation has not committed yet and must be retried',
-  });
-
-/** Wire-shaped drafts, decoded through the owner schemas before they can leave this module. */
-interface OwnerOutcomeDraft {
-  readonly failureCode?: string;
-  readonly failureReason?: string;
-  readonly nextState?: string;
-  readonly outcomeCode: string;
-  readonly resultReference?: string;
-  readonly status: 'FAILED' | 'SUCCEEDED';
-}
-
-interface OwnerResolutionDraft extends OwnerOutcomeDraft {
-  readonly actorPrincipalId: string;
-  readonly reconciliationRef: string;
-}
+const unavailable = (reason: string, cause?: unknown) =>
+  ownerUnavailable(COMMERCE_PROFILE_UNAVAILABLE_CODE, reason, cause);
 
 const decodeOutcome = (
   candidate: OwnerOutcomeDraft,
 ): Effect.Effect<CommerceEnrollmentOwnerEffectOutcome, CommerceEnrollmentOwnerEffectError> =>
-  Schema.decodeUnknownEffect(CommerceEnrollmentOwnerEffectOutcomeSchema)(candidate).pipe(
-    Effect.mapError((cause) => unavailable('The Commerce owner outcome is not representable', cause)),
-  );
+  decodeOwnerOutcome(candidate, COMMERCE_PROFILE_UNAVAILABLE_CODE, 'The Commerce owner outcome is not representable');
 
 const outcomeOf = (
   verdict: CommerceOwnerVerdict,
@@ -194,8 +167,10 @@ const resolutionOf = (
     resourceId,
   ]);
   const decode = (candidate: OwnerResolutionDraft) =>
-    Schema.decodeUnknownEffect(ReconcileEnrollmentResolutionSchema)(candidate).pipe(
-      Effect.mapError((cause) => unavailable('The Commerce reconciliation result is not representable', cause)),
+    decodeOwnerResolution(
+      candidate,
+      COMMERCE_PROFILE_UNAVAILABLE_CODE,
+      'The Commerce reconciliation result is not representable',
     );
   if (verdict.kind === 'SUCCEEDED') {
     return decode({
@@ -320,7 +295,10 @@ export const retailCustomerProfileOwnerEffect = (
         Effect.mapError((cause) => unavailable('The Retail Customer Profile commit resolution is unavailable', cause)),
       );
     if (resolved.state === 'OPEN') {
-      return yield* commitOpen();
+      return yield* ownerRejected(
+        'commerce_profile_commit_open',
+        'The Commerce Action invocation has not committed yet and must be retried',
+      );
     }
     return yield* resolutionOf(
       reconciliation,
@@ -369,7 +347,10 @@ export const retailPortalBindingOwnerEffect = (
         Effect.mapError((cause) => unavailable('The Retail Portal Binding commit resolution is unavailable', cause)),
       );
     if (resolved.state === 'OPEN') {
-      return yield* commitOpen();
+      return yield* ownerRejected(
+        'commerce_profile_commit_open',
+        'The Commerce Action invocation has not committed yet and must be retried',
+      );
     }
     return yield* resolutionOf(
       reconciliation,

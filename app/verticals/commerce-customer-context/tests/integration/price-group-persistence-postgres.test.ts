@@ -1,10 +1,11 @@
-import { loadDatabaseConnectionPair } from '@app/core-runtime';
 import { sql } from 'drizzle-orm';
 import { Effect } from 'effect';
 import { expect, it } from 'effect-rstest';
-import { Pool } from 'pg';
 
-import { makeTestDatabaseFromPool } from '../../../../packages/core-runtime/tests/support/database.ts';
+import {
+  makeTestDatabaseFromPool,
+  testDatabasePools,
+} from '../../../../packages/core-runtime/tests/support/database.ts';
 import { commerceCustomerContextRelations } from '../../src/database/schema.ts';
 import type { CommerceCustomerContextTransaction } from '../../src/database/types.ts';
 
@@ -46,15 +47,7 @@ const one = <Row>(rows: readonly Row[]): Row => {
 it.live('proves exact-current resolution and temporal assignment idempotency in PostgreSQL', () =>
   Effect.scoped(
     Effect.gen(function* postgresAcceptance() {
-      const connections = yield* loadDatabaseConnectionPair();
-      const adminPool = yield* Effect.acquireRelease(
-        Effect.sync(() => new Pool({ connectionString: connections.admin.connectionString })),
-        (pool) => Effect.promise(() => pool.end()).pipe(Effect.orDie),
-      );
-      const runtimePool = yield* Effect.acquireRelease(
-        Effect.sync(() => new Pool({ connectionString: connections.runtime.connectionString })),
-        (pool) => Effect.promise(() => pool.end()).pipe(Effect.orDie),
-      );
+      const { admin: adminPool, runtimePool } = yield* testDatabasePools;
       const admin = yield* makeTestDatabaseFromPool(adminPool, commerceCustomerContextRelations);
       const runtime = yield* makeTestDatabaseFromPool(runtimePool, commerceCustomerContextRelations);
 

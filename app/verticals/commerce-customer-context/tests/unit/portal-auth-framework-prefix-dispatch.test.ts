@@ -84,6 +84,7 @@ it.effect('serves prefixed recovery routes through the owner group and rejects a
     // durable counter does: one shared tally per key, refused once the rule's window is spent.
     const budget = new Map<string, number>();
     const store: CommercePortalAuthRecoveryStore = {
+      accountExists: () => Effect.die('unused: this test substitutes reconciliation.detect directly'),
       consumeEmailVerification: ({ token }) =>
         Effect.sync(() => {
           consumedToken = Redacted.value(token);
@@ -95,11 +96,16 @@ it.effect('serves prefixed recovery routes through the owner group and rejects a
           budget.set(key, spent);
           return spent <= rule.max;
         }),
+      findAccountSubjectForEmail: () => Effect.die('unused: this test substitutes reconciliation.detect directly'),
+      peekEmailVerificationLedger: () => Effect.die('unused: this test substitutes reconciliation.detect directly'),
+      peekPasswordResetLedger: () => Effect.die('unused: this test substitutes reconciliation.detect directly'),
+      recordRecoveryReconciliation: () => Effect.die('unused: this test substitutes reconciliation.detect directly'),
       registerEmailVerificationToken: () => Effect.succeed(true),
+      registerPasswordResetToken: () => Effect.die('unused: this test substitutes reconciliation.detect directly'),
       reserveEmailVerificationSubject: () => Effect.succeed(true),
     };
-    // This store implements none of the optional ledger-evidence methods detection reads, so the
-    // deployed reconciliation would answer exactly this: nothing to reconcile.
+    // This test substitutes reconciliation.detect directly, so the store's evidence methods are
+    // never called: they exist here only to satisfy the interface.
     const reconciliation = { detect: () => Effect.succeed(Option.none()) };
     const recovery = yield* makeCommercePortalAuthRecoveryService(unauditedCommercePortalAuthRecorder).pipe(
       Effect.provideService(CommercePortalAuthRecoveryProviderService, makeCommercePortalAuthRecoveryProvider(auth)),

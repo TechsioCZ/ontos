@@ -1,19 +1,20 @@
 import { createParty, executePartyMatch, recoverPartyCreate } from '@app/party-registry/api/client';
-import { Effect, Match, Schema } from 'effect';
+import { Effect, Match } from 'effect';
 
-import { ReconcileEnrollmentResolutionSchema } from '../../../shared/enrollment-contracts.ts';
 import type { ReconcileEnrollmentResolution } from '../../../shared/enrollment-contracts.ts';
-import { CommerceEnrollmentOwnerEffectOutcomeSchema } from '../orchestration/owner-transition-driver.ts';
+import {
+  decodeOwnerOutcome,
+  decodeOwnerResolution,
+  ownerRejected,
+  ownerUnavailable,
+} from '../orchestration/owner-effect-codec.ts';
+import type { OwnerOutcomeDraft, OwnerResolutionDraft } from '../orchestration/owner-effect-codec.ts';
 import type {
   CommerceEnrollmentOwnerEffect,
   CommerceEnrollmentOwnerEffectOutcome,
   CommerceEnrollmentOwnerReconciliationInput,
   CommerceEnrollmentOwnerTransition,
 } from '../orchestration/owner-transition-driver.ts';
-import {
-  CommerceEnrollmentOwnerEffectRejected,
-  CommerceEnrollmentOwnerEffectUnavailable,
-} from '../orchestration/owner-transition-errors.ts';
 import type { CommerceEnrollmentOwnerEffectError } from '../orchestration/owner-transition-errors.ts';
 import {
   OWNER_RECONCILIATION_REQUIRED_FAILURE_CODE,
@@ -70,7 +71,8 @@ export interface RetailPartyCandidateOwnerInput {
 const matchPartyExecutor: RetailPartyCandidateOwnerExecutors['matchParty'] = (payload, requestCorrelation) =>
   executePartyMatch(payload, requestCorrelation);
 
-const defaultExecutors: RetailPartyCandidateOwnerExecutors = Object.freeze({
+/** Production executors over the published Party Registry client, for application composition. */
+export const retailPartyCandidateOwnerExecutors: RetailPartyCandidateOwnerExecutors = Object.freeze({
   createParty,
   matchParty: matchPartyExecutor,
   recoverPartyCreate,
@@ -81,49 +83,23 @@ type PartyVerdict =
   | { readonly kind: 'RESOLVED'; readonly outcomeCode: string; readonly partyResourceId: string }
   | { readonly kind: 'AMBIGUOUS'; readonly reason: string };
 
-const unavailable = (
-  reason: string,
-  cause?: unknown,
-): InstanceType<typeof CommerceEnrollmentOwnerEffectUnavailable> => {
-  const error = new CommerceEnrollmentOwnerEffectUnavailable({ code: 'party_registry_unavailable', reason });
-  return cause === undefined
-    ? error
-    : Object.defineProperty(error, 'cause', { configurable: false, enumerable: false, value: cause });
-};
+const PARTY_REGISTRY_UNAVAILABLE_CODE = 'party_registry_unavailable';
 
-const commitOpen = (): InstanceType<typeof CommerceEnrollmentOwnerEffectRejected> =>
-  new CommerceEnrollmentOwnerEffectRejected({
-    code: 'party_registry_commit_open',
-    reason: 'The Party Registry invocation has not committed yet and must be retried',
-  });
-
-/** Wire-shaped drafts, decoded through the owner schemas before they can leave this module. */
-interface OwnerOutcomeDraft {
-  readonly failureCode?: string;
-  readonly failureReason?: string;
-  readonly nextState?: string;
-  readonly outcomeCode: string;
-  readonly resultReference?: string;
-  readonly status: 'FAILED' | 'SUCCEEDED';
-}
-
-interface OwnerResolutionDraft extends OwnerOutcomeDraft {
-  readonly actorPrincipalId: string;
-  readonly reconciliationRef: string;
-}
+const unavailable = (reason: string, cause?: unknown) =>
+  ownerUnavailable(PARTY_REGISTRY_UNAVAILABLE_CODE, reason, cause);
 
 const decodeOutcome = (
   candidate: OwnerOutcomeDraft,
 ): Effect.Effect<CommerceEnrollmentOwnerEffectOutcome, CommerceEnrollmentOwnerEffectError> =>
-  Schema.decodeUnknownEffect(CommerceEnrollmentOwnerEffectOutcomeSchema)(candidate).pipe(
-    Effect.mapError((cause) => unavailable('The Party Registry outcome is not representable', cause)),
-  );
+  decodeOwnerOutcome(candidate, PARTY_REGISTRY_UNAVAILABLE_CODE, 'The Party Registry outcome is not representable');
 
 const decodeResolution = (
   candidate: OwnerResolutionDraft,
 ): Effect.Effect<ReconcileEnrollmentResolution, CommerceEnrollmentOwnerEffectError> =>
-  Schema.decodeUnknownEffect(ReconcileEnrollmentResolutionSchema)(candidate).pipe(
-    Effect.mapError((cause) => unavailable('The Party reconciliation result is not representable', cause)),
+  decodeOwnerResolution(
+    candidate,
+    PARTY_REGISTRY_UNAVAILABLE_CODE,
+    'The Party reconciliation result is not representable',
   );
 
 const outcomeOf = (
@@ -171,7 +147,7 @@ const evidenceFor = (ownerInvocationId: string, decisionResourceId: string): str
  */
 export const retailPartyCandidateOwnerEffect = (
   input: RetailPartyCandidateOwnerInput,
-  executors: RetailPartyCandidateOwnerExecutors = defaultExecutors,
+  executors: RetailPartyCandidateOwnerExecutors = retailPartyCandidateOwnerExecutors,
 ): CommerceEnrollmentOwnerEffect => {
   const dispatch = Effect.fn('RetailPartyCandidateOwnerEffect.dispatch')(function* dispatchCandidate(
     transition: CommerceEnrollmentOwnerTransition,
@@ -221,7 +197,10 @@ export const retailPartyCandidateOwnerEffect = (
       Match.orElse(() => null),
     );
     if (recovered === null) {
-      return yield* commitOpen();
+      return yield* ownerRejected(
+        'party_registry_commit_open',
+        'The Party Registry invocation has not committed yet and must be retried',
+      );
     }
     const verdict = createVerdict(recovered);
     const reconciliationRef = evidenceFor(reconciliation.ownerInvocationId, recovered.decisionRef.resourceId);

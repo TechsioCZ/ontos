@@ -60,10 +60,8 @@ export interface CommercePortalAuthRecoveryReconciliation {
    * is its only effect, and the caller must treat a `Some` result as terminal for the request that
    * produced it — no token is granted, no password reset, no email marked verified.
    *
-   * Returns `None` when there is nothing to reconcile: no ledger record for the token (the normal
-   * flow's own token validation handles that case), or the store does not implement the optional
-   * evidence methods detection needs — a store that cannot answer degrades to no detection rather
-   * than failing the request that already has its own outcome to report.
+   * Returns `None` when there is nothing to reconcile: no ledger record for the token — the normal
+   * flow's own token validation handles that case.
    */
   readonly detect: (
     input: CommercePortalAuthRecoveryReconciliationCheck,
@@ -96,19 +94,6 @@ export const makeCommercePortalAuthRecoveryReconciliation = Effect.fn('CommerceP
     > {
       const peek =
         input.operation === VERIFY_OPERATION ? store.peekEmailVerificationLedger : store.peekPasswordResetLedger;
-      const record = store.recordRecoveryReconciliation;
-      // Recording is mandatory for every outcome that finds a conflict: a store that cannot record
-      // must never be asked to detect in the first place, so a conflict can never be found and then
-      // silently dropped. Gating on `record` here, before any lookup runs, is what makes this
-      // structural rather than an optional branch at the end.
-      if (
-        peek === undefined ||
-        store.accountExists === undefined ||
-        store.findAccountSubjectForEmail === undefined ||
-        record === undefined
-      ) {
-        return Option.none();
-      }
 
       const binding = yield* peek({ token: input.token });
       if (Option.isNone(binding)) {
@@ -137,7 +122,7 @@ export const makeCommercePortalAuthRecoveryReconciliation = Effect.fn('CommerceP
 
       // Every conflict this function returns has already been recorded: there is exactly one exit
       // that reports `Some`, and this call is unconditional on the path to it.
-      yield* record({
+      yield* store.recordRecoveryReconciliation({
         conflictClass: conflictClass.value,
         currentProviderSubjectId: currentAccountSubjectId,
         email: binding.value.email,

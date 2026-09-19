@@ -20,7 +20,14 @@ import { CommercePortalAuthConfig } from '../../api/portal-auth/provider/config-
 import { parseCommercePortalAuthConfig } from '../../api/portal-auth/provider/config.ts';
 import { CommerceCoreIdentityClientConfig } from '../../api/portal-auth/provider/core-identity-client-config.ts';
 import { CommerceCoreIdentityClientLive } from '../../api/portal-auth/provider/core-identity-client.ts';
+import { CommerceEnrollmentAttemptNotFound } from '../../src/enrollment/attempts/errors.ts';
 import { CommercePortalAuthAccountLookupLive } from '../../src/portal-auth/persistence/portal-auth-account-lookup.ts';
+import {
+  CommerceEnrollmentContinuation,
+  CommerceEnrollmentContinuationLive,
+} from '../../src/enrollment/continuation/enrollment-continuation.ts';
+import { CommerceEnrollmentOwnerEffectExecutorsLive } from '../../src/enrollment/orchestration/owner-effect-executors.ts';
+import { CommerceEnrollmentOwnerEffectRegistryLive } from '../../src/enrollment/orchestration/owner-effect-registry.ts';
 import { CommerceEnrollmentOwnerTransactionRunnerLive } from '../../src/enrollment/orchestration/owner-transaction-runner.ts';
 import { commerceEnrollmentOwnerTransitionPreparationLive } from '../../src/enrollment/orchestration/owner-transition-composition.ts';
 import { CommerceEnrollmentPreparationSubjectResolverLive } from '../../src/enrollment/orchestration/preparation-subject.ts';
@@ -258,6 +265,79 @@ it.live('still fails closed for an owner transition no installed port declares',
       const outcome = yield* authority.prepare(bindingFor('some.other.module', 'some.other.transition'));
 
       expect(outcome.outcome).toBe('unavailable');
+    }),
+  ),
+);
+
+/**
+ * The enrollment continuation, assembled from the very layers `api/index.ts` composes for a
+ * deployment that opted into both halves of the realm. The Core identity transport is configured
+ * but deliberately unreachable here; the assertion below is decided before any Core call is made.
+ */
+const continuationLive = Effect.fnUntraced(function* continuationLive() {
+  const databaseUrl = yield* providerDatabaseUrl;
+  const configuration = yield* parseCommercePortalAuthConfig({
+    COMMERCE_PORTAL_AUTH_DATABASE_URL: Redacted.value(databaseUrl),
+    COMMERCE_PORTAL_AUTH_SECRET: SECRET,
+    COMMERCE_PORTAL_AUTH_TRUSTED_ORIGINS: ORIGIN,
+    COMMERCE_PORTAL_AUTH_URL: ORIGIN,
+  });
+  const coreIdentityConfigurationLive = Layer.succeed(CommerceCoreIdentityClientConfig, {
+    apiKey: Redacted.make('enrollment-journeys-http-core-identity'),
+    baseUrl: 'https://core-identity.invalid',
+  });
+  const transactionRunnerLive = CommerceEnrollmentOwnerTransactionRunnerLive.pipe(
+    Layer.provide(
+      ActionAuthorizationPreflightDatabaseLive.pipe(
+        Layer.provideMerge(CorePersistenceLive),
+        Layer.provide(DatabaseConfigLive),
+      ),
+    ),
+  );
+  const coreIdentityLive = CommerceCoreIdentityClientLive.pipe(Layer.provide(coreIdentityConfigurationLive));
+  const accountLookupLive = CommercePortalAuthAccountLookupLive.pipe(
+    Layer.provide(
+      CommercePortalAuthDatabaseLive.pipe(Layer.provide(Layer.succeed(CommercePortalAuthConfig, configuration))),
+    ),
+  );
+  const registryLive = CommerceEnrollmentOwnerEffectRegistryLive.pipe(
+    Layer.provide(
+      Layer.mergeAll(
+        accountLookupLive,
+        coreIdentityLive,
+        coreIdentityConfigurationLive,
+        CommerceEnrollmentOwnerEffectExecutorsLive,
+      ),
+    ),
+  );
+  const subjectResolverLive = CommerceEnrollmentPreparationSubjectResolverLive.pipe(
+    Layer.provide(Layer.mergeAll(transactionRunnerLive, coreIdentityLive, coreIdentityConfigurationLive)),
+  );
+  return CommerceEnrollmentContinuationLive.pipe(
+    Layer.provide(Layer.mergeAll(transactionRunnerLive, registryLive, subjectResolverLive)),
+  );
+});
+
+it.live('installs the enrollment continuation, not the fail-closed leaf', () =>
+  Effect.scoped(
+    Effect.gen(function* installedContinuation() {
+      const scope = yield* Effect.scope;
+      const continuation = Context.get(
+        yield* Layer.buildWithScope(yield* continuationLive(), scope),
+        CommerceEnrollmentContinuation,
+      );
+
+      // The Attempt does not exist, so the installed continuation refuses it from the durable read.
+      // The fail-closed leaf refuses every Attempt with `attempt_invalid` before reading anything,
+      // so reverting the wiring in `api/index.ts` flips this assertion.
+      const failure = yield* Effect.flip(
+        continuation.advance({
+          portalEnrollmentAttemptId: Schema.decodeSync(EnrollmentAttemptIdSchema)(randomUUID()),
+          tenantId: Schema.decodeSync(EnrollmentTenantIdSchema)(randomUUID()),
+        }),
+      );
+
+      expect(Schema.is(CommerceEnrollmentAttemptNotFound)(failure)).toBe(true);
     }),
   ),
 );

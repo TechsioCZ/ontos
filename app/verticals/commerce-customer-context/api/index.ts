@@ -24,7 +24,13 @@ import { Context, Layer as GovernedReadLayer, Logger, Option, References, Schema
 import { CommercePortalAuthDatabaseLive } from '../src/portal-auth/persistence/portal-auth-database.ts';
 import { CommercePortalAuthAuditLive } from '../src/portal-auth/audit/audit.ts';
 import { CommercePortalAuthAccountLookupLive } from '../src/portal-auth/persistence/portal-auth-account-lookup.ts';
+import {
+  CommerceEnrollmentContinuationLive,
+  commerceEnrollmentContinuationUnavailableLive,
+} from '../src/enrollment/continuation/enrollment-continuation.ts';
 import { CommerceEnrollmentOwnerTransactionRunnerLive } from '../src/enrollment/orchestration/owner-transaction-runner.ts';
+import { CommerceEnrollmentOwnerEffectExecutorsLive } from '../src/enrollment/orchestration/owner-effect-executors.ts';
+import { CommerceEnrollmentOwnerEffectRegistryLive } from '../src/enrollment/orchestration/owner-effect-registry.ts';
 import { commerceEnrollmentOwnerTransitionPreparationLive } from '../src/enrollment/orchestration/owner-transition-composition.ts';
 import { CommerceEnrollmentPreparationSubjectResolverLive } from '../src/enrollment/orchestration/preparation-subject.ts';
 import { CommercePortalAuthLive } from './portal-auth/provider/auth.ts';
@@ -550,6 +556,45 @@ const deploymentEnrollmentCommitResolutionLive = Layer.unwrap(
     ),
   ),
 );
+/**
+ * The enrollment continuation and the owner-effect registry it dispatches through. A journey only
+ * runs where both halves of the realm exist: the account directory the portal transition is
+ * reconciled against, and the Core identity transport every later transition's Principal is bound
+ * to. A deployment missing either one installs the fail-closed leaves, so the start route still
+ * serves and the Attempt simply stops where that route left it.
+ */
+const commerceEnrollmentOwnerEffectRegistryRealmLive = CommerceEnrollmentOwnerEffectRegistryLive.pipe(
+  Layer.provide(
+    Layer.mergeAll(
+      commercePortalAuthAccountLookupRealmLive.pipe(Layer.provide(CommercePortalAuthConfigLive)),
+      commerceCoreIdentityRealmLive,
+      CommerceEnrollmentOwnerEffectExecutorsLive,
+    ),
+  ),
+);
+const commerceEnrollmentContinuationRealmLive = CommerceEnrollmentContinuationLive.pipe(
+  Layer.provide(
+    Layer.mergeAll(
+      commerceEnrollmentOwnerTransactionRunnerProductionLive,
+      commerceEnrollmentOwnerEffectRegistryRealmLive,
+      commerceEnrollmentPreparationSubjectRealmLive,
+    ),
+  ),
+);
+const deploymentEnrollmentContinuationLive = Layer.unwrap(
+  Effect.all(
+    {
+      // Two independent deployment configuration reads; neither reaches a shared resource.
+      coreIdentity: coreIdentityTransportConfigured,
+      realm: portalAuthRealmConfigured,
+    },
+    { concurrency: 2 },
+  ).pipe(
+    Effect.map(({ coreIdentity, realm }) =>
+      realm && coreIdentity ? commerceEnrollmentContinuationRealmLive : commerceEnrollmentContinuationUnavailableLive,
+    ),
+  ),
+);
 const enrollmentAwareActionRuntimeLive = commerceEnrollmentActionRuntimeLive.pipe(
   Layer.provide(
     Layer.mergeAll(actionRuntimeCoreLive, actionRuntimeServicesLive, deploymentEnrollmentOwnerPreparationLive),
@@ -638,6 +683,11 @@ export const makeCommerceCustomerContextApiRuntime = (
         deploymentEnrollmentCommitResolutionLive.pipe(GovernedReadLayer.provide(governedActionRuntimeLive)),
       ),
       GovernedReadLayer.provide(governedActionRuntimeLive),
+      // The start route commits the Attempt and the one provider account its claim authorizes, then
+      // hands the rest of the journey to the continuation. Without this the journeys never run.
+      GovernedReadLayer.provide(
+        deploymentEnrollmentContinuationLive.pipe(GovernedReadLayer.provide(DatabaseConfigLive)),
+      ),
       GovernedReadLayer.provide(
         commerceEnrollmentOwnerTransactionRunnerProductionLive.pipe(GovernedReadLayer.provide(DatabaseConfigLive)),
       ),

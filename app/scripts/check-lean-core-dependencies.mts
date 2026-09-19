@@ -399,6 +399,7 @@ export const checkLeanCoreDependencies = (
       collect(root),
       readCommerceExportsMap(fileSystem, root, path),
       discoverNonCommerceOwnerRoots(fileSystem, root, path),
+      checkCorePackageJson(fileSystem, root, path, record),
     ]);
     const sourcePairs = yield* Effect.all(
       files.map((file) =>
@@ -412,7 +413,6 @@ export const checkLeanCoreDependencies = (
       recordCoreSourceViolations(record, relative, source);
       recordNonCommerceImportViolations(record, relative, source, commerceExports, nonCommerceOwnerRoots);
     }
-    yield* checkCorePackageJson(fileSystem, root, path, record);
 
     return EffectArray.sort(violations, ViolationOrder);
   });

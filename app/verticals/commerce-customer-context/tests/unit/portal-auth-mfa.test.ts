@@ -154,10 +154,8 @@ it.effect('preserves provider-set cookies as a private MFA response handoff', ()
 it.effect('refuses a trusted-device request and narrows every accepted value to false', () =>
   Effect.sync(() => {
     expect(narrowCommercePortalAuthMfaTrustDevice({ trustDevice: true })).toStrictEqual(Option.none());
-    expect(narrowCommercePortalAuthMfaTrustDevice({ trustDevice: false })).toStrictEqual(
-      Option.some({ trustDevice: false }),
-    );
-    expect(narrowCommercePortalAuthMfaTrustDevice({})).toStrictEqual(Option.some({}));
+    expect(narrowCommercePortalAuthMfaTrustDevice({ trustDevice: false })).toStrictEqual(Option.void);
+    expect(narrowCommercePortalAuthMfaTrustDevice({})).toStrictEqual(Option.void);
   }),
 );
 

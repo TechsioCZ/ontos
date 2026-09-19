@@ -33,7 +33,7 @@ import {
   emitCommercePortalAuthAudit,
   unauditedCommercePortalAuthRecorder,
 } from '../../../src/portal-auth/audit/audit.ts';
-import { CommercePortalAuthRecoveryRateLimitService } from '../rate-limit-service.ts';
+import { consumeRateLimitBudget } from '../rate-limit-service.ts';
 import type { CommercePortalAuthRecoveryRateLimitRule } from '../rate-limit-service.ts';
 import { CommercePortalAuthInstance } from '../provider/auth.ts';
 import type { CommercePortalAuth } from '../provider/auth.ts';
@@ -419,18 +419,13 @@ const signInRateLimit: CommercePortalAuthRecoveryRateLimitRule = {
  */
 const consumeSignInBudget = Effect.fn('CommercePortalAuthSessionHttp.signInRateLimit')(
   function* consumeSignInBudgetEffect(request: HttpServerRequest.HttpServerRequest, email: string) {
-    const budget = yield* CommercePortalAuthRecoveryRateLimitService;
     const configuration = yield* CommercePortalAuthConfig;
     const client = resolveClientKey(request, configuration.trustedProxies);
     const subject = commercePortalAuthSubjectDigest(email, configuration.secret);
-    return yield* budget.consume(`${client}|${subject}|${SIGN_IN_RATE_LIMIT_ROUTE}`, signInRateLimit).pipe(
-      Effect.catchTag('CommercePortalAuthRecoveryProviderFailure', (failure) =>
-        Effect.annotateLogs(Effect.logError('Commerce portal sign-in budget could not be spent', failure), {
-          operation: failure.operation,
-          route: SIGN_IN_RATE_LIMIT_ROUTE,
-        }).pipe(Effect.andThen(Effect.fail(unavailableProblem()))),
-      ),
-    );
+    return yield* consumeRateLimitBudget(`${client}|${subject}|${SIGN_IN_RATE_LIMIT_ROUTE}`, signInRateLimit, {
+      route: SIGN_IN_RATE_LIMIT_ROUTE,
+      unavailable: () => unavailableProblem(),
+    });
   },
 );
 

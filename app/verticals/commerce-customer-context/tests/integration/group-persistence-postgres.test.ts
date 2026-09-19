@@ -4,6 +4,7 @@ import { Effect } from 'effect';
 import { expect, it } from 'effect-rstest';
 import { Pool } from 'pg';
 
+import { acquirePoolResource } from '../../../../packages/core-runtime/src/db/client.ts';
 import { makeTestDatabaseFromPool } from '../../../../packages/core-runtime/tests/support/database.ts';
 import {
   commerceCustomerContextRelations,
@@ -61,23 +62,16 @@ const one = <Row>(rows: readonly Row[]): Row => {
   return row;
 };
 
-const acquireGroupPool = (connectionString: string, maximumConnections?: number) =>
-  Effect.acquireRelease(
-    Effect.sync(
-      () =>
-        new Pool(
-          maximumConnections === undefined ? { connectionString } : { connectionString, max: maximumConnections },
-        ),
-    ),
-    (pool) => Effect.promise(() => pool.end()).pipe(Effect.orDie),
-  );
-
 it.live('preserves Customer Group temporal, replay, and concurrency invariants in PostgreSQL', () =>
   Effect.scoped(
     Effect.gen(function* postgresAcceptance() {
       const connections = yield* loadDatabaseConnectionPair();
-      const adminPool = yield* acquireGroupPool(connections.admin.connectionString);
-      const runtimePool = yield* acquireGroupPool(connections.runtime.connectionString, 4);
+      const adminPool = yield* acquirePoolResource(
+        () => new Pool({ connectionString: connections.admin.connectionString }),
+      );
+      const runtimePool = yield* acquirePoolResource(
+        () => new Pool({ connectionString: connections.runtime.connectionString, max: 4 }),
+      );
       const admin = yield* makeTestDatabaseFromPool(adminPool, commerceCustomerContextRelations);
       const runtime = yield* makeTestDatabaseFromPool(runtimePool, commerceCustomerContextRelations);
 
