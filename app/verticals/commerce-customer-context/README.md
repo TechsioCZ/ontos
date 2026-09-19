@@ -44,6 +44,14 @@ deployment inputs: the installed transport replaces both on every call, so a cal
 the correlation it is dispatching under and can neither redirect the client nor present a
 credential of its own.
 
+Enrollment owner evidence now needs both halves of the realm. The owner preparation authority — the
+gate every governed enrollment Action passes — is installed only when a deployment named both the
+`COMMERCE_PORTAL_AUTH_*` realm and this Core identity transport, because a Retail transition is
+vouched for against the Principal Auth Binding Core retains for the Attempt's provider subject. A
+deployment that named only one of them keeps the fail-closed leaf: every claimed owner payload is
+refused retryably instead of proceeding without owner evidence, and the readiness and business
+routes are unaffected.
+
 ## Authentication namespace registration
 
 The vertical registers its own authentication namespace, `ontos.commerce.portal.better-auth.v1`,

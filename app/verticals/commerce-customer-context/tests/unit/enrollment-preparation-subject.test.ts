@@ -20,7 +20,11 @@ import {
   EnrollmentOwnerOperationSnapshotSchema,
 } from '../../shared/enrollment-contracts.ts';
 import type { EnrollmentAttemptSnapshot } from '../../shared/enrollment-contracts.ts';
-import { CommerceEnrollmentAttemptNotFound } from '../../src/enrollment/attempts/errors.ts';
+import {
+  CommerceEnrollmentAttemptNotFound,
+  CommerceEnrollmentAttemptRejected,
+  CommerceEnrollmentAttemptUnavailable,
+} from '../../src/enrollment/attempts/errors.ts';
 import type { CommerceEnrollmentOwnerAttemptStore } from '../../src/enrollment/orchestration/owner-transition-driver.ts';
 import { commerceEnrollmentPreparationSubjectResolverForPorts } from '../../src/enrollment/orchestration/preparation-subject.ts';
 import {
@@ -294,7 +298,7 @@ it.effect('refuses an Attempt whose retained Core binding is no longer current',
 
     // A retryable answer here would loop an enrollment over an identity an operator withdrew.
     expect(failure.retryable).toBe(false);
-    expect(failure._tag).toBe('CommerceEnrollmentAttemptRejected');
+    expect(Schema.is(CommerceEnrollmentAttemptRejected)(failure)).toBe(true);
   }),
 );
 
@@ -305,7 +309,7 @@ it.effect('stays retryable, and never calls Core, until the account transition r
     const failure = yield* Effect.flip(resolveFor(attempt, undefined, refusingClient));
 
     expect(failure.retryable).toBe(true);
-    expect(failure._tag).toBe('CommerceEnrollmentAttemptUnavailable');
+    expect(Schema.is(CommerceEnrollmentAttemptUnavailable)(failure)).toBe(true);
   }),
 );
 

@@ -21,7 +21,6 @@ import { parseCommercePortalAuthConfig } from '../../api/portal-auth/provider/co
 import { CommerceCoreIdentityClientConfig } from '../../api/portal-auth/provider/core-identity-client-config.ts';
 import { CommerceCoreIdentityClientLive } from '../../api/portal-auth/provider/core-identity-client.ts';
 import { CommercePortalAuthAccountLookupLive } from '../../src/portal-auth/persistence/portal-auth-account-lookup.ts';
-import { CommercePortalAuthDatabaseLive } from '../../src/portal-auth/persistence/portal-auth-database.ts';
 import { CommerceEnrollmentOwnerTransactionRunnerLive } from '../../src/enrollment/orchestration/owner-transaction-runner.ts';
 import { commerceEnrollmentOwnerTransitionPreparationLive } from '../../src/enrollment/orchestration/owner-transition-composition.ts';
 import { CommerceEnrollmentPreparationSubjectResolverLive } from '../../src/enrollment/orchestration/preparation-subject.ts';
@@ -47,7 +46,10 @@ import {
   PARTY_CANDIDATE_SUBMISSION_TRANSITION_KEY,
   PARTY_REGISTRY_OWNER_MODULE_KEY,
 } from '../../src/enrollment/journeys/retail-self-enrollment-contracts.ts';
-import { makeCommercePortalAuthDatabase } from '../../src/portal-auth/persistence/portal-auth-database.ts';
+import {
+  CommercePortalAuthDatabaseLive,
+  makeCommercePortalAuthDatabase,
+} from '../../src/portal-auth/persistence/portal-auth-database.ts';
 import { user } from '../../src/portal-auth/persistence/portal-auth-tables.ts';
 
 /**
@@ -142,7 +144,9 @@ const preparationAuthorityLive = Effect.fnUntraced(function* preparationAuthorit
     ),
   );
   const accountLookupLive = CommercePortalAuthAccountLookupLive.pipe(
-    Layer.provide(CommercePortalAuthDatabaseLive.pipe(Layer.provide(Layer.succeed(CommercePortalAuthConfig, configuration)))),
+    Layer.provide(
+      CommercePortalAuthDatabaseLive.pipe(Layer.provide(Layer.succeed(CommercePortalAuthConfig, configuration))),
+    ),
   );
   const subjectResolverLive = CommerceEnrollmentPreparationSubjectResolverLive.pipe(
     Layer.provide(

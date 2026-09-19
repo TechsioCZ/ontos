@@ -1,5 +1,8 @@
 import type { AuthBindingIdSchema, BindingRevisionSchema } from '@app/core-runtime/auth/external-identity-contracts';
-import { ReadPrincipalBindingPayloadSchema } from '@app/core-runtime/auth/external-identity-contracts';
+import {
+  AuthenticationNamespaceIdSchema,
+  ReadPrincipalBindingPayloadSchema,
+} from '@app/core-runtime/auth/external-identity-contracts';
 import { ExternalIdentityClient } from '@app/shared-contracts/server/external-identity-client';
 import type {
   ExternalIdentityClientError,
@@ -22,7 +25,6 @@ import type { EnrollmentAttemptSnapshot, ReadEnrollmentAttemptInput } from '../.
 import { RetailPortalPrincipalRefSchema } from '../../../shared/resources/retail-portal-profile-binding.ts';
 import { CommerceEnrollmentAttemptRejected, CommerceEnrollmentAttemptUnavailable } from '../attempts/errors.ts';
 import type { CommerceEnrollmentAttemptError } from '../attempts/errors.ts';
-import { makeExistingAccountCoreIdentityReserveRequest } from '../journeys/existing-account.ts';
 import {
   PARTY_CANDIDATE_SUBMISSION_TRANSITION_KEY,
   PARTY_REGISTRY_OWNER_MODULE_KEY,
@@ -72,10 +74,17 @@ export interface CommerceEnrollmentPreparationSubjectResolverService {
    * is not knowable yet (the account transition has not committed, or Core is unreachable); a
    * non-retryable one means this Attempt can never carry a Retail journey subject.
    */
-  readonly resolve: (
-    input: ReadEnrollmentAttemptInput,
-  ) => Effect.Effect<RetailSelfEnrollmentPreparationSubject, CommerceEnrollmentAttemptError>;
+  readonly resolve: CommerceEnrollmentPreparationSubjectResolve;
 }
+
+/**
+ * The resolution itself, as a plain function. An owner preparation port has no requirements channel
+ * of its own, so it receives this rather than the service: the port can then be built once at
+ * composition time from a service the root already yielded.
+ */
+export type CommerceEnrollmentPreparationSubjectResolve = (
+  input: ReadEnrollmentAttemptInput,
+) => Effect.Effect<RetailSelfEnrollmentPreparationSubject, CommerceEnrollmentAttemptError>;
 
 export class CommerceEnrollmentPreparationSubjectResolver extends Context.Service<
   CommerceEnrollmentPreparationSubjectResolver,
@@ -170,33 +179,31 @@ const partyTransitionIdentity = Effect.all(
  * `none` rather than a failure: the journey is simply not past its Party step yet, and the
  * preparation port answers `not_applicable` for the steps that need an exact Party.
  */
-const partyRefFor = Effect.fn('CommerceEnrollmentPreparationSubjectResolver.partyRef')(
-  function* partyRefForEffect(
-    store: CommerceEnrollmentOwnerAttemptStore,
-    attempt: EnrollmentAttemptSnapshot,
-  ): Effect.fn.Return<RetailSelfEnrollmentPreparationSubject['partyRef'], CommerceEnrollmentAttemptError> {
-    const identity = yield* partyTransitionIdentity;
-    const operation = yield* store
-      .readOwnerOperation({
-        ownerModuleKey: identity.ownerModuleKey,
-        portalEnrollmentAttemptId: attempt.portalEnrollmentAttemptId,
-        tenantId: attempt.tenantId,
-        transitionKey: identity.transitionKey,
-      })
-      .pipe(
-        Effect.asSome,
-        Effect.catchTag('CommerceEnrollmentAttemptNotFound', () => Effect.succeedNone),
-      );
-    if (Option.isNone(operation)) {
-      return Option.none();
-    }
-    const { resultReference, status } = operation.value;
-    if (status !== 'SUCCEEDED' || resultReference === undefined) {
-      return Option.none();
-    }
-    return Option.some(retailPartyRefFor(attempt.tenantId, resultReference));
-  },
-);
+const partyRefFor = Effect.fn('CommerceEnrollmentPreparationSubjectResolver.partyRef')(function* partyRefForEffect(
+  store: CommerceEnrollmentOwnerAttemptStore,
+  attempt: EnrollmentAttemptSnapshot,
+): Effect.fn.Return<RetailSelfEnrollmentPreparationSubject['partyRef'], CommerceEnrollmentAttemptError> {
+  const identity = yield* partyTransitionIdentity;
+  const operation = yield* store
+    .readOwnerOperation({
+      ownerModuleKey: identity.ownerModuleKey,
+      portalEnrollmentAttemptId: attempt.portalEnrollmentAttemptId,
+      tenantId: attempt.tenantId,
+      transitionKey: identity.transitionKey,
+    })
+    .pipe(
+      Effect.asSome,
+      Effect.catchTag('CommerceEnrollmentAttemptNotFound', () => Effect.succeedNone),
+    );
+  if (Option.isNone(operation)) {
+    return Option.none();
+  }
+  const { resultReference, status } = operation.value;
+  if (status !== 'SUCCEEDED' || resultReference === undefined) {
+    return Option.none();
+  }
+  return Option.some(retailPartyRefFor(attempt.tenantId, resultReference));
+});
 
 interface CoreBindingIdentity {
   readonly authBindingId: typeof AuthBindingIdSchema.Type;
@@ -241,7 +248,10 @@ const activateBinding = Effect.fn('CommerceEnrollmentPreparationSubjectResolver.
   },
 );
 
-const principalFromBinding = (call: CoreCall, binding: CoreBindingIdentity): Effect.Effect<string, CommerceEnrollmentAttemptError> => {
+const principalFromBinding = (
+  call: CoreCall,
+  binding: CoreBindingIdentity,
+): Effect.Effect<string, CommerceEnrollmentAttemptError> => {
   if (binding.bindingStatus === 'active') {
     return Effect.succeed(binding.principalId);
   }
@@ -260,21 +270,34 @@ const reserveBinding = Effect.fn('CommerceEnrollmentPreparationSubjectResolver.r
     call: CoreCall,
     accountSubject: NonNullable<EnrollmentAttemptSnapshot['accountSubject']>,
   ): Effect.fn.Return<string, CommerceEnrollmentAttemptError> {
-    // The reserve payload is journey-neutral: it names only the exact provider subject and the
-    // opaque owner evidence, so the Existing-account builder is the one place that decoding lives.
-    const payload = yield* makeExistingAccountCoreIdentityReserveRequest({
-      accountSubject,
-      authenticationRef: call.authenticationRef,
-    }).pipe(
+    const authenticationNamespaceId = yield* Schema.decodeEffect(AuthenticationNamespaceIdSchema)(
+      accountSubject.authenticationNamespaceId,
+    ).pipe(
       Effect.mapError((cause) =>
-        rejected(call.attempt, 'The Attempt provider subject could not be represented for Core identity', cause),
+        rejected(
+          call.attempt,
+          'The Attempt authentication namespace could not be represented for Core identity',
+          cause,
+        ),
       ),
     );
     const result = yield* call.client
-      .reservePrincipalBinding(payload, {
-        ...call.options,
-        idempotencyKey: attemptReference(CORE_BINDING_RESERVE_PURPOSE, call.attempt),
-      })
+      .reservePrincipalBinding(
+        {
+          // The reservation names only the exact provider subject; no credential, display name or
+          // provider payload of any kind reaches Core from this path.
+          authenticationRef: call.authenticationRef,
+          reservation: {
+            authenticationNamespaceId,
+            providerSubjectId: accountSubject.providerSubjectId,
+            subjectType: accountSubject.subjectType,
+          },
+        },
+        {
+          ...call.options,
+          idempotencyKey: attemptReference(CORE_BINDING_RESERVE_PURPOSE, call.attempt),
+        },
+      )
       .pipe(
         Effect.mapError(
           coreFailure(call.attempt, 'The Core Principal Auth Binding for this Attempt could not be reserved'),
@@ -361,41 +384,39 @@ const partyCandidateDigestFor = (attempt: EnrollmentAttemptSnapshot): string =>
     attempt.intentDigest,
   ]);
 
-const resolveSubject = Effect.fn('CommerceEnrollmentPreparationSubjectResolver.resolve')(
-  function* resolveSubjectEffect(
-    store: CommerceEnrollmentOwnerAttemptStore,
-    client: ExternalIdentityClientPort,
-    clientOptions: (attempt: EnrollmentAttemptSnapshot) => ExternalIdentityClientOptions,
-    input: ReadEnrollmentAttemptInput,
-  ): Effect.fn.Return<RetailSelfEnrollmentPreparationSubject, CommerceEnrollmentAttemptError> {
-    const attempt = yield* store.read(input);
-    if (isEnrollmentAttemptTerminal(attempt.state)) {
-      return yield* rejected(attempt, 'A terminal Enrollment Attempt has no journey subject to prepare');
-    }
-    const sellingLegalEntityRef = yield* sellingLegalEntityRefFor(attempt);
-    const call: CoreCall = {
-      attempt,
-      authenticationRef: attemptReference(CORE_BINDING_AUTHENTICATION_REF_PURPOSE, attempt),
-      client,
-      options: clientOptions(attempt),
-    };
-    const { partyRef, principalRef } = yield* Effect.all(
-      {
-        // One durable owner read and one Core identity read; neither depends on the other.
-        partyRef: partyRefFor(store, attempt),
-        principalRef: principalRefFor(call),
-      },
-      { concurrency: 2 },
-    );
-    return {
-      partyCandidateDigest: partyCandidateDigestFor(attempt),
-      partyRef,
-      portalEnrollmentAttemptId: attempt.portalEnrollmentAttemptId,
-      principalRef,
-      sellingLegalEntityRef,
-    };
-  },
-);
+const resolveSubject = Effect.fn('CommerceEnrollmentPreparationSubjectResolver.resolve')(function* resolveSubjectEffect(
+  store: CommerceEnrollmentOwnerAttemptStore,
+  client: ExternalIdentityClientPort,
+  clientOptions: (attempt: EnrollmentAttemptSnapshot) => ExternalIdentityClientOptions,
+  input: ReadEnrollmentAttemptInput,
+): Effect.fn.Return<RetailSelfEnrollmentPreparationSubject, CommerceEnrollmentAttemptError> {
+  const attempt = yield* store.read(input);
+  if (isEnrollmentAttemptTerminal(attempt.state)) {
+    return yield* rejected(attempt, 'A terminal Enrollment Attempt has no journey subject to prepare');
+  }
+  const sellingLegalEntityRef = yield* sellingLegalEntityRefFor(attempt);
+  const call: CoreCall = {
+    attempt,
+    authenticationRef: attemptReference(CORE_BINDING_AUTHENTICATION_REF_PURPOSE, attempt),
+    client,
+    options: clientOptions(attempt),
+  };
+  const { partyRef, principalRef } = yield* Effect.all(
+    {
+      // One durable owner read and one Core identity read; neither depends on the other.
+      partyRef: partyRefFor(store, attempt),
+      principalRef: principalRefFor(call),
+    },
+    { concurrency: 2 },
+  );
+  return {
+    partyCandidateDigest: partyCandidateDigestFor(attempt),
+    partyRef,
+    portalEnrollmentAttemptId: attempt.portalEnrollmentAttemptId,
+    principalRef,
+    sellingLegalEntityRef,
+  };
+});
 
 /**
  * Build a resolver over the exact seams it reads. The Attempt store is a per-Tenant seam rather

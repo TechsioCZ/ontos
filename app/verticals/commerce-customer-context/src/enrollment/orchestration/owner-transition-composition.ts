@@ -27,7 +27,7 @@ import type {
 import { retailSelfEnrollmentPreparationPorts } from '../journeys/retail-self-enrollment-preparation.ts';
 import { retailSelfEnrollmentStepPlan } from '../journeys/retail-self-enrollment-contracts.ts';
 import { CommerceEnrollmentPreparationSubjectResolver } from './preparation-subject.ts';
-import type { CommerceEnrollmentPreparationSubjectResolverService } from './preparation-subject.ts';
+import type { CommerceEnrollmentPreparationSubjectResolve } from './preparation-subject.ts';
 import { commerceEnrollmentPortalAuthOwnerReconciliationForLookup } from './provider-owner-effect.ts';
 import type { CommerceEnrollmentProviderOwnerReconciliationObservation } from './provider-owner-effect.ts';
 import {
@@ -300,32 +300,30 @@ export const makeCommerceEnrollmentPortalAuthOwnerPreparationPort = Effect.fn(
  * derived from Attempt state that survived a crash.
  */
 const prepareRetailStep = (
-  resolver: CommerceEnrollmentPreparationSubjectResolverService,
+  resolveSubject: CommerceEnrollmentPreparationSubjectResolve,
   binding: CommerceEnrollmentPreparedOwnerBinding,
 ): Effect.Effect<CommerceEnrollmentOwnerTransitionPreparationResult> =>
-  resolver
-    .resolve({ portalEnrollmentAttemptId: binding.portalEnrollmentAttemptId, tenantId: binding.tenantId })
-    .pipe(
-      Effect.flatMap((subject) =>
-        retailSelfEnrollmentPreparationPorts(subject).pipe(
-          Effect.mapError((cause) =>
-            attemptUnavailable(
-              binding.portalEnrollmentAttemptId,
-              'The Retail self-enrollment preparation ports could not be built',
-              cause,
-            ),
+  resolveSubject({ portalEnrollmentAttemptId: binding.portalEnrollmentAttemptId, tenantId: binding.tenantId }).pipe(
+    Effect.flatMap((subject) =>
+      retailSelfEnrollmentPreparationPorts(subject).pipe(
+        Effect.mapError((cause) =>
+          attemptUnavailable(
+            binding.portalEnrollmentAttemptId,
+            'The Retail self-enrollment preparation ports could not be built',
+            cause,
           ),
         ),
       ),
-      Effect.flatMap((ports) => {
-        const port = ports.find(
-          (candidate) =>
-            candidate.ownerModuleKey === binding.ownerModuleKey && candidate.transitionKey === binding.transitionKey,
-        );
-        return port === undefined ? Effect.succeed(unavailable) : port.prepare(binding);
-      }),
-      Effect.match({ onFailure: preparationFailure, onSuccess: (result) => result }),
-    );
+    ),
+    Effect.flatMap((ports) => {
+      const port = ports.find(
+        (candidate) =>
+          candidate.ownerModuleKey === binding.ownerModuleKey && candidate.transitionKey === binding.transitionKey,
+      );
+      return port === undefined ? Effect.succeed(unavailable) : port.prepare(binding);
+    }),
+    Effect.match({ onFailure: preparationFailure, onSuccess: (result) => result }),
+  );
 
 /**
  * A Retail port is installed only for a declared step no already-installed port owns. The portal
@@ -337,7 +335,7 @@ const prepareRetailStep = (
 const retailPreparationPortsBesides = Effect.fn('CommerceEnrollmentRetailPreparation.ports')(
   function* retailPreparationPortsBesidesEffect(
     installed: readonly CommerceEnrollmentOwnerPreparationPort[],
-    resolver: CommerceEnrollmentPreparationSubjectResolverService,
+    resolveSubject: CommerceEnrollmentPreparationSubjectResolve,
   ): Effect.fn.Return<readonly CommerceEnrollmentOwnerPreparationPort[]> {
     const steps = retailSelfEnrollmentStepPlan().filter(
       (step) =>
@@ -358,7 +356,7 @@ const retailPreparationPortsBesides = Effect.fn('CommerceEnrollmentRetailPrepara
         ).pipe(
           Effect.map(({ ownerModuleKey, transitionKey }): CommerceEnrollmentOwnerPreparationPort => ({
             ownerModuleKey,
-            prepare: (binding) => prepareRetailStep(resolver, binding),
+            prepare: (binding) => prepareRetailStep(resolveSubject, binding),
             transitionKey,
           })),
         ),
@@ -378,7 +376,7 @@ export const commerceEnrollmentOwnerTransitionPreparationLive = Layer.effect(
     const resolver = yield* CommerceEnrollmentPreparationSubjectResolver;
     const portalAuthPort = yield* makeCommerceEnrollmentPortalAuthOwnerPreparationPort();
     const installed = [portalAuthPort];
-    const retailPorts = yield* retailPreparationPortsBesides(installed, resolver);
+    const retailPorts = yield* retailPreparationPortsBesides(installed, resolver.resolve);
     return commerceEnrollmentOwnerTransitionPreparationAuthorityForPorts([...installed, ...retailPorts]);
   }),
 );
