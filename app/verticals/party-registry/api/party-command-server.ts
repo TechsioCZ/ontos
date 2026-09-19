@@ -153,6 +153,14 @@ export const partyRegistryCommandsLive = HttpApiBuilder.group(partyRegistryApi, 
     .handle('counterpartyCreate', ({ payload, headers, request }) =>
       runPartyCommand(partyCommandRegistrations.counterpartyCreate, payload, headers['idempotency-key'], request),
     )
+    .handle('counterpartyCustomerOnboard', ({ payload, headers, request }) =>
+      runPartyCommand(
+        partyCommandRegistrations.counterpartyCustomerOnboard,
+        payload,
+        headers['idempotency-key'],
+        request,
+      ),
+    )
     .handle('counterpartyRoleAdd', ({ payload, headers, request }) =>
       runPartyCommand(partyCommandRegistrations.counterpartyRoleAdd, payload, headers['idempotency-key'], request),
     )

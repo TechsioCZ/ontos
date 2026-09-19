@@ -8,6 +8,7 @@ import { AresAppliedEvidenceSchema } from '../../shared/domain/ares-application.
 import type { partyAliases } from '../../src/db/schema.ts';
 import { parties, partyIdentifierClaims, partyOfficialIdentifiers } from '../../src/db/schema.ts';
 import {
+  acceptMatchingOfficialIdentifierRecord,
   addOfficialIdentifierRecord,
   endOfficialIdentifierRecord,
   updateOfficialIdentifierVerificationRecord,
@@ -166,6 +167,52 @@ it.effect('Add reuses a current same-Party identifier instead of duplicating an 
     });
     expect(result.officialIdentifierId).toBe(officialIdentifierId);
     expect(db.inserts.length).toBe(0);
+  }),
+);
+
+it.effect('matching acceptance upgrades a same-Party UNVERIFIED identifier and attaches its claim', () =>
+  Effect.gen(function* matchingAcceptanceUpgrade() {
+    const db = harness();
+    const result = yield* acceptMatchingOfficialIdentifierRecord(db.transaction, tenantId, partyId, identifier, {
+      actionInvocationId: 'matching-upgrade-invocation',
+      matchRuleVersion: 'party-exact-claims.v1',
+      partyType: 'ORGANIZATION',
+      principalId,
+      provenanceMethod: 'REGISTRY',
+      provenanceSource: 'matching-test',
+      validFrom: '2026-01-01T00:00:00.000Z',
+    });
+    expect(
+      Match.value(result).pipe(
+        Match.tag('updated', () => true),
+        Match.orElse(() => false),
+      ),
+    ).toBe(true);
+    expect(db.updates[0]?.['verificationState']).toBe('VERIFIED');
+    expect(db.inserts.some((entry) => entry.table === partyIdentifierClaims)).toBe(true);
+  }),
+);
+
+it.effect('matching acceptance rejects a late foreign claim without mutating the assertion', () =>
+  Effect.gen(function* matchingAcceptanceForeignClaim() {
+    const db = harness({ claimOwner: 'another-party' });
+    const result = yield* acceptMatchingOfficialIdentifierRecord(db.transaction, tenantId, partyId, identifier, {
+      actionInvocationId: 'matching-conflict-invocation',
+      matchRuleVersion: 'party-exact-claims.v1',
+      partyType: 'ORGANIZATION',
+      principalId,
+      provenanceMethod: 'REGISTRY',
+      provenanceSource: 'matching-test',
+      validFrom: '2026-01-01T00:00:00.000Z',
+    });
+    expect(
+      Match.value(result).pipe(
+        Match.tag('claim_conflict', () => true),
+        Match.orElse(() => false),
+      ),
+    ).toBe(true);
+    expect(db.updates).toEqual([]);
+    expect(db.inserts).toEqual([]);
   }),
 );
 

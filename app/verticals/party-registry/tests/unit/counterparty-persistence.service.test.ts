@@ -11,6 +11,7 @@ import {
   endCounterpartyRoleRecord,
   findCounterpartyRecord,
   listCounterpartyRoleHistory,
+  onboardCounterpartyCustomerRecord,
 } from '../../src/services/counterparty-persistence.service.ts';
 
 const tenantId = '10000000-0000-4000-8000-000000000001';
@@ -145,6 +146,36 @@ const endInput = (validTo: string, method: string) => ({
   rolePeriodId,
   tenantId,
   validTo,
+});
+
+const onboardInput = (overrides: Readonly<Record<string, unknown>> = {}) => ({
+  actionInvocationId,
+  counterpartyProvenance: {
+    evidenceReference: 'contract:context',
+    method: 'SIGNED_CONTRACT',
+    reason: 'Signed commercial agreement',
+    source: 'contracts.core',
+  },
+  customerEvidence: {
+    evidenceReference: 'contract:customer',
+    method: 'SIGNED_CONTRACT',
+    reason: 'Signed customer agreement',
+    source: 'contracts.core',
+  },
+  legalEntityId,
+  partyId,
+  policyVersion: 'counterparty-customer-onboard.v1',
+  principalId,
+  provenance: {
+    evidenceReference: 'contract:customer',
+    method: 'SIGNED_CONTRACT',
+    reason: 'Signed customer agreement',
+    source: 'contracts.core',
+  },
+  tenantId,
+  validFrom: '2026-01-01T00:00:00.000Z',
+  validTo: null,
+  ...overrides,
 });
 
 it.effect('keeps a future-ended role active until its exclusive effective end', () =>
@@ -436,4 +467,173 @@ it.effect('adds a future role and its admin history projection in the same trans
       'counterparty_role_admin_read_models',
     ]);
   }),
+);
+
+it.effect('onboards a fresh Counterparty and CUSTOMER period in one persistence composition', () =>
+  Effect.gen(function* freshOnboarding() {
+    yield* TestClock.setTime(DateTime.toEpochMillis(DateTime.makeUnsafe('2026-09-03T00:00:00.000Z')));
+    const createdCounterparty = { ...counterpartyRow, createdAt: date('2026-09-03T00:00:00.000Z') };
+    const party = { archivedAt: null, partyId, tenantId };
+    const createdRole = roleRow({
+      rolePeriodId,
+      validFrom: date('2026-01-01T00:00:00.000Z'),
+      validTo: null,
+    });
+    const harness = transactionHarness(
+      [[], [{ partyId }], [], [{ partyId }], [party], [createdCounterparty], [], [{ partyId }], [party], []],
+      [],
+      [[createdCounterparty], [createdRole]],
+    );
+
+    const result = yield* onboardCounterpartyCustomerRecord(harness.transaction, onboardInput());
+
+    expect(Predicate.isTagged(result, 'onboarded')).toBe(true);
+    if (!Predicate.isTagged(result, 'onboarded')) {
+      return;
+    }
+    expect(result.counterpartyCreated).toBe(true);
+    expect(result.rolePeriodCreated).toBe(true);
+    expect(result.role.roleType).toBe('CUSTOMER');
+    expect(harness.insertedTables).toEqual([
+      'counterparties',
+      'counterparty_admin_read_models',
+      'counterparty_role_periods',
+      'counterparty_admin_read_models',
+      'counterparty_role_admin_read_models',
+    ]);
+  }),
+);
+
+it.effect('reuses an existing Counterparty while creating its first CUSTOMER period', () =>
+  Effect.gen(function* existingCounterparty() {
+    yield* TestClock.setTime(DateTime.toEpochMillis(DateTime.makeUnsafe('2026-09-03T00:00:00.000Z')));
+    const existingCounterpartyRow = { ...counterpartyRow, createdAt: date('2025-01-01T00:00:00.000Z') };
+    const party = { archivedAt: null, partyId, tenantId };
+    const harness = transactionHarness(
+      [
+        [],
+        [{ partyId }],
+        [],
+        [{ partyId }],
+        [party],
+        [existingCounterpartyRow],
+        [existingCounterpartyRow],
+        [],
+        [{ partyId }],
+        [party],
+        [],
+      ],
+      [],
+      [[], [roleRow({ validFrom: date('2026-01-01T00:00:00.000Z') })]],
+    );
+
+    const result = yield* onboardCounterpartyCustomerRecord(harness.transaction, onboardInput());
+
+    expect(Predicate.isTagged(result, 'onboarded')).toBe(true);
+    if (!Predicate.isTagged(result, 'onboarded')) {
+      return;
+    }
+    expect(result.counterpartyCreated).toBe(false);
+    expect(result.rolePeriodCreated).toBe(true);
+    expect(harness.insertValues[0]?.['partyId']).toBe(partyId);
+    expect(harness.insertedTables).toContain('counterparty_role_periods');
+  }),
+);
+
+it.effect('reuses an exact CUSTOMER period without a duplicate role write or event input', () =>
+  Effect.gen(function* exactRoleReplay() {
+    yield* TestClock.setTime(DateTime.toEpochMillis(DateTime.makeUnsafe('2026-09-03T00:00:00.000Z')));
+    const existingCounterpartyRow = { ...counterpartyRow, createdAt: date('2025-01-01T00:00:00.000Z') };
+    const party = { archivedAt: null, partyId, tenantId };
+    const existingRole = roleRow({
+      validFrom: date('2026-01-01T00:00:00.000Z'),
+      validTo: null,
+    });
+    const harness = transactionHarness(
+      [
+        [],
+        [{ partyId }],
+        [],
+        [{ partyId }],
+        [party],
+        [existingCounterpartyRow],
+        [existingCounterpartyRow],
+        [],
+        [{ partyId }],
+        [party],
+        [existingRole],
+      ],
+      [],
+      [[]],
+    );
+
+    const result = yield* onboardCounterpartyCustomerRecord(harness.transaction, onboardInput());
+
+    expect(Predicate.isTagged(result, 'onboarded')).toBe(true);
+    if (!Predicate.isTagged(result, 'onboarded')) {
+      return;
+    }
+    expect(result.counterpartyCreated).toBe(false);
+    expect(result.rolePeriodCreated).toBe(false);
+    expect(harness.insertedTables).not.toContain('counterparty_role_periods');
+  }),
+);
+
+it.effect('rejects a non-equivalent overlapping CUSTOMER period', () =>
+  Effect.gen(function* overlappingRole() {
+    yield* TestClock.setTime(DateTime.toEpochMillis(DateTime.makeUnsafe('2026-09-03T00:00:00.000Z')));
+    const existingCounterpartyRow = { ...counterpartyRow, createdAt: date('2025-01-01T00:00:00.000Z') };
+    const party = { archivedAt: null, partyId, tenantId };
+    const existingRole = roleRow({
+      validFrom: date('2025-01-01T00:00:00.000Z'),
+      validTo: date('2026-06-01T00:00:00.000Z'),
+    });
+    const harness = transactionHarness(
+      [
+        [],
+        [{ partyId }],
+        [],
+        [{ partyId }],
+        [party],
+        [existingCounterpartyRow],
+        [existingCounterpartyRow],
+        [],
+        [{ partyId }],
+        [party],
+        [existingRole],
+      ],
+      [],
+      [[]],
+    );
+
+    const result = yield* onboardCounterpartyCustomerRecord(harness.transaction, onboardInput());
+
+    expect(Predicate.isTagged(result, 'overlap')).toBe(true);
+    if (!Predicate.isTagged(result, 'overlap')) {
+      return;
+    }
+    expect(result.roleType).toBe('CUSTOMER');
+    expect(harness.insertedTables).not.toContain('counterparty_role_periods');
+  }),
+);
+
+it.effect(
+  'returns persistence failure after a role write failure so the Action transaction can roll back context creation',
+  () =>
+    Effect.gen(function* roleWriteFailure() {
+      yield* TestClock.setTime(DateTime.toEpochMillis(DateTime.makeUnsafe('2026-09-03T00:00:00.000Z')));
+      const createdCounterparty = { ...counterpartyRow, createdAt: date('2026-09-03T00:00:00.000Z') };
+      const party = { archivedAt: null, partyId, tenantId };
+      const harness = transactionHarness(
+        [[], [{ partyId }], [], [{ partyId }], [party], [createdCounterparty], [], [{ partyId }], [party], []],
+        [],
+        [[createdCounterparty], []],
+      );
+
+      const failure = yield* onboardCounterpartyCustomerRecord(harness.transaction, onboardInput()).pipe(Effect.flip);
+
+      expect(Predicate.isTagged(failure, 'CounterpartyPersistenceUnavailable')).toBe(true);
+      expect(harness.insertedTables).toContain('counterparties');
+      expect(harness.insertedTables).toContain('counterparty_role_periods');
+    }),
 );

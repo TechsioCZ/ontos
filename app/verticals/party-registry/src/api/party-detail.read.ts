@@ -26,9 +26,9 @@ interface Services {
   readonly facts: (
     partyId: string,
     includeFactHistory: boolean,
-  ) => Effect.Effect<PartyDetailAssertions, PartyPersistenceUnavailableError>;
-  readonly find: (partyId: string) => Effect.Effect<PartyLookup, PartyPersistenceUnavailableError>;
-  readonly resolve: (partyId: string) => Effect.Effect<ResolvedPartyAlias, PartyAliasResolutionError>;
+  ) => Effect.Effect<PartyDetailAssertions, PartyPersistenceUnavailableError, never>;
+  readonly find: (partyId: string) => Effect.Effect<PartyLookup, PartyPersistenceUnavailableError, never>;
+  readonly resolve: (partyId: string) => Effect.Effect<ResolvedPartyAlias, PartyAliasResolutionError, never>;
 }
 
 const notFound = () =>

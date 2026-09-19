@@ -19,7 +19,10 @@ import {
 import type { PartyTransaction } from '../../src/db/types.ts';
 import { lockAndResolveClaims, lockTenantIdentityWrites } from '../../src/services/party-identifier-claim.service.ts';
 import { createOrMatchParty } from '../../src/services/party-matching-persistence.service.ts';
-import { addOfficialIdentifierRecord } from '../../src/services/party-official-identifier-persistence.service.ts';
+import {
+  acceptMatchingOfficialIdentifierRecord,
+  addOfficialIdentifierRecord,
+} from '../../src/services/party-official-identifier-persistence.service.ts';
 import { openBoundaryDatabases } from '../support/database-boundary.ts';
 
 const tenantId = 'bc100000-0000-4000-8000-000000000001';
@@ -127,5 +130,70 @@ it.live('real PostgreSQL identity locks serialize concurrent exact creates and r
       .from(partyIdentifierClaims)
       .where(eq(partyIdentifierClaims.tenantId, tenantId));
     expect(claims).toHaveLength(2);
+
+    const upgradeIdentifier = normalizeOfficialIdentifier({
+      identifierType: 'ICO',
+      value: '26168685',
+      verification: 'UNVERIFIED',
+    });
+    yield* scoped((transaction) =>
+      Effect.gen(function* seedUnverifiedIdentifier() {
+        yield* lockTenantIdentityWrites(transaction, tenantId);
+        return yield* addOfficialIdentifierRecord(transaction, tenantId, partyId, upgradeIdentifier, {
+          actionInvocationId: 'bc300000-0000-4000-8000-000000000005',
+          matchRuleVersion: 'party-exact-claims.v1',
+          partyType: 'ORGANIZATION',
+          principalId,
+          provenanceMethod: 'REGISTRY',
+          provenanceSource: 'identity-concurrency-test',
+          validFrom: candidate.validFrom,
+        });
+      }),
+    );
+    const accepted = yield* Effect.forEach(
+      ['bc300000-0000-4000-8000-000000000006', 'bc300000-0000-4000-8000-000000000007'],
+      (actionInvocationId) =>
+        scoped((transaction) =>
+          Effect.gen(function* concurrentUpgrade() {
+            yield* lockTenantIdentityWrites(transaction, tenantId);
+            yield* lockAndResolveClaims(transaction, tenantId, [{ ...upgradeIdentifier, verification: 'VERIFIED' }]);
+            return yield* acceptMatchingOfficialIdentifierRecord(
+              transaction,
+              tenantId,
+              partyId,
+              { ...upgradeIdentifier, verification: 'VERIFIED' },
+              {
+                actionInvocationId,
+                matchRuleVersion: 'party-exact-claims.v1',
+                partyType: 'ORGANIZATION',
+                principalId,
+                provenanceMethod: 'REGISTRY',
+                provenanceSource: 'identity-concurrency-test',
+                validFrom: candidate.validFrom,
+              },
+            );
+          }),
+        ),
+      { concurrency: 'unbounded' },
+    );
+    expect(accepted.map((result) => result._tag).toSorted()).toEqual(['reused', 'updated']);
+    const upgraded = yield* admin
+      .select()
+      .from(partyOfficialIdentifiers)
+      .where(eq(partyOfficialIdentifiers.tenantId, tenantId));
+    expect(upgraded.filter((row) => row.normalizedValue === '26168685')).toHaveLength(1);
+    const upgradedAssertion = upgraded.find((row) => row.normalizedValue === '26168685');
+    expect(upgradedAssertion?.verificationState).toBe('VERIFIED');
+    const upgradeClaims = yield* admin
+      .select()
+      .from(partyIdentifierClaims)
+      .where(eq(partyIdentifierClaims.tenantId, tenantId));
+    const exactUpgradeClaims = upgradeClaims.filter(
+      (claim) =>
+        claim.identifierTypeKey === 'ICO' && claim.namespace === 'CZ:ICO' && claim.normalizedValue === '26168685',
+    );
+    expect(exactUpgradeClaims).toHaveLength(1);
+    expect(exactUpgradeClaims[0]?.partyId).toBe(partyId);
+    expect(exactUpgradeClaims[0]?.officialIdentifierId).toBe(upgradedAssertion?.officialIdentifierId);
   }),
 );

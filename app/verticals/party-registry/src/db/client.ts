@@ -73,7 +73,7 @@ export const makePartyDatabase = Effect.fn('Client.makePartyDatabase')(function*
   };
 });
 
-export const PartyDatabaseLive = Layer.effect(
+export const PartyDatabaseLive: Layer.Layer<PartyDatabase, PartyDatabaseConnectionError, DatabaseConfig> = Layer.effect(
   PartyDatabase,
   Effect.gen(function* makePartyDatabaseService() {
     const configuration = yield* DatabaseConfig;

@@ -348,6 +348,22 @@ it.live('builds every declared handler and preserves owner-local CORS through th
         roleType: 'CUSTOMER',
         validFrom: '2026-09-07T00:00:00.000Z',
       },
+      '/party-registry/actions/counterparty-customer-onboard': {
+        counterpartyProvenance: {
+          evidenceReference: 'runtime-assembly-counterparty-proof',
+          method: 'DOCUMENT_REVIEW',
+          reason: 'Runtime assembly proof',
+          source: 'runtime-assembly-proof',
+        },
+        customerEvidence: {
+          evidenceReference: 'runtime-assembly-customer-proof',
+          method: 'PURCHASING_AGREEMENT',
+          reason: 'Runtime assembly proof',
+          source: 'runtime-assembly-proof',
+        },
+        partyRef,
+        validFrom: '2026-09-07T00:00:00.000Z',
+      },
       '/party-registry/actions/counterparty-role-end': {
         counterpartyRef,
         provenance,
@@ -411,6 +427,9 @@ it.live('builds every declared handler and preserves owner-local CORS through th
       '/reads/party-match': { candidate },
     } as const;
     for (const [index, endpoint] of endpoints.entries()) {
+      const priorOnboardEndpoint = endpoints
+        .slice(0, index)
+        .some(({ path }) => path === '/party-registry/actions/counterparty-customer-onboard');
       const callsBefore: number = actionCalls + actionCommitCalls + readCalls;
       const rawPayloadSchema = endpoint.payload.get('application/json')?.schemas[0];
       // Runtime HTTP descriptors erase codec types. These wire codecs require no services.
@@ -424,7 +443,7 @@ it.live('builds every declared handler and preserves owner-local CORS through th
             (yield* Schema.encodeEffect(payloadSchema)(
               FastCheck.sample(Schema.toArbitrary(payloadSchema)(FastCheck), {
                 numRuns: 1,
-                seed: index + 1,
+                seed: index + 1 - Number(priorOnboardEndpoint),
               })[0],
             )));
       const request =

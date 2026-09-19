@@ -48,7 +48,7 @@ const makeServices = (aliases: readonly PartyAliasLookupRow[], party: Party | nu
           currentFactAssertions: [],
           factHistory: Option.none(),
         }),
-      find: (partyId: string): Effect.Effect<PartyLookup> => {
+      find: (partyId: string): Effect.Effect<PartyLookup, never, never> => {
         lookups.push(partyId);
         return Effect.succeed(
           party?.partyRef.resourceId === partyId ? { _tag: 'found', value: party } : { _tag: 'not_found' },

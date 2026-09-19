@@ -3,6 +3,7 @@ import { addPartyOfficialIdentifierAction } from '../src/actions/add-party-offic
 import { archivePartyAction } from '../src/actions/archive-party.action.ts';
 import { confirmDuplicatePartiesAction } from '../src/actions/confirm-duplicate-parties.action.ts';
 import { correctPartyFactAction } from '../src/actions/correct-party-fact.action.ts';
+import { counterpartyCustomerOnboardAction } from '../src/actions/counterparty-customer-onboard.action.ts';
 import { counterpartyCreateAction } from '../src/actions/counterparty-create.action.ts';
 import { counterpartyRoleAddAction } from '../src/actions/counterparty-role-add.action.ts';
 import { counterpartyRoleEndAction } from '../src/actions/counterparty-role-end.action.ts';
@@ -31,6 +32,7 @@ export const partyCommandRegistrations = {
   archiveParty: archivePartyAction,
   confirmDuplicateParties: confirmDuplicatePartiesAction,
   correctPartyFact: correctPartyFactAction,
+  counterpartyCustomerOnboard: counterpartyCustomerOnboardAction,
   counterpartyCreate: counterpartyCreateAction,
   counterpartyRoleAdd: counterpartyRoleAddAction,
   counterpartyRoleEnd: counterpartyRoleEndAction,

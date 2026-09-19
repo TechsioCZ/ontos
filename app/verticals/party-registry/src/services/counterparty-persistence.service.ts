@@ -16,7 +16,11 @@ import {
   legalEntityRef,
 } from '../../shared/domain/counterparty-contract.ts';
 import { CounterpartyPersistenceUnavailable } from '../../shared/domain/counterparty-errors.ts';
-import { roleEndEvidenceIsSufficient, rolePeriodStorageStateAt } from '../../shared/domain/counterparty-role-period.ts';
+import {
+  roleEndEvidenceIsSufficient,
+  rolePeriodsOverlap,
+  rolePeriodStorageStateAt,
+} from '../../shared/domain/counterparty-role-period.ts';
 import type { CounterpartyRolePeriodRef } from '../../shared/resources/counterparty-role-period.ts';
 import type { CounterpartyRef } from '../../shared/resources/counterparty.ts';
 import { CounterpartyRefSchema } from '../../shared/resources/counterparty.ts';
@@ -46,29 +50,44 @@ const lookupResultSchema = <Value>(value: Schema.Schema<Value>) =>
 
 export type LookupResult<Value> = Schema.Schema.Type<ReturnType<typeof lookupResultSchema<Value>>>;
 
+const CreateCounterpartyPartyAliasSchema = Schema.TaggedStruct('party_alias', {
+  aliasPartyRef: PartyRefSchema,
+  canonicalPartyRef: PartyRefSchema,
+});
+const CounterpartyPartyArchivedSchema = Schema.TaggedStruct('party_archived', {
+  partyId: CounterpartyUuidSchema,
+});
+const CounterpartyPartyNotFoundSchema = Schema.TaggedStruct('party_not_found', {
+  partyId: CounterpartyUuidSchema,
+});
+const CreateCounterpartyFoundSchema = Schema.TaggedStruct('found', {
+  counterpartyRef: CounterpartyRefSchema,
+  created: Schema.Boolean,
+  legalEntityRef: LegalEntityRefSchema,
+  partyRef: PartyRefSchema,
+});
 const CreateCounterpartyResultSchema = Schema.Union([
-  Schema.TaggedStruct('party_alias', {
-    aliasPartyRef: PartyRefSchema,
-    canonicalPartyRef: PartyRefSchema,
-  }),
-  Schema.TaggedStruct('party_archived', { partyId: CounterpartyUuidSchema }),
-  Schema.TaggedStruct('party_not_found', { partyId: CounterpartyUuidSchema }),
-  Schema.TaggedStruct('found', {
-    counterpartyRef: CounterpartyRefSchema,
-    created: Schema.Boolean,
-    legalEntityRef: LegalEntityRefSchema,
-    partyRef: PartyRefSchema,
-  }),
+  CreateCounterpartyPartyAliasSchema,
+  CounterpartyPartyArchivedSchema,
+  CounterpartyPartyNotFoundSchema,
+  CreateCounterpartyFoundSchema,
 ]);
 export type CreateCounterpartyResult = typeof CreateCounterpartyResultSchema.Type;
 
+const CounterpartyNotFoundSchema = Schema.TaggedStruct('counterparty_not_found', {
+  counterpartyId: CounterpartyUuidSchema,
+});
+const CounterpartyRoleOverlapSchema = Schema.TaggedStruct('overlap', {
+  roleType: CounterpartyRoleTypeSchema,
+});
+const CounterpartyRoleFoundSchema = Schema.TaggedStruct('found', {
+  value: CounterpartyRolePeriodSchema,
+});
 const AddCounterpartyRoleResultSchema = Schema.Union([
-  Schema.TaggedStruct('counterparty_not_found', {
-    counterpartyId: CounterpartyUuidSchema,
-  }),
-  Schema.TaggedStruct('overlap', { roleType: CounterpartyRoleTypeSchema }),
-  Schema.TaggedStruct('party_archived', { partyId: CounterpartyUuidSchema }),
-  Schema.TaggedStruct('found', { value: CounterpartyRolePeriodSchema }),
+  CounterpartyNotFoundSchema,
+  CounterpartyRoleOverlapSchema,
+  CounterpartyPartyArchivedSchema,
+  CounterpartyRoleFoundSchema,
 ]);
 export type AddCounterpartyRoleResult = typeof AddCounterpartyRoleResultSchema.Type;
 
@@ -120,6 +139,30 @@ export interface AddCounterpartyRoleInput extends AcceptedActionEvidence {
   readonly validFrom: string;
   readonly validTo: null | string;
 }
+
+export interface CustomerOnboardInput extends AcceptedActionEvidence {
+  readonly counterpartyProvenance: CounterpartyProvenance;
+  readonly customerEvidence: CounterpartyProvenance;
+  readonly legalEntityId: string;
+  readonly partyId: string;
+  readonly tenantId: string;
+  readonly validFrom: string;
+  readonly validTo: null | string;
+}
+
+export const CustomerOnboardFoundSchema = Schema.TaggedStruct('onboarded', {
+  counterpartyCreated: Schema.Boolean,
+  counterpartyRef: CounterpartyRefSchema,
+  legalEntityRef: LegalEntityRefSchema,
+  partyRef: PartyRefSchema,
+  role: CounterpartyRolePeriodSchema,
+  rolePeriodCreated: Schema.Boolean,
+});
+
+export type CustomerOnboardResult =
+  | Exclude<CreateCounterpartyResult, { readonly _tag: 'found' }>
+  | Exclude<AddCounterpartyRoleResult, { readonly _tag: 'found' }>
+  | Schema.Schema.Type<typeof CustomerOnboardFoundSchema>;
 
 export interface EndCounterpartyRoleInput extends AcceptedActionEvidence {
   readonly counterpartyId: string;
@@ -590,6 +633,160 @@ export const addCounterpartyRoleRecord = Effect.fn('CounterpartyPersistenceServi
     return { _tag: 'found', value: roleDto(row) } as const;
   },
 );
+
+type CustomerOnboardContext = Extract<CreateCounterpartyResult, { readonly _tag: 'found' }>;
+
+const onboardCustomerRole = Effect.fn('CounterpartyPersistenceService.onboardCustomerRole')(function* onboardRole(
+  transaction: CounterpartyTransaction,
+  input: CustomerOnboardInput,
+  context: CustomerOnboardContext,
+  counterparty: CounterpartyRow,
+) {
+  const validFrom = instantAsDate(input.validFrom);
+  const validTo = input.validTo === null ? null : instantAsDate(input.validTo);
+  const existingRoles = yield* transaction
+    .select()
+    .from(counterpartyRolePeriods)
+    .where(
+      and(
+        eq(counterpartyRolePeriods.tenantId, input.tenantId),
+        eq(counterpartyRolePeriods.legalEntityId, input.legalEntityId),
+        eq(counterpartyRolePeriods.counterpartyId, context.counterpartyRef.resourceId),
+        eq(counterpartyRolePeriods.roleType, 'CUSTOMER'),
+        inArray(counterpartyRolePeriods.state, ['ACTIVE', 'ENDED']),
+      ),
+    )
+    .orderBy(asc(counterpartyRolePeriods.validFrom), asc(counterpartyRolePeriods.rolePeriodId))
+    .pipe(Effect.mapError(unavailable));
+  const overlapping = existingRoles.find((row) =>
+    rolePeriodsOverlap(
+      { validFrom: input.validFrom, validTo: input.validTo },
+      { validFrom: row.validFrom.toISOString(), validTo: row.validTo?.toISOString() ?? null },
+    ),
+  );
+  if (overlapping !== undefined) {
+    const exactEquivalent =
+      overlapping.validFrom.toISOString() === input.validFrom &&
+      (overlapping.validTo?.toISOString() ?? null) === input.validTo;
+    return exactEquivalent
+      ? CustomerOnboardFoundSchema.make({
+          counterpartyCreated: context.created,
+          counterpartyRef: context.counterpartyRef,
+          rolePeriodCreated: false,
+          legalEntityRef: context.legalEntityRef,
+          partyRef: context.partyRef,
+          role: roleDto(overlapping),
+        })
+      : CounterpartyRoleOverlapSchema.make({ roleType: 'CUSTOMER' });
+  }
+  const recordedAt = yield* DateTime.nowAsDate;
+  const lifecycle = rolePeriodStorageStateAt(
+    { validFrom: input.validFrom, validTo: input.validTo },
+    recordedAt.toISOString(),
+  );
+  const [row] = yield* transaction
+    .insert(counterpartyRolePeriods)
+    .values({
+      acceptedByActionInvocationId: input.actionInvocationId,
+      acceptedByPrincipalId: input.principalId,
+      addEvidenceRefs: [input.customerEvidence.evidenceReference],
+      addReason: input.customerEvidence.reason ?? input.customerEvidence.method,
+      counterpartyId: context.counterpartyRef.resourceId,
+      ...roleEndEvidence(
+        {
+          actionInvocationId: input.actionInvocationId,
+          policyVersion: input.policyVersion,
+          principalId: input.principalId,
+          provenance: input.customerEvidence,
+        },
+        recordedAt,
+        validTo !== null,
+      ),
+      isCurrent: lifecycle.isCurrent,
+      legalEntityId: input.legalEntityId,
+      policyVersion: input.policyVersion,
+      provenanceMethod: input.customerEvidence.method,
+      provenanceSource: input.customerEvidence.source,
+      roleType: 'CUSTOMER',
+      state: lifecycle.state,
+      tenantId: input.tenantId,
+      validFrom,
+      validTo,
+    })
+    .returning()
+    .pipe(Effect.mapError(unavailable));
+  if (row === undefined) {
+    return yield* unavailable();
+  }
+  yield* syncCounterpartyReadModel(transaction, counterparty);
+  yield* syncRoleReadModel(transaction, row);
+  return CustomerOnboardFoundSchema.make({
+    counterpartyCreated: context.created,
+    counterpartyRef: context.counterpartyRef,
+    rolePeriodCreated: true,
+    legalEntityRef: context.legalEntityRef,
+    partyRef: context.partyRef,
+    role: roleDto(row),
+  });
+});
+
+const onboardFoundCounterparty = Effect.fn('CounterpartyPersistenceService.onboardFoundCounterparty')(
+  function* onboardFound(
+    transaction: CounterpartyTransaction,
+    input: CustomerOnboardInput,
+    context: CustomerOnboardContext,
+  ) {
+    const counterparty = yield* findCounterpartyRow(
+      transaction,
+      input.tenantId,
+      input.legalEntityId,
+      context.counterpartyRef.resourceId,
+      true,
+    );
+    if (Option.isNone(counterparty)) {
+      return CounterpartyNotFoundSchema.make({
+        counterpartyId: context.counterpartyRef.resourceId,
+      });
+    }
+    const resolvedParty = yield* resolveCanonicalParty(transaction, input.tenantId, counterparty.value.partyId);
+    if (Option.isNone(resolvedParty)) {
+      return yield* unavailable();
+    }
+    if (resolvedParty.value.archivedAt !== null) {
+      return CounterpartyPartyArchivedSchema.make({ partyId: resolvedParty.value.partyId });
+    }
+    return yield* onboardCustomerRole(transaction, input, context, counterparty.value);
+  },
+);
+
+/**
+ * Compose Counterparty and CUSTOMER writes under the Action runtime's one transaction. The
+ * Counterparty row is locked before inspecting periods, so concurrent onboarding requests cannot
+ * both decide that the same period is new.
+ */
+export const onboardCounterpartyCustomerRecord = Effect.fn(
+  'CounterpartyPersistenceService.onboardCounterpartyCustomerRecord',
+)(function* onboardCounterpartyCustomer(
+  transaction: CounterpartyTransaction,
+  input: CustomerOnboardInput,
+): Effect.fn.Return<CustomerOnboardResult, CounterpartyPersistenceUnavailable> {
+  const contextResult = yield* createCounterpartyRecord(transaction, {
+    actionInvocationId: input.actionInvocationId,
+    legalEntityId: input.legalEntityId,
+    partyId: input.partyId,
+    policyVersion: input.policyVersion,
+    principalId: input.principalId,
+    provenance: input.counterpartyProvenance,
+    tenantId: input.tenantId,
+  });
+  return yield* Match.value(contextResult).pipe(
+    Match.tag('found', (context) => onboardFoundCounterparty(transaction, input, context)),
+    Match.tag('party_alias', (failure) => Effect.succeed(failure)),
+    Match.tag('party_archived', (failure) => Effect.succeed(failure)),
+    Match.tag('party_not_found', (failure) => Effect.succeed(failure)),
+    Match.exhaustive,
+  );
+});
 
 const repeatsRecordedRoleEnd = (current: RolePeriodRow, input: EndCounterpartyRoleInput, validTo: Date): boolean =>
   current.validTo !== null &&

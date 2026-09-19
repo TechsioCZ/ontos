@@ -65,7 +65,12 @@ it.layer(NodeFileSystem.layer)('api-integration-command-contract', (suite) => {
         title: 'Canonical Party required',
         type: 'urn:ontos:party:alias-write-rejected',
       };
-      const decodedProblem = yield* Schema.decodeUnknownEffect(PartyCommandAliasWriteRejectedProblemSchema)(input);
+      const decodedProblemEffect: Effect.Effect<
+        typeof PartyCommandAliasWriteRejectedProblemSchema.Type,
+        Schema.SchemaError,
+        never
+      > = Schema.decodeUnknownEffect(PartyCommandAliasWriteRejectedProblemSchema)(input);
+      const decodedProblem = yield* decodedProblemEffect;
       expect(Schema.is(PartyCommandAliasWriteRejectedProblemSchema)(decodedProblem)).toBe(true);
       expect(Struct.omit(decodedProblem, ['_tag'])).toEqual(Struct.omit(input, ['_tag']));
     }),
