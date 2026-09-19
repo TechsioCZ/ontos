@@ -1,23 +1,30 @@
-import { Effect, Schema } from 'effect';
+import { DateTime, Effect, Schema } from 'effect';
 import { expect, it } from 'effect-rstest';
 
 import { CommercePortalAuthAccountLookupService } from '../../api/portal-auth/provider/account-lookup-service.ts';
 import type { CommercePortalAuthAccountLookup } from '../../api/portal-auth/provider/account-lookup-service.ts';
 import { CommercePortalAuthAccountCreationUnavailable } from '../../api/portal-auth/provider/account-creation-unavailable.ts';
 import {
+  CommercePortalAccountSubjectSchema,
   EnrollmentActionInvocationIdSchema,
   EnrollmentAttemptIdSchema,
+  EnrollmentKeySchema,
   EnrollmentModuleKeySchema,
   EnrollmentPrincipalIdSchema,
   EnrollmentTenantIdSchema,
   EnrollmentTransitionKeySchema,
 } from '../../shared/enrollment-contracts.ts';
+import type { EnrollmentAttemptSnapshot } from '../../shared/enrollment-contracts.ts';
 import {
   CommerceEnrollmentAttemptNotFound,
   CommerceEnrollmentAttemptUnavailable,
 } from '../../src/enrollment/attempts/errors.ts';
 import type { CommerceEnrollmentAttemptError } from '../../src/enrollment/attempts/errors.ts';
-import { makeCommerceEnrollmentPortalAuthOwnerPreparationPort } from '../../src/enrollment/orchestration/owner-transition-composition.ts';
+import {
+  makeCommerceEnrollmentPortalAuthOwnerPreparationPort,
+  providerObservationFor,
+} from '../../src/enrollment/orchestration/owner-transition-composition.ts';
+import { CommerceEnrollmentOwnerEffectIndeterminate } from '../../src/enrollment/orchestration/owner-transition-errors.ts';
 import { CommerceEnrollmentOwnerTransactionRunner } from '../../src/enrollment/orchestration/owner-transition-production.ts';
 import {
   CLAIM_PORTAL_ENROLLMENT_TRANSITION_ACTION_KEY,
@@ -123,5 +130,49 @@ it.effect('opens exactly one owner transaction for the claim phase and never rea
     );
     yield* port.prepare(claimBinding);
     expect(transactions).toBe(1);
+  }),
+);
+
+const observedAttempt = (overrides: Partial<EnrollmentAttemptSnapshot> = {}): EnrollmentAttemptSnapshot => ({
+  createdAt: DateTime.makeUnsafe('2026-09-16T10:00:00.000Z'),
+  createdByPrincipalId: actorPrincipalId,
+  intentDigest: 'a'.repeat(64),
+  intentKey: Schema.decodeSync(EnrollmentKeySchema)('portal.enrollment.start'),
+  journey: 'RETAIL_SELF_ENROLLMENT',
+  portalEnrollmentAttemptId: attemptId,
+  revision: 1,
+  state: 'RECONCILIATION_REQUIRED',
+  tenantId,
+  updatedAt: DateTime.makeUnsafe('2026-09-16T10:00:00.000Z'),
+  ...overrides,
+});
+
+it.effect('keeps a creation with no recorded subject indeterminate instead of calling it absent', () =>
+  Effect.gen(function* staysIndeterminateWithoutASubject() {
+    const failure = yield* Effect.flip(providerObservationFor(observedAttempt(), accountLookupNeverRead));
+    expect(Schema.is(CommerceEnrollmentOwnerEffectIndeterminate)(failure)).toBe(true);
+    expect(failure.code).toBe('provider_account_reconciliation_indeterminate');
+  }),
+);
+
+it.effect('resolves a recorded subject through the exact provider directory lookup', () =>
+  Effect.gen(function* readsTheProviderDirectory() {
+    const accountSubject = Schema.decodeSync(CommercePortalAccountSubjectSchema)({
+      authenticationNamespaceId: 'ontos.commerce.portal.better-auth.v1',
+      providerSubjectId: 'provider-user-a1',
+      subjectType: 'user',
+    });
+    let lookedUp: string | undefined;
+    const lookup: CommercePortalAuthAccountLookup = {
+      ...accountLookupNeverRead,
+      existsByProviderSubject: ({ providerSubjectId }) =>
+        Effect.sync(() => {
+          lookedUp = providerSubjectId;
+          return true;
+        }),
+    };
+    const observation = yield* providerObservationFor(observedAttempt({ accountSubject }), lookup);
+    expect(lookedUp).toBe('provider-user-a1');
+    expect(observation.outcome).toBe('FOUND');
   }),
 );

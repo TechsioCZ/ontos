@@ -1,8 +1,22 @@
 import posixPath from 'node:path/posix';
 
 import { NodeServices } from '@effect/platform-node';
-import { Array as EffectArray, Console, Effect, Exit, FileSystem, ManagedRuntime, Order, Path, Schema } from 'effect';
+import {
+  Array as EffectArray,
+  Console,
+  Effect,
+  Exit,
+  FileSystem,
+  ManagedRuntime,
+  Option,
+  Order,
+  Path,
+  Predicate,
+  Schema,
+} from 'effect';
 import type { PlatformError } from 'effect/PlatformError';
+import { parseSync, Visitor } from 'oxc-parser';
+import type { ImportExpression } from 'oxc-parser';
 
 /**
  * Executable audit for the lean-Core architecture decision (issue #337 /
@@ -53,41 +67,71 @@ const collect = (root: string): Effect.Effect<readonly string[], PlatformError, 
 
 const sourceLine = (source: string, index: number): number => source.slice(0, index).split('\n').length;
 
-const importStatement =
-  /(?:^|\n)\s*(?:import\s+type\s|export\s+type\s)?(?:import|export)\b[^;\n]*?from\s+['"](?<specifier>[^'"]+)['"]/gu;
-const dynamicImportStatement = /\bimport\s*\(\s*['"](?<specifier>[^'"]+)['"]\s*\)/gu;
-
 interface ImportOccurrence {
   readonly index: number;
   readonly isTypeOnly: boolean;
   readonly specifier: string;
 }
 
-const importsIn = (source: string): readonly ImportOccurrence[] => {
-  const occurrences: ImportOccurrence[] = [];
-  for (const match of source.matchAll(importStatement)) {
-    const specifier = match.groups?.specifier;
-    if (specifier === undefined) {
-      continue;
-    }
-    occurrences.push({
-      // The leading `(?:^|\n)` alternative consumes the newline that ends the
-      // previous line as part of the match, so `match.index` points at that
-      // newline rather than at the `import`/`export` keyword. Skip past it so
-      // `sourceLine` counts the newline toward the statement's own line.
-      index: source[match.index] === '\n' ? match.index + 1 : match.index,
-      isTypeOnly: /^\s*(?:import|export)\s+type\s/u.test(match[0].replace(/^\n/u, '')),
-      specifier,
-    });
+const OccurrenceIndexOrder = Order.mapInput(Order.Number, (occurrence: ImportOccurrence) => occurrence.index);
+
+type ProgramStatement = ReturnType<typeof parseSync>['program']['body'][number];
+
+const occurrenceForStatement = (statement: ProgramStatement): ImportOccurrence | undefined => {
+  if (statement.type === 'ImportDeclaration') {
+    return {
+      index: statement.start,
+      isTypeOnly: statement.importKind === 'type',
+      specifier: statement.source.value,
+    };
   }
-  for (const match of source.matchAll(dynamicImportStatement)) {
-    const specifier = match.groups?.specifier;
-    if (specifier === undefined) {
-      continue;
-    }
-    occurrences.push({ index: match.index, isTypeOnly: false, specifier });
+  if (statement.type === 'ExportNamedDeclaration' && statement.source !== null) {
+    return {
+      index: statement.start,
+      isTypeOnly: statement.exportKind === 'type',
+      specifier: statement.source.value,
+    };
   }
-  return occurrences;
+  if (statement.type === 'ExportAllDeclaration') {
+    return {
+      index: statement.start,
+      isTypeOnly: statement.exportKind === 'type',
+      specifier: statement.source.value,
+    };
+  }
+  return undefined;
+};
+
+/**
+ * Syntax-aware import/export/dynamic-import collection via oxc-parser. This
+ * covers every specifier-bearing form: `import ... from`, `export ... from`,
+ * `export * from`, side-effect imports (`import '...'`, no bindings), and
+ * dynamic `import('...')` with a string-literal source — including forms
+ * spread across multiple lines, which a line-oriented regex cannot see.
+ * `import type` / `export type` statements are still classified as
+ * type-only so callers can keep allowing them.
+ */
+const importsIn = (file: string, source: string): readonly ImportOccurrence[] => {
+  const parsed = parseSync(file, source, {
+    astType: 'ts',
+    lang: file.endsWith('.tsx') ? 'tsx' : 'ts',
+    sourceType: 'module',
+  });
+  if (parsed.errors.length > 0) {
+    return [];
+  }
+  const occurrences = parsed.program.body.flatMap((statement) => {
+    const occurrence = occurrenceForStatement(statement);
+    return occurrence === undefined ? [] : [occurrence];
+  });
+  const dynamicOccurrences: ImportOccurrence[] = [];
+  const recordDynamicImportExpression = (node: ImportExpression): void => {
+    if (node.source.type === 'Literal' && Predicate.isString(node.source.value)) {
+      dynamicOccurrences.push({ index: node.start, isTypeOnly: false, specifier: node.source.value });
+    }
+  };
+  new Visitor({ ImportExpression: recordDynamicImportExpression }).visit(parsed.program);
+  return EffectArray.sort([...occurrences, ...dynamicOccurrences], OccurrenceIndexOrder);
 };
 
 // --- Core external-dependency positive pin -------------------------------
@@ -126,7 +170,7 @@ const recordCoreSourceViolations = (
   if (!relative.startsWith(`${coreSourceRoot}/`)) {
     return;
   }
-  for (const { index, specifier } of importsIn(source)) {
+  for (const { index, specifier } of importsIn(relative, source)) {
     const isExempt = specifier.startsWith('.') || isAllowedCoreExternalSpecifier(specifier);
     if (isExempt) {
       continue;
@@ -189,9 +233,68 @@ const checkCorePackageJson = (
 
 // --- Non-Commerce -> Commerce private-implementation boundary -------------
 
-const nonCommerceOwnerRoots = ['apps/shell-super-app', 'verticals/party-registry', 'verticals/payment-term-catalog'];
+const commerceVerticalRoot = 'verticals/commerce-customer-context';
+const nonCommerceOwnerParents = ['apps', 'verticals'];
 const commercePackageSpecifierPrefix = '@app/commerce-customer-context';
 const commercePrivateImplementation = /(?:^|\/)verticals\/commerce-customer-context\/(?:src|api)\//u;
+
+/**
+ * Every directory under `apps/` and `verticals/` owns its own unit and is
+ * subject to the private-implementation boundary — except Commerce's own
+ * vertical, which is the thing being bounded. Deriving this from the
+ * workspace layout (instead of a hard-coded list) means a newly added
+ * app/vertical is covered automatically; the composition-seam allowlist
+ * below stays explicit data since those exceptions must be reviewed one at
+ * a time.
+ */
+const ownerRootUnderParent = (
+  fileSystem: FileSystem.FileSystem,
+  path: Path.Path,
+  parentPath: string,
+  parent: string,
+  entry: string,
+): Effect.Effect<Option.Option<string>, PlatformError> =>
+  Effect.gen(function* ownerRootUnderParentProgram() {
+    const relative = `${parent}/${entry}`;
+    if (relative === commerceVerticalRoot) {
+      return Option.none();
+    }
+    const info = yield* fileSystem.stat(path.join(parentPath, entry));
+    return info.type === 'Directory' ? Option.some(relative) : Option.none();
+  });
+
+const ownerRootsUnderParent = (
+  fileSystem: FileSystem.FileSystem,
+  path: Path.Path,
+  root: string,
+  parent: string,
+): Effect.Effect<readonly string[], PlatformError> =>
+  Effect.gen(function* ownerRootsUnderParentProgram() {
+    const parentPath = path.join(root, parent);
+    const exists = yield* fileSystem.exists(parentPath);
+    if (!exists) {
+      return [];
+    }
+    const entries = yield* fileSystem.readDirectory(parentPath);
+    const ownerRoots = yield* Effect.all(
+      entries.map((entry) => ownerRootUnderParent(fileSystem, path, parentPath, parent, entry)),
+      { concurrency: 32 },
+    );
+    return EffectArray.getSomes(ownerRoots);
+  });
+
+const discoverNonCommerceOwnerRoots = (
+  fileSystem: FileSystem.FileSystem,
+  root: string,
+  path: Path.Path,
+): Effect.Effect<readonly string[], PlatformError> =>
+  Effect.gen(function* discoverNonCommerceOwnerRootsProgram() {
+    const rootsByParent = yield* Effect.all(
+      nonCommerceOwnerParents.map((parent) => ownerRootsUnderParent(fileSystem, path, root, parent)),
+      { concurrency: 32 },
+    );
+    return EffectArray.sort(rootsByParent.flat(), Order.String);
+  });
 
 const CommercePackageExportsSchema = Schema.Struct({
   exports: Schema.optional(Schema.Record(Schema.String, Schema.String)),
@@ -264,6 +367,7 @@ const recordNonCommerceImportViolations = (
   relative: string,
   source: string,
   commerceExports: ReadonlyMap<string, string>,
+  nonCommerceOwnerRoots: readonly string[],
 ): void => {
   const isOwnedByNonCommerceUnit = nonCommerceOwnerRoots.some((ownerRoot) => relative.startsWith(`${ownerRoot}/`));
   if (!isOwnedByNonCommerceUnit || isTestSource(relative)) {
@@ -273,12 +377,14 @@ const recordNonCommerceImportViolations = (
   if (!underSrcOrApi) {
     return;
   }
-  for (const { index, isTypeOnly, specifier } of importsIn(source)) {
+  for (const { index, isTypeOnly, specifier } of importsIn(relative, source)) {
     const resolvedTarget = commerceExports.get(specifier);
     const resolvedRelativeSpecifier = specifier.startsWith('.')
       ? posixPath.normalize(posixPath.join(posixPath.dirname(relative), specifier))
       : undefined;
-    const targetsCommercePrivateImplementation = specifier.startsWith(`${commercePackageSpecifierPrefix}/`)
+    const isCommercePackageSpecifier =
+      specifier === commercePackageSpecifierPrefix || specifier.startsWith(`${commercePackageSpecifierPrefix}/`);
+    const targetsCommercePrivateImplementation = isCommercePackageSpecifier
       ? resolvedTarget !== undefined && commercePrivateImplementation.test(resolvedTarget)
       : commercePrivateImplementation.test(resolvedRelativeSpecifier ?? specifier);
     const isViolation =
@@ -329,18 +435,22 @@ export const checkLeanCoreDependencies = (
       violations.push(violation);
     };
 
-    const [files, commerceExports] = yield* Effect.all([collect(root), readCommerceExportsMap(fileSystem, root, path)]);
+    const [files, commerceExports, nonCommerceOwnerRoots] = yield* Effect.all([
+      collect(root),
+      readCommerceExportsMap(fileSystem, root, path),
+      discoverNonCommerceOwnerRoots(fileSystem, root, path),
+    ]);
     const sourcePairs = yield* Effect.all(
       files.map((file) =>
         fileSystem.readFileString(file, 'utf-8').pipe(Effect.map((source) => [file, source] as const)),
       ),
-      { concurrency: 'unbounded' },
+      { concurrency: 32 },
     );
 
     for (const [file, source] of sourcePairs) {
       const relative = path.relative(root, file).split(path.sep).join('/');
       recordCoreSourceViolations(record, relative, source);
-      recordNonCommerceImportViolations(record, relative, source, commerceExports);
+      recordNonCommerceImportViolations(record, relative, source, commerceExports, nonCommerceOwnerRoots);
     }
     yield* checkCorePackageJson(fileSystem, root, path, record);
 

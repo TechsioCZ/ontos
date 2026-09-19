@@ -37,6 +37,10 @@ import { portalAuthMfaApiLive } from './portal-auth/provider/mfa/http.ts';
 import { CommercePortalAuthMfaProviderLive } from './portal-auth/provider/mfa/better-auth-provider.ts';
 import { CommercePortalAuthMfaServiceLive } from './portal-auth/provider/mfa/service.ts';
 import { CommercePortalAuthMfaStepUpCodeVerifierLive } from './portal-auth/provider/mfa/step-up-verifier.ts';
+import { portalAuthEnrollmentApiLive } from './portal-auth/enrollment/http.ts';
+import { CommercePortalAuthAccountCreationService } from './portal-auth/provider/account-create.ts';
+import { CommercePortalAuthAccountCreationUnavailable } from './portal-auth/provider/account-creation-unavailable.ts';
+import { CommercePortalAuthRecoveryReconciliationServiceLive } from './portal-auth/provider/recovery/reconciliation.ts';
 import { portalAuthRecoveryApiLive } from './portal-auth/provider/recovery/http.ts';
 import {
   CommercePortalAuthRecoveryProviderLive,
@@ -227,6 +231,9 @@ const commercePortalAuthRealmPortsLive = Layer.mergeAll(
   CommercePortalAuthMfaStepUpCodeVerifierLive,
   CommercePortalAuthRecoveryProviderLive,
   CommercePortalAuthRecoveryRateLimitLive,
+  // The recovery service reads this authority, so it is published one tier beneath it, beside the
+  // owner store it is built from rather than alongside its own consumer.
+  CommercePortalAuthRecoveryReconciliationServiceLive,
   CommercePortalAuthStepUpHttpProviderUnavailableLive,
 ).pipe(Layer.provideMerge(commercePortalAuthProviderRealmLive));
 const commercePortalAuthLifecycleLive = CommercePortalAuthSessionLifecycleLive.pipe(
@@ -302,6 +309,23 @@ const deploymentPortalAuthRuntimeLive = Layer.unwrap(
   ),
 );
 
+/**
+ * The private provider account-creation capability the enrollment start route dispatches through.
+ * It is fail-closed until the provider sign-up bridge and the Attempt-scoped enrollment proof
+ * service are installed in this composition: the start route still creates the durable Attempt and
+ * durably claims its `provider.account.create` transition under ordinary governance, and then
+ * answers the retryable 503 at the exact seam that is still missing rather than silently accepting
+ * a credential it has nowhere to place. No caller can reach a provider effect through this leaf.
+ */
+const commercePortalAuthAccountCreationUnavailableLive = Layer.succeed(CommercePortalAuthAccountCreationService, {
+  createAccount: () =>
+    Effect.fail(
+      new CommercePortalAuthAccountCreationUnavailable({
+        reason: 'The Commerce portal account creation capability is not installed in this deployment',
+      }),
+    ),
+});
+
 const runtimeObservabilityLive = Layer.mergeAll(
   Logger.layer([Logger.defaultLogger, Logger.tracerLogger]),
   Layer.succeed(Tracer.Tracer, Tracer.make({ span: (options) => new Tracer.NativeSpan(options) })),
@@ -341,7 +365,7 @@ const actionAuthorizationPreflightDatabaseWithCoreLive = ActionAuthorizationPref
 );
 
 /** Each Action owns its prepared evidence and runtime factory; persistence stays deployment-scoped. */
-export const commerceEnrollmentActionRuntimeLive: Layer.Layer<
+const commerceEnrollmentActionRuntimeLive: Layer.Layer<
   ActionRuntime,
   never,
   | ActionRuntime
@@ -523,6 +547,21 @@ export const makeCommerceCustomerContextApiRuntime = (
     portalAuthMfaApiLive.pipe(GovernedReadLayer.provide(portalAuthRuntimeLive)),
     portalAuthRecoveryApiLive.pipe(GovernedReadLayer.provide(portalAuthRuntimeLive)),
     portalAuthStepUpApiLive.pipe(GovernedReadLayer.provide(portalAuthRuntimeLive)),
+    /**
+     * Enrollment is the one portal group that is also a governed Action caller: it reads the realm
+     * (trusted origins, the budget and the provider account-creation capability) and runs the
+     * `start-portal-enrollment` and `claim-portal-enrollment-transition` Actions through the same
+     * enrollment-aware Action runtime every other governed route uses. A deployment without the
+     * realm gets the fail-closed realm here exactly as the other four groups do.
+     */
+    portalAuthEnrollmentApiLive.pipe(
+      GovernedReadLayer.provide(commercePortalAuthAccountCreationUnavailableLive),
+      GovernedReadLayer.provide(portalAuthRuntimeLive),
+      GovernedReadLayer.provide(governedActionRuntimeLive),
+      GovernedReadLayer.provide(
+        commerceEnrollmentOwnerTransactionRunnerProductionLive.pipe(GovernedReadLayer.provide(DatabaseConfigLive)),
+      ),
+    ),
     // <generated-governed-http-handler-layers>
     addSavedAddressActionApiLive.pipe(GovernedReadLayer.provide(governedActionRuntimeLive)),
     archiveCustomerGroupActionApiLive.pipe(GovernedReadLayer.provide(governedActionRuntimeLive)),

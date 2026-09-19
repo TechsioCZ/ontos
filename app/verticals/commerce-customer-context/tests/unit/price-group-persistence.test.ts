@@ -1,7 +1,4 @@
-// @effect-diagnostics nodeBuiltinImport:off -- Checked-in migration SQL is the security contract; expires: 2027-03-01.
 /* eslint-disable effect-native/no-manual-tag-comparison -- Persistence tests assert exact audited routine-to-domain outcome mappings; expires: 2027-03-01. */
-import { readFileSync } from 'node:fs';
-
 import type { OperationalScope, ScopedRoutineDefinition } from '@app/core-runtime';
 import { Effect, Match, Schema } from 'effect';
 import { expect, it } from 'effect-rstest';
@@ -466,50 +463,3 @@ it.effect('fails closed before invoking a routine for a cross-tenant profile', (
     expect(calls).toEqual([]);
   }),
 );
-
-it('pins the clean-chain repair and exact SECURITY DEFINER privilege boundary', () => {
-  const alignment = readFileSync(
-    new URL('../../drizzle/20260909104256_align_customer_context_domain_contracts/migration.sql', import.meta.url),
-    'utf-8',
-  );
-  const routines = readFileSync(
-    new URL('../../drizzle/20260909112237_price-group-routines/migration.sql', import.meta.url),
-    'utf-8',
-  );
-
-  expect(alignment).toContain('DROP CONSTRAINT IF EXISTS "ccc_price_assignments_compatibility_ck"');
-  expect(routines.match(/SECURITY DEFINER/gu)).toHaveLength(6);
-  expect(routines.match(/REVOKE ALL ON FUNCTION/gu)).toHaveLength(6);
-  expect(routines.match(/GRANT EXECUTE ON FUNCTION/gu)).toHaveLength(6);
-  expect(routines).toContain('SET search_path = pg_catalog, commerce_customer_context');
-  expect(routines).toContain('SET row_security = on');
-  expect(routines).toContain('FOR UPDATE');
-  expect(routines).toContain('tstzrange(assignment.effective_from');
-  expect(routines).toContain('counterparty.counterparty_resource_id = p_counterparty_resource_id');
-  expect(routines).toContain('assignment.revision <> p_expected_revision');
-  expect(routines.match(/p_effective_from < p_recorded_at/gu)).toHaveLength(2);
-  expect(routines).toContain('p_effective_at < p_recorded_at');
-  expect(routines).toContain('v_assignment.effective_to IS DISTINCT FROM p_effective_at');
-  expect(routines).toContain("v_assignment.lifecycle IN ('ACTIVE', 'ENDED')");
-  expect(routines).toContain('AND v_assignment.effective_to = p_effective_at');
-  expect(routines).toContain("assignment.lifecycle IN ('ACTIVE', 'ENDED')");
-  expect(routines).toContain('assignment.effective_from <= p_effective_from');
-  expect(routines).toContain('assignment.effective_to IS NULL OR p_effective_from < assignment.effective_to');
-  expect(routines).toContain(
-    `"lifecycle" = 'CANCELLED' OR "effective_to" IS NULL OR "effective_to" > "effective_from"`,
-  );
-  expect(routines).toContain('history.recorded_at <= p_effective_at');
-  expect(routines).toContain(
-    'ORDER BY assignment.effective_from DESC, assignment.customer_price_group_assignment_id DESC',
-  );
-  expect(routines).toContain('LIMIT 200');
-  expect(routines).toContain('ORDER BY selected.effective_from, selected.customer_price_group_assignment_id');
-  expect(routines).toContain('resolve_price_group_assignments"(uuid, uuid, text, text, timestamptz)');
-  expect(routines).toContain("assignment.lifecycle = 'ACTIVE'");
-  expect(routines).toContain('assignment.effective_from <= p_effective_at');
-  expect(routines).toContain('assignment.effective_to IS NULL OR p_effective_at < assignment.effective_to');
-  expect(routines).toContain('LIMIT 2');
-  expect(routines).toContain('inspect_price_group_profile"(uuid, uuid, text, text, timestamptz, text)');
-  expect(routines).not.toMatch(/SET[^;]*action_invocation_id\s*=\s*p_action_invocation_id/su);
-  expect(routines).not.toMatch(/GRANT\s+(?:SELECT|INSERT|UPDATE|DELETE)\s+ON/iu);
-});

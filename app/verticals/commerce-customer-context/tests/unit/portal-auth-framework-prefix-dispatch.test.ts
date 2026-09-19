@@ -14,13 +14,16 @@ import { expect, it } from 'effect-rstest';
 import { CommercePortalAuthConfig } from '../../api/portal-auth/provider/config-service.ts';
 import {
   CommercePortalAuthRecoveryProviderService,
+  CommercePortalAuthRecoveryReconciliationService,
   CommercePortalAuthRecoveryService,
   CommercePortalAuthRecoveryStoreService,
-  makeCommercePortalAuthRecoveryProvider,
   makeCommercePortalAuthRecoveryService,
   portalAuthRecoveryApiLive,
 } from '../../api/portal-auth/provider/recovery/index.ts';
-import { makeCommercePortalAuthRecoveryRateLimit } from '../../api/portal-auth/provider/recovery/provider-service.ts';
+import {
+  makeCommercePortalAuthRecoveryProvider,
+  makeCommercePortalAuthRecoveryRateLimit,
+} from '../../api/portal-auth/provider/recovery/provider-service.ts';
 import { CommercePortalAuthRecoveryRateLimitService } from '../../api/portal-auth/rate-limit-service.ts';
 import type { CommercePortalAuthRecoveryStore } from '../../api/portal-auth/provider/recovery/index.ts';
 import { makeCommercePortalAuthOptions } from '../../api/portal-auth/provider/auth.ts';
@@ -94,8 +97,12 @@ it.effect('serves prefixed recovery routes through the owner group and rejects a
       registerEmailVerificationToken: () => Effect.succeed(true),
       reserveEmailVerificationSubject: () => Effect.succeed(true),
     };
+    // This store implements none of the optional ledger-evidence methods detection reads, so the
+    // deployed reconciliation would answer exactly this: nothing to reconcile.
+    const reconciliation = { detect: () => Effect.succeed(Option.none()) };
     const recovery = yield* makeCommercePortalAuthRecoveryService().pipe(
       Effect.provideService(CommercePortalAuthRecoveryProviderService, makeCommercePortalAuthRecoveryProvider(auth)),
+      Effect.provideService(CommercePortalAuthRecoveryReconciliationService, reconciliation),
       Effect.provideService(CommercePortalAuthRecoveryStoreService, store),
     );
     const apiLayer = HttpApiBuilder.layer(recoveryTransportApi).pipe(

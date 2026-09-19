@@ -27,6 +27,7 @@ import type {
 import { commerceEnrollmentPortalAuthOwnerReconciliationForLookup } from './provider-owner-effect.ts';
 import type { CommerceEnrollmentProviderOwnerReconciliationObservation } from './provider-owner-effect.ts';
 import {
+  CommerceEnrollmentOwnerEffectIndeterminate,
   CommerceEnrollmentOwnerEffectRejected,
   CommerceEnrollmentOwnerEffectUnavailable,
 } from './owner-transition-errors.ts';
@@ -98,13 +99,13 @@ const evidenceReferenceOf = (
  * directory; email continuity and a fresh sign-up retry are deliberately outside it, so a lost
  * provider response can never be resolved from a login identifier.
  */
-const providerObservationFor = Effect.fn('CommerceEnrollmentPortalAuthOwnerPreparation.providerObservation')(
+export const providerObservationFor = Effect.fn('CommerceEnrollmentPortalAuthOwnerPreparation.providerObservation')(
   function* providerObservationEffect(
     attempt: EnrollmentAttemptSnapshot,
     accountLookup: CommercePortalAuthAccountLookup,
   ): Effect.fn.Return<
     CommerceEnrollmentProviderOwnerReconciliationObservation,
-    CommerceEnrollmentOwnerEffectUnavailable
+    CommerceEnrollmentOwnerEffectIndeterminate | CommerceEnrollmentOwnerEffectUnavailable
   > {
     const evidenceRef = yield* evidenceReferenceOf(attempt).pipe(
       Effect.mapError(
@@ -117,7 +118,13 @@ const providerObservationFor = Effect.fn('CommerceEnrollmentPortalAuthOwnerPrepa
     );
     const { accountSubject } = attempt;
     if (accountSubject === undefined) {
-      return { evidenceRef, outcome: 'NOT_FOUND' as const };
+      // A creation that committed at the provider and lost its response records no subject, so
+      // there is nothing to key the exact lookup on. Absent that key the provider's state is
+      // unknown, and calling it NOT_FOUND would authorize a second account for the same Attempt.
+      return yield* new CommerceEnrollmentOwnerEffectIndeterminate({
+        code: 'provider_account_reconciliation_indeterminate',
+        reason: 'The Attempt records no provider subject to correlate the original creation by',
+      });
     }
     const persisted = yield* accountLookup
       .existsByProviderSubject({ providerSubjectId: accountSubject.providerSubjectId })

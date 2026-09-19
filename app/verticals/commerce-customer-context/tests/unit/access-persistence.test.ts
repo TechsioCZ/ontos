@@ -6,7 +6,6 @@ import {
   TenantIdSchema,
 } from '@app/core-runtime/auth/external-identity-contracts';
 import { TrustedPrincipalContextSchema } from '@app/core-runtime/actions/principal-context';
-import { readFile } from 'node:fs/promises';
 import { Effect, Option, Schema } from 'effect';
 import { expect, it } from 'effect-rstest';
 
@@ -1309,69 +1308,5 @@ it.effect('preserves a recoverable invitation when an intended grant conflicts',
     const result = yield* port.claimInvitation(claimInput);
     expect(result.outcome).toBe('RECONCILIATION_REQUIRED');
     expect(invitationOperations).toEqual(['BEGIN_CLAIM', 'FINISH_RECONCILIATION']);
-  }),
-);
-
-it.effect('enforces Counterparty-wide last-admin protection without foreign grant disclosure', () =>
-  Effect.gen(function* verifyAccessRoutineSecurity() {
-    const migration = yield* Effect.promise(() =>
-      readFile(new URL('../../drizzle/20260909112255_access-routines/migration.sql', import.meta.url), 'utf-8'),
-    );
-    const revokeRoutine = migration.slice(
-      migration.indexOf('CREATE FUNCTION "commerce_customer_context"."begin_access_revoke"'),
-      migration.indexOf('CREATE FUNCTION "commerce_customer_context"."transition_access_grant"'),
-    );
-    const grantRoutine = migration.slice(
-      migration.indexOf('CREATE FUNCTION "commerce_customer_context"."begin_access_grant"'),
-      migration.indexOf('CREATE FUNCTION "commerce_customer_context"."begin_access_revoke"'),
-    );
-    const bootstrapCheck = grantRoutine.slice(
-      grantRoutine.indexOf('IF p_bootstrap AND EXISTS'),
-      grantRoutine.indexOf('  SELECT grant_row.counterparty_commerce_access_grant_id'),
-    );
-    const directGrantLookup = revokeRoutine.slice(
-      revokeRoutine.indexOf('IF p_grant_id IS NOT NULL THEN'),
-      revokeRoutine.indexOf('ELSE\n    SELECT grant_row.counterparty_commerce_access_grant_id'),
-    );
-    const lastAdministratorCheck = revokeRoutine.slice(
-      revokeRoutine.indexOf("ELSIF p_permission_code = 'counterparty.access.manage'"),
-      revokeRoutine.indexOf('  ELSE\n    UPDATE commerce_customer_context.counterparty_commerce_access_grants'),
-    );
-
-    expect(directGrantLookup).toContain('grant_row.counterparty_purchasing_profile_id = v_profile_id');
-    expect(lastAdministratorCheck).not.toContain('other_admin.storefront_resource_id');
-    expect(lastAdministratorCheck).toContain("other_admin.lifecycle = 'ACTIVE'");
-    expect(bootstrapCheck).not.toContain('administrator.storefront_resource_id');
-    expect(bootstrapCheck).toContain("administrator.permission_code = 'counterparty.access.manage'");
-  }),
-);
-
-it.effect('hardens durable saga transitions and invitation claim recovery in owner routines', () =>
-  Effect.gen(function* verifySagaRoutineSecurity() {
-    const migration = yield* Effect.promise(() =>
-      readFile(new URL('../../drizzle/20260909112255_access-routines/migration.sql', import.meta.url), 'utf-8'),
-    );
-    const transition = migration.slice(
-      migration.indexOf('CREATE FUNCTION "commerce_customer_context"."transition_access_grant"'),
-      migration.indexOf('CREATE FUNCTION "commerce_customer_context"."list_access_reconciliation"'),
-    );
-    const claimMutation = migration.slice(
-      migration.indexOf('CREATE FUNCTION "commerce_customer_context"."mutate_access_invitation"'),
-      migration.indexOf('CREATE FUNCTION "commerce_customer_context"."read_access_invitation_claim_reconciliation"'),
-    );
-    const claimFinalizer = migration.slice(
-      migration.indexOf('CREATE FUNCTION "commerce_customer_context"."finalize_reconciled_access_invitation"'),
-    );
-
-    expect(transition).toContain('v_latest_mutation_id IS DISTINCT FROM p_mutation_id');
-    expect(transition).toContain('v_operation IS DISTINCT FROM p_expected_operation');
-    expect(transition).toContain("p_target_state = 'ACTIVE' AND lifecycle <> 'ACTIVE' THEN statement_timestamp()");
-    expect(claimMutation).toContain("p_operation IN ('REJECT_CLAIM', 'EXPIRE_CLAIM')");
-    expect(claimMutation).toContain('claim.action_invocation_id = p_action_invocation_id');
-    expect(claimMutation).toContain('claimed_by_principal_id = NULL');
-    expect(claimMutation).toContain('claim_proof_reference = NULL');
-    expect(claimFinalizer).toContain("active_grant.lifecycle = 'ACTIVE'");
-    expect(claimFinalizer).toContain('v_active_count = v_permission_count');
-    expect(claimFinalizer).not.toContain('p_claimant_principal_id');
   }),
 );

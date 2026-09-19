@@ -34,12 +34,21 @@ import type {
 } from '../../api/portal-auth/provider/mfa/index.ts';
 import {
   CommercePortalAuthMfaFreshnessReaderService,
+  commercePortalAuthMfaFreshnessReaderFromApi,
   portalAuthMfaStandaloneApiLive,
 } from '../../api/portal-auth/provider/mfa/http.ts';
-import type { CommercePortalAuthMfaFreshnessReader } from '../../api/portal-auth/provider/mfa/http.ts';
+import type {
+  CommercePortalAuthMfaFreshnessReader,
+  CommercePortalAuthMfaSessionReadApi,
+} from '../../api/portal-auth/provider/mfa/http.ts';
 import { CommercePortalAuthMfaService } from '../../api/portal-auth/provider/mfa/service.ts';
 import { CommercePortalAuthRecoveryRateLimitService } from '../../api/portal-auth/rate-limit-service.ts';
 import type { CommercePortalAuthRecoveryRateLimit } from '../../api/portal-auth/rate-limit-service.ts';
+import { encodeCommerceSessionReference } from '../../api/portal-auth/provider/session-reference.ts';
+import { makeCommercePortalAuthSessionLifecycle } from '../../api/portal-auth/session/lifecycle.ts';
+import type { CommercePortalAuthSessionProvider } from '../../api/portal-auth/session/lifecycle.ts';
+import type { CommercePortalAuthSessionRecord } from '../../api/portal-auth/session/contracts.ts';
+import type { CommercePortalAuthSessionStore } from '../../api/portal-auth/session/store-service.ts';
 
 const headers = new Headers({ origin: 'https://portal.example.test' });
 const otpDeliveryCallback: NonNullable<OTPOptions['sendOTP']> = () => Promise.resolve();
@@ -401,7 +410,7 @@ const mfaHttpRequest = (
 
 interface MfaHttpFixtureState {
   readonly budgetKeys: string[];
-  currentSession: Option.Option<{ readonly sessionCreatedAtMillis: number }>;
+  currentSession: Option.Option<{ readonly authenticatedAtMillis: number }>;
   readonly disableInputs: Parameters<CommercePortalAuthMfaServiceApi['disableTwoFactor']>[0][];
   readonly enableInputs: Parameters<CommercePortalAuthMfaServiceApi['enableTwoFactor']>[0][];
   readonly generateBackupCodesInputs: Parameters<CommercePortalAuthMfaServiceApi['generateBackupCodes']>[0][];
@@ -420,7 +429,7 @@ interface MfaHttpFixture {
 const makeMfaHttpFixture = (): MfaHttpFixture => {
   const state: MfaHttpFixtureState = {
     budgetKeys: [],
-    currentSession: Option.some({ sessionCreatedAtMillis: TEST_NOW_MILLIS - 60_000 }),
+    currentSession: Option.some({ authenticatedAtMillis: TEST_NOW_MILLIS - 60_000 }),
     disableInputs: [],
     enableInputs: [],
     generateBackupCodesInputs: [],
@@ -478,11 +487,11 @@ const makeMfaHttpFixture = (): MfaHttpFixture => {
   return { budget, freshnessReader, service, state };
 };
 
-const makeMfaHttpApp = (fixture: MfaHttpFixture) =>
+const makeMfaHttpApp = (fixture: MfaHttpFixture, reader: CommercePortalAuthMfaFreshnessReader = fixture.freshnessReader) =>
   Effect.gen(function* makeMfaHttpAppEffect() {
     const apiLayer = HttpApiBuilder.layer(CommercePortalAuthMfaApi).pipe(
       Layer.provide(portalAuthMfaStandaloneApiLive),
-      Layer.provide(Layer.succeed(CommercePortalAuthMfaFreshnessReaderService, fixture.freshnessReader)),
+      Layer.provide(Layer.succeed(CommercePortalAuthMfaFreshnessReaderService, reader)),
       Layer.provide(Layer.succeed(CommercePortalAuthMfaService, fixture.service)),
       Layer.provide(Layer.succeed(CommercePortalAuthConfig, HTTP_CONFIG)),
       Layer.provide(Layer.succeed(CommercePortalAuthRecoveryRateLimitService, fixture.budget)),
@@ -534,7 +543,7 @@ it.effect('gates enable behind the trusted origin, the freshness window, and the
     expect(fixture.state.enableInputs).toHaveLength(0);
 
     fixture.state.currentSession = Option.some({
-      sessionCreatedAtMillis: TEST_NOW_MILLIS - (COMMERCE_PORTAL_AUTH_POLICY.session.freshAgeSeconds + 30) * 1000,
+      authenticatedAtMillis: TEST_NOW_MILLIS - (COMMERCE_PORTAL_AUTH_POLICY.session.freshAgeSeconds + 30) * 1000,
     });
     const stale = yield* Effect.promise(() =>
       app.handler(
@@ -547,7 +556,7 @@ it.effect('gates enable behind the trusted origin, the freshness window, and the
     expect(staleBody).toMatchObject({ code: 'mfa_authentication_not_fresh', status: 401 });
     expect(fixture.state.budgetKeys).toHaveLength(0);
 
-    fixture.state.currentSession = Option.some({ sessionCreatedAtMillis: TEST_NOW_MILLIS - 60_000 });
+    fixture.state.currentSession = Option.some({ authenticatedAtMillis: TEST_NOW_MILLIS - 60_000 });
     const fresh = yield* Effect.promise(() =>
       app.handler(
         mfaHttpRequest('/api/portal-auth/two-factor/enable', { password: 'P'.repeat(24) }),
@@ -641,5 +650,135 @@ it.effect('wires confirm-enable, regenerate-backup-codes and totp-uri to the mat
     expect(totpUri.status).toBe(200);
     expect(fixture.state.totpUriInputs).toHaveLength(1);
     expect(fixture.state.totpUriInputs[0]?.body).toStrictEqual({ password: 'P'.repeat(24) });
+  }),
+);
+
+/**
+ * The freshness gate's own proof, over the real reader rather than a fixture reader: Better Auth
+ * resolves the cookie to a session identity, and the owner's lifecycle answers when that session
+ * was last authenticated. `CommercePortalAuthSessionStore.rotateWithAudit` preserves `createdAt` on
+ * the replacement row — deliberately, so the absolute session lifetime survives a rotation — so the
+ * row's age can never stand in for "recently authenticated".
+ */
+const FRESHNESS_SUBJECT = 'commerce-freshness-subject';
+const STALE_AGE_MILLIS = (COMMERCE_PORTAL_AUTH_POLICY.session.freshAgeSeconds + 600) * 1000;
+
+const freshnessRecord = (id: string, token: string): CommercePortalAuthSessionRecord => ({
+  authenticatedAt: null,
+  banExpiresAt: null,
+  banned: false,
+  createdAt: new Date(TEST_NOW_MILLIS - STALE_AGE_MILLIS),
+  emailVerified: true,
+  expiresAt: new Date(TEST_NOW_MILLIS + 3_600_000),
+  id,
+  providerSubjectId: FRESHNESS_SUBJECT,
+  token,
+  updatedAt: new Date(TEST_NOW_MILLIS - STALE_AGE_MILLIS),
+});
+
+const freshnessSessionStore = (initial: readonly CommercePortalAuthSessionRecord[]): CommercePortalAuthSessionStore => {
+  const sessions = new Map(initial.map((value) => [value.id, value]));
+  return {
+    countActive: () => Effect.die('unused in MFA freshness tests'),
+    disableAccountWithAudit: () => Effect.die('unused in MFA freshness tests'),
+    findById: (id) =>
+      Effect.sync(() => {
+        const value = sessions.get(id);
+        return value === undefined ? Option.none() : Option.some(value);
+      }),
+    findByToken: () => Effect.die('unused in MFA freshness tests'),
+    revoke: () => Effect.die('unused in MFA freshness tests'),
+    revokeAllWithAudit: () => Effect.die('unused in MFA freshness tests'),
+    revokeWithAudit: () => Effect.die('unused in MFA freshness tests'),
+    rotateWithAudit: ({ authenticatedAt, expiresAt, now: clockNow, sessionId }) =>
+      Effect.sync(() => {
+        const current = sessions.get(sessionId);
+        if (current === undefined) {
+          return Option.none<CommercePortalAuthSessionRecord>();
+        }
+        const replacement: CommercePortalAuthSessionRecord = {
+          ...current,
+          authenticatedAt: authenticatedAt ?? current.authenticatedAt,
+          expiresAt,
+          id: `${sessionId}-rotated`,
+          token: `${current.token}-rotated`,
+          updatedAt: clockNow,
+        };
+        sessions.delete(sessionId);
+        sessions.set(replacement.id, replacement);
+        return Option.some(replacement);
+      }),
+    touch: () => Effect.die('unused in MFA freshness tests'),
+    touchWithAudit: () => Effect.die('unused in MFA freshness tests'),
+  };
+};
+
+/** The provider half of the gate: a cookie resolves to exactly one session identity. */
+const freshnessProviderApi = (currentSessionId: { value: string }): CommercePortalAuthMfaSessionReadApi => ({
+  getSession: () =>
+    Promise.resolve({
+      headers: new Headers(),
+      response: { session: { id: currentSessionId.value }, user: { id: FRESHNESS_SUBJECT } },
+    }),
+});
+
+const unusedFreshnessSignIn: CommercePortalAuthSessionProvider = {
+  signInEmail: () => Effect.die('unused in MFA freshness tests'),
+};
+
+it.effect('admits an old session only after a step-up that re-authenticated that exact session', () =>
+  Effect.gen(function* freshnessThroughStepUp() {
+    const store = freshnessSessionStore([
+      freshnessRecord('session-stepped-up', 'token-stepped-up'),
+      freshnessRecord('session-other', 'token-other'),
+    ]);
+    const lifecycle = makeCommercePortalAuthSessionLifecycle(store, unusedFreshnessSignIn, {
+      now: () => new Date(TEST_NOW_MILLIS),
+    });
+    const currentSessionId = { value: 'session-stepped-up' };
+    const fixture = makeMfaHttpFixture();
+    const app = yield* makeMfaHttpApp(
+      fixture,
+      commercePortalAuthMfaFreshnessReaderFromApi(freshnessProviderApi(currentSessionId), lifecycle),
+    );
+    const enable = () =>
+      Effect.promise(() =>
+        app.handler(
+          mfaHttpRequest('/api/portal-auth/two-factor/enable', { password: 'P'.repeat(24) }),
+          httpRequestContextMfa,
+        ),
+      );
+
+    // An old session that was never re-authenticated is not fresh, however long it stays alive.
+    const beforeStepUp = yield* enable();
+    expect(beforeStepUp.status).toBe(401);
+    expect(yield* Effect.promise(() => beforeStepUp.json())).toMatchObject({
+      code: 'mfa_authentication_not_fresh',
+    });
+    expect(fixture.state.enableInputs).toHaveLength(0);
+
+    const steppedUp = yield* lifecycle.rotateIdentifierForCookie({
+      expectedProviderSubjectId: FRESHNESS_SUBJECT,
+      reason: 'step-up',
+      sessionRef: yield* encodeCommerceSessionReference('session-stepped-up'),
+    });
+    // The rotation kept the absolute lifetime anchor and moved only the authentication stamp.
+    expect(steppedUp.session.createdAt).toStrictEqual(new Date(TEST_NOW_MILLIS - STALE_AGE_MILLIS));
+    expect(steppedUp.session.authenticatedAt).toStrictEqual(new Date(TEST_NOW_MILLIS));
+
+    currentSessionId.value = 'session-stepped-up-rotated';
+    const afterStepUp = yield* enable();
+    expect(afterStepUp.status).toBe(200);
+    expect(fixture.state.enableInputs).toHaveLength(1);
+
+    // The completed step-up belongs to one session. Another session of the same customer is
+    // untouched by it and stays outside the window.
+    currentSessionId.value = 'session-other';
+    const otherSession = yield* enable();
+    expect(otherSession.status).toBe(401);
+    expect(yield* Effect.promise(() => otherSession.json())).toMatchObject({
+      code: 'mfa_authentication_not_fresh',
+    });
+    expect(fixture.state.enableInputs).toHaveLength(1);
   }),
 );

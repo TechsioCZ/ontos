@@ -20,6 +20,17 @@ it.live(
         // Shell: allowed documented composition seams.
         'apps/shell-super-app/api/auth/commerce-external-identity.ts':
           "import { verify } from '@app/commerce-customer-context/portal-auth/verification/client';\n",
+        // Shell: violates via the bare Commerce package specifier (no subpath), resolved against the
+        // exports map's "." entry, which points at Commerce's private src.
+        'apps/shell-super-app/api/auth/external-identity/bare-specifier-import.ts':
+          "import CommercePrivate from '@app/commerce-customer-context';\n",
+        // Shell: violates via a multi-line named import — a line-oriented regex would miss the
+        // specifier because the `from` clause is on a different line than `import`.
+        'apps/shell-super-app/api/auth/external-identity/multiline-import.ts':
+          "import {\n  EnrollmentJourney,\n} from '../../../../verticals/commerce-customer-context/src/enrollment/journeys/index.ts';\n",
+        // Shell: violates via a side-effect import (no bindings, no `from` keyword to match on).
+        'apps/shell-super-app/api/auth/external-identity/side-effect-import.ts':
+          "import '../../../../verticals/commerce-customer-context/src/enrollment/side-effects.ts';\n",
         // Shell: type-only imports of Commerce private implementation are exempt.
         'apps/shell-super-app/api/auth/external-identity/type-only.ts':
           "import type { EnrollmentJourney } from '../../../../verticals/commerce-customer-context/src/enrollment/journeys/index.ts';\n",
@@ -55,6 +66,7 @@ it.live(
         // Commerce publishes its exports map.
         'verticals/commerce-customer-context/package.json': JSON.stringify({
           exports: {
+            '.': './src/index.ts',
             './api/client': './src/api/client.ts',
             './portal-auth/verification/client': './src/portal-auth/verification/client.ts',
             './shared/contracts': './shared/contracts.ts',
@@ -75,6 +87,9 @@ it.live(
       );
       const violations = yield* checkLeanCoreDependencies(root).pipe(Effect.provide(NodeServices.layer));
       expect(violations.map(({ file, line, reason }) => `${file}:${line}: ${reason}`)).toEqual([
+        'apps/shell-super-app/api/auth/external-identity/bare-specifier-import.ts:1: Non-Commerce unit takes a mandatory runtime import of Commerce\'s private implementation "@app/commerce-customer-context" (only published shared/ contracts and documented composition seams are allowed)',
+        'apps/shell-super-app/api/auth/external-identity/multiline-import.ts:1: Non-Commerce unit takes a mandatory runtime import of Commerce\'s private implementation "../../../../verticals/commerce-customer-context/src/enrollment/journeys/index.ts" (only published shared/ contracts and documented composition seams are allowed)',
+        'apps/shell-super-app/api/auth/external-identity/side-effect-import.ts:1: Non-Commerce unit takes a mandatory runtime import of Commerce\'s private implementation "../../../../verticals/commerce-customer-context/src/enrollment/side-effects.ts" (only published shared/ contracts and documented composition seams are allowed)',
         'apps/shell-super-app/api/auth/external-identity/unauthorized-package-import.ts:1: Non-Commerce unit takes a mandatory runtime import of Commerce\'s private implementation "@app/commerce-customer-context/portal-auth/verification/client" (only published shared/ contracts and documented composition seams are allowed)',
         'apps/shell-super-app/api/auth/external-identity/unauthorized-package-import.ts:2: Non-Commerce unit takes a mandatory runtime import of Commerce\'s private implementation "@app/commerce-customer-context/api/client" (only published shared/ contracts and documented composition seams are allowed)',
         'apps/shell-super-app/api/auth/external-identity/unauthorized-private-import.ts:1: Non-Commerce unit takes a mandatory runtime import of Commerce\'s private implementation "../../../../verticals/commerce-customer-context/src/enrollment/journeys/index.ts" (only published shared/ contracts and documented composition seams are allowed)',

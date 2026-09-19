@@ -209,7 +209,7 @@ export const makeCommerceEnrollmentCommitResolutionService = (
         );
       }
       if (!isCurrentBindingStatus(bindingStatus)) {
-        return yield* revoked(result.originalInvocationId.value, bindingStatus);
+        return yield* revoked(invocationId, bindingStatus);
       }
       return converged(invocationId, result.originalInvocationId.value, retainedBinding);
     },

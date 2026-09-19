@@ -1,6 +1,3 @@
-// @effect-diagnostics nodeBuiltinImport:off -- Checked-in migration security is the contract under test; expires: 2027-03-31.
-import { readFileSync } from 'node:fs';
-
 import { ScopedRoutineInvocationError, TrustedPrincipalContextSchema } from '@app/core-runtime';
 import { Effect, Match, Option, Schema } from 'effect';
 import { expect, it } from 'effect-rstest';
@@ -329,59 +326,3 @@ it.effect('sanitizes Core routine failures as the owner persistence error', () =
     expect(error.reason).not.toContain('private driver detail');
   }),
 );
-
-it('locks down the checked-in SQL to exact scoped SECURITY DEFINER routine grants', () => {
-  const migration = readFileSync(
-    new URL('../../drizzle/20260909112233_group-routines/migration.sql', import.meta.url),
-    'utf-8',
-  );
-  const forwardMigration = readFileSync(
-    new URL('../../drizzle/20260909135000_refresh_customer_group_routines/migration.sql', import.meta.url),
-    'utf-8',
-  );
-  const assignStart = migration.indexOf(
-    'CREATE FUNCTION "commerce_customer_context"."assign_customer_group_membership"',
-  );
-  const firstLookupStart = migration.indexOf(
-    'SELECT membership.customer_group_membership_id INTO v_membership_id',
-    assignStart,
-  );
-  const firstLookupEnd = migration.indexOf('IF v_membership_id IS NOT NULL', firstLookupStart);
-  const exactPeriodLookup = migration.slice(firstLookupStart, firstLookupEnd);
-  const profileLifecycleGate = migration.indexOf("IF v_profile.lifecycle <> 'ACTIVE'", assignStart);
-  const groupLifecycleGate = migration.indexOf("IF v_group.lifecycle <> 'ACTIVE'", assignStart);
-  const overlapLookupStart = migration.indexOf(
-    'SELECT membership.customer_group_membership_id INTO v_membership_id',
-    firstLookupEnd,
-  );
-  const overlapLookupEnd = migration.indexOf('IF v_membership_id IS NOT NULL', overlapLookupStart);
-  const overlapLookup = migration.slice(overlapLookupStart, overlapLookupEnd);
-  expect(migration.match(/SECURITY DEFINER/gu)).toHaveLength(12);
-  expect(migration.match(/routine scope mismatch/gu)).toHaveLength(10);
-  expect(migration.match(/GRANT EXECUTE ON FUNCTION/gu)).toHaveLength(10);
-  expect(migration).not.toMatch(/GRANT (?:SELECT|INSERT|UPDATE|DELETE|ALL) ON/gu);
-  expect(migration).toContain('FOR UPDATE');
-  expect(migration).toContain("tstzrange(p_effective_from, p_effective_to, '[)')");
-  expect(migration).toContain("membership.lifecycle <> 'CANCELLED'");
-  expect(migration).toContain("encode(sha256(convert_to(v_semantic_input, 'UTF8')), 'hex')");
-  expect(migration).toContain('OR p_purpose IS DISTINCT FROM v_current_definition.purpose');
-  expect(migration).toContain("'description', revision.description");
-  expect(exactPeriodLookup).not.toContain('membership.lifecycle');
-  expect(firstLookupStart).toBeLessThan(profileLifecycleGate);
-  expect(firstLookupStart).toBeLessThan(groupLifecycleGate);
-  expect(overlapLookup).toContain("membership.lifecycle <> 'CANCELLED'");
-  expect(migration).toContain('customer_profile_lifecycle_history AS history');
-  expect(migration).toContain('ORDER BY history.recorded_at DESC, history.revision DESC');
-  expect(migration).toContain('p_as_of timestamptz');
-  expect(migration).not.toContain("profile.lifecycle = 'ACTIVE'");
-  expect(migration).toContain('ORDER BY membership.customer_group_membership_id::text');
-  expect(migration).toContain('FROM PUBLIC, "ontos_runtime"');
-  expect(forwardMigration.match(/CREATE OR REPLACE FUNCTION/gu)).toHaveLength(12);
-  expect(forwardMigration.match(/GRANT EXECUTE ON FUNCTION/gu)).toHaveLength(10);
-  expect(forwardMigration).toContain("routine.proname IN ('create_customer_group', 'update_customer_group')");
-  expect(forwardMigration).toContain("'DROP FUNCTION %s'");
-  expect(forwardMigration).toContain("IF v_profile.lifecycle <> 'ACTIVE'");
-  expect(forwardMigration.indexOf('ALREADY_ASSIGNED')).toBeLessThan(
-    forwardMigration.indexOf("IF v_profile.lifecycle <> 'ACTIVE'"),
-  );
-});

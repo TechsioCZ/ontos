@@ -364,7 +364,7 @@ const advanceState = Effect.fn('RetailSelfEnrollment.advanceState')(function* ad
 /**
  * Compose Retail self-enrollment: portal account creation, Party Registry candidate submission,
  * Retail Customer Profile ensure, and the Retail Portal Profile Binding that durably stages the
- * reviewed #332 Retail Portal Self-Service Permission intents.
+ * reviewed Retail Portal Self-Service Permission baseline.
  *
  * A halt returns the steps that did commit and stops the plan there.  A stale Attempt revision
  * authorizes nothing: the first durable claim rejects it and no later transition is dispatched.

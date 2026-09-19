@@ -1,4 +1,4 @@
-import { Config, DateTime, Effect, Redacted } from 'effect';
+import { Config, DateTime, Effect, Redacted, Result } from 'effect';
 import type { Scope } from 'effect';
 import { expect, it } from 'effect-rstest';
 import { eq } from 'drizzle-orm';
@@ -6,6 +6,9 @@ import { randomUUID } from 'node:crypto';
 
 import { makeCommercePortalAuthDatabase } from '../../src/portal-auth/persistence/portal-auth-database.ts';
 import type { CommercePortalAuthDatabase } from '../../src/portal-auth/persistence/portal-auth-database.ts';
+import { makeCommercePortalAuthSessionStore } from '../../src/portal-auth/persistence/portal-auth-session-store.ts';
+import { session, user } from '../../src/portal-auth/persistence/portal-auth-tables.ts';
+import type { CommercePortalAuthSessionStore } from '../../api/portal-auth/session/store-service.ts';
 import { portalAuthAuditEvent } from '../../src/portal-auth/audit/audit-tables.ts';
 import { COMMERCE_PORTAL_AUTH_AUDIT_SCHEMA_VERSION } from '../../src/portal-auth/audit/audit-contracts.ts';
 import { commercePortalAuthSignInAuditEvent } from '../../src/portal-auth/audit/audit-mapping.ts';
@@ -144,6 +147,137 @@ it.live('leaves exactly one durable row for a completed recovery, keyed by the p
           schemaVersion: COMMERCE_PORTAL_AUTH_AUDIT_SCHEMA_VERSION,
           subjectDigest: null,
         },
+      ]);
+    }),
+  ),
+);
+
+/**
+ * The strict path: a state change and its evidence share one transaction. The fixture below writes
+ * the owner's own provider rows so the revocation is a real deletion, then asks the store to record
+ * an audit row PostgreSQL must refuse.
+ */
+interface SessionAuditFixture {
+  readonly auditRows: () => Effect.Effect<readonly { readonly eventType: string; readonly operation: string | null }[]>;
+  readonly providerSubjectId: string;
+  readonly sessionId: string;
+  readonly sessionRows: () => Effect.Effect<readonly { readonly id: string }[]>;
+  readonly store: CommercePortalAuthSessionStore;
+}
+
+/**
+ * A NUL byte is not representable in a PostgreSQL text value, so the server refuses this row at
+ * execution — a real database refusal of the audit insert, raised from inside the transaction the
+ * revocation is running in, rather than a fault injected into the store's own code.
+ */
+const REFUSED_BY_POSTGRES = 'audit-write-refused\u0000';
+
+const revocationEvent = (fixture: Pick<SessionAuditFixture, 'providerSubjectId'>, subjectDigest?: string) => ({
+  eventType: 'commerce.portal-auth.session-revoked.v1' as const,
+  occurredAt: new Date(),
+  operation: 'revoke',
+  outcome: 'success' as const,
+  providerSubjectId: fixture.providerSubjectId,
+  ...(subjectDigest === undefined ? {} : { subjectDigest }),
+});
+
+const makeSessionAuditFixture = Effect.fn('CommercePortalAuthAuditIntegration.makeSessionFixture')(
+  function* makeSessionAuditFixtureEffect(): Effect.fn.Return<SessionAuditFixture, unknown, Scope.Scope> {
+    const connectionString = yield* DATABASE_URL;
+    const configuration = yield* parseCommercePortalAuthConfig({
+      COMMERCE_PORTAL_AUTH_DATABASE_URL: Redacted.value(connectionString),
+      COMMERCE_PORTAL_AUTH_SECRET: SECRET,
+      COMMERCE_PORTAL_AUTH_URL: ORIGIN,
+    });
+    const database = yield* makeCommercePortalAuthDatabase(configuration);
+    const providerSubjectId = `audit-revoke-${randomUUID()}`;
+    const sessionId = `${providerSubjectId}-session`;
+    const now = yield* DateTime.nowAsDate;
+    yield* Effect.addFinalizer(() =>
+      database.executor
+        .transaction((transaction) =>
+          Effect.gen(function* cleanupSessionAuditFixture() {
+            yield* transaction
+              .delete(portalAuthAuditEvent)
+              .where(eq(portalAuthAuditEvent.providerSubjectId, providerSubjectId));
+            yield* transaction.delete(user).where(eq(user.id, providerSubjectId));
+          }),
+        )
+        .pipe(Effect.orDie),
+    );
+    yield* database.executor.insert(user).values({
+      createdAt: now,
+      email: `${providerSubjectId}@example.test`,
+      emailVerified: true,
+      id: providerSubjectId,
+      name: 'Audit revocation fixture',
+      updatedAt: now,
+    });
+    yield* database.executor.insert(session).values({
+      createdAt: now,
+      expiresAt: new Date(now.getTime() + 3_600_000),
+      id: sessionId,
+      token: `${providerSubjectId}-token`,
+      updatedAt: now,
+      userId: providerSubjectId,
+    });
+    return {
+      auditRows: () =>
+        database.executor
+          .select({ eventType: portalAuthAuditEvent.eventType, operation: portalAuthAuditEvent.operation })
+          .from(portalAuthAuditEvent)
+          .where(eq(portalAuthAuditEvent.providerSubjectId, providerSubjectId))
+          .pipe(Effect.orDie),
+      providerSubjectId,
+      sessionId,
+      sessionRows: () =>
+        database.executor
+          .select({ id: session.id })
+          .from(session)
+          .where(eq(session.id, sessionId))
+          .pipe(Effect.orDie),
+      store: makeCommercePortalAuthSessionStore(database.executor),
+    };
+  },
+);
+
+it.live('rolls a revocation back when PostgreSQL refuses its audit row', () =>
+  Effect.scoped(
+    Effect.gen(function* revocationRollsBackWithoutEvidence() {
+      const fixture = yield* makeSessionAuditFixture();
+
+      const refused = yield* Effect.result(
+        fixture.store.revokeWithAudit({
+          audit: revocationEvent(fixture, REFUSED_BY_POSTGRES),
+          providerSubjectId: fixture.providerSubjectId,
+          sessionId: fixture.sessionId,
+        }),
+      );
+      if (!Result.isFailure(refused)) {
+        throw new Error('A revocation whose audit row was refused must not report success');
+      }
+      expect(refused.failure.operation).toBe('session-revoke-audit');
+      // Nothing committed: the session is still revocable and no evidence was left behind.
+      expect(yield* fixture.sessionRows()).toStrictEqual([{ id: fixture.sessionId }]);
+      expect(yield* fixture.auditRows()).toStrictEqual([]);
+    }),
+  ),
+);
+
+it.live('commits a revocation and exactly one audit row together', () =>
+  Effect.scoped(
+    Effect.gen(function* revocationCommitsWithEvidence() {
+      const fixture = yield* makeSessionAuditFixture();
+
+      const revoked = yield* fixture.store.revokeWithAudit({
+        audit: revocationEvent(fixture),
+        providerSubjectId: fixture.providerSubjectId,
+        sessionId: fixture.sessionId,
+      });
+      expect(revoked).toBe(true);
+      expect(yield* fixture.sessionRows()).toStrictEqual([]);
+      expect(yield* fixture.auditRows()).toStrictEqual([
+        { eventType: 'commerce.portal-auth.session-revoked.v1', operation: 'revoke' },
       ]);
     }),
   ),

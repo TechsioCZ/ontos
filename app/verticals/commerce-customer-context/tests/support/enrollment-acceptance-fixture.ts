@@ -1,0 +1,227 @@
+import { loadDatabaseConnectionPair, scopedRoutineInvokerFromTransaction } from '@app/core-runtime';
+import { eq, sql } from 'drizzle-orm';
+import { Context, Effect, Schema } from 'effect';
+import { Pool } from 'pg';
+
+import { layerTestDatabaseFromPool } from '../../../../packages/core-runtime/tests/support/database.ts';
+import type { TestDatabaseFromPool } from '../../../../packages/core-runtime/tests/support/database.ts';
+import type { CommerceCustomerContextTransaction } from '../../src/database/types.ts';
+import {
+  commerceCustomerContextRelations,
+  portalEnrollmentAttempts,
+  portalEnrollmentOwnerOperations,
+} from '../../src/database/schema.ts';
+import type { EnrollmentAttemptSnapshot, StartEnrollmentAttemptInput } from '../../shared/enrollment-contracts.ts';
+import { commerceEnrollmentAttemptPersistenceForTransaction } from '../../src/enrollment/attempts/attempt-persistence.ts';
+import type { CommerceEnrollmentOwnerScope } from '../../src/enrollment/attempts/attempt-persistence.ts';
+import {
+  CommerceEnrollmentAttemptErrorSchema,
+  CommerceEnrollmentAttemptUnavailable,
+} from '../../src/enrollment/attempts/errors.ts';
+import type { CommerceEnrollmentAttemptError } from '../../src/enrollment/attempts/errors.ts';
+import { commerceEnrollmentOwnerAttemptStoreForRun } from '../../src/enrollment/orchestration/owner-transition-production.ts';
+import type { CommerceEnrollmentOwnerTransactionRun } from '../../src/enrollment/orchestration/owner-transition-production.ts';
+import type { CommerceEnrollmentOwnerAttemptStore } from '../../src/enrollment/orchestration/owner-transition-driver.ts';
+
+/**
+ * PostgreSQL fixture for the #338 acceptance matrix. Only the owner effect is scripted; the
+ * driver, Attempt service, SECURITY DEFINER routines and tenant policies all run for real.
+ */
+
+/** The Drizzle/Effect executor the fixture drives both the runtime and the admin role through. */
+type EnrollmentAcceptanceDatabase = TestDatabaseFromPool<typeof commerceCustomerContextRelations>;
+
+class AcceptanceDatabase extends Context.Service<AcceptanceDatabase, EnrollmentAcceptanceDatabase>()(
+  '@app/commerce-customer-context/tests/support/AcceptanceDatabase',
+) {}
+
+export interface EnrollmentAcceptanceFixture {
+  /** Owner-role executor, used only to seed, inspect and clean up fixture rows. */
+  readonly admin: EnrollmentAcceptanceDatabase;
+  /** Removes every Attempt and owner operation of the fixture Tenant. */
+  readonly cleanup: () => Effect.Effect<void>;
+  /** The production generic owner store, backed by one real transaction per phase. */
+  readonly ownerStore: CommerceEnrollmentOwnerAttemptStore;
+  readonly run: CommerceEnrollmentOwnerTransactionRun;
+  readonly scope: CommerceEnrollmentOwnerScope;
+}
+
+const transactionUnavailable = <Cause>(cause: Cause): CommerceEnrollmentAttemptError =>
+  Object.defineProperty(
+    new CommerceEnrollmentAttemptUnavailable({
+      code: 'attempt_unavailable',
+      reason: 'The durable Enrollment Attempt transaction could not be completed',
+      retryable: true,
+    }),
+    'cause',
+    { configurable: false, enumerable: false, value: cause },
+  );
+
+const executorFor =
+  (transaction: CommerceCustomerContextTransaction) => (statement: Parameters<typeof transaction.execute>[0]) =>
+    transaction.execute(statement, 'objects');
+
+/** One owner phase, one transaction, scope installed the same way production installs it. */
+const acceptanceTransactionRun =
+  (database: EnrollmentAcceptanceDatabase): CommerceEnrollmentOwnerTransactionRun =>
+  (scope, operation) =>
+    database
+      .transaction((transaction) =>
+        transaction
+          .execute(
+            sql`select set_config('ontos.tenant_id', ${scope.tenantId}, true), set_config('ontos.legal_entity_id', ${scope.legalEntityId ?? ''}, true)`,
+            'objects',
+          )
+          .pipe(Effect.flatMap(() => operation(scopedRoutineInvokerFromTransaction(executorFor(transaction), scope)))),
+      )
+      .pipe(
+        Effect.mapError((failure) =>
+          Schema.is(CommerceEnrollmentAttemptErrorSchema)(failure) ? failure : transactionUnavailable(failure),
+        ),
+      );
+
+/** Acquires the admin and runtime pools and builds the production owner store on the runtime role. */
+export const makeEnrollmentAcceptanceFixture = Effect.fnUntraced(function* makeEnrollmentAcceptanceFixture(
+  scope: CommerceEnrollmentOwnerScope,
+) {
+  const connections = yield* loadDatabaseConnectionPair();
+  const adminPool = yield* Effect.acquireRelease(
+    Effect.sync(() => new Pool({ connectionString: connections.admin.connectionString })),
+    (pool) => Effect.promise(async () => await pool.end()).pipe(Effect.orDie),
+  );
+  const runtimePool = yield* Effect.acquireRelease(
+    Effect.sync(() => new Pool({ connectionString: connections.runtime.connectionString, max: 4 })),
+    (pool) => Effect.promise(async () => await pool.end()).pipe(Effect.orDie),
+  );
+  const admin = yield* AcceptanceDatabase.pipe(
+    Effect.provide(layerTestDatabaseFromPool(AcceptanceDatabase, adminPool, commerceCustomerContextRelations)),
+  );
+  const runtime = yield* AcceptanceDatabase.pipe(
+    Effect.provide(layerTestDatabaseFromPool(AcceptanceDatabase, runtimePool, commerceCustomerContextRelations)),
+  );
+  const cleanup = () =>
+    admin
+      .transaction((transaction) =>
+        Effect.gen(function* deleteFixtureRows() {
+          yield* transaction.execute(sql`set local session_replication_role = 'replica'`, 'objects');
+          yield* transaction
+            .delete(portalEnrollmentOwnerOperations)
+            .where(eq(portalEnrollmentOwnerOperations.tenantId, scope.tenantId));
+          yield* transaction
+            .delete(portalEnrollmentAttempts)
+            .where(eq(portalEnrollmentAttempts.tenantId, scope.tenantId));
+        }),
+      )
+      .pipe(Effect.orDie);
+  const run = acceptanceTransactionRun(runtime);
+  const fixture: EnrollmentAcceptanceFixture = {
+    admin,
+    cleanup,
+    ownerStore: commerceEnrollmentOwnerAttemptStoreForRun(scope, run),
+    run,
+    scope,
+  };
+  yield* fixture.cleanup();
+  yield* Effect.addFinalizer(() => fixture.cleanup());
+  return fixture;
+});
+
+/** Creates the durable Attempt the journey then advances, through the same routine the Action uses. */
+export const startEnrollmentAcceptanceAttempt = (
+  fixture: EnrollmentAcceptanceFixture,
+  input: StartEnrollmentAttemptInput,
+): Effect.Effect<EnrollmentAttemptSnapshot, CommerceEnrollmentAttemptError> =>
+  fixture
+    .run(fixture.scope, (transaction) =>
+      commerceEnrollmentAttemptPersistenceForTransaction(transaction, fixture.scope).create(input),
+    )
+    .pipe(Effect.map((created) => created.attempt));
+
+/** Moves an Attempt's still-running leases into the past, as if the worker had disappeared. */
+export const expireEnrollmentAcceptanceLeases = (
+  fixture: EnrollmentAcceptanceFixture,
+  portalEnrollmentAttemptId: string,
+): Effect.Effect<void> =>
+  fixture.admin
+    .transaction((transaction) =>
+      Effect.gen(function* expireBothLeases() {
+        yield* transaction.execute(
+          sql`
+            update commerce_customer_context.portal_enrollment_attempts
+               set lease_expires_at = statement_timestamp() - interval '1 second'
+             where tenant_id = ${fixture.scope.tenantId}::uuid
+               and portal_enrollment_attempt_id = ${portalEnrollmentAttemptId}::uuid
+          `,
+          'objects',
+        );
+        yield* transaction.execute(
+          sql`
+            update commerce_customer_context.portal_enrollment_owner_operations
+               set lease_expires_at = statement_timestamp() - interval '1 second'
+             where tenant_id = ${fixture.scope.tenantId}::uuid
+               and portal_enrollment_attempt_id = ${portalEnrollmentAttemptId}::uuid
+               and status = 'IN_PROGRESS'
+          `,
+          'objects',
+        );
+      }),
+    )
+    .pipe(Effect.asVoid, Effect.orDie);
+
+interface EnrollmentAcceptanceOwnerOperationRow extends Record<string, unknown> {
+  readonly outcome_code: string | null;
+  readonly reconciliation_ref: string | null;
+  readonly result_reference: string | null;
+  readonly status: string;
+  readonly transition_key: string;
+}
+
+/** Every durable owner operation of one Attempt, in creation order, read with the owner role. */
+export const readEnrollmentAcceptanceOperations = (
+  fixture: EnrollmentAcceptanceFixture,
+  portalEnrollmentAttemptId: string,
+): Effect.Effect<readonly EnrollmentAcceptanceOwnerOperationRow[]> =>
+  fixture.admin
+    .transaction((transaction) =>
+      transaction.execute<EnrollmentAcceptanceOwnerOperationRow>(
+        sql`
+          select transition_key, status, outcome_code, result_reference, reconciliation_ref
+            from commerce_customer_context.portal_enrollment_owner_operations
+           where tenant_id = ${fixture.scope.tenantId}::uuid
+             and portal_enrollment_attempt_id = ${portalEnrollmentAttemptId}::uuid
+           order by created_at, transition_key
+        `,
+        'objects',
+      ),
+    )
+    .pipe(Effect.orDie);
+
+interface EnrollmentAcceptanceAttemptRow extends Record<string, unknown> {
+  readonly revision: number;
+  readonly state: string;
+}
+
+/** The durable Attempt row itself, read with the owner role so RLS cannot mask a regression. */
+export const readEnrollmentAcceptanceAttempt = (
+  fixture: EnrollmentAcceptanceFixture,
+  portalEnrollmentAttemptId: string,
+): Effect.Effect<EnrollmentAcceptanceAttemptRow> =>
+  fixture.admin
+    .transaction((transaction) =>
+      transaction.execute<EnrollmentAcceptanceAttemptRow>(
+        sql`
+          select state, revision
+            from commerce_customer_context.portal_enrollment_attempts
+           where tenant_id = ${fixture.scope.tenantId}::uuid
+             and portal_enrollment_attempt_id = ${portalEnrollmentAttemptId}::uuid
+        `,
+        'objects',
+      ),
+    )
+    .pipe(
+      Effect.flatMap((rows) => {
+        const [row] = rows;
+        return row === undefined ? Effect.die('The fixture Attempt row is missing') : Effect.succeed(row);
+      }),
+      Effect.orDie,
+    );

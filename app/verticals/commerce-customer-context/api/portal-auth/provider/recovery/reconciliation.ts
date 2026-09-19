@@ -12,10 +12,7 @@ const RESET_OPERATION = 'reset-password';
 const VERIFY_OPERATION = 'verify-email';
 
 /** Which live operation is asking; the conflict class a mismatch is filed under depends on it. */
-export const CommercePortalAuthRecoveryReconciliationOperationSchema = Schema.Literals([
-  RESET_OPERATION,
-  VERIFY_OPERATION,
-]);
+const CommercePortalAuthRecoveryReconciliationOperationSchema = Schema.Literals([RESET_OPERATION, VERIFY_OPERATION]);
 export type CommercePortalAuthRecoveryReconciliationOperation =
   typeof CommercePortalAuthRecoveryReconciliationOperationSchema.Type;
 
@@ -51,7 +48,6 @@ export const detectRecoveryReconciliationConflict = (input: {
 };
 
 export interface CommercePortalAuthRecoveryReconciliationCheck {
-  readonly email: string;
   readonly operation: CommercePortalAuthRecoveryReconciliationOperation;
   readonly token: Redacted.Redacted;
 }

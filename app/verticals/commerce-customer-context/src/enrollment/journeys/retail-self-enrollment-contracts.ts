@@ -15,7 +15,7 @@ import { defineJourneyDefinition } from './journey-contracts.ts';
 import type { JourneyDefinition, JourneyTransitionSpec } from './journey-contracts.ts';
 
 /**
- * Retail self-enrollment vocabulary (issue #338 "Supported journeys → Retail self-enrollment").
+ * Retail self-enrollment vocabulary.
  *
  * The journey composes four owner transitions, each dispatched through the generic owner
  * transition driver so that it has its own durable claim, its own stable transition key and its
@@ -36,8 +36,8 @@ export const COMMERCE_CUSTOMER_CONTEXT_OWNER_MODULE_KEY = 'commerce.customer-con
 /** Transition keys are the exact generated Action keys these transitions invoke. */
 export const ENSURE_RETAIL_CUSTOMER_PROFILE_TRANSITION_KEY = 'commerce.customer-context.ensure-retail-customer-profile';
 /**
- * The Retail Portal Profile Binding Action durably stages the reviewed #332 Retail Portal
- * Self-Service Permission intents in the same transaction as the binding and publishes the
+ * The Retail Portal Profile Binding Action durably stages the reviewed Retail Portal
+ * Self-Service Permission baseline in the same transaction as the binding and publishes the
  * authorization-mutation message the grants owner consumes.  This vertical has no separate retail
  * grant Action — `grant-counterparty-commerce-access` is the Counterparty path — so the binding
  * transition is the retail grant path and the journey records its authorization state rather than
@@ -52,7 +52,7 @@ export const PARTY_CANDIDATE_CREATED_OUTCOME_CODE = 'party_candidate_created';
 export const PARTY_CANDIDATE_AMBIGUOUS_OUTCOME_CODE = 'party_candidate_ambiguous';
 export const RETAIL_CUSTOMER_PROFILE_ENSURED_OUTCOME_CODE = 'retail_customer_profile_ensured';
 export const RETAIL_PORTAL_PROFILE_BOUND_OUTCOME_CODE = 'retail_portal_profile_bound';
-/** The binding committed but did not stage the complete reviewed #332 baseline. */
+/** The binding committed but did not stage the complete reviewed baseline. */
 export const RETAIL_PORTAL_GRANTS_INCOMPLETE_OUTCOME_CODE = 'retail_portal_grants_incomplete';
 /** Failure code recorded with every halt that waits on a decision rather than on a retry. */
 export const OWNER_RECONCILIATION_REQUIRED_FAILURE_CODE = 'owner_reconciliation_required';

@@ -882,7 +882,7 @@ const customerProfileAliases = commerceCustomerContextSchema.table.withRLS(
 );
 
 /** Append-only evidence supplied by one trusted reconciliation owner. */
-export const profileReconciliationOwnerOutcomes = commerceCustomerContextSchema.table.withRLS(
+const profileReconciliationOwnerOutcomes = commerceCustomerContextSchema.table.withRLS(
   'profile_reconciliation_owner_outcomes',
   {
     profileReconciliationOwnerOutcomeId: uuid('profile_reconciliation_owner_outcome_id').defaultRandom().primaryKey(),
@@ -954,7 +954,7 @@ export const profileReconciliationOwnerOutcomes = commerceCustomerContextSchema.
 );
 
 /** Append-only, scoped delivery/currentness evidence for Party merge profile reconciliation. */
-export const partyMergeProfileObservations = commerceCustomerContextSchema.table.withRLS(
+const partyMergeProfileObservations = commerceCustomerContextSchema.table.withRLS(
   'party_merge_profile_observations',
   {
     partyMergeProfileObservationId: uuid('party_merge_profile_observation_id').defaultRandom().primaryKey(),

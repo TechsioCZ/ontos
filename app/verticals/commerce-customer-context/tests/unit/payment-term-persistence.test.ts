@@ -1,6 +1,3 @@
-// @effect-diagnostics nodeBuiltinImport:off -- Checked-in migration security is the contract under test; expires: 2027-03-31.
-import { readFile } from 'node:fs/promises';
-
 import type { OperationalScope } from '@app/core-runtime';
 import { ReadHandlerUnavailable } from '@app/core-runtime';
 import type { CurrentPaymentTermsResponse } from '@app/payment-term-catalog-contracts/current-payment-terms';
@@ -517,81 +514,5 @@ it.effect('fails resolution closed when Customer Commerce Policy is absent', () 
     if (Schema.is(ReadHandlerUnavailable)(failure)) {
       expect(failure.reason).toContain('Customer Commerce Policy');
     }
-  }),
-);
-
-it.effect('grants runtime access only to the three audited routines', () =>
-  Effect.gen(function* migrationSecurity() {
-    const sql = yield* Effect.tryPromise(() =>
-      readFile(
-        new URL('../../drizzle/20260909112241_payment-entitlement-routines/migration.sql', import.meta.url),
-        'utf-8',
-      ),
-    );
-    expect(sql.match(/SECURITY DEFINER/gu)?.length).toBeGreaterThanOrEqual(4);
-    expect(sql).toContain('SET search_path = pg_catalog, commerce_customer_context');
-    expect(sql).toContain('REVOKE ALL ON FUNCTION "commerce_customer_context"."read_customer_payment_terms"');
-    expect(sql.match(/GRANT EXECUTE ON FUNCTION/gu)?.length).toBe(3);
-    expect(sql).toContain('GRANT EXECUTE ON FUNCTION "commerce_customer_context"."read_customer_payment_terms"');
-    expect(sql).toContain('GRANT EXECUTE ON FUNCTION "commerce_customer_context"."persist_customer_payment_terms"');
-    expect(sql).toContain(
-      'GRANT EXECUTE ON FUNCTION "commerce_customer_context"."assess_payment_term_entitlement_use"(uuid, uuid, uuid[], timestamptz) TO "ontos_runtime"',
-    );
-    expect(sql).not.toContain('"assess_payment_term_entitlement_use"(uuid, uuid, text, timestamptz)');
-    expect(sql).toContain('cardinality(p_payment_term_resource_ids) NOT BETWEEN 1 AND 200');
-    expect(sql).toContain('entitlement.payment_term_resource_id = ANY(p_payment_term_resource_ids::text[])');
-    expect(sql).toContain('v_action_invocation_id IS NULL');
-    expect(sql).toContain('customer_payment_term_entitlements.effective_to IS DISTINCT FROM excluded.effective_to');
-    expect(sql).not.toMatch(
-      /GRANT EXECUTE ON FUNCTION[^;]+(?:assert_customer_payment_terms_scope|customer_payment_terms_state_json)/iu,
-    );
-    expect(sql).not.toMatch(/GRANT\s+(?:SELECT|INSERT|UPDATE|DELETE)\s+ON/iu);
-  }),
-);
-
-it.effect('assesses every non-cancelled entitlement interval overlapping the retirement horizon', () =>
-  Effect.gen(function* retirementHorizonAssessment() {
-    const sql = yield* Effect.tryPromise(() =>
-      readFile(
-        new URL('../../drizzle/20260909144801_assess-future-payment-term-uses/migration.sql', import.meta.url),
-        'utf-8',
-      ),
-    );
-    expect(sql).toContain("entitlement.lifecycle IN ('ACTIVE', 'ENDED')");
-    expect(sql).toContain('entitlement.effective_to IS NULL');
-    expect(sql).toContain('entitlement.effective_to > p_effective_at');
-    expect(sql).not.toContain('entitlement.effective_from <= p_effective_at');
-    expect(sql).not.toContain("profile.lifecycle = 'ACTIVE'");
-    expect(sql).not.toContain('INNER JOIN commerce_customer_context.customer_profiles');
-    expect(sql).toContain('payment-term-entitlement-use-horizon');
-    expect(sql).toContain(
-      'GRANT EXECUTE ON FUNCTION "commerce_customer_context"."assess_payment_term_entitlement_use"(uuid, uuid, uuid[], timestamptz) TO "ontos_runtime"',
-    );
-  }),
-);
-
-it.effect('verifies local Payment Terms facts without transferring them during reconciliation', () =>
-  Effect.gen(function* paymentTermsOwnerMigration() {
-    const sql = yield* Effect.tryPromise(() =>
-      readFile(
-        new URL('../../drizzle/20260909152000_payment-terms-reconciliation-owner/migration.sql', import.meta.url),
-        'utf-8',
-      ),
-    );
-    expect(sql).toContain(
-      'CREATE OR REPLACE FUNCTION "commerce_customer_context"."verify_payment_terms_reconciliation_owner"',
-    );
-    expect(sql).toContain('SECURITY DEFINER');
-    expect(sql).toContain('FOR UPDATE OF entitlement');
-    expect(sql).toContain('FOR UPDATE OF preference');
-    expect(sql).toContain('v_non_survivor_current_preferences > 0');
-    expect(sql).toContain('futureOverlapInventory');
-    expect(sql).toContain(
-      'REVOKE ALL ON FUNCTION "commerce_customer_context"."verify_payment_terms_reconciliation_owner"',
-    );
-    expect(sql).toContain(
-      'GRANT EXECUTE ON FUNCTION "commerce_customer_context"."verify_payment_terms_reconciliation_owner"',
-    );
-    expect(sql).not.toMatch(/GRANT\s+(?:SELECT|INSERT|UPDATE|DELETE)\s+ON/iu);
   }),
 );

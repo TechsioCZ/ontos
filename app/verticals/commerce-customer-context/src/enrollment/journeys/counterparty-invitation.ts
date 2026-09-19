@@ -24,8 +24,7 @@ import type { JourneyDefinition, JourneyTransitionSpec } from './journey-contrac
 import { JourneyDefinitionSchema, journeyTransitions } from './journey-contracts.ts';
 
 /**
- * Counterparty invitation enrollment journey (issue #338 "Supported journeys → Counterparty
- * invitation enrollment").
+ * Counterparty invitation enrollment journey.
  *
  * The journey composes exactly three owner transitions: the Commerce Portal Account creation, the
  * existing `claim-counterparty-access-invitation` Action, and the Core Principal Auth Binding
@@ -33,7 +32,7 @@ import { JourneyDefinitionSchema, journeyTransitions } from './journey-contracts
  * the invitation's intended Permission mutations inside its own transaction, so a journey-level
  * grant loop would either duplicate those mutations or invent authority the invitation never
  * carried.  The invitation itself is never treated as a Permission; access exists only once the
- * claim owner's staged #300 grants are Current.
+ * claim owner's staged grants are Current.
  *
  * Every transition travels through the generic owner-transition driver, so a lost claim response
  * converges on the exact original owner invocation through `reconcile` rather than a second blind

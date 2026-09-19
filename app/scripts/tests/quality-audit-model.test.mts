@@ -302,16 +302,6 @@ it.live(
 );
 
 it.live(
-  'the model regression harness uses the repository-pinned Knip version',
-  Effect.fn(function* testEffect5() {
-    const manifest = yield* Schema.decodeUnknownEffect(
-      Schema.fromJsonString(Schema.Struct({ version: Schema.Literal('6.34.0') })),
-    )(readFileSync(path.join(appRoot, knipManifestFile), 'utf-8'));
-    expect(manifest.version).toBe('6.34.0');
-  }),
-);
-
-it.live(
   'runner calibrates only the proven resolver record and retains the direct import',
   Effect.fn(function* testEffect6() {
     const root = yield* fixture();

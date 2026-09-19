@@ -21,6 +21,7 @@ import type {
   CommercePortalAuthEmailVerificationTokenBoundary,
   CommercePortalAuthEmailVerificationTokenRegistration,
   CommercePortalAuthRecoveryCompleted,
+  CommercePortalAuthRecoveryReconciliationRequired,
   CommercePortalAuthRecoveryStarted,
   CommercePortalAuthPasswordResetRequestBoundary,
   CommercePortalAuthPasswordResetBoundary,
@@ -28,6 +29,7 @@ import type {
 import { CommercePortalAuthRecoveryInvalidRequest } from './invalid-request.ts';
 import type { CommercePortalAuthRecoveryProviderFailure } from './provider-failure.ts';
 import { CommercePortalAuthRecoveryProviderService } from './provider-service.ts';
+import { CommercePortalAuthRecoveryReconciliationService } from './reconciliation.ts';
 import { CommercePortalAuthRecoveryStoreService } from './store-service.ts';
 import { CommercePortalAuthRecoveryRejected } from './rejected.ts';
 import { CommercePortalAuthRecoveryUnavailable } from './unavailable.ts';
@@ -127,10 +129,16 @@ export class CommercePortalAuthRecoveryService extends Context.Service<
     ) => Effect.Effect<CommercePortalAuthRecoveryStarted, CommercePortalAuthRecoveryFailure>;
     readonly resetPassword: (
       input: CommercePortalAuthPasswordResetBoundary,
-    ) => Effect.Effect<CommercePortalAuthRecoveryCompleted, CommercePortalAuthRecoveryFailure>;
+    ) => Effect.Effect<
+      CommercePortalAuthRecoveryCompleted | CommercePortalAuthRecoveryReconciliationRequired,
+      CommercePortalAuthRecoveryFailure
+    >;
     readonly verifyEmail: (
       input: CommercePortalAuthEmailVerificationTokenBoundary,
-    ) => Effect.Effect<CommercePortalAuthEmailVerificationCompleted, CommercePortalAuthRecoveryFailure>;
+    ) => Effect.Effect<
+      CommercePortalAuthEmailVerificationCompleted | CommercePortalAuthRecoveryReconciliationRequired,
+      CommercePortalAuthRecoveryFailure
+    >;
   }
 >()('@app/commerce-customer-context/api/portal-auth/provider/recovery/service/CommercePortalAuthRecoveryService') {}
 
@@ -145,10 +153,13 @@ export const makeCommercePortalAuthRecoveryService = Effect.fn('CommercePortalAu
   ): Effect.fn.Return<
     CommercePortalAuthRecoveryService['Service'],
     never,
-    CommercePortalAuthRecoveryProviderService | CommercePortalAuthRecoveryStoreService
+    | CommercePortalAuthRecoveryProviderService
+    | CommercePortalAuthRecoveryReconciliationService
+    | CommercePortalAuthRecoveryStoreService
   > {
     const provider = yield* CommercePortalAuthRecoveryProviderService;
     const store = yield* CommercePortalAuthRecoveryStoreService;
+    const reconciliation = yield* CommercePortalAuthRecoveryReconciliationService;
     const emitAudit = (event: Parameters<CommercePortalAuthAuditRecorder['record']>[0]) =>
       recordCommercePortalAuthAudit(audit, event);
 
@@ -184,10 +195,22 @@ export const makeCommercePortalAuthRecoveryService = Effect.fn('CommercePortalAu
 
     const resetPassword = Effect.fn('CommercePortalAuthRecovery.resetPassword')(function* resetPasswordEffect(
       input: CommercePortalAuthPasswordResetBoundary,
-    ): Effect.fn.Return<CommercePortalAuthRecoveryCompleted, CommercePortalAuthRecoveryFailure> {
+    ): Effect.fn.Return<
+      CommercePortalAuthRecoveryCompleted | CommercePortalAuthRecoveryReconciliationRequired,
+      CommercePortalAuthRecoveryFailure
+    > {
       const request = yield* Schema.decodeEffect(CommercePortalAuthPasswordResetSchema)(input).pipe(
         Effect.mapError(invalidRequest),
       );
+      // Reconciliation runs before any token is spent: a conflict is terminal, and the provider's
+      // reset must never run once the ledger and the account's current state disagree.
+      const conflict = yield* reconciliation.detect({
+        operation: RECOVERY_RESET_OPERATION,
+        token: request.token,
+      });
+      if (Option.isSome(conflict)) {
+        return conflict.value;
+      }
       const response = yield* provider
         .resetPassword({
           body: {
@@ -280,10 +303,22 @@ export const makeCommercePortalAuthRecoveryService = Effect.fn('CommercePortalAu
 
     const verifyEmail = Effect.fn('CommercePortalAuthRecovery.verifyEmail')(function* verifyEmailEffect(
       input: CommercePortalAuthEmailVerificationTokenBoundary,
-    ): Effect.fn.Return<CommercePortalAuthEmailVerificationCompleted, CommercePortalAuthRecoveryFailure> {
+    ): Effect.fn.Return<
+      CommercePortalAuthEmailVerificationCompleted | CommercePortalAuthRecoveryReconciliationRequired,
+      CommercePortalAuthRecoveryFailure
+    > {
       const request = yield* Schema.decodeEffect(CommercePortalAuthEmailVerificationTokenSchema)(input).pipe(
         Effect.mapError(invalidRequest),
       );
+      // Reconciliation runs before the ledger token is consumed: a conflict is terminal, and access
+      // must never be restored once the ledger and the account's current state disagree.
+      const conflict = yield* reconciliation.detect({
+        operation: VERIFY_EMAIL_OPERATION,
+        token: request.token,
+      });
+      if (Option.isSome(conflict)) {
+        return conflict.value;
+      }
       const now = yield* DateTime.nowAsDate;
       const subject = yield* store.consumeEmailVerification({ now, token: request.token });
       if (Option.isNone(subject)) {
@@ -313,7 +348,12 @@ export const makeCommercePortalAuthRecoveryService = Effect.fn('CommercePortalAu
   },
 );
 
-/** The recovery provider and store ports stay visible requirements for the composition root. */
+/**
+ * The recovery provider, store and reconciliation ports stay visible requirements for the
+ * composition root: `api/index.ts` already publishes `CommercePortalAuthRecoveryReconciliationServiceLive`
+ * one tier beneath this layer, beside the owner store it is built from, precisely so this service
+ * can read it here rather than each owning its own private copy.
+ */
 export const CommercePortalAuthRecoveryServiceLive = Layer.effect(
   CommercePortalAuthRecoveryService,
   Effect.gen(function* makeCommercePortalAuthRecoveryServiceLive() {

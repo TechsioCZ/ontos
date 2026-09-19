@@ -14,6 +14,7 @@ import type {
 } from '../attempts/attempt-service.ts';
 import { CommerceEnrollmentAttemptRejected } from '../attempts/errors.ts';
 import type { CommerceEnrollmentAttemptError } from '../attempts/errors.ts';
+import { commerceEnrollmentCompletionAuthorityForPersistence } from './completion.ts';
 import { CommerceEnrollmentPreparedOwnerCapability } from './prepared-owner-authority.ts';
 import type { CommerceEnrollmentPreparedOwnerEvidence } from './prepared-owner-authority.ts';
 
@@ -75,11 +76,14 @@ const attemptServiceForTransaction = (
   transaction: EnrollmentAttemptScopedRoutineInvoker,
   scope: OperationalScope,
   authority: CommerceEnrollmentAttemptReconciliationAuthority,
-): CommerceEnrollmentAttemptService =>
-  commerceEnrollmentAttemptServiceForPersistence(
-    commerceEnrollmentAttemptPersistenceForTransaction(transaction, scope),
+): CommerceEnrollmentAttemptService => {
+  const persistence = commerceEnrollmentAttemptPersistenceForTransaction(transaction, scope);
+  return commerceEnrollmentAttemptServiceForPersistence(
+    persistence,
     authority,
+    commerceEnrollmentCompletionAuthorityForPersistence(persistence),
   );
+};
 
 /**
  * Start, claim and terminate use the durable scoped-routine façade.  Reconciliation is kept
@@ -103,11 +107,17 @@ export const commerceEnrollmentPreparedAttemptActionServicesForTransaction = Eff
 ) {
   const preparedOwner = yield* CommerceEnrollmentPreparedOwnerCapability;
   const persistence = commerceEnrollmentAttemptPersistenceForTransaction(transaction, scope);
-  const attempt = commerceEnrollmentAttemptServiceForPersistence(persistence, unavailableReconciliationAuthority());
+  const completion = commerceEnrollmentCompletionAuthorityForPersistence(persistence);
+  const attempt = commerceEnrollmentAttemptServiceForPersistence(
+    persistence,
+    unavailableReconciliationAuthority(),
+    completion,
+  );
   const reconcilePrepared = (input: ReconcileEnrollmentRequest, evidence: CommerceEnrollmentPreparedOwnerEvidence) =>
     commerceEnrollmentAttemptServiceForPersistence(
       persistence,
       preparedReconciliationAuthority(evidence),
+      completion,
     ).reconcileOutcome(input);
   return Object.freeze({ attempt, preparedOwner, reconcilePrepared });
 });

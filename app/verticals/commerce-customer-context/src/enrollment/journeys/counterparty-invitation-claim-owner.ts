@@ -29,7 +29,7 @@ import type { CounterpartyInvitationClaimDispatchResult } from './counterparty-i
 import { CounterpartyInvitationClaimGateway } from './counterparty-invitation-claim-gateway.ts';
 
 /**
- * Owner effect for the Counterparty invitation claim transition (#338).
+ * Owner effect for the Counterparty invitation claim transition.
  *
  * The claim Action is the grant owner: it stages the invitation's intended Permission mutations
  * inside its own transaction and publishes the authorization-mutation message.  This effect

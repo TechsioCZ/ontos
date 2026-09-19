@@ -224,3 +224,36 @@ it.effect('fails closed (T20) when a historical commit read finds the current re
     expect(error).not.toBeInstanceOf(CommerceEnrollmentCommitResolutionUnavailable);
   }),
 );
+
+it.effect(
+  'reports the caller\'s invocationId (not the retained binding\'s originalInvocationId) when a non-current binding converges onto a different attempt',
+  () =>
+    Effect.gen(function* nonCurrentConvergenceReportsCallerInvocation() {
+      const runtime = {
+        resolveActionCommit: (_resolveInput: ResolveActionCommitInput) =>
+          Effect.fail(
+            new ActionAlreadyCommitted({
+              code: 'action_already_committed',
+              invocationId,
+              reason: 'This idempotency key already committed successfully',
+            }),
+          ),
+      };
+      const client: ExternalIdentityClientPort = {
+        ...unusedClient,
+        readPrincipalBinding: () =>
+          Effect.succeed(foundBinding({ bindingStatus: 'revoked', originalInvocationId: otherInvocationId })),
+      };
+      const service = makeCommerceEnrollmentCommitResolutionService(runtime, client);
+      const error = yield* service
+        .resolve(input({ identityRead: { accountSubject, clientOptions: clientOptions() } }))
+        .pipe(Effect.flip);
+      expect(error).toBeInstanceOf(CommerceEnrollmentCommitResolutionRevoked);
+      expect(Schema.is(CommerceEnrollmentCommitResolutionRevoked)(error) ? error.invocationId : undefined).toBe(
+        invocationId,
+      );
+      expect(Schema.is(CommerceEnrollmentCommitResolutionRevoked)(error) ? error.bindingStatus : undefined).toBe(
+        'revoked',
+      );
+    }),
+);

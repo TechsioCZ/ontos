@@ -150,6 +150,7 @@ interface InvitationOverrides {
   readonly claimantRef?: PrincipalRef;
   readonly expiresAt?: AccessInstant;
   readonly grantProgress?: readonly InvitationGrantProgress[];
+  readonly intendedPermissions?: readonly CounterpartyPermissionCode[];
   readonly state?: CounterpartyAccessInvitation['state'];
 }
 
@@ -163,7 +164,7 @@ const invitation = (overrides: InvitationOverrides = {}): CounterpartyAccessInvi
     deliveryReference: 'verified-contact-point-1',
     expiresAt: overrides.expiresAt ?? EXPIRES_AT,
     grantProgress: overrides.grantProgress ?? [],
-    intendedPermissions: INTENDED_PERMISSIONS,
+    intendedPermissions: overrides.intendedPermissions ?? INTENDED_PERMISSIONS,
     invitationRef,
     invitedBy,
     reason: 'Counterparty buyer onboarding',
@@ -443,6 +444,32 @@ it.effect('stays retryable when Current grantor authority cannot be established'
     const failure = yield* Effect.flip(preflight(staticReads(invitation(), () => Effect.succeed('UNAVAILABLE'))));
     expect(Schema.is(CounterpartyAccessUnavailable)(failure)).toBe(true);
   }),
+);
+
+it.effect('rejects a claim whose requested Permission scope no longer matches the invitation scope', () =>
+  Effect.gen(function* refusesScopeMismatch() {
+    const failure = yield* Effect.flip(
+      preflight(staticReads(invitation()), { scope: { kind: 'storefront', storefrontKey: 'storefront-1' } }),
+    );
+    expect(failure).toBeInstanceOf(CounterpartyInvitationClaimRejected);
+    expect(Schema.is(CounterpartyInvitationClaimRejected)(failure) ? failure.code : undefined).toBe(
+      'invitation_scope_mismatch',
+    );
+  }),
+);
+
+it.effect(
+  'rejects a claim whose invited Permission is no longer delegable under the Current catalog',
+  () =>
+    Effect.gen(function* refusesCatalogRevisionChanged() {
+      const failure = yield* Effect.flip(
+        preflight(staticReads(invitation({ intendedPermissions: ['counterparty.address_book.manage'] }))),
+      );
+      expect(failure).toBeInstanceOf(CounterpartyInvitationClaimRejected);
+      expect(Schema.is(CounterpartyInvitationClaimRejected)(failure) ? failure.code : undefined).toBe(
+        'invitation_catalog_revision_changed',
+      );
+    }),
 );
 
 it.effect('reports exactly the invitation own intended Permissions and nothing inherited', () =>

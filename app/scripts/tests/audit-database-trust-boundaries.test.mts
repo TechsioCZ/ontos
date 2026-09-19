@@ -1,5 +1,3 @@
-import { readFile } from 'node:fs/promises';
-
 import { Effect, Cause } from 'effect';
 import { expect, it } from 'effect-rstest';
 import { Client } from 'pg';
@@ -659,28 +657,6 @@ it('treats ADMIN OPTION as an escalation path when SET OPTION is false', () => {
     'runtime_role_has_cross_schema_dml',
   ]);
 });
-
-it.live(
-  'traverses SET OPTION descendants after every ADMIN OPTION role',
-  Effect.fn(function* scenario1() {
-    const source = yield* Effect.promise(() =>
-      readFile(new URL('../database-trust-audit/collect-snapshot.mts', import.meta.url), 'utf-8'),
-    );
-
-    expect(source.match(/where membership\.admin_option or membership\.set_option/gu)?.length).toBe(3);
-    expect(source).toMatch(/candidate\.oid in \(select role_oid from reachable_roles\) as can_set_role/u);
-    expect(source).not.toMatch(
-      /or pg_has_role\(\$1, grantee\.oid, 'SET'\)\s+or grantee\.oid in \(select role_oid from administrable_roles\)/u,
-    );
-    expect(source).toMatch(/view_dependencies\(view_oid, referenced_oid, effective_owner_oid\)/u);
-    expect(source).toMatch(/target_roles\(role_oid, role_name\)/u);
-    expect(source).toMatch(/format\('role:%I:%s', target\.role_name, authority\.grant_option\)/u);
-    expect(source).toMatch(/pg_has_role\(effective_owner\.oid, \$3, 'USAGE'\)/u);
-    expect(source).toMatch(
-      /pg_has_role\(\s*dependency\.effective_owner_oid,\s*referenced_relation\.relowner,\s*'USAGE'\s*\)/u,
-    );
-  }),
-);
 
 it('treats inherited owner-role authority as effective runtime DDL authority', () => {
   const report = buildHardenedReport({

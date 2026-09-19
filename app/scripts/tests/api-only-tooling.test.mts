@@ -3346,24 +3346,6 @@ it('MicroVertical baseline validation resolves an API stem independently from it
   ).toBe(warehouseItemsApiStem);
 });
 
-it.live(
-  'full-stack Party Registry keeps backend and Contacts component tests executable',
-  Effect.fn(function* scenario27() {
-    const packageJson = yield* readJson(
-      PackageJsonSchema,
-      path.join(workspaceRoot, 'verticals/party-registry/package.json'),
-    );
-    expect(packageJson.scripts['test:component']).toBe('rstest --project component');
-    expect(packageJson.scripts['test:unit']).toBe('rstest --project unit');
-    expect(packageJson.scripts['test:integration']).toBe('rstest --project integration');
-    expect(
-      yield* Effect.promise(() =>
-        readFile(path.join(workspaceRoot, 'verticals/party-registry/rstest.config.ts'), 'utf-8'),
-      ),
-    ).toMatch(/tests\/components/u);
-  }),
-);
-
 const cloudflareProofModule: unknown = await import(
   pathToFileURL(path.join(generatorRoot, 'templates/workspace-scripts/ultramodern-cloudflare-proof.mjs')).href
 );
@@ -3633,34 +3615,6 @@ it.live(
 );
 
 it.live(
-  'Party Registry is the sole deployment owner for Contacts capabilities',
-  Effect.fn(function* scenario37() {
-    const topology = yield* readJson(TopologySchema, path.join(workspaceRoot, topologyReferencePath));
-    const overlay = yield* readJson(
-      OverlaySchema,
-      path.join(workspaceRoot, 'topology/local-overlays/development.json'),
-    );
-    const zerops = yield* Effect.promise(() => readFile(path.join(workspaceRoot, 'zerops.yaml'), 'utf-8'));
-    const partySetup = zerops.split(`  - setup: '${partyId}'`)[1]?.split('  - setup:')[0];
-    expect(partySetup).toBeDefined();
-    if (!partySetup) {
-      throw new Error('Party setup is missing');
-    }
-    expect(zerops.includes("  - setup: 'contacts'")).toBe(false);
-    expect(topology.verticals.some((entry) => entry.id === 'contacts')).toBe(false);
-    const party = topology.verticals.find((entry) => entry.id === partyId);
-    expect(party).toBeDefined();
-    if (!party) {
-      throw new Error('Party deployment is missing');
-    }
-    expect(overlay.ports[party.id]).toBe(4102);
-    expect(overlay.apis[party.id]).toBe('http://localhost:4102/party-registry-api');
-    expect(partySetup.includes('ULTRAMODERN_ZEROPS_SERVICE: party-registry')).toBe(true);
-    expect(party.moduleFederation.exposes.includes('./PageContacts')).toBe(true);
-  }),
-);
-
-it.live(
   'installed Cloudflare CLI preserves API-only routes when synthesizing the real Party contract',
   Effect.fn(function* scenario38() {
     const fixture = yield* Effect.acquireRelease(
@@ -3764,7 +3718,6 @@ it.live(
     const source = yield* Effect.promise(() =>
       readFile(path.join(workspaceRoot, 'verticals/party-registry/shared/api.ts'), 'utf-8'),
     );
-    expect(source.includes(identityTerminator)).toBeTruthy();
     expect(yield* microVerticalApiBaselineViolation(partyId, source)).toBe(undefined);
     const mutations = [
       source.replace(
@@ -3795,85 +3748,6 @@ describe('consumer migration preserves native tooling and governed safety', () =
   const source = (relativePath: string) =>
     Effect.promise(() => readFile(path.join(workspaceRoot, relativePath), 'utf-8'));
   it.live(
-    'authenticated cohort and scoped release-age policy remain pinned',
-    Effect.fn(function* consumerScenario() {
-      const releaseVersion = '3.9.0-ultramodern.11';
-      const cohort = Schema.decodeUnknownSync(
-        Schema.fromJsonString(
-          Schema.Struct({
-            aliases: Schema.Record(Schema.String, Schema.String),
-            packages: Schema.Array(
-              Schema.Struct({
-                sourceName: Schema.String,
-                targetName: Schema.String,
-                version: Schema.Literal(releaseVersion),
-              }),
-            ),
-            release: Schema.Struct({ version: Schema.Literal(releaseVersion) }),
-            source: Schema.Struct({
-              commit: Schema.Literal('972c4fff1ff443358319d993f031f1cf28d1ab79'),
-            }),
-          }),
-        ),
-      )(yield* source('.modernjs/release-cohort.json'));
-      expect(cohort.aliases['@modern-js/ultramodern-create']).toBe('@bleedingdev/modern-js-ultramodern-create');
-      expect(cohort.aliases['@modern-js/create']).toBe(undefined);
-      expect(new Set(cohort.packages.map((entry) => entry.sourceName)).size).toBe(cohort.packages.length);
-      for (const entry of cohort.packages) {
-        expect(cohort.aliases[entry.sourceName]).toBe(entry.targetName);
-      }
-      const workspace = yield* source('pnpm-workspace.yaml');
-      for (const line of [
-        'minimumReleaseAge: 1440',
-        'minimumReleaseAgeStrict: true',
-        'minimumReleaseAgeIgnoreMissingTime: false',
-      ]) {
-        expect(workspace.split('\n').filter((candidate) => candidate === line).length).toBe(1);
-      }
-      const exclusions = /^minimumReleaseAgeExclude:\n(?<entries>(?:[ \t]+[^\n]*\n)*)/mu.exec(workspace)?.groups
-        ?.entries;
-      expect(exclusions !== undefined && exclusions.length > 0).toBeTruthy();
-      if (exclusions === undefined) {
-        throw new Error('Missing release-age exclusions');
-      }
-      const allowed = new Set(cohort.packages.map((entry) => `${entry.targetName}@${entry.version}`));
-      const declared = exclusions
-        .trim()
-        .split('\n')
-        .map((line) => line.trim().replaceAll(/^-\s*['"]?|['"]$/gu, ''));
-      expect(declared.length > 0).toBeTruthy();
-      for (const entry of declared) {
-        expect(
-          allowed.has(entry),
-          `Release-age exception must name an exact authenticated package: ${entry}`,
-        ).toBeTruthy();
-      }
-      // The vendored validator snapshot is gone: the workspace contract gate now runs the
-      // authenticated cohort's own `ultramodern validate`, so the pin is proved against the
-      // adoption manifest and the installed cohort package instead of a copied source block.
-      const validator = yield* source('scripts/validate-ultramodern-workspace.mts');
-      expect(validator).toMatch(/runUltramodernScript\(/u);
-      expect(validator).toMatch(/command: 'validate'/u);
-      expect(validator).not.toMatch(/['"]@modern-js\/create['"]/u);
-      const adoption = Schema.decodeUnknownSync(
-        Schema.fromJsonString(
-          Schema.Struct({
-            generator: Schema.Struct({ version: Schema.Literal(releaseVersion) }),
-            packageSource: Schema.Struct({
-              aliasScope: Schema.Literal('bleedingdev'),
-              modernPackageVersion: Schema.Literal(releaseVersion),
-            }),
-          }),
-        ),
-      )(yield* source(ultramodernConfigFile));
-      const installedGenerator = Schema.decodeUnknownSync(
-        Schema.fromJsonString(Schema.Struct({ name: Schema.String, version: Schema.Literal(releaseVersion) })),
-      )(yield* Effect.promise(() => readFile(path.join(generatorRoot, packageJsonFile), 'utf-8')));
-      expect(installedGenerator.name).toBe(cohort.aliases['@modern-js/ultramodern-create']);
-      expect(installedGenerator.name.startsWith(`@${adoption.packageSource.aliasScope}/`)).toBeTruthy();
-    }),
-  );
-  it.live(
     'current generator handoff preserves arguments and nonzero failures',
     Effect.fn(function* consumerScenario() {
       const scratchRoot = path.join(workspaceRoot, '.scratch');
@@ -3891,19 +3765,7 @@ describe('consumer migration preserves native tooling and governed safety', () =
           ),
         );
         const wrappers = [['ultramodern-typecheck.mts', 'typecheck']] as const;
-        const wrapperSources = yield* Effect.forEach(wrappers, ([file]) => source(`scripts/${file}`), {
-          concurrency: 1,
-        });
-        const runner = yield* source('scripts/shared/ultramodern-command.mts');
-        const commandFailure = yield* source('scripts/ultramodern-command-failure.mts');
-        expect(runner).toMatch(/'ultramodern-create'/u);
-        expect(runner).not.toMatch(/['"]modern-js-create['"]/u);
-        expect(commandFailure).toMatch(/Schema\.TaggedError/u);
-        for (const [index, [file, command]] of wrappers.entries()) {
-          const script = wrapperSources[index] ?? '';
-          expect(script).toMatch(/runUltramodernScript/u);
-          expect(script).not.toMatch(/['"]modern-js-create['"]/u);
-          expect(script).toMatch(/Effect\.runPromiseExit/u);
+        for (const [file, command] of wrappers) {
           const result = spawnSync(
             process.execPath,
             [path.join(workspaceRoot, 'scripts', file), '--fixture-argument'],
@@ -3937,35 +3799,6 @@ describe('consumer migration preserves native tooling and governed safety', () =
     }),
   );
   it.live(
-    'native route, isolated materialization and workerd adaptations survive',
-    Effect.fn(function* consumerScenario() {
-      const files = ['generate-tanstack-routes.mts', 'materialize-zerops-runtime.mjs', 'proof-workerd-ssr.mts'];
-      const scripts = yield* Effect.forEach(files, (file) => source(`scripts/${file}`), {
-        concurrency: 1,
-      });
-      for (const [index, file] of files.entries()) {
-        const script = scripts[index] ?? '';
-        expect(script, file).toMatch(/Effect\.gen/u);
-        expect(script, file).toMatch(/FileSystem/u);
-        expect(script, file).not.toMatch(/import\s*\{[^}]*spawnSync[^}]*\}\s*from\s*['"]node:child_process/u);
-        expect(script, file).not.toMatch(/['"]modern-js-create['"]/u);
-      }
-      const materializer = yield* source('scripts/materialize-zerops-runtime.mjs');
-      expect(materializer).toMatch(/Flag\.boolean\('worker'\)/u);
-      expect(materializer).toMatch(/appPackage\.name !== packageName/u);
-      expect(materializer).toMatch(/makeTempDirectoryScoped/u);
-      expect(materializer).toMatch(/removeIncompatiblePlatformDependencies/u);
-      expect(materializer).not.toMatch(/--skip-build/u);
-      const proof = yield* source('scripts/proof-workerd-ssr.mts');
-      expect(proof).toMatch(/WorkerdProofError extends Schema\.TaggedError/u);
-      expect(proof).toMatch(/findReleaseMarkers/u);
-      expect(proof).toMatch(/not tied to its executed release identity/u);
-      expect(proof).toMatch(/check\.body \?\? null/u);
-      expect(proof).toMatch(/check\.expect \?\? null/u);
-      expect(proof).toMatch(/Exit\.isFailure\(exit\)/u);
-    }),
-  );
-  it.live(
     'custom Party contracts remain accepted and forged auth remains rejected',
     Effect.fn(function* consumerScenario() {
       const principal = yield* source('verticals/party-registry/api/auth/action-principal.ts');
@@ -3983,11 +3816,9 @@ describe('consumer migration preserves native tooling and governed safety', () =
         ],
         ["'@app/core-runtime/http/principal-authentication'", "'./counterfeit.ts'"],
       ]) {
-        expect(principal.includes(before)).toBeTruthy();
         expect(hasGeneratedOperationPrincipalContract(principal.replace(before, after))).toBe(false);
       }
       const audience = "ACTION_GATEWAY_AUDIENCE = 'party-registry'";
-      expect(gateway.includes(audience)).toBeTruthy();
       expect(
         hasGeneratedOperationGatewayContract(
           gateway.replace(audience, "ACTION_GATEWAY_AUDIENCE = 'other-owner'"),

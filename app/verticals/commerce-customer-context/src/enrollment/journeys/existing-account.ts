@@ -111,6 +111,7 @@ export class ExistingAccountEnrollmentRejected extends Schema.TaggedError<Existi
       'existing_account_transition_undeclared',
       'existing_account_transition_invalid',
       'existing_account_subject_mismatch',
+      'existing_account_tenant_mismatch',
     ]),
     reason: Schema.String,
     retryable: Schema.Boolean,
@@ -197,7 +198,7 @@ export const ExistingAccountEnrollmentSubjectSchema = Schema.Struct({
   accountSubject: CommercePortalAccountSubjectSchema,
   targetTenantId: EnrollmentTenantIdSchema,
 }).annotate({ parseOptions: { onExcessProperty: 'error' } });
-export type ExistingAccountEnrollmentSubject = typeof ExistingAccountEnrollmentSubjectSchema.Type;
+type ExistingAccountEnrollmentSubject = typeof ExistingAccountEnrollmentSubjectSchema.Type;
 
 /**
  * Reject when the exact current session subject does not match the subject the Existing-account
@@ -270,6 +271,17 @@ export interface ExistingAccountEnrollmentTransitionInput {
 }
 
 /**
+ * The second Tenant the request names must be the exact Tenant the trusted Attempt identity
+ * belongs to. Mirrors `tenantBindingIssue` in `counterparty-invitation.ts`: a mismatch is a typed
+ * rejection here, before any digest is derived, so two requests that differ only in
+ * `targetTenantId` can never collapse onto the same digest for one step.
+ */
+const tenantBindingIssue = (input: ExistingAccountEnrollmentTransitionInput): string | undefined =>
+  input.subject.targetTenantId === input.identity.tenantId
+    ? undefined
+    : 'The requested second Tenant does not match the Tenant of the Existing-account Enrollment Attempt';
+
+/**
  * Build one driver transition for a declared Core identity step (reserve or activate). The caller
  * cannot supply a request digest: it is derived from the step's own declaration and the trusted
  * subject, so an Attempt can never claim a transition this journey does not own. A delegated step
@@ -289,6 +301,10 @@ export const makeExistingAccountTransition = Effect.fn('ExistingAccountJourney.m
         'existing_account_transition_undeclared',
         'Existing-account enrollment builds owner transitions only for the Core identity reserve/activate steps it owns; every delegated transition is built by its owning journey module',
       );
+    }
+    const tenantIssue = tenantBindingIssue(input);
+    if (tenantIssue !== undefined) {
+      return yield* rejectExistingAccount('existing_account_tenant_mismatch', tenantIssue);
     }
     const requestDigest = yield* makeExistingAccountRequestDigest({
       journey: 'EXISTING_ACCOUNT',

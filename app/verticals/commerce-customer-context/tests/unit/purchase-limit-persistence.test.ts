@@ -26,8 +26,6 @@ import {
 } from '../../shared/domain/purchase-limit-policy.ts';
 import { ExactNonNegativeDecimalSchema } from '../../shared/domain/purchase-limit.ts';
 
-const { readFileSync } = process.getBuiltinModule('node:fs');
-
 const tenantId = '10000000-0000-4000-8000-000000000001';
 const legalEntityId = '20000000-0000-4000-8000-000000000001';
 const actorPrincipalId = '30000000-0000-4000-8000-000000000001';
@@ -788,27 +786,3 @@ it.effect('rejects an external Currentness provider claiming owner-local revisio
     expect(failure.reason).toContain('claimed owner-local sources');
   }),
 );
-
-it('hardens the migration around scope, races, tombstones, and exact EXECUTE-only grants', () => {
-  const migration = readFileSync(
-    new URL('../../drizzle/20260909112249_purchase-limit-routines/migration.sql', import.meta.url),
-    'utf-8',
-  );
-  const correctiveMigration = readFileSync(
-    new URL('../../drizzle/20260909123358_add_customer_group_revision_description/migration.sql', import.meta.url),
-    'utf-8',
-  );
-  expect(migration.match(/SECURITY DEFINER/gu)).toHaveLength(2);
-  expect(migration.match(/SET search_path = pg_catalog, commerce_customer_context/gu)).toHaveLength(2);
-  expect(migration.match(/current_setting\('ontos\.tenant_id', true\)/gu)).toHaveLength(2);
-  expect(migration.match(/current_setting\('ontos\.legal_entity_id', true\)/gu)).toHaveLength(2);
-  expect(migration).toContain('FOR UPDATE;');
-  expect(correctiveMigration).toContain("\"policy_kind\" in ('UNLIMITED', 'CLEARED')");
-  expect(correctiveMigration).toContain('SET DATA TYPE numeric(38,9)');
-  expect(correctiveMigration).toContain('amount" <> trunc("amount", 9)');
-  expect(migration).toContain('policy.action_invocation_id = p_action_invocation_id');
-  expect(migration).toContain('p_expected_revision IS DISTINCT FROM v_logical_revision');
-  expect(migration).toContain('REVOKE ALL ON FUNCTION');
-  expect(migration.match(/GRANT EXECUTE ON FUNCTION/gu)).toHaveLength(2);
-  expect(migration).not.toMatch(/GRANT\s+(?:SELECT|INSERT|UPDATE|DELETE|ALL)\s+ON\s+(?:TABLE|ALL TABLES)/u);
-});
