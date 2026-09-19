@@ -139,7 +139,7 @@ export const makeCommercePortalAuthRecoveryReconciliation = Effect.fn('CommerceP
       // that reports `Some`, and this call is unconditional on the path to it.
       yield* record({
         conflictClass: conflictClass.value,
-        currentProviderSubjectId: ledgerSubjectAccountExists ? currentAccountSubjectId : Option.none(),
+        currentProviderSubjectId: currentAccountSubjectId,
         email: binding.value.email,
         operation: input.operation,
         providerSubjectId: binding.value.providerSubjectId,

@@ -252,7 +252,8 @@ it.live('proves a stale ledger subject is detected without touching any account 
         .where(eq(recoveryReconciliation.email, fixture.originalEmail));
       expect(reconciliationRows).toHaveLength(1);
       expect(reconciliationRows[0]?.conflictClass).toBe('TOKEN_SUBJECT_STALE');
-      expect(reconciliationRows[0]?.currentProviderSubjectId).toBeNull();
+      // The ledger subject is gone, but the email has a current owner: the row names it for the operator.
+      expect(reconciliationRows[0]?.currentProviderSubjectId).toBe(fixture.rebindingUserId);
 
       const rebindingUsers = yield* fixture.database.executor
         .select()
