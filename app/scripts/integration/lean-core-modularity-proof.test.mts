@@ -1,13 +1,28 @@
 import { randomUUID } from 'node:crypto';
 
 import { v1 } from '@authzed/authzed-node';
-import { eq } from 'drizzle-orm';
-import { Effect, Schema } from 'effect';
+import { eq, inArray } from 'drizzle-orm';
+import { Context, Effect, Schema } from 'effect';
 import { expect, it } from 'effect-rstest';
 import { decodeJwt } from 'jose';
 import { Pool } from 'pg';
 
+import { makeActionRepository } from '../../packages/core-runtime/src/actions/repository.ts';
+import { ActionRuntime, makeActionRuntime } from '../../packages/core-runtime/src/actions/runtime.ts';
+import { AuthenticationNamespaceRegistrationSchema } from '../../packages/core-runtime/src/auth/external-identity-contracts.ts';
+import {
+  AuthenticationNamespaceRegistry,
+  makeAuthenticationNamespaceRegistry,
+} from '../../packages/core-runtime/src/auth/external-identity/verifier.ts';
+import {
+  PrincipalManagementRepository,
+  principalManagementRepositoryFromTransaction,
+} from '../../packages/core-runtime/src/auth/principal-management.ts';
 import { PrincipalResolver, makePrincipalResolver } from '../../packages/core-runtime/src/auth/principal-resolver.ts';
+import {
+  SupportRecoveryPrincipalContextResolver,
+  makeSupportRecoveryPrincipalContextResolver,
+} from '../../packages/core-runtime/src/auth/support-recovery-principal-context.ts';
 import {
   actionInvocations,
   auditEvents,
@@ -18,9 +33,17 @@ import {
   principals,
   tenants,
 } from '../../packages/core-runtime/src/db/schema.ts';
+import {
+  makeOperationalScopeRepository,
+  makeOperationalScopeResolver,
+} from '../../packages/core-runtime/src/operations/context.ts';
+import { openActionRuntimeOptions } from '../../packages/core-runtime/tests/support/action-runtime-options.ts';
 import { makeTestDatabaseFromPool } from '../../packages/core-runtime/tests/support/database.ts';
 import { purgeFixtureRows } from '../../packages/core-runtime/tests/support/fixture-cleanup.ts';
-import { toLegalEntityAccessObjectId } from '../../packages/core-runtime/src/permissions/context-access.ts';
+import {
+  ContextAccess,
+  toLegalEntityAccessObjectId,
+} from '../../packages/core-runtime/src/permissions/context-access.ts';
 import { loadSpiceDbConfig } from '../../packages/core-runtime/src/permissions/config.ts';
 import { spiceDbClientSecurity } from '../../packages/core-runtime/src/permissions/client.ts';
 import { toSpiceDbActionObjectId } from '../../packages/core-runtime/src/permissions/service.ts';
@@ -30,9 +53,23 @@ import {
 } from '../../packages/shared-contracts/src/gateway-context.ts';
 import { AuthConfig, loadAuthConfig } from '../../apps/shell-super-app/api/auth/config.ts';
 import { AuthDatabase, makeAuthDatabase } from '../../apps/shell-super-app/api/auth/db/client.ts';
-import { account, apikey, session, user } from '../../apps/shell-super-app/api/auth/db/schema.ts';
+import {
+  account,
+  apikey,
+  session,
+  supportImpersonationRecovery,
+  user,
+} from '../../apps/shell-super-app/api/auth/db/schema.ts';
 import { STAFF_AUTHENTICATION_NAMESPACE_ID } from '../../apps/shell-super-app/api/auth/authentication-namespace.ts';
-import { makeAuthenticationService } from '../../apps/shell-super-app/api/auth/service.ts';
+import {
+  makeSupportAuthProvider,
+  makeSupportImpersonationService,
+  makeSupportImpersonationStore,
+  SupportAuthProviderService,
+  SupportImpersonationCorrelationId,
+  SupportImpersonationStoreService,
+} from '../../apps/shell-super-app/api/auth/impersonation-service.ts';
+import { AuthenticationService, makeAuthenticationService } from '../../apps/shell-super-app/api/auth/service.ts';
 
 const gatewayAudience = 'party-registry';
 
@@ -199,6 +236,11 @@ it.live(
     const authBindingId = randomUUID();
     const email = `lean-core-modularity-${randomUUID()}@example.test`;
     const password = randomUUID();
+    // T27: a second staff principal used to exercise support/impersonation recovery.
+    let supportTargetUserId = '';
+    const supportTargetPrincipalId = randomUUID();
+    const supportTargetAuthBindingId = randomUUID();
+    const supportTargetEmail = `lean-core-support-target-${randomUUID()}@example.test`;
 
     const spiceDbConfiguration = yield* loadSpiceDbConfig();
     const spiceDbClient = yield* Effect.acquireRelease(
@@ -225,15 +267,19 @@ it.live(
     const cleanup = Effect.fnUntraced(function* cleanupLeanCoreModularityFixture() {
       yield* writeSpiceDbRelationships(spiceDbClient, spiceDbRelationships, v1.RelationshipUpdate_Operation.DELETE);
       yield* purgeFixtureRows([
+        authDatabase.delete(supportImpersonationRecovery).where(eq(supportImpersonationRecovery.tenantId, tenantId)),
         coreDatabase.delete(dataAccessEvents).where(eq(dataAccessEvents.tenantId, tenantId)),
         coreDatabase.delete(auditEvents).where(eq(auditEvents.tenantId, tenantId)),
         coreDatabase.delete(actionInvocations).where(eq(actionInvocations.tenantId, tenantId)),
         coreDatabase.delete(principalAuthBindings).where(eq(principalAuthBindings.tenantId, tenantId)),
-        coreDatabase.delete(principals).where(eq(principals.principalId, principalId)),
+        coreDatabase.delete(principals).where(eq(principals.tenantId, tenantId)),
         coreDatabase.delete(legalEntities).where(eq(legalEntities.legalEntityId, legalEntityId)),
         coreDatabase.delete(tenants).where(eq(tenants.tenantId, tenantId)),
       ]);
-      const users = yield* authDatabase.select({ id: user.id }).from(user).where(eq(user.email, email));
+      const users = yield* authDatabase
+        .select({ id: user.id })
+        .from(user)
+        .where(inArray(user.email, [email, supportTargetEmail]));
       yield* Effect.forEach(
         users,
         ({ id }) =>
@@ -324,6 +370,14 @@ it.live(
     expect(currentSession.identity.tenantId).toBe(tenantId);
     expect(currentSession.identity.legalEntityId).toBe(legalEntityId);
 
+    // T27: the staff binding created for sign-in carries the staff authentication namespace.
+    const [staffBindingRow] = yield* coreDatabase
+      .select({ authenticationNamespaceId: principalAuthBindings.authenticationNamespaceId })
+      .from(principalAuthBindings)
+      .where(eq(principalAuthBindings.principalAuthBindingId, authBindingId));
+    expect(STAFF_AUTHENTICATION_NAMESPACE_ID).toBe('ontos.staff.better-auth.v1');
+    expect(staffBindingRow?.authenticationNamespaceId).toBe(STAFF_AUTHENTICATION_NAMESPACE_ID);
+
     const apiKeyResponse = yield* Effect.tryPromise(() =>
       handler.handler(
         requestFor(configuration.baseUrl, '/auth/identity/api-keys/self', {
@@ -342,6 +396,7 @@ it.live(
     );
     expect(issuedApiKey.enabled).toBe(true);
     expect(issuedApiKey.cleanupPending).toBe(false);
+    // T27: the issued self API key binds to a fresh binding id, distinct from the session binding.
     expect(issuedApiKey.authBindingId).not.toBe(authBindingId);
 
     const gatewayResponse = yield* Effect.tryPromise(() =>
@@ -358,6 +413,7 @@ it.live(
       yield* Effect.tryPromise(() => gatewayResponse.json()),
     );
     const gatewayClaims = Schema.decodeUnknownSync(GatewayContextV2ClaimsSchema)(decodeJwt(gateway.token));
+    // T27: the API-key gateway context (v2) resolves for the freshly issued self API key.
     expect(gatewayClaims.aud).toBe(gatewayAudience);
     expect(gatewayClaims.principal.authMethod).toBe('api_key');
     expect(gatewayClaims.principal.authenticationNamespaceId).toBe(STAFF_AUTHENTICATION_NAMESPACE_ID);
@@ -395,6 +451,135 @@ it.live(
       ),
     );
     expect(sessionAfterAbsentCapability.status).toBe(200);
+
+    // T27: staff support recovery (the support/impersonation contract exercised in
+    // identity-modes-runtime.test.ts) still works for a Shell runtime composed without Commerce.
+    supportTargetUserId = yield* authentication.createFixtureUser(
+      supportTargetEmail,
+      'Lean Core Support Target',
+      randomUUID(),
+    );
+    yield* coreDatabase.insert(principals).values({
+      displayName: 'Lean Core Support Target',
+      kind: 'human',
+      principalId: supportTargetPrincipalId,
+      status: 'active',
+      tenantId,
+    });
+    yield* coreDatabase.insert(principalAuthBindings).values({
+      authenticationNamespaceId: STAFF_AUTHENTICATION_NAMESPACE_ID,
+      principalAuthBindingId: supportTargetAuthBindingId,
+      principalId: supportTargetPrincipalId,
+      provider: 'better_auth',
+      providerSubjectId: supportTargetUserId,
+      status: 'active',
+      subjectType: 'user',
+      tenantId,
+    });
+
+    const authenticationNamespaceRegistry = makeAuthenticationNamespaceRegistry([
+      Schema.decodeUnknownSync(AuthenticationNamespaceRegistrationSchema)({
+        allowedAudiences: [gatewayAudience],
+        authenticationNamespaceId: STAFF_AUTHENTICATION_NAMESPACE_ID,
+        provider: 'better-auth',
+        requiresOperationAdmission: false,
+        reservationPrincipalKind: 'human',
+        subjectTypes: ['user', 'api_key'],
+        trustedAttesterPrincipalIds: [],
+      }),
+    ]);
+    const provideAuthenticationNamespaceRegistry = <Success, Failure, Requirements>(
+      effect: Effect.Effect<Success, Failure, Requirements>,
+    ) => effect.pipe(Effect.provideService(AuthenticationNamespaceRegistry, authenticationNamespaceRegistry));
+    const principalManagementRepository = principalManagementRepositoryFromTransaction(
+      coreDatabase,
+      STAFF_AUTHENTICATION_NAMESPACE_ID,
+    );
+    const providePrincipalManagementRepository = <Success, Failure, Requirements>(
+      effect: Effect.Effect<Success, Failure, Requirements>,
+    ) =>
+      provideAuthenticationNamespaceRegistry(
+        effect.pipe(Effect.provideService(PrincipalManagementRepository, principalManagementRepository)),
+      );
+    const allowedContextAccess = {
+      legalEntities: () => Effect.succeed([]),
+      modules: () => Effect.succeed([]),
+      resources: () => Effect.succeed([]),
+      tenants: ({ tenantIds }: { readonly permission: string; readonly tenantIds: readonly string[] }) =>
+        Effect.succeed(tenantIds.map((key) => ({ decision: 'allowed' as const, key }))),
+    };
+    const provideContextAccess = <Success, Failure, Requirements>(
+      effect: Effect.Effect<Success, Failure, Requirements>,
+    ) =>
+      provideAuthenticationNamespaceRegistry(effect.pipe(Effect.provideService(ContextAccess, allowedContextAccess)));
+    const operationalScope = makeOperationalScopeResolver(
+      makeOperationalScopeRepository({ executor: coreDatabase }),
+      allowedContextAccess,
+    );
+    const supportActionRuntime = makeActionRuntime(
+      { executor: coreDatabase },
+      makeActionRepository(),
+      { checkActionPermission: () => Effect.succeed('allowed' as const) },
+      operationalScope,
+      { ...openActionRuntimeOptions, contextAccess: allowedContextAccess },
+    );
+    const supportRecoveryPrincipal = makeSupportRecoveryPrincipalContextResolver(
+      { executor: coreDatabase },
+      { authenticationNamespaceId: STAFF_AUTHENTICATION_NAMESPACE_ID },
+    );
+    const supportConfiguration = { ...configuration, supportUserIds: [betterAuthUserId] };
+    const supportAuthentication = yield* makeAuthenticationService({}).pipe(
+      Effect.provideService(AuthConfig, supportConfiguration),
+      Effect.provideService(AuthDatabase, authPersistence),
+      Effect.provideService(PrincipalResolver, resolver),
+    );
+    const support = makeSupportImpersonationService(
+      Context.empty().pipe(
+        Context.add(ActionRuntime, supportActionRuntime),
+        Context.add(AuthenticationService, supportAuthentication),
+        Context.add(AuthConfig, supportConfiguration),
+        Context.add(PrincipalResolver, resolver),
+        Context.add(SupportRecoveryPrincipalContextResolver, supportRecoveryPrincipal),
+        Context.add(SupportAuthProviderService, makeSupportAuthProvider(supportConfiguration, authPersistence.adapter)),
+        Context.add(SupportImpersonationStoreService, makeSupportImpersonationStore(authDatabase)),
+      ),
+    );
+    const started = yield* provideContextAccess(
+      providePrincipalManagementRepository(
+        support
+          .start({
+            idempotencyKey: randomUUID(),
+            reason: 'T27 lean-core staff support recovery proof',
+            requestHeaders: new Headers({ cookie: cookies, origin: configuration.baseUrl }),
+            targetPrincipalId: supportTargetPrincipalId,
+          })
+          .pipe(Effect.provideService(SupportImpersonationCorrelationId, randomUUID())),
+      ),
+    );
+    expect(started.active).toBe(true);
+    const impersonatedHeaders = new Headers({
+      cookie: cookieHeader(started.setCookieHeaders),
+      origin: configuration.baseUrl,
+    });
+    const impersonated = yield* provideContextAccess(supportAuthentication.resolveTenantContext(impersonatedHeaders));
+    expect(impersonated.state).toBe('authenticated');
+    if (impersonated.state === 'authenticated') {
+      expect(impersonated.principal.authMethod).toBe('support_impersonation');
+      expect(impersonated.principal.principalId).toBe(supportTargetPrincipalId);
+      expect(impersonated.principal.impersonatedByPrincipalId).toBe(principalId);
+    }
+    const stopped = yield* provideContextAccess(
+      providePrincipalManagementRepository(
+        support
+          .stop({
+            idempotencyKey: randomUUID(),
+            requestHeaders: impersonatedHeaders,
+          })
+          .pipe(Effect.provideService(SupportImpersonationCorrelationId, randomUUID())),
+      ),
+    );
+    expect(stopped.checkpointPending).toBe(false);
+
     return yield* Effect.void;
   }),
 );

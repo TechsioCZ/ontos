@@ -55,8 +55,13 @@ export const CommerceEnrollmentProviderOwnerReconciliationObservationSchema = Sc
     providerSubjectId: EnrollmentProviderSubjectIdSchema,
   }),
 ]).annotate({ parseOptions: { onExcessProperty: 'error' } });
-type CommerceEnrollmentProviderOwnerReconciliationObservation =
+export type CommerceEnrollmentProviderOwnerReconciliationObservation =
   typeof CommerceEnrollmentProviderOwnerReconciliationObservationSchema.Type;
+
+/** Performs an exact invocation lookup after an unknown provider response. */
+export type CommerceEnrollmentProviderOwnerReconciliationLookup = (
+  input: CommerceEnrollmentOwnerReconciliationInput,
+) => Effect.Effect<CommerceEnrollmentProviderOwnerReconciliationObservation, CommerceEnrollmentOwnerEffectError>;
 
 export interface CommerceEnrollmentPortalAuthOwnerEffectOptions {
   readonly accountCreation: CommercePortalAuthAccountCreationService['Service'];
@@ -65,9 +70,7 @@ export interface CommerceEnrollmentPortalAuthOwnerEffectOptions {
     input: CommerceEnrollmentOwnerTransition,
   ) => Effect.Effect<CommercePortalAccountCreateInputBoundary, CommerceEnrollmentOwnerEffectError>;
   /** Performs an exact invocation/digest lookup after an unknown provider response. */
-  readonly reconcileAccount: (
-    input: CommerceEnrollmentOwnerReconciliationInput,
-  ) => Effect.Effect<CommerceEnrollmentProviderOwnerReconciliationObservation, CommerceEnrollmentOwnerEffectError>;
+  readonly reconcileAccount: CommerceEnrollmentProviderOwnerReconciliationLookup;
 }
 
 const withCause = <ErrorType extends object>(error: ErrorType, cause: unknown): ErrorType =>
@@ -266,6 +269,34 @@ const reconcileOutcome = Effect.fn('CommerceEnrollmentPortalAuthOwnerEffect.reco
 );
 
 /**
+ * The reconciliation half of the Portal Auth owner adapter. An owner preparation that only has to
+ * resolve an already dispatched, indeterminate transition needs no credential carrier and no
+ * account-creation port: building it separately keeps the private sign-up capability out of the
+ * governed Action preparation path entirely.
+ */
+export const commerceEnrollmentPortalAuthOwnerReconciliationForLookup = (
+  reconcileAccount: CommerceEnrollmentProviderOwnerReconciliationLookup,
+): Pick<CommerceEnrollmentOwnerEffect, 'reconcile'> => ({
+  reconcile: Effect.fn('CommerceEnrollmentPortalAuthOwnerEffect.reconcile')(function* reconcileAccountEffect(
+    input: CommerceEnrollmentOwnerReconciliationInput,
+  ): Effect.fn.Return<ReconcileEnrollmentResolution, CommerceEnrollmentOwnerEffectError> {
+    const observation = yield* reconcileAccount(input);
+    const decodedObservation = yield* Schema.decodeEffect(
+      CommerceEnrollmentProviderOwnerReconciliationObservationSchema,
+    )(observation).pipe(
+      Effect.mapError((cause) =>
+        indeterminate(
+          'provider_account_invalid_reconciliation',
+          'The provider reconciliation result is invalid',
+          cause,
+        ),
+      ),
+    );
+    return yield* reconcileOutcome(input, decodedObservation);
+  }),
+});
+
+/**
  * Private Portal Auth owner adapter. Account creation is invoked once after the durable driver
  * claim; all provider failures remain typed, and an unknown response is recovered only through
  * the exact lookup callback supplied by Portal Auth composition.
@@ -285,23 +316,7 @@ export const makeCommerceEnrollmentPortalAuthOwnerEffect = (
     return yield* dispatchOutcome(input, result);
   });
 
-  const reconcile = Effect.fn('CommerceEnrollmentPortalAuthOwnerEffect.reconcile')(function* reconcileAccount(
-    input: CommerceEnrollmentOwnerReconciliationInput,
-  ): Effect.fn.Return<ReconcileEnrollmentResolution, CommerceEnrollmentOwnerEffectError> {
-    const observation = yield* options.reconcileAccount(input);
-    const decodedObservation = yield* Schema.decodeEffect(
-      CommerceEnrollmentProviderOwnerReconciliationObservationSchema,
-    )(observation).pipe(
-      Effect.mapError((cause) =>
-        indeterminate(
-          'provider_account_invalid_reconciliation',
-          'The provider reconciliation result is invalid',
-          cause,
-        ),
-      ),
-    );
-    return yield* reconcileOutcome(input, decodedObservation);
-  });
+  const { reconcile } = commerceEnrollmentPortalAuthOwnerReconciliationForLookup(options.reconcileAccount);
 
   return Object.freeze({ dispatch, reconcile });
 };

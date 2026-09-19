@@ -9,6 +9,19 @@ export { COMMERCE_CUSTOMER_CONTEXT_API_PREFIX } from './deployment-paths.ts';
 
 export const COMMERCE_AUTHENTICATION_NAMESPACE_ID = 'ontos.commerce.portal.better-auth.v1';
 export const COMMERCE_ADMISSION_DEADLINE_MS = 5000;
+/**
+ * Commerce-facing named outcome for a denied operation whose Core-side cause is
+ * `OperationAuthenticationRequired` (`@app/core-runtime`,
+ * `packages/core-runtime/src/operations/operation-authentication-required.ts`) — the acting
+ * Principal's Auth Binding is not Current for the Tenant/operation being attempted. Core expresses
+ * this generically as `OperationAuthenticationRequired`; Commerce names the same outcome
+ * `PRINCIPAL_AUTH_BINDING_NOT_CURRENT` so its own callers, docs and audit trail do not have to carry
+ * Core's internal error tag. The mapping site is `api/portal-auth/admission/adapter.ts`'s
+ * `mapCoreFailure`, which turns every `ExternalIdentityFailure` other than `identity_unavailable`
+ * into an `OperationAuthenticationRequired` — that is the Core failure this constant names for
+ * Commerce.
+ */
+export const PRINCIPAL_AUTH_BINDING_NOT_CURRENT = 'PRINCIPAL_AUTH_BINDING_NOT_CURRENT' as const;
 const boundedReference = Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(500));
 const uuid = Schema.String.check(Schema.isUUID());
 const EnrollmentAttemptIdSchema = uuid.pipe(Schema.brand('EnrollmentAttemptId'));

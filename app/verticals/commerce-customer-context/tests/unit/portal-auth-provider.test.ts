@@ -371,6 +371,7 @@ it.effect('projects a Better Auth create response double without returning its t
   };
   return makeAccountGateway(auth, {
     existsByEmail: () => Effect.succeed(false),
+    existsByProviderSubject: () => Effect.succeed(false),
     existsByProviderSubjectAndEmail: () => Effect.succeed(true),
   }).pipe(
     Effect.flatMap((gateway) =>
@@ -407,6 +408,7 @@ it.effect('does not treat Better Auth generic duplicate responses as created acc
       auth,
       {
         existsByEmail: () => Effect.succeed(false),
+        existsByProviderSubject: () => Effect.succeed(false),
         existsByProviderSubjectAndEmail: () => Effect.succeed(false),
       },
       {
@@ -444,6 +446,7 @@ it.effect('maps a definitive Better Auth validation failure to rejected', () => 
       auth,
       {
         existsByEmail: () => Effect.succeed(false),
+        existsByProviderSubject: () => Effect.succeed(false),
         existsByProviderSubjectAndEmail: () => Effect.succeed(false),
       },
       {
@@ -474,6 +477,7 @@ it.effect('fails closed when the Better Auth error code is absent or unbounded',
         auth,
         {
           existsByEmail: () => Effect.succeed(false),
+          existsByProviderSubject: () => Effect.succeed(false),
           existsByProviderSubjectAndEmail: () => Effect.succeed(false),
         },
         {
@@ -510,6 +514,7 @@ it.effect('rejects an existing email before invoking Better Auth', () => {
       auth,
       {
         existsByEmail: () => Effect.succeed(true),
+        existsByProviderSubject: () => Effect.succeed(false),
         existsByProviderSubjectAndEmail: () => Effect.succeed(true),
       },
       {
@@ -539,6 +544,7 @@ it.effect('maps a malformed Better Auth success response to unavailable', () => 
       auth,
       {
         existsByEmail: () => Effect.succeed(false),
+        existsByProviderSubject: () => Effect.succeed(false),
         existsByProviderSubjectAndEmail: () => Effect.succeed(true),
       },
       {
@@ -571,6 +577,7 @@ it.effect('maps an indeterminate Better Auth provider failure to unavailable wit
       auth,
       {
         existsByEmail: () => Effect.succeed(false),
+        existsByProviderSubject: () => Effect.succeed(false),
         existsByProviderSubjectAndEmail: () => Effect.succeed(false),
       },
       {
@@ -609,6 +616,7 @@ it.effect('maps a wrapped Better Auth storage failure to unavailable after one p
       auth,
       {
         existsByEmail: () => Effect.succeed(false),
+        existsByProviderSubject: () => Effect.succeed(false),
         existsByProviderSubjectAndEmail: () => Effect.succeed(false),
       },
       {
@@ -640,6 +648,7 @@ it.effect('rejects raw password and missing owner invocation before any gateway 
   };
   const accountLookup: CommercePortalAuthAccountLookup = {
     existsByEmail: () => Effect.succeed(false),
+    existsByProviderSubject: () => Effect.succeed(false),
     existsByProviderSubjectAndEmail: () => Effect.succeed(true),
   };
   const rawPasswordInput = {
@@ -746,10 +755,13 @@ it.effect('keeps the Better Auth table inventory in the isolated commerce_auth s
       'twoFactor',
       'stepUpChallenge',
       'stepUpChallengeAttempt',
+      'recoveryReconciliation',
+      'portalAuthAuditEvent',
     ]);
     expect(Object.keys(commercePortalAuthDatabaseSchema)).toStrictEqual([
       'account',
       'rateLimit',
+      'recoveryReconciliation',
       'session',
       'stepUpChallenge',
       'stepUpChallengeAttempt',

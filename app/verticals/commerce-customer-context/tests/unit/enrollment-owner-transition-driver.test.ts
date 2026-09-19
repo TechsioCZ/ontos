@@ -48,7 +48,10 @@ import {
 import type { ReadPrincipalBindingRequest } from '@app/shared-contracts/server/external-identity-client';
 import {
   AuthBindingIdSchema,
+  AuthenticationNamespaceIdSchema,
+  ProviderSubjectIdSchema,
   ReadPrincipalBindingResultSchema,
+  ReservePrincipalBindingResultSchema,
 } from '@app/core-runtime/auth/external-identity-contracts';
 
 const tenantId = Schema.decodeSync(EnrollmentTenantIdSchema)('10000000-0000-4000-8000-000000000001');
@@ -479,5 +482,55 @@ it.effect('requires original invocation provenance before invoking Core read int
     });
     expect(resolution.status).toBe('SUCCEEDED');
     expect(interpretations).toBe(1);
+  }),
+);
+
+it.effect('rejects a Core reservation that returns a non-current existing binding', () =>
+  Effect.gen(function* rejectsNonCurrentCoreBinding() {
+    const authBindingId = Schema.decodeSync(AuthBindingIdSchema)('80000000-0000-4000-8000-000000000002');
+    const existing = Schema.decodeSync(ReservePrincipalBindingResultSchema)({
+      authBindingId,
+      bindingRevision: 4,
+      bindingStatus: 'revoked',
+      outcome: 'EXISTING',
+      principalId: '90000000-0000-4000-8000-000000000002',
+    });
+    const client = {
+      activatePrincipalBinding: () => Effect.die('unused'),
+      changePrincipalBindingStatus: () => Effect.die('unused'),
+      issueExternalGatewayContext: () => Effect.die('unused'),
+      readPrincipalBinding: () => Effect.die('unused'),
+      reservePrincipalBinding: () => Effect.succeed(existing),
+      resolveExternalSubject: () => Effect.die('unused'),
+    };
+    const options: CommerceEnrollmentCoreIdentityOwnerEffectOptions = {
+      client,
+      clientOptions: () => ({
+        apiKey: Redacted.make('test'),
+        baseUrl: 'https://core.invalid',
+        requestCorrelation: 'core-driver-unit',
+      }),
+      makeDispatchRequest: () => ({
+        operation: 'reserve',
+        payload: {
+          authenticationRef: 'commerce-enrollment-not-current',
+          reservation: {
+            authenticationNamespaceId: Schema.decodeSync(AuthenticationNamespaceIdSchema)(
+              'ontos.commerce.portal.better-auth.v1',
+            ),
+            providerSubjectId: Schema.decodeSync(ProviderSubjectIdSchema)('provider-subject-not-current'),
+            subjectType: 'user',
+          },
+        },
+      }),
+      makeReconciliationRequest: () => {
+        throw new Error('The dispatch-only test must not reconcile');
+      },
+    };
+    const error = yield* makeCommerceEnrollmentCoreIdentityOwnerEffect(options).dispatch(transition).pipe(Effect.flip);
+    expect(error).toBeInstanceOf(CommerceEnrollmentOwnerEffectRejected);
+    expect(Schema.is(CommerceEnrollmentOwnerEffectRejected)(error) ? error.code : undefined).toBe(
+      'core_binding_not_current',
+    );
   }),
 );

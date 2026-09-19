@@ -2,6 +2,12 @@ import { createHash, randomBytes } from 'node:crypto';
 
 import { DateTime, Effect, Layer, Option, Result, Schema } from 'effect';
 
+import {
+  CommercePortalAuthAudit,
+  recordCommercePortalAuthAudit,
+  unauditedCommercePortalAuthRecorder,
+} from '../../../../src/portal-auth/audit/audit-service.ts';
+import type { CommercePortalAuthAuditRecorder } from '../../../../src/portal-auth/audit/audit-service.ts';
 import { COMMERCE_PORTAL_AUTH_POLICY } from '../config.ts';
 import { parseCommerceSessionReference } from '../session-reference.ts';
 import type { CommercePortalAuthAuthoritativeSession } from '../verification.ts';
@@ -23,6 +29,9 @@ import { CommercePortalAuthStepUpRejected } from './rejected.ts';
 import { CommercePortalAuthStepUpUnavailable } from './unavailable.ts';
 import { CommercePortalAuthStepUpService } from './step-up-service.ts';
 import type { CommercePortalAuthStepUp, CommercePortalAuthStepUpFailure } from './step-up-service.ts';
+
+const STEP_UP_EXPIRED_EVENT = 'commerce.portal-auth.step-up-expired.v1' as const;
+const STEP_UP_VERIFIED_EVENT = 'commerce.portal-auth.step-up-verified.v1' as const;
 
 const withCause = <ErrorValue extends object>(error: ErrorValue, cause: unknown): ErrorValue =>
   Object.defineProperty(error, 'cause', { configurable: true, value: cause });
@@ -147,7 +156,9 @@ const sessionRecord = Effect.fn('CommercePortalAuthStepUp.sessionRecord')(functi
 });
 
 export const makeCommercePortalAuthStepUp = Effect.fn('CommercePortalAuthStepUp.make')(
-  function* makeCommercePortalAuthStepUpEffect(): Effect.fn.Return<
+  function* makeCommercePortalAuthStepUpEffect(
+    audit: CommercePortalAuthAuditRecorder = unauditedCommercePortalAuthRecorder,
+  ): Effect.fn.Return<
     CommercePortalAuthStepUp,
     never,
     | CommercePortalAuthStepUpChallengeStoreService
@@ -159,6 +170,8 @@ export const makeCommercePortalAuthStepUp = Effect.fn('CommercePortalAuthStepUp.
     const codeVerifier = yield* CommercePortalAuthStepUpCodeVerifierService;
     const lifecycle = yield* CommercePortalAuthSessionLifecycle;
     const sessionReader = yield* CommercePortalAuthSessionReaderService;
+    const emitAudit = (event: Parameters<CommercePortalAuthAuditRecorder['record']>[0]) =>
+      recordCommercePortalAuthAudit(audit, event);
 
     const issue = Effect.fn('CommercePortalAuthStepUp.issue')(function* issueEffect(
       input: Schema.Codec.Encoded<typeof CommercePortalAuthStepUpIssueInputSchema>,
@@ -196,9 +209,18 @@ export const makeCommercePortalAuthStepUp = Effect.fn('CommercePortalAuthStepUp.
         expiresAt,
         outcome: 'STEP_UP_REQUIRED' as const,
       } satisfies CommercePortalAuthStepUpRequired;
-      return yield* Schema.decodeEffect(CommercePortalAuthStepUpRequiredSchema)(result).pipe(
+      const issued = yield* Schema.decodeEffect(CommercePortalAuthStepUpRequiredSchema)(result).pipe(
         Effect.mapError((cause) => unavailable('challenge-result', cause)),
       );
+      yield* emitAudit({
+        eventType: 'commerce.portal-auth.step-up-issued.v1',
+        occurredAt: now,
+        operation: 'step-up-issue',
+        outcome: 'success',
+        providerSubjectId: request.providerSubjectId,
+        sessionRef: request.sessionRef,
+      });
+      return issued;
     });
 
     const verify = Effect.fn('CommercePortalAuthStepUp.verify')(function* verifyEffect(
@@ -214,23 +236,41 @@ export const makeCommercePortalAuthStepUp = Effect.fn('CommercePortalAuthStepUp.
         Effect.mapError((cause) => invalidRequest(cause)),
       );
       const now = yield* DateTime.nowAsDate;
+      const auditVerification = (
+        eventType: typeof STEP_UP_EXPIRED_EVENT | typeof STEP_UP_VERIFIED_EVENT,
+        outcome: 'authentication_failed' | 'session_expired' | 'success',
+        occurredAt: Date,
+      ) =>
+        emitAudit({
+          eventType,
+          occurredAt,
+          operation: 'step-up-verify',
+          outcome,
+          providerSubjectId: request.providerSubjectId,
+          sessionRef: request.sessionRef,
+        });
       const challengeIdHash = hashChallengeId(request.challengeId);
       const challengeOption = yield* challengeStore
         .findByChallengeIdHash(challengeIdHash)
         .pipe(Effect.mapError((cause) => unavailable('challenge-read', cause)));
       if (Option.isNone(challengeOption)) {
+        // An unknown challenge id is indistinguishable from one whose window already closed.
+        yield* auditVerification(STEP_UP_EXPIRED_EVENT, 'session_expired', now);
         return { outcome: 'STEP_UP_REJECTED' };
       }
       const challenge = challengeOption.value;
       const nowMillis = epochMillis(now);
+      if (!Number.isFinite(nowMillis) || epochMillis(challenge.expiresAt) <= nowMillis) {
+        yield* auditVerification(STEP_UP_EXPIRED_EVENT, 'session_expired', now);
+        return { outcome: 'STEP_UP_REJECTED' };
+      }
       if (
         challenge.providerSubjectId !== request.providerSubjectId ||
         challenge.sessionId !== sessionId ||
         challenge.consumedAt !== null ||
-        challenge.attemptsRemaining <= 0 ||
-        !Number.isFinite(nowMillis) ||
-        epochMillis(challenge.expiresAt) <= nowMillis
+        challenge.attemptsRemaining <= 0
       ) {
+        yield* auditVerification(STEP_UP_VERIFIED_EVENT, 'authentication_failed', now);
         return { outcome: 'STEP_UP_REJECTED' };
       }
       yield* sessionRecord(sessionReader, request.providerSubjectId, sessionId, now);
@@ -246,6 +286,7 @@ export const makeCommercePortalAuthStepUp = Effect.fn('CommercePortalAuthStepUp.
         })
         .pipe(Effect.mapError((cause) => unavailable('challenge-reserve', cause)));
       if (!reserved) {
+        yield* auditVerification(STEP_UP_VERIFIED_EVENT, 'authentication_failed', now);
         return { outcome: 'STEP_UP_REJECTED' };
       }
 
@@ -269,6 +310,7 @@ export const makeCommercePortalAuthStepUp = Effect.fn('CommercePortalAuthStepUp.
               sessionId,
             })
             .pipe(Effect.mapError((cause) => unavailable('challenge-failure', cause)));
+          yield* auditVerification(STEP_UP_VERIFIED_EVENT, 'authentication_failed', now);
           return { outcome: 'STEP_UP_REJECTED' };
         }
         const released = yield* challengeStore
@@ -298,6 +340,7 @@ export const makeCommercePortalAuthStepUp = Effect.fn('CommercePortalAuthStepUp.
         })
         .pipe(Effect.mapError((cause) => unavailable('challenge-consume', cause)));
       if (!consumed) {
+        yield* auditVerification(STEP_UP_VERIFIED_EVENT, 'authentication_failed', verifiedAt);
         return { outcome: 'STEP_UP_REJECTED' };
       }
       const handoff = yield* lifecycle.rotateIdentifierForCookie({
@@ -305,6 +348,7 @@ export const makeCommercePortalAuthStepUp = Effect.fn('CommercePortalAuthStepUp.
         reason: 'step-up',
         sessionRef: request.sessionRef,
       });
+      yield* auditVerification(STEP_UP_VERIFIED_EVENT, 'success', verifiedAt);
       return { handoff, outcome: 'STEP_UP_COMPLETED' };
     });
 
@@ -315,5 +359,8 @@ export const makeCommercePortalAuthStepUp = Effect.fn('CommercePortalAuthStepUp.
 /** Challenge store, code verifier, lifecycle and session reader stay visible requirements. */
 export const CommercePortalAuthStepUpLive = Layer.effect(
   CommercePortalAuthStepUpService,
-  makeCommercePortalAuthStepUp(),
+  Effect.gen(function* makeCommercePortalAuthStepUpLive() {
+    const audit = yield* CommercePortalAuthAudit;
+    return yield* makeCommercePortalAuthStepUp(audit);
+  }),
 );

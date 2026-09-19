@@ -1,5 +1,11 @@
 import { Context, DateTime, Effect, Layer, Option, Redacted, Schema } from 'effect';
 
+import {
+  CommercePortalAuthAudit,
+  recordCommercePortalAuthAudit,
+  unauditedCommercePortalAuthRecorder,
+} from '../../../../src/portal-auth/audit/audit-service.ts';
+import type { CommercePortalAuthAuditRecorder } from '../../../../src/portal-auth/audit/audit-service.ts';
 import { COMMERCE_PORTAL_AUTH_POLICY } from '../config.ts';
 import {
   CommercePortalAuthEmailVerificationRequestSchema,
@@ -33,6 +39,9 @@ export type CommercePortalAuthRecoveryFailure =
 
 const RecoveryResponseSchema = Schema.Struct({ status: Schema.Boolean });
 const SEND_VERIFICATION_EMAIL_OPERATION = 'send-verification-email';
+const RECOVERY_REQUEST_OPERATION = 'request-password-reset';
+const RECOVERY_RESET_OPERATION = 'reset-password';
+const VERIFY_EMAIL_OPERATION = 'verify-email';
 
 const RATE_LIMIT_CODES = new Set(['RATE_LIMITED', 'TOO_MANY_REQUESTS']);
 const REQUEST_REJECTION_CODES = new Set([
@@ -131,13 +140,17 @@ export class CommercePortalAuthRecoveryService extends Context.Service<
  * adapter never performs an email lookup during reset and never returns that subject to callers.
  */
 export const makeCommercePortalAuthRecoveryService = Effect.fn('CommercePortalAuthRecovery.make')(
-  function* makeCommercePortalAuthRecoveryServiceEffect(): Effect.fn.Return<
+  function* makeCommercePortalAuthRecoveryServiceEffect(
+    audit: CommercePortalAuthAuditRecorder = unauditedCommercePortalAuthRecorder,
+  ): Effect.fn.Return<
     CommercePortalAuthRecoveryService['Service'],
     never,
     CommercePortalAuthRecoveryProviderService | CommercePortalAuthRecoveryStoreService
   > {
     const provider = yield* CommercePortalAuthRecoveryProviderService;
     const store = yield* CommercePortalAuthRecoveryStoreService;
+    const emitAudit = (event: Parameters<CommercePortalAuthAuditRecorder['record']>[0]) =>
+      recordCommercePortalAuthAudit(audit, event);
 
     const requestPasswordReset = Effect.fn('CommercePortalAuthRecovery.requestPasswordReset')(
       function* requestPasswordResetEffect(
@@ -150,15 +163,21 @@ export const makeCommercePortalAuthRecoveryService = Effect.fn('CommercePortalAu
           .requestPasswordReset({ body: { email: normalizeEmail(request.email) } })
           .pipe(Effect.mapError((failure) => mapProviderFailure(failure, REQUEST_REJECTION_CODES)));
         const decoded = yield* Schema.decodeEffect(RecoveryResponseSchema)(response).pipe(
-          Effect.mapError((cause) => unavailable('request-password-reset', cause)),
+          Effect.mapError((cause) => unavailable(RECOVERY_REQUEST_OPERATION, cause)),
         );
         if (!decoded.status) {
           return yield* rejected(
-            'request-password-reset',
+            RECOVERY_REQUEST_OPERATION,
             'PROVIDER_REJECTED',
             'The Commerce portal authentication provider rejected the recovery request',
           );
         }
+        yield* emitAudit({
+          eventType: 'commerce.portal-auth.recovery-started.v1',
+          occurredAt: yield* DateTime.nowAsDate,
+          operation: RECOVERY_REQUEST_OPERATION,
+          outcome: 'success',
+        });
         return { outcome: 'ACCOUNT_RECOVERY_STARTED' };
       },
     );
@@ -178,15 +197,21 @@ export const makeCommercePortalAuthRecoveryService = Effect.fn('CommercePortalAu
         })
         .pipe(Effect.mapError((failure) => mapProviderFailure(failure, RESET_REJECTION_CODES)));
       const decoded = yield* Schema.decodeEffect(RecoveryResponseSchema)(response).pipe(
-        Effect.mapError((cause) => unavailable('reset-password', cause)),
+        Effect.mapError((cause) => unavailable(RECOVERY_RESET_OPERATION, cause)),
       );
       if (!decoded.status) {
         return yield* rejected(
-          'reset-password',
+          RECOVERY_RESET_OPERATION,
           'PROVIDER_REJECTED',
           'The Commerce portal authentication provider rejected the recovery token',
         );
       }
+      yield* emitAudit({
+        eventType: 'commerce.portal-auth.recovery-completed.v1',
+        occurredAt: yield* DateTime.nowAsDate,
+        operation: RECOVERY_RESET_OPERATION,
+        outcome: 'success',
+      });
       return { outcome: 'ACCOUNT_RECOVERY_COMPLETED_SAME_SUBJECT' };
     });
 
@@ -263,11 +288,18 @@ export const makeCommercePortalAuthRecoveryService = Effect.fn('CommercePortalAu
       const subject = yield* store.consumeEmailVerification({ now, token: request.token });
       if (Option.isNone(subject)) {
         return yield* rejected(
-          'verify-email',
+          VERIFY_EMAIL_OPERATION,
           'INVALID_TOKEN',
           'The Commerce portal email verification token is invalid, expired, or already consumed',
         );
       }
+      yield* emitAudit({
+        eventType: 'commerce.portal-auth.email-verification-consumed.v1',
+        occurredAt: yield* DateTime.nowAsDate,
+        operation: VERIFY_EMAIL_OPERATION,
+        outcome: 'success',
+        providerSubjectId: subject.value,
+      });
       return { outcome: 'EMAIL_VERIFICATION_COMPLETED_SAME_SUBJECT' };
     });
 
@@ -284,5 +316,8 @@ export const makeCommercePortalAuthRecoveryService = Effect.fn('CommercePortalAu
 /** The recovery provider and store ports stay visible requirements for the composition root. */
 export const CommercePortalAuthRecoveryServiceLive = Layer.effect(
   CommercePortalAuthRecoveryService,
-  makeCommercePortalAuthRecoveryService(),
+  Effect.gen(function* makeCommercePortalAuthRecoveryServiceLive() {
+    const audit = yield* CommercePortalAuthAudit;
+    return yield* makeCommercePortalAuthRecoveryService(audit);
+  }),
 );

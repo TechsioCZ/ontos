@@ -22,6 +22,10 @@ import { Effect, HttpApiBuilder, HttpRouter, Layer } from '@modern-js/bff-effect
 import type { EffectBffDefinition, EffectBffRuntime } from '@modern-js/bff-effect/effect-edge';
 import { Context, Layer as GovernedReadLayer, Logger, Option, References, Schema, Tracer } from 'effect';
 import { CommercePortalAuthDatabaseLive } from '../src/portal-auth/persistence/portal-auth-database.ts';
+import { CommercePortalAuthAuditLive } from '../src/portal-auth/audit/audit-store.ts';
+import { CommercePortalAuthAccountLookupLive } from '../src/portal-auth/persistence/portal-auth-account-lookup.ts';
+import { CommerceEnrollmentOwnerTransactionRunnerLive } from '../src/enrollment/orchestration/owner-transaction-runner.ts';
+import { commerceEnrollmentOwnerTransitionPreparationLive } from '../src/enrollment/orchestration/owner-transition-composition.ts';
 import { CommercePortalAuthLive } from './portal-auth/provider/auth.ts';
 import { CommercePortalAuthConfigLive, optionalCommercePortalAuthConfig } from './portal-auth/provider/config.ts';
 import { commercePortalAuthRealmUnavailableLive } from './portal-auth/realm-unavailable.ts';
@@ -213,6 +217,7 @@ const commercePortalAuthProviderRealmLive = commercePortalAuthProviderLive.pipe(
   Layer.provideMerge(commercePortalAuthEmailTransportLive),
 );
 const commercePortalAuthRealmPortsLive = Layer.mergeAll(
+  CommercePortalAuthAuditLive,
   CommercePortalAuthServiceLive,
   CommercePortalAuthSessionProviderLive,
   CommercePortalAuthSessionStoreLive,
@@ -403,13 +408,64 @@ const commerceEnrollmentOwnerTransitionPreparationUnavailableLive = Layer.succee
   CommerceEnrollmentOwnerTransitionPreparation,
   { prepare: () => Effect.succeed({ outcome: 'unavailable' as const }) },
 );
-const enrollmentAwareActionRuntimeLive = commerceEnrollmentActionRuntimeLive.pipe(
+/**
+ * The installed Commerce portal owner preparation authority. Its two inputs are the vertical's own
+ * governed transaction seam — the Enrollment Attempt journal is Commerce business state, never
+ * provider state, so it is never opened on the portal-auth provider pool — and the provider's own
+ * account directory, which is the only place an exact owner reconciliation may read.
+ */
+const commerceEnrollmentOwnerTransactionRunnerProductionLive = CommerceEnrollmentOwnerTransactionRunnerLive.pipe(
+  Layer.provide(actionAuthorizationPreflightDatabaseWithCoreLive),
+);
+const commercePortalAuthAccountLookupRealmLive = CommercePortalAuthAccountLookupLive.pipe(
+  Layer.provide(CommercePortalAuthDatabaseLive),
+);
+const commerceEnrollmentOwnerTransitionPreparationRealmLive = commerceEnrollmentOwnerTransitionPreparationLive.pipe(
   Layer.provide(
     Layer.mergeAll(
-      actionRuntimeCoreLive,
-      actionRuntimeServicesLive,
-      commerceEnrollmentOwnerTransitionPreparationUnavailableLive,
+      commerceEnrollmentOwnerTransactionRunnerProductionLive,
+      commercePortalAuthAccountLookupRealmLive.pipe(Layer.provide(CommercePortalAuthConfigLive)),
     ),
+  ),
+);
+/**
+ * The enrollment owner authority is part of the optional portal realm: a deployment that opted in
+ * gets the installed Commerce portal owner port, and one that did not keeps the fail-closed leaf so
+ * no governed Action can proceed on a claimed owner payload without owner evidence.
+ */
+const selectEnrollmentOwnerPreparationLive = (
+  configured: boolean,
+): Layer.Layer<
+  CommerceEnrollmentOwnerTransitionPreparation,
+  Layer.Error<typeof commerceEnrollmentOwnerTransitionPreparationRealmLive>,
+  Layer.Services<typeof commerceEnrollmentOwnerTransitionPreparationRealmLive>
+> =>
+  configured
+    ? commerceEnrollmentOwnerTransitionPreparationRealmLive
+    : commerceEnrollmentOwnerTransitionPreparationUnavailableLive;
+/**
+ * A realm configuration that names some `COMMERCE_PORTAL_AUTH_*` value but not all of them is a
+ * misconfiguration, and `optionalCommercePortalAuthConfig` reports it as one. The four portal
+ * groups answer for that on their own — `selectPortalAuthRuntimeLive` keeps the error — but this
+ * read sits inside the Action runtime every governed business route is served from, so an
+ * unreadable realm must not take those routes down with it. The fail-closed leaf is the honest
+ * answer here: no governed Action may proceed on a claimed owner payload without owner evidence,
+ * which is exactly what a deployment whose portal realm cannot be read should get.
+ */
+const deploymentEnrollmentOwnerPreparationLive = Layer.unwrap(
+  optionalCommercePortalAuthConfig.pipe(
+    Effect.map((configuration) => selectEnrollmentOwnerPreparationLive(Option.isSome(configuration))),
+    Effect.catchTag('CommercePortalAuthConfigError', (failure) =>
+      Effect.annotateLogs(
+        Effect.logWarning('Commerce portal realm configuration is unreadable; enrollment owner evidence fails closed'),
+        { reason: failure.reason },
+      ).pipe(Effect.as(commerceEnrollmentOwnerTransitionPreparationUnavailableLive)),
+    ),
+  ),
+);
+const enrollmentAwareActionRuntimeLive = commerceEnrollmentActionRuntimeLive.pipe(
+  Layer.provide(
+    Layer.mergeAll(actionRuntimeCoreLive, actionRuntimeServicesLive, deploymentEnrollmentOwnerPreparationLive),
   ),
 );
 /** Deployment composition seam. External owner ports remain visible requirements here. */

@@ -173,6 +173,20 @@ const verificationEmailData = {
   },
 } satisfies Parameters<CommercePortalAuthEmailDelivery['sendVerificationEmail']>[0];
 
+const resetPasswordEmailData = {
+  token: 'reset-callback-token',
+  url: 'https://portal.example.test/api/portal-auth/reset-password?token=reset-callback-token',
+  user: {
+    createdAt: new Date(0),
+    email: EMAIL,
+    emailVerified: false,
+    id: ORIGINAL_SUBJECT,
+    image: null,
+    name: 'Recovery callback user',
+    updatedAt: new Date(0),
+  },
+} satisfies Parameters<CommercePortalAuthEmailDelivery['sendResetPassword']>[0];
+
 const runWithRecovery = <Value>(
   provider: CommercePortalAuthRecoveryProvider,
   store: CommercePortalAuthRecoveryStore,
@@ -351,46 +365,61 @@ it.effect('rejects a token after the same provider subject changes email', () =>
   );
 });
 
-it.effect('registers verification before delivery and passes reset and OTP callbacks through unchanged', () => {
-  const events: string[] = [];
-  const fixture = makeMemoryRecoveryStore();
-  const raw: CommercePortalAuthEmailDelivery = {
-    sendOTP: () => Promise.resolve(),
-    sendResetPassword: () => Promise.resolve(),
-    sendVerificationEmail: () => {
-      events.push('delivered');
-      return Promise.resolve();
-    },
-  };
-  const store: CommercePortalAuthRecoveryStore = {
-    ...fixture.store,
-    registerEmailVerificationToken: (input) =>
-      fixture.store.registerEmailVerificationToken(input).pipe(
-        Effect.tap(() =>
-          Effect.sync(() => {
-            events.push('registered');
-          }),
+it.effect(
+  'registers verification before delivery, passes OTP through unchanged, and delegates reset through the ledger wrapper',
+  () => {
+    const events: string[] = [];
+    const fixture = makeMemoryRecoveryStore();
+    const raw: CommercePortalAuthEmailDelivery = {
+      sendOTP: () => Promise.resolve(),
+      sendResetPassword: (data) => {
+        events.push(`reset:${data.token}`);
+        return Promise.resolve();
+      },
+      sendVerificationEmail: () => {
+        events.push('delivered');
+        return Promise.resolve();
+      },
+    };
+    const store: CommercePortalAuthRecoveryStore = {
+      ...fixture.store,
+      registerEmailVerificationToken: (input) =>
+        fixture.store.registerEmailVerificationToken(input).pipe(
+          Effect.tap(() =>
+            Effect.sync(() => {
+              events.push('registered');
+            }),
+          ),
+        ),
+    };
+    return makeCommercePortalAuthEmailDelivery(raw).pipe(
+      Effect.provideService(CommercePortalAuthRecoveryStoreService, store),
+      Effect.flatMap((delivery) =>
+        Effect.tryPromise({
+          catch: (cause) => cause,
+          try: () => delivery.sendVerificationEmail(verificationEmailData),
+        }).pipe(
+          Effect.flatMap(() =>
+            Effect.tryPromise({
+              catch: (cause) => cause,
+              // The fixture store does not implement the optional reset-password ledger method,
+              // so this exercises the documented degrade-gracefully path: delivery proceeds
+              // straight through to the raw callback without registering anything.
+              try: () => delivery.sendResetPassword(resetPasswordEmailData),
+            }),
+          ),
+          Effect.tap(() =>
+            Effect.sync(() => {
+              // OTP is never wrapped for a ledger: the raw reference is preserved exactly.
+              expect(delivery.sendOTP).toBe(raw.sendOTP);
+              expect(events).toStrictEqual(['registered', 'delivered', `reset:${resetPasswordEmailData.token}`]);
+            }),
+          ),
         ),
       ),
-  };
-  return makeCommercePortalAuthEmailDelivery(raw).pipe(
-    Effect.provideService(CommercePortalAuthRecoveryStoreService, store),
-    Effect.flatMap((delivery) =>
-      Effect.tryPromise({
-        catch: (cause) => cause,
-        try: () => delivery.sendVerificationEmail(verificationEmailData),
-      }).pipe(
-        Effect.tap(() =>
-          Effect.sync(() => {
-            expect(delivery.sendOTP).toBe(raw.sendOTP);
-            expect(delivery.sendResetPassword).toBe(raw.sendResetPassword);
-            expect(events).toStrictEqual(['registered', 'delivered']);
-          }),
-        ),
-      ),
-    ),
-  );
-});
+    );
+  },
+);
 
 it.effect('propagates a verification delivery failure after recording its binding', () => {
   const events: string[] = [];

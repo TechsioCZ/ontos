@@ -69,3 +69,34 @@ export interface CommercePortalAuthEmailVerificationStarted {
 export interface CommercePortalAuthEmailVerificationCompleted {
   readonly outcome: 'EMAIL_VERIFICATION_COMPLETED_SAME_SUBJECT';
 }
+
+/**
+ * Every recovery evidence conflict this realm can detect. Detection never resolves the conflict
+ * and never restores access; it only records that a support operator needs to look at the account.
+ *
+ * - `VERIFICATION_LEDGER_SUBJECT_MISMATCH`: the email-verification ledger's recorded provider
+ *   subject for an identifier disagrees with the provider's current account for that identifier.
+ * - `IDENTIFIER_REBOUND`: the password-reset ledger's recorded provider subject for an identifier
+ *   disagrees with the provider's current account for that identifier — the identifier was rebound
+ *   to a different subject between issuance and use.
+ * - `TOKEN_SUBJECT_STALE`: the ledger's recorded provider subject no longer names any active
+ *   account at all.
+ */
+export const CommercePortalAuthRecoveryReconciliationConflictClassSchema = Schema.Literals([
+  'VERIFICATION_LEDGER_SUBJECT_MISMATCH',
+  'IDENTIFIER_REBOUND',
+  'TOKEN_SUBJECT_STALE',
+]);
+export type CommercePortalAuthRecoveryReconciliationConflictClass =
+  typeof CommercePortalAuthRecoveryReconciliationConflictClassSchema.Type;
+
+/**
+ * Raised instead of a normal completion when recovery evidence conflicts. This outcome is
+ * terminal for the request that produced it: it never grants a token, resets a password, or marks
+ * an email verified. The conflict is recorded durably for a support operator; the caller only
+ * learns that reconciliation is required, never which account or subject was involved.
+ */
+export interface CommercePortalAuthRecoveryReconciliationRequired {
+  readonly conflictClass: CommercePortalAuthRecoveryReconciliationConflictClass;
+  readonly outcome: 'ACCOUNT_RECOVERY_RECONCILIATION_REQUIRED';
+}

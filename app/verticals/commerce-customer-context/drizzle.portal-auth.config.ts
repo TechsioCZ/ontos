@@ -14,5 +14,5 @@ export default defineConfig({
     table: '__drizzle_migrations_commerce_portal_auth',
   },
   out: './drizzle-portal-auth',
-  schema: './src/portal-auth/persistence/portal-auth-tables.ts',
+  schema: ['./src/portal-auth/persistence/portal-auth-tables.ts', './src/portal-auth/audit/audit-tables.ts'],
 });

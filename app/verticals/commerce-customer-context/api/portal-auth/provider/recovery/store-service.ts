@@ -2,11 +2,36 @@ import { Context } from 'effect';
 
 import type { Effect, Option, Redacted } from 'effect';
 
-import type { CommercePortalAuthEmailVerificationTokenRegistration } from './contracts.ts';
+import type {
+  CommercePortalAuthEmailVerificationTokenRegistration,
+  CommercePortalAuthRecoveryReconciliationConflictClass,
+} from './contracts.ts';
 import type { CommercePortalAuthRecoveryRateLimitRule } from '../../rate-limit-service.ts';
 import type { CommercePortalAuthRecoveryUnavailable } from './unavailable.ts';
 
+/** One durable reconciliation row: a support-visible record of a detected recovery conflict. */
+export interface CommercePortalAuthRecoveryReconciliationEntry {
+  readonly conflictClass: CommercePortalAuthRecoveryReconciliationConflictClass;
+  readonly createdAt: Date;
+  /** The account that currently owns the identifier, when one does; `None` names no current owner. */
+  readonly currentProviderSubjectId: Option.Option<string>;
+  readonly email: string;
+  readonly id: string;
+  readonly operation: string;
+  readonly providerSubjectId: string;
+}
+
+/** A non-destructive read of one ledger's recorded issuance-time binding. */
+export interface CommercePortalAuthRecoveryLedgerBinding {
+  readonly email: string;
+  readonly providerSubjectId: string;
+}
+
 export interface CommercePortalAuthRecoveryStore {
+  /** Read-only: true when the named provider subject still names an active account. */
+  readonly accountExists?: (input: {
+    readonly providerSubjectId: string;
+  }) => Effect.Effect<boolean, CommercePortalAuthRecoveryUnavailable>;
   readonly consumeEmailVerification: (input: {
     readonly now: Date;
     readonly token: Redacted.Redacted;
@@ -20,11 +45,46 @@ export interface CommercePortalAuthRecoveryStore {
     readonly key: string;
     readonly rule: CommercePortalAuthRecoveryRateLimitRule;
   }) => Effect.Effect<boolean, CommercePortalAuthRecoveryUnavailable>;
+  /** Read-only: the provider subject that currently owns the identifier, if one does. */
+  readonly findAccountSubjectForEmail?: (input: {
+    readonly email: string;
+  }) => Effect.Effect<Option.Option<string>, CommercePortalAuthRecoveryUnavailable>;
+  /** A page of recorded reconciliation entries, newest first — for a support operator. */
+  readonly getRecoveryReconciliationEntries?: (input: {
+    readonly limit?: number;
+  }) => Effect.Effect<readonly CommercePortalAuthRecoveryReconciliationEntry[], CommercePortalAuthRecoveryUnavailable>;
+  /** Non-destructive: reads the email-verification ledger's issuance-time binding for a token. */
+  readonly peekEmailVerificationLedger?: (input: {
+    readonly token: Redacted.Redacted;
+  }) => Effect.Effect<Option.Option<CommercePortalAuthRecoveryLedgerBinding>, CommercePortalAuthRecoveryUnavailable>;
+  /** Non-destructive: reads the password-reset ledger's issuance-time binding for a token. */
+  readonly peekPasswordResetLedger?: (input: {
+    readonly token: Redacted.Redacted;
+  }) => Effect.Effect<Option.Option<CommercePortalAuthRecoveryLedgerBinding>, CommercePortalAuthRecoveryUnavailable>;
+  /**
+   * Records one detected conflict. Writing this row is the only effect detection ever has: it
+   * never updates `user`, `session` or `account`, and a duplicate detection of the same conflict
+   * dedupes onto the same row rather than growing without bound.
+   */
+  readonly recordRecoveryReconciliation?: (input: {
+    readonly conflictClass: CommercePortalAuthRecoveryReconciliationConflictClass;
+    readonly currentProviderSubjectId: Option.Option<string>;
+    readonly email: string;
+    readonly operation: string;
+    readonly providerSubjectId: string;
+  }) => Effect.Effect<void, CommercePortalAuthRecoveryUnavailable>;
   readonly registerEmailVerificationToken: (
     input: CommercePortalAuthEmailVerificationTokenRegistration & {
       readonly expiresAt: Date;
     },
   ) => Effect.Effect<boolean, CommercePortalAuthRecoveryUnavailable>;
+  /** Records the issuance-time email/subject binding for a password-reset token, before delivery. */
+  readonly registerPasswordResetToken?: (input: {
+    readonly email: string;
+    readonly expiresAt: Date;
+    readonly providerSubjectId: string;
+    readonly token: Redacted.Redacted;
+  }) => Effect.Effect<boolean, CommercePortalAuthRecoveryUnavailable>;
   readonly reserveEmailVerificationSubject: (input: {
     readonly email: string;
     readonly providerSubjectId: string;

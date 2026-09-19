@@ -45,6 +45,8 @@ jobs:
             command: pnpm api:check:ontos
           - name: Database Access Boundaries
             command: pnpm database-access:check
+          - name: Lean Core Dependencies
+            command: pnpm lean-core:check
           - name: Module Entrypoint Contracts
             command: pnpm module-entrypoints:check
           - name: Module Contract Generation

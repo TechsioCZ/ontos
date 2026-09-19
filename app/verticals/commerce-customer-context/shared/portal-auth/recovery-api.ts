@@ -5,6 +5,7 @@ import { HttpApiMiddleware } from 'effect/unstable/httpapi';
 import {
   CommercePortalAuthPasswordResetRequestSchema,
   CommercePortalAuthPasswordResetSchema,
+  CommercePortalAuthRecoveryReconciliationConflictClassSchema,
 } from '../../api/portal-auth/provider/recovery/contracts.ts';
 
 const recoveryToken = Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(2048));
@@ -75,6 +76,15 @@ export const CommercePortalAuthPasswordResetPendingResultSchema = Schema.Struct(
 const CommercePortalAuthEmailVerificationCompletedResultSchema = Schema.Struct({
   outcome: Schema.Literal('EMAIL_VERIFICATION_COMPLETED_SAME_SUBJECT'),
 });
+/**
+ * Raised instead of a normal completion when recovery evidence conflicts. Terminal for the request
+ * that produced it: no token is granted, no password is reset, no email is marked verified. The
+ * caller learns only that reconciliation is required, never which account or subject was involved.
+ */
+export const CommercePortalAuthRecoveryReconciliationRequiredResultSchema = Schema.Struct({
+  conflictClass: CommercePortalAuthRecoveryReconciliationConflictClassSchema,
+  outcome: Schema.Literal('ACCOUNT_RECOVERY_RECONCILIATION_REQUIRED'),
+});
 
 export class CommercePortalAuthRecoverySchemaErrorMiddleware extends HttpApiMiddleware.Service<CommercePortalAuthRecoverySchemaErrorMiddleware>()(
   'commerce-customer-context/CommercePortalAuthRecoverySchemaErrorMiddleware',
@@ -127,7 +137,10 @@ const commercePortalAuthRecoveryGroupDefinition = HttpApiGroup.make('portalAuthR
     HttpApiEndpoint.post('resetPassword', '/api/portal-auth/reset-password', {
       error: providerRouteProblems,
       payload: Schema.toEncoded(CommercePortalAuthPasswordResetSchema),
-      success: CommercePortalAuthRecoveryCompletedResultSchema,
+      success: Schema.Union([
+        CommercePortalAuthRecoveryCompletedResultSchema,
+        CommercePortalAuthRecoveryReconciliationRequiredResultSchema,
+      ]),
     }),
   )
   .add(
@@ -142,7 +155,10 @@ const commercePortalAuthRecoveryGroupDefinition = HttpApiGroup.make('portalAuthR
     HttpApiEndpoint.get('verifyEmail', '/api/portal-auth/verify-email', {
       error: verificationRouteProblems,
       query: Schema.Struct({ token: recoveryToken }),
-      success: CommercePortalAuthEmailVerificationCompletedResultSchema,
+      success: Schema.Union([
+        CommercePortalAuthEmailVerificationCompletedResultSchema,
+        CommercePortalAuthRecoveryReconciliationRequiredResultSchema,
+      ]),
     }),
   )
   .middleware(CommercePortalAuthRecoverySchemaErrorMiddleware);
