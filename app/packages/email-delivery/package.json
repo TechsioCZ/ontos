@@ -18,6 +18,6 @@
   "devDependencies": {
     "@rstest/core": "0.11.12",
     "@types/node": "^26.4.1",
-    "effect-rstest": "0.1.4"
+    "effect-rstest": "https://pkg.pr.new/ScriptedAlchemy/effect-rstest@f29b3f495d45a11037334620bf5f693414fb5578"
   }
 }

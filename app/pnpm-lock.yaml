@@ -189,7 +189,6 @@ patchedDependencies:
   '@module-federation/runtime-core@2.9.0': b241be221397f0e07dbe6c515725e12eaf3b418469bb7dd21750e6e4b215dd8d
   '@vercel/nft@0.29.2': c0ed4897b98e9055716031187bb8ea16739f6ae0843d35e4873f1a177472cac7
   drizzle-orm@1.0.0-rc.5-ab785fc: b99614c9074d41f359743addc0f2a131dbd9c9c479d57cc0f0bb2bb1344bf5fe
-  effect-rstest@0.1.4: 400646897be54f02f39200a151f0f4a48428fc12dccbd7d91a7391b55247152a
   effect@4.0.0-rc.112: b7489e5109ec4daf5d6c7ac30956ed95c312f4077cbc973b8c82f0f340108ada
   eslint-plugin-perfectionist@5.10.1: 9e69fb6189199155ccf29de79c5127492dcebff0b0a1fdf79bb3cd72704501a7
   msgpackr@2.1.0: de5c91fa6cfd894d171ed06673af40046ba97c7eb604409caf5f510e1a8a5b7a
@@ -279,8 +278,8 @@ importers:
         specifier: 4.0.0-rc.112
         version: 4.0.0-rc.112(patch_hash=b7489e5109ec4daf5d6c7ac30956ed95c312f4077cbc973b8c82f0f340108ada)
       effect-rstest:
-        specifier: 0.1.4
-        version: 0.1.4(patch_hash=400646897be54f02f39200a151f0f4a48428fc12dccbd7d91a7391b55247152a)(@rstest/core@0.11.12(@module-federation/runtime-tools@2.9.0)(core-js@3.50.0)(happy-dom@20.8.3))(effect@4.0.0-rc.112(patch_hash=b7489e5109ec4daf5d6c7ac30956ed95c312f4077cbc973b8c82f0f340108ada))
+        specifier: https://pkg.pr.new/ScriptedAlchemy/effect-rstest@f29b3f495d45a11037334620bf5f693414fb5578
+        version: https://pkg.pr.new/ScriptedAlchemy/effect-rstest@f29b3f495d45a11037334620bf5f693414fb5578(@rstest/core@0.11.12(@module-federation/runtime-tools@2.9.0)(core-js@3.50.0)(happy-dom@20.8.3))(effect@4.0.0-rc.112(patch_hash=b7489e5109ec4daf5d6c7ac30956ed95c312f4077cbc973b8c82f0f340108ada))
       esbuild:
         specifier: 0.28.1
         version: 0.28.1
@@ -493,8 +492,8 @@ importers:
         specifier: 1.0.0-rc.5-ab785fc
         version: 1.0.0-rc.5-ab785fc
       effect-rstest:
-        specifier: 0.1.4
-        version: 0.1.4(patch_hash=400646897be54f02f39200a151f0f4a48428fc12dccbd7d91a7391b55247152a)(@rstest/core@0.11.12(@module-federation/runtime-tools@2.9.0)(core-js@3.50.0)(happy-dom@20.8.3))(effect@4.0.0-rc.112(patch_hash=b7489e5109ec4daf5d6c7ac30956ed95c312f4077cbc973b8c82f0f340108ada))
+        specifier: https://pkg.pr.new/ScriptedAlchemy/effect-rstest@f29b3f495d45a11037334620bf5f693414fb5578
+        version: https://pkg.pr.new/ScriptedAlchemy/effect-rstest@f29b3f495d45a11037334620bf5f693414fb5578(@rstest/core@0.11.12(@module-federation/runtime-tools@2.9.0)(core-js@3.50.0)(happy-dom@20.8.3))(effect@4.0.0-rc.112(patch_hash=b7489e5109ec4daf5d6c7ac30956ed95c312f4077cbc973b8c82f0f340108ada))
       happy-dom:
         specifier: 20.8.3
         version: 20.8.3
@@ -545,8 +544,8 @@ importers:
         specifier: 1.0.0-rc.5-ab785fc
         version: 1.0.0-rc.5-ab785fc
       effect-rstest:
-        specifier: 0.1.4
-        version: 0.1.4(patch_hash=400646897be54f02f39200a151f0f4a48428fc12dccbd7d91a7391b55247152a)(@rstest/core@0.11.12(@module-federation/runtime-tools@2.9.0)(core-js@3.50.0)(happy-dom@20.8.3))(effect@4.0.0-rc.112(patch_hash=b7489e5109ec4daf5d6c7ac30956ed95c312f4077cbc973b8c82f0f340108ada))
+        specifier: https://pkg.pr.new/ScriptedAlchemy/effect-rstest@f29b3f495d45a11037334620bf5f693414fb5578
+        version: https://pkg.pr.new/ScriptedAlchemy/effect-rstest@f29b3f495d45a11037334620bf5f693414fb5578(@rstest/core@0.11.12(@module-federation/runtime-tools@2.9.0)(core-js@3.50.0)(happy-dom@20.8.3))(effect@4.0.0-rc.112(patch_hash=b7489e5109ec4daf5d6c7ac30956ed95c312f4077cbc973b8c82f0f340108ada))
       yaml:
         specifier: 2.9.1
         version: 2.9.1
@@ -570,8 +569,8 @@ importers:
         specifier: 20.19.43
         version: 20.19.43
       effect-rstest:
-        specifier: 0.1.4
-        version: 0.1.4(patch_hash=400646897be54f02f39200a151f0f4a48428fc12dccbd7d91a7391b55247152a)(@rstest/core@0.11.12(@module-federation/runtime-tools@2.9.0)(core-js@3.50.0)(happy-dom@20.8.3))(effect@4.0.0-rc.112(patch_hash=b7489e5109ec4daf5d6c7ac30956ed95c312f4077cbc973b8c82f0f340108ada))
+        specifier: https://pkg.pr.new/ScriptedAlchemy/effect-rstest@f29b3f495d45a11037334620bf5f693414fb5578
+        version: https://pkg.pr.new/ScriptedAlchemy/effect-rstest@f29b3f495d45a11037334620bf5f693414fb5578(@rstest/core@0.11.12(@module-federation/runtime-tools@2.9.0)(core-js@3.50.0)(happy-dom@20.8.3))(effect@4.0.0-rc.112(patch_hash=b7489e5109ec4daf5d6c7ac30956ed95c312f4077cbc973b8c82f0f340108ada))
 
   packages/email-delivery:
     dependencies:
@@ -586,8 +585,8 @@ importers:
         specifier: ^26.4.1
         version: 26.5.1
       effect-rstest:
-        specifier: 0.1.4
-        version: 0.1.4(patch_hash=400646897be54f02f39200a151f0f4a48428fc12dccbd7d91a7391b55247152a)(@rstest/core@0.11.12(@module-federation/runtime-tools@2.9.0)(core-js@3.50.0)(happy-dom@20.8.3))(effect@4.0.0-rc.112(patch_hash=b7489e5109ec4daf5d6c7ac30956ed95c312f4077cbc973b8c82f0f340108ada))
+        specifier: https://pkg.pr.new/ScriptedAlchemy/effect-rstest@f29b3f495d45a11037334620bf5f693414fb5578
+        version: https://pkg.pr.new/ScriptedAlchemy/effect-rstest@f29b3f495d45a11037334620bf5f693414fb5578(@rstest/core@0.11.12(@module-federation/runtime-tools@2.9.0)(core-js@3.50.0)(happy-dom@20.8.3))(effect@4.0.0-rc.112(patch_hash=b7489e5109ec4daf5d6c7ac30956ed95c312f4077cbc973b8c82f0f340108ada))
 
   packages/gateway-principal-verifier:
     dependencies:
@@ -611,8 +610,8 @@ importers:
         specifier: ^26.4.1
         version: 26.5.1
       effect-rstest:
-        specifier: 0.1.4
-        version: 0.1.4(patch_hash=400646897be54f02f39200a151f0f4a48428fc12dccbd7d91a7391b55247152a)(@rstest/core@0.11.12(@module-federation/runtime-tools@2.9.0)(core-js@3.50.0)(happy-dom@20.8.3))(effect@4.0.0-rc.112(patch_hash=b7489e5109ec4daf5d6c7ac30956ed95c312f4077cbc973b8c82f0f340108ada))
+        specifier: https://pkg.pr.new/ScriptedAlchemy/effect-rstest@f29b3f495d45a11037334620bf5f693414fb5578
+        version: https://pkg.pr.new/ScriptedAlchemy/effect-rstest@f29b3f495d45a11037334620bf5f693414fb5578(@rstest/core@0.11.12(@module-federation/runtime-tools@2.9.0)(core-js@3.50.0)(happy-dom@20.8.3))(effect@4.0.0-rc.112(patch_hash=b7489e5109ec4daf5d6c7ac30956ed95c312f4077cbc973b8c82f0f340108ada))
 
   packages/payment-term-catalog-contracts:
     dependencies:
@@ -633,8 +632,8 @@ importers:
         specifier: 20.19.43
         version: 20.19.43
       effect-rstest:
-        specifier: 0.1.4
-        version: 0.1.4(patch_hash=400646897be54f02f39200a151f0f4a48428fc12dccbd7d91a7391b55247152a)(@rstest/core@0.11.12(@module-federation/runtime-tools@2.9.0)(core-js@3.50.0)(happy-dom@20.8.3))(effect@4.0.0-rc.112(patch_hash=b7489e5109ec4daf5d6c7ac30956ed95c312f4077cbc973b8c82f0f340108ada))
+        specifier: https://pkg.pr.new/ScriptedAlchemy/effect-rstest@f29b3f495d45a11037334620bf5f693414fb5578
+        version: https://pkg.pr.new/ScriptedAlchemy/effect-rstest@f29b3f495d45a11037334620bf5f693414fb5578(@rstest/core@0.11.12(@module-federation/runtime-tools@2.9.0)(core-js@3.50.0)(happy-dom@20.8.3))(effect@4.0.0-rc.112(patch_hash=b7489e5109ec4daf5d6c7ac30956ed95c312f4077cbc973b8c82f0f340108ada))
 
   packages/shared-contracts:
     dependencies:
@@ -658,8 +657,8 @@ importers:
         specifier: ^26.4.1
         version: 26.5.1
       effect-rstest:
-        specifier: 0.1.4
-        version: 0.1.4(patch_hash=400646897be54f02f39200a151f0f4a48428fc12dccbd7d91a7391b55247152a)(@rstest/core@0.11.12(@module-federation/runtime-tools@2.9.0)(core-js@3.50.0)(happy-dom@20.8.3))(effect@4.0.0-rc.112(patch_hash=b7489e5109ec4daf5d6c7ac30956ed95c312f4077cbc973b8c82f0f340108ada))
+        specifier: https://pkg.pr.new/ScriptedAlchemy/effect-rstest@f29b3f495d45a11037334620bf5f693414fb5578
+        version: https://pkg.pr.new/ScriptedAlchemy/effect-rstest@f29b3f495d45a11037334620bf5f693414fb5578(@rstest/core@0.11.12(@module-federation/runtime-tools@2.9.0)(core-js@3.50.0)(happy-dom@20.8.3))(effect@4.0.0-rc.112(patch_hash=b7489e5109ec4daf5d6c7ac30956ed95c312f4077cbc973b8c82f0f340108ada))
 
   packages/shared-design-tokens: {}
 
@@ -790,8 +789,8 @@ importers:
         specifier: 1.0.0-rc.5-ab785fc
         version: 1.0.0-rc.5-ab785fc
       effect-rstest:
-        specifier: 0.1.4
-        version: 0.1.4(patch_hash=400646897be54f02f39200a151f0f4a48428fc12dccbd7d91a7391b55247152a)(@rstest/core@0.11.12(@module-federation/runtime-tools@2.9.0)(core-js@3.50.0)(happy-dom@20.8.3))(effect@4.0.0-rc.112(patch_hash=b7489e5109ec4daf5d6c7ac30956ed95c312f4077cbc973b8c82f0f340108ada))
+        specifier: https://pkg.pr.new/ScriptedAlchemy/effect-rstest@f29b3f495d45a11037334620bf5f693414fb5578
+        version: https://pkg.pr.new/ScriptedAlchemy/effect-rstest@f29b3f495d45a11037334620bf5f693414fb5578(@rstest/core@0.11.12(@module-federation/runtime-tools@2.9.0)(core-js@3.50.0)(happy-dom@20.8.3))(effect@4.0.0-rc.112(patch_hash=b7489e5109ec4daf5d6c7ac30956ed95c312f4077cbc973b8c82f0f340108ada))
       typescript:
         specifier: 7.0.2
         version: 7.0.2
@@ -929,8 +928,8 @@ importers:
         specifier: 1.0.0-rc.5-ab785fc
         version: 1.0.0-rc.5-ab785fc
       effect-rstest:
-        specifier: 0.1.4
-        version: 0.1.4(patch_hash=400646897be54f02f39200a151f0f4a48428fc12dccbd7d91a7391b55247152a)(@rstest/core@0.11.12(@module-federation/runtime-tools@2.9.0)(core-js@3.50.0)(happy-dom@20.8.3))(effect@4.0.0-rc.112(patch_hash=b7489e5109ec4daf5d6c7ac30956ed95c312f4077cbc973b8c82f0f340108ada))
+        specifier: https://pkg.pr.new/ScriptedAlchemy/effect-rstest@f29b3f495d45a11037334620bf5f693414fb5578
+        version: https://pkg.pr.new/ScriptedAlchemy/effect-rstest@f29b3f495d45a11037334620bf5f693414fb5578(@rstest/core@0.11.12(@module-federation/runtime-tools@2.9.0)(core-js@3.50.0)(happy-dom@20.8.3))(effect@4.0.0-rc.112(patch_hash=b7489e5109ec4daf5d6c7ac30956ed95c312f4077cbc973b8c82f0f340108ada))
       fast-check:
         specifier: 4.9.0
         version: 4.9.0
@@ -1047,8 +1046,8 @@ importers:
         specifier: 1.0.0-rc.5-ab785fc
         version: 1.0.0-rc.5-ab785fc
       effect-rstest:
-        specifier: 0.1.4
-        version: 0.1.4(patch_hash=400646897be54f02f39200a151f0f4a48428fc12dccbd7d91a7391b55247152a)(@rstest/core@0.11.12(@module-federation/runtime-tools@2.9.0)(core-js@3.50.0)(happy-dom@20.8.3))(effect@4.0.0-rc.112(patch_hash=b7489e5109ec4daf5d6c7ac30956ed95c312f4077cbc973b8c82f0f340108ada))
+        specifier: https://pkg.pr.new/ScriptedAlchemy/effect-rstest@f29b3f495d45a11037334620bf5f693414fb5578
+        version: https://pkg.pr.new/ScriptedAlchemy/effect-rstest@f29b3f495d45a11037334620bf5f693414fb5578(@rstest/core@0.11.12(@module-federation/runtime-tools@2.9.0)(core-js@3.50.0)(happy-dom@20.8.3))(effect@4.0.0-rc.112(patch_hash=b7489e5109ec4daf5d6c7ac30956ed95c312f4077cbc973b8c82f0f340108ada))
       typescript:
         specifier: 7.0.2
         version: 7.0.2
@@ -5845,11 +5844,11 @@ packages:
   eastasianwidth@0.2.0:
     resolution: {integrity: sha512-I88TYZWc9XiYHRQ4/3c5rjjfgkjhLyW2luGIheGERbNQ6OY7yTybanSpDXZa8y7VUP9YmDcYa+eyq4ca7iLqWA==}
 
-  effect-rstest@0.1.4:
-    resolution: {integrity: sha512-0JTpwz1giYQLPYk5OLerS/JZJBQb2ve8h6jwY7DR75sb53z2Sl44+IsjGj4Hh1xC80m91tTR/gqfLPbR1lkH3g==}
-    engines: {node: ^20.19.0 || >=22.12.0}
+  effect-rstest@https://pkg.pr.new/ScriptedAlchemy/effect-rstest@f29b3f495d45a11037334620bf5f693414fb5578:
+    resolution: {integrity: sha512-hr8irxbYTk3OA+3IKz920JlZyIT4/rouzR6fJdy4uXRRi3Nyq6E03VgTZJNcEqtODoq2hgdDrMn9yEy9x47eiQ==, tarball: https://pkg.pr.new/ScriptedAlchemy/effect-rstest@f29b3f495d45a11037334620bf5f693414fb5578}
+    version: 0.1.0
     peerDependencies:
-      '@rstest/core': '>=0.11.12 <0.12.0'
+      '@rstest/core': ^0.11.11
       effect: 4.0.0-rc.112
 
   effect@4.0.0-rc.112:
@@ -13928,7 +13927,7 @@ snapshots:
 
   eastasianwidth@0.2.0: {}
 
-  effect-rstest@0.1.4(patch_hash=400646897be54f02f39200a151f0f4a48428fc12dccbd7d91a7391b55247152a)(@rstest/core@0.11.12(@module-federation/runtime-tools@2.9.0)(core-js@3.50.0)(happy-dom@20.8.3))(effect@4.0.0-rc.112(patch_hash=b7489e5109ec4daf5d6c7ac30956ed95c312f4077cbc973b8c82f0f340108ada)):
+  effect-rstest@https://pkg.pr.new/ScriptedAlchemy/effect-rstest@f29b3f495d45a11037334620bf5f693414fb5578(@rstest/core@0.11.12(@module-federation/runtime-tools@2.9.0)(core-js@3.50.0)(happy-dom@20.8.3))(effect@4.0.0-rc.112(patch_hash=b7489e5109ec4daf5d6c7ac30956ed95c312f4077cbc973b8c82f0f340108ada)):
     dependencies:
       '@rstest/core': 0.11.12(@module-federation/runtime-tools@2.9.0)(core-js@3.50.0)(happy-dom@20.8.3)
       effect: 4.0.0-rc.112(patch_hash=b7489e5109ec4daf5d6c7ac30956ed95c312f4077cbc973b8c82f0f340108ada)
