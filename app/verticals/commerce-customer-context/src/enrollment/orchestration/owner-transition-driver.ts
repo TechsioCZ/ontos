@@ -38,7 +38,7 @@ import {
   ReconcileEnrollmentResolutionSchema,
   RecordEnrollmentOutcomeInputSchema,
 } from '../../../shared/enrollment-contracts.ts';
-import type { AttemptClaimResult, AttemptRecordResult } from '../attempts/attempt-persistence.ts';
+import type { AttemptClaimedResult, AttemptRecordResult } from '../attempts/attempt-persistence.ts';
 import type { CommerceEnrollmentAttemptService } from '../attempts/attempt-service.ts';
 import {
   CommerceEnrollmentAttemptConflict,
@@ -100,9 +100,8 @@ const ownerEffectOutcomeFields = {
   accountSubject: Schema.optionalKey(CommercePortalAccountSubjectSchema),
   failureCode: Schema.optionalKey(EnrollmentKeySchema),
   failureReason: Schema.optionalKey(EnrollmentBoundedTextSchema),
-  nextState: Schema.optionalKey(
-    Schema.Literals(['IN_PROGRESS', 'VERIFICATION_REQUIRED', 'COMPLETE', 'RECONCILIATION_REQUIRED']),
-  ),
+  /** An owner speaks only about its own transition; COMPLETE is derived, never signalled. */
+  nextState: Schema.optionalKey(Schema.Literals(['IN_PROGRESS', 'VERIFICATION_REQUIRED', 'RECONCILIATION_REQUIRED'])),
   outcomeCode: Schema.optionalKey(EnrollmentKeySchema),
   resultDigest: Schema.optionalKey(EnrollmentDigestSchema),
   resultReference: Schema.optionalKey(EnrollmentResourceIdSchema),
@@ -112,7 +111,7 @@ interface CommerceEnrollmentOwnerEffectOutcomeFields {
   readonly accountSubject?: CommercePortalAccountSubject;
   readonly failureCode?: EnrollmentKey;
   readonly failureReason?: typeof EnrollmentBoundedTextSchema.Type;
-  readonly nextState?: 'IN_PROGRESS' | 'VERIFICATION_REQUIRED' | 'COMPLETE' | 'RECONCILIATION_REQUIRED';
+  readonly nextState?: 'IN_PROGRESS' | 'VERIFICATION_REQUIRED' | 'RECONCILIATION_REQUIRED';
   readonly outcomeCode?: EnrollmentKey;
   readonly resultDigest?: typeof EnrollmentDigestSchema.Type;
   readonly resultReference?: EnrollmentResourceId;
@@ -221,15 +220,15 @@ export interface CommerceEnrollmentOwnerTransitionDriver {
 
 type CommerceEnrollmentOwnerTransitionExecutionResult =
   | {
-      readonly claim: AttemptClaimResult;
+      readonly claim: AttemptClaimedResult;
       readonly outcome: 'REPLAYED';
     }
   | {
-      readonly claim: AttemptClaimResult;
+      readonly claim: AttemptClaimedResult;
       readonly outcome: 'LEASE_HELD';
     }
   | {
-      readonly claim: AttemptClaimResult;
+      readonly claim: AttemptClaimedResult;
       readonly outcome: 'RECORDED';
       readonly ownerOutcome: CommerceEnrollmentOwnerEffectOutcome;
       readonly recorded: AttemptRecordResult;
@@ -356,7 +355,7 @@ const toClaimInput = (
 
 const toRecordInput = (
   input: CommerceEnrollmentOwnerTransition,
-  claim: AttemptClaimResult,
+  claim: AttemptClaimedResult,
   outcome: CommerceEnrollmentOwnerEffectOutcome,
   workerId: EnrollmentKey,
 ): Effect.Effect<RecordEnrollmentOutcomeInput, CommerceEnrollmentAttemptError> => {
@@ -460,7 +459,7 @@ const leaseIsActive = (lease: EnrollmentOwnerOperationSnapshot['lease']): Effect
 const claimIsDispatchable = Effect.fn('CommerceEnrollmentOwnerTransitionDriver.claimIsDispatchable')(
   function* claimIsDispatchableEffect(
     input: CommerceEnrollmentOwnerTransition,
-    claim: AttemptClaimResult,
+    claim: AttemptClaimedResult,
     workerId: EnrollmentKey,
   ): Effect.fn.Return<boolean> {
     if (
@@ -512,6 +511,12 @@ export const makeCommerceEnrollmentOwnerTransitionDriver = (
     );
     const claimInput = yield* toClaimInput(input, workerId, leaseDurationMs, required);
     const claim = yield* options.attempt.claimTransition(claimInput);
+    if (claim.outcome === 'INDETERMINATE') {
+      return yield* indeterminate(
+        input,
+        'The prior owner transition outcome is indeterminate and must be resolved first',
+      );
+    }
     if (claim.operation.status === 'SUCCEEDED') {
       return { claim, outcome: 'REPLAYED' };
     }
@@ -572,8 +577,9 @@ export const makeCommerceEnrollmentOwnerTransitionDriver = (
       return yield* invalid('The reconciliation request does not match the immutable owner operation');
     }
 
-    // A timed-out worker may leave the SQL row IN_PROGRESS until the next claim fences it.  Use a
-    // durable claim only to perform that fence, then refresh both rows before owner HTTP.
+    // A timed-out worker leaves the SQL row IN_PROGRESS until the next claim fences it. Claim only
+    // to perform that fence, then refresh both rows before any owner read.
+    let fenced = false;
     if (operation.status === 'IN_PROGRESS') {
       if (yield* leaseIsActive(operation.lease)) {
         return yield* new CommerceEnrollmentAttemptUnavailable({
@@ -592,9 +598,7 @@ export const makeCommerceEnrollmentOwnerTransitionDriver = (
         leaseDurationMs,
         required,
       );
-      yield* options.attempt
-        .claimTransition(fenceInput)
-        .pipe(Effect.catchTag('CommerceEnrollmentAttemptIndeterminate', () => Effect.void));
+      yield* options.attempt.claimTransition(fenceInput);
       attempt = yield* options.attempt.read(readAttemptIdentity(requested));
       operation = yield* options.attempt.readOwnerOperation(readOperationIdentity(requested));
       if (operation.status === 'SUCCEEDED') {
@@ -603,6 +607,7 @@ export const makeCommerceEnrollmentOwnerTransitionDriver = (
       if (operation.status !== 'INDETERMINATE' && operation.status !== 'RECONCILIATION_REQUIRED') {
         return yield* indeterminate(requested, 'The expired owner transition was not durably fenced');
       }
+      fenced = true;
     }
 
     if (operation.status === 'SUCCEEDED') {
@@ -614,7 +619,9 @@ export const makeCommerceEnrollmentOwnerTransitionDriver = (
     if (operation.status !== 'INDETERMINATE' && operation.status !== 'RECONCILIATION_REQUIRED') {
       return yield* indeterminate(requested, 'The owner transition is not ready for reconciliation');
     }
-    if (attempt.revision !== requested.expectedRevision) {
+    // Outside the fence path the caller's revision must still be Current; the fence above moved it
+    // itself and re-read both rows, so its own move is not a concurrent change.
+    if (!fenced && attempt.revision !== requested.expectedRevision) {
       return yield* conflict(requested, 'The durable owner fence changed the Attempt revision; refresh before retry');
     }
 

@@ -88,3 +88,36 @@ export const commercePortalAuthAuditRecord = (event: CommercePortalAuthAuditEven
   sessionRef: event.sessionRef,
   subjectDigest: event.subjectDigest,
 });
+
+/** The exact column values one audit row carries; an absent optional is a NULL, never a guess. */
+export interface CommercePortalAuthAuditRow {
+  readonly eventType: CommercePortalAuthAuditEventType;
+  readonly occurredAt: Date;
+  readonly operation: string | null;
+  readonly outcome: CommercePortalAuthAuditOutcome;
+  readonly providerSubjectId: string | null;
+  readonly schemaVersion: number;
+  readonly sessionRef: string | null;
+  readonly subjectDigest: string | null;
+}
+
+/**
+ * One event becomes exactly one row, projected through the published record shape first, so a field
+ * that is not part of that shape cannot reach a column even if a caller attaches it to the event.
+ * The projection is kept here rather than beside the insert because two writers share it: the
+ * lenient recorder that records a decision, and the session store that writes the same row inside
+ * the transaction that changes state (`../persistence/portal-auth-session-store.ts`).
+ */
+export const commercePortalAuthAuditRow = (event: CommercePortalAuthAuditEvent): CommercePortalAuthAuditRow => {
+  const record = commercePortalAuthAuditRecord(event);
+  return {
+    eventType: record.eventType,
+    occurredAt: event.occurredAt,
+    operation: record.operation ?? null,
+    outcome: record.outcome,
+    providerSubjectId: record.providerSubjectId ?? null,
+    schemaVersion: record.schemaVersion,
+    sessionRef: record.sessionRef ?? null,
+    subjectDigest: record.subjectDigest ?? null,
+  };
+};

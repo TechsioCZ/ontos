@@ -13,6 +13,7 @@ import type {
   CommerceEnrollmentAttemptReconciliationAuthority,
   CommerceEnrollmentAttemptService,
 } from '../attempts/attempt-service.ts';
+import { commerceEnrollmentCompletionAuthorityForPersistence } from './completion.ts';
 import type { CommerceEnrollmentOwnerAttemptStore } from './owner-transition-driver.ts';
 import { commerceEnrollmentOwnerAttemptStoreForFreshService } from './owner-transition-driver.ts';
 import type {
@@ -69,11 +70,14 @@ const attemptServiceForScope = (
   run: CommerceEnrollmentOwnerTransactionRun,
   reconciliationAuthority: CommerceEnrollmentAttemptReconciliationAuthority,
 ): CommerceEnrollmentAttemptService => {
-  const attemptFor = (transaction: EnrollmentAttemptScopedRoutineInvoker) =>
-    commerceEnrollmentAttemptServiceForPersistence(
-      commerceEnrollmentAttemptPersistenceForTransaction(transaction, scope),
+  const attemptFor = (transaction: EnrollmentAttemptScopedRoutineInvoker) => {
+    const persistence = commerceEnrollmentAttemptPersistenceForTransaction(transaction, scope);
+    return commerceEnrollmentAttemptServiceForPersistence(
+      persistence,
       reconciliationAuthority,
+      commerceEnrollmentCompletionAuthorityForPersistence(persistence),
     );
+  };
 
   const claimTransition: CommerceEnrollmentAttemptService['claimTransition'] = (input) =>
     run(scope, (transaction) => attemptFor(transaction).claimTransition(input));

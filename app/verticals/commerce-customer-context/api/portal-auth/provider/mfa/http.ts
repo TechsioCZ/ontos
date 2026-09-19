@@ -28,7 +28,9 @@ import {
 import { CommercePortalAuthRecoveryRateLimitService } from '../../rate-limit-service.ts';
 import type { CommercePortalAuthRecoveryRateLimitRule } from '../../rate-limit-service.ts';
 import { CommercePortalAuthService } from '../../session/http.ts';
+import { CommercePortalAuthSessionLifecycle } from '../../session/lifecycle-service.ts';
 import { CommercePortalAuthConfig } from '../config-service.ts';
+import { encodeCommerceSessionReference } from '../session-reference.ts';
 import { COMMERCE_PORTAL_AUTH_POLICY } from '../config.ts';
 import type { CommercePortalAuthConfigValue } from '../config.ts';
 import {
@@ -182,19 +184,32 @@ const prepareMfaCall = Effect.fn('CommercePortalAuthMfaHttp.prepare')(function* 
   return call;
 });
 
-/** Better Auth session lookup, scoped to only the read this gate needs. */
-type CommercePortalAuthMfaSessionReadApi = Pick<Auth['api'], 'getSession'>;
+/**
+ * Better Auth session lookup, scoped to only the read this gate needs. The argument shape is taken
+ * from the provider's own route so the call stays exact, while the result is left opaque and
+ * decoded below — which also lets an owner test substitute a fixture without reproducing Better
+ * Auth's route descriptor.
+ */
+export interface CommercePortalAuthMfaSessionReadApi {
+  readonly getSession: (input: Parameters<Auth['api']['getSession']>[0]) => Promise<unknown>;
+}
 
 export interface CommercePortalAuthMfaCurrentSession {
-  readonly sessionCreatedAtMillis: number;
+  /**
+   * When the customer last proved who they are on this session: the persisted primary/step-up
+   * authentication stamp, not the row's creation time. The two differ exactly where it matters —
+   * a completed step-up rotates the session and deliberately carries `createdAt` forward so the
+   * absolute session lifetime survives the rotation.
+   */
+  readonly authenticatedAtMillis: number;
 }
 
 /**
  * The owner-local freshness boundary. It reads the exact current provider session from the
  * incoming request's own cookies — never a caller-supplied session id — mirroring how the sibling
  * step-up group derives its current identity. Unlike that sibling's `setSessionCookie` boundary,
- * this port's Live implementation is supplied directly below, over the provider port the group
- * already reads, so the gate adds no requirement of its own to the composition root.
+ * this port's Live implementation is supplied directly below, over the two tags the portal-auth
+ * groups already read, so the gate adds no requirement of its own to the composition root.
  * Exported so the owner's transport tests can substitute a fixture reader — the same shape the
  * sibling step-up group's `CommercePortalAuthStepUpHttpProviderService` is overridden with.
  */
@@ -209,7 +224,10 @@ export class CommercePortalAuthMfaFreshnessReaderService extends Context.Service
 
 const CurrentSessionSchema = Schema.Union([
   Schema.Null,
-  Schema.Struct({ session: Schema.Struct({ createdAt: Schema.instanceOf(Date) }) }),
+  Schema.Struct({
+    session: Schema.Struct({ id: Schema.String }),
+    user: Schema.Struct({ id: Schema.String }),
+  }),
 ]);
 
 /** `returnHeaders: true` makes Better Auth answer with this exact envelope; both halves are concrete. */
@@ -225,74 +243,99 @@ const SessionEnvelopeSchema = Schema.Struct({
  */
 interface CommercePortalAuthMfaSessionReadFailure {
   readonly cause?: unknown;
-  readonly reason: 'malformed' | 'provider-error' | 'timeout';
+  readonly reason: 'evidence-rejected' | 'malformed' | 'provider-error' | 'timeout';
 }
 
 /**
- * Any failure to read or decode the session — timeout, provider fault, malformed response — is
- * treated the same as no session at all: freshness cannot be confirmed, so the gate denies rather
- * than risking a stale or forged session being accepted. Only a diagnostic reason is logged, never
- * session or user identifiers.
+ * Any failure to read or decode the session — timeout, provider fault, malformed response, a
+ * session the owner's lifecycle refuses evidence for — is treated the same as no session at all:
+ * freshness cannot be confirmed, so the gate denies rather than risking a stale or forged session
+ * being accepted. Only a diagnostic reason is logged, never session or user identifiers.
+ *
+ * Better Auth resolves the cookie to a session identity; the owner's lifecycle answers when that
+ * session was last authenticated. The provider has no column for it — the stamp lives on the
+ * owner's own session row (`../../../../src/portal-auth/persistence/portal-auth-tables.ts`) — so
+ * the two halves are read here rather than inferred from the provider's `createdAt`.
  */
 const readCommercePortalAuthMfaCurrentSession = (
   api: CommercePortalAuthMfaSessionReadApi,
+  lifecycle: CommercePortalAuthMfaFreshnessLifecycle,
   headers: Headers,
 ): Effect.Effect<Option.Option<CommercePortalAuthMfaCurrentSession>> =>
-  Effect.tryPromise({
-    catch: (cause): CommercePortalAuthMfaSessionReadFailure => ({ cause, reason: 'provider-error' }),
-    try: api.getSession.bind(api, {
-      asResponse: false,
-      headers,
-      query: { disableCookieCache: true, disableRefresh: true },
-      returnHeaders: true,
-    }),
+  Effect.gen(function* readCommercePortalAuthMfaCurrentSessionEffect() {
+    const result = yield* Effect.tryPromise({
+      catch: (cause): CommercePortalAuthMfaSessionReadFailure => ({ cause, reason: 'provider-error' }),
+      try: api.getSession.bind(api, {
+        asResponse: false,
+        headers,
+        query: { disableCookieCache: true, disableRefresh: true },
+        returnHeaders: true,
+      }),
+    }).pipe(
+      Effect.timeoutOrElse({
+        duration: Duration.millis(COMMERCE_PORTAL_AUTH_POLICY.session.providerCallTimeoutMilliseconds),
+        orElse: () => Effect.fail<CommercePortalAuthMfaSessionReadFailure>({ reason: 'timeout' }),
+      }),
+    );
+    const envelope = yield* Schema.decodeUnknownEffect(SessionEnvelopeSchema)(result).pipe(
+      Effect.mapError((cause): CommercePortalAuthMfaSessionReadFailure => ({ cause, reason: 'malformed' })),
+    );
+    const current = envelope.response;
+    if (current === null) {
+      return Option.none<CommercePortalAuthMfaCurrentSession>();
+    }
+    const sessionRef = yield* encodeCommerceSessionReference(current.session.id).pipe(
+      Effect.mapError((cause): CommercePortalAuthMfaSessionReadFailure => ({ cause, reason: 'malformed' })),
+    );
+    const evidence = yield* lifecycle
+      .evidenceForSession({ expectedProviderSubjectId: current.user.id, sessionRef })
+      .pipe(
+        Effect.mapError((cause): CommercePortalAuthMfaSessionReadFailure => ({ cause, reason: 'evidence-rejected' })),
+      );
+    return Option.some({ authenticatedAtMillis: evidence.authenticatedAt.getTime() });
   }).pipe(
-    Effect.timeoutOrElse({
-      duration: Duration.millis(COMMERCE_PORTAL_AUTH_POLICY.session.providerCallTimeoutMilliseconds),
-      orElse: () => Effect.fail<CommercePortalAuthMfaSessionReadFailure>({ reason: 'timeout' }),
-    }),
-    Effect.flatMap((result) =>
-      Schema.decodeUnknownEffect(SessionEnvelopeSchema)(result).pipe(
-        Effect.mapError((cause): CommercePortalAuthMfaSessionReadFailure => ({ cause, reason: 'malformed' })),
-      ),
-    ),
     Effect.matchEffect({
       onFailure: (failure: CommercePortalAuthMfaSessionReadFailure) =>
         Effect.annotateLogs(Effect.logWarning('Commerce portal MFA session freshness read failed'), {
           reason: failure.reason,
         }).pipe(Effect.as(Option.none())),
-      onSuccess: (envelope) =>
-        Effect.succeed(
-          envelope.response === null
-            ? Option.none()
-            : Option.some({ sessionCreatedAtMillis: envelope.response.session.createdAt.getTime() }),
-        ),
+      onSuccess: (current: Option.Option<CommercePortalAuthMfaCurrentSession>) => Effect.succeed(current),
     }),
   );
 
+/** Exactly the lifecycle read this gate makes; nothing here may change session state. */
+export type CommercePortalAuthMfaFreshnessLifecycle = Pick<
+  CommercePortalAuthSessionLifecycle['Service'],
+  'evidenceForSession'
+>;
+
 /**
- * Exported so a caller already holding a Better Auth `api` — an integration test driving a fixture
- * realm, for instance — can build the same reader without going through a provider port.
+ * Exported so a caller already holding a Better Auth `api` and the owner's lifecycle — an
+ * integration test driving a fixture realm over the real store, for instance — can build the same
+ * reader without going through the service tags.
  */
 export const commercePortalAuthMfaFreshnessReaderFromApi = (
   api: CommercePortalAuthMfaSessionReadApi,
+  lifecycle: CommercePortalAuthMfaFreshnessLifecycle,
 ): CommercePortalAuthMfaFreshnessReader => ({
-  readCurrentSession: (headers: Headers) => readCommercePortalAuthMfaCurrentSession(api, headers),
+  readCurrentSession: (headers: Headers) => readCommercePortalAuthMfaCurrentSession(api, lifecycle, headers),
 });
 
 /**
  * The gate reads the current session through `CommercePortalAuthService` — the same typed Better
- * Auth `api` port the sibling session transport calls — rather than the constructed realm itself.
- * That port is one of the tags every portal-auth group already reads, so the installed realm and
- * the fail-closed realm a host that opted out gets (`../../realm-unavailable.ts`) both satisfy it:
- * on the uninstalled realm the provider call refuses, the read below turns that into "no session",
- * and the freshness gate denies.
+ * Auth `api` port the sibling session transport calls — rather than the constructed realm itself,
+ * and reads when that session was last authenticated through `CommercePortalAuthSessionLifecycle`.
+ * Both are tags the portal-auth groups already read, so the installed realm and the fail-closed
+ * realm a host that opted out gets (`../../realm-unavailable.ts`) both satisfy them: on the
+ * uninstalled realm each call refuses, the read above turns that into "no session", and the
+ * freshness gate denies.
  */
 const commercePortalAuthMfaFreshnessReaderLive = Layer.effect(
   CommercePortalAuthMfaFreshnessReaderService,
   Effect.gen(function* makeCommercePortalAuthMfaFreshnessReaderLive() {
     const provider = yield* CommercePortalAuthService;
-    return commercePortalAuthMfaFreshnessReaderFromApi(provider.api);
+    const lifecycle = yield* CommercePortalAuthSessionLifecycle;
+    return commercePortalAuthMfaFreshnessReaderFromApi(provider.api, lifecycle);
   }),
 );
 
@@ -300,9 +343,16 @@ const commercePortalAuthMfaFreshnessReaderLive = Layer.effect(
  * `enable`, `confirm-enable`, `disable`, `regenerate-backup-codes` and `totp-uri` all gate on an
  * owner-enforced freshness window: no two-factor plugin endpoint consults
  * `COMMERCE_PORTAL_AUTH_POLICY.session.freshAgeSeconds` on its own (confirmed against the vendored
- * Better Auth 1.7.2 plugin source), so this is the only place that window is enforced. A completed
- * step-up always mints a brand-new session, so this single check also satisfies the "or completed
- * step-up for this session" half of the requirement without separately tracking step-up state.
+ * Better Auth 1.7.2 plugin source), so this is the only place that window is enforced.
+ *
+ * "Recent authentication" is a persisted fact about this exact session, not the age of its row.
+ * The gate reads the owner's `authenticatedAt` stamp, which sign-in establishes and a completed
+ * step-up refreshes; that is what satisfies the "or completed step-up for this session" half of
+ * the requirement. A step-up completed on some *other* session never reaches this one, because the
+ * stamp is written only on the replacement row the rotation produced for the session that was
+ * stepped up. Reading the row's `createdAt` instead would be wrong in both directions: rotation
+ * preserves it on purpose so the absolute session lifetime survives, so an old session could never
+ * become fresh no matter how the customer re-proved themselves.
  */
 const requireFreshMfaAuthentication = Effect.fn('CommercePortalAuthMfaHttp.requireFresh')(
   function* requireFreshMfaAuthenticationEffect(headers: Headers) {
@@ -312,9 +362,9 @@ const requireFreshMfaAuthentication = Effect.fn('CommercePortalAuthMfaHttp.requi
       return yield* Effect.fail(commercePortalAuthMfaNotFreshProblem);
     }
     const nowMillis = yield* Clock.currentTimeMillis;
-    const ageMillis = nowMillis - current.value.sessionCreatedAtMillis;
+    const ageMillis = nowMillis - current.value.authenticatedAtMillis;
     const freshWindowMillis = Duration.toMillis(Duration.seconds(COMMERCE_PORTAL_AUTH_POLICY.session.freshAgeSeconds));
-    /** A negative age (clock skew, a `createdAt` in the future) is never treated as fresh. */
+    /** A negative age (clock skew, a stamp in the future) is never treated as fresh. */
     if (ageMillis < 0 || ageMillis >= freshWindowMillis) {
       return yield* Effect.fail(commercePortalAuthMfaNotFreshProblem);
     }

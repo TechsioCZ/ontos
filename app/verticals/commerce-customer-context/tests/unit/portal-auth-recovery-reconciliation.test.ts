@@ -64,7 +64,7 @@ const makeReconciliationStore = (input: {
 
 const runDetect = (store: CommercePortalAuthRecoveryStore, operation: 'reset-password' | 'verify-email') =>
   makeCommercePortalAuthRecoveryReconciliation().pipe(
-    Effect.flatMap((service) => service.detect({ email: EMAIL, operation, token: TOKEN })),
+    Effect.flatMap((service) => service.detect({ operation, token: TOKEN })),
     Effect.provideService(CommercePortalAuthRecoveryStoreService, store),
   );
 

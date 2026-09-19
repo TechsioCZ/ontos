@@ -58,6 +58,7 @@ Locally, the same ordering (minus the standalone readiness server) is available 
 root scripts:
 
 ```sh
+pnpm db:bootstrap-spicedb
 pnpm db:bootstrap-runtime-role
 pnpm --filter @app/core-runtime db:migrate
 pnpm --filter @app/shell-super-app db:migrate
@@ -68,7 +69,8 @@ pnpm db:bootstrap-runtime-role
 pnpm db:portal-auth:migrate        # no-ops if the portal-auth database env is not configured
 ```
 
-or simply `pnpm db:migrate` from `app/`, which runs exactly that chain.
+`pnpm db:migrate` from `app/` runs the same chain *except* the leading `db:bootstrap-spicedb` step —
+run that once, first, on a fresh database before `db:migrate` (or use the explicit sequence above).
 
 ## Readiness and the 503 fail-closed behaviour
 

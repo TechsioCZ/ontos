@@ -6,6 +6,7 @@ import type { CommercePortalAuthAuditOutcome } from '../../src/portal-auth/audit
 import {
   COMMERCE_PORTAL_AUTH_SESSION_OUTCOMES,
   commercePortalAuthAuditRecord,
+  commercePortalAuthAuditRow,
   commercePortalAuthSessionOutcomeClass,
   commercePortalAuthSignInAuditEvent,
   commercePortalAuthSignInEventType,
@@ -162,3 +163,38 @@ it.effect('does not turn an audit store outage into an authentication failure', 
     expect(Result.isSuccess(outcome)).toBe(true);
   }),
 );
+
+it('projects one event onto one row, with a NULL for every field the caller did not know', () => {
+  const sparse = commercePortalAuthAuditRow({
+    eventType: 'commerce.portal-auth.session-revoked.v1',
+    occurredAt,
+    outcome: 'success',
+  });
+  expect(sparse).toStrictEqual({
+    eventType: 'commerce.portal-auth.session-revoked.v1',
+    occurredAt,
+    operation: null,
+    outcome: 'success',
+    providerSubjectId: null,
+    schemaVersion: COMMERCE_PORTAL_AUTH_AUDIT_SCHEMA_VERSION,
+    sessionRef: null,
+    subjectDigest: null,
+  });
+
+  // The row is the same projection the lenient recorder writes, so the strict, transaction-scoped
+  // writer in the session store cannot drift into a different column set.
+  const complete = commercePortalAuthAuditRow({
+    eventType: 'commerce.portal-auth.session-signed-out.v1',
+    occurredAt,
+    operation: 'sign-out',
+    outcome: 'success',
+    providerSubjectId: 'subject-1',
+    sessionRef: 'commerce-session-ref',
+    subjectDigest: commercePortalAuthSubjectDigest(EMAIL, SECRET),
+  });
+  expect(EffectArray.sort(Object.keys(complete), Order.String)).toStrictEqual(
+    EffectArray.sort([...AUDIT_RECORD_KEYS, 'occurredAt'], Order.String),
+  );
+  expect(complete.sessionRef).toBe('commerce-session-ref');
+  expect(JSON.stringify(complete)).not.toContain(Redacted.value(SECRET));
+});

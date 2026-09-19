@@ -26,6 +26,7 @@
     "db:test": "rstest run tests/unit/database-schema-contract.test.ts --config rstest.config.ts",
     "db:verify": "node scripts/verify-db-schema.mts",
     "serve": "modern serve",
+    "test:integration": "rstest --project integration",
     "test:unit": "rstest --project unit",
     "typecheck": "node ../../scripts/ultramodern-typecheck.mts --project tsconfig.json"
   },

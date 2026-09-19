@@ -14,10 +14,12 @@ import type { CommercePortalAuthEmailDelivery } from '../../api/portal-auth/prov
 import {
   CommercePortalAuthRecoveryUnavailable,
   CommercePortalAuthRecoveryProviderService,
+  CommercePortalAuthRecoveryReconciliationService,
   CommercePortalAuthRecoveryRejected,
   CommercePortalAuthRecoveryService,
   CommercePortalAuthRecoveryStoreService,
   makeCommercePortalAuthEmailDelivery,
+  makeCommercePortalAuthRecoveryReconciliation,
   makeCommercePortalAuthRecoveryRateLimit,
   makeCommercePortalAuthRecoveryService,
   portalAuthRecoveryApiLive,
@@ -187,6 +189,13 @@ const resetPasswordEmailData = {
   },
 } satisfies Parameters<CommercePortalAuthEmailDelivery['sendResetPassword']>[0];
 
+/**
+ * The reconciliation collaborator is wired for real here (store-backed, not a stub) so every test
+ * — including the hook-wiring tests below — exercises the same composition production uses. Most
+ * fixture stores in this file implement only the four base methods, so `detect()` degrades to no
+ * conflict for them, exactly as it did before reconciliation existed; the hook-wiring tests below
+ * add the optional evidence methods to prove detection actually runs and is honored.
+ */
 const runWithRecovery = <Value>(
   provider: CommercePortalAuthRecoveryProvider,
   store: CommercePortalAuthRecoveryStore,
@@ -195,6 +204,12 @@ const runWithRecovery = <Value>(
   makeCommercePortalAuthRecoveryService().pipe(
     Effect.provideService(CommercePortalAuthRecoveryProviderService, provider),
     Effect.provideService(CommercePortalAuthRecoveryStoreService, store),
+    Effect.provideServiceEffect(
+      CommercePortalAuthRecoveryReconciliationService,
+      makeCommercePortalAuthRecoveryReconciliation().pipe(
+        Effect.provideService(CommercePortalAuthRecoveryStoreService, store),
+      ),
+    ),
     Effect.flatMap(invoke),
   );
 
@@ -534,6 +549,84 @@ it.effect('unwraps reset credentials only at the provider boundary and returns a
     ),
   );
 });
+
+/**
+ * Reconciliation runs before the provider ever sees the reset token: a rebound identifier is
+ * terminal, and the token must be left unspent for the same reason the callback route already
+ * treats it as sensitive — a reconciliation-required outcome is not a completed reset.
+ */
+it.effect('returns reconciliation-required and never spends the reset token when the identifier was rebound', () => {
+  let resetCalls = 0;
+  const fixture = makeMemoryRecoveryStore();
+  const provider: CommercePortalAuthRecoveryProvider = {
+    ...successfulProvider(),
+    resetPassword: () =>
+      Effect.sync(() => {
+        resetCalls += 1;
+        return { status: true };
+      }),
+  };
+  const store: CommercePortalAuthRecoveryStore = {
+    ...fixture.store,
+    accountExists: () => Effect.succeed(true),
+    findAccountSubjectForEmail: () => Effect.succeed(Option.some(REPLACEMENT_SUBJECT)),
+    peekPasswordResetLedger: () => Effect.succeed(Option.some({ email: EMAIL, providerSubjectId: ORIGINAL_SUBJECT })),
+  };
+  return runWithRecovery(provider, store, (service) =>
+    service.resetPassword({ newPassword: Redacted.make('P'.repeat(24)), token: Redacted.make('reset-token') }).pipe(
+      Effect.tap((result) =>
+        Effect.sync(() => {
+          expect(result).toStrictEqual({
+            conflictClass: 'IDENTIFIER_REBOUND',
+            outcome: 'ACCOUNT_RECOVERY_RECONCILIATION_REQUIRED',
+          });
+          // Terminal before any token is spent: the provider that would consume it is never reached.
+          expect(resetCalls).toBe(0);
+        }),
+      ),
+    ),
+  );
+});
+
+/**
+ * Same terminal contract for email verification: a conflict must be found before the ledger token
+ * is consumed, so a reconciliation-required outcome never restores access or marks the account
+ * verified.
+ */
+it.effect(
+  'returns reconciliation-required and never consumes the verification ledger when the subject was rebound',
+  () => {
+    let consumeCalls = 0;
+    const fixture = makeMemoryRecoveryStore();
+    const store: CommercePortalAuthRecoveryStore = {
+      ...fixture.store,
+      accountExists: () => Effect.succeed(true),
+      consumeEmailVerification: () =>
+        Effect.sync(() => {
+          consumeCalls += 1;
+          return Option.none<string>();
+        }),
+      findAccountSubjectForEmail: () => Effect.succeed(Option.some(REPLACEMENT_SUBJECT)),
+      peekEmailVerificationLedger: () =>
+        Effect.succeed(Option.some({ email: EMAIL, providerSubjectId: ORIGINAL_SUBJECT })),
+    };
+    return runWithRecovery(successfulProvider(), store, (service) =>
+      service.verifyEmail({ token: VERIFICATION_TOKEN }).pipe(
+        Effect.tap((result) =>
+          Effect.sync(() => {
+            expect(result).toStrictEqual({
+              conflictClass: 'VERIFICATION_LEDGER_SUBJECT_MISMATCH',
+              outcome: 'ACCOUNT_RECOVERY_RECONCILIATION_REQUIRED',
+            });
+            // No session change: the ledger token that would flip the account to verified is
+            // never consumed, so no subject is ever bound by this call.
+            expect(consumeCalls).toBe(0);
+          }),
+        ),
+      ),
+    );
+  },
+);
 
 it.effect('serves only the declared recovery routes and keeps the verification route provider-free', () => {
   let resetCalls = 0;

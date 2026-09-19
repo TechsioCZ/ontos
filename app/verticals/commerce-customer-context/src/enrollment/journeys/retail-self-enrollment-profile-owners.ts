@@ -35,8 +35,8 @@ import {
 
 /**
  * The two Commerce-owned Retail self-enrollment transitions: ensure the Commerce Retail Customer
- * Profile (#266) and activate the Retail Portal Profile Binding (#325), which durably stages the
- * reviewed #332 Retail Portal Self-Service Permission intents inside the binding transaction.
+ * Profile and activate the Retail Portal Profile Binding, which durably stages the
+ * reviewed Retail Portal Self-Service Permission baseline inside the binding transaction.
  *
  * This vertical has no separate retail grant Action — `grant-counterparty-commerce-access` is the
  * Counterparty path — so the binding Action's staged Permission mutations are the retail grant
@@ -239,7 +239,7 @@ const ensureVerdict = (result: EnsureRetailCustomerProfileResult): CommerceOwner
       };
 
 /**
- * The reviewed #332 baseline must be staged exactly: same permissions, all staged, one grant
+ * The reviewed baseline must be staged exactly: same permissions, all staged, one grant
  * operation.  Anything else is a partially completed grant, not a bound portal profile.
  */
 export const retailPortalGrantsAreComplete = (result: RetailPortalBindingResult): boolean => {

@@ -18,6 +18,12 @@ export const COMMERCE_PORTAL_AUTH_TABLE_INVENTORY = [
   'portalAuthAuditEvent',
 ] as const;
 
+/**
+ * `drizzle.portal-auth.config.ts` names this module as its schema input, and Drizzle Kit reads a
+ * schema through the module's own exports. The schema handle and every table below therefore stay
+ * exported even where nothing else imports them: unexporting one hides it from migration
+ * generation, and the next generated migration drops the live table.
+ */
 export const commercePortalAuthSchema = pgSchema(COMMERCE_PORTAL_AUTH_SCHEMA_NAME);
 
 export const user = commercePortalAuthSchema.table('user', {
@@ -38,6 +44,15 @@ export const user = commercePortalAuthSchema.table('user', {
 export const session = commercePortalAuthSchema.table(
   'session',
   {
+    /**
+     * The last primary or step-up authentication on this session. Better Auth owns the insert at
+     * sign-in and knows nothing of this column, so a row it wrote answers NULL and every reader
+     * falls back to `created_at` — which for such a row *is* the authentication time. The owner's
+     * identifier rotation deliberately carries `created_at` forward so the absolute session
+     * lifetime survives a rotation, so a completed step-up stamps this column instead: without it
+     * a session older than the freshness window could never become fresh again.
+     */
+    authenticatedAt: timestamp('authenticated_at', { withTimezone: true }),
     createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
     expiresAt: timestamp('expires_at', { withTimezone: true }).notNull(),
     id: text('id').primaryKey(),

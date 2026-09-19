@@ -36,9 +36,16 @@ export const commercePortalAuthSubjectDigest = (email: string, secret: Redacted.
   createHmac('sha256', Redacted.value(secret)).update(email.trim().toLowerCase()).digest('base64url');
 
 /**
- * Audit evidence must not turn a completed authentication decision into a transport failure: a
- * store outage is logged with the event identity and the caller continues. The decision itself is
- * already durable in the provider realm; only the evidence row is lost, and the log names it.
+ * The lenient recorder, for read-side and decision-only events: a refused sign-in, a rate-limited
+ * attempt, a session read, a revoke that matched nothing. Audit evidence must not turn a completed
+ * authentication decision into a transport failure, so a store outage is logged with the event
+ * identity and the caller continues. Nothing durable changed; only the evidence row is lost, and
+ * the log names it.
+ *
+ * A state change may never take this path. A revocation, an account disable, a rotation or a
+ * renewal writes its row inside the very transaction that changes the state, through the audited
+ * session-store methods — so a refused audit insert rolls the state change back instead of leaving
+ * it committed without evidence (`../persistence/portal-auth-session-store.ts`).
  */
 export const recordCommercePortalAuthAudit = (
   recorder: CommercePortalAuthAuditRecorder,

@@ -433,13 +433,49 @@ export const makeCommercePortalAuthRecoveryStore = Effect.fn('CommercePortalAuth
           .from(verification)
           .where(eq(verification.identifier, identifier))
           .pipe(Effect.mapError((cause) => unavailable('recovery-ledger-peek', cause)));
-        // An ambiguous binding (more than one row under this identifier) is unresolved evidence, not
-        // a binding: detection reports nothing rather than guessing which row applies.
-        if (rows.length !== 1) {
+        const decoded = rows.flatMap((row) => {
+          const record = decodeVerificationLedgerRecord(row.value);
+          return Option.isSome(record) ? [record.value] : [];
+        });
+        if (decoded.length === 0) {
           return Option.none();
         }
-        const [row] = rows;
-        return row === undefined ? Option.none() : decodeVerificationLedgerRecord(row.value);
+        const distinct = decoded.filter(
+          (record, index) =>
+            decoded.findIndex(
+              (candidate) =>
+                candidate.providerSubjectId === record.providerSubjectId && candidate.email === record.email,
+            ) === index,
+        );
+        if (distinct.length === 1) {
+          const [record] = distinct;
+          return record === undefined ? Option.none() : Option.some(record);
+        }
+        // The raw token text collided across more than one distinct subject/email pairing (Better
+        // Auth's verification tokens are deterministic per secret/email/issuance-second, so two
+        // registrations within the same second produce byte-identical tokens). Evidence is still
+        // resolvable when exactly one candidate names a subject that no longer owns any account:
+        // staleness is always the more specific, more urgent fact (see
+        // `detectRecoveryReconciliationConflict`), so that candidate is the binding. Anything else
+        // (no stale candidate, or more than one) is unresolved evidence: detection reports nothing
+        // rather than guessing which candidate applies.
+        const existingSubjects = yield* database
+          .select({ id: user.id })
+          .from(user)
+          .where(
+            inArray(
+              user.id,
+              distinct.map((record) => record.providerSubjectId),
+            ),
+          )
+          .pipe(Effect.mapError((cause) => unavailable('recovery-ledger-peek-ambiguous', cause)));
+        const existingSubjectIds = new Set(existingSubjects.map((row) => row.id));
+        const staleCandidates = distinct.filter((record) => !existingSubjectIds.has(record.providerSubjectId));
+        if (staleCandidates.length === 1) {
+          const [staleCandidate] = staleCandidates;
+          return staleCandidate === undefined ? Option.none() : Option.some(staleCandidate);
+        }
+        return Option.none();
       },
     );
 

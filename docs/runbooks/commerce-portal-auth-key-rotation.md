@@ -58,11 +58,16 @@ Source of truth: `app/verticals/commerce-customer-context/api/portal-auth/provid
   depends on it.
 - **Session validity itself:** `COMMERCE_PORTAL_AUTH_POLICY.session.cookieCacheEnabled` is `false`,
   so live sessions are resolved by their database-stored token on every request
-  (`portal-auth/persistence/portal-auth-tables.ts`), not purely by verifying a signed cookie. Secret
-  rotation does not by itself revoke a session row; it affects only material the secret actually
-  signs (CSRF/verification artifacts and any Better Auth-issued token type that depends on it).
-  Session revocation is a separate operation — `CommercePortalAuthSessionLifecycle.revoke` /
-  `revokeAll` — not a side effect of key rotation.
+  (`portal-auth/persistence/portal-auth-tables.ts`), not purely by verifying a signed cookie. The
+  session cookie Better Auth issues is still signed with the rotating secret, though: **removing a
+  version from `COMMERCE_PORTAL_AUTH_SECRETS` invalidates every still-outstanding session cookie
+  signed under it** — the signature no longer verifies, so the holder is forced to re-authenticate —
+  but it does **not** delete or revoke the underlying session row in the database. The row stays
+  live (and would still validate a cookie re-signed under a still-trusted version) until it expires
+  on its own or is revoked explicitly. If an operator wants the session rows themselves gone — for
+  example because a credential compromise is suspected, not just a routine rotation — use the
+  lifecycle revoke path instead of (or in addition to) rotating the secret:
+  `CommercePortalAuthSessionLifecycle.revoke` / `revokeAll` — not a side effect of key rotation.
 - **Password-reset and email-verification tokens** are opaque, database-backed, one-use values
   (see the `verification`/token tables under `src/portal-auth/persistence/portal-auth-tables.ts`),
   not signatures over the rotating secret; rotating the secret does not invalidate an in-flight
@@ -79,11 +84,18 @@ pnpm test:unit -- tests/unit/portal-auth-provider.test.ts   # rstest: config par
 ```
 
 Then confirm the deployment itself came up: the vertical's `readiness` route is unconditional and
-does not depend on the portal-auth realm, so use one of the four portal-auth groups (e.g. a sign-in
-against the running deployment, or the account-facing route your environment normally exercises) to
-prove the new configuration parsed and the runtime is serving `200`s, not the fail-closed retryable
-`503`. A `503` right after a rotation deploy is not the config error case below — see "If the
-rotation was bad" for how to tell them apart.
+does not depend on the portal-auth realm, so use one of the four portal-auth groups (e.g. the
+configured sign-in route) to prove the new configuration parsed and the realm is live. Send that
+route a request with deliberately wrong credentials and check the status code, not just that the
+process answers at all:
+
+- **`401`** — expected. The realm parsed the new configuration, is live, and correctly rejected bad
+  credentials; this is the proof the rotation deploy succeeded.
+- **`503`** — the fail-closed retryable response naming `"The Commerce portal authentication realm
+  is not installed in this deployment"` (`api/portal-auth/realm-unavailable.ts`). This is *not* the
+  expected outcome for a deployment that had already opted into the realm before the rotation; see
+  "If the rotation was bad" below for how a bad rotation actually fails (it does not degrade to this
+  `503`) and what a `503` here would instead indicate.
 
 ## If the rotation was bad (rollback)
 

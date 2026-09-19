@@ -153,7 +153,6 @@ it.live('proves a conflicting reset leaves the account untouched, sessions uncha
         .where(eq(session.id, fixture.sessionId));
 
       const outcome = yield* reconciliation.detect({
-        email: fixture.originalEmail,
         operation: 'reset-password',
         token: fixture.token,
       });
@@ -167,7 +166,7 @@ it.live('proves a conflicting reset leaves the account untouched, sessions uncha
 
       // Detecting twice must not grow the audit past one row: the store's dedupe index, not the
       // service, is what makes a repeated detection idempotent.
-      yield* reconciliation.detect({ email: fixture.originalEmail, operation: 'reset-password', token: fixture.token });
+      yield* reconciliation.detect({ operation: 'reset-password', token: fixture.token });
 
       const usersAfter = yield* fixture.database.executor
         .select()
@@ -212,7 +211,6 @@ it.live('proves a stale ledger subject is detected without touching any account 
       yield* fixture.database.executor.delete(user).where(eq(user.id, fixture.originalUserId));
 
       const outcome = yield* reconciliation.detect({
-        email: fixture.originalEmail,
         operation: 'reset-password',
         token: fixture.token,
       });

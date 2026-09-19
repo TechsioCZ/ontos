@@ -18,6 +18,7 @@ import type { CommerceEnrollmentAttemptError } from './errors.ts';
 import type {
   ClaimEnrollmentTransitionInput,
   CommercePortalAccountSubject,
+  DerivedEnrollmentAttemptState,
   EnrollmentAttemptLease,
   EnrollmentAttemptId,
   EnrollmentAttemptSnapshot,
@@ -334,11 +335,21 @@ export interface AttemptCreateResult {
   readonly outcome: 'CREATED' | 'EXISTING';
 }
 
-export interface AttemptClaimResult {
+export interface AttemptClaimedResult {
   readonly attempt: EnrollmentAttemptSnapshot;
   readonly operation: EnrollmentOwnerOperationSnapshot;
   readonly outcome: 'CLAIMED' | 'REPLAYED' | 'ALREADY_CLAIMED';
 }
+
+/**
+ * The `INDETERMINATE` arm means the routine fenced an expired owner transition into durable
+ * reconciliation. It is a successful result rather than a failure because a failure would roll the
+ * enclosing transaction back and discard the very fence it reports. The fenced transition may be
+ * another one on the same Attempt, so that arm carries no owner operation.
+ */
+export type AttemptClaimResult =
+  | AttemptClaimedResult
+  | { readonly attempt: EnrollmentAttemptSnapshot; readonly outcome: 'INDETERMINATE' };
 
 export interface AttemptRecordResult {
   readonly attempt: EnrollmentAttemptSnapshot;
@@ -369,11 +380,18 @@ export interface CommerceEnrollmentAttemptPersistence {
   readonly readOperation: (
     input: ReadEnrollmentOwnerOperationInput,
   ) => Effect.Effect<EnrollmentOwnerOperationSnapshot, CommerceEnrollmentAttemptError>;
+  /**
+   * `derivedState` is the Attempt state concluded from the journey definition and the durable
+   * owner journal.  It is a separate argument, and not a field of the owner's request, because no
+   * owner may name the Attempt's next state: the routine receives a derivation, never an assertion.
+   */
   readonly reconcile: (
     input: ReconcileEnrollmentOutcomeInput,
+    derivedState: DerivedEnrollmentAttemptState,
   ) => Effect.Effect<AttemptRecordResult, CommerceEnrollmentAttemptError>;
   readonly record: (
     input: RecordEnrollmentOutcomeInput,
+    derivedState: DerivedEnrollmentAttemptState,
   ) => Effect.Effect<AttemptRecordResult, CommerceEnrollmentAttemptError>;
   readonly terminate: (
     input: TerminateEnrollmentAttemptInput,
@@ -757,7 +775,7 @@ const mapRecordedRow = (row: AttemptRoutineRow): Effect.Effect<AttemptRecordResu
     { concurrency: 1 },
   ).pipe(Effect.map(mapRecordedPair));
 
-const claimOutcome = (outcome: string): AttemptClaimResult['outcome'] => {
+const claimOutcome = (outcome: string): AttemptClaimedResult['outcome'] => {
   if (outcome === 'REPLAYED') {
     return 'REPLAYED';
   }
@@ -801,17 +819,6 @@ const mapClaimRow = (
       }),
     );
   }
-  if (row.attempt_outcome === 'INDETERMINATE') {
-    return Effect.fail(
-      new CommerceEnrollmentAttemptIndeterminate({
-        attemptId: input.portalEnrollmentAttemptId,
-        code: 'attempt_indeterminate',
-        ownerInvocationId: input.ownerInvocationId,
-        reason: 'The prior owner transition outcome is indeterminate and must be resolved first',
-        retryable: true,
-      }),
-    );
-  }
   if (row.attempt_outcome === 'TERMINAL') {
     return Effect.fail(
       new CommerceEnrollmentAttemptRejected({
@@ -821,6 +828,9 @@ const mapClaimRow = (
         retryable: false,
       }),
     );
+  }
+  if (row.attempt_outcome === 'INDETERMINATE') {
+    return mapAttempt(row).pipe(Effect.map((attempt) => ({ attempt, outcome: 'INDETERMINATE' as const })));
   }
   if (row.attempt_outcome === 'ALREADY_CLAIMED' && row.operation_id === null) {
     return Effect.fail(
@@ -1118,7 +1128,7 @@ export const commerceEnrollmentAttemptPersistenceForTransaction = (
             ),
         ),
       ),
-    reconcile: (input) =>
+    reconcile: (input, derivedState) =>
       ensureTenant(scope, input.tenantId).pipe(
         Effect.flatMap(() =>
           invokeAttempt(reconcileOutcomeRoutine, [
@@ -1135,7 +1145,7 @@ export const commerceEnrollmentAttemptPersistenceForTransaction = (
             input.resultDigest ?? null,
             input.failureCode ?? null,
             input.failureReason ?? null,
-            input.nextState ?? null,
+            derivedState,
             input.accountSubject?.authenticationNamespaceId ?? null,
             input.accountSubject?.providerSubjectId ?? null,
           ]).pipe(
@@ -1146,7 +1156,7 @@ export const commerceEnrollmentAttemptPersistenceForTransaction = (
           ),
         ),
       ),
-    record: (input) =>
+    record: (input, derivedState) =>
       ensureTenant(scope, input.tenantId).pipe(
         Effect.flatMap(() =>
           invokeAttempt(recordOutcomeRoutine, [
@@ -1164,7 +1174,7 @@ export const commerceEnrollmentAttemptPersistenceForTransaction = (
             input.resultDigest ?? null,
             input.failureCode ?? null,
             input.failureReason ?? null,
-            input.nextState ?? null,
+            derivedState,
             input.accountSubject?.authenticationNamespaceId ?? null,
             input.accountSubject?.providerSubjectId ?? null,
           ]).pipe(

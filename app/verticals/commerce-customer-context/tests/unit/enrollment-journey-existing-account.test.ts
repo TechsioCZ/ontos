@@ -54,6 +54,7 @@ import { COMMERCE_AUTHENTICATION_NAMESPACE_ID } from '../../shared/portal-auth-c
  */
 
 const tenantId = Schema.decodeSync(EnrollmentTenantIdSchema)('10000000-0000-4000-8000-000000000009');
+const otherTenantId = Schema.decodeSync(EnrollmentTenantIdSchema)('10000000-0000-4000-8000-000000000013');
 const attemptId = Schema.decodeSync(EnrollmentAttemptIdSchema)('20000000-0000-4000-8000-000000000009');
 const actorPrincipalId = Schema.decodeSync(EnrollmentPrincipalIdSchema)('40000000-0000-4000-8000-000000000009');
 const ownerInvocationId = Schema.decodeSync(EnrollmentActionInvocationIdSchema)('30000000-0000-4000-8000-000000000009');
@@ -92,10 +93,10 @@ const identityFor = (
     ...overrides,
   });
 
-const subjectFor = (accountSubjectValue: typeof accountSubject) =>
+const subjectFor = (accountSubjectValue: typeof accountSubject, targetTenantId: typeof tenantId = tenantId) =>
   Schema.decodeSync(ExistingAccountEnrollmentSubjectSchema)({
     accountSubject: accountSubjectValue,
-    targetTenantId: tenantId,
+    targetTenantId,
   });
 
 const transitionInput = (
@@ -222,6 +223,40 @@ it.effect('rejects building a transition for a step it does not own, delegated o
     expect(error).toBeInstanceOf(ExistingAccountEnrollmentRejected);
     expect(error.code).toBe('existing_account_transition_undeclared');
   }),
+);
+
+it.effect(
+  'rejects building a transition when the requested second Tenant does not match the trusted Attempt Tenant',
+  () =>
+    Effect.gen(function* rejectsTenantMismatch() {
+      const mismatchedInput: ExistingAccountEnrollmentTransitionInput = {
+        identity: identityFor(),
+        subject: subjectFor(accountSubject, otherTenantId),
+      };
+      const error = yield* makeExistingAccountTransition(reserveStep, mismatchedInput).pipe(Effect.flip);
+      expect(error).toBeInstanceOf(ExistingAccountEnrollmentRejected);
+      expect(error.code).toBe('existing_account_tenant_mismatch');
+      expect(error.retryable).toBe(false);
+    }),
+);
+
+it.effect(
+  'a mismatched target Tenant is rejected before a digest is derived, so it never produces a second digest for the same step',
+  () =>
+    Effect.gen(function* mismatchNeverProducesASecondDigest() {
+      const matching = yield* makeExistingAccountTransition(reserveStep, transitionInput());
+      const mismatchedInput: ExistingAccountEnrollmentTransitionInput = {
+        identity: identityFor(),
+        subject: subjectFor(accountSubject, otherTenantId),
+      };
+      const error = yield* makeExistingAccountTransition(reserveStep, mismatchedInput).pipe(Effect.flip);
+      expect(error).toBeInstanceOf(ExistingAccountEnrollmentRejected);
+      expect(error.code).toBe('existing_account_tenant_mismatch');
+      // The mismatched request never reached digest derivation, so there is only ever the one
+      // digest for this step — a mismatched `targetTenantId` cannot masquerade as a second,
+      // differently-digested request for the same reserve transition.
+      expect(matching.requestDigest).toMatch(/^[0-9a-f]{64}$/u);
+    }),
 );
 
 // --- (d) Replay converges -------------------------------------------------------------------------

@@ -15,8 +15,10 @@ import {
 import type {
   ClaimEnrollmentTransitionInput,
   CommercePortalAccountSubject,
+  DerivedEnrollmentAttemptState,
   EnrollmentAttemptSnapshot,
   EnrollmentOwnerOperationSnapshot,
+  EnrollmentOwnerOutcomeSignal,
   RecordEnrollmentOutcomeInput,
   ReadEnrollmentAttemptInput,
   ReadEnrollmentOwnerOperationInput,
@@ -72,6 +74,27 @@ export interface CommerceEnrollmentAttemptReconciliationAuthority {
   ) => Effect.Effect<ReconcileEnrollmentResolution, CommerceEnrollmentAttemptError>;
 }
 
+/** The final owner outcome that is about to be journalled, before any durable write happens. */
+export interface CommerceEnrollmentAttemptPendingOutcome {
+  readonly ownerModuleKey: string;
+  /** The owner's own signal about its transition.  It can never name COMPLETE. */
+  readonly signal?: EnrollmentOwnerOutcomeSignal;
+  readonly status: 'FAILED' | 'SUCCEEDED';
+  readonly transitionKey: string;
+}
+
+/**
+ * The authority that concludes what the Attempt's state is once this outcome lands.  It is a port
+ * rather than a direct dependency so that the Attempt store stays journey-agnostic: which owner
+ * transitions a journey requires is orchestration vocabulary, installed at the composition root.
+ */
+export interface CommerceEnrollmentAttemptCompletionAuthority {
+  readonly derive: (
+    attempt: EnrollmentAttemptSnapshot,
+    outcome: CommerceEnrollmentAttemptPendingOutcome,
+  ) => Effect.Effect<DerivedEnrollmentAttemptState, CommerceEnrollmentAttemptError>;
+}
+
 const invalid = (reason: string): InstanceType<typeof CommerceEnrollmentAttemptRejected> =>
   new CommerceEnrollmentAttemptRejected({
     code: 'attempt_invalid',
@@ -122,8 +145,44 @@ type MutableReconciliationOutcome = {
   -readonly [Key in keyof ReconcileEnrollmentOutcomeInput]?: ReconcileEnrollmentOutcomeInput[Key];
 };
 
+/**
+ * The derived state the Attempt takes once this outcome is journalled.  It is computed from the
+ * journey definition and the durable owner journal, never read out of the request, so no owner can
+ * assert COMPLETE for a journey whose other required transitions have not happened.
+ */
+const derivedStateFor = (
+  completion: CommerceEnrollmentAttemptCompletionAuthority,
+  attempt: EnrollmentAttemptSnapshot,
+  outcome: CommerceEnrollmentAttemptPendingOutcome,
+): Effect.Effect<DerivedEnrollmentAttemptState, CommerceEnrollmentAttemptError> => completion.derive(attempt, outcome);
+
+const pendingOutcome = (input: {
+  readonly nextState?: EnrollmentOwnerOutcomeSignal;
+  readonly ownerModuleKey: string;
+  readonly status: 'FAILED' | 'SUCCEEDED';
+  readonly transitionKey: string;
+}): CommerceEnrollmentAttemptPendingOutcome => {
+  const outcome = {
+    ownerModuleKey: input.ownerModuleKey,
+    status: input.status,
+    transitionKey: input.transitionKey,
+  };
+  return input.nextState === undefined ? outcome : { ...outcome, signal: input.nextState };
+};
+
+const persistDecodedReconciliation = (
+  persistence: CommerceEnrollmentAttemptPersistence,
+  completion: CommerceEnrollmentAttemptCompletionAuthority,
+  attempt: EnrollmentAttemptSnapshot,
+  decodedOutcome: ReconcileEnrollmentOutcomeInput,
+): Effect.Effect<AttemptRecordResult, CommerceEnrollmentAttemptError> =>
+  derivedStateFor(completion, attempt, pendingOutcome(decodedOutcome)).pipe(
+    Effect.flatMap((derivedState) => persistence.reconcile(decodedOutcome, derivedState)),
+  );
+
 const persistReconciliationResolution = (
   persistence: CommerceEnrollmentAttemptPersistence,
+  completion: CommerceEnrollmentAttemptCompletionAuthority,
   attempt: EnrollmentAttemptSnapshot,
   decodedInput: ReconcileEnrollmentRequest,
   resolution: ReconcileEnrollmentResolution,
@@ -166,7 +225,9 @@ const persistReconciliationResolution = (
         Effect.flatMap(() =>
           Schema.decodeUnknownEffect(ReconcileEnrollmentOutcomeInputSchema)(outcome).pipe(
             Effect.mapError((cause) => invalidWithCause('The owner reconciliation result is invalid', cause)),
-            Effect.flatMap((decodedOutcome) => persistence.reconcile(decodedOutcome)),
+            Effect.flatMap((decodedOutcome) =>
+              persistDecodedReconciliation(persistence, completion, attempt, decodedOutcome),
+            ),
           ),
         ),
       );
@@ -176,6 +237,7 @@ const persistReconciliationResolution = (
 const reconcileAttempt = (
   persistence: CommerceEnrollmentAttemptPersistence,
   reconciliationAuthority: CommerceEnrollmentAttemptReconciliationAuthority,
+  completion: CommerceEnrollmentAttemptCompletionAuthority,
   decodedInput: ReconcileEnrollmentRequest,
   attempt: EnrollmentAttemptSnapshot,
 ): Effect.Effect<AttemptRecordResult, CommerceEnrollmentAttemptError> =>
@@ -192,13 +254,14 @@ const reconcileAttempt = (
         .resolve(decodedInput)
         .pipe(
           Effect.flatMap((resolution) =>
-            persistReconciliationResolution(persistence, attempt, decodedInput, resolution),
+            persistReconciliationResolution(persistence, completion, attempt, decodedInput, resolution),
           ),
         );
 
 const reconcileInput = (
   persistence: CommerceEnrollmentAttemptPersistence,
   reconciliationAuthority: CommerceEnrollmentAttemptReconciliationAuthority,
+  completion: CommerceEnrollmentAttemptCompletionAuthority,
   decodedInput: ReconcileEnrollmentRequest,
 ): Effect.Effect<AttemptRecordResult, CommerceEnrollmentAttemptError> =>
   persistence
@@ -206,7 +269,51 @@ const reconcileInput = (
       portalEnrollmentAttemptId: decodedInput.portalEnrollmentAttemptId,
       tenantId: decodedInput.tenantId,
     })
-    .pipe(Effect.flatMap((attempt) => reconcileAttempt(persistence, reconciliationAuthority, decodedInput, attempt)));
+    .pipe(
+      Effect.flatMap((attempt) =>
+        reconcileAttempt(persistence, reconciliationAuthority, completion, decodedInput, attempt),
+      ),
+    );
+
+/**
+ * Record one final owner outcome.  The Attempt is read, its immutable subject re-checked, the new
+ * state derived from the journey and the journal, and only then is the durable routine entered.
+ */
+const recordDecodedOutcome = (
+  persistence: CommerceEnrollmentAttemptPersistence,
+  completion: CommerceEnrollmentAttemptCompletionAuthority,
+  attempt: EnrollmentAttemptSnapshot,
+  decodedInput: RecordEnrollmentOutcomeInput,
+): Effect.Effect<AttemptRecordResult, CommerceEnrollmentAttemptError> =>
+  ensureSubjectConsistent(attempt, decodedInput.accountSubject).pipe(
+    Effect.flatMap(() => derivedStateFor(completion, attempt, pendingOutcome(decodedInput))),
+    Effect.flatMap((derivedState) => persistence.record(decodedInput, derivedState)),
+  );
+
+const recordOutcomeForInput = (
+  persistence: CommerceEnrollmentAttemptPersistence,
+  completion: CommerceEnrollmentAttemptCompletionAuthority,
+  decodedInput: RecordEnrollmentOutcomeInput,
+): Effect.Effect<AttemptRecordResult, CommerceEnrollmentAttemptError> =>
+  persistence
+    .read({
+      portalEnrollmentAttemptId: decodedInput.portalEnrollmentAttemptId,
+      tenantId: decodedInput.tenantId,
+    })
+    .pipe(
+      Effect.flatMap((attempt) =>
+        isEnrollmentAttemptTerminal(attempt.state)
+          ? Effect.fail(
+              new CommerceEnrollmentAttemptRejected({
+                attemptId: attempt.portalEnrollmentAttemptId,
+                code: 'attempt_terminal',
+                reason: 'A terminal Enrollment Attempt cannot record a new owner outcome',
+                retryable: false,
+              }),
+            )
+          : recordDecodedOutcome(persistence, completion, attempt, decodedInput),
+      ),
+    );
 
 /**
  * Business façade over the owner routine capability.  The façade performs the cheap protocol
@@ -216,6 +323,7 @@ const reconcileInput = (
 export const commerceEnrollmentAttemptServiceForPersistence = (
   persistence: CommerceEnrollmentAttemptPersistence,
   reconciliationAuthority: CommerceEnrollmentAttemptReconciliationAuthority,
+  completion: CommerceEnrollmentAttemptCompletionAuthority,
 ): CommerceEnrollmentAttemptService => ({
   claimTransition: (input) =>
     decodeOrReject(ClaimEnrollmentTransitionInputSchema, input).pipe(
@@ -252,44 +360,11 @@ export const commerceEnrollmentAttemptServiceForPersistence = (
     ),
   reconcileOutcome: (input) =>
     decodeOrReject(ReconcileEnrollmentRequestSchema, input).pipe(
-      Effect.flatMap((decodedInput) => reconcileInput(persistence, reconciliationAuthority, decodedInput)),
+      Effect.flatMap((decodedInput) => reconcileInput(persistence, reconciliationAuthority, completion, decodedInput)),
     ),
   recordOutcome: (input) =>
     decodeOrReject(RecordEnrollmentOutcomeInputSchema, input).pipe(
-      Effect.flatMap((decodedInput) =>
-        persistence
-          .read({
-            portalEnrollmentAttemptId: decodedInput.portalEnrollmentAttemptId,
-            tenantId: decodedInput.tenantId,
-          })
-          .pipe(
-            Effect.flatMap((attempt) =>
-              isEnrollmentAttemptTerminal(attempt.state)
-                ? Effect.fail(
-                    new CommerceEnrollmentAttemptRejected({
-                      attemptId: attempt.portalEnrollmentAttemptId,
-                      code: 'attempt_terminal',
-                      reason: 'A terminal Enrollment Attempt cannot record a new owner outcome',
-                      retryable: false,
-                    }),
-                  )
-                : ensureSubjectConsistent(attempt, decodedInput.accountSubject),
-            ),
-            Effect.flatMap(() => {
-              if (decodedInput.status !== 'SUCCEEDED' && decodedInput.nextState === 'COMPLETE') {
-                return Effect.fail(
-                  new CommerceEnrollmentAttemptRejected({
-                    attemptId: decodedInput.portalEnrollmentAttemptId,
-                    code: 'attempt_invalid',
-                    reason: 'Only proven successful owner outcomes may contribute to COMPLETE',
-                    retryable: false,
-                  }),
-                );
-              }
-              return persistence.record(decodedInput);
-            }),
-          ),
-      ),
+      Effect.flatMap((decodedInput) => recordOutcomeForInput(persistence, completion, decodedInput)),
     ),
   start: (input) =>
     decodeOrReject(StartEnrollmentAttemptInputSchema, input).pipe(

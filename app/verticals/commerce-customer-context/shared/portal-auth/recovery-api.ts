@@ -81,7 +81,7 @@ const CommercePortalAuthEmailVerificationCompletedResultSchema = Schema.Struct({
  * that produced it: no token is granted, no password is reset, no email is marked verified. The
  * caller learns only that reconciliation is required, never which account or subject was involved.
  */
-export const CommercePortalAuthRecoveryReconciliationRequiredResultSchema = Schema.Struct({
+const CommercePortalAuthRecoveryReconciliationRequiredResultSchema = Schema.Struct({
   conflictClass: CommercePortalAuthRecoveryReconciliationConflictClassSchema,
   outcome: Schema.Literal('ACCOUNT_RECOVERY_RECONCILIATION_REQUIRED'),
 });

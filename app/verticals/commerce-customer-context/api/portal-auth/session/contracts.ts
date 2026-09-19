@@ -77,6 +77,13 @@ export const CommercePortalAuthAccountSubjectInputSchema = Schema.Struct({
 }).annotate({ parseOptions: { onExcessProperty: 'error' } });
 
 export interface CommercePortalAuthSessionRecord {
+  /**
+   * The session's last primary or step-up authentication. Better Auth creates the row at sign-in
+   * and does not know this column, so a row it wrote answers `null` — and `createdAt` is that
+   * session's authentication time. Identifier rotation preserves `createdAt` so the absolute
+   * lifetime survives, which is exactly why "recently authenticated" needs its own column.
+   */
+  readonly authenticatedAt: Date | null;
   readonly banExpiresAt: Date | null;
   readonly banned: boolean;
   readonly createdAt: Date;

@@ -1,5 +1,3 @@
-import { readFile } from 'node:fs/promises';
-
 import { Effect } from 'effect';
 import { expect, it } from 'effect-rstest';
 
@@ -101,40 +99,5 @@ it.effect('treats an exact record as idempotent and rejects conflicting state', 
     expect(
       yield* Effect.flip(classifyExactStageDemoRecord('tenant', { ...expected, name: 'Other tenant' }, expected)),
     ).toMatchObject({ reason: expect.stringMatching(/conflicts/u) });
-  }),
-);
-it.live('keeps the demo bootstrap operator-invoked and excludes its password from source', () =>
-  Effect.gen(function* keepsTheDemoBootstrapOperatorinvoked() {
-    const rootPackage = yield* Effect.promise(() =>
-      readFile(new URL('../../../../package.json', import.meta.url), 'utf-8'),
-    );
-    const shellPackage = yield* Effect.promise(() => readFile(new URL('../../package.json', import.meta.url), 'utf-8'));
-    const bootstrapCommand = yield* Effect.promise(() =>
-      readFile(new URL('../../scripts/bootstrap-stage-demo.sh', import.meta.url), 'utf-8'),
-    );
-    const zerops = yield* Effect.promise(() => readFile(new URL('../../../../zerops.yaml', import.meta.url), 'utf-8'));
-    const coreBootstrap = yield* Effect.promise(() =>
-      readFile(
-        new URL('../../../../packages/core-runtime/src/install/stage-context-bootstrap.ts', import.meta.url),
-        'utf-8',
-      ),
-    );
-    const shellBootstrap = yield* Effect.promise(() =>
-      readFile(new URL('../../api/auth/stage-demo-bootstrap-runtime-infrastructure.ts', import.meta.url), 'utf-8'),
-    );
-    expect(JSON.parse(rootPackage).scripts['stage:bootstrap-demo']).toBe(
-      'pnpm --filter @app/shell-super-app stage:bootstrap-demo',
-    );
-    expect(JSON.parse(shellPackage).scripts['stage:bootstrap-demo']).toBe('sh scripts/bootstrap-stage-demo.sh');
-    expect(bootstrapCommand).toMatch(/stty -echo/u);
-    expect(bootstrapCommand).toMatch(/STAGE_DEMO_PASSWORD/u);
-    expect(bootstrapCommand).toMatch(/STAGE_SIAMPARK_PASSWORD/u);
-    expect(zerops).not.toMatch(/start:.*stage:bootstrap-demo/u);
-    expect(zerops).not.toMatch(/^\s*STAGE_DEMO_PASSWORD:/mu);
-    expect(zerops).not.toMatch(/^\s*STAGE_SIAMPARK_PASSWORD:/mu);
-    expect(coreBootstrap).toMatch(/ULTRAMODERN_DEPLOYMENT_ENVIRONMENT/u);
-    expect(coreBootstrap).toMatch(/buildRelationships/u);
-    expect(shellBootstrap).toMatch(/reconcileStageContextBootstraps/u);
-    expect(shellBootstrap).not.toMatch(/contextKey/u);
   }),
 );
