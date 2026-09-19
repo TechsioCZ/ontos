@@ -157,6 +157,7 @@ const makePersistence = (
     create: (_input: StartEnrollmentAttemptInput) => Effect.succeed(createResult),
     read: () => Effect.succeed(currentAttempt),
     readOperation: () => Effect.succeed(currentOperation),
+    readOperations: () => Effect.succeed([currentOperation]),
     reconcile: (_input) => Effect.succeed(recordResult),
     record: (_input: RecordEnrollmentOutcomeInput) => Effect.succeed(recordResult),
     terminate: (_input: TerminateEnrollmentAttemptInput) => Effect.succeed(terminateResult),

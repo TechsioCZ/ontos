@@ -17,10 +17,8 @@ import {
   EnrollmentPrincipalIdSchema,
   EnrollmentTenantIdSchema,
 } from '../../shared/enrollment-contracts.ts';
-import {
-  CommerceEnrollmentAttemptIndeterminate,
-  CommerceEnrollmentAttemptRejected,
-} from '../enrollment/attempts/errors.ts';
+import { claimedOrIndeterminate } from '../enrollment/attempts/attempt-persistence.ts';
+import { CommerceEnrollmentAttemptRejected } from '../enrollment/attempts/errors.ts';
 import { journeyTransitionFor } from '../enrollment/journeys/journey-contracts.ts';
 import { CommerceEnrollmentAttemptActionErrorSchema } from '../enrollment/orchestration/action-errors.ts';
 import { enrollmentJourneyDefinitionForAttempt } from '../enrollment/orchestration/completion.ts';
@@ -106,21 +104,14 @@ const handleClaimPortalEnrollmentTransition = Effect.fn('ClaimPortalEnrollmentTr
       transitionKey: payload.transitionKey,
       workerId,
     }).pipe(Effect.mapError((cause) => invalid(cause)));
-    const claimed = yield* context.services.attempt.claimTransition(request);
-    if (claimed.outcome === 'INDETERMINATE') {
+    return yield* context.services.attempt.claimTransition(request).pipe(
+      Effect.flatMap(claimedOrIndeterminate(payload)),
       // The routine fenced an expired owner transition in this very transaction; the rejection
       // must commit it rather than roll it back.
-      return commitActionThenReject(
-        new CommerceEnrollmentAttemptIndeterminate({
-          attemptId: payload.portalEnrollmentAttemptId,
-          code: 'attempt_indeterminate',
-          ownerInvocationId: payload.ownerInvocationId,
-          reason: 'The prior owner transition outcome is indeterminate and must be resolved first',
-          retryable: true,
-        }),
-      );
-    }
-    return claimed;
+      Effect.catchTag('CommerceEnrollmentAttemptIndeterminate', (fenced) =>
+        Effect.succeed(commitActionThenReject(fenced)),
+      ),
+    );
   },
 );
 

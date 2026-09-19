@@ -34,6 +34,7 @@ import {
   COMMERCE_CUSTOMER_CONTEXT_API_PREFIX,
   COMMERCE_PORTAL_AUTH_PUBLIC_BASE_PATH,
 } from '../../shared/deployment-paths.ts';
+import { unauditedCommercePortalAuthRecorder } from '../../src/portal-auth/audit/audit.ts';
 
 const ORIGIN = 'https://portal.example.test';
 const EMAIL = 'framework-prefix-owner@example.test';
@@ -100,7 +101,7 @@ it.effect('serves prefixed recovery routes through the owner group and rejects a
     // This store implements none of the optional ledger-evidence methods detection reads, so the
     // deployed reconciliation would answer exactly this: nothing to reconcile.
     const reconciliation = { detect: () => Effect.succeed(Option.none()) };
-    const recovery = yield* makeCommercePortalAuthRecoveryService().pipe(
+    const recovery = yield* makeCommercePortalAuthRecoveryService(unauditedCommercePortalAuthRecorder).pipe(
       Effect.provideService(CommercePortalAuthRecoveryProviderService, makeCommercePortalAuthRecoveryProvider(auth)),
       Effect.provideService(CommercePortalAuthRecoveryReconciliationService, reconciliation),
       Effect.provideService(CommercePortalAuthRecoveryStoreService, store),

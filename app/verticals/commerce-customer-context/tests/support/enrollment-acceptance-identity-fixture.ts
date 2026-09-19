@@ -1,12 +1,11 @@
 import { randomUUID } from 'node:crypto';
 
-import { PgClient } from '@effect/sql-pg';
 import { and, eq } from 'drizzle-orm';
-import { makeWithDefaults } from 'drizzle-orm/effect-postgres';
 import { Context, Effect, Layer, Option, Redacted, Schema } from 'effect';
-import { Reactivity } from 'effect/unstable/reactivity';
 import { Pool } from 'pg';
 
+import { layerTestDatabaseFromPool } from '../../../../packages/core-runtime/tests/support/database.ts';
+import type { TestDatabaseFromPool } from '../../../../packages/core-runtime/tests/support/database.ts';
 import { TrustedPrincipalContextSchema } from '../../../../packages/core-runtime/src/actions/principal-context.ts';
 import { ActionRepositoryLive } from '../../../../packages/core-runtime/src/actions/repository.ts';
 import { ActionRuntime, ActionRuntimeLive } from '../../../../packages/core-runtime/src/actions/runtime.ts';
@@ -110,6 +109,11 @@ const AcceptanceActionPermissionLive = Layer.succeed(ActionPermission, {
  * Small, explicitly bounded pools: the scenarios open nested Core transactions and the shared
  * development PostgreSQL has a modest connection budget.
  */
+class AcceptanceCoreDatabase extends Context.Service<
+  AcceptanceCoreDatabase,
+  TestDatabaseFromPool<typeof coreRelations>
+>()('@app/commerce-customer-context/tests/support/AcceptanceCoreDatabase') {}
+
 const acceptanceDatabase = Effect.fnUntraced(function* acceptanceDatabase(connectionString: string) {
   const pool = yield* Effect.acquireRelease(
     Effect.sync(() => new Pool({ connectionString, max: 3 })),
@@ -118,16 +122,11 @@ const acceptanceDatabase = Effect.fnUntraced(function* acceptanceDatabase(connec
         await acquired.end();
       }).pipe(Effect.orDie),
   );
-  const reactivity = yield* Reactivity.make;
-  const client = yield* PgClient.fromPool({ acquire: Effect.succeed(pool) }).pipe(
-    Effect.provideService(Reactivity.Reactivity, reactivity),
+  const executor = yield* AcceptanceCoreDatabase.pipe(
+    Effect.provide(layerTestDatabaseFromPool(AcceptanceCoreDatabase, pool, coreRelations)),
     Effect.orDie,
   );
-  return {
-    executor: yield* makeWithDefaults({ relations: coreRelations }).pipe(
-      Effect.provideService(PgClient.PgClient, client),
-    ),
-  };
+  return { executor };
 });
 
 type CoreDatabaseHandle = Effect.Success<ReturnType<typeof acceptanceDatabase>>;

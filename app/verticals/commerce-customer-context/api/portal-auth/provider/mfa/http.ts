@@ -1,8 +1,6 @@
-import { createHmac } from 'node:crypto';
-
 import { createCookieGetter, parseCookies } from 'better-auth/cookies';
 import { HttpApiBuilder, Layer } from '@modern-js/bff-effect/effect-edge';
-import { Clock, Context, Duration, Effect, Option, Redacted, Result, Schema } from 'effect';
+import { Clock, Context, Duration, Effect, Option, Result, Schema } from 'effect';
 import type { HttpServerRequest } from 'effect/unstable/http';
 import type { Auth } from 'better-auth';
 
@@ -20,6 +18,7 @@ import type {
 } from '../../../../shared/portal-auth/mfa-api.ts';
 import {
   forwardSetCookieHeaders,
+  hashSubjectKey,
   noStoreHeaders,
   requestHeaders,
   requireTrustedOrigin,
@@ -102,9 +101,7 @@ const mfaSubjectKey = (
   for (const name of mfaSubjectCookieNames(configuration)) {
     const value = cookies.get(name);
     if (value !== undefined && value.length > 0) {
-      return Option.some(
-        createHmac('sha256', Redacted.value(configuration.secret)).update(`${name}=${value}`).digest('base64url'),
-      );
+      return Option.some(hashSubjectKey(`${name}=${value}`, configuration.secret));
     }
   }
   return Option.none();

@@ -1,5 +1,7 @@
+import { createHmac } from 'node:crypto';
+
 import { Cookies, HttpEffect, HttpServerResponse } from '@modern-js/bff-effect/effect-edge';
-import { Effect, Option, Schema } from 'effect';
+import { Effect, Option, Redacted, Schema } from 'effect';
 import type { HttpServerRequest } from 'effect/unstable/http';
 
 import { CommercePortalAuthConfig } from './provider/config-service.ts';
@@ -45,6 +47,15 @@ export const requestHeaders = (headers: CommercePortalAuthRequestHeaders): Heade
   }
   return result;
 };
+
+/**
+ * The half of a durable budget key that names the subject an attempt is for — an address, a live
+ * session cookie, a pending challenge, a recovery token. It is keyed under the deployment secret,
+ * so the durable `rate_limit` rows stay a set of opaque digests rather than a readable list of the
+ * portal's customers and the credentials they hold.
+ */
+export const hashSubjectKey = (subject: string, secret: Redacted.Redacted): string =>
+  createHmac('sha256', Redacted.value(secret)).update(subject).digest('base64url');
 
 /** Every request that cannot name a peer shares this key, so an unattributable caller is capped. */
 export const UNRESOLVED_PORTAL_AUTH_CLIENT_KEY = 'no-trusted-peer';

@@ -1,6 +1,7 @@
 import { and, eq, isNull } from 'drizzle-orm';
 import { DateTime, Effect, Layer, Option } from 'effect';
 
+import { withCause } from '../../../api/portal-auth/problems-support.ts';
 import type { CommercePortalAuthStepUpChallengeRecord } from '../../../api/portal-auth/provider/step-up/contracts.ts';
 import { CommercePortalAuthStepUpChallengeStoreService } from '../../../api/portal-auth/provider/step-up/challenge-store-service.ts';
 import type { CommercePortalAuthStepUpChallengeStore } from '../../../api/portal-auth/provider/step-up/challenge-store-service.ts';
@@ -10,9 +11,6 @@ import { COMMERCE_PORTAL_AUTH_POLICY } from '../../../api/portal-auth/provider/c
 import { CommercePortalAuthDatabase } from './portal-auth-database.ts';
 import type { CommercePortalAuthDatabaseExecutor } from './portal-auth-database-types.ts';
 import { stepUpChallenge, stepUpChallengeAttempt } from './portal-auth-tables.ts';
-
-const withCause = <TError extends object>(error: TError, cause: unknown): TError =>
-  Object.defineProperty(error, 'cause', { configurable: true, value: cause });
 
 const unavailable = (operation: string, cause: unknown): CommercePortalAuthStepUpUnavailable =>
   withCause(

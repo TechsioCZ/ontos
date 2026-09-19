@@ -56,7 +56,7 @@ const collect = (root: string): Effect.Effect<readonly string[], PlatformError, 
           }),
         );
       }),
-      { concurrency: 'unbounded' },
+      { concurrency: 32 },
     );
     return EffectArray.sort(discovered.flat(), Order.String);
   });

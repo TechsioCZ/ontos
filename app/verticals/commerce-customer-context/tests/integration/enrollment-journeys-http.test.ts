@@ -14,7 +14,7 @@ import {
 } from '../../api/index.ts';
 import { GatewayAssertionRedemptionLive } from '../../api/auth/gateway-assertion-redemption.ts';
 import { CommercePortalAuthAccountCreationRejected } from '../../api/portal-auth/provider/account-creation-rejected.ts';
-import { CommercePortalAuthAccountCreationService } from '../../api/portal-auth/provider/account-creation-service.ts';
+import { CommercePortalAuthAccountCreationService } from '../../api/portal-auth/provider/account-create.ts';
 import { CommercePortalAuthAccountCreationUnavailable } from '../../api/portal-auth/provider/account-creation-unavailable.ts';
 import { CommercePortalAuthConfig } from '../../api/portal-auth/provider/config-service.ts';
 import { parseCommercePortalAuthConfig } from '../../api/portal-auth/provider/config.ts';

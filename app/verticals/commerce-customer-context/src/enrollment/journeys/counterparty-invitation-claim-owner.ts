@@ -1,4 +1,3 @@
-import { createHash } from 'node:crypto';
 import { Effect, Schema } from 'effect';
 
 import { CounterpartyAccessUnavailable } from '../../../shared/domain/access-error.ts';
@@ -8,6 +7,7 @@ import {
   EnrollmentDigestSchema,
   EnrollmentKeySchema,
   EnrollmentResourceIdSchema,
+  enrollmentDigest,
 } from '../../../shared/enrollment-contracts.ts';
 import type {
   EnrollmentEvidenceReferenceSchema,
@@ -49,7 +49,11 @@ type EnrollmentResourceId = typeof EnrollmentResourceIdSchema.Type;
 const withCause = <ErrorType extends object>(error: ErrorType, cause: unknown): ErrorType =>
   Object.defineProperty(error, 'cause', { configurable: false, enumerable: false, value: cause });
 
-const unavailable = (code: string, reason: string, cause?: unknown): CommerceEnrollmentOwnerEffectUnavailable => {
+const unavailable = (
+  code: string,
+  reason: string,
+  cause?: unknown,
+): InstanceType<typeof CommerceEnrollmentOwnerEffectUnavailable> => {
   const error = new CommerceEnrollmentOwnerEffectUnavailable({
     code: code.slice(0, 200),
     reason: reason.slice(0, 500),
@@ -57,7 +61,11 @@ const unavailable = (code: string, reason: string, cause?: unknown): CommerceEnr
   return cause === undefined ? error : withCause(error, cause);
 };
 
-const indeterminate = (code: string, reason: string, cause?: unknown): CommerceEnrollmentOwnerEffectIndeterminate => {
+const indeterminate = (
+  code: string,
+  reason: string,
+  cause?: unknown,
+): InstanceType<typeof CommerceEnrollmentOwnerEffectIndeterminate> => {
   const error = new CommerceEnrollmentOwnerEffectIndeterminate({
     code: code.slice(0, 200),
     reason: reason.slice(0, 500),
@@ -65,7 +73,11 @@ const indeterminate = (code: string, reason: string, cause?: unknown): CommerceE
   return cause === undefined ? error : withCause(error, cause);
 };
 
-const rejected = (code: string, reason: string, cause?: unknown): CommerceEnrollmentOwnerEffectRejected => {
+const rejected = (
+  code: string,
+  reason: string,
+  cause?: unknown,
+): InstanceType<typeof CommerceEnrollmentOwnerEffectRejected> => {
   const error = new CommerceEnrollmentOwnerEffectRejected({
     code: code.slice(0, 200),
     reason: reason.slice(0, 500),
@@ -83,7 +95,9 @@ const mapClaimFailure = (cause: CounterpartyAccessDomainError): CommerceEnrollme
     ? unavailable('invitation_claim_unavailable', cause.reason, cause)
     : rejected(`invitation_claim_${cause.code}`, cause.reason, cause);
 
-const decodeKey = (value: string): Effect.Effect<EnrollmentKey, CommerceEnrollmentOwnerEffectUnavailable> =>
+const decodeKey = (
+  value: string,
+): Effect.Effect<EnrollmentKey, InstanceType<typeof CommerceEnrollmentOwnerEffectUnavailable>> =>
   Schema.decodeEffect(EnrollmentKeySchema)(value).pipe(
     Effect.mapError((cause) =>
       unavailable('invitation_claim_invalid_result', 'The claim owner returned an invalid outcome key', cause),
@@ -92,7 +106,7 @@ const decodeKey = (value: string): Effect.Effect<EnrollmentKey, CommerceEnrollme
 
 const decodeResourceId = (
   value: string,
-): Effect.Effect<EnrollmentResourceId, CommerceEnrollmentOwnerEffectUnavailable> =>
+): Effect.Effect<EnrollmentResourceId, InstanceType<typeof CommerceEnrollmentOwnerEffectUnavailable>> =>
   Schema.decodeEffect(EnrollmentResourceIdSchema)(value).pipe(
     Effect.mapError((cause) =>
       unavailable('invitation_claim_invalid_result', 'The claim owner returned an invalid result reference', cause),
@@ -106,12 +120,12 @@ const decodeResourceId = (
  */
 const grantProgressDigest = (
   invitation: CounterpartyAccessInvitation,
-): Effect.Effect<typeof EnrollmentDigestSchema.Type, CommerceEnrollmentOwnerEffectUnavailable> => {
+): Effect.Effect<typeof EnrollmentDigestSchema.Type, InstanceType<typeof CommerceEnrollmentOwnerEffectUnavailable>> => {
   const canonical = invitation.grantProgress
     .map((progress) => `${progress.permission}=${progress.state}`)
     .toSorted((left, right) => (left < right ? -1 : 1))
     .join('\u0000');
-  return Schema.decodeEffect(EnrollmentDigestSchema)(createHash('sha256').update(canonical).digest('hex')).pipe(
+  return Schema.decodeEffect(EnrollmentDigestSchema)(enrollmentDigest(canonical)).pipe(
     Effect.mapError((cause) =>
       unavailable('invitation_claim_invalid_result', 'The claim owner returned invalid grant progress', cause),
     ),

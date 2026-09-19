@@ -1,5 +1,11 @@
 import { Schema } from 'effect';
 
+import { withCause } from '../../../api/portal-auth/problems-support.ts';
+
+/**
+ * Declared apart from the audit port itself only because one file may declare one class: the tag
+ * and this error are one contract (`./audit.ts`).
+ */
 export class CommercePortalAuthAuditUnavailable extends Schema.TaggedError<CommercePortalAuthAuditUnavailable>()(
   'CommercePortalAuthAuditUnavailable',
   {
@@ -14,11 +20,10 @@ export class CommercePortalAuthAuditUnavailable extends Schema.TaggedError<Comme
  * state change is in.
  */
 export const commercePortalAuthAuditUnavailable = (cause: unknown): CommercePortalAuthAuditUnavailable =>
-  Object.defineProperty(
+  withCause(
     new CommercePortalAuthAuditUnavailable({
       operation: 'audit-record',
       reason: 'Commerce portal authentication audit evidence could not be persisted',
     }),
-    'cause',
-    { configurable: true, value: cause },
+    cause,
   );

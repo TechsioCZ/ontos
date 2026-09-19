@@ -1,11 +1,8 @@
-import { Context, DateTime, Effect, Layer, Result, Schema } from 'effect';
+import { Context, DateTime, Effect, Result, Schema } from 'effect';
 
-import {
-  CommercePortalAuthAudit,
-  recordCommercePortalAuthAudit,
-  unauditedCommercePortalAuthRecorder,
-} from '../../../../src/portal-auth/audit/audit-service.ts';
-import type { CommercePortalAuthAuditRecorder } from '../../../../src/portal-auth/audit/audit-service.ts';
+import { auditedLayer, recordCommercePortalAuthAudit } from '../../../../src/portal-auth/audit/audit.ts';
+import { withCause } from '../../problems-support.ts';
+import type { CommercePortalAuthAuditRecorder } from '../../../../src/portal-auth/audit/audit.ts';
 
 import {
   CommercePortalAuthMfaBackupCodesResultSchema,
@@ -93,9 +90,6 @@ export class CommercePortalAuthMfaService extends Context.Service<
   CommercePortalAuthMfaServiceApi
 >()('@app/commerce-customer-context/api/portal-auth/provider/mfa/service/CommercePortalAuthMfaService') {}
 
-const withCause = <ErrorValue extends object>(error: ErrorValue, cause: unknown): ErrorValue =>
-  Object.defineProperty(error, 'cause', { configurable: true, value: cause });
-
 interface CommercePortalAuthMfaMalformedResponseCause {
   readonly kind: 'malformed-response';
 }
@@ -168,9 +162,7 @@ const auditedVerification = Effect.fn('CommercePortalAuthMfaService.auditedVerif
 );
 
 export const makeCommercePortalAuthMfaService = Effect.fn('CommercePortalAuthMfaService.make')(
-  function* makeCommercePortalAuthMfaServiceEffect(
-    audit: CommercePortalAuthAuditRecorder = unauditedCommercePortalAuthRecorder,
-  ) {
+  function* makeCommercePortalAuthMfaServiceEffect(audit: CommercePortalAuthAuditRecorder) {
     const provider = yield* CommercePortalAuthMfaProviderService;
     const enableTwoFactor = (input: CommercePortalAuthMfaEnableProviderRequest) =>
       callProvider('enableTwoFactor', provider.enableTwoFactor(input), CommercePortalAuthMfaEnableResultSchema);
@@ -234,10 +226,7 @@ export const makeCommercePortalAuthMfaService = Effect.fn('CommercePortalAuthMfa
 );
 
 /** The MFA provider port stays a visible requirement; the composition root supplies it once. */
-export const CommercePortalAuthMfaServiceLive = Layer.effect(
+export const CommercePortalAuthMfaServiceLive = auditedLayer(
   CommercePortalAuthMfaService,
-  Effect.gen(function* makeCommercePortalAuthMfaServiceLive() {
-    const audit = yield* CommercePortalAuthAudit;
-    return yield* makeCommercePortalAuthMfaService(audit);
-  }),
+  makeCommercePortalAuthMfaService,
 );

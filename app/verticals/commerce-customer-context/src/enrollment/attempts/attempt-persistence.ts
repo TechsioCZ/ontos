@@ -351,6 +351,28 @@ export type AttemptClaimResult =
   | AttemptClaimedResult
   | { readonly attempt: EnrollmentAttemptSnapshot; readonly outcome: 'INDETERMINATE' };
 
+/**
+ * The single place the fenced arm of a claim is recognised.  Every caller reports it as the same
+ * retryable rejection bound to the owner invocation it asked to claim, so the fence the routine
+ * already performed is what the caller must resolve rather than re-derive.
+ */
+export const claimedOrIndeterminate =
+  (identity: Pick<ClaimEnrollmentTransitionInput, 'ownerInvocationId' | 'portalEnrollmentAttemptId'>) =>
+  (
+    claim: AttemptClaimResult,
+  ): Effect.Effect<AttemptClaimedResult, InstanceType<typeof CommerceEnrollmentAttemptIndeterminate>> =>
+    claim.outcome === 'INDETERMINATE'
+      ? Effect.fail(
+          new CommerceEnrollmentAttemptIndeterminate({
+            attemptId: identity.portalEnrollmentAttemptId,
+            code: 'attempt_indeterminate',
+            ownerInvocationId: identity.ownerInvocationId,
+            reason: 'The prior owner transition outcome is indeterminate and must be resolved first',
+            retryable: true,
+          }),
+        )
+      : Effect.succeed(claim);
+
 export interface AttemptRecordResult {
   readonly attempt: EnrollmentAttemptSnapshot;
   readonly operation: EnrollmentOwnerOperationSnapshot;
@@ -380,6 +402,14 @@ export interface CommerceEnrollmentAttemptPersistence {
   readonly readOperation: (
     input: ReadEnrollmentOwnerOperationInput,
   ) => Effect.Effect<EnrollmentOwnerOperationSnapshot, CommerceEnrollmentAttemptError>;
+  /**
+   * Every owner transition this Attempt has on record, in one durable read.  The Attempt
+   * projection already returns one row per journalled owner operation, so a derivation that needs
+   * the whole journal asks for it once instead of once per declared transition.
+   */
+  readonly readOperations: (
+    input: ReadEnrollmentAttemptInput,
+  ) => Effect.Effect<readonly EnrollmentOwnerOperationSnapshot[], CommerceEnrollmentAttemptError>;
   /**
    * `derivedState` is the Attempt state concluded from the journey definition and the durable
    * owner journal.  It is a separate argument, and not a field of the owner's request, because no
@@ -755,6 +785,22 @@ const mapOperationPersistenceError = (error: CommerceEnrollmentAttemptError): Co
 const operationFromAttemptRow = (row: AttemptRoutineRow) =>
   mapOperation(row).pipe(Effect.mapError(mapOperationPersistenceError));
 
+/**
+ * An Attempt that has claimed nothing yet still projects one row, with every owner column NULL.
+ * That row reports an absent journal entry, not a malformed one.
+ */
+const hasOwnerOperation = (row: AttemptRoutineRow): boolean => row.operation_id !== null;
+
+const attemptNotFound = (attemptId: EnrollmentAttemptId): Effect.Effect<never, CommerceEnrollmentAttemptError> =>
+  Effect.fail(
+    new CommerceEnrollmentAttemptNotFound({
+      attemptId,
+      code: 'attempt_not_found',
+      reason: ATTEMPT_NOT_FOUND_REASON,
+      retryable: false,
+    }),
+  );
+
 type MappedAttemptOperation = Readonly<{
   readonly attempt: EnrollmentAttemptSnapshot;
   readonly operation: EnrollmentOwnerOperationSnapshot;
@@ -1126,6 +1172,18 @@ export const commerceEnrollmentAttemptPersistenceForTransaction = (
               Effect.flatMap((rows) => requireOwnerRow(rows, input.portalEnrollmentAttemptId)),
               Effect.flatMap(mapOperation),
             ),
+        ),
+      ),
+    readOperations: (input) =>
+      ensureTenant(scope, input.tenantId).pipe(
+        Effect.flatMap(() =>
+          invokeAttempt(readAttemptRoutine, [input.portalEnrollmentAttemptId]).pipe(
+            Effect.flatMap((rows) =>
+              rows.length === 0
+                ? attemptNotFound(input.portalEnrollmentAttemptId)
+                : Effect.forEach(rows.filter(hasOwnerOperation), operationFromAttemptRow, { concurrency: 1 }),
+            ),
+          ),
         ),
       ),
     reconcile: (input, derivedState) =>

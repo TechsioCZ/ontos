@@ -117,14 +117,17 @@ type CommerceOwnerVerdict =
   | { readonly kind: 'RECONCILE'; readonly outcomeCode: string; readonly reason: string }
   | { readonly kind: 'REJECTED'; readonly outcomeCode: string; readonly reason: string };
 
-const unavailable = (reason: string, cause?: unknown): CommerceEnrollmentOwnerEffectUnavailable => {
+const unavailable = (
+  reason: string,
+  cause?: unknown,
+): InstanceType<typeof CommerceEnrollmentOwnerEffectUnavailable> => {
   const error = new CommerceEnrollmentOwnerEffectUnavailable({ code: 'commerce_profile_unavailable', reason });
   return cause === undefined
     ? error
     : Object.defineProperty(error, 'cause', { configurable: false, enumerable: false, value: cause });
 };
 
-const commitOpen = (): CommerceEnrollmentOwnerEffectRejected =>
+const commitOpen = (): InstanceType<typeof CommerceEnrollmentOwnerEffectRejected> =>
   new CommerceEnrollmentOwnerEffectRejected({
     code: 'commerce_profile_commit_open',
     reason: 'The Commerce Action invocation has not committed yet and must be retried',

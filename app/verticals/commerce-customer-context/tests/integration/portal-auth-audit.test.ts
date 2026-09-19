@@ -12,10 +12,12 @@ import type { CommercePortalAuthSessionStore } from '../../api/portal-auth/sessi
 import { portalAuthAuditEvent } from '../../src/portal-auth/audit/audit-tables.ts';
 import { COMMERCE_PORTAL_AUTH_AUDIT_SCHEMA_VERSION } from '../../src/portal-auth/audit/audit-contracts.ts';
 import { commercePortalAuthSignInAuditEvent } from '../../src/portal-auth/audit/audit-mapping.ts';
-import { commercePortalAuthSubjectDigest } from '../../src/portal-auth/audit/audit-service.ts';
-import type { CommercePortalAuthAuditRecorder } from '../../src/portal-auth/audit/audit-service.ts';
+import {
+  commercePortalAuthSubjectDigest,
+  makeCommercePortalAuthAuditRecorder,
+} from '../../src/portal-auth/audit/audit.ts';
+import type { CommercePortalAuthAuditRecorder } from '../../src/portal-auth/audit/audit.ts';
 import type { CommercePortalAuthAuditEvent } from '../../src/portal-auth/audit/audit-contracts.ts';
-import { makeCommercePortalAuthAuditRecorder } from '../../src/portal-auth/audit/audit-store.ts';
 import { parseCommercePortalAuthConfig } from '../../api/portal-auth/provider/config.ts';
 
 const ORIGIN = 'https://portal.example.test';

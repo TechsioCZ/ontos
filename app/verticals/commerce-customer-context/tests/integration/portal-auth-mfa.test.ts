@@ -59,6 +59,7 @@ import { CommercePortalAuthConfig } from '../../api/portal-auth/provider/config-
 import { COMMERCE_PORTAL_AUTH_POLICY, parseCommercePortalAuthConfig } from '../../api/portal-auth/provider/config.ts';
 import type { CommercePortalAuthConfigValue } from '../../api/portal-auth/provider/config.ts';
 import { CommercePortalAuthMfaApi } from '../../shared/portal-auth/mfa-api.ts';
+import { unauditedCommercePortalAuthRecorder } from '../../src/portal-auth/audit/audit.ts';
 
 const ORIGIN = 'https://commerce.example.test';
 const BASE_PATH = '/api/portal-auth';
@@ -232,7 +233,7 @@ it.effect('adapts inferred Better Auth endpoints through the typed Effect owner 
     });
     expect(signUp.status).toBe(200);
     const provider = makeCommercePortalAuthMfaProvider(auth.api);
-    const service = yield* makeCommercePortalAuthMfaService().pipe(
+    const service = yield* makeCommercePortalAuthMfaService(unauditedCommercePortalAuthRecorder).pipe(
       Effect.provideService(CommercePortalAuthMfaProviderService, provider),
     );
     const setup = yield* service.enableTwoFactor({
@@ -286,7 +287,7 @@ it.effect('serves the reviewed MFA HTTP routes through the typed owner service',
     const challengeHeaders = requestHeaders();
     applySetCookies(challengeHeaders, splitSetCookieHeader(signIn.headers.get('set-cookie') ?? ''));
     const provider = makeCommercePortalAuthMfaProvider(auth.api);
-    const service = yield* makeCommercePortalAuthMfaService().pipe(
+    const service = yield* makeCommercePortalAuthMfaService(unauditedCommercePortalAuthRecorder).pipe(
       Effect.provideService(CommercePortalAuthMfaProviderService, provider),
     );
     const send = yield* service.sendTwoFactorOTP({ body: { trustDevice: false }, headers: challengeHeaders });
@@ -308,7 +309,7 @@ it.effect('classifies a real Better Auth credential rejection without reporting 
     });
     expect(signUp.status).toBe(200);
     const provider = makeCommercePortalAuthMfaProvider(auth.api);
-    const service = yield* makeCommercePortalAuthMfaService().pipe(
+    const service = yield* makeCommercePortalAuthMfaService(unauditedCommercePortalAuthRecorder).pipe(
       Effect.provideService(CommercePortalAuthMfaProviderService, provider),
     );
     const result = yield* Effect.result(
@@ -358,7 +359,7 @@ it.effect('forwards a Better Auth challenge-expiry cookie on a typed throttle fa
     const challengeHeaders = requestHeaders();
     applySetCookies(challengeHeaders, splitSetCookieHeader(signIn.headers.get('set-cookie') ?? ''));
     const provider = makeCommercePortalAuthMfaProvider(auth.api);
-    const service = yield* makeCommercePortalAuthMfaService().pipe(
+    const service = yield* makeCommercePortalAuthMfaService(unauditedCommercePortalAuthRecorder).pipe(
       Effect.provideService(CommercePortalAuthMfaProviderService, provider),
     );
     let firstFailure: CommercePortalAuthMfaProviderFailure | undefined;
@@ -599,7 +600,7 @@ it.effect('drives the published MFA group over HTTP and forwards provider cookie
         .join('; ');
       expect(challengeCookie).toContain('two_factor=');
 
-      const service = yield* makeCommercePortalAuthMfaService().pipe(
+      const service = yield* makeCommercePortalAuthMfaService(unauditedCommercePortalAuthRecorder).pipe(
         Effect.provideService(CommercePortalAuthMfaProviderService, makeCommercePortalAuthMfaProvider(auth.api)),
       );
       const recorded = makeRecordingMfaBudget();
@@ -668,7 +669,7 @@ it.effect('refuses an MFA request that names no challenge without spending any b
   Effect.scoped(
     Effect.gen(function* mfaUnattributableRequest() {
       const { auth } = makeSkipVerificationFixture();
-      const service = yield* makeCommercePortalAuthMfaService().pipe(
+      const service = yield* makeCommercePortalAuthMfaService(unauditedCommercePortalAuthRecorder).pipe(
         Effect.provideService(CommercePortalAuthMfaProviderService, makeCommercePortalAuthMfaProvider(auth.api)),
       );
       const recorded = makeRecordingMfaBudget();
@@ -699,7 +700,7 @@ it.effect('bounds MFA routes on the owner budget and keeps every refusal problem
     Effect.gen(function* mfaBudgetAndContentTypeAssertions() {
       const { auth } = makeSkipVerificationFixture();
       const challengeCookie = yield* makeChallengeCookie(auth, 'mfa-budget-owner@example.test');
-      const service = yield* makeCommercePortalAuthMfaService().pipe(
+      const service = yield* makeCommercePortalAuthMfaService(unauditedCommercePortalAuthRecorder).pipe(
         Effect.provideService(CommercePortalAuthMfaProviderService, makeCommercePortalAuthMfaProvider(auth.api)),
       );
       const recorded = makeRecordingMfaBudget();
@@ -833,9 +834,13 @@ const makeFreshnessFixture = Effect.fn('CommercePortalAuthMfaFreshnessIntegratio
     ]);
 
     const store = makeCommercePortalAuthSessionStore(database.executor);
-    const lifecycle = makeCommercePortalAuthSessionLifecycle(store, {
-      signInEmail: () => Effect.die('unused in the MFA freshness fixture'),
-    });
+    const lifecycle = makeCommercePortalAuthSessionLifecycle(
+      store,
+      {
+        signInEmail: () => Effect.die('unused in the MFA freshness fixture'),
+      },
+      unauditedCommercePortalAuthRecorder,
+    );
     const currentSessionId = { value: `${providerSubjectId}-stepped-up` };
     let enableCalls = 0;
     const mfaService: CommercePortalAuthMfaServiceApi = {

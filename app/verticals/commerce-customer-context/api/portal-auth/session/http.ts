@@ -32,7 +32,7 @@ import {
   commercePortalAuthSubjectDigest,
   emitCommercePortalAuthAudit,
   unauditedCommercePortalAuthRecorder,
-} from '../../../src/portal-auth/audit/audit-service.ts';
+} from '../../../src/portal-auth/audit/audit.ts';
 import { CommercePortalAuthRecoveryRateLimitService } from '../rate-limit-service.ts';
 import type { CommercePortalAuthRecoveryRateLimitRule } from '../rate-limit-service.ts';
 import { CommercePortalAuthInstance } from '../provider/auth.ts';

@@ -39,6 +39,7 @@ import {
   CommercePortalAuthRecoveryForbiddenProblemSchema,
   CommercePortalAuthRecoveryInvalidProblemSchema,
 } from '../../shared/portal-auth/recovery-api.ts';
+import { unauditedCommercePortalAuthRecorder } from '../../src/portal-auth/audit/audit.ts';
 
 const EMAIL = 'customer@example.test';
 const BYSTANDER_EMAIL = 'bystander@example.test';
@@ -201,7 +202,7 @@ const runWithRecovery = <Value>(
   store: CommercePortalAuthRecoveryStore,
   invoke: (service: CommercePortalAuthRecoveryService['Service']) => Effect.Effect<Value, unknown>,
 ) =>
-  makeCommercePortalAuthRecoveryService().pipe(
+  makeCommercePortalAuthRecoveryService(unauditedCommercePortalAuthRecorder).pipe(
     Effect.provideService(CommercePortalAuthRecoveryProviderService, provider),
     Effect.provideService(CommercePortalAuthRecoveryStoreService, store),
     Effect.provideServiceEffect(

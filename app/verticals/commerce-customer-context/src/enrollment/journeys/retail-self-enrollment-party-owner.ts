@@ -81,14 +81,17 @@ type PartyVerdict =
   | { readonly kind: 'RESOLVED'; readonly outcomeCode: string; readonly partyResourceId: string }
   | { readonly kind: 'AMBIGUOUS'; readonly reason: string };
 
-const unavailable = (reason: string, cause?: unknown): CommerceEnrollmentOwnerEffectUnavailable => {
+const unavailable = (
+  reason: string,
+  cause?: unknown,
+): InstanceType<typeof CommerceEnrollmentOwnerEffectUnavailable> => {
   const error = new CommerceEnrollmentOwnerEffectUnavailable({ code: 'party_registry_unavailable', reason });
   return cause === undefined
     ? error
     : Object.defineProperty(error, 'cause', { configurable: false, enumerable: false, value: cause });
 };
 
-const commitOpen = (): CommerceEnrollmentOwnerEffectRejected =>
+const commitOpen = (): InstanceType<typeof CommerceEnrollmentOwnerEffectRejected> =>
   new CommerceEnrollmentOwnerEffectRejected({
     code: 'party_registry_commit_open',
     reason: 'The Party Registry invocation has not committed yet and must be retried',

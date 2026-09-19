@@ -1,9 +1,15 @@
 import { createHmac } from 'node:crypto';
 
-import { Context, Effect, Redacted } from 'effect';
+import { Context, Effect, Layer, Redacted } from 'effect';
+import type { Scope } from 'effect';
 
+import { CommercePortalAuthDatabase } from '../persistence/portal-auth-database.ts';
+import type { CommercePortalAuthDatabaseExecutor } from '../persistence/portal-auth-database-types.ts';
 import type { CommercePortalAuthAuditEvent } from './audit-contracts.ts';
+import { commercePortalAuthAuditUnavailable } from './audit-unavailable.ts';
 import type { CommercePortalAuthAuditUnavailable } from './audit-unavailable.ts';
+import { commercePortalAuthAuditRow } from './audit-mapping.ts';
+import { portalAuthAuditEvent } from './audit-tables.ts';
 
 /**
  * The Commerce-owned audit port. The authentication transport runs outside an Action invocation —
@@ -17,7 +23,7 @@ export interface CommercePortalAuthAuditRecorder {
 export class CommercePortalAuthAudit extends Context.Service<
   CommercePortalAuthAudit,
   CommercePortalAuthAuditRecorder
->()('@app/commerce-customer-context/portal-auth/audit/audit-service/CommercePortalAuthAudit') {}
+>()('@app/commerce-customer-context/portal-auth/audit/audit/CommercePortalAuthAudit') {}
 
 /**
  * A service constructed without the audit port still answers. Production supplies the durable
@@ -61,6 +67,12 @@ export const recordCommercePortalAuthAudit = (
     ),
   );
 
+/** Binds a service's own recorder to the lenient path; a state change never emits through it. */
+export const commercePortalAuthAuditEmitter =
+  (recorder: CommercePortalAuthAuditRecorder) =>
+  (event: CommercePortalAuthAuditEvent): Effect.Effect<void> =>
+    recordCommercePortalAuthAudit(recorder, event);
+
 /** Emits the event through the ambient audit port; used by transports that already read context. */
 export const emitCommercePortalAuthAudit = Effect.fn('CommercePortalAuthAudit.emit')(
   function* emitCommercePortalAuthAuditEffect(
@@ -69,4 +81,42 @@ export const emitCommercePortalAuthAudit = Effect.fn('CommercePortalAuthAudit.em
     const recorder = yield* CommercePortalAuthAudit;
     yield* recordCommercePortalAuthAudit(recorder, event);
   },
+);
+
+/**
+ * Every audited service takes its recorder as a constructor argument, so a test can supply
+ * `unauditedCommercePortalAuthRecorder` deliberately. This is the one place a *Live layer reads the
+ * ambient port instead, which keeps the composition root the only thing that decides whether a
+ * deployment's authentication decisions leave evidence.
+ */
+export const auditedLayer = <Identifier, Capability, Requirements>(
+  tag: Context.Key<Identifier, Capability>,
+  make: (audit: CommercePortalAuthAuditRecorder) => Effect.Effect<Capability, never, Requirements>,
+): Layer.Layer<Identifier, never, Exclude<Requirements, Scope.Scope> | CommercePortalAuthAudit> =>
+  Layer.effect(tag, CommercePortalAuthAudit.pipe(Effect.flatMap(make)));
+
+/**
+ * One event becomes exactly one row. The insert projects through the audit record first, so a
+ * field that is not part of the published record shape cannot reach a column even if a caller
+ * attaches it to the in-process event.
+ *
+ * This recorder writes on its own executor, outside whatever transaction the caller is in. That is
+ * the right shape for a decision-only fact — a refused sign-in, a rate-limited attempt, a session
+ * read — and the wrong shape for a state change, which must leave its evidence inside the same
+ * transaction. The session store owns that strict path (`../persistence/portal-auth-session-store.ts`).
+ */
+export const makeCommercePortalAuthAuditRecorder = (
+  executor: CommercePortalAuthDatabaseExecutor,
+): CommercePortalAuthAuditRecorder => ({
+  record: (event: CommercePortalAuthAuditEvent) =>
+    executor
+      .insert(portalAuthAuditEvent)
+      .values(commercePortalAuthAuditRow(event))
+      .pipe(Effect.asVoid, Effect.mapError(commercePortalAuthAuditUnavailable)),
+});
+
+/** The single Layer the composition root wires for Commerce portal authentication audit evidence. */
+export const CommercePortalAuthAuditLive = Layer.effect(
+  CommercePortalAuthAudit,
+  CommercePortalAuthDatabase.pipe(Effect.map((database) => makeCommercePortalAuthAuditRecorder(database.executor))),
 );

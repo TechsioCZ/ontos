@@ -1,4 +1,3 @@
-import { createHash } from 'node:crypto';
 import { Effect, Result, Schema } from 'effect';
 
 import {
@@ -20,6 +19,7 @@ import {
   EnrollmentModuleKeySchema,
   EnrollmentTenantIdSchema,
   EnrollmentTransitionKeySchema,
+  enrollmentDigest,
 } from '../../../shared/enrollment-contracts.ts';
 import type { CommercePortalAccountSubject, EnrollmentResourceIdSchema } from '../../../shared/enrollment-contracts.ts';
 import {
@@ -32,8 +32,7 @@ import { JourneyDefinitionSchema, journeyTransitions } from './journey-contracts
 import type { JourneyDefinition, JourneyTransitionSpec } from './journey-contracts.ts';
 
 /**
- * Existing-account enrollment journey (issue #338 "Supported journeys → Existing-account
- * enrollment"). An already-authenticated Commerce Portal Account (exact current session, same
+ * Existing-account enrollment journey. An already-authenticated Commerce Portal Account (exact current session, same
  * provider subject) enrolls into a SECOND Tenant. No new provider account and no second subject
  * are ever created here: the journey establishes only a fresh Tenant-scoped Principal Auth
  * Binding for the existing subject, then continues with the same profile/binding/grant steps a
@@ -69,8 +68,8 @@ export const RESERVE_PRINCIPAL_BINDING_TRANSITION_KEY = 'core.principal-binding.
  * Activate the reserved binding after fresh same-subject proof for the exact current session. The
  * transition key is byte-identical to `CORE_PRINCIPAL_BINDING_ACTIVATION_TRANSITION_KEY` in
  * `counterparty-invitation.ts` on purpose: both journeys' activate step dispatches the exact same
- * `ActivatePrincipalBindingRequest` wire shape through `core.identity`, so one wave-3 owner-effect
- * case can serve both.
+ * `ActivatePrincipalBindingRequest` wire shape through `core.identity`, so one owner-effect case
+ * can serve both.
  */
 export const ACTIVATE_PRINCIPAL_BINDING_TRANSITION_KEY = 'core.principal-binding.activate';
 
@@ -253,9 +252,7 @@ export const makeExistingAccountRequestDigest = (
   intent: ExistingAccountEnrollmentTransitionIntent,
 ): Effect.Effect<typeof EnrollmentDigestSchema.Type, ExistingAccountEnrollmentRejected> =>
   Schema.encodeEffect(canonicalIntentJsonSchema)(intent).pipe(
-    Effect.flatMap((canonical) =>
-      Schema.decodeEffect(EnrollmentDigestSchema)(createHash('sha256').update(canonical).digest('hex')),
-    ),
+    Effect.flatMap((canonical) => Schema.decodeEffect(EnrollmentDigestSchema)(enrollmentDigest(canonical))),
     Effect.mapError((cause) =>
       rejectExistingAccount(
         'existing_account_transition_invalid',

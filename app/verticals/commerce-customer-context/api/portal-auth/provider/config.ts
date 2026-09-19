@@ -1,6 +1,7 @@
 import { Config, ConfigProvider, Effect, Layer, Option, Redacted, Schema } from 'effect';
 
 import { CommercePortalAuthConfig } from './config-service.ts';
+import { HttpUrlSchema, optionalConfigReader, parseHttpUrl } from './config-support.ts';
 
 export { CommercePortalAuthConfig } from './config-service.ts';
 
@@ -202,11 +203,6 @@ const malformedConfiguration = () =>
     reason: 'Commerce portal authentication configuration is missing or malformed',
   });
 
-const HttpUrlSchema = Schema.URLFromString.check(
-  Schema.makeFilter((url) =>
-    url.protocol === 'http:' || url.protocol === 'https:' ? undefined : 'URL must use http or https',
-  ),
-);
 const PostgreSqlUrlSchema = Schema.URLFromString.check(
   Schema.makeFilter((url) =>
     url.protocol === 'postgres:' || url.protocol === 'postgresql:' ? undefined : 'URL must use the PostgreSQL protocol',
@@ -224,15 +220,7 @@ const configSource = Config.all({
 });
 
 const parseHttpOrigin = (value: string): Effect.Effect<string, CommercePortalAuthConfigError> =>
-  Schema.decodeEffect(HttpUrlSchema)(value).pipe(
-    Effect.catchTag('SchemaError', () => Effect.fail(malformedConfiguration())),
-    Effect.filterOrFail(
-      (url) =>
-        url.username.length === 0 && url.password.length === 0 && url.search.length === 0 && url.hash.length === 0,
-      () => malformedConfiguration(),
-    ),
-    Effect.map((url) => url.origin),
-  );
+  Effect.map(parseHttpUrl(value, malformedConfiguration), (url) => url.origin);
 
 const parseCommercePortalAuthConfigFromProvider = Effect.fn('CommercePortalAuthConfig.parse')(function* parseConfig(
   provider: ConfigProvider.ConfigProvider,
@@ -313,35 +301,15 @@ export const parseCommercePortalAuthConfig = (
   parseCommercePortalAuthConfigFromProvider(ConfigProvider.fromUnknown(environment, { preserveEmptyStrings: true }));
 
 /**
- * The three operator-supplied values that admit a host into the Commerce portal realm. They are
- * read as options rather than requirements because the realm is optional: a deployment that names
- * none of them is one that never opted in, and the vertical still serves readiness and every
- * business route. Naming only some of them is a misconfiguration, not an opt-out, and is reported
- * as such — the same posture the migration side already takes in
- * `scripts/portal-auth-database-config.mts`'s `parseOptionalCommercePortalAuthDatabaseConfig`.
+ * The three operator-supplied values that admit a host into the Commerce portal realm. The realm is
+ * optional, so a deployment that names none of them never opted in and the vertical still serves
+ * readiness and every business route.
  */
-const optionalAdmissionKeys = Config.all({
-  baseUrl: Config.option(Config.redacted('COMMERCE_PORTAL_AUTH_URL')),
-  databaseUrl: Config.option(Config.redacted('COMMERCE_PORTAL_AUTH_DATABASE_URL')),
-  secret: Config.option(Config.redacted('COMMERCE_PORTAL_AUTH_SECRET')),
-});
-
-const declaredValue = (configured: Option.Option<Redacted.Redacted>): boolean =>
-  Option.isSome(configured) && Redacted.value(configured.value).trim().length > 0;
-
-const parseOptionalCommercePortalAuthConfigFromProvider = Effect.fn('CommercePortalAuthConfig.parseOptional')(
-  function* parseOptionalConfig(
-    provider: ConfigProvider.ConfigProvider,
-  ): Effect.fn.Return<Option.Option<CommercePortalAuthConfigValue>, CommercePortalAuthConfigError> {
-    const configured = yield* optionalAdmissionKeys
-      .parse(provider)
-      .pipe(Effect.catchTag('ConfigError', () => Effect.fail(malformedConfiguration())));
-    const declared = [configured.baseUrl, configured.databaseUrl, configured.secret].filter(declaredValue);
-    if (declared.length === 0) {
-      return Option.none();
-    }
-    return Option.some(yield* parseCommercePortalAuthConfigFromProvider(provider));
-  },
+const parseOptionalCommercePortalAuthConfigFromProvider = optionalConfigReader(
+  'CommercePortalAuthConfig.parseOptional',
+  ['COMMERCE_PORTAL_AUTH_URL', 'COMMERCE_PORTAL_AUTH_DATABASE_URL', 'COMMERCE_PORTAL_AUTH_SECRET'],
+  parseCommercePortalAuthConfigFromProvider,
+  malformedConfiguration,
 );
 
 /** `Option.none()` only when the supplied environment names no portal-realm value at all. */
@@ -352,11 +320,31 @@ export const parseOptionalCommercePortalAuthConfig = (
     ConfigProvider.fromUnknown(environment, { preserveEmptyStrings: true }),
   );
 
-/** The composition root's single availability read for the optional Commerce portal realm. */
+/** The availability read that keeps a misconfiguration an error; the portal groups answer for it. */
 export const optionalCommercePortalAuthConfig: Effect.Effect<
   Option.Option<CommercePortalAuthConfigValue>,
   CommercePortalAuthConfigError
 > = parseOptionalCommercePortalAuthConfigFromProvider(ConfigProvider.fromEnv({ preserveEmptyStrings: true }));
+
+/**
+ * The one fail-closed availability read every consumer that must keep serving shares. A realm
+ * configuration that names some `COMMERCE_PORTAL_AUTH_*` value but not all of them is a
+ * misconfiguration, and `optionalCommercePortalAuthConfig` reports it as one — but a consumer that
+ * sits inside the runtime every governed business route is served from must not be taken down by
+ * an unreadable realm. Folding the error to "not configured" with one warning is the honest
+ * answer: no governed Action may proceed on a claimed owner payload without owner evidence, which
+ * is exactly what a deployment whose portal realm cannot be read should get. A consumer that may
+ * keep the error — the four portal groups — reads `optionalCommercePortalAuthConfig` instead.
+ */
+export const portalAuthRealmConfigured: Effect.Effect<boolean> = optionalCommercePortalAuthConfig.pipe(
+  Effect.map(Option.isSome),
+  Effect.catchTag('CommercePortalAuthConfigError', (failure) =>
+    Effect.annotateLogs(
+      Effect.logWarning('Commerce portal realm configuration is unreadable; enrollment owner evidence fails closed'),
+      { reason: failure.reason },
+    ).pipe(Effect.as(false)),
+  ),
+);
 
 export const CommercePortalAuthConfigLive = Layer.effect(
   CommercePortalAuthConfig,

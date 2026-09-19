@@ -50,6 +50,7 @@ import { makeCommercePortalAuthSessionLifecycle } from '../../api/portal-auth/se
 import type { CommercePortalAuthSessionProvider } from '../../api/portal-auth/session/lifecycle.ts';
 import type { CommercePortalAuthSessionRecord } from '../../api/portal-auth/session/contracts.ts';
 import type { CommercePortalAuthSessionStore } from '../../api/portal-auth/session/store-service.ts';
+import { unauditedCommercePortalAuthRecorder } from '../../src/portal-auth/audit/audit.ts';
 
 const headers = new Headers({ origin: 'https://portal.example.test' });
 const otpDeliveryCallback: NonNullable<OTPOptions['sendOTP']> = () => Promise.resolve();
@@ -79,7 +80,7 @@ const runMfa = <ResultValue>(
     service: CommercePortalAuthMfaServiceApi,
   ) => Effect.Effect<ResultValue, CommercePortalAuthMfaProviderFailure>,
 ) =>
-  makeCommercePortalAuthMfaService().pipe(
+  makeCommercePortalAuthMfaService(unauditedCommercePortalAuthRecorder).pipe(
     Effect.provideService(CommercePortalAuthMfaProviderService, provider),
     Effect.flatMap((service) => invoke(service)),
   );
@@ -738,9 +739,14 @@ it.effect('admits an old session only after a step-up that re-authenticated that
       freshnessRecord('session-stepped-up', 'token-stepped-up'),
       freshnessRecord('session-other', 'token-other'),
     ]);
-    const lifecycle = makeCommercePortalAuthSessionLifecycle(store, unusedFreshnessSignIn, {
-      now: () => new Date(TEST_NOW_MILLIS),
-    });
+    const lifecycle = makeCommercePortalAuthSessionLifecycle(
+      store,
+      unusedFreshnessSignIn,
+      unauditedCommercePortalAuthRecorder,
+      {
+        now: () => new Date(TEST_NOW_MILLIS),
+      },
+    );
     const currentSessionId = { value: 'session-stepped-up' };
     const fixture = makeMfaHttpFixture();
     const app = yield* makeMfaHttpApp(

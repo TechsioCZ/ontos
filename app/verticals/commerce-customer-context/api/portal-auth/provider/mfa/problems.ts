@@ -12,6 +12,7 @@ import {
   CommercePortalAuthMfaUnavailableProblemSchema,
 } from '../../../../shared/portal-auth/mfa-api.ts';
 import type { CommercePortalAuthMfaProblem } from '../../../../shared/portal-auth/mfa-api.ts';
+import { withCause } from '../../problems-support.ts';
 import { CommercePortalAuthMfaChallengeExpired } from './challenge-expired.ts';
 import type { CommercePortalAuthMfaProviderFailure } from './contracts.ts';
 import { CommercePortalAuthMfaProviderRejected } from './provider-rejected.ts';
@@ -33,14 +34,6 @@ export const commercePortalAuthMfaInvalidProblem = CommercePortalAuthMfaInvalidP
   type: 'https://ontos.dev/problems/commerce-portal-auth-mfa-invalid',
 });
 
-/**
- * Non-enumerable so the diagnostic never rides along in the `application/problem+json` body (JSON
- * serialization only walks enumerable own properties) — a fresh copy so concurrent requests never
- * race over the shared singleton problem instances.
- */
-const withCause = <ErrorValue extends object>(error: ErrorValue, cause: unknown): ErrorValue =>
-  Object.defineProperty({ ...error }, 'cause', { configurable: true, value: cause });
-
 interface CommercePortalAuthMfaInvalidBodyCause {
   readonly kind: 'invalid-request-body';
 }
@@ -58,10 +51,11 @@ const invalidRequestBodyCause = <ParseFailure>(_cause: ParseFailure): CommercePo
  * Used wherever the owner's tighter re-validation schema (`contracts.ts`) rejects an
  * already-schema-decoded payload — `enable`, `disable`, `regenerate-backup-codes` and `totp-uri` all
  * re-decode a `password` field this way. Never attach the raw parse failure directly: it can quote
- * the submitted password back in its issue message.
+ * the submitted password back in its issue message. The singleton problem is copied first, so
+ * concurrent requests never race over one shared instance's `cause`.
  */
 export const commercePortalAuthMfaInvalidRequestProblem = (cause: unknown) =>
-  withCause(commercePortalAuthMfaInvalidProblem, invalidRequestBodyCause(cause));
+  withCause({ ...commercePortalAuthMfaInvalidProblem }, invalidRequestBodyCause(cause));
 
 export const commercePortalAuthMfaTrustDeviceProblem = CommercePortalAuthMfaInvalidProblemSchema.make({
   code: 'trust_device_not_allowed',

@@ -1,6 +1,7 @@
-import { Config, ConfigProvider, Context, Effect, Layer, Option, Redacted, Schema } from 'effect';
+import { Config, ConfigProvider, Context, Effect, Layer, Option, Redacted } from 'effect';
 import type { ExternalIdentityClientOptions } from '@app/shared-contracts/server/external-identity-client';
 
+import { optionalConfigReader, parseHttpUrl } from './config-support.ts';
 import { CommerceCoreIdentityClientConfigError } from './core-identity-config-error.ts';
 
 /**
@@ -41,27 +42,8 @@ const malformedConfiguration = (): CommerceCoreIdentityClientConfigError =>
     reason: 'Commerce Core identity client configuration is missing or malformed',
   });
 
-const HttpUrlSchema = Schema.URLFromString.check(
-  Schema.makeFilter((url) =>
-    url.protocol === 'http:' || url.protocol === 'https:' ? undefined : 'URL must use http or https',
-  ),
-);
-
-/**
- * The base URL carries no credential material of its own: a URL with userinfo, a query or a
- * fragment is rejected rather than silently normalised, so the configured endpoint is exactly the
- * origin-and-path the operator named.
- */
 const parseBaseUrl = (value: string): Effect.Effect<string, CommerceCoreIdentityClientConfigError> =>
-  Schema.decodeEffect(HttpUrlSchema)(value.trim()).pipe(
-    Effect.catchTag('SchemaError', () => Effect.fail(malformedConfiguration())),
-    Effect.filterOrFail(
-      (url) =>
-        url.username.length === 0 && url.password.length === 0 && url.search.length === 0 && url.hash.length === 0,
-      () => malformedConfiguration(),
-    ),
-    Effect.map((url) => url.href.replace(/\/+$/u, '')),
-  );
+  Effect.map(parseHttpUrl(value, malformedConfiguration), (url) => url.href.replace(/\/+$/u, ''));
 
 const configSource = Config.all({
   apiKey: Config.redacted(CORE_IDENTITY_API_KEY_KEY),
@@ -82,34 +64,35 @@ const parseFromProvider = Effect.fn('CommerceCoreIdentityClientConfig.parse')(fu
   return Object.freeze({ apiKey: Redacted.make(apiKeyValue), baseUrl });
 });
 
-const optionalKeys = Config.all({
-  apiKey: Config.option(Config.redacted(CORE_IDENTITY_API_KEY_KEY)),
-  baseUrl: Config.option(Config.redacted(CORE_IDENTITY_BASE_URL_KEY)),
-});
-
-const declaredValue = (configured: Option.Option<Redacted.Redacted>): boolean =>
-  Option.isSome(configured) && Redacted.value(configured.value).trim().length > 0;
-
-const parseOptionalFromProvider = Effect.fn('CommerceCoreIdentityClientConfig.parseOptional')(
-  function* parseOptionalCoreIdentityConfig(
-    provider: ConfigProvider.ConfigProvider,
-  ): Effect.fn.Return<Option.Option<CommerceCoreIdentityClientConfigValue>, CommerceCoreIdentityClientConfigError> {
-    const configured = yield* optionalKeys
-      .parse(provider)
-      .pipe(Effect.catchTag('ConfigError', () => Effect.fail(malformedConfiguration())));
-    const declared = [configured.apiKey, configured.baseUrl].filter(declaredValue);
-    if (declared.length === 0) {
-      return Option.none();
-    }
-    return Option.some(yield* parseFromProvider(provider));
-  },
+const parseOptionalFromProvider = optionalConfigReader(
+  'CommerceCoreIdentityClientConfig.parseOptional',
+  [CORE_IDENTITY_API_KEY_KEY, CORE_IDENTITY_BASE_URL_KEY],
+  parseFromProvider,
+  malformedConfiguration,
 );
 
-/** The composition root's single availability read for the optional Core identity transport. */
+/** The availability read that keeps a misconfiguration an error, for a consumer that may refuse. */
 export const optionalCommerceCoreIdentityClientConfig: Effect.Effect<
   Option.Option<CommerceCoreIdentityClientConfigValue>,
   CommerceCoreIdentityClientConfigError
 > = parseOptionalFromProvider(ConfigProvider.fromEnv({ preserveEmptyStrings: true }));
+
+/**
+ * The one fail-closed availability read every consumer that must keep serving shares. Naming only
+ * one `COMMERCE_CORE_IDENTITY_*` value is a misconfiguration, not an opt-out, and
+ * `optionalCommerceCoreIdentityClientConfig` reports it as one — but a consumer inside the runtime
+ * every governed business route is served from must not be taken down by an unreadable transport,
+ * so the error folds to "not configured" with one warning and the fail-closed leaf answers.
+ */
+export const coreIdentityTransportConfigured: Effect.Effect<boolean> = optionalCommerceCoreIdentityClientConfig.pipe(
+  Effect.map(Option.isSome),
+  Effect.catchTag('CommerceCoreIdentityClientConfigError', (failure) =>
+    Effect.annotateLogs(
+      Effect.logWarning('Commerce Core identity transport is unreadable; enrollment owner evidence fails closed'),
+      { reason: failure.reason },
+    ).pipe(Effect.as(false)),
+  ),
+);
 
 export const CommerceCoreIdentityClientConfigLive = Layer.effect(
   CommerceCoreIdentityClientConfig,

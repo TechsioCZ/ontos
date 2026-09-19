@@ -214,7 +214,7 @@ const journalRow = (transition: JourneyTransitionSpec, status: EnrollmentOwnerOp
 
 /** A journal that knows only the transitions listed, exactly as PostgreSQL would report it. */
 const journalledPersistence = (
-  journal: ReadonlyMap<string, EnrollmentOwnerOperationSnapshot['status']>,
+  journal: ReadonlyMap<JourneyTransitionSpec, EnrollmentOwnerOperationSnapshot['status']>,
   read: string[],
 ): CommerceEnrollmentAttemptPersistence => {
   const missing = () =>
@@ -226,6 +226,8 @@ const journalledPersistence = (
         retryable: false,
       }),
     );
+  const entryFor = (transitionKey: string) =>
+    [...journal].find(([transition]) => transition.transitionKey === transitionKey);
   return {
     authorizeAccountCreation: () => missing(),
     claim: () => missing(),
@@ -233,16 +235,16 @@ const journalledPersistence = (
     read: () => Effect.succeed(attempt()),
     readOperation: (input) => {
       read.push(input.transitionKey);
-      const status = journal.get(input.transitionKey);
-      return status === undefined
-        ? missing()
-        : Effect.succeed(
-            journalRow(
-              { ownerModuleKey: input.ownerModuleKey, required: true, transitionKey: input.transitionKey },
-              status,
-            ),
-          );
+      const entry = entryFor(input.transitionKey);
+      return entry === undefined ? missing() : Effect.succeed(journalRow(entry[0], entry[1]));
     },
+    readOperations: () =>
+      Effect.succeed(
+        [...journal].map(([transition, status]) => {
+          read.push(transition.transitionKey);
+          return journalRow(transition, status);
+        }),
+      ),
     reconcile: () => missing(),
     record: () => missing(),
     terminate: () => missing(),
@@ -258,7 +260,7 @@ it.effect('reads the durable journal, not the request, to decide whether an Atte
     // IN_PROGRESS in the journal because its outcome has not been written yet.
     const journal = new Map(
       definition.requiredTransitions.map((transition) => [
-        transition.transitionKey,
+        transition,
         transition === pending ? ('IN_PROGRESS' as const) : ('SUCCEEDED' as const),
       ]),
     );
@@ -282,7 +284,7 @@ it.effect('treats a required transition that was never claimed as unproven rathe
       throw new Error('Retail self-enrollment declares required transitions');
     }
     const authority = commerceEnrollmentCompletionAuthorityForPersistence(
-      journalledPersistence(new Map([[first.transitionKey, 'IN_PROGRESS' as const]]), []),
+      journalledPersistence(new Map([[first, 'IN_PROGRESS' as const]]), []),
     );
     const state = yield* authority.derive(attempt(), {
       ownerModuleKey: first.ownerModuleKey,
