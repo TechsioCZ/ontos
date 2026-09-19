@@ -92,7 +92,7 @@ export const resolveCustomerPriceGroupAt = Effect.fn('CustomerPriceGroup.resolve
   },
 );
 
-/** Fail-closed default until Pricing publishes #334's governed PriceGroup catalog port. */
+/** Fail-closed default until Pricing publishes its governed PriceGroup catalog port. */
 export const unavailablePriceGroupCatalogPort: PriceGroupCatalogPort = {
   resolveCurrent: () =>
     Effect.fail(

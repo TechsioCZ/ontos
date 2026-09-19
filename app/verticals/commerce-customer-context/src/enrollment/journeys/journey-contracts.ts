@@ -7,21 +7,12 @@ import {
 } from '../../../shared/enrollment-contracts.ts';
 
 /**
- * Journey vocabulary shared by the three supported enrollment journeys (Retail self-enrollment,
- * Counterparty invitation, Existing account).  A journey declaration is data only: it names which
- * owner transitions are required and which are optional.  It never performs an owner effect, never
- * carries credentials or provider payloads, and never decides an owner outcome.
- *
- * The declarations exist so a caller can reason about an Attempt before any owner effect runs:
- * every dispatched transition still travels through the owner-transition driver, and the driver's
- * durable claim is the only authority that can record an owner outcome.
+ * Journey vocabulary shared by the three supported enrollment journeys. A declaration is inert
+ * data naming which owner transitions are required and which are optional; every dispatch still
+ * travels through the driver, whose durable claim is the only authority over an owner outcome.
  */
 
-/**
- * Module and transition keys keep their bounded, trimmed validation but stay plain strings in the
- * declaration: a journey declaration is inert data that every consumer re-decodes at its own
- * boundary, so branding here would only force every journey module to decode a literal twice.
- */
+/** Keys stay plain strings: every consumer re-decodes them at its own boundary anyway. */
 const JourneyTransitionSpecSchema = Schema.Struct({
   /** Owner module that dispatches this transition, e.g. `commerce.portal-auth`. */
   ownerModuleKey: Schema.toEncoded(EnrollmentModuleKeySchema),

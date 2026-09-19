@@ -40,7 +40,7 @@ const PurchaseApprovalRouteUnavailableSchema = Schema.TaggedStruct('APPROVAL_ROU
   reasonCode: Schema.String,
 });
 
-/** Exact outcomes owned by #317 after a valid approval-required evaluation reaches submission. */
+/** Exact outcomes after a valid approval-required evaluation reaches submission. */
 export const PurchaseApprovalSubmissionResultSchema = Schema.Union([
   PurchaseApprovalSubmittedSchema,
   PurchaseApprovalAlreadySubmittedSchema,

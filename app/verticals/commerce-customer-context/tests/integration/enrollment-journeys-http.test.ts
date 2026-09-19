@@ -26,7 +26,6 @@ import {
   CommerceEnrollmentContinuation,
   CommerceEnrollmentContinuationLive,
 } from '../../src/enrollment/continuation/enrollment-continuation.ts';
-import { CommerceEnrollmentOwnerEffectExecutorsLive } from '../../src/enrollment/orchestration/owner-effect-executors.ts';
 import { CommerceEnrollmentOwnerEffectRegistryLive } from '../../src/enrollment/orchestration/owner-effect-registry.ts';
 import { CommerceEnrollmentOwnerTransactionRunnerLive } from '../../src/enrollment/orchestration/owner-transaction-runner.ts';
 import { commerceEnrollmentOwnerTransitionPreparationLive } from '../../src/enrollment/orchestration/owner-transition-composition.ts';
@@ -301,14 +300,7 @@ const continuationLive = Effect.fnUntraced(function* continuationLive() {
     ),
   );
   const registryLive = CommerceEnrollmentOwnerEffectRegistryLive.pipe(
-    Layer.provide(
-      Layer.mergeAll(
-        accountLookupLive,
-        coreIdentityLive,
-        coreIdentityConfigurationLive,
-        CommerceEnrollmentOwnerEffectExecutorsLive,
-      ),
-    ),
+    Layer.provide(Layer.mergeAll(accountLookupLive, coreIdentityLive, coreIdentityConfigurationLive)),
   );
   const subjectResolverLive = CommerceEnrollmentPreparationSubjectResolverLive.pipe(
     Layer.provide(Layer.mergeAll(transactionRunnerLive, coreIdentityLive, coreIdentityConfigurationLive)),

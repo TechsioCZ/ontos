@@ -683,7 +683,7 @@ const makeWorkflow = (
             tenantId: scope.tenantId,
           },
           // The SQL owner routine ignores this caller-provided value and uses the persisted proposal's
-          // immutable expiresAt. It remains present for the public #305 adapter shape.
+          // immutable expiresAt. It remains present for the public adapter shape.
           requestExpiresAt: input.proposalEvidence.evaluatedAt,
           storefrontId: input.proposalEvidence.evaluationContext.storefrontId,
         },

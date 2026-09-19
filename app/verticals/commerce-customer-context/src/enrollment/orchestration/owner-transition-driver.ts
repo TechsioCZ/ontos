@@ -5,8 +5,6 @@ import type {
   ExternalIdentityClientPort,
   ReadPrincipalBindingRequest,
   ReadPrincipalBindingResult,
-  ResolveExternalSubjectRequest,
-  ResolveExternalSubjectResult,
   ReservePrincipalBindingRequest,
 } from '@app/shared-contracts/server/external-identity-client';
 import { DateTime, Effect, Option, Schema } from 'effect';
@@ -673,17 +671,11 @@ type CommerceEnrollmentCoreIdentityDispatchRequest =
   | { readonly operation: 'reserve'; readonly payload: ReservePrincipalBindingRequest }
   | { readonly operation: 'activate'; readonly payload: ActivatePrincipalBindingRequest };
 
-type CommerceEnrollmentCoreIdentityReconciliationRequest =
-  | { readonly operation: 'read'; readonly payload: ReadPrincipalBindingRequest }
-  | { readonly operation: 'resolve'; readonly payload: ResolveExternalSubjectRequest };
-
 type CoreFoundBindingResult = Extract<ReadPrincipalBindingResult, { readonly outcome: 'FOUND' }>;
-type CoreResolvedSubjectResult = Extract<ResolveExternalSubjectResult, { readonly outcome: 'RESOLVED' }>;
 
 export interface CommerceEnrollmentCoreIdentityOwnerEffectOptions {
   readonly client: ExternalIdentityClientPort;
   readonly clientOptions: (input: CommerceEnrollmentOwnerTransition) => ExternalIdentityClientOptions;
-  readonly idempotencyKey?: (input: CommerceEnrollmentOwnerTransition) => string;
   /**
    * Interprets a Core read only after the response's original invocation matches the immutable
    * owner operation. The callback must also establish the original request digest; the published
@@ -693,21 +685,12 @@ export interface CommerceEnrollmentCoreIdentityOwnerEffectOptions {
     input: CommerceEnrollmentOwnerReconciliationInput,
     result: CoreFoundBindingResult,
   ) => Effect.Effect<ReconcileEnrollmentResolution, CommerceEnrollmentOwnerEffectError>;
-  /**
-   * Resolve results have no original invocation provenance. Composition may provide this callback
-   * only when its owner-side evidence independently proves both the original invocation and digest;
-   * otherwise reconciliation fails closed as unavailable.
-   */
-  readonly interpretResolveResult?: (
-    input: CommerceEnrollmentOwnerReconciliationInput,
-    result: CoreResolvedSubjectResult,
-  ) => Effect.Effect<ReconcileEnrollmentResolution, CommerceEnrollmentOwnerEffectError>;
   readonly makeDispatchRequest: (
     input: CommerceEnrollmentOwnerTransition,
   ) => CommerceEnrollmentCoreIdentityDispatchRequest;
   readonly makeReconciliationRequest: (
     input: CommerceEnrollmentOwnerReconciliationInput,
-  ) => CommerceEnrollmentCoreIdentityReconciliationRequest;
+  ) => ReadPrincipalBindingRequest;
 }
 
 const coreUnavailable = (cause?: unknown): InstanceType<typeof CommerceEnrollmentOwnerEffectUnavailable> => {
@@ -761,14 +744,11 @@ const decodeCoreKey = (
 export const commerceEnrollmentCoreIdentityOwnerEffectFor = (
   options: CommerceEnrollmentCoreIdentityOwnerEffectOptions,
 ): CommerceEnrollmentOwnerEffect => {
-  const idempotencyKey = options.idempotencyKey ?? ((input) => input.ownerInvocationId);
-
   const dispatch = Effect.fn('CommerceEnrollmentCoreIdentityOwnerEffect.dispatch')(function* dispatchCoreIdentity(
     input: CommerceEnrollmentOwnerTransition,
   ): Effect.fn.Return<CommerceEnrollmentOwnerEffectOutcome, CommerceEnrollmentOwnerEffectError> {
     const request = options.makeDispatchRequest(input);
-    const baseOptions = options.clientOptions(input);
-    const mutationOptions = { ...baseOptions, idempotencyKey: idempotencyKey(input) };
+    const mutationOptions = { ...options.clientOptions(input), idempotencyKey: input.ownerInvocationId };
     if (request.operation === 'reserve') {
       const result = yield* options.client
         .reservePrincipalBinding(request.payload, mutationOptions)
@@ -807,21 +787,9 @@ export const commerceEnrollmentCoreIdentityOwnerEffectFor = (
   const reconcile = Effect.fn('CommerceEnrollmentCoreIdentityOwnerEffect.reconcile')(function* reconcileCoreIdentity(
     input: CommerceEnrollmentOwnerReconciliationInput,
   ): Effect.fn.Return<ReconcileEnrollmentResolution, CommerceEnrollmentOwnerEffectError> {
-    const request = options.makeReconciliationRequest(input);
-    const result =
-      request.operation === 'read'
-        ? yield* options.client
-            .readPrincipalBinding(request.payload, options.clientOptions(input))
-            .pipe(Effect.mapError(mapExternalIdentityError))
-        : yield* options.client
-            .resolveExternalSubject(request.payload, options.clientOptions(input))
-            .pipe(Effect.mapError(mapExternalIdentityError));
-    if (request.operation === 'resolve') {
-      if (options.interpretResolveResult === undefined || result.outcome !== 'RESOLVED') {
-        return yield* coreUnavailable();
-      }
-      return yield* options.interpretResolveResult(input, result);
-    }
+    const result = yield* options.client
+      .readPrincipalBinding(options.makeReconciliationRequest(input), options.clientOptions(input))
+      .pipe(Effect.mapError(mapExternalIdentityError));
     if (
       result.outcome !== 'FOUND' ||
       !Option.isSome(result.originalInvocationId) ||

@@ -25,16 +25,12 @@ import {
 } from './retail-self-enrollment-contracts.ts';
 
 /**
- * Party Registry candidate submission as one Retail self-enrollment owner transition.
+ * Party Registry candidate submission as one Retail self-enrollment owner transition. A Party is
+ * created only on `NO_MATCH`; an `AMBIGUOUS` outcome is a typed non-terminal halt, so the adapter
+ * never picks a Party, widens a match, or infers ownership from an email or a Guest order.
  *
- * The adapter speaks only the published Party Registry client.  It submits the exact candidate,
- * reads the typed match outcome, and creates a Party only on `NO_MATCH`.  An `AMBIGUOUS` outcome
- * is a typed non-terminal halt: the adapter never picks a Party, never widens a match, and never
- * infers ownership from a login email or a Guest order.
- *
- * Reconciliation is an exact owner read.  `recoverPartyCreate` resolves the immutable original
- * invocation's commit state through Core and then reads that invocation's durable decision; a
- * still-open commit is rejected for a later retry rather than resubmitting a Create.
+ * Reconciliation reads what the immutable original invocation committed; a still-open commit is
+ * rejected for a later retry rather than resubmitting a Create.
  */
 
 type PartyMatchInvocation = Parameters<typeof executePartyMatch>;

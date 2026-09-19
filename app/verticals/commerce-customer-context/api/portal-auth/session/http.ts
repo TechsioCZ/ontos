@@ -401,21 +401,10 @@ const signInRateLimit: CommercePortalAuthRecoveryRateLimitRule = {
  * than a readable list of the portal's customers.
  */
 /**
- * Better Auth declares `rateLimit.customRules['/sign-in/email']` but enforces it only inside
- * `router()`'s `onRequest`, which is reachable exclusively through `auth.handler` — a handler this
- * transport deliberately never mounts. Password attempts would therefore be unbounded, so the owner
- * spends the same rule against its own durable counter store. A store that cannot answer refuses
- * the attempt rather than serving it uncounted.
- *
- * The key names both the resolved client and the account the attempt is for. The account half is
- * what keeps one caller from denying sign-in to everybody: this vertical is served by a web handler
- * whose request carries no socket peer (`http-transport.ts`), so `resolveClientKey` answers the same
- * unattributable value for every request and a client-only key would be a single deployment-wide
- * 5-per-60s counter — six attempts from anywhere would answer every customer's sign-in with 429.
- * Keyed on the account, an attempt can only spend the budget of the address it already names, which
- * is also the thing a password-attempt throttle exists to protect. The client half is not
- * decoration: where a deployment does observe a peer it keeps one client's attempts off another
- * client's budget for the same account.
+ * Better Auth runs its `/sign-in/email` limiter only inside `auth.handler`, which this transport
+ * never mounts, so the owner spends the same rule itself. The key carries the account as well as
+ * the client because `resolveClientKey` is unattributable here (see `http-transport.ts`), so a
+ * client-only key would answer every customer's sign-in with 429.
  */
 const consumeSignInBudget = Effect.fn('CommercePortalAuthSessionHttp.signInRateLimit')(
   function* consumeSignInBudgetEffect(request: HttpServerRequest.HttpServerRequest, email: string) {

@@ -103,22 +103,10 @@ const mfaSubjectKey = (
 };
 
 /**
- * `auth.ts` declares `rateLimit.customRules['/two-factor/*']`, but Better Auth runs that limiter
- * only inside `router()`'s request hook, reachable exclusively through `auth.handler` — which this
- * transport never mounts, because every provider call is a direct `auth.api.*` invocation. Without
- * this, `POST /api/portal-auth/two-factor/send-otp` would flood OTP mail and reset the plugin's own
- * attempt counter without limit. One budget covers the group, matching the single `/two-factor/*`
- * rule the provider configuration declares.
- *
- * The key names both the resolved client and the pending challenge — or live session — the attempt
- * is for. The challenge half is what keeps one caller from denying MFA to everybody: this vertical
- * is served by a web handler whose request carries no socket peer (`../../http-transport.ts`), so
- * `resolveClientKey` answers the same unattributable value for every request and a client-only key
- * would be a single deployment-wide 5-per-300s counter — six `send-otp` calls from anywhere would
- * answer every customer's `verify-totp` with 429 and block the completion of every 2FA sign-in.
- * Keyed on the challenge, an attempt can only spend the budget of the challenge it already holds,
- * which is exactly what a per-challenge throttle exists to protect; the sibling step-up transport
- * keys its two budgets the same way, on the session its caller's own cookie resolves to.
+ * Better Auth runs its `/two-factor/*` limiter only inside `auth.handler`, which this transport
+ * never mounts, so the owner spends the same rule itself. The key carries the pending challenge as
+ * well as the client because `resolveClientKey` is unattributable here (see
+ * `../../http-transport.ts`), so a client-only key would block every customer's 2FA sign-in.
  */
 const consumeMfaBudget = Effect.fn('CommercePortalAuthMfaHttp.rateLimit')(function* consumeMfaBudgetEffect(
   request: HttpServerRequest.HttpServerRequest,
@@ -139,17 +127,10 @@ const consumeMfaBudget = Effect.fn('CommercePortalAuthMfaHttp.rateLimit')(functi
 });
 
 /**
- * Every published route is state-changing, so each one runs the owner's CSRF origin check and
- * spends the owner's durable MFA budget. The installed Better Auth plugin still understands
- * `trustDevice: true`, so the transport refuses it here instead of letting a trusted-device cookie
- * be minted.
- *
- * The origin gate runs before the budget is spent. These trusted origins are the only CSRF
- * authority for this route family (`../../http-transport.ts` — the transport CORS layer does not
- * cover them), and an MFA body is a CORS simple request, so a third-party page can drive a
- * visitor's browser into this handler. Spending first would let that page exhaust the visitor's own
- * challenge budget and collect a 403 only afterwards; the sibling sign-in and step-up transports
- * order it the same way.
+ * Every published route is state-changing, so each runs the owner's CSRF origin check and spends
+ * the owner's durable MFA budget. The origin gate runs first: an MFA body is a CORS simple request,
+ * so spending first would let a third-party page exhaust the visitor's own challenge budget. The
+ * installed plugin still understands `trustDevice: true`, so the transport refuses it here.
  */
 const prepareMfaCall = Effect.fn('CommercePortalAuthMfaHttp.prepare')(function* prepareMfaCallEffect(
   request: HttpServerRequest.HttpServerRequest,
@@ -279,18 +260,11 @@ export type CommercePortalAuthMfaFreshnessLifecycle = Pick<
 >;
 
 /**
- * Exported so a caller already holding a Better Auth `api` and the owner's lifecycle — an
- * integration test driving a fixture realm over the real store, for instance — can build the same
- * reader without going through the service tags. Better Auth resolves the cookie to a session
- * identity; the owner's lifecycle answers when that session was last authenticated. The provider
- * has no column for it — the stamp lives on the owner's own session row
- * (`../../../../src/portal-auth/persistence/portal-auth-tables.ts`) — so the two halves are read
- * here rather than inferred from the provider's `createdAt`.
+ * Better Auth resolves the cookie to a session identity; the owner's lifecycle answers when that
+ * session was last authenticated, because the provider has no column for it.
  *
- * Any failure to read or decode the session — timeout, provider fault, malformed response, a
- * session the owner's lifecycle refuses evidence for — is treated the same as no session at all:
- * freshness cannot be confirmed, so the gate denies rather than risking a stale or forged session
- * being accepted. Only a diagnostic reason is logged, never session or user identifiers.
+ * Any failure to read or decode the session is treated as no session at all: freshness cannot be
+ * confirmed, so the gate denies. Only a diagnostic reason is logged, never an identifier.
  */
 export const commercePortalAuthMfaFreshnessReaderFromApi = (
   api: CommercePortalAuthMfaSessionReadApi,

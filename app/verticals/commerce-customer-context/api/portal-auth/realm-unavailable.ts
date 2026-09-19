@@ -20,19 +20,11 @@ import { CommercePortalAuthProviderUnavailable, CommercePortalAuthSessionUnavail
 import { CommercePortalAuthService } from './session/http.ts';
 
 /**
- * The Commerce portal realm is optional. A deployment that never supplied `COMMERCE_PORTAL_AUTH_*`
- * has no Better Auth secret, no provider database and no transactional email transport, and the
- * real realm layers cannot be built there. Building them anyway is what turned every route of this
- * vertical — readiness included — into a 500: `assembleEffectBffRuntime` requires a handler Layer
- * whose error channel is `never`, so the composition root ends in `Layer.orDie` and one failing
- * provider layer becomes a defect for the whole router.
- *
- * This module is the other half of that decision: the same service tags the four portal-auth
- * groups read, implemented so that every portal operation fails closed with the owner's retryable
- * 503 problem while readiness and the business routes keep serving. It follows the leaf the step-up
- * transport already installs (`CommercePortalAuthStepUpHttpProviderUnavailableLive`) and the owner
- * ports the composition root installs beside it (`profileReconfirmationPolicyUnavailableLive`,
- * `ProfileReconciliationOwnerVerifierUnavailableLive`).
+ * The Commerce portal realm is optional, and `assembleEffectBffRuntime` requires a handler Layer
+ * whose error channel is `never`: building the real realm layers without `COMMERCE_PORTAL_AUTH_*`
+ * would turn one failing provider layer into a defect for the whole router. These leaves implement
+ * the same service tags so every portal operation fails closed with the owner's retryable 503
+ * while readiness and the business routes keep serving.
  */
 const UNAVAILABLE_REASON = 'The Commerce portal authentication realm is not installed in this deployment';
 

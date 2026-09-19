@@ -180,7 +180,7 @@ interface RotateInput {
  * Commerce provider tables; no Core binding or Tenant row is touched by these operations.
  *
  * Every mutating method runs in one transaction, and the audited variants write the caller's audit
- * row inside it. That is the containment boundary for #340 evidence: a revocation, an account
+ * row inside it. That is the containment boundary for audit evidence: a revocation, an account
  * disable, an identifier rotation or an inactivity renewal either commits together with its row or
  * does not commit at all.
  */

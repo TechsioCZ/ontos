@@ -35,19 +35,16 @@ import {
 } from './retail-self-enrollment-contracts.ts';
 
 /**
- * The two Commerce-owned Retail self-enrollment transitions: ensure the Commerce Retail Customer
- * Profile and activate the Retail Portal Profile Binding, which durably stages the
- * reviewed Retail Portal Self-Service Permission baseline inside the binding transaction.
+ * The two Commerce-owned Retail self-enrollment transitions: ensure the Retail Customer Profile,
+ * then activate the Retail Portal Profile Binding.
  *
- * This vertical has no separate retail grant Action — `grant-counterparty-commerce-access` is the
- * Counterparty path — so the binding Action's staged Permission mutations are the retail grant
- * path.  A binding that commits without the complete reviewed baseline is therefore a partially
- * completed grant: the owner records `retail_portal_grants_incomplete` and the journey halts into
- * reconciliation instead of reporting portal access that does not exist.
+ * This vertical has no separate retail grant Action, so the binding Action's staged Permission
+ * mutations are the retail grant path: a binding that commits without the complete reviewed
+ * baseline is a partially completed grant, recorded as `retail_portal_grants_incomplete` so the
+ * journey halts rather than reporting portal access that does not exist.
  *
- * Both Actions are dispatched under the immutable owner invocation as their idempotency key.  A
- * timeout after commit reconciles through the Action commit resolution port — an exact read of
- * that invocation's committed result — and never through a second dispatch.
+ * Both dispatch under the immutable owner invocation as idempotency key; a timeout after commit
+ * reconciles through the Action commit resolution port, never through a second dispatch.
  */
 
 type EnsureProfilePayload = Parameters<typeof executeEnsureRetailCustomerProfile>[0];

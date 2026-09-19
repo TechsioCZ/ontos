@@ -49,15 +49,7 @@ import type {
   CommerceEnrollmentPreparedOwnerBinding,
 } from './prepared-owner-authority.ts';
 
-/**
- * An owner-authoritative read is unavailable rather than denied whenever the failure is retryable;
- * every other Attempt failure is a definitive owner denial, so a claimed payload can never reach a
- * governed handler on an ambiguous owner answer.
- */
-/**
- * Module and transition keys are module-owned literals, so they are decoded once at load: a
- * malformed constant is a build-time fact about this module, never a per-request effect.
- */
+/** Module-owned literals, decoded once at load rather than on every request. */
 const decodeModuleKey = (value: string): CommerceEnrollmentPreparedOwnerBinding['ownerModuleKey'] =>
   Result.getOrThrow(Schema.decodeResult(EnrollmentModuleKeySchema)(value));
 const decodeTransitionKey = (value: string): CommerceEnrollmentPreparedOwnerBinding['transitionKey'] =>

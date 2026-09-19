@@ -21,10 +21,7 @@ import {
 } from '../journeys/retail-self-enrollment-contracts.ts';
 import { enrollmentJourneyDefinitionForAttempt } from '../orchestration/completion.ts';
 import { CommerceEnrollmentOwnerEffectRegistry } from '../orchestration/owner-effect-registry.ts';
-import type {
-  CommerceEnrollmentOwnerEffectContext,
-  CommerceEnrollmentRegisteredOwnerEffect,
-} from '../orchestration/owner-effect-registry.ts';
+import type { CommerceEnrollmentRegisteredOwnerEffect } from '../orchestration/owner-effect-registry.ts';
 import {
   CommerceEnrollmentOwnerTransitionSchema,
   commerceEnrollmentOwnerTransitionDriverFor,
@@ -42,22 +39,12 @@ import { CommerceEnrollmentPreparationSubjectResolver } from '../orchestration/p
 import type { CommerceEnrollmentPreparationSubjectResolve } from '../orchestration/preparation-subject.ts';
 
 /**
- * The server-side enrollment continuation.
+ * `POST /enrollment/start` commits one Attempt and the one provider account its claim authorizes;
+ * every further transition is dispatched here, after that request committed and outside every
+ * governed Action transaction.
  *
- * `POST /enrollment/start` commits one Attempt and the one provider account that Attempt's claim
- * authorizes; every further transition the journey requires is dispatched here, after that request
- * has committed and outside every governed Action transaction.
- *
- * The continuation owns no business rule of its own.  It reads the durable Attempt, asks the
- * journey definition which required transition the owner journal has not proven, asks the
- * owner-effect registry who owns it, and hands the whole thing to the generic owner-transition
- * driver — whose durable claim remains the only authority that can record an owner outcome.
- *
- * It is safe to run twice and safe to run after a crash.  Every owner invocation identity it uses
- * is derived from the Attempt, so a re-run presents the very same claim and the journal replays the
- * transition instead of repeating the external effect.  An owner whose answer was lost is settled
- * exactly once through the driver's own reconcile phase — an authoritative read of the original
- * invocation, never a second dispatch.
+ * Every owner invocation identity is derived from the durable Attempt, so a re-run presents the
+ * same claim and the journal replays the transition instead of repeating the external effect.
  */
 
 const CONTINUATION_WORKER_PREFIX = 'commerce.customer-context.enrollment-continuation';
@@ -68,23 +55,11 @@ const CONTINUATION_CONCURRENCY = 8;
 /** The longest journey's transition count, plus one pass to settle a reconciliation. */
 const CONTINUATION_PASS_BUDGET = 8;
 
-interface CommerceEnrollmentContinuationStep {
-  readonly outcome: 'RECONCILED' | 'RECORDED' | 'REPLAYED';
-  readonly ownerModuleKey: string;
-  /** The Attempt revision observed after this owner outcome was durably recorded. */
-  readonly revision: number;
-  readonly transitionKey: string;
-}
-
 interface CommerceEnrollmentContinuationHalt {
   /**
-   * `ATTEMPT_TERMINAL`: the Attempt was terminated, so no owner effect remains to run.
-   * `IN_FLIGHT`: another worker holds the transition's lease.  `NO_OWNER_EFFECT`: this deployment
-   * registers no owner effect that may dispatch the transition, so the Attempt is left exactly as
-   * it was.  `OWNER_REJECTED`: a durable owner refusal.  `RECONCILIATION_REQUIRED`: an owner
-   * decision is pending — an ambiguous Party, an incomplete grant staging, or an owner answer that
-   * never arrived.  `VERIFICATION_REQUIRED`: every required transition is proven but the Attempt's
-   * own derived state still asks for verification.  None of the six is a completed journey.
+   * `IN_FLIGHT`: another worker holds the transition's lease. `NO_OWNER_EFFECT`: this deployment
+   * registers no owner effect that may dispatch it, so the Attempt is left exactly as it was.
+   * `RECONCILIATION_REQUIRED`: an owner decision is pending. None of the six is a completed journey.
    */
   readonly reason:
     | 'ATTEMPT_TERMINAL'
@@ -98,21 +73,12 @@ interface CommerceEnrollmentContinuationHalt {
 }
 
 export type CommerceEnrollmentContinuationResult =
-  | {
-      readonly outcome: 'COMPLETE';
-      readonly revision: number;
-      readonly steps: readonly CommerceEnrollmentContinuationStep[];
-    }
-  | {
-      readonly halt: CommerceEnrollmentContinuationHalt;
-      readonly outcome: 'HALTED';
-      readonly revision: number;
-      readonly steps: readonly CommerceEnrollmentContinuationStep[];
-    };
+  | { readonly outcome: 'COMPLETE' }
+  | { readonly halt: CommerceEnrollmentContinuationHalt; readonly outcome: 'HALTED' };
 
 export interface CommerceEnrollmentContinuationService {
   /**
-   * Advance one Attempt as far as its journey and its durable journal allow.  Failure is always a
+   * Advance one Attempt as far as its journey and its durable journal allow. Failure is always a
    * typed Attempt failure; a halt is an ordinary success that simply is not a completion.
    */
   readonly advance: (
@@ -127,29 +93,25 @@ export class CommerceEnrollmentContinuation extends Context.Service<
 
 type OwnerDispatch = CommerceEnrollmentOwnerEffect['dispatch'];
 
-interface ContinuationState {
-  readonly attemptState: EnrollmentAttemptState;
-  readonly halt: Option.Option<CommerceEnrollmentContinuationHalt>;
-  readonly progressed: boolean;
-  readonly revision: number;
-  readonly steps: readonly CommerceEnrollmentContinuationStep[];
-}
+type PassResult =
+  | { readonly kind: 'ADVANCED' }
+  | { readonly halt: CommerceEnrollmentContinuationHalt; readonly kind: 'HALTED' }
+  | { readonly attemptState: EnrollmentAttemptState; readonly kind: 'SETTLED' };
 
-const haltFor = (
+const advanced: PassResult = { kind: 'ADVANCED' };
+
+const halted = (
   reason: CommerceEnrollmentContinuationHalt['reason'],
-  transition: JourneyTransitionSpec,
-): CommerceEnrollmentContinuationHalt => ({ reason, transition: Option.some(transition) });
-
-const attemptHalt = (reason: CommerceEnrollmentContinuationHalt['reason']): CommerceEnrollmentContinuationHalt => ({
-  reason,
-  transition: Option.none(),
+  transition?: JourneyTransitionSpec,
+): PassResult => ({
+  halt: { reason, transition: Option.fromNullishOr(transition) },
+  kind: 'HALTED',
 });
 
 /**
  * A durable owner failure is a reconciliation halt when the owner said its decision is pending
- * rather than refused.  Owners speak that through the shared reconciliation failure code — an
- * ambiguous Party, an incompletely staged grant baseline — so the reading is journey-neutral and
- * never depends on a journey's own outcome vocabulary.
+ * rather than refused; owners speak that through the shared reconciliation failure code, so the
+ * reading never depends on a journey's own outcome vocabulary.
  */
 const failureHalt = (
   transition: JourneyTransitionSpec,
@@ -157,8 +119,8 @@ const failureHalt = (
     readonly failureCode?: string;
     readonly nextState?: 'IN_PROGRESS' | 'RECONCILIATION_REQUIRED' | 'VERIFICATION_REQUIRED';
   },
-): CommerceEnrollmentContinuationHalt =>
-  haltFor(
+): PassResult =>
+  halted(
     failure.nextState === 'RECONCILIATION_REQUIRED' ||
       failure.failureCode === OWNER_RECONCILIATION_REQUIRED_FAILURE_CODE
       ? 'RECONCILIATION_REQUIRED'
@@ -166,27 +128,14 @@ const failureHalt = (
     transition,
   );
 
-/** Whether an owner operation's lease still grants its holder exclusive ownership. */
 const leaseIsActive = (lease: EnrollmentOwnerOperationSnapshot['lease']): Effect.Effect<boolean> =>
   lease === undefined
     ? Effect.succeed(false)
     : DateTime.now.pipe(Effect.map((now) => DateTime.isLessThan(now, lease.leaseExpiresAt)));
 
-const stepFor = (
-  transition: JourneyTransitionSpec,
-  outcome: CommerceEnrollmentContinuationStep['outcome'],
-  revision: number,
-): CommerceEnrollmentContinuationStep => ({
-  outcome,
-  ownerModuleKey: transition.ownerModuleKey,
-  revision,
-  transitionKey: transition.transitionKey,
-});
-
 /**
- * The owner invocation identity for one transition of one Attempt.  It is derived, never minted:
- * a re-run after a crash presents the identical claim, so the durable journal replays the owner
- * operation rather than authorizing a second external effect.
+ * The owner invocation identity is derived, never minted: a re-run after a crash presents the
+ * identical claim, so the durable journal replays rather than authorizing a second effect.
  */
 const ownerInvocationIdFor = (
   attempt: EnrollmentAttemptSnapshot,
@@ -286,14 +235,7 @@ interface StepInput {
   readonly transition: JourneyTransitionSpec;
 }
 
-type StepResult =
-  | { readonly kind: 'ADVANCED'; readonly step: CommerceEnrollmentContinuationStep }
-  | { readonly halt: CommerceEnrollmentContinuationHalt; readonly kind: 'HALTED'; readonly revision: number };
-
-/**
- * A reconciliation phase never dispatches, so the reconcile-only driver is handed a dispatch that
- * cannot be reached rather than a second live effect.
- */
+/** A reconciliation phase never dispatches, so the driver is handed an unreachable dispatch. */
 const unreachableDispatch: OwnerDispatch = () =>
   Effect.die('The enrollment continuation does not dispatch while reconciling an owner operation');
 
@@ -307,15 +249,14 @@ const driverFor = (input: StepInput, dispatch: OwnerDispatch) =>
   });
 
 /**
- * Settle one already dispatched transition whose answer never arrived.  This is the only path that
- * may resolve an INDETERMINATE owner operation, and the identity it reconciles under is read back
- * from the immutable journal entry — never re-derived — so a transition first dispatched by the
- * start route is reconciled as that route's invocation, not as the continuation's.
+ * Settle one already dispatched transition whose answer never arrived. The identity it reconciles
+ * under is read back from the immutable journal entry — never re-derived — so a transition first
+ * dispatched by the start route is reconciled as that route's invocation.
  */
 const reconcileStep = Effect.fn('CommerceEnrollmentContinuation.reconcile')(function* reconcileStepEffect(
   input: StepInput,
   operation: EnrollmentOwnerOperationSnapshot,
-): Effect.fn.Return<StepResult, CommerceEnrollmentAttemptError> {
+): Effect.fn.Return<PassResult, CommerceEnrollmentAttemptError> {
   const transition = yield* transitionFor(
     input.attempt,
     input.transition,
@@ -323,73 +264,45 @@ const reconcileStep = Effect.fn('CommerceEnrollmentContinuation.reconcile')(func
     operation.requestDigest,
   );
   const reconciled = yield* driverFor(input, unreachableDispatch).reconcile(transition);
-  if (reconciled.outcome !== 'RECORDED') {
-    return reconciled.operation.status === 'SUCCEEDED'
-      ? { kind: 'ADVANCED', step: stepFor(input.transition, 'REPLAYED', reconciled.attempt.revision) }
-      : {
-          halt: failureHalt(input.transition, reconciled.operation),
-          kind: 'HALTED',
-          revision: reconciled.attempt.revision,
-        };
-  }
-  const { recorded, resolution } = reconciled;
-  return resolution.status === 'SUCCEEDED'
-    ? { kind: 'ADVANCED', step: stepFor(input.transition, 'RECONCILED', recorded.attempt.revision) }
-    : {
-        halt: failureHalt(input.transition, resolution),
-        kind: 'HALTED',
-        revision: recorded.attempt.revision,
-      };
+  const settled = reconciled.outcome === 'RECORDED' ? reconciled.resolution : reconciled.operation;
+  return settled.status === 'SUCCEEDED' ? advanced : failureHalt(input.transition, settled);
 });
 
-/** Claim, dispatch outside every transaction, record.  The driver owns all three phases. */
+/** Claim, dispatch outside every transaction, record. The driver owns all three phases. */
 const dispatchStep = Effect.fn('CommerceEnrollmentContinuation.dispatch')(function* dispatchStepEffect(
   input: StepInput,
   dispatch: OwnerDispatch,
   requestDigest: string,
-): Effect.fn.Return<StepResult, CommerceEnrollmentAttemptError> {
+): Effect.fn.Return<PassResult, CommerceEnrollmentAttemptError> {
   const ownerInvocationId = yield* ownerInvocationIdFor(input.attempt, input.transition);
   const transition = yield* transitionFor(input.attempt, input.transition, ownerInvocationId, requestDigest);
   const executed = yield* driverFor(input, dispatch)
     .execute(transition)
     .pipe(
-      Effect.map((value) => ({ kind: 'EXECUTED' as const, value })),
-      Effect.catchTag('CommerceEnrollmentAttemptIndeterminate', () => Effect.succeed({ kind: 'PENDING' as const })),
+      Effect.asSome,
+      // The owner's answer is unknown. Nothing is recorded and nothing is dispatched a second time:
+      // the next `advance` observes an INDETERMINATE operation and settles it by reading the owner.
+      Effect.catchTag('CommerceEnrollmentAttemptIndeterminate', () => Effect.succeedNone),
     );
-  if (executed.kind === 'PENDING') {
-    // The owner's answer is unknown. Nothing is recorded and nothing is dispatched a second time:
-    // the next `advance` observes an INDETERMINATE operation and settles it by reading the owner.
-    return {
-      halt: haltFor('RECONCILIATION_REQUIRED', input.transition),
-      kind: 'HALTED',
-      revision: input.attempt.revision,
-    };
+  if (Option.isNone(executed)) {
+    return halted('RECONCILIATION_REQUIRED', input.transition);
   }
   const execution = executed.value;
   if (execution.outcome === 'LEASE_HELD') {
-    return {
-      halt: haltFor('IN_FLIGHT', input.transition),
-      kind: 'HALTED',
-      revision: execution.claim.attempt.revision,
-    };
+    return halted('IN_FLIGHT', input.transition);
   }
   if (execution.outcome === 'REPLAYED') {
-    return { kind: 'ADVANCED', step: stepFor(input.transition, 'REPLAYED', execution.claim.attempt.revision) };
+    return advanced;
   }
-  const { ownerOutcome, recorded } = execution;
-  return ownerOutcome.status === 'SUCCEEDED'
-    ? { kind: 'ADVANCED', step: stepFor(input.transition, 'RECORDED', recorded.attempt.revision) }
-    : {
-        halt: failureHalt(input.transition, ownerOutcome),
-        kind: 'HALTED',
-        revision: recorded.attempt.revision,
-      };
+  return execution.ownerOutcome.status === 'SUCCEEDED'
+    ? advanced
+    : failureHalt(input.transition, execution.ownerOutcome);
 });
 
 /** The verdict for one declared transition, decided from the durable journal before anything runs. */
 const runTransition = Effect.fn('CommerceEnrollmentContinuation.runTransition')(function* runTransitionEffect(
   input: StepInput,
-): Effect.fn.Return<StepResult, CommerceEnrollmentAttemptError> {
+): Effect.fn.Return<PassResult, CommerceEnrollmentAttemptError> {
   const { operation } = input;
   if (Option.isSome(operation)) {
     const { status } = operation.value;
@@ -397,45 +310,43 @@ const runTransition = Effect.fn('CommerceEnrollmentContinuation.runTransition')(
       return yield* reconcileStep(input, operation.value);
     }
     if (status === 'FAILED') {
-      return {
-        halt: failureHalt(input.transition, operation.value),
-        kind: 'HALTED',
-        revision: input.attempt.revision,
-      };
+      return failureHalt(input.transition, operation.value);
     }
     if (status === 'IN_PROGRESS') {
-      // A dispatch is either still running under a live lease, or its worker disappeared. Only the
-      // lease holder may finish it; once the lease lapses the transition is settled by reading the
-      // owner — the driver's reconcile phase fences the stale row first — never by dispatching a
-      // second time.
+      // Only the lease holder may finish a running dispatch; once the lease lapses the transition is
+      // settled by reading the owner — the driver's reconcile phase fences the stale row first.
       return (yield* leaseIsActive(operation.value.lease))
-        ? { halt: haltFor('IN_FLIGHT', input.transition), kind: 'HALTED', revision: input.attempt.revision }
+        ? halted('IN_FLIGHT', input.transition)
         : yield* reconcileStep(input, operation.value);
     }
   }
   const { dispatch } = input.owner;
   if (Option.isNone(dispatch)) {
     // Either the transition's dispatch belongs to another caller, or an owner operation is still
-    // leased and only its owner may finish it. Either way the Attempt is left exactly as it was:
-    // no claim, no lease, no revision change.
-    return {
-      halt: haltFor(Option.isSome(operation) ? 'IN_FLIGHT' : 'NO_OWNER_EFFECT', input.transition),
-      kind: 'HALTED',
-      revision: input.attempt.revision,
-    };
+    // leased. Either way the Attempt is left exactly as it was: no claim, no lease, no revision.
+    return halted(Option.isSome(operation) ? 'IN_FLIGHT' : 'NO_OWNER_EFFECT', input.transition);
   }
   return yield* dispatchStep(input, dispatch.value.effect, dispatch.value.requestDigest);
 });
 
-const ownerContextFor = Effect.fn('CommerceEnrollmentContinuation.context')(function* ownerContextForEffect(
+/**
+ * One pass over the journey: re-read the Attempt, find the first required transition the journal
+ * has not proven, and run exactly that one. `advance` loops the pass, so every step sees a fresh
+ * Attempt revision and a freshly resolved subject.
+ */
+const advancePass = Effect.fn('CommerceEnrollmentContinuation.pass')(function* advancePassEffect(
   seams: ContinuationSeams,
-  store: CommerceEnrollmentOwnerAttemptStore,
-  attempt: EnrollmentAttemptSnapshot,
-  transitions: readonly JourneyTransitionSpec[],
-): Effect.fn.Return<CommerceEnrollmentOwnerEffectContext, CommerceEnrollmentAttemptError> {
+  input: ReadEnrollmentAttemptInput,
+): Effect.fn.Return<PassResult, CommerceEnrollmentAttemptError> {
+  const store = seams.store(input);
+  const attempt = yield* store.read(input);
+  if (isEnrollmentAttemptTerminal(attempt.state)) {
+    return { attemptState: attempt.state, kind: 'SETTLED' };
+  }
+  const definition = yield* enrollmentJourneyDefinitionForAttempt(attempt);
   const { operations, subject } = yield* Effect.all(
     {
-      operations: readJournal(store, attempt, transitions),
+      operations: readJournal(store, attempt, journeyTransitions(definition)),
       subject: seams.resolveSubject({
         portalEnrollmentAttemptId: attempt.portalEnrollmentAttemptId,
         tenantId: attempt.tenantId,
@@ -443,124 +354,61 @@ const ownerContextFor = Effect.fn('CommerceEnrollmentContinuation.context')(func
     },
     { concurrency: 2 },
   );
-  return {
+  const proven = new Set(
+    operations.flatMap((operation) => (operation.status === 'SUCCEEDED' ? [journeyTransitionIdentity(operation)] : [])),
+  );
+  const next = definition.requiredTransitions.find((transition) => !proven.has(journeyTransitionIdentity(transition)));
+  if (next === undefined) {
+    return { attemptState: attempt.state, kind: 'SETTLED' };
+  }
+  const owner = yield* seams.registry.resolve(next, {
     attempt,
     operations,
     requestCorrelation: `${CONTINUATION_WORKER_PREFIX}:${attempt.portalEnrollmentAttemptId}`,
     subject,
-  };
-});
-
-const settled = (state: ContinuationState, attempt: EnrollmentAttemptSnapshot): ContinuationState => ({
-  attemptState: attempt.state,
-  halt: Option.none(),
-  progressed: false,
-  revision: attempt.revision,
-  steps: state.steps,
-});
-
-/**
- * One pass over the journey: re-read the Attempt, find the first required transition the journal
- * has not proven, and run exactly that one.  `advance` loops the pass, so every step sees a fresh
- * Attempt revision and a freshly resolved subject — the Party the previous step created, the
- * profile the one before it ensured.
- */
-const advancePass = Effect.fn('CommerceEnrollmentContinuation.pass')(function* advancePassEffect(
-  seams: ContinuationSeams,
-  input: ReadEnrollmentAttemptInput,
-  state: ContinuationState,
-): Effect.fn.Return<ContinuationState, CommerceEnrollmentAttemptError> {
-  const store = seams.store(input);
-  const attempt = yield* store.read(input);
-  if (isEnrollmentAttemptTerminal(attempt.state)) {
-    return settled(state, attempt);
-  }
-  const definition = yield* enrollmentJourneyDefinitionForAttempt(attempt);
-  const context = yield* ownerContextFor(seams, store, attempt, journeyTransitions(definition));
-  const proven = new Set(
-    context.operations.flatMap((operation) =>
-      operation.status === 'SUCCEEDED' ? [journeyTransitionIdentity(operation)] : [],
-    ),
-  );
-  const next = definition.requiredTransitions.find((transition) => !proven.has(journeyTransitionIdentity(transition)));
-  if (next === undefined) {
-    return settled(state, attempt);
-  }
-  const owner = yield* seams.registry.resolve(next, context);
+  });
   if (Option.isNone(owner)) {
-    return {
-      attemptState: attempt.state,
-      halt: Option.some(haltFor('NO_OWNER_EFFECT', next)),
-      progressed: false,
-      revision: attempt.revision,
-      steps: state.steps,
-    };
+    return halted('NO_OWNER_EFFECT', next);
   }
   const operation = Option.fromNullishOr(
-    context.operations.find(
+    operations.find(
       (candidate) => candidate.ownerModuleKey === next.ownerModuleKey && candidate.transitionKey === next.transitionKey,
     ),
   );
-  const result = yield* runTransition({ attempt, operation, owner: owner.value, store, transition: next });
-  return result.kind === 'HALTED'
-    ? {
-        attemptState: attempt.state,
-        halt: Option.some(result.halt),
-        progressed: false,
-        revision: result.revision,
-        steps: state.steps,
-      }
-    : {
-        attemptState: attempt.state,
-        halt: Option.none(),
-        progressed: true,
-        revision: result.step.revision,
-        steps: [...state.steps, result.step],
-      };
+  return yield* runTransition({ attempt, operation, owner: owner.value, store, transition: next });
 });
 
-/**
- * A journey declares a finite transition list, and every pass either proves one more transition or
- * stops, so the loop is bounded by that list.  The bound is enforced rather than trusted: a pass
- * that neither advanced nor halted would otherwise spin.
- */
-const finish = (state: ContinuationState): CommerceEnrollmentContinuationResult => {
-  const { halt, revision, steps } = state;
-  if (Option.isSome(halt)) {
-    return { halt: halt.value, outcome: 'HALTED', revision, steps };
-  }
-  if (state.attemptState === 'COMPLETE') {
-    return { outcome: 'COMPLETE', revision, steps };
-  }
-  return {
-    halt: attemptHalt(state.attemptState === 'TERMINATED' ? 'ATTEMPT_TERMINAL' : 'VERIFICATION_REQUIRED'),
-    outcome: 'HALTED',
-    revision,
-    steps,
-  };
-};
+const settledResult = (attemptState: EnrollmentAttemptState): CommerceEnrollmentContinuationResult =>
+  attemptState === 'COMPLETE'
+    ? { outcome: 'COMPLETE' }
+    : {
+        halt: {
+          reason: attemptState === 'TERMINATED' ? 'ATTEMPT_TERMINAL' : 'VERIFICATION_REQUIRED',
+          transition: Option.none(),
+        },
+        outcome: 'HALTED',
+      };
 
+/**
+ * A journey declares a finite transition list and every pass either proves one more transition or
+ * stops, so the loop is bounded by that list. The bound is enforced rather than trusted.
+ */
 const advanceLoop = (
   seams: ContinuationSeams,
   input: ReadEnrollmentAttemptInput,
-  state: ContinuationState,
   remaining: number,
 ): Effect.Effect<CommerceEnrollmentContinuationResult, CommerceEnrollmentAttemptError> =>
-  remaining <= 0
-    ? Effect.succeed(finish(state))
-    : advancePass(seams, input, state).pipe(
-        Effect.flatMap((next) =>
-          next.progressed ? advanceLoop(seams, input, next, remaining - 1) : Effect.succeed(finish(next)),
-        ),
-      );
-
-const initialState: ContinuationState = {
-  attemptState: 'IN_PROGRESS',
-  halt: Option.none(),
-  progressed: false,
-  revision: 0,
-  steps: [],
-};
+  advancePass(seams, input).pipe(
+    Effect.flatMap((pass) => {
+      if (pass.kind === 'HALTED') {
+        return Effect.succeed<CommerceEnrollmentContinuationResult>({ halt: pass.halt, outcome: 'HALTED' });
+      }
+      if (pass.kind === 'SETTLED') {
+        return Effect.succeed(settledResult(pass.attemptState));
+      }
+      return remaining <= 1 ? Effect.succeed(settledResult('IN_PROGRESS')) : advanceLoop(seams, input, remaining - 1);
+    }),
+  );
 
 export const CommerceEnrollmentContinuationLive = Layer.effect(
   CommerceEnrollmentContinuation,
@@ -575,7 +423,7 @@ export const CommerceEnrollmentContinuationLive = Layer.effect(
       store: (attempt) => commerceEnrollmentOwnerAttemptStoreForRun({ tenantId: attempt.tenantId }, runner.run),
     };
     return {
-      advance: (input) => permits.withPermit(advanceLoop(seams, input, initialState, CONTINUATION_PASS_BUDGET)),
+      advance: (input) => permits.withPermit(advanceLoop(seams, input, CONTINUATION_PASS_BUDGET)),
     };
   }),
 );

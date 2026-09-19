@@ -65,33 +65,11 @@ const verifyEmailRateLimit: CommercePortalAuthRecoveryRouteRateLimit = {
 };
 
 /**
- * Better Auth enforces the deployment's recovery limits inside its router (`auth.handler`); the
- * typed `auth.api` surface this group reaches through the owner service never runs them, so the
- * owner re-applies the same rules against its own durable counter store. That store is the realm's,
- * so a horizontally scaled deployment keeps one budget for reset-mail flooding and reset-token
- * replay rather than one per replica. A store that cannot answer refuses the request instead of
- * serving it uncounted.
- *
- * The key names the resolved client, the subject the attempt is for, and the route. The subject
- * half is what keeps one caller from denying recovery to everybody: this vertical is served by a
- * web handler whose request carries no socket peer (`../../http-transport.ts`), so
- * `resolveClientKey` answers the same unattributable value for every request and a client-only key
- * would be a single deployment-wide counter per route — three requests from anywhere would answer
- * every customer's password reset with 429 for the rest of the hour. Keyed on the subject, an
- * attempt can only spend the budget of the account or token it already names. The client half is
- * not decoration: where a deployment does observe a peer it keeps one client's attempts off
- * another client's budget for the same subject. It is the socket peer (or the hop a declared proxy
- * observed), never a caller-chosen header, so a forged `x-forwarded-for` cannot mint itself a
- * fresh budget.
- *
- * No second, deployment-wide ceiling is spent alongside this one. Such a bucket is the same
- * kill switch with a larger constant — one unattributable counter every caller shares — and the
- * two sibling transports the branch models this on (`../../session/http.ts` sign-in and
- * `../step-up/http.ts`) deliberately carry none either. What bounds guessing on the two token
- * routes is the token itself: a reset or verification token is high-entropy, single-use and
- * consumed by the owner ledger, and a guesser varying the token would side-step any shared counter
- * anyway. What this budget bounds is what the holder of one issued token — or the namer of one
- * account — can drive: reset-mail floods and repeated submission of the same credential.
+ * Better Auth runs its recovery limits only inside `auth.handler`, which this transport never
+ * mounts, so the owner re-applies them against its own durable store; a store that cannot answer
+ * refuses rather than serving uncounted. The key carries the subject as well as the client because
+ * `resolveClientKey` is unattributable here (see `../../http-transport.ts`), so a client-only key
+ * would be one deployment-wide counter every caller could spend.
  */
 const consumeRecoveryBudget = Effect.fn('CommercePortalAuthRecoveryHttp.rateLimit')(
   function* consumeRecoveryBudgetEffect(

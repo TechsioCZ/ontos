@@ -44,18 +44,12 @@ import {
 } from './problems.ts';
 
 /**
- * The Commerce Portal Enrollment transport.
+ * The one route that carries an enrollment credential: the password is `Redacted` from decode to
+ * dispatch and never enters the Attempt, an intent, a request digest or a log.
  *
- * This is the one route that carries an enrollment credential, and it carries it exactly as far as
- * the private provider account-creation port: the password is `Redacted` from decode to dispatch,
- * never enters the durable Enrollment Attempt, never reaches an intent or request digest, and is
- * never logged. What the Attempt records is the account subject the provider answered with.
- *
- * Start is three governed steps in the order the Attempt journal requires: create (or converge on)
- * the Attempt, durably claim the `provider.account.create` transition for a fresh owner invocation,
- * then perform the single provider effect that claim authorizes. A caller that skips a step cannot
- * reach the provider: the private account-creation capability refuses any invocation the Attempt
- * has not already claimed.
+ * Start is three governed steps — create or converge on the Attempt, durably claim
+ * `provider.account.create`, then perform the one provider effect that claim authorizes. The
+ * private account-creation capability refuses any invocation the Attempt has not already claimed.
  */
 
 const ENROLLMENT_START_ROUTE = '/enrollment/start';
@@ -80,15 +74,8 @@ const enrollmentSubjectKey = (subject: string, secret: Redacted.Redacted): strin
   createHmac('sha256', Redacted.value(secret)).update(subject).digest('base64url');
 
 /**
- * The origin gate runs before the budget is spent, exactly as the sibling sign-in and recovery
- * transports order it: an enrollment body is a CORS simple request, so a third-party page can drive
- * a visitor's browser into this handler, and spending first would let that page burn the named
- * address's account-creation budget and collect a 403 only afterwards.
- *
- * The key names the resolved client and the address the attempt is for. The address half is what
- * keeps one caller from denying enrollment to everybody: this vertical is served by a web handler
- * whose request carries no socket peer (`../http-transport.ts`), so a client-only key would be a
- * single deployment-wide counter that any caller could spend.
+ * The key carries the address as well as the client because `resolveClientKey` is unattributable
+ * here (see `../http-transport.ts`), so a client-only key would be one deployment-wide counter.
  */
 const consumeEnrollmentBudget = Effect.fn('CommercePortalAuthEnrollmentHttp.rateLimit')(
   function* consumeEnrollmentBudgetEffect(request: HttpServerRequest.HttpServerRequest, email: string) {

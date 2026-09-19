@@ -29,7 +29,6 @@ import {
   commerceEnrollmentContinuationUnavailableLive,
 } from '../src/enrollment/continuation/enrollment-continuation.ts';
 import { CommerceEnrollmentOwnerTransactionRunnerLive } from '../src/enrollment/orchestration/owner-transaction-runner.ts';
-import { CommerceEnrollmentOwnerEffectExecutorsLive } from '../src/enrollment/orchestration/owner-effect-executors.ts';
 import { CommerceEnrollmentOwnerEffectRegistryLive } from '../src/enrollment/orchestration/owner-effect-registry.ts';
 import { commerceEnrollmentOwnerTransitionPreparationLive } from '../src/enrollment/orchestration/owner-transition-composition.ts';
 import { CommerceEnrollmentPreparationSubjectResolverLive } from '../src/enrollment/orchestration/preparation-subject.ts';
@@ -568,7 +567,6 @@ const commerceEnrollmentOwnerEffectRegistryRealmLive = CommerceEnrollmentOwnerEf
     Layer.mergeAll(
       commercePortalAuthAccountLookupRealmLive.pipe(Layer.provide(CommercePortalAuthConfigLive)),
       commerceCoreIdentityRealmLive,
-      CommerceEnrollmentOwnerEffectExecutorsLive,
     ),
   ),
 );

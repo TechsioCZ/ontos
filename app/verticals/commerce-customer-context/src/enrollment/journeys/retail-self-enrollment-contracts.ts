@@ -12,16 +12,12 @@ import {
 import type { JourneyDefinition, JourneyTransitionSpec } from './journey-contracts.ts';
 
 /**
- * Retail self-enrollment vocabulary.
+ * Retail self-enrollment vocabulary: four owner transitions, each with its own durable claim,
+ * transition key and request digest. Nothing here performs an owner effect; it declares the plan
+ * and derives the stable identities an equivalent retry must reproduce exactly.
  *
- * The journey composes four owner transitions, each dispatched through the generic owner
- * transition driver so that it has its own durable claim, its own stable transition key and its
- * own request digest.  Nothing in this module performs an owner effect: it declares the plan and
- * derives the stable identities an equivalent retry must reproduce exactly.
- *
- * The journey deliberately carries no Guest history claim, no email-based continuity and no
- * inferred ownership.  The Party Registry candidate submission is the only source of a Retail
- * Party identity, and an ambiguous candidate halts into reconciliation instead of choosing one.
+ * The journey carries no Guest history claim and no email-based continuity: the Party Registry
+ * candidate submission is the only source of a Retail Party identity.
  */
 
 /** Owner module that owns Party identity: candidate submission, matching and Party creation. */

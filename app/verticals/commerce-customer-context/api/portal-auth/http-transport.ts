@@ -61,21 +61,13 @@ export const hashSubjectKey = (subject: string, secret: Redacted.Redacted): stri
 export const UNRESOLVED_PORTAL_AUTH_CLIENT_KEY = 'no-trusted-peer';
 
 /**
- * The durable budget key must name something the caller cannot choose. The socket peer is that
- * value: a `x-forwarded-for` hop is believed only when the peer is one of the deployment's own
- * declared proxies, and then only the right-most hop that is not itself a declared proxy — the
- * address the outermost trusted proxy actually observed. With no proxy declared, a forged header
- * is ignored entirely rather than minting its own budget.
+ * A `x-forwarded-for` hop is believed only when the peer is a declared proxy, and then only the
+ * right-most hop that is not itself one, so a forged header cannot mint its own budget.
  *
- * A caller that cannot be attributed is capped, not exempted — but note what "capped" means when
- * the transport observes no peer at all. This vertical is served through a web handler
- * (`HttpRouter.toWebHandler`), and `HttpServerRequest.fromWeb` constructs its request without a
- * remote address, so `request.remoteAddress` is `None` for every request and this function answers
- * `UNRESOLVED_PORTAL_AUTH_CLIENT_KEY` for every caller. A budget keyed on this value *alone* is
- * therefore one counter for the whole deployment, which any single caller can spend. Each caller
- * must add a value that bounds what one attempt can deny — the account the attempt names, or the
- * session its own cookie resolves to — so that spending the budget denies that subject and not
- * every customer.
+ * This vertical is served through a web handler, whose request carries no remote address, so this
+ * answers `UNRESOLVED_PORTAL_AUTH_CLIENT_KEY` for every caller: a budget keyed on it alone is one
+ * counter for the whole deployment. Every caller must add a subject that bounds what one attempt
+ * can deny — the account it names, or the session its own cookie resolves to.
  */
 export const resolveClientKey = (
   request: HttpServerRequest.HttpServerRequest,

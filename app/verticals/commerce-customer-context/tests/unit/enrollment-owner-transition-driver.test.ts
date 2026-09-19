@@ -421,7 +421,7 @@ it.effect('does not classify a current Core binding without exact owner evidence
       makeDispatchRequest: () => {
         throw new Error('The reconcile-only test must not dispatch');
       },
-      makeReconciliationRequest: () => ({ operation: 'read', payload: { authBindingId, lookup: 'binding' } }),
+      makeReconciliationRequest: () => ({ authBindingId, lookup: 'binding' }),
     };
     const effect = commerceEnrollmentCoreIdentityOwnerEffectFor(options).reconcile({
       ...transition,
@@ -473,7 +473,7 @@ it.effect('requires original invocation provenance before invoking Core read int
       makeDispatchRequest: () => {
         throw new Error('The reconcile-only test must not dispatch');
       },
-      makeReconciliationRequest: () => ({ operation: 'read', payload: { authBindingId, lookup: 'binding' } }),
+      makeReconciliationRequest: () => ({ authBindingId, lookup: 'binding' }),
     };
     const resolution = yield* commerceEnrollmentCoreIdentityOwnerEffectFor(options).reconcile({
       ...transition,

@@ -23,15 +23,9 @@ import { JourneyDefinitionSchema, journeyTransitionIdentity } from '../journeys/
 import { retailSelfEnrollmentJourneyDefinition } from '../journeys/retail-self-enrollment-contracts.ts';
 
 /**
- * The Attempt's overall state is a *conclusion* about the durable owner journal, never a field an
- * owner hands in with its own outcome.  This module holds the whole conclusion: which transitions
- * a journey requires, what counts as proof for one of them, and what the Attempt's state therefore
- * is after the outcome being recorded lands.
- *
- * Nothing here performs an owner effect, reads a credential or writes: it reads the journal the
- * Attempt routines already keep and returns one state.  The PostgreSQL routines keep their own
- * independent completion gate, so a mistake here can only ever be *more* conservative than the
- * durable fence, never less.
+ * The Attempt's overall state is a conclusion about the durable owner journal, never a field an
+ * owner hands in. The PostgreSQL routines keep their own independent completion gate, so a mistake
+ * here can only ever be more conservative than the durable fence, never less.
  */
 
 /**

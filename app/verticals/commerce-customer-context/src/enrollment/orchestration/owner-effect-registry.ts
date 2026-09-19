@@ -33,11 +33,17 @@ import {
   existingAccountRequestDigest,
 } from '../journeys/existing-account.ts';
 import type { JourneyTransitionSpec } from '../journeys/journey-contracts.ts';
-import { retailPartyCandidateOwnerEffect } from '../journeys/retail-self-enrollment-party-owner.ts';
+import {
+  retailPartyCandidateOwnerEffect,
+  retailPartyCandidateOwnerExecutors,
+} from '../journeys/retail-self-enrollment-party-owner.ts';
 import type { RetailPartyCandidateOwnerInput } from '../journeys/retail-self-enrollment-party-owner.ts';
 import type { RetailSelfEnrollmentPreparationSubject } from '../journeys/retail-self-enrollment-preparation.ts';
 import {
+  CommerceActionCommitResolutionFailed,
+  retailCustomerProfileActionExecutor,
   retailCustomerProfileOwnerEffect,
+  retailPortalBindingActionExecutor,
   retailPortalBindingOwnerEffect,
 } from '../journeys/retail-self-enrollment-profile-owners.ts';
 import {
@@ -51,8 +57,6 @@ import {
 } from '../journeys/retail-self-enrollment-contracts.ts';
 import type { RetailSelfEnrollmentStepIntent } from '../journeys/retail-self-enrollment-contracts.ts';
 import { decodeOwnerResolution } from './owner-effect-codec.ts';
-import { CommerceEnrollmentOwnerEffectExecutors } from './owner-effect-executors.ts';
-import type { CommerceEnrollmentOwnerEffectExecutorSet } from './owner-effect-executors.ts';
 import { providerObservationFor } from './owner-transition-composition.ts';
 import { commerceEnrollmentCoreIdentityOwnerEffectFor } from './owner-transition-driver.ts';
 import type { CommerceEnrollmentOwnerEffect } from './owner-transition-driver.ts';
@@ -63,13 +67,11 @@ import { commerceEnrollmentPortalAuthOwnerReconciliationForLookup } from './prov
  * The owner effects a deployment may run for one Enrollment Attempt, keyed by the exact
  * `ownerModuleKey/transitionKey` pair the journey declared.
  *
- * This is the only module that binds an owner effect to a transport.  Everything it needs about an
- * Attempt comes from state that already survives a crash — the durable Attempt row, the durable
- * owner journal, and the journey subject resolved from both — so a re-run rebuilds byte-identical
- * effects and identical request digests, and the durable claim replays rather than repeating.
+ * Everything an entry reads comes from state that already survives a crash — the durable Attempt
+ * row, the durable owner journal, and the journey subject resolved from both — so a re-run rebuilds
+ * byte-identical effects and identical request digests, and the durable claim replays.
  *
- * A pair no entry declares is a miss, never a wildcard: the continuation halts the journey there
- * with the Attempt untouched rather than advancing on an effect nobody owns.
+ * A pair no entry declares is a miss, never a wildcard.
  */
 
 type EnrollmentDigest = typeof EnrollmentDigestSchema.Type;
@@ -78,10 +80,9 @@ type EnrollmentResourceId = typeof EnrollmentResourceIdSchema.Type;
 /** What this deployment is allowed to do for one transition of one Attempt. */
 export interface CommerceEnrollmentRegisteredOwnerEffect {
   /**
-   * `none` when a continuation may not dispatch the transition.  The portal account-creation
+   * `none` when a continuation may not dispatch the transition. The portal account-creation
    * transition is dispatched exactly once by the enrollment start route — the only caller that ever
-   * holds the credential — so a continuation that could dispatch it would be able to create a
-   * second account for the same Attempt.
+   * holds the credential.
    */
   readonly dispatch: Option.Option<{
     readonly effect: CommerceEnrollmentOwnerEffect['dispatch'];
@@ -124,6 +125,8 @@ const CORE_BINDING_RECONCILIATION_PURPOSE = 'commerce.portal-enrollment.core-bin
 const PARTY_CANDIDATE_EVIDENCE_PURPOSE = 'commerce.portal-enrollment.party-candidate.evidence';
 const RETAIL_PORTAL_BINDING_REASON = 'Retail self-enrollment established the portal profile binding';
 
+type RegistryEntry = CommerceEnrollmentOwnerEffectRegistryService['resolve'];
+
 const registryKey = (ownerModuleKey: string, transitionKey: string): string => `${ownerModuleKey}/${transitionKey}`;
 
 const none: Option.Option<CommerceEnrollmentRegisteredOwnerEffect> = Option.none();
@@ -136,6 +139,12 @@ const registered = (
     dispatch: Option.some({ effect: effect.dispatch, requestDigest }),
     reconcile: effect.reconcile,
   });
+
+/** Every entry reports an unusable derivation the same way: a non-retryable Attempt rejection. */
+const rejectFor =
+  (context: CommerceEnrollmentOwnerEffectContext, reason: string) =>
+  (cause: unknown): CommerceEnrollmentAttemptError =>
+    attemptRejected(reason, context.attempt.portalEnrollmentAttemptId, cause);
 
 /** The exact result reference a prior transition durably recorded, or `none` while it has not. */
 const succeededResultReference = (
@@ -165,23 +174,12 @@ const retailDigestFor = (
       portalEnrollmentAttemptId: context.attempt.portalEnrollmentAttemptId,
       transitionKey: transition.transitionKey,
     }),
-  ).pipe(
-    Effect.mapError((cause) =>
-      attemptRejected(
-        'The Retail self-enrollment request digest is not representable',
-        context.attempt.portalEnrollmentAttemptId,
-        cause,
-      ),
-    ),
-  );
+  ).pipe(Effect.mapError(rejectFor(context, 'The Retail self-enrollment request digest is not representable')));
 
 /**
- * The Party candidate this Attempt submits.
- *
- * Every fact is derived from the durable Attempt: the exact provider subject Commerce already
- * observed is the candidate's subject key, and the deterministic Attempt evidence reference is its
- * only evidence.  No login email, display name or Guest history enters it, so the candidate — and
- * therefore the exact-claim a re-run matches on — is byte-identical on every run.
+ * The exact provider subject Commerce already observed is the candidate's subject key and the
+ * deterministic Attempt evidence reference is its only evidence, so the candidate — and therefore
+ * the exact-claim a re-run matches on — is byte-identical on every run.
  */
 const partyCandidateFor = Effect.fn('CommerceEnrollmentOwnerEffectRegistry.partyCandidate')(
   function* partyCandidateForEffect(
@@ -222,20 +220,15 @@ const partyCandidateFor = Effect.fn('CommerceEnrollmentOwnerEffectRegistry.party
         validFrom: DateTime.formatIso(attempt.createdAt),
       },
     }).pipe(
-      Effect.mapError((cause) =>
-        attemptRejected(
-          'The Attempt does not describe a Party candidate the Party Registry vocabulary can carry',
-          attempt.portalEnrollmentAttemptId,
-          cause,
-        ),
+      Effect.mapError(
+        rejectFor(context, 'The Attempt does not describe a Party candidate the Party Registry vocabulary can carry'),
       ),
     );
     return request.candidate;
   },
 );
 
-const partyEntry = Effect.fn('CommerceEnrollmentOwnerEffectRegistry.party')(function* partyEntryEffect(
-  executors: CommerceEnrollmentOwnerEffectExecutorSet,
+const partyEntry: RegistryEntry = Effect.fn('CommerceEnrollmentOwnerEffectRegistry.party')(function* partyEntryEffect(
   transition: JourneyTransitionSpec,
   context: CommerceEnrollmentOwnerEffectContext,
 ): Effect.fn.Return<Option.Option<CommerceEnrollmentRegisteredOwnerEffect>, CommerceEnrollmentAttemptError> {
@@ -259,15 +252,27 @@ const partyEntry = Effect.fn('CommerceEnrollmentOwnerEffectRegistry.party')(func
   return registered(
     retailPartyCandidateOwnerEffect(
       { candidate, requestCorrelation: context.requestCorrelation, tenantId: context.attempt.tenantId },
-      executors.party,
+      retailPartyCandidateOwnerExecutors,
     ),
     requestDigest,
   );
 });
 
-const ensureProfileEntry = Effect.fn('CommerceEnrollmentOwnerEffectRegistry.ensureProfile')(
+/**
+ * The governed Action runtime resolves whether one invocation committed, but it republishes no
+ * Action result, and an owner verdict about a profile or a binding is a reading of that exact
+ * result. Answering "unavailable" keeps the transition indeterminate, and therefore retryable.
+ */
+const actionResultNotRepublished = (): Effect.Effect<never, CommerceActionCommitResolutionFailed> =>
+  Effect.fail(
+    new CommerceActionCommitResolutionFailed({
+      code: 'commit_resolution_unavailable',
+      reason: 'The governed Action runtime republishes no Action result to reconcile this transition against',
+    }),
+  );
+
+const ensureProfileEntry: RegistryEntry = Effect.fn('CommerceEnrollmentOwnerEffectRegistry.ensureProfile')(
   function* ensureProfileEntryEffect(
-    executors: CommerceEnrollmentOwnerEffectExecutorSet,
     transition: JourneyTransitionSpec,
     context: CommerceEnrollmentOwnerEffectContext,
   ): Effect.fn.Return<Option.Option<CommerceEnrollmentRegisteredOwnerEffect>, CommerceEnrollmentAttemptError> {
@@ -292,16 +297,15 @@ const ensureProfileEntry = Effect.fn('CommerceEnrollmentOwnerEffectRegistry.ensu
           requestCorrelation: context.requestCorrelation,
           sellingLegalEntityRef: context.subject.sellingLegalEntityRef,
         },
-        { commitResolution: executors.ensureProfileCommitResolution, ensureProfile: executors.ensureProfile },
+        { commitResolution: actionResultNotRepublished, ensureProfile: retailCustomerProfileActionExecutor },
       ),
       requestDigest,
     );
   },
 );
 
-const bindProfileEntry = Effect.fn('CommerceEnrollmentOwnerEffectRegistry.bindProfile')(
+const bindProfileEntry: RegistryEntry = Effect.fn('CommerceEnrollmentOwnerEffectRegistry.bindProfile')(
   function* bindProfileEntryEffect(
-    executors: CommerceEnrollmentOwnerEffectExecutorSet,
     transition: JourneyTransitionSpec,
     context: CommerceEnrollmentOwnerEffectContext,
   ): Effect.fn.Return<Option.Option<CommerceEnrollmentRegisteredOwnerEffect>, CommerceEnrollmentAttemptError> {
@@ -322,13 +326,7 @@ const bindProfileEntry = Effect.fn('CommerceEnrollmentOwnerEffectRegistry.bindPr
       resourceType: 'commerce.customer-context.retail-customer-profile',
       tenantId: context.attempt.tenantId,
     }).pipe(
-      Effect.mapError((cause) =>
-        attemptRejected(
-          'The ensured Retail Customer Profile is not a usable Commerce reference',
-          context.attempt.portalEnrollmentAttemptId,
-          cause,
-        ),
-      ),
+      Effect.mapError(rejectFor(context, 'The ensured Retail Customer Profile is not a usable Commerce reference')),
     );
     const requestDigest = yield* retailDigestFor(
       {
@@ -351,7 +349,7 @@ const bindProfileEntry = Effect.fn('CommerceEnrollmentOwnerEffectRegistry.bindPr
           requestCorrelation: context.requestCorrelation,
           sellingLegalEntityRef: context.subject.sellingLegalEntityRef,
         },
-        { bindProfile: executors.bindProfile, commitResolution: executors.bindProfileCommitResolution },
+        { bindProfile: retailPortalBindingActionExecutor, commitResolution: actionResultNotRepublished },
       ),
       requestDigest,
     );
@@ -359,16 +357,15 @@ const bindProfileEntry = Effect.fn('CommerceEnrollmentOwnerEffectRegistry.bindPr
 );
 
 /** Reconcile-only: the credential-carrying dispatch belongs to the enrollment start route alone. */
-const portalAccountEntry = (
-  accountLookup: CommercePortalAuthAccountLookup,
-  context: CommerceEnrollmentOwnerEffectContext,
-): Option.Option<CommerceEnrollmentRegisteredOwnerEffect> =>
-  Option.some({
-    dispatch: Option.none(),
-    reconcile: commerceEnrollmentPortalAuthOwnerReconciliationForLookup(() =>
-      providerObservationFor(context.attempt, accountLookup),
-    ).reconcile,
-  });
+const portalAccountEntry =
+  (accountLookup: CommercePortalAuthAccountLookup): RegistryEntry =>
+  (_transition, context) =>
+    Effect.succeedSome({
+      dispatch: Option.none(),
+      reconcile: commerceEnrollmentPortalAuthOwnerReconciliationForLookup(() =>
+        providerObservationFor(context.attempt, accountLookup),
+      ).reconcile,
+    });
 
 interface CoreIdentitySeam {
   readonly client: ExternalIdentityClientPort;
@@ -394,12 +391,8 @@ const coreIdentityDigest = (
     subject: { accountSubject, targetTenantId: context.attempt.tenantId },
     transitionKey: transition.transitionKey,
   }).pipe(
-    Effect.mapError((cause) =>
-      attemptRejected(
-        'The Core identity request digest could not be derived for this Attempt subject',
-        context.attempt.portalEnrollmentAttemptId,
-        cause,
-      ),
+    Effect.mapError(
+      rejectFor(context, 'The Core identity request digest could not be derived for this Attempt subject'),
     ),
   );
 
@@ -436,12 +429,11 @@ const coreIdentityEffect = (
         'The Core identity reconciliation result is not representable',
       ),
     makeDispatchRequest,
-    makeReconciliationRequest: () => ({ operation: 'read' as const, payload: readRequest }),
+    makeReconciliationRequest: () => readRequest,
   });
 
-const coreReserveEntry = Effect.fn('CommerceEnrollmentOwnerEffectRegistry.coreReserve')(
-  function* coreReserveEntryEffect(
-    seam: CoreIdentitySeam,
+const coreReserveEntry = (seam: CoreIdentitySeam): RegistryEntry =>
+  Effect.fn('CommerceEnrollmentOwnerEffectRegistry.coreReserve')(function* coreReserveEntryEffect(
     transition: JourneyTransitionSpec,
     context: CommerceEnrollmentOwnerEffectContext,
   ): Effect.fn.Return<Option.Option<CommerceEnrollmentRegisteredOwnerEffect>, CommerceEnrollmentAttemptError> {
@@ -460,20 +452,15 @@ const coreReserveEntry = Effect.fn('CommerceEnrollmentOwnerEffectRegistry.coreRe
           providerSubjectId: accountSubject.providerSubjectId,
           subjectType: accountSubject.subjectType,
         }).pipe(
-          Effect.mapError((cause) =>
-            attemptRejected(
-              'The Attempt provider subject could not be encoded for the Core reconciliation read',
-              context.attempt.portalEnrollmentAttemptId,
-              cause,
-            ),
+          Effect.mapError(
+            rejectFor(context, 'The Attempt provider subject could not be encoded for the Core reconciliation read'),
           ),
         ),
         request: existingAccountCoreIdentityReserveRequest({ accountSubject, authenticationRef }).pipe(
-          Effect.mapError((cause) =>
-            attemptRejected(
+          Effect.mapError(
+            rejectFor(
+              context,
               'The Core Principal Auth Binding reservation could not be built for this Attempt subject',
-              context.attempt.portalEnrollmentAttemptId,
-              cause,
             ),
           ),
         ),
@@ -485,12 +472,10 @@ const coreReserveEntry = Effect.fn('CommerceEnrollmentOwnerEffectRegistry.coreRe
       coreIdentityEffect(seam, context, transition, () => ({ operation: 'reserve', payload: request }), readRequest),
       requestDigest,
     );
-  },
-);
+  });
 
-const coreActivateEntry = Effect.fn('CommerceEnrollmentOwnerEffectRegistry.coreActivate')(
-  function* coreActivateEntryEffect(
-    seam: CoreIdentitySeam,
+const coreActivateEntry = (seam: CoreIdentitySeam): RegistryEntry =>
+  Effect.fn('CommerceEnrollmentOwnerEffectRegistry.coreActivate')(function* coreActivateEntryEffect(
     transition: JourneyTransitionSpec,
     context: CommerceEnrollmentOwnerEffectContext,
   ): Effect.fn.Return<Option.Option<CommerceEnrollmentRegisteredOwnerEffect>, CommerceEnrollmentAttemptError> {
@@ -504,13 +489,7 @@ const coreActivateEntry = Effect.fn('CommerceEnrollmentOwnerEffectRegistry.coreA
       return none;
     }
     const readRequest = yield* existingAccountCoreIdentityReadByBindingRequest(reserved.value).pipe(
-      Effect.mapError((cause) =>
-        attemptRejected(
-          'The reserved Core Principal Auth Binding reference is unusable',
-          context.attempt.portalEnrollmentAttemptId,
-          cause,
-        ),
-      ),
+      Effect.mapError(rejectFor(context, 'The reserved Core Principal Auth Binding reference is unusable')),
     );
     // Activation is a compare-and-set on the binding revision and only Core knows it. This read is
     // an owner read outside every Attempt transaction, exactly as the dispatch that follows it is.
@@ -535,12 +514,8 @@ const coreActivateEntry = Effect.fn('CommerceEnrollmentOwnerEffectRegistry.coreA
           authenticationRef: coreAuthenticationRef(context),
           expectedRevision: binding.bindingRevision,
         }).pipe(
-          Effect.mapError((cause) =>
-            attemptRejected(
-              'The Core Principal Auth Binding activation could not be built for this Attempt',
-              context.attempt.portalEnrollmentAttemptId,
-              cause,
-            ),
+          Effect.mapError(
+            rejectFor(context, 'The Core Principal Auth Binding activation could not be built for this Attempt'),
           ),
         ),
         requestDigest: coreIdentityDigest(context, transition, accountSubject),
@@ -551,37 +526,7 @@ const coreActivateEntry = Effect.fn('CommerceEnrollmentOwnerEffectRegistry.coreA
       coreIdentityEffect(seam, context, transition, () => ({ operation: 'activate', payload: request }), readRequest),
       requestDigest,
     );
-  },
-);
-
-const resolveEntry = (
-  accountLookup: CommercePortalAuthAccountLookup,
-  core: CoreIdentitySeam,
-  executors: CommerceEnrollmentOwnerEffectExecutorSet,
-  transition: JourneyTransitionSpec,
-  context: CommerceEnrollmentOwnerEffectContext,
-): Effect.Effect<Option.Option<CommerceEnrollmentRegisteredOwnerEffect>, CommerceEnrollmentAttemptError> => {
-  const key = registryKey(transition.ownerModuleKey, transition.transitionKey);
-  if (key === registryKey(PORTAL_AUTH_OWNER_MODULE_KEY, PORTAL_ACCOUNT_CREATION_TRANSITION_KEY)) {
-    return Effect.succeed(portalAccountEntry(accountLookup, context));
-  }
-  if (key === registryKey(PARTY_REGISTRY_OWNER_MODULE_KEY, PARTY_CANDIDATE_SUBMISSION_TRANSITION_KEY)) {
-    return partyEntry(executors, transition, context);
-  }
-  if (key === registryKey(COMMERCE_CUSTOMER_CONTEXT_OWNER_MODULE_KEY, ENSURE_RETAIL_CUSTOMER_PROFILE_TRANSITION_KEY)) {
-    return ensureProfileEntry(executors, transition, context);
-  }
-  if (key === registryKey(COMMERCE_CUSTOMER_CONTEXT_OWNER_MODULE_KEY, BIND_RETAIL_PORTAL_PROFILE_TRANSITION_KEY)) {
-    return bindProfileEntry(executors, transition, context);
-  }
-  if (key === registryKey(CORE_IDENTITY_OWNER_MODULE_KEY, RESERVE_PRINCIPAL_BINDING_TRANSITION_KEY)) {
-    return coreReserveEntry(core, transition, context);
-  }
-  if (key === registryKey(CORE_IDENTITY_OWNER_MODULE_KEY, ACTIVATE_PRINCIPAL_BINDING_TRANSITION_KEY)) {
-    return coreActivateEntry(core, transition, context);
-  }
-  return Effect.succeed(none);
-};
+  });
 
 export const CommerceEnrollmentOwnerEffectRegistryLive = Layer.effect(
   CommerceEnrollmentOwnerEffectRegistry,
@@ -589,7 +534,6 @@ export const CommerceEnrollmentOwnerEffectRegistryLive = Layer.effect(
     const accountLookup = yield* CommercePortalAuthAccountLookupService;
     const client = yield* ExternalIdentityClient;
     const configuration = yield* CommerceCoreIdentityClientConfig;
-    const executors = yield* CommerceEnrollmentOwnerEffectExecutors;
     const core: CoreIdentitySeam = {
       client,
       clientOptions: (context) =>
@@ -598,8 +542,28 @@ export const CommerceEnrollmentOwnerEffectRegistryLive = Layer.effect(
           `commerce-enrollment-continuation:${context.attempt.portalEnrollmentAttemptId}`,
         ),
     };
+    const entries: ReadonlyMap<string, RegistryEntry> = new Map([
+      [
+        registryKey(PORTAL_AUTH_OWNER_MODULE_KEY, PORTAL_ACCOUNT_CREATION_TRANSITION_KEY),
+        portalAccountEntry(accountLookup),
+      ],
+      [registryKey(PARTY_REGISTRY_OWNER_MODULE_KEY, PARTY_CANDIDATE_SUBMISSION_TRANSITION_KEY), partyEntry],
+      [
+        registryKey(COMMERCE_CUSTOMER_CONTEXT_OWNER_MODULE_KEY, ENSURE_RETAIL_CUSTOMER_PROFILE_TRANSITION_KEY),
+        ensureProfileEntry,
+      ],
+      [
+        registryKey(COMMERCE_CUSTOMER_CONTEXT_OWNER_MODULE_KEY, BIND_RETAIL_PORTAL_PROFILE_TRANSITION_KEY),
+        bindProfileEntry,
+      ],
+      [registryKey(CORE_IDENTITY_OWNER_MODULE_KEY, RESERVE_PRINCIPAL_BINDING_TRANSITION_KEY), coreReserveEntry(core)],
+      [registryKey(CORE_IDENTITY_OWNER_MODULE_KEY, ACTIVATE_PRINCIPAL_BINDING_TRANSITION_KEY), coreActivateEntry(core)],
+    ]);
     return {
-      resolve: (transition, context) => resolveEntry(accountLookup, core, executors, transition, context),
+      resolve: (transition, context) => {
+        const entry = entries.get(registryKey(transition.ownerModuleKey, transition.transitionKey));
+        return entry === undefined ? Effect.succeed(none) : entry(transition, context);
+      },
     };
   }),
 );

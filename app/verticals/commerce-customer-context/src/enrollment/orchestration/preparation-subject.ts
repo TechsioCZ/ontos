@@ -40,22 +40,11 @@ import {
 } from './owner-transition-production.ts';
 
 /**
- * The journey subject for one durable Enrollment Attempt.
- *
- * Every field is recovered from state that already survives a crash, so a re-run after an
- * INDETERMINATE outcome reconciles onto the refs the first run established instead of creating a
- * second Party or a second Principal:
- *
- *   - `sellingLegalEntityRef` is the Attempt's own immutable `targetLegalEntityId`;
- *   - `partyCandidateDigest` is derived from the Attempt's immutable identity digest, so it is
- *     byte-identical on every run and is never a value a caller could choose;
- *   - `partyRef` is the `resultReference` the Party Registry owner transition durably recorded —
- *     the journey never re-derives a Party from an email or a Guest order;
- *   - `principalRef` is the Principal of the Core Principal Auth Binding retained for this
- *     Attempt's exact provider subject. Core's exact-subject storage invariant makes that read the
- *     idempotent answer: a re-run finds the binding the first run reserved rather than reserving a
- *     second one, and the reserve/activate keys are derived from the Attempt identity so even a
- *     request lost in flight converges on the same binding.
+ * The journey subject for one durable Enrollment Attempt. Every field is recovered from state that
+ * already survives a crash, so a re-run after an INDETERMINATE outcome reconciles onto the refs the
+ * first run established instead of creating a second Party or a second Principal: Core's
+ * exact-subject storage invariant makes the binding read idempotent, and every derived key comes
+ * from the Attempt identity, so even a request lost in flight converges on the same binding.
  */
 
 const PRINCIPAL_MODULE_ID = 'core.identity';

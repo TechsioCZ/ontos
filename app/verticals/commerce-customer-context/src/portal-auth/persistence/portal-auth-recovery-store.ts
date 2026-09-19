@@ -397,16 +397,10 @@ export const makeCommercePortalAuthRecoveryStore = Effect.fn('CommercePortalAuth
       );
 
     /**
-     * Records the issuance-time email/subject binding for a password-reset token, before delivery.
-     * This ledger is read-only evidence for reconciliation detection: it is never consumed, and its
-     * presence or absence never changes whether Better Auth's own reset flow succeeds.
-     *
-     * Keyed by `identifierDigest` (the normalized email's digest), so a repeated request for the
-     * same identifier within the window always upserts the *same* row instead of inserting a second
-     * pending row: no duplicate pending rows are possible, and the store-level behavior — a fresh
-     * token digest and expiry replacing the prior ones — is identical whether this is the first
-     * request or a retry, so the caller cannot distinguish "no account" from "already requested".
-     * An identifier whose prior row had already expired is revived back to `pending` in place.
+     * Read-only issuance-time evidence: never consumed, and never a reason Better Auth's own reset
+     * flow succeeds or fails. Keyed by `identifierDigest`, so a repeat within the window upserts
+     * the same row and the caller cannot distinguish "no account" from "already requested"; an
+     * expired row is revived back to `pending` in place.
      */
     const registerPasswordResetToken = Effect.fn('CommercePortalAuthRecoveryStore.registerPasswordResetToken')(
       function* registerPasswordResetTokenEffect(input: {

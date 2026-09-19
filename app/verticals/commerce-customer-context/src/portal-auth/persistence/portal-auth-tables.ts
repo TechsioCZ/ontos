@@ -202,19 +202,11 @@ export const recoveryReconciliation = commercePortalAuthSchema.table(
 );
 
 /**
- * A dedicated, Commerce-owned issuance-time evidence ledger for password-reset requests — separate
- * from Better Auth's shared `verification` table so this vertical can own a unique index on the
- * identifier without any risk to Better Auth's own token rows. `identifierDigest` (the normalized
- * email's digest) is the primary key: a repeated request for the same identifier always upserts the
- * same row (deterministic idempotency, no duplicate pending rows, and a response indistinguishable
- * from the first request), and an expired row is revived back to `pending` in place rather than
- * ever growing a second row for the identifier. `tokenDigest` is a separate unique column so a peek
- * by token can look up the current row without knowing the identifier.
- *
- * A row's `state` is `pending` until it is swept for expiry (see `sweepExpiredResetLedgerRows` in
- * `portal-auth-recovery-store.ts`), at which point it becomes `expired` and `providerSubjectId` and
- * `email` are cleared: a terminal row retains only what reconciliation needs to know it *existed*
- * for the identifier, never the account subject or email it named.
+ * Commerce-owned issuance-time evidence for password-reset requests, kept out of Better Auth's
+ * shared `verification` table so this vertical can own a unique index on the identifier.
+ * `identifierDigest` is the primary key, so a repeat upserts the same row; `tokenDigest` is a
+ * separate unique column so a peek by token needs no identifier. A swept row becomes `expired`
+ * with `providerSubjectId` and `email` cleared, retaining only that it existed.
  */
 export const recoveryResetLedger = commercePortalAuthSchema.table(
   'recovery_reset_ledger',

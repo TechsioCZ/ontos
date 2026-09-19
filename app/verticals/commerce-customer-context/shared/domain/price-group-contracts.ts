@@ -40,7 +40,7 @@ export const isPriceGroupInstantBefore = (requested: PriceGroupInstant, trustedN
   DateTime.toEpochMillis(DateTime.makeUnsafe(requested)) < DateTime.toEpochMillis(DateTime.makeUnsafe(trustedNow));
 
 /**
- * The reference deliberately does not fix Pricing's future module/resource identifiers. #334 owns
+ * The reference deliberately does not fix Pricing's future module/resource identifiers. Pricing owns
  * that contract. The injected catalog port must recognize the reference as Pricing-owned before it
  * can be persisted or returned as ASSIGNED.
  */

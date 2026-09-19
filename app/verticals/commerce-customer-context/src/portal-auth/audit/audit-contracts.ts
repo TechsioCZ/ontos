@@ -24,7 +24,7 @@ const CommercePortalAuthAuditEventTypeSchema = Schema.Literals([
 export type CommercePortalAuthAuditEventType = Schema.Schema.Type<typeof CommercePortalAuthAuditEventTypeSchema>;
 
 /**
- * The outcome classes #340 requires evidence for. `mfa_required` is a live challenge rather than a
+ * The outcome classes that require evidence. `mfa_required` is a live challenge rather than a
  * refusal, so it is recorded as its own class instead of being folded into a failure.
  */
 const CommercePortalAuthAuditOutcomeSchema = Schema.Literals([

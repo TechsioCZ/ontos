@@ -45,9 +45,9 @@ import type { JourneyTransitionSpec } from '../../src/enrollment/journeys/journe
 import type {
   AttemptClaimResult,
   AttemptClaimedResult,
-  CommerceEnrollmentAttemptError,
   CommerceEnrollmentAttemptPersistence,
-} from '../../src/enrollment/attempts/index.ts';
+} from '../../src/enrollment/attempts/attempt-persistence.ts';
+import type { CommerceEnrollmentAttemptError } from '../../src/enrollment/attempts/errors.ts';
 import {
   commerceCustomerContextRelations,
   portalEnrollmentAttempts,
