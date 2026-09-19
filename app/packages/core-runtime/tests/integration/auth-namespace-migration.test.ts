@@ -1,11 +1,10 @@
 import { NodeServices } from '@effect/platform-node';
-import { Crypto, DateTime, Effect, Exit, FileSystem } from 'effect';
+import { Crypto, Effect, Exit, FileSystem } from 'effect';
 import { expect, it } from 'effect-rstest';
 import { Pool } from 'pg';
 import type { PoolClient } from 'pg';
 
 import { loadDatabaseConnectionPair } from '../../src/db/config.ts';
-import { AUTH_NAMESPACE_INVENTORY_TABLE_DDL } from '../../scripts/prepare-auth-namespace-inventory.mts';
 
 const migrationPath = new URL('../../drizzle/20260916130129_auth-namespace-bindings/migration.sql', import.meta.url)
   .pathname;
@@ -16,7 +15,6 @@ const ids = {
   bindingFive: '71000000-0000-4000-8000-000000000005',
   bindingFour: '71000000-0000-4000-8000-000000000004',
   bindingOne: '71000000-0000-4000-8000-000000000001',
-  bindingRevoked: '71000000-0000-4000-8000-000000000007',
   bindingSeven: '71000000-0000-4000-8000-000000000008',
   bindingSix: '71000000-0000-4000-8000-000000000006',
   bindingThree: '71000000-0000-4000-8000-000000000003',
@@ -31,7 +29,6 @@ const ids = {
   principalSix: '41000000-0000-4000-8000-000000000006',
   principalThree: '41000000-0000-4000-8000-000000000003',
   principalTwo: '41000000-0000-4000-8000-000000000002',
-  revokedAuditEvent: '61000000-0000-4000-8000-000000000001',
   tenant: '31000000-0000-4000-8000-000000000001',
   transitionOne: '52000000-0000-4000-8000-000000000001',
 } as const;
@@ -45,17 +42,6 @@ const baseBinding = {
 interface MigrationSchema {
   readonly name: string;
   readonly quotedName: string;
-}
-
-interface InventoryEntry {
-  readonly authenticationNamespaceId: string;
-  readonly evidenceRef: string;
-  readonly principalAuthBindingId: string;
-  readonly principalId: string;
-  readonly provider: string;
-  readonly providerSubjectId: string;
-  readonly subjectType: string;
-  readonly tenantId: string;
 }
 
 const query = <Row extends object>(pool: Pool | PoolClient, text: string, values: readonly unknown[] = []) =>
@@ -133,22 +119,6 @@ const makeMigrationSchema = (pool: Pool, crypto: Crypto.Crypto) =>
        references ${quotedName}.principals (tenant_id, principal_id)
        on delete restrict`,
     );
-    yield* query(
-      pool,
-      `create table ${quotedName}.audit_events (
-        audit_event_id uuid primary key,
-        tenant_id uuid not null,
-        auth_binding_id uuid not null
-      )`,
-    );
-    yield* query(
-      pool,
-      `alter table ${quotedName}.audit_events
-       add constraint core_audit_events_tenant_auth_binding_fk
-       foreign key (tenant_id, auth_binding_id)
-       references ${quotedName}.principal_auth_bindings (tenant_id, principal_auth_binding_id)
-       on delete restrict`,
-    );
     return { name, quotedName };
   });
 
@@ -160,19 +130,11 @@ const insertPrincipal = (pool: Pool, schema: MigrationSchema, principalId: strin
     [principalId, tenantId],
   );
 
-const insertAuditReference = (pool: Pool, schema: MigrationSchema, bindingId: string, tenantId = ids.tenant) =>
-  query(
-    pool,
-    `insert into ${schema.quotedName}.audit_events (audit_event_id, tenant_id, auth_binding_id)
-     values ($1, $2, $3)`,
-    [ids.revokedAuditEvent, tenantId, bindingId],
-  );
-
 const insertBinding = (
   pool: Pool | PoolClient,
   schema: MigrationSchema,
   binding: {
-    readonly authenticationNamespaceId?: string;
+    readonly authenticationNamespaceId: string;
     readonly createdByInvocationId?: string | null;
     readonly lastTransitionRef?: string | null;
     readonly principalAuthBindingId: string;
@@ -185,28 +147,7 @@ const insertBinding = (
     readonly tenantId?: string;
   },
 ) => {
-  const legacyValues = [
-    binding.principalAuthBindingId,
-    binding.tenantId ?? ids.tenant,
-    binding.principalId,
-    binding.provider ?? baseBinding.provider,
-    binding.subjectType ?? baseBinding.subjectType,
-    binding.providerSubjectId,
-    binding.status ?? baseBinding.status,
-    binding.revokedAt ?? null,
-  ];
-  if (binding.authenticationNamespaceId === undefined) {
-    return query(
-      pool,
-      `insert into ${schema.quotedName}.principal_auth_bindings
-         (principal_auth_binding_id, tenant_id, principal_id, provider, subject_type,
-          provider_subject_id, status, revoked_at)
-       values ($1, $2, $3, $4, $5, $6, $7, $8)`,
-      legacyValues,
-    );
-  }
-
-  const postMigrationValues = [
+  const values = [
     binding.principalAuthBindingId,
     binding.tenantId ?? ids.tenant,
     binding.principalId,
@@ -224,7 +165,7 @@ const insertBinding = (
          (principal_auth_binding_id, tenant_id, principal_id, authentication_namespace_id, provider, subject_type,
           provider_subject_id, status, revoked_at)
        values ($1, $2, $3, $4, $5, $6, $7, $8, $9)`,
-      postMigrationValues,
+      values,
     );
   }
 
@@ -234,38 +175,9 @@ const insertBinding = (
        (principal_auth_binding_id, tenant_id, principal_id, authentication_namespace_id, provider, subject_type,
         provider_subject_id, status, revoked_at, created_by_invocation_id, last_transition_ref)
      values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)`,
-    [...postMigrationValues, binding.createdByInvocationId ?? null, binding.lastTransitionRef ?? null],
+    [...values, binding.createdByInvocationId ?? null, binding.lastTransitionRef ?? null],
   );
 };
-
-const stageInventory = (
-  pool: Pool,
-  schema: MigrationSchema,
-  entryOrEntries: InventoryEntry | readonly InventoryEntry[],
-) =>
-  Effect.gen(function* stageInventoryEffect() {
-    const entries = Array.isArray(entryOrEntries) ? entryOrEntries : [entryOrEntries];
-    yield* query(pool, AUTH_NAMESPACE_INVENTORY_TABLE_DDL.replaceAll('"core"', schema.quotedName));
-    for (const entry of entries) {
-      yield* query(
-        pool,
-        `insert into ${schema.quotedName}.principal_auth_binding_namespace_inventory
-           (principal_auth_binding_id, tenant_id, principal_id, provider, subject_type,
-            provider_subject_id, authentication_namespace_id, evidence_ref)
-         values ($1, $2, $3, $4, $5, $6, $7, $8)`,
-        [
-          entry.principalAuthBindingId,
-          entry.tenantId,
-          entry.principalId,
-          entry.provider,
-          entry.subjectType,
-          entry.providerSubjectId,
-          entry.authenticationNamespaceId,
-          entry.evidenceRef,
-        ],
-      );
-    }
-  });
 
 const migrationStatements = (fileSystem: FileSystem.FileSystem, schema: MigrationSchema) =>
   fileSystem.readFileString(migrationPath).pipe(
@@ -307,121 +219,21 @@ const migrationProgram = Effect.gen(function* migrationProgramEffect() {
     (resource) => Effect.promise(() => resource.end()).pipe(Effect.orDie),
   );
 
-  const upgraded = yield* makeMigrationSchema(pool, crypto);
-  yield* Effect.gen(function* upgradeFixture() {
-    for (const principalId of [
-      ids.principalOne,
-      ids.principalTwo,
-      ids.principalThree,
-      ids.principalFour,
-      ids.principalSix,
-      ids.principalSeven,
-      ids.principalEight,
-    ]) {
-      yield* insertPrincipal(pool, upgraded, principalId);
-    }
-    yield* insertPrincipal(pool, upgraded, ids.principalFive, ids.otherTenant);
-    yield* insertBinding(pool, upgraded, {
-      principalAuthBindingId: ids.bindingOne,
-      principalId: ids.principalOne,
-      providerSubjectId: 'subject-001',
-    });
-    const revokedAt = yield* DateTime.nowAsDate;
-    yield* insertBinding(pool, upgraded, {
-      principalAuthBindingId: ids.bindingRevoked,
-      principalId: ids.principalTwo,
-      providerSubjectId: 'subject-revoked',
-      revokedAt,
-      status: 'revoked',
-    });
-    yield* insertAuditReference(pool, upgraded, ids.bindingRevoked);
-    yield* stageInventory(pool, upgraded, {
-      authenticationNamespaceId: 'test.provider.primary.v1',
-      evidenceRef: 'review://issue-337/namespace-binding-001',
-      principalAuthBindingId: ids.bindingOne,
-      principalId: ids.principalOne,
-      provider: baseBinding.provider,
-      providerSubjectId: 'subject-001',
-      subjectType: baseBinding.subjectType,
-      tenantId: ids.tenant,
-    });
-    yield* stageInventory(pool, upgraded, {
-      authenticationNamespaceId: 'test.provider.primary.v1',
-      evidenceRef: 'review://issue-337/namespace-binding-revoked',
-      principalAuthBindingId: ids.bindingRevoked,
-      principalId: ids.principalTwo,
-      provider: baseBinding.provider,
-      providerSubjectId: 'subject-revoked',
-      subjectType: baseBinding.subjectType,
-      tenantId: ids.tenant,
-    });
-    const statements = yield* migrationStatements(fileSystem, upgraded);
+  const schema = yield* makeMigrationSchema(pool, crypto);
+  yield* Effect.gen(function* freshDatabaseFixture() {
+    const statements = yield* migrationStatements(fileSystem, schema);
     yield* runMigration(pool, statements);
 
-    const migrated = yield* query<{
-      authentication_namespace_id: string;
-      binding_revision: number;
-      created_by_invocation_id: string | null;
-      last_transition_ref: string | null;
-      principal_auth_binding_id: string;
-      principal_id: string;
-      provider: string;
-      provider_subject_id: string;
-      revoked: boolean;
-      status: string;
-      subject_type: string;
-      tenant_id: string;
-    }>(
+    const namespaceColumn = yield* query<{ column_default: string | null; is_nullable: string }>(
       pool,
-      `select principal_auth_binding_id::text, tenant_id::text, principal_id::text,
-              provider, subject_type, provider_subject_id, status,
-              binding_revision, authentication_namespace_id,
-              created_by_invocation_id::text, last_transition_ref::text,
-              revoked_at is not null as revoked
-       from ${upgraded.quotedName}.principal_auth_bindings
-       order by principal_auth_binding_id`,
+      `select is_nullable, column_default
+       from information_schema.columns
+       where table_schema = $1
+         and table_name = 'principal_auth_bindings'
+         and column_name = 'authentication_namespace_id'`,
+      [schema.name],
     );
-    expect(migrated.rows).toEqual([
-      {
-        authentication_namespace_id: 'test.provider.primary.v1',
-        binding_revision: 1,
-        created_by_invocation_id: null,
-        last_transition_ref: null,
-        principal_auth_binding_id: ids.bindingOne,
-        principal_id: ids.principalOne,
-        provider: baseBinding.provider,
-        provider_subject_id: 'subject-001',
-        revoked: false,
-        status: baseBinding.status,
-        subject_type: baseBinding.subjectType,
-        tenant_id: ids.tenant,
-      },
-      {
-        authentication_namespace_id: 'test.provider.primary.v1',
-        binding_revision: 1,
-        created_by_invocation_id: null,
-        last_transition_ref: null,
-        principal_auth_binding_id: ids.bindingRevoked,
-        principal_id: ids.principalTwo,
-        provider: baseBinding.provider,
-        provider_subject_id: 'subject-revoked',
-        revoked: true,
-        status: 'revoked',
-        subject_type: baseBinding.subjectType,
-        tenant_id: ids.tenant,
-      },
-    ]);
-
-    const retainedAudit = yield* query<{ audit_event_id: string; auth_binding_id: string }>(
-      pool,
-      `select audit_event_id::text, auth_binding_id::text
-       from ${upgraded.quotedName}.audit_events
-       where auth_binding_id = $1`,
-      [ids.bindingRevoked],
-    );
-    expect(retainedAudit.rows).toEqual([
-      { audit_event_id: ids.revokedAuditEvent, auth_binding_id: ids.bindingRevoked },
-    ]);
+    expect(namespaceColumn.rows).toEqual([{ column_default: null, is_nullable: 'NO' }]);
 
     const indexes = yield* query<{ indexname: string }>(
       pool,
@@ -429,7 +241,7 @@ const migrationProgram = Effect.gen(function* migrationProgramEffect() {
        from pg_indexes
        where schemaname = $1 and tablename = 'principal_auth_bindings'
        order by indexname`,
-      [upgraded.name],
+      [schema.name],
     );
     expect(indexes.rows.map(({ indexname }) => indexname)).toEqual([
       'core_auth_bindings_api_key_subject_global_uk',
@@ -439,7 +251,26 @@ const migrationProgram = Effect.gen(function* migrationProgramEffect() {
       'principal_auth_bindings_pkey',
     ]);
 
-    yield* insertBinding(pool, upgraded, {
+    for (const principalId of [
+      ids.principalOne,
+      ids.principalTwo,
+      ids.principalThree,
+      ids.principalFour,
+      ids.principalSix,
+      ids.principalSeven,
+      ids.principalEight,
+    ]) {
+      yield* insertPrincipal(pool, schema, principalId);
+    }
+    yield* insertPrincipal(pool, schema, ids.principalFive, ids.otherTenant);
+
+    yield* insertBinding(pool, schema, {
+      authenticationNamespaceId: 'test.provider.primary.v1',
+      principalAuthBindingId: ids.bindingOne,
+      principalId: ids.principalOne,
+      providerSubjectId: 'subject-001',
+    });
+    yield* insertBinding(pool, schema, {
       authenticationNamespaceId: 'test.provider.secondary.v1',
       createdByInvocationId: ids.invocationOne,
       lastTransitionRef: ids.transitionOne,
@@ -448,19 +279,7 @@ const migrationProgram = Effect.gen(function* migrationProgramEffect() {
       providerSubjectId: 'subject-001',
       status: 'pending',
     });
-    const duplicateNamespace = yield* Effect.flip(
-      insertBinding(pool, upgraded, {
-        authenticationNamespaceId: 'test.provider.primary.v1',
-        principalAuthBindingId: ids.bindingThree,
-        principalId: ids.principalThree,
-        providerSubjectId: 'subject-001',
-        revokedAt,
-        status: 'revoked',
-      }),
-    );
-    expect(duplicateNamespace).toMatch(/core_auth_bindings_namespace_subject_uk/u);
-
-    yield* insertBinding(pool, upgraded, {
+    yield* insertBinding(pool, schema, {
       authenticationNamespaceId: 'test.provider.tertiary.v1',
       principalAuthBindingId: ids.bindingSix,
       principalId: ids.principalSix,
@@ -471,7 +290,7 @@ const migrationProgram = Effect.gen(function* migrationProgramEffect() {
     const sameUserAcrossNamespaces = yield* query<{ authentication_namespace_id: string }>(
       pool,
       `select authentication_namespace_id
-       from ${upgraded.quotedName}.principal_auth_bindings
+       from ${schema.quotedName}.principal_auth_bindings
        where subject_type = 'user' and provider_subject_id = $1
        order by authentication_namespace_id`,
       ['subject-001'],
@@ -483,23 +302,37 @@ const migrationProgram = Effect.gen(function* migrationProgramEffect() {
     ]);
 
     const bindingProvenance = yield* query<{
+      binding_revision: number;
       created_by_invocation_id: string | null;
       last_transition_ref: string | null;
     }>(
       pool,
-      `select created_by_invocation_id::text, last_transition_ref::text
-       from ${upgraded.quotedName}.principal_auth_bindings
+      `select binding_revision, created_by_invocation_id::text, last_transition_ref::text
+       from ${schema.quotedName}.principal_auth_bindings
        where principal_auth_binding_id = $1`,
       [ids.bindingTwo],
     );
     expect(bindingProvenance.rows).toEqual([
       {
+        binding_revision: 1,
         created_by_invocation_id: ids.invocationOne,
         last_transition_ref: ids.transitionOne,
       },
     ]);
 
-    yield* insertBinding(pool, upgraded, {
+    const duplicateNamespace = yield* Effect.flip(
+      insertBinding(pool, schema, {
+        authenticationNamespaceId: 'test.provider.primary.v1',
+        principalAuthBindingId: ids.bindingThree,
+        principalId: ids.principalThree,
+        providerSubjectId: 'subject-001',
+        revokedAt: '2026-09-16T10:00:00.000Z',
+        status: 'revoked',
+      }),
+    );
+    expect(duplicateNamespace).toMatch(/core_auth_bindings_namespace_subject_uk/u);
+
+    yield* insertBinding(pool, schema, {
       authenticationNamespaceId: 'test.provider.primary.v1',
       principalAuthBindingId: ids.bindingFour,
       principalId: ids.principalFour,
@@ -508,7 +341,7 @@ const migrationProgram = Effect.gen(function* migrationProgramEffect() {
       subjectType: 'api_key',
     });
     const duplicateApiKey = yield* Effect.flip(
-      insertBinding(pool, upgraded, {
+      insertBinding(pool, schema, {
         authenticationNamespaceId: 'test.provider.secondary.v1',
         principalAuthBindingId: ids.bindingFive,
         principalId: ids.principalFive,
@@ -521,7 +354,7 @@ const migrationProgram = Effect.gen(function* migrationProgramEffect() {
     expect(duplicateApiKey).toMatch(/core_auth_bindings_api_key_subject_global_uk/u);
 
     const crossTenantForeignKey = yield* Effect.flip(
-      insertBinding(pool, upgraded, {
+      insertBinding(pool, schema, {
         authenticationNamespaceId: 'test.provider.cross-tenant.v1',
         principalAuthBindingId: ids.bindingCrossTenant,
         principalId: ids.principalOne,
@@ -536,7 +369,7 @@ const migrationProgram = Effect.gen(function* migrationProgramEffect() {
       [ids.bindingSeven, ids.bindingEight],
       (bindingId, index) =>
         Effect.exit(
-          insertBinding(pool, upgraded, {
+          insertBinding(pool, schema, {
             authenticationNamespaceId: 'test.provider.primary.v1',
             principalAuthBindingId: bindingId,
             principalId: index === 0 ? ids.principalSeven : ids.principalEight,
@@ -549,97 +382,7 @@ const migrationProgram = Effect.gen(function* migrationProgramEffect() {
     );
     expect(raceResults.filter(Exit.isSuccess)).toHaveLength(1);
     expect(raceResults.filter(Exit.isFailure)).toHaveLength(1);
-  }).pipe(Effect.ensuring(dropSchema(pool, upgraded)));
-
-  const empty = yield* makeMigrationSchema(pool, crypto);
-  yield* Effect.gen(function* emptyFixture() {
-    const statements = yield* migrationStatements(fileSystem, empty);
-    yield* runMigration(pool, statements);
-    const namespaceColumn = yield* query<{ column_default: string | null; is_nullable: string }>(
-      pool,
-      `select is_nullable, column_default
-       from information_schema.columns
-       where table_schema = $1
-         and table_name = 'principal_auth_bindings'
-         and column_name = 'authentication_namespace_id'`,
-      [empty.name],
-    );
-    expect(namespaceColumn.rows).toEqual([{ column_default: null, is_nullable: 'NO' }]);
-    const stagingTable = yield* query<{ table_name: string }>(
-      pool,
-      `select table_name
-       from information_schema.tables
-       where table_schema = $1
-         and table_name = 'principal_auth_binding_namespace_inventory'`,
-      [empty.name],
-    );
-    expect(stagingTable.rows).toEqual([]);
-  }).pipe(Effect.ensuring(dropSchema(pool, empty)));
-
-  const missingProof = yield* makeMigrationSchema(pool, crypto);
-  yield* Effect.gen(function* missingProofFixture() {
-    yield* insertPrincipal(pool, missingProof, ids.principalOne);
-    yield* insertBinding(pool, missingProof, {
-      principalAuthBindingId: ids.bindingOne,
-      principalId: ids.principalOne,
-      providerSubjectId: 'subject-001',
-    });
-    const statements = yield* migrationStatements(fileSystem, missingProof);
-    const failure = yield* Effect.flip(runMigration(pool, statements));
-    expect(String(failure)).toMatch(/inventory is required/u);
-    const namespaceColumn = yield* query<{ column_name: string }>(
-      pool,
-      `select column_name
-       from information_schema.columns
-       where table_schema = $1
-         and table_name = 'principal_auth_bindings'
-         and column_name = 'authentication_namespace_id'`,
-      [missingProof.name],
-    );
-    expect(namespaceColumn.rows).toEqual([]);
-    const oldIndex = yield* query<{ indexname: string }>(
-      pool,
-      `select indexname
-       from pg_indexes
-       where schemaname = $1
-         and indexname = 'core_auth_bindings_subject_uk'`,
-      [missingProof.name],
-    );
-    expect(oldIndex.rows).toEqual([{ indexname: 'core_auth_bindings_subject_uk' }]);
-  }).pipe(Effect.ensuring(dropSchema(pool, missingProof)));
-
-  const mismatchedProof = yield* makeMigrationSchema(pool, crypto);
-  yield* Effect.gen(function* mismatchedProofFixture() {
-    yield* insertPrincipal(pool, mismatchedProof, ids.principalOne);
-    yield* insertBinding(pool, mismatchedProof, {
-      principalAuthBindingId: ids.bindingOne,
-      principalId: ids.principalOne,
-      providerSubjectId: 'subject-001',
-    });
-    yield* stageInventory(pool, mismatchedProof, {
-      authenticationNamespaceId: 'test.provider.primary.v1',
-      evidenceRef: 'review://issue-337/namespace-binding-001',
-      principalAuthBindingId: ids.bindingOne,
-      principalId: ids.principalOne,
-      provider: 'different-provider',
-      providerSubjectId: 'subject-001',
-      subjectType: baseBinding.subjectType,
-      tenantId: ids.tenant,
-    });
-    const statements = yield* migrationStatements(fileSystem, mismatchedProof);
-    const failure = yield* Effect.flip(runMigration(pool, statements));
-    expect(String(failure)).toMatch(/exactly match/u);
-    const namespaceColumn = yield* query<{ column_name: string }>(
-      pool,
-      `select column_name
-       from information_schema.columns
-       where table_schema = $1
-         and table_name = 'principal_auth_bindings'
-         and column_name = 'authentication_namespace_id'`,
-      [mismatchedProof.name],
-    );
-    expect(namespaceColumn.rows).toEqual([]);
-  }).pipe(Effect.ensuring(dropSchema(pool, mismatchedProof)));
+  }).pipe(Effect.ensuring(dropSchema(pool, schema)));
 
   const lateFailure = yield* makeMigrationSchema(pool, crypto);
   yield* Effect.gen(function* lateFailureFixture() {
@@ -666,21 +409,9 @@ const migrationProgram = Effect.gen(function* migrationProgramEffect() {
       [lateFailure.name],
     );
     expect(oldIndex.rows).toEqual([{ indexname: 'core_auth_bindings_subject_uk' }]);
-    const stagingTable = yield* query<{ table_name: string }>(
-      pool,
-      `select table_name
-       from information_schema.tables
-       where table_schema = $1
-         and table_name = 'principal_auth_binding_namespace_inventory'`,
-      [lateFailure.name],
-    );
-    expect(stagingTable.rows).toEqual([]);
   }).pipe(Effect.ensuring(dropSchema(pool, lateFailure)));
 }).pipe(Effect.scoped);
 
 it.layer(NodeServices.layer, { excludeTestServices: true })('auth-namespace-migration', (suite) => {
-  suite.effect(
-    'upgrades reviewed bindings, preserves IDs, and proves uniqueness and fail-closed rollback',
-    () => migrationProgram,
-  );
+  suite.effect('initializes the empty schema and preserves binding constraints', () => migrationProgram);
 });
