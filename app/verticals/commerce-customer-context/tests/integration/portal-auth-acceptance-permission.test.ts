@@ -348,7 +348,8 @@ it.live(
           yield* admin.executor
             .select({ outcomeCode: dataAccessEvents.outcomeCode })
             .from(dataAccessEvents)
-            .where(eq(dataAccessEvents.tenantId, subject.tenantId)),
+            .where(eq(dataAccessEvents.tenantId, subject.tenantId))
+            .orderBy(dataAccessEvents.occurredAt),
         ).toStrictEqual([{ outcomeCode: 'spicedb_permission_denied' }, { outcomeCode: 'read_permission_denied' }]);
       }),
     ),
