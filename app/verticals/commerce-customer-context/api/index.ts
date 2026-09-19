@@ -479,9 +479,7 @@ const commerceCoreIdentityRealmLive = CommerceCoreIdentityClientLive.pipe(
   Layer.provideMerge(CommerceCoreIdentityClientConfigLive),
 );
 const commerceEnrollmentPreparationSubjectRealmLive = CommerceEnrollmentPreparationSubjectResolverLive.pipe(
-  Layer.provide(
-    Layer.mergeAll(commerceEnrollmentOwnerTransactionRunnerProductionLive, commerceCoreIdentityRealmLive),
-  ),
+  Layer.provide(Layer.mergeAll(commerceEnrollmentOwnerTransactionRunnerProductionLive, commerceCoreIdentityRealmLive)),
 );
 const commerceEnrollmentOwnerTransitionPreparationRealmLive = commerceEnrollmentOwnerTransitionPreparationLive.pipe(
   Layer.provide(
