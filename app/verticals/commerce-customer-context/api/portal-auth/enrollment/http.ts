@@ -95,14 +95,12 @@ const enrollmentStartRateLimit: CommercePortalAuthRecoveryRateLimitRule = {
 };
 
 /**
- * Bounds what one Principal may spend on this route at all, whatever addresses it names; without it
- * a caller could name a fresh address per start and keep its own total unbounded. It is its own
- * policy rather than a reuse of `rateLimit.default`, whose 60-second window would let a Principal
- * walk fresh addresses past the narrower per-address budget.
+ * Reuses `accountCreation`'s budget: the session subject is the only customer-scoped signal before
+ * an account exists, so one policy governs enrollment-start effects whether or not one creates an account.
  */
-const enrollmentStartPrincipalRateLimit: CommercePortalAuthRecoveryRateLimitRule = {
-  max: COMMERCE_PORTAL_AUTH_POLICY.rateLimit.enrollmentStart.max,
-  windowSeconds: COMMERCE_PORTAL_AUTH_POLICY.rateLimit.enrollmentStart.windowSeconds,
+const enrollmentExistingAccountRateLimit: CommercePortalAuthRecoveryRateLimitRule = {
+  max: COMMERCE_PORTAL_AUTH_POLICY.rateLimit.accountCreation.max,
+  windowSeconds: COMMERCE_PORTAL_AUTH_POLICY.rateLimit.accountCreation.windowSeconds,
 };
 
 /**
@@ -127,35 +125,26 @@ const enrollmentSubjectKey = (subject: string, secret: Redacted.Redacted): strin
   createHmac('sha256', Redacted.value(secret)).update(subject).digest('base64url');
 
 /**
- * The two keys one start may spend, both scoped to the verified Principal rather than the
- * unattributable `resolveClientKey` — otherwise any caller with a valid assertion could spend
- * another Principal's whole budget by replaying it.
+ * Keys are scoped to the verified Principal and this route, not the unattributable
+ * `resolveClientKey` — otherwise a caller could spend another Principal's budget by replaying its assertion.
  */
-const enrollmentPrincipalBudgetKey = (principalId: string, secret: Redacted.Redacted): string =>
+const enrollmentPrincipalScopeKey = (principalId: string, secret: Redacted.Redacted): string =>
   `${enrollmentSubjectKey(principalId, secret)}|${ENROLLMENT_START_ROUTE}`;
 
 const enrollmentAddressBudgetKey = (principalId: string, email: string, secret: Redacted.Redacted): string =>
-  `${enrollmentPrincipalBudgetKey(principalId, secret)}|${enrollmentSubjectKey(email, secret)}`;
+  `${enrollmentPrincipalScopeKey(principalId, secret)}|${enrollmentSubjectKey(email, secret)}`;
 
 /**
- * Spends the Principal's route-wide budget alone, every start owes it regardless of address or
- * journey. It runs first so a Principal already out of starts is refused before anything reads or
- * names an address.
+ * Keyed by (Principal, session subject): the session subject is the only customer-scoped signal
+ * before an account is proven, narrowing the budget to one customer rather than every shopper
+ * behind the same Storefront Client Principal.
  */
-export const commercePortalAuthEnrollmentPrincipalBudget = Effect.fn(
-  'CommercePortalAuthEnrollmentHttp.principalBudget',
-)(function* consumeEnrollmentPrincipalBudgetEffect(principalId: string) {
-  const configuration = yield* CommercePortalAuthConfig;
-  const key = enrollmentPrincipalBudgetKey(principalId, configuration.secret);
-  const spent = yield* consumeRateLimitBudget(key, enrollmentStartPrincipalRateLimit, {
-    route: ENROLLMENT_START_ROUTE,
-    unavailable: (failure) => commercePortalAuthEnrollmentUnavailableProblem(failure),
-  });
-  if (!spent) {
-    return yield* Effect.fail(commercePortalAuthEnrollmentRateLimitedProblem(enrollmentStartPrincipalRateLimit));
-  }
-  return null;
-});
+const enrollmentExistingAccountBudgetKey = (
+  principalId: string,
+  sessionProviderSubjectId: string,
+  secret: Redacted.Redacted,
+): string =>
+  `${enrollmentPrincipalScopeKey(principalId, secret)}|existing-account|${enrollmentSubjectKey(sessionProviderSubjectId, secret)}`;
 
 /**
  * Spends the narrow (Principal, address) budget that bounds provider account creation. Only journeys
@@ -177,6 +166,26 @@ export const commercePortalAuthEnrollmentAddressBudget = Effect.fn('CommercePort
     return null;
   },
 );
+
+/**
+ * Spent after the session is read but before the directory lookup, so a no-session start answers 401
+ * and spends nothing. Bounds this exact customer's ownership probes without affecting other
+ * customers behind the same Storefront Client Principal.
+ */
+export const commercePortalAuthEnrollmentExistingAccountBudget = Effect.fn(
+  'CommercePortalAuthEnrollmentHttp.existingAccountBudget',
+)(function* consumeEnrollmentExistingAccountBudgetEffect(principalId: string, sessionProviderSubjectId: string) {
+  const configuration = yield* CommercePortalAuthConfig;
+  const key = enrollmentExistingAccountBudgetKey(principalId, sessionProviderSubjectId, configuration.secret);
+  const spent = yield* consumeRateLimitBudget(key, enrollmentExistingAccountRateLimit, {
+    route: ENROLLMENT_START_ROUTE,
+    unavailable: (failure) => commercePortalAuthEnrollmentUnavailableProblem(failure),
+  });
+  if (!spent) {
+    return yield* Effect.fail(commercePortalAuthEnrollmentRateLimitedProblem(enrollmentExistingAccountRateLimit));
+  }
+  return null;
+});
 
 const isAttemptUnavailable = Schema.is(CommerceEnrollmentAttemptUnavailable);
 const isAccountCreationUnavailable = Schema.is(CommercePortalAuthAccountCreationUnavailable);
@@ -484,15 +493,20 @@ export const commercePortalAuthEnrollmentReadableBy = (
  * subject and no credential. A caller with no session learns only that enrollment wants one, and a
  * caller whose session owns a different account is answered exactly as a malformed request is, so
  * neither answer tells anybody which addresses have accounts.
+ *
+ * The directory lookup below is spent against the (Principal, session subject) budget first,
+ * bounding a replayable verify-only assertion's probes to one customer without affecting others
+ * behind the same Principal.
  */
 export const commercePortalAuthEnrollmentAccountOwner = Effect.fn('CommercePortalAuthEnrollmentHttp.accountOwner')(
-  function* commercePortalAuthEnrollmentAccountOwnerEffect(headers: Headers, email: string) {
+  function* commercePortalAuthEnrollmentAccountOwnerEffect(headers: Headers, principalId: string, email: string) {
     const provider = yield* CommercePortalAuthService;
     const lifecycle = yield* CommercePortalAuthSessionLifecycle;
     const current = yield* commercePortalAuthEnrollmentSessionSubject(provider, lifecycle, headers);
     if (Option.isNone(current)) {
       return yield* Effect.fail(commercePortalAuthEnrollmentAuthenticationProblem);
     }
+    yield* commercePortalAuthEnrollmentExistingAccountBudget(principalId, current.value.providerSubjectId);
     const accountLookup = yield* CommercePortalAuthAccountLookupService;
     const owns = yield* accountLookup
       .existsByProviderSubject({ email, providerSubjectId: current.value.providerSubjectId })
@@ -526,18 +540,17 @@ const startEnrollment = Effect.fn('CommercePortalAuthEnrollmentHttp.start')(func
     return yield* Effect.fail(commercePortalAuthEnrollmentJourneyUnavailableProblem);
   }
   const email = input.email.trim().toLowerCase();
-  // The gateway principal is verified before the budget is spent, and keyed by the Principal it
-  // names rather than the assertion itself, so an unauthenticated caller can't exhaust another
-  // Principal's budget by naming it or by replaying a read-only assertion.
+  // Verified before any budget is spent; every budget below is keyed by the Principal it names, not
+  // the assertion, so a caller can't exhaust another Principal's budget by naming it or replaying a
+  // read-only assertion.
   const caller = yield* verifyOperationPrincipalWithoutRedemption(Redacted.make(request.headers['authorization']), {
     authentication: () => commercePortalAuthEnrollmentAuthenticationProblem,
     unavailable: () => commercePortalAuthEnrollmentUnavailableProblem(),
   });
-  // Spent before the owner-ownership probe below reads or names an address, so a replayable
-  // verify-only assertion can't run that probe against arbitrary addresses unbounded.
-  yield* commercePortalAuthEnrollmentPrincipalBudget(caller.principalId);
+  // For Existing-account, the ownership probe spends its own (Principal, session subject) budget
+  // internally, before its directory lookup — see `commercePortalAuthEnrollmentAccountOwner`.
   const ownerSubject = commercePortalAuthEnrollmentRequiresAccountOwner(input.journey)
-    ? yield* commercePortalAuthEnrollmentAccountOwner(requestHeaders(request.headers), email)
+    ? yield* commercePortalAuthEnrollmentAccountOwner(requestHeaders(request.headers), caller.principalId, email)
     : undefined;
   // Only the journeys that actually create a provider account owe this narrower budget; see
   // `commercePortalAuthEnrollmentAddressBudget`.

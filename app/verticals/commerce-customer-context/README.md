@@ -74,26 +74,23 @@ completes or terminates an Attempt from the outside: every later transition trav
 governed enrollment Actions, and `COMPLETE` is derived from durable owner outcomes rather than
 asserted by a caller.
 
-`POST /enrollment/start` spends two independent budgets, in a fixed order, both keyed under the
-deployment secret by the Principal the caller's gateway assertion verifies as (never by the
-transport's own unattributable client, which every caller shares):
+`POST /enrollment/start` spends a budget scoped to the caller's Principal _and_ a customer-specific
+signal that Principal alone never establishes, so a single shopper cannot exhaust it for every other
+shopper behind the same shared Storefront Principal. Both budgets below are keyed under the
+deployment secret; neither is route-wide:
 
-1. **Principal, per hour** (`rateLimit.enrollmentStart`) — what one Principal may spend on this
-   route at all, whatever address it names. It is spent first, before anything reads or names an
-   address: the Existing-account owner-ownership probe (a portal session read plus a provider
-   directory lookup) runs only after this budget clears, so a caller holding a replayable
-   verify-only assertion cannot run that probe against arbitrary addresses faster than this budget
-   allows. It is its own policy rather than a reuse of `rateLimit.default`, whose 60-second window
-   would let a Principal sharing it walk fresh addresses far faster than the per-address budget
-   below intends.
-2. **Address, per hour** (`rateLimit.accountCreation`) — what one (Principal, address) pair may
-   spend on provider account creation. Spent last, and only by the journeys that actually create a
-   provider account (`RETAIL_SELF_ENROLLMENT`); Existing-account proves ownership of an account
-   that already exists and dispatches no provider effect this budget throttles.
+1. **(Principal, address), per hour** (`rateLimit.accountCreation`) — what one (Principal, address)
+   pair may spend on provider account creation. Spent only by the journeys that actually create a
+   provider account (`RETAIL_SELF_ENROLLMENT`), after the caller's gateway assertion is verified;
+   Existing-account proves ownership of an account that already exists and dispatches no provider
+   effect this budget throttles.
+2. **(Principal, session subject), per hour** (`rateLimit.accountCreation`, reused) — what one
+   Existing-account session may spend on the ownership probe (a portal session read plus a provider
+   directory lookup). Spent only after that session is confirmed live: a start with no session
+   answers `401` without spending anything, so this budget can never be exhausted by an
+   unauthenticated caller walking addresses.
 
-The order is therefore **Principal budget → owner-ownership probe (Existing-account only) → address
-budget (account-creating journeys only)**. A `429` names the window of whichever rule actually
-refused the request.
+A `429` names the window of whichever rule actually refused the request.
 
 `journey: COUNTERPARTY_INVITATION` is refused fail-closed with `422 enrollment_journey_unavailable`
 — no Attempt is persisted and no provider account is created — until an owner effect exists that can

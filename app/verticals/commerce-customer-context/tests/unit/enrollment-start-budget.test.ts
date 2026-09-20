@@ -6,7 +6,7 @@ import { expect, it } from 'effect-rstest';
 
 import {
   commercePortalAuthEnrollmentAddressBudget,
-  commercePortalAuthEnrollmentPrincipalBudget,
+  commercePortalAuthEnrollmentExistingAccountBudget,
 } from '../../api/portal-auth/enrollment/http.ts';
 import { CommercePortalAuthConfig } from '../../api/portal-auth/provider/config-service.ts';
 import { COMMERCE_PORTAL_AUTH_POLICY, parseCommercePortalAuthConfig } from '../../api/portal-auth/provider/config.ts';
@@ -16,10 +16,11 @@ import type { CommercePortalAuthRecoveryRateLimit } from '../../api/portal-auth/
 /**
  * What one enrollment start may spend, and whose budget it spends.
  *
- * The start route decides this before it has redeemed anything: the gate above the budget verifies
- * the gateway assertion rather than redeeming it, so the same assertion can be presented again.
- * Whatever the budget is keyed by is therefore what one caller can exhaust, and the only caller
- * identity established that early is the Principal that verification named.
+ * Both budgets below are keyed by the Principal a caller's gateway assertion verifies as, scoped
+ * further by whatever customer-specific signal that journey has established by the time it spends:
+ * the address named (account-creating journeys) or the session subject a live portal session proved
+ * (the Existing-account ownership probe). Neither budget is route-wide, so one shopper behind a
+ * shared Storefront Principal can never exhaust it for every other shopper behind the same Principal.
  */
 
 const CONFIGURATION_ENVIRONMENT = {
@@ -29,8 +30,8 @@ const CONFIGURATION_ENVIRONMENT = {
 };
 
 const ADDRESS_BUDGET = COMMERCE_PORTAL_AUTH_POLICY.rateLimit.accountCreation.max;
-const PRINCIPAL_BUDGET = COMMERCE_PORTAL_AUTH_POLICY.rateLimit.enrollmentStart.max;
-const PRINCIPAL_WINDOW_SECONDS = COMMERCE_PORTAL_AUTH_POLICY.rateLimit.enrollmentStart.windowSeconds;
+const EXISTING_ACCOUNT_BUDGET = COMMERCE_PORTAL_AUTH_POLICY.rateLimit.accountCreation.max;
+const EXISTING_ACCOUNT_WINDOW_SECONDS = COMMERCE_PORTAL_AUTH_POLICY.rateLimit.accountCreation.windowSeconds;
 const RATE_LIMITED_STATUS = 429;
 const ALLOWED = 'ALLOWED';
 
@@ -70,8 +71,8 @@ const makeBudgetFixture = Effect.fnUntraced(function* makeBudgetFixture() {
         Effect.provideService(CommercePortalAuthRecoveryRateLimitService, budget),
         Effect.provideService(CommercePortalAuthConfig, configuration),
       ),
-    startPrincipal: (principalId: string) =>
-      commercePortalAuthEnrollmentPrincipalBudget(principalId).pipe(
+    startExistingAccount: (principalId: string, sessionProviderSubjectId: string) =>
+      commercePortalAuthEnrollmentExistingAccountBudget(principalId, sessionProviderSubjectId).pipe(
         Effect.match({
           onFailure: (problem) => ({
             retryAfterSeconds: 'retryAfterSeconds' in problem ? problem.retryAfterSeconds : null,
@@ -107,54 +108,75 @@ it.effect('leaves a second Principal the whole address budget the first one exha
   }),
 );
 
-it.effect(
-  'stops a Principal walking fresh addresses inside the enrollment-start window, independent of the address budget',
-  () =>
-    Effect.gen(function* routeBudgetIsPerPrincipal() {
-      const fixture = yield* makeBudgetFixture();
-      const enroller = randomUUID();
-
-      const spent = yield* Effect.forEach(
-        Array.from({ length: PRINCIPAL_BUDGET }, (_unused, index) => index),
-        () => fixture.startPrincipal(enroller),
-        { concurrency: 1 },
-      );
-      expect(spent.map((answer) => answer.status)).toStrictEqual(allowances(PRINCIPAL_BUDGET));
-
-      // One route-wide key for the Principal.
-      expect(yield* fixture.keys).toHaveLength(1);
-
-      // The Principal is out of starts for the rest of the enrollment-start window, regardless of
-      // which address a further start would name — the route spends this budget before it ever
-      // reads or names an address.
-      const refused = yield* fixture.startPrincipal(enroller);
-      expect(refused.status).toBe(String(RATE_LIMITED_STATUS));
-
-      // The refusal reports the window of the rule that actually refused it: the enrollment-start
-      // policy's hourly window, not the narrower per-address `accountCreation` window.
-      expect(refused.retryAfterSeconds).toBe(PRINCIPAL_WINDOW_SECONDS);
-    }),
-);
-
-it.effect('cannot be walked past by waiting out a window shorter than the enrollment-start hour', () =>
-  Effect.gen(function* principalBudgetSurvivesAShortWait() {
+it.effect('leaves a second address the whole budget the first one exhausted, for the very same Principal', () =>
+  Effect.gen(function* addressBudgetIsPerAddress() {
     const fixture = yield* makeBudgetFixture();
     const enroller = randomUUID();
+    const addressA = `enrollment-${randomUUID()}@example.test`;
+    const addressB = `enrollment-${randomUUID()}@example.test`;
 
     const spent = yield* Effect.forEach(
-      Array.from({ length: PRINCIPAL_BUDGET }, (_unused, index) => index),
-      () => fixture.startPrincipal(enroller),
+      Array.from({ length: ADDRESS_BUDGET }, (_unused, index) => index),
+      () => fixture.startAddress(enroller, addressA),
       { concurrency: 1 },
     );
-    expect(spent.map((answer) => answer.status)).toStrictEqual(allowances(PRINCIPAL_BUDGET));
+    expect(spent).toStrictEqual(allowances(ADDRESS_BUDGET));
+    expect(yield* fixture.startAddress(enroller, addressA)).toBe(String(RATE_LIMITED_STATUS));
 
-    // A window far shorter than the enrollment-start hour — the `rateLimit.default` window this
-    // route used to reuse by mistake — must not reset the Principal's budget.
+    // The same Storefront Principal enrolling a different address is untouched: the budget is
+    // scoped to (Principal, address), never to the Principal alone.
+    expect(yield* fixture.startAddress(enroller, addressB)).toBe(ALLOWED);
+  }),
+);
+
+it.effect('leaves a second session subject the whole existing-account budget the first one exhausted', () =>
+  Effect.gen(function* existingAccountBudgetIsPerSessionSubject() {
+    const fixture = yield* makeBudgetFixture();
+    const principalId = randomUUID();
+    const subject = randomUUID();
+
+    const spent = yield* Effect.forEach(
+      Array.from({ length: EXISTING_ACCOUNT_BUDGET }, (_unused, index) => index),
+      () => fixture.startExistingAccount(principalId, subject),
+      { concurrency: 1 },
+    );
+    expect(spent.map((answer) => answer.status)).toStrictEqual(allowances(EXISTING_ACCOUNT_BUDGET));
+
+    // One key per (Principal, session subject).
+    expect(yield* fixture.keys).toHaveLength(1);
+
+    // That session subject is out of probes for the rest of the window.
+    const refused = yield* fixture.startExistingAccount(principalId, subject);
+    expect(refused.status).toBe(String(RATE_LIMITED_STATUS));
+
+    // The refusal reports the window of the rule that actually refused it.
+    expect(refused.retryAfterSeconds).toBe(EXISTING_ACCOUNT_WINDOW_SECONDS);
+
+    // A second session behind the very same shared Storefront Principal is untouched: the budget is
+    // scoped to (Principal, session subject), never to the Principal alone.
+    expect((yield* fixture.startExistingAccount(principalId, randomUUID())).status).toBe(ALLOWED);
+  }),
+);
+
+it.effect('cannot be walked past by waiting out a window shorter than the existing-account hour', () =>
+  Effect.gen(function* existingAccountBudgetSurvivesAShortWait() {
+    const fixture = yield* makeBudgetFixture();
+    const principalId = randomUUID();
+    const subject = randomUUID();
+
+    const spent = yield* Effect.forEach(
+      Array.from({ length: EXISTING_ACCOUNT_BUDGET }, (_unused, index) => index),
+      () => fixture.startExistingAccount(principalId, subject),
+      { concurrency: 1 },
+    );
+    expect(spent.map((answer) => answer.status)).toStrictEqual(allowances(EXISTING_ACCOUNT_BUDGET));
+
+    // A window far shorter than the existing-account hour must not reset the budget.
     yield* TestClock.adjust('60 seconds');
-    expect((yield* fixture.startPrincipal(enroller)).status).toBe(String(RATE_LIMITED_STATUS));
+    expect((yield* fixture.startExistingAccount(principalId, subject)).status).toBe(String(RATE_LIMITED_STATUS));
 
-    // Only once the full enrollment-start window has elapsed does the Principal buy a fresh start.
-    yield* TestClock.adjust(`${PRINCIPAL_WINDOW_SECONDS - 60} seconds`);
-    expect((yield* fixture.startPrincipal(enroller)).status).toBe(ALLOWED);
+    // Only once the full window has elapsed does the session subject buy a fresh probe.
+    yield* TestClock.adjust(`${EXISTING_ACCOUNT_WINDOW_SECONDS - 60} seconds`);
+    expect((yield* fixture.startExistingAccount(principalId, subject)).status).toBe(ALLOWED);
   }),
 );

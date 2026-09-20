@@ -1248,8 +1248,9 @@ it.live(
           yield* Layer.buildWithScope(yield* portalAccountDirectoryLive(), scope),
         );
         const ownerHeaders = new Headers({ cookie: owner.cookie });
+        const probePrincipalId = randomUUID();
         const refusal = yield* Effect.flip(
-          commercePortalAuthEnrollmentAccountOwner(ownerHeaders, stranger.email).pipe(
+          commercePortalAuthEnrollmentAccountOwner(ownerHeaders, probePrincipalId, stranger.email).pipe(
             Effect.provideContext(gateServices),
           ),
         );
@@ -1261,7 +1262,7 @@ it.live(
         const accountLookup = Context.get(gateServices, CommercePortalAuthAccountLookupService);
         expect(yield* accountLookup.existsByEmail({ email: stranger.email })).toBe(true);
         expect(
-          yield* commercePortalAuthEnrollmentAccountOwner(ownerHeaders, owner.email).pipe(
+          yield* commercePortalAuthEnrollmentAccountOwner(ownerHeaders, probePrincipalId, owner.email).pipe(
             Effect.provideContext(gateServices),
           ),
         ).toStrictEqual({
@@ -1461,43 +1462,50 @@ it.live(
   180_000,
 );
 
-/** Every durable row of one Principal's route-wide enrollment-start budget. */
-const enrollmentPrincipalBudgetKeys = Effect.fnUntraced(function* enrollmentPrincipalBudgetKeys(principalId: string) {
+/** Every durable row of one (Principal, session subject) pair's existing-account probe budget. */
+const enrollmentExistingAccountBudgetKeys = Effect.fnUntraced(function* enrollmentExistingAccountBudgetKeys(
+  principalId: string,
+  sessionProviderSubjectId: string,
+) {
   const databaseUrl = yield* providerDatabaseUrl;
   const database = yield* makeCommercePortalAuthDatabase({ connectionString: databaseUrl }).pipe(Effect.orDie);
-  const scope = createHmac('sha256', SECRET).update(principalId).digest('base64url');
-  const key = eq(rateLimit.key, `${scope}|/enrollment/start`);
+  const principalScope = createHmac('sha256', SECRET).update(principalId).digest('base64url');
+  const subjectScope = createHmac('sha256', SECRET).update(sessionProviderSubjectId).digest('base64url');
+  const key = eq(rateLimit.key, `${principalScope}|/enrollment/start|existing-account|${subjectScope}`);
   yield* Effect.addFinalizer(() => database.executor.delete(rateLimit).where(key).pipe(Effect.orDie));
   return yield* database.executor.select({ key: rateLimit.key }).from(rateLimit).where(key).pipe(Effect.orDie);
 });
 
 /**
  * The owner-ownership probe a failed Existing-account start runs — a portal session read plus a
- * provider directory lookup — is exactly what a caller holding a replayable verify-only assertion
- * could otherwise run against arbitrary addresses at whatever rate the probe itself sustains. The
- * Principal budget is what bounds that, and it must be spent before the probe runs at all: a probe
- * that ran first would let every one of these failed attempts through uncounted, and the caller
- * would never feel this budget no matter how many addresses it walked.
+ * provider directory lookup — is exactly what a caller holding a live session could otherwise run
+ * against arbitrary addresses it does not own at whatever rate the probe itself sustains. This
+ * budget bounds that, keyed by the (Principal, session subject) pair the probe only knows once a
+ * live session is confirmed, so a session-less caller can never trip or exhaust it.
  */
 it.live(
-  'stops an Existing-account Principal at the enrollment-start budget before the (N+1)th probe, not after it',
+  'stops an Existing-account session at the enrollment-start budget before the (N+1)th probe, not after it',
   () =>
     Effect.scoped(
-      Effect.gen(function* principalBudgetGatesTheOwnershipProbe() {
+      Effect.gen(function* existingAccountBudgetGatesTheOwnershipProbe() {
         const tenantId = randomUUID();
         const fixture = yield* makeEnrollmentAcceptanceFixture({ tenantId });
         const gateway = yield* makeAcceptanceGatewayIssuer(READ_ISSUER, READ_KEY_ID);
         const runtime = yield* authenticatedRuntime(gateway);
         const principalId = randomUUID();
+        const owner = yield* makeSignedInPortalAccount();
 
         /**
-         * One Existing-account start by this Principal, carrying its own fresh assertion and no
-         * portal session cookie at all — so the ownership probe, if it runs, always answers 401.
+         * One Existing-account start by this shared Storefront Principal, carrying the same live
+         * session. This harness names no portal realm in the mounted route's own deployment
+         * environment, so its directory lookup is the fail-closed leaf and the probe, once the
+         * budget admits it, always answers 503 rather than 401 — the same retryable refusal the
+         * "refuses a foreign account owner" test above documents for this harness.
          */
         const probeAs = Effect.fnUntraced(function* probeAs() {
           const assertion = yield* issueAcceptanceGatewayAssertion(fixture.admin, gateway, READ_AUDIENCE, {
             authBindingId: randomUUID(),
-            authContextRef: `portal-session:${randomUUID()}`,
+            authContextRef: `portal-session:${owner.providerSubjectId}`,
             authenticationNamespaceId: COMMERCE_AUTHENTICATION_NAMESPACE_ID,
             authMethod: 'session',
             legalEntityId: randomUUID(),
@@ -1507,40 +1515,153 @@ it.live(
           return yield* Effect.promise(
             async () =>
               await runtime.handler(
-                startExistingAccountRequest(`enrollment-http-${randomUUID()}@example.test`, { assertion }),
+                startExistingAccountRequest(`enrollment-http-${randomUUID()}@example.test`, {
+                  assertion,
+                  cookie: owner.cookie,
+                }),
               ),
           );
         });
 
-        const principalBudget = COMMERCE_PORTAL_AUTH_POLICY.rateLimit.enrollmentStart.max;
+        const existingAccountBudget = COMMERCE_PORTAL_AUTH_POLICY.rateLimit.accountCreation.max;
 
-        // N failed ownership probes: the Principal has no session, so the probe answers 401 for
-        // each of the starts its enrollment-start budget still permits.
+        // N admitted probes: the budget clears each one and the session read succeeds, so every
+        // probe reaches (and is refused by) the mounted route's fail-closed directory leaf.
         const probed = yield* Effect.forEach(
-          Array.from({ length: principalBudget }, (_unused, index) => index),
+          Array.from({ length: existingAccountBudget }, (_unused, index) => index),
           () => probeAs(),
           { concurrency: 1 },
         );
         expect(probed.map((response) => response.status)).toStrictEqual(
-          Array.from({ length: principalBudget }, () => 401),
+          Array.from({ length: existingAccountBudget }, () => 503),
         );
-        expect(yield* enrollmentPrincipalBudgetKeys(principalId)).toHaveLength(1);
+        expect(yield* enrollmentExistingAccountBudgetKeys(principalId, owner.providerSubjectId)).toHaveLength(1);
 
-        // The (N+1)th start is the Principal budget's own refusal, `429`, never the probe's `401` —
-        // the only way that status can appear here is if the budget refused before the probe ran,
-        // because the probe itself is incapable of answering anything but 401 for this Principal.
+        // The (N+1)th start is the budget's own refusal, `429`, never the probe's `503` — the only
+        // way that status can appear here is if the budget refused before the probe ran, because the
+        // probe itself is incapable of answering anything but 503 for this session in this harness.
         const refused = yield* probeAs();
         expect(refused.status).toBe(429);
         expect(refused.headers.get('content-type')).toContain('application/problem+json');
         expect(yield* Effect.promise(async () => await refused.clone().json())).toMatchObject({
           code: 'rate_limited',
-          retryAfterSeconds: COMMERCE_PORTAL_AUTH_POLICY.rateLimit.enrollmentStart.windowSeconds,
+          retryAfterSeconds: COMMERCE_PORTAL_AUTH_POLICY.rateLimit.accountCreation.windowSeconds,
           status: 429,
         });
 
         // No Attempt exists for any of this: the ownership probe never persists one, and neither
-        // does a Principal-budget refusal.
+        // does a budget refusal.
         expect(yield* enrollmentAttemptCount(fixture)).toBe(0);
+      }),
+    ),
+  180_000,
+);
+
+/**
+ * The fix for the P1 finding: the enrollment-start budgets are scoped to a customer-specific
+ * signal, not to the shared Storefront Principal alone, so one shopper cannot exhaust either budget
+ * for every other shopper behind the same Principal.
+ */
+it.live(
+  'leaves a second address the whole account-creation budget the first one exhausted, for the very same Principal',
+  () =>
+    Effect.scoped(
+      Effect.gen(function* addressBudgetIsPerPrincipalAndAddress() {
+        const tenantId = randomUUID();
+        const fixture = yield* makeEnrollmentAcceptanceFixture({ tenantId });
+        const gateway = yield* makeAcceptanceGatewayIssuer(READ_ISSUER, READ_KEY_ID);
+        const runtime = yield* authenticatedRuntime(gateway);
+        const enroller = randomUUID();
+
+        /** One start of the given address by the same shared Storefront Principal. */
+        const startAs = Effect.fnUntraced(function* startAs(email: string) {
+          const assertion = yield* issueAcceptanceGatewayAssertion(fixture.admin, gateway, READ_AUDIENCE, {
+            authBindingId: randomUUID(),
+            authContextRef: `portal-session:${randomUUID()}`,
+            authenticationNamespaceId: COMMERCE_AUTHENTICATION_NAMESPACE_ID,
+            authMethod: 'session',
+            legalEntityId: randomUUID(),
+            principalId: enroller,
+            tenantId,
+          });
+          const startBody = {
+            displayName: START_DISPLAY_NAME,
+            email,
+            journey: 'RETAIL_SELF_ENROLLMENT',
+            password: PORTAL_OWNER_PASSWORD,
+            sellingLegalEntityId: randomUUID(),
+          };
+          return yield* Effect.promise(async () => await runtime.handler(startEnrollmentRequest(startBody, assertion)));
+        });
+
+        // Address A's entire account-creation budget is spent by the shared Storefront Principal.
+        const addressA = `enrollment-http-${randomUUID()}@example.test`;
+        const spent = yield* Effect.forEach([0, 1, 2], () => startAs(addressA), { concurrency: 1 });
+        expect(spent.map((response) => response.status)).not.toContain(429);
+        expect((yield* startAs(addressA)).status).toBe(429);
+
+        // A different customer behind the very same shared Storefront Principal, enrolling a
+        // different address, is not refused by address A's exhaustion.
+        const addressB = `enrollment-http-${randomUUID()}@example.test`;
+        expect((yield* startAs(addressB)).status).not.toBe(429);
+      }),
+    ),
+  180_000,
+);
+
+it.live(
+  'stops one Existing-account session at its own probe budget while a second session behind the same Principal is still admitted',
+  () =>
+    Effect.scoped(
+      Effect.gen(function* existingAccountBudgetIsPerPrincipalAndSession() {
+        const tenantId = randomUUID();
+        const fixture = yield* makeEnrollmentAcceptanceFixture({ tenantId });
+        const gateway = yield* makeAcceptanceGatewayIssuer(READ_ISSUER, READ_KEY_ID);
+        const runtime = yield* authenticatedRuntime(gateway);
+        const principalId = randomUUID();
+        const first = yield* makeSignedInPortalAccount();
+        const second = yield* makeSignedInPortalAccount();
+
+        /** One Existing-account start by the given session, behind the shared Storefront Principal. */
+        const probeAs = Effect.fnUntraced(function* probeAs(session: SignedInPortalAccount) {
+          const assertion = yield* issueAcceptanceGatewayAssertion(fixture.admin, gateway, READ_AUDIENCE, {
+            authBindingId: randomUUID(),
+            authContextRef: `portal-session:${session.providerSubjectId}`,
+            authenticationNamespaceId: COMMERCE_AUTHENTICATION_NAMESPACE_ID,
+            authMethod: 'session',
+            legalEntityId: randomUUID(),
+            principalId,
+            tenantId,
+          });
+          return yield* Effect.promise(
+            async () =>
+              await runtime.handler(
+                startExistingAccountRequest(`enrollment-http-${randomUUID()}@example.test`, {
+                  assertion,
+                  cookie: session.cookie,
+                }),
+              ),
+          );
+        });
+
+        const existingAccountBudget = COMMERCE_PORTAL_AUTH_POLICY.rateLimit.accountCreation.max;
+
+        // The first customer's session exhausts its own probe budget behind the shared Principal.
+        // This harness's mounted route names no portal realm in its own deployment environment, so
+        // each admitted probe reaches the fail-closed directory leaf and answers 503, not 401.
+        const spent = yield* Effect.forEach(
+          Array.from({ length: existingAccountBudget }, (_unused, index) => index),
+          () => probeAs(first),
+          { concurrency: 1 },
+        );
+        expect(spent.map((response) => response.status)).toStrictEqual(
+          Array.from({ length: existingAccountBudget }, () => 503),
+        );
+        expect((yield* probeAs(first)).status).toBe(429);
+
+        // A second customer's session, behind the very same shared Storefront Principal, is still
+        // admitted: this is the P1 fix — a route-wide, Principal-only budget would answer 429 here.
+        expect((yield* probeAs(second)).status).not.toBe(429);
       }),
     ),
   180_000,
