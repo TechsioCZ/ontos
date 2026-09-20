@@ -86,8 +86,11 @@ Attempt is persisted), then claims that transition and journals the session subj
 A journey that halts is not abandoned. Reading an Attempt that is neither terminal nor under a live
 lease advances it once more, and an in-process sweeper
 (`src/workers/enrollment-continuation-sweeper.ts`) re-advances every halted Attempt whose last
-activity is older than the lease window. Both are safe to repeat: the durable claim and its lease,
-not the caller, are what grant ownership.
+activity is older than the lease window. The sweeper needs no Tenant knowledge: it pages through
+`list_due_portal_enrollment_attempts`, a worker-only cross-Tenant listing that refuses any caller
+whose transaction installed a verified Tenant, so an Attempt one process abandoned is finished by
+the next even in a Tenant that process has never served. Both are safe to repeat: the durable claim
+and its lease, not the caller, are what grant ownership.
 
 Once start has committed, the journey is carried the rest of the way by the server-side enrollment
 continuation (`src/enrollment/continuation/`), which the start route triggers as a detached,

@@ -3,7 +3,10 @@ import { randomUUID } from 'node:crypto';
 import { DateTime, Effect, Option, Ref, Schema } from 'effect';
 import { expect, it } from 'effect-rstest';
 
-import type { StaleEnrollmentAttempt } from '../../src/enrollment/attempts/attempt-persistence.ts';
+import type {
+  DueEnrollmentAttempt,
+  DueEnrollmentAttemptCursor,
+} from '../../src/enrollment/attempts/attempt-persistence.ts';
 import type { CommerceEnrollmentContinuationService } from '../../src/enrollment/continuation/enrollment-continuation.ts';
 import { commerceEnrollmentContinuationSweeperFor } from '../../src/workers/enrollment-continuation-sweeper.ts';
 import type { CommerceEnrollmentContinuationSweepResult } from '../../src/workers/enrollment-continuation-sweeper.ts';
@@ -18,6 +21,13 @@ import type { ReadEnrollmentAttemptInput } from '../../shared/enrollment-contrac
 const attemptId = (value: string) => Schema.decodeSync(EnrollmentAttemptIdSchema)(value);
 const tenantId = (value: string) => Schema.decodeSync(EnrollmentTenantIdSchema)(value);
 
+/** A keyset over the scripted journal's own order: a cursor resumes strictly after its row. */
+const resumeIndex = (rows: readonly DueEnrollmentAttempt[], after: Option.Option<DueEnrollmentAttemptCursor>): number =>
+  Option.match(after, {
+    onNone: () => 0,
+    onSome: (cursor) => rows.findIndex((row) => row.portalEnrollmentAttemptId === cursor.portalEnrollmentAttemptId) + 1,
+  });
+
 interface ScriptedContinuation {
   /** Every Attempt `advance` was called with, in call order. */
   readonly advanced: Effect.Effect<readonly string[]>;
@@ -26,7 +36,7 @@ interface ScriptedContinuation {
 
 /** A continuation that answers from a durable journal and records what it was asked to advance. */
 const scriptedContinuation = Effect.fnUntraced(function* scriptedContinuation(
-  journal: Ref.Ref<readonly StaleEnrollmentAttempt[]>,
+  journal: Ref.Ref<readonly DueEnrollmentAttempt[]>,
   outcome: 'COMPLETE' | 'HALTED',
 ) {
   const log = yield* Ref.make<readonly string[]>([]);
@@ -39,21 +49,26 @@ const scriptedContinuation = Effect.fnUntraced(function* scriptedContinuation(
             : { halt: { reason: 'IN_FLIGHT' as const, transition: Option.none() }, outcome: 'HALTED' as const },
         ),
       ),
-    listStale: (input) =>
-      Ref.get(journal).pipe(Effect.map((rows) => rows.filter((entry) => entry.tenantId === input.tenantId))),
+    listDue: (input) =>
+      Ref.get(journal).pipe(
+        Effect.map((rows) => {
+          const start = resumeIndex(rows, input.after);
+          return rows.slice(start, start + input.limit);
+        }),
+      ),
   };
   const scripted: ScriptedContinuation = { advanced: Ref.get(log), service };
   return scripted;
 });
 
-const stale = (attempt: ReadEnrollmentAttemptInput, revision = 1): StaleEnrollmentAttempt => ({
+const due = (attempt: ReadEnrollmentAttemptInput, revision = 1): DueEnrollmentAttempt => ({
   ...attempt,
   revision,
   state: 'IN_PROGRESS',
   updatedAt: DateTime.makeUnsafe(new Date(0)),
 });
 
-const journalOf = (...rows: readonly StaleEnrollmentAttempt[]) => Ref.make<readonly StaleEnrollmentAttempt[]>(rows);
+const journalOf = (...rows: readonly DueEnrollmentAttempt[]) => Ref.make<readonly DueEnrollmentAttempt[]>(rows);
 
 /** How many ticks a test may spend waiting for a budget to run out before it gives up. */
 const MAX_SWEEP_TICKS = 64;
@@ -80,50 +95,48 @@ it.effect('seeds a tick from the durable journal when its registry has never see
       portalEnrollmentAttemptId: attemptId(randomUUID()),
       tenantId: tenantId(randomUUID()),
     };
-    const scripted = yield* scriptedContinuation(yield* journalOf(stale(attempt)), 'COMPLETE');
+    const scripted = yield* scriptedContinuation(yield* journalOf(due(attempt)), 'COMPLETE');
     const sweeper = yield* commerceEnrollmentContinuationSweeperFor({
       continuation: scripted.service,
       staleAfterMillis: 0,
-      tenants: [attempt.tenantId],
     });
 
     const sweep = yield* sweeper.sweep;
 
     // A registry-only sweeper has nothing to iterate here, so dropping the durable seed makes both
-    // of these empty: the Attempt its process never started stays where the last one left it.
+    // of these empty: the Attempt its process never started stays where the last one left it. The
+    // sweeper is told no Tenant at all, so the listing is the only thing that could have named one.
     expect(sweep.swept).toBe(1);
     expect(yield* scripted.advanced).toStrictEqual([attempt.portalEnrollmentAttemptId]);
   }),
 );
 
-it.effect('scans the journal of a Tenant it learned from an Attempt it already settled', () =>
-  Effect.gen(function* learnsTenantFromTraffic() {
-    const scope = tenantId(randomUUID());
-    const served: ReadEnrollmentAttemptInput = { portalEnrollmentAttemptId: attemptId(randomUUID()), tenantId: scope };
-    const abandoned: ReadEnrollmentAttemptInput = {
+it.effect('reads past a whole page of Attempts an earlier budget gave up on', () =>
+  Effect.gen(function* pagesPastExhaustedAttempts() {
+    const attemptFor = (): ReadEnrollmentAttemptInput => ({
       portalEnrollmentAttemptId: attemptId(randomUUID()),
-      tenantId: scope,
-    };
-    const scripted = yield* scriptedContinuation(yield* journalOf(stale(abandoned)), 'COMPLETE');
+      tenantId: tenantId(randomUUID()),
+    });
+    const [older, oldest, fresh] = [attemptFor(), attemptFor(), attemptFor()];
+    const journal = yield* journalOf(due(oldest), due(older));
+    const scripted = yield* scriptedContinuation(journal, 'HALTED');
     const sweeper = yield* commerceEnrollmentContinuationSweeperFor({
       continuation: scripted.service,
+      pageLimit: 2,
       staleAfterMillis: 0,
     });
 
-    // Nothing has been served yet, so there is no Tenant to ask about and nothing is due.
-    expect((yield* sweeper.sweep).swept).toBe(0);
+    // Both run out of budget on the same tick, and both stay in the journal at the revision they
+    // ran out at — which is what keeps them in the listing and ahead of everything newer.
+    expect((yield* sweepUntilReleased(sweeper.sweep)).released).toBe(2);
+    const spent = (yield* scripted.advanced).length;
 
-    // One request completes cleanly. It leaves no registry entry — and the Tenant behind it is
-    // exactly what lets the next tick find the Attempt a previous process abandoned.
-    expect((yield* sweeper.continuation.advance(served)).outcome).toBe('COMPLETE');
+    // A newer Attempt arrives behind them. It is the second page's only row, and the first page is
+    // entirely Attempts this sweeper will not touch: a tick that stops after one page never sees it.
+    yield* Ref.set(journal, [due(oldest), due(older), due(fresh)]);
 
-    const sweep = yield* sweeper.sweep;
-
-    expect(sweep.swept).toBe(1);
-    expect(yield* scripted.advanced).toStrictEqual([
-      served.portalEnrollmentAttemptId,
-      abandoned.portalEnrollmentAttemptId,
-    ]);
+    expect((yield* sweeper.sweep).swept).toBe(1);
+    expect((yield* scripted.advanced).slice(spent)).toStrictEqual([fresh.portalEnrollmentAttemptId]);
   }),
 );
 
@@ -133,7 +146,7 @@ it.effect('advances an Attempt once per tick when the registry and the journal b
       portalEnrollmentAttemptId: attemptId(randomUUID()),
       tenantId: tenantId(randomUUID()),
     };
-    const scripted = yield* scriptedContinuation(yield* journalOf(stale(attempt)), 'HALTED');
+    const scripted = yield* scriptedContinuation(yield* journalOf(due(attempt)), 'HALTED');
     const sweeper = yield* commerceEnrollmentContinuationSweeperFor({
       continuation: scripted.service,
       staleAfterMillis: 0,
@@ -160,12 +173,11 @@ it.effect('leaves an Attempt alone once its budget ran out, until its durable re
       portalEnrollmentAttemptId: attemptId(randomUUID()),
       tenantId: tenantId(randomUUID()),
     };
-    const journal = yield* journalOf(stale(attempt));
+    const journal = yield* journalOf(due(attempt));
     const scripted = yield* scriptedContinuation(journal, 'HALTED');
     const sweeper = yield* commerceEnrollmentContinuationSweeperFor({
       continuation: scripted.service,
       staleAfterMillis: 0,
-      tenants: [attempt.tenantId],
     });
 
     const released = yield* sweepUntilReleased(sweeper.sweep);
@@ -181,7 +193,7 @@ it.effect('leaves an Attempt alone once its budget ran out, until its durable re
 
     // A revision change is the journal's own word that something moved this Attempt — a read
     // resumed it, or an owner answered — so the budget starts again.
-    yield* Ref.set(journal, [stale(attempt, 2)]);
+    yield* Ref.set(journal, [due(attempt, 2)]);
 
     expect((yield* sweeper.sweep).swept).toBe(1);
     expect((yield* scripted.advanced).length).toBe(spent + 1);

@@ -1442,13 +1442,24 @@ END;
 $function$;
 --> statement-breakpoint
 
--- The durable due-work index for the continuation sweeper. An Attempt whose worker disappeared is
--- only discoverable from the journal itself, so this is the one Attempt surface that answers
--- without an Attempt identity. It stays inside the Tenant boundary every other routine keeps: the
--- verified Tenant is its first argument and the row policies apply to it exactly as to the rest.
-CREATE FUNCTION "commerce_customer_context"."list_stale_portal_enrollment_attempts"(
-  p_tenant_id uuid,
+-- The durable due-work index for the continuation sweeper, and the one Attempt surface that answers
+-- before any Tenant is known. An Attempt whose worker disappeared is discoverable only from the
+-- journal itself, and the process that replaces that worker has never served the Attempt's Tenant,
+-- so a per-Tenant listing can only ever find the Attempts this deployment did not lose.
+--
+-- Cross-Tenant work discovery is what the Core Outbox poller already does: it claims the next due
+-- delivery of any Tenant on the runtime role, in a transaction with no operational scope installed,
+-- and installs the Tenant afterwards to do the work. There is no worker setting and no worker role
+-- in this system — running outside every Tenant scope is the worker scope. So this routine's guard
+-- is the exact inverse of its siblings': a transaction that has installed a verified Tenant is a
+-- request, and no request may read across the Tenant boundary.
+--
+-- It answers with addressing only — Tenant, Attempt, state, revision, activity — never Attempt
+-- content; the caller re-enters each Attempt's own Tenant scope to read or advance it.
+CREATE FUNCTION "commerce_customer_context"."list_due_portal_enrollment_attempts"(
   p_stale_after_millis integer,
+  p_after_updated_at timestamptz,
+  p_after_attempt_id uuid,
   p_limit integer
 )
 RETURNS TABLE (
@@ -1458,10 +1469,24 @@ RETURNS TABLE (
   revision integer,
   updated_at timestamptz
 )
-LANGUAGE sql
+LANGUAGE plpgsql
 SECURITY DEFINER
 SET search_path = pg_catalog, commerce_customer_context
 AS $function$
+DECLARE
+  now_at timestamptz := statement_timestamp();
+  stale_before timestamptz;
+BEGIN
+  IF nullif(current_setting('ontos.tenant_id', true), '') IS NOT NULL THEN
+    RAISE EXCEPTION 'cross-Tenant Attempt due-work listing requires worker scope' USING ERRCODE = '42501';
+  END IF;
+  -- Half a keyset is not a position: comparing a row against a NULL half silently returns nothing,
+  -- which would read as "no more due work" and end the tick with newer Attempts unvisited.
+  IF (p_after_updated_at IS NULL) <> (p_after_attempt_id IS NULL) THEN
+    RAISE EXCEPTION 'a due-work cursor needs both its activity timestamp and its Attempt' USING ERRCODE = '22023';
+  END IF;
+  stale_before := now_at - make_interval(secs => greatest(p_stale_after_millis, 0)::double precision / 1000);
+  RETURN QUERY
   SELECT
     attempt.tenant_id,
     attempt.portal_enrollment_attempt_id,
@@ -1471,26 +1496,45 @@ AS $function$
     attempt.revision,
     attempt.updated_at
   FROM commerce_customer_context.portal_enrollment_attempts AS attempt
-  WHERE attempt.tenant_id = p_tenant_id
+  WHERE
     -- COMPLETE and TERMINATED have nothing left to advance; VERIFICATION_REQUIRED waits on a
     -- caller rather than on a worker, so re-advancing it would halt on the very same answer.
-    -- RECONCILIATION_REQUIRED is the same kind of wait: its one automatic reconcile has already
-    -- run and left the Attempt here, so only a read or an operator resumes it, never this listing.
-    AND attempt.state = 'IN_PROGRESS'
-    AND attempt.updated_at
-          <= statement_timestamp() - make_interval(secs => greatest(p_stale_after_millis, 0)::double precision / 1000)
+    attempt.state IN ('IN_PROGRESS', 'RECONCILIATION_REQUIRED')
+    AND attempt.updated_at <= stale_before
     -- A live claim still owns the transition, and the claim — not this listing — grants ownership.
-    AND (attempt.lease_expires_at IS NULL OR attempt.lease_expires_at <= statement_timestamp())
+    AND (attempt.lease_expires_at IS NULL OR attempt.lease_expires_at <= now_at)
     AND NOT EXISTS (
       SELECT 1
       FROM commerce_customer_context.portal_enrollment_owner_operations AS operation
       WHERE operation.tenant_id = attempt.tenant_id
         AND operation.portal_enrollment_attempt_id = attempt.portal_enrollment_attempt_id
         AND operation.status = 'IN_PROGRESS'
-        AND operation.lease_expires_at > statement_timestamp()
+        AND operation.lease_expires_at > now_at
     )
-  ORDER BY attempt.updated_at
+    -- A fenced Attempt is due exactly once: while an owner transition the claim fenced still has no
+    -- authoritative answer on record. `reconcile_portal_enrollment_outcome` demands that reference
+    -- and writes it with a final status, so one continuation pass settles the operation and the row
+    -- leaves this listing on its own rather than on a rule that has to predict the settlement.
+    AND (
+      attempt.state = 'IN_PROGRESS'
+      OR EXISTS (
+        SELECT 1
+        FROM commerce_customer_context.portal_enrollment_owner_operations AS operation
+        WHERE operation.tenant_id = attempt.tenant_id
+          AND operation.portal_enrollment_attempt_id = attempt.portal_enrollment_attempt_id
+          AND operation.status = 'INDETERMINATE'
+          AND operation.reconciliation_ref IS NULL
+      )
+    )
+    AND (
+      p_after_updated_at IS NULL
+      OR (attempt.updated_at, attempt.portal_enrollment_attempt_id) > (p_after_updated_at, p_after_attempt_id)
+    )
+  -- The Attempt id breaks ties, so the keyset is a total order and a page can never re-serve or
+  -- skip a row whose activity timestamp another Attempt shares.
+  ORDER BY attempt.updated_at, attempt.portal_enrollment_attempt_id
   LIMIT greatest(least(p_limit, 500), 0);
+END;
 $function$;
 --> statement-breakpoint
 
@@ -1502,7 +1546,7 @@ REVOKE ALL ON FUNCTION "commerce_customer_context"."terminate_portal_enrollment"
 REVOKE ALL ON FUNCTION "commerce_customer_context"."read_portal_enrollment_attempt"(uuid, uuid) FROM PUBLIC;
 REVOKE ALL ON FUNCTION "commerce_customer_context"."read_portal_enrollment_owner_operation"(uuid, uuid, text, text) FROM PUBLIC;
 REVOKE ALL ON FUNCTION "commerce_customer_context"."authorize_portal_enrollment_account_creation"(uuid, uuid, uuid) FROM PUBLIC;
-REVOKE ALL ON FUNCTION "commerce_customer_context"."list_stale_portal_enrollment_attempts"(uuid, integer, integer) FROM PUBLIC;
+REVOKE ALL ON FUNCTION "commerce_customer_context"."list_due_portal_enrollment_attempts"(integer, timestamptz, uuid, integer) FROM PUBLIC;
 GRANT EXECUTE ON FUNCTION "commerce_customer_context"."create_portal_enrollment_attempt"(uuid, uuid, uuid, text, text, text, uuid, uuid, text) TO "ontos_runtime";
 GRANT EXECUTE ON FUNCTION "commerce_customer_context"."claim_portal_enrollment_transition"(uuid, uuid, integer, text, text, text, uuid, text, uuid, boolean, integer, text, text) TO "ontos_runtime";
 GRANT EXECUTE ON FUNCTION "commerce_customer_context"."record_portal_enrollment_outcome"(uuid, uuid, integer, text, uuid, text, text, uuid, uuid, text, text, text, text, text, text, text, text, text) TO "ontos_runtime";
@@ -1511,7 +1555,7 @@ GRANT EXECUTE ON FUNCTION "commerce_customer_context"."terminate_portal_enrollme
 GRANT EXECUTE ON FUNCTION "commerce_customer_context"."read_portal_enrollment_attempt"(uuid, uuid) TO "ontos_runtime";
 GRANT EXECUTE ON FUNCTION "commerce_customer_context"."read_portal_enrollment_owner_operation"(uuid, uuid, text, text) TO "ontos_runtime";
 GRANT EXECUTE ON FUNCTION "commerce_customer_context"."authorize_portal_enrollment_account_creation"(uuid, uuid, uuid) TO "ontos_runtime";
-GRANT EXECUTE ON FUNCTION "commerce_customer_context"."list_stale_portal_enrollment_attempts"(uuid, integer, integer) TO "ontos_runtime";
+GRANT EXECUTE ON FUNCTION "commerce_customer_context"."list_due_portal_enrollment_attempts"(integer, timestamptz, uuid, integer) TO "ontos_runtime";
 --> statement-breakpoint
 DO $hardening$
 BEGIN

@@ -3,11 +3,15 @@ import { Context, Effect } from 'effect';
 import type { ReconcileEnrollmentResolution } from '../../../shared/enrollment-contracts.ts';
 import type {
   CommerceEnrollmentOwnerScope,
+  DueEnrollmentAttempt,
   EnrollmentAttemptScopedRoutineInvoker,
-  ListStaleEnrollmentAttemptsInput,
-  StaleEnrollmentAttempt,
+  EnrollmentDueWorkExecution,
+  ListDueEnrollmentAttemptsInput,
 } from '../attempts/attempt-persistence.ts';
-import { commerceEnrollmentAttemptPersistenceForTransaction } from '../attempts/attempt-persistence.ts';
+import {
+  commerceEnrollmentAttemptPersistenceForTransaction,
+  commerceEnrollmentDueWorkForExecution,
+} from '../attempts/attempt-persistence.ts';
 import type { CommerceEnrollmentAttemptError } from '../attempts/errors.ts';
 import { CommerceEnrollmentAttemptUnavailable } from '../attempts/errors.ts';
 import { commerceEnrollmentAttemptServiceForPersistence } from '../attempts/attempt-service.ts';
@@ -38,9 +42,20 @@ export type CommerceEnrollmentOwnerTransactionRun = <Value>(
   ) => Effect.Effect<Value, CommerceEnrollmentAttemptError>,
 ) => Effect.Effect<Value, CommerceEnrollmentAttemptError>;
 
+/**
+ * One worker tick, one transaction, with no operational scope installed. It is the same governed
+ * connection `run` opens, minus the Tenant: the cross-Tenant due-work routine is the one Attempt
+ * surface that answers before any Tenant is known, and it refuses a transaction that installed one.
+ * A deployment implements this by opening a transaction and handing over SQL execution unscoped.
+ */
+export type CommerceEnrollmentWorkerTransactionRun = <Value>(
+  operation: (execute: EnrollmentDueWorkExecution) => Effect.Effect<Value, CommerceEnrollmentAttemptError>,
+) => Effect.Effect<Value, CommerceEnrollmentAttemptError>;
+
 /** Public composition seam for an owner transaction. */
 export interface CommerceEnrollmentOwnerTransactionRunnerService {
   readonly run: CommerceEnrollmentOwnerTransactionRun;
+  readonly runWorker: CommerceEnrollmentWorkerTransactionRun;
 }
 
 /** The Context tag that names the runner contract for the root composition that supplies it. */
@@ -146,27 +161,21 @@ export const makeCommerceEnrollmentOwnerAttemptStoreForProduction = Effect.fn(
 /**
  * The durable due-work surface, kept apart from the per-Attempt owner store on purpose: every
  * method there is addressed by an Attempt identity the caller already holds, and this one exists
- * precisely for the Attempts nobody holds an identity for any more.
+ * precisely for the Attempts nobody holds an identity for any more — including Attempts of Tenants
+ * this process has never served, which is why it carries no scope at all.
  */
-// oxlint-disable-next-line effect-native/require-context-service-for-service-interface -- The store is built for one verified scope at the call site, exactly as the owner attempt store is; it is not an ambient service. expires: 2027-09-17.
-export interface CommerceEnrollmentStaleAttemptStore {
-  readonly listStale: (
-    input: ListStaleEnrollmentAttemptsInput,
-  ) => Effect.Effect<readonly StaleEnrollmentAttempt[], CommerceEnrollmentAttemptError>;
+// oxlint-disable-next-line effect-native/require-context-service-for-service-interface -- The store is built for one worker transaction at the call site, exactly as the owner attempt store is; it is not an ambient service. expires: 2027-09-17.
+export interface CommerceEnrollmentDueAttemptStore {
+  readonly listDue: (
+    input: ListDueEnrollmentAttemptsInput,
+  ) => Effect.Effect<readonly DueEnrollmentAttempt[], CommerceEnrollmentAttemptError>;
 }
 
-/**
- * One listing, one transaction, on the same runner every owner phase uses. The scope's Tenant is
- * what the routine is asked about, so a store built for one Tenant can never report another's.
- */
-export const commerceEnrollmentStaleAttemptStoreForRun = (
-  scope: CommerceEnrollmentOwnerScope,
-  run: CommerceEnrollmentOwnerTransactionRun,
-): CommerceEnrollmentStaleAttemptStore => ({
-  listStale: (input) =>
-    run(scope, (transaction) =>
-      commerceEnrollmentAttemptPersistenceForTransaction(transaction, scope).listStale(input),
-    ),
+/** One listing, one worker transaction, on the same governed connection every owner phase uses. */
+export const commerceEnrollmentDueAttemptStoreForRun = (
+  runWorker: CommerceEnrollmentWorkerTransactionRun,
+): CommerceEnrollmentDueAttemptStore => ({
+  listDue: (input) => runWorker((execute) => commerceEnrollmentDueWorkForExecution(execute).listDue(input)),
 });
 
 /** A public owner adapter for preparing exact Action bindings before ordinary Core authorization. */

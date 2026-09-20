@@ -11,7 +11,7 @@ import type {
   EnrollmentOwnerOperationSnapshot,
   ReadEnrollmentAttemptInput,
 } from '../../../shared/enrollment-contracts.ts';
-import type { ListStaleEnrollmentAttemptsInput, StaleEnrollmentAttempt } from '../attempts/attempt-persistence.ts';
+import type { DueEnrollmentAttempt, ListDueEnrollmentAttemptsInput } from '../attempts/attempt-persistence.ts';
 import { attemptRejected } from '../attempts/errors.ts';
 import type { CommerceEnrollmentAttemptError } from '../attempts/errors.ts';
 import { journeyTransitionIdentity, journeyTransitions } from '../journeys/journey-contracts.ts';
@@ -34,8 +34,8 @@ import type {
 } from '../orchestration/owner-transition-driver.ts';
 import {
   CommerceEnrollmentOwnerTransactionRunner,
+  commerceEnrollmentDueAttemptStoreForRun,
   commerceEnrollmentOwnerAttemptStoreForRun,
-  commerceEnrollmentStaleAttemptStoreForRun,
 } from '../orchestration/owner-transition-production.ts';
 import { CommerceEnrollmentPreparationSubjectResolver } from '../orchestration/preparation-subject.ts';
 import type { CommerceEnrollmentPreparationSubjectResolve } from '../orchestration/preparation-subject.ts';
@@ -87,13 +87,14 @@ export interface CommerceEnrollmentContinuationService {
     input: ReadEnrollmentAttemptInput,
   ) => Effect.Effect<CommerceEnrollmentContinuationResult, CommerceEnrollmentAttemptError>;
   /**
-   * The Attempts of one Tenant the durable journal says are still owed a transition. It lives
-   * beside `advance` because the sweeper is handed this service and nothing else, and its own
-   * memory of what it started does not survive the process that built it.
+   * Every Attempt the durable journal says is still owed a transition, across every Tenant. It
+   * lives beside `advance` because the sweeper is handed this service and nothing else, its own
+   * memory of what it started does not survive the process that built it, and the Attempts it must
+   * finish are mostly the ones a previous process started — in Tenants it has never served.
    */
-  readonly listStale: (
-    input: ListStaleEnrollmentAttemptsInput & { readonly tenantId: ReadEnrollmentAttemptInput['tenantId'] },
-  ) => Effect.Effect<readonly StaleEnrollmentAttempt[], CommerceEnrollmentAttemptError>;
+  readonly listDue: (
+    input: ListDueEnrollmentAttemptsInput,
+  ) => Effect.Effect<readonly DueEnrollmentAttempt[], CommerceEnrollmentAttemptError>;
 }
 
 export class CommerceEnrollmentContinuation extends Context.Service<
@@ -436,8 +437,7 @@ export const CommerceEnrollmentContinuationLive = Layer.effect(
       advance: (input) => permits.withPermit(advanceLoop(seams, input, CONTINUATION_PASS_BUDGET)),
       // Reading the journal dispatches nothing, so it takes no permit: the permits exist to keep
       // enrollment bursts from flooding the owners, and a listing reaches no owner at all.
-      listStale: (input) =>
-        commerceEnrollmentStaleAttemptStoreForRun({ tenantId: input.tenantId }, runner.run).listStale(input),
+      listDue: (input) => commerceEnrollmentDueAttemptStoreForRun(runner.runWorker).listDue(input),
     };
   }),
 );
@@ -456,5 +456,5 @@ export const commerceEnrollmentContinuationUnavailableLive = Layer.succeed(Comme
     ),
   // Empty rather than refused: a deployment without the enrollment realm has no journey to be owed
   // a transition, so the sweeper that reads this has nothing due, not an error to report each tick.
-  listStale: () => Effect.succeed([]),
+  listDue: () => Effect.succeed([]),
 });

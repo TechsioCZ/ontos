@@ -6,11 +6,15 @@ import { Effect, Layer, Schema } from 'effect';
 import type {
   CommerceEnrollmentOwnerScope,
   EnrollmentAttemptScopedRoutineInvoker,
+  EnrollmentDueWorkExecution,
 } from '../attempts/attempt-persistence.ts';
 import { CommerceEnrollmentAttemptErrorSchema, CommerceEnrollmentAttemptUnavailable } from '../attempts/errors.ts';
 import type { CommerceEnrollmentAttemptError } from '../attempts/errors.ts';
 import { CommerceEnrollmentOwnerTransactionRunner } from './owner-transition-production.ts';
-import type { CommerceEnrollmentOwnerTransactionRun } from './owner-transition-production.ts';
+import type {
+  CommerceEnrollmentOwnerTransactionRun,
+  CommerceEnrollmentWorkerTransactionRun,
+} from './owner-transition-production.ts';
 
 /**
  * A transaction that did not complete is retryable and never a definitive owner denial: the
@@ -56,6 +60,16 @@ const runScopedOwnerPhase = <Value>(
   );
 
 /**
+ * A worker tick installs nothing. `set_config(..., true)` is transaction-local, so a transaction
+ * that never installs a scope has no verified Tenant at all — which is exactly what the cross-Tenant
+ * due-work routine demands, and what stops any request-scoped caller from reaching it.
+ */
+const workerExecution =
+  (transaction: ActionAuthorizationPreflightTransaction): EnrollmentDueWorkExecution =>
+  (statement) =>
+    transaction.execute(statement, 'objects').pipe(Effect.mapError((failure) => transactionUnavailable(failure)));
+
+/**
  * One owner phase, one transaction, on the vertical's own governed database connection. Nothing
  * here touches the Commerce portal-auth provider pool: the Enrollment Attempt journal is
  * Commerce-owned business state, not provider state, and it must never share a transaction with
@@ -73,6 +87,14 @@ export const CommerceEnrollmentOwnerTransactionRunnerLive = Layer.effect(
             Schema.is(CommerceEnrollmentAttemptErrorSchema)(failure) ? failure : transactionUnavailable(failure),
           ),
         );
-    return { run };
+    const runWorker: CommerceEnrollmentWorkerTransactionRun = (operation) =>
+      database
+        .transaction((transaction) => operation(workerExecution(transaction)))
+        .pipe(
+          Effect.mapError((failure) =>
+            Schema.is(CommerceEnrollmentAttemptErrorSchema)(failure) ? failure : transactionUnavailable(failure),
+          ),
+        );
+    return { run, runWorker };
   }),
 );

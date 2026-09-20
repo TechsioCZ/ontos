@@ -146,12 +146,16 @@ decision — an ambiguous Party candidate, or a Retail Portal binding that commi
 complete reviewed Permission baseline.
 
 A restart loses nothing: each sweep reads the Attempt journal itself through
-`list_stale_portal_enrollment_attempts`, so an Attempt abandoned by one process is re-advanced by
-the next once that process has served a request for the same Tenant. That listing reports only
-`IN_PROGRESS` Attempts: one already in `RECONCILIATION_REQUIRED` has had its one automatic
-reconcile and is resumed by a read of it or by an operator, never by the sweep loop. An Attempt the
-sweeper advanced fruitlessly through its whole budget is likewise left alone until its revision
-moves, so a permanently unavailable owner cannot crowd the bounded listing.
+`list_due_portal_enrollment_attempts`, so an Attempt abandoned by one process is re-advanced by the
+next — including in a Tenant the replacement process has never served, because that listing is
+cross-Tenant and the sweeper needs no Tenant knowledge to run. It is a worker-only surface: the
+routine refuses any caller whose transaction installed a verified Tenant, which is every request,
+so only a scope-free worker tick can read across the Tenant boundary. It reports `IN_PROGRESS`
+Attempts, and `RECONCILIATION_REQUIRED` ones whose fenced owner transition still has no
+authoritative answer on record; one automatic reconcile settles that transition and the Attempt
+leaves the listing. An Attempt the sweeper advanced fruitlessly through its whole budget is left
+alone until its revision moves, and the sweep pages through the listing in `(updated_at,
+portal_enrollment_attempt_id)` order, so a backlog of such Attempts cannot crowd out newer work.
 
 ## Operator notes
 

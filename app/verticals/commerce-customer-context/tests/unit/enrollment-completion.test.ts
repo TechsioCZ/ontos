@@ -301,7 +301,6 @@ const journalledPersistence = (
     authorizeAccountCreation: () => missing(),
     claim: () => missing(),
     create: () => missing(),
-    listStale: () => missing(),
     read: () => Effect.succeed(attempt()),
     readOperation: (input) => {
       read.push(input.transitionKey);

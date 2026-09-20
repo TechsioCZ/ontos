@@ -155,7 +155,6 @@ const makePersistence = (
     authorizeAccountCreation: () => Effect.succeed({ evidenceRef: operationId, revision: currentAttempt.revision }),
     claim: () => Effect.succeed(claimResult),
     create: (_input: StartEnrollmentAttemptInput) => Effect.succeed(createResult),
-    listStale: () => Effect.succeed([]),
     read: () => Effect.succeed(currentAttempt),
     readOperation: () => Effect.succeed(currentOperation),
     readOperations: () => Effect.succeed([currentOperation]),

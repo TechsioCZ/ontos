@@ -14,7 +14,10 @@ import type {
   CommerceEnrollmentRegisteredOwnerEffect,
 } from '../../src/enrollment/orchestration/owner-effect-registry.ts';
 import { CommerceEnrollmentOwnerTransactionRunner } from '../../src/enrollment/orchestration/owner-transition-production.ts';
-import type { CommerceEnrollmentOwnerTransactionRun } from '../../src/enrollment/orchestration/owner-transition-production.ts';
+import type {
+  CommerceEnrollmentOwnerTransactionRun,
+  CommerceEnrollmentWorkerTransactionRun,
+} from '../../src/enrollment/orchestration/owner-transition-production.ts';
 import { CommerceEnrollmentPreparationSubjectResolver } from '../../src/enrollment/orchestration/preparation-subject.ts';
 import type { RetailSelfEnrollmentPreparationSubject } from '../../src/enrollment/journeys/retail-self-enrollment-preparation.ts';
 import { EnrollmentDigestSchema, enrollmentDigest } from '../../shared/enrollment-contracts.ts';
@@ -70,6 +73,7 @@ const isReconcileOnly = (transition: JourneyTransitionSpec): boolean =>
 
 export const makeEnrollmentContinuationHarness = Effect.fnUntraced(function* makeEnrollmentContinuationHarness(
   run: CommerceEnrollmentOwnerTransactionRun,
+  runWorker: CommerceEnrollmentWorkerTransactionRun,
   script: EnrollmentContinuationScript,
 ) {
   const owner = enrollmentAcceptanceScriptedOwner(
@@ -103,7 +107,11 @@ export const makeEnrollmentContinuationHarness = Effect.fnUntraced(function* mak
     Effect.provide(
       CommerceEnrollmentContinuationLive.pipe(
         Layer.provide(
-          Layer.mergeAll(Layer.succeed(CommerceEnrollmentOwnerTransactionRunner, { run }), registryLive, subjectLive),
+          Layer.mergeAll(
+            Layer.succeed(CommerceEnrollmentOwnerTransactionRunner, { run, runWorker }),
+            registryLive,
+            subjectLive,
+          ),
         ),
       ),
     ),
@@ -111,6 +119,25 @@ export const makeEnrollmentContinuationHarness = Effect.fnUntraced(function* mak
   const harness: EnrollmentContinuationHarness = { continuation, owner };
   return harness;
 });
+
+/**
+ * The very same continuation, with the cross-Tenant due-work listing narrowed to the Tenants one
+ * scenario created. The listing is global by design and the integration files run in parallel
+ * against one database, so without this a sweeper under test would advance another file's
+ * Attempts. It only ever removes rows the routine returned: a scenario whose Attempt the routine
+ * does not report still sees an empty listing and a sweep that moves nothing.
+ */
+export const enrollmentContinuationForTenants = (
+  continuation: CommerceEnrollmentContinuationService,
+  tenantIds: readonly string[],
+): CommerceEnrollmentContinuationService => {
+  const scenarioTenants = new Set<string>(tenantIds);
+  return {
+    advance: continuation.advance,
+    listDue: (input) =>
+      continuation.listDue(input).pipe(Effect.map((rows) => rows.filter((row) => scenarioTenants.has(row.tenantId)))),
+  };
+};
 
 /** The `(transitionKey, status, outcomeCode)` triple of every durable owner operation, in order. */
 export const enrollmentOperationSummary = (

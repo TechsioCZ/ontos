@@ -72,6 +72,7 @@ const portFor = (attemptFailure: CommerceEnrollmentAttemptError) =>
   makeCommerceEnrollmentPortalAuthOwnerPreparationPort().pipe(
     Effect.provideService(CommerceEnrollmentOwnerTransactionRunner, {
       run: () => Effect.fail(attemptFailure),
+      runWorker: () => Effect.fail(attemptFailure),
     }),
     Effect.provideService(CommercePortalAuthAccountLookupService, accountLookupNeverRead),
   );
@@ -123,6 +124,7 @@ it.effect('opens exactly one owner transaction for the claim phase and never rea
           transactions += 1;
           return Effect.fail(retryableAttemptFailure);
         },
+        runWorker: () => Effect.fail(retryableAttemptFailure),
       }),
       Effect.provideService(CommercePortalAuthAccountLookupService, accountLookupNeverRead),
     );

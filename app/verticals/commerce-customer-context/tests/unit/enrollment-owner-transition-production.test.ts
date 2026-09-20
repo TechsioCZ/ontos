@@ -137,6 +137,7 @@ it.effect('opens a fresh transaction runner call for every production Attempt ph
         transactions += 1;
         return Effect.fail(unavailable());
       },
+      runWorker: () => Effect.fail(unavailable()),
     };
     const store = yield* makeCommerceEnrollmentOwnerAttemptStoreForProduction(scope).pipe(
       Effect.provideService(CommerceEnrollmentOwnerTransactionRunner, runner),

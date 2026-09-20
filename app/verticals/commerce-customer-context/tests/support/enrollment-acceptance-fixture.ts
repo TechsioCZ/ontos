@@ -14,14 +14,20 @@ import {
 } from '../../src/database/schema.ts';
 import type { EnrollmentAttemptSnapshot, StartEnrollmentAttemptInput } from '../../shared/enrollment-contracts.ts';
 import { commerceEnrollmentAttemptPersistenceForTransaction } from '../../src/enrollment/attempts/attempt-persistence.ts';
-import type { CommerceEnrollmentOwnerScope } from '../../src/enrollment/attempts/attempt-persistence.ts';
+import type {
+  CommerceEnrollmentOwnerScope,
+  EnrollmentDueWorkExecution,
+} from '../../src/enrollment/attempts/attempt-persistence.ts';
 import {
   CommerceEnrollmentAttemptErrorSchema,
   CommerceEnrollmentAttemptUnavailable,
 } from '../../src/enrollment/attempts/errors.ts';
 import type { CommerceEnrollmentAttemptError } from '../../src/enrollment/attempts/errors.ts';
 import { commerceEnrollmentOwnerAttemptStoreForRun } from '../../src/enrollment/orchestration/owner-transition-production.ts';
-import type { CommerceEnrollmentOwnerTransactionRun } from '../../src/enrollment/orchestration/owner-transition-production.ts';
+import type {
+  CommerceEnrollmentOwnerTransactionRun,
+  CommerceEnrollmentWorkerTransactionRun,
+} from '../../src/enrollment/orchestration/owner-transition-production.ts';
 import type { CommerceEnrollmentOwnerAttemptStore } from '../../src/enrollment/orchestration/owner-transition-driver.ts';
 
 /**
@@ -44,6 +50,13 @@ export interface EnrollmentAcceptanceFixture {
   /** The production generic owner store, backed by one real transaction per phase. */
   readonly ownerStore: CommerceEnrollmentOwnerAttemptStore;
   readonly run: CommerceEnrollmentOwnerTransactionRun;
+  /**
+   * The same runtime-role transaction as `runWorker`, with the fixture's verified Tenant installed
+   * the way every request installs it. It is how a test asks what a request-scoped caller gets.
+   */
+  readonly runRequestScoped: CommerceEnrollmentWorkerTransactionRun;
+  /** One worker transaction on the runtime role, with no operational scope installed. */
+  readonly runWorker: CommerceEnrollmentWorkerTransactionRun;
   readonly scope: CommerceEnrollmentOwnerScope;
 }
 
@@ -75,6 +88,36 @@ const acceptanceTransactionRun =
           )
           .pipe(Effect.flatMap(() => operation(scopedRoutineInvokerFromTransaction(executorFor(transaction), scope)))),
       )
+      .pipe(
+        Effect.mapError((failure) =>
+          Schema.is(CommerceEnrollmentAttemptErrorSchema)(failure) ? failure : transactionUnavailable(failure),
+        ),
+      );
+
+/**
+ * One worker tick, one transaction, and no `set_config` at all: the cross-Tenant due-work routine
+ * refuses a transaction that installed a verified Tenant, so installing one here would make every
+ * sweeper test fail closed rather than exercise the listing.
+ */
+const acceptanceWorkerRun =
+  (
+    database: EnrollmentAcceptanceDatabase,
+    scope?: CommerceEnrollmentOwnerScope,
+  ): CommerceEnrollmentWorkerTransactionRun =>
+  (operation) =>
+    database
+      .transaction((transaction) => {
+        const raw: EnrollmentDueWorkExecution = (statement) =>
+          transaction.execute(statement, 'objects').pipe(Effect.mapError(transactionUnavailable));
+        return scope === undefined
+          ? operation(raw)
+          : transaction
+              .execute(
+                sql`select set_config('ontos.tenant_id', ${scope.tenantId}, true), set_config('ontos.legal_entity_id', ${scope.legalEntityId ?? ''}, true)`,
+                'objects',
+              )
+              .pipe(Effect.flatMap(() => operation(raw)));
+      })
       .pipe(
         Effect.mapError((failure) =>
           Schema.is(CommerceEnrollmentAttemptErrorSchema)(failure) ? failure : transactionUnavailable(failure),
@@ -118,6 +161,8 @@ export const makeEnrollmentAcceptanceFixture = Effect.fnUntraced(function* makeE
     cleanup,
     ownerStore: commerceEnrollmentOwnerAttemptStoreForRun(scope, run),
     run,
+    runRequestScoped: acceptanceWorkerRun(runtime, scope),
+    runWorker: acceptanceWorkerRun(runtime),
     scope,
   };
   yield* fixture.cleanup();
@@ -164,6 +209,30 @@ export const expireEnrollmentAcceptanceLeases = (
           'objects',
         );
       }),
+    )
+    .pipe(Effect.asVoid, Effect.orDie);
+
+/**
+ * Moves an Attempt's last activity to an exact instant. The due-work listing is cross-Tenant and
+ * ordered by activity, so a test that needs a known position in that order states it rather than
+ * hoping the wall clock produced one.
+ */
+export const backdateEnrollmentAcceptanceAttempt = (
+  fixture: EnrollmentAcceptanceFixture,
+  portalEnrollmentAttemptId: string,
+  updatedAt: string,
+): Effect.Effect<void> =>
+  fixture.admin
+    .transaction((transaction) =>
+      transaction.execute(
+        sql`
+          update commerce_customer_context.portal_enrollment_attempts
+             set updated_at = ${updatedAt}::timestamptz
+           where tenant_id = ${fixture.scope.tenantId}::uuid
+             and portal_enrollment_attempt_id = ${portalEnrollmentAttemptId}::uuid
+        `,
+        'objects',
+      ),
     )
     .pipe(Effect.asVoid, Effect.orDie);
 

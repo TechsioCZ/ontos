@@ -5,6 +5,8 @@ import type {
   ScopedRoutineInvocationError,
   ScopedRoutineParameter,
 } from '@app/core-runtime';
+import { sql } from 'drizzle-orm';
+import type { SQL } from 'drizzle-orm';
 import { DateTime, Effect, Option, Schema } from 'effect';
 
 import {
@@ -153,14 +155,14 @@ const OwnerOperationRoutineRowSchema = Schema.Struct({
 type OwnerOperationRoutineRow = typeof OwnerOperationRoutineRowSchema.Type;
 /* oxlint-enable effect-native/no-nullable-schema-field */
 
-const StaleAttemptRoutineRowSchema = Schema.Struct({
+const DueAttemptRoutineRowSchema = Schema.Struct({
   portal_enrollment_attempt_id: EnrollmentAttemptIdSchema,
   revision: Schema.Number.check(Schema.isInt(), Schema.isGreaterThanOrEqualTo(1)),
   state: EnrollmentAttemptStateSchema,
   tenant_id: EnrollmentTenantIdSchema,
   updated_at: databaseTimestamp,
 });
-type StaleAttemptRoutineRow = typeof StaleAttemptRoutineRowSchema.Type;
+type DueAttemptRoutineRow = typeof DueAttemptRoutineRowSchema.Type;
 
 type UuidInput = Readonly<{ readonly source: 'input'; readonly type: 'uuid' }>;
 type TextInput = Readonly<{ readonly source: 'input'; readonly type: 'text' }>;
@@ -290,19 +292,6 @@ const readAttemptRoutine = defineScopedRoutine({
   schema: 'commerce_customer_context',
 });
 
-/**
- * The only Attempt routine that answers without an Attempt identity. It is how a worker that did
- * not create the Attempt finds it again, so its scope is the verified Tenant rather than one row.
- */
-const listStaleAttemptsRoutine = defineScopedRoutine({
-  name: 'list_stale_portal_enrollment_attempts',
-  ownerModuleKey: MODULE_KEY,
-  parameters: [{ source: 'tenantId', type: 'uuid' }, integer(), integer()],
-  resultSchema: StaleAttemptRoutineRowSchema,
-  routineKey: 'portal-enrollment-attempt.list-stale',
-  schema: 'commerce_customer_context',
-});
-
 const readOwnerOperationRoutine = defineScopedRoutine({
   name: 'read_portal_enrollment_owner_operation',
   ownerModuleKey: MODULE_KEY,
@@ -412,7 +401,7 @@ export interface AttemptTerminateResult {
  * journal — not any worker's memory of what it started — is what says a journey is still owed a
  * transition, so this is deliberately the whole record rather than a snapshot.
  */
-export type StaleEnrollmentAttempt = ReadEnrollmentAttemptInput & {
+export type DueEnrollmentAttempt = ReadEnrollmentAttemptInput & {
   /**
    * The Attempt's durable revision: what tells a worker "still exactly as I left it" apart from
    * "something has moved it since", without reading the Attempt again.
@@ -422,11 +411,27 @@ export type StaleEnrollmentAttempt = ReadEnrollmentAttemptInput & {
   readonly updatedAt: DateTime.Utc;
 };
 
-export interface ListStaleEnrollmentAttemptsInput {
+/** Where the next due-work page resumes: the last row of the page before it, in listing order. */
+export type DueEnrollmentAttemptCursor = Pick<DueEnrollmentAttempt, 'portalEnrollmentAttemptId' | 'updatedAt'>;
+
+export interface ListDueEnrollmentAttemptsInput {
+  /** `none` starts at the oldest due Attempt; `some` resumes strictly after that row. */
+  readonly after: Option.Option<DueEnrollmentAttemptCursor>;
   /** Upper bound on the rows one call may return; the routine caps it again on its own side. */
   readonly limit: number;
   /** How long an Attempt must have been untouched before the journal reports it as due. */
   readonly staleAfterMillis: number;
+}
+
+/**
+ * The cross-Tenant due-work surface. It is deliberately not part of
+ * `CommerceEnrollmentAttemptPersistence`: every routine there is addressed by an Attempt inside one
+ * verified Tenant, and this one answers before any Tenant is known.
+ */
+export interface CommerceEnrollmentDueWorkPersistence {
+  readonly listDue: (
+    input: ListDueEnrollmentAttemptsInput,
+  ) => Effect.Effect<readonly DueEnrollmentAttempt[], CommerceEnrollmentAttemptError>;
 }
 
 export interface CommerceEnrollmentAttemptPersistence {
@@ -441,14 +446,6 @@ export interface CommerceEnrollmentAttemptPersistence {
   readonly create: (
     input: StartEnrollmentAttemptInput,
   ) => Effect.Effect<AttemptCreateResult, CommerceEnrollmentAttemptError>;
-  /**
-   * Every non-terminal Attempt of the verified Tenant the journal has left idle longer than
-   * `staleAfterMillis` and that no live lease owns.  It takes no Attempt identity because its
-   * whole point is to name Attempts whose worker is gone and whose identity nobody still holds.
-   */
-  readonly listStale: (
-    input: ListStaleEnrollmentAttemptsInput,
-  ) => Effect.Effect<readonly StaleEnrollmentAttempt[], CommerceEnrollmentAttemptError>;
   readonly read: (
     input: ReadEnrollmentAttemptInput,
   ) => Effect.Effect<EnrollmentAttemptSnapshot, CommerceEnrollmentAttemptError>;
@@ -816,9 +813,9 @@ const mapOperation = (
   return decodeOwnerOperationSnapshot(operation);
 };
 
-const mapStaleAttempt = (
-  row: StaleAttemptRoutineRow,
-): Effect.Effect<StaleEnrollmentAttempt, CommerceEnrollmentAttemptError> => {
+const mapDueAttempt = (
+  row: DueAttemptRoutineRow,
+): Effect.Effect<DueEnrollmentAttempt, CommerceEnrollmentAttemptError> => {
   const updatedAt = mapTimestamp(row.updated_at);
   return updatedAt === undefined
     ? Effect.fail(invalid('The listed Enrollment Attempt activity timestamp is invalid'))
@@ -1206,13 +1203,6 @@ export const commerceEnrollmentAttemptPersistenceForTransaction = (
           ),
         ),
       ),
-    // No `ensureTenant` guard: the listing carries no caller-supplied Tenant to disagree with the
-    // verified scope, because the scope's own Tenant is the routine's first argument.
-    listStale: (input) =>
-      transaction.invoke(listStaleAttemptsRoutine, [input.staleAfterMillis, input.limit]).pipe(
-        Effect.mapError(mapRoutineError),
-        Effect.flatMap((rows) => Effect.forEach(rows, mapStaleAttempt, { concurrency: 1 })),
-      ),
     read: (input) =>
       ensureTenant(scope, input.tenantId).pipe(
         Effect.flatMap(() =>
@@ -1337,3 +1327,40 @@ export const commerceEnrollmentAttemptPersistenceForTransaction = (
       ),
   };
 };
+
+/**
+ * SQL execution inside one worker transaction — a transaction with no operational scope installed.
+ * The due-work routine is outside the scoped-routine contract because that contract requires the
+ * verified Tenant as the routine's first argument, and this routine exists precisely to answer
+ * before any Tenant is known. Running outside every Tenant scope is what the routine verifies.
+ */
+export type EnrollmentDueWorkExecution = (
+  statement: SQL,
+) => Effect.Effect<readonly object[], CommerceEnrollmentAttemptError>;
+
+const DUE_WORK_ROUTINE_SCHEMA = 'commerce_customer_context';
+const DUE_WORK_ROUTINE_NAME = 'list_due_portal_enrollment_attempts';
+
+const listDueStatement = (input: ListDueEnrollmentAttemptsInput): SQL => {
+  const after = Option.getOrUndefined(input.after);
+  // Both keyset halves travel together or neither does; the routine rejects a half cursor.
+  const afterUpdatedAt = after === undefined ? null : DateTime.formatIso(after.updatedAt);
+  const afterAttemptId = after?.portalEnrollmentAttemptId ?? null;
+  return sql`select * from ${sql.identifier(DUE_WORK_ROUTINE_SCHEMA)}.${sql.identifier(DUE_WORK_ROUTINE_NAME)}(${input.staleAfterMillis}::integer, ${afterUpdatedAt}::timestamptz, ${afterAttemptId}::uuid, ${input.limit}::integer)`;
+};
+
+export const commerceEnrollmentDueWorkForExecution = (
+  execute: EnrollmentDueWorkExecution,
+): CommerceEnrollmentDueWorkPersistence => ({
+  listDue: (input) =>
+    execute(listDueStatement(input)).pipe(
+      Effect.flatMap((rows) =>
+        Schema.decodeUnknownEffect(Schema.Array(Schema.toType(DueAttemptRoutineRowSchema)))(rows).pipe(
+          Effect.mapError((cause) =>
+            invalidWithCause('The Enrollment Attempt due-work listing returned an invalid row', cause),
+          ),
+        ),
+      ),
+      Effect.flatMap((rows) => Effect.forEach(rows, mapDueAttempt, { concurrency: 1 })),
+    ),
+});
