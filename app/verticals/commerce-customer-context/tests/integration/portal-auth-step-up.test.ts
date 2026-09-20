@@ -8,6 +8,7 @@ import { makeCommercePortalAuthDatabase } from '../../src/portal-auth/persistenc
 import type { CommercePortalAuthDatabase } from '../../src/portal-auth/persistence/portal-auth-database.ts';
 import { stepUpChallenge, stepUpChallengeAttempt } from '../../src/portal-auth/persistence/portal-auth-tables.ts';
 import { portalAuthAuditEvent } from '../../src/portal-auth/audit/audit-tables.ts';
+import { writeCommercePortalAuthAuditRow } from '../../src/portal-auth/audit/audit-transaction.ts';
 import type { CommercePortalAuthAuditEvent } from '../../src/portal-auth/audit/audit-contracts.ts';
 import { parseCommercePortalAuthConfig } from '../../api/portal-auth/provider/config.ts';
 import { makeCommercePortalAuthStepUpChallengeStore } from '../../api/portal-auth/provider/step-up/index.ts';
@@ -353,7 +354,7 @@ it.live('rolls a consume back when PostgreSQL refuses its audit row', () =>
   ),
 );
 
-it.live('leaves exactly one issued row and one verified row for a full issue-then-verify cycle', () =>
+it.live('leaves an issued row, a requested row, and a completion row for a full issue-verify-rotate cycle', () =>
   Effect.scoped(
     Effect.gen(function* issueThenVerifyLeavesExactlyOneRowEach() {
       const fixture = yield* makeFixture('issue-verify-cycle');
@@ -368,16 +369,63 @@ it.live('leaves exactly one issued row and one verified row for a full issue-the
       });
       const reservation = reservationInput(fixture, 'reservation-cycle');
       expect(yield* fixture.store.reserveAttempt(reservation)).toBe(true);
+      // Mirrors step-up.ts: consume only ever records the intent (code verified, elevation
+      // pending). The completion row below stands in for the session store's rotation
+      // transaction, which is the only place a `success` row is ever allowed to commit.
       expect(
         yield* fixture.store.consume({
           ...reservation,
-          audit: auditEvent(fixture, 'commerce.portal-auth.step-up-verified.v1', 'success'),
+          audit: auditEvent(fixture, 'commerce.portal-auth.step-up-verified.v1', 'requested'),
         }),
       ).toBe(true);
+      yield* fixture.database.executor.transaction((transaction) =>
+        writeCommercePortalAuthAuditRow(
+          transaction,
+          auditEvent(fixture, 'commerce.portal-auth.step-up-verified.v1', 'success'),
+        ),
+      );
 
       expect(yield* auditRowsForSubject(fixture)).toStrictEqual([
         { eventType: 'commerce.portal-auth.step-up-issued.v1', outcome: 'success' },
+        { eventType: 'commerce.portal-auth.step-up-verified.v1', outcome: 'requested' },
         { eventType: 'commerce.portal-auth.step-up-verified.v1', outcome: 'success' },
+      ]);
+    }),
+  ),
+);
+
+it.live('leaves the challenge consumed with only a requested row when the rotation never commits its completion', () =>
+  Effect.scoped(
+    Effect.gen(function* rotationNeverCommittedLeavesOnlyRequested() {
+      const fixture = yield* makeFixture('issue-verify-no-rotation');
+      yield* fixture.store.create({
+        attemptsRemaining: 1,
+        audit: auditEvent(fixture, 'commerce.portal-auth.step-up-issued.v1', 'success'),
+        challengeIdHash: fixture.challengeHash,
+        expiresAt: fixture.expiresAt,
+        now: fixture.now,
+        providerSubjectId: fixture.providerSubjectId,
+        sessionId: fixture.sessionId,
+      });
+      const reservation = reservationInput(fixture, 'reservation-no-rotation');
+      expect(yield* fixture.store.reserveAttempt(reservation)).toBe(true);
+      // The challenge is spent the moment consume commits, independent of whatever the caller
+      // does next — this is exactly the state left behind when a rotation fails after consume.
+      expect(
+        yield* fixture.store.consume({
+          ...reservation,
+          audit: auditEvent(fixture, 'commerce.portal-auth.step-up-verified.v1', 'requested'),
+        }),
+      ).toBe(true);
+
+      const challengeRows = yield* fixture.database.executor
+        .select({ consumedAt: stepUpChallenge.consumedAt })
+        .from(stepUpChallenge)
+        .where(eq(stepUpChallenge.challengeIdHash, fixture.challengeHash));
+      expect(challengeRows.at(0)?.consumedAt).not.toBeNull();
+      expect(yield* auditRowsForSubject(fixture)).toStrictEqual([
+        { eventType: 'commerce.portal-auth.step-up-issued.v1', outcome: 'success' },
+        { eventType: 'commerce.portal-auth.step-up-verified.v1', outcome: 'requested' },
       ]);
     }),
   ),

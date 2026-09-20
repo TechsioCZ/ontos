@@ -1,6 +1,7 @@
 import { Context } from 'effect';
 import type { Effect, Schema } from 'effect';
 
+import type { CommercePortalAuthAuditEvent } from '../../../src/portal-auth/audit/audit-contracts.ts';
 import type {
   CommercePortalAuthAccountSubjectInputSchema,
   CommercePortalAuthSessionCookieHandoff,
@@ -52,9 +53,13 @@ export interface CommercePortalAuthSessionLifecycleService {
   readonly revokeUnaudited: (
     input: Schema.Codec.Encoded<typeof CommercePortalAuthSessionReferenceInputSchema>,
   ) => Effect.Effect<boolean, CommercePortalAuthSessionFailure>;
-  /** Owner-private rotation result for the provider cookie signer. */
+  /**
+   * Owner-private rotation result for the provider cookie signer. `completion`, when given, is
+   * written in the rotation transaction, after its own row, so it never commits without the rotation.
+   */
   readonly rotateIdentifierForCookie: (
     input: Schema.Codec.Encoded<typeof CommercePortalAuthSessionRotationInputSchema>,
+    completion?: CommercePortalAuthAuditEvent,
   ) => Effect.Effect<CommercePortalAuthSessionCookieHandoff, CommercePortalAuthSessionFailure>;
   /** The result carries the provider cookies for the transport response hook, never for a caller. */
   readonly signIn: (

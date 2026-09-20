@@ -292,6 +292,9 @@ interface EnrollmentAcceptanceAttemptRow extends Record<string, unknown> {
   readonly state: string;
 }
 
+/** Every fixture reader below dies with this when its `where` finds no row. */
+const FIXTURE_ATTEMPT_ROW_MISSING = 'The fixture Attempt row is missing';
+
 /** The durable Attempt row itself, read with the owner role so RLS cannot mask a regression. */
 export const readEnrollmentAcceptanceAttempt = (
   fixture: EnrollmentAcceptanceFixture,
@@ -312,7 +315,7 @@ export const readEnrollmentAcceptanceAttempt = (
     .pipe(
       Effect.flatMap((rows) => {
         const [row] = rows;
-        return row === undefined ? Effect.die('The fixture Attempt row is missing') : Effect.succeed(row);
+        return row === undefined ? Effect.die(FIXTURE_ATTEMPT_ROW_MISSING) : Effect.succeed(row);
       }),
       Effect.orDie,
     );
@@ -345,7 +348,39 @@ export const readEnrollmentAcceptanceSweepCount = (
     .pipe(
       Effect.flatMap((rows) => {
         const [row] = rows;
-        return row === undefined ? Effect.die('The fixture Attempt row is missing') : Effect.succeed(row.sweep_count);
+        return row === undefined ? Effect.die(FIXTURE_ATTEMPT_ROW_MISSING) : Effect.succeed(row.sweep_count);
+      }),
+      Effect.orDie,
+    );
+
+interface EnrollmentAcceptanceSweepClaimRow extends Record<string, unknown> {
+  readonly remaining_millis: number;
+}
+
+/**
+ * How far `sweep_claimed_until` still sits ahead of the database's own clock, computed inside the
+ * same statement so a test asserting a claim's back-off never chases this process's clock skew.
+ */
+export const readEnrollmentAcceptanceSweepClaimRemainingMillis = (
+  fixture: EnrollmentAcceptanceFixture,
+  portalEnrollmentAttemptId: string,
+): Effect.Effect<number> =>
+  fixture.admin
+    .transaction((transaction) =>
+      transaction.execute<EnrollmentAcceptanceSweepClaimRow>(
+        sql`
+          select (extract(epoch from (sweep_claimed_until - statement_timestamp())) * 1000)::float8 as remaining_millis
+            from commerce_customer_context.portal_enrollment_attempts
+           where tenant_id = ${fixture.scope.tenantId}::uuid
+             and portal_enrollment_attempt_id = ${portalEnrollmentAttemptId}::uuid
+        `,
+        'objects',
+      ),
+    )
+    .pipe(
+      Effect.flatMap((rows) => {
+        const [row] = rows;
+        return row === undefined ? Effect.die(FIXTURE_ATTEMPT_ROW_MISSING) : Effect.succeed(row.remaining_millis);
       }),
       Effect.orDie,
     );

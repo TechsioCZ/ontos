@@ -33,6 +33,7 @@ import {
   makeEnrollmentAcceptanceFixture,
   expireEnrollmentAcceptanceSweepClaim,
   readEnrollmentAcceptanceAttempt,
+  readEnrollmentAcceptanceSweepClaimRemainingMillis,
   readEnrollmentAcceptanceSweepCount,
   startEnrollmentAcceptanceAttempt,
 } from '../support/enrollment-acceptance-fixture.ts';
@@ -525,4 +526,160 @@ it.live(
         ]);
       }),
     ),
+);
+
+const transactionUpdateAttemptState = (
+  fixture: EnrollmentAcceptanceFixture,
+  tenantId: typeof EnrollmentTenantIdSchema.Type,
+  portalEnrollmentAttemptId: string,
+  state: string,
+) =>
+  fixture.admin.transaction((transaction) =>
+    transaction.execute(
+      sql`
+        update commerce_customer_context.portal_enrollment_attempts
+           set state = ${state}
+         where tenant_id = ${tenantId}::uuid
+           and portal_enrollment_attempt_id = ${portalEnrollmentAttemptId}::uuid
+      `,
+      'objects',
+    ),
+  );
+
+/**
+ * Puts an Attempt in the one class the sweep budget's hard cut-off exempts: waiting on an owner
+ * still deciding an `owner_reconciliation_required` failure, with no INDETERMINATE operation open.
+ */
+const markOwnerReconciliationPending = (
+  fixture: EnrollmentAcceptanceFixture,
+  tenantId: typeof EnrollmentTenantIdSchema.Type,
+  actorPrincipalId: typeof EnrollmentPrincipalIdSchema.Type,
+  portalEnrollmentAttemptId: string,
+) =>
+  fixture.admin
+    .transaction((transaction) =>
+      transaction.execute(
+        sql`
+          insert into commerce_customer_context.portal_enrollment_owner_operations (
+            tenant_id, portal_enrollment_attempt_id, owner_module_key, transition_key,
+            owner_invocation_id, actor_principal_id, request_digest, required,
+            status, completed_at, failure_code
+          ) values (
+            ${tenantId}::uuid, ${portalEnrollmentAttemptId}::uuid, 'commerce.portal-auth',
+            ${PORTAL_ACCOUNT_CREATION_TRANSITION_KEY}, ${randomUUID()}::uuid, ${actorPrincipalId}::uuid,
+            ${'a'.repeat(64)}, true, 'FAILED', statement_timestamp(), 'owner_reconciliation_required'
+          )
+        `,
+        'objects',
+      ),
+    )
+    .pipe(
+      Effect.flatMap(() =>
+        transactionUpdateAttemptState(fixture, tenantId, portalEnrollmentAttemptId, 'RECONCILIATION_REQUIRED'),
+      ),
+      Effect.orDie,
+    );
+
+/** Longer than the value under test needs to be exact: only the back-off's growth is under test. */
+const BACKOFF_CLAIM_TTL_MILLIS = 1000;
+
+/** How close a read of `sweep_claimed_until` must land to the back-off's predicted value. */
+const BACKOFF_TOLERANCE_MILLIS = 2000;
+
+it.live('never permanently excludes an owner still deciding owner_reconciliation_required from the sweep budget', () =>
+  Effect.scoped(
+    Effect.gen(function* ownerPendingSurvivesTheHardBudget() {
+      const tenantId = tenant(randomUUID());
+      const actorPrincipalId = principalId(randomUUID());
+      const fixture = yield* makeEnrollmentAcceptanceFixture({ tenantId });
+      const attempt = yield* startEnrollmentAcceptanceAttempt(
+        fixture,
+        startInputFor(tenantId, actorPrincipalId, 'due-work-owner-pending-budget'),
+      );
+      yield* backdateEnrollmentAcceptanceAttempt(fixture, attempt.portalEnrollmentAttemptId, ANCIENT_ACTIVITY[0]);
+      yield* markOwnerReconciliationPending(fixture, tenantId, actorPrincipalId, attempt.portalEnrollmentAttemptId);
+
+      const store = commerceEnrollmentDueAttemptStoreForRun(fixture.runWorker);
+      const query = { after: Option.none(), limit: 500, maxSweeps: SWEEP_BUDGET, staleAfterMillis: 0 };
+      const ofScenario = (rows: readonly DueEnrollmentAttempt[]) => rows.filter((row) => row.tenantId === tenantId);
+      // A zero-length claim is released the instant it is taken, so SWEEP_BUDGET + 1 passes can run
+      // back to back without waiting on a claim window — the budget itself is what is under test.
+      const sweep = sweepFor(attempt, tenantId, 0);
+
+      // Without the fix the (SWEEP_BUDGET + 1)th claim refuses and the following listing drops the
+      // Attempt, exactly as the ordinary hard cut-off would spend an INDETERMINATE budget.
+      const counted = yield* Effect.forEach(
+        Array.from({ length: SWEEP_BUDGET + 1 }, (_unused, index) => index),
+        () => store.claimSweep(sweep),
+        { concurrency: 1 },
+      );
+      expect(counted).toStrictEqual(
+        Array.from({ length: SWEEP_BUDGET + 1 }, (_unused, index) => Option.some(index + 1)),
+      );
+      expect(yield* readEnrollmentAcceptanceSweepCount(fixture, attempt.portalEnrollmentAttemptId)).toBe(
+        SWEEP_BUDGET + 1,
+      );
+      expect(ofScenario(yield* store.listDue(query)).map((row) => row.portalEnrollmentAttemptId)).toStrictEqual([
+        attempt.portalEnrollmentAttemptId,
+      ]);
+    }),
+  ),
+);
+
+it.live("grows an owner-pending Attempt's claim by a capped doubling instead of a fixed TTL", () =>
+  Effect.scoped(
+    Effect.gen(function* ownerPendingClaimBacksOff() {
+      const tenantId = tenant(randomUUID());
+      const actorPrincipalId = principalId(randomUUID());
+      const fixture = yield* makeEnrollmentAcceptanceFixture({ tenantId });
+      const attempt = yield* startEnrollmentAcceptanceAttempt(
+        fixture,
+        startInputFor(tenantId, actorPrincipalId, 'due-work-owner-pending-backoff'),
+      );
+      yield* backdateEnrollmentAcceptanceAttempt(fixture, attempt.portalEnrollmentAttemptId, ANCIENT_ACTIVITY[0]);
+      yield* markOwnerReconciliationPending(fixture, tenantId, actorPrincipalId, attempt.portalEnrollmentAttemptId);
+
+      const store = commerceEnrollmentDueAttemptStoreForRun(fixture.runWorker);
+      const sweep = sweepFor(attempt, tenantId, BACKOFF_CLAIM_TTL_MILLIS);
+
+      // claim 1: 2^(1-1) = 1 -> ~1x the TTL.
+      expect(yield* store.claimSweep(sweep)).toStrictEqual(Option.some(1));
+      const afterFirst = yield* readEnrollmentAcceptanceSweepClaimRemainingMillis(
+        fixture,
+        attempt.portalEnrollmentAttemptId,
+      );
+      expect(afterFirst).toBeGreaterThan(BACKOFF_CLAIM_TTL_MILLIS - BACKOFF_TOLERANCE_MILLIS);
+      expect(afterFirst).toBeLessThan(BACKOFF_CLAIM_TTL_MILLIS + BACKOFF_TOLERANCE_MILLIS);
+
+      // A live claim is another replica's turn, so the next bid is stated directly rather than
+      // waited for — exactly as `expireEnrollmentAcceptanceSweepClaim` states it everywhere else.
+      yield* expireEnrollmentAcceptanceSweepClaim(fixture, attempt.portalEnrollmentAttemptId);
+      expect(yield* store.claimSweep(sweep)).toStrictEqual(Option.some(2));
+      yield* expireEnrollmentAcceptanceSweepClaim(fixture, attempt.portalEnrollmentAttemptId);
+
+      // claim 3: 2^(3-1) = 4 -> ~4x the TTL.
+      expect(yield* store.claimSweep(sweep)).toStrictEqual(Option.some(3));
+      const afterThird = yield* readEnrollmentAcceptanceSweepClaimRemainingMillis(
+        fixture,
+        attempt.portalEnrollmentAttemptId,
+      );
+      const fourTimesTtl = 4 * BACKOFF_CLAIM_TTL_MILLIS;
+      expect(afterThird).toBeGreaterThan(fourTimesTtl - BACKOFF_TOLERANCE_MILLIS);
+      expect(afterThird).toBeLessThan(fourTimesTtl + BACKOFF_TOLERANCE_MILLIS);
+
+      // Claims 4 through 9 push the doubling well past the SWEEP_BACKOFF_CAP_MULTIPLIER (64), so
+      // claim 9's back-off must land at the cap rather than at 2^8 = 256x the TTL.
+      for (let claimIndex = 4; claimIndex <= 9; claimIndex += 1) {
+        yield* expireEnrollmentAcceptanceSweepClaim(fixture, attempt.portalEnrollmentAttemptId);
+        expect(yield* store.claimSweep(sweep)).toStrictEqual(Option.some(claimIndex));
+      }
+      const afterNinth = yield* readEnrollmentAcceptanceSweepClaimRemainingMillis(
+        fixture,
+        attempt.portalEnrollmentAttemptId,
+      );
+      const cappedTtl = 64 * BACKOFF_CLAIM_TTL_MILLIS;
+      expect(afterNinth).toBeGreaterThan(cappedTtl - BACKOFF_TOLERANCE_MILLIS);
+      expect(afterNinth).toBeLessThan(cappedTtl + BACKOFF_TOLERANCE_MILLIS);
+    }),
+  ),
 );

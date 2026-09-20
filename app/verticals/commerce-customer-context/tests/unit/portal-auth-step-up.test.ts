@@ -48,7 +48,9 @@ import type {
 } from '../../api/portal-auth/session/contracts.ts';
 import { CommercePortalAuthSessionLifecycle } from '../../api/portal-auth/session/lifecycle-service.ts';
 import type { CommercePortalAuthSessionLifecycleService } from '../../api/portal-auth/session/lifecycle-service.ts';
+import { CommercePortalAuthSessionUnavailable } from '../../api/portal-auth/session/errors.ts';
 import { unauditedCommercePortalAuthRecorder } from '../../src/portal-auth/audit/audit.ts';
+import type { CommercePortalAuthAuditEvent } from '../../src/portal-auth/audit/audit-contracts.ts';
 
 const TEST_NOW_MILLIS = 1_800_000_000_000;
 const PROVIDER_SUBJECT_ID = 'commerce-user-1';
@@ -79,9 +81,12 @@ interface StepUpFixture {
   >;
   readonly sessionReader: CommercePortalAuthSessionReader;
   readonly state: {
+    consumeAudits: CommercePortalAuthAuditEvent[];
     currentSession: CommercePortalAuthAuthoritativeSession | null;
+    rotationCompletions: (CommercePortalAuthAuditEvent | undefined)[];
     rotationCount: number;
     rotationReasons: string[];
+    rotationShouldFail: boolean;
     verifierCalls: number;
     verifierEntered: Deferred.Deferred<null> | null;
     verifierGate: Deferred.Deferred<null> | null;
@@ -110,9 +115,12 @@ const makeFixture = (): StepUpFixture => {
     }
   >();
   const state: StepUpFixture['state'] = {
+    consumeAudits: [],
     currentSession: makeSession(),
+    rotationCompletions: [],
     rotationCount: 0,
     rotationReasons: [],
+    rotationShouldFail: false,
     verifierCalls: 0,
     verifierEntered: null,
     verifierGate: null,
@@ -121,6 +129,7 @@ const makeFixture = (): StepUpFixture => {
   const challengeStore = {
     consume: (input) =>
       Effect.sync(() => {
+        state.consumeAudits.push(input.audit);
         const reservation = reservations.get(input.reservationId);
         const current = challenges.get(input.challengeIdHash);
         if (
@@ -310,11 +319,22 @@ const makeFixture = (): StepUpFixture => {
     revoke: () => Effect.die('unused in step-up tests'),
     revokeAll: () => Effect.die('unused in step-up tests'),
     revokeUnaudited: () => Effect.die('unused in step-up tests'),
-    rotateIdentifierForCookie: (input) =>
-      Effect.sync(() => {
+    rotateIdentifierForCookie: (input, completion) =>
+      Effect.suspend(() => {
+        // A real rotation failure rolls its own transaction back, so nothing — not even a
+        // completion row racing to commit alongside it — is ever recorded here.
+        if (state.rotationShouldFail) {
+          return Effect.fail(
+            new CommercePortalAuthSessionUnavailable({
+              operation: 'rotate-identifier',
+              reason: 'Commerce portal session rotation could not complete',
+            }),
+          );
+        }
         state.rotationCount += 1;
         state.rotationReasons.push(input.reason);
-        return handoff;
+        state.rotationCompletions.push(completion);
+        return Effect.succeed(handoff);
       }),
     signIn: () => Effect.die('unused in step-up tests'),
     signOut: () => Effect.die('unused in step-up tests'),
@@ -483,9 +503,37 @@ it.effect('consumes a valid proof once and rotates the provider identifier for s
       expect(result.handoff.providerToken).toBe('private-replacement-token');
       expect(fixture.state.rotationCount).toBe(1);
       expect(fixture.state.rotationReasons).toEqual(['step-up']);
+      // consume only ever records the intent; the success evidence travels as the rotation's
+      // completion argument, so it can commit only alongside the handoff it certifies.
+      expect(fixture.state.consumeAudits.map((event) => event.outcome)).toEqual(['requested']);
+      expect(fixture.state.rotationCompletions).toHaveLength(1);
+      expect(fixture.state.rotationCompletions[0]?.outcome).toBe('success');
+      expect(fixture.state.rotationCompletions[0]?.eventType).toBe('commerce.portal-auth.step-up-verified.v1');
       const replay = yield* verify(service, challenge.challengeId);
       expect(replay.outcome).toBe('STEP_UP_REJECTED');
       expect(fixture.state.verifierCalls).toBe(1);
+    }),
+  ),
+);
+
+it.effect('records only the requested intent, never a false success, when rotation fails after consume', () =>
+  runWithFixture((service, fixture) =>
+    Effect.gen(function* rotationFailureLeavesNoFalseSuccess() {
+      const challenge = yield* issue(service);
+      fixture.state.rotationShouldFail = true;
+      const failure = yield* verify(service, challenge.challengeId).pipe(Effect.flip);
+      expect(Schema.is(CommercePortalAuthSessionUnavailable)(failure)).toBe(true);
+      // The intent row committed with the challenge consumption; no completion was ever attempted
+      // because the fixture fails before it would append one.
+      expect(fixture.state.consumeAudits.map((event) => event.outcome)).toEqual(['requested']);
+      expect(fixture.state.rotationCompletions).toHaveLength(0);
+      expect(fixture.state.rotationCount).toBe(0);
+      const challengeHash = firstChallengeHash(fixture);
+      expect(fixture.challenges.get(challengeHash)?.consumedAt).not.toBeNull();
+      // The spent challenge cannot be replayed: the caller only gets a re-issued challenge, never a
+      // false success.
+      const replay = yield* verify(service, challenge.challengeId);
+      expect(replay.outcome).toBe('STEP_UP_REJECTED');
     }),
   ),
 );

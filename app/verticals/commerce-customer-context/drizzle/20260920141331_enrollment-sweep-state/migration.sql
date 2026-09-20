@@ -103,7 +103,28 @@ BEGIN
     -- The sweep budget, spent durably rather than in a worker's memory. A count only holds this
     -- Attempt back while it still stands at the revision that count was spent against: anything
     -- that moves the Attempt — a read that resumed it, an owner outcome — makes it due again.
-    AND NOT (attempt.sweep_revision = attempt.revision AND attempt.sweep_count >= p_max_sweeps)
+    -- An owner still deciding on `owner_reconciliation_required` is exempt from the hard cut-off; it backs off instead.
+    AND (
+      NOT (attempt.sweep_revision = attempt.revision AND attempt.sweep_count >= p_max_sweeps)
+      OR (
+        EXISTS (
+          SELECT 1
+          FROM commerce_customer_context.portal_enrollment_owner_operations AS operation
+          WHERE operation.tenant_id = attempt.tenant_id
+            AND operation.portal_enrollment_attempt_id = attempt.portal_enrollment_attempt_id
+            AND operation.status = 'FAILED'
+            AND operation.failure_code = 'owner_reconciliation_required'
+        )
+        AND NOT EXISTS (
+          SELECT 1
+          FROM commerce_customer_context.portal_enrollment_owner_operations AS operation
+          WHERE operation.tenant_id = attempt.tenant_id
+            AND operation.portal_enrollment_attempt_id = attempt.portal_enrollment_attempt_id
+            AND operation.status = 'INDETERMINATE'
+            AND operation.reconciliation_ref IS NULL
+        )
+      )
+    )
     -- A live sweep claim is another replica's pass, already charged to the budget above. Offering
     -- the row again would hand every replica the same due work and let the losers spend the whole
     -- budget on a pass none of them performed.
@@ -153,22 +174,54 @@ AS $function$
 DECLARE
   now_at timestamptz := statement_timestamp();
   claimed integer;
+  -- Owner still deciding on `owner_reconciliation_required`, matching the listing's cut-off exemption.
+  owner_pending boolean;
 BEGIN
   IF nullif(current_setting('ontos.tenant_id', true), '') IS NOT NULL THEN
     RAISE EXCEPTION 'cross-Tenant Attempt sweep accounting requires worker scope' USING ERRCODE = '42501';
   END IF;
+  SELECT
+    EXISTS (
+      SELECT 1
+      FROM commerce_customer_context.portal_enrollment_owner_operations AS operation
+      WHERE operation.tenant_id = p_tenant_id
+        AND operation.portal_enrollment_attempt_id = p_attempt_id
+        AND operation.status = 'FAILED'
+        AND operation.failure_code = 'owner_reconciliation_required'
+    )
+    AND NOT EXISTS (
+      SELECT 1
+      FROM commerce_customer_context.portal_enrollment_owner_operations AS operation
+      WHERE operation.tenant_id = p_tenant_id
+        AND operation.portal_enrollment_attempt_id = p_attempt_id
+        AND operation.status = 'INDETERMINATE'
+        AND operation.reconciliation_ref IS NULL
+    )
+  INTO owner_pending;
   -- A revision the count was not spent against starts the budget over, which is how any state or
   -- revision change — not a rule that has to predict one — releases an Attempt the budget held.
+  -- Owner-pending attempts get a growing claim instead of a cut-off, capped at 64x.
   UPDATE commerce_customer_context.portal_enrollment_attempts AS attempt
   SET
     sweep_count = CASE WHEN attempt.sweep_revision IS DISTINCT FROM p_revision THEN 1 ELSE attempt.sweep_count + 1 END,
     sweep_revision = p_revision,
-    sweep_claimed_until = now_at + make_interval(secs => greatest(p_claim_ttl_millis, 0)::double precision / 1000)
+    sweep_claimed_until = now_at + make_interval(secs =>
+      (greatest(p_claim_ttl_millis, 0)::double precision / 1000)
+      * CASE
+          WHEN owner_pending THEN least(
+            power(2, greatest(
+              (CASE WHEN attempt.sweep_revision IS DISTINCT FROM p_revision THEN 1 ELSE attempt.sweep_count + 1 END) - 1,
+              0
+            )),
+            64
+          )
+          ELSE 1
+        END)
   WHERE attempt.tenant_id = p_tenant_id
     AND attempt.portal_enrollment_attempt_id = p_attempt_id
     AND attempt.revision = p_revision -- a listing snapshot the Attempt has outgrown claims nothing
     AND (attempt.sweep_claimed_until IS NULL OR attempt.sweep_claimed_until <= now_at)
-    AND NOT (attempt.sweep_revision = p_revision AND attempt.sweep_count >= p_max_sweeps)
+    AND (owner_pending OR NOT (attempt.sweep_revision = p_revision AND attempt.sweep_count >= p_max_sweeps))
   RETURNING attempt.sweep_count INTO claimed;
   IF claimed IS NULL THEN
     -- The claim failed, which is an answer rather than a fault: another replica holds this pass, or

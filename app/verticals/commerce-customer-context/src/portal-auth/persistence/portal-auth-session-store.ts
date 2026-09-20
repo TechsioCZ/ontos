@@ -145,6 +145,7 @@ interface RevokeInput {
 
 interface RotateInput {
   readonly authenticatedAt?: Date;
+  readonly completion?: CommercePortalAuthAuditEvent;
   readonly expectedProviderSubjectId?: string;
   readonly expiresAt: Date;
   readonly now: Date;
@@ -468,6 +469,8 @@ export const makeCommercePortalAuthSessionStore = (
             return Option.none();
           }
           yield* writeCommercePortalAuthAuditRow(transaction, input.audit);
+          // Written last, so it never commits without the rotation.
+          yield* writeCommercePortalAuthAuditRow(transaction, input.completion);
           return Option.some(projectRecord(row));
         }),
       )

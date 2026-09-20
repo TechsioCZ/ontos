@@ -620,6 +620,7 @@ export const makeCommercePortalAuthSessionLifecycle = (
   const rotateIdentifierResult = Effect.fn('CommercePortalAuthSessionLifecycle.rotateIdentifierResult')(
     function* rotateIdentifierResult(
       input: Schema.Codec.Encoded<typeof CommercePortalAuthSessionRotationInputSchema>,
+      completion?: CommercePortalAuthAuditEvent,
     ): Effect.fn.Return<RotationExecution, CommercePortalAuthSessionFailure> {
       const request = yield* Schema.decodeEffect(CommercePortalAuthSessionRotationInputSchema)(input).pipe(
         Effect.mapError((cause) => invalidRequest(cause)),
@@ -659,6 +660,9 @@ export const makeCommercePortalAuthSessionLifecycle = (
         now,
         sessionId,
       };
+      if (completion !== undefined) {
+        rotateInput.completion = completion;
+      }
       if (request.expectedProviderSubjectId !== undefined) {
         rotateInput.expectedProviderSubjectId = request.expectedProviderSubjectId;
       }
@@ -696,8 +700,9 @@ export const makeCommercePortalAuthSessionLifecycle = (
   const rotateIdentifierForCookie = Effect.fn('CommercePortalAuthSessionLifecycle.rotateIdentifierForCookie')(
     function* rotateIdentifierForCookie(
       input: Schema.Codec.Encoded<typeof CommercePortalAuthSessionRotationInputSchema>,
+      completion?: CommercePortalAuthAuditEvent,
     ): Effect.fn.Return<CommercePortalAuthSessionCookieHandoff, CommercePortalAuthSessionFailure> {
-      const result = yield* rotateIdentifierResult(input);
+      const result = yield* rotateIdentifierResult(input, completion);
       if (result.handoff === undefined) {
         return yield* new CommercePortalAuthSessionRefreshConflict({
           reason: 'Commerce portal session cannot be rotated for a cookie handoff',

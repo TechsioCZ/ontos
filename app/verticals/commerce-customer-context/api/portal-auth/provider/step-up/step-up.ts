@@ -333,11 +333,13 @@ export const makeCommercePortalAuthStepUp = Effect.fn('CommercePortalAuthStepUp.
       yield* sessionRecord(sessionReader, request.providerSubjectId, sessionId, verifiedAt);
       const consumed = yield* challengeStore
         .consume({
+          // This row is the intent, not the outcome. The `success` completion commits only inside
+          // the rotation transaction below.
           audit: {
             eventType: STEP_UP_VERIFIED_EVENT,
             occurredAt: verifiedAt,
             operation: STEP_UP_VERIFY_OPERATION,
-            outcome: 'success',
+            outcome: 'requested',
             providerSubjectId: request.providerSubjectId,
             sessionRef: request.sessionRef,
           },
@@ -352,11 +354,21 @@ export const makeCommercePortalAuthStepUp = Effect.fn('CommercePortalAuthStepUp.
         yield* auditVerification(STEP_UP_VERIFIED_EVENT, 'authentication_failed', verifiedAt);
         return { outcome: 'STEP_UP_REJECTED' };
       }
-      const handoff = yield* lifecycle.rotateIdentifierForCookie({
-        expectedProviderSubjectId: request.providerSubjectId,
-        reason: 'step-up',
-        sessionRef: request.sessionRef,
-      });
+      const handoff = yield* lifecycle.rotateIdentifierForCookie(
+        {
+          expectedProviderSubjectId: request.providerSubjectId,
+          reason: 'step-up',
+          sessionRef: request.sessionRef,
+        },
+        {
+          eventType: STEP_UP_VERIFIED_EVENT,
+          occurredAt: verifiedAt,
+          operation: STEP_UP_VERIFY_OPERATION,
+          outcome: 'success',
+          providerSubjectId: request.providerSubjectId,
+          sessionRef: request.sessionRef,
+        },
+      );
       return { handoff, outcome: 'STEP_UP_COMPLETED' };
     });
 

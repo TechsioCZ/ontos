@@ -59,6 +59,11 @@ export interface CommercePortalAuthSessionStore {
        * nothing new about the customer cannot make a stale session look recently authenticated.
        */
       readonly authenticatedAt?: Date;
+      /**
+       * Written in the rotation transaction, after its own row, so it never commits without the
+       * rotation.
+       */
+      readonly completion?: CommercePortalAuthAuditEvent;
       readonly expectedProviderSubjectId?: string;
       readonly expiresAt: Date;
       readonly now: Date;
