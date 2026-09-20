@@ -24,7 +24,6 @@ import {
   makeCommerceEnrollmentPortalAuthOwnerPreparationPort,
   providerObservationFor,
 } from '../../src/enrollment/orchestration/owner-transition-composition.ts';
-import { CommerceEnrollmentOwnerEffectIndeterminate } from '../../src/enrollment/orchestration/owner-transition-errors.ts';
 import { CommerceEnrollmentOwnerTransactionRunner } from '../../src/enrollment/orchestration/owner-transition-production.ts';
 import {
   CLAIM_PORTAL_ENROLLMENT_TRANSITION_ACTION_KEY,
@@ -148,14 +147,13 @@ const observedAttempt = (overrides: Partial<EnrollmentAttemptSnapshot> = {}): En
   ...overrides,
 });
 
-it.effect('keeps a creation the provider never correlated indeterminate instead of calling it absent', () =>
-  Effect.gen(function* staysIndeterminateWithoutASubject() {
-    const failure = yield* Effect.flip(
-      providerObservationFor(observedAttempt(), accountLookupNeverRead, ownerInvocationId),
-    );
-    expect(Schema.is(CommerceEnrollmentOwnerEffectIndeterminate)(failure)).toBe(true);
-    expect(failure.code).toBe('provider_account_reconciliation_indeterminate');
-  }),
+it.effect(
+  'reports a creation the provider never correlated as absent, so the same invocation is dispatched again',
+  () =>
+    Effect.gen(function* absentWithoutASubject() {
+      const observation = yield* providerObservationFor(observedAttempt(), accountLookupNeverRead, ownerInvocationId);
+      expect(observation.outcome).toBe('NOT_FOUND');
+    }),
 );
 
 it.effect('resolves a recorded subject through the exact provider directory lookup', () =>

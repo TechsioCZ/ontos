@@ -4,17 +4,19 @@ import { HttpApiMiddleware } from 'effect/unstable/httpapi';
 
 import {
   CommercePortalAuthEnrollmentAttemptProjectionSchema,
+  CommercePortalAuthEnrollmentClaimInvitationInputSchema,
   CommercePortalAuthEnrollmentStartInputSchema,
 } from '../../api/portal-auth/enrollment/contracts.ts';
 import { EnrollmentAttemptIdSchema } from '../enrollment-contracts.ts';
 
 /**
  * The Commerce Portal Enrollment transport — the credential carrier for the three supported
- * journeys. Two routes only: one that starts an Attempt and dispatches its first owner transition,
+ * journeys. Three routes only: one that starts an Attempt and dispatches its first owner
+ * transition, one that lets the invitation's recipient present the one-time secret only it holds,
  * and one that reads the Attempt projection back for the exact caller that owns it. There is no
- * route that advances, completes or terminates an Attempt from the outside: every later transition
- * travels through the governed enrollment Actions, and `COMPLETE` is derived from durable owner
- * outcomes rather than asserted by a caller.
+ * route that advances, completes or terminates an Attempt from the outside: every other transition
+ * travels through the continuation or the governed enrollment Actions, and `COMPLETE` is derived
+ * from durable owner outcomes rather than asserted by a caller.
  */
 
 export const CommercePortalAuthEnrollmentInvalidProblemSchema = makeProblemDetailsSchema(
@@ -43,15 +45,26 @@ export const CommercePortalAuthEnrollmentNotFoundProblemSchema = makeProblemDeta
   { code: Schema.Literal('attempt_not_found') },
 );
 /**
- * A journey this deployment cannot carry end to end. The Counterparty invitation journey's claim
- * needs a one-time claim proof no owner effect holds yet, so starting one would persist an Attempt
- * and create a provider account that nothing could ever advance. The refusal is deliberately not a
- * 503: nothing about it is retryable until the missing owner design lands.
+ * A journey this deployment cannot carry end to end, so starting one would persist an Attempt and
+ * create a provider account that nothing could ever advance. The refusal is deliberately not a 503:
+ * nothing about it is retryable until the missing owner design lands.
  */
 export const CommercePortalAuthEnrollmentJourneyUnavailableProblemSchema = makeProblemDetailsSchema(
   'CommercePortalAuthEnrollmentJourneyUnavailableProblem',
   422,
   { code: Schema.Literal('enrollment_journey_unavailable') },
+);
+/**
+ * The Attempt is real and this caller owns it, but the journey has not reached the step the request
+ * asks for: an invitation claim needs the Tenant-scoped Principal Auth Binding this Attempt is
+ * claimed under, and that binding is established by the continuation rather than by the caller.
+ * Retrying once the journey has advanced is exactly the right thing to do, so it is a 409 rather
+ * than a refusal.
+ */
+export const CommercePortalAuthEnrollmentConflictProblemSchema = makeProblemDetailsSchema(
+  'CommercePortalAuthEnrollmentConflictProblem',
+  409,
+  { code: Schema.Literal('enrollment_binding_pending') },
 );
 export const CommercePortalAuthEnrollmentRateLimitedProblemSchema = makeProblemDetailsSchema(
   'CommercePortalAuthEnrollmentRateLimitedProblem',
@@ -92,6 +105,14 @@ const readErrors = [
   CommercePortalAuthEnrollmentNotFoundProblemSchema,
   CommercePortalAuthEnrollmentUnavailableProblemSchema,
 ] as const;
+const claimInvitationErrors = [
+  CommercePortalAuthEnrollmentInvalidProblemSchema,
+  CommercePortalAuthEnrollmentAuthenticationProblemSchema,
+  CommercePortalAuthEnrollmentForbiddenProblemSchema,
+  CommercePortalAuthEnrollmentNotFoundProblemSchema,
+  CommercePortalAuthEnrollmentConflictProblemSchema,
+  CommercePortalAuthEnrollmentUnavailableProblemSchema,
+] as const;
 
 /**
  * The started Attempt, plus whether this request created it or converged on the one an equivalent
@@ -119,6 +140,19 @@ const commercePortalAuthEnrollmentGroupDefinition = HttpApiGroup.make('portalAut
       error: startErrors,
       payload: Schema.toEncoded(CommercePortalAuthEnrollmentStartInputSchema),
       success: CommercePortalAuthEnrollmentStartedResultSchema,
+    }),
+  )
+  .add(
+    /**
+     * The one route the enrolling person calls for itself. Everything else about a journey is
+     * dispatched by the continuation from durable state; an invitation claim cannot be, because the
+     * one-time secret the invitation delivered exists only in the recipient's hands.
+     */
+    HttpApiEndpoint.post('claimEnrollmentInvitation', '/api/portal-auth/enrollment/:attemptId/claim-invitation', {
+      error: claimInvitationErrors,
+      params: Schema.Struct({ attemptId: EnrollmentAttemptIdSchema }),
+      payload: Schema.toEncoded(CommercePortalAuthEnrollmentClaimInvitationInputSchema),
+      success: CommercePortalAuthEnrollmentAttemptProjectionSchema,
     }),
   )
   .add(

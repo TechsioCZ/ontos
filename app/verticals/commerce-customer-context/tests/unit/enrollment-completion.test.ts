@@ -98,8 +98,8 @@ const existingAccountReachableIdentities = new Set(
 );
 
 /**
- * What composing the Counterparty journey instead would add: the invitation claim, which no
- * deployment registers an owner effect for.
+ * What composing the Counterparty journey instead would add: the provider account creation it
+ * declares and the invitation claim only the recipient can perform.
  */
 const counterpartyOnlyIdentities = counterpartyInvitationJourneyDefinition.requiredTransitions
   .map(journeyTransitionIdentity)

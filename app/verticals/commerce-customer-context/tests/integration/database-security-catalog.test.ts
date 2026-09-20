@@ -77,6 +77,7 @@ const grantedRoutines = [
   'read_access_invitation_claim_reconciliation',
   'read_access_reconciliation',
   'read_address_defaults',
+  'read_counterparty_invitation_claimability',
   'read_current_purchase_approval_revalidation',
   'read_current_purchase_proposal_revision',
   'read_customer_group',

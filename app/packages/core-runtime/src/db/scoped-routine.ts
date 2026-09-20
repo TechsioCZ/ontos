@@ -325,9 +325,18 @@ const resolveInvocationValues = <
 };
 
 const invocationStatement = (routine: ScopedRoutineDefinition, values: readonly unknown[]): SQL => {
-  const parameters = routine.parameters.map(
-    (parameter, index) => sql`${values[index]}::${parameterTypeSql[parameter.type]}`,
-  );
+  const parameters = routine.parameters.map((parameter, index) => {
+    const value = values[index];
+    /**
+     * A bare array interpolated into a Drizzle template becomes a parenthesised value list —
+     * `($1, $2)` — which is an `IN` list, not an array literal, so every array-typed owner
+     * parameter would be cast as `($1)::text[]` and refused by PostgreSQL as an invalid text
+     * representation. Binding it explicitly keeps one placeholder per declared parameter, and the
+     * driver renders the array itself.
+     */
+    const bound = Array.isArray(value) ? sql`${sql.param(value)}` : sql`${value}`;
+    return sql`${bound}::${parameterTypeSql[parameter.type]}`;
+  });
   const separator = sql.raw(', ');
   return sql`select * from ${sql.identifier(routine.schema)}.${sql.identifier(routine.name)}(${sql.join(parameters, separator)})`;
 };

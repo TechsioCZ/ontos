@@ -434,39 +434,40 @@ const startEnrollmentRequest = (body: Record<string, string>, assertion?: string
   });
 };
 
-it.live('refuses the Counterparty invitation journey before an Attempt or an account exists', () =>
-  Effect.scoped(
-    Effect.gen(function* invitationJourneyRefused() {
-      const runtime = yield* configuredRuntime;
-      const email = `enrollment-http-${randomUUID()}@example.test`;
+it.live(
+  'carries the Counterparty invitation journey to authentication, creating nothing for an unauthenticated caller',
+  () =>
+    Effect.scoped(
+      Effect.gen(function* invitationJourneyAuthenticated() {
+        const runtime = yield* configuredRuntime;
+        const email = `enrollment-http-${randomUUID()}@example.test`;
 
-      const response = yield* Effect.promise(
-        async () =>
-          await runtime.handler(
-            startEnrollmentRequest({
-              displayName: 'Enrollment HTTP acceptance',
-              email,
-              invitationId: randomUUID(),
-              journey: 'COUNTERPARTY_INVITATION',
-              password: 'P'.repeat(24),
-              sellingLegalEntityId: randomUUID(),
-            }),
-          ),
-      );
+        const response = yield* Effect.promise(
+          async () =>
+            await runtime.handler(
+              startEnrollmentRequest({
+                displayName: 'Enrollment HTTP acceptance',
+                email,
+                invitationId: randomUUID(),
+                journey: 'COUNTERPARTY_INVITATION',
+                password: 'P'.repeat(24),
+                sellingLegalEntityId: randomUUID(),
+              }),
+            ),
+        );
 
-      // The journey is refused for what it is, before the governed Action that would answer 401 for
-      // this unauthenticated caller is ever reached: no owner effect can hold the invitation's
-      // one-time claim proof, so an Attempt started here could only orphan the account it created.
-      // Restoring the start path for this journey answers 401 and fails this assertion.
-      expect(response.status).toBe(422);
-      expect(response.headers.get('content-type')).toContain('application/problem+json');
-      expect(yield* Effect.promise(async () => await response.clone().json())).toMatchObject({
-        code: 'enrollment_journey_unavailable',
-        status: 422,
-      });
-      expect(yield* portalAccountsFor(email)).toStrictEqual([]);
-    }),
-  ),
+        // The journey is no longer refused for what it is: the claim transition it declares is
+        // performed by the recipient's own claim route, so the start reaches the same gateway
+        // authentication every other journey reaches — before any Attempt or account exists.
+        expect(response.status).toBe(401);
+        expect(response.headers.get('content-type')).toContain('application/problem+json');
+        expect(yield* Effect.promise(async () => await response.clone().json())).toMatchObject({
+          code: 'authentication_required',
+          status: 401,
+        });
+        expect(yield* portalAccountsFor(email)).toStrictEqual([]);
+      }),
+    ),
 );
 
 it.live('refuses a Retail self-enrollment that names an invitation at the transport boundary', () =>
@@ -2061,6 +2062,104 @@ it.live(
 
         // The address' durable budget row, removed again on scope close.
         expect(yield* enrollmentStartBudgetKeys(email)).toHaveLength(1);
+      }),
+    ),
+  180_000,
+);
+
+/**
+ * A start whose email the provider definitively refuses — `USER_ALREADY_EXISTS` here — must never
+ * strand the claim it already committed. Without journalling the rejection, the transition stays
+ * `IN_PROGRESS` until its lease fences to indeterminate, and no correlation ever appears to resolve
+ * it, because the rejected `signUpEmail` created no account.
+ */
+it.live(
+  'answers 403 for a provider-rejected start and records the claimed transition as a typed failure',
+  () =>
+    Effect.scoped(
+      Effect.gen(function* answersRejectedStartWithTerminalFailure() {
+        const tenantId = randomUUID();
+        const fixture = yield* makeEnrollmentAcceptanceFixture({ tenantId });
+        const subject = yield* seedGovernedStartSubject(tenantId);
+        yield* seedGovernedStartAuthorization(subject);
+        const gateway = yield* makeAcceptanceGatewayIssuer(GOVERNED_START_ISSUER, GOVERNED_START_KEY_ID);
+        const runtime = yield* authenticatedRuntime(
+          gateway,
+          singleUseRedemptionLive,
+          commerceCustomerContextActionRuntimeAwaitingOwnerPreparation.pipe(
+            Layer.provide(yield* preparationAuthorityLive()),
+          ),
+        );
+        // An account the provider already holds under this address: the fixture that creates it also
+        // owns its own cleanup, so nothing here has to remove the collision it deliberately causes.
+        const existing = yield* makeSignedInPortalAccount();
+        const assertion = yield* issueAcceptanceGatewayAssertion(fixture.admin, gateway, READ_AUDIENCE, {
+          authBindingId: subject.authBindingId,
+          authContextRef: `portal-session:${subject.principalId}`,
+          authenticationNamespaceId: COMMERCE_AUTHENTICATION_NAMESPACE_ID,
+          authMethod: 'session',
+          principalId: subject.principalId,
+          tenantId,
+        });
+
+        const response = yield* Effect.promise(
+          async () =>
+            await runtime.handler(
+              governedStartRequest(
+                {
+                  displayName: START_DISPLAY_NAME,
+                  email: existing.email,
+                  journey: 'RETAIL_SELF_ENROLLMENT',
+                  password: PORTAL_OWNER_PASSWORD,
+                  sellingLegalEntityId: subject.legalEntityId,
+                },
+                assertion,
+              ),
+            ),
+        );
+        expect(response.status).toBe(403);
+
+        // The started Attempt is the caller's only one for this Tenant: reached the same way the
+        // read route reaches it, not by trusting the refused response's own body.
+        expect(yield* enrollmentAttemptCount(fixture)).toBe(1);
+        const attemptRow = yield* fixture.admin
+          .transaction((transaction) =>
+            transaction.execute<{ readonly portal_enrollment_attempt_id: string }>(
+              sql`
+                select portal_enrollment_attempt_id
+                  from commerce_customer_context.portal_enrollment_attempts
+                 where tenant_id = ${tenantId}::uuid
+                 limit 1
+              `,
+              'objects',
+            ),
+          )
+          .pipe(Effect.orDie);
+        const rawPortalEnrollmentAttemptId = attemptRow[0]?.portal_enrollment_attempt_id;
+        if (rawPortalEnrollmentAttemptId === undefined) {
+          throw new Error('The rejected start must still have committed its Attempt');
+        }
+        const portalEnrollmentAttemptId = Schema.decodeSync(EnrollmentAttemptIdSchema)(rawPortalEnrollmentAttemptId);
+
+        // The claim the refused start already held is not left `IN_PROGRESS` forever: the rejection
+        // is journalled as a terminal, reclaimable failure with a typed code, never the provider's text.
+        const operation = yield* fixture.ownerStore.readOwnerOperation({
+          ownerModuleKey: Schema.decodeSync(EnrollmentModuleKeySchema)(PORTAL_AUTH_OWNER_MODULE_KEY),
+          portalEnrollmentAttemptId,
+          tenantId: Schema.decodeSync(EnrollmentTenantIdSchema)(tenantId),
+          transitionKey: Schema.decodeSync(EnrollmentTransitionKeySchema)(PORTAL_ACCOUNT_CREATION_TRANSITION_KEY),
+        });
+        expect(operation.status).toBe('FAILED');
+        expect(operation.failureCode).toBe('provider_account_rejected');
+
+        // No provider account was created under this Attempt's own invocation, so the Attempt itself
+        // never derives a subject and stays exactly where the rejection left it.
+        const attempt = yield* fixture.ownerStore.read({
+          portalEnrollmentAttemptId,
+          tenantId: Schema.decodeSync(EnrollmentTenantIdSchema)(tenantId),
+        });
+        expect(attempt.accountSubject).toBeUndefined();
+        expect(attempt.state).toBe('IN_PROGRESS');
       }),
     ),
   180_000,

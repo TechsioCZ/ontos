@@ -9,6 +9,7 @@ import {
   EnrollmentResourceIdSchema,
 } from '../../../shared/enrollment-contracts.ts';
 import type { EnrollmentAttemptSnapshot } from '../../../shared/enrollment-contracts.ts';
+import { InvitationClaimProofReferenceSchema } from '../../../shared/domain/invitation-contract.ts';
 import { COMMERCE_PORTAL_AUTH_POLICY } from '../provider/config.ts';
 
 /**
@@ -99,6 +100,20 @@ export const CommercePortalAuthEnrollmentStartInputSchema = Schema.Union([
 ]);
 export type CommercePortalAuthEnrollmentStartInput = typeof CommercePortalAuthEnrollmentStartInputSchema.Type;
 
+/**
+ * What the recipient presents when claiming the invitation its Attempt was started for.
+ *
+ * The secret is the one-time value the invitation delivery carried, and it is `Redacted` from
+ * decode to redemption: it never enters the Attempt, an owner request digest or a log. The proof
+ * reference names which registered proof the secret must match, so a redemption is always about one
+ * exact invitation proof rather than about whichever proof the invitation currently holds.
+ */
+export const CommercePortalAuthEnrollmentClaimInvitationInputSchema = Schema.Struct({
+  claimProofReference: InvitationClaimProofReferenceSchema,
+  invitationSecret: Schema.Redacted(
+    Schema.String.check(Schema.isTrimmed(), Schema.isMinLength(16), Schema.isMaxLength(200)),
+  ),
+}).annotate(rejectExcessProperties);
 /** The invitation this start request names, or `undefined` for a journey that carries none. */
 export const commercePortalAuthEnrollmentInvitationId = (
   input: CommercePortalAuthEnrollmentStartInput,

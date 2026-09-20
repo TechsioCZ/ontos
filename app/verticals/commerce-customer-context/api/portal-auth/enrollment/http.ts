@@ -20,6 +20,7 @@ import {
   CommerceEnrollmentOwnerTransactionRunner,
   commerceEnrollmentOwnerAttemptStoreForRun,
 } from '../../../src/enrollment/orchestration/owner-transition-production.ts';
+import type { CommerceEnrollmentOwnerTransactionRun } from '../../../src/enrollment/orchestration/owner-transition-production.ts';
 import {
   CommercePortalAccountSubjectSchema,
   EnrollmentKeySchema,
@@ -30,8 +31,9 @@ import {
   RecordEnrollmentOutcomeInputSchema,
   isEnrollmentAttemptTerminal,
 } from '../../../shared/enrollment-contracts.ts';
-import { CommerceEnrollmentAttemptUnavailable } from '../../../src/enrollment/attempts/errors.ts';
+import { CommerceEnrollmentAttemptUnavailable, attemptUnavailable } from '../../../src/enrollment/attempts/errors.ts';
 import type { CommerceEnrollmentAttemptError } from '../../../src/enrollment/attempts/errors.ts';
+import { readCounterpartyInvitationClaimability } from '../../../src/persistence/access-persistence.ts';
 import type {
   CommercePortalAccountSubject,
   EnrollmentAttemptIdSchema,
@@ -41,8 +43,9 @@ import type {
 import { COMMERCE_AUTHENTICATION_NAMESPACE_ID } from '../../../shared/portal-auth-contracts.ts';
 import { noStoreHeaders, requestHeaders, requireTrustedOrigin } from '../http-transport.ts';
 import { CommercePortalAuthAccountCreationService } from '../provider/account-create.ts';
-import type { CommercePortalAccountCreateResult } from '../provider/account-create.ts';
 import { CommercePortalAuthAccountCreationUnavailable } from '../provider/account-creation-unavailable.ts';
+import type { CommercePortalAuthAccountCreationRejected } from '../provider/account-creation-rejected.ts';
+import type { CommercePortalAccountCreateResult } from '../provider/account-create.ts';
 import { CommercePortalAuthAccountLookupService } from '../provider/account-lookup-service.ts';
 import { CommercePortalAuthConfig } from '../provider/config-service.ts';
 import { COMMERCE_PORTAL_AUTH_POLICY } from '../provider/config.ts';
@@ -50,6 +53,7 @@ import { consumeRateLimitBudget } from '../rate-limit-service.ts';
 import type { CommercePortalAuthRecoveryRateLimitRule } from '../rate-limit-service.ts';
 import { CommercePortalAuthService } from '../session/http.ts';
 import { CommercePortalAuthSessionLifecycle } from '../session/lifecycle-service.ts';
+import { commercePortalAuthEnrollmentClaimInvitation } from './claim-invitation.ts';
 import {
   CommercePortalAuthEnrollmentStartInputSchema,
   commercePortalAuthEnrollmentAttemptProjection,
@@ -188,7 +192,6 @@ export const commercePortalAuthEnrollmentExistingAccountBudget = Effect.fn(
 });
 
 const isAttemptUnavailable = Schema.is(CommerceEnrollmentAttemptUnavailable);
-const isAccountCreationUnavailable = Schema.is(CommercePortalAuthAccountCreationUnavailable);
 
 /**
  * Every governed Action failure this route can surface collapses to two public answers. An Attempt
@@ -344,6 +347,12 @@ const PORTAL_ACCOUNT_CREATED_OUTCOME_CODE = 'provider_account_created';
 const PORTAL_ACCOUNT_VERIFIED_OUTCOME_CODE = 'provider_account_verified';
 
 /**
+ * The typed failure code recorded when the provider definitively refuses the one account this
+ * Attempt may create. It never carries the provider's own rejection text.
+ */
+const PORTAL_ACCOUNT_CREATION_REJECTED_FAILURE_CODE = 'provider_account_rejected';
+
+/**
  * Whether this start still owes the effect its claim authorized.
  *
  * The claim is a governed Action, and a governed Action replays a recorded result verbatim: a retry
@@ -414,6 +423,44 @@ export const commercePortalAuthEnrollmentAccountCreationOutcome = Effect.fn(
     portalEnrollmentAttemptId: attempt.portalEnrollmentAttemptId,
     resultReference,
     status: 'SUCCEEDED',
+    tenantId: attempt.tenantId,
+    transitionKey: claim.transitionKey,
+    workerId: lease.workerId,
+  }).pipe(Effect.mapError((failure) => commercePortalAuthEnrollmentUnavailableProblem(failure)));
+});
+
+/**
+ * The durable outcome of a provider rejection that is definitive for this Attempt's one account.
+ *
+ * A rejected `signUpEmail` still consumed the claim this route holds. Without journalling it the
+ * transition stays `IN_PROGRESS` until its lease fences to indeterminate, and no correlation row
+ * ever appears to resolve it since the rejected call never created an account.
+ */
+const commercePortalAuthEnrollmentAccountCreationRejectionOutcome = Effect.fn(
+  'CommercePortalAuthEnrollmentHttp.accountCreationRejectionOutcome',
+)(function* accountCreationRejectionOutcomeEffect(
+  claim: CommercePortalAuthEnrollmentTransitionClaim,
+  attempt: EnrollmentAttemptSnapshot,
+  operation: EnrollmentOwnerOperationSnapshot,
+) {
+  const { lease } = operation;
+  if (lease === undefined) {
+    // Without the claim's own lease token the outcome cannot be recorded under the fence that
+    // authorized the provider call, and no other value may stand in for it.
+    return yield* Effect.fail(commercePortalAuthEnrollmentUnavailableProblem());
+  }
+  const failureCode = yield* Schema.decodeEffect(EnrollmentKeySchema)(
+    PORTAL_ACCOUNT_CREATION_REJECTED_FAILURE_CODE,
+  ).pipe(Effect.mapError((failure) => commercePortalAuthEnrollmentUnavailableProblem(failure)));
+  return yield* Schema.decodeEffect(RecordEnrollmentOutcomeInputSchema)({
+    actorPrincipalId: operation.actorPrincipalId,
+    expectedRevision: attempt.revision,
+    failureCode,
+    leaseToken: lease.leaseToken,
+    ownerInvocationId: claim.ownerInvocationId,
+    ownerModuleKey: claim.ownerModuleKey,
+    portalEnrollmentAttemptId: attempt.portalEnrollmentAttemptId,
+    status: 'FAILED',
     tenantId: attempt.tenantId,
     transitionKey: claim.transitionKey,
     workerId: lease.workerId,
@@ -498,6 +545,30 @@ export const commercePortalAuthEnrollmentReadableBy = (
  * bounding a replayable verify-only assertion's probes to one customer without affecting others
  * behind the same Principal.
  */
+/**
+ * Whether the named invitation can still be claimed. The refusal is the same generic
+ * journey-unavailable answer whether the invitation id is unknown, already consumed, revoked or
+ * expired, so it never discloses which of those applied.
+ */
+export const commercePortalAuthEnrollmentInvitationClaimable = Effect.fn(
+  'CommercePortalAuthEnrollmentHttp.invitationClaimable',
+)(function* commercePortalAuthEnrollmentInvitationClaimableEffect(
+  run: CommerceEnrollmentOwnerTransactionRun,
+  tenantId: string,
+  legalEntityId: string,
+  invitationId: string,
+) {
+  const claimable = yield* run({ legalEntityId, tenantId }, (transaction) =>
+    readCounterpartyInvitationClaimability(transaction, invitationId).pipe(
+      Effect.mapError((failure) => attemptUnavailable(failure.reason, undefined, failure)),
+    ),
+  ).pipe(Effect.mapError((failure) => commercePortalAuthEnrollmentUnavailableProblem(failure)));
+  if (!claimable) {
+    return yield* Effect.fail(commercePortalAuthEnrollmentJourneyUnavailableProblem);
+  }
+  return null;
+});
+
 export const commercePortalAuthEnrollmentAccountOwner = Effect.fn('CommercePortalAuthEnrollmentHttp.accountOwner')(
   function* commercePortalAuthEnrollmentAccountOwnerEffect(headers: Headers, principalId: string, email: string) {
     const provider = yield* CommercePortalAuthService;
@@ -523,6 +594,30 @@ export const commercePortalAuthEnrollmentAccountOwner = Effect.fn('CommercePorta
  * so its Tenant, Actor and invocation identity come from the governed context rather than from
  * this body, and a repeated equivalent request converges on the Attempt that already exists.
  */
+const isAccountCreationUnavailable = Schema.is(CommercePortalAuthAccountCreationUnavailable);
+
+const settleRejectedAccountCreation = Effect.fn('CommercePortalAuthEnrollmentHttp.settleRejectedAccountCreation')(
+  function* settleRejectedAccountCreationEffect(
+    store: ReturnType<typeof commerceEnrollmentOwnerAttemptStoreForRun>,
+    claim: Parameters<typeof commercePortalAuthEnrollmentAccountCreationRejectionOutcome>[0],
+    claimedState: {
+      readonly attempt: Parameters<typeof commercePortalAuthEnrollmentAccountCreationRejectionOutcome>[1];
+      readonly operation: Parameters<typeof commercePortalAuthEnrollmentAccountCreationRejectionOutcome>[2];
+    },
+    rejection: CommercePortalAuthAccountCreationRejected,
+  ) {
+    const outcome = yield* commercePortalAuthEnrollmentAccountCreationRejectionOutcome(
+      claim,
+      claimedState.attempt,
+      claimedState.operation,
+    );
+    yield* store
+      .recordOutcome(outcome)
+      .pipe(Effect.mapError((failure) => commercePortalAuthEnrollmentUnavailableProblem(failure)));
+    return yield* rejection;
+  },
+);
+
 const startEnrollment = Effect.fn('CommercePortalAuthEnrollmentHttp.start')(function* startEnrollmentEffect(
   payload: Schema.Codec.Encoded<typeof CommercePortalAuthEnrollmentStartInputSchema>,
   idempotencyKey: string | undefined,
@@ -533,12 +628,6 @@ const startEnrollment = Effect.fn('CommercePortalAuthEnrollmentHttp.start')(func
   const input: CommercePortalAuthEnrollmentStartInput = yield* Schema.decodeEffect(
     CommercePortalAuthEnrollmentStartInputSchema,
   )(payload).pipe(Effect.mapError(commercePortalAuthEnrollmentInvalidProblem));
-  if (input.journey === 'COUNTERPARTY_INVITATION') {
-    // Refused before the budget, the Attempt and the provider account: the invitation claim needs a
-    // one-time claim proof no owner effect can hold today, so an Attempt started here could only
-    // ever orphan the account it created.
-    return yield* Effect.fail(commercePortalAuthEnrollmentJourneyUnavailableProblem);
-  }
   const email = input.email.trim().toLowerCase();
   // Verified before any budget is spent; every budget below is keyed by the Principal it names, not
   // the assertion, so a caller can't exhaust another Principal's budget by naming it or replaying a
@@ -547,6 +636,18 @@ const startEnrollment = Effect.fn('CommercePortalAuthEnrollmentHttp.start')(func
     authentication: () => commercePortalAuthEnrollmentAuthenticationProblem,
     unavailable: () => commercePortalAuthEnrollmentUnavailableProblem(),
   });
+  // Refused before any budget is spent or Attempt is created: an unknown, consumed, revoked or
+  // expired invitation would otherwise still produce an Attempt and provider account nothing can
+  // ever complete.
+  if (input.journey === 'COUNTERPARTY_INVITATION') {
+    const runner = yield* CommerceEnrollmentOwnerTransactionRunner;
+    yield* commercePortalAuthEnrollmentInvitationClaimable(
+      runner.run,
+      caller.tenantId,
+      input.sellingLegalEntityId,
+      input.invitationId,
+    );
+  }
   // For Existing-account, the ownership probe spends its own (Principal, session subject) budget
   // internally, before its directory lookup — see `commercePortalAuthEnrollmentAccountOwner`.
   const ownerSubject = commercePortalAuthEnrollmentRequiresAccountOwner(input.journey)
@@ -738,6 +839,11 @@ const startEnrollment = Effect.fn('CommercePortalAuthEnrollmentHttp.start')(func
       tenantId: claimedState.attempt.tenantId,
     })
     .pipe(
+      // A definitive rejection is terminal for the claimed transition: recorded here, or the lease
+      // fences it indeterminate and no correlation ever appears to resolve it.
+      Effect.catchTag('CommercePortalAuthAccountCreationRejected', (rejection) =>
+        settleRejectedAccountCreation(store, claim, claimedState, rejection),
+      ),
       Effect.mapError((failure) =>
         isAccountCreationUnavailable(failure)
           ? commercePortalAuthEnrollmentUnavailableProblem(failure)
@@ -826,6 +932,14 @@ export const portalAuthEnrollmentApiLive = HttpApiBuilder.group(
     handlers
       .handle('startEnrollment', ({ payload, request }) =>
         startEnrollment(payload, request.headers['idempotency-key'], request),
+      )
+      .handle('claimEnrollmentInvitation', ({ params, payload, request }) =>
+        commercePortalAuthEnrollmentClaimInvitation(
+          params.attemptId,
+          payload,
+          request.headers['idempotency-key'],
+          request,
+        ),
       )
       .handle('readEnrollment', ({ params, request }) => readEnrollment(params.attemptId, request)),
 ).pipe(Layer.provide(commercePortalAuthEnrollmentSchemaErrorLive));

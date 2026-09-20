@@ -754,6 +754,15 @@ export const makeCommerceCustomerContextApiRuntime = (
       // The Existing-account journey creates no account, so its start verifies the presented one
       // exists here instead of claiming a provider transition its journey never declares.
       GovernedReadLayer.provide(deploymentEnrollmentAccountLookupLive),
+      // The invitation claim route redeems the recipient's one-time secret itself: the digest it
+      // compares is computed here rather than by an owner Action, so the host platform crypto this
+      // vertical already publishes is installed beside the transaction runner that carries it.
+      GovernedReadLayer.provide(commercePortalAuthPlatformCryptoLive),
+      // The claim route dispatches the governed `claim-counterparty-access-invitation` Action from
+      // inside an owner transition, so the Action's own service graph travels with it explicitly.
+      // Core's relationship projection is part of that graph — the claim re-verifies the grantor's
+      // current administrative authority against it — and the Action runtime keeps it private.
+      GovernedReadLayer.provide(ContextAccessLive),
       GovernedReadLayer.provide(
         commerceEnrollmentOwnerTransactionRunnerProductionLive.pipe(GovernedReadLayer.provide(DatabaseConfigLive)),
       ),

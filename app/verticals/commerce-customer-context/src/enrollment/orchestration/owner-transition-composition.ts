@@ -34,7 +34,6 @@ import type { CommerceEnrollmentPreparationSubjectResolve } from './preparation-
 import { commerceEnrollmentPortalAuthOwnerReconciliationForLookup } from './provider-owner-effect.ts';
 import type { CommerceEnrollmentProviderOwnerReconciliationObservation } from './provider-owner-effect.ts';
 import {
-  CommerceEnrollmentOwnerEffectIndeterminate,
   CommerceEnrollmentOwnerEffectRejected,
   CommerceEnrollmentOwnerEffectUnavailable,
 } from './owner-transition-errors.ts';
@@ -165,8 +164,7 @@ export const providerObservationFor = Effect.fn('CommerceEnrollmentPortalAuthOwn
     ownerInvocationId: CommerceEnrollmentOwnerReconciliationInput['ownerInvocationId'],
   ): Effect.fn.Return<
     CommerceEnrollmentProviderOwnerReconciliationObservation,
-    | InstanceType<typeof CommerceEnrollmentOwnerEffectIndeterminate>
-    | InstanceType<typeof CommerceEnrollmentOwnerEffectUnavailable>
+    InstanceType<typeof CommerceEnrollmentOwnerEffectUnavailable>
   > {
     const evidenceRef = yield* evidenceReferenceOf(attempt).pipe(
       Effect.mapError(
@@ -183,13 +181,10 @@ export const providerObservationFor = Effect.fn('CommerceEnrollmentPortalAuthOwn
         ? yield* correlatedProviderSubject(accountLookup, ownerInvocationId)
         : Option.some(accountSubject.providerSubjectId);
     if (Option.isNone(recordedSubject)) {
-      // Neither the Attempt nor the provider holds a subject for this invocation, so the creation
-      // never committed at all. Absent that key the provider's state is unknown, and calling it
-      // NOT_FOUND would authorize a second account for the same Attempt.
-      return yield* new CommerceEnrollmentOwnerEffectIndeterminate({
-        code: 'provider_account_reconciliation_indeterminate',
-        reason: 'The Attempt records no provider subject to correlate the original creation by',
-      });
+      // Neither the Attempt nor the provider correlates a subject to this invocation, so no account
+      // ever committed under it: the unique correlation index is authoritative for that absence.
+      // Reported as NOT_FOUND, the transition fails closed and its owner invocation stays reclaimable.
+      return { evidenceRef, outcome: 'NOT_FOUND' as const };
     }
     const providerSubjectId = recordedSubject.value;
     const persisted = yield* accountLookup

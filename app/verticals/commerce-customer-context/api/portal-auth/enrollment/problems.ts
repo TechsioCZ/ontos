@@ -3,6 +3,7 @@ import { Effect } from 'effect';
 
 import {
   CommercePortalAuthEnrollmentAuthenticationProblemSchema,
+  CommercePortalAuthEnrollmentConflictProblemSchema,
   CommercePortalAuthEnrollmentForbiddenProblemSchema,
   CommercePortalAuthEnrollmentInvalidProblemSchema,
   CommercePortalAuthEnrollmentJourneyUnavailableProblemSchema,
@@ -87,6 +88,23 @@ export const commercePortalAuthEnrollmentJourneyUnavailableProblem =
     title: 'Enrollment journey unavailable',
     type: `${PROBLEM_TYPE_PREFIX}journey-unavailable`,
   });
+
+/**
+ * The journey has not yet established the Principal Auth Binding an invitation claim is recorded
+ * under. It names no transition and no owner: a caller learns only that its own Attempt is not
+ * there yet, which is the same thing a read of the Attempt would have told it.
+ */
+export const commercePortalAuthEnrollmentBindingPendingProblem = (cause?: unknown) =>
+  withCause(
+    CommercePortalAuthEnrollmentConflictProblemSchema.make({
+      code: 'enrollment_binding_pending',
+      detail: 'This Commerce portal enrollment attempt is not ready to claim its invitation yet.',
+      status: 409,
+      title: 'Enrollment binding pending',
+      type: `${PROBLEM_TYPE_PREFIX}binding-pending`,
+    }),
+    cause,
+  );
 
 /**
  * `retryAfterSeconds` names the window of the rule that actually refused the request: the route

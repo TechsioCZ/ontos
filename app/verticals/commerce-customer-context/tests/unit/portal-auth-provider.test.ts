@@ -375,6 +375,7 @@ it.effect('projects a Better Auth create response double without returning its t
   let receivedBody: unknown;
   const auth: CommercePortalAuthAccountCreationProvider = {
     api: {
+      sendVerificationEmail: () => Effect.void,
       signUpEmail: (signUpRequest) => {
         receivedBody = signUpRequest;
         return Effect.succeed(Option.some({ token: 'raw-session-token', user: { id: providerSubjectId } }));
@@ -421,6 +422,7 @@ it.effect('projects a Better Auth create response double without returning its t
 it.effect('does not treat Better Auth generic duplicate responses as created accounts', () => {
   const auth: CommercePortalAuthAccountCreationProvider = {
     api: {
+      sendVerificationEmail: () => Effect.void,
       signUpEmail: () => providerSuccess({ token: null, user: { id: 'synthetic-user' } }),
     },
   };
@@ -454,6 +456,7 @@ it.effect('maps a definitive Better Auth validation failure to rejected', () => 
   let providerCalls = 0;
   const auth: CommercePortalAuthAccountCreationProvider = {
     api: {
+      sendVerificationEmail: () => Effect.void,
       signUpEmail: () => {
         providerCalls += 1;
         return Effect.fail(
@@ -496,6 +499,7 @@ it.effect('fails closed when the Better Auth error code is absent or unbounded',
   const failureFor = (body: { readonly code?: string; readonly message?: string }) => {
     const auth: CommercePortalAuthAccountCreationProvider = {
       api: {
+        sendVerificationEmail: () => Effect.void,
         signUpEmail: () => Effect.fail(new APIError('BAD_REQUEST', body)),
       },
     };
@@ -533,6 +537,7 @@ it.effect('rejects an existing email before invoking Better Auth', () => {
   let providerCalls = 0;
   const auth: CommercePortalAuthAccountCreationProvider = {
     api: {
+      sendVerificationEmail: () => Effect.void,
       signUpEmail: () => {
         providerCalls += 1;
         return providerSuccess({ token: null, user: { id: 'synthetic-user' } });
@@ -575,6 +580,7 @@ it.effect('replays a correlated owner invocation to its committed subject instea
   let providerCalls = 0;
   const auth: CommercePortalAuthAccountCreationProvider = {
     api: {
+      sendVerificationEmail: () => Effect.void,
       signUpEmail: () => {
         providerCalls += 1;
         return providerSuccess({ user: { id: 'a-second-account' } });
@@ -610,6 +616,7 @@ it.effect('replays a correlated owner invocation to its committed subject instea
 it.effect('maps a malformed Better Auth success response to unavailable', () => {
   const auth: CommercePortalAuthAccountCreationProvider = {
     api: {
+      sendVerificationEmail: () => Effect.void,
       signUpEmail: () => Effect.succeed(Option.none<CommercePortalAuthAccountCreateResponse>()),
     },
   };
@@ -643,6 +650,7 @@ it.effect('maps an indeterminate Better Auth provider failure to unavailable wit
   let providerCalls = 0;
   const auth: CommercePortalAuthAccountCreationProvider = {
     api: {
+      sendVerificationEmail: () => Effect.void,
       signUpEmail: () => {
         providerCalls += 1;
         return Effect.fail(new Error('provider response lost after dispatch'));
@@ -680,6 +688,7 @@ it.effect('maps a wrapped Better Auth storage failure to unavailable after one p
   let providerCalls = 0;
   const auth: CommercePortalAuthAccountCreationProvider = {
     api: {
+      sendVerificationEmail: () => Effect.void,
       signUpEmail: () => {
         providerCalls += 1;
         return Effect.fail(
@@ -723,6 +732,7 @@ it.effect('rejects raw password and missing owner invocation before any gateway 
   let providerCalls = 0;
   const auth: CommercePortalAuthAccountCreationProvider = {
     api: {
+      sendVerificationEmail: () => Effect.void,
       signUpEmail: () => {
         providerCalls += 1;
         return providerSuccess({ user: { id: providerSubjectId } });
@@ -1009,6 +1019,7 @@ it.effect('normalizes the address once before the duplicate guard, the provider 
   let providerBody: unknown;
   const auth: CommercePortalAuthAccountCreationProvider = {
     api: {
+      sendVerificationEmail: () => Effect.void,
       signUpEmail: (signUpRequest) => {
         providerBody = signUpRequest;
         return providerSuccess({ user: { id: providerSubjectId } });

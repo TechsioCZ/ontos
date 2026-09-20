@@ -26,6 +26,11 @@ import {
   readRetailPortalBindingForPrincipal,
   readRetailProfileByParty,
 } from '../../persistence/profile-persistence.ts';
+import {
+  CLAIM_COUNTERPARTY_ACCESS_INVITATION_TRANSITION_KEY,
+  COUNTERPARTY_ACCESS_OWNER_MODULE_KEY,
+} from '../journeys/counterparty-invitation.ts';
+import { CommerceEnrollmentOwnerEffectUnavailable } from './owner-transition-errors.ts';
 import type { EnrollmentAttemptScopedRoutineInvoker } from '../attempts/attempt-persistence.ts';
 import { attemptRejected, attemptUnavailable, withCause } from '../attempts/errors.ts';
 import type { CommerceEnrollmentAttemptError } from '../attempts/errors.ts';
@@ -491,6 +496,27 @@ const portalAccountEntry =
       ).reconcile,
     });
 
+/**
+ * Reconcile-only, and its reconciliation deliberately settles nothing.
+ *
+ * The invitation's one-time secret was delivered to the recipient and exists nowhere the server may
+ * read, so no continuation pass and no sweep may dispatch this transition — `dispatch: none` is what
+ * stops one from trying. A claim whose answer never arrived is left reconcilable rather than
+ * resolved: the next request from the recipient re-presents the secret and converges it, and the
+ * durable redemption replays rather than burning the invitation a second time.
+ */
+const invitationClaimEntry: RegistryEntry = () =>
+  Effect.succeedSome({
+    dispatch: Option.none(),
+    reconcile: () =>
+      Effect.fail(
+        new CommerceEnrollmentOwnerEffectUnavailable({
+          code: 'counterparty_invitation_claim_unavailable',
+          reason: 'Only the invitation recipient can settle a Counterparty Access invitation claim',
+        }),
+      ),
+  });
+
 interface CoreIdentitySeam {
   readonly client: ExternalIdentityClientPort;
   readonly clientOptions: (context: CommerceEnrollmentOwnerEffectContext) => ExternalIdentityClientOptions;
@@ -721,6 +747,10 @@ export const CommerceEnrollmentOwnerEffectRegistryLive = Layer.effect(
       [
         registryKey(COMMERCE_CUSTOMER_CONTEXT_OWNER_MODULE_KEY, BIND_RETAIL_PORTAL_PROFILE_TRANSITION_KEY),
         bindProfileEntry(ownerTransactionRun),
+      ],
+      [
+        registryKey(COUNTERPARTY_ACCESS_OWNER_MODULE_KEY, CLAIM_COUNTERPARTY_ACCESS_INVITATION_TRANSITION_KEY),
+        invitationClaimEntry,
       ],
       [registryKey(CORE_IDENTITY_OWNER_MODULE_KEY, RESERVE_PRINCIPAL_BINDING_TRANSITION_KEY), coreReserveEntry(core)],
       [registryKey(CORE_IDENTITY_OWNER_MODULE_KEY, ACTIVATE_PRINCIPAL_BINDING_TRANSITION_KEY), coreActivateEntry(core)],

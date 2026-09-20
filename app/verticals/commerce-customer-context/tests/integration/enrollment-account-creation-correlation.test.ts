@@ -12,19 +12,31 @@ import {
 } from '../../api/portal-auth/provider/account-create.ts';
 import type { CommercePortalAuthAccountLookup } from '../../api/portal-auth/provider/account-create.ts';
 import type { CommercePortalAuthAccountCreationGateway } from '../../api/portal-auth/provider/account-creation-gateway-service.ts';
+import { CommercePortalAuthAccountCreationRejected } from '../../api/portal-auth/provider/account-creation-rejected.ts';
 import { CommercePortalAuthInstance, makeCommercePortalAuth } from '../../api/portal-auth/provider/auth.ts';
 import { parseCommercePortalAuthConfig } from '../../api/portal-auth/provider/config.ts';
 import {
+  ClaimEnrollmentTransitionInputSchema,
+  CommercePortalAccountSubjectSchema,
   EnrollmentActionInvocationIdSchema,
   EnrollmentAttemptIdSchema,
+  EnrollmentDigestSchema,
   EnrollmentKeySchema,
   EnrollmentPrincipalIdSchema,
+  EnrollmentResourceIdSchema,
   EnrollmentTenantIdSchema,
 } from '../../shared/enrollment-contracts.ts';
 import type { EnrollmentAttemptSnapshot } from '../../shared/enrollment-contracts.ts';
-import { CommerceEnrollmentOwnerTransitionSchema } from '../../src/enrollment/orchestration/owner-transition-driver.ts';
-import type { CommerceEnrollmentOwnerReconciliationInput } from '../../src/enrollment/orchestration/owner-transition-driver.ts';
-import { CommerceEnrollmentOwnerEffectIndeterminate } from '../../src/enrollment/orchestration/owner-transition-errors.ts';
+import { COMMERCE_AUTHENTICATION_NAMESPACE_ID } from '../../shared/portal-auth-contracts.ts';
+import { ownerRejected, ownerUnavailable } from '../../src/enrollment/orchestration/owner-effect-codec.ts';
+import {
+  commerceEnrollmentOwnerTransitionDriverFor,
+  CommerceEnrollmentOwnerTransitionSchema,
+} from '../../src/enrollment/orchestration/owner-transition-driver.ts';
+import type {
+  CommerceEnrollmentOwnerEffect,
+  CommerceEnrollmentOwnerReconciliationInput,
+} from '../../src/enrollment/orchestration/owner-transition-driver.ts';
 import { providerObservationFor } from '../../src/enrollment/orchestration/owner-transition-composition.ts';
 import { commerceEnrollmentPortalAuthOwnerReconciliationForLookup } from '../../src/enrollment/orchestration/provider-owner-effect.ts';
 import { CommercePortalAuthAccountLookupLive } from '../../src/portal-auth/persistence/portal-auth-account-lookup.ts';
@@ -33,6 +45,13 @@ import {
   makeCommercePortalAuthDatabase,
 } from '../../src/portal-auth/persistence/portal-auth-database.ts';
 import { user } from '../../src/portal-auth/persistence/portal-auth-tables.ts';
+import {
+  expireEnrollmentAcceptanceLeases,
+  makeEnrollmentAcceptanceFixture,
+  readEnrollmentAcceptanceAttempt,
+  readEnrollmentAcceptanceOperations,
+  startEnrollmentAcceptanceAttempt,
+} from '../support/enrollment-acceptance-fixture.ts';
 
 /**
  * Better Auth can commit the account row and still lose its answer — a timed-out call, an unusable
@@ -254,10 +273,6 @@ it.live('writes the governed invocation in the very insert that commits the acco
 );
 
 /**
- * A creation that never committed leaves no correlation, and an uncorrelated invocation must stay
- * retryable: resolving it as absent would authorize a second account for the same Attempt.
- */
-/**
  * A retry that converges on an already-committed account must not report CREATED with no usable
  * verification link: the first send is simulated as failing after the user row committed, and the
  * retry must reissue it. The reissued token is proven usable by spending it through Better Auth's
@@ -349,16 +364,139 @@ it.live('reissues the verification email when a retry converges on an already-co
   ),
 );
 
-it.live('keeps an invocation the provider never correlated indeterminate', () =>
+/**
+ * A creation that never committed leaves no correlation. The unique correlation index is
+ * authoritative for that absence, so this must resolve FAILED/reclaimable rather than stay
+ * indeterminate: an Attempt with no subject and no correlation row proves no account exists yet.
+ */
+it.live('resolves an invocation the provider never correlated to a reclaimable failure', () =>
   Effect.scoped(
-    Effect.gen(function* staysIndeterminate() {
+    Effect.gen(function* resolvesToReclaimableFailure() {
       const fixture = yield* makeCorrelationFixture('never-committed');
       const uncorrelated = Schema.decodeSync(EnrollmentActionInvocationIdSchema)(randomUUID());
 
       expect(yield* correlationRows(fixture)).toStrictEqual([]);
-      const failure = yield* Effect.flip(reconcileFor(fixture, uncorrelated));
-      expect(Schema.is(CommerceEnrollmentOwnerEffectIndeterminate)(failure)).toBe(true);
-      expect(failure.code).toBe('provider_account_reconciliation_indeterminate');
+      const resolution = yield* reconcileFor(fixture, uncorrelated);
+      expect(resolution.status).toBe('FAILED');
+      expect(resolution.failureCode).toBe('provider_account_not_found');
+      expect(resolution.outcomeCode).toBe('provider_account_absent');
+    }),
+  ),
+);
+
+/**
+ * A process that commits the durable claim and exits before ever calling `signUpEmail` leaves an
+ * `IN_PROGRESS` operation with no subject and no correlation. Once its lease expires, the fix must
+ * let the very same owner invocation be reclaimed and dispatched again — never a second account.
+ */
+it.live('re-dispatches the account-creation transition after a claim-only crash and creates the account once', () =>
+  Effect.scoped(
+    Effect.gen(function* redispatchesAfterClaimOnlyCrash() {
+      const tenantId = Schema.decodeSync(EnrollmentTenantIdSchema)(randomUUID());
+      const owningActorPrincipalId = Schema.decodeSync(EnrollmentPrincipalIdSchema)(randomUUID());
+      const acceptance = yield* makeEnrollmentAcceptanceFixture({ tenantId });
+      const attempt = yield* startEnrollmentAcceptanceAttempt(acceptance, {
+        actionInvocationId: Schema.decodeSync(EnrollmentActionInvocationIdSchema)(randomUUID()),
+        actorPrincipalId: owningActorPrincipalId,
+        intentDigest: Schema.decodeSync(EnrollmentDigestSchema)('a'.repeat(64)),
+        intentKey,
+        journey: 'RETAIL_SELF_ENROLLMENT',
+        tenantId,
+      });
+
+      const provider = yield* makeCorrelationFixture('redispatch');
+      const ownerInvocationId = Schema.decodeSync(EnrollmentActionInvocationIdSchema)(randomUUID());
+      const requestDigest = 'c'.repeat(64);
+      const transition = Schema.decodeSync(CommerceEnrollmentOwnerTransitionSchema)({
+        actorPrincipalId: owningActorPrincipalId,
+        correlationId: `commerce-enrollment-owner:${ownerInvocationId}`,
+        expectedRevision: attempt.revision,
+        ownerInvocationId,
+        ownerModuleKey: 'commerce.portal-auth',
+        portalEnrollmentAttemptId: attempt.portalEnrollmentAttemptId,
+        requestDigest,
+        tenantId,
+        transitionKey: 'provider.account.create',
+      });
+
+      // The crash: the durable claim commits, but the provider is never called and nothing records.
+      yield* acceptance.ownerStore.claimTransition(
+        Schema.decodeSync(ClaimEnrollmentTransitionInputSchema)({
+          actorPrincipalId: owningActorPrincipalId,
+          expectedRevision: transition.expectedRevision,
+          leaseDurationMs: 1000,
+          ownerInvocationId,
+          ownerModuleKey: 'commerce.portal-auth',
+          portalEnrollmentAttemptId: attempt.portalEnrollmentAttemptId,
+          requestDigest,
+          required: true,
+          tenantId,
+          transitionKey: 'provider.account.create',
+          workerId: 'crashed-worker',
+        }),
+      );
+      yield* expireEnrollmentAcceptanceLeases(acceptance, attempt.portalEnrollmentAttemptId);
+
+      const owner: CommerceEnrollmentOwnerEffect = {
+        dispatch: (input) =>
+          provider.gateway
+            .create({
+              email: provider.email,
+              enrollmentAttemptId: input.portalEnrollmentAttemptId,
+              name: 'Redispatch integration account',
+              ownerInvocationId: input.ownerInvocationId,
+              password: Redacted.make(PASSWORD),
+              tenantId: input.tenantId,
+            })
+            .pipe(
+              Effect.map((result) => ({
+                accountSubject: Schema.decodeSync(CommercePortalAccountSubjectSchema)({
+                  authenticationNamespaceId: COMMERCE_AUTHENTICATION_NAMESPACE_ID,
+                  providerSubjectId: result.providerSubjectId,
+                  subjectType: 'user' as const,
+                }),
+                outcomeCode: Schema.decodeSync(EnrollmentKeySchema)('provider_account_created'),
+                // The raw gateway carries no evidence receipt; the created subject id is itself
+                // a valid, distinct reference for this outcome's schema.
+                resultReference: Schema.decodeSync(EnrollmentResourceIdSchema)(result.providerSubjectId),
+                status: 'SUCCEEDED' as const,
+              })),
+              Effect.mapError((failure) =>
+                Schema.is(CommercePortalAuthAccountCreationRejected)(failure)
+                  ? ownerRejected('provider_account_rejected', failure.reason, failure)
+                  : ownerUnavailable('provider_account_unavailable', failure.reason, failure),
+              ),
+            ),
+        // Exactly the composition's own reconciliation, driven by the fixed `providerObservationFor`.
+        reconcile: commerceEnrollmentPortalAuthOwnerReconciliationForLookup((input) =>
+          providerObservationFor(attempt, provider.lookup, input.ownerInvocationId),
+        ).reconcile,
+      };
+      const driver = commerceEnrollmentOwnerTransitionDriverFor({ attempt: acceptance.ownerStore, owner });
+
+      // The claim above advanced the Attempt's revision past the one captured before it.
+      const beforeReconcile = yield* readEnrollmentAcceptanceAttempt(acceptance, attempt.portalEnrollmentAttemptId);
+
+      // Without the fix this fails outright (Indeterminate) instead of recording a reclaimable FAILED.
+      const reconciled = yield* driver.reconcile({ ...transition, expectedRevision: beforeReconcile.revision });
+      expect(reconciled.outcome).toBe('RECORDED');
+      if (reconciled.outcome === 'RECORDED') {
+        expect(reconciled.resolution.status).toBe('FAILED');
+        expect(reconciled.resolution.failureCode).toBe('provider_account_not_found');
+      }
+
+      const afterReconcile = yield* readEnrollmentAcceptanceAttempt(acceptance, attempt.portalEnrollmentAttemptId);
+      const redispatched = yield* driver.execute({ ...transition, expectedRevision: afterReconcile.revision });
+      expect(redispatched.outcome).toBe('RECORDED');
+      if (redispatched.outcome === 'RECORDED') {
+        expect(redispatched.ownerOutcome.status).toBe('SUCCEEDED');
+      }
+
+      const operations = yield* readEnrollmentAcceptanceOperations(acceptance, attempt.portalEnrollmentAttemptId);
+      expect(operations.at(-1)?.status).toBe('SUCCEEDED');
+
+      // The same owner invocation created exactly one account: the crash-then-retry never doubled it.
+      expect(yield* usersWithEmail(provider)).toHaveLength(1);
     }),
   ),
 );

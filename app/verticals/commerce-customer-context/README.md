@@ -92,9 +92,23 @@ deployment secret; neither is route-wide:
 
 A `429` names the window of whichever rule actually refused the request.
 
-`journey: COUNTERPARTY_INVITATION` is refused fail-closed with `422 enrollment_journey_unavailable`
-— no Attempt is persisted and no provider account is created — until an owner effect exists that can
-hold the invitation's one-time claim proof. `journey: EXISTING_ACCOUNT` creates no account either:
+`journey: COUNTERPARTY_INVITATION` starts like a Retail self-enrollment — the same body plus the
+`invitationId` it claims — and its journey declares four required transitions: the provider account,
+the Tenant-scoped Principal Auth Binding's reservation and activation, and the Counterparty Access
+invitation claim. The continuation drives the first three; the claim is the one transition it may
+never dispatch, because the invitation's one-time secret was delivered to the recipient and exists
+nowhere the server may read. `POST /api/portal-auth/enrollment/:attemptId/claim-invitation` is the
+recipient presenting it: the secret is `Redacted` from decode to redemption, the caller's portal
+session must be authenticated as the exact provider subject the Attempt journalled, and the caller's
+gateway assertion must name the exact Principal Auth Binding the Attempt reserved — so a caller
+holding any other Principal's assertion, the shared Storefront Client Principal included, is
+answered exactly as an absent Attempt is. A request made before that binding is active answers `409
+enrollment_binding_pending`. The redemption is the claimability gate as well as the secret check:
+the owner routine locks the invitation, refuses anything but a current invitation with a staged,
+unexpired proof, and stamps the claimant from the authenticated scope. The Counterparty Access
+Grants the invitation intends are the claim Action's own outbox and
+`reconcile-counterparty-access-invitation-claim-authorization-mutation.worker.ts`; the journey
+records the claim and nothing more. `journey: EXISTING_ACCOUNT` creates no account either:
 its journey definition drops the `provider.account.create` step and declares `provider.account.verify`
 in its place, so the start must be made by the authenticated owner of that account — it requires a
 live Commerce portal session whose subject holds the presented address (`401` without one, and the

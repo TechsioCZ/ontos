@@ -86,17 +86,21 @@ const AccessGrantRowSchema = Schema.Struct({
   grant_id: Schema.String,
   granted_at: timestampSchema,
   granted_by: Schema.String,
+  // `access_grant_row` projects its `p_operation_outcome` argument, which a plain listing or lock
+  // leaves NULL: only a mutation routine has an outcome to report through the shared row shape.
   operation_outcome: Schema.optionalKey(
-    Schema.Literals([
-      'ALREADY_ACTIVE',
-      'ALREADY_REVOKED',
-      'CONFLICT',
-      'LAST_ADMIN_PROTECTED',
-      'PENDING_GRANT',
-      'PENDING_REVOKE',
-      'PROFILE_NOT_FOUND',
-      'SCOPE_MISMATCH',
-    ]),
+    Schema.NullOr(
+      Schema.Literals([
+        'ALREADY_ACTIVE',
+        'ALREADY_REVOKED',
+        'CONFLICT',
+        'LAST_ADMIN_PROTECTED',
+        'PENDING_GRANT',
+        'PENDING_REVOKE',
+        'PROFILE_NOT_FOUND',
+        'SCOPE_MISMATCH',
+      ]),
+    ),
   ),
   permission_code: CounterpartyPermissionCodeSchema,
   principal_id: Schema.String,
@@ -129,22 +133,26 @@ const InvitationRowFieldsSchema = Schema.Struct({
   grant_progress: Schema.Array(InvitationGrantProgressSchema),
   invitation_id: Schema.String,
   invited_by: Schema.String,
+  // `read_access_invitation` projects `NULL::text` into this column: a plain read has no mutation
+  // outcome, while `create_access_invitation` and `mutate_access_invitation` alias their own here.
   operation_outcome: Schema.optionalKey(
-    Schema.Literals([
-      'ALREADY_CLAIMED',
-      'ALREADY_PENDING',
-      'ALREADY_REVOKED',
-      'ALREADY_SENT',
-      'CLAIM_REJECTED',
-      'CLAIMING',
-      'CREATED',
-      'EXPIRED',
-      'INVALID',
-      'RECONCILIATION_REQUIRED',
-      'RESENT',
-      'REVOKED',
-      'REVISION_CONFLICT',
-    ]),
+    Schema.NullOr(
+      Schema.Literals([
+        'ALREADY_CLAIMED',
+        'ALREADY_PENDING',
+        'ALREADY_REVOKED',
+        'ALREADY_SENT',
+        'CLAIM_REJECTED',
+        'CLAIMING',
+        'CREATED',
+        'EXPIRED',
+        'INVALID',
+        'RECONCILIATION_REQUIRED',
+        'RESENT',
+        'REVOKED',
+        'REVISION_CONFLICT',
+      ]),
+    ),
   ),
   reason: Schema.String,
   requested_permission_codes: Schema.Array(CounterpartyPermissionCodeSchema),
@@ -432,6 +440,21 @@ const readAccessInvitationRoutine = defineScopedRoutine({
   ],
   resultSchema: InvitationRowSchema,
   routineKey: 'counterparty-access.read-invitation',
+  schema: 'commerce_customer_context',
+});
+
+const InvitationClaimabilityRowSchema = Schema.Struct({ claimable: Schema.Boolean });
+
+const readCounterpartyInvitationClaimabilityRoutine = defineScopedRoutine({
+  name: 'read_counterparty_invitation_claimability',
+  ownerModuleKey: customerContextModuleKey,
+  parameters: [
+    { source: 'tenantId', type: 'uuid' },
+    { source: 'legalEntityId', type: 'uuid' },
+    { source: 'input', type: 'uuid' },
+  ],
+  resultSchema: InvitationClaimabilityRowSchema,
+  routineKey: 'counterparty-access.read-invitation-claimability',
   schema: 'commerce_customer_context',
 });
 
@@ -1051,6 +1074,60 @@ const readInvitation = (
           : Effect.succeed(invitationFromRow(dependencies.scope.tenantId, row)),
       ),
     );
+
+/**
+ * One invitation, read over a scoped transaction alone.
+ *
+ * The enrollment claim route needs the invitation's current revision to present the
+ * compare-and-set the claim Action demands, and it holds a scoped owner transaction rather than the
+ * whole access port — which would drag the proof-delivery, eligibility and crypto seams a read
+ * never touches into an HTTP group. Scope is still the routine's own: it refuses any Tenant or
+ * Legal Entity the transaction did not install, and it answers an out-of-scope invitation exactly
+ * as an absent one.
+ */
+export const readCounterpartyAccessInvitationForScope = (
+  transaction: CounterpartyAccessScopedRoutineInvoker,
+  tenantId: string,
+  input: {
+    readonly counterpartyRef: CounterpartyRef;
+    readonly invitationId: string;
+    readonly scope: CounterpartyPermissionScope;
+  },
+): Effect.Effect<CounterpartyAccessInvitation, CounterpartyAccessDomainError> =>
+  transaction
+    .invoke(readAccessInvitationRoutine, [
+      input.invitationId,
+      input.counterpartyRef.resourceId,
+      scopeStorefront(input.scope),
+    ])
+    .pipe(
+      Effect.mapError(accessUnavailable),
+      Effect.flatMap(([row]) =>
+        row === undefined
+          ? Effect.fail(violation('invitation_invalid', invitationUnavailableReason))
+          : Effect.succeed(invitationFromRow(tenantId, row)),
+      ),
+    );
+
+/**
+ * Whether the named invitation id can still be claimed: PENDING, unexpired, in this scope's Tenant
+ * and Legal Entity, with a VERIFIED and STAGED proof that has not itself expired.
+ *
+ * No existing read is keyed by invitation id alone: `read_access_invitation` needs the counterparty
+ * resource id and storefront key an unclaimed invitation has not disclosed to its recipient yet, and
+ * `verify_invitation_claim_authority` needs a presented proof reference no caller holds before it
+ * starts a claim. This lets enrollment-start refuse an unknown, consumed, revoked or expired
+ * invitation before it spends any budget or creates an Attempt and provider account nothing can ever
+ * complete — without revealing which of those refusal reasons applied.
+ */
+export const readCounterpartyInvitationClaimability = (
+  transaction: CounterpartyAccessScopedRoutineInvoker,
+  invitationId: string,
+): Effect.Effect<boolean, CounterpartyAccessDomainError> =>
+  transaction.invoke(readCounterpartyInvitationClaimabilityRoutine, [invitationId]).pipe(
+    Effect.mapError(accessUnavailable),
+    Effect.map(([row]) => row?.claimable === true),
+  );
 
 const mutateInvitation = (
   dependencies: CounterpartyAccessPersistenceContext,
