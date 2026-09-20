@@ -54,6 +54,9 @@ const makeMemoryAuth = (emailDelivery: CommercePortalAuthEmailDelivery) =>
   Effect.gen(function* makeMemoryAuthEffect() {
     const configuration = yield* portalConfiguration;
     const options = yield* makeCommercePortalAuthOptions({
+      // This realm creates no account through the private port, so nothing carries a correlation
+      // and nothing may be recorded: a write here would mean the hook lost its governed identity.
+      accountCorrelation: { record: () => Effect.die('no account creation belongs to this dispatch test') },
       configuration,
       databaseAdapter: drizzleAdapter({}, { provider: 'pg' }),
       emailDelivery,

@@ -1,5 +1,16 @@
 import { defineRelations, sql } from 'drizzle-orm';
-import { bigint, boolean, index, integer, pgSchema, smallint, text, timestamp, uniqueIndex } from 'drizzle-orm/pg-core';
+import {
+  bigint,
+  boolean,
+  index,
+  integer,
+  pgSchema,
+  smallint,
+  text,
+  timestamp,
+  uniqueIndex,
+  uuid,
+} from 'drizzle-orm/pg-core';
 
 import { portalAuthAuditEvent } from '../audit/audit-tables.ts';
 
@@ -16,6 +27,7 @@ export const COMMERCE_PORTAL_AUTH_TABLE_INVENTORY = [
   'stepUpChallengeAttempt',
   'recoveryReconciliation',
   'recoveryResetLedger',
+  'accountCreationCorrelation',
   'portalAuthAuditEvent',
 ] as const;
 
@@ -231,6 +243,27 @@ export const recoveryResetLedger = commercePortalAuthSchema.table(
   ],
 );
 
+/**
+ * Which governed owner invocation created which provider account, written by the realm inside the
+ * very sign-up call that commits the `user` row. Better Auth can commit that row and still lose its
+ * answer — a timed-out call, an unusable payload, or a process exit before the Attempt journals the
+ * outcome — and an Attempt with no recorded subject has nothing to key the exact provider lookup
+ * on, so its reconciliation stays permanently indeterminate and a retried start is refused by the
+ * duplicate-email guard. This row is the provider-side key that survives that lost answer.
+ *
+ * `owner_invocation_id` is the primary key because one governed invocation may create at most one
+ * account, and `provider_subject_id` is unique because one account answers to at most one
+ * invocation: either constraint alone would let a second creation quietly claim the same identity.
+ * Deliberately outside `commercePortalAuthDatabaseSchema`: Better Auth owns no model here.
+ */
+export const accountCreationCorrelation = commercePortalAuthSchema.table('account_creation_correlation', {
+  createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
+  ownerInvocationId: text('owner_invocation_id').primaryKey(),
+  portalEnrollmentAttemptId: uuid('portal_enrollment_attempt_id').notNull(),
+  providerSubjectId: text('provider_subject_id').notNull().unique(),
+  tenantId: uuid('tenant_id').notNull(),
+});
+
 export const commercePortalAuthDatabaseSchema = {
   account,
   rateLimit,
@@ -294,5 +327,6 @@ export const COMMERCE_PORTAL_AUTH_TABLES = [
   stepUpChallengeAttempt,
   recoveryReconciliation,
   recoveryResetLedger,
+  accountCreationCorrelation,
   portalAuthAuditEvent,
 ] as const;

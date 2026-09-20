@@ -1,5 +1,6 @@
 import { APIError } from 'better-auth';
 import { drizzleAdapter } from '@better-auth/drizzle-adapter/relations-v2';
+import { getTableConfig } from 'drizzle-orm/pg-core';
 import type { OTPOptions } from 'better-auth/plugins/two-factor';
 import { DateTime, Effect, Option, Redacted, Schema } from 'effect';
 import { expect, it } from 'effect-rstest';
@@ -28,6 +29,7 @@ import { makeCommercePortalAuthOptions } from '../../api/portal-auth/provider/au
 import {
   COMMERCE_PORTAL_AUTH_SCHEMA_NAME,
   COMMERCE_PORTAL_AUTH_TABLE_INVENTORY,
+  COMMERCE_PORTAL_AUTH_TABLES,
   commercePortalAuthDatabaseSchema,
 } from '../../src/portal-auth/persistence/portal-auth-tables.ts';
 import {
@@ -54,6 +56,7 @@ import type {
   CommercePortalAccountCreateResult,
   CommercePortalAuthAccountCreationFailure,
 } from '../../api/portal-auth/provider/account-create.ts';
+import type { CommercePortalAuthAccountCreationCorrelation } from '../../api/portal-auth/provider/account-correlation-service.ts';
 import type {
   CommercePortalAuthAuthoritativeSession,
   CommercePortalAuthVerificationInput,
@@ -61,12 +64,18 @@ import type {
 } from '../../api/portal-auth/provider/verification.ts';
 import type { CommercePortalAuthSessionReader } from '../../api/portal-auth/provider/session-reader-service.ts';
 import type { CommercePortalAuthDatabaseAdapter } from '../../src/portal-auth/persistence/portal-auth-database-types.ts';
-import { EnrollmentAttemptIdSchema } from '../../shared/enrollment-contracts.ts';
+import {
+  EnrollmentActionInvocationIdSchema,
+  EnrollmentAttemptIdSchema,
+  EnrollmentTenantIdSchema,
+} from '../../shared/enrollment-contracts.ts';
 
-const tenantId = '10000000-0000-4000-8000-000000000001';
+const tenantId = Schema.decodeUnknownSync(EnrollmentTenantIdSchema)('10000000-0000-4000-8000-000000000001');
 const nonce = '20000000-0000-4000-8000-000000000002';
 const enrollmentAttemptId = Schema.decodeUnknownSync(EnrollmentAttemptIdSchema)('30000000-0000-4000-8000-000000000003');
-const ownerInvocationId = '40000000-0000-4000-8000-000000000004';
+const ownerInvocationId = Schema.decodeUnknownSync(EnrollmentActionInvocationIdSchema)(
+  '40000000-0000-4000-8000-000000000004',
+);
 const evidenceRef = '50000000-0000-4000-8000-000000000005';
 const providerSubjectId = 'commerce-user-1';
 const sessionId = 'session_safe-1';
@@ -75,6 +84,10 @@ const testNow = new Date(0);
 const testPassword = Redacted.make('P'.repeat(24));
 // The adapter is constructed with a dummy DB because these tests inspect options only; no query runs.
 const testDatabaseAdapter: CommercePortalAuthDatabaseAdapter = drizzleAdapter({}, { provider: 'pg' });
+/** These option builders never reach a provider call, so the correlation store is never written. */
+const correlationNeverWritten: CommercePortalAuthAccountCreationCorrelation = {
+  record: () => Effect.die('the option builder must never record a creation correlation'),
+};
 const otpDeliveryCallback: NonNullable<OTPOptions['sendOTP']> = () => Promise.resolve();
 const createdAt = new Date(testNow.getTime() - 60_000);
 const expiresAt = new Date(testNow.getTime() + 3_600_000);
@@ -131,7 +144,10 @@ const makeAccountGateway = (
 const runGatewayCreate = (
   auth: CommercePortalAuthAccountCreationProvider,
   accountLookup: CommercePortalAuthAccountLookup,
-  input: Pick<CommercePortalAccountCreateInput, 'email' | 'name' | 'password'>,
+  input: Pick<
+    CommercePortalAccountCreateInput,
+    'email' | 'enrollmentAttemptId' | 'name' | 'ownerInvocationId' | 'password' | 'tenantId'
+  >,
 ) => makeAccountGateway(auth, accountLookup).pipe(Effect.flatMap((gateway) => gateway.create(input)));
 
 const providerSuccess = (response: CommercePortalAuthAccountCreateResponse) => Effect.succeed(Option.some(response));
@@ -372,12 +388,16 @@ it.effect('projects a Better Auth create response double without returning its t
   return makeAccountGateway(auth, {
     existsByEmail: () => Effect.succeed(false),
     existsByProviderSubject: () => Effect.succeed(true),
+    subjectForOwnerInvocation: () => Effect.succeedNone,
   }).pipe(
     Effect.flatMap((gateway) =>
       gateway.create({
         email: 'buyer@example.test',
+        enrollmentAttemptId,
         name: 'Buyer',
+        ownerInvocationId,
         password: testPassword,
+        tenantId,
       }),
     ),
     Effect.tap((result) =>
@@ -389,6 +409,12 @@ it.effect('projects a Better Auth create response double without returning its t
             email: 'buyer@example.test',
             name: 'Buyer',
             password: 'P'.repeat(24),
+          },
+          // The provider correlates its own commit by these, so a lost answer is still recoverable.
+          headers: {
+            'x-commerce-portal-account-attempt': enrollmentAttemptId,
+            'x-commerce-portal-account-owner-invocation': ownerInvocationId,
+            'x-commerce-portal-account-tenant': tenantId,
           },
         });
       }),
@@ -408,11 +434,15 @@ it.effect('does not treat Better Auth generic duplicate responses as created acc
       {
         existsByEmail: () => Effect.succeed(false),
         existsByProviderSubject: () => Effect.succeed(false),
+        subjectForOwnerInvocation: () => Effect.succeedNone,
       },
       {
         email: 'existing@example.test',
+        enrollmentAttemptId,
         name: 'Existing',
+        ownerInvocationId,
         password: testPassword,
+        tenantId,
       },
     ),
   ).pipe(
@@ -445,11 +475,15 @@ it.effect('maps a definitive Better Auth validation failure to rejected', () => 
       {
         existsByEmail: () => Effect.succeed(false),
         existsByProviderSubject: () => Effect.succeed(false),
+        subjectForOwnerInvocation: () => Effect.succeedNone,
       },
       {
         email: 'buyer@example.test',
+        enrollmentAttemptId,
         name: 'Buyer',
+        ownerInvocationId,
         password: testPassword,
+        tenantId,
       },
     ),
   ).pipe(
@@ -475,11 +509,15 @@ it.effect('fails closed when the Better Auth error code is absent or unbounded',
         {
           existsByEmail: () => Effect.succeed(false),
           existsByProviderSubject: () => Effect.succeed(false),
+          subjectForOwnerInvocation: () => Effect.succeedNone,
         },
         {
           email: 'buyer@example.test',
+          enrollmentAttemptId,
           name: 'Buyer',
+          ownerInvocationId,
           password: testPassword,
+          tenantId,
         },
       ),
     );
@@ -511,17 +549,62 @@ it.effect('rejects an existing email before invoking Better Auth', () => {
       {
         existsByEmail: () => Effect.succeed(true),
         existsByProviderSubject: () => Effect.succeed(true),
+        subjectForOwnerInvocation: () => Effect.succeedNone,
       },
       {
         email: 'existing@example.test',
+        enrollmentAttemptId,
         name: 'Existing',
+        ownerInvocationId,
         password: testPassword,
+        tenantId,
       },
     ),
   ).pipe(
     Effect.tap((failure) =>
       Effect.sync(() => {
         expect(Schema.is(CommercePortalAuthAccountCreationRejected)(failure)).toBe(true);
+        expect(providerCalls).toBe(0);
+      }),
+    ),
+  );
+});
+
+/**
+ * The lost-answer retry. Better Auth committed the account for this exact invocation and the start
+ * route never journalled its subject, so the address is already taken: without the correlation
+ * replay the duplicate guard refuses the retry and the Attempt can never be completed at all.
+ */
+it.effect('replays a correlated owner invocation to its committed subject instead of refusing it', () => {
+  let providerCalls = 0;
+  const auth: CommercePortalAuthAccountCreationProvider = {
+    api: {
+      signUpEmail: () => {
+        providerCalls += 1;
+        return providerSuccess({ user: { id: 'a-second-account' } });
+      },
+    },
+  };
+  return runGatewayCreate(
+    auth,
+    {
+      existsByEmail: () => Effect.succeed(true),
+      existsByProviderSubject: () => Effect.succeed(true),
+      subjectForOwnerInvocation: ({ ownerInvocationId: invocation }) =>
+        invocation === ownerInvocationId ? Effect.succeedSome(providerSubjectId) : Effect.succeedNone,
+    },
+    {
+      email: 'buyer@example.test',
+      enrollmentAttemptId,
+      name: 'Buyer',
+      ownerInvocationId,
+      password: testPassword,
+      tenantId,
+    },
+  ).pipe(
+    Effect.tap((account) =>
+      Effect.sync(() => {
+        expect(account).toStrictEqual({ providerSubjectId });
         expect(providerCalls).toBe(0);
       }),
     ),
@@ -540,11 +623,15 @@ it.effect('maps a malformed Better Auth success response to unavailable', () => 
       {
         existsByEmail: () => Effect.succeed(false),
         existsByProviderSubject: () => Effect.succeed(true),
+        subjectForOwnerInvocation: () => Effect.succeedNone,
       },
       {
         email: 'buyer@example.test',
+        enrollmentAttemptId,
         name: 'Buyer',
+        ownerInvocationId,
         password: testPassword,
+        tenantId,
       },
     ),
   ).pipe(
@@ -572,11 +659,15 @@ it.effect('maps an indeterminate Better Auth provider failure to unavailable wit
       {
         existsByEmail: () => Effect.succeed(false),
         existsByProviderSubject: () => Effect.succeed(false),
+        subjectForOwnerInvocation: () => Effect.succeedNone,
       },
       {
         email: 'buyer@example.test',
+        enrollmentAttemptId,
         name: 'Buyer',
+        ownerInvocationId,
         password: testPassword,
+        tenantId,
       },
     ),
   ).pipe(
@@ -610,11 +701,15 @@ it.effect('maps a wrapped Better Auth storage failure to unavailable after one p
       {
         existsByEmail: () => Effect.succeed(false),
         existsByProviderSubject: () => Effect.succeed(false),
+        subjectForOwnerInvocation: () => Effect.succeedNone,
       },
       {
         email: 'buyer@example.test',
+        enrollmentAttemptId,
         name: 'Buyer',
+        ownerInvocationId,
         password: testPassword,
+        tenantId,
       },
     ),
   ).pipe(
@@ -641,6 +736,7 @@ it.effect('rejects raw password and missing owner invocation before any gateway 
   const accountLookup: CommercePortalAuthAccountLookup = {
     existsByEmail: () => Effect.succeed(false),
     existsByProviderSubject: () => Effect.succeed(true),
+    subjectForOwnerInvocation: () => Effect.succeedNone,
   };
   const rawPasswordInput = {
     email: 'buyer@example.test',
@@ -748,8 +844,14 @@ it.effect('keeps the Better Auth table inventory in the isolated commerce_auth s
       'stepUpChallengeAttempt',
       'recoveryReconciliation',
       'recoveryResetLedger',
+      'accountCreationCorrelation',
       'portalAuthAuditEvent',
     ]);
+    // The correlation table is migrated and granted, but Better Auth owns no model over it: it is
+    // the realm's own record of which governed invocation committed which account.
+    expect(COMMERCE_PORTAL_AUTH_TABLES.map((table) => getTableConfig(table).name)).toContain(
+      'account_creation_correlation',
+    );
     expect(Object.keys(commercePortalAuthDatabaseSchema)).toStrictEqual([
       'account',
       'rateLimit',
@@ -806,6 +908,7 @@ it.effect('builds Better Auth options with isolated cookies, CSRF, verification 
   }).pipe(
     Effect.flatMap((configuration) =>
       makeCommercePortalAuthOptions({
+        accountCorrelation: correlationNeverWritten,
         configuration,
         databaseAdapter: testDatabaseAdapter,
         emailDelivery: {
@@ -844,6 +947,7 @@ it.effect('always configures the Commerce two-factor plugin with the provider de
   }).pipe(
     Effect.flatMap((configuration) =>
       makeCommercePortalAuthOptions({
+        accountCorrelation: correlationNeverWritten,
         configuration,
         databaseAdapter: testDatabaseAdapter,
         emailDelivery: {
@@ -872,6 +976,7 @@ it.effect('passes explicitly configured Better Auth rotation keys without exposi
   }).pipe(
     Effect.flatMap((configuration) =>
       makeCommercePortalAuthOptions({
+        accountCorrelation: correlationNeverWritten,
         configuration,
         databaseAdapter: testDatabaseAdapter,
         emailDelivery: {
@@ -927,9 +1032,17 @@ it.effect('normalizes the address once before the duplicate guard, the provider 
         probedEmails.push(email ?? '');
         return true;
       }),
+    subjectForOwnerInvocation: () => Effect.succeedNone,
   }).pipe(
     Effect.flatMap((gateway) =>
-      gateway.create({ email: ' Buyer@Example.TEST ', name: 'Buyer', password: testPassword }),
+      gateway.create({
+        email: ' Buyer@Example.TEST ',
+        enrollmentAttemptId,
+        name: 'Buyer',
+        ownerInvocationId,
+        password: testPassword,
+        tenantId,
+      }),
     ),
     Effect.tap(() =>
       Effect.sync(() => {
@@ -938,6 +1051,11 @@ it.effect('normalizes the address once before the duplicate guard, the provider 
         expect(probedEmails).toStrictEqual(['buyer@example.test', 'buyer@example.test']);
         expect(providerBody).toStrictEqual({
           body: { email: 'buyer@example.test', name: 'Buyer', password: 'P'.repeat(24) },
+          headers: {
+            'x-commerce-portal-account-attempt': enrollmentAttemptId,
+            'x-commerce-portal-account-owner-invocation': ownerInvocationId,
+            'x-commerce-portal-account-tenant': tenantId,
+          },
         });
       }),
     ),

@@ -1,6 +1,6 @@
 import { and, eq } from 'drizzle-orm';
 import type { SQL } from 'drizzle-orm';
-import { Effect, Layer } from 'effect';
+import { Effect, Layer, Option } from 'effect';
 
 import { CommercePortalAuthAccountCreationUnavailable } from '../../../api/portal-auth/provider/account-creation-unavailable.ts';
 import { CommercePortalAuthAccountLookupService } from '../../../api/portal-auth/provider/account-lookup-service.ts';
@@ -8,7 +8,7 @@ import type { CommercePortalAuthAccountLookup } from '../../../api/portal-auth/p
 import { normalizeCommercePortalAuthEmail } from '../email-normalization.ts';
 import { CommercePortalAuthDatabase } from './portal-auth-database.ts';
 import type { CommercePortalAuthDatabaseExecutor } from './portal-auth-database-types.ts';
-import { user } from './portal-auth-tables.ts';
+import { accountCreationCorrelation, user } from './portal-auth-tables.ts';
 
 const lookupUnavailable = (cause: unknown): CommercePortalAuthAccountCreationUnavailable =>
   Object.defineProperty(
@@ -52,6 +52,19 @@ const makeCommercePortalAuthAccountLookup = (
           ? eq(user.id, providerSubjectId)
           : and(eq(user.id, providerSubjectId), eq(user.email, normalizeCommercePortalAuthEmail(email))),
       ),
+    // The correlation is keyed by the governed invocation alone: an address is never part of this
+    // probe, so a lost provider answer is resolved from what the deployment itself dispatched
+    // rather than from a login identifier a caller could supply.
+    subjectForOwnerInvocation: ({ ownerInvocationId }) =>
+      database
+        .select({ providerSubjectId: accountCreationCorrelation.providerSubjectId })
+        .from(accountCreationCorrelation)
+        .where(eq(accountCreationCorrelation.ownerInvocationId, ownerInvocationId))
+        .limit(1)
+        .pipe(
+          Effect.mapError(lookupUnavailable),
+          Effect.map((rows) => Option.fromNullishOr(rows[0]?.providerSubjectId)),
+        ),
   };
 };
 

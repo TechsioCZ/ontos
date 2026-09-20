@@ -207,6 +207,7 @@ const registryLive = (bindingStatus: 'active' | 'pending') =>
         Layer.succeed(CommercePortalAuthAccountLookupService, {
           existsByEmail: unreachable('existsByEmail'),
           existsByProviderSubject: unreachable('existsByProviderSubject'),
+          subjectForOwnerInvocation: unreachable('subjectForOwnerInvocation'),
         }),
       ),
     ),

@@ -88,6 +88,7 @@ import {
   CommercePortalAuthDatabaseLive,
   makeCommercePortalAuthDatabase,
 } from '../../src/portal-auth/persistence/portal-auth-database.ts';
+import { makeCommercePortalAuthAccountCreationCorrelation } from '../../src/portal-auth/persistence/portal-auth-account-correlation.ts';
 import { user, verification } from '../../src/portal-auth/persistence/portal-auth-tables.ts';
 import {
   makeEnrollmentAcceptanceFixture,
@@ -896,6 +897,7 @@ const makeSignedInPortalAccount = Effect.fnUntraced(function* makeSignedInPortal
   // The realm this fixture signs up through is configured exactly as the mounted one; only the
   // transactional email transport is replaced, so the verification token is observable here.
   const auth = yield* makeCommercePortalAuth({
+    accountCorrelation: makeCommercePortalAuthAccountCreationCorrelation(database.executor),
     configuration,
     databaseAdapter: database.adapter,
     emailDelivery: {

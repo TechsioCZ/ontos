@@ -18,6 +18,7 @@ import { makeCommercePortalAuth } from '../../api/portal-auth/provider/auth.ts';
 import { CommercePortalAuthConfig } from '../../api/portal-auth/provider/config-service.ts';
 import { parseCommercePortalAuthConfig } from '../../api/portal-auth/provider/config.ts';
 import { makeCommercePortalAuthDatabase } from '../../src/portal-auth/persistence/portal-auth-database.ts';
+import { makeCommercePortalAuthAccountCreationCorrelation } from '../../src/portal-auth/persistence/portal-auth-account-correlation.ts';
 import { session as portalSession, user as portalUser } from '../../src/portal-auth/persistence/portal-auth-tables.ts';
 import { AuthConfig, loadAuthConfig } from '../../../../apps/shell-super-app/api/auth/config.ts';
 import { AuthDatabase, makeAuthDatabase } from '../../../../apps/shell-super-app/api/auth/db/client.ts';
@@ -107,6 +108,7 @@ const makePortalSession = Effect.fnUntraced(function* makePortalSession(
   const database = yield* makeCommercePortalAuthDatabase(configuration);
   const email = `cross-realm-customer-${randomUUID()}@example.test`;
   const auth = yield* makeCommercePortalAuth({
+    accountCorrelation: makeCommercePortalAuthAccountCreationCorrelation(database.executor),
     configuration,
     databaseAdapter: database.adapter,
     emailDelivery: {

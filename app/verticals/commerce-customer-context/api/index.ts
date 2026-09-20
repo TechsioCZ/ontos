@@ -24,6 +24,7 @@ import { Context, Layer as GovernedReadLayer, Logger, Option, References, Schema
 import { CommercePortalAuthDatabaseLive } from '../src/portal-auth/persistence/portal-auth-database.ts';
 import { CommercePortalAuthAuditLive } from '../src/portal-auth/audit/audit.ts';
 import { CommercePortalAuthAccountLookupLive } from '../src/portal-auth/persistence/portal-auth-account-lookup.ts';
+import { CommercePortalAuthAccountCreationCorrelationLive } from '../src/portal-auth/persistence/portal-auth-account-correlation.ts';
 import {
   CommerceEnrollmentContinuationLive,
   commerceEnrollmentContinuationUnavailableLive,
@@ -230,8 +231,17 @@ const commercePortalAuthEmailDeliveryLive = CommercePortalAuthEmailDeliveryLive.
   Layer.provideMerge(commercePortalAuthRecoveryStoreLive),
 );
 
+/**
+ * The realm writes its own account-creation correlation, so the store that owns that row is built
+ * on the very provider database the realm was given rather than on a second pool of its own.
+ */
+const commercePortalAuthAccountCorrelationLive = CommercePortalAuthAccountCreationCorrelationLive.pipe(
+  Layer.provide(CommercePortalAuthDatabaseLive),
+);
+
 /** Installed only by portal-enabled composition; delivery and platform crypto remain explicit inputs. */
 export const commercePortalAuthProviderLive = CommercePortalAuthLive.pipe(
+  Layer.provide(commercePortalAuthAccountCorrelationLive),
   Layer.provideMerge(commercePortalAuthEmailDeliveryLive),
 );
 
@@ -610,19 +620,16 @@ const deploymentEnrollmentSweptContinuationLive = CommerceEnrollmentSweptContinu
  * the same narrow lookup the owner reconciler reads — one yes/no about one address — and a
  * deployment without the realm has no directory to answer from, so it refuses retryably.
  */
+const commercePortalAuthAccountDirectoryUnavailable = () =>
+  Effect.fail(
+    new CommercePortalAuthAccountCreationUnavailable({
+      reason: 'The Commerce portal account directory is not installed in this deployment',
+    }),
+  );
 const commercePortalAuthAccountLookupUnavailableLive = Layer.succeed(CommercePortalAuthAccountLookupService, {
-  existsByEmail: () =>
-    Effect.fail(
-      new CommercePortalAuthAccountCreationUnavailable({
-        reason: 'The Commerce portal account directory is not installed in this deployment',
-      }),
-    ),
-  existsByProviderSubject: () =>
-    Effect.fail(
-      new CommercePortalAuthAccountCreationUnavailable({
-        reason: 'The Commerce portal account directory is not installed in this deployment',
-      }),
-    ),
+  existsByEmail: commercePortalAuthAccountDirectoryUnavailable,
+  existsByProviderSubject: commercePortalAuthAccountDirectoryUnavailable,
+  subjectForOwnerInvocation: commercePortalAuthAccountDirectoryUnavailable,
 });
 const deploymentEnrollmentAccountLookupLive = Layer.unwrap(
   portalAuthRealmConfigured.pipe(

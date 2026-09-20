@@ -1,10 +1,11 @@
-import { Effect, Layer, Result, Schema } from 'effect';
+import { Effect, Layer, Option, Result, Schema } from 'effect';
 
 import { CommercePortalAuthAccountLookupService } from '../../../api/portal-auth/provider/account-lookup-service.ts';
 import type { CommercePortalAuthAccountLookup } from '../../../api/portal-auth/provider/account-lookup-service.ts';
 import {
   EnrollmentEvidenceReferenceSchema,
   EnrollmentModuleKeySchema,
+  EnrollmentProviderSubjectIdSchema,
   EnrollmentTransitionKeySchema,
   isEnrollmentAttemptTerminal,
 } from '../../../shared/enrollment-contracts.ts';
@@ -103,16 +104,65 @@ const evidenceReferenceOf = (
     ),
   );
 
+const reconciliationUnavailable = (
+  reason: string,
+  cause: unknown,
+): InstanceType<typeof CommerceEnrollmentOwnerEffectUnavailable> =>
+  Object.defineProperty(
+    new CommerceEnrollmentOwnerEffectUnavailable({ code: 'provider_account_reconciliation_unavailable', reason }),
+    'cause',
+    { configurable: false, enumerable: false, value: cause },
+  );
+
 /**
- * The exact owner lookup used after an unknown provider outcome. It is keyed only by the stable
- * account subject the durable Attempt already recorded and confirmed against the provider's own
- * directory; email continuity and a fresh sign-up retry are deliberately outside it, so a lost
- * provider response can never be resolved from a login identifier.
+ * The subject the provider itself correlated to this exact owner invocation, inside the very call
+ * that committed the account. It is read only when the Attempt journalled none — the lost-answer
+ * case — and it is decoded here, because a correlation row that cannot name a provider subject is
+ * a provider fault to retry, never an absent account.
+ */
+const correlatedProviderSubject = Effect.fn('CommerceEnrollmentPortalAuthOwnerPreparation.correlatedSubject')(
+  function* correlatedProviderSubjectEffect(
+    accountLookup: CommercePortalAuthAccountLookup,
+    ownerInvocationId: CommerceEnrollmentOwnerReconciliationInput['ownerInvocationId'],
+  ): Effect.fn.Return<
+    Option.Option<typeof EnrollmentProviderSubjectIdSchema.Type>,
+    InstanceType<typeof CommerceEnrollmentOwnerEffectUnavailable>
+  > {
+    const correlated = yield* accountLookup
+      .subjectForOwnerInvocation({ ownerInvocationId })
+      .pipe(
+        Effect.mapError((failure) =>
+          reconciliationUnavailable(
+            'The Commerce portal account creation correlation could not be read for owner reconciliation',
+            failure,
+          ),
+        ),
+      );
+    if (Option.isNone(correlated)) {
+      return Option.none();
+    }
+    const providerSubjectId = yield* Schema.decodeEffect(EnrollmentProviderSubjectIdSchema)(correlated.value).pipe(
+      Effect.mapError((cause) =>
+        reconciliationUnavailable('The Commerce portal account creation correlation names no usable subject', cause),
+      ),
+    );
+    return Option.some(providerSubjectId);
+  },
+);
+
+/**
+ * The exact owner lookup used after an unknown provider outcome. It is keyed only by a stable
+ * account subject — the one the durable Attempt already recorded, or, when the provider committed
+ * and its answer was lost before the Attempt could journal one, the one the provider itself
+ * correlated to this exact owner invocation inside that same call. Either key is then confirmed
+ * against the provider's own directory; email continuity and a fresh sign-up retry are deliberately
+ * outside this lookup, so a lost provider response can never be resolved from a login identifier.
  */
 export const providerObservationFor = Effect.fn('CommerceEnrollmentPortalAuthOwnerPreparation.providerObservation')(
   function* providerObservationEffect(
     attempt: EnrollmentAttemptSnapshot,
     accountLookup: CommercePortalAuthAccountLookup,
+    ownerInvocationId: CommerceEnrollmentOwnerReconciliationInput['ownerInvocationId'],
   ): Effect.fn.Return<
     CommerceEnrollmentProviderOwnerReconciliationObservation,
     | InstanceType<typeof CommerceEnrollmentOwnerEffectIndeterminate>
@@ -128,31 +178,32 @@ export const providerObservationFor = Effect.fn('CommerceEnrollmentPortalAuthOwn
       ),
     );
     const { accountSubject } = attempt;
-    if (accountSubject === undefined) {
-      // A creation that committed at the provider and lost its response records no subject, so
-      // there is nothing to key the exact lookup on. Absent that key the provider's state is
-      // unknown, and calling it NOT_FOUND would authorize a second account for the same Attempt.
+    const recordedSubject =
+      accountSubject === undefined
+        ? yield* correlatedProviderSubject(accountLookup, ownerInvocationId)
+        : Option.some(accountSubject.providerSubjectId);
+    if (Option.isNone(recordedSubject)) {
+      // Neither the Attempt nor the provider holds a subject for this invocation, so the creation
+      // never committed at all. Absent that key the provider's state is unknown, and calling it
+      // NOT_FOUND would authorize a second account for the same Attempt.
       return yield* new CommerceEnrollmentOwnerEffectIndeterminate({
         code: 'provider_account_reconciliation_indeterminate',
         reason: 'The Attempt records no provider subject to correlate the original creation by',
       });
     }
+    const providerSubjectId = recordedSubject.value;
     const persisted = yield* accountLookup
-      .existsByProviderSubject({ providerSubjectId: accountSubject.providerSubjectId })
+      .existsByProviderSubject({ providerSubjectId })
       .pipe(
         Effect.mapError((failure) =>
-          Object.defineProperty(
-            new CommerceEnrollmentOwnerEffectUnavailable({
-              code: 'provider_account_reconciliation_unavailable',
-              reason: 'The Commerce portal account directory could not be read for owner reconciliation',
-            }),
-            'cause',
-            { configurable: false, enumerable: false, value: failure },
+          reconciliationUnavailable(
+            'The Commerce portal account directory could not be read for owner reconciliation',
+            failure,
           ),
         ),
       );
     return persisted
-      ? { evidenceRef, outcome: 'FOUND' as const, providerSubjectId: accountSubject.providerSubjectId }
+      ? { evidenceRef, outcome: 'FOUND' as const, providerSubjectId }
       : { evidenceRef, outcome: 'NOT_FOUND' as const };
   },
 );
@@ -245,8 +296,8 @@ const prepareRecord = Effect.fn('CommerceEnrollmentPortalAuthOwnerPreparation.pr
             ownerOperationRevision: operation.revision,
             ownerResultReference: operation.resultReference,
           };
-    const owner = commerceEnrollmentPortalAuthOwnerReconciliationForLookup(() =>
-      providerObservationFor(attempt, accountLookup),
+    const owner = commerceEnrollmentPortalAuthOwnerReconciliationForLookup((reconciliation) =>
+      providerObservationFor(attempt, accountLookup, reconciliation.ownerInvocationId),
     );
     return yield* owner.reconcile(reconciliationInput).pipe(
       Effect.match({

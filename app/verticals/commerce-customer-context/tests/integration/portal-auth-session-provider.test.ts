@@ -21,6 +21,7 @@ import { TestClock } from 'effect/testing';
 import { randomUUID } from 'node:crypto';
 
 import { makeCommercePortalAuthDatabase } from '../../src/portal-auth/persistence/portal-auth-database.ts';
+import { makeCommercePortalAuthAccountCreationCorrelation } from '../../src/portal-auth/persistence/portal-auth-account-correlation.ts';
 import type { CommercePortalAuthDatabase } from '../../src/portal-auth/persistence/portal-auth-database.ts';
 import { rateLimit, session, user, verification } from '../../src/portal-auth/persistence/portal-auth-tables.ts';
 import { portalAuthAuditEvent } from '../../src/portal-auth/audit/audit-tables.ts';
@@ -348,6 +349,7 @@ const makeProviderFixture = Effect.fn('CommercePortalAuthProviderIntegration.mak
   const database = yield* makeCommercePortalAuthDatabase(configuration);
   const verificationTokens: string[] = [];
   const auth = yield* makeCommercePortalAuth({
+    accountCorrelation: makeCommercePortalAuthAccountCreationCorrelation(database.executor),
     configuration,
     databaseAdapter: database.adapter,
     emailDelivery: {

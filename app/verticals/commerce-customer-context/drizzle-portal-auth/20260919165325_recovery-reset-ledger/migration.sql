@@ -1,3 +1,11 @@
+CREATE TABLE "commerce_auth"."account_creation_correlation" (
+	"created_at" timestamp with time zone DEFAULT now() NOT NULL,
+	"owner_invocation_id" text PRIMARY KEY,
+	"portal_enrollment_attempt_id" uuid NOT NULL,
+	"provider_subject_id" text NOT NULL UNIQUE,
+	"tenant_id" uuid NOT NULL
+);
+--> statement-breakpoint
 CREATE TABLE "commerce_auth"."recovery_reset_ledger" (
 	"created_at" timestamp with time zone DEFAULT now() NOT NULL,
 	"email" text,

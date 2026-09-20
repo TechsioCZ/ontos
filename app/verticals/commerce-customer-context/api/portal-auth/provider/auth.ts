@@ -14,6 +14,11 @@ import { Context, DateTime, Duration, Effect, Layer, Option, Redacted, Schema, f
 
 import type { CommercePortalAuthConfigValue } from './config.ts';
 import { COMMERCE_PORTAL_AUTH_POLICY, CommercePortalAuthConfig } from './config.ts';
+import {
+  CommercePortalAuthAccountCreationCorrelationSchema,
+  CommercePortalAuthAccountCreationCorrelationService,
+} from './account-correlation-service.ts';
+import type { CommercePortalAuthAccountCreationCorrelation } from './account-correlation-service.ts';
 import { CommercePortalAuthDatabase } from '../../../src/portal-auth/persistence/portal-auth-database.ts';
 import { COMMERCE_PORTAL_AUTH_MFA_POLICY, createCommercePortalAuthTwoFactorPlugin } from './mfa/plugin.ts';
 import type { CommercePortalAuthTwoFactorPlugin } from './mfa/plugin.ts';
@@ -42,6 +47,8 @@ export interface CommercePortalAuthEmailDelivery {
 }
 
 export interface CommercePortalAuthOptionsInput {
+  /** Written by the realm's own user-creation hook, so a committed account carries its correlation. */
+  readonly accountCorrelation: CommercePortalAuthAccountCreationCorrelation;
   readonly configuration: CommercePortalAuthConfigValue;
   /** The provider database module supplies its Better Auth adapter factory. */
   readonly databaseAdapter: CommercePortalAuthDatabaseAdapter;
@@ -126,6 +133,20 @@ const databaseBridgeTimeoutPolicy = Effect.timeoutOrElse({
       }),
     ),
 });
+/**
+ * The governed identity the private account-creation port carries on its own direct provider call.
+ * Nothing here crosses a network: `auth.api.signUpEmail` is invoked in-process, Better Auth's
+ * router is the only path that reads headers off the wire, and `/sign-up/email` is never mounted
+ * publicly. Headers are the request-scoped channel a Better Auth database hook can read, and the
+ * user-creation hook below is the first point inside the provider's own call that knows the subject
+ * it has just committed.
+ */
+export const COMMERCE_PORTAL_ACCOUNT_CORRELATION_HEADERS = {
+  attempt: 'x-commerce-portal-account-attempt',
+  ownerInvocation: 'x-commerce-portal-account-owner-invocation',
+  tenant: 'x-commerce-portal-account-tenant',
+} as const;
+
 const databaseFailure = (cause: unknown): APIError =>
   Object.defineProperty(
     new APIError('INTERNAL_SERVER_ERROR', {
@@ -136,6 +157,15 @@ const databaseFailure = (cause: unknown): APIError =>
     { configurable: true, value: cause },
   );
 const databaseTransactionFailure = (cause: unknown): APIError => (isAPIError(cause) ? cause : databaseFailure(cause));
+const correlationFailure = (cause: unknown): APIError =>
+  Object.defineProperty(
+    new APIError('INTERNAL_SERVER_ERROR', {
+      code: 'COMMERCE_AUTH_CORRELATION_FAILURE',
+      message: 'The Commerce portal account creation correlation could not be recorded',
+    }),
+    'cause',
+    { configurable: true, value: cause },
+  );
 const countActiveProviderSessions = (
   rows: readonly Pick<SessionHookData, 'createdAt' | 'expiresAt'>[],
   now: number,
@@ -229,6 +259,73 @@ const sessionUpdateBeforeHook = (databaseAdapter: DBAdapter, runDatabaseEffect: 
   flow(
     (data: Partial<SessionHookData>, endpointContext: GenericEndpointContext | null) =>
       sessionUpdateBeforeEffect(databaseAdapter, data, endpointContext),
+    runDatabaseEffect,
+  );
+
+/**
+ * Reads the governed identity the account-creation port attached to this very provider call. A call
+ * that carries none of the three headers is not a port-driven creation and correlates nothing; a
+ * call that carries some of them is a broken port rather than an ordinary sign-up, so it fails
+ * closed instead of committing an account no Attempt can ever name.
+ */
+const accountCreationCorrelationOf = (
+  context: GenericEndpointContext | null,
+): Effect.Effect<Option.Option<typeof CommercePortalAuthAccountCreationCorrelationSchema.Type>, APIError> => {
+  const headers = context?.headers;
+  if (headers === undefined || headers === null) {
+    return Effect.succeedNone;
+  }
+  const candidate = {
+    ownerInvocationId: headers.get(COMMERCE_PORTAL_ACCOUNT_CORRELATION_HEADERS.ownerInvocation),
+    portalEnrollmentAttemptId: headers.get(COMMERCE_PORTAL_ACCOUNT_CORRELATION_HEADERS.attempt),
+    tenantId: headers.get(COMMERCE_PORTAL_ACCOUNT_CORRELATION_HEADERS.tenant),
+  };
+  if (Object.values(candidate).every((value) => value === null)) {
+    return Effect.succeedNone;
+  }
+  return Schema.decodeUnknownEffect(CommercePortalAuthAccountCreationCorrelationSchema)(candidate).pipe(
+    Effect.mapBoth({
+      onFailure: (cause) =>
+        Object.defineProperty(
+          new APIError('INTERNAL_SERVER_ERROR', {
+            code: 'COMMERCE_AUTH_CORRELATION_INVALID',
+            message: 'The Commerce portal account creation correlation is not a usable governed identity',
+          }),
+          'cause',
+          { configurable: true, value: cause },
+        ),
+      onSuccess: Option.some,
+    }),
+  );
+};
+
+/**
+ * Better Auth queues this hook when the sign-up transaction commits and awaits it before the call
+ * answers, so the correlation for a committed account is written by the provider's own call rather
+ * than by the owner whose answer can be lost. A failure here fails that call: the account exists
+ * but has no durable correlation, which is exactly the state the owner must not record as CREATED.
+ */
+const userCreateAfterEffect = Effect.fn('CommercePortalAuth.userCreateAfterEffect')(function* userCreateAfterEffect(
+  accountCorrelation: CommercePortalAuthAccountCreationCorrelation,
+  createdUser: User,
+  context: GenericEndpointContext | null,
+): Effect.fn.Return<void, APIError> {
+  const correlation = yield* accountCreationCorrelationOf(context);
+  if (Option.isNone(correlation)) {
+    return;
+  }
+  yield* accountCorrelation
+    .record({ ...correlation.value, providerSubjectId: createdUser.id })
+    .pipe(Effect.mapError(correlationFailure), databaseBridgeTimeoutPolicy);
+});
+
+const userCreateAfterHook = (
+  accountCorrelation: CommercePortalAuthAccountCreationCorrelation,
+  runDatabaseEffect: typeof Effect.runPromise,
+) =>
+  flow(
+    (createdUser: User, context: GenericEndpointContext | null) =>
+      userCreateAfterEffect(accountCorrelation, createdUser, context),
     runDatabaseEffect,
   );
 
@@ -337,7 +434,7 @@ const makeCommercePortalAuthOptionsWithAdapter = (
   input: CommercePortalAuthOptionsInput,
   runDatabaseEffect: typeof Effect.runPromise,
 ): CommercePortalAuthOptions => {
-  const { configuration, emailDelivery } = input;
+  const { accountCorrelation, configuration, emailDelivery } = input;
   const atomicDatabaseFactory = (optionsForAdapter: BetterAuthOptions) =>
     withAtomicSessionCreation(input.databaseAdapter(optionsForAdapter), runDatabaseEffect);
   const commonCookieAttributes = {
@@ -509,6 +606,11 @@ const makeCommercePortalAuthOptionsWithAdapter = (
         before: sessionUpdateBeforeHook(initializedAdapter, runDatabaseEffect),
       },
     },
+    user: {
+      create: {
+        after: userCreateAfterHook(accountCorrelation, runDatabaseEffect),
+      },
+    },
   };
   return { ...options, databaseHooks } satisfies BetterAuthOptions;
 };
@@ -539,10 +641,12 @@ export class CommercePortalAuthInstance extends Context.Service<CommercePortalAu
 export const CommercePortalAuthLive = Layer.effect(
   CommercePortalAuthInstance,
   Effect.gen(function* makeCommercePortalAuthLive() {
+    const accountCorrelation = yield* CommercePortalAuthAccountCreationCorrelationService;
     const configuration = yield* CommercePortalAuthConfig;
     const database = yield* CommercePortalAuthDatabase;
     const emailDelivery = yield* CommercePortalAuthEmailDeliveryService;
     return yield* makeCommercePortalAuth({
+      accountCorrelation,
       configuration,
       databaseAdapter: database.adapter,
       emailDelivery,

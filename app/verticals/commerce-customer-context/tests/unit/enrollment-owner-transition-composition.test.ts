@@ -1,4 +1,4 @@
-import { DateTime, Effect, Schema } from 'effect';
+import { DateTime, Effect, Option, Schema } from 'effect';
 import { expect, it } from 'effect-rstest';
 
 import { CommercePortalAuthAccountLookupService } from '../../api/portal-auth/provider/account-lookup-service.ts';
@@ -66,6 +66,7 @@ const accountLookupNeverRead: CommercePortalAuthAccountLookup = {
     Effect.fail(new CommercePortalAuthAccountCreationUnavailable({ reason: 'not part of this preparation' })),
   existsByProviderSubject: () =>
     Effect.fail(new CommercePortalAuthAccountCreationUnavailable({ reason: 'not part of this preparation' })),
+  subjectForOwnerInvocation: () => Effect.succeedNone,
 };
 
 const portFor = (attemptFailure: CommerceEnrollmentAttemptError) =>
@@ -147,9 +148,11 @@ const observedAttempt = (overrides: Partial<EnrollmentAttemptSnapshot> = {}): En
   ...overrides,
 });
 
-it.effect('keeps a creation with no recorded subject indeterminate instead of calling it absent', () =>
+it.effect('keeps a creation the provider never correlated indeterminate instead of calling it absent', () =>
   Effect.gen(function* staysIndeterminateWithoutASubject() {
-    const failure = yield* Effect.flip(providerObservationFor(observedAttempt(), accountLookupNeverRead));
+    const failure = yield* Effect.flip(
+      providerObservationFor(observedAttempt(), accountLookupNeverRead, ownerInvocationId),
+    );
     expect(Schema.is(CommerceEnrollmentOwnerEffectIndeterminate)(failure)).toBe(true);
     expect(failure.code).toBe('provider_account_reconciliation_indeterminate');
   }),
@@ -170,9 +173,64 @@ it.effect('resolves a recorded subject through the exact provider directory look
           lookedUp = providerSubjectId;
           return true;
         }),
+      subjectForOwnerInvocation: () =>
+        Effect.fail(
+          new CommercePortalAuthAccountCreationUnavailable({
+            reason: 'the recorded subject must be preferred over the correlation',
+          }),
+        ),
     };
-    const observation = yield* providerObservationFor(observedAttempt({ accountSubject }), lookup);
+    const observation = yield* providerObservationFor(observedAttempt({ accountSubject }), lookup, ownerInvocationId);
     expect(lookedUp).toBe('provider-user-a1');
     expect(observation.outcome).toBe('FOUND');
+  }),
+);
+
+/**
+ * The lost-answer case the correlation exists for: Better Auth committed the account and the start
+ * route never journalled its subject, so the Attempt carries none. Without the correlation lookup
+ * this reconciliation fails `provider_account_reconciliation_indeterminate` forever.
+ */
+it.effect('recovers a lost creation answer through the provider-side owner-invocation correlation', () =>
+  Effect.gen(function* recoversThroughTheCorrelation() {
+    let correlatedInvocation: string | undefined;
+    let lookedUp: string | undefined;
+    const lookup: CommercePortalAuthAccountLookup = {
+      ...accountLookupNeverRead,
+      existsByProviderSubject: ({ providerSubjectId }) =>
+        Effect.sync(() => {
+          lookedUp = providerSubjectId;
+          return true;
+        }),
+      subjectForOwnerInvocation: ({ ownerInvocationId: invocation }) =>
+        Effect.sync(() => {
+          correlatedInvocation = invocation;
+          return Option.some('provider-user-lost-answer');
+        }),
+    };
+    const observation = yield* providerObservationFor(observedAttempt(), lookup, ownerInvocationId);
+    expect(correlatedInvocation).toBe(String(ownerInvocationId));
+    expect(lookedUp).toBe('provider-user-lost-answer');
+    expect(observation).toStrictEqual({
+      evidenceRef: String(attemptId),
+      outcome: 'FOUND',
+      providerSubjectId: 'provider-user-lost-answer',
+    });
+  }),
+);
+
+/**
+ * A correlation the provider wrote for an account it no longer holds is a definitive absence, not
+ * an unknown: reporting FOUND here would journal a subject no session could ever authenticate.
+ */
+it.effect('reports a correlated subject the provider no longer holds as absent', () =>
+  Effect.gen(function* reportsAbsentCorrelatedSubject() {
+    const lookup: CommercePortalAuthAccountLookup = {
+      ...accountLookupNeverRead,
+      existsByProviderSubject: () => Effect.succeed(false),
+      subjectForOwnerInvocation: () => Effect.succeedSome('provider-user-vanished'),
+    };
+    const observation = yield* providerObservationFor(observedAttempt(), lookup, ownerInvocationId);
+    expect(observation).toStrictEqual({ evidenceRef: String(attemptId), outcome: 'NOT_FOUND' });
   }),
 );

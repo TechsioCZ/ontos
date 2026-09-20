@@ -372,8 +372,8 @@ const portalAccountEntry =
   (_transition, context) =>
     Effect.succeedSome({
       dispatch: Option.none(),
-      reconcile: commerceEnrollmentPortalAuthOwnerReconciliationForLookup(() =>
-        providerObservationFor(context.attempt, accountLookup),
+      reconcile: commerceEnrollmentPortalAuthOwnerReconciliationForLookup((reconciliation) =>
+        providerObservationFor(context.attempt, accountLookup, reconciliation.ownerInvocationId),
       ).reconcile,
     });
 

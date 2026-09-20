@@ -1,5 +1,5 @@
 import { Context } from 'effect';
-import type { Effect } from 'effect';
+import type { Effect, Option } from 'effect';
 
 import type { CommercePortalAuthAccountCreationUnavailable } from './account-creation-unavailable.ts';
 
@@ -30,6 +30,15 @@ export interface CommercePortalAuthAccountLookup {
     readonly email?: string;
     readonly providerSubjectId: string;
   }) => Effect.Effect<boolean, CommercePortalAuthAccountCreationUnavailable>;
+  /**
+   * The subject the provider recorded for one governed owner invocation, written inside the very
+   * call that committed the account. It is the only key a creation whose answer was lost leaves
+   * behind, so owner reconciliation resolves a missing recorded subject through it; `None` means
+   * the provider never committed that creation and a fresh one is still allowed.
+   */
+  readonly subjectForOwnerInvocation: (input: {
+    readonly ownerInvocationId: string;
+  }) => Effect.Effect<Option.Option<string>, CommercePortalAuthAccountCreationUnavailable>;
 }
 
 export class CommercePortalAuthAccountLookupService extends Context.Service<

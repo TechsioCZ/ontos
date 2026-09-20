@@ -17,6 +17,7 @@ import { makeCommercePortalAuth } from '../../api/portal-auth/provider/auth.ts';
 import { CommercePortalAuthConfig } from '../../api/portal-auth/provider/config-service.ts';
 import { parseCommercePortalAuthConfig } from '../../api/portal-auth/provider/config.ts';
 import { makeCommercePortalAuthDatabase } from '../../src/portal-auth/persistence/portal-auth-database.ts';
+import { makeCommercePortalAuthAccountCreationCorrelation } from '../../src/portal-auth/persistence/portal-auth-account-correlation.ts';
 import { session, user } from '../../src/portal-auth/persistence/portal-auth-tables.ts';
 
 /**
@@ -83,6 +84,7 @@ const makeEnrolledAccount = Effect.fnUntraced(function* makeEnrolledAccount(
   const database = yield* makeCommercePortalAuthDatabase(configuration);
   const email = `non-enumeration-${caseName}-${randomUUID()}@example.test`;
   const auth = yield* makeCommercePortalAuth({
+    accountCorrelation: makeCommercePortalAuthAccountCreationCorrelation(database.executor),
     configuration,
     databaseAdapter: database.adapter,
     emailDelivery: {

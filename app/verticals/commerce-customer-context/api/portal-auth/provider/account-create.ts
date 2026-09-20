@@ -9,7 +9,7 @@ import {
 import { withCause } from '../problems-support.ts';
 import { normalizeCommercePortalAuthEmail } from '../../../src/portal-auth/email-normalization.ts';
 import { CommerceEnrollmentProofService } from '../enrollment-proof-port.ts';
-import { CommercePortalAuthInstance } from './auth.ts';
+import { COMMERCE_PORTAL_ACCOUNT_CORRELATION_HEADERS, CommercePortalAuthInstance } from './auth.ts';
 import { COMMERCE_PORTAL_AUTH_POLICY } from './config.ts';
 import type { CommercePortalAuthAccountCreationGateway } from './account-creation-gateway-service.ts';
 import { CommercePortalAuthAccountCreationInvalidRequest } from './account-creation-invalid-request.ts';
@@ -195,7 +195,10 @@ export const makeCommercePortalAuthAccountCreationGateway = Effect.fn('CommerceP
     const auth = yield* CommercePortalAuthAccountCreationProviderService;
     const accountLookup = yield* CommercePortalAuthAccountLookupService;
     const create = Effect.fn('CommercePortalAuthAccountCreationGateway.create')(function* createAccount(
-      input: Pick<CommercePortalAccountCreateInput, 'email' | 'name' | 'password'>,
+      input: Pick<
+        CommercePortalAccountCreateInput,
+        'email' | 'enrollmentAttemptId' | 'name' | 'ownerInvocationId' | 'password' | 'tenantId'
+      >,
     ): Effect.fn.Return<
       CommercePortalAuthCreatedAccount,
       CommercePortalAuthAccountCreationRejected | CommercePortalAuthAccountCreationUnavailable
@@ -204,6 +207,16 @@ export const makeCommercePortalAuthAccountCreationGateway = Effect.fn('CommerceP
       // alike: creating `Ada@example.test` while the guard looked for that exact casing would
       // produce a second account for an address the portal already knows.
       const normalizedEmail = normalizeCommercePortalAuthEmail(input.email);
+      // A creation whose answer was lost still committed at the provider, and the provider recorded
+      // which invocation it committed for. This exact invocation therefore replays to the very
+      // subject it already produced: without this the duplicate guard below would refuse the retry
+      // of an Attempt that can no longer be completed any other way.
+      const correlatedSubject = yield* accountLookup.subjectForOwnerInvocation({
+        ownerInvocationId: input.ownerInvocationId,
+      });
+      if (Option.isSome(correlatedSubject)) {
+        return { providerSubjectId: correlatedSubject.value };
+      }
       // This is only a provider-local duplicate guard. It never identifies an existing account to
       // the caller or treats email equality as continuity for a Core subject/binding.
       const alreadyExists = yield* accountLookup.existsByEmail({ email: normalizedEmail });
@@ -218,6 +231,13 @@ export const makeCommercePortalAuthAccountCreationGateway = Effect.fn('CommerceP
           email: normalizedEmail,
           name: input.name,
           password: Redacted.value(input.password),
+        },
+        // The governed identity the provider correlates its own commit by. It is set from the
+        // decoded request, never from anything a caller supplied directly.
+        headers: {
+          [COMMERCE_PORTAL_ACCOUNT_CORRELATION_HEADERS.attempt]: input.enrollmentAttemptId,
+          [COMMERCE_PORTAL_ACCOUNT_CORRELATION_HEADERS.ownerInvocation]: input.ownerInvocationId,
+          [COMMERCE_PORTAL_ACCOUNT_CORRELATION_HEADERS.tenant]: input.tenantId,
         },
       };
       const responseOption = yield* auth.api.signUpEmail(providerRequest).pipe(
@@ -356,8 +376,11 @@ export const makeCommercePortalAuthAccountCreationService = Effect.fn('CommerceP
 
       const account = yield* gateway.create({
         email: request.email,
+        enrollmentAttemptId: request.enrollmentAttemptId,
         name: request.name,
+        ownerInvocationId: request.ownerInvocationId,
         password: request.password,
+        tenantId: request.tenantId,
       });
       return {
         enrollmentAttemptId: request.enrollmentAttemptId,
