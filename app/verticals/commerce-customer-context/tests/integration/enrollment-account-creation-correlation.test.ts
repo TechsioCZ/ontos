@@ -257,6 +257,98 @@ it.live('writes the governed invocation in the very insert that commits the acco
  * A creation that never committed leaves no correlation, and an uncorrelated invocation must stay
  * retryable: resolving it as absent would authorize a second account for the same Attempt.
  */
+/**
+ * A retry that converges on an already-committed account must not report CREATED with no usable
+ * verification link: the first send is simulated as failing after the user row committed, and the
+ * retry must reissue it. The reissued token is proven usable by spending it through Better Auth's
+ * own `/verify-email`, not merely by observing that a send was attempted.
+ */
+it.live('reissues the verification email when a retry converges on an already-committed account', () =>
+  Effect.scoped(
+    Effect.gen(function* reissuesVerificationOnRetry() {
+      const configuration = yield* parseCommercePortalAuthConfig({
+        COMMERCE_PORTAL_AUTH_DATABASE_URL: Redacted.value(yield* DATABASE_URL),
+        COMMERCE_PORTAL_AUTH_SECRET: SECRET,
+        COMMERCE_PORTAL_AUTH_URL: ORIGIN,
+      });
+      const database = yield* makeCommercePortalAuthDatabase(configuration);
+      let sendCount = 0;
+      const deliveredTokens: string[] = [];
+      const auth = yield* makeCommercePortalAuth({
+        configuration,
+        databaseAdapter: database.adapter,
+        emailDelivery: {
+          sendOTP: () => Promise.resolve(),
+          sendResetPassword: () => Promise.resolve(),
+          sendVerificationEmail: ({ token }) => {
+            sendCount += 1;
+            // The first send fails after Better Auth has already committed the user row (it is
+            // awaited outside `sendOnSignUp`'s fire-and-forget path only for the dedicated
+            // `/send-verification-email` reissue call the retry must make).
+            if (sendCount === 1) {
+              return Promise.reject(new Error('simulated transactional email outage'));
+            }
+            deliveredTokens.push(token);
+            return Promise.resolve();
+          },
+        },
+      });
+      const lookupLive = CommercePortalAuthAccountLookupLive.pipe(
+        Layer.provide(Layer.succeed(CommercePortalAuthDatabase, database)),
+      );
+      const gatewayLive = CommercePortalAuthAccountCreationGatewayLive.pipe(
+        Layer.provide(
+          Layer.mergeAll(
+            CommercePortalAuthAccountCreationProviderLive.pipe(
+              Layer.provide(Layer.succeed(CommercePortalAuthInstance, auth)),
+            ),
+            lookupLive,
+          ),
+        ),
+      );
+      const gateway = yield* CommercePortalAuthAccountCreationGatewayService.pipe(Effect.provide(gatewayLive));
+      const email = `enrollment-verification-reissue-${randomUUID()}@example.test`;
+      const ownerInvocationId = Schema.decodeSync(EnrollmentActionInvocationIdSchema)(randomUUID());
+      const attemptId = Schema.decodeSync(EnrollmentAttemptIdSchema)(randomUUID());
+      const tenantId = Schema.decodeSync(EnrollmentTenantIdSchema)(randomUUID());
+      yield* Effect.addFinalizer(() => database.executor.delete(user).where(eq(user.email, email)).pipe(Effect.orDie));
+
+      const attemptOnce = () =>
+        gateway.create({
+          email,
+          enrollmentAttemptId: attemptId,
+          name: 'Verification reissue account',
+          ownerInvocationId,
+          password: Redacted.make(PASSWORD),
+          tenantId,
+        });
+
+      // Better Auth runs `sendOnSignUp` fire-and-forget and swallows its rejection, so the first
+      // creation still reports CREATED even though the simulated outage means nothing was ever
+      // delivered — exactly the state a lost-answer retry converges on.
+      const created = yield* attemptOnce();
+      expect(sendCount).toBe(1);
+      expect(deliveredTokens).toStrictEqual([]);
+
+      const retried = yield* attemptOnce();
+
+      expect(retried.providerSubjectId).toBe(created.providerSubjectId);
+      expect(sendCount).toBe(2);
+      expect(deliveredTokens).toHaveLength(1);
+      const token = deliveredTokens.at(0) ?? (yield* Effect.die('The retry reissue delivered no verification token'));
+
+      // Spend the reissued token through Better Auth's own verify + sign-in path so the proof is that
+      // the retry left a usable link, not merely that a send was attempted.
+      const headers = new Headers({ origin: ORIGIN });
+      yield* Effect.promise(async () => await auth.api.verifyEmail({ headers, query: { token }, returnHeaders: true }));
+      const signedIn = yield* Effect.promise(
+        async () => await auth.api.signInEmail({ body: { email, password: PASSWORD }, headers, returnHeaders: true }),
+      );
+      expect(signedIn.response.user.id).toBe(retried.providerSubjectId);
+    }),
+  ),
+);
+
 it.live('keeps an invocation the provider never correlated indeterminate', () =>
   Effect.scoped(
     Effect.gen(function* staysIndeterminate() {

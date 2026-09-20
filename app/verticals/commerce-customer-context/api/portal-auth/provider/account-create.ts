@@ -168,6 +168,14 @@ export interface CommercePortalAuthCreatedAccount {
 /** Narrow provider API used by the private gateway; no Better Auth handler leaks across the seam. */
 export interface CommercePortalAuthAccountCreationProvider {
   readonly api: {
+    /**
+     * Server-side (unauthenticated-context) `/send-verification-email`. Better Auth answers an
+     * already-verified or unknown subject with a silent no-op rather than an error, so a failure
+     * here only ever means the send itself did not happen.
+     */
+    readonly sendVerificationEmail: (
+      input: Parameters<Auth['api']['sendVerificationEmail']>[0],
+    ) => Effect.Effect<void, Error>;
     readonly signUpEmail: (
       input: Parameters<Auth['api']['signUpEmail']>[0],
     ) => Effect.Effect<Option.Option<CommercePortalAuthAccountCreateResponse>, Error>;
@@ -215,6 +223,20 @@ export const makeCommercePortalAuthAccountCreationGateway = Effect.fn('CommerceP
         ownerInvocationId: input.ownerInvocationId,
       });
       if (Option.isSome(correlatedSubject)) {
+        // The prior attempt's own send may never have run or may have failed after the user
+        // committed, and nothing else in this realm ever retries it. Reissuing here is what makes
+        // the retry actually able to sign in, not just able to report CREATED again; a reissue
+        // failure keeps the Attempt retryable instead of quietly completing without a usable link.
+        yield* auth.api.sendVerificationEmail({ body: { email: normalizedEmail } }).pipe(
+          Effect.mapError((cause) =>
+            withCause(
+              new CommercePortalAuthAccountCreationUnavailable({
+                reason: 'Commerce portal account creation could not reissue the verification email',
+              }),
+              cause,
+            ),
+          ),
+        );
         return { providerSubjectId: correlatedSubject.value };
       }
       // This is only a provider-local duplicate guard. It never identifies an existing account to
@@ -421,9 +443,36 @@ const signUpEmailForRealm =
       Effect.map(Option.fromNullishOr),
     );
 
+/**
+ * `/send-verification-email` awaits its send hook directly (unlike `sendOnSignUp`, which Better
+ * Auth runs fire-and-forget), so a transport failure here reaches this bridge as a rejection.
+ */
+const sendVerificationEmailForRealm =
+  (
+    auth: Pick<Auth, 'api'>,
+  ): ((
+    input: Parameters<Auth['api']['sendVerificationEmail']>[0],
+  ) => Effect.Effect<void, CommercePortalAuthAccountCreationProviderFailure>) =>
+  (input) =>
+    Effect.tryPromise({
+      catch: providerCallFailure,
+      try: auth.api.sendVerificationEmail.bind(auth.api, input),
+    }).pipe(
+      Effect.asVoid,
+      Effect.timeoutOrElse({
+        duration: Duration.millis(COMMERCE_PORTAL_AUTH_POLICY.accountCreation.providerCallTimeoutMilliseconds),
+        orElse: () => Effect.fail(providerCallFailure({ reason: 'PROVIDER_TIMEOUT' })),
+      }),
+    );
+
 const makeCommercePortalAuthAccountCreationProvider = (
   auth: Pick<Auth, 'api'>,
-): CommercePortalAuthAccountCreationProvider => ({ api: { signUpEmail: signUpEmailForRealm(auth) } });
+): CommercePortalAuthAccountCreationProvider => ({
+  api: {
+    sendVerificationEmail: sendVerificationEmailForRealm(auth),
+    signUpEmail: signUpEmailForRealm(auth),
+  },
+});
 
 /** The constructed realm stays a visible requirement; the composition root supplies it once. */
 export const CommercePortalAuthAccountCreationProviderLive = Layer.effect(
