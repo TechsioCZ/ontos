@@ -1,5 +1,6 @@
 import { randomUUID } from 'node:crypto';
 
+import { sql } from 'drizzle-orm';
 import { Effect, Option, Ref, Schema } from 'effect';
 import { expect, it } from 'effect-rstest';
 
@@ -459,4 +460,69 @@ it.live('refuses a claim against a listing snapshot the Attempt has since outgro
       expect(current.revision).toBe(attempt.revision + 1);
     }),
   ),
+);
+
+it.live(
+  'keeps listing a FAILED owner operation the owner left pending even after a reconciliation ref is recorded',
+  () =>
+    Effect.scoped(
+      Effect.gen(function* pendingReconciliationStaysDueDespiteARef() {
+        const tenantId = tenant(randomUUID());
+        const actorPrincipalId = principalId(randomUUID());
+        const fixture = yield* makeEnrollmentAcceptanceFixture({ tenantId });
+        const attempt = yield* startEnrollmentAcceptanceAttempt(
+          fixture,
+          startInputFor(tenantId, actorPrincipalId, 'due-work-pending-reconciliation'),
+        );
+        yield* backdateEnrollmentAcceptanceAttempt(fixture, attempt.portalEnrollmentAttemptId, ANCIENT_ACTIVITY[0]);
+
+        // A FAILED operation that stays owner_reconciliation_required is a pending distinguished
+        // failure. `reconcile_portal_enrollment_outcome` writes a reconciliation_ref onto it the
+        // instant the first sweep settles it — even when that settlement finds the owner still
+        // undecided — so a listing that only ever offers a null-ref row would never revisit it.
+        yield* fixture.admin
+          .transaction((transaction) =>
+            transaction.execute(
+              sql`
+                insert into commerce_customer_context.portal_enrollment_owner_operations (
+                  tenant_id, portal_enrollment_attempt_id, owner_module_key, transition_key,
+                  owner_invocation_id, actor_principal_id, request_digest, required,
+                  status, completed_at, failure_code, reconciliation_ref
+                ) values (
+                  ${tenantId}::uuid, ${attempt.portalEnrollmentAttemptId}::uuid, 'commerce.portal-auth',
+                  ${PORTAL_ACCOUNT_CREATION_TRANSITION_KEY}, ${randomUUID()}::uuid, ${actorPrincipalId}::uuid,
+                  ${'a'.repeat(64)}, true, 'FAILED', statement_timestamp(), 'owner_reconciliation_required',
+                  ${randomUUID()}::uuid
+                )
+              `,
+              'objects',
+            ),
+          )
+          .pipe(Effect.orDie);
+
+        // IN_PROGRESS Attempts are due regardless of any owner operation, so the reconciliation_ref
+        // predicate is only exercised once the Attempt itself is waiting on that owner decision.
+        yield* fixture.admin
+          .transaction((transaction) =>
+            transaction.execute(
+              sql`
+                update commerce_customer_context.portal_enrollment_attempts
+                   set state = 'RECONCILIATION_REQUIRED'
+                 where tenant_id = ${tenantId}::uuid
+                   and portal_enrollment_attempt_id = ${attempt.portalEnrollmentAttemptId}::uuid
+              `,
+              'objects',
+            ),
+          )
+          .pipe(Effect.orDie);
+
+        const store = commerceEnrollmentDueAttemptStoreForRun(fixture.runWorker);
+        const query = { after: Option.none(), limit: 500, maxSweeps: SWEEP_BUDGET, staleAfterMillis: 0 };
+        const ofScenario = (rows: readonly DueEnrollmentAttempt[]) => rows.filter((row) => row.tenantId === tenantId);
+
+        expect(ofScenario(yield* store.listDue(query)).map((row) => row.portalEnrollmentAttemptId)).toStrictEqual([
+          attempt.portalEnrollmentAttemptId,
+        ]);
+      }),
+    ),
 );

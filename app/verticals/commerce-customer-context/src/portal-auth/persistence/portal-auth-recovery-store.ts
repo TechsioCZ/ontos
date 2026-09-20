@@ -1,4 +1,4 @@
-import { and, eq, gt, inArray, like, lt, or, sql } from 'drizzle-orm';
+import { and, eq, gt, inArray, like, lt, sql } from 'drizzle-orm';
 import { Crypto, DateTime, Effect, Layer, Option, Redacted, Schema } from 'effect';
 
 import { CommercePortalAuthProviderSubjectIdSchema } from '../../../api/portal-auth/provider/recovery/contracts.ts';
@@ -18,6 +18,7 @@ import type {
 } from '../../../api/portal-auth/provider/recovery/store-service.ts';
 import { COMMERCE_PORTAL_AUTH_POLICY } from '../../../api/portal-auth/provider/config.ts';
 import type { CommercePortalAuthAuditEvent } from '../audit/audit-contracts.ts';
+import type { CommercePortalAuthDatabaseTransaction } from '../audit/audit-transaction.ts';
 import { writeCommercePortalAuthAuditRow } from '../audit/audit-transaction.ts';
 import { CommercePortalAuthAuditUnavailable } from '../audit/audit-unavailable.ts';
 import { CommercePortalAuthDatabase } from './portal-auth-database.ts';
@@ -34,6 +35,9 @@ const RESET_LEDGER_STATE_DISPATCHED = 'dispatched';
 const RESET_LEDGER_SWEEP_OPERATION = 'recovery-reset-ledger-sweep';
 /** A sweep touches at most this many stale rows per call: bounded work, never a table scan. */
 const RESET_LEDGER_SWEEP_BATCH_SIZE = 100;
+/** Same operation label as `recovery/reconciliation.ts`, so sweep and service rows dedupe together. */
+const RESET_LEDGER_RECONCILIATION_OPERATION = 'reset-password';
+const RESET_LEDGER_SWEEP_ROW_OPERATION = 'recovery-reset-ledger-sweep-row';
 /**
  * How long a claimed row may keep the binding a lost dispatch left behind. A claim older than the
  * reset token's whole lifetime belongs to a submission nobody is coming back for.
@@ -63,6 +67,9 @@ const mutationFailure = (operation: string, cause: unknown): CommercePortalAuthR
   Schema.is(CommercePortalAuthAuditUnavailable)(cause)
     ? unavailable(`${operation}-audit`, cause)
     : unavailable(operation, cause);
+
+const sweepAgedDispatchedRowUnavailable = (cause: unknown): CommercePortalAuthRecoveryUnavailable =>
+  unavailable(RESET_LEDGER_SWEEP_ROW_OPERATION, cause);
 
 const bytesToHex = (bytes: Uint8Array): string =>
   Array.from(bytes, (byte) => byte.toString(16).padStart(2, '0')).join('');
@@ -131,6 +138,43 @@ const epochMillis = (value: Date): number => {
   const date = DateTime.make(value);
   return Option.isSome(date) ? DateTime.toEpochMillis(date.value) : Number.NaN;
 };
+
+/** Every writer of `recovery_reconciliation` goes through here so they all dedupe on the same index. */
+const insertRecoveryReconciliationRow = (
+  executor: CommercePortalAuthDatabaseExecutor | CommercePortalAuthDatabaseTransaction,
+  input: {
+    readonly conflictClass: CommercePortalAuthRecoveryReconciliationConflictClass;
+    readonly createdAt: Date;
+    readonly currentProviderSubjectId: Option.Option<string>;
+    readonly email: string;
+    readonly id: string;
+    readonly operation: string;
+    readonly providerSubjectId: string;
+  },
+) =>
+  executor
+    .insert(recoveryReconciliation)
+    .values({
+      conflictClass: input.conflictClass,
+      createdAt: input.createdAt,
+      currentProviderSubjectId: Option.getOrNull(input.currentProviderSubjectId),
+      email: normalizeCommercePortalAuthEmail(input.email),
+      id: input.id,
+      operation: input.operation,
+      providerSubjectId: input.providerSubjectId,
+    })
+    // Target the dedupe unique index, not the primary key: `id` is a fresh UUID on every call and
+    // never conflicts, so targeting it would let a repeated detection raise an unhandled
+    // unique-violation on `commerce_auth_recovery_reconciliation_dedupe_uk` instead of silently
+    // no-op'ing.
+    .onConflictDoNothing({
+      target: [
+        recoveryReconciliation.operation,
+        recoveryReconciliation.providerSubjectId,
+        recoveryReconciliation.email,
+        recoveryReconciliation.conflictClass,
+      ],
+    });
 
 const MILLISECONDS_PER_SECOND = 1000;
 const RATE_LIMIT_SWEEP_OPERATION = 'recovery-rate-limit-sweep';
@@ -420,33 +464,124 @@ export const makeCommercePortalAuthRecoveryStore = Effect.fn('CommercePortalAuth
     );
 
     /**
+     * An aged `dispatched` row is the only evidence of a possibly committed reset, so its
+     * `RESET_OUTCOME_INDETERMINATE` conflict row is written before the binding is cleared.
+     */
+    const sweepAgedDispatchedResetLedgerRow = Effect.fn(
+      'CommercePortalAuthRecoveryStore.sweepExpiredResetLedgerRows.row',
+    )(function* sweepAgedDispatchedResetLedgerRowEffect(input: {
+      readonly now: Date;
+      readonly row: {
+        readonly email: string | null;
+        readonly providerSubjectId: string | null;
+        readonly tokenDigest: string;
+      };
+      readonly transaction: CommercePortalAuthDatabaseTransaction;
+    }): Effect.fn.Return<void, CommercePortalAuthRecoveryUnavailable> {
+      const { now, row, transaction } = input;
+      const expire = () =>
+        transaction
+          .update(recoveryResetLedger)
+          .set({ email: null, providerSubjectId: null, state: RESET_LEDGER_STATE_EXPIRED, updatedAt: now })
+          .where(eq(recoveryResetLedger.tokenDigest, row.tokenDigest))
+          .pipe(Effect.mapError(sweepAgedDispatchedRowUnavailable));
+      if (row.email === null || row.providerSubjectId === null) {
+        yield* expire();
+        return;
+      }
+      const email = normalizeCommercePortalAuthEmail(row.email);
+      const currentSubjects = yield* transaction
+        .select({ id: user.id })
+        .from(user)
+        .where(eq(user.email, email))
+        .limit(1)
+        .pipe(Effect.mapError(sweepAgedDispatchedRowUnavailable));
+      const reconciliationId = yield* crypto.randomUUIDv4.pipe(
+        Effect.mapError((cause) => unavailable('recovery-reconciliation-id', cause)),
+      );
+      yield* insertRecoveryReconciliationRow(transaction, {
+        conflictClass: 'RESET_OUTCOME_INDETERMINATE',
+        createdAt: now,
+        currentProviderSubjectId: currentSubjects[0] === undefined ? Option.none() : Option.some(currentSubjects[0].id),
+        email,
+        id: reconciliationId,
+        operation: RESET_LEDGER_RECONCILIATION_OPERATION,
+        providerSubjectId: row.providerSubjectId,
+      }).pipe(Effect.mapError(sweepAgedDispatchedRowUnavailable));
+      yield* expire();
+    });
+
+    const sweepAgedDispatchedResetLedgerRowEntry =
+      (input: { readonly now: Date; readonly transaction: CommercePortalAuthDatabaseTransaction }) =>
+      (row: {
+        readonly email: string | null;
+        readonly providerSubjectId: string | null;
+        readonly tokenDigest: string;
+      }) =>
+        sweepAgedDispatchedResetLedgerRow({ now: input.now, row, transaction: input.transaction });
+
+    const sweepAgedDispatchedResetLedgerRows = Effect.fn(
+      'CommercePortalAuthRecoveryStore.sweepExpiredResetLedgerRows.rows',
+    )(function* sweepAgedDispatchedResetLedgerRowsEffect(input: {
+      readonly agedDispatched: readonly {
+        readonly email: string | null;
+        readonly providerSubjectId: string | null;
+        readonly tokenDigest: string;
+      }[];
+      readonly now: Date;
+      readonly transaction: CommercePortalAuthDatabaseTransaction;
+    }): Effect.fn.Return<void, CommercePortalAuthRecoveryUnavailable> {
+      yield* Effect.forEach(
+        input.agedDispatched,
+        sweepAgedDispatchedResetLedgerRowEntry({ now: input.now, transaction: input.transaction }),
+        { concurrency: 1 },
+      );
+    });
+
+    /**
      * Bounded housekeeping for two ways a row stops being useful but keeps its binding: an expired
-     * `pending` row, and a `dispatched` row past `RESET_LEDGER_DISPATCH_WINDOW_SECONDS` (its
-     * reconciliation row, if any, already holds what support needs). Touches at most
-     * `RESET_LEDGER_SWEEP_BATCH_SIZE` rows and never denies the triggering request on failure.
+     * `pending` row clears with a plain expiry, and an aged `dispatched` row clears through
+     * `sweepAgedDispatchedResetLedgerRow`. Touches at most `RESET_LEDGER_SWEEP_BATCH_SIZE` rows per
+     * state and never denies the triggering request on failure.
      */
     const sweepExpiredResetLedgerRows = (now: Date) =>
       Effect.gen(function* sweepExpiredResetLedgerRowsEffect() {
         const dispatchedBefore = DateTime.toDate(
           DateTime.add(DateTime.makeUnsafe(now), { seconds: -RESET_LEDGER_DISPATCH_WINDOW_SECONDS }),
         );
-        const stale = database
+        const stalePending = database
           .select({ tokenDigest: recoveryResetLedger.tokenDigest })
           .from(recoveryResetLedger)
-          .where(
-            or(
-              and(eq(recoveryResetLedger.state, RESET_LEDGER_STATE_PENDING), lt(recoveryResetLedger.expiresAt, now)),
-              and(
-                eq(recoveryResetLedger.state, RESET_LEDGER_STATE_DISPATCHED),
-                lt(recoveryResetLedger.dispatchedAt, dispatchedBefore),
-              ),
-            ),
-          )
+          .where(and(eq(recoveryResetLedger.state, RESET_LEDGER_STATE_PENDING), lt(recoveryResetLedger.expiresAt, now)))
           .limit(RESET_LEDGER_SWEEP_BATCH_SIZE);
         yield* database
           .update(recoveryResetLedger)
           .set({ email: null, providerSubjectId: null, state: RESET_LEDGER_STATE_EXPIRED, updatedAt: now })
-          .where(inArray(recoveryResetLedger.tokenDigest, stale));
+          .where(inArray(recoveryResetLedger.tokenDigest, stalePending));
+
+        yield* database.transaction(
+          Effect.fn('CommercePortalAuthRecoveryStore.sweepExpiredResetLedgerRows.dispatchedTransaction')(
+            function* sweepAgedDispatchedTransaction(transaction) {
+              const agedDispatched = yield* transaction
+                .select({
+                  email: recoveryResetLedger.email,
+                  providerSubjectId: recoveryResetLedger.providerSubjectId,
+                  tokenDigest: recoveryResetLedger.tokenDigest,
+                })
+                .from(recoveryResetLedger)
+                .where(
+                  and(
+                    eq(recoveryResetLedger.state, RESET_LEDGER_STATE_DISPATCHED),
+                    lt(recoveryResetLedger.dispatchedAt, dispatchedBefore),
+                  ),
+                )
+                .limit(RESET_LEDGER_SWEEP_BATCH_SIZE)
+                .for('update')
+                .pipe(Effect.mapError(sweepAgedDispatchedRowUnavailable));
+              yield* sweepAgedDispatchedResetLedgerRows({ agedDispatched, now, transaction });
+            },
+          ),
+        );
       }).pipe(
         Effect.annotateLogs({ operation: RESET_LEDGER_SWEEP_OPERATION }),
         Effect.ignore({ log: true, message: 'Commerce portal recovery reset-ledger sweep failed' }),
@@ -820,30 +955,15 @@ export const makeCommercePortalAuthRecoveryStore = Effect.fn('CommercePortalAuth
         const id = yield* crypto.randomUUIDv4.pipe(
           Effect.mapError((cause) => unavailable('recovery-reconciliation-id', cause)),
         );
-        yield* database
-          .insert(recoveryReconciliation)
-          .values({
-            conflictClass: input.conflictClass,
-            createdAt: now,
-            currentProviderSubjectId: Option.getOrNull(input.currentProviderSubjectId),
-            email: normalizeCommercePortalAuthEmail(input.email),
-            id,
-            operation: input.operation,
-            providerSubjectId: input.providerSubjectId,
-          })
-          // Target the dedupe unique index, not the primary key: `id` is a fresh UUID on every
-          // call and never conflicts, so targeting it would let a repeated detection raise an
-          // unhandled unique-violation on `commerce_auth_recovery_reconciliation_dedupe_uk`
-          // instead of silently no-op'ing.
-          .onConflictDoNothing({
-            target: [
-              recoveryReconciliation.operation,
-              recoveryReconciliation.providerSubjectId,
-              recoveryReconciliation.email,
-              recoveryReconciliation.conflictClass,
-            ],
-          })
-          .pipe(Effect.mapError((cause) => unavailable('recovery-reconciliation-record', cause)));
+        yield* insertRecoveryReconciliationRow(database, {
+          conflictClass: input.conflictClass,
+          createdAt: now,
+          currentProviderSubjectId: input.currentProviderSubjectId,
+          email: input.email,
+          id,
+          operation: input.operation,
+          providerSubjectId: input.providerSubjectId,
+        }).pipe(Effect.mapError((cause) => unavailable('recovery-reconciliation-record', cause)));
       },
     );
 

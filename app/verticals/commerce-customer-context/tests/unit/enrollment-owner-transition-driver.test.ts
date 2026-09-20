@@ -426,6 +426,43 @@ it.effect('reconciles a FAILED operation the owner left pending, not a terminal 
   }),
 );
 
+it.effect('leaves a FAILED operation the owner left pending untouched when it is still pending', () =>
+  Effect.gen(function* reconcileNoEffectOnRepeatPending() {
+    let reconcileOutcomeCalls = 0;
+    const pendingFailureCode = Schema.decodeSync(EnrollmentKeySchema)(OWNER_RECONCILIATION_REQUIRED_FAILURE_CODE);
+    const pendingOperation = operation({
+      failureCode: pendingFailureCode,
+      status: 'FAILED',
+    });
+    const store = makeAttemptStore(claimResult(), {
+      read: () => Effect.succeed(attempt({ revision: transition.expectedRevision })),
+      readOwnerOperation: () => Effect.succeed(pendingOperation),
+      reconcileOutcome: () =>
+        Effect.sync(() => {
+          reconcileOutcomeCalls += 1;
+          return recordResult;
+        }),
+    });
+    const driver = commerceEnrollmentOwnerTransitionDriverFor({
+      attempt: store,
+      owner: {
+        dispatch: () => Effect.die('unused dispatch'),
+        reconcile: () =>
+          Effect.succeed({
+            actorPrincipalId,
+            failureCode: pendingFailureCode,
+            reconciliationRef,
+            status: 'FAILED' as const,
+          }),
+      },
+      workerId: () => workerId,
+    });
+    const result = yield* driver.reconcile(transition);
+    expect(result.outcome).toBe('NO_EFFECT');
+    expect(reconcileOutcomeCalls).toBe(0);
+  }),
+);
+
 it.effect('does not classify a current Core binding without exact owner evidence', () =>
   Effect.gen(function* rejectsUnprovenCoreRead() {
     const authBindingId = Schema.decodeSync(AuthBindingIdSchema)('80000000-0000-4000-8000-000000000001');

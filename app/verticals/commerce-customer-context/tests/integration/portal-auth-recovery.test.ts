@@ -1304,6 +1304,70 @@ it.live('sweeps an aged PostgreSQL dispatch claim to expired and leaves a fresh 
 );
 
 it.live(
+  'records RESET_OUTCOME_INDETERMINATE reconciliation evidence before a swept PostgreSQL dispatch claim expires',
+  () =>
+    Effect.scoped(
+      Effect.gen(function* postgresResetLedgerDispatchSweepRecordsReconciliation() {
+        const { fixture, resetToken, store, tokenDigest } = yield* makeDispatchFixture('reset-sweep-evidence');
+        const sweepingToken = `sweep-evidence-trigger-${randomUUID()}`;
+        const sweepingDigest = yield* recoveryCrypto
+          .digest('SHA-256', new TextEncoder().encode(sweepingToken))
+          .pipe(Effect.map(bytesToHex));
+        yield* Effect.addFinalizer(() =>
+          fixture.database.executor
+            .delete(recoveryResetLedger)
+            .where(eq(recoveryResetLedger.tokenDigest, sweepingDigest))
+            .pipe(Effect.orDie),
+        );
+        const now = yield* DateTime.nowAsDate;
+        const expiresAt = DateTime.toDate(
+          DateTime.add(DateTime.makeUnsafe(now), {
+            seconds: COMMERCE_PORTAL_AUTH_POLICY.password.resetTokenExpiresInSeconds,
+          }),
+        );
+
+        // The aged claim: this dispatched row is the only durable evidence a possibly-committed
+        // password change ever happened, and the sweep must not destroy that evidence.
+        expect(yield* store.dispatchPasswordResetLedger({ token: Redacted.make(resetToken) })).toBe('claimed');
+        yield* fixture.database.executor
+          .update(recoveryResetLedger)
+          .set({
+            dispatchedAt: DateTime.toDate(
+              DateTime.add(DateTime.makeUnsafe(now), {
+                seconds: -(COMMERCE_PORTAL_AUTH_POLICY.password.resetTokenExpiresInSeconds + 60),
+              }),
+            ),
+          })
+          .where(eq(recoveryResetLedger.tokenDigest, tokenDigest));
+
+        // Registering a new token is what triggers the sweep in production.
+        yield* store.registerPasswordResetToken({
+          email: fixture.email,
+          expiresAt,
+          providerSubjectId: fixture.userId,
+          token: Redacted.make(sweepingToken),
+        });
+
+        const aged = yield* resetLedgerRow(fixture, tokenDigest);
+        expect(aged[0]?.state).toBe('expired');
+        expect(aged[0]?.email).toBeNull();
+        expect(aged[0]?.providerSubjectId).toBeNull();
+
+        // Without the fix this row never appears, which is exactly what leaves support with no
+        // evidence that the password may already have changed.
+        const reconciliationRows = yield* fixture.database.executor
+          .select()
+          .from(recoveryReconciliation)
+          .where(eq(recoveryReconciliation.email, fixture.email));
+        expect(reconciliationRows).toHaveLength(1);
+        expect(reconciliationRows[0]?.conflictClass).toBe('RESET_OUTCOME_INDETERMINATE');
+        expect(reconciliationRows[0]?.providerSubjectId).toBe(fixture.userId);
+        expect(reconciliationRows[0]?.currentProviderSubjectId).toBe(fixture.userId);
+      }),
+    ),
+);
+
+it.live(
   'refuses email verification when the PostgreSQL completion transaction fails, leaving the address unverified and the ledger row untouched',
   () =>
     Effect.scoped(

@@ -317,6 +317,16 @@ const decodeOwnerOutcome = (
     Effect.mapError((cause) => indeterminate(input, 'The owner returned an invalid final outcome', cause)),
   );
 
+/** True when the owner's fresh answer is the exact same pending decision already on record. */
+const isRepeatedPendingReconciliation = (
+  operation: EnrollmentOwnerOperationSnapshot,
+  resolution: ReconcileEnrollmentResolution,
+): boolean =>
+  operation.status === 'FAILED' &&
+  operation.failureCode === OWNER_RECONCILIATION_REQUIRED_FAILURE_CODE &&
+  resolution.status === 'FAILED' &&
+  resolution.failureCode === OWNER_RECONCILIATION_REQUIRED_FAILURE_CODE;
+
 const decodeResolution = (
   input: CommerceEnrollmentOwnerTransition,
   resolution: ReconcileEnrollmentResolution,
@@ -450,6 +460,23 @@ const makeReconciliationRequest = (input: CommerceEnrollmentOwnerTransition): Re
   tenantId: input.tenantId,
   transitionKey: input.transitionKey,
 });
+
+/** An unchanged pending decision is not re-recorded: that would bump the revision and reset the sweep budget. */
+const recordReconciliationOutcome = (
+  store: CommerceEnrollmentOwnerAttemptStore,
+  requested: CommerceEnrollmentOwnerTransition,
+  attempt: EnrollmentAttemptSnapshot,
+  operation: EnrollmentOwnerOperationSnapshot,
+  resolution: ReconcileEnrollmentResolution,
+): Effect.Effect<CommerceEnrollmentOwnerTransitionReconciliationResult, CommerceEnrollmentAttemptError> =>
+  isRepeatedPendingReconciliation(operation, resolution)
+    ? Effect.succeed({ attempt, operation, outcome: 'NO_EFFECT' as const })
+    : store
+        .reconcileOutcome(makeReconciliationRequest({ ...requested, expectedRevision: attempt.revision }), resolution)
+        .pipe(
+          Effect.map((recorded) => ({ outcome: 'RECORDED' as const, recorded, resolution })),
+          Effect.mapError((cause) => indeterminate(requested, 'The owner reconciliation could not be recorded', cause)),
+        );
 
 const leaseIsActive = (lease: EnrollmentOwnerOperationSnapshot['lease']): Effect.Effect<boolean> =>
   lease === undefined
@@ -657,12 +684,7 @@ export const commerceEnrollmentOwnerTransitionDriverFor = (
       ),
     );
     const resolution = yield* decodeResolution(requested, ownerResolution);
-    const recorded = yield* options.attempt
-      .reconcileOutcome(makeReconciliationRequest({ ...requested, expectedRevision: attempt.revision }), resolution)
-      .pipe(
-        Effect.mapError((cause) => indeterminate(requested, 'The owner reconciliation could not be recorded', cause)),
-      );
-    return { outcome: 'RECORDED', recorded, resolution };
+    return yield* recordReconciliationOutcome(options.attempt, requested, attempt, operation, resolution);
   });
 
   return Object.freeze({ execute, reconcile });

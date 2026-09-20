@@ -94,9 +94,8 @@ BEGIN
         FROM commerce_customer_context.portal_enrollment_owner_operations AS operation
         WHERE operation.tenant_id = attempt.tenant_id
           AND operation.portal_enrollment_attempt_id = attempt.portal_enrollment_attempt_id
-          AND operation.reconciliation_ref IS NULL
           AND (
-            operation.status = 'INDETERMINATE'
+            (operation.status = 'INDETERMINATE' AND operation.reconciliation_ref IS NULL)
             OR (operation.status = 'FAILED' AND operation.failure_code = 'owner_reconciliation_required')
           )
       )
