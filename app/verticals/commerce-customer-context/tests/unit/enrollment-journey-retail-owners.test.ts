@@ -1,3 +1,4 @@
+import { PartyCommandNotFoundProblemSchema, PartyCommandUnavailableProblemSchema } from '@app/party-registry/api';
 import { DateTime, Effect, Option, Schema } from 'effect';
 import { expect, it } from 'effect-rstest';
 
@@ -267,6 +268,105 @@ it.effect('never resubmits a Party create while the original invocation is still
       .reconcile(reconciliationInput)
       .pipe(Effect.flip);
     expect(Schema.is(CommerceEnrollmentOwnerEffectRejected)(error)).toBe(true);
+  }),
+);
+
+/**
+ * The match is the first Party Registry call this transition makes and it is read-only, so a match
+ * outage fences the transition indeterminate without any Create having been dispatched. The Party
+ * Registry then holds no invocation of that identity at all and answers the commit resolution with
+ * its 404: that absence is the proof nothing committed.
+ */
+const commitResolutionNotFound = () =>
+  Effect.fail(
+    PartyCommandNotFoundProblemSchema.make({
+      detail: 'The Party Registry holds no invocation of this identity.',
+      status: 404,
+      title: 'Not found',
+      type: 'https://ontos.dev/problems/party-command-not-found',
+    }),
+  );
+
+it.effect('re-runs the read-only match when the Party Registry holds no Create for this invocation', () =>
+  Effect.gen(function* reconcileAfterMatchOutage() {
+    let idempotencyKey: string | null = null;
+    const resolution = yield* retailPartyCandidateOwnerEffect(
+      partyOwnerInput,
+      partyExecutors({
+        createParty: (_payload, options) =>
+          Effect.sync(() => {
+            ({ idempotencyKey } = options);
+            return { decisionRef, outcome: 'CREATED' as const, partyRef };
+          }),
+        matchParty: () => Effect.succeed(matchResponse('NO_MATCH', [])),
+        recoverPartyCreate: commitResolutionNotFound,
+      }),
+    ).reconcile(reconciliationInput);
+
+    // Without this, the 404 is read as "the commit resolution is unavailable" and the transition
+    // stays indeterminate on every later pass: the Party is never submitted and the journey stalls.
+    expect(resolution.status).toBe('SUCCEEDED');
+    expect(resolution.outcomeCode).toBe(PARTY_CANDIDATE_CREATED_OUTCOME_CODE);
+    expect(resolution.resultReference).toBe(partyRef.resourceId);
+    expect(resolution.actorPrincipalId).toBe(actorPrincipalId);
+    // The Create still runs under the immutable owner invocation, so a repeated recovery cannot
+    // produce a second Party.
+    expect(idempotencyKey).toBe(ownerInvocationId);
+  }),
+);
+
+it.effect('creates no Party when the re-run match names the one Party this Tenant already holds', () =>
+  Effect.gen(function* reconcileAfterMatchOutageMatches() {
+    let created = 0;
+    const resolution = yield* retailPartyCandidateOwnerEffect(
+      partyOwnerInput,
+      partyExecutors({
+        createParty: () =>
+          Effect.sync(() => {
+            created += 1;
+            return { decisionRef, outcome: 'CREATED' as const, partyRef };
+          }),
+        matchParty: () => Effect.succeed(matchResponse('MATCHED', [partyRef])),
+        recoverPartyCreate: commitResolutionNotFound,
+      }),
+    ).reconcile(reconciliationInput);
+
+    expect(resolution.status).toBe('SUCCEEDED');
+    expect(resolution.outcomeCode).toBe(PARTY_CANDIDATE_MATCHED_OUTCOME_CODE);
+    expect(created).toBe(0);
+  }),
+);
+
+it.effect('surfaces a commit resolution that is merely unavailable as an unavailable owner effect', () =>
+  Effect.gen(function* reconcileWhenResolutionUnavailable() {
+    let matched = 0;
+    const error = yield* retailPartyCandidateOwnerEffect(
+      partyOwnerInput,
+      partyExecutors({
+        matchParty: () =>
+          Effect.sync(() => {
+            matched += 1;
+            return matchResponse('NO_MATCH', []);
+          }),
+        recoverPartyCreate: () =>
+          Effect.fail(
+            PartyCommandUnavailableProblemSchema.make({
+              detail: 'The Party Registry commit resolution could not be reached.',
+              retryable: true,
+              status: 503,
+              title: 'Unavailable',
+              type: 'https://ontos.dev/problems/party-command-unavailable',
+            }),
+          ),
+      }),
+    )
+      .reconcile(reconciliationInput)
+      .pipe(Effect.flip);
+
+    // A Party Registry that cannot answer is not a Party Registry that has never heard of this
+    // invocation: re-running the submission here could dispatch a Create alongside a committed one.
+    expect(Schema.is(CommerceEnrollmentOwnerEffectUnavailable)(error)).toBe(true);
+    expect(matched).toBe(0);
   }),
 );
 

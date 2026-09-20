@@ -1,5 +1,6 @@
+import { PartyCommandNotFoundProblemSchema } from '@app/party-registry/api';
 import { createParty, executePartyMatch, recoverPartyCreate } from '@app/party-registry/api/client';
-import { Effect, Match } from 'effect';
+import { Effect, Match, Option, Schema } from 'effect';
 
 import type { ReconcileEnrollmentResolution } from '../../../shared/enrollment-contracts.ts';
 import {
@@ -30,7 +31,10 @@ import {
  * never picks a Party, widens a match, or infers ownership from an email or a Guest order.
  *
  * Reconciliation reads what the immutable original invocation committed; a still-open commit is
- * rejected for a later retry rather than resubmitting a Create.
+ * rejected for a later retry rather than resubmitting a Create. A submission that never reached the
+ * Create at all — the match is the first call and it can be unavailable on its own — leaves the
+ * Party Registry with no invocation of that identity, and that absence is what lets reconciliation
+ * run the read-only match again instead of waiting forever for a Create that was never dispatched.
  */
 
 type PartyMatchInvocation = Parameters<typeof executePartyMatch>;
@@ -137,6 +141,25 @@ const createVerdict = (created: PartyCreateResponse): PartyVerdict =>
 const evidenceFor = (ownerInvocationId: string, decisionResourceId: string): string =>
   retailSelfEnrollmentEvidenceReference(['party.registry', ownerInvocationId, decisionResourceId]);
 
+/** One Party Registry submission: the read-only match, and the Create only `NO_MATCH` allows. */
+interface PartySubmission {
+  /**
+   * What this submission was decided by, and therefore what its reconciliation evidence names. A
+   * committed Create names the Party Registry's own decision; a read-only match names what the
+   * match resolved, because the preview match commits no decision to name.
+   */
+  readonly decisionResourceId: string;
+  readonly verdict: PartyVerdict;
+}
+
+/** A submission the read-only match alone decided: its own verdict is the reference it names. */
+const submissionOf = (verdict: PartyVerdict): PartySubmission => ({
+  decisionResourceId: verdict.kind === 'RESOLVED' ? verdict.partyResourceId : PARTY_CANDIDATE_AMBIGUOUS_OUTCOME_CODE,
+  verdict,
+});
+
+const isCommitResolutionNotFound = Schema.is(PartyCommandNotFoundProblemSchema);
+
 /**
  * Build the Party Registry owner effect for one Attempt.  `input` carries the business candidate;
  * `executors` defaults to the published client and is replaced by doubles in unit tests.
@@ -145,22 +168,22 @@ export const retailPartyCandidateOwnerEffect = (
   input: RetailPartyCandidateOwnerInput,
   executors: RetailPartyCandidateOwnerExecutors = retailPartyCandidateOwnerExecutors,
 ): CommerceEnrollmentOwnerEffect => {
-  const dispatch = Effect.fn('RetailPartyCandidateOwnerEffect.dispatch')(function* dispatchCandidate(
-    transition: CommerceEnrollmentOwnerTransition,
-  ): Effect.fn.Return<CommerceEnrollmentOwnerEffectOutcome, CommerceEnrollmentOwnerEffectError> {
+  const submit = Effect.fn('RetailPartyCandidateOwnerEffect.submit')(function* submitCandidate(
+    ownerInvocationId: string,
+  ): Effect.fn.Return<PartySubmission, CommerceEnrollmentOwnerEffectError> {
     const match = yield* executors
       .matchParty({ candidate: input.candidate }, input.requestCorrelation)
       .pipe(Effect.mapError((cause) => unavailable('The Party Registry match operation is unavailable', cause)));
 
     if (match.outcome === 'AMBIGUOUS') {
-      return yield* outcomeOf({
+      return submissionOf({
         kind: 'AMBIGUOUS',
         reason: 'The Party candidate matched more than one Party and must be reconciled',
       });
     }
     if (match.outcome === 'MATCHED') {
       const partyResourceId = soleSameTenantParty(match.candidateParties, input.tenantId);
-      return yield* outcomeOf(
+      return submissionOf(
         partyResourceId === undefined
           ? { kind: 'AMBIGUOUS', reason: 'The Party Registry match did not name exactly one Party in this Tenant' }
           : { kind: 'RESOLVED', outcomeCode: PARTY_CANDIDATE_MATCHED_OUTCOME_CODE, partyResourceId },
@@ -172,23 +195,64 @@ export const retailPartyCandidateOwnerEffect = (
     const created = yield* executors
       .createParty(
         { candidate: input.candidate },
-        { correlationId: input.requestCorrelation, idempotencyKey: transition.ownerInvocationId },
+        { correlationId: input.requestCorrelation, idempotencyKey: ownerInvocationId },
       )
       .pipe(Effect.mapError((cause) => unavailable('The Party Registry create operation is unavailable', cause)));
-    return yield* outcomeOf(createVerdict(created));
+    return { decisionResourceId: created.decisionRef.resourceId, verdict: createVerdict(created) };
   });
+
+  const dispatch = Effect.fn('RetailPartyCandidateOwnerEffect.dispatch')(function* dispatchCandidate(
+    transition: CommerceEnrollmentOwnerTransition,
+  ): Effect.fn.Return<CommerceEnrollmentOwnerEffectOutcome, CommerceEnrollmentOwnerEffectError> {
+    const submission = yield* submit(transition.ownerInvocationId);
+    return yield* outcomeOf(submission.verdict);
+  });
+
+  const resolutionFor = (
+    reconciliation: CommerceEnrollmentOwnerReconciliationInput,
+    submission: PartySubmission,
+  ): Effect.Effect<ReconcileEnrollmentResolution, CommerceEnrollmentOwnerEffectError> => {
+    const reconciliationRef = evidenceFor(reconciliation.ownerInvocationId, submission.decisionResourceId);
+    return submission.verdict.kind === 'RESOLVED'
+      ? decodeResolution({
+          actorPrincipalId: reconciliation.actorPrincipalId,
+          outcomeCode: submission.verdict.outcomeCode,
+          reconciliationRef,
+          resultReference: submission.verdict.partyResourceId,
+          status: 'SUCCEEDED',
+        })
+      : decodeResolution({
+          actorPrincipalId: reconciliation.actorPrincipalId,
+          failureCode: OWNER_RECONCILIATION_REQUIRED_FAILURE_CODE,
+          failureReason: submission.verdict.reason.slice(0, 500),
+          nextState: 'RECONCILIATION_REQUIRED',
+          outcomeCode: PARTY_CANDIDATE_AMBIGUOUS_OUTCOME_CODE,
+          reconciliationRef,
+          status: 'FAILED',
+        });
+  };
 
   const reconcile = Effect.fn('RetailPartyCandidateOwnerEffect.reconcile')(function* reconcileCandidate(
     reconciliation: CommerceEnrollmentOwnerReconciliationInput,
   ): Effect.fn.Return<ReconcileEnrollmentResolution, CommerceEnrollmentOwnerEffectError> {
+    // The Party Registry knows every invocation it was ever asked to commit. An identity it has
+    // never seen is proof that this transition failed upstream of its own Create — in the read-only
+    // match — so nothing is committed, nothing can be lost, and the submission is simply run again.
     const recovery = yield* executors
       .recoverPartyCreate(
         { invocationId: reconciliation.ownerInvocationId },
         { correlationId: input.requestCorrelation },
       )
-      .pipe(Effect.mapError((cause) => unavailable('The Party Registry commit resolution is unavailable', cause)));
+      .pipe(
+        Effect.asSome,
+        Effect.catchIf(isCommitResolutionNotFound, () => Effect.succeedNone),
+        Effect.mapError((cause) => unavailable('The Party Registry commit resolution is unavailable', cause)),
+      );
+    if (Option.isNone(recovery)) {
+      return yield* resolutionFor(reconciliation, yield* submit(reconciliation.ownerInvocationId));
+    }
 
-    const recovered = Match.value(recovery).pipe(
+    const recovered = Match.value(recovery.value).pipe(
       Match.tag('PartyCreateRecovered', ({ result }) => result),
       Match.orElse(() => null),
     );
@@ -198,25 +262,10 @@ export const retailPartyCandidateOwnerEffect = (
         'The Party Registry invocation has not committed yet and must be retried',
       );
     }
-    const verdict = createVerdict(recovered);
-    const reconciliationRef = evidenceFor(reconciliation.ownerInvocationId, recovered.decisionRef.resourceId);
-    return yield* verdict.kind === 'RESOLVED'
-      ? decodeResolution({
-          actorPrincipalId: reconciliation.actorPrincipalId,
-          outcomeCode: verdict.outcomeCode,
-          reconciliationRef,
-          resultReference: verdict.partyResourceId,
-          status: 'SUCCEEDED',
-        })
-      : decodeResolution({
-          actorPrincipalId: reconciliation.actorPrincipalId,
-          failureCode: OWNER_RECONCILIATION_REQUIRED_FAILURE_CODE,
-          failureReason: verdict.reason.slice(0, 500),
-          nextState: 'RECONCILIATION_REQUIRED',
-          outcomeCode: PARTY_CANDIDATE_AMBIGUOUS_OUTCOME_CODE,
-          reconciliationRef,
-          status: 'FAILED',
-        });
+    return yield* resolutionFor(reconciliation, {
+      decisionResourceId: recovered.decisionRef.resourceId,
+      verdict: createVerdict(recovered),
+    });
   });
 
   return Object.freeze({ dispatch, reconcile });

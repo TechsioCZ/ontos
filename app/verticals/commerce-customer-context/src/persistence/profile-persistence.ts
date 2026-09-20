@@ -571,6 +571,11 @@ const readBindingRoutine = routine('read_retail_portal_binding', 'profile.read-b
   { source: 'input', type: 'uuid' },
   { source: 'input', type: 'uuid' },
 ] as const);
+/** The SELECT-only half of `ensure_retail_profile`; it never creates the profile it looks for. */
+const readRetailProfileByPartyRoutine = routine('read_retail_profile_by_party', 'profile.read-retail-by-party', [
+  ...scopeParameters,
+  { source: 'input', type: 'text' },
+] as const);
 const stageBindingAuthorizationMutationsRoutine = routine(
   'stage_retail_portal_profile_binding_permission_mutations',
   'profile.binding-authorization-intent-stage',
@@ -1095,6 +1100,105 @@ const profileFromPayload = (
     updatedAt: raw.updatedAt,
   };
 };
+
+/**
+ * The two owner reads an enrollment reconciliation needs after a committed Commerce Action's
+ * response was lost. Both are SELECT-only, and both answer about the exact durable row the Action
+ * itself writes, inside the same database and the same transaction the Action commits in — so
+ * `none` is that Action not having committed, not merely an unknown.
+ *
+ * Neither read republishes the Action's own result payload: the owner keeps no copy of it. What
+ * they republish is the durable state that result described.
+ */
+const readRetailProfileByPartyUnavailable = (outcome: string | undefined) =>
+  readUnavailable(
+    outcome === 'PROFILE_RECONCILIATION_REQUIRED'
+      ? 'The Retail Customer Profile for this Party is under reconciliation'
+      : 'The Retail Customer Profile read returned no owner row',
+  );
+
+/** The Retail Customer Profile this exact Tenant, Legal Entity and Party already hold, or none. */
+export const readRetailProfileByParty = (
+  transaction: ProfileScopedRoutineInvoker,
+  partyResourceId: string,
+): Effect.Effect<Option.Option<EnsureRetailCustomerProfileResult>, ReadHandlerUnavailable> =>
+  transaction.invoke(readRetailProfileByPartyRoutine, [partyResourceId]).pipe(
+    Effect.mapError(readUnavailableFromRoutineFailure),
+    Effect.flatMap(([row]): Effect.Effect<Option.Option<EnsureRetailCustomerProfileResult>, ReadHandlerUnavailable> => {
+      if (row?.outcome === 'PROFILE_NOT_FOUND') {
+        return Effect.succeedNone;
+      }
+      if (row?.outcome !== 'PROFILE_AVAILABLE') {
+        return Effect.fail(readRetailProfileByPartyUnavailable(row?.outcome));
+      }
+      return Schema.decodeUnknownEffect(EnsureRetailCustomerProfileResultSchema)(row.payload).pipe(
+        Effect.mapError((cause) =>
+          preserveFailureCause(readUnavailable('The Retail Customer Profile projection is invalid'), cause),
+        ),
+        Effect.asSome,
+      );
+    }),
+  );
+
+/**
+ * The Retail Portal Profile Binding this exact profile and Principal already hold, or none.
+ *
+ * The owner publishes no staged Permission mutation list after the fact, so the durable
+ * authorization operation and state travel instead; they are what
+ * `finalize_retail_portal_binding_authorization` settles once every staged mutation is terminal.
+ * `outcome` is read from the binding's own lifecycle rather than from a transition the row does not
+ * record: an Active binding is an activated one.
+ */
+export const readRetailPortalBindingForPrincipal = (
+  transaction: ProfileScopedRoutineInvoker,
+  scope: ProfilePersistenceScope,
+  profileResourceId: string,
+): Effect.Effect<Option.Option<RetailPortalBindingResult>, ReadHandlerUnavailable> =>
+  transaction.invoke(resolvePrincipalRoutine, [profileResourceId, scope.principalId]).pipe(
+    Effect.mapError(readUnavailableFromRoutineFailure),
+    Effect.flatMap(
+      ([principalRow]): Effect.Effect<Option.Option<RetailPortalBindingResult>, ReadHandlerUnavailable> => {
+        if (principalRow?.outcome === 'PROFILE_NOT_FOUND' || principalRow?.outcome === 'RETAIL_PRINCIPAL_NOT_BOUND') {
+          return Effect.succeedNone;
+        }
+        const principalPayload = principalRow === undefined ? undefined : principalPayloadFromRow(principalRow);
+        if (principalPayload?.bindingId === undefined) {
+          return Effect.fail(readUnavailable('The Retail Principal resolution names no single durable binding'));
+        }
+        return transaction.invoke(readBindingRoutine, [principalPayload.bindingId, scope.principalId]).pipe(
+          Effect.mapError(readUnavailableFromRoutineFailure),
+          Effect.flatMap((rows) => {
+            const raw = availableBindingPayloadFromRow(rows[0]);
+            if (raw === undefined) {
+              return Effect.fail(readUnavailable('The Retail Portal binding projection is unavailable'));
+            }
+            const durable = {
+              bindingRef: bindingRef(scope.tenantId, raw.bindingId),
+              effectiveAt: raw.updatedAt,
+              outcome: raw.state === 'ACTIVE' ? ('BINDING_ACTIVATED' as const) : ('BINDING_REVOKED' as const),
+              revision: raw.revision,
+              state: raw.state,
+            };
+            const authorization = bindingAuthorizationFromPayload(raw);
+            const candidate =
+              authorization === undefined
+                ? durable
+                : {
+                    ...durable,
+                    authorizationOperation: authorization.operation,
+                    authorizationState: authorization.state,
+                  };
+            return Schema.decodeEffect(RetailPortalBindingResultSchema)(candidate).pipe(
+              Effect.mapError((cause) =>
+                preserveFailureCause(readUnavailable('The Retail Portal binding projection is invalid'), cause),
+              ),
+              Effect.asSome,
+            );
+          }),
+        );
+      },
+    ),
+  );
 
 export type CounterpartyRoleEligibility =
   | {

@@ -4,13 +4,13 @@ import { HttpApiBuilder, Layer } from '@modern-js/bff-effect/effect-edge';
 import { Cause, DateTime, Effect, Option, Redacted, Schema } from 'effect';
 import type { HttpServerRequest } from 'effect/unstable/http';
 
-import type { ActionRegistration, DomainEventContractMap } from '@app/core-runtime';
+import { bindGovernedActionHttp } from '@app/core-runtime/http/action-runner';
+import type { ActionRegistration, DomainEventContractMap, TrustedPrincipalContext } from '@app/core-runtime';
 
 import {
   authenticateOperationPrincipal,
   verifyOperationPrincipalWithoutRedemption,
 } from '../../auth/action-principal.ts';
-import { bindActionHttpRunner } from '../../action-http-runner.ts';
 import { commerceCustomerContextApi } from '../../../shared/api.ts';
 import { claimPortalEnrollmentTransitionAction } from '../../../src/actions/claim-portal-enrollment-transition.action.ts';
 import { startPortalEnrollmentAction } from '../../../src/actions/start-portal-enrollment.action.ts';
@@ -94,10 +94,18 @@ const enrollmentStartRateLimit: CommercePortalAuthRecoveryRateLimitRule = {
   windowSeconds: COMMERCE_PORTAL_AUTH_POLICY.rateLimit.accountCreation.windowSeconds,
 };
 
-const runActionHttp = bindActionHttpRunner({
-  authentication: () => commercePortalAuthEnrollmentAuthenticationProblem,
-  unavailable: () => commercePortalAuthEnrollmentUnavailableProblem(),
-});
+/**
+ * The governed Action transport for one already authenticated caller.
+ *
+ * Start is a single composed operation that runs more than one governed Action, and the caller
+ * presents one Bearer assertion for all of them. Redemption is what makes that assertion single-use
+ * — the deployed store accepts an `(issuer, audience, jti)` exactly once — so authenticating each
+ * Action from the same inbound header would spend the assertion on the first Action and leave every
+ * later one refusing its own caller as a replay. The assertion is therefore verified and redeemed
+ * once for the whole operation and every Action of it runs under that one verified principal.
+ */
+const runActionHttpAs = (principal: TrustedPrincipalContext) =>
+  bindGovernedActionHttp({ authenticate: () => Effect.succeed(principal) });
 
 /**
  * The enrollment subject is part of the budget key, never the counter store's contents: it is keyed
@@ -146,10 +154,10 @@ const actionProblem = (error: { readonly _tag: string }) =>
     : commercePortalAuthEnrollmentRejectedProblem(error);
 
 /**
- * The governed Action transport reads the caller's own wire headers verbatim — the authorization
- * assertion it will verify, and the correlation and trace identities the caller published. They are
- * request data forwarded to the runner, not an identity this module threads through its own call
- * graph.
+ * The caller's own wire headers, forwarded to the governed Action transport verbatim. The
+ * correlation identity is what the runner reads here: this route authenticates the assertion once
+ * for the whole start (see `runActionHttpAs`), so the authorization header travels as the request
+ * data it is rather than as the thing each Action re-verifies.
  */
 const actionRequestHeaders = (request: HttpServerRequest.HttpServerRequest) => ({
   authorization: Redacted.make(request.headers['authorization']),
@@ -200,7 +208,12 @@ const triggerEnrollmentContinuation = (
   attempt: { readonly portalEnrollmentAttemptId: string; readonly tenantId: string },
 ) =>
   forkEnrollmentAdvance(
-    Schema.decodeEffect(ReadEnrollmentAttemptInputSchema)(attempt).pipe(
+    // The Attempt identity alone: the read input rejects excess properties, so handing it a whole
+    // durable snapshot refuses every continuation this route triggers before it reaches an owner.
+    Schema.decodeEffect(ReadEnrollmentAttemptInputSchema)({
+      portalEnrollmentAttemptId: attempt.portalEnrollmentAttemptId,
+      tenantId: attempt.tenantId,
+    }).pipe(
       Effect.flatMap((identity) => continuation.advance(identity)),
       Effect.asSome,
     ),
@@ -478,8 +491,9 @@ const startEnrollment = Effect.fn('CommercePortalAuthEnrollmentHttp.start')(func
   // being enrolled, so spending first would let an unauthenticated caller exhaust the enrollment
   // budget of any address it can name — a forged trusted Origin is all it would take, because
   // nothing else about the caller has been established yet. The gateway principal is therefore
-  // verified here, upstream of the budget, rather than only inside the governed Action that runs
-  // after it; the sibling sign-in transport orders its own gate the same way.
+  // verified here, upstream of the budget, rather than only when the operation is authenticated
+  // after it; the sibling sign-in transport orders its own gate the same way. It is deliberately a
+  // read: a caller the budget then refuses keeps an assertion it never got to spend.
   yield* verifyOperationPrincipalWithoutRedemption(Redacted.make(request.headers['authorization']), {
     authentication: () => commercePortalAuthEnrollmentAuthenticationProblem,
     unavailable: () => commercePortalAuthEnrollmentUnavailableProblem(),
@@ -488,6 +502,14 @@ const startEnrollment = Effect.fn('CommercePortalAuthEnrollmentHttp.start')(func
     ? yield* commercePortalAuthEnrollmentAccountOwner(requestHeaders(request.headers), email)
     : undefined;
   yield* consumeEnrollmentBudget(request, email);
+  // One redemption for the whole composed start. The gate above only read the assertion, so this is
+  // the single place it is spent, and both governed Actions below are handed the principal it
+  // produced rather than the header it came from.
+  const principal = yield* authenticateOperationPrincipal(Redacted.make(request.headers['authorization']), {
+    authentication: () => commercePortalAuthEnrollmentAuthenticationProblem,
+    unavailable: () => commercePortalAuthEnrollmentUnavailableProblem(),
+  });
+  const runActionHttp = runActionHttpAs(principal);
 
   const runEnrollmentAction = <
     PayloadSchema extends Schema.ConstraintDecoder<unknown> & Schema.ConstraintEncoder<unknown>,

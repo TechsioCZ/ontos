@@ -59,8 +59,13 @@ export const EnrollmentResourceIdSchema = Schema.String.check(
   Schema.isMaxLength(300),
 ).pipe(Schema.brand('EnrollmentResourceId'));
 export const EnrollmentEvidenceReferenceSchema = uuid.pipe(Schema.brand('EnrollmentEvidenceReference'));
-/** Timestamps are UTC instants in the decoded contract; persistence adapters decode driver values. */
-const EnrollmentTimestampSchema = Schema.DateTimeUtc;
+/**
+ * Timestamps are UTC instants in the decoded contract and one canonical UTC ISO string encoded.
+ * The encoded side is what leaves this vertical: the governed Action runtime re-encodes every
+ * Action result and hashes it as canonical data, and a `DateTime.Utc` class instance is not that,
+ * so a self-encoding instant here makes every Action carrying an Attempt snapshot uncommittable.
+ */
+const EnrollmentTimestampSchema = Schema.DateTimeUtcFromString;
 
 /**
  * Enrollment only accepts the Commerce Portal Authentication Namespace.  The provider subject
@@ -145,7 +150,8 @@ const EnrollmentAttemptLeaseSchema = Schema.Struct({
   leaseToken: EnrollmentLeaseTokenSchema,
   workerId: EnrollmentKeySchema,
 }).annotate({ parseOptions: { onExcessProperty: 'error' } });
-export type EnrollmentAttemptLease = typeof EnrollmentAttemptLeaseSchema.Type;
+/** The canonical JSON form a persistence adapter builds before it decodes a snapshot. */
+export type EncodedEnrollmentAttemptLease = typeof EnrollmentAttemptLeaseSchema.Encoded;
 
 export const EnrollmentAttemptSnapshotSchema = Schema.Struct({
   accountSubject: Schema.optionalKey(CommercePortalAccountSubjectSchema),

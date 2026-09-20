@@ -95,6 +95,7 @@ const grantedRoutines = [
   'read_retail_portal_binding',
   'read_retail_portal_binding_authorization',
   'read_retail_portal_profile_binding_permission_mutation',
+  'read_retail_profile_by_party',
   'read_saved_address',
   'reconcile_portal_enrollment_outcome',
   'reconcile_profile_reconciliation_owner',

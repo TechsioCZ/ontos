@@ -233,7 +233,29 @@ export const retailPortalGrantsAreComplete = (result: RetailPortalBindingResult)
   );
 };
 
-const bindingVerdict = (result: RetailPortalBindingResult): CommerceOwnerVerdict => {
+/**
+ * A reconciliation reads grant completeness from the durable authorization state, because the owner
+ * keeps no copy of the Action's staged mutation list to republish once that response is gone.
+ *
+ * `PENDING_GRANT` is the state the binding Action itself leaves behind after staging the reviewed
+ * baseline — dispatch calls that complete — and `ACTIVE` is the state the owner moves to only once
+ * every baseline Permission is terminal. `RECONCILIATION_REQUIRED` is the owner's own record of the
+ * partially completed grant, which is the halt the dispatch path records too.
+ */
+const reconciledGrantsAreComplete = (result: RetailPortalBindingResult): boolean => {
+  if (result.permissionMutations !== undefined) {
+    return retailPortalGrantsAreComplete(result);
+  }
+  return (
+    result.authorizationOperation === 'grant' &&
+    (result.authorizationState === 'ACTIVE' || result.authorizationState === 'PENDING_GRANT')
+  );
+};
+
+const bindingVerdictFor = (
+  result: RetailPortalBindingResult,
+  grantsAreComplete: (result: RetailPortalBindingResult) => boolean,
+): CommerceOwnerVerdict => {
   if (result.outcome !== 'BINDING_ACTIVATED' || result.state !== 'ACTIVE') {
     return {
       kind: 'REJECTED',
@@ -241,7 +263,7 @@ const bindingVerdict = (result: RetailPortalBindingResult): CommerceOwnerVerdict
       reason: 'The Retail Portal Profile Binding did not activate for this enrollment',
     };
   }
-  return retailPortalGrantsAreComplete(result)
+  return grantsAreComplete(result)
     ? {
         kind: 'SUCCEEDED',
         outcomeCode: RETAIL_PORTAL_PROFILE_BOUND_OUTCOME_CODE,
@@ -253,6 +275,12 @@ const bindingVerdict = (result: RetailPortalBindingResult): CommerceOwnerVerdict
         reason: 'The Retail Portal binding committed without the complete reviewed Permission baseline',
       };
 };
+
+const bindingVerdict = (result: RetailPortalBindingResult): CommerceOwnerVerdict =>
+  bindingVerdictFor(result, retailPortalGrantsAreComplete);
+
+const reconciledBindingVerdict = (result: RetailPortalBindingResult): CommerceOwnerVerdict =>
+  bindingVerdictFor(result, reconciledGrantsAreComplete);
 
 const ENSURE_OWNER_KEY = 'commerce.customer-context.ensure-retail-customer-profile';
 const BIND_OWNER_KEY = 'commerce.customer-context.bind-retail-portal-profile';
@@ -353,7 +381,7 @@ export const retailPortalBindingOwnerEffect = (
       reconciliation,
       BIND_OWNER_KEY,
       resolved.result.bindingRef.resourceId,
-      bindingVerdict(resolved.result),
+      reconciledBindingVerdict(resolved.result),
     );
   });
 

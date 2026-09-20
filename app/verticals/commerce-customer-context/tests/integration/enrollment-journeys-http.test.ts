@@ -1,5 +1,7 @@
 import { createHmac, randomUUID } from 'node:crypto';
 
+import { v1 } from '@authzed/authzed-node';
+
 import { ActionAuthorizationPreflightDatabaseLive, CorePersistenceLive, DatabaseConfigLive } from '@app/core-runtime';
 import { ResendEmailDeliveryConfig } from '@app/email-delivery/resend';
 import { eq, like, sql } from 'drizzle-orm';
@@ -10,14 +12,33 @@ import {
   GatewayAssertionRedemptionService,
   GatewayAssertionReplayError,
 } from '../../../../packages/core-runtime/src/auth/gateway-assertion-redemption.ts';
+import { makeCoreDatabase } from '../../../../packages/core-runtime/src/db/client.ts';
+import { loadDatabaseConnectionPair } from '../../../../packages/core-runtime/src/db/config.ts';
 import {
+  actionInvocations,
+  auditEvents,
+  dataAccessEvents,
+  evidenceReferences,
+  legalEntities,
+  principalAuthBindings,
+  principals,
+  tenantModuleStates,
+  tenants,
+} from '../../../../packages/core-runtime/src/db/schema.ts';
+import { loadSpiceDbConfig } from '../../../../packages/core-runtime/src/permissions/config.ts';
+import { toSpiceDbActionObjectId } from '../../../../packages/core-runtime/src/permissions/service.ts';
+import {
+  commerceCustomerContextActionRuntimeAwaitingOwnerPreparation,
   commercePortalAuthRealmLive,
   makeCommerceCustomerContextApiRuntime,
   productionActionRuntimeLive,
   productionReadRuntimeLive,
 } from '../../api/index.ts';
 import { GatewayAssertionRedemptionLive } from '../../api/auth/gateway-assertion-redemption.ts';
-import { CommercePortalAuthEnrollmentStartInputSchema } from '../../api/portal-auth/enrollment/contracts.ts';
+import {
+  CommercePortalAuthEnrollmentAttemptProjectionSchema,
+  CommercePortalAuthEnrollmentStartInputSchema,
+} from '../../api/portal-auth/enrollment/contracts.ts';
 import {
   commercePortalAuthEnrollmentAccountCreationOutcome,
   commercePortalAuthEnrollmentAccountOwner,
@@ -90,6 +111,7 @@ import {
 } from '../../src/portal-auth/persistence/portal-auth-database.ts';
 import { rateLimit, user, verification } from '../../src/portal-auth/persistence/portal-auth-tables.ts';
 import {
+  expireEnrollmentAcceptanceLeases,
   makeEnrollmentAcceptanceFixture,
   readEnrollmentAcceptanceAttempt,
   readEnrollmentAcceptanceOperations,
@@ -155,6 +177,22 @@ const configuredRuntime = Effect.acquireRelease(
   }),
   (runtime) => Effect.promise(async () => await runtime.dispose()),
 );
+
+/** Removes the provider account a start really created, so the directory is left as it was found. */
+const removePortalAccountsOnClose = Effect.fnUntraced(function* removePortalAccountsOnClose(email: string) {
+  const databaseUrl = yield* providerDatabaseUrl;
+  const database = yield* makeCommercePortalAuthDatabase({ connectionString: databaseUrl }).pipe(Effect.orDie);
+  yield* Effect.addFinalizer(() =>
+    database.executor
+      .transaction((transaction) =>
+        Effect.gen(function* deleteCreatedAccount() {
+          yield* transaction.delete(user).where(eq(user.email, email));
+          yield* transaction.delete(verification).where(eq(verification.identifier, email));
+        }),
+      )
+      .pipe(Effect.orDie),
+  );
+});
 
 /** The provider account directory, read directly so a created row cannot hide behind the port. */
 const portalAccountsFor = Effect.fnUntraced(function* portalAccountsFor(email: string) {
@@ -721,14 +759,24 @@ const singleUseRedemptionLive = Layer.sync(GatewayAssertionRedemptionService, ()
   };
 });
 
-const authenticatedRuntime = (gateway: AcceptanceGatewayIssuer) =>
+const authenticatedRuntime = (
+  gateway: AcceptanceGatewayIssuer,
+  redemption: Layer.Layer<GatewayAssertionRedemptionService> = singleUseRedemptionLive,
+  /**
+   * The deployed Action runtime by default, which selects its enrollment owner preparation
+   * authority from the ambient `COMMERCE_PORTAL_AUTH_*`/`COMMERCE_CORE_IDENTITY_*` environment —
+   * absent here, so it is the fail-closed one. A scenario that drives a governed owner transition
+   * supplies the configured authority instead.
+   */
+  actionRuntime: Parameters<typeof makeCommerceCustomerContextApiRuntime>[1] = productionActionRuntimeLive,
+) =>
   Effect.acquireRelease(
     Effect.gen(function* buildAuthenticatedRuntime() {
       const realmLive = yield* configuredRealmLive();
       return makeCommerceCustomerContextApiRuntime(
         productionReadRuntimeLive,
-        productionActionRuntimeLive,
-        singleUseRedemptionLive,
+        actionRuntime,
+        redemption,
         realmLive,
         // The verification material is a composition input of the deployed verifier, so no ambient
         // environment is touched.
@@ -1315,6 +1363,571 @@ it.live(
           status: 401,
         });
         expect(yield* enrollmentAttemptCount(fixture)).toBe(0);
+      }),
+    ),
+  180_000,
+);
+
+/**
+ * The start route runs more than one governed Action for a single caller request, and the caller
+ * presents one Bearer assertion for all of them. A deployed redemption store accepts an assertion's
+ * `(issuer, audience, jti)` exactly once, so what the composed operation does with that assertion is
+ * the whole question: spending it per Action refuses the second Action as a replay of its own
+ * caller, and the Attempt is left carrying no owner transition and no account.
+ */
+
+const START_ACTION_KEY = 'commerce.customer-context.start-portal-enrollment';
+const CLAIM_ACTION_KEY = 'commerce.customer-context.claim-portal-enrollment-transition';
+const RECORD_ACTION_KEY = 'commerce.customer-context.record-portal-enrollment-outcome';
+const GOVERNED_START_ISSUER = 'http://gateway.enrollment-start-redemption.test';
+const GOVERNED_START_KEY_ID = 'enrollment-start-redemption';
+
+interface GovernedStartSubject {
+  readonly authBindingId: string;
+  readonly legalEntityId: string;
+  readonly principalId: string;
+  readonly tenantId: string;
+}
+
+/**
+ * The Core rows an ordinary governed start reads: the Tenant, the enrolling Principal, the Selling
+ * Legal Entity the journey names, the Commerce module state and the Principal's auth binding.
+ */
+const seedGovernedStartSubject = Effect.fnUntraced(function* seedGovernedStartSubject(tenantId: string) {
+  const connections = yield* loadDatabaseConnectionPair();
+  const admin = yield* makeCoreDatabase(connections.admin);
+  const subject: GovernedStartSubject = {
+    authBindingId: randomUUID(),
+    legalEntityId: randomUUID(),
+    principalId: randomUUID(),
+    tenantId,
+  };
+  const cleanup = Effect.gen(function* removeSeededRows() {
+    for (const table of [
+      auditEvents,
+      dataAccessEvents,
+      evidenceReferences,
+      actionInvocations,
+      principalAuthBindings,
+      tenantModuleStates,
+      legalEntities,
+      principals,
+      tenants,
+    ]) {
+      yield* admin.executor.delete(table).where(eq(table.tenantId, subject.tenantId));
+    }
+  });
+  yield* Effect.acquireRelease(cleanup, () => cleanup.pipe(Effect.orDie));
+  yield* admin.executor.insert(tenants).values({
+    defaultLocale: 'en',
+    name: 'Enrollment start redemption tenant',
+    slug: `enrollment-start-redemption-${subject.tenantId}`,
+    status: 'active',
+    tenantId: subject.tenantId,
+  });
+  yield* admin.executor.insert(principals).values({
+    displayName: 'Enrollment start redemption customer',
+    kind: 'human',
+    principalId: subject.principalId,
+    status: 'active',
+    tenantId: subject.tenantId,
+  });
+  yield* admin.executor.insert(legalEntities).values({
+    legalEntityId: subject.legalEntityId,
+    legalName: 'Enrollment start redemption selling entity',
+    registrationCountry: 'CZ',
+    registrationNumber: `enrollment-start-redemption-${subject.legalEntityId}`,
+    status: 'active',
+    tenantId: subject.tenantId,
+  });
+  yield* admin.executor.insert(tenantModuleStates).values({
+    moduleKey: 'commerce.customer-context',
+    state: 'active',
+    tenantId: subject.tenantId,
+  });
+  yield* admin.executor.insert(principalAuthBindings).values({
+    authenticationNamespaceId: COMMERCE_AUTHENTICATION_NAMESPACE_ID,
+    principalAuthBindingId: subject.authBindingId,
+    principalId: subject.principalId,
+    provider: 'commerce-enrollment-acceptance-provider',
+    providerSubjectId: `enrollment-start-redemption-${subject.principalId}`,
+    status: 'active',
+    subjectType: 'user',
+    tenantId: subject.tenantId,
+  });
+  return subject;
+});
+
+/** Tenant membership and the execute grant for each governed Action a scenario runs. */
+const seedGovernedStartAuthorization = Effect.fnUntraced(function* seedGovernedStartAuthorization(
+  subject: GovernedStartSubject,
+  actionKeys: readonly string[] = [START_ACTION_KEY, CLAIM_ACTION_KEY],
+) {
+  const configuration = yield* loadSpiceDbConfig();
+  const client = v1.NewClient(
+    configuration.preSharedKey,
+    configuration.endpoint,
+    configuration.insecureLocal ? v1.ClientSecurity.INSECURE_LOCALHOST_ALLOWED : v1.ClientSecurity.SECURE,
+  );
+  const principalSubject = v1.SubjectReference.create({
+    object: v1.ObjectReference.create({ objectId: subject.principalId, objectType: 'principal' }),
+  });
+  const tenantObject = v1.ObjectReference.create({ objectId: subject.tenantId, objectType: 'tenant' });
+  const relationships = [
+    v1.Relationship.create({ relation: 'member', resource: tenantObject, subject: principalSubject }),
+    ...actionKeys.map((actionKey) =>
+      v1.Relationship.create({
+        relation: 'executor',
+        resource: v1.ObjectReference.create({
+          objectId: toSpiceDbActionObjectId(actionKey),
+          objectType: 'action',
+        }),
+        subject: principalSubject,
+      }),
+    ),
+  ];
+  const write = (operation: v1.RelationshipUpdate_Operation) =>
+    Effect.promise(
+      async () =>
+        await client.promises.writeRelationships(
+          v1.WriteRelationshipsRequest.create({
+            updates: relationships.map((relationship) => v1.RelationshipUpdate.create({ operation, relationship })),
+          }),
+        ),
+    );
+  yield* write(v1.RelationshipUpdate_Operation.TOUCH);
+  yield* Effect.addFinalizer(() => write(v1.RelationshipUpdate_Operation.DELETE).pipe(Effect.asVoid, Effect.orDie));
+});
+
+/** Presents one `jti` to a single-use ledger, recording it whether or not it is accepted. */
+const presentToLedger = (presented: string[], redeemed: Set<string>, jti: string): boolean => {
+  presented.push(jti);
+  if (redeemed.has(jti)) {
+    return false;
+  }
+  redeemed.add(jti);
+  return true;
+};
+
+/** A deployed single-use store that also records every `jti` presented to it, in order. */
+const recordingRedemptionLive = (presented: string[]) =>
+  Layer.sync(GatewayAssertionRedemptionService, () => {
+    const redeemed = new Set<string>();
+    return {
+      consume: ({ jti }) =>
+        Effect.sync(() => presentToLedger(presented, redeemed, jti)).pipe(
+          Effect.flatMap((accepted) =>
+            accepted
+              ? Effect.void
+              : Effect.fail(new GatewayAssertionReplayError({ reason: 'The Bearer assertion was already redeemed' })),
+          ),
+        ),
+    };
+  });
+
+/** One governed start request, carrying the Idempotency-Key the start Action requires. */
+const governedStartRequest = (
+  body: Record<string, string>,
+  assertion: string,
+  options: { readonly correlated?: boolean } = {},
+): Request => {
+  const headers = new Headers({
+    authorization: `Bearer ${assertion}`,
+    'content-type': 'application/json',
+    'idempotency-key': randomUUID(),
+    origin: ORIGIN,
+  });
+  if (options.correlated !== false) {
+    headers.set('x-correlation-id', `enrollment-http-${randomUUID()}`);
+  }
+  return new Request(`${ORIGIN}/api/portal-auth/enrollment/start`, {
+    body: JSON.stringify(body),
+    headers,
+    method: 'POST',
+  });
+};
+
+it.live(
+  'spends one caller assertion once for the whole composed start and refuses its replay',
+  () =>
+    Effect.scoped(
+      Effect.gen(function* startRedeemsTheCallerAssertionOnce() {
+        const tenantId = randomUUID();
+        const fixture = yield* makeEnrollmentAcceptanceFixture({ tenantId });
+        const subject = yield* seedGovernedStartSubject(tenantId);
+        yield* seedGovernedStartAuthorization(subject);
+        const gateway = yield* makeAcceptanceGatewayIssuer(GOVERNED_START_ISSUER, GOVERNED_START_KEY_ID);
+        const presented: string[] = [];
+        const runtime = yield* authenticatedRuntime(gateway, recordingRedemptionLive(presented));
+        const email = `enrollment-http-${randomUUID()}@example.test`;
+        const assertionFor = () =>
+          issueAcceptanceGatewayAssertion(fixture.admin, gateway, READ_AUDIENCE, {
+            authBindingId: subject.authBindingId,
+            authContextRef: `portal-session:${subject.principalId}`,
+            authenticationNamespaceId: COMMERCE_AUTHENTICATION_NAMESPACE_ID,
+            authMethod: 'session',
+            // The two governed Actions the start runs both forbid a Legal Entity in the caller's
+            // operational scope, so the enrolling portal session carries none.
+            principalId: subject.principalId,
+            tenantId,
+          });
+        const startBody = {
+          displayName: START_DISPLAY_NAME,
+          email,
+          journey: 'RETAIL_SELF_ENROLLMENT',
+          password: PORTAL_OWNER_PASSWORD,
+          sellingLegalEntityId: subject.legalEntityId,
+        };
+
+        const assertion = yield* assertionFor();
+        const response = yield* Effect.promise(
+          async () => await runtime.handler(governedStartRequest(startBody, assertion)),
+        );
+
+        // The whole composed start authenticated once. Authenticating per governed Action presents
+        // this same `jti` a second time, and the deployed store refuses that as a replay of the
+        // caller's own credential — so the start answers 401 and the Attempt is left without the
+        // owner transition it exists to claim.
+        expect(presented).toHaveLength(1);
+        expect(response.status).not.toBe(401);
+
+        // The single-use store is what makes the assertion single-use, so the very same assertion
+        // presented by a second request is refused — that is the property one redemption preserves.
+        const replayed = yield* Effect.promise(
+          async () =>
+            await runtime.handler(
+              governedStartRequest({ ...startBody, email: `enrollment-http-${randomUUID()}@example.test` }, assertion),
+            ),
+        );
+        expect(replayed.status).toBe(401);
+        expect(presented).toHaveLength(2);
+
+        // Where the assertion is spent is decidable from the outside, because the governed Action
+        // transport refuses an uncorrelated request before it authenticates anybody. A start
+        // carrying no correlation identity therefore reaches the same 400 either way — but only a
+        // start that authenticates its caller itself, once, for the whole operation, has spent the
+        // assertion by then. Authenticating inside each Action spends nothing here.
+        const uncorrelated = yield* assertionFor();
+        const refused = yield* Effect.promise(
+          async () =>
+            await runtime.handler(
+              governedStartRequest(
+                { ...startBody, email: `enrollment-http-${randomUUID()}@example.test` },
+                uncorrelated,
+                { correlated: false },
+              ),
+            ),
+        );
+        expect(refused.status).toBe(400);
+        expect(presented).toHaveLength(3);
+      }),
+    ),
+  180_000,
+);
+
+/** The start route's own success contract, decoded so the answer is checked rather than probed. */
+const StartedEnrollmentResponseSchema = Schema.Struct({
+  attempt: CommercePortalAuthEnrollmentAttemptProjectionSchema,
+  outcome: Schema.Literals(['CREATED', 'EXISTING']),
+});
+
+/**
+ * The composed start, committed end to end on the deployed runtime.
+ *
+ * Every governed Action this route runs answers with an Enrollment Attempt snapshot, and the Action
+ * runtime re-encodes that result and hashes it as canonical data before it flushes the invocation's
+ * success evidence. An encoded timestamp that is still a `DateTime.Utc` class instance is not
+ * canonical data, so the hash throws, the Action transaction rolls back, and an authorized caller
+ * is answered 403 with no Attempt, no provider account and no owner journal at all. Asserting the
+ * refusal codes alone never noticed, because a refusal is exactly what this route also gives a
+ * caller it is right to refuse — so this pins the happy path instead.
+ */
+it.live(
+  'commits every governed Action of one start and answers the committed Attempt',
+  () =>
+    Effect.scoped(
+      Effect.gen(function* governedStartCommitsEveryAction() {
+        const tenantId = randomUUID();
+        const fixture = yield* makeEnrollmentAcceptanceFixture({ tenantId });
+        const subject = yield* seedGovernedStartSubject(tenantId);
+        yield* seedGovernedStartAuthorization(subject);
+        const gateway = yield* makeAcceptanceGatewayIssuer(GOVERNED_START_ISSUER, GOVERNED_START_KEY_ID);
+        // The deployed composition with both halves of the realm installed: the configured owner
+        // preparation authority — the thing that lets a governed Action proceed on a claimed owner
+        // payload — beside the configured portal provider the claim's effect is dispatched into.
+        const runtime = yield* authenticatedRuntime(
+          gateway,
+          singleUseRedemptionLive,
+          commerceCustomerContextActionRuntimeAwaitingOwnerPreparation.pipe(
+            Layer.provide(yield* preparationAuthorityLive()),
+          ),
+        );
+        const email = `enrollment-http-${randomUUID()}@example.test`;
+        yield* removePortalAccountsOnClose(email);
+        const assertion = yield* issueAcceptanceGatewayAssertion(fixture.admin, gateway, READ_AUDIENCE, {
+          authBindingId: subject.authBindingId,
+          authContextRef: `portal-session:${subject.principalId}`,
+          authenticationNamespaceId: COMMERCE_AUTHENTICATION_NAMESPACE_ID,
+          authMethod: 'session',
+          principalId: subject.principalId,
+          tenantId,
+        });
+
+        const response = yield* Effect.promise(
+          async () =>
+            await runtime.handler(
+              governedStartRequest(
+                {
+                  displayName: START_DISPLAY_NAME,
+                  email,
+                  journey: 'RETAIL_SELF_ENROLLMENT',
+                  password: PORTAL_OWNER_PASSWORD,
+                  sellingLegalEntityId: subject.legalEntityId,
+                },
+                assertion,
+              ),
+            ),
+        );
+
+        // The Attempt projection, from the governed `start-portal-enrollment` Action's own result.
+        expect(response.status).toBe(200);
+        const started = Schema.decodeUnknownSync(StartedEnrollmentResponseSchema)(
+          yield* Effect.promise(async () => await response.clone().json()),
+        );
+        const startedAttempt = started.attempt;
+        expect(started.outcome).toBe('CREATED');
+        expect(startedAttempt.journey).toBe('RETAIL_SELF_ENROLLMENT');
+        expect(startedAttempt.state).toBe('IN_PROGRESS');
+        expect(startedAttempt.targetLegalEntityId).toBe(subject.legalEntityId);
+
+        // The Attempt itself committed. A rolled-back result hash leaves this row absent entirely.
+        expect(yield* enrollmentAttemptCount(fixture)).toBe(1);
+        expect(yield* readEnrollmentAcceptanceAttempt(fixture, startedAttempt.portalEnrollmentAttemptId)).toStrictEqual(
+          { revision: startedAttempt.revision, state: 'IN_PROGRESS' },
+        );
+
+        // The `claim-portal-enrollment-transition` Action committed too — its result carries the
+        // same Attempt snapshot — and the provider account the claim authorized was created and
+        // journalled under the transition this route owns.
+        expect(
+          yield* readEnrollmentAcceptanceOperations(fixture, startedAttempt.portalEnrollmentAttemptId),
+        ).toMatchObject([
+          {
+            outcome_code: 'provider_account_created',
+            status: 'SUCCEEDED',
+            transition_key: PORTAL_ACCOUNT_CREATION_TRANSITION_KEY,
+          },
+        ]);
+        const [account] = yield* portalAccountsFor(email);
+        if (account === undefined) {
+          throw new Error('The committed start must have created the portal account its claim authorized');
+        }
+        const durable = yield* fixture.ownerStore.read({
+          portalEnrollmentAttemptId: startedAttempt.portalEnrollmentAttemptId,
+          tenantId: Schema.decodeSync(EnrollmentTenantIdSchema)(tenantId),
+        });
+        expect(durable.accountSubject).toStrictEqual({
+          authenticationNamespaceId: COMMERCE_AUTHENTICATION_NAMESPACE_ID,
+          providerSubjectId: account.id,
+          subjectType: 'user',
+        });
+
+        // And the caller reads its own committed Attempt back through the mounted read route.
+        const readAssertion = yield* issueAcceptanceGatewayAssertion(fixture.admin, gateway, READ_AUDIENCE, {
+          authBindingId: subject.authBindingId,
+          authContextRef: `portal-session:${subject.principalId}`,
+          authenticationNamespaceId: COMMERCE_AUTHENTICATION_NAMESPACE_ID,
+          authMethod: 'session',
+          principalId: subject.principalId,
+          tenantId,
+        });
+        const read = yield* Effect.promise(
+          async () =>
+            await runtime.handler(
+              new Request(`${ORIGIN}/api/portal-auth/enrollment/${startedAttempt.portalEnrollmentAttemptId}`, {
+                headers: {
+                  authorization: `Bearer ${readAssertion}`,
+                  origin: ORIGIN,
+                  'x-correlation-id': `enrollment-http-${randomUUID()}`,
+                },
+                method: 'GET',
+              }),
+            ),
+        );
+        expect(read.status).toBe(200);
+        expect(yield* Effect.promise(async () => await read.clone().json())).toMatchObject({
+          journey: 'RETAIL_SELF_ENROLLMENT',
+          portalEnrollmentAttemptId: startedAttempt.portalEnrollmentAttemptId,
+        });
+
+        // The address' durable budget row, removed again on scope close.
+        expect(yield* enrollmentStartBudgetKeys(email)).toHaveLength(1);
+      }),
+    ),
+  180_000,
+);
+
+/**
+ * The third Action whose result carries an Attempt snapshot, over its own governed route.
+ *
+ * `record-portal-enrollment-outcome` is what an owner module calls to settle a transition whose
+ * answer was lost: the owner authority reconciles it authoritatively and the Action commits that
+ * resolution. Its result is an Attempt snapshot and an owner operation snapshot, so it is hashed
+ * exactly as the start and claim results are — and was refused exactly as they were.
+ */
+it.live(
+  'commits the governed record Action that settles an indeterminate owner transition',
+  () =>
+    Effect.scoped(
+      Effect.gen(function* governedRecordCommits() {
+        const tenantId = randomUUID();
+        const fixture = yield* makeEnrollmentAcceptanceFixture({ tenantId });
+        const subject = yield* seedGovernedStartSubject(tenantId);
+        yield* seedGovernedStartAuthorization(subject, [RECORD_ACTION_KEY]);
+        const gateway = yield* makeAcceptanceGatewayIssuer(GOVERNED_START_ISSUER, GOVERNED_START_KEY_ID);
+        const runtime = yield* authenticatedRuntime(
+          gateway,
+          singleUseRedemptionLive,
+          commerceCustomerContextActionRuntimeAwaitingOwnerPreparation.pipe(
+            Layer.provide(yield* preparationAuthorityLive()),
+          ),
+        );
+        const actorPrincipalId = Schema.decodeSync(EnrollmentPrincipalIdSchema)(subject.principalId);
+        const email = `enrollment-http-${randomUUID()}@example.test`;
+        yield* removePortalAccountsOnClose(email);
+        const startInput = startInputFor(email);
+        const attempt = yield* startAcceptanceEnrollment(fixture, startInput, actorPrincipalId);
+        const claim = yield* commercePortalAuthEnrollmentAccountCreationClaim(
+          startInput,
+          attempt.portalEnrollmentAttemptId,
+        );
+        const claimed = yield* fixture.ownerStore
+          .claimTransition(
+            Schema.decodeUnknownSync(ClaimEnrollmentTransitionInputSchema)({
+              actorPrincipalId,
+              expectedRevision: attempt.revision,
+              leaseDurationMs: 30_000,
+              ownerInvocationId: claim.ownerInvocationId,
+              ownerModuleKey: claim.ownerModuleKey,
+              portalEnrollmentAttemptId: attempt.portalEnrollmentAttemptId,
+              requestDigest: claim.requestDigest,
+              required: true,
+              tenantId,
+              transitionKey: claim.transitionKey,
+              workerId: START_WORKER_ID,
+            }),
+          )
+          .pipe(
+            Effect.flatMap(
+              claimedOrIndeterminate({
+                ownerInvocationId: claim.ownerInvocationId,
+                portalEnrollmentAttemptId: attempt.portalEnrollmentAttemptId,
+              }),
+            ),
+          );
+        expect(claimed.outcome).toBe('CLAIMED');
+
+        // The provider really committed the account this claim authorized, so the directory holds
+        // the correlation the owner's authoritative lookup reconciles by.
+        const scope = yield* Effect.scope;
+        const accountCreation = Context.get(
+          yield* Layer.buildWithScope(yield* configuredRealmLive(), scope),
+          CommercePortalAuthAccountCreationService,
+        );
+        yield* accountCreation.createAccount({
+          email,
+          enrollmentAttemptId: attempt.portalEnrollmentAttemptId,
+          name: START_DISPLAY_NAME,
+          ownerInvocationId: claim.ownerInvocationId,
+          password: startInput.password,
+          tenantId,
+        });
+
+        // The answer was lost before the journal recorded it: the lease lapses and the next claim
+        // on this Attempt fences the abandoned transition into durable reconciliation.
+        yield* expireEnrollmentAcceptanceLeases(fixture, attempt.portalEnrollmentAttemptId);
+        const fenced = yield* fixture.ownerStore.claimTransition(
+          Schema.decodeUnknownSync(ClaimEnrollmentTransitionInputSchema)({
+            actorPrincipalId,
+            expectedRevision: claimed.attempt.revision,
+            leaseDurationMs: 30_000,
+            ownerInvocationId: randomUUID(),
+            ownerModuleKey: PORTAL_AUTH_OWNER_MODULE_KEY,
+            portalEnrollmentAttemptId: attempt.portalEnrollmentAttemptId,
+            requestDigest: 'e'.repeat(64),
+            required: true,
+            tenantId,
+            transitionKey: PORTAL_ACCOUNT_VERIFICATION_TRANSITION_KEY,
+            workerId: 'commerce.portal-auth.enrollment-fence',
+          }),
+        );
+        expect(fenced.outcome).toBe('INDETERMINATE');
+        expect(fenced.attempt.state).toBe('RECONCILIATION_REQUIRED');
+
+        const assertion = yield* issueAcceptanceGatewayAssertion(fixture.admin, gateway, READ_AUDIENCE, {
+          authBindingId: subject.authBindingId,
+          authContextRef: `portal-session:${subject.principalId}`,
+          authenticationNamespaceId: COMMERCE_AUTHENTICATION_NAMESPACE_ID,
+          authMethod: 'session',
+          principalId: subject.principalId,
+          tenantId,
+        });
+        const response = yield* Effect.promise(
+          async () =>
+            await runtime.handler(
+              new Request(`${ORIGIN}/commerce-customer-context/actions/record-portal-enrollment-outcome`, {
+                body: JSON.stringify({
+                  expectedRevision: fenced.attempt.revision,
+                  ownerInvocationId: claim.ownerInvocationId,
+                  ownerModuleKey: claim.ownerModuleKey,
+                  portalEnrollmentAttemptId: attempt.portalEnrollmentAttemptId,
+                  transitionKey: claim.transitionKey,
+                }),
+                headers: {
+                  authorization: `Bearer ${assertion}`,
+                  'content-type': 'application/json',
+                  'idempotency-key': randomUUID(),
+                  origin: ORIGIN,
+                  'x-correlation-id': `enrollment-http-${randomUUID()}`,
+                },
+                method: 'POST',
+              }),
+            ),
+        );
+
+        expect(response.status).toBe(200);
+        const [account] = yield* portalAccountsFor(email);
+        if (account === undefined) {
+          throw new Error('The reconciled transition must name the provider account that was created');
+        }
+        expect(yield* Effect.promise(async () => await response.clone().json())).toMatchObject({
+          attempt: {
+            accountSubject: {
+              authenticationNamespaceId: COMMERCE_AUTHENTICATION_NAMESPACE_ID,
+              providerSubjectId: account.id,
+              subjectType: 'user',
+            },
+            portalEnrollmentAttemptId: attempt.portalEnrollmentAttemptId,
+          },
+          operation: {
+            outcomeCode: 'provider_account_reconciled',
+            ownerInvocationId: claim.ownerInvocationId,
+            status: 'SUCCEEDED',
+            transitionKey: PORTAL_ACCOUNT_CREATION_TRANSITION_KEY,
+          },
+          outcome: 'RECORDED',
+        });
+
+        // The durable journal agrees, so the 200 is a committed reconciliation rather than a shape.
+        expect(yield* readEnrollmentAcceptanceOperations(fixture, attempt.portalEnrollmentAttemptId)).toStrictEqual([
+          {
+            outcome_code: 'provider_account_reconciled',
+            reconciliation_ref: attempt.portalEnrollmentAttemptId,
+            result_reference: attempt.portalEnrollmentAttemptId,
+            status: 'SUCCEEDED',
+            transition_key: PORTAL_ACCOUNT_CREATION_TRANSITION_KEY,
+          },
+        ]);
       }),
     ),
   180_000,

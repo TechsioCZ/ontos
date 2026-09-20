@@ -54,7 +54,8 @@ export interface AcceptanceGatewayPrincipal {
   readonly authContextRef: string;
   readonly authenticationNamespaceId: string;
   readonly authMethod: 'session';
-  readonly legalEntityId: string;
+  /** Omitted for a caller whose operation forbids a Legal Entity in its operational scope. */
+  readonly legalEntityId?: string;
   readonly principalId: string;
   readonly tenantId: string;
 }

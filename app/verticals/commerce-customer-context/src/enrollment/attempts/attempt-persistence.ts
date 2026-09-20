@@ -21,7 +21,7 @@ import type {
   ClaimEnrollmentTransitionInput,
   CommercePortalAccountSubject,
   DerivedEnrollmentAttemptState,
-  EnrollmentAttemptLease,
+  EncodedEnrollmentAttemptLease,
   EnrollmentAttemptId,
   EnrollmentAttemptSnapshot,
   EnrollmentAttemptState,
@@ -623,16 +623,24 @@ const requireOwnerRow = (
     : Effect.succeed(row);
 };
 
-const mapTimestamp = (value: Date | string): DateTime.Utc | undefined => {
+const mapInstant = (value: Date | string): DateTime.Utc | undefined => {
   const parsed = DateTime.make(value);
   return Option.isSome(parsed) ? parsed.value : undefined;
+};
+
+/**
+ * The snapshot contracts encode an instant as one canonical UTC ISO string, so a driver `Date` or
+ * text value is normalized to that single encoding here rather than handed on as a class instance.
+ */
+const mapTimestamp = (value: Date | string): string | undefined => {
+  const instant = mapInstant(value);
+  return instant === undefined ? undefined : DateTime.formatIso(instant);
 };
 
 type OptionalPropertyValue =
   | boolean
   | CommercePortalAccountSubject
-  | DateTime.Utc
-  | EnrollmentAttemptLease
+  | EncodedEnrollmentAttemptLease
   | number
   | string
   | null
@@ -783,7 +791,7 @@ const CompleteOperationRowFieldsSchema = Schema.Struct({
   transitionKey: EnrollmentTransitionKeySchema,
 }).annotate({ parseOptions: { onExcessProperty: 'error' } });
 
-const mapOptionalTimestamp = (value: Date | string | null): DateTime.Utc | undefined =>
+const mapOptionalTimestamp = (value: Date | string | null): string | undefined =>
   value === null ? undefined : mapTimestamp(value);
 
 const mapOperation = (
@@ -839,7 +847,7 @@ const mapOperation = (
 const mapDueAttempt = (
   row: DueAttemptRoutineRow,
 ): Effect.Effect<DueEnrollmentAttempt, CommerceEnrollmentAttemptError> => {
-  const updatedAt = mapTimestamp(row.updated_at);
+  const updatedAt = mapInstant(row.updated_at);
   return updatedAt === undefined
     ? Effect.fail(invalid('The listed Enrollment Attempt activity timestamp is invalid'))
     : Effect.succeed({

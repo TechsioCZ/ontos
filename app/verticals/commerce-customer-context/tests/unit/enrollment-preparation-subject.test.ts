@@ -1,4 +1,4 @@
-import { DateTime, Effect, Option, Redacted, Schema } from 'effect';
+import { Effect, Option, Redacted, Schema } from 'effect';
 import { expect, it } from 'effect-rstest';
 
 import {
@@ -61,7 +61,7 @@ const attemptFor = (overrides: {
   readonly withAccountSubject: boolean;
 }): EnrollmentAttemptSnapshot => {
   const base = {
-    createdAt: DateTime.makeUnsafe('2026-09-19T00:00:00.000Z'),
+    createdAt: '2026-09-19T00:00:00.000Z',
     createdByPrincipalId: PRINCIPAL_ID,
     intentDigest: overrides.intentDigest ?? INTENT_DIGEST,
     intentKey: 'commerce.customer-context.portal-enrollment.retail_self_enrollment',
@@ -71,7 +71,7 @@ const attemptFor = (overrides: {
     state: 'IN_PROGRESS' as const,
     targetLegalEntityId: LEGAL_ENTITY_ID,
     tenantId: TENANT_ID,
-    updatedAt: DateTime.makeUnsafe('2026-09-19T00:00:01.000Z'),
+    updatedAt: '2026-09-19T00:00:01.000Z',
   };
   return Schema.decodeSync(EnrollmentAttemptSnapshotSchema)(
     overrides.withAccountSubject
@@ -93,7 +93,7 @@ const partyOperationFor = (overrides: {
 }) => {
   const base = {
     actorPrincipalId: PRINCIPAL_ID,
-    createdAt: DateTime.makeUnsafe('2026-09-19T00:00:00.000Z'),
+    createdAt: '2026-09-19T00:00:00.000Z',
     ownerInvocationId: '30000000-0000-4000-8000-000000000001',
     ownerModuleKey: PARTY_REGISTRY_OWNER_MODULE_KEY,
     portalEnrollmentAttemptId: ATTEMPT_ID,
@@ -104,7 +104,7 @@ const partyOperationFor = (overrides: {
     status: overrides.status,
     tenantId: TENANT_ID,
     transitionKey: PARTY_CANDIDATE_SUBMISSION_TRANSITION_KEY,
-    updatedAt: DateTime.makeUnsafe('2026-09-19T00:00:01.000Z'),
+    updatedAt: '2026-09-19T00:00:01.000Z',
   };
   return Schema.decodeSync(EnrollmentOwnerOperationSnapshotSchema)(
     overrides.resultReference === undefined ? base : { ...base, resultReference: overrides.resultReference },

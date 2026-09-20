@@ -1,3 +1,4 @@
+import type { ReadHandlerUnavailable } from '@app/core-runtime';
 import { ReadPrincipalBindingPayloadSchema } from '@app/core-runtime/auth/external-identity-contracts';
 import { PartyMatchRequestSchema } from '@app/party-registry/api';
 import { ExternalIdentityClient } from '@app/shared-contracts/server/external-identity-client';
@@ -21,7 +22,12 @@ import type {
   EnrollmentResourceIdSchema,
 } from '../../../shared/enrollment-contracts.ts';
 import { RetailCustomerProfileRefSchema } from '../../../shared/resources/retail-customer-profile.ts';
-import { attemptRejected, attemptUnavailable } from '../attempts/errors.ts';
+import {
+  readRetailPortalBindingForPrincipal,
+  readRetailProfileByParty,
+} from '../../persistence/profile-persistence.ts';
+import type { EnrollmentAttemptScopedRoutineInvoker } from '../attempts/attempt-persistence.ts';
+import { attemptRejected, attemptUnavailable, withCause } from '../attempts/errors.ts';
 import type { CommerceEnrollmentAttemptError } from '../attempts/errors.ts';
 import {
   ACTIVATE_PRINCIPAL_BINDING_TRANSITION_KEY,
@@ -47,6 +53,10 @@ import {
   retailPortalBindingActionExecutor,
   retailPortalBindingOwnerEffect,
 } from '../journeys/retail-self-enrollment-profile-owners.ts';
+import type {
+  RetailCustomerProfileOwnerExecutors,
+  RetailPortalBindingOwnerExecutors,
+} from '../journeys/retail-self-enrollment-profile-owners.ts';
 import {
   BIND_RETAIL_PORTAL_PROFILE_TRANSITION_KEY,
   COMMERCE_CUSTOMER_CONTEXT_OWNER_MODULE_KEY,
@@ -64,6 +74,8 @@ import type {
   CommerceEnrollmentCoreIdentityOwnerEffectOptions,
   CommerceEnrollmentOwnerEffect,
 } from './owner-transition-driver.ts';
+import { CommerceEnrollmentOwnerTransactionRunner } from './owner-transition-production.ts';
+import type { CommerceEnrollmentOwnerTransactionRun } from './owner-transition-production.ts';
 import { PORTAL_ACCOUNT_CREATION_TRANSITION_KEY, PORTAL_AUTH_OWNER_MODULE_KEY } from './prepared-owner-authority.ts';
 import { commerceEnrollmentPortalAuthOwnerReconciliationForLookup } from './provider-owner-effect.ts';
 
@@ -266,6 +278,9 @@ const partyEntry: RegistryEntry = Effect.fn('CommerceEnrollmentOwnerEffectRegist
  * The governed Action runtime resolves whether one invocation committed, but it republishes no
  * Action result, and an owner verdict about a profile or a binding is a reading of that exact
  * result. Answering "unavailable" keeps the transition indeterminate, and therefore retryable.
+ *
+ * This stays the answer for a deployment that installed no owner transaction runner: without one
+ * there is no way to read the Commerce owner at all, so nothing about the transition can be settled.
  */
 const actionResultNotRepublished = (): Effect.Effect<never, CommerceActionCommitResolutionFailed> =>
   Effect.fail(
@@ -275,8 +290,103 @@ const actionResultNotRepublished = (): Effect.Effect<never, CommerceActionCommit
     }),
   );
 
-const ensureProfileEntry: RegistryEntry = Effect.fn('CommerceEnrollmentOwnerEffectRegistry.ensureProfile')(
-  function* ensureProfileEntryEffect(
+const commitResolutionUnavailable = (reason: string, cause: unknown): CommerceActionCommitResolutionFailed =>
+  withCause(
+    new CommerceActionCommitResolutionFailed({
+      code: 'commit_resolution_unavailable',
+      reason: reason.slice(0, 500),
+    }),
+    cause,
+  );
+
+/**
+ * One SELECT-only owner read, in its own transaction, under the Tenant and Selling Legal Entity the
+ * durable Attempt already verified — the very scope the governed Action wrote under.
+ *
+ * These two transitions are the ones Commerce owns itself: the owner routines and the Commerce
+ * Action commit in the same database and the same transaction. So the owner's durable state *is*
+ * this invocation's commit resolution, and the one thing the Action runtime cannot republish — the
+ * result reference — is read back from the row the Action wrote. A row the owner does not hold is a
+ * transition that never committed, and the driver may dispatch it again.
+ */
+const ownerReadFor =
+  (run: CommerceEnrollmentOwnerTransactionRun, context: CommerceEnrollmentOwnerEffectContext) =>
+  <Value>(
+    read: (invoker: EnrollmentAttemptScopedRoutineInvoker) => Effect.Effect<Value, ReadHandlerUnavailable>,
+  ): Effect.Effect<Value, CommerceActionCommitResolutionFailed> =>
+    run(
+      {
+        legalEntityId: context.subject.sellingLegalEntityRef.resourceId,
+        tenantId: context.attempt.tenantId,
+      },
+      (invoker) =>
+        read(invoker).pipe(
+          Effect.mapError((failure) =>
+            attemptUnavailable(failure.reason, context.attempt.portalEnrollmentAttemptId, failure),
+          ),
+        ),
+    ).pipe(Effect.mapError((failure) => commitResolutionUnavailable(failure.reason, failure)));
+
+/**
+ * The ensure Action's own result, rebuilt from the Retail Customer Profile the owner holds for the
+ * Attempt's exact Party. `none` is that ensure never having committed, so the transition reopens
+ * for a retry instead of staying stuck.
+ */
+const ensureProfileCommitResolution = (
+  run: Option.Option<CommerceEnrollmentOwnerTransactionRun>,
+  context: CommerceEnrollmentOwnerEffectContext,
+  partyResourceId: string,
+): RetailCustomerProfileOwnerExecutors['commitResolution'] =>
+  Option.isNone(run)
+    ? actionResultNotRepublished
+    : () =>
+        ownerReadFor(
+          run.value,
+          context,
+        )((invoker) => readRetailProfileByParty(invoker, partyResourceId)).pipe(
+          Effect.map((found) =>
+            Option.isNone(found)
+              ? ({ state: 'OPEN' } as const)
+              : ({ result: found.value, state: 'COMMITTED' } as const),
+          ),
+        );
+
+/**
+ * The binding Action's own result, rebuilt from the Retail Portal Profile Binding the owner holds
+ * for the Attempt's exact profile and enrolling Principal, with the durable authorization state
+ * carrying grant completeness. `none` is that binding never having committed.
+ */
+const bindProfileCommitResolution = (
+  run: Option.Option<CommerceEnrollmentOwnerTransactionRun>,
+  context: CommerceEnrollmentOwnerEffectContext,
+  profileResourceId: string,
+): RetailPortalBindingOwnerExecutors['commitResolution'] =>
+  Option.isNone(run)
+    ? actionResultNotRepublished
+    : () =>
+        ownerReadFor(
+          run.value,
+          context,
+        )((invoker) =>
+          readRetailPortalBindingForPrincipal(
+            invoker,
+            {
+              legalEntityId: context.subject.sellingLegalEntityRef.resourceId,
+              principalId: context.subject.principalRef.resourceId,
+              tenantId: context.attempt.tenantId,
+            },
+            profileResourceId,
+          ),
+        ).pipe(
+          Effect.map((found) =>
+            Option.isNone(found)
+              ? ({ state: 'OPEN' } as const)
+              : ({ result: found.value, state: 'COMMITTED' } as const),
+          ),
+        );
+
+const ensureProfileEntry = (run: Option.Option<CommerceEnrollmentOwnerTransactionRun>): RegistryEntry =>
+  Effect.fn('CommerceEnrollmentOwnerEffectRegistry.ensureProfile')(function* ensureProfileEntryEffect(
     transition: JourneyTransitionSpec,
     context: CommerceEnrollmentOwnerEffectContext,
   ): Effect.fn.Return<Option.Option<CommerceEnrollmentRegisteredOwnerEffect>, CommerceEnrollmentAttemptError> {
@@ -301,15 +411,17 @@ const ensureProfileEntry: RegistryEntry = Effect.fn('CommerceEnrollmentOwnerEffe
           requestCorrelation: context.requestCorrelation,
           sellingLegalEntityRef: context.subject.sellingLegalEntityRef,
         },
-        { commitResolution: actionResultNotRepublished, ensureProfile: retailCustomerProfileActionExecutor },
+        {
+          commitResolution: ensureProfileCommitResolution(run, context, partyRef.value.resourceId),
+          ensureProfile: retailCustomerProfileActionExecutor,
+        },
       ),
       requestDigest,
     );
-  },
-);
+  });
 
-const bindProfileEntry: RegistryEntry = Effect.fn('CommerceEnrollmentOwnerEffectRegistry.bindProfile')(
-  function* bindProfileEntryEffect(
+const bindProfileEntry = (run: Option.Option<CommerceEnrollmentOwnerTransactionRun>): RegistryEntry =>
+  Effect.fn('CommerceEnrollmentOwnerEffectRegistry.bindProfile')(function* bindProfileEntryEffect(
     transition: JourneyTransitionSpec,
     context: CommerceEnrollmentOwnerEffectContext,
   ): Effect.fn.Return<Option.Option<CommerceEnrollmentRegisteredOwnerEffect>, CommerceEnrollmentAttemptError> {
@@ -353,12 +465,14 @@ const bindProfileEntry: RegistryEntry = Effect.fn('CommerceEnrollmentOwnerEffect
           requestCorrelation: context.requestCorrelation,
           sellingLegalEntityRef: context.subject.sellingLegalEntityRef,
         },
-        { bindProfile: retailPortalBindingActionExecutor, commitResolution: actionResultNotRepublished },
+        {
+          bindProfile: retailPortalBindingActionExecutor,
+          commitResolution: bindProfileCommitResolution(run, context, String(profileResourceId.value)),
+        },
       ),
       requestDigest,
     );
-  },
-);
+  });
 
 /**
  * Reconcile-only: the credential-carrying dispatch belongs to the enrollment start route alone, and
@@ -574,6 +688,14 @@ export const CommerceEnrollmentOwnerEffectRegistryLive = Layer.effect(
     const accountLookup = yield* CommercePortalAuthAccountLookupService;
     const client = yield* ExternalIdentityClient;
     const configuration = yield* CommerceCoreIdentityClientConfig;
+    /**
+     * Optional on purpose: the two Commerce-owned transitions reconcile by reading the Commerce
+     * owner, and a composition that installs no owner transaction runner — the fail-closed and
+     * preparation-only wirings — keeps the old refusal rather than gaining a new hard requirement.
+     */
+    const ownerTransactionRun = (yield* Effect.serviceOption(CommerceEnrollmentOwnerTransactionRunner)).pipe(
+      Option.map((runner) => runner.run),
+    );
     const core: CoreIdentitySeam = {
       client,
       clientOptions: (context) =>
@@ -594,11 +716,11 @@ export const CommerceEnrollmentOwnerEffectRegistryLive = Layer.effect(
       [registryKey(PARTY_REGISTRY_OWNER_MODULE_KEY, PARTY_CANDIDATE_SUBMISSION_TRANSITION_KEY), partyEntry],
       [
         registryKey(COMMERCE_CUSTOMER_CONTEXT_OWNER_MODULE_KEY, ENSURE_RETAIL_CUSTOMER_PROFILE_TRANSITION_KEY),
-        ensureProfileEntry,
+        ensureProfileEntry(ownerTransactionRun),
       ],
       [
         registryKey(COMMERCE_CUSTOMER_CONTEXT_OWNER_MODULE_KEY, BIND_RETAIL_PORTAL_PROFILE_TRANSITION_KEY),
-        bindProfileEntry,
+        bindProfileEntry(ownerTransactionRun),
       ],
       [registryKey(CORE_IDENTITY_OWNER_MODULE_KEY, RESERVE_PRINCIPAL_BINDING_TRANSITION_KEY), coreReserveEntry(core)],
       [registryKey(CORE_IDENTITY_OWNER_MODULE_KEY, ACTIVATE_PRINCIPAL_BINDING_TRANSITION_KEY), coreActivateEntry(core)],

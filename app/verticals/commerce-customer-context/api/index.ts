@@ -570,6 +570,10 @@ const commerceEnrollmentOwnerEffectRegistryRealmLive = CommerceEnrollmentOwnerEf
     Layer.mergeAll(
       commercePortalAuthAccountLookupRealmLive.pipe(Layer.provide(CommercePortalAuthConfigLive)),
       commerceCoreIdentityRealmLive,
+      // The two Commerce-owned Retail transitions reconcile a lost Action response by reading the
+      // Commerce owner itself, so the deployed registry is handed the same owner transaction runner
+      // every other owner phase opens its transactions through.
+      commerceEnrollmentOwnerTransactionRunnerProductionLive,
     ),
   ),
 );
@@ -631,17 +635,22 @@ const deploymentEnrollmentAccountLookupLive = Layer.unwrap(
   ),
 );
 const enrollmentAwareActionRuntimeLive = commerceEnrollmentActionRuntimeLive.pipe(
-  Layer.provide(
-    Layer.mergeAll(actionRuntimeCoreLive, actionRuntimeServicesLive, deploymentEnrollmentOwnerPreparationLive),
-  ),
+  Layer.provide(Layer.mergeAll(actionRuntimeCoreLive, actionRuntimeServicesLive)),
 );
-/** Deployment composition seam. External owner ports remain visible requirements here. */
-const commerceCustomerContextActionRuntime = enrollmentAwareActionRuntimeLive.pipe(
+/**
+ * Deployment composition seam. External owner ports and the enrollment owner preparation authority
+ * remain visible requirements here.
+ */
+const actionRuntimeAwaitingOwnerPreparation = enrollmentAwareActionRuntimeLive.pipe(
   Layer.provideMerge(productionOwnerRuntimeServicesLive),
   Layer.provideMerge(productionOwnerAuthorizationOverlayLive),
   Layer.provideMerge(productionPurchaseLimitCurrentnessLive),
   Layer.provideMerge(purchaseApprovalCurrentnessFactoryLive),
   Layer.provide(DatabaseConfigLive),
+);
+/** Deployment composition seam. External owner ports remain visible requirements here. */
+const commerceCustomerContextActionRuntime = actionRuntimeAwaitingOwnerPreparation.pipe(
+  Layer.provide(deploymentEnrollmentOwnerPreparationLive.pipe(Layer.provide(DatabaseConfigLive))),
 );
 /** Deployment composition seam. External owner ports remain visible requirements here. */
 const commerceCustomerContextReadRuntime = readRuntimeCoreLive.pipe(
@@ -651,6 +660,25 @@ const commerceCustomerContextReadRuntime = readRuntimeCoreLive.pipe(
   Layer.provide(DatabaseConfigLive),
 );
 const productionActionRuntimeLive = commerceCustomerContextActionRuntime.pipe(
+  Layer.provideMerge(commerceCustomerContextProductionExternalPortsLive),
+  Layer.provideMerge(ProfileReconciliationOwnerVerifierUnavailableLive),
+);
+
+/**
+ * The very Action runtime a deployment mounts, with the enrollment owner preparation authority
+ * still a visible requirement instead of the one the ambient environment selects.
+ *
+ * That authority is what lets a governed Action proceed on a claimed owner payload, and the
+ * deployment picks it from `COMMERCE_PORTAL_AUTH_*` and `COMMERCE_CORE_IDENTITY_*`. Leaving it in
+ * the requirements is the same choice the portal realm is given as a parameter of
+ * `makeCommerceCustomerContextApiRuntime`: the deployment still decides which authority it
+ * installs, and each side of the decision stays provable without a process-global environment.
+ */
+export const commerceCustomerContextActionRuntimeAwaitingOwnerPreparation: Layer.Layer<
+  ActionRuntime,
+  Layer.Error<typeof productionActionRuntimeLive>,
+  CommerceEnrollmentOwnerTransitionPreparation
+> = actionRuntimeAwaitingOwnerPreparation.pipe(
   Layer.provideMerge(commerceCustomerContextProductionExternalPortsLive),
   Layer.provideMerge(ProfileReconciliationOwnerVerifierUnavailableLive),
 );
