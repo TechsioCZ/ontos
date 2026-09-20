@@ -31,6 +31,7 @@ import {
   backdateEnrollmentAcceptanceAttempt,
   makeEnrollmentAcceptanceFixture,
   expireEnrollmentAcceptanceSweepClaim,
+  readEnrollmentAcceptanceAttempt,
   readEnrollmentAcceptanceSweepCount,
   startEnrollmentAcceptanceAttempt,
 } from '../support/enrollment-acceptance-fixture.ts';
@@ -419,6 +420,43 @@ it.live('withholds a claimed Attempt from every listing until the claim expires,
 
       expect(ofScenario(yield* store.listDue(query)).map((row) => row.revision)).toStrictEqual([attempt.revision]);
       expect(yield* store.claimSweep(sweepFor(attempt, tenantId, CLAIM_WINDOW_MILLIS))).toStrictEqual(Option.some(2));
+    }),
+  ),
+);
+
+it.live('refuses a claim against a listing snapshot the Attempt has since outgrown', () =>
+  Effect.scoped(
+    Effect.gen(function* staleListingCannotClaim() {
+      const tenantId = tenant(randomUUID());
+      const actorPrincipalId = principalId(randomUUID());
+      const fixture = yield* makeEnrollmentAcceptanceFixture({ tenantId });
+      const attempt = yield* startEnrollmentAcceptanceAttempt(
+        fixture,
+        startInputFor(tenantId, actorPrincipalId, 'due-work-stale-revision'),
+      );
+      yield* backdateEnrollmentAcceptanceAttempt(fixture, attempt.portalEnrollmentAttemptId, ANCIENT_ACTIVITY[0]);
+      const store = commerceEnrollmentDueAttemptStoreForRun(fixture.runWorker);
+      const query = { after: Option.none(), limit: 500, maxSweeps: SWEEP_BUDGET, staleAfterMillis: 0 };
+      const ofScenario = (rows: readonly DueEnrollmentAttempt[]) => rows.filter((row) => row.tenantId === tenantId);
+
+      // The listing's own snapshot of the Attempt's revision, taken before anything else moves it.
+      const [listed] = ofScenario(yield* store.listDue(query));
+      if (listed === undefined) {
+        throw new Error('Expected the fixture Attempt on the due-work listing');
+      }
+
+      // Something advances the Attempt after the listing read it but before the claim runs, exactly
+      // as a real transition would between one worker's listing and its claim.
+      yield* advanceEnrollmentAcceptanceAttemptRevision(fixture, attempt.portalEnrollmentAttemptId);
+
+      // The claim carries the stale snapshot's revision, exactly as a worker mid-pass would.
+      expect(yield* store.claimSweep(sweepFor(listed, tenantId, CLAIM_WINDOW_MILLIS))).toStrictEqual(Option.none());
+
+      // A stale claim must not touch the accounting at the Attempt's current revision: it neither
+      // delays the rightful worker for the claim TTL nor spends a sweep nothing performed.
+      expect(yield* readEnrollmentAcceptanceSweepCount(fixture, attempt.portalEnrollmentAttemptId)).toBe(0);
+      const current = yield* readEnrollmentAcceptanceAttempt(fixture, attempt.portalEnrollmentAttemptId);
+      expect(current.revision).toBe(attempt.revision + 1);
     }),
   ),
 );

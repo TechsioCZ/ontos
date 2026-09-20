@@ -305,15 +305,17 @@ export const makeCommercePortalAuthRecoveryStore = Effect.fn('CommercePortalAuth
           Effect.fn('CommercePortalAuthRecoveryStore.consumeEmailVerificationWithAudit.transaction')(
             function* consumeTransaction(transaction) {
               const rows = yield* transaction
-                .delete(verification)
+                .select({ expiresAt: verification.expiresAt, id: verification.id, value: verification.value })
+                .from(verification)
                 .where(eq(verification.identifier, identifier))
-                .returning({ expiresAt: verification.expiresAt, value: verification.value });
+                .for('update');
               // A provider token is deterministic in the realm secret and the address, so a
               // re-registered address can leave two ledger rows under one identifier bound to two
-              // different subjects. `DELETE … RETURNING` has no defined order, so admitting the
-              // first row would verify an arbitrary one of them. Both rows are spent here and
-              // neither is admitted: an ambiguous binding is refused, never guessed.
+              // different subjects. Postgres defines no order across them, so admitting either one
+              // would verify an arbitrary subject. Both rows are spent here and neither is
+              // admitted: an ambiguous binding is refused, never guessed.
               if (rows.length > 1) {
+                yield* transaction.delete(verification).where(eq(verification.identifier, identifier));
                 return Option.none<string>();
               }
               const [row] = rows;
@@ -322,11 +324,15 @@ export const makeCommercePortalAuthRecoveryStore = Effect.fn('CommercePortalAuth
                 !Number.isFinite(epochMillis(row.expiresAt)) ||
                 epochMillis(row.expiresAt) <= epochMillis(input.now)
               ) {
+                if (row !== undefined) {
+                  yield* transaction.delete(verification).where(eq(verification.id, row.id));
+                }
                 return Option.none<string>();
               }
 
               const record = decodeVerificationLedgerRecord(row.value);
               if (Option.isNone(record)) {
+                yield* transaction.delete(verification).where(eq(verification.id, row.id));
                 return Option.none<string>();
               }
 
@@ -341,9 +347,12 @@ export const makeCommercePortalAuthRecoveryStore = Effect.fn('CommercePortalAuth
                   ),
                 )
                 .returning({ id: user.id });
+              // A missed update (account deleted or rebound since `detect` read it) keeps the ledger
+              // row, so the retry's `detect` still finds the stale binding and records the conflict.
               if (updated.length !== 1) {
                 return Option.none<string>();
               }
+              yield* transaction.delete(verification).where(eq(verification.id, row.id));
               yield* writeCommercePortalAuthAuditRow(transaction, {
                 ...input.audit,
                 correlationDigest: digest,

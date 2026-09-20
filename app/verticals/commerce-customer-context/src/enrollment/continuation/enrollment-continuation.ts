@@ -337,7 +337,11 @@ const runTransition = Effect.fn('CommerceEnrollmentContinuation.runTransition')(
       return yield* reconcileStep(input, operation.value);
     }
     if (status === 'FAILED') {
-      return failureHalt(input.transition, operation.value);
+      // A pending owner decision is reconcilable even after it is recorded FAILED; every other
+      // failure is terminal, so only that one code re-reads the owner instead of re-halting.
+      return operation.value.failureCode === OWNER_RECONCILIATION_REQUIRED_FAILURE_CODE
+        ? yield* reconcileStep(input, operation.value)
+        : failureHalt(input.transition, operation.value);
     }
     if (status === 'IN_PROGRESS') {
       // Only the lease holder may finish a running dispatch; once the lease lapses the transition is

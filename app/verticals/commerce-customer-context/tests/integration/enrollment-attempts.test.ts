@@ -40,7 +40,10 @@ import type {
 } from '../../src/enrollment/attempts/attempt-service.ts';
 import { CommerceEnrollmentAttemptRejected } from '../../src/enrollment/attempts/errors.ts';
 import { commerceEnrollmentCompletionAuthorityForPersistence } from '../../src/enrollment/orchestration/completion.ts';
-import { retailSelfEnrollmentJourneyDefinition } from '../../src/enrollment/journeys/retail-self-enrollment-contracts.ts';
+import {
+  OWNER_RECONCILIATION_REQUIRED_FAILURE_CODE,
+  retailSelfEnrollmentJourneyDefinition,
+} from '../../src/enrollment/journeys/retail-self-enrollment-contracts.ts';
 import type { JourneyTransitionSpec } from '../../src/enrollment/journeys/journey-contracts.ts';
 import type {
   AttemptClaimResult,
@@ -183,6 +186,20 @@ const makeTransactionExecutor =
   (transaction: CommerceCustomerContextTransaction) => (statement: Parameters<typeof transaction.execute>[0]) =>
     transaction.execute(statement, 'objects');
 
+/** Every scenario's fixtures are this Tenant's Attempts and owner operations, torn down the same way. */
+const cleanupTenantFixtures = (
+  admin: Effect.Success<ReturnType<typeof makeTestDatabaseFromPool<typeof commerceCustomerContextRelations>>>,
+) =>
+  admin.transaction((transaction: CommerceCustomerContextTransaction) =>
+    Effect.gen(function* cleanFixtures() {
+      yield* transaction.execute(sql`set local session_replication_role = 'replica'`, 'objects');
+      yield* transaction
+        .delete(portalEnrollmentOwnerOperations)
+        .where(eq(portalEnrollmentOwnerOperations.tenantId, tenantId));
+      yield* transaction.delete(portalEnrollmentAttempts).where(eq(portalEnrollmentAttempts.tenantId, tenantId));
+    }),
+  );
+
 it.live('proves durable Attempt CAS, expiry fencing, governed recovery, and RLS in PostgreSQL', () =>
   Effect.scoped(
     Effect.gen(function* postgresAcceptance() {
@@ -196,16 +213,7 @@ it.live('proves durable Attempt CAS, expiry fencing, governed recovery, and RLS 
       const admin = yield* makeTestDatabaseFromPool(adminPool, commerceCustomerContextRelations);
       const runtime = yield* makeTestDatabaseFromPool(runtimePool, commerceCustomerContextRelations);
 
-      const cleanup = () =>
-        admin.transaction((transaction) =>
-          Effect.gen(function* cleanFixtures() {
-            yield* transaction.execute(sql`set local session_replication_role = 'replica'`, 'objects');
-            yield* transaction
-              .delete(portalEnrollmentOwnerOperations)
-              .where(eq(portalEnrollmentOwnerOperations.tenantId, tenantId));
-            yield* transaction.delete(portalEnrollmentAttempts).where(eq(portalEnrollmentAttempts.tenantId, tenantId));
-          }),
-        );
+      const cleanup = () => cleanupTenantFixtures(admin);
 
       const inScope = <Value>(
         operation: (
@@ -597,6 +605,143 @@ it.live('proves durable Attempt CAS, expiry fencing, governed recovery, and RLS 
         ),
       );
       expect(Exit.isFailure(rawTableResult)).toBe(true);
+    }),
+  ),
+);
+
+it.live('reconciles a FAILED owner_reconciliation_required outcome instead of reporting CONFLICT', () =>
+  Effect.scoped(
+    Effect.gen(function* reconcileOwnerRequiredFailureAcceptance() {
+      const connections = yield* loadDatabaseConnectionPair();
+      const adminPool = yield* acquirePoolResource(
+        () => new Pool({ connectionString: connections.admin.connectionString }),
+      );
+      const runtimePool = yield* acquirePoolResource(
+        () => new Pool({ connectionString: connections.runtime.connectionString, max: 4 }),
+      );
+      const admin = yield* makeTestDatabaseFromPool(adminPool, commerceCustomerContextRelations);
+      const runtime = yield* makeTestDatabaseFromPool(runtimePool, commerceCustomerContextRelations);
+
+      const cleanup = () => cleanupTenantFixtures(admin);
+
+      const inScope = <Value>(
+        operation: (persistence: CommerceEnrollmentAttemptPersistence) => Effect.Effect<Value, Error>,
+      ) =>
+        runtime.transaction((transaction) =>
+          Effect.gen(function* scopedAttemptTransaction() {
+            yield* transaction.execute(sql`select set_config('ontos.tenant_id', ${tenantId}, true)`, 'objects');
+            const invoker = scopedRoutineInvokerFromTransaction(makeTransactionExecutor(transaction), scope);
+            const persistence = commerceEnrollmentAttemptPersistenceForTransaction(invoker, scope);
+            return yield* operation(persistence);
+          }),
+        );
+
+      yield* cleanup();
+      yield* Effect.addFinalizer(() => cleanup().pipe(Effect.orDie));
+
+      const created = yield* inScope((persistence) =>
+        persistence.create(
+          startInput('durable-enrollment-owner-required-failure', 'd6200000-0000-4000-8000-000000000001'),
+        ),
+      );
+
+      const [transition] = retailSelfEnrollmentJourneyDefinition.requiredTransitions;
+      if (transition === undefined) {
+        throw new Error('Expected the retail self-enrollment journey to declare at least one required transition');
+      }
+
+      const claimed = yield* inScope((persistence) =>
+        persistence
+          .claim(journeyClaim(created.attempt, transition, 'd6200000-0000-4000-8000-000000000002'))
+          .pipe(Effect.flatMap(requireClaimed)),
+      );
+      const { lease } = claimed.operation;
+      if (lease === undefined) {
+        throw new Error('Expected a lease on the claimed owner transition');
+      }
+
+      // The owner reports "reconcile later" (a Party match style ambiguity): journaled as FAILED
+      // with the owner_reconciliation_required failure code, which is the case the new routine
+      // makes reconcilable — the fixture the fail-without-fix run exercises against the old body.
+      const recorded = yield* inScope((persistence) =>
+        persistence.record(
+          {
+            accountSubject: subject,
+            actorPrincipalId: principalId,
+            expectedRevision: claimed.attempt.revision,
+            failureCode: enrollmentKey(OWNER_RECONCILIATION_REQUIRED_FAILURE_CODE),
+            failureReason: 'The owner candidate is ambiguous and must be reconciled',
+            leaseToken: lease.leaseToken,
+            nextState: 'RECONCILIATION_REQUIRED',
+            ownerInvocationId: claimed.operation.ownerInvocationId,
+            ownerModuleKey: claimed.operation.ownerModuleKey,
+            portalEnrollmentAttemptId: created.attempt.portalEnrollmentAttemptId,
+            status: 'FAILED',
+            tenantId,
+            transitionKey: claimed.operation.transitionKey,
+            workerId: lease.workerId,
+          },
+          'RECONCILIATION_REQUIRED',
+        ),
+      );
+      expect(recorded.outcome).toBe('RECORDED');
+      expect(recorded.attempt.state).toBe('RECONCILIATION_REQUIRED');
+      expect(recorded.operation.status).toBe('FAILED');
+      expect(recorded.operation.failureCode).toBe(enrollmentKey(OWNER_RECONCILIATION_REQUIRED_FAILURE_CODE));
+
+      // A reconciliation that itself reports the same owner_reconciliation_required failure must
+      // not be rejected either, and it must leave the Attempt exactly where it was.
+      const repeatedFailureRef = Schema.decodeSync(EnrollmentEvidenceReferenceSchema)(
+        'd6200000-0000-4000-8000-000000000003',
+      );
+      const stillRequired = yield* inScope((persistence) =>
+        persistence.reconcile(
+          {
+            accountSubject: subject,
+            actorPrincipalId: principalId,
+            expectedRevision: recorded.attempt.revision,
+            failureCode: enrollmentKey(OWNER_RECONCILIATION_REQUIRED_FAILURE_CODE),
+            failureReason: 'The owner candidate is still ambiguous',
+            ownerInvocationId: claimed.operation.ownerInvocationId,
+            ownerModuleKey: claimed.operation.ownerModuleKey,
+            portalEnrollmentAttemptId: created.attempt.portalEnrollmentAttemptId,
+            reconciliationRef: repeatedFailureRef,
+            status: 'FAILED',
+            tenantId,
+            transitionKey: claimed.operation.transitionKey,
+          },
+          'RECONCILIATION_REQUIRED',
+        ),
+      );
+      expect(stillRequired.outcome).toBe('RECORDED');
+      expect(stillRequired.attempt.state).toBe('RECONCILIATION_REQUIRED');
+
+      const reconciliationRef = Schema.decodeSync(EnrollmentEvidenceReferenceSchema)(
+        'd6200000-0000-4000-8000-000000000004',
+      );
+      const reconciled = yield* inScope((persistence) =>
+        persistence.reconcile(
+          {
+            accountSubject: subject,
+            actorPrincipalId: principalId,
+            expectedRevision: stillRequired.attempt.revision,
+            outcomeCode: enrollmentKey('owner_candidate_resolved'),
+            ownerInvocationId: claimed.operation.ownerInvocationId,
+            ownerModuleKey: claimed.operation.ownerModuleKey,
+            portalEnrollmentAttemptId: created.attempt.portalEnrollmentAttemptId,
+            reconciliationRef,
+            resultReference: enrollmentResourceId('owner-candidate-live-1'),
+            status: 'SUCCEEDED',
+            tenantId,
+            transitionKey: claimed.operation.transitionKey,
+          },
+          'IN_PROGRESS',
+        ),
+      );
+      expect(reconciled.outcome).toBe('RECORDED');
+      expect(reconciled.operation.status).toBe('SUCCEEDED');
+      expect(reconciled.attempt.state).not.toBe('RECONCILIATION_REQUIRED');
+      expect(reconciled.attempt.state).toBe('IN_PROGRESS');
     }),
   ),
 );

@@ -4,6 +4,7 @@ import { expect, it } from 'effect-rstest';
 import type { AttemptClaimResult, AttemptRecordResult } from '../../src/enrollment/attempts/attempt-persistence.ts';
 import type { CommerceEnrollmentAttemptService } from '../../src/enrollment/attempts/attempt-service.ts';
 import { CommerceEnrollmentAttemptIndeterminate } from '../../src/enrollment/attempts/errors.ts';
+import { OWNER_RECONCILIATION_REQUIRED_FAILURE_CODE } from '../../src/enrollment/journeys/retail-self-enrollment-contracts.ts';
 import {
   CommerceEnrollmentOwnerEffectIndeterminate,
   CommerceEnrollmentOwnerEffectRejected,
@@ -386,6 +387,42 @@ it.effect('turns a typed owner rejection into one durable FAILED outcome', () =>
     const result = yield* driver.execute(transition);
     expect(result.outcome).toBe('RECORDED');
     expect(recordStatus).toBe('FAILED');
+  }),
+);
+
+it.effect('reconciles a FAILED operation the owner left pending, not a terminal rejection', () =>
+  Effect.gen(function* reconcilesPendingOwnerDecision() {
+    let reconciliations = 0;
+    let recordedResolution: ReconcileEnrollmentResolution | undefined;
+    const pendingOperation = operation({
+      failureCode: Schema.decodeSync(EnrollmentKeySchema)(OWNER_RECONCILIATION_REQUIRED_FAILURE_CODE),
+      status: 'FAILED',
+    });
+    const store = makeAttemptStore(claimResult(), {
+      read: () => Effect.succeed(attempt({ revision: transition.expectedRevision })),
+      readOwnerOperation: () => Effect.succeed(pendingOperation),
+      reconcileOutcome: (_input, resolution) =>
+        Effect.sync(() => {
+          recordedResolution = resolution;
+          return recordResult;
+        }),
+    });
+    const driver = commerceEnrollmentOwnerTransitionDriverFor({
+      attempt: store,
+      owner: {
+        dispatch: () => Effect.die('unused dispatch'),
+        reconcile: () =>
+          Effect.sync(() => {
+            reconciliations += 1;
+            return { actorPrincipalId, reconciliationRef, status: 'SUCCEEDED' as const };
+          }),
+      },
+      workerId: () => workerId,
+    });
+    const result = yield* driver.reconcile(transition);
+    expect(result.outcome).toBe('RECORDED');
+    expect(reconciliations).toBe(1);
+    expect(recordedResolution?.status).toBe('SUCCEEDED');
   }),
 );
 

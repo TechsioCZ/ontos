@@ -2,7 +2,20 @@ import { HttpApi, HttpApiBuilder, HttpRouter, HttpServer } from '@modern-js/bff-
 import { betterAuth } from 'better-auth';
 import { memoryAdapter } from 'better-auth/adapters/memory';
 import { and, eq, inArray, like } from 'drizzle-orm';
-import { Config, Context, Crypto, DateTime, Deferred, Effect, Fiber, Layer, Redacted, Result, Schema } from 'effect';
+import {
+  Config,
+  Context,
+  Crypto,
+  DateTime,
+  Deferred,
+  Effect,
+  Fiber,
+  Layer,
+  Option,
+  Redacted,
+  Result,
+  Schema,
+} from 'effect';
 import { expect, it } from 'effect-rstest';
 import type { Scope } from 'effect';
 import { createHash, createHmac, randomBytes, randomUUID } from 'node:crypto';
@@ -1330,6 +1343,66 @@ it.live(
           .where(eq(user.id, fixture.userId))
           .limit(1);
         expect(users.at(0)?.emailVerified).toBe(false);
+      }),
+    ),
+);
+
+it.live(
+  'leaves the email verification ledger row in place when the account is deleted between reconciliation.detect and the guarded consumption, so a retry still records the conflict',
+  () =>
+    Effect.scoped(
+      Effect.gen(function* postgresVerificationSubjectDeletedMidFlight() {
+        const fixture = yield* makeRecoveryFixture('verification-user-gone');
+        yield* registerFixtureVerificationToken(fixture);
+        const store = yield* makeCommercePortalAuthRecoveryStore(fixture.database.executor).pipe(
+          Effect.provideService(Crypto.Crypto, recoveryCrypto),
+        );
+        const reconciliation = yield* makeCommercePortalAuthRecoveryReconciliation().pipe(
+          Effect.provideService(CommercePortalAuthRecoveryStoreService, store),
+        );
+
+        // Mirrors what `reconciliation.detect` already read and passed as consistent, then the
+        // account is removed before the guarded consumption transaction runs — the exact window
+        // Codex flagged: the ledger DELETE ran unconditionally ahead of the guarded `user` UPDATE.
+        yield* fixture.database.executor.delete(user).where(eq(user.id, fixture.userId));
+
+        const now = yield* DateTime.nowAsDate;
+        const consumed = yield* store.consumeEmailVerificationWithAudit({
+          audit: {
+            eventType: 'commerce.portal-auth.email-verification-consumed.v1',
+            occurredAt: now,
+            operation: 'verify-email',
+            outcome: 'success',
+          },
+          now,
+          token: fixture.verificationToken,
+        });
+        expect(Option.isNone(consumed)).toBe(true);
+
+        // The row must survive the miss: without the fix it is already gone, and no later `detect`
+        // can ever find the stale binding again.
+        const remainingRows = yield* customVerificationRows(fixture);
+        expect(remainingRows).toHaveLength(1);
+
+        const conflict = yield* reconciliation.detect({
+          operation: 'verify-email',
+          token: fixture.verificationToken,
+        });
+        expect(conflict).toStrictEqual(
+          Option.some({
+            conflictClass: 'TOKEN_SUBJECT_STALE',
+            outcome: 'ACCOUNT_RECOVERY_RECONCILIATION_REQUIRED',
+          }),
+        );
+
+        const reconciliationRows = yield* fixture.database.executor
+          .select()
+          .from(recoveryReconciliation)
+          .where(eq(recoveryReconciliation.email, fixture.email));
+        expect(reconciliationRows).toHaveLength(1);
+        expect(reconciliationRows[0]?.conflictClass).toBe('TOKEN_SUBJECT_STALE');
+        expect(reconciliationRows[0]?.providerSubjectId).toBe(fixture.userId);
+        expect(reconciliationRows[0]?.currentProviderSubjectId).toBeNull();
       }),
     ),
 );

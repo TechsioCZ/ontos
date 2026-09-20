@@ -55,6 +55,7 @@ import type {
   CommerceEnrollmentOwnerEffectError,
   CommerceEnrollmentOwnerEffectIndeterminate,
 } from './owner-transition-errors.ts';
+import { OWNER_RECONCILIATION_REQUIRED_FAILURE_CODE } from '../journeys/retail-self-enrollment-contracts.ts';
 
 type CommerceEnrollmentAttemptRejectedError = Extract<
   CommerceEnrollmentAttemptError,
@@ -612,10 +613,16 @@ export const commerceEnrollmentOwnerTransitionDriverFor = (
     if (operation.status === 'SUCCEEDED') {
       return { attempt, operation, outcome: 'REPLAYED' };
     }
-    if (operation.status === 'FAILED') {
+    // A FAILED operation is reconcilable exactly when the owner marked its own decision pending
+    // rather than refused; every other FAILED operation is a terminal owner rejection.
+    if (operation.status === 'FAILED' && operation.failureCode !== OWNER_RECONCILIATION_REQUIRED_FAILURE_CODE) {
       return { attempt, operation, outcome: 'NO_EFFECT' };
     }
-    if (operation.status !== 'INDETERMINATE' && operation.status !== 'RECONCILIATION_REQUIRED') {
+    if (
+      operation.status !== 'INDETERMINATE' &&
+      operation.status !== 'RECONCILIATION_REQUIRED' &&
+      operation.status !== 'FAILED'
+    ) {
       return yield* indeterminate(requested, 'The owner transition is not ready for reconciliation');
     }
     // Outside the fence path the caller's revision must still be Current; the fence above moved it

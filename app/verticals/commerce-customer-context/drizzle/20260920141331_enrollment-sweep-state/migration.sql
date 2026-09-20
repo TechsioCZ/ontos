@@ -86,6 +86,7 @@ BEGIN
     -- authoritative answer on record. `reconcile_portal_enrollment_outcome` demands that reference
     -- and writes it with a final status, so one continuation pass settles the operation and the row
     -- leaves this listing on its own rather than on a rule that has to predict the settlement.
+    -- FAILED + owner_reconciliation_required is an owner still deciding, due on INDETERMINATE terms.
     AND (
       attempt.state = 'IN_PROGRESS'
       OR EXISTS (
@@ -93,8 +94,11 @@ BEGIN
         FROM commerce_customer_context.portal_enrollment_owner_operations AS operation
         WHERE operation.tenant_id = attempt.tenant_id
           AND operation.portal_enrollment_attempt_id = attempt.portal_enrollment_attempt_id
-          AND operation.status = 'INDETERMINATE'
           AND operation.reconciliation_ref IS NULL
+          AND (
+            operation.status = 'INDETERMINATE'
+            OR (operation.status = 'FAILED' AND operation.failure_code = 'owner_reconciliation_required')
+          )
       )
     )
     -- The sweep budget, spent durably rather than in a worker's memory. A count only holds this
@@ -163,6 +167,7 @@ BEGIN
     sweep_claimed_until = now_at + make_interval(secs => greatest(p_claim_ttl_millis, 0)::double precision / 1000)
   WHERE attempt.tenant_id = p_tenant_id
     AND attempt.portal_enrollment_attempt_id = p_attempt_id
+    AND attempt.revision = p_revision -- a listing snapshot the Attempt has outgrown claims nothing
     AND (attempt.sweep_claimed_until IS NULL OR attempt.sweep_claimed_until <= now_at)
     AND NOT (attempt.sweep_revision = p_revision AND attempt.sweep_count >= p_max_sweeps)
   RETURNING attempt.sweep_count INTO claimed;
