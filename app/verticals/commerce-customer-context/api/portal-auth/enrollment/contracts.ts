@@ -42,16 +42,30 @@ const EnrollmentDisplayNameSchema = Schema.String.check(
 );
 
 /**
- * What a caller may name when starting an enrollment. Everything else — Tenant, Actor, the Attempt
- * identity, the intent digest and every owner transition key — is derived from the governed
- * context and the journey's own declaration, so a caller cannot choose which owner transitions its
- * Attempt will be gated on.
+ * What a caller may name when starting an enrollment that brings a brand-new provider account into
+ * being. Everything else — Tenant, Actor, the Attempt identity, the intent digest and every owner
+ * transition key — is derived from the governed context and the journey's own declaration, so a
+ * caller cannot choose which owner transitions its Attempt will be gated on.
  */
-const enrollmentStartFields = {
+const enrollmentAccountCreationFields = {
   displayName: EnrollmentDisplayNameSchema,
   email: EnrollmentEmailSchema,
   partyRef: Schema.optionalKey(EnrollmentResourceIdSchema),
   password: EnrollmentPasswordSchema,
+  sellingLegalEntityId: EnrollmentLegalEntityIdSchema,
+} as const;
+
+/**
+ * What a caller may name when starting an Existing-account enrollment. This journey never creates a
+ * provider account — it continues a subject the portal session already authenticated — so it has no
+ * `password` and no `displayName`: those fields exist only to create an account, and this branch
+ * never passes them to the provider. Declaring a narrower field set here, rather than reusing the
+ * account-creation fields, means a caller that sends a password gets refused at decode instead of
+ * silently ignored.
+ */
+const enrollmentExistingAccountFields = {
+  email: EnrollmentEmailSchema,
+  partyRef: Schema.optionalKey(EnrollmentResourceIdSchema),
   sellingLegalEntityId: EnrollmentLegalEntityIdSchema,
 } as const;
 
@@ -65,19 +79,21 @@ const rejectExcessProperties = { parseOptions: { onExcessProperty: 'error' } } a
  * governed Action runs, before an Attempt is persisted and before any provider mutation.
  */
 export const CommercePortalAuthEnrollmentStartInputSchema = Schema.Union([
-  Schema.Struct({ ...enrollmentStartFields, journey: Schema.Literal('RETAIL_SELF_ENROLLMENT') }).annotate(
+  Schema.Struct({ ...enrollmentAccountCreationFields, journey: Schema.Literal('RETAIL_SELF_ENROLLMENT') }).annotate(
     rejectExcessProperties,
   ),
   Schema.Struct({
-    ...enrollmentStartFields,
+    ...enrollmentAccountCreationFields,
     invitationId: EnrollmentInvitationIdSchema,
     journey: Schema.Literal('COUNTERPARTY_INVITATION'),
   }).annotate(rejectExcessProperties),
   // Existing-account enrollment continues an already-authenticated subject into a second Tenant,
   // and it enters that Tenant as the journey its own definition composes. Naming an invitation here
   // would ask for a Counterparty claim no owner effect can perform, so the Attempt would journal an
-  // ownership proof and then halt forever: the combination is refused at decode, as Retail's is.
-  Schema.Struct({ ...enrollmentStartFields, journey: Schema.Literal('EXISTING_ACCOUNT') }).annotate(
+  // ownership proof and then halt forever: the combination is refused at decode, as Retail's is. It
+  // also carries no `password` or `displayName`: ownership is proven by the portal session, not by
+  // a credential the provider never sees.
+  Schema.Struct({ ...enrollmentExistingAccountFields, journey: Schema.Literal('EXISTING_ACCOUNT') }).annotate(
     rejectExcessProperties,
   ),
 ]);

@@ -203,6 +203,40 @@ it.effect('advances an Attempt once per tick when the registry and the journal b
   }),
 );
 
+/** Longer than this test takes, so nothing in it ages out of the registry by the clock. */
+const POLL_STALE_WINDOW_MILLIS = 60_000;
+
+it.effect('advances an Attempt the journal still reports due although the registry saw a halt moments ago', () =>
+  Effect.gen(function* durableRowSurvivesAFreshHalt() {
+    const attempt: ReadEnrollmentAttemptInput = {
+      portalEnrollmentAttemptId: attemptId(randomUUID()),
+      tenantId: tenantId(randomUUID()),
+    };
+    const scripted = yield* scriptedContinuation(yield* journalOf(due(attempt)), 'HALTED');
+    const sweeper = yield* commerceEnrollmentContinuationSweeperFor({
+      continuation: scripted.service,
+      staleAfterMillis: POLL_STALE_WINDOW_MILLIS,
+    });
+
+    // What the read route's resume does through this very continuation: it halts IN_FLIGHT, writes
+    // nothing durable, and refreshes the in-process entry's last activity. A client polling the
+    // Attempt does exactly this, over and over, for as long as it waits.
+    expect((yield* sweeper.continuation.advance(attempt)).outcome).toBe('HALTED');
+
+    const sweep = yield* sweeper.sweep;
+
+    // The journal still lists the Attempt: nothing moved its durable revision, and the database's
+    // own clock is what decided it is due. Letting the fresh registry entry veto that row leaves
+    // `swept` at 0 and the second call below missing — and an Attempt somebody is waiting on is
+    // then the one Attempt the sweeper will never re-advance.
+    expect(sweep.swept).toBe(1);
+    expect(yield* scripted.advanced).toStrictEqual([
+      attempt.portalEnrollmentAttemptId,
+      attempt.portalEnrollmentAttemptId,
+    ]);
+  }),
+);
+
 it.effect('leaves an Attempt alone once its budget ran out, until its durable revision moves', () =>
   Effect.gen(function* exhaustedAttemptIsNotReseeded() {
     const attempt: ReadEnrollmentAttemptInput = {

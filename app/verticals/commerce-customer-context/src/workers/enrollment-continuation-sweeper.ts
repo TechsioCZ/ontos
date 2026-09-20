@@ -15,9 +15,10 @@ import type { ReadEnrollmentAttemptInput } from '../../shared/enrollment-contrac
  *
  * The sweeper is that something. It wraps the continuation rather than sitting beside it, so every
  * halt is recorded exactly where halts happen and no caller has to remember to enrol an Attempt.
- * A tracked Attempt is re-advanced once its last activity is older than the lease window: before
- * that a live claim still owns it, and the claim — not this loop — is what grants ownership, so a
- * sweep that overlaps a live worker is refused by the durable lease rather than by timing.
+ * A tracked Attempt the journal has not named yet is re-advanced once its last activity is older
+ * than the lease window: before that a live claim still owns it, and the claim — not this loop — is
+ * what grants ownership, so a sweep that overlaps a live worker is refused by the durable lease
+ * rather than by timing.
  *
  * That in-process record dies with the process, and the Attempt it was recording does not: a host
  * killed between the start route's commit and the continuation's answer leaves a durable Attempt
@@ -315,11 +316,19 @@ const durableDue = (paging: DuePaging): Effect.Effect<DurableListing> =>
   durableDuePage(paging, { attempts: [], unreadable: Option.none() }, Option.none(), 0);
 
 /**
- * What this tick advances: every tracked Attempt whose last activity is older than the stale
- * window, and every Attempt the journal reports as due that the registry holds no fresher word on.
- * A journal row is already due by the database's own clock, so it is never re-aged against this
- * process's clock; a row the registry still tracks keeps the registry's entry, because that entry
- * carries the sweep budget this Attempt has already spent.
+ * What this tick advances: every Attempt the journal reports as due, and every tracked Attempt the
+ * journal did not name whose last activity is older than the stale window.
+ *
+ * The journal's word is never overruled by the registry's. A due row was already aged by the
+ * database's own clock against the same window, and it was answered while this process held a
+ * durable claim on nothing: it is work this Attempt is owed. An in-process entry says only that
+ * something touched the Attempt here, which a halt that changes nothing durable does on every
+ * single call — so a client polling the read route, whose resume halts with `IN_FLIGHT`, would
+ * otherwise refresh the entry forever and veto the very row the journal keeps offering. What stops
+ * a fruitless repeat is the durable sweep budget the claim charges, not this process's memory.
+ *
+ * The registry therefore only adds Attempts the journal has not named — the halts this process
+ * registered that no listing has reached yet — and those carry the bounded in-process budget.
  */
 const dueEntries = (
   registry: Registry,
@@ -328,11 +337,6 @@ const dueEntries = (
   staleAfterMillis: number,
 ): readonly DueSweep[] => {
   const due = new Map<string, DueSweep>();
-  for (const entry of registry.values()) {
-    if (now - entry.lastActivityMillis >= staleAfterMillis) {
-      due.set(registryKey(entry.attempt), { entry, revision: Option.none() });
-    }
-  }
   for (const listed of durable) {
     const attempt: ReadEnrollmentAttemptInput = {
       portalEnrollmentAttemptId: listed.portalEnrollmentAttemptId,
@@ -340,18 +344,20 @@ const dueEntries = (
     };
     const key = registryKey(attempt);
     const tracked = registry.get(key);
-    // A tracked Attempt the registry does not call stale yet keeps the registry's fresher word:
-    // this process advanced it more recently than the page the journal answered from was built.
-    if (tracked === undefined || due.has(key)) {
-      due.set(key, {
-        entry: {
-          attempt,
-          journalled: true,
-          lastActivityMillis: tracked?.lastActivityMillis ?? DateTime.toEpochMillis(listed.updatedAt),
-          sweeps: tracked?.sweeps ?? 0,
-        },
-        revision: Option.some(listed.revision),
-      });
+    due.set(key, {
+      entry: {
+        attempt,
+        journalled: true,
+        lastActivityMillis: tracked?.lastActivityMillis ?? DateTime.toEpochMillis(listed.updatedAt),
+        sweeps: tracked?.sweeps ?? 0,
+      },
+      revision: Option.some(listed.revision),
+    });
+  }
+  for (const entry of registry.values()) {
+    const key = registryKey(entry.attempt);
+    if (!due.has(key) && now - entry.lastActivityMillis >= staleAfterMillis) {
+      due.set(key, { entry, revision: Option.none() });
     }
   }
   return [...due.values()].slice(0, SWEEP_TICK_LIMIT);

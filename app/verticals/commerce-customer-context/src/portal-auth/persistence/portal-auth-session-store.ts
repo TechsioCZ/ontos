@@ -16,9 +16,8 @@ import type {
   CommercePortalAuthSessionStore,
 } from '../../../api/portal-auth/session/store-service.ts';
 import type { CommercePortalAuthAuditEvent } from '../audit/audit-contracts.ts';
-import { commercePortalAuthAuditRow } from '../audit/audit-mapping.ts';
-import { portalAuthAuditEvent } from '../audit/audit-tables.ts';
-import { CommercePortalAuthAuditUnavailable, commercePortalAuthAuditUnavailable } from '../audit/audit-unavailable.ts';
+import { writeCommercePortalAuthAuditRow } from '../audit/audit-transaction.ts';
+import { CommercePortalAuthAuditUnavailable } from '../audit/audit-unavailable.ts';
 import { CommercePortalAuthDatabase } from './portal-auth-database.ts';
 import type { CommercePortalAuthDatabaseExecutor } from './portal-auth-database-types.ts';
 import { session, user } from './portal-auth-tables.ts';
@@ -40,29 +39,6 @@ const mutationFailure = (operation: string, cause: unknown): CommercePortalAuthS
   Schema.is(CommercePortalAuthAuditUnavailable)(cause)
     ? unavailable(`${operation}-audit`, cause)
     : unavailable(operation, cause);
-
-/** The handle the executor hands a transaction body; it writes the same tables the executor does. */
-type CommercePortalAuthDatabaseTransaction = Parameters<
-  Parameters<CommercePortalAuthDatabaseExecutor['transaction']>[0]
->[0];
-
-/**
- * The audit row for a mutation that actually changed state, written on that mutation's own
- * transaction handle. A refused insert fails the transaction, so the state change rolls back with
- * it and the operation reports the outage instead of committing without evidence. A transaction
- * that changed nothing passes `undefined`: that outcome is a decision, not a state change, and the
- * caller records it through the lenient recorder.
- */
-const writeAuditRow = (
-  transaction: CommercePortalAuthDatabaseTransaction,
-  audit: CommercePortalAuthAuditEvent | undefined,
-): Effect.Effect<void, CommercePortalAuthAuditUnavailable> =>
-  audit === undefined
-    ? Effect.void
-    : transaction
-        .insert(portalAuthAuditEvent)
-        .values(commercePortalAuthAuditRow(audit))
-        .pipe(Effect.asVoid, Effect.mapError(commercePortalAuthAuditUnavailable));
 
 const sessionProjection = {
   authenticatedAt: session.authenticatedAt,
@@ -262,7 +238,7 @@ export const makeCommercePortalAuthSessionStore = (
             .update(session)
             .set({ expiresAt: input.expiresAt, updatedAt: input.now })
             .where(eq(session.id, input.sessionId));
-          yield* writeAuditRow(transaction, audit);
+          yield* writeCommercePortalAuthAuditRow(transaction, audit);
           return Option.some(projectRecord({ ...currentRow, expiresAt: input.expiresAt, updatedAt: input.now }));
         }),
       )
@@ -317,7 +293,7 @@ export const makeCommercePortalAuthSessionStore = (
           if (deleted.length === 0) {
             return false;
           }
-          yield* writeAuditRow(transaction, audit);
+          yield* writeCommercePortalAuthAuditRow(transaction, audit);
           return true;
         }),
       )
@@ -360,7 +336,7 @@ export const makeCommercePortalAuthSessionStore = (
               if (deleted.length === 0) {
                 return 0;
               }
-              yield* writeAuditRow(transaction, input.audit);
+              yield* writeCommercePortalAuthAuditRow(transaction, input.audit);
               return deleted.length;
             },
           ),
@@ -393,7 +369,7 @@ export const makeCommercePortalAuthSessionStore = (
               // Account status, session cleanup and the audit row commit together while holding the
               // subject row lock.
               yield* transaction.delete(session).where(eq(session.userId, input.providerSubjectId));
-              yield* writeAuditRow(transaction, input.audit);
+              yield* writeCommercePortalAuthAuditRow(transaction, input.audit);
               return true;
             },
           ),
@@ -491,7 +467,7 @@ export const makeCommercePortalAuthSessionStore = (
           if (row === undefined) {
             return Option.none();
           }
-          yield* writeAuditRow(transaction, input.audit);
+          yield* writeCommercePortalAuthAuditRow(transaction, input.audit);
           return Option.some(projectRecord(row));
         }),
       )

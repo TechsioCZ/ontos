@@ -87,19 +87,21 @@ it.effect('serves prefixed recovery routes through the owner group and rejects a
     const budget = new Map<string, number>();
     const store: CommercePortalAuthRecoveryStore = {
       accountExists: () => Effect.die('unused: this test substitutes reconciliation.detect directly'),
-      consumeEmailVerification: ({ token }) =>
+      consumeEmailVerificationWithAudit: ({ token }) =>
         Effect.sync(() => {
           consumedToken = Redacted.value(token);
           return Option.some(SUBJECT);
         }),
-      consumePasswordResetLedger: () => Effect.die('unused: this test drives email verification only'),
+      consumePasswordResetLedgerWithAudit: () => Effect.die('unused: this test drives email verification only'),
       consumeRateLimitBudget: ({ key, rule }) =>
         Effect.sync(() => {
           const spent = (budget.get(key) ?? 0) + 1;
           budget.set(key, spent);
           return spent <= rule.max;
         }),
+      dispatchPasswordResetLedger: () => Effect.die('unused: this test drives email verification only'),
       findAccountSubjectForEmail: () => Effect.die('unused: this test substitutes reconciliation.detect directly'),
+      peekDispatchedPasswordResetLedger: () => Effect.die('unused: this test drives email verification only'),
       // Read by the evidence path, not by detection: the verify route names the ledger subject on
       // its intent row. This route's ledger holds no binding for the token the test submits.
       peekEmailVerificationLedger: () => Effect.succeed(Option.none()),
@@ -111,7 +113,10 @@ it.effect('serves prefixed recovery routes through the owner group and rejects a
     };
     // This test substitutes reconciliation.detect directly, so the store's *detection* methods are
     // never called: they exist here only to satisfy the interface.
-    const reconciliation = { detect: () => Effect.succeed(Option.none()) };
+    const reconciliation = {
+      detect: () => Effect.succeed(Option.none()),
+      recordIndeterminateReset: () => Effect.die('unused: this test drives email verification only'),
+    };
     const recovery = yield* makeCommercePortalAuthRecoveryService(unauditedCommercePortalAuthRecorder).pipe(
       Effect.provideService(CommercePortalAuthRecoveryProviderService, makeCommercePortalAuthRecoveryProvider(auth)),
       Effect.provideService(CommercePortalAuthRecoveryReconciliationService, reconciliation),

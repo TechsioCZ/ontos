@@ -496,16 +496,21 @@ const confirmEnable = adminCall(
   (call, body) => call.service.confirmEnableTotp({ body, evidence: call.evidence, headers: call.headers }),
 );
 
+/**
+ * Both administrative mutations carry the attempt evidence the owner's strict audit rows name, the
+ * same two digests the budget above was already keyed on. `totpUri` and `enable` do not: neither
+ * takes a factor away nor invalidates a credential the customer already holds.
+ */
 const disable = adminCall(
   'CommercePortalAuthMfaHttp.disable',
   Schema.decodeEffect(CommercePortalAuthMfaOwnerDisableBodySchema),
-  (call, body) => call.service.disableTwoFactor({ body, headers: call.headers }),
+  (call, body) => call.service.disableTwoFactor({ body, evidence: call.evidence, headers: call.headers }),
 );
 
 const regenerateBackupCodes = adminCall(
   'CommercePortalAuthMfaHttp.regenerateBackupCodes',
   Schema.decodeEffect(CommercePortalAuthMfaOwnerPasswordBodySchema),
-  (call, body) => call.service.generateBackupCodes({ body, headers: call.headers }),
+  (call, body) => call.service.generateBackupCodes({ body, evidence: call.evidence, headers: call.headers }),
 );
 
 const totpUri = adminCall(

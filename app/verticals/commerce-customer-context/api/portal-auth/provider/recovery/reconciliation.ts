@@ -69,6 +69,21 @@ export interface CommercePortalAuthRecoveryReconciliation {
     Option.Option<CommercePortalAuthRecoveryReconciliationRequired>,
     CommercePortalAuthRecoveryUnavailable
   >;
+  /**
+   * Records that one dispatched reset ended with no knowable outcome — the provider never answered,
+   * or answered after the completion evidence could no longer be written — and returns the terminal
+   * outcome for the submission that discovered it.
+   *
+   * `None` means there is nothing indeterminate about this token: no row is claimed for a dispatch,
+   * so the caller's own provider answer stands as it is. Like `detect`, recording the row is the
+   * only effect this ever has: it resets no password, grants no token and clears no claim.
+   */
+  readonly recordIndeterminateReset: (input: {
+    readonly token: Redacted.Redacted;
+  }) => Effect.Effect<
+    Option.Option<CommercePortalAuthRecoveryReconciliationRequired>,
+    CommercePortalAuthRecoveryUnavailable
+  >;
 }
 
 export class CommercePortalAuthRecoveryReconciliationService extends Context.Service<
@@ -136,7 +151,35 @@ export const makeCommercePortalAuthRecoveryReconciliation = Effect.fn('CommerceP
       });
     });
 
-    return { detect };
+    const recordIndeterminateReset = Effect.fn('CommercePortalAuthRecoveryReconciliation.recordIndeterminateReset')(
+      function* recordIndeterminateResetEffect(input: {
+        readonly token: Redacted.Redacted;
+      }): Effect.fn.Return<
+        Option.Option<CommercePortalAuthRecoveryReconciliationRequired>,
+        CommercePortalAuthRecoveryUnavailable
+      > {
+        const binding = yield* store.peekDispatchedPasswordResetLedger({ token: input.token });
+        if (Option.isNone(binding)) {
+          return Option.none();
+        }
+        // Which account owns the identifier now is the first thing an operator asks of an
+        // indeterminate reset, and it is the one column on the conflict row that answers it.
+        const currentProviderSubjectId = yield* store.findAccountSubjectForEmail({ email: binding.value.email });
+        yield* store.recordRecoveryReconciliation({
+          conflictClass: 'RESET_OUTCOME_INDETERMINATE',
+          currentProviderSubjectId,
+          email: binding.value.email,
+          operation: RESET_OPERATION,
+          providerSubjectId: binding.value.providerSubjectId,
+        });
+        return Option.some({
+          conflictClass: 'RESET_OUTCOME_INDETERMINATE' as const,
+          outcome: 'ACCOUNT_RECOVERY_RECONCILIATION_REQUIRED' as const,
+        });
+      },
+    );
+
+    return { detect, recordIndeterminateReset };
   },
 );
 

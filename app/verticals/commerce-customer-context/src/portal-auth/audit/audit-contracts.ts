@@ -10,6 +10,8 @@ const CommercePortalAuthAuditEventTypeSchema = Schema.Literals([
   'commerce.portal-auth.account-disabled.v1',
   'commerce.portal-auth.email-verification-consumed.v1',
   'commerce.portal-auth.email-verification-requested.v1',
+  'commerce.portal-auth.mfa-backup-codes-regenerated.v1',
+  'commerce.portal-auth.mfa-disabled.v1',
   'commerce.portal-auth.mfa-enable-requested.v1',
   'commerce.portal-auth.mfa-verification-requested.v1',
   'commerce.portal-auth.mfa-verified.v1',

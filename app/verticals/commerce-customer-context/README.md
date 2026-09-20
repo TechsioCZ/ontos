@@ -82,6 +82,9 @@ in its place, so the start must be made by the authenticated owner of that accou
 live Commerce portal session whose subject holds the presented address (`401` without one, and the
 group's invalid-request answer when the session owns a different account, in both cases before any
 Attempt is persisted), then claims that transition and journals the session subject on the Attempt.
+Its request body carries no `password` and no `displayName`: those fields exist only to create a
+provider account, this journey never does, and a body that names either is refused at decode with
+`400 invalid_request` before any Attempt is persisted.
 
 A journey that halts is not abandoned. Reading an Attempt that is neither terminal nor under a live
 lease advances it once more, and an in-process sweeper

@@ -94,7 +94,7 @@ const makeMemoryRecoveryStore = (
 
   const store: CommercePortalAuthRecoveryStore = {
     accountExists: (input) => Effect.succeed(input.providerSubjectId === currentSubject),
-    consumeEmailVerification: (input) =>
+    consumeEmailVerificationWithAudit: (input) =>
       Effect.sync(() => {
         if (
           token === null ||
@@ -118,7 +118,7 @@ const makeMemoryRecoveryStore = (
         currentVerified = true;
         return Option.some(consumedSubject);
       }),
-    consumePasswordResetLedger: () => Effect.void,
+    consumePasswordResetLedgerWithAudit: () => Effect.void,
     consumeRateLimitBudget: (input) =>
       Effect.sync(() => {
         const counted = spentBudgets.get(input.key) ?? 0;
@@ -128,10 +128,12 @@ const makeMemoryRecoveryStore = (
         spentBudgets.set(input.key, counted + 1);
         return true;
       }),
+    dispatchPasswordResetLedger: () => Effect.void,
     findAccountSubjectForEmail: (input) =>
       Effect.succeed(
         input.email.toLowerCase() === currentEmail.toLowerCase() ? Option.some(currentSubject) : Option.none(),
       ),
+    peekDispatchedPasswordResetLedger: () => Effect.succeed(Option.none()),
     peekEmailVerificationLedger: () => Effect.succeed(Option.none()),
     peekPasswordResetLedger: () => Effect.succeed(Option.none()),
     recordRecoveryReconciliation: () => Effect.void,
@@ -618,7 +620,7 @@ it.effect(
     const store: CommercePortalAuthRecoveryStore = {
       ...fixture.store,
       accountExists: () => Effect.succeed(true),
-      consumeEmailVerification: () =>
+      consumeEmailVerificationWithAudit: () =>
         Effect.sync(() => {
           consumeCalls += 1;
           return Option.none<string>();
@@ -1207,14 +1209,18 @@ const runAuditedRecovery = <Value>(
 
 const noConsume = (): void => {};
 
+/**
+ * The reset's completion row is written by the ledger transaction rather than by the recorder, so
+ * this fixture hands it to the same callback that observes the consumption: the two are one write.
+ */
 const resetLedgerStore = (
   fixture: MemoryRecoveryStoreFixture,
-  onConsume: () => void,
+  onConsume: (audit: CommercePortalAuthAuditEvent) => void,
 ): CommercePortalAuthRecoveryStore =>
   ({
     ...fixture.store,
     accountExists: () => Effect.succeed(true),
-    consumePasswordResetLedger: () => Effect.sync(onConsume),
+    consumePasswordResetLedgerWithAudit: (input) => Effect.sync(() => onConsume(input.audit)),
     findAccountSubjectForEmail: () => Effect.succeed(Option.some(ORIGINAL_SUBJECT)),
     peekPasswordResetLedger: () =>
       Effect.succeed(
@@ -1251,7 +1257,7 @@ it.effect('refuses the password reset when the pre-mutation intent row cannot be
 });
 
 it.effect('records the reset intent before the provider call and names the ledger subject on both rows', () => {
-  let consumeCalls = 0;
+  const consumedAudits: CommercePortalAuthAuditEvent[] = [];
   const order: string[] = [];
   const fixture = makeMemoryRecoveryStore();
   const provider: CommercePortalAuthRecoveryProvider = {
@@ -1267,25 +1273,29 @@ it.effect('records the reset intent before the provider call and names the ledge
     yield* runAuditedRecovery(
       recording.recorder,
       provider,
-      resetLedgerStore(fixture, () => {
-        consumeCalls += 1;
+      resetLedgerStore(fixture, (audit) => {
+        consumedAudits.push(audit);
       }),
       (service) =>
         service.resetPassword({ newPassword: Redacted.make('P'.repeat(24)), token: Redacted.make('reset-token') }),
     );
-    const [intent, completion] = recording.events();
+    const [intent] = recording.events();
     expect(intent?.eventType).toBe('commerce.portal-auth.recovery-reset-requested.v1');
     expect(intent?.outcome).toBe('requested');
     expect(intent?.providerSubjectId).toBe(ORIGINAL_SUBJECT);
     expect(intent?.correlationDigest).toBe(RESET_TOKEN_DIGEST);
     // The intent row is durable before Better Auth is asked to change anything.
     expect(order).toStrictEqual(['provider']);
+    // The completion row never goes through the recorder: it commits inside the ledger transaction
+    // that retires the spent token, so exactly one write carries both.
+    expect(recording.events()).toHaveLength(1);
+    expect(consumedAudits).toHaveLength(1);
+    const [completion] = consumedAudits;
     expect(completion?.eventType).toBe('commerce.portal-auth.recovery-completed.v1');
+    expect(completion?.outcome).toBe('success');
     // Without the subject the completed reset is the one recovery event nobody can attribute.
     expect(completion?.providerSubjectId).toBe(ORIGINAL_SUBJECT);
     expect(completion?.correlationDigest).toBe(RESET_TOKEN_DIGEST);
-    // The spent token is retired so a replay of the same link cannot be reconciled again.
-    expect(consumeCalls).toBe(1);
   });
 });
 
@@ -1294,7 +1304,7 @@ it.effect('refuses email verification when the pre-mutation intent row cannot be
   const fixture = makeMemoryRecoveryStore();
   const store: CommercePortalAuthRecoveryStore = {
     ...fixture.store,
-    consumeEmailVerification: () =>
+    consumeEmailVerificationWithAudit: () =>
       Effect.sync(() => {
         consumeCalls += 1;
         return Option.some(ORIGINAL_SUBJECT);
@@ -1313,5 +1323,102 @@ it.effect('refuses email verification when the pre-mutation intent row cannot be
     }
     // The address is never marked verified when the deployment cannot record that it was.
     expect(consumeCalls).toBe(0);
+  });
+});
+
+/**
+ * The verification ledger store, wired to the same fixture that names it. Consuming the token and
+ * writing the completion row are one write in `consumeEmailVerificationWithAudit`, so this fixture
+ * hands both to the same callback the reset-ledger fixture above uses; it never touches the fixture's
+ * own token bookkeeping, which is exactly how `resetLedgerStore` treats the reset ledger above.
+ */
+const verificationLedgerStore = (
+  fixture: MemoryRecoveryStoreFixture,
+  onConsume: (audit: CommercePortalAuthAuditEvent) => void,
+): CommercePortalAuthRecoveryStore =>
+  ({
+    ...fixture.store,
+    consumeEmailVerificationWithAudit: (input) =>
+      Effect.sync(() => {
+        onConsume(input.audit);
+        return Option.some(ORIGINAL_SUBJECT);
+      }),
+    peekEmailVerificationLedger: () =>
+      Effect.succeed(
+        Option.some({ email: EMAIL, providerSubjectId: ORIGINAL_SUBJECT, tokenDigest: VERIFICATION_TOKEN_DIGEST }),
+      ),
+  }) satisfies CommercePortalAuthRecoveryStore;
+
+it.effect(
+  'records the verification completion row inside the same consumption write and names the ledger subject on both rows',
+  () => {
+    const consumedAudits: CommercePortalAuthAuditEvent[] = [];
+    const fixture = makeMemoryRecoveryStore();
+    const recording = makeRecordingRecorder();
+    return Effect.gen(function* verifyEvidenceOrdering() {
+      yield* runAuditedRecovery(
+        recording.recorder,
+        successfulProvider(),
+        verificationLedgerStore(fixture, (audit) => {
+          consumedAudits.push(audit);
+        }),
+        (service) => service.verifyEmail({ token: VERIFICATION_TOKEN }),
+      );
+      const [intent] = recording.events();
+      expect(intent?.eventType).toBe('commerce.portal-auth.email-verification-requested.v1');
+      expect(intent?.outcome).toBe('requested');
+      expect(intent?.providerSubjectId).toBe(ORIGINAL_SUBJECT);
+      expect(intent?.correlationDigest).toBe(VERIFICATION_TOKEN_DIGEST);
+      // The completion row never goes through the recorder: it commits inside the ledger write that
+      // consumes the token, so exactly one write carries both.
+      expect(recording.events()).toHaveLength(1);
+      expect(consumedAudits).toHaveLength(1);
+      const [completion] = consumedAudits;
+      expect(completion?.eventType).toBe('commerce.portal-auth.email-verification-consumed.v1');
+      expect(completion?.outcome).toBe('success');
+      expect(completion?.providerSubjectId).toBe(ORIGINAL_SUBJECT);
+      expect(completion?.correlationDigest).toBe(VERIFICATION_TOKEN_DIGEST);
+    });
+  },
+);
+
+it.effect('refuses email verification when the completion transaction fails, leaving the address unverified', () => {
+  let consumeCalls = 0;
+  const fixture = makeMemoryRecoveryStore();
+  const store: CommercePortalAuthRecoveryStore = {
+    ...fixture.store,
+    consumeEmailVerificationWithAudit: () =>
+      Effect.sync(() => {
+        consumeCalls += 1;
+      }).pipe(
+        Effect.flatMap(() =>
+          Effect.fail(
+            new CommercePortalAuthRecoveryUnavailable({
+              operation: 'verification-token-consume-audit',
+              reason: 'the completion transaction was refused',
+            }),
+          ),
+        ),
+      ),
+    peekEmailVerificationLedger: () =>
+      Effect.succeed(
+        Option.some({ email: EMAIL, providerSubjectId: ORIGINAL_SUBJECT, tokenDigest: VERIFICATION_TOKEN_DIGEST }),
+      ),
+  };
+  return Effect.gen(function* verifyCompletionIsStrict() {
+    const outcome = yield* Effect.result(
+      runWithRecovery(successfulProvider(), store, (service) => service.verifyEmail({ token: VERIFICATION_TOKEN })),
+    );
+    expect(Result.isFailure(outcome)).toBe(true);
+    if (Result.isFailure(outcome)) {
+      expect(outcome.failure).toBeInstanceOf(CommercePortalAuthRecoveryUnavailable);
+    }
+    // The store attempted the consumption exactly once, and its own transaction is what must
+    // undo the flip when the completion row cannot be written — this service call makes no
+    // separate mutation the caller could see succeed while evidence is lost. Without the fix (a
+    // lenient emit after a separately-committed consume) this assertion would still pass while
+    // the address was already marked verified — the atomicity is what the store-level and
+    // integration tests prove.
+    expect(consumeCalls).toBe(1);
   });
 });

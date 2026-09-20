@@ -234,11 +234,18 @@ export const recoveryReconciliation = commercePortalAuthSchema.table(
  * token upserts its own row, which keeps a retried issuance idempotent. A terminal row — `expired`
  * by the sweep, `consumed` by a successful reset — clears `providerSubjectId` and `email`,
  * retaining only that it existed.
+ *
+ * `dispatched` is the one non-terminal state that is not `pending`: the row was claimed in its own
+ * transaction immediately before the provider was asked to spend the token, and the provider's
+ * answer never arrived (or arrived after the completion evidence was refused). It keeps its
+ * binding, because that binding is the only thing a support operator has to work out whether the
+ * password actually changed; `dispatchedAt` says when the claim was taken.
  */
 export const recoveryResetLedger = commercePortalAuthSchema.table(
   'recovery_reset_ledger',
   {
     createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
+    dispatchedAt: timestamp('dispatched_at', { withTimezone: true }),
     email: text('email'),
     expiresAt: timestamp('expires_at', { withTimezone: true }).notNull(),
     identifierDigest: text('identifier_digest').notNull(),

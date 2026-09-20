@@ -16,6 +16,9 @@ import type {
   CommercePortalAuthRecoveryStore,
 } from '../../../api/portal-auth/provider/recovery/store-service.ts';
 import { COMMERCE_PORTAL_AUTH_POLICY } from '../../../api/portal-auth/provider/config.ts';
+import type { CommercePortalAuthAuditEvent } from '../audit/audit-contracts.ts';
+import { writeCommercePortalAuthAuditRow } from '../audit/audit-transaction.ts';
+import { CommercePortalAuthAuditUnavailable } from '../audit/audit-unavailable.ts';
 import { CommercePortalAuthDatabase } from './portal-auth-database.ts';
 import type { CommercePortalAuthDatabaseExecutor } from './portal-auth-database-types.ts';
 import { rateLimit, recoveryReconciliation, recoveryResetLedger, user, verification } from './portal-auth-tables.ts';
@@ -25,6 +28,8 @@ const EMAIL_VERIFICATION_RESERVATION_IDENTIFIER_PREFIX = 'commerce-email-verific
 const RESET_LEDGER_STATE_PENDING = 'pending';
 const RESET_LEDGER_STATE_EXPIRED = 'expired';
 const RESET_LEDGER_STATE_CONSUMED = 'consumed';
+/** Claimed for one provider dispatch whose outcome this realm has not learned. */
+const RESET_LEDGER_STATE_DISPATCHED = 'dispatched';
 const RESET_LEDGER_SWEEP_OPERATION = 'recovery-reset-ledger-sweep';
 /** A sweep touches at most this many stale rows per call: bounded work, never a table scan. */
 const RESET_LEDGER_SWEEP_BATCH_SIZE = 100;
@@ -43,6 +48,15 @@ const unavailable = (operation: string, cause: unknown): CommercePortalAuthRecov
     }),
     cause,
   );
+
+/**
+ * A refused audit insert and a refused ledger write are the same outage to a caller — PostgreSQL
+ * rolls the one transaction back either way — but the operation name keeps them apart in a log.
+ */
+const mutationFailure = (operation: string, cause: unknown): CommercePortalAuthRecoveryUnavailable =>
+  Schema.is(CommercePortalAuthAuditUnavailable)(cause)
+    ? unavailable(`${operation}-audit`, cause)
+    : unavailable(operation, cause);
 
 const bytesToHex = (bytes: Uint8Array): string =>
   Array.from(bytes, (byte) => byte.toString(16).padStart(2, '0')).join('');
@@ -260,63 +274,81 @@ export const makeCommercePortalAuthRecoveryStore = Effect.fn('CommercePortalAuth
         .pipe(Effect.mapError((cause) => unavailable('verification-reservation', cause)));
     });
 
-    const consumeEmailVerification = Effect.fn('CommercePortalAuthRecoveryStore.consumeEmailVerification')(
-      function* consumeEmailVerificationEffect(input: {
-        readonly now: Date;
-        readonly token: Redacted.Redacted;
-      }): Effect.fn.Return<Option.Option<string>, CommercePortalAuthRecoveryUnavailable> {
-        const digest = yield* digestToken(crypto, input.token).pipe(
-          Effect.mapError((cause) => unavailable('verification-token-hash', cause)),
-        );
-        const identifier = emailVerificationIdentifier(digest);
-        return yield* database
-          .transaction(
-            Effect.fn('CommercePortalAuthRecoveryStore.consumeEmailVerification.transaction')(
-              function* consumeTransaction(transaction) {
-                const rows = yield* transaction
-                  .delete(verification)
-                  .where(eq(verification.identifier, identifier))
-                  .returning({ expiresAt: verification.expiresAt, value: verification.value });
-                // A provider token is deterministic in the realm secret and the address, so a
-                // re-registered address can leave two ledger rows under one identifier bound to two
-                // different subjects. `DELETE … RETURNING` has no defined order, so admitting the
-                // first row would verify an arbitrary one of them. Both rows are spent here and
-                // neither is admitted: an ambiguous binding is refused, never guessed.
-                if (rows.length > 1) {
-                  return Option.none<string>();
-                }
-                const [row] = rows;
-                if (
-                  row === undefined ||
-                  !Number.isFinite(epochMillis(row.expiresAt)) ||
-                  epochMillis(row.expiresAt) <= epochMillis(input.now)
-                ) {
-                  return Option.none<string>();
-                }
+    /**
+     * Consuming the token and writing the verification's completion audit row are one transaction:
+     * consuming it *is* what flips `user.emailVerified`, so a flip that commits without its
+     * completion row would leave a verified address unevidenced, and a completion row over a token
+     * that was never actually spent would be evidence for a verification that never happened. A
+     * refused write rolls back the flip along with it, so the token and the account are left exactly
+     * as they were — `Option.none` covers both "no row matched" and "the audit row could not be
+     * written", and either way nothing changed.
+     */
+    const consumeEmailVerificationWithAudit = Effect.fn(
+      'CommercePortalAuthRecoveryStore.consumeEmailVerificationWithAudit',
+    )(function* consumeEmailVerificationWithAuditEffect(input: {
+      readonly audit: CommercePortalAuthAuditEvent;
+      readonly now: Date;
+      readonly token: Redacted.Redacted;
+    }): Effect.fn.Return<Option.Option<string>, CommercePortalAuthRecoveryUnavailable> {
+      const digest = yield* digestToken(crypto, input.token).pipe(
+        Effect.mapError((cause) => unavailable('verification-token-hash', cause)),
+      );
+      const identifier = emailVerificationIdentifier(digest);
+      return yield* database
+        .transaction(
+          Effect.fn('CommercePortalAuthRecoveryStore.consumeEmailVerificationWithAudit.transaction')(
+            function* consumeTransaction(transaction) {
+              const rows = yield* transaction
+                .delete(verification)
+                .where(eq(verification.identifier, identifier))
+                .returning({ expiresAt: verification.expiresAt, value: verification.value });
+              // A provider token is deterministic in the realm secret and the address, so a
+              // re-registered address can leave two ledger rows under one identifier bound to two
+              // different subjects. `DELETE … RETURNING` has no defined order, so admitting the
+              // first row would verify an arbitrary one of them. Both rows are spent here and
+              // neither is admitted: an ambiguous binding is refused, never guessed.
+              if (rows.length > 1) {
+                return Option.none<string>();
+              }
+              const [row] = rows;
+              if (
+                row === undefined ||
+                !Number.isFinite(epochMillis(row.expiresAt)) ||
+                epochMillis(row.expiresAt) <= epochMillis(input.now)
+              ) {
+                return Option.none<string>();
+              }
 
-                const record = decodeVerificationLedgerRecord(row.value);
-                if (Option.isNone(record)) {
-                  return Option.none<string>();
-                }
+              const record = decodeVerificationLedgerRecord(row.value);
+              if (Option.isNone(record)) {
+                return Option.none<string>();
+              }
 
-                const updated = yield* transaction
-                  .update(user)
-                  .set({ emailVerified: true, updatedAt: input.now })
-                  .where(
-                    and(
-                      eq(user.id, record.value.providerSubjectId),
-                      eq(user.email, record.value.email),
-                      eq(user.emailVerified, false),
-                    ),
-                  )
-                  .returning({ id: user.id });
-                return updated.length === 1 ? Option.some(record.value.providerSubjectId) : Option.none<string>();
-              },
-            ),
-          )
-          .pipe(Effect.mapError((cause) => unavailable('verification-token-consume', cause)));
-      },
-    );
+              const updated = yield* transaction
+                .update(user)
+                .set({ emailVerified: true, updatedAt: input.now })
+                .where(
+                  and(
+                    eq(user.id, record.value.providerSubjectId),
+                    eq(user.email, record.value.email),
+                    eq(user.emailVerified, false),
+                  ),
+                )
+                .returning({ id: user.id });
+              if (updated.length !== 1) {
+                return Option.none<string>();
+              }
+              yield* writeCommercePortalAuthAuditRow(transaction, {
+                ...input.audit,
+                correlationDigest: digest,
+                providerSubjectId: record.value.providerSubjectId,
+              });
+              return Option.some(record.value.providerSubjectId);
+            },
+          ),
+        )
+        .pipe(Effect.mapError((cause) => mutationFailure('verification-token-consume', cause)));
+    });
 
     /**
      * Housekeeping only: a row untouched for longer than the longest configured window can never
@@ -534,7 +566,10 @@ export const makeCommercePortalAuthRecoveryStore = Effect.fn('CommercePortalAuth
      * (`expired` by the sweep, `consumed` by a completed reset) row's `providerSubjectId`/`email`
      * were already cleared where they were written, but this filter is what actually keeps the row
      * out of lookups even for the instant between expiry and the next sweep: an expired or already
-     * spent row is never returned here regardless of whether it has been swept yet.
+     * spent row is never returned here regardless of whether it has been swept yet. A `dispatched`
+     * row is excluded by the same guard and for the same reason a `consumed` one is: the provider
+     * has already been asked to spend that token, so this submission caused no drift to reconcile.
+     * `peekDispatchedPasswordResetLedger` is the read that deliberately does see those rows.
      */
     const peekPasswordResetLedger = Effect.fn('CommercePortalAuthRecoveryStore.peekPasswordResetLedger')(
       function* peekPasswordResetLedgerEffect(input: {
@@ -568,32 +603,111 @@ export const makeCommercePortalAuthRecoveryStore = Effect.fn('CommercePortalAuth
     );
 
     /**
-     * Terminal state for a token Better Auth has already spent. Without it the row stays `pending`
-     * until it expires, so a customer who re-submits the confirmation link they just used would
-     * have that spent token reconciled against the account's *current* state — and a legitimate
-     * address change or account deletion in between would open a support conflict for a token that
-     * changed nothing. The guard on `pending` makes the transition happen once.
+     * The claim taken immediately before Better Auth is asked to spend the token, in a transaction
+     * of its own so it is durable whatever happens to the provider call next. Better Auth deletes
+     * its own token row inside `resetPassword`, so a call that times out after that commit leaves
+     * this realm with no way to tell a reset that never started from one that finished. A row left
+     * `pending` would make the customer's retry read as a confident `INVALID_TOKEN` rejection; a
+     * `dispatched` row is what turns that same retry into a reconciliation a support operator sees.
+     * The guard on `pending` makes the claim happen once, and the expiry guard keeps a long-dead
+     * token from opening one.
      */
-    const consumePasswordResetLedger = Effect.fn('CommercePortalAuthRecoveryStore.consumePasswordResetLedger')(
-      function* consumePasswordResetLedgerEffect(input: {
+    const dispatchPasswordResetLedger = Effect.fn('CommercePortalAuthRecoveryStore.dispatchPasswordResetLedger')(
+      function* dispatchPasswordResetLedgerEffect(input: {
         readonly token: Redacted.Redacted;
       }): Effect.fn.Return<void, CommercePortalAuthRecoveryUnavailable> {
         const now = yield* DateTime.nowAsDate;
         const tokenDigest = yield* digestToken(crypto, input.token).pipe(
-          Effect.mapError((cause) => unavailable('password-reset-ledger-consume-hash', cause)),
+          Effect.mapError((cause) => unavailable('password-reset-ledger-dispatch-hash', cause)),
         );
         yield* database
           .update(recoveryResetLedger)
-          .set({ email: null, providerSubjectId: null, state: RESET_LEDGER_STATE_CONSUMED, updatedAt: now })
+          .set({ dispatchedAt: now, state: RESET_LEDGER_STATE_DISPATCHED, updatedAt: now })
           .where(
             and(
               eq(recoveryResetLedger.tokenDigest, tokenDigest),
               eq(recoveryResetLedger.state, RESET_LEDGER_STATE_PENDING),
+              gt(recoveryResetLedger.expiresAt, now),
             ),
           )
-          .pipe(Effect.mapError((cause) => unavailable('password-reset-ledger-consume', cause)));
+          .pipe(Effect.mapError((cause) => unavailable('password-reset-ledger-dispatch', cause)));
       },
     );
+
+    /**
+     * The claimed row's binding, read for the one question a lost provider answer leaves open. No
+     * expiry filter: the token itself is unusable once it expires, but whether the dispatch that
+     * claimed it changed the password is still unknown, and that is what a support operator needs.
+     * `consumed` and `expired` rows are excluded by the state guard — both are settled outcomes.
+     */
+    const peekDispatchedPasswordResetLedger = Effect.fn(
+      'CommercePortalAuthRecoveryStore.peekDispatchedPasswordResetLedger',
+    )(function* peekDispatchedPasswordResetLedgerEffect(input: {
+      readonly token: Redacted.Redacted;
+    }): Effect.fn.Return<
+      Option.Option<CommercePortalAuthRecoveryLedgerBinding>,
+      CommercePortalAuthRecoveryUnavailable
+    > {
+      const tokenDigest = yield* digestToken(crypto, input.token).pipe(
+        Effect.mapError((cause) => unavailable('password-reset-ledger-dispatch-peek-hash', cause)),
+      );
+      const rows = yield* database
+        .select({ email: recoveryResetLedger.email, providerSubjectId: recoveryResetLedger.providerSubjectId })
+        .from(recoveryResetLedger)
+        .where(
+          and(
+            eq(recoveryResetLedger.tokenDigest, tokenDigest),
+            eq(recoveryResetLedger.state, RESET_LEDGER_STATE_DISPATCHED),
+          ),
+        )
+        .limit(1)
+        .pipe(Effect.mapError((cause) => unavailable('password-reset-ledger-dispatch-peek', cause)));
+      const [row] = rows;
+      if (row === undefined || row.email === null || row.providerSubjectId === null) {
+        return Option.none();
+      }
+      return Option.some({ email: row.email, providerSubjectId: row.providerSubjectId, tokenDigest });
+    });
+
+    /**
+     * Terminal state for a token Better Auth has already spent, written together with the reset's
+     * completion evidence. Without the terminal state the row stays claimed until it expires, so a
+     * customer who re-submits the confirmation link they just used would have that spent token
+     * reconciled against the account's *current* state — and a legitimate address change or account
+     * deletion in between would open a support conflict for a token that changed nothing. Without
+     * the audit row in the same transaction the opposite is possible: a password changed behind an
+     * audit trail with no row for it. The guard admits `pending` as well as `dispatched` so the
+     * happy path is one transition either way.
+     */
+    const consumePasswordResetLedgerWithAudit = Effect.fn(
+      'CommercePortalAuthRecoveryStore.consumePasswordResetLedgerWithAudit',
+    )(function* consumePasswordResetLedgerWithAuditEffect(input: {
+      readonly audit: CommercePortalAuthAuditEvent;
+      readonly token: Redacted.Redacted;
+    }): Effect.fn.Return<void, CommercePortalAuthRecoveryUnavailable> {
+      const now = yield* DateTime.nowAsDate;
+      const tokenDigest = yield* digestToken(crypto, input.token).pipe(
+        Effect.mapError((cause) => unavailable('password-reset-ledger-consume-hash', cause)),
+      );
+      yield* database
+        .transaction(
+          Effect.fn('CommercePortalAuthRecoveryStore.consumePasswordResetLedgerWithAudit.transaction')(
+            function* consumeTransaction(transaction) {
+              yield* transaction
+                .update(recoveryResetLedger)
+                .set({ email: null, providerSubjectId: null, state: RESET_LEDGER_STATE_CONSUMED, updatedAt: now })
+                .where(
+                  and(
+                    eq(recoveryResetLedger.tokenDigest, tokenDigest),
+                    inArray(recoveryResetLedger.state, [RESET_LEDGER_STATE_PENDING, RESET_LEDGER_STATE_DISPATCHED]),
+                  ),
+                );
+              yield* writeCommercePortalAuthAuditRow(transaction, input.audit);
+            },
+          ),
+        )
+        .pipe(Effect.mapError((cause) => mutationFailure('password-reset-ledger-consume', cause)));
+    });
 
     const findAccountSubjectForEmail = Effect.fn('CommercePortalAuthRecoveryStore.findAccountSubjectForEmail')(
       function* findAccountSubjectForEmailEffect(input: {
@@ -670,10 +784,12 @@ export const makeCommercePortalAuthRecoveryStore = Effect.fn('CommercePortalAuth
 
     return {
       accountExists,
-      consumeEmailVerification,
-      consumePasswordResetLedger,
+      consumeEmailVerificationWithAudit,
+      consumePasswordResetLedgerWithAudit,
       consumeRateLimitBudget,
+      dispatchPasswordResetLedger,
       findAccountSubjectForEmail,
+      peekDispatchedPasswordResetLedger,
       peekEmailVerificationLedger,
       peekPasswordResetLedger,
       recordRecoveryReconciliation,

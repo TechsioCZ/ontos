@@ -2,6 +2,7 @@ import { Context } from 'effect';
 
 import type { Effect, Option, Redacted } from 'effect';
 
+import type { CommercePortalAuthAuditEvent } from '../../../../src/portal-auth/audit/audit-contracts.ts';
 import type {
   CommercePortalAuthEmailVerificationTokenRegistration,
   CommercePortalAuthRecoveryReconciliationConflictClass,
@@ -22,16 +23,34 @@ export interface CommercePortalAuthRecoveryStore {
   readonly accountExists: (input: {
     readonly providerSubjectId: string;
   }) => Effect.Effect<boolean, CommercePortalAuthRecoveryUnavailable>;
-  readonly consumeEmailVerification: (input: {
+  /**
+   * Marks an email-verification ledger token terminal and flips `user.emailVerified` in the same
+   * transaction that writes the verification's completion audit row. Consuming the token *is* what
+   * marks the address verified, so a flip that commits with no completion row is a verified address
+   * the audit outage hides, and a completion row over a token that was never actually spent is
+   * evidence for a verification that never happened. A refused write leaves the token, and the
+   * account, exactly as they were: `Option.none` means the token was invalid, expired, already
+   * consumed, or no longer names the current subject/email/unverified state, and neither the ledger
+   * nor the account changed.
+   */
+  readonly consumeEmailVerificationWithAudit: (input: {
+    readonly audit: CommercePortalAuthAuditEvent;
     readonly now: Date;
     readonly token: Redacted.Redacted;
   }) => Effect.Effect<Option.Option<string>, CommercePortalAuthRecoveryUnavailable>;
   /**
-   * Marks a password-reset token's ledger row terminal after the provider accepted it. A spent
-   * token must never be reconciled against the account's current state again: it changed nothing
-   * the second time, so any drift since the reset is not a conflict it caused.
+   * Marks a password-reset token's ledger row terminal after the provider accepted it, and writes
+   * the reset's completion audit row in the same transaction. A spent token must never be
+   * reconciled against the account's current state again: it changed nothing the second time, so
+   * any drift since the reset is not a conflict it caused.
+   *
+   * The two writes are one transaction because either alone is a broken outcome: a consumed row
+   * with no completion evidence is a reset nothing records, and a completion row over a still
+   * `pending`/`dispatched` row is a spent token the ledger still offers. A refused write leaves the
+   * row claimed, which is what lets the caller answer the reconciliation outcome instead.
    */
-  readonly consumePasswordResetLedger: (input: {
+  readonly consumePasswordResetLedgerWithAudit: (input: {
+    readonly audit: CommercePortalAuthAuditEvent;
     readonly token: Redacted.Redacted;
   }) => Effect.Effect<void, CommercePortalAuthRecoveryUnavailable>;
   /**
@@ -43,15 +62,39 @@ export interface CommercePortalAuthRecoveryStore {
     readonly key: string;
     readonly rule: CommercePortalAuthRecoveryRateLimitRule;
   }) => Effect.Effect<boolean, CommercePortalAuthRecoveryUnavailable>;
+  /**
+   * Claims a `pending` ledger row for one dispatch, in its own transaction, immediately before the
+   * provider is asked to spend the token. The claim is what makes a lost provider answer
+   * recoverable: Better Auth consumes its own token row atomically inside `resetPassword`, so a
+   * timeout after it committed leaves this realm unable to tell a never-started reset from a
+   * completed one — and a `pending` row would let the retry be answered as a confident rejection.
+   */
+  readonly dispatchPasswordResetLedger: (input: {
+    readonly token: Redacted.Redacted;
+  }) => Effect.Effect<void, CommercePortalAuthRecoveryUnavailable>;
   /** Read-only: the provider subject that currently owns the identifier, if one does. */
   readonly findAccountSubjectForEmail: (input: {
     readonly email: string;
   }) => Effect.Effect<Option.Option<string>, CommercePortalAuthRecoveryUnavailable>;
+  /**
+   * Non-destructive: reads the binding of a password-reset row that is still claimed for a dispatch
+   * whose outcome never came back. Unlike `peekPasswordResetLedger` this deliberately ignores
+   * expiry — the token can no longer be spent, but whether the earlier dispatch changed the
+   * password is still unknown, and that question outlives the token.
+   */
+  readonly peekDispatchedPasswordResetLedger: (input: {
+    readonly token: Redacted.Redacted;
+  }) => Effect.Effect<Option.Option<CommercePortalAuthRecoveryLedgerBinding>, CommercePortalAuthRecoveryUnavailable>;
   /** Non-destructive: reads the email-verification ledger's issuance-time binding for a token. */
   readonly peekEmailVerificationLedger: (input: {
     readonly token: Redacted.Redacted;
   }) => Effect.Effect<Option.Option<CommercePortalAuthRecoveryLedgerBinding>, CommercePortalAuthRecoveryUnavailable>;
-  /** Non-destructive: reads the password-reset ledger's issuance-time binding for a token. */
+  /**
+   * Non-destructive: reads the password-reset ledger's issuance-time binding for a token, for the
+   * one purpose that must only see a token nobody has spent yet — fresh reconciliation. A
+   * `dispatched` row is excluded exactly as a `consumed` one is: the provider was already asked to
+   * spend that token, so drift since then is not a conflict this submission caused.
+   */
   readonly peekPasswordResetLedger: (input: {
     readonly token: Redacted.Redacted;
   }) => Effect.Effect<Option.Option<CommercePortalAuthRecoveryLedgerBinding>, CommercePortalAuthRecoveryUnavailable>;

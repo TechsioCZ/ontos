@@ -1,4 +1,4 @@
-import { Context, DateTime, Effect, Option, Redacted, Schema } from 'effect';
+import { Context, DateTime, Effect, Option, Redacted, Result, Schema } from 'effect';
 
 import { auditedLayer, commercePortalAuthAuditEmitter } from '../../../../src/portal-auth/audit/audit.ts';
 import { withCause } from '../../problems-support.ts';
@@ -160,9 +160,13 @@ export const makeCommercePortalAuthRecoveryService = Effect.fn('CommercePortalAu
      * The strict half of the audit contract, for the two operations here that change durable state.
      * The intent row is written *before* the provider is asked to act and its failure is the
      * caller's failure: a deployment whose audit store is down refuses the reset outright rather
-     * than resetting a password and losing the only evidence that it happened. The completion event
-     * afterwards may take the lenient path, because this row already proves the attempt reached the
-     * provider and names the subject and token it named.
+     * than resetting a password and losing the only evidence that it happened.
+     *
+     * Both completion rows are stricter still: they commit inside the same transaction that retires
+     * the spent token (`consumePasswordResetLedgerWithAudit`, `consumeEmailVerificationWithAudit`),
+     * so neither half of either pair can stand alone. Email verification's flip is the more urgent
+     * of the two — unlike a reset, nothing external was already asked to act — so a refused audit
+     * write there rolls the flip back rather than leaving it unevidenced.
      */
     const recordIntent = Effect.fn('CommercePortalAuthRecovery.recordIntent')(function* recordIntentEffect(
       event: CommercePortalAuthAuditEvent,
@@ -222,24 +226,51 @@ export const makeCommercePortalAuthRecoveryService = Effect.fn('CommercePortalAu
       // evidence rows name. A token with no ledger row is submitted anyway — the provider decides
       // whether it is valid — and its intent row simply names no subject.
       const binding = yield* store.peekPasswordResetLedger({ token: request.token });
+      const correlationDigest = Option.isSome(binding) ? binding.value.tokenDigest : undefined;
       const ledgerSubjectId = Option.isSome(binding) ? binding.value.providerSubjectId : undefined;
       yield* recordIntent({
-        correlationDigest: Option.isSome(binding) ? binding.value.tokenDigest : undefined,
+        correlationDigest,
         eventType: 'commerce.portal-auth.recovery-reset-requested.v1',
         occurredAt: yield* DateTime.nowAsDate,
         operation: RECOVERY_RESET_OPERATION,
         outcome: 'requested',
         providerSubjectId: ledgerSubjectId,
       });
-      const response = yield* provider
-        .resetPassword({
-          body: {
-            newPassword: Redacted.value(request.newPassword),
-            token: Redacted.value(request.token),
-          },
-        })
-        .pipe(Effect.mapError((failure) => mapProviderFailure(failure, RESET_REJECTION_CODES)));
-      const decoded = yield* Schema.decodeEffect(RecoveryResponseSchema)(response).pipe(
+      // Claim before dispatch. Better Auth consumes its own token row atomically inside
+      // `resetPassword`, so a call that never answers may still have committed the new password.
+      // The claim is taken first and in its own transaction, which makes it survive exactly the
+      // failures that lose the answer; a store that cannot take it refuses before the provider is
+      // ever asked, because an unclaimed dispatch is the case nothing can reconstruct afterwards.
+      yield* store.dispatchPasswordResetLedger({ token: request.token });
+      const attempt = yield* Effect.result(
+        provider
+          .resetPassword({
+            body: {
+              newPassword: Redacted.value(request.newPassword),
+              token: Redacted.value(request.token),
+            },
+          })
+          .pipe(Effect.mapError((failure) => mapProviderFailure(failure, RESET_REJECTION_CODES))),
+      );
+      if (Result.isFailure(attempt)) {
+        // A decoded `INVALID_TOKEN` over a row still claimed for a dispatch is the provider saying
+        // the token is gone — which is equally what a *completed* earlier reset looks like, because
+        // that is exactly how Better Auth spends it. Answering the customer a confident rejection
+        // there hides a likely-completed reset, so the indeterminate outcome is recorded instead.
+        // Every other failure keeps its own status, and the claim stays: a network or timeout-class
+        // failure is reported unavailable with the row left `dispatched` for the retry to find.
+        if (
+          Schema.is(CommercePortalAuthRecoveryRejected)(attempt.failure) &&
+          attempt.failure.code === 'INVALID_TOKEN'
+        ) {
+          const indeterminate = yield* reconciliation.recordIndeterminateReset({ token: request.token });
+          if (Option.isSome(indeterminate)) {
+            return indeterminate.value;
+          }
+        }
+        return yield* attempt.failure;
+      }
+      const decoded = yield* Schema.decodeEffect(RecoveryResponseSchema)(attempt.success).pipe(
         Effect.mapError((cause) => unavailable(RECOVERY_RESET_OPERATION, cause)),
       );
       if (!decoded.status) {
@@ -249,15 +280,37 @@ export const makeCommercePortalAuthRecoveryService = Effect.fn('CommercePortalAu
           'The Commerce portal authentication provider rejected the recovery token',
         );
       }
-      yield* store.consumePasswordResetLedger({ token: request.token });
-      yield* emitAudit({
-        correlationDigest: Option.isSome(binding) ? binding.value.tokenDigest : undefined,
-        eventType: 'commerce.portal-auth.recovery-completed.v1',
-        occurredAt: yield* DateTime.nowAsDate,
-        operation: RECOVERY_RESET_OPERATION,
-        outcome: 'success',
-        providerSubjectId: ledgerSubjectId,
-      });
+      // Retiring the spent token and recording that the reset completed are one transaction: the
+      // provider has already changed the password, so a ledger row that commits without its
+      // completion row would leave the change unevidenced, and a completion row without the
+      // terminal state would leave the spent token still offered to reconciliation.
+      const completion = yield* Effect.result(
+        store.consumePasswordResetLedgerWithAudit({
+          audit: {
+            correlationDigest,
+            eventType: 'commerce.portal-auth.recovery-completed.v1',
+            occurredAt: yield* DateTime.nowAsDate,
+            operation: RECOVERY_RESET_OPERATION,
+            outcome: 'success',
+            providerSubjectId: ledgerSubjectId,
+          },
+          token: request.token,
+        }),
+      );
+      if (Result.isFailure(completion)) {
+        // The password is already changed and this realm cannot say so durably. The claim stands,
+        // so the reset is reported as indeterminate rather than as a bare outage: a customer told
+        // only "unavailable" would retry a token the provider has already spent.
+        const indeterminate = yield* reconciliation.recordIndeterminateReset({ token: request.token });
+        if (Option.isNone(indeterminate)) {
+          return yield* completion.failure;
+        }
+        yield* Effect.annotateLogs(
+          Effect.logError('Commerce portal recovery reset completed with no durable evidence', completion.failure),
+          { operation: RECOVERY_RESET_OPERATION },
+        );
+        return indeterminate.value;
+      }
       return { outcome: 'ACCOUNT_RECOVERY_COMPLETED_SAME_SUBJECT' };
     });
 
@@ -354,7 +407,25 @@ export const makeCommercePortalAuthRecoveryService = Effect.fn('CommercePortalAu
         providerSubjectId: Option.isSome(binding) ? binding.value.providerSubjectId : undefined,
       });
       const now = yield* DateTime.nowAsDate;
-      const subject = yield* store.consumeEmailVerification({ now, token: request.token });
+      // Retiring the ledger token and recording that the verification completed are one
+      // transaction: consuming the token is what flips `user.emailVerified`, so a refused audit
+      // write here must undo the flip along with it rather than leave a verified address behind an
+      // audit outage. A transaction failure surfaces as `CommercePortalAuthRecoveryUnavailable`
+      // straight through this call — unlike the reset, nothing external was already asked to act,
+      // so there is no completed side effect to reconcile and no reason to answer anything but
+      // unavailable.
+      const subject = yield* store.consumeEmailVerificationWithAudit({
+        audit: {
+          correlationDigest: Option.isSome(binding) ? binding.value.tokenDigest : undefined,
+          eventType: 'commerce.portal-auth.email-verification-consumed.v1',
+          occurredAt: now,
+          operation: VERIFY_EMAIL_OPERATION,
+          outcome: 'success',
+          providerSubjectId: Option.isSome(binding) ? binding.value.providerSubjectId : undefined,
+        },
+        now,
+        token: request.token,
+      });
       if (Option.isNone(subject)) {
         return yield* rejected(
           VERIFY_EMAIL_OPERATION,
@@ -362,14 +433,6 @@ export const makeCommercePortalAuthRecoveryService = Effect.fn('CommercePortalAu
           'The Commerce portal email verification token is invalid, expired, or already consumed',
         );
       }
-      yield* emitAudit({
-        correlationDigest: Option.isSome(binding) ? binding.value.tokenDigest : undefined,
-        eventType: 'commerce.portal-auth.email-verification-consumed.v1',
-        occurredAt: yield* DateTime.nowAsDate,
-        operation: VERIFY_EMAIL_OPERATION,
-        outcome: 'success',
-        providerSubjectId: subject.value,
-      });
       return { outcome: 'EMAIL_VERIFICATION_COMPLETED_SAME_SUBJECT' };
     });
 

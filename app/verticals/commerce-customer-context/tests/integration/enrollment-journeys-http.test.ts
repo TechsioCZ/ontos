@@ -39,6 +39,7 @@ import {
   CommercePortalAuthEnrollmentAttemptProjectionSchema,
   CommercePortalAuthEnrollmentStartInputSchema,
 } from '../../api/portal-auth/enrollment/contracts.ts';
+import type { CommercePortalAuthEnrollmentStartInput } from '../../api/portal-auth/enrollment/contracts.ts';
 import {
   commercePortalAuthEnrollmentAccountCreationOutcome,
   commercePortalAuthEnrollmentAccountOwner,
@@ -507,11 +508,9 @@ it.live('refuses an Existing-account start that names an invitation at the trans
         async () =>
           await runtime.handler(
             startEnrollmentRequest({
-              displayName: 'Enrollment HTTP acceptance',
               email,
               invitationId: randomUUID(),
               journey: 'EXISTING_ACCOUNT',
-              password: 'P'.repeat(24),
               sellingLegalEntityId: randomUUID(),
             }),
           ),
@@ -522,6 +521,36 @@ it.live('refuses an Existing-account start that names an invitation at the trans
       // and reserve a Core binding before halting at NO_OWNER_EFFECT for good. Refused at decode,
       // nothing is started at all — a schema that takes an optional invitation here answers 401
       // from the governed Action instead, and this assertion fails.
+      expect(response.status).toBe(400);
+      expect(yield* portalAccountsFor(email)).toStrictEqual([]);
+    }),
+  ),
+);
+
+it.live('refuses an Existing-account start that carries a password at the transport boundary', () =>
+  Effect.scoped(
+    Effect.gen(function* existingAccountNamingAPasswordRefused() {
+      const runtime = yield* configuredRuntime;
+      const email = `enrollment-http-${randomUUID()}@example.test`;
+
+      const response = yield* Effect.promise(
+        async () =>
+          await runtime.handler(
+            startEnrollmentRequest({
+              email,
+              journey: 'EXISTING_ACCOUNT',
+              password: 'P'.repeat(24),
+              sellingLegalEntityId: randomUUID(),
+            }),
+          ),
+      );
+
+      // Existing-account never creates a provider account — ownership is proven by the portal
+      // session, not by a credential — so `password` is not a field of this variant at all. A
+      // schema that still accepted it here would let a caller send a reusable credential the
+      // provider is never asked to check, and this decode-time rejection is what makes that
+      // impossible: no Attempt is started and the provider account-creation capability is never
+      // reached.
       expect(response.status).toBe(400);
       expect(yield* portalAccountsFor(email)).toStrictEqual([]);
     }),
@@ -540,19 +569,26 @@ const START_DISPLAY_NAME = 'Enrollment HTTP acceptance';
 const START_WORKER_ID = 'commerce.portal-auth.enrollment-start';
 const isAttemptConflict = Schema.is(CommerceEnrollmentAttemptConflict);
 
-const startInputFor = (email: string) =>
-  Schema.decodeUnknownSync(CommercePortalAuthEnrollmentStartInputSchema)({
+const startInputFor = (
+  email: string,
+): Extract<CommercePortalAuthEnrollmentStartInput, { readonly journey: 'RETAIL_SELF_ENROLLMENT' }> => {
+  const decoded = Schema.decodeUnknownSync(CommercePortalAuthEnrollmentStartInputSchema)({
     displayName: START_DISPLAY_NAME,
     email,
     journey: 'RETAIL_SELF_ENROLLMENT',
     password: Redacted.make('P'.repeat(24)),
     sellingLegalEntityId: randomUUID(),
   });
+  if (decoded.journey !== 'RETAIL_SELF_ENROLLMENT') {
+    throw new Error('startInputFor must decode a Retail self-enrollment input');
+  }
+  return decoded;
+};
 
 /** The Attempt the governed `start-portal-enrollment` Action commits, under the route's own intent. */
 const startAcceptanceEnrollment = Effect.fnUntraced(function* startAcceptanceEnrollment(
   fixture: EnrollmentAcceptanceFixture,
-  startInput: ReturnType<typeof startInputFor>,
+  startInput: CommercePortalAuthEnrollmentStartInput,
   actorPrincipalId: typeof EnrollmentPrincipalIdSchema.Type,
 ) {
   const intent = yield* commercePortalAuthEnrollmentIntent(startInput);
@@ -1027,10 +1063,8 @@ const enrollmentAttemptCount = (fixture: EnrollmentAcceptanceFixture): Effect.Ef
 
 const existingAccountStartInputFor = (email: string) =>
   Schema.decodeUnknownSync(CommercePortalAuthEnrollmentStartInputSchema)({
-    displayName: START_DISPLAY_NAME,
     email,
     journey: 'EXISTING_ACCOUNT',
-    password: Redacted.make(PORTAL_OWNER_PASSWORD),
     sellingLegalEntityId: randomUUID(),
   });
 
@@ -1052,10 +1086,8 @@ const startExistingAccountRequest = (
   }
   return new Request(`${ORIGIN}/api/portal-auth/enrollment/start`, {
     body: JSON.stringify({
-      displayName: START_DISPLAY_NAME,
       email,
       journey: 'EXISTING_ACCOUNT',
-      password: PORTAL_OWNER_PASSWORD,
       sellingLegalEntityId: randomUUID(),
     }),
     headers,
@@ -1324,6 +1356,67 @@ it.live(
         );
         expect(authenticated.status).not.toBe(429);
         expect(yield* enrollmentStartBudgetKeys(email)).toHaveLength(1);
+      }),
+    ),
+  180_000,
+);
+
+/**
+ * Whose budget one start spends. The gate above the budget verifies the caller's gateway assertion
+ * without redeeming it — it has to, because the composed operation redeems it once further down —
+ * so an assertion is replayable at that point and the budget must be keyed by the Principal it
+ * names. Keyed by anything a caller shares with every other caller, one assertion holder can spend
+ * any address' entire account-creation budget and keep spending it.
+ */
+it.live(
+  'charges one Principal exhausting an address to that Principal alone',
+  () =>
+    Effect.scoped(
+      Effect.gen(function* enrollmentBudgetIsPerPrincipal() {
+        const tenantId = randomUUID();
+        const fixture = yield* makeEnrollmentAcceptanceFixture({ tenantId });
+        const gateway = yield* makeAcceptanceGatewayIssuer(READ_ISSUER, READ_KEY_ID);
+        const runtime = yield* authenticatedRuntime(gateway);
+        const email = `enrollment-http-${randomUUID()}@example.test`;
+        const startBody = {
+          displayName: START_DISPLAY_NAME,
+          email,
+          journey: 'RETAIL_SELF_ENROLLMENT',
+          password: PORTAL_OWNER_PASSWORD,
+          sellingLegalEntityId: randomUUID(),
+        };
+
+        /** One start of this address by one Principal, each carrying its own single-use assertion. */
+        const startAs = Effect.fnUntraced(function* startAs(principalId: string) {
+          const assertion = yield* issueAcceptanceGatewayAssertion(fixture.admin, gateway, READ_AUDIENCE, {
+            authBindingId: randomUUID(),
+            authContextRef: `portal-session:${randomUUID()}`,
+            authenticationNamespaceId: COMMERCE_AUTHENTICATION_NAMESPACE_ID,
+            authMethod: 'session',
+            legalEntityId: randomUUID(),
+            principalId,
+            tenantId,
+          });
+          return yield* Effect.promise(async () => await runtime.handler(startEnrollmentRequest(startBody, assertion)));
+        });
+
+        // The address' entire account-creation budget is three starts, spent here by one Principal.
+        const enroller = randomUUID();
+        const spent = yield* Effect.forEach([0, 1, 2], () => startAs(enroller), { concurrency: 1 });
+        expect(spent.map((response) => response.status)).not.toContain(429);
+
+        // The per-address rule still holds for the Principal that spent it: a fourth start of the
+        // same address by the same caller is refused before anything governed runs.
+        expect((yield* startAs(enroller)).status).toBe(429);
+
+        // A different Principal enrolling that very same address is not refused by the first one's
+        // spending. Keyed by the transport's unattributable client this is 429, and then anyone
+        // holding any valid assertion can keep any address out of enrollment for the window.
+        expect((yield* startAs(randomUUID())).status).not.toBe(429);
+
+        // Two durable rows for this address, one per Principal, which is what makes the refusal
+        // above one caller's own limit rather than the address'. A client-keyed budget writes one.
+        expect(yield* enrollmentStartBudgetKeys(email)).toHaveLength(2);
       }),
     ),
   180_000,

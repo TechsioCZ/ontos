@@ -24,9 +24,10 @@ import {
 import type {
   CommercePortalAuthMfaAttemptEvidence,
   CommercePortalAuthMfaBackupCodesResult,
-  CommercePortalAuthMfaDisableProviderRequest,
+  CommercePortalAuthMfaDisableServiceRequest,
   CommercePortalAuthMfaEnableProviderRequest,
   CommercePortalAuthMfaEnableResult,
+  CommercePortalAuthMfaGenerateBackupCodesServiceRequest,
   CommercePortalAuthMfaPasswordProviderRequest,
   CommercePortalAuthMfaProviderFailure,
   CommercePortalAuthMfaResponse,
@@ -59,8 +60,15 @@ export interface CommercePortalAuthMfaServiceApi {
     CommercePortalAuthMfaResponse<CommercePortalAuthMfaVerificationResult>,
     CommercePortalAuthMfaProviderFailure
   >;
+  /**
+   * Takes the customer's second factor away, so its evidence is strict in both halves exactly as a
+   * verification's is: the intent row commits before Better Auth is asked, and a refused completion
+   * row answers unavailable with no cookies. The factor cannot be put back — Better Auth's only
+   * re-enable stages a fresh secret the customer must confirm — so a lost completion is an operator
+   * fact logged at error rather than a rollback.
+   */
   readonly disableTwoFactor: (
-    input: CommercePortalAuthMfaDisableProviderRequest,
+    input: CommercePortalAuthMfaDisableServiceRequest,
   ) => Effect.Effect<
     CommercePortalAuthMfaResponse<CommercePortalAuthMfaStatusResult>,
     CommercePortalAuthMfaProviderFailure
@@ -71,8 +79,13 @@ export interface CommercePortalAuthMfaServiceApi {
     CommercePortalAuthMfaResponse<CommercePortalAuthMfaEnableResult>,
     CommercePortalAuthMfaProviderFailure
   >;
+  /**
+   * Replaces the customer's backup codes, which invalidates every code they were holding. Audited
+   * strictly for the same reason `disableTwoFactor` is: the set the customer can still authenticate
+   * with changed, and nothing else in this realm records that it did.
+   */
   readonly generateBackupCodes: (
-    input: CommercePortalAuthMfaPasswordProviderRequest,
+    input: CommercePortalAuthMfaGenerateBackupCodesServiceRequest,
   ) => Effect.Effect<
     CommercePortalAuthMfaResponse<CommercePortalAuthMfaBackupCodesResult>,
     CommercePortalAuthMfaProviderFailure
@@ -331,6 +344,73 @@ const strictlyAuditedVerification = Effect.fn('CommercePortalAuthMfaService.stri
   },
 );
 
+/** What the two evidence rows of one administrative change name, beyond the outcome itself. */
+interface AdministrationEvidence {
+  readonly attempt: CommercePortalAuthMfaAttemptEvidence;
+  readonly eventType: CommercePortalAuthAuditEventType;
+  readonly method: string;
+}
+
+/**
+ * The same strict contract `strictlyAuditedVerification` applies, for the administrative changes
+ * that mint no session: disabling the second factor and replacing the backup codes. The intent row
+ * goes in before Better Auth is asked — an audit outage refuses the change outright and the
+ * provider is never called — and the completion row is strict too.
+ *
+ * Where a verification can take back the session it just minted, neither of these has anything to
+ * take back: Better Auth's re-enable stages a fresh TOTP secret the customer must confirm, and the
+ * superseded backup codes are gone. Refusing the success is still the right answer — the change
+ * stands, but no cookie is forwarded and the caller is told the deployment is unavailable — and the
+ * error log is the whole record of a change that happened with no completion row.
+ */
+const strictlyAuditedAdministration = Effect.fn('CommercePortalAuthMfaService.strictlyAuditedAdministration')(
+  function* strictlyAuditedAdministrationEffect<Body>(
+    recorder: CommercePortalAuthAuditRecorder,
+    evidence: AdministrationEvidence,
+    call: Effect.Effect<CommercePortalAuthMfaResponse<Body>, CommercePortalAuthMfaProviderFailure>,
+  ): Effect.fn.Return<CommercePortalAuthMfaResponse<Body>, CommercePortalAuthMfaProviderFailure> {
+    yield* recordStrictEvidence(recorder, {
+      correlationDigest: evidence.attempt.clientKeyDigest,
+      eventType: evidence.eventType,
+      occurredAt: yield* DateTime.nowAsDate,
+      operation: evidence.method,
+      outcome: 'requested',
+      subjectDigest: evidence.attempt.subjectDigest,
+    });
+    const outcome = yield* Effect.result(call);
+    const completion = yield* Effect.result(
+      recordStrictEvidence(recorder, {
+        correlationDigest: evidence.attempt.clientKeyDigest,
+        eventType: evidence.eventType,
+        occurredAt: yield* DateTime.nowAsDate,
+        operation: evidence.method,
+        outcome: Result.isSuccess(outcome) ? 'success' : mfaVerificationOutcome(outcome.failure),
+        subjectDigest: evidence.attempt.subjectDigest,
+      }),
+    );
+    if (Result.isFailure(completion)) {
+      if (Result.isFailure(outcome)) {
+        // The provider judged and refused: nothing changed, and the intent row above already
+        // stands for the attempt. The refusal keeps its own status.
+        yield* Effect.annotateLogs(Effect.logError('Commerce portal MFA administration evidence was not persisted'), {
+          auditOperation: evidence.method,
+          auditOutcome: mfaVerificationOutcome(outcome.failure),
+        });
+        return yield* outcome.failure;
+      }
+      yield* Effect.annotateLogs(
+        Effect.logError('Commerce portal MFA administration completed with no durable evidence'),
+        { auditOperation: evidence.method },
+      );
+      return yield* completion.failure;
+    }
+    if (Result.isFailure(outcome)) {
+      return yield* outcome.failure;
+    }
+    return outcome.success;
+  },
+);
+
 export const makeCommercePortalAuthMfaService = Effect.fn('CommercePortalAuthMfaService.make')(
   function* makeCommercePortalAuthMfaServiceEffect(
     audit: CommercePortalAuthAuditRecorder,
@@ -340,8 +420,18 @@ export const makeCommercePortalAuthMfaService = Effect.fn('CommercePortalAuthMfa
     const enableTwoFactor = (input: CommercePortalAuthMfaEnableProviderRequest) =>
       callProvider('enableTwoFactor', provider.enableTwoFactor(input), CommercePortalAuthMfaEnableResultSchema);
 
-    const disableTwoFactor = (input: CommercePortalAuthMfaDisableProviderRequest) =>
-      callProvider('disableTwoFactor', provider.disableTwoFactor(input), CommercePortalAuthMfaStatusResultSchema);
+    const disableTwoFactor = (input: CommercePortalAuthMfaDisableServiceRequest) =>
+      strictlyAuditedAdministration(
+        audit,
+        { attempt: input.evidence, eventType: 'commerce.portal-auth.mfa-disabled.v1', method: 'disable-two-factor' },
+        callProvider(
+          'disableTwoFactor',
+          // The evidence is the owner's own and has no meaning to Better Auth, so the provider
+          // request is rebuilt from the two fields it understands rather than forwarded whole.
+          provider.disableTwoFactor({ body: input.body, headers: input.headers }),
+          CommercePortalAuthMfaStatusResultSchema,
+        ),
+      );
 
     const sendTwoFactorOTP = (input: CommercePortalAuthMfaSendOtpProviderRequest) =>
       callProvider('sendTwoFactorOTP', provider.sendTwoFactorOTP(input), CommercePortalAuthMfaStatusResultSchema);
@@ -409,11 +499,19 @@ export const makeCommercePortalAuthMfaService = Effect.fn('CommercePortalAuthMfa
     const getTOTPURI = (input: CommercePortalAuthMfaPasswordProviderRequest) =>
       callProvider('getTOTPURI', provider.getTOTPURI(input), CommercePortalAuthMfaTotpUriResultSchema);
 
-    const generateBackupCodes = (input: CommercePortalAuthMfaPasswordProviderRequest) =>
-      callProvider(
-        'generateBackupCodes',
-        provider.generateBackupCodes(input),
-        CommercePortalAuthMfaBackupCodesResultSchema,
+    const generateBackupCodes = (input: CommercePortalAuthMfaGenerateBackupCodesServiceRequest) =>
+      strictlyAuditedAdministration(
+        audit,
+        {
+          attempt: input.evidence,
+          eventType: 'commerce.portal-auth.mfa-backup-codes-regenerated.v1',
+          method: 'regenerate-backup-codes',
+        },
+        callProvider(
+          'generateBackupCodes',
+          provider.generateBackupCodes({ body: input.body, headers: input.headers }),
+          CommercePortalAuthMfaBackupCodesResultSchema,
+        ),
       );
 
     return {

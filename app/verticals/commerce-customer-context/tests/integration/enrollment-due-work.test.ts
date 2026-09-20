@@ -201,6 +201,64 @@ it.live('advances a newer Attempt in one tick even when a whole page of older on
   ),
 );
 
+/** Longer than this test takes, so only the database's clock decides what is stale here. */
+const POLL_STALE_WINDOW_MILLIS = 60_000;
+
+/** How many times the waiting client polls its Attempt before the sweeper's next tick. */
+const POLLS_BEFORE_A_TICK = [0, 1, 2] as const;
+
+it.live('re-advances a durably stale Attempt a waiting client keeps polling', () =>
+  Effect.scoped(
+    Effect.gen(function* pollingDoesNotVetoTheDurableRow() {
+      const tenantId = tenant(randomUUID());
+      const actorPrincipalId = principalId(randomUUID());
+      const fixture = yield* makeEnrollmentAcceptanceFixture({ tenantId });
+      const scoped = yield* haltingContinuationFor(fixture, tenantId, actorPrincipalId);
+      const advanced = yield* Ref.make<readonly string[]>([]);
+      const continuation: CommerceEnrollmentContinuationService = {
+        advance: (input) =>
+          Ref.update(advanced, (ids) => [...ids, input.portalEnrollmentAttemptId]).pipe(
+            Effect.flatMap(() => scoped.advance(input)),
+          ),
+        claimSweep: scoped.claimSweep,
+        listDue: scoped.listDue,
+      };
+      const sweeper = yield* commerceEnrollmentContinuationSweeperFor({
+        continuation,
+        staleAfterMillis: POLL_STALE_WINDOW_MILLIS,
+      });
+      const attempt = yield* startEnrollmentAcceptanceAttempt(
+        fixture,
+        startInputFor(tenantId, actorPrincipalId, 'due-work-polled'),
+      );
+      yield* backdateEnrollmentAcceptanceAttempt(fixture, attempt.portalEnrollmentAttemptId, ANCIENT_ACTIVITY[0]);
+
+      // GET /enrollment/:id resumes a non-terminal Attempt through this very continuation. Each
+      // poll halts without moving the Attempt's durable revision or its activity timestamp, and
+      // each one refreshes what this process last recorded about it.
+      yield* Effect.forEach(
+        POLLS_BEFORE_A_TICK,
+        () =>
+          sweeper.continuation.advance({
+            portalEnrollmentAttemptId: attempt.portalEnrollmentAttemptId,
+            tenantId,
+          }),
+        { concurrency: 1 },
+      );
+      const polled = (yield* Ref.get(advanced)).length;
+      expect(polled).toBe(POLLS_BEFORE_A_TICK.length);
+
+      const sweep = yield* sweeper.sweep;
+
+      // The Attempt is exactly as stale as the database says it is, so this tick owes it a sweep.
+      // Letting the poll's fresh in-process entry veto the durable row leaves `swept` at 0 and this
+      // slice empty: the one caller still waiting on the journey is what stops it advancing.
+      expect(sweep.swept).toBe(1);
+      expect((yield* Ref.get(advanced)).slice(polled)).toStrictEqual([attempt.portalEnrollmentAttemptId]);
+    }),
+  ),
+);
+
 it.live('the due-work listing answers a worker tick and refuses a caller with a verified Tenant', () =>
   Effect.scoped(
     Effect.gen(function* workerScopeIsRequired() {

@@ -148,10 +148,19 @@ export type CommercePortalAuthMfaPasswordProviderRequest =
   CommercePortalAuthMfaProviderRequest<CommercePortalAuthMfaPasswordBody>;
 
 /**
- * The owner-service shapes for the four state-changing verification calls. They differ from the
- * provider shapes by the evidence alone, because the evidence exists for the audit rows the owner
- * writes around the provider call and has no meaning to Better Auth.
+ * The owner-service shapes for every state-changing call. They differ from the provider shapes by
+ * the evidence alone, because the evidence exists for the audit rows the owner writes around the
+ * provider call and has no meaning to Better Auth.
+ *
+ * `getTOTPURI` and `enableTwoFactor` have no shape here on purpose: neither takes a factor away
+ * nor invalidates a credential a customer already holds, so neither is a mutation whose evidence a
+ * support operator would miss. Disabling the second factor and regenerating the backup codes are
+ * both, which is why they are audited exactly as a verification is.
  */
+export type CommercePortalAuthMfaDisableServiceRequest = CommercePortalAuthMfaAuditedAttempt &
+  CommercePortalAuthMfaDisableProviderRequest;
+export type CommercePortalAuthMfaGenerateBackupCodesServiceRequest = CommercePortalAuthMfaAuditedAttempt &
+  CommercePortalAuthMfaPasswordProviderRequest;
 export type CommercePortalAuthMfaVerifyTotpServiceRequest = CommercePortalAuthMfaAuditedAttempt &
   CommercePortalAuthMfaVerifyTotpProviderRequest;
 export type CommercePortalAuthMfaVerifyOtpServiceRequest = CommercePortalAuthMfaAuditedAttempt &

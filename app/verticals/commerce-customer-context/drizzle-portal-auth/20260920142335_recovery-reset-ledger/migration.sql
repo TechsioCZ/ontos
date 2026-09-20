@@ -1,5 +1,6 @@
 CREATE TABLE "commerce_auth"."recovery_reset_ledger" (
 	"created_at" timestamp with time zone DEFAULT now() NOT NULL,
+	"dispatched_at" timestamp with time zone,
 	"email" text,
 	"expires_at" timestamp with time zone NOT NULL,
 	"identifier_digest" text NOT NULL,

@@ -276,6 +276,7 @@ it.effect('adapts inferred Better Auth endpoints through the typed Effect owner 
     }
     const disabled = yield* service.disableTwoFactor({
       body: { password: PASSWORD },
+      evidence: MFA_ATTEMPT_EVIDENCE,
       headers: browserHeadersFrom(signUp),
     });
     expect(disabled.body.status).toBe(true);

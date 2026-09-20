@@ -39,24 +39,38 @@ const SELLING_LEGAL_ENTITY_ID = randomUUID();
  * payload schema is meant to refuse: any journey, with or without an invitation.
  */
 interface EnrollmentStartRequestBody {
-  readonly displayName: string;
+  readonly displayName?: string;
   readonly email: string;
   readonly invitationId?: string;
   readonly journey: string;
-  readonly password: Redacted.Redacted;
+  readonly password?: Redacted.Redacted;
   readonly sellingLegalEntityId: string;
 }
 
+/**
+ * `displayName` and `password` exist only to create a provider account, so they default in only
+ * for the journeys that do — an Existing-account payload gets neither, matching what its own
+ * variant of the schema accepts. A scenario that needs to prove one of those fields is refused for
+ * Existing-account passes it explicitly through `overrides`.
+ */
 const startPayload = (
   overrides: Partial<EnrollmentStartRequestBody> & { readonly journey: string },
-): EnrollmentStartRequestBody => ({
-  displayName: 'Enrollment start intent',
-  email: 'first.person@example.test',
-  // The credential is `Redacted` from the transport boundary inward; nothing below ever sees it.
-  password: Redacted.make('P'.repeat(24)),
-  sellingLegalEntityId: SELLING_LEGAL_ENTITY_ID,
-  ...overrides,
-});
+): EnrollmentStartRequestBody => {
+  const base = {
+    email: 'first.person@example.test',
+    sellingLegalEntityId: SELLING_LEGAL_ENTITY_ID,
+    ...overrides,
+  };
+  if (base.journey === 'EXISTING_ACCOUNT') {
+    return base;
+  }
+  return {
+    displayName: 'Enrollment start intent',
+    // The credential is `Redacted` from the transport boundary inward; nothing below ever sees it.
+    password: Redacted.make('P'.repeat(24)),
+    ...base,
+  };
+};
 
 const decodeStart = (payload: EnrollmentStartRequestBody) =>
   Schema.decodeUnknownEffect(CommercePortalAuthEnrollmentStartInputSchema)(payload);

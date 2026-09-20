@@ -6,6 +6,7 @@ import { eq } from 'drizzle-orm';
 
 import { makeCommercePortalAuthDatabase } from '../../src/portal-auth/persistence/portal-auth-database.ts';
 import type { CommercePortalAuthDatabase } from '../../src/portal-auth/persistence/portal-auth-database.ts';
+import { portalAuthAuditEvent } from '../../src/portal-auth/audit/audit-tables.ts';
 import { makeCommercePortalAuthRecoveryStore } from '../../src/portal-auth/persistence/portal-auth-recovery-store.ts';
 import {
   recoveryReconciliation,
@@ -377,13 +378,26 @@ it.live('proves a spent PostgreSQL password-reset token becomes terminal and is 
             .delete(recoveryResetLedger)
             .where(eq(recoveryResetLedger.identifierDigest, identifierDigest));
           yield* database.executor.delete(recoveryReconciliation).where(eq(recoveryReconciliation.email, email));
+          yield* database.executor
+            .delete(portalAuthAuditEvent)
+            .where(eq(portalAuthAuditEvent.providerSubjectId, providerSubjectId));
           yield* database.executor.delete(user).where(eq(user.id, providerSubjectId));
         }).pipe(Effect.orDie),
       );
 
       expect(yield* store.registerPasswordResetToken({ email, expiresAt, providerSubjectId, token })).toBe(true);
-      // The provider accepted the token; the ledger must record that it is spent.
-      yield* store.consumePasswordResetLedger({ token });
+      // The provider accepted the token; the ledger must record that it is spent, together with
+      // the completion row the same transaction writes.
+      yield* store.consumePasswordResetLedgerWithAudit({
+        audit: {
+          eventType: 'commerce.portal-auth.recovery-completed.v1',
+          occurredAt: now,
+          operation: 'reset-password',
+          outcome: 'success',
+          providerSubjectId,
+        },
+        token,
+      });
 
       const rows = yield* database.executor
         .select()

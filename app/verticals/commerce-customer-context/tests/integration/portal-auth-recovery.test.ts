@@ -1,17 +1,19 @@
 import { HttpApi, HttpApiBuilder, HttpRouter, HttpServer } from '@modern-js/bff-effect/effect-edge';
 import { betterAuth } from 'better-auth';
 import { memoryAdapter } from 'better-auth/adapters/memory';
-import { eq, inArray, like } from 'drizzle-orm';
-import { Config, Context, Crypto, DateTime, Effect, Layer, Redacted, Result } from 'effect';
+import { and, eq, inArray, like } from 'drizzle-orm';
+import { Config, Context, Crypto, DateTime, Effect, Layer, Redacted, Result, Schema } from 'effect';
 import { expect, it } from 'effect-rstest';
 import type { Scope } from 'effect';
 import { createHash, createHmac, randomBytes, randomUUID } from 'node:crypto';
 
 import { makeCommercePortalAuthDatabase } from '../../src/portal-auth/persistence/portal-auth-database.ts';
 import type { CommercePortalAuthDatabase } from '../../src/portal-auth/persistence/portal-auth-database.ts';
+import { portalAuthAuditEvent } from '../../src/portal-auth/audit/audit-tables.ts';
 import {
   rateLimit,
   recoveryReconciliation,
+  recoveryResetLedger,
   session,
   user,
   verification,
@@ -21,12 +23,14 @@ import { UNRESOLVED_PORTAL_AUTH_CLIENT_KEY } from '../../api/portal-auth/http-tr
 import { CommercePortalAuthConfig } from '../../api/portal-auth/provider/config-service.ts';
 import { COMMERCE_PORTAL_AUTH_POLICY, parseCommercePortalAuthConfig } from '../../api/portal-auth/provider/config.ts';
 import { makeCommercePortalAuthRecoveryProvider } from '../../api/portal-auth/provider/recovery/provider-service.ts';
+import { CommercePortalAuthRecoveryProviderFailure } from '../../api/portal-auth/provider/recovery/provider-failure.ts';
 import {
   CommercePortalAuthRecoveryProviderService,
   CommercePortalAuthRecoveryRateLimitService,
   CommercePortalAuthRecoveryReconciliationService,
   CommercePortalAuthRecoveryService as CommercePortalAuthRecoveryServiceTag,
   CommercePortalAuthRecoveryStoreService,
+  CommercePortalAuthRecoveryUnavailable,
   makeCommercePortalAuthEmailDelivery,
   makeCommercePortalAuthRecoveryReconciliation,
   makeCommercePortalAuthRecoveryRateLimit,
@@ -388,6 +392,50 @@ it.live('proves PostgreSQL verification expiry consumes an expired row and rejec
   ),
 );
 
+it.live(
+  'consumes the PostgreSQL verification ledger and writes the completion row in one transaction on the happy path',
+  () =>
+    Effect.scoped(
+      Effect.gen(function* postgresVerificationHappyPath() {
+        const fixture = yield* makeRecoveryFixture('verification-consumed');
+        yield* registerFixtureVerificationToken(fixture);
+        const tokenDigest = yield* recoveryCrypto
+          .digest('SHA-256', new TextEncoder().encode(Redacted.value(fixture.verificationToken)))
+          .pipe(Effect.map(bytesToHex));
+        yield* Effect.addFinalizer(() =>
+          fixture.database.executor
+            .delete(portalAuthAuditEvent)
+            .where(eq(portalAuthAuditEvent.providerSubjectId, fixture.userId))
+            .pipe(Effect.orDie),
+        );
+
+        const outcome = yield* fixture.recovery.verifyEmail({ token: fixture.verificationToken });
+        expect(outcome).toStrictEqual({ outcome: 'EMAIL_VERIFICATION_COMPLETED_SAME_SUBJECT' });
+
+        // The token is spent by the same transaction that verified the address.
+        const remainingRows = yield* customVerificationRows(fixture);
+        expect(remainingRows).toHaveLength(0);
+        const users = yield* fixture.database.executor
+          .select({ emailVerified: user.emailVerified })
+          .from(user)
+          .where(eq(user.id, fixture.userId))
+          .limit(1);
+        expect(users.at(0)?.emailVerified).toBe(true);
+
+        // The completion row committed with that same consumption — it is written by the ledger
+        // store, not by the (un-audited) recorder this fixture composes the service with.
+        const auditRows = yield* fixture.database.executor
+          .select()
+          .from(portalAuthAuditEvent)
+          .where(eq(portalAuthAuditEvent.providerSubjectId, fixture.userId));
+        expect(auditRows).toHaveLength(1);
+        expect(auditRows[0]?.eventType).toBe('commerce.portal-auth.email-verification-consumed.v1');
+        expect(auditRows[0]?.outcome).toBe('success');
+        expect(auditRows[0]?.correlationDigest).toBe(tokenDigest);
+      }),
+    ),
+);
+
 it.live('proves PostgreSQL password recovery revokes the original user sessions', () =>
   Effect.scoped(
     Effect.gen(function* postgresPasswordRecovery() {
@@ -700,4 +748,326 @@ it.live('spends one PostgreSQL recovery budget across two independent HttpApi ru
       expect(yield* requestReset(runtimes[0], fixture.email.toUpperCase(), ORIGIN)).toBe(429);
     }),
   ),
+);
+
+// -- Claim-before-dispatch: what a lost provider answer leaves behind. --------------------------
+
+/**
+ * A recovery service over the fixture's real PostgreSQL store, with one collaborator replaced. The
+ * provider double below is what makes a *lost answer* reproducible: the real Better Auth call runs
+ * and commits, and only then does the answer fail to come back.
+ */
+const makeScriptedRecovery = Effect.fn('CommercePortalAuthRecoveryIntegration.makeScriptedRecovery')(
+  function* makeScripted(
+    provider: RecoveryProvider,
+    store: CommercePortalAuthRecoveryStore,
+  ): Effect.fn.Return<RecoveryService, unknown> {
+    return yield* makeCommercePortalAuthRecoveryService(unauditedCommercePortalAuthRecorder).pipe(
+      Effect.provideService(CommercePortalAuthRecoveryProviderService, provider),
+      Effect.provideService(CommercePortalAuthRecoveryStoreService, store),
+      Effect.provideServiceEffect(
+        CommercePortalAuthRecoveryReconciliationService,
+        makeCommercePortalAuthRecoveryReconciliation().pipe(
+          Effect.provideService(CommercePortalAuthRecoveryStoreService, store),
+        ),
+      ),
+    );
+  },
+);
+
+/**
+ * The provider that commits and then loses its answer: Better Auth really resets the password and
+ * really consumes its own token row, and the owner sees a timeout-class failure — no provider code,
+ * which is exactly how `provider-service.ts` reports a call that never came back.
+ */
+const losingAnswerProvider = (provider: RecoveryProvider): RecoveryProvider => ({
+  ...provider,
+  resetPassword: (input) =>
+    provider
+      .resetPassword(input)
+      .pipe(
+        Effect.flatMap(() =>
+          Effect.fail(new CommercePortalAuthRecoveryProviderFailure({ operation: 'reset-password' })),
+        ),
+      ),
+});
+
+/** Everything one reset-ledger scenario needs on top of the shared fixture. */
+const makeDispatchFixture = Effect.fn('CommercePortalAuthRecoveryIntegration.makeDispatchFixture')(
+  function* makeDispatch(caseName: string): Effect.fn.Return<
+    {
+      readonly fixture: RecoveryFixture;
+      readonly resetToken: string;
+      readonly store: CommercePortalAuthRecoveryStore;
+      readonly tokenDigest: string;
+    },
+    unknown,
+    Scope.Scope
+  > {
+    const fixture = yield* makeRecoveryFixture(caseName);
+    // The deployment requires a verified address before sign-in, and the assertions below prove the
+    // password by signing in, so the account is verified up front.
+    yield* registerFixtureVerificationToken(fixture);
+    yield* fixture.recovery.verifyEmail({ token: fixture.verificationToken });
+    const store = yield* makeCommercePortalAuthRecoveryStore(fixture.database.executor).pipe(
+      Effect.provideService(Crypto.Crypto, recoveryCrypto),
+    );
+    const requested = yield* fixture.provider.requestPasswordReset({ body: { email: fixture.email } });
+    expect(requested.status).toBe(true);
+    const resetToken = yield* Effect.head(Effect.succeed(fixture.resetTokens)).pipe(
+      Effect.mapError(() => new Error('Recovery fixture did not receive a password reset token')),
+    );
+    const tokenDigest = yield* recoveryCrypto
+      .digest('SHA-256', new TextEncoder().encode(resetToken))
+      .pipe(Effect.map(bytesToHex));
+    yield* Effect.addFinalizer(() =>
+      Effect.gen(function* cleanupDispatchFixture() {
+        yield* fixture.database.executor
+          .delete(recoveryResetLedger)
+          .where(eq(recoveryResetLedger.tokenDigest, tokenDigest));
+        yield* fixture.database.executor
+          .delete(recoveryReconciliation)
+          .where(eq(recoveryReconciliation.email, fixture.email));
+        yield* fixture.database.executor
+          .delete(portalAuthAuditEvent)
+          .where(eq(portalAuthAuditEvent.providerSubjectId, fixture.userId));
+      }).pipe(Effect.orDie),
+    );
+    return { fixture, resetToken, store, tokenDigest };
+  },
+);
+
+const resetLedgerRow = (fixture: RecoveryFixture, tokenDigest: string) =>
+  fixture.database.executor
+    .select()
+    .from(recoveryResetLedger)
+    .where(eq(recoveryResetLedger.tokenDigest, tokenDigest))
+    .limit(1);
+
+const signInWith = (fixture: RecoveryFixture, password: string) =>
+  Effect.result(
+    Effect.tryPromise({
+      catch: (cause) => cause,
+      try: () =>
+        fixture.auth.api.signInEmail({
+          body: { email: fixture.email, password },
+          headers: { origin: ORIGIN, 'x-forwarded-for': fixture.ip },
+        }),
+    }),
+  );
+
+it.live(
+  'claims the PostgreSQL reset ledger before dispatch, so a provider that commits and loses its answer leaves a dispatched row and an unavailable outcome',
+  () =>
+    Effect.scoped(
+      Effect.gen(function* postgresResetDispatchClaimed() {
+        const { fixture, resetToken, store, tokenDigest } = yield* makeDispatchFixture('reset-dispatch');
+        const recovery = yield* makeScriptedRecovery(losingAnswerProvider(fixture.provider), store);
+
+        const outcome = yield* Effect.result(
+          recovery.resetPassword({
+            newPassword: Redacted.make(REPLACEMENT_PASSWORD),
+            token: Redacted.make(resetToken),
+          }),
+        );
+        // A network/timeout-class provider failure is reported unavailable — the transport answers
+        // 503 — and nothing pretends to know whether the reset happened.
+        expect(Result.isFailure(outcome)).toBe(true);
+        if (Result.isFailure(outcome)) {
+          expect(Schema.is(CommercePortalAuthRecoveryUnavailable)(outcome.failure)).toBe(true);
+        }
+
+        // The claim is what survives: the row is `dispatched`, stamped, and still carries the
+        // binding a support operator needs.
+        const rows = yield* resetLedgerRow(fixture, tokenDigest);
+        expect(rows[0]?.state).toBe('dispatched');
+        expect(rows[0]?.dispatchedAt).not.toBeNull();
+        expect(rows[0]?.providerSubjectId).toBe(fixture.userId);
+        expect(rows[0]?.email).toBe(fixture.email);
+
+        // The provider really did commit before the answer was lost: the new password works, which
+        // is the fact the `pending` row of the old behaviour would have denied.
+        expect(Result.isSuccess(yield* signInWith(fixture, REPLACEMENT_PASSWORD))).toBe(true);
+      }),
+    ),
+);
+
+it.live(
+  'answers reconciliation-required rather than INVALID_TOKEN when a PostgreSQL reset is retried after its answer was lost',
+  () =>
+    Effect.scoped(
+      Effect.gen(function* postgresResetRetryAfterLostAnswer() {
+        const { fixture, resetToken, store, tokenDigest } = yield* makeDispatchFixture('reset-retry');
+        const losing = yield* makeScriptedRecovery(losingAnswerProvider(fixture.provider), store);
+        yield* Effect.result(
+          losing.resetPassword({
+            newPassword: Redacted.make(REPLACEMENT_PASSWORD),
+            token: Redacted.make(resetToken),
+          }),
+        );
+        expect((yield* resetLedgerRow(fixture, tokenDigest))[0]?.state).toBe('dispatched');
+
+        // The customer retries the same link against the real provider. Better Auth already spent
+        // its own token row inside the reset above, so it answers INVALID_TOKEN — indistinguishable
+        // from a token that was never valid, which is precisely why the claim decides instead.
+        const retry = yield* makeScriptedRecovery(fixture.provider, store);
+        const outcome = yield* retry.resetPassword({
+          newPassword: Redacted.make(REPLACEMENT_PASSWORD),
+          token: Redacted.make(resetToken),
+        });
+        expect(outcome).toStrictEqual({
+          conflictClass: 'RESET_OUTCOME_INDETERMINATE',
+          outcome: 'ACCOUNT_RECOVERY_RECONCILIATION_REQUIRED',
+        });
+
+        // Exactly one durable row, naming the account whose reset nobody can confirm.
+        const reconciliationRows = yield* fixture.database.executor
+          .select()
+          .from(recoveryReconciliation)
+          .where(eq(recoveryReconciliation.email, fixture.email));
+        expect(reconciliationRows).toHaveLength(1);
+        expect(reconciliationRows[0]?.conflictClass).toBe('RESET_OUTCOME_INDETERMINATE');
+        expect(reconciliationRows[0]?.operation).toBe('reset-password');
+        expect(reconciliationRows[0]?.providerSubjectId).toBe(fixture.userId);
+        expect(reconciliationRows[0]?.currentProviderSubjectId).toBe(fixture.userId);
+        // The claim is not cleared by being reported: the row stays the operator's evidence.
+        expect((yield* resetLedgerRow(fixture, tokenDigest))[0]?.state).toBe('dispatched');
+      }),
+    ),
+);
+
+it.live('consumes the PostgreSQL reset ledger and writes the completion row in one transaction on the happy path', () =>
+  Effect.scoped(
+    Effect.gen(function* postgresResetHappyPath() {
+      const { fixture, resetToken, store, tokenDigest } = yield* makeDispatchFixture('reset-consumed');
+      const recovery = yield* makeScriptedRecovery(fixture.provider, store);
+
+      const outcome = yield* recovery.resetPassword({
+        newPassword: Redacted.make(REPLACEMENT_PASSWORD),
+        token: Redacted.make(resetToken),
+      });
+      expect(outcome).toStrictEqual({ outcome: 'ACCOUNT_RECOVERY_COMPLETED_SAME_SUBJECT' });
+
+      const rows = yield* resetLedgerRow(fixture, tokenDigest);
+      expect(rows[0]?.state).toBe('consumed');
+      expect(rows[0]?.providerSubjectId).toBeNull();
+      expect(rows[0]?.email).toBeNull();
+
+      // The completion row committed with that same transition — it is written by the ledger
+      // store, not by the (un-audited) recorder this fixture composes the service with.
+      const auditRows = yield* fixture.database.executor
+        .select()
+        .from(portalAuthAuditEvent)
+        .where(
+          and(
+            eq(portalAuthAuditEvent.providerSubjectId, fixture.userId),
+            eq(portalAuthAuditEvent.eventType, 'commerce.portal-auth.recovery-completed.v1'),
+          ),
+        );
+      expect(auditRows).toHaveLength(1);
+      expect(auditRows[0]?.outcome).toBe('success');
+      expect(auditRows[0]?.correlationDigest).toBe(tokenDigest);
+      expect(Result.isSuccess(yield* signInWith(fixture, REPLACEMENT_PASSWORD))).toBe(true);
+    }),
+  ),
+);
+
+it.live(
+  'answers reconciliation-required when the PostgreSQL completion transaction fails after a real reset, and keeps the token unusable',
+  () =>
+    Effect.scoped(
+      Effect.gen(function* postgresResetCompletionRefused() {
+        const { fixture, resetToken, store, tokenDigest } = yield* makeDispatchFixture('reset-completion');
+        // The provider succeeds; the one write that cannot be made is the transaction carrying the
+        // ledger's terminal state and the completion row together.
+        const refusingStore: CommercePortalAuthRecoveryStore = {
+          ...store,
+          consumePasswordResetLedgerWithAudit: () =>
+            Effect.fail(
+              new CommercePortalAuthRecoveryUnavailable({
+                operation: 'password-reset-ledger-consume-audit',
+                reason: 'the completion transaction was refused',
+              }),
+            ),
+        };
+        const recovery = yield* makeScriptedRecovery(fixture.provider, refusingStore);
+
+        const outcome = yield* recovery.resetPassword({
+          newPassword: Redacted.make(REPLACEMENT_PASSWORD),
+          token: Redacted.make(resetToken),
+        });
+        // Not a bare outage: a customer told only "unavailable" would retry a token the provider
+        // has already spent, and nothing would ever record that the password changed.
+        expect(outcome).toStrictEqual({
+          conflictClass: 'RESET_OUTCOME_INDETERMINATE',
+          outcome: 'ACCOUNT_RECOVERY_RECONCILIATION_REQUIRED',
+        });
+        expect((yield* resetLedgerRow(fixture, tokenDigest))[0]?.state).toBe('dispatched');
+        expect(Result.isSuccess(yield* signInWith(fixture, REPLACEMENT_PASSWORD))).toBe(true);
+
+        // The retry re-reads the same claim: Better Auth rejects the spent token, and the owner
+        // still answers reconciliation rather than a confident rejection.
+        const retry = yield* makeScriptedRecovery(fixture.provider, store);
+        expect(
+          yield* retry.resetPassword({
+            newPassword: Redacted.make(REPLACEMENT_PASSWORD),
+            token: Redacted.make(resetToken),
+          }),
+        ).toStrictEqual({
+          conflictClass: 'RESET_OUTCOME_INDETERMINATE',
+          outcome: 'ACCOUNT_RECOVERY_RECONCILIATION_REQUIRED',
+        });
+        const reconciliationRows = yield* fixture.database.executor
+          .select()
+          .from(recoveryReconciliation)
+          .where(eq(recoveryReconciliation.email, fixture.email));
+        // The dedupe index keeps a repeated detection of the same conflict on one row.
+        expect(reconciliationRows).toHaveLength(1);
+        expect(reconciliationRows[0]?.conflictClass).toBe('RESET_OUTCOME_INDETERMINATE');
+      }),
+    ),
+);
+
+it.live(
+  'refuses email verification when the PostgreSQL completion transaction fails, leaving the address unverified and the ledger row untouched',
+  () =>
+    Effect.scoped(
+      Effect.gen(function* postgresVerificationCompletionRefused() {
+        const fixture = yield* makeRecoveryFixture('verification-completion');
+        yield* registerFixtureVerificationToken(fixture);
+        const store = yield* makeCommercePortalAuthRecoveryStore(fixture.database.executor).pipe(
+          Effect.provideService(Crypto.Crypto, recoveryCrypto),
+        );
+        // The one write that cannot be made is the transaction carrying the ledger's consumption
+        // and the completion row together; nothing about the token or the account changes.
+        const refusingStore: CommercePortalAuthRecoveryStore = {
+          ...store,
+          consumeEmailVerificationWithAudit: () =>
+            Effect.fail(
+              new CommercePortalAuthRecoveryUnavailable({
+                operation: 'verification-token-consume-audit',
+                reason: 'the completion transaction was refused',
+              }),
+            ),
+        };
+        const recovery = yield* makeScriptedRecovery(fixture.provider, refusingStore);
+
+        const outcome = yield* Effect.result(recovery.verifyEmail({ token: fixture.verificationToken }));
+        expect(Result.isFailure(outcome)).toBe(true);
+        if (Result.isFailure(outcome)) {
+          expect(outcome.failure).toBeInstanceOf(CommercePortalAuthRecoveryUnavailable);
+        }
+
+        // Without the fix this consumes the token and flips the account verified before the audit
+        // write is even attempted, so both assertions below fail on the lenient-emit code path.
+        const remainingRows = yield* customVerificationRows(fixture);
+        expect(remainingRows).toHaveLength(1);
+        const users = yield* fixture.database.executor
+          .select({ emailVerified: user.emailVerified })
+          .from(user)
+          .where(eq(user.id, fixture.userId))
+          .limit(1);
+        expect(users.at(0)?.emailVerified).toBe(false);
+      }),
+    ),
 );

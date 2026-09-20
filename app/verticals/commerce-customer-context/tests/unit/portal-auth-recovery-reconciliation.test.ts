@@ -18,9 +18,11 @@ const TOKEN = Redacted.make('reconciliation-token');
 const TOKEN_DIGEST = 'reconciliation-token-digest';
 
 /**
- * Everything the reconciliation service needs, wired to explicit fixture state. The four
- * always-required store methods are stubbed with `Effect.die` — `detect` never calls them, so
- * a test that invokes one has a bug and should fail loudly rather than silently return a placeholder.
+ * Everything the reconciliation service needs, wired to explicit fixture state. Every store method
+ * outside detection's own reads is stubbed with `Effect.die` — `detect` never calls them, so a test
+ * that invokes one has a bug and should fail loudly rather than silently return a placeholder. The
+ * dispatched-row read is among them: it belongs to `recordIndeterminateReset`, which the tests at
+ * the end of this file drive with a fixture of its own.
  */
 interface ReconciliationStoreFixture {
   readonly recordedConflicts: () => readonly Parameters<
@@ -41,10 +43,12 @@ const makeReconciliationStore = (input: {
     recordedConflicts: () => recorded,
     store: {
       accountExists: () => Effect.succeed(input.accountExists),
-      consumeEmailVerification: unusedRequiredMethod,
-      consumePasswordResetLedger: unusedRequiredMethod,
+      consumeEmailVerificationWithAudit: unusedRequiredMethod,
+      consumePasswordResetLedgerWithAudit: unusedRequiredMethod,
       consumeRateLimitBudget: unusedRequiredMethod,
+      dispatchPasswordResetLedger: unusedRequiredMethod,
       findAccountSubjectForEmail: () => Effect.succeed(input.currentAccountSubjectId),
+      peekDispatchedPasswordResetLedger: unusedRequiredMethod,
       peekEmailVerificationLedger: () => Effect.succeed(input.ledgerBinding),
       peekPasswordResetLedger: () => Effect.succeed(input.ledgerBinding),
       recordRecoveryReconciliation: (conflict) =>
@@ -238,5 +242,83 @@ it.effect('detect never restores access: a conflicting result carries no subject
       expect(keys).toContain('conflictClass');
       expect(keys).toContain('outcome');
     }
+  }),
+);
+
+// -- The indeterminate-reset recorder: the dispatched row is the whole evidence. ----------------
+
+/**
+ * The same store fixture, with only the reads `recordIndeterminateReset` makes wired: the claimed
+ * row's binding and the identifier's current owner. Detection's own reads stay fatal here for the
+ * same reason they are stubbed above — this path must never re-run detection.
+ */
+const makeIndeterminateStore = (input: {
+  readonly currentAccountSubjectId: Option.Option<string>;
+  readonly dispatchedBinding: Option.Option<CommercePortalAuthRecoveryLedgerBinding>;
+}): ReconciliationStoreFixture => {
+  const recorded: Parameters<CommercePortalAuthRecoveryStore['recordRecoveryReconciliation']>[0][] = [];
+  return {
+    recordedConflicts: () => recorded,
+    store: {
+      accountExists: unusedRequiredMethod,
+      consumeEmailVerificationWithAudit: unusedRequiredMethod,
+      consumePasswordResetLedgerWithAudit: unusedRequiredMethod,
+      consumeRateLimitBudget: unusedRequiredMethod,
+      dispatchPasswordResetLedger: unusedRequiredMethod,
+      findAccountSubjectForEmail: () => Effect.succeed(input.currentAccountSubjectId),
+      peekDispatchedPasswordResetLedger: () => Effect.succeed(input.dispatchedBinding),
+      peekEmailVerificationLedger: unusedRequiredMethod,
+      peekPasswordResetLedger: unusedRequiredMethod,
+      recordRecoveryReconciliation: (conflict) =>
+        Effect.sync(() => {
+          recorded.push(conflict);
+        }),
+      registerEmailVerificationToken: unusedRequiredMethod,
+      registerPasswordResetToken: unusedRequiredMethod,
+      reserveEmailVerificationSubject: unusedRequiredMethod,
+    },
+  };
+};
+
+const runRecordIndeterminate = (store: CommercePortalAuthRecoveryStore) =>
+  makeCommercePortalAuthRecoveryReconciliation().pipe(
+    Effect.flatMap((service) => service.recordIndeterminateReset({ token: TOKEN })),
+    Effect.provideService(CommercePortalAuthRecoveryStoreService, store),
+  );
+
+it.effect('recordIndeterminateReset files RESET_OUTCOME_INDETERMINATE for a row still claimed for a dispatch', () =>
+  Effect.gen(function* test() {
+    const fixture = makeIndeterminateStore({
+      currentAccountSubjectId: Option.some(LEDGER_SUBJECT),
+      dispatchedBinding: Option.some({ email: EMAIL, providerSubjectId: LEDGER_SUBJECT, tokenDigest: TOKEN_DIGEST }),
+    });
+    const outcome = yield* runRecordIndeterminate(fixture.store);
+    expect(Option.isSome(outcome)).toBe(true);
+    if (Option.isSome(outcome)) {
+      expect(outcome.value).toStrictEqual({
+        conflictClass: 'RESET_OUTCOME_INDETERMINATE',
+        outcome: 'ACCOUNT_RECOVERY_RECONCILIATION_REQUIRED',
+      });
+    }
+    expect(fixture.recordedConflicts()).toHaveLength(1);
+    expect(fixture.recordedConflicts()[0]?.conflictClass).toBe('RESET_OUTCOME_INDETERMINATE');
+    expect(fixture.recordedConflicts()[0]?.operation).toBe('reset-password');
+    expect(fixture.recordedConflicts()[0]?.providerSubjectId).toBe(LEDGER_SUBJECT);
+    // The identifier's current owner is the column a support operator reads first.
+    expect(fixture.recordedConflicts()[0]?.currentProviderSubjectId).toStrictEqual(Option.some(LEDGER_SUBJECT));
+  }),
+);
+
+it.effect('recordIndeterminateReset records nothing when no row is claimed for a dispatch', () =>
+  Effect.gen(function* test() {
+    const fixture = makeIndeterminateStore({
+      currentAccountSubjectId: Option.some(CURRENT_SUBJECT),
+      dispatchedBinding: Option.none(),
+    });
+    const outcome = yield* runRecordIndeterminate(fixture.store);
+    // None is what lets the caller's own provider answer stand: a token nobody claimed was never
+    // dispatched, so a rejection of it is a rejection, not an unknown outcome.
+    expect(Option.isNone(outcome)).toBe(true);
+    expect(fixture.recordedConflicts()).toHaveLength(0);
   }),
 );

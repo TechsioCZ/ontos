@@ -81,11 +81,16 @@ export interface CommercePortalAuthEmailVerificationCompleted {
  *   to a different subject between issuance and use.
  * - `TOKEN_SUBJECT_STALE`: the ledger's recorded provider subject no longer names any active
  *   account at all.
+ * - `RESET_OUTCOME_INDETERMINATE`: the provider was asked to spend a reset token and never answered
+ *   — or answered after the deployment could no longer record the completion — so whether the
+ *   password actually changed is unknown to this realm. Unlike the three above it is not a
+ *   disagreement between issuance-time and current evidence: it is the absence of an outcome.
  */
 export const CommercePortalAuthRecoveryReconciliationConflictClassSchema = Schema.Literals([
   'VERIFICATION_LEDGER_SUBJECT_MISMATCH',
   'IDENTIFIER_REBOUND',
   'TOKEN_SUBJECT_STALE',
+  'RESET_OUTCOME_INDETERMINATE',
 ]);
 export type CommercePortalAuthRecoveryReconciliationConflictClass =
   typeof CommercePortalAuthRecoveryReconciliationConflictClassSchema.Type;

@@ -415,6 +415,19 @@
       "table": "recovery_reset_ledger"
     },
     {
+      "type": "timestamp with time zone",
+      "typeSchema": null,
+      "notNull": false,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "dispatched_at",
+      "entityType": "columns",
+      "schema": "commerce_auth",
+      "table": "recovery_reset_ledger"
+    },
+    {
       "type": "text",
       "typeSchema": null,
       "notNull": false,

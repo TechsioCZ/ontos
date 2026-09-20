@@ -368,7 +368,7 @@ it.effect('keeps backup-code and URI responses typed at the owner facade', () =>
   runMfa(successfulProvider(), (service) =>
     Effect.all([
       service.getTOTPURI({ body: { password: 'P'.repeat(24) }, headers }),
-      service.generateBackupCodes({ body: { password: 'P'.repeat(24) }, headers }),
+      service.generateBackupCodes({ body: { password: 'P'.repeat(24) }, evidence: ATTEMPT_EVIDENCE, headers }),
     ]).pipe(
       Effect.tap(([uri, backupCodes]) =>
         Effect.sync(() => {
@@ -1047,6 +1047,147 @@ for (const [method, invoke, intentEventType] of strictVerificationCases) {
             intentEventType,
             'commerce.portal-auth.mfa-verified.v1',
           ]);
+        }),
+      ),
+    );
+  });
+}
+
+/**
+ * The same strict contract around the two administrative changes that mint no session. Neither can
+ * be rolled back — Better Auth's re-enable stages a fresh secret the customer must confirm, and
+ * superseded backup codes are gone — so a refused completion row answers 503 with no cookies and
+ * leaves the change standing, exactly as `confirm-enable` does with an activated factor.
+ */
+const ADMINISTRATION_COOKIE = 'better-auth.session_token=rotated; Path=/; HttpOnly';
+const ADMINISTRATION_PASSWORD = 'P'.repeat(24);
+
+const strictAdministrationCases: readonly (readonly [
+  string,
+  (service: CommercePortalAuthMfaServiceApi) => Effect.Effect<unknown, CommercePortalAuthMfaProviderFailure>,
+  string,
+  (onCall: () => void) => CommercePortalAuthMfaProvider,
+])[] = [
+  [
+    'disable-two-factor',
+    (service) =>
+      service.disableTwoFactor({
+        body: { password: ADMINISTRATION_PASSWORD },
+        evidence: ATTEMPT_EVIDENCE,
+        headers,
+      }),
+    'commerce.portal-auth.mfa-disabled.v1',
+    (onCall) => ({
+      ...successfulProvider(),
+      disableTwoFactor: () =>
+        Effect.sync(() => {
+          onCall();
+          return providerResponse({ status: true }, [ADMINISTRATION_COOKIE]);
+        }),
+    }),
+  ],
+  [
+    'regenerate-backup-codes',
+    (service) =>
+      service.generateBackupCodes({
+        body: { password: ADMINISTRATION_PASSWORD },
+        evidence: ATTEMPT_EVIDENCE,
+        headers,
+      }),
+    'commerce.portal-auth.mfa-backup-codes-regenerated.v1',
+    (onCall) => ({
+      ...successfulProvider(),
+      generateBackupCodes: () =>
+        Effect.sync(() => {
+          onCall();
+          return providerResponse({ backupCodes: ['backup-3'], status: true }, [ADMINISTRATION_COOKIE]);
+        }),
+    }),
+  ],
+];
+
+for (const [method, invoke, eventType, providerFor] of strictAdministrationCases) {
+  it.effect(`refuses ${method} without calling the provider when the intent row cannot be written`, () => {
+    let providerCalls = 0;
+    const recording = makeRefusingRecorder(0);
+    return makeCommercePortalAuthMfaService(recording.recorder, unusedRollback).pipe(
+      Effect.provideService(
+        CommercePortalAuthMfaProviderService,
+        providerFor(() => {
+          providerCalls += 1;
+        }),
+      ),
+      Effect.flatMap((service) => Effect.result(invoke(service))),
+      Effect.tap((result) =>
+        Effect.sync(() => {
+          expect(Result.isFailure(result)).toBe(true);
+          if (Result.isFailure(result)) {
+            expect(commercePortalAuthMfaProblemForFailure(result.failure).status).toBe(503);
+            expect(result.failure.setCookieHeaders).toStrictEqual([]);
+          }
+          // The whole point of the intent row: an audit outage refuses the change outright rather
+          // than taking a factor away with nothing durable to say it happened.
+          expect(providerCalls).toBe(0);
+          expect(recording.events().map((event) => event.eventType)).toStrictEqual([eventType]);
+          expect(recording.events().map((event) => event.outcome)).toStrictEqual(['requested']);
+        }),
+      ),
+    );
+  });
+
+  it.effect(`answers ${method} with 503 and no cookies when its completion row cannot be written`, () => {
+    let providerCalls = 0;
+    // The intent row commits; the completion row is the one the outage swallows.
+    const recording = makeRefusingRecorder(1);
+    return makeCommercePortalAuthMfaService(recording.recorder, unusedRollback).pipe(
+      Effect.provideService(
+        CommercePortalAuthMfaProviderService,
+        providerFor(() => {
+          providerCalls += 1;
+        }),
+      ),
+      Effect.flatMap((service) => Effect.result(invoke(service))),
+      Effect.tap((result) =>
+        Effect.sync(() => {
+          expect(Result.isFailure(result)).toBe(true);
+          if (Result.isFailure(result)) {
+            expect(commercePortalAuthMfaProblemForFailure(result.failure).status).toBe(503);
+            // Better Auth rotated a cookie for this change. Forwarding it would hand the browser a
+            // credential whose admission nothing records, so the refusal carries none.
+            expect(result.failure.setCookieHeaders).toStrictEqual([]);
+          }
+          // The change itself stands — there is nothing to take back — which is exactly why both
+          // rows were attempted and the failure is reported rather than swallowed.
+          expect(providerCalls).toBe(1);
+          expect(recording.events().map((event) => event.outcome)).toStrictEqual(['requested', 'success']);
+        }),
+      ),
+    );
+  });
+
+  it.effect(`forwards ${method} with both evidence rows when the audit store accepts`, () => {
+    let providerCalls = 0;
+    const recording = makeRecordingRecorder();
+    return makeCommercePortalAuthMfaService(recording.recorder, unusedRollback).pipe(
+      Effect.provideService(
+        CommercePortalAuthMfaProviderService,
+        providerFor(() => {
+          providerCalls += 1;
+        }),
+      ),
+      Effect.flatMap((service) => Effect.result(invoke(service))),
+      Effect.tap((result) =>
+        Effect.sync(() => {
+          expect(Result.isSuccess(result)).toBe(true);
+          expect(providerCalls).toBe(1);
+          expect(recording.events().map((event) => event.eventType)).toStrictEqual([eventType, eventType]);
+          expect(recording.events().map((event) => event.outcome)).toStrictEqual(['requested', 'success']);
+          // Both rows name the same attempt, which is what ties them together for an operator.
+          expect(recording.events().map((event) => event.correlationDigest)).toStrictEqual([
+            ATTEMPT_EVIDENCE.clientKeyDigest,
+            ATTEMPT_EVIDENCE.clientKeyDigest,
+          ]);
+          expect(recording.events().map((event) => event.operation)).toStrictEqual([method, method]);
         }),
       ),
     );
