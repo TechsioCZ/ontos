@@ -1,4 +1,4 @@
-import { eq } from 'drizzle-orm';
+import { eq, sql } from 'drizzle-orm';
 import { Config, DateTime, Effect, Layer, Redacted, Schema } from 'effect';
 import type { Scope } from 'effect';
 import { expect, it } from 'effect-rstest';
@@ -27,19 +27,22 @@ import type { CommerceEnrollmentOwnerReconciliationInput } from '../../src/enrol
 import { CommerceEnrollmentOwnerEffectIndeterminate } from '../../src/enrollment/orchestration/owner-transition-errors.ts';
 import { providerObservationFor } from '../../src/enrollment/orchestration/owner-transition-composition.ts';
 import { commerceEnrollmentPortalAuthOwnerReconciliationForLookup } from '../../src/enrollment/orchestration/provider-owner-effect.ts';
-import { makeCommercePortalAuthAccountCreationCorrelation } from '../../src/portal-auth/persistence/portal-auth-account-correlation.ts';
 import { CommercePortalAuthAccountLookupLive } from '../../src/portal-auth/persistence/portal-auth-account-lookup.ts';
 import {
   CommercePortalAuthDatabase,
   makeCommercePortalAuthDatabase,
 } from '../../src/portal-auth/persistence/portal-auth-database.ts';
-import { accountCreationCorrelation, user } from '../../src/portal-auth/persistence/portal-auth-tables.ts';
+import { user } from '../../src/portal-auth/persistence/portal-auth-tables.ts';
 
 /**
  * Better Auth can commit the account row and still lose its answer — a timed-out call, an unusable
  * payload, or a process exit before the start route journals the outcome. These cases drive the
  * installed provider against PostgreSQL and then reconcile exactly as the owner preparation does,
  * so what is proven here is the deployment's own recovery rather than a test double's.
+ *
+ * The correlation is a column on the account row, written by the realm's own user-creation hook in
+ * the very insert that commits it. There is no second statement that could fail on its own, and no
+ * second table it could fail to reach: the realm carries none.
  */
 
 const ORIGIN = 'https://portal.example.test';
@@ -64,7 +67,7 @@ interface CorrelationFixture {
 
 /**
  * One real realm over the proof database, reached through the very gateway the private
- * account-creation port installs: the correlation row is therefore written by Better Auth's own
+ * account-creation port installs: the correlation is therefore written by Better Auth's own
  * user-creation hook inside the provider call, never by this test.
  */
 const makeCorrelationFixture = Effect.fn('CommerceEnrollmentAccountCorrelation.makeFixture')(function* makeFixture(
@@ -77,7 +80,6 @@ const makeCorrelationFixture = Effect.fn('CommerceEnrollmentAccountCorrelation.m
   });
   const database = yield* makeCommercePortalAuthDatabase(configuration);
   const auth = yield* makeCommercePortalAuth({
-    accountCorrelation: makeCommercePortalAuthAccountCreationCorrelation(database.executor),
     configuration,
     databaseAdapter: database.adapter,
     emailDelivery: {
@@ -107,18 +109,7 @@ const makeCorrelationFixture = Effect.fn('CommerceEnrollmentAccountCorrelation.m
   const ownerInvocationId = Schema.decodeSync(EnrollmentActionInvocationIdSchema)(randomUUID());
   const attemptId = Schema.decodeSync(EnrollmentAttemptIdSchema)(randomUUID());
   const tenantId = Schema.decodeSync(EnrollmentTenantIdSchema)(randomUUID());
-  yield* Effect.addFinalizer(() =>
-    database.executor
-      .transaction((transaction) =>
-        Effect.gen(function* removeFixtureRows() {
-          yield* transaction
-            .delete(accountCreationCorrelation)
-            .where(eq(accountCreationCorrelation.ownerInvocationId, String(ownerInvocationId)));
-          yield* transaction.delete(user).where(eq(user.email, email));
-        }),
-      )
-      .pipe(Effect.orDie),
-  );
+  yield* Effect.addFinalizer(() => database.executor.delete(user).where(eq(user.email, email)).pipe(Effect.orDie));
   return { attemptId, database, email, gateway, lookup, ownerInvocationId, tenantId };
 });
 
@@ -176,13 +167,27 @@ const usersWithEmail = (fixture: CorrelationFixture) =>
 
 const correlationRows = (fixture: CorrelationFixture) =>
   fixture.database.executor
-    .select({
-      portalEnrollmentAttemptId: accountCreationCorrelation.portalEnrollmentAttemptId,
-      providerSubjectId: accountCreationCorrelation.providerSubjectId,
-      tenantId: accountCreationCorrelation.tenantId,
-    })
-    .from(accountCreationCorrelation)
-    .where(eq(accountCreationCorrelation.ownerInvocationId, String(fixture.ownerInvocationId)));
+    .select({ providerSubjectId: user.id })
+    .from(user)
+    .where(eq(user.enrollmentOwnerInvocationId, String(fixture.ownerInvocationId)));
+
+/**
+ * Whether the realm still carries a table an account creation could correlate itself in separately.
+ * It must not: a correlation the realm could write after its user transaction committed is exactly
+ * the write that can fail on its own and leave a committed account no Attempt can ever name.
+ */
+const separateCorrelationTables = (fixture: CorrelationFixture) =>
+  fixture.database.executor
+    .execute(
+      sql<{ readonly table_name: string }>`
+        SELECT table_name
+        FROM information_schema.tables
+        WHERE table_schema = 'commerce_auth'
+          AND table_name = 'account_creation_correlation'
+      `,
+      'objects',
+    )
+    .pipe(Effect.map((rows) => rows.length));
 
 /**
  * Without the provider-side correlation this reconciliation can only fail
@@ -196,11 +201,7 @@ it.live('recovers a lost creation answer from the provider-side correlation', ()
       const created = yield* createAccountFor(fixture);
 
       const [correlation] = yield* correlationRows(fixture);
-      expect(correlation).toStrictEqual({
-        portalEnrollmentAttemptId: String(fixture.attemptId),
-        providerSubjectId: created.providerSubjectId,
-        tenantId: String(fixture.tenantId),
-      });
+      expect(correlation).toStrictEqual({ providerSubjectId: created.providerSubjectId });
 
       // The recorded outcome is dropped: the Attempt below carries no account subject at all.
       const resolution = yield* reconcileFor(fixture, fixture.ownerInvocationId);
@@ -224,6 +225,30 @@ it.live('replays a retried start to the same subject and creates no second accou
 
       expect(replayed.providerSubjectId).toBe(created.providerSubjectId);
       expect(yield* usersWithEmail(fixture)).toStrictEqual([{ id: created.providerSubjectId }]);
+    }),
+  ),
+);
+
+/**
+ * The governed invocation reaches PostgreSQL in the account's own INSERT. Nothing else could have
+ * carried it: the realm has no separate correlation table for a second write to land in, so a row
+ * that answers to this invocation is proof the account insert itself carried it.
+ */
+it.live('writes the governed invocation in the very insert that commits the account', () =>
+  Effect.scoped(
+    Effect.gen(function* writesTheInvocationInTheAccountInsert() {
+      const fixture = yield* makeCorrelationFixture('same-insert');
+      expect(yield* separateCorrelationTables(fixture)).toBe(0);
+
+      const created = yield* createAccountFor(fixture);
+
+      const rows = yield* fixture.database.executor
+        .select({ enrollmentOwnerInvocationId: user.enrollmentOwnerInvocationId, id: user.id })
+        .from(user)
+        .where(eq(user.email, fixture.email));
+      expect(rows).toStrictEqual([
+        { enrollmentOwnerInvocationId: String(fixture.ownerInvocationId), id: created.providerSubjectId },
+      ]);
     }),
   ),
 );

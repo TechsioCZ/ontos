@@ -1,8 +1,8 @@
-import { randomUUID } from 'node:crypto';
+import { createHmac, randomUUID } from 'node:crypto';
 
 import { ActionAuthorizationPreflightDatabaseLive, CorePersistenceLive, DatabaseConfigLive } from '@app/core-runtime';
 import { ResendEmailDeliveryConfig } from '@app/email-delivery/resend';
-import { eq, sql } from 'drizzle-orm';
+import { eq, like, sql } from 'drizzle-orm';
 import { Config, Context, Effect, Layer, Option, Redacted, Schema } from 'effect';
 import { expect, it } from 'effect-rstest';
 
@@ -88,8 +88,7 @@ import {
   CommercePortalAuthDatabaseLive,
   makeCommercePortalAuthDatabase,
 } from '../../src/portal-auth/persistence/portal-auth-database.ts';
-import { makeCommercePortalAuthAccountCreationCorrelation } from '../../src/portal-auth/persistence/portal-auth-account-correlation.ts';
-import { user, verification } from '../../src/portal-auth/persistence/portal-auth-tables.ts';
+import { rateLimit, user, verification } from '../../src/portal-auth/persistence/portal-auth-tables.ts';
 import {
   makeEnrollmentAcceptanceFixture,
   readEnrollmentAcceptanceAttempt,
@@ -379,17 +378,22 @@ it.live('installs the enrollment continuation, not the fail-closed leaf', () =>
   ),
 );
 
-/** One start request from a trusted origin, presenting no gateway assertion. */
-const startEnrollmentRequest = (body: Record<string, string>): Request =>
-  new Request(`${ORIGIN}/api/portal-auth/enrollment/start`, {
+/** One start request from a trusted origin, carrying a gateway assertion only when given one. */
+const startEnrollmentRequest = (body: Record<string, string>, assertion?: string): Request => {
+  const headers = new Headers({
+    'content-type': 'application/json',
+    origin: ORIGIN,
+    'x-correlation-id': `enrollment-http-${randomUUID()}`,
+  });
+  if (assertion !== undefined) {
+    headers.set('authorization', `Bearer ${assertion}`);
+  }
+  return new Request(`${ORIGIN}/api/portal-auth/enrollment/start`, {
     body: JSON.stringify(body),
-    headers: {
-      'content-type': 'application/json',
-      origin: ORIGIN,
-      'x-correlation-id': `enrollment-http-${randomUUID()}`,
-    },
+    headers,
     method: 'POST',
   });
+};
 
 it.live('refuses the Counterparty invitation journey before an Attempt or an account exists', () =>
   Effect.scoped(
@@ -897,7 +901,6 @@ const makeSignedInPortalAccount = Effect.fnUntraced(function* makeSignedInPortal
   // The realm this fixture signs up through is configured exactly as the mounted one; only the
   // transactional email transport is replaced, so the verification token is observable here.
   const auth = yield* makeCommercePortalAuth({
-    accountCorrelation: makeCommercePortalAuthAccountCreationCorrelation(database.executor),
     configuration,
     databaseAdapter: database.adapter,
     emailDelivery: {
@@ -1198,6 +1201,81 @@ it.live(
         expect(response.status).toBe(503);
         expect(response.headers.get('content-type')).toContain('application/problem+json');
         expect(yield* enrollmentAttemptCount(fixture)).toBe(0);
+      }),
+    ),
+  180_000,
+);
+
+/**
+ * The durable `rate_limit` rows this start route owns for one address' budget. The key is the
+ * deployment's own: the unresolvable client of a synthetic request, the address under the realm
+ * secret, and the route.
+ */
+const enrollmentStartBudgetKeys = Effect.fnUntraced(function* enrollmentStartBudgetKeys(email: string) {
+  const databaseUrl = yield* providerDatabaseUrl;
+  const database = yield* makeCommercePortalAuthDatabase({ connectionString: databaseUrl }).pipe(Effect.orDie);
+  const scope = createHmac('sha256', SECRET).update(email).digest('base64url');
+  const budgetKeys = like(rateLimit.key, `%|${scope}|/enrollment/start`);
+  yield* Effect.addFinalizer(() => database.executor.delete(rateLimit).where(budgetKeys).pipe(Effect.orDie));
+  return yield* database.executor.select({ key: rateLimit.key }).from(rateLimit).where(budgetKeys).pipe(Effect.orDie);
+});
+
+/**
+ * The enrollment budget is keyed by the address being enrolled, so whoever can spend it can lock
+ * any address out of account creation for the window. A trusted `Origin` is the only thing the
+ * transport establishes before it — and an Origin header is not an authenticated caller. The
+ * gateway principal is therefore verified first, and an unverifiable caller is refused with the
+ * group's own 401 having charged nothing.
+ */
+it.live(
+  'charges no enrollment budget to a start whose gateway principal cannot be verified',
+  () =>
+    Effect.scoped(
+      Effect.gen(function* unverifiableStartChargesNoBudget() {
+        const tenantId = randomUUID();
+        const fixture = yield* makeEnrollmentAcceptanceFixture({ tenantId });
+        const gateway = yield* makeAcceptanceGatewayIssuer(READ_ISSUER, READ_KEY_ID);
+        const runtime = yield* authenticatedRuntime(gateway);
+        const email = `enrollment-http-${randomUUID()}@example.test`;
+        const startBody = {
+          displayName: START_DISPLAY_NAME,
+          email,
+          journey: 'RETAIL_SELF_ENROLLMENT',
+          password: PORTAL_OWNER_PASSWORD,
+          sellingLegalEntityId: randomUUID(),
+        };
+
+        // The address' entire account-creation budget is three starts. All three are spent here by
+        // a caller carrying nothing but the trusted Origin the transport checks first.
+        const refusals = yield* Effect.forEach(
+          [0, 1, 2],
+          () => Effect.promise(async () => await runtime.handler(startEnrollmentRequest(startBody))),
+          { concurrency: 1 },
+        );
+        expect(refusals.map((response) => response.status)).toStrictEqual([401, 401, 401]);
+        expect(yield* enrollmentAttemptCount(fixture)).toBe(0);
+
+        // Nothing was charged: the budget for this address has no durable row at all. Spending it
+        // before the caller is verified leaves one here and fails this assertion.
+        expect(yield* enrollmentStartBudgetKeys(email)).toStrictEqual([]);
+
+        // The address' owner, arriving with a verifiable gateway assertion, is therefore not rate
+        // limited: the start reaches the budget, spends the first of three, and carries on into the
+        // governed Action. Charging the refusals above answers 429 here instead.
+        const assertion = yield* issueAcceptanceGatewayAssertion(fixture.admin, gateway, READ_AUDIENCE, {
+          authBindingId: randomUUID(),
+          authContextRef: `portal-session:${randomUUID()}`,
+          authenticationNamespaceId: COMMERCE_AUTHENTICATION_NAMESPACE_ID,
+          authMethod: 'session',
+          legalEntityId: randomUUID(),
+          principalId: randomUUID(),
+          tenantId,
+        });
+        const authenticated = yield* Effect.promise(
+          async () => await runtime.handler(startEnrollmentRequest(startBody, assertion)),
+        );
+        expect(authenticated.status).not.toBe(429);
+        expect(yield* enrollmentStartBudgetKeys(email)).toHaveLength(1);
       }),
     ),
   180_000,

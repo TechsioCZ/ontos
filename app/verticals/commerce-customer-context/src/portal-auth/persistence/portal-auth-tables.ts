@@ -1,16 +1,5 @@
 import { defineRelations, sql } from 'drizzle-orm';
-import {
-  bigint,
-  boolean,
-  index,
-  integer,
-  pgSchema,
-  smallint,
-  text,
-  timestamp,
-  uniqueIndex,
-  uuid,
-} from 'drizzle-orm/pg-core';
+import { bigint, boolean, index, integer, pgSchema, smallint, text, timestamp, uniqueIndex } from 'drizzle-orm/pg-core';
 
 import { portalAuthAuditEvent } from '../audit/audit-tables.ts';
 
@@ -27,7 +16,6 @@ export const COMMERCE_PORTAL_AUTH_TABLE_INVENTORY = [
   'stepUpChallengeAttempt',
   'recoveryReconciliation',
   'recoveryResetLedger',
-  'accountCreationCorrelation',
   'portalAuthAuditEvent',
 ] as const;
 
@@ -39,20 +27,42 @@ export const COMMERCE_PORTAL_AUTH_TABLE_INVENTORY = [
  */
 export const commercePortalAuthSchema = pgSchema(COMMERCE_PORTAL_AUTH_SCHEMA_NAME);
 
-export const user = commercePortalAuthSchema.table('user', {
-  // Provider controls own status; browser assertions never establish these values.
-  banExpires: timestamp('ban_expires', { withTimezone: true }),
-  banned: boolean('banned').default(false),
-  banReason: text('ban_reason'),
-  createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
-  email: text('email').notNull().unique(),
-  emailVerified: boolean('email_verified').default(false).notNull(),
-  id: text('id').primaryKey(),
-  image: text('image'),
-  name: text('name').notNull(),
-  twoFactorEnabled: boolean('two_factor_enabled').default(false),
-  updatedAt: timestamp('updated_at', { withTimezone: true }).defaultNow().notNull(),
-});
+export const user = commercePortalAuthSchema.table(
+  'user',
+  {
+    // Provider controls own status; browser assertions never establish these values.
+    banExpires: timestamp('ban_expires', { withTimezone: true }),
+    banned: boolean('banned').default(false),
+    banReason: text('ban_reason'),
+    createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
+    email: text('email').notNull().unique(),
+    emailVerified: boolean('email_verified').default(false).notNull(),
+    /**
+     * Which governed owner invocation created this account, written by the realm's own
+     * user-creation hook in the very insert that commits the row. Better Auth can commit the
+     * account and still lose its answer — a timed-out call, an unusable payload, or a process exit
+     * before the Attempt journals the outcome — and an Attempt with no recorded subject has nothing
+     * to key the exact provider lookup on, so its reconciliation stays permanently indeterminate
+     * and a retried start is refused by the duplicate-email guard. Carrying the invocation on the
+     * account row rather than in a table of its own is what makes it unlosable: a separate write
+     * after the user transaction committed can fail on its own and leave exactly the account this
+     * column exists to recover.
+     */
+    enrollmentOwnerInvocationId: text('enrollment_owner_invocation_id'),
+    id: text('id').primaryKey(),
+    image: text('image'),
+    name: text('name').notNull(),
+    twoFactorEnabled: boolean('two_factor_enabled').default(false),
+    updatedAt: timestamp('updated_at', { withTimezone: true }).defaultNow().notNull(),
+  },
+  (table) => [
+    // One governed invocation may create at most one account. The index is partial because every
+    // account created outside enrollment answers NULL here, and NULLs must stay uncontended.
+    uniqueIndex('commerce_auth_user_enrollment_owner_invocation_uk')
+      .on(table.enrollmentOwnerInvocationId)
+      .where(sql`${table.enrollmentOwnerInvocationId} is not null`),
+  ],
+);
 
 export const session = commercePortalAuthSchema.table(
   'session',
@@ -243,27 +253,6 @@ export const recoveryResetLedger = commercePortalAuthSchema.table(
   ],
 );
 
-/**
- * Which governed owner invocation created which provider account, written by the realm inside the
- * very sign-up call that commits the `user` row. Better Auth can commit that row and still lose its
- * answer — a timed-out call, an unusable payload, or a process exit before the Attempt journals the
- * outcome — and an Attempt with no recorded subject has nothing to key the exact provider lookup
- * on, so its reconciliation stays permanently indeterminate and a retried start is refused by the
- * duplicate-email guard. This row is the provider-side key that survives that lost answer.
- *
- * `owner_invocation_id` is the primary key because one governed invocation may create at most one
- * account, and `provider_subject_id` is unique because one account answers to at most one
- * invocation: either constraint alone would let a second creation quietly claim the same identity.
- * Deliberately outside `commercePortalAuthDatabaseSchema`: Better Auth owns no model here.
- */
-export const accountCreationCorrelation = commercePortalAuthSchema.table('account_creation_correlation', {
-  createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
-  ownerInvocationId: text('owner_invocation_id').primaryKey(),
-  portalEnrollmentAttemptId: uuid('portal_enrollment_attempt_id').notNull(),
-  providerSubjectId: text('provider_subject_id').notNull().unique(),
-  tenantId: uuid('tenant_id').notNull(),
-});
-
 export const commercePortalAuthDatabaseSchema = {
   account,
   rateLimit,
@@ -327,6 +316,5 @@ export const COMMERCE_PORTAL_AUTH_TABLES = [
   stepUpChallengeAttempt,
   recoveryReconciliation,
   recoveryResetLedger,
-  accountCreationCorrelation,
   portalAuthAuditEvent,
 ] as const;

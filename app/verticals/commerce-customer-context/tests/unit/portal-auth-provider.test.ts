@@ -31,6 +31,7 @@ import {
   COMMERCE_PORTAL_AUTH_TABLE_INVENTORY,
   COMMERCE_PORTAL_AUTH_TABLES,
   commercePortalAuthDatabaseSchema,
+  user,
 } from '../../src/portal-auth/persistence/portal-auth-tables.ts';
 import {
   COMMERCE_PORTAL_AUTH_POLICY,
@@ -56,7 +57,6 @@ import type {
   CommercePortalAccountCreateResult,
   CommercePortalAuthAccountCreationFailure,
 } from '../../api/portal-auth/provider/account-create.ts';
-import type { CommercePortalAuthAccountCreationCorrelation } from '../../api/portal-auth/provider/account-correlation-service.ts';
 import type {
   CommercePortalAuthAuthoritativeSession,
   CommercePortalAuthVerificationInput,
@@ -84,10 +84,6 @@ const testNow = new Date(0);
 const testPassword = Redacted.make('P'.repeat(24));
 // The adapter is constructed with a dummy DB because these tests inspect options only; no query runs.
 const testDatabaseAdapter: CommercePortalAuthDatabaseAdapter = drizzleAdapter({}, { provider: 'pg' });
-/** These option builders never reach a provider call, so the correlation store is never written. */
-const correlationNeverWritten: CommercePortalAuthAccountCreationCorrelation = {
-  record: () => Effect.die('the option builder must never record a creation correlation'),
-};
 const otpDeliveryCallback: NonNullable<OTPOptions['sendOTP']> = () => Promise.resolve();
 const createdAt = new Date(testNow.getTime() - 60_000);
 const expiresAt = new Date(testNow.getTime() + 3_600_000);
@@ -844,14 +840,15 @@ it.effect('keeps the Better Auth table inventory in the isolated commerce_auth s
       'stepUpChallengeAttempt',
       'recoveryReconciliation',
       'recoveryResetLedger',
-      'accountCreationCorrelation',
       'portalAuthAuditEvent',
     ]);
-    // The correlation table is migrated and granted, but Better Auth owns no model over it: it is
-    // the realm's own record of which governed invocation committed which account.
-    expect(COMMERCE_PORTAL_AUTH_TABLES.map((table) => getTableConfig(table).name)).toContain(
+    // The governed invocation that created an account is a column on the account row, never a
+    // table of its own: a second row written after the user transaction committed could fail on
+    // its own and leave exactly the uncorrelated account it exists to recover.
+    expect(COMMERCE_PORTAL_AUTH_TABLES.map((table) => getTableConfig(table).name)).not.toContain(
       'account_creation_correlation',
     );
+    expect(getTableConfig(user).columns.map((column) => column.name)).toContain('enrollment_owner_invocation_id');
     expect(Object.keys(commercePortalAuthDatabaseSchema)).toStrictEqual([
       'account',
       'rateLimit',
@@ -908,7 +905,6 @@ it.effect('builds Better Auth options with isolated cookies, CSRF, verification 
   }).pipe(
     Effect.flatMap((configuration) =>
       makeCommercePortalAuthOptions({
-        accountCorrelation: correlationNeverWritten,
         configuration,
         databaseAdapter: testDatabaseAdapter,
         emailDelivery: {
@@ -947,7 +943,6 @@ it.effect('always configures the Commerce two-factor plugin with the provider de
   }).pipe(
     Effect.flatMap((configuration) =>
       makeCommercePortalAuthOptions({
-        accountCorrelation: correlationNeverWritten,
         configuration,
         databaseAdapter: testDatabaseAdapter,
         emailDelivery: {
@@ -976,7 +971,6 @@ it.effect('passes explicitly configured Better Auth rotation keys without exposi
   }).pipe(
     Effect.flatMap((configuration) =>
       makeCommercePortalAuthOptions({
-        accountCorrelation: correlationNeverWritten,
         configuration,
         databaseAdapter: testDatabaseAdapter,
         emailDelivery: {

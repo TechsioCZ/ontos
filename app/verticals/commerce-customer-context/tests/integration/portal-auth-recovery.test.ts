@@ -8,7 +8,6 @@ import type { Scope } from 'effect';
 import { createHash, createHmac, randomBytes, randomUUID } from 'node:crypto';
 
 import { makeCommercePortalAuthDatabase } from '../../src/portal-auth/persistence/portal-auth-database.ts';
-import { makeCommercePortalAuthAccountCreationCorrelation } from '../../src/portal-auth/persistence/portal-auth-account-correlation.ts';
 import type { CommercePortalAuthDatabase } from '../../src/portal-auth/persistence/portal-auth-database.ts';
 import {
   rateLimit,
@@ -176,7 +175,6 @@ const makeRecoveryFixture = Effect.fn('CommercePortalAuthRecoveryIntegration.mak
     Effect.provideService(CommercePortalAuthRecoveryStoreService, store),
   );
   const auth = yield* makeCommercePortalAuth({
-    accountCorrelation: makeCommercePortalAuthAccountCreationCorrelation(database.executor),
     configuration,
     databaseAdapter: database.adapter,
     emailDelivery,

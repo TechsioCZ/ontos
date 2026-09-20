@@ -1,11 +1,3 @@
-CREATE TABLE "commerce_auth"."account_creation_correlation" (
-	"created_at" timestamp with time zone DEFAULT now() NOT NULL,
-	"owner_invocation_id" text PRIMARY KEY,
-	"portal_enrollment_attempt_id" uuid NOT NULL,
-	"provider_subject_id" text NOT NULL UNIQUE,
-	"tenant_id" uuid NOT NULL
-);
---> statement-breakpoint
 CREATE TABLE "commerce_auth"."recovery_reset_ledger" (
 	"created_at" timestamp with time zone DEFAULT now() NOT NULL,
 	"email" text,
@@ -17,7 +9,9 @@ CREATE TABLE "commerce_auth"."recovery_reset_ledger" (
 	"updated_at" timestamp with time zone DEFAULT now() NOT NULL
 );
 --> statement-breakpoint
+ALTER TABLE "commerce_auth"."user" ADD COLUMN "enrollment_owner_invocation_id" text;--> statement-breakpoint
 ALTER TABLE "commerce_auth"."portal_auth_audit_event" ADD COLUMN "correlation_digest" text;--> statement-breakpoint
 CREATE INDEX "commerce_auth_recovery_reset_ledger_identifier_digest_idx" ON "commerce_auth"."recovery_reset_ledger" ("identifier_digest");--> statement-breakpoint
 CREATE INDEX "commerce_auth_recovery_reset_ledger_state_expires_at_idx" ON "commerce_auth"."recovery_reset_ledger" ("state","expires_at");--> statement-breakpoint
+CREATE UNIQUE INDEX "commerce_auth_user_enrollment_owner_invocation_uk" ON "commerce_auth"."user" ("enrollment_owner_invocation_id") WHERE "enrollment_owner_invocation_id" is not null;--> statement-breakpoint
 CREATE INDEX "commerce_auth_audit_event_correlation_digest_idx" ON "commerce_auth"."portal_auth_audit_event" ("correlation_digest");

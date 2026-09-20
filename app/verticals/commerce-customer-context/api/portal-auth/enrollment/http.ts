@@ -6,7 +6,10 @@ import type { HttpServerRequest } from 'effect/unstable/http';
 
 import type { ActionRegistration, DomainEventContractMap } from '@app/core-runtime';
 
-import { authenticateOperationPrincipal } from '../../auth/action-principal.ts';
+import {
+  authenticateOperationPrincipal,
+  verifyOperationPrincipalWithoutRedemption,
+} from '../../auth/action-principal.ts';
 import { bindActionHttpRunner } from '../../action-http-runner.ts';
 import { commerceCustomerContextApi } from '../../../shared/api.ts';
 import { claimPortalEnrollmentTransitionAction } from '../../../src/actions/claim-portal-enrollment-transition.action.ts';
@@ -471,9 +474,16 @@ const startEnrollment = Effect.fn('CommercePortalAuthEnrollmentHttp.start')(func
     return yield* Effect.fail(commercePortalAuthEnrollmentJourneyUnavailableProblem);
   }
   const email = input.email.trim().toLowerCase();
-  // The owner gate runs before the budget is spent. The budget is keyed by the address being
-  // enrolled, so spending first would let an unauthenticated caller exhaust the enrollment budget
-  // of any address it can name; the sibling sign-in transport orders its own gate the same way.
+  // Every gate this start owns runs before the budget is spent. The budget is keyed by the address
+  // being enrolled, so spending first would let an unauthenticated caller exhaust the enrollment
+  // budget of any address it can name — a forged trusted Origin is all it would take, because
+  // nothing else about the caller has been established yet. The gateway principal is therefore
+  // verified here, upstream of the budget, rather than only inside the governed Action that runs
+  // after it; the sibling sign-in transport orders its own gate the same way.
+  yield* verifyOperationPrincipalWithoutRedemption(Redacted.make(request.headers['authorization']), {
+    authentication: () => commercePortalAuthEnrollmentAuthenticationProblem,
+    unavailable: () => commercePortalAuthEnrollmentUnavailableProblem(),
+  });
   const ownerSubject = commercePortalAuthEnrollmentRequiresAccountOwner(input.journey)
     ? yield* commercePortalAuthEnrollmentAccountOwner(requestHeaders(request.headers), email)
     : undefined;

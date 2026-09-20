@@ -19,3 +19,14 @@ const verifyOperationPrincipal = (authorization: Redacted.Redacted<string | unde
 
 /** Shared HTTP acquisition bound to this deployment's audience-specific verifier. */
 export const authenticateOperationPrincipal = makeMicroverticalHttpPrincipalAuthentication(verifyOperationPrincipal);
+
+/**
+ * The same audience-bound verification the governed Action transport performs, deliberately without
+ * the one-time redemption. A route that must decide something before it dispatches its Action — that
+ * the caller is a verifiable gateway principal at all — may only read the assertion, never spend it:
+ * redeeming here would mark the assertion used and the Action that follows would refuse its own
+ * caller as a replay. The governed Action still redeems exactly as it always did.
+ */
+export const verifyOperationPrincipalWithoutRedemption = makeMicroverticalHttpPrincipalAuthentication(
+  (authorization: Redacted.Redacted<string | undefined>) => principalVerifier.verify(authorization),
+);

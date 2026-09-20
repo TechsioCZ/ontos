@@ -1,7 +1,7 @@
 {
   "version": "8",
   "dialect": "postgres",
-  "id": "96378e42-512a-43af-ae71-71bcb07df79a",
+  "id": "88ea9dc2-dafd-4aca-9baa-e7dc5461722c",
   "prevIds": [
     "a918ab65-1736-46bd-ae26-82d1ba7e72f9"
   ],
@@ -13,12 +13,6 @@
     {
       "isRlsEnabled": false,
       "name": "account",
-      "entityType": "tables",
-      "schema": "commerce_auth"
-    },
-    {
-      "isRlsEnabled": false,
-      "name": "account_creation_correlation",
       "entityType": "tables",
       "schema": "commerce_auth"
     },
@@ -263,71 +257,6 @@
       "entityType": "columns",
       "schema": "commerce_auth",
       "table": "account"
-    },
-    {
-      "type": "timestamp with time zone",
-      "typeSchema": null,
-      "notNull": true,
-      "dimensions": 0,
-      "default": "now()",
-      "generated": null,
-      "identity": null,
-      "name": "created_at",
-      "entityType": "columns",
-      "schema": "commerce_auth",
-      "table": "account_creation_correlation"
-    },
-    {
-      "type": "text",
-      "typeSchema": null,
-      "notNull": true,
-      "dimensions": 0,
-      "default": null,
-      "generated": null,
-      "identity": null,
-      "name": "owner_invocation_id",
-      "entityType": "columns",
-      "schema": "commerce_auth",
-      "table": "account_creation_correlation"
-    },
-    {
-      "type": "uuid",
-      "typeSchema": null,
-      "notNull": true,
-      "dimensions": 0,
-      "default": null,
-      "generated": null,
-      "identity": null,
-      "name": "portal_enrollment_attempt_id",
-      "entityType": "columns",
-      "schema": "commerce_auth",
-      "table": "account_creation_correlation"
-    },
-    {
-      "type": "text",
-      "typeSchema": null,
-      "notNull": true,
-      "dimensions": 0,
-      "default": null,
-      "generated": null,
-      "identity": null,
-      "name": "provider_subject_id",
-      "entityType": "columns",
-      "schema": "commerce_auth",
-      "table": "account_creation_correlation"
-    },
-    {
-      "type": "uuid",
-      "typeSchema": null,
-      "notNull": true,
-      "dimensions": 0,
-      "default": null,
-      "generated": null,
-      "identity": null,
-      "name": "tenant_id",
-      "entityType": "columns",
-      "schema": "commerce_auth",
-      "table": "account_creation_correlation"
     },
     {
       "type": "bigint",
@@ -1034,6 +963,19 @@
     {
       "type": "text",
       "typeSchema": null,
+      "notNull": false,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "enrollment_owner_invocation_id",
+      "entityType": "columns",
+      "schema": "commerce_auth",
+      "table": "user"
+    },
+    {
+      "type": "text",
+      "typeSchema": null,
       "notNull": true,
       "dimensions": 0,
       "default": null,
@@ -1587,6 +1529,27 @@
       "nameExplicit": true,
       "columns": [
         {
+          "value": "enrollment_owner_invocation_id",
+          "isExpression": false,
+          "asc": true,
+          "nullsFirst": false,
+          "opclass": null
+        }
+      ],
+      "isUnique": true,
+      "where": "\"enrollment_owner_invocation_id\" is not null",
+      "with": "",
+      "method": "btree",
+      "concurrently": false,
+      "name": "commerce_auth_user_enrollment_owner_invocation_uk",
+      "entityType": "indexes",
+      "schema": "commerce_auth",
+      "table": "user"
+    },
+    {
+      "nameExplicit": true,
+      "columns": [
+        {
           "value": "identifier",
           "isExpression": false,
           "asc": true,
@@ -1796,16 +1759,6 @@
     },
     {
       "columns": [
-        "owner_invocation_id"
-      ],
-      "nameExplicit": false,
-      "name": "account_creation_correlation_pkey",
-      "schema": "commerce_auth",
-      "table": "account_creation_correlation",
-      "entityType": "pks"
-    },
-    {
-      "columns": [
         "key"
       ],
       "nameExplicit": false,
@@ -1903,17 +1856,6 @@
       "schema": "commerce_auth",
       "table": "portal_auth_audit_event",
       "entityType": "pks"
-    },
-    {
-      "nameExplicit": false,
-      "columns": [
-        "provider_subject_id"
-      ],
-      "nullsNotDistinct": false,
-      "name": "account_creation_correlation_provider_subject_id_key",
-      "schema": "commerce_auth",
-      "table": "account_creation_correlation",
-      "entityType": "uniques"
     },
     {
       "nameExplicit": false,
