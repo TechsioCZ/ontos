@@ -1,4 +1,4 @@
-import { Context } from 'effect';
+import { Context, Schema } from 'effect';
 
 import type { Effect, Option, Redacted } from 'effect';
 
@@ -9,6 +9,14 @@ import type {
 } from './contracts.ts';
 import type { CommercePortalAuthRecoveryRateLimitRule } from '../../rate-limit-service.ts';
 import type { CommercePortalAuthRecoveryUnavailable } from './unavailable.ts';
+
+/**
+ * What one attempt to claim a password-reset row for a dispatch actually did: `claimed` (this
+ * caller now owns the dispatch), `already-dispatched` (somebody else holds it, outcome unknown), or
+ * `not-pending` (no row to claim; the provider stays authoritative).
+ */
+const CommercePortalAuthRecoveryResetClaimSchema = Schema.Literals(['already-dispatched', 'claimed', 'not-pending']);
+export type CommercePortalAuthRecoveryResetClaim = typeof CommercePortalAuthRecoveryResetClaimSchema.Type;
 
 /** A non-destructive read of one ledger's recorded issuance-time binding. */
 export interface CommercePortalAuthRecoveryLedgerBinding {
@@ -64,14 +72,14 @@ export interface CommercePortalAuthRecoveryStore {
   }) => Effect.Effect<boolean, CommercePortalAuthRecoveryUnavailable>;
   /**
    * Claims a `pending` ledger row for one dispatch, in its own transaction, immediately before the
-   * provider is asked to spend the token. The claim is what makes a lost provider answer
-   * recoverable: Better Auth consumes its own token row atomically inside `resetPassword`, so a
-   * timeout after it committed leaves this realm unable to tell a never-started reset from a
-   * completed one — and a `pending` row would let the retry be answered as a confident rejection.
+   * provider is asked to spend the token — the claim is what makes a lost provider answer
+   * recoverable. The returned `CommercePortalAuthRecoveryResetClaim` tells the caller which of the
+   * three outcomes happened, since two submissions of one link race on the same row and the loser
+   * must not treat a zero-row update as success.
    */
   readonly dispatchPasswordResetLedger: (input: {
     readonly token: Redacted.Redacted;
-  }) => Effect.Effect<void, CommercePortalAuthRecoveryUnavailable>;
+  }) => Effect.Effect<CommercePortalAuthRecoveryResetClaim, CommercePortalAuthRecoveryUnavailable>;
   /** Read-only: the provider subject that currently owns the identifier, if one does. */
   readonly findAccountSubjectForEmail: (input: {
     readonly email: string;
@@ -122,6 +130,14 @@ export interface CommercePortalAuthRecoveryStore {
     readonly providerSubjectId: string;
     readonly token: Redacted.Redacted;
   }) => Effect.Effect<boolean, CommercePortalAuthRecoveryUnavailable>;
+  /**
+   * Gives a dispatch claim back when the provider's rejection proves the token was never spent, so
+   * the customer's corrected retry finds a pending row instead of a stale claim. Guarded on
+   * `dispatched`, so it can never revive a `consumed` or `expired` row.
+   */
+  readonly releasePasswordResetLedger: (input: {
+    readonly token: Redacted.Redacted;
+  }) => Effect.Effect<void, CommercePortalAuthRecoveryUnavailable>;
   readonly reserveEmailVerificationSubject: (input: {
     readonly email: string;
     readonly providerSubjectId: string;

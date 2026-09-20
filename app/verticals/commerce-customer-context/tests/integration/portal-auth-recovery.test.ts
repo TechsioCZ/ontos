@@ -2,7 +2,7 @@ import { HttpApi, HttpApiBuilder, HttpRouter, HttpServer } from '@modern-js/bff-
 import { betterAuth } from 'better-auth';
 import { memoryAdapter } from 'better-auth/adapters/memory';
 import { and, eq, inArray, like } from 'drizzle-orm';
-import { Config, Context, Crypto, DateTime, Effect, Layer, Redacted, Result, Schema } from 'effect';
+import { Config, Context, Crypto, DateTime, Deferred, Effect, Fiber, Layer, Redacted, Result, Schema } from 'effect';
 import { expect, it } from 'effect-rstest';
 import type { Scope } from 'effect';
 import { createHash, createHmac, randomBytes, randomUUID } from 'node:crypto';
@@ -28,6 +28,7 @@ import {
   CommercePortalAuthRecoveryProviderService,
   CommercePortalAuthRecoveryRateLimitService,
   CommercePortalAuthRecoveryReconciliationService,
+  CommercePortalAuthRecoveryRejected,
   CommercePortalAuthRecoveryService as CommercePortalAuthRecoveryServiceTag,
   CommercePortalAuthRecoveryStoreService,
   CommercePortalAuthRecoveryUnavailable,
@@ -53,6 +54,8 @@ const ORIGIN = 'https://portal.example.test';
 const EMAIL = 'recovery-integration@example.test';
 const ORIGINAL_PASSWORD = 'P'.repeat(24);
 const REPLACEMENT_PASSWORD = 'R'.repeat(24);
+/** Below the realm's own minimum, so Better Auth refuses it before it reads its token row. */
+const SHORT_PASSWORD = 'R'.repeat(4);
 const SECRET = 's'.repeat(64);
 const DATABASE_URL = Config.redacted('COMMERCE_PORTAL_AUTH_DATABASE_URL').pipe(
   Config.orElse(() => Config.redacted('DATABASE_URL')),
@@ -907,9 +910,10 @@ it.live(
         );
         expect((yield* resetLedgerRow(fixture, tokenDigest))[0]?.state).toBe('dispatched');
 
-        // The customer retries the same link against the real provider. Better Auth already spent
-        // its own token row inside the reset above, so it answers INVALID_TOKEN — indistinguishable
-        // from a token that was never valid, which is precisely why the claim decides instead.
+        // The customer retries the same link. Better Auth already spent its own token row inside
+        // the reset above, so asking it again would answer INVALID_TOKEN — indistinguishable from a
+        // token that was never valid, which is precisely why the claim decides before the provider
+        // is ever reached.
         const retry = yield* makeScriptedRecovery(fixture.provider, store);
         const outcome = yield* retry.resetPassword({
           newPassword: Redacted.make(REPLACEMENT_PASSWORD),
@@ -934,6 +938,78 @@ it.live(
         expect((yield* resetLedgerRow(fixture, tokenDigest))[0]?.state).toBe('dispatched');
       }),
     ),
+);
+
+it.live('lets only the PostgreSQL claim winner reach the provider when two submissions race one reset token', () =>
+  Effect.scoped(
+    Effect.gen(function* postgresConcurrentResetSubmissions() {
+      const { fixture, resetToken, store, tokenDigest } = yield* makeDispatchFixture('reset-race');
+      let dispatches = 0;
+      const counted: RecoveryProvider = {
+        ...fixture.provider,
+        resetPassword: (input) =>
+          Effect.suspend(() => {
+            dispatches += 1;
+            return fixture.provider.resetPassword(input);
+          }),
+      };
+      const entered = yield* Deferred.make<null>();
+      const release = yield* Deferred.make<null>();
+      // The claim holder stops inside its provider call, which puts the second submission exactly
+      // where two portal tabs put it: after one guarded `UPDATE` won the row and before the reset
+      // it authorises has settled anything.
+      const gated: RecoveryProvider = {
+        ...counted,
+        resetPassword: (input) =>
+          Deferred.succeed(entered, null).pipe(
+            Effect.andThen(() => Deferred.await(release)),
+            Effect.andThen(() => counted.resetPassword(input)),
+          ),
+      };
+      const holder = yield* makeScriptedRecovery(gated, store);
+      const contender = yield* makeScriptedRecovery(counted, store);
+      const submit = (recovery: RecoveryService) =>
+        recovery.resetPassword({
+          newPassword: Redacted.make(REPLACEMENT_PASSWORD),
+          token: Redacted.make(resetToken),
+        });
+
+      const holderFiber = yield* Effect.forkScoped(submit(holder));
+      yield* Deferred.await(entered);
+      const contenderOutcome = yield* Effect.ensuring(
+        Effect.result(submit(contender)),
+        Deferred.succeed(release, null).pipe(Effect.asVoid),
+      );
+      // One claim, one dispatch: a zero-row `UPDATE` is a refusal, never permission to ask Better
+      // Auth to spend the same token again behind the holder's back.
+      expect(dispatches).toBe(1);
+      const holderOutcome = yield* Fiber.join(holderFiber);
+      expect(holderOutcome).toStrictEqual({ outcome: 'ACCOUNT_RECOVERY_COMPLETED_SAME_SUBJECT' });
+      // The loser of the claim cannot know the holder's outcome, so it reports the reconciliation
+      // that already describes it rather than spending the token a second time.
+      expect(Result.isSuccess(contenderOutcome)).toBe(true);
+      if (Result.isSuccess(contenderOutcome)) {
+        expect(contenderOutcome.success).toStrictEqual({
+          conflictClass: 'RESET_OUTCOME_INDETERMINATE',
+          outcome: 'ACCOUNT_RECOVERY_RECONCILIATION_REQUIRED',
+        });
+      }
+
+      const rows = yield* resetLedgerRow(fixture, tokenDigest);
+      expect(rows).toHaveLength(1);
+      expect(rows[0]?.state).toBe('consumed');
+
+      // Exactly the one row the design intends — the holder's unknown outcome, filed once.
+      const reconciliationRows = yield* fixture.database.executor
+        .select()
+        .from(recoveryReconciliation)
+        .where(eq(recoveryReconciliation.email, fixture.email));
+      expect(reconciliationRows).toHaveLength(1);
+      expect(reconciliationRows[0]?.conflictClass).toBe('RESET_OUTCOME_INDETERMINATE');
+      expect(reconciliationRows[0]?.providerSubjectId).toBe(fixture.userId);
+      expect(Result.isSuccess(yield* signInWith(fixture, REPLACEMENT_PASSWORD))).toBe(true);
+    }),
+  ),
 );
 
 it.live('consumes the PostgreSQL reset ledger and writes the completion row in one transaction on the happy path', () =>
@@ -1026,6 +1102,192 @@ it.live(
         expect(reconciliationRows[0]?.conflictClass).toBe('RESET_OUTCOME_INDETERMINATE');
       }),
     ),
+);
+
+/**
+ * The one rejection Better Auth judges *before* it consumes its own token row, so the link it
+ * refuses is provably still spendable. The realm's published schema enforces the same length bound
+ * the provider does, so the short value is introduced here — inside the provider bridge — which is
+ * exactly where a provider whose own bound is stricter than the realm's would produce it.
+ */
+const shortPasswordProvider = (provider: RecoveryProvider): RecoveryProvider => ({
+  ...provider,
+  resetPassword: (input) =>
+    provider.resetPassword(
+      input === undefined ? input : { ...input, body: { ...input.body, newPassword: SHORT_PASSWORD } },
+    ),
+});
+
+/**
+ * The account deleted between the claim and the provider's answer. Better Auth loads the account
+ * only after it has consumed the token row, so `USER_NOT_FOUND` arrives over a token this call has
+ * already spent — from here, indistinguishable from a reset that completed.
+ */
+const deletingAccountProvider = (fixture: RecoveryFixture): RecoveryProvider => ({
+  ...fixture.provider,
+  resetPassword: (input) =>
+    fixture.database.executor
+      .delete(user)
+      .where(eq(user.id, fixture.userId))
+      .pipe(
+        Effect.orDie,
+        Effect.andThen(() => fixture.provider.resetPassword(input)),
+      ),
+});
+
+it.live(
+  'releases the PostgreSQL reset claim when the provider refuses the new password, so the corrected retry still resets it',
+  () =>
+    Effect.scoped(
+      Effect.gen(function* postgresResetClaimReleased() {
+        const { fixture, resetToken, store, tokenDigest } = yield* makeDispatchFixture('reset-release');
+        const refusing = yield* makeScriptedRecovery(shortPasswordProvider(fixture.provider), store);
+
+        const refused = yield* Effect.result(
+          refusing.resetPassword({
+            newPassword: Redacted.make(REPLACEMENT_PASSWORD),
+            token: Redacted.make(resetToken),
+          }),
+        );
+        // The provider's own rejection, not an unknown outcome: the customer is told the password
+        // was refused and can correct it.
+        expect(Result.isFailure(refused)).toBe(true);
+        if (Result.isFailure(refused)) {
+          expect(Schema.is(CommercePortalAuthRecoveryRejected)(refused.failure)).toBe(true);
+        }
+
+        // Without the release the row stays `dispatched` for the rest of its life: nothing else
+        // ever moves it back, so this is the assertion the stranded claim fails.
+        const released = yield* resetLedgerRow(fixture, tokenDigest);
+        expect(released[0]?.state).toBe('pending');
+        expect(released[0]?.dispatchedAt).toBeNull();
+        expect(released[0]?.providerSubjectId).toBe(fixture.userId);
+        expect(released[0]?.email).toBe(fixture.email);
+
+        // The link really is still good, which is the whole point of giving the claim back: the
+        // corrected submission resets the password and retires the token.
+        const retry = yield* makeScriptedRecovery(fixture.provider, store);
+        expect(
+          yield* retry.resetPassword({
+            newPassword: Redacted.make(REPLACEMENT_PASSWORD),
+            token: Redacted.make(resetToken),
+          }),
+        ).toStrictEqual({ outcome: 'ACCOUNT_RECOVERY_COMPLETED_SAME_SUBJECT' });
+        expect((yield* resetLedgerRow(fixture, tokenDigest))[0]?.state).toBe('consumed');
+        expect(Result.isSuccess(yield* signInWith(fixture, REPLACEMENT_PASSWORD))).toBe(true);
+
+        // A refused password is a known outcome from end to end, so no operator is asked to look
+        // at this account.
+        const reconciliationRows = yield* fixture.database.executor
+          .select()
+          .from(recoveryReconciliation)
+          .where(eq(recoveryReconciliation.email, fixture.email));
+        expect(reconciliationRows).toHaveLength(0);
+      }),
+    ),
+);
+
+it.live(
+  'answers reconciliation-required when the PostgreSQL account is deleted between the claim and the provider answer',
+  () =>
+    Effect.scoped(
+      Effect.gen(function* postgresResetSubjectDeletedMidFlight() {
+        const { fixture, resetToken, store, tokenDigest } = yield* makeDispatchFixture('reset-user-gone');
+        const recovery = yield* makeScriptedRecovery(deletingAccountProvider(fixture), store);
+
+        const outcome = yield* recovery.resetPassword({
+          newPassword: Redacted.make(REPLACEMENT_PASSWORD),
+          token: Redacted.make(resetToken),
+        });
+        // Better Auth spent the token before it looked the account up, so answering the customer a
+        // confident rejection would deny a link whose outcome nobody in this realm can state.
+        expect(outcome).toStrictEqual({
+          conflictClass: 'RESET_OUTCOME_INDETERMINATE',
+          outcome: 'ACCOUNT_RECOVERY_RECONCILIATION_REQUIRED',
+        });
+
+        // The claim is evidence now and is deliberately not released: the token really was spent.
+        const rows = yield* resetLedgerRow(fixture, tokenDigest);
+        expect(rows[0]?.state).toBe('dispatched');
+        expect(rows[0]?.providerSubjectId).toBe(fixture.userId);
+
+        const reconciliationRows = yield* fixture.database.executor
+          .select()
+          .from(recoveryReconciliation)
+          .where(eq(recoveryReconciliation.email, fixture.email));
+        expect(reconciliationRows).toHaveLength(1);
+        expect(reconciliationRows[0]?.conflictClass).toBe('RESET_OUTCOME_INDETERMINATE');
+        expect(reconciliationRows[0]?.providerSubjectId).toBe(fixture.userId);
+        // Nobody owns the identifier any more, which is the first thing an operator asks.
+        expect(reconciliationRows[0]?.currentProviderSubjectId).toBeNull();
+      }),
+    ),
+);
+
+it.live('sweeps an aged PostgreSQL dispatch claim to expired and leaves a fresh one alone', () =>
+  Effect.scoped(
+    Effect.gen(function* postgresResetLedgerDispatchSweep() {
+      const { fixture, resetToken, store, tokenDigest } = yield* makeDispatchFixture('reset-sweep');
+      const digestOf = (token: string) =>
+        recoveryCrypto.digest('SHA-256', new TextEncoder().encode(token)).pipe(Effect.map(bytesToHex));
+      const freshToken = `sweep-fresh-${randomUUID()}`;
+      const sweepingToken = `sweep-trigger-${randomUUID()}`;
+      const [freshDigest, sweepingDigest] = yield* Effect.all([digestOf(freshToken), digestOf(sweepingToken)], {
+        concurrency: 1,
+      });
+      yield* Effect.addFinalizer(() =>
+        fixture.database.executor
+          .delete(recoveryResetLedger)
+          .where(inArray(recoveryResetLedger.tokenDigest, [freshDigest, sweepingDigest]))
+          .pipe(Effect.orDie),
+      );
+      const now = yield* DateTime.nowAsDate;
+      const expiresAt = DateTime.toDate(
+        DateTime.add(DateTime.makeUnsafe(now), {
+          seconds: COMMERCE_PORTAL_AUTH_POLICY.password.resetTokenExpiresInSeconds,
+        }),
+      );
+      const issue = (token: string) =>
+        store.registerPasswordResetToken({
+          email: fixture.email,
+          expiresAt,
+          providerSubjectId: fixture.userId,
+          token: Redacted.make(token),
+        });
+
+      // The aged claim: still well inside its own `expiresAt`, so only the dispatch window can
+      // retire it, and it keeps the address and subject until something does.
+      expect(yield* store.dispatchPasswordResetLedger({ token: Redacted.make(resetToken) })).toBe('claimed');
+      yield* fixture.database.executor
+        .update(recoveryResetLedger)
+        .set({
+          dispatchedAt: DateTime.toDate(
+            DateTime.add(DateTime.makeUnsafe(now), {
+              seconds: -(COMMERCE_PORTAL_AUTH_POLICY.password.resetTokenExpiresInSeconds + 60),
+            }),
+          ),
+        })
+        .where(eq(recoveryResetLedger.tokenDigest, tokenDigest));
+
+      // Issuance is what pays for the sweep, exactly as the deployment runs it. The second
+      // issuance claims its own row, and the third is what sweeps with that claim already fresh.
+      yield* issue(freshToken);
+      expect(yield* store.dispatchPasswordResetLedger({ token: Redacted.make(freshToken) })).toBe('claimed');
+      yield* issue(sweepingToken);
+
+      // Without the dispatch half of the sweep this row keeps its email and subject forever.
+      const aged = yield* resetLedgerRow(fixture, tokenDigest);
+      expect(aged[0]?.state).toBe('expired');
+      expect(aged[0]?.email).toBeNull();
+      expect(aged[0]?.providerSubjectId).toBeNull();
+
+      // A claim inside the window is still the answer to a lost dispatch, so it keeps its binding.
+      const fresh = yield* resetLedgerRow(fixture, freshDigest);
+      expect(fresh[0]?.state).toBe('dispatched');
+      expect(fresh[0]?.email).toBe(fixture.email);
+      expect(fresh[0]?.providerSubjectId).toBe(fixture.userId);
+    }),
+  ),
 );
 
 it.live(

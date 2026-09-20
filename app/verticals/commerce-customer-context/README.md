@@ -69,10 +69,31 @@ that supplies its own registry alongside the gateway assertion redemption store 
 | `POST /api/portal-auth/enrollment/start`      | Starts (or converges on) an Enrollment Attempt for one of the three supported journeys, durably claims its `provider.account.create` transition, and performs that one provider effect. This is the only Commerce route that carries an enrollment credential; the password is `Redacted` end to end, never enters the durable Attempt and never reaches an intent or request digest. |
 | `GET /api/portal-auth/enrollment/{attemptId}` | Reads the Attempt projection back for the caller's own governed Tenant. The durable read is Tenant-scoped inside PostgreSQL, so an Attempt belonging to another Tenant answers exactly as an absent one does.                                                                                                                                                                         |
 
-Both routes run the trusted-origin gate and a subject-keyed budget before any owner effect. There is
-no route that advances, completes or terminates an Attempt from the outside: every later transition
-travels through the governed enrollment Actions, and `COMPLETE` is derived from durable owner
-outcomes rather than asserted by a caller.
+Both routes run the trusted-origin gate before any owner effect. There is no route that advances,
+completes or terminates an Attempt from the outside: every later transition travels through the
+governed enrollment Actions, and `COMPLETE` is derived from durable owner outcomes rather than
+asserted by a caller.
+
+`POST /enrollment/start` spends two independent budgets, in a fixed order, both keyed under the
+deployment secret by the Principal the caller's gateway assertion verifies as (never by the
+transport's own unattributable client, which every caller shares):
+
+1. **Principal, per hour** (`rateLimit.enrollmentStart`) — what one Principal may spend on this
+   route at all, whatever address it names. It is spent first, before anything reads or names an
+   address: the Existing-account owner-ownership probe (a portal session read plus a provider
+   directory lookup) runs only after this budget clears, so a caller holding a replayable
+   verify-only assertion cannot run that probe against arbitrary addresses faster than this budget
+   allows. It is its own policy rather than a reuse of `rateLimit.default`, whose 60-second window
+   would let a Principal sharing it walk fresh addresses far faster than the per-address budget
+   below intends.
+2. **Address, per hour** (`rateLimit.accountCreation`) — what one (Principal, address) pair may
+   spend on provider account creation. Spent last, and only by the journeys that actually create a
+   provider account (`RETAIL_SELF_ENROLLMENT`); Existing-account proves ownership of an account
+   that already exists and dispatches no provider effect this budget throttles.
+
+The order is therefore **Principal budget → owner-ownership probe (Existing-account only) → address
+budget (account-creating journeys only)**. A `429` names the window of whichever rule actually
+refused the request.
 
 `journey: COUNTERPARTY_INVITATION` is refused fail-closed with `422 enrollment_journey_unavailable`
 — no Attempt is persisted and no provider account is created — until an owner effect exists that can

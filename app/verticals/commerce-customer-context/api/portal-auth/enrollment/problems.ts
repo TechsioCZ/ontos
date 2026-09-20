@@ -11,7 +11,6 @@ import {
   CommercePortalAuthEnrollmentSchemaErrorMiddleware,
   CommercePortalAuthEnrollmentUnavailableProblemSchema,
 } from '../../../shared/portal-auth/enrollment-api.ts';
-import { COMMERCE_PORTAL_AUTH_POLICY } from '../provider/config.ts';
 
 /**
  * Every published enrollment problem body. None of them carries a provider message, an owner
@@ -89,16 +88,20 @@ export const commercePortalAuthEnrollmentJourneyUnavailableProblem =
     type: `${PROBLEM_TYPE_PREFIX}journey-unavailable`,
   });
 
-export const commercePortalAuthEnrollmentRateLimitedProblem = CommercePortalAuthEnrollmentRateLimitedProblemSchema.make(
-  {
+/**
+ * `retryAfterSeconds` names the window of the rule that actually refused the request: the route
+ * spends more than one budget per start, each on its own window, and a caller told to wait out the
+ * wrong one would still be refused when it retries.
+ */
+export const commercePortalAuthEnrollmentRateLimitedProblem = (rule: { readonly windowSeconds: number }) =>
+  CommercePortalAuthEnrollmentRateLimitedProblemSchema.make({
     code: 'rate_limited',
     detail: 'Too many Commerce portal enrollment attempts.',
-    retryAfterSeconds: COMMERCE_PORTAL_AUTH_POLICY.rateLimit.accountCreation.windowSeconds,
+    retryAfterSeconds: rule.windowSeconds,
     status: 429,
     title: 'Enrollment request rate limited',
     type: `${PROBLEM_TYPE_PREFIX}rate-limited`,
-  },
-);
+  });
 
 /** The failing owner value is retained for diagnostics; it never reaches the encoded body. */
 export const commercePortalAuthEnrollmentUnavailableProblem = (cause?: unknown) =>

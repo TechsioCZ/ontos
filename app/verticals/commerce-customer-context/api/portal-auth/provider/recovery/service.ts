@@ -52,6 +52,16 @@ const REQUEST_REJECTION_CODES = new Set([
   'USER_NOT_FOUND',
 ]);
 const RESET_REJECTION_CODES = new Set(['INVALID_TOKEN', 'PASSWORD_TOO_LONG', 'PASSWORD_TOO_SHORT', 'USER_NOT_FOUND']);
+/**
+ * Rejections Better Auth judges before it consumes its own token row, so the token is provably still
+ * spendable and the dispatch claim taken for it must be given back.
+ */
+const RESET_UNSPENT_REJECTION_CODES = new Set(['PASSWORD_TOO_LONG', 'PASSWORD_TOO_SHORT']);
+/**
+ * Rejections that answer exactly as an already-spent token would: `INVALID_TOKEN` looks like a
+ * completed earlier reset, and `USER_NOT_FOUND` can only occur after the token row is gone.
+ */
+const RESET_INDETERMINATE_REJECTION_CODES = new Set(['INVALID_TOKEN', 'USER_NOT_FOUND']);
 
 const mapProviderFailure = (
   failure: CommercePortalAuthRecoveryProviderFailure,
@@ -241,34 +251,57 @@ export const makeCommercePortalAuthRecoveryService = Effect.fn('CommercePortalAu
       // The claim is taken first and in its own transaction, which makes it survive exactly the
       // failures that lose the answer; a store that cannot take it refuses before the provider is
       // ever asked, because an unclaimed dispatch is the case nothing can reconstruct afterwards.
-      yield* store.dispatchPasswordResetLedger({ token: request.token });
+      const claim = yield* store.dispatchPasswordResetLedger({ token: request.token });
+      if (claim === 'already-dispatched') {
+        // Somebody else already holds the claim, so this caller can't know their outcome and must
+        // not spend the token a second time; answer as the reconciliation the holder already owns.
+        const contended = yield* reconciliation.recordIndeterminateReset({ token: request.token });
+        if (Option.isSome(contended)) {
+          return contended.value;
+        }
+        // The holder settled the row since the refused claim, so the token really is spent.
+        return yield* rejected(
+          RECOVERY_RESET_OPERATION,
+          'INVALID_TOKEN',
+          'The Commerce portal authentication recovery token has already been spent',
+        );
+      }
+      // The failure is read before it is mapped, since the mapped rejection collapses to
+      // `PROVIDER_REJECTED` and loses the code this branch needs to judge.
       const attempt = yield* Effect.result(
-        provider
-          .resetPassword({
-            body: {
-              newPassword: Redacted.value(request.newPassword),
-              token: Redacted.value(request.token),
-            },
-          })
-          .pipe(Effect.mapError((failure) => mapProviderFailure(failure, RESET_REJECTION_CODES))),
+        provider.resetPassword({
+          body: {
+            newPassword: Redacted.value(request.newPassword),
+            token: Redacted.value(request.token),
+          },
+        }),
       );
       if (Result.isFailure(attempt)) {
-        // A decoded `INVALID_TOKEN` over a row still claimed for a dispatch is the provider saying
-        // the token is gone — which is equally what a *completed* earlier reset looks like, because
-        // that is exactly how Better Auth spends it. Answering the customer a confident rejection
-        // there hides a likely-completed reset, so the indeterminate outcome is recorded instead.
-        // Every other failure keeps its own status, and the claim stays: a network or timeout-class
-        // failure is reported unavailable with the row left `dispatched` for the retry to find.
-        if (
-          Schema.is(CommercePortalAuthRecoveryRejected)(attempt.failure) &&
-          attempt.failure.code === 'INVALID_TOKEN'
-        ) {
+        const { providerCode } = attempt.failure;
+        const failure = mapProviderFailure(attempt.failure, RESET_REJECTION_CODES);
+        if (providerCode !== undefined && RESET_UNSPENT_REJECTION_CODES.has(providerCode)) {
+          // The provider refused before it reached the token, so the link is still good; release the
+          // claim or the customer's corrected retry can never find its row.
+          const released = yield* Effect.result(store.releasePasswordResetLedger({ token: request.token }));
+          if (Result.isFailure(released)) {
+            // Leave the row claimed: a support reconciliation is the conservative answer when this
+            // realm can't confirm the release, safer than a confident rejection of a valid link.
+            yield* Effect.annotateLogs(
+              Effect.logError('Commerce portal recovery reset claim was not released', released.failure),
+              { operation: RECOVERY_RESET_OPERATION },
+            );
+          }
+          return yield* failure;
+        }
+        // A rejection that could equally follow an already-spent token hides a likely completed reset
+        // behind a confident refusal, so record the indeterminate outcome instead.
+        if (providerCode !== undefined && RESET_INDETERMINATE_REJECTION_CODES.has(providerCode)) {
           const indeterminate = yield* reconciliation.recordIndeterminateReset({ token: request.token });
           if (Option.isSome(indeterminate)) {
             return indeterminate.value;
           }
         }
-        return yield* attempt.failure;
+        return yield* failure;
       }
       const decoded = yield* Schema.decodeEffect(RecoveryResponseSchema)(attempt.success).pipe(
         Effect.mapError((cause) => unavailable(RECOVERY_RESET_OPERATION, cause)),

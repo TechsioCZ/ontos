@@ -109,6 +109,7 @@ it.effect('serves prefixed recovery routes through the owner group and rejects a
       recordRecoveryReconciliation: () => Effect.die('unused: this test substitutes reconciliation.detect directly'),
       registerEmailVerificationToken: () => Effect.succeed(true),
       registerPasswordResetToken: () => Effect.die('unused: this test substitutes reconciliation.detect directly'),
+      releasePasswordResetLedger: () => Effect.die('unused: this test drives email verification only'),
       reserveEmailVerificationSubject: () => Effect.succeed(true),
     };
     // This test substitutes reconciliation.detect directly, so the store's *detection* methods are

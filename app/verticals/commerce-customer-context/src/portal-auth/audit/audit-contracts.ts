@@ -35,7 +35,9 @@ export type CommercePortalAuthAuditEventType = Schema.Schema.Type<typeof Commerc
  * refusal, so it is recorded as its own class instead of being folded into a failure. `requested`
  * is the pre-mutation intent class: the row states that the owner is about to ask the provider to
  * change state, and it is written strictly, before the call, so no completed mutation can exist
- * without at least this row.
+ * without at least this row. `state_conflict` is a refusal that judged no credential at all, kept
+ * separate from `authentication_failed` because a lockout review reads that class as "a credential
+ * was presented and refused".
  */
 const CommercePortalAuthAuditOutcomeSchema = Schema.Literals([
   'account_disabled',
@@ -47,6 +49,7 @@ const CommercePortalAuthAuditOutcomeSchema = Schema.Literals([
   'session_expired',
   'session_limit_reached',
   'session_revoked',
+  'state_conflict',
   'success',
   'unavailable',
   'verification_required',

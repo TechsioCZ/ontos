@@ -1,9 +1,13 @@
 import { randomUUID } from 'node:crypto';
 
-import { Effect, Ref } from 'effect';
+import { Clock, Effect, Ref } from 'effect';
+import { TestClock } from 'effect/testing';
 import { expect, it } from 'effect-rstest';
 
-import { commercePortalAuthEnrollmentBudget } from '../../api/portal-auth/enrollment/http.ts';
+import {
+  commercePortalAuthEnrollmentAddressBudget,
+  commercePortalAuthEnrollmentPrincipalBudget,
+} from '../../api/portal-auth/enrollment/http.ts';
 import { CommercePortalAuthConfig } from '../../api/portal-auth/provider/config-service.ts';
 import { COMMERCE_PORTAL_AUTH_POLICY, parseCommercePortalAuthConfig } from '../../api/portal-auth/provider/config.ts';
 import { CommercePortalAuthRecoveryRateLimitService } from '../../api/portal-auth/rate-limit-service.ts';
@@ -25,7 +29,8 @@ const CONFIGURATION_ENVIRONMENT = {
 };
 
 const ADDRESS_BUDGET = COMMERCE_PORTAL_AUTH_POLICY.rateLimit.accountCreation.max;
-const ROUTE_BUDGET = COMMERCE_PORTAL_AUTH_POLICY.rateLimit.default.max;
+const PRINCIPAL_BUDGET = COMMERCE_PORTAL_AUTH_POLICY.rateLimit.enrollmentStart.max;
+const PRINCIPAL_WINDOW_SECONDS = COMMERCE_PORTAL_AUTH_POLICY.rateLimit.enrollmentStart.windowSeconds;
 const RATE_LIMITED_STATUS = 429;
 const ALLOWED = 'ALLOWED';
 
@@ -33,24 +38,47 @@ const allowances = (length: number): readonly string[] => Array.from({ length },
 
 /**
  * The durable counter store's own contract, without PostgreSQL: one budget per key, shared by every
- * holder of the store, answering `false` once the rule's allowance for that key is spent.
+ * holder of the store, answering `false` once the rule's allowance for that key is spent within its
+ * window. A window is real here — the count for a key resets once `windowSeconds` has elapsed since
+ * that key's first charge — so a fixture that never modelled expiry could not catch a route reusing
+ * the wrong policy's window.
  */
 const makeBudgetFixture = Effect.fnUntraced(function* makeBudgetFixture() {
   const configuration = yield* parseCommercePortalAuthConfig(CONFIGURATION_ENVIRONMENT).pipe(Effect.orDie);
-  const counts = yield* Ref.make<ReadonlyMap<string, number>>(new Map());
+  const counts = yield* Ref.make<ReadonlyMap<string, { readonly count: number; readonly windowStartMillis: number }>>(
+    new Map(),
+  );
   const budget: CommercePortalAuthRecoveryRateLimit = {
     consume: (key, rule) =>
-      Ref.modify(counts, (recorded) => {
-        const spent = (recorded.get(key) ?? 0) + 1;
-        return [spent <= rule.max, new Map([...recorded, [key, spent]])] as const;
+      Effect.gen(function* consumeEffect() {
+        const now = yield* Clock.currentTimeMillis;
+        const recorded = yield* Ref.get(counts);
+        const existing = recorded.get(key);
+        const windowElapsed = existing === undefined || now - existing.windowStartMillis >= rule.windowSeconds * 1000;
+        const windowStartMillis = windowElapsed ? now : existing.windowStartMillis;
+        const spent = (windowElapsed ? 0 : existing.count) + 1;
+        yield* Ref.set(counts, new Map([...recorded, [key, { count: spent, windowStartMillis }]]));
+        return spent <= rule.max;
       }),
   };
   return {
     /** Every key this store was ever asked to charge, which is what a refusal must not add to. */
     keys: Ref.get(counts).pipe(Effect.map((recorded) => [...recorded.keys()])),
-    start: (principalId: string, email: string) =>
-      commercePortalAuthEnrollmentBudget(principalId, email).pipe(
+    startAddress: (principalId: string, email: string) =>
+      commercePortalAuthEnrollmentAddressBudget(principalId, email).pipe(
         Effect.match({ onFailure: (problem) => String(problem.status), onSuccess: () => ALLOWED }),
+        Effect.provideService(CommercePortalAuthRecoveryRateLimitService, budget),
+        Effect.provideService(CommercePortalAuthConfig, configuration),
+      ),
+    startPrincipal: (principalId: string) =>
+      commercePortalAuthEnrollmentPrincipalBudget(principalId).pipe(
+        Effect.match({
+          onFailure: (problem) => ({
+            retryAfterSeconds: 'retryAfterSeconds' in problem ? problem.retryAfterSeconds : null,
+            status: String(problem.status),
+          }),
+          onSuccess: () => ({ retryAfterSeconds: null, status: ALLOWED }),
+        }),
         Effect.provideService(CommercePortalAuthRecoveryRateLimitService, budget),
         Effect.provideService(CommercePortalAuthConfig, configuration),
       ),
@@ -65,46 +93,68 @@ it.effect('leaves a second Principal the whole address budget the first one exha
 
     const spent = yield* Effect.forEach(
       Array.from({ length: ADDRESS_BUDGET }, (_unused, index) => index),
-      () => fixture.start(enroller, email),
+      () => fixture.startAddress(enroller, email),
       { concurrency: 1 },
     );
     expect(spent).toStrictEqual(allowances(ADDRESS_BUDGET));
 
     // The per-address rule is kept for the Principal that spent it: the caller that already made
     // this address' starts gets no more of them.
-    expect(yield* fixture.start(enroller, email)).toBe(String(RATE_LIMITED_STATUS));
+    expect(yield* fixture.startAddress(enroller, email)).toBe(String(RATE_LIMITED_STATUS));
 
-    // A different Principal enrolling the very same address is untouched by that. Keyed by the
-    // transport's unattributable client instead of the verified Principal, this start is refused
-    // too — and then any holder of any valid assertion can lock any address out of account creation
-    // for the window, replaying one assertion, because the gate above the budget only reads it.
-    expect(yield* fixture.start(randomUUID(), email)).toBe(ALLOWED);
+    // A different Principal enrolling the very same address is untouched by that.
+    expect(yield* fixture.startAddress(randomUUID(), email)).toBe(ALLOWED);
   }),
 );
 
-it.effect('stops a Principal walking fresh addresses, and charges the address it was stopped on nothing', () =>
-  Effect.gen(function* routeBudgetIsPerPrincipal() {
+it.effect(
+  'stops a Principal walking fresh addresses inside the enrollment-start window, independent of the address budget',
+  () =>
+    Effect.gen(function* routeBudgetIsPerPrincipal() {
+      const fixture = yield* makeBudgetFixture();
+      const enroller = randomUUID();
+
+      const spent = yield* Effect.forEach(
+        Array.from({ length: PRINCIPAL_BUDGET }, (_unused, index) => index),
+        () => fixture.startPrincipal(enroller),
+        { concurrency: 1 },
+      );
+      expect(spent.map((answer) => answer.status)).toStrictEqual(allowances(PRINCIPAL_BUDGET));
+
+      // One route-wide key for the Principal.
+      expect(yield* fixture.keys).toHaveLength(1);
+
+      // The Principal is out of starts for the rest of the enrollment-start window, regardless of
+      // which address a further start would name — the route spends this budget before it ever
+      // reads or names an address.
+      const refused = yield* fixture.startPrincipal(enroller);
+      expect(refused.status).toBe(String(RATE_LIMITED_STATUS));
+
+      // The refusal reports the window of the rule that actually refused it: the enrollment-start
+      // policy's hourly window, not the narrower per-address `accountCreation` window.
+      expect(refused.retryAfterSeconds).toBe(PRINCIPAL_WINDOW_SECONDS);
+    }),
+);
+
+it.effect('cannot be walked past by waiting out a window shorter than the enrollment-start hour', () =>
+  Effect.gen(function* principalBudgetSurvivesAShortWait() {
     const fixture = yield* makeBudgetFixture();
     const enroller = randomUUID();
-    const run = randomUUID();
 
     const spent = yield* Effect.forEach(
-      Array.from({ length: ROUTE_BUDGET }, (_unused, index) => index),
-      (index) => fixture.start(enroller, `enrollment-${index}-${run}@example.test`),
+      Array.from({ length: PRINCIPAL_BUDGET }, (_unused, index) => index),
+      () => fixture.startPrincipal(enroller),
       { concurrency: 1 },
     );
-    expect(spent).toStrictEqual(allowances(ROUTE_BUDGET));
+    expect(spent.map((answer) => answer.status)).toStrictEqual(allowances(PRINCIPAL_BUDGET));
 
-    // One route-wide key for the Principal, and one narrow key per address it named.
-    expect(yield* fixture.keys).toHaveLength(ROUTE_BUDGET + 1);
+    // A window far shorter than the enrollment-start hour — the `rateLimit.default` window this
+    // route used to reuse by mistake — must not reset the Principal's budget.
+    yield* TestClock.adjust('60 seconds');
+    expect((yield* fixture.startPrincipal(enroller)).status).toBe(String(RATE_LIMITED_STATUS));
 
-    // A never-before-seen address buys this Principal no further start. The per-address rule alone
-    // bounds only (Principal, address) pairs, so without a route-wide one a caller's own total is
-    // unbounded: it need only name a new address each time.
-    expect(yield* fixture.start(enroller, `enrollment-past-${run}@example.test`)).toBe(String(RATE_LIMITED_STATUS));
-
-    // The address it was refused on was charged nothing, so a caller out of starts cannot take an
-    // address it never enrolled down with it: the store holds no key for that address at all.
-    expect(yield* fixture.keys).toHaveLength(ROUTE_BUDGET + 1);
+    // Only once the full enrollment-start window has elapsed does the Principal buy a fresh start.
+    yield* TestClock.adjust(`${PRINCIPAL_WINDOW_SECONDS - 60} seconds`);
+    expect((yield* fixture.startPrincipal(enroller)).status).toBe(ALLOWED);
   }),
 );

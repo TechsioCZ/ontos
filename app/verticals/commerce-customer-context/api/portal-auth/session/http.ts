@@ -594,7 +594,10 @@ const getSession = Effect.fn('CommercePortalAuthSessionHttp.getSession')(functio
 ) {
   yield* noStoreHeaders;
   const lifecycle = yield* CommercePortalAuthSessionLifecycle;
-  const providerSession = yield* readProviderSession(requestHeaders(request.headers), true);
+  // Non-refreshing, like `/refresh`'s own first read: with `updateAgeSeconds: 0` a refreshing read
+  // would renew the provider session before `evidenceForSession` decides it may still be admitted.
+  // Renewal belongs to `/refresh` alone.
+  const providerSession = yield* readProviderSession(requestHeaders(request.headers), false);
   if (Option.isNone(providerSession)) {
     return { state: 'anonymous' } as const;
   }
@@ -605,7 +608,6 @@ const getSession = Effect.fn('CommercePortalAuthSessionHttp.getSession')(functio
   if (Result.isFailure(evidence)) {
     return yield* Effect.fail(evidenceFailureProblem(evidence.failure));
   }
-  yield* forwardSetCookieHeaders(providerSetCookieHeaders(providerSession.value.headers));
   return { session: toSessionSnapshot(evidence.success), state: 'authenticated' } as const;
 });
 

@@ -41,6 +41,7 @@ import type {
   CommercePortalAuthMfaVerifyTotpServiceRequest,
 } from './contracts.ts';
 import { CommercePortalAuthMfaProviderUnavailable } from './provider-unavailable.ts';
+import type { CommercePortalAuthMfaProviderRejectionCodeSchema } from './provider-rejected.ts';
 import { CommercePortalAuthMfaProviderService } from './provider-service.ts';
 
 /**
@@ -207,6 +208,33 @@ const mfaVerificationOutcome = (failure: CommercePortalAuthMfaProviderFailure): 
     Match.when('CommercePortalAuthMfaProviderUnavailable', () => 'provider_unavailable' as const),
     Match.when('CommercePortalAuthMfaRateLimited', () => 'rate_limited' as const),
     Match.exhaustive,
+  );
+
+/**
+ * Rejection codes that judge the account's MFA state, not a credential (e.g. disabling a factor
+ * that is already off). Better Auth answers these before any secret is compared.
+ */
+const MFA_STATE_CONFLICT_CODES = new Set<typeof CommercePortalAuthMfaProviderRejectionCodeSchema.Type>([
+  'BACKUP_CODES_NOT_ENABLED',
+  'INVALID_REQUEST',
+  'OTP_NOT_CONFIGURED',
+  'OTP_NOT_ENABLED',
+  'TOTP_NOT_CONFIGURED',
+  'TOTP_NOT_ENABLED',
+  'TWO_FACTOR_NOT_ENABLED',
+]);
+
+/**
+ * A rejection that never judged a credential is a `state_conflict`, not a failed authentication —
+ * otherwise a client out of step with the account (e.g. disabling an already-off factor) would fill
+ * the same lockout review as wrong passwords, reading a stale screen as an attack.
+ */
+const mfaAdministrationOutcome = (failure: CommercePortalAuthMfaProviderFailure): CommercePortalAuthAuditOutcome =>
+  Match.value(failure).pipe(
+    Match.when({ _tag: 'CommercePortalAuthMfaProviderRejected' }, (rejected) =>
+      MFA_STATE_CONFLICT_CODES.has(rejected.code) ? ('state_conflict' as const) : mfaVerificationOutcome(rejected),
+    ),
+    Match.orElse(mfaVerificationOutcome),
   );
 
 const ROLLBACK_OPERATION = 'mfa-verification-rollback';
@@ -384,7 +412,7 @@ const strictlyAuditedAdministration = Effect.fn('CommercePortalAuthMfaService.st
         eventType: evidence.eventType,
         occurredAt: yield* DateTime.nowAsDate,
         operation: evidence.method,
-        outcome: Result.isSuccess(outcome) ? 'success' : mfaVerificationOutcome(outcome.failure),
+        outcome: Result.isSuccess(outcome) ? 'success' : mfaAdministrationOutcome(outcome.failure),
         subjectDigest: evidence.attempt.subjectDigest,
       }),
     );
@@ -394,7 +422,7 @@ const strictlyAuditedAdministration = Effect.fn('CommercePortalAuthMfaService.st
         // stands for the attempt. The refusal keeps its own status.
         yield* Effect.annotateLogs(Effect.logError('Commerce portal MFA administration evidence was not persisted'), {
           auditOperation: evidence.method,
-          auditOutcome: mfaVerificationOutcome(outcome.failure),
+          auditOutcome: mfaAdministrationOutcome(outcome.failure),
         });
         return yield* outcome.failure;
       }

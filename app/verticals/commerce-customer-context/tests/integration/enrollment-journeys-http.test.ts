@@ -62,7 +62,7 @@ import { CommercePortalAuthAccountCreationRejected } from '../../api/portal-auth
 import { CommercePortalAuthAccountCreationService } from '../../api/portal-auth/provider/account-create.ts';
 import { CommercePortalAuthAccountCreationUnavailable } from '../../api/portal-auth/provider/account-creation-unavailable.ts';
 import { CommercePortalAuthConfig } from '../../api/portal-auth/provider/config-service.ts';
-import { parseCommercePortalAuthConfig } from '../../api/portal-auth/provider/config.ts';
+import { COMMERCE_PORTAL_AUTH_POLICY, parseCommercePortalAuthConfig } from '../../api/portal-auth/provider/config.ts';
 import { CommerceCoreIdentityClientConfig } from '../../api/portal-auth/provider/core-identity-client-config.ts';
 import { CommerceCoreIdentityClientLive } from '../../api/portal-auth/provider/core-identity-client.ts';
 import {
@@ -1295,7 +1295,7 @@ const enrollmentStartBudgetKeys = Effect.fnUntraced(function* enrollmentStartBud
   const databaseUrl = yield* providerDatabaseUrl;
   const database = yield* makeCommercePortalAuthDatabase({ connectionString: databaseUrl }).pipe(Effect.orDie);
   const scope = createHmac('sha256', SECRET).update(email).digest('base64url');
-  const budgetKeys = like(rateLimit.key, `%|${scope}|/enrollment/start`);
+  const budgetKeys = like(rateLimit.key, `%|/enrollment/start|${scope}`);
   yield* Effect.addFinalizer(() => database.executor.delete(rateLimit).where(budgetKeys).pipe(Effect.orDie));
   return yield* database.executor.select({ key: rateLimit.key }).from(rateLimit).where(budgetKeys).pipe(Effect.orDie);
 });
@@ -1455,6 +1455,91 @@ it.live(
           code: 'authentication_required',
           status: 401,
         });
+        expect(yield* enrollmentAttemptCount(fixture)).toBe(0);
+      }),
+    ),
+  180_000,
+);
+
+/** Every durable row of one Principal's route-wide enrollment-start budget. */
+const enrollmentPrincipalBudgetKeys = Effect.fnUntraced(function* enrollmentPrincipalBudgetKeys(principalId: string) {
+  const databaseUrl = yield* providerDatabaseUrl;
+  const database = yield* makeCommercePortalAuthDatabase({ connectionString: databaseUrl }).pipe(Effect.orDie);
+  const scope = createHmac('sha256', SECRET).update(principalId).digest('base64url');
+  const key = eq(rateLimit.key, `${scope}|/enrollment/start`);
+  yield* Effect.addFinalizer(() => database.executor.delete(rateLimit).where(key).pipe(Effect.orDie));
+  return yield* database.executor.select({ key: rateLimit.key }).from(rateLimit).where(key).pipe(Effect.orDie);
+});
+
+/**
+ * The owner-ownership probe a failed Existing-account start runs — a portal session read plus a
+ * provider directory lookup — is exactly what a caller holding a replayable verify-only assertion
+ * could otherwise run against arbitrary addresses at whatever rate the probe itself sustains. The
+ * Principal budget is what bounds that, and it must be spent before the probe runs at all: a probe
+ * that ran first would let every one of these failed attempts through uncounted, and the caller
+ * would never feel this budget no matter how many addresses it walked.
+ */
+it.live(
+  'stops an Existing-account Principal at the enrollment-start budget before the (N+1)th probe, not after it',
+  () =>
+    Effect.scoped(
+      Effect.gen(function* principalBudgetGatesTheOwnershipProbe() {
+        const tenantId = randomUUID();
+        const fixture = yield* makeEnrollmentAcceptanceFixture({ tenantId });
+        const gateway = yield* makeAcceptanceGatewayIssuer(READ_ISSUER, READ_KEY_ID);
+        const runtime = yield* authenticatedRuntime(gateway);
+        const principalId = randomUUID();
+
+        /**
+         * One Existing-account start by this Principal, carrying its own fresh assertion and no
+         * portal session cookie at all — so the ownership probe, if it runs, always answers 401.
+         */
+        const probeAs = Effect.fnUntraced(function* probeAs() {
+          const assertion = yield* issueAcceptanceGatewayAssertion(fixture.admin, gateway, READ_AUDIENCE, {
+            authBindingId: randomUUID(),
+            authContextRef: `portal-session:${randomUUID()}`,
+            authenticationNamespaceId: COMMERCE_AUTHENTICATION_NAMESPACE_ID,
+            authMethod: 'session',
+            legalEntityId: randomUUID(),
+            principalId,
+            tenantId,
+          });
+          return yield* Effect.promise(
+            async () =>
+              await runtime.handler(
+                startExistingAccountRequest(`enrollment-http-${randomUUID()}@example.test`, { assertion }),
+              ),
+          );
+        });
+
+        const principalBudget = COMMERCE_PORTAL_AUTH_POLICY.rateLimit.enrollmentStart.max;
+
+        // N failed ownership probes: the Principal has no session, so the probe answers 401 for
+        // each of the starts its enrollment-start budget still permits.
+        const probed = yield* Effect.forEach(
+          Array.from({ length: principalBudget }, (_unused, index) => index),
+          () => probeAs(),
+          { concurrency: 1 },
+        );
+        expect(probed.map((response) => response.status)).toStrictEqual(
+          Array.from({ length: principalBudget }, () => 401),
+        );
+        expect(yield* enrollmentPrincipalBudgetKeys(principalId)).toHaveLength(1);
+
+        // The (N+1)th start is the Principal budget's own refusal, `429`, never the probe's `401` —
+        // the only way that status can appear here is if the budget refused before the probe ran,
+        // because the probe itself is incapable of answering anything but 401 for this Principal.
+        const refused = yield* probeAs();
+        expect(refused.status).toBe(429);
+        expect(refused.headers.get('content-type')).toContain('application/problem+json');
+        expect(yield* Effect.promise(async () => await refused.clone().json())).toMatchObject({
+          code: 'rate_limited',
+          retryAfterSeconds: COMMERCE_PORTAL_AUTH_POLICY.rateLimit.enrollmentStart.windowSeconds,
+          status: 429,
+        });
+
+        // No Attempt exists for any of this: the ownership probe never persists one, and neither
+        // does a Principal-budget refusal.
         expect(yield* enrollmentAttemptCount(fixture)).toBe(0);
       }),
     ),

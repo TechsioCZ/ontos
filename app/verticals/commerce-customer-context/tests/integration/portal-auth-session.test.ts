@@ -17,7 +17,10 @@ import type {
   CommercePortalAuthSessionSnapshot,
 } from '../../api/portal-auth/session/contracts.ts';
 import { CommercePortalAuthService, portalAuthSessionStandaloneApiLive } from '../../api/portal-auth/session/http.ts';
-import { CommercePortalAuthSessionUnavailable } from '../../api/portal-auth/session/errors.ts';
+import {
+  CommercePortalAuthSessionEvidenceRejected,
+  CommercePortalAuthSessionUnavailable,
+} from '../../api/portal-auth/session/errors.ts';
 import {
   CommercePortalAuthSessionLifecycle,
   makeCommercePortalAuthSessionLifecycle,
@@ -161,6 +164,11 @@ const postWithCookie = (app: SessionApp) => (route: string, body: string, cookie
       }),
       requestContext,
     ),
+  );
+
+const getWithCookie = (app: SessionApp) => (route: string, cookie: string) =>
+  Effect.promise(() =>
+    app.handler(new Request(`${trustedOrigin}${route}`, { headers: { cookie }, method: 'GET' }), requestContext),
   );
 
 it('publishes only the explicitly reviewed provider routes', () => {
@@ -820,6 +828,65 @@ it.effect('renews the provider session only after the audited refresh committed'
       // session and still hands the renewed cookie onward.
       expect(counting.renewals()).toBeGreaterThan(renewalsBefore);
       expect(response.headers.getSetCookie().join('\n')).toContain('session_token=');
+    }),
+  ),
+);
+
+/** The evidence an admitted session read answers with; only its snapshot half reaches the wire. */
+const admittedEvidence = { ...snapshot, assurance: 'password' as const, observedAt: snapshot.updatedAt };
+
+it.effect('never renews the provider session on an ordinary session read', () =>
+  Effect.scoped(
+    Effect.gen(function* getSessionNeverRenews() {
+      const counting = makeRenewalCountingRealm();
+      const cookie = yield* makeLiveSession(counting.realm, 'get-session-no-renewal@example.test');
+      const renewalsBefore = counting.renewals();
+      const app = yield* makeApp(
+        { ...unusedLifecycle, evidenceForSession: () => Effect.succeed(admittedEvidence) },
+        makeCountingBudget(),
+        counting.realm.api,
+      );
+
+      const response = yield* getWithCookie(app)('/api/portal-auth/get-session', cookie);
+      expect(response.status).toBe(200);
+      expect(yield* jsonBody(response)).toMatchObject({ state: 'authenticated' });
+      // `updateAge: 0` makes every provider read eligible for Better Auth's own refresh, and that
+      // refresh commits in its own transaction the moment it is asked for. A reading route that
+      // asked for it would extend the durable session on every poll, outside the audited touch
+      // `/refresh` routes renewals through — so an identifying read takes none.
+      expect(counting.renewals()).toBe(renewalsBefore);
+      expect(response.headers.getSetCookie()).toStrictEqual([]);
+    }),
+  ),
+);
+
+it.effect('rejects a disabled session on read without renewing it', () =>
+  Effect.scoped(
+    Effect.gen(function* getSessionDisabledNeverRenews() {
+      const counting = makeRenewalCountingRealm();
+      const cookie = yield* makeLiveSession(counting.realm, 'get-session-disabled@example.test');
+      const renewalsBefore = counting.renewals();
+      const app = yield* makeApp(
+        {
+          ...unusedLifecycle,
+          evidenceForSession: () =>
+            Effect.fail(
+              new CommercePortalAuthSessionEvidenceRejected({
+                reason: 'the Commerce portal account is disabled',
+              }),
+            ),
+        },
+        makeCountingBudget(),
+        counting.realm.api,
+      );
+
+      const response = yield* getWithCookie(app)('/api/portal-auth/get-session', cookie);
+      expect(response.status).toBe(403);
+      expect(yield* jsonBody(response)).toMatchObject({ code: 'account_disabled', status: 403 });
+      // The rejection decides whether the session may live on, so the read that precedes it must
+      // not already have extended the provider row a disabled account no longer deserves.
+      expect(counting.renewals()).toBe(renewalsBefore);
+      expect(response.headers.getSetCookie()).toStrictEqual([]);
     }),
   ),
 );

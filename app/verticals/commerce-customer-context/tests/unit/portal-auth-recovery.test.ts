@@ -24,6 +24,7 @@ import {
   makeCommercePortalAuthRecoveryService,
   portalAuthRecoveryApiLive,
 } from '../../api/portal-auth/provider/recovery/index.ts';
+import { CommercePortalAuthRecoveryProviderFailure } from '../../api/portal-auth/provider/recovery/provider-failure.ts';
 import { CommercePortalAuthConfig } from '../../api/portal-auth/provider/config-service.ts';
 import { COMMERCE_PORTAL_AUTH_POLICY, parseCommercePortalAuthConfig } from '../../api/portal-auth/provider/config.ts';
 import { UNRESOLVED_PORTAL_AUTH_CLIENT_KEY } from '../../api/portal-auth/http-transport.ts';
@@ -128,7 +129,10 @@ const makeMemoryRecoveryStore = (
         spentBudgets.set(input.key, counted + 1);
         return true;
       }),
-    dispatchPasswordResetLedger: () => Effect.void,
+    // This fixture keeps no reset ledger (`peekPasswordResetLedger` answers none), so there is
+    // never a row to claim — the provider stays the authority on the token, as it is in
+    // production for a token this realm has no row for.
+    dispatchPasswordResetLedger: () => Effect.succeed('not-pending' as const),
     findAccountSubjectForEmail: (input) =>
       Effect.succeed(
         input.email.toLowerCase() === currentEmail.toLowerCase() ? Option.some(currentSubject) : Option.none(),
@@ -156,6 +160,7 @@ const makeMemoryRecoveryStore = (
         return true;
       }),
     registerPasswordResetToken: () => Effect.succeed(true),
+    releasePasswordResetLedger: () => Effect.void,
     reserveEmailVerificationSubject: (input) =>
       Effect.sync(() => {
         if (
@@ -562,6 +567,101 @@ it.effect('unwraps reset credentials only at the provider boundary and returns a
         }),
       ),
     ),
+  );
+});
+
+/**
+ * The reset ledger as PostgreSQL answers it: one guarded `UPDATE … WHERE state = 'pending'`, so the
+ * first caller takes the claim and every later one is told who holds it. The three answers are what
+ * the service is allowed to read — a statement that merely succeeded says nothing about which of
+ * two racing submissions may spend the token.
+ */
+const makeClaimingResetLedger = (base: CommercePortalAuthRecoveryStore) => {
+  const binding = { email: EMAIL, providerSubjectId: ORIGINAL_SUBJECT, tokenDigest: RESET_TOKEN_DIGEST };
+  const recorded: Parameters<CommercePortalAuthRecoveryStore['recordRecoveryReconciliation']>[0][] = [];
+  let state: 'consumed' | 'dispatched' | 'pending' = 'pending';
+  const store: CommercePortalAuthRecoveryStore = {
+    ...base,
+    accountExists: () => Effect.succeed(true),
+    consumePasswordResetLedgerWithAudit: () =>
+      Effect.sync(() => {
+        state = 'consumed';
+      }),
+    dispatchPasswordResetLedger: () =>
+      Effect.sync(() => {
+        if (state === 'pending') {
+          state = 'dispatched';
+          return 'claimed' as const;
+        }
+        return state === 'dispatched' ? ('already-dispatched' as const) : ('not-pending' as const);
+      }),
+    findAccountSubjectForEmail: () => Effect.succeed(Option.some(ORIGINAL_SUBJECT)),
+    peekDispatchedPasswordResetLedger: () =>
+      Effect.succeed(state === 'dispatched' ? Option.some(binding) : Option.none()),
+    peekPasswordResetLedger: () => Effect.succeed(state === 'pending' ? Option.some(binding) : Option.none()),
+    recordRecoveryReconciliation: (conflict) =>
+      Effect.sync(() => {
+        recorded.push(conflict);
+      }),
+  };
+  return { recordedConflicts: () => recorded, state: () => state, store };
+};
+
+it.effect('never dispatches a reset twice: a claim somebody else holds answers reconciliation instead', () => {
+  let resetCalls = 0;
+  let losesAnswer = true;
+  const ledger = makeClaimingResetLedger(makeMemoryRecoveryStore().store);
+  const provider: CommercePortalAuthRecoveryProvider = {
+    ...successfulProvider(),
+    resetPassword: () =>
+      Effect.suspend(() => {
+        resetCalls += 1;
+        // A timeout-class failure, so the claim stays with this caller exactly as a lost answer
+        // leaves it: no provider code, so nothing is decoded as a rejection of the token.
+        return losesAnswer
+          ? Effect.fail(new CommercePortalAuthRecoveryProviderFailure({ operation: 'reset-password' }))
+          : Effect.succeed({ status: true });
+      }),
+  };
+  return runWithRecovery(provider, ledger.store, (service) =>
+    Effect.gen(function* concurrentResetClaim() {
+      const reset = () =>
+        service.resetPassword({ newPassword: Redacted.make('P'.repeat(24)), token: Redacted.make('reset-token') });
+
+      const holder = yield* Effect.result(reset());
+      expect(Result.isFailure(holder)).toBe(true);
+      expect(ledger.state()).toBe('dispatched');
+      expect(resetCalls).toBe(1);
+
+      // The second submission of the same link. The claim is already taken, so the provider must
+      // not be asked again: a second dispatch is an outcome neither submission could attribute.
+      const contender = yield* Effect.result(reset());
+      expect(resetCalls).toBe(1);
+      expect(Result.isSuccess(contender)).toBe(true);
+      if (Result.isSuccess(contender)) {
+        expect(contender.success).toStrictEqual({
+          conflictClass: 'RESET_OUTCOME_INDETERMINATE',
+          outcome: 'ACCOUNT_RECOVERY_RECONCILIATION_REQUIRED',
+        });
+      }
+      expect(ledger.recordedConflicts().map((conflict) => conflict.conflictClass)).toStrictEqual([
+        'RESET_OUTCOME_INDETERMINATE',
+      ]);
+
+      // A claim nobody holds is still the provider's call: once the row is settled there is nothing
+      // to serialize, so the third answer dispatches exactly as an unledgered token does.
+      yield* ledger.store.consumePasswordResetLedgerWithAudit({
+        audit: {
+          eventType: 'commerce.portal-auth.recovery-completed.v1',
+          occurredAt: new Date(0),
+          outcome: 'success',
+        },
+        token: Redacted.make('reset-token'),
+      });
+      losesAnswer = false;
+      expect(yield* reset()).toStrictEqual({ outcome: 'ACCOUNT_RECOVERY_COMPLETED_SAME_SUBJECT' });
+      expect(resetCalls).toBe(2);
+    }),
   );
 });
 

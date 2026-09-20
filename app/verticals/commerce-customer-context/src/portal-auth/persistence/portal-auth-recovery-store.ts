@@ -1,4 +1,4 @@
-import { and, eq, gt, inArray, like, lt, sql } from 'drizzle-orm';
+import { and, eq, gt, inArray, like, lt, or, sql } from 'drizzle-orm';
 import { Crypto, DateTime, Effect, Layer, Option, Redacted, Schema } from 'effect';
 
 import { CommercePortalAuthProviderSubjectIdSchema } from '../../../api/portal-auth/provider/recovery/contracts.ts';
@@ -13,6 +13,7 @@ import { CommercePortalAuthRecoveryUnavailable } from '../../../api/portal-auth/
 import { CommercePortalAuthRecoveryStoreService } from '../../../api/portal-auth/provider/recovery/store-service.ts';
 import type {
   CommercePortalAuthRecoveryLedgerBinding,
+  CommercePortalAuthRecoveryResetClaim,
   CommercePortalAuthRecoveryStore,
 } from '../../../api/portal-auth/provider/recovery/store-service.ts';
 import { COMMERCE_PORTAL_AUTH_POLICY } from '../../../api/portal-auth/provider/config.ts';
@@ -33,6 +34,11 @@ const RESET_LEDGER_STATE_DISPATCHED = 'dispatched';
 const RESET_LEDGER_SWEEP_OPERATION = 'recovery-reset-ledger-sweep';
 /** A sweep touches at most this many stale rows per call: bounded work, never a table scan. */
 const RESET_LEDGER_SWEEP_BATCH_SIZE = 100;
+/**
+ * How long a claimed row may keep the binding a lost dispatch left behind. A claim older than the
+ * reset token's whole lifetime belongs to a submission nobody is coming back for.
+ */
+const RESET_LEDGER_DISPATCH_WINDOW_SECONDS = COMMERCE_PORTAL_AUTH_POLICY.password.resetTokenExpiresInSeconds;
 const verificationLedgerEmail = Schema.String.check(Schema.isTrimmed(), Schema.isMinLength(3), Schema.isMaxLength(320));
 const VerificationLedgerRecordSchema = Schema.Struct({
   email: verificationLedgerEmail,
@@ -405,19 +411,28 @@ export const makeCommercePortalAuthRecoveryStore = Effect.fn('CommercePortalAuth
     );
 
     /**
-     * Bounded housekeeping: a pending row whose expiry has already passed can never satisfy a peek
-     * again (`peekPasswordResetLedger` itself also filters on `expiresAt`, so an unswept row is
-     * already excluded from lookups — this only makes the exclusion durable). At most
-     * `RESET_LEDGER_SWEEP_BATCH_SIZE` rows are touched per call, so this never becomes a table scan.
-     * A sweep that fails must not deny the request that triggered it, so its cause is reported and
-     * the caller continues.
+     * Bounded housekeeping for two ways a row stops being useful but keeps its binding: an expired
+     * `pending` row, and a `dispatched` row past `RESET_LEDGER_DISPATCH_WINDOW_SECONDS` (its
+     * reconciliation row, if any, already holds what support needs). Touches at most
+     * `RESET_LEDGER_SWEEP_BATCH_SIZE` rows and never denies the triggering request on failure.
      */
     const sweepExpiredResetLedgerRows = (now: Date) =>
       Effect.gen(function* sweepExpiredResetLedgerRowsEffect() {
+        const dispatchedBefore = DateTime.toDate(
+          DateTime.add(DateTime.makeUnsafe(now), { seconds: -RESET_LEDGER_DISPATCH_WINDOW_SECONDS }),
+        );
         const stale = database
           .select({ tokenDigest: recoveryResetLedger.tokenDigest })
           .from(recoveryResetLedger)
-          .where(and(eq(recoveryResetLedger.state, RESET_LEDGER_STATE_PENDING), lt(recoveryResetLedger.expiresAt, now)))
+          .where(
+            or(
+              and(eq(recoveryResetLedger.state, RESET_LEDGER_STATE_PENDING), lt(recoveryResetLedger.expiresAt, now)),
+              and(
+                eq(recoveryResetLedger.state, RESET_LEDGER_STATE_DISPATCHED),
+                lt(recoveryResetLedger.dispatchedAt, dispatchedBefore),
+              ),
+            ),
+          )
           .limit(RESET_LEDGER_SWEEP_BATCH_SIZE);
         yield* database
           .update(recoveryResetLedger)
@@ -611,16 +626,20 @@ export const makeCommercePortalAuthRecoveryStore = Effect.fn('CommercePortalAuth
      * `dispatched` row is what turns that same retry into a reconciliation a support operator sees.
      * The guard on `pending` makes the claim happen once, and the expiry guard keeps a long-dead
      * token from opening one.
+     *
+     * The answer is derived from the rows the guarded `UPDATE` actually returned, since two
+     * submissions of the same link race here and the loser's zero-row update is a refusal, not a
+     * claim.
      */
     const dispatchPasswordResetLedger = Effect.fn('CommercePortalAuthRecoveryStore.dispatchPasswordResetLedger')(
       function* dispatchPasswordResetLedgerEffect(input: {
         readonly token: Redacted.Redacted;
-      }): Effect.fn.Return<void, CommercePortalAuthRecoveryUnavailable> {
+      }): Effect.fn.Return<CommercePortalAuthRecoveryResetClaim, CommercePortalAuthRecoveryUnavailable> {
         const now = yield* DateTime.nowAsDate;
         const tokenDigest = yield* digestToken(crypto, input.token).pipe(
           Effect.mapError((cause) => unavailable('password-reset-ledger-dispatch-hash', cause)),
         );
-        yield* database
+        const claimed = yield* database
           .update(recoveryResetLedger)
           .set({ dispatchedAt: now, state: RESET_LEDGER_STATE_DISPATCHED, updatedAt: now })
           .where(
@@ -630,7 +649,44 @@ export const makeCommercePortalAuthRecoveryStore = Effect.fn('CommercePortalAuth
               gt(recoveryResetLedger.expiresAt, now),
             ),
           )
+          .returning({ tokenDigest: recoveryResetLedger.tokenDigest })
           .pipe(Effect.mapError((cause) => unavailable('password-reset-ledger-dispatch', cause)));
+        if (claimed.length > 0) {
+          return 'claimed';
+        }
+        const rows = yield* database
+          .select({ state: recoveryResetLedger.state })
+          .from(recoveryResetLedger)
+          .where(eq(recoveryResetLedger.tokenDigest, tokenDigest))
+          .limit(1)
+          .pipe(Effect.mapError((cause) => unavailable('password-reset-ledger-dispatch-state', cause)));
+        return rows[0]?.state === RESET_LEDGER_STATE_DISPATCHED ? 'already-dispatched' : 'not-pending';
+      },
+    );
+
+    /**
+     * The claim, given back, once a rejection proves the token is still spendable. Guarded on
+     * `dispatched` so it can never revive a `consumed` or `expired` row, or one someone else has
+     * since claimed.
+     */
+    const releasePasswordResetLedger = Effect.fn('CommercePortalAuthRecoveryStore.releasePasswordResetLedger')(
+      function* releasePasswordResetLedgerEffect(input: {
+        readonly token: Redacted.Redacted;
+      }): Effect.fn.Return<void, CommercePortalAuthRecoveryUnavailable> {
+        const now = yield* DateTime.nowAsDate;
+        const tokenDigest = yield* digestToken(crypto, input.token).pipe(
+          Effect.mapError((cause) => unavailable('password-reset-ledger-release-hash', cause)),
+        );
+        yield* database
+          .update(recoveryResetLedger)
+          .set({ dispatchedAt: null, state: RESET_LEDGER_STATE_PENDING, updatedAt: now })
+          .where(
+            and(
+              eq(recoveryResetLedger.tokenDigest, tokenDigest),
+              eq(recoveryResetLedger.state, RESET_LEDGER_STATE_DISPATCHED),
+            ),
+          )
+          .pipe(Effect.mapError((cause) => unavailable('password-reset-ledger-release', cause)));
       },
     );
 
@@ -795,6 +851,7 @@ export const makeCommercePortalAuthRecoveryStore = Effect.fn('CommercePortalAuth
       recordRecoveryReconciliation,
       registerEmailVerificationToken,
       registerPasswordResetToken,
+      releasePasswordResetLedger,
       reserveEmailVerificationSubject,
     };
   },

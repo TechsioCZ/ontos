@@ -95,14 +95,14 @@ const enrollmentStartRateLimit: CommercePortalAuthRecoveryRateLimitRule = {
 };
 
 /**
- * What one Principal may spend on this route at all, whatever addresses it names. The per-address
- * rule above bounds how often one Principal may enroll one address; without this one a caller would
- * simply name a fresh address per start and keep its own total unbounded. It is the deployment's
- * default per-route budget, because the route as a whole is what it bounds.
+ * Bounds what one Principal may spend on this route at all, whatever addresses it names; without it
+ * a caller could name a fresh address per start and keep its own total unbounded. It is its own
+ * policy rather than a reuse of `rateLimit.default`, whose 60-second window would let a Principal
+ * walk fresh addresses past the narrower per-address budget.
  */
 const enrollmentStartPrincipalRateLimit: CommercePortalAuthRecoveryRateLimitRule = {
-  max: COMMERCE_PORTAL_AUTH_POLICY.rateLimit.default.max,
-  windowSeconds: COMMERCE_PORTAL_AUTH_POLICY.rateLimit.default.windowSeconds,
+  max: COMMERCE_PORTAL_AUTH_POLICY.rateLimit.enrollmentStart.max,
+  windowSeconds: COMMERCE_PORTAL_AUTH_POLICY.rateLimit.enrollmentStart.windowSeconds,
 };
 
 /**
@@ -127,48 +127,54 @@ const enrollmentSubjectKey = (subject: string, secret: Redacted.Redacted): strin
   createHmac('sha256', Redacted.value(secret)).update(subject).digest('base64url');
 
 /**
- * The two keys one start spends, both scoped to the caller the gateway assertion was verified as.
- *
- * `resolveClientKey` is unattributable on this route (see `../http-transport.ts`), so a key built
- * from it is one deployment-wide counter that every caller shares: whoever holds any valid assertion
- * could then spend any address' whole account-creation budget, and — the pre-budget gate being a
- * verification rather than a redemption — could do it by replaying one assertion. The verified
- * Principal is the only caller identity established this early, so it is what both keys carry: a
- * caller can burn budget under its own Principal alone. The address stays part of the narrow key,
- * never the counter store's contents, because it is keyed under the deployment secret: the durable
- * `rate_limit` rows stay a set of opaque digests rather than a readable list of the addresses people
- * are enrolling with.
+ * The two keys one start may spend, both scoped to the verified Principal rather than the
+ * unattributable `resolveClientKey` — otherwise any caller with a valid assertion could spend
+ * another Principal's whole budget by replaying it.
  */
-const enrollmentBudgetKeys = (principalId: string, email: string, secret: Redacted.Redacted) => {
-  const principalScope = enrollmentSubjectKey(principalId, secret);
-  return {
-    principal: `${principalScope}|${ENROLLMENT_START_ROUTE}`,
-    subject: `${principalScope}|${enrollmentSubjectKey(email, secret)}|${ENROLLMENT_START_ROUTE}`,
-  };
-};
+const enrollmentPrincipalBudgetKey = (principalId: string, secret: Redacted.Redacted): string =>
+  `${enrollmentSubjectKey(principalId, secret)}|${ENROLLMENT_START_ROUTE}`;
+
+const enrollmentAddressBudgetKey = (principalId: string, email: string, secret: Redacted.Redacted): string =>
+  `${enrollmentPrincipalBudgetKey(principalId, secret)}|${enrollmentSubjectKey(email, secret)}`;
 
 /**
- * Spend both budgets for one start, the route-wide one first: a Principal already out of starts is
- * refused without also charging the address it named, so a caller past its own limit cannot still
- * take a fresh address down with it. They are spent in order rather than together because they are
- * two rows of the same durable counter store.
+ * Spends the Principal's route-wide budget alone, every start owes it regardless of address or
+ * journey. It runs first so a Principal already out of starts is refused before anything reads or
+ * names an address.
  */
-export const commercePortalAuthEnrollmentBudget = Effect.fn('CommercePortalAuthEnrollmentHttp.rateLimit')(
-  function* consumeEnrollmentBudgetEffect(principalId: string, email: string) {
+export const commercePortalAuthEnrollmentPrincipalBudget = Effect.fn(
+  'CommercePortalAuthEnrollmentHttp.principalBudget',
+)(function* consumeEnrollmentPrincipalBudgetEffect(principalId: string) {
+  const configuration = yield* CommercePortalAuthConfig;
+  const key = enrollmentPrincipalBudgetKey(principalId, configuration.secret);
+  const spent = yield* consumeRateLimitBudget(key, enrollmentStartPrincipalRateLimit, {
+    route: ENROLLMENT_START_ROUTE,
+    unavailable: (failure) => commercePortalAuthEnrollmentUnavailableProblem(failure),
+  });
+  if (!spent) {
+    return yield* Effect.fail(commercePortalAuthEnrollmentRateLimitedProblem(enrollmentStartPrincipalRateLimit));
+  }
+  return null;
+});
+
+/**
+ * Spends the narrow (Principal, address) budget that bounds provider account creation. Only journeys
+ * that actually create an account owe it (see `commercePortalAuthEnrollmentCreatesAccount`); an
+ * Existing-account journey proves ownership of an account that already exists and dispatches nothing
+ * this budget is meant to throttle.
+ */
+export const commercePortalAuthEnrollmentAddressBudget = Effect.fn('CommercePortalAuthEnrollmentHttp.addressBudget')(
+  function* consumeEnrollmentAddressBudgetEffect(principalId: string, email: string) {
     const configuration = yield* CommercePortalAuthConfig;
-    const keys = enrollmentBudgetKeys(principalId, email, configuration.secret);
-    const spend = (key: string, rule: CommercePortalAuthRecoveryRateLimitRule) =>
-      consumeRateLimitBudget(key, rule, {
-        route: ENROLLMENT_START_ROUTE,
-        unavailable: (failure) => commercePortalAuthEnrollmentUnavailableProblem(failure),
-      });
-    if (!(yield* spend(keys.principal, enrollmentStartPrincipalRateLimit))) {
-      return yield* Effect.fail(commercePortalAuthEnrollmentRateLimitedProblem);
+    const key = enrollmentAddressBudgetKey(principalId, email, configuration.secret);
+    const spent = yield* consumeRateLimitBudget(key, enrollmentStartRateLimit, {
+      route: ENROLLMENT_START_ROUTE,
+      unavailable: (failure) => commercePortalAuthEnrollmentUnavailableProblem(failure),
+    });
+    if (!spent) {
+      return yield* Effect.fail(commercePortalAuthEnrollmentRateLimitedProblem(enrollmentStartRateLimit));
     }
-    if (!(yield* spend(keys.subject, enrollmentStartRateLimit))) {
-      return yield* Effect.fail(commercePortalAuthEnrollmentRateLimitedProblem);
-    }
-    return yield* Effect.void;
+    return null;
   },
 );
 
@@ -520,23 +526,24 @@ const startEnrollment = Effect.fn('CommercePortalAuthEnrollmentHttp.start')(func
     return yield* Effect.fail(commercePortalAuthEnrollmentJourneyUnavailableProblem);
   }
   const email = input.email.trim().toLowerCase();
-  // Every gate this start owns runs before the budget is spent, and the budget is keyed by what
-  // this gate establishes. Spending first would let an unauthenticated caller exhaust the enrollment
-  // budget of any address it can name — a forged trusted Origin is all it would take, because
-  // nothing else about the caller has been established yet. The gateway principal is therefore
-  // verified here, upstream of the budget, rather than only when the operation is authenticated
-  // after it; the sibling sign-in transport orders its own gate the same way. It is deliberately a
-  // read: a caller the budget then refuses keeps an assertion it never got to spend. That is also
-  // why the budget is keyed by the Principal this read names rather than by the assertion itself —
-  // a read is replayable, so an assertion holder must only ever be able to spend its own budget.
+  // The gateway principal is verified before the budget is spent, and keyed by the Principal it
+  // names rather than the assertion itself, so an unauthenticated caller can't exhaust another
+  // Principal's budget by naming it or by replaying a read-only assertion.
   const caller = yield* verifyOperationPrincipalWithoutRedemption(Redacted.make(request.headers['authorization']), {
     authentication: () => commercePortalAuthEnrollmentAuthenticationProblem,
     unavailable: () => commercePortalAuthEnrollmentUnavailableProblem(),
   });
+  // Spent before the owner-ownership probe below reads or names an address, so a replayable
+  // verify-only assertion can't run that probe against arbitrary addresses unbounded.
+  yield* commercePortalAuthEnrollmentPrincipalBudget(caller.principalId);
   const ownerSubject = commercePortalAuthEnrollmentRequiresAccountOwner(input.journey)
     ? yield* commercePortalAuthEnrollmentAccountOwner(requestHeaders(request.headers), email)
     : undefined;
-  yield* commercePortalAuthEnrollmentBudget(caller.principalId, email);
+  // Only the journeys that actually create a provider account owe this narrower budget; see
+  // `commercePortalAuthEnrollmentAddressBudget`.
+  if (commercePortalAuthEnrollmentCreatesAccount(input.journey)) {
+    yield* commercePortalAuthEnrollmentAddressBudget(caller.principalId, email);
+  }
   // One redemption for the whole composed start. The gate above only read the assertion, so this is
   // the single place it is spent, and both governed Actions below are handed the principal it
   // produced rather than the header it came from.

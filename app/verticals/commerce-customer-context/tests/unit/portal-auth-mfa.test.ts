@@ -1237,6 +1237,128 @@ const refusedCompletionRoutes: readonly (readonly [string, string])[] = [
   ['confirm-enable', '/api/portal-auth/two-factor/confirm-enable'],
 ];
 
+/**
+ * What an administrative change's completion row is filed as. A rejection that judged the account's
+ * MFA *state* — the factor is already off, the codes were never issued, the method was never
+ * configured — compared no credential at all, so recording it as `authentication_failed` would put
+ * a portal one screen out of date into the same lockout review as wrong passwords and wrong backup
+ * codes. Only a rejection that judged a credential keeps that class.
+ */
+const administrationRejection = (
+  code: CommercePortalAuthMfaProviderRejected['code'],
+): CommercePortalAuthMfaProviderRejected =>
+  new CommercePortalAuthMfaProviderRejected({
+    code,
+    operation: 'disableTwoFactor',
+    reason: 'the provider refused the change',
+    setCookieHeaders: [],
+  });
+
+const administrationOutcomeCases: readonly (readonly [string, CommercePortalAuthMfaProviderFailure, string])[] = [
+  ['a factor that is already disabled', administrationRejection('TWO_FACTOR_NOT_ENABLED'), 'state_conflict'],
+  ['backup codes that were never issued', administrationRejection('BACKUP_CODES_NOT_ENABLED'), 'state_conflict'],
+  ['a TOTP method the account never configured', administrationRejection('TOTP_NOT_CONFIGURED'), 'state_conflict'],
+  ['a request the provider could not interpret', administrationRejection('INVALID_REQUEST'), 'state_conflict'],
+  ['a wrong account password', administrationRejection('INVALID_PASSWORD'), 'authentication_failed'],
+  [
+    'an unavailable provider',
+    new CommercePortalAuthMfaProviderUnavailable({
+      operation: 'disableTwoFactor',
+      reason: 'provider unavailable',
+      setCookieHeaders: [],
+    }),
+    'provider_unavailable',
+  ],
+];
+
+for (const [description, failure, expectedOutcome] of administrationOutcomeCases) {
+  it.effect(`files ${description} under its own audit outcome class on disable-two-factor`, () => {
+    const recording = makeRecordingRecorder();
+    const provider: CommercePortalAuthMfaProvider = {
+      ...successfulProvider(),
+      disableTwoFactor: () => Effect.fail(failure),
+    };
+    return makeCommercePortalAuthMfaService(recording.recorder, unusedRollback).pipe(
+      Effect.provideService(CommercePortalAuthMfaProviderService, provider),
+      Effect.flatMap((service) =>
+        Effect.result(
+          service.disableTwoFactor({
+            body: { password: ADMINISTRATION_PASSWORD },
+            evidence: ATTEMPT_EVIDENCE,
+            headers,
+          }),
+        ),
+      ),
+      Effect.tap(() =>
+        Effect.sync(() => {
+          // The intent row goes in first and is its own fact, so the completion row is the second.
+          expect(recording.events().map((event) => event.outcome)).toStrictEqual(['requested', expectedOutcome]);
+        }),
+      ),
+    );
+  });
+}
+
+it.effect('files backup codes that were never issued as a state conflict on regenerate-backup-codes', () => {
+  const recording = makeRecordingRecorder();
+  const provider: CommercePortalAuthMfaProvider = {
+    ...successfulProvider(),
+    generateBackupCodes: () =>
+      Effect.fail(
+        new CommercePortalAuthMfaProviderRejected({
+          code: 'BACKUP_CODES_NOT_ENABLED',
+          operation: 'generateBackupCodes',
+          reason: 'the provider refused the change',
+          setCookieHeaders: [],
+        }),
+      ),
+  };
+  return makeCommercePortalAuthMfaService(recording.recorder, unusedRollback).pipe(
+    Effect.provideService(CommercePortalAuthMfaProviderService, provider),
+    Effect.flatMap((service) =>
+      Effect.result(
+        service.generateBackupCodes({
+          body: { password: ADMINISTRATION_PASSWORD },
+          evidence: ATTEMPT_EVIDENCE,
+          headers,
+        }),
+      ),
+    ),
+    Effect.tap(() =>
+      Effect.sync(() => {
+        expect(recording.events().map((event) => event.outcome)).toStrictEqual(['requested', 'state_conflict']);
+      }),
+    ),
+  );
+});
+
+it.effect('keeps a refused second factor an authentication failure, which administration must not dilute', () => {
+  const recording = makeRecordingRecorder();
+  const provider: CommercePortalAuthMfaProvider = {
+    ...successfulProvider(),
+    verifyTOTP: () =>
+      Effect.fail(
+        new CommercePortalAuthMfaProviderRejected({
+          code: 'INVALID_CODE',
+          operation: 'verifyTOTP',
+          reason: 'the provider refused the code',
+          setCookieHeaders: [],
+        }),
+      ),
+  };
+  return makeCommercePortalAuthMfaService(recording.recorder, unusedRollback).pipe(
+    Effect.provideService(CommercePortalAuthMfaProviderService, provider),
+    Effect.flatMap((service) =>
+      Effect.result(service.verifyTOTP({ body: { code: '123456' }, evidence: ATTEMPT_EVIDENCE, headers })),
+    ),
+    Effect.tap(() =>
+      Effect.sync(() => {
+        expect(recording.events().map((event) => event.outcome)).toStrictEqual(['requested', 'authentication_failed']);
+      }),
+    ),
+  );
+});
+
 for (const [route, path] of refusedCompletionRoutes) {
   it.effect(`answers ${route} with 503 and no cookies when its completion evidence is refused`, () =>
     Effect.gen(function* refusedCompletionForwardsNoCookie() {

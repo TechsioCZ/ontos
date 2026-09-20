@@ -57,6 +57,7 @@ const makeReconciliationStore = (input: {
         }),
       registerEmailVerificationToken: unusedRequiredMethod,
       registerPasswordResetToken: unusedRequiredMethod,
+      releasePasswordResetLedger: unusedRequiredMethod,
       reserveEmailVerificationSubject: unusedRequiredMethod,
     },
   };
@@ -275,6 +276,7 @@ const makeIndeterminateStore = (input: {
         }),
       registerEmailVerificationToken: unusedRequiredMethod,
       registerPasswordResetToken: unusedRequiredMethod,
+      releasePasswordResetLedger: unusedRequiredMethod,
       reserveEmailVerificationSubject: unusedRequiredMethod,
     },
   };

@@ -65,6 +65,12 @@ export interface CommercePortalAuthPolicyValue {
   readonly rateLimit: {
     readonly accountCreation: { readonly max: number; readonly windowSeconds: number };
     readonly default: { readonly max: number; readonly windowSeconds: number };
+    /**
+     * The route-wide budget one Principal may spend on `POST /enrollment/start`, whatever address it
+     * names. Its own policy rather than a reuse of `default`, whose 60-second window would let a
+     * Principal walk fresh addresses past the narrower per-address `accountCreation` budget below.
+     */
+    readonly enrollmentStart: { readonly max: number; readonly windowSeconds: number };
     readonly mfa: { readonly max: number; readonly windowSeconds: number };
     readonly recovery: { readonly max: number; readonly windowSeconds: number };
     readonly signIn: { readonly max: number; readonly windowSeconds: number };
@@ -136,6 +142,7 @@ export const COMMERCE_PORTAL_AUTH_POLICY: CommercePortalAuthPolicyValue = Object
   rateLimit: Object.freeze({
     accountCreation: Object.freeze({ max: 3, windowSeconds: 3600 }),
     default: Object.freeze({ max: 30, windowSeconds: 60 }),
+    enrollmentStart: Object.freeze({ max: 10, windowSeconds: 3600 }),
     mfa: Object.freeze({ max: 5, windowSeconds: 300 }),
     recovery: Object.freeze({ max: 3, windowSeconds: 3600 }),
     signIn: Object.freeze({ max: 5, windowSeconds: 60 }),
@@ -171,9 +178,9 @@ export const COMMERCE_PORTAL_AUTH_POLICY: CommercePortalAuthPolicyValue = Object
     // A timed-out sign-in is indeterminate; callers must reconcile before any deliberate retry,
     // and the session adapter never replays the provider effect automatically.
     providerCallTimeoutMilliseconds: 5000,
-    // Better Auth is the provider-cookie renewal authority. The Commerce lifecycle advances its
-    // durable inactivity expiry on every authenticated refresh, so the provider must emit a fresh
-    // signed cookie on every getSession call instead of waiting for its own stale updateAge.
+    // Better Auth must emit a fresh signed cookie the moment the audited `/refresh` route asks, not
+    // on its own stale updateAge. Every other provider read is taken with refresh disabled, so a
+    // zero update age never renews anything on its own.
     updateAgeSeconds: 0,
   }),
 });
