@@ -29,6 +29,7 @@ import {
   commercePortalAuthEnrollmentAccountVerificationClaim,
   commercePortalAuthEnrollmentIntent,
 } from '../../api/portal-auth/enrollment/intent.ts';
+import type { CommercePortalAuthEnrollmentTransitionClaim } from '../../api/portal-auth/enrollment/intent.ts';
 import { commercePortalAuthEnrollmentSessionSubject } from '../../api/portal-auth/enrollment/session-subject.ts';
 import { CommercePortalAuthAccountLookupService } from '../../api/portal-auth/provider/account-lookup-service.ts';
 import { makeCommercePortalAuth } from '../../api/portal-auth/provider/auth.ts';
@@ -453,6 +454,37 @@ it.live('refuses a Retail self-enrollment that names an invitation at the transp
   ),
 );
 
+it.live('refuses an Existing-account start that names an invitation at the transport boundary', () =>
+  Effect.scoped(
+    Effect.gen(function* existingAccountNamingAnInvitationRefused() {
+      const runtime = yield* configuredRuntime;
+      const email = `enrollment-http-${randomUUID()}@example.test`;
+
+      const response = yield* Effect.promise(
+        async () =>
+          await runtime.handler(
+            startEnrollmentRequest({
+              displayName: 'Enrollment HTTP acceptance',
+              email,
+              invitationId: randomUUID(),
+              journey: 'EXISTING_ACCOUNT',
+              password: 'P'.repeat(24),
+              sellingLegalEntityId: randomUUID(),
+            }),
+          ),
+      );
+
+      // Accepting the key composes the Counterparty target for this Attempt, and its invitation
+      // claim has no registered owner effect: the Attempt would journal an account-ownership proof
+      // and reserve a Core binding before halting at NO_OWNER_EFFECT for good. Refused at decode,
+      // nothing is started at all — a schema that takes an optional invitation here answers 401
+      // from the governed Action instead, and this assertion fails.
+      expect(response.status).toBe(400);
+      expect(yield* portalAccountsFor(email)).toStrictEqual([]);
+    }),
+  ),
+);
+
 /**
  * The durable half of a start, on real PostgreSQL: the Attempt, the claim the route mints for
  * `provider.account.create`, the gate that authorizes exactly one provider call, and the outcome
@@ -606,6 +638,58 @@ it.live('records the created portal account on the transition the start route cl
           ),
         ),
       ).toBe(true);
+    }),
+  ),
+);
+
+it.live('replays the owner claim of a start retried under the same Idempotency-Key', () =>
+  Effect.scoped(
+    Effect.gen(function* retriedStartReplaysItsClaim() {
+      const tenantId = randomUUID();
+      const actorPrincipalId = Schema.decodeSync(EnrollmentPrincipalIdSchema)(randomUUID());
+      const fixture = yield* makeEnrollmentAcceptanceFixture({ tenantId });
+      const startInput = startInputFor(`enrollment-http-${randomUUID()}@example.test`);
+      const attempt = yield* startAcceptanceEnrollment(fixture, startInput, actorPrincipalId);
+
+      /** Exactly what a start mints for its first owner transition, once per request. */
+      const mintClaim = () =>
+        commercePortalAuthEnrollmentAccountCreationClaim(startInput, attempt.portalEnrollmentAttemptId);
+      const claimFor = (claim: CommercePortalAuthEnrollmentTransitionClaim) =>
+        fixture.ownerStore.claimTransition(
+          Schema.decodeUnknownSync(ClaimEnrollmentTransitionInputSchema)({
+            actorPrincipalId,
+            expectedRevision: attempt.revision,
+            leaseDurationMs: 30_000,
+            ownerInvocationId: claim.ownerInvocationId,
+            ownerModuleKey: claim.ownerModuleKey,
+            portalEnrollmentAttemptId: attempt.portalEnrollmentAttemptId,
+            requestDigest: claim.requestDigest,
+            required: true,
+            tenantId,
+            transitionKey: claim.transitionKey,
+            workerId: START_WORKER_ID,
+          }),
+        );
+
+      const first = yield* mintClaim();
+      const claimed = yield* claimFor(first);
+      expect(claimed.outcome).toBe('CLAIMED');
+
+      // The retry re-derives the identical claim, so the journal recognises its own transition and
+      // replays it. Minting a fresh owner invocation identity per request breaks both halves: this
+      // claim is refused as a conflict on a transition already claimed under another identity, and
+      // the Action payload carrying that identity hashes differently, so the runtime refuses the
+      // same Idempotency-Key as a different request rather than replaying the first answer.
+      const retry = yield* mintClaim();
+      const replayed = yield* claimFor(retry);
+
+      expect(replayed.outcome).toBe('ALREADY_CLAIMED');
+      if (replayed.outcome !== 'INDETERMINATE') {
+        expect(replayed.operation.ownerInvocationId).toBe(first.ownerInvocationId);
+      }
+      expect(retry).toStrictEqual(first);
+      // One owner operation, not two: the retry claimed nothing new and dispatched nothing.
+      expect(yield* readEnrollmentAcceptanceOperations(fixture, attempt.portalEnrollmentAttemptId)).toHaveLength(1);
     }),
   ),
 );

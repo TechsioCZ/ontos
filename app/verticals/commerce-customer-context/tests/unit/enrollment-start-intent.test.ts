@@ -162,12 +162,18 @@ it.effect('a Counterparty invitation enrollment that names no invitation is refu
   }),
 );
 
-it.effect('Existing-account enrollment may still name the invitation it is entering through', () =>
-  Effect.gen(function* existingAccountKeepsItsInvitation() {
-    const invitationId = randomUUID();
-    const intent = yield* intentFor(startPayload({ invitationId, journey: 'EXISTING_ACCOUNT' }));
+it.effect('an Existing-account enrollment that names an invitation is refused at decode', () =>
+  Effect.gen(function* existingAccountNamingAnInvitation() {
+    const named = startPayload({ invitationId: randomUUID(), journey: 'EXISTING_ACCOUNT' });
+    const failure = yield* Effect.flip(decodeStart(named));
 
-    expect(intent.invitationId).toBe(invitationId);
+    // Accepting the key composes the Counterparty target for this Attempt, whose invitation claim
+    // no owner effect can perform: the Attempt journals its ownership proof, reserves the Core
+    // binding and then halts at NO_OWNER_EFFECT for good. Refusing it here happens before the
+    // governed Action, so no Attempt and no Core reservation exist to halt.
+    expect(Predicate.isTagged(failure, 'SchemaError')).toBe(true);
+    // The very same payload without the invitation decodes, so the refusal is about that key alone.
+    expect((yield* decodeStart(startPayload({ journey: 'EXISTING_ACCOUNT' }))).journey).toBe('EXISTING_ACCOUNT');
   }),
 );
 
@@ -223,6 +229,25 @@ it.effect('digests the two transitions a start may claim apart, so neither repla
     // An equivalent retry re-derives the digest the durable owner operation already holds, so the
     // journal replays it rather than opening a second ownership proof for the same Attempt.
     expect(verificationRetry.requestDigest).toBe(verification.requestDigest);
-    expect(verificationRetry.ownerInvocationId).not.toBe(verification.ownerInvocationId);
+    // The two transitions of one Attempt never share an invocation identity, or the journal would
+    // read the second claim as the first one under a different transition key and refuse it.
+    expect(creation.ownerInvocationId).not.toBe(verification.ownerInvocationId);
+  }),
+);
+
+it.effect('mints the same owner invocation identity for every retry of one start', () =>
+  Effect.gen(function* invocationIdentityIsDerived() {
+    const input = yield* decodeStart(startPayload({ journey: 'EXISTING_ACCOUNT' }));
+    const attemptId = randomUUID();
+    const first = yield* commercePortalAuthEnrollmentAccountVerificationClaim(input, attemptId);
+    const retry = yield* commercePortalAuthEnrollmentAccountVerificationClaim(input, attemptId);
+    const otherAttempt = yield* commercePortalAuthEnrollmentAccountVerificationClaim(input, randomUUID());
+
+    // The claim Action's payload carries this identity, and the Action runtime hashes that payload
+    // to decide whether an Idempotency-Key is being replayed. Minting a fresh identity per request
+    // makes the two payloads differ and the retry is refused as a different request instead of
+    // replaying — so every field this start hands the Action has to be a derivation, not a draw.
+    expect(retry).toStrictEqual(first);
+    expect(otherAttempt.ownerInvocationId).not.toBe(first.ownerInvocationId);
   }),
 );

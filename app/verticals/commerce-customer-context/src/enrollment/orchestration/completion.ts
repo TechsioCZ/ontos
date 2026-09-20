@@ -144,10 +144,13 @@ const existingAccountDefinition = (
 /**
  * The journey definition that gates one exact Attempt.
  *
- * Existing-account enrollment has no fixed required set: it continues an already-authenticated
- * subject into a second Tenant as whichever journey that Tenant's enrollment is, so its definition
- * is composed from the target journey.  The Attempt's own immutable intent selects that target —
- * an `invitationId` means the second Tenant is being entered through a Counterparty invitation.
+ * The Attempt's own journey — the immutable one its intent recorded — is the only thing that
+ * selects a definition.  Existing-account has no fixed required set of its own: it continues an
+ * already-authenticated subject into a second Tenant, so its definition is composed from the Retail
+ * target and its own ownership and Principal Auth Binding steps.  An invitation id carried by an
+ * Attempt of some other journey never selects the Counterparty composition: that composition
+ * requires the invitation claim, which no owner effect performs, so such an Attempt would journal
+ * its ownership proof and then halt at NO_OWNER_EFFECT with a Core binding already reserved.
  */
 export const enrollmentJourneyDefinitionForAttempt = (
   attempt: EnrollmentAttemptSnapshot,
@@ -158,11 +161,7 @@ export const enrollmentJourneyDefinitionForAttempt = (
   if (attempt.journey === 'COUNTERPARTY_INVITATION') {
     return Effect.succeed(counterpartyInvitationJourneyDefinition);
   }
-  const target =
-    attempt.invitationId === undefined
-      ? retailSelfEnrollmentJourneyDefinition
-      : counterpartyInvitationJourneyDefinition;
-  return existingAccountTarget(target).pipe(Effect.flatMap(existingAccountDefinition));
+  return existingAccountTarget(retailSelfEnrollmentJourneyDefinition).pipe(Effect.flatMap(existingAccountDefinition));
 };
 
 /**

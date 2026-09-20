@@ -1455,6 +1455,7 @@ RETURNS TABLE (
   tenant_id uuid,
   portal_enrollment_attempt_id uuid,
   state text,
+  revision integer,
   updated_at timestamptz
 )
 LANGUAGE sql
@@ -1465,12 +1466,17 @@ AS $function$
     attempt.tenant_id,
     attempt.portal_enrollment_attempt_id,
     attempt.state,
+    -- The revision is how a worker tells an Attempt that has not moved since its last fruitless
+    -- pass from one that has, without reading the Attempt again.
+    attempt.revision,
     attempt.updated_at
   FROM commerce_customer_context.portal_enrollment_attempts AS attempt
   WHERE attempt.tenant_id = p_tenant_id
     -- COMPLETE and TERMINATED have nothing left to advance; VERIFICATION_REQUIRED waits on a
     -- caller rather than on a worker, so re-advancing it would halt on the very same answer.
-    AND attempt.state IN ('IN_PROGRESS', 'RECONCILIATION_REQUIRED')
+    -- RECONCILIATION_REQUIRED is the same kind of wait: its one automatic reconcile has already
+    -- run and left the Attempt here, so only a read or an operator resumes it, never this listing.
+    AND attempt.state = 'IN_PROGRESS'
     AND attempt.updated_at
           <= statement_timestamp() - make_interval(secs => greatest(p_stale_after_millis, 0)::double precision / 1000)
     -- A live claim still owns the transition, and the claim — not this listing — grants ownership.

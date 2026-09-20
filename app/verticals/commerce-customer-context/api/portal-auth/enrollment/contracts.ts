@@ -60,9 +60,9 @@ const rejectExcessProperties = { parseOptions: { onExcessProperty: 'error' } } a
 /**
  * The start payload is a discriminated union rather than one struct with an optional invitation,
  * because the two are not independent: a Counterparty invitation enrollment is meaningless without
- * the invitation it claims, and a Retail self-enrollment that names one is asking for a journey it
- * did not select. Stating the dependency in the schema rejects both combinations at decode —
- * before a governed Action runs, before an Attempt is persisted and before any provider mutation.
+ * the invitation it claims, and any other journey that names one is asking for a journey it did not
+ * select. Stating the dependency in the schema rejects every such combination at decode — before a
+ * governed Action runs, before an Attempt is persisted and before any provider mutation.
  */
 export const CommercePortalAuthEnrollmentStartInputSchema = Schema.Union([
   Schema.Struct({ ...enrollmentStartFields, journey: Schema.Literal('RETAIL_SELF_ENROLLMENT') }).annotate(
@@ -74,13 +74,12 @@ export const CommercePortalAuthEnrollmentStartInputSchema = Schema.Union([
     journey: Schema.Literal('COUNTERPARTY_INVITATION'),
   }).annotate(rejectExcessProperties),
   // Existing-account enrollment continues an already-authenticated subject into a second Tenant,
-  // and that Tenant may be entered either as Retail or through an invitation, so the invitation is
-  // genuinely optional here and selects which target journey the Attempt composes.
-  Schema.Struct({
-    ...enrollmentStartFields,
-    invitationId: Schema.optionalKey(EnrollmentInvitationIdSchema),
-    journey: Schema.Literal('EXISTING_ACCOUNT'),
-  }).annotate(rejectExcessProperties),
+  // and it enters that Tenant as the journey its own definition composes. Naming an invitation here
+  // would ask for a Counterparty claim no owner effect can perform, so the Attempt would journal an
+  // ownership proof and then halt forever: the combination is refused at decode, as Retail's is.
+  Schema.Struct({ ...enrollmentStartFields, journey: Schema.Literal('EXISTING_ACCOUNT') }).annotate(
+    rejectExcessProperties,
+  ),
 ]);
 export type CommercePortalAuthEnrollmentStartInput = typeof CommercePortalAuthEnrollmentStartInputSchema.Type;
 
@@ -88,7 +87,7 @@ export type CommercePortalAuthEnrollmentStartInput = typeof CommercePortalAuthEn
 export const commercePortalAuthEnrollmentInvitationId = (
   input: CommercePortalAuthEnrollmentStartInput,
 ): typeof EnrollmentInvitationIdSchema.Type | undefined =>
-  input.journey === 'RETAIL_SELF_ENROLLMENT' ? undefined : input.invitationId;
+  input.journey === 'COUNTERPARTY_INVITATION' ? input.invitationId : undefined;
 
 /**
  * The projection a caller may observe. It is deliberately narrower than the durable Attempt

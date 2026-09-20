@@ -25,6 +25,7 @@ import {
   PARTY_CANDIDATE_AMBIGUOUS_OUTCOME_CODE,
   PARTY_CANDIDATE_CREATED_OUTCOME_CODE,
   PARTY_CANDIDATE_SUBMISSION_TRANSITION_KEY,
+  PARTY_REGISTRY_OWNER_MODULE_KEY,
   RETAIL_CUSTOMER_PROFILE_ENSURED_OUTCOME_CODE,
   RETAIL_PORTAL_GRANTS_INCOMPLETE_OUTCOME_CODE,
   RETAIL_PORTAL_PROFILE_BOUND_OUTCOME_CODE,
@@ -750,6 +751,10 @@ it.live('the durable listing skips a settled Attempt and one a live lease still 
       expect(due.map((attempt) => [attempt.portalEnrollmentAttemptId, attempt.state])).toStrictEqual([
         [portalEnrollmentAttemptId, 'IN_PROGRESS'],
       ]);
+      // The listing carries the Attempt's own durable revision, which is what a worker compares a
+      // later listing against to tell "nothing moved" from "someone resumed this".
+      const listed = yield* readEnrollmentAcceptanceAttempt(fixture, portalEnrollmentAttemptId);
+      expect(due.map((attempt) => attempt.revision)).toStrictEqual([listed.revision]);
 
       // A COMPLETE Attempt has no transition left to advance, so it drops out for good.
       expect((yield* harness.continuation.advance(identity)).outcome).toBe('COMPLETE');
@@ -757,6 +762,73 @@ it.live('the durable listing skips a settled Attempt and one a live lease still 
         state: 'COMPLETE',
       });
       expect(yield* journal.listStale(query)).toStrictEqual([]);
+    }),
+  ),
+);
+
+/** One owner claim of the Party transition, exactly as a continuation pass makes it. */
+const claimPartySubmission = (
+  fixture: EnrollmentAcceptanceFixture,
+  identities: ScenarioIdentities,
+  portalEnrollmentAttemptId: string,
+  expectedRevision: number,
+  ownerInvocationId: string,
+) =>
+  fixture.ownerStore.claimTransition(
+    Schema.decodeUnknownSync(ClaimEnrollmentTransitionInputSchema)({
+      actorPrincipalId: identities.actorPrincipalId,
+      expectedRevision,
+      leaseDurationMs: 30_000,
+      ownerInvocationId,
+      ownerModuleKey: PARTY_REGISTRY_OWNER_MODULE_KEY,
+      portalEnrollmentAttemptId,
+      requestDigest: digest('c'.repeat(64)),
+      required: true,
+      tenantId: identities.tenantId,
+      transitionKey: PARTY_CANDIDATE_SUBMISSION_TRANSITION_KEY,
+      workerId: 'commerce.customer-context.enrollment-continuation',
+    }),
+  );
+
+it.live('the durable listing leaves an Attempt halted into reconciliation to a read or an operator', () =>
+  Effect.scoped(
+    Effect.gen(function* listStaleSkipsReconciliationRequired() {
+      const identities = makeScenarioIdentities();
+      const { fixture, portalEnrollmentAttemptId } = yield* scenario(identities);
+      const journal = commerceEnrollmentStaleAttemptStoreForRun(fixture.scope, fixture.run);
+      const started = yield* readEnrollmentAcceptanceAttempt(fixture, portalEnrollmentAttemptId);
+      const ownerInvocationId = randomUUID();
+
+      // A worker claims the Party transition and disappears; its lease lapses with no answer, so
+      // whether that Party was created is unknown.
+      const claimed = yield* claimPartySubmission(
+        fixture,
+        identities,
+        portalEnrollmentAttemptId,
+        started.revision,
+        ownerInvocationId,
+      );
+      expect(claimed.outcome).toBe('CLAIMED');
+      yield* expireEnrollmentAcceptanceLeases(fixture, portalEnrollmentAttemptId);
+
+      // The next pass fences that unknown outcome into durable reconciliation, which is the state
+      // an operator is meant to resolve — and it leaves no lease behind to hide the Attempt.
+      const fenced = yield* claimPartySubmission(
+        fixture,
+        identities,
+        portalEnrollmentAttemptId,
+        claimed.attempt.revision,
+        ownerInvocationId,
+      );
+      expect(fenced.outcome).toBe('INDETERMINATE');
+      expect(yield* readEnrollmentAcceptanceAttempt(fixture, portalEnrollmentAttemptId)).toMatchObject({
+        state: 'RECONCILIATION_REQUIRED',
+      });
+
+      // Reporting it as due hands the very same fenced Attempt back to the sweeper on every tick
+      // for the life of the deployment, and the bounded listing fills with Attempts that cannot
+      // move. Its one automatic reconcile has run: from here a read, or an operator, resumes it.
+      expect(yield* journal.listStale({ limit: 16, staleAfterMillis: 0 })).toStrictEqual([]);
     }),
   ),
 );

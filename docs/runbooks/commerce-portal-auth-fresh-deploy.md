@@ -147,7 +147,11 @@ complete reviewed Permission baseline.
 
 A restart loses nothing: each sweep reads the Attempt journal itself through
 `list_stale_portal_enrollment_attempts`, so an Attempt abandoned by one process is re-advanced by
-the next once that process has served a request for the same Tenant.
+the next once that process has served a request for the same Tenant. That listing reports only
+`IN_PROGRESS` Attempts: one already in `RECONCILIATION_REQUIRED` has had its one automatic
+reconcile and is resumed by a read of it or by an operator, never by the sweep loop. An Attempt the
+sweeper advanced fruitlessly through its whole budget is likewise left alone until its revision
+moves, so a permanently unavailable owner cannot crowd the bounded listing.
 
 ## Operator notes
 

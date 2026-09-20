@@ -155,6 +155,7 @@ type OwnerOperationRoutineRow = typeof OwnerOperationRoutineRowSchema.Type;
 
 const StaleAttemptRoutineRowSchema = Schema.Struct({
   portal_enrollment_attempt_id: EnrollmentAttemptIdSchema,
+  revision: Schema.Number.check(Schema.isInt(), Schema.isGreaterThanOrEqualTo(1)),
   state: EnrollmentAttemptStateSchema,
   tenant_id: EnrollmentTenantIdSchema,
   updated_at: databaseTimestamp,
@@ -412,6 +413,11 @@ export interface AttemptTerminateResult {
  * transition, so this is deliberately the whole record rather than a snapshot.
  */
 export type StaleEnrollmentAttempt = ReadEnrollmentAttemptInput & {
+  /**
+   * The Attempt's durable revision: what tells a worker "still exactly as I left it" apart from
+   * "something has moved it since", without reading the Attempt again.
+   */
+  readonly revision: number;
   readonly state: EnrollmentAttemptState;
   readonly updatedAt: DateTime.Utc;
 };
@@ -818,6 +824,7 @@ const mapStaleAttempt = (
     ? Effect.fail(invalid('The listed Enrollment Attempt activity timestamp is invalid'))
     : Effect.succeed({
         portalEnrollmentAttemptId: row.portal_enrollment_attempt_id,
+        revision: row.revision,
         state: row.state,
         tenantId: row.tenant_id,
         updatedAt,

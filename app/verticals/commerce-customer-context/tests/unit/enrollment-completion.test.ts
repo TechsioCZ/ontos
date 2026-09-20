@@ -88,14 +88,22 @@ const accountCreationIdentity = journeyTransitionIdentity({
   transitionKey: PORTAL_ACCOUNT_CREATION_TRANSITION_KEY,
 });
 
-const existingAccountDefinition = (target: JourneyDefinition) =>
-  enrollmentJourneyDefinitionForAttempt(
-    attempt(
-      target.kind === 'COUNTERPARTY_INVITATION'
-        ? { invitationId, journey: 'EXISTING_ACCOUNT' }
-        : { journey: 'EXISTING_ACCOUNT' },
-    ),
-  );
+/** Everything an Existing-account Attempt may legitimately be gated on: its own steps, and Retail's. */
+const existingAccountReachableIdentities = new Set(
+  [
+    ...EXISTING_ACCOUNT_OWNERSHIP_TRANSITIONS,
+    ...EXISTING_ACCOUNT_CORE_IDENTITY_TRANSITIONS,
+    ...retailSelfEnrollmentJourneyDefinition.requiredTransitions,
+  ].map(journeyTransitionIdentity),
+);
+
+/**
+ * What composing the Counterparty journey instead would add: the invitation claim, which no
+ * deployment registers an owner effect for.
+ */
+const counterpartyOnlyIdentities = counterpartyInvitationJourneyDefinition.requiredTransitions
+  .map(journeyTransitionIdentity)
+  .filter((identity) => !existingAccountReachableIdentities.has(identity));
 
 it('holds an Attempt open while any required transition of its journey is unproven', () => {
   for (const definition of [retailSelfEnrollmentJourneyDefinition, counterpartyInvitationJourneyDefinition]) {
@@ -174,33 +182,53 @@ it.effect('gates each journey kind on its own declared required transitions', ()
     expect(counterparty).toBe(counterpartyInvitationJourneyDefinition);
 
     // Existing-account never creates a provider account, so it inherits every other required step
-    // of the target journey and adds the second Tenant's own Principal Auth Binding steps.
-    for (const target of [retailSelfEnrollmentJourneyDefinition, counterpartyInvitationJourneyDefinition]) {
-      const definition = yield* existingAccountDefinition(target);
-      const identities = definition.requiredTransitions.map(journeyTransitionIdentity);
-      expect(definition.kind).toBe('EXISTING_ACCOUNT');
-      expect(new Set(identities).size).toBe(identities.length);
-      for (const coreTransition of EXISTING_ACCOUNT_CORE_IDENTITY_TRANSITIONS) {
-        expect(identities).toContain(journeyTransitionIdentity(coreTransition));
-      }
-      // The account-creation step is replaced by the proof that the caller owns the account it is
-      // continuing; without that step the journey would gate on nothing this route can establish.
-      for (const ownershipTransition of EXISTING_ACCOUNT_OWNERSHIP_TRANSITIONS) {
-        expect(identities).toContain(journeyTransitionIdentity(ownershipTransition));
-      }
-      expect(identities).not.toContain(accountCreationIdentity);
-      for (const inherited of target.requiredTransitions.filter(
-        (transition) => journeyTransitionIdentity(transition) !== accountCreationIdentity,
-      )) {
-        expect(identities).toContain(journeyTransitionIdentity(inherited));
-      }
-      expect(
-        deriveEnrollmentAttemptState({ definition, outcomeStatus: 'SUCCEEDED', proofs: provenExceptLast(definition) }),
-      ).toBe('IN_PROGRESS');
-      expect(
-        deriveEnrollmentAttemptState({ definition, outcomeStatus: 'SUCCEEDED', proofs: allProven(definition) }),
-      ).toBe('COMPLETE');
+    // of the Retail target and adds the second Tenant's own Principal Auth Binding steps.
+    const definition = yield* enrollmentJourneyDefinitionForAttempt(attempt({ journey: 'EXISTING_ACCOUNT' }));
+    const identities = definition.requiredTransitions.map(journeyTransitionIdentity);
+    expect(definition.kind).toBe('EXISTING_ACCOUNT');
+    expect(new Set(identities).size).toBe(identities.length);
+    for (const coreTransition of EXISTING_ACCOUNT_CORE_IDENTITY_TRANSITIONS) {
+      expect(identities).toContain(journeyTransitionIdentity(coreTransition));
     }
+    // The account-creation step is replaced by the proof that the caller owns the account it is
+    // continuing; without that step the journey would gate on nothing this route can establish.
+    for (const ownershipTransition of EXISTING_ACCOUNT_OWNERSHIP_TRANSITIONS) {
+      expect(identities).toContain(journeyTransitionIdentity(ownershipTransition));
+    }
+    expect(identities).not.toContain(accountCreationIdentity);
+    for (const inherited of retailSelfEnrollmentJourneyDefinition.requiredTransitions.filter(
+      (transition) => journeyTransitionIdentity(transition) !== accountCreationIdentity,
+    )) {
+      expect(identities).toContain(journeyTransitionIdentity(inherited));
+    }
+    expect(
+      deriveEnrollmentAttemptState({ definition, outcomeStatus: 'SUCCEEDED', proofs: provenExceptLast(definition) }),
+    ).toBe('IN_PROGRESS');
+    expect(
+      deriveEnrollmentAttemptState({ definition, outcomeStatus: 'SUCCEEDED', proofs: allProven(definition) }),
+    ).toBe('COMPLETE');
+  }),
+);
+
+it.effect('never gates an Existing-account Attempt on the Counterparty invitation claim', () =>
+  Effect.gen(function* existingAccountIgnoresAnInvitationId() {
+    // A durable Attempt of some other journey that carries an invitation id — the start boundary
+    // refuses to create one now, and this is what such a row would compose if it existed.
+    const definition = yield* enrollmentJourneyDefinitionForAttempt(
+      attempt({ invitationId, journey: 'EXISTING_ACCOUNT' }),
+    );
+    const identities = definition.requiredTransitions.map(journeyTransitionIdentity);
+
+    // Selecting the Counterparty target on the presence of an invitation id gates this Attempt on
+    // the invitation claim, which no deployment registers an owner effect for: the Attempt journals
+    // its ownership proof, reserves a Core binding and then halts at NO_OWNER_EFFECT for good.
+    expect(counterpartyOnlyIdentities.length).toBeGreaterThan(0);
+    for (const counterpartyIdentity of counterpartyOnlyIdentities) {
+      expect(identities).not.toContain(counterpartyIdentity);
+    }
+    expect(definition).toStrictEqual(
+      yield* enrollmentJourneyDefinitionForAttempt(attempt({ journey: 'EXISTING_ACCOUNT' })),
+    );
   }),
 );
 
@@ -214,7 +242,7 @@ const existingAccountOwnershipTransition = (): JourneyTransitionSpec => {
 
 it.effect('never completes an Existing-account Attempt whose account-ownership proof is unproven', () =>
   Effect.gen(function* ownershipGatesExistingAccountCompletion() {
-    const definition = yield* existingAccountDefinition(retailSelfEnrollmentJourneyDefinition);
+    const definition = yield* enrollmentJourneyDefinitionForAttempt(attempt({ journey: 'EXISTING_ACCOUNT' }));
     const ownership = existingAccountOwnershipTransition();
     const ownershipIdentity = journeyTransitionIdentity(ownership);
     const everythingElse = definition.requiredTransitions

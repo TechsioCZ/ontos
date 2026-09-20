@@ -1,4 +1,3 @@
-import { randomUUID } from 'node:crypto';
 import { Effect, Schema } from 'effect';
 
 import {
@@ -11,6 +10,7 @@ import {
 } from '../../../shared/enrollment-contracts.ts';
 import type { StartPortalEnrollmentPayload } from '../../../shared/actions/start-portal-enrollment.ts';
 import { PORTAL_ACCOUNT_VERIFICATION_TRANSITION_KEY } from '../../../src/enrollment/journeys/existing-account.ts';
+import { retailSelfEnrollmentEvidenceReference } from '../../../src/enrollment/journeys/retail-self-enrollment-contracts.ts';
 import {
   PORTAL_ACCOUNT_CREATION_TRANSITION_KEY,
   PORTAL_AUTH_OWNER_MODULE_KEY,
@@ -30,6 +30,13 @@ import type { CommercePortalAuthEnrollmentStartInput } from './contracts.ts';
 
 const ENROLLMENT_INTENT_KEY_PREFIX = 'commerce.customer-context.portal-enrollment';
 
+/**
+ * What the start route's owner invocation identities are derived from. It names this exact purpose
+ * so a start's identity can never collide with the continuation's own derivation for the same
+ * Attempt and the same transition.
+ */
+const ENROLLMENT_START_INVOCATION_PURPOSE = 'commerce.portal-enrollment.start.owner-invocation';
+
 const digestOf = (parts: readonly string[]): string => enrollmentDigest(parts.join('\u0000'));
 
 const normalizedEmail = (input: CommercePortalAuthEnrollmentStartInput): string => input.email.trim().toLowerCase();
@@ -45,9 +52,9 @@ const normalizedEmail = (input: CommercePortalAuthEnrollmentStartInput): string 
  */
 const enrollmentIdentityDigest = (input: CommercePortalAuthEnrollmentStartInput): string => {
   const invitationId = commercePortalAuthEnrollmentInvitationId(input);
-  return input.journey === 'COUNTERPARTY_INVITATION' && invitationId !== undefined
-    ? digestOf(['invitation', invitationId])
-    : digestOf(['email', normalizedEmail(input)]);
+  return invitationId === undefined
+    ? digestOf(['email', normalizedEmail(input)])
+    : digestOf(['invitation', invitationId]);
 };
 
 /**
@@ -100,14 +107,15 @@ export interface CommercePortalAuthEnrollmentTransitionClaim {
 
 /**
  * Mint the claim for the first owner transition of a start request. The owner invocation identity
- * is fresh per request on purpose: the durable claim, not this value, is what deduplicates — a
- * replayed claim against an already-claimed transition is reported as such by the Attempt journal
- * rather than silently creating a second provider account.
+ * is derived, never minted: an equivalent retry of the same start — the same Idempotency-Key, the
+ * same Attempt, the same transition — must present the byte-identical Action payload, or the Action
+ * runtime hashes it differently and refuses the retry as a second request instead of replaying it.
+ * The continuation derives its own invocation identities the same way, for the same reason.
  *
  * The request digest is derived from the same credential-free business intent as the Attempt's own
  * digest, so the installed owner preparation port can re-derive and compare it without ever seeing
- * the credential. The transition key is part of that digest, so the two transitions a start may
- * claim never collide on one digest.
+ * the credential. The transition key is part of both derivations, so the two transitions a start
+ * may claim never collide on one digest or one invocation identity.
  */
 const enrollmentTransitionClaim = (
   transitionKey: string,
@@ -116,7 +124,14 @@ const enrollmentTransitionClaim = (
 ): Effect.Effect<CommercePortalAuthEnrollmentTransitionClaim, Schema.SchemaError> =>
   Effect.all(
     {
-      ownerInvocationId: Schema.decodeEffect(EnrollmentActionInvocationIdSchema)(randomUUID()),
+      ownerInvocationId: Schema.decodeEffect(EnrollmentActionInvocationIdSchema)(
+        retailSelfEnrollmentEvidenceReference([
+          ENROLLMENT_START_INVOCATION_PURPOSE,
+          PORTAL_AUTH_OWNER_MODULE_KEY,
+          portalEnrollmentAttemptId,
+          transitionKey,
+        ]),
+      ),
       ownerModuleKey: Schema.decodeEffect(EnrollmentModuleKeySchema)(PORTAL_AUTH_OWNER_MODULE_KEY),
       requestDigest: Schema.decodeEffect(EnrollmentDigestSchema)(
         digestOf([

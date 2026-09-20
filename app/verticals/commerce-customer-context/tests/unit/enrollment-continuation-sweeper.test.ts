@@ -6,6 +6,7 @@ import { expect, it } from 'effect-rstest';
 import type { StaleEnrollmentAttempt } from '../../src/enrollment/attempts/attempt-persistence.ts';
 import type { CommerceEnrollmentContinuationService } from '../../src/enrollment/continuation/enrollment-continuation.ts';
 import { commerceEnrollmentContinuationSweeperFor } from '../../src/workers/enrollment-continuation-sweeper.ts';
+import type { CommerceEnrollmentContinuationSweepResult } from '../../src/workers/enrollment-continuation-sweeper.ts';
 import { EnrollmentAttemptIdSchema, EnrollmentTenantIdSchema } from '../../shared/enrollment-contracts.ts';
 import type { ReadEnrollmentAttemptInput } from '../../shared/enrollment-contracts.ts';
 
@@ -23,9 +24,9 @@ interface ScriptedContinuation {
   readonly service: CommerceEnrollmentContinuationService;
 }
 
-/** A continuation that answers from a fixed journal and records what it was asked to advance. */
+/** A continuation that answers from a durable journal and records what it was asked to advance. */
 const scriptedContinuation = Effect.fnUntraced(function* scriptedContinuation(
-  journal: readonly StaleEnrollmentAttempt[],
+  journal: Ref.Ref<readonly StaleEnrollmentAttempt[]>,
   outcome: 'COMPLETE' | 'HALTED',
 ) {
   const log = yield* Ref.make<readonly string[]>([]);
@@ -38,16 +39,39 @@ const scriptedContinuation = Effect.fnUntraced(function* scriptedContinuation(
             : { halt: { reason: 'IN_FLIGHT' as const, transition: Option.none() }, outcome: 'HALTED' as const },
         ),
       ),
-    listStale: (input) => Effect.succeed(journal.filter((entry) => entry.tenantId === input.tenantId)),
+    listStale: (input) =>
+      Ref.get(journal).pipe(Effect.map((rows) => rows.filter((entry) => entry.tenantId === input.tenantId))),
   };
   const scripted: ScriptedContinuation = { advanced: Ref.get(log), service };
   return scripted;
 });
 
-const stale = (attempt: ReadEnrollmentAttemptInput): StaleEnrollmentAttempt => ({
+const stale = (attempt: ReadEnrollmentAttemptInput, revision = 1): StaleEnrollmentAttempt => ({
   ...attempt,
+  revision,
   state: 'IN_PROGRESS',
   updatedAt: DateTime.makeUnsafe(new Date(0)),
+});
+
+const journalOf = (...rows: readonly StaleEnrollmentAttempt[]) => Ref.make<readonly StaleEnrollmentAttempt[]>(rows);
+
+/** How many ticks a test may spend waiting for a budget to run out before it gives up. */
+const MAX_SWEEP_TICKS = 64;
+
+/**
+ * Tick until the sweeper releases an Attempt, which is the tick its sweep budget ran out on. The
+ * budget itself stays the worker's own constant rather than being restated here.
+ */
+const sweepUntilReleased = Effect.fnUntraced(function* sweepUntilReleased(
+  sweep: Effect.Effect<CommerceEnrollmentContinuationSweepResult>,
+) {
+  for (let tick = 0; tick < MAX_SWEEP_TICKS; tick += 1) {
+    const result = yield* sweep;
+    if (result.released > 0) {
+      return result;
+    }
+  }
+  return yield* Effect.die('The sweeper never released the Attempt whose budget should have run out');
 });
 
 it.effect('seeds a tick from the durable journal when its registry has never seen the Attempt', () =>
@@ -56,7 +80,7 @@ it.effect('seeds a tick from the durable journal when its registry has never see
       portalEnrollmentAttemptId: attemptId(randomUUID()),
       tenantId: tenantId(randomUUID()),
     };
-    const scripted = yield* scriptedContinuation([stale(attempt)], 'COMPLETE');
+    const scripted = yield* scriptedContinuation(yield* journalOf(stale(attempt)), 'COMPLETE');
     const sweeper = yield* commerceEnrollmentContinuationSweeperFor({
       continuation: scripted.service,
       staleAfterMillis: 0,
@@ -80,7 +104,7 @@ it.effect('scans the journal of a Tenant it learned from an Attempt it already s
       portalEnrollmentAttemptId: attemptId(randomUUID()),
       tenantId: scope,
     };
-    const scripted = yield* scriptedContinuation([stale(abandoned)], 'COMPLETE');
+    const scripted = yield* scriptedContinuation(yield* journalOf(stale(abandoned)), 'COMPLETE');
     const sweeper = yield* commerceEnrollmentContinuationSweeperFor({
       continuation: scripted.service,
       staleAfterMillis: 0,
@@ -109,7 +133,7 @@ it.effect('advances an Attempt once per tick when the registry and the journal b
       portalEnrollmentAttemptId: attemptId(randomUUID()),
       tenantId: tenantId(randomUUID()),
     };
-    const scripted = yield* scriptedContinuation([stale(attempt)], 'HALTED');
+    const scripted = yield* scriptedContinuation(yield* journalOf(stale(attempt)), 'HALTED');
     const sweeper = yield* commerceEnrollmentContinuationSweeperFor({
       continuation: scripted.service,
       staleAfterMillis: 0,
@@ -127,5 +151,39 @@ it.effect('advances an Attempt once per tick when the registry and the journal b
       attempt.portalEnrollmentAttemptId,
     ]);
     expect(sweep.tracked).toBe(1);
+  }),
+);
+
+it.effect('leaves an Attempt alone once its budget ran out, until its durable revision moves', () =>
+  Effect.gen(function* exhaustedAttemptIsNotReseeded() {
+    const attempt: ReadEnrollmentAttemptInput = {
+      portalEnrollmentAttemptId: attemptId(randomUUID()),
+      tenantId: tenantId(randomUUID()),
+    };
+    const journal = yield* journalOf(stale(attempt));
+    const scripted = yield* scriptedContinuation(journal, 'HALTED');
+    const sweeper = yield* commerceEnrollmentContinuationSweeperFor({
+      continuation: scripted.service,
+      staleAfterMillis: 0,
+      tenants: [attempt.tenantId],
+    });
+
+    const released = yield* sweepUntilReleased(sweeper.sweep);
+    expect(released.tracked).toBe(0);
+    const spent = (yield* scripted.advanced).length;
+
+    // The journal still reports this Attempt, unchanged, on every later tick. Releasing the entry
+    // without remembering the revision it was released at makes the next merge seed it again with
+    // a full budget, so an Attempt no owner effect can move is advanced for the life of the
+    // process and crowds the bounded listing out of the Attempts that can still finish.
+    expect((yield* sweeper.sweep).swept).toBe(0);
+    expect((yield* scripted.advanced).length).toBe(spent);
+
+    // A revision change is the journal's own word that something moved this Attempt — a read
+    // resumed it, or an owner answered — so the budget starts again.
+    yield* Ref.set(journal, [stale(attempt, 2)]);
+
+    expect((yield* sweeper.sweep).swept).toBe(1);
+    expect((yield* scripted.advanced).length).toBe(spent + 1);
   }),
 );
