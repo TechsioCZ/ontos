@@ -47,7 +47,13 @@ const PasswordSchema = Schema.String.check(
   Schema.isMinLength(COMMERCE_PORTAL_AUTH_POLICY.password.minLength),
   Schema.isMaxLength(COMMERCE_PORTAL_AUTH_POLICY.password.maxLength),
 );
-const MethodSchema = Schema.Literals(['otp', 'totp']);
+/**
+ * Better Auth 1.7.2 activates `method: 'otp'` immediately inside `/enable`
+ * (`dist/plugins/two-factor/index.mjs:116-124`); only TOTP is staged until `/confirm-enable`. The
+ * owner publishes only the staged enrollment flow, so `otp` is refused here at decode (400) rather
+ * than forwarded to the provider.
+ */
+const MethodSchema = Schema.Literal('totp');
 
 export const CommercePortalAuthMfaEnableBodySchema = Schema.Struct({
   issuer: Schema.optionalKey(Schema.String),

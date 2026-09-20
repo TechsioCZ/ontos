@@ -1,6 +1,7 @@
 import { DateTime, Duration, Effect, Layer, Redacted, Schema } from 'effect';
 
 import { withCause } from '../../problems-support.ts';
+import { normalizeCommercePortalAuthEmail } from '../../../../src/portal-auth/email-normalization.ts';
 import { CommercePortalAuthRawEmailDeliveryService } from '../raw-email-delivery-service.ts';
 import type { CommercePortalAuthEmailDelivery } from '../auth.ts';
 import { COMMERCE_PORTAL_AUTH_POLICY } from '../config.ts';
@@ -26,8 +27,6 @@ const unavailable = (operation: string, cause: unknown): CommercePortalAuthRecov
     }),
     cause,
   );
-
-const normalizeEmail = (email: string): string => email.toLowerCase();
 
 const expirationFrom = (now: Date): Date =>
   DateTime.toDate(
@@ -64,7 +63,7 @@ export const makeCommercePortalAuthEmailDelivery = Effect.fn('CommercePortalAuth
       }).pipe(Effect.mapError((cause) => unavailable('verification-email-validation', cause)));
       const now = yield* DateTime.nowAsDate;
       const registered = yield* store.registerEmailVerificationToken({
-        email: normalizeEmail(metadata.email),
+        email: normalizeCommercePortalAuthEmail(metadata.email),
         expiresAt: expirationFrom(now),
         providerSubjectId: metadata.providerSubjectId,
         token: Redacted.make(metadata.token),
@@ -97,7 +96,7 @@ export const makeCommercePortalAuthEmailDelivery = Effect.fn('CommercePortalAuth
       }).pipe(Effect.mapError((cause) => unavailable('reset-password-email-validation', cause)));
       const now = yield* DateTime.nowAsDate;
       const registered = yield* store.registerPasswordResetToken({
-        email: normalizeEmail(metadata.email),
+        email: normalizeCommercePortalAuthEmail(metadata.email),
         expiresAt: expirationFrom(now),
         providerSubjectId: metadata.providerSubjectId,
         token: Redacted.make(metadata.token),

@@ -20,6 +20,7 @@ import {
 import type { CommercePortalAuthSessionSnapshotWire } from '../../../shared/portal-auth/session-api.ts';
 import {
   forwardSetCookieHeaders,
+  hashSubjectKey,
   noStoreHeaders,
   providerSetCookieHeaders,
   requestHeaders,
@@ -27,11 +28,11 @@ import {
   resolveClientKey,
 } from '../http-transport.ts';
 import { commercePortalAuthSignInAuditEvent } from '../../../src/portal-auth/audit/audit-mapping.ts';
+import type { CommercePortalAuthAuditEvent } from '../../../src/portal-auth/audit/audit-contracts.ts';
 import {
   CommercePortalAuthAudit,
   commercePortalAuthSubjectDigest,
   emitCommercePortalAuthAudit,
-  unauditedCommercePortalAuthRecorder,
 } from '../../../src/portal-auth/audit/audit.ts';
 import { consumeRateLimitBudget } from '../rate-limit-service.ts';
 import type { CommercePortalAuthRecoveryRateLimitRule } from '../rate-limit-service.ts';
@@ -424,8 +425,32 @@ const signInAuditSessionRef = (outcome: CommercePortalAuthSessionSignInOutcome):
     ? outcome.session.sessionRef
     : undefined;
 
-const signInAuditProviderSubjectId = (outcome: CommercePortalAuthSessionSignInOutcome): string | undefined =>
-  outcome.outcome === 'ACCOUNT_DISABLED' ? outcome.providerSubjectId : undefined;
+/**
+ * An admitted sign-in names the subject it admitted: the evidence for the one outcome that creates
+ * a live credential must not be the only one that cannot say whose credential it is. A refusal that
+ * never resolved an account still names none — there is nothing to name, and guessing from the
+ * attempted address would turn the audit trail into an account-existence oracle.
+ */
+const signInAuditProviderSubjectId = (outcome: CommercePortalAuthSessionSignInOutcome): string | undefined => {
+  if (outcome.outcome === 'SESSION_CREATED') {
+    return outcome.session.providerSubjectId;
+  }
+  return outcome.outcome === 'ACCOUNT_DISABLED' ? outcome.providerSubjectId : undefined;
+};
+
+/**
+ * The strict evidence path for sign-in. A sign-in is the one transport operation that mints a
+ * credential, so its evidence may not be best-effort: the intent row is written before Better Auth
+ * is asked for a session (an audit outage refuses the attempt outright), and the completion row is
+ * written strictly too — a session the provider already created but whose evidence was refused is
+ * revoked again rather than handed to the browser.
+ */
+const recordSignInEvidence = Effect.fn('CommercePortalAuthSessionHttp.recordSignInEvidence')(
+  function* recordSignInEvidenceEffect(event: CommercePortalAuthAuditEvent) {
+    const recorder = yield* CommercePortalAuthAudit;
+    yield* recorder.record(event).pipe(Effect.mapError(unavailableProblem));
+  },
+);
 
 const signIn = Effect.fn('CommercePortalAuthSessionHttp.signIn')(function* signInEffect(
   payload: Schema.Codec.Encoded<typeof CommercePortalAuthSignInInputSchema>,
@@ -451,19 +476,49 @@ const signIn = Effect.fn('CommercePortalAuthSessionHttp.signIn')(function* signI
     );
     return yield* Effect.fail(rateLimitedProblem());
   }
+  const client = resolveClientKey(request, configuration.trustedProxies);
+  yield* recordSignInEvidence({
+    correlationDigest: hashSubjectKey(client, configuration.secret),
+    eventType: 'commerce.portal-auth.session-sign-in-requested.v1',
+    occurredAt: yield* DateTime.nowAsDate,
+    operation: 'sign-in',
+    outcome: 'requested',
+    subjectDigest,
+  });
   const lifecycle = yield* CommercePortalAuthSessionLifecycle;
   const result = yield* lifecycle.signIn(payload).pipe(Effect.mapError(signInFailureProblem));
   const providerSubjectId = signInAuditProviderSubjectId(result.outcome);
   const sessionRef = signInAuditSessionRef(result.outcome);
-  yield* emitCommercePortalAuthAudit(
-    commercePortalAuthSignInAuditEvent({
-      occurredAt: yield* DateTime.nowAsDate,
-      outcome: result.outcome.outcome,
-      providerSubjectId,
-      sessionRef,
-      subjectDigest,
+  const evidence = yield* Effect.result(
+    recordSignInEvidence({
+      ...commercePortalAuthSignInAuditEvent({
+        occurredAt: yield* DateTime.nowAsDate,
+        outcome: result.outcome.outcome,
+        providerSubjectId,
+        sessionRef,
+        subjectDigest,
+      }),
+      correlationDigest: hashSubjectKey(client, configuration.secret),
     }),
   );
+  if (Result.isFailure(evidence)) {
+    // The provider already persisted this session. Handing its cookie to the browser would leave a
+    // live credential whose creation nothing durable records, so the session is taken back and the
+    // caller is told the deployment is unavailable. Every other outcome changed no state, and the
+    // intent row above already stands for the attempt.
+    if (result.outcome.outcome === 'SESSION_CREATED') {
+      yield* lifecycle
+        .revoke({
+          expectedProviderSubjectId: result.outcome.session.providerSubjectId,
+          sessionRef: result.outcome.session.sessionRef,
+        })
+        .pipe(Effect.ignore({ log: true, message: 'Commerce portal sign-in rollback revoke failed' }));
+      return yield* Effect.fail(evidence.failure);
+    }
+    yield* Effect.annotateLogs(Effect.logError('Commerce portal authentication sign-in evidence was not persisted'), {
+      auditOutcome: result.outcome.outcome,
+    });
+  }
   // The provider cookies belong to an admitted sign-in only. A rejected admission (disabled,
   // unverified or session-capped) has already revoked the durable session, so the response hook is
   // registered after the outcome is known to be a success and never on a rejection.
@@ -496,7 +551,12 @@ const refresh = Effect.fn('CommercePortalAuthSessionHttp.refresh')(function* ref
   yield* noStoreHeaders;
   yield* requireTrustedOrigin(request.headers, untrustedOriginProblem);
   const lifecycle = yield* CommercePortalAuthSessionLifecycle;
-  const providerSession = yield* readProviderSession(requestHeaders(request.headers), true);
+  const headers = requestHeaders(request.headers);
+  // The identifying read never renews anything. Better Auth's own refresh commits immediately and
+  // in its own transaction, so asking for it first would leave a renewed provider session behind
+  // whenever the owner's audited touch then failed — a renewal with no evidence, and one the
+  // rejection branches below could not take back either.
+  const providerSession = yield* readProviderSession(headers, false);
   if (Option.isNone(providerSession)) {
     return yield* Effect.fail(authenticationProblem('session_revoked'));
   }
@@ -504,11 +564,16 @@ const refresh = Effect.fn('CommercePortalAuthSessionHttp.refresh')(function* ref
   const outcome = yield* lifecycle
     .refresh(referenceInput(providerSession.value.session, sessionRef))
     .pipe(Effect.mapError(unavailableProblem));
-  // Only an admitted session hands its cookies onward. Reading the session with provider refresh
-  // enabled may already have rotated the Better Auth cookie, so the hook is registered after the
-  // outcome is known to be a success: a rejection must never renew the browser's credential.
+  // Only an admitted session hands its cookies onward, so the provider refresh runs after the
+  // audited renewal has committed and the outcome is known to be a success: a rejection must never
+  // renew the browser's credential.
   const response = yield* refreshOutcomeResponse(outcome);
-  yield* forwardSetCookieHeaders(providerSetCookieHeaders(providerSession.value.headers));
+  // Sequenced on `response`, not merely written after it: the provider refresh is the last thing
+  // this handler does, and only an admitted outcome ever reaches it.
+  const renewed = yield* Effect.succeed(response).pipe(Effect.andThen(() => readProviderSession(headers, true)));
+  if (Option.isSome(renewed)) {
+    yield* forwardSetCookieHeaders(providerSetCookieHeaders(renewed.value.headers));
+  }
   return response;
 });
 
@@ -553,6 +618,13 @@ export const portalAuthSessionApiLive = HttpApiBuilder.group(
  * The same handlers mounted on the standalone session API. The composed Commerce runtime uses
  * `portalAuthSessionApiLive`; this mount is the isolated session topology the owner's transport
  * tests drive, mirroring the Shell's standalone external-identity group.
+ *
+ * Unlike `portalAuthSessionApiLive`, this mount does not bake in a recorder: sign-in evidence is
+ * strict, so whether the audit store answers now decides whether a session is handed out at all.
+ * Leaving `CommercePortalAuthAudit` a visible requirement is what lets the owner's transport tests
+ * drive a refusing recorder — the same shape the sibling MFA group's freshness reader is
+ * substituted with. A topology that wants the old silence supplies
+ * `unauditedCommercePortalAuthRecorder` explicitly.
  */
 export const portalAuthSessionStandaloneApiLive = HttpApiBuilder.group(
   CommercePortalAuthSessionApi,
@@ -563,11 +635,7 @@ export const portalAuthSessionStandaloneApiLive = HttpApiBuilder.group(
       .handle('signOut', ({ request }) => signOut(request))
       .handle('refresh', ({ request }) => refresh(request))
       .handle('getSession', ({ request }) => getSession(request)),
-).pipe(
-  Layer.provide(portalAuthSessionSchemaErrorLive),
-  // The isolated topology has no durable audit store; decisions still complete, they are just unrecorded.
-  Layer.provide(Layer.succeed(CommercePortalAuthAudit, unauditedCommercePortalAuthRecorder)),
-);
+).pipe(Layer.provide(portalAuthSessionSchemaErrorLive));
 
 /** The constructed realm stays a visible requirement; the composition root supplies it once. */
 export const CommercePortalAuthServiceLive = Layer.effect(

@@ -12,6 +12,7 @@ import {
   recoveryResetLedger,
   session,
   user,
+  verification,
 } from '../../src/portal-auth/persistence/portal-auth-tables.ts';
 import { parseCommercePortalAuthConfig } from '../../api/portal-auth/provider/config.ts';
 import {
@@ -38,6 +39,9 @@ const recoveryCrypto = Crypto.make({
 
 const identifierDigestFor = (email: string) =>
   recoveryCrypto.digest('SHA-256', new TextEncoder().encode(email)).pipe(Effect.map(bytesToHex));
+
+const tokenDigestFor = (token: Redacted.Redacted) =>
+  recoveryCrypto.digest('SHA-256', new TextEncoder().encode(Redacted.value(token))).pipe(Effect.map(bytesToHex));
 
 /** A store instance plus the raw database, for tests that exercise the password-reset ledger directly. */
 const makeResetLedgerHarness = Effect.fn('CommercePortalAuthRecoveryIntegration.makeResetLedgerHarness')(
@@ -264,18 +268,20 @@ it.live('proves a stale ledger subject is detected without touching any account 
 );
 
 it.live(
-  'proves a repeated PostgreSQL password-reset registration for the same identifier replaces the pending ledger row instead of duplicating it',
+  'proves a second PostgreSQL password-reset registration for one identifier keeps the earlier live token reconcilable',
   () =>
     Effect.scoped(
-      Effect.gen(function* postgresResetLedgerIdempotency() {
+      Effect.gen(function* postgresResetLedgerPerToken() {
         const { database, store } = yield* makeResetLedgerHarness();
         const now = yield* DateTime.nowAsDate;
-        const email = `recon-idempotent-${randomUUID()}@example.test`;
-        const providerSubjectId = `recon-idempotent-subject-${randomUUID()}`;
+        const email = `recon-per-token-${randomUUID()}@example.test`;
+        const providerSubjectId = `recon-per-token-subject-${randomUUID()}`;
         const expiresAt = DateTime.toDate(DateTime.add(DateTime.makeUnsafe(now), { seconds: 3600 }));
-        const firstToken = Redacted.make(`recon-idempotent-token-a-${randomUUID()}`);
-        const secondToken = Redacted.make(`recon-idempotent-token-b-${randomUUID()}`);
+        const firstToken = Redacted.make(`recon-per-token-a-${randomUUID()}`);
+        const secondToken = Redacted.make(`recon-per-token-b-${randomUUID()}`);
         const identifierDigest = yield* identifierDigestFor(email);
+        const firstDigest = yield* tokenDigestFor(firstToken);
+        const secondDigest = yield* tokenDigestFor(secondToken);
         yield* Effect.addFinalizer(() =>
           database.executor
             .delete(recoveryResetLedger)
@@ -286,8 +292,10 @@ it.live(
         const registerToken = store.registerPasswordResetToken;
         const peekLedger = store.peekPasswordResetLedger;
 
-        // Two requests for the same identifier within the window: the first opens the pending row,
-        // the second must reuse it deterministically rather than inserting a second pending row.
+        // Two requests for the same identifier within the window. Better Auth keeps both tokens
+        // acceptable, so the ledger must keep both bindings: a row keyed by identifier alone would
+        // let the second registration erase the first token's evidence while that token still
+        // works, and submitting it would then skip reconciliation entirely.
         const firstRegistered = yield* registerToken({ email, expiresAt, providerSubjectId, token: firstToken });
         expect(firstRegistered).toBe(true);
         const secondRegistered = yield* registerToken({ email, expiresAt, providerSubjectId, token: secondToken });
@@ -297,20 +305,156 @@ it.live(
           .select()
           .from(recoveryResetLedger)
           .where(eq(recoveryResetLedger.identifierDigest, identifierDigest));
-        expect(rows).toHaveLength(1);
+        expect(rows).toHaveLength(2);
 
-        // The response the caller sees for each request never distinguishes "first" from "repeat":
-        // the superseded token no longer resolves, and only the latest one does.
         const firstPeek = yield* peekLedger({ token: firstToken });
-        expect(Option.isNone(firstPeek)).toBe(true);
+        expect(Option.isSome(firstPeek)).toBe(true);
+        if (Option.isSome(firstPeek)) {
+          expect(firstPeek.value).toStrictEqual({ email, providerSubjectId, tokenDigest: firstDigest });
+        }
         const secondPeek = yield* peekLedger({ token: secondToken });
         expect(Option.isSome(secondPeek)).toBe(true);
         if (Option.isSome(secondPeek)) {
-          expect(secondPeek.value).toStrictEqual({ email, providerSubjectId });
+          expect(secondPeek.value).toStrictEqual({ email, providerSubjectId, tokenDigest: secondDigest });
         }
         return null;
       }),
     ),
+);
+
+it.live('proves a repeated PostgreSQL registration of one password-reset token replaces that token’s own row', () =>
+  Effect.scoped(
+    Effect.gen(function* postgresResetLedgerIdempotency() {
+      const { database, store } = yield* makeResetLedgerHarness();
+      const now = yield* DateTime.nowAsDate;
+      const email = `recon-idempotent-${randomUUID()}@example.test`;
+      const providerSubjectId = `recon-idempotent-subject-${randomUUID()}`;
+      const expiresAt = DateTime.toDate(DateTime.add(DateTime.makeUnsafe(now), { seconds: 3600 }));
+      const token = Redacted.make(`recon-idempotent-token-${randomUUID()}`);
+      const identifierDigest = yield* identifierDigestFor(email);
+      yield* Effect.addFinalizer(() =>
+        database.executor
+          .delete(recoveryResetLedger)
+          .where(eq(recoveryResetLedger.identifierDigest, identifierDigest))
+          .pipe(Effect.orDie),
+      );
+
+      const registerToken = store.registerPasswordResetToken;
+
+      // A retried issuance of the *same* token is one token, so it stays one row: the ledger grows
+      // per live token, never per delivery attempt.
+      expect(yield* registerToken({ email, expiresAt, providerSubjectId, token })).toBe(true);
+      expect(yield* registerToken({ email, expiresAt, providerSubjectId, token })).toBe(true);
+
+      const rows = yield* database.executor
+        .select()
+        .from(recoveryResetLedger)
+        .where(eq(recoveryResetLedger.identifierDigest, identifierDigest));
+      expect(rows).toHaveLength(1);
+      expect(rows[0]?.state).toBe('pending');
+      return null;
+    }),
+  ),
+);
+
+it.live('proves a spent PostgreSQL password-reset token becomes terminal and is never reconciled again', () =>
+  Effect.scoped(
+    Effect.gen(function* postgresResetLedgerConsumed() {
+      const { database, store } = yield* makeResetLedgerHarness();
+      const reconciliation = yield* makeCommercePortalAuthRecoveryReconciliation().pipe(
+        Effect.provideService(CommercePortalAuthRecoveryStoreService, store),
+      );
+      const now = yield* DateTime.nowAsDate;
+      const email = `recon-consumed-${randomUUID()}@example.test`;
+      const providerSubjectId = `recon-consumed-subject-${randomUUID()}`;
+      const expiresAt = DateTime.toDate(DateTime.add(DateTime.makeUnsafe(now), { seconds: 3600 }));
+      const token = Redacted.make(`recon-consumed-token-${randomUUID()}`);
+      const identifierDigest = yield* identifierDigestFor(email);
+      yield* database.executor.insert(user).values({ email, id: providerSubjectId, name: 'Consumed ledger owner' });
+      yield* Effect.addFinalizer(() =>
+        Effect.gen(function* cleanup() {
+          yield* database.executor
+            .delete(recoveryResetLedger)
+            .where(eq(recoveryResetLedger.identifierDigest, identifierDigest));
+          yield* database.executor.delete(recoveryReconciliation).where(eq(recoveryReconciliation.email, email));
+          yield* database.executor.delete(user).where(eq(user.id, providerSubjectId));
+        }).pipe(Effect.orDie),
+      );
+
+      expect(yield* store.registerPasswordResetToken({ email, expiresAt, providerSubjectId, token })).toBe(true);
+      // The provider accepted the token; the ledger must record that it is spent.
+      yield* store.consumePasswordResetLedger({ token });
+
+      const rows = yield* database.executor
+        .select()
+        .from(recoveryResetLedger)
+        .where(eq(recoveryResetLedger.identifierDigest, identifierDigest));
+      expect(rows[0]?.state).toBe('consumed');
+      expect(rows[0]?.providerSubjectId).toBeNull();
+      expect(rows[0]?.email).toBeNull();
+      expect(Option.isNone(yield* store.peekPasswordResetLedger({ token }))).toBe(true);
+
+      // The account is then legitimately deleted. Re-submitting the already-spent link must not
+      // open a support conflict: that token changed nothing the second time.
+      yield* database.executor.delete(user).where(eq(user.id, providerSubjectId));
+      const outcome = yield* reconciliation.detect({ operation: 'reset-password', token });
+      expect(Option.isNone(outcome)).toBe(true);
+      const reconciliationRows = yield* database.executor
+        .select()
+        .from(recoveryReconciliation)
+        .where(eq(recoveryReconciliation.email, email));
+      expect(reconciliationRows).toHaveLength(0);
+      return null;
+    }),
+  ),
+);
+
+it.live('proves an expired PostgreSQL email-verification token is not reconciliation evidence', () =>
+  Effect.scoped(
+    Effect.gen(function* postgresVerificationLedgerExpiry() {
+      const { database, store } = yield* makeResetLedgerHarness();
+      const reconciliation = yield* makeCommercePortalAuthRecoveryReconciliation().pipe(
+        Effect.provideService(CommercePortalAuthRecoveryStoreService, store),
+      );
+      const now = yield* DateTime.nowAsDate;
+      const email = `recon-verify-expired-${randomUUID()}@example.test`;
+      const providerSubjectId = `recon-verify-expired-subject-${randomUUID()}`;
+      const token = Redacted.make(`recon-verify-expired-token-${randomUUID()}`);
+      const tokenDigest = yield* tokenDigestFor(token);
+      const verificationIdentifier = `commerce-email-verification:${tokenDigest}`;
+      const alreadyExpired = DateTime.toDate(DateTime.add(DateTime.makeUnsafe(now), { seconds: -5 }));
+      yield* database.executor.insert(user).values({ email, id: providerSubjectId, name: 'Expired token owner' });
+      yield* Effect.addFinalizer(() =>
+        Effect.gen(function* cleanup() {
+          yield* database.executor.delete(verification).where(eq(verification.identifier, verificationIdentifier));
+          yield* database.executor.delete(recoveryReconciliation).where(eq(recoveryReconciliation.email, email));
+          yield* database.executor.delete(user).where(eq(user.id, providerSubjectId));
+        }).pipe(Effect.orDie),
+      );
+
+      // An issued-then-expired verification token, recorded exactly as the register path writes it.
+      yield* database.executor.insert(verification).values({
+        expiresAt: alreadyExpired,
+        id: randomUUID(),
+        identifier: verificationIdentifier,
+        updatedAt: now,
+        value: `${providerSubjectId.length}:${providerSubjectId}${email.length}:${email}`,
+      });
+
+      expect(Option.isNone(yield* store.peekEmailVerificationLedger({ token }))).toBe(true);
+
+      // Delete the account so the binding, if it were admitted, would look stale and file a row.
+      yield* database.executor.delete(user).where(eq(user.id, providerSubjectId));
+      const outcome = yield* reconciliation.detect({ operation: 'verify-email', token });
+      expect(Option.isNone(outcome)).toBe(true);
+      const reconciliationRows = yield* database.executor
+        .select()
+        .from(recoveryReconciliation)
+        .where(eq(recoveryReconciliation.email, email));
+      expect(reconciliationRows).toHaveLength(0);
+      return null;
+    }),
+  ),
 );
 
 it.live(

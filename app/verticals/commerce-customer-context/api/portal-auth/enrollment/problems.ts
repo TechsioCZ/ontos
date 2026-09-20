@@ -5,6 +5,7 @@ import {
   CommercePortalAuthEnrollmentAuthenticationProblemSchema,
   CommercePortalAuthEnrollmentForbiddenProblemSchema,
   CommercePortalAuthEnrollmentInvalidProblemSchema,
+  CommercePortalAuthEnrollmentJourneyUnavailableProblemSchema,
   CommercePortalAuthEnrollmentNotFoundProblemSchema,
   CommercePortalAuthEnrollmentRateLimitedProblemSchema,
   CommercePortalAuthEnrollmentSchemaErrorMiddleware,
@@ -74,6 +75,19 @@ export const commercePortalAuthEnrollmentNotFoundProblem = (cause?: unknown) =>
     }),
     cause,
   );
+
+/**
+ * The journey itself is refused, not this request: no Attempt is persisted and no provider account
+ * is created, so a caller is never left holding an orphaned account for a journey that cannot run.
+ */
+export const commercePortalAuthEnrollmentJourneyUnavailableProblem =
+  CommercePortalAuthEnrollmentJourneyUnavailableProblemSchema.make({
+    code: 'enrollment_journey_unavailable',
+    detail: 'This Commerce portal enrollment journey is not available.',
+    status: 422,
+    title: 'Enrollment journey unavailable',
+    type: `${PROBLEM_TYPE_PREFIX}journey-unavailable`,
+  });
 
 export const commercePortalAuthEnrollmentRateLimitedProblem = CommercePortalAuthEnrollmentRateLimitedProblemSchema.make(
   {

@@ -904,3 +904,42 @@ it.effect('keeps the provider operation identifier exact', () =>
     expect(CommercePortalAuthAccountCreationRejected).toBeDefined();
   }),
 );
+
+it.effect('normalizes the address once before the duplicate guard, the provider call and the persistence check', () => {
+  const probedEmails: string[] = [];
+  let providerBody: unknown;
+  const auth: CommercePortalAuthAccountCreationProvider = {
+    api: {
+      signUpEmail: (signUpRequest) => {
+        providerBody = signUpRequest;
+        return providerSuccess({ user: { id: providerSubjectId } });
+      },
+    },
+  };
+  return makeAccountGateway(auth, {
+    existsByEmail: ({ email }) =>
+      Effect.sync(() => {
+        probedEmails.push(email);
+        return false;
+      }),
+    existsByProviderSubject: ({ email }) =>
+      Effect.sync(() => {
+        probedEmails.push(email ?? '');
+        return true;
+      }),
+  }).pipe(
+    Effect.flatMap((gateway) =>
+      gateway.create({ email: ' Buyer@Example.TEST ', name: 'Buyer', password: testPassword }),
+    ),
+    Effect.tap(() =>
+      Effect.sync(() => {
+        // The stored column holds the normalized form, so a guard comparing the caller's casing
+        // would miss the existing row and let a second account through for the same address.
+        expect(probedEmails).toStrictEqual(['buyer@example.test', 'buyer@example.test']);
+        expect(providerBody).toStrictEqual({
+          body: { email: 'buyer@example.test', name: 'Buyer', password: 'P'.repeat(24) },
+        });
+      }),
+    ),
+  );
+});

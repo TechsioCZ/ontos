@@ -58,6 +58,10 @@ it.live(
         'packages/core-runtime/src/auth/commerce-leak.ts':
           "import { CommercePortalAuth } from '@app/commerce-customer-context';\n",
         'packages/core-runtime/src/auth/relative.ts': "import { helper } from './allowed.ts';\n",
+        // Core: violates by importing Commerce private implementation via a relative specifier that
+        // resolves outside packages/core-runtime/src (regression for a gate that only checked bare specifiers).
+        'packages/core-runtime/src/auth/relative-commerce-leak.ts':
+          "import { CommercePortalAuth } from '../../../../verticals/commerce-customer-context/src/enrollment/journeys/index.ts';\n",
         // Core: violates by importing an unpinned external package.
         'packages/core-runtime/src/auth/unpinned.ts': "import { z } from 'zod';\n",
         // Core: tests directory is exempt.
@@ -94,6 +98,7 @@ it.live(
         'apps/shell-super-app/api/auth/external-identity/unauthorized-package-import.ts:2: Non-Commerce unit takes a mandatory runtime import of Commerce\'s private implementation "@app/commerce-customer-context/api/client" (only published shared/ contracts and documented composition seams are allowed)',
         'apps/shell-super-app/api/auth/external-identity/unauthorized-private-import.ts:1: Non-Commerce unit takes a mandatory runtime import of Commerce\'s private implementation "../../../../verticals/commerce-customer-context/src/enrollment/journeys/index.ts" (only published shared/ contracts and documented composition seams are allowed)',
         'packages/core-runtime/src/auth/commerce-leak.ts:1: Core runtime source imports Commerce/Storefront/Better Auth package "@app/commerce-customer-context"',
+        'packages/core-runtime/src/auth/relative-commerce-leak.ts:1: Core runtime source imports Commerce/Storefront/Better Auth via relative specifier "../../../../verticals/commerce-customer-context/src/enrollment/journeys/index.ts" (resolves to "verticals/commerce-customer-context/src/enrollment/journeys/index.ts")',
         'packages/core-runtime/src/auth/unpinned.ts:1: Core runtime source imports a dependency outside the pinned external specifier set: "zod"',
         'verticals/party-registry/api/uses-commerce-api.ts:1: Non-Commerce unit takes a mandatory runtime import of Commerce\'s private implementation "../../commerce-customer-context/api/owner-transition.ts" (only published shared/ contracts and documented composition seams are allowed)',
       ]);

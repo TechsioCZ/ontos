@@ -14,6 +14,7 @@ import {
   PORTAL_ACCOUNT_CREATION_TRANSITION_KEY,
   PORTAL_AUTH_OWNER_MODULE_KEY,
 } from '../../../src/enrollment/orchestration/prepared-owner-authority.ts';
+import { commercePortalAuthEnrollmentInvitationId } from './contracts.ts';
 import type { CommercePortalAuthEnrollmentStartInput } from './contracts.ts';
 
 /**
@@ -30,27 +31,46 @@ const ENROLLMENT_INTENT_KEY_PREFIX = 'commerce.customer-context.portal-enrollmen
 
 const digestOf = (parts: readonly string[]): string => enrollmentDigest(parts.join('\u0000'));
 
+const normalizedEmail = (input: CommercePortalAuthEnrollmentStartInput): string => input.email.trim().toLowerCase();
+
+/**
+ * The enrolling identity, as a digest.
+ *
+ * `portal_enrollment_attempts` is unique on `(tenant_id, intent_key)`, so the key must name *who*
+ * is enrolling and not only *how*: a key carrying the journey alone makes every enrolling person in
+ * one Tenant collide on a single Attempt row. An invitation enrollment is identified by the
+ * invitation it claims — two people may not claim the same one — and every other journey by the
+ * normalized address, which is exactly the value a retry re-presents.
+ */
+const enrollmentIdentityDigest = (input: CommercePortalAuthEnrollmentStartInput): string => {
+  const invitationId = commercePortalAuthEnrollmentInvitationId(input);
+  return input.journey === 'COUNTERPARTY_INVITATION' && invitationId !== undefined
+    ? digestOf(['invitation', invitationId])
+    : digestOf(['email', normalizedEmail(input)]);
+};
+
 /**
  * The durable intent the `start-portal-enrollment` Action records. `intentKey` names the journey
- * so two journeys never share an Attempt; `intentDigest` is what makes an equivalent retry
- * idempotent.
+ * and the enrolling identity, so two journeys never share an Attempt and two people never do
+ * either; `intentDigest` is what makes an equivalent retry by that same identity idempotent.
  */
 export const commercePortalAuthEnrollmentIntent = (
   input: CommercePortalAuthEnrollmentStartInput,
-): Effect.Effect<StartPortalEnrollmentPayload, Schema.SchemaError> =>
-  Effect.all(
+): Effect.Effect<StartPortalEnrollmentPayload, Schema.SchemaError> => {
+  const invitationId = commercePortalAuthEnrollmentInvitationId(input);
+  return Effect.all(
     {
       intentDigest: Schema.decodeEffect(EnrollmentDigestSchema)(
         digestOf([
           input.journey,
-          input.email.trim().toLowerCase(),
+          normalizedEmail(input),
           input.sellingLegalEntityId,
-          input.invitationId ?? '',
+          invitationId ?? '',
           input.partyRef ?? '',
         ]),
       ),
       intentKey: Schema.decodeEffect(EnrollmentKeySchema)(
-        `${ENROLLMENT_INTENT_KEY_PREFIX}.${input.journey.toLowerCase()}`,
+        `${ENROLLMENT_INTENT_KEY_PREFIX}.${input.journey.toLowerCase()}.${enrollmentIdentityDigest(input)}`,
       ),
       // Two independent in-memory decodes of values this module derived itself.
     },
@@ -63,10 +83,11 @@ export const commercePortalAuthEnrollmentIntent = (
         journey: input.journey,
         targetLegalEntityId: input.sellingLegalEntityId,
       };
-      const withInvitation = input.invitationId === undefined ? base : { ...base, invitationId: input.invitationId };
+      const withInvitation = invitationId === undefined ? base : { ...base, invitationId };
       return input.partyRef === undefined ? withInvitation : { ...withInvitation, targetResourceId: input.partyRef };
     }),
   );
+};
 
 /** The immutable identity of the provider account-creation transition this vertical owns. */
 export interface CommercePortalAuthEnrollmentAccountCreationClaim {
@@ -100,7 +121,7 @@ export const commercePortalAuthEnrollmentAccountCreationClaim = (
           PORTAL_ACCOUNT_CREATION_TRANSITION_KEY,
           portalEnrollmentAttemptId,
           input.journey,
-          input.email.trim().toLowerCase(),
+          normalizedEmail(input),
           input.sellingLegalEntityId,
         ]),
       ),

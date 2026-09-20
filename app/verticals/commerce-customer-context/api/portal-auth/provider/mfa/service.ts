@@ -1,8 +1,9 @@
-import { Context, DateTime, Effect, Result, Schema } from 'effect';
+import { Context, DateTime, Effect, Match, Result, Schema } from 'effect';
 
 import { auditedLayer, recordCommercePortalAuthAudit } from '../../../../src/portal-auth/audit/audit.ts';
 import { withCause } from '../../problems-support.ts';
 import type { CommercePortalAuthAuditRecorder } from '../../../../src/portal-auth/audit/audit.ts';
+import type { CommercePortalAuthAuditOutcome } from '../../../../src/portal-auth/audit/audit-contracts.ts';
 
 import {
   CommercePortalAuthMfaBackupCodesResultSchema,
@@ -137,9 +138,24 @@ const callProvider = <SchemaValue extends Schema.Constraint>(
   );
 
 /**
+ * Only a provider that actually judged the code and refused it is a failed authentication. An
+ * outage, a throttle and an expired challenge all end the attempt without the second factor ever
+ * being judged, so filing them as `authentication_failed` would make a provider outage read as a
+ * burst of wrong codes — the exact signal a lockout review and an attack investigation depend on.
+ */
+const mfaVerificationOutcome = (failure: CommercePortalAuthMfaProviderFailure): CommercePortalAuthAuditOutcome =>
+  Match.value(failure._tag).pipe(
+    Match.when('CommercePortalAuthMfaChallengeExpired', () => 'session_expired' as const),
+    Match.when('CommercePortalAuthMfaProviderRejected', () => 'authentication_failed' as const),
+    Match.when('CommercePortalAuthMfaProviderUnavailable', () => 'provider_unavailable' as const),
+    Match.when('CommercePortalAuthMfaRateLimited', () => 'rate_limited' as const),
+    Match.exhaustive,
+  );
+
+/**
  * A second-factor verification is an authentication decision in its own right, so each verify call
- * leaves one row naming the method that was attempted and whether it succeeded. The code, the OTP,
- * the backup code and the TOTP seed are never part of the event.
+ * leaves one row naming the method that was attempted and how it ended. The code, the OTP, the
+ * backup code and the TOTP seed are never part of the event.
  */
 const auditedVerification = Effect.fn('CommercePortalAuthMfaService.auditedVerification')(
   function* auditedVerificationEffect<ResultValue>(
@@ -152,7 +168,7 @@ const auditedVerification = Effect.fn('CommercePortalAuthMfaService.auditedVerif
       eventType: 'commerce.portal-auth.mfa-verified.v1',
       occurredAt: yield* DateTime.nowAsDate,
       operation: method,
-      outcome: Result.isSuccess(outcome) ? 'success' : 'authentication_failed',
+      outcome: Result.isSuccess(outcome) ? 'success' : mfaVerificationOutcome(outcome.failure),
     });
     if (Result.isFailure(outcome)) {
       return yield* outcome.failure;

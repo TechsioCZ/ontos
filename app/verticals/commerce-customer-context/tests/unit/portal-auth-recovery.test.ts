@@ -40,6 +40,9 @@ import {
   CommercePortalAuthRecoveryInvalidProblemSchema,
 } from '../../shared/portal-auth/recovery-api.ts';
 import { unauditedCommercePortalAuthRecorder } from '../../src/portal-auth/audit/audit.ts';
+import type { CommercePortalAuthAuditRecorder } from '../../src/portal-auth/audit/audit.ts';
+import type { CommercePortalAuthAuditEvent } from '../../src/portal-auth/audit/audit-contracts.ts';
+import { CommercePortalAuthAuditUnavailable } from '../../src/portal-auth/audit/audit-unavailable.ts';
 
 const EMAIL = 'customer@example.test';
 const BYSTANDER_EMAIL = 'bystander@example.test';
@@ -49,6 +52,8 @@ const ORIGINAL_SUBJECT = 'commerce-user-original';
 const REPLACEMENT_SUBJECT = 'commerce-user-replacement';
 const VERIFICATION_TOKEN = Redacted.make('verification-token');
 const VERIFICATION_TOKEN_EXPIRES_AT = new Date('2099-01-01T00:00:00.000Z');
+const RESET_TOKEN_DIGEST = 'reset-token-digest';
+const VERIFICATION_TOKEN_DIGEST = 'verification-token-digest';
 
 interface MemoryRecoveryStoreFixture {
   /** Every key the transport spent against, in order: the key *is* the isolation invariant. */
@@ -113,6 +118,7 @@ const makeMemoryRecoveryStore = (
         currentVerified = true;
         return Option.some(consumedSubject);
       }),
+    consumePasswordResetLedger: () => Effect.void,
     consumeRateLimitBudget: (input) =>
       Effect.sync(() => {
         const counted = spentBudgets.get(input.key) ?? 0;
@@ -577,7 +583,10 @@ it.effect('returns reconciliation-required and never spends the reset token when
     ...fixture.store,
     accountExists: () => Effect.succeed(true),
     findAccountSubjectForEmail: () => Effect.succeed(Option.some(REPLACEMENT_SUBJECT)),
-    peekPasswordResetLedger: () => Effect.succeed(Option.some({ email: EMAIL, providerSubjectId: ORIGINAL_SUBJECT })),
+    peekPasswordResetLedger: () =>
+      Effect.succeed(
+        Option.some({ email: EMAIL, providerSubjectId: ORIGINAL_SUBJECT, tokenDigest: RESET_TOKEN_DIGEST }),
+      ),
     recordRecoveryReconciliation: () => Effect.void,
   };
   return runWithRecovery(provider, store, (service) =>
@@ -616,7 +625,9 @@ it.effect(
         }),
       findAccountSubjectForEmail: () => Effect.succeed(Option.some(REPLACEMENT_SUBJECT)),
       peekEmailVerificationLedger: () =>
-        Effect.succeed(Option.some({ email: EMAIL, providerSubjectId: ORIGINAL_SUBJECT })),
+        Effect.succeed(
+          Option.some({ email: EMAIL, providerSubjectId: ORIGINAL_SUBJECT, tokenDigest: VERIFICATION_TOKEN_DIGEST }),
+        ),
       recordRecoveryReconciliation: () => Effect.void,
     };
     return runWithRecovery(successfulProvider(), store, (service) =>
@@ -1156,5 +1167,151 @@ it.effect('ignores a forged forwarded-for hop when keying the recovery budget', 
       { concurrency: 1 },
     );
     expect(statuses).toStrictEqual([...Array.from({ length: budget }, () => 200), 429]);
+  });
+});
+
+/**
+ * The recorder these evidence tests drive. `failing` names the one event type whose insert refuses,
+ * so a test can prove exactly which row the operation depends on without failing the others.
+ */
+const makeRecordingRecorder = (failing?: string) => {
+  const events: CommercePortalAuthAuditEvent[] = [];
+  const recorder: CommercePortalAuthAuditRecorder = {
+    record: (event) =>
+      event.eventType === failing
+        ? Effect.fail(new CommercePortalAuthAuditUnavailable({ operation: 'audit-insert', reason: 'store is down' }))
+        : Effect.sync(() => {
+            events.push(event);
+          }),
+  };
+  return { events: () => events, recorder };
+};
+
+const runAuditedRecovery = <Value>(
+  recorder: CommercePortalAuthAuditRecorder,
+  provider: CommercePortalAuthRecoveryProvider,
+  store: CommercePortalAuthRecoveryStore,
+  invoke: (service: CommercePortalAuthRecoveryService['Service']) => Effect.Effect<Value, unknown>,
+) =>
+  makeCommercePortalAuthRecoveryService(recorder).pipe(
+    Effect.provideService(CommercePortalAuthRecoveryProviderService, provider),
+    Effect.provideService(CommercePortalAuthRecoveryStoreService, store),
+    Effect.provideServiceEffect(
+      CommercePortalAuthRecoveryReconciliationService,
+      makeCommercePortalAuthRecoveryReconciliation().pipe(
+        Effect.provideService(CommercePortalAuthRecoveryStoreService, store),
+      ),
+    ),
+    Effect.flatMap(invoke),
+  );
+
+const noConsume = (): void => {};
+
+const resetLedgerStore = (
+  fixture: MemoryRecoveryStoreFixture,
+  onConsume: () => void,
+): CommercePortalAuthRecoveryStore =>
+  ({
+    ...fixture.store,
+    accountExists: () => Effect.succeed(true),
+    consumePasswordResetLedger: () => Effect.sync(onConsume),
+    findAccountSubjectForEmail: () => Effect.succeed(Option.some(ORIGINAL_SUBJECT)),
+    peekPasswordResetLedger: () =>
+      Effect.succeed(
+        Option.some({ email: EMAIL, providerSubjectId: ORIGINAL_SUBJECT, tokenDigest: RESET_TOKEN_DIGEST }),
+      ),
+  }) satisfies CommercePortalAuthRecoveryStore;
+
+it.effect('refuses the password reset when the pre-mutation intent row cannot be written', () => {
+  let resetCalls = 0;
+  const fixture = makeMemoryRecoveryStore();
+  const provider: CommercePortalAuthRecoveryProvider = {
+    ...successfulProvider(),
+    resetPassword: () =>
+      Effect.sync(() => {
+        resetCalls += 1;
+        return { status: true };
+      }),
+  };
+  const recording = makeRecordingRecorder('commerce.portal-auth.recovery-reset-requested.v1');
+  return Effect.gen(function* resetIntentIsStrict() {
+    const outcome = yield* Effect.result(
+      runAuditedRecovery(recording.recorder, provider, resetLedgerStore(fixture, noConsume), (service) =>
+        service.resetPassword({ newPassword: Redacted.make('P'.repeat(24)), token: Redacted.make('reset-token') }),
+      ),
+    );
+    expect(Result.isFailure(outcome)).toBe(true);
+    if (Result.isFailure(outcome)) {
+      expect(outcome.failure).toBeInstanceOf(CommercePortalAuthRecoveryUnavailable);
+    }
+    // A deployment that cannot record the attempt does not make it: the customer's password is
+    // never changed behind an audit trail that would have no row for it.
+    expect(resetCalls).toBe(0);
+  });
+});
+
+it.effect('records the reset intent before the provider call and names the ledger subject on both rows', () => {
+  let consumeCalls = 0;
+  const order: string[] = [];
+  const fixture = makeMemoryRecoveryStore();
+  const provider: CommercePortalAuthRecoveryProvider = {
+    ...successfulProvider(),
+    resetPassword: () =>
+      Effect.sync(() => {
+        order.push('provider');
+        return { status: true };
+      }),
+  };
+  const recording = makeRecordingRecorder();
+  return Effect.gen(function* resetEvidenceOrdering() {
+    yield* runAuditedRecovery(
+      recording.recorder,
+      provider,
+      resetLedgerStore(fixture, () => {
+        consumeCalls += 1;
+      }),
+      (service) =>
+        service.resetPassword({ newPassword: Redacted.make('P'.repeat(24)), token: Redacted.make('reset-token') }),
+    );
+    const [intent, completion] = recording.events();
+    expect(intent?.eventType).toBe('commerce.portal-auth.recovery-reset-requested.v1');
+    expect(intent?.outcome).toBe('requested');
+    expect(intent?.providerSubjectId).toBe(ORIGINAL_SUBJECT);
+    expect(intent?.correlationDigest).toBe(RESET_TOKEN_DIGEST);
+    // The intent row is durable before Better Auth is asked to change anything.
+    expect(order).toStrictEqual(['provider']);
+    expect(completion?.eventType).toBe('commerce.portal-auth.recovery-completed.v1');
+    // Without the subject the completed reset is the one recovery event nobody can attribute.
+    expect(completion?.providerSubjectId).toBe(ORIGINAL_SUBJECT);
+    expect(completion?.correlationDigest).toBe(RESET_TOKEN_DIGEST);
+    // The spent token is retired so a replay of the same link cannot be reconciled again.
+    expect(consumeCalls).toBe(1);
+  });
+});
+
+it.effect('refuses email verification when the pre-mutation intent row cannot be written', () => {
+  let consumeCalls = 0;
+  const fixture = makeMemoryRecoveryStore();
+  const store: CommercePortalAuthRecoveryStore = {
+    ...fixture.store,
+    consumeEmailVerification: () =>
+      Effect.sync(() => {
+        consumeCalls += 1;
+        return Option.some(ORIGINAL_SUBJECT);
+      }),
+  };
+  const recording = makeRecordingRecorder('commerce.portal-auth.email-verification-requested.v1');
+  return Effect.gen(function* verifyIntentIsStrict() {
+    const outcome = yield* Effect.result(
+      runAuditedRecovery(recording.recorder, successfulProvider(), store, (service) =>
+        service.verifyEmail({ token: VERIFICATION_TOKEN }),
+      ),
+    );
+    expect(Result.isFailure(outcome)).toBe(true);
+    if (Result.isFailure(outcome)) {
+      expect(outcome.failure).toBeInstanceOf(CommercePortalAuthRecoveryUnavailable);
+    }
+    // The address is never marked verified when the deployment cannot record that it was.
+    expect(consumeCalls).toBe(0);
   });
 });

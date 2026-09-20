@@ -90,6 +90,7 @@ it.effect('serves prefixed recovery routes through the owner group and rejects a
           consumedToken = Redacted.value(token);
           return Option.some(SUBJECT);
         }),
+      consumePasswordResetLedger: () => Effect.die('unused: this test drives email verification only'),
       consumeRateLimitBudget: ({ key, rule }) =>
         Effect.sync(() => {
           const spent = (budget.get(key) ?? 0) + 1;
@@ -97,14 +98,16 @@ it.effect('serves prefixed recovery routes through the owner group and rejects a
           return spent <= rule.max;
         }),
       findAccountSubjectForEmail: () => Effect.die('unused: this test substitutes reconciliation.detect directly'),
-      peekEmailVerificationLedger: () => Effect.die('unused: this test substitutes reconciliation.detect directly'),
+      // Read by the evidence path, not by detection: the verify route names the ledger subject on
+      // its intent row. This route's ledger holds no binding for the token the test submits.
+      peekEmailVerificationLedger: () => Effect.succeed(Option.none()),
       peekPasswordResetLedger: () => Effect.die('unused: this test substitutes reconciliation.detect directly'),
       recordRecoveryReconciliation: () => Effect.die('unused: this test substitutes reconciliation.detect directly'),
       registerEmailVerificationToken: () => Effect.succeed(true),
       registerPasswordResetToken: () => Effect.die('unused: this test substitutes reconciliation.detect directly'),
       reserveEmailVerificationSubject: () => Effect.succeed(true),
     };
-    // This test substitutes reconciliation.detect directly, so the store's evidence methods are
+    // This test substitutes reconciliation.detect directly, so the store's *detection* methods are
     // never called: they exist here only to satisfy the interface.
     const reconciliation = { detect: () => Effect.succeed(Option.none()) };
     const recovery = yield* makeCommercePortalAuthRecoveryService(unauditedCommercePortalAuthRecorder).pipe(

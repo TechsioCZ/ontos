@@ -74,6 +74,18 @@ no route that advances, completes or terminates an Attempt from the outside: eve
 travels through the governed enrollment Actions, and `COMPLETE` is derived from durable owner
 outcomes rather than asserted by a caller.
 
+`journey: COUNTERPARTY_INVITATION` is refused fail-closed with `422 enrollment_journey_unavailable`
+— no Attempt is persisted and no provider account is created — until an owner effect exists that can
+hold the invitation's one-time claim proof. `journey: EXISTING_ACCOUNT` creates no account either:
+its journey definition drops the `provider.account.create` step, so start verifies the presented
+address against the provider account directory and hands the Attempt straight to the continuation.
+
+A journey that halts is not abandoned. Reading an Attempt that is neither terminal nor under a live
+lease advances it once more, and an in-process sweeper
+(`src/workers/enrollment-continuation-sweeper.ts`) re-advances every halted Attempt whose last
+activity is older than the lease window. Both are safe to repeat: the durable claim and its lease,
+not the caller, are what grant ownership.
+
 Once start has committed, the journey is carried the rest of the way by the server-side enrollment
 continuation (`src/enrollment/continuation/`), which the start route triggers as a detached,
 concurrency-bounded fork. It reads the durable Attempt, asks the journey definition which required

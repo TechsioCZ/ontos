@@ -677,9 +677,9 @@ export interface CommerceEnrollmentCoreIdentityOwnerEffectOptions {
   readonly client: ExternalIdentityClientPort;
   readonly clientOptions: (input: CommerceEnrollmentOwnerTransition) => ExternalIdentityClientOptions;
   /**
-   * Interprets a Core read only after the response's original invocation matches the immutable
-   * owner operation. The callback must also establish the original request digest; the published
-   * Core read result intentionally does not carry that digest.
+   * Interprets a Core read only after `readResultIsOriginal` has vouched for its provenance. The
+   * callback must also establish the original request digest; the published Core read result
+   * intentionally does not carry that digest.
    */
   readonly interpretReadResult?: (
     input: CommerceEnrollmentOwnerReconciliationInput,
@@ -691,6 +691,19 @@ export interface CommerceEnrollmentCoreIdentityOwnerEffectOptions {
   readonly makeReconciliationRequest: (
     input: CommerceEnrollmentOwnerReconciliationInput,
   ) => ReadPrincipalBindingRequest;
+  /**
+   * Whether this exact Core read proves the transition being reconciled already committed.
+   *
+   * The default is the reservation's own provenance: `originalInvocationId` is the invocation that
+   * *created* the binding, so it identifies a reserve and nothing else. A transition that changes a
+   * binding Core already holds — activation — supplies its own predicate, because Core publishes no
+   * per-transition invocation reference to compare against and the default would report every lost
+   * activation response as unavailable forever.
+   */
+  readonly readResultIsOriginal?: (
+    input: CommerceEnrollmentOwnerReconciliationInput,
+    result: CoreFoundBindingResult,
+  ) => boolean;
 }
 
 const coreUnavailable = (cause?: unknown): InstanceType<typeof CommerceEnrollmentOwnerEffectUnavailable> => {
@@ -741,9 +754,17 @@ const decodeCoreKey = (
  * or calls a private registration; reserve/activate/status use the x-api-key client port and
  * reconciliation uses exact binding read or external-subject resolve selected by composition.
  */
+/** A reservation is the invocation that created the binding, so Core names it back verbatim. */
+const reservationCreatedThisBinding = (
+  input: CommerceEnrollmentOwnerReconciliationInput,
+  result: CoreFoundBindingResult,
+): boolean =>
+  Option.isSome(result.originalInvocationId) && result.originalInvocationId.value === input.ownerInvocationId;
+
 export const commerceEnrollmentCoreIdentityOwnerEffectFor = (
   options: CommerceEnrollmentCoreIdentityOwnerEffectOptions,
 ): CommerceEnrollmentOwnerEffect => {
+  const readResultIsOriginal = options.readResultIsOriginal ?? reservationCreatedThisBinding;
   const dispatch = Effect.fn('CommerceEnrollmentCoreIdentityOwnerEffect.dispatch')(function* dispatchCoreIdentity(
     input: CommerceEnrollmentOwnerTransition,
   ): Effect.fn.Return<CommerceEnrollmentOwnerEffectOutcome, CommerceEnrollmentOwnerEffectError> {
@@ -792,9 +813,8 @@ export const commerceEnrollmentCoreIdentityOwnerEffectFor = (
       .pipe(Effect.mapError(mapExternalIdentityError));
     if (
       result.outcome !== 'FOUND' ||
-      !Option.isSome(result.originalInvocationId) ||
-      result.originalInvocationId.value !== input.ownerInvocationId ||
-      options.interpretReadResult === undefined
+      options.interpretReadResult === undefined ||
+      !readResultIsOriginal(input, result)
     ) {
       return yield* coreUnavailable();
     }

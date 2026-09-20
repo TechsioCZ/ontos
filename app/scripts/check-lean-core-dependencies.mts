@@ -151,6 +151,15 @@ const coreExternalDependencyReason = (specifier: string): string =>
     ? `Core runtime source imports Commerce/Storefront/Better Auth package "${specifier}"`
     : `Core runtime source imports a dependency outside the pinned external specifier set: "${specifier}"`;
 
+/** Resolve a relative specifier against its importing file's directory, POSIX-style. */
+const resolveRelativeSpecifier = (importer: string, specifier: string): string =>
+  posixPath.normalize(posixPath.join(posixPath.dirname(importer), specifier));
+
+const coreRelativeEscapeReason = (specifier: string, resolved: string): string =>
+  commerceVocabulary.test(resolved)
+    ? `Core runtime source imports Commerce/Storefront/Better Auth via relative specifier "${specifier}" (resolves to "${resolved}")`
+    : `Core runtime source imports outside packages/core-runtime/src via relative specifier "${specifier}" (resolves to "${resolved}")`;
+
 const recordCoreSourceViolations = (
   record: (violation: LeanCoreDependencyViolation) => void,
   relative: string,
@@ -160,11 +169,22 @@ const recordCoreSourceViolations = (
     return;
   }
   for (const { index, specifier } of importsIn(relative, source)) {
-    const isExempt = specifier.startsWith('.') || isAllowedCoreExternalSpecifier(specifier);
+    const isRelative = specifier.startsWith('.');
+    const resolved = isRelative ? resolveRelativeSpecifier(relative, specifier) : undefined;
+    const isExempt = isRelative
+      ? resolved === coreSourceRoot || (resolved?.startsWith(`${coreSourceRoot}/`) ?? false)
+      : isAllowedCoreExternalSpecifier(specifier);
     if (isExempt) {
       continue;
     }
-    record({ file: relative, line: sourceLine(source, index), reason: coreExternalDependencyReason(specifier) });
+    record({
+      file: relative,
+      line: sourceLine(source, index),
+      reason:
+        isRelative && resolved !== undefined
+          ? coreRelativeEscapeReason(specifier, resolved)
+          : coreExternalDependencyReason(specifier),
+    });
   }
 };
 

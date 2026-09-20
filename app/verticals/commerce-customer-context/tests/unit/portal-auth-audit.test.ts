@@ -20,6 +20,7 @@ const occurredAt = new Date('2026-01-01T00:00:00.000Z');
 const SECRET = Redacted.make('s'.repeat(64));
 const EMAIL = 'Customer@Example.test';
 const AUDIT_RECORD_KEYS = [
+  'correlationDigest',
   'eventType',
   'operation',
   'outcome',
@@ -168,6 +169,7 @@ it('projects one event onto one row, with a NULL for every field the caller did 
     outcome: 'success',
   });
   expect(sparse).toStrictEqual({
+    correlationDigest: null,
     eventType: 'commerce.portal-auth.session-revoked.v1',
     occurredAt,
     operation: null,

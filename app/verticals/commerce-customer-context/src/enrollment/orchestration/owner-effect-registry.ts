@@ -59,7 +59,10 @@ import type { RetailSelfEnrollmentStepIntent } from '../journeys/retail-self-enr
 import { decodeOwnerResolution } from './owner-effect-codec.ts';
 import { providerObservationFor } from './owner-transition-composition.ts';
 import { commerceEnrollmentCoreIdentityOwnerEffectFor } from './owner-transition-driver.ts';
-import type { CommerceEnrollmentOwnerEffect } from './owner-transition-driver.ts';
+import type {
+  CommerceEnrollmentCoreIdentityOwnerEffectOptions,
+  CommerceEnrollmentOwnerEffect,
+} from './owner-transition-driver.ts';
 import { PORTAL_ACCOUNT_CREATION_TRANSITION_KEY, PORTAL_AUTH_OWNER_MODULE_KEY } from './prepared-owner-authority.ts';
 import { commerceEnrollmentPortalAuthOwnerReconciliationForLookup } from './provider-owner-effect.ts';
 
@@ -397,9 +400,9 @@ const coreIdentityDigest = (
   );
 
 /**
- * Both Core identity transitions reconcile through one exact Core read that carries the original
- * invocation's provenance, so a lost reserve or activate response is resolved by reading Core
- * rather than by reserving or activating a second time.
+ * Both Core identity transitions reconcile through one exact Core read, so a lost reserve or
+ * activate response is resolved by reading Core rather than by reserving or activating a second
+ * time. What counts as proof differs per transition, so each entry supplies its own predicate.
  */
 const coreIdentityEffect = (
   seam: CoreIdentitySeam,
@@ -407,8 +410,9 @@ const coreIdentityEffect = (
   transition: JourneyTransitionSpec,
   makeDispatchRequest: Parameters<typeof commerceEnrollmentCoreIdentityOwnerEffectFor>[0]['makeDispatchRequest'],
   readRequest: ReadPrincipalBindingRequest,
-): CommerceEnrollmentOwnerEffect =>
-  commerceEnrollmentCoreIdentityOwnerEffectFor({
+  readResultIsOriginal?: Parameters<typeof commerceEnrollmentCoreIdentityOwnerEffectFor>[0]['readResultIsOriginal'],
+): CommerceEnrollmentOwnerEffect => {
+  const base: CommerceEnrollmentCoreIdentityOwnerEffectOptions = {
     client: seam.client,
     clientOptions: () => seam.clientOptions(context),
     interpretReadResult: (input, result) =>
@@ -430,7 +434,29 @@ const coreIdentityEffect = (
       ),
     makeDispatchRequest,
     makeReconciliationRequest: () => readRequest,
-  });
+  };
+  return commerceEnrollmentCoreIdentityOwnerEffectFor(
+    readResultIsOriginal === undefined ? base : { ...base, readResultIsOriginal },
+  );
+};
+
+/**
+ * Activation's proof is the binding's own activation provenance, not an invocation id: Core
+ * populates the read result's `originalInvocationId` from the *reservation* that created the
+ * binding and publishes no reference for the activation that followed, so comparing it against the
+ * activation's invocation reports every lost activation response as unavailable and leaves the
+ * Attempt stuck. The exact reserved binding, in the namespace the Attempt's subject names, standing
+ * `active` is that activation having committed — whichever invocation carried it.
+ */
+const activationCommittedFor =
+  (
+    authBindingId: EnrollmentResourceId,
+    accountSubject: NonNullable<EnrollmentAttemptSnapshot['accountSubject']>,
+  ): NonNullable<Parameters<typeof commerceEnrollmentCoreIdentityOwnerEffectFor>[0]['readResultIsOriginal']> =>
+  (_input, result) =>
+    result.bindingStatus === 'active' &&
+    result.authBindingId === String(authBindingId) &&
+    String(result.authenticationNamespaceId) === String(accountSubject.authenticationNamespaceId);
 
 const coreReserveEntry = (seam: CoreIdentitySeam): RegistryEntry =>
   Effect.fn('CommerceEnrollmentOwnerEffectRegistry.coreReserve')(function* coreReserveEntryEffect(
@@ -523,7 +549,14 @@ const coreActivateEntry = (seam: CoreIdentitySeam): RegistryEntry =>
       { concurrency: 2 },
     );
     return registered(
-      coreIdentityEffect(seam, context, transition, () => ({ operation: 'activate', payload: request }), readRequest),
+      coreIdentityEffect(
+        seam,
+        context,
+        transition,
+        () => ({ operation: 'activate', payload: request }),
+        readRequest,
+        activationCommittedFor(reserved.value, accountSubject),
+      ),
       requestDigest,
     );
   });

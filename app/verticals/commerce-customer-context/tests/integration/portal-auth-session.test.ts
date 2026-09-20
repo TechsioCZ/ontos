@@ -16,11 +16,16 @@ import type {
   CommercePortalAuthSessionSnapshot,
 } from '../../api/portal-auth/session/contracts.ts';
 import { CommercePortalAuthService, portalAuthSessionStandaloneApiLive } from '../../api/portal-auth/session/http.ts';
+import { CommercePortalAuthSessionUnavailable } from '../../api/portal-auth/session/errors.ts';
 import { CommercePortalAuthSessionLifecycle } from '../../api/portal-auth/session/lifecycle.ts';
 import type { CommercePortalAuthSessionLifecycleService } from '../../api/portal-auth/session/lifecycle.ts';
 import { CommercePortalAuthRecoveryRateLimitService } from '../../api/portal-auth/rate-limit-service.ts';
 import type { CommercePortalAuthRecoveryRateLimit } from '../../api/portal-auth/rate-limit-service.ts';
 import { CommercePortalAuthSessionApi } from '../../shared/portal-auth/session-api.ts';
+import { CommercePortalAuthAudit, unauditedCommercePortalAuthRecorder } from '../../src/portal-auth/audit/audit.ts';
+import type { CommercePortalAuthAuditRecorder } from '../../src/portal-auth/audit/audit.ts';
+import type { CommercePortalAuthAuditEvent } from '../../src/portal-auth/audit/audit-contracts.ts';
+import { CommercePortalAuthAuditUnavailable } from '../../src/portal-auth/audit/audit-unavailable.ts';
 import { jsonBody } from '../support/response.ts';
 
 const trustedOrigin = 'https://portal.example.test';
@@ -100,6 +105,7 @@ const makeApp = (
   lifecycle: CommercePortalAuthSessionLifecycleService,
   budget: CommercePortalAuthRecoveryRateLimit = makeCountingBudget(),
   api: CommercePortalAuthService['Service']['api'] = providerRealm.api,
+  recorder: CommercePortalAuthAuditRecorder = unauditedCommercePortalAuthRecorder,
 ) =>
   Effect.acquireRelease(
     Effect.sync(() =>
@@ -107,6 +113,7 @@ const makeApp = (
         HttpApiBuilder.layer(CommercePortalAuthSessionApi).pipe(
           Layer.provide(portalAuthSessionStandaloneApiLive),
           Layer.provide(Layer.succeed(CommercePortalAuthSessionLifecycle, lifecycle)),
+          Layer.provide(Layer.succeed(CommercePortalAuthAudit, recorder)),
           Layer.provide(Layer.succeed(CommercePortalAuthService, { api })),
           Layer.provide(Layer.succeed(CommercePortalAuthConfig, configuration)),
           Layer.provide(Layer.succeed(CommercePortalAuthRecoveryRateLimitService, budget)),
@@ -503,6 +510,222 @@ it.effect('never renews the browser session cookie on a rejected refresh', () =>
       const renewed = yield* postWithCookie(admitted)('/api/portal-auth/refresh', '{}', browserCookie);
       expect(renewed.status).toBe(200);
       expect(renewed.headers.getSetCookie().length).toBeGreaterThan(0);
+    }),
+  ),
+);
+
+/**
+ * The recorder these evidence tests drive. `failing` names the one event type whose insert refuses,
+ * so a test can prove which row a decision actually depends on without failing the others.
+ */
+const makeRecordingRecorder = (failing?: string) => {
+  const events: CommercePortalAuthAuditEvent[] = [];
+  const recorder: CommercePortalAuthAuditRecorder = {
+    record: (event) =>
+      event.eventType === failing
+        ? Effect.fail(new CommercePortalAuthAuditUnavailable({ operation: 'audit-insert', reason: 'store is down' }))
+        : Effect.sync(() => {
+            events.push(event);
+          }),
+  };
+  return { events: () => events, recorder };
+};
+
+const signInBody = JSON.stringify({ email: 'customer@example.test', password: 'P'.repeat(24) });
+
+it.effect('refuses sign-in outright when the pre-provider intent row cannot be written', () =>
+  Effect.scoped(
+    Effect.gen(function* signInIntentIsStrict() {
+      let signInCalls = 0;
+      const recording = makeRecordingRecorder('commerce.portal-auth.session-sign-in-requested.v1');
+      const app = yield* makeApp(
+        {
+          ...unusedLifecycle,
+          signIn: () => {
+            signInCalls += 1;
+            return Effect.succeed({
+              outcome: { outcome: 'SESSION_CREATED' as const, session: snapshot },
+              setCookieHeaders: [signInCookie],
+            });
+          },
+        },
+        makeCountingBudget(),
+        providerRealm.api,
+        recording.recorder,
+      );
+      const response = yield* post(app)('/api/portal-auth/sign-in/email', signInBody, trustedOrigin);
+      expect(response.status).toBe(503);
+      // Better Auth is never asked for a session: a deployment that cannot record the attempt does
+      // not make one.
+      expect(signInCalls).toBe(0);
+      expect(response.headers.get('set-cookie')).toBeNull();
+    }),
+  ),
+);
+
+it.effect('revokes the session it just created when its completion evidence cannot be written', () =>
+  Effect.scoped(
+    Effect.gen(function* signInCompletionIsStrict() {
+      const revoked: string[] = [];
+      const recording = makeRecordingRecorder('commerce.portal-auth.session-signed-in.v1');
+      const app = yield* makeApp(
+        {
+          ...unusedLifecycle,
+          revoke: (input) =>
+            Effect.sync(() => {
+              revoked.push(input.sessionRef);
+              return { existed: true, outcome: 'SESSION_REVOKED' as const, sessionRef: input.sessionRef };
+            }),
+          signIn: () =>
+            Effect.succeed({
+              outcome: { outcome: 'SESSION_CREATED' as const, session: snapshot },
+              setCookieHeaders: [signInCookie],
+            }),
+        },
+        makeCountingBudget(),
+        providerRealm.api,
+        recording.recorder,
+      );
+      const response = yield* post(app)('/api/portal-auth/sign-in/email', signInBody, trustedOrigin);
+      // No live cookie may outlive its own evidence: the provider already persisted this session,
+      // so it is taken back rather than handed to the browser.
+      expect(response.status).toBe(503);
+      expect(response.headers.get('set-cookie')).toBeNull();
+      expect(revoked).toStrictEqual([snapshot.sessionRef]);
+      // The intent row still stands, so the attempt is not invisible.
+      expect(recording.events().map((event) => event.eventType)).toStrictEqual([
+        'commerce.portal-auth.session-sign-in-requested.v1',
+      ]);
+    }),
+  ),
+);
+
+it.effect('names the admitted subject on the completed sign-in evidence', () =>
+  Effect.scoped(
+    Effect.gen(function* signInEvidenceNamesSubject() {
+      const recording = makeRecordingRecorder();
+      const app = yield* makeApp(
+        {
+          ...unusedLifecycle,
+          signIn: () =>
+            Effect.succeed({
+              outcome: { outcome: 'SESSION_CREATED' as const, session: snapshot },
+              setCookieHeaders: [signInCookie],
+            }),
+        },
+        makeCountingBudget(),
+        providerRealm.api,
+        recording.recorder,
+      );
+      const response = yield* post(app)('/api/portal-auth/sign-in/email', signInBody, trustedOrigin);
+      expect(response.status).toBe(200);
+      const events = recording.events();
+      const completion = events.find((event) => event.eventType === 'commerce.portal-auth.session-signed-in.v1');
+      // The one outcome that mints a credential must say whose credential it is.
+      expect(completion?.providerSubjectId).toBe(snapshot.providerSubjectId);
+      expect(completion?.sessionRef).toBe(snapshot.sessionRef);
+    }),
+  ),
+);
+
+/**
+ * A realm that reports every provider-side session renewal. Better Auth's refresh is a row update,
+ * so the database hook counts exactly the writes a refreshing `getSession` commits — no clock, and
+ * nothing the owner transport can suppress after the fact.
+ */
+const makeRenewalCountingRealm = () => {
+  let renewals = 0;
+  const realm = betterAuth({
+    baseURL: trustedOrigin,
+    database: memoryAdapter({ account: [], session: [], user: [], verification: [] }),
+    databaseHooks: {
+      session: {
+        update: {
+          after: () => {
+            renewals += 1;
+            return Promise.resolve();
+          },
+        },
+      },
+    },
+    emailAndPassword: { enabled: true },
+    session: { updateAge: 0 },
+    trustedOrigins: [trustedOrigin],
+  });
+  return { realm, renewals: () => renewals };
+};
+
+/** A live provider session on the given realm, plus the browser cookie that names it. */
+const makeLiveSession = (realm: ReturnType<typeof makeRenewalCountingRealm>['realm'], email: string) =>
+  Effect.gen(function* liveSession() {
+    const signUp = yield* Effect.promise(() =>
+      realm.api.signUpEmail({
+        body: { email, name: 'Refresh Ordering', password: 'P'.repeat(24) },
+        headers: new Headers({ origin: trustedOrigin }),
+        returnHeaders: true,
+      }),
+    );
+    const cookie = signUp.headers
+      .getSetCookie()
+      .map((header) => header.split(';')[0] ?? '')
+      .filter((pair) => pair.length > 0)
+      .join('; ');
+    expect(cookie.length).toBeGreaterThan(0);
+    return cookie;
+  });
+
+it.effect('never renews the provider session when the audited refresh could not commit', () =>
+  Effect.scoped(
+    Effect.gen(function* refreshOrdersRenewalLast() {
+      const counting = makeRenewalCountingRealm();
+      const cookie = yield* makeLiveSession(counting.realm, 'refresh-ordering-failed@example.test');
+      const renewalsBefore = counting.renewals();
+      const app = yield* makeApp(
+        {
+          ...unusedLifecycle,
+          refresh: () =>
+            Effect.fail(
+              new CommercePortalAuthSessionUnavailable({
+                operation: 'session-touch-audit',
+                reason: 'audit evidence could not be persisted',
+              }),
+            ),
+        },
+        makeCountingBudget(),
+        counting.realm.api,
+      );
+      const response = yield* postWithCookie(app)('/api/portal-auth/refresh', '{}', cookie);
+      expect(response.status).toBe(503);
+      expect(response.headers.getSetCookie()).toStrictEqual([]);
+      // Better Auth's refresh commits provider-side the moment it is asked for, so reading with
+      // renewal enabled *before* the audited touch would leave the session extended by a call that
+      // then failed — and nothing here could take that extension back.
+      expect(counting.renewals()).toBe(renewalsBefore);
+    }),
+  ),
+);
+
+it.effect('renews the provider session only after the audited refresh committed', () =>
+  Effect.scoped(
+    Effect.gen(function* refreshRenewsAfterCommit() {
+      const counting = makeRenewalCountingRealm();
+      const cookie = yield* makeLiveSession(counting.realm, 'refresh-ordering-admitted@example.test');
+      const renewalsBefore = counting.renewals();
+      const app = yield* makeApp(
+        {
+          ...unusedLifecycle,
+          refresh: () =>
+            Effect.succeed({ identifierRotated: false, outcome: 'SESSION_REFRESHED' as const, session: snapshot }),
+        },
+        makeCountingBudget(),
+        counting.realm.api,
+      );
+      const response = yield* postWithCookie(app)('/api/portal-auth/refresh', '{}', cookie);
+      expect(response.status).toBe(200);
+      // The renewal is not lost by moving it: an admitted refresh still extends the provider
+      // session and still hands the renewed cookie onward.
+      expect(counting.renewals()).toBeGreaterThan(renewalsBefore);
+      expect(response.headers.getSetCookie().join('\n')).toContain('session_token=');
     }),
   ),
 );

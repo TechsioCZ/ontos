@@ -21,7 +21,14 @@ const MfaPasswordFieldSchema = Schema.String.check(Schema.isMinLength(1), Schema
 const MfaIssuerFieldSchema = Schema.optionalKey(
   Schema.String.check(Schema.isTrimmed(), Schema.isMinLength(1), Schema.isMaxLength(256)),
 );
-const MfaMethodFieldSchema = Schema.optionalKey(Schema.Literals(['otp', 'totp']));
+/**
+ * Better Auth 1.7.2 activates `method: 'otp'` immediately inside `/enable`
+ * (`dist/plugins/two-factor/index.mjs:116-124`), with no confirm step; only TOTP is staged for
+ * `/confirm-enable`. The owner never publishes an immediate-activation enrollment path, so the
+ * published field accepts only the literal that matches the staged flow — an `otp` request is a
+ * decoding failure (400), not a provider call.
+ */
+const MfaMethodFieldSchema = Schema.optionalKey(Schema.Literal('totp'));
 
 /** Request payloads are closed at the public boundary; excess fields are a decoding failure. */
 const CommercePortalAuthMfaSendOtpBodySchema = Schema.Struct({

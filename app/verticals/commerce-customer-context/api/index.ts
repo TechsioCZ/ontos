@@ -32,6 +32,9 @@ import { CommerceEnrollmentOwnerTransactionRunnerLive } from '../src/enrollment/
 import { CommerceEnrollmentOwnerEffectRegistryLive } from '../src/enrollment/orchestration/owner-effect-registry.ts';
 import { commerceEnrollmentOwnerTransitionPreparationLive } from '../src/enrollment/orchestration/owner-transition-composition.ts';
 import { CommerceEnrollmentPreparationSubjectResolverLive } from '../src/enrollment/orchestration/preparation-subject.ts';
+import { CommerceEnrollmentSweptContinuationLive } from '../src/workers/enrollment-continuation-sweeper.ts';
+import { CommercePortalAuthAccountCreationUnavailable } from './portal-auth/provider/account-creation-unavailable.ts';
+import { CommercePortalAuthAccountLookupService } from './portal-auth/provider/account-lookup-service.ts';
 import { CommercePortalAuthLive } from './portal-auth/provider/auth.ts';
 import {
   CommercePortalAuthConfigLive,
@@ -593,6 +596,43 @@ const deploymentEnrollmentContinuationLive = Layer.unwrap(
     ),
   ),
 );
+/**
+ * The continuation the routes are handed is the swept one: `advance` is the only thing that moves a
+ * journey and its only callers are detached request forks, so a halted Attempt would otherwise wait
+ * for a read that may never come. The sweeper records every halt and re-advances it once the lease
+ * window has lapsed, for the lifetime of this handler tree.
+ */
+const deploymentEnrollmentSweptContinuationLive = CommerceEnrollmentSweptContinuationLive.pipe(
+  Layer.provide(deploymentEnrollmentContinuationLive),
+);
+/**
+ * The provider account directory the Existing-account journey's start is verified against. It is
+ * the same narrow lookup the owner reconciler reads — one yes/no about one address — and a
+ * deployment without the realm has no directory to answer from, so it refuses retryably.
+ */
+const commercePortalAuthAccountLookupUnavailableLive = Layer.succeed(CommercePortalAuthAccountLookupService, {
+  existsByEmail: () =>
+    Effect.fail(
+      new CommercePortalAuthAccountCreationUnavailable({
+        reason: 'The Commerce portal account directory is not installed in this deployment',
+      }),
+    ),
+  existsByProviderSubject: () =>
+    Effect.fail(
+      new CommercePortalAuthAccountCreationUnavailable({
+        reason: 'The Commerce portal account directory is not installed in this deployment',
+      }),
+    ),
+});
+const deploymentEnrollmentAccountLookupLive = Layer.unwrap(
+  portalAuthRealmConfigured.pipe(
+    Effect.map((realm) =>
+      realm
+        ? commercePortalAuthAccountLookupRealmLive.pipe(Layer.provide(CommercePortalAuthConfigLive))
+        : commercePortalAuthAccountLookupUnavailableLive,
+    ),
+  ),
+);
 const enrollmentAwareActionRuntimeLive = commerceEnrollmentActionRuntimeLive.pipe(
   Layer.provide(
     Layer.mergeAll(actionRuntimeCoreLive, actionRuntimeServicesLive, deploymentEnrollmentOwnerPreparationLive),
@@ -684,8 +724,11 @@ export const makeCommerceCustomerContextApiRuntime = (
       // The start route commits the Attempt and the one provider account its claim authorizes, then
       // hands the rest of the journey to the continuation. Without this the journeys never run.
       GovernedReadLayer.provide(
-        deploymentEnrollmentContinuationLive.pipe(GovernedReadLayer.provide(DatabaseConfigLive)),
+        deploymentEnrollmentSweptContinuationLive.pipe(GovernedReadLayer.provide(DatabaseConfigLive)),
       ),
+      // The Existing-account journey creates no account, so its start verifies the presented one
+      // exists here instead of claiming a provider transition its journey never declares.
+      GovernedReadLayer.provide(deploymentEnrollmentAccountLookupLive),
       GovernedReadLayer.provide(
         commerceEnrollmentOwnerTransactionRunnerProductionLive.pipe(GovernedReadLayer.provide(DatabaseConfigLive)),
       ),

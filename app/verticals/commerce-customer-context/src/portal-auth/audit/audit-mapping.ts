@@ -80,6 +80,7 @@ export const commercePortalAuthSignInAuditEvent = (
  * carried the decision — tokens, cookies, passwords, MFA seeds, raw addresses — have no field here.
  */
 export const commercePortalAuthAuditRecord = (event: CommercePortalAuthAuditEvent): CommercePortalAuthAuditRecord => ({
+  correlationDigest: event.correlationDigest,
   eventType: event.eventType,
   operation: event.operation,
   outcome: event.outcome,
@@ -91,6 +92,7 @@ export const commercePortalAuthAuditRecord = (event: CommercePortalAuthAuditEven
 
 /** The exact column values one audit row carries; an absent optional is a NULL, never a guess. */
 export interface CommercePortalAuthAuditRow {
+  readonly correlationDigest: string | null;
   readonly eventType: CommercePortalAuthAuditEventType;
   readonly occurredAt: Date;
   readonly operation: string | null;
@@ -111,6 +113,7 @@ export interface CommercePortalAuthAuditRow {
 export const commercePortalAuthAuditRow = (event: CommercePortalAuthAuditEvent): CommercePortalAuthAuditRow => {
   const record = commercePortalAuthAuditRecord(event);
   return {
+    correlationDigest: record.correlationDigest ?? null,
     eventType: record.eventType,
     occurredAt: event.occurredAt,
     operation: record.operation ?? null,

@@ -3,6 +3,8 @@ import { randomUUID } from 'node:crypto';
 import { Effect, Option, Schema } from 'effect';
 import { expect, it } from 'effect-rstest';
 
+import { commercePortalAuthEnrollmentResumeOnRead } from '../../api/portal-auth/enrollment/http.ts';
+import { commerceEnrollmentContinuationSweeperFor } from '../../src/workers/enrollment-continuation-sweeper.ts';
 import {
   ClaimEnrollmentTransitionInputSchema,
   CommercePortalAccountSubjectSchema,
@@ -578,6 +580,109 @@ it.live('a second advance of a COMPLETE Attempt dispatches nothing at all', () =
       expect(second.owner.log.reconciled).toStrictEqual([]);
       // Byte-identical journal: a re-run of a settled Attempt must change nothing.
       expect(yield* readEnrollmentAcceptanceOperations(fixture, portalEnrollmentAttemptId)).toStrictEqual(settled);
+    }),
+  ),
+);
+
+/**
+ * Durable retry for a journey the detached start fork abandoned.
+ *
+ * `advance` is the only thing that moves a journey, and its only caller is a fork of a request that
+ * has already answered. A halt — a lost owner answer, another worker's lease, an unavailable
+ * owner — therefore leaves the Attempt non-terminal with nothing scheduled to touch it again. Two
+ * things come back for it: a read of the Attempt, and the sweeper.
+ */
+
+/** The owner whose answer never arrives on the first pass and is read back on the second. */
+const reconcilingPartyHarness = (fixture: EnrollmentAcceptanceFixture, identities: ScenarioIdentities) =>
+  harnessFor(fixture, identities, withAnswer(PARTY_CANDIDATE_SUBMISSION_TRANSITION_KEY, { kind: 'TIMED_OUT' }), {
+    resolutions: {
+      [PARTY_CANDIDATE_SUBMISSION_TRANSITION_KEY]: {
+        outcomeCode: PARTY_CANDIDATE_CREATED_OUTCOME_CODE,
+        reconciliationRef: randomUUID(),
+        resultReference: PARTY_RESOURCE_ID,
+        status: 'SUCCEEDED',
+      },
+    },
+    subject: subjectWithParty(identities),
+  });
+
+it.live('a read resumes a halted Attempt once its lease has lapsed, and never before', () =>
+  Effect.scoped(
+    Effect.gen(function* readResumesAStalledAttempt() {
+      const identities = makeScenarioIdentities();
+      const { fixture, portalEnrollmentAttemptId } = yield* scenario(identities);
+      const harness = yield* reconcilingPartyHarness(fixture, identities);
+      const identity = { portalEnrollmentAttemptId, tenantId: identities.tenantId };
+
+      const halted = yield* harness.continuation.advance(identity);
+      expect(halted.outcome).toBe('HALTED');
+
+      // While the abandoned claim's lease is still live it owns the transition, so a read must not
+      // touch it: resuming here would race a worker that may still answer.
+      const leased = yield* commercePortalAuthEnrollmentResumeOnRead(
+        harness.continuation,
+        yield* fixture.ownerStore.read(identity),
+      );
+      expect(Option.isNone(leased)).toBe(true);
+
+      // The lease lapses exactly as a killed worker's would, and now the read is the only signal
+      // that anyone is still waiting on this Attempt.
+      yield* expireEnrollmentAcceptanceLeases(fixture, portalEnrollmentAttemptId);
+      const resumed = yield* commercePortalAuthEnrollmentResumeOnRead(
+        harness.continuation,
+        yield* fixture.ownerStore.read(identity),
+      );
+
+      expect(resumed.pipe(Option.map((result) => result.outcome))).toStrictEqual(Option.some('COMPLETE'));
+      // The lost Party answer is read back rather than dispatched again, and the journey finishes.
+      expect(harness.owner.log.reconciled).toStrictEqual([PARTY_CANDIDATE_SUBMISSION_TRANSITION_KEY]);
+      expect(yield* readEnrollmentAcceptanceAttempt(fixture, portalEnrollmentAttemptId)).toMatchObject({
+        state: 'COMPLETE',
+      });
+
+      // A settled Attempt has nothing to resume, so a later read dispatches and reconciles nothing.
+      const settled = yield* commercePortalAuthEnrollmentResumeOnRead(
+        harness.continuation,
+        yield* fixture.ownerStore.read(identity),
+      );
+      expect(Option.isNone(settled)).toBe(true);
+      expect(harness.owner.log.reconciled).toStrictEqual([PARTY_CANDIDATE_SUBMISSION_TRANSITION_KEY]);
+    }),
+  ),
+);
+
+it.live('the sweeper re-advances a stale halted Attempt nobody ever reads', () =>
+  Effect.scoped(
+    Effect.gen(function* sweeperResumesAStaleAttempt() {
+      const identities = makeScenarioIdentities();
+      const { fixture, portalEnrollmentAttemptId } = yield* scenario(identities);
+      const harness = yield* reconcilingPartyHarness(fixture, identities);
+      // The stale window is zero here so the scenario decides when an Attempt is due rather than
+      // the wall clock; in the deployment it is the continuation's own lease window.
+      const sweeper = yield* commerceEnrollmentContinuationSweeperFor({
+        continuation: harness.continuation,
+        staleAfterMillis: 0,
+      });
+      const identity = { portalEnrollmentAttemptId, tenantId: identities.tenantId };
+
+      // The journey halts inside the swept continuation, which is the only place the Attempt is
+      // registered: no caller has to remember to enrol it.
+      const halted = yield* sweeper.continuation.advance(identity);
+      expect(halted.outcome).toBe('HALTED');
+      yield* expireEnrollmentAcceptanceLeases(fixture, portalEnrollmentAttemptId);
+
+      const sweep = yield* sweeper.sweep;
+
+      expect(sweep.swept).toBe(1);
+      // Without a sweeper this Attempt stays IN_PROGRESS for good: nothing else ever calls advance.
+      expect(yield* readEnrollmentAcceptanceAttempt(fixture, portalEnrollmentAttemptId)).toMatchObject({
+        state: 'COMPLETE',
+      });
+      expect(harness.owner.log.reconciled).toStrictEqual([PARTY_CANDIDATE_SUBMISSION_TRANSITION_KEY]);
+      // A completed journey is released, so the sweeper does not keep re-reading a settled Attempt.
+      expect(sweep.tracked).toBe(0);
+      expect((yield* sweeper.sweep).swept).toBe(0);
     }),
   ),
 );

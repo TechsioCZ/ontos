@@ -51,6 +51,8 @@ import type { CommercePortalAuthSessionProvider } from '../../api/portal-auth/se
 import type { CommercePortalAuthSessionRecord } from '../../api/portal-auth/session/contracts.ts';
 import type { CommercePortalAuthSessionStore } from '../../api/portal-auth/session/store-service.ts';
 import { unauditedCommercePortalAuthRecorder } from '../../src/portal-auth/audit/audit.ts';
+import type { CommercePortalAuthAuditRecorder } from '../../src/portal-auth/audit/audit.ts';
+import type { CommercePortalAuthAuditEvent } from '../../src/portal-auth/audit/audit-contracts.ts';
 
 const headers = new Headers({ origin: 'https://portal.example.test' });
 const otpDeliveryCallback: NonNullable<OTPOptions['sendOTP']> = () => Promise.resolve();
@@ -573,6 +575,30 @@ it.effect('gates enable behind the trusted origin, the freshness window, and the
   }),
 );
 
+/**
+ * Better Auth 1.7.2 activates `method: 'otp'` immediately inside `/enable`
+ * (`dist/plugins/two-factor/index.mjs:116-124`), with no confirm step; the owner publishes only
+ * the staged TOTP enrollment flow, so an `otp` enable body must be refused at decode — after the
+ * budget is spent (matching the owner-policy-bound-password case above) but before the provider is
+ * ever called.
+ */
+it.effect('refuses an otp enable body at decode, without calling the provider', () =>
+  Effect.gen(function* otpEnableRefused() {
+    const fixture = makeMfaHttpFixture();
+    const app = yield* makeMfaHttpApp(fixture);
+    const response = yield* Effect.promise(() =>
+      app.handler(
+        mfaHttpRequest('/api/portal-auth/two-factor/enable', { method: 'otp', password: 'P'.repeat(24) }),
+        httpRequestContextMfa,
+      ),
+    );
+    expect(response.status).toBe(400);
+    const body = yield* Effect.promise(() => response.json());
+    expect(body).toMatchObject({ code: 'invalid_request', status: 400 });
+    expect(fixture.state.enableInputs).toHaveLength(0);
+  }),
+);
+
 it.effect('answers a spent MFA budget with the rate-limited problem and stops calling the provider', () =>
   Effect.gen(function* rateLimitedRejection() {
     const fixture = makeMfaHttpFixture();
@@ -792,3 +818,77 @@ it.effect('admits an old session only after a step-up that re-authenticated that
     expect(fixture.state.enableInputs).toHaveLength(1);
   }),
 );
+
+/** Collects the rows a verification leaves, so a test can read the class it was filed under. */
+const makeRecordingRecorder = () => {
+  const events: CommercePortalAuthAuditEvent[] = [];
+  const recorder: CommercePortalAuthAuditRecorder = {
+    record: (event) =>
+      Effect.sync(() => {
+        events.push(event);
+      }),
+  };
+  return { events: () => events, recorder };
+};
+
+const verificationFailureCases: readonly (readonly [string, CommercePortalAuthMfaProviderFailure, string])[] = [
+  [
+    'a refused code',
+    new CommercePortalAuthMfaProviderRejected({
+      code: 'INVALID_CODE',
+      operation: 'verifyTOTP',
+      reason: 'the provider refused the code',
+      setCookieHeaders: [],
+    }),
+    'authentication_failed',
+  ],
+  [
+    'an unavailable provider',
+    new CommercePortalAuthMfaProviderUnavailable({
+      operation: 'verifyTOTP',
+      reason: 'provider unavailable',
+      setCookieHeaders: [],
+    }),
+    'provider_unavailable',
+  ],
+  [
+    'a throttled attempt',
+    new CommercePortalAuthMfaRateLimited({
+      code: 'TOO_MANY_ATTEMPTS_REQUEST_NEW_CODE',
+      operation: 'verifyTOTP',
+      reason: 'too many attempts',
+      setCookieHeaders: [],
+    }),
+    'rate_limited',
+  ],
+  [
+    'an expired challenge',
+    new CommercePortalAuthMfaChallengeExpired({
+      operation: 'verifyTOTP',
+      reason: 'the challenge expired',
+      setCookieHeaders: [],
+    }),
+    'session_expired',
+  ],
+];
+
+for (const [description, failure, expectedOutcome] of verificationFailureCases) {
+  it.effect(`files ${description} under its own audit outcome class`, () => {
+    const recording = makeRecordingRecorder();
+    const provider: CommercePortalAuthMfaProvider = {
+      ...successfulProvider(),
+      verifyTOTP: () => Effect.fail(failure),
+    };
+    return makeCommercePortalAuthMfaService(recording.recorder).pipe(
+      Effect.provideService(CommercePortalAuthMfaProviderService, provider),
+      Effect.flatMap((service) => Effect.result(service.verifyTOTP({ body: { code: '123456' }, headers }))),
+      Effect.tap(() =>
+        Effect.sync(() => {
+          // A provider outage or a throttle never judged the second factor. Filing them as
+          // `authentication_failed` would make an outage read as a burst of wrong codes.
+          expect(recording.events().map((event) => event.outcome)).toStrictEqual([expectedOutcome]);
+        }),
+      ),
+    );
+  });
+}

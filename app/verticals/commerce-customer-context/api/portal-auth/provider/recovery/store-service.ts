@@ -13,6 +13,8 @@ import type { CommercePortalAuthRecoveryUnavailable } from './unavailable.ts';
 export interface CommercePortalAuthRecoveryLedgerBinding {
   readonly email: string;
   readonly providerSubjectId: string;
+  /** The stored digest of the token this binding was read by; the audit trail's correlation key. */
+  readonly tokenDigest: string;
 }
 
 export interface CommercePortalAuthRecoveryStore {
@@ -24,6 +26,14 @@ export interface CommercePortalAuthRecoveryStore {
     readonly now: Date;
     readonly token: Redacted.Redacted;
   }) => Effect.Effect<Option.Option<string>, CommercePortalAuthRecoveryUnavailable>;
+  /**
+   * Marks a password-reset token's ledger row terminal after the provider accepted it. A spent
+   * token must never be reconciled against the account's current state again: it changed nothing
+   * the second time, so any drift since the reset is not a conflict it caused.
+   */
+  readonly consumePasswordResetLedger: (input: {
+    readonly token: Redacted.Redacted;
+  }) => Effect.Effect<void, CommercePortalAuthRecoveryUnavailable>;
   /**
    * Spends one unit of the durable budget the key names, answering `false` once the rule's window
    * is exhausted. The counter lives in the deployment's own store, so concurrent replicas spend one

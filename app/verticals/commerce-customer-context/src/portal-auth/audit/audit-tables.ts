@@ -16,6 +16,12 @@ export const portalAuthAuditEvent = commercePortalAuthAuditSchema.table(
   'portal_auth_audit_event',
   {
     auditEventId: uuid('audit_event_id').defaultRandom().primaryKey(),
+    /**
+     * Ties a pre-mutation intent row to the completion row for the same attempt — a recovery
+     * ledger token digest, or the keyed digest of a sign-in attempt's client key. A digest only:
+     * no token, address or credential can occupy this column.
+     */
+    correlationDigest: text('correlation_digest'),
     eventType: text('event_type').notNull(),
     occurredAt: timestamp('occurred_at', { withTimezone: true }).notNull(),
     operation: text('operation'),
@@ -34,5 +40,6 @@ export const portalAuthAuditEvent = commercePortalAuthAuditSchema.table(
     index('commerce_auth_audit_event_type_occurred_at_idx').on(table.eventType, table.occurredAt),
     index('commerce_auth_audit_event_subject_digest_idx').on(table.subjectDigest),
     index('commerce_auth_audit_event_provider_subject_id_idx').on(table.providerSubjectId),
+    index('commerce_auth_audit_event_correlation_digest_idx').on(table.correlationDigest),
   ],
 );

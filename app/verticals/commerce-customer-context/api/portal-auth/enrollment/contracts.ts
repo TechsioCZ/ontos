@@ -47,16 +47,48 @@ const EnrollmentDisplayNameSchema = Schema.String.check(
  * context and the journey's own declaration, so a caller cannot choose which owner transitions its
  * Attempt will be gated on.
  */
-export const CommercePortalAuthEnrollmentStartInputSchema = Schema.Struct({
+const enrollmentStartFields = {
   displayName: EnrollmentDisplayNameSchema,
   email: EnrollmentEmailSchema,
-  invitationId: Schema.optionalKey(EnrollmentInvitationIdSchema),
-  journey: EnrollmentJourneySchema,
   partyRef: Schema.optionalKey(EnrollmentResourceIdSchema),
   password: EnrollmentPasswordSchema,
   sellingLegalEntityId: EnrollmentLegalEntityIdSchema,
-}).annotate({ parseOptions: { onExcessProperty: 'error' } });
+} as const;
+
+const rejectExcessProperties = { parseOptions: { onExcessProperty: 'error' } } as const;
+
+/**
+ * The start payload is a discriminated union rather than one struct with an optional invitation,
+ * because the two are not independent: a Counterparty invitation enrollment is meaningless without
+ * the invitation it claims, and a Retail self-enrollment that names one is asking for a journey it
+ * did not select. Stating the dependency in the schema rejects both combinations at decode —
+ * before a governed Action runs, before an Attempt is persisted and before any provider mutation.
+ */
+export const CommercePortalAuthEnrollmentStartInputSchema = Schema.Union([
+  Schema.Struct({ ...enrollmentStartFields, journey: Schema.Literal('RETAIL_SELF_ENROLLMENT') }).annotate(
+    rejectExcessProperties,
+  ),
+  Schema.Struct({
+    ...enrollmentStartFields,
+    invitationId: EnrollmentInvitationIdSchema,
+    journey: Schema.Literal('COUNTERPARTY_INVITATION'),
+  }).annotate(rejectExcessProperties),
+  // Existing-account enrollment continues an already-authenticated subject into a second Tenant,
+  // and that Tenant may be entered either as Retail or through an invitation, so the invitation is
+  // genuinely optional here and selects which target journey the Attempt composes.
+  Schema.Struct({
+    ...enrollmentStartFields,
+    invitationId: Schema.optionalKey(EnrollmentInvitationIdSchema),
+    journey: Schema.Literal('EXISTING_ACCOUNT'),
+  }).annotate(rejectExcessProperties),
+]);
 export type CommercePortalAuthEnrollmentStartInput = typeof CommercePortalAuthEnrollmentStartInputSchema.Type;
+
+/** The invitation this start request names, or `undefined` for a journey that carries none. */
+export const commercePortalAuthEnrollmentInvitationId = (
+  input: CommercePortalAuthEnrollmentStartInput,
+): typeof EnrollmentInvitationIdSchema.Type | undefined =>
+  input.journey === 'RETAIL_SELF_ENROLLMENT' ? undefined : input.invitationId;
 
 /**
  * The projection a caller may observe. It is deliberately narrower than the durable Attempt

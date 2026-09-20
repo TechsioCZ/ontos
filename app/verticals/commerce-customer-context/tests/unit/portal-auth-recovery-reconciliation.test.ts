@@ -15,6 +15,7 @@ const EMAIL = 'reconciliation-customer@example.test';
 const LEDGER_SUBJECT = 'commerce-user-ledger-subject';
 const CURRENT_SUBJECT = 'commerce-user-current-subject';
 const TOKEN = Redacted.make('reconciliation-token');
+const TOKEN_DIGEST = 'reconciliation-token-digest';
 
 /**
  * Everything the reconciliation service needs, wired to explicit fixture state. The four
@@ -41,6 +42,7 @@ const makeReconciliationStore = (input: {
     store: {
       accountExists: () => Effect.succeed(input.accountExists),
       consumeEmailVerification: unusedRequiredMethod,
+      consumePasswordResetLedger: unusedRequiredMethod,
       consumeRateLimitBudget: unusedRequiredMethod,
       findAccountSubjectForEmail: () => Effect.succeed(input.currentAccountSubjectId),
       peekEmailVerificationLedger: () => Effect.succeed(input.ledgerBinding),
@@ -138,7 +140,7 @@ it.effect(
       const fixture = makeReconciliationStore({
         accountExists: true,
         currentAccountSubjectId: Option.some(CURRENT_SUBJECT),
-        ledgerBinding: Option.some({ email: EMAIL, providerSubjectId: LEDGER_SUBJECT }),
+        ledgerBinding: Option.some({ email: EMAIL, providerSubjectId: LEDGER_SUBJECT, tokenDigest: TOKEN_DIGEST }),
       });
       const outcome = yield* runDetect(fixture.store, 'verify-email');
       expect(Option.isSome(outcome)).toBe(true);
@@ -158,7 +160,7 @@ it.effect('detect raises ACCOUNT_RECOVERY_RECONCILIATION_REQUIRED exactly once f
     const fixture = makeReconciliationStore({
       accountExists: true,
       currentAccountSubjectId: Option.some(CURRENT_SUBJECT),
-      ledgerBinding: Option.some({ email: EMAIL, providerSubjectId: LEDGER_SUBJECT }),
+      ledgerBinding: Option.some({ email: EMAIL, providerSubjectId: LEDGER_SUBJECT, tokenDigest: TOKEN_DIGEST }),
     });
     const outcome = yield* runDetect(fixture.store, 'reset-password');
     expect(Option.isSome(outcome)).toBe(true);
@@ -178,7 +180,7 @@ it.effect('detect raises ACCOUNT_RECOVERY_RECONCILIATION_REQUIRED exactly once f
     const fixture = makeReconciliationStore({
       accountExists: false,
       currentAccountSubjectId: Option.none(),
-      ledgerBinding: Option.some({ email: EMAIL, providerSubjectId: LEDGER_SUBJECT }),
+      ledgerBinding: Option.some({ email: EMAIL, providerSubjectId: LEDGER_SUBJECT, tokenDigest: TOKEN_DIGEST }),
     });
     const outcome = yield* runDetect(fixture.store, 'reset-password');
     expect(Option.isSome(outcome)).toBe(true);
@@ -200,7 +202,7 @@ it.effect('detect returns None and records nothing when the evidence still agree
     const fixture = makeReconciliationStore({
       accountExists: true,
       currentAccountSubjectId: Option.some(LEDGER_SUBJECT),
-      ledgerBinding: Option.some({ email: EMAIL, providerSubjectId: LEDGER_SUBJECT }),
+      ledgerBinding: Option.some({ email: EMAIL, providerSubjectId: LEDGER_SUBJECT, tokenDigest: TOKEN_DIGEST }),
     });
     const outcome = yield* runDetect(fixture.store, 'verify-email');
     expect(Option.isNone(outcome)).toBe(true);
@@ -226,7 +228,7 @@ it.effect('detect never restores access: a conflicting result carries no subject
     const fixture = makeReconciliationStore({
       accountExists: true,
       currentAccountSubjectId: Option.some(CURRENT_SUBJECT),
-      ledgerBinding: Option.some({ email: EMAIL, providerSubjectId: LEDGER_SUBJECT }),
+      ledgerBinding: Option.some({ email: EMAIL, providerSubjectId: LEDGER_SUBJECT, tokenDigest: TOKEN_DIGEST }),
     });
     const outcome = yield* runDetect(fixture.store, 'verify-email');
     expect(Option.isSome(outcome)).toBe(true);

@@ -203,10 +203,15 @@ export const recoveryReconciliation = commercePortalAuthSchema.table(
 
 /**
  * Commerce-owned issuance-time evidence for password-reset requests, kept out of Better Auth's
- * shared `verification` table so this vertical can own a unique index on the identifier.
- * `identifierDigest` is the primary key, so a repeat upserts the same row; `tokenDigest` is a
- * separate unique column so a peek by token needs no identifier. A swept row becomes `expired`
- * with `providerSubjectId` and `email` cleared, retaining only that it existed.
+ * shared `verification` table so this vertical can own its own keys.
+ *
+ * `tokenDigest` is the primary key: one row per live token. Better Auth keeps every unexpired reset
+ * token it issued valid, so keying by identifier would let a second request overwrite the first
+ * token's binding and leave that still-acceptable token with no ledger row to reconcile against.
+ * `identifierDigest` is indexed rather than unique for the same reason. Re-registering the *same*
+ * token upserts its own row, which keeps a retried issuance idempotent. A terminal row — `expired`
+ * by the sweep, `consumed` by a successful reset — clears `providerSubjectId` and `email`,
+ * retaining only that it existed.
  */
 export const recoveryResetLedger = commercePortalAuthSchema.table(
   'recovery_reset_ledger',
@@ -214,14 +219,14 @@ export const recoveryResetLedger = commercePortalAuthSchema.table(
     createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
     email: text('email'),
     expiresAt: timestamp('expires_at', { withTimezone: true }).notNull(),
-    identifierDigest: text('identifier_digest').primaryKey(),
+    identifierDigest: text('identifier_digest').notNull(),
     providerSubjectId: text('provider_subject_id'),
     state: text('state').notNull().default('pending'),
-    tokenDigest: text('token_digest').notNull(),
+    tokenDigest: text('token_digest').primaryKey(),
     updatedAt: timestamp('updated_at', { withTimezone: true }).defaultNow().notNull(),
   },
   (table) => [
-    uniqueIndex('commerce_auth_recovery_reset_ledger_token_digest_uk').on(table.tokenDigest),
+    index('commerce_auth_recovery_reset_ledger_identifier_digest_idx').on(table.identifierDigest),
     index('commerce_auth_recovery_reset_ledger_state_expires_at_idx').on(table.state, table.expiresAt),
   ],
 );

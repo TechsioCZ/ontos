@@ -110,6 +110,13 @@ const makeFixture = () => {
   return { auth, database };
 };
 
+/**
+ * A deliberately *different* realm from the Commerce one: `skipVerificationOnEnable: true`. Better
+ * Auth activates the factor inside `/two-factor/enable` under that option, so the tests that need
+ * an account already holding a live second factor build it here in one call. The Commerce realm
+ * above sets the option to `false` and stages instead — the test directly below `makeFixture`'s
+ * staging assertions pins that difference, so neither fixture can be mistaken for the other.
+ */
 const makeSkipVerificationFixture = () => {
   const database = {
     account: [],
@@ -966,4 +973,35 @@ it.live('gates MFA enrollment on the persisted authentication stamp, not on the 
       ]);
     }),
   ),
+);
+
+it.effect('proves the Commerce realm stages a TOTP factor at /enable and activates it only at confirm', () =>
+  Effect.gen(function* stagedTotpEnable() {
+    const { auth } = makeFixture();
+    const email = `mfa-staged-${randomUUID()}@example.test`;
+    const signUp = yield* request(auth, '/sign-up/email', { email, name: 'MFA Staged User', password: PASSWORD });
+    expect(signUp.status).toBe(200);
+
+    const enabled = yield* request(
+      auth,
+      '/two-factor/enable',
+      { method: 'totp', password: PASSWORD },
+      browserHeadersFrom(signUp).get('cookie') ?? undefined,
+    );
+    expect(enabled.status).toBe(200);
+
+    const setup = yield* responseBody(enabled, EnableResponseSchema);
+    expect(setup.totpURI.startsWith('otpauth://totp/')).toBe(true);
+
+    // Better Auth 1.7.2, dist/plugins/two-factor/index.mjs:138-149 — the `twoFactorEnabled` update
+    // and the session rotation at lines 139-144 run only under `skipVerificationOnEnable`, and the
+    // stored row's `verified` at line 149 is `false` without it. `plugin.ts` sets the option to
+    // `false`, so `/enable` hands back the secret and backup codes but activates nothing, and
+    // signing in still completes: an unconfirmed factor must never lock the customer out.
+    yield* Effect.promise(() => auth.api.signOut({ headers: browserHeadersFrom(enabled) }));
+    const signIn = yield* Effect.promise(() =>
+      auth.api.signInEmail({ body: { email, password: PASSWORD }, headers: requestHeaders(), returnHeaders: true }),
+    );
+    expect(signIn.response).not.toStrictEqual({ twoFactorMethods: ['totp', 'otp'], twoFactorRedirect: true });
+  }),
 );

@@ -2,7 +2,9 @@ import { Context, DateTime, Effect, Option, Redacted, Schema } from 'effect';
 
 import { auditedLayer, commercePortalAuthAuditEmitter } from '../../../../src/portal-auth/audit/audit.ts';
 import { withCause } from '../../problems-support.ts';
+import { normalizeCommercePortalAuthEmail } from '../../../../src/portal-auth/email-normalization.ts';
 import type { CommercePortalAuthAuditRecorder } from '../../../../src/portal-auth/audit/audit.ts';
+import type { CommercePortalAuthAuditEvent } from '../../../../src/portal-auth/audit/audit-contracts.ts';
 import { COMMERCE_PORTAL_AUTH_POLICY } from '../config.ts';
 import {
   CommercePortalAuthEmailVerificationRequestSchema,
@@ -99,8 +101,6 @@ const unavailable = (operation: string, cause: unknown): CommercePortalAuthRecov
     cause,
   );
 
-const normalizeEmail = (email: string): string => email.toLowerCase();
-
 const expirationFrom = (now: Date): Date =>
   DateTime.toDate(
     DateTime.add(DateTime.makeUnsafe(now), {
@@ -156,6 +156,20 @@ export const makeCommercePortalAuthRecoveryService = Effect.fn('CommercePortalAu
     const reconciliation = yield* CommercePortalAuthRecoveryReconciliationService;
     const emitAudit = commercePortalAuthAuditEmitter(audit);
 
+    /**
+     * The strict half of the audit contract, for the two operations here that change durable state.
+     * The intent row is written *before* the provider is asked to act and its failure is the
+     * caller's failure: a deployment whose audit store is down refuses the reset outright rather
+     * than resetting a password and losing the only evidence that it happened. The completion event
+     * afterwards may take the lenient path, because this row already proves the attempt reached the
+     * provider and names the subject and token it named.
+     */
+    const recordIntent = Effect.fn('CommercePortalAuthRecovery.recordIntent')(function* recordIntentEffect(
+      event: CommercePortalAuthAuditEvent,
+    ): Effect.fn.Return<void, CommercePortalAuthRecoveryUnavailable> {
+      yield* audit.record(event).pipe(Effect.mapError((cause) => unavailable(event.operation ?? 'audit', cause)));
+    });
+
     const requestPasswordReset = Effect.fn('CommercePortalAuthRecovery.requestPasswordReset')(
       function* requestPasswordResetEffect(
         input: CommercePortalAuthPasswordResetRequestBoundary,
@@ -164,7 +178,7 @@ export const makeCommercePortalAuthRecoveryService = Effect.fn('CommercePortalAu
           Effect.mapError(invalidRequest),
         );
         const response = yield* provider
-          .requestPasswordReset({ body: { email: normalizeEmail(request.email) } })
+          .requestPasswordReset({ body: { email: normalizeCommercePortalAuthEmail(request.email) } })
           .pipe(Effect.mapError((failure) => mapProviderFailure(failure, REQUEST_REJECTION_CODES)));
         const decoded = yield* Schema.decodeEffect(RecoveryResponseSchema)(response).pipe(
           Effect.mapError((cause) => unavailable(RECOVERY_REQUEST_OPERATION, cause)),
@@ -204,6 +218,19 @@ export const makeCommercePortalAuthRecoveryService = Effect.fn('CommercePortalAu
       if (Option.isSome(conflict)) {
         return conflict.value;
       }
+      // The same row reconciliation just cleared, read again for the subject and token digest the
+      // evidence rows name. A token with no ledger row is submitted anyway — the provider decides
+      // whether it is valid — and its intent row simply names no subject.
+      const binding = yield* store.peekPasswordResetLedger({ token: request.token });
+      const ledgerSubjectId = Option.isSome(binding) ? binding.value.providerSubjectId : undefined;
+      yield* recordIntent({
+        correlationDigest: Option.isSome(binding) ? binding.value.tokenDigest : undefined,
+        eventType: 'commerce.portal-auth.recovery-reset-requested.v1',
+        occurredAt: yield* DateTime.nowAsDate,
+        operation: RECOVERY_RESET_OPERATION,
+        outcome: 'requested',
+        providerSubjectId: ledgerSubjectId,
+      });
       const response = yield* provider
         .resetPassword({
           body: {
@@ -222,11 +249,14 @@ export const makeCommercePortalAuthRecoveryService = Effect.fn('CommercePortalAu
           'The Commerce portal authentication provider rejected the recovery token',
         );
       }
+      yield* store.consumePasswordResetLedger({ token: request.token });
       yield* emitAudit({
+        correlationDigest: Option.isSome(binding) ? binding.value.tokenDigest : undefined,
         eventType: 'commerce.portal-auth.recovery-completed.v1',
         occurredAt: yield* DateTime.nowAsDate,
         operation: RECOVERY_RESET_OPERATION,
         outcome: 'success',
+        providerSubjectId: ledgerSubjectId,
       });
       return { outcome: 'ACCOUNT_RECOVERY_COMPLETED_SAME_SUBJECT' };
     });
@@ -239,7 +269,7 @@ export const makeCommercePortalAuthRecoveryService = Effect.fn('CommercePortalAu
           Effect.mapError(invalidRequest),
         );
         const reserved = yield* store.reserveEmailVerificationSubject({
-          email: normalizeEmail(request.email),
+          email: normalizeCommercePortalAuthEmail(request.email),
           providerSubjectId: request.providerSubjectId,
         });
         if (!reserved) {
@@ -250,7 +280,7 @@ export const makeCommercePortalAuthRecoveryService = Effect.fn('CommercePortalAu
           );
         }
         const response = yield* provider
-          .sendVerificationEmail({ body: { email: normalizeEmail(request.email) } })
+          .sendVerificationEmail({ body: { email: normalizeCommercePortalAuthEmail(request.email) } })
           .pipe(Effect.mapError((failure) => mapProviderFailure(failure, REQUEST_REJECTION_CODES)));
         const decoded = yield* Schema.decodeEffect(RecoveryResponseSchema)(response).pipe(
           Effect.mapError((cause) => unavailable(SEND_VERIFICATION_EMAIL_OPERATION, cause)),
@@ -278,7 +308,7 @@ export const makeCommercePortalAuthRecoveryService = Effect.fn('CommercePortalAu
         );
         const now = yield* DateTime.nowAsDate;
         const registered = yield* store.registerEmailVerificationToken({
-          email: normalizeEmail(metadata.email),
+          email: normalizeCommercePortalAuthEmail(metadata.email),
           expiresAt: expirationFrom(now),
           providerSubjectId: metadata.providerSubjectId,
           token: input.token,
@@ -312,6 +342,17 @@ export const makeCommercePortalAuthRecoveryService = Effect.fn('CommercePortalAu
       if (Option.isSome(conflict)) {
         return conflict.value;
       }
+      // Consuming the token marks the address verified, so the intent row goes in first: an audit
+      // store that cannot answer refuses the verification rather than restoring access silently.
+      const binding = yield* store.peekEmailVerificationLedger({ token: request.token });
+      yield* recordIntent({
+        correlationDigest: Option.isSome(binding) ? binding.value.tokenDigest : undefined,
+        eventType: 'commerce.portal-auth.email-verification-requested.v1',
+        occurredAt: yield* DateTime.nowAsDate,
+        operation: VERIFY_EMAIL_OPERATION,
+        outcome: 'requested',
+        providerSubjectId: Option.isSome(binding) ? binding.value.providerSubjectId : undefined,
+      });
       const now = yield* DateTime.nowAsDate;
       const subject = yield* store.consumeEmailVerification({ now, token: request.token });
       if (Option.isNone(subject)) {
@@ -322,6 +363,7 @@ export const makeCommercePortalAuthRecoveryService = Effect.fn('CommercePortalAu
         );
       }
       yield* emitAudit({
+        correlationDigest: Option.isSome(binding) ? binding.value.tokenDigest : undefined,
         eventType: 'commerce.portal-auth.email-verification-consumed.v1',
         occurredAt: yield* DateTime.nowAsDate,
         operation: VERIFY_EMAIL_OPERATION,

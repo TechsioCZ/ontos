@@ -42,6 +42,17 @@ export const CommercePortalAuthEnrollmentNotFoundProblemSchema = makeProblemDeta
   404,
   { code: Schema.Literal('attempt_not_found') },
 );
+/**
+ * A journey this deployment cannot carry end to end. The Counterparty invitation journey's claim
+ * needs a one-time claim proof no owner effect holds yet, so starting one would persist an Attempt
+ * and create a provider account that nothing could ever advance. The refusal is deliberately not a
+ * 503: nothing about it is retryable until the missing owner design lands.
+ */
+export const CommercePortalAuthEnrollmentJourneyUnavailableProblemSchema = makeProblemDetailsSchema(
+  'CommercePortalAuthEnrollmentJourneyUnavailableProblem',
+  422,
+  { code: Schema.Literal('enrollment_journey_unavailable') },
+);
 export const CommercePortalAuthEnrollmentRateLimitedProblemSchema = makeProblemDetailsSchema(
   'CommercePortalAuthEnrollmentRateLimitedProblem',
   429,
@@ -70,6 +81,7 @@ const startErrors = [
   CommercePortalAuthEnrollmentInvalidProblemSchema,
   CommercePortalAuthEnrollmentAuthenticationProblemSchema,
   CommercePortalAuthEnrollmentForbiddenProblemSchema,
+  CommercePortalAuthEnrollmentJourneyUnavailableProblemSchema,
   CommercePortalAuthEnrollmentRateLimitedProblemSchema,
   CommercePortalAuthEnrollmentUnavailableProblemSchema,
 ] as const;

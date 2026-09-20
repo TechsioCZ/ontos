@@ -7,6 +7,7 @@ import {
   ExternalUserSubjectSchema,
 } from '../../../shared/portal-auth-contracts.ts';
 import { withCause } from '../problems-support.ts';
+import { normalizeCommercePortalAuthEmail } from '../../../src/portal-auth/email-normalization.ts';
 import { CommerceEnrollmentProofService } from '../enrollment-proof-port.ts';
 import { CommercePortalAuthInstance } from './auth.ts';
 import { COMMERCE_PORTAL_AUTH_POLICY } from './config.ts';
@@ -199,9 +200,13 @@ export const makeCommercePortalAuthAccountCreationGateway = Effect.fn('CommerceP
       CommercePortalAuthCreatedAccount,
       CommercePortalAuthAccountCreationRejected | CommercePortalAuthAccountCreationUnavailable
     > {
+      // Normalized once, here, and used for the guard, the provider call and the persistence check
+      // alike: creating `Ada@example.test` while the guard looked for that exact casing would
+      // produce a second account for an address the portal already knows.
+      const normalizedEmail = normalizeCommercePortalAuthEmail(input.email);
       // This is only a provider-local duplicate guard. It never identifies an existing account to
       // the caller or treats email equality as continuity for a Core subject/binding.
-      const alreadyExists = yield* accountLookup.existsByEmail({ email: input.email });
+      const alreadyExists = yield* accountLookup.existsByEmail({ email: normalizedEmail });
       if (alreadyExists) {
         return yield* new CommercePortalAuthAccountCreationRejected({
           reason: 'Commerce portal account creation did not produce a new account',
@@ -210,7 +215,7 @@ export const makeCommercePortalAuthAccountCreationGateway = Effect.fn('CommerceP
 
       const providerRequest = {
         body: {
-          email: input.email,
+          email: normalizedEmail,
           name: input.name,
           password: Redacted.value(input.password),
         },
@@ -264,7 +269,7 @@ export const makeCommercePortalAuthAccountCreationGateway = Effect.fn('CommerceP
       );
       const { providerSubjectId } = providerSubject;
       const persisted = yield* accountLookup.existsByProviderSubject({
-        email: input.email,
+        email: normalizedEmail,
         providerSubjectId,
       });
       if (!persisted) {

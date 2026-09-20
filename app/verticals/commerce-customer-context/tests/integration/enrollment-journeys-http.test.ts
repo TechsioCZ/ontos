@@ -7,12 +7,25 @@ import { Config, Context, Effect, Layer, Redacted, Schema } from 'effect';
 import { expect, it } from 'effect-rstest';
 
 import {
+  GatewayAssertionRedemptionService,
+  GatewayAssertionReplayError,
+} from '../../../../packages/core-runtime/src/auth/gateway-assertion-redemption.ts';
+import {
   commercePortalAuthRealmLive,
   makeCommerceCustomerContextApiRuntime,
   productionActionRuntimeLive,
   productionReadRuntimeLive,
 } from '../../api/index.ts';
 import { GatewayAssertionRedemptionLive } from '../../api/auth/gateway-assertion-redemption.ts';
+import { CommercePortalAuthEnrollmentStartInputSchema } from '../../api/portal-auth/enrollment/contracts.ts';
+import {
+  commercePortalAuthEnrollmentAccountCreationOutcome,
+  commercePortalAuthEnrollmentDispatchesAccountCreation,
+} from '../../api/portal-auth/enrollment/http.ts';
+import {
+  commercePortalAuthEnrollmentAccountCreationClaim,
+  commercePortalAuthEnrollmentIntent,
+} from '../../api/portal-auth/enrollment/intent.ts';
 import { CommercePortalAuthAccountCreationRejected } from '../../api/portal-auth/provider/account-creation-rejected.ts';
 import { CommercePortalAuthAccountCreationService } from '../../api/portal-auth/provider/account-create.ts';
 import { CommercePortalAuthAccountCreationUnavailable } from '../../api/portal-auth/provider/account-creation-unavailable.ts';
@@ -20,7 +33,14 @@ import { CommercePortalAuthConfig } from '../../api/portal-auth/provider/config-
 import { parseCommercePortalAuthConfig } from '../../api/portal-auth/provider/config.ts';
 import { CommerceCoreIdentityClientConfig } from '../../api/portal-auth/provider/core-identity-client-config.ts';
 import { CommerceCoreIdentityClientLive } from '../../api/portal-auth/provider/core-identity-client.ts';
-import { CommerceEnrollmentAttemptNotFound } from '../../src/enrollment/attempts/errors.ts';
+import {
+  claimedOrIndeterminate,
+  commerceEnrollmentAttemptPersistenceForTransaction,
+} from '../../src/enrollment/attempts/attempt-persistence.ts';
+import {
+  CommerceEnrollmentAttemptConflict,
+  CommerceEnrollmentAttemptNotFound,
+} from '../../src/enrollment/attempts/errors.ts';
 import { CommercePortalAuthAccountLookupLive } from '../../src/portal-auth/persistence/portal-auth-account-lookup.ts';
 import {
   CommerceEnrollmentContinuation,
@@ -38,6 +58,7 @@ import {
 } from '../../src/enrollment/orchestration/prepared-owner-authority.ts';
 import type { CommerceEnrollmentPreparedOwnerBinding } from '../../src/enrollment/orchestration/prepared-owner-authority.ts';
 import {
+  ClaimEnrollmentTransitionInputSchema,
   EnrollmentActionInvocationIdSchema,
   EnrollmentAttemptIdSchema,
   EnrollmentModuleKeySchema,
@@ -45,6 +66,7 @@ import {
   EnrollmentTenantIdSchema,
   EnrollmentTransitionKeySchema,
 } from '../../shared/enrollment-contracts.ts';
+import { COMMERCE_AUTHENTICATION_NAMESPACE_ID } from '../../shared/portal-auth-contracts.ts';
 import {
   BIND_RETAIL_PORTAL_PROFILE_TRANSITION_KEY,
   COMMERCE_CUSTOMER_CONTEXT_OWNER_MODULE_KEY,
@@ -57,6 +79,18 @@ import {
   makeCommercePortalAuthDatabase,
 } from '../../src/portal-auth/persistence/portal-auth-database.ts';
 import { user } from '../../src/portal-auth/persistence/portal-auth-tables.ts';
+import {
+  makeEnrollmentAcceptanceFixture,
+  readEnrollmentAcceptanceAttempt,
+  readEnrollmentAcceptanceOperations,
+  startEnrollmentAcceptanceAttempt,
+} from '../support/enrollment-acceptance-fixture.ts';
+import type { EnrollmentAcceptanceFixture } from '../support/enrollment-acceptance-fixture.ts';
+import {
+  issueAcceptanceGatewayAssertion,
+  makeAcceptanceGatewayIssuer,
+} from '../support/enrollment-acceptance-identity-gateway-assertion.ts';
+import type { AcceptanceGatewayIssuer } from '../support/enrollment-acceptance-identity-gateway-assertion.ts';
 
 /**
  * The enrollment start path through the deployed composition, on real PostgreSQL.
@@ -332,6 +366,353 @@ it.live('installs the enrollment continuation, not the fail-closed leaf', () =>
       expect(Schema.is(CommerceEnrollmentAttemptNotFound)(failure)).toBe(true);
     }),
   ),
+);
+
+/** One start request from a trusted origin, presenting no gateway assertion. */
+const startEnrollmentRequest = (body: Record<string, string>): Request =>
+  new Request(`${ORIGIN}/api/portal-auth/enrollment/start`, {
+    body: JSON.stringify(body),
+    headers: {
+      'content-type': 'application/json',
+      origin: ORIGIN,
+      'x-correlation-id': `enrollment-http-${randomUUID()}`,
+    },
+    method: 'POST',
+  });
+
+it.live('refuses the Counterparty invitation journey before an Attempt or an account exists', () =>
+  Effect.scoped(
+    Effect.gen(function* invitationJourneyRefused() {
+      const runtime = yield* configuredRuntime;
+      const email = `enrollment-http-${randomUUID()}@example.test`;
+
+      const response = yield* Effect.promise(
+        async () =>
+          await runtime.handler(
+            startEnrollmentRequest({
+              displayName: 'Enrollment HTTP acceptance',
+              email,
+              invitationId: randomUUID(),
+              journey: 'COUNTERPARTY_INVITATION',
+              password: 'P'.repeat(24),
+              sellingLegalEntityId: randomUUID(),
+            }),
+          ),
+      );
+
+      // The journey is refused for what it is, before the governed Action that would answer 401 for
+      // this unauthenticated caller is ever reached: no owner effect can hold the invitation's
+      // one-time claim proof, so an Attempt started here could only orphan the account it created.
+      // Restoring the start path for this journey answers 401 and fails this assertion.
+      expect(response.status).toBe(422);
+      expect(response.headers.get('content-type')).toContain('application/problem+json');
+      expect(yield* Effect.promise(async () => await response.clone().json())).toMatchObject({
+        code: 'enrollment_journey_unavailable',
+        status: 422,
+      });
+      expect(yield* portalAccountsFor(email)).toStrictEqual([]);
+    }),
+  ),
+);
+
+it.live('refuses a Retail self-enrollment that names an invitation at the transport boundary', () =>
+  Effect.scoped(
+    Effect.gen(function* retailNamingAnInvitationRefused() {
+      const runtime = yield* configuredRuntime;
+      const email = `enrollment-http-${randomUUID()}@example.test`;
+
+      const response = yield* Effect.promise(
+        async () =>
+          await runtime.handler(
+            startEnrollmentRequest({
+              displayName: 'Enrollment HTTP acceptance',
+              email,
+              invitationId: randomUUID(),
+              journey: 'RETAIL_SELF_ENROLLMENT',
+              password: 'P'.repeat(24),
+              sellingLegalEntityId: randomUUID(),
+            }),
+          ),
+      );
+
+      // The journey and its invitation are not independent, and the payload schema says so: the
+      // combination is refused at decode. A start payload that accepts an optional invitation for
+      // every journey reaches the governed Action instead and answers 401 here.
+      expect(response.status).toBe(400);
+      expect(yield* portalAccountsFor(email)).toStrictEqual([]);
+    }),
+  ),
+);
+
+/**
+ * The durable half of a start, on real PostgreSQL: the Attempt, the claim the route mints for
+ * `provider.account.create`, the gate that authorizes exactly one provider call, and the outcome
+ * the route owes that claim once the account exists.
+ *
+ * Only the Better Auth sign-up itself is stood in for — it is the one step that cannot be replayed,
+ * and its answer is taken verbatim from the durable authorization the route's own capability reads.
+ */
+const START_DISPLAY_NAME = 'Enrollment HTTP acceptance';
+const START_WORKER_ID = 'commerce.portal-auth.enrollment-start';
+const isAttemptConflict = Schema.is(CommerceEnrollmentAttemptConflict);
+
+const startInputFor = (email: string) =>
+  Schema.decodeUnknownSync(CommercePortalAuthEnrollmentStartInputSchema)({
+    displayName: START_DISPLAY_NAME,
+    email,
+    journey: 'RETAIL_SELF_ENROLLMENT',
+    password: Redacted.make('P'.repeat(24)),
+    sellingLegalEntityId: randomUUID(),
+  });
+
+/** The Attempt the governed `start-portal-enrollment` Action commits, under the route's own intent. */
+const startAcceptanceEnrollment = Effect.fnUntraced(function* startAcceptanceEnrollment(
+  fixture: EnrollmentAcceptanceFixture,
+  startInput: ReturnType<typeof startInputFor>,
+  actorPrincipalId: typeof EnrollmentPrincipalIdSchema.Type,
+) {
+  const intent = yield* commercePortalAuthEnrollmentIntent(startInput);
+  return yield* startEnrollmentAcceptanceAttempt(fixture, {
+    ...intent,
+    actionInvocationId: Schema.decodeSync(EnrollmentActionInvocationIdSchema)(randomUUID()),
+    actorPrincipalId,
+    tenantId: Schema.decodeSync(EnrollmentTenantIdSchema)(fixture.scope.tenantId),
+  });
+});
+
+/** The durable gate the private account-creation capability passes before it calls the provider. */
+const authorizeAcceptanceAccountCreation = (
+  fixture: EnrollmentAcceptanceFixture,
+  portalEnrollmentAttemptId: string,
+  ownerInvocationId: string,
+) =>
+  fixture.run(fixture.scope, (transaction) =>
+    commerceEnrollmentAttemptPersistenceForTransaction(transaction, fixture.scope).authorizeAccountCreation({
+      ownerInvocationId,
+      portalEnrollmentAttemptId,
+      tenantId: fixture.scope.tenantId,
+    }),
+  );
+
+it.live('records the created portal account on the transition the start route claimed', () =>
+  Effect.scoped(
+    Effect.gen(function* recordsTheCreatedPortalAccount() {
+      const tenantId = randomUUID();
+      const actorPrincipalId = Schema.decodeSync(EnrollmentPrincipalIdSchema)(randomUUID());
+      const fixture = yield* makeEnrollmentAcceptanceFixture({ tenantId });
+      const startInput = startInputFor(`enrollment-http-${randomUUID()}@example.test`);
+      const attempt = yield* startAcceptanceEnrollment(fixture, startInput, actorPrincipalId);
+      const claim = yield* commercePortalAuthEnrollmentAccountCreationClaim(
+        startInput,
+        attempt.portalEnrollmentAttemptId,
+      );
+
+      const claimed = yield* fixture.ownerStore
+        .claimTransition(
+          Schema.decodeUnknownSync(ClaimEnrollmentTransitionInputSchema)({
+            actorPrincipalId,
+            expectedRevision: attempt.revision,
+            leaseDurationMs: 30_000,
+            ownerInvocationId: claim.ownerInvocationId,
+            ownerModuleKey: claim.ownerModuleKey,
+            portalEnrollmentAttemptId: attempt.portalEnrollmentAttemptId,
+            requestDigest: claim.requestDigest,
+            required: true,
+            tenantId,
+            transitionKey: claim.transitionKey,
+            workerId: START_WORKER_ID,
+          }),
+        )
+        .pipe(
+          Effect.flatMap(
+            claimedOrIndeterminate({
+              ownerInvocationId: claim.ownerInvocationId,
+              portalEnrollmentAttemptId: attempt.portalEnrollmentAttemptId,
+            }),
+          ),
+        );
+      expect(claimed.outcome).toBe('CLAIMED');
+      expect(commercePortalAuthEnrollmentDispatchesAccountCreation(claimed.operation, claim)).toBe(true);
+
+      // The provider call is authorized by the durable Attempt itself; the evidence and revision it
+      // answers with are exactly what the private capability hands back to the route.
+      const authorized = yield* authorizeAcceptanceAccountCreation(
+        fixture,
+        attempt.portalEnrollmentAttemptId,
+        claim.ownerInvocationId,
+      );
+      const providerSubjectId = `portal-user-${randomUUID()}`;
+      const recorded = yield* commercePortalAuthEnrollmentAccountCreationOutcome(
+        claim,
+        claimed.attempt,
+        claimed.operation,
+        {
+          enrollmentAttemptId: attempt.portalEnrollmentAttemptId,
+          evidenceRef: authorized.evidenceRef,
+          outcome: 'CREATED',
+          providerSubjectId,
+          revision: authorized.revision,
+        },
+      ).pipe(Effect.flatMap((outcome) => fixture.ownerStore.recordOutcome(outcome)));
+
+      // Discarding the provider result leaves this row IN_PROGRESS with no subject for good: the
+      // Attempt can never derive completion and its reconciliation has nothing to correlate by.
+      expect(yield* readEnrollmentAcceptanceOperations(fixture, attempt.portalEnrollmentAttemptId)).toStrictEqual([
+        {
+          outcome_code: 'provider_account_created',
+          reconciliation_ref: null,
+          result_reference: authorized.evidenceRef,
+          status: 'SUCCEEDED',
+          transition_key: PORTAL_ACCOUNT_CREATION_TRANSITION_KEY,
+        },
+      ]);
+      expect(recorded.attempt.accountSubject).toStrictEqual({
+        authenticationNamespaceId: COMMERCE_AUTHENTICATION_NAMESPACE_ID,
+        providerSubjectId,
+        subjectType: 'user',
+      });
+
+      // What the continuation reads next is the durable Attempt, and the subject is on it.
+      const observed = yield* fixture.ownerStore.read({
+        portalEnrollmentAttemptId: attempt.portalEnrollmentAttemptId,
+        tenantId: Schema.decodeSync(EnrollmentTenantIdSchema)(tenantId),
+      });
+      expect(observed.accountSubject).toStrictEqual(recorded.attempt.accountSubject);
+      expect(observed.state).toBe('IN_PROGRESS');
+
+      // A retry presenting the same Idempotency-Key replays that `CLAIMED` answer verbatim. The
+      // journal is what refuses it a second account: the transition is recorded, so the route
+      // dispatches nothing, and the durable gate would refuse the provider call in any case.
+      const replayed = yield* fixture.ownerStore.readOwnerOperation({
+        ownerModuleKey: claim.ownerModuleKey,
+        portalEnrollmentAttemptId: attempt.portalEnrollmentAttemptId,
+        tenantId: Schema.decodeSync(EnrollmentTenantIdSchema)(tenantId),
+        transitionKey: claim.transitionKey,
+      });
+      expect(commercePortalAuthEnrollmentDispatchesAccountCreation(replayed, claim)).toBe(false);
+      expect(
+        isAttemptConflict(
+          yield* Effect.flip(
+            authorizeAcceptanceAccountCreation(fixture, attempt.portalEnrollmentAttemptId, claim.ownerInvocationId),
+          ),
+        ),
+      ).toBe(true);
+    }),
+  ),
+);
+
+/**
+ * The enrollment read is not a governed Action: it authenticates the caller's Bearer assertion and
+ * then reads one durable Attempt, so the Tenant and the Principal it scopes by are the ones the
+ * assertion names and nothing else. Everything below is the deployed composition but that issuer.
+ */
+const READ_AUDIENCE = 'commerce-customer-context';
+const READ_ISSUER = 'http://gateway.enrollment-journeys-http.test';
+const READ_KEY_ID = 'enrollment-journeys-http';
+
+/** A redemption store that accepts each `jti` exactly once, as a deployed redemption store does. */
+const singleUseRedemptionLive = Layer.sync(GatewayAssertionRedemptionService, () => {
+  const consumed = new Set<string>();
+  return {
+    consume: ({ jti }) =>
+      consumed.has(jti)
+        ? Effect.fail(new GatewayAssertionReplayError({ reason: 'The Bearer assertion was already redeemed' }))
+        : Effect.sync(() => {
+            consumed.add(jti);
+          }),
+  };
+});
+
+const authenticatedRuntime = (gateway: AcceptanceGatewayIssuer) =>
+  Effect.acquireRelease(
+    Effect.gen(function* buildAuthenticatedRuntime() {
+      const realmLive = yield* configuredRealmLive();
+      return makeCommerceCustomerContextApiRuntime(
+        productionReadRuntimeLive,
+        productionActionRuntimeLive,
+        singleUseRedemptionLive,
+        realmLive,
+        // The verification material is a composition input of the deployed verifier, so no ambient
+        // environment is touched.
+        gateway.verificationLive,
+      ).createHandler();
+    }),
+    (runtime) => Effect.promise(async () => await runtime.dispose()),
+  );
+
+it.live(
+  'answers a same-Tenant caller that did not start an Attempt exactly as an absent one',
+  () =>
+    Effect.scoped(
+      Effect.gen(function* foreignPrincipalReadsNothing() {
+        const tenantId = randomUUID();
+        const creatorPrincipalId = Schema.decodeSync(EnrollmentPrincipalIdSchema)(randomUUID());
+        const fixture = yield* makeEnrollmentAcceptanceFixture({ tenantId });
+        const gateway = yield* makeAcceptanceGatewayIssuer(READ_ISSUER, READ_KEY_ID);
+        const runtime = yield* authenticatedRuntime(gateway);
+        const attempt = yield* startAcceptanceEnrollment(
+          fixture,
+          startInputFor(`enrollment-http-${randomUUID()}@example.test`),
+          creatorPrincipalId,
+        );
+
+        /** One portal session of this Tenant reading one Attempt id. */
+        const readAs = Effect.fnUntraced(function* readAs(principalId: string, attemptId: string) {
+          const assertion = yield* issueAcceptanceGatewayAssertion(fixture.admin, gateway, READ_AUDIENCE, {
+            authBindingId: randomUUID(),
+            authContextRef: `portal-session:${principalId}`,
+            authenticationNamespaceId: COMMERCE_AUTHENTICATION_NAMESPACE_ID,
+            authMethod: 'session',
+            legalEntityId: randomUUID(),
+            principalId,
+            tenantId,
+          });
+          return yield* Effect.promise(
+            async () =>
+              await runtime.handler(
+                new Request(`${ORIGIN}/api/portal-auth/enrollment/${attemptId}`, {
+                  headers: {
+                    authorization: `Bearer ${assertion}`,
+                    origin: ORIGIN,
+                    'x-correlation-id': `enrollment-http-${randomUUID()}`,
+                  },
+                  method: 'GET',
+                }),
+              ),
+          );
+        });
+
+        // A second customer of the very same Tenant, holding the Attempt id, and the same customer
+        // asking for an Attempt that does not exist. The two answers must be indistinguishable.
+        const foreign = yield* readAs(randomUUID(), attempt.portalEnrollmentAttemptId);
+        const absent = yield* readAs(randomUUID(), randomUUID());
+        expect(foreign.status).toBe(404);
+        expect(absent.status).toBe(404);
+        expect(foreign.headers.get('content-type')).toContain('application/problem+json');
+        expect(yield* Effect.promise(async () => await foreign.clone().json())).toStrictEqual(
+          yield* Effect.promise(async () => await absent.clone().json()),
+        );
+
+        // The foreign read resumed nothing either: the Attempt is untouched at the revision it was
+        // started with. Scoping the read alone would leave that resume open to any caller.
+        expect(yield* readEnrollmentAcceptanceAttempt(fixture, attempt.portalEnrollmentAttemptId)).toStrictEqual({
+          revision: attempt.revision,
+          state: 'IN_PROGRESS',
+        });
+
+        // The customer who started it still reads it, so the 404 above is about the caller and not
+        // about an unreadable Attempt.
+        const owned = yield* readAs(creatorPrincipalId, attempt.portalEnrollmentAttemptId);
+        expect(owned.status).toBe(200);
+        expect(yield* Effect.promise(async () => await owned.clone().json())).toMatchObject({
+          journey: 'RETAIL_SELF_ENROLLMENT',
+          portalEnrollmentAttemptId: attempt.portalEnrollmentAttemptId,
+          revision: attempt.revision,
+          state: 'IN_PROGRESS',
+        });
+      }),
+    ),
+  180_000,
 );
 
 it.live('serves the enrollment start route from the installed realm under ordinary governance', () =>

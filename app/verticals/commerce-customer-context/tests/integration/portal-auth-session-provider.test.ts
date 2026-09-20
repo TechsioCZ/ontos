@@ -36,7 +36,7 @@ import {
 } from '../../api/portal-auth/session/lifecycle.ts';
 import { makeCommercePortalAuthSessionStore } from '../../src/portal-auth/persistence/portal-auth-session-store.ts';
 import { CommercePortalAuthSessionApi } from '../../shared/portal-auth/session-api.ts';
-import { unauditedCommercePortalAuthRecorder } from '../../src/portal-auth/audit/audit.ts';
+import { CommercePortalAuthAudit, unauditedCommercePortalAuthRecorder } from '../../src/portal-auth/audit/audit.ts';
 
 const ORIGIN = 'http://localhost:3020';
 const requestContext = Context.makeUnsafe<unknown>(new Map());
@@ -396,6 +396,7 @@ const makeProviderFixture = Effect.fn('CommercePortalAuthProviderIntegration.mak
           Layer.provide(portalAuthSessionStandaloneApiLive),
           Layer.provide(Layer.succeed(CommercePortalAuthSessionLifecycle, lifecycle)),
           Layer.provide(Layer.succeed(CommercePortalAuthService, { api: auth.api })),
+          Layer.provide(Layer.succeed(CommercePortalAuthAudit, unauditedCommercePortalAuthRecorder)),
           Layer.provide(Layer.succeed(CommercePortalAuthConfig, configuration)),
           // This fixture drives the real provider through many deliberate sign-ins; the owner's
           // durable budget is exercised by `portal-auth-session.test.ts`, so it grants here.

@@ -145,6 +145,17 @@ with the same Attempt id. Attempts left in `RECONCILIATION_REQUIRED` are the one
 decision — an ambiguous Party candidate, or a Retail Portal binding that committed without its
 complete reviewed Permission baseline.
 
+## Operator notes
+
+- `commerce_auth.recovery_reset_ledger` holds one row per live reset token (primary key
+  `token_digest`, `identifier_digest` indexed, not unique), so a customer with two unexpired links
+  has two rows; a row reaches `consumed` when the reset succeeds and `expired` when the sweep
+  retires it, and both terminal states clear `provider_subject_id` and `email`.
+- Sign-in, password reset and email verification now write a strict `…-requested.v1` intent row
+  before calling the provider, so an unreachable `commerce_auth.portal_auth_audit_event` table makes
+  those three operations answer 503 instead of changing state without evidence — treat an audit
+  store outage as an authentication outage, not a degraded mode.
+
 ## Verification commands
 
 Run from `app/verticals/commerce-customer-context` (or `pnpm --filter @app/commerce-customer-context <script>` from `app/`):
