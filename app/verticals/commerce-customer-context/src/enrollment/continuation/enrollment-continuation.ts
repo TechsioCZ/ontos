@@ -11,7 +11,11 @@ import type {
   EnrollmentOwnerOperationSnapshot,
   ReadEnrollmentAttemptInput,
 } from '../../../shared/enrollment-contracts.ts';
-import type { DueEnrollmentAttempt, ListDueEnrollmentAttemptsInput } from '../attempts/attempt-persistence.ts';
+import type {
+  DueEnrollmentAttempt,
+  ListDueEnrollmentAttemptsInput,
+  RecordEnrollmentSweepInput,
+} from '../attempts/attempt-persistence.ts';
 import { attemptRejected } from '../attempts/errors.ts';
 import type { CommerceEnrollmentAttemptError } from '../attempts/errors.ts';
 import { journeyTransitionIdentity, journeyTransitions } from '../journeys/journey-contracts.ts';
@@ -95,6 +99,13 @@ export interface CommerceEnrollmentContinuationService {
   readonly listDue: (
     input: ListDueEnrollmentAttemptsInput,
   ) => Effect.Effect<readonly DueEnrollmentAttempt[], CommerceEnrollmentAttemptError>;
+  /**
+   * Count one sweep of one Attempt against the revision it was swept at, and answer with its new
+   * count. The budget is durable because the worker that spends it is not: a count kept in memory
+   * dies with its process and is re-granted by the next listing, which is how an Attempt nothing
+   * can move ends up ahead of newer work on every page, for ever.
+   */
+  readonly recordSweep: (input: RecordEnrollmentSweepInput) => Effect.Effect<number, CommerceEnrollmentAttemptError>;
 }
 
 export class CommerceEnrollmentContinuation extends Context.Service<
@@ -438,6 +449,7 @@ export const CommerceEnrollmentContinuationLive = Layer.effect(
       // Reading the journal dispatches nothing, so it takes no permit: the permits exist to keep
       // enrollment bursts from flooding the owners, and a listing reaches no owner at all.
       listDue: (input) => commerceEnrollmentDueAttemptStoreForRun(runner.runWorker).listDue(input),
+      recordSweep: (input) => commerceEnrollmentDueAttemptStoreForRun(runner.runWorker).recordSweep(input),
     };
   }),
 );
@@ -457,4 +469,7 @@ export const commerceEnrollmentContinuationUnavailableLive = Layer.succeed(Comme
   // Empty rather than refused: a deployment without the enrollment realm has no journey to be owed
   // a transition, so the sweeper that reads this has nothing due, not an error to report each tick.
   listDue: () => Effect.succeed([]),
+  // Nothing is ever listed here, so nothing is ever swept; answering with the count a first sweep
+  // would have left keeps this a no-op rather than a second code path for the sweeper to know.
+  recordSweep: () => Effect.succeed(1),
 });

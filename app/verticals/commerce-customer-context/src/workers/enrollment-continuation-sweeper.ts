@@ -33,6 +33,12 @@ import type { ReadEnrollmentAttemptInput } from '../../shared/enrollment-contrac
  * The single reconcile a fenced Attempt is owed settles that operation, after which the Attempt
  * leaves the listing by itself rather than by a rule predicting the settlement.
  *
+ * The sweep budget is durable for the same reason the discovery is: an Attempt no owner effect can
+ * move would otherwise be granted a fresh budget by every listing, and the oldest rows are the ones
+ * a listing hands out first. So each sweep is counted on the Attempt itself, against the revision
+ * it was swept at, and the listing excludes a spent one in SQL — which is also what stops a page of
+ * them from hiding newer work behind it. Anything that moves the Attempt resets the count.
+ *
  * It follows the shape of the outbox poller's supervision loop: one tick that cannot fail, logged
  * only when it did something, repeated on a fixed schedule for the lifetime of the layer's scope.
  * It is deliberately not a queue: the Attempt journal already is the durable record, and a second
@@ -45,21 +51,19 @@ const LEASE_WINDOW_MS = 30_000;
 const SWEEP_CONCURRENCY = 4;
 /**
  * A halt that repeats is an operator fact, not a retry loop: after this many fruitless sweeps the
- * Attempt is released, and only something that moves its durable revision — a read that resumes it,
- * or an owner outcome — makes it due again.
+ * journal stops reporting the Attempt, and only something that moves its durable revision — a read
+ * that resumes it, or an owner outcome — makes it due again. It is spent durably, because the
+ * worker spending it is not durable: a count kept only in a process's memory is re-granted in full
+ * by the next listing, so an Attempt nothing can move stays ahead of newer work on every page.
  */
-const SWEEP_BUDGET = 8;
+export const SWEEP_BUDGET = 8;
 /** The registry is a recovery aid, not a work queue, so it is bounded and drops its oldest entry. */
 const MAX_TRACKED_ATTEMPTS = 512;
 /** One tick's appetite: how many Attempts it will take from the journal and advance. */
 const SWEEP_TICK_LIMIT = 64;
 /** One durable page. Smaller than a tick's appetite so a page is never a tick's whole answer. */
 const SWEEP_PAGE_LIMIT = 32;
-/**
- * How many pages one tick will read. A page of Attempts an earlier budget gave up on contributes
- * nothing to the appetite, so without a bound a long run of them would keep the tick reading; with
- * it, the tick stops and the next one resumes from the start rather than from where this one gave up.
- */
+/** How many pages one tick will read before it stops and leaves the rest to the next one. */
 const SWEEP_MAX_PAGES = 8;
 
 type Continuation = typeof CommerceEnrollmentContinuation.Service;
@@ -67,8 +71,11 @@ type Continuation = typeof CommerceEnrollmentContinuation.Service;
 /** What one advance knows about the Attempt it is advancing, beyond the identity it advances. */
 interface AdvanceEntry {
   readonly attempt: ReadEnrollmentAttemptInput;
-  /** The durable revision the journal last reported; `none` until a listing has named one. */
-  readonly revision: Option.Option<number>;
+  /**
+   * Whether the durable journal has ever named this Attempt. Only one it never named is swept on
+   * the in-process budget below; for everything else the journal counts the sweeps itself.
+   */
+  readonly journalled: boolean;
   readonly sweeps: number;
 }
 
@@ -76,8 +83,15 @@ interface TrackedAttempt extends AdvanceEntry {
   readonly lastActivityMillis: number;
 }
 
+/** One Attempt this tick decided to work on, together with the journal's current word on it. */
+interface DueSweep {
+  readonly entry: TrackedAttempt;
+  /** The revision the journal named for it on this tick; `none` when this tick's listing had none. */
+  readonly revision: Option.Option<number>;
+}
+
 export interface CommerceEnrollmentContinuationSweepResult {
-  /** Attempts that ran out of sweep budget and were released without being advanced. */
+  /** Due Attempts this tick did not advance: a spent budget, or a sweep it could not record. */
   readonly released: number;
   /** Attempts whose last activity was older than the stale window and were advanced again. */
   readonly swept: number;
@@ -102,17 +116,8 @@ export interface CommerceEnrollmentContinuationSweeperOptions {
 }
 
 type Registry = ReadonlyMap<string, TrackedAttempt>;
-/** Attempts whose sweep budget ran out, against the durable revision each ran out at. */
-type Exhausted = ReadonlyMap<string, number>;
 
 interface SweeperState {
-  /**
-   * Why this is remembered at all: releasing an entry from the registry is not enough, because the
-   * durable listing reports the very same Attempt on the next tick and a merge that knows nothing
-   * about the spent budget seeds it again from zero. Marked against the revision it was released
-   * at, so the mark says "nothing has moved" rather than "never sweep this again".
-   */
-  readonly exhausted: Ref.Ref<Exhausted>;
   readonly registry: Ref.Ref<Registry>;
 }
 
@@ -137,43 +142,31 @@ const bounded = <Value>(entries: ReadonlyMap<string, Value>): ReadonlyMap<string
   entries.size <= MAX_TRACKED_ATTEMPTS ? entries : new Map([...entries].slice(entries.size - MAX_TRACKED_ATTEMPTS));
 
 const withEntry = (registry: Registry, key: string, entry: TrackedAttempt): Registry => {
-  // Only a durable listing ever names a revision, so an entry re-registered by an advance keeps
-  // the one the registry already holds rather than forgetting what this Attempt was last seen at.
+  // Only a durable listing ever names an Attempt, so an entry re-registered by an advance keeps the
+  // registry's word on whether the journal has named this one rather than forgetting it.
   const tracked = registry.get(key);
   const carried: TrackedAttempt =
-    Option.isSome(entry.revision) || tracked === undefined ? entry : { ...entry, revision: tracked.revision };
+    entry.journalled || tracked === undefined ? entry : { ...entry, journalled: tracked.journalled };
   return bounded(new Map([...withoutKey(registry, key), [key, carried]]));
 };
-
-const withMark = (exhausted: Exhausted, key: string, revision: number): Exhausted =>
-  bounded(new Map([...withoutKey(exhausted, key), [key, revision]]));
 
 /** Record what one advance answered: a settled Attempt is released, every other one is kept. */
 const observe = (
   state: SweeperState,
   entry: AdvanceEntry,
   result?: CommerceEnrollmentContinuationResult,
-): Effect.Effect<void> => {
-  const key = registryKey(entry.attempt);
-  return Clock.currentTimeMillis.pipe(
-    Effect.flatMap((now) =>
-      Effect.all(
-        [
-          Ref.update(state.registry, (registry) =>
-            result !== undefined && isSettled(result)
-              ? withoutKey(registry, key)
-              : withEntry(registry, key, { ...entry, lastActivityMillis: now }),
-          ),
-          // An advance is movement, whoever asked for it, so an exhaustion mark left by an earlier
-          // budget has nothing left to hold back: this Attempt is being worked on again.
-          Ref.update(state.exhausted, (exhausted) => withoutKey(exhausted, key)),
-        ],
-        { concurrency: 1 },
-      ),
-    ),
+): Effect.Effect<void> =>
+  Clock.currentTimeMillis.pipe(
+    Effect.flatMap((now) => {
+      const key = registryKey(entry.attempt);
+      return Ref.update(state.registry, (registry) =>
+        result !== undefined && isSettled(result)
+          ? withoutKey(registry, key)
+          : withEntry(registry, key, { ...entry, lastActivityMillis: now }),
+      );
+    }),
     Effect.asVoid,
   );
-};
 
 const trackedAdvance = (state: SweeperState, inner: Continuation, entry: AdvanceEntry) =>
   inner.advance(entry.attempt).pipe(
@@ -182,41 +175,59 @@ const trackedAdvance = (state: SweeperState, inner: Continuation, entry: Advance
     Effect.tapError(() => observe(state, entry)),
   );
 
-/**
- * A spent budget releases the entry and records the revision it was spent at. The durable listing
- * still reports this Attempt every tick; the mark is what stops the next merge from handing it a
- * fresh budget, and it lasts exactly as long as the Attempt stays at that revision.
- */
-const release = (state: SweeperState, entry: TrackedAttempt): Effect.Effect<void> => {
-  const key = registryKey(entry.attempt);
-  return Effect.all(
-    [
-      Ref.update(state.registry, (registry) => withoutKey(registry, key)),
-      Option.match(entry.revision, {
-        // An entry no listing ever named cannot be marked: the durable journal is the only thing
-        // that will re-create it, and only a listing says which revision it would re-create it at.
-        onNone: () => Effect.void,
-        onSome: (revision) => Ref.update(state.exhausted, (exhausted) => withMark(exhausted, key, revision)),
-      }),
-    ],
-    { concurrency: 1 },
-  ).pipe(Effect.asVoid);
-};
+/** Letting an entry go costs nothing durable: the journal's own count is what withholds the work. */
+const release = (state: SweeperState, entry: TrackedAttempt): Effect.Effect<void> =>
+  Ref.update(state.registry, (registry) => withoutKey(registry, registryKey(entry.attempt)));
 
-/** One tracked Attempt: advanced, or released once it has used up its sweep budget. */
-const sweepEntry = (state: SweeperState, inner: Continuation, entry: TrackedAttempt): Effect.Effect<boolean> =>
-  entry.sweeps >= SWEEP_BUDGET
-    ? release(state, entry).pipe(Effect.as(false))
-    : trackedAdvance(state, inner, { ...entry, sweeps: entry.sweeps + 1 }).pipe(
-        Effect.matchCauseEffect({
-          onFailure: (cause) =>
-            Effect.annotateLogs(Effect.logWarning('The Commerce enrollment sweeper could not advance this Attempt'), {
-              portalEnrollmentAttemptId: entry.attempt.portalEnrollmentAttemptId,
-              reason: String(cause),
-            }).pipe(Effect.as(true)),
-          onSuccess: () => Effect.succeed(true),
-        }),
-      );
+const advanceEntry = (state: SweeperState, inner: Continuation, entry: TrackedAttempt): Effect.Effect<boolean> =>
+  trackedAdvance(state, inner, entry).pipe(
+    Effect.matchCauseEffect({
+      onFailure: (cause) =>
+        Effect.annotateLogs(Effect.logWarning('The Commerce enrollment sweeper could not advance this Attempt'), {
+          portalEnrollmentAttemptId: entry.attempt.portalEnrollmentAttemptId,
+          reason: String(cause),
+        }).pipe(Effect.as(true)),
+      onSuccess: () => Effect.succeed(true),
+    }),
+  );
+
+/**
+ * A sweep the journal named a revision for is counted before it is spent, so the count survives the
+ * process spending it. A count that cannot be written is not a licence to sweep anyway: the tick
+ * leaves the Attempt for the next one rather than working it on a budget nothing is keeping.
+ */
+const countedAdvance = (
+  state: SweeperState,
+  inner: Continuation,
+  entry: TrackedAttempt,
+  revision: number,
+): Effect.Effect<boolean> =>
+  inner.recordSweep({ ...entry.attempt, revision }).pipe(
+    Effect.matchCauseEffect({
+      onFailure: (cause) =>
+        Effect.annotateLogs(Effect.logWarning('The Commerce enrollment sweeper could not record this sweep'), {
+          portalEnrollmentAttemptId: entry.attempt.portalEnrollmentAttemptId,
+          reason: String(cause),
+        }).pipe(Effect.as(false)),
+      // The journal now holds this Attempt's budget, so the in-process counter has nothing to say.
+      onSuccess: () => advanceEntry(state, inner, { ...entry, journalled: true, sweeps: 0 }),
+    }),
+  );
+
+/** One due Attempt: advanced under whichever budget this tick's listing left it under. */
+const sweepEntry = (state: SweeperState, inner: Continuation, due: DueSweep): Effect.Effect<boolean> =>
+  Option.match(due.revision, {
+    // The journal is silent about this Attempt on this tick. One it has named before and is not
+    // naming now is not owed a transition any more — its durable budget is spent, or it settled —
+    // so the fast path lets it go instead of working it on a count nothing can see. One the journal
+    // has never named is a halt this process registered and no listing has reached yet, and only
+    // there is the bounded in-process budget the thing that stops a fruitless repeat.
+    onNone: () =>
+      due.entry.journalled || due.entry.sweeps >= SWEEP_BUDGET
+        ? release(state, due.entry).pipe(Effect.as(false))
+        : advanceEntry(state, inner, { ...due.entry, sweeps: due.entry.sweeps + 1 }),
+    onSome: (revision) => countedAdvance(state, inner, due.entry, revision),
+  });
 
 const cursorAfter = (attempts: readonly DueEnrollmentAttempt[]): Option.Option<DueEnrollmentAttemptCursor> =>
   Option.map(Option.fromNullishOr(attempts.at(-1)), (last) => ({
@@ -234,7 +245,7 @@ const listDuePage = (
   pageLimit: number,
   staleAfterMillis: number,
 ): Effect.Effect<DurableListing> =>
-  inner.listDue({ after, limit: pageLimit, staleAfterMillis }).pipe(
+  inner.listDue({ after, limit: pageLimit, maxSweeps: SWEEP_BUDGET, staleAfterMillis }).pipe(
     Effect.matchCauseEffect({
       onFailure: (cause) => Effect.succeed<DurableListing>({ attempts: [], unreadable: Option.some(String(cause)) }),
       onSuccess: (attempts) => Effect.succeed<DurableListing>({ attempts, unreadable: Option.none() }),
@@ -243,8 +254,6 @@ const listDuePage = (
 
 /** Everything one tick's paging is decided from, apart from where it has got to. */
 interface DuePaging {
-  /** Attempts marked at the revision an earlier budget gave up on; each costs the tick nothing. */
-  readonly exhausted: Exhausted;
   readonly inner: Continuation;
   readonly pageLimit: number;
   readonly staleAfterMillis: number;
@@ -252,9 +261,9 @@ interface DuePaging {
 
 /**
  * The journal's own answer to what is still owed a transition, read in keyset order until the tick
- * has its appetite in Attempts it may actually advance. Rows an earlier budget already gave up on
- * are dropped per page rather than per tick, which is what stops a run of them — always the oldest,
- * so always first in the listing — from filling the tick and starving the newer work behind it.
+ * has its appetite. Every row it hands back is one this sweeper may advance: an Attempt whose sweep
+ * budget is spent is excluded by the listing itself, so a run of them — always the oldest, so
+ * always first in the order — can no longer fill a page ahead of the newer work behind it.
  */
 const durableDuePage = (
   paging: DuePaging,
@@ -271,10 +280,7 @@ const durableDuePage = (
         return Effect.succeed<DurableListing>({ attempts: listing.attempts, unreadable: listed.unreadable });
       }
       const next: DurableListing = {
-        attempts: [
-          ...listing.attempts,
-          ...listed.attempts.filter((attempt) => paging.exhausted.get(registryKey(attempt)) !== attempt.revision),
-        ],
+        attempts: [...listing.attempts, ...listed.attempts],
         unreadable: listing.unreadable,
       };
       // A short page is the end of the journal, so there is nothing left to resume after.
@@ -300,11 +306,11 @@ const dueEntries = (
   durable: readonly DueEnrollmentAttempt[],
   now: number,
   staleAfterMillis: number,
-): readonly TrackedAttempt[] => {
-  const due = new Map<string, TrackedAttempt>();
+): readonly DueSweep[] => {
+  const due = new Map<string, DueSweep>();
   for (const entry of registry.values()) {
     if (now - entry.lastActivityMillis >= staleAfterMillis) {
-      due.set(registryKey(entry.attempt), entry);
+      due.set(registryKey(entry.attempt), { entry, revision: Option.none() });
     }
   }
   for (const listed of durable) {
@@ -313,12 +319,18 @@ const dueEntries = (
       tenantId: listed.tenantId,
     };
     const key = registryKey(attempt);
-    if (!registry.has(key)) {
+    const tracked = registry.get(key);
+    // A tracked Attempt the registry does not call stale yet keeps the registry's fresher word:
+    // this process advanced it more recently than the page the journal answered from was built.
+    if (tracked === undefined || due.has(key)) {
       due.set(key, {
-        attempt,
-        lastActivityMillis: DateTime.toEpochMillis(listed.updatedAt),
+        entry: {
+          attempt,
+          journalled: true,
+          lastActivityMillis: tracked?.lastActivityMillis ?? DateTime.toEpochMillis(listed.updatedAt),
+          sweeps: tracked?.sweeps ?? 0,
+        },
         revision: Option.some(listed.revision),
-        sweeps: 0,
       });
     }
   }
@@ -335,11 +347,8 @@ const sweepOnce = Effect.fn('CommerceEnrollmentContinuationSweeper.sweep')(funct
   pageLimit: number,
   staleAfterMillis: number,
 ): Effect.fn.Return<CommerceEnrollmentContinuationSweepResult> {
-  const [now, registry, exhausted] = yield* Effect.all(
-    [Clock.currentTimeMillis, Ref.get(state.registry), Ref.get(state.exhausted)],
-    { concurrency: 3 },
-  );
-  const durable = yield* durableDue({ exhausted, inner, pageLimit, staleAfterMillis });
+  const [now, registry] = yield* Effect.all([Clock.currentTimeMillis, Ref.get(state.registry)], { concurrency: 2 });
+  const durable = yield* durableDue({ inner, pageLimit, staleAfterMillis });
   if (Option.isSome(durable.unreadable)) {
     yield* Effect.annotateLogs(
       Effect.logWarning('The Commerce enrollment sweeper could not read the durable Attempt journal'),
@@ -357,17 +366,16 @@ const sweepOnce = Effect.fn('CommerceEnrollmentContinuationSweeper.sweep')(funct
 
 export const commerceEnrollmentContinuationSweeperFor = Effect.fnUntraced(
   function* commerceEnrollmentContinuationSweeperFor(options: CommerceEnrollmentContinuationSweeperOptions) {
-    const [exhausted, registry] = yield* Effect.all([Ref.make<Exhausted>(new Map()), Ref.make<Registry>(new Map())], {
-      concurrency: 1,
-    });
-    const state: SweeperState = { exhausted, registry };
+    const registry = yield* Ref.make<Registry>(new Map());
+    const state: SweeperState = { registry };
     const inner = options.continuation;
     const pageLimit = options.pageLimit ?? SWEEP_PAGE_LIMIT;
     const staleAfterMillis = options.staleAfterMillis ?? LEASE_WINDOW_MS;
     const sweeper: CommerceEnrollmentContinuationSweeper = {
       continuation: {
-        advance: (attempt) => trackedAdvance(state, inner, { attempt, revision: Option.none(), sweeps: 0 }),
+        advance: (attempt) => trackedAdvance(state, inner, { attempt, journalled: false, sweeps: 0 }),
         listDue: (input) => inner.listDue(input),
+        recordSweep: (input) => inner.recordSweep(input),
       },
       sweep: sweepOnce(state, inner, pageLimit, staleAfterMillis),
     };

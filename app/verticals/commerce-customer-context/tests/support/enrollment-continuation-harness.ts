@@ -136,6 +136,7 @@ export const enrollmentContinuationForTenants = (
     advance: continuation.advance,
     listDue: (input) =>
       continuation.listDue(input).pipe(Effect.map((rows) => rows.filter((row) => scenarioTenants.has(row.tenantId)))),
+    recordSweep: continuation.recordSweep,
   };
 };
 

@@ -177,6 +177,10 @@ export const portalEnrollmentAttempts = commerceCustomerContextSchema.table.with
     revision: integer('revision').default(1).notNull(),
     state: text('state').default('IN_PROGRESS').notNull(),
     subjectType: text('subject_type'),
+    /** How many fruitless continuation sweeps this Attempt has had while standing at `sweepRevision`. */
+    sweepCount: integer('sweep_count').default(0).notNull(),
+    /** The revision the sweep count was spent against; a different one starts the budget over. */
+    sweepRevision: integer('sweep_revision'),
     targetLegalEntityId: uuid('target_legal_entity_id'),
     targetResourceId: text('target_resource_id'),
     tenantId: uuid('tenant_id').notNull(),

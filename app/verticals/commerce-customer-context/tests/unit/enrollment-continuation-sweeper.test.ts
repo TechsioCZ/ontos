@@ -34,12 +34,29 @@ interface ScriptedContinuation {
   readonly service: CommerceEnrollmentContinuationService;
 }
 
+/** The durable sweep accounting `record_portal_enrollment_sweep` keeps, one entry per Attempt. */
+interface ScriptedSweep {
+  readonly count: number;
+  readonly revision: number;
+}
+
+/**
+ * The exclusion `list_due_portal_enrollment_attempts` applies: an Attempt still standing at the
+ * revision its budget was spent against is not offered again, and anything that moves the revision
+ * puts it back in the listing with the whole budget ahead of it.
+ */
+const isExhausted = (sweeps: ReadonlyMap<string, ScriptedSweep>, row: DueEnrollmentAttempt, maxSweeps: number) => {
+  const recorded = sweeps.get(row.portalEnrollmentAttemptId);
+  return recorded !== undefined && recorded.revision === row.revision && recorded.count >= maxSweeps;
+};
+
 /** A continuation that answers from a durable journal and records what it was asked to advance. */
 const scriptedContinuation = Effect.fnUntraced(function* scriptedContinuation(
   journal: Ref.Ref<readonly DueEnrollmentAttempt[]>,
   outcome: 'COMPLETE' | 'HALTED',
 ) {
   const log = yield* Ref.make<readonly string[]>([]);
+  const sweeps = yield* Ref.make<ReadonlyMap<string, ScriptedSweep>>(new Map());
   const service: CommerceEnrollmentContinuationService = {
     advance: (input) =>
       Ref.update(log, (calls) => [...calls, input.portalEnrollmentAttemptId]).pipe(
@@ -50,12 +67,22 @@ const scriptedContinuation = Effect.fnUntraced(function* scriptedContinuation(
         ),
       ),
     listDue: (input) =>
-      Ref.get(journal).pipe(
-        Effect.map((rows) => {
-          const start = resumeIndex(rows, input.after);
-          return rows.slice(start, start + input.limit);
+      Effect.all([Ref.get(journal), Ref.get(sweeps)], { concurrency: 2 }).pipe(
+        Effect.map(([rows, recorded]) => {
+          const offered = rows.filter((row) => !isExhausted(recorded, row, input.maxSweeps));
+          const start = resumeIndex(offered, input.after);
+          return offered.slice(start, start + input.limit);
         }),
       ),
+    recordSweep: (input) =>
+      Ref.modify(sweeps, (recorded) => {
+        const previous = recorded.get(input.portalEnrollmentAttemptId);
+        const count = previous === undefined || previous.revision !== input.revision ? 1 : previous.count + 1;
+        return [
+          count,
+          new Map([...recorded, [input.portalEnrollmentAttemptId, { count, revision: input.revision }]]),
+        ] as const;
+      }),
   };
   const scripted: ScriptedContinuation = { advanced: Ref.get(log), service };
   return scripted;
@@ -126,13 +153,14 @@ it.effect('reads past a whole page of Attempts an earlier budget gave up on', ()
       staleAfterMillis: 0,
     });
 
-    // Both run out of budget on the same tick, and both stay in the journal at the revision they
-    // ran out at — which is what keeps them in the listing and ahead of everything newer.
+    // Both spend their durable budget at the revision they are standing at, which is what takes
+    // them out of the listing while nothing moves them.
     expect((yield* sweepUntilReleased(sweeper.sweep)).released).toBe(2);
     const spent = (yield* scripted.advanced).length;
 
-    // A newer Attempt arrives behind them. It is the second page's only row, and the first page is
-    // entirely Attempts this sweeper will not touch: a tick that stops after one page never sees it.
+    // A newer Attempt arrives behind them in the journal's oldest-first order. Were the two spent
+    // rows still offered they would be the tick's whole first page, and a tick that stops after one
+    // page would never reach this one.
     yield* Ref.set(journal, [due(oldest), due(older), due(fresh)]);
 
     expect((yield* sweeper.sweep).swept).toBe(1);
@@ -184,10 +212,11 @@ it.effect('leaves an Attempt alone once its budget ran out, until its durable re
     expect(released.tracked).toBe(0);
     const spent = (yield* scripted.advanced).length;
 
-    // The journal still reports this Attempt, unchanged, on every later tick. Releasing the entry
-    // without remembering the revision it was released at makes the next merge seed it again with
-    // a full budget, so an Attempt no owner effect can move is advanced for the life of the
-    // process and crowds the bounded listing out of the Attempts that can still finish.
+    // The Attempt is still in the journal and still unchanged; it is its own recorded count, at
+    // the revision it is standing at, that stops the listing offering it. A budget held only in
+    // this process's memory would be granted again by the very next tick's listing, so an Attempt
+    // no owner effect can move would be advanced for the life of the process — and, being among
+    // the oldest, would crowd the Attempts that can still finish out of every bounded page.
     expect((yield* sweeper.sweep).swept).toBe(0);
     expect((yield* scripted.advanced).length).toBe(spent);
 

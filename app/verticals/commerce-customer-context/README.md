@@ -92,6 +92,15 @@ whose transaction installed a verified Tenant, so an Attempt one process abandon
 the next even in a Tenant that process has never served. Both are safe to repeat: the durable claim
 and its lease, not the caller, are what grant ownership.
 
+A halt that keeps repeating is an operator fact rather than a retry loop, so the sweeper's budget is
+durable too. Each pass is counted on the Attempt itself by `record_portal_enrollment_sweep` — the
+same worker-only credential the listing takes — into `sweep_revision`/`sweep_count`, and the listing
+excludes an Attempt that has spent the budget while still standing at that revision. A count held
+only in a worker's memory would die with its process and be granted again in full by the next
+listing, and because the listing is oldest-first that Attempt would then fill the first page of
+every tick ahead of newer work. Anything that moves the Attempt — a read that resumes it, an owner
+outcome — changes its revision and starts the count over.
+
 Once start has committed, the journey is carried the rest of the way by the server-side enrollment
 continuation (`src/enrollment/continuation/`), which the start route triggers as a detached,
 concurrency-bounded fork. It reads the durable Attempt, asks the journey definition which required

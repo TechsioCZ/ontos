@@ -507,12 +507,24 @@ const signIn = Effect.fn('CommercePortalAuthSessionHttp.signIn')(function* signI
     // caller is told the deployment is unavailable. Every other outcome changed no state, and the
     // intent row above already stands for the attempt.
     if (result.outcome.outcome === 'SESSION_CREATED') {
-      yield* lifecycle
-        .revoke({
+      // Un-audited on purpose. The audit store is refusing right now — that is what brought this
+      // branch about — and an audited revoke writes its row inside the deletion's own transaction,
+      // so a continuing outage would roll the deletion back and leave exactly the live credential
+      // this compensation exists to take back. A deletion that fails is an operator fact rather
+      // than something to swallow: it is logged at error, and the caller is still refused without
+      // a cookie, so no browser holds a credential whose evidence never committed.
+      const compensated = yield* Effect.result(
+        lifecycle.revokeUnaudited({
           expectedProviderSubjectId: result.outcome.session.providerSubjectId,
           sessionRef: result.outcome.session.sessionRef,
-        })
-        .pipe(Effect.ignore({ log: true, message: 'Commerce portal sign-in rollback revoke failed' }));
+        }),
+      );
+      if (Result.isFailure(compensated)) {
+        yield* Effect.annotateLogs(
+          Effect.logError('Commerce portal authentication sign-in rollback could not delete the provider session'),
+          { sessionRef: result.outcome.session.sessionRef },
+        );
+      }
       return yield* Effect.fail(evidence.failure);
     }
     yield* Effect.annotateLogs(Effect.logError('Commerce portal authentication sign-in evidence was not persisted'), {

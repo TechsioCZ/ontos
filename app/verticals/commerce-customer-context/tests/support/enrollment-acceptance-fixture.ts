@@ -236,6 +236,29 @@ export const backdateEnrollmentAcceptanceAttempt = (
     )
     .pipe(Effect.asVoid, Effect.orDie);
 
+/**
+ * Moves an Attempt's durable revision and nothing else. Every real transition moves it too; this
+ * states the one fact the durable sweep budget reads — "something has moved this Attempt since the
+ * count was spent" — so a test of that rule need not drive a whole journey to produce it.
+ */
+export const advanceEnrollmentAcceptanceAttemptRevision = (
+  fixture: EnrollmentAcceptanceFixture,
+  portalEnrollmentAttemptId: string,
+): Effect.Effect<void> =>
+  fixture.admin
+    .transaction((transaction) =>
+      transaction.execute(
+        sql`
+          update commerce_customer_context.portal_enrollment_attempts
+             set revision = revision + 1
+           where tenant_id = ${fixture.scope.tenantId}::uuid
+             and portal_enrollment_attempt_id = ${portalEnrollmentAttemptId}::uuid
+        `,
+        'objects',
+      ),
+    )
+    .pipe(Effect.asVoid, Effect.orDie);
+
 interface EnrollmentAcceptanceOwnerOperationRow extends Record<string, unknown> {
   readonly outcome_code: string | null;
   readonly reconciliation_ref: string | null;

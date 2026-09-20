@@ -42,6 +42,16 @@ export interface CommercePortalAuthSessionLifecycleService {
   readonly revokeAll: (
     input: Schema.Codec.Encoded<typeof CommercePortalAuthAccountSubjectInputSchema>,
   ) => Effect.Effect<number, CommercePortalAuthSessionFailure>;
+  /**
+   * The compensating deletion for a sign-in whose completion evidence was refused, and the only
+   * caller this exists for. It writes no audit row on purpose: the row an audited revoke would
+   * write goes to the very store that just refused, so its own transaction would roll the deletion
+   * back and leave the live credential this call exists to take back. The sign-in intent row is
+   * already persisted, so the interrupted attempt still has its evidence.
+   */
+  readonly revokeUnaudited: (
+    input: Schema.Codec.Encoded<typeof CommercePortalAuthSessionReferenceInputSchema>,
+  ) => Effect.Effect<boolean, CommercePortalAuthSessionFailure>;
   /** Owner-private rotation result for the provider cookie signer. */
   readonly rotateIdentifierForCookie: (
     input: Schema.Codec.Encoded<typeof CommercePortalAuthSessionRotationInputSchema>,

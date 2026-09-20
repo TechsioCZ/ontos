@@ -84,6 +84,7 @@ const unavailableSessionLifecycle: CommercePortalAuthSessionLifecycle['Service']
   refresh: sessionRefusal('refresh'),
   revoke: sessionRefusal('revoke'),
   revokeAll: sessionRefusal('revoke-all'),
+  revokeUnaudited: sessionRefusal('revoke-unaudited'),
   rotateIdentifierForCookie: sessionRefusal('rotate-identifier'),
   signIn: sessionRefusal('sign-in'),
   signOut: sessionRefusal('sign-out'),

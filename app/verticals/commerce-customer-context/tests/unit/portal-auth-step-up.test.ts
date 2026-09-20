@@ -309,6 +309,7 @@ const makeFixture = (): StepUpFixture => {
     refresh: () => Effect.die('unused in step-up tests'),
     revoke: () => Effect.die('unused in step-up tests'),
     revokeAll: () => Effect.die('unused in step-up tests'),
+    revokeUnaudited: () => Effect.die('unused in step-up tests'),
     rotateIdentifierForCookie: (input) =>
       Effect.sync(() => {
         state.rotationCount += 1;

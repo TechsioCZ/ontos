@@ -419,9 +419,20 @@ export interface ListDueEnrollmentAttemptsInput {
   readonly after: Option.Option<DueEnrollmentAttemptCursor>;
   /** Upper bound on the rows one call may return; the routine caps it again on its own side. */
   readonly limit: number;
+  /**
+   * The sweep budget. An Attempt that has had this many recorded sweeps while standing at the same
+   * revision is left out, so a prefix of Attempts nothing can move never fills a page ahead of the
+   * newer work behind it.
+   */
+  readonly maxSweeps: number;
   /** How long an Attempt must have been untouched before the journal reports it as due. */
   readonly staleAfterMillis: number;
 }
+
+/** One sweep of one Attempt, counted against the exact durable revision it was swept at. */
+export type RecordEnrollmentSweepInput = ReadEnrollmentAttemptInput & {
+  readonly revision: number;
+};
 
 /**
  * The cross-Tenant due-work surface. It is deliberately not part of
@@ -432,6 +443,8 @@ export interface CommerceEnrollmentDueWorkPersistence {
   readonly listDue: (
     input: ListDueEnrollmentAttemptsInput,
   ) => Effect.Effect<readonly DueEnrollmentAttempt[], CommerceEnrollmentAttemptError>;
+  /** Counts one sweep and answers with the Attempt's new count at that revision. */
+  readonly recordSweep: (input: RecordEnrollmentSweepInput) => Effect.Effect<number, CommerceEnrollmentAttemptError>;
 }
 
 export interface CommerceEnrollmentAttemptPersistence {
@@ -1340,14 +1353,22 @@ export type EnrollmentDueWorkExecution = (
 
 const DUE_WORK_ROUTINE_SCHEMA = 'commerce_customer_context';
 const DUE_WORK_ROUTINE_NAME = 'list_due_portal_enrollment_attempts';
+const SWEEP_ROUTINE_NAME = 'record_portal_enrollment_sweep';
 
 const listDueStatement = (input: ListDueEnrollmentAttemptsInput): SQL => {
   const after = Option.getOrUndefined(input.after);
   // Both keyset halves travel together or neither does; the routine rejects a half cursor.
   const afterUpdatedAt = after === undefined ? null : DateTime.formatIso(after.updatedAt);
   const afterAttemptId = after?.portalEnrollmentAttemptId ?? null;
-  return sql`select * from ${sql.identifier(DUE_WORK_ROUTINE_SCHEMA)}.${sql.identifier(DUE_WORK_ROUTINE_NAME)}(${input.staleAfterMillis}::integer, ${afterUpdatedAt}::timestamptz, ${afterAttemptId}::uuid, ${input.limit}::integer)`;
+  return sql`select * from ${sql.identifier(DUE_WORK_ROUTINE_SCHEMA)}.${sql.identifier(DUE_WORK_ROUTINE_NAME)}(${input.staleAfterMillis}::integer, ${afterUpdatedAt}::timestamptz, ${afterAttemptId}::uuid, ${input.limit}::integer, ${input.maxSweeps}::integer)`;
 };
+
+const recordSweepStatement = (input: RecordEnrollmentSweepInput): SQL =>
+  sql`select ${sql.identifier(DUE_WORK_ROUTINE_SCHEMA)}.${sql.identifier(SWEEP_ROUTINE_NAME)}(${input.tenantId}::uuid, ${input.portalEnrollmentAttemptId}::uuid, ${input.revision}::integer) as sweep_count`;
+
+const SweepRoutineRowSchema = Schema.Struct({
+  sweep_count: Schema.Number.check(Schema.isInt(), Schema.isGreaterThanOrEqualTo(1)),
+});
 
 export const commerceEnrollmentDueWorkForExecution = (
   execute: EnrollmentDueWorkExecution,
@@ -1362,5 +1383,21 @@ export const commerceEnrollmentDueWorkForExecution = (
         ),
       ),
       Effect.flatMap((rows) => Effect.forEach(rows, mapDueAttempt, { concurrency: 1 })),
+    ),
+  recordSweep: (input) =>
+    execute(recordSweepStatement(input)).pipe(
+      Effect.flatMap((rows) =>
+        Schema.decodeUnknownEffect(Schema.Array(Schema.toType(SweepRoutineRowSchema)))(rows).pipe(
+          Effect.mapError((cause) =>
+            invalidWithCause('The Enrollment Attempt sweep accounting returned an invalid row', cause),
+          ),
+        ),
+      ),
+      Effect.flatMap((rows) => {
+        const [row] = rows;
+        return row === undefined
+          ? Effect.fail(invalid('The Enrollment Attempt sweep accounting returned no count'))
+          : Effect.succeed(row.sweep_count);
+      }),
     ),
 });

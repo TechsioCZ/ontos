@@ -1,7 +1,7 @@
 import { betterAuth } from 'better-auth';
 import { memoryAdapter } from 'better-auth/adapters/memory';
 import { HttpApiBuilder, HttpRouter, HttpServer } from '@modern-js/bff-effect/effect-edge';
-import { Context, Effect, Layer, Redacted, Schema } from 'effect';
+import { Context, Effect, Layer, Option, Redacted, Schema } from 'effect';
 import { expect, it } from 'effect-rstest';
 
 import { CommercePortalAuthConfig } from '../../api/portal-auth/provider/config-service.ts';
@@ -12,13 +12,21 @@ import {
   CommercePortalAuthProviderSubjectIdSchema,
 } from '../../api/portal-auth/session/contracts.ts';
 import type {
+  CommercePortalAuthSessionRecord,
   CommercePortalAuthSessionSignInResult,
   CommercePortalAuthSessionSnapshot,
 } from '../../api/portal-auth/session/contracts.ts';
 import { CommercePortalAuthService, portalAuthSessionStandaloneApiLive } from '../../api/portal-auth/session/http.ts';
 import { CommercePortalAuthSessionUnavailable } from '../../api/portal-auth/session/errors.ts';
-import { CommercePortalAuthSessionLifecycle } from '../../api/portal-auth/session/lifecycle.ts';
-import type { CommercePortalAuthSessionLifecycleService } from '../../api/portal-auth/session/lifecycle.ts';
+import {
+  CommercePortalAuthSessionLifecycle,
+  makeCommercePortalAuthSessionLifecycle,
+} from '../../api/portal-auth/session/lifecycle.ts';
+import type {
+  CommercePortalAuthSessionLifecycleService,
+  CommercePortalAuthSessionProvider,
+} from '../../api/portal-auth/session/lifecycle.ts';
+import type { CommercePortalAuthSessionStore } from '../../api/portal-auth/session/store-service.ts';
 import { CommercePortalAuthRecoveryRateLimitService } from '../../api/portal-auth/rate-limit-service.ts';
 import type { CommercePortalAuthRecoveryRateLimit } from '../../api/portal-auth/rate-limit-service.ts';
 import { CommercePortalAuthSessionApi } from '../../shared/portal-auth/session-api.ts';
@@ -64,6 +72,7 @@ const unusedLifecycle: CommercePortalAuthSessionLifecycleService = {
   refresh: () => Effect.die('unused lifecycle double'),
   revoke: () => Effect.die('unused lifecycle double'),
   revokeAll: () => Effect.die('unused lifecycle double'),
+  revokeUnaudited: () => Effect.die('unused lifecycle double'),
   rotateIdentifierForCookie: () => Effect.die('unused lifecycle double'),
   signIn: () => Effect.die('unused lifecycle double'),
   signOut: () => Effect.die('unused lifecycle double'),
@@ -571,10 +580,10 @@ it.effect('revokes the session it just created when its completion evidence cann
       const app = yield* makeApp(
         {
           ...unusedLifecycle,
-          revoke: (input) =>
+          revokeUnaudited: (input) =>
             Effect.sync(() => {
               revoked.push(input.sessionRef);
-              return { existed: true, outcome: 'SESSION_REVOKED' as const, sessionRef: input.sessionRef };
+              return true;
             }),
           signIn: () =>
             Effect.succeed({
@@ -596,6 +605,91 @@ it.effect('revokes the session it just created when its completion evidence cann
       expect(recording.events().map((event) => event.eventType)).toStrictEqual([
         'commerce.portal-auth.session-sign-in-requested.v1',
       ]);
+    }),
+  ),
+);
+
+/** The refusal every audited store write answers with while the audit insert keeps failing. */
+const refuseAuditedWrite = <Value>(operation: string): Effect.Effect<Value, CommercePortalAuthSessionUnavailable> =>
+  Effect.fail(
+    new CommercePortalAuthSessionUnavailable({
+      operation: `${operation}-audit`,
+      reason: 'audit evidence could not be persisted',
+    }),
+  );
+
+const outageNow = new Date('2026-02-01T00:00:00.000Z');
+const outageSessionId = 'commerce-session-outage';
+const outageToken = 'provider-token-outage';
+
+const outageRecord: CommercePortalAuthSessionRecord = {
+  authenticatedAt: null,
+  banExpiresAt: null,
+  banned: false,
+  createdAt: new Date(outageNow.getTime() - 1000),
+  emailVerified: true,
+  expiresAt: new Date(outageNow.getTime() + 60_000),
+  id: outageSessionId,
+  providerSubjectId: 'commerce-user-outage',
+  token: outageToken,
+  updatedAt: new Date(outageNow.getTime() - 1000),
+};
+
+const outageProvider: CommercePortalAuthSessionProvider = {
+  signInEmail: () => Effect.succeed({ setCookieHeaders: [signInCookie], token: outageToken }),
+};
+
+/**
+ * A store in the outage the compensation has to survive: every audited write refuses, exactly as
+ * PostgreSQL answers while the audit insert inside the mutation's own transaction keeps failing —
+ * the state change rolls back with the row it could not write. Only the un-audited `revoke` asks
+ * the audit store for nothing, so it is the one deletion that can still commit.
+ */
+const auditOutageStore = (initial: CommercePortalAuthSessionRecord) => {
+  const sessions = new Map([[initial.id, initial]]);
+  const store: CommercePortalAuthSessionStore = {
+    countActive: () => Effect.sync(() => sessions.size),
+    disableAccountWithAudit: () => refuseAuditedWrite('account-disable'),
+    findById: (id) => Effect.sync(() => Option.fromNullishOr(sessions.get(id))),
+    findByToken: (token) =>
+      Effect.sync(() => Option.fromNullishOr([...sessions.values()].find((value) => value.token === token))),
+    revoke: ({ sessionId }) => Effect.sync(() => sessions.delete(sessionId)),
+    revokeAllWithAudit: () => refuseAuditedWrite('session-revoke-all'),
+    revokeWithAudit: () => refuseAuditedWrite('session-revoke'),
+    rotateWithAudit: () => refuseAuditedWrite('session-rotation'),
+    touch: ({ expiresAt, now, sessionId }) =>
+      Effect.sync(() => {
+        const current = sessions.get(sessionId);
+        if (current === undefined) {
+          return Option.none();
+        }
+        const touched = { ...current, expiresAt, updatedAt: now };
+        sessions.set(sessionId, touched);
+        return Option.some(touched);
+      }),
+    touchWithAudit: () => refuseAuditedWrite('session-touch'),
+  };
+  return { sessions, store };
+};
+
+it.effect('deletes the session it just created even while every audit write is still refusing', () =>
+  Effect.scoped(
+    Effect.gen(function* signInCompensationOutlivesTheAuditOutage() {
+      const memory = auditOutageStore(outageRecord);
+      const recording = makeRecordingRecorder('commerce.portal-auth.session-signed-in.v1');
+      const lifecycle = makeCommercePortalAuthSessionLifecycle(memory.store, outageProvider, recording.recorder, {
+        now: () => outageNow,
+      });
+      const app = yield* makeApp(lifecycle, makeCountingBudget(), providerRealm.api, recording.recorder);
+
+      const response = yield* post(app)('/api/portal-auth/sign-in/email', signInBody, trustedOrigin);
+
+      expect(response.status).toBe(503);
+      expect(response.headers.getSetCookie()).toStrictEqual([]);
+      // The compensation may not depend on the store that just refused: an audited revoke writes
+      // its row inside the deletion's own transaction, so the very outage that brought this branch
+      // about would roll the deletion back and hand the outage a live credential to keep.
+      expect(memory.sessions.has(outageSessionId)).toBe(false);
     }),
   ),
 );

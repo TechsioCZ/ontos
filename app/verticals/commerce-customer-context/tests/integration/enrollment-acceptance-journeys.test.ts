@@ -4,7 +4,10 @@ import { Effect, Option, Schema } from 'effect';
 import { expect, it } from 'effect-rstest';
 
 import { commercePortalAuthEnrollmentResumeOnRead } from '../../api/portal-auth/enrollment/http.ts';
-import { commerceEnrollmentContinuationSweeperFor } from '../../src/workers/enrollment-continuation-sweeper.ts';
+import {
+  commerceEnrollmentContinuationSweeperFor,
+  SWEEP_BUDGET,
+} from '../../src/workers/enrollment-continuation-sweeper.ts';
 import {
   ClaimEnrollmentTransitionInputSchema,
   CommercePortalAccountSubjectSchema,
@@ -738,7 +741,7 @@ it.live('the durable listing skips a settled Attempt and one a live lease still 
       const identities = makeScenarioIdentities();
       const { fixture, portalEnrollmentAttemptId } = yield* scenario(identities);
       const journal = commerceEnrollmentDueAttemptStoreForRun(fixture.runWorker);
-      const query = { after: Option.none(), limit: 500, staleAfterMillis: 0 };
+      const query = { after: Option.none(), limit: 500, maxSweeps: SWEEP_BUDGET, staleAfterMillis: 0 };
       const ofScenario = (rows: readonly DueEnrollmentAttempt[]) =>
         rows.filter((row) => row.tenantId === identities.tenantId);
       const harness = yield* reconcilingPartyHarness(fixture, identities);
@@ -800,7 +803,7 @@ it.live('the sweeper reconciles a fenced Attempt exactly once and then stops lis
       const identities = makeScenarioIdentities();
       const { fixture, portalEnrollmentAttemptId } = yield* scenario(identities);
       const journal = commerceEnrollmentDueAttemptStoreForRun(fixture.runWorker);
-      const query = { after: Option.none(), limit: 500, staleAfterMillis: 0 };
+      const query = { after: Option.none(), limit: 500, maxSweeps: SWEEP_BUDGET, staleAfterMillis: 0 };
       const ofScenario = (rows: readonly DueEnrollmentAttempt[]) =>
         rows.filter((row) => row.tenantId === identities.tenantId);
       const started = yield* readEnrollmentAcceptanceAttempt(fixture, portalEnrollmentAttemptId);

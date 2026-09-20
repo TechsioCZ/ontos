@@ -389,6 +389,27 @@ export const makeCommercePortalAuthSessionLifecycle = (
     return yield* revokeSession(input, 'commerce.portal-auth.session-revoked.v1', 'revoke');
   });
 
+  /**
+   * The sign-in compensation's deletion, and nothing else. It reaches the store's un-audited revoke
+   * because its caller is already inside an audit outage: an audited revoke would ask the refusing
+   * store for one more row, and PostgreSQL would roll the deletion back with it — leaving a live
+   * credential whose creation nothing records. The attempt is not invisible either way, because the
+   * intent row committed before Better Auth was ever asked for a session.
+   */
+  const revokeUnaudited = Effect.fn('CommercePortalAuthSessionLifecycle.revokeUnaudited')(function* revokeUnaudited(
+    input: Schema.Codec.Encoded<typeof CommercePortalAuthSessionReferenceInputSchema>,
+  ): Effect.fn.Return<boolean, CommercePortalAuthSessionFailure> {
+    const request = yield* Schema.decodeEffect(CommercePortalAuthSessionReferenceInputSchema)(input).pipe(
+      Effect.mapError((cause) => invalidRequest(cause)),
+    );
+    const sessionId = yield* parseSessionId(request);
+    return yield* store.revoke(
+      request.expectedProviderSubjectId === undefined
+        ? { sessionId }
+        : { providerSubjectId: request.expectedProviderSubjectId, sessionId },
+    );
+  });
+
   const signOut = Effect.fn('CommercePortalAuthSessionLifecycle.signOut')(function* signOut(
     input: Schema.Codec.Encoded<typeof CommercePortalAuthSessionReferenceInputSchema>,
   ): Effect.fn.Return<
@@ -732,6 +753,7 @@ export const makeCommercePortalAuthSessionLifecycle = (
     refresh,
     revoke,
     revokeAll,
+    revokeUnaudited,
     rotateIdentifierForCookie,
     signIn,
     signOut,

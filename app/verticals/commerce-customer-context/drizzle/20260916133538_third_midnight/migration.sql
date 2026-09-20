@@ -17,6 +17,12 @@ CREATE TABLE "commerce_customer_context"."portal_enrollment_attempts" (
   "provider_subject_id" text,
   "state" text DEFAULT 'IN_PROGRESS' NOT NULL,
   "revision" integer DEFAULT 1 NOT NULL,
+  -- The continuation sweeper's durable budget: how many fruitless sweeps this Attempt has had
+  -- while standing at `sweep_revision`. Keeping it here rather than in a worker's memory is what
+  -- lets the due-work listing exclude a spent Attempt in SQL, so an exhausted prefix can never
+  -- fill a page ahead of newer work, and what makes the count survive the process that spent it.
+  "sweep_revision" integer,
+  "sweep_count" integer DEFAULT 0 NOT NULL,
   "created_by_principal_id" uuid NOT NULL,
   "last_owner_invocation_id" uuid,
   "last_failure_code" text,
@@ -1460,7 +1466,8 @@ CREATE FUNCTION "commerce_customer_context"."list_due_portal_enrollment_attempts
   p_stale_after_millis integer,
   p_after_updated_at timestamptz,
   p_after_attempt_id uuid,
-  p_limit integer
+  p_limit integer,
+  p_max_sweeps integer
 )
 RETURNS TABLE (
   tenant_id uuid,
@@ -1526,6 +1533,10 @@ BEGIN
           AND operation.reconciliation_ref IS NULL
       )
     )
+    -- The sweep budget, spent durably rather than in a worker's memory. A count only holds this
+    -- Attempt back while it still stands at the revision that count was spent against: anything
+    -- that moves the Attempt — a read that resumed it, an owner outcome — makes it due again.
+    AND NOT (attempt.sweep_revision = attempt.revision AND attempt.sweep_count >= p_max_sweeps)
     AND (
       p_after_updated_at IS NULL
       OR (attempt.updated_at, attempt.portal_enrollment_attempt_id) > (p_after_updated_at, p_after_attempt_id)
@@ -1538,6 +1549,47 @@ END;
 $function$;
 --> statement-breakpoint
 
+-- The counting half of the due-work surface: one sweep of one Attempt, recorded against the exact
+-- revision it was swept at. It is the worker's own bookkeeping rather than a transition, so it
+-- moves neither `revision` nor `updated_at` — an Attempt a sweep could not move must keep its place
+-- in the listing's activity order, and a count that re-aged the row would hide it instead.
+--
+-- The guard is the listing's, for the same reason: this is a cross-Tenant worker surface, and a
+-- transaction that installed a verified Tenant is a request. Running outside every Tenant scope is
+-- the worker scope.
+CREATE FUNCTION "commerce_customer_context"."record_portal_enrollment_sweep"(
+  p_tenant_id uuid,
+  p_attempt_id uuid,
+  p_revision integer
+)
+RETURNS integer
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = pg_catalog, commerce_customer_context
+AS $function$
+DECLARE
+  recorded integer;
+BEGIN
+  IF nullif(current_setting('ontos.tenant_id', true), '') IS NOT NULL THEN
+    RAISE EXCEPTION 'cross-Tenant Attempt sweep accounting requires worker scope' USING ERRCODE = '42501';
+  END IF;
+  -- A revision the count was not spent against starts the budget over, which is how any state or
+  -- revision change — not a rule that has to predict one — releases an Attempt the budget held.
+  UPDATE commerce_customer_context.portal_enrollment_attempts AS attempt
+  SET
+    sweep_count = CASE WHEN attempt.sweep_revision IS DISTINCT FROM p_revision THEN 1 ELSE attempt.sweep_count + 1 END,
+    sweep_revision = p_revision
+  WHERE attempt.tenant_id = p_tenant_id
+    AND attempt.portal_enrollment_attempt_id = p_attempt_id
+  RETURNING attempt.sweep_count INTO recorded;
+  IF recorded IS NULL THEN
+    RAISE EXCEPTION 'Enrollment Attempt not found for sweep accounting' USING ERRCODE = '02000';
+  END IF;
+  RETURN recorded;
+END;
+$function$;
+--> statement-breakpoint
+
 REVOKE ALL ON FUNCTION "commerce_customer_context"."create_portal_enrollment_attempt"(uuid, uuid, uuid, text, text, text, uuid, uuid, text) FROM PUBLIC;
 REVOKE ALL ON FUNCTION "commerce_customer_context"."claim_portal_enrollment_transition"(uuid, uuid, integer, text, text, text, uuid, text, uuid, boolean, integer, text, text) FROM PUBLIC;
 REVOKE ALL ON FUNCTION "commerce_customer_context"."record_portal_enrollment_outcome"(uuid, uuid, integer, text, uuid, text, text, uuid, uuid, text, text, text, text, text, text, text, text, text) FROM PUBLIC;
@@ -1546,7 +1598,8 @@ REVOKE ALL ON FUNCTION "commerce_customer_context"."terminate_portal_enrollment"
 REVOKE ALL ON FUNCTION "commerce_customer_context"."read_portal_enrollment_attempt"(uuid, uuid) FROM PUBLIC;
 REVOKE ALL ON FUNCTION "commerce_customer_context"."read_portal_enrollment_owner_operation"(uuid, uuid, text, text) FROM PUBLIC;
 REVOKE ALL ON FUNCTION "commerce_customer_context"."authorize_portal_enrollment_account_creation"(uuid, uuid, uuid) FROM PUBLIC;
-REVOKE ALL ON FUNCTION "commerce_customer_context"."list_due_portal_enrollment_attempts"(integer, timestamptz, uuid, integer) FROM PUBLIC;
+REVOKE ALL ON FUNCTION "commerce_customer_context"."list_due_portal_enrollment_attempts"(integer, timestamptz, uuid, integer, integer) FROM PUBLIC;
+REVOKE ALL ON FUNCTION "commerce_customer_context"."record_portal_enrollment_sweep"(uuid, uuid, integer) FROM PUBLIC;
 GRANT EXECUTE ON FUNCTION "commerce_customer_context"."create_portal_enrollment_attempt"(uuid, uuid, uuid, text, text, text, uuid, uuid, text) TO "ontos_runtime";
 GRANT EXECUTE ON FUNCTION "commerce_customer_context"."claim_portal_enrollment_transition"(uuid, uuid, integer, text, text, text, uuid, text, uuid, boolean, integer, text, text) TO "ontos_runtime";
 GRANT EXECUTE ON FUNCTION "commerce_customer_context"."record_portal_enrollment_outcome"(uuid, uuid, integer, text, uuid, text, text, uuid, uuid, text, text, text, text, text, text, text, text, text) TO "ontos_runtime";
@@ -1555,7 +1608,8 @@ GRANT EXECUTE ON FUNCTION "commerce_customer_context"."terminate_portal_enrollme
 GRANT EXECUTE ON FUNCTION "commerce_customer_context"."read_portal_enrollment_attempt"(uuid, uuid) TO "ontos_runtime";
 GRANT EXECUTE ON FUNCTION "commerce_customer_context"."read_portal_enrollment_owner_operation"(uuid, uuid, text, text) TO "ontos_runtime";
 GRANT EXECUTE ON FUNCTION "commerce_customer_context"."authorize_portal_enrollment_account_creation"(uuid, uuid, uuid) TO "ontos_runtime";
-GRANT EXECUTE ON FUNCTION "commerce_customer_context"."list_due_portal_enrollment_attempts"(integer, timestamptz, uuid, integer) TO "ontos_runtime";
+GRANT EXECUTE ON FUNCTION "commerce_customer_context"."list_due_portal_enrollment_attempts"(integer, timestamptz, uuid, integer, integer) TO "ontos_runtime";
+GRANT EXECUTE ON FUNCTION "commerce_customer_context"."record_portal_enrollment_sweep"(uuid, uuid, integer) TO "ontos_runtime";
 --> statement-breakpoint
 DO $hardening$
 BEGIN

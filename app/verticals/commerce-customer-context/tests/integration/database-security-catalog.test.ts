@@ -100,6 +100,7 @@ const grantedRoutines = [
   'record_address_book_reconciliation_receipt',
   'record_guest_attribution',
   'record_portal_enrollment_outcome',
+  'record_portal_enrollment_sweep',
   'record_profile_reconciliation_owner_outcome',
   'redeem_invitation_claim_secret',
   'register_invitation_claim_proof',

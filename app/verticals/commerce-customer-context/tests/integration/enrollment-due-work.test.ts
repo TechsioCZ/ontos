@@ -22,8 +22,12 @@ import {
 } from '../../src/enrollment/journeys/retail-self-enrollment-contracts.ts';
 import { commerceEnrollmentDueAttemptStoreForRun } from '../../src/enrollment/orchestration/owner-transition-production.ts';
 import { PORTAL_ACCOUNT_CREATION_TRANSITION_KEY } from '../../src/enrollment/orchestration/prepared-owner-authority.ts';
-import { commerceEnrollmentContinuationSweeperFor } from '../../src/workers/enrollment-continuation-sweeper.ts';
 import {
+  commerceEnrollmentContinuationSweeperFor,
+  SWEEP_BUDGET,
+} from '../../src/workers/enrollment-continuation-sweeper.ts';
+import {
+  advanceEnrollmentAcceptanceAttemptRevision,
   backdateEnrollmentAcceptanceAttempt,
   makeEnrollmentAcceptanceFixture,
   startEnrollmentAcceptanceAttempt,
@@ -125,6 +129,7 @@ it.live('advances a newer Attempt in one tick even when a whole page of older on
             Effect.flatMap(() => scoped.advance(input)),
           ),
         listDue: scoped.listDue,
+        recordSweep: scoped.recordSweep,
       };
       // Two rows per page against three Attempts that cannot move: the page the listing starts with
       // is entirely theirs, which is the whole point of the scenario.
@@ -148,8 +153,8 @@ it.live('advances a newer Attempt in one tick even when a whole page of older on
         { concurrency: 1 },
       );
 
-      // Tick until nothing moves any more: every Attempt the listing offers has spent its whole
-      // sweep budget, and each stays in the listing at the revision it spent it at.
+      // Tick until nothing moves any more: every Attempt the listing offered has spent its whole
+      // sweep budget at the revision it is standing at, so the listing stops offering it.
       let settled = false;
       for (let tick = 0; tick < MAX_SWEEP_TICKS && !settled; tick += 1) {
         const sweep = yield* sweeper.sweep;
@@ -158,8 +163,9 @@ it.live('advances a newer Attempt in one tick even when a whole page of older on
       expect(settled).toBe(true);
       const spent = (yield* Ref.get(advanced)).length;
 
-      // A newer Attempt arrives behind them. It is the second page's row, and the first page is
-      // nothing but Attempts this sweeper has given up on: a tick that reads one page never sees it.
+      // A newer Attempt arrives behind them in the journal's oldest-first order. Were the spent rows
+      // still offered they would be the tick's whole first page, and a tick that reads one page
+      // would never reach this one.
       const fresh = yield* startEnrollmentAcceptanceAttempt(
         fixture,
         startInputFor(tenantId, actorPrincipalId, 'due-work-fresh'),
@@ -185,7 +191,7 @@ it.live('the due-work listing answers a worker tick and refuses a caller with a 
         startInputFor(tenantId, actorPrincipalId, 'due-work-scope'),
       );
       yield* backdateEnrollmentAcceptanceAttempt(fixture, attempt.portalEnrollmentAttemptId, ANCIENT_ACTIVITY[0]);
-      const query = { after: Option.none(), limit: 500, staleAfterMillis: 0 };
+      const query = { after: Option.none(), limit: 500, maxSweeps: SWEEP_BUDGET, staleAfterMillis: 0 };
       const ofScenario = (rows: readonly DueEnrollmentAttempt[]) => rows.filter((row) => row.tenantId === tenantId);
 
       // A worker tick installs no scope at all, and that is the whole credential the routine wants.
@@ -200,6 +206,79 @@ it.live('the due-work listing answers a worker tick and refuses a caller with a 
         .listDue(query)
         .pipe(Effect.flip);
       expect(refusal.code).toBe('attempt_unavailable');
+    }),
+  ),
+);
+
+it.live('the sweep accounting answers a worker tick and refuses a caller with a verified Tenant', () =>
+  Effect.scoped(
+    Effect.gen(function* sweepAccountingWorkerScopeIsRequired() {
+      const tenantId = tenant(randomUUID());
+      const actorPrincipalId = principalId(randomUUID());
+      const fixture = yield* makeEnrollmentAcceptanceFixture({ tenantId });
+      const attempt = yield* startEnrollmentAcceptanceAttempt(
+        fixture,
+        startInputFor(tenantId, actorPrincipalId, 'due-work-sweep-scope'),
+      );
+      const sweep = {
+        portalEnrollmentAttemptId: attempt.portalEnrollmentAttemptId,
+        revision: attempt.revision,
+        tenantId,
+      };
+
+      // The accounting writes to the one Attempt surface that answers before any Tenant is known,
+      // so it takes the listing's credential: a transaction with no operational scope installed.
+      expect(yield* commerceEnrollmentDueAttemptStoreForRun(fixture.runWorker).recordSweep(sweep)).toBe(1);
+
+      // The same statement with the verified Tenant every request installs. Without the guard, a
+      // request could spend another Tenant's sweep budget and take its Attempts off the listing.
+      const refusal = yield* commerceEnrollmentDueAttemptStoreForRun(fixture.runRequestScoped)
+        .recordSweep(sweep)
+        .pipe(Effect.flip);
+      expect(refusal.code).toBe('attempt_unavailable');
+    }),
+  ),
+);
+
+it.live('stops listing an Attempt once its sweep budget is spent, and lists it again once it moves', () =>
+  Effect.scoped(
+    Effect.gen(function* durableSweepBudgetHoldsAndReleases() {
+      const tenantId = tenant(randomUUID());
+      const actorPrincipalId = principalId(randomUUID());
+      const fixture = yield* makeEnrollmentAcceptanceFixture({ tenantId });
+      const attempt = yield* startEnrollmentAcceptanceAttempt(
+        fixture,
+        startInputFor(tenantId, actorPrincipalId, 'due-work-budget'),
+      );
+      yield* backdateEnrollmentAcceptanceAttempt(fixture, attempt.portalEnrollmentAttemptId, ANCIENT_ACTIVITY[0]);
+      const store = commerceEnrollmentDueAttemptStoreForRun(fixture.runWorker);
+      const query = { after: Option.none(), limit: 500, maxSweeps: SWEEP_BUDGET, staleAfterMillis: 0 };
+      const ofScenario = (rows: readonly DueEnrollmentAttempt[]) => rows.filter((row) => row.tenantId === tenantId);
+      const sweep = {
+        portalEnrollmentAttemptId: attempt.portalEnrollmentAttemptId,
+        revision: attempt.revision,
+        tenantId,
+      };
+      expect(ofScenario(yield* store.listDue(query)).map((row) => row.revision)).toStrictEqual([attempt.revision]);
+
+      // Exactly the budget, every sweep recorded against the revision the Attempt is standing at.
+      const counted = yield* Effect.forEach(
+        Array.from({ length: SWEEP_BUDGET }, (_unused, index) => index),
+        () => store.recordSweep(sweep),
+        { concurrency: 1 },
+      );
+      expect(counted).toStrictEqual(Array.from({ length: SWEEP_BUDGET }, (_unused, index) => index + 1));
+
+      // The journal itself withholds the Attempt now. Held in a worker's memory instead, this count
+      // would die with the process and the very next listing would hand the budget back in full.
+      expect(ofScenario(yield* store.listDue(query))).toStrictEqual([]);
+
+      // Anything that moves the Attempt is the journal's own word that the halt is not the same
+      // halt any more, so the budget starts over without a rule that has to predict the movement.
+      yield* advanceEnrollmentAcceptanceAttemptRevision(fixture, attempt.portalEnrollmentAttemptId);
+      yield* backdateEnrollmentAcceptanceAttempt(fixture, attempt.portalEnrollmentAttemptId, ANCIENT_ACTIVITY[0]);
+
+      expect(ofScenario(yield* store.listDue(query)).map((row) => row.revision)).toStrictEqual([attempt.revision + 1]);
     }),
   ),
 );
