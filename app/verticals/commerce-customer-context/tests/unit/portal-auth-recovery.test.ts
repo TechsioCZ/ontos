@@ -1356,6 +1356,54 @@ it.effect('refuses the password reset when the pre-mutation intent row cannot be
   });
 });
 
+it.effect('refuses a recovery request when its intent row cannot be written, before the provider is asked', () => {
+  let requestCalls = 0;
+  const provider: CommercePortalAuthRecoveryProvider = {
+    ...successfulProvider(),
+    requestPasswordReset: () =>
+      Effect.sync(() => {
+        requestCalls += 1;
+        return { message: 'sent', status: true };
+      }),
+  };
+  const recording = makeRecordingRecorder('commerce.portal-auth.recovery-started.v1');
+  return Effect.gen(function* recoveryStartIntentIsStrict() {
+    const outcome = yield* Effect.result(
+      runAuditedRecovery(recording.recorder, provider, makeMemoryRecoveryStore().store, (service) =>
+        service.requestPasswordReset({ email: 'customer@example.test' }),
+      ),
+    );
+    expect(Result.isFailure(outcome)).toBe(true);
+    if (Result.isFailure(outcome)) {
+      expect(outcome.failure).toBeInstanceOf(CommercePortalAuthRecoveryUnavailable);
+    }
+    expect(requestCalls).toBe(0);
+  });
+});
+
+it.effect('records the recovery request as a strict intent row before the provider and a completion row after', () => {
+  const order: string[] = [];
+  const provider: CommercePortalAuthRecoveryProvider = {
+    ...successfulProvider(),
+    requestPasswordReset: () =>
+      Effect.sync(() => {
+        order.push('provider');
+        return { message: 'sent', status: true };
+      }),
+  };
+  const recording = makeRecordingRecorder();
+  return Effect.gen(function* recoveryStartEvidence() {
+    yield* runAuditedRecovery(recording.recorder, provider, makeMemoryRecoveryStore().store, (service) =>
+      service.requestPasswordReset({ email: 'customer@example.test' }),
+    );
+    expect(order).toStrictEqual(['provider']);
+    expect(recording.events().map((event) => [event.eventType, event.outcome, event.providerSubjectId])).toStrictEqual([
+      ['commerce.portal-auth.recovery-started.v1', 'requested', undefined],
+      ['commerce.portal-auth.recovery-started.v1', 'success', undefined],
+    ]);
+  });
+});
+
 it.effect('records the reset intent before the provider call and names the ledger subject on both rows', () => {
   const consumedAudits: CommercePortalAuthAuditEvent[] = [];
   const order: string[] = [];

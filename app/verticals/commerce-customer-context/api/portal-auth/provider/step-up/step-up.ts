@@ -29,6 +29,7 @@ import type { CommercePortalAuthStepUp, CommercePortalAuthStepUpFailure } from '
 
 const STEP_UP_EXPIRED_EVENT = 'commerce.portal-auth.step-up-expired.v1' as const;
 const STEP_UP_VERIFIED_EVENT = 'commerce.portal-auth.step-up-verified.v1' as const;
+const STEP_UP_VERIFY_OPERATION = 'step-up-verify' as const;
 
 const invalidRequest = (cause?: unknown): CommercePortalAuthStepUpInvalidRequest =>
   cause === undefined
@@ -189,6 +190,14 @@ export const makeCommercePortalAuthStepUp = Effect.fn('CommercePortalAuthStepUp.
       yield* challengeStore
         .create({
           attemptsRemaining,
+          audit: {
+            eventType: 'commerce.portal-auth.step-up-issued.v1',
+            occurredAt: now,
+            operation: 'step-up-issue',
+            outcome: 'success',
+            providerSubjectId: request.providerSubjectId,
+            sessionRef: request.sessionRef,
+          },
           challengeIdHash: hashChallengeId(challengeId),
           expiresAt,
           now,
@@ -205,14 +214,6 @@ export const makeCommercePortalAuthStepUp = Effect.fn('CommercePortalAuthStepUp.
       const issued = yield* Schema.decodeEffect(CommercePortalAuthStepUpRequiredSchema)(result).pipe(
         Effect.mapError((cause) => unavailable('challenge-result', cause)),
       );
-      yield* emitAudit({
-        eventType: 'commerce.portal-auth.step-up-issued.v1',
-        occurredAt: now,
-        operation: 'step-up-issue',
-        outcome: 'success',
-        providerSubjectId: request.providerSubjectId,
-        sessionRef: request.sessionRef,
-      });
       return issued;
     });
 
@@ -237,7 +238,7 @@ export const makeCommercePortalAuthStepUp = Effect.fn('CommercePortalAuthStepUp.
         emitAudit({
           eventType,
           occurredAt,
-          operation: 'step-up-verify',
+          operation: STEP_UP_VERIFY_OPERATION,
           outcome,
           providerSubjectId: request.providerSubjectId,
           sessionRef: request.sessionRef,
@@ -296,6 +297,14 @@ export const makeCommercePortalAuthStepUp = Effect.fn('CommercePortalAuthStepUp.
         if (Schema.is(CommercePortalAuthStepUpCodeRejected)(failure)) {
           yield* challengeStore
             .recordFailure({
+              audit: {
+                eventType: STEP_UP_VERIFIED_EVENT,
+                occurredAt: now,
+                operation: STEP_UP_VERIFY_OPERATION,
+                outcome: 'authentication_failed',
+                providerSubjectId: request.providerSubjectId,
+                sessionRef: request.sessionRef,
+              },
               challengeIdHash,
               now,
               providerSubjectId: request.providerSubjectId,
@@ -303,7 +312,6 @@ export const makeCommercePortalAuthStepUp = Effect.fn('CommercePortalAuthStepUp.
               sessionId,
             })
             .pipe(Effect.mapError((cause) => unavailable('challenge-failure', cause)));
-          yield* auditVerification(STEP_UP_VERIFIED_EVENT, 'authentication_failed', now);
           return { outcome: 'STEP_UP_REJECTED' };
         }
         const released = yield* challengeStore
@@ -325,6 +333,14 @@ export const makeCommercePortalAuthStepUp = Effect.fn('CommercePortalAuthStepUp.
       yield* sessionRecord(sessionReader, request.providerSubjectId, sessionId, verifiedAt);
       const consumed = yield* challengeStore
         .consume({
+          audit: {
+            eventType: STEP_UP_VERIFIED_EVENT,
+            occurredAt: verifiedAt,
+            operation: STEP_UP_VERIFY_OPERATION,
+            outcome: 'success',
+            providerSubjectId: request.providerSubjectId,
+            sessionRef: request.sessionRef,
+          },
           challengeIdHash,
           now: verifiedAt,
           providerSubjectId: request.providerSubjectId,
@@ -341,7 +357,6 @@ export const makeCommercePortalAuthStepUp = Effect.fn('CommercePortalAuthStepUp.
         reason: 'step-up',
         sessionRef: request.sessionRef,
       });
-      yield* auditVerification(STEP_UP_VERIFIED_EVENT, 'success', verifiedAt);
       return { handoff, outcome: 'STEP_UP_COMPLETED' };
     });
 

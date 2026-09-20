@@ -1,5 +1,5 @@
 import { and, eq, isNull } from 'drizzle-orm';
-import { DateTime, Effect, Layer, Option } from 'effect';
+import { DateTime, Effect, Layer, Option, Schema } from 'effect';
 
 import { withCause } from '../../../api/portal-auth/problems-support.ts';
 import type { CommercePortalAuthStepUpChallengeRecord } from '../../../api/portal-auth/provider/step-up/contracts.ts';
@@ -8,6 +8,9 @@ import type { CommercePortalAuthStepUpChallengeStore } from '../../../api/portal
 import type { CommercePortalAuthStepUpUnavailable } from '../../../api/portal-auth/provider/step-up/unavailable.ts';
 import { CommercePortalAuthStepUpUnavailable as StepUpUnavailable } from '../../../api/portal-auth/provider/step-up/unavailable.ts';
 import { COMMERCE_PORTAL_AUTH_POLICY } from '../../../api/portal-auth/provider/config.ts';
+import type { CommercePortalAuthAuditEvent } from '../audit/audit-contracts.ts';
+import { CommercePortalAuthAuditUnavailable } from '../audit/audit-unavailable.ts';
+import { writeCommercePortalAuthAuditRow } from '../audit/audit-transaction.ts';
 import { CommercePortalAuthDatabase } from './portal-auth-database.ts';
 import type { CommercePortalAuthDatabaseExecutor } from './portal-auth-database-types.ts';
 import { stepUpChallenge, stepUpChallengeAttempt } from './portal-auth-tables.ts';
@@ -20,6 +23,11 @@ const unavailable = (operation: string, cause: unknown): CommercePortalAuthStepU
     }),
     cause,
   );
+
+const mutationFailure = (operation: string, cause: unknown): CommercePortalAuthStepUpUnavailable =>
+  Schema.is(CommercePortalAuthAuditUnavailable)(cause)
+    ? unavailable(`${operation}-audit`, cause)
+    : unavailable(operation, cause);
 
 const epochMillis = (value: Date): number => {
   const date = DateTime.make(value);
@@ -95,6 +103,7 @@ export const makeCommercePortalAuthStepUpChallengeStore = Effect.fn('CommercePor
     database: CommercePortalAuthDatabaseExecutor,
   ): Effect.fn.Return<CommercePortalAuthStepUpChallengeStore> {
     const consume = Effect.fn('CommercePortalAuthStepUpChallengeStore.consume')(function* consumeEffect(input: {
+      readonly audit: CommercePortalAuthAuditEvent;
       readonly challengeIdHash: string;
       readonly now: Date;
       readonly providerSubjectId: string;
@@ -144,18 +153,23 @@ export const makeCommercePortalAuthStepUpChallengeStore = Effect.fn('CommercePor
                     .where(and(exactChallengeBinding(input), isNull(stepUpChallenge.consumedAt)))
                     .returning({ challengeIdHash: stepUpChallenge.challengeIdHash })
                 : [];
+              const didConsume = consumed.length === 1;
+              if (didConsume) {
+                yield* writeCommercePortalAuthAuditRow(transaction, input.audit);
+              }
               yield* transaction
                 .delete(stepUpChallengeAttempt)
                 .where(eq(stepUpChallengeAttempt.reservationId, input.reservationId));
-              return consumed.length === 1;
+              return didConsume;
             },
           ),
         )
-        .pipe(Effect.mapError((cause) => unavailable('challenge-consume', cause)));
+        .pipe(Effect.mapError((cause) => mutationFailure('challenge-consume', cause)));
     });
 
     const create = Effect.fn('CommercePortalAuthStepUpChallengeStore.create')(function* createEffect(input: {
       readonly attemptsRemaining: number;
+      readonly audit: CommercePortalAuthAuditEvent;
       readonly challengeIdHash: string;
       readonly expiresAt: Date;
       readonly now: Date;
@@ -188,10 +202,11 @@ export const makeCommercePortalAuthStepUpChallengeStore = Effect.fn('CommercePor
                 sessionId: input.sessionId,
                 updatedAt: input.now,
               });
+              yield* writeCommercePortalAuthAuditRow(transaction, input.audit);
             },
           ),
         )
-        .pipe(Effect.mapError((cause) => unavailable('challenge-create', cause)));
+        .pipe(Effect.mapError((cause) => mutationFailure('challenge-create', cause)));
     });
 
     const findByChallengeIdHash = Effect.fn('CommercePortalAuthStepUpChallengeStore.findByChallengeIdHash')(
@@ -208,6 +223,7 @@ export const makeCommercePortalAuthStepUpChallengeStore = Effect.fn('CommercePor
 
     const recordFailure = Effect.fn('CommercePortalAuthStepUpChallengeStore.recordFailure')(
       function* recordFailureEffect(input: {
+        readonly audit: CommercePortalAuthAuditEvent;
         readonly challengeIdHash: string;
         readonly now: Date;
         readonly providerSubjectId: string;
@@ -215,13 +231,19 @@ export const makeCommercePortalAuthStepUpChallengeStore = Effect.fn('CommercePor
         readonly sessionId: string;
       }): Effect.fn.Return<boolean, CommercePortalAuthStepUpUnavailable> {
         return yield* database
-          .delete(stepUpChallengeAttempt)
-          .where(exactReservation(input))
-          .returning({ reservationId: stepUpChallengeAttempt.reservationId })
-          .pipe(
-            Effect.map((rows) => rows.length === 1),
-            Effect.mapError((cause) => unavailable('challenge-failure', cause)),
-          );
+          .transaction(
+            Effect.fn('CommercePortalAuthStepUpChallengeStore.recordFailure.transaction')(
+              function* recordFailureTransaction(transaction) {
+                const rows = yield* transaction
+                  .delete(stepUpChallengeAttempt)
+                  .where(exactReservation(input))
+                  .returning({ reservationId: stepUpChallengeAttempt.reservationId });
+                yield* writeCommercePortalAuthAuditRow(transaction, input.audit);
+                return rows.length === 1;
+              },
+            ),
+          )
+          .pipe(Effect.mapError((cause) => mutationFailure('challenge-failure', cause)));
       },
     );
 

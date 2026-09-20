@@ -1,4 +1,4 @@
-import { Config, DateTime, Effect, Option, Redacted } from 'effect';
+import { Config, DateTime, Effect, Option, Redacted, Result } from 'effect';
 import type { Scope } from 'effect';
 import { expect, it } from 'effect-rstest';
 import { eq } from 'drizzle-orm';
@@ -7,6 +7,8 @@ import { randomUUID } from 'node:crypto';
 import { makeCommercePortalAuthDatabase } from '../../src/portal-auth/persistence/portal-auth-database.ts';
 import type { CommercePortalAuthDatabase } from '../../src/portal-auth/persistence/portal-auth-database.ts';
 import { stepUpChallenge, stepUpChallengeAttempt } from '../../src/portal-auth/persistence/portal-auth-tables.ts';
+import { portalAuthAuditEvent } from '../../src/portal-auth/audit/audit-tables.ts';
+import type { CommercePortalAuthAuditEvent } from '../../src/portal-auth/audit/audit-contracts.ts';
 import { parseCommercePortalAuthConfig } from '../../api/portal-auth/provider/config.ts';
 import { makeCommercePortalAuthStepUpChallengeStore } from '../../api/portal-auth/provider/step-up/index.ts';
 import type { CommercePortalAuthStepUpChallengeStore } from '../../api/portal-auth/provider/step-up/index.ts';
@@ -36,8 +38,41 @@ const cleanupChallenge = (fixture: StepUpStoreFixture) =>
         .delete(stepUpChallengeAttempt)
         .where(eq(stepUpChallengeAttempt.challengeIdHash, fixture.challengeHash));
       yield* transaction.delete(stepUpChallenge).where(eq(stepUpChallenge.challengeIdHash, fixture.challengeHash));
+      yield* transaction
+        .delete(portalAuthAuditEvent)
+        .where(eq(portalAuthAuditEvent.providerSubjectId, fixture.providerSubjectId));
     }),
   );
+
+/**
+ * A NUL byte is not representable in a PostgreSQL text value, so the server refuses this row at
+ * execution — a real database refusal of the audit insert, raised from inside the same transaction
+ * as the challenge mutation, rather than a fault injected into the store's own code.
+ */
+const REFUSED_BY_POSTGRES = 'step-up-audit-refused\u0000';
+
+const auditEvent = (
+  fixture: Pick<StepUpStoreFixture, 'now' | 'providerSubjectId' | 'sessionId'>,
+  eventType: CommercePortalAuthAuditEvent['eventType'],
+  outcome: CommercePortalAuthAuditEvent['outcome'],
+  subjectDigest?: string,
+): CommercePortalAuthAuditEvent => {
+  const event: CommercePortalAuthAuditEvent = {
+    eventType,
+    occurredAt: fixture.now,
+    operation: 'step-up-test',
+    outcome,
+    providerSubjectId: fixture.providerSubjectId,
+    sessionRef: fixture.sessionId,
+  };
+  return subjectDigest === undefined ? event : { ...event, subjectDigest };
+};
+
+const auditRowsForSubject = (fixture: StepUpStoreFixture) =>
+  fixture.database.executor
+    .select({ eventType: portalAuthAuditEvent.eventType, outcome: portalAuthAuditEvent.outcome })
+    .from(portalAuthAuditEvent)
+    .where(eq(portalAuthAuditEvent.providerSubjectId, fixture.providerSubjectId));
 
 const makeFixture = Effect.fn('CommercePortalAuthStepUpIntegration.makeFixture')(function* makeFixtureEffect(
   caseName: string,
@@ -77,6 +112,7 @@ it.live('serializes concurrent reservations before any verifier could run', () =
       const fixture = yield* makeFixture('reserve');
       yield* fixture.store.create({
         attemptsRemaining: 1,
+        audit: auditEvent(fixture, 'commerce.portal-auth.step-up-issued.v1', 'success'),
         challengeIdHash: fixture.challengeHash,
         expiresAt: fixture.expiresAt,
         now: fixture.now,
@@ -108,7 +144,12 @@ it.live('serializes concurrent reservations before any verifier could run', () =
       if (winner === undefined) {
         return yield* Effect.fail(new Error('Reservation result did not identify a winner'));
       }
-      expect(yield* fixture.store.recordFailure(winner)).toBe(true);
+      expect(
+        yield* fixture.store.recordFailure({
+          ...winner,
+          audit: auditEvent(fixture, 'commerce.portal-auth.step-up-verified.v1', 'authentication_failed'),
+        }),
+      ).toBe(true);
       const afterFailure = yield* fixture.store.findByChallengeIdHash(fixture.challengeHash);
       expect(Option.isSome(afterFailure)).toBe(true);
       if (Option.isSome(afterFailure)) {
@@ -125,6 +166,7 @@ it.live('consumes one concurrent valid reservation and releases only its exact o
       const fixture = yield* makeFixture('consume');
       yield* fixture.store.create({
         attemptsRemaining: 2,
+        audit: auditEvent(fixture, 'commerce.portal-auth.step-up-issued.v1', 'success'),
         challengeIdHash: fixture.challengeHash,
         expiresAt: fixture.expiresAt,
         now: fixture.now,
@@ -136,9 +178,16 @@ it.live('consumes one concurrent valid reservation and releases only its exact o
       expect(yield* fixture.store.reserveAttempt(first)).toBe(true);
       expect(yield* fixture.store.reserveAttempt(second)).toBe(true);
 
-      const consumed = yield* Effect.all([fixture.store.consume(first), fixture.store.consume(second)], {
-        concurrency: 2,
-      });
+      const consumeAudit = auditEvent(fixture, 'commerce.portal-auth.step-up-verified.v1', 'success');
+      const consumed = yield* Effect.all(
+        [
+          fixture.store.consume({ ...first, audit: consumeAudit }),
+          fixture.store.consume({ ...second, audit: consumeAudit }),
+        ],
+        {
+          concurrency: 2,
+        },
+      );
       expect(consumed.filter(Boolean)).toHaveLength(1);
       expect(consumed.filter((value) => !value)).toHaveLength(1);
 
@@ -158,6 +207,7 @@ it.live('consumes one concurrent valid reservation and releases only its exact o
       const releaseFixture = yield* makeFixture('release');
       yield* releaseFixture.store.create({
         attemptsRemaining: 1,
+        audit: auditEvent(releaseFixture, 'commerce.portal-auth.step-up-issued.v1', 'success'),
         challengeIdHash: releaseFixture.challengeHash,
         expiresAt: releaseFixture.expiresAt,
         now: releaseFixture.now,
@@ -178,6 +228,157 @@ it.live('consumes one concurrent valid reservation and releases only its exact o
       if (Option.isSome(released)) {
         expect(released.value.attemptsRemaining).toBe(1);
       }
+    }),
+  ),
+);
+
+it.live('rolls a challenge creation back when PostgreSQL refuses its audit row', () =>
+  Effect.scoped(
+    Effect.gen(function* createRollsBackWithoutEvidence() {
+      const fixture = yield* makeFixture('create-audit-refused');
+
+      const refused = yield* Effect.result(
+        fixture.store.create({
+          attemptsRemaining: 1,
+          audit: auditEvent(fixture, 'commerce.portal-auth.step-up-issued.v1', 'success', REFUSED_BY_POSTGRES),
+          challengeIdHash: fixture.challengeHash,
+          expiresAt: fixture.expiresAt,
+          now: fixture.now,
+          providerSubjectId: fixture.providerSubjectId,
+          sessionId: fixture.sessionId,
+        }),
+      );
+      if (!Result.isFailure(refused)) {
+        throw new Error('A challenge creation whose audit row was refused must not report success');
+      }
+      expect(refused.failure.operation).toBe('challenge-create-audit');
+
+      const challengeRows = yield* fixture.database.executor
+        .select({ challengeIdHash: stepUpChallenge.challengeIdHash })
+        .from(stepUpChallenge)
+        .where(eq(stepUpChallenge.challengeIdHash, fixture.challengeHash));
+      expect(challengeRows).toStrictEqual([]);
+      expect(yield* auditRowsForSubject(fixture)).toStrictEqual([]);
+    }),
+  ),
+);
+
+it.live('rolls a recorded failure back when PostgreSQL refuses its audit row', () =>
+  Effect.scoped(
+    Effect.gen(function* recordFailureRollsBackWithoutEvidence() {
+      const fixture = yield* makeFixture('failure-audit-refused');
+      yield* fixture.store.create({
+        attemptsRemaining: 1,
+        audit: auditEvent(fixture, 'commerce.portal-auth.step-up-issued.v1', 'success'),
+        challengeIdHash: fixture.challengeHash,
+        expiresAt: fixture.expiresAt,
+        now: fixture.now,
+        providerSubjectId: fixture.providerSubjectId,
+        sessionId: fixture.sessionId,
+      });
+      const reservation = reservationInput(fixture, 'reservation-failure-refused');
+      expect(yield* fixture.store.reserveAttempt(reservation)).toBe(true);
+
+      const refused = yield* Effect.result(
+        fixture.store.recordFailure({
+          ...reservation,
+          audit: auditEvent(
+            fixture,
+            'commerce.portal-auth.step-up-verified.v1',
+            'authentication_failed',
+            REFUSED_BY_POSTGRES,
+          ),
+        }),
+      );
+      if (!Result.isFailure(refused)) {
+        throw new Error('A recorded failure whose audit row was refused must not report success');
+      }
+      expect(refused.failure.operation).toBe('challenge-failure-audit');
+
+      // Nothing committed: the reservation is still there and no evidence was left behind.
+      const reservationRows = yield* fixture.database.executor
+        .select({ reservationId: stepUpChallengeAttempt.reservationId })
+        .from(stepUpChallengeAttempt)
+        .where(eq(stepUpChallengeAttempt.challengeIdHash, fixture.challengeHash));
+      expect(reservationRows).toStrictEqual([{ reservationId: reservation.reservationId }]);
+      expect(yield* auditRowsForSubject(fixture)).toStrictEqual([
+        { eventType: 'commerce.portal-auth.step-up-issued.v1', outcome: 'success' },
+      ]);
+    }),
+  ),
+);
+
+it.live('rolls a consume back when PostgreSQL refuses its audit row', () =>
+  Effect.scoped(
+    Effect.gen(function* consumeRollsBackWithoutEvidence() {
+      const fixture = yield* makeFixture('consume-audit-refused');
+      yield* fixture.store.create({
+        attemptsRemaining: 1,
+        audit: auditEvent(fixture, 'commerce.portal-auth.step-up-issued.v1', 'success'),
+        challengeIdHash: fixture.challengeHash,
+        expiresAt: fixture.expiresAt,
+        now: fixture.now,
+        providerSubjectId: fixture.providerSubjectId,
+        sessionId: fixture.sessionId,
+      });
+      const reservation = reservationInput(fixture, 'reservation-consume-refused');
+      expect(yield* fixture.store.reserveAttempt(reservation)).toBe(true);
+
+      const refused = yield* Effect.result(
+        fixture.store.consume({
+          ...reservation,
+          audit: auditEvent(fixture, 'commerce.portal-auth.step-up-verified.v1', 'success', REFUSED_BY_POSTGRES),
+        }),
+      );
+      if (!Result.isFailure(refused)) {
+        throw new Error('A consume whose audit row was refused must not report success');
+      }
+      expect(refused.failure.operation).toBe('challenge-consume-audit');
+
+      // Nothing committed: the challenge is still unconsumed and its reservation is still live.
+      const challengeRows = yield* fixture.database.executor
+        .select({ consumedAt: stepUpChallenge.consumedAt })
+        .from(stepUpChallenge)
+        .where(eq(stepUpChallenge.challengeIdHash, fixture.challengeHash));
+      expect(challengeRows.at(0)?.consumedAt).toBeNull();
+      const reservationRows = yield* fixture.database.executor
+        .select({ reservationId: stepUpChallengeAttempt.reservationId })
+        .from(stepUpChallengeAttempt)
+        .where(eq(stepUpChallengeAttempt.challengeIdHash, fixture.challengeHash));
+      expect(reservationRows).toStrictEqual([{ reservationId: reservation.reservationId }]);
+      expect(yield* auditRowsForSubject(fixture)).toStrictEqual([
+        { eventType: 'commerce.portal-auth.step-up-issued.v1', outcome: 'success' },
+      ]);
+    }),
+  ),
+);
+
+it.live('leaves exactly one issued row and one verified row for a full issue-then-verify cycle', () =>
+  Effect.scoped(
+    Effect.gen(function* issueThenVerifyLeavesExactlyOneRowEach() {
+      const fixture = yield* makeFixture('issue-verify-cycle');
+      yield* fixture.store.create({
+        attemptsRemaining: 1,
+        audit: auditEvent(fixture, 'commerce.portal-auth.step-up-issued.v1', 'success'),
+        challengeIdHash: fixture.challengeHash,
+        expiresAt: fixture.expiresAt,
+        now: fixture.now,
+        providerSubjectId: fixture.providerSubjectId,
+        sessionId: fixture.sessionId,
+      });
+      const reservation = reservationInput(fixture, 'reservation-cycle');
+      expect(yield* fixture.store.reserveAttempt(reservation)).toBe(true);
+      expect(
+        yield* fixture.store.consume({
+          ...reservation,
+          audit: auditEvent(fixture, 'commerce.portal-auth.step-up-verified.v1', 'success'),
+        }),
+      ).toBe(true);
+
+      expect(yield* auditRowsForSubject(fixture)).toStrictEqual([
+        { eventType: 'commerce.portal-auth.step-up-issued.v1', outcome: 'success' },
+        { eventType: 'commerce.portal-auth.step-up-verified.v1', outcome: 'success' },
+      ]);
     }),
   ),
 );

@@ -1,6 +1,6 @@
 import { Context, DateTime, Effect, Option, Redacted, Result, Schema } from 'effect';
 
-import { auditedLayer, commercePortalAuthAuditEmitter } from '../../../../src/portal-auth/audit/audit.ts';
+import { auditedLayer } from '../../../../src/portal-auth/audit/audit.ts';
 import { withCause } from '../../problems-support.ts';
 import { normalizeCommercePortalAuthEmail } from '../../../../src/portal-auth/email-normalization.ts';
 import type { CommercePortalAuthAuditRecorder } from '../../../../src/portal-auth/audit/audit.ts';
@@ -51,6 +51,7 @@ const REQUEST_REJECTION_CODES = new Set([
   'INVALID_EMAIL',
   'USER_NOT_FOUND',
 ]);
+const RECOVERY_STARTED_EVENT_TYPE = 'commerce.portal-auth.recovery-started.v1';
 const RESET_REJECTION_CODES = new Set(['INVALID_TOKEN', 'PASSWORD_TOO_LONG', 'PASSWORD_TOO_SHORT', 'USER_NOT_FOUND']);
 /**
  * Rejections Better Auth judges before it consumes its own token row, so the token is provably still
@@ -164,7 +165,6 @@ export const makeCommercePortalAuthRecoveryService = Effect.fn('CommercePortalAu
     const provider = yield* CommercePortalAuthRecoveryProviderService;
     const store = yield* CommercePortalAuthRecoveryStoreService;
     const reconciliation = yield* CommercePortalAuthRecoveryReconciliationService;
-    const emitAudit = commercePortalAuthAuditEmitter(audit);
 
     /**
      * The strict half of the audit contract, for the two operations here that change durable state.
@@ -191,6 +191,14 @@ export const makeCommercePortalAuthRecoveryService = Effect.fn('CommercePortalAu
         const request = yield* Schema.decodeEffect(CommercePortalAuthPasswordResetRequestSchema)(input).pipe(
           Effect.mapError(invalidRequest),
         );
+        // The provider sends mail and registers a token; both rows are strict so neither can happen
+        // behind an audit trail with no row for it. No subject: the answer must not enumerate.
+        yield* recordIntent({
+          eventType: RECOVERY_STARTED_EVENT_TYPE,
+          occurredAt: yield* DateTime.nowAsDate,
+          operation: RECOVERY_REQUEST_OPERATION,
+          outcome: 'requested',
+        });
         const response = yield* provider
           .requestPasswordReset({ body: { email: normalizeCommercePortalAuthEmail(request.email) } })
           .pipe(Effect.mapError((failure) => mapProviderFailure(failure, REQUEST_REJECTION_CODES)));
@@ -204,8 +212,8 @@ export const makeCommercePortalAuthRecoveryService = Effect.fn('CommercePortalAu
             'The Commerce portal authentication provider rejected the recovery request',
           );
         }
-        yield* emitAudit({
-          eventType: 'commerce.portal-auth.recovery-started.v1',
+        yield* recordIntent({
+          eventType: RECOVERY_STARTED_EVENT_TYPE,
           occurredAt: yield* DateTime.nowAsDate,
           operation: RECOVERY_REQUEST_OPERATION,
           outcome: 'success',
