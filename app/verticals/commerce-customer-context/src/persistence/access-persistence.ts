@@ -122,6 +122,16 @@ const AccessMutationIntentRowSchema = Schema.Struct({
 });
 type AccessMutationIntentRow = typeof AccessMutationIntentRowSchema.Type;
 
+/** The closed lifecycle vocabulary of `counterparty_access_invitations`, under either column name. */
+const InvitationLifecycleSchema = Schema.Literals([
+  'PENDING',
+  'CLAIMING',
+  'CLAIMED',
+  'REVOKED',
+  'EXPIRED',
+  'RECONCILIATION_REQUIRED',
+]);
+
 const InvitationRowFieldsSchema = Schema.Struct({
   claimed_at: nullableTimestampSchema,
   claimed_by_principal_id: Schema.NullOr(Schema.String),
@@ -157,7 +167,7 @@ const InvitationRowFieldsSchema = Schema.Struct({
   reason: Schema.String,
   requested_permission_codes: Schema.Array(CounterpartyPermissionCodeSchema),
   revision: Schema.Int,
-  state: Schema.Literals(['PENDING', 'CLAIMING', 'CLAIMED', 'REVOKED', 'EXPIRED', 'RECONCILIATION_REQUIRED']),
+  state: InvitationLifecycleSchema,
   storefront_resource_id: Schema.NullOr(Schema.String),
 });
 type InvitationRow = typeof InvitationRowFieldsSchema.Type;
@@ -443,7 +453,15 @@ const readAccessInvitationRoutine = defineScopedRoutine({
   schema: 'commerce_customer_context',
 });
 
-const InvitationClaimabilityRowSchema = Schema.Struct({ claimable: Schema.Boolean });
+/* oxlint-disable effect-native/no-nullable-schema-field -- The routine projects SQL NULL for every invitation fact an unknown or unclaimed invitation has none of; the mapping below turns each absence into an omitted public field. */
+const InvitationClaimabilityRowSchema = Schema.Struct({
+  claim_proof_reference: Schema.optionalKey(Schema.NullOr(Schema.String)),
+  claimable: Schema.Boolean,
+  claimed_by_principal_id: Schema.optionalKey(Schema.NullOr(Schema.String)),
+  lifecycle: Schema.optionalKey(Schema.NullOr(InvitationLifecycleSchema)),
+});
+/* oxlint-enable effect-native/no-nullable-schema-field */
+type InvitationClaimabilityRow = typeof InvitationClaimabilityRowSchema.Type;
 
 const readCounterpartyInvitationClaimabilityRoutine = defineScopedRoutine({
   name: 'read_counterparty_invitation_claimability',
@@ -1109,24 +1127,46 @@ export const readCounterpartyAccessInvitationForScope = (
       ),
     );
 
+/** What the durable invitation says about one claim, for a caller holding the invitation id alone. */
+export interface CounterpartyInvitationClaimability {
+  /** PENDING, unexpired, with an unexpired STAGED proof still to present. */
+  readonly claimable: boolean;
+  readonly claimedByPrincipalId: string | undefined;
+  /** The attestation reference a finished claim stamped, absent while none has. */
+  readonly claimProofReference: string | undefined;
+  /** Absent exactly when this scope holds no such invitation. */
+  readonly lifecycle: CounterpartyInvitationLifecycle | undefined;
+}
+
+type CounterpartyInvitationLifecycle = typeof InvitationLifecycleSchema.Type;
+
+const claimabilityFromRow = (row: InvitationClaimabilityRow | undefined): CounterpartyInvitationClaimability => ({
+  claimable: row?.claimable === true,
+  claimedByPrincipalId: row?.claimed_by_principal_id ?? undefined,
+  claimProofReference: row?.claim_proof_reference ?? undefined,
+  lifecycle: row?.lifecycle ?? undefined,
+});
+
 /**
  * Whether the named invitation id can still be claimed: PENDING, unexpired, in this scope's Tenant
- * and Legal Entity, with a VERIFIED and STAGED proof that has not itself expired.
+ * and Legal Entity, with a VERIFIED and STAGED proof that has not itself expired — and, alongside
+ * that, the lifecycle, claimant and claim attestation reference the invitation durably carries.
  *
  * No existing read is keyed by invitation id alone: `read_access_invitation` needs the counterparty
  * resource id and storefront key an unclaimed invitation has not disclosed to its recipient yet, and
  * `verify_invitation_claim_authority` needs a presented proof reference no caller holds before it
  * starts a claim. This lets enrollment-start refuse an unknown, consumed, revoked or expired
  * invitation before it spends any budget or creates an Attempt and provider account nothing can ever
- * complete — without revealing which of those refusal reasons applied.
+ * complete — without revealing which of those refusal reasons applied — and lets an enrollment claim
+ * whose answer never arrived be settled from the invitation instead of claimed a second time.
  */
 export const readCounterpartyInvitationClaimability = (
   transaction: CounterpartyAccessScopedRoutineInvoker,
   invitationId: string,
-): Effect.Effect<boolean, CounterpartyAccessDomainError> =>
+): Effect.Effect<CounterpartyInvitationClaimability, CounterpartyAccessDomainError> =>
   transaction.invoke(readCounterpartyInvitationClaimabilityRoutine, [invitationId]).pipe(
     Effect.mapError(accessUnavailable),
-    Effect.map(([row]) => row?.claimable === true),
+    Effect.map(([row]) => claimabilityFromRow(row)),
   );
 
 const mutateInvitation = (

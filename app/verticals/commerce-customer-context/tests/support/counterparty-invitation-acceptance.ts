@@ -532,6 +532,55 @@ export const readCounterpartyInvitationClaimProof = (
       Effect.orDie,
     );
 
+/**
+ * Rewrites one owner transition back into the durable state a lost answer leaves behind: dispatched
+ * under a worker lease that has since lapsed, with no outcome ever recorded.
+ *
+ * Everything the owner itself committed — the consumed proof, the claimed invitation, the staged
+ * grants — is deliberately left exactly as the claim wrote it. That difference is the whole point:
+ * only a read of the invitation can tell this apart from a claim that never ran.
+ */
+export const loseCounterpartyInvitationClaimAnswer = (
+  fixture: EnrollmentAcceptanceFixture,
+  realm: CounterpartyInvitationRealm,
+  portalEnrollmentAttemptId: string,
+  transitionKey: string,
+): Effect.Effect<void> =>
+  fixture.admin
+    .transaction((transaction) =>
+      Effect.gen(function* rewriteClaimTransition() {
+        yield* transaction.execute(
+          sql`
+            update commerce_customer_context.portal_enrollment_owner_operations
+               set status = 'IN_PROGRESS', revision = revision + 1,
+                   result_reference = null, reconciliation_ref = null, result_digest = null,
+                   outcome_code = null, failure_code = null, failure_reason = null,
+                   lease_owner = ${`commerce.customer-context.invitation-claim:${portalEnrollmentAttemptId}`},
+                   lease_token = gen_random_uuid(),
+                   lease_expires_at = statement_timestamp() - interval '1 minute',
+                   completed_at = null, updated_at = statement_timestamp()
+             where tenant_id = ${realm.tenantId}::uuid
+               and portal_enrollment_attempt_id = ${portalEnrollmentAttemptId}::uuid
+               and transition_key = ${transitionKey}
+          `,
+          'objects',
+        );
+        yield* transaction.execute(
+          sql`
+            update commerce_customer_context.portal_enrollment_attempts
+               set state = 'IN_PROGRESS', revision = revision + 1,
+                   lease_owner = null, lease_token = null, lease_expires_at = null,
+                   last_failure_code = null, last_failure_reason = null,
+                   updated_at = statement_timestamp()
+             where tenant_id = ${realm.tenantId}::uuid
+               and portal_enrollment_attempt_id = ${portalEnrollmentAttemptId}::uuid
+          `,
+          'objects',
+        );
+      }),
+    )
+    .pipe(Effect.asVoid, Effect.orDie);
+
 interface ClaimMutationRow extends Record<string, unknown> {
   readonly claims: string;
 }

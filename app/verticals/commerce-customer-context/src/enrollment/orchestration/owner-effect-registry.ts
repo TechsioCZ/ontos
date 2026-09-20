@@ -20,8 +20,11 @@ import type {
   EnrollmentAttemptSnapshot,
   EnrollmentOwnerOperationSnapshot,
   EnrollmentResourceIdSchema,
+  ReconcileEnrollmentResolution,
 } from '../../../shared/enrollment-contracts.ts';
 import { RetailCustomerProfileRefSchema } from '../../../shared/resources/retail-customer-profile.ts';
+import { readCounterpartyInvitationClaimability } from '../../persistence/access-persistence.ts';
+import type { CounterpartyInvitationClaimability } from '../../persistence/access-persistence.ts';
 import {
   readRetailPortalBindingForPrincipal,
   readRetailProfileByParty,
@@ -30,7 +33,7 @@ import {
   CLAIM_COUNTERPARTY_ACCESS_INVITATION_TRANSITION_KEY,
   COUNTERPARTY_ACCESS_OWNER_MODULE_KEY,
 } from '../journeys/counterparty-invitation.ts';
-import { CommerceEnrollmentOwnerEffectUnavailable } from './owner-transition-errors.ts';
+import type { CommerceEnrollmentOwnerEffectError } from './owner-transition-errors.ts';
 import type { EnrollmentAttemptScopedRoutineInvoker } from '../attempts/attempt-persistence.ts';
 import { attemptRejected, attemptUnavailable, withCause } from '../attempts/errors.ts';
 import type { CommerceEnrollmentAttemptError } from '../attempts/errors.ts';
@@ -72,12 +75,14 @@ import {
   retailSelfEnrollmentRequestDigest,
 } from '../journeys/retail-self-enrollment-contracts.ts';
 import type { RetailSelfEnrollmentStepIntent } from '../journeys/retail-self-enrollment-contracts.ts';
-import { decodeOwnerResolution } from './owner-effect-codec.ts';
+import { decodeOwnerResolution, ownerUnavailable } from './owner-effect-codec.ts';
+import type { OwnerResolutionDraft } from './owner-effect-codec.ts';
 import { providerObservationFor } from './owner-transition-composition.ts';
 import { commerceEnrollmentCoreIdentityOwnerEffectFor } from './owner-transition-driver.ts';
 import type {
   CommerceEnrollmentCoreIdentityOwnerEffectOptions,
   CommerceEnrollmentOwnerEffect,
+  CommerceEnrollmentOwnerReconciliationInput,
 } from './owner-transition-driver.ts';
 import { CommerceEnrollmentOwnerTransactionRunner } from './owner-transition-production.ts';
 import type { CommerceEnrollmentOwnerTransactionRun } from './owner-transition-production.ts';
@@ -496,26 +501,185 @@ const portalAccountEntry =
       ).reconcile,
     });
 
+const COUNTERPARTY_INVITATION_CLAIM_UNAVAILABLE_CODE = 'counterparty_invitation_claim_unavailable';
+const COUNTERPARTY_INVITATION_CLAIM_RECONCILIATION_PURPOSE =
+  'commerce.portal-enrollment.counterparty-invitation-claim.reconciliation';
+/** The outcome code a settled claim carries, byte-identical to the one the claim route records. */
+const COUNTERPARTY_INVITATION_CLAIMED_OUTCOME_CODE = 'counterparty_invitation_claimed';
 /**
- * Reconcile-only, and its reconciliation deliberately settles nothing.
- *
- * The invitation's one-time secret was delivered to the recipient and exists nowhere the server may
- * read, so no continuation pass and no sweep may dispatch this transition — `dispatch: none` is what
- * stops one from trying. A claim whose answer never arrived is left reconcilable rather than
- * resolved: the next request from the recipient re-presents the secret and converges it, and the
- * durable redemption replays rather than burning the invitation a second time.
+ * The claim never committed. It is recorded as an ordinary terminal-shaped failure rather than as a
+ * pending owner decision, because that is exactly what reopens the transition: the durable claim
+ * accepts a new lease over a FAILED operation, so the recipient's next request dispatches its
+ * re-presented proof instead of finding the Attempt fenced for ever.
  */
-const invitationClaimEntry: RegistryEntry = () =>
-  Effect.succeedSome({
-    dispatch: Option.none(),
-    reconcile: () =>
-      Effect.fail(
-        new CommerceEnrollmentOwnerEffectUnavailable({
-          code: 'counterparty_invitation_claim_unavailable',
-          reason: 'Only the invitation recipient can settle a Counterparty Access invitation claim',
-        }),
-      ),
+export const COUNTERPARTY_INVITATION_CLAIM_OPEN_OUTCOME_CODE = 'counterparty_invitation_claim_open';
+const COUNTERPARTY_INVITATION_CLAIM_OPEN_FAILURE_CODE = 'counterparty_invitation_claim_not_recorded';
+
+const claimUnavailable = (reason: string, cause?: unknown) =>
+  ownerUnavailable(COUNTERPARTY_INVITATION_CLAIM_UNAVAILABLE_CODE, reason, cause);
+
+/** Everything the claim reconciliation needs, all of it durable on the Attempt and its subject. */
+export interface CounterpartyInvitationClaimReconciliationSubject {
+  /** The Principal this Attempt's journey bound; the only claimant its claim may be settled under. */
+  readonly boundPrincipalId: string;
+  readonly invitationId: string;
+  readonly legalEntityId: string;
+  readonly portalEnrollmentAttemptId: EnrollmentAttemptSnapshot['portalEnrollmentAttemptId'];
+  readonly tenantId: string;
+}
+
+type CounterpartyInvitationClaimVerdict =
+  | { readonly kind: 'OPEN' }
+  | { readonly kind: 'REFUSED'; readonly outcomeCode: string; readonly reason: string }
+  | { readonly kind: 'SETTLED'; readonly resultReference: string }
+  | { readonly kind: 'UNKNOWN'; readonly reason: string };
+
+/** The three lifecycles the claim Action's own transaction can leave an invitation in. */
+const CLAIMED_INVITATION_LIFECYCLES: ReadonlySet<string> = new Set(['CLAIMED', 'CLAIMING', 'RECONCILIATION_REQUIRED']);
+
+/**
+ * The invitation's own reading of one claim.
+ *
+ * Redemption never moves the invitation, so a still PENDING invitation is a claim that did not
+ * commit. A claim that did commit stamps the claimant and the claim proof in the Action's own
+ * transaction — whether its staged grants have finished or not — so those two fields, not the
+ * lifecycle a later grant pass moves on, are what identify this Attempt's own claim.
+ */
+const counterpartyInvitationClaimVerdict = (
+  claimability: CounterpartyInvitationClaimability,
+  boundPrincipalId: string,
+): CounterpartyInvitationClaimVerdict => {
+  const { claimedByPrincipalId, claimProofReference, lifecycle } = claimability;
+  if (lifecycle === undefined) {
+    return {
+      kind: 'REFUSED',
+      outcomeCode: 'invitation_invalid',
+      reason: 'The Counterparty Access invitation this Attempt names no longer exists in its scope',
+    };
+  }
+  if (claimedByPrincipalId !== undefined && claimedByPrincipalId !== boundPrincipalId) {
+    return {
+      kind: 'REFUSED',
+      outcomeCode: 'invitation_claimed_by_other',
+      reason: 'The Counterparty Access invitation was claimed by another Principal',
+    };
+  }
+  if (CLAIMED_INVITATION_LIFECYCLES.has(lifecycle)) {
+    return claimedByPrincipalId === boundPrincipalId && claimProofReference !== undefined
+      ? { kind: 'SETTLED', resultReference: claimProofReference }
+      : { kind: 'UNKNOWN', reason: 'The Counterparty Access invitation names no claimant for this claim yet' };
+  }
+  if (lifecycle === 'PENDING') {
+    return { kind: 'OPEN' };
+  }
+  return {
+    kind: 'REFUSED',
+    outcomeCode: lifecycle === 'REVOKED' ? 'invitation_revoked' : 'invitation_expired',
+    reason: 'The Counterparty Access invitation can no longer be claimed',
+  };
+};
+
+/**
+ * Settle one invitation claim by reading the invitation it was made against.
+ *
+ * The secret itself exists nowhere the server may read, so no caller but the recipient can *make*
+ * the claim — but the invitation the claim commits against is durable, and reading it is what
+ * separates "the answer was lost after it committed" from "it never committed at all". A claim that
+ * committed replays from the invitation's own attestation; one that did not reopens the transition.
+ */
+export const counterpartyInvitationClaimReconciliationFor = (
+  run: CommerceEnrollmentOwnerTransactionRun,
+  subject: CounterpartyInvitationClaimReconciliationSubject,
+): CommerceEnrollmentOwnerEffect['reconcile'] =>
+  Effect.fn('CommerceEnrollmentCounterpartyInvitationClaim.reconcile')(function* reconcileInvitationClaim(
+    input: CommerceEnrollmentOwnerReconciliationInput,
+  ): Effect.fn.Return<ReconcileEnrollmentResolution, CommerceEnrollmentOwnerEffectError> {
+    const claimability = yield* run(
+      { legalEntityId: subject.legalEntityId, tenantId: subject.tenantId },
+      (transaction) =>
+        readCounterpartyInvitationClaimability(transaction, subject.invitationId).pipe(
+          Effect.mapError((failure) => attemptUnavailable(failure.reason, subject.portalEnrollmentAttemptId, failure)),
+        ),
+    ).pipe(Effect.mapError((failure) => claimUnavailable(failure.reason, failure)));
+    const verdict = counterpartyInvitationClaimVerdict(claimability, subject.boundPrincipalId);
+    if (verdict.kind === 'UNKNOWN') {
+      return yield* claimUnavailable(verdict.reason);
+    }
+    const decode = (draft: OwnerResolutionDraft) =>
+      decodeOwnerResolution(
+        draft,
+        COUNTERPARTY_INVITATION_CLAIM_UNAVAILABLE_CODE,
+        'The Counterparty Access invitation reconciliation result is not representable',
+      );
+    const reconciliationRef = retailSelfEnrollmentEvidenceReference([
+      COUNTERPARTY_INVITATION_CLAIM_RECONCILIATION_PURPOSE,
+      subject.tenantId,
+      String(subject.portalEnrollmentAttemptId),
+      CLAIM_COUNTERPARTY_ACCESS_INVITATION_TRANSITION_KEY,
+    ]);
+    if (verdict.kind === 'SETTLED') {
+      return yield* decode({
+        actorPrincipalId: input.actorPrincipalId,
+        outcomeCode: COUNTERPARTY_INVITATION_CLAIMED_OUTCOME_CODE,
+        reconciliationRef,
+        resultReference: verdict.resultReference,
+        status: 'SUCCEEDED',
+      });
+    }
+    if (verdict.kind === 'OPEN') {
+      return yield* decode({
+        actorPrincipalId: input.actorPrincipalId,
+        failureCode: COUNTERPARTY_INVITATION_CLAIM_OPEN_FAILURE_CODE,
+        failureReason: 'The invitation is still unclaimed, so this claim never committed',
+        outcomeCode: COUNTERPARTY_INVITATION_CLAIM_OPEN_OUTCOME_CODE,
+        reconciliationRef,
+        status: 'FAILED',
+      });
+    }
+    return yield* decode({
+      actorPrincipalId: input.actorPrincipalId,
+      failureCode: 'owner_rejected',
+      failureReason: verdict.reason,
+      outcomeCode: verdict.outcomeCode,
+      reconciliationRef,
+      status: 'FAILED',
+    });
   });
+
+/**
+ * Reconcile-only: the invitation's one-time secret was delivered to the recipient and exists
+ * nowhere the server may read, so no continuation pass and no sweep may dispatch this transition —
+ * `dispatch: none` is what stops one from trying.
+ *
+ * Its reconciliation still settles, because the invitation is durable even though the secret is
+ * not: a claim whose answer never arrived is resolved by reading the invitation, and only an
+ * Attempt with no invitation to read, or a deployment with no owner transaction runner, is left
+ * with nothing to answer from.
+ */
+const invitationClaimEntry =
+  (run: Option.Option<CommerceEnrollmentOwnerTransactionRun>): RegistryEntry =>
+  (_transition, context) => {
+    const { invitationId, targetLegalEntityId } = context.attempt;
+    if (Option.isNone(run) || invitationId === undefined || targetLegalEntityId === undefined) {
+      return Effect.succeedSome({
+        dispatch: Option.none(),
+        reconcile: () =>
+          Effect.fail(
+            claimUnavailable('Only the invitation recipient can settle a Counterparty Access invitation claim'),
+          ),
+      });
+    }
+    return Effect.succeedSome({
+      dispatch: Option.none(),
+      reconcile: counterpartyInvitationClaimReconciliationFor(run.value, {
+        boundPrincipalId: context.subject.principalRef.resourceId,
+        invitationId: String(invitationId),
+        legalEntityId: String(targetLegalEntityId),
+        portalEnrollmentAttemptId: context.attempt.portalEnrollmentAttemptId,
+        tenantId: String(context.attempt.tenantId),
+      }),
+    });
+  };
 
 interface CoreIdentitySeam {
   readonly client: ExternalIdentityClientPort;
@@ -750,7 +914,7 @@ export const CommerceEnrollmentOwnerEffectRegistryLive = Layer.effect(
       ],
       [
         registryKey(COUNTERPARTY_ACCESS_OWNER_MODULE_KEY, CLAIM_COUNTERPARTY_ACCESS_INVITATION_TRANSITION_KEY),
-        invitationClaimEntry,
+        invitationClaimEntry(ownerTransactionRun),
       ],
       [registryKey(CORE_IDENTITY_OWNER_MODULE_KEY, RESERVE_PRINCIPAL_BINDING_TRANSITION_KEY), coreReserveEntry(core)],
       [registryKey(CORE_IDENTITY_OWNER_MODULE_KEY, ACTIVATE_PRINCIPAL_BINDING_TRANSITION_KEY), coreActivateEntry(core)],

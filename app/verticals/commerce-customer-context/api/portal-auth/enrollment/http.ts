@@ -558,7 +558,7 @@ export const commercePortalAuthEnrollmentInvitationClaimable = Effect.fn(
   legalEntityId: string,
   invitationId: string,
 ) {
-  const claimable = yield* run({ legalEntityId, tenantId }, (transaction) =>
+  const { claimable } = yield* run({ legalEntityId, tenantId }, (transaction) =>
     readCounterpartyInvitationClaimability(transaction, invitationId).pipe(
       Effect.mapError((failure) => attemptUnavailable(failure.reason, undefined, failure)),
     ),

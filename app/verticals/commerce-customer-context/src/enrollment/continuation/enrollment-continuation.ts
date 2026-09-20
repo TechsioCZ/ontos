@@ -191,9 +191,11 @@ const transitionFor = (
   transition: JourneyTransitionSpec,
   ownerInvocationId: typeof EnrollmentActionInvocationIdSchema.Type,
   requestDigest: string,
+  /** The journal's own Actor, for a transition some other caller than the start already claimed. */
+  actorPrincipalId: EnrollmentOwnerOperationSnapshot['actorPrincipalId'] = attempt.createdByPrincipalId,
 ): Effect.Effect<CommerceEnrollmentOwnerTransition, CommerceEnrollmentAttemptError> =>
   Schema.decodeEffect(CommerceEnrollmentOwnerTransitionSchema)({
-    actorPrincipalId: attempt.createdByPrincipalId,
+    actorPrincipalId,
     correlationId: `${CONTINUATION_WORKER_PREFIX}:${attempt.portalEnrollmentAttemptId}`,
     expectedRevision: attempt.revision,
     ownerInvocationId,
@@ -289,6 +291,9 @@ const reconcileStep = Effect.fn('CommerceEnrollmentContinuation.reconcile')(func
     input.transition,
     operation.ownerInvocationId,
     operation.requestDigest,
+    // A transition the recipient's own claim route dispatched carries that Principal as its Actor,
+    // and the driver reconciles only under the operation's immutable identity.
+    operation.actorPrincipalId,
   );
   const reconciled = yield* driverFor(input, unreachableDispatch).reconcile(transition);
   const settled = reconciled.outcome === 'RECORDED' ? reconciled.resolution : reconciled.operation;

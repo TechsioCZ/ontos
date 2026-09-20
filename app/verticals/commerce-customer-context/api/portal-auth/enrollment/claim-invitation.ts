@@ -1,6 +1,7 @@
 import { Cause, Crypto, Effect, Option, Redacted, Schema } from 'effect';
 import type { HttpServerRequest } from 'effect/unstable/http';
 
+import { ActionTransportMetadataSchema } from '@app/core-runtime';
 import { bindGovernedActionHttp } from '@app/core-runtime/http/action-runner';
 import type { ActionRuntime, ContextAccess, OperationalScope, PrincipalEligibility } from '@app/core-runtime';
 
@@ -18,6 +19,11 @@ import {
   RESERVE_PRINCIPAL_BINDING_TRANSITION_KEY,
 } from '../../../src/enrollment/journeys/existing-account.ts';
 import { retailSelfEnrollmentEvidenceReference } from '../../../src/enrollment/journeys/retail-self-enrollment-contracts.ts';
+import type { CommerceEnrollmentAttemptError } from '../../../src/enrollment/attempts/errors.ts';
+import {
+  COUNTERPARTY_INVITATION_CLAIM_OPEN_OUTCOME_CODE,
+  counterpartyInvitationClaimReconciliationFor,
+} from '../../../src/enrollment/orchestration/owner-effect-registry.ts';
 import {
   CommerceEnrollmentOwnerEffectRejected,
   CommerceEnrollmentOwnerEffectUnavailable,
@@ -27,8 +33,10 @@ import {
   commerceEnrollmentOwnerTransitionDriverFor,
 } from '../../../src/enrollment/orchestration/owner-transition-driver.ts';
 import type {
+  CommerceEnrollmentOwnerAttemptStore,
   CommerceEnrollmentOwnerEffectOutcome,
   CommerceEnrollmentOwnerTransition,
+  CommerceEnrollmentOwnerTransitionDriver,
 } from '../../../src/enrollment/orchestration/owner-transition-driver.ts';
 import {
   CommerceEnrollmentOwnerTransactionRunner,
@@ -97,18 +105,57 @@ const digestOf = (parts: readonly string[]): string => enrollmentDigest(parts.jo
 
 const isContractViolation = Schema.is(CounterpartyAccessContractViolation);
 
+type ClaimOwnerFailure =
+  | InstanceType<typeof CommerceEnrollmentOwnerEffectRejected>
+  | InstanceType<typeof CommerceEnrollmentOwnerEffectUnavailable>;
+
+const claimUnavailable = (reason: string) =>
+  new CommerceEnrollmentOwnerEffectUnavailable({ code: 'counterparty_invitation_claim_unavailable', reason });
+
 /**
  * The owner refusal a domain violation becomes. A violation is the owner's own closed vocabulary
  * about this exact invitation, so it is recorded as a rejection the Attempt can show; anything else
  * is an unavailable owner, which leaves the transition indeterminate and therefore retryable.
  */
-const ownerFailureFor = (failure: CounterpartyAccessDomainError) =>
+const ownerFailureFor = (failure: CounterpartyAccessDomainError): ClaimOwnerFailure =>
   isContractViolation(failure)
     ? new CommerceEnrollmentOwnerEffectRejected({ code: failure.code, reason: failure.reason })
-    : new CommerceEnrollmentOwnerEffectUnavailable({
-        code: 'counterparty_invitation_claim_unavailable',
-        reason: 'The Counterparty Access invitation owner is temporarily unavailable',
-      });
+    : claimUnavailable('The Counterparty Access invitation owner is temporarily unavailable');
+
+/**
+ * The same reading, one layer out, for whatever the governed claim Action fails with.
+ *
+ * Only the Action's own domain vocabulary is a decision about this invitation. Everything else the
+ * Action runtime can fail with — a missing idempotency key, a permission check that could not run,
+ * persistence that was briefly unavailable, an indeterminate commit — says nothing about the
+ * invitation, and recording it as a refusal would strand an Attempt whose redemption has already
+ * committed. Those stay unavailable, so the transition remains reconcilable.
+ */
+const claimActionFailure = (error: { readonly _tag: string }): ClaimOwnerFailure =>
+  isContractViolation(error)
+    ? new CommerceEnrollmentOwnerEffectRejected({ code: error.code, reason: error.reason })
+    : claimUnavailable(`The Counterparty Access invitation claim could not be completed (${error._tag})`);
+
+/**
+ * The transport's own idempotency-key rule, applied before anything is claimed or redeemed.
+ *
+ * The claim Action declares `idempotency: 'required'`, so a request without a usable key is a
+ * request defect rather than an owner decision — and one discovered after redemption committed
+ * would be journalled as a refusal of the invitation itself.
+ */
+const IdempotencyKeyCarrierSchema = Schema.Struct({
+  idempotencyKey: ActionTransportMetadataSchema.fields.idempotencyKey,
+});
+
+const requiredIdempotencyKey = (candidate: string | undefined) =>
+  Schema.decodeEffect(IdempotencyKeyCarrierSchema)(candidate === undefined ? {} : { idempotencyKey: candidate }).pipe(
+    Effect.mapError(commercePortalAuthEnrollmentInvalidProblem),
+    Effect.flatMap((carrier) =>
+      carrier.idempotencyKey === undefined
+        ? Effect.fail(commercePortalAuthEnrollmentInvalidProblem())
+        : Effect.succeed(carrier.idempotencyKey),
+    ),
+  );
 
 /** The exact result reference a prior transition durably recorded, or `none` while it has not. */
 const succeededResultReference = (
@@ -191,14 +238,8 @@ interface ClaimSeams {
 const claimInvitationEffect = (
   seams: ClaimSeams,
   input: { readonly claimProofReference: string; readonly invitationId: string; readonly secret: Redacted.Redacted },
-  runClaimAction: (
-    payload: ClaimCounterpartyAccessInvitationPayload,
-  ) => Effect.Effect<unknown, CounterpartyAccessDomainError>,
-): Effect.Effect<
-  CommerceEnrollmentOwnerEffectOutcome,
-  | InstanceType<typeof CommerceEnrollmentOwnerEffectRejected>
-  | InstanceType<typeof CommerceEnrollmentOwnerEffectUnavailable>
-> => {
+  runClaimAction: (payload: ClaimCounterpartyAccessInvitationPayload) => Effect.Effect<unknown, ClaimOwnerFailure>,
+): Effect.Effect<CommerceEnrollmentOwnerEffectOutcome, ClaimOwnerFailure> => {
   const { crypto, run, trustedScope } = seams;
   const { legalEntityId, principalId, tenantId } = trustedScope;
   const invitationRef = {
@@ -224,13 +265,7 @@ const claimInvitationEffect = (
         }),
       ),
   ).pipe(
-    Effect.mapError(
-      (failure) =>
-        new CommerceEnrollmentOwnerEffectUnavailable({
-          code: 'counterparty_invitation_claim_unavailable',
-          reason: failure.reason,
-        }),
-    ),
+    Effect.mapError((failure) => claimUnavailable(failure.reason)),
     Effect.flatMap((redemption) =>
       redemption.kind === 'refused'
         ? Effect.fail(ownerFailureFor(redemption.failure))
@@ -242,7 +277,6 @@ const claimInvitationEffect = (
             invitationRef,
             scope: redemption.resolved.redeemed.scope,
           }).pipe(
-            Effect.mapError(ownerFailureFor),
             Effect.flatMap(() =>
               Effect.all(
                 {
@@ -259,12 +293,8 @@ const claimInvitationEffect = (
                   resultReference,
                   status: 'SUCCEEDED',
                 })),
-                Effect.mapError(
-                  (cause) =>
-                    new CommerceEnrollmentOwnerEffectUnavailable({
-                      code: 'counterparty_invitation_claim_unavailable',
-                      reason: `The invitation claim proof reference is not a usable owner result (${cause._tag})`,
-                    }),
+                Effect.mapError((cause) =>
+                  claimUnavailable(`The invitation claim proof reference is not a usable owner result (${cause._tag})`),
                 ),
               ),
             ),
@@ -273,11 +303,84 @@ const claimInvitationEffect = (
   );
 };
 
-/** The public answer for an owner refusal recorded on the journal. It never names the owner rule. */
-const claimRefusalProblem = (outcome: CommerceEnrollmentOwnerEffectOutcome) =>
+/**
+ * The public answer for an owner refusal recorded on the journal. It never names the owner rule.
+ *
+ * A refusal reaches this from three places that record the same two fields — the dispatch's own
+ * outcome, a reconciliation's resolution, and a journal entry a reconciliation left behind — so it
+ * reads exactly those fields rather than any one of their shapes.
+ */
+const claimRefusalProblem = (outcome: { readonly failureReason?: string; readonly outcomeCode?: string }) =>
   outcome.outcomeCode === 'invitation_claim_proof_invalid' || outcome.outcomeCode === 'invitation_invalid'
     ? commercePortalAuthEnrollmentInvalidProblem(outcome.failureReason)
     : commercePortalAuthEnrollmentRejectedProblem(outcome.outcomeCode);
+
+/** What one claim request settled on, once the driver's phases have run as far as they can. */
+type ClaimSettlement =
+  | { readonly kind: 'LEASE_HELD' }
+  | { readonly kind: 'REFUSED'; readonly refusal: { readonly failureReason?: string; readonly outcomeCode?: string } }
+  | { readonly kind: 'SETTLED' };
+
+const claimSettled: ClaimSettlement = { kind: 'SETTLED' };
+const claimLeaseHeld: ClaimSettlement = { kind: 'LEASE_HELD' };
+
+const settlementOfExecution = (
+  executed: Effect.Success<ReturnType<CommerceEnrollmentOwnerTransitionDriver['execute']>>,
+): ClaimSettlement => {
+  if (executed.outcome === 'LEASE_HELD') {
+    return claimLeaseHeld;
+  }
+  return executed.outcome === 'RECORDED' && executed.ownerOutcome.status === 'FAILED'
+    ? { kind: 'REFUSED', refusal: executed.ownerOutcome }
+    : claimSettled;
+};
+
+/**
+ * Claim, dispatch, record — and, when a prior request's answer never arrived, settle that request
+ * before this one.
+ *
+ * The durable fence turns a lapsed claim into an INDETERMINATE operation no dispatch may pass, so a
+ * route that only ever executed would answer every later request with the same retryable failure
+ * for ever. Reconciling reads the invitation instead: a claim that committed replays from the
+ * journal, and one that never did reopens the transition for the proof this request re-presented.
+ */
+const claimWithReconciliation = Effect.fn('CommercePortalAuthEnrollmentHttp.claimWithReconciliation')(
+  function* claimWithReconciliationEffect(
+    driver: CommerceEnrollmentOwnerTransitionDriver,
+    store: CommerceEnrollmentOwnerAttemptStore,
+    transition: CommerceEnrollmentOwnerTransition,
+  ): Effect.fn.Return<ClaimSettlement, CommerceEnrollmentAttemptError> {
+    const executed = yield* driver.execute(transition).pipe(
+      Effect.asSome,
+      Effect.catchTag('CommerceEnrollmentAttemptIndeterminate', () => Effect.succeedNone),
+    );
+    if (Option.isSome(executed)) {
+      return settlementOfExecution(executed.value);
+    }
+    const identity = {
+      portalEnrollmentAttemptId: transition.portalEnrollmentAttemptId,
+      tenantId: transition.tenantId,
+    };
+    const fenced = yield* store.read(identity);
+    const reconciled = yield* driver.reconcile({ ...transition, expectedRevision: fenced.revision });
+    if (reconciled.outcome === 'REPLAYED') {
+      return claimSettled;
+    }
+    if (reconciled.outcome === 'NO_EFFECT') {
+      return { kind: 'REFUSED', refusal: reconciled.operation };
+    }
+    if (reconciled.resolution.status === 'SUCCEEDED') {
+      return claimSettled;
+    }
+    if (reconciled.resolution.outcomeCode !== COUNTERPARTY_INVITATION_CLAIM_OPEN_OUTCOME_CODE) {
+      return { kind: 'REFUSED', refusal: reconciled.resolution };
+    }
+    // The invitation is still unclaimed, so the lost dispatch never committed: this request's own
+    // re-presented proof is dispatched over the reopened transition.
+    const reopened = yield* store.read(identity);
+    return settlementOfExecution(yield* driver.execute({ ...transition, expectedRevision: reopened.revision }));
+  },
+);
 
 /**
  * Claim the invitation this Attempt was started for.
@@ -300,6 +403,9 @@ export const commercePortalAuthEnrollmentClaimInvitation = Effect.fn(
   const input = yield* Schema.decodeEffect(CommercePortalAuthEnrollmentClaimInvitationInputSchema)(payload).pipe(
     Effect.mapError(commercePortalAuthEnrollmentInvalidProblem),
   );
+  // Ahead of every durable phase on purpose: the claim Action requires this key, and discovering it
+  // missing after the secret was redeemed would journal a request defect as a refused invitation.
+  const claimIdempotencyKey = yield* requiredIdempotencyKey(idempotencyKey);
   const principal = yield* authenticateOperationPrincipal(Redacted.make(request.headers['authorization']), {
     authentication: () => commercePortalAuthEnrollmentAuthenticationProblem,
     unavailable: () => commercePortalAuthEnrollmentUnavailableProblem(),
@@ -414,24 +520,11 @@ export const commercePortalAuthEnrollmentClaimInvitation = Effect.fn(
   >();
   const runClaimAction = (claimPayload: ClaimCounterpartyAccessInvitationPayload) =>
     runActionHttp({
-      endpointHeaders: { idempotencyKey, traceId: request.headers['x-trace-id'] },
-      internalProblem: () =>
-        new CounterpartyAccessContractViolation({
-          code: 'invitation_invalid',
-          reason: 'The Counterparty Access invitation claim could not be executed',
-        }),
+      endpointHeaders: { idempotencyKey: claimIdempotencyKey, traceId: request.headers['x-trace-id'] },
+      internalProblem: () => claimUnavailable('The Counterparty Access invitation claim could not be executed'),
       invalidCorrelationProblem: () =>
-        new CounterpartyAccessContractViolation({
-          code: 'invitation_invalid',
-          reason: 'The Counterparty Access invitation claim carried an unusable correlation',
-        }),
-      mapError: (error: { readonly _tag: string }) =>
-        isContractViolation(error)
-          ? error
-          : new CounterpartyAccessContractViolation({
-              code: 'invitation_invalid',
-              reason: 'The Counterparty Access invitation claim was refused',
-            }),
+        claimUnavailable('The Counterparty Access invitation claim carried an unusable correlation'),
+      mapError: claimActionFailure,
       payload: claimPayload,
       registration: claimCounterpartyAccessInvitationAction,
       requestHeaders: {
@@ -476,7 +569,7 @@ export const commercePortalAuthEnrollmentClaimInvitation = Effect.fn(
       legalEntityId: String(targetLegalEntityId),
     },
   };
-  const executed = yield* commerceEnrollmentOwnerTransitionDriverFor({
+  const driver = commerceEnrollmentOwnerTransitionDriverFor({
     attempt: store,
     owner: {
       dispatch: () =>
@@ -489,32 +582,31 @@ export const commercePortalAuthEnrollmentClaimInvitation = Effect.fn(
           },
           runClaimAction,
         ),
-      // Only the recipient holds the secret, so nothing may settle a lapsed claim on its behalf:
-      // the transition stays reconcilable and the next claim request converges it.
-      reconcile: () =>
-        Effect.fail(
-          new CommerceEnrollmentOwnerEffectUnavailable({
-            code: 'counterparty_invitation_claim_unavailable',
-            reason: 'Only the invitation recipient can settle a Counterparty Access invitation claim',
-          }),
-        ),
+      // Only the recipient holds the secret, so nothing may claim on its behalf — but the invitation
+      // the claim commits against is durable, so a lapsed claim is settled by reading it.
+      reconcile: counterpartyInvitationClaimReconciliationFor(runner.run, {
+        boundPrincipalId: String(actorPrincipalId),
+        invitationId: String(invitationId),
+        legalEntityId: String(targetLegalEntityId),
+        portalEnrollmentAttemptId,
+        tenantId: String(tenantId),
+      }),
     },
     required: true,
     workerId: () => `commerce.customer-context.invitation-claim:${portalEnrollmentAttemptId}`,
-  })
-    .execute(transition)
-    .pipe(
-      Effect.mapError((failure) =>
-        failure.retryable
-          ? commercePortalAuthEnrollmentUnavailableProblem(failure)
-          : commercePortalAuthEnrollmentRejectedProblem(failure),
-      ),
-    );
-  if (executed.outcome === 'LEASE_HELD') {
+  });
+  const executed = yield* claimWithReconciliation(driver, store, transition).pipe(
+    Effect.mapError((failure) =>
+      failure.retryable
+        ? commercePortalAuthEnrollmentUnavailableProblem(failure)
+        : commercePortalAuthEnrollmentRejectedProblem(failure),
+    ),
+  );
+  if (executed.kind === 'LEASE_HELD') {
     return yield* Effect.fail(commercePortalAuthEnrollmentBindingPendingProblem());
   }
-  if (executed.outcome === 'RECORDED' && executed.ownerOutcome.status === 'FAILED') {
-    return yield* Effect.fail(claimRefusalProblem(executed.ownerOutcome));
+  if (executed.kind === 'REFUSED') {
+    return yield* Effect.fail(claimRefusalProblem(executed.refusal));
   }
   const settled = yield* store
     .read({ portalEnrollmentAttemptId, tenantId })

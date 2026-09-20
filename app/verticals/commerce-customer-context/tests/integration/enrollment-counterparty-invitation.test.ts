@@ -23,6 +23,12 @@ import { parseCommercePortalAuthConfig } from '../../api/portal-auth/provider/co
 import { CommerceCoreIdentityClientConfig } from '../../api/portal-auth/provider/core-identity-client-config.ts';
 import { CommerceCoreIdentityClientLive } from '../../api/portal-auth/provider/core-identity-client.ts';
 import { CommercePortalAuthAccountLookupLive } from '../../src/portal-auth/persistence/portal-auth-account-lookup.ts';
+import {
+  CommerceEnrollmentContinuation,
+  CommerceEnrollmentContinuationLive,
+} from '../../src/enrollment/continuation/enrollment-continuation.ts';
+import { CommerceEnrollmentOwnerEffectRegistryLive } from '../../src/enrollment/orchestration/owner-effect-registry.ts';
+import { CommerceEnrollmentOwnerTransactionRunner } from '../../src/enrollment/orchestration/owner-transition-production.ts';
 import { CLAIM_COUNTERPARTY_ACCESS_INVITATION_TRANSITION_KEY } from '../../src/enrollment/journeys/counterparty-invitation.ts';
 import {
   ACTIVATE_PRINCIPAL_BINDING_TRANSITION_KEY,
@@ -32,7 +38,10 @@ import { retailPartyCandidateDigest } from '../../src/enrollment/journeys/retail
 import type { RetailSelfEnrollmentPreparationSubject } from '../../src/enrollment/journeys/retail-self-enrollment-preparation.ts';
 import { CommerceEnrollmentOwnerTransactionRunnerLive } from '../../src/enrollment/orchestration/owner-transaction-runner.ts';
 import { commerceEnrollmentOwnerTransitionPreparationLive } from '../../src/enrollment/orchestration/owner-transition-composition.ts';
-import { CommerceEnrollmentPreparationSubjectResolverLive } from '../../src/enrollment/orchestration/preparation-subject.ts';
+import {
+  CommerceEnrollmentPreparationSubjectResolver,
+  CommerceEnrollmentPreparationSubjectResolverLive,
+} from '../../src/enrollment/orchestration/preparation-subject.ts';
 import { PORTAL_ACCOUNT_CREATION_TRANSITION_KEY } from '../../src/enrollment/orchestration/prepared-owner-authority.ts';
 import {
   CommercePortalAuthDatabaseLive,
@@ -46,6 +55,7 @@ import {
 } from '../../shared/enrollment-contracts.ts';
 import { COMMERCE_AUTHENTICATION_NAMESPACE_ID } from '../../shared/portal-auth-contracts.ts';
 import {
+  expireEnrollmentAcceptanceLeases,
   makeEnrollmentAcceptanceFixture,
   readEnrollmentAcceptanceAttempt,
   readEnrollmentAcceptanceOperations,
@@ -61,6 +71,7 @@ import { makeCapturingCounterpartyInvitationProofDelivery } from '../support/cou
 import {
   countCounterpartyInvitationClaims,
   issueCounterpartyAccessInvitation,
+  loseCounterpartyInvitationClaimAnswer,
   makeCounterpartyInvitationRealm,
   readCounterpartyInvitationClaimProof,
   readCounterpartyInvitationRow,
@@ -283,15 +294,24 @@ const startInvitationRequest = (body: Record<string, string>, assertion: string)
 const claimInvitationRequest = (
   portalEnrollmentAttemptId: string,
   body: Record<string, string>,
-  options: { readonly assertion: string; readonly cookie?: string },
+  options: {
+    readonly assertion: string;
+    readonly cookie?: string;
+    readonly omitCorrelationId?: boolean;
+    readonly omitIdempotencyKey?: boolean;
+  },
 ): Request => {
   const headers = new Headers({
     authorization: `Bearer ${options.assertion}`,
     'content-type': 'application/json',
-    'idempotency-key': randomUUID(),
     origin: ORIGIN,
-    'x-correlation-id': `counterparty-invitation-${randomUUID()}`,
   });
+  if (options.omitCorrelationId !== true) {
+    headers.set('x-correlation-id', `counterparty-invitation-${randomUUID()}`);
+  }
+  if (options.omitIdempotencyKey !== true) {
+    headers.set('idempotency-key', randomUUID());
+  }
   if (options.cookie !== undefined) {
     headers.set('cookie', options.cookie);
   }
@@ -467,6 +487,57 @@ type EnrollmentOperationRow = Effect.Success<ReturnType<typeof readEnrollmentAcc
 
 const claimTransitionRow = (rows: readonly EnrollmentOperationRow[]) =>
   rows.find((row) => row.transition_key === CLAIM_COUNTERPARTY_ACCESS_INVITATION_TRANSITION_KEY);
+
+const claimTransitionFor = (scenario: InvitationScenario) =>
+  readEnrollmentAcceptanceOperations(scenario.fixture, scenario.attemptId).pipe(Effect.map(claimTransitionRow));
+
+/**
+ * The continuation a deployed sweeper runs, with this deployment's own owner-effect registry.
+ *
+ * Only the journey subject is supplied directly: resolving it calls Core, which is not reachable
+ * from this sandbox. Everything the claim transition itself is settled by — the registry entry, the
+ * owner transaction runner, the invitation routine and the driver's reconciliation phases — is the
+ * deployed one, so this is the sweep that would run with no recipient present at all.
+ */
+const sweepingContinuation = Effect.fnUntraced(function* sweepingContinuation(scenario: InvitationScenario) {
+  const configuration = yield* portalAuthConfiguration();
+  const coreIdentityConfigurationLive = Layer.succeed(CommerceCoreIdentityClientConfig, {
+    apiKey: Redacted.make('enrollment-counterparty-invitation-core-identity'),
+    baseUrl: 'https://core-identity.invalid',
+  });
+  const transactionRunnerLive = Layer.succeed(CommerceEnrollmentOwnerTransactionRunner, {
+    run: scenario.fixture.run,
+    runWorker: scenario.fixture.runWorker,
+  });
+  const registryLive = CommerceEnrollmentOwnerEffectRegistryLive.pipe(
+    Layer.provide(
+      Layer.mergeAll(
+        CommercePortalAuthAccountLookupLive.pipe(
+          Layer.provide(
+            CommercePortalAuthDatabaseLive.pipe(Layer.provide(Layer.succeed(CommercePortalAuthConfig, configuration))),
+          ),
+        ),
+        CommerceCoreIdentityClientLive.pipe(Layer.provide(coreIdentityConfigurationLive)),
+        coreIdentityConfigurationLive,
+        transactionRunnerLive,
+      ),
+    ),
+  );
+  const subjectLive = Layer.succeed(CommerceEnrollmentPreparationSubjectResolver, {
+    resolve: (input) =>
+      Effect.succeed({
+        ...preparationSubjectFor(scenario.realm, scenario.attemptId),
+        portalEnrollmentAttemptId: input.portalEnrollmentAttemptId,
+      }),
+  });
+  return yield* CommerceEnrollmentContinuation.pipe(
+    Effect.provide(
+      CommerceEnrollmentContinuationLive.pipe(
+        Layer.provide(Layer.mergeAll(transactionRunnerLive, registryLive, subjectLive)),
+      ),
+    ),
+  );
+});
 
 it.live(
   'claims a Counterparty invitation for the Principal its own journey bound and completes the Attempt',
@@ -753,6 +824,236 @@ it.live(
         expect(
           (yield* readCounterpartyInvitationRow(scenario.fixture, scenario.realm, scenario.invitationId)).lifecycle,
         ).toBe('PENDING');
+      }),
+    ),
+  300_000,
+);
+
+it.live(
+  'converges a claim whose recorded answer was lost, from the invitation the claim committed against',
+  () =>
+    Effect.scoped(
+      Effect.gen(function* convergesALostClaimAnswer() {
+        const { scenario } = yield* invitationScenario({ advanceBinding: 'ACTIVATED' });
+        const body = { claimProofReference: scenario.claimProofReference, invitationSecret: scenario.secret };
+
+        const firstAssertion = yield* recipientAssertion(scenario);
+        const first = yield* Effect.promise(
+          async () =>
+            await scenario.runtime.handler(
+              claimInvitationRequest(scenario.attemptId, body, {
+                assertion: firstAssertion,
+                cookie: scenario.session.cookie,
+              }),
+            ),
+        );
+        expect(first.status).toBe(200);
+        const claims = yield* countCounterpartyInvitationClaims(
+          scenario.fixture,
+          scenario.realm,
+          scenario.invitationId,
+        );
+        const claimedInvitation = yield* readCounterpartyInvitationRow(
+          scenario.fixture,
+          scenario.realm,
+          scenario.invitationId,
+        );
+
+        // The claim committed and its answer was lost on the way to the journal: the transition is
+        // back to dispatched-under-a-lease-that-has-since-lapsed, which the next claim fences.
+        yield* loseCounterpartyInvitationClaimAnswer(
+          scenario.fixture,
+          scenario.realm,
+          scenario.attemptId,
+          CLAIM_COUNTERPARTY_ACCESS_INVITATION_TRANSITION_KEY,
+        );
+        expect((yield* claimTransitionFor(scenario))?.status).toBe('IN_PROGRESS');
+
+        const retriedAssertion = yield* recipientAssertion(scenario);
+        const retried = yield* Effect.promise(
+          async () =>
+            await scenario.runtime.handler(
+              claimInvitationRequest(scenario.attemptId, body, {
+                assertion: retriedAssertion,
+                cookie: scenario.session.cookie,
+              }),
+            ),
+        );
+        expect(retried.status).toBe(200);
+
+        // Settled from the invitation rather than by claiming again: the result reference is the
+        // attestation the claim itself stamped, and the reconciliation is journalled as one.
+        const settled = yield* claimTransitionFor(scenario);
+        expect(settled).toMatchObject({
+          outcome_code: 'counterparty_invitation_claimed',
+          result_reference: claimedInvitation.claim_proof_reference,
+          status: 'SUCCEEDED',
+        });
+        expect(settled?.reconciliation_ref).not.toBeNull();
+        expect(yield* countCounterpartyInvitationClaims(scenario.fixture, scenario.realm, scenario.invitationId)).toBe(
+          claims,
+        );
+        expect(
+          yield* readCounterpartyInvitationRow(scenario.fixture, scenario.realm, scenario.invitationId),
+        ).toStrictEqual(claimedInvitation);
+      }),
+    ),
+  300_000,
+);
+
+it.live(
+  'settles a lost claim answer from a continuation pass, with no request from the recipient',
+  () =>
+    Effect.scoped(
+      Effect.gen(function* sweepSettlesALostClaimAnswer() {
+        const { scenario } = yield* invitationScenario({ advanceBinding: 'ACTIVATED' });
+        const body = { claimProofReference: scenario.claimProofReference, invitationSecret: scenario.secret };
+
+        const assertion = yield* recipientAssertion(scenario);
+        const claimed = yield* Effect.promise(
+          async () =>
+            await scenario.runtime.handler(
+              claimInvitationRequest(scenario.attemptId, body, { assertion, cookie: scenario.session.cookie }),
+            ),
+        );
+        expect(claimed.status).toBe(200);
+        const claims = yield* countCounterpartyInvitationClaims(
+          scenario.fixture,
+          scenario.realm,
+          scenario.invitationId,
+        );
+        const claimedInvitation = yield* readCounterpartyInvitationRow(
+          scenario.fixture,
+          scenario.realm,
+          scenario.invitationId,
+        );
+
+        yield* loseCounterpartyInvitationClaimAnswer(
+          scenario.fixture,
+          scenario.realm,
+          scenario.attemptId,
+          CLAIM_COUNTERPARTY_ACCESS_INVITATION_TRANSITION_KEY,
+        );
+        const continuation = yield* sweepingContinuation(scenario);
+        const advanced = yield* continuation.advance({
+          portalEnrollmentAttemptId: Schema.decodeSync(EnrollmentAttemptIdSchema)(scenario.attemptId),
+          tenantId: Schema.decodeSync(EnrollmentTenantIdSchema)(scenario.realm.tenantId),
+        });
+
+        expect(advanced.outcome).toBe('COMPLETE');
+        expect(yield* claimTransitionFor(scenario)).toMatchObject({
+          outcome_code: 'counterparty_invitation_claimed',
+          result_reference: claimedInvitation.claim_proof_reference,
+          status: 'SUCCEEDED',
+        });
+        expect(yield* countCounterpartyInvitationClaims(scenario.fixture, scenario.realm, scenario.invitationId)).toBe(
+          claims,
+        );
+      }),
+    ),
+  300_000,
+);
+
+it.live(
+  'refuses a claim carrying no Idempotency-Key before it redeems anything, leaving the secret usable',
+  () =>
+    Effect.scoped(
+      Effect.gen(function* refusesAMissingIdempotencyKey() {
+        const { scenario } = yield* invitationScenario({ advanceBinding: 'ACTIVATED' });
+        const body = { claimProofReference: scenario.claimProofReference, invitationSecret: scenario.secret };
+
+        const keylessAssertion = yield* recipientAssertion(scenario);
+        const keyless = yield* Effect.promise(
+          async () =>
+            await scenario.runtime.handler(
+              claimInvitationRequest(scenario.attemptId, body, {
+                assertion: keylessAssertion,
+                cookie: scenario.session.cookie,
+                omitIdempotencyKey: true,
+              }),
+            ),
+        );
+
+        // The Action requires the key, so the request is refused where a request defect belongs:
+        // upstream of the durable claim, the redemption and the journal.
+        expect(keyless.status).toBe(400);
+        expect(yield* responseBody(keyless)).toMatchObject({ code: 'invalid_request', status: 400 });
+        expect(yield* claimTransitionFor(scenario)).toBeUndefined();
+        expect(
+          (yield* readCounterpartyInvitationClaimProof(scenario.fixture, scenario.realm, scenario.invitationId))
+            .lifecycle,
+        ).toBe('ISSUED');
+
+        // The same secret still claims, which is what "nothing was spent" means here.
+        const keyedAssertion = yield* recipientAssertion(scenario);
+        const keyed = yield* Effect.promise(
+          async () =>
+            await scenario.runtime.handler(
+              claimInvitationRequest(scenario.attemptId, body, {
+                assertion: keyedAssertion,
+                cookie: scenario.session.cookie,
+              }),
+            ),
+        );
+        expect(keyed.status).toBe(200);
+        expect((yield* claimTransitionFor(scenario))?.status).toBe('SUCCEEDED');
+      }),
+    ),
+  300_000,
+);
+
+it.live(
+  'answers an Action-core failure after redemption as retryable, and converges on the retry',
+  () =>
+    Effect.scoped(
+      Effect.gen(function* retriesAnActionCoreFailure() {
+        const { scenario } = yield* invitationScenario({ advanceBinding: 'ACTIVATED' });
+        const body = { claimProofReference: scenario.claimProofReference, invitationSecret: scenario.secret };
+
+        // The Action runtime refuses an unusable correlation, and it refuses it where every
+        // Action-core failure lands: after this route has already committed the redemption.
+        const refusedAssertion = yield* recipientAssertion(scenario);
+        const refused = yield* Effect.promise(
+          async () =>
+            await scenario.runtime.handler(
+              claimInvitationRequest(scenario.attemptId, body, {
+                assertion: refusedAssertion,
+                cookie: scenario.session.cookie,
+                omitCorrelationId: true,
+              }),
+            ),
+        );
+
+        // Nothing about the invitation was decided, so nothing about it is journalled: a refusal
+        // recorded here would strand an Attempt whose redemption has already committed.
+        expect(refused.status).toBe(503);
+        expect(yield* responseBody(refused)).toMatchObject({ code: 'enrollment_unavailable', retryable: true });
+        expect((yield* claimTransitionFor(scenario))?.status).toBe('IN_PROGRESS');
+        expect(
+          (yield* readCounterpartyInvitationRow(scenario.fixture, scenario.realm, scenario.invitationId)).lifecycle,
+        ).toBe('PENDING');
+
+        yield* expireEnrollmentAcceptanceLeases(scenario.fixture, scenario.attemptId);
+        const retriedAssertion = yield* recipientAssertion(scenario);
+        const retried = yield* Effect.promise(
+          async () =>
+            await scenario.runtime.handler(
+              claimInvitationRequest(scenario.attemptId, body, {
+                assertion: retriedAssertion,
+                cookie: scenario.session.cookie,
+              }),
+            ),
+        );
+
+        expect(retried.status).toBe(200);
+        expect(yield* claimTransitionFor(scenario)).toMatchObject({
+          outcome_code: 'counterparty_invitation_claimed',
+          status: 'SUCCEEDED',
+        });
+        expect(
+          (yield* readCounterpartyInvitationRow(scenario.fixture, scenario.realm, scenario.invitationId))
+            .claimed_by_principal_id,
+        ).toBe(scenario.realm.recipientPrincipalId);
       }),
     ),
   300_000,
