@@ -30,12 +30,13 @@ import {
 import { CommerceEnrollmentAttemptUnavailable } from '../../../src/enrollment/attempts/errors.ts';
 import type { CommerceEnrollmentAttemptError } from '../../../src/enrollment/attempts/errors.ts';
 import type {
+  CommercePortalAccountSubject,
   EnrollmentAttemptIdSchema,
   EnrollmentAttemptSnapshot,
   EnrollmentOwnerOperationSnapshot,
 } from '../../../shared/enrollment-contracts.ts';
 import { COMMERCE_AUTHENTICATION_NAMESPACE_ID } from '../../../shared/portal-auth-contracts.ts';
-import { noStoreHeaders, requireTrustedOrigin, resolveClientKey } from '../http-transport.ts';
+import { noStoreHeaders, requestHeaders, requireTrustedOrigin, resolveClientKey } from '../http-transport.ts';
 import { CommercePortalAuthAccountCreationService } from '../provider/account-create.ts';
 import type { CommercePortalAccountCreateResult } from '../provider/account-create.ts';
 import { CommercePortalAuthAccountCreationUnavailable } from '../provider/account-creation-unavailable.ts';
@@ -44,13 +45,20 @@ import { CommercePortalAuthConfig } from '../provider/config-service.ts';
 import { COMMERCE_PORTAL_AUTH_POLICY } from '../provider/config.ts';
 import { consumeRateLimitBudget } from '../rate-limit-service.ts';
 import type { CommercePortalAuthRecoveryRateLimitRule } from '../rate-limit-service.ts';
+import { CommercePortalAuthService } from '../session/http.ts';
+import { CommercePortalAuthSessionLifecycle } from '../session/lifecycle-service.ts';
 import {
   CommercePortalAuthEnrollmentStartInputSchema,
   commercePortalAuthEnrollmentAttemptProjection,
 } from './contracts.ts';
 import type { CommercePortalAuthEnrollmentStartInput } from './contracts.ts';
-import { commercePortalAuthEnrollmentAccountCreationClaim, commercePortalAuthEnrollmentIntent } from './intent.ts';
-import type { CommercePortalAuthEnrollmentAccountCreationClaim } from './intent.ts';
+import {
+  commercePortalAuthEnrollmentAccountCreationClaim,
+  commercePortalAuthEnrollmentAccountVerificationClaim,
+  commercePortalAuthEnrollmentIntent,
+} from './intent.ts';
+import type { CommercePortalAuthEnrollmentTransitionClaim } from './intent.ts';
+import { commercePortalAuthEnrollmentSessionSubject } from './session-subject.ts';
 import {
   commercePortalAuthEnrollmentAuthenticationProblem,
   commercePortalAuthEnrollmentInvalidProblem,
@@ -67,9 +75,12 @@ import {
  * The one route that carries an enrollment credential: the password is `Redacted` from decode to
  * dispatch and never enters the Attempt, an intent, a request digest or a log.
  *
- * Start is three governed steps — create or converge on the Attempt, durably claim
- * `provider.account.create`, then perform the one provider effect that claim authorizes. The
- * private account-creation capability refuses any invocation the Attempt has not already claimed.
+ * Start is three governed steps — create or converge on the Attempt, durably claim the one
+ * transition this route owns for the journey, then record what that claim authorized. For Retail
+ * self-enrollment the claim is `provider.account.create` and the effect is the provider sign-up,
+ * which the private account-creation capability refuses for any invocation the Attempt has not
+ * already claimed. For Existing-account the claim is `provider.account.verify` and what it records
+ * is the subject the caller's own portal session is authenticated as; nothing is created.
  */
 
 const ENROLLMENT_START_ROUTE = '/enrollment/start';
@@ -241,6 +252,20 @@ export const commercePortalAuthEnrollmentCreatesAccount = (
 ): boolean => journey === 'RETAIL_SELF_ENROLLMENT';
 
 /**
+ * Whether this journey's start must be made by the authenticated owner of the account it enrolls.
+ *
+ * Only Existing-account continues a subject that already exists, and it binds that subject to a
+ * Tenant it has never belonged to. "Some account holds this address" is not a fact about the
+ * caller, so it can never be the authority for that: anyone who knows an address would otherwise
+ * enroll its owner into a Tenant of their choosing. A journey that brings a brand-new subject into
+ * being has no prior owner to authenticate as, which is exactly the complement of
+ * `commercePortalAuthEnrollmentCreatesAccount` for every journey this route still starts.
+ */
+export const commercePortalAuthEnrollmentRequiresAccountOwner = (
+  journey: CommercePortalAuthEnrollmentStartInput['journey'],
+): boolean => journey === 'EXISTING_ACCOUNT';
+
+/**
  * The outcome code the Attempt journal carries for a portal account this route created. It is the
  * same key the owner adapter records for its own dispatch of this transition, so the journal reads
  * identically whichever half of the vertical performed the provider call.
@@ -248,7 +273,14 @@ export const commercePortalAuthEnrollmentCreatesAccount = (
 const PORTAL_ACCOUNT_CREATED_OUTCOME_CODE = 'provider_account_created';
 
 /**
- * Whether this start still owes the provider account creation.
+ * The outcome code the Attempt journal carries for an account-ownership proof this route made. It
+ * names what was proven rather than what was created: no provider state changed, and the journal
+ * entry exists so the subject this request authenticated as is the one every later phase binds.
+ */
+const PORTAL_ACCOUNT_VERIFIED_OUTCOME_CODE = 'provider_account_verified';
+
+/**
+ * Whether this start still owes the effect its claim authorized.
  *
  * The claim is a governed Action, and a governed Action replays a recorded result verbatim: a retry
  * presenting the same Idempotency-Key is handed the very `CLAIMED` answer of the request that
@@ -256,9 +288,9 @@ const PORTAL_ACCOUNT_CREATED_OUTCOME_CODE = 'provider_account_created';
  * request's own owner invocation still holds `IN_PROGRESS` has an effect left to run, and one whose
  * outcome is already recorded must never be dispatched a second time.
  */
-export const commercePortalAuthEnrollmentDispatchesAccountCreation = (
+export const commercePortalAuthEnrollmentOwesTransitionOutcome = (
   operation: EnrollmentOwnerOperationSnapshot,
-  claim: CommercePortalAuthEnrollmentAccountCreationClaim,
+  claim: CommercePortalAuthEnrollmentTransitionClaim,
 ): boolean =>
   operation.status === 'IN_PROGRESS' &&
   operation.ownerInvocationId === claim.ownerInvocationId &&
@@ -278,7 +310,7 @@ export const commercePortalAuthEnrollmentDispatchesAccountCreation = (
 export const commercePortalAuthEnrollmentAccountCreationOutcome = Effect.fn(
   'CommercePortalAuthEnrollmentHttp.accountCreationOutcome',
 )(function* accountCreationOutcomeEffect(
-  claim: CommercePortalAuthEnrollmentAccountCreationClaim,
+  claim: CommercePortalAuthEnrollmentTransitionClaim,
   attempt: EnrollmentAttemptSnapshot,
   operation: EnrollmentOwnerOperationSnapshot,
   created: CommercePortalAccountCreateResult,
@@ -325,6 +357,56 @@ export const commercePortalAuthEnrollmentAccountCreationOutcome = Effect.fn(
 });
 
 /**
+ * The durable outcome of the account-ownership proof.
+ *
+ * It is the same journal entry shape the account-creation dispatch records, and deliberately so:
+ * the subject reaches the Attempt by exactly one route whichever journey started it, so the Core
+ * reservation that follows binds a subject PostgreSQL holds rather than one a request body named.
+ * The result reference is the Attempt's own identity — the very value the owner reconciliation
+ * reports for this transition — so a start and a later reconciliation agree on it. Everything else
+ * is taken from the durable claim: the Actor, the lease token and the worker are the ones
+ * PostgreSQL recorded, never values this request re-derived.
+ */
+export const commercePortalAuthEnrollmentAccountVerificationOutcome = Effect.fn(
+  'CommercePortalAuthEnrollmentHttp.accountVerificationOutcome',
+)(function* accountVerificationOutcomeEffect(
+  claim: CommercePortalAuthEnrollmentTransitionClaim,
+  attempt: EnrollmentAttemptSnapshot,
+  operation: EnrollmentOwnerOperationSnapshot,
+  accountSubject: CommercePortalAccountSubject,
+) {
+  const { lease } = operation;
+  if (lease === undefined) {
+    // Without the claim's own lease token the outcome cannot be recorded under the fence that
+    // authorized it, and no other value may stand in for it.
+    return yield* Effect.fail(commercePortalAuthEnrollmentUnavailableProblem());
+  }
+  const { outcomeCode, resultReference } = yield* Effect.all(
+    {
+      outcomeCode: Schema.decodeEffect(EnrollmentKeySchema)(PORTAL_ACCOUNT_VERIFIED_OUTCOME_CODE),
+      resultReference: Schema.decodeEffect(EnrollmentResourceIdSchema)(String(attempt.portalEnrollmentAttemptId)),
+      // Two independent in-memory decodes; neither reaches a shared downstream resource.
+    },
+    { concurrency: 2 },
+  ).pipe(Effect.mapError((failure) => commercePortalAuthEnrollmentUnavailableProblem(failure)));
+  return yield* Schema.decodeEffect(RecordEnrollmentOutcomeInputSchema)({
+    accountSubject,
+    actorPrincipalId: operation.actorPrincipalId,
+    expectedRevision: attempt.revision,
+    leaseToken: lease.leaseToken,
+    outcomeCode,
+    ownerInvocationId: claim.ownerInvocationId,
+    ownerModuleKey: claim.ownerModuleKey,
+    portalEnrollmentAttemptId: attempt.portalEnrollmentAttemptId,
+    resultReference,
+    status: 'SUCCEEDED',
+    tenantId: attempt.tenantId,
+    transitionKey: claim.transitionKey,
+    workerId: lease.workerId,
+  }).pipe(Effect.mapError((failure) => commercePortalAuthEnrollmentUnavailableProblem(failure)));
+});
+
+/**
  * Whether this caller may observe this Attempt at all.
  *
  * The durable read is Tenant-scoped inside PostgreSQL, so another Tenant's Attempt is unreachable.
@@ -338,21 +420,32 @@ export const commercePortalAuthEnrollmentReadableBy = (
 ): boolean => attempt.createdByPrincipalId === actorPrincipalId;
 
 /**
- * Existing-account enrollment continues an account that must already be there. The provider
- * directory is the only authority on that, and it is read through the same narrow lookup the owner
- * reconciler uses — it answers a yes/no about one address and returns no user record, no subject
- * and no credential — so a caller learns only the refusal every other governed denial gives.
+ * The authenticated owner of the account this Existing-account start names, or a refusal.
+ *
+ * Two independent facts have to line up, and neither is supplied by the request body. The caller's
+ * own portal session names the subject it is authenticated as, and the provider directory decides
+ * whether that exact subject is the one holding the address being enrolled — through the same
+ * narrow probe the owner reconciler uses, which answers yes or no and returns no user record, no
+ * subject and no credential. A caller with no session learns only that enrollment wants one, and a
+ * caller whose session owns a different account is answered exactly as a malformed request is, so
+ * neither answer tells anybody which addresses have accounts.
  */
-const requireExistingPortalAccount = Effect.fn('CommercePortalAuthEnrollmentHttp.existingAccount')(
-  function* requireExistingPortalAccountEffect(email: string) {
-    const accountLookup = yield* CommercePortalAuthAccountLookupService;
-    const exists = yield* accountLookup
-      .existsByEmail({ email })
-      .pipe(Effect.mapError((failure) => commercePortalAuthEnrollmentUnavailableProblem(failure)));
-    if (!exists) {
-      return yield* Effect.fail(commercePortalAuthEnrollmentRejectedProblem());
+export const commercePortalAuthEnrollmentAccountOwner = Effect.fn('CommercePortalAuthEnrollmentHttp.accountOwner')(
+  function* commercePortalAuthEnrollmentAccountOwnerEffect(headers: Headers, email: string) {
+    const provider = yield* CommercePortalAuthService;
+    const lifecycle = yield* CommercePortalAuthSessionLifecycle;
+    const current = yield* commercePortalAuthEnrollmentSessionSubject(provider, lifecycle, headers);
+    if (Option.isNone(current)) {
+      return yield* Effect.fail(commercePortalAuthEnrollmentAuthenticationProblem);
     }
-    return yield* Effect.void;
+    const accountLookup = yield* CommercePortalAuthAccountLookupService;
+    const owns = yield* accountLookup
+      .existsByProviderSubject({ email, providerSubjectId: current.value.providerSubjectId })
+      .pipe(Effect.mapError((failure) => commercePortalAuthEnrollmentUnavailableProblem(failure)));
+    if (!owns) {
+      return yield* Effect.fail(commercePortalAuthEnrollmentInvalidProblem());
+    }
+    return current.value;
   },
 );
 
@@ -378,6 +471,12 @@ const startEnrollment = Effect.fn('CommercePortalAuthEnrollmentHttp.start')(func
     return yield* Effect.fail(commercePortalAuthEnrollmentJourneyUnavailableProblem);
   }
   const email = input.email.trim().toLowerCase();
+  // The owner gate runs before the budget is spent. The budget is keyed by the address being
+  // enrolled, so spending first would let an unauthenticated caller exhaust the enrollment budget
+  // of any address it can name; the sibling sign-in transport orders its own gate the same way.
+  const ownerSubject = commercePortalAuthEnrollmentRequiresAccountOwner(input.journey)
+    ? yield* commercePortalAuthEnrollmentAccountOwner(requestHeaders(request.headers), email)
+    : undefined;
   yield* consumeEnrollmentBudget(request, email);
 
   const runEnrollmentAction = <
@@ -417,13 +516,74 @@ const startEnrollment = Effect.fn('CommercePortalAuthEnrollmentHttp.start')(func
   const started = yield* runEnrollmentAction(startPortalEnrollmentAction, intent);
 
   if (!commercePortalAuthEnrollmentCreatesAccount(input.journey)) {
-    // This journey's definition drops the provider account-creation step, so claiming it here would
-    // gate the Attempt on a transition its own journey never declares and leave it unusable. The
-    // account already exists; what start owes is evidence of that, read from the provider directory
-    // the reconciler itself reads, before the continuation binds a second Tenant's Principal to it.
-    yield* requireExistingPortalAccount(email);
-    yield* triggerEnrollmentContinuation(continuation, started.attempt);
-    return { attempt: commercePortalAuthEnrollmentAttemptProjection(started.attempt), outcome: started.outcome };
+    // Only Existing-account reaches here — Counterparty was refused above — so the gate has already
+    // produced this journey's owner subject. A deployment where the two predicates disagreed would
+    // have no subject to journal and must refuse rather than start a journey nothing can finish.
+    if (ownerSubject === undefined) {
+      return yield* Effect.fail(commercePortalAuthEnrollmentUnavailableProblem());
+    }
+    // This journey's definition drops the provider account-creation step and declares the
+    // account-ownership proof in its place. The subject the gate authenticated is journalled under
+    // that transition, because the continuation's first Core reservation binds the subject the
+    // Attempt carries: an Attempt that records none can never leave IN_PROGRESS.
+    const verification = yield* commercePortalAuthEnrollmentAccountVerificationClaim(
+      input,
+      started.attempt.portalEnrollmentAttemptId,
+    ).pipe(Effect.mapError(commercePortalAuthEnrollmentUnavailableProblem));
+    const verified = yield* runEnrollmentAction(claimPortalEnrollmentTransitionAction, {
+      expectedRevision: started.attempt.revision,
+      ownerInvocationId: verification.ownerInvocationId,
+      ownerModuleKey: verification.ownerModuleKey,
+      portalEnrollmentAttemptId: started.attempt.portalEnrollmentAttemptId,
+      requestDigest: verification.requestDigest,
+      transitionKey: verification.transitionKey,
+    });
+    if (verified.outcome !== 'CLAIMED') {
+      yield* triggerEnrollmentContinuation(continuation, verified.attempt);
+      return { attempt: commercePortalAuthEnrollmentAttemptProjection(verified.attempt), outcome: started.outcome };
+    }
+    // Both owner rows are re-read from the journal rather than taken from the Action's answer, and
+    // through the same runner the read route uses: one committed transaction per owner phase.
+    const verifiedRunner = yield* CommerceEnrollmentOwnerTransactionRunner;
+    const verifiedStore = commerceEnrollmentOwnerAttemptStoreForRun(
+      { tenantId: verified.attempt.tenantId },
+      verifiedRunner.run,
+    );
+    const verifiedState = yield* Effect.all(
+      {
+        attempt: verifiedStore.read({
+          portalEnrollmentAttemptId: verified.attempt.portalEnrollmentAttemptId,
+          tenantId: verified.attempt.tenantId,
+        }),
+        operation: verifiedStore.readOwnerOperation({
+          ownerModuleKey: verification.ownerModuleKey,
+          portalEnrollmentAttemptId: verified.attempt.portalEnrollmentAttemptId,
+          tenantId: verified.attempt.tenantId,
+          transitionKey: verification.transitionKey,
+        }),
+        // Two durable reads of the Attempt this request just claimed, in their own transactions.
+      },
+      { concurrency: 2 },
+    ).pipe(Effect.mapError((failure) => commercePortalAuthEnrollmentUnavailableProblem(failure)));
+    if (!commercePortalAuthEnrollmentOwesTransitionOutcome(verifiedState.operation, verification)) {
+      // A retry replaying this start's own `CLAIMED` answer: the subject is journalled already.
+      yield* triggerEnrollmentContinuation(continuation, verifiedState.attempt);
+      return {
+        attempt: commercePortalAuthEnrollmentAttemptProjection(verifiedState.attempt),
+        outcome: started.outcome,
+      };
+    }
+    const verificationOutcome = yield* commercePortalAuthEnrollmentAccountVerificationOutcome(
+      verification,
+      verifiedState.attempt,
+      verifiedState.operation,
+      ownerSubject,
+    );
+    const journalled = yield* verifiedStore
+      .recordOutcome(verificationOutcome)
+      .pipe(Effect.mapError((failure) => commercePortalAuthEnrollmentUnavailableProblem(failure)));
+    yield* triggerEnrollmentContinuation(continuation, journalled.attempt);
+    return { attempt: commercePortalAuthEnrollmentAttemptProjection(journalled.attempt), outcome: started.outcome };
   }
 
   const claim = yield* commercePortalAuthEnrollmentAccountCreationClaim(
@@ -469,7 +629,7 @@ const startEnrollment = Effect.fn('CommercePortalAuthEnrollmentHttp.start')(func
     { concurrency: 2 },
   ).pipe(Effect.mapError((failure) => commercePortalAuthEnrollmentUnavailableProblem(failure)));
 
-  if (!commercePortalAuthEnrollmentDispatchesAccountCreation(claimedState.operation, claim)) {
+  if (!commercePortalAuthEnrollmentOwesTransitionOutcome(claimedState.operation, claim)) {
     // The transition already carries a recorded outcome, so this start is a retry of one that
     // dispatched: it answers with the Attempt as the journal now has it and dispatches nothing.
     yield* triggerEnrollmentContinuation(continuation, claimedState.attempt);

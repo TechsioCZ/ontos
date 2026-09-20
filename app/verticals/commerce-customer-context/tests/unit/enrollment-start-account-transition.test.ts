@@ -4,11 +4,11 @@ import { expect, it } from 'effect-rstest';
 import { CommercePortalAuthEnrollmentStartInputSchema } from '../../api/portal-auth/enrollment/contracts.ts';
 import {
   commercePortalAuthEnrollmentAccountCreationOutcome,
-  commercePortalAuthEnrollmentDispatchesAccountCreation,
+  commercePortalAuthEnrollmentOwesTransitionOutcome,
   commercePortalAuthEnrollmentReadableBy,
 } from '../../api/portal-auth/enrollment/http.ts';
 import { commercePortalAuthEnrollmentAccountCreationClaim } from '../../api/portal-auth/enrollment/intent.ts';
-import type { CommercePortalAuthEnrollmentAccountCreationClaim } from '../../api/portal-auth/enrollment/intent.ts';
+import type { CommercePortalAuthEnrollmentTransitionClaim } from '../../api/portal-auth/enrollment/intent.ts';
 import type { CommercePortalAccountCreateResult } from '../../api/portal-auth/provider/account-create.ts';
 import {
   EnrollmentActionInvocationIdSchema,
@@ -76,7 +76,7 @@ const attempt = (overrides: Partial<EnrollmentAttemptSnapshot> = {}): Enrollment
 
 /** The durable owner operation the claim routine commits, without its lease. */
 const unleasedOperation = (
-  claim: CommercePortalAuthEnrollmentAccountCreationClaim,
+  claim: CommercePortalAuthEnrollmentTransitionClaim,
   overrides: Partial<EnrollmentOwnerOperationSnapshot> = {},
 ): EnrollmentOwnerOperationSnapshot => ({
   actorPrincipalId,
@@ -96,7 +96,7 @@ const unleasedOperation = (
 });
 
 const operation = (
-  claim: CommercePortalAuthEnrollmentAccountCreationClaim,
+  claim: CommercePortalAuthEnrollmentTransitionClaim,
   overrides: Partial<EnrollmentOwnerOperationSnapshot> = {},
 ): EnrollmentOwnerOperationSnapshot => ({
   ...unleasedOperation(claim),
@@ -187,16 +187,16 @@ it.effect('a start whose transition is already recorded dispatches no second acc
     // A governed Action replays a recorded result verbatim, so a retry presenting the same
     // Idempotency-Key is handed the same `CLAIMED` answer as the request that already created the
     // account. Only the durable journal separates them.
-    expect(commercePortalAuthEnrollmentDispatchesAccountCreation(operation(claim), claim)).toBe(true);
-    expect(
-      commercePortalAuthEnrollmentDispatchesAccountCreation(operation(claim, { status: 'SUCCEEDED' }), claim),
-    ).toBe(false);
-    expect(commercePortalAuthEnrollmentDispatchesAccountCreation(operation(claim, { status: 'FAILED' }), claim)).toBe(
+    expect(commercePortalAuthEnrollmentOwesTransitionOutcome(operation(claim), claim)).toBe(true);
+    expect(commercePortalAuthEnrollmentOwesTransitionOutcome(operation(claim, { status: 'SUCCEEDED' }), claim)).toBe(
+      false,
+    );
+    expect(commercePortalAuthEnrollmentOwesTransitionOutcome(operation(claim, { status: 'FAILED' }), claim)).toBe(
       false,
     );
     // A transition another invocation holds is that invocation's to complete, never this one's.
     expect(
-      commercePortalAuthEnrollmentDispatchesAccountCreation(
+      commercePortalAuthEnrollmentOwesTransitionOutcome(
         operation(claim, { ownerInvocationId: otherInvocationId }),
         claim,
       ),

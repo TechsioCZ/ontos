@@ -77,8 +77,11 @@ outcomes rather than asserted by a caller.
 `journey: COUNTERPARTY_INVITATION` is refused fail-closed with `422 enrollment_journey_unavailable`
 — no Attempt is persisted and no provider account is created — until an owner effect exists that can
 hold the invitation's one-time claim proof. `journey: EXISTING_ACCOUNT` creates no account either:
-its journey definition drops the `provider.account.create` step, so start verifies the presented
-address against the provider account directory and hands the Attempt straight to the continuation.
+its journey definition drops the `provider.account.create` step and declares `provider.account.verify`
+in its place, so the start must be made by the authenticated owner of that account — it requires a
+live Commerce portal session whose subject holds the presented address (`401` without one, and the
+group's invalid-request answer when the session owns a different account, in both cases before any
+Attempt is persisted), then claims that transition and journals the session subject on the Attempt.
 
 A journey that halts is not abandoned. Reading an Attempt that is neither terminal nor under a live
 lease advances it once more, and an in-process sweeper

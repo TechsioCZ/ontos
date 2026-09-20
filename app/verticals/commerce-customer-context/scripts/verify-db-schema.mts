@@ -61,6 +61,7 @@ const EXPECTED_RUNTIME_ROUTINES = [
   'list_access_grants',
   'list_access_reconciliation',
   'list_saved_addresses',
+  'list_stale_portal_enrollment_attempts',
   'lock_access_grant_authority',
   'migrate_price_group_assignments',
   'mutate_access_invitation',

@@ -31,6 +31,7 @@ import {
   retailPartyCandidateDigest,
   retailPartyRefFor,
 } from '../../src/enrollment/journeys/retail-self-enrollment-contracts.ts';
+import { commerceEnrollmentStaleAttemptStoreForRun } from '../../src/enrollment/orchestration/owner-transition-production.ts';
 import { PORTAL_ACCOUNT_CREATION_TRANSITION_KEY } from '../../src/enrollment/orchestration/prepared-owner-authority.ts';
 import {
   expireEnrollmentAcceptanceLeases,
@@ -683,6 +684,79 @@ it.live('the sweeper re-advances a stale halted Attempt nobody ever reads', () =
       // A completed journey is released, so the sweeper does not keep re-reading a settled Attempt.
       expect(sweep.tracked).toBe(0);
       expect((yield* sweeper.sweep).swept).toBe(0);
+    }),
+  ),
+);
+
+it.live('a fresh sweeper instance finishes an Attempt the instance before it abandoned', () =>
+  Effect.scoped(
+    Effect.gen(function* sweeperSeedsFromTheDurableJournal() {
+      const identities = makeScenarioIdentities();
+      const { fixture, portalEnrollmentAttemptId } = yield* scenario(identities);
+      const identity = { portalEnrollmentAttemptId, tenantId: identities.tenantId };
+
+      // The instance that started the journey halts on the lost Party answer and then disappears,
+      // taking the only in-process record of this Attempt with it.
+      const abandoning = yield* reconcilingPartyHarness(fixture, identities);
+      const abandoningSweeper = yield* commerceEnrollmentContinuationSweeperFor({
+        continuation: abandoning.continuation,
+        staleAfterMillis: 0,
+      });
+      expect((yield* abandoningSweeper.continuation.advance(identity)).outcome).toBe('HALTED');
+      yield* expireEnrollmentAcceptanceLeases(fixture, portalEnrollmentAttemptId);
+
+      // The replacement: a fresh continuation and a registry that has never heard of this Attempt.
+      // Only the durable journal can tell it there is anything left to do.
+      const replacement = yield* reconcilingPartyHarness(fixture, identities);
+      const freshSweeper = yield* commerceEnrollmentContinuationSweeperFor({
+        continuation: replacement.continuation,
+        staleAfterMillis: 0,
+        tenants: [identities.tenantId],
+      });
+
+      const sweep = yield* freshSweeper.sweep;
+
+      // Seeding only from the in-process registry makes this 0 and leaves the Attempt IN_PROGRESS
+      // for good: no read, no fork and no registry entry ever comes back for it again.
+      expect(sweep.swept).toBe(1);
+      expect(yield* readEnrollmentAcceptanceAttempt(fixture, portalEnrollmentAttemptId)).toMatchObject({
+        state: 'COMPLETE',
+      });
+      expect(replacement.owner.log.reconciled).toStrictEqual([PARTY_CANDIDATE_SUBMISSION_TRANSITION_KEY]);
+      // The settled Attempt drops out of the journal, so the next tick has nothing to advance.
+      expect((yield* freshSweeper.sweep).swept).toBe(0);
+    }),
+  ),
+);
+
+it.live('the durable listing skips a settled Attempt and one a live lease still owns', () =>
+  Effect.scoped(
+    Effect.gen(function* listStaleSkipsSettledAndLeased() {
+      const identities = makeScenarioIdentities();
+      const { fixture, portalEnrollmentAttemptId } = yield* scenario(identities);
+      const journal = commerceEnrollmentStaleAttemptStoreForRun(fixture.scope, fixture.run);
+      const query = { limit: 16, staleAfterMillis: 0 };
+      const harness = yield* reconcilingPartyHarness(fixture, identities);
+      const identity = { portalEnrollmentAttemptId, tenantId: identities.tenantId };
+
+      // The abandoned Party claim still holds a live lease, so the listing must leave it alone:
+      // the claim, not the listing, is what grants ownership of the transition.
+      expect((yield* harness.continuation.advance(identity)).outcome).toBe('HALTED');
+      expect(yield* journal.listStale(query)).toStrictEqual([]);
+
+      // Once the lease lapses the very same Attempt is the one thing the journal reports as due.
+      yield* expireEnrollmentAcceptanceLeases(fixture, portalEnrollmentAttemptId);
+      const due = yield* journal.listStale(query);
+      expect(due.map((attempt) => [attempt.portalEnrollmentAttemptId, attempt.state])).toStrictEqual([
+        [portalEnrollmentAttemptId, 'IN_PROGRESS'],
+      ]);
+
+      // A COMPLETE Attempt has no transition left to advance, so it drops out for good.
+      expect((yield* harness.continuation.advance(identity)).outcome).toBe('COMPLETE');
+      expect(yield* readEnrollmentAcceptanceAttempt(fixture, portalEnrollmentAttemptId)).toMatchObject({
+        state: 'COMPLETE',
+      });
+      expect(yield* journal.listStale(query)).toStrictEqual([]);
     }),
   ),
 );

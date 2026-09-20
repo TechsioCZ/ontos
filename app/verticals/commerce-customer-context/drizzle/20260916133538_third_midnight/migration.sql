@@ -1442,6 +1442,52 @@ END;
 $function$;
 --> statement-breakpoint
 
+-- The durable due-work index for the continuation sweeper. An Attempt whose worker disappeared is
+-- only discoverable from the journal itself, so this is the one Attempt surface that answers
+-- without an Attempt identity. It stays inside the Tenant boundary every other routine keeps: the
+-- verified Tenant is its first argument and the row policies apply to it exactly as to the rest.
+CREATE FUNCTION "commerce_customer_context"."list_stale_portal_enrollment_attempts"(
+  p_tenant_id uuid,
+  p_stale_after_millis integer,
+  p_limit integer
+)
+RETURNS TABLE (
+  tenant_id uuid,
+  portal_enrollment_attempt_id uuid,
+  state text,
+  updated_at timestamptz
+)
+LANGUAGE sql
+SECURITY DEFINER
+SET search_path = pg_catalog, commerce_customer_context
+AS $function$
+  SELECT
+    attempt.tenant_id,
+    attempt.portal_enrollment_attempt_id,
+    attempt.state,
+    attempt.updated_at
+  FROM commerce_customer_context.portal_enrollment_attempts AS attempt
+  WHERE attempt.tenant_id = p_tenant_id
+    -- COMPLETE and TERMINATED have nothing left to advance; VERIFICATION_REQUIRED waits on a
+    -- caller rather than on a worker, so re-advancing it would halt on the very same answer.
+    AND attempt.state IN ('IN_PROGRESS', 'RECONCILIATION_REQUIRED')
+    AND attempt.updated_at
+          <= statement_timestamp() - make_interval(secs => greatest(p_stale_after_millis, 0)::double precision / 1000)
+    -- A live claim still owns the transition, and the claim — not this listing — grants ownership.
+    AND (attempt.lease_expires_at IS NULL OR attempt.lease_expires_at <= statement_timestamp())
+    AND NOT EXISTS (
+      SELECT 1
+      FROM commerce_customer_context.portal_enrollment_owner_operations AS operation
+      WHERE operation.tenant_id = attempt.tenant_id
+        AND operation.portal_enrollment_attempt_id = attempt.portal_enrollment_attempt_id
+        AND operation.status = 'IN_PROGRESS'
+        AND operation.lease_expires_at > statement_timestamp()
+    )
+  ORDER BY attempt.updated_at
+  LIMIT greatest(least(p_limit, 500), 0);
+$function$;
+--> statement-breakpoint
+
 REVOKE ALL ON FUNCTION "commerce_customer_context"."create_portal_enrollment_attempt"(uuid, uuid, uuid, text, text, text, uuid, uuid, text) FROM PUBLIC;
 REVOKE ALL ON FUNCTION "commerce_customer_context"."claim_portal_enrollment_transition"(uuid, uuid, integer, text, text, text, uuid, text, uuid, boolean, integer, text, text) FROM PUBLIC;
 REVOKE ALL ON FUNCTION "commerce_customer_context"."record_portal_enrollment_outcome"(uuid, uuid, integer, text, uuid, text, text, uuid, uuid, text, text, text, text, text, text, text, text, text) FROM PUBLIC;
@@ -1450,6 +1496,7 @@ REVOKE ALL ON FUNCTION "commerce_customer_context"."terminate_portal_enrollment"
 REVOKE ALL ON FUNCTION "commerce_customer_context"."read_portal_enrollment_attempt"(uuid, uuid) FROM PUBLIC;
 REVOKE ALL ON FUNCTION "commerce_customer_context"."read_portal_enrollment_owner_operation"(uuid, uuid, text, text) FROM PUBLIC;
 REVOKE ALL ON FUNCTION "commerce_customer_context"."authorize_portal_enrollment_account_creation"(uuid, uuid, uuid) FROM PUBLIC;
+REVOKE ALL ON FUNCTION "commerce_customer_context"."list_stale_portal_enrollment_attempts"(uuid, integer, integer) FROM PUBLIC;
 GRANT EXECUTE ON FUNCTION "commerce_customer_context"."create_portal_enrollment_attempt"(uuid, uuid, uuid, text, text, text, uuid, uuid, text) TO "ontos_runtime";
 GRANT EXECUTE ON FUNCTION "commerce_customer_context"."claim_portal_enrollment_transition"(uuid, uuid, integer, text, text, text, uuid, text, uuid, boolean, integer, text, text) TO "ontos_runtime";
 GRANT EXECUTE ON FUNCTION "commerce_customer_context"."record_portal_enrollment_outcome"(uuid, uuid, integer, text, uuid, text, text, uuid, uuid, text, text, text, text, text, text, text, text, text) TO "ontos_runtime";
@@ -1458,6 +1505,7 @@ GRANT EXECUTE ON FUNCTION "commerce_customer_context"."terminate_portal_enrollme
 GRANT EXECUTE ON FUNCTION "commerce_customer_context"."read_portal_enrollment_attempt"(uuid, uuid) TO "ontos_runtime";
 GRANT EXECUTE ON FUNCTION "commerce_customer_context"."read_portal_enrollment_owner_operation"(uuid, uuid, text, text) TO "ontos_runtime";
 GRANT EXECUTE ON FUNCTION "commerce_customer_context"."authorize_portal_enrollment_account_creation"(uuid, uuid, uuid) TO "ontos_runtime";
+GRANT EXECUTE ON FUNCTION "commerce_customer_context"."list_stale_portal_enrollment_attempts"(uuid, integer, integer) TO "ontos_runtime";
 --> statement-breakpoint
 DO $hardening$
 BEGIN

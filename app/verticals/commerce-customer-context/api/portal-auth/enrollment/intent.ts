@@ -10,6 +10,7 @@ import {
   enrollmentDigest,
 } from '../../../shared/enrollment-contracts.ts';
 import type { StartPortalEnrollmentPayload } from '../../../shared/actions/start-portal-enrollment.ts';
+import { PORTAL_ACCOUNT_VERIFICATION_TRANSITION_KEY } from '../../../src/enrollment/journeys/existing-account.ts';
 import {
   PORTAL_ACCOUNT_CREATION_TRANSITION_KEY,
   PORTAL_AUTH_OWNER_MODULE_KEY,
@@ -89,8 +90,8 @@ export const commercePortalAuthEnrollmentIntent = (
   );
 };
 
-/** The immutable identity of the provider account-creation transition this vertical owns. */
-export interface CommercePortalAuthEnrollmentAccountCreationClaim {
+/** The immutable identity of one owner transition an enrollment start claims for itself. */
+export interface CommercePortalAuthEnrollmentTransitionClaim {
   readonly ownerInvocationId: typeof EnrollmentActionInvocationIdSchema.Type;
   readonly ownerModuleKey: typeof EnrollmentModuleKeySchema.Type;
   readonly requestDigest: typeof EnrollmentDigestSchema.Type;
@@ -105,12 +106,14 @@ export interface CommercePortalAuthEnrollmentAccountCreationClaim {
  *
  * The request digest is derived from the same credential-free business intent as the Attempt's own
  * digest, so the installed owner preparation port can re-derive and compare it without ever seeing
- * the credential.
+ * the credential. The transition key is part of that digest, so the two transitions a start may
+ * claim never collide on one digest.
  */
-export const commercePortalAuthEnrollmentAccountCreationClaim = (
+const enrollmentTransitionClaim = (
+  transitionKey: string,
   input: CommercePortalAuthEnrollmentStartInput,
   portalEnrollmentAttemptId: string,
-): Effect.Effect<CommercePortalAuthEnrollmentAccountCreationClaim, Schema.SchemaError> =>
+): Effect.Effect<CommercePortalAuthEnrollmentTransitionClaim, Schema.SchemaError> =>
   Effect.all(
     {
       ownerInvocationId: Schema.decodeEffect(EnrollmentActionInvocationIdSchema)(randomUUID()),
@@ -118,15 +121,32 @@ export const commercePortalAuthEnrollmentAccountCreationClaim = (
       requestDigest: Schema.decodeEffect(EnrollmentDigestSchema)(
         digestOf([
           PORTAL_AUTH_OWNER_MODULE_KEY,
-          PORTAL_ACCOUNT_CREATION_TRANSITION_KEY,
+          transitionKey,
           portalEnrollmentAttemptId,
           input.journey,
           normalizedEmail(input),
           input.sellingLegalEntityId,
         ]),
       ),
-      transitionKey: Schema.decodeEffect(EnrollmentTransitionKeySchema)(PORTAL_ACCOUNT_CREATION_TRANSITION_KEY),
+      transitionKey: Schema.decodeEffect(EnrollmentTransitionKeySchema)(transitionKey),
       // Four independent in-memory decodes; none reaches a shared downstream resource.
     },
     { concurrency: 4 },
   );
+
+/** The provider account-creation transition, claimed by a Retail self-enrollment start. */
+export const commercePortalAuthEnrollmentAccountCreationClaim = (
+  input: CommercePortalAuthEnrollmentStartInput,
+  portalEnrollmentAttemptId: string,
+): Effect.Effect<CommercePortalAuthEnrollmentTransitionClaim, Schema.SchemaError> =>
+  enrollmentTransitionClaim(PORTAL_ACCOUNT_CREATION_TRANSITION_KEY, input, portalEnrollmentAttemptId);
+
+/**
+ * The account-ownership proof, claimed by an Existing-account start. It creates no account: what it
+ * journals is the exact subject the caller's own portal session authenticated as.
+ */
+export const commercePortalAuthEnrollmentAccountVerificationClaim = (
+  input: CommercePortalAuthEnrollmentStartInput,
+  portalEnrollmentAttemptId: string,
+): Effect.Effect<CommercePortalAuthEnrollmentTransitionClaim, Schema.SchemaError> =>
+  enrollmentTransitionClaim(PORTAL_ACCOUNT_VERIFICATION_TRANSITION_KEY, input, portalEnrollmentAttemptId);

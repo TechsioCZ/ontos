@@ -145,6 +145,10 @@ with the same Attempt id. Attempts left in `RECONCILIATION_REQUIRED` are the one
 decision — an ambiguous Party candidate, or a Retail Portal binding that committed without its
 complete reviewed Permission baseline.
 
+A restart loses nothing: each sweep reads the Attempt journal itself through
+`list_stale_portal_enrollment_attempts`, so an Attempt abandoned by one process is re-advanced by
+the next once that process has served a request for the same Tenant.
+
 ## Operator notes
 
 - `commerce_auth.recovery_reset_ledger` holds one row per live reset token (primary key

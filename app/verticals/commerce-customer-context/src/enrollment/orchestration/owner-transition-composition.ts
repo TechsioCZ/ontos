@@ -24,6 +24,7 @@ import type {
   CommerceEnrollmentOwnerReconciliationInput,
   CommerceEnrollmentOwnerTransition,
 } from './owner-transition-driver.ts';
+import { PORTAL_ACCOUNT_VERIFICATION_TRANSITION_KEY } from '../journeys/existing-account.ts';
 import { retailSelfEnrollmentPrepareStep } from '../journeys/retail-self-enrollment-preparation.ts';
 import { retailSelfEnrollmentStepPlan } from '../journeys/retail-self-enrollment-contracts.ts';
 import type { JourneyTransitionSpec } from '../journeys/journey-contracts.ts';
@@ -58,6 +59,11 @@ const decodeTransitionKey = (value: string): CommerceEnrollmentPreparedOwnerBind
 const PORTAL_ACCOUNT_TRANSITION_IDENTITY = {
   ownerModuleKey: decodeModuleKey(PORTAL_AUTH_OWNER_MODULE_KEY),
   transitionKey: decodeTransitionKey(PORTAL_ACCOUNT_CREATION_TRANSITION_KEY),
+} as const;
+
+const PORTAL_ACCOUNT_VERIFICATION_TRANSITION_IDENTITY = {
+  ownerModuleKey: decodeModuleKey(PORTAL_AUTH_OWNER_MODULE_KEY),
+  transitionKey: decodeTransitionKey(PORTAL_ACCOUNT_VERIFICATION_TRANSITION_KEY),
 } as const;
 
 interface RetailPreparationStep {
@@ -262,6 +268,10 @@ const prepareRecord = Effect.fn('CommerceEnrollmentPortalAuthOwnerPreparation.pr
  * reconciliation of an indeterminate transition. Both open their own transactions through the
  * runner, so no owner work happens inside the governed Action transaction, and neither path can
  * reach the private account-creation capability.
+ *
+ * Neither preparation reads the transition key for anything but the journal row it addresses, so
+ * the very same port serves the Existing-account ownership proof; `portalAuthPreparationPorts`
+ * publishes it under both identities.
  */
 export const makeCommerceEnrollmentPortalAuthOwnerPreparationPort = Effect.fn(
   'CommerceEnrollmentPortalAuthOwnerPreparation.make',
@@ -284,6 +294,18 @@ export const makeCommerceEnrollmentPortalAuthOwnerPreparationPort = Effect.fn(
   };
   return { ...PORTAL_ACCOUNT_TRANSITION_IDENTITY, prepare };
 });
+
+/**
+ * Both portal-auth transitions of one deployment, over a single owner port. A transition no port
+ * declares fails closed, so the Existing-account ownership proof needs its own entry here or its
+ * governed claim could never be authorized.
+ */
+const portalAuthPreparationPorts = (
+  port: CommerceEnrollmentOwnerPreparationPort,
+): readonly CommerceEnrollmentOwnerPreparationPort[] => [
+  port,
+  { ...port, ...PORTAL_ACCOUNT_VERIFICATION_TRANSITION_IDENTITY },
+];
 
 /**
  * The Retail self-enrollment ports, bound to the durable Attempt rather than to a subject a caller
@@ -312,9 +334,10 @@ const retailPreparationPorts = (
   }));
 
 /**
- * The deployed preparation authority: the Commerce portal owner port for the provider
- * account-creation transition, plus one port per declared Retail self-enrollment transition. Every
- * other owner module or transition key still fails closed through the router.
+ * The deployed preparation authority: the Commerce portal owner port for the two transitions that
+ * vertical owns — the provider account creation and the Existing-account ownership proof — plus one
+ * port per declared Retail self-enrollment transition. Every other owner module or transition key
+ * still fails closed through the router.
  *
  * The portal account-creation pair is declared by the Retail journey too. Listing the portal-auth
  * port first is what keeps it: it is the owner-authoritative one — it reads the durable claim and
@@ -327,7 +350,7 @@ export const commerceEnrollmentOwnerTransitionPreparationLive = Layer.effect(
     const resolver = yield* CommerceEnrollmentPreparationSubjectResolver;
     const portalAuthPort = yield* makeCommerceEnrollmentPortalAuthOwnerPreparationPort();
     return commerceEnrollmentOwnerTransitionPreparationAuthorityForPorts([
-      portalAuthPort,
+      ...portalAuthPreparationPorts(portalAuthPort),
       ...retailPreparationPorts(resolver.resolve),
     ]);
   }),

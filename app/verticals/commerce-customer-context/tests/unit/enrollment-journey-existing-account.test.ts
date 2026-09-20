@@ -11,7 +11,9 @@ import {
   ACTIVATE_PRINCIPAL_BINDING_TRANSITION_KEY,
   CORE_IDENTITY_OWNER_MODULE_KEY,
   EXISTING_ACCOUNT_CORE_IDENTITY_TRANSITIONS,
+  EXISTING_ACCOUNT_OWNERSHIP_TRANSITIONS,
   ExistingAccountEnrollmentRejected,
+  PORTAL_ACCOUNT_VERIFICATION_TRANSITION_KEY,
   RESERVE_PRINCIPAL_BINDING_TRANSITION_KEY,
   existingAccountCoreIdentityActivateRequest,
   existingAccountCoreIdentityReadByBindingRequest,
@@ -21,7 +23,10 @@ import {
 } from '../../src/enrollment/journeys/existing-account.ts';
 import type { ExistingAccountEnrollmentTransitionIntent } from '../../src/enrollment/journeys/existing-account.ts';
 import { retailSelfEnrollmentJourneyDefinition } from '../../src/enrollment/journeys/retail-self-enrollment-contracts.ts';
-import { PORTAL_ACCOUNT_CREATION_TRANSITION_KEY } from '../../src/enrollment/orchestration/prepared-owner-authority.ts';
+import {
+  PORTAL_ACCOUNT_CREATION_TRANSITION_KEY,
+  PORTAL_AUTH_OWNER_MODULE_KEY,
+} from '../../src/enrollment/orchestration/prepared-owner-authority.ts';
 import type {
   CommerceEnrollmentCoreIdentityOwnerEffectOptions,
   CommerceEnrollmentOwnerTransition,
@@ -97,14 +102,22 @@ it.effect(
     Effect.gen(function* composesJourney() {
       const definition = yield* existingAccountJourneyDefinitionFor(retailSelfEnrollmentJourneyDefinition);
       expect(definition.kind).toBe('EXISTING_ACCOUNT');
-      expect(definition.requiredTransitions[0]?.transitionKey).toBe(RESERVE_PRINCIPAL_BINDING_TRANSITION_KEY);
-      expect(definition.requiredTransitions[1]?.transitionKey).toBe(ACTIVATE_PRINCIPAL_BINDING_TRANSITION_KEY);
+      // The ownership proof is declared first: it is the precondition of the reservation that
+      // follows, and the continuation runs required transitions in declaration order.
+      expect(definition.requiredTransitions[0]).toStrictEqual({
+        ownerModuleKey: PORTAL_AUTH_OWNER_MODULE_KEY,
+        required: true,
+        transitionKey: PORTAL_ACCOUNT_VERIFICATION_TRANSITION_KEY,
+      });
+      expect(definition.requiredTransitions[1]?.transitionKey).toBe(RESERVE_PRINCIPAL_BINDING_TRANSITION_KEY);
+      expect(definition.requiredTransitions[2]?.transitionKey).toBe(ACTIVATE_PRINCIPAL_BINDING_TRANSITION_KEY);
       expect(
         definition.requiredTransitions.some((step) => step.transitionKey === PORTAL_ACCOUNT_CREATION_TRANSITION_KEY),
       ).toBe(false);
       // Every non-account-creation step of the target is still inherited, unmodified.
       expect(definition.requiredTransitions.length).toBe(
-        EXISTING_ACCOUNT_CORE_IDENTITY_TRANSITIONS.length +
+        EXISTING_ACCOUNT_OWNERSHIP_TRANSITIONS.length +
+          EXISTING_ACCOUNT_CORE_IDENTITY_TRANSITIONS.length +
           retailSelfEnrollmentJourneyDefinition.requiredTransitions.length -
           1,
       );

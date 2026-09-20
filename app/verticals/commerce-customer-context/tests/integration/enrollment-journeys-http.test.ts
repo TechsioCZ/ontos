@@ -2,8 +2,8 @@ import { randomUUID } from 'node:crypto';
 
 import { ActionAuthorizationPreflightDatabaseLive, CorePersistenceLive, DatabaseConfigLive } from '@app/core-runtime';
 import { ResendEmailDeliveryConfig } from '@app/email-delivery/resend';
-import { eq } from 'drizzle-orm';
-import { Config, Context, Effect, Layer, Redacted, Schema } from 'effect';
+import { eq, sql } from 'drizzle-orm';
+import { Config, Context, Effect, Layer, Option, Redacted, Schema } from 'effect';
 import { expect, it } from 'effect-rstest';
 
 import {
@@ -20,12 +20,21 @@ import { GatewayAssertionRedemptionLive } from '../../api/auth/gateway-assertion
 import { CommercePortalAuthEnrollmentStartInputSchema } from '../../api/portal-auth/enrollment/contracts.ts';
 import {
   commercePortalAuthEnrollmentAccountCreationOutcome,
-  commercePortalAuthEnrollmentDispatchesAccountCreation,
+  commercePortalAuthEnrollmentAccountOwner,
+  commercePortalAuthEnrollmentAccountVerificationOutcome,
+  commercePortalAuthEnrollmentOwesTransitionOutcome,
 } from '../../api/portal-auth/enrollment/http.ts';
 import {
   commercePortalAuthEnrollmentAccountCreationClaim,
+  commercePortalAuthEnrollmentAccountVerificationClaim,
   commercePortalAuthEnrollmentIntent,
 } from '../../api/portal-auth/enrollment/intent.ts';
+import { commercePortalAuthEnrollmentSessionSubject } from '../../api/portal-auth/enrollment/session-subject.ts';
+import { CommercePortalAuthAccountLookupService } from '../../api/portal-auth/provider/account-lookup-service.ts';
+import { makeCommercePortalAuth } from '../../api/portal-auth/provider/auth.ts';
+import { CommercePortalAuthService } from '../../api/portal-auth/session/http.ts';
+import { CommercePortalAuthSessionLifecycle } from '../../api/portal-auth/session/lifecycle-service.ts';
+import { PORTAL_ACCOUNT_VERIFICATION_TRANSITION_KEY } from '../../src/enrollment/journeys/existing-account.ts';
 import { CommercePortalAuthAccountCreationRejected } from '../../api/portal-auth/provider/account-creation-rejected.ts';
 import { CommercePortalAuthAccountCreationService } from '../../api/portal-auth/provider/account-create.ts';
 import { CommercePortalAuthAccountCreationUnavailable } from '../../api/portal-auth/provider/account-creation-unavailable.ts';
@@ -78,7 +87,7 @@ import {
   CommercePortalAuthDatabaseLive,
   makeCommercePortalAuthDatabase,
 } from '../../src/portal-auth/persistence/portal-auth-database.ts';
-import { user } from '../../src/portal-auth/persistence/portal-auth-tables.ts';
+import { user, verification } from '../../src/portal-auth/persistence/portal-auth-tables.ts';
 import {
   makeEnrollmentAcceptanceFixture,
   readEnrollmentAcceptanceAttempt,
@@ -532,7 +541,7 @@ it.live('records the created portal account on the transition the start route cl
           ),
         );
       expect(claimed.outcome).toBe('CLAIMED');
-      expect(commercePortalAuthEnrollmentDispatchesAccountCreation(claimed.operation, claim)).toBe(true);
+      expect(commercePortalAuthEnrollmentOwesTransitionOutcome(claimed.operation, claim)).toBe(true);
 
       // The provider call is authorized by the durable Attempt itself; the evidence and revision it
       // answers with are exactly what the private capability hands back to the route.
@@ -589,7 +598,7 @@ it.live('records the created portal account on the transition the start route cl
         tenantId: Schema.decodeSync(EnrollmentTenantIdSchema)(tenantId),
         transitionKey: claim.transitionKey,
       });
-      expect(commercePortalAuthEnrollmentDispatchesAccountCreation(replayed, claim)).toBe(false);
+      expect(commercePortalAuthEnrollmentOwesTransitionOutcome(replayed, claim)).toBe(false);
       expect(
         isAttemptConflict(
           yield* Effect.flip(
@@ -755,4 +764,394 @@ it.live('serves the enrollment start route from the installed realm under ordina
       expect(yield* portalAccountsFor(email)).toStrictEqual([]);
     }),
   ),
+);
+
+/**
+ * The Existing-account journey, which binds an account someone already holds to a Tenant it has
+ * never belonged to. Its start is the one place that decision is made, so these scenarios drive a
+ * real Commerce portal account and a real browser session for it against the deployed realm: the
+ * cookie is minted by Better Auth over the same provider database and the same deployment secret
+ * the mounted realm reads, so the route resolves it exactly as a customer's browser would.
+ */
+const PORTAL_OWNER_PASSWORD = 'P'.repeat(24);
+
+/** The provider account directory the ownership probe reads, over the deployment's own database. */
+const portalAccountDirectoryLive = Effect.fnUntraced(function* portalAccountDirectoryLive() {
+  const databaseUrl = yield* providerDatabaseUrl;
+  const configuration = yield* parseCommercePortalAuthConfig({
+    COMMERCE_PORTAL_AUTH_DATABASE_URL: Redacted.value(databaseUrl),
+    COMMERCE_PORTAL_AUTH_SECRET: SECRET,
+    COMMERCE_PORTAL_AUTH_TRUSTED_ORIGINS: ORIGIN,
+    COMMERCE_PORTAL_AUTH_URL: ORIGIN,
+  });
+  return CommercePortalAuthAccountLookupLive.pipe(
+    Layer.provide(
+      CommercePortalAuthDatabaseLive.pipe(Layer.provide(Layer.succeed(CommercePortalAuthConfig, configuration))),
+    ),
+  );
+});
+
+interface SignedInPortalAccount {
+  /** The `Cookie` header a browser would send after signing in. */
+  readonly cookie: string;
+  readonly email: string;
+  readonly providerSubjectId: string;
+}
+
+/** A verified Commerce portal account and one live session for it, removed again on scope close. */
+const makeSignedInPortalAccount = Effect.fnUntraced(function* makeSignedInPortalAccount() {
+  const databaseUrl = yield* providerDatabaseUrl;
+  const configuration = yield* parseCommercePortalAuthConfig({
+    COMMERCE_PORTAL_AUTH_DATABASE_URL: Redacted.value(databaseUrl),
+    COMMERCE_PORTAL_AUTH_SECRET: SECRET,
+    COMMERCE_PORTAL_AUTH_TRUSTED_ORIGINS: ORIGIN,
+    COMMERCE_PORTAL_AUTH_URL: ORIGIN,
+  });
+  const database = yield* makeCommercePortalAuthDatabase(configuration).pipe(Effect.orDie);
+  const verificationTokens: string[] = [];
+  // The realm this fixture signs up through is configured exactly as the mounted one; only the
+  // transactional email transport is replaced, so the verification token is observable here.
+  const auth = yield* makeCommercePortalAuth({
+    configuration,
+    databaseAdapter: database.adapter,
+    emailDelivery: {
+      sendOTP: () => Promise.resolve(),
+      sendResetPassword: () => Promise.resolve(),
+      sendVerificationEmail: ({ token }) => {
+        verificationTokens.push(token);
+        return Promise.resolve();
+      },
+    },
+  }).pipe(Effect.orDie);
+  const email = `enrollment-owner-${randomUUID()}@example.test`;
+  yield* Effect.addFinalizer(() =>
+    database.executor
+      .transaction((transaction) =>
+        Effect.gen(function* deletePortalAccount() {
+          yield* transaction.delete(user).where(eq(user.email, email));
+          yield* transaction.delete(verification).where(eq(verification.identifier, email));
+        }),
+      )
+      .pipe(Effect.orDie),
+  );
+  const headers = new Headers({ origin: ORIGIN });
+  yield* Effect.promise(
+    async () =>
+      await auth.api.signUpEmail({
+        body: { email, name: 'Enrollment owner', password: PORTAL_OWNER_PASSWORD },
+        headers,
+        returnHeaders: true,
+      }),
+  );
+  const token = verificationTokens.at(-1);
+  if (token === undefined) {
+    return yield* Effect.die('The portal owner fixture received no email verification token');
+  }
+  // The owner's session evidence is refused for an unverified account, so the fixture completes the
+  // verification the deployment's own policy requires before signing in.
+  yield* Effect.promise(async () => await auth.api.verifyEmail({ headers, query: { token }, returnHeaders: true }));
+  const signedIn = yield* Effect.promise(
+    async () =>
+      await auth.api.signInEmail({
+        body: { email, password: PORTAL_OWNER_PASSWORD },
+        headers,
+        returnHeaders: true,
+      }),
+  );
+  const cookie = signedIn.headers
+    .getSetCookie()
+    .map((header) => header.split(';')[0] ?? '')
+    .filter((pair) => pair.length > 0)
+    .join('; ');
+  const [account] = yield* portalAccountsFor(email);
+  if (account === undefined || cookie.length === 0) {
+    return yield* Effect.die('The portal owner fixture produced no signed-in account');
+  }
+  return { cookie, email, providerSubjectId: account.id } satisfies SignedInPortalAccount;
+});
+
+/** Every Attempt of one Tenant, read with the owner role so RLS cannot mask a persisted row. */
+const enrollmentAttemptCount = (fixture: EnrollmentAcceptanceFixture): Effect.Effect<number> =>
+  fixture.admin
+    .transaction((transaction) =>
+      transaction.execute<{ readonly attempts: string }>(
+        sql`
+          select count(*)::text as attempts
+            from commerce_customer_context.portal_enrollment_attempts
+           where tenant_id = ${fixture.scope.tenantId}::uuid
+        `,
+        'objects',
+      ),
+    )
+    .pipe(
+      Effect.map((rows) => Number(rows[0]?.attempts ?? '0')),
+      Effect.orDie,
+    );
+
+const existingAccountStartInputFor = (email: string) =>
+  Schema.decodeUnknownSync(CommercePortalAuthEnrollmentStartInputSchema)({
+    displayName: START_DISPLAY_NAME,
+    email,
+    journey: 'EXISTING_ACCOUNT',
+    password: Redacted.make(PORTAL_OWNER_PASSWORD),
+    sellingLegalEntityId: randomUUID(),
+  });
+
+/** One Existing-account start request, optionally carrying a browser session and an assertion. */
+const startExistingAccountRequest = (
+  email: string,
+  options: { readonly assertion?: string; readonly cookie?: string },
+): Request => {
+  const headers = new Headers({
+    'content-type': 'application/json',
+    origin: ORIGIN,
+    'x-correlation-id': `enrollment-http-${randomUUID()}`,
+  });
+  if (options.assertion !== undefined) {
+    headers.set('authorization', `Bearer ${options.assertion}`);
+  }
+  if (options.cookie !== undefined) {
+    headers.set('cookie', options.cookie);
+  }
+  return new Request(`${ORIGIN}/api/portal-auth/enrollment/start`, {
+    body: JSON.stringify({
+      displayName: START_DISPLAY_NAME,
+      email,
+      journey: 'EXISTING_ACCOUNT',
+      password: PORTAL_OWNER_PASSWORD,
+      sellingLegalEntityId: randomUUID(),
+    }),
+    headers,
+    method: 'POST',
+  });
+};
+
+it.live(
+  'records the authenticated owner account subject on the transition an Existing-account start claims',
+  () =>
+    Effect.scoped(
+      Effect.gen(function* recordsTheAuthenticatedOwnerSubject() {
+        const tenantId = randomUUID();
+        const actorPrincipalId = Schema.decodeSync(EnrollmentPrincipalIdSchema)(randomUUID());
+        const fixture = yield* makeEnrollmentAcceptanceFixture({ tenantId });
+        const owner = yield* makeSignedInPortalAccount();
+        const scope = yield* Effect.scope;
+        const realm = yield* Layer.buildWithScope(yield* configuredRealmLive(), scope);
+
+        // The gate's own read, over the deployed realm: Better Auth resolves the request's cookie to
+        // a session identity and the owner's lifecycle decides it is live evidence for that subject.
+        const current = yield* commercePortalAuthEnrollmentSessionSubject(
+          Context.get(realm, CommercePortalAuthService),
+          Context.get(realm, CommercePortalAuthSessionLifecycle),
+          new Headers({ cookie: owner.cookie }),
+        );
+        if (Option.isNone(current)) {
+          throw new Error('The deployed realm must resolve a live browser session to its subject');
+        }
+        const accountSubject = current.value;
+        expect(accountSubject.providerSubjectId).toBe(owner.providerSubjectId);
+        expect(accountSubject.authenticationNamespaceId).toBe(COMMERCE_AUTHENTICATION_NAMESPACE_ID);
+
+        // The directory decides whether that exact subject holds the address being enrolled. It is
+        // the narrow probe the owner reconciler reads: a yes/no, never a user record.
+        const accountLookup = Context.get(
+          yield* Layer.buildWithScope(yield* portalAccountDirectoryLive(), scope),
+          CommercePortalAuthAccountLookupService,
+        );
+        expect(
+          yield* accountLookup.existsByProviderSubject({
+            email: owner.email,
+            providerSubjectId: accountSubject.providerSubjectId,
+          }),
+        ).toBe(true);
+        expect(
+          yield* accountLookup.existsByProviderSubject({
+            email: `enrollment-http-${randomUUID()}@example.test`,
+            providerSubjectId: accountSubject.providerSubjectId,
+          }),
+        ).toBe(false);
+
+        const startInput = existingAccountStartInputFor(owner.email);
+        const attempt = yield* startAcceptanceEnrollment(fixture, startInput, actorPrincipalId);
+        const claim = yield* commercePortalAuthEnrollmentAccountVerificationClaim(
+          startInput,
+          attempt.portalEnrollmentAttemptId,
+        );
+        const claimed = yield* fixture.ownerStore
+          .claimTransition(
+            Schema.decodeUnknownSync(ClaimEnrollmentTransitionInputSchema)({
+              actorPrincipalId,
+              expectedRevision: attempt.revision,
+              leaseDurationMs: 30_000,
+              ownerInvocationId: claim.ownerInvocationId,
+              ownerModuleKey: claim.ownerModuleKey,
+              portalEnrollmentAttemptId: attempt.portalEnrollmentAttemptId,
+              requestDigest: claim.requestDigest,
+              required: true,
+              tenantId,
+              transitionKey: claim.transitionKey,
+              workerId: START_WORKER_ID,
+            }),
+          )
+          .pipe(
+            Effect.flatMap(
+              claimedOrIndeterminate({
+                ownerInvocationId: claim.ownerInvocationId,
+                portalEnrollmentAttemptId: attempt.portalEnrollmentAttemptId,
+              }),
+            ),
+          );
+        expect(claimed.outcome).toBe('CLAIMED');
+        expect(commercePortalAuthEnrollmentOwesTransitionOutcome(claimed.operation, claim)).toBe(true);
+
+        const recorded = yield* commercePortalAuthEnrollmentAccountVerificationOutcome(
+          claim,
+          claimed.attempt,
+          claimed.operation,
+          accountSubject,
+        ).pipe(Effect.flatMap((outcome) => fixture.ownerStore.recordOutcome(outcome)));
+
+        // The ownership proof is journalled under the transition the journey declares, and the
+        // subject it proved is on the Attempt. Discarding either leaves the journey gated on a step
+        // nothing can ever record, with no subject for the Core reservation to bind.
+        expect(yield* readEnrollmentAcceptanceOperations(fixture, attempt.portalEnrollmentAttemptId)).toStrictEqual([
+          {
+            outcome_code: 'provider_account_verified',
+            reconciliation_ref: null,
+            result_reference: attempt.portalEnrollmentAttemptId,
+            status: 'SUCCEEDED',
+            transition_key: PORTAL_ACCOUNT_VERIFICATION_TRANSITION_KEY,
+          },
+        ]);
+        expect(recorded.attempt.accountSubject).toStrictEqual({
+          authenticationNamespaceId: COMMERCE_AUTHENTICATION_NAMESPACE_ID,
+          providerSubjectId: owner.providerSubjectId,
+          subjectType: 'user',
+        });
+        expect(recorded.attempt.state).toBe('IN_PROGRESS');
+
+        // The continuation now gets past the subject it used to have none of: its first pass reaches
+        // the Core identity transport (deliberately unreachable here) instead of refusing the
+        // Attempt for want of a recorded provider subject, which is what left it IN_PROGRESS forever.
+        const continuation = Context.get(
+          yield* Layer.buildWithScope(yield* continuationLive(), scope),
+          CommerceEnrollmentContinuation,
+        );
+        const halted = yield* Effect.flip(
+          continuation.advance({
+            portalEnrollmentAttemptId: attempt.portalEnrollmentAttemptId,
+            tenantId: Schema.decodeSync(EnrollmentTenantIdSchema)(tenantId),
+          }),
+        );
+        expect(halted.reason).not.toContain('provider account subject');
+        expect(halted.reason).toContain('Core Principal Auth Binding');
+      }),
+    ),
+  180_000,
+);
+
+it.live(
+  'refuses an Existing-account start whose session owns a different account, before any Attempt',
+  () =>
+    Effect.scoped(
+      Effect.gen(function* refusesAForeignAccountOwner() {
+        const tenantId = randomUUID();
+        const fixture = yield* makeEnrollmentAcceptanceFixture({ tenantId });
+        const gateway = yield* makeAcceptanceGatewayIssuer(READ_ISSUER, READ_KEY_ID);
+        const runtime = yield* authenticatedRuntime(gateway);
+        const owner = yield* makeSignedInPortalAccount();
+        const stranger = yield* makeSignedInPortalAccount();
+        const assertion = yield* issueAcceptanceGatewayAssertion(fixture.admin, gateway, READ_AUDIENCE, {
+          authBindingId: randomUUID(),
+          authContextRef: `portal-session:${owner.providerSubjectId}`,
+          authenticationNamespaceId: COMMERCE_AUTHENTICATION_NAMESPACE_ID,
+          authMethod: 'session',
+          legalEntityId: randomUUID(),
+          principalId: randomUUID(),
+          tenantId,
+        });
+
+        // The route's own gate, over the deployed realm and the real provider directory: a live,
+        // verified portal session presented for an address that belongs to somebody else.
+        const scope = yield* Effect.scope;
+        const gateServices = Context.merge(
+          yield* Layer.buildWithScope(yield* configuredRealmLive(), scope),
+          yield* Layer.buildWithScope(yield* portalAccountDirectoryLive(), scope),
+        );
+        const ownerHeaders = new Headers({ cookie: owner.cookie });
+        const refusal = yield* Effect.flip(
+          commercePortalAuthEnrollmentAccountOwner(ownerHeaders, stranger.email).pipe(
+            Effect.provideContext(gateServices),
+          ),
+        );
+        expect(refusal).toMatchObject({ code: 'invalid_request', status: 400 });
+
+        // The stranger's address does have an account, and the session presented is a real one, so
+        // every fact the old check consulted still holds. Only the pairing is wrong, and that is
+        // what refuses: a caller that knows an address cannot enroll its owner into its own Tenant.
+        const accountLookup = Context.get(gateServices, CommercePortalAuthAccountLookupService);
+        expect(yield* accountLookup.existsByEmail({ email: stranger.email })).toBe(true);
+        expect(
+          yield* commercePortalAuthEnrollmentAccountOwner(ownerHeaders, owner.email).pipe(
+            Effect.provideContext(gateServices),
+          ),
+        ).toStrictEqual({
+          authenticationNamespaceId: COMMERCE_AUTHENTICATION_NAMESPACE_ID,
+          providerSubjectId: owner.providerSubjectId,
+          subjectType: 'user',
+        });
+
+        // End to end, the same mismatched start persists no Attempt. This harness names no portal
+        // realm in the deployment environment it reads, so the directory the mounted route probes
+        // is the fail-closed leaf and the refusal it reaches the caller with is the retryable 503 —
+        // upstream of the governed Action either way, which is what leaves the Tenant empty.
+        const response = yield* Effect.promise(
+          async () =>
+            await runtime.handler(startExistingAccountRequest(stranger.email, { assertion, cookie: owner.cookie })),
+        );
+        expect(response.status).toBe(503);
+        expect(response.headers.get('content-type')).toContain('application/problem+json');
+        expect(yield* enrollmentAttemptCount(fixture)).toBe(0);
+      }),
+    ),
+  180_000,
+);
+
+it.live(
+  'answers an Existing-account start that carries no portal session with 401 and no Attempt',
+  () =>
+    Effect.scoped(
+      Effect.gen(function* refusesAnUnauthenticatedExistingAccountStart() {
+        const tenantId = randomUUID();
+        const fixture = yield* makeEnrollmentAcceptanceFixture({ tenantId });
+        const gateway = yield* makeAcceptanceGatewayIssuer(READ_ISSUER, READ_KEY_ID);
+        const runtime = yield* authenticatedRuntime(gateway);
+        const owner = yield* makeSignedInPortalAccount();
+        const assertion = yield* issueAcceptanceGatewayAssertion(fixture.admin, gateway, READ_AUDIENCE, {
+          authBindingId: randomUUID(),
+          authContextRef: `portal-session:${owner.providerSubjectId}`,
+          authenticationNamespaceId: COMMERCE_AUTHENTICATION_NAMESPACE_ID,
+          authMethod: 'session',
+          legalEntityId: randomUUID(),
+          principalId: randomUUID(),
+          tenantId,
+        });
+
+        // The caller's gateway assertion is valid and names this Tenant, so the governed Action would
+        // be reached. It never is: this journey needs the account owner's own portal session, and the
+        // request carries no cookie at all.
+        const response = yield* Effect.promise(
+          async () => await runtime.handler(startExistingAccountRequest(owner.email, { assertion })),
+        );
+
+        expect(response.status).toBe(401);
+        expect(response.headers.get('content-type')).toContain('application/problem+json');
+        expect(yield* Effect.promise(async () => await response.clone().json())).toMatchObject({
+          code: 'authentication_required',
+          status: 401,
+        });
+        expect(yield* enrollmentAttemptCount(fixture)).toBe(0);
+      }),
+    ),
+  180_000,
 );

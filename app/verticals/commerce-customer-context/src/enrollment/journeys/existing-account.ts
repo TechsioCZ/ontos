@@ -44,6 +44,15 @@ import type { JourneyDefinition, JourneyTransitionSpec } from './journey-contrac
 /** Provider-neutral Core identity owner module, declared identically by every journey. */
 export const CORE_IDENTITY_OWNER_MODULE_KEY = 'core.identity';
 /**
+ * The account-ownership proof. Existing-account is the only journey that binds an account someone
+ * already holds to a Tenant it has never belonged to, so "an account with this address exists" is
+ * never enough: the start must prove the caller is that account's authenticated owner. The proof is
+ * a durable transition like every other — start claims it and records the session subject it
+ * verified — so an Attempt that never proved ownership can never derive completion, and the subject
+ * the Core reservation binds is the one this transition journalled rather than one a caller named.
+ */
+export const PORTAL_ACCOUNT_VERIFICATION_TRANSITION_KEY = 'provider.account.verify';
+/**
  * Existing-account enrollment is the only journey that dispatches a reserve: the others create a
  * brand-new subject, so their account-creation step reserves the binding.
  */
@@ -51,11 +60,16 @@ export const RESERVE_PRINCIPAL_BINDING_TRANSITION_KEY = 'core.principal-binding.
 /** Byte-identical to the Counterparty invitation activation key, so one owner effect serves both. */
 export const ACTIVATE_PRINCIPAL_BINDING_TRANSITION_KEY = 'core.principal-binding.activate';
 
-const existingAccountCoreIdentityDefinition: JourneyDefinition = Result.getOrThrow(
+const existingAccountOwnDefinition: JourneyDefinition = Result.getOrThrow(
   Schema.decodeResult(JourneyDefinitionSchema)({
     kind: 'EXISTING_ACCOUNT',
     optionalTransitions: [],
     requiredTransitions: [
+      {
+        ownerModuleKey: PORTAL_AUTH_OWNER_MODULE_KEY,
+        required: true,
+        transitionKey: PORTAL_ACCOUNT_VERIFICATION_TRANSITION_KEY,
+      },
       {
         ownerModuleKey: CORE_IDENTITY_OWNER_MODULE_KEY,
         required: true,
@@ -69,8 +83,18 @@ const existingAccountCoreIdentityDefinition: JourneyDefinition = Result.getOrThr
     ],
   }),
 );
+
+const isCoreIdentityTransition = (transition: JourneyTransitionSpec): boolean =>
+  transition.ownerModuleKey === CORE_IDENTITY_OWNER_MODULE_KEY;
+
+/**
+ * The ownership proof stands first: it is the precondition of the reservation that follows, and the
+ * continuation runs required transitions in declaration order.
+ */
+export const EXISTING_ACCOUNT_OWNERSHIP_TRANSITIONS: readonly JourneyTransitionSpec[] =
+  existingAccountOwnDefinition.requiredTransitions.filter((transition) => !isCoreIdentityTransition(transition));
 export const EXISTING_ACCOUNT_CORE_IDENTITY_TRANSITIONS: readonly JourneyTransitionSpec[] =
-  existingAccountCoreIdentityDefinition.requiredTransitions;
+  existingAccountOwnDefinition.requiredTransitions.filter(isCoreIdentityTransition);
 
 /** Closed, safe rejection vocabulary for the Existing-account journey. */
 export class ExistingAccountEnrollmentRejected extends Schema.TaggedError<ExistingAccountEnrollmentRejected>()(
@@ -98,8 +122,9 @@ const isAccountCreationTransition = (transition: JourneyTransitionSpec): boolean
 
 /**
  * Compose the Existing-account definition for one target journey: the target's own
- * provider-account-creation step is dropped because Existing-account never creates an account, and
- * every other declared step is inherited verbatim.
+ * provider-account-creation step is dropped because Existing-account never creates an account, the
+ * account-ownership proof this journey needs instead is declared in its place, and every other
+ * declared step is inherited verbatim.
  */
 export const existingAccountJourneyDefinitionFor = (
   targetDefinition: JourneyDefinition,
@@ -118,6 +143,7 @@ export const existingAccountJourneyDefinitionFor = (
       (transition) => !isAccountCreationTransition(transition),
     ),
     requiredTransitions: [
+      ...EXISTING_ACCOUNT_OWNERSHIP_TRANSITIONS,
       ...EXISTING_ACCOUNT_CORE_IDENTITY_TRANSITIONS,
       ...targetDefinition.requiredTransitions.filter((transition) => !isAccountCreationTransition(transition)),
     ],

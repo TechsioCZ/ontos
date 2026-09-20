@@ -4,9 +4,19 @@ import { Effect, Predicate, Redacted, Schema } from 'effect';
 import { expect, it } from 'effect-rstest';
 
 import { CommercePortalAuthEnrollmentStartInputSchema } from '../../api/portal-auth/enrollment/contracts.ts';
-import { commercePortalAuthEnrollmentCreatesAccount } from '../../api/portal-auth/enrollment/http.ts';
-import { commercePortalAuthEnrollmentIntent } from '../../api/portal-auth/enrollment/intent.ts';
-import { existingAccountJourneyDefinitionFor } from '../../src/enrollment/journeys/existing-account.ts';
+import {
+  commercePortalAuthEnrollmentCreatesAccount,
+  commercePortalAuthEnrollmentRequiresAccountOwner,
+} from '../../api/portal-auth/enrollment/http.ts';
+import {
+  commercePortalAuthEnrollmentAccountCreationClaim,
+  commercePortalAuthEnrollmentAccountVerificationClaim,
+  commercePortalAuthEnrollmentIntent,
+} from '../../api/portal-auth/enrollment/intent.ts';
+import {
+  PORTAL_ACCOUNT_VERIFICATION_TRANSITION_KEY,
+  existingAccountJourneyDefinitionFor,
+} from '../../src/enrollment/journeys/existing-account.ts';
 import type { JourneyDefinition } from '../../src/enrollment/journeys/journey-contracts.ts';
 import { retailSelfEnrollmentJourneyDefinition } from '../../src/enrollment/journeys/retail-self-enrollment-contracts.ts';
 import {
@@ -54,12 +64,17 @@ const decodeStart = (payload: EnrollmentStartRequestBody) =>
 const intentFor = (payload: EnrollmentStartRequestBody) =>
   decodeStart(payload).pipe(Effect.flatMap(commercePortalAuthEnrollmentIntent));
 
-const declaresAccountCreation = (definition: JourneyDefinition): boolean =>
+const declaresPortalTransition = (definition: JourneyDefinition, transitionKey: string): boolean =>
   definition.requiredTransitions.some(
     (transition) =>
-      transition.ownerModuleKey === PORTAL_AUTH_OWNER_MODULE_KEY &&
-      transition.transitionKey === PORTAL_ACCOUNT_CREATION_TRANSITION_KEY,
+      transition.ownerModuleKey === PORTAL_AUTH_OWNER_MODULE_KEY && transition.transitionKey === transitionKey,
   );
+
+const declaresAccountCreation = (definition: JourneyDefinition): boolean =>
+  declaresPortalTransition(definition, PORTAL_ACCOUNT_CREATION_TRANSITION_KEY);
+
+const declaresAccountVerification = (definition: JourneyDefinition): boolean =>
+  declaresPortalTransition(definition, PORTAL_ACCOUNT_VERIFICATION_TRANSITION_KEY);
 
 it.effect('two people enrolling into one Tenant never derive the same Attempt identity', () =>
   Effect.gen(function* twoPeopleNeverCollide() {
@@ -173,5 +188,41 @@ it.effect('start creates a provider account exactly for the journeys that declar
       declaresAccountCreation(existingAccount),
     );
     expect(declaresAccountCreation(existingAccount)).toBe(false);
+  }),
+);
+
+it.effect('start proves account ownership exactly for the journey that declares the proof', () =>
+  Effect.gen(function* startMatchesTheOwnershipDeclaration() {
+    const existingAccount = yield* existingAccountJourneyDefinitionFor(retailSelfEnrollmentJourneyDefinition);
+
+    // The same pairing as above, for the transition that replaced account creation. A start that
+    // did not claim it would leave the Attempt gated on a step nothing else can ever record, and a
+    // start that claimed it for Retail would gate that Attempt on a proof it has no session for.
+    expect(commercePortalAuthEnrollmentRequiresAccountOwner('EXISTING_ACCOUNT')).toBe(
+      declaresAccountVerification(existingAccount),
+    );
+    expect(declaresAccountVerification(existingAccount)).toBe(true);
+    expect(commercePortalAuthEnrollmentRequiresAccountOwner('RETAIL_SELF_ENROLLMENT')).toBe(
+      declaresAccountVerification(retailSelfEnrollmentJourneyDefinition),
+    );
+    expect(declaresAccountVerification(retailSelfEnrollmentJourneyDefinition)).toBe(false);
+  }),
+);
+
+it.effect('digests the two transitions a start may claim apart, so neither replays as the other', () =>
+  Effect.gen(function* transitionDigestsDiffer() {
+    const input = yield* decodeStart(startPayload({ journey: 'EXISTING_ACCOUNT' }));
+    const attemptId = randomUUID();
+    const creation = yield* commercePortalAuthEnrollmentAccountCreationClaim(input, attemptId);
+    const verification = yield* commercePortalAuthEnrollmentAccountVerificationClaim(input, attemptId);
+    const verificationRetry = yield* commercePortalAuthEnrollmentAccountVerificationClaim(input, attemptId);
+
+    expect(verification.transitionKey).toBe(PORTAL_ACCOUNT_VERIFICATION_TRANSITION_KEY);
+    expect(verification.ownerModuleKey).toBe(PORTAL_AUTH_OWNER_MODULE_KEY);
+    expect(verification.requestDigest).not.toBe(creation.requestDigest);
+    // An equivalent retry re-derives the digest the durable owner operation already holds, so the
+    // journal replays it rather than opening a second ownership proof for the same Attempt.
+    expect(verificationRetry.requestDigest).toBe(verification.requestDigest);
+    expect(verificationRetry.ownerInvocationId).not.toBe(verification.ownerInvocationId);
   }),
 );

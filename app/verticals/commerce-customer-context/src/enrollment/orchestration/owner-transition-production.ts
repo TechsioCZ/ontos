@@ -4,6 +4,8 @@ import type { ReconcileEnrollmentResolution } from '../../../shared/enrollment-c
 import type {
   CommerceEnrollmentOwnerScope,
   EnrollmentAttemptScopedRoutineInvoker,
+  ListStaleEnrollmentAttemptsInput,
+  StaleEnrollmentAttempt,
 } from '../attempts/attempt-persistence.ts';
 import { commerceEnrollmentAttemptPersistenceForTransaction } from '../attempts/attempt-persistence.ts';
 import type { CommerceEnrollmentAttemptError } from '../attempts/errors.ts';
@@ -139,6 +141,32 @@ export const makeCommerceEnrollmentOwnerAttemptStoreForProduction = Effect.fn(
 ): Effect.fn.Return<CommerceEnrollmentOwnerAttemptStore, never, CommerceEnrollmentOwnerTransactionRunner> {
   const runner = yield* CommerceEnrollmentOwnerTransactionRunner;
   return commerceEnrollmentOwnerAttemptStoreForRun(scope, runner.run);
+});
+
+/**
+ * The durable due-work surface, kept apart from the per-Attempt owner store on purpose: every
+ * method there is addressed by an Attempt identity the caller already holds, and this one exists
+ * precisely for the Attempts nobody holds an identity for any more.
+ */
+// oxlint-disable-next-line effect-native/require-context-service-for-service-interface -- The store is built for one verified scope at the call site, exactly as the owner attempt store is; it is not an ambient service. expires: 2027-09-17.
+export interface CommerceEnrollmentStaleAttemptStore {
+  readonly listStale: (
+    input: ListStaleEnrollmentAttemptsInput,
+  ) => Effect.Effect<readonly StaleEnrollmentAttempt[], CommerceEnrollmentAttemptError>;
+}
+
+/**
+ * One listing, one transaction, on the same runner every owner phase uses. The scope's Tenant is
+ * what the routine is asked about, so a store built for one Tenant can never report another's.
+ */
+export const commerceEnrollmentStaleAttemptStoreForRun = (
+  scope: CommerceEnrollmentOwnerScope,
+  run: CommerceEnrollmentOwnerTransactionRun,
+): CommerceEnrollmentStaleAttemptStore => ({
+  listStale: (input) =>
+    run(scope, (transaction) =>
+      commerceEnrollmentAttemptPersistenceForTransaction(transaction, scope).listStale(input),
+    ),
 });
 
 /** A public owner adapter for preparing exact Action bindings before ordinary Core authorization. */

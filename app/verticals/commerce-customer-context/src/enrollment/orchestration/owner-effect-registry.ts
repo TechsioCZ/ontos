@@ -26,6 +26,7 @@ import type { CommerceEnrollmentAttemptError } from '../attempts/errors.ts';
 import {
   ACTIVATE_PRINCIPAL_BINDING_TRANSITION_KEY,
   CORE_IDENTITY_OWNER_MODULE_KEY,
+  PORTAL_ACCOUNT_VERIFICATION_TRANSITION_KEY,
   RESERVE_PRINCIPAL_BINDING_TRANSITION_KEY,
   existingAccountCoreIdentityActivateRequest,
   existingAccountCoreIdentityReadByBindingRequest,
@@ -359,7 +360,13 @@ const bindProfileEntry: RegistryEntry = Effect.fn('CommerceEnrollmentOwnerEffect
   },
 );
 
-/** Reconcile-only: the credential-carrying dispatch belongs to the enrollment start route alone. */
+/**
+ * Reconcile-only: the credential-carrying dispatch belongs to the enrollment start route alone, and
+ * so does the Existing-account ownership proof — only the start request holds the caller's portal
+ * session. Both transitions reconcile through the same exact-subject provider lookup: the question
+ * a lost answer leaves open is the same one either way, whether the provider still holds the exact
+ * subject the Attempt journalled.
+ */
 const portalAccountEntry =
   (accountLookup: CommercePortalAuthAccountLookup): RegistryEntry =>
   (_transition, context) =>
@@ -578,6 +585,10 @@ export const CommerceEnrollmentOwnerEffectRegistryLive = Layer.effect(
     const entries: ReadonlyMap<string, RegistryEntry> = new Map([
       [
         registryKey(PORTAL_AUTH_OWNER_MODULE_KEY, PORTAL_ACCOUNT_CREATION_TRANSITION_KEY),
+        portalAccountEntry(accountLookup),
+      ],
+      [
+        registryKey(PORTAL_AUTH_OWNER_MODULE_KEY, PORTAL_ACCOUNT_VERIFICATION_TRANSITION_KEY),
         portalAccountEntry(accountLookup),
       ],
       [registryKey(PARTY_REGISTRY_OWNER_MODULE_KEY, PARTY_CANDIDATE_SUBMISSION_TRANSITION_KEY), partyEntry],

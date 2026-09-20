@@ -16,6 +16,7 @@ import type { CommerceEnrollmentAttemptError } from '../attempts/errors.ts';
 import { counterpartyInvitationJourneyDefinition } from '../journeys/counterparty-invitation.ts';
 import {
   EXISTING_ACCOUNT_CORE_IDENTITY_TRANSITIONS,
+  EXISTING_ACCOUNT_OWNERSHIP_TRANSITIONS,
   existingAccountJourneyDefinitionFor,
 } from '../journeys/existing-account.ts';
 import type { JourneyDefinition, JourneyTransitionSpec } from '../journeys/journey-contracts.ts';
@@ -92,20 +93,25 @@ export const deriveEnrollmentAttemptState = ({
   return signal === 'VERIFICATION_REQUIRED' ? 'VERIFICATION_REQUIRED' : 'IN_PROGRESS';
 };
 
-const existingAccountCoreIdentity = new Set(EXISTING_ACCOUNT_CORE_IDENTITY_TRANSITIONS.map(journeyTransitionIdentity));
+const existingAccountOwnTransitions = new Set(
+  [...EXISTING_ACCOUNT_OWNERSHIP_TRANSITIONS, ...EXISTING_ACCOUNT_CORE_IDENTITY_TRANSITIONS].map(
+    journeyTransitionIdentity,
+  ),
+);
 
 /**
- * Existing-account declares the second Tenant's Principal Auth Binding steps itself, and a target
- * journey may declare the very same activation step under the very same transition key — that is
- * deliberate, so one owner-effect case serves both.  A journey may name a transition only once, so
- * the target's own copy of a step Existing-account already declares is dropped before composing:
- * the step still gates completion, just once rather than twice.
+ * Existing-account declares the account-ownership proof and the second Tenant's Principal Auth
+ * Binding steps itself, and a target journey may declare the very same activation step under the
+ * very same transition key — that is deliberate, so one owner-effect case serves both.  A journey
+ * may name a transition only once, so the target's own copy of a step Existing-account already
+ * declares is dropped before composing: the step still gates completion, just once rather than
+ * twice.
  */
 const existingAccountTarget = (
   target: JourneyDefinition,
 ): Effect.Effect<JourneyDefinition, CommerceEnrollmentAttemptError> => {
   const undeclared = (transition: JourneyTransitionSpec): boolean =>
-    !existingAccountCoreIdentity.has(journeyTransitionIdentity(transition));
+    !existingAccountOwnTransitions.has(journeyTransitionIdentity(transition));
   return Schema.decodeEffect(JourneyDefinitionSchema)({
     kind: target.kind,
     optionalTransitions: target.optionalTransitions.filter(undeclared),

@@ -22,6 +22,7 @@ import type {
   EnrollmentAttemptLease,
   EnrollmentAttemptId,
   EnrollmentAttemptSnapshot,
+  EnrollmentAttemptState,
   EnrollmentOwnerOperationSnapshot,
   ReadEnrollmentAttemptInput,
   ReadEnrollmentOwnerOperationInput,
@@ -152,6 +153,14 @@ const OwnerOperationRoutineRowSchema = Schema.Struct({
 type OwnerOperationRoutineRow = typeof OwnerOperationRoutineRowSchema.Type;
 /* oxlint-enable effect-native/no-nullable-schema-field */
 
+const StaleAttemptRoutineRowSchema = Schema.Struct({
+  portal_enrollment_attempt_id: EnrollmentAttemptIdSchema,
+  state: EnrollmentAttemptStateSchema,
+  tenant_id: EnrollmentTenantIdSchema,
+  updated_at: databaseTimestamp,
+});
+type StaleAttemptRoutineRow = typeof StaleAttemptRoutineRowSchema.Type;
+
 type UuidInput = Readonly<{ readonly source: 'input'; readonly type: 'uuid' }>;
 type TextInput = Readonly<{ readonly source: 'input'; readonly type: 'text' }>;
 type IntegerInput = Readonly<{ readonly source: 'input'; readonly type: 'integer' }>;
@@ -280,6 +289,19 @@ const readAttemptRoutine = defineScopedRoutine({
   schema: 'commerce_customer_context',
 });
 
+/**
+ * The only Attempt routine that answers without an Attempt identity. It is how a worker that did
+ * not create the Attempt finds it again, so its scope is the verified Tenant rather than one row.
+ */
+const listStaleAttemptsRoutine = defineScopedRoutine({
+  name: 'list_stale_portal_enrollment_attempts',
+  ownerModuleKey: MODULE_KEY,
+  parameters: [{ source: 'tenantId', type: 'uuid' }, integer(), integer()],
+  resultSchema: StaleAttemptRoutineRowSchema,
+  routineKey: 'portal-enrollment-attempt.list-stale',
+  schema: 'commerce_customer_context',
+});
+
 const readOwnerOperationRoutine = defineScopedRoutine({
   name: 'read_portal_enrollment_owner_operation',
   ownerModuleKey: MODULE_KEY,
@@ -384,6 +406,23 @@ export interface AttemptTerminateResult {
   readonly outcome: 'TERMINATED' | 'ALREADY_TERMINAL';
 }
 
+/**
+ * One Attempt the durable journal has left idle, carrying just enough to address and age it. The
+ * journal — not any worker's memory of what it started — is what says a journey is still owed a
+ * transition, so this is deliberately the whole record rather than a snapshot.
+ */
+export type StaleEnrollmentAttempt = ReadEnrollmentAttemptInput & {
+  readonly state: EnrollmentAttemptState;
+  readonly updatedAt: DateTime.Utc;
+};
+
+export interface ListStaleEnrollmentAttemptsInput {
+  /** Upper bound on the rows one call may return; the routine caps it again on its own side. */
+  readonly limit: number;
+  /** How long an Attempt must have been untouched before the journal reports it as due. */
+  readonly staleAfterMillis: number;
+}
+
 export interface CommerceEnrollmentAttemptPersistence {
   readonly authorizeAccountCreation: (input: {
     readonly ownerInvocationId: string;
@@ -396,6 +435,14 @@ export interface CommerceEnrollmentAttemptPersistence {
   readonly create: (
     input: StartEnrollmentAttemptInput,
   ) => Effect.Effect<AttemptCreateResult, CommerceEnrollmentAttemptError>;
+  /**
+   * Every non-terminal Attempt of the verified Tenant the journal has left idle longer than
+   * `staleAfterMillis` and that no live lease owns.  It takes no Attempt identity because its
+   * whole point is to name Attempts whose worker is gone and whose identity nobody still holds.
+   */
+  readonly listStale: (
+    input: ListStaleEnrollmentAttemptsInput,
+  ) => Effect.Effect<readonly StaleEnrollmentAttempt[], CommerceEnrollmentAttemptError>;
   readonly read: (
     input: ReadEnrollmentAttemptInput,
   ) => Effect.Effect<EnrollmentAttemptSnapshot, CommerceEnrollmentAttemptError>;
@@ -761,6 +808,20 @@ const mapOperation = (
   operation = addOptionalProperty(operation, 'resultDigest', row.result_digest);
   operation = addOptionalProperty(operation, 'resultReference', row.result_reference);
   return decodeOwnerOperationSnapshot(operation);
+};
+
+const mapStaleAttempt = (
+  row: StaleAttemptRoutineRow,
+): Effect.Effect<StaleEnrollmentAttempt, CommerceEnrollmentAttemptError> => {
+  const updatedAt = mapTimestamp(row.updated_at);
+  return updatedAt === undefined
+    ? Effect.fail(invalid('The listed Enrollment Attempt activity timestamp is invalid'))
+    : Effect.succeed({
+        portalEnrollmentAttemptId: row.portal_enrollment_attempt_id,
+        state: row.state,
+        tenantId: row.tenant_id,
+        updatedAt,
+      });
 };
 
 const mapRoutineError = (cause: unknown): CommerceEnrollmentAttemptError => unavailable(cause);
@@ -1137,6 +1198,13 @@ export const commerceEnrollmentAttemptPersistenceForTransaction = (
             Effect.flatMap(mapCreateRow),
           ),
         ),
+      ),
+    // No `ensureTenant` guard: the listing carries no caller-supplied Tenant to disagree with the
+    // verified scope, because the scope's own Tenant is the routine's first argument.
+    listStale: (input) =>
+      transaction.invoke(listStaleAttemptsRoutine, [input.staleAfterMillis, input.limit]).pipe(
+        Effect.mapError(mapRoutineError),
+        Effect.flatMap((rows) => Effect.forEach(rows, mapStaleAttempt, { concurrency: 1 })),
       ),
     read: (input) =>
       ensureTenant(scope, input.tenantId).pipe(

@@ -10,7 +10,10 @@ import {
 } from '../../src/enrollment/orchestration/completion.ts';
 import type { EnrollmentTransitionProof } from '../../src/enrollment/orchestration/completion.ts';
 import { counterpartyInvitationJourneyDefinition } from '../../src/enrollment/journeys/counterparty-invitation.ts';
-import { EXISTING_ACCOUNT_CORE_IDENTITY_TRANSITIONS } from '../../src/enrollment/journeys/existing-account.ts';
+import {
+  EXISTING_ACCOUNT_CORE_IDENTITY_TRANSITIONS,
+  EXISTING_ACCOUNT_OWNERSHIP_TRANSITIONS,
+} from '../../src/enrollment/journeys/existing-account.ts';
 import type { JourneyDefinition, JourneyTransitionSpec } from '../../src/enrollment/journeys/journey-contracts.ts';
 import { journeyTransitionIdentity } from '../../src/enrollment/journeys/journey-contracts.ts';
 import {
@@ -180,6 +183,11 @@ it.effect('gates each journey kind on its own declared required transitions', ()
       for (const coreTransition of EXISTING_ACCOUNT_CORE_IDENTITY_TRANSITIONS) {
         expect(identities).toContain(journeyTransitionIdentity(coreTransition));
       }
+      // The account-creation step is replaced by the proof that the caller owns the account it is
+      // continuing; without that step the journey would gate on nothing this route can establish.
+      for (const ownershipTransition of EXISTING_ACCOUNT_OWNERSHIP_TRANSITIONS) {
+        expect(identities).toContain(journeyTransitionIdentity(ownershipTransition));
+      }
       expect(identities).not.toContain(accountCreationIdentity);
       for (const inherited of target.requiredTransitions.filter(
         (transition) => journeyTransitionIdentity(transition) !== accountCreationIdentity,
@@ -193,6 +201,39 @@ it.effect('gates each journey kind on its own declared required transitions', ()
         deriveEnrollmentAttemptState({ definition, outcomeStatus: 'SUCCEEDED', proofs: allProven(definition) }),
       ).toBe('COMPLETE');
     }
+  }),
+);
+
+const existingAccountOwnershipTransition = (): JourneyTransitionSpec => {
+  const [transition] = EXISTING_ACCOUNT_OWNERSHIP_TRANSITIONS;
+  if (transition === undefined) {
+    throw new Error('Existing-account declares an account-ownership transition of its own');
+  }
+  return transition;
+};
+
+it.effect('never completes an Existing-account Attempt whose account-ownership proof is unproven', () =>
+  Effect.gen(function* ownershipGatesExistingAccountCompletion() {
+    const definition = yield* existingAccountDefinition(retailSelfEnrollmentJourneyDefinition);
+    const ownership = existingAccountOwnershipTransition();
+    const ownershipIdentity = journeyTransitionIdentity(ownership);
+    const everythingElse = definition.requiredTransitions
+      .filter((transition) => journeyTransitionIdentity(transition) !== ownershipIdentity)
+      .map(proven);
+    expect(everythingElse.length).toBe(definition.requiredTransitions.length - 1);
+
+    // Every other declared step succeeded. Without the ownership proof the Attempt has bound an
+    // account to a second Tenant on nobody's authority, so it must not read as a finished journey.
+    expect(deriveEnrollmentAttemptState({ definition, outcomeStatus: 'SUCCEEDED', proofs: everythingElse })).toBe(
+      'IN_PROGRESS',
+    );
+    expect(
+      deriveEnrollmentAttemptState({
+        definition,
+        outcomeStatus: 'SUCCEEDED',
+        proofs: [...everythingElse, proven(ownership)],
+      }),
+    ).toBe('COMPLETE');
   }),
 );
 
@@ -232,6 +273,7 @@ const journalledPersistence = (
     authorizeAccountCreation: () => missing(),
     claim: () => missing(),
     create: () => missing(),
+    listStale: () => missing(),
     read: () => Effect.succeed(attempt()),
     readOperation: (input) => {
       read.push(input.transitionKey);
@@ -273,6 +315,43 @@ it.effect('reads the durable journal, not the request, to decide whether an Atte
     expect(yield* authority.derive(attempt(), outcome)).toBe('COMPLETE');
     expect(read).toEqual(definition.requiredTransitions.map((transition) => transition.transitionKey));
     expect(yield* authority.derive(attempt(), { ...outcome, status: 'FAILED' })).toBe('IN_PROGRESS');
+  }),
+);
+
+it.effect('derives an Existing-account Attempt from a journal that carries its ownership proof', () =>
+  Effect.gen(function* deriveExistingAccountFromJournal() {
+    const existingAccount = attempt({ journey: 'EXISTING_ACCOUNT' });
+    const definition = yield* enrollmentJourneyDefinitionForAttempt(existingAccount);
+    const pending = lastTransition(definition);
+    const journalled = (rows: readonly JourneyTransitionSpec[]) =>
+      commerceEnrollmentCompletionAuthorityForPersistence(
+        journalledPersistence(
+          new Map(
+            rows.map((transition) => [
+              transition,
+              transition === pending ? ('IN_PROGRESS' as const) : ('SUCCEEDED' as const),
+            ]),
+          ),
+          [],
+        ),
+      );
+    const outcome = {
+      ownerModuleKey: pending.ownerModuleKey,
+      status: 'SUCCEEDED' as const,
+      transitionKey: pending.transitionKey,
+    };
+    const ownershipIdentity = journeyTransitionIdentity(existingAccountOwnershipTransition());
+
+    // A journal missing only the ownership row cannot complete; the very same journal with that one
+    // row present does. The ownership proof is therefore counted, not merely declared.
+    expect(
+      yield* journalled(
+        definition.requiredTransitions.filter(
+          (transition) => journeyTransitionIdentity(transition) !== ownershipIdentity,
+        ),
+      ).derive(existingAccount, outcome),
+    ).toBe('IN_PROGRESS');
+    expect(yield* journalled(definition.requiredTransitions).derive(existingAccount, outcome)).toBe('COMPLETE');
   }),
 );
 
