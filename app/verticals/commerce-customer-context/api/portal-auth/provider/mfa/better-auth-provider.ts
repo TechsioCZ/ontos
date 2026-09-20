@@ -1,7 +1,7 @@
 import { isAPIError } from 'better-auth/api';
 import { splitSetCookieHeader } from 'better-auth/cookies';
 import type { InferAPI } from 'better-auth';
-import { Duration, Effect, Layer, Option, Schema } from 'effect';
+import { Duration, Effect, Layer, Option, Redacted, Schema } from 'effect';
 
 import type {
   CommercePortalAuthMfaDisableProviderRequest,
@@ -11,7 +11,7 @@ import type {
   CommercePortalAuthMfaProviderFailure,
   CommercePortalAuthMfaResponse,
   CommercePortalAuthMfaSendOtpProviderRequest,
-  CommercePortalAuthMfaVerificationResult,
+  CommercePortalAuthMfaVerificationResponse,
   CommercePortalAuthMfaVerifyBackupCodeProviderRequest,
   CommercePortalAuthMfaVerifyOtpProviderRequest,
   CommercePortalAuthMfaVerifyTotpProviderRequest,
@@ -258,17 +258,25 @@ const callBetterAuth = <SchemaValue extends CommercePortalAuthMfaSchema, Respons
     }),
   );
 
-const mapVerificationResult = <SchemaValue extends CommercePortalAuthMfaSchema>(
+/**
+ * The token stays inside the owner boundary rather than being dropped here: it is the only handle
+ * on the session this verification just minted, and the owner service needs it to take that session
+ * back when the verification's completion evidence is refused. It is projected out of the published
+ * body in the same step, so no caller, log or audit row can reach it.
+ */
+const mapVerificationResult = (
   call: Effect.Effect<
-    CommercePortalAuthMfaResponse<SchemaValue['Type']>,
-    CommercePortalAuthMfaProviderFailure,
-    SchemaValue['DecodingServices']
+    CommercePortalAuthMfaResponse<typeof CommercePortalAuthMfaVerificationProviderResultSchema.Type>,
+    CommercePortalAuthMfaProviderFailure
   >,
-): Effect.Effect<
-  CommercePortalAuthMfaResponse<CommercePortalAuthMfaVerificationResult>,
-  CommercePortalAuthMfaProviderFailure,
-  SchemaValue['DecodingServices']
-> => call.pipe(Effect.map(({ setCookieHeaders }) => ({ body: { status: true } as const, setCookieHeaders })));
+): Effect.Effect<CommercePortalAuthMfaVerificationResponse, CommercePortalAuthMfaProviderFailure> =>
+  call.pipe(
+    Effect.map(({ body, setCookieHeaders }) => ({
+      body: { status: true } as const,
+      issuedSessionToken: Redacted.make(body.token),
+      setCookieHeaders,
+    })),
+  );
 
 /**
  * Adapt Better Auth's inferred Promise API to the provider-owned Effect port. Verification

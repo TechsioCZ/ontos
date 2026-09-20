@@ -30,6 +30,8 @@ import {
   advanceEnrollmentAcceptanceAttemptRevision,
   backdateEnrollmentAcceptanceAttempt,
   makeEnrollmentAcceptanceFixture,
+  expireEnrollmentAcceptanceSweepClaim,
+  readEnrollmentAcceptanceSweepCount,
   startEnrollmentAcceptanceAttempt,
 } from '../support/enrollment-acceptance-fixture.ts';
 import type { EnrollmentAcceptanceFixture } from '../support/enrollment-acceptance-fixture.ts';
@@ -56,6 +58,9 @@ import {
 const ANCIENT_ACTIVITY = ['2001-01-01T00:00:00Z', '2001-01-02T00:00:00Z', '2001-01-03T00:00:00Z'] as const;
 const NEWER_ACTIVITY = '2001-01-04T00:00:00Z';
 
+/** Long enough that a losing bid in the same tick can only be the claim refusing it. */
+const CLAIM_WINDOW_MILLIS = 60_000;
+
 const principalId = (value: string) => Schema.decodeSync(EnrollmentPrincipalIdSchema)(value);
 const tenant = (value: string) => Schema.decodeSync(EnrollmentTenantIdSchema)(value);
 const enrollmentKey = (value: string) => Schema.decodeSync(EnrollmentKeySchema)(value);
@@ -78,6 +83,22 @@ const startInputFor = (
   intentDigest: digest('a'.repeat(64)),
   intentKey: enrollmentKey(intent),
   journey: 'RETAIL_SELF_ENROLLMENT',
+  tenantId,
+});
+
+/** One replica's bid for one Attempt's next sweep, at the claim length the scenario needs. */
+const sweepFor = (
+  attempt: {
+    readonly portalEnrollmentAttemptId: typeof EnrollmentAttemptIdSchema.Type;
+    readonly revision: number;
+  },
+  tenantId: typeof EnrollmentTenantIdSchema.Type,
+  claimTtlMillis: number,
+) => ({
+  claimTtlMillis,
+  maxSweeps: SWEEP_BUDGET,
+  portalEnrollmentAttemptId: attempt.portalEnrollmentAttemptId,
+  revision: attempt.revision,
   tenantId,
 });
 
@@ -128,8 +149,8 @@ it.live('advances a newer Attempt in one tick even when a whole page of older on
           Ref.update(advanced, (ids) => [...ids, input.portalEnrollmentAttemptId]).pipe(
             Effect.flatMap(() => scoped.advance(input)),
           ),
+        claimSweep: scoped.claimSweep,
         listDue: scoped.listDue,
-        recordSweep: scoped.recordSweep,
       };
       // Two rows per page against three Attempts that cannot move: the page the listing starts with
       // is entirely theirs, which is the whole point of the scenario.
@@ -220,20 +241,18 @@ it.live('the sweep accounting answers a worker tick and refuses a caller with a 
         fixture,
         startInputFor(tenantId, actorPrincipalId, 'due-work-sweep-scope'),
       );
-      const sweep = {
-        portalEnrollmentAttemptId: attempt.portalEnrollmentAttemptId,
-        revision: attempt.revision,
-        tenantId,
-      };
+      const sweep = sweepFor(attempt, tenantId, 0);
 
       // The accounting writes to the one Attempt surface that answers before any Tenant is known,
       // so it takes the listing's credential: a transaction with no operational scope installed.
-      expect(yield* commerceEnrollmentDueAttemptStoreForRun(fixture.runWorker).recordSweep(sweep)).toBe(1);
+      expect(yield* commerceEnrollmentDueAttemptStoreForRun(fixture.runWorker).claimSweep(sweep)).toStrictEqual(
+        Option.some(1),
+      );
 
       // The same statement with the verified Tenant every request installs. Without the guard, a
       // request could spend another Tenant's sweep budget and take its Attempts off the listing.
       const refusal = yield* commerceEnrollmentDueAttemptStoreForRun(fixture.runRequestScoped)
-        .recordSweep(sweep)
+        .claimSweep(sweep)
         .pipe(Effect.flip);
       expect(refusal.code).toBe('attempt_unavailable');
     }),
@@ -254,20 +273,21 @@ it.live('stops listing an Attempt once its sweep budget is spent, and lists it a
       const store = commerceEnrollmentDueAttemptStoreForRun(fixture.runWorker);
       const query = { after: Option.none(), limit: 500, maxSweeps: SWEEP_BUDGET, staleAfterMillis: 0 };
       const ofScenario = (rows: readonly DueEnrollmentAttempt[]) => rows.filter((row) => row.tenantId === tenantId);
-      const sweep = {
-        portalEnrollmentAttemptId: attempt.portalEnrollmentAttemptId,
-        revision: attempt.revision,
-        tenantId,
-      };
+      // A zero-length claim is released the instant it is taken, so these passes queue rather than
+      // contend: this test is about the budget, and the claim has its own tests below.
+      const sweep = sweepFor(attempt, tenantId, 0);
       expect(ofScenario(yield* store.listDue(query)).map((row) => row.revision)).toStrictEqual([attempt.revision]);
 
-      // Exactly the budget, every sweep recorded against the revision the Attempt is standing at.
+      // Exactly the budget, every sweep charged against the revision the Attempt is standing at.
       const counted = yield* Effect.forEach(
         Array.from({ length: SWEEP_BUDGET }, (_unused, index) => index),
-        () => store.recordSweep(sweep),
+        () => store.claimSweep(sweep),
         { concurrency: 1 },
       );
-      expect(counted).toStrictEqual(Array.from({ length: SWEEP_BUDGET }, (_unused, index) => index + 1));
+      expect(counted).toStrictEqual(Array.from({ length: SWEEP_BUDGET }, (_unused, index) => Option.some(index + 1)));
+
+      // The budget is spent, so the claim itself refuses now rather than charging a ninth pass.
+      expect(yield* store.claimSweep(sweep)).toStrictEqual(Option.none());
 
       // The journal itself withholds the Attempt now. Held in a worker's memory instead, this count
       // would die with the process and the very next listing would hand the budget back in full.
@@ -279,6 +299,68 @@ it.live('stops listing an Attempt once its sweep budget is spent, and lists it a
       yield* backdateEnrollmentAcceptanceAttempt(fixture, attempt.portalEnrollmentAttemptId, ANCIENT_ACTIVITY[0]);
 
       expect(ofScenario(yield* store.listDue(query)).map((row) => row.revision)).toStrictEqual([attempt.revision + 1]);
+    }),
+  ),
+);
+
+it.live('charges exactly one of two replicas bidding for the same sweep', () =>
+  Effect.scoped(
+    Effect.gen(function* oneClaimPerPass() {
+      const tenantId = tenant(randomUUID());
+      const actorPrincipalId = principalId(randomUUID());
+      const fixture = yield* makeEnrollmentAcceptanceFixture({ tenantId });
+      const attempt = yield* startEnrollmentAcceptanceAttempt(
+        fixture,
+        startInputFor(tenantId, actorPrincipalId, 'due-work-claim-race'),
+      );
+      yield* backdateEnrollmentAcceptanceAttempt(fixture, attempt.portalEnrollmentAttemptId, ANCIENT_ACTIVITY[0]);
+      const store = commerceEnrollmentDueAttemptStoreForRun(fixture.runWorker);
+      // Both replicas read the same due row and bid for it at the same moment; each bid is its own
+      // worker transaction on the shared pool, so they contend on the Attempt row itself.
+      const sweep = sweepFor(attempt, tenantId, CLAIM_WINDOW_MILLIS);
+
+      const bids = yield* Effect.forEach([0, 1], () => store.claimSweep(sweep), { concurrency: 2 });
+
+      // Charging before ownership is exactly the defect: two bids would read as two fruitless
+      // sweeps and a handful of replicas would exhaust the budget of an Attempt swept once.
+      expect(bids.filter(Option.isSome)).toStrictEqual([Option.some(1)]);
+      expect(bids.filter(Option.isNone)).toHaveLength(1);
+      expect(yield* readEnrollmentAcceptanceSweepCount(fixture, attempt.portalEnrollmentAttemptId)).toBe(1);
+    }),
+  ),
+);
+
+it.live('withholds a claimed Attempt from every listing until the claim expires, then lets it be re-taken', () =>
+  Effect.scoped(
+    Effect.gen(function* claimHoldsAndExpires() {
+      const tenantId = tenant(randomUUID());
+      const actorPrincipalId = principalId(randomUUID());
+      const fixture = yield* makeEnrollmentAcceptanceFixture({ tenantId });
+      const attempt = yield* startEnrollmentAcceptanceAttempt(
+        fixture,
+        startInputFor(tenantId, actorPrincipalId, 'due-work-claim-window'),
+      );
+      yield* backdateEnrollmentAcceptanceAttempt(fixture, attempt.portalEnrollmentAttemptId, ANCIENT_ACTIVITY[0]);
+      const store = commerceEnrollmentDueAttemptStoreForRun(fixture.runWorker);
+      const query = { after: Option.none(), limit: 500, maxSweeps: SWEEP_BUDGET, staleAfterMillis: 0 };
+      const ofScenario = (rows: readonly DueEnrollmentAttempt[]) => rows.filter((row) => row.tenantId === tenantId);
+      expect(ofScenario(yield* store.listDue(query)).map((row) => row.revision)).toStrictEqual([attempt.revision]);
+
+      expect(yield* store.claimSweep(sweepFor(attempt, tenantId, CLAIM_WINDOW_MILLIS))).toStrictEqual(Option.some(1));
+
+      // While the claim stands the row is nobody else's work: it leaves the listing, and a second
+      // bid is refused rather than charged.
+      expect(ofScenario(yield* store.listDue(query))).toStrictEqual([]);
+      expect(yield* store.claimSweep(sweepFor(attempt, tenantId, CLAIM_WINDOW_MILLIS))).toStrictEqual(Option.none());
+      expect(yield* readEnrollmentAcceptanceSweepCount(fixture, attempt.portalEnrollmentAttemptId)).toBe(1);
+
+      // The replica holding a claim may be the process that just died, so the claim expires against
+      // the database's own clock; the Attempt comes back and the next pass is charged as the second
+      // sweep, not the first.
+      yield* expireEnrollmentAcceptanceSweepClaim(fixture, attempt.portalEnrollmentAttemptId);
+
+      expect(ofScenario(yield* store.listDue(query)).map((row) => row.revision)).toStrictEqual([attempt.revision]);
+      expect(yield* store.claimSweep(sweepFor(attempt, tenantId, CLAIM_WINDOW_MILLIS))).toStrictEqual(Option.some(2));
     }),
   ),
 );

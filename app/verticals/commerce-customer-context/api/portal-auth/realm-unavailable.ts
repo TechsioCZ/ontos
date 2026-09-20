@@ -92,6 +92,7 @@ const unavailableSessionLifecycle: CommercePortalAuthSessionLifecycle['Service']
 
 const mfaRefusal = unavailableService(mfaUnavailable);
 const unavailableMfaService: CommercePortalAuthMfaService['Service'] = {
+  confirmEnableTotp: mfaRefusal('confirm-enable-totp'),
   disableTwoFactor: mfaRefusal('disable-two-factor'),
   enableTwoFactor: mfaRefusal('enable-two-factor'),
   generateBackupCodes: mfaRefusal('generate-backup-codes'),

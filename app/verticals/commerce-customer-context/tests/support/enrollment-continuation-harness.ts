@@ -134,9 +134,9 @@ export const enrollmentContinuationForTenants = (
   const scenarioTenants = new Set<string>(tenantIds);
   return {
     advance: continuation.advance,
+    claimSweep: continuation.claimSweep,
     listDue: (input) =>
       continuation.listDue(input).pipe(Effect.map((rows) => rows.filter((row) => scenarioTenants.has(row.tenantId)))),
-    recordSweep: continuation.recordSweep,
   };
 };
 

@@ -34,7 +34,11 @@ import {
   CommercePortalAuthMfaEnableBodySchema as CommercePortalAuthMfaOwnerEnableBodySchema,
   CommercePortalAuthMfaPasswordBodySchema as CommercePortalAuthMfaOwnerPasswordBodySchema,
 } from './contracts.ts';
-import type { CommercePortalAuthMfaProviderFailure, CommercePortalAuthMfaResponse } from './contracts.ts';
+import type {
+  CommercePortalAuthMfaAttemptEvidence,
+  CommercePortalAuthMfaProviderFailure,
+  CommercePortalAuthMfaResponse,
+} from './contracts.ts';
 import {
   commercePortalAuthMfaChallengeExpiredProblem,
   commercePortalAuthMfaInvalidRequestProblem,
@@ -51,6 +55,8 @@ import type { CommercePortalAuthMfaServiceApi } from './service.ts';
 import { narrowCommercePortalAuthMfaTrustDevice } from './trust-device.ts';
 
 interface CommercePortalAuthMfaCall {
+  /** The digests this attempt's audit rows name; every state-changing route resolves them. */
+  readonly evidence: CommercePortalAuthMfaAttemptEvidence;
   readonly headers: Headers;
   readonly service: CommercePortalAuthMfaServiceApi;
 }
@@ -121,9 +127,12 @@ const consumeMfaBudget = Effect.fn('CommercePortalAuthMfaHttp.rateLimit')(functi
     route: MFA_RATE_LIMIT_ROUTE,
     unavailable: () => commercePortalAuthMfaUnavailableProblem,
   });
-  return allowed
-    ? yield* Effect.void
-    : yield* Effect.fail(commercePortalAuthMfaRateLimitedProblem(MFA_RATE_LIMITED_CODE));
+  if (!allowed) {
+    return yield* Effect.fail(commercePortalAuthMfaRateLimitedProblem(MFA_RATE_LIMITED_CODE));
+  }
+  // The budget's own two halves are exactly what an audit row may name: the credential the attempt
+  // operates on and the client it came from, both already keyed under the deployment secret.
+  return { clientKeyDigest: hashSubjectKey(client, configuration.secret), subjectDigest: subject.value };
 });
 
 /**
@@ -138,12 +147,13 @@ const prepareMfaCall = Effect.fn('CommercePortalAuthMfaHttp.prepare')(function* 
 ) {
   yield* noStoreHeaders;
   yield* requireTrustedOrigin(request.headers, () => commercePortalAuthMfaUntrustedOriginProblem);
-  yield* consumeMfaBudget(request);
+  const evidence = yield* consumeMfaBudget(request);
   if (Option.isNone(narrowCommercePortalAuthMfaTrustDevice(payload))) {
     return yield* Effect.fail(commercePortalAuthMfaTrustDeviceProblem);
   }
   const service = yield* CommercePortalAuthMfaService;
   const call: CommercePortalAuthMfaCall = {
+    evidence,
     headers: requestHeaders(request.headers),
     service,
   };
@@ -367,9 +377,10 @@ const prepareMfaAdminCall = Effect.fn('CommercePortalAuthMfaHttp.prepareAdmin')(
   yield* requireTrustedOrigin(request.headers, () => commercePortalAuthMfaUntrustedOriginProblem);
   const headers = requestHeaders(request.headers);
   yield* requireFreshMfaAuthentication(headers);
-  yield* consumeMfaBudget(request);
+  const evidence = yield* consumeMfaBudget(request);
   const service = yield* CommercePortalAuthMfaService;
-  return { headers, service };
+  const call: CommercePortalAuthMfaCall = { evidence, headers, service };
+  return call;
 });
 
 /**
@@ -405,7 +416,11 @@ const verifyTotp = Effect.fn('CommercePortalAuthMfaHttp.verifyTotp')(function* v
 ) {
   const call = yield* prepareMfaCall(request, payload);
   return yield* forwardMfaOutcome(
-    call.service.verifyTOTP({ body: { code: payload.code, trustDevice: false }, headers: call.headers }),
+    call.service.verifyTOTP({
+      body: { code: payload.code, trustDevice: false },
+      evidence: call.evidence,
+      headers: call.headers,
+    }),
   );
 });
 
@@ -415,7 +430,11 @@ const verifyOtp = Effect.fn('CommercePortalAuthMfaHttp.verifyOtp')(function* ver
 ) {
   const call = yield* prepareMfaCall(request, payload);
   return yield* forwardMfaOutcome(
-    call.service.verifyTwoFactorOTP({ body: { code: payload.code, trustDevice: false }, headers: call.headers }),
+    call.service.verifyTwoFactorOTP({
+      body: { code: payload.code, trustDevice: false },
+      evidence: call.evidence,
+      headers: call.headers,
+    }),
   );
 });
 
@@ -427,6 +446,7 @@ const verifyBackupCode = Effect.fn('CommercePortalAuthMfaHttp.verifyBackupCode')
   return yield* forwardMfaOutcome(
     call.service.verifyBackupCode({
       body: { code: payload.code, trustDevice: false },
+      evidence: call.evidence,
       headers: call.headers,
     }),
   );
@@ -441,7 +461,7 @@ const adminCall = <Payload, Body, ResponseBody, E, R>(
   name: string,
   toBody: (payload: Payload) => Effect.Effect<Body, E, R>,
   invoke: (
-    call: { headers: Headers; service: CommercePortalAuthMfaServiceApi },
+    call: CommercePortalAuthMfaCall,
     body: Body,
   ) => Effect.Effect<CommercePortalAuthMfaResponse<ResponseBody>, CommercePortalAuthMfaProviderFailure>,
 ) =>
@@ -465,14 +485,15 @@ const enable = adminCall(
 /**
  * Better Auth's own `verifyTOTP` endpoint is dual-purpose: with no established session it verifies
  * a sign-in challenge, and with one it activates a just-enabled TOTP factor — rotating the session
- * and marking it verified. `confirm-enable` reuses the exact same provider call as `verifyTotp`;
- * only the route, the freshness gate and the budget differ.
+ * and marking it verified. `confirm-enable` reaches that same provider call, through the owner
+ * method that files it as an enrollment rather than a second-factor authentication; the route, the
+ * freshness gate and the budget differ too.
  */
 const confirmEnable = adminCall(
   'CommercePortalAuthMfaHttp.confirmEnable',
   (payload: CommercePortalAuthMfaConfirmEnableBody) =>
     Effect.succeed({ code: payload.code, trustDevice: false as const }),
-  (call, body) => call.service.verifyTOTP({ body, headers: call.headers }),
+  (call, body) => call.service.confirmEnableTotp({ body, evidence: call.evidence, headers: call.headers }),
 );
 
 const disable = adminCall(

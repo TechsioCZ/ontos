@@ -39,6 +39,12 @@ import type { ReadEnrollmentAttemptInput } from '../../shared/enrollment-contrac
  * it was swept at, and the listing excludes a spent one in SQL — which is also what stops a page of
  * them from hiding newer work behind it. Anything that moves the Attempt resets the count.
  *
+ * That count is taken rather than merely written: every replica's listing reports the same due row,
+ * so a sweep that charged the budget without also taking the row would let each replica that then
+ * lost the transition claim spend a pass it never performed, and a few replicas would exhaust an
+ * Attempt swept exactly once. The journal therefore hands out one claim per Attempt per pass, and a
+ * replica that does not get it leaves the row alone without charging it.
+ *
  * It follows the shape of the outbox poller's supervision loop: one tick that cannot fail, logged
  * only when it did something, repeated on a fixed schedule for the lifetime of the layer's scope.
  * It is deliberately not a queue: the Attempt journal already is the durable record, and a second
@@ -91,7 +97,10 @@ interface DueSweep {
 }
 
 export interface CommerceEnrollmentContinuationSweepResult {
-  /** Due Attempts this tick did not advance: a spent budget, or a sweep it could not record. */
+  /**
+   * Due Attempts this tick did not advance: a spent budget, a claim another replica holds, or a
+   * claim it could not write at all.
+   */
   readonly released: number;
   /** Attempts whose last activity was older than the stale window and were advanced again. */
   readonly swept: number;
@@ -192,30 +201,41 @@ const advanceEntry = (state: SweeperState, inner: Continuation, entry: TrackedAt
   );
 
 /**
- * A sweep the journal named a revision for is counted before it is spent, so the count survives the
- * process spending it. A count that cannot be written is not a licence to sweep anyway: the tick
- * leaves the Attempt for the next one rather than working it on a budget nothing is keeping.
+ * A sweep the journal named a revision for is claimed before it is spent, so the count survives the
+ * process spending it and no second replica works the same row on the same pass. A refused claim is
+ * another replica's turn or a budget already spent, and a claim that cannot be written at all is
+ * not a licence to sweep anyway: either way the tick leaves the Attempt alone rather than working
+ * it on a budget nothing is keeping, and neither path charges the Attempt.
  */
-const countedAdvance = (
+const claimedAdvance = (
   state: SweeperState,
   inner: Continuation,
   entry: TrackedAttempt,
   revision: number,
+  claimTtlMillis: number,
 ): Effect.Effect<boolean> =>
-  inner.recordSweep({ ...entry.attempt, revision }).pipe(
+  inner.claimSweep({ ...entry.attempt, claimTtlMillis, maxSweeps: SWEEP_BUDGET, revision }).pipe(
     Effect.matchCauseEffect({
       onFailure: (cause) =>
-        Effect.annotateLogs(Effect.logWarning('The Commerce enrollment sweeper could not record this sweep'), {
+        Effect.annotateLogs(Effect.logWarning('The Commerce enrollment sweeper could not claim this sweep'), {
           portalEnrollmentAttemptId: entry.attempt.portalEnrollmentAttemptId,
           reason: String(cause),
         }).pipe(Effect.as(false)),
-      // The journal now holds this Attempt's budget, so the in-process counter has nothing to say.
-      onSuccess: () => advanceEntry(state, inner, { ...entry, journalled: true, sweeps: 0 }),
+      onSuccess: Option.match({
+        onNone: () => Effect.succeed(false),
+        // The journal now holds this Attempt's budget, so the in-process counter has nothing to say.
+        onSome: () => advanceEntry(state, inner, { ...entry, journalled: true, sweeps: 0 }),
+      }),
     }),
   );
 
 /** One due Attempt: advanced under whichever budget this tick's listing left it under. */
-const sweepEntry = (state: SweeperState, inner: Continuation, due: DueSweep): Effect.Effect<boolean> =>
+const sweepEntry = (
+  state: SweeperState,
+  inner: Continuation,
+  due: DueSweep,
+  claimTtlMillis: number,
+): Effect.Effect<boolean> =>
   Option.match(due.revision, {
     // The journal is silent about this Attempt on this tick. One it has named before and is not
     // naming now is not owed a transition any more — its durable budget is spent, or it settled —
@@ -226,7 +246,7 @@ const sweepEntry = (state: SweeperState, inner: Continuation, due: DueSweep): Ef
       due.entry.journalled || due.entry.sweeps >= SWEEP_BUDGET
         ? release(state, due.entry).pipe(Effect.as(false))
         : advanceEntry(state, inner, { ...due.entry, sweeps: due.entry.sweeps + 1 }),
-    onSome: (revision) => countedAdvance(state, inner, due.entry, revision),
+    onSome: (revision) => claimedAdvance(state, inner, due.entry, revision, claimTtlMillis),
   });
 
 const cursorAfter = (attempts: readonly DueEnrollmentAttempt[]): Option.Option<DueEnrollmentAttemptCursor> =>
@@ -356,7 +376,9 @@ const sweepOnce = Effect.fn('CommerceEnrollmentContinuationSweeper.sweep')(funct
     );
   }
   const due = dueEntries(registry, durable.attempts, now, staleAfterMillis);
-  const advanced = yield* Effect.forEach(due, (entry) => sweepEntry(state, inner, entry), {
+  // The claim lives exactly as long as the window that made the row due, so the replica that took
+  // it is the only one working it right up to the moment the row would be offered again anyway.
+  const advanced = yield* Effect.forEach(due, (entry) => sweepEntry(state, inner, entry, staleAfterMillis), {
     concurrency: SWEEP_CONCURRENCY,
   });
   const swept = advanced.filter(Boolean).length;
@@ -374,8 +396,8 @@ export const commerceEnrollmentContinuationSweeperFor = Effect.fnUntraced(
     const sweeper: CommerceEnrollmentContinuationSweeper = {
       continuation: {
         advance: (attempt) => trackedAdvance(state, inner, { attempt, journalled: false, sweeps: 0 }),
+        claimSweep: (input) => inner.claimSweep(input),
         listDue: (input) => inner.listDue(input),
-        recordSweep: (input) => inner.recordSweep(input),
       },
       sweep: sweepOnce(state, inner, pageLimit, staleAfterMillis),
     };

@@ -12,9 +12,9 @@ import type {
   ReadEnrollmentAttemptInput,
 } from '../../../shared/enrollment-contracts.ts';
 import type {
+  ClaimEnrollmentSweepInput,
   DueEnrollmentAttempt,
   ListDueEnrollmentAttemptsInput,
-  RecordEnrollmentSweepInput,
 } from '../attempts/attempt-persistence.ts';
 import { attemptRejected } from '../attempts/errors.ts';
 import type { CommerceEnrollmentAttemptError } from '../attempts/errors.ts';
@@ -91,6 +91,18 @@ export interface CommerceEnrollmentContinuationService {
     input: ReadEnrollmentAttemptInput,
   ) => Effect.Effect<CommerceEnrollmentContinuationResult, CommerceEnrollmentAttemptError>;
   /**
+   * Take one Attempt's next sweep against the revision it stands at, charging the durable budget in
+   * the same act, and answer with its new count. The budget is durable because the worker that
+   * spends it is not: a count kept in memory dies with its process and is re-granted by the next
+   * listing, which is how an Attempt nothing can move ends up ahead of newer work on every page,
+   * for ever. It is a claim rather than a count because every replica's listing reports the same
+   * due Attempt: `none` is another replica's pass, or a budget already spent at this revision, and
+   * the caller must then leave the row alone rather than sweep it.
+   */
+  readonly claimSweep: (
+    input: ClaimEnrollmentSweepInput,
+  ) => Effect.Effect<Option.Option<number>, CommerceEnrollmentAttemptError>;
+  /**
    * Every Attempt the durable journal says is still owed a transition, across every Tenant. It
    * lives beside `advance` because the sweeper is handed this service and nothing else, its own
    * memory of what it started does not survive the process that built it, and the Attempts it must
@@ -99,13 +111,6 @@ export interface CommerceEnrollmentContinuationService {
   readonly listDue: (
     input: ListDueEnrollmentAttemptsInput,
   ) => Effect.Effect<readonly DueEnrollmentAttempt[], CommerceEnrollmentAttemptError>;
-  /**
-   * Count one sweep of one Attempt against the revision it was swept at, and answer with its new
-   * count. The budget is durable because the worker that spends it is not: a count kept in memory
-   * dies with its process and is re-granted by the next listing, which is how an Attempt nothing
-   * can move ends up ahead of newer work on every page, for ever.
-   */
-  readonly recordSweep: (input: RecordEnrollmentSweepInput) => Effect.Effect<number, CommerceEnrollmentAttemptError>;
 }
 
 export class CommerceEnrollmentContinuation extends Context.Service<
@@ -448,8 +453,8 @@ export const CommerceEnrollmentContinuationLive = Layer.effect(
       advance: (input) => permits.withPermit(advanceLoop(seams, input, CONTINUATION_PASS_BUDGET)),
       // Reading the journal dispatches nothing, so it takes no permit: the permits exist to keep
       // enrollment bursts from flooding the owners, and a listing reaches no owner at all.
+      claimSweep: (input) => commerceEnrollmentDueAttemptStoreForRun(runner.runWorker).claimSweep(input),
       listDue: (input) => commerceEnrollmentDueAttemptStoreForRun(runner.runWorker).listDue(input),
-      recordSweep: (input) => commerceEnrollmentDueAttemptStoreForRun(runner.runWorker).recordSweep(input),
     };
   }),
 );
@@ -466,10 +471,10 @@ export const commerceEnrollmentContinuationUnavailableLive = Layer.succeed(Comme
         input.portalEnrollmentAttemptId,
       ),
     ),
+  // Nothing is ever listed here, so nothing is ever swept; answering with the count a first claim
+  // would have left keeps this a no-op rather than a second code path for the sweeper to know.
+  claimSweep: () => Effect.succeedSome(1),
   // Empty rather than refused: a deployment without the enrollment realm has no journey to be owed
   // a transition, so the sweeper that reads this has nothing due, not an error to report each tick.
   listDue: () => Effect.succeed([]),
-  // Nothing is ever listed here, so nothing is ever swept; answering with the count a first sweep
-  // would have left keeps this a no-op rather than a second code path for the sweeper to know.
-  recordSweep: () => Effect.succeed(1),
 });

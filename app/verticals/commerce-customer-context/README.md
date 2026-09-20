@@ -93,9 +93,14 @@ the next even in a Tenant that process has never served. Both are safe to repeat
 and its lease, not the caller, are what grant ownership.
 
 A halt that keeps repeating is an operator fact rather than a retry loop, so the sweeper's budget is
-durable too. Each pass is counted on the Attempt itself by `record_portal_enrollment_sweep` — the
-same worker-only credential the listing takes — into `sweep_revision`/`sweep_count`, and the listing
-excludes an Attempt that has spent the budget while still standing at that revision. A count held
+durable too. Each pass is taken on the Attempt itself by `claim_portal_enrollment_sweep` — the same
+worker-only credential the listing takes — into `sweep_revision`/`sweep_count`, and the listing
+excludes an Attempt that has spent the budget while still standing at that revision. Taking the
+pass and charging it are one statement: every replica's listing reports the same due row, so a
+routine that charged first would let each replica that then lost the transition claim spend a sweep
+it never performed. The winner also stamps `sweep_claimed_until`, which keeps the row out of every
+other listing until the claim expires on its own — the replica holding it may be the process that
+just died — and a replica whose claim is refused skips the row without charging it. A count held
 only in a worker's memory would die with its process and be granted again in full by the next
 listing, and because the listing is oldest-first that Attempt would then fill the first page of
 every tick ahead of newer work. Anything that moves the Attempt — a read that resumes it, an owner

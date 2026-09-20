@@ -32,6 +32,10 @@ import type {
   CommercePortalAuthMfaResponse,
   CommercePortalAuthMfaServiceApi,
 } from '../../api/portal-auth/provider/mfa/index.ts';
+import type {
+  CommercePortalAuthMfaAttemptEvidence,
+  CommercePortalAuthMfaVerificationResponse,
+} from '../../api/portal-auth/provider/mfa/contracts.ts';
 import {
   CommercePortalAuthMfaFreshnessReaderService,
   commercePortalAuthMfaFreshnessReaderFromApi,
@@ -43,6 +47,7 @@ import type {
   CommercePortalAuthMfaSessionSnapshot,
 } from '../../api/portal-auth/provider/mfa/http.ts';
 import { CommercePortalAuthMfaService } from '../../api/portal-auth/provider/mfa/service.ts';
+import type { CommercePortalAuthMfaSessionRollback } from '../../api/portal-auth/provider/mfa/service.ts';
 import { CommercePortalAuthRecoveryRateLimitService } from '../../api/portal-auth/rate-limit-service.ts';
 import type { CommercePortalAuthRecoveryRateLimit } from '../../api/portal-auth/rate-limit-service.ts';
 import { encodeCommerceSessionReference } from '../../api/portal-auth/provider/session-reference.ts';
@@ -51,6 +56,7 @@ import type { CommercePortalAuthSessionProvider } from '../../api/portal-auth/se
 import type { CommercePortalAuthSessionRecord } from '../../api/portal-auth/session/contracts.ts';
 import type { CommercePortalAuthSessionStore } from '../../api/portal-auth/session/store-service.ts';
 import { unauditedCommercePortalAuthRecorder } from '../../src/portal-auth/audit/audit.ts';
+import { commercePortalAuthAuditUnavailable } from '../../src/portal-auth/audit/audit-unavailable.ts';
 import type { CommercePortalAuthAuditRecorder } from '../../src/portal-auth/audit/audit.ts';
 import type { CommercePortalAuthAuditEvent } from '../../src/portal-auth/audit/audit-contracts.ts';
 
@@ -64,6 +70,28 @@ const providerResponse = <Body>(
   setCookieHeaders,
 });
 
+/** The session a verification mints, as the provider hands it back: status plus the raw token. */
+const ISSUED_SESSION_TOKEN = 'issued-session-token';
+const verificationResponse = (
+  setCookieHeaders: readonly string[] = [],
+  issuedSessionToken = ISSUED_SESSION_TOKEN,
+): CommercePortalAuthMfaVerificationResponse => ({
+  body: { status: true },
+  issuedSessionToken: Redacted.make(issuedSessionToken),
+  setCookieHeaders,
+});
+
+/** The digests every audited MFA call names; a unit test needs them constant, not realistic. */
+const ATTEMPT_EVIDENCE: CommercePortalAuthMfaAttemptEvidence = {
+  clientKeyDigest: 'client-key-digest',
+  subjectDigest: 'subject-digest',
+};
+
+/** A rollback nothing in this file exercises; the compensation has its own tests below. */
+const unusedRollback: CommercePortalAuthMfaSessionRollback = {
+  revokeIssuedSession: () => Effect.die('unused in this MFA test'),
+};
+
 const successfulProvider = (): CommercePortalAuthMfaProvider => ({
   disableTwoFactor: () => Effect.succeed(providerResponse({ status: true })),
   enableTwoFactor: () =>
@@ -71,9 +99,9 @@ const successfulProvider = (): CommercePortalAuthMfaProvider => ({
   generateBackupCodes: () => Effect.succeed(providerResponse({ backupCodes: ['backup-2'], status: true })),
   getTOTPURI: () => Effect.succeed(providerResponse({ totpURI: 'otpauth://totp/test' })),
   sendTwoFactorOTP: () => Effect.succeed(providerResponse({ status: true })),
-  verifyBackupCode: () => Effect.succeed(providerResponse({ status: true })),
-  verifyTOTP: () => Effect.succeed(providerResponse({ status: true })),
-  verifyTwoFactorOTP: () => Effect.succeed(providerResponse({ status: true })),
+  verifyBackupCode: () => Effect.succeed(verificationResponse()),
+  verifyTOTP: () => Effect.succeed(verificationResponse()),
+  verifyTwoFactorOTP: () => Effect.succeed(verificationResponse()),
 });
 
 const runMfa = <ResultValue>(
@@ -82,7 +110,7 @@ const runMfa = <ResultValue>(
     service: CommercePortalAuthMfaServiceApi,
   ) => Effect.Effect<ResultValue, CommercePortalAuthMfaProviderFailure>,
 ) =>
-  makeCommercePortalAuthMfaService(unauditedCommercePortalAuthRecorder).pipe(
+  makeCommercePortalAuthMfaService(unauditedCommercePortalAuthRecorder, unusedRollback).pipe(
     Effect.provideService(CommercePortalAuthMfaProviderService, provider),
     Effect.flatMap((service) => invoke(service)),
   );
@@ -204,7 +232,7 @@ it.effect('maps provider failures into a typed unavailable outcome', () => {
     verifyTOTP: () => Effect.fail(providerFailure),
   };
   return runMfa(provider, (service) =>
-    Effect.result(service.verifyTOTP({ body: { code: '123456' }, headers })).pipe(
+    Effect.result(service.verifyTOTP({ body: { code: '123456' }, evidence: ATTEMPT_EVIDENCE, headers })).pipe(
       Effect.tap((result) =>
         Effect.sync(() => {
           expect(Result.isFailure(result)).toBe(true);
@@ -317,7 +345,7 @@ it.effect('refuses a backup-code session-control flag before the one-time creden
     verifyBackupCode: (input) =>
       Effect.sync(() => {
         receivedBody = { ...input.body };
-        return providerResponse({ status: true });
+        return verificationResponse();
       }),
   };
   return Effect.gen(function* backupCodeSessionControlRefused() {
@@ -330,7 +358,7 @@ it.effect('refuses a backup-code session-control flag before the one-time creden
     expect(Result.isFailure(rejected)).toBe(true);
 
     yield* runMfa(provider, (service) =>
-      service.verifyBackupCode({ body: { code: 'backup-1', trustDevice: false }, headers }),
+      service.verifyBackupCode({ body: { code: 'backup-1', trustDevice: false }, evidence: ATTEMPT_EVIDENCE, headers }),
     );
     expect(receivedBody).toStrictEqual({ code: 'backup-1', trustDevice: false });
   });
@@ -412,6 +440,7 @@ const mfaHttpRequest = (
 
 interface MfaHttpFixtureState {
   readonly budgetKeys: string[];
+  readonly confirmEnableInputs: Parameters<CommercePortalAuthMfaServiceApi['confirmEnableTotp']>[0][];
   currentSession: Option.Option<{ readonly authenticatedAtMillis: number }>;
   readonly disableInputs: Parameters<CommercePortalAuthMfaServiceApi['disableTwoFactor']>[0][];
   readonly enableInputs: Parameters<CommercePortalAuthMfaServiceApi['enableTwoFactor']>[0][];
@@ -431,6 +460,7 @@ interface MfaHttpFixture {
 const makeMfaHttpFixture = (): MfaHttpFixture => {
   const state: MfaHttpFixtureState = {
     budgetKeys: [],
+    confirmEnableInputs: [],
     currentSession: Option.some({ authenticatedAtMillis: TEST_NOW_MILLIS - 60_000 }),
     disableInputs: [],
     enableInputs: [],
@@ -457,6 +487,11 @@ const makeMfaHttpFixture = (): MfaHttpFixture => {
       }),
   };
   const service: CommercePortalAuthMfaServiceApi = {
+    confirmEnableTotp: (input) =>
+      Effect.sync(() => {
+        state.confirmEnableInputs.push(input);
+        return providerResponse({ status: true } as const);
+      }),
     disableTwoFactor: (input) =>
       Effect.sync(() => {
         state.disableInputs.push(input);
@@ -657,8 +692,11 @@ it.effect('wires confirm-enable, regenerate-backup-codes and totp-uri to the mat
       ),
     );
     expect(confirmEnable.status).toBe(200);
-    expect(fixture.state.verifyTotpInputs).toHaveLength(1);
-    expect(fixture.state.verifyTotpInputs[0]?.body).toStrictEqual({ code: '123456', trustDevice: false });
+    // `confirm-enable` reaches the enrollment method, not the sign-in verification one: the two
+    // share Better Auth's endpoint but not the audit fact they leave behind.
+    expect(fixture.state.verifyTotpInputs).toHaveLength(0);
+    expect(fixture.state.confirmEnableInputs).toHaveLength(1);
+    expect(fixture.state.confirmEnableInputs[0]?.body).toStrictEqual({ code: '123456', trustDevice: false });
 
     const regenerate = yield* Effect.promise(() =>
       app.handler(
@@ -879,16 +917,213 @@ for (const [description, failure, expectedOutcome] of verificationFailureCases) 
       ...successfulProvider(),
       verifyTOTP: () => Effect.fail(failure),
     };
-    return makeCommercePortalAuthMfaService(recording.recorder).pipe(
+    return makeCommercePortalAuthMfaService(recording.recorder, unusedRollback).pipe(
       Effect.provideService(CommercePortalAuthMfaProviderService, provider),
-      Effect.flatMap((service) => Effect.result(service.verifyTOTP({ body: { code: '123456' }, headers }))),
+      Effect.flatMap((service) =>
+        Effect.result(service.verifyTOTP({ body: { code: '123456' }, evidence: ATTEMPT_EVIDENCE, headers })),
+      ),
       Effect.tap(() =>
         Effect.sync(() => {
           // A provider outage or a throttle never judged the second factor. Filing them as
-          // `authentication_failed` would make an outage read as a burst of wrong codes.
-          expect(recording.events().map((event) => event.outcome)).toStrictEqual([expectedOutcome]);
+          // `authentication_failed` would make an outage read as a burst of wrong codes. The intent
+          // row goes in first and is its own fact, so the completion row is the second of the two.
+          expect(recording.events().map((event) => event.outcome)).toStrictEqual(['requested', expectedOutcome]);
         }),
       ),
     );
   });
+}
+
+/**
+ * The strict evidence contract around a second-factor verification. A verification mints or rotates
+ * a live credential, so — exactly as the sign-in route does — the intent row is written before
+ * Better Auth is asked to judge the code, and the completion row is written strictly too: a session
+ * the provider already created but whose evidence was refused is taken back rather than forwarded.
+ */
+
+/** A recorder that refuses the nth write and succeeds on every other one. */
+const makeRefusingRecorder = (refusedIndex: number) => {
+  const events: CommercePortalAuthAuditEvent[] = [];
+  const recorder: CommercePortalAuthAuditRecorder = {
+    record: (event) =>
+      Effect.suspend(() => {
+        const index = events.length;
+        events.push(event);
+        return index === refusedIndex
+          ? Effect.fail(commercePortalAuthAuditUnavailable({ reason: 'audit store refused' }))
+          : Effect.void;
+      }),
+  };
+  return { events: () => events, recorder };
+};
+
+/** Collects the tokens a compensation revoked, so a test can name the session that was taken back. */
+const makeRecordingRollback = (revoked: string[]): CommercePortalAuthMfaSessionRollback => ({
+  revokeIssuedSession: (issuedSessionToken) =>
+    Effect.sync(() => {
+      revoked.push(Redacted.value(issuedSessionToken));
+      return true;
+    }),
+});
+
+const VERIFICATION_COOKIE = 'better-auth.session_token=minted; Path=/; HttpOnly';
+
+const strictVerificationCases: readonly (readonly [
+  string,
+  (service: CommercePortalAuthMfaServiceApi) => Effect.Effect<unknown, CommercePortalAuthMfaProviderFailure>,
+  string,
+])[] = [
+  [
+    'verify-totp',
+    (service) => service.verifyTOTP({ body: { code: '123456' }, evidence: ATTEMPT_EVIDENCE, headers }),
+    'commerce.portal-auth.mfa-verification-requested.v1',
+  ],
+  [
+    'confirm-enable',
+    (service) => service.confirmEnableTotp({ body: { code: '123456' }, evidence: ATTEMPT_EVIDENCE, headers }),
+    'commerce.portal-auth.mfa-enable-requested.v1',
+  ],
+];
+
+for (const [method, invoke, intentEventType] of strictVerificationCases) {
+  it.effect(`refuses ${method} without calling the provider when the intent row cannot be written`, () => {
+    let providerCalls = 0;
+    const provider: CommercePortalAuthMfaProvider = {
+      ...successfulProvider(),
+      verifyTOTP: () =>
+        Effect.sync(() => {
+          providerCalls += 1;
+          return verificationResponse([VERIFICATION_COOKIE]);
+        }),
+    };
+    const recording = makeRefusingRecorder(0);
+    const revoked: string[] = [];
+    return makeCommercePortalAuthMfaService(recording.recorder, makeRecordingRollback(revoked)).pipe(
+      Effect.provideService(CommercePortalAuthMfaProviderService, provider),
+      Effect.flatMap((service) => Effect.result(invoke(service))),
+      Effect.tap((result) =>
+        Effect.sync(() => {
+          expect(Result.isFailure(result)).toBe(true);
+          if (Result.isFailure(result)) {
+            // A 503 with no cookies: the attempt never reached Better Auth, so there is nothing to
+            // forward and nothing to take back.
+            expect(commercePortalAuthMfaProblemForFailure(result.failure).status).toBe(503);
+            expect(result.failure.setCookieHeaders).toStrictEqual([]);
+          }
+          // The whole point of the intent row: an audit outage refuses the attempt outright rather
+          // than admitting a second factor nothing durable records.
+          expect(providerCalls).toBe(0);
+          expect(revoked).toStrictEqual([]);
+          expect(recording.events().map((event) => event.eventType)).toStrictEqual([intentEventType]);
+        }),
+      ),
+    );
+  });
+
+  it.effect(`takes back the session ${method} minted when its completion row cannot be written`, () => {
+    const provider: CommercePortalAuthMfaProvider = {
+      ...successfulProvider(),
+      verifyTOTP: () => Effect.succeed(verificationResponse([VERIFICATION_COOKIE])),
+    };
+    // The intent row commits; the completion row is the one the outage swallows.
+    const recording = makeRefusingRecorder(1);
+    const revoked: string[] = [];
+    return makeCommercePortalAuthMfaService(recording.recorder, makeRecordingRollback(revoked)).pipe(
+      Effect.provideService(CommercePortalAuthMfaProviderService, provider),
+      Effect.flatMap((service) => Effect.result(invoke(service))),
+      Effect.tap((result) =>
+        Effect.sync(() => {
+          expect(Result.isFailure(result)).toBe(true);
+          if (Result.isFailure(result)) {
+            expect(commercePortalAuthMfaProblemForFailure(result.failure).status).toBe(503);
+            // Better Auth minted a cookie for this verification. Forwarding it would hand the
+            // browser a credential whose admission nothing records, so the refusal carries none.
+            expect(result.failure.setCookieHeaders).toStrictEqual([]);
+          }
+          // The credential itself is taken back, un-audited, because the audit store is the very
+          // thing that is refusing: an audited revoke would be rolled back with its own row.
+          expect(revoked).toStrictEqual([ISSUED_SESSION_TOKEN]);
+          expect(recording.events().map((event) => event.eventType)).toStrictEqual([
+            intentEventType,
+            'commerce.portal-auth.mfa-verified.v1',
+          ]);
+        }),
+      ),
+    );
+  });
+}
+
+it.effect('forwards a verification the audit store accepted, with both rows and the provider cookies', () => {
+  const provider: CommercePortalAuthMfaProvider = {
+    ...successfulProvider(),
+    verifyTOTP: () => Effect.succeed(verificationResponse([VERIFICATION_COOKIE])),
+  };
+  const recording = makeRecordingRecorder();
+  const revoked: string[] = [];
+  return makeCommercePortalAuthMfaService(recording.recorder, makeRecordingRollback(revoked)).pipe(
+    Effect.provideService(CommercePortalAuthMfaProviderService, provider),
+    Effect.flatMap((service) => service.verifyTOTP({ body: { code: '123456' }, evidence: ATTEMPT_EVIDENCE, headers })),
+    Effect.tap((result) =>
+      Effect.sync(() => {
+        expect(result.body).toStrictEqual({ status: true });
+        expect(result.setCookieHeaders).toStrictEqual([VERIFICATION_COOKIE]);
+        // The token the provider handed back is the owner's rollback handle alone: it is not part
+        // of anything a caller, a log or an audit row can read.
+        expect('issuedSessionToken' in result).toBe(false);
+        expect(revoked).toStrictEqual([]);
+        expect(
+          recording.events().map((event) => [event.eventType, event.outcome, event.correlationDigest] as const),
+        ).toStrictEqual([
+          ['commerce.portal-auth.mfa-verification-requested.v1', 'requested', ATTEMPT_EVIDENCE.clientKeyDigest],
+          ['commerce.portal-auth.mfa-verified.v1', 'success', ATTEMPT_EVIDENCE.clientKeyDigest],
+        ]);
+        expect(recording.events().map((event) => event.subjectDigest)).toStrictEqual([
+          ATTEMPT_EVIDENCE.subjectDigest,
+          ATTEMPT_EVIDENCE.subjectDigest,
+        ]);
+      }),
+    ),
+  );
+});
+
+/**
+ * The same refusal at the published boundary: what the browser is actually told, and what it is
+ * given. A 503 that still carried the provider's `Set-Cookie` would leave a live second factor in
+ * the browser whose admission the deployment cannot show.
+ */
+const refusedCompletionRoutes: readonly (readonly [string, string])[] = [
+  ['verify-totp', '/api/portal-auth/two-factor/verify-totp'],
+  ['confirm-enable', '/api/portal-auth/two-factor/confirm-enable'],
+];
+
+for (const [route, path] of refusedCompletionRoutes) {
+  it.effect(`answers ${route} with 503 and no cookies when its completion evidence is refused`, () =>
+    Effect.gen(function* refusedCompletionForwardsNoCookie() {
+      const recording = makeRefusingRecorder(1);
+      const revoked: string[] = [];
+      const provider: CommercePortalAuthMfaProvider = {
+        ...successfulProvider(),
+        verifyTOTP: () => Effect.succeed(verificationResponse([VERIFICATION_COOKIE])),
+      };
+      const service = yield* makeCommercePortalAuthMfaService(recording.recorder, makeRecordingRollback(revoked)).pipe(
+        Effect.provideService(CommercePortalAuthMfaProviderService, provider),
+      );
+      const fixture = makeMfaHttpFixture();
+      const app = yield* makeMfaHttpApp({ ...fixture, service });
+
+      const response = yield* Effect.promise(() =>
+        app.handler(mfaHttpRequest(path, { code: '123456' }), httpRequestContextMfa),
+      );
+
+      expect(response.status).toBe(503);
+      expect(yield* Effect.promise(() => response.json())).toMatchObject({
+        code: 'authentication_unavailable',
+        status: 503,
+      });
+      // The provider minted this cookie for a verification the deployment cannot evidence, so the
+      // browser is handed nothing and the session behind it is taken back.
+      expect(response.headers.getSetCookie()).toStrictEqual([]);
+      expect(revoked).toStrictEqual([ISSUED_SESSION_TOKEN]);
+    }),
+  );
 }

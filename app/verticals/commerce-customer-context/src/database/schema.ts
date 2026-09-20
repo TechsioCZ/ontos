@@ -177,6 +177,8 @@ export const portalEnrollmentAttempts = commerceCustomerContextSchema.table.with
     revision: integer('revision').default(1).notNull(),
     state: text('state').default('IN_PROGRESS').notNull(),
     subjectType: text('subject_type'),
+    /** While this stands in the future one replica owns this Attempt's sweep; it expires on its own. */
+    sweepClaimedUntil: timestamp('sweep_claimed_until', { withTimezone: true }),
     /** How many fruitless continuation sweeps this Attempt has had while standing at `sweepRevision`. */
     sweepCount: integer('sweep_count').default(0).notNull(),
     /** The revision the sweep count was spent against; a different one starts the budget over. */

@@ -4,11 +4,15 @@ import { DateTime, Effect, Option, Ref, Schema } from 'effect';
 import { expect, it } from 'effect-rstest';
 
 import type {
+  ClaimEnrollmentSweepInput,
   DueEnrollmentAttempt,
   DueEnrollmentAttemptCursor,
 } from '../../src/enrollment/attempts/attempt-persistence.ts';
 import type { CommerceEnrollmentContinuationService } from '../../src/enrollment/continuation/enrollment-continuation.ts';
-import { commerceEnrollmentContinuationSweeperFor } from '../../src/workers/enrollment-continuation-sweeper.ts';
+import {
+  commerceEnrollmentContinuationSweeperFor,
+  SWEEP_BUDGET,
+} from '../../src/workers/enrollment-continuation-sweeper.ts';
 import type { CommerceEnrollmentContinuationSweepResult } from '../../src/workers/enrollment-continuation-sweeper.ts';
 import { EnrollmentAttemptIdSchema, EnrollmentTenantIdSchema } from '../../shared/enrollment-contracts.ts';
 import type { ReadEnrollmentAttemptInput } from '../../shared/enrollment-contracts.ts';
@@ -34,7 +38,7 @@ interface ScriptedContinuation {
   readonly service: CommerceEnrollmentContinuationService;
 }
 
-/** The durable sweep accounting `record_portal_enrollment_sweep` keeps, one entry per Attempt. */
+/** The durable sweep accounting `claim_portal_enrollment_sweep` keeps, one entry per Attempt. */
 interface ScriptedSweep {
   readonly count: number;
   readonly revision: number;
@@ -66,6 +70,19 @@ const scriptedContinuation = Effect.fnUntraced(function* scriptedContinuation(
             : { halt: { reason: 'IN_FLIGHT' as const, transition: Option.none() }, outcome: 'HALTED' as const },
         ),
       ),
+    claimSweep: (input) =>
+      Ref.modify(sweeps, (recorded) => {
+        const previous = recorded.get(input.portalEnrollmentAttemptId);
+        // The routine's own refusal: a budget already spent at this revision is charged no further.
+        if (previous !== undefined && previous.revision === input.revision && previous.count >= input.maxSweeps) {
+          return [Option.none<number>(), recorded] as const;
+        }
+        const count = previous === undefined || previous.revision !== input.revision ? 1 : previous.count + 1;
+        return [
+          Option.some(count),
+          new Map([...recorded, [input.portalEnrollmentAttemptId, { count, revision: input.revision }]]),
+        ] as const;
+      }),
     listDue: (input) =>
       Effect.all([Ref.get(journal), Ref.get(sweeps)], { concurrency: 2 }).pipe(
         Effect.map(([rows, recorded]) => {
@@ -74,15 +91,6 @@ const scriptedContinuation = Effect.fnUntraced(function* scriptedContinuation(
           return offered.slice(start, start + input.limit);
         }),
       ),
-    recordSweep: (input) =>
-      Ref.modify(sweeps, (recorded) => {
-        const previous = recorded.get(input.portalEnrollmentAttemptId);
-        const count = previous === undefined || previous.revision !== input.revision ? 1 : previous.count + 1;
-        return [
-          count,
-          new Map([...recorded, [input.portalEnrollmentAttemptId, { count, revision: input.revision }]]),
-        ] as const;
-      }),
   };
   const scripted: ScriptedContinuation = { advanced: Ref.get(log), service };
   return scripted;
@@ -226,5 +234,43 @@ it.effect('leaves an Attempt alone once its budget ran out, until its durable re
 
     expect((yield* sweeper.sweep).swept).toBe(1);
     expect((yield* scripted.advanced).length).toBe(spent + 1);
+  }),
+);
+
+it.effect('leaves an Attempt another replica has claimed alone, and charges it nothing', () =>
+  Effect.gen(function* refusedClaimIsNotSwept() {
+    const attempt: ReadEnrollmentAttemptInput = {
+      portalEnrollmentAttemptId: attemptId(randomUUID()),
+      tenantId: tenantId(randomUUID()),
+    };
+    const advanced = yield* Ref.make<readonly string[]>([]);
+    const claims = yield* Ref.make<readonly ClaimEnrollmentSweepInput[]>([]);
+    const service: CommerceEnrollmentContinuationService = {
+      advance: (input) =>
+        Ref.update(advanced, (calls) => [...calls, input.portalEnrollmentAttemptId]).pipe(
+          Effect.as({ outcome: 'COMPLETE' as const }),
+        ),
+      // The journal refuses the claim: another replica already holds this Attempt's pass, so the
+      // routine charged nothing and grants no licence to advance.
+      claimSweep: (input) => Ref.update(claims, (calls) => [...calls, input]).pipe(Effect.as(Option.none())),
+      listDue: () => Effect.succeed([due(attempt)]),
+    };
+    const sweeper = yield* commerceEnrollmentContinuationSweeperFor({
+      continuation: service,
+      staleAfterMillis: 0,
+    });
+
+    const sweep = yield* sweeper.sweep;
+
+    // The listing offered the row, so a sweeper that advanced on anything but a granted claim would
+    // run the very transition the replica holding the claim is already running.
+    expect(sweep.swept).toBe(0);
+    expect(sweep.released).toBe(1);
+    expect(yield* Ref.get(advanced)).toStrictEqual([]);
+    // One bid, and the budget it names is the sweeper's own, so the journal can refuse a spent one.
+    expect((yield* Ref.get(claims)).map((call) => call.portalEnrollmentAttemptId)).toStrictEqual([
+      attempt.portalEnrollmentAttemptId,
+    ]);
+    expect((yield* Ref.get(claims)).map((call) => call.maxSweeps)).toStrictEqual([SWEEP_BUDGET]);
   }),
 );

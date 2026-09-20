@@ -429,8 +429,12 @@ export interface ListDueEnrollmentAttemptsInput {
   readonly staleAfterMillis: number;
 }
 
-/** One sweep of one Attempt, counted against the exact durable revision it was swept at. */
-export type RecordEnrollmentSweepInput = ReadEnrollmentAttemptInput & {
+/** One replica's bid to sweep one Attempt, counted against the exact durable revision it stands at. */
+export type ClaimEnrollmentSweepInput = ReadEnrollmentAttemptInput & {
+  /** How long the claim withholds the Attempt from every other replica's listing. */
+  readonly claimTtlMillis: number;
+  /** The same budget the listing applies; the claim refuses once it is spent at this revision. */
+  readonly maxSweeps: number;
   readonly revision: number;
 };
 
@@ -440,11 +444,17 @@ export type RecordEnrollmentSweepInput = ReadEnrollmentAttemptInput & {
  * verified Tenant, and this one answers before any Tenant is known.
  */
 export interface CommerceEnrollmentDueWorkPersistence {
+  /**
+   * Takes this Attempt's next sweep and charges the budget in the same act. `some` is the new count
+   * and the caller's exclusive licence to advance; `none` means another replica holds the pass or
+   * the budget at this revision is spent, and the caller skips the row without charging it.
+   */
+  readonly claimSweep: (
+    input: ClaimEnrollmentSweepInput,
+  ) => Effect.Effect<Option.Option<number>, CommerceEnrollmentAttemptError>;
   readonly listDue: (
     input: ListDueEnrollmentAttemptsInput,
   ) => Effect.Effect<readonly DueEnrollmentAttempt[], CommerceEnrollmentAttemptError>;
-  /** Counts one sweep and answers with the Attempt's new count at that revision. */
-  readonly recordSweep: (input: RecordEnrollmentSweepInput) => Effect.Effect<number, CommerceEnrollmentAttemptError>;
 }
 
 export interface CommerceEnrollmentAttemptPersistence {
@@ -1353,7 +1363,7 @@ export type EnrollmentDueWorkExecution = (
 
 const DUE_WORK_ROUTINE_SCHEMA = 'commerce_customer_context';
 const DUE_WORK_ROUTINE_NAME = 'list_due_portal_enrollment_attempts';
-const SWEEP_ROUTINE_NAME = 'record_portal_enrollment_sweep';
+const SWEEP_ROUTINE_NAME = 'claim_portal_enrollment_sweep';
 
 const listDueStatement = (input: ListDueEnrollmentAttemptsInput): SQL => {
   const after = Option.getOrUndefined(input.after);
@@ -1363,31 +1373,23 @@ const listDueStatement = (input: ListDueEnrollmentAttemptsInput): SQL => {
   return sql`select * from ${sql.identifier(DUE_WORK_ROUTINE_SCHEMA)}.${sql.identifier(DUE_WORK_ROUTINE_NAME)}(${input.staleAfterMillis}::integer, ${afterUpdatedAt}::timestamptz, ${afterAttemptId}::uuid, ${input.limit}::integer, ${input.maxSweeps}::integer)`;
 };
 
-const recordSweepStatement = (input: RecordEnrollmentSweepInput): SQL =>
-  sql`select ${sql.identifier(DUE_WORK_ROUTINE_SCHEMA)}.${sql.identifier(SWEEP_ROUTINE_NAME)}(${input.tenantId}::uuid, ${input.portalEnrollmentAttemptId}::uuid, ${input.revision}::integer) as sweep_count`;
+const claimSweepStatement = (input: ClaimEnrollmentSweepInput): SQL =>
+  sql`select ${sql.identifier(DUE_WORK_ROUTINE_SCHEMA)}.${sql.identifier(SWEEP_ROUTINE_NAME)}(${input.tenantId}::uuid, ${input.portalEnrollmentAttemptId}::uuid, ${input.revision}::integer, ${input.maxSweeps}::integer, ${input.claimTtlMillis}::integer) as sweep_count`;
 
+/** A refused claim is a NULL count, not an empty answer: the routine always returns its one row. */
 const SweepRoutineRowSchema = Schema.Struct({
-  sweep_count: Schema.Number.check(Schema.isInt(), Schema.isGreaterThanOrEqualTo(1)),
+  sweep_count: Schema.OptionFromNullOr(Schema.Number.check(Schema.isInt(), Schema.isGreaterThanOrEqualTo(1))),
 });
 
 export const commerceEnrollmentDueWorkForExecution = (
   execute: EnrollmentDueWorkExecution,
 ): CommerceEnrollmentDueWorkPersistence => ({
-  listDue: (input) =>
-    execute(listDueStatement(input)).pipe(
+  claimSweep: (input) =>
+    execute(claimSweepStatement(input)).pipe(
+      // Decoded through the codec rather than its Type: the routine answers SQL NULL for a refused
+      // claim, and that NULL is exactly what this schema turns into the absent count.
       Effect.flatMap((rows) =>
-        Schema.decodeUnknownEffect(Schema.Array(Schema.toType(DueAttemptRoutineRowSchema)))(rows).pipe(
-          Effect.mapError((cause) =>
-            invalidWithCause('The Enrollment Attempt due-work listing returned an invalid row', cause),
-          ),
-        ),
-      ),
-      Effect.flatMap((rows) => Effect.forEach(rows, mapDueAttempt, { concurrency: 1 })),
-    ),
-  recordSweep: (input) =>
-    execute(recordSweepStatement(input)).pipe(
-      Effect.flatMap((rows) =>
-        Schema.decodeUnknownEffect(Schema.Array(Schema.toType(SweepRoutineRowSchema)))(rows).pipe(
+        Schema.decodeUnknownEffect(Schema.Array(SweepRoutineRowSchema))(rows).pipe(
           Effect.mapError((cause) =>
             invalidWithCause('The Enrollment Attempt sweep accounting returned an invalid row', cause),
           ),
@@ -1399,5 +1401,16 @@ export const commerceEnrollmentDueWorkForExecution = (
           ? Effect.fail(invalid('The Enrollment Attempt sweep accounting returned no count'))
           : Effect.succeed(row.sweep_count);
       }),
+    ),
+  listDue: (input) =>
+    execute(listDueStatement(input)).pipe(
+      Effect.flatMap((rows) =>
+        Schema.decodeUnknownEffect(Schema.Array(Schema.toType(DueAttemptRoutineRowSchema)))(rows).pipe(
+          Effect.mapError((cause) =>
+            invalidWithCause('The Enrollment Attempt due-work listing returned an invalid row', cause),
+          ),
+        ),
+      ),
+      Effect.flatMap((rows) => Effect.forEach(rows, mapDueAttempt, { concurrency: 1 })),
     ),
 });

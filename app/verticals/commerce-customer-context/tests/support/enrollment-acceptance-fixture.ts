@@ -316,3 +316,60 @@ export const readEnrollmentAcceptanceAttempt = (
       }),
       Effect.orDie,
     );
+
+interface EnrollmentAcceptanceSweepRow extends Record<string, unknown> {
+  readonly sweep_count: number;
+}
+
+/**
+ * The durable sweep budget one Attempt has actually been charged, read with the owner role. A test
+ * of the claim needs the charge itself: an answer of "one replica won" says nothing about whether
+ * the losers were charged on their way out.
+ */
+export const readEnrollmentAcceptanceSweepCount = (
+  fixture: EnrollmentAcceptanceFixture,
+  portalEnrollmentAttemptId: string,
+): Effect.Effect<number> =>
+  fixture.admin
+    .transaction((transaction) =>
+      transaction.execute<EnrollmentAcceptanceSweepRow>(
+        sql`
+          select sweep_count
+            from commerce_customer_context.portal_enrollment_attempts
+           where tenant_id = ${fixture.scope.tenantId}::uuid
+             and portal_enrollment_attempt_id = ${portalEnrollmentAttemptId}::uuid
+        `,
+        'objects',
+      ),
+    )
+    .pipe(
+      Effect.flatMap((rows) => {
+        const [row] = rows;
+        return row === undefined ? Effect.die('The fixture Attempt row is missing') : Effect.succeed(row.sweep_count);
+      }),
+      Effect.orDie,
+    );
+
+/**
+ * Moves an Attempt's sweep claim into the past. The claim expires against the database's own clock,
+ * which a test cannot advance, so the one fact under test — "this claim is no longer live" — is
+ * stated directly instead of waited for, exactly as `backdateEnrollmentAcceptanceAttempt` states
+ * the activity order.
+ */
+export const expireEnrollmentAcceptanceSweepClaim = (
+  fixture: EnrollmentAcceptanceFixture,
+  portalEnrollmentAttemptId: string,
+): Effect.Effect<void> =>
+  fixture.admin
+    .transaction((transaction) =>
+      transaction.execute(
+        sql`
+          update commerce_customer_context.portal_enrollment_attempts
+             set sweep_claimed_until = statement_timestamp() - interval '1 second'
+           where tenant_id = ${fixture.scope.tenantId}::uuid
+             and portal_enrollment_attempt_id = ${portalEnrollmentAttemptId}::uuid
+        `,
+        'objects',
+      ),
+    )
+    .pipe(Effect.asVoid, Effect.orDie);

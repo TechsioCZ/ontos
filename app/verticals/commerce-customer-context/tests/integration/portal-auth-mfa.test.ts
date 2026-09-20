@@ -54,6 +54,8 @@ import { UNRESOLVED_PORTAL_AUTH_CLIENT_KEY } from '../../api/portal-auth/http-tr
 import { CommercePortalAuthRecoveryRateLimitService } from '../../api/portal-auth/rate-limit-service.ts';
 import type { CommercePortalAuthRecoveryRateLimit } from '../../api/portal-auth/rate-limit-service.ts';
 import { CommercePortalAuthMfaService } from '../../api/portal-auth/provider/mfa/service.ts';
+import type { CommercePortalAuthMfaSessionRollback } from '../../api/portal-auth/provider/mfa/service.ts';
+import type { CommercePortalAuthMfaAttemptEvidence } from '../../api/portal-auth/provider/mfa/contracts.ts';
 import { CommercePortalAuthStepUpCodeRejected } from '../../api/portal-auth/provider/step-up/index.ts';
 import { CommercePortalAuthConfig } from '../../api/portal-auth/provider/config-service.ts';
 import { COMMERCE_PORTAL_AUTH_POLICY, parseCommercePortalAuthConfig } from '../../api/portal-auth/provider/config.ts';
@@ -64,6 +66,21 @@ import { unauditedCommercePortalAuthRecorder } from '../../src/portal-auth/audit
 const ORIGIN = 'https://commerce.example.test';
 const BASE_PATH = '/api/portal-auth';
 const PASSWORD = 'P'.repeat(24);
+
+/** The digests an audited MFA call names. Nothing here drives the audit store, so they are opaque. */
+const MFA_ATTEMPT_EVIDENCE: CommercePortalAuthMfaAttemptEvidence = {
+  clientKeyDigest: 'client-key-digest',
+  subjectDigest: 'subject-digest',
+};
+
+/**
+ * The compensation only ever runs when a completion row is refused, and every service here records
+ * through the un-audited recorder, so a rollback in this file would be a rollback nothing asked
+ * for. `tests/unit/portal-auth-mfa.test.ts` drives the refusal itself.
+ */
+const unusedMfaRollback: CommercePortalAuthMfaSessionRollback = {
+  revokeIssuedSession: () => Effect.die('unused in the MFA integration fixtures'),
+};
 const SECRET = 's'.repeat(64);
 const otpDeliveryCallback: NonNullable<OTPOptions['sendOTP']> = () => Promise.resolve();
 
@@ -240,9 +257,10 @@ it.effect('adapts inferred Better Auth endpoints through the typed Effect owner 
     });
     expect(signUp.status).toBe(200);
     const provider = makeCommercePortalAuthMfaProvider(auth.api);
-    const service = yield* makeCommercePortalAuthMfaService(unauditedCommercePortalAuthRecorder).pipe(
-      Effect.provideService(CommercePortalAuthMfaProviderService, provider),
-    );
+    const service = yield* makeCommercePortalAuthMfaService(
+      unauditedCommercePortalAuthRecorder,
+      unusedMfaRollback,
+    ).pipe(Effect.provideService(CommercePortalAuthMfaProviderService, provider));
     const setup = yield* service.enableTwoFactor({
       body: { method: 'totp', password: PASSWORD },
       headers: browserHeadersFrom(signUp),
@@ -294,9 +312,10 @@ it.effect('serves the reviewed MFA HTTP routes through the typed owner service',
     const challengeHeaders = requestHeaders();
     applySetCookies(challengeHeaders, splitSetCookieHeader(signIn.headers.get('set-cookie') ?? ''));
     const provider = makeCommercePortalAuthMfaProvider(auth.api);
-    const service = yield* makeCommercePortalAuthMfaService(unauditedCommercePortalAuthRecorder).pipe(
-      Effect.provideService(CommercePortalAuthMfaProviderService, provider),
-    );
+    const service = yield* makeCommercePortalAuthMfaService(
+      unauditedCommercePortalAuthRecorder,
+      unusedMfaRollback,
+    ).pipe(Effect.provideService(CommercePortalAuthMfaProviderService, provider));
     const send = yield* service.sendTwoFactorOTP({ body: { trustDevice: false }, headers: challengeHeaders });
     expect(send.body.status).toBe(true);
 
@@ -316,9 +335,10 @@ it.effect('classifies a real Better Auth credential rejection without reporting 
     });
     expect(signUp.status).toBe(200);
     const provider = makeCommercePortalAuthMfaProvider(auth.api);
-    const service = yield* makeCommercePortalAuthMfaService(unauditedCommercePortalAuthRecorder).pipe(
-      Effect.provideService(CommercePortalAuthMfaProviderService, provider),
-    );
+    const service = yield* makeCommercePortalAuthMfaService(
+      unauditedCommercePortalAuthRecorder,
+      unusedMfaRollback,
+    ).pipe(Effect.provideService(CommercePortalAuthMfaProviderService, provider));
     const result = yield* Effect.result(
       service.enableTwoFactor({
         body: { method: 'totp', password: 'W'.repeat(24) },
@@ -366,14 +386,19 @@ it.effect('forwards a Better Auth challenge-expiry cookie on a typed throttle fa
     const challengeHeaders = requestHeaders();
     applySetCookies(challengeHeaders, splitSetCookieHeader(signIn.headers.get('set-cookie') ?? ''));
     const provider = makeCommercePortalAuthMfaProvider(auth.api);
-    const service = yield* makeCommercePortalAuthMfaService(unauditedCommercePortalAuthRecorder).pipe(
-      Effect.provideService(CommercePortalAuthMfaProviderService, provider),
-    );
+    const service = yield* makeCommercePortalAuthMfaService(
+      unauditedCommercePortalAuthRecorder,
+      unusedMfaRollback,
+    ).pipe(Effect.provideService(CommercePortalAuthMfaProviderService, provider));
     let firstFailure: CommercePortalAuthMfaProviderFailure | undefined;
     let finalFailure: CommercePortalAuthMfaProviderFailure | undefined;
     for (let attempt = 1; attempt <= COMMERCE_PORTAL_AUTH_MFA_POLICY.maxFailedAttempts + 1; attempt += 1) {
       const outcome = yield* Effect.result(
-        service.verifyTOTP({ body: { code: '000000', trustDevice: false }, headers: challengeHeaders }),
+        service.verifyTOTP({
+          body: { code: '000000', trustDevice: false },
+          evidence: MFA_ATTEMPT_EVIDENCE,
+          headers: challengeHeaders,
+        }),
       );
       expect(Result.isFailure(outcome)).toBe(true);
       if (!Result.isFailure(outcome)) {
@@ -607,9 +632,10 @@ it.effect('drives the published MFA group over HTTP and forwards provider cookie
         .join('; ');
       expect(challengeCookie).toContain('two_factor=');
 
-      const service = yield* makeCommercePortalAuthMfaService(unauditedCommercePortalAuthRecorder).pipe(
-        Effect.provideService(CommercePortalAuthMfaProviderService, makeCommercePortalAuthMfaProvider(auth.api)),
-      );
+      const service = yield* makeCommercePortalAuthMfaService(
+        unauditedCommercePortalAuthRecorder,
+        unusedMfaRollback,
+      ).pipe(Effect.provideService(CommercePortalAuthMfaProviderService, makeCommercePortalAuthMfaProvider(auth.api)));
       const recorded = makeRecordingMfaBudget();
       const app = yield* makeMfaTransport(auth, service, recorded.budget);
       const send = (route: string, body: Schema.Json, origin?: string) =>
@@ -676,9 +702,10 @@ it.effect('refuses an MFA request that names no challenge without spending any b
   Effect.scoped(
     Effect.gen(function* mfaUnattributableRequest() {
       const { auth } = makeSkipVerificationFixture();
-      const service = yield* makeCommercePortalAuthMfaService(unauditedCommercePortalAuthRecorder).pipe(
-        Effect.provideService(CommercePortalAuthMfaProviderService, makeCommercePortalAuthMfaProvider(auth.api)),
-      );
+      const service = yield* makeCommercePortalAuthMfaService(
+        unauditedCommercePortalAuthRecorder,
+        unusedMfaRollback,
+      ).pipe(Effect.provideService(CommercePortalAuthMfaProviderService, makeCommercePortalAuthMfaProvider(auth.api)));
       const recorded = makeRecordingMfaBudget();
       const app = yield* makeMfaTransport(auth, service, recorded.budget);
       const response = yield* Effect.promise(() =>
@@ -707,9 +734,10 @@ it.effect('bounds MFA routes on the owner budget and keeps every refusal problem
     Effect.gen(function* mfaBudgetAndContentTypeAssertions() {
       const { auth } = makeSkipVerificationFixture();
       const challengeCookie = yield* makeChallengeCookie(auth, 'mfa-budget-owner@example.test');
-      const service = yield* makeCommercePortalAuthMfaService(unauditedCommercePortalAuthRecorder).pipe(
-        Effect.provideService(CommercePortalAuthMfaProviderService, makeCommercePortalAuthMfaProvider(auth.api)),
-      );
+      const service = yield* makeCommercePortalAuthMfaService(
+        unauditedCommercePortalAuthRecorder,
+        unusedMfaRollback,
+      ).pipe(Effect.provideService(CommercePortalAuthMfaProviderService, makeCommercePortalAuthMfaProvider(auth.api)));
       const recorded = makeRecordingMfaBudget();
       const app = yield* makeMfaTransport(auth, service, recorded.budget);
       const send = (contentType: string, cookie: string = challengeCookie) =>
@@ -851,6 +879,7 @@ const makeFreshnessFixture = Effect.fn('CommercePortalAuthMfaFreshnessIntegratio
     const currentSessionId = { value: `${providerSubjectId}-stepped-up` };
     let enableCalls = 0;
     const mfaService: CommercePortalAuthMfaServiceApi = {
+      confirmEnableTotp: () => Effect.die('unused in the MFA freshness fixture'),
       disableTwoFactor: () => Effect.die('unused in the MFA freshness fixture'),
       enableTwoFactor: () =>
         Effect.sync(() => {

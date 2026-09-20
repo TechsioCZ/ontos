@@ -1,13 +1,14 @@
 import { Context, Effect } from 'effect';
+import type { Option } from 'effect';
 
 import type { ReconcileEnrollmentResolution } from '../../../shared/enrollment-contracts.ts';
 import type {
+  ClaimEnrollmentSweepInput,
   CommerceEnrollmentOwnerScope,
   DueEnrollmentAttempt,
   EnrollmentAttemptScopedRoutineInvoker,
   EnrollmentDueWorkExecution,
   ListDueEnrollmentAttemptsInput,
-  RecordEnrollmentSweepInput,
 } from '../attempts/attempt-persistence.ts';
 import {
   commerceEnrollmentAttemptPersistenceForTransaction,
@@ -167,18 +168,20 @@ export const makeCommerceEnrollmentOwnerAttemptStoreForProduction = Effect.fn(
  */
 // oxlint-disable-next-line effect-native/require-context-service-for-service-interface -- The store is built for one worker transaction at the call site, exactly as the owner attempt store is; it is not an ambient service. expires: 2027-09-17.
 export interface CommerceEnrollmentDueAttemptStore {
+  readonly claimSweep: (
+    input: ClaimEnrollmentSweepInput,
+  ) => Effect.Effect<Option.Option<number>, CommerceEnrollmentAttemptError>;
   readonly listDue: (
     input: ListDueEnrollmentAttemptsInput,
   ) => Effect.Effect<readonly DueEnrollmentAttempt[], CommerceEnrollmentAttemptError>;
-  readonly recordSweep: (input: RecordEnrollmentSweepInput) => Effect.Effect<number, CommerceEnrollmentAttemptError>;
 }
 
 /** One listing, one worker transaction, on the same governed connection every owner phase uses. */
 export const commerceEnrollmentDueAttemptStoreForRun = (
   runWorker: CommerceEnrollmentWorkerTransactionRun,
 ): CommerceEnrollmentDueAttemptStore => ({
+  claimSweep: (input) => runWorker((execute) => commerceEnrollmentDueWorkForExecution(execute).claimSweep(input)),
   listDue: (input) => runWorker((execute) => commerceEnrollmentDueWorkForExecution(execute).listDue(input)),
-  recordSweep: (input) => runWorker((execute) => commerceEnrollmentDueWorkForExecution(execute).recordSweep(input)),
 });
 
 /** A public owner adapter for preparing exact Action bindings before ordinary Core authorization. */

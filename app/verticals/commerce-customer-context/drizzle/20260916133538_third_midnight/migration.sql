@@ -23,6 +23,11 @@ CREATE TABLE "commerce_customer_context"."portal_enrollment_attempts" (
   -- fill a page ahead of newer work, and what makes the count survive the process that spent it.
   "sweep_revision" integer,
   "sweep_count" integer DEFAULT 0 NOT NULL,
+  -- Who is sweeping this Attempt right now. Every replica's listing offers the same due row, so the
+  -- budget above can only be spent once per pass if taking it is also taking the row: a claim is
+  -- what makes the two one act. It expires on its own because the replica holding it may be the
+  -- process that just died, and a claim nothing can release would withhold the Attempt for good.
+  "sweep_claimed_until" timestamp with time zone,
   "created_by_principal_id" uuid NOT NULL,
   "last_owner_invocation_id" uuid,
   "last_failure_code" text,
@@ -1537,6 +1542,10 @@ BEGIN
     -- Attempt back while it still stands at the revision that count was spent against: anything
     -- that moves the Attempt — a read that resumed it, an owner outcome — makes it due again.
     AND NOT (attempt.sweep_revision = attempt.revision AND attempt.sweep_count >= p_max_sweeps)
+    -- A live sweep claim is another replica's pass, already charged to the budget above. Offering
+    -- the row again would hand every replica the same due work and let the losers spend the whole
+    -- budget on a pass none of them performed.
+    AND (attempt.sweep_claimed_until IS NULL OR attempt.sweep_claimed_until <= now_at)
     AND (
       p_after_updated_at IS NULL
       OR (attempt.updated_at, attempt.portal_enrollment_attempt_id) > (p_after_updated_at, p_after_attempt_id)
@@ -1549,18 +1558,30 @@ END;
 $function$;
 --> statement-breakpoint
 
--- The counting half of the due-work surface: one sweep of one Attempt, recorded against the exact
--- revision it was swept at. It is the worker's own bookkeeping rather than a transition, so it
--- moves neither `revision` nor `updated_at` — an Attempt a sweep could not move must keep its place
--- in the listing's activity order, and a count that re-aged the row would hide it instead.
+-- The owning half of the due-work surface: one replica takes one Attempt for one sweep, and the
+-- budget is charged in the same act. Taking the row and charging it cannot be two statements —
+-- every replica's listing reports the same due Attempt, so an accounting that charged first would
+-- let each loser of the transition claim spend a sweep it never performed, and a handful of
+-- replicas would exhaust the budget of an Attempt that was swept exactly once.
+--
+-- The claim is therefore the whole routine: a single UPDATE that succeeds only while no live claim
+-- stands and the budget at this revision is unspent, and answers NULL otherwise. Two concurrent
+-- callers serialize on the row, and the loser re-checks the very predicate the winner just
+-- falsified, so exactly one of them is charged.
+--
+-- It is the worker's own bookkeeping rather than a transition, so it moves neither `revision` nor
+-- `updated_at` — an Attempt a sweep could not move must keep its place in the listing's activity
+-- order, and a count that re-aged the row would hide it instead.
 --
 -- The guard is the listing's, for the same reason: this is a cross-Tenant worker surface, and a
 -- transaction that installed a verified Tenant is a request. Running outside every Tenant scope is
 -- the worker scope.
-CREATE FUNCTION "commerce_customer_context"."record_portal_enrollment_sweep"(
+CREATE FUNCTION "commerce_customer_context"."claim_portal_enrollment_sweep"(
   p_tenant_id uuid,
   p_attempt_id uuid,
-  p_revision integer
+  p_revision integer,
+  p_max_sweeps integer,
+  p_claim_ttl_millis integer
 )
 RETURNS integer
 LANGUAGE plpgsql
@@ -1568,7 +1589,8 @@ SECURITY DEFINER
 SET search_path = pg_catalog, commerce_customer_context
 AS $function$
 DECLARE
-  recorded integer;
+  now_at timestamptz := statement_timestamp();
+  claimed integer;
 BEGIN
   IF nullif(current_setting('ontos.tenant_id', true), '') IS NOT NULL THEN
     RAISE EXCEPTION 'cross-Tenant Attempt sweep accounting requires worker scope' USING ERRCODE = '42501';
@@ -1578,14 +1600,27 @@ BEGIN
   UPDATE commerce_customer_context.portal_enrollment_attempts AS attempt
   SET
     sweep_count = CASE WHEN attempt.sweep_revision IS DISTINCT FROM p_revision THEN 1 ELSE attempt.sweep_count + 1 END,
-    sweep_revision = p_revision
+    sweep_revision = p_revision,
+    sweep_claimed_until = now_at + make_interval(secs => greatest(p_claim_ttl_millis, 0)::double precision / 1000)
   WHERE attempt.tenant_id = p_tenant_id
     AND attempt.portal_enrollment_attempt_id = p_attempt_id
-  RETURNING attempt.sweep_count INTO recorded;
-  IF recorded IS NULL THEN
-    RAISE EXCEPTION 'Enrollment Attempt not found for sweep accounting' USING ERRCODE = '02000';
+    AND (attempt.sweep_claimed_until IS NULL OR attempt.sweep_claimed_until <= now_at)
+    AND NOT (attempt.sweep_revision = p_revision AND attempt.sweep_count >= p_max_sweeps)
+  RETURNING attempt.sweep_count INTO claimed;
+  IF claimed IS NULL THEN
+    -- The claim failed, which is an answer rather than a fault: another replica holds this pass, or
+    -- the budget at this revision is spent. An Attempt that is not there at all is neither.
+    IF NOT EXISTS (
+      SELECT 1
+      FROM commerce_customer_context.portal_enrollment_attempts AS attempt
+      WHERE attempt.tenant_id = p_tenant_id
+        AND attempt.portal_enrollment_attempt_id = p_attempt_id
+    ) THEN
+      RAISE EXCEPTION 'Enrollment Attempt not found for sweep accounting' USING ERRCODE = '02000';
+    END IF;
+    RETURN NULL;
   END IF;
-  RETURN recorded;
+  RETURN claimed;
 END;
 $function$;
 --> statement-breakpoint
@@ -1599,7 +1634,7 @@ REVOKE ALL ON FUNCTION "commerce_customer_context"."read_portal_enrollment_attem
 REVOKE ALL ON FUNCTION "commerce_customer_context"."read_portal_enrollment_owner_operation"(uuid, uuid, text, text) FROM PUBLIC;
 REVOKE ALL ON FUNCTION "commerce_customer_context"."authorize_portal_enrollment_account_creation"(uuid, uuid, uuid) FROM PUBLIC;
 REVOKE ALL ON FUNCTION "commerce_customer_context"."list_due_portal_enrollment_attempts"(integer, timestamptz, uuid, integer, integer) FROM PUBLIC;
-REVOKE ALL ON FUNCTION "commerce_customer_context"."record_portal_enrollment_sweep"(uuid, uuid, integer) FROM PUBLIC;
+REVOKE ALL ON FUNCTION "commerce_customer_context"."claim_portal_enrollment_sweep"(uuid, uuid, integer, integer, integer) FROM PUBLIC;
 GRANT EXECUTE ON FUNCTION "commerce_customer_context"."create_portal_enrollment_attempt"(uuid, uuid, uuid, text, text, text, uuid, uuid, text) TO "ontos_runtime";
 GRANT EXECUTE ON FUNCTION "commerce_customer_context"."claim_portal_enrollment_transition"(uuid, uuid, integer, text, text, text, uuid, text, uuid, boolean, integer, text, text) TO "ontos_runtime";
 GRANT EXECUTE ON FUNCTION "commerce_customer_context"."record_portal_enrollment_outcome"(uuid, uuid, integer, text, uuid, text, text, uuid, uuid, text, text, text, text, text, text, text, text, text) TO "ontos_runtime";
@@ -1609,7 +1644,7 @@ GRANT EXECUTE ON FUNCTION "commerce_customer_context"."read_portal_enrollment_at
 GRANT EXECUTE ON FUNCTION "commerce_customer_context"."read_portal_enrollment_owner_operation"(uuid, uuid, text, text) TO "ontos_runtime";
 GRANT EXECUTE ON FUNCTION "commerce_customer_context"."authorize_portal_enrollment_account_creation"(uuid, uuid, uuid) TO "ontos_runtime";
 GRANT EXECUTE ON FUNCTION "commerce_customer_context"."list_due_portal_enrollment_attempts"(integer, timestamptz, uuid, integer, integer) TO "ontos_runtime";
-GRANT EXECUTE ON FUNCTION "commerce_customer_context"."record_portal_enrollment_sweep"(uuid, uuid, integer) TO "ontos_runtime";
+GRANT EXECUTE ON FUNCTION "commerce_customer_context"."claim_portal_enrollment_sweep"(uuid, uuid, integer, integer, integer) TO "ontos_runtime";
 --> statement-breakpoint
 DO $hardening$
 BEGIN

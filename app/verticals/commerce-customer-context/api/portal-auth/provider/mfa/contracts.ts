@@ -1,5 +1,5 @@
 import { Schema } from 'effect';
-import type { Effect } from 'effect';
+import type { Effect, Redacted } from 'effect';
 
 import type {
   CommercePortalAuthMfaBackupCodesResult,
@@ -87,6 +87,32 @@ export interface CommercePortalAuthMfaResponse<Body> {
   readonly setCookieHeaders: readonly string[];
 }
 
+/**
+ * A verification's private handoff. Better Auth answers a verification with the session it just
+ * minted — a credential the owner must be able to take back when the completion evidence for that
+ * verification is refused. It travels no further than the owner service that owns the compensation:
+ * the published body stays the status result, so no token reaches a caller, a log or an audit row.
+ */
+export interface CommercePortalAuthMfaVerificationResponse extends CommercePortalAuthMfaResponse<CommercePortalAuthMfaVerificationResult> {
+  readonly issuedSessionToken: Redacted.Redacted;
+}
+
+/**
+ * What an audit row may say about one MFA attempt. Both halves are digests keyed under the
+ * deployment secret: the credential the attempt operates on, and the client it came from, which is
+ * what ties a pre-mutation intent row to the completion row for the same attempt. Neither is a
+ * cookie, a code or an address, and neither can be reversed into one.
+ */
+export interface CommercePortalAuthMfaAttemptEvidence {
+  readonly clientKeyDigest: string;
+  readonly subjectDigest: string;
+}
+
+/** The transport-derived half of every owner-audited MFA call; the provider never receives it. */
+interface CommercePortalAuthMfaAuditedAttempt {
+  readonly evidence: CommercePortalAuthMfaAttemptEvidence;
+}
+
 export type CommercePortalAuthMfaProviderFailure =
   | CommercePortalAuthMfaChallengeExpired
   | CommercePortalAuthMfaProviderRejected
@@ -121,6 +147,18 @@ export type CommercePortalAuthMfaVerifyBackupCodeProviderRequest = CommercePorta
 export type CommercePortalAuthMfaPasswordProviderRequest =
   CommercePortalAuthMfaProviderRequest<CommercePortalAuthMfaPasswordBody>;
 
+/**
+ * The owner-service shapes for the four state-changing verification calls. They differ from the
+ * provider shapes by the evidence alone, because the evidence exists for the audit rows the owner
+ * writes around the provider call and has no meaning to Better Auth.
+ */
+export type CommercePortalAuthMfaVerifyTotpServiceRequest = CommercePortalAuthMfaAuditedAttempt &
+  CommercePortalAuthMfaVerifyTotpProviderRequest;
+export type CommercePortalAuthMfaVerifyOtpServiceRequest = CommercePortalAuthMfaAuditedAttempt &
+  CommercePortalAuthMfaVerifyOtpProviderRequest;
+export type CommercePortalAuthMfaVerifyBackupCodeServiceRequest = CommercePortalAuthMfaAuditedAttempt &
+  CommercePortalAuthMfaVerifyBackupCodeProviderRequest;
+
 export interface CommercePortalAuthMfaProvider {
   readonly disableTwoFactor: (
     input: CommercePortalAuthMfaDisableProviderRequest,
@@ -154,20 +192,11 @@ export interface CommercePortalAuthMfaProvider {
   >;
   readonly verifyBackupCode: (
     input: CommercePortalAuthMfaVerifyBackupCodeProviderRequest,
-  ) => Effect.Effect<
-    CommercePortalAuthMfaResponse<CommercePortalAuthMfaVerificationResult>,
-    CommercePortalAuthMfaProviderFailure
-  >;
+  ) => Effect.Effect<CommercePortalAuthMfaVerificationResponse, CommercePortalAuthMfaProviderFailure>;
   readonly verifyTOTP: (
     input: CommercePortalAuthMfaVerifyTotpProviderRequest,
-  ) => Effect.Effect<
-    CommercePortalAuthMfaResponse<CommercePortalAuthMfaVerificationResult>,
-    CommercePortalAuthMfaProviderFailure
-  >;
+  ) => Effect.Effect<CommercePortalAuthMfaVerificationResponse, CommercePortalAuthMfaProviderFailure>;
   readonly verifyTwoFactorOTP: (
     input: CommercePortalAuthMfaVerifyOtpProviderRequest,
-  ) => Effect.Effect<
-    CommercePortalAuthMfaResponse<CommercePortalAuthMfaVerificationResult>,
-    CommercePortalAuthMfaProviderFailure
-  >;
+  ) => Effect.Effect<CommercePortalAuthMfaVerificationResponse, CommercePortalAuthMfaProviderFailure>;
 }
