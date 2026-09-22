@@ -477,7 +477,7 @@ export const createModernConfig = <Plugin, BuilderPlugin>({
     },
     source: {
       alias: {
-        '@modern-js/plugin-i18n/runtime': '@modern-js/plugin-i18n/runtime/no-react-i18next',
+        '@modern-js/plugin-i18n/runtime$': '@modern-js/plugin-i18n/runtime/no-react-i18next',
       },
       entriesDir: 'src/routes',
       globalVars: {
