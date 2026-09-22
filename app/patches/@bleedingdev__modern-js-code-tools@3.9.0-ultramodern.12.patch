@@ -1,43 +1,79 @@
 diff --git a/dist/cjs/oxlint-plugin/rules/strict-effect-api-boundaries.cjs b/dist/cjs/oxlint-plugin/rules/strict-effect-api-boundaries.cjs
 --- a/dist/cjs/oxlint-plugin/rules/strict-effect-api-boundaries.cjs
 +++ b/dist/cjs/oxlint-plugin/rules/strict-effect-api-boundaries.cjs
-@@ -55 +55 @@
+@@ -52,7 +52,7 @@
+                     });
+                     (0, external_ast_cjs_namespaceObject.reportProgramPattern)(context, node, source, /@modern-js\/plugin-bff\/(?:server|hono-server)(?![\w-])/u, 'UltraModern API workspaces must not import Hono server helpers; use @modern-js/bff-effect/effect-edge and HttpApi.');
+                     (0, external_ast_cjs_namespaceObject.reportProgramPattern)(context, node, source, /\bruntimeFramework\s*(?::|=)\s*['"]hono['"]/u, 'UltraModern API apps must use bff.runtimeFramework: "effect".');
 -                    (0, external_ast_cjs_namespaceObject.reportProgramPattern)(context, node, source, /(?:from|import)\s*['"][^'"]*(?:api\/effect|shared\/effect)[^'"]*['"]|shared-effect-api/u, 'Import API code from direct api/index.ts, shared/api.ts or src/api/* paths, not api/effect, shared/effect or shared Effect API packages.');
 +                    (0, external_ast_cjs_namespaceObject.reportProgramPattern)(context, node, source, /(?:from|import)\s*['"][^'"]*(?:api\/effect|shared\/effect)(?=\/|['"])[^'"]*['"]|shared-effect-api/u, 'Import API code from direct api/index.ts, shared/api.ts or src/api/* paths, not api/effect, shared/effect or shared Effect API packages.');
+                     (0, external_ast_cjs_namespaceObject.reportProgramPattern)(context, node, source, /\bstrictEffectApproach\s*(?::|=)\s*false\b/u, 'UltraModern API apps must keep strictEffectApproach enabled.');
+                     if ((0, external_ast_cjs_namespaceObject.isApiEntryFile)(filename)) {
+                         const violation = (0, external_strict_effect_runtime_cjs_namespaceObject.strictEffectRuntimeTopologyViolation)(source, (0, external_strict_effect_runtime_cjs_namespaceObject.createEffectApiImportResolver)(filename));
 diff --git a/dist/cjs/strict-effect-runtime.cjs b/dist/cjs/strict-effect-runtime.cjs
 --- a/dist/cjs/strict-effect-runtime.cjs
 +++ b/dist/cjs/strict-effect-runtime.cjs
-@@ -96 +96 @@
--        if (modules.size >= 64 || input.source.length > 1000000) throw invalidSource('API source budget exceeded');
-+        if (modules.size >= 256 || input.source.length > 1000000) throw invalidSource('API source budget exceeded');
+@@ -81,7 +81,7 @@
+     const load = (input)=>{
+         const existing = modules.get(input.id);
+         if (existing) return existing;
+-        if (modules.size >= 64 || input.source.length > 1000000) throw new external_source_analysis_cjs_namespaceObject.SourceSyntaxError('API source budget exceeded');
++        if (modules.size >= 256 || input.source.length > 1000000) throw new external_source_analysis_cjs_namespaceObject.SourceSyntaxError('API source budget exceeded');
+         const file = (0, external_source_analysis_cjs_namespaceObject.parseSource)(input.source, input.id, 'Invalid API syntax');
+         const module = {
+             ...input,
 diff --git a/dist/esm-node/oxlint-plugin/rules/strict-effect-api-boundaries.js b/dist/esm-node/oxlint-plugin/rules/strict-effect-api-boundaries.js
 --- a/dist/esm-node/oxlint-plugin/rules/strict-effect-api-boundaries.js
 +++ b/dist/esm-node/oxlint-plugin/rules/strict-effect-api-boundaries.js
-@@ -24 +24 @@
+@@ -21,7 +21,7 @@
+                     });
+                     reportProgramPattern(context, node, source, /@modern-js\/plugin-bff\/(?:server|hono-server)(?![\w-])/u, 'UltraModern API workspaces must not import Hono server helpers; use @modern-js/bff-effect/effect-edge and HttpApi.');
+                     reportProgramPattern(context, node, source, /\bruntimeFramework\s*(?::|=)\s*['"]hono['"]/u, 'UltraModern API apps must use bff.runtimeFramework: "effect".');
 -                    reportProgramPattern(context, node, source, /(?:from|import)\s*['"][^'"]*(?:api\/effect|shared\/effect)[^'"]*['"]|shared-effect-api/u, 'Import API code from direct api/index.ts, shared/api.ts or src/api/* paths, not api/effect, shared/effect or shared Effect API packages.');
 +                    reportProgramPattern(context, node, source, /(?:from|import)\s*['"][^'"]*(?:api\/effect|shared\/effect)(?=\/|['"])[^'"]*['"]|shared-effect-api/u, 'Import API code from direct api/index.ts, shared/api.ts or src/api/* paths, not api/effect, shared/effect or shared Effect API packages.');
+                     reportProgramPattern(context, node, source, /\bstrictEffectApproach\s*(?::|=)\s*false\b/u, 'UltraModern API apps must keep strictEffectApproach enabled.');
+                     if (isApiEntryFile(filename)) {
+                         const violation = strictEffectRuntimeTopologyViolation(source, createEffectApiImportResolver(filename));
 diff --git a/dist/esm-node/strict-effect-runtime.js b/dist/esm-node/strict-effect-runtime.js
 --- a/dist/esm-node/strict-effect-runtime.js
 +++ b/dist/esm-node/strict-effect-runtime.js
-@@ -52 +52 @@
--        if (modules.size >= 64 || input.source.length > 1000000) throw invalidSource('API source budget exceeded');
-+        if (modules.size >= 256 || input.source.length > 1000000) throw invalidSource('API source budget exceeded');
+@@ -38,7 +38,7 @@
+     const load = (input)=>{
+         const existing = modules.get(input.id);
+         if (existing) return existing;
+-        if (modules.size >= 64 || input.source.length > 1000000) throw new SourceSyntaxError('API source budget exceeded');
++        if (modules.size >= 256 || input.source.length > 1000000) throw new SourceSyntaxError('API source budget exceeded');
+         const file = parseSource(input.source, input.id, 'Invalid API syntax');
+         const module = {
+             ...input,
 diff --git a/dist/esm/oxlint-plugin/rules/strict-effect-api-boundaries.js b/dist/esm/oxlint-plugin/rules/strict-effect-api-boundaries.js
 --- a/dist/esm/oxlint-plugin/rules/strict-effect-api-boundaries.js
 +++ b/dist/esm/oxlint-plugin/rules/strict-effect-api-boundaries.js
-@@ -23 +23 @@
+@@ -20,7 +20,7 @@
+                     });
+                     reportProgramPattern(context, node, source, /@modern-js\/plugin-bff\/(?:server|hono-server)(?![\w-])/u, 'UltraModern API workspaces must not import Hono server helpers; use @modern-js/bff-effect/effect-edge and HttpApi.');
+                     reportProgramPattern(context, node, source, /\bruntimeFramework\s*(?::|=)\s*['"]hono['"]/u, 'UltraModern API apps must use bff.runtimeFramework: "effect".');
 -                    reportProgramPattern(context, node, source, /(?:from|import)\s*['"][^'"]*(?:api\/effect|shared\/effect)[^'"]*['"]|shared-effect-api/u, 'Import API code from direct api/index.ts, shared/api.ts or src/api/* paths, not api/effect, shared/effect or shared Effect API packages.');
 +                    reportProgramPattern(context, node, source, /(?:from|import)\s*['"][^'"]*(?:api\/effect|shared\/effect)(?=\/|['"])[^'"]*['"]|shared-effect-api/u, 'Import API code from direct api/index.ts, shared/api.ts or src/api/* paths, not api/effect, shared/effect or shared Effect API packages.');
+                     reportProgramPattern(context, node, source, /\bstrictEffectApproach\s*(?::|=)\s*false\b/u, 'UltraModern API apps must keep strictEffectApproach enabled.');
+                     if (isApiEntryFile(filename)) {
+                         const violation = strictEffectRuntimeTopologyViolation(source, createEffectApiImportResolver(filename));
 diff --git a/dist/esm/strict-effect-runtime.js b/dist/esm/strict-effect-runtime.js
 --- a/dist/esm/strict-effect-runtime.js
 +++ b/dist/esm/strict-effect-runtime.js
-@@ -51 +51 @@
--        if (modules.size >= 64 || input.source.length > 1000000) throw invalidSource('API source budget exceeded');
-+        if (modules.size >= 256 || input.source.length > 1000000) throw invalidSource('API source budget exceeded');
+@@ -37,7 +37,7 @@
+     const load = (input)=>{
+         const existing = modules.get(input.id);
+         if (existing) return existing;
+-        if (modules.size >= 64 || input.source.length > 1000000) throw new SourceSyntaxError('API source budget exceeded');
++        if (modules.size >= 256 || input.source.length > 1000000) throw new SourceSyntaxError('API source budget exceeded');
+         const file = parseSource(input.source, input.id, 'Invalid API syntax');
+         const module = {
+             ...input,
 diff --git a/dist/cjs/microvertical-api-baseline.cjs b/dist/cjs/microvertical-api-baseline.cjs
 --- a/dist/cjs/microvertical-api-baseline.cjs
 +++ b/dist/cjs/microvertical-api-baseline.cjs
-@@ -165,8 +165,25 @@
+@@ -126,8 +126,25 @@
      }
  };
  const resolveRelativeModulePath = (fromPath, specifier)=>{
@@ -68,7 +104,7 @@ diff --git a/dist/cjs/microvertical-api-baseline.cjs b/dist/cjs/microvertical-ap
 diff --git a/dist/esm-node/microvertical-api-baseline.js b/dist/esm-node/microvertical-api-baseline.js
 --- a/dist/esm-node/microvertical-api-baseline.js
 +++ b/dist/esm-node/microvertical-api-baseline.js
-@@ -120,8 +120,25 @@
+@@ -83,8 +83,25 @@
      }
  };
  const resolveRelativeModulePath = (fromPath, specifier)=>{
@@ -99,7 +135,7 @@ diff --git a/dist/esm-node/microvertical-api-baseline.js b/dist/esm-node/microve
 diff --git a/dist/esm/microvertical-api-baseline.js b/dist/esm/microvertical-api-baseline.js
 --- a/dist/esm/microvertical-api-baseline.js
 +++ b/dist/esm/microvertical-api-baseline.js
-@@ -119,8 +119,25 @@
+@@ -82,8 +82,25 @@
      }
  };
  const resolveRelativeModulePath = (fromPath, specifier)=>{

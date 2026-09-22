@@ -1,8 +1,7 @@
 diff --git a/templates/workspace-scripts/proof-node-backend-federation.mjs b/templates/workspace-scripts/proof-node-backend-federation.mjs
-index 1e3f3d137ab0a836f38455414834ae7bbf32b381..00ed3c8c2452ded9d3a0e96dee510c825e42bdd3 100644
 --- a/templates/workspace-scripts/proof-node-backend-federation.mjs
 +++ b/templates/workspace-scripts/proof-node-backend-federation.mjs
-@@ -193,6 +193,7 @@ function compactApps(config, appFilter) {
+@@ -193,6 +193,7 @@
        port: app.port,
        portEnv: app.portEnv,
        remoteType: resolveRemoteType(app),
@@ -10,7 +9,7 @@ index 1e3f3d137ab0a836f38455414834ae7bbf32b381..00ed3c8c2452ded9d3a0e96dee510c82
        smokeChecks: collectJsonSmokeChecks(apps, app),
        compactDeliveryUnit:
          app.deliveryUnit && typeof app.deliveryUnit === 'object'
-@@ -440,7 +441,64 @@ function sha256(bytes) {
+@@ -440,7 +441,64 @@
    return createHash('sha256').update(bytes).digest('hex');
  }
  
@@ -76,7 +75,7 @@ index 1e3f3d137ab0a836f38455414834ae7bbf32b381..00ed3c8c2452ded9d3a0e96dee510c82
    const targetDirectory = path.join(workspaceRoot, app.directory, target);
    const envelopePath = path.join(targetDirectory, releaseEnvelopePath);
    assertFile(envelopePath, app.id, 'Node release envelope');
-@@ -1009,7 +1067,7 @@ async function proveBackend(app, backendRuntime, target) {
+@@ -1009,7 +1067,7 @@
    assertCompactStableIdentityMatchesBuild(app, buildIdentity);
    const manifest = readJson(manifestPath);
    validateManifest(app, manifest, buildIdentity);

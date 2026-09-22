@@ -1,7 +1,7 @@
 diff --git a/dist/cjs/release-envelope/plugin.js b/dist/cjs/release-envelope/plugin.js
 --- a/dist/cjs/release-envelope/plugin.js
 +++ b/dist/cjs/release-envelope/plugin.js
-@@ -75,7 +75,8 @@
+@@ -76,14 +76,16 @@
              api.onBeforeDeploy(async ()=>{
                  const configuredTarget = resolveActiveDeployTarget(api, resolveDeployTarget);
                  if ('node' !== configuredTarget) return;
@@ -11,7 +11,6 @@ diff --git a/dist/cjs/release-envelope/plugin.js b/dist/cjs/release-envelope/plu
 -                const { distDirectory } = api.getAppContext();
                  await (0, external_framework_output_js_namespaceObject.verifyBuildOutputReleaseEnvelope)(distDirectory, configuredTarget);
              });
-@@ -82,7 +83,8 @@
              api.onAfterDeploy(async ()=>{
                  const configuredTarget = resolveActiveDeployTarget(api, resolveDeployTarget);
                  if ('node' !== configuredTarget) return;
@@ -24,21 +23,45 @@ diff --git a/dist/cjs/release-envelope/plugin.js b/dist/cjs/release-envelope/plu
 diff --git a/dist/cjs/cloudflare/index.js b/dist/cjs/cloudflare/index.js
 --- a/dist/cjs/cloudflare/index.js
 +++ b/dist/cjs/cloudflare/index.js
-@@ -86 +86 @@
+@@ -83,7 +83,7 @@
+                 distDirectory,
+                 target: 'cloudflare'
+             });
 -            if (releaseEnvelopeEnabled) await (0, framework_output_js_namespaceObject.verifyBuildOutputReleaseEnvelope)(distDirectory, 'cloudflare');
 +            if (releaseEnvelopeEnabled && !apiOnly) await (0, framework_output_js_namespaceObject.verifyBuildOutputReleaseEnvelope)(distDirectory, 'cloudflare');
-@@ -123 +123 @@
+             await utils_namespaceObject.fs.copy(distDirectory, publicDirectory, {
+                 filter: (src)=>{
+                     const relativePath = external_node_path_default().relative(distDirectory, src).replace(/\\/gu, '/');
+@@ -120,7 +120,7 @@
+                 spaces: 2
+             });
+             await utils_namespaceObject.fs.writeJSON(outputPlan.paths.outputPackage, outputPlan.packages.output);
 -            hasReleaseEnvelope = releaseEnvelopeEnabled && Boolean(await (0, framework_output_js_namespaceObject.stageCloudflareReleaseEnvelope)({
 +            hasReleaseEnvelope = releaseEnvelopeEnabled && !apiOnly && Boolean(await (0, framework_output_js_namespaceObject.stageCloudflareReleaseEnvelope)({
+                 distDirectory,
+                 outputDirectory
+             }));
 diff --git a/dist/esm-node/cloudflare/index.mjs b/dist/esm-node/cloudflare/index.mjs
 --- a/dist/esm-node/cloudflare/index.mjs
 +++ b/dist/esm-node/cloudflare/index.mjs
-@@ -45 +45 @@
+@@ -42,7 +42,7 @@
+                 distDirectory,
+                 target: 'cloudflare'
+             });
 -            if (releaseEnvelopeEnabled) await verifyBuildOutputReleaseEnvelope(distDirectory, 'cloudflare');
 +            if (releaseEnvelopeEnabled && !apiOnly) await verifyBuildOutputReleaseEnvelope(distDirectory, 'cloudflare');
-@@ -82 +82 @@
+             await fs.copy(distDirectory, publicDirectory, {
+                 filter: (src)=>{
+                     const relativePath = node_path.relative(distDirectory, src).replace(/\\/gu, '/');
+@@ -79,7 +79,7 @@
+                 spaces: 2
+             });
+             await fs.writeJSON(outputPlan.paths.outputPackage, outputPlan.packages.output);
 -            hasReleaseEnvelope = releaseEnvelopeEnabled && Boolean(await stageCloudflareReleaseEnvelope({
 +            hasReleaseEnvelope = releaseEnvelopeEnabled && !apiOnly && Boolean(await stageCloudflareReleaseEnvelope({
+                 distDirectory,
+                 outputDirectory
+             }));
 diff --git a/dist/cjs/cloudflare-output-verifier/identity.js b/dist/cjs/cloudflare-output-verifier/identity.js
 --- a/dist/cjs/cloudflare-output-verifier/identity.js
 +++ b/dist/cjs/cloudflare-output-verifier/identity.js
@@ -64,18 +87,36 @@ diff --git a/dist/esm-node/cloudflare-output-verifier/identity.mjs b/dist/esm-no
 diff --git a/dist/cjs/cloudflare-output-contract.js b/dist/cjs/cloudflare-output-contract.js
 --- a/dist/cjs/cloudflare-output-contract.js
 +++ b/dist/cjs/cloudflare-output-contract.js
-@@ -55,0 +56 @@
+@@ -54,6 +54,7 @@
+     'fs/promises',
+     'http',
+     'http2',
 +    'https',
+     'inspector',
+     'module',
+     'net',
 diff --git a/dist/esm-node/cloudflare-output-contract.mjs b/dist/esm-node/cloudflare-output-contract.mjs
 --- a/dist/esm-node/cloudflare-output-contract.mjs
 +++ b/dist/esm-node/cloudflare-output-contract.mjs
-@@ -27,0 +28 @@
+@@ -26,6 +26,7 @@
+     'fs/promises',
+     'http',
+     'http2',
 +    'https',
+     'inspector',
+     'module',
+     'net',
 diff --git a/dist/esm/cloudflare-output-contract.mjs b/dist/esm/cloudflare-output-contract.mjs
 --- a/dist/esm/cloudflare-output-contract.mjs
 +++ b/dist/esm/cloudflare-output-contract.mjs
-@@ -26,0 +27 @@
+@@ -25,6 +25,7 @@
+     'fs/promises',
+     'http',
+     'http2',
 +    'https',
+     'inspector',
+     'module',
+     'net',
 diff --git a/dist/esm/cloudflare-output-verifier/identity.mjs b/dist/esm/cloudflare-output-verifier/identity.mjs
 --- a/dist/esm/cloudflare-output-verifier/identity.mjs
 +++ b/dist/esm/cloudflare-output-verifier/identity.mjs
@@ -90,16 +131,28 @@ diff --git a/dist/esm/cloudflare-output-verifier/identity.mjs b/dist/esm/cloudfl
 diff --git a/dist/esm/cloudflare/index.mjs b/dist/esm/cloudflare/index.mjs
 --- a/dist/esm/cloudflare/index.mjs
 +++ b/dist/esm/cloudflare/index.mjs
-@@ -44 +44 @@
+@@ -41,7 +41,7 @@
+                 distDirectory,
+                 target: 'cloudflare'
+             });
 -            if (releaseEnvelopeEnabled) await verifyBuildOutputReleaseEnvelope(distDirectory, 'cloudflare');
 +            if (releaseEnvelopeEnabled && !apiOnly) await verifyBuildOutputReleaseEnvelope(distDirectory, 'cloudflare');
-@@ -81 +81 @@
+             await fs.copy(distDirectory, publicDirectory, {
+                 filter: (src)=>{
+                     const relativePath = node_path.relative(distDirectory, src).replace(/\\/gu, '/');
+@@ -78,7 +78,7 @@
+                 spaces: 2
+             });
+             await fs.writeJSON(outputPlan.paths.outputPackage, outputPlan.packages.output);
 -            hasReleaseEnvelope = releaseEnvelopeEnabled && Boolean(await stageCloudflareReleaseEnvelope({
 +            hasReleaseEnvelope = releaseEnvelopeEnabled && !apiOnly && Boolean(await stageCloudflareReleaseEnvelope({
+                 distDirectory,
+                 outputDirectory
+             }));
 diff --git a/dist/esm-node/release-envelope/plugin.mjs b/dist/esm-node/release-envelope/plugin.mjs
 --- a/dist/esm-node/release-envelope/plugin.mjs
 +++ b/dist/esm-node/release-envelope/plugin.mjs
-@@ -34,7 +34,8 @@
+@@ -35,14 +35,16 @@
              api.onBeforeDeploy(async ()=>{
                  const configuredTarget = resolveActiveDeployTarget(api, resolveDeployTarget);
                  if ('node' !== configuredTarget) return;
@@ -109,7 +162,6 @@ diff --git a/dist/esm-node/release-envelope/plugin.mjs b/dist/esm-node/release-e
 -                const { distDirectory } = api.getAppContext();
                  await verifyBuildOutputReleaseEnvelope(distDirectory, configuredTarget);
              });
-@@ -41,7 +42,8 @@
              api.onAfterDeploy(async ()=>{
                  const configuredTarget = resolveActiveDeployTarget(api, resolveDeployTarget);
                  if ('node' !== configuredTarget) return;
@@ -122,7 +174,7 @@ diff --git a/dist/esm-node/release-envelope/plugin.mjs b/dist/esm-node/release-e
 diff --git a/dist/esm/release-envelope/plugin.mjs b/dist/esm/release-envelope/plugin.mjs
 --- a/dist/esm/release-envelope/plugin.mjs
 +++ b/dist/esm/release-envelope/plugin.mjs
-@@ -33,7 +33,8 @@
+@@ -34,14 +34,16 @@
              api.onBeforeDeploy(async ()=>{
                  const configuredTarget = resolveActiveDeployTarget(api, resolveDeployTarget);
                  if ('node' !== configuredTarget) return;
@@ -132,7 +184,6 @@ diff --git a/dist/esm/release-envelope/plugin.mjs b/dist/esm/release-envelope/pl
 -                const { distDirectory } = api.getAppContext();
                  await verifyBuildOutputReleaseEnvelope(distDirectory, configuredTarget);
              });
-@@ -40,7 +41,8 @@
              api.onAfterDeploy(async ()=>{
                  const configuredTarget = resolveActiveDeployTarget(api, resolveDeployTarget);
                  if ('node' !== configuredTarget) return;
