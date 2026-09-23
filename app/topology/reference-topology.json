@@ -5,6 +5,7 @@
   "preset": "presetUltramodern",
   "shell": {
     "id": "shell-super-app",
+    "path": "apps/shell-super-app",
     "kind": "shell",
     "package": "@app/shell-super-app",
     "verticalRefs": [
@@ -181,7 +182,6 @@
         }
       },
       "evidence": {
-        "proofScript": "scripts/proof-cloudflare-version.mts",
         "reportDefault": ".codex/reports/cloudflare-version-proof/public-url-proof.json"
       }
     },
@@ -395,7 +395,11 @@
           "global_fetch_strictly_public"
         ],
         "assetsBinding": "ASSETS",
+        "distributedSsrProofRoutes": [
+          "/en/contacts"
+        ],
         "routes": {
+          "ssr": "/en/contacts",
           "mfManifest": "/mf-manifest.json",
           "apiReadiness": "/party-registry-api/party-registry/readiness"
         },
@@ -509,7 +513,6 @@
           }
         },
         "evidence": {
-          "proofScript": "scripts/proof-cloudflare-version.mts",
           "reportDefault": ".codex/reports/cloudflare-version-proof/public-url-proof.json"
         },
         "jsonSmokeChecks": [
@@ -738,9 +741,6 @@
         ],
         "assetsBinding": "ASSETS",
         "routes": {
-          "ssr": "/en",
-          "mfManifest": "/mf-manifest.json",
-          "locale": "/locales/en/commerce-customer-context.json",
           "apiReadiness": "/commerce-customer-context-api/commerce-customer-context/readiness"
         },
         "security": {
@@ -853,7 +853,6 @@
           }
         },
         "evidence": {
-          "proofScript": "scripts/proof-cloudflare-version.mts",
           "reportDefault": ".codex/reports/cloudflare-version-proof/public-url-proof.json"
         },
         "jsonSmokeChecks": [
@@ -1082,9 +1081,6 @@
         ],
         "assetsBinding": "ASSETS",
         "routes": {
-          "ssr": "/en",
-          "mfManifest": "/mf-manifest.json",
-          "locale": "/locales/en/payment-term-catalog.json",
           "apiReadiness": "/payment-term-catalog-api/payment-term-catalog/readiness"
         },
         "security": {
@@ -1197,7 +1193,6 @@
           }
         },
         "evidence": {
-          "proofScript": "scripts/proof-cloudflare-version.mts",
           "reportDefault": ".codex/reports/cloudflare-version-proof/public-url-proof.json"
         },
         "jsonSmokeChecks": [
@@ -1528,7 +1523,6 @@
           }
         },
         "evidence": {
-          "proofScript": "scripts/proof-cloudflare-version.mts",
           "reportDefault": ".codex/reports/cloudflare-version-proof/public-url-proof.json"
         },
         "jsonSmokeChecks": [
@@ -1875,7 +1869,6 @@
           }
         },
         "evidence": {
-          "proofScript": "scripts/proof-cloudflare-version.mts",
           "reportDefault": ".codex/reports/cloudflare-version-proof/public-url-proof.json"
         },
         "jsonSmokeChecks": [
@@ -2216,7 +2209,6 @@
           }
         },
         "evidence": {
-          "proofScript": "scripts/proof-cloudflare-version.mts",
           "reportDefault": ".codex/reports/cloudflare-version-proof/public-url-proof.json"
         },
         "jsonSmokeChecks": [
@@ -2557,7 +2549,6 @@
           }
         },
         "evidence": {
-          "proofScript": "scripts/proof-cloudflare-version.mts",
           "reportDefault": ".codex/reports/cloudflare-version-proof/public-url-proof.json"
         },
         "jsonSmokeChecks": [
@@ -2968,7 +2959,6 @@
     }
   ],
   "validation": {
-    "script": "scripts/validate-ultramodern-workspace.mts",
     "commands": [
       "pnpm i18n:boundaries",
       "pnpm api:check",

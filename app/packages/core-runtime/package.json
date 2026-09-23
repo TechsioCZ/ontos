@@ -37,7 +37,7 @@
     "action:test:integration": "rstest --project integration tests/integration/action-",
     "outbox:test:unit": "rstest --project unit tests/unit/outbox-",
     "outbox:test:integration": "rstest --project integration tests/integration/outbox-",
-    "typecheck": "node ../../scripts/ultramodern-typecheck.mts --project tsconfig.json"
+    "typecheck": "ultramodern-create ultramodern typecheck --project tsconfig.json"
   },
   "dependencies": {
     "@authzed/authzed-node": "1.6.1",

@@ -6234,7 +6234,7 @@ it.live(
         'const resolvedApiHandlersLive = apiHandlersLive.pipe(',
         'const resolvedApiHandlersLive = unrelatedHandlers.pipe(',
       ],
-      ["'@app/shared-contracts/server/effect-bff-runtime'", "'./counterfeit-assembler.ts'"],
+      ["'@modern-js/bff-effect/assembly'", "'./counterfeit-assembler.ts'"],
       ['handlers: resolvedApiHandlersLive,', 'handlers: unrelatedHandlers,'],
     ] as const) {
       expect(handler.includes(before)).toBeTruthy();

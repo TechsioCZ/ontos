@@ -601,11 +601,8 @@ const requireRouteEntrypoint = (
   });
 
 const TopologyMetadataSchema = Schema.Struct({
-  topology: Schema.optionalKey(
-    Schema.Struct({
-      apps: Schema.optionalKey(Schema.Array(Schema.Struct({ id: Schema.String, path: Schema.String }))),
-    }),
-  ),
+  shell: Schema.Struct({ id: Schema.String }),
+  verticals: Schema.Array(Schema.Struct({ id: Schema.String, path: Schema.String })),
 });
 const decodeTopologyMetadata = Schema.decodeUnknownEffect(Schema.fromJsonString(TopologyMetadataSchema));
 
@@ -619,9 +616,12 @@ const readTopologyOwners = (root: string) =>
     const fileSystem = yield* FileSystem.FileSystem;
     const path = yield* Path.Path;
     const metadata = yield* fileSystem
-      .readFileString(path.join(root, '.modernjs/ultramodern.json'), 'utf-8')
+      .readFileString(path.join(root, 'topology/reference-topology.json'), 'utf-8')
       .pipe(Effect.flatMap(decodeTopologyMetadata));
-    return new Map((metadata.topology?.apps ?? []).map((app) => [app.path.replaceAll('\\', '/'), app.id]));
+    return new Map([
+      [`apps/${metadata.shell.id}`, metadata.shell.id],
+      ...metadata.verticals.map((app) => [app.path.replaceAll('\\', '/'), app.id] as const),
+    ]);
   });
 
 const readSourceRevision = (root: string) =>

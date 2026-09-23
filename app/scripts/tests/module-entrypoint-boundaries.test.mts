@@ -443,15 +443,13 @@ const makeFixture = Effect.fn(function* mergedScenario1(
   yield* initialize(root);
   yield* write(
     root,
-    '.modernjs/ultramodern.json',
+    'topology/reference-topology.json',
     JSON.stringify({
-      topology: {
-        apps: [
-          { id: 'shell-super-app', path: 'apps/shell-super-app' },
-          { id: 'inventory-stock', path: INVENTORY_VERTICAL_PATH },
-          ...(includeParty === true ? [{ id: PARTY_DEPLOYMENT_ID, path: 'verticals/party-registry' }] : []),
-        ],
-      },
+      shell: { id: 'shell-super-app' },
+      verticals: [
+        { id: 'inventory-stock', path: INVENTORY_VERTICAL_PATH },
+        ...(includeParty === true ? [{ id: PARTY_DEPLOYMENT_ID, path: 'verticals/party-registry' }] : []),
+      ],
     }),
   );
   yield* write(root, `${INVENTORY_VERTICAL_PATH}/package.json`, JSON.stringify({ name: '@app/inventory-stock' }));
@@ -786,7 +784,7 @@ export const api = HttpApi.make('InventoryApi')
   yield* write(
     root,
     `${vertical}/api/index.ts`,
-    `import { assembleEffectBffRuntime } from '@app/shared-contracts/server/effect-bff-runtime';
+    `import { assembleEffectBffRuntime } from '@modern-js/bff-effect/assembly';
 // <generated-governed-http-handler-imports>
 import { stockListReadApiLive } from './stock-list-read-server.ts';
 // </generated-governed-http-handler-imports>
@@ -2006,14 +2004,10 @@ export const stockLevelsRead = defineRead({ accessKind: 'report', entrypoint: st
     );
     yield* write(
       root,
-      '.modernjs/ultramodern.json',
+      'topology/reference-topology.json',
       JSON.stringify({
-        topology: {
-          apps: [
-            { id: 'shell-super-app', path: 'apps/shell-super-app' },
-            { id: INVENTORY_RUNTIME_ID, path: INVENTORY_VERTICAL_PATH },
-          ],
-        },
+        shell: { id: 'shell-super-app' },
+        verticals: [{ id: INVENTORY_RUNTIME_ID, path: INVENTORY_VERTICAL_PATH }],
       }),
     );
     const routeMetadataPath = 'verticals/inventory-stock/src/routes/orders/route.meta.ts';

@@ -11,7 +11,7 @@
   },
   "scripts": {
     "test:unit": "rstest --project unit",
-    "typecheck": "node ../../scripts/ultramodern-typecheck.mts --project tsconfig.json"
+    "typecheck": "ultramodern-create ultramodern typecheck --project tsconfig.json"
   },
   "dependencies": {
     "@app/shared-contracts": "workspace:*",
@@ -24,7 +24,9 @@
   },
   "ontosContractOwner": {
     "appId": "pricing",
-    "moduleApis": ["current-supported-currencies"],
+    "moduleApis": [
+      "current-supported-currencies"
+    ],
     "moduleId": "commerce.pricing",
     "packageName": "@app/pricing"
   }
