@@ -156,7 +156,8 @@ const resolveMigrationCatalogPriceGroup = Effect.fn(
   }
   if (
     !samePriceGroupRef(catalogOutcome.priceGroupRef, payload.targetPriceGroupRef) ||
-    catalogOutcome.compatibility.contractId !== CUSTOMER_PRICE_GROUP_COMPATIBILITY_CONTRACT
+    catalogOutcome.compatibility.requiredContract.contractId !== CUSTOMER_PRICE_GROUP_COMPATIBILITY_CONTRACT ||
+    catalogOutcome.compatibility.requiredContract.version !== 1
   ) {
     return yield* new CustomerPriceGroupCatalogRejected({
       code: 'customer_price_group_catalog_rejected',

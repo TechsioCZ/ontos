@@ -14,6 +14,9 @@
       "path": "packages/payment-term-catalog-contracts"
     },
     {
+      "path": "packages/price-group-catalog-contracts"
+    },
+    {
       "path": "packages/shared-contracts"
     },
     {
@@ -30,6 +33,9 @@
     },
     {
       "path": "verticals/payment-term-catalog"
+    },
+    {
+      "path": "verticals/price-group-catalog"
     },
     {
       "path": "packages/email-delivery"

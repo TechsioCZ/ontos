@@ -70,12 +70,54 @@ export type BusinessAccessTarget =
       legalEntityId: string;
       storefrontId: string;
       tenantId: string;
+    }>
+  | Readonly<{
+      kind: 'pricing_catalog';
+      pricingCatalogId: string;
+      tenantId: string;
+    }>
+  | Readonly<{
+      kind: 'price_group';
+      priceGroupId: string;
+      pricingCatalogId: string;
+      tenantId: string;
     }>;
+
+const canonicalPricingAuthorizationResourceId = Schema.String.check(Schema.isUUID());
+
+/** Stable Pricing authorization identity. Business codes and display values are never valid targets. */
+export const PricingAuthorizationResourceIdSchema = canonicalPricingAuthorizationResourceId.pipe(
+  Schema.brand('PricingAuthorizationResourceId'),
+  Schema.decodeTo(canonicalPricingAuthorizationResourceId),
+);
 
 export interface BusinessPermissionAccessTarget {
   readonly permission: BusinessPermissionCode;
   readonly target: BusinessAccessTarget;
 }
+
+export const hasCanonicalPricingAuthorizationTargetIds = (target: BusinessAccessTarget): boolean =>
+  target.kind !== 'pricing_catalog' && target.kind !== 'price_group'
+    ? true
+    : Schema.is(PricingAuthorizationResourceIdSchema)(target.pricingCatalogId) &&
+      (target.kind !== 'price_group' || Schema.is(PricingAuthorizationResourceIdSchema)(target.priceGroupId));
+
+/** Keeps every business Permission family on its declared authorization target vocabulary. */
+export const isBusinessPermissionTargetCompatible = ({
+  permission,
+  target,
+}: BusinessPermissionAccessTarget): boolean => {
+  if (permission.startsWith('pricing.price_group.')) {
+    return target.kind === 'pricing_catalog' || target.kind === 'price_group';
+  }
+  if (permission.startsWith('retail.')) {
+    return target.kind === 'retail_profile';
+  }
+  return (
+    permission.startsWith('counterparty.') &&
+    (target.kind === 'counterparty' || target.kind === 'counterparty_storefront')
+  );
+};
 
 export interface ContextAccessService {
   readonly businessPermissions?: (input: {
@@ -184,15 +226,24 @@ const businessTargetParts = (target: BusinessAccessTarget): readonly string[] =>
   if (target.kind === 'retail_profile') {
     return [target.tenantId, target.legalEntityId, target.kind, target.profileId];
   }
-  return target.kind === 'counterparty'
-    ? [target.tenantId, target.legalEntityId, target.kind, target.counterpartyId]
-    : [target.tenantId, target.legalEntityId, target.kind, target.counterpartyId, target.storefrontId];
+  if (target.kind === 'counterparty') {
+    return [target.tenantId, target.legalEntityId, target.kind, target.counterpartyId];
+  }
+  if (target.kind === 'counterparty_storefront') {
+    return [target.tenantId, target.legalEntityId, target.kind, target.counterpartyId, target.storefrontId];
+  }
+  return target.kind === 'pricing_catalog'
+    ? [target.tenantId, target.kind, target.pricingCatalogId]
+    : [target.tenantId, target.kind, target.pricingCatalogId, target.priceGroupId];
 };
 
 export const toBusinessPermissionAccessObjectId = (
   permission: BusinessPermissionCode,
   target: BusinessAccessTarget,
-): string | undefined => encodeObjectId([permission, ...businessTargetParts(target)]);
+): string | undefined =>
+  isBusinessPermissionTargetCompatible({ permission, target }) && hasCanonicalPricingAuthorizationTargetIds(target)
+    ? encodeObjectId([permission, ...businessTargetParts(target)])
+    : undefined;
 
 export const toBusinessPermissionAccessKey = ({ permission, target }: BusinessPermissionAccessTarget): string =>
   [permission, ...businessTargetParts(target)].join(':');
@@ -329,11 +380,13 @@ export const makeContextAccess = (client: SpiceDbPermissionClient): ContextAcces
     businessPermissions: ({ principal, targets, trustedStorefrontId }) => {
       const alternatives = targets.map((target) => {
         const hasTrustedTenant = target.target.tenantId === principal.tenantId;
+        const hasCompatibleTarget =
+          isBusinessPermissionTargetCompatible(target) && hasCanonicalPricingAuthorizationTargetIds(target.target);
         const hasTrustedStorefront =
           target.target.kind !== 'counterparty_storefront' ||
           (trustedStorefrontId !== undefined && trustedStorefrontId === target.target.storefrontId);
         const requestedKey = toBusinessPermissionAccessKey(target);
-        if (!hasTrustedTenant || !hasTrustedStorefront) {
+        if (!hasTrustedTenant || !hasCompatibleTarget || !hasTrustedStorefront) {
           const noItems: readonly BatchItem[] = [];
           return { items: noItems, requestedKey };
         }

@@ -7,7 +7,7 @@ import {
   defineRead,
   defineTenantModuleEntrypoint,
 } from '@app/core-runtime';
-import type { ReadHandlerContext } from '@app/core-runtime';
+import type { OperationalScope, ReadHandlerContext } from '@app/core-runtime';
 import { DateTime, Effect, Schema } from 'effect';
 import {
   CustomerPriceGroupResolutionRequestSchema,
@@ -23,14 +23,13 @@ import type {
   CustomerPriceGroupProfileValidationPort,
   PriceGroupCatalogPort,
 } from '../../shared/domain/price-group-ports.ts';
-import {
-  resolveCustomerPriceGroupAt,
-  unavailablePriceGroupCatalogPort,
-} from '../../shared/domain/price-group-resolution.ts';
+import { resolveCustomerPriceGroupAt } from '../../shared/domain/price-group-resolution.ts';
+import { priceGroupCatalogPortFromEnvironment } from '../integrations/price-group-catalog.ts';
 import {
   customerPriceGroupAssignmentStoreForTransaction,
   customerPriceGroupProfileValidationForTransaction,
 } from '../persistence/price-group-persistence.ts';
+import type { PriceGroupRoutineInvoker } from '../persistence/price-group-persistence.ts';
 import { validateCustomerPriceGroupReadProfile } from './customer-price-group-assignment-read.read.ts';
 import { customerPriceGroupReadPermission } from './customer-price-group-read-permission.ts';
 
@@ -91,6 +90,33 @@ const customerPriceGroupResolutionEntrypoint = defineTenantModuleEntrypoint({
   role: 'api',
 });
 
+export const customerPriceGroupResolutionServicesForTransaction = (
+  transaction: PriceGroupRoutineInvoker,
+  scope: OperationalScope,
+): Effect.Effect<CustomerPriceGroupResolutionServices, OperationContextUnavailable> => {
+  const { legalEntityId } = scope;
+  if (legalEntityId === undefined) {
+    return Effect.fail(
+      new OperationContextUnavailable({
+        code: 'operation_context_unavailable',
+        reason: 'Customer PriceGroup resolution requires a trusted Legal Entity scope',
+      }),
+    );
+  }
+  const trustedScope = { ...scope, legalEntityId };
+  return Effect.gen(function* makeCustomerPriceGroupResolutionServices() {
+    const catalog = yield* priceGroupCatalogPortFromEnvironment({
+      requestCorrelation: scope.correlationId,
+    });
+    return {
+      catalog,
+      now: DateTime.now.pipe(Effect.map(DateTime.formatIso)),
+      profileValidation: customerPriceGroupProfileValidationForTransaction(transaction, trustedScope),
+      store: customerPriceGroupAssignmentStoreForTransaction(transaction, trustedScope),
+    };
+  });
+};
+
 export const customerPriceGroupResolutionRead = defineRead(
   {
     accessKind: 'detail',
@@ -123,22 +149,6 @@ export const customerPriceGroupResolutionRead = defineRead(
         result,
       })),
     ),
-  (transaction, scope) => {
-    if (scope.legalEntityId === undefined) {
-      return Effect.fail(
-        new OperationContextUnavailable({
-          code: 'operation_context_unavailable',
-          reason: 'Customer PriceGroup resolution requires a trusted Legal Entity scope',
-        }),
-      );
-    }
-    const trustedScope = { ...scope, legalEntityId: scope.legalEntityId };
-    return Effect.succeed({
-      catalog: unavailablePriceGroupCatalogPort,
-      now: DateTime.now.pipe(Effect.map(DateTime.formatIso)),
-      profileValidation: customerPriceGroupProfileValidationForTransaction(transaction, trustedScope),
-      store: customerPriceGroupAssignmentStoreForTransaction(transaction, trustedScope),
-    });
-  },
+  customerPriceGroupResolutionServicesForTransaction,
   customerPriceGroupReadPermission,
 );

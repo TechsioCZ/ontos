@@ -2,6 +2,7 @@ import { Effect } from 'effect';
 import type { AuthorizationMutationJournalEntry, AuthorizationMutationState } from './authorization-mutation.ts';
 import { canTransitionAuthorizationMutation } from './authorization-mutation.ts';
 import { AuthorizationMutationSagaError } from './authorization-mutation-saga-error.ts';
+import { hasCanonicalPricingAuthorizationTargetIds, isBusinessPermissionTargetCompatible } from './context-access.ts';
 import type {
   BusinessPermissionRelationshipMutationInput,
   BusinessPermissionRelationshipMutationService,
@@ -60,32 +61,67 @@ const sameBusinessTarget = (
   left: AuthorizationMutationJournalEntry['businessTarget'],
   right: AuthorizationMutationJournalEntry['businessTarget'],
 ): boolean => {
-  if (left.kind !== right.kind || left.tenantId !== right.tenantId || left.legalEntityId !== right.legalEntityId) {
+  if (left.kind !== right.kind || left.tenantId !== right.tenantId) {
     return false;
   }
   if (left.kind === 'counterparty') {
-    return right.kind === 'counterparty' && left.counterpartyId === right.counterpartyId;
+    return (
+      right.kind === 'counterparty' &&
+      left.legalEntityId === right.legalEntityId &&
+      left.counterpartyId === right.counterpartyId
+    );
   }
   if (left.kind === 'counterparty_storefront') {
     return (
       right.kind === 'counterparty_storefront' &&
+      left.legalEntityId === right.legalEntityId &&
       left.counterpartyId === right.counterpartyId &&
       left.storefrontId === right.storefrontId
     );
   }
-  return right.kind === 'retail_profile' && left.profileId === right.profileId;
+  if (left.kind === 'retail_profile') {
+    return (
+      right.kind === 'retail_profile' &&
+      left.legalEntityId === right.legalEntityId &&
+      left.profileId === right.profileId
+    );
+  }
+  if (left.kind === 'pricing_catalog') {
+    return right.kind === 'pricing_catalog' && left.pricingCatalogId === right.pricingCatalogId;
+  }
+  return (
+    right.kind === 'price_group' &&
+    left.pricingCatalogId === right.pricingCatalogId &&
+    left.priceGroupId === right.priceGroupId
+  );
 };
 
-const validIntentScope = (entry: AuthorizationMutationJournalEntry): boolean =>
-  entry.mutationId.length > 0 &&
-  entry.principal.principalId.length > 0 &&
-  entry.principal.tenantId === entry.businessTarget.tenantId &&
-  entry.businessTarget.tenantId.length > 0 &&
-  entry.businessTarget.legalEntityId.length > 0 &&
-  (entry.businessTarget.kind === 'retail_profile'
-    ? entry.businessTarget.profileId.length > 0
-    : entry.businessTarget.counterpartyId.length > 0 &&
-      (entry.businessTarget.kind === 'counterparty' || entry.businessTarget.storefrontId.length > 0));
+const validIntentScope = (entry: AuthorizationMutationJournalEntry): boolean => {
+  const target = entry.businessTarget;
+  if (
+    entry.mutationId.length === 0 ||
+    entry.principal.principalId.length === 0 ||
+    entry.principal.tenantId !== target.tenantId ||
+    target.tenantId.length === 0 ||
+    !isBusinessPermissionTargetCompatible({ permission: entry.permission, target }) ||
+    !hasCanonicalPricingAuthorizationTargetIds(target)
+  ) {
+    return false;
+  }
+  if (target.kind === 'pricing_catalog') {
+    return true;
+  }
+  if (target.kind === 'price_group') {
+    return true;
+  }
+  if (target.legalEntityId.length === 0) {
+    return false;
+  }
+  if (target.kind === 'retail_profile') {
+    return target.profileId.length > 0;
+  }
+  return target.counterpartyId.length > 0 && (target.kind === 'counterparty' || target.storefrontId.length > 0);
+};
 
 const validReconciliableState = (entry: AuthorizationMutationJournalEntry): boolean => {
   const terminal = desiredState(entry.operation);

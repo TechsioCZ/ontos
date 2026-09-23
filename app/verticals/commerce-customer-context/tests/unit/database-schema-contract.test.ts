@@ -99,6 +99,29 @@ it('models independently revised, half-open temporal customer facts', () => {
   }
 });
 
+it('stores canonical Price Group compatibility evidence without rewriting legacy assignments', () => {
+  const config = getTableConfig(customerPriceGroupAssignments);
+  for (const column of [
+    'catalog_revision',
+    'compatibility_contract_id',
+    'compatibility_contract_revision',
+    'definition_revision',
+  ]) {
+    expect(config.columns.find(({ name }) => name === column)?.notNull, column).toBe(true);
+  }
+  for (const column of [
+    'definition_revision_id',
+    'meaning_fingerprint',
+    'definition_effective_from',
+    'definition_effective_to',
+    'compatibility_trusted_at',
+    'compatibility_verified_at',
+  ]) {
+    expect(config.columns.find(({ name }) => name === column)?.notNull, column).toBe(false);
+  }
+  expect(config.checks.some(({ name }) => name === 'ccc_price_assignments_canonical_evidence_ck')).toBe(true);
+});
+
 it('persists each required mutable Customer Group description on its immutable revision', () => {
   const config = getTableConfig(customerGroupRevisions);
   expect(config.columns.some(({ name, notNull }) => name === 'description' && notNull)).toBe(true);

@@ -163,6 +163,47 @@ it.effect('returns unavailable when owner reconciliation is required', () =>
   }),
 );
 
+it.effect('rejects Pricing business targets before entering Counterparty persistence', () =>
+  Effect.gen(function* rejectsPricingTargets() {
+    const calls: string[] = [];
+    const transaction = transactionWith((routineKey) => {
+      calls.push(routineKey);
+      return [];
+    });
+    const overlay = makeCommerceCustomerContextOwnerAuthorizationOverlay(readerFactory);
+    const decision = yield* overlay.authorize(transaction, {
+      operation: 'read',
+      operationKey: 'pricing.price-group.read',
+      owningModuleKey: 'commerce.customer-context',
+      scope,
+      targets: [
+        {
+          kind: 'business_permission',
+          permission: 'pricing.price_group.read',
+          target: {
+            kind: 'pricing_catalog',
+            pricingCatalogId: 'catalog-one',
+            tenantId,
+          },
+        },
+        {
+          kind: 'business_permission',
+          permission: 'pricing.price_group.read',
+          target: {
+            kind: 'price_group',
+            priceGroupId: 'price-group-one',
+            pricingCatalogId: 'catalog-one',
+            tenantId,
+          },
+        },
+      ],
+    });
+
+    expect(decision).toBe('unavailable');
+    expect(calls).toEqual([]);
+  }),
+);
+
 it.effect('fences a grant reauthorization against a concurrent revoke', () =>
   Effect.gen(function* revokeBeforeGrantReauthorization() {
     const lockStarted = yield* Deferred.make<null>();

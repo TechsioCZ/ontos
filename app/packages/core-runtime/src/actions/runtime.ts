@@ -18,7 +18,12 @@ import type { ModuleStateGateService } from '../modules/module-state-gate.ts';
 import { ModuleStateGate } from '../modules/module-state-gate.ts';
 import type { OperationalScope, OperationalScopeResolverService } from '../operations/context.ts';
 import { OperationalScopeResolver } from '../operations/context.ts';
-import { ContextAccess, toBusinessPermissionAccessKey } from '../permissions/context-access.ts';
+import {
+  ContextAccess,
+  PricingAuthorizationResourceIdSchema,
+  isBusinessPermissionTargetCompatible,
+  toBusinessPermissionAccessKey,
+} from '../permissions/context-access.ts';
 import { BusinessPermissionCodeSchema } from '../permissions/business-permission.ts';
 import { ActionAuthorizationPreflight } from '../permissions/action-authorization-preflight.ts';
 import type { ActionAuthorizationPreflightService } from '../permissions/action-authorization-preflight.ts';
@@ -399,7 +404,6 @@ const BusinessStorefrontIdSchema = Schema.String.check(Schema.isMinLength(1), Sc
   Schema.brand('BusinessStorefrontId'),
   Schema.decodeTo(Schema.String),
 );
-
 const BusinessAccessTargetSchema = Schema.Union([
   Schema.Struct({
     kind: Schema.Literal('retail_profile'),
@@ -420,6 +424,17 @@ const BusinessAccessTargetSchema = Schema.Union([
     storefrontId: BusinessStorefrontIdSchema,
     tenantId: BusinessTenantIdSchema,
   }),
+  Schema.Struct({
+    kind: Schema.Literal('pricing_catalog'),
+    pricingCatalogId: PricingAuthorizationResourceIdSchema,
+    tenantId: BusinessTenantIdSchema,
+  }),
+  Schema.Struct({
+    kind: Schema.Literal('price_group'),
+    priceGroupId: PricingAuthorizationResourceIdSchema,
+    pricingCatalogId: PricingAuthorizationResourceIdSchema,
+    tenantId: BusinessTenantIdSchema,
+  }),
 ]);
 const ActionBusinessPermissionTargetSchema = Schema.Struct({
   permission: BusinessPermissionCodeSchema,
@@ -431,7 +446,15 @@ const businessTargetResourceId = (target: ActionBusinessPermissionTarget['target
   if (target.kind === 'retail_profile') {
     return target.profileId;
   }
-  return target.kind === 'counterparty' ? target.counterpartyId : `${target.counterpartyId}:${target.storefrontId}`;
+  if (target.kind === 'counterparty') {
+    return target.counterpartyId;
+  }
+  if (target.kind === 'counterparty_storefront') {
+    return `${target.counterpartyId}:${target.storefrontId}`;
+  }
+  return target.kind === 'pricing_catalog'
+    ? target.pricingCatalogId
+    : `${target.pricingCatalogId}:${target.priceGroupId}`;
 };
 
 const resolveActionBusinessPermissionTarget = <Payload>(
@@ -456,13 +479,28 @@ const resolveActionBusinessPermissionTarget = <Payload>(
     }).pipe(
       Effect.flatMap(Schema.decodeUnknownEffect(ActionBusinessPermissionTargetSchema)),
       Effect.filterOrFail(
-        (resolved) =>
-          resolved.target.tenantId === scope.tenantId &&
-          resolved.target.legalEntityId === scope.legalEntityId &&
-          (resolved.target.kind === 'counterparty_storefront'
-            ? scope.trustedStorefrontId === resolved.target.storefrontId &&
-              resolved.trustedStorefrontId === scope.trustedStorefrontId
-            : resolved.trustedStorefrontId === undefined),
+        (resolved) => {
+          if (!isBusinessPermissionTargetCompatible(resolved)) {
+            return false;
+          }
+          if (resolved.target.tenantId !== scope.tenantId) {
+            return false;
+          }
+          if (resolved.target.kind === 'pricing_catalog' || resolved.target.kind === 'price_group') {
+            return (
+              scope.legalEntityId === undefined &&
+              scope.trustedStorefrontId === undefined &&
+              resolved.trustedStorefrontId === undefined
+            );
+          }
+          return (
+            resolved.target.legalEntityId === scope.legalEntityId &&
+            (resolved.target.kind === 'counterparty_storefront'
+              ? scope.trustedStorefrontId === resolved.target.storefrontId &&
+                resolved.trustedStorefrontId === scope.trustedStorefrontId
+              : resolved.trustedStorefrontId === undefined)
+          );
+        },
         () =>
           new ActionPermissionCheckError({
             code: 'action_permission_check_failed',

@@ -17,6 +17,8 @@ import { OperationalScopeResolver } from '../operations/context.ts';
 import {
   ContextAccess,
   LEGAL_ENTITY_PERMISSION_KEYS,
+  hasCanonicalPricingAuthorizationTargetIds,
+  isBusinessPermissionTargetCompatible,
   toBusinessPermissionAccessKey,
   toContextPermissionAccessKey,
 } from '../permissions/context-access.ts';
@@ -114,9 +116,22 @@ const businessPermissionTargetIsValid = (
   scope?: OperationalScope,
 ): boolean => {
   const business = target.businessPermission.target;
+  if (
+    !stableTargetKey(target.businessPermission.permission) ||
+    !stableTargetKey(business.tenantId) ||
+    !isBusinessPermissionTargetCompatible(target.businessPermission) ||
+    !hasCanonicalPricingAuthorizationTargetIds(business)
+  ) {
+    return false;
+  }
+  if (business.kind === 'pricing_catalog' || business.kind === 'price_group') {
+    return (
+      scope?.legalEntityId === undefined &&
+      scope?.trustedStorefrontId === undefined &&
+      target.trustedStorefrontId === undefined
+    );
+  }
   return (
-    stableTargetKey(target.businessPermission.permission) &&
-    stableTargetKey(business.tenantId) &&
     stableTargetKey(business.legalEntityId) &&
     (business.kind !== 'counterparty_storefront' ||
       (stableTargetKey(business.storefrontId) &&
@@ -301,7 +316,15 @@ const readBusinessTargetResourceId = (
   if (target.kind === 'retail_profile') {
     return target.profileId;
   }
-  return target.kind === 'counterparty' ? target.counterpartyId : `${target.counterpartyId}:${target.storefrontId}`;
+  if (target.kind === 'counterparty') {
+    return target.counterpartyId;
+  }
+  if (target.kind === 'counterparty_storefront') {
+    return `${target.counterpartyId}:${target.storefrontId}`;
+  }
+  return target.kind === 'pricing_catalog'
+    ? target.pricingCatalogId
+    : `${target.pricingCatalogId}:${target.priceGroupId}`;
 };
 
 const targetMetadata = (target: ResolvedReadPermissionTarget) => {
@@ -344,12 +367,20 @@ const checkBusinessPermissionTarget = <AccessValue extends (typeof ContextAccess
   target: Extract<AtomicResolvedReadPermissionTarget, { readonly kind: 'business_permission' }>,
 ): Effect.Effect<PermissionDecision> => {
   const business = target.businessPermission.target;
+  const tenantOnlyPricingTarget = business.kind === 'pricing_catalog' || business.kind === 'price_group';
+  if (business.tenantId !== scope.tenantId) {
+    return Effect.succeed('unavailable');
+  }
   if (
-    business.tenantId !== scope.tenantId ||
-    business.legalEntityId !== scope.legalEntityId ||
-    (business.kind === 'counterparty_storefront'
-      ? scope.trustedStorefrontId !== business.storefrontId || target.trustedStorefrontId !== scope.trustedStorefrontId
-      : target.trustedStorefrontId !== undefined)
+    tenantOnlyPricingTarget
+      ? scope.legalEntityId !== undefined ||
+        scope.trustedStorefrontId !== undefined ||
+        target.trustedStorefrontId !== undefined
+      : business.legalEntityId !== scope.legalEntityId ||
+        (business.kind === 'counterparty_storefront'
+          ? scope.trustedStorefrontId !== business.storefrontId ||
+            target.trustedStorefrontId !== scope.trustedStorefrontId
+          : target.trustedStorefrontId !== undefined)
   ) {
     return Effect.succeed('unavailable');
   }

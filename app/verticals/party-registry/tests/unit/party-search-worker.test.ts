@@ -49,6 +49,7 @@ for (const targetField of ['partyId', 'counterpartyId'] as const) {
         consumerModuleKey: 'party.registry',
         entrypoint,
         leaseDurationMs: 30_000,
+        legalEntityScope: 'required',
         payloadSchema,
         producerModuleKey: 'party.registry',
         retryPolicy: {

@@ -78,19 +78,51 @@ export const CounterpartyPriceGroupProfileTargetSchema = Schema.Struct({
   ...CounterpartyPurchasingProfileRefSchema.fields,
 });
 
-const PriceGroupCompatibilityIdentitySchema = Schema.Struct({
+const PriceGroupMeaningFingerprintSchema = Schema.String.check(Schema.isPattern(/^[0-9a-f]{64}$/u));
+
+export const PriceGroupCompatibilityEvidenceSchema = Schema.Struct({
   catalogRevision: PriceGroupRevisionSchema,
-  contractId: BoundedIdentifierSchema,
-  contractRevision: PriceGroupRevisionSchema,
-  definitionRevision: PriceGroupRevisionSchema,
-});
-export type PriceGroupCompatibilityIdentity = typeof PriceGroupCompatibilityIdentitySchema.Type;
+  definitionEffectivePeriod: Schema.Struct({
+    effectiveFrom: PriceGroupInstantJsonSchema,
+    effectiveTo: Schema.NullOr(PriceGroupInstantJsonSchema),
+  }).check(
+    Schema.makeFilter((period) =>
+      period.effectiveTo === null || period.effectiveFrom < period.effectiveTo
+        ? undefined
+        : 'Price Group effective period must be a non-empty half-open interval',
+    ),
+  ),
+  definitionRevisionId: Schema.String.check(Schema.isUUID()),
+  definitionRevisionNumber: PriceGroupRevisionSchema,
+  meaningFingerprint: PriceGroupMeaningFingerprintSchema,
+  priceGroupRef: PriceGroupRefSchema,
+  requiredContract: Schema.Struct({
+    contractId: BoundedIdentifierSchema,
+    version: PriceGroupRevisionSchema,
+  }),
+  trustedOperationAt: PriceGroupInstantJsonSchema,
+  verifiedAt: PriceGroupInstantJsonSchema,
+}).check(
+  Schema.makeFilter((evidence) => {
+    const insideDefinitionPeriod =
+      evidence.definitionEffectivePeriod.effectiveFrom <= evidence.trustedOperationAt &&
+      (evidence.definitionEffectivePeriod.effectiveTo === null ||
+        evidence.trustedOperationAt < evidence.definitionEffectivePeriod.effectiveTo);
+    if (!insideDefinitionPeriod) {
+      return 'Compatibility Evidence must bind an operation time inside the exact definition period';
+    }
+    return evidence.trustedOperationAt <= evidence.verifiedAt
+      ? undefined
+      : 'Compatibility Evidence cannot be verified before its trusted operation time';
+  }),
+);
+export type PriceGroupCompatibilityEvidence = typeof PriceGroupCompatibilityEvidenceSchema.Type;
 
 const CustomerPriceGroupAssignmentStateSchema = Schema.Literals(['ACTIVE', 'CANCELLED']);
 
 export const CustomerPriceGroupAssignmentSchema = Schema.Struct({
   assignmentRef: CustomerPriceGroupAssignmentRefSchema,
-  compatibility: PriceGroupCompatibilityIdentitySchema,
+  compatibility: Schema.optionalKey(PriceGroupCompatibilityEvidenceSchema),
   effectiveFrom: PriceGroupInstantJsonSchema,
   effectiveTo: Schema.NullOr(PriceGroupInstantJsonSchema),
   priceGroupRef: PriceGroupRefSchema,
@@ -100,19 +132,32 @@ export const CustomerPriceGroupAssignmentSchema = Schema.Struct({
   revision: PriceGroupRevisionSchema,
   state: CustomerPriceGroupAssignmentStateSchema,
 }).check(
-  Schema.makeFilter((assignment) =>
-    assignment.state === 'CANCELLED' ||
-    assignment.effectiveTo === null ||
-    assignment.effectiveTo > assignment.effectiveFrom
-      ? undefined
-      : [{ issue: 'effectiveTo must be later than effectiveFrom', path: ['effectiveTo'] }],
-  ),
+  Schema.makeFilter((assignment) => {
+    const invalidAssignmentPeriod =
+      assignment.state !== 'CANCELLED' &&
+      assignment.effectiveTo !== null &&
+      assignment.effectiveTo <= assignment.effectiveFrom;
+    const evidenceRefMismatch =
+      assignment.compatibility !== undefined &&
+      (assignment.compatibility.priceGroupRef.moduleId !== assignment.priceGroupRef.moduleId ||
+        assignment.compatibility.priceGroupRef.resourceType !== assignment.priceGroupRef.resourceType ||
+        assignment.compatibility.priceGroupRef.resourceId !== assignment.priceGroupRef.resourceId ||
+        assignment.compatibility.priceGroupRef.tenantId !== assignment.priceGroupRef.tenantId);
+    const issues: { readonly issue: string; readonly path: readonly string[] }[] = [];
+    if (invalidAssignmentPeriod) {
+      issues.push({ issue: 'effectiveTo must be later than effectiveFrom', path: ['effectiveTo'] });
+    }
+    if (evidenceRefMismatch) {
+      issues.push({ issue: 'Compatibility Evidence must reference the assigned Price Group', path: ['compatibility'] });
+    }
+    return issues.length === 0 ? undefined : issues;
+  }),
 );
 export type CustomerPriceGroupAssignment = typeof CustomerPriceGroupAssignmentSchema.Type;
 
 const PriceGroupCatalogOutcomeSchema = Schema.Union([
   Schema.TaggedStruct('USABLE', {
-    compatibility: PriceGroupCompatibilityIdentitySchema,
+    compatibility: PriceGroupCompatibilityEvidenceSchema,
     priceGroupRef: PriceGroupRefSchema,
   }),
   Schema.TaggedStruct('MISSING', {}),
@@ -121,17 +166,13 @@ const PriceGroupCatalogOutcomeSchema = Schema.Union([
     catalogRevision: PriceGroupRevisionSchema,
     contractId: BoundedIdentifierSchema,
   }),
-  Schema.TaggedStruct('UNUSABLE', {
-    catalogRevision: PriceGroupRevisionSchema,
-    reasonCode: BoundedIdentifierSchema,
-  }),
 ]);
 export type PriceGroupCatalogOutcome = typeof PriceGroupCatalogOutcomeSchema.Type;
 
 const AssignedResolutionSchema = Schema.TaggedStruct('ASSIGNED', {
   assignmentRef: CustomerPriceGroupAssignmentRefSchema,
   assignmentRevision: PriceGroupRevisionSchema,
-  compatibility: PriceGroupCompatibilityIdentitySchema,
+  compatibility: PriceGroupCompatibilityEvidenceSchema,
   effectiveFrom: PriceGroupInstantJsonSchema,
   effectiveTo: Schema.NullOr(PriceGroupInstantJsonSchema),
   priceGroupRef: PriceGroupRefSchema,
@@ -142,7 +183,7 @@ const BrokenResolutionSchema = Schema.TaggedStruct('BROKEN', {
   assignmentRevision: PriceGroupRevisionSchema,
   catalogRevision: Schema.NullOr(PriceGroupRevisionSchema),
   priceGroupRef: PriceGroupRefSchema,
-  reason: Schema.Literals(['MISSING', 'RETIRED', 'INCOMPATIBLE', 'UNUSABLE']),
+  reason: Schema.Literals(['MISSING', 'RETIRED', 'INCOMPATIBLE']),
 });
 const InconsistentResolutionSchema = Schema.TaggedStruct('INCONSISTENT', {
   currentAssignmentCount: Schema.Finite.check(Schema.isInt(), Schema.isGreaterThanOrEqualTo(2)),

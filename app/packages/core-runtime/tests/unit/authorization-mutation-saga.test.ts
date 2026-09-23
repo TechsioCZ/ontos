@@ -13,6 +13,9 @@ const permission = Schema.decodeSync(BusinessPermissionCodeSchema)('counterparty
 const tenantId = '20000000-0000-4000-8000-000000000001';
 const legalEntityId = '30000000-0000-4000-8000-000000000001';
 const principalId = '40000000-0000-4000-8000-000000000001';
+const pricingCatalogId = '50000000-0000-4000-8000-000000000001';
+const priceGroupId = '60000000-0000-4000-8000-000000000001';
+const otherPriceGroupId = '60000000-0000-4000-8000-000000000002';
 
 const intent = (
   operation: 'grant' | 'revoke' = 'grant',
@@ -209,6 +212,7 @@ it.effect('rejects a finalizer response for another tuple without claiming succe
 
 it.effect('applies the exact retail profile target without inventing storefront scope', () =>
   Effect.gen(function* reconcileRetailProfile() {
+    const retailPermission = yield* Schema.decodeEffect(BusinessPermissionCodeSchema)('retail.profile.read');
     const retailIntent: AuthorizationMutationJournalEntry = {
       ...intent(),
       businessTarget: {
@@ -217,6 +221,7 @@ it.effect('applies the exact retail profile target without inventing storefront 
         profileId: 'retail-profile-one',
         tenantId,
       },
+      permission: retailPermission,
     };
     const writes: unknown[] = [];
     const result = yield* reconcileCommittedAuthorizationMutation(
@@ -239,10 +244,113 @@ it.effect('applies the exact retail profile target without inventing storefront 
     expect(writes).toEqual([
       {
         operation: 'grant',
-        permission,
+        permission: retailPermission,
         principal: { principalId, tenantId },
         target: retailIntent.businessTarget,
       },
     ]);
+  }),
+);
+
+it.effect('reconciles the exact tenant-only Price Group target and rejects a different final target', () =>
+  Effect.gen(function* reconcilePriceGroup() {
+    const pricingPermission = yield* Schema.decodeEffect(BusinessPermissionCodeSchema)('pricing.price_group.read');
+    const pricingIntent: AuthorizationMutationJournalEntry = {
+      ...intent(),
+      businessTarget: {
+        kind: 'price_group',
+        priceGroupId,
+        pricingCatalogId,
+        tenantId,
+      },
+      permission: pricingPermission,
+    };
+    const writes: unknown[] = [];
+    const result = yield* reconcileCommittedAuthorizationMutation(
+      pricingIntent,
+      {
+        mutate: (input) =>
+          Effect.sync(() => {
+            writes.push(input);
+          }),
+      },
+      {
+        finalize: () => Effect.succeed({ ...pricingIntent, state: 'ACTIVE' }),
+      },
+    );
+    expect(result.outcome).toBe('FINALIZED');
+    expect(writes).toEqual([
+      {
+        operation: 'grant',
+        permission: pricingPermission,
+        principal: { principalId, tenantId },
+        target: pricingIntent.businessTarget,
+      },
+    ]);
+
+    const mismatch = yield* Effect.flip(
+      reconcileCommittedAuthorizationMutation(
+        pricingIntent,
+        { mutate: () => Effect.void },
+        {
+          finalize: () =>
+            Effect.succeed({
+              ...pricingIntent,
+              businessTarget: { ...pricingIntent.businessTarget, priceGroupId: otherPriceGroupId },
+              state: 'ACTIVE',
+            }),
+        },
+      ),
+    );
+    expect(mismatch.code).toBe('authorization_mutation_final_state_invalid');
+  }),
+);
+
+it.effect('rejects incompatible or noncanonical Pricing intents before relationship mutation and finalization', () =>
+  Effect.gen(function* rejectInvalidPricingIntents() {
+    const pricingPermission = yield* Schema.decodeEffect(BusinessPermissionCodeSchema)('pricing.price_group.read');
+    const pricingIntent: AuthorizationMutationJournalEntry = {
+      ...intent(),
+      businessTarget: { kind: 'price_group', priceGroupId, pricingCatalogId, tenantId },
+      permission: pricingPermission,
+    };
+    const invalidIntents: readonly AuthorizationMutationJournalEntry[] = [
+      { ...intent(), permission: pricingPermission },
+      { ...pricingIntent, permission },
+      {
+        ...pricingIntent,
+        businessTarget: { kind: 'price_group', priceGroupId: 'DEALER', pricingCatalogId, tenantId },
+      },
+      {
+        ...pricingIntent,
+        businessTarget: { kind: 'pricing_catalog', pricingCatalogId: 'DEALER', tenantId },
+      },
+    ];
+    let mutations = 0;
+    let finalizations = 0;
+
+    const failures = yield* Effect.forEach((invalidIntent: AuthorizationMutationJournalEntry) =>
+      Effect.flip(
+        reconcileCommittedAuthorizationMutation(
+          invalidIntent,
+          {
+            mutate: () =>
+              Effect.sync(() => {
+                mutations += 1;
+              }),
+          },
+          {
+            finalize: () =>
+              Effect.sync(() => {
+                finalizations += 1;
+                return { ...invalidIntent, state: 'ACTIVE' };
+              }),
+          },
+        ),
+      ),
+    )(invalidIntents);
+    expect(failures.every((failure) => failure.code === 'authorization_mutation_intent_invalid')).toBe(true);
+    expect(mutations).toBe(0);
+    expect(finalizations).toBe(0);
   }),
 );

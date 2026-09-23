@@ -54,8 +54,23 @@ const contextAccessProgram = Effect.gen(function* contextAccessIntegration() {
   const configuration = yield* loadSpiceDbConfig();
   const crypto = yield* Crypto.Crypto;
   const fileSystem = yield* FileSystem.FileSystem;
-  const [tenantId, otherTenantId, legalEntityId, otherLegalEntityId, principalId, resourceId] = yield* Effect.all(
+  const [
+    tenantId,
+    otherTenantId,
+    legalEntityId,
+    otherLegalEntityId,
+    principalId,
+    resourceId,
+    pricingCatalogId,
+    priceGroupId,
+    otherPriceGroupId,
+    crossTenantPriceGroupId,
+  ] = yield* Effect.all(
     [
+      crypto.randomUUIDv4,
+      crypto.randomUUIDv4,
+      crypto.randomUUIDv4,
+      crypto.randomUUIDv4,
       crypto.randomUUIDv4,
       crypto.randomUUIDv4,
       crypto.randomUUIDv4,
@@ -82,6 +97,39 @@ const contextAccessProgram = Effect.gen(function* contextAccessIntegration() {
     },
   };
   const businessPermissionObjectId = toBusinessPermissionAccessObjectId(businessPermission, businessTarget.target);
+  const pricingPermission = yield* Schema.decodeEffect(BusinessPermissionCodeSchema)('pricing.price_group.read');
+  const pricingCatalogTarget = {
+    permission: pricingPermission,
+    target: {
+      kind: 'pricing_catalog' as const,
+      pricingCatalogId,
+      tenantId,
+    },
+  };
+  const priceGroupTarget = {
+    permission: pricingPermission,
+    target: {
+      kind: 'price_group' as const,
+      priceGroupId,
+      pricingCatalogId,
+      tenantId,
+    },
+  };
+  const crossTenantPriceGroupTarget = {
+    permission: pricingPermission,
+    target: {
+      kind: 'price_group' as const,
+      priceGroupId: crossTenantPriceGroupId,
+      pricingCatalogId,
+      tenantId: otherTenantId,
+    },
+  };
+  const pricingCatalogObjectId = toBusinessPermissionAccessObjectId(pricingPermission, pricingCatalogTarget.target);
+  const priceGroupObjectId = toBusinessPermissionAccessObjectId(pricingPermission, priceGroupTarget.target);
+  const crossTenantPriceGroupObjectId = toBusinessPermissionAccessObjectId(
+    pricingPermission,
+    crossTenantPriceGroupTarget.target,
+  );
   const contextPermissionTarget = {
     moduleId: 'commerce.customer-context',
     permission: 'customer.group.history.read',
@@ -92,6 +140,9 @@ const contextAccessProgram = Effect.gen(function* contextAccessIntegration() {
     moduleObjectId === undefined ||
     resourceObjectId === undefined ||
     businessPermissionObjectId === undefined ||
+    pricingCatalogObjectId === undefined ||
+    priceGroupObjectId === undefined ||
+    crossTenantPriceGroupObjectId === undefined ||
     contextPermissionObjectId === undefined
   ) {
     throw new Error('Expected valid SpiceDB object identifiers');
@@ -136,6 +187,24 @@ const contextAccessProgram = Effect.gen(function* contextAccessIntegration() {
     relationship('resource', resourceObjectId, 'reader', 'principal', principalId),
     relationship('business_permission', businessPermissionObjectId, 'legal_entity', 'legal_entity', legalObjectId),
     relationship('business_permission', businessPermissionObjectId, 'grantee', 'principal', principalId),
+    relationship('business_permission', pricingCatalogObjectId, 'tenant', 'tenant', tenantId),
+    relationship('business_permission', pricingCatalogObjectId, 'grantee', 'principal', principalId),
+    relationship('business_permission', priceGroupObjectId, 'tenant', 'tenant', tenantId),
+    relationship(
+      'business_permission',
+      priceGroupObjectId,
+      'containing_catalog',
+      'business_permission',
+      pricingCatalogObjectId,
+    ),
+    relationship('business_permission', crossTenantPriceGroupObjectId, 'tenant', 'tenant', otherTenantId),
+    relationship(
+      'business_permission',
+      crossTenantPriceGroupObjectId,
+      'containing_catalog',
+      'business_permission',
+      pricingCatalogObjectId,
+    ),
     relationship('context_permission', contextPermissionObjectId, 'tenant', 'tenant', tenantId),
     relationship('context_permission', contextPermissionObjectId, 'grantee', 'principal', principalId),
   ];
@@ -224,6 +293,34 @@ const contextAccessProgram = Effect.gen(function* contextAccessIntegration() {
           trustedStorefrontId: 'storefront-live',
         }),
       ).toEqual([{ decision: 'allowed', key: toBusinessPermissionAccessKey(businessTarget) }]);
+      expect(
+        yield* checkBusinessPermissions({
+          principal: { principalId, tenantId },
+          targets: [pricingCatalogTarget],
+        }),
+      ).toEqual([{ decision: 'allowed', key: toBusinessPermissionAccessKey(pricingCatalogTarget) }]);
+      expect(
+        yield* checkBusinessPermissions({
+          principal: { principalId, tenantId },
+          targets: [priceGroupTarget],
+        }),
+      ).toEqual([{ decision: 'allowed', key: toBusinessPermissionAccessKey(priceGroupTarget) }]);
+      const wrongPriceGroupTarget = {
+        ...priceGroupTarget,
+        target: { ...priceGroupTarget.target, priceGroupId: otherPriceGroupId },
+      };
+      expect(
+        yield* checkBusinessPermissions({
+          principal: { principalId, tenantId },
+          targets: [wrongPriceGroupTarget],
+        }),
+      ).toEqual([{ decision: 'denied', key: toBusinessPermissionAccessKey(wrongPriceGroupTarget) }]);
+      expect(
+        yield* checkBusinessPermissions({
+          principal: { principalId, tenantId: otherTenantId },
+          targets: [crossTenantPriceGroupTarget],
+        }),
+      ).toEqual([{ decision: 'denied', key: toBusinessPermissionAccessKey(crossTenantPriceGroupTarget) }]);
       const checkContextPermissions = access.contextPermissions;
       if (checkContextPermissions === undefined) {
         throw new Error('Expected context permission access');
@@ -251,6 +348,9 @@ const contextAccessProgram = Effect.gen(function* contextAccessIntegration() {
       Effect.forEach(
         [
           ['context_permission', contextPermissionObjectId],
+          ['business_permission', crossTenantPriceGroupObjectId],
+          ['business_permission', priceGroupObjectId],
+          ['business_permission', pricingCatalogObjectId],
           ['business_permission', businessPermissionObjectId],
           ['resource', resourceObjectId],
           ['module_access', moduleObjectId],

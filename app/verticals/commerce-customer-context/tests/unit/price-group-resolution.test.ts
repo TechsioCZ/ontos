@@ -55,9 +55,20 @@ const counterpartyProfile = {
 } as const;
 const compatibility = {
   catalogRevision: 7,
-  contractId: CUSTOMER_PRICE_GROUP_COMPATIBILITY_CONTRACT,
-  contractRevision: 1,
-  definitionRevision: 4,
+  definitionEffectivePeriod: {
+    effectiveFrom: '2026-01-01T00:00:00.000Z',
+    effectiveTo: null,
+  },
+  definitionRevisionId: '44444444-4444-4444-8444-444444444444',
+  definitionRevisionNumber: 4,
+  meaningFingerprint: 'a'.repeat(64),
+  priceGroupRef,
+  requiredContract: {
+    contractId: CUSTOMER_PRICE_GROUP_COMPATIBILITY_CONTRACT,
+    version: 1,
+  },
+  trustedOperationAt: '2026-03-01T00:00:00.000Z',
+  verifiedAt: '2026-03-01T00:00:01.000Z',
 } as const;
 
 const assignment = (
@@ -195,7 +206,7 @@ it.effect('resolves from the dedicated current-at lookup instead of capped histo
   }),
 );
 
-it.effect('reports every unusable catalog state as BROKEN instead of falling back', () =>
+it.effect('reports every precise catalog rejection as BROKEN instead of falling back', () =>
   Effect.gen(function* brokenResolution() {
     const missing = yield* resolveCustomerPriceGroupAt(
       profile,
@@ -212,6 +223,14 @@ it.effect('reports every unusable catalog state as BROKEN instead of falling bac
       catalog({ _tag: 'RETIRED', catalogRevision: 8 }),
     );
     expect(retired).toMatchObject({ _tag: 'BROKEN', catalogRevision: 8, reason: 'RETIRED' });
+
+    const incompatible = yield* resolveCustomerPriceGroupAt(
+      profile,
+      [assignment('incompatible')],
+      '2026-03-01T00:00:00.000Z',
+      catalog({ _tag: 'INCOMPATIBLE', catalogRevision: 9, contractId: 'pricing.other-contract.v1' }),
+    );
+    expect(incompatible).toMatchObject({ _tag: 'BROKEN', catalogRevision: 9, reason: 'INCOMPATIBLE' });
   }),
 );
 

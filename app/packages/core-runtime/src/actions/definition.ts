@@ -121,7 +121,7 @@ export const defineActionResourcePermission = <Payload>(
   });
 };
 
-/** Declares one exact profile/counterparty permission resolved before policy or handler code. */
+/** Declares one exact business permission resolved before policy or handler code. */
 export const defineActionBusinessPermission = <Payload>(
   resolver: ActionBusinessPermissionTargetResolver<Payload>,
 ): ActionBusinessPermissionDeclaration<Payload> => {

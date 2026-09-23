@@ -85,11 +85,13 @@ const prepare = (
   return {
     granteeId: input.principal.principalId,
     resourceId,
-    scopeRelationship: {
-      relation: 'tenant',
-      subjectId: input.tenantId,
-      subjectType: 'tenant',
-    },
+    scopeRelationships: [
+      {
+        relation: 'tenant',
+        subjectId: input.tenantId,
+        subjectType: 'tenant',
+      },
+    ],
   };
 };
 

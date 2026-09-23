@@ -4074,6 +4074,7 @@ export const ordersCreatedLoggerWorker = defineOutboxWorker(
       role: 'worker',
     }),
     leaseDurationMs: 30_000,
+    legalEntityScope: 'required',
     payloadSchema: OutboxPayloadSchema,
     producerModuleKey: outboxProducerModuleKey,
     retryPolicy: {

@@ -2,7 +2,8 @@
   "ontosModuleManifests": {
     "party-registry": "http://localhost:4102/.well-known/ontos-module-manifest.json",
     "commerce-customer-context": "http://localhost:4101/.well-known/ontos-module-manifest.json",
-    "payment-term-catalog": "http://localhost:4103/.well-known/ontos-module-manifest.json"
+    "payment-term-catalog": "http://localhost:4103/.well-known/ontos-module-manifest.json",
+    "price-group-catalog": "http://localhost:4104/.well-known/ontos-module-manifest.json"
   },
   "schemaVersion": 1,
   "environment": "development",
@@ -11,7 +12,8 @@
     "shell-super-app": 3020,
     "party-registry": 4102,
     "commerce-customer-context": 4101,
-    "payment-term-catalog": 4103
+    "payment-term-catalog": 4103,
+    "price-group-catalog": 4104
   },
   "manifests": {
     "party-registry": "http://localhost:4102/mf-manifest.json"
@@ -88,7 +90,7 @@
           "assetsBinding": "ASSETS"
         },
         "zephyr": {
-          "runtime": "ssr-worker",
+          "runtime": "api-worker",
           "integration": "managed-cloudflare",
           "snapshotIdEnv": "ZEPHYR_COMMERCE_CUSTOMER_CONTEXT_SNAPSHOT_ID",
           "versionIdEnv": "ZEPHYR_COMMERCE_CUSTOMER_CONTEXT_VERSION_ID",
@@ -101,6 +103,11 @@
           "dispatchNamespaceEnv": "VERTICAL_COMMERCE_CUSTOMER_CONTEXT_DISPATCH_NAMESPACE",
           "dispatchWorkerNameEnv": "VERTICAL_COMMERCE_CUSTOMER_CONTEXT_WORKER_NAME",
           "requestInterface": "fetch"
+        },
+        "api": {
+          "workerEntry": ".output/server/index.mjs",
+          "workerManifest": ".output/server/modern-worker-manifest.json",
+          "effectBffBundle": ".output/worker/__modern_bff_effect.js"
         }
       },
       "node": {
@@ -112,7 +119,7 @@
         "containerEntry": "http://localhost:4101/backendRemoteEntry.cjs",
         "remoteType": "commonjs-module",
         "expose": "./effect-api",
-        "runtimePackage": "@modern-js/plugin-bff/effect",
+        "runtimePackage": "@modern-js/plugin-bff-extensions/backend-federation-manifest/node",
         "expected": {
           "unitId": "app/commerce-customer-context",
           "buildMarker": "2b4d72d8d032dd53"
@@ -139,7 +146,7 @@
           "assetsBinding": "ASSETS"
         },
         "zephyr": {
-          "runtime": "ssr-worker",
+          "runtime": "api-worker",
           "integration": "managed-cloudflare",
           "snapshotIdEnv": "ZEPHYR_PAYMENT_TERM_CATALOG_SNAPSHOT_ID",
           "versionIdEnv": "ZEPHYR_PAYMENT_TERM_CATALOG_VERSION_ID",
@@ -152,6 +159,11 @@
           "dispatchNamespaceEnv": "VERTICAL_PAYMENT_TERM_CATALOG_DISPATCH_NAMESPACE",
           "dispatchWorkerNameEnv": "VERTICAL_PAYMENT_TERM_CATALOG_WORKER_NAME",
           "requestInterface": "fetch"
+        },
+        "api": {
+          "workerEntry": ".output/server/index.mjs",
+          "workerManifest": ".output/server/modern-worker-manifest.json",
+          "effectBffBundle": ".output/worker/__modern_bff_effect.js"
         }
       },
       "node": {
@@ -163,10 +175,58 @@
         "containerEntry": "http://localhost:4103/backendRemoteEntry.cjs",
         "remoteType": "commonjs-module",
         "expose": "./effect-api",
-        "runtimePackage": "@modern-js/plugin-bff/effect",
+        "runtimePackage": "@modern-js/plugin-bff-extensions/backend-federation-manifest/node",
         "expected": {
           "unitId": "app/payment-term-catalog",
           "buildMarker": "3812f892cf5544cf"
+        }
+      }
+    },
+    "price-group-catalog": {
+      "apiBaseUrl": "http://localhost:4104/price-group-catalog-api",
+      "versionBoundary": "web-and-api-same-build",
+      "deliveryUnit": {
+        "unitId": "app/price-group-catalog",
+        "buildMarker": "af022b7822b7562c"
+      },
+      "cloudflare": {
+        "kind": "cloudflare-worker-snapshot",
+        "workerName": "app-price-group-catalog",
+        "publicUrlEnv": "ULTRAMODERN_PUBLIC_URL_PRICE_GROUP_CATALOG",
+        "api": {
+          "workerEntry": ".output/server/index.mjs",
+          "workerManifest": ".output/server/modern-worker-manifest.json",
+          "effectBffBundle": ".output/worker/__modern_bff_effect.js"
+        },
+        "zephyr": {
+          "runtime": "api-worker",
+          "integration": "managed-cloudflare",
+          "snapshotIdEnv": "ZEPHYR_PRICE_GROUP_CATALOG_SNAPSHOT_ID",
+          "versionIdEnv": "ZEPHYR_PRICE_GROUP_CATALOG_VERSION_ID",
+          "applicationUidEnv": "ZEPHYR_PRICE_GROUP_CATALOG_APPLICATION_UID"
+        },
+        "workerDispatch": {
+          "preferred": "service-binding",
+          "serviceBinding": "VERTICAL_PRICE_GROUP_CATALOG_WORKER",
+          "serviceBindingEnv": "VERTICAL_PRICE_GROUP_CATALOG_WORKER_BINDING",
+          "dispatchNamespaceEnv": "VERTICAL_PRICE_GROUP_CATALOG_DISPATCH_NAMESPACE",
+          "dispatchWorkerNameEnv": "VERTICAL_PRICE_GROUP_CATALOG_WORKER_NAME",
+          "requestInterface": "fetch"
+        }
+      },
+      "node": {
+        "kind": "node-mf-runtime",
+        "adapterVersion": "backend-mf-effect-v1",
+        "remoteName": "verticalPriceGroupCatalogBackend",
+        "manifestEnv": "VERTICAL_PRICE_GROUP_CATALOG_BACKEND_MF_MANIFEST",
+        "manifestUrl": "http://localhost:4104/backend-mf-manifest.json",
+        "containerEntry": "http://localhost:4104/backendRemoteEntry.cjs",
+        "remoteType": "commonjs-module",
+        "expose": "./effect-api",
+        "runtimePackage": "@modern-js/plugin-bff-extensions/backend-federation-manifest/node",
+        "expected": {
+          "unitId": "app/price-group-catalog",
+          "buildMarker": "af022b7822b7562c"
         }
       }
     }
@@ -174,6 +234,7 @@
   "apis": {
     "party-registry": "http://localhost:4102/party-registry-api",
     "commerce-customer-context": "http://localhost:4101/commerce-customer-context-api",
-    "payment-term-catalog": "http://localhost:4103/payment-term-catalog-api"
+    "payment-term-catalog": "http://localhost:4103/payment-term-catalog-api",
+    "price-group-catalog": "http://localhost:4104/price-group-catalog-api"
   }
 }

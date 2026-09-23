@@ -575,6 +575,7 @@ it.live('changing a topology identity changes the plan without editing planner s
 
 const promotionFixture = (): AuthorizationPromotionGateInput => {
   const inventory = {
+    businessPermissions: [],
     entries: [
       {
         authorization: { kind: 'public' as const },
@@ -585,7 +586,7 @@ const promotionFixture = (): AuthorizationPromotionGateInput => {
       },
     ],
     inventoryHash: 'a'.repeat(64),
-    schemaVersion: 1 as const,
+    schemaVersion: 2 as const,
     sourceRevision: 'revision',
   };
   const impact = {

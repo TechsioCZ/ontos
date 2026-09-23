@@ -1215,11 +1215,17 @@ export const customerPriceGroupAssignments = commerceCustomerContextSchema.table
     catalogRevision: integer('catalog_revision').notNull(),
     compatibilityContractId: text('compatibility_contract_id').notNull(),
     compatibilityContractRevision: integer('compatibility_contract_revision').notNull(),
+    compatibilityTrustedAt: timestamp('compatibility_trusted_at', { withTimezone: true }),
+    compatibilityVerifiedAt: timestamp('compatibility_verified_at', { withTimezone: true }),
     customerProfileId: uuid('customer_profile_id').notNull(),
+    definitionEffectiveFrom: timestamp('definition_effective_from', { withTimezone: true }),
+    definitionEffectiveTo: timestamp('definition_effective_to', { withTimezone: true }),
     definitionRevision: integer('definition_revision').notNull(),
+    definitionRevisionId: uuid('definition_revision_id'),
     effectiveFrom: effectiveFrom(),
     effectiveTo: effectiveTo(),
     lifecycle: text('lifecycle').default('ACTIVE').notNull(),
+    meaningFingerprint: text('meaning_fingerprint'),
     priceGroupModuleId: text('price_group_module_id').notNull(),
     priceGroupResourceId: text('price_group_resource_id').notNull(),
     priceGroupResourceType: text('price_group_resource_type').notNull(),
@@ -1240,6 +1246,27 @@ export const customerPriceGroupAssignments = commerceCustomerContextSchema.table
     positiveRevision('ccc_price_assignments_catalog_revision_ck', table.catalogRevision),
     positiveRevision('ccc_price_assignments_contract_revision_ck', table.compatibilityContractRevision),
     positiveRevision('ccc_price_assignments_definition_revision_ck', table.definitionRevision),
+    check(
+      'ccc_price_assignments_canonical_evidence_ck',
+      sql`(
+        ${table.definitionRevisionId} is null
+        and ${table.definitionEffectiveFrom} is null
+        and ${table.definitionEffectiveTo} is null
+        and ${table.meaningFingerprint} is null
+        and ${table.compatibilityTrustedAt} is null
+        and ${table.compatibilityVerifiedAt} is null
+      ) or (
+        ${table.definitionRevisionId} is not null
+        and ${table.definitionEffectiveFrom} is not null
+        and (${table.definitionEffectiveTo} is null or ${table.definitionEffectiveTo} > ${table.definitionEffectiveFrom})
+        and ${table.meaningFingerprint} ~ '^[0-9a-f]{64}$'
+        and ${table.compatibilityTrustedAt} is not null
+        and ${table.compatibilityTrustedAt} >= ${table.definitionEffectiveFrom}
+        and (${table.definitionEffectiveTo} is null or ${table.compatibilityTrustedAt} < ${table.definitionEffectiveTo})
+        and ${table.compatibilityVerifiedAt} is not null
+        and ${table.compatibilityVerifiedAt} >= ${table.compatibilityTrustedAt}
+      )`,
+    ),
     halfOpenPeriod('ccc_price_assignments_period_ck', table),
     check(
       'ccc_price_assignments_lifecycle_ck',

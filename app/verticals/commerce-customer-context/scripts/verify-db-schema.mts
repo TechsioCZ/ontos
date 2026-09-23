@@ -41,6 +41,7 @@ const EXPECTED_RUNTIME_ROUTINES = [
   'authorize_portal_enrollment_account_creation',
   'begin_access_grant',
   'begin_access_revoke',
+  'bind_price_group_assignment_compatibility_evidence',
   'change_address_default',
   'change_purchase_limit_policy',
   'claim_portal_enrollment_sweep',
@@ -87,6 +88,7 @@ const EXPECTED_RUNTIME_ROUTINES = [
   'read_guest_attribution',
   'read_portal_enrollment_attempt',
   'read_portal_enrollment_owner_operation',
+  'read_price_group_assignment_compatibility_evidence',
   'read_price_group_assignments',
   'read_profile_reconciliation',
   'read_profile_trading_gate',
@@ -380,6 +382,8 @@ const verify = Effect.gen(function* verifyCommerceCustomerContextSchema() {
               `forcedRls=${row.forced_rls_count}/${COMMERCE_CUSTOMER_CONTEXT_TABLES.length}, ` +
               `policies=${row.policy_count}/${COMMERCE_CUSTOMER_CONTEXT_TABLES.length * 5 + 2}, ` +
               `rawRuntimePrivileges=${row.raw_runtime_privilege_count}, exclusions=${row.exclusion_count}/6, ` +
+              `groupDescriptionColumn=${row.group_description_column_count}/1, ` +
+              `groupDescriptionConstraint=${row.group_description_constraint_count}/1, ` +
               `appendOnlyTriggers=${row.append_only_trigger_count}/10, ` +
               `triggers=${row.trigger_count}/${EXPECTED_TRIGGER_NAMES.length}, ` +
               `missingTriggers=[${missingTriggers.join(',')}], unexpectedTriggers=[${unexpectedTriggers.join(',')}], ` +

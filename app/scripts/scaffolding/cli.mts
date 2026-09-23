@@ -657,15 +657,15 @@ Options:
   permission: defineCommand({
     flags: ['permission', 'scope', 'vertical'],
     generator: permissionGenerator,
-    help: `Usage: pnpm scaffold:permission -- --vertical <vertical> --permission <retail.*|counterparty.*> --scope <retail_profile|counterparty|counterparty_storefront>
+    help: `Usage: pnpm scaffold:permission -- --vertical <vertical> --permission <retail.*|counterparty.*|pricing.price_group.*> --scope <retail_profile|counterparty|counterparty_storefront|pricing_catalog|price_group>
 
 Generate one versioned, fail-closed business Permission declaration and register it in the module manifest.
 Generated Permissions start non-delegable and with no authority-group or protected-entrypoint membership.
 
 Required flags:
   --vertical <vertical>  Existing generated vertical folder (lower-kebab-case)
-  --permission <code>    Stable lowercase retail.* or counterparty.* Permission code
-  --scope <scope>        Exact business target scope
+  --permission <code>    Stable lowercase retail.*, counterparty.*, or pricing.price_group.* Permission code
+  --scope <scope>        Exact compatible business target scope
 
 Options:
   --help                 Show this help without writing
@@ -674,8 +674,16 @@ Options:
     toConfig: (flags) =>
       Effect.gen(function* permissionConfigEffect() {
         const { scope } = flags;
-        if (scope !== 'retail_profile' && scope !== 'counterparty' && scope !== 'counterparty_storefront') {
-          return yield* failScaffolding('--scope must be retail_profile, counterparty, or counterparty_storefront');
+        if (
+          scope !== 'retail_profile' &&
+          scope !== 'counterparty' &&
+          scope !== 'counterparty_storefront' &&
+          scope !== 'pricing_catalog' &&
+          scope !== 'price_group'
+        ) {
+          return yield* failScaffolding(
+            '--scope must be retail_profile, counterparty, counterparty_storefront, pricing_catalog, or price_group',
+          );
         }
         return {
           permission: flags.permission ?? '',

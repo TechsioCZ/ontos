@@ -1,0 +1,44 @@
+{
+  "deliveryUnit": {
+    "appId": "price-group-catalog",
+    "buildMarker": "af022b7822b7562c",
+    "deployProfile": "cloudflare-ssr-mf-effect-v1",
+    "kind": "microvertical-delivery-unit",
+    "packageName": "@app/price-group-catalog",
+    "schemaVersion": 1,
+    "sourceRevision": "workspace",
+    "unitId": "app/price-group-catalog",
+    "version": "0.1.0",
+    "build": "af022b7822b7562c"
+  },
+  "kind": "ultramodern-build-artifact",
+  "schemaVersion": 1,
+  "surfaces": {
+    "api": {
+      "appId": "price-group-catalog",
+      "buildMarker": "af022b7822b7562c",
+      "deployProfile": "cloudflare-ssr-mf-effect-v1",
+      "kind": "microvertical-delivery-unit",
+      "packageName": "@app/price-group-catalog",
+      "schemaVersion": 1,
+      "sourceRevision": "workspace",
+      "unitId": "app/price-group-catalog",
+      "version": "0.1.0",
+      "build": "af022b7822b7562c",
+      "surface": "api"
+    },
+    "ui": {
+      "appId": "price-group-catalog",
+      "buildMarker": "af022b7822b7562c",
+      "deployProfile": "cloudflare-ssr-mf-effect-v1",
+      "kind": "microvertical-delivery-unit",
+      "packageName": "@app/price-group-catalog",
+      "schemaVersion": 1,
+      "sourceRevision": "workspace",
+      "unitId": "app/price-group-catalog",
+      "version": "0.1.0",
+      "build": "af022b7822b7562c",
+      "surface": "ui"
+    }
+  }
+}

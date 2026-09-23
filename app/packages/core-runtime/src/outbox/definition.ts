@@ -5,7 +5,6 @@ import type { TenantModuleEntrypoint } from '../modules/module-entrypoint.ts';
 import { OutboxWorkerDescriptorError } from './errors.ts';
 
 const outboxWorkerRegistration: unique symbol = Symbol('@app/core-runtime/outbox/worker-registration');
-const verifiedOutboxWorkerHandlerContext = '__verifiedOutboxWorkerHandlerContext' as const;
 
 export interface OutboxWorkerRetryPolicy {
   readonly initialBackoffMs: number;
@@ -23,6 +22,8 @@ export interface OutboxWorkerHandlerContext extends Readonly<
   readonly consumerModuleKey?: string;
   readonly deliveryId: string;
   readonly domainEventId: string;
+  /** Core-attested owner database scope. Omitted legacy contexts are treated as required. */
+  readonly legalEntityScope?: 'forbidden' | 'required';
   readonly messageId: string;
   readonly producerModuleKey: string;
   readonly tenantId: string;
@@ -31,22 +32,7 @@ export interface OutboxWorkerHandlerContext extends Readonly<
   readonly workerKey: string;
 }
 
-const VerifiedOutboxWorkerHandlerContextSchema = Schema.Struct({
-  [verifiedOutboxWorkerHandlerContext]: Schema.Literal(true),
-});
-
-/** Core-private construction seam: caller-created context objects are not trusted worker claims. */
-export const attestOutboxWorkerHandlerContext = (context: OutboxWorkerHandlerContext): OutboxWorkerHandlerContext => {
-  const verified = { ...context };
-  Object.defineProperty(verified, verifiedOutboxWorkerHandlerContext, {
-    enumerable: false,
-    value: true,
-  });
-  return Object.freeze(verified);
-};
-
-export const isVerifiedOutboxWorkerHandlerContext = (context: OutboxWorkerHandlerContext): boolean =>
-  Schema.is(VerifiedOutboxWorkerHandlerContextSchema)(context);
+export { attestOutboxWorkerHandlerContext, isVerifiedOutboxWorkerHandlerContext } from './verified-handler-context.ts';
 
 export interface OutboxWorkerDescriptor<
   PayloadSchema extends Schema.ConstraintDecoder<unknown>,
@@ -56,6 +42,8 @@ export interface OutboxWorkerDescriptor<
   readonly consumerModuleKey: Consumer;
   readonly entrypoint: TenantModuleEntrypoint<'worker', 'background', Consumer>;
   readonly leaseDurationMs: number;
+  /** Defaults to required so existing Legal Entity workers cannot silently broaden their scope. */
+  readonly legalEntityScope?: 'forbidden' | 'required';
   readonly payloadSchema: PayloadSchema;
   readonly producerModuleKey: Producer;
   readonly retryPolicy: OutboxWorkerRetryPolicy;
@@ -226,6 +214,13 @@ export const defineOutboxWorker = <
     'Worker entrypoint must be an immutable tenant worker/background descriptor owned by consumerModuleKey',
   );
   assertFiniteInteger(descriptor.leaseDurationMs, 1000, 3_600_000, 'leaseDurationMs');
+  if (
+    descriptor.legalEntityScope !== undefined &&
+    descriptor.legalEntityScope !== 'forbidden' &&
+    descriptor.legalEntityScope !== 'required'
+  ) {
+    throw descriptorError('legalEntityScope must be forbidden or required');
+  }
   assertFiniteInteger(descriptor.retryPolicy.maxAttempts, 1, 100, 'retryPolicy.maxAttempts');
   assertFiniteInteger(descriptor.retryPolicy.initialBackoffMs, 0, 86_400_000, 'retryPolicy.initialBackoffMs');
   assertFiniteInteger(
@@ -249,6 +244,7 @@ export const defineOutboxWorker = <
     Object.freeze({
       ...descriptor,
       entrypoint: descriptor.entrypoint,
+      legalEntityScope: descriptor.legalEntityScope ?? 'required',
       retryPolicy: Object.freeze({ ...descriptor.retryPolicy }),
     }),
     handler,

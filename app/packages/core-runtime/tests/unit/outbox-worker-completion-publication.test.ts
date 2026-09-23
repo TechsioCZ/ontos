@@ -4,6 +4,7 @@ import { expect, it } from 'effect-rstest';
 import { attestOutboxWorkerHandlerContext } from '../../src/outbox/definition.ts';
 import {
   defineOutboxWorkerCompletion,
+  isOutboxWorkerCompletionSourceEligible,
   outboxWorkerCompletionPublisherFor,
   OutboxWorkerCompletionPublicationError,
 } from '../../src/outbox/completion-publication.ts';
@@ -104,6 +105,77 @@ it.effect('rejects caller-created worker context before persistence', () =>
     expect(calls).toBe(0);
   }),
 );
+
+it.effect('rejects a caller-forged string attestation marker before persistence', () =>
+  Effect.gen(function* rejectForgedMarker() {
+    let calls = 0;
+    const forged = { ...context };
+    Reflect.set(forged, '__verifiedOutboxWorkerHandlerContext', true);
+    const publisher = outboxWorkerCompletionPublisherFor({
+      context: forged,
+      legalEntityId,
+      persist: () => {
+        calls += 1;
+        return Effect.succeed({ domainEventId: completionId, outcome: 'PUBLISHED' as const });
+      },
+    });
+    const failure = yield* Effect.flip(publisher.publish(definition, input));
+    expect(failure.code).toBe('outbox_worker_completion_invalid');
+    expect(calls).toBe(0);
+  }),
+);
+
+it.effect('publishes tenant-only completion evidence only from an attested forbidden-scope worker', () =>
+  Effect.gen(function* publishTenantOnlyCompletion() {
+    const persisted: PersistOutboxWorkerCompletionInput[] = [];
+    const tenantContext = attestOutboxWorkerHandlerContext({
+      ...context,
+      legalEntityScope: 'forbidden',
+    });
+    const publisher = outboxWorkerCompletionPublisherFor({
+      context: tenantContext,
+      legalEntityId: null,
+      persist: (completion) =>
+        Effect.sync(() => {
+          persisted.push(completion);
+          return { domainEventId: completion.completionId, outcome: 'PUBLISHED' as const };
+        }),
+    });
+    yield* publisher.publish(definition, input);
+    expect(persisted[0]?.legalEntityId).toBeNull();
+
+    const requiredPublisher = outboxWorkerCompletionPublisherFor({
+      context: attestOutboxWorkerHandlerContext({ ...context, legalEntityScope: 'required' }),
+      legalEntityId: null,
+      persist: () => Effect.die('must not persist'),
+    });
+    const failure = yield* Effect.flip(requiredPublisher.publish(definition, input));
+    expect(failure.code).toBe('outbox_worker_completion_invalid');
+  }),
+);
+
+it('requires an exact tenant and explicit null Legal Entity for a tenant-only completion source', () => {
+  const tenantCompletion = {
+    ...input,
+    eventType,
+    legalEntityId: null,
+    producerModuleKey: consumerModuleKey,
+    tenantId,
+    topic: eventType,
+  } satisfies PersistOutboxWorkerCompletionInput;
+  expect(
+    isOutboxWorkerCompletionSourceEligible({ legalEntityId: null, status: 'succeeded', tenantId }, tenantCompletion),
+  ).toBe(true);
+  expect(
+    isOutboxWorkerCompletionSourceEligible(
+      { legalEntityId: null, status: 'succeeded', tenantId: '10000000-0000-4000-8000-000000000009' },
+      tenantCompletion,
+    ),
+  ).toBe(false);
+  expect(
+    isOutboxWorkerCompletionSourceEligible({ legalEntityId, status: 'succeeded', tenantId }, tenantCompletion),
+  ).toBe(false);
+});
 
 it.effect('rejects a foreign worker, owner, event topic, or invalid payload', () =>
   Effect.gen(function* rejectCrossBoundaryCompletion() {

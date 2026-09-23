@@ -52,7 +52,10 @@ interface DecodedCounterpartyTarget {
   readonly principal: typeof CounterpartyPrincipalRefSchema.Type;
 }
 type BusinessPermissionTarget = Extract<OwnerAuthorizationTarget, { readonly kind: 'business_permission' }>;
-type CounterpartyBusinessTarget = Exclude<BusinessPermissionTarget['target'], { readonly kind: 'retail_profile' }>;
+type CounterpartyBusinessTarget = Extract<
+  BusinessPermissionTarget['target'],
+  { readonly kind: 'counterparty' | 'counterparty_storefront' }
+>;
 
 const counterpartyTargetMatchesScope = (
   target: CounterpartyBusinessTarget,
@@ -99,7 +102,7 @@ const decodeCounterpartyTarget = (
   target: Extract<OwnerAuthorizationTarget, { readonly kind: 'business_permission' }>,
   scope: OwnerAuthorizationInput['scope'],
 ): Effect.Effect<Option.Option<DecodedCounterpartyTarget>> => {
-  if (target.target.kind === 'retail_profile') {
+  if (target.target.kind !== 'counterparty' && target.target.kind !== 'counterparty_storefront') {
     return Effect.succeedNone;
   }
   if (!counterpartyTargetMatchesScope(target.target, target.trustedStorefrontId, scope)) {

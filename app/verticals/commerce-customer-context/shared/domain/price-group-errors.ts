@@ -52,7 +52,7 @@ export class CustomerPriceGroupCatalogRejected extends Schema.TaggedError<Custom
   {
     code: Schema.Literal('customer_price_group_catalog_rejected'),
     reason: ErrorReasonSchema,
-    reasonCode: Schema.Literals(['INCOMPATIBLE', 'MISSING', 'RETIRED', 'UNUSABLE']),
+    reasonCode: Schema.Literals(['INCOMPATIBLE', 'MISSING', 'RETIRED']),
   },
 ) {}
 

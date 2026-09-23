@@ -69,6 +69,9 @@ if (principal.authBindingId === undefined || principal.legalEntityId === undefin
 }
 const principalAuthBindingId = principal.authBindingId;
 const principalLegalEntityId = principal.legalEntityId;
+const pricingCatalogId = '50000000-0000-4000-8000-000000000001';
+const priceGroupId = '60000000-0000-4000-8000-000000000001';
+const otherPriceGroupId = '60000000-0000-4000-8000-000000000002';
 
 const transport = (idempotencyKey = 'intent-1') => ({
   correlationId: `correlation-${idempotencyKey}`,
@@ -1649,6 +1652,209 @@ it.effect(
 
     expect(handlerCalls).toBe(1);
     expect(policyCalls).toBe(2);
+  }),
+);
+
+it.effect(
+  'enforces tenant-only Price Group targets and persists their canonical authorization evidence',
+  Effect.fn(function* testPriceGroupBusinessPermission() {
+    const permission = yield* Schema.decodeEffect(BusinessPermissionCodeSchema)('pricing.price_group.read');
+    const PriceGroupIdSchema = Schema.String.pipe(Schema.brand('PriceGroupId'));
+    const PricingCatalogIdSchema = Schema.String.pipe(Schema.brand('PricingCatalogId'));
+    const TargetTenantIdSchema = Schema.String.pipe(Schema.brand('TargetTenantId'));
+    const InputSchema = Schema.Struct({
+      priceGroupId: PriceGroupIdSchema,
+      pricingCatalogId: PricingCatalogIdSchema,
+      targetTenantId: TargetTenantIdSchema,
+    });
+    let handlerCalls = 0;
+    const action = defineAction(
+      {
+        accessEvidencePolicy: {
+          captureMode: 'metadata_only',
+          policyKey: 'pricing.price-group.read.v1',
+        },
+        actionKey: 'pricing.price-group.inspect',
+        auditProfile: 'sensitive',
+        businessPermission: defineActionBusinessPermission<typeof InputSchema.Type>((payload) => ({
+          permission,
+          target: {
+            kind: 'price_group',
+            priceGroupId: payload.priceGroupId,
+            pricingCatalogId: payload.pricingCatalogId,
+            tenantId: payload.targetTenantId,
+          },
+        })),
+        domainErrorSchema: Schema.Never,
+        domainEvents: {},
+        entrypoint: defineTenantModuleEntrypoint({
+          access: 'write',
+          authorization: {
+            kind: 'action_execution',
+            provisioning: 'tenant_membership_default',
+          },
+          entrypointKey: 'pricing.price-group.inspect',
+          moduleKey: 'pricing.price-group-catalog',
+          role: 'action',
+        }),
+        idempotency: 'required',
+        legalEntityScope: 'forbidden',
+        owningModuleKey: 'pricing.price-group-catalog',
+        payloadSchema: InputSchema,
+        policies: [],
+        resultSchema: Schema.Void,
+        schemaVersion: '1',
+      },
+      () => {
+        handlerCalls += 1;
+        return Effect.void;
+      },
+    );
+    const payload = {
+      priceGroupId,
+      pricingCatalogId,
+      targetTenantId: principal.tenantId,
+    };
+    const tenantOnlyPrincipal = Struct.omit(principal, ['legalEntityId']);
+    const run = (harness: Effect.Success<ReturnType<typeof makeHarness>>, input = payload) =>
+      harness.runtime.runAction({
+        payload: input,
+        principal: tenantOnlyPrincipal,
+        registration: action,
+        transport: {
+          ...transport('pricing-target'),
+          targetModuleKey: 'forged.module',
+          targetResourceId: 'forged-resource',
+          targetResourceType: 'forged-type',
+        },
+      });
+
+    const first = yield* makeHarness({ businessPermissionDecision: 'allowed' });
+    const second = yield* makeHarness({ businessPermissionDecision: 'allowed' });
+    yield* run(first);
+    yield* run(second);
+    expect(first.businessPermissionChecks).toEqual([
+      {
+        principal: { principalId: principal.principalId, tenantId: principal.tenantId },
+        targets: [
+          {
+            permission,
+            target: {
+              kind: 'price_group',
+              priceGroupId,
+              pricingCatalogId,
+              tenantId: principal.tenantId,
+            },
+          },
+        ],
+      },
+    ]);
+    expect(first.requestHashes).toEqual(second.requestHashes);
+    expect(first.flushed[0]?.transport).toEqual({
+      correlationId: 'correlation-pricing-target',
+      idempotencyKey: 'pricing-target',
+      targetModuleKey: 'pricing.price-group-catalog',
+      targetResourceId: `${pricingCatalogId}:${priceGroupId}`,
+      targetResourceType: `price_group:${permission}`,
+    });
+
+    const wrongPriceGroup = yield* makeHarness({ businessPermissionDecision: 'denied' });
+    const denied = yield* Effect.flip(
+      run(wrongPriceGroup, {
+        ...payload,
+        priceGroupId: otherPriceGroupId,
+      }),
+    );
+    expect(Predicate.isTagged(denied, 'ActionPermissionDenied')).toBe(true);
+
+    const crossTenant = yield* makeHarness({ businessPermissionDecision: 'allowed' });
+    const crossTenantFailure = yield* Effect.flip(
+      run(crossTenant, {
+        ...payload,
+        targetTenantId: '00000000-0000-4000-8000-000000000099',
+      }),
+    );
+    expect(Predicate.isTagged(crossTenantFailure, 'ActionPermissionCheckError')).toBe(true);
+    expect(crossTenant.businessPermissionChecks).toHaveLength(0);
+
+    const unavailable = yield* makeHarness({ businessPermissionDecision: 'unavailable' });
+    expect(Predicate.isTagged(yield* Effect.flip(run(unavailable)), 'ActionPermissionCheckError')).toBe(true);
+    for (const invalidPayload of [
+      { ...payload, priceGroupId: 'DEALER' },
+      { ...payload, pricingCatalogId: 'DEALER' },
+    ]) {
+      const invalidIdentifier = yield* makeHarness({ businessPermissionDecision: 'allowed' });
+      expect(
+        Predicate.isTagged(yield* Effect.flip(run(invalidIdentifier, invalidPayload)), 'ActionPermissionCheckError'),
+      ).toBe(true);
+      expect(invalidIdentifier.businessPermissionChecks).toHaveLength(0);
+      expect(invalidIdentifier.counts().createCount).toBe(0);
+      expect(invalidIdentifier.flushed).toHaveLength(0);
+    }
+    expect(handlerCalls).toBe(2);
+  }),
+);
+
+it.effect(
+  'rejects a Pricing permission resolved onto a Counterparty target before checks, persistence, or handler code',
+  Effect.fn(function* rejectMismatchedBusinessPermissionTarget() {
+    const pricingPermission = yield* Schema.decodeEffect(BusinessPermissionCodeSchema)('pricing.price_group.read');
+    const MismatchedTargetPayloadSchema = Schema.Struct({ counterpartyId: CounterpartyIdSchema });
+    let handlerCalls = 0;
+    const action = defineAction(
+      {
+        accessEvidencePolicy: {
+          captureMode: 'metadata_only',
+          policyKey: 'pricing.price-group.mismatched-target.v1',
+        },
+        actionKey: 'pricing.price-group.mismatched-target',
+        auditProfile: 'sensitive',
+        businessPermission: defineActionBusinessPermission<typeof MismatchedTargetPayloadSchema.Type>((payload) => ({
+          permission: pricingPermission,
+          target: {
+            counterpartyId: payload.counterpartyId,
+            kind: 'counterparty',
+            legalEntityId: principalLegalEntityId,
+            tenantId: principal.tenantId,
+          },
+        })),
+        domainErrorSchema: Schema.Never,
+        domainEvents: {},
+        entrypoint: defineTenantModuleEntrypoint({
+          access: 'write',
+          authorization: { kind: 'action_execution', provisioning: 'tenant_membership_default' },
+          entrypointKey: 'pricing.price-group.mismatched-target',
+          moduleKey: 'pricing.price-group-catalog',
+          role: 'action',
+        }),
+        idempotency: 'required',
+        legalEntityScope: 'required',
+        owningModuleKey: 'pricing.price-group-catalog',
+        payloadSchema: MismatchedTargetPayloadSchema,
+        policies: [],
+        resultSchema: Schema.Void,
+        schemaVersion: '1',
+      },
+      () => {
+        handlerCalls += 1;
+        return Effect.void;
+      },
+    );
+    const harness = yield* makeHarness({ businessPermissionDecision: 'allowed' });
+    const failure = yield* Effect.flip(
+      harness.runtime.runAction({
+        payload: { counterpartyId: 'counterparty-one' },
+        principal,
+        registration: action,
+        transport: transport('mismatched-pricing-target'),
+      }),
+    );
+
+    expect(Predicate.isTagged(failure, 'ActionPermissionCheckError')).toBe(true);
+    expect(harness.businessPermissionChecks).toHaveLength(0);
+    expect(harness.counts().createCount).toBe(0);
+    expect(harness.flushed).toHaveLength(0);
+    expect(handlerCalls).toBe(0);
   }),
 );
 

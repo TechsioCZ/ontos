@@ -13,6 +13,14 @@ export {
 export { CoreSearchWorkerSnapshot, CoreSearchWorkerSnapshotLive } from '../search/worker-snapshot.ts';
 export { defineOutboxWorker, extractOutboxWorkerSubscriptions } from './definition.ts';
 export { defineOutboxWorkerCompletion, OutboxWorkerCompletionPublicationError } from './completion-publication.ts';
+export {
+  ResourceContainmentMutationUnavailable,
+  ResourceContainmentRelationshipMutation,
+  ResourceContainmentRelationshipMutationLive,
+  createResourceContainmentRelationshipMutationClient,
+  makeResourceContainmentRelationshipMutation,
+  makeResourceContainmentRelationshipMutationLive,
+} from '../permissions/resource-containment-mutation.ts';
 export { OutboxWorkerInfrastructureLive, startOutboxWorkerProcess } from './process.ts';
 export { OutboxRepositoryLive } from './repository.ts';
 export {
@@ -21,6 +29,12 @@ export {
   OutboxWorkerLegalEntityScopeFanout,
   OutboxWorkerLegalEntityScopeFanoutLive,
 } from './legal-entity-scope-fanout.ts';
+export {
+  makeOutboxWorkerTenantScope,
+  OutboxWorkerTenantScope,
+  OutboxWorkerTenantScopeError,
+  OutboxWorkerTenantScopeLive,
+} from './tenant-scope.ts';
 export type { AnyOutboxWorkerRegistration, OutboxWorkerHandlerContext } from './definition.ts';
 export type {
   OutboxWorkerCompletionDefinition,
@@ -34,6 +48,18 @@ export type {
   OutboxWorkerLegalEntityScopeFanoutService,
   OutboxWorkerLegalEntityScopeRecord,
 } from './legal-entity-scope-fanout.ts';
+export type {
+  OutboxWorkerTenantScopeBackend,
+  OutboxWorkerTenantScopeService,
+  OutboxWorkerTenantScopeView,
+} from './tenant-scope.ts';
+export type {
+  ResourceContainmentRelationship,
+  ResourceContainmentRelationshipMutationClient,
+  ResourceContainmentRelationshipMutationInput,
+  ResourceContainmentRelationshipMutationService,
+  SpiceDbResourceReference,
+} from '../permissions/resource-containment-mutation.ts';
 export type { CoreSearchIngestionService } from '../search/ingestion.ts';
 export type {
   CoreSearchProjectionDocument,

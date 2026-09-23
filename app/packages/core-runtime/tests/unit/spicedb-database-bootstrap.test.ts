@@ -68,6 +68,10 @@ it.layer(NodeFileSystem.layer)('SpiceDB bootstrap sources', (suite) => {
       expect(stage).not.toMatch(/relationships:|assertions:/u);
       expect(development).toMatch(/#executor@tenant:test-tenant#member/u);
       expect(development).toMatch(/#executor@principal:allowed-principal/u);
+      expect(development).toMatch(/relation containing_catalog: business_permission/u);
+      expect(development).toMatch(
+        /permission use = direct_use \+ \(tenant->access & containing_catalog->direct_use\)/u,
+      );
     }),
   );
 

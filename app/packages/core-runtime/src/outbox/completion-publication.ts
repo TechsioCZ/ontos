@@ -73,7 +73,7 @@ export interface OutboxWorkerCompletionPublisher {
 export interface PersistOutboxWorkerCompletionInput {
   readonly completionId: string;
   readonly eventType: string;
-  readonly legalEntityId: string;
+  readonly legalEntityId: string | null;
   readonly occurredAt: Date;
   readonly payloadJson: unknown;
   readonly producerModuleKey: string;
@@ -157,16 +157,20 @@ const validInput = (input: OutboxWorkerCompletionInput<unknown>): boolean =>
 export const outboxWorkerCompletionPublisherFor = (
   dependencies: Readonly<{
     context: OutboxWorkerHandlerContext;
-    legalEntityId: string;
+    legalEntityId: string | null;
     persist: PersistOutboxWorkerCompletion;
   }>,
 ): OutboxWorkerCompletionPublisher => ({
   publish: (definition, input) => {
     const { context, legalEntityId, persist } = dependencies;
+    const legalEntityScope = context.legalEntityScope ?? 'required';
+    const hasExactOperationalScope =
+      (legalEntityScope === 'forbidden' && legalEntityId === null) ||
+      (legalEntityScope === 'required' && legalEntityId !== null && uuidPattern.test(legalEntityId));
     if (
       !isVerifiedOutboxWorkerHandlerContext(context) ||
       !uuidPattern.test(context.tenantId) ||
-      !uuidPattern.test(legalEntityId) ||
+      !hasExactOperationalScope ||
       !validDefinition(definition, context) ||
       !validInput(input)
     ) {
@@ -205,11 +209,12 @@ const epochMillis = (value: Date): number | undefined =>
 
 const sameInstant = (left: Date, right: Date): boolean => epochMillis(left) === epochMillis(right);
 
-const sourceInvocationIsEligible = (
-  sourceInvocation: Readonly<{ legalEntityId: string | null; status: string }> | undefined,
+export const isOutboxWorkerCompletionSourceEligible = (
+  sourceInvocation: Readonly<{ legalEntityId: string | null; status: string; tenantId: string }> | undefined,
   input: PersistOutboxWorkerCompletionInput,
 ): boolean =>
   sourceInvocation !== undefined &&
+  sourceInvocation.tenantId === input.tenantId &&
   sourceInvocation.legalEntityId === input.legalEntityId &&
   sourceInvocation.status === 'succeeded';
 
@@ -264,6 +269,7 @@ export const persistOutboxWorkerCompletion = (transaction: CoreTransaction): Per
         actionInvocationId: actionInvocations.actionInvocationId,
         legalEntityId: actionInvocations.legalEntityId,
         status: actionInvocations.status,
+        tenantId: actionInvocations.tenantId,
       })
       .from(actionInvocations)
       .where(
@@ -274,8 +280,8 @@ export const persistOutboxWorkerCompletion = (transaction: CoreTransaction): Per
       )
       .limit(1)
       .pipe(Effect.mapError(unavailable));
-    if (!sourceInvocationIsEligible(sourceInvocation, input)) {
-      return yield* invalid('The completion source Action is not durably succeeded in the exact Legal Entity scope');
+    if (!isOutboxWorkerCompletionSourceEligible(sourceInvocation, input)) {
+      return yield* invalid('The completion source Action is not durably succeeded in the exact operational scope');
     }
 
     const [lockedTenant] = yield* transaction

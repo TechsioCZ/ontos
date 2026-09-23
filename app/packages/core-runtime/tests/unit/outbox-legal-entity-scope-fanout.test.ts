@@ -75,6 +75,28 @@ it.effect('rejects caller-created worker evidence before legal-entity enumeratio
   });
 });
 
+it.effect('rejects a tenant-only worker before legal-entity enumeration', () => {
+  let listed = 0;
+  const fanout = makeOutboxWorkerLegalEntityScopeFanout({
+    list: () => {
+      listed += 1;
+      return Effect.succeed([active(legalEntityOne)]);
+    },
+    run: () => Effect.void,
+  });
+  return Effect.gen(function* rejectTenantOnlyContext() {
+    const failure = yield* Effect.flip(
+      fanout.forEachScope(
+        attestOutboxWorkerHandlerContext({ ...context, legalEntityScope: 'forbidden' }),
+        () => Effect.void,
+      ),
+    );
+    expect(failure.code).toBe('outbox_worker_scope_context_invalid');
+    expect(failure.retryable).toBe(false);
+    expect(listed).toBe(0);
+  });
+});
+
 it.effect('enumerates every Tenant-owned lifecycle scope once in deterministic order', () => {
   const calls: string[] = [];
   const fanout = makeOutboxWorkerLegalEntityScopeFanout(

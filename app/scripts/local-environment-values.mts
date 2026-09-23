@@ -20,6 +20,7 @@ export interface LocalEnvironmentOverrides {
 
 export interface LocalPublicClientTopology {
   readonly partyRegistryApiBaseUrl: string;
+  readonly priceGroupCatalogApiBaseUrl: string;
   readonly shellId: string;
   readonly shellPort: number;
 }
@@ -28,6 +29,8 @@ export const localPublicClientValues = (lines: readonly string[], topology: Loca
   const existing = existingValues(lines);
   return {
     ONTOS_PARTY_REGISTRY_API_BASE_URL: existing.ONTOS_PARTY_REGISTRY_API_BASE_URL ?? topology.partyRegistryApiBaseUrl,
+    ONTOS_PRICE_GROUP_CATALOG_BASE_URL:
+      existing.ONTOS_PRICE_GROUP_CATALOG_BASE_URL ?? topology.priceGroupCatalogApiBaseUrl,
     ONTOS_SHELL_GATEWAY_BASE_URL:
       existing.ONTOS_SHELL_GATEWAY_BASE_URL ?? `http://localhost:${topology.shellPort}/${topology.shellId}-api`,
   };

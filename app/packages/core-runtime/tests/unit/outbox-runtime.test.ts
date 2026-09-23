@@ -236,6 +236,7 @@ it.effect('decodes a published payload, supplies exact context, and completes su
         correlationId: 'correlation-1',
         deliveryId: 'delivery-1',
         domainEventId: 'event-1',
+        legalEntityScope: 'required',
         messageId: 'message-1',
         producerModuleKey: 'producer',
         tenantId: 'tenant-1',

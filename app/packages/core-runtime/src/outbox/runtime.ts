@@ -145,7 +145,7 @@ const withOutcomeSpan = <Value, Error, Requirements>(
     }),
   );
 
-const handlerContext = (claim: OutboxClaim): OutboxWorkerHandlerContext =>
+const handlerContext = (claim: OutboxClaim, legalEntityScope: 'forbidden' | 'required'): OutboxWorkerHandlerContext =>
   attestOutboxWorkerHandlerContext(
     withOptionalProperty(
       withOptionalProperty(
@@ -165,6 +165,7 @@ const handlerContext = (claim: OutboxClaim): OutboxWorkerHandlerContext =>
         consumerModuleKey: claim.consumerModuleKey,
         deliveryId: claim.deliveryId,
         domainEventId: claim.domainEventId,
+        legalEntityScope,
         messageId: claim.messageId,
         producerModuleKey: claim.producerModuleKey,
         tenantId: claim.tenantId,
@@ -310,7 +311,9 @@ const processNextOutboxDelivery = Effect.fn('makeOutboxRuntime.processNextDelive
 
     const handler = getOutboxWorkerHandler(registration);
     const handlerExit = yield* Effect.exit(
-      Effect.suspend(() => handler(decoded.value, handlerContext(claim))).pipe(
+      Effect.suspend(() =>
+        handler(decoded.value, handlerContext(claim, registration.descriptor.legalEntityScope ?? 'required')),
+      ).pipe(
         Effect.match({
           onFailure: (error) => {
             void error;

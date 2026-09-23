@@ -12,7 +12,6 @@ import {
   samePriceGroupRef,
   sameProfileTarget,
 } from './price-group-contracts.ts';
-import { CustomerPriceGroupCatalogUnavailable } from './price-group-errors.ts';
 import type { PriceGroupCatalogPort } from './price-group-ports.ts';
 import { CUSTOMER_PRICE_GROUP_COMPATIBILITY_CONTRACT } from './price-group-ports.ts';
 
@@ -68,7 +67,8 @@ export const resolveCustomerPriceGroupAt = Effect.fn('CustomerPriceGroup.resolve
     }
     if (
       !samePriceGroupRef(outcome.priceGroupRef, assignment.priceGroupRef) ||
-      outcome.compatibility.contractId !== CUSTOMER_PRICE_GROUP_COMPATIBILITY_CONTRACT
+      outcome.compatibility.requiredContract.contractId !== CUSTOMER_PRICE_GROUP_COMPATIBILITY_CONTRACT ||
+      outcome.compatibility.requiredContract.version !== 1
     ) {
       return {
         _tag: 'BROKEN',
@@ -91,14 +91,3 @@ export const resolveCustomerPriceGroupAt = Effect.fn('CustomerPriceGroup.resolve
     } as const;
   },
 );
-
-/** Fail-closed default until Pricing publishes its governed PriceGroup catalog port. */
-export const unavailablePriceGroupCatalogPort: PriceGroupCatalogPort = {
-  resolveCurrent: () =>
-    Effect.fail(
-      new CustomerPriceGroupCatalogUnavailable({
-        code: 'customer_price_group_catalog_unavailable',
-        reason: 'Pricing has not published the governed PriceGroup catalog contract (#334)',
-      }),
-    ),
-};

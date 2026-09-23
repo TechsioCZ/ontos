@@ -13,6 +13,7 @@ const moduleId = 'commerce.customer-context';
 const addressBookPermission = 'counterparty.address_book.use';
 const paymentTermPreferencePermission = 'retail.settings.payment_term_preference.manage';
 const repeatOrderPermission = 'retail.repeat_order';
+const priceGroupReadPermission = 'pricing.price_group.read';
 const json = (value: typeof Schema.Json.Type): string => `${JSON.stringify(value, null, 2)}\n`;
 const PackageExportsSchema = Schema.Struct({
   exports: Schema.Record(Schema.String, Schema.String),
@@ -87,12 +88,19 @@ export const manifest = {
   });
 
 const withFixture = withCreatedFixture(createFixture());
-const scaffoldPermission = (root: string, permission = addressBookPermission) =>
-  runScaffoldEffect(
-    'permission',
-    ['--vertical', vertical, '--permission', permission, '--scope', 'counterparty_storefront'],
-    { workspaceRoot: root },
-  ).pipe(Effect.provide(NodeServices.layer));
+const scaffoldPermission = (
+  root: string,
+  permission = addressBookPermission,
+  scope:
+    | 'counterparty'
+    | 'counterparty_storefront'
+    | 'price_group'
+    | 'pricing_catalog'
+    | 'retail_profile' = 'counterparty_storefront',
+) =>
+  runScaffoldEffect('permission', ['--vertical', vertical, '--permission', permission, '--scope', scope], {
+    workspaceRoot: root,
+  }).pipe(Effect.provide(NodeServices.layer));
 
 it.live('permission help is write-free and documents exact business scopes', () =>
   Effect.gen(function* permissionHelp() {
@@ -101,10 +109,43 @@ it.live('permission help is write-free and documents exact business scopes', () 
     }).pipe(Effect.provide(NodeServices.layer));
     expect(result).toEqual({ help: getHelpText('permission'), kind: 'help' });
     if (result.kind === 'help') {
-      expect(result.help).toMatch(/retail_profile\|counterparty\|counterparty_storefront/u);
+      expect(result.help).toMatch(/pricing\.price_group\.\*/u);
+      expect(result.help).toMatch(/pricing_catalog\|price_group/u);
       expect(result.help).toMatch(/start non-delegable/u);
     }
   }),
+);
+
+it.live('generates and registers tenant-only Pricing permissions for both canonical scopes', () =>
+  withFixture(
+    Effect.fn(function* generatesPricingPermission(root) {
+      yield* scaffoldPermission(root, priceGroupReadPermission, 'price_group');
+      yield* scaffoldPermission(root, 'pricing.price_group.create', 'pricing_catalog');
+      const [readPermission, createPermission, manifest, packageSource] = yield* Effect.all([
+        Effect.promise(() =>
+          readFile(path.join(root, `verticals/${vertical}/shared/permissions/pricing-price-group-read.ts`), 'utf-8'),
+        ),
+        Effect.promise(() =>
+          readFile(path.join(root, `verticals/${vertical}/shared/permissions/pricing-price-group-create.ts`), 'utf-8'),
+        ),
+        Effect.promise(() => readFile(path.join(root, `verticals/${vertical}/vertical.manifest.ts`), 'utf-8')),
+        Effect.promise(() => readFile(path.join(root, `verticals/${vertical}/package.json`), 'utf-8')),
+      ]);
+      expect(readPermission).toMatch(/key: 'pricing\.price_group\.read'/u);
+      expect(readPermission).toMatch(/allowedScopeKinds: \['price_group'\]/u);
+      expect(createPermission).toMatch(/key: 'pricing\.price_group\.create'/u);
+      expect(createPermission).toMatch(/allowedScopeKinds: \['pricing_catalog'\]/u);
+      expect(manifest).toMatch(/pricingPriceGroupCreatePermission,/u);
+      expect(manifest).toMatch(/pricingPriceGroupReadPermission,/u);
+      const packageValue = yield* Schema.decodeUnknownEffect(PackageExportsSchema)(JSON.parse(packageSource));
+      expect(packageValue.exports['./permissions/pricing.price_group.read']).toBe(
+        './shared/permissions/pricing-price-group-read.ts',
+      );
+      expect(packageValue.exports['./permissions/pricing.price_group.create']).toBe(
+        './shared/permissions/pricing-price-group-create.ts',
+      );
+    }),
+  ),
 );
 
 it.live('generates and registers conservative versioned business permissions sequentially', () =>
@@ -179,7 +220,25 @@ it.live('rejects malformed and duplicate permissions without partial writes', ()
     Effect.fn(function* rejectsUnsafePermission(root) {
       const before = yield* snapshotTree(root);
       const malformed = yield* scaffoldPermission(root, 'generic.manage').pipe(Effect.sandbox, Effect.flip);
-      expect(String(Cause.squash(malformed))).toMatch(/retail\.\* or counterparty\.\*/u);
+      expect(String(Cause.squash(malformed))).toMatch(/pricing\.price_group\.\*/u);
+      expect(yield* snapshotTree(root)).toEqual(before);
+      const malformedPricing = yield* scaffoldPermission(root, 'pricing.discount.read', 'price_group').pipe(
+        Effect.sandbox,
+        Effect.flip,
+      );
+      expect(String(Cause.squash(malformedPricing))).toMatch(/pricing\.price_group\.\*/u);
+      expect(yield* snapshotTree(root)).toEqual(before);
+      const mismatchedPricingScope = yield* scaffoldPermission(root, priceGroupReadPermission, 'counterparty').pipe(
+        Effect.sandbox,
+        Effect.flip,
+      );
+      expect(String(Cause.squash(mismatchedPricingScope))).toMatch(/require pricing_catalog or price_group scope/u);
+      expect(yield* snapshotTree(root)).toEqual(before);
+      const mismatchedExistingScope = yield* scaffoldPermission(root, addressBookPermission, 'price_group').pipe(
+        Effect.sandbox,
+        Effect.flip,
+      );
+      expect(String(Cause.squash(mismatchedExistingScope))).toMatch(/those scopes reject other permission families/u);
       expect(yield* snapshotTree(root)).toEqual(before);
       yield* scaffoldPermission(root);
       const after = yield* snapshotTree(root);

@@ -22,6 +22,7 @@ const readPermission = defineBusinessPermission({
 
 it('builds an immutable, reciprocal and versioned permission catalog', () => {
   expect(Schema.decodeSync(BusinessPermissionCodeSchema)('retail.repeat_order')).toBe('retail.repeat_order');
+  expect(Schema.decodeSync(BusinessPermissionCodeSchema)('pricing.price_group.read')).toBe('pricing.price_group.read');
   const catalog = defineBusinessPermissionCatalog({
     authorityGroups: {
       'Counterparty Buyer': [Schema.decodeSync(BusinessPermissionCodeSchema)('counterparty.profile.read')],
@@ -53,6 +54,29 @@ it('rejects invalid codes, duplicate catalog entries, and one-sided group member
       permissions: [readPermission],
     }),
   ).toThrow(/undeclared authority group/u);
+});
+
+it('accepts only the canonical tenant-only Pricing target kinds', () => {
+  expect(
+    defineBusinessPermission({
+      ...readPermission,
+      allowedScopeKinds: ['pricing_catalog', 'price_group'],
+      key: 'pricing.price_group.create',
+    }).allowedScopeKinds,
+  ).toEqual(['pricing_catalog', 'price_group']);
+  expect(() =>
+    defineBusinessPermission({
+      ...readPermission,
+      allowedScopeKinds: ['counterparty'],
+      key: 'pricing.price_group.create',
+    }),
+  ).toThrow(/incompatible target scope/u);
+  expect(() =>
+    defineBusinessPermission({
+      ...readPermission,
+      allowedScopeKinds: ['price_group'],
+    }),
+  ).toThrow(/incompatible target scope/u);
 });
 
 it('allows only explicit authorization projection state transitions', () => {

@@ -55,7 +55,7 @@ interface PermissionRelationshipDefinition {
 export interface PermissionRelationshipMutationPreparation {
   readonly granteeId: string;
   readonly resourceId: string;
-  readonly scopeRelationship: PermissionRelationshipDefinition;
+  readonly scopeRelationships: readonly PermissionRelationshipDefinition[];
 }
 
 interface PermissionRelationshipMutationDefinition<Input extends PermissionRelationshipMutationInput, Failure> {
@@ -95,12 +95,12 @@ export const makePermissionRelationshipMutation = <Input extends PermissionRelat
         input.operation === 'grant' ? v1.RelationshipUpdate_Operation.TOUCH : v1.RelationshipUpdate_Operation.DELETE;
       const updates = [
         ...(input.operation === 'grant'
-          ? [
+          ? prepared.scopeRelationships.map((scopeRelationship) =>
               v1.RelationshipUpdate.create({
                 operation: v1.RelationshipUpdate_Operation.TOUCH,
-                relationship: relationship(definition.resourceType, prepared.resourceId, prepared.scopeRelationship),
+                relationship: relationship(definition.resourceType, prepared.resourceId, scopeRelationship),
               }),
-            ]
+            )
           : []),
         v1.RelationshipUpdate.create({
           operation,

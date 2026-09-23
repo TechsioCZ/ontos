@@ -6,7 +6,7 @@ import type {
   CustomerPriceGroupProfileValidationPort,
   PriceGroupCatalogPort,
 } from '../../shared/domain/price-group-ports.ts';
-import { unavailablePriceGroupCatalogPort } from '../../shared/domain/price-group-resolution.ts';
+import { priceGroupCatalogPortFromEnvironment } from '../integrations/price-group-catalog.ts';
 import {
   customerPriceGroupAssignmentStoreForTransaction,
   customerPriceGroupProfileValidationForTransaction,
@@ -24,7 +24,8 @@ export const priceGroupActionServicesForTransaction = (
   invoker: PriceGroupRoutineInvoker,
   scope: OperationalScope,
 ): Effect.Effect<PriceGroupActionServices, OperationContextUnavailable> => {
-  if (scope.legalEntityId === undefined) {
+  const { legalEntityId } = scope;
+  if (legalEntityId === undefined) {
     return Effect.fail(
       new OperationContextUnavailable({
         code: 'operation_context_unavailable',
@@ -32,11 +33,16 @@ export const priceGroupActionServicesForTransaction = (
       }),
     );
   }
-  const trustedScope = { ...scope, legalEntityId: scope.legalEntityId };
-  return Effect.succeed({
-    catalog: unavailablePriceGroupCatalogPort,
-    now: DateTime.now.pipe(Effect.map(DateTime.formatIso)),
-    profileValidation: customerPriceGroupProfileValidationForTransaction(invoker, trustedScope),
-    store: customerPriceGroupAssignmentStoreForTransaction(invoker, trustedScope),
+  const trustedScope = { ...scope, legalEntityId };
+  return Effect.gen(function* makePriceGroupActionServices() {
+    const catalog = yield* priceGroupCatalogPortFromEnvironment({
+      requestCorrelation: scope.correlationId,
+    });
+    return {
+      catalog,
+      now: DateTime.now.pipe(Effect.map(DateTime.formatIso)),
+      profileValidation: customerPriceGroupProfileValidationForTransaction(invoker, trustedScope),
+      store: customerPriceGroupAssignmentStoreForTransaction(invoker, trustedScope),
+    };
   });
 };

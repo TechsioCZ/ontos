@@ -6,7 +6,7 @@ import type {
   CommerceCustomerProfileTarget,
   CustomerPriceGroupAssignment,
   PriceGroupCatalogOutcome,
-  PriceGroupCompatibilityIdentity,
+  PriceGroupCompatibilityEvidence,
   PriceGroupInstant,
   PriceGroupRef,
 } from './price-group-contracts.ts';
@@ -23,7 +23,7 @@ export interface PriceGroupCatalogPort {
     priceGroupRef: PriceGroupRef,
     requiredContractId: typeof CUSTOMER_PRICE_GROUP_COMPATIBILITY_CONTRACT,
     effectiveAt: PriceGroupInstant,
-    expectedCompatibility?: PriceGroupCompatibilityIdentity,
+    expectedCompatibility?: PriceGroupCompatibilityEvidence,
   ) => Effect.Effect<PriceGroupCatalogOutcome, CustomerPriceGroupCatalogUnavailable>;
 }
 
@@ -49,7 +49,7 @@ export interface CustomerPriceGroupProfileValidationPort {
 
 export interface AssignCustomerPriceGroupStoreInput {
   readonly actionInvocationId: string;
-  readonly compatibility: PriceGroupCompatibilityIdentity;
+  readonly compatibility: PriceGroupCompatibilityEvidence;
   /** When present, persistence must verify Profile association atomically with the mutation. */
   readonly counterpartyRef?: CounterpartyRef;
   readonly effectiveFrom: PriceGroupInstant;
@@ -115,7 +115,7 @@ interface CustomerPriceGroupMigrationTarget {
 
 export interface MigrateCustomerPriceGroupStoreInput {
   readonly actionInvocationId: string;
-  readonly compatibility: PriceGroupCompatibilityIdentity;
+  readonly compatibility: PriceGroupCompatibilityEvidence;
   /** When present, persistence must verify every target Profile association atomically. */
   readonly counterpartyRef?: CounterpartyRef;
   readonly effectiveFrom: PriceGroupInstant;

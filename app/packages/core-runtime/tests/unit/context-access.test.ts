@@ -21,6 +21,9 @@ import { BusinessPermissionCodeSchema } from '../../src/permissions/business-per
 const tenantId = '10000000-0000-4000-8000-000000000001';
 const legalEntityId = '20000000-0000-4000-8000-000000000001';
 const principalId = '30000000-0000-4000-8000-000000000001';
+const pricingCatalogId = '50000000-0000-4000-8000-000000000001';
+const priceGroupId = '60000000-0000-4000-8000-000000000001';
+const otherPriceGroupId = '60000000-0000-4000-8000-000000000002';
 
 const responseFor = (
   request: v1.CheckBulkPermissionsRequest,
@@ -322,6 +325,92 @@ it.effect('accepts either an exact Storefront or exact Counterparty-wide positiv
   }),
 );
 
+it.effect('checks one exact Price Group target and leaves containing-catalog traversal to SpiceDB', () =>
+  Effect.gen(function* checksPriceGroupPermission() {
+    const requests: v1.CheckBulkPermissionsRequest[] = [];
+    const access = makeContextAccess(
+      makeClient((request) =>
+        Effect.sync(() => {
+          requests.push(request);
+          return responseFor(request, [v1.CheckPermissionResponse_Permissionship.HAS_PERMISSION]);
+        }),
+      ),
+    );
+    const permission = yield* Schema.decodeEffect(BusinessPermissionCodeSchema)('pricing.price_group.read');
+    const target = {
+      permission,
+      target: {
+        kind: 'price_group' as const,
+        priceGroupId,
+        pricingCatalogId,
+        tenantId,
+      },
+    };
+
+    expect(
+      yield* requireBusinessPermissions(access)({
+        principal: { principalId, tenantId },
+        targets: [target],
+      }),
+    ).toEqual([{ decision: 'allowed', key: toBusinessPermissionAccessKey(target) }]);
+    expect(requests).toHaveLength(1);
+    expect(requests[0]?.items).toHaveLength(1);
+    expect(requests[0]?.items[0]?.resource?.objectId).toBe(
+      toBusinessPermissionAccessObjectId(permission, target.target),
+    );
+    expect(toBusinessPermissionAccessObjectId(permission, target.target)).not.toBe(
+      toBusinessPermissionAccessObjectId(permission, {
+        ...target.target,
+        priceGroupId: otherPriceGroupId,
+      }),
+    );
+  }),
+);
+
+it.effect('rejects incompatible permission families and noncanonical Pricing identifiers before SpiceDB', () =>
+  Effect.gen(function* rejectsInvalidPricingTargets() {
+    let requests = 0;
+    const access = makeContextAccess(
+      makeClient((request) => {
+        requests += 1;
+        return Effect.succeed(responseFor(request, []));
+      }),
+    );
+    const pricingPermission = yield* Schema.decodeEffect(BusinessPermissionCodeSchema)('pricing.price_group.read');
+    const counterpartyPermission =
+      yield* Schema.decodeEffect(BusinessPermissionCodeSchema)('counterparty.purchase.submit');
+    const targets = [
+      {
+        permission: pricingPermission,
+        target: { counterpartyId: 'counterparty-1', kind: 'counterparty' as const, legalEntityId, tenantId },
+      },
+      {
+        permission: counterpartyPermission,
+        target: { kind: 'price_group' as const, priceGroupId, pricingCatalogId, tenantId },
+      },
+      {
+        permission: pricingPermission,
+        target: { kind: 'price_group' as const, priceGroupId: 'DEALER', pricingCatalogId, tenantId },
+      },
+      {
+        permission: pricingPermission,
+        target: { kind: 'pricing_catalog' as const, pricingCatalogId: 'DEALER', tenantId },
+      },
+    ];
+
+    expect(
+      yield* requireBusinessPermissions(access)({
+        principal: { principalId, tenantId },
+        targets,
+      }),
+    ).toEqual(targets.map((target) => ({ decision: 'unavailable', key: toBusinessPermissionAccessKey(target) })));
+    for (const target of targets) {
+      expect(toBusinessPermissionAccessObjectId(target.permission, target.target)).toBeUndefined();
+    }
+    expect(requests).toBe(0);
+  }),
+);
+
 it.effect('reuses exact and Counterparty-wide alternatives across repeated Storefront targets', () =>
   Effect.gen(function* reusesBusinessPermissionAlternative() {
     const permission = yield* Schema.decodeEffect(BusinessPermissionCodeSchema)('counterparty.purchase.submit');
@@ -423,6 +512,35 @@ it.effect('rejects cross-tenant business permission checks before calling SpiceD
     const checkBusinessPermissions = requireBusinessPermissions(access);
     expect(
       yield* checkBusinessPermissions({
+        principal: { principalId, tenantId },
+        targets: [target],
+      }),
+    ).toEqual([{ decision: 'unavailable', key: toBusinessPermissionAccessKey(target) }]);
+    expect(requests).toBe(0);
+  }),
+);
+
+it.effect('rejects cross-tenant Pricing permission checks before calling SpiceDB', () =>
+  Effect.gen(function* rejectsCrossTenantPricingTarget() {
+    let requests = 0;
+    const access = makeContextAccess(
+      makeClient((request) =>
+        Effect.sync(() => {
+          requests += 1;
+          return responseFor(request, [v1.CheckPermissionResponse_Permissionship.HAS_PERMISSION]);
+        }),
+      ),
+    );
+    const target = {
+      permission: yield* Schema.decodeEffect(BusinessPermissionCodeSchema)('pricing.price_group.read'),
+      target: {
+        kind: 'pricing_catalog' as const,
+        pricingCatalogId,
+        tenantId: '10000000-0000-4000-8000-000000000002',
+      },
+    };
+    expect(
+      yield* requireBusinessPermissions(access)({
         principal: { principalId, tenantId },
         targets: [target],
       }),

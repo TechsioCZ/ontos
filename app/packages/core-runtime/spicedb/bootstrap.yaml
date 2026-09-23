@@ -52,12 +52,16 @@ schema: |-
     permission write = writer & module->access
   }
 
-  // Each object ID encodes the stable permission code and exact tenant/legal-entity/business scope.
-  // Grants are positive and exact; tenant membership and Legal Entity access remain independent gates.
+  // Each object ID encodes the stable permission code and exact tenant/business scope.
+  // Tenant-only Pricing targets use tenant access; existing Retail and Counterparty targets use Legal Entity access.
+  // A Price Group may inherit the same permission from its exact containing catalog through an explicit relation.
   definition business_permission {
+    relation tenant: tenant
     relation legal_entity: legal_entity
+    relation containing_catalog: business_permission
     relation grantee: principal
-    permission use = grantee & legal_entity->access
+    permission direct_use = grantee & (tenant->access + legal_entity->access)
+    permission use = direct_use + (tenant->access & containing_catalog->direct_use)
   }
 
   // Named entrypoint permissions are exact to one Tenant, optional Legal Entity, and owning module.

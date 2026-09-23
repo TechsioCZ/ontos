@@ -344,6 +344,12 @@ const InventoryAuthorizationSchema = Schema.Union([
 ]);
 
 const ProtectedEntrypointInventorySchema = Schema.Struct({
+  businessPermissions: Schema.Array(
+    Schema.Struct({
+      key: Schema.String,
+      owner: Schema.String,
+    }),
+  ),
   entries: Schema.Array(
     Schema.Struct({
       authorization: InventoryAuthorizationSchema,
@@ -354,7 +360,7 @@ const ProtectedEntrypointInventorySchema = Schema.Struct({
     }),
   ),
   inventoryHash: Schema.String,
-  schemaVersion: Schema.Literal(1),
+  schemaVersion: Schema.Literal(2),
   sourceRevision: Schema.String,
 });
 

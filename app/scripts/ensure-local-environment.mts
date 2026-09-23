@@ -17,12 +17,14 @@ const LocalOverlaySchema = Schema.fromJsonString(
   Schema.Struct({
     apis: Schema.Struct({
       'party-registry': Schema.String,
+      'price-group-catalog': Schema.String,
     }),
     ports: Schema.Record(Schema.String, Schema.Number),
   }),
 );
 const PublicClientTopologySchema = Schema.Struct({
   partyRegistryApiBaseUrl: Schema.String,
+  priceGroupCatalogApiBaseUrl: Schema.String,
   shellId: ShellIdSchema,
   shellPort: Schema.Number,
 });
@@ -70,6 +72,7 @@ const main = Effect.gen(function* ensureLocalEnvironment() {
   const shellId = topology.shell.id;
   const publicClientTopology = yield* Schema.decodeUnknownEffect(PublicClientTopologySchema)({
     partyRegistryApiBaseUrl: overlay.apis['party-registry'],
+    priceGroupCatalogApiBaseUrl: overlay.apis['price-group-catalog'],
     shellId,
     shellPort: overlay.ports[shellId],
   });

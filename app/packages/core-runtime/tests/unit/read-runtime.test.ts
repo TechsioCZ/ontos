@@ -42,6 +42,9 @@ const scope: OperationalScope = Object.freeze({
   }),
   correlationId: 'correlation-1',
 });
+const pricingCatalogId = '50000000-0000-4000-8000-000000000001';
+const priceGroupId = '60000000-0000-4000-8000-000000000001';
+const otherPriceGroupId = '60000000-0000-4000-8000-000000000002';
 const EvidenceRowSchema = Schema.Struct({
   queryHash: Schema.optionalKey(Schema.String),
 });
@@ -898,6 +901,173 @@ it.effect('rejects payload Storefront promotion and requires an exact trusted sc
     expect(yield* run(allowed, 'storefront-a')).toEqual([]);
     expect(observedTrustedStorefrontIds).toEqual(['storefront-a']);
     expect(handlerCalls).toBe(1);
+  }),
+);
+
+it.effect('governs tenant-only Price Group reads with stable target evidence and fail-closed outcomes', () =>
+  Effect.gen(function* governsPriceGroupRead() {
+    const permission = yield* Schema.decodeEffect(BusinessPermissionCodeSchema)('pricing.price_group.read');
+    const counterpartyPermission = yield* Schema.decodeEffect(BusinessPermissionCodeSchema)(
+      'counterparty.order_history.read',
+    );
+    const PriceGroupIdSchema = Schema.String.pipe(Schema.brand('PriceGroupId'));
+    const PricingCatalogIdSchema = Schema.String.pipe(Schema.brand('PricingCatalogId'));
+    const TargetTenantIdSchema = Schema.String.pipe(Schema.brand('TargetTenantId'));
+    const InputSchema = Schema.Struct({
+      priceGroupId: PriceGroupIdSchema,
+      pricingCatalogId: PricingCatalogIdSchema,
+      targetTenantId: TargetTenantIdSchema,
+    });
+    let handlerCalls = 0;
+    const makePriceGroupRead = (targetPermission: typeof permission) =>
+      defineRead(
+        {
+          accessKind: 'detail',
+          entrypoint: defineTenantModuleEntrypoint({
+            access: 'read',
+            authorization: {
+              kind: 'context_permission',
+              permission: 'pricing.price-group.read',
+            },
+            entrypointKey: 'pricing.price-group.read',
+            moduleKey: 'pricing.price-group-catalog',
+            role: 'api',
+          }),
+          evidencePolicy: {
+            captureMode: 'metadata_only',
+            policyKey: 'pricing.price-group.read.v1',
+          },
+          inputSchema: InputSchema,
+          legalEntityScope: 'forbidden',
+          owningModuleKey: 'pricing.price-group-catalog',
+          permissionTarget: 'business_permission',
+          policies: [],
+          readKey: 'pricing.price-group.read',
+          resultSchema: Schema.String,
+          schemaVersion: '1',
+        },
+        ({ priceGroupId: handledPriceGroupId }) => {
+          handlerCalls += 1;
+          return Effect.succeed({ evidence: { resultCount: 1 }, result: handledPriceGroupId });
+        },
+        () => Effect.succeed({}),
+        (input) => ({
+          businessPermission: {
+            permission: targetPermission,
+            target: {
+              kind: 'price_group',
+              priceGroupId: input.priceGroupId,
+              pricingCatalogId: input.pricingCatalogId,
+              tenantId: input.targetTenantId,
+            },
+          },
+          kind: 'business_permission',
+        }),
+      );
+    const read = makePriceGroupRead(permission);
+    const input = {
+      priceGroupId,
+      pricingCatalogId,
+      targetTenantId: scope.tenantId,
+    };
+    const run = (harness: Effect.Success<ReturnType<typeof makeHarness>>, nextInput = input) =>
+      harness.runtime.runRead({
+        input: nextInput,
+        principal: scope,
+        registration: read,
+        transport: { correlationId: scope.correlationId },
+      });
+
+    const first = yield* makeHarness({
+      businessPermissionDecision: 'allowed',
+      contextPermissionDecision: 'allowed',
+    });
+    const second = yield* makeHarness({
+      businessPermissionDecision: 'allowed',
+      contextPermissionDecision: 'allowed',
+    });
+    expect(yield* run(first)).toBe(priceGroupId);
+    expect(yield* run(second)).toBe(priceGroupId);
+    expect(first.evidenceRows()[0]?.queryHash).toBe(second.evidenceRows()[0]?.queryHash);
+    const evidenceValues = first.evidenceParameterRows()[0] ?? [];
+    expect(evidenceValues).toContain(permission);
+    expect(evidenceValues).toContain(`${pricingCatalogId}:${priceGroupId}`);
+    expect(evidenceValues).toContain('price_group');
+
+    const wrongPriceGroup = yield* makeHarness({
+      businessPermissionDecision: 'denied',
+      contextPermissionDecision: 'allowed',
+    });
+    expect(
+      Predicate.isTagged(
+        yield* Effect.flip(
+          run(wrongPriceGroup, {
+            ...input,
+            priceGroupId: otherPriceGroupId,
+          }),
+        ),
+        'ReadPermissionDenied',
+      ),
+    ).toBe(true);
+
+    const crossTenant = yield* makeHarness({
+      businessPermissionDecision: 'allowed',
+      contextPermissionDecision: 'allowed',
+    });
+    expect(
+      Predicate.isTagged(
+        yield* Effect.flip(
+          run(crossTenant, {
+            ...input,
+            targetTenantId: '00000000-0000-4000-8000-000000000099',
+          }),
+        ),
+        'ReadPermissionUnavailable',
+      ),
+    ).toBe(true);
+    expect(crossTenant.permissionChecks().businessPermissionChecks).toBe(0);
+
+    const unavailable = yield* makeHarness({
+      businessPermissionDecision: 'unavailable',
+      contextPermissionDecision: 'allowed',
+    });
+    expect(Predicate.isTagged(yield* Effect.flip(run(unavailable)), 'ReadPermissionUnavailable')).toBe(true);
+
+    for (const invalidInput of [
+      { ...input, priceGroupId: 'DEALER' },
+      { ...input, pricingCatalogId: 'DEALER' },
+    ]) {
+      const invalidIdentifier = yield* makeHarness({
+        businessPermissionDecision: 'allowed',
+        contextPermissionDecision: 'allowed',
+      });
+      expect(
+        Predicate.isTagged(yield* Effect.flip(run(invalidIdentifier, invalidInput)), 'ReadHandlerExecutionError'),
+      ).toBe(true);
+      expect(invalidIdentifier.permissionChecks().businessPermissionChecks).toBe(0);
+      expect(invalidIdentifier.evidence()).toBe(0);
+    }
+
+    const mismatchedPermission = yield* makeHarness({
+      businessPermissionDecision: 'allowed',
+      contextPermissionDecision: 'allowed',
+    });
+    expect(
+      Predicate.isTagged(
+        yield* Effect.flip(
+          mismatchedPermission.runtime.runRead({
+            input,
+            principal: scope,
+            registration: makePriceGroupRead(counterpartyPermission),
+            transport: { correlationId: scope.correlationId },
+          }),
+        ),
+        'ReadHandlerExecutionError',
+      ),
+    ).toBe(true);
+    expect(mismatchedPermission.permissionChecks().businessPermissionChecks).toBe(0);
+    expect(mismatchedPermission.evidence()).toBe(0);
+    expect(handlerCalls).toBe(2);
   }),
 );
 

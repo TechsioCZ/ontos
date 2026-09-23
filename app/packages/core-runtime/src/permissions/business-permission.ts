@@ -1,6 +1,7 @@
 import { Predicate, Result, Schema } from 'effect';
 
-const dottedPermissionPattern = /^(?:retail|counterparty)(?:\.[a-z][a-z0-9_]*)+$/u;
+const dottedPermissionPattern =
+  /^(?:(?:retail|counterparty)(?:\.[a-z][a-z0-9_]*)+|pricing\.price_group(?:\.[a-z][a-z0-9_]*)+)$/u;
 const dottedEntrypointPattern = /^[a-z][a-z0-9]*(?:-[a-z0-9]+)*(?:\.[a-z][a-z0-9_-]*)+$/u;
 const schemaVersionPattern = /^[1-9][0-9]*$/u;
 const nonEmptyString = Schema.String.check(Schema.isMinLength(1));
@@ -13,6 +14,8 @@ export const BusinessPermissionCodeSchema = Schema.String.check(Schema.isPattern
 export const BusinessPermissionScopeKindSchema = Schema.Literals([
   'counterparty',
   'counterparty_storefront',
+  'price_group',
+  'pricing_catalog',
   'retail_profile',
 ]);
 export const BusinessPermissionAuditSensitivitySchema = Schema.Literals(['sensitive', 'standard']);
@@ -74,6 +77,17 @@ export const defineBusinessPermission = (
   }
   if (descriptor.allowedScopeKinds.length === 0) {
     return invalid(`business permission ${descriptor.key} must allow at least one scope kind`);
+  }
+  const pricingPermission = descriptor.key.startsWith('pricing.price_group.');
+  const hasPricingScope = descriptor.allowedScopeKinds.some(
+    (scope) => scope === 'pricing_catalog' || scope === 'price_group',
+  );
+  if (
+    (pricingPermission &&
+      descriptor.allowedScopeKinds.some((scope) => scope !== 'pricing_catalog' && scope !== 'price_group')) ||
+    (!pricingPermission && hasPricingScope)
+  ) {
+    return invalid(`business permission ${descriptor.key} uses an incompatible target scope`);
   }
   for (const values of [descriptor.authorityGroups, descriptor.protectedEntrypoints]) {
     if (new Set(values).size !== values.length) {

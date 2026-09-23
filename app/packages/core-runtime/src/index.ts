@@ -301,6 +301,21 @@ export type {
   BusinessPermissionRelationshipMutationService,
 } from './permissions/business-permission-mutation.ts';
 export {
+  ResourceContainmentMutationUnavailable,
+  ResourceContainmentRelationshipMutation,
+  ResourceContainmentRelationshipMutationLive,
+  createResourceContainmentRelationshipMutationClient,
+  makeResourceContainmentRelationshipMutation,
+  makeResourceContainmentRelationshipMutationLive,
+} from './permissions/resource-containment-mutation.ts';
+export type {
+  ResourceContainmentRelationship,
+  ResourceContainmentRelationshipMutationClient,
+  ResourceContainmentRelationshipMutationInput,
+  ResourceContainmentRelationshipMutationService,
+  SpiceDbResourceReference,
+} from './permissions/resource-containment-mutation.ts';
+export {
   ContextPermissionMutationUnavailable,
   ContextPermissionRelationshipMutation,
   ContextPermissionRelationshipMutationLive,

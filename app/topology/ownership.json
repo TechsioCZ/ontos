@@ -14,9 +14,7 @@
         "adrRef": "docs/super-app-rfc-adr/wave2/reference-topology.md#shared-packages",
         "blastRadius": {
           "tier": "tier-0-core-infrastructure",
-          "references": [
-            "docs/super-app-rfc-adr/wave2/blast-radius.md#shared-packages"
-          ]
+          "references": ["docs/super-app-rfc-adr/wave2/blast-radius.md#shared-packages"]
         }
       }
     },
@@ -32,9 +30,7 @@
         "adrRef": "docs/super-app-rfc-adr/wave2/reference-topology.md#shared-packages",
         "blastRadius": {
           "tier": "tier-0-core-infrastructure",
-          "references": [
-            "docs/super-app-rfc-adr/wave2/blast-radius.md#shared-packages"
-          ]
+          "references": ["docs/super-app-rfc-adr/wave2/blast-radius.md#shared-packages"]
         }
       }
     },
@@ -69,9 +65,7 @@
         "adrRef": "docs/super-app-rfc-adr/verticals.md#commerce-customer-context",
         "blastRadius": {
           "tier": "tier-1-shared-contract",
-          "references": [
-            "docs/super-app-rfc-adr/blast-radius.md#commerce-customer-context"
-          ]
+          "references": ["docs/super-app-rfc-adr/blast-radius.md#commerce-customer-context"]
         }
       }
     },
@@ -87,9 +81,7 @@
         "adrRef": "docs/super-app-rfc-adr/verticals.md#payment-term-catalog",
         "blastRadius": {
           "tier": "tier-1-shared-contract",
-          "references": [
-            "docs/super-app-rfc-adr/blast-radius.md#payment-term-catalog"
-          ]
+          "references": ["docs/super-app-rfc-adr/blast-radius.md#payment-term-catalog"]
         }
       }
     },
@@ -105,9 +97,7 @@
         "adrRef": "docs/super-app-rfc-adr/wave2/reference-topology.md#shared-packages",
         "blastRadius": {
           "tier": "tier-1-shared-contract",
-          "references": [
-            "docs/super-app-rfc-adr/wave2/blast-radius.md#shared-packages"
-          ]
+          "references": ["docs/super-app-rfc-adr/wave2/blast-radius.md#shared-packages"]
         }
       }
     },
@@ -123,9 +113,7 @@
         "adrRef": "docs/super-app-rfc-adr/wave2/reference-topology.md#shared-packages",
         "blastRadius": {
           "tier": "tier-1-shared-contract",
-          "references": [
-            "docs/super-app-rfc-adr/wave2/blast-radius.md#shared-packages"
-          ]
+          "references": ["docs/super-app-rfc-adr/wave2/blast-radius.md#shared-packages"]
         }
       }
     },
@@ -141,9 +129,7 @@
         "adrRef": "docs/super-app-rfc-adr/verticals.md#party-registry",
         "blastRadius": {
           "tier": "tier-2-vertical",
-          "references": [
-            "docs/super-app-rfc-adr/blast-radius.md#party-registry"
-          ]
+          "references": ["docs/super-app-rfc-adr/blast-radius.md#party-registry"]
         }
       }
     },
@@ -159,9 +145,7 @@
         "adrRef": "docs/super-app-rfc-adr/verticals.md#commerce-customer-context",
         "blastRadius": {
           "tier": "tier-2-vertical",
-          "references": [
-            "docs/super-app-rfc-adr/blast-radius.md#commerce-customer-context"
-          ]
+          "references": ["docs/super-app-rfc-adr/blast-radius.md#commerce-customer-context"]
         }
       }
     },
@@ -177,9 +161,23 @@
         "adrRef": "docs/super-app-rfc-adr/verticals.md#payment-term-catalog",
         "blastRadius": {
           "tier": "tier-2-vertical",
-          "references": [
-            "docs/super-app-rfc-adr/blast-radius.md#payment-term-catalog"
-          ]
+          "references": ["docs/super-app-rfc-adr/blast-radius.md#payment-term-catalog"]
+        }
+      }
+    },
+    {
+      "id": "price-group-catalog",
+      "package": "@app/price-group-catalog",
+      "path": "verticals/price-group-catalog",
+      "ownership": {
+        "team": "super-app-platform",
+        "slack": "#super-app-platform",
+        "pagerDuty": "pd-super-app-platform",
+        "runbookRef": "runbooks/verticals/price-group-catalog.md",
+        "adrRef": "docs/super-app-rfc-adr/verticals.md#price-group-catalog",
+        "blastRadius": {
+          "tier": "tier-2-vertical",
+          "references": ["docs/super-app-rfc-adr/blast-radius.md#price-group-catalog"]
         }
       }
     }

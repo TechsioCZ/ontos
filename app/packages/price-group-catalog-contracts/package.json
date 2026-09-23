@@ -1,0 +1,38 @@
+{
+  "name": "@app/price-group-catalog-contracts",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Pricing-owned browser-safe Price Group Catalog resource, domain, evidence, and failure contracts.",
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts",
+    "./price-group-definition": "./src/apis/price-group-definition.ts",
+    "./price-group-definition/client": "./src/api/price-group-definition-client.ts",
+    "./price-group": "./src/domain/price-group.ts",
+    "./price-group-errors": "./src/domain/price-group-errors.ts",
+    "./resources/price-group": "./src/resources/price-group.ts",
+    "./resources/price-group-catalog-root": "./src/resources/price-group-catalog-root.ts",
+    "./validate-price-group-compatibility": "./src/apis/validate-price-group-compatibility.ts",
+    "./validate-price-group-compatibility/client": "./src/api/validate-price-group-compatibility-client.ts"
+  },
+  "scripts": {
+    "test:unit": "rstest --project unit",
+    "typecheck": "node ../../scripts/ultramodern-typecheck.mts --project tsconfig.json"
+  },
+  "dependencies": {
+    "@app/core-runtime": "workspace:*",
+    "@app/shared-contracts": "workspace:*",
+    "effect": "4.0.0-rc.112"
+  },
+  "devDependencies": {
+    "@rstest/core": "0.11.12",
+    "@types/node": "20.19.43",
+    "effect-rstest": "https://pkg.pr.new/ScriptedAlchemy/effect-rstest@f29b3f495d45a11037334620bf5f693414fb5578"
+  },
+  "ontosContractOwner": {
+    "appId": "price-group-catalog",
+    "moduleApis": ["price-group-definition", "validate-price-group-compatibility"],
+    "moduleId": "pricing.price-group-catalog",
+    "packageName": "@app/price-group-catalog"
+  }
+}

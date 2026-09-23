@@ -1,0 +1,21 @@
+{
+  "price-group-catalog": {
+    "language": {
+      "cs": "Čeština",
+      "en": "Angličtina",
+      "switcher": "Jazyk"
+    },
+    "routes": {
+      "home": "Domů"
+    },
+    "seo": {
+      "description": "Route-owned UltraModern plocha s lokalizovaným SSR a frameworkem řízenými public metadata."
+    },
+    "federatedSurface": "Federovaná plocha vlastněná tímto verticalem.",
+    "remoteUnavailable": "Remote vertical je nedostupný",
+    "role": "price-group-catalog",
+    "routeSurface": "Routovaná plocha vlastněná tímto verticalem.",
+    "title": "Price Group Catalog Vertical",
+    "widgetBody": "Vlastní routovanou plochu verticalu."
+  }
+}

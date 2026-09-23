@@ -14,6 +14,7 @@ import type { TestDatabaseFromPool } from '../../../../packages/core-runtime/tes
 import { loadDatabaseConnectionPair } from '../../../../packages/core-runtime/src/db/config.ts';
 import {
   ContextAccess,
+  toBusinessPermissionAccessKey,
   toBusinessPermissionAccessObjectId,
   toLegalEntityAccessObjectId,
   toModuleAccessObjectId,
@@ -307,8 +308,7 @@ const eligiblePrincipals: PrincipalEligibilityService = {
 /** Context authorization is granted wholesale for issuance; the claim reads the real SpiceDB. */
 const allowed = (keys: readonly string[]) => Effect.succeed(keys.map((key) => ({ decision: 'allowed' as const, key })));
 const openContextAccess: ContextAccessService = {
-  businessPermissions: ({ targets }) =>
-    allowed(targets.map(({ permission, target }) => `${permission}:${target.tenantId}:${target.legalEntityId}`)),
+  businessPermissions: ({ targets }) => allowed(targets.map(toBusinessPermissionAccessKey)),
   identityNamespaces: ({ authenticationNamespaceIds }) => allowed(authenticationNamespaceIds),
   legalEntities: ({ legalEntityIds }) => allowed(legalEntityIds),
   modules: ({ moduleIds }) => allowed(moduleIds),
